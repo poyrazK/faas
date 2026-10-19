@@ -12004,6 +12004,9 @@ const (
 	AuthAdminBodyBytes = 1 << 20
 	AuthImportBatch    = 100
 	AuthAdminPageSize  = 100
+	// AuthCustomClaimsMaxBytes bounds a user's custom claims (app_metadata
+	// other than GoTrue's provider keys) as JSON; they ride in every token.
+	AuthCustomClaimsMaxBytes = 1000
 	// AuthReauthenticationSeconds is how recent a sign-in must be for a
 	// user to delete their own account.
 	AuthReauthenticationSeconds = 600

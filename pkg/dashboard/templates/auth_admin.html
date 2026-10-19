@@ -115,6 +115,8 @@
   let key = store.get(), tab = 'users', page = 1, search = '', loads = 0, ssoInfo = null
   const messages = {
     last_owner: 'This user is the last owner of an organization that has other members. Make another member an owner first.',
+    invalid_claim_name: 'Claim names are letters, digits and _, start with a letter, and cannot be provider or providers.',
+    claims_too_large: 'Custom claims are limited to 1,000 bytes of JSON per user.', invalid_claims: 'Enter a JSON object of claims; remove a claim instead of setting it to null.',
     not_found: 'It no longer exists.', invalid_duration: 'Choose a ban duration.',
     sso_disabled: 'Organization SSO is off. Turn it on under Settings first.', invalid_metadata: 'Give an HTTPS metadata URL or the metadata XML, not both.',
     invalid_domains: 'List one or more email domains, such as acme.com.', organization_not_found: 'No organization has that slug or ID.',
@@ -324,6 +326,7 @@
         facts([['User ID', user.id], ['Sign-in methods', user.providers.join(', ') || '—'], ['Created', when(user.created_at)], ['Last sign-in', when(user.last_sign_in_at)],
           ['Email confirmed', when(user.email_confirmed_at)], ['Banned until', banned(user) ? when(user.banned_until) : '—'], ['Active sessions', sessions]]),
         actions, result,
+        el('h3', 'Custom claims'), claimsEditor(user),
         el('h3', 'Organizations'), organizations.length ? memberships : el('p', 'Not a member of any organization.', { class: 'muted' }),
         el('h3', 'Recent activity'), recent.entries.length ? activityTable(recent.entries) : el('p', 'No recorded activity.', { class: 'muted' }),
         button('Close', () => { panel.hidden = true }),
@@ -331,6 +334,33 @@
       panel.hidden = false
       panel.scrollIntoView({ block: 'nearest' })
     } catch (error) { say(error.message) }
+  }
+
+  // claimsEditor edits a user's custom claims as one JSON object; saving
+  // sends what changed. Tokens carry them as app_metadata from the next refresh.
+  function claimsEditor(user) {
+    const current = user.claims || {}
+    const text = el('textarea', null, { rows: '4', spellcheck: 'false', 'aria-label': 'Custom claims as JSON' })
+    text.value = JSON.stringify(current, null, 2)
+    const status = el('p', '', { role: 'status' })
+    const save = button('Save claims', async () => {
+      let next
+      try { next = JSON.parse(text.value || '{}') } catch { status.textContent = 'Enter a JSON object, such as {"plan": "pro"}.'; return }
+      if (!next || typeof next !== 'object' || Array.isArray(next)) { status.textContent = 'Enter a JSON object, such as {"plan": "pro"}.'; return }
+      const set = Object.fromEntries(Object.entries(next).filter(([name, value]) => JSON.stringify(value) !== JSON.stringify(current[name])))
+      const unset = Object.keys(current).filter(name => !(name in next))
+      if (!Object.keys(set).length && !unset.length) { status.textContent = 'Nothing changed.'; return }
+      status.textContent = 'Saving…'
+      try {
+        const { claims } = await call('PATCH', '/admin/v1/users/' + encodeURIComponent(user.id) + '/claims', { set, unset })
+        Object.keys(current).forEach(name => delete current[name]); Object.assign(current, claims)
+        text.value = JSON.stringify(claims, null, 2)
+        status.textContent = 'Saved. Tokens carry them as app_metadata from the next refresh, within ten minutes.'
+      } catch (error) { status.textContent = error.message }
+    })
+    const box = el('div')
+    box.append(el('p', 'Values your backend and row-level security read from tokens, such as a plan or a tenant.', { class: 'muted' }), text, save, status)
+    return box
   }
 
   function activityTable(entries) {
