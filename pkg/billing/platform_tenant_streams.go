@@ -62,19 +62,6 @@ func tenantCardInForceIn(cards []state.PlatformTenantRateCard, start, end time.T
 	return false
 }
 
-// tenantStreamCardsAt returns, for each stream, the card in force at
-// minute; streams that have not started are absent.
-func tenantStreamCardsAt(cards []state.PlatformTenantRateCard, minute time.Time) []state.PlatformTenantRateCard {
-	units, streams := TenantUnitStreams(cards)
-	var out []state.PlatformTenantRateCard
-	for _, unit := range units {
-		if card := tenantCardAt(streams[unit], minute); card != nil {
-			out = append(out, *card)
-		}
-	}
-	return out
-}
-
 func tenantCardsAsApp(cards []state.PlatformTenantRateCard) []state.APIConsumerRateCard {
 	out := make([]state.APIConsumerRateCard, 0, len(cards))
 	for _, card := range cards {
