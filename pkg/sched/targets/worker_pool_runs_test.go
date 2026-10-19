@@ -1,4 +1,4 @@
-// adr: 1420 — worker pools reconcile off the scheduler loop.
+// adr: 20261018101500 — worker pools reconcile off the scheduler loop.
 package targets
 
 import (

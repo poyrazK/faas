@@ -118,7 +118,7 @@ func deployPreflightRelease(safe bool, canaryPreset string, trafficPercent int, 
 	var release string
 	switch {
 	case safe:
-		release = "safe · balanced 1% -> 10% -> 50% -> 100% · automatic rollback"
+		release = "safe · adaptive 1% -> 10% -> 50% -> 100% · automatic rollback"
 	case canaryPreset != "" && canaryPreset != "none":
 		release = "canary · " + canaryPreset
 	case trafficPercent >= 0:
@@ -159,7 +159,7 @@ func renderDeployPreflight(w io.Writer, summary deployPreflightSummary) {
 	if summary.BuildPlan != nil && summary.BuildPlan.Handler != "" {
 		_, _ = fmt.Fprintf(w, "  %-14s %s\n", "handler:", summary.BuildPlan.Handler)
 	}
-	if listener := deployPreflightListenerWith(summary.BuildPlan, summary.SimpleAppPlan, summary.Healthcheck); listener != "" {
+	if listener := deployPreflightListenerWith(summary.BuildPlan, summary.SimpleAppPlan, summary.Healthcheck); listener != "" && !servesNoHTTP(deployPreflightExecutionMode(summary)) {
 		_, _ = fmt.Fprintf(w, "  %-14s %s\n", "listener:", listener)
 	}
 	if resources := deployPreflightResources(summary); resources != "" {
@@ -242,19 +242,32 @@ func deployPreflightListenerWith(build *api.BuildPlan, simple *simpleapp.Plan, h
 	return fmt.Sprintf(":%d · health GET %s", port, health)
 }
 
+// deployPreflightExecutionMode is the declared mode, falling back to the
+// simple-app plan's.
+func deployPreflightExecutionMode(summary deployPreflightSummary) string {
+	if execution := strings.TrimSpace(summary.ExecutionMode); execution != "" {
+		return execution
+	}
+	if summary.SimpleAppPlan != nil {
+		return summary.SimpleAppPlan.ExecutionMode
+	}
+	return ""
+}
+
+// servesNoHTTP reports the modes whose process never answers requests:
+// a worker runs continuously and a job runs to completion (H10-137).
+func servesNoHTTP(executionMode string) bool {
+	return executionMode == api.ExecutionModeWorker || executionMode == api.ExecutionModeJob
+}
+
 func deployPreflightResources(summary deployPreflightSummary) string {
 	if resources := strings.TrimSpace(summary.ResourceBehavior); resources != "" {
 		return resources
 	}
 	profile := strings.TrimSpace(summary.ResourceProfile)
-	execution := strings.TrimSpace(summary.ExecutionMode)
-	if summary.SimpleAppPlan != nil {
-		if profile == "" {
-			profile = summary.SimpleAppPlan.ResourceProfile
-		}
-		if execution == "" {
-			execution = summary.SimpleAppPlan.ExecutionMode
-		}
+	execution := deployPreflightExecutionMode(summary)
+	if summary.SimpleAppPlan != nil && profile == "" {
+		profile = summary.SimpleAppPlan.ResourceProfile
 	}
 	if profile == "" {
 		profile = "plan-default"

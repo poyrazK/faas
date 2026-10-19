@@ -33,6 +33,7 @@ func TestManagerWorkloadTokenIdentity(t *testing.T) {
 		waking: map[string]wakingInstance{
 			"boot-1":          {appID: "app-2", accountID: "acct-2"},
 			"qualification-1": {},
+			"contained-1":     {appID: "app-3", accountID: "acct-3", contained: true},
 		},
 	}
 	tests := []struct {
@@ -44,11 +45,12 @@ func TestManagerWorkloadTokenIdentity(t *testing.T) {
 		{instance: "live-1", app: "app-1", account: "acct-1", resolves: true, instanceResolve: true},
 		{instance: "boot-1", app: "app-2", account: "acct-2", resolves: true},
 		{instance: "qualification-1"},
+		{instance: "contained-1"}, // a rehearsal-contained wake gets no token
 		{instance: "missing"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.instance, func(t *testing.T) {
-			appID, accountID, err := m.WorkloadTokenIdentity(tt.instance)
+			appID, accountID, err := m.WorkloadTokenIdentity(t.Context(), tt.instance)
 			if tt.resolves != (err == nil) || appID != tt.app || accountID != tt.account {
 				t.Fatalf("WorkloadTokenIdentity = %q/%q, %v; want %q/%q resolves=%v", appID, accountID, err, tt.app, tt.account, tt.resolves)
 			}

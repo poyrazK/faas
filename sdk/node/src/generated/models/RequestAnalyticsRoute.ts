@@ -73,9 +73,17 @@ export type RequestAnalyticsRoute = {
    */
   other_deployment_estimated_compute_cost_millicents?: number;
   /**
-   * Estimated raw RAM-hour value allocated to this route by observed request share; excludes account-level included allowance and egress.
+   * Estimated raw RAM-hour value allocated to this route by its share of observed request time (ADR-743), or by request share when no timing exists; excludes account-level included allowance and egress.
    */
   estimated_compute_cost_millicents?: number;
   request_share_pct?: number;
+  /**
+   * Total gateway-observed request time for this route in the window, in milliseconds.
+   */
+  request_time_ms?: number;
+  /**
+   * This route's share of all observed app request time in the window.
+   */
+  request_time_share_pct?: number;
 };
 

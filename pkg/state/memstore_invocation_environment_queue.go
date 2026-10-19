@@ -9,12 +9,17 @@ import (
 
 var _ ProjectEnvironmentQueueInvocationStore = (*MemStore)(nil)
 
-func (m *MemStore) InvocationEnvironmentQueueAdmission(_ context.Context, id string) (InvocationEnvironmentQueueAdmission, error) {
+func (m *MemStore) InvocationEnvironmentQueueAdmission(ctx context.Context, id string) (InvocationEnvironmentQueueAdmission, error) {
 	if parsed, err := uuid.Parse(id); err != nil || parsed == uuid.Nil {
 		return InvocationEnvironmentQueueAdmission{}, ErrInvalidArgument
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 InvocationEnvironmentQueueAdmission
+		return zero0, err
+	}
+
 	owner, ok := m.invocationEnvironmentQueueAdmissions[id]
 	if !ok {
 		return owner, ErrNotFound
@@ -33,6 +38,11 @@ func (m *MemStore) EnqueueProjectEnvironmentQueueInvocation(ctx context.Context,
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 Invocation
+		return zero0, err
+	}
+
 	current, err := m.projectEnvironmentQueueConsumersLocked(accountID, projectID, deploymentID, false, true)
 	if err != nil {
 		return Invocation{}, err
@@ -59,7 +69,7 @@ func (m *MemStore) EnqueueProjectEnvironmentQueueInvocation(ctx context.Context,
 	if !m.invocationQueuePinLocked(inv, owner.DeploymentID, true) {
 		return Invocation{}, ErrInvocationEnvironmentWorkIsolation
 	}
-	account, found := m.accounts[accountID]
+	account, found := m.queuePolicyAccountLocked(accountID, current.AppID)
 	if !found {
 		return Invocation{}, ErrNotFound
 	}

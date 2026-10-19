@@ -76,11 +76,19 @@ retains its lease until cleanup actually completes. No query, write or uncertain
 COMMIT is replayed. Applications needing retry-safe writes must supply their own
 idempotency contract. Pool sizes, request limits and timeouts are app settings.
 
-## Snapshot restore and shutdown
+## Snapshot checkpoint, restore and shutdown
+
+The two-second `lifecycle.before_checkpoint` hook calls
+`/internal/before-checkpoint` before each capture. The adapter closes
+admission, cancels unfinished work and waits until every SQL session has
+closed, so no snapshot holds a connection or open transaction. Repeated calls
+report the completed drain; only a restore reopens the pool. The platform turns
+off warm captures for apps that declare this hook.
 
 The two-second `lifecycle.after_restore` hook calls `/internal/after-restore`.
-It requires both an actual loopback peer and `X-Faas-After-Restore: 1`.
-Forwarded-address headers cannot authorize it.
+Each hook requires an actual loopback peer and its exact marker header
+(`X-Faas-Before-Checkpoint: 1` or `X-Faas-After-Restore: 1`).
+Forwarded-address headers cannot authorize either.
 
 Before awaiting work, the adapter closes database readiness, cancels captured
 requests and invalidates the captured pool. It rereads the latest atomic snapshot

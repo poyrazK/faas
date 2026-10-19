@@ -10,6 +10,7 @@ import (
 )
 
 type storedPlan struct {
+	RegressionResult   *api.DebugRegressionReview
 	BudgetResult       *api.EnvironmentRouteBudgets
 	Plan               releasePlan
 	AppHash            [32]byte
@@ -55,6 +56,15 @@ func (m *management) restorePlans() error {
 				return errors.New("stored route budget receipt binding mismatch")
 			}
 		}
+		if p.Action == "regression_action" {
+			if validateRegressionPlan(&p) != nil {
+				return errors.New("stored regression plan binding mismatch")
+			}
+			if record.RegressionResult != nil && validateRegressionReceipt(p.Regression, *record.RegressionResult) != nil {
+				return errors.New("stored regression receipt binding mismatch")
+			}
+		}
+		p.regressionResult = record.RegressionResult
 		p.budgetResult = record.BudgetResult
 		p.appHash, p.latestID, p.attempted = record.AppHash, record.LatestID, record.Attempted
 		p.review = record.Review
@@ -75,7 +85,7 @@ func (m *management) persistPlans() error {
 		if time.Now().After(p.ExpiresAt) {
 			continue
 		}
-		records[id] = storedPlan{BudgetResult: p.budgetResult, Plan: *p, AppHash: p.appHash, LatestID: p.latestID, Attempted: p.attempted, Result: p.result, Promoted: p.promoted, PromotionAttempted: p.promotionAttempted, Review: p.review}
+		records[id] = storedPlan{RegressionResult: p.regressionResult, BudgetResult: p.budgetResult, Plan: *p, AppHash: p.appHash, LatestID: p.latestID, Attempted: p.attempted, Result: p.result, Promoted: p.promoted, PromotionAttempted: p.promotionAttempted, Review: p.review}
 	}
 	return m.opts.planStore.update("plans/"+m.opts.planNamespace, records)
 }

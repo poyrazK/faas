@@ -535,7 +535,7 @@ func TestProbeHTTP_URLShape(t *testing.T) {
 	}
 }
 
-// ADR-1420: a proven worker's boot only shows that its process started and
+// ADR-20261018101500: a proven worker's boot only shows that its process started and
 // stayed up; every other boot watches for the full window.
 func TestWaitForBindProvenWorkerUsesShortWindow(t *testing.T) {
 	for _, tt := range []struct {

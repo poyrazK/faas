@@ -15,11 +15,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-type encryptedRouteStore interface {
-	accountingStore
-	state.ObjectUploadRouteStore
-	state.ObjectTrackedUploadStore
-}
+type encryptedRouteStore = contractTestStore
 
 // adr: 559
 func TestObjectUploadRouteEncryptionMem(t *testing.T) {

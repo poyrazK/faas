@@ -377,13 +377,17 @@ func cmdDev(args []string) int {
 			ttl: *ttl, buckets: bucketNames, watch: *watch,
 		})
 	}
-	linkedContext, _, linkedErr := linkedProjectContext(cwd)
-	if linkedErr != nil && !errors.Is(linkedErr, errProjectContextNotFound) {
-		return printErr("Could not read local project context", linkedErr)
-	}
 	sourceDir, err := resolveDeploySourceDir(cwd, *sourcePath)
 	if err != nil {
 		return printErr("Invalid developer source", err)
+	}
+	var linkedContext localProjectContext
+	linkedErr := errProjectContextNotFound
+	if *name == "" {
+		linkedContext, _, linkedErr = linkedProjectContext(sourceDir)
+		if linkedErr != nil && !errors.Is(linkedErr, errProjectContextNotFound) {
+			return printErr("Could not read local project context", linkedErr)
+		}
 	}
 	var manifest *gregalemanifest.Manifest
 	if !*stop {
@@ -501,6 +505,12 @@ func cmdDev(args []string) int {
 	if err != nil {
 		return printErr("No deployable source found in "+filepath.Base(sourceDir), err)
 	}
+	if code := checkDevSource(sourceDir, config); code != 0 {
+		return code
+	}
+	if !jsonOutput {
+		PrintProgress(osStdout, "Source: %s; connection: %s; isolated developer session: %s", sourceDir, currentProfile(), project)
+	}
 
 	if *debug && !devDebugSupported(sourceDir, config) {
 		return printErr("Invalid flags", fmt.Errorf("--debug supports Node.js workloads only"))
@@ -518,6 +528,7 @@ func cmdDev(args []string) int {
 	if err != nil {
 		return printErr("Could not create developer environment", err)
 	}
+	defer renderDevSessionExit(sourceDir, project, session.App.Slug, lease)
 	if code := applyDevDebugSetting(client, session.App.Slug, *debug); code != 0 {
 		return code
 	}

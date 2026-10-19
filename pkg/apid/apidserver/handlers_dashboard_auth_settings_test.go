@@ -27,6 +27,7 @@ func authSettingsPost(e apidserver.TestEnv, session, csrf *http.Cookie, path str
 }
 
 func TestDashboardAuthSettingsWriteValidatedSecrets(t *testing.T) {
+	t.Setenv("FAAS_APPLICATION_AUTH_ENABLED", "1")
 	_, restore := apidserver.WithTestIdentities(t)
 	t.Cleanup(restore)
 	e := apidserver.Setup(t, api.PlanPro)
@@ -52,7 +53,7 @@ func TestDashboardAuthSettingsWriteValidatedSecrets(t *testing.T) {
 		sort.Strings(names)
 		return names
 	}
-	settings := url.Values{"csrf_token": {token}, "signup": {"off"}, "password_min_length": {"12"}, "password_require": {"lower,digit"}, "mfa": {"off"}}
+	settings := url.Values{"csrf_token": {token}, "signup": {"off"}, "password_min_length": {"12"}, "password_require": {"lower,digit"}, "mfa": {"off"}, "mfa_phone": {"on"}, "recovery_codes": {"on"}, "self_deletion": {"on"}, "org_claims": {"on"}}
 	if rec := authSettingsPost(e, cookie, nil, base+"/settings", settings); rec.Code != http.StatusBadRequest || len(keys()) != 0 {
 		t.Fatalf("missing CSRF cookie = %d, secrets %v", rec.Code, keys())
 	}
@@ -61,7 +62,7 @@ func TestDashboardAuthSettingsWriteValidatedSecrets(t *testing.T) {
 		t.Fatalf("invalid settings = %d %q, secrets %v", rec.Code, rec.Header().Get("Location"), keys())
 	}
 	rec := authSettingsPost(e, cookie, csrf, base+"/settings", settings)
-	want := []string{"AUTH_DISABLE_SIGNUP", "GOTRUE_MFA_TOTP_ENROLL_ENABLED", "GOTRUE_MFA_TOTP_VERIFY_ENABLED", "GOTRUE_PASSWORD_MIN_LENGTH", "GOTRUE_PASSWORD_REQUIRED_CHARACTERS"}
+	want := []string{"AUTH_DISABLE_SIGNUP", "AUTH_ORG_CLAIMS", "AUTH_SELF_DELETION", "GOTRUE_MFA_PHONE_ENROLL_ENABLED", "GOTRUE_MFA_PHONE_VERIFY_ENABLED", "GOTRUE_MFA_RECOVERY_CODES_ENROLL_ENABLED", "GOTRUE_MFA_RECOVERY_CODES_VERIFY_ENABLED", "GOTRUE_MFA_TOTP_ENROLL_ENABLED", "GOTRUE_MFA_TOTP_VERIFY_ENABLED", "GOTRUE_PASSWORD_MIN_LENGTH", "GOTRUE_PASSWORD_REQUIRED_CHARACTERS"}
 	if rec.Code != http.StatusSeeOther || strings.Join(keys(), ",") != strings.Join(want, ",") {
 		t.Fatalf("settings = %d %q, secrets %v\n%s", rec.Code, rec.Header().Get("Location"), keys(), rec.Body)
 	}

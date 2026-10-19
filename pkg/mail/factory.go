@@ -4,6 +4,8 @@
 //	log      → NewLogSender (default; safe for dev)
 //	resend   → NewResendSender (FAAS_MAIL_RESEND_API_KEY required)
 //	postmark → NewPostmarkSender (FAAS_MAIL_POSTMARK_TOKEN required)
+//	internal → private maild socket (explicit master flag + service token)
+//	internal-producer → private producer route (master + producer gates and scoped token)
 //	noop     → NoopSender (silent drop, for tests)
 //
 // The transport name comes from FAAS_MAIL_TRANSPORT. Selecting a live
@@ -34,14 +36,18 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+
+	"github.com/onebox-faas/faas/pkg/internalmail"
 )
 
 // Transport names. Add a new one here when wiring a new provider.
 const (
-	TransportNoop     = "noop"
-	TransportLog      = "log"
-	TransportResend   = "resend"
-	TransportPostmark = "postmark"
+	TransportNoop             = "noop"
+	TransportLog              = "log"
+	TransportResend           = "resend"
+	TransportPostmark         = "postmark"
+	TransportInternal         = "internal"
+	TransportInternalProducer = "internal-producer"
 )
 
 // ErrMailerMisconfigured is the sentinel returned by SenderFromEnv when
@@ -102,6 +108,31 @@ func SenderFromEnv(getenv func(string) string, log *slog.Logger) (Sender, error)
 	case TransportNoop:
 		log.Info("mail.transport", "transport", TransportNoop)
 		return NoopSender{}, nil
+	case TransportInternal:
+		socket := getenv("FAAS_INTERNAL_MAIL_SOCKET")
+		if socket == "" {
+			socket = internalmail.DefaultSocket
+		}
+		s, err := NewInternalSender(socket, getenv("FAAS_INTERNAL_MAIL_TOKEN"), getenv("FAAS_MAIL_FROM"), func() bool { return internalmail.Enabled(getenv) })
+		if err != nil {
+			return nil, fmt.Errorf("mail: internal transport: %w: %w", ErrMailerMisconfigured, err)
+		}
+		log.Info("mail.transport", "transport", TransportInternal)
+		return s.WithScheduling(func() bool { return internalmail.SchedulingEnabled(getenv) }), nil
+	case TransportInternalProducer:
+		if !internalmail.ProducersEnabled(getenv) {
+			return nil, fmt.Errorf("mail: internal producer transport: %w: %w", ErrMailerMisconfigured, internalmail.ErrDisabled)
+		}
+		socket := getenv("FAAS_INTERNAL_MAIL_SOCKET")
+		if socket == "" {
+			socket = internalmail.DefaultSocket
+		}
+		s, err := NewInternalProducerSender(socket, getenv("FAAS_INTERNAL_MAIL_PRODUCER_ID"), getenv("FAAS_INTERNAL_MAIL_PRODUCER_TOKEN"), getenv("FAAS_MAIL_FROM"), func() bool { return internalmail.ProducersEnabled(getenv) })
+		if err != nil {
+			return nil, fmt.Errorf("mail: internal producer transport: %w: %w", ErrMailerMisconfigured, err)
+		}
+		log.Info("mail.transport", "transport", TransportInternalProducer)
+		return s.WithScheduling(func() bool { return internalmail.SchedulingEnabled(getenv) }), nil
 	case TransportResend:
 		cfg := ResendConfig{
 			APIKey: getenv("FAAS_MAIL_RESEND_API_KEY"),
@@ -145,7 +176,7 @@ func SenderFromEnv(getenv func(string) string, log *slog.Logger) (Sender, error)
 		// so it fails closed on production boxes too.
 		if !IsDevMode(getenv) {
 			return nil, fmt.Errorf("%w: FAAS_MAIL_TRANSPORT=%q is not a known transport"+
-				" (want one of: resend, postmark, log, noop)",
+				" (want one of: resend, postmark, internal, log, noop)",
 				ErrMailUnknownTransport, getenv("FAAS_MAIL_TRANSPORT"))
 		}
 		log.Warn("mail.transport unknown; falling back to log",

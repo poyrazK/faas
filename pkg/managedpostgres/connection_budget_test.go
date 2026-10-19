@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/managedpostgres/connectioncapacity"
 )
 
 func budgetSnapshot() ConnectionBudgetSnapshot {
@@ -16,7 +17,9 @@ func budgetSnapshot() ConnectionBudgetSnapshot {
 	id := uuid.NewString()
 	return ConnectionBudgetSnapshot{DatabaseID: id, DatabaseName: "primary", DatabaseState: "ready", Generation: 2, BackendFingerprint: strings.Repeat("a", 64), CheckedAt: now,
 		ModelsVerified: true, OtherConsumersCovered: true,
-		Capacity: &ConnectionBudgetCapacityEvidence{DatabaseID: id, BackendFingerprint: strings.Repeat("a", 64), Generation: 2, UsableConnections: 20, CheckedAt: now, ExpiresAt: now.Add(api.DataAPIConnectionBudgetMaxAge)},
+		Capacity: &ConnectionBudgetCapacityEvidence{DatabaseID: id, BackendFingerprint: strings.Repeat("a", 64), Generation: 2, UsableConnections: 20, CheckedAt: now, ExpiresAt: now.Add(api.DataAPIConnectionBudgetMaxAge),
+			Source: "native_qualification", SourceSHA256: strings.Repeat("b", 64), AllocationCheckedAt: now, AllocationExpiresAt: now.Add(time.Minute), AllocationConnections: 20,
+			SQL: &connectioncapacity.Observation{MaxConnections: 100, SuperuserReserved: 3, DatabaseLimit: -1, RoleLimit: -1}},
 		Bindings: []connectionBudgetBinding{{AppID: "api", Scope: "default", Access: "data_api", State: "ready", Plan: api.PlanPro, MaxConcurrency: 3, Residents: 2, Parked: 1, Deployments: 1}}}
 }
 
@@ -37,10 +40,12 @@ func TestConnectionBudgetPlansWakeAndLifecycleOverlapWithoutDoubleCounting(t *te
 		t.Fatal("rotation added another copy of the observed replacement", got)
 	}
 	s.Capacity.UsableConnections = 8
+	s.Capacity.AllocationConnections = 8
 	if got = describeConnectionBudget(s, s.CheckedAt); got.State != "over_budget" {
 		t.Fatal(got)
 	}
 	s.Capacity.UsableConnections = 9
+	s.Capacity.AllocationConnections = 9
 	if got = describeConnectionBudget(s, s.CheckedAt); got.State != "within_budget" {
 		t.Fatal("exact budget must fit", got)
 	}
@@ -55,18 +60,19 @@ func TestConnectionBudgetPlansWakeAndLifecycleOverlapWithoutDoubleCounting(t *te
 
 func TestConnectionBudgetMissingUnqualifiedAndStaleEvidenceCannotPass(t *testing.T) {
 	cases := map[string]func(*ConnectionBudgetSnapshot){
-		"capacity_unverified":                   func(s *ConnectionBudgetSnapshot) { s.Capacity = nil },
-		"runtime_pool_configuration_unverified": func(s *ConnectionBudgetSnapshot) { s.ModelsVerified = false },
-		"external_consumers_unobserved":         func(s *ConnectionBudgetSnapshot) { s.OtherConsumersCovered = false },
-		"inventory_stale":                       func(s *ConnectionBudgetSnapshot) { s.CheckedAt = s.CheckedAt.Add(-time.Hour) },
-		"database_not_ready":                    func(s *ConnectionBudgetSnapshot) { s.DatabaseState = "updating" },
-		"inventory_truncated":                   func(s *ConnectionBudgetSnapshot) { s.Truncated = true },
-		"runtime_inventory_unavailable":         func(s *ConnectionBudgetSnapshot) { s.InventoryUnavailable = true },
-		"node_observations_stale":               func(s *ConnectionBudgetSnapshot) { s.Bindings[0].StaleNodes = 1 },
-		"auxiliary_connections_unmodeled":       func(s *ConnectionBudgetSnapshot) { s.Bindings[0].Tasks = 1 },
-		"binding_transition":                    func(s *ConnectionBudgetSnapshot) { s.Bindings[0].State = "retiring" },
-		"multiple_runtime_bindings":             func(s *ConnectionBudgetSnapshot) { s.Bindings = append(s.Bindings, s.Bindings[0]) },
-		"inventory_invalid":                     func(s *ConnectionBudgetSnapshot) { s.Bindings[0].Residents = -1 },
+		"native_replication_connections_unmodeled": func(s *ConnectionBudgetSnapshot) { s.NativeReplication = true },
+		"capacity_unverified":                      func(s *ConnectionBudgetSnapshot) { s.Capacity = nil },
+		"runtime_pool_configuration_unverified":    func(s *ConnectionBudgetSnapshot) { s.ModelsVerified = false },
+		"external_consumers_unobserved":            func(s *ConnectionBudgetSnapshot) { s.OtherConsumersCovered = false },
+		"inventory_stale":                          func(s *ConnectionBudgetSnapshot) { s.CheckedAt = s.CheckedAt.Add(-time.Hour) },
+		"database_not_ready":                       func(s *ConnectionBudgetSnapshot) { s.DatabaseState = "updating" },
+		"inventory_truncated":                      func(s *ConnectionBudgetSnapshot) { s.Truncated = true },
+		"runtime_inventory_unavailable":            func(s *ConnectionBudgetSnapshot) { s.InventoryUnavailable = true },
+		"node_observations_stale":                  func(s *ConnectionBudgetSnapshot) { s.Bindings[0].StaleNodes = 1 },
+		"auxiliary_connections_unmodeled":          func(s *ConnectionBudgetSnapshot) { s.Bindings[0].Tasks = 1 },
+		"binding_transition":                       func(s *ConnectionBudgetSnapshot) { s.Bindings[0].State = "retiring" },
+		"multiple_runtime_bindings":                func(s *ConnectionBudgetSnapshot) { s.Bindings = append(s.Bindings, s.Bindings[0]) },
+		"inventory_invalid":                        func(s *ConnectionBudgetSnapshot) { s.Bindings[0].Residents = -1 },
 	}
 	for reason, change := range cases {
 		t.Run(reason, func(t *testing.T) {

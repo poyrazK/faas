@@ -62,7 +62,7 @@ var mfaRecipient func() *age.X25519Recipient
 // that the next request would 401 out of (a UX cliff).
 var errSessionMissingFromContext = errors.New("reissueSessionCookie: no session in request context — wiring broken")
 
-const mfaDisableEmailCooldown = 24 * time.Hour
+const mfaDisableEmailCooldown = api.MFADisableEmailCooldown
 
 // SetMFARecipient is the boot-time wire-up called by the apid
 // main() once the host age key has loaded. Tests call this
@@ -164,9 +164,7 @@ func (s *server) mfaEnroll(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, api.ErrCapacity("could not seal TOTP secret"))
 		return
 	}
-	if err := s.store.SetMFASecret(r.Context(), acct.ID, sealed, hashes); err != nil {
-		s.log.Error("mfa.enroll.persist", "err", err.Error())
-		api.WriteProblem(w, api.ErrCapacity("could not persist TOTP enrollment"))
+	if !s.saveMFAEnrollment(w, r, acct, sealed, hashes) {
 		return
 	}
 
@@ -210,11 +208,18 @@ func (s *server) mfaConfirm(w http.ResponseWriter, r *http.Request, acct state.A
 	if !s.totpAttemptAllowed(w, acct) {
 		return
 	}
+	if s.tryMFAEnabledAlert(w, r, acct, req.Totp) {
+		return
+	}
+	s.confirmInlineMFA(w, r, acct, req.Totp)
+}
+
+func (s *server) confirmInlineMFA(w http.ResponseWriter, r *http.Request, acct state.Account, code string) {
 	confirmSecret := readSealedSecret(s, w, r, acct.ID)
 	if confirmSecret == "" {
 		return // readSealedSecret wrote the problem
 	}
-	if !auth.VerifyCode(confirmSecret, req.Totp) {
+	if !auth.VerifyCode(confirmSecret, code) {
 		s.totp.fail(acct.ID, time.Now())
 		s.audit.Emit(r.Context(), "account.mfa_confirm_failed", &acct.ID, map[string]any{"reason": "code_mismatch"})
 		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeMFAInvalidCode,
@@ -226,6 +231,10 @@ func (s *server) mfaConfirm(w http.ResponseWriter, r *http.Request, acct state.A
 		api.WriteProblem(w, api.ErrCapacity("could not finalize enrollment"))
 		return
 	}
+	s.finishMFAConfirmation(w, r, acct)
+}
+
+func (s *server) finishMFAConfirmation(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	if err := s.reissueSessionCookie(w, r, acct, false); err != nil {
 		// Cookie re-issue failure is non-fatal — the customer's
 		// enrollment landed; the next request will trip
@@ -423,10 +432,12 @@ func (s *server) refuseLastRecoveryCodeOrMatch(w http.ResponseWriter, r *http.Re
 // already reissued, so failing the response would force the
 // customer to re-authenticate. Same shape as the password-reset
 // mailer at handlers_auth_login.go:256-263.
+// With durable alerts enabled, storage failure leaves the code unused. Maild
+// availability is handled later by the worker and cannot fail this recovery.
 func (s *server) completeRecoveryCodeBurn(w http.ResponseWriter, r *http.Request, acct state.Account, presented []byte) {
-	matchedConsume, _, remaining, err := consumeRecoveryCode(r.Context(), s.store, acct.ID, presented)
+	matchedConsume, lastCode, remaining, outboxed, err := s.consumeMFARecoveryWithAlert(r.Context(), acct, presented)
 	if err != nil {
-		s.log.Error("mfa.recover.consume", "err", err.Error())
+		s.log.Error("mfa.recover.consume")
 		api.WriteProblem(w, api.ErrCapacity("could not consume recovery code"))
 		return
 	}
@@ -439,13 +450,20 @@ func (s *server) completeRecoveryCodeBurn(w http.ResponseWriter, r *http.Request
 			"Invalid code", "recovery code was already consumed"))
 		return
 	}
+	if lastCode {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation,
+			"Last recovery code", "burning the only remaining code would lock you out — disable MFA with your password instead"))
+		return
+	}
 	if err := s.reissueSessionCookie(w, r, acct, false); err != nil {
 		s.log.Error("mfa.recover.reissue_cookie", "err", err.Error())
 		api.WriteProblem(w, api.ErrCapacity("could not re-issue session cookie"))
 		return
 	}
 	s.audit.Emit(r.Context(), "account.mfa_recovered", &acct.ID, nil)
-	s.sendBurnEmail(r.Context(), acct, remaining)
+	if !outboxed {
+		s.sendBurnEmail(r.Context(), acct, remaining)
+	}
 	writeJSON(w, http.StatusOK, api.MFARecoverResponse{})
 }
 
@@ -508,6 +526,15 @@ func (s *server) mfaDisable(w http.ResponseWriter, r *http.Request, acct state.A
 		return
 	}
 
+	if s.tryMFADisabledAlert(w, r, acct, req) {
+		return
+	}
+	s.completeInlineMFADisable(w, r, acct, req)
+}
+
+func (s *server) completeInlineMFADisable(w http.ResponseWriter, r *http.Request, acct state.Account, req api.MFADisableRequest) {
+	hasPassword := req.Password != ""
+
 	switch {
 	case hasPassword:
 		// The password is the first factor. An mfa_pending session has
@@ -558,6 +585,12 @@ func (s *server) mfaDisableEmail(w http.ResponseWriter, r *http.Request, acct st
 			"Invalid request", "malformed JSON body"))
 		return
 	}
+	if !s.queueMFADisableEmail(w, r, acct) {
+		s.issueInlineMFADisableEmail(w, r, acct)
+	}
+}
+
+func (s *server) issueInlineMFADisableEmail(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
 		s.log.Error("mfa.disable_email.rand", "err", err.Error())
@@ -616,7 +649,14 @@ func (s *server) mfaDisableEmailConfirm(w http.ResponseWriter, r *http.Request, 
 		s.writeMFADisableEmailInvalid(w, r, acct, "token_malformed")
 		return
 	}
-	idents := s.mfaDisableTokenIdentities()
+	alertRequested := s.mfaDisabledAlertRequested()
+	if !s.consumeDurableMFADisableEmail(w, r, acct, sealed, alertRequested) {
+		s.confirmInlineMFADisableEmail(w, r, acct, sealed, alertRequested)
+	}
+}
+
+func (s *server) confirmInlineMFADisableEmail(w http.ResponseWriter, r *http.Request, acct state.Account, sealed []byte, alertRequested bool) {
+	idents := s.mfaHostIdentities()
 	if len(idents) == 0 {
 		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity,
 			"MFA unavailable", "host age identity not loaded — refusing to verify disable token"))
@@ -625,6 +665,10 @@ func (s *server) mfaDisableEmailConfirm(w http.ResponseWriter, r *http.Request, 
 	namespace, plaintext, err := secretbox.OpenBytesMulti(idents, sealed)
 	if err != nil || namespace != "mfa-disable" || len(plaintext) != 32 {
 		s.writeMFADisableEmailInvalid(w, r, acct, "token_invalid")
+		return
+	}
+	if alertRequested {
+		s.confirmLegacyMFADisabledAlert(w, r, acct, sealed)
 		return
 	}
 	reqRow, err := s.store.GetMFADisableRequest(r.Context(), api.HashToken(sealed))
@@ -674,7 +718,7 @@ func (s *server) mfaDisableEmailLink(r *http.Request, raw []byte) string {
 	return fmt.Sprintf("%s://%s/v1/account/mfa/disable-email/confirm?token=%s", scheme, host, base64.RawURLEncoding.EncodeToString(raw))
 }
 
-func (s *server) mfaDisableTokenIdentities() []*age.X25519Identity {
+func (s *server) mfaHostIdentities() []*age.X25519Identity {
 	if mfaIdentities != nil {
 		if idents := mfaIdentities(); len(idents) > 0 {
 			return idents
@@ -783,15 +827,7 @@ func readSealedSecret(s *server, w http.ResponseWriter, r *http.Request, account
 	// entry point. Fall back to the single-identity accessor so
 	// pre-rotation test harnesses (and any caller that hasn't
 	// migrated to LoadHostKeys) keep working.
-	var idents []*age.X25519Identity
-	if mfaIdentities != nil {
-		idents = mfaIdentities()
-	}
-	if len(idents) == 0 && mfaIdentity != nil {
-		if single := mfaIdentity(); single != nil {
-			idents = []*age.X25519Identity{single}
-		}
-	}
+	idents := s.mfaHostIdentities()
 	if len(idents) == 0 {
 		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity,
 			"MFA unavailable", "host age identity not loaded — refusing to unseal"))

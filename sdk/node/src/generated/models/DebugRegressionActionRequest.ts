@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Debugger-only workflow action for one deployment/route observation.
+ * Legacy debugger-only workflow action for one deployment/route observation.
  */
 export type DebugRegressionActionRequest = {
   deployment_id: string;

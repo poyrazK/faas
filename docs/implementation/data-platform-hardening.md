@@ -11,11 +11,23 @@ Capability promotion continues to follow `pkg/productcap/catalog.json` and
 | P0 | Qualify one supported managed PostgreSQL/Data API/Auth journey | Current provider v8 report, matching native guest report and hosted customer canary, including rotation, migrations, park/restore and cleanup | Pending isolated provider, account and native-host setup |
 | P1 | Bound existing realtime channel grants | Idle and buffered-delivery revocation, callback outage recovery, endpoint changes, focused tests and race checks | First implementation: ADR-1385; deployed qualification pending |
 | P1 | Complete restore-to-serving activation | Writer/session drain evidence, atomic binding publication, snapshot invalidation, application checks and explicit recovery/backout procedure | Pending; keep customer activation unavailable |
-| P1 | Establish production data capacity and health contracts | Aggregate connection budgets, pool/query timing, controlled SQL probes and concurrent app/database wake load tests | Data API admission, health, gateway timings, pool counts, response limits, per-user rates, a local load/recovery verifier and read-only connection-budget estimates implemented; verified capacity, budget enforcement, SQL/pool-wait timing and deployed load qualification pending |
+| P1 | Establish production data capacity and health contracts | Aggregate connection budgets, pool/query timing, controlled SQL probes and concurrent app/database wake load tests | Data API admission, health, gateway and combined engine transaction timings, pool counts, response limits, per-user rate/concurrency limits, a local load/recovery verifier, read-only budgets and an opt-in qualified capacity observer and authenticated resident pool reports implemented; automated allocation sources, consumer coverage, budget enforcement, isolated SQL/pool-wait timing and deployed load qualification pending |
 | P1 | Release supported client packages | Owner-approved SDK licensing, immutable versioned releases, provenance and tested CLI/runtime compatibility | Pending licensing and registry decisions |
 | P1 | Reconcile complete provider spend | Provider allowances and branch charges, delayed corrections, deletion settlement and qualified budget cutoffs | Pending provider/exporter qualification |
 | P2 | Reconcile capability discovery, docs and onboarding | Dedicated maturity entries, consistent customer guides and measured first verified transaction | Pending |
 | P2 | Expand provider and change-feed coverage | Qualified operation matrix, orphan reconciliation, reviewed feed payload/latency limits and customer-driven backfill/partition support | Pending |
+
+## Data API rotation checks
+
+Local Data API rotation diagnostics now includes read-only owner preflight,
+stable repair codes, and existing rollout/retirement metadata (ADR-1668).
+Preflight does not approve drift or prove provider revocation; deployed
+qualification remains part of the P0 journey above.
+
+The SDK and note/order examples also provide read-only receipt recovery
+(ADR-1669). Lost responses can be checked without replaying a mutation; missing
+or purged receipts remain unresolved. Write retry stays explicit and subject to
+the application's identity and retention contract.
 
 ## First slice: retained channel authorization
 
@@ -73,10 +85,20 @@ explicit unsupported fault coverage and the parent's resource cleanup journal.
 Its contracts and local SQL behavior are verified separately from live execution.
 Read-only connection-budget reports now aggregate shared bindings/scopes,
 resident/parked runtimes, lifecycle overlap and explicit planning headroom, and
-appear in `data-api health`. Current adapters lack verified usable capacity and
-runtime/external-consumer coverage, so the estimates remain explicitly unknown.
-Provider/native and live hosted qualification, SQL/pool timing, a qualified
-capacity observer and aggregate budget enforcement remain open.
+appear in `data-api health`. An opt-in operator
+[capacity observer](../runbooks/DataAPIConnectionCapacity.md) now combines
+qualified allocation receipts with bounded direct SQL ceilings and persists
+generation-bound evidence for at most 30 seconds. Budget reads remain cache-only;
+missing or stale evidence leaves capacity unknown. Opt-in authenticated
+[resident pool reports](../runbooks/DataAPIRuntimeConnections.md) now separate
+configured connections from missing resident and parked observations. Complete
+runtime/external-consumer coverage remains unverified, so capacity evidence alone does not make the
+overall budget known.
+Private engine headers now supply request-correlated combined transaction
+timings in logs, CLI diagnostics and health, with unknown/absent coverage kept
+separate ([ADR-1731](../adr/1731-data-api-database-timing-telemetry.md)).
+Provider/native and live hosted qualification, isolated SQL/pool timing,
+automated allocation sources and aggregate budget enforcement remain open.
 
 Local fixtures and portable CI cannot substitute for live provider and native
 acceptance. Reuse the existing managed PostgreSQL qualification tooling and Data
@@ -271,8 +293,16 @@ coverage, completed p50/p95/p99 and separate interrupted elapsed lower bounds.
 Old logs and bypassed requests remain explicitly without timings. Query shapes
 can be ranked by total gateway p95 or failure count without logging SQL or values.
 These intervals do not isolate PostgreSQL execution or pool wait; SQL/pool
-instrumentation, verified capacity, aggregate budget enforcement and deployed
-load qualification remain open.
+instrumentation, automated capacity qualification, complete consumer coverage,
+aggregate budget enforcement and deployed load qualification remain open.
+
+Engine transaction telemetry now supplements these gateway intervals. Versioned
+request-correlated logs accept the pinned engine's five fixed timing phases and
+report combined pool acquisition/session/SQL time. Diagnostics and health keep
+observed, unknown and absent coverage separate and preserve completed engine
+samples after downstream cancellation. Error responses, deadlines and engine
+restarts cannot inherit old measurements. No additional SQL pool or probe is
+created. SQL execution and pool wait remain individually unknown; see ADR-1731.
 
 Local checks cover distinct verification/refresh/signing/engine/streaming delays,
 cancelled and timed-out phases, late-callback stability, legacy/malformed logs,
@@ -338,5 +368,213 @@ subject identity, refill boundaries, tracking saturation/expiry, redaction and
 SDK retry counts. A real PostgreSQL fixture checks rejected REST/RPC writes,
 including a nontransactional invocation counter, then RLS-preserving recovery.
 This adds no distributed quota, per-user admission fairness or SQL-cost budget;
-verified capacity, aggregate connection-budget enforcement and hosted load
-qualification remain open.
+automated capacity qualification, complete consumer coverage, aggregate
+connection-budget enforcement and hosted load qualification remain open.
+
+## Data API: optional per-user concurrent requests
+
+`DATA_API_USER_CONCURRENCY` now caps each verified user's concurrent authenticated
+requests within one runtime. JWT rotation shares slots; global admission and rate
+policies retain their bounds. Rejections precede refresh/readiness/engine SQL and
+return a distinct 429 code with safe counts and advisory retry time. A slot covers
+both handler and downstream work. Dispatched work with no completion acknowledgement
+enters a 15-second cooldown after both settle, and pending handlers cannot be
+evicted. Tracking is bounded at 4,096 subject digests, with no new SQL pool or probe.
+
+SDK recovery and CLI diagnostics distinguish concurrency limits from request rates
+and overload, and health treats retained rejections as historical. Tests exercise
+real SQL locks, isolated users, rejected invocation counters, deadlines, cancelled
+work, recovery, tracking pressure and redaction. This protects local HTTP admission;
+SQL completion, fair queuing across identities, coordination across runtimes and
+aggregate connection-budget enforcement remain separate. See
+[ADR-1732](../adr/1732-data-api-user-concurrency-limits.md).
+
+## Data API: database lock contention
+
+New Data API SQL logins default to a five-second lock timeout alongside the
+15-second statement timeout; local development matches. Credential reconciliation
+upgrades only the exact legacy role policy and commits after ACL verification,
+preserving credentials and refusing drift. Existing sessions need reconnecting;
+cached credentials and a runtime rebuild alone do not upgrade the database login.
+Disposable qualification checks effective defaults; RPC ACL tooling supports both
+exact policies without changing them.
+
+The SDK classifies original `55P03` lock conflicts and surfaced `40P01` deadlocks
+with explicit wait guidance. It adds no mutation retries. Native PostgreSQL and
+pinned PostgREST tests cover blocked REST/RPC rollback, independent user progress,
+RLS, bounded pools and recovery. A real deadlock also confirms the pinned engine's
+existing SQL-transaction retry behavior: two HTTP requests can succeed after one
+victim is retried, with partial writes rolled back. Login defaults are per lock
+acquisition and can be overridden by trusted SQL settings/functions; they do not
+prove SQL cancellation or fleet-wide capacity. See
+[ADR-1733](../adr/1733-data-api-lock-contention-policy.md).
+
+## Data API: SQL deadlines across transaction retries
+
+Optional `DATA_API_SQL_DEADLINE=1` passes one admission-time expiry into the pinned
+engine's repeated SQL transaction attempts. Owner-installed, protected invoker
+hooks validate the versioned internal claim, cap remaining statement/lock budgets
+and compose around the existing refresh barrier. Startup and the read-only check
+command verify the exact hook contract; no request probe or new pool is added.
+SDK timeout guidance preserves explicit receipt reconciliation without replay.
+
+New and rotated roles require setup/grants before adoption. Stable clocks,
+unmodified trusted hooks/functions and normal timeout behavior are assumptions;
+pool acquisition, arbitrary owner SQL and external effects stay outside the bound.
+Native checks cover injected repeated serialization/deadlock faults, HTTP
+cancellation, rollback, RLS, independent user progress, recovery and composed
+refresh waits. See [ADR-1734](../adr/1734-data-api-sql-retry-deadlines.md).
+
+## Data API: deadline grants during credential rotation
+
+The stable managed schema owner can now explicitly enroll a Neon `data_api`
+binding for automatic deadline-hook grants across credential generations. The
+provider checks the private binding/resource approval and exact protected hooks,
+then grants only the two deadline functions inside the candidate transaction,
+before publishing a replacement secret. Drift rolls back preparation; existing
+credentials remain available and owner repair can resume the same generation.
+Rolling runtime refresh and previous-login retirement remain unchanged.
+
+Real PostgreSQL checks cover active RLS traffic, both user scopes, private-table
+and unapproved-RPC denial, drift rollback, replay, owner repair and retirement.
+The actual owner command is tested for explicit enrollment, read-only checking
+and removal. Other bindings retain manual grants. Databases with coordinated SQL
+refresh gates use the shared-gate enrollment below to preserve pause/fingerprint
+state across both serving generations. See
+[ADR-1735](../adr/1735-data-api-deadline-grant-rotation.md).
+
+## Data API: coordinated refresh during credential rotation
+
+Owner-approved managed Neon `api` bindings can now share pause/resume protection
+across credential generations. Per-login fingerprints preserve permission-filtered
+contracts while old and replacement runtimes overlap. Enrollment drains legacy
+admissions and removes the old gate row so queued legacy hook calls fail closed.
+Existing owner commands route enrolled logins to the shared gate, and resume
+verifies every member through role-filtered catalog inspection without assuming
+serving roles.
+
+Before publication, preparation validates pinned functions, private-table metadata,
+source identity and a catalog/privilege witness, then grants only the approved
+RPCs and fixed refresh/deadline functions. Drift rolls back the candidate; owner
+verification permits retry. The existing rollout/retirement lifecycle removes
+only the retired login's mapping and retains the shared pause. Native checks
+exercise two runtimes, RLS, enrollment/pause races, stale fingerprints and failed
+preparation recovery. See [ADR-1667](../adr/1667-data-api-coordinated-refresh-rotation.md).
+
+## Data API: versioned replay expiry
+
+The starter now has opt-in v2 note RPCs using UUIDv7 timestamps and a fixed
+24-hour replay deadline enforced by PostgreSQL. Expired writes are rejected even
+after receipt cleanup. Cleanup accepts `--contract v2`, removes only expired
+snapshots and skips active operation locks. Live receipt deletion and snapshot
+edits are guarded; v1 remains compatible with its existing retention behavior.
+
+The SDK generates v2 keys and reports typed expiry as an unresolved operation.
+Read-only lookup can still confirm a retained expired receipt. The browser
+explicitly uses v2 and keeps the original pending operation on expiry. This is a
+local implementation; owner migration, RPC grants, schema refresh and paired
+client adoption are required for rollout. See
+[ADR-1670](../adr/1670-data-api-versioned-replay-expiry.md).
+
+## Data API: recoverable conditional updates and deletes
+
+Opt-in v2 note RPCs now combine expected-version checks with immutable success
+receipts. Update and delete share a subject/key namespace and check saved receipts
+before current row versions. Identical replay returns the original post-update
+or deleted snapshot; changed requests conflict. Read-only lookups can recover
+committed results after lost responses and later edits/deletion. The SDK adds
+typed classification without automatic retries or key/version replacement.
+
+The existing v2 expiry contract also applies to these operations. Owner cleanup
+selects `--contract v2 --receipt-kind mutation`, preserves live receipts and skips
+active locks. Ordinary REST writes retain their existing semantics. This is a
+local implementation requiring owner migration, approved RPC grants, schema
+refresh and paired-client adoption. See
+[ADR-1671](../adr/1671-data-api-versioned-update-delete-receipts.md).
+
+## Data API: recoverable atomic note batches
+
+The starter now provides an explicit v2 RPC for 1–100 distinct note updates and
+deletes in one transaction. It locks IDs in stable order, requires every expected
+version, and rolls back all mutations/cascades if any item or receipt fails.
+One bounded ordered envelope can be replayed or recovered read-only after later
+changes. Client validation checks every snapshot before acknowledgement; SDK
+type-guard overloads preserve that validated result type.
+
+The existing v2 expiry and owner controls apply, with a separate batch receipt
+namespace and cleanup selector `--contract v2 --receipt-kind batch`. This local
+implementation requires migration, owner RPC grants, runtime refresh, generated
+types and paired-client adoption. See
+[ADR-1672](../adr/1672-data-api-atomic-note-batches.md).
+
+## Data API: v2 business transaction generation
+
+`data-api transaction init --contract v2` now emits a separate order/inventory
+package with fixed UUIDv7 replay deadlines, immutable original snapshots,
+read-only recovery, typed context-bound client helpers and guarded owner cleanup.
+The writer commits business changes and its receipt atomically. Matching replay
+recovers original prices/results after later changes, while expired keys remain
+refused after purge. Default/explicit v1 generation retains its current contract.
+
+Generated packages remain local review artifacts. Adoption requires owner
+migration, approved RPC grants, runtime refresh, schema validators and the paired
+SDK. Business authorization and external effects remain application decisions.
+See [ADR-1673](../adr/1673-data-api-v2-transaction-generator.md).
+
+## Data API: durable client recovery
+
+The SDK now offers opt-in bounded pending-operation journals and an IndexedDB
+adapter with atomic cross-tab claims. Prepared operations retain their original
+API/identity/contract/key/payload through reloads. Dispatch persists uncertainty
+before its first request; recovery explicitly reads receipts. Unresolved and
+expired results remain stored, and local marker failures preserve proven server
+receipts. Strict restore validation rejects corruption, context changes and
+lossy parsers without replacing work.
+
+The v2 transaction generator exposes `persistentTransactionClient` using this
+protocol. Applications explicitly choose storage and stable slots; v1 and SQL
+contracts remain unchanged. See
+[ADR-1674](../adr/1674-data-api-durable-mutation-journal.md).
+
+## Data API: receipt storage diagnostics
+
+The note starter and generated v2 transaction packages now offer owner-only
+read-only JSON reports of active/expired receipt counts, oldest expired deadline
+and backlog age, and physical table/index storage. Exact ownership checks and
+bounded queries keep application sessions from cross-user aggregates. Missing,
+unsupported and timed-out tables remain explicitly unavailable with a nonzero
+exit; successful contract measurements are preserved. The reporter shares one
+implementation across both packages and leaves cleanup explicit. See
+[ADR-1675](../adr/1675-data-api-receipt-storage-diagnostics.md).
+
+## Data API: incremental note change feed
+
+The starter now captures note insert/update/delete metadata atomically with
+writes. Per-subject transactional counters preserve commit ordering and roll
+back with failed work; a bounded retained suffix and durable watermark make
+expired cursors explicitly require resync. Read-only RLS-protected checkpoint
+and polling RPCs support an initial row scan followed by invalidation catch-up.
+Typed helpers validate opaque cursors, ordered events and continuation before
+applications persist progress. The feed stores no historical note bodies and
+keeps client polling/resync explicit. See
+[ADR-1676](../adr/1676-data-api-incremental-note-change-feed.md).
+
+## Data API: ranked note search
+
+The starter now provides English AND-word search with relevance ranking and
+query/subject-bound keyset cursors. A subject/lexeme posting index remains
+indexable under serving-role RLS; every candidate is rechecked against current
+note visibility. Atomic trigger maintenance and migration backfill cover normal
+writes and existing rows. Strict client parsers, bounded inputs, native isolation
+checks and serving-role query-plan verification cover the contract. See
+[ADR-1677](../adr/1677-data-api-ranked-note-search.md).
+
+## Data API: exact team order summaries
+
+The teams starter now offers a read-only business-data aggregate over all
+matching visible orders. Current membership and order RLS protect overall and
+per-status counts and whole-cent totals. Decimal strings preserve large values;
+the paired client validates context, filters and bucket consistency. Native
+acceptance covers revoked memberships, rows beyond page caps, read-only calls,
+5,000,001 synthetic orders with an odd total above 2^53, and statement cancellation.
+See [ADR-1678](../adr/1678-data-api-team-order-aggregation.md).

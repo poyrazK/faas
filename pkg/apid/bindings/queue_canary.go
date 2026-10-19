@@ -20,7 +20,7 @@ func QueueCanaryProblem(err error) *api.Problem {
 	case errors.Is(err, state.ErrNotFound):
 		return api.NewProblem(http.StatusNotFound, "not_found", "Not found", "Queue canary or eligible deployment/consumer not found.")
 	case errors.Is(err, state.ErrInvalidArgument):
-		return api.ErrValidation("Supply an exact deployment, binding, publication consent and 1–600 second TTL. The deployment must declare this binding in GREGALE_QUEUE_CANARY_BINDINGS as a JSON array in override_env.")
+		return api.ErrValidation("Supply an exact deployment, binding, publication consent and 1–600 second TTL. The deployment must declare this binding in GREGALE_QUEUE_CANARY_BINDINGS as a JSON array in override_env or its frozen reviewed variables.")
 	case errors.Is(err, state.ErrConflict):
 		return api.NewProblem(http.StatusConflict, "queue_canary_changed", "Queue canary blocked", "Another canary is active or the consumer changed. Cancel the previous canary and verify the selected push consumer.")
 	default:
@@ -41,7 +41,17 @@ func ApplyQueueCanaryInventory(ctx context.Context, store state.Store, account, 
 		if item.Type != api.BindingTypeQueue || !api.QueueBindingInScope(*item, inventory.VerificationScope) {
 			continue
 		}
-		item.QueueCanarySupported = state.QueueCanaryDeploymentSupports(dep, item.Binding)
+		item.QueueCanarySupported = false
+		if eligibility, ok := store.(state.QueueBindingCanaryEligibilityStore); ok {
+			var err error
+			item.QueueCanarySupported, item.QueueCanaryReason, err = eligibility.QueueBindingCanaryEligibility(ctx, account, app, dep.ID, item.Binding)
+			if err != nil {
+				inventory.Complete = false
+				inventory.Issues = append(inventory.Issues, api.BindingInventoryIssue{Type: api.BindingTypeQueue, Code: "queue_canary_unavailable", Severity: "error", Message: "Queue canary eligibility could not be read."})
+			}
+		} else {
+			item.QueueCanaryReason = "queue_canary_context_unavailable"
+		}
 		r, err := canaries.LatestQueueBindingCanary(ctx, account, app, inventory.VerificationDeploymentID, item.Binding)
 		if errors.Is(err, state.ErrNotFound) {
 			continue

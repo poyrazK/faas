@@ -97,6 +97,9 @@ func isolateQualificationWakeRequest(req WakeRequest) (WakeRequest, error) {
 // every native launch effect to this frame; a normal JobColdBoot request
 // cannot borrow a qualification reservation.
 func (m *Manager) BootEnvironmentQualificationJob(ctx context.Context, frame state.EnvironmentQualificationExecution, req JobBootRequest) (*Instance, error) {
+	if err := m.rejectRehearsalExecution(ctx, frame.AppID); err != nil {
+		return nil, err
+	}
 	j, err := m.qualificationJournal(frame)
 	if err != nil {
 		return nil, err
@@ -155,6 +158,9 @@ type nativeQualificationRestoreVMM interface {
 // distinct, privately tracked target. It never uses generic Restore/Wake,
 // which may cold-boot on a miss and publishes through serving indexes.
 func (m *Manager) RestoreEnvironmentQualification(ctx context.Context, frame state.EnvironmentQualificationExecution, req WakeRequest) (_ *Instance, err error) {
+	if err := m.rejectRehearsalExecution(ctx, frame.AppID); err != nil {
+		return nil, err
+	}
 	j, err := m.qualificationRestoreJournal(frame)
 	if err != nil {
 		return nil, err
@@ -342,6 +348,9 @@ func isolateQualificationJobNetwork(nc netns.Config) netns.Config {
 // physical generation. Schedd supplies the frozen workload payload; vmmd
 // verifies its placement, artifact and guest reservation at this boundary.
 func (m *Manager) WakeEnvironmentQualification(ctx context.Context, frame state.EnvironmentQualificationExecution, req WakeRequest) (*Instance, error) {
+	if err := m.rejectRehearsalExecution(ctx, frame.AppID); err != nil {
+		return nil, err
+	}
 	j, err := m.qualificationJournal(frame)
 	if err != nil {
 		return nil, err

@@ -531,6 +531,54 @@ func EvaluateEventConsumerDeliverySLO(h EventConsumerDeliveryHealth, options Eve
 	return api.EvaluateEventConsumerDeliverySLO(h, options)
 }
 
+// Deployment-bound source-map artifact publication and verified occurrence metadata.
+type IssueSourceMapArtifact = api.IssueSourceMapArtifact
+type IssueSourceMapManifest = api.IssueSourceMapManifest
+type PublishIssueSourceMapsRequest = api.PublishIssueSourceMapsRequest
+type IssueSourceMapsMetadata = api.IssueSourceMapsMetadata
+type IssueSymbolicationResult = api.IssueSymbolicationResult
+
+// IssueBreadcrumb is bounded reported operational context.
+type IssueBreadcrumb = api.IssueBreadcrumb
+
+type IssueReleaseHealth = api.IssueReleaseHealth
+type IssueReleaseComparison = api.IssueReleaseComparison
+type BulkIssueActionRequest = api.BulkIssueActionRequest
+type BulkIssueActionResponse = api.BulkIssueActionResponse
+
+type BulkIssueLifecycleAction = api.BulkIssueLifecycleAction
+
+type IssueSavedViewFilters = api.IssueSavedViewFilters
+type IssueSavedView = api.IssueSavedView
+type PutIssueSavedViewRequest = api.PutIssueSavedViewRequest
+type ListIssueSavedViewsResponse = api.ListIssueSavedViewsResponse
+
+type IssueTeam = api.IssueTeam
+type PutIssueTeamRequest = api.PutIssueTeamRequest
+type ListIssueTeamsResponse = api.ListIssueTeamsResponse
+
+type PutIssueTrackerLinkRequest = api.PutIssueTrackerLinkRequest
+type IssueTrackerLink = api.IssueTrackerLink
+type ListIssueTrackerLinksResponse = api.ListIssueTrackerLinksResponse
+
+type IssueTrackerProviderStatus = api.IssueTrackerProviderStatus
+type NativeIssueTrackerStatus = api.NativeIssueTrackerStatus
+type UpdateNativeIssueTrackerStatusRequest = api.UpdateNativeIssueTrackerStatusRequest
+
+type CreateNativeIssueTicketRequest = api.CreateNativeIssueTicketRequest
+type NativeIssueTicketResult = api.NativeIssueTicketResult
+
+type IssueTrackerAutoSync = api.IssueTrackerAutoSync
+type UpdateIssueTrackerAutoSyncRequest = api.UpdateIssueTrackerAutoSyncRequest
+
+type IssueTrackerLinearConnection = api.IssueTrackerLinearConnection
+type UpdateIssueTrackerLinearConnectionRequest = api.UpdateIssueTrackerLinearConnectionRequest
+
+type CreateNativeLinearIssueTicketRequest = api.CreateNativeLinearIssueTicketRequest
+
+type NativeLinearIssueTrackerStatus = api.NativeLinearIssueTrackerStatus
+type UpdateNativeLinearIssueTrackerStatusRequest = api.UpdateNativeLinearIssueTrackerStatusRequest
+
 type EventExecutionReconciliation = api.EventExecutionReconciliation
 
 type EventExecutionLineageCase = api.EventExecutionLineageCase
@@ -568,3 +616,74 @@ type EventSubscriptionCapacityCommandsQuery = api.EventSubscriptionCapacityComma
 type EventSubscriptionCapacityCommandBudget = api.EventSubscriptionCapacityCommandBudget
 
 type EventDeliveryHealthConfirmation = api.EventDeliveryHealthConfirmation
+
+// Subscription token-bucket controls and retained command evidence.
+type (
+	EventSubscriptionRateRequest        = api.EventSubscriptionRateRequest
+	EventSubscriptionRateLimit          = api.EventSubscriptionRateLimit
+	EventSubscriptionRateCommandReceipt = api.EventSubscriptionRateCommandReceipt
+	EventSubscriptionRateCommands       = api.EventSubscriptionRateCommands
+)
+
+// Read-only delivery pacing previews.
+type (
+	EventSubscriptionRatePreviewRequest = api.EventSubscriptionRatePreviewRequest
+	EventSubscriptionRatePreview        = api.EventSubscriptionRatePreview
+	EventSubscriptionRateDeadlineRisk   = api.EventSubscriptionRateDeadlineRisk
+)
+
+// Opt-in Go SDK consumer pacing and deadline-risk watch diagnostics.
+type (
+	EventDeliveryRateRiskOptions = api.EventDeliveryRateRiskOptions
+	EventDeliveryRateEvidence    = api.EventDeliveryRateEvidence
+)
+
+// Complete retained pending-recipient observations.
+type EventSubscriptionPendingSummary = api.EventSubscriptionPendingSummary
+
+// Read-only effective-deadline triage.
+type (
+	EventSubscriptionDeadlineQuery     = api.EventSubscriptionDeadlineQuery
+	EventSubscriptionDeadlineRecipient = api.EventSubscriptionDeadlineRecipient
+	EventSubscriptionDeadlinePage      = api.EventSubscriptionDeadlinePage
+)
+
+// Full, disjoint deadline-window counts and opt-in sustained count alerts.
+type (
+	EventSubscriptionDeadlineWindow    = api.EventSubscriptionDeadlineWindow
+	EventDeliveryDeadlineWindowOptions = api.EventDeliveryDeadlineWindowOptions
+	EventDeliveryDeadlineRatioOptions  = api.EventDeliveryDeadlineRatioOptions
+)
+
+// EventSubscriptionDeadlineWindowCountsComplete checks complete known cohort partitions.
+func EventSubscriptionDeadlineWindowCountsComplete(v EventSubscriptionDeadlineWindow) bool {
+	return api.EventSubscriptionDeadlineWindowCountsComplete(v)
+}
+
+// EventDeliveryDeadlineRatioBasisPointsMax represents 100% in deadline ratio options.
+const EventDeliveryDeadlineRatioBasisPointsMax = api.EventDeliveryDeadlineRatioBasisPointsMax
+
+// Read-only alert-to-current-triage correlation helpers.
+type (
+	EventDeadlineInvestigationOptions = api.EventDeadlineInvestigationOptions
+	EventDeadlineAlertReference       = api.EventDeadlineAlertReference
+	EventDeadlineInvestigation        = api.EventDeadlineInvestigation
+	EventDeadlineExplanations         = api.EventDeadlineExplanations
+	EventDeadlineExplanation          = api.EventDeadlineExplanation
+	EventDeadlineRoutingExplanation   = api.EventDeadlineRoutingExplanation
+	EventDeadlineOrderingExplanation  = api.EventDeadlineOrderingExplanation
+)
+
+// Lifecycle alert policy and draft preview types.
+type (
+	IssueLifecycleAlertPolicy              = api.IssueLifecycleAlertPolicy
+	UpdateIssueLifecycleAlertPolicyRequest = api.UpdateIssueLifecycleAlertPolicyRequest
+	PreviewIssueLifecycleAlertRequest      = api.PreviewIssueLifecycleAlertRequest
+	IssueLifecycleAlertPreview             = api.IssueLifecycleAlertPreview
+)
+
+type IssueCompoundAlertRule = api.IssueCompoundAlertRule
+type IssueCompoundAlertPolicy = api.IssueCompoundAlertPolicy
+type UpdateIssueCompoundAlertPolicyRequest = api.UpdateIssueCompoundAlertPolicyRequest
+type PreviewIssueCompoundAlertRequest = api.PreviewIssueCompoundAlertRequest
+type IssueCompoundAlertPreview = api.IssueCompoundAlertPreview

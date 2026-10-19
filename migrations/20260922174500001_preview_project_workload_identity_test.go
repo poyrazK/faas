@@ -22,6 +22,7 @@ func TestMigrationPreviewProjectWorkloadIdentity(t *testing.T) {
 	}
 
 	accountID := seedAccount(t, ctx, pool)
+	seedPersonalOrg(t, ctx, pool, accountID) // projects require it since #4882
 	projectID := uuid.NewString()
 	if _, err := pool.Exec(ctx, `insert into projects (id, account_id, slug) values ($1, $2, $3)`,
 		projectID, accountID, "preview-scope-"+uuid.NewString()[:8]); err != nil {

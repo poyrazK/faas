@@ -107,7 +107,7 @@ func TestWorkflowRecoveryAutomaticPollingIsolation(t *testing.T) {
 					t.Fatal("failure retried before due")
 				}
 				if pg, ok := s.(*PgStore); ok {
-					s = NewPgStore(pg.pool)
+					s = NewPgStore(pg.pool.Pool)
 				}
 				if !reflect.DeepEqual(get().AutomaticExecution.PollingFailure, f) {
 					t.Fatal("failure lost after restart")
@@ -237,7 +237,7 @@ func TestWorkflowRecoveryAutomaticPollingRollback(t *testing.T) {
 				if _, err = pg.pool.Exec(ctx, "ALTER TABLE workflow_recovery_policies DROP CONSTRAINT test_automatic_poll_advance"); err != nil {
 					t.Fatal(err)
 				}
-				pg = NewPgStore(pg.pool)
+				pg = NewPgStore(pg.pool.Pool)
 				if did, e := pg.ProcessNextWorkflowRecoveryAutomaticPolicy(ctx, p.AutomaticExecution.PollingFailure.RetryAt); e != nil || !did {
 					t.Fatalf("retry %v %v", did, e)
 				}

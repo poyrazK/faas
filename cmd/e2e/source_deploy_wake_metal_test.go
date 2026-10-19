@@ -116,7 +116,15 @@ func TestSourceDeployWakeMetal(t *testing.T) {
 	// Full metal set: deploy_wake_metal_test.go uses DeployWake
 	// (no builderd) but the source-deploy path needs builderd to claim
 	// the build_queued pg_notify and spin up a builder microVM. Use All.
-	h := e2etest.Start(t, pool, e2etest.All, commitOperationEnvironment(t, "FAAS_COMMIT_API_ENABLED=true")...)
+	// FAAS_E2E_SHARED_RUNTIME=1 runs the chain with H10-140's shared runner
+	// base: the Node fixture (engines 22) builds on runner-node22 and its
+	// layer keeps only /app (docs/adr/20261017-shared-runtime-source-apps.md).
+	sharedRuntime := os.Getenv("FAAS_E2E_SHARED_RUNTIME") == "1"
+	harnessEnv := commitOperationEnvironment(t, "FAAS_COMMIT_API_ENABLED=true")
+	if sharedRuntime {
+		harnessEnv = append(harnessEnv, "FAAS_SOURCE_APP_SHARED_RUNTIME=1")
+	}
+	h := e2etest.Start(t, pool, e2etest.All, harnessEnv...)
 	key := h.SeedAccount(context.Background(), api.PlanHobby)
 
 	// Hobby defaults to require_authn=true post #695 / ADR-080. The wake
@@ -187,6 +195,23 @@ func TestSourceDeployWakeMetal(t *testing.T) {
 		}
 		if receipt.Smoke.Status != apihostingreceipt.SmokeVerified || receipt.Smoke.StatusCode < http.StatusOK || receipt.Smoke.StatusCode >= http.StatusMultipleChoices {
 			t.Fatalf("hosting smoke = %+v, want verified 2xx", receipt.Smoke)
+		}
+		if sharedRuntime {
+			if dep.RuntimeBase != "node22" {
+				t.Fatalf("deployment runtime_base = %q, want node22 (the shared runner base)", dep.RuntimeBase)
+			}
+			// Every app layer carries guest-init as /sbin/init (rootfs.Build).
+			// Beyond that the fixture's /app is a few files, while Railpack's
+			// mise Node alone is ~200 MB, so a layer within 8 MiB of
+			// guest-init held only /app.
+			guestInit, err := os.Stat(os.Getenv("FAAS_GUEST_INIT"))
+			if err != nil {
+				t.Fatalf("stat FAAS_GUEST_INIT: %v", err)
+			}
+			if limit := guestInit.Size() + 8<<20; dep.RootfsBytes <= 0 || dep.RootfsBytes > limit {
+				t.Fatalf("app layer = %d bytes, want guest-init (%d) plus an /app-only tree, at most %d", dep.RootfsBytes, guestInit.Size(), limit)
+			}
+			t.Logf("source-deployed-live: shared runtime node22, app layer %d bytes", dep.RootfsBytes)
 		}
 		t.Logf("source-deployed-live: dep=%s build=%s live", dep.ID, buildID)
 	})

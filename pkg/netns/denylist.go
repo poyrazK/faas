@@ -303,6 +303,20 @@ func NewDefaultDenySet() DenySet {
 			Comment:     "Teredo (RFC4380); tunnels IPv6 over UDP/3544 — same lateral-movement risk as 6to4",
 			CounterName: DropCounterName(FamilyV6, "2001::/32"),
 		},
+		{
+			Family:      FamilyV6,
+			Prefix:      netip.MustParsePrefix("64:ff9b::/96"),
+			SourceADR:   "ADR-20261018194214",
+			Comment:     "NAT64 well-known prefix (RFC6052); embeds an IPv4 destination — lateral movement through a translator",
+			CounterName: DropCounterName(FamilyV6, "64:ff9b::/96"),
+		},
+		{
+			Family:      FamilyV6,
+			Prefix:      netip.MustParsePrefix("64:ff9b:1::/48"),
+			SourceADR:   "ADR-20261018194214",
+			Comment:     "NAT64 local-use prefix (RFC8215); may embed a private IPv4 destination",
+			CounterName: DropCounterName(FamilyV6, "64:ff9b:1::/48"),
+		},
 	}
 
 	// Sanity: every entry has a CounterName. A future edit that

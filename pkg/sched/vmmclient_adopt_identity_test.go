@@ -50,7 +50,7 @@ func newAdoptIdentityClient(t *testing.T, node *adoptIdentityNode) *sched.VMMCli
 }
 
 // A deploy prime boots without wake correlation, yet vmmd keys a proven
-// worker deployment on the deployment it reads from this metadata (ADR-1420).
+// worker deployment on the deployment it reads from this metadata (ADR-20261018101500).
 func TestCreateColdBootCarriesIdentityWithoutWakeCorrelation(t *testing.T) {
 	node := &adoptIdentityNode{}
 	client := newAdoptIdentityClient(t, node)

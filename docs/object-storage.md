@@ -7,6 +7,10 @@ snapshot/image-layer usage.
 Architecture and launch boundaries: [ADR-151](adr/151-provider-neutral-object-storage.md).
 Large-upload protocol: [ADR-158](adr/158-provider-neutral-multipart-uploads.md).
 
+For the local prototype that begins storing bytes on Gregale-owned disks, see
+[Building Gregale-owned object storage](owned-object-storage.md). It reuses the
+existing S3 driver and does not change the preview's provider qualification gates.
+
 ## Enable a qualified backend
 
 1. Apply database migrations through the normal Gregale deployment process.
@@ -748,8 +752,10 @@ limits through its object-storage ceilings in `pkg/api/limits.go`
 ([ADR-1320](adr/1320-object-storage-plan-allowances-ceilings-and-overage-cap.md)).
 Per limit, the tighter positive value applies, and the bucket byte limit never
 exceeds the account limit. A plan never loosens the operator policy.
-`GET /v1/account/object-storage-usage` reports the effective policy. Every
-plan's ceilings are currently zero, so the operator policy applies unchanged.
+`GET /v1/account/object-storage-usage` reports the effective policy. Free
+stops at 1 GiB of account bytes; paid plans set no ceilings, so the operator
+policy applies unchanged
+([ADR-1430](adr/1430-plan-entitlements-from-october-2026-cogs-report.md)).
 
 In `gateway_safety_v1`, customer native calls reserve the shared request budget
 before dispatch. Each multipart part-list page (including CLI resume), bucket
@@ -797,7 +803,7 @@ without changing the safety policy:
 
 ```json
 "pricing": {
-  "currency": "EUR",
+  "currency": "USD",
   "storage_millicents_per_gib_month": 15000,
   "requests_millicents_per_million": 500,
   "egress_millicents_per_gib": 90000
@@ -821,7 +827,7 @@ detailed storage, request, egress, and upstream-cost values remain in metadata
 and the local ledger. A durable provider receipt records pre-activation, shadow, or
 live handling; accounts that are not on a paid plan receive a permanent
 zero-quantity ineligible receipt. Changing modes, plans, or restarting cannot
-retroactively charge an older period. Configure the Polar meter to sum `charge_millicents` at EUR
+retroactively charge an older period. Configure the Polar meter to sum `charge_millicents` at USD
 `0.001` cents per unit, and follow the billing provider switch runbook for the
 required environment variables and catalog checks. Polar bills the month-close
 event in the provider cycle in which it is received; its metadata preserves the
@@ -967,7 +973,9 @@ Do not drop accounting tables while serving customer storage.
 A plan's object-storage allowance (included stored bytes, requests, and egress
 bytes) is removed from each meter before pricing. The month uses the largest
 allowance among the plans active in it, and the finalized record copies the
-allowance it used. Every plan's allowance is currently zero. A finalized
+allowance it used. Plans include 1 / 10 / 50 / 200 GiB of stored bytes
+(Free / Hobby / Pro / Scale); request and egress allowances are zero until
+exporters report reads and writes separately (ADR-1430). A finalized
 month is billed only up to what the account's overage cap still allows after
 the month's billable compute and live egress, and capped usage is never billed
 later ([ADR-1320](adr/1320-object-storage-plan-allowances-ceilings-and-overage-cap.md)).

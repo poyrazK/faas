@@ -8,8 +8,8 @@ import (
 	"net/url"
 )
 
-// DataAPIConnectionBudgets contains per-database planning snapshots. It does
-// not reserve connections or change scheduler admission.
+// DataAPIConnectionBudgets contains per-database planning or enforced
+// allocation snapshots. Reading this endpoint never reserves connections.
 type DataAPIConnectionBudgets struct {
 	Version   int                               `json:"version"`
 	App       string                            `json:"app"`
@@ -49,17 +49,34 @@ type ConnectionBudgetInventory struct {
 }
 
 type ConnectionBudgetDemand struct {
-	DataAPIResidentEstimate int64 `json:"data_api_resident_estimate"`
-	DataAPIWakeEstimate     int64 `json:"data_api_wake_estimate"`
-	AuthWakeEstimate        int64 `json:"auth_wake_estimate"`
-	ControlHeadroom         int64 `json:"control_headroom"`
-	MigrationHeadroom       int64 `json:"migration_headroom"`
-	ModeledPeakConnections  int64 `json:"modeled_peak_connections"`
+	DataAPIResidentEstimate int64                                `json:"data_api_resident_estimate"`
+	DataAPIWakeEstimate     int64                                `json:"data_api_wake_estimate"`
+	AuthWakeEstimate        int64                                `json:"auth_wake_estimate"`
+	ControlHeadroom         int64                                `json:"control_headroom"`
+	MigrationHeadroom       int64                                `json:"migration_headroom"`
+	ModeledPeakConnections  int64                                `json:"modeled_peak_connections"`
+	RuntimeObservations     *ConnectionBudgetRuntimeObservations `json:"runtime_observations,omitempty"`
+}
+
+// ConnectionBudgetRuntimeObservations covers configured resident Data API
+// pools only. Future wakes, parked runtimes and other consumers remain estimates.
+type ConnectionBudgetRuntimeObservations struct {
+	State                 string `json:"state"`
+	Source                string `json:"source"`
+	ObservedInstances     int64  `json:"observed_instances"`
+	UnobservedInstances   int64  `json:"unobserved_instances"`
+	ParkedInstances       int64  `json:"parked_instances"`
+	ConfiguredConnections int64  `json:"configured_connections"`
+	CheckedAt             string `json:"checked_at,omitempty"`
+	ExpiresAt             string `json:"expires_at,omitempty"`
 }
 
 type ConnectionBudgetCapacity struct {
 	State             string `json:"state"`
 	UsableConnections *int64 `json:"usable_connections,omitempty"`
+	Source            string `json:"source,omitempty"`
+	CheckedAt         string `json:"checked_at,omitempty"`
+	ExpiresAt         string `json:"expires_at,omitempty"`
 }
 
 func (c *Client) GetAppDataAPIConnectionBudgets(ctx context.Context, slug string) (DataAPIConnectionBudgets, error) {
@@ -120,8 +137,14 @@ func validateConnectionBudgetFields(raw json.RawMessage) error {
 	if _, err = connectionBudgetFields(fields["inventory"], "bindings", "data_api_consumers", "auth_consumers", "migration_bindings", "other_bindings", "resident_instances", "parked_instances", "auxiliary_instances", "active_tasks", "rotation_pending", "overlap_consumers", "stale_node_instances"); err != nil {
 		return err
 	}
-	if _, err = connectionBudgetFields(fields["demand"], "data_api_resident_estimate", "data_api_wake_estimate", "auth_wake_estimate", "control_headroom", "migration_headroom", "modeled_peak_connections"); err != nil {
+	demand, err := connectionBudgetFields(fields["demand"], "data_api_resident_estimate", "data_api_wake_estimate", "auth_wake_estimate", "control_headroom", "migration_headroom", "modeled_peak_connections")
+	if err != nil {
 		return err
+	}
+	if observations, ok := demand["runtime_observations"]; ok {
+		if _, err = connectionBudgetFields(observations, "state", "source", "observed_instances", "unobserved_instances", "parked_instances", "configured_connections"); err != nil {
+			return err
+		}
 	}
 	_, err = connectionBudgetFields(fields["capacity"], "state")
 	return err

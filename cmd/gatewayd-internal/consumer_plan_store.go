@@ -23,7 +23,9 @@ func (a consumerPlanStore) ConsumerPlanPolicy(ctx context.Context, accountID, ap
 	policy, err := a.store.GetAPIConsumerPlanPolicy(ctx, accountID, appID, consumerID, time.Now().UTC())
 	return gateway.ConsumerPlanPolicy{PlanID: policy.PlanID, AppID: policy.AppID, MaxRequestsPerMinute: policy.MaxRequestsPerMinute,
 		MaxUnitsPerMonth: policy.MaxUnitsPerMonth, RouteWeights: policy.RouteWeights,
-		AlertThresholdsPercent: policy.AlertThresholdsPercent}, err
+		AlertThresholdsPercent: policy.AlertThresholdsPercent, SpendCapped: policy.SpendCapped,
+		SpendCapMillicents: policy.SpendCapMillicents, SpendDueMillicents: policy.SpendDueMillicents,
+		SpendCurrency: policy.SpendCurrency, OverdueBlocked: policy.OverdueBlocked, OverdueDueAt: policy.OverdueDueAt}, err
 }
 
 func (a consumerPlanStore) AdmitConsumerPlanRequest(ctx context.Context, accountID, consumerID string, policy gateway.ConsumerPlanPolicy, units int64) (gateway.ConsumerPlanDecision, error) {

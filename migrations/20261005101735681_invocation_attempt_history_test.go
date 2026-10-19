@@ -18,7 +18,7 @@ func TestMigrationInvocationAttemptHistoryUpgradeAndReplay(t *testing.T) {
 	pool := pgtest.Open(t)
 	migrateUpTo(t, ctx, pool, 20261004223934001)
 	store := state.NewPgStore(pool)
-	account, err := store.CreateAccount(ctx, "attempt-history-migration@example.test", api.PlanPro)
+	account, err := legacyAccount(ctx, pool, "attempt-history-migration@example.test", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -26,19 +26,31 @@ func TestMigrationInvocationAttemptHistoryUpgradeAndReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	inv, err := store.EnqueueInvocation(ctx, state.Invocation{AccountID: account.ID, AppID: app.ID, Source: state.InvocationAsyncInvoke, DueAt: time.Now()})
-	if err != nil {
+	// Enqueue with the staged schema's own columns: today's EnqueueInvocation
+	// also reads later tables (scenario_test_action_policies, #4892).
+	var inv state.Invocation
+	if err := pool.QueryRow(ctx, `INSERT INTO invocations(account_id,app_id,source,due_at)
+		VALUES($1,$2,$3,now()) RETURNING id::text`, account.ID, app.ID, string(state.InvocationAsyncInvoke)).Scan(&inv.ID); err != nil {
 		t.Fatal(err)
 	}
-	legacy, err := store.ClaimInvocation(ctx, inv.ID, "", 60)
-	if err != nil {
+	// Take the legacy lease with the claim statement the pre-history release
+	// ran, not today's store.ClaimInvocation: that path now also reads tables
+	// from later migrations (scenario_test_action_policies, #4892) that this
+	// staged schema cannot have. Seed raw, upgrade, then use the store.
+	var legacyAttempts int
+	if err := pool.QueryRow(ctx, `update invocations
+		   set state = 'dispatching', quota_reserved = false,
+		       lease_expires_at = now() + interval '60 seconds',
+		       received_at = now(), attempts = attempts + 1
+		 where id = $1 and state = 'pending'
+		 returning attempts`, inv.ID).Scan(&legacyAttempts); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.MigrateUp(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
 	row, err := store.InvocationByID(ctx, inv.ID)
-	if err != nil || row.State != state.InvocationDispatching || row.Attempts != legacy.Attempts {
+	if err != nil || row.State != state.InvocationDispatching || row.Attempts != legacyAttempts {
 		t.Fatalf("upgrade changed lease: %+v %v", row, err)
 	}
 	var n int

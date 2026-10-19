@@ -136,7 +136,7 @@ func (s *server) upsertTrustedSigner(w http.ResponseWriter, r *http.Request, acc
 		api.WriteProblem(w, prob)
 		return
 	}
-	_, rotated, err := s.store.UpsertAppTrustedSigner(r.Context(), acct.ID, app.ID, name, pubKey, acct.ID)
+	_, rotated, err := s.store.UpsertAppTrustedSigner(r.Context(), acct.ID, app.ID, name, pubKey, actorAccount(r, acct).ID)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not persist trusted signer"))
 		return

@@ -55,6 +55,12 @@ func (s *server) resolveDeploymentAccount(w http.ResponseWriter, r *http.Request
 		s.notFound(w, "no such deployment")
 		return state.Deployment{}, state.App{}, false
 	}
+	// An app-scoped route must also bind the deployment to that exact app.
+	// Two apps may share a legacy account while belonging to different orgs.
+	if slug := r.PathValue("slug"); slug != "" && app.Slug != slug {
+		s.notFound(w, "no such deployment")
+		return state.Deployment{}, state.App{}, false
+	}
 	return d, app, true
 }
 

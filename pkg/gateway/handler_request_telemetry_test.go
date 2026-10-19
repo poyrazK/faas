@@ -531,7 +531,7 @@ func TestHandlerObservePersistsGuestEvidence(t *testing.T) {
 	acct, app, deployment := uuid.New(), uuid.New(), uuid.New()
 	r := httptest.NewRequest(http.MethodGet, "/checkout", nil)
 	r = withAppAndAccount(r, acct, app)
-	r = withGuestExecutionEvidence(r)
+	r = withGuestExecutionEvidence(r, true)
 	for _, header := range []struct{ name, value string }{
 		{"X-Faas-Guest-Runtime", "node24"},
 		{"X-Faas-Guest-Duration-Ms", "125"},

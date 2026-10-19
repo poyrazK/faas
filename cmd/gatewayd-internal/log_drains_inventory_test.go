@@ -311,3 +311,40 @@ func TestStandardLogManagerLockSurvivesWorkerShutdown(t *testing.T) {
 	}
 	defer next.spoolLease.Unlock()
 }
+
+// ADR-1736: a hand-off successor waits for the old generation to release the
+// spool instead of leaving customer log drains off.
+func TestLogDrainManagerWaitsForTheSpoolLease(t *testing.T) {
+	old := newAppLogDrainManager(state.NewMemStore(), nil, nil, nil, nil)
+	old.spoolRoot = t.TempDir()
+	if err := old.acquireLogSpoolLease(); err != nil {
+		t.Fatal(err)
+	}
+	next := newAppLogDrainManager(state.NewMemStore(), nil, nil, nil, nil)
+	next.spoolRoot = old.spoolRoot
+	acquired := make(chan bool, 1)
+	go func() { acquired <- next.waitForLogSpoolLease(t.Context(), 10*time.Millisecond) }()
+	select {
+	case <-acquired:
+		t.Fatal("successor took the spool while the old generation held it")
+	case <-time.After(100 * time.Millisecond):
+	}
+	_ = old.spoolLease.Unlock()
+	select {
+	case ok := <-acquired:
+		if !ok {
+			t.Fatal("successor gave up on the spool")
+		}
+		defer next.spoolLease.Unlock()
+	case <-time.After(3 * time.Second):
+		t.Fatal("successor did not take the released spool")
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	third := newAppLogDrainManager(state.NewMemStore(), nil, nil, nil, nil)
+	third.spoolRoot = old.spoolRoot
+	if third.waitForLogSpoolLease(ctx, 10*time.Millisecond) {
+		t.Fatal("took a held spool after cancellation")
+	}
+}

@@ -278,7 +278,7 @@ func TestVerifyWebhookProjectsCompletedTransactionInvoice(t *testing.T) {
 		t.Fatal(err)
 	}
 	when := time.Now().UTC()
-	body := []byte(`{"event_id":"evt_completed","event_type":"transaction.completed","data":{"id":"txn-1","invoice_id":"inv-1","customer_id":"ctm-1","subscription_id":"sub-1","status":"completed","invoice_number":"INV-1","currency_code":"EUR","billing_period":{"starts_at":"2026-08-01T00:00:00Z","ends_at":"2026-09-01T00:00:00Z"},"details":{"totals":{"subtotal":"900","tax":"100","total":"1000"}}}}`)
+	body := []byte(`{"event_id":"evt_completed","event_type":"transaction.completed","data":{"id":"txn-1","invoice_id":"inv-1","customer_id":"ctm-1","subscription_id":"sub-1","status":"completed","invoice_number":"INV-1","currency_code":"USD","billing_period":{"starts_at":"2026-08-01T00:00:00Z","ends_at":"2026-09-01T00:00:00Z"},"details":{"totals":{"subtotal":"900","tax":"100","total":"1000"}}}}`)
 	ev, err := p.VerifyWebhook(body, map[string]string{"Paddle-Signature": signPaddleBody(testWebhookKey, body, when)}, time.Minute)
 	if err != nil {
 		t.Fatal(err)
@@ -300,12 +300,12 @@ func TestVerifyWebhookMapsRefundAdjustment(t *testing.T) {
 		t.Fatal(err)
 	}
 	when := time.Now().UTC()
-	body := []byte(`{"event_id":"evt_refund","event_type":"adjustment.updated","data":{"id":"adj-1","action":"refund","customer_id":"ctm-1","transaction_id":"txn-1","currency_code":"EUR","totals":{"total":"500"}}}`)
+	body := []byte(`{"event_id":"evt_refund","event_type":"adjustment.updated","data":{"id":"adj-1","action":"refund","customer_id":"ctm-1","transaction_id":"txn-1","currency_code":"USD","totals":{"total":"500"}}}`)
 	ev, err := p.VerifyWebhook(body, map[string]string{"Paddle-Signature": signPaddleBody(testWebhookKey, body, when)}, time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ev.Type != billing.EventRefundProcessed || ev.ProviderRefundID != "adj-1" || ev.ChargeID != "txn-1" || ev.AmountCents != 500 || ev.Currency != "EUR" {
+	if ev.Type != billing.EventRefundProcessed || ev.ProviderRefundID != "adj-1" || ev.ChargeID != "txn-1" || ev.AmountCents != 500 || ev.Currency != "USD" {
 		t.Fatalf("refund event = %+v", ev)
 	}
 }

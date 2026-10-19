@@ -496,7 +496,7 @@ type Trigger struct {
 	admissionBackoff map[string]admissionBackoffState
 
 	// Worker pools reconcile in background runs, one per account at a time
-	// (ADR-1420); workerRunning holds the accounts with a run in progress.
+	// (ADR-20261018101500); workerRunning holds the accounts with a run in progress.
 	workerRunMu   sync.Mutex
 	workerRunning map[string]bool
 	workerRuns    sync.WaitGroup
@@ -926,6 +926,11 @@ func (t *Trigger) Tick(ctx context.Context) error {
 					t.log.Warn("targets: custom metrics failed", "app_id", app.ID, "err", err)
 				}
 				for _, row := range rows {
+					// ADR-745: a cumulative counter only grows; as a
+					// backlog it would mean monotonic scale-out.
+					if row.Kind == state.CustomMetricKindCounter {
+						continue
+					}
 					stored[row.Name] = row
 				}
 			}

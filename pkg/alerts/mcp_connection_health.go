@@ -67,7 +67,7 @@ func (e *Evaluator) recoverMCPConnectionHealth(ctx context.Context, rule state.A
 	if recovering && now.Sub(delivery.FiredAt) < time.Duration(rule.CooldownMinutes)*time.Minute {
 		return
 	}
-	_, payload, err := buildPayload(rule, observed, investigationPaths{mcpHealth: health})
+	_, payload, err := buildPayload(rule, observed, investigationPaths{mcpHealth: health}, nil)
 	if err != nil {
 		return
 	}

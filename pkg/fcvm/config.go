@@ -270,7 +270,7 @@ type ColdBootSpec struct {
 	// ProvenWorker boots a declared worker whose deployment already passed
 	// the full characterization window on this node with api.ProvenWorkerBootArg,
 	// so guest-init reports it after api.ProvenWorkerCharacterizationWindow
-	// (ADR-1420).
+	// (ADR-20261018101500).
 	ProvenWorker bool
 	// SkipReady suppresses readiness probing for builder VMs. Builder guests
 	// run a finite build and power off instead of binding port 8080.

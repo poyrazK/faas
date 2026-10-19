@@ -106,6 +106,10 @@ export type UpdateAppRequest = {
    */
   request_timeout_s?: number | null;
   /**
+   * Changes how many requests one Node or Python function worker serves at once (ADR-1342). 0 or 1 restores one request per worker; capped by the plan's concurrency_per_vm. Existing functions pick up the change on their next deploy.
+   */
+  function_concurrency?: number | null;
+  /**
    * Runtime override for the app-wide edge rate-limit refill rate. 0 restores the plan default; positive values may only tighten the plan ceiling. Does not create a deployment.
    */
   request_rate_limit_rps?: number | null;
@@ -169,6 +173,14 @@ export type UpdateAppRequest = {
    * Set the revision pin window in seconds; zero disables future retention. Omit for no change.
    */
   revision_pin_ttl_seconds?: number | null;
+  /**
+   * Set the default rollout for production releases (ADR-1446, ADR-1450). Omit for no change.
+   */
+  release_policy?: 'safe' | 'fast' | 'immediate';
+  /**
+   * Replace the paths the default rollout probe checks (ADR-1449). An empty list restores /. Omit for no change.
+   */
+  release_probe_paths?: any[] | null;
   min_instances?: number | null;
   /**
    * v4 or v6 CIDR allowlist; empty array clears to chain-default-accept.

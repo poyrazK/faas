@@ -26,8 +26,11 @@ import (
 func cmdAccount(args []string) int {
 	parent, _ := lookupCliCommand("account")
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale account {export|delete|restore|status|dpa|slo}", "account")
+		PrintUsage(os.Stderr, releasedUsage("account", "usage: gregale account {export|delete|restore|status|dpa|slo|billing-connection|billing-run|invoices}"), "account")
 		return 1
+	}
+	if hiddenMonetizationVerb("account", args[0]) {
+		return unknownAccountSubcommand(parent, args[0])
 	}
 	switch args[0] {
 	case "export":
@@ -45,16 +48,30 @@ func cmdAccount(args []string) int {
 		// CLI surfaces the same body so operators can `curl`-equiv
 		// from a CI box or pin the response in a contract test.
 		return cmdAccountDPA(args[1:])
+	case "billing-connection":
+		// ADR-1502, ADR-1507: the account's billing provider keys for
+		// statement invoice exports.
+		return cmdAccountBillingConnection(args[1:])
+	case "billing-run":
+		// ADR-1503: bill a month for every customer, or schedule it.
+		return cmdAccountBillingRun(args[1:])
+	case "invoices":
+		// ADR-1504: exported invoices and their payment status.
+		return cmdAccountInvoices(args[1:])
 	case "slo":
 		// Move 2 PR-A: CLI twin for GET /v1/account/slo
 		// (issue #696 / ADR-082). Account-wide SLO rollup.
 		return cmdAccountSLO(args[1:])
 	default:
-		sug, _ := suggestSubcommand(args[0], parent)
-		fmt.Fprintf(os.Stderr, "gregale account: unknown subcommand %q\n", args[0])
-		maybeSuggestSub(sug)
-		return 1
+		return unknownAccountSubcommand(parent, args[0])
 	}
+}
+
+func unknownAccountSubcommand(parent cliCommand, name string) int {
+	sug, _ := suggestSubcommand(name, parent)
+	fmt.Fprintf(os.Stderr, "gregale account: unknown subcommand %q\n", name)
+	maybeSuggestSub(sug)
+	return 1
 }
 
 // cmdAccountExport downloads the GDPR export bundle. Default output

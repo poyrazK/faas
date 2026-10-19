@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"maps"
 	"time"
 
 	"github.com/google/uuid"
@@ -30,6 +31,9 @@ func (m *MemStore) publishProjectReleaseSet(ctx context.Context, accountID, proj
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return ProjectReleaseSet{}, err
+	}
 	defer m.invalidateChangedLifecycleSuccessorsLocked()
 	project, ok := m.projects[projectID]
 	if !ok || project.AccountID != accountID {
@@ -253,7 +257,7 @@ func (m *MemStore) validateProjectReleaseFallbackForAppsLocked(appIDs []string, 
 
 var _ ProjectReleaseSetPromotionStore = (*MemStore)(nil)
 
-func (m *MemStore) publishProjectReleaseSetLocked(accountID, projectID, environment string, ttlSeconds int, members []ProjectReleaseMember, allowGitOpsReplacement bool) (ProjectReleaseSet, error) {
+func (m *MemStore) publishProjectReleaseSetLocked(accountID, projectID, environment string, ttlSeconds int, members []ProjectReleaseMember, allowGitOpsReplacement bool, bindingGrants ...*environmentBindingPublication) (ProjectReleaseSet, error) {
 	if !validReleaseTTL(ttlSeconds) || len(members) == 0 && !allowGitOpsReplacement || len(members) > api.ProjectReleaseSetMaxMembers || !api.ValidProjectEnvironmentSlug(environment) {
 		return ProjectReleaseSet{}, ErrInvalidArgument
 	}
@@ -308,7 +312,21 @@ func (m *MemStore) publishProjectReleaseSetLocked(accountID, projectID, environm
 		return ProjectReleaseSet{}, ErrConflict
 	}
 	if err := m.rejectUncheckedBindingReleaseGraphLocked(projectID, environment); err != nil {
-		return ProjectReleaseSet{}, err
+		if !allowGitOpsReplacement || len(bindingGrants) != 1 || bindingGrants[0] == nil || !maps.Equal(bindingGrants[0].members, byApp) {
+			return ProjectReleaseSet{}, err
+		}
+		grant := bindingGrants[0]
+		if grant.retirement != nil {
+			source := grant.retirement.lease.Source
+			if len(members) != 0 || source.AccountID != accountID || source.ProjectID != projectID || source.EnvironmentSlug != environment || m.checkEnvironmentBindingRetirementLocked(*grant.retirement, true) != nil {
+				return ProjectReleaseSet{}, err
+			}
+		} else if !candidateBindingMembersMatch(grant.graph, members) {
+			return ProjectReleaseSet{}, err
+		}
+		if !time.Now().Before(bindingGrants[0].validUntil) {
+			return ProjectReleaseSet{}, ErrBindingPromotionExpired
+		}
 	}
 	key := releaseKey(projectID, environment)
 	previousID := m.activeProjectReleaseSets[key]

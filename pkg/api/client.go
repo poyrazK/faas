@@ -133,6 +133,34 @@ type Client struct {
 	// subtests). NewClient wires a fresh cache so completion just works;
 	// tests that want hermetic isolation call SetCompletionCache(nil).
 	cache *CompletionCache
+
+	// noConfigGuard sends `guard=false` on env and secret writes, so they
+	// open no config guard (ADR-1451, CLI --no-guard).
+	noConfigGuard bool
+}
+
+// WithoutConfigGuard returns a client whose env and secret writes open no
+// config guard (ADR-1451). The receiver is unchanged.
+func (c *Client) WithoutConfigGuard() *Client {
+	cp := *c
+	cp.noConfigGuard = true
+	return &cp
+}
+
+// configWriteQuery is scopeQuery for env and secret writes: it also carries
+// the config guard opt-out.
+func (c *Client) configWriteQuery(path, scope string) string {
+	v := url.Values{}
+	if scope != "" {
+		v.Set("scope", scope)
+	}
+	if c.noConfigGuard {
+		v.Set("guard", "false")
+	}
+	if len(v) == 0 {
+		return path
+	}
+	return path + "?" + v.Encode()
 }
 
 // NewClient builds a client for baseURL with the given bearer token.
@@ -958,7 +986,80 @@ func (c *Client) DeleteDevSessionsProject(ctx context.Context, project string, w
 // RegisterScenarioTest gives a run's developer sessions a private service
 // namespace before source deployment. Registration is create-only.
 func (c *Client) RegisterScenarioTest(ctx context.Context, runID string, req RegisterScenarioTestRequest) error {
-	return c.do(ctx, "PUT", "/v1/dev/test-runs/"+runID, req, nil)
+	if req.CommandVersion != 0 && (req.CommandVersion != 1 || req.Simulation == nil) {
+		return errors.New("contained commands require protocol version 1 and simulation enrollment")
+	}
+	if req.NetworkMode != "" && (req.NetworkMode != "contained" || req.WebhookMode != "capture") {
+		return errors.New("contained rehearsal networking requires capture mode")
+	}
+	if req.ActionEvidenceVersion != 0 && ((req.ActionEvidenceVersion != ScenarioActionSnapshotVersion && req.ActionEvidenceVersion != ScenarioSimulationSnapshotVersion) || req.WebhookMode != "capture") {
+		return errors.New("sealed action evidence requires capture mode and a supported evidence version")
+	}
+	simulationDigest := ""
+	if req.Simulation != nil {
+		if req.NetworkMode != "contained" || req.WebhookMode != "capture" || req.ActionEvidenceVersion != ScenarioSimulationSnapshotVersion {
+			return errors.New("simulation requires contained networking and action evidence version 2")
+		}
+		names := make([]string, 0, len(req.Members))
+		for _, m := range req.Members {
+			names = append(names, m.Workload)
+		}
+		_, digest, err := NormalizeScenarioSimulationPlan(*req.Simulation, names)
+		if err != nil {
+			return err
+		}
+		simulationDigest = digest
+	} else if req.ActionEvidenceVersion == ScenarioSimulationSnapshotVersion {
+		return errors.New("action evidence version 2 requires simulation fixtures")
+	}
+	_, resumeDigest, err := ScenarioSuspendResumeEnrollment(req)
+	if err != nil {
+		return err
+	}
+	_, coldDigest, err := ScenarioColdStartEnrollment(req)
+	if err != nil {
+		return err
+	}
+	workDigest, err := validateScenarioManagedWorkEnrollment(req)
+	if err != nil {
+		return err
+	}
+	path := "/v1/dev/test-runs/" + runID
+	if req.WebhookMode == "" {
+		return c.do(ctx, "PUT", path, req, nil)
+	}
+	var out RegisterScenarioTestResponse
+	if err := c.do(ctx, "PUT", path, req, &out); err != nil {
+		return err
+	}
+	if out.SuspendResumeSHA256 != resumeDigest {
+		return errors.New("server did not acknowledge the exact suspend/resume plan")
+	}
+	if out.ColdStartSHA256 != coldDigest {
+		return errors.New("server did not acknowledge the exact cold-start plan")
+	}
+	if out.ManagedWorkSHA256 != workDigest {
+		return errors.New("server did not acknowledge the exact managed-work plan")
+	}
+	if req.CommandVersion != 0 && out.CommandVersion != req.CommandVersion {
+		return errors.New("server did not acknowledge contained command execution")
+	}
+	if req.Simulation != nil && out.RecorderVersion != 1 {
+		return errors.New("server did not acknowledge durable rehearsal recorder support")
+	}
+	if out.SimulationSHA256 != simulationDigest {
+		return errors.New("server did not acknowledge the exact rehearsal simulation fixtures")
+	}
+	if out.NetworkMode != req.NetworkMode {
+		return errors.New("server did not acknowledge the requested rehearsal network containment")
+	}
+	if out.PolicyVersion != 1 || out.WebhookMode != req.WebhookMode {
+		return errors.New("server did not acknowledge the requested rehearsal webhook capture policy")
+	}
+	if req.ActionEvidenceVersion != 0 && out.ActionEvidenceVersion != req.ActionEvidenceVersion {
+		return errors.New("server did not acknowledge the requested sealed action evidence version")
+	}
+	return nil
 }
 
 // InjectScenarioTestChaos installs bounded HTTP and TCP faults for one isolated run.
@@ -1748,6 +1849,19 @@ func (c *Client) ApplyProjectPlanWithBindingEnvironmentApproval(
 	environment, approvalToken string,
 	platformTenantRequired ...*bool,
 ) (ApplyResponse, error) {
+	return c.ApplyProjectPlanWithInitialSecrets(ctx, planToken, source, sourceName, projectSlug, repoFullName,
+		productionBranch, installID, only, exclude, persistExclude, noTriggers, environment, approvalToken, nil, platformTenantRequired...)
+}
+
+// ApplyProjectPlanWithInitialSecrets seals initial workload configuration on
+// the server before any selected workload's first build is enqueued.
+func (c *Client) ApplyProjectPlanWithInitialSecrets(
+	ctx context.Context, planToken string,
+	source io.Reader, sourceName, projectSlug, repoFullName, productionBranch string,
+	installID int64, only, exclude []string, persistExclude, noTriggers bool,
+	environment, approvalToken string, initialSecrets ProjectInitialSecrets,
+	platformTenantRequired ...*bool,
+) (ApplyResponse, error) {
 	var b bytes.Buffer
 	w := multipart.NewWriter(&b)
 	if err := writeProjectMultipartFields(w, source, sourceName, projectSlug, repoFullName, productionBranch, installID, only, exclude, persistExclude, noTriggers, environment, approvalToken); err != nil {
@@ -1755,6 +1869,15 @@ func (c *Client) ApplyProjectPlanWithBindingEnvironmentApproval(
 	}
 	if err := writeProjectTenantPolicy(w, platformTenantRequired); err != nil {
 		return ApplyResponse{}, fmt.Errorf("build tenant policy field: %w", err)
+	}
+	if len(initialSecrets) > 0 {
+		body, err := json.Marshal(initialSecrets)
+		if err != nil {
+			return ApplyResponse{}, fmt.Errorf("encode initial project configuration: %w", err)
+		}
+		if err := w.WriteField("initial_secrets", string(body)); err != nil {
+			return ApplyResponse{}, fmt.Errorf("write initial project configuration: %w", err)
+		}
 	}
 	if err := w.Close(); err != nil {
 		return ApplyResponse{}, fmt.Errorf("close multipart writer: %w", err)
@@ -1782,6 +1905,12 @@ func (c *Client) ApplyProjectPlanWithBindingEnvironmentApproval(
 	req.Header.Set("Idempotency-Key", idempotencyKey)
 	var out ApplyResponse
 	return out, c.doReq(c.uploadHTTP(), req, &out)
+}
+
+// ApplyCachedProjectPlan deploys exactly the account-owned source from scan.
+func (c *Client) ApplyCachedProjectPlan(ctx context.Context, request ApplyCachedProjectPlanRequest) (ApplyResponse, error) {
+	var out ApplyResponse
+	return out, c.do(ctx, http.MethodPost, "/v1/projects/apply-plan", request, &out)
 }
 
 // DeleteDeploymentScopeExclusion drops a single persisted
@@ -2287,6 +2416,13 @@ func (c *Client) RollbackTo(ctx context.Context, slug, targetDeploymentID string
 	}
 	body := RollbackRequest{TargetDeploymentID: &targetDeploymentID}
 	return out, c.doWithClientAndIdempotencyKey(ctx, c.rollbackHTTP(), "POST", "/v1/apps/"+slug+"/rollback", body, &out, "")
+}
+
+// RollbackWithRequest sends a full rollback request, for fields such as
+// AcknowledgeReleases (ADR-1448) that the narrower helpers do not carry.
+func (c *Client) RollbackWithRequest(ctx context.Context, slug string, req RollbackRequest) (DeploymentResponse, error) {
+	var out DeploymentResponse
+	return out, c.doWithClientAndIdempotencyKey(ctx, c.rollbackHTTP(), "POST", "/v1/apps/"+slug+"/rollback", req, &out, "")
 }
 
 // RollbackToWithRule (SAFE-RELEASES-OBS PR-D, issue #976 / ADR-122)
@@ -4208,10 +4344,9 @@ func (c *Client) RotateDeployToken(ctx context.Context, slug, id string, req Rot
 // reads it as a forward narrative (queue_accepted → admitted →
 // boot_started → boot_completed → readiness_200 → proxy_first_byte).
 //
-// since is an RFC 3339 timestamp; rows strictly older are skipped
-// (the dashboard's "load older" infinite-scroll). limit is bounded
-// server-side at 1000; values larger are silently capped per the
-// same convention as ListSecrets / ListAuditEvents.
+// since is an exclusive RFC3339 lower bound (at > since). The legacy
+// timestamp hint can skip equal-time events; use ListWakeTimelinePage for
+// keyset continuation. limit is bounded to 1..1000; larger values are rejected.
 //
 // Cross-account visibility is enforced server-side: the slug must
 // resolve to the caller's account, and each row's data.app_id is
@@ -4626,7 +4761,7 @@ func (c *Client) SetSecretWithScope(ctx context.Context, slug, key, value, scope
 // its snapshot-retention class. Empty class preserves an existing class and
 // defaults a new row to persistent.
 func (c *Client) SetSecretWithScopeAndClass(ctx context.Context, slug, key, value, scope, secretClass string) error {
-	return c.do(ctx, "PUT", c.scopeQuery("/v1/apps/"+slug+"/secrets/"+key, scope),
+	return c.do(ctx, "PUT", c.configWriteQuery("/v1/apps/"+slug+"/secrets/"+key, scope),
 		PutAppSecretRequest{Value: value, SecretClass: secretClass}, nil)
 }
 func (c *Client) UnsetSecret(ctx context.Context, slug, key string) error {
@@ -4636,7 +4771,7 @@ func (c *Client) UnsetSecret(ctx context.Context, slug, key string) error {
 // UnsetSecretWithScope is the scope-aware sibling of UnsetSecret.
 // Same reserved-sentinel posture as SetSecretWithScope.
 func (c *Client) UnsetSecretWithScope(ctx context.Context, slug, key, scope string) error {
-	return c.do(ctx, "DELETE", c.scopeQuery("/v1/apps/"+slug+"/secrets/"+key, scope), nil, nil)
+	return c.do(ctx, "DELETE", c.configWriteQuery("/v1/apps/"+slug+"/secrets/"+key, scope), nil, nil)
 }
 
 // UnsetSecretWithScopeAndStatus deletes a secret and returns the durable
@@ -4645,7 +4780,7 @@ func (c *Client) UnsetSecretWithScopeAndStatus(ctx context.Context, slug, key, s
 	var out AppSecretRevocationResponse
 	headers := make(http.Header)
 	headers.Set("Prefer", "return=representation")
-	err := c.doWithHeaders(ctx, "DELETE", c.scopeQuery("/v1/apps/"+slug+"/secrets/"+key, scope), nil, &out, headers)
+	err := c.doWithHeaders(ctx, "DELETE", c.configWriteQuery("/v1/apps/"+slug+"/secrets/"+key, scope), nil, &out, headers)
 	return out, err
 }
 
@@ -4671,8 +4806,47 @@ func (c *Client) RotateSecret(ctx context.Context, slug, key, value string) (Rot
 func (c *Client) RotateSecretWithScope(ctx context.Context, slug, key, value, scope string) (RotateAppSecretResponse, error) {
 	var out RotateAppSecretResponse
 	return out, c.do(ctx, "POST",
-		c.scopeQuery("/v1/apps/"+slug+"/secrets/"+key+"/rotate", scope),
+		c.configWriteQuery("/v1/apps/"+slug+"/secrets/"+key+"/rotate", scope),
 		RotateAppSecretRequest{Value: value}, &out)
+}
+
+// ListConfigRevisions lists a scope's config revisions, newest first, with
+// its newest config guard (ADR-1451). limit <= 0 uses the server default.
+func (c *Client) ListConfigRevisions(ctx context.Context, slug, scope string, limit int) (ListConfigRevisionsResponse, error) {
+	var out ListConfigRevisionsResponse
+	v := url.Values{}
+	if scope != "" {
+		v.Set("scope", scope)
+	}
+	if limit > 0 {
+		v.Set("limit", strconv.Itoa(limit))
+	}
+	path := "/v1/apps/" + url.PathEscape(slug) + "/config/revisions"
+	if len(v) > 0 {
+		path += "?" + v.Encode()
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// GetConfigRevision reads one config revision with its variables and secret
+// versions (never secret values).
+func (c *Client) GetConfigRevision(ctx context.Context, slug, scope string, revision int64) (ConfigRevisionDetail, error) {
+	var out ConfigRevisionDetail
+	path := c.scopeQuery("/v1/apps/"+url.PathEscape(slug)+"/config/revisions/"+strconv.FormatInt(revision, 10), scope)
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// GetConfigGuard reads a scope's newest config guard and its verdict.
+func (c *Client) GetConfigGuard(ctx context.Context, slug, scope string) (ConfigGuard, error) {
+	var out ConfigGuard
+	return out, c.do(ctx, "GET", c.scopeQuery("/v1/apps/"+url.PathEscape(slug)+"/config/guard", scope), nil, &out)
+}
+
+// RollbackConfig restores a scope's variables to a config revision.
+func (c *Client) RollbackConfig(ctx context.Context, slug, scope string, revision int64) (ConfigRollbackResponse, error) {
+	var out ConfigRollbackResponse
+	return out, c.do(ctx, "POST", c.configWriteQuery("/v1/apps/"+url.PathEscape(slug)+"/config/rollback", scope),
+		ConfigRollbackRequest{Revision: revision}, &out)
 }
 
 // scopeQuery appends "?scope=<name>" to path when scope is
@@ -4723,15 +4897,21 @@ func (c *Client) DeleteAppRegistryCredential(ctx context.Context, slug, registry
 // ListSecrets/SetSecret/UnsetSecret which the gate tolerates as
 // pre-existing helpers — new surfaces follow MethodResource).
 func (c *Client) GetAppsSlugEnv(ctx context.Context, slug string) (AppEnvListResponse, error) {
+	return c.GetAppsSlugEnvWithScope(ctx, slug, "")
+}
+
+// GetAppsSlugEnvWithScope lists runtime variable names in one scope. Empty
+// scope preserves the default endpoint; values are never returned.
+func (c *Client) GetAppsSlugEnvWithScope(ctx context.Context, slug, scope string) (AppEnvListResponse, error) {
 	var out AppEnvListResponse
-	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/env", nil, &out)
+	return out, c.do(ctx, "GET", c.scopeQuery("/v1/apps/"+slug+"/env", scope), nil, &out)
 }
 func (c *Client) PutAppsSlugEnvKey(ctx context.Context, slug, key, value string) error {
-	return c.do(ctx, "PUT", "/v1/apps/"+slug+"/env/"+key,
+	return c.do(ctx, "PUT", c.configWriteQuery("/v1/apps/"+slug+"/env/"+key, ""),
 		PutAppEnvRequest{Value: value}, nil)
 }
 func (c *Client) DeleteAppsSlugEnvKey(ctx context.Context, slug, key string) error {
-	return c.do(ctx, "DELETE", "/v1/apps/"+slug+"/env/"+key, nil, nil)
+	return c.do(ctx, "DELETE", c.configWriteQuery("/v1/apps/"+slug+"/env/"+key, ""), nil, nil)
 }
 
 // Usage.

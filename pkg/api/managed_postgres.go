@@ -6,25 +6,42 @@ import "time"
 // PostgreSQL. Provider adapters may impose a lower ceiling, but never raise
 // these plan limits.
 type ManagedPostgresPlanLimits struct {
-	DatabasesMax         int
-	StorageLimitBytes    int64
-	RestoreWindowSeconds int64
-	DevelopmentAllowed   bool
-	BurstableAllowed     bool
-	ProductionAllowed    bool
+	DatabasesMax int
+	// StorageLimitBytes is the account's pooled storage (ADR-1430): every
+	// database together, and so also the most one database may use. The pool
+	// is held as the account's monthly storage byte-seconds ceiling.
+	StorageLimitBytes int64
+	// MonthlyComputeUnitSeconds is the account's included compute across all
+	// databases per UTC month (ADR-1430). Until compute overage is billed it is
+	// a ceiling; zero keeps the operator's.
+	MonthlyComputeUnitSeconds int64
+	RestoreWindowSeconds      int64
+	DevelopmentAllowed        bool
+	BurstableAllowed          bool
+	ProductionAllowed         bool
 	// AlwaysOnAllowed is deliberately disabled for the current bundled plans.
 	// Keeping this as an entitlement makes the future always-on tier explicit
 	// instead of allowing a customer request to bypass the COGS guardrail.
 	AlwaysOnAllowed bool
 }
 
-const managedPostgresGiB int64 = 1 << 30
+const (
+	managedPostgresGiB                 int64 = 1 << 30
+	managedPostgresComputeUnitHour     int64 = 60 * 60
+	managedPostgresRestoreWindowSecond int64 = 7 * 24 * 60 * 60
+)
 
+// managedPostgresPlanLimits follows the October 2026 COGS report (ADR-1430):
+// databases, highest service class, pooled storage and monthly compute units.
 var managedPostgresPlanLimits = map[Plan]ManagedPostgresPlanLimits{
-	PlanFree:  {},
-	PlanHobby: {DatabasesMax: 1, StorageLimitBytes: 10 * managedPostgresGiB, RestoreWindowSeconds: 7 * 24 * 60 * 60, DevelopmentAllowed: true},
-	PlanPro:   {DatabasesMax: 3, StorageLimitBytes: 50 * managedPostgresGiB, RestoreWindowSeconds: 7 * 24 * 60 * 60, DevelopmentAllowed: true, BurstableAllowed: true},
-	PlanScale: {DatabasesMax: 10, StorageLimitBytes: 100 * managedPostgresGiB, RestoreWindowSeconds: 7 * 24 * 60 * 60, DevelopmentAllowed: true, BurstableAllowed: true, ProductionAllowed: true},
+	PlanFree: {DatabasesMax: 1, StorageLimitBytes: managedPostgresGiB / 2, MonthlyComputeUnitSeconds: 5 * managedPostgresComputeUnitHour,
+		RestoreWindowSeconds: managedPostgresRestoreWindowSecond, DevelopmentAllowed: true},
+	PlanHobby: {DatabasesMax: 1, StorageLimitBytes: managedPostgresGiB, MonthlyComputeUnitSeconds: 25 * managedPostgresComputeUnitHour,
+		RestoreWindowSeconds: managedPostgresRestoreWindowSecond, DevelopmentAllowed: true},
+	PlanPro: {DatabasesMax: 3, StorageLimitBytes: 5 * managedPostgresGiB, MonthlyComputeUnitSeconds: 75 * managedPostgresComputeUnitHour,
+		RestoreWindowSeconds: managedPostgresRestoreWindowSecond, DevelopmentAllowed: true, BurstableAllowed: true},
+	PlanScale: {DatabasesMax: 10, StorageLimitBytes: 20 * managedPostgresGiB, MonthlyComputeUnitSeconds: 200 * managedPostgresComputeUnitHour,
+		RestoreWindowSeconds: managedPostgresRestoreWindowSecond, DevelopmentAllowed: true, BurstableAllowed: true, ProductionAllowed: true},
 }
 
 // ManagedPostgresLimitsFor returns a copy of the closed-set entitlement for p.

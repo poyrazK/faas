@@ -98,7 +98,10 @@ const (
 // Workload is one discoverable unit of work. Stable, deterministic
 // fields; the confirm table in Phase 3 reads these verbatim.
 type Workload struct {
-	Name             string                  // service name; deterministic sort key
+	Name string // service name; deterministic sort key
+	// AppSlug is control-plane allocation metadata, never a repository declaration.
+	// Name remains the identity used by dependencies, configuration and reconcile.
+	AppSlug          string                  `json:"-"`
 	RootDir          string                  // build context relative to repo root; "" = root
 	Dockerfile       string                  // explicit path if declared (relative to RootDir)
 	Image            string                  // prebuilt OCI image when the source declares one
@@ -276,8 +279,11 @@ type Managed struct {
 type Result struct {
 	Workloads []Workload
 	Managed   []Managed
-	Tier      Tier // highest tier that produced any workload
-	Warnings  []string
+	// DependencyReferences validate source-reviewed services omitted from a
+	// partial migration. They are never reconciled or built.
+	DependencyReferences []Workload `json:"-"`
+	Tier                 Tier       // highest tier that produced any workload
+	Warnings             []string
 	// DetectionWarnings is the structured skip/merge decision trail used
 	// by the scan explainability surface. Warnings remains the legacy
 	// human-readable list for compatibility.

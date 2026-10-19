@@ -73,7 +73,23 @@ func TestSessionRoutesRefuseMFAPendingCookies(t *testing.T) {
 	if len(routes) < 300 {
 		t.Fatalf("only %d session routes found; the scan is broken", len(routes))
 	}
+	// With its runtime flag off, the internal hosting namespace answers the
+	// missing-route 404 before auth (ADR 202610171453). Enable it before the
+	// server reads its runtime config so the hosting routes' MFA enforcement
+	// stays covered.
+	t.Setenv("FAAS_FRONTEND_HOSTING_ENABLED", "true")
 	e := apidserver.SetupWithMFA(t, api.PlanPro, false, true)
+	// Outside the live-query rollout those routes answer the missing-route 404
+	// before auth (ADR-20261016151947). Open it so their MFA enforcement stays
+	// covered.
+	if err := (*e.Srv()).ConfigureLiveQueriesForTest(func(key string) string {
+		if key == "FAAS_LIVE_QUERIES_ACCOUNTS" {
+			return "*"
+		}
+		return ""
+	}); err != nil {
+		t.Fatal(err)
+	}
 	// With the preview off, durable entity routes answer 404 before auth.
 	// Enable it so their MFA enforcement stays covered.
 	(*e.Srv()).Durable().Engine = &durableentity.Manager{}

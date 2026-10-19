@@ -25,6 +25,8 @@ class QueueBindingCanary:
     status: QueueBindingCanaryStatus
     published_at: datetime.datetime
     expires_at: datetime.datetime
+    release_id: UUID | Unset = UNSET
+    """Exact active reviewed release for a managed worker canary."""
     reason: str | Unset = UNSET
     delivered_at: datetime.datetime | Unset = UNSET
     completed_at: datetime.datetime | Unset = UNSET
@@ -44,6 +46,10 @@ class QueueBindingCanary:
         published_at = self.published_at.isoformat()
 
         expires_at = self.expires_at.isoformat()
+
+        release_id: str | Unset = UNSET
+        if not isinstance(self.release_id, Unset):
+            release_id = str(self.release_id)
 
         reason = self.reason
 
@@ -68,6 +74,8 @@ class QueueBindingCanary:
                 "expires_at": expires_at,
             }
         )
+        if release_id is not UNSET:
+            field_dict["release_id"] = release_id
         if reason is not UNSET:
             field_dict["reason"] = reason
         if delivered_at is not UNSET:
@@ -94,6 +102,13 @@ class QueueBindingCanary:
 
         expires_at = datetime.datetime.fromisoformat(d.pop("expires_at"))
 
+        _release_id = d.pop("release_id", UNSET)
+        release_id: UUID | Unset
+        if isinstance(_release_id, Unset):
+            release_id = UNSET
+        else:
+            release_id = UUID(_release_id)
+
         reason = d.pop("reason", UNSET)
 
         _delivered_at = d.pop("delivered_at", UNSET)
@@ -118,6 +133,7 @@ class QueueBindingCanary:
             status=status,
             published_at=published_at,
             expires_at=expires_at,
+            release_id=release_id,
             reason=reason,
             delivered_at=delivered_at,
             completed_at=completed_at,

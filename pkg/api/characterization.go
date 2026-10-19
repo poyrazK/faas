@@ -4,7 +4,7 @@ package api
 // of a declared worker whose deployment already passed the full
 // characterization window on that node. guest-init then observes for
 // ProvenWorkerCharacterizationWindow instead of CharacterizationDeadline
-// (ADR-1420).
+// (ADR-20261018101500).
 const ProvenWorkerBootArg = "faas.worker=proven"
 
 // CharacterizationReport is the payload guest-init ships to the host

@@ -1,0 +1,64 @@
+rule_files:
+- ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
+evaluation_interval: 30s
+tests:
+- name: opted in stale heartbeat after startup grace
+  interval: 30s
+  input_series:
+  - series: vmmd_mcp_telemetry_heartbeat_timestamp_seconds{app_id="app",deployment_id="dep",instance_id="replica"}
+    values: 1+0x40
+  - series: vmmd_mcp_telemetry_instance_started_timestamp_seconds{app_id="app",deployment_id="dep",instance_id="replica"}
+    values: 1+0x40
+  - series: vmmd_mcp_telemetry_loss_alert_enabled{app_id="app",deployment_id="dep",instance_id="replica"}
+    values: 1+0x40
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasMCPTelemetryHeartbeatLost
+    exp_alerts: []
+  - eval_time: 10m
+    alertname: FaasMCPTelemetryHeartbeatLost
+    exp_alerts:
+    - exp_labels:
+        app_id: app
+        deployment_id: dep
+        instance_id: replica
+        severity: warn
+        component: vmmd
+        family: mcp_protocol
+        public_status: internal
+      exp_annotations:
+        summary: MCP starter telemetry heartbeats stopped
+        description: An opted-in executing instance has stopped reporting heartbeats after its startup grace period. This indicates missing process telemetry, independently of MCP readiness and tool success. Paused and retired host log lifecycles are excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasMCPProtocolPerformance.md
+- name: opt out and continuously reporting instances stay quiet
+  interval: 30s
+  input_series:
+  - series: vmmd_mcp_telemetry_heartbeat_timestamp_seconds{app_id="optout",instance_id="a"}
+    values: 1+0x40
+  - series: vmmd_mcp_telemetry_instance_started_timestamp_seconds{app_id="optout",instance_id="a"}
+    values: 1+0x40
+  - series: vmmd_mcp_telemetry_loss_alert_enabled{app_id="optout",instance_id="a"}
+    values: 0+0x40
+  - series: vmmd_mcp_telemetry_heartbeat_timestamp_seconds{app_id="idle",instance_id="b"}
+    values: 1+30x40
+  - series: vmmd_mcp_telemetry_instance_started_timestamp_seconds{app_id="idle",instance_id="b"}
+    values: 1+0x40
+  - series: vmmd_mcp_telemetry_loss_alert_enabled{app_id="idle",instance_id="b"}
+    values: 1+0x40
+  alert_rule_test:
+  - eval_time: 15m
+    alertname: FaasMCPTelemetryHeartbeatLost
+    exp_alerts: []
+- name: paused or retired lifecycle removes alert
+  interval: 30s
+  input_series:
+  - series: vmmd_mcp_telemetry_heartbeat_timestamp_seconds{app_id="paused",instance_id="a"}
+    values: 1+0x5 stale
+  - series: vmmd_mcp_telemetry_instance_started_timestamp_seconds{app_id="paused",instance_id="a"}
+    values: 1+0x5 stale
+  - series: vmmd_mcp_telemetry_loss_alert_enabled{app_id="paused",instance_id="a"}
+    values: 1+0x5 stale
+  alert_rule_test:
+  - eval_time: 15m
+    alertname: FaasMCPTelemetryHeartbeatLost
+    exp_alerts: []

@@ -6,9 +6,12 @@ import (
 	"time"
 )
 
-func (m *MemStore) CreateProjectEnvironmentPromotion(_ context.Context, promotion ProjectEnvironmentPromotion, workloads []ProjectEnvironmentPromotionWorkload) (ProjectEnvironmentPromotion, []ProjectEnvironmentPromotionWorkload, error) {
+func (m *MemStore) CreateProjectEnvironmentPromotion(ctx context.Context, promotion ProjectEnvironmentPromotion, workloads []ProjectEnvironmentPromotionWorkload) (ProjectEnvironmentPromotion, []ProjectEnvironmentPromotionWorkload, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return ProjectEnvironmentPromotion{}, nil, err
+	}
 	for _, existing := range m.projectEnvironmentPromotions {
 		if existing.AccountID == promotion.AccountID && existing.IdempotencyKey == promotion.IdempotencyKey {
 			return ProjectEnvironmentPromotion{}, nil, ErrConflict
@@ -61,9 +64,12 @@ func (m *MemStore) CreateProjectEnvironmentPromotion(_ context.Context, promotio
 	return cloneProjectEnvironmentPromotion(promotion), cloneProjectEnvironmentPromotionWorkloads(items), nil
 }
 
-func (m *MemStore) UpdateProjectEnvironmentPromotionVerification(_ context.Context, accountID, id, status, errorMessage string, startedAt, completedAt *time.Time) (ProjectEnvironmentPromotion, error) {
+func (m *MemStore) UpdateProjectEnvironmentPromotionVerification(ctx context.Context, accountID, id, status, errorMessage string, startedAt, completedAt *time.Time) (ProjectEnvironmentPromotion, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return ProjectEnvironmentPromotion{}, err
+	}
 	promotion, ok := m.projectEnvironmentPromotions[id]
 	if !ok || promotion.AccountID != accountID {
 		return ProjectEnvironmentPromotion{}, ErrNotFound
@@ -83,9 +89,12 @@ func (m *MemStore) UpdateProjectEnvironmentPromotionVerification(_ context.Conte
 	return cloneProjectEnvironmentPromotion(promotion), nil
 }
 
-func (m *MemStore) UpdateProjectEnvironmentPromotionVerificationWorkload(_ context.Context, accountID, promotionID, workloadID, status, errorMessage string) (ProjectEnvironmentPromotionWorkload, error) {
+func (m *MemStore) UpdateProjectEnvironmentPromotionVerificationWorkload(ctx context.Context, accountID, promotionID, workloadID, status, errorMessage string) (ProjectEnvironmentPromotionWorkload, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return ProjectEnvironmentPromotionWorkload{}, err
+	}
 	promotion, ok := m.projectEnvironmentPromotions[promotionID]
 	if !ok || promotion.AccountID != accountID {
 		return ProjectEnvironmentPromotionWorkload{}, ErrNotFound
@@ -105,9 +114,12 @@ func (m *MemStore) UpdateProjectEnvironmentPromotionVerificationWorkload(_ conte
 	return ProjectEnvironmentPromotionWorkload{}, ErrNotFound
 }
 
-func (m *MemStore) UpdateProjectEnvironmentPromotionReleaseSets(_ context.Context, accountID, id, targetReleaseSetID, restoredTargetReleaseSetID string) (ProjectEnvironmentPromotion, error) {
+func (m *MemStore) UpdateProjectEnvironmentPromotionReleaseSets(ctx context.Context, accountID, id, targetReleaseSetID, restoredTargetReleaseSetID string) (ProjectEnvironmentPromotion, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return ProjectEnvironmentPromotion{}, err
+	}
 	promotion, ok := m.projectEnvironmentPromotions[id]
 	if !ok || promotion.AccountID != accountID {
 		return ProjectEnvironmentPromotion{}, ErrNotFound
@@ -180,9 +192,12 @@ func (m *MemStore) ListProjectEnvironmentPromotionsBefore(_ context.Context, acc
 	return items, nil
 }
 
-func (m *MemStore) StartProjectEnvironmentPromotionRollback(_ context.Context, accountID, id, idempotencyKey string) (ProjectEnvironmentPromotion, error) {
+func (m *MemStore) StartProjectEnvironmentPromotionRollback(ctx context.Context, accountID, id, idempotencyKey string) (ProjectEnvironmentPromotion, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return ProjectEnvironmentPromotion{}, err
+	}
 	promotion, ok := m.projectEnvironmentPromotions[id]
 	if !ok || promotion.AccountID != accountID {
 		return ProjectEnvironmentPromotion{}, ErrNotFound
@@ -206,9 +221,12 @@ func (m *MemStore) StartProjectEnvironmentPromotionRollback(_ context.Context, a
 	return cloneProjectEnvironmentPromotion(promotion), nil
 }
 
-func (m *MemStore) UpdateProjectEnvironmentPromotionRollback(_ context.Context, accountID, id, status, errorMessage string, completedAt *time.Time) (ProjectEnvironmentPromotion, error) {
+func (m *MemStore) UpdateProjectEnvironmentPromotionRollback(ctx context.Context, accountID, id, status, errorMessage string, completedAt *time.Time) (ProjectEnvironmentPromotion, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return ProjectEnvironmentPromotion{}, err
+	}
 	promotion, ok := m.projectEnvironmentPromotions[id]
 	if !ok || promotion.AccountID != accountID {
 		return ProjectEnvironmentPromotion{}, ErrNotFound
@@ -224,9 +242,12 @@ func (m *MemStore) UpdateProjectEnvironmentPromotionRollback(_ context.Context, 
 	return cloneProjectEnvironmentPromotion(promotion), nil
 }
 
-func (m *MemStore) UpdateProjectEnvironmentPromotionRollbackWorkload(_ context.Context, accountID, promotionID, workloadID, status, restoredTargetDeploymentID, errorMessage string) (ProjectEnvironmentPromotionWorkload, error) {
+func (m *MemStore) UpdateProjectEnvironmentPromotionRollbackWorkload(ctx context.Context, accountID, promotionID, workloadID, status, restoredTargetDeploymentID, errorMessage string) (ProjectEnvironmentPromotionWorkload, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return ProjectEnvironmentPromotionWorkload{}, err
+	}
 	promotion, ok := m.projectEnvironmentPromotions[promotionID]
 	if !ok || promotion.AccountID != accountID {
 		return ProjectEnvironmentPromotionWorkload{}, ErrNotFound
@@ -247,9 +268,12 @@ func (m *MemStore) UpdateProjectEnvironmentPromotionRollbackWorkload(_ context.C
 	return ProjectEnvironmentPromotionWorkload{}, ErrNotFound
 }
 
-func (m *MemStore) UpdateProjectEnvironmentPromotion(_ context.Context, accountID, id, status, errorMessage string, completedAt *time.Time) (ProjectEnvironmentPromotion, error) {
+func (m *MemStore) UpdateProjectEnvironmentPromotion(ctx context.Context, accountID, id, status, errorMessage string, completedAt *time.Time) (ProjectEnvironmentPromotion, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return ProjectEnvironmentPromotion{}, err
+	}
 	promotion, ok := m.projectEnvironmentPromotions[id]
 	if !ok || promotion.AccountID != accountID {
 		return ProjectEnvironmentPromotion{}, ErrNotFound
@@ -265,9 +289,12 @@ func (m *MemStore) UpdateProjectEnvironmentPromotion(_ context.Context, accountI
 	return cloneProjectEnvironmentPromotion(promotion), nil
 }
 
-func (m *MemStore) UpdateProjectEnvironmentPromotionWorkload(_ context.Context, accountID, promotionID, workloadID, status, targetDeploymentID, errorMessage string) (ProjectEnvironmentPromotionWorkload, error) {
+func (m *MemStore) UpdateProjectEnvironmentPromotionWorkload(ctx context.Context, accountID, promotionID, workloadID, status, targetDeploymentID, errorMessage string) (ProjectEnvironmentPromotionWorkload, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return ProjectEnvironmentPromotionWorkload{}, err
+	}
 	promotion, ok := m.projectEnvironmentPromotions[promotionID]
 	if !ok || promotion.AccountID != accountID {
 		return ProjectEnvironmentPromotionWorkload{}, ErrNotFound

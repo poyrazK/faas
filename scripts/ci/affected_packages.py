@@ -15,10 +15,16 @@ package lists derived from `go list`:
            scripts/ci/select_package_tests.py); the mega tier runs it in full
   pinned   the large package a shard owns, whether or not it changed
 
-Global inputs (go.mod, go.sum, this selector and the light workflow) vet
-every package; tests still cover changed packages only. The light tier
-compile-checks importers instead of testing them; the mega tier (ci.yml)
-runs every package's -race tests nightly and before every release.
+A global input (go.mod, go.sum, this selector or the light workflow) puts
+every package in the vet set; tests still cover changed packages only.
+
+A text-contract package (TEXT_CONTRACT_PACKAGES) also counts as changed when
+a file its tests read as text changes: a workflow, an Ansible role, a deploy
+or release script. Its inputs are read from the tests themselves. The
+light tier compile-checks only the importers that use a changed exported
+name (scripts/ci/select_importers.py); the mega tier (ci.yml) vets every
+package and runs every package's -race tests nightly and before every
+release.
 
 Usage:
   git diff --name-only BASE HEAD | scripts/ci/affected_packages.py changed
@@ -26,8 +32,10 @@ Usage:
   git diff --name-only BASE HEAD | scripts/ci/affected_packages.py selective --shard 3
 """
 import argparse
+import glob
 import json
 import os
+import re
 import subprocess
 import sys
 
@@ -53,8 +61,8 @@ INVARIANT_PACKAGES = ("tests/property",)
 
 # Suites too large for the light tier's 10-minute budget (thousands of tests
 # each). A pull request runs only the tests related to its change, without
-# -race; the mega tier runs them in full with -race nightly and before every
-# release. Each is pinned to its own shard so their compiles never share a
+# -race; the mega tier runs them in full with -race nightly (it does not gate
+# releases). Each is pinned to its own shard so their compiles never share a
 # runner: pkg/state and pkg/apid/apidserver also keep separate PostgreSQL
 # services (pkg/state uses the shard's second one).
 SELECTIVE_SHARD = {
@@ -65,6 +73,23 @@ SELECTIVE_SHARD = {
 # Shard-balancing weight of a pinned selective package (compile plus capped
 # test run), so the -race packages are spread around it.
 SELECTIVE_WEIGHT = 6
+
+# Packages whose tests check workflows, Ansible roles and deploy or release
+# scripts as text. Those files are no Go package's input, so without this a
+# change to one ran none of the tests that read it: PR #4926 changed
+# scripts/ci/unit_deploy.sh and broke cmd/gregalectl's unit-lane contract
+# test unseen by the light tier. PR #4950 then changed postgres_capacity's
+# tasks and broke pkg/daemonunitspec's role test the same way; pkg/db's tests
+# read that role's pool budgets.
+TEXT_CONTRACT_PACKAGES = ("cmd/gregalectl", "pkg/daemonunitspec", "pkg/db")
+
+# The ways those tests name a repository file: filepath.Join climbing from the
+# package directory to the repository root, or from the repository root by
+# name (REPO_ROOTS), readRepoFile(t, parts...) and readWorkflow(t, name). One
+# level of call nesting is allowed for filepath.Join(repoRoot(t), ...).
+REPO_JOIN = re.compile(r"\b(filepath\.Join|readRepoFile|readWorkflow)\(((?:[^()]|\([^()]*\))*)\)")
+REPO_ROOTS = ("repoRoot", "repoRoot(t)", "repoRoot()", "root", "repo")
+GO_STRING = re.compile(r'^"([^"\\*]*)"$')
 
 # Relative cost of a package's race test run, used only to balance shards.
 # Unlisted packages weigh 1. Measured from the mega tier's shard timings.
@@ -97,6 +122,52 @@ def go_packages():
     return pkgs
 
 
+def literal_path(parts):
+    """The repository path the leading string-literal parts name: an exact
+    file, or a directory prefix ending in / when a later part is a variable
+    or a glob. Empty when nothing is literal."""
+    names = []
+    for part in parts:
+        m = GO_STRING.match(part)
+        if not m:
+            return "/".join(names) + "/" if names else ""
+        names.append(m.group(1))
+    return "/".join(names)
+
+
+def text_inputs(pkg_dir, root="."):
+    """Repository paths (files, or prefixes ending in /) that the package's
+    tests read as text."""
+    climb = ['".."'] * (pkg_dir.count("/") + 1)
+    found = set()
+    for test in sorted(glob.glob(os.path.join(root, pkg_dir, "*_test.go"))):
+        with open(test, encoding="utf-8") as fh:
+            src = fh.read()
+        for m in REPO_JOIN.finditer(src):
+            args = [a.strip() for a in m.group(2).split(",")]
+            if m.group(1) == "readRepoFile":
+                parts = args[1:]
+            elif m.group(1) == "readWorkflow":
+                parts = ['".github"', '"workflows"'] + args[1:]
+            elif args[:len(climb)] == climb:
+                parts = args[len(climb):]
+            elif args[:1] and args[0] in REPO_ROOTS:
+                parts = args[1:]
+            else:
+                continue
+            path = literal_path(parts)
+            # A literal directory (a role) covers every file under it.
+            if path and not path.endswith("/") and os.path.isdir(os.path.join(root, path)):
+                path += "/"
+            if path:
+                found.add(path)
+    return found
+
+
+def reads(path, inputs):
+    return any(path == i or (i.endswith("/") and path.startswith(i)) for i in inputs)
+
+
 def owning_package(path, pkg_dirs):
     """Nearest enclosing package directory for a changed file, if any."""
     d = os.path.dirname(path)
@@ -109,7 +180,9 @@ def owning_package(path, pkg_dirs):
     return "." if os.path.dirname(path) == "" and "." in pkg_dirs else None
 
 
-def select(paths, pkgs):
+def select(paths, pkgs, contract_inputs=None):
+    """contract_inputs maps a text-contract package to the paths its tests
+    read (text_inputs); None reads them from the tests."""
     paths = [p.strip() for p in paths]
     paths = [p[2:] if p.startswith("./") else p for p in paths if p]
     everything = any(p in GLOBAL_INPUTS for p in paths)
@@ -118,9 +191,14 @@ def select(paths, pkgs):
         owner = owning_package(p, pkgs)
         if owner is not None:
             changed.add(owner)
+    if contract_inputs is None:
+        contract_inputs = {d: text_inputs(d) for d in TEXT_CONTRACT_PACKAGES if d in pkgs}
+    for d, inputs in contract_inputs.items():
+        if d in pkgs and any(reads(p, inputs) for p in paths):
+            changed.add(d)
     # A global input (dependency bump, CI change) vets every package but still
     # tests only changed ones: re-running the whole tree would blow the light
-    # budget, and the mega tier tests everything nightly and before release.
+    # budget, and the mega tier tests everything nightly.
     if everything:
         vet = set(pkgs)
     else:

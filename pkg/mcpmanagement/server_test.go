@@ -1,3 +1,4 @@
+// adr: 1618
 package mcpmanagement
 
 import (
@@ -129,7 +130,7 @@ func TestManagementMCPJourney(t *testing.T) {
 			defer backend.Close()
 			cs, ctx := connectTestServer(t, backend, 0, version)
 			catalog, err := cs.ListTools(ctx, nil)
-			if err != nil || len(catalog.Tools) != 29 {
+			if err != nil || len(catalog.Tools) != 49 {
 				t.Fatalf("catalog=%+v error=%v", catalog, err)
 			}
 			for _, tool := range catalog.Tools {

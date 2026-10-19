@@ -20,7 +20,7 @@
 // Workers and jobs never restore from a snapshot (ADR-138), so every scale
 // from zero is a cold boot. The deployment's first boot passes the full
 // characterization window; later boots of it on the node only show that the
-// process started (ADR-1420), so each is RUNNING well inside the window. A
+// process started (ADR-20261018101500), so each is RUNNING well inside the window. A
 // burst of one message per pool slot shows the pool admitting one worker
 // after another.
 // FAAS_WORKER_SCALE_FROM_ZERO_CYCLES repeats the single-message cycle; each
@@ -175,7 +175,7 @@ func TestWorkerScaleFromZeroMetal(t *testing.T) {
 				w.instanceID, msOrDash(w.token), msOrDash(w.running))
 		}
 	}
-	// ADR-1420: the deployment's first boot passed the full characterization
+	// ADR-20261018101500: the deployment's first boot passed the full characterization
 	// window, so every pool boot after it only has to show its process
 	// started. vmmd's wait_ready phase covers the guest boot and that window;
 	// it was about 11 s per worker before. Disk staging (provision) is timed

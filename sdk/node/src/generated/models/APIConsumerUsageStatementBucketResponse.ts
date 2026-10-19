@@ -23,5 +23,13 @@ export type APIConsumerUsageStatementBucketResponse = {
    * Exact charge for this minute. Negative only on a tiered adjustment line that re-rates billed units into a cheaper step; a revision's total is never negative.
    */
   amount_millicents: number;
+  /**
+   * A minute of the consumer's free trial, billed at zero (ADR-1314).
+   */
+  trial?: boolean;
+  /**
+   * The billed minute's price stream when it is not request: compute_second, response_megabyte or app:<meter> (ADR-1317).
+   */
+  unit?: string;
 };
 

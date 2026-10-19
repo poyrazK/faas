@@ -139,6 +139,9 @@ daemons:
     # local keeps one in-process bucket per node (each node admits the full
     # burst on its own).
     # ratelimit_mode: central
+    # ADR-1520: spend those counters from local leases instead of one
+    # Postgres consult per request. Omitted renders false; needs central.
+    # ratelimit_lease: true
     # Split-box peer identities. These are intentionally separate from
     # `tls` (the daemon has no customer-facing TLS listener) and from
     # `outbound` (which models schedd's single vmmd peer).
@@ -235,6 +238,12 @@ postgresql:
   database: faas
   migration_max_slot: 265
   policy: on-boot
+  # ADR-1344 §8 warm standby: an async streaming replica on a host outside
+  # the fleet, promoted by hand. The address must lie inside overlay.cidr.
+  # standby:
+  #   name: standby-1
+  #   address: 10.42.0.20
+  #   ssh_host: 198.51.100.20
 
 # Release — the immutable release-tuple anchor. PR-0 validates
 # the shape; PR-3 ships the bundle/install path that materialises

@@ -14,6 +14,8 @@ type updateAppCLISurface struct {
 
 var updateAppRequestCLISurfaces = map[string]updateAppCLISurface{
 	"expected_service_binding_fingerprint": {Path: "gregale bindings service apply <app> --plan"},
+	"release_policy":                       {Path: "gregale app <slug> --release-policy", AppFlags: []string{"release-policy"}},
+	"release_probe_paths":                  {Path: "gregale app <slug> --release-probe-paths", AppFlags: []string{"release-probe-paths"}},
 	"visibility":                           {Path: "gregale app <slug> --visibility", AppFlags: []string{"visibility"}},
 	"allowed_service_callers":              {Path: "gregale bindings service configure <app> --file"},
 	"allowed_service_call_scopes":          {Path: "gregale bindings service configure <app> --file"},
@@ -36,6 +38,7 @@ var updateAppRequestCLISurfaces = map[string]updateAppCLISurface{
 	"stop_grace_period_s":                  {Path: "gregale.yaml lifecycle.stop_grace_period_s"},
 	"stop_signal":                          {Path: "gregale.yaml lifecycle.stop_signal"},
 	"request_timeout_s":                    {Path: "gregale app <slug> --request-timeout", AppFlags: []string{"request-timeout"}},
+	"function_concurrency":                 {Path: "gregale app <slug> --function-concurrency / gregale.yaml functions[].concurrency", AppFlags: []string{"function-concurrency"}},
 	"request_rate_limit_rps":               {KnownGap: "no customer CLI setter; API-only today"},
 	"request_rate_limit_burst":             {KnownGap: "no customer CLI setter; API-only today"},
 	"retry_policy":                         {Path: "gregale.yaml retry_policy"},

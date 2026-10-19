@@ -178,12 +178,14 @@ type AccountHandler func(w http.ResponseWriter, r *http.Request, acct state.Acco
 // inject a fresh limiter per test so the bucket doesn't bleed
 // across cases.
 type Middleware struct {
-	Authn    Authenticator
-	Sessions Sessions
-	Lookups  SessionLookup       // live-session-row check; nil disables RequireSession's cookie branch
-	Audit    Auditor             // nil-safe; nil disables audit emit
-	Log      *slog.Logger        // nil-safe; nil disables the Warn path
-	Limiter  *middleware.Limiter // shared per-IP bucket for RequireLimited
+	HostingAutomationEnabled func() bool
+	HostingOIDCEnabled       func() bool
+	Authn                    Authenticator
+	Sessions                 Sessions
+	Lookups                  SessionLookup       // live-session-row check; nil disables RequireSession's cookie branch
+	Audit                    Auditor             // nil-safe; nil disables audit emit
+	Log                      *slog.Logger        // nil-safe; nil disables the Warn path
+	Limiter                  *middleware.Limiter // shared per-IP bucket for RequireLimited
 
 	// CookieDomain is the cookie attribute on the session-cookie
 	// issued/cleared by RequireSession. Empty = omit Domain
@@ -470,6 +472,9 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// (1) Bearer-key branch — fastest path, no DB cross-check.
 		tok := bearerToken(r)
+		if m.hostingAutomation(w, r, tok, next) {
+			return
+		}
 		if api.ValidAPIKeyFormat(tok) {
 			acct, key, err := m.Authn.AuthenticateKey(r.Context(), api.HashAPIKey(tok))
 			// IAM-5 (issue #189): translate the IAM-5 sentinels
@@ -481,17 +486,17 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 			if err != nil {
 				if errors.Is(err, state.ErrAPIKeyExpired) {
 					setBearerChallenge(w, "invalid_token")
-					m.Audit.Emit(r.Context(), "key.expired", nil, map[string]any{
-						"key_id": key.ID,
-					})
+					if m.Audit != nil {
+						m.Audit.Emit(r.Context(), "key.expired", nil, map[string]any{"key_id": key.ID})
+					}
 					api.WriteProblem(w, api.ErrAPIKeyExpired())
 					return
 				}
 				if errors.Is(err, state.ErrAPIKeyRevoked) {
 					setBearerChallenge(w, "invalid_token")
-					m.Audit.Emit(r.Context(), "key.auth_rejected_revoked", nil, map[string]any{
-						"key_id": key.ID,
-					})
+					if m.Audit != nil {
+						m.Audit.Emit(r.Context(), "key.auth_rejected_revoked", nil, map[string]any{"key_id": key.ID})
+					}
 					api.WriteProblem(w, api.ErrAPIKeyRevoked())
 					return
 				}
@@ -783,6 +788,12 @@ func platformTenantSelfPathAllowed(method, path string) bool {
 	suffix := strings.TrimPrefix(path, "/v1/platform-tenant-self/")
 	if suffix == path {
 		return false
+	}
+	if suffix == "product" || suffix == "product/billing" {
+		return method == http.MethodGet
+	}
+	if suffix == "product/start" || suffix == "product/submissions/lookup" {
+		return method == http.MethodPost
 	}
 	if suffix == "customer-operations/submissions/lookup" {
 		return method == http.MethodPost
@@ -1578,6 +1589,8 @@ var mfaAllowlist = []string{
 	"/v1/account/mfa/disable",
 	"/v1/account/mfa/disable-email",
 	"/v1/account/mfa/disable-email/confirm",
+	// The internal durable-mail confirmation page is gated before auth.
+	"/auth/reset/mfa",
 	// IAM-3 (ADR-039) — a customer whose session is mfa_pending
 	// must still be able to list / revoke their active sessions.
 	// The /v1/auth/sessions/{id} route is matched by the prefix

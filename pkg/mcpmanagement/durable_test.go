@@ -25,7 +25,7 @@ func TestRemoteEnvironmentConsentSurvivesRestartWithoutWidening(t *testing.T) {
 	if response.StatusCode != 200 {
 		t.Fatal("account review failed")
 	}
-	form := url.Values{"request_id": {flow.requestID}, "csrf": {flow.csrf}, "decision": {"approve"}, "app_access": {"selected"}, "apps": {"alpha"}, "allow_writes": {"yes"}, "environments": {"shop/staging", "shop/production"}, "environment_writes": {"shop/staging"}}
+	form := url.Values{"request_id": {flow.requestID}, "csrf": {flow.csrf}, "decision": {"approve"}, "app_access": {"selected"}, "apps": {"alpha"}, "allow_writes": {"yes"}, "environments": {"shop/staging", "shop/production"}, "environment_writes": {"shop/staging"}, "request_read_apps": {"alpha"}, "regression_write_apps": {"alpha"}}
 	req, err := http.NewRequest(http.MethodPost, f.server.URL+"/oauth/consent", strings.NewReader(form.Encode()))
 	if err != nil {
 		t.Fatal(err)
@@ -56,7 +56,7 @@ func TestRemoteEnvironmentConsentSurvivesRestartWithoutWidening(t *testing.T) {
 		if err := json.Unmarshal(result["environment_access"], &consent); err != nil {
 			t.Fatal(err)
 		}
-		if consent.DefaultWrite || len(consent.Named) != 2 || !consent.Named["shop/staging"].Write || consent.Named["shop/production"].Write || consent.Named["shop/production"].EnvironmentID != "alice-production" {
+		if consent.RegressionWriteApps["alpha"] != "alice-app" || consent.RequestReadApps["alpha"] != "alice-app" || consent.DefaultWrite || len(consent.Named) != 2 || !consent.Named["shop/staging"].Write || consent.Named["shop/production"].Write || consent.Named["shop/production"].EnvironmentID != "alice-production" {
 			t.Fatal("reviewed environment consent widened or disappeared")
 		}
 		result = callTool(t, ctx, cs, "gregale_list_environments", map[string]any{}, false)

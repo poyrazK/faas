@@ -58,16 +58,17 @@ Commands:
   secrets      Post-bootstrap secrets init (secrets init|rotate|status|stamp; PR-X / issue #911 / ADR-110)
   artifact     Publish or verify release-pinned shared artifacts (artifact publish|verify)
   compute-nodes  Compute-node state and release readiness (add|list|show|release-status|drain|activate|retire)
-  instances    Authenticated instance recovery (force-park|force-cold-boot|force-restart)
+  instances    Authenticated instance recovery (force-park|force-cold-boot|force-restart|wait)
   accounts     Authenticated tenant support and lifecycle controls (list|show|360|activity|suspend|restore|revoke-sessions)
   billing      Operator billing catalog, reconciliation, and webhook diagnostics
   config       Inspect and safely change hot runtime configuration (list|show|history|set|rollback)
   audit        Correlate operator intents and events by trace ID (audit trace)
   builds       Authenticated recovery for stuck builds (builds sweep-stuck)
+  ci           Internal CI planning and metadata (compute disabled)
   jobs         Cross-account job-run diagnosis and guarded cancellation (active|inspect|cancel)
   deployments  Cross-account deployment diagnosis and guarded retry/cancellation (active|inspect|cancel|retry)
   deploy        Provider-neutral node adoption + fleet topology tools (deploy claim|fleet-bundle|prepare-node|join-node|join-fleet|rollback-node|add-node)
-  obs           Operator incident inbox, health, fleet overview, and capacity (obs incidents|health|overview|capacity)
+  obs           Operator incidents, evidence, context, health, fleet overview, and capacity (obs incidents|evidence|context|health|overview|capacity)
   debug         Operator-side smoke harness for the OTel spans writer (debug otel-smoke; ADR-127 PR-D)
   github        GitHub delivery + Check Run recovery (status|retry-delivery|retry-check)
   status        Publish incidents and maintenance (status incident|maintenance ...)
@@ -257,6 +258,8 @@ func run(args []string) int {
 		return cmdGithubDispatch(args[1:])
 	case "status":
 		return cmdStatusDispatch(args[1:])
+	case "ci":
+		return cmdCIDispatch(args[1:])
 	default:
 		fmt.Fprintf(os.Stderr, "gregalectl: unknown command %q\nRun 'gregalectl help' for usage.\n", args[0])
 		return 1

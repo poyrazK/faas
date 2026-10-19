@@ -121,7 +121,7 @@ type RunArgs struct {
 	Now            func() time.Time // injectable for tests
 	// ProvenWorker shortens the window to
 	// api.ProvenWorkerCharacterizationWindow: vmmd booted a declared worker
-	// whose deployment already passed the full window (ADR-1420).
+	// whose deployment already passed the full window (ADR-20261018101500).
 	ProvenWorker bool
 }
 
@@ -312,7 +312,7 @@ func hasBootArg(cmdline, arg string) bool {
 
 // characterizationWindow is how long waitForBind watches for a listener. A
 // declared worker booted with api.ProvenWorkerBootArg only has to show that
-// its process started and stayed up (ADR-1420).
+// its process started and stayed up (ADR-20261018101500).
 func characterizationWindow(args RunArgs) time.Duration {
 	if args.ProvenWorker {
 		return api.ProvenWorkerCharacterizationWindow

@@ -280,12 +280,9 @@ func TestRenderProjectPreview_ShowsAsyncRouteDiff(t *testing.T) {
 	}
 }
 
-// TestPreviewDispatch_BadSlugRejected confirms a malformed slug
-// at the POST handler entrypoint returns 400 rather than
-// dispatching into a (potentially redirect-target-injecting)
-// handler body. Mirrors dashboard_cron_fire.go's
-// dashboardFireCronIDRe regex on the {id} segment of the cron
-// fire-now route.
+// TestPreviewDispatch_BadSlugRejected confirms that the
+// account-scoped project lookup hides a malformed/nonexistent slug
+// before dispatching into the POST handler body.
 func TestPreviewDispatch_BadSlugRejected(t *testing.T) {
 	srv, cookie := apidserver.NewAuthedDashboardServer(t)
 	rec := httptest.NewRecorder()
@@ -296,7 +293,9 @@ func TestPreviewDispatch_BadSlugRejected(t *testing.T) {
 	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	r.AddCookie(cookie)
 	srv.ServeHTTP(rec, r)
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("uppercase slug on POST /preview: code = %d, want 400\nbody = %s", rec.Code, rec.Body.String())
+	// Project access resolves the addressed project before the handler
+	// (#4882); an uppercase slug names no project, so it is refused as absent.
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("uppercase slug on POST /preview: code = %d, want 404\nbody = %s", rec.Code, rec.Body.String())
 	}
 }

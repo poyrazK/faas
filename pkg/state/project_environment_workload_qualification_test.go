@@ -10,16 +10,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-type workloadQualificationTestStore interface {
-	state.Store
-	state.ProjectReleaseSetStore
-	state.ProjectReleaseSetReader
-	state.ProjectEnvironmentQualificationStore
-	state.ProjectEnvironmentWorkloadQualificationStore
-	state.ProjectEnvironmentWorkloadSpecStore
-	state.ProjectEnvironmentPromotionReleaseSetStore
-	state.ProjectPromotionDeploymentStore
-}
+type workloadQualificationTestStore = contractTestStore
 
 func TestMemQualificationPinsWorkloadConfigurations(t *testing.T) {
 	testQualificationPinsWorkloadConfigurations(t, state.NewMemStore())

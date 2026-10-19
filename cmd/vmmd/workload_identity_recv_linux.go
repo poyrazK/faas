@@ -96,7 +96,7 @@ func (r *WorkloadIdentityReceiver) handleGuestStream(instance string, conn net.C
 		_ = r.writeResponse(conn, workloadIdentityResponse{Error: "invalid_request"})
 		return "protocol", fmt.Errorf("workload identity request: %w", err)
 	}
-	if req.Audience == workloadidentity.OutboundRelayAudience {
+	if req.Audience == workloadidentity.OutboundRelayAudience || workloadidentity.IsRehearsalRelayAudience(req.Audience) {
 		// ADR-989: the relay audience is minted only by vmmd for its own
 		// outboundd connections, never for guest code.
 		return r.respond(conn, workloadIdentityInvalidAudience, workloadIdentityResponse{Error: "invalid_audience"})
@@ -107,7 +107,10 @@ func (r *WorkloadIdentityReceiver) handleGuestStream(instance string, conn net.C
 	if r.mgr == nil {
 		return r.respond(conn, workloadIdentityInstanceNotFound, workloadIdentityResponse{Error: "instance_not_found"})
 	}
-	appID, accountID, err := r.mgr.WorkloadTokenIdentity(instance)
+	appID, accountID, err := r.mgr.WorkloadTokenIdentity(r.ctx, instance)
+	if errors.Is(err, fcvm.ErrRehearsalExternalActionDenied) {
+		return r.respond(conn, workloadIdentityInvalidAudience, workloadIdentityResponse{Error: "rehearsal_identity_unavailable"})
+	}
 	if err != nil || appID == "" || accountID == "" {
 		return r.respond(conn, workloadIdentityInstanceNotFound, workloadIdentityResponse{Error: "instance_not_found"})
 	}

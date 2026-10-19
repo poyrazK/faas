@@ -74,12 +74,7 @@ func TestValidPlatformTenantWebhookFilter(t *testing.T) {
 	}
 }
 
-type platformTenantReconciliationWebhookFixture interface {
-	state.Store
-	state.PlatformTenantStore
-	state.PlatformTenantReconciliationStore
-	state.PlatformTenantWebhookStore
-}
+type platformTenantReconciliationWebhookFixture = contractTestStore
 
 func TestMemPlatformTenantReconciliationAppliedWebhook(t *testing.T) {
 	testPlatformTenantReconciliationAppliedWebhook(t, state.NewMemStore(), context.Background())
@@ -191,11 +186,7 @@ func testPlatformTenantReconciliationAppliedWebhook(t *testing.T, store platform
 	}
 }
 
-type platformTenantCustomerLifecycleWebhookFixture interface {
-	state.Store
-	state.PlatformTenantStore
-	state.PlatformTenantWebhookStore
-}
+type platformTenantCustomerLifecycleWebhookFixture = contractTestStore
 
 func TestMemPlatformTenantCustomerLifecycleWebhooks(t *testing.T) {
 	testPlatformTenantCustomerLifecycleWebhooks(t, state.NewMemStore(), context.Background())

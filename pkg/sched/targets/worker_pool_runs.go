@@ -1,6 +1,6 @@
 package targets
 
-// adr: 1420 — worker pools reconcile off the scheduler loop.
+// adr: 20261018101500 — worker pools reconcile off the scheduler loop.
 
 import (
 	"context"
@@ -39,7 +39,7 @@ func (r *workerPoolRuns) add(pool ScopedWorkerPoolEngine, app state.App) {
 }
 
 // startWorkerPoolRuns reconciles worker pools off the scheduler loop
-// (ADR-1420). A reconcile that admits workers returns only when they are
+// (ADR-20261018101500). A reconcile that admits workers returns only when they are
 // ready, a whole characterization window for a worker, and the loop also
 // runs the reaper, watchdog, cron and job dispatch. Each account's apps run
 // in tick order in one background run, so each reconcile computes the

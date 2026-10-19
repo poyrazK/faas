@@ -152,7 +152,7 @@ func (s *server) prepareIsolatedProjectEnvironmentObjectStorageBinding(
 	if err != nil {
 		return "", 0, fmt.Errorf("generate isolated object storage credential: %w", err)
 	}
-	recipient := setSecretRecipient()
+	recipient := hostSecretRecipient()
 	sealed, err := secretbox.SealBytes(recipient, s3gateway.CredentialSecretNamespace, []byte(secretAccessKey), 64)
 	if err != nil {
 		return "", 0, fmt.Errorf("seal isolated object storage credential: %w", err)

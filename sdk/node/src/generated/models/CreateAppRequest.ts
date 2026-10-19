@@ -75,6 +75,10 @@ export type CreateAppRequest = {
    */
   request_timeout_s?: number;
   /**
+   * Requests one Node or Python function worker may serve at once (ADR-1342). Omitted, 0 or 1 keeps one request per worker; the plan's concurrency_per_vm bound caps it. Python runs sync handlers on threads.
+   */
+  function_concurrency?: number;
+  /**
    * Lifecycle contract for the app. Default is request; service/worker/job are plan-gated.
    */
   execution_mode?: 'request' | 'service' | 'worker' | 'job';
@@ -155,6 +159,14 @@ export type CreateAppRequest = {
    * Maximum lifetime of a superseded deployment for revision-pinned requests; zero disables pinning.
    */
   revision_pin_ttl_seconds?: number;
+  /**
+   * Default rollout for production releases that name no rollout policy (ADR-1446, ADR-1450). Omit for safe.
+   */
+  release_policy?: 'safe' | 'fast' | 'immediate';
+  /**
+   * Up to 3 concrete GET paths the default rollout probe checks instead of / (ADR-1449).
+   */
+  release_probe_paths?: Array<string>;
   /**
    * Per-app streaming flag. Omitted at create-time → apid applies the plan default (issue #471).
    */

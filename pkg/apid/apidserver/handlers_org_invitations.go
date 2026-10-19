@@ -151,12 +151,17 @@ func (s *server) transferOrgOwnership(w http.ResponseWriter, r *http.Request, ac
 		}
 		return
 	}
-	s.audit.Emit(r.Context(), "org.ownership_transferred", &acct.ID, map[string]any{
+	// The committed transfer demoted the caller, invalidating this request's
+	// own access fence: audit delivery and the response read must not run
+	// under it, or the fenced write revokes the request and a successful
+	// transfer answers 403.
+	responseCtx := state.WithoutOrgAccessFence(r.Context())
+	s.audit.Emit(responseCtx, "org.ownership_transferred", &acct.ID, map[string]any{
 		"org_id":       mem.OrgID,
 		"from_account": acct.ID,
 		"to_account":   newOwnerID,
 	})
-	updated, ok := s.rehydrateOrg(r.Context(), w, mem)
+	updated, ok := s.rehydrateOrg(responseCtx, w, mem)
 	if !ok {
 		return
 	}

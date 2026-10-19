@@ -556,6 +556,10 @@ func renderedUnitEnvironment(t *testing.T, unit daemonunit.Unit, sessionKeyPath,
 		t.Fatalf("EnvironmentFile = %q, want %q", unit.EnvironmentFile, wantEnvironmentFiles)
 	}
 	want := map[string]string{
+		// Optional mail readers stay absent: the default-off production boot
+		// must not load either credential.
+		"FAAS_INTERNAL_MAIL_VERIFICATION_IDENTITY_PATH":          filepath.Join(root, "optional-mail-verification.age"),
+		"FAAS_INTERNAL_MAIL_VERIFICATION_PREVIOUS_IDENTITY_PATH": filepath.Join(root, "optional-mail-verification-previous.age"),
 		"FAAS_SESSION_KEY":              sessionKeyPath,
 		"FAAS_HOST_AGE_IDENTITY_PATH":   hostAgePath,
 		"FAAS_FLEET_AGE_IDENTITY_PATH":  fleetAgePath,
@@ -569,6 +573,9 @@ func renderedUnitEnvironment(t *testing.T, unit daemonunit.Unit, sessionKeyPath,
 	seen := make(map[string]bool, len(want))
 	var env []string
 	for _, kv := range unit.Environment {
+		if strings.HasPrefix(kv.Key, "FAAS_INTERNAL_MAIL_") && strings.HasSuffix(kv.Key, "_ENABLED") && kv.Value != "0" {
+			t.Fatalf("production boot fixture must leave internal mail disabled: %s=%s", kv.Key, kv.Value)
+		}
 		value := kv.Value
 		if replacement, ok := want[kv.Key]; ok {
 			value = replacement

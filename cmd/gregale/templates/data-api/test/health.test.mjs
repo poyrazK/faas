@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import http from 'node:http'
+import { EventEmitter } from 'node:events'
 import { createServer } from '../server.mjs'
 import { createHealth } from '../health.mjs'
 import { runtimeConfig, limits } from '../config.mjs'
@@ -115,4 +116,29 @@ test('concurrent hung probes have a total deadline and share bounded engine and 
   release({ paused: false })
   assert.equal((await next).checks.refresh, 'active')
   assert.equal(probes, 1, 'a caller deadline must not queue a second engine SQL check')
+})
+
+test('a retained readiness probe expires at its hard cap and a fresh probe recovers', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  let probes = 0, destroyed = 0
+  t.mock.method(http, 'get', (_options, respond) => {
+    const request = new EventEmitter()
+    request.destroy = () => { destroyed++ }
+    if (++probes > 1) queueMicrotask(() => respond({ statusCode: 200, destroy() {} }))
+    return request
+  })
+  const health = createHealth({ coordinatedRefresh: false }, 1, 2)
+  const first = health.sql()
+  t.mock.timers.tick(limits.healthProbeMs)
+  assert.equal(await first, 'unknown')
+  const shared = health.sql()
+  t.mock.timers.tick(limits.healthProbeMs)
+  assert.equal(await shared, 'unknown')
+  assert.equal(probes, 1, 'caller timeouts must not add SQL waiters')
+  t.mock.timers.tick(limits.queryMs - 2 * limits.healthProbeMs)
+  // Let the shared probe's finally handler remove the expired request.
+  await Promise.resolve()
+  assert.equal(destroyed, 1)
+  assert.equal(await health.sql(), 'ready')
+  assert.equal(probes, 2, 'recovery uses a fresh probe after the hard cap')
 })

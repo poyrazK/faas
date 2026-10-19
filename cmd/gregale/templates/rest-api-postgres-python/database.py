@@ -56,9 +56,10 @@ class Database:
         self._restore_timeout = min(restore_timeout, 1.5)
         self._shutdown_timeout = shutdown_timeout
         self._active = set()
-        self._starting = self._restoring = self._closing = None
+        self._starting = self._restoring = self._closing = self._checkpointing = None
         self._restore_cancel = None
         self._started = self._closed = self._restore_failed = False
+        self._checkpointed = self._drained = False
         self.generation = 0
 
         async def factory(config, cancel):
@@ -89,6 +90,10 @@ class Database:
         async def apply(snapshot, cancel):
             if "MIGRATION_DATABASE_URL" in snapshot.secrets:
                 raise DatabaseError("migration_credentials_forbidden")
+            # A pool built after the checkpoint drain would be captured; restore
+            # rereads the latest snapshot anyway.
+            if self._checkpointed and self._restoring is None:
+                raise DatabaseError("database_unavailable")
             await consumer.apply(snapshot, cancel)
 
         self.coordinator = AsyncSecretReloadCoordinator(
@@ -137,7 +142,8 @@ class Database:
             work.task.cancel()
 
     async def query(self, text, parameters=(), *, write=False):
-        if not self._started or self._closed or self._restoring is not None or self._restore_failed:
+        if (not self._started or self._closed or self._restoring is not None or self._restore_failed
+                or self._checkpointed):
             raise DatabaseError("database_unavailable")
         if len(self._active) >= 16:
             raise DatabaseError("database_busy")
@@ -172,13 +178,46 @@ class Database:
             raise DatabaseError("database_unavailable") from None
 
     async def reload(self):
-        if not self._started or self._closed:
+        if not self._started or self._closed or self._checkpointed:
             raise DatabaseError("database_unavailable")
         await self.coordinator.reload(timeout=self._sql_timeout)
+
+    async def checkpoint(self):
+        """before_checkpoint (ADR-351): close admission, cancel unfinished work
+        and wait until every session has closed, so a capture holds no
+        connection or open transaction. A guest is then captured or destroyed,
+        never resumed, so only restore() reopens the pool. A retried capture
+        finds it drained; a call after a failed drain drains again."""
+        if not self._started or self._closed:
+            raise DatabaseError("database_unavailable")
+        if self._restoring is not None and not self._restoring.done():
+            raise DatabaseError("database_busy")
+        if self._drained:
+            return
+        if self._checkpointing is None or self._checkpointing.done():
+            self._checkpointed = True
+            for work in tuple(self._active):
+                self._cancel(work)
+            self.binding.invalidate()
+            self._checkpointing = asyncio.create_task(self._drain_for_checkpoint())
+            self._checkpointing.add_done_callback(_consume)
+        await asyncio.shield(self._checkpointing)
+
+    async def _drain_for_checkpoint(self):
+        try:
+            await self.binding.wait_for_retirement(self._restore_timeout)
+            if self._closed:
+                raise DatabaseError("database_unavailable")
+            self._drained = True
+        except BaseException:
+            logger.warning("database_checkpoint_drain_failed")
+            raise DatabaseError("database_unavailable") from None
 
     async def restore(self):
         if not self._started or self._closed:
             raise DatabaseError("database_unavailable")
+        if self._checkpointing is not None and not self._checkpointing.done():
+            raise DatabaseError("database_busy")
         if self._restoring is not None and self._restoring.done():
             self._restoring = None
         owner = self._restoring is None
@@ -222,6 +261,7 @@ class Database:
                     raise DatabaseError("database_unavailable")
                 self.generation += 1
                 self._restore_failed = False
+                self._checkpointed = self._drained = False
         except BaseException:
             self.binding.invalidate()
             logger.warning("database_restore_failed")

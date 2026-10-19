@@ -1,4 +1,4 @@
-// adr: 1420 — proven worker deployments characterize briefly.
+// adr: 20261018101500 — proven worker deployments characterize briefly.
 package fcvm
 
 import (

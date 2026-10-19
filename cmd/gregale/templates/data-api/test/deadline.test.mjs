@@ -163,6 +163,30 @@ test('an upstream wait gets one 504 with a request ID, aborts HTTP work and reco
   assert.doesNotMatch(JSON.stringify(f.state.logs) + response.body, /private-|postgres:/)
 })
 
+test('an early socket timeout waits for the total deadline before responding or aborting', async t => {
+  const originalRequest = http.request
+  let upstream
+  t.mock.method(http, 'request', function (...args) {
+    const request = Reflect.apply(originalRequest, this, args)
+    if (args[0]?.signal) upstream = request
+    return request
+  })
+  const f = await fixture(t)
+  const request = f.start('/rest/v1/notes', 'POST')
+  await until(() => f.state.calls.length === 1)
+  assert.ok(upstream)
+  f.advance(limits.queryMs - 1)
+  upstream.emit('timeout')
+  assert.equal(upstream.destroyed, false)
+  assert.equal(request.observed.status, null)
+  f.advance(1)
+  const response = await request.result
+  assert.equal(response.status, 504)
+  assert.equal(JSON.parse(response.body).code, 'request_deadline_exceeded')
+  assert.deepEqual(f.state.logs[0].deadline, { phase: 'upstream', elapsed_ms: limits.queryMs, dispatched: true })
+  await until(() => f.state.closed === 1)
+})
+
 test('steady response chunks cannot extend the total deadline or retain an active slot', async t => {
   const f = await fixture(t)
   const request = f.start()
@@ -295,4 +319,30 @@ test('failed verification is a completed phase observation', async t => {
   assert.equal((await request.result).status, 401)
   assert.deepEqual(f.state.logs[0].timings, { verification: { duration_ms: 21, complete: true } })
   assert.equal(f.state.calls.length, 0)
+})
+
+
+test('an early socket timeout cannot preempt the total request deadline', async t => {
+  const f = await fixture(t)
+  const original = http.request
+  let outgoing
+  t.mock.method(http, 'request', function (options, ...args) {
+    const request = original.call(this, options, ...args)
+    if (options.signal) outgoing = request
+    return request
+  })
+  const pending = f.start()
+  await until(() => f.state.calls.length === 1)
+  f.advance(limits.queryMs - 1, false)
+  outgoing.emit('timeout')
+  await new Promise(setImmediate)
+  assert.equal(pending.observed.status, null)
+  f.advance(1)
+  // Flush the timer armed when the request began; elapsed time is authoritative.
+  t.mock.timers.tick(limits.queryMs)
+  const result = await pending.result
+  assert.equal(result.status, 504)
+  assert.equal(JSON.parse(result.body).code, 'request_deadline_exceeded')
+  await until(() => f.state.logs.length === 1)
+  assert.equal(f.state.logs[0].deadline.dispatched, true)
 })

@@ -20,7 +20,7 @@ func (s *PostgresStore) RecordCreationReceipt(ctx context.Context, r CreationRec
 	if err != nil {
 		return err
 	}
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.catalog.Begin(ctx)
 	if err != nil {
 		return mapPostgresError(err)
 	}
@@ -77,7 +77,7 @@ func (s *PostgresStore) RecordCreationReceipt(ctx context.Context, r CreationRec
 }
 
 func (s *PostgresStore) GetCreationReceipt(ctx context.Context, kind, backend, resource string) (CreationReceipt, error) {
-	row, err := new(sqlc.Queries).ReadManagedPostgresCreationReceipt(ctx, s.pool, sqlc.ReadManagedPostgresCreationReceiptParams{Kind: kind, BackendID: backend, ResourceID: resource})
+	row, err := new(sqlc.Queries).ReadManagedPostgresCreationReceipt(ctx, s.catalog, sqlc.ReadManagedPostgresCreationReceiptParams{Kind: kind, BackendID: backend, ResourceID: resource})
 	if err != nil {
 		return CreationReceipt{}, mapPostgresError(err)
 	}
@@ -105,7 +105,7 @@ func (s *PostgresStore) RecordCreationCleanup(ctx context.Context, r CreationRec
 	if err != nil {
 		return err
 	}
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.catalog.Begin(ctx)
 	if err != nil {
 		return mapPostgresError(err)
 	}

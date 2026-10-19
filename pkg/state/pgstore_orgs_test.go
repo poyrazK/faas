@@ -39,7 +39,7 @@ func newPgStore(t *testing.T) *PgStore {
 
 func TestPgStore_OrgSurface_RoundTripsAndLastOwnerGuard(t *testing.T) {
 	s := newPgStore(t)
-	pool := s.pool
+	pool := s.pool.Pool
 	ctx := context.Background()
 
 	// Seed an account (the slug / FK on org_memberships.account_id does
@@ -244,7 +244,7 @@ func pgStoreSeedAccounts(t *testing.T, ctx context.Context, pool *pgxpool.Pool, 
 // not cover.
 func TestPgStore_OrgLookups_ByPersonalAndSlug(t *testing.T) {
 	s := newPgStore(t)
-	pool := s.pool
+	pool := s.pool.Pool
 	ctx := context.Background()
 	pgStoreSeedAccounts(t, ctx, pool, "00000000-0000-0000-0000-0000000000d2")
 
@@ -353,7 +353,7 @@ func TestPgStore_OrgUpdates_PlanStatusDelete(t *testing.T) {
 // (success + ErrNotFound), and ListOrgMembers happy path.
 func TestPgStore_MembershipOps_AllBranches(t *testing.T) {
 	s := newPgStore(t)
-	pool := s.pool
+	pool := s.pool.Pool
 	ctx := context.Background()
 	pgStoreSeedAccounts(t, ctx, pool,
 		"00000000-0000-0000-0000-0000000000e1",
@@ -493,7 +493,7 @@ func TestPgStore_InvitationOps_AllBranches(t *testing.T) {
 // not hit. These flow through pgx error mapping → store sentinel errors.
 func TestPgStore_ConsumeOrgInvitation_ErrorPaths(t *testing.T) {
 	s := newPgStore(t)
-	pool := s.pool
+	pool := s.pool.Pool
 	ctx := context.Background()
 	pgStoreSeedAccounts(t, ctx, pool,
 		"00000000-0000-0000-0000-0000000000f1",
@@ -631,7 +631,7 @@ func TestPgStore_CreateAccountWithPersonalOrg_SlugDeterministic(t *testing.T) {
 //   - to is removed → ErrNotFound
 func TestPgStore_TransferOrgOwnership_AllBranches(t *testing.T) {
 	s := newPgStore(t)
-	pool := s.pool
+	pool := s.pool.Pool
 	ctx := context.Background()
 
 	ownerID := "00000000-0000-0000-0000-0000000000a1"
@@ -744,7 +744,7 @@ func TestPgStore_TransferOrgOwnership_AllBranches(t *testing.T) {
 // the invitation-accept path.
 func TestPgStore_ConsumeOrgInvitation_MemberCap(t *testing.T) {
 	s := newPgStore(t)
-	pool := s.pool
+	pool := s.pool.Pool
 	ctx := context.Background()
 
 	o, err := s.CreateOrg(ctx, newTestOrg("consume-cap-pg"))

@@ -16,12 +16,17 @@ deletion reconciliation remain safe while provisioning is disabled.
 Plan entitlements are enforced before provider work and again at the atomic
 database reservation boundary:
 
-| Plan | Databases | Storage | Restore window | Classes |
-| --- | ---: | ---: | ---: | --- |
-| Free | 0 | — | — | — |
-| Hobby | 1 | 10 GiB | 7 days | development |
-| Pro | 3 | 50 GiB | 7 days | development, burstable |
-| Scale | 10 | 100 GiB | 7 days | development, burstable, production |
+| Plan | Databases | Pooled storage | Compute per month | Restore window | Classes |
+| --- | ---: | ---: | ---: | ---: | --- |
+| Free | 1 | 0.5 GiB | 5 CU-hours | 7 days | development |
+| Hobby | 1 | 1 GiB | 25 CU-hours | 7 days | development |
+| Pro | 3 | 5 GiB | 75 CU-hours | 7 days | development, burstable |
+| Scale | 10 | 20 GiB | 200 CU-hours | 7 days | development, burstable, production |
+
+Storage is pooled across the account's databases: one database may use the
+whole pool. Storage and compute are limits, not billed overage, until managed
+PostgreSQL is invoiced
+([ADR-1430](adr/1430-plan-entitlements-from-october-2026-cogs-report.md)).
 
 All current plans use provider-managed compute suspension. Always-on database
 compute is not included in the bundled plans, and requests that disable
@@ -278,15 +283,6 @@ credential mode and the dedicated `api` schema. See the
 and schema refresh. Neon advertises this mode only when the backend explicitly
 sets `data_api_enabled: true` and passes fresh qualification for that configuration.
 
-Application Auth ([ADR-1190](adr/1190-application-auth.md)) uses the separately
-qualified `auth` credential mode. GoTrue enables row-level security on every
-table it creates, so the auth login acts as a dedicated non-login owner of only
-the `auth` and `gregale_auth` schemas. That owner never joins the customer
-schema owner and has no database `CREATE`, temporary-object or customer-schema
-access. Issuance fails closed when an `auth` schema already belongs to another
-role. Neon advertises the mode only when the backend sets `auth_enabled: true`
-and passes fresh qualification including the `auth_credentials_probe`.
-
 Neon's create-project operation is non-idempotent. The adapter never retries
 that POST at the HTTP layer. It assigns a deterministic, hashed project name,
 discovers that exact name before creation, and returns the Neon project ID as
@@ -316,7 +312,6 @@ codes without response bodies, connection strings, endpoint hosts, or API keys.
 | `migration` | Direct required; release tasks only | Schema changes through a stable non-login schema owner; no role/database administration or replication |
 | `read_only` | Replica when available, otherwise pooled/direct primary | Public-schema SELECT and sequence inspection; no sequence advancement, DML, DDL, administration or RLS bypass |
 | `data_api` | Pooled, with direct fallback | `api`-schema DML only for the [Data API](data-api.md); RLS enforced |
-| `auth` | Direct required; serving and release tasks | Acts as the owner of only the `auth` and `gregale_auth` schemas for [application Auth](adr/1190-application-auth.md); no customer-schema access |
 
 Runtime logins cannot create tables, temporary objects, schemas, or roles,
 truncate tables, or bypass row-level security. Runtime grants cover existing
@@ -378,6 +373,14 @@ committed database changes. The PostgreSQL starters use direct
 and a 120-second statement timeout. Serving startup performs no DDL. For other
 frameworks, declare your migration tool as the release command and configure it
 to use the migration connection.
+
+A rollback never undoes a migration. A rollback to a release that has not
+served since a later release command ran is refused with
+`rollback_crosses_release`, which gives the `gregale postgres restore`
+command for each database the release commands can migrate, at the moment
+before the earliest of them
+([ADR-1448](adr/1448-releases-that-change-the-database.md); see
+[Releases that change the database](deploys.md#releases-that-change-the-database)).
 
 Migration sessions automatically switch to the schema owner. `SET ROLE NONE`
 removes DDL access until that owner is selected again, so normal migrations do
@@ -523,10 +526,10 @@ resource created inside the current, still-open window owes no completed window 
 so its missing first observation does not block; once that window closes it needs
 coverage like any other resource. Missing or stale observations fail
 closed; an existing named database remains idempotent and can still be
-reconciled. The plan's per-database storage entitlement is multiplied by the
-plan's database-count allowance, converted to the canonical byte-second meter,
-and intersected with the operator ceiling; compute, history,
-egress, and spend remain operator-configured COGS ceilings. This keeps the
+reconciled. The plan's pooled storage, held for a whole billing month, becomes
+the canonical byte-second ceiling, and its monthly compute units the
+compute-unit-second ceiling; both are intersected with the operator ceilings,
+while history, egress, and spend remain operator-configured COGS ceilings. This keeps the
 admission path provider-neutral and prevents a plan or provider adapter from
 raising the operator's safety budget.
 

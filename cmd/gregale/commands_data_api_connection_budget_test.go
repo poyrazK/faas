@@ -21,6 +21,72 @@ func connectionBudgetFixture() api.DataAPIConnectionBudgets {
 	return api.DataAPIConnectionBudgets{Version: 1, App: "notes", State: "within_budget", Databases: []api.ManagedPostgresConnectionBudget{{Version: 1, DatabaseID: uuid.NewString(), DatabaseName: "primary", State: "within_budget", CheckedAt: now.Format(time.RFC3339Nano), ExpiresAt: now.Add(api.DataAPIConnectionBudgetMaxAge).Format(time.RFC3339Nano), Model: "canonical_runtime_pools", Reasons: []string{}, Demand: api.ConnectionBudgetDemand{DataAPIResidentEstimate: 2, DataAPIWakeEstimate: 6, ControlHeadroom: 1, ModeledPeakConnections: 7}, Capacity: api.ConnectionBudgetCapacity{State: "verified", UsableConnections: &capacity}}}}
 }
 
+func TestDataAPIConnectionBudgetRuntimeCoverageConsistency(t *testing.T) {
+	b := connectionBudgetFixture().Databases[0]
+	b.Inventory.DataAPIConsumers, b.Inventory.ResidentInstances, b.Inventory.ParkedInstances = 1, 2, 1
+	b.Demand.DataAPIResidentEstimate = 4
+	b.Demand.RuntimeObservations = &api.ConnectionBudgetRuntimeObservations{State: "partial", Source: "workload_report", ObservedInstances: 1, UnobservedInstances: 1, ParkedInstances: 1, ConfiguredConnections: 2, CheckedAt: b.CheckedAt, ExpiresAt: b.ExpiresAt}
+	now := time.Now()
+	if !validDataAPIConnectionBudget(b, now) {
+		t.Fatal("valid coverage rejected")
+	}
+	for _, change := range []func(*api.ConnectionBudgetRuntimeObservations){
+		func(r *api.ConnectionBudgetRuntimeObservations) { r.Source = "private-provider" },
+		func(r *api.ConnectionBudgetRuntimeObservations) { r.State = "observed" },
+		func(r *api.ConnectionBudgetRuntimeObservations) { r.ConfiguredConnections = 999 },
+		func(r *api.ConnectionBudgetRuntimeObservations) { r.UnobservedInstances = 0 },
+		func(r *api.ConnectionBudgetRuntimeObservations) { r.ObservedInstances = -1 },
+		func(r *api.ConnectionBudgetRuntimeObservations) {
+			r.CheckedAt = now.Add(time.Hour).Format(time.RFC3339Nano)
+		},
+		func(r *api.ConnectionBudgetRuntimeObservations) {
+			r.ExpiresAt = now.Add(-time.Second).Format(time.RFC3339Nano)
+		},
+		func(r *api.ConnectionBudgetRuntimeObservations) { r.CheckedAt = "" },
+	} {
+		invalid := b
+		coverage := *b.Demand.RuntimeObservations
+		change(&coverage)
+		invalid.Demand.RuntimeObservations = &coverage
+		if validDataAPIConnectionBudget(invalid, now) {
+			t.Fatal("invalid coverage accepted", coverage)
+		}
+	}
+}
+
+func TestDataAPIConnectionBudgetCapacityFreshnessAndZeroCeiling(t *testing.T) {
+	now := time.Now().UTC()
+	value := connectionBudgetFixture().Databases[0]
+	zero := int64(0)
+	value.State = "over_budget"
+	value.Capacity.UsableConnections = &zero
+	value.Capacity.Source = "provider_api"
+	value.Capacity.CheckedAt = value.CheckedAt
+	value.Capacity.ExpiresAt = value.ExpiresAt
+	if !validDataAPIConnectionBudget(value, now.Add(time.Second)) {
+		t.Fatal("verified zero ceiling rejected")
+	}
+	for _, change := range []func(*api.ManagedPostgresConnectionBudget){
+		func(b *api.ManagedPostgresConnectionBudget) { b.Capacity.Source = "private-provider" },
+		func(b *api.ManagedPostgresConnectionBudget) {
+			b.Capacity.CheckedAt = now.Add(time.Minute).Format(time.RFC3339Nano)
+		},
+		func(b *api.ManagedPostgresConnectionBudget) {
+			b.Capacity.ExpiresAt = now.Add(-time.Second).Format(time.RFC3339Nano)
+		},
+		func(b *api.ManagedPostgresConnectionBudget) {
+			b.Capacity.ExpiresAt = now.Add(time.Hour).Format(time.RFC3339Nano)
+		},
+		func(b *api.ManagedPostgresConnectionBudget) { b.Capacity.Source = "" },
+	} {
+		invalid := value
+		change(&invalid)
+		if validDataAPIConnectionBudget(invalid, now.Add(time.Second)) {
+			t.Fatal("invalid capacity metadata accepted", invalid.Capacity)
+		}
+	}
+}
+
 func TestDataAPIConnectionBudgetReadRejectsUnsafeAndInconsistentMetadata(t *testing.T) {
 	for _, mode := range []string{"within", "over", "unknown", "not-applicable", "missing", "missing-count", "wrong-app", "private-name", "private-reason", "stale", "future", "negative", "inconsistent", "unverified-green", "enforced", "duplicate", "truncated-green"} {
 		t.Run(mode, func(t *testing.T) {
@@ -121,5 +187,24 @@ func TestDataAPIConnectionBudgetHumanOutputShowsPlanningAndUnknownCapacity(t *te
 	}
 	if !strings.Contains(stdout.String(), "planning only") || !strings.Contains(stdout.String(), "verified usable capacity unknown") {
 		t.Fatal(fmt.Sprint(stdout))
+	}
+}
+
+func TestConnectionBudgetAcceptsEnforcedSharedCeilings(t *testing.T) {
+	budget := connectionBudgetFixture().Databases[0]
+	budget.Model = "qualified_shared_connection_limits"
+	budget.Enforced = true
+	budget.Demand = api.ConnectionBudgetDemand{ModeledPeakConnections: 15}
+	if !validDataAPIConnectionBudget(budget, time.Now()) {
+		t.Fatal("valid enforced budget rejected", budget)
+	}
+	budget.State = "over_budget"
+	budget.Reasons = []string{"reserved_capacity_exceeds_allocation"}
+	if !validDataAPIConnectionBudget(budget, time.Now()) {
+		t.Fatal("replication worker overage was hidden", budget)
+	}
+	budget.Enforced = false
+	if validDataAPIConnectionBudget(budget, time.Now()) {
+		t.Fatal("unbound planning was labeled enforced")
 	}
 }

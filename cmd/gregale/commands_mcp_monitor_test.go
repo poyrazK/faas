@@ -199,6 +199,7 @@ func TestMCPCatalogOAuthSetup(t *testing.T) {
 		t.Fatal(err)
 	}
 	calls := 0
+	expectedRefresh, expectedBrowser := "secret:REFRESH", ""
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
 		if r.Method != http.MethodPut || r.URL.Path != "/v1/apps/oauth-app/mcp-catalog-monitor" {
@@ -208,7 +209,7 @@ func TestMCPCatalogOAuthSetup(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Fatal(err)
 		}
-		if req.Role != "reader" || req.Observer == nil || req.Observer.OAuth == nil || req.Observer.OAuth.RefreshTokenSecretRef != "secret:REFRESH" || req.Observer.OAuth.ClientSecretRef != "secret:CLIENT_SECRET" || req.Observer.SecretRef != "" {
+		if req.Role != "reader" || req.Observer == nil || req.Observer.OAuth == nil || req.Observer.OAuth.RefreshTokenSecretRef != expectedRefresh || req.Observer.OAuth.BrowserRedirectURI != expectedBrowser || req.Observer.OAuth.Guided != (expectedBrowser != "") || req.Observer.OAuth.ClientSecretRef != "secret:CLIENT_SECRET" || req.Observer.SecretRef != "" {
 			t.Fatal("OAuth binding lost")
 		}
 		_ = json.NewEncoder(w).Encode(api.MCPCatalogMonitorSnapshot{Config: api.MCPCatalogMonitorConfig{Role: req.Role, Enabled: true, Observer: req.Observer}})
@@ -232,6 +233,20 @@ func TestMCPCatalogOAuthSetup(t *testing.T) {
 	if code := cmdMCPCatalogMonitor([]string{"status", "--app", "oauth-app", "--oauth-client-id", "reader"}); code == 0 || calls != 1 {
 		t.Fatal("setup-only OAuth flags accepted")
 	}
+	expectedRefresh, expectedBrowser = "", "https://console.example/dashboard/mcp/oauth/callback"
+	var guided []string
+	for i := 0; i < len(args); i++ {
+		if args[i] == "--oauth-refresh-secret-ref" {
+			i++
+			continue
+		}
+		guided = append(guided, args[i])
+	}
+	guided = append(guided, "--oauth-guided", "--oauth-authorization-endpoint", "https://provider.example/authorize", "--oauth-browser-redirect-uri", expectedBrowser)
+	if code := cmdMCPCatalogMonitor(guided); code != 0 || calls != 2 {
+		t.Fatal("browser redirect configuration not submitted", code, calls)
+	}
+
 }
 
 func TestMCPCatalogOAuthLifecycleOutput(t *testing.T) {

@@ -494,3 +494,18 @@ func TestClassifyDLQReason_EmptyCodeSubstringFallback(t *testing.T) {
 		t.Errorf("default: got %q, want %q", got, triggerReasonPoisonRecord)
 	}
 }
+
+func TestBuildDispatchEnvelope_BatchDelivery(t *testing.T) {
+	tr := sqlc.Trigger{
+		ID:    mustUUID(t, "11111111-1111-1111-1111-111111111111"),
+		AppID: mustUUID(t, "22222222-2222-2222-2222-222222222222"),
+	}
+	batch := []SourceRecord{{ItemIdentifier: "k1"}, {ItemIdentifier: "k2"}}
+	if env := buildDispatchEnvelope(tr, batch); env.Delivery != "" {
+		t.Fatalf("record delivery envelope Delivery = %q, want empty", env.Delivery)
+	}
+	tr.Delivery = "batch"
+	if env := buildDispatchEnvelope(tr, batch); env.Delivery != "batch" || len(env.Records) != 2 {
+		t.Fatalf("batch delivery envelope = %+v", env)
+	}
+}

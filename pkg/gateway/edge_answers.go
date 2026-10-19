@@ -321,11 +321,14 @@ func (h *Handler) observeEdgeAnswer(w http.ResponseWriter, r *http.Request, app 
 	h.observe(r, status, app.ID, string(app.Plan), false, Target{})
 }
 
-// cacheHeadResponse stores the response headers from a successful live
-// response. It is called only after the origin leg returns, so a parked HEAD
-// can reuse the last known shape without replaying a body or waking a VM.
+// cacheHeadResponse stores anonymous, shareable headers from a successful
+// live response. Parked HEAD answers run before authentication, so private
+// metadata must never enter this app-wide cache, even with cookies stripped.
 func (h *Handler) cacheHeadResponse(appID string, rec *statusRecorder) {
 	if h == nil || h.headHeaders == nil || rec == nil || rec.deploymentSmoke || rec.status < 200 || rec.status >= 400 {
+		return
+	}
+	if hasCacheCredentials(rec.request) || rec.headCachePrivate || responseForbidsSharedCaching(rec.Header()) {
 		return
 	}
 	h.headHeaders.put(appID, rec.Header())
