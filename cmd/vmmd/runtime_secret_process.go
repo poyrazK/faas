@@ -25,20 +25,28 @@ func validRuntimeSecretProcessRequest(req runtimeConfigRequest) bool {
 }
 
 func (r *runtimeConfigReceiver) handleRuntimeSecretProcess(instance string, req runtimeConfigRequest, conn net.Conn) (string, error) {
+	// The guest only sees secrets_unavailable and its app never starts, so
+	// name the refusal here (identifiers and error class only, no values).
+	refuse := func(reason string, err error) (string, error) {
+		if r.log != nil {
+			r.log.Warn("runtime secret execution refused", "instance", instance, "kind", req.Kind, "reason", reason, "err", err)
+		}
+		return responseRuntimeConfig(r.log, conn, runtimeConfigResponse{Error: "secrets_unavailable"})
+	}
 	store, ok := r.store.(runtimeSecretsStore)
 	processStore, processOK := r.store.(runtimeSecretProcessStore)
 	if !ok || !processOK || r.mgr == nil {
-		return responseRuntimeConfig(r.log, conn, runtimeConfigResponse{Error: "secrets_unavailable"})
+		return refuse("store_unavailable", nil)
 	}
 	deploymentID, appID, accountID, err := r.mgr.InstanceRuntimeSecretIdentity(instance)
 	if err != nil {
-		return responseRuntimeConfig(r.log, conn, runtimeConfigResponse{Error: "secrets_unavailable"})
+		return refuse("instance_unknown", err)
 	}
 	ctx, cancel := context.WithTimeout(r.ctx, 4*time.Second)
 	defer cancel()
 	snapshot, err := store.RuntimeAppValuesForDeployment(ctx, accountID, appID, deploymentID)
 	if err != nil || snapshot.DeploymentID != deploymentID || snapshot.AppID != appID || snapshot.AccountID != accountID {
-		return responseRuntimeConfig(r.log, conn, runtimeConfigResponse{Error: "secrets_unavailable"})
+		return refuse("deployment_values_unavailable", err)
 	}
 	deployment := state.Deployment{ID: deploymentID, AppID: appID, Scope: snapshot.Scope, Sidecars: snapshot.SecretGrants.Sidecars, SecretReloadSignal: snapshot.SecretGrants.ReloadSignal}
 	if err = runtimeSecretProcessWorkload(deployment, req.WorkloadName); err != nil {
@@ -46,7 +54,7 @@ func (r *runtimeConfigReceiver) handleRuntimeSecretProcess(instance string, req 
 	}
 	enabled := runtimeSecretReloadEnabled(snapshot.SecretGrants, req.WorkloadName)
 	if !enabled {
-		return responseRuntimeConfig(r.log, conn, runtimeConfigResponse{Error: "secrets_unavailable"})
+		return refuse("reload_not_enabled", nil)
 	}
 	p := state.AppSecretRuntimeProcess{AccountID: accountID, AppID: appID, InstanceID: instance, WorkloadName: req.WorkloadName,
 		Generation: req.Generation, PreviousGeneration: req.PreviousGeneration, AttemptedAt: time.Now().UTC()}
@@ -59,7 +67,7 @@ func (r *runtimeConfigReceiver) handleRuntimeSecretProcess(instance string, req 
 		return responseRuntimeConfig(r.log, conn, runtimeConfigResponse{Error: "secret_generation_stale"})
 	}
 	if err != nil {
-		return responseRuntimeConfig(r.log, conn, runtimeConfigResponse{Error: "secrets_unavailable"})
+		return refuse("state_write_failed", err)
 	}
 	return responseRuntimeConfig(r.log, conn, runtimeConfigResponse{Accepted: true, Generation: req.Generation})
 }
