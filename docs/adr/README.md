@@ -1,5 +1,6 @@
 # Architecture Decision Records
 
+- [Per-account realtime preview rollout and realtime apps declared in gregale.yaml](20261019102657-realtime-preview-rollout-and-declared-apps.md)
 - [Tenant egress denies the NAT64 prefixes](20261018194214-tenant-egress-deny-nat64.md)
 - [ADR-1745: Shared-window compound Issues alerts](1745-shared-window-issue-compound-alerts.md)
 - [ADR-1744: Offline grouping previews and reviewed regression baselines](1744-issue-grouping-previews-and-baselines.md)
