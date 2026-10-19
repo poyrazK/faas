@@ -977,11 +977,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// must not own either background activity.
 	mgr.WithLifecycleContext(ctx)
 	if store != nil {
-		policies, ok := store.(state.ScenarioNetworkPolicyStore)
-		if !ok {
-			return errors.New("vmmd: rehearsal network policy storage is unavailable")
+		if rehearsalContainmentEnabled(os.Getenv) {
+			policies, ok := store.(state.ScenarioNetworkPolicyStore)
+			if !ok {
+				return errors.New("vmmd: rehearsal network policy storage is unavailable")
+			}
+			mgr.WithRehearsalNetworkPolicies(policies)
 		}
-		mgr.WithRehearsalNetworkPolicies(policies)
+		// Revoke unconditionally: identities left by an earlier enabled
+		// incarnation must not survive a restart with containment disabled.
 		if fencer, ok := store.(interface {
 			RevokeScenarioCommandNetworksForNode(context.Context, string) error
 		}); ok {

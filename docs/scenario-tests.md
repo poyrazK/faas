@@ -1275,8 +1275,11 @@ actions:
 
 The complete serving fleet must run the new scheduler, vmmd and internal gateway
 code, with database-backed runtime policy reads. After native qualification,
-the operator enables enrollment with `FAAS_REHEARSAL_NETWORK_CONTAINMENT=1` on
-apid. It is disabled by default. Registration must echo `network_mode: contained`
+the operator sets `FAAS_REHEARSAL_NETWORK_CONTAINMENT=1` on every serving vmmd
+(which turns on its durable policy reads) and then on apid (which enables
+enrollment). It is disabled by default. A vmmd without the flag makes no
+rehearsal reads on ordinary wakes and resumes and refuses contained boots
+([ADR-20261019120000](adr/20261019120000-rehearsal-runtime-hot-path-isolation.md)). Registration must echo `network_mode: contained`
 before the runner deploys anything; every VM must also acknowledge the exact run
 before the scheduler accepts its boot. An older runtime refuses the dedicated
 boot methods. Policy read or firewall installation failures stop boot/resume.

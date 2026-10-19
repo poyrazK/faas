@@ -193,6 +193,10 @@ func capture(ctx context.Context, c *pgx.Conn, spec rehearsalpg.Spec) ([]rehears
 		expected[t.Schema+"."+t.Name] = t
 	}
 	out := make([]rehearsalpg.Snapshot, 0, len(rels))
+	// CanonicalSnapshots bounds the compacted inventory at a quarter of
+	// MaxEvidenceBytes. Stop reading at the full bound so customer rows cannot
+	// make apid buffer 16 tables x 1000 rows x 64 KiB before that check runs.
+	scanned := 0
 	for _, rel := range rels {
 		t, ok := expected[rel.SchemaName+"."+rel.TableName]
 		if !ok || rel.Kind != "r" || rel.Persistence != "p" {
@@ -228,6 +232,10 @@ func capture(ctx context.Context, c *pgx.Conn, spec rehearsalpg.Spec) ([]rehears
 			if rows.Scan(&row) != nil || len(row) == 0 || len(snapshot.Rows) >= rehearsalpg.MaxRows {
 				rows.Close()
 				return nil, ErrFixture
+			}
+			if scanned += len(row); scanned > rehearsalpg.MaxEvidenceBytes {
+				rows.Close()
+				return nil, rehearsalpg.ErrSnapshotBound
 			}
 			snapshot.Rows = append(snapshot.Rows, json.RawMessage(row))
 		}

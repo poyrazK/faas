@@ -129,6 +129,9 @@ func (s Spec) ContractSHA256() string {
 	return Hash(copy)
 }
 
+// ErrSnapshotBound reports a captured inventory larger than its evidence bound.
+var ErrSnapshotBound = errors.New("PostgreSQL snapshot exceeds evidence bound")
+
 // CanonicalSnapshots preserves duplicate rows; a repeated insert must remain visible.
 func CanonicalSnapshots(v []Snapshot) ([]Snapshot, error) {
 	if len(v) < 1 || len(v) > MaxTables {
@@ -151,7 +154,7 @@ func CanonicalSnapshots(v []Snapshot) ([]Snapshot, error) {
 			b, _ := json.Marshal(row)
 			total += len(b)
 			if total > MaxEvidenceBytes/4 {
-				return nil, errors.New("PostgreSQL snapshot exceeds evidence bound")
+				return nil, ErrSnapshotBound
 			}
 			rows = append(rows, b)
 		}
