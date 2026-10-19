@@ -44,7 +44,7 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		"mcp_readiness_incident_attention":         CloneSchemaOperational,
 		"mcp_readiness_incident_cursors":           CloneSchemaOperational,
 		"mcp_readiness_incident_events":            CloneSchemaData,
-		"mcp_readiness_incidents":                  CloneSchemaData,
+		"mcp_readiness_incidents":                  CloneSchemaOperational,
 		"mcp_readiness_maintenance_windows":        CloneSchemaConfiguration,
 		"mcp_readiness_notification_actions":       CloneSchemaData,
 		"mcp_readiness_pagerduty_ack_events":       CloneSchemaData,
