@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -92,6 +93,12 @@ func candidateBindingFixture(t *testing.T, basic gitOpsTestStore, kind, age stri
 }
 
 func completeCandidateBindingCohort(t *testing.T, store candidateBindingTestStore, claimed []state.EnvironmentWorkloadQualificationRequest, placement state.EnvironmentWorkloadQualificationPlacement, exchange bool) {
+	completeCandidateBindingCohortWithSecrets(t, store, claimed, placement, exchange, nil)
+}
+
+// secrets maps an app ID to the scoped secret versions its candidate runtime
+// was captured and restored with.
+func completeCandidateBindingCohortWithSecrets(t *testing.T, store candidateBindingTestStore, claimed []state.EnvironmentWorkloadQualificationRequest, placement state.EnvironmentWorkloadQualificationPlacement, exchange bool, secrets map[string]map[string]int64) {
 	type member struct {
 		request      state.EnvironmentWorkloadQualificationRequest
 		frame        state.EnvironmentQualificationExecution
@@ -110,6 +117,7 @@ func completeCandidateBindingCohort(t *testing.T, store candidateBindingTestStor
 			t.Fatal(err)
 		}
 		inputs := state.RuntimeConfigInputs{Scope: "production", Boundary: time.Now().UTC(), Variables: request.FrozenInputs.Variables, SecretVersions: map[string]int64{}, SecretRefs: map[string]string{}, AllSecrets: true}
+		maps.Copy(inputs.SecretVersions, secrets[request.AppID])
 		if inputs.Variables == nil {
 			inputs.Variables = map[string]string{}
 		}

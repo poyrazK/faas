@@ -154,8 +154,18 @@ func checkEnvironmentBindingGraphTx(ctx context.Context, tx sqlc.DBTX, projectID
 		if err != nil {
 			return true, ErrBindingReleaseRequired
 		}
-		if _, err := candidateBindingEvidenceDeadline(r, qualificationSmokeReceiptFromSQL(smoke), receipts, requests, time.Now()); err != nil {
+		receipt := qualificationSmokeReceiptFromSQL(smoke)
+		if _, err := candidateBindingEvidenceDeadline(r, receipt, receipts, requests, time.Now()); err != nil {
 			return true, err
+		}
+		age, err := time.ParseDuration(r.BindingContext.Policy.MaxVerificationAge)
+		if err != nil {
+			return true, ErrBindingReleaseRequired
+		}
+		if until, err := candidatePostgresDeadlineTx(ctx, tx, r, receipt.InstanceID, age); err != nil {
+			return true, err
+		} else if !until.IsZero() && !time.Now().Before(until) {
+			return true, ErrBindingPromotionExpired
 		}
 	}
 	return true, nil

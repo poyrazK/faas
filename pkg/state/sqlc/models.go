@@ -4106,6 +4106,17 @@ type EnvironmentQualificationJobSmokeReceipt struct {
 	RecordedAt   pgtype.Timestamptz
 }
 
+type EnvironmentQualificationPostgresReceipt struct {
+	RequestID            pgtype.UUID
+	Attempt              int64
+	BindingID            pgtype.UUID
+	EnvironmentKey       string
+	Access               string
+	CredentialGeneration int64
+	DeliveryVersion      int64
+	RecordedAt           pgtype.Timestamptz
+}
+
 type EnvironmentQualificationRestoreReceipt struct {
 	RequestID         pgtype.UUID
 	Attempt           int64

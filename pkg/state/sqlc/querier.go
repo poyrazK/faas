@@ -827,6 +827,8 @@ type Querier interface {
 	// Holding a deployment is independent of whether its execution lease expired.
 	EnvironmentQualificationNetworkInstances(ctx context.Context, db DBTX, arg EnvironmentQualificationNetworkInstancesParams) ([]EnvironmentQualificationNetworkInstancesRow, error)
 	EnvironmentQualificationNodeUsedMB(ctx context.Context, db DBTX, arg EnvironmentQualificationNodeUsedMBParams) (int64, error)
+	// NULL blocks activation; 'infinity' means the candidate has no PostgreSQL binding.
+	EnvironmentQualificationPostgresDeadline(ctx context.Context, db DBTX, arg EnvironmentQualificationPostgresDeadlineParams) (pgtype.Timestamptz, error)
 	EnvironmentQualificationRestoreCurrent(ctx context.Context, db DBTX, arg EnvironmentQualificationRestoreCurrentParams) (bool, error)
 	EnvironmentQualificationRestoreReceipt(ctx context.Context, db DBTX, arg EnvironmentQualificationRestoreReceiptParams) (EnvironmentQualificationRestoreReceipt, error)
 	EnvironmentQualificationRestoreReservation(ctx context.Context, db DBTX, arg EnvironmentQualificationRestoreReservationParams) (EnvironmentQualificationRestoreReservation, error)
@@ -3879,6 +3881,9 @@ type Querier interface {
 	PeekProductionQueue(ctx context.Context, db DBTX, arg PeekProductionQueueParams) ([]Invocation, error)
 	PendingEnvironmentGitOpsEffects(ctx context.Context, db DBTX, sourceID pgtype.UUID) ([]EnvironmentGitopsEffect, error)
 	PendingEnvironmentGitOpsRuntime(ctx context.Context, db DBTX, sourceID pgtype.UUID) ([]EnvironmentGitopsRuntimeEffect, error)
+	// ADR-20261019072523: settled managed PostgreSQL deliveries of a graph's
+	// enforced candidates that have no receipt for their current credential.
+	PendingEnvironmentQualificationPostgresChecks(ctx context.Context, db DBTX, graphID pgtype.UUID) ([]PendingEnvironmentQualificationPostgresChecksRow, error)
 	PendingLayerArtifactDeletions(ctx context.Context, db DBTX) ([]PendingLayerArtifactDeletionsRow, error)
 	PendingManagedPostgresCutoverPreflights(ctx context.Context, db DBTX, batchSize int32) ([]ManagedPostgresCutover, error)
 	PendingScenarioCommands(ctx context.Context, db DBTX, arg PendingScenarioCommandsParams) (int64, error)
@@ -4586,6 +4591,7 @@ type Querier interface {
 	RecordEnvironmentGitOpsEvent(ctx context.Context, db DBTX, arg RecordEnvironmentGitOpsEventParams) error
 	RecordEnvironmentGitSourcePoll(ctx context.Context, db DBTX, arg RecordEnvironmentGitSourcePollParams) error
 	RecordEnvironmentQualificationJobSmokeReceipt(ctx context.Context, db DBTX, arg RecordEnvironmentQualificationJobSmokeReceiptParams) (EnvironmentQualificationJobSmokeReceipt, error)
+	RecordEnvironmentQualificationPostgresReceipt(ctx context.Context, db DBTX, arg RecordEnvironmentQualificationPostgresReceiptParams) error
 	RecordEnvironmentQualificationRestoreReceipt(ctx context.Context, db DBTX, arg RecordEnvironmentQualificationRestoreReceiptParams) (EnvironmentQualificationRestoreReceipt, error)
 	RecordEnvironmentQualificationServiceExchange(ctx context.Context, db DBTX, arg RecordEnvironmentQualificationServiceExchangeParams) error
 	RecordEnvironmentQualificationSmokeReceipt(ctx context.Context, db DBTX, arg RecordEnvironmentQualificationSmokeReceiptParams) (EnvironmentQualificationSmokeReceipt, error)

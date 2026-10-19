@@ -14,3 +14,7 @@
 
 See [reviewed source verification](1645-reviewed-source-binding-verification.md)
 and [checked project releases](1348-checked-project-binding-release-graphs.md).
+
+Managed PostgreSQL bindings were later admitted by
+[ADR-20261019072523](20261019072523-candidate-postgres-binding-qualification.md)
+through control-plane credential receipts; the other blocked classes above remain.

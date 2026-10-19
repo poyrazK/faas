@@ -7,6 +7,20 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## PostgreSQL bindings in candidate qualification — 2026-10-19
+
+Enforced managed GitOps graphs no longer block activation because a member has
+a managed PostgreSQL binding. Qualification candidates still cannot reach their
+database, so apid verifies each candidate's exact sealed credential from the
+control plane (TLS authentication, role and privileges, read-only) and records
+an immutable receipt pinned to the credential generation and delivery version.
+Runtime credentials must match the candidate's captured and restored inputs;
+migration credentials are release-only. Data API and Auth bindings stay blocked.
+This is credential evidence, not proof that candidate code reaches the
+database. Portable memory and PostgreSQL tests cover the lifecycle; native KVM
+acceptance and qualification dispatch remain pending.
+See [ADR-20261019072523](adr/20261019072523-candidate-postgres-binding-qualification.md).
+
 ## Checked binding retirement — 2026-10-17
 
 Complete reviewed GitOps graph removal can publish an empty release with binding

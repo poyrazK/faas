@@ -10,8 +10,9 @@ var _ EnvironmentQualificationServiceReceiptStore = (*MemStore)(nil)
 
 func (m *MemStore) candidateBindingCatalogSupportedLocked(request EnvironmentWorkloadQualificationRequest) bool {
 	appID, scope := request.AppID, request.FrozenInputs.Scope
+	// Managed PostgreSQL is qualified by credential receipts (ADR-20261019072523).
 	for key, s := range m.secrets {
-		if key.AppID == appID && s.Scope == scope && (s.ManagedPostgresBindingID != "" || s.ManagedObjectStorageCredentialID != "") {
+		if key.AppID == appID && s.Scope == scope && s.ManagedObjectStorageCredentialID != "" {
 			return false
 		}
 	}
@@ -120,6 +121,22 @@ func (m *MemStore) environmentBindingGraphDeadlineLocked(memory *environmentGitO
 		end, err := candidateBindingEvidenceDeadline(r, smoke, memory.bindingServices, requests, time.Now())
 		if err != nil {
 			return time.Time{}, fmt.Errorf("candidate binding evidence is missing or expired: %w", err)
+		}
+		age, err := time.ParseDuration(r.BindingContext.Policy.MaxVerificationAge)
+		if err != nil {
+			return time.Time{}, ErrBindingReleaseRequired
+		}
+		restore := m.qualificationRestoreReceipts[qualificationRestoreReceiptKey(r.ID, r.Attempt)]
+		postgresEnd, err := candidatePostgresEvidenceDeadline(r, m.candidatePostgresDeliveriesLocked(r.AppID, r.FrozenInputs.Scope),
+			memory.bindingPostgres, m.qualificationSnapshots[r.ReservedInstanceID].Inputs, restore.Inputs, age, time.Now())
+		if err != nil {
+			return time.Time{}, fmt.Errorf("candidate PostgreSQL credential evidence is missing or changed: %w", err)
+		}
+		if !postgresEnd.IsZero() && postgresEnd.Before(end) {
+			end = postgresEnd
+		}
+		if !time.Now().Before(end) {
+			return time.Time{}, ErrBindingPromotionExpired
 		}
 		if deadline.IsZero() || end.Before(deadline) {
 			deadline = end

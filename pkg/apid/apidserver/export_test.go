@@ -1541,3 +1541,19 @@ func (s *server) ConfigureLiveQueriesForTest(getenv func(string) string) error {
 func (s *server) LiveRoutesForTest(ctx context.Context, accountID, appID string) ([]realtime.LiveRoute, error) {
 	return s.liveRoutes(ctx, nil, accountID, appID)
 }
+
+// VerifyCandidatePostgresCredentialsForTest runs the GitOps backend's
+// pre-activation credential step (ADR-20261019072523) with an injected verifier.
+func VerifyCandidatePostgresCredentialsForTest(ctx context.Context, intent state.EnvironmentGitOpsIntentStore, graphID string,
+	verify func(context.Context, state.EnvironmentQualificationPostgresCheck) error) error {
+	b := &environmentGitOpsBackend{server: &server{candidatePostgresVerifier: verify}, intent: intent}
+	return b.verifyCandidatePostgresCredentials(ctx, graphID)
+}
+
+// VerifyCandidatePostgresCredentialForTest runs the production verifier's
+// sealed-credential checks with explicit host material and probe.
+func VerifyCandidatePostgresCredentialForTest(ctx context.Context, c state.EnvironmentQualificationPostgresCheck, identities []*age.X25519Identity,
+	hmacKey []byte, probe func(context.Context, string, managedpostgres.CredentialAccess, int) error) error {
+	sink := &appSecretCredentialSink{hmacKey: func() []byte { return hmacKey }, identities: func() []*age.X25519Identity { return identities }, probe: probe}
+	return verifyCandidatePostgresCredentialWith(ctx, sink, c)
+}

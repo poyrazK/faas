@@ -164,7 +164,10 @@ type server struct {
 	totp            *totpGuard
 	objectStorage   *objectstorage.Registry
 	managedPostgres *managedpostgres.Service
-	liveQueries     *livequeries.Service // ADR-20261016151947 live queries per managed database
+	// candidatePostgresVerifier checks one enforced candidate's sealed
+	// PostgreSQL credential (ADR-20261019072523); nil uses the host identities.
+	candidatePostgresVerifier func(context.Context, state.EnvironmentQualificationPostgresCheck) error
+	liveQueries               *livequeries.Service // ADR-20261016151947 live queries per managed database
 	// liveRollout is who sees live queries (FAAS_LIVE_QUERIES_ACCOUNTS);
 	// nobody until configured.
 	liveRollout                   livequeries.Rollout

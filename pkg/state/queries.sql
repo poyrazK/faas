@@ -22142,6 +22142,38 @@ RETURNING created_at;
 
 -- name: AuthorizeEnvironmentBindingTraffic :one
 SELECT authorize_environment_binding_traffic(sqlc.arg(graph_id)::uuid,sqlc.arg(release_id)::uuid)::boolean;
+
+-- name: PendingEnvironmentQualificationPostgresChecks :many
+-- ADR-20261019072523: settled managed PostgreSQL deliveries of a graph's
+-- enforced candidates that have no receipt for their current credential.
+SELECT q.id::text AS request_id, q.attempt, b.account_id::text AS account_id, q.app_id::text AS app_id, e.slug AS scope,
+ b.id::text AS binding_id, b.database_id::text AS database_id, b.environment_key, b.access, b.credential_generation,
+ s.delivery_version::bigint AS delivery_version, d.postgres_major::integer AS postgres_major,
+ coalesce(s.managed_credential_ref,'')::text AS credential_ref, s.ciphertext, coalesce(s.kid,'')::text AS kid,
+ coalesce(s.value_hash,'')::text AS value_hash
+FROM environment_workload_qualification_requests q
+JOIN environment_workload_graphs g ON g.id=q.graph_id
+JOIN project_environments e ON e.id=g.environment_id
+JOIN managed_postgres_bindings b ON b.app_id=q.app_id AND b.scope=e.slug AND b.state='ready'
+ AND b.access IN ('read_write','read_only','migration') AND b.rotation_previous_generation IS NULL AND b.cutover_id IS NULL
+JOIN app_secrets s ON s.app_id=q.app_id AND s.scope=e.slug AND s.key=b.environment_key
+ AND s.managed_postgres_binding_id=b.id AND s.managed_credential_generation=b.credential_generation AND s.delivery_version IS NOT NULL
+JOIN managed_postgres_databases d ON d.id=b.database_id AND d.deleted_at IS NULL
+WHERE q.graph_id=sqlc.arg(graph_id)::uuid AND q.binding_context IS NOT NULL AND q.lease_until>clock_timestamp()
+ AND NOT EXISTS(SELECT 1 FROM environment_qualification_postgres_receipts r WHERE r.request_id=q.id AND r.attempt=q.attempt
+  AND r.binding_id=b.id AND r.credential_generation=b.credential_generation AND r.delivery_version=s.delivery_version)
+ORDER BY q.id, b.id;
+
+-- name: RecordEnvironmentQualificationPostgresReceipt :exec
+INSERT INTO environment_qualification_postgres_receipts(request_id,attempt,binding_id,environment_key,access,credential_generation,delivery_version)
+VALUES(sqlc.arg(request_id)::uuid,sqlc.arg(attempt)::bigint,sqlc.arg(binding_id)::uuid,sqlc.arg(environment_key)::text,
+ sqlc.arg(access)::text,sqlc.arg(credential_generation)::bigint,sqlc.arg(delivery_version)::bigint)
+ON CONFLICT DO NOTHING;
+
+-- name: EnvironmentQualificationPostgresDeadline :one
+-- NULL blocks activation; 'infinity' means the candidate has no PostgreSQL binding.
+SELECT environment_binding_postgres_deadline(q,sqlc.arg(scope)::text,sqlc.arg(max_age_seconds)::bigint,sqlc.arg(restored_instance_id)::uuid)::timestamptz AS deadline
+FROM environment_workload_qualification_requests q WHERE q.id=sqlc.arg(request_id)::uuid;
 -- name: ReleaseRunsCrossedBy :many
 -- ADR-1448: release tasks of other deployments in a rollback target's scope
 -- that started after the target last served (serving_ended_at), or after it

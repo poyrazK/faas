@@ -4851,6 +4851,20 @@
     "kind": "operational"
   },
   {
+    "table": "environment_qualification_postgres_receipts",
+    "columns": [
+      "access",
+      "attempt",
+      "binding_id",
+      "credential_generation",
+      "delivery_version",
+      "environment_key",
+      "recorded_at",
+      "request_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "environment_qualification_service_receipts",
     "columns": [
       "attempt",
