@@ -11147,8 +11147,10 @@ const (
 // only after ServiceWakeAheadMinWakes observed caller wakes, when at least
 // ServiceWakeAheadMinCallShare of them called it and at least
 // ServiceWakeAheadMinColdShare of those calls found it parked (or warm only
-// because of a wake-ahead). Wake-ahead never starts while fleet residency is
-// at or above ServiceWakeAheadMaxResidentPercent of the admission ceiling.
+// because of a wake-ahead). Before ServiceWakeAheadMinWakes, the caller's
+// declared dependencies stand in, at most ServiceWakeAheadMaxTargets of them
+// (ADR-1137). Wake-ahead never starts while fleet residency is at or above
+// ServiceWakeAheadMaxResidentPercent of the admission ceiling.
 const (
 	ServiceWakeAheadFollowWindow       = 10 * time.Second
 	ServiceWakeAheadMinWakes           = 20

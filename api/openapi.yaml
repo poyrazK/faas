@@ -72909,7 +72909,7 @@ components:
       required: [slug, enabled]
       properties:
         slug: {"type": "string"}
-        enabled: {"type": "boolean", "description": "Whether a cold wake of this app also wakes the services it is measured to call."}
+        enabled: {"type": "boolean", "description": "Whether a cold wake of this app also wakes the services it declares or is measured to call."}
         updated_at: {"type": "string", "format": "date-time", "description": "Omitted until the opt-in is first changed."}
         learned: { $ref: '#/components/schemas/ServiceWakeAheadLearned' }
     ServiceWakeAheadLearned:
