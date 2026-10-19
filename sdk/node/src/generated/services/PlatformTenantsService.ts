@@ -1024,7 +1024,7 @@ export class PlatformTenantsService {
    * statement's amount. A tenant holds at most 100 grants with credit
    * left.
    *
-   * @returns PlatformTenantCreditResponse The new grant.
+   * @returns PlatformTenantCreditResponse The tenant's new grant.
    * @throws ApiError
    */
   public static createPlatformTenantCredit({
@@ -1060,13 +1060,13 @@ export class PlatformTenantsService {
         401: `code: unauthorized`,
         404: `code: not_found`,
         409: `The tenant already holds 100 grants with credit left.`,
-        422: `Invalid currency, amount, note or expiry.`,
+        422: `Invalid tenant credit currency, amount, note or expiry.`,
       },
     });
   }
   /**
    * Void what is left of a tenant credit grant; credit already applied stays applied.
-   * @returns PlatformTenantCreditResponse The voided grant.
+   * @returns PlatformTenantCreditResponse The voided tenant grant.
    * @throws ApiError
    */
   public static voidPlatformTenantCredit({
@@ -1078,7 +1078,7 @@ export class PlatformTenantsService {
      */
     id: string,
     /**
-     * Credit grant to void.
+     * Tenant credit grant to void.
      */
     creditId: string,
   }): CancelablePromise<PlatformTenantCreditResponse> {
@@ -1097,7 +1097,7 @@ export class PlatformTenantsService {
   }
   /**
    * Read a tenant's monthly spend cap and its last check.
-   * @returns PlatformTenantSpendCapResponse The cap and whether it is reached this month.
+   * @returns PlatformTenantSpendCapResponse The tenant's cap and whether it is reached this month.
    * @throws ApiError
    */
   public static getPlatformTenantSpendCap({
@@ -1131,7 +1131,7 @@ export class PlatformTenantsService {
    * a tenant can overshoot by about two minutes of traffic. A zero cap
    * allows prepaid usage only.
    *
-   * @returns PlatformTenantSpendCapResponse The stored cap, checked at once.
+   * @returns PlatformTenantSpendCapResponse The tenant's stored cap, checked at once.
    * @throws ApiError
    */
   public static putPlatformTenantSpendCap({
@@ -1156,7 +1156,7 @@ export class PlatformTenantsService {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         404: `code: not_found`,
-        422: `Invalid currency or cap.`,
+        422: `Invalid tenant cap currency or amount.`,
       },
     });
   }

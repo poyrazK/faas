@@ -25,7 +25,7 @@ class PlatformTenantSpendCapResponse:
     created_at: datetime.datetime
     updated_at: datetime.datetime
     month: str | Unset = UNSET
-    """UTC month of the last check."""
+    """UTC month of the tenant's last check."""
     amount_due_millicents: int | Unset = UNSET
     """The month's usage after prepaid credit at the last check; monthly fees are not counted."""
     checked_at: datetime.datetime | Unset = UNSET

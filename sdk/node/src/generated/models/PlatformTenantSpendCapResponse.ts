@@ -14,7 +14,7 @@ export type PlatformTenantSpendCapResponse = {
    */
   capped: boolean;
   /**
-   * UTC month of the last check.
+   * UTC month of the tenant's last check.
    */
   month?: string;
   /**

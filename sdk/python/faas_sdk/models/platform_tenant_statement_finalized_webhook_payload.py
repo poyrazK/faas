@@ -44,9 +44,9 @@ class PlatformTenantStatementFinalizedWebhookPayload:
     fees: list[APIConsumerStatementFeeResponse] | Unset = UNSET
     """The revision's monthly base fees and minimum top-ups (ADR-1322), included in amount_millicents."""
     credit_applied_millicents: int | Unset = UNSET
-    """Prepaid credit drawn when the revision was finalized (ADR-20261019100331)."""
+    """Tenant prepaid credit this finalized revision drew (ADR-20261019100331)."""
     amount_due_millicents: int | Unset = UNSET
-    """amount_millicents less credit_applied_millicents: what invoice exports bill."""
+    """What remains to invoice after the credit."""
 
     def to_dict(self) -> dict[str, Any]:
         platform_tenant_id = str(self.platform_tenant_id)

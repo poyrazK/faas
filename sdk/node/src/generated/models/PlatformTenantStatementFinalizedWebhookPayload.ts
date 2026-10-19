@@ -29,11 +29,11 @@ export type PlatformTenantStatementFinalizedWebhookPayload = {
    */
   fees?: Array<APIConsumerStatementFeeResponse>;
   /**
-   * Prepaid credit drawn when the revision was finalized (ADR-20261019100331).
+   * Tenant prepaid credit this finalized revision drew (ADR-20261019100331).
    */
   credit_applied_millicents?: number;
   /**
-   * amount_millicents less credit_applied_millicents: what invoice exports bill.
+   * What remains to invoice after the credit.
    */
   amount_due_millicents?: number;
   as_of: string;
