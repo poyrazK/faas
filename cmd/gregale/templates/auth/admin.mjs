@@ -6,6 +6,7 @@ import { ssoRoute } from './sso.mjs'
 import { oauthRoute } from './oauth.mjs'
 import { emailRoute } from './emails.mjs'
 import { signupsRoute } from './signups.mjs'
+import { impersonationsRoute, startImpersonation } from './impersonation.mjs'
 
 // /admin/v1: owner administration of an application Auth app (ADR-1190
 // phase 6). The owner holds the key; the app stores only its SHA-256 as
@@ -16,10 +17,12 @@ import { signupsRoute } from './signups.mjs'
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
+// adminKeyHashes lists each admin key's ID (the secret name's suffix) and
+// SHA-256, so actions such as impersonation record which key acted.
 export function adminKeyHashes(env) {
   return Object.entries(env)
     .filter(([k, v]) => /^AUTH_ADMIN_KEY_[0-9A-F]{8}$/.test(k) && typeof v === 'string' && /^[0-9a-f]{64}$/.test(v))
-    .map(([, v]) => Buffer.from(v, 'hex'))
+    .map(([k, v]) => ({ id: k.slice(-8), hash: Buffer.from(v, 'hex') }))
 }
 
 export function newAdminKey() {
@@ -27,12 +30,13 @@ export function newAdminKey() {
   return { key, hash: createHash('sha256').update(key).digest('hex') }
 }
 
-function keyMatches(hashes, header) {
+// keyMatches returns the ID of the admin key presented, or null.
+function keyMatches(keys, header) {
   const key = /^Bearer (gaak_[A-Za-z0-9_-]{43})$/.exec(header ?? '')?.[1]
-  if (!key) return false
+  if (!key) return null
   const presented = createHash('sha256').update(key).digest()
   // Compare against every hash so timing does not reveal which key matched.
-  return hashes.reduce((found, hash) => timingSafeEqual(hash, presented) || found, false)
+  return keys.reduce((found, { id, hash }) => timingSafeEqual(hash, presented) ? id : found, null)
 }
 
 // signingKey picks the one ES256 key in GOTRUE_JWT_KEYS that signs. GoTrue
@@ -257,7 +261,7 @@ async function activity(query, params) {
 }
 
 // adminRoute returns [status, body] for one authorized request.
-export async function adminRoute({ pool, admin, external, emails = {} }, method, url, body) {
+export async function adminRoute({ pool, admin, external, emails = {}, impersonation = null, keyId = null }, method, url, body) {
   const path = url.pathname.replace(/^\/admin\/v1/, '')
   const parts = path.split('/').filter(Boolean)
   const query = async (sql, args) => (await pool.query(sql, args)).rows
@@ -265,6 +269,10 @@ export async function adminRoute({ pool, admin, external, emails = {} }, method,
   if (parts[0] === 'oauth') return oauthRoute({ admin, goTrueError }, method, parts, body)
   if (parts[0] === 'emails') return emailRoute({ pool, external, ...emails }, method, parts, body)
   if (parts[0] === 'signups') return signupsRoute({ pool, mailer: emails.mailer, external, app: emails.app, pageParams, likePattern }, method, parts, url, body)
+  if (parts[0] === 'impersonations') {
+    if (!impersonation) throw new HTTPError(404, 'impersonation_disabled')
+    return impersonationsRoute({ pool }, method, parts, url)
+  }
   const user = parts[0] === 'users' && parts[1] && parts[1] !== 'import' ? (uuid.test(parts[1]) ? parts[1] : null) : undefined
   if (user === null) throw new HTTPError(400, 'invalid_id')
 
@@ -293,6 +301,10 @@ export async function adminRoute({ pool, admin, external, emails = {} }, method,
     const response = await admin('PUT', `/admin/users/${user}`, { app_metadata: patch })
     if (response.status !== 200) throw goTrueError(response)
     return [200, { claims: customClaims(response.data?.app_metadata) }]
+  }
+  if (user && parts[2] === 'impersonate' && parts.length === 3 && method === 'POST') {
+    if (!impersonation) throw new HTTPError(404, 'impersonation_disabled')
+    return startImpersonation({ pool, admin, goTrueError, siteURL: impersonation.siteURL, keyId }, user, body)
   }
   if (user && parts[2] === 'sign-out' && parts.length === 3 && method === 'POST') {
     // GoTrue has no admin sign-out; deleting sessions ends their refresh
@@ -332,7 +344,7 @@ export async function adminRoute({ pool, admin, external, emails = {} }, method,
 }
 
 // createAdminHandler serves /admin/v1. Without a key it does not exist.
-export function createAdminHandler({ pool, admin, keys, origins = [], external, emails = {} }) {
+export function createAdminHandler({ pool, admin, keys, origins = [], external, emails = {}, impersonation = null }) {
   const allowed = new Set(origins)
   return async (req, res) => {
     const headers = { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }
@@ -346,10 +358,11 @@ export function createAdminHandler({ pool, admin, keys, origins = [], external, 
       return res.end()
     }
     try {
-      if (!keyMatches(keys, req.headers.authorization)) { req.resume(); throw new HTTPError(401, 'invalid_admin_key') }
+      const keyId = keyMatches(keys, req.headers.authorization)
+      if (!keyId) { req.resume(); throw new HTTPError(401, 'invalid_admin_key') }
       const url = new URL(req.url, 'http://admin.invalid')
       const body = await readJSON(req, limits.adminBodyBytes)
-      const [status, payload] = await adminRoute({ pool, admin, external, emails }, req.method, url, body)
+      const [status, payload] = await adminRoute({ pool, admin, external, emails, impersonation, keyId }, req.method, url, body)
       reply(status, payload)
     } catch (err) {
       const failure = err instanceof HTTPError ? err : new HTTPError(500, 'internal_error')

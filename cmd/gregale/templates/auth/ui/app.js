@@ -165,6 +165,7 @@ export function errorMessage(body, status) {
     saml_provider_disabled: 'Organization sign-in is turned off for this application.',
     reauthentication_required: 'Sign in again to do this; your sign-in is too old.',
     current_session: 'Use Back to leave; this page signs itself out.',
+    impersonation_restricted: 'Support cannot change this from a session opened as you.',
   }
   if (code === 'last_owner') {
     const orgs = Array.isArray(body?.organizations) ? body.organizations.join(', ') : 'an organization'
@@ -752,7 +753,7 @@ async function connectedAppsSection(ctx) {
 
 async function sessionsSection(ctx) {
   const { sessions } = await ctx.call('GET', '/authz/v1/sessions')
-  const list = sessions.map(s => row(`${deviceName(s.user_agent)}${s.ip ? `, ${s.ip}` : ''}: ${s.current ? 'this page' : `active ${when(s.last_active_at)}`}`,
+  const list = sessions.map(s => row(`${deviceName(s.user_agent)}${s.ip ? `, ${s.ip}` : ''}: ${s.current ? 'this page' : `active ${when(s.last_active_at)}`}${s.impersonated ? ` (opened by ${ctx.config.app} support)` : ''}`,
     ...(s.current ? [] : [confirmButton('Sign out', () => ctx.act(async () => { await ctx.call('DELETE', `/authz/v1/sessions/${encodeURIComponent(s.id)}`); await ctx.refresh() }))])))
   const others = sessions.some(s => !s.current) ? [['Sign out everywhere else', () => ctx.act(async () => {
     await ctx.call('POST', '/auth/v1/logout?scope=others')

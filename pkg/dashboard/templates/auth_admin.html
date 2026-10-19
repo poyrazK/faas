@@ -58,6 +58,7 @@
 <label>Users link and unlink sign-in methods<select name="identity_linking"><option value="off">Off</option><option value="on">On</option></select></label>
 <label>Users delete their own accounts (after a recent sign-in)<select name="self_deletion"><option value="off">Off</option><option value="on">On</option></select></label>
 <label>Access tokens carry the active organization, role and permissions<select name="org_claims"><option value="off">Off</option><option value="on">On</option></select></label>
+<label>Support may open sessions as users<select name="impersonation"><option value="off">Off</option><option value="on">On: time-limited, recorded, cannot change the account</option></select></label>
 <button type="submit">Save and restart</button>
 </form>
 <h3>Sign-in providers</h3>
@@ -116,11 +117,13 @@
     clear() { try { sessionStorage.removeItem(storageKey) } catch { /* memory only */ } },
   }
   const perPage = 50
-  let key = store.get(), tab = 'users', page = 1, search = '', loads = 0, ssoInfo = null
+  let key = store.get(), tab = 'users', page = 1, search = '', loads = 0, ssoInfo = null, impersonationOn = false
   const messages = {
     last_owner: 'This user is the last owner of an organization that has other members. Make another member an owner first.',
     invalid_claim_name: 'Claim names are letters, digits and _, start with a letter, and cannot be provider or providers.',
     claims_too_large: 'Custom claims are limited to 1,000 bytes of JSON per user.', invalid_claims: 'Enter a JSON object of claims; remove a claim instead of setting it to null.',
+    impersonation_needs_confirmed_email: 'Only a user with a confirmed email address can be opened; the sign-in link would confirm it.', user_banned: 'This user is banned.',
+    impersonation_disabled: 'Opening sessions as users is off. Turn it on under Settings first.', invalid_reason: 'Give a reason of up to 200 characters.',
     not_found: 'It no longer exists.', invalid_duration: 'Choose a ban duration.',
     sso_disabled: 'Organization SSO is off. Turn it on under Settings first.', invalid_metadata: 'Give an HTTPS metadata URL or the metadata XML, not both.',
     invalid_domains: 'List one or more email domains, such as acme.com.', organization_not_found: 'No organization has that slug or ID.',
@@ -360,6 +363,7 @@
           ['Email confirmed', when(user.email_confirmed_at)], ['Banned until', banned(user) ? when(user.banned_until) : '—'], ['Active sessions', sessions]]),
         actions, result,
         el('h3', 'Custom claims'), claimsEditor(user),
+        ...(impersonationOn ? [el('h3', 'Open as this user'), await impersonationPanel(user)] : []),
         el('h3', 'Organizations'), organizations.length ? memberships : el('p', 'Not a member of any organization.', { class: 'muted' }),
         el('h3', 'Recent activity'), recent.entries.length ? activityTable(recent.entries) : el('p', 'No recorded activity.', { class: 'muted' }),
         button('Close', () => { panel.hidden = true }),
@@ -393,6 +397,43 @@
     })
     const box = el('div')
     box.append(el('p', 'Values your backend and row-level security read from tokens, such as a plan or a tenant.', { class: 'muted' }), text, save, status)
+    return box
+  }
+
+  // impersonationPanel opens a time-limited session as the user in a new tab,
+  // recorded with the reason given, and lists the earlier ones. The session
+  // cannot change the user's password, email, factors or account.
+  async function impersonationPanel(user) {
+    const box = el('div')
+    const status = el('p', '', { role: 'status' })
+    const reason = el('input', null, { type: 'text', maxlength: '200', size: '40', 'aria-label': 'Reason, such as a support ticket', placeholder: 'Reason, such as a support ticket' })
+    const minutes = el('select', null, { 'aria-label': 'Session length' })
+    for (const m of [15, 30, 60]) minutes.append(el('option', m + ' minutes', { value: String(m) }))
+    minutes.value = '30'
+    const open = button('Open the app as this user', async () => {
+      if (!reason.value.trim()) { status.textContent = 'Give a reason; it is recorded.'; return }
+      status.textContent = 'Opening…'
+      try {
+        const started = await call('POST', '/admin/v1/users/' + encodeURIComponent(user.id) + '/impersonate', { reason: reason.value.trim(), minutes: Number(minutes.value) })
+        window.open(started.url, '_blank', 'noopener,noreferrer')
+        status.textContent = 'Opened in a new tab until ' + when(started.expires_at) + '.'
+        await showUser(user.id)
+      } catch (error) { status.textContent = error.message }
+    })
+    const { impersonations } = await call('GET', '/admin/v1/impersonations?user=' + encodeURIComponent(user.id))
+    const history = el('table')
+    history.append(el('tr'))
+    for (const heading of ['Opened', 'By', 'Reason', 'State', '']) history.rows[0].append(el('th', heading, { scope: 'col' }))
+    for (const item of impersonations) {
+      const row = history.insertRow()
+      const cell = el('td')
+      if (item.active) cell.append(button('End', async () => {
+        try { await call('DELETE', '/admin/v1/impersonations/' + encodeURIComponent(item.id)); await showUser(user.id) } catch (error) { status.textContent = error.message }
+      }))
+      row.append(el('td', when(item.started_at)), el('td', item.actor), el('td', item.reason), el('td', item.active ? 'Active until ' + when(item.expires_at) : 'Ended'), cell)
+    }
+    box.append(el('p', 'Opens the app signed in as this user, for support. The session is recorded with your reason and cannot change their password, email, second factors or account.', { class: 'muted' }),
+      reason, minutes, open, status, ...(impersonations.length ? [history] : []))
     return box
   }
 
@@ -631,7 +672,7 @@
       sso: settings.sso?.enabled ? 'on' : 'off', sms_countries: (settings.phone?.countries ?? []).join(','), org_sso: settings.sso?.self_service ? 'on' : 'off',
       oauth_server: settings.oauth?.enabled ? 'on' : 'off', oauth_registration: settings.oauth?.dynamic_registration ? 'on' : 'off',
       anonymous: settings.anonymous?.enabled ? 'on' : 'off', anonymous_retention_days: settings.anonymous?.retention_days ? String(settings.anonymous.retention_days) : '',
-      identity_linking: settings.identity_linking ? 'on' : 'off', self_deletion: settings.self_deletion ? 'on' : 'off', org_claims: settings.organization_claims ? 'on' : 'off',
+      identity_linking: settings.identity_linking ? 'on' : 'off', self_deletion: settings.self_deletion ? 'on' : 'off', org_claims: settings.organization_claims ? 'on' : 'off', impersonation: settings.impersonation ? 'on' : 'off',
     }
     for (const box of classes) box.checked = settings.password.required.includes(box.value)
     values.password_require = requireValue()
@@ -659,6 +700,7 @@
     emailForm.elements.namedItem('email_from').value = settings.email.from ?? ''
     emailForm.hidden = false
     ssoInfo = settings.sso ?? null
+    impersonationOn = settings.impersonation === true
     $('events-status').textContent = settings.events?.lifecycle ? 'Lifecycle events (auth.user.created, signed_in, confirmed, banned, unbanned, deleted) are published to your event bus.' : 'Lifecycle events are off.'
     renderKeys(settings.keys)
   }

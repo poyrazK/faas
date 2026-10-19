@@ -73,6 +73,7 @@ const (
 	secretSignupBlocked   = "AUTH_SIGNUP_BLOCKED_DOMAINS"
 	secretBlockDisposable = "AUTH_SIGNUP_BLOCK_DISPOSABLE"
 	secretSignupAccess    = "AUTH_SIGNUP_ACCESS"
+	secretImpersonation   = "AUTH_IMPERSONATION"
 )
 
 // SignupAccessModes are who may sign up: anyone, invited or approved
@@ -169,6 +170,8 @@ type Change struct {
 	BlockDisposable      *bool
 	// SignupAccess is one of SignupAccessModes.
 	SignupAccess *string
+	// Impersonation lets the admin key open time-limited sessions as users.
+	Impersonation *bool
 }
 
 // Captcha is a CAPTCHA provider and its keys; the secret stays in the app.
@@ -324,6 +327,9 @@ func (c Change) Secrets() (map[string]string, []string, error) {
 			return nil, nil, fmt.Errorf("unknown sign-up access %q; use %s", *c.SignupAccess, strings.Join(SignupAccessModes, ", "))
 		}
 		set[secretSignupAccess] = *c.SignupAccess
+	}
+	if c.Impersonation != nil {
+		set[secretImpersonation] = flag(*c.Impersonation)
 	}
 	if c.AnonymousRetentionDays != nil {
 		days := *c.AnonymousRetentionDays
