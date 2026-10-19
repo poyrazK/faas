@@ -1,3 +1,4 @@
+-- migration-compat: expand
 -- ADR-20261018161833: a schedule admits ordinary Operations for one customer,
 -- once at a fixed time or on a cron timetable. apid fires due rows; the lease
 -- lets one replica fire a row while the others skip it.
