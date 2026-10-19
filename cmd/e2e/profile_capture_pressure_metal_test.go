@@ -76,9 +76,11 @@ func startPressureApp(t *testing.T, prefix string) pressureApp {
 		t.Fatalf("create deployment: status=%d body=%s", status, body)
 	}
 	depID := parseImageDeployment(t, body)
-	ctx, cancel := context.WithTimeout(t.Context(), 4*time.Minute)
+	// Image deploys include the layer secret and abuse scans; give a loaded
+	// host room before the capture under test starts.
+	ctx, cancel := context.WithTimeout(t.Context(), 6*time.Minute)
 	defer cancel()
-	if _, err := e2etest.WaitForDeploymentLive(ctx, t, pool, depID, 110*time.Second); err != nil {
+	if _, err := e2etest.WaitForDeploymentLive(ctx, t, pool, depID, 4*time.Minute); err != nil {
 		t.Fatalf("deployment did not reach live: %v", err)
 	}
 	app := pressureApp{h: h, pool: pool, key: key, slug: slug, appID: appID, depID: depID, client: h.HTTPClient(), url: gatewayAppURL(h, slug), host: slug + ".apps.test.example"}

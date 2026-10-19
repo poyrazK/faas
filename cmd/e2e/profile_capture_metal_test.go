@@ -69,9 +69,11 @@ func TestProfileCaptureMetal(t *testing.T) {
 		t.Fatalf("create deployment: status=%d body=%s", status, body)
 	}
 	depID := parseImageDeployment(t, body)
-	deployCtx, deployCancel := context.WithTimeout(t.Context(), 120*time.Second)
+	// Image deploys include the layer secret and abuse scans; give a loaded
+	// host room before the capture under test starts.
+	deployCtx, deployCancel := context.WithTimeout(t.Context(), 5*time.Minute)
 	defer deployCancel()
-	if _, err := e2etest.WaitForDeploymentLive(deployCtx, t, pool, depID, 110*time.Second); err != nil {
+	if _, err := e2etest.WaitForDeploymentLive(deployCtx, t, pool, depID, 4*time.Minute); err != nil {
 		t.Fatalf("deployment did not reach live: %v", err)
 	}
 
