@@ -138,7 +138,7 @@ func NewService(registry *Registry, store Store, options ServiceOptions) (*Servi
 }
 
 func (s *Service) reservationLimit(ctx context.Context, accountID string) (int, error) {
-	limit, err := s.maxDatabasesPerAccount(ctx, accountID)
+	limit, err := s.maxDatabasesPerAccount(ctx, PolicySubject(ctx, accountID))
 	if err != nil {
 		return 0, err
 	}
@@ -149,6 +149,20 @@ func (s *Service) reservationLimit(ctx context.Context, accountID string) (int, 
 }
 
 func (s *Service) Create(ctx context.Context, request CreateRequest) (Database, error) {
+	return s.create(ctx, request, "")
+}
+
+// CreateWithID is for durable workflows which reserve a resource identity
+// before asking the provider to create it. A name collision must not adopt a
+// different database, even if its configuration happens to match.
+func (s *Service) CreateWithID(ctx context.Context, request CreateRequest, id string) (Database, error) {
+	if _, err := uuid.Parse(id); err != nil {
+		return Database{}, ErrInvalid
+	}
+	return s.create(ctx, request, id)
+}
+
+func (s *Service) create(ctx context.Context, request CreateRequest, reservedID string) (Database, error) {
 	if !s.provisioningEnabled() {
 		return Database{}, ErrProvisioningClosed
 	}
@@ -166,7 +180,10 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (Database, 
 	}
 	existing, err := s.store.FindByName(ctx, request.AccountID, request.Name)
 	if err == nil {
-		if _, err := s.Get(ctx, request.AccountID, existing.ID); err != nil {
+		if reservedID != "" && existing.ID != reservedID {
+			return Database{}, ErrConflict
+		}
+		if _, err := s.Get(ctx, existing.AccountID, existing.ID); err != nil {
 			return Database{}, err
 		}
 		if existing.Spec != request.Spec {
@@ -175,7 +192,7 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (Database, 
 		if existing.State == StateReady {
 			return existing, nil
 		}
-		return s.Reconcile(ctx, request.AccountID, existing.ID)
+		return s.Reconcile(ctx, existing.AccountID, existing.ID)
 	}
 	if !errors.Is(err, ErrNotFound) {
 		return Database{}, err
@@ -191,7 +208,7 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (Database, 
 		return Database{}, err
 	}
 	if s.admit != nil {
-		if err := s.admit(ctx, request.AccountID); err != nil {
+		if err := s.admit(ctx, PolicySubject(ctx, request.AccountID)); err != nil {
 			return Database{}, err
 		}
 	}
@@ -200,9 +217,14 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (Database, 
 	if err != nil {
 		return Database{}, err
 	}
+	databaseID := reservedID
+	if databaseID == "" {
+		databaseID = s.newID()
+	}
 	database, _, err := s.store.Reserve(ctx, Database{
-		ID:                 s.newID(),
+		ID:                 databaseID,
 		AccountID:          request.AccountID,
+		OrgID:              Organization(ctx),
 		Name:               request.Name,
 		Spec:               request.Spec,
 		BackendID:          backend.ID,
@@ -221,7 +243,7 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (Database, 
 	if database.State == StateReady {
 		return database, nil
 	}
-	return s.Reconcile(ctx, request.AccountID, database.ID)
+	return s.Reconcile(ctx, database.AccountID, database.ID)
 }
 
 // Restore creates a new database from a ready source without changing the
@@ -268,7 +290,7 @@ func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabase
 	// remain in retention: the durable target has already been reserved.
 	existing, err := s.store.FindByName(ctx, request.AccountID, request.Name)
 	if err == nil {
-		if _, err := s.Get(ctx, request.AccountID, existing.ID); err != nil {
+		if _, err := s.Get(ctx, existing.AccountID, existing.ID); err != nil {
 			return Database{}, false, err
 		}
 		if existing.RestoreSourceDatabaseID != request.SourceDatabaseID || !existing.RestorePointInTime.Equal(request.PointInTime) {
@@ -280,7 +302,7 @@ func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabase
 		if existing.State == StateReady {
 			return existing, false, nil
 		}
-		database, err := s.Reconcile(ctx, request.AccountID, existing.ID)
+		database, err := s.Reconcile(ctx, existing.AccountID, existing.ID)
 		return database, false, err
 	}
 	if !errors.Is(err, ErrNotFound) {
@@ -305,6 +327,7 @@ func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabase
 	database, created, err := s.store.Reserve(ctx, Database{
 		ID:                      s.newID(),
 		AccountID:               request.AccountID,
+		OrgID:                   source.OrgID,
 		Name:                    request.Name,
 		Spec:                    source.Spec,
 		BackendID:               source.BackendID,
@@ -329,7 +352,7 @@ func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabase
 	if database.State == StateReady {
 		return database, created, nil
 	}
-	ready, err := s.Reconcile(ctx, request.AccountID, database.ID)
+	ready, err := s.Reconcile(ctx, database.AccountID, database.ID)
 	if err != nil {
 		return database, created, err
 	}
@@ -350,7 +373,7 @@ func (s *Service) AdmitRestoreReservation(ctx context.Context, accountID string,
 		return 0, ErrInvalid
 	}
 	if s.admit != nil {
-		if err := s.admit(ctx, accountID); err != nil {
+		if err := s.admit(ctx, PolicySubject(ctx, accountID)); err != nil {
 			return 0, err
 		}
 	}
@@ -651,6 +674,16 @@ func (s *Service) Get(ctx context.Context, accountID, databaseID string) (Databa
 		return Database{}, err
 	}
 	return rows[0], nil
+}
+
+// LiveHub returns the livequeryd hub serving database's live queries
+// (ADR-20261016151947), or "" when its backend runs none.
+func (s *Service) LiveHub(database Database) (string, error) {
+	backend, err := s.registry.Resolve(database.BackendID, database.BackendFingerprint)
+	if err != nil {
+		return "", err
+	}
+	return backend.LiveHub(database.ID), nil
 }
 
 // FindByName locates an account-owned durable reservation. Clone workers use

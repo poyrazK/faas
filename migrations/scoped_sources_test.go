@@ -32,7 +32,11 @@ func TestIssuedMigrationDeclarationsRespectTargetSchema(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if bytes.Equal(original, body) || bytes.Contains(body, []byte("public.")) {
+			// This issued file already declares functions and row types without
+			// public qualifiers. search_path binds it to the target schema, so
+			// adapting it must preserve its bytes. The other four need rewriting.
+			alreadyScoped := entry.Name() == "20261003160458628_application_standard_runtime_default_base.sql"
+			if bytes.Equal(original, body) != alreadyScoped || bytes.Contains(body, []byte("public.")) {
 				t.Fatal("issued declaration escaped the target schema")
 			}
 			info, err := fs.Stat(scoped, entry.Name())
@@ -57,5 +61,25 @@ func TestMigrationScopingPreservesOtherSQL(t *testing.T) {
 	const protected = "-- CREATE FUNCTION public.application_standard_comment()\nSELECT 'public.apps';\n" + sql
 	if got := scopeIssuedMigrationDeclarations([]byte(protected), `"test"`); string(got) != protected {
 		t.Fatal("SQL outside the frozen declarations was adapted")
+	}
+}
+
+func TestMigrationScopingPreservesAlreadyUnqualifiedIssuedSQL(t *testing.T) {
+	// This issued migration already uses search_path-relative declarations.
+	// Requiring its bytes to change falsely reported a schema escape. Keep
+	// it outside the narrowly scoped public-declaration adaptation list.
+	const name = "20261003160458628_application_standard_runtime_default_base.sql"
+	original, err := fs.ReadFile(FS, name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(original, []byte("public.")) || issuedPublicDeclarationMigration(name) {
+		t.Fatal("unqualified migration unexpectedly requires public adaptation")
+	}
+	for _, schema := range []string{"public", "isolated schema", `schema"with quote`} {
+		body, err := fs.ReadFile(SourcesForSchema(schema), name)
+		if err != nil || !bytes.Equal(body, original) {
+			t.Fatalf("%q changed already scoped SQL: %v", schema, err)
+		}
 	}
 }

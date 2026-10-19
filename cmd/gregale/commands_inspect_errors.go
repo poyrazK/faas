@@ -13,7 +13,7 @@
 // Wire shape: the apid's DeploymentResponse carries the 4 fields
 // added by commit 6 (pkg/api/dto.go::DeploymentResponse). The
 // SDK's ListDeploymentsAll cursor walks the pages; we read until
-// we find status=failed AND error_code != "". The latest failed
+// we find status=failed, including failures with no recorded cause. The latest failed
 // deployment wins (ordered by created_at DESC).
 //
 // Exit codes:
@@ -42,7 +42,7 @@ const inspectErrorsUsage = "usage: gregale inspect <slug> --errors [--json]"
 // cmdInspectErrors lifts the latest failed deployment's
 // persisted explanation prose for slug and renders it via the
 // standard 3-5 line shape (Title / Detail / Hint / Why / Fix /
-// RelevantLogs / DocsURL). Under --json emits the raw DTO so
+// RelevantLogs / DocsURL). Under --json retains the DTO fields and adds recovery so
 // `gregale inspect <slug> --errors --json | jq` works.
 //
 // Auth required (the row is per-account, not public). On auth
@@ -88,15 +88,17 @@ func cmdInspectErrors(slug string) int {
 		return 1
 	}
 	if jsonOutput || *asJSON {
-		return jsonOut(writeJSON(dep))
+		return jsonOut(writeJSON(struct {
+			api.DeploymentResponse
+			Recovery *deployRecovery `json:"recovery"`
+		}{*dep, failedDeploymentRecovery(slug, *dep)}))
 	}
 	renderInspectErrorsHuman(osStdout, slug, *dep)
 	return 0
 }
 
 // findLatestFailedDeployment walks the app-scoped deployment list for slug
-// and returns the first row with status=failed AND error_code
-// non-empty. Returns (nil, nil) when no such row exists within
+// and returns the first row with status=failed. Returns (nil, nil) when no such row exists within
 // the cap. Errors propagate to the caller.
 //
 // The app-scoped endpoint prevents a busy account from pushing the target
@@ -116,7 +118,7 @@ func findLatestFailedDeployment(client *Client, slug string, maxPages int) (*api
 		}
 		for i := range resp.Items {
 			d := &resp.Items[i]
-			if d.Status == "failed" && d.ErrorCode != "" {
+			if d.Status == "failed" {
 				return d, nil
 			}
 		}
@@ -136,6 +138,10 @@ func findLatestFailedDeployment(client *Client, slug string, maxPages int) (*api
 func renderInspectErrorsHuman(w io.Writer, slug string, dep api.DeploymentResponse) {
 	renderDeploymentFailure(w, dep)
 	printDeploymentLogCommand(w, slug, dep.ID)
+	if dep.ErrorCode == "" && dep.Error == "" && dep.ErrorWhy == "" {
+		_, _ = fmt.Fprintln(w, "  Cause: not yet available; inspect deployment logs for evidence.")
+	}
+	_, _ = fmt.Fprintf(w, "Next step (POSIX shells):\n  %s\n", failedDeploymentRecovery(slug, dep).NextCommand)
 	// Footer: when the failure happened (the apid stamps
 	// created_at; we accept the empty case gracefully).
 	_, _ = fmt.Fprintf(w, "  app: %s\n", slug)

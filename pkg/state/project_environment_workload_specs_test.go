@@ -52,13 +52,7 @@ func TestWorkloadAppFieldPoliciesCoverEveryAppField(t *testing.T) {
 	}
 }
 
-type workloadSpecTestStore interface {
-	state.Store
-	state.ProjectEnvironmentWorkloadSpecStore
-	state.DeploymentWorkloadSpecReader
-	CloneProjectEnvironment(context.Context, state.ProjectEnvironmentClone, api.Limits) (state.ProjectEnvironment, state.ProjectEnvironmentCloneResult, error)
-	RollbackProjectEnvironmentClone(context.Context, string, string, string) error
-}
+type workloadSpecTestStore = contractTestStore
 
 func TestMemEnvironmentWorkloadSettingsAreIsolatedAndPinned(t *testing.T) {
 	testEnvironmentWorkloadSettings(t, state.NewMemStore())

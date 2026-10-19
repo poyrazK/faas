@@ -13,6 +13,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/google/uuid"
 	"golang.org/x/net/http/httpguts"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -56,12 +57,26 @@ func logDrainFlags(name string, args []string, needID bool, define func(*flag.Fl
 	if err := parseInterspersed(fs, rest); err != nil {
 		return "", "", false
 	}
+	positional := fs.Args()
+	// A drain id given positionally (`rm <id> --app my-app`, `rm my-app
+	// <id>`) was read as a second app slug and failed with "pass the app
+	// once" (H10-125). An id is a UUID; a slug never is.
+	if needID && *drain == "" {
+		if isLogDrainID(leading) {
+			*drain, leading = leading, ""
+		} else if len(positional) == 1 && isLogDrainID(positional[0]) {
+			*drain, positional = positional[0], nil
+		}
+	}
 	// The usage line places the slug after the flags (`rm --id X my-app`);
 	// a trailing slug was rejected as an unexpected argument (H10-17).
-	if leading == "" && *app == "" && fs.NArg() == 1 {
-		leading = fs.Arg(0)
-	} else if rejectUnexpectedFlagArgs(fs) {
-		return "", "", false
+	switch {
+	case leading == "" && *app == "" && len(positional) == 1:
+		leading = positional[0]
+	case len(positional) > 0:
+		if rejectUnexpectedFlagArgs(fs) {
+			return "", "", false
+		}
 	}
 	if err := mergeLeadingSlug(app, leading); err != nil {
 		printErr("Invalid arguments", err)
@@ -76,6 +91,11 @@ func logDrainFlags(name string, args []string, needID bool, define func(*flag.Fl
 		return "", "", false
 	}
 	return *app, *drain, true
+}
+
+func isLogDrainID(s string) bool {
+	_, err := uuid.Parse(s)
+	return s != "" && err == nil
 }
 
 func cmdLogDrainsList(args []string) int {

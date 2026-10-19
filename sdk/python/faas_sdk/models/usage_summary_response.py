@@ -34,7 +34,7 @@ class UsageSummaryResponse:
     included_gb_hours: int
     overage_gb_hours: float
     overage_cents: int
-    """Integer cents. Includes compute at €0.01/GB-h and configured live egress overage; shadow egress is excluded."""
+    """Integer cents. Includes compute at $0.01/GB-h and configured live egress overage; shadow egress is excluded."""
     used_cpu_hours: float | Unset = UNSET
     """Per-month CPU-hours (informational; not billed). issue #279 / PR-B."""
     used_egress_gb: float | Unset = UNSET

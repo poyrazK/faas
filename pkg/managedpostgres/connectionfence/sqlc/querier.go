@@ -19,6 +19,14 @@ type Querier interface {
 	// Recheck the entire native catalogue against the original OIDs. A database
 	// created after selection cannot disappear behind a drained selected subset.
 	CheckpointUnselectedDatabaseCount(ctx context.Context, db DBTX, arg CheckpointUnselectedDatabaseCountParams) (int64, error)
+	// Backend types hidden by SQL privileges are unknown, never silently idle.
+	// The observer itself is the only session excluded. Server housekeeping is
+	// distinguished from logical/background writers; provider evidence must still
+	// prevent future dispatch and cover alternate endpoints/admin APIs.
+	CheckpointWriterActivity(ctx context.Context, db DBTX) (CheckpointWriterActivityRow, error)
+	// Read the complete bounded catalog, including the authenticated maintenance
+	// database. A changing digest is drift; an unchanged digest is not a DDL fence.
+	CheckpointWriterCatalog(ctx context.Context, db DBTX, maxDatabases int32) ([]CheckpointWriterCatalogRow, error)
 	CloseConnections(ctx context.Context, db DBTX, arg CloseConnectionsParams) (bool, error)
 	CreateMaintenanceDatabase(ctx context.Context, db DBTX) error
 	FenceInstallationVersion(ctx context.Context, db DBTX) (int32, error)

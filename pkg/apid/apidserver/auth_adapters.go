@@ -111,3 +111,11 @@ var (
 	_ middleware.Auditor                                = auditorAuthAdapter{}
 	_ authz.AuditEmitter                                = auditorAuthzAdapter{}
 )
+
+func (a storeAuthAdapter) AuthenticateHostingAutomationToken(ctx context.Context, hash []byte) (state.Account, state.APIKey, error) {
+	store, ok := a.Store.(state.HostingAutomationStore)
+	if !ok {
+		return state.Account{}, state.APIKey{}, state.ErrNotFound
+	}
+	return store.AuthenticateHostingAutomationToken(ctx, hash)
+}

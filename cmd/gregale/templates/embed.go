@@ -22,7 +22,6 @@ import (
 	"compress/gzip"
 	"embed"
 	"fmt"
-	"io"
 	"io/fs"
 	"os"
 	"path"
@@ -34,7 +33,10 @@ import (
 // FS holds the embedded starter projects. The root is the directory
 // this file lives in, so subdirs are accessed by their template name.
 //
-//go:embed hello-node hello-python hello-go cron-example function-node function-python function-go function-node24 function-python313 function-rust event-worker queue-worker s3-uploader object-storage-node slack-bot rest-api-postgres cron-worker webhook-receiver ai-chat secret-reload-node customer-platform mcp-node mcp-go mcp-python customer-operation-export customer-operation-job-export customer-operation-workflow-export data-api data-api-starter durable-entity-node data-api-teams data-api-support-console auth
+// Include private Python module filenames, which directory embedding omits.
+//
+//go:embed hello-node hello-python hello-go cron-example function-node function-python function-go function-node24 function-python313 function-rust event-worker queue-worker s3-uploader object-storage-node slack-bot rest-api-postgres rest-api-postgres-python cron-worker webhook-receiver ai-chat secret-reload-node customer-platform mcp-node mcp-go mcp-python customer-operation-export customer-operation-job-export customer-operation-workflow-export data-api data-api-starter durable-entity-node data-api-teams data-api-support-console auth
+//go:embed rest-api-postgres-python/runtime/*.py object-storage-python object-storage-python/runtime/*.py
 var FS embed.FS
 
 // GoToolchainVersion is the patched toolchain selected by Gregale's built-in
@@ -64,8 +66,10 @@ var Names = []string{
 	"queue-worker",
 	"s3-uploader",
 	"object-storage-node",
+	"object-storage-python",
 	"slack-bot",
 	"rest-api-postgres",
+	"rest-api-postgres-python",
 	"cron-worker",
 	"webhook-receiver",
 	"ai-chat",
@@ -86,10 +90,12 @@ var Names = []string{
 }
 
 // unlisted templates stay embedded and materializable by name but are left
-// out of customer discovery: `gregale init --list`, completions and
-// unknown-template hints. durable-entity-node scaffolds the operator-only
-// durable entity preview (ADR-712).
-var unlisted = map[string]bool{"durable-entity-node": true}
+// out of customer discovery: `gregale init --list`, completions,
+// unknown-template hints and the dashboard catalog. durable-entity-node
+// scaffolds the operator-only durable entity preview (ADR-712); auth is
+// application Auth, a dark launch (ADR-1190) that `gregale auth create`
+// materializes.
+var unlisted = map[string]bool{"durable-entity-node": true, "auth": true}
 
 // ListedNames returns Names without unlisted templates, in catalog order.
 func ListedNames() []string {
@@ -106,6 +112,14 @@ func ListedNames() []string {
 // //go:embed omits such names from a directory pattern, so Materialize
 // writes them instead.
 var generatedDotfiles = map[string]map[string]string{
+	"object-storage-python": {
+		".gitignore":     "__pycache__/\n*.pyc\n.venv/\n.gregale/\n.env\n.env.*\n*.secrets\n",
+		".gregaleignore": "/tests/\n**/__pycache__/\n*.pyc\n/.venv/\n/.gregale/\n.env\n.env.*\n*.secrets\n",
+	},
+	"rest-api-postgres-python": {
+		".gitignore":     "__pycache__/\n*.pyc\n.venv/\n.gregale/\n.env\n.env.*\n*.secrets\n",
+		".gregaleignore": "/tests/\n**/__pycache__/\n*.pyc\n/.venv/\n/.gregale/\n.env\n.env.*\n*.secrets\n",
+	},
 	"data-api-support-console": {".gitignore": "node_modules/\n.gregale/\n.env\n.env.*\n", ".gregaleignore": "/test/\n/demo.mjs\n/.env\n/.env.*\n"},
 	"data-api-teams": {
 		".gitignore":     "node_modules/\nclient/dist/\nclient/client.js\nclient/vendor/\n.gregale/\n.gregale-tools/\n.env\n.env.*\n",
@@ -248,6 +262,9 @@ func Materialize(name, dest string) error {
 	if err := os.CopyFS(dest, subFS); err != nil {
 		return err
 	}
+	if err := withholdMonetization(name, dest); err != nil {
+		return err
+	}
 	for source, output := range generatedTemplateFiles[name] {
 		if err := os.Rename(filepath.Join(dest, source), filepath.Join(dest, output)); err != nil {
 			return err
@@ -353,13 +370,25 @@ func TarGz(name, dest string) error {
 			archivePath = output
 		}
 		hdr.Name = name + "/" + filepath.ToSlash(archivePath)
+		if !info.Mode().IsRegular() {
+			if err := tw.WriteHeader(hdr); err != nil {
+				return err
+			}
+			continue
+		}
+		raw, err := fs.ReadFile(rootFS, p)
+		if err != nil {
+			return err
+		}
+		content, ok := shipped(name, p, raw)
+		if !ok {
+			continue
+		}
+		hdr.Size = int64(len(content))
 		if err := tw.WriteHeader(hdr); err != nil {
 			return err
 		}
-		if !info.Mode().IsRegular() {
-			continue
-		}
-		if err := copyFromFS(tw, rootFS, p); err != nil {
+		if _, err := tw.Write(content); err != nil {
 			return err
 		}
 	}
@@ -397,16 +426,6 @@ func TarGz(name, dest string) error {
 		}
 	}
 	return nil
-}
-
-func copyFromFS(w io.Writer, root fs.FS, name string) error {
-	f, err := root.Open(name)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = f.Close() }()
-	_, err = io.Copy(w, f)
-	return err
 }
 
 // MaterializeForTest copies a single template into a fresh tempdir and
@@ -461,7 +480,7 @@ func CategoryFor(name string) string {
 		return "function"
 	case "event-worker", "queue-worker":
 		return "event-driven"
-	case "s3-uploader", "object-storage-node", "slack-bot", "rest-api-postgres", "cron-worker", "webhook-receiver", "secret-reload-node", "customer-platform", "data-api", "data-api-starter", "data-api-teams", "data-api-support-console", "auth":
+	case "s3-uploader", "object-storage-node", "object-storage-python", "slack-bot", "rest-api-postgres", "rest-api-postgres-python", "cron-worker", "webhook-receiver", "secret-reload-node", "customer-platform", "data-api", "data-api-starter", "data-api-teams", "data-api-support-console", "auth":
 		return "stateless-contract"
 	case "ai-chat":
 		return "ai"

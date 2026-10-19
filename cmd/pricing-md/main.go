@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -31,7 +32,7 @@ func render() string {
 	var b strings.Builder
 	b.WriteString("# Plans and pricing\n\n")
 	b.WriteString("<!-- GENERATED — do not edit by hand; regenerate with `make pricing-md`. -->\n\n")
-	b.WriteString("Gregale pricing and quotas come from [`pkg/api/limits.go`](../pkg/api/limits.go). The same table is enforced by the API, so this page is generated rather than maintained separately. Prices are monthly and shown in euros. Usage beyond the included GB-RAM-hours is billed at €0.01 per GB-RAM-hour on paid plans.\n\n")
+	b.WriteString("Gregale pricing and quotas come from [`pkg/api/limits.go`](../pkg/api/limits.go). The same table is enforced by the API, so this page is generated rather than maintained separately. Prices are monthly and shown in US dollars. Usage beyond the included GB-RAM-hours is billed at $0.01 per GB-RAM-hour on paid plans.\n\n")
 	b.WriteString("## At a glance\n\n")
 	b.WriteString("| Plan | Monthly | Deployed apps | PR preview apps | Developer apps | Concurrent instances | RAM / app | Included GB-RAM-hours | App layer | Idle timeout | Max request timeout |\n")
 	b.WriteString("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n")
@@ -69,10 +70,36 @@ func render() string {
 		}
 		fmt.Fprintf(&b, "| **%s** | %d | %s |\n", titlePlan(plan), l.DeveloperApps, formatDuration(l.DeveloperLeaseMaxHours*3600))
 	}
+	b.WriteString("\n## Managed realtime\n\n")
+	b.WriteString("Realtime is included on every paid plan at no extra charge: Gregale bills compute, and channels, consumer groups and delivery are software. Limits apply only where realtime holds real capacity. Retained history is bounded per endpoint, and functions triggered by channel messages bill as normal compute.\n\n")
+	b.WriteString("| Plan | Endpoints per app | Endpoints per account | Concurrent connections per account |\n")
+	b.WriteString("|---|---:|---:|---:|\n")
+	for _, plan := range api.Plans {
+		rl, ok := api.RealtimeLimitsFor(plan)
+		if !ok {
+			continue
+		}
+		if rl.EndpointsPerApp == 0 {
+			fmt.Fprintf(&b, "| **%s** | — | — | — |\n", titlePlan(plan))
+			continue
+		}
+		fmt.Fprintf(&b, "| **%s** | %d | %d | %s |\n", titlePlan(plan), rl.EndpointsPerApp, rl.EndpointsPerAccount, formatCount(rl.ConnectionsPerAccount))
+	}
+	fmt.Fprintf(&b, "\nThe connection limit counts open WebSocket and SSE connections across all of an account's endpoints. One account may also hold at most %d%% of a single realtime node's connections; see [realtime fair use](realtime.md#fair-use-limits).\n",
+		api.RealtimeAccountNodeSharePercent)
 	b.WriteString("\n## Choose a plan\n\n")
 	b.WriteString("Start on **Free** for a small public API or a trial. **Hobby** unlocks the paid observability, async, and data surfaces. **Pro** is the normal production tier for teams, while **Scale** raises the app, concurrency, RAM, and usage ceilings. Feature maturity and entitlement are listed in the [capability matrix](capabilities.md).\n\n")
 	b.WriteString("Plan changes are safe to preview with `gregale plan`; quota errors include the exact observed value, limit, and next action.\n")
 	return b.String()
+}
+
+// formatCount groups thousands with commas, e.g. 5000 → "5,000".
+func formatCount(n int) string {
+	s := strconv.Itoa(n)
+	for i := len(s) - 3; i > 0; i -= 3 {
+		s = s[:i] + "," + s[i:]
+	}
+	return s
 }
 
 func titlePlan(plan api.Plan) string {
@@ -85,16 +112,16 @@ func titlePlan(plan api.Plan) string {
 
 func formatPrice(millicents int64) string {
 	if millicents == 0 {
-		return "€0"
+		return api.BillingCurrencySymbol + "0"
 	}
-	// The current catalog uses whole-euro prices. Keep the cents path for a
+	// The current catalog uses whole-dollar prices. Keep the cents path for a
 	// future plan so generation remains correct without a code change.
 	whole := millicents / 100_000
 	minor := (millicents % 100_000) / 1_000
 	if minor == 0 {
-		return fmt.Sprintf("€%d", whole)
+		return fmt.Sprintf("%s%d", api.BillingCurrencySymbol, whole)
 	}
-	return fmt.Sprintf("€%d.%02d", whole, minor)
+	return fmt.Sprintf("%s%d.%02d", api.BillingCurrencySymbol, whole, minor)
 }
 
 func formatDuration(seconds int) string {

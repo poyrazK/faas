@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strconv"
 	"time"
 
@@ -97,6 +98,7 @@ type resumeClientFrame struct {
 	Subscription   string            `json:"subscription,omitempty"`
 	PresenceScope  string            `json:"presence_scope,omitempty"`
 	DirectMessages bool              `json:"direct_messages,omitempty"`
+	Occupancy      bool              `json:"occupancy,omitempty"`
 	MessageID      string            `json:"message_id,omitempty"`
 	After          int64             `json:"after,omitempty"`
 	Sequence       int64             `json:"sequence,omitempty"`
@@ -134,6 +136,7 @@ type resumeServerFrame struct {
 	Data               json.RawMessage                      `json:"data,omitempty"`
 	ConnectionCount    int                                  `json:"connection_count,omitempty"`
 	Members            []resumePresenceMember               `json:"members,omitempty"`
+	Subscribers        *int                                 `json:"subscribers,omitempty"`
 	Complete           bool                                 `json:"complete,omitempty"`
 	UpdatedAt          time.Time                            `json:"updated_at,omitempty"`
 }
@@ -158,16 +161,18 @@ type resumeSignalRate struct {
 }
 
 type resumeSubscription struct {
-	filter      map[string]string
-	cancel      context.CancelFunc
-	wake        chan struct{}
-	durableName string
-	lastSent    int64 // guarded by connection.mu
-	lastAck     int64 // guarded by connection.mu
-	resyncing   bool  // guarded by connection.mu
+	authorization channelAuthorization
+	filter        map[string]string
+	cancel        context.CancelFunc
+	wake          chan struct{}
+	durableName   string
+	lastSent      int64 // guarded by connection.mu
+	lastAck       int64 // guarded by connection.mu
+	resyncing     bool  // guarded by connection.mu
 }
 
 func (m *Manager) runResumeConnection(ctx context.Context, c *connection) {
+	defer c.closeLive()
 	for {
 		kind, data, err := c.ws.ReadMessage()
 		if err != nil {
@@ -181,6 +186,14 @@ func (m *Manager) runResumeConnection(ctx context.Context, c *connection) {
 			_ = c.close(websocket.CloseUnsupportedData, "v2 requires JSON text frames")
 			return
 		}
+		// An endpoint without live routes (its account is outside the
+		// FAAS_LIVE_QUERIES_ACCOUNTS rollout, or no live database is bound)
+		// answers live frames like any unknown frame, so the protocol is not
+		// discoverable; a session already open keeps receiving its frames.
+		if kind, subscription := liveFrameType(data); kind != "" && (c.live != nil || len(c.liveRoutes()) > 0) {
+			m.handleLive(ctx, c, data, subscription)
+			continue
+		}
 		var frame resumeClientFrame
 		if err := json.Unmarshal(data, &frame); err != nil {
 			m.queueResumeControl(ctx, c, resumeServerFrame{Type: "error", Code: "invalid_frame"})
@@ -192,6 +205,12 @@ func (m *Manager) runResumeConnection(ctx context.Context, c *connection) {
 		}
 		if frame.Type != "unsubscribe" && !c.accessAllows(ctx, frame.Channel) {
 			m.queueResumeControl(ctx, c, resumeServerFrame{Type: "error", Code: "access_revoked", Channel: frame.Channel})
+			continue
+		}
+		if !c.identityAllows(ctx) {
+			return
+		}
+		if !m.admitResumeCommand(ctx, c, frame) {
 			continue
 		}
 		c.mu.Lock()
@@ -345,7 +364,8 @@ func (m *Manager) resumeSubscribe(ctx context.Context, c *connection, frame resu
 			m.resumeCount.Add(-1)
 		}
 	}()
-	if !m.authorizeResumeChannel(ctx, c, frame.Channel) {
+	subscription := &resumeSubscription{}
+	if subscription.authorization.check(ctx, c, frame.Channel) != channelAuthorizationAllowed {
 		m.queueResumeControl(ctx, c, resumeServerFrame{Type: "error", Channel: frame.Channel, Code: "not_authorized"})
 		return
 	}
@@ -406,7 +426,8 @@ func (m *Manager) resumeSubscribe(ctx context.Context, c *connection, frame resu
 	for key, value := range frame.Filter {
 		filter[key] = value
 	}
-	subscription := &resumeSubscription{filter: filter, cancel: subCancel, wake: make(chan struct{}, 1), durableName: frame.Subscription, lastSent: after, lastAck: after}
+	subscription.filter, subscription.cancel, subscription.wake = filter, subCancel, make(chan struct{}, 1)
+	subscription.durableName, subscription.lastSent, subscription.lastAck = frame.Subscription, after, after
 	m.mu.Lock()
 	if m.conns[c.info.ID] != c {
 		m.mu.Unlock()
@@ -425,7 +446,7 @@ func (m *Manager) resumeSubscribe(ctx context.Context, c *connection, frame resu
 		return
 	}
 	c.resumeSubs[frame.Channel] = subscription
-	c.channels[frame.Channel] = struct{}{}
+	c.addChannelLocked(frame.Channel)
 	if frame.ReadReceipts {
 		c.readReceipts = true
 	}
@@ -554,7 +575,16 @@ func (m *Manager) resumeSubscribe(ctx context.Context, c *connection, frame resu
 	}
 	m.syncFleetPresence(ctx, key)
 	release = false
+	m.watchSubscriptionOccupancy(ctx, c, frame)
 	go m.pumpResumeSubscription(subCtx, c, frame.Channel, subscription, page)
+}
+
+// watchSubscriptionOccupancy starts live occupancy frames when the subscribe
+// frame asked for them and the preview is on (ADR-1324).
+func (m *Manager) watchSubscriptionOccupancy(ctx context.Context, c *connection, frame resumeClientFrame) {
+	if frame.Occupancy && m.cfg.OccupancyPreview && !m.watchOccupancy(c.info.EndpointID, frame.Channel, c) {
+		m.queueResumeControl(ctx, c, resumeServerFrame{Type: "error", Channel: frame.Channel, Code: "occupancy_limit"})
+	}
 }
 
 func normalizeResumePresenceState(raw json.RawMessage) (json.RawMessage, bool) {
@@ -830,23 +860,34 @@ func durableCursorErrorCode(err error) string {
 }
 
 func (m *Manager) authorizeResumeChannel(ctx context.Context, c *connection, channel string) bool {
+	var authorization channelAuthorization
+	return authorization.check(ctx, c, channel) == channelAuthorizationAllowed
+}
+
+func (m *Manager) checkResumeChannel(ctx context.Context, c *connection, channel string, endpoint *Endpoint) (bool, error) {
 	if !c.accessAllows(ctx, channel) {
-		return false
+		return false, nil
 	}
 	if c.ticketToken != "" {
-		return true
+		return true, nil
 	}
-	authorizer := m.hooks.(ChannelAuthorizer) // checked before WebSocket upgrade
+	authorizer, ok := m.hooks.(ChannelAuthorizer)
+	if !ok {
+		return false, errors.New("realtime: channel authorizer unavailable")
+	}
 	event := Event{
 		ID: "evt_" + uuid.NewString(), Type: EventAuthorizeChannel,
 		EndpointID: c.info.EndpointID, AppID: c.info.AppID, AccountID: c.info.AccountID,
 		ConnectionID: c.info.ID, Principal: c.info.Principal, Channel: channel,
-		Permission: "read", At: time.Now().UTC(), CallbackURL: c.endpoint.CallbackURL,
-		CallbackAuthToken: c.currentCallbackAuthToken(),
+		Permission: "read", At: time.Now().UTC(), CallbackURL: endpoint.CallbackURL,
+		CallbackAuthToken: endpoint.CallbackAuthToken,
+	}
+	if c.identity != nil {
+		event.SessionID = c.identity.identity.SessionID
 	}
 	parent, scope, parseErr := api.ParseRealtimeActivityScope(channel)
 	if parseErr != nil {
-		return false
+		return false, fmt.Errorf("realtime: parse channel activity scope: %w", parseErr)
 	}
 	if scope != "" {
 		event.ActivityParentChannel = parent
@@ -855,8 +896,11 @@ func (m *Manager) authorizeResumeChannel(ctx context.Context, c *connection, cha
 	}
 	authCtx, cancel := context.WithTimeout(ctx, m.cfg.CallbackTimeout)
 	allowed, err := authorizer.AuthorizeChannel(authCtx, event)
+	if err == nil {
+		err = authCtx.Err()
+	}
 	cancel()
-	return err == nil && allowed
+	return allowed, err
 }
 
 func (m *Manager) pumpResumeSubscription(ctx context.Context, c *connection, channel string, subscription *resumeSubscription, page state.ManagedRealtimeChannelHistory) {
@@ -868,6 +912,9 @@ func (m *Manager) pumpResumeSubscription(ctx context.Context, c *connection, cha
 	key := channelKey{endpointID: c.info.EndpointID, channel: channel}
 	for {
 		if ctx.Err() != nil {
+			return
+		}
+		if !m.admitResumeChannel(ctx, c, channel, subscription) {
 			return
 		}
 		if page.HistoryUnavailable {
@@ -948,6 +995,9 @@ func (m *Manager) pumpResumeSubscription(ctx context.Context, c *connection, cha
 				return
 			}
 		}
+		if !m.admitResumeChannel(ctx, c, channel, subscription) {
+			return
+		}
 		if c.ticketToken == "" {
 			m.syncFleetPresence(ctx, key)
 		}
@@ -969,6 +1019,7 @@ func (m *Manager) pumpResumeSubscription(ctx context.Context, c *connection, cha
 
 func (m *Manager) removeResumeSubscription(ctx context.Context, c *connection, channel string, subscription *resumeSubscription) {
 	var routeRemoved bool
+	var removed bool
 	var memberID string
 	var leaseDeleted bool
 	var fullPresenceQueues []*connection
@@ -976,8 +1027,9 @@ func (m *Manager) removeResumeSubscription(ctx context.Context, c *connection, c
 	m.mu.Lock()
 	c.mu.Lock()
 	if c.resumeSubs[channel] == subscription {
+		removed = true
 		delete(c.resumeSubs, channel)
-		delete(c.channels, channel)
+		c.removeChannelLocked(channel)
 		if member := m.presenceMembers[key][c.info.ID]; member != nil {
 			leaseDeleted = true
 			if m.cfg.FleetClient == nil {
@@ -1018,6 +1070,9 @@ func (m *Manager) removeResumeSubscription(ctx context.Context, c *connection, c
 	c.mu.Unlock()
 	m.mu.Unlock()
 	subscription.cancel()
+	if removed {
+		m.unwatchOccupancy(c.info.EndpointID, channel, c)
+	}
 	for _, slow := range fullPresenceQueues {
 		m.closeResumeOnQueueFull(slow, ErrOutboundQueueFull)
 	}
@@ -1231,6 +1286,10 @@ func (m *Manager) queueResume(ctx context.Context, c *connection, frame resumeSe
 		return ErrOutboundQueueFull
 	}
 	message := Message{Data: data}
+	switch frame.Type {
+	case "subscribed", "message", "checkpoint", "presence", "signal", "read_receipt":
+		message.channelAuthorization = frame.Channel != ""
+	}
 	if frame.Type != "error" && frame.Type != "unsubscribed" {
 		message.accessChannel = frame.Channel
 	}
@@ -1244,5 +1303,8 @@ func (m *Manager) queueResume(ctx context.Context, c *connection, frame resumeSe
 	}
 	m.sentMessages.Add(1)
 	m.sentBytes.Add(uint64(len(data)))
+	if usagePayloadFrames[frame.Type] {
+		c.state.usage.delivered(len(data))
+	}
 	return nil
 }

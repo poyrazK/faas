@@ -11,12 +11,14 @@ package apidserver
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/promql"
@@ -115,9 +117,14 @@ func TestObsHealthHandler_StableJSONShapeOnEmptyDB(t *testing.T) {
 func TestObsHealthHandler_PrometheusNoActivityIsAvailable(t *testing.T) {
 	var queries []string
 	promServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		queries = append(queries, r.URL.Query().Get("query"))
+		query := r.URL.Query().Get("query")
+		queries = append(queries, query)
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"status":"success","data":{"resultType":"vector","result":[{"metric":{},"value":[1728000000,"0"]}]}}`)
+		value := int64(0)
+		if strings.Contains(query, "timestamp(") || strings.Contains(query, "last_evaluation_timestamp_seconds") {
+			value = time.Now().Unix()
+		}
+		_, _ = fmt.Fprintf(w, `{"status":"success","data":{"resultType":"vector","result":[{"metric":{},"value":[1728000000,"%d"]}]}}`, value)
 	}))
 	defer promServer.Close()
 
@@ -139,8 +146,11 @@ func TestObsHealthHandler_PrometheusNoActivityIsAvailable(t *testing.T) {
 	}
 	want := []string{
 		`sum(increase(apid_audit_log_write_total[5m]))`,
+		`min(max_over_time(timestamp(apid_audit_log_write_total)[900s:15s]))`,
 		`sum(increase(apid_audit_log_write_failures_total[5m]))`,
+		`min(max_over_time(timestamp(apid_audit_log_write_failures_total)[900s:15s]))`,
 		`count(ALERTS{alertstate="firing",alertname!="FaasWatchdog",severity!="info"}) or vector(0)`,
+		`min(last_over_time(prometheus_rule_group_last_evaluation_timestamp_seconds{rule_group=~".*faas[.]rules[.]yml;.*"}[900s]))`,
 	}
 	if len(queries) != len(want) {
 		t.Fatalf("PromQL query count = %d, want %d (%v)", len(queries), len(want), queries)

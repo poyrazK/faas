@@ -4,6 +4,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"io"
@@ -45,7 +46,7 @@ func TestResumeAckWaitsForUserspaceReseed(t *testing.T) {
 			guest := os.NewFile(uintptr(fds[0]), "guest-resume")
 			host := os.NewFile(uintptr(fds[1]), "host-resume")
 			defer func() { _ = host.Close() }()
-			body, _ := json.Marshal(map[string]any{"hostTimeUnixNano": 1})
+			body, _ := json.Marshal(map[string]any{"hostTimeUnixNano": 1, "entropy": base64.StdEncoding.EncodeToString(make([]byte, 32))})
 			msg := make([]byte, 8+len(body))
 			binary.BigEndian.PutUint32(msg[:4], VsockResumeMsgType)
 			binary.BigEndian.PutUint32(msg[4:8], uint32(len(body)))

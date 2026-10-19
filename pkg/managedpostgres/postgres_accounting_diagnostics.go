@@ -25,7 +25,7 @@ func (s *PostgresStore) ListAccountingCoverage(ctx context.Context, accountID, a
 			return nil, err
 		}
 	}
-	rows, err := sqlc.New().ListManagedPostgresAccountingCoverage(ctx, s.pool, params)
+	rows, err := sqlc.New().ListManagedPostgresAccountingCoverage(ctx, s.catalog, params)
 	if err != nil {
 		return nil, mapPostgresError(err)
 	}

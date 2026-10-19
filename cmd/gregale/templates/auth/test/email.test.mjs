@@ -127,3 +127,20 @@ test('the loopback hook delivers signed payloads and reports failures to GoTrue'
   assert.equal(sent[0].key, 'msg_9-0')
   assert.equal(sent[0].m.to, 'alice@example.test')
 })
+
+test('the hook sends the owner template, and the default when templates cannot be read', async t => {
+  const secret = newHookSecret()
+  const sent = []
+  const mailer = { send: async m => { sent.push(m) } }
+  for (const templates of [async () => ({ magiclink: { subject: 'Hi from {{app}}', body: 'Tap {{link}}' } }), async () => { throw new Error('database down') }]) {
+    const server = createHookServer({ secret, mailer, api, app: 'Shop', templates })
+    server.listen(0, '127.0.0.1')
+    await once(server, 'listening')
+    t.after(() => server.close())
+    const body = JSON.stringify({ user: { email: 'alice@example.test' }, email_data: { email_action_type: 'magiclink', token_hash: 'h' } })
+    const timestamp = String(Math.floor(Date.now() / 1000))
+    const response = await fetch(`http://127.0.0.1:${server.address().port}/send-email`, { method: 'POST', body, headers: { 'webhook-id': 'msg_1', 'webhook-timestamp': timestamp, 'webhook-signature': sign(secret, 'msg_1', timestamp, body) } })
+    assert.deepEqual(await response.json(), {})
+  }
+  assert.deepEqual(sent.map(m => m.subject), ['Hi from Shop', 'Your sign-in link'])
+})

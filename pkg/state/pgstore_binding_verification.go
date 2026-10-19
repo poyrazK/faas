@@ -14,6 +14,9 @@ import (
 var _ BindingVerificationStore = (*PgStore)(nil)
 
 func (s *PgStore) createBindingVerificationTask(ctx context.Context, params CreateAppTaskParams) (AppTask, error) {
+	if params.BindingVerification.ManagedService != nil && ManagedServiceProbeCurrent(ctx, s, AppTask{AppID: params.AppID, DeploymentID: params.DeploymentID, BindingVerification: params.BindingVerification}) != nil {
+		return AppTask{}, ErrAppTaskDeploymentUnavailable
+	}
 	raw, err := json.Marshal(params.BindingVerification)
 	if err != nil {
 		return AppTask{}, fmt.Errorf("state: encode binding verification pin: %w", err)
@@ -42,8 +45,13 @@ func (s *PgStore) ListBindingVerificationTasks(ctx context.Context, accountID, a
 	if selection.DeploymentID != "" {
 		selectedID = mustPgUUID(selection.DeploymentID)
 	}
+	targets, err := json.Marshal(selection.ServiceTargets)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := sqlc.New().ListBindingVerificationTasks(ctx, s.pool, sqlc.ListBindingVerificationTasksParams{
-		AccountID: mustPgUUID(accountID), AppID: mustPgUUID(appID), Kinds: kinds,
+		ManagedService: selection.ManagedService,
+		AccountID:      mustPgUUID(accountID), AppID: mustPgUUID(appID), Kinds: kinds, ServiceTargets: targets,
 		SelectedDeploymentID: selectedID, ExactDeployment: selection.DeploymentID != "" && !selection.AllowFallback,
 	})
 	if err != nil {
@@ -61,7 +69,7 @@ func (s *PgStore) ListBindingVerificationTasks(ctx context.Context, accountID, a
 			exit = &value
 		}
 		items = append(items, BindingVerificationTask{
-			Pin: pin, DeploymentID: uuidString(row.DeploymentID), Scope: row.DeploymentScope,
+			TaskID: uuidString(row.ID), Pin: pin, DeploymentID: uuidString(row.DeploymentID), Scope: row.DeploymentScope,
 			Status: row.Status, Stdout: row.Stdout, OutputTruncated: row.Truncated.Bool,
 			ExitCode: exit, CreatedAt: row.CreatedAt.Time.UTC(), FinishedAt: optionalHealthTime(row.FinishedAt),
 		})

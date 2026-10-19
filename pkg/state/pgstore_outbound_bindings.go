@@ -39,7 +39,14 @@ func scanOutboundOffer(row pgx.Row) (OutboundIntegrationOffer, error) {
 		&aiDailyCostLimit, &aiMonthlyCostLimit, &offer.AIRequestLogEnabled,
 		&aiUserDailyTokenLimit, &aiUserDailyCostLimit, &offer.AIRequestLogContent,
 		&offer.AIContentPolicy.Email, &offer.AIContentPolicy.PaymentCard, &offer.AIContentPolicy.IBAN,
-		&offer.AIContentPolicy.Secret, &offer.AIContentPolicy.BlockedTerms); err != nil {
+		&offer.AIContentPolicy.Secret, &offer.AIContentPolicy.BlockedTerms, &offer.AILogExport,
+		&offer.AIContentPolicy.Moderation.Action, &offer.AIContentPolicy.Moderation.Kind,
+		&offer.AIContentPolicy.Moderation.IntegrationID, &offer.AIContentPolicy.Moderation.Model,
+		&offer.AIContentPolicy.Moderation.Categories, &offer.AIContentPolicy.Moderation.OnError, &offer.AIAllowUnmetered,
+		&offer.AIAutoPromptCache,
+		&offer.AIContentPolicy.Response.Email, &offer.AIContentPolicy.Response.PaymentCard, &offer.AIContentPolicy.Response.IBAN,
+		&offer.AIContentPolicy.Response.Secret, &offer.AIContentPolicy.Response.BlockedTerms,
+		&offer.AIContentPolicy.Response.Moderation); err != nil {
 		return OutboundIntegrationOffer{}, mapErr(err)
 	}
 	offer.AIUserDailyTokenLimit = outboundAITokenLimit(aiUserDailyTokenLimit)
@@ -135,7 +142,13 @@ func (s *PgStore) ListOutboundIntegrationOffers(ctx context.Context, accountID s
 		       integration.ai_request_log_enabled,
 		       integration.ai_user_daily_token_limit, integration.ai_user_daily_cost_limit_millicents,
 		       integration.ai_request_log_content, integration.ai_content_email, integration.ai_content_payment_card,
-		       integration.ai_content_iban, integration.ai_content_secret, integration.ai_content_blocked_terms
+		       integration.ai_content_iban, integration.ai_content_secret, integration.ai_content_blocked_terms,
+		       integration.ai_log_export, integration.ai_moderation_action, COALESCE(integration.ai_moderation_kind, ''),
+		       COALESCE(integration.ai_moderation_integration_id::text, ''), COALESCE(integration.ai_moderation_model, ''),
+		       integration.ai_moderation_categories, integration.ai_moderation_on_error, integration.ai_allow_unmetered,
+		       integration.ai_auto_prompt_cache,
+		       integration.ai_response_email, integration.ai_response_payment_card, integration.ai_response_iban,
+		       integration.ai_response_secret, integration.ai_response_blocked_terms, integration.ai_response_moderation
 		  FROM outbound_integrations integration
 		  JOIN accounts account ON account.id = integration.account_id
 		  LEFT JOIN outbound_integration_credentials credential

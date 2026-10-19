@@ -34,19 +34,18 @@ evidence behind each compatibility claim are tracked in the generated
 
 ## Quickstart
 
-Install the CLI, sign in, and deploy from an existing project:
+Install the CLI and launch your project with the guided command:
 
 ```bash
 curl -fsSL https://get.gregale.dev | sh
-gregale login
-
-cd my-api
-gregale deploy --dry-run
-gregale deploy
+gregale start ./my-api
 ```
 
-The CLI detects the application shape, packages the source, streams the build,
-waits for readiness, verifies the public route, and prints the live URL.
+The CLI handles login when needed and detects your app. Review the source,
+account, connection, access, and resources, then confirm deployment. It uploads
+your working files, including uncommitted changes, shows build progress, waits
+for readiness, and tests the first response. The result includes the tested URL
+and commands to update the app, read logs, open it, and delete it.
 
 ```bash
 gregale logs my-api --follow
@@ -57,8 +56,11 @@ gregale open my-api
 No project handy:
 
 ```bash
-gregale deploy --template hello-node
+gregale start
 ```
+
+Run it from an empty directory to choose a Node.js, Python, or Go starter.
+Use `gregale deploy` for explicit deployment options and automation.
 
 The npm channel uses the `rc` tag for prereleases. Check the
 [installation guide](docs/cli-install.md) for its publication status before
@@ -67,7 +69,7 @@ using it:
 ```bash
 npm view gregale dist-tags --json
 npm install -g gregale@rc
-npx gregale@rc deploy
+npx gregale@rc start
 ```
 
 See the [quickstart](docs/quickstart.md) for the first-deploy flow, the
@@ -281,3 +283,21 @@ limits and recorded execution pressure; historical gaps and replay assumptions a
 explicit. See [historical evaluation](docs/automation-authoring.md#historical-recovery-policy-evaluation).
 
 Recovery policy evaluation now includes separately timed `later_eligibility` checks for unreviewed failures. The bounded background observer runs even without a recovery policy, checking retained recovery parents, generation fences and resume blockers. Checks refresh no sooner than five minutes and expire for qualification after 15 minutes. These observations do not change historical preparation totals or authorize retries; missing or stale evidence remains unknown. See [ADR-1026](docs/adr/1026-workflow-failure-eligibility-observer.md).
+
+See [reviewed verification creation helpers](docs/adr/1362-reviewed-verification-creation-helpers.md) for recoverable SDK receipt creation.
+
+See [bounded verification status read retries](docs/adr/1363-bounded-verification-status-read-retries.md) for resilient durable observation.
+
+See [verification run discovery](docs/adr/1364-verification-run-discovery.md) for paginated receipt listings and recovery by retained identity.
+
+See [verification qualification waiting](docs/adr/1365-verification-qualification-waiting.md) for bounded completion after probes succeed.
+
+See [verification write reconciliation](docs/adr/1366-verification-write-reconciliation.md) for recovery after lost admission or completion responses.
+
+See [binding CLI progress](docs/adr/1367-binding-cli-progress.md) for live verification events and retained recovery context.
+
+See [verification creation reconciliation](docs/adr/1368-verification-creation-reconciliation.md) for bounded recovery of the original UUID after an uncertain creation response.
+
+PostgreSQL credential rotation can use the driver-independent SDK
+[pool runtime bindings](docs/postgres-pool-runtime.md), with validated adoption and
+transaction leases. See the [Node pg.Pool example](examples/postgres-pool-rotation/README.md).

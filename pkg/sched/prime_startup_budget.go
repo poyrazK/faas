@@ -57,7 +57,7 @@ func (w *Watchdog) primeWatchdogExtension(ctx context.Context, ins state.Instanc
 	if err != nil {
 		return 0
 	}
-	acct, err := w.store.AccountByID(ctx, app.AccountID)
+	acct, err := state.AppResourceAccount(ctx, w.store, app)
 	if err != nil {
 		return 0
 	}

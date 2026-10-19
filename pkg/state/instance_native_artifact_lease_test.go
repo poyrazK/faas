@@ -14,12 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 )
 
-type nativeArtifactTestStore interface {
-	standardRuntimeCaptureTestStore
-	runtimeArtifactCaptureTestStore
-	DeploymentRuntimeProducerInputStore
-	DeploymentRuntimeScanStore
-}
+type nativeArtifactTestStore = contractTestStore
 
 func manageNativeArtifactApp(t *testing.T, s nativeArtifactTestStore, app App) App {
 	t.Helper()

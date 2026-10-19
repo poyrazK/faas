@@ -29,6 +29,7 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	githubdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/githubd/v1"
@@ -38,6 +39,8 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/githubdgrpc"
+	"github.com/onebox-faas/faas/pkg/issuetracker"
+	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/reconcile"
 	"github.com/onebox-faas/faas/pkg/safetext"
 	"github.com/onebox-faas/faas/pkg/trace"
@@ -100,6 +103,10 @@ type Server struct {
 	// Deliveries is the durable delivery inbox. When wired, the HTTP handler
 	// acknowledges after Enqueue and the worker performs fetch/scan/build work.
 	Deliveries WebhookDeliveryStore
+	// RecordCI is invoked only after App HMAC verification and durable inbox
+	// insertion, before acknowledgement. It records compact CI source evidence;
+	// apid creates the run intent asynchronously. Nil keeps CI entirely inert.
+	RecordCI func(context.Context, WebhookDelivery) error
 
 	// ReadyFunc + ReasonFunc are the /readyz hooks (issue #571
 	// PR-A2). Wired by cmd/githubd/main.go to
@@ -416,12 +423,34 @@ func (s *Server) handleWebhookPush(w http.ResponseWriter, r *http.Request) {
 		observe(nil)
 		return
 	}
-	if eventType != "" && eventType != "push" && eventType != "pull_request" &&
+	if eventType != "" && eventType != "issues" && eventType != "push" && eventType != "pull_request" &&
 		eventType != "installation" && eventType != "installation_repositories" && eventType != "repository" {
 		http.Error(w, "unsupported event", http.StatusBadRequest)
 		observe(errors.New("githubd: unsupported webhook event"))
 		return
 	}
+	if eventType == "issues" {
+		event, err := issuetracker.DecodeGitHubIssueCallback(body, r.Header.Get("X-GitHub-Delivery"))
+		if errors.Is(err, issuetracker.ErrIgnoredCallback) {
+			w.WriteHeader(http.StatusOK)
+			observe(nil)
+			return
+		}
+		if err != nil {
+			http.Error(w, "invalid issue callback", http.StatusBadRequest)
+			observe(err)
+			return
+		}
+		if len(s.WebhookSecret) == 0 {
+			headerID, parseErr := strconv.ParseInt(r.Header.Get("X-GitHub-Installation-id"), 10, 64)
+			if parseErr != nil || headerID != event.InstallationID {
+				http.Error(w, "installation scope mismatch", http.StatusUnauthorized)
+				observe(issuetracker.ErrInvalidCallback)
+				return
+			}
+		}
+	}
+
 	if s.Deliveries != nil {
 		deliveryID := r.Header.Get("X-GitHub-Delivery")
 		if eventType == "" || deliveryID == "" {
@@ -444,6 +473,16 @@ func (s *Server) handleWebhookPush(w http.ResponseWriter, r *http.Request) {
 			observe(enqueueErr)
 			return
 		}
+		// CI trusts only GitHub App deliveries. Legacy installation-scoped
+		// senders cannot authenticate another installation's payload identity.
+		if s.RecordCI != nil && len(s.WebhookSecret) > 0 {
+			if err := s.RecordCI(r.Context(), WebhookDelivery{DeliveryID: deliveryID, EventType: eventType, Payload: body}); err != nil {
+				s.Log.Warn("githubd CI source journal unavailable", "err", err)
+				http.Error(w, "CI source journal unavailable", http.StatusServiceUnavailable)
+				observe(err)
+				return
+			}
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusAccepted)
 		if inserted {
@@ -463,7 +502,7 @@ func (s *Server) handleWebhookPush(w http.ResponseWriter, r *http.Request) {
 	}
 	if eventType == "installation" || eventType == "installation_repositories" || eventType == "repository" {
 		if err := s.Service.HandleInstallationLifecycle(r.Context(), eventType, body); err != nil {
-			s.Log.Error("githubd lifecycle webhook handle", "event_type", eventType, "err", err)
+			s.Log.Error("githubd lifecycle webhook handle", "event_type", logsanitize.Field(eventType), "err", logsanitize.FieldAny(err))
 			http.Error(w, "internal", http.StatusInternalServerError)
 			observe(err)
 			return
@@ -484,6 +523,12 @@ func (s *Server) handleWebhookPush(w http.ResponseWriter, r *http.Request) {
 // processing success or failure.
 func webhookDeliveryMetadata(eventType string, body []byte) (installationID int64, repoFullName, commitSHA string) {
 	switch eventType {
+	case "issues":
+		event, err := issuetracker.DecodeGitHubIssueCallback(body, "metadata")
+		if err != nil {
+			return 0, "", ""
+		}
+		return event.InstallationID, strings.SplitN(event.TicketURL, "/issues/", 2)[0][len("https://github.com/"):], ""
 	case "push":
 		event, err := DecodePush(body)
 		if err != nil {

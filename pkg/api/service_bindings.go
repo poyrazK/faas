@@ -210,6 +210,7 @@ func (s ServiceCallScope) Allows(method, requestPath string) bool {
 func normalizeServiceCallPathPrefix(raw string) (string, error) {
 	prefix := strings.TrimSpace(raw)
 	if prefix == "" || len(prefix) > ServiceCallPathPrefixMaxBytes || !strings.HasPrefix(prefix, "/") ||
+		strings.HasPrefix(prefix, "//") || strings.HasPrefix(prefix, "/\\") ||
 		strings.ContainsAny(prefix, "?#\\\r\n\x00") {
 		return "", fmt.Errorf("path prefix %q must be an origin-form path without query or fragment", raw)
 	}
@@ -226,6 +227,7 @@ func normalizeServiceCallPathPrefix(raw string) (string, error) {
 
 func canonicalServiceCallRequestPath(value string) (string, bool) {
 	if value == "" || len(value) > ServiceCallPathPrefixMaxBytes || !strings.HasPrefix(value, "/") ||
+		strings.HasPrefix(value, "//") || strings.HasPrefix(value, "/\\") ||
 		strings.ContainsAny(value, "\\\r\n\x00") {
 		return "", false
 	}
@@ -340,21 +342,26 @@ type ServiceBindingProbeCheck struct {
 // ServiceBindingProbeReport contains only bounded, non-secret diagnostics
 // from a canary executed in the caller's deployment-attached task guest.
 type ServiceBindingProbeReport struct {
-	App           string                   `json:"app,omitempty"`
-	Service       string                   `json:"service"`
-	URL           string                   `json:"url"`
-	TaskID        string                   `json:"task_id,omitempty"`
-	DeploymentID  string                   `json:"deployment_id,omitempty"`
-	DNS           ServiceBindingProbeCheck `json:"dns"`
-	TLS           ServiceBindingProbeCheck `json:"tls"`
-	Authorization ServiceBindingProbeCheck `json:"authorization"`
-	Routing       ServiceBindingProbeCheck `json:"routing"`
-	HTTPStatus    int                      `json:"http_status,omitempty"`
-	Error         string                   `json:"error,omitempty"`
+	ManagedService     *ManagedServiceProbeSpec `json:"managed_service,omitempty"`
+	TargetDeploymentID string                   `json:"target_deployment_id,omitempty"`
+	App                string                   `json:"app,omitempty"`
+	Service            string                   `json:"service"`
+	URL                string                   `json:"url"`
+	TaskID             string                   `json:"task_id,omitempty"`
+	DeploymentID       string                   `json:"deployment_id,omitempty"`
+	DNS                ServiceBindingProbeCheck `json:"dns"`
+	TLS                ServiceBindingProbeCheck `json:"tls"`
+	Authorization      ServiceBindingProbeCheck `json:"authorization"`
+	Routing            ServiceBindingProbeCheck `json:"routing"`
+	HTTPStatus         int                      `json:"http_status,omitempty"`
+	Error              string                   `json:"error,omitempty"`
 }
 
 // Passed reports whether every canary stage succeeded.
 func (r ServiceBindingProbeReport) Passed() bool {
+	if r.ManagedService != nil && (!r.ManagedService.Valid() || r.Service != r.ManagedService.Service || r.TargetDeploymentID != r.ManagedService.TargetDeploymentID || r.HTTPStatus != http.StatusNoContent) {
+		return false
+	}
 	return r.DNS.Status == "passed" && r.TLS.Status == "passed" &&
 		r.Authorization.Status == "passed" && r.Routing.Status == "passed"
 }

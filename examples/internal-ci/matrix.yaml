@@ -1,0 +1,30 @@
+# Internal planning example. Digests are placeholders; qualify runner images before use.
+version: 1
+repository: acme/api
+jobs:
+  test:
+    image: registry.example/ci-node22@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    env:
+      BUILD_MODE: test
+    matrix:
+      node22:
+        env: {TEST_TOOLCHAIN: node22}
+      node24:
+        image: registry.example/ci-node24@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+        env: {TEST_TOOLCHAIN: node24}
+    steps:
+      - name: install
+        run: npm ci
+      - name: unit
+        run: npm test
+    artifacts: [reports/**]
+  collect:
+    image: registry.example/ci-node22@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    needs: [test]
+    inputs:
+      - name: node24-report
+        job: test-node24
+        path: reports/unit.xml
+    steps:
+      - name: inspect
+        run: test -s .gregale-ci-inputs/node24-report

@@ -18,12 +18,14 @@ import (
 	"context"
 	"crypto/rsa"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"filippo.io/age"
@@ -32,6 +34,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/audit"
 	"github.com/onebox-faas/faas/pkg/capdecl/runtimecheck"
+	"github.com/onebox-faas/faas/pkg/ci"
 	"github.com/onebox-faas/faas/pkg/daemonunit"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/gitfetch"
@@ -261,6 +264,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// dashboard reflects reality on every box.
 	webhookSvc.Ops = ops
 	webhookSvc.Bindings = storeAdapter
+	webhookSvc.IssueCallbacks = storeAdapter.store
 	webhookSvc.Installs = installsAdapter
 	webhookSvc.Source = source
 	webhookSvc.Reconcile = ghReconcile
@@ -369,6 +373,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				realSvc = githubd.NewRealService(auth, tokens, checks, storeAdapter, installsAdapter, recipient, identity, auditFn).
 					WithStreamer(newSourceRefStreamer(installsAdapter, &tokenCacheAdapter{cache: tokens}, nil, log))
 				realSvc.BranchHeads = githubd.NewHTTPBranchHeads(tokens, deps.httpClient())
+				realSvc.CIPullRequests = githubd.NewHTTPCIPullRequests(tokens, deps.httpClient())
+				realSvc.CIChanges = githubd.NewHTTPCIChangedFiles(tokens, deps.httpClient())
 				realSvc.ProtectedBranches = githubd.NewHTTPProtectedBranches(tokens, deps.httpClient())
 				realSvc.ReviewedMerges = githubd.NewHTTPReviewedMerges(tokens, deps.httpClient())
 				if identities != nil {
@@ -453,6 +459,37 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	webhookSvc.InvalidateInstallationSecrets = secretResolver.Invalidate
 
 	checkUpdates := githubd.NewPGCheckUpdateStore(pool)
+	ciConfig := ci.ConfigFromEnv(os.Getenv)
+	ciStore := ci.NewPostgresStore(pool)
+	ciCtx, stopCI := context.WithCancel(ctx)
+	var ciWorkers sync.WaitGroup
+	defer func() { stopCI(); ciWorkers.Wait() }()
+	ci.NewHealthMetrics(ctx, ops.Registry(), ops.MetricPrefix(), ciStore, ciConfig.HealthMonitoringEnabled, func() map[ci.WorkerKind]bool { return ciConfig.WorkerConfiguration("githubd") })
+	if ciConfig.HealthMonitoringEnabled() {
+		verify := func(workerCtx context.Context, account string, installationID, repositoryID int64, repository string) error {
+			acct, err := installsAdapter.store.AccountByID(workerCtx, account)
+			if errors.Is(err, state.ErrNotFound) || err == nil && !acct.MayDeploy() {
+				return ci.ErrGitHubAccess
+			}
+			if err != nil {
+				return ci.ErrGitHubUnavailable
+			}
+			return realSvc.VerifyCIRepository(workerCtx, account, installationID, repositoryID, repository)
+		}
+		configured := ciConfig.WorkerConfiguration("githubd")
+		ready := realSvc != nil && checks != nil
+		ciWorkers.Go(func() {
+			ci.ObserveWorker(ciCtx, ciStore, ci.WorkerMetadataChecks, configured[ci.WorkerMetadataChecks], ready, func(ctx context.Context) {
+				ci.RunGitHubCheckWorker(ctx, ciConfig, ciStore, verify, checks.WriteBlockedCICheck, log)
+			})
+		})
+		ciWorkers.Go(func() {
+			ci.ObserveWorker(ciCtx, ciStore, ci.WorkerExecutionChecks, configured[ci.WorkerExecutionChecks], ready, func(ctx context.Context) {
+				ci.RunExecutionCheckWorker(ctx, ciConfig, ciStore, verify, checks.WriteExecutionCICheck, log)
+			})
+		})
+	}
+
 	if checks != nil {
 		go githubd.RunCheckUpdateWorker(ctx, checkUpdates, func(workerCtx context.Context, deploymentID string) error {
 			return syncDeploymentCheck(workerCtx, pool, checks, deploymentID)
@@ -502,8 +539,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		SecretResolver: secretResolver,
 		WebhookSecret:  webhookSecret,
 		Deliveries:     deliveryStore,
-		ReadyFunc:      githubdProbe.ReadyFunc(),
-		ReasonFunc:     githubdProbe.ReasonFunc(),
+		RecordCI: func(recordCtx context.Context, delivery githubd.WebhookDelivery) error {
+			return ci.RecordVerifiedGitHubDelivery(recordCtx, ciConfig, ciStore, delivery.DeliveryID, delivery.EventType, delivery.Payload)
+		},
+		ReadyFunc:  githubdProbe.ReadyFunc(),
+		ReasonFunc: githubdProbe.ReasonFunc(),
 	}
 	cleanup, errc, err := srv.Start(ctx)
 	if err != nil {

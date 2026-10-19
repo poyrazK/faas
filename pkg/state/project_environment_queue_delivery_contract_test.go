@@ -17,11 +17,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-type environmentQueueDeliveryTestStore interface {
-	environmentQueueInvocationTestStore
-	state.ProjectEnvironmentQueueDeliveryStore
-	state.AccountAbuseHoldStore
-}
+type environmentQueueDeliveryTestStore = contractTestStore
 
 func seedQueueDelivery(ctx context.Context, t *testing.T, store environmentQueueDeliveryTestStore, class state.WorkloadClass, mode string) (queueConsumerFixture, state.ProjectEnvironmentQueueDeliveryRequest) {
 	t.Helper()

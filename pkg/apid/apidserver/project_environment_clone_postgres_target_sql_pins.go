@@ -43,7 +43,7 @@ func (s *server) projectEnvironmentClonePostgresTargetSQLPins(ctx context.Contex
 	if l.Operation.Status != state.CloneOperationCapturing || s.managedPostgres == nil || setSecretRecipient == nil {
 		return copyarchive.RestoreTarget{}, managedpostgres.ErrUnavailable
 	}
-	recipient := setSecretRecipient()
+	recipient := hostSecretRecipient()
 	if !cloneInventoryCanOpen(recipient, identities) {
 		return copyarchive.RestoreTarget{}, managedpostgres.ErrUnavailable
 	}

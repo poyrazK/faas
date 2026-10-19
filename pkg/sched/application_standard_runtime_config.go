@@ -3,6 +3,7 @@ package sched
 
 import (
 	"context"
+	"errors"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
@@ -12,6 +13,21 @@ import (
 func (e *Engine) publishOwnedRuntimeWithStandards(ctx context.Context, out *WakeOutcome, p state.RuntimeInstancePublication) (state.Instance, error) {
 	if out == nil {
 		return state.Instance{}, runtimeadmission.ErrInvalid
+	}
+	// ADR-1741: a wake admitted from the owner cache publishes on the
+	// generation its admission insert checked. That covers the managed
+	// Postgres barrier (an apps column) and every input the fence rereads, so
+	// neither is read again. When the generation moved, nothing was written
+	// and the publication goes through both checks as before.
+	if out.RuntimeAdmissionReceipt == nil && state.RuntimeGenerationGuarded(ctx, p.AppID) {
+		guarded := p
+		guarded.GenerationGuarded = true
+		fresh, err := e.store.PublishOwnedInstanceRuntime(ctx, guarded)
+		if !errors.Is(err, state.ErrRuntimeGenerationMoved) {
+			e.observeOwnerCache(ownerCacheGuardedPublish)
+			return fresh, err
+		}
+		e.observeOwnerCache(ownerCacheGuardedPublishMoved)
 	}
 	if err := e.checkManagedPostgresAdmission(ctx, p.AppID); err != nil {
 		return state.Instance{}, err

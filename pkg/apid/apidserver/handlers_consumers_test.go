@@ -99,7 +99,10 @@ func TestConsumerControlPlaneLifecycle(t *testing.T) {
 
 func TestConsumerControlPlaneFreePlanGate(t *testing.T) {
 	e := apidserver.Setup(t, api.PlanFree)
-	rec := e.Do(t, http.MethodGet, "/v1/apps/missing/consumers", nil, nil)
+	// App access resolves the addressed app before any handler runs (#4882),
+	// so the gate is observed on an app the caller owns.
+	apidserver.MustSeedApp(t, e, "consumer-gate")
+	rec := e.Do(t, http.MethodGet, "/v1/apps/consumer-gate/consumers", nil, nil)
 	apidserver.AssertProblem(t, rec, http.StatusPaymentRequired, api.CodeConsumerKeysNotAllowed)
 }
 

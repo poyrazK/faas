@@ -74,6 +74,9 @@ type egressGRPCListener struct {
 	serveDone  chan struct{}
 	sink       *egresssink.EgressSink
 	log        *slog.Logger
+	// drain ends meterd's long-lived frame stream at stop, so GracefulStop
+	// does not hold gatewayd-internal's exit (and its restart) for 5 s.
+	drain *wire.StreamDrain
 }
 
 // chmodSocket applies mode to a unix-socket path, retrying briefly
@@ -163,6 +166,8 @@ func newEgressGRPCListener(target string, tlsCfg *tls.Config, srv *egressgrpc.Se
 	// handler, the vmmd/gateway egress client span would terminate at
 	// the listener and the trace would lose the receiver-side span.
 	opts = append(opts, wire.TraceServerOptions()...)
+	drain := wire.NewStreamDrain()
+	opts = append(opts, drain.ServerOption())
 	gs := grpc.NewServer(opts...)
 	egresspb.RegisterEgressTxServiceServer(gs, srv)
 	return &egressGRPCListener{
@@ -171,6 +176,7 @@ func newEgressGRPCListener(target string, tlsCfg *tls.Config, srv *egressgrpc.Se
 		tlsCfg:     tlsCfg,
 		sink:       nil, // reserved for a future /debug endpoint
 		log:        log,
+		drain:      drain,
 	}
 }
 
@@ -204,6 +210,16 @@ func (l *egressGRPCListener) start(ctx context.Context) error {
 	var lis net.Listener
 	var err error
 	if isUnixSocketPath(l.socketPath) {
+		// A hand-off successor serves the socket its predecessor listens on
+		// (ADR-1736); removing the path would strand meterd's dial.
+		if inherited, ok, err := wire.InheritedListener("unix", l.socketPath); err != nil {
+			return fmt.Errorf("egress: %w", err)
+		} else if ok {
+			l.listener = inherited
+			l.log.Info("egress: listening on inherited socket", "socket", l.socketPath)
+			l.serve(inherited)
+			return nil
+		}
 		if err := os.Remove(l.socketPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("egress: remove stale socket: %w", err)
 		}
@@ -232,6 +248,7 @@ func (l *egressGRPCListener) start(ctx context.Context) error {
 			_ = lis.Close()
 			return fmt.Errorf("egress: chmod: %w", err)
 		}
+		wire.Share(lis)
 		l.listener = lis
 		l.log.Info("egress: listening", "socket", l.socketPath)
 	} else {
@@ -246,6 +263,11 @@ func (l *egressGRPCListener) start(ctx context.Context) error {
 		l.listener = lis
 		l.log.Info("egress: listening", "addr", l.socketPath)
 	}
+	l.serve(lis)
+	return nil
+}
+
+func (l *egressGRPCListener) serve(lis net.Listener) {
 	l.serveDone = make(chan struct{})
 	go func() {
 		defer close(l.serveDone)
@@ -253,7 +275,6 @@ func (l *egressGRPCListener) start(ctx context.Context) error {
 			l.log.Warn("egress: serve", "err", err)
 		}
 	}()
-	return nil
 }
 
 // stop tears down the gRPC server. The socket file is NOT
@@ -283,6 +304,9 @@ func (l *egressGRPCListener) start(ctx context.Context) error {
 func (l *egressGRPCListener) stop(ctx context.Context) error {
 	if l == nil || l.server == nil {
 		return nil
+	}
+	if l.drain != nil {
+		l.drain.Begin()
 	}
 	done := make(chan struct{})
 	go func() {

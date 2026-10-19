@@ -43,7 +43,9 @@ func (f *credentialFixture) authRole(t *testing.T, suffix string) credentialRole
 func TestSQLAuthCredentialsOwnAuthSchemasAndIsolateCustomerData(t *testing.T) {
 	f := newCredentialFixture(t)
 	ctx := context.Background()
-	role := f.authRole(t, "")
+	// Distinct fixed suffixes prevent a random fixture hash from making the
+	// replacement identical to the login being revoked.
+	role := f.authRole(t, "f0")
 	if err := f.manager.Ensure(ctx, f.material, role); err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +92,7 @@ func TestSQLAuthCredentialsOwnAuthSchemasAndIsolateCustomerData(t *testing.T) {
 	deniedSQL(t, reader, `SELECT * FROM auth.auth_contract`)
 	deniedSQL(t, migration, `SELECT * FROM auth.auth_contract`)
 
-	next := f.authRole(t, "f0")
+	next := f.authRole(t, "f1")
 	if err := f.manager.Ensure(ctx, f.material, next); err != nil {
 		t.Fatal(err)
 	}

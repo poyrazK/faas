@@ -40,16 +40,16 @@ func planProducts() []api.Plan {
 
 // millicentsToPaddleAmount converts integer millicents (project's
 // 1000-decimal currency unit) to Paddle's "lowest denomination in a
-// string" wire format. EUR uses cents, so 1 millicent = 0.001 cents
+// string" wire format. USD uses cents, so 1 millicent = 0.001 cents
 // which doesn't fit a String → round to nearest cent via the fact
-// that all platform prices are exact cent multiples: €9 = 900 cents,
+// that all platform prices are exact cent multiples: $10 = 1000 cents,
 // 900 cents × 1000 mc/cent = 900_000 millicents. The helper then
 // divides by 1000 to land at cents (the wire unit Paddle wants).
 //
 // Paddle's Money struct docstring: "Amount in the lowest
 // denomination for the currency, e.g. 10 USD = 1000 (cents).
 // Although represented as a string, this value must be a valid
-// integer." For EUR that's integer cents. Source of truth:
+// integer." For USD that's integer cents. Source of truth:
 // paddle-go-sdk/v5@v5.2.0 currencies.go.
 func millicentsToPaddleAmount(mc int64) string {
 	return strconv.FormatInt(mc/1000, 10)
@@ -190,7 +190,7 @@ func (p *Provider) ensurePriceForProduct(
 		Description: spec.description,
 		UnitPrice: paddle.Money{
 			Amount:       amount,
-			CurrencyCode: paddle.CurrencyCodeEUR,
+			CurrencyCode: paddle.CurrencyCodeUSD,
 		},
 		BillingCycle: &paddle.Duration{
 			Interval:  paddle.IntervalMonth,

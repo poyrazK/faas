@@ -15,10 +15,11 @@ import (
 )
 
 // externalMetricPrefixes are series exported by third-party binaries
-// (node_exporter, Prometheus, Alertmanager, Loki, Promtail, client_golang's
-// process collector) or synthesized per target by Prometheus (scrape_*)
+// (node_exporter, Prometheus, Alertmanager, Loki, Promtail, the Cloudflare
+// Tunnel connector, client_golang's process collector) or synthesized per
+// target by Prometheus (scrape_*)
 // rather than by Gregale code.
-var externalMetricPrefixes = []string{"alertmanager_", "loki_", "node_", "process_", "prometheus_", "promtail_", "scrape_"}
+var externalMetricPrefixes = []string{"alertmanager_", "cloudflared_", "loki_", "node_", "process_", "prometheus_", "promtail_", "scrape_"}
 
 var externalMetricNames = map[string]bool{"up": true, "ALERTS": true, "ALERTS_FOR_STATE": true}
 
@@ -33,9 +34,7 @@ var daemonMetricPrefixes = []string{
 // knownUnemittedAlertMetrics are dead alert inputs: each maps a metric no
 // code emits to the reason. Fix the producer or the rule, then delete the
 // entry; the test fails once the metric resolves so the list cannot rot.
-var knownUnemittedAlertMetrics = map[string]string{
-	"faas_build_queue_depth": "FaasBuildQueueDepthHigh: QueuedBuildsCount is only served by GET /v1/admin/obs/builder-heartbeats; no Prometheus gauge exports it",
-}
+var knownUnemittedAlertMetrics = map[string]string{}
 
 var promqlKeywords = map[string]bool{
 	"sum": true, "min": true, "max": true, "avg": true, "count": true, "stddev": true,

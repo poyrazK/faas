@@ -76,7 +76,7 @@ func (s *PostgresStore) FinishProvisionWithDataResource(ctx context.Context, dat
 	if err != nil {
 		return Database{}, ErrInvalid
 	}
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.catalog.Begin(ctx)
 	if err != nil {
 		return Database{}, err
 	}

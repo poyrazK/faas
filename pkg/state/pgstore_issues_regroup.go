@@ -122,9 +122,12 @@ func issueSplitGroup(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, root sqlc.
 		return sqlc.AppIssue{}, ErrIssueGroupingConflict
 	}
 	member, err := q.IssueUpdateAction(ctx, tx, sqlc.IssueUpdateActionParams{
-		ID: issueUUID(in.MemberIssueID), State: "open", Assignee: root.AssigneeAccountID,
+		ID: issueUUID(in.MemberIssueID), State: "open", Assignee: root.AssigneeAccountID, AssigneeTeamID: root.AssigneeTeamID,
 	})
 	if err != nil {
+		return sqlc.AppIssue{}, err
+	}
+	if err = resetApplicationTriage(ctx, q, tx, member, actor); err != nil {
 		return sqlc.AppIssue{}, err
 	}
 	details := map[string]string{"member_issue_id": in.MemberIssueID, "canonical_issue_id": issueID(root.ID)}

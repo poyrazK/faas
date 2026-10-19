@@ -1,6 +1,7 @@
 // migrating_watchdog_engine_test.go — engine-level tests for
 // Tier A6 (ADR-067) Engine.ReconcileExpiredMigrations.
 // adr: 067
+// adr: 1528
 //
 // The watcher loop (pkg/sched/migrating_watchdog.go) is
 // exercised by migrating_watchdog_test.go. THIS file pins
@@ -162,8 +163,11 @@ func TestReconcileExpiredMigrations_DeadOwnerParked(t *testing.T) {
 	notif := &fakeNotifier{}
 	e := newEngine(t, store, vmm, notif, "1.10.0")
 	e.WithOpsMetrics(ops)
-	nodeID := seedComputeNodeForReconcile(t, store, false)
+	nodeID := seedComputeNodeForReconcile(t, store, true)
 	instanceID, _ := seedReconcileFixture(t, store, nodeID)
+	if err := store.NodeSetLifecycle(t.Context(), nodeID, state.NodeLifecycleActive, state.NodeLifecycleUnavailable); err != nil {
+		t.Fatal(err)
+	}
 	// The watchdog's abort path leaves instance.NodeID alone
 	// (migrated_from_node_id is NULL pre-Phase-3; the wake path
 	// dispatches via app.NodeID, not instance.NodeID). Verify

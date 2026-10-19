@@ -63,7 +63,17 @@ func (s *Service) reconcile(
 	if err != nil {
 		return out, fmt.Errorf("reconcile: validate workload admission: %w", err)
 	}
-	if err := validateWorkloadAdmissionWithManaged(scan.Workloads, scan.Managed, accountApps, project.ID); err != nil {
+	if project.OrgID != "" {
+		visible := accountApps[:0]
+		for _, app := range accountApps {
+			if app.OrgID == project.OrgID {
+				visible = append(visible, app)
+			}
+		}
+		accountApps = visible
+	}
+	scan.Workloads = PreserveAppSlugs(scan.Workloads, accountApps, project.ID)
+	if err := validateWorkloadAdmissionWithManaged(scan.Workloads, scan.Managed, accountApps, project.ID, scan.DependencyReferences); err != nil {
 		return out, err
 	}
 

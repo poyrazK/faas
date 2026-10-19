@@ -109,6 +109,7 @@ func lifecycleManifestFromCreate(req api.CreateAppRequest) api.AppManifest {
 		StopGracePeriod:              stopGrace,
 		StopSignal:                   req.StopSignal,
 		RequestTimeoutS:              req.RequestTimeoutS,
+		FunctionConcurrency:          req.FunctionConcurrency,
 		ServiceReplicas:              req.ServiceReplicas,
 		WorkerReplicas:               req.WorkerReplicas,
 		Ports:                        cloneWorkloadPorts(req.Ports),
@@ -123,6 +124,8 @@ func lifecycleManifestFromCreate(req api.CreateAppRequest) api.AppManifest {
 		VersionAffinityCookie:        req.VersionAffinityCookie,
 		VersionAffinityManagedCookie: req.VersionAffinityManagedCookie,
 		RevisionPinTTLSeconds:        req.RevisionPinTTLSeconds,
+		ReleasePolicy:                req.ReleasePolicy,
+		ReleaseProbePaths:            req.ReleaseProbePaths,
 	}
 }
 
@@ -159,6 +162,7 @@ func stateManifestFromAPI(manifest api.AppManifest) state.AppManifest {
 		StopGracePeriodS:             stopGracePeriodS,
 		StopSignal:                   manifest.StopSignal,
 		RequestTimeoutS:              manifest.RequestTimeoutS,
+		FunctionConcurrency:          manifest.FunctionConcurrency,
 		ServiceReplicas:              replicas,
 		WorkerReplicas:               workerReplicas,
 		Ports:                        cloneWorkloadPorts(manifest.Ports),
@@ -173,6 +177,8 @@ func stateManifestFromAPI(manifest api.AppManifest) state.AppManifest {
 		VersionAffinityCookie:        manifest.VersionAffinityCookie,
 		VersionAffinityManagedCookie: manifest.VersionAffinityManagedCookie,
 		RevisionPinTTLSeconds:        manifest.RevisionPinTTLSeconds,
+		ReleasePolicy:                manifest.ReleasePolicy,
+		ReleaseProbePaths:            manifest.ReleaseProbePaths,
 	}
 }
 
@@ -209,6 +215,7 @@ func apiManifestFromState(manifest state.AppManifest) api.AppManifest {
 		StopGracePeriod:              stopGrace,
 		StopSignal:                   manifest.StopSignal,
 		RequestTimeoutS:              manifest.RequestTimeoutS,
+		FunctionConcurrency:          manifest.FunctionConcurrency,
 		ServiceReplicas:              replicas,
 		WorkerReplicas:               workerReplicas,
 		Ports:                        cloneWorkloadPorts(manifest.Ports),
@@ -223,17 +230,20 @@ func apiManifestFromState(manifest state.AppManifest) api.AppManifest {
 		VersionAffinityCookie:        manifest.VersionAffinityCookie,
 		VersionAffinityManagedCookie: manifest.VersionAffinityManagedCookie,
 		RevisionPinTTLSeconds:        manifest.RevisionPinTTLSeconds,
+		ReleasePolicy:                manifest.ReleasePolicy,
+		ReleaseProbePaths:            manifest.ReleaseProbePaths,
 	}
 }
 
 func mergedLifecycleManifest(app state.App, req *api.UpdateAppRequest) (api.AppManifest, bool) {
 	changed := req.ExecutionMode != nil || req.RestartPolicy != nil ||
-		req.StartupDeadlineS != nil || req.MaxRetries != nil || req.RequestTimeoutS != nil || req.ServiceReplicas != nil ||
+		req.StartupDeadlineS != nil || req.MaxRetries != nil || req.RequestTimeoutS != nil || req.FunctionConcurrency != nil || req.ServiceReplicas != nil ||
 		req.AfterRestore != nil || req.Pause != nil ||
 		req.BeforeCheckpoint != nil || req.Profiling != nil || req.Tracing != nil ||
 		req.WorkerReplicas != nil || req.StopGracePeriodS != nil || req.StopSignal != nil ||
 		req.Favicon != nil || req.RobotsTxt != nil || req.HeadWakes != nil || req.CrawlerPolicy != nil || req.PreAuthRateLimit != nil ||
-		req.HealthPath != nil || req.HealthPathWakes != nil || req.SessionAffinity != nil || req.VersionAffinityCookie != nil || req.VersionAffinityManagedCookie != nil || req.RevisionPinTTLSeconds != nil || req.Ports != nil
+		req.HealthPath != nil || req.HealthPathWakes != nil || req.SessionAffinity != nil || req.VersionAffinityCookie != nil || req.VersionAffinityManagedCookie != nil || req.RevisionPinTTLSeconds != nil || req.Ports != nil ||
+		req.ReleasePolicy != nil || req.ReleaseProbePaths != nil
 	if !changed {
 		return api.AppManifest{}, false
 	}
@@ -284,6 +294,9 @@ func mergedLifecycleManifest(app state.App, req *api.UpdateAppRequest) (api.AppM
 	if req.RequestTimeoutS != nil {
 		manifest.RequestTimeoutS = *req.RequestTimeoutS
 	}
+	if req.FunctionConcurrency != nil {
+		manifest.FunctionConcurrency = *req.FunctionConcurrency
+	}
 	if req.ServiceReplicas != nil {
 		manifest.ServiceReplicas = req.ServiceReplicas
 	} else if manifest.EffectiveExecutionMode() != api.ExecutionModeService {
@@ -333,6 +346,12 @@ func mergedLifecycleManifest(app state.App, req *api.UpdateAppRequest) (api.AppM
 	if req.RevisionPinTTLSeconds != nil {
 		manifest.RevisionPinTTLSeconds = *req.RevisionPinTTLSeconds
 	}
+	if req.ReleasePolicy != nil {
+		manifest.ReleasePolicy = *req.ReleasePolicy
+	}
+	if req.ReleaseProbePaths != nil {
+		manifest.ReleaseProbePaths = *req.ReleaseProbePaths
+	}
 	return manifest, true
 }
 
@@ -354,6 +373,7 @@ func stateManifestForUpdate(app state.App, req *api.UpdateAppRequest) (*state.Ap
 	updated.StopGracePeriodS = stateManifestFromAPI(manifest).StopGracePeriodS
 	updated.StopSignal = manifest.StopSignal
 	updated.RequestTimeoutS = manifest.RequestTimeoutS
+	updated.FunctionConcurrency = manifest.FunctionConcurrency
 	updated.ServiceReplicas = stateManifestFromAPI(manifest).ServiceReplicas
 	updated.WorkerReplicas = stateManifestFromAPI(manifest).WorkerReplicas
 	updated.Ports = cloneWorkloadPorts(manifest.Ports)
@@ -368,5 +388,7 @@ func stateManifestForUpdate(app state.App, req *api.UpdateAppRequest) (*state.Ap
 	updated.VersionAffinityCookie = manifest.VersionAffinityCookie
 	updated.VersionAffinityManagedCookie = manifest.VersionAffinityManagedCookie
 	updated.RevisionPinTTLSeconds = manifest.RevisionPinTTLSeconds
+	updated.ReleasePolicy = manifest.ReleasePolicy
+	updated.ReleaseProbePaths = manifest.ReleaseProbePaths
 	return &updated, true
 }

@@ -40,8 +40,63 @@ func renderTestComparisonMarkdown(comparison testReportComparison) string {
 	var out strings.Builder
 	fmt.Fprintf(&out, "# Gregale test comparison\n\n**Earlier:** %s  \n**Later:** %s\n\n",
 		markdownComparisonText(comparison.Before), markdownComparisonText(comparison.After))
+	if r := comparison.Rehearsal; r != nil {
+		fmt.Fprintf(&out, "## Revision rehearsal: %s\n\nID: %s\n\n| Input | SHA / SHA-256 |\n|---|---|\n| Baseline commit | %s |\n| Candidate commit | %s |\n| Trusted manifest | %s |\n| Recipe | %s |\n| Baseline source | %s |\n| Candidate source | %s |\n\n",
+			markdownComparisonText(r.Status), markdownComparisonText(r.ID), r.Baseline.Commit, r.Candidate.Commit, r.ManifestSHA256, r.RecipeSHA256, r.Baseline.SourceSHA256, r.Candidate.SourceSHA256)
+		if r.Error != "" || r.CleanupError != "" {
+			fmt.Fprintf(&out, "%s\n\n", markdownComparisonText(strings.TrimSpace(r.Error+" "+r.CleanupError)))
+		}
+	}
 	fmt.Fprintf(&out, "Matched **%d** · Added **%d** · Removed **%d** · Status changes **%d**\n\n",
 		comparison.Summary.Matched, comparison.Summary.Added, comparison.Summary.Removed, comparison.Summary.StatusChanged)
+	if comparison.BehaviorStatus != "" {
+		fmt.Fprintf(&out, "## Behavior comparison: %s\n\nApplication-reported observations from declared fixture and observer files.\n\n", strings.ToUpper(comparison.BehaviorStatus))
+		for index, run := range comparison.Runs {
+			if index == testComparisonMarkdownRowLimit {
+				break
+			}
+			if run.Behavior == nil {
+				continue
+			}
+			fmt.Fprintf(&out, "**%s:** %s\n\n", markdownComparisonText(run.Key), markdownComparisonText(run.Behavior.Status))
+			if run.Behavior.Reason != "" {
+				fmt.Fprintf(&out, "%s\n\n", markdownComparisonText(run.Behavior.Reason))
+			}
+			if len(run.Behavior.Changes) == 0 {
+				continue
+			}
+			out.WriteString("| Observation | Kind | Result | Earlier | Later |\n|---|---|---|---|---|\n")
+			for _, change := range run.Behavior.Changes {
+				fmt.Fprintf(&out, "| %s | %s | %s | %s | %s |\n",
+					markdownComparisonText(change.Key), markdownComparisonText(change.Kind), markdownComparisonText(change.Status),
+					markdownComparisonText(formatTestBehaviorValue(change.Before)), markdownComparisonText(formatTestBehaviorValue(change.After)))
+			}
+			out.WriteString("\n")
+		}
+	}
+	renderTestActionComparisonMarkdown(&out, comparison)
+	renderTestObjectComparisonMarkdown(&out, comparison)
+	if comparison.PostgresStatus != "" {
+		fmt.Fprintf(&out, "## PostgreSQL comparison: %s\n\nIndependent platform observations of selected rows and sampled lock waits.\n\n", strings.ToUpper(comparison.PostgresStatus))
+		for _, run := range comparison.Runs {
+			if run.Postgres == nil {
+				continue
+			}
+			fmt.Fprintf(&out, "**%s:** %s\n\n", markdownComparisonText(run.Key), markdownComparisonText(run.Postgres.Status))
+			if run.Postgres.Reason != "" {
+				fmt.Fprintf(&out, "%s\n\n", markdownComparisonText(run.Postgres.Reason))
+			}
+			out.WriteString("| Table | Baseline inserted / deleted | Candidate inserted / deleted |\n|---|---:|---:|\n")
+			for i, old := range run.Postgres.Before {
+				if i >= len(run.Postgres.After) {
+					break
+				}
+				current := run.Postgres.After[i]
+				fmt.Fprintf(&out, "| %s | %d / %d | %d / %d |\n", markdownComparisonText(old.Table), len(old.Inserted), len(old.Deleted), len(current.Inserted), len(current.Deleted))
+			}
+			out.WriteString("\n")
+		}
+	}
 	if comparison.Gate == nil {
 		out.WriteString("No budget was supplied; metric changes are informational.\n\n")
 	} else {

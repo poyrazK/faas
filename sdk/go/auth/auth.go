@@ -19,6 +19,10 @@
 // the keys are cached. A token stays valid until it expires, at most 600
 // seconds after a sign-out or ban. Authorize asks the Auth app, which also
 // checks that the session is still active.
+//
+// An API or MCP server that third-party OAuth clients call verifies their
+// tokens with WithAudience and its resource URL; Claims.ClientID and
+// Claims.Scopes then name the client and what its user granted.
 package auth
 
 import (
@@ -84,8 +88,26 @@ type Claims struct {
 	ExpiresAt    time.Time
 	AppMetadata  map[string]any
 	UserMetadata map[string]any
+	// ClientID names the third-party OAuth client the token was issued to,
+	// and Scopes what its user granted it; both are empty for the Auth
+	// app's own sessions.
+	ClientID string
+	Scopes   []string
+	// Organization is the session's active organization, when the Auth app
+	// has organization claims on; nil otherwise. A changed membership
+	// shows at the next token, within its lifetime.
+	Organization *Organization
 	// Raw holds every claim, including ones this type does not name.
 	Raw map[string]json.RawMessage
+}
+
+// Organization is a session's active organization, the user's role in it
+// and that role's permissions.
+type Organization struct {
+	ID          string
+	Slug        string
+	Role        string
+	Permissions []string
 }
 
 // Error is a refusal from the Auth app's API: the HTTP status and the stable
@@ -111,12 +133,13 @@ func (e *Error) Is(target error) bool {
 // Client verifies tokens issued by one Auth app. It is safe for concurrent
 // use; create one per Auth app and reuse it.
 type Client struct {
-	origin  string
-	issuer  string
-	jwksURL string
-	http    *http.Client
-	leeway  time.Duration
-	now     func() time.Time
+	origin   string
+	issuer   string
+	audience string
+	jwksURL  string
+	http     *http.Client
+	leeway   time.Duration
+	now      func() time.Time
 
 	fetch     sync.Mutex
 	mu        sync.Mutex
@@ -136,6 +159,12 @@ func WithHTTPClient(hc *http.Client) Option { return func(c *Client) { c.http = 
 // WithLeeway sets the clock-skew tolerance for exp and nbf.
 func WithLeeway(d time.Duration) Option { return func(c *Client) { c.leeway = d } }
 
+// WithAudience accepts tokens for audience instead of the Auth app's own
+// sessions (Audience). An API or MCP server that third-party OAuth clients
+// call passes its resource URL: the Auth app gives a client's token the
+// resource the client asked for as its audience.
+func WithAudience(audience string) Option { return func(c *Client) { c.audience = audience } }
+
 // New returns a Client for the Auth app at authURL, its origin such as
 // https://shop-auth.gregale.app. HTTP is accepted only on a loopback host.
 func New(authURL string, opts ...Option) (*Client, error) {
@@ -143,12 +172,12 @@ func New(authURL string, opts ...Option) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	c := &Client{origin: origin, issuer: origin + "/auth/v1", http: http.DefaultClient, leeway: DefaultLeeway, now: time.Now}
+	c := &Client{origin: origin, issuer: origin + "/auth/v1", audience: Audience, http: http.DefaultClient, leeway: DefaultLeeway, now: time.Now}
 	c.jwksURL = c.issuer + "/.well-known/jwks.json"
 	for _, opt := range opts {
 		opt(c)
 	}
-	if c.http == nil || c.leeway < 0 {
+	if c.http == nil || c.leeway < 0 || c.audience == "" {
 		return nil, errors.New("auth: invalid option")
 	}
 	noRedirects := *c.http
@@ -224,6 +253,12 @@ func (c *Client) claims(segment string) (*Claims, error) {
 		Phone        string          `json:"phone"`
 		AAL          string          `json:"aal"`
 		IsAnonymous  bool            `json:"is_anonymous"`
+		ClientID     string          `json:"client_id"`
+		Scope        string          `json:"scope"`
+		OrgID        string          `json:"org_id"`
+		OrgSlug      string          `json:"org_slug"`
+		OrgRole      string          `json:"org_role"`
+		OrgPerms     []string        `json:"org_permissions"`
 		AppMetadata  map[string]any  `json:"app_metadata"`
 		UserMetadata map[string]any  `json:"user_metadata"`
 	}
@@ -234,8 +269,8 @@ func (c *Client) claims(segment string) (*Claims, error) {
 	switch {
 	case p.Iss != c.issuer:
 		return nil, fmt.Errorf("%w: issuer %q is not %q", ErrInvalidToken, p.Iss, c.issuer)
-	case !hasAudience(p.Aud):
-		return nil, fmt.Errorf("%w: audience is not %q", ErrInvalidToken, Audience)
+	case !hasAudience(p.Aud, c.audience):
+		return nil, fmt.Errorf("%w: audience is not %q", ErrInvalidToken, c.audience)
 	case p.Sub == "":
 		return nil, fmt.Errorf("%w: no subject", ErrInvalidToken)
 	case p.Exp == nil:
@@ -246,24 +281,27 @@ func (c *Client) claims(segment string) (*Claims, error) {
 		return nil, fmt.Errorf("%w: not valid yet", ErrInvalidToken)
 	}
 	claims := &Claims{Subject: p.Sub, SessionID: p.SessionID, Role: p.Role, Email: p.Email, Phone: p.Phone, AAL: p.AAL,
-		IsAnonymous: p.IsAnonymous, ExpiresAt: unix(*p.Exp), AppMetadata: p.AppMetadata, UserMetadata: p.UserMetadata, Raw: raw}
+		IsAnonymous: p.IsAnonymous, ExpiresAt: unix(*p.Exp), ClientID: p.ClientID, Scopes: strings.Fields(p.Scope), AppMetadata: p.AppMetadata, UserMetadata: p.UserMetadata, Raw: raw}
 	if p.Iat != nil {
 		claims.IssuedAt = unix(*p.Iat)
+	}
+	if p.OrgID != "" && p.OrgSlug != "" && p.OrgRole != "" {
+		claims.Organization = &Organization{ID: p.OrgID, Slug: p.OrgSlug, Role: p.OrgRole, Permissions: p.OrgPerms}
 	}
 	return claims, nil
 }
 
-func hasAudience(aud json.RawMessage) bool {
+func hasAudience(aud json.RawMessage, want string) bool {
 	var one string
 	if json.Unmarshal(aud, &one) == nil {
-		return one == Audience
+		return one == want
 	}
 	var many []string
 	if json.Unmarshal(aud, &many) != nil {
 		return false
 	}
 	for _, a := range many {
-		if a == Audience {
+		if a == want {
 			return true
 		}
 	}

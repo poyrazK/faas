@@ -44,7 +44,7 @@ func TestWorkflowRunRecoveryJobs(t *testing.T) {
 					t.Fatalf("conflict=%v", err)
 				}
 				if pg, ok := store.(*PgStore); ok {
-					recovery = NewPgStore(pg.pool)
+					recovery = NewPgStore(pg.pool.Pool)
 				}
 				if _, err := recovery.GetEventRecovery(ctx, uuid.NewString(), job.ID); !errors.Is(err, ErrNotFound) {
 					t.Fatalf("tenant=%v", err)

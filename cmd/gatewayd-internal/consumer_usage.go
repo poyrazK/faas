@@ -87,6 +87,9 @@ func deliverConsumerUsage(ctx context.Context, q *usageoutbox.Outbox, target str
 					DiscoveredRoute:    event.DiscoveredRoute,
 					DiscoveredAtUnixMs: event.DiscoveredAtUnixMs,
 					BillingRoute:       event.BillingRoute,
+					ComputeMs:          event.ComputeMS,
+					MeterUnits:         event.MeterUnits,
+					ResponseBytes:      event.ResponseBytes,
 				})
 				cancel()
 				if err == nil && receipt == nil {
@@ -103,6 +106,12 @@ func deliverConsumerUsage(ctx context.Context, q *usageoutbox.Outbox, target str
 				}
 				if err == nil && event.DiscoveredRoute != "" && !receipt.GetDiscoveryRecorded() {
 					err = fmt.Errorf("discovered route not acknowledged by receiver")
+				}
+				if err == nil && len(event.MeterUnits) > 0 && !receipt.GetMeterUsageRecorded() {
+					err = fmt.Errorf("app-reported units not acknowledged by receiver")
+				}
+				if err == nil && (event.ComputeMS > 0 || event.ResponseBytes > 0) && !receipt.GetResourceUsageRecorded() {
+					err = fmt.Errorf("compute and response size not acknowledged by receiver")
 				}
 				if err == nil {
 					err = q.Ack(item)

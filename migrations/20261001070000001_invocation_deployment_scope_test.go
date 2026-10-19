@@ -19,11 +19,11 @@ func TestMigrationInvocationDeploymentScopeBackfillAndIdentity(t *testing.T) {
 	pool := pgtest.Open(t)
 	migrateUpTo(t, ctx, pool, 20261001060000001)
 	store := state.NewPgStore(pool)
-	account, err := store.CreateAccount(ctx, "invocation-migration@example.test", api.PlanPro)
+	account, err := legacyAccount(ctx, pool, "invocation-migration@example.test", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
 	}
-	project, err := store.CreateProject(ctx, state.Project{AccountID: account.ID, Slug: "migration-project"})
+	project, err := store.CreateProject(ctx, state.Project{AccountID: account.ID, OrgID: legacyPersonalOrg(t, ctx, pool, account.ID), Slug: "migration-project"})
 	if err != nil {
 		t.Fatal(err)
 	}

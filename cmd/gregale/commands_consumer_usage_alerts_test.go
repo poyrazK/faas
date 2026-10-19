@@ -13,6 +13,7 @@ import (
 
 // adr: 849 — plans carry alert thresholds and consumers list crossed alerts.
 func TestCmdConsumersUsageAlerts(t *testing.T) {
+	t.Setenv("FAAS_API_MONETIZATION_ENABLED", "1") // adr: 20261018090210 — exercises released monetization
 	var created api.CreateAPIConsumerPlanRequest
 	var updated map[string]json.RawMessage
 	month := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
