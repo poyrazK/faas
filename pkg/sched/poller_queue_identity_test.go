@@ -1,11 +1,12 @@
 // adr: 568 — environment intent and runtime ownership contracts.
-package sched
+package sched_test
 
 import (
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -25,7 +26,7 @@ func TestQueuePollerRequiresAuthoritativeBindingIdentity(t *testing.T) {
 			if tc.owned {
 				trigger.QueueBindingID = pgtype.UUID{Bytes: bindingID, Valid: true}
 			}
-			poller, err := newQueuePoller(nil, trigger, nil)
+			poller, err := sched.NewQueuePoller(nil, trigger, nil)
 			if (err != nil) != tc.rejected {
 				t.Fatalf("poller err=%v, rejected=%v", err, tc.rejected)
 			}

@@ -1,6 +1,6 @@
 // adr: 366 — a replayed job task keeps its original partition identity.
 
-package sched
+package sched_test
 
 import (
 	"context"
@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -19,7 +20,7 @@ import (
 func TestEngineWakeJobReplayKeepsPartition(t *testing.T) {
 	store := state.NewMemStore()
 	ctx := context.Background()
-	acct, job, _ := seedJobRun(t, store, json.RawMessage(`{}`), json.RawMessage(`{}`))
+	acct, job, _ := sched.SeedJobRun(t, store, json.RawMessage(`{}`), json.RawMessage(`{}`))
 	run, _, err := store.JobRunCreate(ctx, job.ID, acct.ID, "manual", nil, nil, nil, nil, 4)
 	if err != nil {
 		t.Fatalf("JobRunCreate: %v", err)
@@ -39,9 +40,9 @@ func TestEngineWakeJobReplayKeepsPartition(t *testing.T) {
 			t.Fatalf("JobRunRecompute: %v", err)
 		}
 	}
-	vmm := &recordingJobVMM{}
-	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0").
-		WithJobLeaser(AdaptJobLeaser(NewMemLeaser(nil))).WithJobVmmClient(vmm)
+	vmm := &sched.RecordingJobVMM{}
+	e := sched.XNewEngine(t, store, &sched.FakeVMM{}, &sched.FakeNotifier{}, "1.10.0").
+		WithJobLeaser(sched.AdaptJobLeaser(sched.NewMemLeaser(nil))).WithJobVmmClient(vmm)
 	assertPartition := func(runID string) {
 		t.Helper()
 		if _, err := e.WakeJob(ctx, acct.ID, runID, 0); err != nil {
@@ -51,7 +52,7 @@ func TestEngineWakeJobReplayKeepsPartition(t *testing.T) {
 			"GREGALE_TASK_INDEX": "2", "GREGALE_PARTITION_INDEX": "2",
 			"GREGALE_TASK_COUNT": "4", "GREGALE_PARTITION_COUNT": "4",
 		} {
-			if got := vmm.spec.Env[key]; got != want {
+			if got := (*vmm.Spec()).Env[key]; got != want {
 				t.Errorf("run %s %s = %q, want %q", runID, key, got, want)
 			}
 		}

@@ -1,4 +1,4 @@
-package sched
+package sched_test
 
 // overage_test.go (issue #561) pins the OverageChecker seam:
 //
@@ -21,6 +21,7 @@ package sched
 import (
 	"context"
 	"errors"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"sync"
 	"testing"
 	"time"
@@ -94,15 +95,15 @@ func TestOverageChecker_CachesThenExpires(t *testing.T) {
 	f := &overageFixture{capCents: cap, observedVal: 200}
 
 	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
-	c := newMemCacheOverageChecker(f, 5*time.Second)
-	c.now = func() time.Time { return now }
+	c := sched.XNewMemCacheOverageChecker(f, 5*time.Second)
+	(*c.Now()) = func() time.Time { return now }
 
 	ctx := context.Background()
 	status, obs, capCents, err := c.Check(ctx, "acct-1")
 	if err != nil {
 		t.Fatalf("first Check: %v", err)
 	}
-	if status != OverageReached {
+	if status != sched.OverageReached {
 		t.Fatalf("first Check: got %v, want OverageReached", status)
 	}
 	if obs != 200 || capCents != 100 {
@@ -111,12 +112,12 @@ func TestOverageChecker_CachesThenExpires(t *testing.T) {
 
 	// Second call within TTL: same answer.
 	now = now.Add(2 * time.Second)
-	c.now = func() time.Time { return now }
+	(*c.Now()) = func() time.Time { return now }
 	status, _, _, err = c.Check(ctx, "acct-1")
 	if err != nil {
 		t.Fatalf("second Check: %v", err)
 	}
-	if status != OverageReached {
+	if status != sched.OverageReached {
 		t.Fatalf("second Check within TTL: got %v, want OverageReached (cache miss?)", status)
 	}
 
@@ -129,21 +130,21 @@ func TestOverageChecker_CachesThenExpires(t *testing.T) {
 	if err != nil {
 		t.Fatalf("post-Invalidate Check: %v", err)
 	}
-	if status != OverageOK {
+	if status != sched.OverageOK {
 		t.Fatalf("post-Invalidate Check: got %v, want OverageOK (cap cleared)", status)
 	}
 }
 
 func TestOverageChecker_FailsOpenOnStoreError(t *testing.T) {
 	f := &overageFixture{capErr: errors.New("synthetic store error")}
-	c := newMemCacheOverageChecker(f, 5*time.Second)
+	c := sched.XNewMemCacheOverageChecker(f, 5*time.Second)
 
 	ctx := context.Background()
 	status, obs, capCents, err := c.Check(ctx, "acct-x")
 	if err == nil {
 		t.Fatalf("expected error, got nil")
 	}
-	if status != OverageOK {
+	if status != sched.OverageOK {
 		t.Fatalf("fail-open: got %v, want OverageOK", status)
 	}
 	if obs != 0 || capCents != 0 {
@@ -156,8 +157,8 @@ func TestOverageChecker_DedupePerUTCDay(t *testing.T) {
 	f := &overageFixture{capCents: cap, observedVal: 150}
 
 	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
-	c := newMemCacheOverageChecker(f, 5*time.Second)
-	c.now = func() time.Time { return now }
+	c := sched.XNewMemCacheOverageChecker(f, 5*time.Second)
+	(*c.Now()) = func() time.Time { return now }
 
 	ctx := context.Background()
 	// Three RecordReached calls on day 1: only one emits.
@@ -170,10 +171,10 @@ func TestOverageChecker_DedupePerUTCDay(t *testing.T) {
 
 	// Day 2: new emit.
 	now = time.Date(2026, 8, 7, 0, 0, 1, 0, time.UTC)
-	c.now = func() time.Time { return now }
+	(*c.Now()) = func() time.Time { return now }
 	c.Invalidate("acct-d")
 	status, _, _, _ := c.Check(ctx, "acct-d")
-	if status != OverageReached {
+	if status != sched.OverageReached {
 		t.Fatalf("day 2 Check: got %v, want OverageReached", status)
 	}
 	c.RecordReached(ctx, "acct-d", 200, 100)
@@ -185,14 +186,14 @@ func TestOverageChecker_DedupePerUTCDay(t *testing.T) {
 
 func TestOverageChecker_NullCapCachesOK(t *testing.T) {
 	f := &overageFixture{capCents: nil, observedVal: 0}
-	c := newMemCacheOverageChecker(f, 5*time.Second)
+	c := sched.XNewMemCacheOverageChecker(f, 5*time.Second)
 
 	ctx := context.Background()
 	status, _, _, err := c.Check(ctx, "acct-n")
 	if err != nil {
 		t.Fatalf("NULL cap Check: %v", err)
 	}
-	if status != OverageOK {
+	if status != sched.OverageOK {
 		t.Fatalf("NULL cap Check: got %v, want OverageOK", status)
 	}
 
@@ -201,12 +202,12 @@ func TestOverageChecker_NullCapCachesOK(t *testing.T) {
 	f.mu.Lock()
 	f.capCents = ptr(int64(0))
 	f.mu.Unlock()
-	c.now = func() time.Time { return time.Now().Add(time.Hour) }
+	(*c.Now()) = func() time.Time { return time.Now().Add(time.Hour) }
 	status, _, capCents, err := c.Check(ctx, "acct-n")
 	if err != nil {
 		t.Fatalf("post-TTL Check: %v", err)
 	}
-	if status != OverageReached {
+	if status != sched.OverageReached {
 		t.Fatalf("post-TTL re-Read with cap=0: got %v, want OverageReached (proves cache expired)", status)
 	}
 	if capCents != 0 {
@@ -221,17 +222,17 @@ func TestOverageChecker_ObserveAtCapEqualBoundary(t *testing.T) {
 		name              string
 		capCents          int64
 		observedCents     int64
-		wantOverageStatus OverageStatus
+		wantOverageStatus sched.OverageStatus
 	}{
-		{"below cap", 100, 99, OverageOK},
-		{"at cap", 100, 100, OverageReached},
-		{"above cap", 100, 101, OverageReached},
-		{"cap=0, observed=0", 0, 0, OverageReached},
-		{"cap=0, observed=1", 0, 1, OverageReached},
+		{"below cap", 100, 99, sched.OverageOK},
+		{"at cap", 100, 100, sched.OverageReached},
+		{"above cap", 100, 101, sched.OverageReached},
+		{"cap=0, observed=0", 0, 0, sched.OverageReached},
+		{"cap=0, observed=1", 0, 1, sched.OverageReached},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := &overageFixture{capCents: ptr(tc.capCents), observedVal: tc.observedCents}
-			c := newMemCacheOverageChecker(f, 5*time.Second)
+			c := sched.XNewMemCacheOverageChecker(f, 5*time.Second)
 			status, _, _, err := c.Check(context.Background(), "acct-b")
 			if err != nil {
 				t.Fatalf("Check: %v", err)
@@ -244,9 +245,9 @@ func TestOverageChecker_ObserveAtCapEqualBoundary(t *testing.T) {
 }
 
 func TestAlwaysOKOverageChecker_StubShape(t *testing.T) {
-	checker := AlwaysOKOverageChecker()
+	checker := sched.AlwaysOKOverageChecker()
 	status, _, _, err := checker.Check(context.Background(), "any-account")
-	if err != nil || status != OverageOK {
+	if err != nil || status != sched.OverageOK {
 		t.Fatalf("Check: got (%v, %v), want (OverageOK, nil)", status, err)
 	}
 	// RecordReached / Invalidate are no-ops (must not panic).

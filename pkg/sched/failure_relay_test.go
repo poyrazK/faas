@@ -1,6 +1,6 @@
 // spec: §6.1
 // adr: 078
-package sched
+package sched_test
 
 import (
 	"context"
@@ -8,6 +8,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -27,28 +28,28 @@ func TestRelayedInstanceFailure_OnlyOwnerApplies(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
 			store := state.NewMemStore()
-			_, app, dep := seedApp(t, store, api.PlanPro, 512, 5)
+			_, app, dep := sched.SeedApp(t, store, api.PlanPro, 512, 5)
 			if err := store.SetAppNodeID(ctx, app.ID, ownerNode); err != nil {
 				t.Fatalf("SetAppNodeID: %v", err)
 			}
-			vmm := &fakeVMM{}
+			vmm := &sched.FakeVMM{}
 
-			hostNotif := &fakeNotifier{}
-			host := newEngine(t, store, vmm, hostNotif, "1.10.0").WithOwnerNodeID("node-host")
-			handler := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0").WithOwnerNodeID(tc.handlerNode)
-			inst := runningInstance(t, store, app, dep, vmm, handler)
+			hostNotif := &sched.FakeNotifier{}
+			host := sched.XNewEngine(t, store, vmm, hostNotif, "1.10.0").WithOwnerNodeID("node-host")
+			handler := sched.XNewEngine(t, store, vmm, &sched.FakeNotifier{}, "1.10.0").WithOwnerNodeID(tc.handlerNode)
+			inst := sched.RunningInstance(t, store, app, dep, vmm, handler)
 
-			if err := host.RelayInstanceFailure(ctx, InstanceFailureReport{
-				InstanceID: inst.ID, AppID: app.ID, Kind: InstanceFailureLiveness, Reason: "liveness_process_exited",
+			if err := host.RelayInstanceFailure(ctx, sched.InstanceFailureReport{
+				InstanceID: inst.ID, AppID: app.ID, Kind: sched.InstanceFailureLiveness, Reason: "liveness_process_exited",
 			}); err != nil {
 				t.Fatalf("RelayInstanceFailure: %v", err)
 			}
-			if got := hostNotif.count(db.NotifyInstanceFailureRelayed); got != 1 {
+			if got := hostNotif.Count(db.NotifyInstanceFailureRelayed); got != 1 {
 				t.Fatalf("relay notifications = %d, want 1", got)
 			}
-			hostNotif.mu.Lock()
-			payload := hostNotif.events[len(hostNotif.events)-1].payload
-			hostNotif.mu.Unlock()
+			(*hostNotif.Mu()).Lock()
+			payload := (*(*hostNotif.Events())[len((*hostNotif.Events()))-1].Payload())
+			(*hostNotif.Mu()).Unlock()
 
 			if err := handler.HandleRelayedInstanceFailure(ctx, payload); err != nil {
 				t.Fatalf("HandleRelayedInstanceFailure: %v", err)
@@ -66,11 +67,11 @@ func TestRelayedInstanceFailure_OnlyOwnerApplies(t *testing.T) {
 
 func TestRelayedInstanceFailure_RejectsMalformedReports(t *testing.T) {
 	store := state.NewMemStore()
-	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+	e := sched.XNewEngine(t, store, &sched.FakeVMM{}, &sched.FakeNotifier{}, "1.10.0")
 	ctx := context.Background()
-	bad := []InstanceFailureReport{
-		{AppID: "a", Kind: InstanceFailureLiveness},
-		{InstanceID: "i", Kind: InstanceFailureLiveness},
+	bad := []sched.InstanceFailureReport{
+		{AppID: "a", Kind: sched.InstanceFailureLiveness},
+		{InstanceID: "i", Kind: sched.InstanceFailureLiveness},
 		{InstanceID: "i", AppID: "a", Kind: "reboot"},
 	}
 	for _, r := range bad {
@@ -105,16 +106,16 @@ func TestLoopAppliesRelayedInstanceFailureKinds(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
 			store := state.NewMemStore()
-			_, app, dep := seedApp(t, store, api.PlanPro, 512, 5)
+			_, app, dep := sched.SeedApp(t, store, api.PlanPro, 512, 5)
 			if err := store.SetAppNodeID(ctx, app.ID, "node-owner"); err != nil {
 				t.Fatalf("SetAppNodeID: %v", err)
 			}
-			vmm := &fakeVMM{}
-			owner := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0").WithOwnerNodeID("node-owner")
-			inst := runningInstance(t, store, app, dep, vmm, owner)
-			loop := NewLoop(nil, owner, testLog())
+			vmm := &sched.FakeVMM{}
+			owner := sched.XNewEngine(t, store, vmm, &sched.FakeNotifier{}, "1.10.0").WithOwnerNodeID("node-owner")
+			inst := sched.RunningInstance(t, store, app, dep, vmm, owner)
+			loop := sched.NewLoop(nil, owner, sched.TestLog())
 
-			loop.handleNotification(ctx, db.Notification{
+			loop.XHandleNotification(ctx, db.Notification{
 				Channel: db.NotifyInstanceFailureRelayed,
 				Payload: tc.payload(inst.ID, app.ID),
 			})

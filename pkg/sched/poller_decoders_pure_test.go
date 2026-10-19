@@ -5,22 +5,23 @@
 //
 // Whitebox `package sched`.
 
-package sched
+package sched_test
 
 import (
+	"github.com/onebox-faas/faas/pkg/sched"
 	"testing"
 )
 
 // --- parseJSONHeaders --------------------------------------------
 
 func TestParseJSONHeaders_EmptyReturnsNil(t *testing.T) {
-	if got := parseJSONHeaders(""); got != nil {
+	if got := sched.ParseJSONHeaders(""); got != nil {
 		t.Errorf("empty: %v, want nil", got)
 	}
 }
 
 func TestParseJSONHeaders_ValidJSON(t *testing.T) {
-	got := parseJSONHeaders(`{"X-Foo":"bar","X-Baz":"qux"}`)
+	got := sched.ParseJSONHeaders(`{"X-Foo":"bar","X-Baz":"qux"}`)
 	if got == nil || got["X-Foo"] != "bar" || got["X-Baz"] != "qux" {
 		t.Errorf("got %v", got)
 	}
@@ -29,13 +30,13 @@ func TestParseJSONHeaders_ValidJSON(t *testing.T) {
 func TestParseJSONHeaders_InvalidReturnsNil(t *testing.T) {
 	// Per doc: malformed JSON is swallowed (one record's problem,
 	// not the batch's). Pin the swallow.
-	if got := parseJSONHeaders("not json"); got != nil {
+	if got := sched.ParseJSONHeaders("not json"); got != nil {
 		t.Errorf("invalid: %v, want nil", got)
 	}
 }
 
 func TestParseJSONHeaders_EmptyObjectReturnsEmptyMap(t *testing.T) {
-	got := parseJSONHeaders("{}")
+	got := sched.ParseJSONHeaders("{}")
 	if got == nil {
 		t.Fatal("empty object: nil, want empty (non-nil) map")
 	}
@@ -47,13 +48,13 @@ func TestParseJSONHeaders_EmptyObjectReturnsEmptyMap(t *testing.T) {
 // --- parseJSONMetadata -------------------------------------------
 
 func TestParseJSONMetadata_EmptyReturnsNil(t *testing.T) {
-	if got := parseJSONMetadata(""); got != nil {
+	if got := sched.ParseJSONMetadata(""); got != nil {
 		t.Errorf("empty: %v, want nil", got)
 	}
 }
 
 func TestParseJSONMetadata_ValidJSON(t *testing.T) {
-	got := parseJSONMetadata(`{"partition":7,"stream":"events"}`)
+	got := sched.ParseJSONMetadata(`{"partition":7,"stream":"events"}`)
 	if got == nil {
 		t.Fatal("nil result")
 	}
@@ -66,13 +67,13 @@ func TestParseJSONMetadata_ValidJSON(t *testing.T) {
 }
 
 func TestParseJSONMetadata_InvalidReturnsNil(t *testing.T) {
-	if got := parseJSONMetadata("not json"); got != nil {
+	if got := sched.ParseJSONMetadata("not json"); got != nil {
 		t.Errorf("invalid: %v, want nil", got)
 	}
 }
 
 func TestParseJSONMetadata_EmptyObjectReturnsEmptyMap(t *testing.T) {
-	got := parseJSONMetadata("{}")
+	got := sched.ParseJSONMetadata("{}")
 	if got == nil {
 		t.Fatal("empty object: nil, want empty (non-nil) map")
 	}
@@ -85,7 +86,7 @@ func TestParseJSONMetadata_EmptyObjectReturnsEmptyMap(t *testing.T) {
 
 func TestJsonStdUnmarshal_Valid(t *testing.T) {
 	var got map[string]int
-	if err := jsonStdUnmarshal([]byte(`{"x":1}`), &got); err != nil {
+	if err := sched.JsonStdUnmarshal([]byte(`{"x":1}`), &got); err != nil {
 		t.Fatalf("err = %v", err)
 	}
 	if got["x"] != 1 {
@@ -95,7 +96,7 @@ func TestJsonStdUnmarshal_Valid(t *testing.T) {
 
 func TestJsonStdUnmarshal_Invalid(t *testing.T) {
 	var got map[string]int
-	if err := jsonStdUnmarshal([]byte("not json"), &got); err == nil {
+	if err := sched.JsonStdUnmarshal([]byte("not json"), &got); err == nil {
 		t.Error("invalid input: err = nil, want error")
 	}
 }

@@ -1,6 +1,6 @@
 // adr: 643
 
-package sched
+package sched_test
 
 import (
 	"context"
@@ -10,11 +10,12 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-func pressureInstance(id, app string, idle time.Duration, now time.Time) InstanceInfo {
-	return InstanceInfo{
+func pressureInstance(id, app string, idle time.Duration, now time.Time) sched.InstanceInfo {
+	return sched.InstanceInfo{
 		Instance: id, AppID: app, Plan: api.PlanPro, State: state.StateRunning, RAMMB: 1024,
 		NodeID: "n1", Started: now.Add(-10 * time.Minute), LastRequest: now.Add(-idle),
 	}
@@ -34,7 +35,7 @@ func TestSelectPressureParkCandidatesKeepsReapingExemptions(t *testing.T) {
 	service.Mode = string(state.InstanceModeService)
 	scale := pressureInstance("scale", "scale-app", 2*time.Hour, now)
 	scale.Plan = api.PlanScale
-	got := SelectPressureParkCandidates(now, []InstanceInfo{
+	got := sched.SelectPressureParkCandidates(now, []sched.InstanceInfo{
 		floored, busy, young, reserved, service, scale,
 		pressureInstance("recent", "recent-app", 5*time.Second, now),
 		pressureInstance("idle-newer", "a", 2*time.Minute, now),
@@ -61,7 +62,7 @@ func TestSelectPressureParkCandidatesParksOnlyAboveTheFloor(t *testing.T) {
 	a.MinInstances = 1
 	b := pressureInstance("a2", "app", 2*time.Hour, now)
 	b.MinInstances = 1
-	got := SelectPressureParkCandidates(now, []InstanceInfo{a, b})
+	got := sched.SelectPressureParkCandidates(now, []sched.InstanceInfo{a, b})
 	if len(got) != 1 || got[0].Instance != "a2" {
 		t.Fatalf("candidates = %+v, want only the older of two instances above a floor of 1", got)
 	}
@@ -69,42 +70,42 @@ func TestSelectPressureParkCandidatesParksOnlyAboveTheFloor(t *testing.T) {
 
 func TestClaimPressureParkCandidate(t *testing.T) {
 	now := time.Now()
-	e := &Engine{}
-	e.publishPressureParkCandidates([]PressureParkCandidate{
+	e := &sched.Engine{}
+	e.PublishPressureParkCandidates([]sched.PressureParkCandidate{
 		{Instance: "own", AppID: "waking-app", RAMMB: 2048},
 		{Instance: "small", AppID: "x", RAMMB: 256},
 		{Instance: "large", AppID: "y", RAMMB: 1024},
 	}, now)
-	c, ok := e.claimPressureParkCandidate("waking-app", 1024, now)
+	c, ok := e.ClaimPressureParkCandidate("waking-app", 1024, now)
 	if !ok || c.Instance != "large" {
 		t.Fatalf("first claim = %+v %v, want the candidate that fits the request, never the waking app's own", c, ok)
 	}
-	c, ok = e.claimPressureParkCandidate("waking-app", 1024, now)
+	c, ok = e.ClaimPressureParkCandidate("waking-app", 1024, now)
 	if !ok || c.Instance != "small" {
 		t.Fatalf("second claim = %+v %v, want the remaining candidate", c, ok)
 	}
-	if _, ok := e.claimPressureParkCandidate("waking-app", 1024, now); ok {
+	if _, ok := e.ClaimPressureParkCandidate("waking-app", 1024, now); ok {
 		t.Fatal("a third claim succeeded; claimed candidates must not be handed out twice")
 	}
-	e.publishPressureParkCandidates([]PressureParkCandidate{{Instance: "z", AppID: "z", RAMMB: 1024}}, now)
-	if _, ok := e.claimPressureParkCandidate("waking-app", 1024, now.Add(pressureParkFreshness+time.Second)); ok {
+	e.PublishPressureParkCandidates([]sched.PressureParkCandidate{{Instance: "z", AppID: "z", RAMMB: 1024}}, now)
+	if _, ok := e.ClaimPressureParkCandidate("waking-app", 1024, now.Add(sched.PressureParkFreshness+time.Second)); ok {
 		t.Fatal("a stale reaper view was used")
 	}
 }
 
 func TestParkForCapacityOnlyForGatewayCapacityRefusals(t *testing.T) {
-	e := &Engine{}
-	e.publishPressureParkCandidates([]PressureParkCandidate{{Instance: "idle", AppID: "other", RAMMB: 1024}}, time.Now())
+	e := &sched.Engine{}
+	e.PublishPressureParkCandidates([]sched.PressureParkCandidate{{Instance: "idle", AppID: "other", RAMMB: 1024}}, time.Now())
 	for _, tc := range []struct {
 		trigger string
 		err     error
 	}{
-		{TriggerGateway, nil},
-		{TriggerGateway, api.NewProblem(429, api.CodePlanLimitConcur, "Concurrency limit", "at cap")},
-		{TriggerGateway, errors.New("vmm unreachable")},
+		{sched.TriggerGateway, nil},
+		{sched.TriggerGateway, api.NewProblem(429, api.CodePlanLimitConcur, "Concurrency limit", "at cap")},
+		{sched.TriggerGateway, errors.New("vmm unreachable")},
 		{"floor.deployment", api.ErrCapacity("placement: no active compute_node fits")},
 	} {
-		if e.parkForCapacity(context.Background(), "app", tc.trigger, tc.err) {
+		if e.ParkForCapacity(context.Background(), "app", tc.trigger, tc.err) {
 			t.Fatalf("trigger=%s err=%v parked an instance", tc.trigger, tc.err)
 		}
 	}
@@ -116,7 +117,7 @@ func TestParkForCapacityOnlyForGatewayCapacityRefusals(t *testing.T) {
 func TestGatewayWakeParksAnIdleInstanceWhenTheNodeIsFull(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemStore()
-	_, app, _ := seedApp(t, store, api.PlanPro, 128, 1)
+	_, app, _ := sched.SeedApp(t, store, api.PlanPro, 128, 1)
 	vacct, err := store.CreateAccount(ctx, "victim@example.com", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
@@ -128,8 +129,8 @@ func TestGatewayWakeParksAnIdleInstanceWhenTheNodeIsFull(t *testing.T) {
 	if _, err := store.CreateDeployment(ctx, state.Deployment{AppID: victim.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:abc", Status: state.DeployLive}); err != nil {
 		t.Fatal(err)
 	}
-	vmm := &fakeVMM{}
-	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+	vmm := &sched.FakeVMM{}
+	e := sched.XNewEngine(t, store, vmm, &sched.FakeNotifier{}, "1.10.0")
 	idle, err := e.Wake(ctx, victim.ID, "", "", "")
 	if err != nil {
 		t.Fatalf("wake victim: %v", err)
@@ -139,24 +140,24 @@ func TestGatewayWakeParksAnIdleInstanceWhenTheNodeIsFull(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Fill the node's vCPU budget around the idle instance.
-	for i := 0; e.Ledger().Admit(Request{
+	for i := 0; e.Ledger().Admit(sched.Request{
 		Instance: "fill-" + strconv.Itoa(i), AppID: "fill-app-" + strconv.Itoa(i),
-		Plan: api.PlanFree, RAMMB: 8, VCPU: 1, MaxConcurrency: 1, NodeID: e.defaultLocalNodeID,
+		Plan: api.PlanFree, RAMMB: 8, VCPU: 1, MaxConcurrency: 1, NodeID: (*e.DefaultLocalNodeID()),
 	}) == nil; i++ {
 	}
-	e.publishPressureParkCandidates([]PressureParkCandidate{{
-		Instance: idle.InstanceID, AppID: victim.ID, NodeID: e.defaultLocalNodeID, Plan: api.PlanPro, RAMMB: 128, LastActivity: idleSince,
+	e.PublishPressureParkCandidates([]sched.PressureParkCandidate{{
+		Instance: idle.InstanceID, AppID: victim.ID, NodeID: (*e.DefaultLocalNodeID()), Plan: api.PlanPro, RAMMB: 128, LastActivity: idleSince,
 	}}, time.Now())
 
-	if _, err := e.Wake(ctx, app.ID, "", "", "floor.deployment"); !isFleetCapacityRefusal(err) {
+	if _, err := e.Wake(ctx, app.ID, "", "", "floor.deployment"); !sched.IsFleetCapacityRefusal(err) {
 		t.Fatalf("background wake err = %v, want the capacity refusal (only gateway wakes park others)", err)
 	}
-	res, err := e.Wake(ctx, app.ID, "", "", TriggerGateway)
+	res, err := e.Wake(ctx, app.ID, "", "", sched.TriggerGateway)
 	if err != nil {
 		t.Fatalf("gateway wake: %v, want it placed after parking the idle instance", err)
 	}
-	if res.InstanceID == "" || vmm.snapshots != 1 {
-		t.Fatalf("result=%+v snapshots=%d, want a placed instance and one park snapshot", res, vmm.snapshots)
+	if res.InstanceID == "" || (*vmm.Snapshots()) != 1 {
+		t.Fatalf("result=%+v snapshots=%d, want a placed instance and one park snapshot", res, (*vmm.Snapshots()))
 	}
 	row, err := store.InstanceByID(ctx, idle.InstanceID)
 	if err != nil || row.State != string(state.StateParked) {
@@ -172,7 +173,7 @@ func TestGatewayWakeParksAnIdleInstanceWhenTheNodeIsFull(t *testing.T) {
 func TestAdmissionAtCapParksAnIdleZeroTrafficSibling(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemStore()
-	_, app, serving := seedApp(t, store, api.PlanScale, 256, 1)
+	_, app, serving := sched.SeedApp(t, store, api.PlanScale, 256, 1)
 	staged, err := store.CreateDeployment(ctx, state.Deployment{
 		AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:def", Status: state.DeployLive,
 		TrafficPercent: 0, TrafficPercentExplicit: true,
@@ -190,20 +191,21 @@ func TestAdmissionAtCapParksAnIdleZeroTrafficSibling(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	vmm := &fakeVMM{}
-	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
-	servingIns, err := e.AdmitInstance(ctx, app.ID, serving.ID, "", TriggerGateway)
+	vmm := &sched.FakeVMM{}
+	e := sched.XNewEngine(t, store, vmm, &sched.FakeNotifier{}, "1.10.0")
+	servingIns, err := e.AdmitInstance(ctx, app.ID, serving.ID, "", sched.TriggerGateway)
 	if err != nil || servingIns.InstanceID == "" {
 		t.Fatalf("admit serving: %+v %v", servingIns, err)
 	}
-	stagedIns, err := e.AdmitInstance(ctx, app.ID, staged.ID, "", TriggerGateway)
+	stagedIns, err := e.AdmitInstance(ctx, app.ID, staged.ID, "", sched.TriggerGateway)
 	if err != nil || stagedIns.InstanceID == "" {
 		t.Fatalf("admit staged (rollout grant): %+v %v", stagedIns, err)
 	}
+	(*
 	// Both instances are idle; the clock moves past the park guards.
-	e.now = func() time.Time { return time.Now().Add(10 * time.Minute) }
+	e.Now()) = func() time.Time { return time.Now().Add(10 * time.Minute) }
 
-	res, err := e.AdmitInstance(ctx, app.ID, candidate.ID, "", TriggerDeploymentSmoke)
+	res, err := e.AdmitInstance(ctx, app.ID, candidate.ID, "", sched.TriggerDeploymentSmoke)
 	if err != nil || res.AtCapacity || res.InstanceID == "" {
 		t.Fatalf("candidate admission = %+v, %v; want admitted after parking the zero-traffic instance", res, err)
 	}
@@ -220,19 +222,19 @@ func TestAdmissionAtCapParksAnIdleZeroTrafficSibling(t *testing.T) {
 func TestParkZeroTrafficSiblingKeepsServingAndBusyInstances(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemStore()
-	_, app, serving := seedApp(t, store, api.PlanScale, 256, 2)
-	vmm := &fakeVMM{}
-	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+	_, app, serving := sched.SeedApp(t, store, api.PlanScale, 256, 2)
+	vmm := &sched.FakeVMM{}
+	e := sched.XNewEngine(t, store, vmm, &sched.FakeNotifier{}, "1.10.0")
 	for range 2 {
-		if res, err := e.AdmitInstance(ctx, app.ID, serving.ID, "", TriggerGateway); err != nil || res.InstanceID == "" {
+		if res, err := e.AdmitInstance(ctx, app.ID, serving.ID, "", sched.TriggerGateway); err != nil || res.InstanceID == "" {
 			t.Fatalf("admit serving: %+v %v", res, err)
 		}
 	}
-	e.now = func() time.Time { return time.Now().Add(10 * time.Minute) }
-	if e.parkZeroTrafficSibling(ctx, app.ID, "") {
+	(*e.Now()) = func() time.Time { return time.Now().Add(10 * time.Minute) }
+	if e.ParkZeroTrafficSibling(ctx, app.ID, "") {
 		t.Fatal("parked an instance of the serving deployment")
 	}
-	if vmm.snapshots != 0 {
-		t.Fatalf("snapshots = %d, want none", vmm.snapshots)
+	if (*vmm.Snapshots()) != 0 {
+		t.Fatalf("snapshots = %d, want none", (*vmm.Snapshots()))
 	}
 }

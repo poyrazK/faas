@@ -1,6 +1,6 @@
 // adr: 171 — restore only accepts a verified memory/vmstate snapshot pair.
 
-package sched
+package sched_test
 
 import (
 	"bytes"
@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/storage"
 )
 
@@ -24,7 +25,7 @@ func TestStorageRuntimeSnapshotVerifierAuthenticatesPair(t *testing.T) {
 		"execution-snapshots/node22/vmstate": vmstate,
 	}}
 	snapshot := validStorageRuntimeSnapshot(memory, vmstate)
-	verifier := NewStorageRuntimeSnapshotVerifier(backend)
+	verifier := sched.NewStorageRuntimeSnapshotVerifier(backend)
 	if err := verifier.VerifyRuntimeSnapshot(context.Background(), snapshot); err != nil {
 		t.Fatalf("VerifyRuntimeSnapshot: %v", err)
 	}
@@ -33,7 +34,7 @@ func TestStorageRuntimeSnapshotVerifierAuthenticatesPair(t *testing.T) {
 	}
 
 	backend.objects["execution-snapshots/node22/vmstate"][0] ^= 1
-	if err := verifier.VerifyRuntimeSnapshot(context.Background(), snapshot); !errors.Is(err, ErrRuntimeSnapshotCorrupt) {
+	if err := verifier.VerifyRuntimeSnapshot(context.Background(), snapshot); !errors.Is(err, sched.ErrRuntimeSnapshotCorrupt) {
 		t.Fatalf("tampered vmstate error = %v, want ErrRuntimeSnapshotCorrupt", err)
 	}
 }
@@ -49,16 +50,16 @@ func TestStorageRuntimeSnapshotVerifierRejectsMissingAndWrongSize(t *testing.T) 
 	snapshot.StorageKey = "snap/runtime/mem"
 	snapshot.MemBytes = int64(len(memory))
 	snapshot.VMStateBytes = int64(len(vmstate))
-	snapshot.SnapshotDigest = RuntimeSnapshotDigest(memory, vmstate)
-	verifier := NewStorageRuntimeSnapshotVerifier(backend)
+	snapshot.SnapshotDigest = sched.RuntimeSnapshotDigest(memory, vmstate)
+	verifier := sched.NewStorageRuntimeSnapshotVerifier(backend)
 
 	delete(backend.objects, "snap/runtime/vmstate")
-	if err := verifier.VerifyRuntimeSnapshot(context.Background(), snapshot); !errors.Is(err, ErrRuntimeSnapshotCorrupt) {
+	if err := verifier.VerifyRuntimeSnapshot(context.Background(), snapshot); !errors.Is(err, sched.ErrRuntimeSnapshotCorrupt) {
 		t.Fatalf("missing object error = %v, want ErrRuntimeSnapshotCorrupt", err)
 	}
 	backend.objects["snap/runtime/vmstate"] = append([]byte(nil), vmstate...)
 	snapshot.VMStateBytes++
-	if err := verifier.VerifyRuntimeSnapshot(context.Background(), snapshot); !errors.Is(err, ErrRuntimeSnapshotCorrupt) {
+	if err := verifier.VerifyRuntimeSnapshot(context.Background(), snapshot); !errors.Is(err, sched.ErrRuntimeSnapshotCorrupt) {
 		t.Fatalf("wrong size metadata error = %v, want ErrRuntimeSnapshotCorrupt", err)
 	}
 }
@@ -70,9 +71,9 @@ func TestStorageRuntimeSnapshotVerifierPreservesTransientAndCancellation(t *test
 	transient := errors.New("object store unavailable")
 	backend := &snapshotVerifyStorage{objects: map[string][]byte{
 		snapshot.StorageKey: memory,
-		runtimeSnapshotVMStateStorageKey(snapshot.StorageKey): vmstate,
+		sched.RuntimeSnapshotVMStateStorageKey(snapshot.StorageKey): vmstate,
 	}, err: transient}
-	verifier := NewStorageRuntimeSnapshotVerifier(backend)
+	verifier := sched.NewStorageRuntimeSnapshotVerifier(backend)
 	if err := verifier.VerifyRuntimeSnapshot(context.Background(), snapshot); !errors.Is(err, transient) {
 		t.Fatalf("transient error = %v, want wrapped storage error", err)
 	}
@@ -86,7 +87,7 @@ func TestStorageRuntimeSnapshotVerifierPreservesTransientAndCancellation(t *test
 }
 
 func TestRuntimeSnapshotDigestIsLengthDelimited(t *testing.T) {
-	if RuntimeSnapshotDigest([]byte("ab"), []byte("c")) == RuntimeSnapshotDigest([]byte("a"), []byte("bc")) {
+	if sched.RuntimeSnapshotDigest([]byte("ab"), []byte("c")) == sched.RuntimeSnapshotDigest([]byte("a"), []byte("bc")) {
 		t.Fatal("digest does not bind object boundaries")
 	}
 }
@@ -97,45 +98,45 @@ func TestRuntimeSnapshotCatalogRestoresOnlyVerifiedStoragePair(t *testing.T) {
 	entry := validStorageRuntimeSnapshot(memory, vmstate)
 	backend := &snapshotVerifyStorage{objects: map[string][]byte{
 		entry.StorageKey: memory,
-		runtimeSnapshotVMStateStorageKey(entry.StorageKey): vmstate,
+		sched.RuntimeSnapshotVMStateStorageKey(entry.StorageKey): vmstate,
 	}}
-	index := NewMemoryRuntimeSnapshotIndex()
+	index := sched.NewMemoryRuntimeSnapshotIndex()
 	if err := index.Publish(entry); err != nil {
 		t.Fatal(err)
 	}
-	catalog := NewRuntimeSnapshotCatalog(index, NewStorageRuntimeSnapshotVerifier(backend))
-	plan, err := catalog.Resolve(context.Background(), RuntimeSnapshotRequest{
+	catalog := sched.NewRuntimeSnapshotCatalog(index, sched.NewStorageRuntimeSnapshotVerifier(backend))
+	plan, err := catalog.Resolve(context.Background(), sched.RuntimeSnapshotRequest{
 		Shape:        api.ExecutionSnapshotShape{Runtime: api.ExecutionRuntimeNode22, MemoryMB: 128, EphemeralDiskMB: 64},
-		Architecture: archAMD64, KernelDigest: strings.Repeat("a", 64),
+		Architecture: sched.ArchAMD64, KernelDigest: strings.Repeat("a", 64),
 		GuestExecutorDigest: strings.Repeat("b", 64), BaseImageDigest: strings.Repeat("c", 64),
-		FormatVersion: CurrentRuntimeSnapshotFormatVersion,
+		FormatVersion: sched.CurrentRuntimeSnapshotFormatVersion,
 	})
-	if err != nil || plan.Mode != RuntimeSnapshotRestore || plan.Snapshot == nil {
+	if err != nil || plan.Mode != sched.RuntimeSnapshotRestore || plan.Snapshot == nil {
 		t.Fatalf("catalog plan = %#v, err=%v", plan, err)
 	}
 	backend.objects[entry.StorageKey][0] ^= 1
-	plan, err = catalog.Resolve(context.Background(), RuntimeSnapshotRequest{
+	plan, err = catalog.Resolve(context.Background(), sched.RuntimeSnapshotRequest{
 		Shape:        api.ExecutionSnapshotShape{Runtime: api.ExecutionRuntimeNode22, MemoryMB: 128, EphemeralDiskMB: 64},
-		Architecture: archAMD64, KernelDigest: strings.Repeat("a", 64),
+		Architecture: sched.ArchAMD64, KernelDigest: strings.Repeat("a", 64),
 		GuestExecutorDigest: strings.Repeat("b", 64), BaseImageDigest: strings.Repeat("c", 64),
-		FormatVersion: CurrentRuntimeSnapshotFormatVersion,
+		FormatVersion: sched.CurrentRuntimeSnapshotFormatVersion,
 	})
-	if err != nil || plan.Mode != RuntimeSnapshotColdBoot || plan.FallbackReason != RuntimeSnapshotFallbackCorrupt {
+	if err != nil || plan.Mode != sched.RuntimeSnapshotColdBoot || plan.FallbackReason != sched.RuntimeSnapshotFallbackCorrupt {
 		t.Fatalf("tampered catalog plan = %#v, err=%v", plan, err)
 	}
 }
 
-func validStorageRuntimeSnapshot(memory, vmstate []byte) RuntimeSnapshot {
-	identity := RuntimeSnapshotIdentity{
-		Runtime: api.ExecutionRuntimeNode22, Architecture: archAMD64,
+func validStorageRuntimeSnapshot(memory, vmstate []byte) sched.RuntimeSnapshot {
+	identity := sched.RuntimeSnapshotIdentity{
+		Runtime: api.ExecutionRuntimeNode22, Architecture: sched.ArchAMD64,
 		KernelDigest: strings.Repeat("a", 64), GuestExecutorDigest: strings.Repeat("b", 64),
 		BaseImageDigest: strings.Repeat("c", 64), MemoryMB: 128, EphemeralDiskMB: 64,
-		FormatVersion: CurrentRuntimeSnapshotFormatVersion,
+		FormatVersion: sched.CurrentRuntimeSnapshotFormatVersion,
 	}
-	return RuntimeSnapshot{
+	return sched.RuntimeSnapshot{
 		Identity: identity, StorageKey: "execution-snapshots/node22/mem",
-		SnapshotDigest: RuntimeSnapshotDigest(memory, vmstate), MemBytes: int64(len(memory)), VMStateBytes: int64(len(vmstate)),
-		Sanitized: true, PayloadFree: true, State: RuntimeSnapshotReady, CreatedAt: time.Unix(1, 0).UTC(),
+		SnapshotDigest: sched.RuntimeSnapshotDigest(memory, vmstate), MemBytes: int64(len(memory)), VMStateBytes: int64(len(vmstate)),
+		Sanitized: true, PayloadFree: true, State: sched.RuntimeSnapshotReady, CreatedAt: time.Unix(1, 0).UTC(),
 	}
 }
 

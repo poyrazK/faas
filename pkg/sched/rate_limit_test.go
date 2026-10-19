@@ -1,4 +1,4 @@
-package sched
+package sched_test
 
 import (
 	"sync"
@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched"
 )
 
 // frozenClock returns a clock the test owns. The limiter holds no
@@ -30,7 +31,7 @@ func frozenClock() (clock func() time.Time, advance func(d time.Duration)) {
 }
 
 func TestWakeRateLimiter_NilReceiverIsNoop(t *testing.T) {
-	var l *WakeRateLimiter // nil
+	var l *sched.WakeRateLimiter // nil
 	if !l.AllowWakeApp("app-1", api.PlanScale) {
 		t.Fatal("nil receiver must allow (test seam contract)")
 	}
@@ -44,7 +45,7 @@ func TestWakeRateLimiter_NilReceiverIsNoop(t *testing.T) {
 
 func TestWakeRateLimiter_AllowWakeApp_BurstThenThrottle(t *testing.T) {
 	clock, _ := frozenClock()
-	l := NewWakeRateLimiterWithClock(clock)
+	l := sched.NewWakeRateLimiterWithClock(clock)
 
 	// Scale = 100/min. Consume the full bucket — every call must
 	// allow until the bucket is empty.
@@ -61,7 +62,7 @@ func TestWakeRateLimiter_AllowWakeApp_BurstThenThrottle(t *testing.T) {
 
 func TestWakeRateLimiter_AllowWakeApp_PerAppIsolation(t *testing.T) {
 	clock, _ := frozenClock()
-	l := NewWakeRateLimiterWithClock(clock)
+	l := sched.NewWakeRateLimiterWithClock(clock)
 
 	// Drain app-1 to empty on Scale.
 	for i := 0; i < 100; i++ {
@@ -78,7 +79,7 @@ func TestWakeRateLimiter_AllowWakeApp_PerAppIsolation(t *testing.T) {
 
 func TestWakeRateLimiter_AllowWakeApp_PlanChangePreservesBurstCeiling(t *testing.T) {
 	clock, advance := frozenClock()
-	l := NewWakeRateLimiterWithClock(clock)
+	l := sched.NewWakeRateLimiterWithClock(clock)
 
 	// Drain app-1 to empty on Scale (100 tokens consumed in <1s).
 	for i := 0; i < 100; i++ {
@@ -111,7 +112,7 @@ func TestWakeRateLimiter_AllowWakeApp_PlanChangePreservesBurstCeiling(t *testing
 
 func TestWakeRateLimiter_AllowWakeAccount_BoundsCrossAppFanout(t *testing.T) {
 	clock, _ := frozenClock()
-	l := NewWakeRateLimiterWithClock(clock)
+	l := sched.NewWakeRateLimiterWithClock(clock)
 
 	// Scale per-account = 150/min. Drain via different app ids
 	// (per-app buckets stay fresh). Per-account bucket is the
@@ -130,7 +131,7 @@ func TestWakeRateLimiter_AllowWakeAccount_BoundsCrossAppFanout(t *testing.T) {
 
 func TestWakeRateLimiter_RefillOverTime(t *testing.T) {
 	clock, advance := frozenClock()
-	l := NewWakeRateLimiterWithClock(clock)
+	l := sched.NewWakeRateLimiterWithClock(clock)
 
 	// Drain Scale bucket (100 tokens, 100/min refill).
 	for i := 0; i < 100; i++ {
@@ -153,7 +154,7 @@ func TestWakeRateLimiter_RefillOverTime(t *testing.T) {
 
 func TestWakeRateLimiter_UnknownPlanFailsClosed(t *testing.T) {
 	clock, _ := frozenClock()
-	l := NewWakeRateLimiterWithClock(clock)
+	l := sched.NewWakeRateLimiterWithClock(clock)
 
 	if l.AllowWakeApp("app-1", api.Plan("unknown")) {
 		t.Fatal("unknown plan must fail closed (mirrors pkg/gateway.Limiter.Allow)")
@@ -165,7 +166,7 @@ func TestWakeRateLimiter_UnknownPlanFailsClosed(t *testing.T) {
 
 func TestWakeRateLimiter_FreePlanThrottlesToZero(t *testing.T) {
 	clock, _ := frozenClock()
-	l := NewWakeRateLimiterWithClock(clock)
+	l := sched.NewWakeRateLimiterWithClock(clock)
 
 	// Free = 1 burst — the abuse-floor tier. The first call
 	// consumes the single token; subsequent calls throttle until
@@ -180,7 +181,7 @@ func TestWakeRateLimiter_FreePlanThrottlesToZero(t *testing.T) {
 
 func TestWakeRateLimiter_ForgetDropsBuckets(t *testing.T) {
 	clock, _ := frozenClock()
-	l := NewWakeRateLimiterWithClock(clock)
+	l := sched.NewWakeRateLimiterWithClock(clock)
 
 	l.AllowWakeApp("app-1", api.PlanScale)
 	l.AllowWakeAccount("acct-1", api.PlanScale)
@@ -204,7 +205,7 @@ func TestWakeRateLimiter_ForgetDropsBuckets(t *testing.T) {
 
 func TestWakeRateLimiter_WithNoopAlwaysAllows(t *testing.T) {
 	clock, _ := frozenClock()
-	l := NewWakeRateLimiterWithClock(clock)
+	l := sched.NewWakeRateLimiterWithClock(clock)
 	noop := l.WithNoop()
 
 	// Drain the original limiter to empty.

@@ -1,5 +1,5 @@
 // adr: 595
-package sched
+package sched_test
 
 // These tests prove scheduler orchestration with a simulated legacy native
 // consumer; they do not prove protocol-2 artifact consumption or metal safety.
@@ -11,6 +11,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -48,9 +49,9 @@ func installRefreshTestRevision(t *testing.T, s *state.MemStore, app state.App) 
 }
 
 func TestApplicationStandardRuntimeRefreshKeepsIdleCold(t *testing.T) {
-	s, app, _ := newStandardCaptureService(t)
-	vmm := &fakeVMM{}
-	e := newEngine(t, s, vmm, &fakeNotifier{}, "1.10.0")
+	s, app, _ := sched.NewStandardCaptureService(t)
+	vmm := &sched.FakeVMM{}
+	e := sched.XNewEngine(t, s, vmm, &sched.FakeNotifier{}, "1.10.0")
 	r, err := s.GetApplicationStandardRuntimeRefresh(t.Context(), app.OrgID, app.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -60,7 +61,7 @@ func TestApplicationStandardRuntimeRefreshKeepsIdleCold(t *testing.T) {
 			t.Fatal("idle handoff woke a service", out, err)
 		}
 	}
-	if vmm.coldBoots != 0 || vmm.destroys != 0 || vmm.snapshots != 0 {
+	if (*vmm.ColdBoots()) != 0 || (*vmm.Destroys()) != 0 || (*vmm.Snapshots()) != 0 {
 		t.Fatal("idle revision performed VM work")
 	}
 	if _, stamped, err := s.AppRuntimeConfigChangedAt(t.Context(), app.ID); err != nil || stamped {
@@ -69,10 +70,10 @@ func TestApplicationStandardRuntimeRefreshKeepsIdleCold(t *testing.T) {
 }
 
 func TestApplicationStandardRuntimeRefreshRollsResidentAndReplays(t *testing.T) {
-	s, app, dep := newStandardCaptureService(t)
-	vmm := newStandardNativeTestVMM(t, s, &fakeVMM{}, standardNativeTestNodeID(t, s))
-	e := newEngine(t, s, vmm, &fakeNotifier{}, "1.10.0")
-	if _, err := e.Wake(t.Context(), app.ID, dep.ID, "", TriggerGateway); err != nil {
+	s, app, dep := sched.NewStandardCaptureService(t)
+	vmm := sched.NewStandardNativeTestVMM(t, s, &sched.FakeVMM{}, sched.StandardNativeTestNodeID(t, s))
+	e := sched.XNewEngine(t, s, vmm, &sched.FakeNotifier{}, "1.10.0")
+	if _, err := e.Wake(t.Context(), app.ID, dep.ID, "", sched.TriggerGateway); err != nil {
 		t.Fatal(err)
 	}
 	old, _ := s.ListInstancesForApp(t.Context(), app.ID)
@@ -82,7 +83,7 @@ func TestApplicationStandardRuntimeRefreshRollsResidentAndReplays(t *testing.T) 
 	if err != nil || r.WakeID == prior.WakeID {
 		t.Fatal("new revision reused old runtime work", r, err)
 	}
-	if out, err := e.RefreshApplicationStandard(t.Context(), prior); err != nil || out.Instance != nil || vmm.coldBoots != 1 {
+	if out, err := e.RefreshApplicationStandard(t.Context(), prior); err != nil || out.Instance != nil || (*vmm.ColdBoots()) != 1 {
 		t.Fatal("old queued revision performed work", out, err)
 	}
 	for i := 0; i < 2; i++ {
@@ -107,8 +108,8 @@ func TestApplicationStandardRuntimeRefreshRollsResidentAndReplays(t *testing.T) 
 			t.Fatal("old serving process was retained", ins)
 		}
 	}
-	if running != 1 || vmm.coldBoots != 2 || vmm.destroys != 1 || vmm.snapshots != 0 {
-		t.Fatal("rolling handoff replay duplicated VM work", running, vmm.coldBoots, vmm.destroys, vmm.snapshots)
+	if running != 1 || (*vmm.ColdBoots()) != 2 || (*vmm.Destroys()) != 1 || (*vmm.Snapshots()) != 0 {
+		t.Fatal("rolling handoff replay duplicated VM work", running, (*vmm.ColdBoots()), (*vmm.Destroys()), (*vmm.Snapshots()))
 	}
 	enrollment, _ := s.GetApplicationStandardEnrollment(t.Context(), app.OrgID, app.ID)
 	if enrollment.ObservedRevision != 0 {
@@ -117,10 +118,10 @@ func TestApplicationStandardRuntimeRefreshRollsResidentAndReplays(t *testing.T) 
 }
 
 func TestApplicationStandardRuntimeRefreshPauseDuringReplacement(t *testing.T) {
-	s, app, dep := newStandardCaptureService(t)
-	vmm := newStandardNativeTestVMM(t, s, &fakeVMM{}, standardNativeTestNodeID(t, s))
-	e := newEngine(t, s, vmm, &fakeNotifier{}, "1.10.0")
-	if _, err := e.Wake(t.Context(), app.ID, dep.ID, "", TriggerGateway); err != nil {
+	s, app, dep := sched.NewStandardCaptureService(t)
+	vmm := sched.NewStandardNativeTestVMM(t, s, &sched.FakeVMM{}, sched.StandardNativeTestNodeID(t, s))
+	e := sched.XNewEngine(t, s, vmm, &sched.FakeNotifier{}, "1.10.0")
+	if _, err := e.Wake(t.Context(), app.ID, dep.ID, "", sched.TriggerGateway); err != nil {
 		t.Fatal(err)
 	}
 	o := installRefreshTestRevision(t, s, app)
@@ -129,7 +130,7 @@ func TestApplicationStandardRuntimeRefreshPauseDuringReplacement(t *testing.T) {
 		t.Fatal(err)
 	}
 	var paused state.ApplicationStandardOperation
-	vmm.beforeNative = func() {
+	(*vmm.BeforeNative()) = func() {
 		var err error
 		paused, err = s.ControlApplicationStandardOperation(t.Context(), app.OrgID, app.AccountID, o.ID, o.UpdatedAt, state.ApplicationStandardOperationPause)
 		if err != nil {
@@ -139,23 +140,23 @@ func TestApplicationStandardRuntimeRefreshPauseDuringReplacement(t *testing.T) {
 	if _, err := e.RefreshApplicationStandard(t.Context(), r); !errors.Is(err, state.ErrApplicationStandardRefreshDeferred) {
 		t.Fatal("in-flight pause acknowledged runtime work", err)
 	}
-	if vmm.coldBoots != 2 || vmm.destroys != 0 {
-		t.Fatal("paused rollout retired serving predecessor", vmm.coldBoots, vmm.destroys)
+	if (*vmm.ColdBoots()) != 2 || (*vmm.Destroys()) != 0 {
+		t.Fatal("paused rollout retired serving predecessor", (*vmm.ColdBoots()), (*vmm.Destroys()))
 	}
-	vmm.beforeNative = nil
+	(*vmm.BeforeNative()) = nil
 	if _, err := s.ControlApplicationStandardOperation(t.Context(), app.OrgID, app.AccountID, o.ID, paused.UpdatedAt, state.ApplicationStandardOperationResume); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := e.RefreshApplicationStandard(t.Context(), r); err != nil {
 		t.Fatal(err)
 	}
-	if vmm.coldBoots != 2 || vmm.destroys != 1 || vmm.snapshots != 0 {
-		t.Fatal("resume did not reuse the ready replacement", vmm.coldBoots, vmm.destroys, vmm.snapshots)
+	if (*vmm.ColdBoots()) != 2 || (*vmm.Destroys()) != 1 || (*vmm.Snapshots()) != 0 {
+		t.Fatal("resume did not reuse the ready replacement", (*vmm.ColdBoots()), (*vmm.Destroys()), (*vmm.Snapshots()))
 	}
 }
 
 func TestApplicationStandardRuntimeRefreshPauseDefersLoopAndResume(t *testing.T) {
-	s, app, _ := newStandardCaptureService(t)
+	s, app, _ := sched.NewStandardCaptureService(t)
 	o := installRefreshTestRevision(t, s, app)
 	paused, err := s.ControlApplicationStandardOperation(t.Context(), app.OrgID, app.AccountID, o.ID, o.UpdatedAt, state.ApplicationStandardOperationPause)
 	if err != nil {
@@ -163,19 +164,19 @@ func TestApplicationStandardRuntimeRefreshPauseDefersLoopAndResume(t *testing.T)
 	}
 	r, _ := s.GetApplicationStandardRuntimeRefresh(t.Context(), app.OrgID, app.ID)
 	payload, _ := json.Marshal(r)
-	vmm := &fakeVMM{}
-	e := newEngine(t, s, vmm, &fakeNotifier{}, "1.10.0")
-	l := NewLoop(nil, e, e.log)
-	if err := l.handleRuntimeConfigRestart(t.Context(), db.Notification{Payload: string(payload)}); !errors.Is(err, db.ErrNotificationDeferred) {
+	vmm := &sched.FakeVMM{}
+	e := sched.XNewEngine(t, s, vmm, &sched.FakeNotifier{}, "1.10.0")
+	l := sched.NewLoop(nil, e, (*e.Log()))
+	if err := l.HandleRuntimeConfigRestart(t.Context(), db.Notification{Payload: string(payload)}); !errors.Is(err, db.ErrNotificationDeferred) {
 		t.Fatal("paused loop consumed its durable work", err)
 	}
 	if _, err := s.ControlApplicationStandardOperation(t.Context(), app.OrgID, app.AccountID, o.ID, paused.UpdatedAt, state.ApplicationStandardOperationResume); err != nil {
 		t.Fatal(err)
 	}
-	if err := l.handleRuntimeConfigRestart(t.Context(), db.Notification{Payload: string(payload)}); err != nil {
+	if err := l.HandleRuntimeConfigRestart(t.Context(), db.Notification{Payload: string(payload)}); err != nil {
 		t.Fatal(err)
 	}
-	if vmm.coldBoots != 0 || vmm.destroys != 0 {
+	if (*vmm.ColdBoots()) != 0 || (*vmm.Destroys()) != 0 {
 		t.Fatal("pause or resume woke idle service")
 	}
 }

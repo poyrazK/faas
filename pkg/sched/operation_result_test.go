@@ -1,9 +1,10 @@
 // adr: 488
-package sched
+package sched_test
 
 import (
 	"encoding/json"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"strings"
 	"testing"
 )
@@ -32,7 +33,7 @@ func TestDecodeOperationResult(t *testing.T) {
 		{"oversized", strings.Repeat("x", api.MaxExclusiveResultBytes+1), "", true, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			result, effects, err := decodeOperationResult(json.RawMessage(tc.body))
+			result, effects, err := sched.DecodeOperationResult(json.RawMessage(tc.body))
 			if (err != nil) != tc.fail {
 				t.Fatalf("err=%v", err)
 			}
@@ -53,7 +54,7 @@ func TestDecodeOperationResultBoundsEffectCount(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		_, decoded, err := decodeOperationResult(body)
+		_, decoded, err := sched.DecodeOperationResult(body)
 		if count <= api.MaxExclusiveEffectsPerCommit {
 			if err != nil || len(decoded) != count {
 				t.Fatalf("bounded count=%d decoded=%d err=%v", count, len(decoded), err)
