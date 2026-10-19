@@ -88,17 +88,6 @@ func (s *server) authorizeDashboardProject(next http.Handler, w http.ResponseWri
 		next.ServeHTTP(w, r)
 		return
 	}
-	// The project-access wrapper looks up the path slug before the
-	// dashboard handler runs. Preview dispatches own their slug
-	// validation and return a 400; let malformed preview slugs reach
-	// that guard instead of turning them into a project-not-found 404.
-	if r.Method == http.MethodPost &&
-		(r.Pattern == "POST /dashboard/projects/{slug}/preview" ||
-			r.Pattern == "POST /dashboard/projects/{slug}/preview/apply") &&
-		!previewSlugOK(r.PathValue("slug")) {
-		next.ServeHTTP(w, r)
-		return
-	}
 	r = r.WithContext(middleware.WithPrincipal(r.Context(), actor, nil, nil))
 	projectaccess.Wrap(s.store, loadOrgAuditFrom(s.audit), func(w http.ResponseWriter, r *http.Request, _ state.Account) {
 		next.ServeHTTP(w, r)
