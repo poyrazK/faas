@@ -82,3 +82,30 @@ func (c *Client) GetProductCustomerBilling(ctx context.Context, app, period, cur
 	err := c.do(ctx, http.MethodGet, "/v1/platform-tenant-self/product/billing?"+query.Encode(), nil, &out)
 	return out, err
 }
+
+// GetProductOverduePolicy reads an app's overdue rule (ADR-20261018212918).
+func (c *Client) GetProductOverduePolicy(ctx context.Context, app string) (ProductOverduePolicy, error) {
+	var out ProductOverduePolicy
+	err := c.do(ctx, http.MethodGet, productPath(app)+"/billing/overdue-policy", nil, &out)
+	return out, err
+}
+
+// PutProductOverduePolicy holds customers whose exported statement is
+// unpaid days after its due date; holds follow at the next recomputation.
+func (c *Client) PutProductOverduePolicy(ctx context.Context, app string, days int) (ProductOverduePolicy, error) {
+	var out ProductOverduePolicy
+	err := c.do(ctx, http.MethodPut, productPath(app)+"/billing/overdue-policy", PutProductOverduePolicyRequest{BlockOverdueAfterDays: &days}, &out)
+	return out, err
+}
+
+// DeleteProductOverduePolicy clears an app's overdue rule and lifts its holds.
+func (c *Client) DeleteProductOverduePolicy(ctx context.Context, app string) error {
+	return c.do(ctx, http.MethodDelete, productPath(app)+"/billing/overdue-policy", nil, nil)
+}
+
+// ListProductOverdueHolds lists an app's customers held by overdue invoices.
+func (c *Client) ListProductOverdueHolds(ctx context.Context, app string) (ProductOverdueHolds, error) {
+	var out ProductOverdueHolds
+	err := c.do(ctx, http.MethodGet, productPath(app)+"/billing/overdue-holds", nil, &out)
+	return out, err
+}

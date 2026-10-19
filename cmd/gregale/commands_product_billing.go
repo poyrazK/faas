@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"flag"
+	"net/http"
 	"strings"
 	"time"
 
@@ -118,4 +119,43 @@ func runProductBillingCommand(ctx context.Context, client *Client, c productComm
 		return client.GetProductStatementExport(ctx, c.app, c.tenant, c.period, c.document)
 	}
 	return nil, errors.New("unsupported billing command")
+}
+
+// productOverdueView is what billing overdue-policy inspect prints: the
+// policy, null when the app has none, and the customers it holds.
+type productOverdueView struct {
+	Policy *api.ProductOverduePolicy `json:"policy"`
+	Holds  []api.ProductOverdueHold  `json:"holds"`
+}
+
+// runProductOverdueCommand reads or changes the app's overdue policy
+// (ADR-20261018212918).
+func runProductOverdueCommand(ctx context.Context, client *Client, c productCommand) (any, error) {
+	switch c.verb {
+	case "billing overdue-policy set":
+		return client.PutProductOverduePolicy(ctx, c.app, c.overdueDays)
+	case "billing overdue-policy clear":
+		if err := client.DeleteProductOverduePolicy(ctx, c.app); err != nil {
+			return nil, err
+		}
+		return map[string]string{"status": "overdue policy cleared; its holds are lifted"}, nil
+	}
+	view := productOverdueView{Holds: []api.ProductOverdueHold{}}
+	policy, err := client.GetProductOverduePolicy(ctx, c.app)
+	var problem *api.APIError
+	switch {
+	case err == nil:
+		view.Policy = &policy
+	case errors.As(err, &problem) && problem.Problem.Status == http.StatusNotFound:
+	default:
+		return nil, err
+	}
+	holds, err := client.ListProductOverdueHolds(ctx, c.app)
+	if err != nil {
+		return nil, err
+	}
+	if holds.Holds != nil {
+		view.Holds = holds.Holds
+	}
+	return view, nil
 }

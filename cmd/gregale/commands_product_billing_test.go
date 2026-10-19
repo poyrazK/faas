@@ -109,3 +109,82 @@ func TestProductBillingCustomerCLI(t *testing.T) {
 		}
 	}
 }
+
+// adr: 20261018212918 — billing overdue-policy inspect reads the policy and
+// its holds (a missing policy is null, not an error), set sends the day count
+// and clear deletes the policy.
+func TestProductOverduePolicyCLI(t *testing.T) {
+	tenant := uuid.NewString()
+	var policy *api.ProductOverduePolicy
+	var requests []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests = append(requests, r.Method+" "+r.URL.Path)
+		switch r.Method + " " + r.URL.Path {
+		case "GET /v1/apps/exports/product/billing/overdue-policy":
+			if policy == nil {
+				w.Header().Set("Content-Type", "application/problem+json")
+				w.WriteHeader(http.StatusNotFound)
+				_ = json.NewEncoder(w).Encode(api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "no policy"))
+				return
+			}
+			_ = json.NewEncoder(w).Encode(policy)
+		case "PUT /v1/apps/exports/product/billing/overdue-policy":
+			var req api.PutProductOverduePolicyRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.BlockOverdueAfterDays == nil {
+				t.Errorf("policy body: %+v %v", req, err)
+				return
+			}
+			policy = &api.ProductOverduePolicy{AppID: "app", BlockOverdueAfterDays: *req.BlockOverdueAfterDays}
+			_ = json.NewEncoder(w).Encode(policy)
+		case "DELETE /v1/apps/exports/product/billing/overdue-policy":
+			policy = nil
+			w.WriteHeader(http.StatusNoContent)
+		case "GET /v1/apps/exports/product/billing/overdue-holds":
+			holds := api.ProductOverdueHolds{Holds: []api.ProductOverdueHold{}}
+			if policy != nil {
+				holds.Holds = append(holds.Holds, api.ProductOverdueHold{TenantID: tenant})
+			}
+			_ = json.NewEncoder(w).Encode(holds)
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL)
+		}
+	}))
+	defer srv.Close()
+	run := func(args ...string) any {
+		t.Helper()
+		c, err := parseProductCommand(append([]string{"billing", "overdue-policy"}, append(args, "--app", "exports")...))
+		if err != nil {
+			t.Fatal(err)
+		}
+		value, err := runProductCommand(t.Context(), NewClient(srv.URL, "owner"), c)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return value
+	}
+	if view := run("inspect").(productOverdueView); view.Policy != nil || view.Holds == nil || len(view.Holds) != 0 {
+		t.Fatalf("inspect without a policy = %+v", view)
+	}
+	if got := run("set", "--block-overdue-after-days", "0").(api.ProductOverduePolicy); got.BlockOverdueAfterDays != 0 || policy == nil {
+		t.Fatalf("set = %+v", got)
+	}
+	if view := run("inspect").(productOverdueView); view.Policy == nil || len(view.Holds) != 1 || view.Holds[0].TenantID != tenant {
+		t.Fatalf("inspect = %+v", view)
+	}
+	run("clear")
+	if policy != nil || requests[len(requests)-1] != "DELETE /v1/apps/exports/product/billing/overdue-policy" {
+		t.Fatalf("clear left %+v after %v", policy, requests)
+	}
+	for _, args := range [][]string{
+		{"billing", "overdue-policy", "set", "--app", "exports"},
+		{"billing", "overdue-policy", "set", "--app", "exports", "--block-overdue-after-days", "366"},
+		{"billing", "overdue-policy", "set", "--app", "exports", "--block-overdue-after-days", "-2"},
+		{"billing", "overdue-policy", "remove", "--app", "exports"},
+		{"billing", "invoices", "list", "--app", "exports"},
+		{"billing", "overdue-policy"},
+	} {
+		if _, err := parseProductCommand(args); err == nil {
+			t.Errorf("accepted %q", args)
+		}
+	}
+}

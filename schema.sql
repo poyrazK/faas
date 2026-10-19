@@ -41503,6 +41503,49 @@ CREATE TABLE public.product_control_onboardings (
 
 
 --
+-- Name: product_control_overdue_holds; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.product_control_overdue_holds (
+    app_id uuid NOT NULL,
+    tenant_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    document_id uuid NOT NULL,
+    export_id uuid NOT NULL,
+    due_at timestamp with time zone NOT NULL,
+    since timestamp with time zone NOT NULL
+);
+
+
+--
+-- Name: TABLE product_control_overdue_holds; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.product_control_overdue_holds IS 'Product Control customers whose new starts are refused because of an overdue invoice; recomputed by apid (ADR-20261018212918).';
+
+
+--
+-- Name: product_control_overdue_policies; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.product_control_overdue_policies (
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    block_overdue_after_days integer NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT product_control_overdue_policies_days_chk CHECK (((block_overdue_after_days >= 0) AND (block_overdue_after_days <= 365)))
+);
+
+
+--
+-- Name: TABLE product_control_overdue_policies; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.product_control_overdue_policies IS 'Per-app rule refusing new Product Control starts from customers whose exported statement is unpaid that many days after its due date (ADR-20261018212918).';
+
+
+--
 -- Name: product_control_plan_changes; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -55230,6 +55273,22 @@ ALTER TABLE ONLY public.product_control_onboardings
 
 
 --
+-- Name: product_control_overdue_holds product_control_overdue_holds_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_overdue_holds
+    ADD CONSTRAINT product_control_overdue_holds_pkey PRIMARY KEY (app_id, tenant_id);
+
+
+--
+-- Name: product_control_overdue_policies product_control_overdue_policies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_overdue_policies
+    ADD CONSTRAINT product_control_overdue_policies_pkey PRIMARY KEY (app_id);
+
+
+--
 -- Name: product_control_plan_changes product_control_plan_changes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -64708,6 +64767,13 @@ CREATE INDEX product_control_onboarding_customer ON public.product_control_onboa
 --
 
 CREATE INDEX product_control_onboarding_success ON public.product_control_receipts USING btree (account_id, app_id, tenant_id, resolved_at, operation_id) WHERE (resolved_state = 'succeeded'::text);
+
+
+--
+-- Name: product_control_overdue_holds_app_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX product_control_overdue_holds_app_idx ON public.product_control_overdue_holds USING btree (account_id, app_id, due_at);
 
 
 --
@@ -82064,6 +82130,62 @@ ALTER TABLE ONLY public.product_control_onboardings
 
 ALTER TABLE ONLY public.product_control_onboardings
     ADD CONSTRAINT product_control_onboardings_tenant_id_fkey FOREIGN KEY (tenant_id) REFERENCES public.platform_tenants(id) ON DELETE CASCADE;
+
+
+--
+-- Name: product_control_overdue_holds product_control_overdue_holds_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_overdue_holds
+    ADD CONSTRAINT product_control_overdue_holds_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: product_control_overdue_holds product_control_overdue_holds_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_overdue_holds
+    ADD CONSTRAINT product_control_overdue_holds_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: product_control_overdue_holds product_control_overdue_holds_document_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_overdue_holds
+    ADD CONSTRAINT product_control_overdue_holds_document_id_fkey FOREIGN KEY (document_id) REFERENCES public.product_control_billing_documents(id) ON DELETE CASCADE;
+
+
+--
+-- Name: product_control_overdue_holds product_control_overdue_holds_export_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_overdue_holds
+    ADD CONSTRAINT product_control_overdue_holds_export_id_fkey FOREIGN KEY (export_id) REFERENCES public.usage_statement_invoice_exports(id) ON DELETE CASCADE;
+
+
+--
+-- Name: product_control_overdue_holds product_control_overdue_holds_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_overdue_holds
+    ADD CONSTRAINT product_control_overdue_holds_tenant_id_fkey FOREIGN KEY (tenant_id) REFERENCES public.platform_tenants(id) ON DELETE CASCADE;
+
+
+--
+-- Name: product_control_overdue_policies product_control_overdue_policies_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_overdue_policies
+    ADD CONSTRAINT product_control_overdue_policies_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: product_control_overdue_policies product_control_overdue_policies_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_overdue_policies
+    ADD CONSTRAINT product_control_overdue_policies_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --

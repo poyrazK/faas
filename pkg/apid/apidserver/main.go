@@ -851,10 +851,11 @@ func run(ctx context.Context, log *slog.Logger) error {
 		// that the apid gRPC receiver (Stage 4) already honors.
 		startDebugRegressionCron(ctx, srv, log, deps.getenv)
 		startProfileDeploymentChecks(ctx, srv, log)
-		srv.billingRuns.Start(ctx, log)       // ADR-1503
-		srv.statementInvoices.Start(ctx, log) // ADR-1504
-		srv.consumerCredits.Start(ctx, log)   // ADR-1306
-		srv.consumerControls.Start(ctx, log)  // ADR-1315
+		srv.billingRuns.Start(ctx, log)                // ADR-1503
+		srv.statementInvoices.Start(ctx, log)          // ADR-1504
+		srv.consumerCredits.Start(ctx, log)            // ADR-1306
+		srv.consumerControls.Start(ctx, log)           // ADR-1315
+		srv.productControl.StartOverdueHolds(ctx, log) // ADR-20261018212918
 		startFeatureFlagAutoAdvancer(ctx, srv, log)
 		srv.startIssuesMaintenance(ctx)
 		srv.startIssueTrackerAutoSync(ctx)

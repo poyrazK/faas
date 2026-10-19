@@ -26,7 +26,7 @@ type productCommand struct {
 	reviewHash, reason, billingID, document, invoice, billingProvider, billingCustomer       string
 	output, policyFile, helpID                                                               string
 	emailStatus, deliveryID                                                                  string
-	failedAttempt                                                                            int
+	failedAttempt, overdueDays                                                               int
 	externalRef, customerName, workspace, authTokenFile, onboardingID                        string
 	confirm                                                                                  bool
 	amountMillicents                                                                         int64
@@ -37,7 +37,7 @@ type productCommand struct {
 func parseProductCommand(args []string) (productCommand, error) {
 	var c productCommand
 	if len(args) == 0 {
-		return c, errors.New("use gregale product <init|validate|apply|inspect|features|plans|customers|doctor|pilot|email|quote|start|explain|usage|statements|access|plan-policy|team-policy>")
+		return c, errors.New("use gregale product <init|validate|apply|inspect|features|plans|customers|doctor|pilot|email|quote|start|explain|usage|statements|billing|access|plan-policy|team-policy>")
 	}
 	c.verb = args[0]
 	args = args[1:]
@@ -47,6 +47,13 @@ func parseProductCommand(args []string) (productCommand, error) {
 		}
 		c.verb += " " + args[0]
 		args = args[1:]
+	}
+	if c.verb == "billing" {
+		if len(args) < 2 || args[0] != "overdue-policy" {
+			return c, errors.New("use gregale product billing overdue-policy <inspect|set|clear>")
+		}
+		c.verb += " overdue-policy " + args[1]
+		args = args[2:]
 	}
 	if c.verb == "explain" {
 		if len(args) == 0 {
@@ -119,6 +126,9 @@ func parseProductCommand(args []string) (productCommand, error) {
 		fs.BoolVar(&c.suspended, "suspended", false, "pause new feature starts")
 	case "statements list", "statements review", "statements receipts", "statements finalize", "statements waive", "statements credit", "statements handoff", "statements handoff-status", "statements export", "statements export-status":
 		productBillingFlags(fs, &c)
+	case "billing overdue-policy inspect", "billing overdue-policy clear":
+	case "billing overdue-policy set":
+		fs.IntVar(&c.overdueDays, "block-overdue-after-days", -1, "days after an invoice's due date before a customer's new starts are refused (0 to 365)")
 	case "usage":
 		fs.StringVar(&c.tenant, "tenant", "", "customer platform tenant UUID")
 		fs.StringVar(&c.period, "period", productcontrol.Period(time.Now()), "UTC usage month YYYY-MM")
@@ -204,6 +214,9 @@ func parseProductCommand(args []string) (productCommand, error) {
 			return c, err
 		}
 	}
+	if c.verb == "billing overdue-policy set" && (c.overdueDays < 0 || c.overdueDays > api.ProductOverdueBlockMaxDays) {
+		return c, fmt.Errorf("--block-overdue-after-days must be 0 to %d (0 holds as soon as an invoice is past due)", api.ProductOverdueBlockMaxDays)
+	}
 	if c.verb == "usage" {
 		if err := productcontrol.ValidatePeriod(c.period); err != nil {
 			return c, errors.New("--period must be YYYY-MM")
@@ -233,7 +246,7 @@ func parseProductCommand(args []string) (productCommand, error) {
 
 func cmdProduct(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale product <init|validate|apply|inspect|features|plans|customers|doctor|pilot|email|quote|start|explain|usage|statements|access|plan-policy|team-policy>", "product-control")
+		PrintUsage(os.Stderr, "usage: gregale product <init|validate|apply|inspect|features|plans|customers|doctor|pilot|email|quote|start|explain|usage|statements|billing|access|plan-policy|team-policy>", "product-control")
 		return 1
 	}
 	c, err := parseProductCommand(args)
@@ -385,6 +398,8 @@ func runProductCommand(ctx context.Context, client *Client, c productCommand) (a
 		return runProductOnboardingCommand(ctx, client, c)
 	case "statements list", "statements review", "statements receipts", "statements finalize", "statements waive", "statements credit", "statements handoff", "statements handoff-status", "statements export", "statements export-status":
 		return runProductBillingCommand(ctx, client, c)
+	case "billing overdue-policy inspect", "billing overdue-policy set", "billing overdue-policy clear":
+		return runProductOverdueCommand(ctx, client, c)
 	case "usage":
 		var usage api.ProductUsage
 		var err error

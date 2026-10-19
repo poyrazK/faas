@@ -3809,6 +3809,28 @@ type Querier interface {
 	ProductOnboardingReadTenant(ctx context.Context, db DBTX, arg ProductOnboardingReadTenantParams) (PlatformTenant, error)
 	ProductOnboardingTenant(ctx context.Context, db DBTX, arg ProductOnboardingTenantParams) (PlatformTenant, error)
 	ProductOnboardingTenantCount(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
+	ProductOverdueAllHolds(ctx context.Context, db DBTX) ([]ProductControlOverdueHold, error)
+	ProductOverdueCustomerHold(ctx context.Context, db DBTX, arg ProductOverdueCustomerHoldParams) (ProductOverdueCustomerHoldRow, error)
+	ProductOverdueDeleteAppHolds(ctx context.Context, db DBTX, arg ProductOverdueDeleteAppHoldsParams) ([]ProductControlOverdueHold, error)
+	ProductOverdueDeleteHold(ctx context.Context, db DBTX, arg ProductOverdueDeleteHoldParams) error
+	ProductOverdueDeletePolicy(ctx context.Context, db DBTX, arg ProductOverdueDeletePolicyParams) (int64, error)
+	// Each customer's oldest exported statement that is still unpaid its app's
+	// policy days after its due date. Drafts have no due date and never count.
+	ProductOverdueDue(ctx context.Context, db DBTX, now pgtype.Timestamptz) ([]ProductOverdueDueRow, error)
+	// Holds apply while their policy exists and their invoice is still unpaid, so
+	// payment or a cleared policy takes effect before the next recomputation.
+	ProductOverdueHolds(ctx context.Context, db DBTX, arg ProductOverdueHoldsParams) ([]ProductOverdueHoldsRow, error)
+	// Policy deletion waits for a running recomputation; the recomputation skips
+	// when another replica holds the lock.
+	ProductOverdueLock(ctx context.Context, db DBTX) error
+	ProductOverduePolicy(ctx context.Context, db DBTX, arg ProductOverduePolicyParams) (ProductControlOverduePolicy, error)
+	// Product Control overdue policies and holds (ADR-20261018212918, mirroring ADR-1315).
+	ProductOverduePutPolicy(ctx context.Context, db DBTX, arg ProductOverduePutPolicyParams) (ProductControlOverduePolicy, error)
+	// A held invoice's payment status is read at least every
+	// api.ProductOverdueHeldSyncInterval, so paying it lifts the hold quickly.
+	ProductOverdueResyncHeld(ctx context.Context, db DBTX, soon pgtype.Timestamptz) error
+	ProductOverdueTryLock(ctx context.Context, db DBTX) (bool, error)
+	ProductOverdueUpsertHold(ctx context.Context, db DBTX, arg ProductOverdueUpsertHoldParams) error
 	ProductOwnerAttention(ctx context.Context, db DBTX, arg ProductOwnerAttentionParams) ([]ProductOwnerAttentionRow, error)
 	ProductOwnerGetChange(ctx context.Context, db DBTX, arg ProductOwnerGetChangeParams) (ProductOwnerGetChangeRow, error)
 	ProductOwnerInsertChange(ctx context.Context, db DBTX, arg ProductOwnerInsertChangeParams) error

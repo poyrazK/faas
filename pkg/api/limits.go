@@ -563,6 +563,14 @@ const (
 	ConsumerOverdueHeldSyncInterval = 15 * time.Minute
 )
 
+// Product Control overdue holds (ADR-20261018212918) reuse the ADR-1315
+// values: a held customer's new starts are refused until its invoice is paid.
+const (
+	ProductOverdueBlockMaxDays     = ConsumerOverdueBlockMaxDays
+	ProductOverdueCheckInterval    = ConsumerOverdueCheckInterval
+	ProductOverdueHeldSyncInterval = ConsumerOverdueHeldSyncInterval
+)
+
 // PlatformTenantPlansMax bounds the tenant plans one account keeps
 // (ADR-1307).
 const PlatformTenantPlansMax = 100

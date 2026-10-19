@@ -47,6 +47,8 @@ type Service struct {
 	// DocumentInvoice reads a scoped statement's export by account and
 	// document, nil before one starts.
 	DocumentInvoice func(context.Context, string, string) (*api.StatementInvoiceExportResponse, error)
+	// Now pins the overdue recomputation clock in tests.
+	Now func() time.Time
 }
 
 func (s *Service) Start(w http.ResponseWriter, r *http.Request, acct state.Account) {

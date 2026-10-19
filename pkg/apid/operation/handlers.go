@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
@@ -30,6 +31,8 @@ func WriteOperationError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, state.ErrProductQuoteChanged):
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "product_quote_changed", "Confirm current price", "the confirmed product terms have changed; refresh the assigned plan and confirm again before starting new work"))
+	case errors.Is(err, state.ErrProductInvoiceOverdue):
+		api.WriteProblem(w, productInvoiceOverdueProblem(err))
 	case errors.Is(err, state.ErrProductAccess):
 		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, "product_entitlement_denied", "Feature unavailable", "the assigned product plan does not permit this feature"))
 	case errors.Is(err, state.ErrProductBindingUnavailable):
@@ -65,6 +68,21 @@ func WriteOperationError(w http.ResponseWriter, err error) {
 	default:
 		api.WriteProblem(w, api.ErrInternal("operation request failed"))
 	}
+}
+
+// productInvoiceOverdueProblem names the due date and the provider's hosted
+// invoice page of the statement holding the customer (ADR-20261018212918).
+// No start was consumed.
+func productInvoiceOverdueProblem(err error) *api.Problem {
+	detail := "an invoice for this product is unpaid past its due date; new work resumes once it is paid"
+	var overdue *state.ProductInvoiceOverdueError
+	if errors.As(err, &overdue) {
+		detail = "an invoice due " + overdue.DueAt.UTC().Format(time.DateOnly) + " is unpaid; new work resumes once it is paid"
+		if link := api.ProviderHostedURL(overdue.HostedInvoiceURL); link != "" {
+			detail += ": " + link
+		}
+	}
+	return api.NewProblem(http.StatusPaymentRequired, api.CodeProductInvoiceOverdue, "Invoice overdue", detail)
 }
 
 // Canonicalization rejects duplicate members before typed decoding discards

@@ -3,7 +3,6 @@ package product
 import (
 	"context"
 	"fmt"
-	"net/url"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -43,9 +42,7 @@ func documentInvoice(e *api.StatementInvoiceExportResponse, owner bool) *api.Pro
 	}
 	out := &api.ProductDocumentInvoice{PaymentStatus: e.PaymentStatus, Overdue: e.Overdue, Currency: e.Currency, AmountMinor: e.AmountMinor,
 		AmountRemainingMinor: e.AmountRemainingMinor, DueAt: e.DueAt, PaidAt: e.PaidAt}
-	if link, err := url.Parse(e.HostedInvoiceURL); err == nil && link.Scheme == "https" && link.Host != "" && link.User == nil {
-		out.HostedInvoiceURL = link.String()
-	}
+	out.HostedInvoiceURL = api.ProviderHostedURL(e.HostedInvoiceURL)
 	if owner {
 		out.Provider, out.InvoiceID, out.DashboardURL, out.ExportStatus = e.Provider, e.InvoiceID, e.DashboardURL, e.Status
 	}

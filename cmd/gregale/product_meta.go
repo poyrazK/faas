@@ -53,6 +53,14 @@ func productCLIManifest() []cliSub {
 		{Name: "explain", Short: "Trace an accepted run's entitlement, binding, execution and charge", Positionals: []string{"<operation-id>"}, Flags: []cliFlag{app, {Name: "after", Value: "N", Short: "execution generation cursor (default 0)"}}},
 		{Name: "usage", Short: "Read outcome usage and start allowances", Flags: usage},
 		{Name: "statements", Short: "Review and finalize charges, issue credit notes, and record invoice handoffs", Subcommands: productBillingCLIManifest(app)},
+		{Name: "billing", Short: "Configure collection policy for exported statements", Subcommands: []cliSub{
+			{Name: "overdue-policy", Short: "Refuse new starts from customers whose exported invoice is overdue", Subcommands: []cliSub{
+				{Name: "inspect", Short: "Read the overdue policy and the customers it holds", Flags: []cliFlag{app}},
+				{Name: "set", Short: "Hold customers whose invoice is unpaid this many days after its due date", Flags: []cliFlag{app,
+					{Name: "block-overdue-after-days", Value: "N", Req: true, Short: "0 to 365; 0 holds as soon as an invoice is past due"}}},
+				{Name: "clear", Short: "Remove the overdue policy and lift its holds", Flags: []cliFlag{app}},
+			}},
+		}},
 	}
 }
 

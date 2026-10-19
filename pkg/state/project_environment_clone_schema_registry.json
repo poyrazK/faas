@@ -11488,6 +11488,30 @@
     "kind": "operational"
   },
   {
+    "table": "product_control_overdue_holds",
+    "columns": [
+      "account_id",
+      "app_id",
+      "document_id",
+      "due_at",
+      "export_id",
+      "since",
+      "tenant_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "product_control_overdue_policies",
+    "columns": [
+      "account_id",
+      "app_id",
+      "block_overdue_after_days",
+      "created_at",
+      "updated_at"
+    ],
+    "kind": "configuration"
+  },
+  {
     "table": "product_control_plan_changes",
     "columns": [
       "account_id",

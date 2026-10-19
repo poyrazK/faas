@@ -9708,6 +9708,26 @@ type ProductControlOnboarding struct {
 	AccessVerifiedAt   pgtype.Timestamptz
 }
 
+// Product Control customers whose new starts are refused because of an overdue invoice; recomputed by apid (ADR-20261018212918).
+type ProductControlOverdueHold struct {
+	AppID      pgtype.UUID
+	TenantID   pgtype.UUID
+	AccountID  pgtype.UUID
+	DocumentID pgtype.UUID
+	ExportID   pgtype.UUID
+	DueAt      pgtype.Timestamptz
+	Since      pgtype.Timestamptz
+}
+
+// Per-app rule refusing new Product Control starts from customers whose exported statement is unpaid that many days after its due date (ADR-20261018212918).
+type ProductControlOverduePolicy struct {
+	AppID                 pgtype.UUID
+	AccountID             pgtype.UUID
+	BlockOverdueAfterDays int32
+	CreatedAt             pgtype.Timestamptz
+	UpdatedAt             pgtype.Timestamptz
+}
+
 type ProductControlPlanChange struct {
 	ID          pgtype.UUID
 	AccountID   pgtype.UUID
