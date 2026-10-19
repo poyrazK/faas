@@ -340,6 +340,41 @@ func TestPgStore_TenantHostname_VerifyAndList(t *testing.T) {
 	}
 }
 
+// Verification binds the proved TXT token: a stale token, an already
+// verified row and a missing row all report no match.
+func TestPgStore_TenantHostname_VerifyIfChallenge(t *testing.T) {
+	s, ctx := pgStore(t)
+	acct, app := pgTenantSurfaceSeed(t, s, ctx, "verifycas")
+	lim := api.Limits{TenantSurfacesAllowed: true, TenantSurfacesPerAccount: 5, TenantHostnamesPerSurface: 10}
+	surf, err := s.CreateTenantSurfaceIfUnderQuota(ctx, pgTenantSurfaceParams(acct, app, "casurf"), lim)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CreateTenantHostnameIfUnderQuota(ctx, state.CreateTenantHostnameParams{
+		SurfaceID: surf.ID, Hostname: "cas.example", ChallengeToken: "current",
+	}, lim); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		host, token string
+		want        bool
+	}{
+		{"cas.example", "stale", false},
+		{"missing.example", "current", false},
+		{"cas.example", "current", true},
+		{"cas.example", "current", false},
+	} {
+		got, err := s.MarkTenantHostnameVerifiedIfChallenge(ctx, tc.host, tc.token)
+		if err != nil || got != tc.want {
+			t.Fatalf("verify %s with %q = %v, %v; want %v", tc.host, tc.token, got, err, tc.want)
+		}
+	}
+	h, err := s.GetTenantHostnameByName(ctx, "cas.example")
+	if err != nil || !h.Verified() {
+		t.Fatalf("hostname after verification = %+v, %v", h, err)
+	}
+}
+
 func TestPgStore_TenantHostname_DeleteAndResolveByHostname(t *testing.T) {
 	s, ctx := pgStore(t)
 	acct, app := pgTenantSurfaceSeed(t, s, ctx, "resolve")

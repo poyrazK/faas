@@ -459,6 +459,23 @@ func (m *MemStore) MarkTenantHostnameVerified(_ context.Context, hostname string
 	return nil
 }
 
+// MarkTenantHostnameVerifiedIfChallenge verifies the row only while it still
+// carries the proved token (see PgStore).
+func (m *MemStore) MarkTenantHostnameVerifiedIfChallenge(_ context.Context, hostname, token string) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	h, ok := m.tenantHostnames[hostname]
+	if !ok || h.ChallengeToken != token || h.Verified() {
+		return false, nil
+	}
+	now := time.Now().UTC()
+	h.VerifiedAt = now
+	h.LastCheckAt = now
+	h.LastError = ""
+	m.tenantHostnames[hostname] = h
+	return true, nil
+}
+
 // MarkTenantHostnameCheckFailed — dns_poller path; preserves
 // VerifiedAt across a transient DNS failure.
 func (m *MemStore) MarkTenantHostnameCheckFailed(_ context.Context, hostname, reason string) error {

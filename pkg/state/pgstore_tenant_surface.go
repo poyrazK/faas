@@ -597,6 +597,36 @@ func (s *PgStore) MarkTenantHostnameVerified(ctx context.Context, hostname strin
 	return nil
 }
 
+// TenantHostnameChallengeVerifier atomically verifies only the hostname row
+// whose TXT token was observed, as CustomDomainChallengeVerifier does for
+// custom domains.
+type TenantHostnameChallengeVerifier interface {
+	MarkTenantHostnameVerifiedIfChallenge(ctx context.Context, hostname, token string) (bool, error)
+}
+
+var _ TenantHostnameChallengeVerifier = (*PgStore)(nil)
+var _ TenantHostnameChallengeVerifier = (*MemStore)(nil)
+
+// MarkTenantHostnameVerifiedIfChallenge is the ownership-safe verification
+// write. The token the poller proved is part of the UPDATE predicate, so a
+// TXT lookup still in flight when the hostname was deleted and added again,
+// possibly by another account, cannot verify the replacement row.
+func (s *PgStore) MarkTenantHostnameVerifiedIfChallenge(ctx context.Context, hostname, token string) (bool, error) {
+	tag, err := s.pool.Exec(ctx,
+		`update tenant_hostnames
+		    set verified_at = now(),
+		        last_check_at = now(),
+		        last_error = ''
+		  where hostname = $1
+		    and challenge_token = $2
+		    and verified_at is null`,
+		hostname, token)
+	if err != nil {
+		return false, mapErr(err)
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
 // MarkTenantHostnameCheckFailed — the dns_poller path. Preserves
 // verified_at (a previously-verified hostname stays verified across
 // a transient DNS resolution failure); only updates last_check_at +

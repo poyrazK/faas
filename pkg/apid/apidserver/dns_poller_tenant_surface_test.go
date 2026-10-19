@@ -3,6 +3,7 @@ package apidserver_test
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"sync"
 	"testing"
 	"time"
@@ -237,4 +238,61 @@ func TestDNSPoller_TenantHostname_FlagOffSkips(t *testing.T) {
 		t.Fatal("TenantSurfacesEnabled = true; want false (flag unset)")
 	}
 	_ = db.NotifyTenantSurfaceChanged // the constant is wired in pkg/db/notify.go (commit 6)
+}
+
+// The poller reads a pending hostname's token, then resolves TXT. If the
+// hostname is deleted and added again (here by another account) while the
+// lookup is in flight, the proof found belongs to the old row's token; it
+// must not verify the replacement, which proved nothing.
+func TestDNSPoller_TenantHostname_StaleProofDoesNotVerifyReplacement(t *testing.T) {
+	t.Setenv("FAAS_TENANT_SURFACES_ENABLED", "true")
+	ctx := context.Background()
+	e := apidserver.Setup(t, api.PlanPro)
+	store := *e.Store()
+	lim := api.Limits{TenantSurfacesAllowed: true, TenantSurfacesPerAccount: 5, TenantHostnamesPerSurface: 10}
+	surface := func(email, slug string) state.TenantSurface {
+		acct, err := store.CreateAccount(ctx, email, api.PlanPro)
+		if err != nil {
+			t.Fatal(err)
+		}
+		app, err := store.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: slug, RAMMB: 256, Status: state.AppActive})
+		if err != nil {
+			t.Fatal(err)
+		}
+		surf, err := store.CreateTenantSurfaceIfUnderQuota(ctx, state.CreateTenantSurfaceParams{AccountID: acct.ID, AppID: app.ID, Name: slug}, lim)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return surf
+	}
+	owner, newcomer := surface("hostname-owner@example.com", "hostname-owner"), surface("hostname-newcomer@example.com", "hostname-newcomer")
+	const host = "shop.customer-a.com"
+	if _, err := store.CreateTenantHostnameIfUnderQuota(ctx, state.CreateTenantHostnameParams{SurfaceID: owner.ID, Hostname: host, ChallengeToken: "owner-token"}, lim); err != nil {
+		t.Fatal(err)
+	}
+
+	prev := *apidserver.TxtLookupFunc
+	*apidserver.TxtLookupFunc = func(context.Context, string) ([]string, error) {
+		if err := store.DeleteTenantHostname(ctx, host); err != nil {
+			t.Errorf("delete hostname mid-lookup: %v", err)
+		}
+		if _, err := store.CreateTenantHostnameIfUnderQuota(ctx, state.CreateTenantHostnameParams{SurfaceID: newcomer.ID, Hostname: host, ChallengeToken: "newcomer-token"}, lim); err != nil {
+			t.Errorf("re-add hostname mid-lookup: %v", err)
+		}
+		return []string{"owner-token"}, nil
+	}
+	t.Cleanup(func() { *apidserver.TxtLookupFunc = prev })
+
+	(*e.S()).RunVerifyOnce(ctx, slog.New(slog.DiscardHandler))
+
+	got, err := store.GetTenantHostnameByName(ctx, host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.SurfaceID != newcomer.ID {
+		t.Fatalf("hostname surface = %s, want the replacement row %s", got.SurfaceID, newcomer.ID)
+	}
+	if got.Verified() {
+		t.Fatal("the old row's TXT proof verified the replacement hostname")
+	}
 }

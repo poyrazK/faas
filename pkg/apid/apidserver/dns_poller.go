@@ -165,10 +165,22 @@ func (s *server) runVerifyOnce(ctx context.Context, log *slog.Logger) {
 		log.Warn("dns_poller: list tenant hostnames failed", "err", err)
 		return
 	}
+	verifier, verifierOK := s.store.(state.TenantHostnameChallengeVerifier)
 	for _, h := range pendingHostnames {
 		if checkTXT(ctx, h.Hostname, h.ChallengeToken) {
-			if err := s.store.MarkTenantHostnameVerified(ctx, h.Hostname); err != nil {
+			if !verifierOK {
+				log.Warn("dns_poller: challenge-bound tenant hostname verification unavailable", "hostname", h.Hostname)
+				continue
+			}
+			matched, err := verifier.MarkTenantHostnameVerifiedIfChallenge(ctx, h.Hostname, h.ChallengeToken)
+			if err != nil {
 				log.Warn("dns_poller: mark tenant hostname verified failed", "hostname", h.Hostname, "err", err)
+				continue
+			}
+			if !matched {
+				// Deleted and added again while DNS was in flight: the proof
+				// belongs to the old row's token, never the replacement's.
+				log.Info("dns_poller: stale tenant hostname challenge ignored", "hostname", h.Hostname)
 				continue
 			}
 			// tenant_surface_changed fires on the tenant_hostnames
