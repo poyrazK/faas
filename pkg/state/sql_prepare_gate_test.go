@@ -141,6 +141,12 @@ func TestSQLLiteralsPrepareAgainstMigratedSchema(t *testing.T) {
 		if strings.HasPrefix(pos, "../../pkg/managedpostgres/neon/refresh_rotation.go:") || strings.HasPrefix(pos, "../../pkg/managedpostgres/neon/sql_deadline_policy.go:") {
 			continue
 		}
+		// Managed PostgreSQL pipelines (ADR-1591) create gregale_pipeline in the
+		// customer's destination database when a mirror starts
+		// (pkg/datapipeline/engine.go); the package's own tests run this SQL there.
+		if strings.HasPrefix(pos, "../../pkg/datapipeline/") && strings.Contains(s.sql, "gregale_pipeline.") {
+			continue
+		}
 		if strings.HasPrefix(pos, "../../pkg/commit/") || strings.HasPrefix(pos, "../../pkg/commitmanaged/") {
 			target = customerConn
 			query = s.sql
