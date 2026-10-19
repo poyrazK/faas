@@ -76,6 +76,7 @@ var memDispatched = map[string]bool{
 	"CreateProjectEnvironmentPromotion":                       true,
 	"CreateTCPListener":                                       true,
 	"DeadLetterEventByID":                                     true,
+	"DomainByName":                                            true,
 	"DeploymentByID":                                          true,
 	"DeploymentSnapshotBackoffActive":                         true,
 	"EdgeRuleHitStatsForApp":                                  true,
@@ -446,6 +447,15 @@ func (s *Mem) DeadLetterEventByID(p0 context.Context, p1 string, p2 string) (sta
 		return o.DeadLetterEventByID(p0, p1, p2)
 	}
 	return s.MemStore.DeadLetterEventByID(p0, p1, p2)
+}
+
+func (s *Mem) DomainByName(p0 context.Context, p1 string) (state.CustomDomain, error) {
+	if o, ok := s.over.(interface {
+		DomainByName(context.Context, string) (state.CustomDomain, error)
+	}); ok {
+		return o.DomainByName(p0, p1)
+	}
+	return s.MemStore.DomainByName(p0, p1)
 }
 
 func (s *Mem) DeploymentByID(p0 context.Context, p1 string) (state.Deployment, error) {

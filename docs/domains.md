@@ -49,6 +49,12 @@ Each subdomain gets its own certificate on its first HTTPS connection; at
 most 40 new subdomains per wildcard get a certificate in any 7 days.
 Subdomains that already have one keep it and renew normally.
 
+Once a wildcard verifies, names below it belong to its account: another
+account cannot add `api.example.com` or `*.shop.example.com` while
+`*.example.com` is verified elsewhere (`409`). An exact domain you add below
+your own wildcard takes over that name once it verifies; until then the name
+is unrouted. An unverified domain releases its name after 7 days.
+
 The default `*.gregale.dev` hostname works without a custom domain. Domain
 entitlement, certificate limits, and wildcard behavior are listed in
 [plans](plans.md).

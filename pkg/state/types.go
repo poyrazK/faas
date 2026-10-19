@@ -3279,6 +3279,15 @@ type CustomDomain struct {
 // Verified reports whether the TXT challenge has been satisfied.
 func (d CustomDomain) Verified() bool { return !d.VerifiedAt.IsZero() }
 
+// ClaimLive reports whether the row still reserves its hostname: it is
+// verified, or its verification deadline has not passed. An expired challenge
+// is not an ownership record; it must not shadow a broader route, deny a
+// certificate or block another reservation. A zero deadline predates the
+// column and never expires.
+func (d CustomDomain) ClaimLive(now time.Time) bool {
+	return d.Verified() || d.VerificationExpiresAt.IsZero() || d.VerificationExpiresAt.After(now)
+}
+
 // DomainDoctorObservation (ADR-120) is the dns_poller's
 // view of a per-domain probe pass. The struct mirrors the
 // domain_doctor_observations table (migrations/00309) so

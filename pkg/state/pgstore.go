@@ -13063,10 +13063,11 @@ func (s *PgStore) DefaultCustomDomain(ctx context.Context, appID string) (string
 	return domain, nil
 }
 
-// WildcardDomainForHost returns the most-specific wildcard row whose
+// WildcardDomainForHost returns the most-specific live wildcard row whose
 // suffix strictly contains host. The leading dot in substr(domain, 2) makes
 // the match label-boundary safe ("badexample.com" cannot match
-// "*.example.com").
+// "*.example.com"). An expired, unverified claim is skipped
+// (CustomDomain.ClaimLive).
 func (s *PgStore) WildcardDomainForHost(ctx context.Context, host string) (CustomDomain, error) {
 	row := s.pool.QueryRow(ctx,
 		`select domain, app_id, challenge_token, coalesce(verified_at, 'epoch'::timestamptz),
@@ -13078,6 +13079,7 @@ func (s *PgStore) WildcardDomainForHost(ctx context.Context, host string) (Custo
 		  where domain like '*.%'
 		    and lower($1) like '%' || lower(substr(domain, 2))
 		    and lower($1) <> lower(substr(domain, 3))
+		    and (verified_at is not null or verification_expires_at > now())
 		  order by length(domain) desc
 		  limit 1`, host)
 	d := CustomDomain{}

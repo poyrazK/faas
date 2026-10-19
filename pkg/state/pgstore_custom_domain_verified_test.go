@@ -140,3 +140,41 @@ func TestPgStoreCustomDomainExpiredClaimReclaim(t *testing.T) {
 		t.Fatalf("verified claim replacement error = %v, want ErrConflict", err)
 	}
 }
+
+// An expired, unverified wildcard claim reserves nothing (ADR-167), so the
+// lookup skips it and returns the broader verified wildcard.
+func TestPgStoreWildcardDomainForHostSkipsExpiredClaim(t *testing.T) {
+	s, pool, ctx := pgStoreWithPool(t)
+	account, err := s.CreateAccount(ctx, "wildcard-expired@example.com", api.PlanScale)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := s.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "wildcard-expired", Status: state.AppActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CreateCustomDomain(ctx, "*.zone.example.com", app.ID, "zone"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MarkDomainVerified(ctx, "*.zone.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CreateCustomDomain(ctx, "*.shop.zone.example.com", app.ID, "shop"); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.WildcardDomainForHost(ctx, "a.shop.zone.example.com"); err != nil || got.Domain != "*.shop.zone.example.com" {
+		t.Fatalf("live pending claim lookup = %q, %v", got.Domain, err)
+	}
+	if _, err := pool.Exec(ctx, `update custom_domains set verification_expires_at=now()-interval '1 minute' where domain=$1`, "*.shop.zone.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.WildcardDomainForHost(ctx, "a.shop.zone.example.com"); err != nil || got.Domain != "*.zone.example.com" {
+		t.Fatalf("expired claim lookup = %q, %v; want the verified *.zone.example.com", got.Domain, err)
+	}
+	if _, err := pool.Exec(ctx, `update custom_domains set verification_expires_at=now()-interval '1 minute' where domain=$1`, "*.zone.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.WildcardDomainForHost(ctx, "a.shop.zone.example.com"); err != nil || got.Domain != "*.zone.example.com" {
+		t.Fatalf("verified wildcard past its old deadline = %q, %v; verification never expires", got.Domain, err)
+	}
+}
