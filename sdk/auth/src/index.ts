@@ -2,7 +2,7 @@
 // Sign-up, sign-in, passkeys, sessions with single-flight refresh, the hosted
 // pages, and the /authz/v1 organization and authorization API. No
 // dependencies.
-import { aal, activeOrganization, type ActiveOrganization } from './claims.js'
+import { aal, activeOrganization, claims, type ActiveOrganization } from './claims.js'
 import { baseURL } from './url.js'
 
 export type Session = Readonly<{
@@ -526,7 +526,7 @@ export function createAuthClient(options: AuthClientOptions) {
      */
     async actor(): Promise<string | null> {
       const session = await getSession()
-      const act = session ? payload(session.accessToken).act as { sub?: unknown } | undefined : undefined
+      const act = session ? claims(session.accessToken).act as { sub?: unknown } | undefined : undefined
       return typeof act?.sub === 'string' ? act.sub : null
     },
     organizations: {
