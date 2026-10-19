@@ -53,6 +53,9 @@ func (s *server) captureOutboundVerificationPin(r *http.Request, acct state.Acco
 }
 
 func bindingVerificationTaskCommand(command []string, pin *state.BindingVerificationPin) ([]string, error) {
+	if pin != nil && pin.ManagedService != nil {
+		return []string{api.AppTaskServiceBindingTargetProbeCommand, pin.Binding, pin.TargetDeploymentID}, nil
+	}
 	if pin == nil || pin.OutboundProbe == nil {
 		return command, nil
 	}

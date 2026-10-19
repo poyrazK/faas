@@ -50,7 +50,8 @@ const (
 	// AppTaskServiceBindingProbeCommand is a reserved argv[0] handled directly
 	// by guest-init. It runs a bounded HTTPS canary without requiring utilities
 	// or a language runtime in the customer image.
-	AppTaskServiceBindingProbeCommand = "__gregale_service_binding_probe_v1__"
+	AppTaskServiceBindingProbeCommand       = "__gregale_service_binding_probe_v1__"
+	AppTaskServiceBindingTargetProbeCommand = "__gregale_service_binding_probe_v2__"
 	// AppTaskPostgresBindingProbeCommand is a reserved argv[0] handled directly
 	// by guest-init. It runs a bounded, read-only PostgreSQL connectivity canary
 	// using an environment key injected into the customer's deployment.
@@ -110,6 +111,11 @@ type ResolvedCreateAppTaskRequest struct {
 
 // Resolve validates all caller-controlled fields and fills bounded defaults.
 func (r CreateAppTaskRequest) Resolve() (ResolvedCreateAppTaskRequest, *Problem) {
+	if len(r.Command) > 0 && r.Command[0] == AppTaskMigrationDependenciesCommand {
+		if _, valid := ParseMigrationDependenciesCommand(r.Command, r.CommandShell); !valid || r.Interactive || r.VerificationDeploymentID != "" || r.SmokeDeploymentID != "" {
+			return ResolvedCreateAppTaskRequest{}, appTaskInvalid("invalid migration dependency command")
+		}
+	}
 	if r.TTY && !r.Interactive {
 		return ResolvedCreateAppTaskRequest{}, appTaskInvalid("tty requires interactive")
 	}
@@ -143,6 +149,9 @@ func (r CreateAppTaskRequest) Resolve() (ResolvedCreateAppTaskRequest, *Problem)
 	}
 	if len(r.Command) > 0 && r.Command[0] == AppTaskObjectStorageWriteProbeCommand && !IsObjectStorageWriteProbeCommand(r.Command, r.CommandShell) {
 		return ResolvedCreateAppTaskRequest{}, appTaskInvalid("invalid object-storage write probe command")
+	}
+	if len(r.Command) > 0 && r.Command[0] == AppTaskServiceBindingTargetProbeCommand && (r.VerificationDeploymentID == "" || !IsServiceBindingTargetProbeCommand(r.Command, r.CommandShell)) {
+		return ResolvedCreateAppTaskRequest{}, appTaskInvalid("target service probe requires an exact caller deployment and a canonical target UUID")
 	}
 	if r.Interactive && (IsServiceBindingSmokeCommand(r.Command, r.CommandShell) || IsBindingVerificationCommand(r.Command, r.CommandShell) ||
 		IsObjectStorageWriteProbeCommand(r.Command, r.CommandShell)) {
@@ -218,7 +227,7 @@ func (r CreateAppTaskRequest) Resolve() (ResolvedCreateAppTaskRequest, *Problem)
 // IsBindingVerificationCommand excludes generic commands and service smoke
 // requests; explicit deployment selection is limited to these four probes.
 func IsBindingVerificationCommand(command []string, shell bool) bool {
-	if IsObjectStorageWriteProbeCommand(command, shell) {
+	if IsServiceBindingTargetProbeCommand(command, shell) || IsObjectStorageWriteProbeCommand(command, shell) {
 		return true
 	}
 	if shell || len(command) != 2 || command[1] == "" {
@@ -230,6 +239,15 @@ func IsBindingVerificationCommand(command []string, shell bool) bool {
 	default:
 		return false
 	}
+}
+
+func IsServiceBindingTargetProbeCommand(command []string, shell bool) bool {
+	if shell || len(command) != 3 || command[0] != AppTaskServiceBindingTargetProbeCommand {
+		return false
+	}
+	names, err := NormalizeServiceBindingTargets([]string{command[1]})
+	id, parseErr := uuid.Parse(command[2])
+	return err == nil && len(names) == 1 && names[0] == command[1] && parseErr == nil && id != uuid.Nil && id.String() == command[2]
 }
 
 func IsObjectStorageWriteProbeCommand(command []string, shell bool) bool {

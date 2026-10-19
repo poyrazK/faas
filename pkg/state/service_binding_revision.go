@@ -34,7 +34,7 @@ func (m *MemStore) serviceBindingRevisionLocked(accountID string) (string, error
 	facts := map[string]any{}
 	for id, app := range m.apps {
 		if app.AccountID == accountID {
-			facts["app/"+id] = []any{app.ID, app.AccountID, app.Slug, app.Status, app.Manifest, app.ProjectID, app.PreviewOfSlug, app.PreviewPrNumber, app.PreviewPrState, app.PreviewExpiresAt, app.AppProtocol, app.WebSocketEnabled}
+			facts["app/"+id] = []any{app.ID, app.AccountID, app.Slug, app.WorkloadName, app.Status, app.Manifest, app.ProjectID, app.PreviewOfSlug, app.PreviewPrNumber, app.PreviewPrState, app.PreviewExpiresAt, app.AppProtocol, app.WebSocketEnabled}
 		}
 	}
 	for id, policy := range m.githubDeployPolicies {

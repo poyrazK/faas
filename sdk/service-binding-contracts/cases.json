@@ -1,0 +1,309 @@
+{
+  "requests": [
+    {
+      "name": "create-defaults",
+      "schema": "CreateAppRequest",
+      "body": {
+        "slug": "demo"
+      }
+    },
+    {
+      "name": "create-declared-https",
+      "schema": "CreateAppRequest",
+      "body": {
+        "slug": "demo",
+        "service_binding_targets": [
+          "payments"
+        ],
+        "service_binding_policy": "declared",
+        "service_binding_transport": "https",
+        "allowed_service_callers": [
+          "frontend"
+        ],
+        "allowed_service_call_scopes": {
+          "frontend": {
+            "methods": [
+              "GET",
+              "POST"
+            ],
+            "path_prefixes": [
+              "/api",
+              "/healthz"
+            ]
+          }
+        },
+        "service_reliability": {
+          "payments": {
+            "timeout_ms": 2500,
+            "max_attempts": 2,
+            "min_remaining_ms": 100,
+            "retry_budget_percent": 20,
+            "allow_non_idempotent": true
+          }
+        }
+      }
+    },
+    {
+      "name": "patch-omitted",
+      "schema": "UpdateAppRequest",
+      "body": {}
+    },
+    {
+      "name": "patch-reset-unrestricted",
+      "schema": "UpdateAppRequest",
+      "body": {
+        "expected_service_binding_fingerprint": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "allowed_service_callers": null,
+        "allowed_service_call_scopes": null,
+        "service_reliability": null
+      }
+    },
+    {
+      "name": "patch-empty-deny-all",
+      "schema": "UpdateAppRequest",
+      "body": {
+        "expected_service_binding_fingerprint": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "service_binding_targets": [],
+        "allowed_service_callers": [],
+        "allowed_service_call_scopes": {},
+        "service_reliability": {}
+      }
+    },
+    {
+      "name": "patch-declared-https",
+      "schema": "UpdateAppRequest",
+      "body": {
+        "expected_service_binding_fingerprint": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "service_binding_targets": [
+          "payments"
+        ],
+        "service_binding_policy": "declared",
+        "service_binding_transport": "https",
+        "allowed_service_callers": [
+          "frontend"
+        ],
+        "allowed_service_call_scopes": {
+          "frontend": {
+            "methods": [
+              "GET",
+              "POST"
+            ],
+            "path_prefixes": [
+              "/api",
+              "/healthz"
+            ]
+          }
+        },
+        "service_reliability": {
+          "payments": {
+            "timeout_ms": 2500,
+            "max_attempts": 2,
+            "min_remaining_ms": 100,
+            "retry_budget_percent": 20,
+            "allow_non_idempotent": true
+          }
+        }
+      }
+    },
+    {
+      "name": "patch-account-http",
+      "schema": "UpdateAppRequest",
+      "body": {
+        "service_binding_policy": "account",
+        "service_binding_transport": "http"
+      }
+    }
+  ],
+  "responses": [
+    {
+      "name": "legacy-unrestricted",
+      "body": {
+        "id": "11111111-1111-4111-8111-111111111111",
+        "slug": "demo",
+        "type": "app",
+        "ram_mb": 256,
+        "vcpu": 1,
+        "cpu_millicores": 500,
+        "configured_resources": {
+          "memory_mb": 256,
+          "cpu_millicores": 500
+        },
+        "max_concurrency": 2,
+        "concurrency_per_vm": 80,
+        "effective_limits": {
+          "memory_limit_mb": 256,
+          "plan_memory_max_mb": 256,
+          "ephemeral_disk_max_mb": 512,
+          "guest_vcpus": 1,
+          "cpu_limit_millicores": 500,
+          "plan_cpu_max_millicores": 500,
+          "cpu_weight": 100,
+          "max_instances": 2,
+          "concurrency_per_instance": 80,
+          "concurrency_queue_depth": 10,
+          "concurrency_queue_wait_ms": 500,
+          "app_request_rate_rps": 50,
+          "app_request_burst": 100,
+          "account_request_rate_rpm": 1000,
+          "request_budget_ms": 10000,
+          "request_budget_max_ms": 30000,
+          "response_write_timeout_s": 30,
+          "request_body_max_bytes": 1048576
+        },
+        "min_instances": 0,
+        "status": "active",
+        "build_cache_hit_rate_pct": 0,
+        "url": "https://demo.gregale.dev",
+        "autoscale_target_rps": 0,
+        "autoscale_target_cpu_pct": 0,
+        "manifest": {
+          "entrypoint": [
+            "node",
+            "server.js"
+          ]
+        },
+        "service_binding_fingerprint": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "service_binding_policy": "account",
+        "service_binding_transport": "http"
+      }
+    },
+    {
+      "name": "declared-https",
+      "body": {
+        "id": "11111111-1111-4111-8111-111111111111",
+        "slug": "demo",
+        "type": "app",
+        "ram_mb": 256,
+        "vcpu": 1,
+        "cpu_millicores": 500,
+        "configured_resources": {
+          "memory_mb": 256,
+          "cpu_millicores": 500
+        },
+        "max_concurrency": 2,
+        "concurrency_per_vm": 80,
+        "effective_limits": {
+          "memory_limit_mb": 256,
+          "plan_memory_max_mb": 256,
+          "ephemeral_disk_max_mb": 512,
+          "guest_vcpus": 1,
+          "cpu_limit_millicores": 500,
+          "plan_cpu_max_millicores": 500,
+          "cpu_weight": 100,
+          "max_instances": 2,
+          "concurrency_per_instance": 80,
+          "concurrency_queue_depth": 10,
+          "concurrency_queue_wait_ms": 500,
+          "app_request_rate_rps": 50,
+          "app_request_burst": 100,
+          "account_request_rate_rpm": 1000,
+          "request_budget_ms": 10000,
+          "request_budget_max_ms": 30000,
+          "response_write_timeout_s": 30,
+          "request_body_max_bytes": 1048576
+        },
+        "min_instances": 0,
+        "status": "active",
+        "build_cache_hit_rate_pct": 0,
+        "url": "https://demo.gregale.dev",
+        "autoscale_target_rps": 0,
+        "autoscale_target_cpu_pct": 0,
+        "manifest": {
+          "entrypoint": [
+            "node",
+            "server.js"
+          ],
+          "service_binding_transport": "https"
+        },
+        "service_binding_fingerprint": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "service_binding_policy": "declared",
+        "service_binding_transport": "https",
+        "allowed_service_callers": [
+          "frontend"
+        ],
+        "allowed_service_call_scopes": {
+          "frontend": {
+            "methods": [
+              "GET",
+              "POST"
+            ],
+            "path_prefixes": [
+              "/api",
+              "/healthz"
+            ]
+          }
+        },
+        "service_reliability": {
+          "payments": {
+            "timeout_ms": 2500,
+            "max_attempts": 2,
+            "min_remaining_ms": 100,
+            "retry_budget_percent": 20,
+            "allow_non_idempotent": true
+          }
+        },
+        "service_bindings": [
+          {
+            "binding": "GREGALE_SERVICE_PAYMENTS_URL",
+            "service": "payments"
+          }
+        ]
+      }
+    },
+    {
+      "name": "explicit-deny-all",
+      "body": {
+        "id": "11111111-1111-4111-8111-111111111111",
+        "slug": "demo",
+        "type": "app",
+        "ram_mb": 256,
+        "vcpu": 1,
+        "cpu_millicores": 500,
+        "configured_resources": {
+          "memory_mb": 256,
+          "cpu_millicores": 500
+        },
+        "max_concurrency": 2,
+        "concurrency_per_vm": 80,
+        "effective_limits": {
+          "memory_limit_mb": 256,
+          "plan_memory_max_mb": 256,
+          "ephemeral_disk_max_mb": 512,
+          "guest_vcpus": 1,
+          "cpu_limit_millicores": 500,
+          "plan_cpu_max_millicores": 500,
+          "cpu_weight": 100,
+          "max_instances": 2,
+          "concurrency_per_instance": 80,
+          "concurrency_queue_depth": 10,
+          "concurrency_queue_wait_ms": 500,
+          "app_request_rate_rps": 50,
+          "app_request_burst": 100,
+          "account_request_rate_rpm": 1000,
+          "request_budget_ms": 10000,
+          "request_budget_max_ms": 30000,
+          "response_write_timeout_s": 30,
+          "request_body_max_bytes": 1048576
+        },
+        "min_instances": 0,
+        "status": "active",
+        "build_cache_hit_rate_pct": 0,
+        "url": "https://demo.gregale.dev",
+        "autoscale_target_rps": 0,
+        "autoscale_target_cpu_pct": 0,
+        "manifest": {
+          "entrypoint": [
+            "node",
+            "server.js"
+          ],
+          "service_binding_transport": "http"
+        },
+        "service_binding_fingerprint": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "service_binding_policy": "account",
+        "service_binding_transport": "http",
+        "allowed_service_callers": [],
+        "allowed_service_call_scopes": {}
+      }
+    }
+  ]
+}

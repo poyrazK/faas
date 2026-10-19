@@ -196,6 +196,25 @@ func (p *Platform) EmitAsyncOnce(ctx context.Context, key string, ev WakeEvent) 
 	p.EmitAsync(ctx, ev)
 }
 
+// EmitAsyncOnceCovering is EmitAsyncOnce keyed by key that, when it emits,
+// also marks covered as seen for ev's kind, so a later EmitAsyncOnce or
+// EmitAsyncOnceCovering keyed by covered is suppressed. The gateway keys a
+// wake generation's first byte by its wake id and start (a frozen VM keeps
+// its wake id across thaws) and covers the bare wake id, which paths without
+// a claimed generation (a cron synth on a cached target) still use.
+func (p *Platform) EmitAsyncOnceCovering(ctx context.Context, key, covered string, ev WakeEvent) {
+	if ev == nil {
+		return
+	}
+	if key != "" && !p.claimOnce(ev.Kind()+"\x00"+key) {
+		return
+	}
+	if covered != "" && covered != key {
+		p.claimOnce(ev.Kind() + "\x00" + covered)
+	}
+	p.EmitAsync(ctx, ev)
+}
+
 func (p *Platform) claimOnce(key string) bool {
 	p.onceMu.Lock()
 	defer p.onceMu.Unlock()
@@ -347,6 +366,16 @@ func invalidWakeIdentity(kind string, payload map[string]any) string {
 // the wake timeline's TopicWake subscriber shouldn't see node.drained
 // rows and vice versa.
 func (p *Platform) EmitRecovery(ctx context.Context, ev RecoveryEvent) {
+	p.emitRecovery(ctx, ev, true)
+}
+
+// PublishCommittedRecovery publishes a completion whose audit outbox row was
+// already delivered. The caller owns deduplication; this never appends an event.
+func (p *Platform) PublishCommittedRecovery(ctx context.Context, ev RecoveryEvent) {
+	p.emitRecovery(ctx, ev, false)
+}
+
+func (p *Platform) emitRecovery(ctx context.Context, ev RecoveryEvent, persist bool) {
 	if ev == nil {
 		return
 	}
@@ -368,7 +397,9 @@ func (p *Platform) EmitRecovery(ctx context.Context, ev RecoveryEvent) {
 		return
 	}
 	start := time.Now()
-	err = p.store.AppendEvent(ctx, p.actor, kind, subject, body)
+	if persist {
+		err = p.store.AppendEvent(ctx, p.actor, kind, subject, body)
+	}
 	dur := time.Since(start)
 	result := "ok"
 	if err != nil {

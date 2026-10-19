@@ -54,11 +54,12 @@ Each candidate creates its own S3 transport and performs ListObjectsV2(MaxKeys=1
 through the gateway before adoption. This checks read/list access, not write
 permission or continuous provider health. Use the managed read_write binding and
 storage operation canaries for release qualification. Probes consume ordinary
-gateway request budgets. `/readyz` reports local adoption; `/healthz` is process
-liveness. Neither endpoint alone certifies provider availability.
+gateway request budgets. `/readyz` reports local adoption and the restore gate;
+the included `gregale.yaml` selects it as the hosting health check. `/healthz` is
+process liveness. Neither endpoint alone certifies provider availability.
 
-Every transfer holds a request lease through upload-file cleanup or download-body
-closure. Rotation stops new borrowing of the old client while admitted streams
+Every transfer holds a request lease through upload-file cleanup or the actual
+download-body close event. Rotation stops new borrowing of the old client while admitted streams
 can finish. Revocation prevents new acquisition after reload; the gateway can
 reject a later operation even when a request already holds a lease. In-flight
 provider work is not a revocation barrier. A lease never extends credential rights.
@@ -75,6 +76,36 @@ Gregale account/bucket budgets still apply independently. Uploads use private
 failure, timeout or disconnect. A chunked upload exceeding the byte cap may end
 with a closed connection because aborting its stream closes the request socket.
 Disk staging consumes guest disk and latency; choose smaller limits for your app.
+
+## Snapshot restore recovery
+
+The manifest's two-second `lifecycle.after_restore` hook calls
+`POST /internal/after-restore`. Only an actual loopback peer with
+`X-Faas-After-Restore: 1` can invoke it; forwarded address headers do not authorize
+the hook. It runs before the public bearer-token gate so recovery can repair failed
+adoption without an application token.
+
+Recovery immediately closes readiness, cancels captured transfers and fences the
+captured client. Within a maximum 1.5-second application budget, it rereads the
+latest atomic snapshot, creates and validates a fresh transport even at an
+unchanged revision, adopts HTTP authentication, and drains captured body/spool
+leases before reopening readiness. Concurrent hooks share one recovery; owner
+cancellation aborts that recovery, while a departing follower leaves it running.
+The actual body close event and upload-file cleanup precede client retirement.
+
+Failed, timed-out or disconnected recovery keeps readiness closed until a later
+successful hook. SIGHUP alone cannot clear this gate. The platform's existing
+cold-boot fallback applies when the hook fails. A cancelled queued/active
+validation cannot publish a client or initiate an applied ACK later. Adoption
+ACKs describe validated resource/auth adoption; they do not certify the subsequent
+captured-resource drain. An ACK already sent cannot be retracted.
+
+Cancellation closes captured HTTP connections promptly, including when a driver
+ignores its abort signal. Late provider responses remain owned until bodies close
+and spools are removed; they cannot send late success headers. Never retry an
+uncertain PUT automatically: it may have committed before cancellation. Revocation
+and transfer failures do not replay an operation. SIGTERM/SIGINT also cancel an
+active recovery and prevent subsequent adoption.
 
 ## Local qualification and maintenance
 
@@ -97,10 +128,14 @@ An omitted `--bucket` preserves existing resources. A revoked automatic binding
 requires stopping/restarting the environment; ordinary reloads cannot regrant it.
 
 `npm test` uses owned local HTTP/client fixtures for authentication, exact bytes,
-rotation, failed adoption, cancellation, cleanup and shutdown. In the Gregale
+rotation, failed adoption, cancellation, delayed body closure, restore recovery,
+cleanup and shutdown. In the Gregale
 repository, `bash scripts/test-storage-node-starter.sh` materializes this embedded
 template, installs its lockfile and also starts the real application through the
 production SigV4 gateway, S3 adapter and memory store using a local provider fixture.
+The journey proves a new gateway connection at the same revision, captured-stream
+cancellation without replay, sticky failed recovery, bounded validation cancellation,
+restore queued behind SIGHUP, and subsequent recovery before graceful shutdown.
 This does not qualify GCS/R2, a deployment, native microVM restore or production.
 
 The dependency-free SDK runtime files are generated copies, not independent

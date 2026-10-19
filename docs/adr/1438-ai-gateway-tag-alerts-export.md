@@ -1,0 +1,26 @@
+# ADR-1438 · AI gateway phase 16: tag budget alerts and tag usage export
+
+- **Status:** accepted
+- **Date:** 2026-10-17
+- **Relates to:** ADR-991 (budget alerts), ADR-995 (per-user alerts and export), ADR-1436 (usage tags)
+- **Decision:**
+  - **Tag budget alerts.** A tag with a daily cost limit (ADR-1436) alerts at 80% and 100% of it, once per tag, UTC day and threshold, as budget `tag_daily_cost`.
+    - The alert row names the tag. Settlement reads the tag's day total and limit back from the rollup statement it already sends, so alerts add no round trip.
+    - The `outbound.ai_budget.threshold` webhook carries `tag` and goes to the app whose call crossed the threshold, as per-user alerts do. A Runs call has no app, so its alert is only listed.
+    - `gregale ai alerts` shows the tag. Tag alerts follow the per-user retention.
+  - **Tag usage export.** `GET /v1/outbound/integrations/{id}/ai-usage/tags/export?from=&to=&key=&format=csv|ndjson` streams every tag row of the UTC days in range, optionally for one key, ordered by day and tag. The default format is NDJSON.
+    - The columns are `usage_date, tag, requests, error_requests, input_tokens, output_tokens, tokens, cost_millicents`. Rows are read in pages by day and tag, so a whole retention window streams without being held.
+    - CLI: `gregale ai tags export`.
+- **Why:**
+  - ADR-1436 shipped tag limits without the warnings that every other budget gives. A team found out about a capped feature only when its calls were refused.
+  - Tags are for chargeback and reporting. A day range for a spreadsheet or billing job needs an export, as end users have (ADR-995).
+- **Consequences:**
+  - **Alerts follow limits.** A tag only alerts while it has a limit; removing a limit stops its alerts, and overflow rows (`<key>=~other`) never alert.
+  - **Webhook payloads gain an optional field.** Receivers that ignore unknown fields are unaffected.
+  - **Schema changes:**
+    - `outbound_ai_budget_alerts` gains `tag`.
+    - Its budget check gains `tag_daily_cost`.
+    - Its once-per-period index now includes the tag.
+- **Rejected alternatives:**
+  - **Alerts per tag key.** Limits are per exact tag, so alerts are too.
+  - **A separate tag alert table.** The budget alert table, its webhook and its listing already carry per-app and per-user budgets. One more nullable column keeps a single alert stream.

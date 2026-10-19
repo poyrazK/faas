@@ -42,7 +42,8 @@ type Host interface {
 // Service is the operations surface. apid configures Preview and
 // WorkloadVerifier at boot and ArtifactStorage via WithOperationArtifactStorage.
 type Service struct {
-	Host Host
+	ProductControlEnabled bool
+	Host                  Host
 
 	// AdmissionEnabled is the private fixture fallback; startup always
 	// installs the scoped Preview gate.

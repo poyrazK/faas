@@ -16,6 +16,9 @@ func (m *MemStore) CreateOrgAPIKeyWithActivity(_ context.Context, orgID, account
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgCredentialMemberLocked(orgID, accountID); err != nil {
+		return APIKey{}, 0, err
+	}
 
 	hashKey := hex.EncodeToString(hash)
 	if _, exists := m.keyByHash[hashKey]; exists {
@@ -83,6 +86,9 @@ func (m *MemStore) RotateOrgAPIKeyWithActivity(_ context.Context, orgID, oldKeyI
 	old, ok := m.keys[oldKeyID]
 	if !ok || old.OrgID != orgID {
 		return APIKey{}, APIKey{}, 0, ErrNotFound
+	}
+	if err := m.checkOrgCredentialMemberLocked(orgID, old.AccountID); err != nil {
+		return APIKey{}, APIKey{}, 0, err
 	}
 	if old.Status == string(APIKeyStatusRevoked) {
 		return APIKey{}, APIKey{}, 0, ErrAPIKeyRevoked

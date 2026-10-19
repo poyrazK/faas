@@ -10,12 +10,18 @@ import (
 
 var _ ObjectTrackedUploadStore = (*MemStore)(nil)
 
-func (m *MemStore) BeginTrackedObjectUpload(_ context.Context, c ObjectUploadCompletion, p api.ObjectStoragePolicy) (ObjectUploadCompletion, bool, error) {
+func (m *MemStore) BeginTrackedObjectUpload(ctx context.Context, c ObjectUploadCompletion, p api.ObjectStoragePolicy) (ObjectUploadCompletion, bool, error) {
 	if c.EncryptionDefaultRevision != 0 || !validTrackedObjectUpload(c) {
 		return c, false, ErrConflict
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 ObjectUploadCompletion
+		var zero1 bool
+		return zero0, zero1, err
+	}
+
 	if c.IdempotencyKey != "" {
 		for _, old := range m.objectUploadCompletions {
 			if old.RouteID == c.RouteID && old.SubjectID == c.SubjectID && old.IdempotencyKey == c.IdempotencyKey && old.AccountID == c.AccountID && old.AppID == c.AppID {
@@ -35,6 +41,10 @@ func (m *MemStore) BeginTrackedObjectUpload(_ context.Context, c ObjectUploadCom
 }
 
 func (m *MemStore) beginTrackedUploadLocked(c ObjectUploadCompletion, p api.ObjectStoragePolicy, capture bool) (ObjectUploadCompletion, bool, error) {
+	job, err := m.nodeSettlementEnrollmentLocked(c.ID, "put", m.objectBuckets[c.BucketID], c.QueueNodeSettlement)
+	if err != nil {
+		return c, false, err
+	}
 	if _, held := m.objectWriteFences[c.BucketID]; held {
 		return c, false, ErrObjectBucketWriteFenced
 	}
@@ -82,6 +92,7 @@ func (m *MemStore) beginTrackedUploadLocked(c ObjectUploadCompletion, p api.Obje
 	c.RecoveryVersionsObserved = false
 	c.RecoveryLeaseUntil = time.Time{}
 	c.RuntimeSinglePutLimit = 0
+	c.QueueNodeSettlement = false
 	c.CreatedAt = m.clock().UTC()
 	c.WritePhase = ObjectUploadPrepared
 	c.RecoveryRetryAt = c.CreatedAt.Add(api.ObjectUploadPreparationTimeout)
@@ -92,12 +103,18 @@ func (m *MemStore) beginTrackedUploadLocked(c ObjectUploadCompletion, p api.Obje
 		m.objectMutations = map[string]ObjectBucketMutation{}
 	}
 	m.objectMutations[c.ID] = ObjectBucketMutation{ID: c.ID, UploadID: c.ID, Bucket: m.objectBuckets[c.BucketID], Kind: ObjectBucketMutationRequest, CreatedAt: c.CreatedAt}
+	m.enrollObjectNodeSettlementLocked(job)
 	m.objectUploadCompletions[c.ID] = cloneObjectUploadCompletion(c)
 	return cloneObjectUploadCompletion(c), true, nil
 }
-func (m *MemStore) DispatchTrackedObjectUpload(_ context.Context, account, bucket, id string) (ObjectUploadCompletion, error) {
+func (m *MemStore) DispatchTrackedObjectUpload(ctx context.Context, account, bucket, id string) (ObjectUploadCompletion, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 ObjectUploadCompletion
+		return zero0, err
+	}
+
 	c, ok := m.objectUploadCompletions[id]
 	if !ok || c.AccountID != account || c.BucketID != bucket || c.WritePhase != ObjectUploadPrepared {
 		return cloneObjectUploadCompletion(c), ErrConflict
@@ -140,9 +157,14 @@ func (m *MemStore) finishTrackedObjectUploadLocked(old, c ObjectUploadCompletion
 	old.ETag = c.ETag
 	old.Status = c.Status
 	old.ErrorCode = c.ErrorCode
+	dispatched := old.WritePhase == ObjectUploadDispatched
 	old.WritePhase = ObjectUploadSettled
 	old.RecoveryToken = ""
 	old.RecoveryLeaseUntil = time.Time{}
+	commitSettlement, err := m.prepareUploadNodeSettlementLocked(old, dispatched)
+	if err != nil {
+		return cloneObjectUploadCompletion(old), err
+	}
 	if old.Status == "completed" {
 		if err := m.publishObjectEventLocked(old.AccountID, "write:"+old.ID, api.ObjectEventCreated, trackedUploadEvent(old), m.clock()); err != nil {
 			return cloneObjectUploadCompletion(old), err
@@ -154,6 +176,7 @@ func (m *MemStore) finishTrackedObjectUploadLocked(old, c ObjectUploadCompletion
 	w.Settled = true
 	m.objectWriteAdmissions[old.ID] = w
 	m.objectUploadCompletions[old.ID] = old
+	commitSettlement()
 	if receipt, exists := m.objectMutations[old.ID]; exists && receipt.UploadID == old.ID {
 		delete(m.objectMutations, old.ID)
 	}
@@ -181,17 +204,22 @@ func (m *MemStore) finishTrackedObjectUpload(c ObjectUploadCompletion, recovery,
 	if preparedOnly && (c.Status != "failed" || old.WritePhase != ObjectUploadPrepared && old.Status != "failed") {
 		return cloneObjectUploadCompletion(old), ErrConflict
 	}
-	if recovery && (!validTrackedUploadRecovery(old, m.clock()) || old.RecoveryToken != c.RecoveryToken || c.Status != "completed") {
+	if recovery && (!validTrackedUploadRecovery(old, m.clock()) || old.RecoveryToken != c.RecoveryToken || !validTrackedUploadRecoveryOutcome(c)) {
 		return cloneObjectUploadCompletion(old), ErrConflict
 	}
 	return m.finishTrackedObjectUploadLocked(old, c)
 }
-func (m *MemStore) DueTrackedObjectUploads(_ context.Context, limit int32) ([]ObjectUploadCompletion, error) {
+func (m *MemStore) DueTrackedObjectUploads(ctx context.Context, limit int32) ([]ObjectUploadCompletion, error) {
 	if limit < 1 || limit > api.ObjectUploadRecoveryBatch {
 		return nil, ErrConflict
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 []ObjectUploadCompletion
+		return zero0, err
+	}
+
 	now := m.clock()
 	out := []ObjectUploadCompletion{}
 	for _, c := range m.objectUploadCompletions {
@@ -204,9 +232,14 @@ func (m *MemStore) DueTrackedObjectUploads(_ context.Context, limit int32) ([]Ob
 	})
 	return out[:min(int(limit), len(out))], nil
 }
-func (m *MemStore) ClaimTrackedObjectUploadRecovery(_ context.Context, account, bucket, id, token string) (ObjectUploadCompletion, error) {
+func (m *MemStore) ClaimTrackedObjectUploadRecovery(ctx context.Context, account, bucket, id, token string) (ObjectUploadCompletion, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 ObjectUploadCompletion
+		return zero0, err
+	}
+
 	c, ok := m.objectUploadCompletions[id]
 	now := m.clock()
 	if !ok || c.AccountID != account || c.BucketID != bucket {
@@ -226,12 +259,16 @@ func (m *MemStore) ClaimTrackedObjectUploadRecovery(_ context.Context, account, 
 	m.objectUploadCompletions[id] = c
 	return cloneObjectUploadCompletion(c), nil
 }
-func (m *MemStore) RetryTrackedObjectUploadRecovery(_ context.Context, c ObjectUploadCompletion, code string) error {
+func (m *MemStore) RetryTrackedObjectUploadRecovery(ctx context.Context, c ObjectUploadCompletion, code string) error {
 	if !validTrackedUploadRetry(code) || !validTrackedUploadCursor(c) {
 		return ErrConflict
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return err
+	}
+
 	old, ok := m.objectUploadCompletions[c.ID]
 	if !ok || old.AccountID != c.AccountID || old.BucketID != c.BucketID {
 		return ErrNotFound
@@ -249,9 +286,14 @@ func (m *MemStore) RetryTrackedObjectUploadRecovery(_ context.Context, c ObjectU
 	return nil
 }
 
-func (m *MemStore) GetObjectUploadReceipt(_ context.Context, account, app, route, subject, id string) (ObjectUploadCompletion, error) {
+func (m *MemStore) GetObjectUploadReceipt(ctx context.Context, account, app, route, subject, id string) (ObjectUploadCompletion, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 ObjectUploadCompletion
+		return zero0, err
+	}
+
 	c, ok := m.objectUploadCompletions[id]
 	if !ok || c.AccountID != account || c.AppID != app || c.RouteID != route || c.SubjectID != subject {
 		return ObjectUploadCompletion{}, ErrNotFound

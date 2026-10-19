@@ -47,6 +47,12 @@ func TestMutationLeavesRejectTrailingArgumentsBeforeNetwork(t *testing.T) {
 		{"cron add", func() int {
 			return cmdCrons([]string{"add", "--app", "demo", "--schedule", "*/5 * * * *", "unexpected"})
 		}},
+		{"ai token create", func() int {
+			return cmdAITokens([]string{"create", "--app", "demo", "--name", "test-token", "unexpected"})
+		}},
+		{"ai token revoke", func() int {
+			return cmdAITokens([]string{"revoke", "--app", "demo", "token-id", "unexpected"})
+		}},
 		{"domain add", func() int {
 			return cmdDomains([]string{"add", "--domain", "demo.example.com", "--app", "demo", "unexpected"})
 		}},
@@ -83,6 +89,18 @@ func TestMutationLeavesRejectTrailingArgumentsBeforeNetwork(t *testing.T) {
 		{"mirror remove", func() int { return cmdMirrorRm([]string{"--app", "demo", "--id", "mirror-id", "unexpected"}) }},
 		{"webhook add", func() int {
 			return cmdWebhooksAdd([]string{"--app", "demo", "--target-url", "https://example.com/hook", "unexpected"})
+		}},
+		{"issue automatic sync", func() int {
+			return cmdIssueAutoSync([]string{"--app", "demo", "--issue", "33333333-3333-4333-8333-333333333333", "--link", "55555555-5555-4555-8555-555555555555", "--enable", "unexpected"})
+		}},
+		{"issue ticket create", func() int {
+			return cmdIssueTickets([]string{"create", "--app", "demo", "--issue", "33333333-3333-4333-8333-333333333333", "--provider", "github", "--native", "unexpected"})
+		}},
+		{"issue ticket sync", func() int {
+			return cmdIssueTickets([]string{"sync", "--app", "demo", "--issue", "33333333-3333-4333-8333-333333333333", "--link", "55555555-5555-4555-8555-555555555555", "--direction", "push", "--native", "--apply", "unexpected"})
+		}},
+		{"issue Linear connection", func() int {
+			return cmdIssueLinearConnection([]string{"--app", "demo", "--disconnect", "unexpected"})
 		}},
 		{"org create", func() int { return cmdOrgsCreate([]string{"--slug", "demo-org", "--name", "Demo", "unexpected"}) }},
 		{"org member invite", func() int {

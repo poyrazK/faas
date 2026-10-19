@@ -15,46 +15,41 @@
 // truth), absent kinds are seeded from obsHealthKindVocabulary so
 // the dashboard never has to special-case a missing key.
 //
-// The PromQL-derived fields (audit_log_write_total_5m,
-// audit_log_write_failures_5m, audit_log_coverage_ratio_5m,
-// alerts_firing) retain stable numeric fallbacks on nil-promql or query
-// failure. prometheus_available makes that degraded state explicit so a
-// dashboard cannot render the fallback as observed telemetry.
-// SQL-derived fields (operator_intent_outcome_missing_total,
-// trace_id_completeness_ratio) DO surface store errors as 503
-// because the local DB is the source of truth — a failure there
-// IS the apid being unhealthy.
+// Prometheus-derived counters and alerts have independent health and
+// observation timestamps. Numeric fallbacks remain stable for older clients;
+// signals describes which values are usable. SQL failures surface as 503.
 package apidserver
 
 import (
+	"context"
 	"net/http"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/operatorobs"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// obsHealthHandler handles GET /v1/admin/obs/health. The
-// computation is split into per-metric methods in
-// obs_health_query.go so this handler stays ≤50 lines and each
-// PromQL / SQL call is testable in isolation.
-//
-// The snapshot is computed in series (not parallel) because the
-// SQL calls share the same pool connection — running them in
-// parallel would force three pool acquisitions instead of one
-// chained tx, with no observable latency benefit at this scale
-// (admin-only endpoint, polled on a 30s cadence).
+// obsHealthHandler composes durable SQL coverage with per-signal telemetry
+// health. The Prometheus reads share one deadline in operatorobs.
 func (s *server) obsHealthHandler(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	if allowed, prob := s.adminAllows(acct); !allowed {
 		api.WriteProblem(w, prob)
 		return
 	}
-	ctx := r.Context()
+	response, prob := s.obsHealthSnapshot(r.Context())
+	if prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+func (s *server) obsHealthSnapshot(ctx context.Context) (api.ObsHealthResponse, *api.Problem) {
 	missing := seedHealthKindCounts()
 	storeCounts, err := s.operatorIntentOutcomeMissing(ctx)
 	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not count stuck-running operator intents"))
-		return
+		return api.ObsHealthResponse{}, api.ErrCapacity("could not count stuck-running operator intents")
 	}
 	for kind, n := range storeCounts {
 		missing[kind] = n
@@ -62,28 +57,32 @@ func (s *server) obsHealthHandler(w http.ResponseWriter, r *http.Request, acct s
 	ratios := seedHealthKindRatios()
 	storeRatios, err := s.traceIDCompletenessRatio(ctx)
 	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not compute trace_id completeness ratio"))
-		return
+		return api.ObsHealthResponse{}, api.ErrCapacity("could not compute trace_id completeness ratio")
 	}
 	for kind, r := range storeRatios {
 		ratios[kind] = r
 	}
-	auditWrites, auditWritesOK := s.auditLogWrite5mStatus(ctx)
-	auditFailures, auditFailuresOK := s.auditLogWriteFailures5mStatus(ctx)
 	auditCoverage, err := s.store.OperatorAuditTraceCoverage(ctx, time.Now().UTC().Add(-obsHealthQueryWindow))
 	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not compute audit trace coverage"))
-		return
+		return api.ObsHealthResponse{}, api.ErrCapacity("could not compute audit trace coverage")
 	}
-	alerts, alertsOK := s.alertsFiringStatus(ctx)
-	writeJSON(w, http.StatusOK, api.ObsHealthResponse{
+	enabled := s.promqlClient != nil && s.promqlClient.BaseURL() != ""
+	history, retention, err := operatorobs.MaintenanceHealth(ctx, s.store, enabled, time.Now().UTC())
+	if err != nil {
+		return api.ObsHealthResponse{}, api.ErrCapacity("could not load alert maintenance health")
+	}
+	telemetry := operatorobs.PrometheusHealth(ctx, s.promqlClient, time.Now().UTC())
+	return api.ObsHealthResponse{
 		GeneratedAt:                        time.Now().UTC(),
-		PrometheusAvailable:                auditWritesOK && auditFailuresOK && alertsOK,
-		AuditLogWriteTotal5m:               auditWrites,
-		AuditLogWriteFailures5m:            auditFailures,
+		PrometheusAvailable:                telemetry.Available,
+		AuditLogWriteTotal5m:               telemetry.AuditWrites,
+		AuditLogWriteFailures5m:            telemetry.AuditFailures,
 		AuditLogCoverageRatio5m:            auditCoverage,
 		OperatorIntentOutcomeMissingCounts: missing,
 		TraceIDCompletenessRatio:           ratios,
-		AlertsFiring:                       alerts,
-	})
+		AlertsFiring:                       telemetry.AlertsFiring,
+		Signals:                            telemetry.Signals,
+		AlertHistory:                       &history,
+		AlertRetention:                     &retention,
+	}, nil
 }

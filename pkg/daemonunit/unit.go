@@ -83,12 +83,19 @@ type Unit struct {
 	StartLimitBurst       string
 
 	// [Service]
-	Type            string // "simple" for every faas daemon today
-	User            string
-	Group           string
-	ExecStart       string
-	ExecStartPre    []string // ordered (vmmd has 2; nobody else has any)
-	ExecStartPost   []string // ordered post-start fixups (vmmd runtime dir)
+	Type string // "simple" for every faas daemon today
+	// NotifyAccess names who may send sd_notify messages. A daemon that
+	// hands off on reload (ADR-1736) pins "main": once its successor is the
+	// main process, the old generation's messages are rejected.
+	NotifyAccess  string
+	User          string
+	Group         string
+	ExecStart     string
+	ExecStartPre  []string // ordered (vmmd has 2; nobody else has any)
+	ExecStartPost []string // ordered post-start fixups (vmmd runtime dir)
+	// ExecReload is what `systemctl reload` runs. "/bin/kill -USR2 $MAINPID"
+	// starts a two-generation hand-off (ADR-1736).
+	ExecReload      string
 	Restart         string
 	RestartSec      string
 	TimeoutStartSec string // bounded allowance for Type=notify startup work
@@ -106,8 +113,13 @@ type Unit struct {
 	// dropping it — vmmd's 2026-09-03 OOM took its whole compute node out
 	// of rotation, and a hard cap alone would not have changed that.
 	// Empty omits the directive.
-	MemoryHigh            string
-	MemoryMax             string
+	MemoryHigh string
+	MemoryMax  string
+	// OOMPolicy decides what an OOM kill of one of the unit's processes
+	// does. "continue" keeps a hand-off's serving generation running when
+	// the kernel kills the draining one (ADR-1736); a killed main process
+	// still restarts under Restart=on-failure.
+	OOMPolicy             string
 	CPUQuota              string // aggregate process and subprocess CPU ceiling
 	TasksMax              string // aggregate process/thread ceiling
 	Delegate              bool
@@ -154,9 +166,10 @@ func BoolPtr(b bool) *bool { return &b }
 
 // Render emits the unit file as bytes. Section ordering: [Unit] first,
 // then [Service], then [Install] — matching every shipped faas unit.
-// Inside [Service], field ordering is fixed (Type → User → Group →
-// ExecStartPre → ExecStart → Restart → RestartSec →
-// TimeoutStartSec → WatchdogSec → Slice → MemoryHigh → MemoryMax → CPUQuota → TasksMax → Delegate →
+// Inside [Service], field ordering is fixed (Type → NotifyAccess → User →
+// Group → ExecStartPre → ExecStart → ExecStartPost → ExecReload → Restart →
+// RestartSec →
+// TimeoutStartSec → WatchdogSec → Slice → MemoryHigh → MemoryMax → OOMPolicy → CPUQuota → TasksMax → Delegate →
 // CapabilityBoundingSet → AmbientCapabilities → EnvironmentFile →
 // Environment entries → LoadCredential entries → NoNewPrivileges →
 // ProtectSystem → ProtectHome → PrivateTmp → PrivateDevices →\n →
@@ -186,6 +199,7 @@ func (u Unit) Render() []byte {
 
 	buf.WriteString("[Service]\n")
 	writeStringKV(&buf, "Type", u.Type)
+	writeStringKV(&buf, "NotifyAccess", u.NotifyAccess)
 	writeStringKV(&buf, "User", u.User)
 	writeStringKV(&buf, "Group", u.Group)
 
@@ -203,6 +217,7 @@ func (u Unit) Render() []byte {
 		buf.WriteString(post)
 		buf.WriteByte('\n')
 	}
+	writeStringKV(&buf, "ExecReload", u.ExecReload)
 	writeStringKV(&buf, "Restart", u.Restart)
 	writeStringKV(&buf, "RestartSec", u.RestartSec)
 	writeStringKV(&buf, "TimeoutStartSec", u.TimeoutStartSec)
@@ -210,6 +225,7 @@ func (u Unit) Render() []byte {
 	writeStringKV(&buf, "Slice", u.Slice)
 	writeStringKV(&buf, "MemoryHigh", u.MemoryHigh)
 	writeStringKV(&buf, "MemoryMax", u.MemoryMax)
+	writeStringKV(&buf, "OOMPolicy", u.OOMPolicy)
 	writeStringKV(&buf, "CPUQuota", u.CPUQuota)
 	writeStringKV(&buf, "TasksMax", u.TasksMax)
 	if u.Delegate {
@@ -506,6 +522,10 @@ func apply(u *Unit, section, key, val string) error {
 		u.ExecStartPre = append(u.ExecStartPre, val)
 	case "[Service]/ExecStartPost":
 		u.ExecStartPost = append(u.ExecStartPost, val)
+	case "[Service]/ExecReload":
+		u.ExecReload = val
+	case "[Service]/NotifyAccess":
+		u.NotifyAccess = val
 	case "[Service]/Restart":
 		u.Restart = val
 	case "[Service]/RestartSec":
@@ -516,6 +536,8 @@ func apply(u *Unit, section, key, val string) error {
 		u.WatchdogSec = val
 	case "[Service]/Slice":
 		u.Slice = val
+	case "[Service]/OOMPolicy":
+		u.OOMPolicy = val
 	case "[Service]/MemoryHigh":
 		u.MemoryHigh = val
 	case "[Service]/MemoryMax":
@@ -688,17 +710,20 @@ func Diff(a, b Unit) []string {
 	add("[Unit]", "StartLimitIntervalSec", a.StartLimitIntervalSec, b.StartLimitIntervalSec)
 	add("[Unit]", "StartLimitBurst", a.StartLimitBurst, b.StartLimitBurst)
 	add("[Service]", "Type", a.Type, b.Type)
+	add("[Service]", "NotifyAccess", a.NotifyAccess, b.NotifyAccess)
 	add("[Service]", "User", a.User, b.User)
 	add("[Service]", "Group", a.Group, b.Group)
 	add("[Service]", "ExecStart", a.ExecStart, b.ExecStart)
 	add("[Service]", "ExecStartPre", fmt.Sprintf("%v", a.ExecStartPre), fmt.Sprintf("%v", b.ExecStartPre))
 	add("[Service]", "ExecStartPost", fmt.Sprintf("%v", a.ExecStartPost), fmt.Sprintf("%v", b.ExecStartPost))
+	add("[Service]", "ExecReload", a.ExecReload, b.ExecReload)
 	add("[Service]", "Restart", a.Restart, b.Restart)
 	add("[Service]", "RestartSec", a.RestartSec, b.RestartSec)
 	add("[Service]", "TimeoutStartSec", a.TimeoutStartSec, b.TimeoutStartSec)
 	add("[Service]", "Slice", a.Slice, b.Slice)
 	add("[Service]", "MemoryHigh", a.MemoryHigh, b.MemoryHigh)
 	add("[Service]", "MemoryMax", a.MemoryMax, b.MemoryMax)
+	add("[Service]", "OOMPolicy", a.OOMPolicy, b.OOMPolicy)
 	add("[Service]", "CPUQuota", a.CPUQuota, b.CPUQuota)
 	add("[Service]", "TasksMax", a.TasksMax, b.TasksMax)
 	add("[Service]", "Delegate", boolStr(a.Delegate), boolStr(b.Delegate))

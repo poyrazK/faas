@@ -27,6 +27,7 @@ func withConsumersTestAPI(t *testing.T, handler http.HandlerFunc) *bytes.Buffer 
 
 // adr: 949 — the CLI drives the consumer monetization lifecycle end to end.
 func TestCmdConsumersMonetizationLifecycle(t *testing.T) {
+	t.Setenv("FAAS_API_MONETIZATION_ENABLED", "1") // adr: 20261018090210 — exercises released monetization
 	var key api.CreateConsumerKeyRequest
 	var card api.CreateAPIConsumerRateCardRequest
 	var period api.CreateAPIConsumerUsageStatementRequest
@@ -86,6 +87,7 @@ func TestCmdConsumersMonetizationLifecycle(t *testing.T) {
 }
 
 func TestCmdConsumersRejectsBadArgumentsBeforeCallingAPI(t *testing.T) {
+	t.Setenv("FAAS_API_MONETIZATION_ENABLED", "1") // adr: 20261018090210 — exercises released monetization
 	withConsumersTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
 		t.Errorf("unexpected API call %s %s", r.Method, r.URL.Path)
 	})
@@ -105,7 +107,7 @@ func TestCmdConsumersRejectsBadArgumentsBeforeCallingAPI(t *testing.T) {
 		"malformed weight":        {"rate-card-create", "my-api", "--currency", "EUR", "--price-millicents", "1", "--weight", "POST /generate"},
 		"duplicate weight":        {"rate-card-create", "my-api", "--currency", "EUR", "--price-millicents", "1", "--weight", "GET /a=2", "--weight", "GET /a=3"},
 		"tenant tiers and units":  {"rate-card-create", "--id", "t1", "--currency", "EUR", "--included-units", "5", "--tier", "10:0", "--tier", "inf:5"},
-		"tenant weight":           {"rate-card-create", "--id", "t1", "--currency", "EUR", "--price-millicents", "1", "--weight", "GET /a=2"},
+		"tenant bad weight":       {"rate-card-create", "--id", "t1", "--currency", "EUR", "--price-millicents", "1", "--weight", "GET /a"},
 		"bad currency":            {"rate-card-create", "my-api", "--currency", "EURO", "--price-millicents", "1"},
 		"missing invoice":         {"statement-handoff", "my-api", "c1", "s1"},
 		"tenant without id":       {"rate-cards"},
@@ -127,6 +129,7 @@ func TestCmdConsumersRejectsBadArgumentsBeforeCallingAPI(t *testing.T) {
 
 // adr: 951
 func TestCmdConsumersTieredRateCard(t *testing.T) {
+	t.Setenv("FAAS_API_MONETIZATION_ENABLED", "1") // adr: 20261018090210 — exercises released monetization
 	var card api.CreateAPIConsumerRateCardRequest
 	stdout := withConsumersTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewDecoder(r.Body).Decode(&card)
@@ -145,6 +148,7 @@ func TestCmdConsumersTieredRateCard(t *testing.T) {
 
 // adr: 952
 func TestCmdConsumersRouteWeights(t *testing.T) {
+	t.Setenv("FAAS_API_MONETIZATION_ENABLED", "1") // adr: 20261018090210 — exercises released monetization
 	var card api.CreateAPIConsumerRateCardRequest
 	stdout := withConsumersTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewDecoder(r.Body).Decode(&card)
@@ -164,6 +168,7 @@ func TestCmdConsumersRouteWeights(t *testing.T) {
 
 // adr: 953
 func TestCmdConsumersPlans(t *testing.T) {
+	t.Setenv("FAAS_API_MONETIZATION_ENABLED", "1") // adr: 20261018090210 — exercises released monetization
 	var created api.CreateAPIConsumerPlanRequest
 	var updated api.UpdateAPIConsumerPlanLimitsRequest
 	var assigned api.AssignAPIConsumerPlanRequest
@@ -239,6 +244,7 @@ func TestFormatMillicents(t *testing.T) {
 }
 
 func TestCmdPlatformTenantStatementVerbs(t *testing.T) {
+	t.Setenv("FAAS_API_MONETIZATION_ENABLED", "1") // adr: 20261018090210 — exercises released monetization
 	var period api.CreateAPIConsumerUsageStatementRequest
 	var listQuery string
 	stdout := withConsumersTestAPI(t, func(w http.ResponseWriter, r *http.Request) {

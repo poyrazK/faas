@@ -1,0 +1,38 @@
+# ADR-1433 · AI gateway phase 11: price built-in tool fees
+
+- **Status:** accepted
+- **Date:** 2026-10-16
+- **Relates to:** ADR-990 (price lists), ADR-991 (hard caps), ADR-994 (price catalog), ADR-1432 (unmetered calls)
+- **Decision:**
+  - **Built-in tools are counted, priced and reserved.** A metered call can run provider tools that are billed per use on top of tokens. The gateway now counts them from the response, prices them and reserves them before the call.
+    - **Web search:**
+      - OpenAI Responses `web_search_call` items;
+      - OpenAI chat completions on a search model (one search per call);
+      - Anthropic `usage.server_tool_use.web_search_requests`;
+      - Gemini and Vertex `groundingMetadata.webSearchQueries`. Gemini 3 and newer bill each query; Gemini 2.5 and older bill each grounded prompt.
+    - **File search:** OpenAI Responses `file_search_call` items.
+    - **Code-interpreter containers:** OpenAI Responses `code_interpreter_call` items, billed per container per 20-minute session at a price per GB of container memory. The memory comes from the request's `code_interpreter` tool (default 1 GB).
+  - **Prices.** Price lists and the catalog take a price per web search, per file search and per GB container session. The catalog takes web-search prices per model from LiteLLM and OpenAI's container price from LiteLLM. File search costs $2.50 per 1,000 calls on OpenAI's pricing page; the generator records it with its source and date.
+  - **Reservation.** A request that declares a tool reserves its fee:
+    - web search: the tool's `max_uses` (Anthropic), else `OutboundAIToolReserveWebSearches`; one for a chat search model or a Gemini 2.5 grounded prompt;
+    - file search: `OutboundAIToolReserveFileSearches`;
+    - a code interpreter: one session at its memory.
+  - **Settlement** charges the counted uses. A container is charged once per `OutboundAIContainerSessionMinutes` window per outboundd process, so a container reused across turns is not charged again within its session.
+- **Why:**
+  - Hard caps are the gateway's main promise (ADR-991), and ADR-1432 closed the endpoints the gateway could not meter. Inside metered calls, tools were still free in the gateway's numbers: at $10 to $35 per 1,000 searches and $0.03 to $1.92 per container session, an agent that searches in a loop could pass a cost cap many times over without the gateway seeing it.
+- **Consequences:**
+  - **Free allowances are not modeled.** Gemini's free grounding (1,500 prompts a day on 2.5, 5,000 queries a month on Gemini 3) is charged like the rest. Caps err on the safe side and reports can overstate spend for low-volume customers.
+  - **Not covered:**
+    - Anthropic code execution, billed by container hour, is free with web search or web fetch and includes 1,550 free hours a month; the gateway cannot see hours.
+    - Google Maps grounding.
+    - Search content tokens appear in the providers' token counts and are already priced as tokens.
+  - **OpenAI web search price.** The catalog's per-model price is LiteLLM's, which for non-reasoning models is the `web_search_preview` price ($25 per 1,000). OpenAI's generally available `web_search` tool costs $10 per 1,000 on every model, so those calls are overstated until a price list corrects them.
+  - **Container dedupe is per process.** Each outboundd replica charges a container once per session window, so with several replicas a container can be charged more than once.
+  - **New columns:**
+    - `outbound_ai_price_entries`: `millicents_per_web_search`, `millicents_per_file_search`, `millicents_per_code_session_gb`;
+    - `outbound_ai_usage_daily`: `web_searches`, `file_searches`, `code_session_gb`.
+  - **Catalog.** `catalog.json` gains three fields, for thirteen in all.
+- **Rejected alternatives:**
+  - **A flat fee per provider.** Prices differ by model and API: OpenAI $10 or $25, Gemini $14 per query or $35 per prompt.
+  - **Charge every container reference.** A multi-turn conversation reuses one container; charging each turn overstates the bill several times over.
+  - **Skip reservation.** A call that searches many times would pass a cost cap after admission; reserving the declared tools keeps the cap ahead of the call.

@@ -1,3 +1,4 @@
+// adr: 251
 package outbound
 
 import (
@@ -106,13 +107,17 @@ func TestManagedRoutePolicyRejectsBeforeAdmissionOrProviderCall(t *testing.T) {
 			}
 		})
 	}
-	override := httptest.NewRequest(http.MethodGet, "http://gateway.test/i/"+integration.ID+"/v1/customers", nil)
-	override.Header.Set(WorkloadIdentityHeader, token)
-	override.Header.Set("X-HTTP-Method-Override", http.MethodDelete)
-	overrideResponse := httptest.NewRecorder()
-	handler.ServeHTTP(overrideResponse, override)
-	if overrideResponse.Code != http.StatusForbidden || providerCalls != 0 {
-		t.Fatalf("method override status=%d provider calls=%d", overrideResponse.Code, providerCalls)
+	for _, name := range []string{"X-Http-Method-Override", "X-Method-Override", "X-Http-Method"} {
+		for _, values := range [][]string{{http.MethodDelete}, {"", http.MethodDelete}, {"", "", http.MethodDelete}} {
+			override := httptest.NewRequest(http.MethodGet, "http://gateway.test/i/"+integration.ID+"/v1/customers", nil)
+			override.Header.Set(WorkloadIdentityHeader, token)
+			override.Header[name] = values
+			overrideResponse := httptest.NewRecorder()
+			handler.ServeHTTP(overrideResponse, override)
+			if overrideResponse.Code != http.StatusForbidden || providerCalls != 0 {
+				t.Fatalf("%s %q: method override status=%d provider calls=%d", name, values, overrideResponse.Code, providerCalls)
+			}
+		}
 	}
 	queryOverride := httptest.NewRequest(http.MethodGet, "http://gateway.test/i/"+integration.ID+"/v1/customers?_method=DELETE", nil)
 	queryOverride.Header.Set(WorkloadIdentityHeader, token)

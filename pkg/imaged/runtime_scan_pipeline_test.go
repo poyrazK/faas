@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type pipelineRuntimeVMM struct {
@@ -276,7 +277,7 @@ func TestProducedRuntimePublicationDefersDuplicateJobAndReleasesOnCompletion(t *
 }
 
 type busyRuntimeRenewalStore struct {
-	*state.MemStore
+	MemStore     *state.MemStore
 	point        string
 	failedWrites int
 }
@@ -318,11 +319,11 @@ func TestProducedRuntimeRenewalBusyRefusesAdmissionWithoutFailureOrQuarantine(t 
 				t.Fatal(err)
 			}
 			store := &busyRuntimeRenewalStore{MemStore: th.store, point: point}
-			h.store = store
+			h.store = statetest.NewMem(store)
 			if err := h.runDeployScan(t.Context(), th.app, th.dep); !producedEvidenceBusy(err) {
 				t.Fatal("contention permitted admission", err)
 			}
-			l := &Loop{store: store, handler: h, log: silentLogger()}
+			l := &Loop{store: statetest.NewMem(store), handler: h, log: silentLogger()}
 			l.rescanLiveDeployment(t.Context(), th.app, th.dep)
 			current, err := th.store.GetCurrentDeploymentRuntimeScan(t.Context(), th.app.AccountID, th.app.ID, th.dep.ID)
 			app, readErr := th.store.AppByID(t.Context(), th.app.ID)

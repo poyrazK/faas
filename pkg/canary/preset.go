@@ -110,13 +110,16 @@ type exactRolloutRecoveryClient interface {
 // returns []state.Deployment; the meterd wiring wraps each row into
 // this shape at the seam.
 type CanaryRow struct {
-	ID                string
-	AppID             string
-	AppSlug           string
-	Scope             string
-	CanaryPreset      string
-	CanaryStep        int
-	CanaryTotalSteps  int
+	ID               string
+	AppID            string
+	AppSlug          string
+	Scope            string
+	CanaryPreset     string
+	CanaryStep       int
+	CanaryTotalSteps int
+	// TrafficPercent is the candidate's current share; rollout decision
+	// records report it (ADR-1447).
+	TrafficPercent    int
 	CanaryStepStarted time.Time
 	RolloutStarted    time.Time
 	RolloutState      string
@@ -301,21 +304,25 @@ func (p *Progression) Once(ctx context.Context) (Stats, error) {
 		if currentStage.MirrorClean != nil && !p.mirrorCleanReady(ctx, row, currentStage.MirrorClean, now, &stats) {
 			continue
 		}
-		if !p.circuitBreakerReady(ctx, row, currentStage.Duration, now, &stats) {
+		ready, record := p.circuitBreakerReady(ctx, row, currentStage, now, &stats)
+		if !ready {
 			continue
 		}
+		// Before the timer ends, only conclusive evidence on a stage paced
+		// by evidence (ADR-1321) comes back with a record.
 		elapsed := now.Sub(row.CanaryStepStarted)
-		if elapsed < currentStage.Duration {
+		early := elapsed < currentStage.Duration
+		if early && record == nil {
 			stats.SkippedNotElapsed++
 			continue
 		}
-		if !p.safeReleaseHealthReady(ctx, row, &stats) {
+		if !p.safeReleaseHealthReady(ctx, row, now, &stats) {
 			continue
 		}
 		// Advance through APID's atomic state transition. The endpoint
 		// derives nextStage.Percent from the persisted preset, so the
 		// runtime cannot apply a stale or caller-invented traffic value.
-		response, err := p.APID.AdvanceCanary(ctx, row.ID, row.CanaryStep)
+		response, err := p.advance(ctx, row, record)
 		if err != nil {
 			var problem *api.Problem
 			if errors.As(err, &problem) && (problem.Code == api.CodeRouteGateBlocked || problem.Code == api.CodeRouteHealthBlocked || problem.Code == api.CodeProfileGateBlocked) {
@@ -335,6 +342,14 @@ func (p *Progression) Once(ctx context.Context) (Stats, error) {
 		if response.ProfileGate != nil && response.ProfileGate.Status == "rolled_back" {
 			stats.Aborted++
 			continue
+		}
+		if early {
+			stats.EarlyAdvanced++
+			p.Log.Info("canary: stage advanced before its timer on clean evidence",
+				"deployment_id", row.ID,
+				"rule", record.Rule,
+				"elapsed", elapsed.Round(time.Second).String(),
+				"stage_duration", currentStage.Duration.String())
 		}
 		stats.Advanced++
 		if p.Ops != nil {
@@ -382,7 +397,7 @@ func (p *Progression) mirrorCleanReady(ctx context.Context, row CanaryRow, condi
 // The store is optional for the package's small unit-test seam. Production's
 // canaryStoreAdapter always implements it; when present, a read error fails
 // closed and leaves the canary at its current traffic share.
-func (p *Progression) safeReleaseHealthReady(ctx context.Context, row CanaryRow, stats *Stats) bool {
+func (p *Progression) safeReleaseHealthReady(ctx context.Context, row CanaryRow, now time.Time, stats *Stats) bool {
 	checker, ok := p.Store.(SafeReleaseHealthStore)
 	if !ok {
 		return true
@@ -392,6 +407,8 @@ func (p *Progression) safeReleaseHealthReady(ctx context.Context, row CanaryRow,
 		p.Log.Warn("canary: safe-release health gate unavailable; holding promotion",
 			"deployment_id", row.ID, "err", err)
 		stats.Errors++
+		p.recordHold(ctx, row, rolloutDecisionRecord(row, api.RolloutRuleHoldObservation,
+			"safe-release health alerts could not be read", nil, time.Time{}, now))
 		return false
 	}
 	if len(signals) == 0 {
@@ -404,6 +421,9 @@ func (p *Progression) safeReleaseHealthReady(ctx context.Context, row CanaryRow,
 		}
 	}
 	first := signals[0]
+	p.recordHold(ctx, row, rolloutDecisionRecord(row, api.RolloutRuleHoldHealthAlert,
+		fmt.Sprintf("%d safe-release health alert(s) with a rollback action firing (metric %s)", len(signals), first.Metric),
+		nil, time.Time{}, now))
 	p.Log.Warn("canary: promotion held by firing safe-release health alert",
 		"deployment_id", row.ID,
 		"rule_id", first.RuleID,
@@ -419,7 +439,12 @@ func (p *Progression) safeReleaseHealthReady(ctx context.Context, row CanaryRow,
 // canary can gain more traffic. Clear 5xx, p95, or OOM regressions abort via
 // APID's atomic rollout-recovery transaction. Inconclusive samples hold only
 // at the stage boundary, so the normal stage timer still controls exposure.
-func (p *Progression) circuitBreakerReady(ctx context.Context, row CanaryRow, stageDuration time.Duration, now time.Time, stats *Stats) bool {
+//
+// The returned record is the evidence for an advance taken this tick
+// (ADR-1447); holds are reported to APID here and aborts carry their record.
+// Before the stage's timer ends the record is nil unless the stage is paced
+// by evidence and that evidence is conclusive and clean (ADR-1321).
+func (p *Progression) circuitBreakerReady(ctx context.Context, row CanaryRow, stage canarycatalog.Stage, now time.Time, stats *Stats) (bool, *api.RolloutDecision) {
 	checker, ok := p.Store.(CircuitBreakerStore)
 	if !ok {
 		p.Log.Error("canary: circuit-breaker observation unavailable; holding promotion",
@@ -427,7 +452,9 @@ func (p *Progression) circuitBreakerReady(ctx context.Context, row CanaryRow, st
 		stats.Errors++
 		stats.SkippedCircuitBreaker++
 		p.recordCircuitBreakerEvent("hold_observation_unavailable")
-		return false
+		p.recordHold(ctx, row, rolloutDecisionRecord(row, api.RolloutRuleHoldObservation,
+			"circuit-breaker observation unavailable", nil, time.Time{}, now))
+		return false, nil
 	}
 	since := row.CanaryStepStarted
 	if since.IsZero() {
@@ -440,22 +467,58 @@ func (p *Progression) circuitBreakerReady(ctx context.Context, row CanaryRow, st
 		stats.Errors++
 		stats.SkippedCircuitBreaker++
 		p.recordCircuitBreakerEvent("hold_observation_unavailable")
-		return false
+		p.recordHold(ctx, row, rolloutDecisionRecord(row, api.RolloutRuleHoldObservation,
+			"circuit-breaker observation unavailable", nil, since, now))
+		return false, nil
 	}
 	decision := EvaluateCircuitBreaker(observation)
+	elapsed := now.Sub(row.CanaryStepStarted)
+	beforeTimer := elapsed < stage.Duration
 	switch decision.Action {
 	case CircuitBreakerAdvance:
-		return true
+		rule := circuitBreakerRule(decision)
+		if beforeTimer && (rule != api.RolloutRuleAdvanceHealthy || !earlyAdvanceAllowed(stage, elapsed)) {
+			// Without a predecessor there is no evidence to pace by.
+			return true, nil
+		}
+		record := rolloutDecisionRecord(row, rule, decision.Reason, &observation, since, now)
+		return true, &record
 	case CircuitBreakerAbort:
-		if p.abortCircuitBreaker(ctx, row, decision, observation, stats) {
-			return false
+		record := rolloutDecisionRecord(row, circuitBreakerRule(decision), decision.Reason, &observation, since, now)
+		if p.abortCircuitBreaker(ctx, row, decision, observation, record, stats) {
+			return false, nil
 		}
 		// If APID is temporarily unavailable, keep the candidate at the
 		// current weight and retry the same safe decision on the next tick.
-		return false
+		return false, nil
 	default:
-		if now.Sub(row.CanaryStepStarted) < stageDuration {
-			return true
+		held := elapsed - stage.Duration
+		if held < 0 && (!earlyAdvanceAllowed(stage, elapsed) || !ProbeEvidenceAdvanceAllowed(decision, observation)) {
+			return true, nil
+		}
+		if ProbeEvidenceAdvanceAllowed(decision, observation) {
+			p.Log.Info("canary: advancing low-traffic stage on synthetic probe evidence",
+				"deployment_id", row.ID,
+				"stable_deployment_id", observation.StableDeploymentID,
+				"candidate_probes", observation.Candidate.ProbeRequests,
+				"candidate_probe_5xx", observation.Candidate.ProbeServerErrors,
+				"stable_probes", observation.Stable.ProbeRequests,
+				"stable_probe_5xx", observation.Stable.ProbeServerErrors)
+			stats.ProbeEvidenceAdvanced++
+			p.recordCircuitBreakerEvent("advance_probe_evidence")
+			record := rolloutDecisionRecord(row, api.RolloutRuleAdvanceProbeEvidence, decision.Reason, &observation, since, now)
+			return true, &record
+		}
+		if held >= api.CanaryLowTrafficMaxHold && LowTrafficAdvanceAllowed(decision, observation) {
+			p.Log.Info("canary: advancing low-traffic stage on clean evidence",
+				"deployment_id", row.ID,
+				"stable_deployment_id", observation.StableDeploymentID,
+				"reason", decision.Reason,
+				"held", held.Round(time.Second).String())
+			stats.LowTrafficAdvanced++
+			p.recordCircuitBreakerEvent("advance_low_traffic")
+			record := rolloutDecisionRecord(row, api.RolloutRuleAdvanceLowTraffic, decision.Reason, &observation, since, now)
+			return true, &record
 		}
 		p.Log.Warn("canary: circuit breaker is inconclusive; holding promotion",
 			"deployment_id", row.ID,
@@ -463,11 +526,33 @@ func (p *Progression) circuitBreakerReady(ctx context.Context, row CanaryRow, st
 			"reason", decision.Reason)
 		stats.SkippedCircuitBreaker++
 		p.recordCircuitBreakerEvent(circuitBreakerHoldEvent(decision.Reason))
-		return false
+		p.recordHold(ctx, row, rolloutDecisionRecord(row, circuitBreakerHoldEvent(decision.Reason), decision.Reason, &observation, since, now))
+		return false, nil
 	}
 }
 
-func (p *Progression) abortCircuitBreaker(ctx context.Context, row CanaryRow, decision CircuitBreakerDecision, observation CircuitBreakerObservation, stats *Stats) bool {
+// earlyAdvanceAllowed reports whether a stage paced by evidence (ADR-1321)
+// has run long enough to advance before its timer on conclusive evidence.
+// Rollout-wide OOM and liveness signals cover the earlier stages too.
+func earlyAdvanceAllowed(stage canarycatalog.Stage, elapsed time.Duration) bool {
+	return stage.MinDuration > 0 && elapsed >= stage.MinDuration
+}
+
+// advance asks APID for one step, carrying the evidence when the client can
+// record it (ADR-1447).
+func (p *Progression) advance(ctx context.Context, row CanaryRow, record *api.RolloutDecision) (api.CanaryAdvanceResponse, error) {
+	if client, ok := p.APID.(decisionAdvanceClient); ok && record != nil {
+		err := record.Validate()
+		if err == nil {
+			return client.AdvanceCanaryWithDecision(ctx, row.ID, row.CanaryStep, *record)
+		}
+		p.Log.Warn("canary: rollout decision record invalid; advancing without it",
+			"deployment_id", row.ID, "rule", record.Rule, "err", err)
+	}
+	return p.APID.AdvanceCanary(ctx, row.ID, row.CanaryStep)
+}
+
+func (p *Progression) abortCircuitBreaker(ctx context.Context, row CanaryRow, decision CircuitBreakerDecision, observation CircuitBreakerObservation, record api.RolloutDecision, stats *Stats) bool {
 	recovery, ok := p.APID.(exactRolloutRecoveryClient)
 	if !ok || observation.StableDeploymentID == "" {
 		p.Log.Error("canary: circuit-breaker abort unavailable; holding candidate traffic",
@@ -493,9 +578,17 @@ func (p *Progression) abortCircuitBreaker(ctx context.Context, row CanaryRow, de
 		reason = "circuit breaker: CPU per request regression; restoring predecessor " + observation.StableDeploymentID
 	case strings.HasPrefix(decision.Reason, "dependency error regression"):
 		reason = "circuit breaker: managed dependency error regression; restoring predecessor " + observation.StableDeploymentID
+	case strings.HasPrefix(decision.Reason, "crash loop"):
+		reason = "circuit breaker: crash loop (repeated liveness restarts); restoring predecessor " + observation.StableDeploymentID
 	}
 	key := "canary-circuit-breaker-abort-" + row.ID + "-" + observation.StableDeploymentID
-	if _, err := recovery.RecoverDeploymentRolloutAndIdempotencyKey(ctx, row.ID, observation.StableDeploymentID, "abort", reason, key); err != nil {
+	var err error
+	if client, ok := p.APID.(decisionRecoveryClient); ok && record.Validate() == nil {
+		_, err = client.RecoverDeploymentRolloutWithDecision(ctx, row.ID, observation.StableDeploymentID, "abort", reason, key, record)
+	} else {
+		_, err = recovery.RecoverDeploymentRolloutAndIdempotencyKey(ctx, row.ID, observation.StableDeploymentID, "abort", reason, key)
+	}
+	if err != nil {
 		p.Log.Warn("canary: circuit-breaker abort failed",
 			"deployment_id", row.ID, "stable_deployment_id", observation.StableDeploymentID, "reason", decision.Reason, "err", err)
 		stats.Errors++
@@ -525,7 +618,9 @@ func (p *Progression) abortCircuitBreaker(ctx context.Context, row CanaryRow, de
 		"stable_dependency_calls", observation.Stable.DependencyCalls,
 		"candidate_dependency_errors", observation.Candidate.DependencyErrors,
 		"stable_dependency_errors", observation.Stable.DependencyErrors,
-		"oom_kills", observation.OOMKills)
+		"oom_kills", observation.OOMKills,
+		"candidate_liveness_restarts", observation.CandidateLivenessRestarts,
+		"stable_liveness_restarts", observation.StableLivenessRestarts)
 	stats.Aborted++
 	stats.CircuitBreakerAborted++
 	p.recordCircuitBreakerEvent(circuitBreakerAbortEvent(decision.Reason))
@@ -546,6 +641,8 @@ func circuitBreakerAbortEvent(reason string) string {
 		return "abort_dependency_errors"
 	case strings.HasPrefix(reason, "workload OOM"):
 		return "abort_oom"
+	case strings.HasPrefix(reason, "crash loop"):
+		return "abort_crash_loop"
 	default:
 		return "hold_recovery_failed"
 	}
@@ -556,6 +653,8 @@ func circuitBreakerHoldEvent(reason string) string {
 	case strings.HasPrefix(reason, "insufficient request samples"):
 		return "hold_insufficient_samples"
 	case strings.HasPrefix(reason, "workload OOM signal unavailable"):
+		return "hold_signal_unavailable"
+	case strings.HasPrefix(reason, "liveness restart signal unavailable"):
 		return "hold_signal_unavailable"
 	case strings.HasPrefix(reason, "CPU/request signal unavailable"):
 		return "hold_signal_unavailable"
@@ -608,11 +707,16 @@ func (p *Progression) now() time.Time {
 // bucket per tick (Errors is its own bucket; SkippedNotElapsed is
 // distinct from SkippedUnknownPreset).
 type Stats struct {
-	Advanced               int
-	Errors                 int
-	Aborted                int
-	CircuitBreakerAborted  int
-	SkippedCircuitBreaker  int
+	Advanced              int
+	Errors                int
+	Aborted               int
+	CircuitBreakerAborted int
+	SkippedCircuitBreaker int
+	LowTrafficAdvanced    int
+	ProbeEvidenceAdvanced int
+	// EarlyAdvanced counts advances taken before the stage's timer
+	// (ADR-1321); each is also counted in Advanced.
+	EarlyAdvanced          int
 	SkippedUnknownPreset   int
 	SkippedOutOfBounds     int
 	SkippedAlreadyTerminal int

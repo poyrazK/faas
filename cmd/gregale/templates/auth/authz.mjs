@@ -1,9 +1,12 @@
 import { createHash, randomBytes } from 'node:crypto'
 import http from 'node:http'
 import { gotrue, limits } from './config.mjs'
-import { EmailError, invitationMessage } from './email.mjs'
+import { EmailError, invitationMessage, loadEmailTemplates } from './email.mjs'
 import { objectResource, objectURL, presign } from './storage.mjs'
 import { WorkflowError } from './workflows.mjs'
+import { routeTeam, TeamError } from './team.mjs'
+import { emailPath, emailConsent, resolveEmailRecipient, ProductEmailError } from './product-email.mjs'
+import { orgSSORoute } from './orgsso.mjs'
 
 // /authz/v1: organizations, members, invitations and authorization checks
 // (ADR-1190). Every operation is a gregale_auth SQL function that enforces
@@ -15,8 +18,9 @@ const codes = new Map([
   ['28000', 401], ['42501', 403], ['P0002', 404], ['23505', 409], ['23514', 409], ['23503', 409], ['54000', 409], ['22023', 400], ['22P02', 400],
 ])
 // Messages raised by gregale_auth functions; anything else is never echoed.
-const stableMessages = new Set(['not_authenticated', 'forbidden', 'not_found', 'slug_taken', 'invalid_organization', 'organization_limit',
-  'unknown_role', 'invalid_invitation', 'invitation_limit', 'invitation_invalid', 'invitation_email_mismatch', 'already_member', 'last_owner'])
+const stableMessages = new Set(['not_authenticated', 'forbidden', 'not_found', 'slug_taken', 'invalid_organization', 'organization_limit', 'anonymous_user',
+  'unknown_role', 'invalid_invitation', 'invitation_limit', 'invitation_invalid', 'invitation_email_mismatch', 'already_member', 'last_owner',
+  'domain_taken', 'domain_limit', 'invalid_domain', 'domain_in_use', 'domain_not_verified', 'sso_provider_limit', 'team_limit', 'current_session'])
 
 export class HTTPError extends Error {
   constructor(status, code) { super(code); this.status = status; this.code = code }
@@ -37,7 +41,7 @@ function claimsFromToken(token, user) {
   let payload
   try { payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString('utf8')) } catch { throw new HTTPError(401, 'not_authenticated') }
   if (payload.sub !== user.id || typeof payload.session_id !== 'string') throw new HTTPError(401, 'not_authenticated')
-  return { sub: user.id, session_id: payload.session_id }
+  return { sub: user.id, session_id: payload.session_id, ...(payload.client_id ? { client_id: String(payload.client_id) } : {}) }
 }
 
 // authenticate asks GoTrue, on loopback, to verify the bearer token.
@@ -57,7 +61,20 @@ export function goTrueAuthenticator(port = gotrue.port) {
   })
 }
 
-async function inSession(pool, claims, work) {
+// organizationClaims are the claims the custom access token hook adds to a
+// first-party token with AUTH_ORG_CLAIMS on: the session's active
+// organization, read with the current membership (sql/0015), or none.
+export async function organizationClaims(pool, { sub, session_id: session }) {
+  if (!uuid.test(sub ?? '') || !uuid.test(session ?? '')) return {}
+  const { rows: [org] } = await pool.query(`SELECT o.id, o.slug, m.role, r.permissions FROM gregale_auth.session_organizations s
+      JOIN gregale_auth.organizations o ON o.id = s.org_id
+      JOIN gregale_auth.memberships m ON m.org_id = s.org_id AND m.user_id = $2
+      JOIN gregale_auth.roles r ON r.name = m.role
+    WHERE s.session_id = $1`, [session, sub])
+  return org ? { org_id: org.id, org_slug: org.slug, org_role: org.role, org_permissions: org.permissions } : {}
+}
+
+export async function inSession(pool, claims, work) {
   const client = await pool.connect()
   try {
     await client.query('BEGIN')
@@ -75,6 +92,8 @@ async function inSession(pool, claims, work) {
 
 function sqlError(err) {
   if (err instanceof HTTPError) return err
+  if (err instanceof ProductEmailError) return new HTTPError(err.status, err.code)
+  if (err instanceof TeamError) return new HTTPError(err.status, err.code)
   if (err instanceof EmailError || err instanceof WorkflowError) return new HTTPError(err.status, err.code)
   const status = codes.get(err?.code)
   if (status) return new HTTPError(status, stableMessages.has(err.message) ? err.message : 'invalid_request')
@@ -96,6 +115,8 @@ function requireString(body, name, max) {
 export async function route(pool, claims, method, path, body, services = {}) {
   const invitations = services.invitations ?? {}
   const parts = path.split('/').filter(Boolean)
+  // A third-party OAuth client may only check its user's permissions.
+  if (claims.client_id && !(path === '/authorize' && method === 'POST')) throw new HTTPError(403, 'oauth_client_token')
   const run = work => inSession(pool, claims, work)
   const rows = async (sql, args) => (await run(c => c.query(sql, args))).rows
   if (parts.length === 1 && parts[0] === 'orgs') {
@@ -107,6 +128,18 @@ export async function route(pool, claims, method, path, body, services = {}) {
   }
   if (parts[0] === 'orgs' && parts.length >= 3) {
     const org = requireUUID(parts[1])
+    if (parts[2] === 'email-recipient') {
+      if (services.emailEnabled !== true) throw new HTTPError(404, 'not_found')
+      return emailConsent(run, method, parts, body)
+    }
+    if (parts[2] === 'team' || parts[2] === 'team-actions') {
+      if (services.teamEnabled !== true) throw new HTTPError(404, 'not_found')
+      return routeTeam({ run, method, parts, body, invitations, query: services.query })
+    }
+    if (parts[2] === 'domains' || parts[2] === 'sso') {
+      if (!services.orgSSO) throw new HTTPError(403, 'org_sso_disabled')
+      return orgSSORoute({ rows, ...services.orgSSO }, org, method, parts.slice(2), body)
+    }
     if (parts[2] === 'members' && parts.length === 3 && method === 'GET') {
       return [200, { members: await rows('SELECT user_id, email, role, created_at FROM gregale_auth.list_members($1)', [org]) }]
     }
@@ -131,7 +164,7 @@ export async function route(pool, claims, method, path, body, services = {}) {
         const created = await run(async c => {
           const { rows: [invitation] } = await c.query('SELECT i.id, i.email, i.role, i.expires_at, o.name AS org_name FROM gregale_auth.invite($1, $2, $3, $4, $5) i JOIN gregale_auth.organizations o ON o.id = i.org_id', args)
           const { org_name: orgName, ...fields } = invitation
-          if (invitations.mailer) await invitations.mailer.send(invitationMessage(fields.email, { external: invitations.external, app: invitations.app, orgName, token }), `invitation-${fields.id}`)
+          if (invitations.mailer) await invitations.mailer.send(invitationMessage(fields.email, { external: invitations.external, app: invitations.app, orgName, token, templates: await loadEmailTemplates(c) }), `invitation-${fields.id}`)
           return fields
         })
         return [201, invitations.mailer ? { ...created, delivered: true } : { ...created, delivered: false, token }]
@@ -141,6 +174,28 @@ export async function route(pool, claims, method, path, body, services = {}) {
       await rows('SELECT gregale_auth.revoke_invitation($1, $2)', [org, requireUUID(parts[3])])
       return [204, null]
     }
+  }
+  // The caller's own sessions (sql/0013); the current one ends through
+  // GoTrue's logout, and all the others through logout?scope=others.
+  if (path === '/sessions' && method === 'GET') {
+    return [200, { sessions: await rows('SELECT id, created_at, last_active_at, user_agent, ip, aal, current FROM gregale_auth.list_sessions()') }]
+  }
+  if (parts[0] === 'sessions' && parts.length === 2 && method === 'DELETE') {
+    await rows('SELECT gregale_auth.end_session($1)', [requireUUID(parts[1])])
+    return [204, null]
+  }
+  // Deleting one's own account, when the app allows it (AUTH_SELF_DELETION).
+  if (path === '/account' && method === 'DELETE') {
+    if (!services.deleteAccount) throw new HTTPError(404, 'not_found')
+    return services.deleteAccount(claims)
+  }
+  // The organization this session acts in, carried in its next tokens
+  // (AUTH_ORG_CLAIMS); null clears it. The client refreshes afterwards.
+  if (path === '/active-organization' && method === 'POST') {
+    if (services.orgClaims !== true) throw new HTTPError(404, 'not_found')
+    const org = body?.org === null ? null : requireUUID(typeof body?.org === 'string' ? body.org : '')
+    const [active] = await rows('SELECT id, slug, role FROM gregale_auth.set_active_organization($1)', [org])
+    return [200, { organization: active ?? null }]
   }
   if (path === '/invitations/accept' && method === 'POST') {
     const [membership] = await rows('SELECT org_id, role FROM gregale_auth.accept_invitation($1)', [hashToken(body?.token)])
@@ -192,23 +247,33 @@ export function readJSON(req, maxBytes) {
   })
 }
 
-export function createAuthzHandler({ pool, authenticate, origins = [], invitations = {}, storage, workflows }) {
+export function createAuthzHandler({ pool, authenticate, origins = [], invitations = {}, storage, workflows, orgSSO, teamEnabled = false, emailEnabled = false, deleteAccount = null, orgClaims = false }) {
   const allowed = new Set(origins)
   return async (req, res, path) => {
     const origin = req.headers.origin
     const headers = { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }
     if (origin && allowed.has(origin)) Object.assign(headers, { 'Access-Control-Allow-Origin': origin, Vary: 'Origin' })
+    if (emailEnabled !== true && emailPath(path)) {
+      res.writeHead(404, headers); return res.end('{"status":404,"code":"not_found"}')
+    }
+    if (teamEnabled !== true && /^\/orgs\/[^/]+\/(?:team|team-actions)(?:\/|$)/.test(path)) {
+      res.writeHead(404, headers); return res.end('{"status":404,"code":"not_found"}')
+    }
     if (req.method === 'OPTIONS') {
       if (!origin || !allowed.has(origin)) { res.writeHead(403, headers); return res.end('{"code":"origin_not_allowed"}') }
       res.writeHead(204, { ...headers, 'Access-Control-Allow-Methods': 'GET,POST,PATCH,DELETE,OPTIONS', 'Access-Control-Allow-Headers': 'Authorization,Content-Type', 'Access-Control-Max-Age': '600' })
       return res.end()
     }
     try {
+      if (emailEnabled && emailPath(path) && path.split('/').filter(Boolean).length === 4) {
+        const [status, payload] = await resolveEmailRecipient(pool, req.method, path, req.headers.authorization)
+        res.writeHead(status, headers); return res.end(JSON.stringify(payload))
+      }
       const token = req.headers.authorization?.match(/^Bearer ([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)$/)?.[1]
       if (!token) throw new HTTPError(401, 'not_authenticated')
       const body = await readJSON(req, limits.authzBodyBytes)
       const claims = await authenticate(token)
-      const [status, payload] = await route(pool, claims, req.method, path, body, { invitations, storage, workflows })
+      const [status, payload] = await route(pool, claims, req.method, path, body, { invitations, storage, workflows, orgSSO, teamEnabled, emailEnabled, deleteAccount, orgClaims, query: new URL(req.url, 'http://auth.local').searchParams })
       res.writeHead(status, headers)
       res.end(payload === null ? undefined : JSON.stringify(payload))
     } catch (err) {

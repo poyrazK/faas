@@ -11,12 +11,7 @@ import (
 	"time"
 )
 
-type standardEgressTestStore interface {
-	Store
-	standardLocalIntentTestStore
-	ApplicationStandardEgressStore
-	ComputeNodeRuntimeIdentityStore
-}
+type standardEgressTestStore = contractTestStore
 
 type standardEgressFixture struct {
 	local    standardLocalIntentFixture
@@ -205,10 +200,7 @@ func TestMemApplicationStandardEgressFreshnessAndCancellation(t *testing.T) {
 	}
 }
 
-func standardEgressExceptionDeadline(t *testing.T, s interface {
-	standardEgressTestStore
-	ApplicationStandardExceptionStore
-}) {
+func standardEgressExceptionDeadline(t *testing.T, s contractTestStore) {
 	t.Helper()
 	ctx := t.Context()
 	f := newStandardEgressFixture(t, s)

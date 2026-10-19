@@ -2,6 +2,7 @@ package authsettings
 
 import (
 	"crypto/ecdh"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
 	"reflect"
@@ -76,6 +77,79 @@ func TestEmailSettings(t *testing.T) {
 	} {
 		if _, _, err := (Change{Email: &bad}).Secrets(); err == nil {
 			t.Errorf("accepted %+v", bad)
+		}
+	}
+}
+
+func TestSMSSettings(t *testing.T) {
+	set, unset, err := Change{SMS: &SMS{Provider: "twilio", Account: "AC123", Sender: "MG456", Secret: "auth-token"}}.Secrets()
+	want := map[string]string{"GOTRUE_EXTERNAL_PHONE_ENABLED": "true", "GOTRUE_SMS_PROVIDER": "twilio", "GOTRUE_SMS_TWILIO_ACCOUNT_SID": "AC123",
+		"GOTRUE_SMS_TWILIO_MESSAGE_SERVICE_SID": "MG456", "GOTRUE_SMS_TWILIO_AUTH_TOKEN": "auth-token"}
+	if err != nil || !reflect.DeepEqual(set, want) {
+		t.Fatalf("twilio: set %v err %v", set, err)
+	}
+	// Switching providers removes every other provider's credentials.
+	for _, stale := range []string{"GOTRUE_SMS_VONAGE_API_SECRET", "GOTRUE_SMS_MESSAGEBIRD_ACCESS_KEY", "GOTRUE_SMS_TWILIO_VERIFY_AUTH_TOKEN", "GOTRUE_SMS_TEXTLOCAL_API_KEY"} {
+		if !strings.Contains(strings.Join(unset, ","), stale) {
+			t.Errorf("%s not removed: %v", stale, unset)
+		}
+	}
+	if strings.Contains(strings.Join(unset, ","), "GOTRUE_SMS_TWILIO_AUTH_TOKEN") {
+		t.Fatalf("the chosen provider's token is removed: %v", unset)
+	}
+	set, _, err = Change{SMS: &SMS{Provider: "messagebird", Sender: "Shop", Secret: "live_key"}}.Secrets()
+	if err != nil || set["GOTRUE_SMS_MESSAGEBIRD_ORIGINATOR"] != "Shop" || set["GOTRUE_SMS_MESSAGEBIRD_ACCESS_KEY"] != "live_key" {
+		t.Fatalf("messagebird: %v %v", set, err)
+	}
+	set, unset, err = Change{SMS: &SMS{}}.Secrets()
+	if err != nil || set["GOTRUE_EXTERNAL_PHONE_ENABLED"] != "false" || !strings.Contains(strings.Join(unset, ","), "GOTRUE_SMS_PROVIDER") || !strings.Contains(strings.Join(unset, ","), "GOTRUE_SMS_TWILIO_AUTH_TOKEN") {
+		t.Fatalf("off: set %v unset %v err %v", set, unset, err)
+	}
+	for _, bad := range []SMS{
+		{Provider: "sinch", Sender: "s", Secret: "x"},
+		{Provider: "twilio", Sender: "MG456", Secret: "token"},
+		{Provider: "vonage", Account: "key", Sender: "Shop Inc", Secret: "secret"},
+		{Provider: "textlocal", Account: "acct", Sender: "SHOP", Secret: "key"},
+		{Provider: "textlocal", Sender: "SHOP"},
+		{Provider: "vonage", Account: "key", Sender: "Shop", Secret: "bad\nsecret"},
+	} {
+		if _, _, err := (Change{SMS: &bad}).Secrets(); err == nil {
+			t.Errorf("accepted %+v", bad)
+		}
+	}
+}
+
+func TestNewSAMLKeyIsWhatGoTrueAccepts(t *testing.T) {
+	value, err := NewSAMLKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	der, err := base64.StdEncoding.DecodeString(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := x509.ParsePKCS1PrivateKey(der)
+	if err != nil || key.E != 65537 || key.N.BitLen() < 2048 {
+		t.Fatalf("SAML key: %v", err)
+	}
+	on := true
+	if set, _, err := (Change{SSO: &on}).Secrets(); err != nil || set["AUTH_SSO"] != "1" {
+		t.Fatalf("SSO on = %v %v", set, err)
+	}
+}
+
+func TestSMSCountries(t *testing.T) {
+	codes := []string{"+44", " 1", "49", "44"}
+	if set, _, err := (Change{SMSCountries: &codes}).Secrets(); err != nil || set["AUTH_SMS_COUNTRIES"] != "44,1,49" {
+		t.Fatalf("countries = %v %v", set, err)
+	}
+	all := []string{}
+	if _, unset, err := (Change{SMSCountries: &all}).Secrets(); err != nil || !reflect.DeepEqual(unset, []string{"AUTH_SMS_COUNTRIES"}) {
+		t.Fatalf("every country = %v %v", unset, err)
+	}
+	for _, bad := range [][]string{{"0"}, {"1234"}, {"uk"}, {""}, make([]string, 51)} {
+		if _, _, err := (Change{SMSCountries: &bad}).Secrets(); err == nil {
+			t.Errorf("accepted %q", bad)
 		}
 	}
 }

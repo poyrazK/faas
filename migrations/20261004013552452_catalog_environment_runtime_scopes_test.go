@@ -22,11 +22,11 @@ func TestMigrationCatalogRuntimeScopesUpgradeAndPopulatedReplay(t *testing.T) {
 	pool := pgtest.Open(t)
 	migrateUpTo(t, ctx, pool, 20261003214107898)
 	store := state.NewPgStore(pool)
-	account, err := store.CreateAccount(ctx, "catalog-runtime-scope@example.test", api.PlanPro)
+	account, err := legacyAccount(ctx, pool, "catalog-runtime-scope@example.test", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
 	}
-	project, err := store.CreateProject(ctx, state.Project{AccountID: account.ID, Slug: "catalog-scopes"})
+	project, err := store.CreateProject(ctx, state.Project{AccountID: account.ID, OrgID: legacyPersonalOrg(t, ctx, pool, account.ID), Slug: "catalog-scopes"})
 	if err != nil {
 		t.Fatal(err)
 	}

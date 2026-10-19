@@ -42,7 +42,8 @@
       "evidence": [
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_consumer_usage_statements_test.go::TestAPIConsumerUsageStatementSnapshotAndFinalize"},
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_consumer_completeness_test.go::TestAPIConsumerUsageCompletenessEndpoint"},
-        {"kind": "test", "locator": "pkg/billing/api_consumer_completeness_test.go::TestCheckAPIConsumerUsageCompleteness"}
+        {"kind": "test", "locator": "pkg/billing/api_consumer_completeness_test.go::TestCheckAPIConsumerUsageCompleteness"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/billing_runs_test.go::TestBillingRunExportsEveryCustomer"}
       ]
     },
     {
@@ -229,7 +230,8 @@
       "evidence": [
         {"kind": "test", "locator": "cmd/e2e/rollback_specific_test.go::TestRollbackSpecific_E2E"},
         {"kind": "test", "locator": "pkg/apid/apidserver/circuit_breaker_drill_test.go::TestCircuitBreakerFaultDrill"},
-        {"kind": "test", "locator": "pkg/sched/invariants_property_test.go::TestProperty_RolloutGrant_AllowsExactlyOneOverlap"}
+        {"kind": "test", "locator": "pkg/sched/invariants_property_test.go::TestProperty_RolloutGrant_AllowsExactlyOneOverlap"},
+        {"kind": "test", "locator": "cmd/e2e/safe_release_drill_metal_test.go::TestSafeReleaseDrillMetal"}
       ]
     },
     {
@@ -274,6 +276,18 @@
         {"kind": "test", "locator": "cmd/e2e/service_mesh_e2e_test.go::TestE2E_ServiceMesh_StampsTargetProtocol"},
         {"kind": "test", "locator": "cmd/e2e/service_mesh_e2e_test.go::TestE2E_ServiceMesh_AccessBoundaries"},
         {"kind": "test", "locator": "cmd/gatewayd-internal/backend_test.go::TestPgRouter_InternalAppIsNotPubliclyRouted"}
+      ]
+    },
+    {
+      "id": "slo-and-synthetic-signal",
+      "name": "SLO budgets and synthetic checks",
+      "category": "observability",
+      "description": "Customer SLO budgets are computed from the recorded hourly attainment, and synthetic checks record every run's outcome, status and latency.",
+      "capabilities": ["custom-slos", "synthetic-checks"],
+      "targets": [{"metric": "ratio", "operator": "gte", "value": 100, "unit": "percent"}],
+      "evidence": [
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_slo_status_test.go::TestGetSLOReportsBudgetFromHourlyRows"},
+        {"kind": "test", "locator": "pkg/synthetics/runner_test.go::TestRunOnceRecordsOutcomes"}
       ]
     },
     {

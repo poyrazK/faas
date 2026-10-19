@@ -361,7 +361,9 @@ type authPublicSettings struct {
 		LeakedPasswordCheck bool     `json:"leaked_password_check"`
 	} `json:"password"`
 	MFA struct {
-		TOTP bool `json:"totp"`
+		TOTP          bool `json:"totp"`
+		Phone         bool `json:"phone"`
+		RecoveryCodes bool `json:"recovery_codes"`
 	} `json:"mfa"`
 	Email struct {
 		Configured bool   `json:"configured"`
@@ -388,7 +390,32 @@ type authPublicSettings struct {
 	Activity struct {
 		RetentionDays *int `json:"retention_days"`
 	} `json:"activity"`
-	Keys struct {
+	Phone struct {
+		Enabled   bool     `json:"enabled"`
+		Provider  string   `json:"provider"`
+		Countries []string `json:"countries"`
+	} `json:"phone"`
+	SSO struct {
+		Enabled     bool   `json:"enabled"`
+		EntityID    string `json:"entity_id"`
+		ACSURL      string `json:"acs_url"`
+		SelfService bool   `json:"self_service"`
+	} `json:"sso"`
+	OAuth struct {
+		Enabled             bool   `json:"enabled"`
+		DynamicRegistration bool   `json:"dynamic_registration"`
+		Issuer              string `json:"issuer"`
+		MetadataURL         string `json:"metadata_url"`
+		DefaultAudience     string `json:"default_audience"`
+	} `json:"oauth"`
+	Anonymous struct {
+		Enabled       bool `json:"enabled"`
+		RetentionDays *int `json:"retention_days"`
+	} `json:"anonymous"`
+	IdentityLinking    bool `json:"identity_linking"`
+	SelfDeletion       bool `json:"self_deletion"`
+	OrganizationClaims bool `json:"organization_claims"`
+	Keys               struct {
 		Signing   string   `json:"signing"`
 		Verifying []string `json:"verifying"`
 	} `json:"keys"`

@@ -27,6 +27,68 @@
     mode: "0644"
   register: realtimed_unit
 
+# Durable listeners (ADR-1736), off unless faas_compute_durable_listeners.
+# The socket units are inert until a service drop-in Wants= them. Nothing
+# here starts a socket: a daemon that bound the address itself unlinks the
+# unix path when it exits, so the handler stops the service and its socket
+# and starts the service again, which brings the socket up first.
+- name: gatewayd_internal_service — install durable listener sockets
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - faas-gatewayd-internal.socket
+    - faas-realtimed.socket
+  register: gatewayd_internal_sockets
+  notify: restart faas-gatewayd-internal listeners
+
+- name: gatewayd_internal_service — create durable listener drop-in directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - /etc/systemd/system/faas-gatewayd-internal.socket.d
+    - /etc/systemd/system/faas-gatewayd-internal.service.d
+    - /etc/systemd/system/faas-realtimed.service.d
+
+- name: gatewayd_internal_service — render the durable listener drop-ins
+  ansible.builtin.template:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop: &compute_listener_files
+    - { src: 50-faas-durable-listener.conf.j2, dest: /etc/systemd/system/faas-gatewayd-internal.service.d/50-faas-durable-listener.conf, socket: faas-gatewayd-internal.socket }
+    - { src: 50-faas-durable-listener.conf.j2, dest: /etc/systemd/system/faas-realtimed.service.d/50-faas-durable-listener.conf, socket: faas-realtimed.socket }
+    - { src: 99-faas-data-listen.conf.j2, dest: /etc/systemd/system/faas-gatewayd-internal.socket.d/99-faas-data-listen.conf, socket: faas-gatewayd-internal.socket }
+  register: gatewayd_internal_listener_dropins
+  when: faas_compute_durable_listeners | bool
+  notify: restart faas-gatewayd-internal listeners
+
+- name: gatewayd_internal_service — remove the durable listener drop-ins when off
+  ansible.builtin.file:
+    path: "{{ item.dest }}"
+    state: absent
+  loop: *compute_listener_files
+  register: gatewayd_internal_listener_dropins_removed
+  when: not (faas_compute_durable_listeners | bool)
+  notify: restart faas-gatewayd-internal listeners
+
+- name: gatewayd_internal_service — enable the durable listener sockets with their drop-ins
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    enabled: "{{ faas_compute_durable_listeners | bool }}"
+  loop:
+    - faas-gatewayd-internal.socket
+    - faas-realtimed.socket
+
 - name: gatewayd_internal_service — create development routing drop-in directory
   ansible.builtin.file:
     path: /etc/systemd/system/faas-gatewayd-internal.service.d
@@ -236,7 +298,10 @@
 - name: gatewayd_internal_service — systemctl daemon-reload (idempotent, after new unit file)  # noqa: no-handler (handlers only fire at play end; later tasks in this role query the unit)
   ansible.builtin.systemd:
     daemon_reload: true
-  when: gatewayd_internal_unit.changed or realtimed_unit.changed
+  when: >-
+    gatewayd_internal_unit.changed or realtimed_unit.changed or gatewayd_internal_sockets.changed
+    or (gatewayd_internal_listener_dropins.changed | default(false))
+    or (gatewayd_internal_listener_dropins_removed.changed | default(false))
 
 - name: gatewayd_internal_service — create systemd drop-in directory
   ansible.builtin.file:

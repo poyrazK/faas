@@ -249,6 +249,16 @@ func RenderSummaryText(w io.Writer, ss state.StageState, status string, terminal
 
 	order := StageOrder()
 	labels := StageLabels()
+	if gate := ss.BuildDependencyGate; gate != nil && gate.Blocker != "" {
+		if _, err := fmt.Fprintf(w, "Build APIs: %s\n", gate.Blocker); err != nil {
+			return err
+		}
+		if gate.Status == "waiting" {
+			if _, err := fmt.Fprintf(w, "Build API deadline: %s\n", gate.DeadlineAt.UTC().Format(time.RFC3339)); err != nil {
+				return err
+			}
+		}
+	}
 	if ss.DependencyGate != nil && ss.DependencyGate.Blocker != "" {
 		if _, err := fmt.Fprintf(w, "Dependencies: %s\n", ss.DependencyGate.Blocker); err != nil {
 			return err
@@ -401,6 +411,9 @@ func RenderSummaryHTML(ss state.StageState, status string, terminalAt time.Time)
 	}
 
 	var rowsHTML strings.Builder
+	if gate := ss.BuildDependencyGate; gate != nil && gate.Blocker != "" {
+		fmt.Fprintf(&rowsHTML, "<p class=\"stage-dependency-note\">Build APIs: %s</p>", template.HTMLEscapeString(gate.Blocker))
+	}
 	if ss.DependencyGate != nil && ss.DependencyGate.Blocker != "" {
 		fmt.Fprintf(&rowsHTML, "<p class=\"stage-dependency-note\">Dependencies: %s</p>", template.HTMLEscapeString(ss.DependencyGate.Blocker))
 	}
@@ -460,7 +473,7 @@ func RenderSummaryHTML(ss state.StageState, status string, terminalAt time.Time)
 			case stageStatusFailed:
 				tail = fmt.Sprintf(" · failed at %s", terminalAt.UTC().Format(time.RFC3339))
 			default:
-				tail = fmt.Sprintf(" · %s at %s", status, terminalAt.UTC().Format(time.RFC3339))
+				tail = fmt.Sprintf(" · %s at %s", htmlEscape(status), terminalAt.UTC().Format(time.RFC3339))
 			}
 		}
 		footerHTML = fmt.Sprintf(`<p class="stage-footer">Total: %s%s</p>`, htmlEscape(totalStr), tail)

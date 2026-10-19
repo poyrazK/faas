@@ -49,6 +49,9 @@ func (m *MemStore) PruneOperationState(_ context.Context, now time.Time, limit i
 	}
 	deleted := int64(0)
 	for id, op := range data.operations {
+		if op.DataRepair != nil && (op.DataRepair.Phase == api.DataRepairReplacing || op.DataRepair.Phase == api.DataRepairResolving) {
+			continue // Keep the exact reservation and history until replacement admission or source outcome resolution.
+		}
 		if !op.EventExpiresAt.After(now) {
 			delete(data.events, id)
 		}

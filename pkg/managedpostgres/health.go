@@ -116,14 +116,22 @@ func (s *Service) withHealth(ctx context.Context, accountID string, databases []
 	policy := s.registry.HealthPolicy()
 	snapshots := map[string]HealthSnapshot{}
 	if store, ok := s.store.(HealthStore); ok && policy.Enabled && len(databases) > 0 {
-		ids := make([]string, len(databases))
-		for i, database := range databases {
-			ids[i] = database.ID
+		groups := make(map[string][]string)
+		for _, database := range databases {
+			namespace := database.AccountID
+			if namespace == "" {
+				namespace = accountID
+			}
+			groups[namespace] = append(groups[namespace], database.ID)
 		}
-		var err error
-		snapshots, err = store.ReadHealthSnapshots(ctx, accountID, ids)
-		if err != nil {
-			return nil, err
+		for namespace, ids := range groups {
+			rows, err := store.ReadHealthSnapshots(ctx, namespace, ids)
+			if err != nil {
+				return nil, err
+			}
+			for id, row := range rows {
+				snapshots[id] = row
+			}
 		}
 	}
 	for i := range databases {

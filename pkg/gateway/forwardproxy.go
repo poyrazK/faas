@@ -137,19 +137,17 @@ var hopByHopHeaders = []string{
 	"Proxy-Authenticate",
 	"Proxy-Authorization",
 	"Te",
+	"Trailer",
 	"Trailers",
 	"Transfer-Encoding",
 	"Upgrade",
 }
 
-// stripHopByHop drops the headers above from h in place. We mutate a
-// shallow copy so the inbound request (already observed by middleware
-// that reads headers) is not surprised by a missing field.
+// stripHopByHop removes fixed hop-by-hop headers and Connection options
+// from a clone, leaving the inbound request's headers intact.
 func stripHopByHop(h http.Header) http.Header {
 	out := h.Clone()
-	for _, k := range hopByHopHeaders {
-		out.Del(k)
-	}
+	stripHopByHopInPlace(out)
 	return out
 }
 
@@ -595,8 +593,17 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 		if init := frame.GetInit(); init != nil && !wroteHeader {
 			recordForwardedFirstByte(r.Context())
 			stampDeploymentSmokeResponse(r.Context(), w.Header())
+			// Connection can nominate headers appearing anywhere in the
+			// frame, so filter the complete block before forwarding fields.
+			responseHeaders := make(http.Header, len(init.GetHeaders()))
 			for _, h := range init.GetHeaders() {
-				forwardedResponseHeader(r.Context(), w.Header(), h.GetName(), h.GetValue())
+				responseHeaders.Add(h.GetName(), h.GetValue())
+			}
+			stripHopByHopInPlace(responseHeaders)
+			for name, values := range responseHeaders {
+				for _, value := range values {
+					forwardedResponseHeader(r.Context(), w.Header(), name, value)
+				}
 			}
 			for _, trailer := range init.GetTrailers() {
 				if name := strings.TrimSpace(trailer.GetName()); name != "" {
@@ -616,6 +623,12 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			// 3/30-second request budget.
 			if init.GetStatus() >= http.StatusOK && init.GetStatus() < http.StatusBadRequest {
 				detachBudget()
+				if isEventStream(w.Header()) {
+					// An EventSource reconnects with Last-Event-ID, so a
+					// gateway restart ends it cleanly below rather than
+					// holding the drain open.
+					drain.EndOnShutdown(ctx, cancel)
+				}
 			}
 			if grpcDuplex {
 				flushSafe(w)
@@ -643,7 +656,7 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 				if trace := wakePhaseTraceFrom(r.Context()); trace != nil {
 					gatewayPhasesMS = trace.gatewayPhasesMS(emitAt)
 				}
-				evs.EmitAsyncOnce(r.Context(), t.WakeID, evts.ProxyFirstByte{
+				evs.EmitAsyncOnceCovering(r.Context(), firstByteOnceKey(r, t.WakeID), t.WakeID, evts.ProxyFirstByte{
 					EmitAt:          emitAt,
 					WakeID:          t.WakeID,
 					AppID:           t.AppID,
@@ -973,6 +986,11 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 				// the 24-hour ceiling, and client cancellation.
 				detachBudget()
 			}
+			if upgraded {
+				// WebSocket clients reconnect; a restart closes the session
+				// now instead of holding the drain for its whole grace.
+				drain.EndOnShutdown(ctx, cancel)
+			}
 			touch()
 			// Mirror fwdStreamOnceWithEvents: emit
 			// wake.proxy_first_byte on the first downstream
@@ -985,7 +1003,7 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 				if trace := wakePhaseTraceFrom(r.Context()); trace != nil {
 					gatewayPhasesMS = trace.gatewayPhasesMS(emitAt)
 				}
-				evs.EmitAsyncOnce(r.Context(), t.WakeID, evts.ProxyFirstByte{
+				evs.EmitAsyncOnceCovering(r.Context(), firstByteOnceKey(r, t.WakeID), t.WakeID, evts.ProxyFirstByte{
 					EmitAt:          emitAt,
 					WakeID:          t.WakeID,
 					AppID:           t.AppID,
@@ -1261,7 +1279,7 @@ func ForwardingRawReverseProxyWithEventsAndDrain(nodes NodeClientLookup, log *sl
 				done = tracker.Begin("upgrade")
 			}
 			defer done()
-			ctx := contextWithProxyStart(r.Context(), time.Now())
+			ctx := drain.WithShutdownNotice(contextWithProxyStart(r.Context(), time.Now()), tracker)
 			cli, closer, ok := nodes.ClientFor(r.Context(), t.NodeID)
 			if !ok {
 				markStaleTarget(r.Context())

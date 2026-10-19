@@ -19,6 +19,9 @@ func validateOperationCancellation(op Operation, accountID, tenantID string, gen
 	if generation < 1 {
 		return ErrInvalidArgument
 	}
+	if op.DataRepair != nil {
+		return ErrConflict
+	}
 	if generation != op.Generation || op.State == api.OperationRequiresReconciliation {
 		return ErrConflict
 	}
@@ -59,7 +62,7 @@ func (m *MemStore) CancelOperation(_ context.Context, accountID, tenantID, opera
 		}
 		m.invocations[inv.ID] = inv
 		if reserved {
-			m.decrementAccountAsyncInflightLocked(inv.AccountID)
+			m.decrementAccountAsyncInflightLocked(invocationAsyncSubject(inv))
 		}
 		op = m.operationData.operations[op.ID]
 	default:
@@ -72,6 +75,9 @@ func (s *PgStore) CancelOperation(ctx context.Context, accountID, tenantID, oper
 	snapshot, err := s.OperationByID(ctx, accountID, tenantID, operationID)
 	if err != nil {
 		return Operation{}, err
+	}
+	if snapshot.DataRepair != nil {
+		return Operation{}, ErrConflict
 	}
 	if snapshot.WorkflowRunID != "" {
 		return s.cancelOperationWorkflow(ctx, snapshot, generation)
@@ -119,7 +125,7 @@ func (s *PgStore) CancelOperation(ctx context.Context, accountID, tenantID, oper
 			return Operation{}, err
 		}
 		if inv.QuotaReserved {
-			if err := decrementAccountAsyncInflightTx(ctx, tx, inv.AccountID); err != nil {
+			if err := decrementAccountAsyncInflightTx(ctx, tx, invocationAsyncSubject(inv)); err != nil {
 				return Operation{}, err
 			}
 		}

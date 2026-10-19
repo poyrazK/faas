@@ -86,10 +86,10 @@ func (s *server) prepareCapturedCloneObjectCredential(ctx context.Context, store
 
 func (s *server) newCapturedCloneObjectCredential(ctx context.Context, op state.ProjectEnvironmentCloneOperation, plan capturedProjectEnvironmentObjectPlan, source state.ProjectEnvironmentCloneObjectCredential, bucket state.ObjectBucket) (state.ProjectEnvironmentCloneObjectCredentialRequest, error) {
 	request := state.ProjectEnvironmentCloneObjectCredentialRequest{AppID: plan.appID, SourceBucketID: plan.source.ID, SourceCredentialID: source.ID}
-	if !s.object.ObjectStorageEnabled() || setSecretRecipient() == nil {
+	if !s.object.ObjectStorageEnabled() || hostSecretRecipient() == nil {
 		return request, objectstorage.ErrUnavailable
 	}
-	recipient := setSecretRecipient()
+	recipient := hostSecretRecipient()
 	accessKey, secretKey, err := api.GenerateObjectS3Credential()
 	if err != nil {
 		return request, fmt.Errorf("generate stage object credential: %w", err)
@@ -105,7 +105,7 @@ func (s *server) newCapturedCloneObjectCredential(ctx context.Context, op state.
 	if source.ManagedAppID == "" {
 		return request, nil
 	}
-	account, err := s.store.AccountByID(ctx, op.AccountID)
+	account, err := state.ProjectResourceAccountByID(ctx, s.store, op.ProjectID)
 	if err != nil {
 		return request, err
 	}

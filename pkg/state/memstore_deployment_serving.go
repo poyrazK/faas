@@ -16,6 +16,10 @@ func (m *MemStore) putDeploymentLocked(id string, d Deployment) {
 		}
 	}
 	prev, existed := m.deployments[id]
+	if !existed {
+		m.capturePublicBuildURLsLocked(id, d)
+	}
+	m.consumeMCPReadinessOverrideLocked(prev, d)
 	if existed && prev.Status == DeploySnapshotting && d.Status == DeployFailed {
 		// Mirrors the deployment_failed_rollback_keeps_target trigger
 		// (migration 20261005013455209): a release re-primed by a rollback

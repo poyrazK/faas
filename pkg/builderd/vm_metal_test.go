@@ -34,6 +34,20 @@ type warmSnapshotFailureClient struct {
 	deleteCalls  int
 }
 
+func TestBuildManifestForRequestIssueSourceMaps(t *testing.T) {
+	cfg := &api.IssueSourceMapBuildConfig{Version: 1, Directory: "/app/dist"}
+	req := VMRequest{BuildID: "build", DeploymentID: "deployment", SourceRoot: "apps/api", Framework: FrameworkNode, SourceSHA256: strings.Repeat("a", 64), IssueSourceMaps: cfg}
+	m, err := buildManifestForRequest(req, 60)
+	if err != nil || m.IssueSourceMaps != cfg || m.SourceSHA256 != req.SourceSHA256 || m.Workdir != "/build/src/apps/api" {
+		t.Fatalf("builder manifest lost the frozen opt-in or source binding: %+v %v", m, err)
+	}
+	req.IssueSourceMaps = nil
+	m, err = buildManifestForRequest(req, 60)
+	if err != nil || m.IssueSourceMaps != nil {
+		t.Fatal("ordinary build acquired map collection", err)
+	}
+}
+
 func (c *warmSnapshotFailureClient) WaitBuilderReady(context.Context, *vmmdpb.WaitBuilderReadyRequest, ...grpc.CallOption) (*vmmdpb.WaitBuilderReadyResponse, error) {
 	if c.readyErr != nil {
 		return nil, c.readyErr

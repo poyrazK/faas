@@ -57,7 +57,7 @@ func TestWorkflowRecoveryEvidenceHistory(t *testing.T) {
 		}
 		poll()
 		if pg, ok := s.(*PgStore); ok {
-			s = NewPgStore(pg.pool)
+			s = NewPgStore(pg.pool.Pool)
 		}
 		options := api.WorkflowRecoveryHistoryOptions{RunID: run.ID, Workflow: run.WorkflowName, PolicyVersion: review.PolicyVersion, Limit: 100}
 		history := s.(WorkflowRecoveryHistoryStore)

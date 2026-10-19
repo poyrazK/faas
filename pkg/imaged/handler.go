@@ -187,7 +187,10 @@ type Handler struct {
 	// OCI pull sites inside aboveBaseLayers + the legacy
 	// PullLayers path, plus imaged_oci_pull_duration_seconds
 	// per-pull op{manifest,config,blob,above_base}.
-	ops *wire.OpsMetrics
+	ops                *wire.OpsMetrics
+	handoffMetrics     *buildImageHandoffMetrics
+	preparationMetrics *imagePreparationProgressMetrics
+	postCaptureMetrics *postCaptureMetrics
 	// audit (issue #470 / PR C / ADR-074) is the imaged-side
 	// audit-log seam used to emit app.warm_snapshot_stale from the
 	// MarkFCSnapshotsStale path. Wired via WithAudit; nil opts
@@ -647,8 +650,29 @@ func (h *Handler) replicateLayer(ctx context.Context, layerKey string) error {
 // PullLayers. Nil-safe (Observe* is no-op on a nil receiver).
 // Mirrors pkg/builderd/builderd.go's WithOpsMetrics (PR #124,
 // ADR-030) and cmd/apid/server.go's WithOpsMetrics (this PR).
+// Wire before Loop.Run; one handler owns handoff diagnostics per registry.
 func (h *Handler) WithOpsMetrics(ops *wire.OpsMetrics) *Handler {
+	if h.ops == ops {
+		return h
+	}
+	if h.handoffMetrics != nil && h.ops != nil && h.ops.Registry() != nil {
+		h.ops.Registry().Unregister(h.handoffMetrics)
+	}
+	if h.preparationMetrics != nil && h.ops != nil && h.ops.Registry() != nil {
+		h.ops.Registry().Unregister(h.preparationMetrics)
+	}
+	if h.postCaptureMetrics != nil && h.ops != nil && h.ops.Registry() != nil {
+		h.ops.Registry().Unregister(h.postCaptureMetrics)
+	}
 	h.ops = ops
+	h.handoffMetrics = nil
+	h.preparationMetrics = nil
+	h.postCaptureMetrics = nil
+	if ops != nil && ops.Registry() != nil {
+		h.handoffMetrics = newBuildImageHandoffMetrics(ops.Registry())
+		h.preparationMetrics = newImagePreparationProgressMetrics(ops.Registry())
+		h.postCaptureMetrics = newPostCaptureMetrics(ops.Registry())
+	}
 	return h
 }
 
@@ -1815,7 +1839,7 @@ func (h *Handler) handleDeploymentLegacy(ctx context.Context, p deploymentChange
 	if err != nil {
 		return err
 	}
-	acct, err := h.store.AccountByID(ctx, app.AccountID)
+	acct, err := state.AppResourceAccount(ctx, h.store, app)
 	if err != nil {
 		return fmt.Errorf("imaged: load account: %w", err)
 	}
@@ -2938,7 +2962,7 @@ func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep sta
 		_ = h.markDeployFailed(ctx, dep.ID, err, "manifest overrides: decode failed")
 		return fmt.Errorf("imaged: apply overrides: %w", err)
 	}
-	manifest = applyAppLifecycle(manifest, app)
+	manifest = applyFunctionConcurrency(applyAppLifecycle(manifest, app), app)
 	manifest, err = state.ApplyDeploymentRuntime(manifest, dep)
 	if err != nil {
 		return fmt.Errorf("imaged: scoped runtime: %w", err)
@@ -3269,7 +3293,12 @@ func (h *Handler) rejectEphemeralSnapshot(ctx context.Context, candidate snapsho
 // handleDeploymentActivation is the common post-readiness deployment gate.
 // snapshot is populated for request/service flows; ready is populated for the
 // non-snapshot worker/job flows. Exactly one input must be present.
-func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snapshotWrittenPayload, ready *deploymentReadyPayload) error {
+func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snapshotWrittenPayload, ready *deploymentReadyPayload) (err error) {
+	input, phase := "snapshot", "evidence"
+	if ready != nil {
+		input = "ready"
+	}
+	defer func() { h.postCaptureMetrics.observeAttempt(ctx, input, phase, err) }()
 	deploymentID := snapshot.DeploymentID
 	if ready != nil {
 		deploymentID = ready.DeploymentID
@@ -3319,59 +3348,65 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 		if ready.ExecutionMode != mode {
 			return fmt.Errorf("imaged: deployment_ready mode mismatch: payload=%q app=%q", ready.ExecutionMode, mode)
 		}
-		switch mode {
-		case api.ExecutionModeWorker:
-			if ready.NoSnapshotReason != "" {
-				return errors.New("imaged: worker deployment_ready must not carry no_snapshot_reason")
+		if ready.NoSnapshotReason == "rehearsal_cold_start" {
+			if err := h.validateColdStartActivation(ctx, app, dep, *ready); err != nil {
+				return err
 			}
-			if ready.InstanceID == "" {
-				return errors.New("imaged: worker deployment_ready missing instance_id")
+		} else {
+			switch mode {
+			case api.ExecutionModeWorker:
+				if ready.NoSnapshotReason != "" {
+					return errors.New("imaged: worker deployment_ready must not carry no_snapshot_reason")
+				}
+				if ready.InstanceID == "" {
+					return errors.New("imaged: worker deployment_ready missing instance_id")
+				}
+				if dep.Status == state.DeployLive {
+					return nil
+				}
+				ins, instanceErr := h.store.InstanceByID(ctx, ready.InstanceID)
+				if instanceErr != nil {
+					return fmt.Errorf("imaged: load ready worker instance: %w", instanceErr)
+				}
+				if ins.AppID != dep.AppID || ins.DeploymentID != dep.ID ||
+					ins.Mode != string(state.InstanceModeWorker) || ins.State != string(state.StateRunning) {
+					return fmt.Errorf("imaged: worker readiness proof does not match a running worker instance")
+				}
+			case api.ExecutionModeJob:
+				if ready.NoSnapshotReason != "" {
+					return errors.New("imaged: job deployment_ready must not carry no_snapshot_reason")
+				}
+				if ready.InstanceID != "" {
+					return errors.New("imaged: job deployment_ready must not carry instance_id")
+				}
+				if dep.Status == state.DeployLive {
+					return nil
+				}
+			case api.ExecutionModeRequest, api.ExecutionModeService:
+				if ready.NoSnapshotReason != "ephemeral_secret" {
+					return fmt.Errorf("imaged: %s deployment_ready requires snapshot activation unless an authorized ephemeral-secret proof is supplied", mode)
+				}
+				if ready.InstanceID == "" {
+					return fmt.Errorf("imaged: %s ephemeral-secret readiness missing instance_id", mode)
+				}
+				if dep.Status == state.DeployLive {
+					return nil
+				}
+				ins, instanceErr := h.store.InstanceByID(ctx, ready.InstanceID)
+				if instanceErr != nil {
+					return fmt.Errorf("imaged: load ready ephemeral-secret instance: %w", instanceErr)
+				}
+				wantMode := state.InstanceModeNormal
+				if mode == api.ExecutionModeService {
+					wantMode = state.InstanceModeService
+				}
+				if ins.AppID != dep.AppID || ins.DeploymentID != dep.ID ||
+					ins.Mode != string(wantMode) || ins.State != string(state.StateStopped) {
+					return fmt.Errorf("imaged: ephemeral-secret readiness proof does not match a stopped %s instance", mode)
+				}
+			default:
+				return fmt.Errorf("imaged: execution mode %q requires snapshot activation unless authorized ephemeral-secret readiness is supplied", mode)
 			}
-			if dep.Status == state.DeployLive {
-				return nil
-			}
-			ins, instanceErr := h.store.InstanceByID(ctx, ready.InstanceID)
-			if instanceErr != nil {
-				return fmt.Errorf("imaged: load ready worker instance: %w", instanceErr)
-			}
-			if ins.AppID != dep.AppID || ins.DeploymentID != dep.ID ||
-				ins.Mode != string(state.InstanceModeWorker) || ins.State != string(state.StateRunning) {
-				return fmt.Errorf("imaged: worker readiness proof does not match a running worker instance")
-			}
-		case api.ExecutionModeJob:
-			if ready.NoSnapshotReason != "" {
-				return errors.New("imaged: job deployment_ready must not carry no_snapshot_reason")
-			}
-			if ready.InstanceID != "" {
-				return errors.New("imaged: job deployment_ready must not carry instance_id")
-			}
-			if dep.Status == state.DeployLive {
-				return nil
-			}
-		case api.ExecutionModeRequest, api.ExecutionModeService:
-			if ready.NoSnapshotReason != "ephemeral_secret" {
-				return fmt.Errorf("imaged: %s deployment_ready requires snapshot activation unless an authorized ephemeral-secret proof is supplied", mode)
-			}
-			if ready.InstanceID == "" {
-				return fmt.Errorf("imaged: %s ephemeral-secret readiness missing instance_id", mode)
-			}
-			if dep.Status == state.DeployLive {
-				return nil
-			}
-			ins, instanceErr := h.store.InstanceByID(ctx, ready.InstanceID)
-			if instanceErr != nil {
-				return fmt.Errorf("imaged: load ready ephemeral-secret instance: %w", instanceErr)
-			}
-			wantMode := state.InstanceModeNormal
-			if mode == api.ExecutionModeService {
-				wantMode = state.InstanceModeService
-			}
-			if ins.AppID != dep.AppID || ins.DeploymentID != dep.ID ||
-				ins.Mode != string(wantMode) || ins.State != string(state.StateStopped) {
-				return fmt.Errorf("imaged: ephemeral-secret readiness proof does not match a stopped %s instance", mode)
-			}
-		default:
-			return fmt.Errorf("imaged: execution mode %q requires snapshot activation unless authorized ephemeral-secret readiness is supplied", mode)
 		}
 	}
 
@@ -3563,9 +3598,11 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 		}
 	}
 
+	phase = "dependency"
 	if stop, gateErr := h.gateProjectDependencyActivation(ctx, dep); stop || gateErr != nil {
 		return gateErr
 	}
+	phase = "verification"
 	// Snapshot candidates are verified through the gateway's authenticated,
 	// deployment-pinned smoke path before the live pointer moves. Keeping the
 	// predecessor live during this phase is the zero-downtime boundary: a slow
@@ -3634,6 +3671,7 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 	// actually-superseded predecessor may be drained. Manual traffic splits and
 	// canaries can keep the predecessor live, so confirm its durable state
 	// instead of inferring it from the attempted promotion.
+	phase = "promotion"
 	checkedRollback := false
 	if rollbacks, ok := h.store.(state.CheckedRollbackStore); ok {
 		operation, err := rollbacks.CheckedRollbackForTarget(ctx, dep.ID)
@@ -3642,6 +3680,20 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 		}
 		checkedRollback = err == nil && operation.Status == "preparing"
 	}
+	// ADR-1446: a plain rollback (manual or first-wake 5xx auto-rollback)
+	// deliberately activates an older revision. Like a checked rollback it
+	// must skip the latest-revision fence and the source-branch freshness
+	// check, which would otherwise supersede every rollback target.
+	if !checkedRollback {
+		if prepared, ok := h.store.(state.RollbackPreparedStore); ok {
+			isPrepared, err := prepared.DeploymentRollbackPrepared(ctx, dep.ID)
+			if err != nil && !errors.Is(err, state.ErrNotFound) {
+				return fmt.Errorf("imaged: read rollback marker: %w", err)
+			}
+			checkedRollback = isPrepared
+		}
+	}
+
 	if h.validatorArtifactCheck != nil {
 		if err := h.validatorArtifactCheck(ctx, dep.AppID, dep.ID); err != nil {
 			return fmt.Errorf("imaged: validator artifact preflight: %w", err)
@@ -3727,6 +3779,7 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 		}
 		return fmt.Errorf("imaged: mark live: %w", promoteErr)
 	}
+	phase = "finalize"
 	h.notifyDeploymentRoute(ctx, dep.AppID, dep.ID)
 	if previousLiveID != "" {
 		previous, previousErr := h.store.DeploymentByID(ctx, previousLiveID)
@@ -3960,7 +4013,7 @@ func (h *Handler) handleSnapshotBootLegacy(ctx context.Context, p snapshotBootPa
 	if err != nil {
 		return err
 	}
-	acct, err := h.store.AccountByID(ctx, app.AccountID)
+	acct, err := state.AppResourceAccount(ctx, h.store, app)
 	if err != nil {
 		return fmt.Errorf("imaged: load account: %w", err)
 	}
@@ -4165,8 +4218,8 @@ func (h *Handler) transitionWithStage(ctx context.Context, depID string, from, t
 }
 
 // markDeployFailed transitions a deployment to `failed` with the given
-// RFC 7807 code (or "" if the upstream error didn't map to a sentinel)
-// and a free-text message. The code column carries the stable signal;
+// RFC 7807 code (deploy_failed if the upstream error didn't map to a
+// sentinel, as schedd's prime failure does; H10-107) and a free-text message. The code column carries the stable signal;
 // the message preserves the upstream string for debugging. Returns
 // the mark error so the caller can choose to log-and-continue or
 // bubble it up; in practice callers ignore the mark error (the
@@ -4191,6 +4244,9 @@ func (h *Handler) markDeployFailed(ctx context.Context, depID string, err error,
 	}
 	if errors.Is(err, errImageAbuseDetected) {
 		code = api.CodeImageAbuseDetected
+	}
+	if code == "" {
+		code = api.CodeDeployFailed
 	}
 	detail := err.Error()
 	if prefix != "" {

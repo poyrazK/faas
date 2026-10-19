@@ -18,11 +18,30 @@ func appHealthFresh(out api.AppHealthResponse, now time.Time) bool {
 	return err == nil && out.ValidForSeconds > 0 && age >= 0 && age.Seconds() < float64(out.ValidForSeconds)
 }
 
-func appHealthCheckPassed(out api.AppHealthResponse, now time.Time) bool {
-	return out.Status == "healthy" && out.Scope == "default" && appHealthFresh(out, now)
+func appHealthCheckPassed(out api.AppHealthResponse, environment string, now time.Time) bool {
+	return out.Status == "healthy" && out.Scope == appHealthScope(environment) && appHealthFresh(out, now)
 }
 
-func waitAppHealth(client *api.Client, slug string, timeout, interval time.Duration) int {
+// appHealthScope is the scope an assessment must report: the requested
+// project environment, or the default scope when none was named.
+func appHealthScope(environment string) string {
+	if environment != "" {
+		return environment
+	}
+	return api.DefaultEnvScope
+}
+
+// readAppHealth reads the default scope, or a project environment. A project
+// app's hostname can serve an environment while an older default-scope
+// release stays live, which made the default assessment idle (H10-113).
+func readAppHealth(ctx context.Context, client *api.Client, slug, environment string) (api.AppHealthResponse, error) {
+	if environment != "" {
+		return client.GetAppHealthInEnvironment(ctx, slug, environment)
+	}
+	return client.GetAppHealth(ctx, slug)
+}
+
+func waitAppHealth(client *api.Client, slug, environment string, timeout, interval time.Duration) int {
 	signalCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	ctx, cancel := context.WithTimeout(signalCtx, timeout)
@@ -30,11 +49,11 @@ func waitAppHealth(client *api.Client, slug string, timeout, interval time.Durat
 	var last *api.AppHealthResponse
 	previous := ""
 	if !jsonOutput {
-		_, _ = fmt.Fprintln(osStderr, "Waiting for a fresh healthy default-scope assessment from recorded evidence; this does not wake or restart the app.")
+		_, _ = fmt.Fprintf(osStderr, "Waiting for a fresh healthy %s-scope assessment from recorded evidence; this does not wake or restart the app.\n", appHealthScope(environment))
 	}
 	for ctx.Err() == nil {
 		readCtx, readCancel := context.WithTimeout(ctx, 30*time.Second)
-		out, err := client.GetAppHealth(readCtx, slug)
+		out, err := readAppHealth(readCtx, client, slug, environment)
 		readCancel()
 		if ctx.Err() != nil {
 			break
@@ -47,7 +66,7 @@ func waitAppHealth(client *api.Client, slug string, timeout, interval time.Durat
 		} else {
 			last = &out
 			fresh := appHealthFresh(out, time.Now())
-			if appHealthCheckPassed(out, time.Now()) {
+			if appHealthCheckPassed(out, environment, time.Now()) {
 				return renderAppHealth(slug, out)
 			}
 			progress = fmt.Sprintf("Health: %s (%s); scope=%s; fresh=%t — %s", compactInspectFailureText(out.Status), compactInspectFailureText(out.Phase), compactInspectFailureText(out.Scope), fresh, compactInspectFailureText(out.Summary))
@@ -73,7 +92,7 @@ func waitAppHealth(client *api.Client, slug string, timeout, interval time.Durat
 			return code
 		}
 	}
-	message := "Health wait timed out without a fresh healthy default-scope assessment; any assessment shown is the last observation and may be stale."
+	message := fmt.Sprintf("Health wait timed out without a fresh healthy %s-scope assessment; any assessment shown is the last observation and may be stale.", appHealthScope(environment))
 	if jsonOutput {
 		_ = writeJSONProblemWithExit(os.Stderr, api.Problem{Type: docsSiteURL + "/errors/invalid-request", Title: "Health wait timed out", Status: 408, Detail: message, DocsURL: cliDocsURL}, 124)
 	} else {

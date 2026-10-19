@@ -57,7 +57,7 @@ func (h *AppTaskAttachHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		}
 		h.attach(w, r, acct, app)
 	})
-	chain := h.Auth.RequireScope(api.ScopesDeployWriteSurface...)(h.Auth.RequireMFA(inner))
+	chain := h.Auth.RequireScope(api.ScopesDeployWriteSurface...)(h.Auth.RequireMFA(wrapControlPlaneAppAccess(h.Auth, inner)))
 	h.Auth.RequireLimited(chain)(w, r)
 }
 
@@ -110,8 +110,17 @@ func writeAttachNotReady(w http.ResponseWriter) {
 func (h *AppTaskAttachHandler) open(w http.ResponseWriter, r *http.Request, nodeID, instance, token string) {
 	rows, cols := attachTerminalSize(r)
 
-	sessionCtx, cancel := context.WithCancel(context.WithoutCancel(r.Context()))
+	requestCtx := r.Context()
+	sessionCtx, cancel := context.WithCancel(context.WithoutCancel(requestCtx))
 	defer cancel()
+	// The upgraded session owns its normal disconnect lifecycle, but must
+	// still terminate when its organization authorization is revoked.
+	stopRevocation := context.AfterFunc(requestCtx, func() {
+		if errors.Is(context.Cause(requestCtx), state.ErrOrgAccessRevoked) {
+			cancel()
+		}
+	})
+	defer stopRevocation()
 	dialCtx, cancelDial := context.WithTimeout(sessionCtx, appTaskAttachDialTimeout)
 	client, closer, ok := h.Nodes.ClientFor(dialCtx, nodeID)
 	cancelDial()

@@ -93,8 +93,9 @@ func GetResumeTraceparent() string { return resumeTraceparent }
 // UUIDMarkerPath so the §14 V6 metal test (and any operator tool) can observe
 // the freshly-rekeyed UUID.
 //
-// hostEntropy may be nil/empty (e.g. on cold boot the hook isn't invoked, but
-// if a future caller does invoke with no entropy, AddEntropy is a no-op).
+// hostEntropy must be non-empty: it is the only input guaranteed to differ
+// between two restores of one snapshot (ADR-022). Cold boot never runs the
+// hook.
 func RunResumeHook(hostTimeUnixNano int64, hostEntropy []byte) error {
 	if err := addHostEntropy(hostEntropy); err != nil {
 		resumeDiag(fmt.Sprintf("resume: addHostEntropy err=%v", err))
@@ -116,8 +117,9 @@ func RunResumeHook(hostTimeUnixNano int64, hostEntropy []byte) error {
 }
 
 // addHostEntropy injects the host-supplied bytes into /dev/urandom via
-// ioctl(RNDADDENTROPY). Empty input is a no-op (still returns nil) — the
-// cold-boot path never calls us, but a future caller might pass nil.
+// ioctl(RNDADDENTROPY). Empty input is an error: without it the pool and the
+// CRNG keep the snapshot's state, and the optional virtio-rng mix below may
+// contribute nothing (device absent, or no bytes ready).
 //
 // A plain write mixes bytes without crediting the pool; RNDADDENTROPY also
 // credits initialization entropy. Neither immediately rekeys an initialized
@@ -125,7 +127,7 @@ func RunResumeHook(hostTimeUnixNano int64, hostEntropy []byte) error {
 // can observe readiness or draw the UUID marker (ADR-022).
 func addHostEntropy(entropy []byte) error {
 	if len(entropy) == 0 {
-		return nil
+		return fmt.Errorf("resume: host entropy missing")
 	}
 	if len(entropy) > 4096 {
 		return fmt.Errorf("resume: host entropy %d bytes exceeds ioctl buffer cap", len(entropy))

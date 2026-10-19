@@ -54,6 +54,9 @@ func operationForInvocationTx(ctx context.Context, tx pgx.Tx, invocationID strin
 }
 
 func operationSaveTx(ctx context.Context, tx pgx.Tx, op Operation, event api.OperationEvent) error {
+	if err := settleProductOperationTx(ctx, tx, op); err != nil {
+		return err
+	}
 	// Native Jobs retain their own image snapshot. Host outcome settlement
 	// must remain possible after the app is tombstoned, while parent purge
 	// waits for the claimed task to close. Admission still pins app code.
@@ -248,7 +251,7 @@ func recoverExpiredOperationExecutionsTx(ctx context.Context, tx pgx.Tx, now tim
 			return 0, err
 		}
 		if reserved {
-			if err := decrementAccountAsyncInflightTx(ctx, tx, inv.AccountID); err != nil {
+			if err := decrementAccountAsyncInflightTx(ctx, tx, invocationAsyncSubject(inv)); err != nil {
 				return 0, err
 			}
 		}

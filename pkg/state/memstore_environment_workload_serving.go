@@ -60,7 +60,7 @@ func (m *MemStore) CompleteEnvironmentGitOpsPullQueueDelivery(ctx context.Contex
 	}
 	acknowledgement := &EnvironmentWorkloadQueueServingAcknowledgement{Mode: "pull", DeploymentID: deploymentID,
 		InvocationID: invocationID}
-	return m.completeInvocationWithQueueServingAck(invocationID, attempt, result, acknowledgement)
+	return m.completeInvocationWithQueueServingAck(ctx, invocationID, attempt, result, acknowledgement)
 }
 
 func (m *MemStore) recordEnvironmentGitOpsQueueServingAcknowledgementLocked(
@@ -245,6 +245,14 @@ func (m *MemStore) PrepareEnvironmentGitOpsWorkloadServing(ctx context.Context, 
 	receipt.ReleaseCreatedAt = release.CreatedAt
 	receipt.ExpectedScheduledJobs = scheduledJobs
 	receipt.ScheduledJobAcks = m.environmentWorkloadScheduledJobAcksLocked(graph, release, targets)
+	if !m.environmentWorkloadServingCutoverWeightsMatchLocked(memory.source, routes) && m.rejectUncheckedBindingReleaseGraphLocked(memory.source.ProjectID, memory.source.EnvironmentSlug) != nil {
+		if memory.bindingReleases[release.ID] != graph.ID {
+			return EnvironmentWorkloadServingReceipt{}, false, ErrBindingReleaseRequired
+		}
+		if err := m.checkEnvironmentBindingGraphLocked(memory, graph, release.Members); err != nil {
+			return EnvironmentWorkloadServingReceipt{}, false, err
+		}
+	}
 	// All validations happen before mutation so the memory adapter mirrors the
 	// transaction in PgStore: a cutover cannot leave only part of a graph at
 	// 100% after a rejected sibling.

@@ -147,7 +147,14 @@ func (h HTTPHooks) AuthorizeChannel(ctx context.Context, event Event) (bool, err
 	if err != nil {
 		return false, err
 	}
-	return response.statusCode >= http.StatusOK && response.statusCode < http.StatusMultipleChoices, nil
+	switch {
+	case response.statusCode >= http.StatusOK && response.statusCode < http.StatusMultipleChoices:
+		return true, nil
+	case response.statusCode == http.StatusUnauthorized || response.statusCode == http.StatusForbidden:
+		return false, nil
+	default:
+		return false, fmt.Errorf("realtime: channel authorization returned HTTP %d", response.statusCode)
+	}
 }
 
 func (h HTTPHooks) Message(ctx context.Context, event Event) error {
@@ -511,6 +518,8 @@ type endpointRequest struct {
 	MaxConnections             int               `json:"max_connections,omitempty"`
 	MaxMessageBytes            int64             `json:"max_message_bytes,omitempty"`
 	MaxConnectionAgeSeconds    int64             `json:"max_connection_age_seconds,omitempty"`
+	AccountMaxConnections      int               `json:"account_max_connections,omitempty"`
+	LiveRoutes                 []LiveRoute       `json:"live_routes,omitempty"`
 }
 
 func (r endpointRequest) endpoint() Endpoint {
@@ -536,6 +545,9 @@ func (r endpointRequest) endpoint() Endpoint {
 		MaxConnections:   r.MaxConnections,
 		MaxMessageBytes:  r.MaxMessageBytes,
 		MaxConnectionAge: time.Duration(r.MaxConnectionAgeSeconds) * time.Second,
+		LiveRoutes:       append([]LiveRoute(nil), r.LiveRoutes...),
+
+		AccountMaxConnections: r.AccountMaxConnections,
 	}
 }
 
@@ -710,6 +722,21 @@ func (m *Manager) handleEndpointRoute(w http.ResponseWriter, r *http.Request, pa
 	if len(parts) == 1 && r.Method == http.MethodDelete {
 		m.RemoveEndpoint(parts[0])
 		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if len(parts) == 2 && parts[1] == "occupancy" && r.Method == http.MethodGet && m.cfg.OccupancyPreview {
+		channels := r.URL.Query()["channel"]
+		if len(channels) == 0 || len(channels) > api.RealtimeOccupancyChannelsMax {
+			http.Error(w, "invalid occupancy channels", http.StatusBadRequest)
+			return
+		}
+		for _, channel := range channels {
+			if !validChannel(channel) {
+				http.Error(w, "invalid occupancy channels", http.StatusBadRequest)
+				return
+			}
+		}
+		writeJSON(w, http.StatusOK, m.ChannelOccupancy(parts[0], channels))
 		return
 	}
 	if len(parts) == 2 && parts[1] == "principals:send" && r.Method == http.MethodPost {

@@ -13,9 +13,14 @@ var _ ObjectDeletionStore = (*MemStore)(nil)
 var _ ObjectDeletionActivityStore = (*MemStore)(nil)
 var _ ObjectProtectedLifecycleDeletionStore = (*MemStore)(nil)
 
-func (m *MemStore) HasActiveObjectDeletion(_ context.Context, account, app, bucket string) (bool, error) {
+func (m *MemStore) HasActiveObjectDeletion(ctx context.Context, account, app, bucket string) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 bool
+		return zero0, err
+	}
+
 	b, ok := m.objectBuckets[bucket]
 	if !ok || b.AccountID != account || b.AppID != app {
 		return false, ErrNotFound
@@ -36,13 +41,19 @@ func (m *MemStore) activeDeletionLocked(bucket string) bool {
 	}
 	return false
 }
-func (m *MemStore) BeginObjectDeletion(_ context.Context, j ObjectDeletion, policy api.ObjectStoragePolicy) (ObjectDeletion, bool, error) {
+func (m *MemStore) BeginObjectDeletion(ctx context.Context, j ObjectDeletion, policy api.ObjectStoragePolicy) (ObjectDeletion, bool, error) {
 	if !validDeletionIdentity(j) {
 		return ObjectDeletion{}, false, ErrConflict
 	}
 	j = newDeletionIntent(j)
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 ObjectDeletion
+		var zero1 bool
+		return zero0, zero1, err
+	}
+
 	b, ok := m.objectBuckets[j.BucketID]
 	if !ok || b.AccountID != j.AccountID || b.AppID != j.AppID {
 		return ObjectDeletion{}, false, ErrNotFound
@@ -96,7 +107,7 @@ func (m *MemStore) BeginObjectDeletion(_ context.Context, j ObjectDeletion, poli
 	}
 	if j.Selector == "" && j.ProviderStatus != "" && !nativeGCSDeletionStatus(j.ProviderStatus) {
 		j.ReservedBytes = int64(len(j.Key))
-		if _, _, err := checkObjectAdmission(m.objectUsageLocked(j.AccountID, m.clock()), b.ID, j.ReservedBytes, 0, false, true, policy, m.clock()); err != nil {
+		if _, _, err := checkObjectAdmission(m.objectUsageLocked(m.objectBillingSubjectLocked(m.objectBuckets[j.BucketID]), m.clock()), b.ID, j.ReservedBytes, 0, false, true, policy, m.clock()); err != nil {
 			return ObjectDeletion{}, false, err
 		}
 		u := m.objectUsage[b.ID]
@@ -116,9 +127,14 @@ func (m *MemStore) BeginObjectDeletion(_ context.Context, j ObjectDeletion, poli
 	m.objectDeletions[j.ID] = cloneDeletion(j)
 	return cloneDeletion(j), true, nil
 }
-func (m *MemStore) GetObjectDeletion(_ context.Context, account, bucket, id string) (ObjectDeletion, error) {
+func (m *MemStore) GetObjectDeletion(ctx context.Context, account, bucket, id string) (ObjectDeletion, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 ObjectDeletion
+		return zero0, err
+	}
+
 	j, ok := m.objectDeletions[id]
 	if !ok || j.AccountID != account || j.BucketID != bucket {
 		return ObjectDeletion{}, ErrNotFound
@@ -131,9 +147,14 @@ func (m *MemStore) DispatchObjectDeletion(ctx context.Context, id, token, status
 func (m *MemStore) DispatchObjectProtectedLifecycleDeletion(ctx context.Context, id, token, status string, baseline []string) (ObjectDeletion, error) {
 	return m.dispatchObjectDeletion(ctx, id, token, status, baseline, true)
 }
-func (m *MemStore) dispatchObjectDeletion(_ context.Context, id, token, status string, baseline []string, verified bool) (ObjectDeletion, error) {
+func (m *MemStore) dispatchObjectDeletion(ctx context.Context, id, token, status string, baseline []string, verified bool) (ObjectDeletion, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 ObjectDeletion
+		return zero0, err
+	}
+
 	j := m.objectDeletions[id]
 	if err := m.validateLifecycleDeletionLocked(j); err != nil {
 		return cloneDeletion(j), err
@@ -147,9 +168,14 @@ func (m *MemStore) dispatchObjectDeletion(_ context.Context, id, token, status s
 	}
 	return cloneDeletion(j), err
 }
-func (m *MemStore) FinishObjectDeletion(_ context.Context, result ObjectDeletion) (ObjectDeletion, error) {
+func (m *MemStore) FinishObjectDeletion(ctx context.Context, result ObjectDeletion) (ObjectDeletion, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 ObjectDeletion
+		return zero0, err
+	}
+
 	j := m.objectDeletions[result.ID]
 	if result.ProviderVersionID != "" && !validVersionReferences([]ObjectVersionIdentity{{Key: j.Key, ProviderVersionID: result.ProviderVersionID, DeleteMarker: result.DeleteMarker}}) {
 		return j, ErrConflict
@@ -185,12 +211,17 @@ func (m *MemStore) FinishObjectDeletion(_ context.Context, result ObjectDeletion
 	m.objectDeletions[j.ID] = cloneDeletion(out)
 	return cloneDeletion(out), nil
 }
-func (m *MemStore) DueObjectDeletions(_ context.Context, limit int32) ([]ObjectDeletion, error) {
+func (m *MemStore) DueObjectDeletions(ctx context.Context, limit int32) ([]ObjectDeletion, error) {
 	if limit < 1 || limit > api.ObjectDeletionBatch {
 		return nil, ErrConflict
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 []ObjectDeletion
+		return zero0, err
+	}
+
 	out := []ObjectDeletion{}
 	now := m.clock()
 	for _, j := range m.objectDeletions {
@@ -206,9 +237,14 @@ func (m *MemStore) DueObjectDeletions(_ context.Context, limit int32) ([]ObjectD
 	})
 	return out[:min(len(out), int(limit))], nil
 }
-func (m *MemStore) ClaimObjectDeletion(_ context.Context, id, token string) (ObjectDeletion, error) {
+func (m *MemStore) ClaimObjectDeletion(ctx context.Context, id, token string) (ObjectDeletion, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 ObjectDeletion
+		return zero0, err
+	}
+
 	j, ok := m.objectDeletions[id]
 	now := m.clock()
 	if !ok {
@@ -224,12 +260,16 @@ func (m *MemStore) ClaimObjectDeletion(_ context.Context, id, token string) (Obj
 	m.objectDeletions[id] = cloneDeletion(j)
 	return cloneDeletion(j), nil
 }
-func (m *MemStore) RetryObjectDeletion(_ context.Context, id, token, code string) error {
+func (m *MemStore) RetryObjectDeletion(ctx context.Context, id, token, code string) error {
 	if code != "provider_uncertain" && code != "configuration" {
 		return ErrConflict
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return err
+	}
+
 	j := m.objectDeletions[id]
 	now := m.clock()
 	if !validDeletionLease(j, token, now) {

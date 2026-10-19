@@ -64,10 +64,10 @@ const defaultAppWebhookDeliveryFormat = "json"
 // alert-rule default (empty failure_source).
 func defaultAppWebhookEventFilter() []string { return []string{} }
 
-// validateWebhookEventFilter rejects out-of-vocabulary entries
-// before persist. Returns an ErrAppWebhookInvalid problem on
-// failure.
-func validateWebhookEventFilter(events []string) *api.Problem {
+// validateWebhookEventFilter rejects entries outside vocabulary
+// (s.appWebhookEvents) before persist. Returns an
+// ErrAppWebhookInvalid problem on failure.
+func validateWebhookEventFilter(events, vocabulary []string) *api.Problem {
 	if len(events) == 0 {
 		return nil
 	}
@@ -75,14 +75,14 @@ func validateWebhookEventFilter(events []string) *api.Problem {
 		return api.ErrAppWebhookInvalid(fmt.Sprintf("event_filter has %d entries; max %d",
 			len(events), api.AppWebhookEventFilterLenMax))
 	}
-	allowed := make(map[string]struct{}, len(api.AllowedAppWebhookEvents))
-	for _, e := range api.AllowedAppWebhookEvents {
+	allowed := make(map[string]struct{}, len(vocabulary))
+	for _, e := range vocabulary {
 		allowed[e] = struct{}{}
 	}
 	for _, e := range events {
 		if _, ok := allowed[e]; !ok {
 			return api.ErrAppWebhookInvalid(fmt.Sprintf("event %q is not in the closed vocabulary; allowed: %s",
-				e, strings.Join(api.AllowedAppWebhookEvents, ", ")))
+				e, strings.Join(vocabulary, ", ")))
 		}
 	}
 	return nil
@@ -114,6 +114,61 @@ func validateWebhookDeliveryFormat(format string) *api.Problem {
 	}
 	return api.ErrAppWebhookInvalid(fmt.Sprintf("delivery_format %q is not in the closed vocabulary; allowed: %s",
 		format, strings.Join(api.AllowedAppWebhookDeliveryFormats, ", ")))
+}
+
+// validateAppWebhookDeliveryFormat accepts the shared formats plus datadog,
+// which only app webhooks support (ADR-752).
+func validateAppWebhookDeliveryFormat(format string) *api.Problem {
+	if format == api.AppWebhookDeliveryFormatDatadog {
+		return nil
+	}
+	return validateWebhookDeliveryFormat(format)
+}
+
+// validateDatadogAppWebhook enforces ADR-752 on a webhook's effective state:
+// a datadog webhook sends its secret as a Datadog API key, so it may only
+// target a supported Events API endpoint, must carry a non-empty key, and may
+// only subscribe to the deployment and rollout events Datadog events model.
+// secret is nil when the request keeps the stored secret; requireSecret is
+// set on create and when an update switches a webhook to datadog, whose old
+// secret is an HMAC key rather than a Datadog API key.
+func validateDatadogAppWebhook(format, target string, events []string, secret *string, requireSecret bool) *api.Problem {
+	if format != api.AppWebhookDeliveryFormatDatadog {
+		return nil
+	}
+	if !api.IsDatadogEventsURL(target) {
+		return api.ErrAppWebhookInvalid(fmt.Sprintf("a datadog webhook must target a Datadog Events API endpoint for one of the sites %s", strings.Join(api.DatadogSiteNames(), ", ")))
+	}
+	if (secret == nil && requireSecret) || (secret != nil && strings.TrimSpace(*secret) == "") {
+		return api.ErrAppWebhookInvalid("a datadog webhook requires webhook_secret set to the Datadog API key")
+	}
+	allowed := make(map[string]bool, len(api.DatadogWebhookEvents))
+	for _, e := range api.DatadogWebhookEvents {
+		allowed[e] = true
+	}
+	for _, e := range events {
+		if !allowed[e] {
+			return api.ErrAppWebhookInvalid(fmt.Sprintf("a datadog webhook can only subscribe to %s", strings.Join(api.DatadogWebhookEvents, ", ")))
+		}
+	}
+	return nil
+}
+
+// validateUpdatedDatadogAppWebhook applies validateDatadogAppWebhook to the
+// webhook as it will be after the patch.
+func validateUpdatedDatadogAppWebhook(existing state.AppWebhook, params state.UpdateAppWebhookParams, secret *string) *api.Problem {
+	format, target, events := string(existing.DeliveryFormat), existing.TargetURL, existing.EventFilter
+	if params.DeliveryFormat != nil {
+		format = string(*params.DeliveryFormat)
+	}
+	if params.TargetURL != nil {
+		target = *params.TargetURL
+	}
+	if params.EventFilter != nil {
+		events = *params.EventFilter
+	}
+	switching := string(existing.DeliveryFormat) != api.AppWebhookDeliveryFormatDatadog
+	return validateDatadogAppWebhook(format, target, events, secret, switching)
 }
 
 // validateWebhookURL is the body-side length / scheme check. The
@@ -220,7 +275,7 @@ func (s *server) createAppWebhook(w http.ResponseWriter, r *http.Request, acct s
 		api.WriteProblem(w, prob)
 		return
 	}
-	if prob := validateWebhookEventFilter(req.EventFilter); prob != nil {
+	if prob := validateWebhookEventFilter(req.EventFilter, s.appWebhookEvents()); prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
@@ -229,16 +284,24 @@ func (s *server) createAppWebhook(w http.ResponseWriter, r *http.Request, acct s
 		return
 	}
 	if req.DeliveryFormat != "" {
-		if prob := validateWebhookDeliveryFormat(req.DeliveryFormat); prob != nil {
+		if prob := validateAppWebhookDeliveryFormat(req.DeliveryFormat); prob != nil {
 			api.WriteProblem(w, prob)
 			return
 		}
+	}
+	if prob := validateDatadogAppWebhook(req.DeliveryFormat, req.TargetURL, req.EventFilter, &req.WebhookSecret, true); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	if req.DeliveryFormat == api.AppWebhookDeliveryFormatDatadog && len(req.EventFilter) == 0 {
+		// "Every event" would include events Datadog does not model.
+		req.EventFilter = append([]string(nil), api.DatadogWebhookEvents...)
 	}
 	if prob := resolveAndCheckEgress(r.Context(), req.TargetURL); prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
-	recipient := setSecretRecipient()
+	recipient := hostSecretRecipient()
 	if recipient == nil {
 		api.WriteProblem(w, api.ErrCapacity("host age recipient not loaded — refusing to seal webhook secret"))
 		return
@@ -462,7 +525,7 @@ func (s *server) updateAppWebhook(w http.ResponseWriter, r *http.Request, acct s
 		params.TargetURL = req.TargetURL
 	}
 	if req.EventFilter != nil {
-		if prob := validateWebhookEventFilter(*req.EventFilter); prob != nil {
+		if prob := validateWebhookEventFilter(*req.EventFilter, s.appWebhookEvents()); prob != nil {
 			api.WriteProblem(w, prob)
 			return
 		}
@@ -476,7 +539,7 @@ func (s *server) updateAppWebhook(w http.ResponseWriter, r *http.Request, acct s
 		params.RetryPolicy = (*state.AppWebhookRetryPolicy)(req.RetryPolicy)
 	}
 	if req.DeliveryFormat != nil {
-		if prob := validateWebhookDeliveryFormat(*req.DeliveryFormat); prob != nil {
+		if prob := validateAppWebhookDeliveryFormat(*req.DeliveryFormat); prob != nil {
 			api.WriteProblem(w, prob)
 			return
 		}
@@ -485,12 +548,16 @@ func (s *server) updateAppWebhook(w http.ResponseWriter, r *http.Request, acct s
 	if req.Enabled != nil {
 		params.Enabled = req.Enabled
 	}
+	if prob := validateUpdatedDatadogAppWebhook(existing, params, req.WebhookSecret); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	if req.WebhookSecret != nil {
 		if prob := validateWebhookSecret(*req.WebhookSecret); prob != nil {
 			api.WriteProblem(w, prob)
 			return
 		}
-		recipient := setSecretRecipient()
+		recipient := hostSecretRecipient()
 		if recipient == nil {
 			api.WriteProblem(w, api.ErrCapacity("host age recipient not loaded — refusing to seal webhook secret"))
 			return
@@ -596,7 +663,7 @@ func (s *server) rotateAppWebhookSecret(w http.ResponseWriter, r *http.Request, 
 		api.WriteProblem(w, prob)
 		return
 	}
-	recipient := setSecretRecipient()
+	recipient := hostSecretRecipient()
 	if recipient == nil {
 		api.WriteProblem(w, api.ErrCapacity("host age recipient not loaded — refusing to seal webhook secret"))
 		return

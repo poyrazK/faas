@@ -1,7 +1,7 @@
 # Application Auth
 
 This template runs a pinned GoTrue (Supabase Auth) v2.197.0 server for your
-application's own users ([ADR-1190](https://gregale.dev/docs/application-auth)).
+application's own users (ADR-1190).
 It is not your Gregale account login. Create and configure it with
 `gregale auth create NAME --database DATABASE --site-url URL`.
 
@@ -16,7 +16,12 @@ Users live in the `auth` schema of your own database. The `auth` binding acts
 as the owner of only the `auth` and `gregale_auth` schemas; it cannot read or
 change your other tables. GoTrue migrations run in the release task, never at
 serving startup. The image verifies every pinned upstream migration byte for
-byte and replaces one file whose grants assumed a role named `postgres`.
+byte. The release runner applies the verified files directly, with an overlay
+for the file whose grants assumed a role named `postgres`. GoTrue's stock
+`migrate` command uses embedded SQL and does not read that overlay; the template
+does not invoke it. Existing versions stay in `auth.schema_migrations`, and
+each migration/version record commits together. Raw files, manifest and overlay
+remain in the image for release-time verification.
 
 Organizations, memberships, roles and invitations live in the `gregale_auth`
 schema. The `/authz/v1` API manages them and answers `authorize` checks;
@@ -25,11 +30,28 @@ schema. The `/authz/v1` API manages them and answers `authorize` checks;
 release task applies `sql/` after GoTrue's migrations, then the declarative
 `AUTH_AUTHZ` roles and policies.
 
+The internal Product Control team API requires
+`AUTH_PRODUCT_CONTROL_TEAM_ENABLED=1`; it is off by default. After applying
+`sql/0010_reviewed_team_actions.sql` through the release task, it provides
+`GET /authz/v1/orgs/{org}/team` and reviewed `/team-actions` create/read/history
+routes. They require a live session with `org:read` and `members:manage`.
+Membership changes and their retry/audit receipts commit in the same transaction.
+Invitations reuse the existing hosted acceptance page and email provider. Manual
+invitation links are returned once, never retained in receipts or returned by
+retries. Product Control's separate apid flag and opt-in product permission are
+also required for its portal. The existing Auth APIs keep their own permissions.
+
 `POST /authz/v1/storage/sign` signs 60-second URLs for buckets bound to this
 app (`GREGALE_S3_<NAME>_*`); `POST /realtime/authorize-channel` serves managed
 realtime endpoints created with `gregale realtime create APP --auth`; and
 `POST /authz/v1/workflows/{name}/start` publishes an `auth.workflow.start`
 event with the `events:publish` key from `gregale auth create --workflows`.
+
+Realtime callbacks must include the verified token's UUID `session_id` and user
+ID. The callback scopes `gregale_auth.authorize` to that exact session, so a
+signed-out device cannot borrow another device's session. Deploy a daemon with
+the verified session handoff before updating an existing Auth app, then reconnect
+clients. No SQL migration is needed for this change.
 
 The create command seals these values: `AUTH_EXTERNAL_URL`, `AUTH_SITE_URL`,
 `AUTH_REDIRECT_URLS`, `AUTH_AUTOCONFIRM`, `AUTH_DISABLE_SIGNUP`, `AUTH_AUTHZ`,
@@ -50,3 +72,29 @@ Email goes through GoTrue's send-email hook to a loopback-only listener in the
 front, which delivers through Resend or Postmark over HTTPS (`AUTH_EMAIL_*`);
 tenant egress blocks SMTP. Hosted pages are served under `/ui`. The front drops
 GoTrue's info-level logs and redacts email addresses from the rest.
+
+With `AUTH_OAUTH_SERVER=1` (`gregale auth config NAME --oauth-server on`) GoTrue
+is also an OAuth 2.1 authorization server for third-party apps and MCP
+clients: issuer `<host>/auth/v1`, metadata at
+`/.well-known/oauth-authorization-server/auth/v1`, consent at `/ui/consent`.
+`AUTH_OAUTH_REGISTRATION=1` lets clients register themselves; owners manage
+clients with `gregale auth oauth-clients`. A client's access token carries
+`client_id`, `scope` and, as its audience, the RFC 8707 resource it asked for
+(or `oauth-client`), so verifiers of `aud=authenticated` refuse it. On this
+host it reaches only `/auth/v1/oauth/userinfo`, `POST /auth/v1/logout?scope=local`
+and `POST /authz/v1/authorize`.
+
+`gregale auth config NAME --anonymous on` lets people start without an
+account (`signInAnonymously`); their tokens carry `is_anonymous`, they cannot
+create organizations, and `--anonymous-retention DAYS` deletes those idle
+that long (`AUTH_ANONYMOUS_RETENTION_DAYS`). `--identity-linking on`
+(`AUTH_IDENTITY_LINKING`) lets users link a provider account, which also
+makes an anonymous user permanent, and unlink sign-in methods.
+
+Run the portable tests with `npm ci` and `npm test`. To include the reviewed
+team transaction tests, set `GREGALE_AUTH_TEAM_TEST_DATABASE_URL` to a disposable
+local database named `product_control_team_auth_<suffix>`. That test resets its
+Auth schemas and applies the Gregale migrations twice. It supplies a minimal
+GoTrue user/session schema for SQL contract tests; actual GoTrue session,
+configured-provider email and hosted acceptance qualification still require the
+live Product Control pilot.

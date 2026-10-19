@@ -1,0 +1,79 @@
+# ADR-1344 §8: converge the warm standby, an asynchronous streaming replica
+# of the control plane's PostgreSQL on a host outside the fleet.
+#
+# The manifest's postgresql.standby renders the postgres_standby inventory
+# group and tells the primary which address to admit. Converge the control
+# plane first (make bootstrap-control-plane), so its replicator role, slot and
+# pg_hba line exist, then run this playbook (make bootstrap-postgres-standby).
+#
+# The standby is never in the control_plane group: the singleton leases stay
+# off and it serves nothing until an operator promotes it
+# (docs/runbooks/FaasPostgresStandby.md).
+
+# The standby connects to the address the primary's discovery publishes, the
+# same private transport address every fleet host uses.
+- name: Discover private transport addresses of the primary and the standby
+  hosts: control_plane:postgres_standby
+  gather_facts: false
+  become: false
+  pre_tasks:
+    - name: Gather facts for the primary and the standby
+      ansible.builtin.setup:
+  tasks:
+    - name: Require a usable private transport address
+      ansible.builtin.assert:
+        that:
+          - (faas_private_address | default(ansible_facts.default_ipv4.address, true) | default('')) | length > 0
+        fail_msg: >-
+          No private transport address was discovered for {{ inventory_hostname }}.
+          Set faas_private_address in the provider inventory or ensure the
+          host has a default IPv4 address.
+
+    - name: Publish private transport address to later plays
+      ansible.builtin.set_fact:
+        faas_private_dns_address: "{{ faas_private_address | default(ansible_facts.default_ipv4.address, true) }}"
+
+- name: Converge the warm-standby PostgreSQL replica
+  hosts: postgres_standby
+  gather_facts: false
+  become: true
+  serial: 1
+  max_fail_percentage: 0
+
+  roles:
+    # ADR-143: the same OS posture as every fleet host; the standby holds a
+    # full copy of the database.
+    - role: host_hardening
+    - role: node_exporter
+    # Installs and configures PostgreSQL as on the control plane, but skips
+    # every task that writes to the database (faas_postgres_standby_mode).
+    - role: postgres
+    - role: postgres_standby
+    # Stages the primary's control-plane files for a takeover; rerun after
+    # rotating any of them (docs/runbooks/ControlPlaneFailover.md).
+    - role: control_plane_standby
+
+# The slowest parts of a control-plane bootstrap, done ahead of time so a
+# takeover does not wait for them: building the Firecracker guest kernel from
+# source (in /usr/src, so a later storage mount over /srv does not undo it)
+# and fetching the pinned Firecracker and supply-chain scanner binaries and
+# the scanner database. Both roles only download,
+# verify and build. They start no service, read no /etc/faas file and write
+# nothing to the database, so they are safe beside a replica; the takeover's
+# bootstrap then finds their output current and skips it. Roles installed
+# through apt (Caddy, Grafana, PgBouncer, ...) are left out on purpose: the
+# packages start their services on install.
+- name: Pre-install the control plane's slow software on the standby
+  hosts: postgres_standby
+  gather_facts: false
+  become: true
+  serial: 1
+  max_fail_percentage: 0
+  vars:
+    # What the host becomes at a takeover; selects the control plane's
+    # kernel path (built from the pinned source, as on the control plane).
+    faas_box_role: control-plane
+
+  roles:
+    - role: firecracker
+    - role: supply_chain_scanners

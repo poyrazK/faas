@@ -1,0 +1,113 @@
+---
+# control_plane_standby — install the staged control-plane files on the
+# promoted standby (ADR-1344 §8, docs/runbooks/ControlPlaneFailover.md).
+# Run after postgres_promote.yml and before the first bootstrap of this host
+# as the control plane: bootstrap would otherwise generate new apid HMAC
+# keys, and a new CA would mean re-issuing every node's certificates.
+
+- name: control_plane_standby — refuse a takeover before the database is promoted
+  ansible.builtin.command:
+    argv: [psql, -X, -A, -t, -c, "SELECT pg_is_in_recovery()"]
+  become: true
+  become_user: postgres
+  register: control_plane_standby_recovery
+  changed_when: false
+  failed_when: (control_plane_standby_recovery.stdout | trim) != 'f'
+  # A rebuild from the off-host backup installs the files before PostgreSQL
+  # exists (cp_state_restore.yml); a standby takeover always checks.
+  when: control_plane_standby_require_promoted | bool
+
+- name: control_plane_standby — read the staging index
+  ansible.builtin.slurp:
+    src: "{{ faas_standby_stage_dir }}/index.json"
+  register: control_plane_standby_index_raw
+
+- name: control_plane_standby — parse the staging index
+  ansible.builtin.set_fact:
+    control_plane_standby_index: "{{ control_plane_standby_index_raw.content | b64decode | from_json }}"
+
+- name: control_plane_standby — require staged files
+  ansible.builtin.assert:
+    that:
+      - control_plane_standby_index.files | length > 0
+    fail_msg: >-
+      Nothing is staged in {{ faas_standby_stage_dir }}. Converge the standby
+      while the primary is up (make bootstrap-postgres-standby).
+    quiet: true
+
+- name: control_plane_standby — read local groups
+  ansible.builtin.getent:
+    database: group
+
+- name: control_plane_standby — create the groups the files belong to
+  ansible.builtin.group:
+    name: "{{ item }}"
+    system: true
+  loop: "{{ (['faas'] + (control_plane_standby_index.directories + control_plane_standby_index.files) | map(attribute='group') | list) | unique | difference(ansible_facts.getent_group.keys() | list) }}"
+
+- name: control_plane_standby — read local users
+  ansible.builtin.getent:
+    database: passwd
+
+# Same shape as control_plane_service's per-daemon users, which the
+# bootstrap that follows converges.
+- name: control_plane_standby — create the users the files belong to
+  ansible.builtin.user:
+    name: "{{ item }}"
+    group: "{{ 'faas' if item is match('faas') else item }}"
+    shell: /usr/sbin/nologin
+    system: true
+    create_home: false
+  loop: "{{ (control_plane_standby_index.directories + control_plane_standby_index.files) | map(attribute='owner') | unique | difference(ansible_facts.getent_passwd.keys() | list) }}"
+
+- name: control_plane_standby — create directories with the primary's ownership
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: "{{ item.group }}"
+    mode: "{{ item.mode }}"
+  loop: "{{ control_plane_standby_index.directories | sort(attribute='path') }}"
+  loop_control:
+    label: "{{ item.path }}"
+
+# Decoded on the host, written beside the target and renamed into place, so
+# a reader never sees a partial file and the content never enters the log.
+- name: control_plane_standby — install the files with the primary's ownership
+  ansible.builtin.shell: |
+    set -euo pipefail
+    umask 077
+    tmp="$(mktemp "$(dirname {{ item.path | quote }})/.standby-takeover.XXXXXX")"
+    base64 -d < {{ (faas_standby_stage_dir ~ '/files' ~ item.path ~ '.b64') | quote }} > "$tmp"
+    chown {{ (item.owner ~ ':' ~ item.group) | quote }} "$tmp"
+    chmod {{ item.mode | quote }} "$tmp"
+    mv -T "$tmp" {{ item.path | quote }}
+  args:
+    executable: /bin/bash
+  loop: "{{ control_plane_standby_index.files }}"
+  loop_control:
+    label: "{{ item.path }}"
+  changed_when: true
+
+- name: control_plane_standby — read the primary's recorded release
+  ansible.builtin.slurp:
+    src: "{{ faas_standby_stage_dir }}/release.json"
+  register: control_plane_standby_recorded_release
+  failed_when: false
+
+- name: control_plane_standby — next steps
+  ansible.builtin.debug:
+    msg: >-
+      Installed {{ control_plane_standby_index.files | length }} files staged
+      from {{ control_plane_standby_index.primary }}. Make this host the
+      control plane in the manifest, render, and bootstrap it
+      (docs/runbooks/ControlPlaneFailover.md).
+      {% if control_plane_standby_recorded_release.content is defined %}
+      {%- set release = control_plane_standby_recorded_release.content | b64decode | from_json -%}
+      Then deploy the release {{ release.primary }} last ran, commit
+      {{ release.git_sha }} (manifest {{ release.manifest_hash }}){{ ', per-unit versions ' ~ (release.unit_versions | to_json) if release.unit_versions else '' }},
+      with CP_HOST set to this host.
+      {% else %}
+      No release was recorded for {{ control_plane_standby_index.primary }}:
+      deploy the release it ran, from the CD history.
+      {% endif %}

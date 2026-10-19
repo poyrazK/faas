@@ -95,6 +95,7 @@ func (m *Manager) serveSSE(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	var ticketExpiry time.Time
 	var principal string
+	var identity JWTIdentity
 	var err error
 	if usesTicket {
 		claims, e := m.readTicket(ctx, id, token)
@@ -106,7 +107,8 @@ func (m *Manager) serveSSE(w http.ResponseWriter, r *http.Request) {
 			defer ticketCancel()
 		}
 	} else {
-		principal, err = m.cfg.JWTAuthorizer.Authorize(ctx, token, endpoint.ClientAuth)
+		identity, err = m.authorizeIdentity(ctx, token, endpoint.ClientAuth)
+		principal = identity.Principal
 	}
 	if err != nil || strings.TrimSpace(principal) == "" {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
@@ -129,7 +131,7 @@ func (m *Manager) serveSSE(w http.ResponseWriter, r *http.Request) {
 	}
 	auth := &sseAuthorization{m: m, node: node, r: r, authorizer: authorizer, endpointID: id, channel: channel,
 		principal: principal, token: token, connectionID: "sse_" + uuid.NewString(), usesTicket: usesTicket,
-		issued: issued, ticketExpiry: ticketExpiry}
+		issued: issued, ticketExpiry: ticketExpiry, identity: identity}
 	switch auth.check(ctx) {
 	case sseDenied:
 		http.Error(w, "not authorized", http.StatusForbidden)
@@ -138,7 +140,11 @@ func (m *Manager) serveSSE(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "authorization unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	if !m.tryReserve(node) {
+	if refusal, ok := m.tryReserve(node); !ok {
+		if refusal.scope != "" {
+			api.WriteProblem(w, refusal.problem())
+			return
+		}
 		http.Error(w, "connection limit reached", http.StatusTooManyRequests)
 		return
 	}
@@ -162,6 +168,9 @@ func (m *Manager) serveSSE(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "streaming unavailable", http.StatusServiceUnavailable)
 		return
 	}
+	occupancyKey := channelKey{endpointID: id, channel: channel}
+	m.occupancy.add(occupancyKey, 1)
+	defer m.occupancy.add(occupancyKey, -1)
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("X-Accel-Buffering", "no")
 	controller := http.NewResponseController(w)
@@ -181,7 +190,16 @@ func (m *Manager) serveSSE(w http.ResponseWriter, r *http.Request) {
 		if _, e = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, encoded); e != nil {
 			return false
 		}
-		return controller.Flush() == nil
+		if controller.Flush() != nil {
+			return false
+		}
+		if event == "message" {
+			node.usage.delivered(len(encoded))
+		}
+		return true
+	}
+	if !auth.admit(ctx, send) {
+		return
 	}
 	if !send("subscribed", "", map[string]string{
 		"channel":         channel,
@@ -190,6 +208,18 @@ func (m *Manager) serveSSE(w http.ResponseWriter, r *http.Request) {
 		"latest_sequence": strconv.FormatInt(page.LatestSequence, 10),
 	}) {
 		return
+	}
+	// ?occupancy=1 adds live occupancy events (ADR-1324), written while the
+	// stream waits for new history.
+	var occupancy <-chan int
+	if value := r.URL.Query().Get("occupancy"); m.cfg.OccupancyPreview && (value == "1" || value == "true") {
+		watcher := newSSEOccupancyWatcher()
+		if m.watchOccupancy(id, channel, watcher) {
+			defer m.unwatchOccupancy(id, channel, watcher)
+			occupancy = watcher.updates
+		} else if !send("error", "", map[string]string{"channel": channel, "code": "occupancy_limit"}) {
+			return
+		}
 	}
 	for {
 		if !auth.admit(ctx, send) {
@@ -227,21 +257,35 @@ func (m *Manager) serveSSE(w http.ResponseWriter, r *http.Request) {
 			if !send("heartbeat", "", map[string]string{"channel": channel}) {
 				return
 			}
-			timer := time.NewTimer(min(m.cfg.ResumePollInterval, realtimeAccessRefreshInterval))
-			select {
-			case <-ctx.Done():
-				timer.Stop()
+			if !m.waitSSE(ctx, min(m.cfg.ResumePollInterval, realtimeAccessRefreshInterval), channel, occupancy, send) {
 				return
-			case <-m.ctx.Done():
-				timer.Stop()
-				return
-			case <-timer.C:
 			}
 		}
 		page, err = read()
 		if err != nil {
 			// Transient: end the stream so the client reconnects from its cursor.
 			return
+		}
+	}
+}
+
+// waitSSE waits for the next history poll, writing live occupancy counts as
+// they arrive. It reports false when the stream should end.
+func (m *Manager) waitSSE(ctx context.Context, interval time.Duration, channel string, occupancy <-chan int, send func(string, string, any) bool) bool {
+	timer := time.NewTimer(interval)
+	defer timer.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return false
+		case <-m.ctx.Done():
+			return false
+		case <-timer.C:
+			return true
+		case count := <-occupancy:
+			if !send("occupancy", "", map[string]any{"channel": channel, "subscribers": count}) {
+				return false
+			}
 		}
 	}
 }
@@ -257,12 +301,8 @@ const (
 	sseUnavailable
 )
 
-// sseReauthorizeInterval bounds how often an open stream repeats identity
-// verification and the application channel callback. Durable denies and ticket
-// state still refresh every realtimeAccessRefreshInterval, as on WebSockets.
-const sseReauthorizeInterval = 30 * time.Second
-
 type sseAuthorization struct {
+	identity                                            JWTIdentity
 	m                                                   *Manager
 	node                                                *endpointState
 	r                                                   *http.Request
@@ -293,13 +333,20 @@ func (a *sseAuthorization) check(ctx context.Context) sseVerdict {
 	if a.usesTicket {
 		return a.checkTicket(ctx, now)
 	}
-	if now.Sub(a.authorizedAt) >= sseReauthorizeInterval {
+	if !a.identity.ExpiresAt.IsZero() && !now.Before(a.identity.ExpiresAt) {
+		return sseDenied
+	}
+	if now.Sub(a.authorizedAt) >= channelReauthorizeInterval {
 		if verdict := a.authorize(ctx); verdict != sseAllowed {
 			return verdict
 		}
 		a.authorizedAt = now
 	}
-	return a.checkAccess(ctx, now)
+	verdict := a.checkAccess(ctx, now)
+	if verdict == sseAllowed && !a.identity.ExpiresAt.IsZero() && !time.Now().Before(a.identity.ExpiresAt) {
+		return sseDenied
+	}
+	return verdict
 }
 
 func (a *sseAuthorization) checkTicket(ctx context.Context, now time.Time) sseVerdict {
@@ -327,7 +374,14 @@ func (a *sseAuthorization) authorize(ctx context.Context) sseVerdict {
 	}
 	authCtx, stop := context.WithTimeout(ctx, a.m.cfg.CallbackTimeout)
 	defer stop()
-	verified, err := a.m.cfg.JWTAuthorizer.Authorize(authCtx, a.token, current.ClientAuth)
+	identity, err := a.m.authorizeIdentity(authCtx, a.token, current.ClientAuth)
+	if err != nil {
+		return sseUnavailable
+	}
+	if (a.identity.Principal != "" && identity.Principal != a.identity.Principal) || identity.SessionID != a.identity.SessionID {
+		return sseDenied
+	}
+	verified := identity.Principal
 	// Custom hooks may project a principal; revalidate the same projection.
 	if err == nil && current.Authorize != nil {
 		verified, err = current.Authorize(authCtx, a.r)
@@ -348,10 +402,13 @@ func (a *sseAuthorization) authorize(ctx context.Context) sseVerdict {
 	}
 	allow, err := a.authorizer.AuthorizeChannel(authCtx, Event{ID: "evt_" + uuid.NewString(), Type: EventAuthorizeChannel,
 		EndpointID: a.endpointID, AppID: current.AppID, AccountID: current.AccountID, ConnectionID: a.connectionID,
-		Principal: a.principal, Channel: a.channel, Permission: permission, ActivityParentChannel: parent, ActivityScope: scope,
+		Principal: a.principal, SessionID: a.identity.SessionID, Channel: a.channel, Permission: permission, ActivityParentChannel: parent, ActivityScope: scope,
 		At: time.Now().UTC(), CallbackURL: current.CallbackURL, CallbackAuthToken: current.CallbackAuthToken})
-	if err != nil {
+	if err != nil || authCtx.Err() != nil {
 		return sseUnavailable
+	}
+	if !a.identity.ExpiresAt.IsZero() && !time.Now().Before(a.identity.ExpiresAt) {
+		return sseDenied
 	}
 	if !allow {
 		return sseDenied

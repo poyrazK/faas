@@ -1821,7 +1821,7 @@ func createNormalPathLiveDeployment(t *testing.T, f *normalPathFixture, appID, v
 	}
 	publishNormalPathLayer(t, f, dep.ID)
 	instance, err := f.store.CreateInstance(f.ctx, appID, dep.ID, string(state.StateRunning),
-		e2etest.FakeSnapshotRAMMB, f.nodeID, "")
+		f.app.RAMMB, f.nodeID, "")
 	if err != nil {
 		t.Fatalf("create %s instance: %v", version, err)
 	}

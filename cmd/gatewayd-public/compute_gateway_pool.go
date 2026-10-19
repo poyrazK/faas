@@ -80,13 +80,16 @@ type computeGatewayPool struct {
 	refreshing   bool
 	lastStaleLog time.Time
 	next         uint64
+	// readiness skips nodes whose gatewayd-internal stopped answering
+	// (compute_gateway_readiness.go).
+	readiness *computeGatewayReadiness
 }
 
 func newComputeGatewayPool(store computeGatewayNodeLister, log *slog.Logger) gateway.InternalDialer {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &computeGatewayPool{store: store, log: log}
+	return &computeGatewayPool{store: store, log: log, readiness: newComputeGatewayReadiness(0)}
 }
 
 func (p *computeGatewayPool) DialContext(ctx context.Context, _ string) (net.Conn, error) {
@@ -100,8 +103,7 @@ func (p *computeGatewayPool) DialContext(ctx context.Context, _ string) (net.Con
 
 	start := p.nextIndex(len(endpoints))
 	var lastErr error
-	for offset := range endpoints {
-		endpoint := endpoints[(start+offset)%len(endpoints)]
+	for _, endpoint := range p.readiness.order(endpoints, start) {
 		dialCtx, cancel := context.WithTimeout(ctx, computeGatewayDialTimeout)
 		conn, dialErr := (&net.Dialer{}).DialContext(dialCtx, "tcp", endpoint.address)
 		cancel()
@@ -116,6 +118,22 @@ func (p *computeGatewayPool) DialContext(ctx context.Context, _ string) (net.Con
 		lastErr = errors.New("all compute gateway dials failed")
 	}
 	return nil, fmt.Errorf("%w: %w", gateway.ErrNoComputeCapacity, lastErr)
+}
+
+// nodeStatus reports whether name is in the active compute inventory and
+// how many active nodes it holds. known is false while no inventory can be
+// read, so a registry outage never reads as a drain (ADR-1343 §6).
+func (p *computeGatewayPool) nodeStatus(ctx context.Context, name string) (active bool, activeNodes int, known bool) {
+	endpoints, err := p.snapshot(ctx)
+	if err != nil {
+		return false, 0, false
+	}
+	for _, endpoint := range endpoints {
+		if endpoint.name == name {
+			active = true
+		}
+	}
+	return active, len(endpoints), true
 }
 
 func (p *computeGatewayPool) nextIndex(size int) int {

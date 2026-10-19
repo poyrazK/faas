@@ -1,3 +1,5 @@
+//go:build !no_pg
+
 package migrations_test
 
 import (
@@ -29,7 +31,7 @@ import (
 // it (per migration-slot-renumber-at-pr-creation).
 func TestMigrations_00145_SessionsBinding(t *testing.T) {
 	ctx := context.Background()
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 
 	if err := db.MigrateUp(ctx, pool); err != nil {
 		t.Fatalf("db.MigrateUp: %v", err)

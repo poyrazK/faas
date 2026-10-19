@@ -50,6 +50,10 @@ const (
 	secretLeakedPasswords = "GOTRUE_PASSWORD_HIBP_ENABLED"
 	secretTOTPEnroll      = "GOTRUE_MFA_TOTP_ENROLL_ENABLED"
 	secretTOTPVerify      = "GOTRUE_MFA_TOTP_VERIFY_ENABLED"
+	secretPhoneMFAEnroll  = "GOTRUE_MFA_PHONE_ENROLL_ENABLED"
+	secretPhoneMFAVerify  = "GOTRUE_MFA_PHONE_VERIFY_ENABLED"
+	secretRecoveryEnroll  = "GOTRUE_MFA_RECOVERY_CODES_ENROLL_ENABLED"
+	secretRecoveryVerify  = "GOTRUE_MFA_RECOVERY_CODES_VERIFY_ENABLED"
 	secretPasskeys        = "GOTRUE_PASSKEY_ENABLED"
 	secretPasskeyRPID     = "AUTH_PASSKEY_RP_ID"
 	secretUIName          = "AUTH_UI_NAME"
@@ -60,6 +64,11 @@ const (
 	secretCaptchaSecret   = "GOTRUE_SECURITY_CAPTCHA_SECRET"
 	secretCaptchaSiteKey  = "AUTH_CAPTCHA_SITE_KEY"
 	secretAuditRetention  = "AUTH_AUDIT_RETENTION_DAYS"
+	secretAnonymous       = "GOTRUE_EXTERNAL_ANONYMOUS_USERS_ENABLED"
+	secretAnonRetention   = "AUTH_ANONYMOUS_RETENTION_DAYS"
+	secretIdentityLinking = "AUTH_IDENTITY_LINKING"
+	secretSelfDeletion    = "AUTH_SELF_DELETION"
+	secretOrgClaims       = "AUTH_ORG_CLAIMS"
 )
 
 // CaptchaProviders are the CAPTCHA services GoTrue verifies and the hosted
@@ -91,6 +100,11 @@ type Change struct {
 	// MFA turns TOTP enrolment on or off. Verification stays on, so users
 	// who already enrolled an authenticator keep using it.
 	MFA *bool
+	// MFAPhone turns enrolment of SMS codes as a second factor on or off;
+	// RecoveryCodes does the same for one-time recovery codes. As with
+	// TOTP, verification stays on, so enrolled users keep signing in.
+	MFAPhone      *bool
+	RecoveryCodes *bool
 	// Passkeys turns passkey sign-in on or off. PasskeyRPID names a parent
 	// domain the Auth app shares with the site so both use the same
 	// passkeys; empty returns to the Auth app's own host.
@@ -108,6 +122,37 @@ type Change struct {
 	ActivityRetentionDays *int
 	// Email sets the HTTPS email provider, or removes it (empty Provider).
 	Email *Email
+	// SMS turns phone sign-in by text message on with a provider, or off
+	// (empty Provider).
+	SMS *SMS
+	// SSO turns organization single sign-on (SAML) on or off. Turning it on
+	// also needs SAMLKeySecret, which the caller creates once.
+	SSO *bool
+	// SMSCountries lists the country calling codes phone sign-in may text;
+	// empty allows every country.
+	SMSCountries *[]string
+	// OrgSSO lets organizations verify their email domains and connect
+	// their own SAML identity provider; it needs SSO.
+	OrgSSO *bool
+	// OAuthServer turns the OAuth 2.1 authorization server on or off.
+	// OAuthRegistration lets clients register themselves (RFC 7591), as MCP
+	// clients do; it takes effect only while the server is on.
+	OAuthServer       *bool
+	OAuthRegistration *bool
+	// Anonymous lets people start without an account (signInAnonymously);
+	// AnonymousRetentionDays deletes anonymous users idle that long, 0 keeps
+	// them. IdentityLinking lets signed-in users link and unlink sign-in
+	// methods, which is how an anonymous user becomes permanent with a
+	// provider account.
+	Anonymous              *bool
+	AnonymousRetentionDays *int
+	IdentityLinking        *bool
+	// SelfDeletion lets signed-in users delete their own accounts after a
+	// recent sign-in (the hosted account page, deleteAccount()).
+	SelfDeletion *bool
+	// OrgClaims puts each session's active organization, role and
+	// permissions into its access tokens (org_* claims).
+	OrgClaims *bool
 }
 
 // Captcha is a CAPTCHA provider and its keys; the secret stays in the app.
@@ -169,6 +214,12 @@ func (c Change) Secrets() (map[string]string, []string, error) {
 	if c.MFA != nil {
 		set[secretTOTPEnroll], set[secretTOTPVerify] = strconv.FormatBool(*c.MFA), "true"
 	}
+	if c.MFAPhone != nil {
+		set[secretPhoneMFAEnroll], set[secretPhoneMFAVerify] = strconv.FormatBool(*c.MFAPhone), "true"
+	}
+	if c.RecoveryCodes != nil {
+		set[secretRecoveryEnroll], set[secretRecoveryVerify] = strconv.FormatBool(*c.RecoveryCodes), "true"
+	}
 	if c.Passkeys != nil {
 		set[secretPasskeys] = strconv.FormatBool(*c.Passkeys)
 	}
@@ -199,6 +250,60 @@ func (c Change) Secrets() (map[string]string, []string, error) {
 			}
 			maps.Copy(set, email)
 		}
+	}
+	if c.SSO != nil {
+		set["AUTH_SSO"] = flag(*c.SSO)
+	}
+	if c.SMSCountries != nil {
+		value, err := smsCountries(*c.SMSCountries)
+		if err != nil {
+			return nil, nil, err
+		}
+		if value == "" {
+			unset = append(unset, secretSMSCountries)
+		} else {
+			set[secretSMSCountries] = value
+		}
+	}
+	if c.OrgSSO != nil {
+		set["AUTH_ORG_SSO"] = flag(*c.OrgSSO)
+	}
+	if c.OAuthServer != nil {
+		set["AUTH_OAUTH_SERVER"] = flag(*c.OAuthServer)
+	}
+	if c.OAuthRegistration != nil {
+		set["AUTH_OAUTH_REGISTRATION"] = flag(*c.OAuthRegistration)
+	}
+	if c.Anonymous != nil {
+		set[secretAnonymous] = strconv.FormatBool(*c.Anonymous)
+	}
+	if c.IdentityLinking != nil {
+		set[secretIdentityLinking] = flag(*c.IdentityLinking)
+	}
+	if c.SelfDeletion != nil {
+		set[secretSelfDeletion] = flag(*c.SelfDeletion)
+	}
+	if c.OrgClaims != nil {
+		set[secretOrgClaims] = flag(*c.OrgClaims)
+	}
+	if c.AnonymousRetentionDays != nil {
+		days := *c.AnonymousRetentionDays
+		switch {
+		case days == 0:
+			unset = append(unset, secretAnonRetention)
+		case days < 0 || days > api.AuthAnonymousRetentionMaxDays:
+			return nil, nil, fmt.Errorf("anonymous user retention must be 1 to %d days, or 0 to keep them; got %d", api.AuthAnonymousRetentionMaxDays, days)
+		default:
+			set[secretAnonRetention] = strconv.Itoa(days)
+		}
+	}
+	if c.SMS != nil {
+		sms, removed, err := c.SMS.secrets()
+		if err != nil {
+			return nil, nil, err
+		}
+		maps.Copy(set, sms)
+		unset = append(unset, removed...)
 	}
 	if c.PasskeyRPID != nil {
 		switch {

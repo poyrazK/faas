@@ -104,7 +104,7 @@ func TestWorkflowRetryEvidenceNotifications(t *testing.T) {
 					t.Fatalf("repairable reason %+v", first)
 				}
 				if pg, ok := s.(*PgStore); ok {
-					s = NewPgStore(pg.pool)
+					s = NewPgStore(pg.pool.Pool)
 					worker = s.(WorkflowRecoveryAutomaticBlockedStore)
 				}
 				poll(at.Add(time.Minute))

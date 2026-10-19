@@ -141,11 +141,11 @@ class StateCoverageWorkflowTest(unittest.TestCase):
         command = next(line for line in aggregate.splitlines() if "coverage_floor.py --state-only" in line)
         profiles = command.split("--state-only", 1)[1].split()
         self.assertEqual(set(profiles), {
-            *(f"coverage/cover-shard-state-{shard}.out" for shard in range(1, 5)),
+            *(f"coverage/cover-shard-state-{shard}.out" for shard in range(1, 7)),
             "coverage/cover-shard2a.out", "coverage/cover-shard1.out",
             *(f"coverage/cover-shard1-pgclone-{part}.out" for part in range(1, 5)),
         })
-        self.assertEqual(len(profiles), 10)
+        self.assertEqual(len(profiles), 12)
 
 
 if __name__ == "__main__":

@@ -81,14 +81,14 @@ func (h objectHost) SecretRecipient() *age.X25519Recipient {
 	if setSecretRecipient == nil {
 		return nil
 	}
-	return setSecretRecipient()
+	return hostSecretRecipient()
 }
 
 func (h objectHost) HostHMACKey() []byte {
 	if hostHMACKey == nil {
 		return nil
 	}
-	return hostHMACKey()
+	return hostHMACKeyBytes()
 }
 
 // MFAIdentities prefers the rotation set and falls back to the single
