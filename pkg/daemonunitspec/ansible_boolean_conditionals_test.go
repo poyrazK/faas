@@ -35,11 +35,12 @@ func TestAnsibleConditionsAreBoolean(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		var doc any
-		if yaml.Unmarshal(body, &doc) != nil {
-			return nil // templates and non-YAML files under deploy/ansible
-		}
 		rel, _ := filepath.Rel(repoRoot(t), path)
+		var doc any
+		if err := yaml.Unmarshal(body, &doc); err != nil {
+			t.Errorf("%s: parse: %v", rel, err)
+			return nil
+		}
 		for _, cond := range collectWhen(doc) {
 			if stringDefaultCondition.MatchString(cond) && !booleanCondition.MatchString(cond) {
 				bad = append(bad, rel+": when: "+cond)
