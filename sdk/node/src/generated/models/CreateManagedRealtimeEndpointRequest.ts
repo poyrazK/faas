@@ -23,5 +23,9 @@ export type CreateManagedRealtimeEndpointRequest = {
   max_message_bytes?: number;
   max_connection_age_seconds?: number;
   enabled?: boolean;
+  /**
+   * Optional name of the endpoint within its app, unique per app. gregale.yaml declares endpoints by slug.
+   */
+  slug?: string;
 };
 

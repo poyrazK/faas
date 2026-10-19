@@ -111159,6 +111159,10 @@ components:
         enabled: { type: boolean }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+        slug:
+          type: string
+          pattern: '^[a-z0-9][a-z0-9-]{0,47}$'
+          description: "Name of the endpoint within its app, used by gregale.yaml. Absent for endpoints created without one."
 
     CreateManagedRealtimeEndpointRequest:
       type: object
@@ -111194,6 +111198,10 @@ components:
         max_message_bytes: { type: integer, format: int64, minimum: 0, maximum: 1048576, default: 0 }
         max_connection_age_seconds: { type: integer, format: int64, minimum: 0, maximum: 604800, default: 0 }
         enabled: { type: boolean, default: true }
+        slug:
+          type: string
+          pattern: '^[a-z0-9][a-z0-9-]{0,47}$'
+          description: "Optional name of the endpoint within its app, unique per app. gregale.yaml declares endpoints by slug."
 
     UpdateManagedRealtimeEndpointRequest:
       type: object
@@ -111228,6 +111236,10 @@ components:
         max_message_bytes: { type: integer, format: int64, minimum: 0, maximum: 1048576 }
         max_connection_age_seconds: { type: integer, format: int64, minimum: 0, maximum: 604800 }
         enabled: { type: boolean }
+        slug:
+          type: string
+          pattern: '^$|^[a-z0-9][a-z0-9-]{0,47}$'
+          description: "Replace the endpoint's slug. An empty string removes it."
 
     RotateManagedRealtimeAuthRequest:
       type: object

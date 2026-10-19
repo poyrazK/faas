@@ -3,6 +3,7 @@ package api
 import (
 	"fmt"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -60,6 +61,9 @@ type CreateManagedRealtimeEndpointRequest struct {
 	MaxMessageBytes         int64             `json:"max_message_bytes,omitempty"`
 	MaxConnectionAgeSeconds int64             `json:"max_connection_age_seconds,omitempty"`
 	Enabled                 *bool             `json:"enabled,omitempty"`
+	// Slug names the endpoint within its app for gregale.yaml
+	// (ADR-20261019102657); optional.
+	Slug string `json:"slug,omitempty"`
 }
 
 type UpdateManagedRealtimeEndpointRequest struct {
@@ -80,6 +84,8 @@ type UpdateManagedRealtimeEndpointRequest struct {
 	MaxMessageBytes         *int64             `json:"max_message_bytes,omitempty"`
 	MaxConnectionAgeSeconds *int64             `json:"max_connection_age_seconds,omitempty"`
 	Enabled                 *bool              `json:"enabled,omitempty"`
+	// Slug replaces the endpoint's slug; an empty string removes it.
+	Slug *string `json:"slug,omitempty"`
 }
 
 // RotateManagedRealtimeAuthRequest starts a bounded overlap window for a new
@@ -211,6 +217,18 @@ type ManagedRealtimePrincipalReceiptResponse struct {
 
 // ValidateRealtimePrincipal reports whether a request identifies one bounded
 // principal value without silently normalizing the identity.
+// realtimeEndpointSlug matches the migration's CHECK on
+// managed_realtime_endpoints.slug.
+var realtimeEndpointSlug = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,47}$`)
+
+// ValidateRealtimeEndpointSlug checks an endpoint slug (ADR-20261019102657).
+func ValidateRealtimeEndpointSlug(slug string) error {
+	if !realtimeEndpointSlug.MatchString(slug) {
+		return fmt.Errorf("slug must be 1-48 lowercase letters, digits and hyphens, starting with a letter or digit")
+	}
+	return nil
+}
+
 func ValidateRealtimePrincipal(principal string) error {
 	if strings.TrimSpace(principal) == "" || len(principal) > RealtimePrincipalMaxBytes ||
 		strings.ContainsAny(principal, "\x00\r\n") {
@@ -401,6 +419,7 @@ type ManagedRealtimeEndpointResponse struct {
 	Enabled                    bool              `json:"enabled"`
 	CreatedAt                  string            `json:"created_at"`
 	UpdatedAt                  string            `json:"updated_at"`
+	Slug                       string            `json:"slug,omitempty"`
 }
 
 func ManagedRealtimeEndpointResponseFromRow(id, appID, accountID, callbackURL, connectPath, messagePath, disconnectPath, authMode, authIssuer, authJWKSURL string, authAudience, authAlgorithms []string, authRequiredClaims map[string]string, authTokenPreviousExpiresAt *time.Time, allowedOrigins []string, maxConnections int, maxMessageBytes, maxConnectionAgeSeconds int64, enabled bool, createdAt, updatedAt time.Time) ManagedRealtimeEndpointResponse {

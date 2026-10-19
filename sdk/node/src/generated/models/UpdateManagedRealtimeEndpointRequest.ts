@@ -23,5 +23,9 @@ export type UpdateManagedRealtimeEndpointRequest = {
   max_message_bytes?: number;
   max_connection_age_seconds?: number;
   enabled?: boolean;
+  /**
+   * Replace the endpoint's slug. An empty string removes it.
+   */
+  slug?: string;
 };
 

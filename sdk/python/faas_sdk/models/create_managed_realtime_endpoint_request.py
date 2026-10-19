@@ -46,6 +46,8 @@ class CreateManagedRealtimeEndpointRequest:
     max_message_bytes: int | Unset = 0
     max_connection_age_seconds: int | Unset = 0
     enabled: bool | Unset = True
+    slug: str | Unset = UNSET
+    """Optional name of the endpoint within its app, unique per app. gregale.yaml declares endpoints by slug."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -96,6 +98,8 @@ class CreateManagedRealtimeEndpointRequest:
 
         enabled = self.enabled
 
+        slug = self.slug
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -134,6 +138,8 @@ class CreateManagedRealtimeEndpointRequest:
             field_dict["max_connection_age_seconds"] = max_connection_age_seconds
         if enabled is not UNSET:
             field_dict["enabled"] = enabled
+        if slug is not UNSET:
+            field_dict["slug"] = slug
 
         return field_dict
 
@@ -199,6 +205,8 @@ class CreateManagedRealtimeEndpointRequest:
 
         enabled = d.pop("enabled", UNSET)
 
+        slug = d.pop("slug", UNSET)
+
         create_managed_realtime_endpoint_request = cls(
             callback_url=callback_url,
             callback_auth_token=callback_auth_token,
@@ -217,6 +225,7 @@ class CreateManagedRealtimeEndpointRequest:
             max_message_bytes=max_message_bytes,
             max_connection_age_seconds=max_connection_age_seconds,
             enabled=enabled,
+            slug=slug,
         )
 
         create_managed_realtime_endpoint_request.additional_properties = d

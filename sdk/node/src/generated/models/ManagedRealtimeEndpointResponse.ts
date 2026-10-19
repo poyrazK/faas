@@ -34,5 +34,9 @@ export type ManagedRealtimeEndpointResponse = {
   enabled: boolean;
   created_at: string;
   updated_at: string;
+  /**
+   * Name of the endpoint within its app, used by gregale.yaml. Absent for endpoints created without one.
+   */
+  slug?: string;
 };
 

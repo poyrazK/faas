@@ -2019,7 +2019,7 @@ func deployManifestTriggersWithRollback(ctx context.Context, client manifestCron
 	if err != nil {
 		return txn, err
 	}
-	if err := reconcileManifestRealtimeTriggers(ctx, client, slug, m, txn); err != nil {
+	if err := reconcileManifestRealtime(ctx, client, slug, m, txn); err != nil {
 		if rollbackErr := txn.rollback(ctx); rollbackErr != nil {
 			err = errors.Join(err, fmt.Errorf("roll back manifest triggers: %w", rollbackErr))
 		}

@@ -46,6 +46,8 @@ class UpdateManagedRealtimeEndpointRequest:
     max_message_bytes: int | Unset = UNSET
     max_connection_age_seconds: int | Unset = UNSET
     enabled: bool | Unset = UNSET
+    slug: str | Unset = UNSET
+    """Replace the endpoint's slug. An empty string removes it."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -96,6 +98,8 @@ class UpdateManagedRealtimeEndpointRequest:
 
         enabled = self.enabled
 
+        slug = self.slug
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
@@ -133,6 +137,8 @@ class UpdateManagedRealtimeEndpointRequest:
             field_dict["max_connection_age_seconds"] = max_connection_age_seconds
         if enabled is not UNSET:
             field_dict["enabled"] = enabled
+        if slug is not UNSET:
+            field_dict["slug"] = slug
 
         return field_dict
 
@@ -198,6 +204,8 @@ class UpdateManagedRealtimeEndpointRequest:
 
         enabled = d.pop("enabled", UNSET)
 
+        slug = d.pop("slug", UNSET)
+
         update_managed_realtime_endpoint_request = cls(
             callback_url=callback_url,
             connect_path=connect_path,
@@ -216,6 +224,7 @@ class UpdateManagedRealtimeEndpointRequest:
             max_message_bytes=max_message_bytes,
             max_connection_age_seconds=max_connection_age_seconds,
             enabled=enabled,
+            slug=slug,
         )
 
         update_managed_realtime_endpoint_request.additional_properties = d

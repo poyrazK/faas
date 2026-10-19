@@ -20,6 +20,41 @@ and [customer transaction and fencing examples](realtime-customer-examples.md).
 The [realtime operations guide](ops/realtime.md) documents configuration,
 preview gates, limits, recovery behavior, and rollout procedures.
 
+## Declare endpoints in gregale.yaml
+
+Name each endpoint with a `slug` and declare it next to your app, so every
+deploy creates it, keeps it in step with the file, and can recreate it in
+another account:
+
+```yaml
+realtime:
+  endpoints:
+    - slug: chat
+      auth: none                   # or an oidc: block (issuer, jwks_url, audience, algorithms)
+      allowed_origins: [https://shop.example.com]
+      max_connections: 500
+      callbacks:                   # paths on this app; these are the defaults
+        connect: /realtime/connect
+        message: /realtime/message
+        disconnect: /realtime/disconnect
+      consumer_groups:
+        - channel: orders
+          name: billing
+          lease_seconds: 120
+```
+
+- The first deploy creates the endpoint and stores a callback token in the app
+  as `REALTIME_CHAT_CALLBACK_TOKEN` (the slug in upper case). Check it on every
+  callback.
+- Later deploys update changed settings. An endpoint you remove from the file is
+  disabled, not deleted, so its history and consumer groups survive; delete it
+  with `gregale realtime delete` when you are sure.
+- Consumer groups are created when missing and never deleted by a deploy.
+- Endpoints created without a slug (API, CLI, dashboard) are never touched. Give
+  one a slug with `PATCH …/endpoints/{id}` `{"slug": "chat"}` to manage it from
+  the file.
+- A failed deploy rolls all of it back.
+
 ## Fair-use limits
 
 Realtime has no separate charge. Gregale bills compute, and realtime channels,
@@ -224,7 +259,8 @@ triggers:
     app: notify                   # the app slug, or a function name
     slug: orders
     config:
-      endpoint_id: 6f1c2a4e-1d9b-4c7a-9a39-0b8d6f0f4c11
+      endpoint: chat              # an endpoint declared under realtime.endpoints,
+                                  # or endpoint_id: <UUID> for any other endpoint
       channel: orders
       group: billing
       max_concurrency: 4          # optional; defaults to 1

@@ -78,21 +78,21 @@ func (s *PgStore) CreateManagedRealtimeEndpointIfUnderQuota(ctx context.Context,
 			 auth_token_previous_sealed, auth_token_previous_expires_at,
 			 auth_mode, auth_issuer, auth_jwks_url, auth_audience,
 			 auth_algorithms, auth_required_claims, allowed_origins, max_connections, max_message_bytes,
-			 max_connection_age_seconds, enabled)
-		values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
+			 max_connection_age_seconds, enabled, slug)
+		values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, nullif($23, ''))
 		returning id, app_id, account_id, callback_url, connect_path, message_path,
 		          disconnect_path, callback_auth_token_sealed, auth_token_sealed,
 		          auth_token_previous_sealed, auth_token_previous_expires_at,
 		          auth_mode, auth_issuer, auth_jwks_url, auth_audience,
 		          auth_algorithms, auth_required_claims, allowed_origins,
 		          max_connections, max_message_bytes, max_connection_age_seconds,
-		          enabled, created_at, updated_at
+		          enabled, created_at, updated_at, slug
 	`, in.ID, in.AppID, in.AccountID, in.CallbackURL, in.ConnectPath, in.MessagePath,
 		in.DisconnectPath, in.CallbackAuthTokenSealed, in.AuthTokenSealed,
 		in.AuthTokenPreviousSealed, in.AuthTokenPreviousExpiresAt,
 		in.AuthMode, in.AuthIssuer, in.AuthJWKSURL, in.AuthAudience,
 		in.AuthAlgorithms, authClaims, in.AllowedOrigins, in.MaxConnections,
-		in.MaxMessageBytes, in.MaxConnectionAgeSeconds, in.Enabled)
+		in.MaxMessageBytes, in.MaxConnectionAgeSeconds, in.Enabled, in.Slug)
 	endpoint, err := scanManagedRealtimeEndpoint(row)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -114,7 +114,7 @@ func (s *PgStore) ManagedRealtimeEndpointByID(ctx context.Context, id string) (M
 		       auth_mode, auth_issuer, auth_jwks_url, auth_audience,
 		       auth_algorithms, auth_required_claims, allowed_origins,
 		       max_connections, max_message_bytes,
-		       max_connection_age_seconds, enabled, created_at, updated_at
+		       max_connection_age_seconds, enabled, created_at, updated_at, slug
 		  from managed_realtime_endpoints where id = $1
 	`, id)
 	e, err := scanManagedRealtimeEndpoint(row)
@@ -192,6 +192,9 @@ func (s *PgStore) UpdateManagedRealtimeEndpoint(ctx context.Context, id string, 
 	if p.Enabled != nil {
 		current.Enabled = *p.Enabled
 	}
+	if p.Slug != nil {
+		current.Slug = *p.Slug
+	}
 	row := s.pool.QueryRow(ctx, `
 		update managed_realtime_endpoints set
 			callback_url = $2, connect_path = $3, message_path = $4,
@@ -201,7 +204,7 @@ func (s *PgStore) UpdateManagedRealtimeEndpoint(ctx context.Context, id string, 
 			auth_jwks_url = $12, auth_audience = $13, auth_algorithms = $14,
 			auth_required_claims = $15, allowed_origins = $16,
 			max_connections = $17, max_message_bytes = $18,
-			max_connection_age_seconds = $19, enabled = $20, updated_at = now()
+			max_connection_age_seconds = $19, enabled = $20, slug = nullif($21, ''), updated_at = now()
 		where id = $1
 		returning id, app_id, account_id, callback_url, connect_path, message_path,
 		          disconnect_path, callback_auth_token_sealed, auth_token_sealed,
@@ -209,18 +212,21 @@ func (s *PgStore) UpdateManagedRealtimeEndpoint(ctx context.Context, id string, 
 		          auth_mode, auth_issuer, auth_jwks_url, auth_audience,
 		          auth_algorithms, auth_required_claims, allowed_origins,
 		          max_connections, max_message_bytes, max_connection_age_seconds,
-		          enabled, created_at, updated_at
+		          enabled, created_at, updated_at, slug
 	`, id, current.CallbackURL, current.ConnectPath, current.MessagePath,
 		current.DisconnectPath, current.CallbackAuthTokenSealed, current.AuthTokenSealed,
 		current.AuthTokenPreviousSealed, current.AuthTokenPreviousExpiresAt,
 		current.AuthMode, current.AuthIssuer, current.AuthJWKSURL, current.AuthAudience,
 		current.AuthAlgorithms, mustMarshalManagedRealtimeClaims(current.AuthRequiredClaims),
 		current.AllowedOrigins, current.MaxConnections, current.MaxMessageBytes,
-		current.MaxConnectionAgeSeconds, current.Enabled)
+		current.MaxConnectionAgeSeconds, current.Enabled, current.Slug)
 	e, err := scanManagedRealtimeEndpoint(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ManagedRealtimeEndpoint{}, ErrNotFound
+		}
+		if isUniqueViolation(err) {
+			return ManagedRealtimeEndpoint{}, ErrConflict
 		}
 		return ManagedRealtimeEndpoint{}, fmt.Errorf("state: update realtime endpoint: %w", err)
 	}
@@ -246,7 +252,7 @@ func (s *PgStore) ListManagedRealtimeEndpointsForApp(ctx context.Context, appID 
 		       auth_mode, auth_issuer, auth_jwks_url, auth_audience,
 		       auth_algorithms, auth_required_claims, allowed_origins,
 		       max_connections, max_message_bytes,
-		       max_connection_age_seconds, enabled, created_at, updated_at
+		       max_connection_age_seconds, enabled, created_at, updated_at, slug
 		  from managed_realtime_endpoints where app_id = $1 order by created_at desc
 	`, appID)
 	if err != nil {
@@ -264,7 +270,7 @@ func (s *PgStore) ListManagedRealtimeEndpointsForAccount(ctx context.Context, ac
 		       auth_mode, auth_issuer, auth_jwks_url, auth_audience,
 		       auth_algorithms, auth_required_claims, allowed_origins,
 		       max_connections, max_message_bytes,
-		       max_connection_age_seconds, enabled, created_at, updated_at
+		       max_connection_age_seconds, enabled, created_at, updated_at, slug
 		  from managed_realtime_endpoints where account_id = $1 order by created_at desc
 	`, accountID)
 	if err != nil {
@@ -282,7 +288,7 @@ func (s *PgStore) ListManagedRealtimeEndpoints(ctx context.Context) ([]ManagedRe
 		       auth_mode, auth_issuer, auth_jwks_url, auth_audience,
 		       auth_algorithms, auth_required_claims, allowed_origins,
 		       max_connections, max_message_bytes,
-		       max_connection_age_seconds, enabled, created_at, updated_at
+		       max_connection_age_seconds, enabled, created_at, updated_at, slug
 		  from managed_realtime_endpoints order by created_at desc
 	`)
 	if err != nil {
@@ -297,14 +303,18 @@ type managedRealtimeEndpointScanner interface{ Scan(dest ...any) error }
 func scanManagedRealtimeEndpoint(s managedRealtimeEndpointScanner) (ManagedRealtimeEndpoint, error) {
 	var e ManagedRealtimeEndpoint
 	var authClaims []byte
+	var slug *string
 	if err := s.Scan(&e.ID, &e.AppID, &e.AccountID, &e.CallbackURL, &e.ConnectPath, &e.MessagePath,
 		&e.DisconnectPath, &e.CallbackAuthTokenSealed, &e.AuthTokenSealed,
 		&e.AuthTokenPreviousSealed, &e.AuthTokenPreviousExpiresAt,
 		&e.AuthMode, &e.AuthIssuer, &e.AuthJWKSURL, &e.AuthAudience,
 		&e.AuthAlgorithms, &authClaims, &e.AllowedOrigins, &e.MaxConnections,
 		&e.MaxMessageBytes, &e.MaxConnectionAgeSeconds,
-		&e.Enabled, &e.CreatedAt, &e.UpdatedAt); err != nil {
+		&e.Enabled, &e.CreatedAt, &e.UpdatedAt, &slug); err != nil {
 		return ManagedRealtimeEndpoint{}, err
+	}
+	if slug != nil {
+		e.Slug = *slug
 	}
 	e.AuthRequiredClaims = map[string]string{}
 	if len(authClaims) > 0 {
