@@ -13546,12 +13546,11 @@ func (s *PgStore) CreateCronWithOptions(ctx context.Context, appID, schedule, pa
 }
 
 // CreateCronIfUnderQuota is the customer-facing variant of
-// CreateCron that enforces the per-app and per-account caps under
-// an apps FOR UPDATE row lock (mirrors CreateAppIfUnderQuota). The
-// per-app cap is checked first because the lock is on the apps row,
-// not the account row; two concurrent POSTs for different apps on the
-// same account serialise through the per-account count read inside
-// the same tx.
+// CreateCron that enforces the per-app and per-account caps. It locks
+// the account's resource_namespaces row (the quota mutex
+// CreateAppIfUnderQuota and ApplyProjectPlan share) and then the apps
+// row, so concurrent creates on different apps of one account are
+// counted one after another.
 //
 // Failure modes:
 //   - *CronQuotaError when either cap trips (Scope names which).
@@ -13582,19 +13581,45 @@ func (s *PgStore) CreateCronIfUnderQuotaWithOptions(ctx context.Context, appID, 
 	}
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
 
-	// 1. Lock the parent apps row. SELECT 1 + FOR UPDATE keeps the lock
-	//    acquisition in one round-trip; the FOR UPDATE blocks any
-	//    concurrent createCron for the same app until COMMIT/ROLLBACK.
-	//    apps_pkey serves the lock search.
-	var locked int
+	// 1. Serialise against every other quota writer on this account. The
+	//    account's resource_namespaces row is the mutex CreateAppIfUnderQuota
+	//    and ApplyProjectPlan take before counting; it is locked before the
+	//    app row, the order they use. Locking only the app row let two
+	//    creates on different apps of one account both pass the per-account
+	//    count below.
+	var accountID string
 	err = tx.QueryRow(ctx,
-		`select 1 from apps where id = $1 and status <> 'deleted' for update`, appID,
-	).Scan(&locked)
+		`select account_id from apps where id = $1 and status <> 'deleted'`, appID,
+	).Scan(&accountID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Cron{}, ErrNotFound
+		}
+		return Cron{}, fmt.Errorf("state: read account_id for app %s: %w", appID, err)
+	}
+	var locked int
+	if err := tx.QueryRow(ctx,
+		`select 1 from resource_namespaces where id = $1 for update`, accountID,
+	).Scan(&locked); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Cron{}, ErrNotFound
+		}
+		return Cron{}, fmt.Errorf("state: lock account %s: %w", accountID, err)
+	}
+	// The FOR UPDATE on the app row blocks any concurrent createCron for the
+	// same app until COMMIT/ROLLBACK; apps_pkey serves the lock search.
+	var lockedAccountID string
+	err = tx.QueryRow(ctx,
+		`select account_id from apps where id = $1 and status <> 'deleted' for update`, appID,
+	).Scan(&lockedAccountID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Cron{}, ErrNotFound
 		}
 		return Cron{}, fmt.Errorf("state: lock app %s: %w", appID, err)
+	}
+	if lockedAccountID != accountID {
+		return Cron{}, ErrConflict
 	}
 	// An identical create is an idempotent read, including at the exact app
 	// or account cap. This check must run after the app lock and before quota
@@ -13633,16 +13658,9 @@ func (s *PgStore) CreateCronIfUnderQuotaWithOptions(ctx context.Context, appID, 
 		}
 	}
 
-	// 3. Per-account count under the same tx. account_id is read off
-	//    the apps row we just locked (no second round-trip to
-	//    accounts). The join through apps excludes deleted apps so
-	//    their cron rows don't poison the cap.
-	var accountID string
-	if err := tx.QueryRow(ctx,
-		`select account_id from apps where id = $1`, appID,
-	).Scan(&accountID); err != nil {
-		return Cron{}, fmt.Errorf("state: read account_id for app %s: %w", appID, err)
-	}
+	// 3. Per-account count under the account lock taken in step 1. The
+	//    join through apps excludes deleted apps so their cron rows
+	//    don't poison the cap.
 	var accountCount int
 	if err := tx.QueryRow(ctx,
 		`select count(*) from crons c
