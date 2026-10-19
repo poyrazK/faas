@@ -283,3 +283,15 @@ func (s *PgStore) releaseOperationQueue(ctx context.Context, g sqlc.ListOperatio
 	}
 	return released, nil
 }
+
+func (s *PgStore) OperationQueueStats(ctx context.Context) (int64, *time.Time, error) {
+	row, err := sqlc.New().OperationQueueStats(ctx, s.pool)
+	if err != nil {
+		return 0, nil, err
+	}
+	if !row.Oldest.Valid {
+		return row.Queued, nil, nil
+	}
+	oldest := row.Oldest.Time.UTC()
+	return row.Queued, &oldest, nil
+}

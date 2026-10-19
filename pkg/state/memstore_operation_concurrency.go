@@ -261,3 +261,16 @@ func (m *MemStore) releaseOperationDispatchLocked(op Operation, now time.Time) {
 		m.invocations[inv.ID] = inv
 	}
 }
+
+func (m *MemStore) OperationQueueStats(_ context.Context) (int64, *time.Time, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var oldest *time.Time
+	for _, q := range m.operationMemoryLocked().queue {
+		if oldest == nil || q.queuedAt.Before(*oldest) {
+			at := q.queuedAt
+			oldest = &at
+		}
+	}
+	return int64(len(m.operationMemoryLocked().queue)), oldest, nil
+}

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
@@ -62,4 +63,29 @@ func TestMetricsCountWebhookEventsOnce(t *testing.T) {
 	if none.Registry() != nil {
 		t.Fatal("nil metrics reported a registry")
 	}
+}
+
+// ADR-20261018210500: the queue gauges report the fleet backlog; a second
+// registration reuses them, and an empty queue reads zero age.
+func TestMetricsReportOperationQueue(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	m := NewMetrics(reg, "apid")
+	if again := NewMetrics(reg, "apid"); again.queued != m.queued || again.queueOldest != m.queueOldest || again.queueReleases != m.queueReleases {
+		t.Fatal("a second registration made second queue metrics")
+	}
+	now := time.Now()
+	oldest := now.Add(-90 * time.Second)
+	m.operationQueue(3, &oldest, now)
+	m.operationQueueReleases(2)
+	m.operationQueueReleases(0)
+	if q, age, released := testutil.ToFloat64(m.queued), testutil.ToFloat64(m.queueOldest), testutil.ToFloat64(m.queueReleases); q != 3 || age != 90 || released != 2 {
+		t.Fatalf("queued=%v oldest=%v released=%v", q, age, released)
+	}
+	m.operationQueue(0, nil, now)
+	if q, age := testutil.ToFloat64(m.queued), testutil.ToFloat64(m.queueOldest); q != 0 || age != 0 {
+		t.Fatalf("empty queue reported queued=%v oldest=%v", q, age)
+	}
+	var none *Metrics
+	none.operationQueue(1, &oldest, now)
+	none.operationQueueReleases(1)
 }

@@ -146,6 +146,9 @@ func TestOperationConcurrencyQueuesAndReleasesInOrder(t *testing.T) {
 		if n, err := f.store.ReleaseQueuedOperations(ctx, time.Now()); err != nil || n != 0 {
 			t.Fatalf("release with no free slot = %d %v", n, err)
 		}
+		if queued, oldest, err := f.store.OperationQueueStats(ctx); err != nil || queued != 2 || oldest == nil || oldest.After(time.Now()) {
+			t.Fatalf("queue stats = %d %v %v", queued, oldest, err)
+		}
 
 		// A finished Operation frees a slot: the oldest queued one starts.
 		if _, err := f.store.CancelOperation(ctx, f.account, "", a1.ID, a1.Generation); err != nil {
@@ -169,6 +172,9 @@ func TestOperationConcurrencyQueuesAndReleasesInOrder(t *testing.T) {
 		}
 		if queue, _ := f.store.CustomerOperationQueue(ctx, f.account, f.tenant); len(queue) != 0 {
 			t.Fatalf("queue after release = %+v", queue)
+		}
+		if queued, oldest, err := f.store.OperationQueueStats(ctx); err != nil || queued != 0 || oldest != nil {
+			t.Fatalf("queue stats after release = %d %v %v", queued, oldest, err)
 		}
 	})
 }

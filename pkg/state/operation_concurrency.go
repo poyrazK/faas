@@ -43,6 +43,9 @@ type OperationConcurrencyStore interface {
 	// ReleaseQueuedOperations starts queued Operations up to each customer's
 	// free slots and returns how many it started.
 	ReleaseQueuedOperations(ctx context.Context, now time.Time) (int, error)
+	// OperationQueueStats reports the fleet's queued Operations and when the
+	// oldest was queued (nil when none is).
+	OperationQueueStats(ctx context.Context) (int64, *time.Time, error)
 }
 
 func validateOperationConcurrencyRequest(req api.OperationConcurrencyPolicyRequest) (scope string, err error) {

@@ -6832,6 +6832,21 @@ groups:
           description: "{{ $value }} accounts had an Operation attempt end with an unknown outcome in the last 15m. One app timing out is its owner's problem; several accounts at once point at the platform losing attempts (instance crashes, lost leases, node loss)."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCustomerOperations.md"
 
+      - alert: FaasCustomerOperationQueueNotDraining
+        expr: |
+          max(apid_customer_operation_queue_oldest_seconds) > 1800
+          and on() sum(increase(apid_customer_operation_queue_releases_total[30m])) == 0
+        for: 10m
+        labels:
+          severity: warn
+          component: apid
+          family: customer_operations
+          public_status: internal
+        annotations:
+          summary: "Queued Customer Operations are not being released"
+          description: "The oldest Operation held by a per-customer concurrency policy has waited {{ $value | humanizeDuration }} and no queued Operation started in 30m. Either every queued customer is still at its limit, or apid's queue releaser has stopped (ADR-20261018210500)."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCustomerOperations.md"
+
   # Starter-reported protocol signals, not host-verified authorization outcomes.
   # No alert is inferred from event silence: idle apps emit no protocol events.
   - name: faas_mcp_protocol

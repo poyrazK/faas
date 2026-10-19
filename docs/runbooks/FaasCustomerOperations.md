@@ -82,3 +82,37 @@ ORDER BY unknown DESC;
 Customers resolve each Operation through recovery
 (`gregale customer-operations recover`), after checking whether the effect
 happened. Do not change Operation state by hand.
+
+## FaasCustomerOperationQueueNotDraining
+
+An Operation held by a per-customer concurrency policy
+([ADR-20261018210500](../adr/20261018210500-per-customer-operation-concurrency.md))
+has waited more than thirty minutes and apid started no queued Operation in
+that time. apid reports `apid_customer_operation_queued`,
+`apid_customer_operation_queue_oldest_seconds` and
+`apid_customer_operation_queue_releases_total`; every replica reports the same
+queue, so rules read `max()`.
+
+```sql
+SELECT q.account_id, q.app_id, q.scope, q.operation, q.platform_tenant_id,
+       count(*) AS queued, min(q.queued_at) AS oldest,
+       (SELECT count(*) FROM customer_operations o
+          JOIN customer_operation_definitions d ON d.id = o.definition_id
+         WHERE o.platform_tenant_id = q.platform_tenant_id AND o.app_id = q.app_id
+           AND d.scope = q.scope AND d.name = q.operation
+           AND o.state IN ('accepted','running','requires_reconciliation')
+           AND NOT EXISTS (SELECT 1 FROM customer_operation_queue h WHERE h.operation_id = o.id)) AS in_flight
+FROM customer_operation_queue q
+GROUP BY 1, 2, 3, 4, 5
+ORDER BY oldest;
+```
+
+- **`in_flight` at the customer's limit:** the queue is working as configured;
+  the customer's earlier Operations are long-running. Check the policy with the
+  account (`GET /v1/apps/{slug}/operation-concurrency`) before changing it.
+- **`in_flight` below the limit:** the releaser is not running. Look for
+  `operation queue release failed` or `operation queue stats failed` in the apid
+  log, and check that apid is up; the releaser runs in every replica.
+- **An Operation stuck `accepted` and never dispatched after release:** its
+  invocation or workflow run is due but not claimed; follow the scheduler's
+  dispatch alerts.

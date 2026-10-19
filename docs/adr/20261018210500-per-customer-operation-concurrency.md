@@ -50,6 +50,9 @@ recomputes the limit and the in-flight count, and makes the oldest queued
 Operations due now, up to the free slots. schedd's dispatchers already poll for
 due work every second, so a freed slot starts the next Operation within a few
 seconds. Raising or removing a policy releases waiting work on the next pass.
+While anything is queued, the releaser also wakes on `customer_operation_changed`,
+which every Operation save notifies, and runs within 250 ms; the two-second
+pass remains the fallback for a dropped notification.
 
 **Scope of v1.** HTTP and workflow Operations queue. A job Operation's run has
 no hold, so policies do not apply to job definitions; jobs keep their own run
@@ -72,8 +75,11 @@ OpenAPI document and SDKs until launch.
 Scale 1,000); `max_running` between 1 and 1,000.
 
 **Telemetry.** `<prefix>_customer_operation_queue_releases_total` counts
-queued Operations the releaser started; the account's concurrency view shows
-each customer's backlog.
+queued Operations the releaser started; `<prefix>_customer_operation_queued`
+and `<prefix>_customer_operation_queue_oldest_seconds` report the fleet's
+backlog. `FaasCustomerOperationQueueNotDraining` warns when the oldest queued
+Operation has waited thirty minutes with no release; the account's concurrency
+view shows each customer's backlog.
 
 ## Consequences
 

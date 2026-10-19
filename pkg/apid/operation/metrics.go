@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 
@@ -17,6 +18,8 @@ type Metrics struct {
 	webhookEvents *prometheus.CounterVec
 	scheduleFires *prometheus.CounterVec
 	queueReleases prometheus.Counter
+	queued        prometheus.Gauge
+	queueOldest   prometheus.Gauge
 }
 
 func NewMetrics(registry *prometheus.Registry, prefix string) *Metrics {
@@ -32,7 +35,39 @@ func NewMetrics(registry *prometheus.Registry, prefix string) *Metrics {
 		Name: prefix + "_customer_operation_queue_releases_total",
 		Help: "Queued Operations started by the per-customer concurrency releaser.",
 	}).WithLabelValues()
-	return &Metrics{registry: registry, webhookEvents: events, scheduleFires: fires, queueReleases: releases}
+	queued := registerGauge(registry, prometheus.GaugeOpts{
+		Name: prefix + "_customer_operation_queued",
+		Help: "Operations held by per-customer concurrency policies, fleet-wide; every apid reports the same value.",
+	})
+	oldest := registerGauge(registry, prometheus.GaugeOpts{
+		Name: prefix + "_customer_operation_queue_oldest_seconds",
+		Help: "Age of the oldest Operation held by a per-customer concurrency policy; 0 when none is queued.",
+	})
+	return &Metrics{registry: registry, webhookEvents: events, scheduleFires: fires, queueReleases: releases, queued: queued, queueOldest: oldest}
+}
+
+func registerGauge(registry *prometheus.Registry, opts prometheus.GaugeOpts) prometheus.Gauge {
+	gauge := prometheus.NewGauge(opts)
+	if err := registry.Register(gauge); err != nil {
+		var existing prometheus.AlreadyRegisteredError
+		if !errors.As(err, &existing) {
+			panic(err)
+		}
+		gauge = existing.ExistingCollector.(prometheus.Gauge)
+	}
+	return gauge
+}
+
+func (m *Metrics) operationQueue(queued int64, oldest *time.Time, now time.Time) {
+	if m == nil {
+		return
+	}
+	m.queued.Set(float64(queued))
+	age := 0.0
+	if oldest != nil && now.After(*oldest) {
+		age = now.Sub(*oldest).Seconds()
+	}
+	m.queueOldest.Set(age)
 }
 
 func registerCounterVec(registry *prometheus.Registry, opts prometheus.CounterOpts, labels ...string) *prometheus.CounterVec {
