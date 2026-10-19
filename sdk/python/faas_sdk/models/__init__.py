@@ -4332,23 +4332,74 @@ from .project_environment_workload_diff_response import ProjectEnvironmentWorklo
 from .project_initial_secrets import ProjectInitialSecrets
 from .project_initial_secrets_additional_property import ProjectInitialSecretsAdditionalProperty
 from .project_migration import ProjectMigration
+from .project_migration_baseline_verification import ProjectMigrationBaselineVerification
+from .project_migration_baseline_verification_status import ProjectMigrationBaselineVerificationStatus
 from .project_migration_build_wait import ProjectMigrationBuildWait
 from .project_migration_build_wait_status import ProjectMigrationBuildWaitStatus
+from .project_migration_contract import ProjectMigrationContract
+from .project_migration_contract_status import ProjectMigrationContractStatus
 from .project_migration_list import ProjectMigrationList
+from .project_migration_recovery import ProjectMigrationRecovery
+from .project_migration_recovery_request import ProjectMigrationRecoveryRequest
+from .project_migration_recovery_status import ProjectMigrationRecoveryStatus
 from .project_migration_service import ProjectMigrationService
 from .project_migration_service_public_build_urls import ProjectMigrationServicePublicBuildUrls
 from .project_migration_service_public_service_connections import ProjectMigrationServicePublicServiceConnections
 from .project_migration_service_service_connections import ProjectMigrationServiceServiceConnections
 from .project_migration_status import ProjectMigrationStatus
+from .project_promotion_admission import ProjectPromotionAdmission
+from .project_promotion_control import ProjectPromotionControl
+from .project_promotion_control_action import ProjectPromotionControlAction
+from .project_promotion_control_request import ProjectPromotionControlRequest
+from .project_promotion_control_status import ProjectPromotionControlStatus
+from .project_promotion_health import ProjectPromotionHealth
+from .project_promotion_health_phase import ProjectPromotionHealthPhase
+from .project_promotion_health_policy import ProjectPromotionHealthPolicy
+from .project_promotion_health_verdict import ProjectPromotionHealthVerdict
+from .project_promotion_migration_policy import ProjectPromotionMigrationPolicy
+from .project_promotion_migration_policy_compatibility import ProjectPromotionMigrationPolicyCompatibility
+from .project_promotion_migration_recovery import ProjectPromotionMigrationRecovery
+from .project_promotion_migration_recovery_request import ProjectPromotionMigrationRecoveryRequest
+from .project_promotion_migration_recovery_request_action import ProjectPromotionMigrationRecoveryRequestAction
+from .project_promotion_migration_recovery_status import ProjectPromotionMigrationRecoveryStatus
+from .project_promotion_worker_health import ProjectPromotionWorkerHealth
 from .project_public_build_ur_ls import ProjectPublicBuildURLs
 from .project_public_build_ur_ls_additional_property import ProjectPublicBuildURLsAdditionalProperty
+from .project_release_addition import ProjectReleaseAddition
+from .project_release_command import ProjectReleaseCommand
+from .project_release_command_compatibility import ProjectReleaseCommandCompatibility
+from .project_release_command_status import ProjectReleaseCommandStatus
+from .project_release_configuration import ProjectReleaseConfiguration
+from .project_release_control import ProjectReleaseControl
+from .project_release_control_action import ProjectReleaseControlAction
+from .project_release_control_request import ProjectReleaseControlRequest
+from .project_release_control_status import ProjectReleaseControlStatus
 from .project_release_deactivation_receipt import ProjectReleaseDeactivationReceipt
+from .project_release_probe import ProjectReleaseProbe
+from .project_release_probe_evidence import ProjectReleaseProbeEvidence
+from .project_release_secret_configuration import ProjectReleaseSecretConfiguration
+from .project_release_secret_stage_request import ProjectReleaseSecretStageRequest
+from .project_release_secret_stage_request_workloads import ProjectReleaseSecretStageRequestWorkloads
+from .project_release_secret_stage_request_workloads_additional_property import (
+    ProjectReleaseSecretStageRequestWorkloadsAdditionalProperty,
+)
+from .project_release_secret_stage_response import ProjectReleaseSecretStageResponse
+from .project_release_secret_version_map import ProjectReleaseSecretVersionMap
+from .project_release_secret_version_map_additional_property import ProjectReleaseSecretVersionMapAdditionalProperty
 from .project_release_set_list_response import ProjectReleaseSetListResponse
 from .project_release_set_member_response import ProjectReleaseSetMemberResponse
 from .project_release_set_response import ProjectReleaseSetResponse
+from .project_release_stabilization import ProjectReleaseStabilization
+from .project_release_stabilization_health import ProjectReleaseStabilizationHealth
+from .project_release_stabilization_status import ProjectReleaseStabilizationStatus
 from .project_release_stage import ProjectReleaseStage
 from .project_release_stage_member import ProjectReleaseStageMember
 from .project_release_stage_status import ProjectReleaseStageStatus
+from .project_release_verification import ProjectReleaseVerification
+from .project_release_verification_actions_item import ProjectReleaseVerificationActionsItem
+from .project_release_verification_percent import ProjectReleaseVerificationPercent
+from .project_release_worker import ProjectReleaseWorker
+from .project_release_worker_status import ProjectReleaseWorkerStatus
 from .project_response import ProjectResponse
 from .project_safe_release import ProjectSafeRelease
 from .project_safe_release_status import ProjectSafeReleaseStatus
@@ -4358,6 +4409,8 @@ from .project_service_connections import ProjectServiceConnections
 from .project_service_connections_additional_property import ProjectServiceConnectionsAdditionalProperty
 from .project_source_ref_scan_request import ProjectSourceRefScanRequest
 from .project_source_ref_scan_request_app_slugs import ProjectSourceRefScanRequestAppSlugs
+from .project_submission_receipt import ProjectSubmissionReceipt
+from .project_submission_receipt_status import ProjectSubmissionReceiptStatus
 from .project_summary_response import ProjectSummaryResponse
 from .project_worker_health import ProjectWorkerHealth
 from .project_worker_health_status import ProjectWorkerHealthStatus
@@ -9829,23 +9882,72 @@ __all__ = (
     "ProjectInitialSecrets",
     "ProjectInitialSecretsAdditionalProperty",
     "ProjectMigration",
+    "ProjectMigrationBaselineVerification",
+    "ProjectMigrationBaselineVerificationStatus",
     "ProjectMigrationBuildWait",
     "ProjectMigrationBuildWaitStatus",
+    "ProjectMigrationContract",
+    "ProjectMigrationContractStatus",
     "ProjectMigrationList",
+    "ProjectMigrationRecovery",
+    "ProjectMigrationRecoveryRequest",
+    "ProjectMigrationRecoveryStatus",
     "ProjectMigrationService",
     "ProjectMigrationServicePublicBuildUrls",
     "ProjectMigrationServicePublicServiceConnections",
     "ProjectMigrationServiceServiceConnections",
     "ProjectMigrationStatus",
+    "ProjectPromotionAdmission",
+    "ProjectPromotionControl",
+    "ProjectPromotionControlAction",
+    "ProjectPromotionControlRequest",
+    "ProjectPromotionControlStatus",
+    "ProjectPromotionHealth",
+    "ProjectPromotionHealthPhase",
+    "ProjectPromotionHealthPolicy",
+    "ProjectPromotionHealthVerdict",
+    "ProjectPromotionMigrationPolicy",
+    "ProjectPromotionMigrationPolicyCompatibility",
+    "ProjectPromotionMigrationRecovery",
+    "ProjectPromotionMigrationRecoveryRequest",
+    "ProjectPromotionMigrationRecoveryRequestAction",
+    "ProjectPromotionMigrationRecoveryStatus",
+    "ProjectPromotionWorkerHealth",
     "ProjectPublicBuildURLs",
     "ProjectPublicBuildURLsAdditionalProperty",
+    "ProjectReleaseAddition",
+    "ProjectReleaseCommand",
+    "ProjectReleaseCommandCompatibility",
+    "ProjectReleaseCommandStatus",
+    "ProjectReleaseConfiguration",
+    "ProjectReleaseControl",
+    "ProjectReleaseControlAction",
+    "ProjectReleaseControlRequest",
+    "ProjectReleaseControlStatus",
     "ProjectReleaseDeactivationReceipt",
+    "ProjectReleaseProbe",
+    "ProjectReleaseProbeEvidence",
+    "ProjectReleaseSecretConfiguration",
+    "ProjectReleaseSecretStageRequest",
+    "ProjectReleaseSecretStageRequestWorkloads",
+    "ProjectReleaseSecretStageRequestWorkloadsAdditionalProperty",
+    "ProjectReleaseSecretStageResponse",
+    "ProjectReleaseSecretVersionMap",
+    "ProjectReleaseSecretVersionMapAdditionalProperty",
     "ProjectReleaseSetListResponse",
     "ProjectReleaseSetMemberResponse",
     "ProjectReleaseSetResponse",
+    "ProjectReleaseStabilization",
+    "ProjectReleaseStabilizationHealth",
+    "ProjectReleaseStabilizationStatus",
     "ProjectReleaseStage",
     "ProjectReleaseStageMember",
     "ProjectReleaseStageStatus",
+    "ProjectReleaseVerification",
+    "ProjectReleaseVerificationActionsItem",
+    "ProjectReleaseVerificationPercent",
+    "ProjectReleaseWorker",
+    "ProjectReleaseWorkerStatus",
     "ProjectResponse",
     "ProjectSafeRelease",
     "ProjectSafeReleaseStatus",
@@ -9855,6 +9957,8 @@ __all__ = (
     "ProjectServiceConnectionsAdditionalProperty",
     "ProjectSourceRefScanRequest",
     "ProjectSourceRefScanRequestAppSlugs",
+    "ProjectSubmissionReceipt",
+    "ProjectSubmissionReceiptStatus",
     "ProjectSummaryResponse",
     "ProjectWorkerHealth",
     "ProjectWorkerHealthStatus",

@@ -61,6 +61,14 @@ import type { ProjectEnvironmentRoutePolicyResponse } from '../models/ProjectEnv
 import type { ProjectEnvironmentStateResponse } from '../models/ProjectEnvironmentStateResponse.js';
 import type { ProjectMigration } from '../models/ProjectMigration.js';
 import type { ProjectMigrationList } from '../models/ProjectMigrationList.js';
+import type { ProjectMigrationRecoveryRequest } from '../models/ProjectMigrationRecoveryRequest.js';
+import type { ProjectPromotionControl } from '../models/ProjectPromotionControl.js';
+import type { ProjectPromotionControlRequest } from '../models/ProjectPromotionControlRequest.js';
+import type { ProjectPromotionMigrationRecovery } from '../models/ProjectPromotionMigrationRecovery.js';
+import type { ProjectPromotionMigrationRecoveryRequest } from '../models/ProjectPromotionMigrationRecoveryRequest.js';
+import type { ProjectReleaseControlRequest } from '../models/ProjectReleaseControlRequest.js';
+import type { ProjectReleaseSecretStageRequest } from '../models/ProjectReleaseSecretStageRequest.js';
+import type { ProjectReleaseSecretStageResponse } from '../models/ProjectReleaseSecretStageResponse.js';
 import type { ProjectReleaseSetListResponse } from '../models/ProjectReleaseSetListResponse.js';
 import type { ProjectReleaseSetResponse } from '../models/ProjectReleaseSetResponse.js';
 import type { ProjectReleaseStage } from '../models/ProjectReleaseStage.js';

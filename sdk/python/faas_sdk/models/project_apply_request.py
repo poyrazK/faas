@@ -28,6 +28,9 @@ class ProjectApplyRequest:
     """
 
     source: File
+    release_config: str | Unset = UNSET
+    """Planned non-secret workload variables encoded as ProjectReleaseConfigRequest JSON for atomic-config-verify
+    admission."""
     migration: bool | Unset = False
     """Apply the reviewed migration naming mode, preserving repository service identities and project-prefixed app
     allocations. Automatic triggers and repository push bindings must be disabled."""
@@ -61,6 +64,8 @@ class ProjectApplyRequest:
 
     def to_dict(self) -> dict[str, Any]:
         source = self.source.to_tuple()
+
+        release_config = self.release_config
 
         migration = self.migration
 
@@ -99,6 +104,8 @@ class ProjectApplyRequest:
                 "source": source,
             }
         )
+        if release_config is not UNSET:
+            field_dict["release_config"] = release_config
         if migration is not UNSET:
             field_dict["migration"] = migration
         if app_slugs is not UNSET:
@@ -132,6 +139,9 @@ class ProjectApplyRequest:
         files: types.RequestFiles = []
 
         files.append(("source", self.source.to_tuple()))
+
+        if not isinstance(self.release_config, Unset):
+            files.append(("release_config", (None, str(self.release_config).encode(), "text/plain")))
 
         if not isinstance(self.migration, Unset):
             files.append(("migration", (None, str(self.migration).encode(), "text/plain")))
@@ -189,6 +199,8 @@ class ProjectApplyRequest:
         d = dict(src_dict)
         source = File(payload=BytesIO(d.pop("source")))
 
+        release_config = d.pop("release_config", UNSET)
+
         migration = d.pop("migration", UNSET)
 
         _app_slugs = d.pop("app_slugs", UNSET)
@@ -227,6 +239,7 @@ class ProjectApplyRequest:
 
         project_apply_request = cls(
             source=source,
+            release_config=release_config,
             migration=migration,
             app_slugs=app_slugs,
             project_slug=project_slug,

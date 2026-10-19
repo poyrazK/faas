@@ -7,6 +7,10 @@
  */
 export type ProjectScanRequest = {
   /**
+   * JSON-encoded ProjectReleaseConfigRequest for atomic-config-verify; contains only non-secret workload variables.
+   */
+  release_config?: string;
+  /**
    * Preserve repository service identities and suggest project-prefixed app names. Requires no_triggers and no repository push binding; apply repeats the reviewed setting.
    */
   migration?: boolean;

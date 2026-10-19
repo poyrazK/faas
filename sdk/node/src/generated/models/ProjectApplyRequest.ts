@@ -11,6 +11,10 @@ import type { ProjectInitialSecrets } from './ProjectInitialSecrets.js';
  */
 export type ProjectApplyRequest = {
   /**
+   * Planned non-secret workload variables encoded as ProjectReleaseConfigRequest JSON for atomic-config-verify admission.
+   */
+  release_config?: string;
+  /**
    * Apply the reviewed migration naming mode, preserving repository service identities and project-prefixed app allocations. Automatic triggers and repository push bindings must be disabled.
    */
   migration?: boolean;

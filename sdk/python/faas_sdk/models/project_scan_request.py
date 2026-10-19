@@ -24,6 +24,9 @@ class ProjectScanRequest:
 
     source: File
     """tar.gz of the repo root."""
+    release_config: str | Unset = UNSET
+    """JSON-encoded ProjectReleaseConfigRequest for atomic-config-verify; contains only non-secret workload
+    variables."""
     migration: bool | Unset = False
     """Preserve repository service identities and suggest project-prefixed app names. Requires no_triggers and no
     repository push binding; apply repeats the reviewed setting."""
@@ -54,6 +57,8 @@ class ProjectScanRequest:
     def to_dict(self) -> dict[str, Any]:
         source = self.source.to_tuple()
 
+        release_config = self.release_config
+
         migration = self.migration
 
         app_slugs: dict[str, Any] | Unset = UNSET
@@ -83,6 +88,8 @@ class ProjectScanRequest:
                 "source": source,
             }
         )
+        if release_config is not UNSET:
+            field_dict["release_config"] = release_config
         if migration is not UNSET:
             field_dict["migration"] = migration
         if app_slugs is not UNSET:
@@ -110,6 +117,9 @@ class ProjectScanRequest:
         files: types.RequestFiles = []
 
         files.append(("source", self.source.to_tuple()))
+
+        if not isinstance(self.release_config, Unset):
+            files.append(("release_config", (None, str(self.release_config).encode(), "text/plain")))
 
         if not isinstance(self.migration, Unset):
             files.append(("migration", (None, str(self.migration).encode(), "text/plain")))
@@ -155,6 +165,8 @@ class ProjectScanRequest:
         d = dict(src_dict)
         source = File(payload=BytesIO(d.pop("source")))
 
+        release_config = d.pop("release_config", UNSET)
+
         migration = d.pop("migration", UNSET)
 
         _app_slugs = d.pop("app_slugs", UNSET)
@@ -182,6 +194,7 @@ class ProjectScanRequest:
 
         project_scan_request = cls(
             source=source,
+            release_config=release_config,
             migration=migration,
             app_slugs=app_slugs,
             project_slug=project_slug,
