@@ -265,3 +265,26 @@ test('live queries are not published until launch (ADR-20261016151947 rollout)',
   const root = await import('../dist/index.js')
   assert.equal(Object.keys(root).some((k) => /live/i.test(k)), false, 'the root entry exports nothing live')
 })
+
+test('anonymous and server-key reads subscribe and renew with their own credential', async () => {
+  const clock = new FakeClock()
+  const sockets = []
+  const conn = new LiveConnection({ connect: () => { const s = new FakeSocket(); sockets.push(s); return s }, clock })
+  await settle()
+  const key = 'gdsk_' + 'A'.repeat(43)
+  const visitor = conn.query({ database: 'db_1', read: 'products?select=id', anonymous: true })
+  const backend = conn.query({ database: 'db_1', read: 'orders?select=id', serverKey: key, subject: 'user-7' })
+  sockets[0].open(); await settle()
+  assert.deepEqual(sockets[0].sent, [
+    { type: 'live.subscribe', subscription: visitor.id, database: 'db_1', rest: 'products?select=id', anonymous: true },
+    { type: 'live.subscribe', subscription: backend.id, database: 'db_1', rest: 'orders?select=id', server_key: key, subject: 'user-7' },
+  ])
+  sockets[0].deliver(rows(visitor.id, 1, '100:104:', [{ id: 'a', values: ['1', '7', 'null', 't'] }]))
+  sockets[0].deliver(rows(backend.id, 1, '100:104:', [{ id: 'b', values: ['2', '7', 'null', 't'] }]))
+  clock.advance(49_000); await settle()
+  assert.deepEqual(sockets[0].sent.filter((f) => f.type === 'live.renew'), [
+    { type: 'live.renew', subscription: visitor.id, anonymous: true },
+    { type: 'live.renew', subscription: backend.id, server_key: key, subject: 'user-7' },
+  ])
+  visitor.close(); backend.close(); conn.close()
+})

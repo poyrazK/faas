@@ -39,19 +39,32 @@ export type LiveSealedOptions<Row> = LiveRowOptions<Row> & {
 }
 
 /**
- * RLS mode: a Data API read as the signed-in user. The realtime endpoint
- * verifies the user's token and the database's row-level security decides
- * every row, as for the Data API itself.
+ * Who a live Data API read runs as. Row-level security decides every row in
+ * each case, as for the Data API itself.
  */
-export type LiveReadOptions<Row> = LiveRowOptions<Row> & {
+export type LiveReadCredential =
+  /** The signed-in user: called to subscribe, again before it expires, and after a reconnect. */
+  | { token: () => string | Promise<string>; anonymous?: never; serverKey?: never; subject?: never }
+  /** A visitor without a session: only relations the Data API makes public, embedded ones included. */
+  | { anonymous: true; token?: never; serverKey?: never; subject?: never }
+  /**
+   * A Data API server key, for trusted backends only. realtimed refuses it on
+   * browser connections. subject acts for one application user.
+   */
+  | { serverKey: string; subject?: string; token?: never; anonymous?: never }
+
+/**
+ * RLS mode: a Data API read. The realtime endpoint verifies the user's token
+ * (or admits an anonymous or server-key read against the Data API's rules),
+ * and the database's row-level security decides every row.
+ */
+export type LiveReadOptions<Row> = LiveRowOptions<Row> & LiveReadCredential & {
   /** The database the read is from, as bound to the app. */
   database: string
   /** The PostgREST read ("messages?select=id,body&order=id.desc&limit=50"); see liveRead for a query builder. */
   read: string
-  /** The schema the read is in; defaults to public. */
+  /** The schema the read is in; defaults to the Data API's first exposed schema. */
   schema?: string
-  /** The user's access token: called to subscribe, again before it expires, and after a reconnect. */
-  token: () => string | Promise<string>
 }
 
 export type LiveQueryOptions<Row> = LiveSealedOptions<Row> | LiveReadOptions<Row>
@@ -459,11 +472,16 @@ class LiveQueryHandle<Row> implements LiveQuery<Row> {
     this.setState({ ...this.state, status: 'closed', error: frame })
   }
 
-  /** The frame fields that authorize: a seal (fresh when asked), or the user's current token. */
-  private async credential(fresh: boolean): Promise<{ sealed: string } | { token: string } | undefined> {
+  /**
+   * The frame fields that authorize: a seal (fresh when asked), the user's
+   * current token, anonymous access or a server key.
+   */
+  private async credential(fresh: boolean): Promise<Record<string, string | boolean> | undefined> {
     const o = this.options
     if (isRead(o)) {
-      try { return { token: await o.token() } } catch { return undefined /* retried at the next reconnect */ }
+      if (o.anonymous === true) return { anonymous: true }
+      if (typeof o.serverKey === 'string') return { server_key: o.serverKey, ...(o.subject ? { subject: o.subject } : {}) }
+      try { return { token: await o.token!() } } catch { return undefined /* retried at the next reconnect */ }
     }
     if (fresh && o.refresh) {
       try { this.sealed = await o.refresh() } catch { /* the held seal may still be valid */ }

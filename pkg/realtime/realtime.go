@@ -483,6 +483,12 @@ type connection struct {
 	// live frame.
 	live     LiveSession
 	liveOnce sync.Once
+	// browser is set before the read loop when the upgrade carried an Origin
+	// header; Data API server keys are refused on such connections.
+	browser bool
+	// liveOnly marks a v2 connection without OIDC: it carries live frames
+	// only, and channel frames are refused.
+	liveOnly bool
 
 	outbound       chan Message
 	outboundMu     sync.Mutex
@@ -895,6 +901,7 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		ticketToken = browserToken
 	}
 	usesTicket := isTicket(ticketToken)
+	liveOnly := false
 	if usesTicket && (!wantsResume || !m.cfg.TicketPreview || m.cfg.TicketReader == nil) {
 		http.Error(w, "ticket unavailable", http.StatusUnauthorized)
 		return
@@ -905,10 +912,17 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if !usesTicket && endpoint.ClientAuth.Mode != AuthModeOIDCJWT {
-			http.Error(w, "realtime resume requires OIDC authentication", http.StatusForbidden)
-			return
+			// ADR-20261016151947: an endpoint with live routes accepts v2 without
+			// OIDC for live frames only. Anonymous and server-key Data API reads
+			// are admitted frame by frame; channels need an authenticated
+			// connection.
+			if len(endpoint.LiveRoutes) == 0 {
+				http.Error(w, "realtime resume requires OIDC authentication", http.StatusForbidden)
+				return
+			}
+			liveOnly = true
 		}
-		if _, ok := m.hooks.(ChannelAuthorizer); !ok && !usesTicket {
+		if _, ok := m.hooks.(ChannelAuthorizer); !ok && !usesTicket && !liveOnly {
 			http.Error(w, "realtime channel authorization unavailable", http.StatusServiceUnavailable)
 			return
 		}
@@ -987,6 +1001,9 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if liveOnly && strings.TrimSpace(principal) == "" {
+		principal = "live" // a visitor without a session; live frames carry their own credential
+	}
 	if wantsResume && strings.TrimSpace(principal) == "" {
 		m.recordAuthOutcome(authMetricMode, authMetricOutcomeRejected)
 		m.rejectedConnections.Add(1)
@@ -1055,6 +1072,8 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return ""
 	}(), verifiedConnection)
 	state.gate.Unlock()
+	conn.browser = r.Header.Get("Origin") != ""
+	conn.liveOnly = liveOnly
 	m.runConnection(r.Context(), conn)
 }
 

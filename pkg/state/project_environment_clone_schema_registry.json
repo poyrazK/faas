@@ -3464,6 +3464,15 @@
     "kind": "operational"
   },
   {
+    "table": "data_api_access_configs",
+    "columns": [
+      "app_id",
+      "config",
+      "reported_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "data_api_usage_hourly",
     "columns": [
       "anonymous_requests",

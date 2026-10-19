@@ -30,13 +30,15 @@ func open(t *testing.T) *pgxpool.Pool {
 	if _, err := pool.Exec(ctx, `CREATE TABLE apps (id uuid PRIMARY KEY, account_id uuid NOT NULL, deleted_at timestamptz)`); err != nil {
 		t.Fatal(err)
 	}
-	raw, err := migrations.FS.ReadFile("20261019131100664_data_api_usage.sql")
-	if err != nil {
-		t.Fatal(err)
-	}
-	up, _, _ := strings.Cut(string(raw), "-- +goose Down")
-	if _, err := pool.Exec(ctx, up); err != nil {
-		t.Fatalf("apply migration: %v", err)
+	for _, name := range []string{"20261019131100664_data_api_usage.sql", "20261019172254731_data_api_access_configs.sql"} {
+		raw, err := migrations.FS.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		up, _, _ := strings.Cut(string(raw), "-- +goose Down")
+		if _, err := pool.Exec(ctx, up); err != nil {
+			t.Fatalf("apply migration %s: %v", name, err)
+		}
 	}
 	if _, err := pool.Exec(ctx, `INSERT INTO apps (id, account_id) VALUES ($1, $2), ($3, $2)`, app, account, gone); err != nil {
 		t.Fatal(err)
@@ -56,18 +58,18 @@ func TestRecordAddsEachReportOnceAndReturnsMonthToDate(t *testing.T) {
 		{Hour: hour.Add(-time.Hour), Counts: dataapiusage.Counts{UserRequests: 3, AnonymousRequests: 2, ServerRequests: 1, RowsReturned: 40, ResponseBytes: 900}},
 		{Hour: hour, Counts: dataapiusage.Counts{AnonymousRequests: 5, RejectedRequests: 2, ErrorRequests: 1, CappedRequests: 4}},
 	}
-	mtd, err := store.Record(ctx, account, app, "i-1:1", delta, now)
+	mtd, err := store.Record(ctx, account, app, "i-1:1", delta, nil, now)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if mtd.Requests != 11 || mtd.AnonymousRequests != 7 || !mtd.Month.Equal(time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)) {
 		t.Fatalf("month to date = %+v", mtd)
 	}
-	again, err := store.Record(ctx, account, app, "i-1:1", delta, now)
+	again, err := store.Record(ctx, account, app, "i-1:1", delta, nil, now)
 	if err != nil || again != mtd {
 		t.Fatalf("a retried report must add nothing: %+v (%v)", again, err)
 	}
-	if _, err = store.Record(ctx, account, app, "i-1:2", delta[1:], now); err != nil {
+	if _, err = store.Record(ctx, account, app, "i-1:2", delta[1:], nil, now); err != nil {
 		t.Fatal(err)
 	}
 	hours, err := store.Hours(ctx, app, hour.Add(-24*time.Hour), hour.Add(time.Hour))
@@ -84,7 +86,7 @@ func TestRecordRefusesForeignAndDeletedApps(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now()
 	for _, tc := range []struct{ account, app string }{{other, app}, {account, gone}, {account, "55555555-5555-5555-5555-555555555555"}} {
-		if _, err := store.Record(ctx, tc.account, tc.app, "r", nil, now); !errors.Is(err, dataapiusage.ErrNotFound) {
+		if _, err := store.Record(ctx, tc.account, tc.app, "r", nil, nil, now); !errors.Is(err, dataapiusage.ErrNotFound) {
 			t.Fatalf("%+v: err = %v", tc, err)
 		}
 	}
@@ -98,7 +100,7 @@ func TestMonthToDateCountsOnlyTheCurrentUTCMonth(t *testing.T) {
 		{Hour: time.Date(2026, 10, 31, 23, 0, 0, 0, time.UTC), Counts: dataapiusage.Counts{UserRequests: 100}},
 		{Hour: time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC), Counts: dataapiusage.Counts{UserRequests: 1, AnonymousRequests: 1}},
 	}
-	mtd, err := store.Record(ctx, account, app, "r1", delta, now)
+	mtd, err := store.Record(ctx, account, app, "r1", delta, nil, now)
 	if err != nil || mtd.Requests != 2 || mtd.AnonymousRequests != 1 {
 		t.Fatalf("mtd = %+v (%v)", mtd, err)
 	}
@@ -112,14 +114,14 @@ func TestRecordPrunesExpiredReportsAndHours(t *testing.T) {
 	store := dataapiusage.New(pool)
 	ctx := context.Background()
 	old := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
-	if _, err := store.Record(ctx, account, app, "old", []dataapiusage.Hour{{Hour: old, Counts: dataapiusage.Counts{UserRequests: 1}}}, old); err != nil {
+	if _, err := store.Record(ctx, account, app, "old", []dataapiusage.Hour{{Hour: old, Counts: dataapiusage.Counts{UserRequests: 1}}}, nil, old); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `UPDATE data_api_usage_reports SET received_at = $1`, old); err != nil {
 		t.Fatal(err)
 	}
 	now := time.Date(2026, 10, 19, 0, 0, 0, 0, time.UTC)
-	if _, err := store.Record(ctx, account, app, "new", nil, now); err != nil {
+	if _, err := store.Record(ctx, account, app, "new", nil, nil, now); err != nil {
 		t.Fatal(err)
 	}
 	var reports, hours int
@@ -142,5 +144,41 @@ func TestTheSchemaRefusesUnalignedHoursAndMalformedReportIDs(t *testing.T) {
 	}
 	if _, err := pool.Exec(ctx, `INSERT INTO data_api_usage_reports (app_id, report_id) VALUES ($1, 'bad id')`, app); err == nil {
 		t.Fatal("a malformed report id was stored")
+	}
+}
+
+func TestAccessSettingsAreReplacedReadAndForgotten(t *testing.T) {
+	store := dataapiusage.New(open(t))
+	ctx := context.Background()
+	now := time.Date(2026, 10, 19, 10, 0, 0, 0, time.UTC)
+	if _, _, ok, err := store.Access(ctx, app); ok || err != nil {
+		t.Fatalf("an app that never reported has settings: %v %v", ok, err)
+	}
+	first := []byte(`{"version":1,"schemas":["api"],"public_read":["api.products"]}`)
+	if _, err := store.Record(ctx, account, app, "r1", nil, first, now); err != nil {
+		t.Fatal(err)
+	}
+	second := []byte(`{"version":1,"schemas":["api"]}`)
+	if _, err := store.Record(ctx, account, app, "r2", nil, second, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Record(ctx, account, app, "r3", nil, nil, now); err != nil {
+		t.Fatal(err)
+	}
+	config, reported, ok, err := store.Access(ctx, app)
+	if err != nil || !ok || reported.IsZero() || !strings.Contains(string(config), `"schemas"`) || strings.Contains(string(config), "public_read") {
+		t.Fatalf("settings = %s %v %v %v (the latest report replaces; a report without settings keeps them)", config, reported, ok, err)
+	}
+	if err := store.DeleteAccess(ctx, other, app); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, ok, _ := store.Access(ctx, app); !ok {
+		t.Fatal("another account cleared the settings")
+	}
+	if err := store.DeleteAccess(ctx, account, app); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, ok, _ := store.Access(ctx, app); ok {
+		t.Fatal("settings survived deletion")
 	}
 }

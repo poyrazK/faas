@@ -22,6 +22,10 @@
  * RLS mode, as the signed-in user:
  *   const mine = connection.query({ database, token: () => auth.accessToken(),
  *     ...liveRead(data.from('messages').select('id, body').eq('channel_id', id).order('id', { ascending: false }).limit(50)) })
+ *
+ * A visitor without a session (public relations only), or a trusted backend:
+ *   connection.query({ database, anonymous: true, ...liveRead(visitor.from('products').select('id, name')) })
+ *   connection.query({ database, serverKey: process.env.SHOP_SERVER_KEY!, ...liveRead(backend.from('orders').select('id')) })
  */
 
 export { sql, toPostgresText } from './sql.js'
@@ -29,7 +33,7 @@ export { createLiveSealer, LiveSealError, LIVE_SEAL_DEFAULT_TTL_SECONDS, LIVE_SE
 export type { LiveQueryText, LiveSealer, LiveSealOptions } from './seal.js'
 export { LiveConnection, LiveQueryClosedError, liveRead, parseDataAPIRow, parseDataAPIValue, parseLiveRow, parseLiveValue } from './client.js'
 export type {
-  LiveConnectionOptions, LiveQuery, LiveQueryOptions, LiveQueryState, LiveReadOptions, LiveReadRow, LiveSealedOptions, LiveSocket, LiveStatus,
+  LiveConnectionOptions, LiveQuery, LiveQueryOptions, LiveQueryState, LiveReadCredential, LiveReadOptions, LiveReadRow, LiveSealedOptions, LiveSocket, LiveStatus,
 } from './client.js'
 export { LiveProtocolError, LiveResult, LiveSnapshot, parseLiveServerFrame, LIVE_TYPES } from './protocol.js'
 export type {

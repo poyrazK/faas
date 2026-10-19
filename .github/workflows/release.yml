@@ -490,6 +490,61 @@ jobs:
       - name: Verify npm installation from the public registry
         run: node scripts/verify-npm-installation.mjs --packages-dir "$RUNNER_TEMP/npm" --prefix "$RUNNER_TEMP/npm-smoke"
 
+  # @gregale/data (ADR 20261018170742). Off until the client-SDK license is
+  # decided (sdk/README-publishing.md); the repository variable
+  # PUBLISH_DATA_SDK=true turns it on. A version already on the registry is
+  # skipped, so a CLI release that does not bump the SDK publishes nothing.
+  publish-data-sdk:
+    name: Publish @gregale/data
+    if: vars.PUBLISH_DATA_SDK == 'true'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    concurrency:
+      group: gregale-npm-publish-data-sdk
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Build and test the SDK
+        working-directory: sdk/data
+        run: |
+          npm ci --ignore-scripts
+          npm test
+
+      # The live-query module stays unpacked until live queries launch.
+      - name: Verify the package contents
+        working-directory: sdk/data
+        run: |
+          set -euo pipefail
+          npm pack --dry-run --json > "$RUNNER_TEMP/data-pack.json"
+          node -e '
+            const files = require(process.argv[1])[0].files.map(f => f.path)
+            for (const f of ["dist/index.js", "dist/index.d.ts", "README.md", "LICENSE"]) if (!files.includes(f)) throw new Error("missing " + f)
+            if (files.some(f => f.startsWith("dist/live/"))) throw new Error("dist/live must not be published yet")
+          ' "$RUNNER_TEMP/data-pack.json"
+
+      - name: Publish unless this version exists
+        working-directory: sdk/data
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "::error title=npm channel unavailable::Set NPM_TOKEN to publish @gregale/data."
+            exit 1
+          fi
+          version=$(node -p 'require("./package.json").version')
+          if npm view "@gregale/data@$version" version >/dev/null 2>&1; then
+            echo "@gregale/data@$version is already published; nothing to do."
+            exit 0
+          fi
+          npm publish
+
   daemon-bundle:
     name: Build and sign canonical daemon bundle
     runs-on: ubuntu-22.04

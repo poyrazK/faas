@@ -6,6 +6,18 @@ import { limits } from './config.mjs'
 // workload identity. Counts come from the customer's own VM, so they are
 // owner telemetry, never billing records.
 
+// The access settings the platform applies to this app's live reads without a
+// user token (ADR 20261016151947): exposed schemas, the public-read allowlist and
+// server-key hashes with their permissions. Never a key.
+export function accessReport(config) {
+  const name = entry => `${entry.schema}.${entry.name ?? entry.relation}`
+  const permissions = p => ({ access: p.access, ...(p.relations ? { relations: p.relations.map(name) } : {}),
+    ...(p.rpcs ? { rpcs: p.rpcs.map(name) } : {}), subjects: p.subjects })
+  return { version: 1, schemas: [...config.schemas],
+    ...(config.publicRead ? { public_read: config.publicRead.map(name) } : {}),
+    ...(config.serverKeys ? { server_keys: config.serverKeys.map(k => ({ slot: k.slot, sha256: k.hash.toString('hex'), ...(k.permissions ? { permissions: permissions(k.permissions) } : {}) })) } : {}) }
+}
+
 const hourMs = 3600000
 const emptyCounts = () => ({ user_requests: 0, anonymous_requests: 0, server_requests: 0, rejected_requests: 0, error_requests: 0, capped_requests: 0, rows_returned: 0, response_bytes: 0 })
 const month = ms => new Date(ms).toISOString().slice(0, 7)
@@ -35,10 +47,14 @@ function instanceOf(token) {
 // A restore, seen as the wall clock jumping against the monotonic clock,
 // drops pending counts rather than reporting them once per instance. An
 // in-flight report keeps its id, which the platform applies once.
-export function createUsage(config, { now = Date.now, monotonic = () => performance.now(), fetchImpl = fetch, nonce = randomUUID() } = {}) {
+export function createUsage(config, { now = Date.now, monotonic = () => performance.now(), fetchImpl = fetch, nonce = randomUUID(), access = null } = {}) {
   if (!config) return null
   const pending = new Map()
   let inflight = null, sequence = 0, totals = null, timer = null, busy = false, offset = now() - monotonic(), stopped = false
+  // Access settings go out after start, after a restore and hourly, so the
+  // platform's copy follows restarts with new settings.
+  let accessSentAt = null
+  const accessDue = () => access !== null && (accessSentAt === null || now() - accessSentAt >= hourMs)
 
   const restored = () => {
     const current = now() - monotonic()
@@ -46,6 +62,7 @@ export function createUsage(config, { now = Date.now, monotonic = () => performa
     offset = current
     pending.clear()
     totals = null
+    accessSentAt = null
     return true
   }
   const schedule = delay => {
@@ -107,7 +124,7 @@ export function createUsage(config, { now = Date.now, monotonic = () => performa
     busy = true
     try {
       restored()
-      if (!inflight && !pending.size && totals && totals.month === month(now())) return
+      if (!inflight && !pending.size && !accessDue() && (!config.caps || totals && totals.month === month(now()))) return
       const signal = AbortSignal.timeout(limits.usageReportMs)
       const identity = await fetchImpl(config.identity, { signal, redirect: 'error' })
       if (!identity.ok) { await identity.body?.cancel(); return }
@@ -119,13 +136,14 @@ export function createUsage(config, { now = Date.now, monotonic = () => performa
         const cutoff = Math.floor(now() / hourMs) * hourMs - limits.usageReportMaxHours * hourMs
         const hours = [...pending].filter(([hour]) => hour > cutoff).sort(([a], [b]) => a - b).map(([hour, c]) => ({ hour: new Date(hour).toISOString(), ...c }))
         pending.clear()
-        inflight = { report_id: `${instance}.${nonce}:${++sequence}`, hours }
+        inflight = { report_id: `${instance}.${nonce}:${++sequence}`, hours, ...(accessDue() ? { access } : {}) }
       }
       const response = await fetchImpl(config.endpoint, { method: 'POST', redirect: 'error', signal,
         headers: { Authorization: `Bearer ${body.access_token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ version: 1, ...inflight }) })
       if (response.ok) {
         const answer = await response.json()
+        if (inflight.access) accessSentAt = now()
         inflight = null
         const mtd = answer?.month_to_date
         if (mtd && typeof mtd.month === 'string' && Number.isSafeInteger(mtd.requests) && Number.isSafeInteger(mtd.anonymous_requests)) totals = { month: mtd.month, requests: mtd.requests, anonymous_requests: mtd.anonymous_requests }
@@ -148,7 +166,7 @@ export function createUsage(config, { now = Date.now, monotonic = () => performa
     return entry
   }
 
-  if (config.caps) schedule(0)
+  if (config.caps || access !== null) schedule(0)
   return Object.freeze({ start, capReached, report, stop: () => { stopped = true; clearTimeout(timer) },
     flush: async () => { clearTimeout(timer); timer = null; await report() } })
 }

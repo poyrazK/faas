@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
@@ -429,5 +430,152 @@ func TestLiveFramesRideV2Connections(t *testing.T) {
 	if err := json.Unmarshal(data, &refusal); err != nil || refusal.Type != "live.error" || refusal.Code != "unavailable" ||
 		!refusal.Closed || refusal.Subscription != "feed" {
 		t.Fatalf("refusal %s", data)
+	}
+}
+
+// adr: 20261016151947 — anonymous and server-key live reads reach the live
+// proxy, which admits them; realtimed refuses client-set access kinds and
+// keeps server keys out of browsers.
+func TestKeylessLiveFramesReachTheProxyButKeysStayOutOfBrowsers(t *testing.T) {
+	live := &fakeLive{got: make(chan struct{}, 4)}
+	m := NewManager(Config{
+		JWTAuthorizer: &claimsJWT{}, ResumePreview: true,
+		HistoryReader: &testResumeHistory{}, ResumePollInterval: 15 * time.Millisecond, Live: live,
+	}, &testChannelHooks{})
+	if err := m.RegisterEndpoint(Endpoint{
+		ID: "resume-endpoint", AppID: "app-1", AccountID: "acct-1", CallbackURL: "https://app.example",
+		AllowedOrigins: []string{"https://app.example"},
+		ClientAuth: AuthPolicy{
+			Mode: AuthModeOIDCJWT, Issuer: "https://issuer.example",
+			JWKSURL: "https://issuer.example/.well-known/jwks.json", Algorithms: []string{"RS256"},
+		},
+		LiveRoutes: []LiveRoute{testLiveRoute},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(m.Handler())
+	t.Cleanup(func() { server.Close(); _ = m.Close() })
+	read := `"database":"db","rest":"products?select=id"`
+	key := `"server_key":"gdsk_` + strings.Repeat("A", 43) + `"`
+	refusal := func(client *websocket.Conn) (string, bool) {
+		t.Helper()
+		_ = client.SetReadDeadline(time.Now().Add(5 * time.Second))
+		_, data, err := client.ReadMessage()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var r struct {
+			Code   string
+			Closed bool
+		}
+		_ = json.Unmarshal(data, &r)
+		return r.Code, r.Closed
+	}
+
+	backend := dialResumeTest(t, server)
+	for _, frame := range []string{`{"type":"live.subscribe","subscription":"public",` + read + `,"anonymous":true}`, `{"type":"live.subscribe","subscription":"backend",` + read + `,` + key + `}`} {
+		if err := backend.WriteMessage(1, []byte(frame)); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case <-live.got:
+		case <-time.After(5 * time.Second):
+			t.Fatalf("%s never reached the live session", frame)
+		}
+	}
+	live.mu.Lock()
+	forwarded := string(live.received[0]) + string(live.received[1])
+	live.mu.Unlock()
+	if !strings.Contains(forwarded, `"anonymous":true`) || !strings.Contains(forwarded, `"server_key":"gdsk_`) || strings.Contains(forwarded, "claims") {
+		t.Fatalf("realtimed changed keyless frames before the proxy admits them: %s", forwarded)
+	}
+	if err := backend.WriteMessage(1, []byte(`{"type":"live.subscribe","subscription":"forged",`+read+`,"claims":{"gregale_access":"server","gregale_server_key":"a"},"access":"server"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if code, closed := refusal(backend); code != "protocol_error" || !closed {
+		t.Fatalf("client-set access kind: %s", code)
+	}
+
+	dialer := websocket.Dialer{Subprotocols: []string{ResumeSubprotocol}}
+	browser, response, err := dialer.Dial("ws"+strings.TrimPrefix(server.URL, "http")+ManagedPathPrefix+"resume-endpoint",
+		http.Header{"Authorization": {"Bearer test-jwt"}, "Origin": {"https://app.example"}})
+	if response != nil && response.Body != nil {
+		_ = response.Body.Close()
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = browser.Close() })
+	if err := browser.WriteMessage(1, []byte(`{"type":"live.subscribe","subscription":"leak",`+read+`,`+key+`}`)); err != nil {
+		t.Fatal(err)
+	}
+	if code, closed := refusal(browser); code != "forbidden" || !closed {
+		t.Fatalf("server key from a browser: %s", code)
+	}
+	live.mu.Lock()
+	n := len(live.received)
+	live.mu.Unlock()
+	if n != 2 {
+		t.Fatalf("refused frames reached the live session (%d frames)", n)
+	}
+}
+
+// adr: 20261016151947 — an endpoint without OIDC accepts v2 connections only
+// when it has live routes, and such a connection carries live frames only.
+func TestEndpointsWithoutOIDCAcceptLiveOnlyConnections(t *testing.T) {
+	live := &fakeLive{got: make(chan struct{}, 4)}
+	m := NewManager(Config{ResumePreview: true, HistoryReader: &testResumeHistory{}, ResumePollInterval: 15 * time.Millisecond, Live: live}, &testChannelHooks{})
+	t.Cleanup(func() { _ = m.Close() })
+	for _, e := range []Endpoint{
+		{ID: "public", AppID: "app-1", AccountID: "acct-1", CallbackURL: "https://app.example", ClientAuth: AuthPolicy{Mode: AuthModeNone}, LiveRoutes: []LiveRoute{testLiveRoute}},
+		{ID: "plain", AppID: "app-1", AccountID: "acct-1", CallbackURL: "https://app.example", ClientAuth: AuthPolicy{Mode: AuthModeNone}},
+	} {
+		if err := m.RegisterEndpoint(e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	server := httptest.NewServer(m.Handler())
+	t.Cleanup(server.Close)
+	dial := func(endpoint string) (*websocket.Conn, int) {
+		client, response, err := (&websocket.Dialer{Subprotocols: []string{ResumeSubprotocol}}).Dial("ws"+strings.TrimPrefix(server.URL, "http")+ManagedPathPrefix+endpoint, nil)
+		status := 0
+		if response != nil {
+			status = response.StatusCode
+			if response.Body != nil {
+				_ = response.Body.Close()
+			}
+		}
+		if err == nil {
+			t.Cleanup(func() { _ = client.Close() })
+		}
+		return client, status
+	}
+	if _, status := dial("plain"); status != http.StatusForbidden {
+		t.Fatalf("v2 without OIDC or live routes: status %d", status)
+	}
+	client, status := dial("public")
+	if client == nil {
+		t.Fatalf("live-only connection refused: status %d", status)
+	}
+	if err := client.WriteMessage(1, []byte(`{"type":"subscribe","channel":"news"}`)); err != nil {
+		t.Fatal(err)
+	}
+	_ = client.SetReadDeadline(time.Now().Add(5 * time.Second))
+	for {
+		_, data, err := client.ReadMessage()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(data), `"live_only_connection"`) {
+			break
+		}
+	}
+	if err := client.WriteMessage(1, []byte(`{"type":"live.subscribe","subscription":"public","database":"db","rest":"products","anonymous":true}`)); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-live.got:
+	case <-time.After(5 * time.Second):
+		t.Fatal("a live frame on a live-only connection never reached the live session")
 	}
 }

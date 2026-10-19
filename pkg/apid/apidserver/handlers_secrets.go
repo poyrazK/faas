@@ -561,6 +561,9 @@ func (s *server) deleteSecret(w http.ResponseWriter, r *http.Request, acct state
 	}
 	// ADR-1451: deletion is revocation; a guard never restores it.
 	s.finishConfigChange(r.Context(), change, state.ConfigSourceSecretDelete, key, true)
+	if key == "DATA_API_USAGE_URL" {
+		s.forgetDataAPIAccess(r.Context(), acct.ID, app.ID)
+	}
 	invalidated, err := s.invalidateAppSnapshots(r.Context(), app.ID)
 	if err != nil {
 		s.log.Error("secret delete: invalidate snapshots", "app", safeAppSlug, "err", err)

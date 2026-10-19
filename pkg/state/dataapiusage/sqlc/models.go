@@ -14,6 +14,12 @@ type App struct {
 	DeletedAt pgtype.Timestamptz
 }
 
+type DataApiAccessConfig struct {
+	AppID      pgtype.UUID
+	Config     []byte
+	ReportedAt pgtype.Timestamptz
+}
+
 type DataApiUsageHourly struct {
 	AppID             pgtype.UUID
 	Hour              pgtype.Timestamptz

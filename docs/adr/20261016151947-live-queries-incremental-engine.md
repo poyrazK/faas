@@ -1073,6 +1073,47 @@ Phase 0 did not cover:
     realtimed.
   - The SDK's live module stays unexported and unpacked until launch.
 
+- **Anonymous and server-key reads** (2026-10-19, with ADR-20261018170742
+  and ADR-20261019102108).
+  - **Frames.** A Data API read may carry `anonymous: true` or a
+    `server_key` (with an optional `subject`) instead of a user's token.
+    `access` (`anonymous` or `server`) is set only by realtimed, like `role`
+    and `claims`; a client that sends it is refused.
+  - **Settings.** The Data API runtime reports its access settings with its
+    usage reports, after start, after a restore and hourly. They hold its
+    exposed schemas, its public-read allowlist and its server-key hashes with
+    permissions, never a key. apid stores the latest per app
+    (`data_api_access_configs`) and puts them on the app's live routes
+    (`LiveRoute.DataAPIAccess`). Deleting `DATA_API_USAGE_URL` forgets them,
+    so live reads never follow settings the runtime can no longer report.
+  - **Admission.** The live proxy in realtimed admits these reads. An
+    anonymous read may name only public relations, and embedded relations are
+    checked recursively from the parsed read. A server key must match a
+    slot's hash, compared in constant time, and stay within the key's
+    relation and subject permissions. The proxy then replaces the credential
+    with the Data API gateway's claims (`gregale_access` `anonymous`, or
+    `server` with `gregale_server_key` and `sub`), set to expire after
+    `LiveQueryKeySessionMax` (1 h). The key never reaches the hub. A renewal
+    re-runs admission against the current settings with the subscription's
+    read, so a revoked key or a narrowed allowlist takes effect within an hour.
+    A renewal that changes the access kind is a `renew_mismatch`.
+  - **The hub** accepts claims for these kinds only in exactly that shape, and
+    only from realtimed. Row-level security still decides every row.
+  - **Connections.** v2 previously required OIDC (or a ticket). An endpoint
+    without OIDC now accepts v2 when it has live routes, as a live-only
+    connection: live frames are admitted frame by frame, and channel frames
+    answer `live_only_connection`. Server keys are refused on connections
+    whose upgrade carried an `Origin` header, as the REST gateway refuses them
+    from browsers.
+  - **SDK.** `connection.query({ database, anonymous: true, ...liveRead(q) })`
+    and `{ serverKey, subject }`; exactly one credential, enforced by types.
+  - **Tests:** frame validation; admission unit tests; a proxy session
+    against a recording hub, showing the key stays in realtimed and renewals
+    re-check; realtimed's pass-through, client-set access kinds and
+    browser-origin refusal; live-only connections; and a full path on
+    PostgreSQL where a visitor without a session sees only published rows,
+    follows a new one, and is refused orders that a server key reads.
+
 ## Consequences
 
 - **TRUNCATE waits.** TRUNCATE and table rewrites on live tables wait for the

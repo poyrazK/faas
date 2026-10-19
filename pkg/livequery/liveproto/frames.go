@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -92,10 +93,28 @@ type ClientFrame struct {
 	// endpoint's route (the app's binding to the database); a client never
 	// sends it.
 	Role string `json:"role,omitempty"`
+
+	// Anonymous is a Data API read without a user token, allowed only for
+	// relations the Data API makes public. ServerKey is a Data API server key
+	// for trusted backends, optionally acting for Subject. realtimed admits
+	// either against the app's reported access settings and replaces it with
+	// claims and Access ("anonymous" or "server"), which a client never sends.
+	Anonymous bool   `json:"anonymous,omitempty"`
+	ServerKey string `json:"server_key,omitempty"`
+	Subject   string `json:"subject,omitempty"`
+	Access    string `json:"access,omitempty"`
 }
 
-// RLS reports whether the frame is RLS mode rather than sealed.
-func (f ClientFrame) RLS() bool { return f.Sealed == "" && (f.Token != "" || len(f.Claims) > 0) }
+// Access kinds realtimed sets on admitted frames without a user token.
+const (
+	AccessAnonymous = "anonymous"
+	AccessServer    = "server"
+)
+
+// RLS reports whether the frame is RLS mode (a Data API read) rather than sealed.
+func (f ClientFrame) RLS() bool {
+	return f.Sealed == "" && (f.Token != "" || len(f.Claims) > 0 || f.Anonymous || f.ServerKey != "")
+}
 
 // ParseClientFrame decodes and validates a client frame.
 func ParseClientFrame(data []byte) (ClientFrame, error) {
@@ -116,7 +135,8 @@ func ParseClientFrame(data []byte) (ClientFrame, error) {
 			return ClientFrame{}, fmt.Errorf("%w: %s carries no version", ErrProtocol, f.Type)
 		}
 	case TypeUnsubscribe:
-		if f.Sealed != "" || f.Version != 0 || f.Database != "" || f.Rest != "" || f.Schema != "" || f.Token != "" || len(f.Claims) > 0 || f.Role != "" {
+		if f.Sealed != "" || f.Version != 0 || f.Database != "" || f.Rest != "" || f.Schema != "" || f.Token != "" || len(f.Claims) > 0 || f.Role != "" ||
+			f.Anonymous || f.ServerKey != "" || f.Subject != "" || f.Access != "" {
 			return ClientFrame{}, fmt.Errorf("%w: %s carries only the subscription", ErrProtocol, f.Type)
 		}
 		return f, nil
@@ -129,17 +149,39 @@ func ParseClientFrame(data []byte) (ClientFrame, error) {
 	return f, nil
 }
 
-// checkCredential checks that a subscribe or renew carries one credential,
-// a seal or a user's token (or claims), and the query it needs.
+// checkCredential checks that a subscribe or renew carries one credential
+// (a seal, a user's token or its claims, anonymous access or a server key)
+// and the query it needs.
 func (f ClientFrame) checkCredential() error {
 	sealed, user := f.Sealed != "", f.Token != "" || len(f.Claims) > 0
+	credentials := 0
+	for _, present := range []bool{sealed, f.Token != "", f.Anonymous, f.ServerKey != ""} {
+		if present {
+			credentials++
+		}
+	}
+	if len(f.Claims) > 0 && f.Token == "" && !f.Anonymous && f.ServerKey == "" && !sealed {
+		credentials++
+	}
 	switch {
-	case sealed == user:
-		return fmt.Errorf("%w: %s needs a sealed query or a user's token", ErrProtocol, f.Type)
+	case credentials != 1:
+		return fmt.Errorf("%w: %s needs one of a sealed query, a user's token, anonymous access or a server key", ErrProtocol, f.Type)
+	case f.Access != "" && f.Access != AccessAnonymous && f.Access != AccessServer:
+		return fmt.Errorf("%w: unknown access kind", ErrProtocol)
+	case f.Access != "" && len(f.Claims) == 0:
+		return fmt.Errorf("%w: an access kind comes with its claims", ErrProtocol)
+	case f.Subject != "" && f.ServerKey == "":
+		return fmt.Errorf("%w: a subject needs a server key", ErrProtocol)
+	case len(f.Subject) > api.DataAPIServerKeySubjectMaxBytes || strings.ContainsFunc(f.Subject, func(r rune) bool { return r < 0x20 || r == 0x7f }):
+		return fmt.Errorf("%w: the subject is invalid", ErrProtocol)
+	case f.ServerKey != "" && !serverKeyShape(f.ServerKey):
+		return fmt.Errorf("%w: the server key is malformed", ErrProtocol)
 	case sealed && (f.Database != "" || f.Rest != "" || f.Schema != ""):
 		return fmt.Errorf("%w: a sealed query names its own database and query", ErrProtocol)
 	case sealed:
 		return nil
+	case user && (f.Anonymous || f.ServerKey != ""):
+		return fmt.Errorf("%w: a token or its claims, not both", ErrProtocol)
 	case f.Token != "" && len(f.Claims) > 0:
 		return fmt.Errorf("%w: a token or its claims, not both", ErrProtocol)
 	case len(f.Token) > api.LiveQueryTokenMaxBytes || len(f.Claims) > api.LiveQueryTokenMaxBytes:
@@ -159,6 +201,19 @@ func (f ClientFrame) checkCredential() error {
 		return fmt.Errorf("%w: role name too long", ErrProtocol)
 	}
 	return nil
+}
+
+// serverKeyShape matches a Data API server key: gdsk_ and 43 base64url characters.
+func serverKeyShape(key string) bool {
+	if len(key) != 48 || !strings.HasPrefix(key, "gdsk_") {
+		return false
+	}
+	for _, c := range key[5:] {
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '-' || c == '_') {
+			return false
+		}
+	}
+	return true
 }
 
 func validSubscription(s string) bool {

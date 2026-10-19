@@ -9,7 +9,7 @@ in [Blocker: licensing](#blocker-licensing).
 |---|---|---|---|
 | Go | `github.com/poyrazK/faas/sdk/go` | `faas` | needs a `sdk/go/vX.Y.Z` tag |
 | Node | `@gregale/sdk-node` | `@gregale/sdk-node` | npm scope `@gregale` unregistered |
-| Data API | `@gregale/data` | `@gregale/data` | source package in `sdk/data`; not published |
+| Data API | `@gregale/data` | `@gregale/data` | not published; release job ready, off (see [Data API SDK](#data-api-sdk)) |
 | Application Auth | `@gregale/auth` | `@gregale/auth` | source package in `sdk/auth`; not published |
 | Python | `gregale-sdk` | `faas_sdk` | PyPI project unregistered |
 
@@ -93,6 +93,27 @@ npm publish
 ```
 
 `prepublishOnly` reruns the build, so a stale `dist/` cannot ship.
+
+## Data API SDK
+
+`release.yml` has a `publish-data-sdk` job for `@gregale/data`. It stays off
+until the licensing decision above; set the repository variable
+`PUBLISH_DATA_SDK=true` to turn it on. On each release tag it then:
+
+1. installs the locked dependencies without lifecycle scripts and runs
+   `npm test` (build, declaration and type tests, unit tests);
+2. checks the packed files, including that the unreleased live-query module
+   (`dist/live`) stays out;
+3. publishes the version in `sdk/data/package.json` unless the registry already
+   has it, so a CLI release that does not bump the SDK publishes nothing.
+
+`publishConfig.access` is `restricted` today, which publishes a private
+package only members of the `@gregale` npm organization can install. Change it
+to `public` together with the license decision. The `@gregale` scope already
+holds the CLI's `@gregale/cli-*` packages, so no registration step remains.
+
+The generated Python and Go clients (`gregale data-api types --language`) are
+not packages: the CLI renders them into each project.
 
 ## Python
 

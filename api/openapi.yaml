@@ -77434,6 +77434,35 @@ components:
         version: { type: integer, enum: [1] }
         report_id: { type: string, pattern: '^[A-Za-z0-9._:-]{1,128}$' }
         hours: { type: array, maxItems: 48, items: { $ref: '#/components/schemas/DataAPIUsageHour' } }
+        access: { $ref: '#/components/schemas/DataAPIAccessConfig' }
+    DataAPIAccessConfig:
+      description: Access settings the runtime reports for live reads without a user token, sent after start and hourly. It replaces the stored settings; turning usage reporting off forgets them. Holds key hashes, never keys.
+      type: object
+      additionalProperties: false
+      required: [version, schemas]
+      properties:
+        version: { type: integer, enum: [1] }
+        schemas: { type: array, minItems: 1, maxItems: 8, items: { type: string, pattern: '^[a-z][a-z0-9_]{0,62}$' } }
+        public_read: { type: array, maxItems: 64, items: { type: string, pattern: '^[a-z][a-z0-9_]{0,62}\.[A-Za-z_][A-Za-z0-9_]{0,62}$' } }
+        server_keys: { type: array, maxItems: 2, items: { $ref: '#/components/schemas/DataAPIServerKey' } }
+    DataAPIServerKey:
+      description: One server-key rotation slot as the runtime reports it, the SHA-256 of the key and any permissions.
+      type: object
+      additionalProperties: false
+      required: [slot, sha256]
+      properties:
+        slot: { type: string, enum: [a, b] }
+        sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+        permissions: { $ref: '#/components/schemas/DataAPIServerKeyPermissionSet' }
+    DataAPIServerKeyPermissionSet:
+      description: Narrows a server key. Absent fields keep full access; live reads use relations and subjects.
+      type: object
+      additionalProperties: false
+      properties:
+        access: { type: string, enum: [read, write] }
+        relations: { type: array, maxItems: 64, items: { type: string } }
+        rpcs: { type: array, maxItems: 64, items: { type: string } }
+        subjects: { type: boolean }
     DataAPIUsageMonthToDate:
       description: Admitted requests in the current UTC calendar month, all and anonymous, which owner caps compare against.
       type: object
