@@ -16,8 +16,10 @@ ec = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = ec  # dataclasses resolve annotations through sys.modules
 spec.loader.exec_module(ec)
 
-CATALOGUE = ec.Catalogue(relations={"apps", "events", "app_summary"}, indexes={"events_at_idx", "apps_slug_key"},
-                         unique={"apps_slug_key", "apps_pkey"})
+CATALOGUE = ec.Catalogue(relations={"apps", "events", "app_summary", "orgs", "projects", "accounts"},
+                         indexes={"events_at_idx", "apps_slug_key"}, unique={"apps_slug_key", "apps_pkey"},
+                         index_tables={"events_at_idx": "events", "apps_slug_key": "apps"},
+                         unique_keys={"apps": [frozenset({"id"}), frozenset({"account_id", "slug"})]})
 
 
 def no_refs(name, table):
@@ -71,7 +73,7 @@ class LockTimeoutTest(unittest.TestCase):
     def test_alter_inside_do_block(self):
         up = """DO $r$ BEGIN
  IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conname='x') THEN
-  ALTER TABLE apps ADD CONSTRAINT x CHECK(note <> '');
+  ALTER TABLE apps ADD CONSTRAINT x CHECK(note <> '') NOT VALID;
  END IF;
 END $r$;"""
         self.assertEqual(lint(up), [("lock-timeout", "apps")])
@@ -129,10 +131,12 @@ class NotNullTest(unittest.TestCase):
         self.assertEqual(lint(LT + "ALTER TABLE apps ADD COLUMN IF NOT EXISTS tier text NOT NULL;"), [("not-null", "apps.tier")])
 
     def test_add_not_null_with_default(self):
-        self.assertEqual(lint(LT + "ALTER TABLE apps ADD COLUMN tier text NOT NULL DEFAULT 'free' CHECK (tier <> '');"), [])
+        self.assertEqual(lint(LT + "ALTER TABLE apps ADD COLUMN tier text NOT NULL DEFAULT 'free';"), [])
 
     def test_check_is_not_null_is_not_a_not_null_column(self):
-        self.assertEqual(lint(LT + "ALTER TABLE apps ADD COLUMN tier text CHECK (tier IS NOT NULL OR true);"), [])
+        # No not-null finding; the column CHECK itself validates every row.
+        self.assertEqual(lint(LT + "ALTER TABLE apps ADD COLUMN tier text CHECK (tier IS NOT NULL OR true);"),
+                         [("constraint-validation", "apps.tier")])
 
     def test_set_not_null(self):
         self.assertEqual(lint(LT + "ALTER TABLE apps ALTER COLUMN tier SET NOT NULL;"), [("not-null", "apps.tier")])
@@ -184,13 +188,216 @@ class ContractTest(unittest.TestCase):
         self.assertEqual(lint(up, referenced=refs_in_release), [])
 
 
+NO_TX = "-- +goose NO TRANSACTION\n"
+# The batched backfill docs/release-compatibility.md recommends.
+BACKFILL = """DO $backfill$
+DECLARE
+  last_id uuid := '00000000-0000-0000-0000-000000000000';
+BEGIN
+  LOOP
+    PERFORM set_config('lock_timeout', '5s', true);
+    WITH batch AS (
+      SELECT id FROM apps WHERE id > last_id ORDER BY id LIMIT 1000
+    ), moved AS (
+      UPDATE apps SET org_id = apps.account_id FROM batch WHERE apps.id = batch.id AND apps.org_id IS NULL
+    )
+    SELECT max(id) INTO last_id FROM batch;
+    EXIT WHEN last_id IS NULL;
+    COMMIT;
+  END LOOP;
+END
+$backfill$;"""
+
+
+class NoDowntimeTest(unittest.TestCase):
+    """The rules that keep a migration from needing writers stopped
+    (ADR-202610171900, amendment 1). None can be waived."""
+
+    CASES = [
+        # name, header, Up section, findings
+        # constraint-validation
+        ("foreign key validated under the lock", "",
+         LT + "ALTER TABLE apps ADD CONSTRAINT apps_org_fk FOREIGN KEY (org_id) REFERENCES orgs (id);",
+         [("constraint-validation", "apps.apps_org_fk")]),
+        ("foreign key NOT VALID", "",
+         LT + "ALTER TABLE apps ADD CONSTRAINT apps_org_fk FOREIGN KEY (org_id) REFERENCES public.orgs (id) NOT VALID;", []),
+        ("check validated under the lock", "", LT + "ALTER TABLE apps ADD CONSTRAINT apps_tier_chk CHECK (tier <> '');",
+         [("constraint-validation", "apps.apps_tier_chk")]),
+        ("check NOT VALID", "", LT + "ALTER TABLE apps ADD CONSTRAINT apps_tier_chk CHECK (tier <> '') NOT VALID;", []),
+        ("unnamed constraints", "", LT + "ALTER TABLE apps ADD CHECK (ram_mb > 0), ADD FOREIGN KEY (org_id) REFERENCES orgs;",
+         [("constraint-validation", "apps"), ("constraint-validation", "apps")]),
+        ("quoted name", "", LT + "ALTER TABLE apps ADD CONSTRAINT \"Apps_Tier\" CHECK (tier <> '');",
+         [("constraint-validation", "apps.Apps_Tier")]),
+        ("validate on its own", "", "ALTER TABLE apps VALIDATE CONSTRAINT apps_tier_chk;", []),
+        ("validate in the migration that adds it", "",
+         LT + "ALTER TABLE apps ADD CONSTRAINT apps_tier_chk CHECK (tier <> '') NOT VALID;\n"
+              "ALTER TABLE apps VALIDATE CONSTRAINT apps_tier_chk;",
+         [("constraint-validation", "apps.apps_tier_chk")]),
+        ("column CHECK", "", LT + "ALTER TABLE apps ADD COLUMN tier text NOT NULL DEFAULT 'free' CHECK (tier <> '');",
+         [("constraint-validation", "apps.tier")]),
+        ("column REFERENCES without a default is not validated", "",
+         LT + "ALTER TABLE apps ADD COLUMN org_id uuid REFERENCES orgs (id);", []),
+        ("column REFERENCES with a default", "",
+         LT + "ALTER TABLE apps ADD COLUMN org_id uuid DEFAULT '00000000-0000-0000-0000-000000000000' REFERENCES orgs (id);",
+         [("constraint-validation", "apps.org_id")]),
+        ("new table is exempt", "",
+         "CREATE TABLE widgets (id int, n int);\nALTER TABLE widgets ADD CONSTRAINT w_n CHECK (n > 0);\n"
+         "ALTER TABLE widgets DROP CONSTRAINT w_n, ADD CONSTRAINT w_n CHECK (n >= 0);\n"
+         "UPDATE widgets SET n = 1;", []),
+        ("a new table's foreign key locks the existing parent", "", "CREATE TABLE widgets (app_id uuid REFERENCES apps (id));",
+         [("lock-timeout", "apps")]),
+        ("so does one added after the CREATE", "",
+         "CREATE TABLE widgets (app_id uuid);\nALTER TABLE widgets ADD CONSTRAINT w_app FOREIGN KEY (app_id) REFERENCES apps (id);",
+         [("lock-timeout", "apps")]),
+        ("not waivable", "",
+         "-- migration-lint: allow constraint-validation apps: 40 rows\n" + LT +
+         "ALTER TABLE apps ADD CONSTRAINT apps_tier_chk CHECK (tier <> '');",
+         [("constraint-validation", "apps.apps_tier_chk")]),
+        # constraint-churn
+        ("drop and re-add a foreign key", "",
+         LT + "ALTER TABLE apps DROP CONSTRAINT apps_account_id_fkey;\n"
+              "ALTER TABLE apps ADD CONSTRAINT apps_account_id_fkey FOREIGN KEY (account_id) REFERENCES orgs (id) NOT VALID;",
+         [("constraint-churn", "apps")]),
+        ("drop and add in one statement", "",
+         LT + "ALTER TABLE apps DROP CONSTRAINT IF EXISTS apps_tier_chk, ADD CONSTRAINT apps_tier_chk CHECK (tier <> '') NOT VALID;",
+         [("constraint-churn", "apps")]),
+        ("add then drop the old one", "",
+         LT + "ALTER TABLE apps ADD CONSTRAINT apps_tier_v2 CHECK (tier <> '') NOT VALID;\n"
+              "ALTER TABLE apps DROP CONSTRAINT apps_tier_chk;",
+         [("constraint-churn", "apps")]),
+        ("drop on one table, add on another", "",
+         LT + "ALTER TABLE apps DROP CONSTRAINT apps_tier_chk;\n"
+              "ALTER TABLE events ADD CONSTRAINT events_kind_chk CHECK (kind <> '') NOT VALID;", []),
+        ("primary key swapped to a concurrently built index", "",
+         LT + "ALTER TABLE apps DROP CONSTRAINT apps_pkey, ADD CONSTRAINT apps_pkey PRIMARY KEY USING INDEX apps_pkey_v2;", []),
+        # unbatched-write
+        ("bulk update", "", "UPDATE apps SET tier = 'free' WHERE tier IS NULL;", [("unbatched-write", "apps")]),
+        ("update without WHERE", "", "UPDATE ONLY public.apps SET tier = 'free';", [("unbatched-write", "apps")]),
+        ("bulk delete", "", "DELETE FROM events WHERE at < now() - interval '30 days';", [("unbatched-write", "events")]),
+        ("one bounded batch", "",
+         "UPDATE apps SET tier = 'free' WHERE id IN (SELECT id FROM apps WHERE tier IS NULL ORDER BY id LIMIT 1000);", []),
+        ("batch too large", "", "DELETE FROM events WHERE id IN (SELECT id FROM events LIMIT 50000);",
+         [("unbatched-write", "events")]),
+        ("LIMIT ALL", "", "DELETE FROM events WHERE id IN (SELECT id FROM events LIMIT ALL);", [("unbatched-write", "events")]),
+        ("LIMIT on another table", "",
+         "UPDATE apps SET tier = 'free' WHERE account_id IN (SELECT id FROM accounts ORDER BY id LIMIT 100);",
+         [("unbatched-write", "apps")]),
+        ("LIMIT only in SET", "", "UPDATE apps SET tier = (SELECT tier FROM apps LIMIT 1);", [("unbatched-write", "apps")]),
+        ("batch from a FROM subquery", "",
+         "UPDATE apps SET tier = 'free' FROM (SELECT id FROM apps WHERE id > $1 ORDER BY id LIMIT 500) b WHERE apps.id = b.id;", []),
+        ("batch from DELETE USING", "",
+         "DELETE FROM events USING (SELECT id FROM events ORDER BY id LIMIT 500) b WHERE events.id = b.id;", []),
+        ("batch from a WITH query", "",
+         "WITH b AS (SELECT id FROM apps ORDER BY id LIMIT 500) UPDATE apps SET tier = 'free' FROM b WHERE apps.id = b.id;", []),
+        ("unbounded data-modifying WITH query", "",
+         "WITH gone AS (DELETE FROM events WHERE at < now() RETURNING id) SELECT count(*) FROM gone;",
+         [("unbatched-write", "events")]),
+        ("variable batch size", "",
+         "DO $$ DECLARE n int := 500; BEGIN DELETE FROM events WHERE id IN (SELECT id FROM events LIMIT n); END $$;", []),
+        ("WHERE CURRENT OF", "", "UPDATE apps SET tier = 'free' WHERE CURRENT OF app_cursor;", []),
+        ("pinned to the primary key", "",
+         "UPDATE apps SET tier = 'free' WHERE id = '6f1c6a52-0000-4000-8000-000000000001'::uuid RETURNING id;", []),
+        ("pinned to a unique key", "", "UPDATE apps SET tier = 'free' WHERE account_id = 'a' AND apps.slug = 'web';", []),
+        ("a short list of keys", "", "DELETE FROM apps WHERE id IN ('a', 'b', 'c');", []),
+        ("part of a unique key", "", "UPDATE apps SET tier = 'free' WHERE slug = 'web';", [("unbatched-write", "apps")]),
+        ("a key or anything", "", "UPDATE apps SET tier = 'free' WHERE id = 'a' OR tier IS NULL;", [("unbatched-write", "apps")]),
+        ("a key from a variable", "", "DO $$ DECLARE r record; BEGIN UPDATE apps SET tier = 'free' WHERE id = r.id; END $$;",
+         [("unbatched-write", "apps")]),
+        ("a key from a subquery", "", "DELETE FROM apps WHERE id IN (SELECT id FROM apps);", [("unbatched-write", "apps")]),
+        ("the documented backfill", NO_TX, BACKFILL, []),
+        ("backfill loop inside one transaction", "", BACKFILL, [("unbatched-write", "apps")]),
+        ("backfill loop that never commits", NO_TX, BACKFILL.replace("COMMIT;", ""), [("unbatched-write", "apps")]),
+        ("row-by-row loop", NO_TX,
+         "DO $$ DECLARE r record; BEGIN FOR r IN SELECT id FROM apps LOOP UPDATE apps SET tier = 'free' WHERE id = r.id; "
+         "COMMIT; END LOOP; END $$;", [("unbatched-write", "apps")]),
+        ("SELECT FOR UPDATE is not a write", "", "WITH x AS (SELECT 1) SELECT id FROM apps FOR UPDATE;", []),
+        ("inserts are not checked", "", "INSERT INTO events (kind) SELECT 'x' FROM apps;", []),
+        ("not waivable", "", "-- migration-lint: allow unbatched-write apps: 12 rows in production\n"
+                             "UPDATE apps SET tier = 'free';", [("unbatched-write", "apps")]),
+        # lock-fanout
+        ("three existing tables", "",
+         LT + "ALTER TABLE apps ADD COLUMN a int;\nALTER TABLE events ADD COLUMN b int;\nALTER TABLE orgs ADD COLUMN c int;", []),
+        ("four existing tables", "",
+         LT + "ALTER TABLE apps ADD COLUMN a int;\nALTER TABLE events ADD COLUMN b int;\nALTER TABLE orgs ADD COLUMN c int;\n"
+              "CREATE TRIGGER t AFTER INSERT ON projects FOR EACH ROW EXECUTE FUNCTION f();",
+         [("lock-fanout", "projects")]),
+        ("a foreign key locks the table it references", "",
+         LT + "ALTER TABLE apps ADD CONSTRAINT apps_org_fk FOREIGN KEY (org_id) REFERENCES orgs (id) NOT VALID;\n"
+              "ALTER TABLE events ADD CONSTRAINT events_project_fk FOREIGN KEY (project_id) REFERENCES projects (id) NOT VALID;",
+         [("lock-fanout", "projects")]),
+        # Three tables, not four: the index counts as the table it is on.
+        ("a dropped index locks its table", "",
+         LT + "DROP INDEX events_at_idx;\nALTER TABLE events ADD COLUMN a int;\nALTER TABLE apps ADD COLUMN b int;\n"
+              "ALTER TABLE orgs ADD COLUMN c int;", []),
+        ("validation does not block writes", "",
+         "ALTER TABLE apps VALIDATE CONSTRAINT a;\nALTER TABLE events VALIDATE CONSTRAINT b;\n"
+         "ALTER TABLE orgs VALIDATE CONSTRAINT c;\nALTER TABLE projects VALIDATE CONSTRAINT d;", []),
+        ("each NO TRANSACTION statement commits on its own", NO_TX,
+         "\n".join(f"DO $$ BEGIN PERFORM set_config('lock_timeout', '5s', true); ALTER TABLE {t} ADD COLUMN n int; END $$;"
+                   for t in ("apps", "events", "orgs", "projects")), []),
+        ("one StatementBegin block is one transaction", NO_TX,
+         "-- +goose StatementBegin\n" + LT + "ALTER TABLE apps ADD COLUMN a int;\nALTER TABLE events ADD COLUMN b int;\n"
+         "ALTER TABLE orgs ADD COLUMN c int;\nALTER TABLE projects ADD COLUMN d int;\n-- +goose StatementEnd",
+         [("lock-fanout", "projects")]),
+        ("not waivable", "",
+         "-- migration-lint: allow lock-fanout *: tables are small\n" + LT +
+         "LOCK TABLE apps, events, orgs, projects IN SHARE ROW EXCLUSIVE MODE;", [("lock-fanout", "projects")]),
+        # lock_timeout under NO TRANSACTION
+        ("SET LOCAL as its own statement does nothing", NO_TX, LT + "ALTER TABLE apps ADD COLUMN n int;",
+         [("lock-timeout", "apps")]),
+        ("session SET may run on another pooled connection", NO_TX,
+         "SET lock_timeout = '5s';\nALTER TABLE apps ADD COLUMN n int;", [("lock-timeout", "apps")]),
+        ("lock_timeout in the same StatementBegin block", NO_TX,
+         "-- +goose StatementBegin\n" + LT + "ALTER TABLE apps ADD COLUMN n int;\n-- +goose StatementEnd", []),
+        ("lock_timeout set before a COMMIT does not survive it", NO_TX,
+         "DO $$ BEGIN PERFORM set_config('lock_timeout', '5s', true); COMMIT; ALTER TABLE apps ADD COLUMN n int; END $$;",
+         [("lock-timeout", "apps")]),
+        ("TRUNCATE takes a strong lock", "", "TRUNCATE events;", [("lock-timeout", "events")]),
+    ]
+
+    def test_cases(self):
+        for name, header, up, want in self.CASES:
+            with self.subTest(name):
+                self.assertEqual(lint(up, header=header), sorted(want))
+
+    def test_the_documented_backfill_passes(self):
+        doc = pathlib.Path(__file__).parents[2].joinpath("docs", "release-compatibility.md").read_text(encoding="utf-8")
+        section = doc[doc.index("### Batched backfill"):]
+        text = section[section.index("```sql\n") + 7 : section.index("\n```", section.index("```sql\n"))] + "\n"
+        findings = ec.lint_migration("migrations/1_x.sql", text, CATALOGUE, no_refs)
+        findings += ec.check_compat_marker("migrations/1_x.sql", text, CATALOGUE)
+        self.assertEqual(findings, [])
+        self.assertIn("UPDATE apps", text)
+
+    def test_the_rc277_cutover_shape_fails_every_rule(self):
+        # The shape of 20261018003100003: ownership foreign keys dropped and
+        # re-added, validated under the lock, across many hot tables, with a
+        # bulk backfill, in one transaction.
+        up = LT + "UPDATE apps SET org_id = account_id WHERE org_id IS NULL;\n" + "\n".join(
+            f"ALTER TABLE {t} DROP CONSTRAINT {t}_account_id_fkey;\n"
+            f"ALTER TABLE {t} ADD CONSTRAINT {t}_account_id_fkey FOREIGN KEY (account_id) REFERENCES orgs (id);"
+            for t in ("apps", "events", "projects"))
+        self.assertEqual(sorted({rule for rule, _ in lint(up)}),
+                         ["constraint-churn", "constraint-validation", "lock-fanout", "unbatched-write"])
+
+
 class CatalogueTest(unittest.TestCase):
     def test_load_catalogue(self):
         cat = ec.load_catalogue("CREATE TABLE public.apps (\nCREATE VIEW public.app_summary AS\n"
-                                "CREATE MATERIALIZED VIEW public.mv AS\nCREATE UNIQUE INDEX apps_slug ON public.apps USING btree (slug);\n")
+                                "CREATE MATERIALIZED VIEW public.mv AS\nCREATE UNIQUE INDEX apps_slug ON public.apps USING btree (slug);\n"
+                                "CREATE INDEX mv_at ON ONLY public.mv USING btree (at);\n")
         self.assertEqual(cat.relations, {"apps", "app_summary", "mv"})
-        self.assertEqual(cat.indexes, {"apps_slug"})
+        self.assertEqual(cat.indexes, {"apps_slug", "mv_at"})
         self.assertEqual(cat.unique, {"apps_slug"})
+        self.assertEqual(cat.index_tables, {"apps_slug": "apps", "mv_at": "mv"})
+
+    def test_unique_keys(self):
+        cat = ec.load_catalogue("ALTER TABLE ONLY public.apps\n    ADD CONSTRAINT apps_pkey PRIMARY KEY (id);\n"
+                                "ALTER TABLE ONLY public.apps\n    ADD CONSTRAINT apps_name_key UNIQUE (account_id, name);\n"
+                                "CREATE UNIQUE INDEX apps_slug ON public.apps USING btree (slug);\n"
+                                "CREATE UNIQUE INDEX apps_live ON public.apps USING btree (host) WHERE (deleted_at IS NULL);\n"
+                                "CREATE UNIQUE INDEX apps_email ON public.apps USING btree (lower(email));\n")
+        self.assertEqual(cat.unique_keys, {"apps": [frozenset({"id"}), frozenset({"account_id", "name"}), frozenset({"slug"})]})
 
     def test_unique_constraints_are_on_conflict_targets(self):
         cat = ec.load_catalogue("ALTER TABLE ONLY public.apps\n    ADD CONSTRAINT apps_pkey PRIMARY KEY (id);\n"
@@ -374,7 +581,10 @@ class LaneVerdictTest(unittest.TestCase):
          False, ["waives concurrently-in-transaction"]),
         ("concurrent index", marked("CREATE INDEX CONCURRENTLY IF NOT EXISTS events_kind ON events (kind);",
                                     header="-- +goose NO TRANSACTION\n"), True, []),
-        ("contract statement", marked("TRUNCATE events;"), False, ["contract change contract-statement events"]),
+        ("contract statement", marked(LT + "TRUNCATE events;"), False, ["contract change contract-statement events"]),
+        ("a waived no-downtime rule still blocks",
+         marked("-- migration-lint: allow unbatched-write apps: small table\nUPDATE apps SET tier = 'free';"), False,
+         ["lint finding unbatched-write apps"]),
     ]
 
     def test_cases(self):

@@ -2,6 +2,7 @@
 
 Date: 2026-10-17
 Status: Accepted (owner goal: 30-minute, per-unit, zero-downtime releases)
+Amended: 2026-10-19 (amendment 1: no downtime, no exceptions)
 Related: ADR-1344 §6 (schema discipline, version skew, release safety), ADR-005 (cold boot always works), ADR-124 (migration lock), docs/release-compatibility.md
 
 This record has a date-and-time identifier because date-only identifiers
@@ -81,3 +82,85 @@ linter, `buf breaking` on every proto, and automatic rollback on SLO burn.
   `app-task.json` and `execution.json` (with `DisallowUnknownFields`, so any
   added key breaks an older guest); ADR-1344's previous-binaries-against-new-
   schema CI job; capability negotiation between daemons.
+
+## Amendment 1 (2026-10-19): no downtime, no exceptions
+
+### Context
+
+The rc.277 production rollout (cd-platform run 39298746522) failed: the
+#4882 migrations (`20261018003100003` to `…007`) deadlocked against live
+writers. They passed the linter, which judges one statement at a time.
+Migration `…003` was a single 1,400-line transaction. It locked 42 existing
+tables, re-added 34 foreign keys and checks without `NOT VALID` (each one
+scanned its table under a lock that blocks writes), dropped and re-added 32
+constraints, and ran 12 bulk backfills. ADR-202610171908 called the cutover
+a "planned-maintenance exception" that needed writers quiesced. The deploy
+workflows had a `maintenance_mode` input that only skipped the healthy
+customer-path baseline gate. No check stood in the way.
+
+### Decision
+
+1. **No migration and no release may require quiescing writers or a
+   maintenance window.** No ADR, waiver or workflow input grants an
+   exception. The planned-maintenance exception in ADR-202610171908 is
+   withdrawn.
+2. **Ownership and backfill moves span releases:** expand → batched
+   backfill → validate → switch → contract
+   (docs/release-compatibility.md, "No downtime, no exceptions").
+3. **Four linter rules, none waivable**, on tables that exist on the base:
+   - `constraint-validation`: a FOREIGN KEY or CHECK is added `NOT VALID`
+     and validated in a later migration.
+   - `constraint-churn`: no migration both drops and adds constraints of
+     one table. `ADD CONSTRAINT … USING INDEX` is exempt.
+   - `unbatched-write`: an `UPDATE` or `DELETE` either takes its rows from
+     a `SELECT … FROM <that table> … LIMIT n` (n ≤ 10,000) or pins a whole
+     unique key to constants. A loop of batches runs under
+     `-- +goose NO TRANSACTION` and commits after each batch.
+   - `lock-fanout`: one transaction takes write-blocking locks on at most 3
+     existing tables, counting the table a foreign key references.
+
+   Under `NO TRANSACTION`, a `lock_timeout` counts only inside the goose
+   statement that sets it. goose runs each statement on its own pooled
+   connection, so a separate `SET LOCAL` there does nothing. This was a
+   hole in the original `lock-timeout` rule. `TRUNCATE`, and a foreign key
+   from a new table to an existing one, now also need `lock_timeout`.
+4. **Deploy workflows.** `maintenance_mode` is removed from cd-platform and
+   cd-controlplane. The rollout observer refuses to run without at least
+   one healthy baseline sample.
+
+### Alternatives considered
+
+- **A waiver with a measured cost for small tables**, like `index-build`.
+  Rejected. The owner's rule admits no exceptions. The online form always
+  exists and costs one more migration file. "Small" also changes as
+  tenants grow, and no reviewer re-measures.
+- **A `lock-fanout` limit of 2.** It would have failed 14% of recent
+  migrations, against 6% for a limit of 3. A limit of 3 still allows a
+  table plus two foreign-key parents, and still forbids the many-table
+  transaction that deadlocked.
+- **A `statement_timeout` on migrations instead of batching.** A timeout
+  bounds how long a write runs, not how many row locks it holds until
+  commit. A long backfill would fail every deploy instead of finishing.
+
+### Consequences
+
+- Of the 1,374 migrations added since 2026-09-12, each replayed against its
+  own base, the new rules flag:
+
+  | Rule | Migrations | Share |
+  |---|---|---|
+  | `constraint-validation` | 381 | 28% |
+  | `constraint-churn` | 215 | 16% |
+  | `lock-fanout` | 87 | 6% |
+  | `unbatched-write` | 54 | 4% |
+
+  Every #4882 migration fails at least one rule. Most hits come from the
+  state-column CHECK convention. Adding a state column with an inline
+  CHECK, or widening a CHECK, now takes two migrations: add the constraint
+  `NOT VALID`, then validate it and drop the old one.
+- Issued migrations stay exempt. The per-unit lane re-judges every
+  migration since the last full release, and treats a finding under these
+  rules as a blocker, like any other unwaived finding.
+- Not covered: DDL that a `DO` block runs through `EXECUTE`; whether the
+  previous release's writes satisfy a new constraint; `INSERT … SELECT`
+  backfills. Those inserts lock no existing rows, but they can run long.
