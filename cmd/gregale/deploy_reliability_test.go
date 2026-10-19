@@ -165,12 +165,12 @@ func TestDeployReliabilityProjectSecretsTravelInApplyBeforeWaiting(t *testing.T)
 					return
 				}
 				body, _ := io.ReadAll(part)
-				if part.FormName() == "secrets" {
-					var bundle map[string]string
+				if part.FormName() == "initial_secrets" {
+					var bundle api.ProjectInitialSecrets
 					if err := json.Unmarshal(body, &bundle); err != nil {
 						t.Error(err)
 					}
-					found = bundle["DATABASE_URL"] == "fixture-database"
+					found = bundle["api"]["DATABASE_URL"] == "fixture-database"
 				}
 			}
 			if !found {

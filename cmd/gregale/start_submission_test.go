@@ -140,6 +140,9 @@ func TestStartPendingSubmissionIsDurableBeforeLostCommitReply(t *testing.T) {
 			w.Header().Set("Upload-Offset", strconv.FormatInt(offset+n, 10))
 		case r.URL.Path == "/v1/uploads/upload-1/commit":
 			committed.Store(true)
+			// Commit carries a non-replayable empty JSON body; the server only
+			// observes the client's disconnect once that body is consumed.
+			_, _ = io.Copy(io.Discard, r.Body)
 			cancel() // The server accepted it, but the CLI never receives its ID.
 			<-r.Context().Done()
 		case r.URL.Path == "/v1/uploads/upload-1" && r.Method == http.MethodGet:
