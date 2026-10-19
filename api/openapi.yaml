@@ -13596,6 +13596,149 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /v1/account/platform-tenants/{id}/credits:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Tenant whose prepaid credit is listed or granted.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [platform-tenants]
+      operationId: listPlatformTenantCredits
+      summary: List a tenant's prepaid credit grants, newest first, with the usable balance per currency (ADR-20261019100331).
+      responses:
+        '200':
+          description: The tenant's grants and balances.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantCreditListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [platform-tenants]
+      operationId: createPlatformTenantCredit
+      summary: Grant a tenant prepaid credit that pays its statements across all of its apps.
+      description: |
+        Finalized tenant statements in the credit's currency draw it down,
+        the grant that expires first before grants that never expire, in the
+        same transaction that finalizes them (ADR-20261019100331). The
+        statement's credit_applied_millicents records the draw and invoice
+        exports bill amount_due_millicents. Credit never pays more than a
+        statement's amount. A tenant holds at most 100 grants with credit
+        left.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateAPIConsumerCreditRequest' }
+      responses:
+        '201':
+          description: The tenant's new grant.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantCreditResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The tenant already holds 100 grants with credit left.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '422':
+          description: Invalid tenant credit currency, amount, note or expiry.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/account/platform-tenants/{id}/credits/{credit_id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Tenant that holds the credit.
+        schema: { type: string, format: uuid }
+      - name: credit_id
+        in: path
+        required: true
+        description: Tenant credit grant to void.
+        schema: { type: string, format: uuid }
+    delete:
+      tags: [platform-tenants]
+      operationId: voidPlatformTenantCredit
+      summary: Void what is left of a tenant credit grant; credit already applied stays applied.
+      responses:
+        '200':
+          description: The voided tenant grant.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantCreditResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/account/platform-tenants/{id}/spend-cap:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Tenant whose monthly spend is capped.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [platform-tenants]
+      operationId: getPlatformTenantSpendCap
+      summary: Read a tenant's monthly spend cap and its last check.
+      responses:
+        '200':
+          description: The tenant's cap and whether it is reached this month.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantSpendCapResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [platform-tenants]
+      operationId: putPlatformTenantSpendCap
+      summary: Set a tenant's monthly spend cap across all of its apps (ADR-20261019100331).
+      description: |
+        Once the month's amount due passes the cap, the gateway answers every
+        request attributed to the tenant with 402 `tenant_spend_cap_reached`
+        until the month ends, the cap rises or credit is added. The amount
+        due is the tenant's usage for the month to date priced like a
+        statement, without monthly fees, minus usable prepaid credit. apid
+        checks it every minute and at once when the cap or credit changes, so
+        a tenant can overshoot by about two minutes of traffic. A zero cap
+        allows prepaid usage only.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PutAPIConsumerSpendCapRequest' }
+      responses:
+        '200':
+          description: The tenant's stored cap, checked at once.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantSpendCapResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422':
+          description: Invalid tenant cap currency or amount.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    delete:
+      tags: [platform-tenants]
+      operationId: deletePlatformTenantSpendCap
+      summary: Remove a tenant's spend cap.
+      responses:
+        '204': { description: The tenant's spend cap was removed. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /v1/account/platform-tenant-billing-policy:
     get:
       tags: [platform-tenants]
@@ -14103,7 +14246,8 @@ paths:
         Checks the key against the provider, then seals it at rest. Stripe
         takes a restricted key (rk_live_… or rk_test_…) with read and write
         access to invoices and invoice items; Paddle an API key
-        (pdl_live_apikey_… or pdl_sdbx_apikey_…) with transaction access; Lago
+        (pdl_live_apikey_… or pdl_sdbx_apikey_…) with transaction access and
+        read access to customers; Lago
         an API key and, for the EU region or a self-hosted Lago, api_url. Only
         the last four characters, the mode and the Lago API URL are ever
         returned.
@@ -82283,6 +82427,8 @@ components:
           maxItems: 64
           description: "Monthly base fees and minimum top-ups this revision bills (ADR-1322); amount_millicents includes them. A revision can bill fees without lines for a tenant without usage."
           items: { $ref: '#/components/schemas/APIConsumerStatementFeeResponse' }
+        credit_applied_millicents: { type: integer, format: int64, minimum: 0, description: "Prepaid credit drawn when the revision was finalized (ADR-20261019100331)." }
+        amount_due_millicents: { type: integer, format: int64, minimum: 0, description: "amount_millicents less credit_applied_millicents: what invoice exports bill." }
         as_of: { type: string, format: date-time }
         created_at: { type: string, format: date-time }
         finalized_at: { type: string, format: date-time }
@@ -82922,6 +83068,49 @@ components:
         capped: { type: boolean, description: "True while the gateway refuses the consumer this month." }
         month: { type: string, pattern: '^[0-9]{4}-[0-9]{2}$', description: "UTC month of the last check." }
         amount_due_millicents: { type: integer, format: int64, minimum: 0, description: "The month's amount due after prepaid credit at the last check." }
+        checked_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    PlatformTenantCreditResponse:
+      description: "One prepaid credit grant to a platform tenant (ADR-20261019100331)."
+      type: object
+      required: [id, tenant_id, currency, amount_millicents, remaining_millicents, status, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        tenant_id: { type: string, format: uuid }
+        currency: { type: string, pattern: '^[A-Z]{3}$' }
+        amount_millicents: { type: integer, format: int64, minimum: 1 }
+        remaining_millicents: { type: integer, format: int64, minimum: 0 }
+        status: { type: string, enum: [active, used, expired, voided] }
+        note: { type: string }
+        expires_at: { type: string, format: date-time }
+        voided_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+
+    PlatformTenantCreditListResponse:
+      description: "A tenant's credit grants, newest first, with balances per currency."
+      type: object
+      required: [credits, balances]
+      properties:
+        credits:
+          type: array
+          items: { $ref: '#/components/schemas/PlatformTenantCreditResponse' }
+        balances:
+          type: array
+          items: { $ref: '#/components/schemas/APIConsumerCreditBalance' }
+
+    PlatformTenantSpendCapResponse:
+      description: "A tenant's spend cap and its last check (ADR-20261019100331)."
+      type: object
+      required: [tenant_id, currency, monthly_cap_millicents, capped, created_at, updated_at]
+      properties:
+        tenant_id: { type: string, format: uuid }
+        currency: { type: string, pattern: '^[A-Z]{3}$' }
+        monthly_cap_millicents: { type: integer, format: int64, minimum: 0 }
+        capped: { type: boolean, description: "True while the gateway refuses the tenant this month." }
+        month: { type: string, pattern: '^[0-9]{4}-[0-9]{2}$', description: "UTC month of the tenant's last check." }
+        amount_due_millicents: { type: integer, format: int64, minimum: 0, description: "The month's usage after prepaid credit at the last check; monthly fees are not counted." }
         checked_at: { type: string, format: date-time }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
@@ -109874,7 +110063,7 @@ components:
       properties:
         secret_key: { type: string, minLength: 8, maxLength: 512, description: "A Stripe secret or restricted key (sk_… or rk_…), a Paddle API key (pdl_…), or a Lago API key.", writeOnly: true }
         api_url: { type: string, format: uri, maxLength: 512, description: "Lago only: the API origin for the EU region or a self-hosted Lago, https:// only; default https://api.getlago.com." }
-        collection: { type: string, enum: [none, send, charge], default: none, description: "What the provider does with exported invoices (ADR-1311): none leaves drafts (Lago issues them without charging); send has Stripe email the invoice; charge has Stripe charge the customer's default payment method, or Lago charge through its payment provider. Paddle supports none only." }
+        collection: { type: string, enum: [none, send, charge], default: none, description: "What the provider does with exported invoices (ADR-1311): none leaves drafts (Lago issues them without charging); send has Stripe email the invoice; charge has Stripe charge the customer's default payment method, or Lago charge through its payment provider. Paddle supports none and send: send bills the transaction so Paddle emails the invoice to the customer's most recent address; Paddle cannot charge a saved card for an invoice." }
         days_until_due: { type: integer, minimum: 1, maximum: 365, default: 30, description: "With collection send, days until a sent invoice is due." }
         automatic_tax: { type: boolean, default: false, description: "Stripe only: have Stripe Tax calculate tax on exported invoices (ADR-1313). Needs Stripe Tax and customer addresses." }
 
@@ -110219,6 +110408,8 @@ components:
           maxItems: 64
           description: "The revision's monthly base fees and minimum top-ups (ADR-1322), included in amount_millicents."
           items: { $ref: '#/components/schemas/APIConsumerStatementFeeResponse' }
+        credit_applied_millicents: { type: integer, format: int64, minimum: 0, description: "Tenant prepaid credit this finalized revision drew (ADR-20261019100331)." }
+        amount_due_millicents: { type: integer, format: int64, minimum: 0, description: "What remains to invoice after the credit." }
         as_of: { type: string, format: date-time }
         finalized_at: { type: string, format: date-time }
       additionalProperties: false

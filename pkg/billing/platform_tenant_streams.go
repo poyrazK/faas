@@ -151,7 +151,7 @@ type TenantMonth struct {
 // charge up to its minimum. streamUsage is the stream's charge for the
 // whole month as priced now. A trial running at the fee instant, or
 // starting the minute after, waives them.
-func tenantStatementFees(m TenantMonth, streamUsage map[string]int64) []state.APIConsumerStatementFee {
+func tenantStatementFees(m TenantMonth, usage feeUsage) []state.APIConsumerStatementFee {
 	if m.TenantCreated.IsZero() || !IsCalendarMonth(m.Start, m.End) {
 		return nil
 	}
@@ -165,11 +165,16 @@ func tenantStatementFees(m TenantMonth, streamUsage map[string]int64) []state.AP
 			finalized = append(finalized, statement.Fees)
 		}
 	}
-	var inForce []feeCard
-	for _, card := range tenantStreamCardsAt(m.TenantCards, at) {
-		inForce = append(inForce, feeCard{id: card.ID, stream: tenantCardUnit(card),
-			base: card.BaseFeeMillicentsPerMonth, minimum: card.MinimumMillicentsPerMonth,
-			prorate: card.ProrateMonthlyFees, hasMonthlyCharge: card.MonthlyFees()})
+	units, streams := TenantUnitStreams(m.TenantCards)
+	var charging []feeCard
+	for _, unit := range units {
+		ordered := make([]feeCard, 0, len(streams[unit]))
+		for _, card := range streams[unit] {
+			ordered = append(ordered, feeCard{id: card.ID, stream: tenantCardUnit(card), effectiveFrom: card.EffectiveFrom,
+				base: card.BaseFeeMillicentsPerMonth, minimum: card.MinimumMillicentsPerMonth,
+				prorate: card.ProrateMonthlyFees, hasMonthlyCharge: card.MonthlyFees()})
+		}
+		charging = append(charging, feeSegments(ordered, at, time.Time{})...)
 	}
-	return monthlyStatementFees(inForce, at, streamUsage, billedFees(finalized...))
+	return monthlyStatementFees(charging, usage, billedFees(finalized...))
 }

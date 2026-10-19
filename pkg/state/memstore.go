@@ -1056,6 +1056,12 @@ type MemStore struct {
 	apiConsumerCreditGrants       map[string]APIConsumerCreditGrant
 	apiConsumerCreditApplications []apiConsumerCreditApplication
 	apiConsumerSpendCaps          map[string]APIConsumerSpendCap
+	// platformTenantCreditGrants (by ID), platformTenantCreditApplications
+	// and platformTenantSpendCaps (by tenant ID) do the same for platform
+	// tenants (ADR-20261019100331).
+	platformTenantCreditGrants       map[string]PlatformTenantCreditGrant
+	platformTenantCreditApplications []platformTenantCreditApplication
+	platformTenantSpendCaps          map[string]PlatformTenantSpendCap
 	// billingConnections and statementInvoiceExports back statement invoice
 	// exports (ADR-1502); keyed by account/provider and export ID.
 	billingConnections      map[string]BillingConnection

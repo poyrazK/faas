@@ -28,6 +28,14 @@ export type PlatformTenantStatementFinalizedWebhookPayload = {
    * The revision's monthly base fees and minimum top-ups (ADR-1322), included in amount_millicents.
    */
   fees?: Array<APIConsumerStatementFeeResponse>;
+  /**
+   * Prepaid credit drawn when the revision was finalized (ADR-20261019100331).
+   */
+  credit_applied_millicents?: number;
+  /**
+   * amount_millicents less credit_applied_millicents: what invoice exports bill.
+   */
+  amount_due_millicents?: number;
   as_of: string;
   finalized_at: string;
 };
