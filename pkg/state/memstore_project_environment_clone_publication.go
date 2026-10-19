@@ -124,9 +124,12 @@ func (m *MemStore) verifyClonePublicationLocked(op ProjectEnvironmentCloneOperat
 	return validateCloneFeatureFlagsProof(config.FeatureFlags, m.latestFeatureFlagsLocked(FeatureFlagScope{AccountID: op.AccountID, ProjectID: op.ProjectID, EnvironmentID: target.ID}))
 }
 
-func (m *MemStore) PublishProjectEnvironmentCloneReleaseSet(_ context.Context, accountID, projectID, operationID string, revision int64, ttl int) (ProjectReleaseSet, error) {
+func (m *MemStore) PublishProjectEnvironmentCloneReleaseSet(ctx context.Context, accountID, projectID, operationID string, revision int64, ttl int) (ProjectReleaseSet, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return ProjectReleaseSet{}, err
+	}
 	op, ok := m.projectEnvironmentCloneOperations[operationID]
 	if !ok || op.AccountID != accountID || op.ProjectID != projectID {
 		return ProjectReleaseSet{}, ErrNotFound

@@ -370,11 +370,15 @@ export async function verifyAuthorization({ url, userA, userB }) {
     }
   } finally {
     // Remove only IDs this run received from its own successful inserts.
-    const results = await Promise.allSettled([
+    const cleanup = [
       ...owned.map(([owner, id]) => owner.remove(id)),
       ...ownedTags.map(([owner, id]) => owner.db.from('tags').delete().eq('id', id)),
       ...orphaned.map(([owner, id]) => owner.db.from('comments').delete().eq('id', id)),
-    ])
+    ]
+    // Keep cleanup within the runtime's finite admission queue and attempt
+    // every owned object even when an earlier deletion fails.
+    const results = []
+    for (const request of cleanup) results.push(...await Promise.allSettled([request]))
     assert.ok(results.every(result => result.status === 'fulfilled' && !result.value.error), 'authorization_cleanup_failed')
   }
 }

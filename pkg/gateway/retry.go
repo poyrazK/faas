@@ -104,11 +104,12 @@ func (p RetryPolicy) retryable(r *http.Request) (bool, string) {
 // where a replay might still replace it. A Flush always commits — a caller
 // that has begun streaming has, by definition, committed.
 type retryWriter struct {
-	dst       http.ResponseWriter
-	header    http.Header
-	status    int
-	committed bool
-	buffer    bytes.Buffer
+	dst         http.ResponseWriter
+	header      http.Header
+	status      int
+	committed   bool
+	interimSent bool
+	buffer      bytes.Buffer
 }
 
 func newRetryWriter(dst http.ResponseWriter) *retryWriter {
@@ -119,6 +120,15 @@ func (w *retryWriter) Header() http.Header { return w.header }
 
 func (w *retryWriter) WriteHeader(status int) {
 	if w.status != 0 {
+		return
+	}
+	if isInformationalStatus(status) {
+		header := w.dst.Header().Clone()
+		for key, values := range w.header {
+			header[key] = values
+		}
+		writeInformationalResponse(w.dst, status, header)
+		w.interimSent = true
 		return
 	}
 	w.status = status
@@ -168,6 +178,13 @@ func (w *retryWriter) commit() {
 		_, _ = w.dst.Write(w.buffer.Bytes())
 		w.buffer.Reset()
 	}
+}
+
+// finish releases the chosen attempt, including trailers written after its
+// initial headers were committed. Discarded attempts never reach this path.
+func (w *retryWriter) finish() {
+	w.commit()
+	copyBufferedResponseTrailers(w.dst.Header(), w.header)
 }
 
 // discard drops a buffered attempt so a replay can produce the real response.
@@ -257,24 +274,15 @@ func runAttempts(
 	obs retryObserver,
 	admission retryBudgetAdmission,
 ) {
+	req, err := replayRequest(r)
+	if err != nil {
+		if obs != nil {
+			obs.IncRetryExhausted(RetrySkipBodyNotReplay)
+		}
+		writeForwarderProblem(w, http.StatusInternalServerError)
+		return
+	}
 	for i := 0; i < policy.MaxAttempts; i++ {
-		if i > 0 && policy.Backoff > 0 {
-			timer := time.NewTimer(policy.Backoff)
-			select {
-			case <-timer.C:
-			case <-r.Context().Done():
-				timer.Stop()
-				return
-			}
-			timer.Stop()
-		}
-		req, err := replayRequest(r)
-		if err != nil {
-			if obs != nil {
-				obs.IncRetryExhausted(RetrySkipBodyNotReplay)
-			}
-			return
-		}
 		failed := target
 		signal := &staleTargetSignal{}
 		signal.onStale = func() {
@@ -295,7 +303,7 @@ func runAttempts(
 			if obs != nil && reason != "" {
 				obs.IncRetryExhausted(reason)
 			}
-			buf.commit()
+			buf.finish()
 			return
 		}
 		next, found := repick()
@@ -303,7 +311,7 @@ func runAttempts(
 			if obs != nil {
 				obs.IncRetryExhausted(RetrySkipNoTarget)
 			}
-			buf.commit()
+			buf.finish()
 			return
 		}
 		percent := policy.BudgetPercent
@@ -318,7 +326,17 @@ func runAttempts(
 			if obs != nil {
 				obs.IncRetryExhausted(RetrySkipAggregate)
 			}
-			buf.commit()
+			buf.finish()
+			return
+		}
+		// Keep the failure until the replacement request is ready. A
+		// canceled backoff or failed body rewind must not become an empty 200.
+		req, reason = prepareRetryRequest(r, policy)
+		if reason != "" {
+			if obs != nil {
+				obs.IncRetryExhausted(reason)
+			}
+			buf.finish()
 			return
 		}
 		buf.discard()
@@ -342,7 +360,7 @@ func nextAttemptAllowed(
 		return "", false
 	}
 	// Rule 1: a response that reached the client cannot be taken back.
-	if buf.committed {
+	if buf.committed || buf.interimSent {
 		return RetrySkipCommitted, false
 	}
 	// Rule 6.
@@ -350,14 +368,54 @@ func nextAttemptAllowed(
 		return RetrySkipAttempts, false
 	}
 	// Rule 5: a replay borrows from the customer's own deadline and may never
-	// extend it. No budget attached means no budget rule matched, so there is
-	// nothing to overrun.
-	if budget, ok := reqbudget.FromContext(r.Context()); ok {
-		if budget.Remaining(time.Now()) < policy.MinRemaining {
-			return RetrySkipBudget, false
-		}
+	// extend it. Client cancellation also stops any further attempts.
+	if !retryTimeAvailable(r, policy.MinRemaining, time.Now()) {
+		return RetrySkipBudget, false
 	}
 	return "", true
+}
+
+// prepareRetryRequest runs while the last failure is still buffered. Target
+// selection, aggregate admission and backoff can consume the remaining time,
+// so admission must be checked again before starting a replacement attempt.
+func prepareRetryRequest(r *http.Request, policy RetryPolicy) (*http.Request, string) {
+	if !retryTimeAvailable(r, policy.MinRemaining, time.Now()) {
+		return nil, RetrySkipBudget
+	}
+	if policy.Backoff > 0 {
+		timer := time.NewTimer(policy.Backoff)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+		case <-r.Context().Done():
+			return nil, RetrySkipBudget
+		}
+	}
+	if !retryTimeAvailable(r, policy.MinRemaining, time.Now()) {
+		return nil, RetrySkipBudget
+	}
+	req, err := replayRequest(r)
+	if err != nil {
+		return nil, RetrySkipBodyNotReplay
+	}
+	return req, ""
+}
+
+func retryTimeAvailable(r *http.Request, minRemaining time.Duration, now time.Time) bool {
+	if r.Context().Err() != nil {
+		return false
+	}
+	if deadline, ok := r.Context().Deadline(); ok {
+		if remaining := deadline.Sub(now); remaining <= 0 || remaining < minRemaining {
+			return false
+		}
+	}
+	if budget, ok := reqbudget.FromContext(r.Context()); ok {
+		if remaining := budget.Remaining(now); remaining <= 0 || remaining < minRemaining {
+			return false
+		}
+	}
+	return true
 }
 
 // replayRequest returns the request to send for this attempt, rewinding the

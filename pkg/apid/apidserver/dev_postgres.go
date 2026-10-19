@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/postgresaccess"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -27,6 +28,10 @@ func (s *server) ensureDevPostgres(ctx context.Context, acct state.Account, app 
 	limits, ok := api.ManagedPostgresLimitsFor(acct.Plan)
 	if !ok || limits.DatabasesMax == 0 || !limits.DevelopmentAllowed {
 		return nil, managedpostgres.ErrQuotaExceeded
+	}
+	ctx, err := postgresaccess.PersonalContext(ctx, s.store, acct.ID)
+	if err != nil {
+		return nil, err
 	}
 	databases, err := s.managedPostgres.List(ctx, acct.ID)
 	if err != nil {
@@ -56,7 +61,7 @@ func (s *server) ensureDevPostgres(ctx context.Context, acct state.Account, app 
 		Class:                managedpostgres.ClassDevelopment,
 		Availability:         managedpostgres.AvailabilitySingleZone,
 		ScaleToZero:          true,
-		StorageLimitBytes:    devPostgresStorageLimitBytes,
+		StorageLimitBytes:    min(devPostgresStorageLimitBytes, limits.StorageLimitBytes),
 		RestoreWindowSeconds: 0,
 	}
 	if existing != nil {

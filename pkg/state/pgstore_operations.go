@@ -253,6 +253,9 @@ func (s *PgStore) admitOperationTx(ctx context.Context, tx pgx.Tx, account, defi
 		return Operation{}, false, mapErr(err)
 	}
 	limits := api.MustLimitsFor(api.Plan(plan))
+	if err := checkProductCustomerIdentityTx(ctx, tx, def, admission); err != nil {
+		return Operation{}, false, err
+	}
 	// Postgres keeps microseconds; the returned Operation must equal the stored one.
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	op, inv, key, fingerprint, err := prepareOperationAdmission(def, admission, limits, now)
@@ -319,6 +322,9 @@ func (s *PgStore) admitOperationTx(ctx context.Context, tx pgx.Tx, account, defi
 	if pending >= int64(limits.Operations.PendingPerAccount) {
 		return Operation{}, false, NewOperationLimitError("pending_per_account", int64(limits.Operations.PendingPerAccount), int64(pending)+1)
 	}
+	if err := prepareProductOperationTx(ctx, tx, &op, def, admission, now); err != nil {
+		return Operation{}, false, err
+	}
 	queued, err := operationConcurrencyHoldTx(ctx, tx, op, def)
 	if err != nil {
 		return Operation{}, false, err
@@ -348,6 +354,9 @@ func (s *PgStore) admitOperationTx(ctx context.Context, tx pgx.Tx, account, defi
 			return Operation{}, false, err
 		}
 		op.dispatchHold = time.Time{}
+	}
+	if err := insertProductOperationTx(ctx, tx, op); err != nil {
+		return Operation{}, false, err
 	}
 	return op, true, nil
 }

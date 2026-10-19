@@ -31,10 +31,7 @@ func TestPgCancelPendingKeyedWork(t *testing.T) {
 	assertCancelPendingKeyedWork(t, ctx, store, accountID, appID)
 }
 
-type keyedCancellationStore interface {
-	state.Store
-	state.WorkCancellationStore
-}
+type keyedCancellationStore = contractTestStore
 
 func assertCancelPendingKeyedWork(t *testing.T, ctx context.Context, store keyedCancellationStore, accountID, appID string) {
 	t.Helper()

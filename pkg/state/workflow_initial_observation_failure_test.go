@@ -66,7 +66,7 @@ func TestWorkflowInitialObservationFailureIsolation(t *testing.T) {
 			t.Fatal("failed review retried before due")
 		}
 		if pg, ok := s.(*PgStore); ok {
-			s = NewPgStore(pg.pool)
+			s = NewPgStore(pg.pool.Pool)
 		}
 		if got := initialAutomaticReviewWithContext(t, ctx, s, badApp, bad.ID).ObservationFailure; !reflect.DeepEqual(got, f) {
 			t.Fatal("failure lost on restart")
@@ -177,7 +177,7 @@ func TestWorkflowInitialObservationFailureRollback(t *testing.T) {
 		if _, err = pg.pool.Exec(ctx, "ALTER TABLE workflow_initial_recovery_reviews DROP CONSTRAINT test_observation_result_failure"); err != nil {
 			t.Fatal(err)
 		}
-		pg = NewPgStore(pg.pool)
+		pg = NewPgStore(pg.pool.Pool)
 		if did, e := pg.ProcessNextWorkflowInitialManualCompletion(ctx, saved.ObservationFailure.RetryAt); e != nil || !did {
 			t.Fatalf("retry %v %v", did, e)
 		}

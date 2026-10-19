@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/appstandards"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
@@ -55,93 +56,50 @@ func postgresLegacyOwnerWrites(t *testing.T, s *PgStore, pool *pgxpool.Pool) leg
 	}
 }
 
-func TestPgLegacyStandardOwnerProjectReviewAndRestore(t *testing.T) {
+// adr: 435, 595 — #4882 binds every inserted app to an owner: a raw insert
+// without an organization takes its project's organization or the account's
+// personal one. The unowned legacy state the MemStore cases still model can no
+// longer be created in PostgreSQL, so neither can a standards bypass through
+// it: the raw insert is enrolled in its assigned scope like any created app.
+func TestPgLegacyStandardOwnerRawInsertionIsOwned(t *testing.T) {
 	s, pool := postgresLegacyOwnerStore(t)
-	legacyOwnerProjectReviewAndRestore(t, s, postgresLegacyOwnerWrites(t, s, pool))
-}
-
-func TestPgLegacyStandardOwnerAttachment(t *testing.T) {
-	s, pool := postgresLegacyOwnerStore(t)
-	legacyOwnerAttachmentCapturesStandards(t, s, postgresLegacyOwnerWrites(t, s, pool))
+	writes := postgresLegacyOwnerWrites(t, s, pool)
+	owner, project, assignment := legacyOwnerFixture(t, s)
+	if err := writes.seed(assignment, owner.Account.ID); err != nil {
+		t.Fatal(err)
+	}
+	member, err := writes.create(App{ID: uuid.NewString(), AccountID: owner.Account.ID, ProjectID: project.ID, Slug: "raw-project-member", RAMMB: 128, Status: AppActive})
+	if err != nil || !sameStandardUUID(member.OrgID, owner.PersonalOrg.ID) {
+		t.Fatalf("raw project member left unowned: %+v %v", member, err)
+	}
+	e, err := s.GetApplicationStandardEnrollment(t.Context(), owner.PersonalOrg.ID, member.ID)
+	if err != nil || e.State != "pending" || e.DesiredRevision != 1 || len(e.Adoptions) != 1 || e.Adoptions[0].AssignmentID != assignment.ID {
+		t.Fatalf("raw project member escaped its assigned project: %+v %v", e, err)
+	}
+	if _, err := s.CreateDeployment(t.Context(), Deployment{AppID: member.ID, Kind: DeploymentKindImage, Status: DeployPending}); !errors.Is(err, ErrApplicationStandardsPending) {
+		t.Fatalf("raw project member deployed before installation: %v", err)
+	}
+	plain, err := writes.create(App{ID: uuid.NewString(), AccountID: owner.Account.ID, Slug: "raw-personal", RAMMB: 128, Status: AppActive})
+	if err != nil || !sameStandardUUID(plain.OrgID, owner.PersonalOrg.ID) {
+		t.Fatalf("raw app outside a project left unowned: %+v %v", plain, err)
+	}
+	if err := writes.attach(plain.ID, ""); !errors.Is(err, ErrInvalidArgument) {
+		t.Fatalf("raw app cleared its owner: %v", err)
+	}
+	foreign, err := s.CreateAccountWithPersonalOrg(t.Context(), CreateAccountWithPersonalOrgParams{Email: "legacy-foreign@example.com", Plan: api.PlanPro})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = pool.Exec(t.Context(), `INSERT INTO apps (id,account_id,org_id,slug,ram_mb,status) VALUES ($1,$2,$3,'raw-foreign-personal',128,'active')`, uuid.NewString(), owner.Account.ID, foreign.PersonalOrg.ID)
+	var failure *pgconn.PgError
+	if !errors.As(err, &failure) || failure.Code != "23514" {
+		t.Fatalf("raw app joined another account's personal organization: %v", err)
+	}
 }
 
 func TestPgLegacyStandardOwnerUnmanagedRemoval(t *testing.T) {
 	s, pool := postgresLegacyOwnerStore(t)
 	legacyOwnerUnmanagedRemoval(t, s, postgresLegacyOwnerWrites(t, s, pool))
-}
-
-func TestPgLegacyStandardOwnerRetainedApplicationScope(t *testing.T) {
-	s, pool := postgresLegacyOwnerStore(t)
-	legacyOwnerRetainedApplicationScope(t, s, postgresLegacyOwnerWrites(t, s, pool))
-}
-
-func TestPgLegacyStandardOwnerProjectMembershipRace(t *testing.T) {
-	s, pool := postgresLegacyOwnerStore(t)
-	owner, project, assignment := legacyOwnerFixture(t, s)
-	appID := uuid.NewString()
-	appArgs := []any{appID, owner.Account.ID, project.ID, "unowned-race-member"}
-	assignmentArgs := []any{assignment.ID, assignment.OrgID, assignment.Scope, assignment.ScopeID, assignment.StandardID, assignment.AdmissionVersion, owner.Account.ID}
-	member, err := pool.Begin(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer member.Rollback(t.Context())
-	if _, err := member.Exec(t.Context(), insertLegacyOwnerApp, appArgs...); err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithTimeout(t.Context(), 150*time.Millisecond)
-	_, err = pool.Exec(ctx, insertLegacyOwnerAssignment, assignmentArgs...)
-	cancel()
-	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("assignment did not wait for uncommitted unowned member: %v", err)
-	}
-	if err := member.Commit(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	_, err = pool.Exec(t.Context(), insertLegacyOwnerAssignment, assignmentArgs...)
-	assertLegacyOwnerScopeFailure(t, err)
-	if _, err := pool.Exec(t.Context(), `DELETE FROM apps WHERE id=$1`, appID); err != nil {
-		t.Fatal(err)
-	}
-	assigned, err := pool.Begin(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer assigned.Rollback(t.Context())
-	if _, err := assigned.Exec(t.Context(), insertLegacyOwnerAssignment, assignmentArgs...); err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel = context.WithTimeout(t.Context(), 150*time.Millisecond)
-	_, err = pool.Exec(ctx, insertLegacyOwnerApp, appArgs...)
-	cancel()
-	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("unowned member did not wait for uncommitted assignment: %v", err)
-	}
-	if err := assigned.Commit(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	_, err = pool.Exec(t.Context(), insertLegacyOwnerApp, appArgs...)
-	assertLegacyOwnerScopeFailure(t, err)
-}
-
-func assertLegacyOwnerScopeFailure(t *testing.T, err error) {
-	t.Helper()
-	var value *pgconn.PgError
-	if !errors.As(err, &value) || value.Code != "23514" || value.ConstraintName != "application_standard_scope_owner" {
-		t.Fatalf("nullable owner bypassed assigned scope: %v", err)
-	}
-}
-
-func TestPgLegacyStandardOwnerRuntimeCompatibility(t *testing.T) {
-	s, pool := postgresLegacyOwnerStore(t)
-	legacyOwnerRuntimeCompatibility(t, s, postgresLegacyOwnerWrites(t, s, pool), func(app App, ins Instance) {
-		var input []byte
-		err := pool.QueryRow(t.Context(), `SELECT application_standard_native_runtime_snapshot($1,$2)`, app.ID, ins.DeploymentID).Scan(&input)
-		var value *pgconn.PgError
-		if !errors.As(err, &value) || value.ConstraintName != "application_standards_pending" {
-			t.Fatalf("unowned app acquired runtime authority: %v", err)
-		}
-	})
 }
 
 func TestPgLegacyStandardOwnerRuntimeEligibility(t *testing.T) {

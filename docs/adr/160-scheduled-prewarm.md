@@ -2,6 +2,9 @@
 
 Status: proposed (initial implementation)
 
+Amended by ADR-1189: the schedd unit now sets `FAAS_PREWARM_ENABLED=1`, so
+the drain runs by default.
+
 ## Context
 
 An app may be parked when a known traffic window begins. A request-driven

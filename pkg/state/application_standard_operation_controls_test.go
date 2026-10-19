@@ -16,10 +16,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-type standardOperationControlTestStore interface {
-	standardMaterializationTestStore
-	ApplicationStandardOperationControlStore
-}
+type standardOperationControlTestStore = contractTestStore
 
 func TestMemApplicationStandardOperationControls(t *testing.T) {
 	standardOperationControlsLifecycle(t, NewMemStore())

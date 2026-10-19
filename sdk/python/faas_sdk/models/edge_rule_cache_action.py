@@ -36,7 +36,9 @@ class EdgeRuleCacheAction:
         gateway request refreshes the key in the background. Default
         0 (disabled); absolute cap 300.
       * `stale_if_error_seconds` — required. Stale-on-error window
-        in seconds. Default 300; absolute cap 300
+        in seconds; 0 disables it (apid does not replace 0 with a
+        default, so send 300 explicitly for the recommended
+        window). Absolute cap 300
         (`api.ResponseCacheStaleIfErrorMaxSeconds`). During an
         upstream error the gateway returns the cached body within
         this window instead of 502/504.
@@ -56,13 +58,13 @@ class EdgeRuleCacheAction:
 
     max_age_seconds: int = 60
     """Fresh window in seconds. 0 = inherit the apid-side default
-    (60s). Positive values are clamped to the platform cap
-    (3600s = 1 hour).
+    (60s). Values above the platform cap
+    (3600s = 1 hour) are rejected with 422.
     """
     stale_if_error_seconds: int = 300
     """Stale-on-error window in seconds. 0 = no stale-on-error
-    (errors return 502/504 directly). Positive values are
-    clamped to the platform cap (300s = 5 minutes).
+    (errors return 502/504 directly). Values above the
+    platform cap (300s = 5 minutes) are rejected with 422.
     """
     stale_while_revalidate_seconds: int | Unset = 0
     """After the fresh window, serve stale for this many seconds

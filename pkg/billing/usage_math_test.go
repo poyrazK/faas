@@ -31,7 +31,7 @@ func TestOverageMBSecondsForRangeFollowsPlanHistory(t *testing.T) {
 	}{{api.PlanHobby, month}, {api.PlanPro, upgrade}} {
 		if _, err := store.PutFinancialPriceSnapshot(ctx, state.FinancialPriceSnapshot{
 			AccountID: acct.ID, PeriodStart: month, PeriodEnd: month.AddDate(0, 1, 0),
-			Price: financial.Price{Version: "test-" + string(g.plan), Meter: "compute", Currency: "EUR", Unit: "mb_seconds",
+			Price: financial.Price{Version: "test-" + string(g.plan), Meter: "compute", Currency: "USD", Unit: "mb_seconds",
 				UnitQuantity: api.SecondsPerGBHour, MillicentsPerUnit: api.OverageMillicentsPerGBHour,
 				IncludedQuantity: api.IncludedMBSeconds(g.plan)},
 			Plan: g.plan, EffectiveFrom: g.at, DeliveryMode: "live",
@@ -44,7 +44,7 @@ func TestOverageMBSecondsForRangeFollowsPlanHistory(t *testing.T) {
 		at time.Time
 		mb int64
 	}{
-		{month.Add(time.Hour), 100 * gbh},                     // 50 GB-h of Hobby overage before the range
+		{month.Add(time.Hour), 250 * gbh},                     // 50 GB-h of Hobby overage before the range
 		{upgrade.Add(-80 * time.Minute), 10 * gbh},            // 09:10, Hobby: 10 GB-h billable
 		{upgrade.Add(-20 * time.Minute), 10 * gbh},            // 10:10, Pro applies to the 10:00 hour
 		{upgrade.Add(2*time.Hour + 10*time.Minute), 10 * gbh}, // 12:40, Pro
@@ -78,9 +78,9 @@ func TestOverageMBSecondsForRangeResetsAtUTCMonth(t *testing.T) {
 		at time.Time
 		mb int64
 	}{
-		{august, 50 * api.SecondsPerGBHour},
+		{august, 200 * api.SecondsPerGBHour},
 		{windowStart.Add(5 * time.Minute), 2 * api.SecondsPerGBHour},
-		{windowStart.Add(time.Hour + 5*time.Minute), 53 * api.SecondsPerGBHour},
+		{windowStart.Add(time.Hour + 5*time.Minute), 203 * api.SecondsPerGBHour},
 	}
 	for i, row := range rows {
 		if err := store.AppendUsage(ctx, acct.ID, "app-"+string(rune('a'+i)), "instance", row.at, row.mb, 0, 0, 0, 0, 0, 0, 0); err != nil {

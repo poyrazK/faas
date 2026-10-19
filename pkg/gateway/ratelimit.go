@@ -119,6 +119,9 @@ type Limiter struct {
 	// coalescer batches concurrent consults for one central counter when the
 	// backend implements CentralBatchBackend.
 	coalescer centralCoalescer
+	// lease, when set, spends central tokens from local leases instead of
+	// consulting Postgres per request (ADR-1520). Set by EnableLeasing.
+	lease *leaseTable
 }
 
 type bucket struct {
@@ -446,8 +449,11 @@ func (l *Limiter) allowTokenKeyedLocked(id string, rps, burst float64, pinnedKey
 			l.elems[id] = l.ll.PushFront(b)
 		}
 	} else {
-		b.rps, b.burst = rps, burst
+		// Refill under the old policy, then install the new one, as
+		// allowTokenWithCentralKey does: an edited rule must not apply its
+		// new rate to the time before the edit.
 		b.tokens += now.Sub(b.last).Seconds() * b.rps
+		b.rps, b.burst = rps, burst
 		if b.tokens > b.burst {
 			b.tokens = b.burst
 		}
@@ -750,8 +756,13 @@ func (l *Limiter) allowTokenWithCentralKey(ctx context.Context, id string, rps, 
 // gave up (client disconnect) does not open it. Concurrent consults for one
 // counter are batched when the backend supports it (centralCoalescer).
 func (l *Limiter) consumeCentral(ctx context.Context, scope, subjectID, plan string, rps, burst float64) (int, bool, error) {
+	if l.lease != nil {
+		if batch, ok := l.central.(CentralBatchBackend); ok {
+			return l.leaseConsume(ctx, batch, scope, subjectID, plan, rps, burst)
+		}
+	}
 	now := l.now()
-	if until := l.centralOpenUntil.Load(); until != 0 && now.UnixNano() < until {
+	if l.centralBreakerOpen(now) {
 		return 0, false, errCentralBreakerOpen
 	}
 	var (

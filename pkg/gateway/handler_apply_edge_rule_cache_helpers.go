@@ -56,7 +56,9 @@ func computeVaryHash(r *http.Request, varyOn []string) [32]byte {
 		}
 		h.Write([]byte(strings.ToLower(name)))
 		h.Write([]byte{0})
-		h.Write([]byte(r.Header.Get(name)))
+		// Both allowed Vary headers are HTTP lists. Include every field line;
+		// Header.Get alone would discard later language/encoding preferences.
+		h.Write([]byte(strings.Join(r.Header.Values(name), ", ")))
 	}
 	var out [32]byte
 	copy(out[:], h.Sum(nil))
@@ -75,27 +77,21 @@ func hashStable(s string) [32]byte {
 	return out
 }
 
-// sortQuery returns the canonical "sorted" form of a URL
-// query string suitable for use as the Query dimension of a
-// CacheKey. Two requests with identical key/value pairs in
-// different orders must produce identical cache keys (otherwise
-// a single client switching from ?id=1&id=2 to ?id=2&id=1 would
-// miss the cache and serve two distinct entries back-to-back);
-// the runtime normalises them to a stable lexical form.
-//
-// Implementation: split on '&', sort the pairs, rejoin. Empty
-// input returns "" so a no-query request collapses cleanly into
-// one entry. Duplicates are preserved as-is — the sort is stable
-// but does not dedupe, on the principle that the upstream origin
-// already accepts both orderings and we should mirror that
-// surface.
-func sortQuery(raw string) string {
-	if raw == "" {
-		return ""
+// responseCacheKeyForRequest preserves the origin-visible URL. All serve,
+// capture and refresh paths use the same key, including its escaping and
+// query ordering; decoded paths remain available for rule matching and purge.
+func responseCacheKeyForRequest(r *http.Request, appID, deploymentID string, rule *EdgeRuleCacheResolved) CacheKey {
+	return CacheKey{
+		AppID:          appID,
+		DeploymentID:   deploymentID,
+		RuleID:         rule.ID,
+		Method:         r.Method,
+		NormalizedPath: r.URL.Path,
+		RawPath:        r.URL.RawPath,
+		Query:          r.URL.RawQuery,
+		ForceQuery:     r.URL.ForceQuery,
+		VaryHash:       computeVaryHash(r, rule.VaryOn),
 	}
-	parts := strings.Split(raw, "&")
-	sort.Strings(parts)
-	return strings.Join(parts, "&")
 }
 
 // strconvItoa is a thin wrapper to keep the cache applier free

@@ -61,6 +61,13 @@ service RequestTelemetry {
   // request telemetry, this identity mapping is not sampled or rate-limited.
   // Apid applies the account's request-time debugger retention window.
   rpc RecordRequestIDJournal(RecordRequestIDJournalRequest) returns (RecordRequestIDJournalResponse);
+
+  // RecordRequestIDJournalBatch commits up to 512 journal records with one
+  // account lookup per distinct account and one multi-row insert (ADR-1521).
+  // An invalid record is counted as rejected instead of failing the batch;
+  // storage failures are gRPC errors for the whole batch. Gateways fall back
+  // to RecordRequestIDJournal while apid answers Unimplemented.
+  rpc RecordRequestIDJournalBatch(RecordRequestIDJournalBatchRequest) returns (RecordRequestIDJournalBatchResponse);
 }
 
 message RecordRequestIDJournalRequest {
@@ -76,6 +83,16 @@ message RecordRequestIDJournalResponse {
   // False only when the account plan has no debugger entitlement. Storage or
   // validation failures are gRPC errors and must prevent guest forwarding.
   bool recorded = 1;
+}
+
+message RecordRequestIDJournalBatchRequest {
+  repeated RecordRequestIDJournalRequest records = 1; // 1..512
+}
+
+message RecordRequestIDJournalBatchResponse {
+  int32 recorded = 1; // inserted, or an identical retry of an existing record
+  int32 not_entitled = 2; // the account's plan has no debugger retention
+  int32 rejected = 3; // malformed, or the app is not owned by the account
 }
 
 // The financial fields contain no request path, client metadata, or payload.
@@ -102,6 +119,15 @@ message ConsumerUsageEvent {
   // keeps route-level billable minutes so rate cards can weight routes
   // (ADR-952). Empty for anonymous traffic and from older gateways.
   string billing_route = 15;
+  // Execution time and response size of a billable consumer request, which
+  // rate cards can price instead of requests (ADR-1308). Zero from older
+  // gateways and for requests a customer is not billed for.
+  int64 compute_ms = 16;
+  int64 response_bytes = 17;
+  // Units the app reported for a billable consumer request in its
+  // Gregale-Usage header or trailer, by meter (ADR-1318). Empty from older
+  // gateways.
+  map<string, int64> meter_units = 18;
 }
 
 message ConsumerUsageReceipt {
@@ -118,6 +144,12 @@ message ConsumerUsageReceipt {
   // outbox record until a receiver explicitly advertises support.
   bool surface_attribution_supported = 4;
   bool jwt_tenant_attribution_supported = 5;
+  // True when the receiver stored compute_ms and response_bytes. A gateway
+  // retains an event carrying them until a receiver acknowledges it.
+  bool resource_usage_recorded = 6;
+  // True when the receiver stored meter_units. A gateway retains an event
+  // carrying them until a receiver acknowledges it (ADR-1318).
+  bool meter_usage_recorded = 7;
 }
 
 // One completed request, not a collapsed debugger bucket. No query, headers,

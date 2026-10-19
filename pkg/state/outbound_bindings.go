@@ -44,8 +44,18 @@ type OutboundIntegrationOffer struct {
 	AIUserDailyCostLimit  *int64
 	// AIRequestLogContent also captures logged calls' bodies (ADR-996).
 	AIRequestLogContent bool
-	// AIContentPolicy is the integration's content guardrails (ADR-997).
+	// AIContentPolicy is the integration's content guardrails (ADR-997)
+	// and moderation check (ADR-1340).
 	AIContentPolicy api.OutboundAIContentPolicy
+	// AIAllowUnmetered lets through writes the gateway cannot meter
+	// (ADR-1432).
+	AIAllowUnmetered bool
+	// AIAutoPromptCache adds prompt-cache breakpoints to Claude requests
+	// (ADR-1437).
+	AIAutoPromptCache bool
+	// AILogExport sends settled app calls to the app's log drains
+	// (ADR-1340).
+	AILogExport bool
 }
 
 // OutboundAIContentPolicyStore owns an integration's content guardrails
@@ -72,6 +82,16 @@ type OutboundAIUsageItem struct {
 	Images       int64
 	AudioSeconds int64
 	Characters   int64
+	// VideoSeconds is seconds of generated video (ADR-1432).
+	VideoSeconds int64
+	// Built-in tool uses (ADR-1433).
+	WebSearches   int64
+	FileSearches  int64
+	CodeSessionGB int64
+	// Cache hits and what caching saved (ADR-1440).
+	CachedRequests             int64
+	CacheSavedMillicents       int64
+	PromptCacheSavedMillicents int64
 }
 
 // OutboundAIUsage is one UTC day of AI usage for an integration.
@@ -107,13 +127,24 @@ type OutboundAIPolicy struct {
 	// RequestLogContent also captures logged calls' bodies; it requires
 	// the request log (ADR-996).
 	RequestLogContent bool
+	// LogExport sends settled app calls to the app's log drains; it
+	// requires a provider (ADR-1340).
+	LogExport bool
+	// AllowUnmetered lets through writes the gateway cannot meter; it
+	// requires a provider (ADR-1432).
+	AllowUnmetered bool
+	// AutoPromptCache adds prompt-cache breakpoints to Claude requests; it
+	// requires a provider (ADR-1437).
+	AutoPromptCache bool
 }
 
 func (p OutboundAIPolicy) valid() bool {
 	return api.ValidOutboundAIPolicy(p.Provider, p.DailyTokenLimit) &&
 		api.ValidOutboundAICostLimits(p.Provider, p.DailyCostLimit, p.MonthlyCostLimit) &&
 		api.ValidOutboundAIUserLimits(p.Provider, p.UserDailyTokenLimit, p.UserDailyCostLimit) &&
-		(!p.RequestLogEnabled || p.Provider != "") && (!p.RequestLogContent || p.RequestLogEnabled)
+		(!p.RequestLogEnabled || p.Provider != "") && (!p.RequestLogContent || p.RequestLogEnabled) &&
+		(!p.LogExport || p.Provider != "") && (!p.AllowUnmetered || p.Provider != "") &&
+		(!p.AutoPromptCache || p.Provider != "")
 }
 
 // OutboundAIPriceList is the current price list; EffectiveFrom is nil when

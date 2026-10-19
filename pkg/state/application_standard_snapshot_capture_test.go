@@ -13,10 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 )
 
-type standardSnapshotTestStore interface {
-	nativeArtifactTestStore
-	ApplicationStandardSnapshotCaptureStore
-}
+type standardSnapshotTestStore = contractTestStore
 
 func standardSnapshotFixture(t *testing.T, s standardSnapshotTestStore, mode string) (Instance, ApplicationStandardSnapshotCaptureRequest) {
 	t.Helper()

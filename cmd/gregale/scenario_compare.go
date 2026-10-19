@@ -9,14 +9,24 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/onebox-faas/faas/pkg/actioncompare"
+	"github.com/onebox-faas/faas/pkg/behaviorcompare"
+	"github.com/onebox-faas/faas/pkg/rehearsalobj"
+	"github.com/onebox-faas/faas/pkg/rehearsalpg"
 )
 
 type testReportComparison struct {
-	Before  string                    `json:"before"`
-	After   string                    `json:"after"`
-	Summary testReportComparisonStats `json:"summary"`
-	Runs    []testRunComparison       `json:"runs"`
-	Gate    *testComparisonGate       `json:"gate,omitempty"`
+	Rehearsal      *testRehearsalIdentity    `json:"rehearsal,omitempty"`
+	BehaviorStatus string                    `json:"behavior_status,omitempty"`
+	ActionStatus   string                    `json:"action_status,omitempty"`
+	ObjectStatus   string                    `json:"object_status,omitempty"`
+	PostgresStatus string                    `json:"postgres_status,omitempty"`
+	Before         string                    `json:"before"`
+	After          string                    `json:"after"`
+	Summary        testReportComparisonStats `json:"summary"`
+	Runs           []testRunComparison       `json:"runs"`
+	Gate           *testComparisonGate       `json:"gate,omitempty"`
 }
 
 type testReportComparisonStats struct {
@@ -27,28 +37,32 @@ type testReportComparisonStats struct {
 }
 
 type testRunComparison struct {
-	Key                  string               `json:"key"`
-	Scenario             string               `json:"scenario"`
-	Engine               string               `json:"engine"`
-	Profile              string               `json:"profile"`
-	Case                 string               `json:"case,omitempty"`
-	Attempt              int                  `json:"attempt"`
-	Change               string               `json:"change"`
-	BeforeStatus         string               `json:"before_status,omitempty"`
-	AfterStatus          string               `json:"after_status,omitempty"`
-	BeforeBaselineStatus string               `json:"before_baseline_status,omitempty"`
-	AfterBaselineStatus  string               `json:"after_baseline_status,omitempty"`
-	BeforeLoadStatus     string               `json:"before_load_status,omitempty"`
-	AfterLoadStatus      string               `json:"after_load_status,omitempty"`
-	BeforeError          string               `json:"before_error,omitempty"`
-	AfterError           string               `json:"after_error,omitempty"`
-	BeforeCleanupError   string               `json:"before_cleanup_error,omitempty"`
-	AfterCleanupError    string               `json:"after_cleanup_error,omitempty"`
-	BeforeWorkload       *testLoadWorkload    `json:"before_workload,omitempty"`
-	AfterWorkload        *testLoadWorkload    `json:"after_workload,omitempty"`
-	WorkloadChanged      bool                 `json:"workload_changed,omitempty"`
-	Metrics              []testMetricDelta    `json:"metrics,omitempty"`
-	Steps                []testStepComparison `json:"steps,omitempty"`
+	Objects              *rehearsalobj.Comparison    `json:"objects,omitempty"`
+	Postgres             *rehearsalpg.Comparison     `json:"postgres,omitempty"`
+	Behavior             *behaviorcompare.Comparison `json:"behavior,omitempty"`
+	Actions              *actioncompare.Comparison   `json:"actions,omitempty"`
+	Key                  string                      `json:"key"`
+	Scenario             string                      `json:"scenario"`
+	Engine               string                      `json:"engine"`
+	Profile              string                      `json:"profile"`
+	Case                 string                      `json:"case,omitempty"`
+	Attempt              int                         `json:"attempt"`
+	Change               string                      `json:"change"`
+	BeforeStatus         string                      `json:"before_status,omitempty"`
+	AfterStatus          string                      `json:"after_status,omitempty"`
+	BeforeBaselineStatus string                      `json:"before_baseline_status,omitempty"`
+	AfterBaselineStatus  string                      `json:"after_baseline_status,omitempty"`
+	BeforeLoadStatus     string                      `json:"before_load_status,omitempty"`
+	AfterLoadStatus      string                      `json:"after_load_status,omitempty"`
+	BeforeError          string                      `json:"before_error,omitempty"`
+	AfterError           string                      `json:"after_error,omitempty"`
+	BeforeCleanupError   string                      `json:"before_cleanup_error,omitempty"`
+	AfterCleanupError    string                      `json:"after_cleanup_error,omitempty"`
+	BeforeWorkload       *testLoadWorkload           `json:"before_workload,omitempty"`
+	AfterWorkload        *testLoadWorkload           `json:"after_workload,omitempty"`
+	WorkloadChanged      bool                        `json:"workload_changed,omitempty"`
+	Metrics              []testMetricDelta           `json:"metrics,omitempty"`
+	Steps                []testStepComparison        `json:"steps,omitempty"`
 }
 
 type testMetricDelta struct {
@@ -234,6 +248,18 @@ func cmdTestCompare(args []string) int {
 	if comparison.Gate != nil && comparison.Gate.Status != "passed" {
 		return 1
 	}
+	if comparison.BehaviorStatus != "" && comparison.BehaviorStatus != "passed" {
+		return 1
+	}
+	if comparison.ActionStatus != "" && comparison.ActionStatus != "passed" {
+		return 1
+	}
+	if comparison.ObjectStatus != "" && comparison.ObjectStatus != "passed" {
+		return 1
+	}
+	if comparison.PostgresStatus != "" && comparison.PostgresStatus != "passed" {
+		return 1
+	}
 	return 0
 }
 
@@ -329,8 +355,16 @@ func compareTestReports(beforeName, afterName string, before, after []testRunRec
 			}
 			comparison.Summary.Removed++
 		}
+		run.Behavior = compareTestBehavior(oldReceipt, newReceipt)
+		run.Actions = compareTestActions(oldReceipt, newReceipt)
+		run.Objects = compareTestObjects(oldReceipt, newReceipt)
+		run.Postgres = compareTestPostgres(oldReceipt, newReceipt)
 		comparison.Runs = append(comparison.Runs, run)
 	}
+	comparison.BehaviorStatus = testBehaviorComparisonStatus(comparison.Runs)
+	comparison.ActionStatus = testActionComparisonStatus(comparison.Runs)
+	comparison.ObjectStatus = testObjectComparisonStatus(comparison.Runs)
+	comparison.PostgresStatus = testPostgresComparisonStatus(comparison.Runs)
 	return comparison, nil
 }
 func (run *testRunComparison) setLoadStatuses(before, after *testLoadEvidence) {
@@ -574,9 +608,21 @@ func testLoadStepMetrics(step testLoadStepEvidence, after bool) []testMetricDelt
 }
 
 func printTestReportComparison(out io.Writer, comparison testReportComparison) {
+	if r := comparison.Rehearsal; r != nil {
+		_, _ = fmt.Fprintf(out, "Rehearsal %s: %s\n  baseline %s\n  candidate %s\n  trusted manifest %s\n", r.ID, r.Status, r.Baseline.Commit, r.Candidate.Commit, r.ManifestSHA256)
+		if r.Error != "" || r.CleanupError != "" {
+			_, _ = fmt.Fprintf(out, "  %s\n", strings.TrimSpace(r.Error+" "+r.CleanupError))
+		}
+	}
 	_, _ = fmt.Fprintf(out, "Compare %s → %s\n", comparison.Before, comparison.After)
 	_, _ = fmt.Fprintf(out, "%d matched · %d added · %d removed · %d status changes\n",
 		comparison.Summary.Matched, comparison.Summary.Added, comparison.Summary.Removed, comparison.Summary.StatusChanged)
+	if comparison.BehaviorStatus != "" {
+		_, _ = fmt.Fprintf(out, "Behavior comparison: %s (application-reported observations)\n", strings.ToUpper(comparison.BehaviorStatus))
+	}
+	if comparison.ActionStatus != "" {
+		_, _ = fmt.Fprintf(out, "%s: %s (platform-captured evidence)\n", testReportActionLabel(comparison.Runs), strings.ToUpper(comparison.ActionStatus))
+	}
 	if comparison.Gate == nil {
 		_, _ = fmt.Fprintln(out, "This is a report diff; metric changes are informational.")
 	} else {
@@ -612,6 +658,10 @@ func printTestReportComparison(out io.Writer, comparison testReportComparison) {
 			afterStatus = "—"
 		}
 		_, _ = fmt.Fprintf(out, "\n%s  %s → %s\n", run.Key, beforeStatus, afterStatus)
+		printTestBehaviorComparison(out, run.Behavior)
+		printTestActionComparison(out, run.Actions)
+		printTestPostgresComparison(out, run.Postgres)
+		printTestObjectComparison(out, run.Objects)
 		if run.WorkloadChanged {
 			_, _ = fmt.Fprintln(out, "  load workload identity changed; compare the load metrics cautiously")
 		}
@@ -659,6 +709,9 @@ const testHTMLComparisonTemplate = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Gregale test comparison</title><style>{{styles}}</style></head>
 <body><main><h1>Gregale test comparison</h1>
 <div class="muted">{{.Before}} → {{.After}} · generated {{.Generated}}</div>
+{{with .Rehearsal}}<section class="panel"><h2>Revision rehearsal: {{.Status}}</h2><p>ID: <code>{{.ID}}</code></p><p>Baseline commit: <code>{{.Baseline.Commit}}</code><br>Candidate commit: <code>{{.Candidate.Commit}}</code></p><p>Trusted manifest SHA-256: <code>{{.ManifestSHA256}}</code><br>Recipe SHA-256: <code>{{.RecipeSHA256}}</code></p><p>Baseline source SHA-256: <code>{{.Baseline.SourceSHA256}}</code><br>Candidate source SHA-256: <code>{{.Candidate.SourceSHA256}}</code></p>{{if .Error}}<p class="error">{{.Error}}</p>{{end}}{{if .CleanupError}}<p class="error">Cleanup: {{.CleanupError}}</p>{{end}}</section>{{end}}
+{{if .BehaviorStatus}}<p class="panel">Behavior comparison: <strong>{{.BehaviorStatus}}</strong> · Application-reported observations</p>{{end}}
+{{if .ActionStatus}}<p class="panel">{{reportActionLabel .Runs}}: <strong>{{.ActionStatus}}</strong> · Platform-captured evidence, sealed before cleanup. Coverage follows each run’s declared scope.</p>{{end}}
 {{if .Gate}}<p class="panel">Regression budget gate: <strong>{{.Gate.Status}}</strong> · {{.Gate.Passed}} passed · {{.Gate.Failed}} failed · {{.Gate.Inconclusive}} inconclusive</p>
 <h2>Budget checks</h2><table><thead><tr><th>Run</th><th>Metric</th><th>Status</th><th>Earlier</th><th>Later</th><th>Limit</th><th>Earlier spread</th><th>Later spread</th><th>Reason</th></tr></thead><tbody>{{range .Gate.Checks}}<tr><td>{{.Run}}</td><td>{{.Metric}}</td><td>{{.Status}}</td><td>{{comparisonValue .Before .Unit}}</td><td>{{comparisonValue .After .Unit}}</td><td>{{comparisonValue .Limit .Unit}}</td><td>{{if .BeforeSpread}}{{comparisonValue .BeforeSpread .SpreadUnit}} ({{.BeforeRuns}} runs){{end}}</td><td>{{if .AfterSpread}}{{comparisonValue .AfterSpread .SpreadUnit}} ({{.AfterRuns}} runs){{end}}</td><td>{{.Reason}}</td></tr>{{end}}</tbody></table>
 {{else}}<p class="panel">Offline report diff. Metric changes are informational; pass <code>--budget</code> to enforce regression limits.</p>{{end}}
@@ -666,7 +719,11 @@ const testHTMLComparisonTemplate = `<!doctype html>
 <h2>Run changes</h2><table><thead><tr><th>Run</th><th>Change</th><th>Earlier</th><th>Later</th><th>Duration</th></tr></thead><tbody>
 {{range .Runs}}<tr><td>{{.Key}}</td><td>{{.Change}}</td><td>{{if .BeforeStatus}}{{.BeforeStatus}}{{else}}—{{end}}{{if .BeforeBaselineStatus}} · baseline {{.BeforeBaselineStatus}}{{end}}</td><td>{{if .AfterStatus}}{{.AfterStatus}}{{else}}—{{end}}{{if .AfterBaselineStatus}} · baseline {{.AfterBaselineStatus}}{{end}}</td><td>{{range .Metrics}}{{if eq .Name "duration_ms"}}{{delta .}}{{end}}{{end}}</td></tr>{{end}}
 </tbody></table>
-{{range .Runs}}{{if or .Metrics .Steps .BeforeError .AfterError .BeforeCleanupError .AfterCleanupError .WorkloadChanged}}<details class="run"><summary><strong>{{.Key}}</strong> · {{.Change}}</summary><div class="run-body">
+{{range .Runs}}{{if or .Objects .Postgres .Actions .Behavior .Metrics .Steps .BeforeError .AfterError .BeforeCleanupError .AfterCleanupError .WorkloadChanged}}<details class="run"><summary><strong>{{.Key}}</strong> · {{.Change}}</summary><div class="run-body">
+{{with .Objects}}<h3>Object storage: {{.Status}}</h3><p>Independent platform collector; {{.BeforeMutations}} → {{.AfterMutations}} mutation attempts.</p>{{range .MutationChanges}}<p>{{if .Workload}}<strong>{{.Workload}}</strong> · {{end}}<strong>{{.Method}}</strong> <code>{{.Key}}</code>: {{.BeforeCount}} → {{.AfterCount}} attempts</p>{{end}}{{if .Reason}}<div class="error">{{.Reason}}</div>{{end}}<h4>Baseline objects</h4>{{range .BeforeObjects}}<p><code>{{.Key}}</code>: {{.Size}} bytes, SHA-256 <code>{{.SHA256}}</code>; {{.ContentType}}; metadata {{range $key,$value:=.Metadata}}{{$key}}={{$value}} {{end}}</p>{{end}}<h4>Candidate objects</h4>{{range .AfterObjects}}<p><code>{{.Key}}</code>: {{.Size}} bytes, SHA-256 <code>{{.SHA256}}</code>; {{.ContentType}}; metadata {{range $key,$value:=.Metadata}}{{$key}}={{$value}} {{end}}</p>{{end}}{{end}}
+{{with .Postgres}}<h3>PostgreSQL: {{.Status}}</h3><p>Independent platform observations of selected database rows.</p>{{if .Reason}}<div class="error">{{.Reason}}</div>{{end}}<h4>Baseline changes</h4>{{range .Before}}<p>{{.Table}}: {{len .Inserted}} inserted / {{len .Deleted}} deleted rows</p>{{end}}<h4>Candidate changes</h4>{{range .After}}<p>{{.Table}}: {{len .Inserted}} inserted / {{len .Deleted}} deleted rows</p>{{end}}{{end}}
+{{with .Actions}}<h3>{{actionLabel .}}: {{.Status}}</h3><p>Scope: {{.Scope}}. {{actionCount .BeforeCount}} → {{actionCount .AfterCount}} {{actionUnits .}}.</p>{{if .Reason}}<div class="error">{{.Reason}}</div>{{end}}{{if .Changes}}<table><thead><tr><th>Workload / source</th><th>Effect</th><th>Result</th><th>Earlier evidence</th><th>Later evidence</th></tr></thead><tbody>{{range .Changes}}<tr><td>{{.Workload}} / {{.Source}}{{if .Workflow}} / {{.Workflow}} / {{.Step}}{{end}}</td><td>{{.Name}}</td><td>{{.Status}}</td><td><code>{{actionValues .Before}}</code></td><td><code>{{actionValues .After}}</code></td></tr>{{end}}</tbody></table>{{end}}{{end}}
+{{with .Behavior}}<h3>Behavior: {{.Status}}</h3>{{if .Reason}}<div class="error">{{.Reason}}</div>{{end}}{{if .Changes}}<table><thead><tr><th>Observation</th><th>Kind</th><th>Result</th><th>Earlier</th><th>Later</th></tr></thead><tbody>{{range .Changes}}<tr><td>{{.Key}}</td><td>{{.Kind}}</td><td>{{.Status}}</td><td><code>{{behaviorValue .Before}}</code></td><td><code>{{behaviorValue .After}}</code></td></tr>{{end}}</tbody></table>{{end}}{{end}}
 {{if .BeforeError}}<div class="error">Earlier error: {{.BeforeError}}</div>{{end}}{{if .AfterError}}<div class="error">Later error: {{.AfterError}}</div>{{end}}{{if .BeforeCleanupError}}<div class="error">Earlier cleanup error: {{.BeforeCleanupError}}</div>{{end}}{{if .AfterCleanupError}}<div class="error">Later cleanup error: {{.AfterCleanupError}}</div>{{end}}
 {{if .WorkloadChanged}}<div class="error">The load workload identity changed. Review the report labels and SHA-256 values before interpreting metric deltas.</div>{{end}}
 {{if .Metrics}}<h3>Run and load metrics</h3><table><thead><tr><th>Metric</th><th>Earlier</th><th>Later</th><th>Change</th></tr></thead><tbody>{{range .Metrics}}<tr><td>{{.Name}}</td><td>{{metricValue . true}}</td><td>{{metricValue . false}}</td><td>{{delta .}}</td></tr>{{end}}</tbody></table>{{end}}

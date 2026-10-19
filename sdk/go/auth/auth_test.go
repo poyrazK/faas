@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -401,5 +402,55 @@ func TestRedirectsAreNotFollowed(t *testing.T) {
 	}
 	if _, err := c.fetchKeys(context.Background()); !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("redirected key set: %v", err)
+	}
+}
+
+func TestVerifyWithAudienceAcceptsAnOAuthClientsToken(t *testing.T) {
+	key := newKey(t, "0A1B2C3D")
+	app := newAuthApp(t, key)
+	own, clk := newClient(t, app)
+	resource := "https://shop-mcp.gregale.app/mcp"
+	mcp, err := New(app.server.URL, WithAudience(resource))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mcp.now = clk.now
+	claims := userClaims(mcp, clk)
+	claims["aud"], claims["client_id"], claims["scope"] = resource, "6a1b2c3d-0000-4000-8000-000000000002", "openid email"
+	token := key.sign(t, header(key.kid), claims)
+	verified, err := mcp.Verify(context.Background(), token)
+	if err != nil || verified.ClientID != "6a1b2c3d-0000-4000-8000-000000000002" || strings.Join(verified.Scopes, " ") != "openid email" {
+		t.Fatalf("Verify = %+v, %v", verified, err)
+	}
+	if _, err := own.Verify(context.Background(), token); !errors.Is(err, ErrInvalidToken) {
+		t.Fatalf("a client's token passed the app's own audience: %v", err)
+	}
+	if _, err := mcp.Verify(context.Background(), key.sign(t, header(key.kid), userClaims(own, clk))); !errors.Is(err, ErrInvalidToken) {
+		t.Fatalf("an app session passed the resource's audience: %v", err)
+	}
+	if _, err := New(app.server.URL, WithAudience("")); err == nil {
+		t.Fatal("accepted an empty audience")
+	}
+}
+
+func TestVerifyReadsTheActiveOrganization(t *testing.T) {
+	key := newKey(t, "0A1B2C3D")
+	app := newAuthApp(t, key)
+	c, clk := newClient(t, app)
+	payload := userClaims(c, clk)
+	for name, value := range map[string]any{"org_id": "o1", "org_slug": "acme", "org_role": "admin", "org_permissions": []string{"org:read", "members:manage"}} {
+		payload[name] = value
+	}
+	claims, err := c.Verify(context.Background(), key.sign(t, header(key.kid), payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := &Organization{ID: "o1", Slug: "acme", Role: "admin", Permissions: []string{"org:read", "members:manage"}}
+	if !reflect.DeepEqual(claims.Organization, want) {
+		t.Fatalf("organization = %+v", claims.Organization)
+	}
+	plain, err := c.Verify(context.Background(), key.sign(t, header(key.kid), userClaims(c, clk)))
+	if err != nil || plain.Organization != nil {
+		t.Fatalf("without org claims: %+v, %v", plain.Organization, err)
 	}
 }

@@ -22,6 +22,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/rootfs"
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type sourceExportFixture struct {
@@ -33,7 +34,7 @@ type sourceExportFixture struct {
 	acct    state.Account
 }
 
-func newSourceExportFixture(t *testing.T, kind state.DeploymentKind, function, publish bool) sourceExportFixture {
+func newSourceExportFixture(t *testing.T, kind state.DeploymentKind, function, publish bool, legacyRuntime ...string) sourceExportFixture {
 	t.Helper()
 	s := state.NewMemStore()
 	owner, err := s.CreateAccountWithPersonalOrg(t.Context(), state.CreateAccountWithPersonalOrgParams{Email: uuid.NewString() + "@example.com", Plan: api.PlanPro})
@@ -43,6 +44,9 @@ func newSourceExportFixture(t *testing.T, kind state.DeploymentKind, function, p
 	in := state.App{AccountID: owner.Account.ID, OrgID: owner.PersonalOrg.ID, Slug: "source-" + uuid.NewString()[:8], RAMMB: 128, MaxConcurrency: 2, RequireSigned: publish}
 	if function {
 		in.Type, in.Runtime = state.AppTypeFunction, RuntimeGo124
+	}
+	if len(legacyRuntime) > 0 {
+		in.Runtime = legacyRuntime[0]
 	}
 	app, err := s.CreateApp(t.Context(), in)
 	if err != nil {
@@ -165,6 +169,18 @@ func TestApprovedSourceExportConsumesExactContainerAndFunction(t *testing.T) {
 	}
 }
 
+func TestSourceExportContainerIgnoresLegacyFunctionRuntime(t *testing.T) {
+	for _, publish := range []bool{false, true} {
+		t.Run(map[bool]string{false: "unsigned", true: "approved"}[publish], func(t *testing.T) {
+			f := newSourceExportFixture(t, state.DeploymentKindTarball, false, publish, RuntimeGo124)
+			f.builder.buildHook = func() { assertSourceLayers(t, f.builder, false) }
+			if err := f.h.consumeSourceBuild(t.Context(), f.app, f.dep, f.acct); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
 func TestApprovedSourceExportRefusesChangedOrRevokedInput(t *testing.T) {
 	for _, mode := range []string{"changed archive", "revoked publisher", "different latest build", "cross account", "expired approval", "function legacy seam"} {
 		t.Run(mode, func(t *testing.T) {
@@ -199,7 +215,7 @@ func TestApprovedSourceExportRefusesChangedOrRevokedInput(t *testing.T) {
 			case "cross account":
 				f.app.AccountID = uuid.NewString()
 			case "expired approval":
-				f.h.store = expiredSourceStore{f.store}
+				f.h.store = statetest.NewMem(expiredSourceStore{f.store})
 			}
 			if err := f.h.consumeSourceBuild(t.Context(), f.app, f.dep, f.acct); err == nil {
 				t.Fatal("unapproved source converted")
@@ -211,7 +227,7 @@ func TestApprovedSourceExportRefusesChangedOrRevokedInput(t *testing.T) {
 	}
 }
 
-type expiredSourceStore struct{ *state.MemStore }
+type expiredSourceStore struct{ MemStore *state.MemStore }
 
 func (s expiredSourceStore) GetFreshBuildExportPublication(context.Context, string, string, string, string) (state.BuildExportPublication, error) {
 	return state.BuildExportPublication{}, state.ErrApplicationStandardRuntimeStale

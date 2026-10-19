@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from typing import Any, TypeVar
+from uuid import UUID
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -31,6 +32,18 @@ T = TypeVar("T", bound="UpdateAlertRuleRequest")
 class UpdateAlertRuleRequest:
     """Partial update — every field is optional. Omitted means leave alone."""
 
+    mcp_readiness_scope: str | Unset = UNSET
+    """Immutable environment selector. If supplied it must equal the current value; create a new rule to select
+    another environment."""
+    mcp_min_calls: int | Unset = UNSET
+    """Replacement observation minimum for the existing protocol alert. MCP protocol alerts only. Minimum
+    observations in every rolling window; defaults to 20 on create. Latency uses measured executions. Omit for other
+    metrics."""
+    mcp_for_minutes: int | Unset = UNSET
+    """Replacement sustained duration for the existing protocol alert. MCP protocol alerts only. Continuous breach
+    duration sampled every 30 seconds; defaults to 10 on create. Missing observations interrupt eligibility. Webhook
+    action, app scope, gt/gte and windows 5m/15m/1h are required. Error thresholds are percent (0..100), execution
+    p95 thresholds are milliseconds (0..300000)."""
     post_deploy_rollback_window_seconds: int | Unset = UNSET
     """Change the completed-release recovery window. Omission preserves it and explicit 0 disables it. Positive
     values require action=rollback; only error_rate_pct with gt or gte and sufficient exact deployment telemetry
@@ -44,6 +57,9 @@ class UpdateAlertRuleRequest:
     threshold: float | Unset = UNSET
     window_spec: UpdateAlertRuleRequestWindowSpec | Unset = UNSET
     webhook_url: str | Unset = UNSET
+    channel_ids: list[UUID] | Unset = UNSET
+    """Replaces the rule's notification channels; an empty list clears them, which a rule without a webhook cannot
+    do."""
     webhook_secret: str | Unset = UNSET
     """New plaintext HMAC secret. Omit to keep the existing secret."""
     cooldown_minutes: int | Unset = UNSET
@@ -53,6 +69,12 @@ class UpdateAlertRuleRequest:
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        mcp_readiness_scope = self.mcp_readiness_scope
+
+        mcp_min_calls = self.mcp_min_calls
+
+        mcp_for_minutes = self.mcp_for_minutes
+
         post_deploy_rollback_window_seconds = self.post_deploy_rollback_window_seconds
 
         name = self.name
@@ -75,6 +97,13 @@ class UpdateAlertRuleRequest:
 
         webhook_url = self.webhook_url
 
+        channel_ids: list[str] | Unset = UNSET
+        if not isinstance(self.channel_ids, Unset):
+            channel_ids = []
+            for channel_ids_item_data in self.channel_ids:
+                channel_ids_item = str(channel_ids_item_data)
+                channel_ids.append(channel_ids_item)
+
         webhook_secret = self.webhook_secret
 
         cooldown_minutes = self.cooldown_minutes
@@ -86,6 +115,12 @@ class UpdateAlertRuleRequest:
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
+        if mcp_readiness_scope is not UNSET:
+            field_dict["mcp_readiness_scope"] = mcp_readiness_scope
+        if mcp_min_calls is not UNSET:
+            field_dict["mcp_min_calls"] = mcp_min_calls
+        if mcp_for_minutes is not UNSET:
+            field_dict["mcp_for_minutes"] = mcp_for_minutes
         if post_deploy_rollback_window_seconds is not UNSET:
             field_dict["post_deploy_rollback_window_seconds"] = post_deploy_rollback_window_seconds
         if name is not UNSET:
@@ -102,6 +137,8 @@ class UpdateAlertRuleRequest:
             field_dict["window_spec"] = window_spec
         if webhook_url is not UNSET:
             field_dict["webhook_url"] = webhook_url
+        if channel_ids is not UNSET:
+            field_dict["channel_ids"] = channel_ids
         if webhook_secret is not UNSET:
             field_dict["webhook_secret"] = webhook_secret
         if cooldown_minutes is not UNSET:
@@ -114,6 +151,12 @@ class UpdateAlertRuleRequest:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
+        mcp_readiness_scope = d.pop("mcp_readiness_scope", UNSET)
+
+        mcp_min_calls = d.pop("mcp_min_calls", UNSET)
+
+        mcp_for_minutes = d.pop("mcp_for_minutes", UNSET)
+
         post_deploy_rollback_window_seconds = d.pop("post_deploy_rollback_window_seconds", UNSET)
 
         name = d.pop("name", UNSET)
@@ -145,6 +188,15 @@ class UpdateAlertRuleRequest:
 
         webhook_url = d.pop("webhook_url", UNSET)
 
+        _channel_ids = d.pop("channel_ids", UNSET)
+        channel_ids: list[UUID] | Unset = UNSET
+        if _channel_ids is not UNSET:
+            channel_ids = []
+            for channel_ids_item_data in _channel_ids:
+                channel_ids_item = UUID(channel_ids_item_data)
+
+                channel_ids.append(channel_ids_item)
+
         webhook_secret = d.pop("webhook_secret", UNSET)
 
         cooldown_minutes = d.pop("cooldown_minutes", UNSET)
@@ -157,6 +209,9 @@ class UpdateAlertRuleRequest:
             action = check_update_alert_rule_request_action(_action)
 
         update_alert_rule_request = cls(
+            mcp_readiness_scope=mcp_readiness_scope,
+            mcp_min_calls=mcp_min_calls,
+            mcp_for_minutes=mcp_for_minutes,
             post_deploy_rollback_window_seconds=post_deploy_rollback_window_seconds,
             name=name,
             enabled=enabled,
@@ -165,6 +220,7 @@ class UpdateAlertRuleRequest:
             threshold=threshold,
             window_spec=window_spec,
             webhook_url=webhook_url,
+            channel_ids=channel_ids,
             webhook_secret=webhook_secret,
             cooldown_minutes=cooldown_minutes,
             action=action,

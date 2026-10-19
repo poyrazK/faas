@@ -20,11 +20,7 @@ func TestMemProjectEnvironmentCloneReservationOwnership(t *testing.T) {
 	projectEnvironmentCloneReservationOwnership(t, state.NewMemStore())
 }
 
-type cloneReservationStore interface {
-	state.Store
-	state.ProjectEnvironmentCloneOperationStore
-	CloneProjectEnvironment(context.Context, state.ProjectEnvironmentClone, api.Limits) (state.ProjectEnvironment, state.ProjectEnvironmentCloneResult, error)
-}
+type cloneReservationStore = contractTestStore
 
 func projectEnvironmentCloneReservationOwnership(t *testing.T, s cloneReservationStore) {
 	t.Helper()

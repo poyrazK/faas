@@ -15,8 +15,30 @@ import (
 func (s *Service) DecideOperationApproval(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	op, _, ok := s.ownedOperation(w, r, acct)
 	if ok {
+		if !accountApprovalAllowed(w, r, op) {
+			return
+		}
 		s.decideApproval(w, r, acct, op, "", api.OperationApproverAccount)
 	}
+}
+
+func accountApprovalAllowed(w http.ResponseWriter, r *http.Request, op state.Operation) bool {
+	p, ok := httpkit.PrincipalFrom(r)
+	if !ok {
+		return false
+	}
+	if p.Key == nil {
+		return true
+	}
+	want := api.ScopeDeployWrite
+	if op.DataRepair != nil {
+		want = api.ScopeManagedPostgresManage
+	}
+	if p.Key.PlatformTenantID == "" && (httpkit.APIKeyCarriesScope(*p.Key, api.ScopeAdmin) || httpkit.APIKeyCarriesScope(*p.Key, want)) {
+		return true
+	}
+	api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Approval forbidden", "This identity cannot approve this operation"))
+	return false
 }
 
 // DecidePlatformTenantSelfOperationApproval records the customer's decision
@@ -38,7 +60,7 @@ func (s *Service) decideApproval(w http.ResponseWriter, r *http.Request, acct st
 	if !ok {
 		return
 	}
-	actor := api.OperationApprovalActor{Kind: kind}
+	actor := api.OperationApprovalActor{Kind: kind, ID: acct.ID}
 	if principal, ok := httpkit.PrincipalFrom(r); ok && principal.Key != nil {
 		actor.ID = principal.Key.ID
 	}

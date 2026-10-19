@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto'
 import { pathToFileURL } from 'node:url'
 import { inspectClient, fingerprint as schemaFingerprint } from './types.mjs'
 import { schemaNames, databaseURL } from './config.mjs'
+import { rotationInstalled, changeRotationBarrier, checkRotationSetup } from './refresh-rotation.mjs'
 
 const hash = /^[a-f0-9]{64}$/
 export function refreshTokenHash(token) {
@@ -18,6 +19,7 @@ function roleIdentifier(role) {
 // but cannot read or mutate the control table. This schema is never exposed.
 export async function installRefreshBarrier(client, role, schemas = ['api']) {
   const identifier = roleIdentifier(role)
+  if (await rotationInstalled(client)) throw new Error('Refresh rotation is installed; enroll managed bindings with refresh-rotation.mjs instead of replacing its hooks')
   await client.query('BEGIN')
   try {
     await client.query(`
@@ -82,6 +84,7 @@ export async function changeRefreshBarrier(client, action, role, token, fingerpr
   const identifier = roleIdentifier(role)
   const tokenHash = refreshTokenHash(token)
   if (!tokenHash || !['pause', 'resume'].includes(action) || (action === 'resume' && !hash.test(fingerprint ?? ''))) throw new Error('Invalid refresh operation')
+  if (await changeRotationBarrier(client, action, role, tokenHash, fingerprint, schemas)) return
   await client.query('BEGIN')
   try {
     // An exclusive transaction lock drains every transaction admitted by the hook.
@@ -105,6 +108,9 @@ export async function changeRefreshBarrier(client, action, role, token, fingerpr
 
 export function refreshStatusReader(connection) {
   const pool = new pg.Pool({ connectionString: connection, max: 1, connectionTimeoutMillis: 3000, query_timeout: 3000 })
+  // An idle client dropped by a database restart must not crash the server;
+  // driver errors can carry connection details, so report a fixed message.
+  pool.on('error', () => console.error('refresh status database connection unavailable'))
   return {
     async read(token) {
       const result = await pool.query('SELECT * FROM gregale_data_api.refresh_status($1)', [refreshTokenHash(token)])
@@ -132,6 +138,8 @@ class RefreshSetupError extends Error {
 // Inspect with a read-only transaction. Never install, pause, resume or adopt a gate.
 export async function checkRefreshSetup(client, role, schemas = ['api']) {
   const identifier = roleIdentifier(role)
+  const rotation = await checkRotationSetup(client, role, schemas)
+  if (rotation) return rotation
   await client.query('BEGIN READ ONLY')
   let stage = 'control_access'
   try {

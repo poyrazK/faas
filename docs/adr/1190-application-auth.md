@@ -1,6 +1,6 @@
 # ADR-1190: Application Auth on a pinned GoTrue server
 
-- **Status:** proposed; phases 1–6 implemented (the `auth` credential mode; the template and `gregale auth create|status`; organizations, roles, `authorize()` and `--auth`; email, hosted pages and `@gregale/auth`; storage, realtime and workflow checks; owner administration, the dashboard screens and user import; signing-key rotation and typed settings; lifecycle events and the activity view; passkeys, branded hosted pages, CAPTCHA and activity retention; Go and Python backend SDKs), not yet qualified on a live backend or native builder
+- **Status:** proposed; phases 1–6 implemented (the `auth` credential mode; the template and `gregale auth create|status`; organizations, roles, `authorize()` and `--auth`; email, hosted pages and `@gregale/auth`; storage, realtime and workflow checks; owner administration, the dashboard screens and user import; signing-key rotation and typed settings; lifecycle events and the activity view; passkeys, branded hosted pages, CAPTCHA and activity retention; Go, Python and Node backend SDKs; phone sign-in by SMS; organization SAML single sign-on; SMS and recovery-code second factors with a hosted verification step; SCIM provisioning; self-service organization SSO with DNS domain verification; the OAuth 2.1 authorization server; anonymous users and identity linking), not yet qualified on a live backend or native builder
 - **Date:** 2026-10-13
 - **Decision:** Package a pinned Supabase Auth (GoTrue) server with a Gregale front process as an ordinary Gregale app bound to the customer's managed PostgreSQL. Add Gregale-owned organizations, invitations, roles and one SQL authorization function that the Data API, object downloads, realtime channels and workflow starts all use.
 - **Why:** Gregale authenticates its own accounts, and its gateway, Data API and realtime service verify tokens from an identity provider the customer brings. Gregale issues no tokens for an application's own users, so every customer must still design sign-up, sessions, recovery, membership and permissions alone.
@@ -42,6 +42,10 @@ customer's own database next to the rows RLS protects. A version bump is a
 template change that must re-run the migration overlay check below.
 
 ### Packaging
+
+[ADR-1711](1711-verified-application-auth-release-migrations.md) supersedes the
+upstream migration invocation below: the release runner applies verified files
+directly because the pinned GoTrue binary's `migrate` command uses embedded SQL.
 
 `gregale auth create NAME --database DB` reserves an ordinary app, attaches an
 `auth` binding, seals the settings as app secrets and deploys the `auth`
@@ -177,6 +181,21 @@ seals an `AUTH_AUTHZ` document (`roles` and `policies`), and the release task
 replaces custom roles and every policy from it. The `owner` role always holds
 every permission, and a role still assigned cannot be removed.
 
+With `AUTH_ORG_CLAIMS` on, a session chooses the organization it acts in
+(`gregale_auth.set_active_organization()`, a member's own session only), and
+GoTrue's custom access token hook adds `org_id`, `org_slug`, `org_role` and
+`org_permissions` to its first-party tokens, joining the choice with the
+current membership and role. The choice is per session, not per user, so
+devices and tabs act independently; a foreign key to `auth.sessions` and to
+the organization removes it with either. Backends then authorize from a
+verified token without a call, accepting that a removed member or changed role
+holds until the token expires (`AuthAccessTokenTTLSeconds`); `authorize()`
+remains the current check. The hook, which otherwise runs only with the OAuth
+server, runs whenever either is on, so apps that use neither pay nothing per
+token. Client tokens never carry the claims, and nothing is chosen
+implicitly: a user in one organization still sets it, so a token's claims are
+never a guess.
+
 ### One authorization function
 
 Permissions are resolved in PostgreSQL when access is checked, never copied
@@ -267,6 +286,19 @@ reauthentication and security notifications are supported; HTML is escaped.
 Gregale operates no sender for application email. Without a provider, email
 flows fail with `email_provider_unconfigured`. Links and codes are never
 logged.
+
+Owners replace the subject and body of each of eight email types. A template
+is plain text with per-type `{{placeholders}}`; the front escapes every value
+and builds the HTML itself, so a template cannot carry markup or scripts into
+recipients' mail, and an email's link or code is appended when the body does
+not place it. Full HTML templates were left out for that reason. Templates live
+in the app's database (`gregale_auth.email_templates`), not in app secrets:
+they are not secret, the CLI and dashboard must read them back to edit them,
+an edit should not need a restart, and Free apps have eight secrets in all.
+They are edited through `/admin/v1/emails` with an admin key (CLI and the
+dashboard's Emails tab, from the owner's browser), with a preview that renders
+example values and can send through the provider. The hook reads them per
+email and falls back to the defaults if the database cannot be read.
 
 Organization invitations are emailed when a provider is configured. The send
 happens inside the invitation transaction, so a failed send leaves no pending
@@ -371,10 +403,196 @@ of a passkey sign-in; the hosted pages render the provider's widget and add a
 fresh token to each of those requests. Only when CAPTCHA is on does the pages'
 policy allow the provider's script, frame, style and connection origins.
 
+### Two-step verification
+
+GoTrue's factors are typed settings: TOTP (on by default), SMS codes and
+recovery codes, each with enrolment switchable and verification left on so
+enrolled users are never locked out. SMS codes need the SMS provider; without
+one the Auth app keeps their enrolment off instead of creating factors that
+no code can reach. The hosted pages complete a verified second factor after
+every first-factor sign-in they perform, so they never hand an application an
+`aal1` session for a user who has one; `@gregale/auth` exposes enrolment,
+challenge, verification, recovery codes and the assurance level. Applications
+enforce `aal2` themselves, through the `aal` claim. GoTrue texts a phone
+factor's challenge through the SMS provider even for numbers in
+`GOTRUE_SMS_TEST_OTP`, which covers sign-in codes only.
+
+The hosted account page `/ui/account` gives people the self-service that
+GoTrue's user API allows without each application building it: email and
+password changes, second factors and recovery codes, passkeys, linked
+providers, connected OAuth apps and their own sessions. Like the consent page
+it signs in through the usual pages (so the session is `aal2` for anyone with
+a second factor, which removing a factor requires), keeps the session only in
+the tab's memory and ends it on leaving; it never reuses the application's
+session, which would need a token handed across origins. GoTrue v2.197.0 can
+end the current session, the others or all, but cannot list sessions or end
+one, so `gregale_auth.list_sessions()` and `end_session()` (owner-only, run by
+the front under the caller's verified claims like the organization
+functions) serve `/authz/v1/sessions`. They leave third-party OAuth clients'
+sessions to connected apps, and the current session to GoTrue's logout. The
+page's image policy adds `data:` for the QR code GoTrue returns inline.
+
+GoTrue has no endpoint for people to delete themselves. With
+`AUTH_SELF_DELETION` on (off by default: an app may need to settle billing
+or data first), `DELETE /authz/v1/account` deletes the caller through the
+same path as an owner's deletion, so the last-owner refusal and the removal
+of organizations left without members are shared. It requires the token's
+session to be younger than `AuthReauthenticationSeconds` and, for a user
+with a verified second factor, `aal2`; anonymous users are exempt because
+they cannot sign in again. A third-party client's token cannot reach it.
+GoTrue's audit log records the deletion as an administrator's, since it goes
+through the admin API; the lifecycle event `auth.user.deleted` is the same
+either way.
+
+### Phone sign-in
+
+Phone sign-in uses GoTrue's own SMS providers (Twilio, Twilio Verify,
+MessageBird, Textlocal and Vonage), which call the provider's HTTPS API with
+the customer's account, so tenant egress needs no exception and Gregale sells
+no messages. `GOTRUE_SMS_*` secrets join the pass-through settings, and a
+typed setting writes one provider's account, sender and secret and removes
+every other provider's. Codes last five minutes rather than GoTrue's 60
+seconds, which a delayed text can outlast, and the message names the app.
+Texting costs the customer money and attracts SMS pumping, so the CLI warns
+when phone sign-in is on without CAPTCHA, and `AUTH_SMS_COUNTRIES` limits the
+country calling codes the app texts: the front reads every request that can
+text a number (code sign-in, sign-up, resend, phone change, phone MFA
+enrolment), normalises the number exactly as GoTrue does, checks every JSON
+key GoTrue would read as the phone (Go matches field names without regard to
+case) and refuses the rest before GoTrue sees them; GoTrue's per-instance limit of 30
+messages an hour and one code a minute per number also apply. A confirmed
+phone number publishes `auth.user.confirmed` with `channel: phone`; the
+number itself is never in an event.
+
+### Organization single sign-on
+
+Organization SSO uses GoTrue's SAML 2.0 service provider. `AUTH_SSO` turns it
+on; `AUTH_SAML_PRIVATE_KEY` is the RSA key GoTrue signs with and publishes in
+its metadata. The CLI or dashboard creates the key the first time SSO is
+turned on and never replaces it, because a new key would make every
+identity provider distrust the app; turning SSO off keeps it sealed. The owner
+registers identity providers with an admin key through `/admin/v1/sso` (from
+the CLI or the dashboard's SSO tab, which calls it from the owner's browser),
+which calls GoTrue's admin API, so provider records stay in the customer's
+database like users. Each provider must name its email domains, and may be
+linked to one organization (`gregale_auth.sso_organizations`) with a role
+other than owner: a trigger on `auth.identities` adds a user who signs in
+through it for the first time, and linking adds its existing users. Members
+keep their memberships when a link changes or ends.
+
+GoTrue keeps SSO accounts separate from other accounts with the same address,
+so an identity provider cannot sign in as an existing password or OAuth user.
+It could still assert any address for its own users, so an SSO user may
+accept an organization invitation only for an address in one of its
+provider's domains.
+
+Self-service SSO for an organization's own admins is opt-in
+(`AUTH_ORG_SSO`, which needs SSO). It requires proof of domain control: the
+organization adds a domain, publishes the returned token as a TXT record at
+`_gregale-auth.<domain>`, and the Auth app looks it up itself; a domain is
+verified by at most one organization (a partial unique index), so one
+organization cannot claim another's domain. Owners and members with
+`sso:manage` then register up to three providers for verified domains only,
+through `/authz/v1/orgs/{org}/sso`, which checks the rules in SQL
+(`check_org_sso`) before calling GoTrue's admin API and links the provider
+to the organization; a failed link removes the provider again. A domain an
+organization's provider serves cannot be removed.
+
+SCIM provisioning is served by the front, because GoTrue v2.197.0's SCIM
+module is an experimental stub with discovery endpoints only. Each SSO
+provider may have one SCIM bearer token, stored as a SHA-256 hash; requests
+are scoped to that provider. `/scim/v2/Users` keeps a provisioning record
+(`gregale_auth.scim_users`) rather than creating GoTrue users, because GoTrue
+keeps SSO accounts separate and a pre-created user would never be the one the
+person signs in as. A trigger on `auth.identities` links the record on the
+person's first SSO sign-in (it runs before the organization join), and bans
+a person who was deprovisioned first. Deprovisioning a linked person bans them
+through GoTrue's admin API, ends their sessions and removes their membership in
+the provider's organization, never its last owner; deleting the record does the
+same rather than deleting the account. Groups are not supported: the
+provider's organization link decides membership.
+
+### Dark launch
+
+Application Auth reaches no customer until it launches. apid reads
+`FAAS_APPLICATION_AUTH_ENABLED` (every account) and
+`FAAS_APPLICATION_AUTH_ACCOUNTS` (a comma-separated allowlist for internal
+accounts) on every request (`api.ApplicationAuthEnabled`). Where it is off,
+the `auth` credential mode is indistinguishable from an unknown one in the
+binding API, the deploy manifest and capability discovery; the dashboard's
+Auth link and screens do not exist; and the template catalog omits `auth`.
+Existing Auth apps keep running. The CLI shows the `auth` command, the
+`--auth`/`--jwt-auth` flags of other commands, the `auth` access mode and
+template only with `FAAS_APPLICATION_AUTH_ENABLED` set in the shell; without it
+they are absent from help, completions, man pages, the generated reference
+and suggestions, and dispatch treats them as unknown. The customer docs omit
+the Auth page (`docs/application-auth.md`, unlisted) and the public OpenAPI
+omits the mode. Launch reverses these: add the page to
+`docs/customer-pages.json`, the mode to the OpenAPI enums and the managed
+Postgres page, drop the `Unreleased` markers and the `unlisted` entry, and set
+the apid flag.
+
+### OAuth 2.1 authorization server
+
+GoTrue v2.197.0 is also an OAuth 2.1 authorization server: authorization code
+with PKCE, refresh tokens, OpenID Connect ID tokens, RFC 8414 metadata and
+RFC 7591 registration. `AUTH_OAUTH_SERVER` turns it on so third-party apps
+and MCP clients can act for an application's users with their consent;
+`AUTH_OAUTH_REGISTRATION` separately lets clients register themselves, as
+MCP clients do. Owners register clients with an admin key through
+`/admin/v1/oauth/clients` (`gregale auth oauth-clients`); one app holds at
+most `AuthOAuthMaxClients`, and the front refuses self-registration beyond
+that.
+
+GoTrue sends people to `SITE_URL` plus a configured path to approve a
+client. The front redirects that to the hosted consent page on the Auth
+host, which signs the person in with the usual pages, shows the client's
+self-chosen name, the permissions, the requested resource and the host
+they return to, and ends the session it made once they decide. The issuer
+`<host>/auth/v1` is discoverable at the RFC 8414 path-insertion URL.
+
+GoTrue gives a client's access token the same audience and powers as the
+user's own session, and lets it call every user endpoint, including changing
+the email address or password. The front therefore confines such tokens
+(those with a `client_id` claim): on the Auth host they reach only userinfo,
+their own sign-out and the permission check `/authz/v1/authorize`, which a
+resource server needs; everything else answers `oauth_client_token`.
+GoTrue's custom access token hook, on only with the server, sets their
+audience to the RFC 8707 resource the client was authorized for, or
+`oauth-client` when it named none. GoTrue drops the authorization at the
+code exchange, so the hook records each client session's resource in
+`gregale_auth.oauth_session_resources` and refreshed tokens keep it. A
+verifier set up for the app's own tokens (`authenticated`: the Data API,
+edge rules, realtime and the SDKs by default) never accepts a client's
+token; an API or MCP server accepts one for its own resource
+(`gregale mcp init --auth-app`, the SDKs' audience option). GoTrue issues
+only the OpenID scopes, so finer permissions come from `authorize()`.
+
+### Anonymous users and identity linking
+
+GoTrue's anonymous users let people start, for example fill a cart, before
+creating an account. They are a typed setting
+(`GOTRUE_EXTERNAL_ANONYMOUS_USERS_ENABLED`); GoTrue rate-limits them per
+client address and checks CAPTCHA on their sign-up, and the CLI advises
+turning CAPTCHA on with them. Their tokens carry `is_anonymous`, which the
+SDKs expose and RLS policies can read. Anyone can become one without an
+address, so `create_organization` refuses them (`anonymous_user`); they hold
+no memberships, so `authorize()` grants them nothing.
+
+An anonymous user becomes permanent, keeping its ID and data, by adding an
+email address and password, a phone, or a provider account. Linking a
+provider, like unlinking any sign-in method, needs `AUTH_IDENTITY_LINKING`
+(GoTrue's manual linking), which Gregale owns. GoTrue never deletes anonymous
+users, and on a database the customer pays for they accumulate; with
+`AUTH_ANONYMOUS_RETENTION_DAYS` the front deletes those created, and with no
+session refreshed, within that many days, in the same request-driven batches
+as activity retention. Deleting one ends its sessions, identities and
+memberships; the application's own tables decide through their foreign keys.
+
 ### Scale to zero
 
 The gateway, Data API and realtime service verify tokens against cached JWKS,
-and so do the Go and Python backend SDKs, with the same five-minute cache and
+and so do the Go, Python and Node backend SDKs, with the same five-minute cache and
 at most one refetch every 30 seconds for an unknown key ID. A parked auth app
 therefore wakes only for sign-in, refresh, administration,
 organization changes and the front's storage, realtime and workflow checks.
@@ -408,7 +626,8 @@ in `pkg/api/limits.go`.
    `/authz/v1` API, declarative `AUTH_AUTHZ` roles and policies, and `--auth`
    for the Data API and edge JWT rules.
 4. Hosted pages, the `@gregale/auth` SDK and the email hook. Go and Python
-   backend SDKs (`sdk/go/auth`, `faas_sdk.auth`) followed.
+   backend SDKs (`sdk/go/auth`, `faas_sdk.auth`, `@gregale/auth/server`)
+   followed.
 5. The storage, realtime and workflow checks.
 6. Dashboard user and organization screens through the auth app's admin API
    with an owner-held key, user import, and native acceptance.
@@ -430,6 +649,9 @@ in `pkg/api/limits.go`.
   tables, and the credential would reach every customer table.
 - **Permissions in token claims:** stale after role changes and unbounded in
   size.
+- **OAuth client tokens with the app's own audience:** GoTrue's default; any
+  consent, including to a self-registered client, would grant the user's
+  full Data API and Auth API powers.
 
 ## Acceptance
 
@@ -442,8 +664,15 @@ migration, sign-up issued an ES256 token that verifies against the published
 JWKS with the expected issuer, audience and 600-second lifetime, refresh
 tokens rotated, and sign-out ended refresh. Under amd64 emulation the instance
 used about 131 MiB (Node ~62 MB, GoTrue ~84 MB RSS), above the Free plan's
-128 MB. Native x86_64 measurement decides whether the front must move from
-Node to a small Go process before Free-plan availability. With phase 3 the release
+128 MB. Measured natively on x86_64 (fsn-4, 2026-10-17), the instance idles
+at 98 MiB RSS (Node 64, GoTrue 33; 33 MiB of it anonymous) and ran every SMS,
+second-factor, SAML, SCIM and organization-SSO check inside the Free plan's
+136 MiB container cgroup without an OOM kill, so the front stays in Node.
+GoTrue hashes each recovery code with argon2id (19 MiB), which grew its RSS to
+98 MiB unbounded; the front starts it with `GOMEMLIMIT` at a third of the
+instance's memory, which cut the cgroup's `memory.max` events over the same
+run from 1004 to 308. The microVM measurement on a Free instance stays part of
+the staging canary. With phase 3 the release
 task also applied the `gregale_auth` SQL and an `AUTH_AUTHZ` document, twice
 idempotently; read-only issuance still verified next to the real schema; and
 two real users created an organization, invited, accepted, were authorized by a

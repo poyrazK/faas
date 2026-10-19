@@ -46,6 +46,10 @@ func (w *scenarioHTTPResponseWriter) WriteHeader(status int) {
 	if w.status != 0 {
 		return
 	}
+	if isInformationalStatus(status) {
+		writeInformationalResponse(w.dst, status, w.header)
+		return
+	}
 	w.status = status
 	w.discard = status >= 200 && status < 300 && status != http.StatusNoContent && status != http.StatusResetContent
 	if !w.discard {

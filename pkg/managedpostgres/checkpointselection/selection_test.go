@@ -16,13 +16,13 @@ import (
 	"filippo.io/age"
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/managedpostgres"
+	"github.com/onebox-faas/faas/pkg/managedpostgres/checkpoint"
 	"github.com/onebox-faas/faas/pkg/managedpostgres/connectionfence"
 	"github.com/onebox-faas/faas/pkg/managedpostgres/pgerrors"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 )
 
-func fixture(t *testing.T) (*age.X25519Identity, Scope, managedpostgres.CheckpointConnectionRequest, [32]byte) {
+func fixture(t *testing.T) (*age.X25519Identity, Scope, checkpoint.CheckpointConnectionRequest, [32]byte) {
 	t.Helper()
 	identity, err := age.GenerateX25519Identity()
 	if err != nil {
@@ -31,7 +31,7 @@ func fixture(t *testing.T) (*age.X25519Identity, Scope, managedpostgres.Checkpoi
 	scope := Scope{OperationID: uuid.NewString(), AccountID: uuid.NewString(), ProjectID: uuid.NewString(), SourceDatabaseID: uuid.NewString(), MaintenanceID: uuid.NewString(),
 		SourceVersion: strings.Repeat("a", 64), BackendID: "private-backend", BackendFingerprint: strings.Repeat("b", 64), SourceProviderResourceID: "project-source", SourceDataResourceID: "project-source/br-source",
 		PostgresMajor: 16, MaintenanceOwnerOID: 10001, MaintenanceDatabaseOID: 20002}
-	r := managedpostgres.CheckpointConnectionRequest{CheckpointConnectionIdentity: managedpostgres.CheckpointConnectionIdentity{OwnerToken: scope.OperationID, SourceResourceID: scope.SourceDataResourceID},
+	r := checkpoint.CheckpointConnectionRequest{CheckpointConnectionIdentity: checkpoint.CheckpointConnectionIdentity{OwnerToken: scope.OperationID, SourceResourceID: scope.SourceDataResourceID},
 		DatabaseNames: []string{"source_private_z\";ü%", "source_private_alpha"}}
 	var key [32]byte
 	copy(key[:], strings.Repeat("k", 32))

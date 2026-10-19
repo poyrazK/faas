@@ -11,8 +11,15 @@ export async function browserMatchingWrite(evaluate,until,inspectorURL,apiHeader
  await evaluate("document.querySelector('#identity').value='bob';document.querySelector('#identity').dispatchEvent(new Event('change'));"+filter()+"document.querySelector('#bulk-limit').value='105';document.querySelector('#bulk-review').click()")
  await until("document.querySelector('#bulk-stop').disabled&&document.querySelector('#bulk-status').textContent.includes('No rows match')")
  assert.equal(await evaluate("document.querySelector('#bulk-run').disabled"),true)
+ // Hold a background refresh body across the identity change. It must preserve
+ // the new identity's preview when the schema and input model are unchanged.
+ await evaluate(`(()=>{const original=window.fetch;window.fetch=async(...args)=>{const response=await original(...args);if(String(args[0])==='session'&&!window.matchingRefreshHeld){const json=response.json.bind(response);response.json=async()=>{const value=await json();window.matchingRefreshHeld=true;await new Promise(resolve=>window.releaseMatchingRefresh=resolve);return value}}return response}})()`)
+ await until('window.matchingRefreshHeld===true')
  await evaluate("document.querySelector('#identity').value='alice';document.querySelector('#identity').dispatchEvent(new Event('change'));"+filter()+"document.querySelector('#bulk-review').click()")
  await until("document.querySelector('#bulk-stop').disabled&&document.querySelector('#bulk-preview').textContent.includes('expectedVersion')")
+ await evaluate('(async()=>{window.releaseMatchingRefresh();await new Promise(resolve=>setTimeout(resolve,0))})()')
+ assert.equal(await evaluate("document.querySelector('#identity').value"),'alice')
+ assert.equal(await evaluate("document.querySelector('#data-value').value"),marker)
  let preview=await evaluate("JSON.parse(document.querySelector('#bulk-preview').textContent)")
  assert.equal(preview.count,105);assert.equal(preview.source,'matching');assert.equal(preview.rows.length,105)
  assert.ok(preview.rows.every(row=>row.changes.body.before===marker))

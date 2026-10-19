@@ -61,22 +61,32 @@ func (e *Engine) capturedStandardRuntimeForApp(ctx context.Context, app state.Ap
 }
 
 func (e *Engine) createRuntimeWithStandards(ctx context.Context, nodeID, instanceID, expectedState string, spec AppSpec, snap *SnapshotRef, paused bool) (*WakeOutcome, error) {
-	capture, err := e.capturedStandardRuntime(ctx, spec.AppID, instanceID)
-	if err != nil {
-		return nil, applicationStandardRuntimeProblem(err)
+	// A wake hands over the rehearsal network and the standards capture it
+	// already read (ADR-1741); anything not handed over is read here, the
+	// two reads together.
+	prepared, _ := bootPreparedFor(ctx, instanceID)
+	runID, capture := prepared.rehearsalRunID, prepared.capture
+	var runErr, captureErr error
+	reads := make([]func(), 0, 2)
+	if !prepared.haveRehearsal {
+		reads = append(reads, func() { runID, runErr = e.rehearsalNetworkRun(ctx, spec.AppID) })
+	}
+	if !prepared.haveCapture {
+		reads = append(reads, func() { capture, captureErr = e.capturedStandardRuntime(ctx, spec.AppID, instanceID) })
+	}
+	concurrently(reads...)
+	if runErr != nil {
+		return nil, runErr
+	}
+	spec.RehearsalRunID = runID
+	if captureErr != nil {
+		return nil, applicationStandardRuntimeProblem(captureErr)
+	}
+	if capture.Managed && runID != "" {
+		return nil, errors.New("rehearsal containment does not yet support managed native admission")
 	}
 	if !capture.Managed {
-		if snap == nil {
-			return e.vmm.CreateColdBoot(ctx, nodeID, instanceID, spec)
-		}
-		if !paused {
-			return e.vmm.CreateFromSnapshot(ctx, nodeID, instanceID, spec, *snap)
-		}
-		vmm, ok := e.vmm.(PausedRestoreVMM)
-		if !ok {
-			return nil, runtimeadmission.ErrUnavailable
-		}
-		return vmm.CreatePausedFromSnapshot(ctx, nodeID, instanceID, spec, *snap)
+		return e.createRehearsalCheckedRuntime(ctx, nodeID, instanceID, spec, snap, paused)
 	}
 	native, ok := e.vmm.(standardNativeRuntimeVMM)
 	if !ok {

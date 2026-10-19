@@ -20,6 +20,9 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api/canary"
+	"github.com/onebox-faas/faas/pkg/rehearsalcold"
+	"github.com/onebox-faas/faas/pkg/rehearsalresume"
+	"github.com/onebox-faas/faas/pkg/rehearsalwork"
 	"github.com/onebox-faas/faas/pkg/statefuldenylist"
 )
 
@@ -585,6 +588,9 @@ type CreateAppRequest struct {
 	// seconds. Zero inherits the plan/type default; positive values are
 	// bounded by the plan request-budget ceiling.
 	RequestTimeoutS int `json:"request_timeout_s,omitempty"`
+	// FunctionConcurrency is how many requests one Node or Python function
+	// worker serves at once (ADR-1342); zero keeps one.
+	FunctionConcurrency int `json:"function_concurrency,omitempty"`
 	// RetryPolicy is the app-level default for invocation retries. Binding
 	// and per-invocation overrides take precedence over this policy.
 	RetryPolicy     *RetryPolicyDTO  `json:"retry_policy,omitempty"`
@@ -621,6 +627,11 @@ type CreateAppRequest struct {
 	VersionAffinityCookie        string `json:"version_affinity_cookie,omitempty"`
 	VersionAffinityManagedCookie bool   `json:"version_affinity_managed_cookie,omitempty"`
 	RevisionPinTTLSeconds        int    `json:"revision_pin_ttl_seconds,omitempty"`
+	// ReleasePolicy (ADR-1446): "safe" (default) or "immediate".
+	ReleasePolicy string `json:"release_policy,omitempty"`
+	// ReleaseProbePaths (ADR-1449): up to ReleaseProbePathsMax GET paths the
+	// default rollout probe checks instead of "/".
+	ReleaseProbePaths []string `json:"release_probe_paths,omitempty"`
 	// StreamingEnabled (issue #471) lets a customer opt out of
 	// streaming at creation time. nil → plan default (Free off,
 	// Hobby+ on). Explicit false on a Hobby/Pro/Scale plan = opt out
@@ -885,7 +896,30 @@ type DevSessionResponse struct {
 // RegisterScenarioTestRequest binds developer sessions to one isolated run.
 // Workload is the logical .svc name seen by sibling applications.
 type RegisterScenarioTestRequest struct {
-	Members []ScenarioTestWorkload `json:"members"`
+	SuspendResume         *rehearsalresume.Spec   `json:"suspend_resume,omitempty"`
+	ColdStart             *rehearsalcold.Spec     `json:"cold_start,omitempty"`
+	ManagedWork           *rehearsalwork.Plan     `json:"managed_work,omitempty"`
+	CommandVersion        int                     `json:"command_version,omitempty"`
+	Simulation            *ScenarioSimulationPlan `json:"simulation,omitempty"`
+	NetworkMode           string                  `json:"network_mode,omitempty"`
+	Members               []ScenarioTestWorkload  `json:"members"`
+	WebhookMode           string                  `json:"webhook_mode,omitempty"`
+	ActionEvidenceVersion int                     `json:"action_evidence_version,omitempty"`
+}
+
+// RegisterScenarioTestResponse acknowledges durable capture before deployment.
+// Ordinary namespace registration keeps its existing 204 response.
+type RegisterScenarioTestResponse struct {
+	SuspendResumeSHA256   string `json:"suspend_resume_sha256,omitempty"`
+	ColdStartSHA256       string `json:"cold_start_sha256,omitempty"`
+	ManagedWorkSHA256     string `json:"managed_work_sha256,omitempty"`
+	CommandVersion        int    `json:"command_version,omitempty"`
+	RecorderVersion       int    `json:"recorder_version,omitempty"`
+	SimulationSHA256      string `json:"simulation_sha256,omitempty"`
+	NetworkMode           string `json:"network_mode,omitempty"`
+	WebhookMode           string `json:"webhook_mode"`
+	PolicyVersion         int    `json:"policy_version"`
+	ActionEvidenceVersion int    `json:"action_evidence_version,omitempty"`
 }
 
 type ScenarioTestWorkload struct {
@@ -938,6 +972,8 @@ type ScenarioTestChaosMatch struct {
 // All fields are pointers so the wire form can distinguish "not set" from
 // "set to zero".
 type UpdateAppRequest struct {
+	// ExpectedServiceBindingFingerprint guards service-only updates atomically.
+	ExpectedServiceBindingFingerprint *string `json:"expected_service_binding_fingerprint,omitempty"`
 	// Visibility changes the app's edge exposure. Nil leaves it unchanged;
 	// values are public or internal. Internal is available on every plan.
 	Visibility *string `json:"visibility,omitempty"`
@@ -986,6 +1022,10 @@ type UpdateAppRequest struct {
 	// seconds. A pointer distinguishes an explicit 0 (restore the plan
 	// default) from an omitted field.
 	RequestTimeoutS *int `json:"request_timeout_s,omitempty"`
+	// FunctionConcurrency sets how many requests one Node or Python function
+	// worker serves at once (ADR-1342). It takes effect on the next deploy;
+	// an explicit 0 restores one request per worker.
+	FunctionConcurrency *int `json:"function_concurrency,omitempty"`
 	// RequestRateLimitRPS and RequestRateLimitBurst override the app-wide
 	// request token bucket without changing the deployment. Zero restores the
 	// plan default; positive values may lower, but never exceed, the plan cap.
@@ -1025,6 +1065,12 @@ type UpdateAppRequest struct {
 	VersionAffinityCookie        *string `json:"version_affinity_cookie,omitempty"`
 	VersionAffinityManagedCookie *bool   `json:"version_affinity_managed_cookie,omitempty"`
 	RevisionPinTTLSeconds        *int    `json:"revision_pin_ttl_seconds,omitempty"`
+	// ReleasePolicy (ADR-1446) replaces the app's default rollout for
+	// production releases: "safe" or "immediate".
+	ReleasePolicy *string `json:"release_policy,omitempty"`
+	// ReleaseProbePaths (ADR-1449) replaces the paths the default rollout
+	// probe checks; an empty list restores "/".
+	ReleaseProbePaths *[]string `json:"release_probe_paths,omitempty"`
 	// MinInstances is the per-app cold-wake floor (ux_spec §6.5).
 	// 0 / unset => scale to zero; >0 => keep at least this many
 	// RUNNING instances alive. Pro/Scale only — Free/Hobby get
@@ -1294,6 +1340,85 @@ type DeclaredRoute struct {
 type CreateAPIConsumerRequest struct {
 	ExternalRef string `json:"external_ref"`
 	Name        string `json:"name"`
+	// TrialDays starts the consumer's one free trial at the next UTC minute
+	// (ADR-1314); 0 means none.
+	TrialDays int `json:"trial_days,omitempty"`
+}
+
+// PutAPIConsumerTrialRequest starts a consumer's trial or moves the end of
+// a running one (ADR-1314). Set days (from the trial's start) or ends_at.
+type PutAPIConsumerTrialRequest struct {
+	Days   int        `json:"days,omitempty"`
+	EndsAt *time.Time `json:"ends_at,omitempty"`
+}
+
+// APIConsumerTrialResponse is a consumer's free trial: usage in
+// [starts_at, ends_at) is priced at zero (ADR-1314).
+type APIConsumerTrialResponse struct {
+	ConsumerID string    `json:"consumer_id"`
+	StartsAt   time.Time `json:"starts_at"`
+	EndsAt     time.Time `json:"ends_at"`
+	Active     bool      `json:"active"`
+}
+
+// PutAPIConsumerBillingPolicyRequest sets an app's overdue rule (ADR-1315):
+// consumers whose exported invoice is unpaid block_overdue_after_days after
+// its due date are refused until it is paid or voided.
+type PutAPIConsumerBillingPolicyRequest struct {
+	BlockOverdueAfterDays *int `json:"block_overdue_after_days"`
+}
+
+// APIConsumerBillingPolicyResponse is an app's overdue rule.
+type APIConsumerBillingPolicyResponse struct {
+	AppID                 string    `json:"app_id"`
+	BlockOverdueAfterDays int       `json:"block_overdue_after_days"`
+	UpdatedAt             time.Time `json:"updated_at"`
+}
+
+// APIConsumerOverdueHoldResponse is one consumer the gateway refuses
+// because of an overdue invoice.
+type APIConsumerOverdueHoldResponse struct {
+	ConsumerID string    `json:"consumer_id"`
+	ExportID   string    `json:"export_id"`
+	DueAt      time.Time `json:"due_at"`
+	Since      time.Time `json:"since"`
+}
+
+// APIConsumerOverdueHoldListResponse lists an app's blocked consumers,
+// oldest due date first.
+type APIConsumerOverdueHoldListResponse struct {
+	Holds []APIConsumerOverdueHoldResponse `json:"holds"`
+}
+
+// PlatformTenantTrialResponse is a platform tenant's free trial: its usage
+// in [starts_at, ends_at) is priced at zero (ADR-1322).
+type PlatformTenantTrialResponse struct {
+	TenantID string    `json:"tenant_id"`
+	StartsAt time.Time `json:"starts_at"`
+	EndsAt   time.Time `json:"ends_at"`
+	Active   bool      `json:"active"`
+}
+
+// PlatformTenantBillingPolicyResponse is an account's overdue rule for
+// platform tenants (ADR-1324).
+type PlatformTenantBillingPolicyResponse struct {
+	BlockOverdueAfterDays int       `json:"block_overdue_after_days"`
+	UpdatedAt             time.Time `json:"updated_at"`
+}
+
+// PlatformTenantOverdueHoldResponse is one platform tenant the gateway
+// refuses because of an overdue invoice.
+type PlatformTenantOverdueHoldResponse struct {
+	TenantID string    `json:"tenant_id"`
+	ExportID string    `json:"export_id"`
+	DueAt    time.Time `json:"due_at"`
+	Since    time.Time `json:"since"`
+}
+
+// PlatformTenantOverdueHoldListResponse lists an account's blocked tenants,
+// oldest due date first.
+type PlatformTenantOverdueHoldListResponse struct {
+	Holds []PlatformTenantOverdueHoldResponse `json:"holds"`
 }
 
 // APIConsumerResponse is the public representation of an API consumer.
@@ -1385,6 +1510,23 @@ type CreateAPIConsumerRateCardRequest struct {
 	// empty prices the app default plan.
 	PlanID        string     `json:"plan_id,omitempty"`
 	EffectiveFrom *time.Time `json:"effective_from,omitempty"`
+	// Unit is what the card prices (ADR-1308): request (default),
+	// compute_second, or response_megabyte. Compute and response size count
+	// billable requests per consumer minute, rounded to the nearest unit.
+	Unit string `json:"unit,omitempty"`
+	// TierMode is how tiers price a month (ADR-1309): graduated (default)
+	// prices each unit at its position's step; volume prices every unit at
+	// the step the month's total reaches.
+	TierMode string `json:"tier_mode,omitempty"`
+	// BaseFeeMillicentsPerMonth is a fixed charge per consumer per UTC
+	// month, and MinimumMillicentsPerMonth a minimum usage charge, topped
+	// up when usage costs less (ADR-1316). The card in force when a
+	// consumer's month starts sets both for that month.
+	BaseFeeMillicentsPerMonth int64 `json:"base_fee_millicents_per_month,omitempty"`
+	MinimumMillicentsPerMonth int64 `json:"minimum_millicents_per_month,omitempty"`
+	// ProrateMonthlyFees scales both in a consumer's first month to the
+	// share of it left after the consumer was created (ADR-1325).
+	ProrateMonthlyFees bool `json:"prorate_monthly_fees,omitempty"`
 }
 
 // APIConsumerRateCardTier is one step of a graduated ladder. Units whose
@@ -1406,10 +1548,16 @@ type APIConsumerRateCardResponse struct {
 	PriceMillicentsPerUnit int64                     `json:"price_millicents_per_unit"`
 	IncludedUnitsPerMonth  int64                     `json:"included_units_per_month"`
 	Tiers                  []APIConsumerRateCardTier `json:"tiers,omitempty"`
+	TierMode               string                    `json:"tier_mode"`
 	RouteWeights           map[string]int64          `json:"route_weights,omitempty"`
 	PlanID                 string                    `json:"plan_id,omitempty"`
-	EffectiveFrom          time.Time                 `json:"effective_from"`
-	CreatedAt              time.Time                 `json:"created_at"`
+	// Monthly base fee and minimum spend per consumer (ADR-1316), prorated
+	// in a consumer's first month when prorate_monthly_fees (ADR-1325).
+	BaseFeeMillicentsPerMonth int64     `json:"base_fee_millicents_per_month,omitempty"`
+	MinimumMillicentsPerMonth int64     `json:"minimum_millicents_per_month,omitempty"`
+	ProrateMonthlyFees        bool      `json:"prorate_monthly_fees,omitempty"`
+	EffectiveFrom             time.Time `json:"effective_from"`
+	CreatedAt                 time.Time `json:"created_at"`
 }
 
 // APIConsumerRateCardListResponse wraps an app's rate-card history in
@@ -1432,6 +1580,10 @@ type APIConsumerUsageQuoteBucketResponse struct {
 	// TierUnits splits billable_units across a tiered card's steps.
 	TierUnits        []int64 `json:"tier_units,omitempty"`
 	AmountMillicents int64   `json:"amount_millicents"`
+	// Trial marks a minute of the consumer's free trial (ADR-1314).
+	Trial bool `json:"trial,omitempty"`
+	// Unit is the bucket's price stream when it is not request (ADR-1317).
+	Unit string `json:"unit,omitempty"`
 }
 
 // APIConsumerUsageQuoteResponse is a deterministic estimate from durable
@@ -1474,6 +1626,19 @@ type APIConsumerUsageStatementBucketResponse struct {
 	// never is.
 	TierUnits        []int64 `json:"tier_units,omitempty"`
 	AmountMillicents int64   `json:"amount_millicents"`
+	// Trial marks a minute of the consumer's free trial (ADR-1314).
+	Trial bool `json:"trial,omitempty"`
+	// Unit is the bucket's price stream when it is not request (ADR-1317).
+	Unit string `json:"unit,omitempty"`
+}
+
+// APIConsumerStatementFeeResponse is a statement's monthly base fee or
+// minimum-spend top-up (ADR-1316). A minimum top-up in an adjustment can be
+// negative when late usage covers part of it.
+type APIConsumerStatementFeeResponse struct {
+	Kind             string `json:"kind"`
+	RateCardID       string `json:"rate_card_id"`
+	AmountMillicents int64  `json:"amount_millicents"`
 }
 
 // APIConsumerUsageStatementResponse is an immutable, auditable usage
@@ -1493,9 +1658,16 @@ type APIConsumerUsageStatementResponse struct {
 	AmountMillicents int64                                     `json:"amount_millicents"`
 	Priced           bool                                      `json:"priced"`
 	Buckets          []APIConsumerUsageStatementBucketResponse `json:"buckets"`
-	AsOf             string                                    `json:"as_of"`
-	CreatedAt        time.Time                                 `json:"created_at"`
-	FinalizedAt      *time.Time                                `json:"finalized_at,omitempty"`
+	// Fees are the month's base fee and minimum top-up (ADR-1316);
+	// amount_millicents includes them.
+	Fees        []APIConsumerStatementFeeResponse `json:"fees,omitempty"`
+	AsOf        string                            `json:"as_of"`
+	CreatedAt   time.Time                         `json:"created_at"`
+	FinalizedAt *time.Time                        `json:"finalized_at,omitempty"`
+	// CreditAppliedMillicents is prepaid credit drawn when the statement was
+	// finalized; AmountDueMillicents is what is left to bill (ADR-1306).
+	CreditAppliedMillicents int64 `json:"credit_applied_millicents"`
+	AmountDueMillicents     int64 `json:"amount_due_millicents"`
 }
 
 // APIConsumerUsageStatementListResponse wraps statements newest-period first.
@@ -1784,9 +1956,14 @@ const (
 
 // AppResponse is an app as returned by the API.
 type AppResponse struct {
-	ID   string `json:"id"`
-	Slug string `json:"slug"`
-	Type string `json:"type"`
+	ServiceBindingFingerprint string `json:"service_binding_fingerprint,omitempty"`
+	ID                        string `json:"id"`
+	Slug                      string `json:"slug"`
+	Type                      string `json:"type"`
+	// ProjectID is the parent project (ADR-050) as the canonical UUID text
+	// Postgres renders for apps.project_id. Omitted for standalone apps.
+	// Read-only: no app create/update request accepts it.
+	ProjectID string `json:"project_id,omitempty"`
 	// Visibility is public unless the app is explicitly configured for
 	// authenticated service-to-service ingress only.
 	Visibility string `json:"visibility"`
@@ -1819,6 +1996,9 @@ type AppResponse struct {
 	ConfiguredResources AppConfiguredResources `json:"configured_resources"`
 	IdleTimeoutS        int                    `json:"idle_timeout_s,omitempty"`
 	RequestTimeoutS     int                    `json:"request_timeout_s,omitempty"`
+	// FunctionConcurrency is the requests one function worker serves at
+	// once (ADR-1342); omitted means one.
+	FunctionConcurrency int `json:"function_concurrency,omitempty"`
 	// MinInstances is the per-app cold-wake floor (ux_spec §6.5).
 	// 0 => scale to zero; >0 => keep N warm. Pro/Scale only.
 	MinInstances int    `json:"min_instances"`
@@ -1928,6 +2108,12 @@ type AppResponse struct {
 	VersionAffinityCookie        string `json:"version_affinity_cookie,omitempty"`
 	VersionAffinityManagedCookie bool   `json:"version_affinity_managed_cookie"`
 	RevisionPinTTLSeconds        int    `json:"revision_pin_ttl_seconds"`
+	// ReleasePolicy is the effective default rollout for production
+	// releases (ADR-1446): "safe" or "immediate".
+	ReleasePolicy string `json:"release_policy"`
+	// ReleaseProbePaths are the paths the default rollout probe checks; empty
+	// means "/" (ADR-1449).
+	ReleaseProbePaths []string `json:"release_probe_paths,omitempty"`
 	// AppProtocol (ADR-124) is the wire-protocol selector stored on
 	// the apps row. Always "http1" on a Free-or-above app that
 	// didn't set the field — the universal default. Set to "http2"
@@ -3406,11 +3592,23 @@ type DeploymentResponse struct {
 	// 'pending' isn't "" — the dashboard fills in from
 	// pkg/state.SerializeDeployment which always stamps the
 	// resolved value).
-	RolloutState          string                         `json:"rollout_state,omitempty"`
-	RolloutStartedAt      *time.Time                     `json:"rollout_started_at,omitempty"`
-	RolloutCompletedAt    *time.Time                     `json:"rollout_completed_at,omitempty"`
-	RolloutAbortedAt      *time.Time                     `json:"rollout_aborted_at,omitempty"`
-	RolloutAbortedReason  string                         `json:"rollout_aborted_reason,omitempty"`
+	RolloutState         string     `json:"rollout_state,omitempty"`
+	RolloutStartedAt     *time.Time `json:"rollout_started_at,omitempty"`
+	RolloutCompletedAt   *time.Time `json:"rollout_completed_at,omitempty"`
+	RolloutAbortedAt     *time.Time `json:"rollout_aborted_at,omitempty"`
+	RolloutAbortedReason string     `json:"rollout_aborted_reason,omitempty"`
+	// RolloutDecision is the evidence recorded with the latest rollout
+	// transition (ADR-1447). It explains an outcome only when its kind matches:
+	// an advance record for completion, an abort record for an abort.
+	RolloutDecision *RolloutDecision `json:"rollout_decision,omitempty"`
+	// RolloutHold is the newest hold recorded since the current canary step
+	// started, while the rollout is in flight (ADR-1447). Only single-deployment
+	// reads and the deployment summary fill it.
+	RolloutHold *RolloutDecision `json:"rollout_hold,omitempty"`
+	// Release is the deployment's release command run, for a deployment that
+	// declares one (ADR-1448). Only single-deployment reads and the
+	// deployment summary fill it.
+	Release               *DeploymentRelease             `json:"release,omitempty"`
 	RollbackOperation     *RollbackOperation             `json:"rollback_operation,omitempty"`
 	ServiceRolloutHandoff *ServiceRolloutHandoffResponse `json:"service_rollout_handoff,omitempty"`
 }
@@ -3577,6 +3775,9 @@ type AdvanceCanaryRequest struct {
 	ProfileGateRollback bool                 `json:"profile_gate_rollback,omitempty"`
 	ProfileGateOverride *ProfileGateOverride `json:"profile_gate_override,omitempty"`
 	ExpectedStep        int                  `json:"expected_step"`
+	// Decision is the circuit-breaker evidence for this advance (ADR-1447).
+	// Reserved for the lease-bound internal worker; public requests reject it.
+	Decision *RolloutDecision `json:"decision,omitempty"`
 }
 
 // CanaryAdvanceResponse carries the atomically advanced deployment and the
@@ -3831,6 +4032,12 @@ type RollbackRequest struct {
 	// set this; the API does not enforce role because the
 	// underlying endpoint already requires MFA + ScopesDeployWrite.
 	AlertRuleID *string `json:"alert_rule_id,omitempty"`
+
+	// AcknowledgeReleases lets the rollback proceed although release
+	// commands ran after its target last served (ADR-1448). Without it such a
+	// rollback is refused with rollback_crosses_release. Automated rollbacks
+	// never set it.
+	AcknowledgeReleases bool `json:"acknowledge_releases,omitempty"`
 }
 
 // CapabilityStatus is a customer-visible catalog row with the account's
@@ -4607,7 +4814,7 @@ type DeploymentChange struct {
 
 // Invoice is one persisted invoice from a billing provider, surfaced
 // via GET /v1/invoices. Money is integer cents in the provider's
-// currency (the financial model distills to EUR at the API edge).
+// currency (the financial model distills to the billing currency at the API edge).
 // PDFAvailable is the only PDF surface we expose — the hosted PDF URL
 // is provider-scoped and customer-fetched via the Stripe/Paddle
 // portal, not via this API. HostedURL is intentionally not on the
@@ -4870,7 +5077,7 @@ type ExecutionUsageSummaryResponse struct {
 // without having to sum rows.
 //
 // Overage math: anything above IncludedGBHours is billable at the
-// overage rate in the financial model (€0.01/GB-h). Cents are integer.
+// overage rate in the financial model ($0.01/GB-h). Cents are integer.
 //
 // Issue #279 / PR-B: UsedCPUHours is informational and NOT billed.
 // The billing math is on UsedGBHours (plan RAM + 8 MB per running
@@ -6746,6 +6953,21 @@ type AppWakeTimelineResponse struct {
 	TriggerClassHistogram map[string]int        `json:"trigger_class_histogram"` // empty map, not nil
 	Rows                  []WakeTimelineJSONRow `json:"rows"`
 	AsOf                  string                `json:"as_of"` // RFC3339Nano UTC
+	Page                  *AppWakeHistoryPage   `json:"page,omitempty"`
+}
+
+// AppWakeHistoryPage describes one live page of retained instance records.
+// Counts and histograms describe this page, not the complete requested range.
+type AppWakeHistoryPage struct {
+	Mode         string `json:"mode"`
+	Since        string `json:"since"`
+	Until        string `json:"until"`
+	Limit        int    `json:"limit"`
+	Cursor       string `json:"cursor,omitempty"`
+	NextCursor   string `json:"next_cursor,omitempty"`
+	Complete     bool   `json:"complete"`
+	SourceStatus string `json:"source_status"`
+	CountScope   string `json:"count_scope"`
 }
 
 // WakeTimelineApp is the slim per-app DTO embedded inside
@@ -6793,7 +7015,7 @@ type WakeTimelineApp struct {
 //     a second round-trip.
 //   - OverageGBHours: max(0, gb_hours - plan_included). 0 when
 //     gb_hours ≤ plan_included. The dashboard renders this as the
-//     red overage chip; the Stripe pusher bills it at €0.01/GB-h.
+//     red overage chip; the Stripe pusher bills it at $0.01/GB-h.
 //   - Source: "usage_minutes" today (after the 30d retention cap).
 //     "usage_daily" / "mixed" land with the trail-period reader
 //     follow-up — same wire shape, no migration needed.
@@ -6888,15 +7110,17 @@ const (
 // schema-parity AST gate can assert field-for-field equivalence with
 // the OpenAPI spec.
 type ProjectScanRequest struct {
-	Source                 string `json:"source"`                // tar.gz binary blob
-	ProjectSlug            string `json:"project_slug"`          // kebab slug
-	RepoFullName           string `json:"repo_full_name"`        // GitHub owner/name binding
-	ProductionBranch       string `json:"production_branch"`     // default "main"
-	InstallID              int64  `json:"install_id"`            // GitHub install id (--repo); 0 for unbound
-	Only                   string `json:"only"`                  // CSV of workload names
-	Environment            string `json:"environment,omitempty"` // registered project environment
-	NoTriggers             bool   `json:"no_triggers"`           // leave declared and existing triggers unchanged
-	PlatformTenantRequired *bool  `json:"platform_tenant_required,omitempty"`
+	AppSlugs               map[string]string `json:"app_slugs,omitempty"`
+	Migration              bool              `json:"migration,omitempty"`
+	Source                 string            `json:"source"`                // tar.gz binary blob
+	ProjectSlug            string            `json:"project_slug"`          // kebab slug
+	RepoFullName           string            `json:"repo_full_name"`        // GitHub owner/name binding
+	ProductionBranch       string            `json:"production_branch"`     // default "main"
+	InstallID              int64             `json:"install_id"`            // GitHub install id (--repo); 0 for unbound
+	Only                   string            `json:"only"`                  // CSV of workload names
+	Environment            string            `json:"environment,omitempty"` // registered project environment
+	NoTriggers             bool              `json:"no_triggers"`           // leave declared and existing triggers unchanged
+	PlatformTenantRequired *bool             `json:"platform_tenant_required,omitempty"`
 }
 
 // ProjectSourceRefScanRequest asks the control plane to fetch a connected
@@ -6904,32 +7128,53 @@ type ProjectScanRequest struct {
 // credentials stay inside githubd; InstallID may be omitted when exactly one
 // account installation can access Repo.
 type ProjectSourceRefScanRequest struct {
-	Repo             string   `json:"repo"`
-	Ref              string   `json:"ref"`
-	ProjectSlug      string   `json:"project_slug"`
-	RepoFullName     string   `json:"repo_full_name,omitempty"`
-	ProductionBranch string   `json:"production_branch,omitempty"`
-	InstallID        int64    `json:"install_id,omitempty"`
-	Only             []string `json:"only,omitempty"`
-	Exclude          []string `json:"exclude,omitempty"`
-	Environment      string   `json:"environment,omitempty"`
-	NoTriggers       bool     `json:"no_triggers,omitempty"`
+	AppSlugs         map[string]string `json:"app_slugs,omitempty"`
+	Repo             string            `json:"repo"`
+	Ref              string            `json:"ref"`
+	ProjectSlug      string            `json:"project_slug"`
+	RepoFullName     string            `json:"repo_full_name,omitempty"`
+	ProductionBranch string            `json:"production_branch,omitempty"`
+	InstallID        int64             `json:"install_id,omitempty"`
+	Only             []string          `json:"only,omitempty"`
+	Exclude          []string          `json:"exclude,omitempty"`
+	Environment      string            `json:"environment,omitempty"`
+	NoTriggers       bool              `json:"no_triggers,omitempty"`
+	// Migration leaves the project unbound from unattended GitHub push deploys
+	// and suppresses triggers while the customer verifies the first service.
+	Migration bool `json:"migration,omitempty"`
+}
+
+// ProjectInitialSecrets maps exact selected workload names to initial sealed
+// environment values. It is request-only and must never enter scan responses.
+type ProjectInitialSecrets map[string]map[string]string
+
+// ApplyCachedProjectPlanRequest applies the exact account-owned source retained
+// by scan, without asking a browser to upload or refetch the repository.
+type ApplyCachedProjectPlanRequest struct {
+	PlanToken      string                `json:"plan_token"`
+	Only           []string              `json:"only,omitempty"`
+	Exclude        []string              `json:"exclude,omitempty"`
+	ApprovalToken  string                `json:"approval_token,omitempty"`
+	InitialSecrets ProjectInitialSecrets `json:"initial_secrets,omitempty"`
 }
 
 // ProjectApplyRequest is the multipart body for POST /v1/projects.
 // Shape mirrors ProjectScanRequest — the handler re-runs the scan
 // and re-checks the plan token internally.
 type ProjectApplyRequest struct {
-	Source                 string `json:"source"`
-	ProjectSlug            string `json:"project_slug"`
-	RepoFullName           string `json:"repo_full_name"`
-	ProductionBranch       string `json:"production_branch"`
-	InstallID              int64  `json:"install_id"`
-	Only                   string `json:"only"`
-	Environment            string `json:"environment,omitempty"`
-	ApprovalToken          string `json:"approval_token,omitempty"`
-	NoTriggers             bool   `json:"no_triggers"`
-	PlatformTenantRequired *bool  `json:"platform_tenant_required,omitempty"`
+	AppSlugs               map[string]string     `json:"app_slugs,omitempty"`
+	Migration              bool                  `json:"migration,omitempty"`
+	Source                 string                `json:"source"`
+	ProjectSlug            string                `json:"project_slug"`
+	RepoFullName           string                `json:"repo_full_name"`
+	ProductionBranch       string                `json:"production_branch"`
+	InstallID              int64                 `json:"install_id"`
+	Only                   string                `json:"only"`
+	Environment            string                `json:"environment,omitempty"`
+	ApprovalToken          string                `json:"approval_token,omitempty"`
+	NoTriggers             bool                  `json:"no_triggers"`
+	PlatformTenantRequired *bool                 `json:"platform_tenant_required,omitempty"`
+	InitialSecrets         ProjectInitialSecrets `json:"initial_secrets,omitempty"`
 }
 
 // SourceRefDeployRequest is the JSON body for
@@ -7025,11 +7270,14 @@ type SourceTarballDeployRequest struct {
 // existing app, and which existing app row the update targets. ID is
 // empty when Action == "create".
 type PlanWorkload struct {
+	AppSlug             string              `json:"app_slug,omitempty"`
+	PublicURL           string              `json:"public_url,omitempty"`
 	Name                string              `json:"name"`
 	RootDir             string              `json:"root_dir"`
 	Dockerfile          string              `json:"dockerfile,omitempty"`
 	Image               string              `json:"image,omitempty"`
 	ImageHealthcheck    *ComposeHealthcheck `json:"image_healthcheck,omitempty"`
+	ImageProcess        *ComposeProcess     `json:"image_process,omitempty"`
 	Command             []string            `json:"command"`
 	DependsOn           []string            `json:"depends_on,omitempty"`
 	DependsOnConditions map[string]string   `json:"depends_on_conditions,omitempty"`
@@ -7044,14 +7292,15 @@ type PlanWorkload struct {
 	AllowedServiceCallScopes  *ServiceCallerScopes                `json:"allowed_service_call_scopes,omitempty"`
 	PlatformTenantRequired    *bool                               `json:"platform_tenant_required,omitempty"`
 
-	Class         string   `json:"class,omitempty"`
-	Schedule      string   `json:"schedule,omitempty"`
-	Ports         []int    `json:"ports"`
-	EnvKeys       []string `json:"env_keys,omitempty"`
-	Source        string   `json:"source,omitempty"`
-	Tier          string   `json:"tier,omitempty"`
-	Action        string   `json:"action,omitempty"`          // ADR-124: "create" | "update"
-	ExistingAppID string   `json:"existing_app_id,omitempty"` // ADR-124: empty iff Action == "create"
+	Class           string   `json:"class,omitempty"`
+	Schedule        string   `json:"schedule,omitempty"`
+	Ports           []int    `json:"ports"`
+	EnvKeys         []string `json:"env_keys,omitempty"`
+	RequiredEnvKeys []string `json:"required_env_keys,omitempty"`
+	Source          string   `json:"source,omitempty"`
+	Tier            string   `json:"tier,omitempty"`
+	Action          string   `json:"action,omitempty"`          // ADR-124: "create" | "update"
+	ExistingAppID   string   `json:"existing_app_id,omitempty"` // ADR-124: empty iff Action == "create"
 	// DetectedBy is the structured detection trace (issue #742).
 	// Pointer + omitempty so the field is purely additive: an
 	// existing `gregale scan --json` consumer that does not know
@@ -10495,20 +10744,50 @@ type OperatorIntentAcceptedResponse struct {
 // force_cold_boot (warm + init tiers walked). On failure,
 // Error carries the bounded dispatch error message (1 KB cap).
 type OperatorIntentResponse struct {
-	IntentID           string          `json:"intent_id"`
-	Kind               string          `json:"kind"`
-	Status             string          `json:"status"`
-	TargetID           string          `json:"target_id"`
-	AccountID          string          `json:"account_id,omitempty"`
-	ActorID            string          `json:"actor_id"`
-	Reason             string          `json:"reason"`
-	Metadata           json.RawMessage `json:"metadata"`
-	TraceID            string          `json:"trace_id,omitempty"`
-	RequestedAt        time.Time       `json:"requested_at"`
-	StartedAt          *time.Time      `json:"started_at,omitempty"`
-	FinishedAt         *time.Time      `json:"finished_at,omitempty"`
-	Error              string          `json:"error,omitempty"`
-	SnapIDsMarkedStale []string        `json:"snap_ids_marked_stale,omitempty"`
+	ParkExecution      *OperatorParkExecutionResponse    `json:"park_execution,omitempty"`
+	ColdBootGeneration int64                             `json:"cold_boot_generation,omitempty"`
+	RestartExecution   *OperatorRestartExecutionResponse `json:"restart_execution,omitempty"`
+	IntentID           string                            `json:"intent_id"`
+	Kind               string                            `json:"kind"`
+	Status             string                            `json:"status"`
+	TargetID           string                            `json:"target_id"`
+	AccountID          string                            `json:"account_id,omitempty"`
+	ActorID            string                            `json:"actor_id"`
+	Reason             string                            `json:"reason"`
+	Metadata           json.RawMessage                   `json:"metadata"`
+	TraceID            string                            `json:"trace_id,omitempty"`
+	RequestedAt        time.Time                         `json:"requested_at"`
+	StartedAt          *time.Time                        `json:"started_at,omitempty"`
+	FinishedAt         *time.Time                        `json:"finished_at,omitempty"`
+	Error              string                            `json:"error,omitempty"`
+	SnapIDsMarkedStale []string                          `json:"snap_ids_marked_stale,omitempty"`
+}
+
+// OperatorParkExecutionResponse exposes proof of capture and cleanup (ADR-1525).
+type OperatorParkExecutionResponse struct {
+	Phase            string     `json:"phase"`
+	NodeID           string     `json:"node_id"`
+	WakeID           string     `json:"wake_id"`
+	Generation       string     `json:"generation"`
+	Action           string     `json:"action"`
+	CaptureCompleted bool       `json:"capture_completed"`
+	StoppedAt        *time.Time `json:"stopped_at,omitempty"`
+	TerminalState    string     `json:"terminal_state,omitempty"`
+	ColdBootRequired bool       `json:"cold_boot_required"`
+	Reason           string     `json:"reason,omitempty"`
+	UpdatedAt        time.Time  `json:"updated_at"`
+}
+
+// OperatorRestartExecutionResponse exposes durable evidence without internal
+// claim/destroy tokens. outcome_unknown requires reconciliation before a new action.
+type OperatorRestartExecutionResponse struct {
+	Phase       string     `json:"phase"`
+	NodeID      string     `json:"node_id"`
+	WakeID      string     `json:"wake_id"`
+	Generation  string     `json:"generation"`
+	SnapshotIDs []string   `json:"snapshot_ids"`
+	DestroyedAt *time.Time `json:"destroyed_at,omitempty"`
+	UpdatedAt   time.Time  `json:"updated_at"`
 }
 
 // SweepStuckBuildsResponse is the wire shape returned by POST
@@ -11590,10 +11869,15 @@ type RequestAnalyticsRoute struct {
 	OtherDeploymentRequests                       int64 `json:"other_deployment_requests,omitempty"`
 	OtherDeploymentEstimatedComputeCostMillicents int64 `json:"other_deployment_estimated_compute_cost_millicents,omitempty"`
 	// EstimatedComputeCostMillicents allocates this app's estimated raw
-	// RAM-hour value to the route by its share of observed requests. It is
+	// RAM-hour value to the route by its share of observed request time
+	// (ADR-743), falling back to request share when no timing exists. It is
 	// an estimate at the current compute overage rate, not an invoice line.
 	EstimatedComputeCostMillicents int64   `json:"estimated_compute_cost_millicents,omitempty"`
 	RequestSharePct                float64 `json:"request_share_pct,omitempty"`
+	// RequestTimeMS is the route's total gateway-observed request time in the
+	// window; RequestTimeSharePct is its share of the app's total.
+	RequestTimeMS       int64   `json:"request_time_ms,omitempty"`
+	RequestTimeSharePct float64 `json:"request_time_share_pct,omitempty"`
 }
 
 // RequestAnalyticsRouteDeploymentObservation is one route's request-share
@@ -11859,6 +12143,22 @@ type DebugRegressionsResponse struct {
 	Regressions []DebugRegressionItem `json:"regressions"`
 }
 
+// DebugRegressionReview is an exact workflow observation, including hidden
+// dismissed/resolved rows. Version changes on every database update or insert.
+// It contains no raw dependency, request, SQL or application evidence.
+type DebugRegressionReview struct {
+	AppID           string `json:"app_id"`
+	DeploymentID    string `json:"deployment_id"`
+	Route           string `json:"route"`
+	Version         string `json:"version"`
+	State           string `json:"state"`
+	FirstDetectedAt string `json:"first_detected_at"`
+	LastDetectedAt  string `json:"last_detected_at"`
+	AcknowledgedAt  string `json:"acknowledged_at,omitempty"`
+	DismissedUntil  string `json:"dismissed_until,omitempty"`
+	ResolvedAt      string `json:"resolved_at,omitempty"`
+}
+
 // DebugRegressionActionRequest is the body for PATCH
 // /v1/apps/{slug}/debug/regressions. Actions change only the debugger's
 // workflow state; they never alter traffic or deployment state.
@@ -11869,10 +12169,23 @@ type DebugRegressionActionRequest struct {
 	DismissedUntil string `json:"dismissed_until,omitempty"`
 }
 
+// GuardedDebugRegressionActionRequest is required by the dedicated checked
+// action endpoint. Older API nodes cannot accept that endpoint unguarded.
+type GuardedDebugRegressionActionRequest struct {
+	DeploymentID    string `json:"deployment_id"`
+	Route           string `json:"route"`
+	Action          string `json:"action"`
+	DismissedUntil  string `json:"dismissed_until,omitempty"`
+	ExpectedAppID   string `json:"expected_app_id"`
+	ExpectedVersion string `json:"expected_version"`
+	Reason          string `json:"reason"`
+}
+
 // DebugRegressionActionResponse returns the updated observation so API,
 // CLI, dashboard, and event consumers share one post-action representation.
 type DebugRegressionActionResponse struct {
-	Regression DebugRegressionItem `json:"regression"`
+	Review     *DebugRegressionReview `json:"review,omitempty"`
+	Regression DebugRegressionItem    `json:"regression"`
 }
 
 // AllowedDebugRegressionActions is the closed workflow vocabulary for a
@@ -11921,9 +12234,17 @@ type DebugCompareRouteStats struct {
 // endpoint. Routes is empty when both deployments had no traffic
 // in the window.
 type DebugCompareResponse struct {
-	Source string                   `json:"source"`
-	Mirror string                   `json:"mirror"`
-	Routes []DebugCompareRouteStats `json:"routes"`
+	// Optional on older servers; diagnostic clients must require these fields
+	// before claiming an effective retained window (ADR-1623).
+	AppID            string                   `json:"app_id,omitempty"`
+	Since            string                   `json:"since,omitempty"`
+	WindowStart      string                   `json:"window_start,omitempty"`
+	WindowEnd        string                   `json:"window_end,omitempty"`
+	RetentionClamped *bool                    `json:"retention_clamped,omitempty"`
+	RouteFilter      string                   `json:"route_filter,omitempty"`
+	Source           string                   `json:"source"`
+	Mirror           string                   `json:"mirror"`
+	Routes           []DebugCompareRouteStats `json:"routes"`
 }
 
 // DebugReplayRequest is the optional body for POST
@@ -12053,6 +12374,8 @@ type RecoverDeploymentRolloutRequest struct {
 	Action                          string `json:"action"`
 	Reason                          string `json:"reason,omitempty"`
 	ExpectedPredecessorDeploymentID string `json:"expected_predecessor_deployment_id"`
+	// Decision is the circuit-breaker evidence for the abort (ADR-1447).
+	Decision *RolloutDecision `json:"decision,omitempty"`
 }
 
 // RolloutTransitionResponse is the body returned by
@@ -12605,6 +12928,9 @@ type CustomMetricResponse struct {
 	// therefore NOT driving scaling. Computed server-side so the API and
 	// the scheduler cannot disagree about which rows count.
 	Stale bool `json:"stale"`
+	// Kind is "gauge" (pushed, a scaling signal) or "counter" (an ADR-745
+	// OTLP cumulative sum, charted as a rate and never a scaling signal).
+	Kind string `json:"kind,omitempty"`
 }
 
 // CustomMetricListResponse carries the rows plus the two limits an operator
@@ -12912,6 +13238,8 @@ type AppEventPublishStatusResponse struct {
 }
 
 type AppPublishEventRequest struct {
+	// ExpectedAppID fences slug reuse when set.
+	ExpectedAppID string          `json:"expected_app_id,omitempty"`
 	Key           string          `json:"key"`
 	Type          string          `json:"type"`
 	Data          json.RawMessage `json:"data"`
@@ -13142,4 +13470,56 @@ type EventRoutingRecoveryExpectation struct {
 
 func (e EventRoutingRecoveryExpectation) Valid() bool {
 	return strings.TrimSpace(e.WorkflowName) != "" && e.PublishedVersion > 0 && e.ReplayCount >= 0 && (e.Generation == nil || *e.Generation >= 0)
+}
+
+// SelectedTraceApp binds an explicit native selection to an immutable app ID.
+type SelectedTraceApp struct {
+	ID   string `json:"id"`
+	Slug string `json:"slug"`
+}
+
+// SelectedTraceRequest contains only retained request metadata, never spans.
+type SelectedTraceRequest struct {
+	AppID        string `json:"app_id"`
+	ID           string `json:"id"`
+	DeploymentID string `json:"deployment_id,omitempty"`
+	Route        string `json:"route"`
+	Method       string `json:"method"`
+	Status       int    `json:"status"`
+	LatencyMS    int    `json:"latency_ms"`
+	Count        int    `json:"count"`
+	ColdBoot     bool   `json:"cold_boot"`
+	ReceivedAt   string `json:"received_at"`
+}
+
+// SelectedTraceInvocation omits headers, payloads, results and queue names.
+type SelectedTraceInvocation struct {
+	AppID       string `json:"app_id"`
+	ID          string `json:"id"`
+	Source      string `json:"source"`
+	State       string `json:"state"`
+	Attempts    int    `json:"attempts"`
+	CreatedAt   string `json:"created_at"`
+	StartedAt   string `json:"started_at,omitempty"`
+	CompletedAt string `json:"completed_at,omitempty"`
+}
+
+// SelectedTraceLookupResponse is separate from the account-wide trace DTO.
+// Each source has its own bound, status and live-read truncation flag.
+type SelectedTraceLookupResponse struct {
+	Selection            string                    `json:"selection"`
+	TraceID              string                    `json:"trace_id"`
+	Apps                 []SelectedTraceApp        `json:"apps"`
+	GeneratedAt          string                    `json:"generated_at"`
+	Limit                int                       `json:"limit"`
+	RequestWindowStart   string                    `json:"request_window_start"`
+	RequestWindowEnd     string                    `json:"request_window_end"`
+	RequestRetentionDays int                       `json:"request_retention_days"`
+	Requests             []SelectedTraceRequest    `json:"requests"`
+	RequestsStatus       string                    `json:"requests_status"`
+	RequestsTruncated    bool                      `json:"requests_truncated"`
+	Invocations          []SelectedTraceInvocation `json:"invocations"`
+	InvocationsStatus    string                    `json:"invocations_status"`
+	InvocationsTruncated bool                      `json:"invocations_truncated"`
+	Partial              bool                      `json:"partial"`
 }

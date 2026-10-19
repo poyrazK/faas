@@ -32,8 +32,14 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/appaccess"
+	"github.com/onebox-faas/faas/pkg/apid/objectaccess"
+	"github.com/onebox-faas/faas/pkg/apid/postgresaccess"
+	"github.com/onebox-faas/faas/pkg/apid/projectaccess"
+	"github.com/onebox-faas/faas/pkg/apid/queueaccess"
 	"github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/authz"
+	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -49,7 +55,7 @@ import (
 // mfa_pending session legitimately needs are in the middleware's MFA
 // allowlist; bearer principals are unaffected.
 func (s *server) auth(next accountHandler) http.HandlerFunc {
-	pkgNext := middleware.AccountHandler(s.sameOriginSessionWrites(s.requireMFA(next)))
+	pkgNext := middleware.AccountHandler(s.sameOriginSessionWrites(s.requireMFA(s.authorizeAppResource(next))))
 	return s.authMw.RequireSession(pkgNext)
 }
 
@@ -60,8 +66,32 @@ func (s *server) auth(next accountHandler) http.HandlerFunc {
 // the wrapping because the spec §11 "10/min/IP" rule is a
 // middleware-level concern, not a per-daemon configuration detail.
 func (s *server) authLimited(next accountHandler) http.HandlerFunc {
-	pkgNext := middleware.AccountHandler(s.sameOriginSessionWrites(s.requireMFA(next)))
+	pkgNext := middleware.AccountHandler(s.sameOriginSessionWrites(s.requireMFA(s.authorizeAppResource(next))))
 	return s.authMw.RequireLimited(pkgNext)
+}
+
+// Project publishing checks the human's verification before resolving the
+// project, so a missing resource cannot bypass the verification response.
+func (s *server) authVerifiedLimited(next accountHandler) http.HandlerFunc {
+	pkgNext := middleware.AccountHandler(s.sameOriginSessionWrites(s.requireMFA(s.requireVerifiedEmail(s.authorizeAppResource(next)))))
+	return s.authMw.RequireLimited(pkgNext)
+}
+
+// The handler account remains the storage/quota subject, while the request
+// principal remains the actor for scope, MFA, verification and audit checks.
+func (s *server) authorizeAppResource(next accountHandler) accountHandler {
+	return accountHandler(appaccess.Wrap(s.store, loadOrgAuditFrom(s.audit), projectaccess.Wrap(s.store, loadOrgAuditFrom(s.audit), postgresaccess.Wrap(s.store, loadOrgAuditFrom(s.audit), func() *managedpostgres.Service { return s.managedPostgres }, objectaccess.Wrap(s.store, loadOrgAuditFrom(s.audit), queueaccess.Wrap(s.store, loadOrgAuditFrom(s.audit), middleware.AccountHandler(next)))))))
+}
+
+func (s *server) authorizeDashboardProject(next http.Handler, w http.ResponseWriter, r *http.Request, actor state.Account) {
+	if !strings.HasPrefix(r.URL.Path, "/dashboard/projects/") || r.PathValue("slug") == "" {
+		next.ServeHTTP(w, r)
+		return
+	}
+	r = r.WithContext(middleware.WithPrincipal(r.Context(), actor, nil, nil))
+	projectaccess.Wrap(s.store, loadOrgAuditFrom(s.audit), func(w http.ResponseWriter, r *http.Request, _ state.Account) {
+		next.ServeHTTP(w, r)
+	})(w, r, actor)
 }
 
 // sameOriginSessionWrites refuses a state-changing /v1 request that is
@@ -153,12 +183,20 @@ func (s *server) requireMFA(next accountHandler) accountHandler {
 // unverified customer can sign in and follow the dashboard guidance.
 func (s *server) requireVerifiedEmail(next accountHandler) accountHandler {
 	return func(w http.ResponseWriter, r *http.Request, acct state.Account) {
-		if !acct.EmailVerified() {
+		actor := actorAccount(r, acct)
+		if !actor.EmailVerified() {
 			api.WriteProblem(w, api.ErrEmailVerificationRequired())
 			return
 		}
 		next(w, r, acct)
 	}
+}
+
+func actorAccount(r *http.Request, fallback state.Account) state.Account {
+	if actor, _, ok := middleware.AccountFromContext(r); ok {
+		return actor
+	}
+	return fallback
 }
 
 // requireVerifiedEmailHandler is the http.Handler counterpart for dashboard
@@ -217,7 +255,17 @@ func (s *server) requireStepUpStrict(ttl time.Duration) func(accountHandler) acc
 // caller a platform operator. It is part of the policy so a handler can no
 // longer forget its in-handler adminAllows call.
 func (s *server) requireAdminMutation(next accountHandler) accountHandler {
-	return s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireOperator(s.requireStepUpStrict(5 * time.Minute)(s.requireSameOrigin(s.requireIdempotency(next))))))
+	return s.requireAdminMutationPolicy(s.requireIdempotency(next))
+}
+
+// Recovery submissions own their atomic, non-expiring idempotency contract
+// (ADR-1524). Keep exactly the same authentication gates on every replay.
+func (s *server) requireAdminRecoveryMutation(next accountHandler) accountHandler {
+	return s.requireAdminMutationPolicy(next)
+}
+
+func (s *server) requireAdminMutationPolicy(next accountHandler) accountHandler {
+	return s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireOperator(s.requireStepUpStrict(5 * time.Minute)(s.requireSameOrigin(next)))))
 }
 
 // requireOperator admits only accounts in the operator allowlist. Use it on
@@ -345,6 +393,10 @@ func (s *server) requireBearer(next accountHandler) accountHandler {
 // slug→App with the ownership predicate app.AccountID == acct.ID).
 // Behaviour matches cmd/apid/server.go:1611-1617.
 func (s *server) loadApp(w http.ResponseWriter, r *http.Request, acct state.Account, slug string) (state.App, bool) {
+	if grant, ok := appaccess.From(r); ok && (grant.App.Slug != slug || grant.Owner.ID != acct.ID) {
+		s.notFound(w, "no such app")
+		return state.App{}, false
+	}
 	return s.authMw.LoadApp(w, r, acct, slug)
 }
 
@@ -388,7 +440,7 @@ func (s *server) loadOrg(next accountHandler) accountHandler {
 	// third argument used by the rest of the cmd/apid route table.
 	return func(w http.ResponseWriter, r *http.Request, acct state.Account) {
 		wrapped := mw(http.HandlerFunc(func(w2 http.ResponseWriter, r2 *http.Request) {
-			next(w2, r2, acct)
+			appaccess.WrapOrganization(s.store, middleware.AccountHandler(next))(w2, r2, acct)
 		}))
 		wrapped.ServeHTTP(w, r)
 	}

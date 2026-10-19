@@ -66,7 +66,8 @@ func pollBindingCheckReleasePolicy(ctx context.Context, client bindingReleasePol
 		ExpectedDeploymentID: effective.DeploymentID, CheckedAt: time.Now().UTC(), MaxVerificationAge: effective.MaxVerificationAge.String(),
 		AllowUnsupported: effective.AllowUnsupported, RequireApplicationAck: effective.RequireApplicationAck,
 		ObjectStorageRequirements: maps.Clone(effective.ObjectStorageRequirements), Coverage: "none",
-		Bindings: []bindingcheck.BindingResult{}, Runtime: []api.BindingRuntimeDeployment{}, Issues: []api.BindingInventoryIssue{},
+		QueueRequirements: maps.Clone(effective.QueueRequirements),
+		Bindings:          []bindingcheck.BindingResult{}, Runtime: []api.BindingRuntimeDeployment{}, Issues: []api.BindingInventoryIssue{},
 		Blockers: []bindingcheck.Finding{}, Warnings: []bindingcheck.Finding{}}
 	confirm := func(ctx context.Context, report bindingcheck.Report) (bindingcheck.Report, error) {
 		result.ReleasePolicyConfirmed = false
@@ -121,6 +122,7 @@ func validateReleasePolicyCheckTarget(policy api.BindingReleasePolicy, appID, sc
 
 func effectiveBindingReleaseCheckPolicy(local bindingcheck.Policy, stored api.BindingReleasePolicy) (bindingcheck.Policy, error) {
 	local.ObjectStorageRequirements = maps.Clone(local.ObjectStorageRequirements)
+	local.QueueRequirements = maps.Clone(local.QueueRequirements)
 	if stored.Mode == "enforce" {
 		age, _ := time.ParseDuration(stored.MaxVerificationAge) // Validated before use.
 		if local.MaxVerificationAge > age {
@@ -137,12 +139,22 @@ func effectiveBindingReleaseCheckPolicy(local bindingcheck.Policy, stored api.Bi
 			}
 			local.ObjectStorageRequirements[prefix] = mode
 		}
+		if local.QueueRequirements == nil {
+			local.QueueRequirements = map[string]string{}
+		}
+		for name, evidence := range stored.QueueRequirements {
+			local.QueueRequirements[name] = evidence
+		}
+	}
+	if err := api.ValidateQueueReleaseRequirements(local.QueueRequirements); err != nil {
+		return local, err
 	}
 	return local, api.ValidateObjectStorageRequirements(local.ObjectStorageRequirements)
 }
 
 func copyBindingReleasePolicy(policy api.BindingReleasePolicy) api.BindingReleasePolicy {
 	policy.ObjectStorageRequirements = maps.Clone(policy.ObjectStorageRequirements)
+	policy.QueueRequirements = maps.Clone(policy.QueueRequirements)
 	if policy.UpdatedAt != nil {
 		updated := *policy.UpdatedAt
 		policy.UpdatedAt = &updated
@@ -155,7 +167,7 @@ func sameBindingReleasePolicy(a, b api.BindingReleasePolicy) bool {
 	bAge, _ := time.ParseDuration(b.MaxVerificationAge)
 	updatedEqual := a.UpdatedAt == nil && b.UpdatedAt == nil || a.UpdatedAt != nil && b.UpdatedAt != nil && a.UpdatedAt.Equal(*b.UpdatedAt)
 	return sameBindingDeployment(a.AppID, b.AppID) && a.Scope == b.Scope && a.Revision == b.Revision && a.Mode == b.Mode && aAge == bAge &&
-		a.RequireApplicationAck == b.RequireApplicationAck && maps.Equal(a.ObjectStorageRequirements, b.ObjectStorageRequirements) && a.Reason == b.Reason && updatedEqual
+		a.RequireApplicationAck == b.RequireApplicationAck && maps.Equal(a.ObjectStorageRequirements, b.ObjectStorageRequirements) && maps.Equal(a.QueueRequirements, b.QueueRequirements) && a.Reason == b.Reason && updatedEqual
 }
 
 func blockReleasePolicyCheck(report bindingcheck.Report, code, message string) bindingcheck.Report {

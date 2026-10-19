@@ -25,7 +25,7 @@ func (s *PgStore) AcquireEdgeRuleMutationLocks(ctx context.Context, apps []strin
 		return func(context.Context) {}, nil
 	}
 	for {
-		conn, err := db.DirectPool(s.pool).Acquire(ctx)
+		conn, err := db.DirectPool(s.pool.Pool).Acquire(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("acquire edge-rule batch connection: %w", err)
 		}

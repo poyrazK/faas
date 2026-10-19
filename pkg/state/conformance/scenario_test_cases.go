@@ -12,6 +12,67 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+// Namespace cleanup cannot reopen network or webhook delivery for an enrolled
+// app, or apply its retained policy to an ordinary app.
+func testScenarioActionPolicyReaders(t *testing.T, fx *Fixture) {
+	s, ctx := fx.Store, fx.Ctx
+	expiry := time.Now().UTC().Add(time.Hour)
+	app, err := s.CreateApp(ctx, state.App{
+		AccountID: fx.Account.ID, Slug: "policy-" + uuid.NewString(),
+		Type: state.AppTypeApp, Runtime: "node22", RAMMB: fx.App.RAMMB,
+		PreviewOfSlug: fx.App.Slug, PreviewPrState: state.PreviewPrStateOpen,
+		PreviewExpiresAt: &expiry,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hook, err := s.CreateAppWebhook(ctx, state.AppWebhook{
+		AppID: app.ID, AccountID: fx.Account.ID, TargetURL: "https://example.test/policy",
+		SecretSealed: []byte("sealed"), Enabled: true,
+		EventFilter: []string{string(state.AppWebhookEventAppDeployed)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertPolicy := func(enrolled bool) {
+		t.Helper()
+		want := ""
+		if enrolled {
+			want = strings.Repeat("e", 32)
+		}
+		if run, err := s.ScenarioRehearsalNetworkRun(ctx, app.ID); err != nil || run != want {
+			t.Fatalf("contained app run = %q, %v; want %q", run, err, want)
+		}
+		if run, err := s.ScenarioRehearsalNetworkRun(ctx, fx.App.ID); err != nil || run != "" {
+			t.Fatalf("ordinary app inherited containment: %q, %v", run, err)
+		}
+		for _, pair := range [][2]string{{app.ID, uuid.NewString()}, {fx.App.ID, hook.ID}} {
+			if blocked, err := s.ScenarioWebhookDeliveryBlocked(ctx, pair[0], pair[1]); err != nil || blocked != enrolled {
+				t.Fatalf("app/receiver policy %v = %v, %v; want %v", pair, blocked, err, enrolled)
+			}
+		}
+		if blocked, err := s.ScenarioWebhookDeliveryBlocked(ctx, fx.App.ID, uuid.NewString()); err != nil || blocked {
+			t.Fatalf("ordinary delivery inherited capture: %v, %v", blocked, err)
+		}
+	}
+	assertPolicy(false)
+	runID := strings.Repeat("e", 32)
+	if err := s.RegisterScenarioTestMembers(ctx, fx.Account.ID, runID, []state.ScenarioTestMember{{
+		AppID: app.ID, Workload: "primary", WebhookMode: state.ScenarioWebhookCaptureMode,
+		NetworkMode: state.ScenarioNetworkContained,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	assertPolicy(true)
+	if _, err := s.SoftDeleteAppCascade(ctx, app.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteScenarioTestMembers(ctx, fx.Account.ID, runID); err != nil {
+		t.Fatal(err)
+	}
+	assertPolicy(true)
+}
+
 // A test service name must never resolve outside its run, and a failed
 // teardown must keep the namespace fenced until the apps have been deleted.
 func testScenarioTestNamespace(t *testing.T, fx *Fixture) {

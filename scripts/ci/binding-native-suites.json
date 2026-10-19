@@ -1,0 +1,6 @@
+[
+  {"name":"postgres","tag":"managed_postgres_native","target":"test-managed-postgres-native","runner":"scripts/test-managed-postgres-native.sh","verdict":"scripts/ci/managed-postgres-native-verdict.py","contract":"pkg/managedpostgres/guestqualification/contract.json","env_prefix":"GREGALE_POSTGRES_NATIVE"},
+  {"name":"storage","tag":"object_storage_native","target":"test-object-storage-native","runner":"scripts/test-object-storage-native.sh","verdict":"scripts/ci/object-storage-native-verdict.py","contract":"pkg/e2etest/storagestarter/contract.json","env_prefix":"GREGALE_STORAGE_NATIVE"},
+  {"name":"queue","tag":"queue_binding_native","target":"test-queue-bindings-native","runner":"scripts/test-queue-bindings-native.sh","verdict":"scripts/ci/queue-bindings-native-verdict.py","contract":"pkg/e2etest/queuestarter/contract.json","env_prefix":"GREGALE_QUEUE_NATIVE"},
+  {"name":"service","tag":"managed_service_native","target":"test-managed-service-native","runner":"scripts/test-managed-service-native.sh","verdict":"scripts/ci/managed-service-native-verdict.py","contract":"pkg/e2etest/servicestarter/contract.json","env_prefix":"GREGALE_SERVICE_NATIVE"}
+]

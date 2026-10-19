@@ -52,7 +52,7 @@ func (h *Handler) consumeSourceBuild(ctx context.Context, app state.App, dep sta
 		}
 		return h.recheckSourceApproval(ctx, app, dep, nil)
 	}
-	if (app.Type == state.AppTypeFunction || app.Runtime != "") && !h.runtimeBaseStagingEnabled {
+	if app.Type == state.AppTypeFunction && !h.runtimeBaseStagingEnabled {
 		return fmt.Errorf("imaged: approved function conversion requires produced runtime staging")
 	}
 	snapshot, err := buildpublisher.SnapshotExport(ctx, dep.RootfsPath, approval.Input.Claims.ExportDigest, approval.Input.Claims.ExportBytes)
@@ -73,7 +73,9 @@ func (h *Handler) consumeSourceBuild(ctx context.Context, app state.App, dep sta
 }
 
 func (h *Handler) convertSourceBuild(ctx context.Context, app state.App, dep state.Deployment, acct state.Account, source *sourceBuildRootfsBinding) error {
-	if app.Type == state.AppTypeFunction || app.Runtime != "" {
+	// Type owns the process contract. Older clients saved function runtimes on
+	// container apps; those rows must still retain their container entrypoint.
+	if app.Type == state.AppTypeFunction {
 		return h.buildFunctionLayer(ctx, app, dep, acct, source)
 	}
 	return h.buildLocalOCIAppLayer(ctx, app, &dep, acct, source)

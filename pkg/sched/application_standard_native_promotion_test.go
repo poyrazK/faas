@@ -12,6 +12,7 @@ import (
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type standardNativePromotionTestVMM struct {
@@ -21,7 +22,7 @@ type standardNativePromotionTestVMM struct {
 }
 
 type lostPromotionPublicationAckStore struct {
-	*state.MemStore
+	MemStore     *state.MemStore
 	publications int
 	refuse       error // returned, without committing, by every promotion publication
 }
@@ -75,7 +76,7 @@ func TestApplicationStandardNativeWarmPromotionRequiresDurableFreshGrant(t *test
 			var engineStore state.Store = s
 			ackStore := &lostPromotionPublicationAckStore{MemStore: s}
 			if scenario == "lost-publication-ack" {
-				engineStore = ackStore
+				engineStore = statetest.NewMem(ackStore)
 			}
 			e := newEngine(t, engineStore, v, &fakeNotifier{}, "1.10.0")
 			if err := e.ReconcileWarmPool(t.Context(), app.ID); err != nil {
@@ -135,7 +136,7 @@ func TestApplicationStandardNativeWarmPromotionDoesNotReplayRefusal(t *testing.T
 	}
 	v := &standardNativePromotionTestVMM{standardNativeTestVMM: newStandardNativeTestVMM(t, s, &fakeVMM{}, standardNativeTestNodeID(t, s))}
 	store := &lostPromotionPublicationAckStore{MemStore: s, refuse: state.ErrApplicationStandardRuntimeStale}
-	e := newEngine(t, store, v, &fakeNotifier{}, "1.10.0")
+	e := newEngine(t, statetest.NewMem(store), v, &fakeNotifier{}, "1.10.0")
 	if err := e.ReconcileWarmPool(t.Context(), app.ID); err != nil {
 		t.Fatal(err)
 	}

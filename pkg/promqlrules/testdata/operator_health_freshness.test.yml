@@ -1,0 +1,73 @@
+# Pin the source timestamps used by /v1/admin/obs/health on Prometheus 2.54.1.
+# Range aggregates produce a new output timestamp even after scrapes stop;
+# timestamp() must stay inside the subquery to preserve the original evidence.
+rule_files: []
+evaluation_interval: 15s
+
+tests:
+  - name: "zero activity is observed when scrapes and rule evaluations continue"
+    interval: 15s
+    input_series:
+      - series: 'apid_audit_log_write_total{instance="live"}'
+        values: '0+0x40 stale'
+      - series: 'apid_audit_log_write_failures_total{instance="live"}'
+        values: '0+0x40 stale'
+      - series: 'prometheus_rule_group_last_evaluation_timestamp_seconds{rule_group="/etc/prometheus/faas.rules.yml;faas_slo"}'
+        values: '0+15x40'
+      - series: 'prometheus_rule_group_last_evaluation_timestamp_seconds{rule_group="/etc/prometheus/other.rules.yml;unrelated"}'
+        values: '0+0x40 stale'
+    promql_expr_test:
+      - expr: 'sum(increase(apid_audit_log_write_total[5m]))'
+        eval_time: 10m
+        exp_samples: [{labels: '{}', value: 0}]
+      - expr: 'min(max_over_time(timestamp(apid_audit_log_write_total)[900s:15s]))'
+        eval_time: 10m
+        exp_samples: [{labels: '{}', value: 600}]
+      - expr: 'min(max_over_time(timestamp(apid_audit_log_write_failures_total)[900s:15s]))'
+        eval_time: 10m
+        exp_samples: [{labels: '{}', value: 600}]
+      - expr: 'count(ALERTS{alertstate="firing",alertname!="FaasWatchdog",severity!="info"}) or vector(0)'
+        eval_time: 10m
+        exp_samples: [{labels: '{}', value: 0}]
+      - expr: 'min(last_over_time(prometheus_rule_group_last_evaluation_timestamp_seconds{rule_group=~".*faas[.]rules[.]yml;.*"}[900s]))'
+        eval_time: 10m
+        exp_samples: [{labels: '{}', value: 600}]
+
+  - name: "a fresh series cannot mask a stopped series and history expires"
+    interval: 15s
+    input_series:
+      - series: 'apid_audit_log_write_total{instance="live"}'
+        values: '0+0x40 stale'
+      - series: 'apid_audit_log_write_total{instance="stopped"}'
+        values: '0+0x4 stale'
+      - series: 'prometheus_rule_group_last_evaluation_timestamp_seconds{rule_group="/etc/prometheus/faas.rules.yml;stopped"}'
+        values: '0+15x4 stale'
+    promql_expr_test:
+      - expr: 'min(max_over_time(timestamp(apid_audit_log_write_total)[900s:15s]))'
+        eval_time: 10m
+        exp_samples: [{labels: '{}', value: 60}]
+      - expr: 'min(last_over_time(prometheus_rule_group_last_evaluation_timestamp_seconds{rule_group=~".*faas[.]rules[.]yml;.*"}[900s]))'
+        eval_time: 10m
+        exp_samples: [{labels: '{}', value: 60}]
+      - expr: 'time() - min(last_over_time(prometheus_rule_group_last_evaluation_timestamp_seconds{rule_group=~".*faas[.]rules[.]yml;.*"}[900s])) > bool 120'
+        eval_time: 3m
+        exp_samples: [{labels: '{}', value: 0}]
+      - expr: 'time() - min(last_over_time(prometheus_rule_group_last_evaluation_timestamp_seconds{rule_group=~".*faas[.]rules[.]yml;.*"}[900s])) > bool 120'
+        eval_time: 3m15s
+        exp_samples: [{labels: '{}', value: 1}]
+      - expr: 'min(max_over_time(timestamp(apid_audit_log_write_total)[900s:15s]))'
+        eval_time: 26m
+        exp_samples: []
+      - expr: 'min(last_over_time(prometheus_rule_group_last_evaluation_timestamp_seconds{rule_group=~".*faas[.]rules[.]yml;.*"}[900s]))'
+        eval_time: 26m
+        exp_samples: []
+
+  - name: "absence of alerts does not establish an evaluated rule group"
+    interval: 15s
+    promql_expr_test:
+      - expr: 'count(ALERTS{alertstate="firing",alertname!="FaasWatchdog",severity!="info"}) or vector(0)'
+        eval_time: 10m
+        exp_samples: [{labels: '{}', value: 0}]
+      - expr: 'min(last_over_time(prometheus_rule_group_last_evaluation_timestamp_seconds{rule_group=~".*faas[.]rules[.]yml;.*"}[900s]))'
+        eval_time: 10m
+        exp_samples: []

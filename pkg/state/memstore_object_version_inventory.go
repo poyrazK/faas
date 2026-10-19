@@ -27,9 +27,14 @@ func (m *MemStore) versionAccountingStatusLocked(bucket string) ObjectVersionAcc
 	return s
 }
 
-func (m *MemStore) ObjectVersionAccountingStatus(_ context.Context, account, bucket string) (ObjectVersionAccountingStatus, error) {
+func (m *MemStore) ObjectVersionAccountingStatus(ctx context.Context, account, bucket string) (ObjectVersionAccountingStatus, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 ObjectVersionAccountingStatus
+		return zero0, err
+	}
+
 	b, ok := m.objectBuckets[bucket]
 	if !ok || b.AccountID != account {
 		return ObjectVersionAccountingStatus{}, ErrNotFound
@@ -37,12 +42,17 @@ func (m *MemStore) ObjectVersionAccountingStatus(_ context.Context, account, buc
 	return m.versionAccountingStatusLocked(bucket), nil
 }
 
-func (m *MemStore) StageObjectVersionInventoryPage(_ context.Context, id, token, next string, items []ObjectVersionInventoryRecord) (ObjectCapacityReconciliation, error) {
+func (m *MemStore) StageObjectVersionInventoryPage(ctx context.Context, id, token, next string, items []ObjectVersionInventoryRecord) (ObjectCapacityReconciliation, error) {
 	if !validVersionInventoryPage(next, items) {
 		return ObjectCapacityReconciliation{}, ErrConflict
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 ObjectCapacityReconciliation
+		return zero0, err
+	}
+
 	j, ok := m.objectCapacityJobs[id]
 	if !ok {
 		return cloneObjectCapacityJob(j), ErrNotFound

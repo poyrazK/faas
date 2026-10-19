@@ -10,7 +10,46 @@ import (
 	"github.com/google/uuid"
 )
 
-const APIConsumerRateCardUnitRequest = "request"
+// App consumer rate card units (ADR-1308): billable requests, or the
+// compute time or response size of billable requests, rounded to the
+// nearest whole second or megabyte per consumer minute.
+const (
+	APIConsumerRateCardUnitRequest          = "request"
+	APIConsumerRateCardUnitComputeSecond    = "compute_second"
+	APIConsumerRateCardUnitResponseMegabyte = "response_megabyte"
+)
+
+// ValidAPIConsumerRateCardUnit reports whether unit is a known card unit:
+// request, compute_second, response_megabyte, or an app meter "app:<name>"
+// (ADR-1318).
+func ValidAPIConsumerRateCardUnit(unit string) bool {
+	_, app := AppMeterOfUnit(unit)
+	return unit == APIConsumerRateCardUnitRequest || unit == APIConsumerRateCardUnitComputeSecond ||
+		unit == APIConsumerRateCardUnitResponseMegabyte || app
+}
+
+// Ladder modes (ADR-1309): graduated prices each unit at the step its
+// position in the month falls in (ADR-951); volume prices every unit of the
+// month at the step the month's total reaches.
+const (
+	RateCardTierModeGraduated = "graduated"
+	RateCardTierModeVolume    = "volume"
+)
+
+// normalizeRateCardTierMode defaults an empty mode to graduated and rejects
+// an unknown mode or a volume card without a ladder.
+func normalizeRateCardTierMode(mode string, tiers []APIConsumerRateCardTier) (string, error) {
+	switch mode {
+	case "", RateCardTierModeGraduated:
+		return RateCardTierModeGraduated, nil
+	case RateCardTierModeVolume:
+		if len(tiers) == 0 {
+			return "", fmt.Errorf("%w: tier_mode volume needs tiers", ErrInvalidArgument)
+		}
+		return mode, nil
+	}
+	return "", fmt.Errorf("%w: tier_mode must be graduated or volume", ErrInvalidArgument)
+}
 
 // APIConsumerRateCardStore is deliberately narrower than Store. The pricing
 // surface is additive, so existing test doubles that only implement the core
@@ -38,6 +77,15 @@ type APIConsumerRateCardInput struct {
 	RouteWeights           map[string]int64
 	PlanID                 string
 	EffectiveFrom          time.Time
+	// Unit is what the card prices; empty means request (ADR-1308).
+	Unit string
+	// TierMode is how Tiers price a month; empty means graduated (ADR-1309).
+	TierMode string
+	// Monthly base fee and minimum spend per consumer (ADR-1316), prorated
+	// in a consumer's first month when ProrateMonthlyFees is set (ADR-1325).
+	BaseFeeMillicentsPerMonth int64
+	MinimumMillicentsPerMonth int64
+	ProrateMonthlyFees        bool
 }
 
 // normalizeAPIConsumerRateCardInput validates a version and derives the
@@ -45,6 +93,17 @@ type APIConsumerRateCardInput struct {
 func normalizeAPIConsumerRateCardInput(in APIConsumerRateCardInput) (APIConsumerRateCardInput, error) {
 	in.Currency = normalizeAPIConsumerRateCardCurrency(in.Currency)
 	in.EffectiveFrom = in.EffectiveFrom.UTC()
+	if in.Unit == "" {
+		in.Unit = APIConsumerRateCardUnitRequest
+	}
+	if !ValidAPIConsumerRateCardUnit(in.Unit) || (in.Unit != APIConsumerRateCardUnitRequest && len(in.RouteWeights) > 0) {
+		return in, fmt.Errorf("CreateAPIConsumerRateCard: %w: route weights apply to request cards only", ErrInvalidArgument)
+	}
+	mode, err := normalizeRateCardTierMode(in.TierMode, in.Tiers)
+	if err != nil {
+		return in, fmt.Errorf("CreateAPIConsumerRateCard: %w", err)
+	}
+	in.TierMode = mode
 	if len(in.Tiers) > 0 {
 		if err := ValidateAPIConsumerRateCardTiers(in.Tiers); err != nil {
 			return in, fmt.Errorf("CreateAPIConsumerRateCard: %w", err)
@@ -54,7 +113,7 @@ func normalizeAPIConsumerRateCardInput(in APIConsumerRateCardInput) (APIConsumer
 		}
 		in.PriceMillicentsPerUnit = in.Tiers[len(in.Tiers)-1].PriceMillicentsPerUnit
 	}
-	if in.IncludedUnitsPerMonth < 0 {
+	if in.IncludedUnitsPerMonth < 0 || in.BaseFeeMillicentsPerMonth < 0 || in.MinimumMillicentsPerMonth < 0 {
 		return in, ErrInvalidArgument
 	}
 	if err := validateAPIConsumerRateCardInput("CreateAPIConsumerRateCard", in.AccountID, in.AppID, in.Currency, in.PriceMillicentsPerUnit, in.EffectiveFrom); err != nil {

@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "api_origin": "https://api.pilot.example",
+  "account_id": "REPLACE_GREGALE_ACCOUNT_UUID",
+  "origin_id": "REPLACE_TERRAFORM_ORIGIN_SHA256",
+  "worker_name": "gregale-internal-pilot",
+  "hostname": "unique-run.customer.example",
+  "hosting_domain": "hosting.example",
+  "cf_account_id": "REPLACE_HOSTING_CLOUDFLARE_ACCOUNT_HEX",
+  "hosting_zone_id": "REPLACE_HOSTING_ZONE_HEX",
+  "access_policy_id": "REPLACE_INTERNAL_ACCESS_POLICY_UUID",
+  "dns_account_id": "REPLACE_SEPARATE_CUSTOMER_DNS_ACCOUNT_HEX",
+  "dns_zone_id": "REPLACE_CUSTOMER_DNS_ZONE_HEX",
+  "dns_zone_name": "customer.example",
+  "access_team": "pilot.cloudflareaccess.com",
+  "analytics_dataset": "gregale_internal_pilot_traffic",
+  "dns_token_file": "/private/hosting-pilot/customer-dns-token",
+  "hosting_read_token_file": "/private/hosting-pilot/hosting-read-token",
+  "domain_access_token_file": "/private/hosting-pilot/domain-access-jwt"
+}

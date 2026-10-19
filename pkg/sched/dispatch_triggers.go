@@ -135,6 +135,9 @@ type triggerDispatchRequest struct {
 	Source       string                  `json:"source"`
 	TriggerID    string                  `json:"trigger_id"`
 	Records      []triggerDispatchRecord `json:"records"`
+	// Delivery "batch" asks the gateway for one invocation carrying every
+	// record (ADR-1321); empty keeps one invocation per record.
+	Delivery string `json:"delivery,omitempty"`
 }
 
 // triggerDispatchResponse mirrors pkg/gateway/synth.go's batch
@@ -305,6 +308,10 @@ func (l *Loop) runTriggerTick(ctx context.Context) {
 			l.scheduleQueuePushLanes(ctx, t, store)
 			continue
 		}
+		if t.Kind == string(api.TriggerKindRealtime) {
+			l.scheduleRealtimeLanes(ctx, t, store)
+			continue
+		}
 		if err := l.dispatchOneTrigger(ctx, t, store, resolvePlan); err != nil {
 			if errors.Is(err, errTriggerGatewayDispatch) {
 				continue
@@ -334,7 +341,7 @@ func (l *Loop) triggerPlanResolver(ctx context.Context) func(string) api.Plan {
 		if appErr != nil {
 			return api.PlanFree
 		}
-		acct, acctErr := l.engine.Store().AccountByID(ctx, app.AccountID)
+		acct, acctErr := state.AppResourceAccount(ctx, l.engine.Store(), app)
 		if acctErr != nil {
 			return api.PlanFree
 		}
@@ -791,6 +798,10 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 		l.log.Warn("sched trigger tick: gateway post",
 			"trigger_id", t.ID.String(),
 			"err", postErr)
+		if rt, ok := poller.(*realtimePoller); ok {
+			l.returnRealtimeBatch(ctx, t, rt, claimed, "dispatch_"+triggerReasonBrokerError)
+			return fmt.Errorf("%w: %w", errTriggerGatewayDispatch, postErr)
+		}
 		retryItems, exhaustedItems := l.markRetryAll(ctx, t, claimed, postErr.Error(), store)
 		l.observeESMRecordOutcome(t.Kind, wire.ESMRecordOutcomeRetry, len(retryItems))
 		l.observeESMRecordOutcome(t.Kind, wire.ESMRecordOutcomeDeadLetter, len(exhaustedItems))
@@ -833,6 +844,10 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 		l.log.Warn("sched trigger tick: response parse",
 			"trigger_id", t.ID.String(),
 			"err", err)
+		if rt, ok := poller.(*realtimePoller); ok {
+			l.returnRealtimeBatch(ctx, t, rt, claimed, "gateway_response_malformed")
+			return nil
+		}
 		l.observeESMRecordOutcome(t.Kind, wire.ESMRecordOutcomeDeadLetter, len(claimed))
 		l.observeESMRecordProcessingBatch(t.Kind, claimed)
 		// Audit finding #6 (paired with the post-error path
@@ -859,6 +874,9 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 	statusByID := make(map[string]triggerDispatchResult, len(resp.Results))
 	for _, r := range resp.Results {
 		statusByID[r.ItemIdentifier] = r
+	}
+	if rt, ok := poller.(*realtimePoller); ok {
+		return l.finishRealtimeDispatch(ctx, t, rt, claimed, statusByID, store)
 	}
 	claimedByID := make(map[string]sqlc.TriggerRecord, len(claimed))
 	for _, record := range claimed {
@@ -1172,13 +1190,17 @@ func buildDispatchEnvelope(t sqlc.Trigger, batch []SourceRecord) triggerDispatch
 			Metadata:                   r.Metadata,
 		})
 	}
-	return triggerDispatchRequest{
+	env := triggerDispatchRequest{
 		InvocationID: "trigger-" + t.ID.String(),
 		AppID:        t.AppID.String(),
 		Source:       "esm",
 		TriggerID:    t.ID.String(),
 		Records:      recs,
 	}
+	if t.Delivery == api.TriggerDeliveryBatch {
+		env.Delivery = api.TriggerDeliveryBatch
+	}
+	return env
 }
 
 func (l *Loop) admitExclusiveBrokerBatch(ctx context.Context, store storeLike, trigger sqlc.Trigger, binding state.ExclusiveTriggerBinding, batch []SourceRecord, claimed []sqlc.TriggerRecord) triggerDispatchResponse {
@@ -1434,6 +1456,13 @@ func (l *Loop) handleRateLimitedBatch(ctx context.Context, poller triggerSource,
 		if !record.ReceivedAt.IsZero() {
 			l.observeESMRecordProcessing(t.Kind, time.Since(record.ReceivedAt).Seconds())
 		}
+	}
+	if rt, ok := poller.(*realtimePoller); ok {
+		// The handler never ran: return the attempt to the group.
+		if err := rt.Nack(ctx, t, items, triggerReasonRateLimited); err != nil {
+			l.log.Warn("sched trigger tick: return rate-limited realtime batch", "trigger_id", t.ID.String(), "err", err)
+		}
+		return
 	}
 	if queue, ok := poller.(*queuePoller); ok {
 		if err := queue.finishInvocations(ctx, t, items, "dead_letter", "dead_letter", "rate_limited", triggerReasonRateLimited, `{"trigger_dispatch":"rate_limited"}`); err != nil {

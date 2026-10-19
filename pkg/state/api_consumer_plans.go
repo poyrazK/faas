@@ -53,6 +53,29 @@ type APIConsumerPlanPolicy struct {
 	RouteWeights         map[string]int64
 	// AlertThresholdsPercent are the plan's usage alert thresholds (ADR-849).
 	AlertThresholdsPercent []int32
+	// SpendCapped is set, on any plan, while the consumer's last spend check
+	// this month found its amount due past its cap (ADR-1306); the cap,
+	// amount due and currency explain the denial.
+	SpendCapped        bool
+	SpendCapMillicents int64
+	SpendDueMillicents int64
+	SpendCurrency      string
+	// OverdueBlocked is set, on any plan, while the consumer has an
+	// exported invoice its app's policy considers overdue (ADR-1315);
+	// OverdueDueAt is that invoice's due date.
+	OverdueBlocked bool
+	OverdueDueAt   time.Time
+}
+
+func (p *APIConsumerPlanPolicy) attachSpendCap(c APIConsumerSpendCap, at time.Time) {
+	monthStart, _ := creditMonth(at)
+	if !c.CappedIn(monthStart) {
+		return
+	}
+	p.SpendCapped, p.SpendCapMillicents, p.SpendCurrency = true, c.MonthlyCapMillicents, c.Currency
+	if c.AmountDueMillicents != nil {
+		p.SpendDueMillicents = *c.AmountDueMillicents
+	}
 }
 
 // Limited reports whether admission must consult the counter.
@@ -295,12 +318,19 @@ func (m *MemStore) GetAPIConsumerPlanPolicy(_ context.Context, accountID, appID,
 			planID = a.PlanID
 		}
 	}
+	var policy APIConsumerPlanPolicy
+	if c, ok := m.apiConsumerSpendCaps[consumerID]; ok && c.AccountID == accountID {
+		policy.attachSpendCap(c, at)
+	}
+	if hold, ok := m.apiConsumerOverdueHold(consumerID); ok && hold.AccountID == accountID {
+		policy.OverdueBlocked, policy.OverdueDueAt = true, hold.DueAt
+	}
 	plan, ok := m.apiConsumerPlans[planID]
 	if planID == "" || !ok {
-		return APIConsumerPlanPolicy{}, nil
+		return policy, nil
 	}
-	policy := APIConsumerPlanPolicy{PlanID: plan.ID, AppID: plan.AppID, MaxRequestsPerMinute: plan.MaxRequestsPerMinute,
-		MaxUnitsPerMonth: plan.MaxUnitsPerMonth, AlertThresholdsPercent: slices.Clone(plan.AlertThresholdsPercent)}
+	policy.PlanID, policy.AppID, policy.MaxRequestsPerMinute = plan.ID, plan.AppID, plan.MaxRequestsPerMinute
+	policy.MaxUnitsPerMonth, policy.AlertThresholdsPercent = plan.MaxUnitsPerMonth, slices.Clone(plan.AlertThresholdsPercent)
 	var current APIConsumerRateCard
 	for _, card := range m.apiConsumerRateCards {
 		if card.PlanID == plan.ID && !card.EffectiveFrom.After(at) && card.EffectiveFrom.After(current.EffectiveFrom) {

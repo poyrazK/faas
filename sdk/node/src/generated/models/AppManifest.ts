@@ -79,6 +79,10 @@ export type AppManifest = {
    * Runtime request wall-clock timeout in seconds. 0 inherits the plan/type default.
    */
   request_timeout_s?: number | null;
+  /**
+   * Per-worker request concurrency imaged stamps into the function's build as FAAS_FUNCTION_CONCURRENCY (ADR-1342). 0 or 1 means one request per worker.
+   */
+  function_concurrency?: number | null;
   service_replicas?: ServiceReplicas;
   worker_replicas?: WorkerScaling;
   /**
@@ -122,5 +126,13 @@ export type AppManifest = {
    * Configured revision pin window in seconds; zero disables pinning.
    */
   revision_pin_ttl_seconds?: number;
+  /**
+   * Effective default rollout for production releases (ADR-1446, ADR-1450).
+   */
+  release_policy?: 'safe' | 'fast' | 'immediate';
+  /**
+   * Paths the default rollout probe checks; absent means / (ADR-1449).
+   */
+  release_probe_paths?: Array<string>;
 };
 

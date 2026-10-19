@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/workerrecovery"
 	"github.com/onebox-faas/faas/pkg/apphealth"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -98,6 +99,7 @@ func (s *server) scopedOperationalSummary(ctx context.Context, acct state.Accoun
 }
 func (s *server) scopedOperationalRecovery(ctx context.Context, acct state.Account, app state.App, scope string) api.AppOperationalRecovery {
 	out := api.AppOperationalRecovery{Coverage: "explicit_scope_only", Rollbacks: []api.AppOperationalRollback{}, Restarts: []api.RuntimeConfigRestartStatusResponse{}}
+	out.Workers = workerrecovery.Collect(ctx, s.store, app, acct, scope, time.Now().UTC())
 	if store, ok := s.store.(state.ScopedOperationalStore); ok {
 		rows, err := store.ListScopedPendingRollbacks(ctx, acct.ID, app.ID, scope)
 		out.RollbacksAvailable = err == nil

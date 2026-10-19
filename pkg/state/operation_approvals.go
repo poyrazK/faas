@@ -110,6 +110,11 @@ func (s *PgStore) DecideOperationApproval(ctx context.Context, in OperationAppro
 	if err != nil {
 		return Operation{}, err
 	}
+	if snapshot.DataRepair != nil {
+		return s.mutateDataRepair(ctx, in.AccountID, in.OperationID, func(op *Operation) (api.OperationEvent, bool, error) {
+			return decideDataRepairApproval(op, in, time.Now().UTC())
+		})
+	}
 	def, err := s.OperationDefinitionByID(ctx, snapshot.AccountID, snapshot.DefinitionID)
 	if err != nil {
 		return Operation{}, err
@@ -192,6 +197,17 @@ func (m *MemStore) DecideOperationApproval(_ context.Context, in OperationApprov
 	op, ok := data.operations[in.OperationID]
 	if !ok || op.AccountID != in.AccountID || in.PlatformTenantID != "" && op.PlatformTenantID != in.PlatformTenantID {
 		return Operation{}, ErrNotFound
+	}
+	if op.DataRepair != nil {
+		op = cloneOperation(op)
+		event, replay, err := decideDataRepairApproval(&op, in, time.Now().UTC())
+		if err != nil {
+			return Operation{}, err
+		}
+		if !replay {
+			m.saveDataRepairLocked(op, event)
+		}
+		return cloneOperation(op), nil
 	}
 	def, ok := data.definitions[op.DefinitionID]
 	if !ok || op.WorkflowRunID == "" {

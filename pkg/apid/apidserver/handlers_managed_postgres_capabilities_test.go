@@ -30,10 +30,15 @@ func (capabilityOnlyProvider) Capabilities() managedpostgres.Capabilities {
 
 func capabilitiesService(t *testing.T, canary string) *managedpostgres.Service {
 	t.Helper()
+	return capabilitiesServiceWith(t, canary, capabilityOnlyProvider{})
+}
+
+func capabilitiesServiceWith(t *testing.T, canary string, provider managedpostgres.Provider) *managedpostgres.Service {
+	t.Helper()
 	registry, err := managedpostgres.NewRegistry(managedpostgres.Config{DefaultRegion: "us-east-1", MaxDatabasesPerAccount: 2,
 		Defaults: map[string]string{"us-east-1": "private-backend"}, Backends: []managedpostgres.BackendConfig{{ID: "private-backend", Driver: "fixture", Region: "us-east-1", Namespace: "private-namespace"}}},
 		func(string) string { return "private-secret" }, map[string]managedpostgres.Factory{"fixture": func(managedpostgres.BackendConfig, func(string) string) (managedpostgres.Provider, error) {
-			return capabilityOnlyProvider{}, nil
+			return provider, nil
 		}})
 	if err != nil {
 		t.Fatal(err)
@@ -106,8 +111,8 @@ func TestManagedPostgresCapabilitiesPlanAndAvailabilityLimits(t *testing.T) {
 		t.Run(string(plan), func(t *testing.T) {
 			limits, _ := api.ManagedPostgresLimitsFor(plan)
 			d := managedpostgres.CapabilityDiscovery{Region: "us-east-1", Capabilities: capabilityOnlyProvider{}.Capabilities(), DatabaseLimit: 2, ProvisioningEnabled: true}
-			out := apidserver.ManagedPostgresCapabilitiesView(d, limits)
-			if out.DatabaseLimit != min(2, limits.DatabasesMax) || (plan == api.PlanFree && (out.ProvisioningEnabled || len(out.CredentialAccess) != 0)) {
+			out := apidserver.ManagedPostgresCapabilitiesView(d, limits, false)
+			if out.DatabaseLimit != min(2, limits.DatabasesMax) || (limits.DatabasesMax == 0 && (out.ProvisioningEnabled || len(out.CredentialAccess) != 0)) {
 				t.Fatalf("plan capabilities=%+v", out)
 			}
 			for _, class := range out.ServiceClasses {
@@ -116,7 +121,7 @@ func TestManagedPostgresCapabilitiesPlanAndAvailabilityLimits(t *testing.T) {
 				}
 			}
 			d.Capabilities.ScaleToZero = false
-			out = apidserver.ManagedPostgresCapabilitiesView(d, limits)
+			out = apidserver.ManagedPostgresCapabilitiesView(d, limits, false)
 			if !limits.AlwaysOnAllowed && (out.ProvisioningEnabled || len(out.ServiceClasses) != 0) {
 				t.Fatal("always-on-only backend advertised to restricted plan")
 			}

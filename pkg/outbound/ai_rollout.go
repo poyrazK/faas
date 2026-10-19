@@ -2,11 +2,13 @@ package outbound
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 )
 
 // AIGatewayCapability is the AI gateway's product capability ID.
@@ -64,4 +66,17 @@ func (r AIGatewayRollout) Allows(accountID string) bool {
 func AIGatewayEntitled(plan api.Plan) bool {
 	entitled, err := api.CapabilityEntitled(AIGatewayCapability, plan)
 	return err == nil && entitled
+}
+
+// AIGatewayFlagBootstrap converts the release gate and the staged rollout
+// into the ai_gateway platform flag's boot fallback (ADR-1700): off when the
+// gate is off, every account when the rollout is nil, otherwise the listed
+// accounts. An empty non-nil rollout admits no account, as Allows does.
+func AIGatewayFlagBootstrap(enabled bool, rollout AIGatewayRollout) platformflags.Definition {
+	accounts := make([]string, 0, len(rollout))
+	for id := range rollout {
+		accounts = append(accounts, id)
+	}
+	slices.Sort(accounts)
+	return platformflags.FromAccountList(enabled, rollout == nil, accounts)
 }

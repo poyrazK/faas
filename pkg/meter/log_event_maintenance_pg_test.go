@@ -12,9 +12,67 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
+	"github.com/onebox-faas/faas/pkg/state"
 )
+
+// adr: 202610171904
+func TestLogEventRetentionUsesCompanyPlanAfterCreatorErasure(t *testing.T) {
+	ctx := t.Context()
+	pool := pgtest.OpenMigrated(t)
+	store := state.NewPgStore(pool)
+	creator, err := store.CreateAccount(ctx, "log-creator@example.test", api.PlanFree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, err := store.CreateAccount(ctx, "log-owner@example.test", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	org, err := store.CreateOrg(ctx, state.Org{Slug: "company-logs", Name: "Company", Plan: api.PlanPro})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AddOrgMember(ctx, org.ID, owner.ID, state.OrgRoleOwner, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AddOrgMember(ctx, org.ID, creator.ID, state.OrgRoleDeveloper, nil); err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{AccountID: creator.ID, OrgID: org.ID, Slug: "company-logs"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpdateAccountProviderCustomerID(ctx, org.ID, "cus_logs"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpdateAccountStripeSubscriptionItem(ctx, org.ID, "si_logs"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RemoveOrgMember(ctx, org.ID, creator.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkAccountDeletionPending(ctx, creator.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.DeleteAccount(ctx, creator.ID); err != nil {
+		t.Fatal(err)
+	}
+	retained, expired := uuid.NewString(), uuid.NewString()
+	if _, err := pool.Exec(ctx, `INSERT INTO log_events(id,occurred_at,account_id,app_id,source,message)
+VALUES ($1,now()-interval '20 days',$3,$4,'http','retained'),($2,now()-interval '31 days',$3,$4,'http','expired')`, retained, expired, app.AccountID, app.ID); err != nil {
+		t.Fatal(err)
+	}
+	if deleted, err := RetentionOnceLogEvents(ctx, partitionTestDB{pool: pool}); err != nil || deleted != 1 {
+		t.Fatalf("company retention: deleted=%d err=%v", deleted, err)
+	}
+	var exists bool
+	if err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM log_events WHERE id=$1)`, retained).Scan(&exists); err != nil || !exists {
+		t.Fatalf("company log lost its paid retention: %v", err)
+	}
+}
 
 func TestLogEventRetentionUsesAccountPlanAndOneDayOrphanFloor(t *testing.T) {
 	ctx := context.Background()

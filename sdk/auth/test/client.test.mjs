@@ -204,3 +204,173 @@ test('sends the CAPTCHA token the Auth app requires', async () => {
   await auth.signInWithPassword({ email: 'a@example.test', password: 'pw' })
   assert.equal('gotrue_meta_security' in api.calls.at(-1).body, false)
 })
+
+test('phone sign-in texts a code and verifies it', async () => {
+  const api = server({
+    'POST /auth/v1/otp': () => [200, {}],
+    'POST /auth/v1/verify': call => call.body.token === '123456' ? [200, tokens(1)] : [403, { error_code: 'otp_expired' }],
+  })
+  const auth = createAuthClient({ url: origin, fetch: api.fetch, store: null })
+  await auth.signInWithPhone({ phone: '+447700900123', captchaToken: 't1' })
+  assert.deepEqual(api.calls[0].body, { phone: '+447700900123', channel: 'sms', create_user: false, gotrue_meta_security: { captcha_token: 't1' } })
+  await assert.rejects(auth.verifyPhone({ phone: '+447700900123', code: '000000' }), { status: 403, code: 'otp_expired' })
+  const session = await auth.verifyPhone({ phone: '+447700900123', code: '123456' })
+  assert.equal(session.accessToken, 'access-1')
+  assert.deepEqual(api.calls[2].body, { type: 'sms', phone: '+447700900123', token: '123456' })
+  assert.equal((await auth.getSession()).accessToken, 'access-1')
+  await auth.signInWithPhone({ phone: '+15555550100', createUser: true })
+  assert.equal(api.calls[3].body.create_user, true)
+})
+
+test('organization single sign-on returns the identity provider URL', async () => {
+  const api = server({ 'POST /auth/v1/sso': call => call.body.domain === 'acme.com' || call.body.provider_id ? [200, { url: 'https://idp.example.com/sso?SAMLRequest=x' }] : [404, { error_code: 'sso_provider_not_found' }] })
+  const auth = createAuthClient({ url: origin, fetch: api.fetch, store: null })
+  assert.deepEqual(await auth.signInWithSSO({ domain: ' Acme.com ', redirectTo: 'https://shop.example.com/', captchaToken: 't1' }), { url: 'https://idp.example.com/sso?SAMLRequest=x' })
+  assert.deepEqual(api.calls[0].body, { domain: 'acme.com', redirect_to: 'https://shop.example.com/', skip_http_redirect: true, gotrue_meta_security: { captcha_token: 't1' } })
+  await auth.signInWithSSO({ providerId: 'p1' })
+  assert.deepEqual(api.calls[1].body, { provider_id: 'p1', skip_http_redirect: true })
+  await assert.rejects(auth.signInWithSSO({ domain: 'globex.com' }), { status: 404, code: 'sso_provider_not_found' })
+})
+
+test('second factors enrol, challenge and verify to aal2', async () => {
+  const jwt = level => `h.${Buffer.from(JSON.stringify({ aal: level })).toString('base64url')}.s`
+  const session = level => ({ access_token: jwt(level), refresh_token: `r-${level}`, expires_in: 600, user: { id: 'u1' } })
+  const api = server({
+    'POST /auth/v1/token': () => [200, session('aal1')],
+    'GET /auth/v1/user': () => [200, { id: 'u1', factors: [{ id: 'f1', factor_type: 'totp', status: 'verified' }, { id: 'rc', factor_type: 'recovery_code', status: 'verified' }] }],
+    'POST /auth/v1/factors': call => [200, call.body.factor_type === 'totp' ? { id: 'f2', type: 'totp', totp: { qr_code: '<svg xmlns="http://www.w3.org/2000/svg"/>', secret: 'S', uri: 'otpauth://' } } : { id: 'f3', factor_type: 'phone', status: 'unverified' }],
+    'POST /auth/v1/factors/f1/challenge': () => [200, { id: 'c1', type: 'totp', expires_at: 1 }],
+    'POST /auth/v1/factors/f1/verify': call => call.body.code === '123456' ? [200, session('aal2')] : [422, { error_code: 'mfa_verification_failed' }],
+    'POST /auth/v1/factors/recovery-codes/verify': () => [200, session('aal2')],
+    'DELETE /auth/v1/factors/f3': () => [200, {}],
+  })
+  const auth = createAuthClient({ url: origin, fetch: api.fetch, store: null })
+  const events = []
+  auth.onAuthStateChange(event => events.push(event))
+  await auth.signInWithPassword({ email: 'a@example.test', password: 'pw' })
+  assert.deepEqual(await auth.mfa.assuranceLevel(), { current: 'aal1', next: 'aal2' })
+  const enrollment = await auth.mfa.enrollTOTP({ friendlyName: 'Phone app' })
+  assert.deepEqual(enrollment.totp.uri, 'otpauth://')
+  assert.equal(enrollment.totp.qr_code, 'data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%2F%3E', 'GoTrue SVG becomes an image URL')
+  assert.deepEqual(api.calls.at(-1).body, { factor_type: 'totp', friendly_name: 'Phone app' })
+  await auth.mfa.enrollPhone({ phone: '+447700900123' })
+  assert.deepEqual(api.calls.at(-1).body, { factor_type: 'phone', phone: '+447700900123' })
+  const challenge = await auth.mfa.challenge('f1')
+  await assert.rejects(auth.mfa.verify({ factorId: 'f1', challengeId: challenge.id, code: '000000' }), { status: 422, code: 'mfa_verification_failed' })
+  await auth.mfa.verify({ factorId: 'f1', challengeId: challenge.id, code: '123456' })
+  assert.deepEqual(api.calls.at(-1).body, { challenge_id: 'c1', code: '123456' })
+  assert.deepEqual(await auth.mfa.assuranceLevel(), { current: 'aal2', next: 'aal2' })
+  await auth.mfa.recoveryCodes.verify('abcd-efgh')
+  assert.deepEqual(api.calls.at(-1).body, { code: 'abcd-efgh' })
+  await auth.mfa.unenroll('f3')
+  assert.deepEqual(events, ['SIGNED_IN', 'MFA_VERIFIED', 'MFA_VERIFIED'])
+})
+
+test('organization SSO verifies domains and manages providers', async () => {
+  const api = server({
+    'POST /auth/v1/token': () => [200, tokens(1)],
+    'POST /authz/v1/orgs/o1/domains': call => [201, { domain: call.body.domain, verified: false, verified_at: null, record: { type: 'TXT', name: '_gregale-auth.acme.com', value: 'gregale-auth-verification=t' } }],
+    'POST /authz/v1/orgs/o1/domains/acme.com/verify': () => [200, { domain: 'acme.com', verified: true }],
+    'POST /authz/v1/orgs/o1/sso': call => [201, { id: 'p1', domains: call.body.domains, role: call.body.role }],
+    'POST /authz/v1/orgs/o1/sso/p1/scim-token': () => [201, { token: 'gscim_x', scim_url: 'https://shop-auth.gregale.app/scim/v2' }],
+  })
+  const auth = createAuthClient({ url: origin, fetch: api.fetch, store: null })
+  await auth.signInWithPassword({ email: 'a@example.test', password: 'pw' })
+  assert.equal((await auth.orgSSO.domains.add('o1', 'acme.com')).record.name, '_gregale-auth.acme.com')
+  assert.equal((await auth.orgSSO.domains.verify('o1', 'acme.com')).verified, true)
+  assert.deepEqual(api.calls.at(-1).body, {})
+  await auth.orgSSO.providers.add('o1', { metadataUrl: 'https://idp.acme.com/m', domains: ['acme.com'], role: 'member' })
+  assert.deepEqual(api.calls.at(-1).body, { metadata_url: 'https://idp.acme.com/m', domains: ['acme.com'], role: 'member' })
+  assert.equal((await auth.orgSSO.providers.scimToken('o1', 'p1')).token, 'gscim_x')
+  assert.equal(api.calls.at(-1).headers.Authorization, 'Bearer access-1')
+})
+
+test('lists and revokes the apps a user connected through the OAuth server', async () => {
+  const grant = { client: { id: 'c1', name: 'Claude' }, scopes: ['openid'], granted_at: '2026-10-17T00:00:00Z' }
+  const api = server({
+    'POST /auth/v1/token': () => [200, tokens(1)],
+    'GET /auth/v1/user/oauth/grants': () => [200, [grant]],
+    'DELETE /auth/v1/user/oauth/grants': () => [204, undefined],
+  })
+  const auth = createAuthClient({ url: origin, fetch: api.fetch, store: null })
+  await auth.signInWithPassword({ email: 'a@example.test', password: 'pw' })
+  assert.deepEqual(await auth.connectedApps.list(), [grant])
+  await auth.connectedApps.revoke('c1')
+  const revoke = api.calls.at(-1)
+  assert.equal(revoke.url.searchParams.get('client_id'), 'c1')
+  assert.equal(revoke.headers.Authorization, 'Bearer access-1')
+})
+
+test('anonymous users sign in, link a provider and unlink a sign-in method', async () => {
+  const api = server({
+    'POST /auth/v1/signup': () => [200, { ...tokens(1), user: { id: 'u1', is_anonymous: true } }],
+    'GET /auth/v1/user/identities/authorize': () => [200, { url: 'https://github.com/login/oauth/authorize?x=1' }],
+    'DELETE /auth/v1/user/identities/i1': () => [204, undefined],
+  })
+  const auth = createAuthClient({ url: origin, fetch: api.fetch, store: null })
+  const session = await auth.signInAnonymously({ captchaToken: 'cap' })
+  assert.equal(session.accessToken, 'access-1')
+  assert.deepEqual(api.calls[0].body, { gotrue_meta_security: { captcha_token: 'cap' } })
+  assert.deepEqual(await auth.linkIdentity({ provider: 'github', redirectTo: 'https://shop.example.com/app' }), { url: 'https://github.com/login/oauth/authorize?x=1' })
+  const link = api.calls.at(-1)
+  assert.equal(link.url.searchParams.get('provider'), 'github')
+  assert.equal(link.url.searchParams.get('skip_http_redirect'), 'true')
+  assert.equal(link.url.searchParams.get('redirect_to'), 'https://shop.example.com/app')
+  assert.equal(link.headers.Authorization, 'Bearer access-1')
+  await auth.unlinkIdentity('i1')
+  assert.equal(api.calls.at(-1).key, 'DELETE /auth/v1/user/identities/i1')
+})
+
+test('lists the user own sessions, ends one and signs out the others', async () => {
+  const listed = [{ id: 's2', created_at: '2026-10-18T09:00:00Z', last_active_at: '2026-10-18T10:00:00Z', user_agent: 'Mozilla/5.0', ip: '203.0.113.7', aal: 'aal1', current: false }]
+  const api = server({
+    'POST /auth/v1/token': () => [200, tokens(1)],
+    'GET /authz/v1/sessions': () => [200, { sessions: listed }],
+    'DELETE /authz/v1/sessions/s2': () => [204, undefined],
+    'POST /auth/v1/logout': () => [204, undefined],
+  })
+  const auth = createAuthClient({ url: origin, fetch: api.fetch, store: null })
+  await auth.signInWithPassword({ email: 'a@example.test', password: 'pw' })
+  assert.deepEqual(await auth.sessions.list(), listed)
+  await auth.sessions.revoke('s2')
+  assert.equal(api.calls.at(-1).headers.Authorization, 'Bearer access-1')
+  await auth.signOut({ scope: 'others' })
+  assert.equal(api.calls.at(-1).url.searchParams.get('scope'), 'others')
+  assert.notEqual(await auth.getSession(), null, 'signing the others out keeps this session')
+  assert.equal(auth.hostedAccountUrl({ redirectTo: 'https://shop.example.com/app' }), `${origin}/ui/account?redirect_to=https%3A%2F%2Fshop.example.com%2Fapp`)
+})
+
+test('deletes the user own account and forgets the session', async () => {
+  const api = server({
+    'POST /auth/v1/token': () => [200, tokens(1)],
+    'DELETE /authz/v1/account': () => [200, { deleted: true, organizations_deleted: 1 }],
+  })
+  const auth = createAuthClient({ url: origin, fetch: api.fetch, store: null })
+  await auth.signInWithPassword({ email: 'a@example.test', password: 'pw' })
+  const events = []
+  auth.onAuthStateChange(event => events.push(event))
+  assert.deepEqual(await auth.deleteAccount(), { organizations_deleted: 1 })
+  assert.equal(api.calls.at(-1).headers.Authorization, 'Bearer access-1')
+  assert.equal(await auth.getSession(), null)
+  assert.deepEqual(events, ['SIGNED_OUT'])
+})
+
+test('chooses the active organization and reads it from the refreshed token', async () => {
+  const jwt = claims => `eyJhbGciOiJFUzI1NiJ9.${Buffer.from(JSON.stringify(claims)).toString('base64url')}.sig`
+  const org = { org_id: 'o1', org_slug: 'acme', org_role: 'admin', org_permissions: ['org:read', 7] }
+  let next = { ...tokens(1), access_token: jwt({ sub: 'u1' }) }
+  const api = server({
+    'POST /auth/v1/token': () => [200, next],
+    'POST /authz/v1/active-organization': call => [200, { organization: call.body.org ? { id: call.body.org, slug: 'acme', role: 'admin' } : null }],
+  })
+  const auth = createAuthClient({ url: origin, fetch: api.fetch, store: null })
+  await auth.signInWithPassword({ email: 'a@example.test', password: 'pw' })
+  assert.equal(await auth.organizations.active(), null)
+  next = { ...tokens(2), access_token: jwt({ sub: 'u1', ...org }) }
+  assert.deepEqual(await auth.organizations.setActive('o1'), { id: 'o1', slug: 'acme', role: 'admin', permissions: ['org:read'] })
+  assert.deepEqual(api.calls.map(c => c.key).slice(-2), ['POST /authz/v1/active-organization', 'POST /auth/v1/token'], 'set, then refresh')
+  assert.equal((await auth.organizations.active()).slug, 'acme')
+  next = { ...tokens(3), access_token: jwt({ sub: 'u1' }) }
+  assert.equal(await auth.organizations.setActive(null), null)
+  assert.deepEqual(api.calls.at(-2).body, { org: null })
+})

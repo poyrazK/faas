@@ -1,0 +1,10 @@
+---
+# Inclusion, activation, and SMTP dispatch all require explicit operator opt-in.
+faas_internal_mail_enabled: false
+faas_internal_mail_env_src: ""
+faas_internal_mail_age_identity_src: ""
+# Installs only the helper and its private environment. Postfix configuration
+# and runtime flags remain explicit operator choices.
+faas_internal_mail_reports_managed: false
+faas_internal_mail_report_env_src: ""
+faas_internal_mail_metrics_enabled: false

@@ -92,6 +92,12 @@ func HelloGitOpsWorkerImage(repo string) (fakeImage, string) {
 	return layeredHelloImageOnPortWithCmd(repo, "queue worker", false, 8080, []string{"/hello-server", "-queue-ack", "-gitops-resilience"})
 }
 
+// HelloManagedServiceWorkerImage adds a private startup marker and an explicit
+// task-only assertion mode to the normal qualification-capable worker image.
+func HelloManagedServiceWorkerImage(repo string) (fakeImage, string) {
+	return layeredHelloImageOnPortWithCmd(repo, "service-bound worker", false, 8080, []string{"/hello-server", "-queue-ack", "-gitops-resilience", "-worker-startup-marker"})
+}
+
 // ImageOnlyBuilderBaseImage is a startup fixture for metal tests that deploy
 // full-rootfs OCI images and never launch a source builder. imaged still stages
 // and validates its builder base before subscribing, so this image carries the
@@ -191,17 +197,23 @@ func HelloImageWithoutHealthz(repo, helloBody string) (fakeImage, string) {
 // numeric user/group, working directory, and image environment in a shell-free
 // full-rootfs image. Its /contract endpoint exposes only fixed fixture fields.
 func HelloImageWithProcessContract(repo, body, user string) (fakeImage, string) {
-	return helloImageWithProcessContract(repo, body, user, false)
+	return helloImageWithProcessContract(repo, body, user, false, 8080)
+}
+
+// HelloImageWithProcessContractOnPort is HelloImageWithProcessContract served
+// on an image-declared port. An empty user models an image without USER.
+func HelloImageWithProcessContractOnPort(repo, body, user string, port int) (fakeImage, string) {
+	return helloImageWithProcessContract(repo, body, user, false, port)
 }
 
 // HelloImageWithProcessHealthcheck adds a shell-free OCI exec probe that
 // reports its process context to the fixture's /contract endpoint.
 func HelloImageWithProcessHealthcheck(repo, body, user string) (fakeImage, string) {
-	return helloImageWithProcessContract(repo, body, user, true)
+	return helloImageWithProcessContract(repo, body, user, true, 8080)
 }
 
-func helloImageWithProcessContract(repo, body, user string, healthcheck bool) (fakeImage, string) {
-	img, _ := HelloImage(repo, body)
+func helloImageWithProcessContract(repo, body, user string, healthcheck bool, port int) (fakeImage, string) {
+	img, _ := layeredHelloImageOnPort(repo, body, false, port)
 	var cfg map[string]any
 	if err := json.Unmarshal(img.configBytes, &cfg); err != nil {
 		panic(err)
@@ -241,6 +253,35 @@ func helloImageWithProcessContract(repo, body, user string, healthcheck bool) (f
 // the second (above-base) layer into `above`.
 func HelloImageAboveBase(repo, helloBody string) (fakeImage, string) {
 	return layeredHelloImageOnPort(repo, helloBody, true, 8080)
+}
+
+// FailingAPIImageAboveBase is HelloImageAboveBase whose /api answers 500
+// while / and /healthz stay healthy: a release that passes its startup gate
+// and the post-readiness smoke, then fails real API requests. The
+// safe-release drill deploys it as a bad canary.
+func FailingAPIImageAboveBase(repo, helloBody string) (fakeImage, string) {
+	return HelloImageAboveBaseWithArgs(repo, helloBody, "-fail-api")
+}
+
+// HelloImageAboveBaseWithArgs is HelloImageAboveBase with extra hello-server
+// arguments. Distinct arguments give a distinct image digest, which lets a
+// test deploy a second healthy revision of the same app.
+func HelloImageAboveBaseWithArgs(repo, helloBody string, args ...string) (fakeImage, string) {
+	return layeredHelloImageOnPortWithCmd(repo, helloBody, true, 8080, append([]string{"/hello-server"}, args...))
+}
+
+// FailingLivenessImageAboveBase is HelloImageAboveBase whose /livez answers
+// 500 while / and /healthz stay healthy, so a liveness probe on /livez keeps
+// restarting it. The safe-release drill deploys it as a crash-looping canary.
+func FailingLivenessImageAboveBase(repo, helloBody string) (fakeImage, string) {
+	return HelloImageAboveBaseWithArgs(repo, helloBody, "-fail-livez")
+}
+
+// DelayedRootFailureImageAboveBase is HelloImageAboveBase whose / answers 500
+// after its first few requests, so the release passes the post-readiness
+// smoke and then fails / under synthetic probes (ADR-1446).
+func DelayedRootFailureImageAboveBase(repo, helloBody string) (fakeImage, string) {
+	return HelloImageAboveBaseWithArgs(repo, helloBody, "-fail-root-after-requests", "3")
 }
 
 // CPUBoundImage returns a single-layer image whose entrypoint is hello-server

@@ -249,10 +249,15 @@ func TestMemStoreLifecycleRecoverySurface(t *testing.T) {
 	if err := store.NodeSetLifecycle(ctx, active.ID, state.NodeLifecycleActive, state.NodeLifecycleDraining); err != nil {
 		t.Fatalf("prepare drain completion: %v", err)
 	}
-	completedAt := time.Date(2026, 9, 4, 22, 0, 0, 0, time.UTC)
-	if err := store.NodeMarkDrainCompleted(ctx, active.ID, completedAt); err != nil {
-		t.Fatalf("NodeMarkDrainCompleted: %v", err)
+	draining, err = store.NodeGet(ctx, active.ID)
+	if err != nil {
+		t.Fatal(err)
 	}
+	completion, err := store.CompleteNodeLifecycle(ctx, state.NodeLifecycleCompletion{NodeID: active.ID, Generation: draining.LifecycleGeneration, Lifecycle: draining.Lifecycle})
+	if err != nil {
+		t.Fatal(err)
+	}
+	completedAt := completion.CompletedAt
 	got, err = store.NodeGet(ctx, active.ID)
 	if err != nil || got.Lifecycle != state.NodeLifecycleMaintenance || got.Active || got.DrainCompletedAt == nil || !got.DrainCompletedAt.Equal(completedAt) {
 		t.Fatalf("completed drain = %+v, %v", got, err)
@@ -264,8 +269,8 @@ func TestMemStoreLifecycleRecoverySurface(t *testing.T) {
 	if err := store.NodeMarkRecovered(ctx, active.ID); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("NodeMarkRecovered non-recovering = %v, want ErrConflict", err)
 	}
-	if err := store.NodeMarkRecovered(ctx, recovering.ID); err != nil {
-		t.Fatalf("NodeMarkRecovered: %v", err)
+	if _, err := store.CompleteNodeLifecycle(ctx, state.NodeLifecycleCompletion{NodeID: recovering.ID, Generation: recovering.LifecycleGeneration, Lifecycle: recovering.Lifecycle}); err != nil {
+		t.Fatal(err)
 	}
 	got, err = store.NodeGet(ctx, recovering.ID)
 	if err != nil || got.Lifecycle != state.NodeLifecycleActive || got.LastRecoveryOutcome == nil || *got.LastRecoveryOutcome != "succeeded" {

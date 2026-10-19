@@ -44,3 +44,6 @@ be retried on a subsequent running instance. Confirm that the alert's 15-minute
 failure count falls below three and that new `captured` or `reused` outcomes
 increase. Do not treat a `captured` counter alone as proof that imaged has
 published the snapshot row.
+
+For captured-but-unpublished or published-but-not-live backlog, see
+[post-capture publication and activation diagnostics](FaasPostCapture.md).

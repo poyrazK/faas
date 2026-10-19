@@ -20,6 +20,7 @@ func TestMigrationHTTPFunctionPushQueueBinding(t *testing.T) {
 		t.Fatal(err)
 	}
 	accountID := seedAccount(t, ctx, pool)
+	seedPersonalOrg(t, ctx, pool, accountID) // a queue binding's org must match its app's (#4882)
 	appID := seedApp(t, ctx, pool, accountID)
 	for _, tc := range []struct {
 		name, mode, class string

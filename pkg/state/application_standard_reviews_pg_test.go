@@ -112,7 +112,22 @@ func TestPgApplicationStandardReviews(t *testing.T) {
 		}
 	}
 	// Actor erasure retains company review and approval attribution, without
-	// holding account foreign keys or contact information in the review.
+	// holding account foreign keys or contact information in the review. The
+	// actor first hands the company over: an owner of a shared organization
+	// cannot be purged (#4882).
+	successor, err := store.CreateAccountWithPersonalOrg(ctx, CreateAccountWithPersonalOrgParams{Email: "review-successor@example.com", Plan: api.PlanPro})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AddOrgMember(ctx, org.ID, successor.Account.ID, OrgRoleAdmin, &actor.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.TransferOrgOwnership(ctx, org.ID, actor.ID, successor.Account.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RemoveOrgMember(ctx, org.ID, actor.ID); err != nil {
+		t.Fatal(err)
+	}
 	for _, query := range []string{
 		`DELETE FROM app_trusted_signers WHERE account_id IN (SELECT id FROM accounts WHERE email = 'review-owner@example.com')`,
 		`DELETE FROM deployments WHERE app_id IN (SELECT id FROM apps WHERE account_id IN (SELECT id FROM accounts WHERE email = 'review-owner@example.com'))`,
