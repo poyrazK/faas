@@ -224,6 +224,14 @@ func applyLayer(dst string, tr *tar.Reader, opts layerApplyOptions) error {
 			if err != nil {
 				return err
 			}
+			// The staging root is the image's "/". A directory entry may set
+			// its mode and ownership, but no other entry may replace it:
+			// applyEntry removes what sits at its target, so a symlink named
+			// "./" would swap the empty root for a link and every later entry
+			// would be written wherever that link points.
+			if filepath.Clean(target) == filepath.Clean(dst) && hdr.Typeflag != tar.TypeDir {
+				return fmt.Errorf("rootfs: archive entry %q would replace the image root", hdr.Name)
+			}
 
 			base := filepath.Base(archiveName)
 			switch {
@@ -393,6 +401,11 @@ func applyEntry(base, target string, hdr *tar.Header, tr io.Reader, res Resolver
 // applyEntryWithBudget charges regular-file bytes to budget before writing
 // them; a nil budget is unbounded.
 func applyEntryWithBudget(base, target string, hdr *tar.Header, tr io.Reader, res Resolver, budget *extractionBudget) error {
+	// Every extractor shares this guard: base is the archive root, and only a
+	// directory entry may land on it (see applyLayer).
+	if filepath.Clean(target) == filepath.Clean(base) && hdr.Typeflag != tar.TypeDir {
+		return fmt.Errorf("rootfs: archive entry %q would replace the archive root", hdr.Name)
+	}
 	switch hdr.Typeflag {
 	case tar.TypeDir:
 		// A directory entry replaces any non-directory at its path, as the
