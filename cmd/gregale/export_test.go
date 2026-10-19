@@ -1859,6 +1859,7 @@ var TopLevelUsage = topLevelUsage
 var TopPatterns = topPatterns
 var TraceHostMatches = traceHostMatches
 var TraceLookupErrorLine = traceLookupErrorLine
+var TraceMatchBreakdown = traceMatchBreakdown
 var TraceMethodMatches = traceMethodMatches
 var TraceWatchComplete = traceWatchComplete
 var TraceWatchRetryDelay = traceWatchRetryDelay

@@ -76,10 +76,9 @@ var composeServiceKeyReasons = map[string]string{
 	"platform":        "services run on linux/amd64",
 }
 
-// composeBuildKeyReasons covers build: keys beyond context and dockerfile.
+// composeBuildKeyReasons covers build: keys beyond context, dockerfile, args
+// and target.
 var composeBuildKeyReasons = map[string]string{
-	"args":              "build args are not passed to the builder; give each ARG a default in the Dockerfile",
-	"target":            "the builder builds the Dockerfile's final stage; build target is not selectable",
 	"secrets":           "build secrets are not available to the builder",
 	"ssh":               "SSH forwarding is not available to the builder",
 	"dockerfile_inline": "inline Dockerfiles are not supported; commit the Dockerfile and point build.dockerfile at it",
@@ -107,12 +106,12 @@ func composeServiceKeyWarnings(raw, services map[string]any) []string {
 	if build, ok := raw["build"].(map[string]any); ok {
 		for _, key := range slices.Sorted(maps.Keys(build)) {
 			switch {
-			case key == "context" || key == "dockerfile" || strings.HasPrefix(key, "x-"):
+			case key == "context" || key == "dockerfile" || key == "args" || key == "target" || strings.HasPrefix(key, "x-"):
 				continue
 			case composeBuildKeyReasons[key] != "":
 				warnings = append(warnings, fmt.Sprintf("build.%s ignored: %s", key, composeBuildKeyReasons[key]))
 			default:
-				warnings = append(warnings, fmt.Sprintf("build.%s ignored: the builder uses only build.context and build.dockerfile", key))
+				warnings = append(warnings, fmt.Sprintf("build.%s ignored: the builder uses only build.context, build.dockerfile, build.args and build.target", key))
 			}
 		}
 	}
