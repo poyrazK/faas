@@ -284,6 +284,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_FROZEN_FAST_PATH` | schedd | `default` |  |  | `` | optional boolean switch for the ADR-1740 frozen fast path (thaw from a ticket recorded at freeze); needs FAAS_FROZEN_TIER; production default is off |
 | `FAAS_FROZEN_TIER` | schedd | `default` |  |  | `` | optional boolean switch for the ADR-1151 frozen tier; production default is off |
 | `FAAS_FROZEN_TIER_APPS` | schedd | `default` |  |  | `` | optional boolean switch extending the ADR-1151 frozen tier to request-mode apps; needs FAAS_FROZEN_TIER; production default is off |
+| `FAAS_FROZEN_TIER_WORKERS` | schedd | `default` |  |  | `` | optional boolean switch letting worker pools freeze surplus workers and thaw them before booting new ones (ADR-20261019103000); needs FAAS_FROZEN_TIER; production default is off |
 | `FAAS_FUNCTION_CONCURRENCY` | guest, shared | `guest` |  |  | `` | stamped by imaged on function deployments whose function_concurrency is above one (ADR-1342) |
 | `FAAS_FUNCTION_RUNNER_GO124` | imaged | `unit` | yes |  | `path-exists` |  |
 | `FAAS_FUNCTION_RUNNER_GO124_ALPINE` | imaged | `unit` | yes |  | `path-exists` |  |

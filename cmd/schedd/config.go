@@ -203,6 +203,11 @@ type Config struct {
 	// Off by default and ignored unless frozen_tier is on.
 	// FAAS_FROZEN_TIER_APPS overrides it.
 	FrozenTierApps bool `toml:"frozen_tier_apps"`
+	// FrozenTierWorkers (ADR-20261019103000) lets a worker pool freeze a
+	// surplus worker that holds no queue lease instead of stopping it, and
+	// thaw it before booting a new one. Off by default and ignored unless
+	// frozen_tier is on. FAAS_FROZEN_TIER_WORKERS overrides it.
+	FrozenTierWorkers bool `toml:"frozen_tier_workers"`
 
 	// FrozenFastPath (ADR-1740) thaws a frozen VM from a ticket recorded
 	// when it froze: one runtime-values read beside the vmmd thaw and one
@@ -566,6 +571,13 @@ func LoadConfig(path string) (*Config, error) {
 			return nil, fmt.Errorf("schedd: FAAS_FROZEN_TIER_APPS must be a boolean (got %q)", v)
 		}
 		c.FrozenTierApps = enabled
+	}
+	if v := os.Getenv("FAAS_FROZEN_TIER_WORKERS"); v != "" {
+		enabled, err := strconv.ParseBool(v)
+		if err != nil {
+			return nil, fmt.Errorf("schedd: FAAS_FROZEN_TIER_WORKERS must be a boolean (got %q)", v)
+		}
+		c.FrozenTierWorkers = enabled
 	}
 	applyRoutingEnv()
 	return c, nil

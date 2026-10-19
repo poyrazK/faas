@@ -129,6 +129,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
+| 20261019103000 | [Frozen worker pools](20261019103000-frozen-worker-pools.md) | accepted; behind `frozen_tier_workers` | A pool scaling in freezes a surplus worker that holds no lease and thaws it before booting new ones; a frozen worker stops instead of parking and gives up its account slot when another pool needs it |
 | 20261018101500 | [Worker pools scale out off the scheduler loop, with brief characterization for proven workers](20261018101500-worker-pool-scale-out-off-loop.md) | accepted | The targets trigger reconciles worker apps in background runs, one per account at a time; a declared worker whose deployment passed the full window on the node boots with `faas.worker=proven` and is characterized in 1 s |
 | 1728 | [Owner-authorized deployment response checks](1728-owner-authorized-deployment-response-checks.md) | accepted; native deployment validation pending | Exact-deployment GET checks through the trusted gateway, with bounded HTTP evidence and no forwarded account credentials |
 | 2026101709 | [Receipt-bound repairable operation transactions](2026101709-repairable-operation-transactions.md) | accepted for internal qualification | Go, Node and Python capture, business writes and receipt bindings commit together; replay survives payload compaction |

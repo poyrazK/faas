@@ -43,6 +43,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/e2etest"
@@ -66,24 +67,25 @@ type workerColdStart struct {
 	breakdown     map[string]any // wake.cold_boot_breakdown payload
 }
 
-func TestWorkerScaleFromZeroMetal(t *testing.T) {
-	if os.Getenv("FAAS_TEST_KERNEL") == "" {
-		t.Skip("FAAS_TEST_KERNEL unset; skipping metal worker scale-from-zero test")
-	}
-	if _, err := os.Stat("/dev/kvm"); err != nil {
-		t.Skipf("/dev/kvm not available: %v", err)
-	}
-	cycles := 1
-	if raw := os.Getenv("FAAS_WORKER_SCALE_FROM_ZERO_CYCLES"); raw != "" {
-		n, err := strconv.Atoi(raw)
-		if err != nil || n < 1 {
-			t.Fatalf("FAAS_WORKER_SCALE_FROM_ZERO_CYCLES=%q: want a positive integer", raw)
-		}
-		cycles = n
-	}
+// workerPoolRig is a Pro worker pool on real Firecracker: the app consumes a
+// pull binding, scales on queue depth (target 1) from zero to the plan's
+// worker cap, and its deployment is live.
+type workerPoolRig struct {
+	h       *e2etest.Harness
+	pool    *pgxpool.Pool
+	key     string
+	slug    string
+	appID   string
+	poolMax int
+}
+
+// startWorkerPoolRig deploys the queue-consumer fixture as a worker pool.
+// extraEnv reaches every daemon. The caller owns teardown of its workers.
+func startWorkerPoolRig(t *testing.T, extraEnv ...string) *workerPoolRig {
+	t.Helper()
 	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
-		return
+		t.Skip("no Postgres for the metal worker pool")
 	}
 	if err := dbMigrateUp(t, pool); err != nil {
 		t.Fatalf("migrate: %v", err)
@@ -97,7 +99,7 @@ func TestWorkerScaleFromZeroMetal(t *testing.T) {
 	_ = registry.AddImage("onebox-faas/deploy-base", deployBaseImg)
 	e2etest.OverrideDeployBase(t, registry.Host()+"/onebox-faas/deploy-base:latest")
 
-	h := e2etest.Start(t, pool, e2etest.DeployWake|e2etest.VMMDMetrics, identityEnv...)
+	h := e2etest.Start(t, pool, e2etest.DeployWake|e2etest.VMMDMetrics, append(identityEnv, extraEnv...)...)
 	t.Cleanup(func() {
 		if t.Failed() {
 			h.DumpLogs(t)
@@ -140,6 +142,31 @@ func TestWorkerScaleFromZeroMetal(t *testing.T) {
 	if err := json.Unmarshal(raw, &dep); err != nil {
 		t.Fatal(err)
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+	defer cancel()
+	if _, err := e2etest.WaitForDeploymentLive(ctx, t, pool, dep.ID, 12*time.Minute); err != nil {
+		t.Fatalf("deployment not live: %v", err)
+	}
+	return &workerPoolRig{h: h, pool: pool, key: key, slug: slug, appID: appID, poolMax: poolMax}
+}
+
+func TestWorkerScaleFromZeroMetal(t *testing.T) {
+	if os.Getenv("FAAS_TEST_KERNEL") == "" {
+		t.Skip("FAAS_TEST_KERNEL unset; skipping metal worker scale-from-zero test")
+	}
+	if _, err := os.Stat("/dev/kvm"); err != nil {
+		t.Skipf("/dev/kvm not available: %v", err)
+	}
+	cycles := 1
+	if raw := os.Getenv("FAAS_WORKER_SCALE_FROM_ZERO_CYCLES"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 1 {
+			t.Fatalf("FAAS_WORKER_SCALE_FROM_ZERO_CYCLES=%q: want a positive integer", raw)
+		}
+		cycles = n
+	}
+	rig := startWorkerPoolRig(t)
+	h, key, slug, appID, poolMax := rig.h, rig.key, rig.slug, rig.appID, rig.poolMax
 	// Every message is acknowledged, so the pool drains to zero after the
 	// stabilization window. Wait for it, or the worker microVMs outlive the
 	// harness (vmmd keeps VMs across a restart).
@@ -148,11 +175,6 @@ func TestWorkerScaleFromZeroMetal(t *testing.T) {
 			t.Errorf("teardown: %v; its microVMs will leak", err)
 		}
 	})
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
-	defer cancel()
-	if _, err := e2etest.WaitForDeploymentLive(ctx, t, pool, dep.ID, 12*time.Minute); err != nil {
-		t.Fatalf("deployment not live: %v", err)
-	}
 
 	var singles []workerColdStart
 	for cycle := 1; cycle <= cycles; cycle++ {

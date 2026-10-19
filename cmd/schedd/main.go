@@ -1657,7 +1657,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if cfg.FrozenTierApps {
 			engine.EnableFrozenTierApps()
 		}
-		log.Info("frozen tier enabled (ADR-1151)", "apps", cfg.FrozenTierApps,
+		if cfg.FrozenTierWorkers {
+			engine.EnableFrozenTierWorkers()
+		}
+		log.Info("frozen tier enabled (ADR-1151)", "apps", cfg.FrozenTierApps, "workers", cfg.FrozenTierWorkers,
 			"frozen_ttl_seconds", api.FrozenTTLSeconds, "frozen_max_per_node", api.FrozenMaxPerNode)
 	}
 	if cfg.FrozenFastPath {
