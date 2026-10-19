@@ -21,7 +21,9 @@
 package apidserver
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -123,6 +125,13 @@ func (s *server) createSurfaceUnderQuotas(
 	if !certKind.Valid() {
 		return state.TenantSurface{}, nil, api.ErrTenantSurfaceCertKindInvalid(string(certKind))
 	}
+	for _, h := range req.Hostnames {
+		if hn := strings.ToLower(strings.TrimSpace(h)); hn != "" {
+			if problem := s.tenantHostnameProblem(ctx, hn); problem != nil {
+				return state.TenantSurface{}, nil, problem
+			}
+		}
+	}
 	surf, err := s.store.CreateTenantSurfaceIfUnderQuota(ctx, state.CreateTenantSurfaceParams{
 		AccountID: acct.ID,
 		AppID:     app.ID,
@@ -153,6 +162,29 @@ func (s *server) createSurfaceUnderQuotas(
 		hostnames = append(hostnames, created)
 	}
 	return surf, hostnames, nil
+}
+
+// tenantHostnameProblem refuses a hostname that cannot be a tenant hostname:
+// not a lowercase DNS name of at least two labels, or below a wildcard custom
+// domain (ADR-167). Both creation paths, a surface with hostnames and an added
+// hostname, check it; the surface path used to skip both checks.
+func (s *server) tenantHostnameProblem(ctx context.Context, hostname string) *api.Problem {
+	if !state.ValidPlatformTenantHostname(hostname) {
+		return api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid hostname",
+			fmt.Sprintf("%q is not a DNS hostname of at least two labels", hostname))
+	}
+	ws, ok := s.store.(state.CustomDomainWildcardStore)
+	if !ok {
+		return nil
+	}
+	wildcard, err := ws.WildcardDomainForHost(ctx, hostname)
+	if err == nil {
+		return api.ErrWildcardDomainTenantSurfaceOverlap(wildcard.Domain, hostname)
+	}
+	if !errors.Is(err, state.ErrNotFound) {
+		return api.ErrCapacity("could not check wildcard-domain overlap")
+	}
+	return nil
 }
 
 // surfaceCreateProblem maps a CreateTenantSurfaceIfUnderQuota
@@ -358,14 +390,9 @@ func (s *server) addTenantHostname(w http.ResponseWriter, r *http.Request, acct 
 		api.WriteProblem(w, api.ErrCapacity("unknown plan"))
 		return
 	}
-	if ws, ok := s.store.(state.CustomDomainWildcardStore); ok {
-		if wildcard, werr := ws.WildcardDomainForHost(r.Context(), hostname); werr == nil {
-			api.WriteProblem(w, api.ErrWildcardDomainTenantSurfaceOverlap(wildcard.Domain, hostname))
-			return
-		} else if !errors.Is(werr, state.ErrNotFound) {
-			api.WriteProblem(w, api.ErrCapacity("could not check wildcard-domain overlap"))
-			return
-		}
+	if problem := s.tenantHostnameProblem(r.Context(), hostname); problem != nil {
+		api.WriteProblem(w, problem)
+		return
 	}
 	h, err := s.store.CreateTenantHostnameIfUnderQuota(r.Context(), state.CreateTenantHostnameParams{
 		SurfaceID:      surf.ID,
