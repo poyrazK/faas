@@ -37,7 +37,7 @@ func main() {
 
 func run(ctx context.Context, log *slog.Logger) error {
 	// stopping is the unit's SIGTERM. ctx also ends once a two-generation
-	// hand-off's successor serves (ADR-1580).
+	// hand-off's successor serves (ADR-1736).
 	stopping := ctx
 	ctx, endGeneration := context.WithCancel(ctx)
 	defer endGeneration()
@@ -70,7 +70,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		}
 	}
 	// Each generation owns a slot of the outbox, so a hand-off's two
-	// generations never deliver the same callback file (ADR-1580).
+	// generations never deliver the same callback file (ADR-1736).
 	outboxSlot, err := genslot.Acquire(outboxRoot)
 	if err != nil {
 		return fmt.Errorf("realtimed: claim callback outbox: %w", err)
@@ -228,7 +228,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		}, callbackReplayRestarts.Inc)
 	}()
 	// The drains let a connection accepted just before shutdown deliver its
-	// request; net/http drops one it reads after Shutdown began (ADR-1580).
+	// request; net/http drops one it reads after Shutdown began (ADR-1736).
 	// During a hand-off the successor accepts on the same sockets.
 	serverDrain, healthDrain := wire.NewHTTPDrain(server), wire.NewHTTPDrain(healthServer)
 	serverErr := make(chan error, 2)
@@ -305,7 +305,7 @@ func listenRealtimeSocket(path string) (net.Listener, error) {
 		_ = l.Close()
 		return nil, err
 	}
-	wire.Share(l) // a hand-off successor serves the same socket (ADR-1580)
+	wire.Share(l) // a hand-off successor serves the same socket (ADR-1736)
 	return l, nil
 }
 

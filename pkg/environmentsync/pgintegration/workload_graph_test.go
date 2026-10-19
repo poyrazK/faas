@@ -18,6 +18,21 @@ import (
 
 func workloadGraphFixture(t *testing.T, basic gitOpsTestStore, serviceBoundWorker ...bool) (state.EnvironmentGitOpsLease, environmentsync.Plan, state.QueueBindingConsumerResult) {
 	t.Helper()
+	return workloadGraphFixtureWithWorkerTransport(t, basic, len(serviceBoundWorker) > 0 && serviceBoundWorker[0], "")
+}
+
+func workloadGraphFixtureWithWorkerTransport(t *testing.T, basic gitOpsTestStore, serviceBoundWorker bool, transport api.ServiceBindingTransport) (state.EnvironmentGitOpsLease, environmentsync.Plan, state.QueueBindingConsumerResult) {
+	t.Helper()
+	return workloadGraphFixtureWithWorkerVariables(t, basic, serviceBoundWorker, transport, nil)
+}
+
+func workloadGraphFixtureWithWorkerVariables(t *testing.T, basic gitOpsTestStore, serviceBoundWorker bool, transport api.ServiceBindingTransport, variables map[string]string) (state.EnvironmentGitOpsLease, environmentsync.Plan, state.QueueBindingConsumerResult) {
+	t.Helper()
+	return workloadGraphFixtureWithWorkerSources(t, basic, serviceBoundWorker, transport, variables, "")
+}
+
+func workloadGraphFixtureWithWorkerSources(t *testing.T, basic gitOpsTestStore, serviceBoundWorker bool, transport api.ServiceBindingTransport, variables map[string]string, sourceKind string) (state.EnvironmentGitOpsLease, environmentsync.Plan, state.QueueBindingConsumerResult) {
+	t.Helper()
 	store, source, desired, _, _, _ := workloadIntentFixture(t, basic, "enforce")
 	apiWorkload := desired.Definition.Workloads["api"]
 	apiWorkload.Runtime = json.RawMessage(`{"port":8080,"healthz":"/readyz","ports":[],"startup_deadline_s":25,"stop_grace_period":20000000000}`)
@@ -42,14 +57,31 @@ func workloadGraphFixture(t *testing.T, basic gitOpsTestStore, serviceBoundWorke
 		t.Fatal(err)
 	}
 	enabled := true
-	workerWorkload := api.EnvironmentWorkload{App: worker.Slug, Source: &api.EnvironmentWorkloadSource{Kind: "image", Image: "registry.example/worker@sha256:" + strings.Repeat("e", 64)},
+	workerWorkload := api.EnvironmentWorkload{Variables: variables, App: worker.Slug, Source: &api.EnvironmentWorkloadSource{Kind: "image", Image: "registry.example/worker@sha256:" + strings.Repeat("e", 64)},
 		Runtime: json.RawMessage(`{"execution_mode":"worker"}`), QueueBindings: map[string]api.EnvironmentQueueBinding{
 			"orders": {QueueName: "orders", Mode: "push", WorkloadClass: "worker", Enabled: &enabled, MaxConcurrency: 1}},
 		QueueSmoke: map[string]api.EnvironmentQueueSmoke{"orders": {Payload: json.RawMessage(`{"id":"qualification-smoke"}`)}}}
-	if len(serviceBoundWorker) > 0 && serviceBoundWorker[0] {
+	if serviceBoundWorker {
 		workerWorkload.ServiceBindings = map[string]api.EnvironmentServiceBinding{"api": {Workload: "api", EnvKey: "API_URL"}}
 	}
+	if transport != "" {
+		raw, err := json.Marshal(map[string]any{"execution_mode": api.ExecutionModeWorker, "service_binding_transport": transport})
+		if err != nil {
+			t.Fatal(err)
+		}
+		workerWorkload.Runtime = raw
+	}
 	desired.Definition.Workloads["worker"] = workerWorkload
+	if sourceKind != "" {
+		for _, name := range []string{"api", "worker"} {
+			w := desired.Definition.Workloads[name]
+			w.Source = &api.EnvironmentWorkloadSource{Kind: sourceKind, Directory: "apps/" + name}
+			if sourceKind == "dockerfile" {
+				w.Source.Dockerfile = "Dockerfile"
+			}
+			desired.Definition.Workloads[name] = w
+		}
+	}
 	desired, err = environmentsync.Compile(desired.Definition)
 	if err != nil {
 		t.Fatal(err)

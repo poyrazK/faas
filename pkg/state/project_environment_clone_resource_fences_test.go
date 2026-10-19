@@ -14,11 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-type cloneResourceFenceStore interface {
-	state.Store
-	state.ProjectEnvironmentCloneOperationStore
-	state.ProjectEnvironmentCloneObjectManifestStore
-}
+type cloneResourceFenceStore = contractTestStore
 
 func TestMemCloneResourceInventoryFencesPublication(t *testing.T) {
 	testCloneResourceInventoryFences(t, state.NewMemStore())

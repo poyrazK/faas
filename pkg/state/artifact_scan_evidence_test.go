@@ -13,10 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/imagepublisher"
 )
 
-type artifactEvidenceTestStore interface {
-	artifactScanTestStore
-	DeploymentArtifactScanEvidenceStore
-}
+type artifactEvidenceTestStore = contractTestStore
 
 func artifactEvidenceLifecycle(t *testing.T, s artifactEvidenceTestStore) {
 	for _, sidecar := range []bool{false, true} {
@@ -121,11 +118,7 @@ func TestMemArtifactEvidenceExpiredLease(t *testing.T) {
 	}
 }
 
-type artifactBaseEvidenceTestStore interface {
-	artifactEvidenceTestStore
-	BaseImageProducerStore
-	BaseImageScanStore
-}
+type artifactBaseEvidenceTestStore = contractTestStore
 
 func artifactEvidenceRequiresBase(t *testing.T, s artifactBaseEvidenceTestStore) {
 	in, base, app, dep := artifactScanBaseFixture(t, s)

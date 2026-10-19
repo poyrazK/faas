@@ -47,6 +47,12 @@ func TestMutationLeavesRejectTrailingArgumentsBeforeNetwork(t *testing.T) {
 		{"cron add", func() int {
 			return cmdCrons([]string{"add", "--app", "demo", "--schedule", "*/5 * * * *", "unexpected"})
 		}},
+		{"ai token create", func() int {
+			return cmdAITokens([]string{"create", "--app", "demo", "--name", "test-token", "unexpected"})
+		}},
+		{"ai token revoke", func() int {
+			return cmdAITokens([]string{"revoke", "--app", "demo", "token-id", "unexpected"})
+		}},
 		{"domain add", func() int {
 			return cmdDomains([]string{"add", "--domain", "demo.example.com", "--app", "demo", "unexpected"})
 		}},

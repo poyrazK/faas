@@ -162,7 +162,8 @@ func cmdDeployRepoSourceRefContextWithJSONWaitOptionsAndManifestAndRollout(ctx c
 	if jsonWait {
 		return writeWaitedDeploymentReceiptUntilWithOptions(ctx, client, dep, nil, appURL, "", slug, waitTimeout, waitForRollout, darkDeploy)
 	}
-	return streamDeployLogsContextWithOptions(ctx, client, dep, slug, streamDeployOptions{waitTimeout: waitTimeout, waitForRollout: waitForRollout, darkDeploy: darkDeploy})
+	return streamDeployLogsContextWithOptions(ctx, client, dep, slug, streamDeployOptions{waitTimeout: waitTimeout, waitForRollout: waitForRollout,
+		followRollout: !darkDeploy && followRolloutByDefault(), darkDeploy: darkDeploy})
 }
 
 func ensureSourceRefApp(ctx context.Context, client *Client, slug string, appPolicy ...sourceRefAppPolicy) (api.AppResponse, error) {

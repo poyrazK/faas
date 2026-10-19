@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto'
 import http from 'node:http'
 import { gotrue, limits } from './config.mjs'
-import { EmailError, invitationMessage } from './email.mjs'
+import { EmailError, invitationMessage, loadEmailTemplates } from './email.mjs'
 import { objectResource, objectURL, presign } from './storage.mjs'
 import { WorkflowError } from './workflows.mjs'
 import { routeTeam, TeamError } from './team.mjs'
@@ -20,7 +20,7 @@ const codes = new Map([
 // Messages raised by gregale_auth functions; anything else is never echoed.
 const stableMessages = new Set(['not_authenticated', 'forbidden', 'not_found', 'slug_taken', 'invalid_organization', 'organization_limit', 'anonymous_user',
   'unknown_role', 'invalid_invitation', 'invitation_limit', 'invitation_invalid', 'invitation_email_mismatch', 'already_member', 'last_owner',
-  'domain_taken', 'domain_limit', 'invalid_domain', 'domain_in_use', 'domain_not_verified', 'sso_provider_limit', 'team_limit'])
+  'domain_taken', 'domain_limit', 'invalid_domain', 'domain_in_use', 'domain_not_verified', 'sso_provider_limit', 'team_limit', 'current_session'])
 
 export class HTTPError extends Error {
   constructor(status, code) { super(code); this.status = status; this.code = code }
@@ -59,6 +59,19 @@ export function goTrueAuthenticator(port = gotrue.port) {
     req.on('timeout', () => req.destroy())
     req.on('error', () => reject(new HTTPError(503, 'auth_unavailable')))
   })
+}
+
+// organizationClaims are the claims the custom access token hook adds to a
+// first-party token with AUTH_ORG_CLAIMS on: the session's active
+// organization, read with the current membership (sql/0015), or none.
+export async function organizationClaims(pool, { sub, session_id: session }) {
+  if (!uuid.test(sub ?? '') || !uuid.test(session ?? '')) return {}
+  const { rows: [org] } = await pool.query(`SELECT o.id, o.slug, m.role, r.permissions FROM gregale_auth.session_organizations s
+      JOIN gregale_auth.organizations o ON o.id = s.org_id
+      JOIN gregale_auth.memberships m ON m.org_id = s.org_id AND m.user_id = $2
+      JOIN gregale_auth.roles r ON r.name = m.role
+    WHERE s.session_id = $1`, [session, sub])
+  return org ? { org_id: org.id, org_slug: org.slug, org_role: org.role, org_permissions: org.permissions } : {}
 }
 
 export async function inSession(pool, claims, work) {
@@ -151,7 +164,7 @@ export async function route(pool, claims, method, path, body, services = {}) {
         const created = await run(async c => {
           const { rows: [invitation] } = await c.query('SELECT i.id, i.email, i.role, i.expires_at, o.name AS org_name FROM gregale_auth.invite($1, $2, $3, $4, $5) i JOIN gregale_auth.organizations o ON o.id = i.org_id', args)
           const { org_name: orgName, ...fields } = invitation
-          if (invitations.mailer) await invitations.mailer.send(invitationMessage(fields.email, { external: invitations.external, app: invitations.app, orgName, token }), `invitation-${fields.id}`)
+          if (invitations.mailer) await invitations.mailer.send(invitationMessage(fields.email, { external: invitations.external, app: invitations.app, orgName, token, templates: await loadEmailTemplates(c) }), `invitation-${fields.id}`)
           return fields
         })
         return [201, invitations.mailer ? { ...created, delivered: true } : { ...created, delivered: false, token }]
@@ -161,6 +174,28 @@ export async function route(pool, claims, method, path, body, services = {}) {
       await rows('SELECT gregale_auth.revoke_invitation($1, $2)', [org, requireUUID(parts[3])])
       return [204, null]
     }
+  }
+  // The caller's own sessions (sql/0013); the current one ends through
+  // GoTrue's logout, and all the others through logout?scope=others.
+  if (path === '/sessions' && method === 'GET') {
+    return [200, { sessions: await rows('SELECT id, created_at, last_active_at, user_agent, ip, aal, current FROM gregale_auth.list_sessions()') }]
+  }
+  if (parts[0] === 'sessions' && parts.length === 2 && method === 'DELETE') {
+    await rows('SELECT gregale_auth.end_session($1)', [requireUUID(parts[1])])
+    return [204, null]
+  }
+  // Deleting one's own account, when the app allows it (AUTH_SELF_DELETION).
+  if (path === '/account' && method === 'DELETE') {
+    if (!services.deleteAccount) throw new HTTPError(404, 'not_found')
+    return services.deleteAccount(claims)
+  }
+  // The organization this session acts in, carried in its next tokens
+  // (AUTH_ORG_CLAIMS); null clears it. The client refreshes afterwards.
+  if (path === '/active-organization' && method === 'POST') {
+    if (services.orgClaims !== true) throw new HTTPError(404, 'not_found')
+    const org = body?.org === null ? null : requireUUID(typeof body?.org === 'string' ? body.org : '')
+    const [active] = await rows('SELECT id, slug, role FROM gregale_auth.set_active_organization($1)', [org])
+    return [200, { organization: active ?? null }]
   }
   if (path === '/invitations/accept' && method === 'POST') {
     const [membership] = await rows('SELECT org_id, role FROM gregale_auth.accept_invitation($1)', [hashToken(body?.token)])
@@ -212,7 +247,7 @@ export function readJSON(req, maxBytes) {
   })
 }
 
-export function createAuthzHandler({ pool, authenticate, origins = [], invitations = {}, storage, workflows, orgSSO, teamEnabled = false, emailEnabled = false }) {
+export function createAuthzHandler({ pool, authenticate, origins = [], invitations = {}, storage, workflows, orgSSO, teamEnabled = false, emailEnabled = false, deleteAccount = null, orgClaims = false }) {
   const allowed = new Set(origins)
   return async (req, res, path) => {
     const origin = req.headers.origin
@@ -238,7 +273,7 @@ export function createAuthzHandler({ pool, authenticate, origins = [], invitatio
       if (!token) throw new HTTPError(401, 'not_authenticated')
       const body = await readJSON(req, limits.authzBodyBytes)
       const claims = await authenticate(token)
-      const [status, payload] = await route(pool, claims, req.method, path, body, { invitations, storage, workflows, orgSSO, teamEnabled, emailEnabled, query: new URL(req.url, 'http://auth.local').searchParams })
+      const [status, payload] = await route(pool, claims, req.method, path, body, { invitations, storage, workflows, orgSSO, teamEnabled, emailEnabled, deleteAccount, orgClaims, query: new URL(req.url, 'http://auth.local').searchParams })
       res.writeHead(status, headers)
       res.end(payload === null ? undefined : JSON.stringify(payload))
     } catch (err) {

@@ -354,6 +354,9 @@ const (
 	// closes. Not wired yet; the schema CHECK accepts it so the
 	// caller can stamp it without a migration.
 	AutoRollbackReasonFirstWindowExpired AutoRollbackReason = "first_window_expired"
+	// AutoRollbackReasonPostReleaseRegression is stamped when the
+	// post-release watch rolls a completed release back (ADR-1445).
+	AutoRollbackReasonPostReleaseRegression AutoRollbackReason = "post_release_regression"
 )
 
 // IsValidAutoRollbackReason reports whether r is one of the
@@ -362,7 +365,7 @@ const (
 // on a stray value before the SQL UPDATE surfaces a 23514.
 func (r AutoRollbackReason) IsValid() bool {
 	switch r {
-	case AutoRollbackReasonThresholdExceeded, AutoRollbackReasonFirstWindowExpired:
+	case AutoRollbackReasonThresholdExceeded, AutoRollbackReasonFirstWindowExpired, AutoRollbackReasonPostReleaseRegression:
 		return true
 	default:
 		return false
@@ -1946,8 +1949,11 @@ type WorkerScaling struct {
 // as jsonb in Postgres; lifecycle fields are overlaid onto each deployment's
 // image manifest before it is written into the snapshot for guest-init.
 type AppManifest struct {
-	Entrypoint []string          `json:"entrypoint,omitempty"`
-	Env        map[string]string `json:"env,omitempty"`
+	// PublicBuildURLs are explicitly reviewed, non-secret frontend build inputs.
+	// New production source deployments capture an immutable copy at INSERT.
+	PublicBuildURLs map[string]string `json:"public_build_urls,omitempty"`
+	Entrypoint      []string          `json:"entrypoint,omitempty"`
+	Env             map[string]string `json:"env,omitempty"`
 	// ProjectSourceSHA256 and BuildDockerfile are project-reconcile build
 	// metadata. They persist the exact source subtree and Dockerfile choice
 	// that produced the approved plan so a reapply can detect source-only
@@ -2021,6 +2027,11 @@ type AppManifest struct {
 	VersionAffinityCookie        string `json:"version_affinity_cookie,omitempty"`
 	VersionAffinityManagedCookie bool   `json:"version_affinity_managed_cookie,omitempty"`
 	RevisionPinTTLSeconds        int    `json:"revision_pin_ttl_seconds,omitempty"`
+	// ReleasePolicy (ADR-1446): "" / "safe" or "immediate".
+	ReleasePolicy string `json:"release_policy,omitempty"`
+	// ReleaseProbePaths (ADR-1449): GET paths the default rollout probe checks
+	// instead of "/".
+	ReleaseProbePaths []string `json:"release_probe_paths,omitempty"`
 	// FunctionConcurrency is how many requests one function worker serves
 	// at once (ADR-1342); zero keeps one.
 	FunctionConcurrency int `json:"function_concurrency,omitempty"`
@@ -2060,7 +2071,7 @@ func (m AppManifest) EffectivePreviewServiceCallsPolicy() api.PreviewServiceCall
 // It keeps the legacy empty-manifest JSON shape while allowing lifecycle-only
 // app rows to persist a non-empty contract.
 func (m AppManifest) IsZero() bool {
-	return m.Entrypoint == nil && m.Env == nil && m.ProjectSourceSHA256 == "" &&
+	return len(m.PublicBuildURLs) == 0 && m.Entrypoint == nil && m.Env == nil && m.ProjectSourceSHA256 == "" &&
 		m.BuildDockerfile == "" && m.ProjectImage == "" && m.ProjectImageCommand == nil && m.ProjectImagePort == 0 && m.ProjectImageHealthcheck == nil && len(m.ProjectDependencyConditions) == 0 && len(m.ServiceBindings) == 0 && len(m.ServiceReliability) == 0 && m.ServiceBindingPolicy == "" && m.ServiceBindingTransport == "" && m.PreviewServiceCallsPolicy == "" && m.AllowedServiceCallers == nil && m.AllowedServiceCallScopes == nil && m.WorkingDir == "" &&
 		m.Port == 0 && len(m.Ports) == 0 && m.Healthz == "" && m.User == "" &&
 		m.ExecutionMode == "" && m.RestartPolicy == "" && m.AfterRestore == nil && m.BeforeCheckpoint == nil && m.Pause == "" && m.Profiling == nil && m.Tracing == nil &&
@@ -2068,7 +2079,8 @@ func (m AppManifest) IsZero() bool {
 		m.StopGracePeriodS == 0 && m.StopSignal == "" &&
 		m.ServiceReplicas == nil && m.WorkerReplicas == nil && len(m.Favicon) == 0 &&
 		m.RobotsTxt == "" && !m.HeadWakes && m.CrawlerPolicy == "" && m.PreAuthRateLimit == nil &&
-		m.HealthPath == "" && !m.HealthPathWakes && !m.SessionAffinity && m.VersionAffinityCookie == "" && !m.VersionAffinityManagedCookie && m.RevisionPinTTLSeconds == 0
+		m.HealthPath == "" && !m.HealthPathWakes && !m.SessionAffinity && m.VersionAffinityCookie == "" && !m.VersionAffinityManagedCookie && m.RevisionPinTTLSeconds == 0 &&
+		m.ReleasePolicy == "" && len(m.ReleaseProbePaths) == 0
 }
 
 func mergeProjectManagedManifest(existing, desired AppManifest) AppManifest {
@@ -2450,6 +2462,9 @@ func (m AppManifest) MarshalJSON() ([]byte, error) {
 
 // Deployment is one attempt to ship a version of an app.
 type Deployment struct {
+	// BuildDependencies is trusted APID admission input, captured atomically in
+	// a separate durable gate before the build can enter the queue.
+	BuildDependencies []DeploymentDependencyPin `json:"-"`
 	// Admission metadata only: checked under the parent lock, never persisted.
 	ExpectedReview      *api.AppReleaseReview `json:"-"`
 	ReviewedRolloutMode string                `json:"-"`
@@ -2746,6 +2761,9 @@ type Deployment struct {
 	RolloutCompletedAt   *time.Time `json:"rollout_completed_at,omitempty"`
 	RolloutAbortedAt     *time.Time `json:"rollout_aborted_at,omitempty"`
 	RolloutAbortedReason string     `json:"rollout_aborted_reason,omitempty"`
+	// RolloutDecision is the api.RolloutDecision recorded with the latest
+	// rollout transition (ADR-1447), or nil. Holds never write it.
+	RolloutDecision json.RawMessage `json:"rollout_decision,omitempty"`
 	// ServiceRolloutHandoff persists the scheduler-owned routing and drain
 	// barriers for zero-step service rollouts. Empty for ordinary canaries and
 	// stable deployments.
@@ -3099,6 +3117,7 @@ func (d Deployment) DeploymentAliasActive() bool {
 // the shape so unit tests can exercise the read path without
 // spinning Postgres.
 type StageState struct {
+	BuildDependencyGate *BuildDependencyGate         `json:"build_dependency_gate,omitempty"`
 	DependencyGate      *DeploymentDependencyGate    `json:"dependency_gate,omitempty"`
 	HostingVerification *HostingVerificationProgress `json:"hosting_verification,omitempty"`
 	RetryRequestedStage StageName                    `json:"retry_requested_stage,omitempty"`
@@ -3992,6 +4011,7 @@ const (
 	AppWebhookEventIssueTrackerSyncAttention               AppWebhookEvent = "issue.tracker_sync.attention"
 	AppWebhookEventIssueTrackerSyncRecovered               AppWebhookEvent = "issue.tracker_sync.recovered"
 	AppWebhookEventIssueFrequencyThresholdReached          AppWebhookEvent = "issue.frequency_threshold_reached"
+	AppWebhookEventIssueCompoundThresholdReached           AppWebhookEvent = "issue.compound_threshold_reached"
 )
 
 // AllAppWebhookEvents is the canonical closed vocabulary shared by
@@ -4065,6 +4085,7 @@ var AllAppWebhookEvents = []AppWebhookEvent{
 	AppWebhookEventRecoveryExecutionFinished,
 	AppWebhookEventRecoveryExecutionAttention,
 	AppWebhookEventIssueFrequencyThresholdReached,
+	AppWebhookEventIssueCompoundThresholdReached,
 	AppWebhookEventWorkflowFinished, AppWebhookEventAutomationPaused,
 	AppWebhookEventEnvironmentGitOpsChanged,
 }
@@ -5876,6 +5897,10 @@ const (
 	DeployMCPTaskHoldCancelled  DeploymentAuditKind = "deploy.mcp_task_hold_cancelled"
 	DeployWorkerDrainStarted    DeploymentAuditKind = "deploy.worker_drain_started"
 	DeployWorkerDrainCompleted  DeploymentAuditKind = "deploy.worker_drain_completed"
+	// DeployRolloutHeld records why a canary step is held (ADR-1447). Its
+	// data is {"decision": api.RolloutDecision}; repeats of the same rule are
+	// deduplicated for api.RolloutHoldRefreshInterval.
+	DeployRolloutHeld DeploymentAuditKind = "deploy.rollout_held"
 )
 
 // DeploymentAudit is one row of the deployment_audit table

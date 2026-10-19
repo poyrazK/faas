@@ -184,6 +184,129 @@ application-level authorization. Use binding verification and runtime smoke
 checks to investigate those layers. Hints suggest settings to review and never
 apply changes or automatically broaden access.
 
+### Explain an exact deployment
+
+Select the caller deployment to include environment and release routing:
+
+```sh
+gregale bindings service explain public-api billing \
+  --deployment CALLER_DEPLOYMENT_UUID --scope staging \
+  --method GET --path /invoices --json
+```
+
+The environment comes from the selected app-owned deployment. `--scope` is an
+optional assertion: a mismatch produces a denied explanation. It requires
+`--deployment`; neither selector switches the selected account. For managed
+deployments, `billing` is the logical workload name in the reviewed graph and
+may differ from the physical target app slug. Ordinary deployments use the
+target app slug.
+
+The read-only API uses the gateway's app authorization, managed environment
+binding resolver and project release resolver. For managed routes it evaluates
+frozen method/path policy and transport after app authorization, and returns
+the exact target deployment and active reviewed release. Missing bindings never
+fall back to global app names. Checks explain missing active releases, stale
+caller membership, scope mismatches and resolver denials. An ordinary project
+route can select a retained release under the existing gateway rules; an
+unpinned service route reports `unpinned_service_route` without inventing a
+target deployment.
+
+JSON adds `caller_deployment_id`, `target_app_id`, optional
+`target_deployment_id` and `release_id`, plus `policy_source` (`app` or
+`environment_release`). `scope` is the caller environment. App fingerprints
+describe observed app settings, not the frozen release policy. The same exit
+codes apply: 0 allowed, 1 denied, 2 indeterminate/error. The CLI checks response
+identities and never falls back to app-only evaluation if the server lacks this
+API or returns an incomplete explanation. Query values are removed before the
+CLI sends the path to the API and are excluded from reports.
+
+The API is `GET /v1/apps/{slug}/bindings/services/{service}/explanation`, with
+required `deployment_id` and optional `scope`, `method` and `path` query
+parameters. It requires app read permission and completed MFA. Foreign caller
+deployments return 404; foreign or unreadable targets produce indeterminate
+results without target identities. Duplicate or unknown selectors are rejected.
+
+These are separate metadata reads assuming an authenticated caller from the
+selected deployment. They do not establish live caller credentials, guest
+adoption, connectivity, endpoint selection or application authorization.
+Previews, held qualification guests and development bridge contexts are not
+evaluated. Use runtime verification for those observations.
+
+## Inspect deployment service bindings
+
+```sh
+gregale bindings public-api --deployment v12 --json
+gregale bindings check public-api --deployment v12 --json
+```
+
+The inventory command accepts an exact deployment UUID or app version. The
+server must confirm that selector and publish the service namespace source;
+older servers without this contract are rejected. The CLI never silently inspects another
+deployment. Without it, the server selects the current live deployment. Ordinary
+unmanaged deployments retain app-level service discovery. Managed deployments
+use only the selected deployment's frozen service map, including its custom
+environment keys and effective transport. An empty or unreadable frozen map
+does not fall back to app settings.
+
+`service_binding_source` identifies `app`, `environment_release` or
+`unavailable` metadata. Each managed service entry has `service_context` with
+the caller deployment, account-owned physical target app, active reviewed
+release when resolved, routing status/reason and an opaque context revision.
+The entry's name remains the logical workload; `service_target_deployment_id`
+is the actual target selected by the managed resolver. Context revisions change
+when the frozen graph, selected target or release changes, and participate in
+durable review configuration digests. They are metadata, not probe receipts.
+Scope mismatches, invalid frozen data and failed reads make inventory incomplete;
+known denied routes remain visible. `service_targets` cannot override a managed
+release route.
+
+Active request/service and worker callers with resolved frozen HTTPS bindings
+to request/service targets publish
+`verification_supported: true` and `verification_contract: managed-https-v1`.
+Verify the selected logical binding with:
+
+```sh
+gregale bindings verify public-api billing --deployment v12 --json
+gregale bindings verify public-api --all --deployment v12 --require-complete --json
+gregale bindings verify orders-worker billing --deployment v12 --json
+```
+
+The server pins the custom environment key, caller deployment, physical target,
+exact target deployment, active release and an opaque context revision in the
+task ledger. The guest requires the staged caller identity and frozen URL,
+validates private TLS, and checks exact gateway deployment/release confirmations.
+On named compute nodes, the guest service listener authenticates the probe's
+network address through vmmd's live map and its current task lease. Older vmmd
+nodes reject managed probes before boot; task VMs never become serving replicas.
+The CLI refreshes inventory after completion. Changed graph inputs, targets,
+releases or service policies make old evidence stale. Ordinary app receipts are
+excluded even if their deployment/name matches. Inventory and checks recognize
+only matching managed receipts.
+
+Worker verification uses a fresh task guest with the frozen worker configuration.
+It does not start the image's worker entrypoint or listener, restore a worker
+snapshot, or consume queued work. A single-service probe never publishes a queue
+message. If the worker also has eligible queues, strict `--all` verification
+requires explicit `--queue-publish` consent for those separate bounded canaries.
+The frozen workload class and effective execution mode must agree. This extension
+adds HTTPS service evidence, not managed queue-canary admission for zero-traffic
+worker deployments. Strict `--all` still fails when a queue lacks supported
+canary evidence, even after its HTTPS service probe passes.
+
+Held candidates, Job callers, worker/Job targets, HTTP edges, unresolved routes and unknown
+contracts remain `unsupported` with `managed_service_verification_unsupported`.
+Checks and strict batch coverage block those gaps; `--allow-unsupported` does
+not waive them. Managed service smoke calls remain unavailable. Route probes
+do not establish resident application adoption, application behavior or reviewed
+environment qualification.
+
+For managed callers, a gateway route probe can succeed only while the exact
+target deployment selected by the active reviewed release has a healthy replica.
+Conflicting deployment or release selectors are rejected. A successful response
+confirms both selected identities without waking the target or invoking its
+application. A raw gateway response alone is not a managed binding receipt;
+the admitted managed guest report and current context checks are also required.
+
 ## Save and apply a reviewed plan
 
 Save a plan to a new private file, then apply that exact patch:

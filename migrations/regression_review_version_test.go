@@ -9,11 +9,10 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/migrations"
-	"github.com/onebox-faas/faas/pkg/db/pgtest"
 )
 
 func TestRegressionReviewVersionFastDefaultAndLegacyHistory(t *testing.T) {
-	pool := pgtest.OpenMigrated(t)
+	pool := openMigrated(t)
 	raw, err := migrations.FS.ReadFile("20261017210000001_regression_review_version.sql")
 	if err != nil {
 		t.Fatal(err)

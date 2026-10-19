@@ -77,6 +77,13 @@ func TestManagerExecuteAppTaskDestroysWhenDialerIsUnavailable(t *testing.T) {
 }
 
 func TestManagerWakeAppTaskKeepsAppNetworkAndStagesMarker(t *testing.T) {
+	for _, mode := range []string{api.ExecutionModeRequest, api.ExecutionModeWorker} {
+		t.Run(mode, func(t *testing.T) { managerWakeAppTaskKeepsAppNetworkAndStagesMarker(t, mode) })
+	}
+}
+
+func managerWakeAppTaskKeepsAppNetworkAndStagesMarker(t *testing.T, mode string) {
+	t.Helper()
 	runner := &fakeRunner{}
 	vmm := &fakeVMM{}
 	m := NewManager(runner, vmm, Paths{Kernel: "kernel/test"}, "1.0.0", nil, nil)
@@ -84,7 +91,8 @@ func TestManagerWakeAppTaskKeepsAppNetworkAndStagesMarker(t *testing.T) {
 		Instance: "task-wake-1", AccountID: "acct-1", AppID: "app-1", DeploymentID: "dep-1",
 		Plan: api.PlanPro, Runtime: "node22", BaseKey: "base/test", LayerKey: "layer/test",
 		VcpuCount: 2, MemSizeMiB: 256, CPUMillicores: 500,
-		Sidecars: []WorkloadSpec{{Name: "metrics", StorageKey: "sidecar/test"}},
+		ExecutionMode: mode,
+		Sidecars:      []WorkloadSpec{{Name: "metrics", StorageKey: "sidecar/test"}},
 	}})
 	if err != nil {
 		t.Fatalf("WakeAppTask: %v", err)

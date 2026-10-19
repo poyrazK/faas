@@ -25,6 +25,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/consumerbilling"
 	"github.com/onebox-faas/faas/pkg/apid/consumercontrols"
 	"github.com/onebox-faas/faas/pkg/apid/consumercredits"
+	pipelineapi "github.com/onebox-faas/faas/pkg/apid/datapipelines"
 	repairapi "github.com/onebox-faas/faas/pkg/apid/datarepair"
 	"github.com/onebox-faas/faas/pkg/apid/durable"
 	"github.com/onebox-faas/faas/pkg/apid/edgerules"
@@ -40,6 +41,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/mcpreadiness"
 	"github.com/onebox-faas/faas/pkg/apid/object"
 	"github.com/onebox-faas/faas/pkg/apid/operation"
+	"github.com/onebox-faas/faas/pkg/apid/operatorobs"
 	"github.com/onebox-faas/faas/pkg/apid/outboundai"
 	"github.com/onebox-faas/faas/pkg/apid/postgresaccess"
 	"github.com/onebox-faas/faas/pkg/apid/product"
@@ -122,6 +124,7 @@ type server struct {
 	nativeLinearVerifier                   issuetrackers.LinearConnectionVerifier
 	nativeTrackerProvider                  issuetracker.StatusProvider
 	nativeTicketProvider                   issuetracker.Provider
+	dataPipelines                          *pipelineapi.Handler
 	environmentGitOpsAcceptanceEnforcement atomic.Bool
 	profileBackend                         profiling.Backend
 	profileQuerySlots                      chan struct{}
@@ -138,17 +141,23 @@ type server struct {
 	productControl                         product.Service
 	appEvents                              appevents.Service  // ADR-977; Host wired in newServer
 	serviceMap                             servicemap.Service // ADR-1131; Host wired in newServer
-	featureFlagsEnabled                    bool
-	aiGatewayEnabled                       bool
-	aiGatewayRollout                       outbound.AIGatewayRollout // ADR-998
-	outboundAI                             outboundai.Service        // ADR-977; Host wired in newServer
-	flagsWorkloadVerifier                  *workloadidentity.Verifier
-	statementInvoices                      statementinvoices.Service // ADR-1502; Host wired in newServer
-	billingRuns                            billingruns.Service       // ADR-1503; Host wired in newServer
-	consumerBilling                        consumerbilling.Service   // ADR-1506; Host wired in newServer
-	consumerCredits                        consumercredits.Service   // ADR-1306; Host wired in newServer
-	consumerControls                       consumercontrols.Service  // ADR-1314, ADR-1315; Host wired in newServer
-	tenantPlans                            tenantplans.Service       // ADR-1307; Host wired in newServer
+	// configGuardTelemetry overrides the store's request telemetry for
+	// config guards (ADR-1451); nil reads it from the store.
+	configGuardTelemetry state.ConfigGuardTelemetryStore
+	// postReleaseTelemetry overrides the store's request telemetry for the
+	// post-release watch (ADR-1445); nil reads it from the store.
+	postReleaseTelemetry  rollbackOn5xxTelemetry
+	featureFlagsEnabled   bool
+	aiGatewayEnabled      bool
+	aiGatewayRollout      outbound.AIGatewayRollout // ADR-998
+	outboundAI            outboundai.Service        // ADR-977; Host wired in newServer
+	flagsWorkloadVerifier *workloadidentity.Verifier
+	statementInvoices     statementinvoices.Service // ADR-1502; Host wired in newServer
+	billingRuns           billingruns.Service       // ADR-1503; Host wired in newServer
+	consumerBilling       consumerbilling.Service   // ADR-1506; Host wired in newServer
+	consumerCredits       consumercredits.Service   // ADR-1306; Host wired in newServer
+	consumerControls      consumercontrols.Service  // ADR-1314, ADR-1315; Host wired in newServer
+	tenantPlans           tenantplans.Service       // ADR-1307; Host wired in newServer
 	// workloadVerifier is the cluster workload trust (ADR-1141); nil when unset.
 	workloadVerifier *workloadidentity.Verifier
 	// totp limits TOTP guesses per account (totp_guard.go).
@@ -186,6 +195,9 @@ type server struct {
 	notif          Notifier
 	// routeProbes sends ADR-847 synthetic route probes; nil disables them.
 	routeProbes routeProbeSender
+	// routeProbePrunedAt is the last probe data prune; only the route
+	// probe worker goroutine reads or writes it.
+	routeProbePrunedAt time.Time
 	// edgeRules is the edge rules surface (ADR-977); Host wired in newServer.
 	edgeRules edgerules.Service
 	// queueLeases is the pull-lease surface (ADR-1140); Host wired in newServer.
@@ -370,7 +382,8 @@ type server struct {
 	// reuses the same tested transport; the client is nil-safe (the
 	// handler falls back to a degraded zero-valued payload when
 	// Prometheus isn't configured). See pkg/promql/client.go.
-	promqlClient *promql.Client
+	promqlClient       *promql.Client
+	alertmanagerClient *operatorobs.AlertmanagerClient
 	// statusPagePath is the on-disk path of the static HTML served
 	// at GET /status. Empty uses /etc/faas/statuspage/index.html.
 	statusPagePath string
@@ -678,6 +691,13 @@ func (s *server) WithStatusCache(promURL, htmlPath string) *server {
 		s.promqlClient = promql.NewClient(promURL, nil)
 	}
 	s.statusPagePath = htmlPath
+	return s
+}
+
+// WithAlertmanagerObservability configures only the bounded read-only API.
+// Invalid destinations degrade observations; they never trigger remote reads.
+func (s *server) WithAlertmanagerObservability(baseURL string) *server {
+	s.alertmanagerClient = operatorobs.NewAlertmanagerClient(baseURL, nil)
 	return s
 }
 
@@ -1433,6 +1453,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /integrations/slack/events", s.issueSlackManagedEvents)
 	mux.HandleFunc("GET /v1/apps/{slug}/operational-summary", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAppOperationalSummary))))
 	mux.HandleFunc("GET /v1/apps/{slug}/bindings", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAppBindingInventory))))
+	mux.HandleFunc("GET /v1/apps/{slug}/bindings/services/{service}/explanation", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.explainAppServiceBinding))))
+
 	// Internal static hosting remains default-off and operator-only. The
 	// handler repeats the gate so direct invocation cannot bypass it.
 	mux.HandleFunc("GET /v1/internal/hosting/capabilities", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.requireOperator(s.hosting.Capabilities)))))
@@ -1545,6 +1567,16 @@ func (s *server) handler() http.Handler {
 	// Managed PostgreSQL has immutable organization ownership. The
 	// read/write scopes are intentionally separate from generic app scopes so
 	// CI credentials can bind workloads without receiving unrelated access.
+	mux.HandleFunc("GET /v1/data/connections", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.pipelineConnections))))
+	mux.HandleFunc("POST /v1/data/connections", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.idempotent(s.pipelineCreateConnection))))))
+	mux.HandleFunc("PUT /v1/data/connections/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.pipelineRotateConnection))))
+	mux.HandleFunc("DELETE /v1/data/connections/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.pipelineDeleteConnection))))
+	mux.HandleFunc("GET /v1/data/connections/{id}/check", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.pipelineGetCheck))))
+	mux.HandleFunc("POST /v1/data/connections/{id}/check", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.pipelineRequestCheck)))))
+	mux.HandleFunc("GET /v1/data/pipelines", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.pipelineList))))
+	mux.HandleFunc("POST /v1/data/pipelines", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.idempotent(s.pipelineCreate))))))
+	mux.HandleFunc("GET /v1/data/pipelines/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.pipelineGet))))
+	mux.HandleFunc("POST /v1/data/pipelines/{id}/control", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.pipelineControl))))
 	mux.HandleFunc("GET /v1/postgres/databases", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.listManagedPostgresDatabases))))
 	mux.HandleFunc("GET /v1/postgres/capabilities", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.getManagedPostgresCapabilities))))
 	mux.HandleFunc("POST /v1/postgres/databases", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.idempotent(s.createManagedPostgresDatabase))))))
@@ -1622,6 +1654,15 @@ func (s *server) handler() http.Handler {
 	// before app lookup so a disabled host reveals no app existence. Public
 	// admission is manual-only; release tasks remain an internal consumer.
 	mux.HandleFunc("GET /v1/apps/{slug}/tasks", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAppTasks))))
+	mux.HandleFunc("POST /v1/apps/{slug}/migration-cutovers", s.authLimited(s.requireMFA(s.requireVerifiedEmail(s.requireScope(api.ScopesDeployWriteSurface...)(s.createMigrationCutover)))))
+	mux.HandleFunc("GET /v1/apps/{slug}/migration-cutovers", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listMigrationCutovers))))
+	mux.HandleFunc("GET /v1/apps/{slug}/migration-cutovers/{plan}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getMigrationCutover))))
+	mux.HandleFunc("POST /v1/apps/{slug}/migration-cutovers/{plan}/actions", s.authLimited(s.requireMFA(s.requireVerifiedEmail(s.requireScope(api.ScopesDeployWriteSurface...)(s.actOnMigrationCutover)))))
+	mux.HandleFunc("POST /v1/apps/{slug}/migration-verifications", s.authLimited(s.requireMFA(s.requireVerifiedEmail(s.requireScope(api.ScopesDeployWriteSurface...)(s.createMigrationVerification)))))
+	mux.HandleFunc("GET /v1/apps/{slug}/migration-verifications", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listMigrationVerifications))))
+	mux.HandleFunc("GET /v1/apps/{slug}/migration-verifications/{run}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getMigrationVerification))))
+	mux.HandleFunc("POST /v1/apps/{slug}/migration-verifications/{run}/advance", s.authLimited(s.requireMFA(s.requireVerifiedEmail(s.requireScope(api.ScopesDeployWriteSurface...)(s.advanceMigrationVerification)))))
+	mux.HandleFunc("POST /v1/apps/{slug}/migration-verifications/{run}/cancel", s.authLimited(s.requireMFA(s.requireVerifiedEmail(s.requireScope(api.ScopesDeployWriteSurface...)(s.cancelMigrationVerification)))))
 	mux.HandleFunc("POST /v1/apps/{slug}/tasks", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createAppTask)))))
 	mux.HandleFunc("GET /v1/apps/{slug}/tasks/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAppTask))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/tasks/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.cancelAppTask)))))
@@ -3042,6 +3083,11 @@ func (s *server) handler() http.Handler {
 	// over-quota on /apply.
 	mux.HandleFunc("POST /v1/projects/scan", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.scanProject))))
 	mux.HandleFunc("POST /v1/projects/scan/source-ref", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.scanProjectSourceRef))))
+	mux.HandleFunc("POST /v1/project-migrations", s.authLimited(s.requireMFA(s.requireVerifiedEmail(s.requireScope(api.ScopesDeployWriteSurface...)(s.createProjectMigration)))))
+	mux.HandleFunc("GET /v1/project-migrations", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listProjectMigrations))))
+	mux.HandleFunc("GET /v1/project-migrations/{migration}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getProjectMigration))))
+	mux.HandleFunc("POST /v1/project-migrations/{migration}/resume", s.authLimited(s.requireMFA(s.requireVerifiedEmail(s.requireScope(api.ScopesDeployWriteSurface...)(s.resumeProjectMigration)))))
+	mux.HandleFunc("POST /v1/projects/apply-plan", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.applyCachedProjectPlan))))))
 	mux.HandleFunc("POST /v1/projects", s.authVerifiedLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.applyProject))))))
 	s.registerOrganizationProjectRoutes(mux)
 	mux.HandleFunc("GET /v1/projects", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listProjects))))
@@ -3335,6 +3381,13 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/outbound/ai-routes/{route}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.GetRoute)))))
 	mux.HandleFunc("PUT /v1/outbound/ai-routes/{route}/targets", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.aiGateway(s.outboundAI.PutRouteTargets)))))
 	mux.HandleFunc("DELETE /v1/outbound/ai-routes/{route}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.aiGateway(s.outboundAI.DeleteRoute)))))
+	// ADR-1340: a route's model canary.
+	mux.HandleFunc("PUT /v1/outbound/ai-routes/{route}/canary", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.aiGateway(s.outboundAI.PutRouteCanary)))))
+	mux.HandleFunc("GET /v1/outbound/ai-routes/{route}/canary", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.GetRouteCanary)))))
+	mux.HandleFunc("POST /v1/outbound/ai-routes/{route}/canary/promote", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.aiGateway(s.outboundAI.PromoteRouteCanary)))))
+	mux.HandleFunc("DELETE /v1/outbound/ai-routes/{route}/canary", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.aiGateway(s.outboundAI.DeleteRouteCanary)))))
+	// ADR-1434: each target's attempts over the strategy window.
+	mux.HandleFunc("GET /v1/outbound/ai-routes/{route}/stats", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.GetRouteStats)))))
 	// ADR-991: per-app guardrails, extra key pools, budget alerts and the
 	// opt-in AI request log.
 	mux.HandleFunc("PUT /v1/apps/{slug}/outbound-bindings/{integration}/ai-guardrails", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.aiGateway(s.outboundAI.PutBindingGuardrails)))))
@@ -3343,11 +3396,24 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("DELETE /v1/outbound/integrations/{integration}/credential-keys/{key}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.aiGateway(s.outboundAI.DeleteCredentialKey)))))
 	mux.HandleFunc("GET /v1/outbound/integrations/{integration}/ai-usage/users", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.GetUserUsage)))))
 	mux.HandleFunc("GET /v1/outbound/integrations/{integration}/ai-usage/users/export", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.ExportUserUsage)))))
+	// ADR-1436: usage by tag, and per-tag daily cost limits.
+	mux.HandleFunc("GET /v1/outbound/integrations/{integration}/ai-usage/tags", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.GetTagUsage)))))
+	mux.HandleFunc("GET /v1/outbound/integrations/{integration}/ai-usage/tags/export", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.ExportTagUsage)))))
+	mux.HandleFunc("GET /v1/outbound/integrations/{integration}/ai-tag-limits", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.GetTagLimits)))))
+	mux.HandleFunc("PUT /v1/outbound/integrations/{integration}/ai-tag-limits", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.aiGateway(s.outboundAI.PutTagLimits)))))
 	mux.HandleFunc("GET /v1/outbound/integrations/{integration}/ai-alerts", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.ListBudgetAlerts)))))
 	mux.HandleFunc("GET /v1/outbound/integrations/{integration}/ai-requests", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.ListRequestLog)))))
 	mux.HandleFunc("GET /v1/outbound/integrations/{integration}/ai-requests/{request}/content", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.GetRequestContent)))))
 	mux.HandleFunc("POST /v1/outbound/integrations/{integration}/ai-requests/{request}/replays", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.aiGateway(s.outboundAI.CreateReplay)))))
 	mux.HandleFunc("GET /v1/outbound/ai-replays/{replay}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.GetReplay)))))
+	// ADR-1431: evaluations before a canary, and access tokens for callers
+	// outside Gregale.
+	mux.HandleFunc("POST /v1/outbound/ai-routes/{route}/evaluations", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.aiGateway(s.outboundAI.CreateEvaluation)))))
+	mux.HandleFunc("GET /v1/outbound/ai-routes/{route}/evaluations", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.ListEvaluations)))))
+	mux.HandleFunc("GET /v1/outbound/ai-evaluations/{evaluation}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.GetEvaluation)))))
+	mux.HandleFunc("POST /v1/apps/{slug}/ai-access-tokens", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.aiGateway(s.outboundAI.CreateAccessToken)))))
+	mux.HandleFunc("GET /v1/apps/{slug}/ai-access-tokens", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.ListAccessTokens)))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/ai-access-tokens/{token}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.aiGateway(s.outboundAI.RevokeAccessToken)))))
 	mux.HandleFunc("PUT /v1/outbound/integrations/{integration}/ai-content-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.aiGateway(s.outboundAI.PutContentPolicy)))))
 	mux.HandleFunc("PUT /v1/outbound/integrations/{integration}/runs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.putOutboundRunsBinding))))
 
@@ -3842,6 +3908,11 @@ func (s *server) handler() http.Handler {
 	// because the snapshot exposes alert-state metadata.
 	mux.HandleFunc("GET /v1/admin/obs/health",
 		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsHealthHandler))))
+	mux.HandleFunc("GET /v1/admin/obs/notification-health", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsNotificationHealth))))
+	mux.HandleFunc("GET /v1/admin/obs/rule-health", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsRuleHealth))))
+	mux.HandleFunc("GET /v1/admin/obs/rule-coverage", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsRuleCoverage))))
+	mux.HandleFunc("GET /v1/admin/obs/recording-coverage", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsRecordingCoverage))))
+	mux.HandleFunc("GET /v1/admin/obs/input-health", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsInputHealth))))
 	mux.HandleFunc("GET /v1/admin/ops/data-repairs",
 		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.getOperatorDataRepairHealth))))
 	// Unified incident inbox. This is a read-only correlation projection over
@@ -3849,6 +3920,18 @@ func (s *server) handler() http.Handler {
 	// it keeps operator triage out of the deployment request path.
 	mux.HandleFunc("GET /v1/admin/obs/incidents",
 		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsIncidents))))
+	mux.HandleFunc("GET /v1/admin/obs/incidents/{kind}/{id}/evidence",
+		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsIncidentEvidence))))
+	mux.HandleFunc("GET /v1/admin/obs/incidents/{kind}/{id}/context",
+		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsIncidentContext))))
+
+	mux.HandleFunc("GET /v1/admin/obs/incidents/platform_alert/response-times", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsAlertResponseTimes))))
+	mux.HandleFunc("GET /v1/admin/obs/incidents/platform_alert/recurrence", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsAlertRecurrence))))
+	mux.HandleFunc("GET /v1/admin/obs/collection-history", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsAlertCollectionHistory))))
+	mux.HandleFunc("GET /v1/admin/obs/incidents/platform_alert/summary", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsAlertWorkload))))
+	mux.HandleFunc("GET /v1/admin/obs/incidents/platform_alert/{id}/triage-history", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsAlertTriageHistory))))
+
+	mux.Handle("POST /v1/admin/obs/incidents/platform_alert/{id}/triage", middleware.TraceID(s.authLimited(s.requireAdminMutation(s.postObsAlertTriage))))
 
 	// P2a + P2b + P2d — operator recovery primitives. All three
 	// routes mount under requireScope(admin-only) so the admin
@@ -4055,6 +4138,14 @@ func (s *server) handler() http.Handler {
 	// (only present / value_hash / value-for-env signals). The
 	// same ScopesReadSurface gate as listEnv.
 	mux.HandleFunc("GET /v1/apps/{slug}/env-diff", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.envDiff)))
+
+	// ADR-1451: config history, rollback and guard. Revisions carry variable
+	// values (readable like GET /env) and secret versions, never secret
+	// values. Rollback writes variables only, so it takes env:write.
+	mux.HandleFunc("GET /v1/apps/{slug}/config/revisions", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.listConfigRevisions)))
+	mux.HandleFunc("GET /v1/apps/{slug}/config/revisions/{revision}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getConfigRevision)))
+	mux.HandleFunc("GET /v1/apps/{slug}/config/guard", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getConfigGuard)))
+	mux.HandleFunc("POST /v1/apps/{slug}/config/rollback", s.authLimited(s.requireScope(api.ScopesEnvWriteSurface...)(s.rollbackConfig)))
 
 	// Data upstreams (ADR-098 §D4 / PR-B). The full handler family is
 	// gated on s.dataPlacementEnabled (FAAS_DATA_PLACEMENT=1); when
@@ -4384,6 +4475,8 @@ func (s *server) handler() http.Handler {
 	mux.Handle("POST /dashboard/apps/{slug}/automations/live-verifications/{run_id}", s.dashboardChain(s.sessionAuth(http.HandlerFunc(console.CheckLiveProgress))))
 	mux.Handle("POST /dashboard/apps/{slug}/automations/live-suites/{suite_id}/advance", s.dashboardChain(s.sessionAuth(http.HandlerFunc(console.AdvanceLiveSuite))))
 	mux.Handle("POST /dashboard/apps/{slug}/automations/{action}", s.dashboardChain(s.sessionAuth(http.HandlerFunc(console.Act))))
+	mux.Handle("GET /dashboard/data", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderDashboardPipelines))))
+	mux.Handle("POST /dashboard/data", s.dashboardChain(s.sessionAuth(s.requireVerifiedEmailHandler(http.HandlerFunc(s.dashboardPipelineAction)))))
 	mux.Handle("GET /dashboard/apps/{slug}/data-api", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderDashboardDataAPI))))
 	mux.Handle("GET /dashboard/apps/{slug}/auth", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderDashboardAuth))))
 	mux.Handle("POST /dashboard/apps/{slug}/auth/settings", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardAuthSettings))))
@@ -4646,6 +4739,8 @@ func (s *server) handler() http.Handler {
 	mux.Handle("POST /dashboard/apps/{slug}/issues/{issue_id}/actions", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardIssueActionHandler))))
 	mux.Handle("GET /dashboard/apps/{slug}/issues/lifecycle-alerts", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardIssueLifecycleAlerts))))
 	mux.Handle("POST /dashboard/apps/{slug}/issues/lifecycle-alerts", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardIssueLifecycleAlerts))))
+	mux.Handle("GET /dashboard/apps/{slug}/issues/compound-alerts", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardIssueCompoundAlerts))))
+	mux.Handle("POST /dashboard/apps/{slug}/issues/compound-alerts", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardIssueCompoundAlerts))))
 	mux.Handle("POST /dashboard/apps/{slug}/issues/frequency-alerts", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardIssueFrequencyAlerts))))
 	mux.Handle("POST /dashboard/apps/{slug}/issues/impact-alert-policy", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardIssueImpactAlertPolicyHandler))))
 	mux.Handle("POST /dashboard/apps/{slug}/issues/ownership-rules", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardIssueOwnershipRulesHandler))))

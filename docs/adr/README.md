@@ -1,5 +1,10 @@
 # Architecture Decision Records
 
+- [ADR-1745: Shared-window compound Issues alerts](1745-shared-window-issue-compound-alerts.md)
+- [ADR-1744: Offline grouping previews and reviewed regression baselines](1744-issue-grouping-previews-and-baselines.md)
+- [ADR-1743: Publish final Node build source maps with build completion](1743-builder-issue-source-map-publication.md)
+- [ADR-1742: Publish prebuilt Issues source maps during CLI deployment](1742-deploy-issue-source-map-publication.md)
+
 - [Preserve request identity in response caching](20261017214848-response-cache-request-identity.md)
 
 - [Restart-safe Go acknowledgment recovery alerts](20261017182028-go-recovery-alert-checkpoints.md)
@@ -123,7 +128,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
-| 1658 | [Owner-authorized deployment response checks](1658-owner-authorized-deployment-response-checks.md) | accepted; native deployment validation pending | Exact-deployment GET checks through the trusted gateway, with bounded HTTP evidence and no forwarded account credentials |
+| 1728 | [Owner-authorized deployment response checks](1728-owner-authorized-deployment-response-checks.md) | accepted; native deployment validation pending | Exact-deployment GET checks through the trusted gateway, with bounded HTTP evidence and no forwarded account credentials |
 | 2026101709 | [Receipt-bound repairable operation transactions](2026101709-repairable-operation-transactions.md) | accepted for internal qualification | Go, Node and Python capture, business writes and receipt bindings commit together; replay survives payload compaction |
 | 2026101708 | [Application writer capture readiness](2026101708-repair-capture-readiness.md) | accepted for internal qualification | Read-only checks on the actual application writer connection |
 | 2026101707 | [Read-only selective repair readiness](2026101707-repair-readiness.md) | accepted for internal qualification | Bounded executor catalog, enrollment and policy diagnostics |
@@ -276,6 +281,16 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 996 | [AI gateway phase 6: Responses API routes, forced tool choice on current Claude models, hard-cap gaps and opt-in content capture](996-ai-gateway-responses-api-hard-cap-gaps-content-capture.md) | accepted | openai routes accept the stateless Responses API (passthrough to OpenAI/Azure, translated replies and stream events for other targets); forced `tool_choice` becomes `auto` plus an instruction on Claude models that reject it; billable calls with unreadable usage settle at their reservation; new end users past the day's 10,000 are refused while per-user limits are set; opt-in capture of the first 32 KiB of logged calls' bodies (1,000 per day, 3 days) |
 | 997 | [AI gateway phase 7: media metering, content guardrails and replay](997-ai-gateway-media-metering-content-guardrails-replay.md) | accepted | Image, Imagen, transcription and speech calls are billable and reserved per image, audio second or character (5 new media prices, 106 catalog models); usage read from the tail of large JSON responses; per-integration content policy (email, payment card, IBAN, secret: off/redact/block, blocked terms) enforced before forwarding; captures always redacted; replay of a captured call on up to 5 targets through outboundd's worker with usage, cost, latency and output text |
 | 998 | [AI gateway preview: plan entitlement, staged account rollout and qualification](998-ai-gateway-preview-rollout.md) | accepted | AI gateway moves to preview on Hobby, Pro and Scale; plan entitlement enforced in apid (402) and outboundd (403); `ai_gateway_accounts` / `FAAS_AI_GATEWAY_ACCOUNTS` limits the gate to listed accounts during the preview; settlement timeout 2 s -> 15 s after the soak dropped usage; acceptance test, failure drills, opt-in soak, alerts, dashboard panels, runbook and customer page |
+| 1440 | [AI gateway phase 17: streaming response cache and cache savings](1440-ai-gateway-stream-cache-savings.md) | accepted | The response cache also stores identical streamed AI responses as they are forwarded and replays them on a hit; hits settle as cached requests with the provider cost they avoided, and settlement records what provider prompt caching saved |
+| 1438 | [AI gateway phase 16: tag budget alerts and tag usage export](1438-ai-gateway-tag-alerts-export.md) | accepted | A tag's daily cost limit alerts at 80% and 100% through the budget alert table and webhook, read back from the existing rollup statement, and a day range of usage by tag exports as CSV or NDJSON |
+| 1437 | [AI gateway phase 15: automatic prompt caching for Claude](1437-ai-gateway-automatic-prompt-caching.md) | accepted | With auto_prompt_cache on, the gateway adds prompt-cache breakpoints to Claude requests that carry none: after a system prompt or tool list it saw repeat, and after the last message of a continuing conversation, on the Anthropic API, Vertex and Bedrock |
+| 1436 | [AI gateway phase 14: usage tags and per-tag cost limits](1436-ai-gateway-usage-tags.md) | accepted | AI calls name up to five key=value tags in X-Gregale-AI-Tags; settlement rolls usage up per tag and UTC day with a bounded number of tags, and exact tags can carry daily cost limits enforced at admission |
+| 1435 | [AI gateway phase 13: response guardrails](1435-ai-gateway-response-guardrails.md) | accepted | The content policy's response section redacts or blocks e-mail addresses, cards, IBANs, secrets and blocked terms in model output, and runs the moderation check on it; whole responses are checked before release and streams through a per-channel hold-back window |
+| 1434 | [AI gateway phase 12: weighted, latency and cost route strategies](1434-ai-gateway-route-strategies.md) | accepted | A route's strategy picks the target each call tries first: by weight, by lowest recent time to first byte, or by lowest recent cost per call within an optional latency target, from the per-target minute rows read in the existing route query; the rest fall back in route order |
+| 1433 | [AI gateway phase 11: price built-in tool fees](1433-ai-gateway-tool-fees.md) | accepted | Web search, file search, code-interpreter container sessions and Gemini search grounding are counted from responses, priced per use from price lists and the catalog, and reserved when a request declares the tool |
+| 1432 | [AI gateway phase 10: refuse paid calls the gateway cannot meter, and meter video generation](1432-ai-gateway-unmetered-endpoints.md) | accepted | Writes on an AI integration go through only to metered or known-free endpoints unless the AI policy sets allow_unmetered; Veo video generation reserves and settles its seconds at the price for its resolution |
+| 1431 | [AI gateway phase 9: evaluations before a canary, access tokens for callers outside Gregale, and batch APIs](1431-ai-gateway-evaluations-access-tokens-batches.md) | accepted | Captured calls replay on a candidate target and a judge model compares the answers before a canary starts; expiring app tokens let laptops and CI call the gateway on an optional public listener; OpenAI and Anthropic batches reserve at creation and settle actual usage at batch prices |
+| 1340 | [AI gateway phase 8: model canary routes, request-log export and moderation guardrails](1340-ai-gateway-model-canaries-log-export-moderation.md) | accepted | A route can send a percentage of calls to a canary target first and rolls it back automatically on worse errors or latency; settled app calls can be exported to the app's log drains through a Postgres outbox; a content policy can check requests with OpenAI moderation or a classifier model on the account's own integration |
 | 1120 | [AI gateway throughput: pipelined admission and settlement, keyed settlement retries](1120-ai-gateway-throughput-pipelined-admission-keyed-settlement.md) | accepted | Admission and settlement pipeline their statements, admission reports the breaker and cooldown, unchanged breaker outcomes take no lock, and settlements keyed by the lease are retried; a call drops from 30 to 11 Postgres round trips |
 | 989 | [App access to managed outbound integrations through a guest relay](989-app-outbound-relay.md) | accepted | guest-init loopback `GREGALE_OUTBOUND_URL` relays bytes over vsock to vmmd, which adds a relay assertion and splices to an mTLS `outboundd` listener; only outboundd parses HTTP; Anthropic credentials use `x-api-key` |
 | 988 | [AI gateway on managed outbound integrations](988-ai-gateway-outbound-integrations.md) | accepted (phase 1) | `ai_provider` integrations stream event-stream responses, extract OpenAI-compatible and Anthropic token usage, keep UTC-day usage per caller and model, and enforce a daily token limit at admission |
@@ -305,6 +320,14 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 20261018090210 | [API monetization behind a release flag](20261018090210-api-monetization-release-flag.md) | accepted | Runtime setting `api_monetization_enabled` (default off) hides its routes before auth, spec paths, CLI verbs, webhook events and starter billing, and pauses its workers and gateway enforcement |
 | 650 | [Schema-generated Data APIs](650-schema-generated-data-api.md) | accepted | Ordinary app lifecycle, schema-restricted bindings, private type export and typed application clients |
 | 712 | [Object-storage durable entities](712-object-storage-durable-entities.md) | internal prototype; qualification pending | SQL-free entity state and retry receipts, opt-in alarms and checkpointed cleanup |
+| 1446 | [Safe releases by default](1446-safe-releases-by-default.md) | accepted; n2 drills passed | Default balanced canary and 5xx rollback for production releases, bounded low-traffic hold, crash-loop gate, unfenced plain rollback, verified rollback outcomes |
+| 1447 | [Explained rollout decisions](1447-explained-rollout-decisions.md) | proposed | The circuit breaker records why each canary stage advanced, is held, or was aborted; shown on the deployment, in `deployment wait --rollout` and `deployment summary`, and in rollout webhooks |
+| 1321 | [Evidence-paced default rollouts](1321-evidence-paced-default-rollouts.md) | proposed | The default `adaptive` ladder advances a stage on clean circuit-breaker evidence after one minute instead of its 2-minute timer; the default probe sends 20 per revision per round and each minute's round starts within about 15 s |
+| 1448 | [Releases that change the database](1448-releases-that-change-the-database.md) | proposed | A rollback over release commands that ran after its target last served needs acknowledgement; the refusal lists them with managed PostgreSQL restore points; automation never acknowledges; deployments report their release run |
+| 1449 | [App-chosen rollout probe routes](1449-app-chosen-rollout-probe-routes.md) | proposed | `release_probe_paths` names up to three GET paths the default rollout probe checks instead of `/`; a round splits its 20 probes across them |
+| 1450 | [One rollout flag and a live rollout view](1450-one-rollout-flag-and-live-rollout.md) | proposed | `gregale deploy --rollout safe\|fast\|immediate` and `release_policy` safe/fast/immediate; deploy follows a canary to 100% at a terminal and Ctrl-C detaches; `--safe`, `--canary-preset`, `--canary-stages` deprecated |
+| 1445 | [Post-release watch](1445-post-release-watch.md) | proposed | For 30 minutes after a release reaches 100%, apid compares it with its predecessor's pre-rollout traffic; a clear 5xx or p95 regression rolls back through the readiness-gated rollback (trigger `post_release`) and records an explained decision |
+| 1451 | [Guarded, reversible config changes](1451-guarded-reversible-config-changes.md) | proposed | Every env/secret write records a config revision (`gregale env history`, `gregale env rollback`); a guard judges the first new-config traffic against the old and restores the previous config on a 5xx failure; secret values are kept only while a guard is open; deleted or rotated secrets are never restored automatically |
 | 903 | [Object-storage entity outbox commit contract](903-object-storage-entity-outbox-contract.md) | internal engine; delivery pending | Atomically rooted outgoing intents with bounded restore, receipt replay and storage accounting |
 | 1037 | [Interactive app-task attach](1037-interactive-app-task-attach.md) | accepted; operator-gated preview | `gregale app exec -it` attaches one client to a fresh task VM's PTY through the gateway and vmmd with a single-use token; schedd lifecycle unchanged |
 | 971 | [Retire dead same-boot instance records after verified absence](971-same-boot-dead-instance-record-retirement.md) | accepted | vmmd startup retires instance records whose process is gone and whose kernel resources are verifiably absent, freeing quarantined slots and identity-verified temporary files (amends ADR-472, extends ADR-478) |
@@ -1038,19 +1061,25 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 
 ## Data API execution and recovery
 
-- [ADR-1660: Data API connection-capacity observations](1660-data-api-connection-capacity-observations.md)
+- [ADR-1729: Data API connection-capacity observations](1729-data-api-connection-capacity-observations.md)
 
-- [ADR-1661: Data API runtime connection-demand observations](1661-data-api-runtime-connection-demand.md)
+- [ADR-1730: Data API runtime connection-demand observations](1730-data-api-runtime-connection-demand.md)
 
-- [ADR-1662: Data API database timing telemetry](1662-data-api-database-timing-telemetry.md)
+- [ADR-1731: Data API database timing telemetry](1731-data-api-database-timing-telemetry.md)
 
-- [ADR-1663: Data API per-user concurrent request limits](1663-data-api-user-concurrency-limits.md)
+- [ADR-1732: Data API per-user concurrent request limits](1732-data-api-user-concurrency-limits.md)
 
-- [ADR-1664: Data API lock waits and contention recovery](1664-data-api-lock-contention-policy.md)
+- [ADR-1733: Data API lock waits and contention recovery](1733-data-api-lock-contention-policy.md)
 
-- [ADR-1665: Data API deadlines across SQL transaction retries](1665-data-api-sql-retry-deadlines.md)
+- [ADR-1734: Data API deadlines across SQL transaction retries](1734-data-api-sql-retry-deadlines.md)
 
-- [ADR-1666: Owner-approved deadline grants during credential rotation](1666-data-api-deadline-grant-rotation.md)
+- [ADR-1735: Owner-approved deadline grants during credential rotation](1735-data-api-deadline-grant-rotation.md)
+
+- [ADR-1736: Zero-downtime daemon restarts](1736-zero-downtime-daemon-restarts.md)
+
+- [ADR-1737: Internal mail service with independent activation and delivery gates](2026101501-internal-mail-service.md)
+
+- [ADR-1738: Durable producer handoff for internal account-deletion email](2026101601-mail-producer-outbox.md)
 
 - [ADR-1667: Coordinated SQL refresh across credential rotation](1667-data-api-coordinated-refresh-rotation.md)
 
@@ -1473,9 +1502,22 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-1380: Python PostgreSQL native acceptance](1380-python-postgres-native-acceptance.md)
 - [ADR-1381: Queue worker completion acceptance](1381-queue-worker-completion-acceptance.md)
 
+- [ADR-1658: Guided migration of an existing service](1658-guided-service-migration.md)
+- [ADR-1659: Resumable migration verification](1659-resumable-migration-verification.md)
+- [ADR-1660: Background migration verification and service recovery](1660-background-migration-verification.md)
+- [ADR-1661: Saved production cutover and DNS recovery](1661-guided-production-cutover.md)
+- [ADR-1662: Saved multi-service migration progress](1662-project-migration-journal.md)
+- [ADR-1663: Separate migration service names from app names](1663-migration-service-app-names.md)
+- [ADR-1664: Map migration runtime variables to selected services](1664-migration-runtime-connections.md)
+- [ADR-1665: Configure public frontend URLs before migration builds](1665-public-frontend-migration-urls.md)
+- [ADR-1666: Wait for selected APIs before migration builds](1666-migration-build-dependency-waits.md)
+
 - [ADR-1260: Initial-failure policy dry run](1260-initial-failure-policy-dry-run.md)
 - [ADR-1261: Durable first-recovery reviews](1261-durable-initial-recovery-reviews.md)
 - [ADR-1135: Sparse extent encoding for remote drives and snapshot memory](1135-sparse-extent-encoding-for-remote-artifacts.md)
+- [ADR-20261015120000000: Operator incident evidence](20261015120000000-operator-incident-evidence.md)
+- [ADR-20261016120000000: Operator alert workload summary](20261016120000000-operator-alert-workload-summary.md)
+
 
 [ADR-202610171028: Site hosting GitHub OIDC](202610171028-site-hosting-github-oidc.md) specifies explicit immutable trust and short-lived preview credentials.
 
@@ -1503,6 +1545,8 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-1528: Node admission generation fencing](1528-node-admission-generation-fencing.md) — transactional lifecycle/generation checks, fresh placement retries and migration destination validation.
 
 - [ADR-1529: Durable inbound migration reservations](1529-durable-inbound-migration-reservations.md) — persistent destination capacity, one adoption dispatch, original-generation cleanup and atomic ownership conversion.
+- [ADR-1740: Frozen fast path — a thaw is a ledger check, the vmmd call beside one read, and one guarded update](1740-frozen-fast-path.md)
+- [ADR-1741: schedd owner cache — per-app runtime generations and one guarded write per wake](1741-schedd-owner-cache.md)
 
 - [ADR-1530: Durable migration source retirement](1530-durable-migration-source-retirement.md) — original physical source receipts, atomic retirement accounting and maintenance fencing after ownership moves.
 
@@ -1585,6 +1629,7 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-1499: Native issue lifecycle alert policy](1499-issue-lifecycle-alert-policy.md)
 - [ADR-1500: Source-built apps run on the shared runtime base](1500-shared-runtime-source-apps.md)
 - [ADR-1501: Reconcile worker pools once at scheduler start](1501-worker-startup-reconcile.md)
+- [ADR-1591: Managed Postgres data pipelines](1591-managed-postgres-data-pipelines.md)
 
 - [ADR-20261017191501: Browser and Task migration parity for Go/Python MCP starters](20261017191501-mcp-go-python-starter-parity.md)
 - [ADR-20261017191502: Bounded starter protocol observations](20261017191502-mcp-starter-protocol-telemetry.md)

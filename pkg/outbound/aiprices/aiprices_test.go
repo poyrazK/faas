@@ -2,6 +2,8 @@ package aiprices
 
 // adr: 994 — the embedded catalog parses, covers every gateway provider and
 // resolves dated, versioned and region-prefixed model names to a family.
+// adr: 1432 — Veo rows carry a price per second, with resolutions priced
+// apart under "<model>@<resolution>".
 
 import (
 	"testing"
@@ -19,7 +21,8 @@ func TestDefaultCatalogCoversEveryProvider(t *testing.T) {
 		}
 		for _, entry := range models {
 			price := entry.Price
-			media := price.OutputImage != nil || price.Image != nil || price.AudioMinute != nil || price.Characters != nil
+			media := price.OutputImage != nil || price.Image != nil || price.AudioMinute != nil || price.Characters != nil ||
+				price.VideoSecond != nil
 			if price.Input == 0 && price.Output == 0 && !media {
 				t.Errorf("%s %s is free in the catalog", provider, entry.Model)
 			}
@@ -28,12 +31,40 @@ func TestDefaultCatalogCoversEveryProvider(t *testing.T) {
 	if catalog.Source == "" || catalog.USDPerEUR == "" || catalog.Generated == "" {
 		t.Fatalf("catalog header = %+v", catalog)
 	}
+	for _, tc := range []struct {
+		provider, model, want string
+	}{
+		{api.OutboundAIProviderGemini, "veo-3.1-generate-preview@4k", "veo-3.1-generate-preview@4k"},
+		{api.OutboundAIProviderGemini, "veo-3.1-generate-preview@1080p", "veo-3.1-generate-preview"},
+		{api.OutboundAIProviderVertex, "veo-3.1-fast-generate-001@1080p", "veo-3.1-fast-generate-001@1080p"},
+	} {
+		entry, ok := catalog.Lookup(tc.provider, tc.model)
+		if !ok || entry.Model != tc.want || entry.Price.VideoSecond == nil || *entry.Price.VideoSecond <= 0 {
+			t.Errorf("Lookup(%s, %s) = %+v, %v", tc.provider, tc.model, entry, ok)
+		}
+	}
+	// adr: 1433 — models carry built-in tool prices.
+	for provider, model := range map[string]string{api.OutboundAIProviderOpenAI: "gpt-5", api.OutboundAIProviderAnthropic: "claude-sonnet-4-5",
+		api.OutboundAIProviderGemini: "gemini-2.5-flash"} {
+		entry, ok := catalog.Lookup(provider, model)
+		if !ok || entry.Price.WebSearch == nil || *entry.Price.WebSearch <= 0 {
+			t.Errorf("%s %s has no web search price: %+v", provider, model, entry.Price)
+		}
+	}
+	if entry, _ := catalog.Lookup(api.OutboundAIProviderOpenAI, "gpt-5"); entry.Price.FileSearch == nil || entry.Price.CodeSessionGB == nil {
+		t.Errorf("gpt-5 has no file search or container price: %+v", entry.Price)
+	}
+	base, _ := catalog.Lookup(api.OutboundAIProviderGemini, "veo-3.1-generate-preview")
+	ultra, _ := catalog.Lookup(api.OutboundAIProviderGemini, "veo-3.1-generate-preview@4k")
+	if base.Price.VideoSecond == nil || ultra.Price.VideoSecond == nil || *ultra.Price.VideoSecond <= *base.Price.VideoSecond {
+		t.Fatalf("4k is not dearer than the base price: %+v / %+v", base.Price, ultra.Price)
+	}
 }
 
 func TestLookup(t *testing.T) {
 	catalog, err := Parse([]byte(`{
 		"source": "test", "generated": "2026-10-12", "usd_per_eur": "1", "fx_source": "test",
-		"fields": ["input", "cached_input", "cache_write", "output", "input_image", "output_image", "image", "audio_minute", "characters"],
+		"fields": ["input", "cached_input", "cache_write", "output", "input_image", "output_image", "image", "audio_minute", "characters", "video_second", "web_search", "file_search", "code_session_gb"],
 		"providers": {
 			"openai": {"gpt-4o": [1, 1, 1, 4], "gpt-4o-mini": [2, 2, 2, 8], "o1": [3, 3, 3, 12]},
 			"bedrock": {"anthropic.claude-3-5-sonnet-20241022-v2:0": [5, 5, 5, 20], "anthropic.claude-3-5-haiku": [6, 6, 6, 24]},
@@ -66,7 +97,7 @@ func TestLookup(t *testing.T) {
 }
 
 func TestParseRejectsInvalidCatalogs(t *testing.T) {
-	header := `"source": "s", "generated": "g", "usd_per_eur": "1", "fx_source": "f", "fields": ["input", "cached_input", "cache_write", "output", "input_image", "output_image", "image", "audio_minute", "characters"]`
+	header := `"source": "s", "generated": "g", "usd_per_eur": "1", "fx_source": "f", "fields": ["input", "cached_input", "cache_write", "output", "input_image", "output_image", "image", "audio_minute", "characters", "video_second", "web_search", "file_search", "code_session_gb"]`
 	for name, body := range map[string]string{
 		"unknown provider": `{` + header + `, "providers": {"mistral": {"m": [1, 1, 1, 1]}}}`,
 		"negative price":   `{` + header + `, "providers": {"openai": {"m": [-1, 1, 1, 1]}}}`,
@@ -74,6 +105,8 @@ func TestParseRejectsInvalidCatalogs(t *testing.T) {
 		"too dear":         `{` + header + `, "providers": {"openai": {"m": [1, 1, 1, 1000000001]}}}`,
 		"image too dear":   `{` + header + `, "providers": {"openai": {"m": [1, 1, 1, 1, null, null, 10000001]}}}`,
 		"negative media":   `{` + header + `, "providers": {"openai": {"m": [1, 1, 1, 1, null, null, null, -1]}}}`,
+		"video too dear":   `{` + header + `, "providers": {"gemini": {"veo": [0, 0, 0, 0, null, null, null, null, null, 10000001]}}}`,
+		"search too dear":  `{` + header + `, "providers": {"openai": {"m": [1, 1, 1, 1, null, null, null, null, null, null, 10000001]}}}`,
 		"field order":      `{"source": "s", "generated": "g", "usd_per_eur": "1", "fx_source": "f", "fields": ["output"], "providers": {}}`,
 	} {
 		if _, err := Parse([]byte(body)); err == nil {

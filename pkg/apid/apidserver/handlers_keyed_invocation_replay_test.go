@@ -158,14 +158,26 @@ func finishKeyedReplayExecution(t *testing.T, e apidserver.TestEnv, id string, s
 func TestKeyedInvocationReplayScope(t *testing.T) {
 	for _, test := range []struct {
 		scope  string
+		owned  bool
 		status int
 	}{
-		{api.ScopeAppsRead, http.StatusForbidden},
-		{api.ScopeDeployWrite, http.StatusNotFound},
+		// App access resolves the invocation's app before scopes (#4882), so
+		// the missing scope is observed on an invocation the caller owns.
+		{api.ScopeAppsRead, true, http.StatusForbidden},
+		{api.ScopeDeployWrite, false, http.StatusNotFound},
 	} {
 		t.Run(test.scope, func(t *testing.T) {
 			e := apidserver.SetupWithScopes(t, []string{test.scope})
-			if rec := e.Do(t, "POST", "/v1/invocations/missing/replay-keyed", nil, nil); rec.Code != test.status {
+			id := "missing"
+			if test.owned {
+				id = "11111111-1111-4111-8111-111111111111"
+				appID := apidserver.MustSeedApp(t, e, "keyed-scope")
+				if _, err := (*e.Store()).EnqueueInvocation(t.Context(), state.Invocation{ID: id, AccountID: (*e.Acct()).ID, AppID: appID,
+					Source: state.InvocationAsyncInvoke, DueAt: time.Now()}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if rec := e.Do(t, "POST", "/v1/invocations/"+id+"/replay-keyed", nil, nil); rec.Code != test.status {
 				t.Fatalf("scope: %d %s", rec.Code, rec.Body)
 			}
 		})

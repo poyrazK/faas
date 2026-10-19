@@ -156,6 +156,20 @@
       "acceptance_test": "pkg/apid/apidserver/handlers_slo_status_test.go::TestGetSLOReportsBudgetFromHourlyRows"
     },
     {
+      "id": "data-pipelines",
+      "name": "Managed Postgres data pipelines",
+      "category": "data",
+      "description": "Continuously mirror selected external PostgreSQL tables into a dedicated managed database and expose explicitly authorized reads through the Data API. Staging qualification only.",
+      "maturity": "internal",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/data-pipelines",
+      "acceptance_test": "pkg/datapipeline/native_test.go::TestNativePipelineEndToEnd"
+    },
+    {
       "id": "datadog-integration",
       "name": "Datadog integration",
       "category": "observability",
@@ -466,7 +480,7 @@
       "name": "Progressive rollouts and rollback",
       "category": "delivery",
       "description": "Shift traffic between immutable deployment revisions, advance a canary ladder automatically while health signals stay clean, and roll back to a named revision.",
-      "maturity": "preview",
+      "maturity": "beta",
       "plans": [
         "free",
         "hobby",
@@ -474,7 +488,7 @@
         "scale"
       ],
       "docs_url": "/docs/deploys",
-      "acceptance_test": "pkg/sched/invariants_property_test.go::TestProperty_RolloutGrant_AllowsExactlyOneOverlap"
+      "acceptance_test": "cmd/e2e/safe_release_drill_metal_test.go::TestSafeReleaseDrillMetal"
     },
     {
       "id": "request-retry",

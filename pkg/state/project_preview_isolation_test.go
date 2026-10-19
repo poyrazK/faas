@@ -16,10 +16,7 @@ func TestMemStoreProjectReconcileIgnoresPreviewApps(t *testing.T) {
 // The production project membership and reconcile paths share one contract.
 // A PR preview has the same project/workload identity as its parent for
 // service routing, but must never become a production reconcile candidate.
-func testProjectReconcileIgnoresPreviewApps(t *testing.T, store interface {
-	state.Store
-	state.ProjectReconcileStore
-}) {
+func testProjectReconcileIgnoresPreviewApps(t *testing.T, store contractTestStore) {
 	t.Helper()
 	ctx := context.Background()
 	account, err := store.CreateAccount(ctx, "project-preview-isolation@example.test", api.PlanPro)

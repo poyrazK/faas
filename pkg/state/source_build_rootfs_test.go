@@ -14,13 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/imagechain"
 )
 
-type sourceRootfsTestStore interface {
-	buildExportTestStore
-	SourceBuildRootfsStore
-	BaseImageProducerStore
-	DeploymentRuntimeProducerPresenceStore
-	DeploymentRuntimeProducerInputStore
-}
+type sourceRootfsTestStore = contractTestStore
 
 func TestSourceBuildRootfsKindHonorsAppType(t *testing.T) {
 	for _, tc := range []struct {

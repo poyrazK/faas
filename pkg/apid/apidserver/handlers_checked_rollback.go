@@ -12,10 +12,16 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/release"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/openapidiff"
 	"github.com/onebox-faas/faas/pkg/state"
 )
+
+// plainRollbacks is the verified plain-rollback ledger (ADR-1446).
+func (s *server) plainRollbacks() release.Rollbacks {
+	return release.Rollbacks{Store: s.store, Log: s.log, Audit: s.audit, Metrics: s.ops}
+}
 
 func (s *server) startCheckedRollback(w http.ResponseWriter, r *http.Request, acct state.Account, app state.App, req api.RollbackRequest) {
 	operation, target, problem := s.prepareCheckedRollback(r.Context(), acct, app, req)
@@ -54,6 +60,9 @@ func (s *server) prepareCheckedRollback(ctx context.Context, acct state.Account,
 	target, err := s.store.GetDeploymentByIDScopedToSuperseded(ctx, app.ID, targetID)
 	if err != nil {
 		return empty, target, api.ErrRollbackTargetIneligible("select a superseded or zero-traffic live deployment of this app")
+	}
+	if _, problem := s.rollbackReleaseGuard(ctx, app, target, req.AcknowledgeReleases); problem != nil {
+		return empty, target, problem
 	}
 	if problem := s.verifyRollbackTargetArtifact(ctx, target); problem != nil {
 		return empty, target, problem
@@ -104,6 +113,11 @@ func (s *server) getCheckedRollback(w http.ResponseWriter, r *http.Request, acct
 	}
 	operation, err := store.GetCheckedRollback(r.Context(), acct.ID, app.ID, id.String())
 	if errors.Is(err, state.ErrNotFound) {
+		// ADR-1446: plain rollbacks share this receipt endpoint.
+		if plain, ok := s.plainRollbacks().Operation(r.Context(), acct.ID, app.ID, id.String()); ok {
+			writeJSON(w, http.StatusOK, plain)
+			return
+		}
 		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Rollback not found", "No such rollback operation for this app."))
 		return
 	}

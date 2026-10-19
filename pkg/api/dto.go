@@ -627,6 +627,11 @@ type CreateAppRequest struct {
 	VersionAffinityCookie        string `json:"version_affinity_cookie,omitempty"`
 	VersionAffinityManagedCookie bool   `json:"version_affinity_managed_cookie,omitempty"`
 	RevisionPinTTLSeconds        int    `json:"revision_pin_ttl_seconds,omitempty"`
+	// ReleasePolicy (ADR-1446): "safe" (default) or "immediate".
+	ReleasePolicy string `json:"release_policy,omitempty"`
+	// ReleaseProbePaths (ADR-1449): up to ReleaseProbePathsMax GET paths the
+	// default rollout probe checks instead of "/".
+	ReleaseProbePaths []string `json:"release_probe_paths,omitempty"`
 	// StreamingEnabled (issue #471) lets a customer opt out of
 	// streaming at creation time. nil → plan default (Free off,
 	// Hobby+ on). Explicit false on a Hobby/Pro/Scale plan = opt out
@@ -1060,6 +1065,12 @@ type UpdateAppRequest struct {
 	VersionAffinityCookie        *string `json:"version_affinity_cookie,omitempty"`
 	VersionAffinityManagedCookie *bool   `json:"version_affinity_managed_cookie,omitempty"`
 	RevisionPinTTLSeconds        *int    `json:"revision_pin_ttl_seconds,omitempty"`
+	// ReleasePolicy (ADR-1446) replaces the app's default rollout for
+	// production releases: "safe" or "immediate".
+	ReleasePolicy *string `json:"release_policy,omitempty"`
+	// ReleaseProbePaths (ADR-1449) replaces the paths the default rollout
+	// probe checks; an empty list restores "/".
+	ReleaseProbePaths *[]string `json:"release_probe_paths,omitempty"`
 	// MinInstances is the per-app cold-wake floor (ux_spec §6.5).
 	// 0 / unset => scale to zero; >0 => keep at least this many
 	// RUNNING instances alive. Pro/Scale only — Free/Hobby get
@@ -2093,6 +2104,12 @@ type AppResponse struct {
 	VersionAffinityCookie        string `json:"version_affinity_cookie,omitempty"`
 	VersionAffinityManagedCookie bool   `json:"version_affinity_managed_cookie"`
 	RevisionPinTTLSeconds        int    `json:"revision_pin_ttl_seconds"`
+	// ReleasePolicy is the effective default rollout for production
+	// releases (ADR-1446): "safe" or "immediate".
+	ReleasePolicy string `json:"release_policy"`
+	// ReleaseProbePaths are the paths the default rollout probe checks; empty
+	// means "/" (ADR-1449).
+	ReleaseProbePaths []string `json:"release_probe_paths,omitempty"`
 	// AppProtocol (ADR-124) is the wire-protocol selector stored on
 	// the apps row. Always "http1" on a Free-or-above app that
 	// didn't set the field — the universal default. Set to "http2"
@@ -3571,11 +3588,23 @@ type DeploymentResponse struct {
 	// 'pending' isn't "" — the dashboard fills in from
 	// pkg/state.SerializeDeployment which always stamps the
 	// resolved value).
-	RolloutState          string                         `json:"rollout_state,omitempty"`
-	RolloutStartedAt      *time.Time                     `json:"rollout_started_at,omitempty"`
-	RolloutCompletedAt    *time.Time                     `json:"rollout_completed_at,omitempty"`
-	RolloutAbortedAt      *time.Time                     `json:"rollout_aborted_at,omitempty"`
-	RolloutAbortedReason  string                         `json:"rollout_aborted_reason,omitempty"`
+	RolloutState         string     `json:"rollout_state,omitempty"`
+	RolloutStartedAt     *time.Time `json:"rollout_started_at,omitempty"`
+	RolloutCompletedAt   *time.Time `json:"rollout_completed_at,omitempty"`
+	RolloutAbortedAt     *time.Time `json:"rollout_aborted_at,omitempty"`
+	RolloutAbortedReason string     `json:"rollout_aborted_reason,omitempty"`
+	// RolloutDecision is the evidence recorded with the latest rollout
+	// transition (ADR-1447). It explains an outcome only when its kind matches:
+	// an advance record for completion, an abort record for an abort.
+	RolloutDecision *RolloutDecision `json:"rollout_decision,omitempty"`
+	// RolloutHold is the newest hold recorded since the current canary step
+	// started, while the rollout is in flight (ADR-1447). Only single-deployment
+	// reads and the deployment summary fill it.
+	RolloutHold *RolloutDecision `json:"rollout_hold,omitempty"`
+	// Release is the deployment's release command run, for a deployment that
+	// declares one (ADR-1448). Only single-deployment reads and the
+	// deployment summary fill it.
+	Release               *DeploymentRelease             `json:"release,omitempty"`
 	RollbackOperation     *RollbackOperation             `json:"rollback_operation,omitempty"`
 	ServiceRolloutHandoff *ServiceRolloutHandoffResponse `json:"service_rollout_handoff,omitempty"`
 }
@@ -3742,6 +3771,9 @@ type AdvanceCanaryRequest struct {
 	ProfileGateRollback bool                 `json:"profile_gate_rollback,omitempty"`
 	ProfileGateOverride *ProfileGateOverride `json:"profile_gate_override,omitempty"`
 	ExpectedStep        int                  `json:"expected_step"`
+	// Decision is the circuit-breaker evidence for this advance (ADR-1447).
+	// Reserved for the lease-bound internal worker; public requests reject it.
+	Decision *RolloutDecision `json:"decision,omitempty"`
 }
 
 // CanaryAdvanceResponse carries the atomically advanced deployment and the
@@ -3996,6 +4028,12 @@ type RollbackRequest struct {
 	// set this; the API does not enforce role because the
 	// underlying endpoint already requires MFA + ScopesDeployWrite.
 	AlertRuleID *string `json:"alert_rule_id,omitempty"`
+
+	// AcknowledgeReleases lets the rollback proceed although release
+	// commands ran after its target last served (ADR-1448). Without it such a
+	// rollback is refused with rollback_crosses_release. Automated rollbacks
+	// never set it.
+	AcknowledgeReleases bool `json:"acknowledge_releases,omitempty"`
 }
 
 // CapabilityStatus is a customer-visible catalog row with the account's
@@ -7068,15 +7106,17 @@ const (
 // schema-parity AST gate can assert field-for-field equivalence with
 // the OpenAPI spec.
 type ProjectScanRequest struct {
-	Source                 string `json:"source"`                // tar.gz binary blob
-	ProjectSlug            string `json:"project_slug"`          // kebab slug
-	RepoFullName           string `json:"repo_full_name"`        // GitHub owner/name binding
-	ProductionBranch       string `json:"production_branch"`     // default "main"
-	InstallID              int64  `json:"install_id"`            // GitHub install id (--repo); 0 for unbound
-	Only                   string `json:"only"`                  // CSV of workload names
-	Environment            string `json:"environment,omitempty"` // registered project environment
-	NoTriggers             bool   `json:"no_triggers"`           // leave declared and existing triggers unchanged
-	PlatformTenantRequired *bool  `json:"platform_tenant_required,omitempty"`
+	AppSlugs               map[string]string `json:"app_slugs,omitempty"`
+	Migration              bool              `json:"migration,omitempty"`
+	Source                 string            `json:"source"`                // tar.gz binary blob
+	ProjectSlug            string            `json:"project_slug"`          // kebab slug
+	RepoFullName           string            `json:"repo_full_name"`        // GitHub owner/name binding
+	ProductionBranch       string            `json:"production_branch"`     // default "main"
+	InstallID              int64             `json:"install_id"`            // GitHub install id (--repo); 0 for unbound
+	Only                   string            `json:"only"`                  // CSV of workload names
+	Environment            string            `json:"environment,omitempty"` // registered project environment
+	NoTriggers             bool              `json:"no_triggers"`           // leave declared and existing triggers unchanged
+	PlatformTenantRequired *bool             `json:"platform_tenant_required,omitempty"`
 }
 
 // ProjectSourceRefScanRequest asks the control plane to fetch a connected
@@ -7084,32 +7124,53 @@ type ProjectScanRequest struct {
 // credentials stay inside githubd; InstallID may be omitted when exactly one
 // account installation can access Repo.
 type ProjectSourceRefScanRequest struct {
-	Repo             string   `json:"repo"`
-	Ref              string   `json:"ref"`
-	ProjectSlug      string   `json:"project_slug"`
-	RepoFullName     string   `json:"repo_full_name,omitempty"`
-	ProductionBranch string   `json:"production_branch,omitempty"`
-	InstallID        int64    `json:"install_id,omitempty"`
-	Only             []string `json:"only,omitempty"`
-	Exclude          []string `json:"exclude,omitempty"`
-	Environment      string   `json:"environment,omitempty"`
-	NoTriggers       bool     `json:"no_triggers,omitempty"`
+	AppSlugs         map[string]string `json:"app_slugs,omitempty"`
+	Repo             string            `json:"repo"`
+	Ref              string            `json:"ref"`
+	ProjectSlug      string            `json:"project_slug"`
+	RepoFullName     string            `json:"repo_full_name,omitempty"`
+	ProductionBranch string            `json:"production_branch,omitempty"`
+	InstallID        int64             `json:"install_id,omitempty"`
+	Only             []string          `json:"only,omitempty"`
+	Exclude          []string          `json:"exclude,omitempty"`
+	Environment      string            `json:"environment,omitempty"`
+	NoTriggers       bool              `json:"no_triggers,omitempty"`
+	// Migration leaves the project unbound from unattended GitHub push deploys
+	// and suppresses triggers while the customer verifies the first service.
+	Migration bool `json:"migration,omitempty"`
+}
+
+// ProjectInitialSecrets maps exact selected workload names to initial sealed
+// environment values. It is request-only and must never enter scan responses.
+type ProjectInitialSecrets map[string]map[string]string
+
+// ApplyCachedProjectPlanRequest applies the exact account-owned source retained
+// by scan, without asking a browser to upload or refetch the repository.
+type ApplyCachedProjectPlanRequest struct {
+	PlanToken      string                `json:"plan_token"`
+	Only           []string              `json:"only,omitempty"`
+	Exclude        []string              `json:"exclude,omitempty"`
+	ApprovalToken  string                `json:"approval_token,omitempty"`
+	InitialSecrets ProjectInitialSecrets `json:"initial_secrets,omitempty"`
 }
 
 // ProjectApplyRequest is the multipart body for POST /v1/projects.
 // Shape mirrors ProjectScanRequest — the handler re-runs the scan
 // and re-checks the plan token internally.
 type ProjectApplyRequest struct {
-	Source                 string `json:"source"`
-	ProjectSlug            string `json:"project_slug"`
-	RepoFullName           string `json:"repo_full_name"`
-	ProductionBranch       string `json:"production_branch"`
-	InstallID              int64  `json:"install_id"`
-	Only                   string `json:"only"`
-	Environment            string `json:"environment,omitempty"`
-	ApprovalToken          string `json:"approval_token,omitempty"`
-	NoTriggers             bool   `json:"no_triggers"`
-	PlatformTenantRequired *bool  `json:"platform_tenant_required,omitempty"`
+	AppSlugs               map[string]string     `json:"app_slugs,omitempty"`
+	Migration              bool                  `json:"migration,omitempty"`
+	Source                 string                `json:"source"`
+	ProjectSlug            string                `json:"project_slug"`
+	RepoFullName           string                `json:"repo_full_name"`
+	ProductionBranch       string                `json:"production_branch"`
+	InstallID              int64                 `json:"install_id"`
+	Only                   string                `json:"only"`
+	Environment            string                `json:"environment,omitempty"`
+	ApprovalToken          string                `json:"approval_token,omitempty"`
+	NoTriggers             bool                  `json:"no_triggers"`
+	PlatformTenantRequired *bool                 `json:"platform_tenant_required,omitempty"`
+	InitialSecrets         ProjectInitialSecrets `json:"initial_secrets,omitempty"`
 }
 
 // SourceRefDeployRequest is the JSON body for
@@ -7205,6 +7266,8 @@ type SourceTarballDeployRequest struct {
 // existing app, and which existing app row the update targets. ID is
 // empty when Action == "create".
 type PlanWorkload struct {
+	AppSlug             string              `json:"app_slug,omitempty"`
+	PublicURL           string              `json:"public_url,omitempty"`
 	Name                string              `json:"name"`
 	RootDir             string              `json:"root_dir"`
 	Dockerfile          string              `json:"dockerfile,omitempty"`
@@ -7224,14 +7287,15 @@ type PlanWorkload struct {
 	AllowedServiceCallScopes  *ServiceCallerScopes                `json:"allowed_service_call_scopes,omitempty"`
 	PlatformTenantRequired    *bool                               `json:"platform_tenant_required,omitempty"`
 
-	Class         string   `json:"class,omitempty"`
-	Schedule      string   `json:"schedule,omitempty"`
-	Ports         []int    `json:"ports"`
-	EnvKeys       []string `json:"env_keys,omitempty"`
-	Source        string   `json:"source,omitempty"`
-	Tier          string   `json:"tier,omitempty"`
-	Action        string   `json:"action,omitempty"`          // ADR-124: "create" | "update"
-	ExistingAppID string   `json:"existing_app_id,omitempty"` // ADR-124: empty iff Action == "create"
+	Class           string   `json:"class,omitempty"`
+	Schedule        string   `json:"schedule,omitempty"`
+	Ports           []int    `json:"ports"`
+	EnvKeys         []string `json:"env_keys,omitempty"`
+	RequiredEnvKeys []string `json:"required_env_keys,omitempty"`
+	Source          string   `json:"source,omitempty"`
+	Tier            string   `json:"tier,omitempty"`
+	Action          string   `json:"action,omitempty"`          // ADR-124: "create" | "update"
+	ExistingAppID   string   `json:"existing_app_id,omitempty"` // ADR-124: empty iff Action == "create"
 	// DetectedBy is the structured detection trace (issue #742).
 	// Pointer + omitempty so the field is purely additive: an
 	// existing `gregale scan --json` consumer that does not know
@@ -12305,6 +12369,8 @@ type RecoverDeploymentRolloutRequest struct {
 	Action                          string `json:"action"`
 	Reason                          string `json:"reason,omitempty"`
 	ExpectedPredecessorDeploymentID string `json:"expected_predecessor_deployment_id"`
+	// Decision is the circuit-breaker evidence for the abort (ADR-1447).
+	Decision *RolloutDecision `json:"decision,omitempty"`
 }
 
 // RolloutTransitionResponse is the body returned by

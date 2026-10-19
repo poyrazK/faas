@@ -13,16 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-type promotionWorkloadTestStore interface {
-	state.Store
-	state.ProjectReleaseSetStore
-	state.ProjectReleaseSetReader
-	state.ProjectEnvironmentPromotionReleaseSetStore
-	state.ProjectEnvironmentPromotionWorkloadSpecStore
-	state.ProjectEnvironmentWorkloadSpecStore
-	state.DeploymentWorkloadSpecReader
-	state.ProjectPromotionDeploymentStore
-}
+type promotionWorkloadTestStore = contractTestStore
 
 func TestMemPromotionActivatesAndRestoresWorkloadSettings(t *testing.T) {
 	testPromotionWorkloadSettings(t, state.NewMemStore(), false)
