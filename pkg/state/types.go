@@ -7954,7 +7954,7 @@ const (
 	// proof of work and carry a signed pass before the request reaches the
 	// app (ADR-831 amendment 7). Quota via Limits.EdgeRulesChallengePerApp
 	// (Free 0 / Hobby 3 / Pro 10 / Scale 25). See
-	// migrations/20261015085640049_edge_rules_kind_challenge.sql.
+	// migrations/20261019134529781_edge_rules_kind_challenge.sql.
 	EdgeRuleKindChallenge EdgeRuleKind = "challenge"
 )
 
