@@ -133,6 +133,34 @@ type Client struct {
 	// subtests). NewClient wires a fresh cache so completion just works;
 	// tests that want hermetic isolation call SetCompletionCache(nil).
 	cache *CompletionCache
+
+	// noConfigGuard sends `guard=false` on env and secret writes, so they
+	// open no config guard (ADR-1451, CLI --no-guard).
+	noConfigGuard bool
+}
+
+// WithoutConfigGuard returns a client whose env and secret writes open no
+// config guard (ADR-1451). The receiver is unchanged.
+func (c *Client) WithoutConfigGuard() *Client {
+	cp := *c
+	cp.noConfigGuard = true
+	return &cp
+}
+
+// configWriteQuery is scopeQuery for env and secret writes: it also carries
+// the config guard opt-out.
+func (c *Client) configWriteQuery(path, scope string) string {
+	v := url.Values{}
+	if scope != "" {
+		v.Set("scope", scope)
+	}
+	if c.noConfigGuard {
+		v.Set("guard", "false")
+	}
+	if len(v) == 0 {
+		return path
+	}
+	return path + "?" + v.Encode()
 }
 
 // NewClient builds a client for baseURL with the given bearer token.
@@ -1821,6 +1849,19 @@ func (c *Client) ApplyProjectPlanWithBindingEnvironmentApproval(
 	environment, approvalToken string,
 	platformTenantRequired ...*bool,
 ) (ApplyResponse, error) {
+	return c.ApplyProjectPlanWithInitialSecrets(ctx, planToken, source, sourceName, projectSlug, repoFullName,
+		productionBranch, installID, only, exclude, persistExclude, noTriggers, environment, approvalToken, nil, platformTenantRequired...)
+}
+
+// ApplyProjectPlanWithInitialSecrets seals initial workload configuration on
+// the server before any selected workload's first build is enqueued.
+func (c *Client) ApplyProjectPlanWithInitialSecrets(
+	ctx context.Context, planToken string,
+	source io.Reader, sourceName, projectSlug, repoFullName, productionBranch string,
+	installID int64, only, exclude []string, persistExclude, noTriggers bool,
+	environment, approvalToken string, initialSecrets ProjectInitialSecrets,
+	platformTenantRequired ...*bool,
+) (ApplyResponse, error) {
 	var b bytes.Buffer
 	w := multipart.NewWriter(&b)
 	if err := writeProjectMultipartFields(w, source, sourceName, projectSlug, repoFullName, productionBranch, installID, only, exclude, persistExclude, noTriggers, environment, approvalToken); err != nil {
@@ -1828,6 +1869,15 @@ func (c *Client) ApplyProjectPlanWithBindingEnvironmentApproval(
 	}
 	if err := writeProjectTenantPolicy(w, platformTenantRequired); err != nil {
 		return ApplyResponse{}, fmt.Errorf("build tenant policy field: %w", err)
+	}
+	if len(initialSecrets) > 0 {
+		body, err := json.Marshal(initialSecrets)
+		if err != nil {
+			return ApplyResponse{}, fmt.Errorf("encode initial project configuration: %w", err)
+		}
+		if err := w.WriteField("initial_secrets", string(body)); err != nil {
+			return ApplyResponse{}, fmt.Errorf("write initial project configuration: %w", err)
+		}
 	}
 	if err := w.Close(); err != nil {
 		return ApplyResponse{}, fmt.Errorf("close multipart writer: %w", err)
@@ -1855,6 +1905,12 @@ func (c *Client) ApplyProjectPlanWithBindingEnvironmentApproval(
 	req.Header.Set("Idempotency-Key", idempotencyKey)
 	var out ApplyResponse
 	return out, c.doReq(c.uploadHTTP(), req, &out)
+}
+
+// ApplyCachedProjectPlan deploys exactly the account-owned source from scan.
+func (c *Client) ApplyCachedProjectPlan(ctx context.Context, request ApplyCachedProjectPlanRequest) (ApplyResponse, error) {
+	var out ApplyResponse
+	return out, c.do(ctx, http.MethodPost, "/v1/projects/apply-plan", request, &out)
 }
 
 // DeleteDeploymentScopeExclusion drops a single persisted
@@ -2360,6 +2416,13 @@ func (c *Client) RollbackTo(ctx context.Context, slug, targetDeploymentID string
 	}
 	body := RollbackRequest{TargetDeploymentID: &targetDeploymentID}
 	return out, c.doWithClientAndIdempotencyKey(ctx, c.rollbackHTTP(), "POST", "/v1/apps/"+slug+"/rollback", body, &out, "")
+}
+
+// RollbackWithRequest sends a full rollback request, for fields such as
+// AcknowledgeReleases (ADR-1448) that the narrower helpers do not carry.
+func (c *Client) RollbackWithRequest(ctx context.Context, slug string, req RollbackRequest) (DeploymentResponse, error) {
+	var out DeploymentResponse
+	return out, c.doWithClientAndIdempotencyKey(ctx, c.rollbackHTTP(), "POST", "/v1/apps/"+slug+"/rollback", req, &out, "")
 }
 
 // RollbackToWithRule (SAFE-RELEASES-OBS PR-D, issue #976 / ADR-122)
@@ -4698,7 +4761,7 @@ func (c *Client) SetSecretWithScope(ctx context.Context, slug, key, value, scope
 // its snapshot-retention class. Empty class preserves an existing class and
 // defaults a new row to persistent.
 func (c *Client) SetSecretWithScopeAndClass(ctx context.Context, slug, key, value, scope, secretClass string) error {
-	return c.do(ctx, "PUT", c.scopeQuery("/v1/apps/"+slug+"/secrets/"+key, scope),
+	return c.do(ctx, "PUT", c.configWriteQuery("/v1/apps/"+slug+"/secrets/"+key, scope),
 		PutAppSecretRequest{Value: value, SecretClass: secretClass}, nil)
 }
 func (c *Client) UnsetSecret(ctx context.Context, slug, key string) error {
@@ -4708,7 +4771,7 @@ func (c *Client) UnsetSecret(ctx context.Context, slug, key string) error {
 // UnsetSecretWithScope is the scope-aware sibling of UnsetSecret.
 // Same reserved-sentinel posture as SetSecretWithScope.
 func (c *Client) UnsetSecretWithScope(ctx context.Context, slug, key, scope string) error {
-	return c.do(ctx, "DELETE", c.scopeQuery("/v1/apps/"+slug+"/secrets/"+key, scope), nil, nil)
+	return c.do(ctx, "DELETE", c.configWriteQuery("/v1/apps/"+slug+"/secrets/"+key, scope), nil, nil)
 }
 
 // UnsetSecretWithScopeAndStatus deletes a secret and returns the durable
@@ -4717,7 +4780,7 @@ func (c *Client) UnsetSecretWithScopeAndStatus(ctx context.Context, slug, key, s
 	var out AppSecretRevocationResponse
 	headers := make(http.Header)
 	headers.Set("Prefer", "return=representation")
-	err := c.doWithHeaders(ctx, "DELETE", c.scopeQuery("/v1/apps/"+slug+"/secrets/"+key, scope), nil, &out, headers)
+	err := c.doWithHeaders(ctx, "DELETE", c.configWriteQuery("/v1/apps/"+slug+"/secrets/"+key, scope), nil, &out, headers)
 	return out, err
 }
 
@@ -4743,8 +4806,47 @@ func (c *Client) RotateSecret(ctx context.Context, slug, key, value string) (Rot
 func (c *Client) RotateSecretWithScope(ctx context.Context, slug, key, value, scope string) (RotateAppSecretResponse, error) {
 	var out RotateAppSecretResponse
 	return out, c.do(ctx, "POST",
-		c.scopeQuery("/v1/apps/"+slug+"/secrets/"+key+"/rotate", scope),
+		c.configWriteQuery("/v1/apps/"+slug+"/secrets/"+key+"/rotate", scope),
 		RotateAppSecretRequest{Value: value}, &out)
+}
+
+// ListConfigRevisions lists a scope's config revisions, newest first, with
+// its newest config guard (ADR-1451). limit <= 0 uses the server default.
+func (c *Client) ListConfigRevisions(ctx context.Context, slug, scope string, limit int) (ListConfigRevisionsResponse, error) {
+	var out ListConfigRevisionsResponse
+	v := url.Values{}
+	if scope != "" {
+		v.Set("scope", scope)
+	}
+	if limit > 0 {
+		v.Set("limit", strconv.Itoa(limit))
+	}
+	path := "/v1/apps/" + url.PathEscape(slug) + "/config/revisions"
+	if len(v) > 0 {
+		path += "?" + v.Encode()
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// GetConfigRevision reads one config revision with its variables and secret
+// versions (never secret values).
+func (c *Client) GetConfigRevision(ctx context.Context, slug, scope string, revision int64) (ConfigRevisionDetail, error) {
+	var out ConfigRevisionDetail
+	path := c.scopeQuery("/v1/apps/"+url.PathEscape(slug)+"/config/revisions/"+strconv.FormatInt(revision, 10), scope)
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// GetConfigGuard reads a scope's newest config guard and its verdict.
+func (c *Client) GetConfigGuard(ctx context.Context, slug, scope string) (ConfigGuard, error) {
+	var out ConfigGuard
+	return out, c.do(ctx, "GET", c.scopeQuery("/v1/apps/"+url.PathEscape(slug)+"/config/guard", scope), nil, &out)
+}
+
+// RollbackConfig restores a scope's variables to a config revision.
+func (c *Client) RollbackConfig(ctx context.Context, slug, scope string, revision int64) (ConfigRollbackResponse, error) {
+	var out ConfigRollbackResponse
+	return out, c.do(ctx, "POST", c.configWriteQuery("/v1/apps/"+url.PathEscape(slug)+"/config/rollback", scope),
+		ConfigRollbackRequest{Revision: revision}, &out)
 }
 
 // scopeQuery appends "?scope=<name>" to path when scope is
@@ -4805,11 +4907,11 @@ func (c *Client) GetAppsSlugEnvWithScope(ctx context.Context, slug, scope string
 	return out, c.do(ctx, "GET", c.scopeQuery("/v1/apps/"+slug+"/env", scope), nil, &out)
 }
 func (c *Client) PutAppsSlugEnvKey(ctx context.Context, slug, key, value string) error {
-	return c.do(ctx, "PUT", "/v1/apps/"+slug+"/env/"+key,
+	return c.do(ctx, "PUT", c.configWriteQuery("/v1/apps/"+slug+"/env/"+key, ""),
 		PutAppEnvRequest{Value: value}, nil)
 }
 func (c *Client) DeleteAppsSlugEnvKey(ctx context.Context, slug, key string) error {
-	return c.do(ctx, "DELETE", "/v1/apps/"+slug+"/env/"+key, nil, nil)
+	return c.do(ctx, "DELETE", c.configWriteQuery("/v1/apps/"+slug+"/env/"+key, ""), nil, nil)
 }
 
 // Usage.

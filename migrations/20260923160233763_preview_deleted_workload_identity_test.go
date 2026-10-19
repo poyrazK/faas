@@ -21,6 +21,7 @@ func TestMigrationPreviewDeletedWorkloadIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	accountID := seedAccount(t, ctx, pool)
+	seedPersonalOrg(t, ctx, pool, accountID) // projects require it since #4882
 	projectID := uuid.NewString()
 	if _, err := pool.Exec(ctx, `insert into projects (id, account_id, slug) values ($1, $2, $3)`,
 		projectID, accountID, "deleted-preview-"+uuid.NewString()[:8]); err != nil {

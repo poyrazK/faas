@@ -170,6 +170,7 @@ func (m *MemStore) CreatePlatformTenantStatement(_ context.Context, in PlatformT
 		Status: APIConsumerUsageStatementDraft, Currency: in.Currency, BillableUnits: in.BillableUnits,
 		UnpricedUnits: in.UnpricedUnits, AmountMillicents: in.AmountMillicents,
 		Lines:    append([]PlatformTenantStatementLine(nil), in.Lines...),
+		Fees:     append([]APIConsumerStatementFee(nil), in.Fees...),
 		Coverage: append([]PlatformTenantStatementCoverage(nil), in.Coverage...),
 		AsOf:     in.AsOf, CreatedAt: now}
 	m.platformTenantStatements[out.ID] = out

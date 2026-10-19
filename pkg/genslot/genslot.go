@@ -1,6 +1,6 @@
 // Package genslot gives each running generation of a daemon its own
 // directory for a durable queue, so a successor started by a hand-off
-// (docs/adr/1580-zero-downtime-daemon-restarts.md) and the old generation
+// (docs/adr/1736-zero-downtime-daemon-restarts.md) and the old generation
 // still finishing its requests never write the same files.
 //
 // Slot 0 is the queue's root itself, the layout every release before the

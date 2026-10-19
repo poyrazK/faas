@@ -18,14 +18,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
-type replayPreviewTestStore interface {
-	state.Store
-	state.EventSubscriptionStore
-	state.EventReplayPreviewStore
-	state.PublishedEventWorkStore
-	state.PublishedEventRetentionStore
-	state.EventReceiptStore
-}
+type replayPreviewTestStore = contractTestStore
 
 func forReplayPreviewStores(t *testing.T, run func(*testing.T, replayPreviewTestStore, *pgxpool.Pool)) {
 	t.Helper()

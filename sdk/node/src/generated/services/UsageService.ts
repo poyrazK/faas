@@ -6,6 +6,7 @@ import type { AccountUsageResponse } from '../models/AccountUsageResponse.js';
 import type { DailyUsageListResponse } from '../models/DailyUsageListResponse.js';
 import type { InvoiceListResponse } from '../models/InvoiceListResponse.js';
 import type { Problem } from '../models/Problem.js';
+import type { RealtimeUsageResponse } from '../models/RealtimeUsageResponse.js';
 import type { StorageUsageListResponse } from '../models/StorageUsageListResponse.js';
 import type { UsageResponse } from '../models/UsageResponse.js';
 import type { UsageSummaryResponse } from '../models/UsageSummaryResponse.js';
@@ -152,6 +153,37 @@ export class UsageService {
       },
       errors: {
         400: `Missing or malformed \`day\` query parameter on the storage rollup surface.`,
+        401: `code: unauthorized`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Realtime connections against the plan's fair-use limit, and recorded usage per hour.
+   * Realtime is free (ADR-1323). open_connections counts connections on realtime nodes that reported in the last 30 seconds. Hourly usage appears only when the operator records realtime usage; the peak is the most connections open at once in any minute of the hour.
+   * @returns RealtimeUsageResponse Open connections, the plan limit, and hourly usage for the account and each endpoint.
+   * @throws ApiError
+   */
+  public static getRealtimeUsage({
+    hours = 24,
+  }: {
+    /**
+     * How many most recent UTC hours of usage to return, including the current one.
+     */
+    hours?: number,
+  }): CancelablePromise<RealtimeUsageResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/usage/realtime',
+      query: {
+        'hours': hours,
+      },
+      errors: {
+        400: `The hours query parameter is not a whole number from 1 to 744.`,
         401: `code: unauthorized`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable

@@ -34,6 +34,9 @@ func (m *MemStore) SetOutboundAIPolicy(_ context.Context, accountID, integration
 	offer.AIMonthlyCostLimit = copyInt64Ptr(policy.MonthlyCostLimit)
 	offer.AIRequestLogEnabled = policy.RequestLogEnabled
 	offer.AIRequestLogContent = policy.RequestLogContent
+	offer.AILogExport = policy.LogExport
+	offer.AIAllowUnmetered = policy.AllowUnmetered
+	offer.AIAutoPromptCache = policy.AutoPromptCache
 	if policy.Provider == "" {
 		offer.AIContentPolicy = api.OutboundAIContentPolicy{}
 	}
@@ -159,10 +162,18 @@ func (m *MemStore) SetOutboundAIContentPolicy(_ context.Context, accountID, inte
 	if !ok || offer.AccountID != accountID || offer.OwnerKind != "customer" || !offer.Enabled {
 		return ErrNotFound
 	}
-	if policy.Active() && offer.AIProvider == "" {
+	if (policy.Active() || policy.Moderation.Active() || policy.Response.Active()) && offer.AIProvider == "" {
 		return ErrInvalidArgument
 	}
 	policy = policy.Normalized()
+	if policy.Moderation.Active() || policy.Response.Moderation != api.OutboundAIModerationOff {
+		moderator, ok := m.outboundIntegrationOffers[policy.Moderation.IntegrationID]
+		if !ok || moderator.AccountID != accountID || moderator.OwnerKind != "customer" || !moderator.Enabled || moderator.AIProvider == "" ||
+			(policy.Moderation.Kind == api.OutboundAIModerationKindOpenAI && moderator.AIProvider != api.OutboundAIProviderOpenAI) {
+			return ErrInvalidArgument
+		}
+		policy.Moderation.Categories = append([]string{}, policy.Moderation.Categories...)
+	}
 	policy.BlockedTerms = append([]string{}, policy.BlockedTerms...)
 	offer.AIContentPolicy = policy
 	m.outboundIntegrationOffers[integrationID] = offer

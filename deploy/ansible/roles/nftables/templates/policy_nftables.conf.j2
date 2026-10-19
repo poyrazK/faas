@@ -14,6 +14,8 @@ table inet faas {
   counter drop_v4_192_168_0_0_16 {}
   counter drop_v6____128 {}
   counter drop_v6___1_128 {}
+  counter drop_v6_64_ff9b___96 {}
+  counter drop_v6_64_ff9b_1___48 {}
   counter drop_v6_2001___32 {}
   counter drop_v6_2002___16 {}
   counter drop_v6_fc00___7 {}
@@ -105,6 +107,8 @@ table inet faas {
     ip daddr 192.168.0.0/16 counter name "drop_v4_192_168_0_0_16" drop
     ip6 daddr ::/128 counter name "drop_v6____128" drop
     ip6 daddr ::1/128 counter name "drop_v6___1_128" drop
+    ip6 daddr 64:ff9b::/96 counter name "drop_v6_64_ff9b___96" drop
+    ip6 daddr 64:ff9b:1::/48 counter name "drop_v6_64_ff9b_1___48" drop
     ip6 daddr 2001::/32 counter name "drop_v6_2001___32" drop
     ip6 daddr 2002::/16 counter name "drop_v6_2002___16" drop
     ip6 daddr fc00::/7 counter name "drop_v6_fc00___7" drop

@@ -27,6 +27,13 @@ func TestLoadPRPreviewSetCheck_CurrentHeadAndFullClosure(t *testing.T) {
 	if _, err := pool.Exec(ctx, `insert into accounts (id, email) values ($1, $2)`, accountID, "preview-set-"+uuid.NewString()+"@example.test"); err != nil {
 		t.Fatal(err)
 	}
+	// Projects belong to an organization since #4882; a raw account insert
+	// has none, so seed the personal org the store would have created.
+	if _, err := pool.Exec(ctx, `insert into orgs (id, slug, name, personal_org, personal_owner_account_id, plan, status)
+		select gen_random_uuid(), 'u-' || substring(replace(a.id::text, '-', '') from 1 for 12), 'Personal', true, a.id, a.plan, a.status
+		from accounts a where a.id = $1`, accountID); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := pool.Exec(ctx, `insert into projects (id, account_id, slug) values ($1, $2, $3)`, projectID, accountID, "preview-set-"+uuid.NewString()[:8]); err != nil {
 		t.Fatal(err)
 	}

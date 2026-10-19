@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
 )
 
 // AppManifestPath is where imaged writes the manifest inside the app layer and
@@ -280,9 +281,85 @@ type AppManifest struct {
 	// RevisionPinTTLSeconds opts into retaining replaced revisions for exact
 	// client pins. Zero disables skew protection.
 	RevisionPinTTLSeconds int `json:"revision_pin_ttl_seconds,omitempty"`
+	// ReleasePolicy selects how a production release with a serving
+	// predecessor rolls out when the deploy names no rollout policy
+	// (ADR-1446). Empty or "safe" is the adaptive health-gated canary with
+	// first-wake 5xx rollback; "fast" the aggressive ladder with the same
+	// rollback (ADR-1450); "immediate" moves all traffic at once.
+	ReleasePolicy string `json:"release_policy,omitempty"`
+	// ReleaseProbePaths are up to ReleaseProbePathsMax concrete GET paths the
+	// default rollout probe checks instead of "/" (ADR-1449).
+	ReleaseProbePaths []string `json:"release_probe_paths,omitempty"`
 }
 
 const ManagedVersionAffinityCookieName = "__Host-gregale_version"
+
+// Release policies (ADR-1446). The empty string reads as ReleasePolicySafe.
+const (
+	ReleasePolicySafe      = "safe"
+	ReleasePolicyImmediate = "immediate"
+	// ReleasePolicyFast rolls out on FastReleaseCanaryPreset (ADR-1450).
+	ReleasePolicyFast = "fast"
+	// DefaultReleaseCanaryPreset is the ladder a safe release uses when the
+	// deploy names none; it is the same ladder `gregale deploy --safe` uses.
+	// "adaptive" is the balanced ladder paced by evidence (ADR-1321).
+	DefaultReleaseCanaryPreset = "adaptive"
+	// FastReleaseCanaryPreset is the ladder for release_policy and
+	// `deploy --rollout` fast: 5% -> 50% -> 100%, a minute each (ADR-1450).
+	FastReleaseCanaryPreset = "aggressive"
+)
+
+// ValidProbePath reports whether path is a concrete absolute path a synthetic
+// probe may request (ADR-847, ADR-1449): at most RouteHealthMaxPathBytes, with
+// no query, fragment, wildcard, parameter, whitespace or control character.
+func ValidProbePath(path string) bool {
+	return len(path) > 0 && len(path) <= RouteHealthMaxPathBytes && strings.HasPrefix(path, "/") &&
+		!strings.ContainsAny(path, "?#*\\{}") &&
+		strings.IndexFunc(path, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) < 0
+}
+
+// ValidateReleaseProbePaths checks an app's release_probe_paths (ADR-1449):
+// at most ReleaseProbePathsMax distinct probe paths.
+func ValidateReleaseProbePaths(paths []string) error {
+	if len(paths) > ReleaseProbePathsMax {
+		return fmt.Errorf("release_probe_paths: at most %d paths; got %d", ReleaseProbePathsMax, len(paths))
+	}
+	seen := make(map[string]bool, len(paths))
+	for _, p := range paths {
+		if !ValidProbePath(p) {
+			return fmt.Errorf("release_probe_paths: %q must be a concrete absolute path without queries, fragments, wildcards or parameters", p)
+		}
+		if seen[p] {
+			return fmt.Errorf("release_probe_paths: %q is listed twice", p)
+		}
+		seen[p] = true
+	}
+	return nil
+}
+
+// ValidReleasePolicy reports whether p is an accepted release_policy value.
+func ValidReleasePolicy(p string) bool {
+	return p == "" || p == ReleasePolicySafe || p == ReleasePolicyFast || p == ReleasePolicyImmediate
+}
+
+// EffectiveReleasePolicy returns the policy a deploy uses, mapping the
+// unset value to the safe default.
+func EffectiveReleasePolicy(p string) string {
+	if p == ReleasePolicyImmediate || p == ReleasePolicyFast {
+		return p
+	}
+	return ReleasePolicySafe
+}
+
+// ReleasePolicyCanaryPreset is the ladder the default fills for a policy
+// that rolls out on a canary (ADR-1450): adaptive for safe, aggressive for
+// fast.
+func ReleasePolicyCanaryPreset(p string) string {
+	if p == ReleasePolicyFast {
+		return FastReleaseCanaryPreset
+	}
+	return DefaultReleaseCanaryPreset
+}
 
 // ManagedReleaseContextCookieName stores the immutable project release
 // selected for a browser document navigation. Unlike the rollout cookie, the
@@ -753,6 +830,12 @@ func (m AppManifest) ValidatePlan(plan Plan) error {
 	}
 	if m.RevisionPinTTLSeconds < 0 || m.RevisionPinTTLSeconds > RevisionPinMaxTTLSeconds {
 		return fmt.Errorf("app manifest: revision_pin_ttl_seconds must be between 0 and %d", RevisionPinMaxTTLSeconds)
+	}
+	if !ValidReleasePolicy(m.ReleasePolicy) {
+		return fmt.Errorf("app manifest: release_policy must be %q, %q or %q", ReleasePolicySafe, ReleasePolicyFast, ReleasePolicyImmediate)
+	}
+	if err := ValidateReleaseProbePaths(m.ReleaseProbePaths); err != nil {
+		return fmt.Errorf("app manifest: %w", err)
 	}
 	if m.Port < 0 || m.Port > 65535 {
 		return fmt.Errorf("app manifest: port %d out of range", m.Port)

@@ -61,6 +61,19 @@ type Service struct {
 	Lago   *lagoinvoice.Client
 	// Now is the payment sync clock; nil uses time.Now.
 	Now func() time.Time
+	// Enabled pauses the background worker while it reports false: API
+	// monetization is released by a runtime setting (ADR-20261018090210).
+	// Nil runs it.
+	Enabled func() bool
+}
+
+// tick runs one background tick unless Enabled pauses the worker; paused,
+// no provider reads and no overdue digests.
+func (s *Service) tick(ctx context.Context) error {
+	if s.Enabled != nil && !s.Enabled() {
+		return nil
+	}
+	return s.SyncOnce(ctx)
 }
 
 func (s *Service) stripeInvoiceClient() *stripeinvoice.Client {

@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/onebox-faas/faas/pkg/connectioncapacity"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
@@ -383,6 +384,10 @@ func mapPostgresError(err error) error {
 		return err
 	}
 	switch postgresError.Code {
+	case "PCC01":
+		return connectioncapacity.ErrInsufficient
+	case "PCC02":
+		return connectioncapacity.ErrUnknown
 	case pgerrcode.DeadlockDetected, pgerrcode.SerializationFailure:
 		return ErrConflict
 	case pgerrcode.UniqueViolation:

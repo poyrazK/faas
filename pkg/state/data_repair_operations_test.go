@@ -14,14 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 )
 
-type repairTestStore interface {
-	PlatformTenantStore
-	Store
-	OperationStore
-	DataRepairOperationStore
-	OperationApprovalStore
-	OperationTimelineStore
-}
+type repairTestStore = contractTestStore
 
 func TestManagedDataRepairState(t *testing.T) {
 	for _, backend := range []string{"memory", "postgres"} {

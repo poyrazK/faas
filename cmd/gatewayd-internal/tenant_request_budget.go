@@ -20,6 +20,6 @@ func (a tenantRequestBudgetStore) AdmitTenantRequest(ctx context.Context, accoun
 	decision, err := a.store.AdmitPlatformTenantRequest(ctx, accountID, tenantID)
 	return gateway.TenantRequestBudgetDecision{
 		Allowed: decision.Allowed, Scope: decision.Scope, Limit: decision.Limit,
-		Observed: decision.Observed, RetryAfterSeconds: decision.RetryAfterSeconds,
+		Observed: decision.Observed, RetryAfterSeconds: decision.RetryAfterSeconds, OverdueDueAt: decision.OverdueDueAt,
 	}, err
 }

@@ -69,7 +69,6 @@ import (
 	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/gateway/activity"
 	"github.com/onebox-faas/faas/pkg/gateway/drain"
-	"github.com/onebox-faas/faas/pkg/gateway/egressgrpc"
 	"github.com/onebox-faas/faas/pkg/gateway/egresssink"
 	"github.com/onebox-faas/faas/pkg/gateway/ingress"
 	"github.com/onebox-faas/faas/pkg/gateway/writegate"
@@ -819,13 +818,20 @@ func (a *synthAdapter) restoreDurableQueueIdentity(ctx context.Context, appID st
 	if stored.ID != inv.ID || stored.AppID != appID ||
 		(stored.Source != state.InvocationQueue && stored.Source != state.InvocationDelayedTask) ||
 		stored.State != state.InvocationDispatching || stored.Attempts != inv.Attempts ||
-		stored.ReplayGeneration != inv.ReplayGeneration || !bytes.Equal(stored.Payload, inv.Payload) {
+		stored.ReplayGeneration != inv.ReplayGeneration || stored.LeaseExpiresAt == nil || !stored.LeaseExpiresAt.After(time.Now()) || !bytes.Equal(stored.Payload, inv.Payload) {
 		return inv, state.ErrConflict
 	}
 	inv.AccountID = stored.AccountID
 	inv.PlatformTenantID = stored.PlatformTenantID
 	inv.DeploymentScope = stored.DeploymentScope
 	inv.QueueBindingID = stored.QueueBindingID
+	// Named bound work must enter the environment resolver as queue work.
+	// The ESM transport omits its queue identity; all claim and payload checks
+	// above apply before recovering the durable origin. Unbound/delayed ESM
+	// deliveries retain their existing transport semantics.
+	if stored.Source == state.InvocationQueue && stored.QueueBindingID != "" {
+		inv.Source, inv.QueueName = state.InvocationQueue, stored.QueueName
+	}
 	return inv, nil
 }
 
@@ -1031,6 +1037,10 @@ func isHandlerErrorResult(body []byte) bool {
 // runDeps is the dependency seam for run. Tests inject net.Listen / http.Server
 // wrappers so the seam is fully exercised without spawning a real daemon.
 type runDeps struct {
+	// apiMonetization is the API monetization release gate
+	// (ADR-20261018090210), following the api_monetization_enabled runtime
+	// setting. Nil keeps monetization off.
+	apiMonetization func() bool
 	// Private identity is built only with the process-wide drain tracker.
 	runtimeIngressIdentity http.Handler
 	listen                 func(network, addr string) (net.Listener, error)
@@ -1077,7 +1087,7 @@ type runDeps struct {
 	// Tests use a private ledger; an empty value retains the production path.
 	egressPendingPath string
 	// onHandoff stops node-level work run() started before runWithDeps once
-	// a hand-off's successor serves (ADR-1580).
+	// a hand-off's successor serves (ADR-1736).
 	onHandoff []func()
 	// lastSeen flushes per-instance last_request_at to schedd (spec §4.1). nil in
 	// tests (the wake/routing path doesn't need it); production wires the
@@ -1398,8 +1408,31 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("gatewayd: open db: %w", err)
 	}
-	defer pool.Close()
+	return runThenClosePool(ctx, log, pool.Close, func(ctx context.Context) error {
+		return runOnPool(ctx, log, pool)
+	})
+}
 
+// runThenClosePool runs body under a context that ends when body returns,
+// and closes the pool only after that. Goroutines body starts hold pooled
+// connections until their context ends (the notify hub's LISTEN connection,
+// the repair pollers), and pgxpool.Close waits for every one of them. Closing
+// first left a gateway that failed to start hanging instead of exiting, with
+// its error never logged. The error is logged before this cleanup so it
+// reaches the journal even if a close stalls.
+func runThenClosePool(ctx context.Context, log *slog.Logger, closePool func(), body func(context.Context) error) error {
+	bodyCtx, stop := context.WithCancel(ctx)
+	err := body(bodyCtx)
+	if err != nil {
+		log.Error("gatewayd-internal: stopping after error", "err", err)
+	}
+	stop()
+	closePool()
+	return err
+}
+
+// runOnPool is run's body; runThenClosePool owns the pool's lifetime.
+func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error {
 	cfg, err := LoadConfig(configPath)
 	if err != nil {
 		return err
@@ -1441,7 +1474,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	deps := defaultDeps()
 	// handoffCtx carries the work that speaks for this node's gateway rather
 	// than for one request: a hand-off ends it here and the successor takes it
-	// over (ADR-1580). Requests and their sinks keep ctx.
+	// over (ADR-1736). Requests and their sinks keep ctx.
 	handoffCtx, endHandoffWork := context.WithCancel(ctx)
 	defer endHandoffWork()
 	deps.onHandoff = append(deps.onHandoff, endHandoffWork)
@@ -1494,6 +1527,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}
 	deps.appsDomain = appsDomain
 	tenantSurfacesFlag := runtimeconfig.NewBoolFlag(api.TenantSurfacesEnabled())
+	apiMonetizationFlag := runtimeconfig.NewBoolFlag(api.APIMonetizationEnabled())
+	deps.apiMonetization = apiMonetizationFlag.Load
 	hstsFlag := runtimeconfig.NewBoolFlag(httpsec.HSTSEnabledFromEnv(osGetenv))
 	httpsec.SetHSTSEnabled(hstsFlag.Load())
 	router := pgRouter{
@@ -2096,7 +2131,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		runtimeCtx, runtimeCancel := context.WithCancel(ctx)
 		defer runtimeCancel()
 		watcher := runtimeconfig.New(pgStore, pool,
-			[]string{runtimeconfig.KeyTenantSurfaces, runtimeconfig.KeyHSTS},
+			[]string{runtimeconfig.KeyTenantSurfaces, runtimeconfig.KeyHSTS, runtimeconfig.KeyAPIMonetization},
 			func(ctx context.Context, key string, value json.RawMessage, _ int64) error {
 				enabled, err := runtimeconfig.Bool(value)
 				if err != nil {
@@ -2105,6 +2140,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 				switch key {
 				case runtimeconfig.KeyTenantSurfaces:
 					tenantSurfacesFlag.Store(enabled)
+				case runtimeconfig.KeyAPIMonetization:
+					apiMonetizationFlag.Store(enabled)
 				case runtimeconfig.KeyHSTS:
 					hstsFlag.Store(enabled)
 					httpsec.SetHSTSEnabled(enabled)
@@ -2538,7 +2575,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	// handoffCtx carries the work that speaks for this node's gateway rather
 	// than for one request: a hand-off ends it here and the successor takes it
-	// over (ADR-1580). Requests and their sinks keep ctx.
+	// over (ADR-1736). Requests and their sinks keep ctx.
 	handoffCtx, endHandoffWork := context.WithCancel(ctx)
 	defer endHandoffWork()
 	stores := &generationStores{log: log}
@@ -2791,6 +2828,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// adapter translates only the narrow lookup/touch contract.
 	handler.WithConsumerAuth(newConsumerAuthStore(deps.pgStore))
 	handler.WithTenantRequestBudgetStore(newTenantRequestBudgetStore(deps.pgStore))
+	handler.WithAPIMonetization(deps.apiMonetization)
 	// ADR-978: order the warm-capacity queue by route priority. Rules are
 	// read only for requests that have to queue, through a 30 s cache.
 	if pgStore := deps.pgStore; pgStore != nil {
@@ -2988,10 +3026,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if !isUnixSocketPath(egressGRPCSocket) && deps.egressTLS == nil {
 		return fmt.Errorf("gatewayd: egress target %q is non-unix but egress_tls_* is empty (set egress_tls_cert_path / key_path / ca_path or point the target at a unix socket for single-box mode)", egressGRPCSocket)
 	}
-	egressPendingPath := deps.egressPendingPath
-	if egressPendingPath == "" {
-		egressPendingPath = egressgrpc.DefaultPendingPath
-	}
+	egressPendingPath := gatewayEgressPendingPath(deps.egressPendingPath, osGetenv)
 	egressGRPCSrv, err := stores.openEgress(egressSink, egressPendingPath)
 	if err != nil {
 		return fmt.Errorf("gatewayd: open durable egress replay ledger: %w", err)
@@ -3922,6 +3957,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			Wake:      newServiceProxyWaker(pgStore, handler.EnsureWakeAheadCapacity),
 		})
 		serviceProxyConfig := gateway.ServiceProxyConfig{
+			APIMonetization:           deps.apiMonetization,
 			AdmitManagedAsync:         gateway.NewRehearsalAsyncAdmitter(pgStore),
 			Provider:                  serviceEndpointProvider,
 			Resolve:                   newServiceProxyResolver(pgStore),
@@ -3979,6 +4015,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if strings.TrimSpace(cfg.ServiceProxyListen) != "" {
 			identityResolver := newServiceProxyCallerIdentityResolver(pgStore.ListAllInstances, cfg.NodeName)
 			identityResolver.lookup = pgStore.LiveServiceCallersByHostIP
+			if cfg.NodeName != "" {
+				identityResolver.lookup = newServiceProxyLiveLookup(pgStore, deps.nodeCache.cache, newLocalNodeID(pgStore, cfg.NodeName))
+			}
 			serviceProxyConfig.ResolveCallerIdentity = func(ctx context.Context, remote string) (string, string, error) {
 				if err := ordinaryQualificationCallerGuard(ctx, pgStore, cfg.NodeName, remote); err != nil {
 					return "", "", err
@@ -4007,7 +4046,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	errc := make(chan error, 6)
 	var servers []drainedServer
 	// sessionDrains stop raw listeners and wait for their sessions; a
-	// hand-off's old generation runs them (ADR-1580).
+	// hand-off's old generation runs them (ADR-1736).
 	var sessionDrains []func(context.Context) error
 	var serviceDiscoveryServers []*dns.Server
 	addSrv := func(s *http.Server) *wire.HTTPDrain {

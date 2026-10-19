@@ -339,6 +339,11 @@ func (s *PgStore) RecordIssue(ctx context.Context, in RecordIssueParams) (api.Is
 			return api.IssueEventResponse{}, err
 		}
 	}
+	// Regression activity resets response state before evaluating a new
+	// incident, so a prior incident's snooze cannot suppress this alert.
+	if err = recordIssueCompoundAlerts(ctx, q, tx, row, in); err != nil {
+		return api.IssueEventResponse{}, err
+	}
 	if err = tx.Commit(ctx); err != nil {
 		return api.IssueEventResponse{}, err
 	}

@@ -65,7 +65,10 @@ func (s *server) activateCheckedProjectRelease(w http.ResponseWriter, r *http.Re
 // A private context marks which frozen graph selectors must still match the
 // app configuration reloaded after capturing its promotion revision.
 type bindingGraphSelectionKey struct{}
-type bindingGraphSelection struct{ deployments, targets map[string]string }
+type bindingGraphSelection struct {
+	deployments, targets map[string]string
+	apps                 []state.App
+}
 
 func (s *server) executeCheckedProjectRelease(r *http.Request, acct state.Account, project state.Project, manifest api.CheckedProjectReleaseManifest) (api.CheckedProjectReleaseResponse, *api.Problem) {
 	response := api.CheckedProjectReleaseResponse{BindingsChecks: map[string]api.BindingCheckReport{}}
@@ -107,7 +110,7 @@ func (s *server) executeCheckedProjectRelease(r *http.Request, acct state.Accoun
 		if deployment.Scope != manifest.Environment || deployment.EnvironmentWorkloadHeld() {
 			return response, api.ErrValidation("candidate deployment must belong to the graph environment and be eligible")
 		}
-		selection := bindingGraphSelection{deployments: manifest.Deployments, targets: manifest.ServiceTargets[app.Slug]}
+		selection := bindingGraphSelection{deployments: manifest.Deployments, targets: manifest.ServiceTargets[app.Slug], apps: apps}
 		request := r.Clone(context.WithValue(r.Context(), bindingGraphSelectionKey{}, selection))
 		observation, problem := s.observeBindingPromotion(request, acct, app, deployment, api.BindingPromotionRequest{}, api.DefaultBindingVerificationAge)
 		response.BindingsChecks[app.Slug] = observation.report
@@ -162,7 +165,8 @@ func bindingGraphInventoryRequest(r *http.Request, app state.App) (*http.Request
 	if !ok {
 		return r, nil
 	}
-	if !maps.Equal(selection.targets, bindings.ProjectServiceTargets(app, selection.deployments)) {
+	expectedTargets := bindings.ProjectServiceTargets(app, selection.deployments, selection.apps)
+	if expectedTargets == nil || !maps.Equal(selection.targets, expectedTargets) {
 		return r, api.NewProblem(http.StatusConflict, "bindings_check_changed", "Service graph changed", "Prepare and qualify the updated service graph before activating.")
 	}
 	encoded, err := json.Marshal(selection.targets)

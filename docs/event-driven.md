@@ -454,6 +454,11 @@ pick up the job's current configuration at fire time.
 
 Handlers receive an event id and delivery attempt. Persist that id before applying side effects so retries are idempotent. Set explicit payload limits, timeouts, retry counts, and retention; route poison messages to a dead-letter destination for inspection and replay.
 
+Trigger delivery records (`gregale triggers records`) are kept at least 7 days
+after their last dispatch, and trigger dead letters (`gregale triggers dlq`) at
+least 30 days, unless a record carries its own retention; after that they may
+be deleted. Retry or export dead letters you still need before then.
+
 Keep synchronous endpoints small and return an acknowledgement only after the event is durably accepted. Verify webhook signatures and record the source, schema version, and correlation id in application logs.
 
 Async invocations may name existing app webhook subscriptions as terminal
@@ -623,7 +628,11 @@ and final traffic percentage. A build that fails before going live emits
 `deployment.failed` instead of `rollout.aborted`.
 
 Both payloads include `app_id`, `deployment_id`, and `rollout_state`, plus
-`completed_at` or `aborted_at` respectively. An outcome is enqueued once per
+`completed_at` or `aborted_at` respectively. When the safe-release circuit
+breaker, a person, or the worker lease expiry decided the outcome, the payload
+also carries `decision`: the rule and the request, 5xx, probe, latency, OOM and
+restart counts for both revisions behind it
+([ADR-1447](adr/1447-explained-rollout-decisions.md)). An outcome is enqueued once per
 state transition, in the same transaction as the state change; updating an
 already-terminal rollout does not enqueue another event. Webhook delivery is
 at least once, so receivers must deduplicate by the stable delivery id.

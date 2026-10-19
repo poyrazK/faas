@@ -17,6 +17,7 @@ from ..models.app_response_deployment_availability import (
 )
 from ..models.app_response_eviction_priority import AppResponseEvictionPriority, check_app_response_eviction_priority
 from ..models.app_response_preview_pr_state import AppResponsePreviewPrState, check_app_response_preview_pr_state
+from ..models.app_response_release_policy import AppResponseReleasePolicy, check_app_response_release_policy
 from ..models.app_response_runtime import AppResponseRuntime, check_app_response_runtime
 from ..models.app_response_status import AppResponseStatus, check_app_response_status
 from ..models.app_response_type import AppResponseType, check_app_response_type
@@ -96,6 +97,9 @@ class AppResponse:
     service_binding_fingerprint: str | Unset = UNSET
     """Opaque fingerprint of app identity, source ownership and service binding settings. Use as the atomic
     precondition for a reviewed service-only update."""
+    project_id: UUID | Unset = UNSET
+    """Parent project (ADR-050) as a canonical hyphenated UUID. Omitted when the app is standalone. Read-only: app
+    create and update requests do not accept it."""
     visibility: AppResponseVisibility | Unset = "public"
     """Public exposes the app through the edge; internal keeps it available only to authenticated service-to-
     service routing. Available on every plan."""
@@ -182,6 +186,14 @@ class AppResponse:
     revision_pin_ttl_seconds: int | Unset = 0
     """Retain superseded live deployments for revision-pinned requests for up to this many seconds. Zero disables
     revision pinning."""
+    release_policy: AppResponseReleasePolicy | Unset = UNSET
+    """Default rollout for production releases that name no rollout policy (ADR-1446). safe (or unset) uses the
+    adaptive health-gated canary (ADR-1321: each stage advances on clean evidence after a minute) with first-wake
+    5xx rollback; fast uses the aggressive ladder with the same rollback (ADR-1450); immediate moves all traffic at
+    once."""
+    release_probe_paths: list[str] | Unset = UNSET
+    """Up to 3 concrete GET paths the default rollout probe checks instead of / (ADR-1449). No queries, fragments,
+    wildcards or parameters."""
     route_metrics_enabled: bool | Unset = UNSET
     """Per-app per-route observability flag (ADR-093). When true, gatewayd-internal emits
     gateway_request_duration_seconds{app,route,class} and serves the bounded reader at GET /v1/apps/{slug}/routes.
@@ -299,6 +311,10 @@ class AppResponse:
 
         service_binding_fingerprint = self.service_binding_fingerprint
 
+        project_id: str | Unset = UNSET
+        if not isinstance(self.project_id, Unset):
+            project_id = str(self.project_id)
+
         visibility: str | Unset = UNSET
         if not isinstance(self.visibility, Unset):
             visibility = self.visibility
@@ -415,6 +431,14 @@ class AppResponse:
         version_affinity_managed_cookie = self.version_affinity_managed_cookie
 
         revision_pin_ttl_seconds = self.revision_pin_ttl_seconds
+
+        release_policy: str | Unset = UNSET
+        if not isinstance(self.release_policy, Unset):
+            release_policy = self.release_policy
+
+        release_probe_paths: list[str] | Unset = UNSET
+        if not isinstance(self.release_probe_paths, Unset):
+            release_probe_paths = self.release_probe_paths
 
         route_metrics_enabled = self.route_metrics_enabled
 
@@ -550,6 +574,8 @@ class AppResponse:
         )
         if service_binding_fingerprint is not UNSET:
             field_dict["service_binding_fingerprint"] = service_binding_fingerprint
+        if project_id is not UNSET:
+            field_dict["project_id"] = project_id
         if visibility is not UNSET:
             field_dict["visibility"] = visibility
         if workload_class is not UNSET:
@@ -612,6 +638,10 @@ class AppResponse:
             field_dict["version_affinity_managed_cookie"] = version_affinity_managed_cookie
         if revision_pin_ttl_seconds is not UNSET:
             field_dict["revision_pin_ttl_seconds"] = revision_pin_ttl_seconds
+        if release_policy is not UNSET:
+            field_dict["release_policy"] = release_policy
+        if release_probe_paths is not UNSET:
+            field_dict["release_probe_paths"] = release_probe_paths
         if route_metrics_enabled is not UNSET:
             field_dict["route_metrics_enabled"] = route_metrics_enabled
         if only_allow_declared_routes is not UNSET:
@@ -713,6 +743,13 @@ class AppResponse:
         autoscale_target_cpu_pct = d.pop("autoscale_target_cpu_pct")
 
         service_binding_fingerprint = d.pop("service_binding_fingerprint", UNSET)
+
+        _project_id = d.pop("project_id", UNSET)
+        project_id: UUID | Unset
+        if isinstance(_project_id, Unset):
+            project_id = UNSET
+        else:
+            project_id = UUID(_project_id)
 
         _visibility = d.pop("visibility", UNSET)
         visibility: AppResponseVisibility | Unset
@@ -889,6 +926,15 @@ class AppResponse:
         version_affinity_managed_cookie = d.pop("version_affinity_managed_cookie", UNSET)
 
         revision_pin_ttl_seconds = d.pop("revision_pin_ttl_seconds", UNSET)
+
+        _release_policy = d.pop("release_policy", UNSET)
+        release_policy: AppResponseReleasePolicy | Unset
+        if isinstance(_release_policy, Unset):
+            release_policy = UNSET
+        else:
+            release_policy = check_app_response_release_policy(_release_policy)
+
+        release_probe_paths = cast(list[str], d.pop("release_probe_paths", UNSET))
 
         route_metrics_enabled = d.pop("route_metrics_enabled", UNSET)
 
@@ -1096,6 +1142,7 @@ class AppResponse:
             autoscale_target_rps=autoscale_target_rps,
             autoscale_target_cpu_pct=autoscale_target_cpu_pct,
             service_binding_fingerprint=service_binding_fingerprint,
+            project_id=project_id,
             visibility=visibility,
             workload_class=workload_class,
             runtime=runtime,
@@ -1127,6 +1174,8 @@ class AppResponse:
             version_affinity_cookie=version_affinity_cookie,
             version_affinity_managed_cookie=version_affinity_managed_cookie,
             revision_pin_ttl_seconds=revision_pin_ttl_seconds,
+            release_policy=release_policy,
+            release_probe_paths=release_probe_paths,
             route_metrics_enabled=route_metrics_enabled,
             only_allow_declared_routes=only_allow_declared_routes,
             declared_routes=declared_routes,

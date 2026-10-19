@@ -49,6 +49,11 @@ func Run(t *testing.T, open Open) {
 		name string
 		fn   func(*testing.T, *Fixture)
 	}{
+		{"operator_alert_triage_and_retention_are_durable", testOperatorAlertTriageRetention},
+		{"operator_evidence_projections_are_exact", testOperatorEvidenceProjections},
+		{"operator_queue_count_excludes_running_and_terminal_builds", testOperatorQueuedBuildsCount},
+		{"operator_queue_snapshot_preserves_wait_across_requeue", testOperatorBuildQueueSnapshot},
+		{"operator_build_recovery_snapshot_preserves_cleanup_age", testOperatorBuildRecoverySnapshot},
 		{"app_limits_are_persisted_for_each_plan", testAppLimits},
 		{"app_secret_delivery_is_version_fenced", testAppSecretDeliveryVersionFence},
 		{"app_secret_class_survives_legacy_writes", testAppSecretClassSurvivesLegacyWrites},
@@ -58,6 +63,8 @@ func Run(t *testing.T, open Open) {
 		{"non_uuid_invocation_identity_is_unowned", testNonUUIDInvocationIdentityIsUnowned},
 		{"deployment_secret_reload_signal_survives_read", testDeploymentSecretReloadSignalSurvivesRead},
 		{"rollback_on_5xx_candidates_track_the_opt_in", testRollbackOn5xxCandidates},
+		{"config_revisions_and_guards_track_each_write", testConfigRevisionsAndGuards},
+		{"post_release_watch_candidates_follow_the_newest_release", testPostReleaseWatchCandidates},
 		{"app_secret_revocation_ack_survives_secret_deletion", testAppSecretRevocationAckSurvivesDeletion},
 		{"custom_metrics_cap_applies_to_new_names_only", testCustomMetricsContract},
 		{"scaling_policy_survives_a_store_round_trip", testScalingPolicyRoundTrip},
@@ -103,7 +110,9 @@ func Run(t *testing.T, open Open) {
 		{"archived_logs_are_scoped_to_the_owning_app", testInstanceLogsOwnedByApp},
 		{"invalid_instance_state_is_rejected", testInvalidInstanceState},
 		{"live_state_readers_count_running_instances", testLiveStateReaders},
+		{"live_instance_list_follows_app_ownership", testLiveInstanceListOwnership},
 		{"live_instances_by_node_are_the_nodes_live_rows", testLiveInstancesByNode},
+		{"org_access_fences_and_org_projects", testOrgAccessAndOrgProjects},
 		{"frozen_instance_holds_ram_without_concurrency", testFrozenInstanceState},
 		{"beta_first_success_includes_parked_instances", testBetaFirstSuccess},
 		{"account_credits_issue_list_and_consume", testAccountCredits},
@@ -198,6 +207,7 @@ func Run(t *testing.T, open Open) {
 		{"app_deletion_claim_closes_restore_window", testAppDeletionClaim},
 		{"preview_lifecycle_is_scoped_and_reclaimable", testPreviewLifecycle},
 		{"scenario_test_namespace_is_scoped_and_reaped", testScenarioTestNamespace},
+		{"scenario_containment_and_capture_survive_namespace_cleanup", testScenarioRetainedContainment},
 		{"scenario_action_policy_readers_retain_isolation_after_cleanup", testScenarioActionPolicyReaders},
 		{"mcp_compatibility_snapshots_and_recovery_leases_are_fenced", testMCPCompatibilityAndRecovery},
 		{"preview_teardown_claim_fences_reopen", testPreviewTeardownClaim},
@@ -228,6 +238,8 @@ func Run(t *testing.T, open Open) {
 		{"runtime_config_change_orders_with_instance_start", testRuntimeConfigChangeOrdersWithInstanceStart},
 		{"snapshot_publication_fences_runtime_config_changes", testSnapshotPublicationFencesRuntimeConfigChanges},
 		{"scoped_runtime_changes_preserve_neighbor_snapshots", testScopedRuntimeChangesPreserveNeighborSnapshots},
+		{"project_config_reaches_runtime_values", testProjectConfigReachesRuntimeValues},
+		{"project_config_change_invalidates_member_snapshots", testProjectConfigChangeInvalidatesMemberSnapshots},
 		{"runtime_input_receipts_are_immutable_and_preserved_in_snapshots", testRuntimeInputReceipts},
 		{"runtime_input_receipts_check_secret_versions", testRuntimeInputReceiptSecretVersions},
 		{"runtime_input_receipts_preserve_sidecar_secret_access", testRuntimeInputReceiptSidecarSecretAccess},
@@ -3737,6 +3749,18 @@ func testPrepareDeploymentRollback(t *testing.T, fx *Fixture) {
 	if prepared.Status != state.DeploySnapshotting || prepared.TrafficPercent != 0 ||
 		prepared.RolloutState != "pending" || prepared.CanaryPreset != "none" {
 		t.Fatalf("prepared rollback target = %+v", prepared)
+	}
+	// ADR-1446: imaged reads this marker to promote the older revision
+	// without the latest-revision fence.
+	if markers, ok := fx.Store.(state.RollbackPreparedStore); ok {
+		isPrepared, err := markers.DeploymentRollbackPrepared(fx.Ctx, fx.Deployment.ID)
+		if err != nil || !isPrepared {
+			t.Fatalf("DeploymentRollbackPrepared(target) = %v, %v; want true", isPrepared, err)
+		}
+		isPrepared, err = markers.DeploymentRollbackPrepared(fx.Ctx, current.ID)
+		if err != nil || isPrepared {
+			t.Fatalf("DeploymentRollbackPrepared(current) = %v, %v; want false", isPrepared, err)
+		}
 	}
 	live, err := fx.Store.LiveDeployment(fx.Ctx, fx.App.ID)
 	if err != nil {

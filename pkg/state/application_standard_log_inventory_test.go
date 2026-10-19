@@ -11,20 +11,13 @@ import (
 	"github.com/google/uuid"
 )
 
-type standardLogInventoryTestStore interface {
-	standardLocalIntentTestStore
-	ApplicationStandardLogInventoryStore
-	SetComputeNodeActive(context.Context, string, bool) error
-}
+type standardLogInventoryTestStore = contractTestStore
 
 func TestMemApplicationStandardLogInventory(t *testing.T) {
 	standardLogInventoryLifecycle(t, NewMemStore())
 }
 
-type standardLogInventoryExceptionTestStore interface {
-	standardLogInventoryTestStore
-	ApplicationStandardExceptionStore
-}
+type standardLogInventoryExceptionTestStore = contractTestStore
 
 func TestMemApplicationStandardLogInventoryExceptionDeadline(t *testing.T) {
 	standardLogInventoryExceptionDeadline(t, NewMemStore())

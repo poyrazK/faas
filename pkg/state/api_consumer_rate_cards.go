@@ -81,9 +81,11 @@ type APIConsumerRateCardInput struct {
 	Unit string
 	// TierMode is how Tiers price a month; empty means graduated (ADR-1309).
 	TierMode string
-	// Monthly base fee and minimum spend per consumer (ADR-1316).
+	// Monthly base fee and minimum spend per consumer (ADR-1316), prorated
+	// in a consumer's first month when ProrateMonthlyFees is set (ADR-1325).
 	BaseFeeMillicentsPerMonth int64
 	MinimumMillicentsPerMonth int64
+	ProrateMonthlyFees        bool
 }
 
 // normalizeAPIConsumerRateCardInput validates a version and derives the

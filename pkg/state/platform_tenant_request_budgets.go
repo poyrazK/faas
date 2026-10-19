@@ -24,11 +24,18 @@ type PlatformTenantRequestBudget struct {
 
 type PlatformTenantBudgetDecision struct {
 	Allowed           bool
-	Scope             string // minute or day when denied
+	Scope             string // minute, day or overdue when denied
 	Limit             int64
 	Observed          int64
 	RetryAfterSeconds int64
+	// OverdueDueAt is the due date of the invoice that holds the tenant
+	// when Scope is overdue (ADR-1324).
+	OverdueDueAt time.Time
 }
+
+// PlatformTenantBudgetScopeOverdue denies a tenant held for an overdue
+// invoice (ADR-1324).
+const PlatformTenantBudgetScopeOverdue = "overdue"
 
 // PlatformTenantRequestBudgetStore is deliberately separate from Store so
 // existing narrow test doubles need no new billing or admission methods.
@@ -158,6 +165,9 @@ func (m *MemStore) AdmitPlatformTenantRequest(_ context.Context, accountID, tena
 	tenant, ok := m.platformTenants[tenantID]
 	if !ok || tenant.AccountID != accountID {
 		return PlatformTenantBudgetDecision{}, ErrNotFound
+	}
+	if hold, held := m.platformTenantOverdueHolds[tenantID]; held && hold.AccountID == accountID {
+		return overdueTenantDecision(hold.DueAt), nil
 	}
 	row, configured := m.platformTenantBudgets[tenantID]
 	if !configured || (row.MaxRequestsPerMinute == 0 && row.MaxRequestsPerDay == 0) {

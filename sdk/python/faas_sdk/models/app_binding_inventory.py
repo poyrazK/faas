@@ -8,6 +8,10 @@ from uuid import UUID
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.app_binding_inventory_service_binding_source import (
+    AppBindingInventoryServiceBindingSource,
+    check_app_binding_inventory_service_binding_source,
+)
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
@@ -29,6 +33,9 @@ class AppBindingInventory:
     complete: bool
     """All binding sections could be read; this does not mean that bindings are healthy or verified."""
     bindings: list[AppBindingInventoryItem]
+    service_binding_source: AppBindingInventoryServiceBindingSource | Unset = UNSET
+    """Source used for the service namespace. Managed empty or unreadable namespaces never fall back to app
+    settings."""
     service_targets: AppBindingInventoryServiceTargets | Unset = UNSET
     """Applied exact service target selectors; absent for ordinary evidence selection."""
     scope: str | Unset = UNSET
@@ -59,6 +66,10 @@ class AppBindingInventory:
         for bindings_item_data in self.bindings:
             bindings_item = bindings_item_data.to_dict()
             bindings.append(bindings_item)
+
+        service_binding_source: str | Unset = UNSET
+        if not isinstance(self.service_binding_source, Unset):
+            service_binding_source = self.service_binding_source
 
         service_targets: dict[str, Any] | Unset = UNSET
         if not isinstance(self.service_targets, Unset):
@@ -101,6 +112,8 @@ class AppBindingInventory:
                 "bindings": bindings,
             }
         )
+        if service_binding_source is not UNSET:
+            field_dict["service_binding_source"] = service_binding_source
         if service_targets is not UNSET:
             field_dict["service_targets"] = service_targets
         if scope is not UNSET:
@@ -140,6 +153,13 @@ class AppBindingInventory:
             bindings_item = AppBindingInventoryItem.from_dict(bindings_item_data)
 
             bindings.append(bindings_item)
+
+        _service_binding_source = d.pop("service_binding_source", UNSET)
+        service_binding_source: AppBindingInventoryServiceBindingSource | Unset
+        if isinstance(_service_binding_source, Unset):
+            service_binding_source = UNSET
+        else:
+            service_binding_source = check_app_binding_inventory_service_binding_source(_service_binding_source)
 
         _service_targets = d.pop("service_targets", UNSET)
         service_targets: AppBindingInventoryServiceTargets | Unset
@@ -189,6 +209,7 @@ class AppBindingInventory:
             generated_at=generated_at,
             complete=complete,
             bindings=bindings,
+            service_binding_source=service_binding_source,
             service_targets=service_targets,
             scope=scope,
             requested_deployment_id=requested_deployment_id,

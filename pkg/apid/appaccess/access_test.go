@@ -153,3 +153,21 @@ func findOtherMember(t *testing.T, s *state.MemStore, orgID, accountID string) s
 	t.Fatal("missing member")
 	return ""
 }
+
+// A key bound to the creator's personal org never reaches an app a company
+// owns (Postgres stamps every account key with that binding); company access
+// takes a session or a key bound to the company.
+func TestSharedAppRefusesPersonalOrgKeys(t *testing.T) {
+	store, owner, _, _, app := fixture(t, state.OrgRoleDeveloper)
+	ownerID := owner.ID
+	personal, err := store.CreateOrg(t.Context(), state.Org{Slug: "personal-creator", Name: "Personal", Plan: api.PlanPro, Personal: true, PersonalOwnerAccountID: &ownerID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := request(owner, &state.APIKey{OrgID: personal.ID}, "GET /v1/apps/{slug}", "/v1/apps/team-api", app.Slug, "")
+	w := httptest.NewRecorder()
+	Wrap(store, nil, func(http.ResponseWriter, *http.Request, state.Account) { t.Fatal("personal key reached a company app") })(w, r, owner)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status=%d body=%s; want 404", w.Code, w.Body)
+	}
+}

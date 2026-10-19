@@ -15,6 +15,7 @@ from ..models.platform_tenant_statement_response_status import (
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.api_consumer_statement_fee_response import APIConsumerStatementFeeResponse
     from ..models.platform_tenant_statement_line_response import PlatformTenantStatementLineResponse
 
 
@@ -41,6 +42,9 @@ class PlatformTenantStatementResponse:
     as_of: datetime.datetime
     created_at: datetime.datetime
     currency: str | Unset = UNSET
+    fees: list[APIConsumerStatementFeeResponse] | Unset = UNSET
+    """Monthly base fees and minimum top-ups this revision bills (ADR-1322); amount_millicents includes them. A
+    revision can bill fees without lines for a tenant without usage."""
     finalized_at: datetime.datetime | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -74,6 +78,13 @@ class PlatformTenantStatementResponse:
 
         currency = self.currency
 
+        fees: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.fees, Unset):
+            fees = []
+            for fees_item_data in self.fees:
+                fees_item = fees_item_data.to_dict()
+                fees.append(fees_item)
+
         finalized_at: str | Unset = UNSET
         if not isinstance(self.finalized_at, Unset):
             finalized_at = self.finalized_at.isoformat()
@@ -98,6 +109,8 @@ class PlatformTenantStatementResponse:
         )
         if currency is not UNSET:
             field_dict["currency"] = currency
+        if fees is not UNSET:
+            field_dict["fees"] = fees
         if finalized_at is not UNSET:
             field_dict["finalized_at"] = finalized_at
 
@@ -105,6 +118,7 @@ class PlatformTenantStatementResponse:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.api_consumer_statement_fee_response import APIConsumerStatementFeeResponse
         from ..models.platform_tenant_statement_line_response import PlatformTenantStatementLineResponse
 
         d = dict(src_dict)
@@ -139,6 +153,15 @@ class PlatformTenantStatementResponse:
 
         currency = d.pop("currency", UNSET)
 
+        _fees = d.pop("fees", UNSET)
+        fees: list[APIConsumerStatementFeeResponse] | Unset = UNSET
+        if _fees is not UNSET:
+            fees = []
+            for fees_item_data in _fees:
+                fees_item = APIConsumerStatementFeeResponse.from_dict(fees_item_data)
+
+                fees.append(fees_item)
+
         _finalized_at = d.pop("finalized_at", UNSET)
         finalized_at: datetime.datetime | Unset
         if isinstance(_finalized_at, Unset):
@@ -160,6 +183,7 @@ class PlatformTenantStatementResponse:
             as_of=as_of,
             created_at=created_at,
             currency=currency,
+            fees=fees,
             finalized_at=finalized_at,
         )
 

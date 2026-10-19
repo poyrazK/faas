@@ -27,18 +27,19 @@ func SlugHolders(ctx context.Context, lookup SlugLookup, workloads []reposcan.Wo
 	}
 	holders := map[string]state.App{}
 	for _, workload := range workloads {
-		if known[workload.Name] || !api.ValidAppSlug(workload.Name) {
+		slug := AppSlug(workload)
+		if known[slug] || !api.ValidAppSlug(slug) {
 			continue
 		}
-		known[workload.Name] = true
-		app, err := lookup(ctx, workload.Name)
+		known[slug] = true
+		app, err := lookup(ctx, slug)
 		if errors.Is(err, state.ErrNotFound) {
 			continue
 		}
 		if err != nil {
-			return nil, fmt.Errorf("reconcile: look up app slug %q: %w", workload.Name, err)
+			return nil, fmt.Errorf("reconcile: look up app slug %q: %w", slug, err)
 		}
-		holders[workload.Name] = app
+		holders[slug] = app
 	}
 	return holders, nil
 }
@@ -47,17 +48,18 @@ func SlugHolders(ctx context.Context, lookup SlugLookup, workloads []reposcan.Wo
 func SlugHolderReasons(accountID string, workloads []reposcan.Workload, holders map[string]state.App) []string {
 	var reasons []string
 	for _, workload := range workloads {
-		app, held := holders[workload.Name]
+		slug := AppSlug(workload)
+		app, held := holders[slug]
 		switch {
 		case !held:
 		case app.AccountID == accountID && app.Status == state.AppDeleted:
 			reasons = append(reasons, fmt.Sprintf(
-				"workload %q uses app slug %q, held by a deleted app until its grace window ends; restore it with `gregale apps restore %s` or rename the workload",
-				workload.Name, workload.Name, workload.Name))
+				"workload %q uses app slug %q, held by a deleted app until its grace window ends; restore it with `gregale apps restore %s` or choose another app name",
+				workload.Name, slug, slug))
 		default:
 			reasons = append(reasons, fmt.Sprintf(
-				"workload %q uses app slug %q, which is already taken; rename the workload",
-				workload.Name, workload.Name))
+				"workload %q uses app slug %q, which is already taken; choose another app name",
+				workload.Name, slug))
 		}
 	}
 	return reasons

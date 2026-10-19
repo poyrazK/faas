@@ -177,9 +177,12 @@ func authorize(r *http.Request, store Store, audit authz.AuditEmitter, actor sta
 	return owner, member, fence, nil
 }
 
+// lookupProblem answers absent and foreign databases alike with the documented
+// managed PostgreSQL 404 (code managed_postgres_not_found, as the handlers
+// write it), so resolving access first neither enumerates nor changes the code.
 func lookupProblem(err error) *api.Problem {
 	if errors.Is(err, state.ErrNotFound) || errors.Is(err, managedpostgres.ErrNotFound) {
-		return api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "no such managed PostgreSQL resource")
+		return api.NewProblem(http.StatusNotFound, "managed_postgres_not_found", "Managed PostgreSQL resource not found", "no such managed PostgreSQL resource")
 	}
 	return api.ErrCapacity("could not authorize managed PostgreSQL access")
 }

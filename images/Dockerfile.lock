@@ -181,6 +181,16 @@
       "platform": "linux/amd64",
       "digest": "sha256:a4672c0cb26fbdde88e38fa2dfb6c681942306680e41e4378b28770b6e79ee91",
       "pinned_in_dockerfile": "FROM public.ecr.aws/docker/library/debian:12-slim@sha256:a4672c0cb26fbdde88e38fa2dfb6c681942306680e41e4378b28770b6e79ee91"
+    },
+    {
+      "dockerfile": "images/data-repair-postgres16.Dockerfile",
+      "instruction": "FROM",
+      "alias": "postgres:16",
+      "resolved_repo": "docker.io/library/postgres",
+      "resolved_tag": "16",
+      "platform": "linux/amd64",
+      "digest": "sha256:1a6ab3f5345eb6dbe04a1349529caabdb0ab09293a09590fad07b2246bfa4b54",
+      "pinned_in_dockerfile": "FROM postgres:16@sha256:1a6ab3f5345eb6dbe04a1349529caabdb0ab09293a09590fad07b2246bfa4b54"
     }
   ]
 }
