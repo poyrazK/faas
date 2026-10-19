@@ -2,6 +2,7 @@
 // Sign-up, sign-in, passkeys, sessions with single-flight refresh, the hosted
 // pages, and the /authz/v1 organization and authorization API. No
 // dependencies.
+import { aal, activeOrganization, type ActiveOrganization } from './claims.js'
 import { baseURL } from './url.js'
 
 export type Session = Readonly<{
@@ -48,29 +49,7 @@ export type FactorChallenge = Readonly<{ id: string; type: string; expires_at?: 
 export type RecoveryCodes = Readonly<{ id: string; type: string; total: number; remaining?: number; codes?: readonly string[] }>
 export type AssuranceLevel = Readonly<{ current: 'aal1' | 'aal2' | null; next: 'aal1' | 'aal2' | null }>
 
-/** payload reads an access token's claims without verifying them. */
-function payload(token: string): Record<string, unknown> {
-  try {
-    const part = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')
-    const claims = JSON.parse(atob(part + '='.repeat((4 - part.length % 4) % 4)))
-    return claims && typeof claims === 'object' ? claims : {}
-  } catch { return {} }
-}
-
-/** aal reads the assurance level of an access token without verifying it. */
-function aal(token: string): 'aal1' | 'aal2' {
-  return payload(token).aal === 'aal2' ? 'aal2' : 'aal1'
-}
-
-/** The organization a session acts in, from its token's org_* claims. */
-export type ActiveOrganization = Readonly<{ id: string; slug: string; role: string; permissions: readonly string[] }>
-
-function activeOrganization(token: string): ActiveOrganization | null {
-  const c = payload(token)
-  if (typeof c.org_id !== 'string' || typeof c.org_slug !== 'string' || typeof c.org_role !== 'string') return null
-  const permissions = Array.isArray(c.org_permissions) ? c.org_permissions.filter((p): p is string => typeof p === 'string') : []
-  return { id: c.org_id, slug: c.org_slug, role: c.org_role, permissions }
-}
+export type { ActiveOrganization } from './claims.js'
 
 /** A third-party app (an OAuth client) the user allowed to use their account. */
 export type ConnectedApp = Readonly<{ client: { id: string; name: string; uri?: string; logo_uri?: string }; scopes: string[]; granted_at: string }>
