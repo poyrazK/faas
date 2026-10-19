@@ -20494,6 +20494,7 @@ CREATE FUNCTION public.project_environment_config_runtime_change() RETURNS trigg
     AS $$
 DECLARE
     previous jsonb;
+    changed timestamptz := clock_timestamp();
 BEGIN
     SELECT c.config_json INTO previous
       FROM project_environment_config_versions c
@@ -20504,16 +20505,12 @@ BEGIN
     IF project_environment_config_env(previous) = project_environment_config_env(NEW.config_json) THEN
         RETURN NULL;
     END IF;
-    -- The default scope reads production (workloadEnvironmentSlug).
     WITH member AS (
         SELECT a.id FROM apps a
          WHERE a.project_id = NEW.project_id AND a.account_id = NEW.account_id AND a.status <> 'deleted'
-    ), scopes AS (
-        SELECT unnest(CASE WHEN NEW.environment_slug = 'production'
-            THEN ARRAY['production', 'default'] ELSE ARRAY[NEW.environment_slug] END) AS scope
     ), stamped AS (
         INSERT INTO app_runtime_config_scope_changes (app_id, scope, changed_at)
-        SELECT member.id, scopes.scope, clock_timestamp() FROM member, scopes
+        SELECT member.id, NEW.environment_slug, changed FROM member
         ON CONFLICT (app_id, scope) DO UPDATE
             SET changed_at = greatest(app_runtime_config_scope_changes.changed_at, excluded.changed_at)
         RETURNING app_id, scope, changed_at
@@ -20523,6 +20520,16 @@ BEGIN
      WHERE snapshots.deployment_id = d.id AND d.app_id = stamped.app_id
        AND coalesce(nullif(d.scope, ''), 'default') = stamped.scope
        AND NOT snapshots.stale AND snapshots.created_at <= stamped.changed_at;
+    -- The default scope reads production (workloadEnvironmentSlug): its
+    -- snapshots go stale without advancing the shared 'default' boundary.
+    IF NEW.environment_slug = 'production' THEN
+        UPDATE snapshots SET stale = true
+          FROM deployments d, apps a
+         WHERE snapshots.deployment_id = d.id AND d.app_id = a.id
+           AND a.project_id = NEW.project_id AND a.account_id = NEW.account_id AND a.status <> 'deleted'
+           AND coalesce(nullif(d.scope, ''), 'default') = 'default'
+           AND NOT snapshots.stale AND snapshots.created_at <= changed;
+    END IF;
     RETURN NULL;
 END;
 $$;
