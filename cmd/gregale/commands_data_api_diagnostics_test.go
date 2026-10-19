@@ -20,11 +20,7 @@ import (
 
 func dataAPIDiagnosticFixture(t *testing.T, id int, route, outcome string, status any, duration float64, code any) string {
 	t.Helper()
-	content, err := json.Marshal(map[string]any{"time": "2026-10-11T10:00:00Z", "level": "info", "event": "data_api_request", "request_id": fmt.Sprintf("00000000-0000-4000-8000-%012d", id), "method": "GET", "route": route, "status": status, "duration_ms": duration, "outcome": outcome, "code": code})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return string(content)
+	return main.DataAPIDiagnosticFixture(t, id, route, outcome, status, duration, code)
 }
 func dataAPIDiagnosticEnvelope(t *testing.T, line string) string {
 	t.Helper()
@@ -440,5 +436,36 @@ func TestDataAPIDiagnosticsRefreshAdmission(t *testing.T) {
 	c.Finish()
 	if (*c.Report()).Partial || (*c.Report()).Invalid != 0 || (*c.Report()).Summary.Requests != 2 || (*c.Report()).Failures.Unavailable != 2 || (*c.Report()).Failures.RefreshPaused != 1 || (*c.Report()).Failures.RefreshUnavailable != 1 {
 		t.Fatalf("refresh admission diagnostics lost: %+v", (*c.Report()))
+	}
+}
+
+// The two failure classes below were added beside the internal tests while
+// the fixture moved to this external package (#5001, #5002); they live here so
+// both compile units build.
+func TestDataAPIMonthlyCapDiagnostics(t *testing.T) {
+	c := main.NewDataAPIDiagnosticsCollector("", "")
+	c.Observe(dataAPIDiagnosticFixture(t, 1, "rest", "rejected", 429, 1, "data_api_monthly_cap_reached"))
+	c.Finish()
+	if c.Report().Failures.MonthlyCapReached != 1 {
+		t.Fatalf("caps were misclassified: %+v", c.Report().Failures)
+	}
+	stdout, _, restore := main.SwapIO(t)
+	defer restore()
+	if err := main.WriteDataAPIDiagnostics(*c.Report()); err != nil || !strings.Contains(stdout.String(), "Monthly caps: 1 requests refused") {
+		t.Fatalf("missing cap text: %s (%v)", stdout.String(), err)
+	}
+}
+
+func TestDataAPIPublicRPCDiagnostics(t *testing.T) {
+	c := main.NewDataAPIDiagnosticsCollector("", "")
+	c.Observe(dataAPIDiagnosticFixture(t, 1, "rpc", "rejected", 405, 1, "public_rpc_requires_get"))
+	c.Finish()
+	if c.Report().Failures.PublicRPCNotGET != 1 {
+		t.Fatalf("public RPC POSTs were misclassified: %+v", c.Report().Failures)
+	}
+	stdout, _, restore := main.SwapIO(t)
+	defer restore()
+	if err := main.WriteDataAPIDiagnostics(*c.Report()); err != nil || !strings.Contains(stdout.String(), "Public RPC calls without a token sent by POST: 1") {
+		t.Fatalf("missing public RPC text: %s (%v)", stdout.String(), err)
 	}
 }

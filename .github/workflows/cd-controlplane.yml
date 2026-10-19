@@ -84,10 +84,6 @@ on:
           fleet runner host is unavailable; hosted jobs queue behind CI.
         type: boolean
         default: false
-      maintenance_mode:
-        description: "Planned window with legacy writers stopped before incompatible migrations"
-        type: boolean
-        default: false
   workflow_dispatch:  # manual trigger for deliberate deployment
     inputs:
       deploy_environment:
@@ -134,10 +130,6 @@ on:
           fleet runner host is unavailable; hosted jobs queue behind CI.
         type: boolean
         default: false
-      maintenance_mode:
-        description: "Planned window with legacy writers stopped before incompatible migrations"
-        type: boolean
-        default: false
 
 concurrency:
   group: cd-cp-${{ inputs.deploy_environment }}-${{ inputs.release_tag || 'units' }}
@@ -165,7 +157,6 @@ jobs:
       # compute hosts. Keep the shared storage.env credential read-only.
       APID_STORAGE_LIFECYCLE_ENV: ${{ secrets.COMPUTE_IMAGED_STORAGE_ENV }}
       RELEASE_TAG: ${{ inputs.release_tag }}
-      MAINTENANCE_MODE: ${{ inputs.maintenance_mode }}
       # The critical / best-effort service split is owned by
       # pkg/daemonunitspec (Entry.Critical) and shipped as
       # deploy/etc/daemons.json; the env lists that used to live here were
@@ -941,11 +932,8 @@ jobs:
           # activation. The telemetry-heavy status route is diagnostic only.
           # Host hardening disables TCP forwarding. Run the observer on the
           # control plane so probes still traverse public DNS and Cloudflare.
-          baseline_samples=3
-          if [[ "$MAINTENANCE_MODE" == "true" ]]; then
-            baseline_samples=0
-            echo "::notice::planned maintenance: customer-path availability gate is inconclusive"
-          fi
+          # The healthy baseline always runs: no release stops writers or
+          # opens a maintenance window (ADR-202610171900, amendment 1).
           activation_script="$RUNNER_TEMP/controlplane-activate.sh"
           cat > "$activation_script" <<ACTIVATE
           set -euo pipefail
@@ -977,7 +965,7 @@ jobs:
           ln -sfn /opt/faas/current/bin/gregalectl /usr/local/bin/.gregalectl-${RELEASE_ID}
           mv -Tf /usr/local/bin/.gregalectl-${RELEASE_ID} /usr/local/bin/gregalectl
           ACTIVATE
-          ROLLOUT_BASELINE_SAMPLE_COUNT="$baseline_samples" \
+          ROLLOUT_BASELINE_SAMPLE_COUNT=3 \
             scripts/ci/observe_remote_rollout.sh \
             "root@${{ env.CP_HOST }}" ~/.ssh/deploy_key "$activation_script"
 
