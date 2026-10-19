@@ -10,8 +10,9 @@ import (
 // inheriting a live Dockerfile app that uses them must refuse rather than
 // rebuild the final stage with default arguments (ADR-20261019142544).
 func TestObservedWorkloadSourceRefusesDockerfileBuildOptions(t *testing.T) {
+	const commit = "0123456789abcdef0123456789abcdef01234567"
 	app := gitOpsIntentApp{Type: AppTypeApp, Sources: []gitOpsSourceBaseline{{
-		Kind: DeploymentKindGitHub, SourceURL: "github://acme/shop@abc123", CommitSHA: "abc123", SourceRoot: "api",
+		Kind: DeploymentKindGitHub, SourceURL: "github://acme/shop@" + commit, CommitSHA: commit, SourceRoot: "api",
 	}}}
 	app.Manifest.BuildDockerfile = "Dockerfile"
 	source, _, reason := observedWorkloadSource(app, "acme/shop")
