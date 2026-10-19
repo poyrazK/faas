@@ -17,18 +17,22 @@ SET lock_timeout = '500ms';
 -- +goose StatementBegin
 -- orgs: object_storage_owned_from column
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
    PERFORM set_config('lock_timeout', '500ms', true);
    SET CONSTRAINTS ALL IMMEDIATE;
    ALTER TABLE orgs ADD COLUMN IF NOT EXISTS object_storage_owned_from timestamptz;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: orgs: object_storage_owned_from column' USING ERRCODE = '55P03';
 END
 $online$;
@@ -36,18 +40,22 @@ $online$;
 -- +goose StatementBegin
 -- object_buckets: org_id column
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
    PERFORM set_config('lock_timeout', '500ms', true);
    SET CONSTRAINTS ALL IMMEDIATE;
    ALTER TABLE object_buckets ADD COLUMN IF NOT EXISTS org_id uuid;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: object_buckets: org_id column' USING ERRCODE = '55P03';
 END
 $online$;
@@ -55,6 +63,7 @@ $online$;
 -- +goose StatementBegin
 -- object_storage_s3_credentials: issuer columns
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -62,12 +71,15 @@ BEGIN
    SET CONSTRAINTS ALL IMMEDIATE;
    ALTER TABLE object_storage_s3_credentials ADD COLUMN IF NOT EXISTS issuer_account_id uuid,
        ADD COLUMN IF NOT EXISTS issuer_access_revision bigint;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: object_storage_s3_credentials: issuer columns' USING ERRCODE = '55P03';
 END
 $online$;
@@ -241,6 +253,7 @@ END $$;
 -- +goose StatementBegin
 -- orgs: trigger object_storage_billing_origin
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -248,12 +261,15 @@ BEGIN
    SET CONSTRAINTS ALL IMMEDIATE;
    CREATE OR REPLACE TRIGGER object_storage_billing_origin BEFORE UPDATE OF object_storage_owned_from ON orgs
     FOR EACH ROW EXECUTE FUNCTION guard_object_storage_billing_origin();
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: orgs: trigger object_storage_billing_origin' USING ERRCODE = '55P03';
 END
 $online$;
@@ -261,6 +277,7 @@ $online$;
 -- +goose StatementBegin
 -- orgs: trigger object_usage_adoption
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -268,12 +285,15 @@ BEGIN
    SET CONSTRAINTS ALL IMMEDIATE;
    CREATE OR REPLACE TRIGGER object_usage_adoption AFTER INSERT OR UPDATE OF resource_ownership_enabled ON orgs
     FOR EACH ROW EXECUTE FUNCTION invalidate_object_usage_on_adoption();
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: orgs: trigger object_usage_adoption' USING ERRCODE = '55P03';
 END
 $online$;
@@ -281,6 +301,7 @@ $online$;
 -- +goose StatementBegin
 -- object_buckets: trigger object_bucket_organization
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -288,12 +309,15 @@ BEGIN
    SET CONSTRAINTS ALL IMMEDIATE;
    CREATE OR REPLACE TRIGGER object_bucket_organization BEFORE INSERT OR UPDATE OF org_id,account_id,app_id ON object_buckets
     FOR EACH ROW EXECUTE FUNCTION bind_object_bucket_organization();
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: object_buckets: trigger object_bucket_organization' USING ERRCODE = '55P03';
 END
 $online$;
@@ -419,6 +443,7 @@ END $$;
 -- +goose StatementBegin
 -- object_storage_s3_credentials: catch up and install the issuer trigger under one short write lock
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -428,26 +453,32 @@ BEGIN
    CREATE TEMP TABLE org_issuer_catch_up ON COMMIT DROP AS
     SELECT c.id FROM object_storage_s3_credentials c JOIN object_buckets b ON b.id=c.bucket_id JOIN orgs o ON o.id=b.org_id
     WHERE NOT o.personal_org AND c.managed_app_id IS NULL AND c.rotation_parent_id IS NULL AND c.issuer_account_id IS NULL;
+   IF (SELECT count(*) FROM org_issuer_catch_up) > 10000 THEN
+    RAISE EXCEPTION 'object_storage_s3_credentials: more rows changed during the backfill than one catch-up covers; run the migration again' USING ERRCODE = '55000';
+   END IF;
    UPDATE object_storage_s3_credentials c SET issuer_account_id=b.account_id,issuer_access_revision=coalesce(m.access_revision,1)
        FROM object_buckets b JOIN orgs o ON o.id=b.org_id
        LEFT JOIN org_memberships m ON m.org_id=o.id AND m.account_id=b.account_id AND m.removed_at IS NULL
        WHERE c.bucket_id=b.id AND NOT o.personal_org AND c.managed_app_id IS NULL AND c.rotation_parent_id IS NULL
-        AND c.issuer_account_id IS NULL AND c.id IN (SELECT id FROM org_issuer_catch_up);
+        AND c.issuer_account_id IS NULL AND c.id IN (SELECT x.id FROM object_storage_s3_credentials x WHERE x.id IN (SELECT id FROM org_issuer_catch_up) LIMIT 10000);
        UPDATE object_storage_s3_credentials c SET issuer_account_id=k.account_id,issuer_access_revision=coalesce(m.access_revision,1)
        FROM api_keys k LEFT JOIN org_memberships m ON m.org_id=k.org_id AND m.account_id=k.account_id AND m.removed_at IS NULL
-       WHERE c.url_api_key_id=k.id AND c.issuer_account_id IS NOT NULL AND c.id IN (SELECT id FROM org_issuer_catch_up);
+       WHERE c.url_api_key_id=k.id AND c.issuer_account_id IS NOT NULL AND c.id IN (SELECT x.id FROM object_storage_s3_credentials x WHERE x.id IN (SELECT id FROM org_issuer_catch_up) LIMIT 10000);
        UPDATE object_storage_s3_credentials c SET status='revoked',revoked_at=coalesce(revoked_at,now())
        WHERE issuer_account_id IS NOT NULL AND status <> 'revoked' AND NOT EXISTS(SELECT 1 FROM object_buckets b JOIN org_memberships m ON m.org_id=b.org_id
         WHERE b.id=c.bucket_id AND m.account_id=c.issuer_account_id AND m.removed_at IS NULL
-        AND m.access_revision=c.issuer_access_revision AND m.role IN ('owner','admin','developer')) AND c.id IN (SELECT id FROM org_issuer_catch_up);
+        AND m.access_revision=c.issuer_access_revision AND m.role IN ('owner','admin','developer')) AND c.id IN (SELECT x.id FROM object_storage_s3_credentials x WHERE x.id IN (SELECT id FROM org_issuer_catch_up) LIMIT 10000);
    CREATE OR REPLACE TRIGGER object_storage_issuer BEFORE INSERT OR UPDATE OF account_id,bucket_id,issuer_account_id,issuer_access_revision,managed_app_id,rotation_parent_id ON object_storage_s3_credentials
     FOR EACH ROW EXECUTE FUNCTION stamp_object_storage_issuer();
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: object_storage_s3_credentials: catch up and install the issuer trigger under one short write lock' USING ERRCODE = '55P03';
 END
 $online$;
@@ -466,6 +497,7 @@ $$;
 -- +goose StatementBegin
 -- org_memberships: trigger object_storage_member_revocation
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -473,12 +505,15 @@ BEGIN
    SET CONSTRAINTS ALL IMMEDIATE;
    CREATE OR REPLACE TRIGGER object_storage_member_revocation AFTER UPDATE OR DELETE ON org_memberships
     FOR EACH ROW EXECUTE FUNCTION revoke_object_storage_member_keys();
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: org_memberships: trigger object_storage_member_revocation' USING ERRCODE = '55P03';
 END
 $online$;
@@ -486,6 +521,7 @@ $online$;
 -- +goose StatementBegin
 -- orgs: trigger org_object_buckets_guard
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -493,12 +529,15 @@ BEGIN
    SET CONSTRAINTS ALL IMMEDIATE;
    CREATE OR REPLACE TRIGGER org_object_buckets_guard BEFORE UPDATE OF status,deleted_pending ON orgs
     FOR EACH ROW EXECUTE FUNCTION guard_org_object_buckets();
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: orgs: trigger org_object_buckets_guard' USING ERRCODE = '55P03';
 END
 $online$;
@@ -744,6 +783,7 @@ $online$;
 -- +goose StatementBegin
 -- orgs: add org_object_storage_owned_from_finite NOT VALID
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -752,12 +792,15 @@ BEGIN
    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'orgs'::regclass AND conname = 'org_object_storage_owned_from_finite') THEN
     ALTER TABLE orgs ADD CONSTRAINT org_object_storage_owned_from_finite CHECK (object_storage_owned_from IS NULL OR isfinite(object_storage_owned_from)) NOT VALID;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: orgs: add org_object_storage_owned_from_finite NOT VALID' USING ERRCODE = '55P03';
 END
 $online$;
@@ -765,6 +808,7 @@ $online$;
 -- +goose StatementBegin
 -- object_buckets: add object_buckets_org_id_fkey NOT VALID
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -773,12 +817,15 @@ BEGIN
    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'object_buckets'::regclass AND conname = 'object_buckets_org_id_fkey') THEN
     ALTER TABLE object_buckets ADD CONSTRAINT object_buckets_org_id_fkey FOREIGN KEY (org_id) REFERENCES orgs(id) NOT VALID;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: object_buckets: add object_buckets_org_id_fkey NOT VALID' USING ERRCODE = '55P03';
 END
 $online$;
@@ -786,6 +833,7 @@ $online$;
 -- +goose StatementBegin
 -- object_storage_s3_credentials: add object_s3_issuer_pair NOT VALID
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -794,12 +842,15 @@ BEGIN
    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'object_storage_s3_credentials'::regclass AND conname = 'object_s3_issuer_pair') THEN
     ALTER TABLE object_storage_s3_credentials ADD CONSTRAINT object_s3_issuer_pair CHECK ((issuer_account_id IS NULL AND issuer_access_revision IS NULL) OR (issuer_account_id IS NOT NULL AND issuer_access_revision IS NOT NULL AND issuer_access_revision>0)) NOT VALID;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: object_storage_s3_credentials: add object_s3_issuer_pair NOT VALID' USING ERRCODE = '55P03';
 END
 $online$;
@@ -807,6 +858,7 @@ $online$;
 -- +goose StatementBegin
 -- object_buckets.org_id: prove NOT NULL with a NOT VALID check
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -815,12 +867,15 @@ BEGIN
    IF EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = 'object_buckets'::regclass AND attname = 'org_id' AND NOT attnotnull) AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'object_buckets'::regclass AND conname = 'org_nn_8564a496b978') THEN
     ALTER TABLE object_buckets ADD CONSTRAINT org_nn_8564a496b978 CHECK (org_id IS NOT NULL) NOT VALID;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: object_buckets.org_id: prove NOT NULL with a NOT VALID check' USING ERRCODE = '55P03';
 END
 $online$;
@@ -828,6 +883,7 @@ $online$;
 -- +goose StatementBegin
 -- event_fanout_outbox: add the namespace foreign key NOT VALID
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -837,12 +893,15 @@ BEGIN
       AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'event_fanout_outbox'::regclass AND conname = 'org_ns_fk_ec63f0944798') THEN
     ALTER TABLE event_fanout_outbox ADD CONSTRAINT org_ns_fk_ec63f0944798 FOREIGN KEY(account_id) REFERENCES resource_namespaces(id) ON DELETE CASCADE NOT VALID;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: event_fanout_outbox: add the namespace foreign key NOT VALID' USING ERRCODE = '55P03';
 END
 $online$;
@@ -850,6 +909,7 @@ $online$;
 -- +goose StatementBegin
 -- object_buckets: add the namespace foreign key NOT VALID
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -859,12 +919,15 @@ BEGIN
       AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'object_buckets'::regclass AND conname = 'org_ns_fk_b648d4edbc87') THEN
     ALTER TABLE object_buckets ADD CONSTRAINT org_ns_fk_b648d4edbc87 FOREIGN KEY(account_id) REFERENCES resource_namespaces(id) NOT VALID;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: object_buckets: add the namespace foreign key NOT VALID' USING ERRCODE = '55P03';
 END
 $online$;
@@ -872,6 +935,7 @@ $online$;
 -- +goose StatementBegin
 -- object_s3_copy_source_epochs: add the namespace foreign key NOT VALID
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -881,12 +945,15 @@ BEGIN
       AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'object_s3_copy_source_epochs'::regclass AND conname = 'org_ns_fk_3ee00c326709') THEN
     ALTER TABLE object_s3_copy_source_epochs ADD CONSTRAINT org_ns_fk_3ee00c326709 FOREIGN KEY(account_id) REFERENCES resource_namespaces(id) ON DELETE CASCADE NOT VALID;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: object_s3_copy_source_epochs: add the namespace foreign key NOT VALID' USING ERRCODE = '55P03';
 END
 $online$;
@@ -894,6 +961,7 @@ $online$;
 -- +goose StatementBegin
 -- object_s3_copy_source_grants: add the namespace foreign key NOT VALID
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -903,12 +971,15 @@ BEGIN
       AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'object_s3_copy_source_grants'::regclass AND conname = 'org_ns_fk_79feeb784d0f') THEN
     ALTER TABLE object_s3_copy_source_grants ADD CONSTRAINT org_ns_fk_79feeb784d0f FOREIGN KEY(account_id) REFERENCES resource_namespaces(id) ON DELETE CASCADE NOT VALID;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: object_s3_copy_source_grants: add the namespace foreign key NOT VALID' USING ERRCODE = '55P03';
 END
 $online$;
@@ -916,6 +987,7 @@ $online$;
 -- +goose StatementBegin
 -- object_storage_access_grants: add the namespace foreign key NOT VALID
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -925,12 +997,15 @@ BEGIN
       AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'object_storage_access_grants'::regclass AND conname = 'org_ns_fk_6003f4aa8a8f') THEN
     ALTER TABLE object_storage_access_grants ADD CONSTRAINT org_ns_fk_6003f4aa8a8f FOREIGN KEY(account_id) REFERENCES resource_namespaces(id) ON DELETE CASCADE NOT VALID;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: object_storage_access_grants: add the namespace foreign key NOT VALID' USING ERRCODE = '55P03';
 END
 $online$;
@@ -938,6 +1013,7 @@ $online$;
 -- +goose StatementBegin
 -- object_storage_authorizations: add the namespace foreign key NOT VALID
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -947,12 +1023,15 @@ BEGIN
       AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'object_storage_authorizations'::regclass AND conname = 'org_ns_fk_db7b20f561c5') THEN
     ALTER TABLE object_storage_authorizations ADD CONSTRAINT org_ns_fk_db7b20f561c5 FOREIGN KEY(account_id) REFERENCES resource_namespaces(id) ON DELETE CASCADE NOT VALID;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: object_storage_authorizations: add the namespace foreign key NOT VALID' USING ERRCODE = '55P03';
 END
 $online$;
@@ -960,6 +1039,7 @@ $online$;
 -- +goose StatementBegin
 -- object_storage_billing_periods: add the namespace foreign key NOT VALID
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -969,12 +1049,15 @@ BEGIN
       AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'object_storage_billing_periods'::regclass AND conname = 'org_ns_fk_02cda69e3685') THEN
     ALTER TABLE object_storage_billing_periods ADD CONSTRAINT org_ns_fk_02cda69e3685 FOREIGN KEY(account_id) REFERENCES resource_namespaces(id) ON DELETE CASCADE NOT VALID;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: object_storage_billing_periods: add the namespace foreign key NOT VALID' USING ERRCODE = '55P03';
 END
 $online$;
@@ -982,6 +1065,7 @@ $online$;
 -- +goose StatementBegin
 -- object_storage_customer_usage_reports_v2: add the namespace foreign key NOT VALID
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -991,12 +1075,15 @@ BEGIN
       AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'object_storage_customer_usage_reports_v2'::regclass AND conname = 'org_ns_fk_2f14d7c704dc') THEN
     ALTER TABLE object_storage_customer_usage_reports_v2 ADD CONSTRAINT org_ns_fk_2f14d7c704dc FOREIGN KEY(account_id) REFERENCES resource_namespaces(id) ON DELETE CASCADE NOT VALID;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: object_storage_customer_usage_reports_v2: add the namespace foreign key NOT VALID' USING ERRCODE = '55P03';
 END
 $online$;
@@ -1004,6 +1091,7 @@ $online$;
 -- +goose StatementBegin
 -- object_storage_multipart_uploads: add the namespace foreign key NOT VALID
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -1013,12 +1101,15 @@ BEGIN
       AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'object_storage_multipart_uploads'::regclass AND conname = 'org_ns_fk_e0a60f7b1fe0') THEN
     ALTER TABLE object_storage_multipart_uploads ADD CONSTRAINT org_ns_fk_e0a60f7b1fe0 FOREIGN KEY(account_id) REFERENCES resource_namespaces(id) ON DELETE CASCADE NOT VALID;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: object_storage_multipart_uploads: add the namespace foreign key NOT VALID' USING ERRCODE = '55P03';
 END
 $online$;
@@ -1026,6 +1117,7 @@ $online$;
 -- +goose StatementBegin
 -- object_storage_s3_credentials: add the namespace foreign key NOT VALID
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -1035,12 +1127,15 @@ BEGIN
       AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'object_storage_s3_credentials'::regclass AND conname = 'org_ns_fk_6ee2b4e0bd2c') THEN
     ALTER TABLE object_storage_s3_credentials ADD CONSTRAINT org_ns_fk_6ee2b4e0bd2c FOREIGN KEY(account_id) REFERENCES resource_namespaces(id) ON DELETE CASCADE NOT VALID;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: object_storage_s3_credentials: add the namespace foreign key NOT VALID' USING ERRCODE = '55P03';
 END
 $online$;
@@ -1048,6 +1143,7 @@ $online$;
 -- +goose StatementBegin
 -- object_storage_upload_grants: add the namespace foreign key NOT VALID
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -1057,12 +1153,15 @@ BEGIN
       AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'object_storage_upload_grants'::regclass AND conname = 'org_ns_fk_a3948fe3645d') THEN
     ALTER TABLE object_storage_upload_grants ADD CONSTRAINT org_ns_fk_a3948fe3645d FOREIGN KEY(account_id) REFERENCES resource_namespaces(id) ON DELETE CASCADE NOT VALID;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: object_storage_upload_grants: add the namespace foreign key NOT VALID' USING ERRCODE = '55P03';
 END
 $online$;
@@ -1070,6 +1169,7 @@ $online$;
 -- +goose StatementBegin
 -- object_storage_usage_reports: add the namespace foreign key NOT VALID
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -1079,12 +1179,15 @@ BEGIN
       AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'object_storage_usage_reports'::regclass AND conname = 'org_ns_fk_e347d2858258') THEN
     ALTER TABLE object_storage_usage_reports ADD CONSTRAINT org_ns_fk_e347d2858258 FOREIGN KEY(account_id) REFERENCES resource_namespaces(id) ON DELETE CASCADE NOT VALID;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: object_storage_usage_reports: add the namespace foreign key NOT VALID' USING ERRCODE = '55P03';
 END
 $online$;
@@ -1092,6 +1195,7 @@ $online$;
 -- +goose StatementBegin
 -- object_upload_completions: add the namespace foreign key NOT VALID
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -1101,12 +1205,15 @@ BEGIN
       AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'object_upload_completions'::regclass AND conname = 'org_ns_fk_682f9222af86') THEN
     ALTER TABLE object_upload_completions ADD CONSTRAINT org_ns_fk_682f9222af86 FOREIGN KEY(account_id) REFERENCES resource_namespaces(id) ON DELETE CASCADE NOT VALID;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: object_upload_completions: add the namespace foreign key NOT VALID' USING ERRCODE = '55P03';
 END
 $online$;
@@ -1114,6 +1221,7 @@ $online$;
 -- +goose StatementBegin
 -- object_upload_routes: add the namespace foreign key NOT VALID
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -1123,12 +1231,15 @@ BEGIN
       AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'object_upload_routes'::regclass AND conname = 'org_ns_fk_be97fc4a76b2') THEN
     ALTER TABLE object_upload_routes ADD CONSTRAINT org_ns_fk_be97fc4a76b2 FOREIGN KEY(account_id) REFERENCES resource_namespaces(id) ON DELETE CASCADE NOT VALID;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: object_upload_routes: add the namespace foreign key NOT VALID' USING ERRCODE = '55P03';
 END
 $online$;
@@ -1136,6 +1247,7 @@ $online$;
 -- +goose StatementBegin
 -- object_version_protection: add the namespace foreign key NOT VALID
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -1145,12 +1257,15 @@ BEGIN
       AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'object_version_protection'::regclass AND conname = 'org_ns_fk_e671e091b387') THEN
     ALTER TABLE object_version_protection ADD CONSTRAINT org_ns_fk_e671e091b387 FOREIGN KEY(account_id) REFERENCES resource_namespaces(id) ON DELETE CASCADE NOT VALID;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: object_version_protection: add the namespace foreign key NOT VALID' USING ERRCODE = '55P03';
 END
 $online$;
@@ -1160,6 +1275,7 @@ $online$;
 -- +goose StatementBegin
 -- orgs: validate org_object_storage_owned_from_finite
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -1168,12 +1284,15 @@ BEGIN
    IF EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'orgs'::regclass AND conname = 'org_object_storage_owned_from_finite' AND NOT convalidated) THEN
     ALTER TABLE orgs VALIDATE CONSTRAINT org_object_storage_owned_from_finite;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: orgs: validate org_object_storage_owned_from_finite' USING ERRCODE = '55P03';
 END
 $online$;
@@ -1181,6 +1300,7 @@ $online$;
 -- +goose StatementBegin
 -- object_buckets: validate object_buckets_org_id_fkey
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -1189,12 +1309,15 @@ BEGIN
    IF EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'object_buckets'::regclass AND conname = 'object_buckets_org_id_fkey' AND NOT convalidated) THEN
     ALTER TABLE object_buckets VALIDATE CONSTRAINT object_buckets_org_id_fkey;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: object_buckets: validate object_buckets_org_id_fkey' USING ERRCODE = '55P03';
 END
 $online$;
@@ -1202,6 +1325,7 @@ $online$;
 -- +goose StatementBegin
 -- object_storage_s3_credentials: validate object_s3_issuer_pair
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -1210,12 +1334,15 @@ BEGIN
    IF EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'object_storage_s3_credentials'::regclass AND conname = 'object_s3_issuer_pair' AND NOT convalidated) THEN
     ALTER TABLE object_storage_s3_credentials VALIDATE CONSTRAINT object_s3_issuer_pair;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: object_storage_s3_credentials: validate object_s3_issuer_pair' USING ERRCODE = '55P03';
 END
 $online$;
@@ -1223,6 +1350,7 @@ $online$;
 -- +goose StatementBegin
 -- object_buckets: validate org_nn_8564a496b978
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -1231,12 +1359,15 @@ BEGIN
    IF EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'object_buckets'::regclass AND conname = 'org_nn_8564a496b978' AND NOT convalidated) THEN
     ALTER TABLE object_buckets VALIDATE CONSTRAINT org_nn_8564a496b978;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: object_buckets: validate org_nn_8564a496b978' USING ERRCODE = '55P03';
 END
 $online$;
@@ -1244,6 +1375,7 @@ $online$;
 -- +goose StatementBegin
 -- event_fanout_outbox: validate the namespace foreign key
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -1252,12 +1384,15 @@ BEGIN
    IF EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'event_fanout_outbox'::regclass AND conname = 'org_ns_fk_ec63f0944798' AND NOT convalidated) THEN
     ALTER TABLE event_fanout_outbox VALIDATE CONSTRAINT org_ns_fk_ec63f0944798;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: event_fanout_outbox: validate the namespace foreign key' USING ERRCODE = '55P03';
 END
 $online$;
@@ -1265,6 +1400,7 @@ $online$;
 -- +goose StatementBegin
 -- object_buckets: validate the namespace foreign key
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -1273,12 +1409,15 @@ BEGIN
    IF EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'object_buckets'::regclass AND conname = 'org_ns_fk_b648d4edbc87' AND NOT convalidated) THEN
     ALTER TABLE object_buckets VALIDATE CONSTRAINT org_ns_fk_b648d4edbc87;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: object_buckets: validate the namespace foreign key' USING ERRCODE = '55P03';
 END
 $online$;
@@ -1286,6 +1425,7 @@ $online$;
 -- +goose StatementBegin
 -- object_s3_copy_source_epochs: validate the namespace foreign key
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -1294,12 +1434,15 @@ BEGIN
    IF EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'object_s3_copy_source_epochs'::regclass AND conname = 'org_ns_fk_3ee00c326709' AND NOT convalidated) THEN
     ALTER TABLE object_s3_copy_source_epochs VALIDATE CONSTRAINT org_ns_fk_3ee00c326709;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: object_s3_copy_source_epochs: validate the namespace foreign key' USING ERRCODE = '55P03';
 END
 $online$;
@@ -1307,6 +1450,7 @@ $online$;
 -- +goose StatementBegin
 -- object_s3_copy_source_grants: validate the namespace foreign key
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -1315,12 +1459,15 @@ BEGIN
    IF EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'object_s3_copy_source_grants'::regclass AND conname = 'org_ns_fk_79feeb784d0f' AND NOT convalidated) THEN
     ALTER TABLE object_s3_copy_source_grants VALIDATE CONSTRAINT org_ns_fk_79feeb784d0f;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: object_s3_copy_source_grants: validate the namespace foreign key' USING ERRCODE = '55P03';
 END
 $online$;
@@ -1328,6 +1475,7 @@ $online$;
 -- +goose StatementBegin
 -- object_storage_access_grants: validate the namespace foreign key
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -1336,12 +1484,15 @@ BEGIN
    IF EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'object_storage_access_grants'::regclass AND conname = 'org_ns_fk_6003f4aa8a8f' AND NOT convalidated) THEN
     ALTER TABLE object_storage_access_grants VALIDATE CONSTRAINT org_ns_fk_6003f4aa8a8f;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: object_storage_access_grants: validate the namespace foreign key' USING ERRCODE = '55P03';
 END
 $online$;
@@ -1349,6 +1500,7 @@ $online$;
 -- +goose StatementBegin
 -- object_storage_authorizations: validate the namespace foreign key
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -1357,12 +1509,15 @@ BEGIN
    IF EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'object_storage_authorizations'::regclass AND conname = 'org_ns_fk_db7b20f561c5' AND NOT convalidated) THEN
     ALTER TABLE object_storage_authorizations VALIDATE CONSTRAINT org_ns_fk_db7b20f561c5;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: object_storage_authorizations: validate the namespace foreign key' USING ERRCODE = '55P03';
 END
 $online$;
@@ -1370,6 +1525,7 @@ $online$;
 -- +goose StatementBegin
 -- object_storage_billing_periods: validate the namespace foreign key
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -1378,12 +1534,15 @@ BEGIN
    IF EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'object_storage_billing_periods'::regclass AND conname = 'org_ns_fk_02cda69e3685' AND NOT convalidated) THEN
     ALTER TABLE object_storage_billing_periods VALIDATE CONSTRAINT org_ns_fk_02cda69e3685;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: object_storage_billing_periods: validate the namespace foreign key' USING ERRCODE = '55P03';
 END
 $online$;
@@ -1391,6 +1550,7 @@ $online$;
 -- +goose StatementBegin
 -- object_storage_customer_usage_reports_v2: validate the namespace foreign key
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -1399,12 +1559,15 @@ BEGIN
    IF EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'object_storage_customer_usage_reports_v2'::regclass AND conname = 'org_ns_fk_2f14d7c704dc' AND NOT convalidated) THEN
     ALTER TABLE object_storage_customer_usage_reports_v2 VALIDATE CONSTRAINT org_ns_fk_2f14d7c704dc;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: object_storage_customer_usage_reports_v2: validate the namespace foreign key' USING ERRCODE = '55P03';
 END
 $online$;
@@ -1412,6 +1575,7 @@ $online$;
 -- +goose StatementBegin
 -- object_storage_multipart_uploads: validate the namespace foreign key
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -1420,12 +1584,15 @@ BEGIN
    IF EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'object_storage_multipart_uploads'::regclass AND conname = 'org_ns_fk_e0a60f7b1fe0' AND NOT convalidated) THEN
     ALTER TABLE object_storage_multipart_uploads VALIDATE CONSTRAINT org_ns_fk_e0a60f7b1fe0;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: object_storage_multipart_uploads: validate the namespace foreign key' USING ERRCODE = '55P03';
 END
 $online$;
@@ -1433,6 +1600,7 @@ $online$;
 -- +goose StatementBegin
 -- object_storage_s3_credentials: validate the namespace foreign key
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -1441,12 +1609,15 @@ BEGIN
    IF EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'object_storage_s3_credentials'::regclass AND conname = 'org_ns_fk_6ee2b4e0bd2c' AND NOT convalidated) THEN
     ALTER TABLE object_storage_s3_credentials VALIDATE CONSTRAINT org_ns_fk_6ee2b4e0bd2c;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: object_storage_s3_credentials: validate the namespace foreign key' USING ERRCODE = '55P03';
 END
 $online$;
@@ -1454,6 +1625,7 @@ $online$;
 -- +goose StatementBegin
 -- object_storage_upload_grants: validate the namespace foreign key
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -1462,12 +1634,15 @@ BEGIN
    IF EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'object_storage_upload_grants'::regclass AND conname = 'org_ns_fk_a3948fe3645d' AND NOT convalidated) THEN
     ALTER TABLE object_storage_upload_grants VALIDATE CONSTRAINT org_ns_fk_a3948fe3645d;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: object_storage_upload_grants: validate the namespace foreign key' USING ERRCODE = '55P03';
 END
 $online$;
@@ -1475,6 +1650,7 @@ $online$;
 -- +goose StatementBegin
 -- object_storage_usage_reports: validate the namespace foreign key
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -1483,12 +1659,15 @@ BEGIN
    IF EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'object_storage_usage_reports'::regclass AND conname = 'org_ns_fk_e347d2858258' AND NOT convalidated) THEN
     ALTER TABLE object_storage_usage_reports VALIDATE CONSTRAINT org_ns_fk_e347d2858258;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: object_storage_usage_reports: validate the namespace foreign key' USING ERRCODE = '55P03';
 END
 $online$;
@@ -1496,6 +1675,7 @@ $online$;
 -- +goose StatementBegin
 -- object_upload_completions: validate the namespace foreign key
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -1504,12 +1684,15 @@ BEGIN
    IF EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'object_upload_completions'::regclass AND conname = 'org_ns_fk_682f9222af86' AND NOT convalidated) THEN
     ALTER TABLE object_upload_completions VALIDATE CONSTRAINT org_ns_fk_682f9222af86;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: object_upload_completions: validate the namespace foreign key' USING ERRCODE = '55P03';
 END
 $online$;
@@ -1517,6 +1700,7 @@ $online$;
 -- +goose StatementBegin
 -- object_upload_routes: validate the namespace foreign key
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -1525,12 +1709,15 @@ BEGIN
    IF EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'object_upload_routes'::regclass AND conname = 'org_ns_fk_be97fc4a76b2' AND NOT convalidated) THEN
     ALTER TABLE object_upload_routes VALIDATE CONSTRAINT org_ns_fk_be97fc4a76b2;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: object_upload_routes: validate the namespace foreign key' USING ERRCODE = '55P03';
 END
 $online$;
@@ -1538,6 +1725,7 @@ $online$;
 -- +goose StatementBegin
 -- object_version_protection: validate the namespace foreign key
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -1546,12 +1734,15 @@ BEGIN
    IF EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'object_version_protection'::regclass AND conname = 'org_ns_fk_e671e091b387' AND NOT convalidated) THEN
     ALTER TABLE object_version_protection VALIDATE CONSTRAINT org_ns_fk_e671e091b387;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: object_version_protection: validate the namespace foreign key' USING ERRCODE = '55P03';
 END
 $online$;
@@ -1561,6 +1752,7 @@ $online$;
 -- +goose StatementBegin
 -- event_fanout_outbox: retire the accounts foreign key
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -1570,12 +1762,15 @@ BEGIN
     ALTER TABLE event_fanout_outbox DROP CONSTRAINT IF EXISTS event_fanout_outbox_account_id_fkey;
     ALTER TABLE event_fanout_outbox RENAME CONSTRAINT org_ns_fk_ec63f0944798 TO event_fanout_outbox_account_id_fkey;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: event_fanout_outbox: retire the accounts foreign key' USING ERRCODE = '55P03';
 END
 $online$;
@@ -1583,6 +1778,7 @@ $online$;
 -- +goose StatementBegin
 -- object_buckets: retire the accounts foreign key
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -1592,12 +1788,15 @@ BEGIN
     ALTER TABLE object_buckets DROP CONSTRAINT IF EXISTS object_buckets_account_id_fkey;
     ALTER TABLE object_buckets RENAME CONSTRAINT org_ns_fk_b648d4edbc87 TO object_buckets_account_id_fkey;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: object_buckets: retire the accounts foreign key' USING ERRCODE = '55P03';
 END
 $online$;
@@ -1605,6 +1804,7 @@ $online$;
 -- +goose StatementBegin
 -- object_s3_copy_source_epochs: retire the accounts foreign key
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -1614,12 +1814,15 @@ BEGIN
     ALTER TABLE object_s3_copy_source_epochs DROP CONSTRAINT IF EXISTS object_s3_copy_source_epochs_account_id_fkey;
     ALTER TABLE object_s3_copy_source_epochs RENAME CONSTRAINT org_ns_fk_3ee00c326709 TO object_s3_copy_source_epochs_account_id_fkey;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: object_s3_copy_source_epochs: retire the accounts foreign key' USING ERRCODE = '55P03';
 END
 $online$;
@@ -1627,6 +1830,7 @@ $online$;
 -- +goose StatementBegin
 -- object_s3_copy_source_grants: retire the accounts foreign key
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -1636,12 +1840,15 @@ BEGIN
     ALTER TABLE object_s3_copy_source_grants DROP CONSTRAINT IF EXISTS object_s3_copy_source_grants_account_id_fkey;
     ALTER TABLE object_s3_copy_source_grants RENAME CONSTRAINT org_ns_fk_79feeb784d0f TO object_s3_copy_source_grants_account_id_fkey;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: object_s3_copy_source_grants: retire the accounts foreign key' USING ERRCODE = '55P03';
 END
 $online$;
@@ -1649,6 +1856,7 @@ $online$;
 -- +goose StatementBegin
 -- object_storage_access_grants: retire the accounts foreign key
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -1658,12 +1866,15 @@ BEGIN
     ALTER TABLE object_storage_access_grants DROP CONSTRAINT IF EXISTS object_storage_access_grants_account_id_fkey;
     ALTER TABLE object_storage_access_grants RENAME CONSTRAINT org_ns_fk_6003f4aa8a8f TO object_storage_access_grants_account_id_fkey;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: object_storage_access_grants: retire the accounts foreign key' USING ERRCODE = '55P03';
 END
 $online$;
@@ -1671,6 +1882,7 @@ $online$;
 -- +goose StatementBegin
 -- object_storage_authorizations: retire the accounts foreign key
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -1680,12 +1892,15 @@ BEGIN
     ALTER TABLE object_storage_authorizations DROP CONSTRAINT IF EXISTS object_storage_authorizations_account_id_fkey;
     ALTER TABLE object_storage_authorizations RENAME CONSTRAINT org_ns_fk_db7b20f561c5 TO object_storage_authorizations_account_id_fkey;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: object_storage_authorizations: retire the accounts foreign key' USING ERRCODE = '55P03';
 END
 $online$;
@@ -1693,6 +1908,7 @@ $online$;
 -- +goose StatementBegin
 -- object_storage_billing_periods: retire the accounts foreign key
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -1702,12 +1918,15 @@ BEGIN
     ALTER TABLE object_storage_billing_periods DROP CONSTRAINT IF EXISTS object_storage_billing_periods_account_id_fkey;
     ALTER TABLE object_storage_billing_periods RENAME CONSTRAINT org_ns_fk_02cda69e3685 TO object_storage_billing_periods_account_id_fkey;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: object_storage_billing_periods: retire the accounts foreign key' USING ERRCODE = '55P03';
 END
 $online$;
@@ -1715,6 +1934,7 @@ $online$;
 -- +goose StatementBegin
 -- object_storage_customer_usage_reports_v2: retire the accounts foreign key
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -1724,12 +1944,15 @@ BEGIN
     ALTER TABLE object_storage_customer_usage_reports_v2 DROP CONSTRAINT IF EXISTS object_storage_customer_usage_reports_v2_account_id_fkey;
     ALTER TABLE object_storage_customer_usage_reports_v2 RENAME CONSTRAINT org_ns_fk_2f14d7c704dc TO object_storage_customer_usage_reports_v2_account_id_fkey;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: object_storage_customer_usage_reports_v2: retire the accounts foreign key' USING ERRCODE = '55P03';
 END
 $online$;
@@ -1737,6 +1960,7 @@ $online$;
 -- +goose StatementBegin
 -- object_storage_multipart_uploads: retire the accounts foreign key
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -1746,12 +1970,15 @@ BEGIN
     ALTER TABLE object_storage_multipart_uploads DROP CONSTRAINT IF EXISTS object_storage_multipart_uploads_account_id_fkey;
     ALTER TABLE object_storage_multipart_uploads RENAME CONSTRAINT org_ns_fk_e0a60f7b1fe0 TO object_storage_multipart_uploads_account_id_fkey;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: object_storage_multipart_uploads: retire the accounts foreign key' USING ERRCODE = '55P03';
 END
 $online$;
@@ -1759,6 +1986,7 @@ $online$;
 -- +goose StatementBegin
 -- object_storage_s3_credentials: retire the accounts foreign key
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -1768,12 +1996,15 @@ BEGIN
     ALTER TABLE object_storage_s3_credentials DROP CONSTRAINT IF EXISTS object_storage_s3_credentials_account_id_fkey;
     ALTER TABLE object_storage_s3_credentials RENAME CONSTRAINT org_ns_fk_6ee2b4e0bd2c TO object_storage_s3_credentials_account_id_fkey;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: object_storage_s3_credentials: retire the accounts foreign key' USING ERRCODE = '55P03';
 END
 $online$;
@@ -1781,6 +2012,7 @@ $online$;
 -- +goose StatementBegin
 -- object_storage_upload_grants: retire the accounts foreign key
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -1790,12 +2022,15 @@ BEGIN
     ALTER TABLE object_storage_upload_grants DROP CONSTRAINT IF EXISTS object_storage_upload_grants_account_id_fkey;
     ALTER TABLE object_storage_upload_grants RENAME CONSTRAINT org_ns_fk_a3948fe3645d TO object_storage_upload_grants_account_id_fkey;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: object_storage_upload_grants: retire the accounts foreign key' USING ERRCODE = '55P03';
 END
 $online$;
@@ -1803,6 +2038,7 @@ $online$;
 -- +goose StatementBegin
 -- object_storage_usage_reports: retire the accounts foreign key
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -1812,12 +2048,15 @@ BEGIN
     ALTER TABLE object_storage_usage_reports DROP CONSTRAINT IF EXISTS object_storage_usage_reports_account_id_fkey;
     ALTER TABLE object_storage_usage_reports RENAME CONSTRAINT org_ns_fk_e347d2858258 TO object_storage_usage_reports_account_id_fkey;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: object_storage_usage_reports: retire the accounts foreign key' USING ERRCODE = '55P03';
 END
 $online$;
@@ -1825,6 +2064,7 @@ $online$;
 -- +goose StatementBegin
 -- object_upload_completions: retire the accounts foreign key
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -1834,12 +2074,15 @@ BEGIN
     ALTER TABLE object_upload_completions DROP CONSTRAINT IF EXISTS object_upload_completions_account_id_fkey;
     ALTER TABLE object_upload_completions RENAME CONSTRAINT org_ns_fk_682f9222af86 TO object_upload_completions_account_id_fkey;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: object_upload_completions: retire the accounts foreign key' USING ERRCODE = '55P03';
 END
 $online$;
@@ -1847,6 +2090,7 @@ $online$;
 -- +goose StatementBegin
 -- object_upload_routes: retire the accounts foreign key
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -1856,12 +2100,15 @@ BEGIN
     ALTER TABLE object_upload_routes DROP CONSTRAINT IF EXISTS object_upload_routes_account_id_fkey;
     ALTER TABLE object_upload_routes RENAME CONSTRAINT org_ns_fk_be97fc4a76b2 TO object_upload_routes_account_id_fkey;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: object_upload_routes: retire the accounts foreign key' USING ERRCODE = '55P03';
 END
 $online$;
@@ -1869,6 +2116,7 @@ $online$;
 -- +goose StatementBegin
 -- object_version_protection: retire the accounts foreign key
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -1878,12 +2126,15 @@ BEGIN
     ALTER TABLE object_version_protection DROP CONSTRAINT IF EXISTS object_version_protection_account_id_fkey;
     ALTER TABLE object_version_protection RENAME CONSTRAINT org_ns_fk_e671e091b387 TO object_version_protection_account_id_fkey;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: object_version_protection: retire the accounts foreign key' USING ERRCODE = '55P03';
 END
 $online$;
@@ -1891,6 +2142,7 @@ $online$;
 -- +goose StatementBegin
 -- object_buckets.org_id: SET NOT NULL from the validated check
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -1900,12 +2152,15 @@ BEGIN
     ALTER TABLE object_buckets ALTER COLUMN org_id SET NOT NULL;
    END IF;
    ALTER TABLE object_buckets DROP CONSTRAINT IF EXISTS org_nn_8564a496b978;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: object_buckets.org_id: SET NOT NULL from the validated check' USING ERRCODE = '55P03';
 END
 $online$;
@@ -1913,6 +2168,7 @@ $online$;
 -- +goose StatementBegin
 -- object_buckets_org_idx: drop an interrupted build
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -1921,12 +2177,15 @@ BEGIN
    IF EXISTS (SELECT 1 FROM pg_index WHERE indexrelid = to_regclass('object_buckets_org_idx') AND NOT indisvalid) THEN
     DROP INDEX object_buckets_org_idx;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: object_buckets_org_idx: drop an interrupted build' USING ERRCODE = '55P03';
 END
 $online$;

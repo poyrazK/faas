@@ -18,18 +18,22 @@ SET lock_timeout = '500ms';
 -- +goose StatementBegin
 -- managed_postgres_databases: org_id column
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
    PERFORM set_config('lock_timeout', '500ms', true);
    SET CONSTRAINTS ALL IMMEDIATE;
    ALTER TABLE managed_postgres_databases ADD COLUMN IF NOT EXISTS org_id uuid;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: managed_postgres_databases: org_id column' USING ERRCODE = '55P03';
 END
 $online$;
@@ -37,18 +41,22 @@ $online$;
 -- +goose StatementBegin
 -- managed_postgres_bindings: database_account_id column
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
    PERFORM set_config('lock_timeout', '500ms', true);
    SET CONSTRAINTS ALL IMMEDIATE;
    ALTER TABLE managed_postgres_bindings ADD COLUMN IF NOT EXISTS database_account_id uuid;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: managed_postgres_bindings: database_account_id column' USING ERRCODE = '55P03';
 END
 $online$;
@@ -237,6 +245,7 @@ $online$;
 -- +goose StatementBegin
 -- managed_postgres_databases: catch up and install the ownership trigger under one short write lock
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -257,16 +266,23 @@ BEGIN
     SELECT CASE WHEN e.child=r.id THEN e.parent ELSE e.child END,r.org_id FROM roots r JOIN edges e ON e.child=r.id OR e.parent=r.id
    )
    SELECT id,min(org_id::text)::uuid AS org_id,count(DISTINCT org_id) AS owner_count FROM roots GROUP BY id;
-    UPDATE managed_postgres_databases d SET org_id = coalesce((SELECT r.org_id FROM managed_postgres_owner_roots r WHERE r.id=d.id), (SELECT o.id FROM orgs o WHERE o.personal_org AND o.personal_owner_account_id=d.account_id)) WHERE d.org_id IS NULL;
+    UPDATE managed_postgres_databases d SET org_id = coalesce((SELECT r.org_id FROM managed_postgres_owner_roots r WHERE r.id=d.id), (SELECT o.id FROM orgs o WHERE o.personal_org AND o.personal_owner_account_id=d.account_id))
+     WHERE d.id IN (SELECT x.id FROM managed_postgres_databases x WHERE x.org_id IS NULL LIMIT 10000);
+   END IF;
+   IF EXISTS (SELECT 1 FROM managed_postgres_databases WHERE org_id IS NULL) THEN
+    RAISE EXCEPTION 'managed_postgres_databases: more rows changed during the backfill than one catch-up covers; run the migration again' USING ERRCODE = '55000';
    END IF;
    CREATE OR REPLACE TRIGGER managed_postgres_resource_owner BEFORE INSERT OR UPDATE OF org_id,account_id,restore_source_database_id ON managed_postgres_databases
     FOR EACH ROW EXECUTE FUNCTION bind_managed_postgres_resource_owner();
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: managed_postgres_databases: catch up and install the ownership trigger under one short write lock' USING ERRCODE = '55P03';
 END
 $online$;
@@ -303,6 +319,7 @@ $$;
 -- +goose StatementBegin
 -- managed_postgres_bindings: catch up and widen the owner guard under one short write lock
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -310,15 +327,22 @@ BEGIN
    SET CONSTRAINTS ALL IMMEDIATE;
    LOCK TABLE managed_postgres_bindings IN SHARE ROW EXCLUSIVE MODE;
    UPDATE managed_postgres_bindings b SET database_account_id = d.account_id FROM managed_postgres_databases d
-    WHERE d.id = b.database_id AND b.database_account_id IS NULL;
+    WHERE d.id = b.database_id
+     AND b.id IN (SELECT x.id FROM managed_postgres_bindings x WHERE x.database_account_id IS NULL LIMIT 10000);
+   IF EXISTS (SELECT 1 FROM managed_postgres_bindings WHERE database_account_id IS NULL) THEN
+    RAISE EXCEPTION 'managed_postgres_bindings: more rows changed during the backfill than one catch-up covers; run the migration again' USING ERRCODE = '55000';
+   END IF;
    CREATE OR REPLACE TRIGGER managed_postgres_binding_owner_guard BEFORE INSERT OR UPDATE OF account_id,database_id,app_id,database_account_id ON managed_postgres_bindings
     FOR EACH ROW EXECUTE FUNCTION guard_managed_postgres_binding_owner();
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: managed_postgres_bindings: catch up and widen the owner guard under one short write lock' USING ERRCODE = '55P03';
 END
 $online$;
@@ -344,6 +368,7 @@ $$;
 -- +goose StatementBegin
 -- orgs: trigger org_managed_postgres_databases_guard
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -351,12 +376,15 @@ BEGIN
    SET CONSTRAINTS ALL IMMEDIATE;
    CREATE OR REPLACE TRIGGER org_managed_postgres_databases_guard BEFORE UPDATE OF status,deleted_pending ON orgs
     FOR EACH ROW EXECUTE FUNCTION guard_org_managed_postgres_databases();
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: orgs: trigger org_managed_postgres_databases_guard' USING ERRCODE = '55P03';
 END
 $online$;
@@ -576,6 +604,7 @@ END $_$;
 -- +goose StatementBegin
 -- managed_postgres_databases: add managed_postgres_databases_org_id_fkey NOT VALID
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -584,12 +613,15 @@ BEGIN
    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'managed_postgres_databases'::regclass AND conname = 'managed_postgres_databases_org_id_fkey') THEN
     ALTER TABLE managed_postgres_databases ADD CONSTRAINT managed_postgres_databases_org_id_fkey FOREIGN KEY (org_id) REFERENCES orgs(id) NOT VALID;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: managed_postgres_databases: add managed_postgres_databases_org_id_fkey NOT VALID' USING ERRCODE = '55P03';
 END
 $online$;
@@ -597,6 +629,7 @@ $online$;
 -- +goose StatementBegin
 -- managed_postgres_bindings: add managed_postgres_bindings_database_account_id_fkey NOT VALID
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -605,12 +638,15 @@ BEGIN
    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'managed_postgres_bindings'::regclass AND conname = 'managed_postgres_bindings_database_account_id_fkey') THEN
     ALTER TABLE managed_postgres_bindings ADD CONSTRAINT managed_postgres_bindings_database_account_id_fkey FOREIGN KEY (database_account_id) REFERENCES resource_namespaces(id) NOT VALID;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: managed_postgres_bindings: add managed_postgres_bindings_database_account_id_fkey NOT VALID' USING ERRCODE = '55P03';
 END
 $online$;
@@ -618,6 +654,7 @@ $online$;
 -- +goose StatementBegin
 -- managed_postgres_databases.org_id: prove NOT NULL with a NOT VALID check
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -626,12 +663,15 @@ BEGIN
    IF EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = 'managed_postgres_databases'::regclass AND attname = 'org_id' AND NOT attnotnull) AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'managed_postgres_databases'::regclass AND conname = 'org_nn_d1a8c4e90b3e') THEN
     ALTER TABLE managed_postgres_databases ADD CONSTRAINT org_nn_d1a8c4e90b3e CHECK (org_id IS NOT NULL) NOT VALID;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: managed_postgres_databases.org_id: prove NOT NULL with a NOT VALID check' USING ERRCODE = '55P03';
 END
 $online$;
@@ -639,6 +679,7 @@ $online$;
 -- +goose StatementBegin
 -- managed_postgres_bindings.database_account_id: prove NOT NULL with a NOT VALID check
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -647,12 +688,15 @@ BEGIN
    IF EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = 'managed_postgres_bindings'::regclass AND attname = 'database_account_id' AND NOT attnotnull) AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'managed_postgres_bindings'::regclass AND conname = 'org_nn_180774322761') THEN
     ALTER TABLE managed_postgres_bindings ADD CONSTRAINT org_nn_180774322761 CHECK (database_account_id IS NOT NULL) NOT VALID;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: managed_postgres_bindings.database_account_id: prove NOT NULL with a NOT VALID check' USING ERRCODE = '55P03';
 END
 $online$;
@@ -660,6 +704,7 @@ $online$;
 -- +goose StatementBegin
 -- managed_postgres_accounting_reconciliations: add the namespace foreign key NOT VALID
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -669,12 +714,15 @@ BEGIN
       AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'managed_postgres_accounting_reconciliations'::regclass AND conname = 'org_ns_fk_f79356dd3944') THEN
     ALTER TABLE managed_postgres_accounting_reconciliations ADD CONSTRAINT org_ns_fk_f79356dd3944 FOREIGN KEY(account_id) REFERENCES resource_namespaces(id) ON DELETE CASCADE NOT VALID;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: managed_postgres_accounting_reconciliations: add the namespace foreign key NOT VALID' USING ERRCODE = '55P03';
 END
 $online$;
@@ -682,6 +730,7 @@ $online$;
 -- +goose StatementBegin
 -- managed_postgres_bindings: add the namespace foreign key NOT VALID
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -691,12 +740,15 @@ BEGIN
       AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'managed_postgres_bindings'::regclass AND conname = 'org_ns_fk_5eb275749f12') THEN
     ALTER TABLE managed_postgres_bindings ADD CONSTRAINT org_ns_fk_5eb275749f12 FOREIGN KEY(account_id) REFERENCES resource_namespaces(id) NOT VALID;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: managed_postgres_bindings: add the namespace foreign key NOT VALID' USING ERRCODE = '55P03';
 END
 $online$;
@@ -704,6 +756,7 @@ $online$;
 -- +goose StatementBegin
 -- managed_postgres_creation_receipts: add the namespace foreign key NOT VALID
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -713,12 +766,15 @@ BEGIN
       AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'managed_postgres_creation_receipts'::regclass AND conname = 'org_ns_fk_e7398f11de92') THEN
     ALTER TABLE managed_postgres_creation_receipts ADD CONSTRAINT org_ns_fk_e7398f11de92 FOREIGN KEY(account_id) REFERENCES resource_namespaces(id) ON DELETE RESTRICT NOT VALID;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: managed_postgres_creation_receipts: add the namespace foreign key NOT VALID' USING ERRCODE = '55P03';
 END
 $online$;
@@ -726,6 +782,7 @@ $online$;
 -- +goose StatementBegin
 -- managed_postgres_cutovers: add the namespace foreign key NOT VALID
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -735,12 +792,15 @@ BEGIN
       AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'managed_postgres_cutovers'::regclass AND conname = 'org_ns_fk_ce739fe74978') THEN
     ALTER TABLE managed_postgres_cutovers ADD CONSTRAINT org_ns_fk_ce739fe74978 FOREIGN KEY(account_id) REFERENCES resource_namespaces(id) ON DELETE CASCADE NOT VALID;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: managed_postgres_cutovers: add the namespace foreign key NOT VALID' USING ERRCODE = '55P03';
 END
 $online$;
@@ -748,6 +808,7 @@ $online$;
 -- +goose StatementBegin
 -- managed_postgres_databases: add the namespace foreign key NOT VALID
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -757,12 +818,15 @@ BEGIN
       AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'managed_postgres_databases'::regclass AND conname = 'org_ns_fk_df30c182246b') THEN
     ALTER TABLE managed_postgres_databases ADD CONSTRAINT org_ns_fk_df30c182246b FOREIGN KEY(account_id) REFERENCES resource_namespaces(id) NOT VALID;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: managed_postgres_databases: add the namespace foreign key NOT VALID' USING ERRCODE = '55P03';
 END
 $online$;
@@ -770,6 +834,7 @@ $online$;
 -- +goose StatementBegin
 -- managed_postgres_health: add the namespace foreign key NOT VALID
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -779,12 +844,15 @@ BEGIN
       AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'managed_postgres_health'::regclass AND conname = 'org_ns_fk_aafd96e0959c') THEN
     ALTER TABLE managed_postgres_health ADD CONSTRAINT org_ns_fk_aafd96e0959c FOREIGN KEY(account_id) REFERENCES resource_namespaces(id) ON DELETE CASCADE NOT VALID;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: managed_postgres_health: add the namespace foreign key NOT VALID' USING ERRCODE = '55P03';
 END
 $online$;
@@ -792,6 +860,7 @@ $online$;
 -- +goose StatementBegin
 -- managed_postgres_resizes: add the namespace foreign key NOT VALID
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -801,12 +870,15 @@ BEGIN
       AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'managed_postgres_resizes'::regclass AND conname = 'org_ns_fk_2b4850ad12b7') THEN
     ALTER TABLE managed_postgres_resizes ADD CONSTRAINT org_ns_fk_2b4850ad12b7 FOREIGN KEY(account_id) REFERENCES resource_namespaces(id) ON DELETE CASCADE NOT VALID;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: managed_postgres_resizes: add the namespace foreign key NOT VALID' USING ERRCODE = '55P03';
 END
 $online$;
@@ -814,6 +886,7 @@ $online$;
 -- +goose StatementBegin
 -- managed_postgres_restore_verifications: add the namespace foreign key NOT VALID
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -823,12 +896,15 @@ BEGIN
       AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'managed_postgres_restore_verifications'::regclass AND conname = 'org_ns_fk_b24b26192e79') THEN
     ALTER TABLE managed_postgres_restore_verifications ADD CONSTRAINT org_ns_fk_b24b26192e79 FOREIGN KEY(account_id) REFERENCES resource_namespaces(id) ON DELETE RESTRICT NOT VALID;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: managed_postgres_restore_verifications: add the namespace foreign key NOT VALID' USING ERRCODE = '55P03';
 END
 $online$;
@@ -836,6 +912,7 @@ $online$;
 -- +goose StatementBegin
 -- managed_postgres_usage: add the namespace foreign key NOT VALID
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -845,12 +922,15 @@ BEGIN
       AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'managed_postgres_usage'::regclass AND conname = 'org_ns_fk_535e19141cd6') THEN
     ALTER TABLE managed_postgres_usage ADD CONSTRAINT org_ns_fk_535e19141cd6 FOREIGN KEY(account_id) REFERENCES resource_namespaces(id) ON DELETE CASCADE NOT VALID;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: managed_postgres_usage: add the namespace foreign key NOT VALID' USING ERRCODE = '55P03';
 END
 $online$;
@@ -858,6 +938,7 @@ $online$;
 -- +goose StatementBegin
 -- managed_postgres_usage_imports: add the namespace foreign key NOT VALID
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -867,12 +948,15 @@ BEGIN
       AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'managed_postgres_usage_imports'::regclass AND conname = 'org_ns_fk_0c4aa7699d86') THEN
     ALTER TABLE managed_postgres_usage_imports ADD CONSTRAINT org_ns_fk_0c4aa7699d86 FOREIGN KEY(account_id) REFERENCES resource_namespaces(id) ON DELETE CASCADE NOT VALID;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: managed_postgres_usage_imports: add the namespace foreign key NOT VALID' USING ERRCODE = '55P03';
 END
 $online$;
@@ -882,6 +966,7 @@ $online$;
 -- +goose StatementBegin
 -- managed_postgres_databases: validate managed_postgres_databases_org_id_fkey
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -890,12 +975,15 @@ BEGIN
    IF EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'managed_postgres_databases'::regclass AND conname = 'managed_postgres_databases_org_id_fkey' AND NOT convalidated) THEN
     ALTER TABLE managed_postgres_databases VALIDATE CONSTRAINT managed_postgres_databases_org_id_fkey;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: managed_postgres_databases: validate managed_postgres_databases_org_id_fkey' USING ERRCODE = '55P03';
 END
 $online$;
@@ -903,6 +991,7 @@ $online$;
 -- +goose StatementBegin
 -- managed_postgres_bindings: validate managed_postgres_bindings_database_account_id_fkey
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -911,12 +1000,15 @@ BEGIN
    IF EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'managed_postgres_bindings'::regclass AND conname = 'managed_postgres_bindings_database_account_id_fkey' AND NOT convalidated) THEN
     ALTER TABLE managed_postgres_bindings VALIDATE CONSTRAINT managed_postgres_bindings_database_account_id_fkey;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: managed_postgres_bindings: validate managed_postgres_bindings_database_account_id_fkey' USING ERRCODE = '55P03';
 END
 $online$;
@@ -924,6 +1016,7 @@ $online$;
 -- +goose StatementBegin
 -- managed_postgres_databases: validate org_nn_d1a8c4e90b3e
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -932,12 +1025,15 @@ BEGIN
    IF EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'managed_postgres_databases'::regclass AND conname = 'org_nn_d1a8c4e90b3e' AND NOT convalidated) THEN
     ALTER TABLE managed_postgres_databases VALIDATE CONSTRAINT org_nn_d1a8c4e90b3e;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: managed_postgres_databases: validate org_nn_d1a8c4e90b3e' USING ERRCODE = '55P03';
 END
 $online$;
@@ -945,6 +1041,7 @@ $online$;
 -- +goose StatementBegin
 -- managed_postgres_bindings: validate org_nn_180774322761
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -953,12 +1050,15 @@ BEGIN
    IF EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'managed_postgres_bindings'::regclass AND conname = 'org_nn_180774322761' AND NOT convalidated) THEN
     ALTER TABLE managed_postgres_bindings VALIDATE CONSTRAINT org_nn_180774322761;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: managed_postgres_bindings: validate org_nn_180774322761' USING ERRCODE = '55P03';
 END
 $online$;
@@ -966,6 +1066,7 @@ $online$;
 -- +goose StatementBegin
 -- managed_postgres_accounting_reconciliations: validate the namespace foreign key
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -974,12 +1075,15 @@ BEGIN
    IF EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'managed_postgres_accounting_reconciliations'::regclass AND conname = 'org_ns_fk_f79356dd3944' AND NOT convalidated) THEN
     ALTER TABLE managed_postgres_accounting_reconciliations VALIDATE CONSTRAINT org_ns_fk_f79356dd3944;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: managed_postgres_accounting_reconciliations: validate the namespace foreign key' USING ERRCODE = '55P03';
 END
 $online$;
@@ -987,6 +1091,7 @@ $online$;
 -- +goose StatementBegin
 -- managed_postgres_bindings: validate the namespace foreign key
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -995,12 +1100,15 @@ BEGIN
    IF EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'managed_postgres_bindings'::regclass AND conname = 'org_ns_fk_5eb275749f12' AND NOT convalidated) THEN
     ALTER TABLE managed_postgres_bindings VALIDATE CONSTRAINT org_ns_fk_5eb275749f12;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: managed_postgres_bindings: validate the namespace foreign key' USING ERRCODE = '55P03';
 END
 $online$;
@@ -1008,6 +1116,7 @@ $online$;
 -- +goose StatementBegin
 -- managed_postgres_creation_receipts: validate the namespace foreign key
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -1016,12 +1125,15 @@ BEGIN
    IF EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'managed_postgres_creation_receipts'::regclass AND conname = 'org_ns_fk_e7398f11de92' AND NOT convalidated) THEN
     ALTER TABLE managed_postgres_creation_receipts VALIDATE CONSTRAINT org_ns_fk_e7398f11de92;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: managed_postgres_creation_receipts: validate the namespace foreign key' USING ERRCODE = '55P03';
 END
 $online$;
@@ -1029,6 +1141,7 @@ $online$;
 -- +goose StatementBegin
 -- managed_postgres_cutovers: validate the namespace foreign key
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -1037,12 +1150,15 @@ BEGIN
    IF EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'managed_postgres_cutovers'::regclass AND conname = 'org_ns_fk_ce739fe74978' AND NOT convalidated) THEN
     ALTER TABLE managed_postgres_cutovers VALIDATE CONSTRAINT org_ns_fk_ce739fe74978;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: managed_postgres_cutovers: validate the namespace foreign key' USING ERRCODE = '55P03';
 END
 $online$;
@@ -1050,6 +1166,7 @@ $online$;
 -- +goose StatementBegin
 -- managed_postgres_databases: validate the namespace foreign key
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -1058,12 +1175,15 @@ BEGIN
    IF EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'managed_postgres_databases'::regclass AND conname = 'org_ns_fk_df30c182246b' AND NOT convalidated) THEN
     ALTER TABLE managed_postgres_databases VALIDATE CONSTRAINT org_ns_fk_df30c182246b;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: managed_postgres_databases: validate the namespace foreign key' USING ERRCODE = '55P03';
 END
 $online$;
@@ -1071,6 +1191,7 @@ $online$;
 -- +goose StatementBegin
 -- managed_postgres_health: validate the namespace foreign key
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -1079,12 +1200,15 @@ BEGIN
    IF EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'managed_postgres_health'::regclass AND conname = 'org_ns_fk_aafd96e0959c' AND NOT convalidated) THEN
     ALTER TABLE managed_postgres_health VALIDATE CONSTRAINT org_ns_fk_aafd96e0959c;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: managed_postgres_health: validate the namespace foreign key' USING ERRCODE = '55P03';
 END
 $online$;
@@ -1092,6 +1216,7 @@ $online$;
 -- +goose StatementBegin
 -- managed_postgres_resizes: validate the namespace foreign key
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -1100,12 +1225,15 @@ BEGIN
    IF EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'managed_postgres_resizes'::regclass AND conname = 'org_ns_fk_2b4850ad12b7' AND NOT convalidated) THEN
     ALTER TABLE managed_postgres_resizes VALIDATE CONSTRAINT org_ns_fk_2b4850ad12b7;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: managed_postgres_resizes: validate the namespace foreign key' USING ERRCODE = '55P03';
 END
 $online$;
@@ -1113,6 +1241,7 @@ $online$;
 -- +goose StatementBegin
 -- managed_postgres_restore_verifications: validate the namespace foreign key
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -1121,12 +1250,15 @@ BEGIN
    IF EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'managed_postgres_restore_verifications'::regclass AND conname = 'org_ns_fk_b24b26192e79' AND NOT convalidated) THEN
     ALTER TABLE managed_postgres_restore_verifications VALIDATE CONSTRAINT org_ns_fk_b24b26192e79;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: managed_postgres_restore_verifications: validate the namespace foreign key' USING ERRCODE = '55P03';
 END
 $online$;
@@ -1134,6 +1266,7 @@ $online$;
 -- +goose StatementBegin
 -- managed_postgres_usage: validate the namespace foreign key
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -1142,12 +1275,15 @@ BEGIN
    IF EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'managed_postgres_usage'::regclass AND conname = 'org_ns_fk_535e19141cd6' AND NOT convalidated) THEN
     ALTER TABLE managed_postgres_usage VALIDATE CONSTRAINT org_ns_fk_535e19141cd6;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: managed_postgres_usage: validate the namespace foreign key' USING ERRCODE = '55P03';
 END
 $online$;
@@ -1155,6 +1291,7 @@ $online$;
 -- +goose StatementBegin
 -- managed_postgres_usage_imports: validate the namespace foreign key
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -1163,12 +1300,15 @@ BEGIN
    IF EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'managed_postgres_usage_imports'::regclass AND conname = 'org_ns_fk_0c4aa7699d86' AND NOT convalidated) THEN
     ALTER TABLE managed_postgres_usage_imports VALIDATE CONSTRAINT org_ns_fk_0c4aa7699d86;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: managed_postgres_usage_imports: validate the namespace foreign key' USING ERRCODE = '55P03';
 END
 $online$;
@@ -1178,6 +1318,7 @@ $online$;
 -- +goose StatementBegin
 -- managed_postgres_accounting_reconciliations: retire the accounts foreign key
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -1187,12 +1328,15 @@ BEGIN
     ALTER TABLE managed_postgres_accounting_reconciliations DROP CONSTRAINT IF EXISTS managed_postgres_accounting_reconciliations_account_id_fkey;
     ALTER TABLE managed_postgres_accounting_reconciliations RENAME CONSTRAINT org_ns_fk_f79356dd3944 TO managed_postgres_accounting_reconciliations_account_id_fkey;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: managed_postgres_accounting_reconciliations: retire the accounts foreign key' USING ERRCODE = '55P03';
 END
 $online$;
@@ -1200,6 +1344,7 @@ $online$;
 -- +goose StatementBegin
 -- managed_postgres_bindings: retire the accounts foreign key
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -1209,12 +1354,15 @@ BEGIN
     ALTER TABLE managed_postgres_bindings DROP CONSTRAINT IF EXISTS managed_postgres_bindings_account_id_fkey;
     ALTER TABLE managed_postgres_bindings RENAME CONSTRAINT org_ns_fk_5eb275749f12 TO managed_postgres_bindings_account_id_fkey;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: managed_postgres_bindings: retire the accounts foreign key' USING ERRCODE = '55P03';
 END
 $online$;
@@ -1222,6 +1370,7 @@ $online$;
 -- +goose StatementBegin
 -- managed_postgres_creation_receipts: retire the accounts foreign key
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -1231,12 +1380,15 @@ BEGIN
     ALTER TABLE managed_postgres_creation_receipts DROP CONSTRAINT IF EXISTS managed_postgres_creation_receipts_account_id_fkey;
     ALTER TABLE managed_postgres_creation_receipts RENAME CONSTRAINT org_ns_fk_e7398f11de92 TO managed_postgres_creation_receipts_account_id_fkey;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: managed_postgres_creation_receipts: retire the accounts foreign key' USING ERRCODE = '55P03';
 END
 $online$;
@@ -1244,6 +1396,7 @@ $online$;
 -- +goose StatementBegin
 -- managed_postgres_cutovers: retire the accounts foreign key
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -1253,12 +1406,15 @@ BEGIN
     ALTER TABLE managed_postgres_cutovers DROP CONSTRAINT IF EXISTS managed_postgres_cutovers_account_id_fkey;
     ALTER TABLE managed_postgres_cutovers RENAME CONSTRAINT org_ns_fk_ce739fe74978 TO managed_postgres_cutovers_account_id_fkey;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: managed_postgres_cutovers: retire the accounts foreign key' USING ERRCODE = '55P03';
 END
 $online$;
@@ -1266,6 +1422,7 @@ $online$;
 -- +goose StatementBegin
 -- managed_postgres_databases: retire the accounts foreign key
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -1275,12 +1432,15 @@ BEGIN
     ALTER TABLE managed_postgres_databases DROP CONSTRAINT IF EXISTS managed_postgres_databases_account_id_fkey;
     ALTER TABLE managed_postgres_databases RENAME CONSTRAINT org_ns_fk_df30c182246b TO managed_postgres_databases_account_id_fkey;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: managed_postgres_databases: retire the accounts foreign key' USING ERRCODE = '55P03';
 END
 $online$;
@@ -1288,6 +1448,7 @@ $online$;
 -- +goose StatementBegin
 -- managed_postgres_health: retire the accounts foreign key
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -1297,12 +1458,15 @@ BEGIN
     ALTER TABLE managed_postgres_health DROP CONSTRAINT IF EXISTS managed_postgres_health_account_id_fkey;
     ALTER TABLE managed_postgres_health RENAME CONSTRAINT org_ns_fk_aafd96e0959c TO managed_postgres_health_account_id_fkey;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: managed_postgres_health: retire the accounts foreign key' USING ERRCODE = '55P03';
 END
 $online$;
@@ -1310,6 +1474,7 @@ $online$;
 -- +goose StatementBegin
 -- managed_postgres_resizes: retire the accounts foreign key
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -1319,12 +1484,15 @@ BEGIN
     ALTER TABLE managed_postgres_resizes DROP CONSTRAINT IF EXISTS managed_postgres_resizes_account_id_fkey;
     ALTER TABLE managed_postgres_resizes RENAME CONSTRAINT org_ns_fk_2b4850ad12b7 TO managed_postgres_resizes_account_id_fkey;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: managed_postgres_resizes: retire the accounts foreign key' USING ERRCODE = '55P03';
 END
 $online$;
@@ -1332,6 +1500,7 @@ $online$;
 -- +goose StatementBegin
 -- managed_postgres_restore_verifications: retire the accounts foreign key
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -1341,12 +1510,15 @@ BEGIN
     ALTER TABLE managed_postgres_restore_verifications DROP CONSTRAINT IF EXISTS managed_postgres_restore_verifications_account_id_fkey;
     ALTER TABLE managed_postgres_restore_verifications RENAME CONSTRAINT org_ns_fk_b24b26192e79 TO managed_postgres_restore_verifications_account_id_fkey;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: managed_postgres_restore_verifications: retire the accounts foreign key' USING ERRCODE = '55P03';
 END
 $online$;
@@ -1354,6 +1526,7 @@ $online$;
 -- +goose StatementBegin
 -- managed_postgres_usage: retire the accounts foreign key
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -1363,12 +1536,15 @@ BEGIN
     ALTER TABLE managed_postgres_usage DROP CONSTRAINT IF EXISTS managed_postgres_usage_account_id_fkey;
     ALTER TABLE managed_postgres_usage RENAME CONSTRAINT org_ns_fk_535e19141cd6 TO managed_postgres_usage_account_id_fkey;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: managed_postgres_usage: retire the accounts foreign key' USING ERRCODE = '55P03';
 END
 $online$;
@@ -1376,6 +1552,7 @@ $online$;
 -- +goose StatementBegin
 -- managed_postgres_usage_imports: retire the accounts foreign key
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -1385,12 +1562,15 @@ BEGIN
     ALTER TABLE managed_postgres_usage_imports DROP CONSTRAINT IF EXISTS managed_postgres_usage_imports_account_id_fkey;
     ALTER TABLE managed_postgres_usage_imports RENAME CONSTRAINT org_ns_fk_0c4aa7699d86 TO managed_postgres_usage_imports_account_id_fkey;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: managed_postgres_usage_imports: retire the accounts foreign key' USING ERRCODE = '55P03';
 END
 $online$;
@@ -1398,6 +1578,7 @@ $online$;
 -- +goose StatementBegin
 -- managed_postgres_databases.org_id: SET NOT NULL from the validated check
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -1407,12 +1588,15 @@ BEGIN
     ALTER TABLE managed_postgres_databases ALTER COLUMN org_id SET NOT NULL;
    END IF;
    ALTER TABLE managed_postgres_databases DROP CONSTRAINT IF EXISTS org_nn_d1a8c4e90b3e;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: managed_postgres_databases.org_id: SET NOT NULL from the validated check' USING ERRCODE = '55P03';
 END
 $online$;
@@ -1420,6 +1604,7 @@ $online$;
 -- +goose StatementBegin
 -- managed_postgres_bindings.database_account_id: SET NOT NULL from the validated check
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -1429,12 +1614,15 @@ BEGIN
     ALTER TABLE managed_postgres_bindings ALTER COLUMN database_account_id SET NOT NULL;
    END IF;
    ALTER TABLE managed_postgres_bindings DROP CONSTRAINT IF EXISTS org_nn_180774322761;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: managed_postgres_bindings.database_account_id: SET NOT NULL from the validated check' USING ERRCODE = '55P03';
 END
 $online$;
@@ -1450,6 +1638,7 @@ END $$;
 -- +goose StatementBegin
 -- managed_postgres_databases_org_name_idx: drop an interrupted build
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -1458,12 +1647,15 @@ BEGIN
    IF EXISTS (SELECT 1 FROM pg_index WHERE indexrelid = to_regclass('managed_postgres_databases_org_name_idx') AND NOT indisvalid) THEN
     DROP INDEX managed_postgres_databases_org_name_idx;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: managed_postgres_databases_org_name_idx: drop an interrupted build' USING ERRCODE = '55P03';
 END
 $online$;
@@ -1475,6 +1667,7 @@ SET lock_timeout = '500ms';
 -- +goose StatementBegin
 -- managed_postgres_databases: name uniqueness moves from the namespace to the organization
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -1489,12 +1682,15 @@ BEGIN
      DROP INDEX managed_postgres_databases_org_name_idx;
     END IF;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: managed_postgres_databases: name uniqueness moves from the namespace to the organization' USING ERRCODE = '55P03';
 END
 $online$;
@@ -1502,6 +1698,7 @@ $online$;
 -- +goose StatementBegin
 -- managed_postgres_databases_org_idx: drop an interrupted build
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -1510,12 +1707,15 @@ BEGIN
    IF EXISTS (SELECT 1 FROM pg_index WHERE indexrelid = to_regclass('managed_postgres_databases_org_idx') AND NOT indisvalid) THEN
     DROP INDEX managed_postgres_databases_org_idx;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: managed_postgres_databases_org_idx: drop an interrupted build' USING ERRCODE = '55P03';
 END
 $online$;

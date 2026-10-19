@@ -21,18 +21,22 @@ SET lock_timeout = '500ms';
 -- +goose StatementBegin
 -- queue_bindings: org_id column
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
    PERFORM set_config('lock_timeout', '500ms', true);
    SET CONSTRAINTS ALL IMMEDIATE;
    ALTER TABLE queue_bindings ADD COLUMN IF NOT EXISTS org_id uuid;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: queue_bindings: org_id column' USING ERRCODE = '55P03';
 END
 $online$;
@@ -40,18 +44,22 @@ $online$;
 -- +goose StatementBegin
 -- invocations: async_quota_subject_id column
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
    PERFORM set_config('lock_timeout', '500ms', true);
    SET CONSTRAINTS ALL IMMEDIATE;
    ALTER TABLE invocations ADD COLUMN IF NOT EXISTS async_quota_subject_id uuid;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: invocations: async_quota_subject_id column' USING ERRCODE = '55P03';
 END
 $online$;
@@ -59,18 +67,22 @@ $online$;
 -- +goose StatementBegin
 -- orgs: async_quota_pooled_at column (NULL: reservations stay on the namespace counter)
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
    PERFORM set_config('lock_timeout', '500ms', true);
    SET CONSTRAINTS ALL IMMEDIATE;
    ALTER TABLE orgs ADD COLUMN IF NOT EXISTS async_quota_pooled_at timestamptz;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: orgs: async_quota_pooled_at column (NULL: reservations stay on the namespace counter)' USING ERRCODE = '55P03';
 END
 $online$;
@@ -174,18 +186,22 @@ END $$;
 -- +goose StatementBegin
 -- orgs: no reservation move on adoption in this release (left by an earlier draft)
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
    PERFORM set_config('lock_timeout', '500ms', true);
    SET CONSTRAINTS ALL IMMEDIATE;
    DROP TRIGGER IF EXISTS org_queue_reservation_adoption ON orgs;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: orgs: no reservation move on adoption in this release (left by an earlier draft)' USING ERRCODE = '55P03';
 END
 $online$;
@@ -197,18 +213,22 @@ DROP FUNCTION IF EXISTS adopt_queue_reservations_on_org_adoption();
 -- +goose StatementBegin
 -- queue_bindings: trigger queue_organization
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
    PERFORM set_config('lock_timeout', '500ms', true);
    SET CONSTRAINTS ALL IMMEDIATE;
    CREATE OR REPLACE TRIGGER queue_organization BEFORE INSERT OR UPDATE ON queue_bindings FOR EACH ROW EXECUTE FUNCTION bind_queue_organization();
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: queue_bindings: trigger queue_organization' USING ERRCODE = '55P03';
 END
 $online$;
@@ -216,18 +236,22 @@ $online$;
 -- +goose StatementBegin
 -- invocations: trigger invocation_async_subject
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
    PERFORM set_config('lock_timeout', '500ms', true);
    SET CONSTRAINTS ALL IMMEDIATE;
    CREATE OR REPLACE TRIGGER invocation_async_subject BEFORE INSERT OR UPDATE ON invocations FOR EACH ROW EXECUTE FUNCTION stamp_invocation_async_subject();
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: invocations: trigger invocation_async_subject' USING ERRCODE = '55P03';
 END
 $online$;
@@ -280,6 +304,7 @@ $online$;
 -- +goose StatementBegin
 -- invocation_async_subject_reserved_idx: drop an interrupted build
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -288,12 +313,15 @@ BEGIN
    IF EXISTS (SELECT 1 FROM pg_index WHERE indexrelid = to_regclass('invocation_async_subject_reserved_idx') AND NOT indisvalid) THEN
     DROP INDEX invocation_async_subject_reserved_idx;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: invocation_async_subject_reserved_idx: drop an interrupted build' USING ERRCODE = '55P03';
 END
 $online$;
@@ -363,6 +391,7 @@ $online$;
 -- +goose StatementBegin
 -- orgs: trigger org_queue_bindings_guard
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -370,12 +399,15 @@ BEGIN
    SET CONSTRAINTS ALL IMMEDIATE;
    CREATE OR REPLACE TRIGGER org_queue_bindings_guard BEFORE UPDATE OF status,deleted_pending ON orgs
     FOR EACH ROW EXECUTE FUNCTION guard_org_queue_bindings();
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: orgs: trigger org_queue_bindings_guard' USING ERRCODE = '55P03';
 END
 $online$;
@@ -595,6 +627,7 @@ END $_$;
 -- +goose StatementBegin
 -- queue_bindings: add queue_bindings_org_id_fkey NOT VALID
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -603,12 +636,15 @@ BEGIN
    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'queue_bindings'::regclass AND conname = 'queue_bindings_org_id_fkey') THEN
     ALTER TABLE queue_bindings ADD CONSTRAINT queue_bindings_org_id_fkey FOREIGN KEY (org_id) REFERENCES orgs(id) NOT VALID;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: queue_bindings: add queue_bindings_org_id_fkey NOT VALID' USING ERRCODE = '55P03';
 END
 $online$;
@@ -616,6 +652,7 @@ $online$;
 -- +goose StatementBegin
 -- invocations: add invocations_async_quota_subject_id_fkey NOT VALID
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -624,12 +661,15 @@ BEGIN
    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'invocations'::regclass AND conname = 'invocations_async_quota_subject_id_fkey') THEN
     ALTER TABLE invocations ADD CONSTRAINT invocations_async_quota_subject_id_fkey FOREIGN KEY (async_quota_subject_id) REFERENCES resource_namespaces(id) NOT VALID;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: invocations: add invocations_async_quota_subject_id_fkey NOT VALID' USING ERRCODE = '55P03';
 END
 $online$;
@@ -637,6 +677,7 @@ $online$;
 -- +goose StatementBegin
 -- invocations: add invocation_async_subject_required NOT VALID
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -645,12 +686,15 @@ BEGIN
    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'invocations'::regclass AND conname = 'invocation_async_subject_required') THEN
     ALTER TABLE invocations ADD CONSTRAINT invocation_async_subject_required CHECK (NOT quota_reserved OR async_quota_subject_id IS NOT NULL) NOT VALID;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: invocations: add invocation_async_subject_required NOT VALID' USING ERRCODE = '55P03';
 END
 $online$;
@@ -658,6 +702,7 @@ $online$;
 -- +goose StatementBegin
 -- queue_bindings.org_id: prove NOT NULL with a NOT VALID check
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -666,12 +711,15 @@ BEGIN
    IF EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = 'queue_bindings'::regclass AND attname = 'org_id' AND NOT attnotnull) AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'queue_bindings'::regclass AND conname = 'org_nn_942d7951174a') THEN
     ALTER TABLE queue_bindings ADD CONSTRAINT org_nn_942d7951174a CHECK (org_id IS NOT NULL) NOT VALID;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: queue_bindings.org_id: prove NOT NULL with a NOT VALID check' USING ERRCODE = '55P03';
 END
 $online$;
@@ -679,6 +727,7 @@ $online$;
 -- +goose StatementBegin
 -- queue_bindings: add the namespace foreign key NOT VALID
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -688,12 +737,15 @@ BEGIN
       AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'queue_bindings'::regclass AND conname = 'org_ns_fk_458e5f8ad3c5') THEN
     ALTER TABLE queue_bindings ADD CONSTRAINT org_ns_fk_458e5f8ad3c5 FOREIGN KEY(account_id) REFERENCES resource_namespaces(id) ON DELETE CASCADE NOT VALID;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: queue_bindings: add the namespace foreign key NOT VALID' USING ERRCODE = '55P03';
 END
 $online$;
@@ -701,6 +753,7 @@ $online$;
 -- +goose StatementBegin
 -- project_environment_queue_runtime_sets: add the namespace foreign key NOT VALID
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -710,12 +763,15 @@ BEGIN
       AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'project_environment_queue_runtime_sets'::regclass AND conname = 'org_ns_fk_85a74f54cd5e') THEN
     ALTER TABLE project_environment_queue_runtime_sets ADD CONSTRAINT org_ns_fk_85a74f54cd5e FOREIGN KEY(account_id) REFERENCES resource_namespaces(id) ON DELETE CASCADE NOT VALID;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: project_environment_queue_runtime_sets: add the namespace foreign key NOT VALID' USING ERRCODE = '55P03';
 END
 $online$;
@@ -723,6 +779,7 @@ $online$;
 -- +goose StatementBegin
 -- invocation_environment_queue_admissions: add the namespace foreign key NOT VALID
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -732,12 +789,15 @@ BEGIN
       AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'invocation_environment_queue_admissions'::regclass AND conname = 'org_ns_fk_06724afb6e44') THEN
     ALTER TABLE invocation_environment_queue_admissions ADD CONSTRAINT org_ns_fk_06724afb6e44 FOREIGN KEY(account_id) REFERENCES resource_namespaces(id) NOT VALID;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: invocation_environment_queue_admissions: add the namespace foreign key NOT VALID' USING ERRCODE = '55P03';
 END
 $online$;
@@ -745,6 +805,7 @@ $online$;
 -- +goose StatementBegin
 -- triggers: add the namespace foreign key NOT VALID
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -754,12 +815,15 @@ BEGIN
       AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'triggers'::regclass AND conname = 'org_ns_fk_50abf9b68b72') THEN
     ALTER TABLE triggers ADD CONSTRAINT org_ns_fk_50abf9b68b72 FOREIGN KEY(account_id) REFERENCES resource_namespaces(id) ON DELETE CASCADE NOT VALID;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: triggers: add the namespace foreign key NOT VALID' USING ERRCODE = '55P03';
 END
 $online$;
@@ -767,6 +831,7 @@ $online$;
 -- +goose StatementBegin
 -- dead_letter_events: add the namespace foreign key NOT VALID
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -776,12 +841,15 @@ BEGIN
       AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'dead_letter_events'::regclass AND conname = 'org_ns_fk_1768a8a87496') THEN
     ALTER TABLE dead_letter_events ADD CONSTRAINT org_ns_fk_1768a8a87496 FOREIGN KEY(account_id) REFERENCES resource_namespaces(id) ON DELETE CASCADE NOT VALID;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: dead_letter_events: add the namespace foreign key NOT VALID' USING ERRCODE = '55P03';
 END
 $online$;
@@ -791,6 +859,7 @@ $online$;
 -- +goose StatementBegin
 -- queue_bindings: validate queue_bindings_org_id_fkey
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -799,12 +868,15 @@ BEGIN
    IF EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'queue_bindings'::regclass AND conname = 'queue_bindings_org_id_fkey' AND NOT convalidated) THEN
     ALTER TABLE queue_bindings VALIDATE CONSTRAINT queue_bindings_org_id_fkey;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: queue_bindings: validate queue_bindings_org_id_fkey' USING ERRCODE = '55P03';
 END
 $online$;
@@ -812,6 +884,7 @@ $online$;
 -- +goose StatementBegin
 -- invocations: validate invocations_async_quota_subject_id_fkey
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -820,12 +893,15 @@ BEGIN
    IF EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'invocations'::regclass AND conname = 'invocations_async_quota_subject_id_fkey' AND NOT convalidated) THEN
     ALTER TABLE invocations VALIDATE CONSTRAINT invocations_async_quota_subject_id_fkey;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: invocations: validate invocations_async_quota_subject_id_fkey' USING ERRCODE = '55P03';
 END
 $online$;
@@ -833,6 +909,7 @@ $online$;
 -- +goose StatementBegin
 -- invocations: validate invocation_async_subject_required
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -841,12 +918,15 @@ BEGIN
    IF EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'invocations'::regclass AND conname = 'invocation_async_subject_required' AND NOT convalidated) THEN
     ALTER TABLE invocations VALIDATE CONSTRAINT invocation_async_subject_required;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: invocations: validate invocation_async_subject_required' USING ERRCODE = '55P03';
 END
 $online$;
@@ -854,6 +934,7 @@ $online$;
 -- +goose StatementBegin
 -- queue_bindings: validate org_nn_942d7951174a
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -862,12 +943,15 @@ BEGIN
    IF EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'queue_bindings'::regclass AND conname = 'org_nn_942d7951174a' AND NOT convalidated) THEN
     ALTER TABLE queue_bindings VALIDATE CONSTRAINT org_nn_942d7951174a;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: queue_bindings: validate org_nn_942d7951174a' USING ERRCODE = '55P03';
 END
 $online$;
@@ -875,6 +959,7 @@ $online$;
 -- +goose StatementBegin
 -- queue_bindings: validate the namespace foreign key
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -883,12 +968,15 @@ BEGIN
    IF EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'queue_bindings'::regclass AND conname = 'org_ns_fk_458e5f8ad3c5' AND NOT convalidated) THEN
     ALTER TABLE queue_bindings VALIDATE CONSTRAINT org_ns_fk_458e5f8ad3c5;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: queue_bindings: validate the namespace foreign key' USING ERRCODE = '55P03';
 END
 $online$;
@@ -896,6 +984,7 @@ $online$;
 -- +goose StatementBegin
 -- project_environment_queue_runtime_sets: validate the namespace foreign key
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -904,12 +993,15 @@ BEGIN
    IF EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'project_environment_queue_runtime_sets'::regclass AND conname = 'org_ns_fk_85a74f54cd5e' AND NOT convalidated) THEN
     ALTER TABLE project_environment_queue_runtime_sets VALIDATE CONSTRAINT org_ns_fk_85a74f54cd5e;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: project_environment_queue_runtime_sets: validate the namespace foreign key' USING ERRCODE = '55P03';
 END
 $online$;
@@ -917,6 +1009,7 @@ $online$;
 -- +goose StatementBegin
 -- invocation_environment_queue_admissions: validate the namespace foreign key
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -925,12 +1018,15 @@ BEGIN
    IF EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'invocation_environment_queue_admissions'::regclass AND conname = 'org_ns_fk_06724afb6e44' AND NOT convalidated) THEN
     ALTER TABLE invocation_environment_queue_admissions VALIDATE CONSTRAINT org_ns_fk_06724afb6e44;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: invocation_environment_queue_admissions: validate the namespace foreign key' USING ERRCODE = '55P03';
 END
 $online$;
@@ -938,6 +1034,7 @@ $online$;
 -- +goose StatementBegin
 -- triggers: validate the namespace foreign key
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -946,12 +1043,15 @@ BEGIN
    IF EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'triggers'::regclass AND conname = 'org_ns_fk_50abf9b68b72' AND NOT convalidated) THEN
     ALTER TABLE triggers VALIDATE CONSTRAINT org_ns_fk_50abf9b68b72;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: triggers: validate the namespace foreign key' USING ERRCODE = '55P03';
 END
 $online$;
@@ -959,6 +1059,7 @@ $online$;
 -- +goose StatementBegin
 -- dead_letter_events: validate the namespace foreign key
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -967,12 +1068,15 @@ BEGIN
    IF EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'dead_letter_events'::regclass AND conname = 'org_ns_fk_1768a8a87496' AND NOT convalidated) THEN
     ALTER TABLE dead_letter_events VALIDATE CONSTRAINT org_ns_fk_1768a8a87496;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: dead_letter_events: validate the namespace foreign key' USING ERRCODE = '55P03';
 END
 $online$;
@@ -982,6 +1086,7 @@ $online$;
 -- +goose StatementBegin
 -- queue_bindings: retire the accounts foreign key
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -991,12 +1096,15 @@ BEGIN
     ALTER TABLE queue_bindings DROP CONSTRAINT IF EXISTS queue_bindings_account_id_fkey;
     ALTER TABLE queue_bindings RENAME CONSTRAINT org_ns_fk_458e5f8ad3c5 TO queue_bindings_account_id_fkey;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: queue_bindings: retire the accounts foreign key' USING ERRCODE = '55P03';
 END
 $online$;
@@ -1004,6 +1112,7 @@ $online$;
 -- +goose StatementBegin
 -- project_environment_queue_runtime_sets: retire the accounts foreign key
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -1013,12 +1122,15 @@ BEGIN
     ALTER TABLE project_environment_queue_runtime_sets DROP CONSTRAINT IF EXISTS project_environment_queue_runtime_sets_account_id_fkey;
     ALTER TABLE project_environment_queue_runtime_sets RENAME CONSTRAINT org_ns_fk_85a74f54cd5e TO project_environment_queue_runtime_sets_account_id_fkey;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: project_environment_queue_runtime_sets: retire the accounts foreign key' USING ERRCODE = '55P03';
 END
 $online$;
@@ -1026,6 +1138,7 @@ $online$;
 -- +goose StatementBegin
 -- invocation_environment_queue_admissions: retire the accounts foreign key
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -1035,12 +1148,15 @@ BEGIN
     ALTER TABLE invocation_environment_queue_admissions DROP CONSTRAINT IF EXISTS invocation_environment_queue_admissions_account_id_fkey;
     ALTER TABLE invocation_environment_queue_admissions RENAME CONSTRAINT org_ns_fk_06724afb6e44 TO invocation_environment_queue_admissions_account_id_fkey;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: invocation_environment_queue_admissions: retire the accounts foreign key' USING ERRCODE = '55P03';
 END
 $online$;
@@ -1048,6 +1164,7 @@ $online$;
 -- +goose StatementBegin
 -- triggers: retire the accounts foreign key
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -1057,12 +1174,15 @@ BEGIN
     ALTER TABLE triggers DROP CONSTRAINT IF EXISTS triggers_account_id_fkey;
     ALTER TABLE triggers RENAME CONSTRAINT org_ns_fk_50abf9b68b72 TO triggers_account_id_fkey;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: triggers: retire the accounts foreign key' USING ERRCODE = '55P03';
 END
 $online$;
@@ -1070,6 +1190,7 @@ $online$;
 -- +goose StatementBegin
 -- dead_letter_events: retire the accounts foreign key
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -1079,12 +1200,15 @@ BEGIN
     ALTER TABLE dead_letter_events DROP CONSTRAINT IF EXISTS dead_letter_events_account_id_fkey;
     ALTER TABLE dead_letter_events RENAME CONSTRAINT org_ns_fk_1768a8a87496 TO dead_letter_events_account_id_fkey;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: dead_letter_events: retire the accounts foreign key' USING ERRCODE = '55P03';
 END
 $online$;
@@ -1092,6 +1216,7 @@ $online$;
 -- +goose StatementBegin
 -- queue_bindings.org_id: SET NOT NULL from the validated check
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -1101,12 +1226,15 @@ BEGIN
     ALTER TABLE queue_bindings ALTER COLUMN org_id SET NOT NULL;
    END IF;
    ALTER TABLE queue_bindings DROP CONSTRAINT IF EXISTS org_nn_942d7951174a;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: queue_bindings.org_id: SET NOT NULL from the validated check' USING ERRCODE = '55P03';
 END
 $online$;
@@ -1114,6 +1242,7 @@ $online$;
 -- +goose StatementBegin
 -- queue_bindings_org_id_idx: drop an interrupted build
 DO $online$
+DECLARE done boolean := false;
 BEGIN
  FOR attempt IN 1..600 LOOP
   BEGIN
@@ -1122,12 +1251,15 @@ BEGIN
    IF EXISTS (SELECT 1 FROM pg_index WHERE indexrelid = to_regclass('queue_bindings_org_id_idx') AND NOT indisvalid) THEN
     DROP INDEX queue_bindings_org_id_idx;
    END IF;
-   PERFORM set_config('lock_timeout', '5s', true);
-   RETURN;
+   done := true;
   EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
    PERFORM pg_sleep(least(attempt, 20) * 0.05);
   END;
+  PERFORM set_config('lock_timeout', '5s', true);
+  COMMIT;
+  EXIT WHEN done;
  END LOOP;
+ IF done THEN RETURN; END IF;
  RAISE EXCEPTION 'online migration step did not get its lock: queue_bindings_org_id_idx: drop an interrupted build' USING ERRCODE = '55P03';
 END
 $online$;
