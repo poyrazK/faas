@@ -6,7 +6,7 @@ const codes = new Set(['origin_not_allowed', 'not_found', 'invalid_path', 'metho
   'token_required', 'token_invalid', 'read_only_identity', 'serving_contract_unavailable', 'data_api_unavailable',
   'data_api_refresh_paused', 'data_api_refresh_unavailable', 'data_api_overloaded', 'data_api_rate_limited', 'data_api_concurrency_limited',
   'request_too_large', 'response_too_large', 'query_timeout', 'request_deadline_exceeded', 'schema_document_too_large', 'schema_contract_mismatch', 'upstream_error',
-  'public_read_not_allowed', 'server_key_browser_forbidden', 'server_key_permission_denied'])
+  'public_read_not_allowed', 'public_rpc_requires_get', 'server_key_browser_forbidden', 'server_key_permission_denied'])
 
 function route(url) {
   if (url === '/healthz' || url === '/livez') return 'health'
@@ -97,7 +97,7 @@ export function markDatabaseTimings(res, timings) {
 export function requestID(res) { return res[trace]?.id }
 
 export function runtimeFailure(event) {
-  const allowed = ['data_api_configuration_invalid', 'data_api_postgrest_start_failed', 'data_api_public_read_unsafe']
+  const allowed = ['data_api_configuration_invalid', 'data_api_postgrest_start_failed', 'data_api_public_read_unsafe', 'data_api_public_rpc_unsafe']
   try { writeLog({ time: new Date().toISOString(), level: 'error', event: allowed.includes(event) ? event : 'data_api_runtime_failed' }) } catch {}
 }
 

@@ -17,7 +17,7 @@ import { createRateLimiter, admitRateLimit } from './rate-limit.mjs'
 import { createUserConcurrency, admitUserConcurrency } from './user-concurrency.mjs'
 import { qualifiedConnectionEngine, startConnectionReporter } from './connection-observations.mjs'
 import { createPoolObservation } from './pool.mjs'
-import { publicReadTarget, publicReadCache, clientKey, matchServerKey, serverKeyAllows, serverSubject, checkPublicRelations } from './access.mjs'
+import { publicReadTarget, publicRpcTarget, publicRpcListed, publicReadCache, clientKey, matchServerKey, serverKeyAllows, serverSubject, checkPublicRelations, checkPublicFunctions } from './access.mjs'
 
 export function createServer(config, verify, upstreamPort = 3000, readyPort = 3001, log) {
   const servingFingerprint = config.fingerprint
@@ -25,7 +25,7 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
   const health = createHealth(config, upstreamPort, readyPort)
   const rateLimiter = createRateLimiter(config.rateLimit)
   // Anonymous clients always have a budget and never use subject tracking slots.
-  const anonymousLimiter = config.publicRead ? createRateLimiter(config.rateLimit ?? { perSecond: limits.rateLimitDefaultPerSecond, burst: limits.rateLimitDefaultBurst }) : null
+  const anonymousLimiter = config.publicRead || config.publicRpc ? createRateLimiter(config.rateLimit ?? { perSecond: limits.rateLimitDefaultPerSecond, burst: limits.rateLimitDefaultBurst }) : null
   const userConcurrency = createUserConcurrency(config.userConcurrency, config.coordinatedRefresh ? limits.pool - 1 : limits.pool)
   const admitted = createAdmission(config.coordinatedRefresh ? limits.pool - 1 : limits.pool, res => {
     res.setHeader('Retry-After', String(limits.overloadRetrySeconds))
@@ -65,11 +65,13 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
       try { path = decodeURIComponent(raw) } catch { return problem(res, 400, 'invalid_path') }
       if (path.includes('/')) {
         const match = /^rpc\/([a-z][a-z0-9_]{0,62})$/.exec(path)
-        const schema = req.headers['content-profile'] ?? config.schemas[0]
+        const read = ['GET', 'HEAD'].includes(req.method)
+        const schema = req.headers[read ? 'accept-profile' : 'content-profile'] ?? config.schemas[0]
         if (raw !== path || !match) return problem(res, 404, 'not_found')
         rpc = { schema, name: match[1] }
         if (!guarded && !config.functions?.some(f => f.schema === rpc.schema && f.name === rpc.name)) return problem(res, 404, 'not_found')
-        if (req.method !== 'POST') return problem(res, 405, 'method_not_allowed')
+        // Only public functions take GET, which PostgREST runs read-only.
+        if (req.method !== 'POST' && !(read && publicRpcListed(config, rpc))) return problem(res, 405, 'method_not_allowed')
       }
     }
     if (!['GET', 'HEAD', 'POST', 'PATCH', 'DELETE'].includes(req.method)) return problem(res, 405, 'method_not_allowed')
@@ -78,8 +80,9 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
     let access = 'user', serverKeySlot = null, serverKeyPermissions = null, subject = null, publicCache = null
     if (req.headers.authorization === undefined) {
       // Never downgrade a present but invalid credential to anonymous access.
-      const target = publicReadTarget(req, config)
-      if (target.code) return problem(res, target.code === 'public_read_not_allowed' ? 403 : 401, target.code)
+      const target = rpc ? publicRpcTarget(req, config, rpc) : publicReadTarget(req, config)
+      if (target.code === 'public_rpc_requires_get') res.setHeader('Allow', 'GET, HEAD')
+      if (target.code) return problem(res, { public_read_not_allowed: 403, public_rpc_requires_get: 405 }[target.code] ?? 401, target.code)
       access = 'anonymous'
       publicCache = publicReadCache(req, config, target)
     } else if (!token) return problem(res, 401, 'token_required')
@@ -275,7 +278,7 @@ function openAPISpec(response, res, config, restBasePath, deadline) {
       const schema = response.req.getHeader('accept-profile') ?? config.schemas[0]
       for (const path of Object.keys(document.paths ?? {})) if (path.startsWith('/rpc/')) {
         if (!config.functions?.some(f => f.schema === schema && f.name === path.slice(5))) delete document.paths[path]
-        else for (const method of Object.keys(document.paths[path])) if (method !== 'post' && method !== 'parameters') delete document.paths[path][method]
+        else for (const method of Object.keys(document.paths[path])) if (method !== 'post' && method !== 'parameters' && !(method === 'get' && publicRpcListed(config, { schema, name: path.slice(5) }))) delete document.paths[path][method]
       }
       const output = JSON.stringify(enrichOpenAPI(document, config.snapshot, schema))
       if (Buffer.byteLength(output) > limits.outputBytes) return problem(res, 503, 'schema_document_too_large')
@@ -302,6 +305,12 @@ export async function main(env = process.env) {
   const snapshot = await inspect(config.connection, config.schemas)
   config.snapshot = snapshot
   config.functions = snapshot.functions
+  if (config.publicRpc) {
+    try { await checkPublicFunctions(config.connection, config.publicRpc, snapshot.functions) } catch (error) {
+      runtimeFailure('data_api_public_rpc_unsafe')
+      throw Object.assign(new Error('Unsafe public RPC configuration'), { cause: error, reported: true })
+    }
+  }
   config.fingerprint = fingerprint(snapshot)
   // Reject stale owner policies before starting an engine process.
   servingContracts(config)

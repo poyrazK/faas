@@ -144,6 +144,7 @@ func cmdDataAPICreate(args []string) int {
 	resume := fs.Bool("resume", false, "resume configuration and deployment of an existing app")
 	authApp := unreleasedStringFlag(fs, "auth", "Auth app whose tokens to verify (replaces --issuer, --jwks-url and --audience)")
 	publicRead := fs.String("public-read", "", "comma-separated schema.relation list readable without a token")
+	publicRPC := fs.String("public-rpc", "", "comma-separated schema.function list callable without a token by GET")
 	aggregates := fs.Bool("aggregates", false, "enable aggregate queries (also enables the SQL deadline)")
 	migrations := fs.String("migrations", "", "single-app project: migration directory run as this app's release task")
 	releaseCommand := fs.String("release-command", dataAPIDefaultReleaseCommand, "single-app release command run with "+dataAPIMigrationEnv)
@@ -160,6 +161,9 @@ func cmdDataAPICreate(args []string) int {
 	}
 	if *publicRead != "" && !validDataAPIPublicRead(*publicRead) {
 		return printErr("Invalid --public-read", fmt.Errorf("list at most %d unique schema.relation names", api.DataAPIPublicReadMaxRelations))
+	}
+	if *publicRPC != "" && !validDataAPIPublicRPC(*publicRPC) {
+		return printErr("Invalid --public-rpc", fmt.Errorf("list at most %d unique schema.function names", api.DataAPIPublicRPCMaxFunctions))
 	}
 	if *migrations != "" {
 		if _, err := checkedDataAPIMigrations(*migrations, *releaseCommand); err != nil {
@@ -213,7 +217,7 @@ func cmdDataAPICreate(args []string) int {
 	}
 	// Retain partially configured intent on failure: the ordinary app and
 	// binding recovery paths own cleanup and retries, never an ad-hoc rollback.
-	settings := map[string]string{"DATA_API_SCHEMAS": *schema, "DATA_API_ISSUER": *issuer, "DATA_API_JWKS_URL": *jwks, "DATA_API_AUDIENCE": *audience, "DATA_API_ALLOWED_ORIGINS": *origins, "DATA_API_PUBLIC_READ": *publicRead}
+	settings := map[string]string{"DATA_API_SCHEMAS": *schema, "DATA_API_ISSUER": *issuer, "DATA_API_JWKS_URL": *jwks, "DATA_API_AUDIENCE": *audience, "DATA_API_ALLOWED_ORIGINS": *origins, "DATA_API_PUBLIC_READ": *publicRead, "DATA_API_PUBLIC_RPC": *publicRPC}
 	if *aggregates {
 		settings["DATA_API_SQL_DEADLINE"], settings["DATA_API_AGGREGATES"] = "1", "1"
 	}
@@ -256,7 +260,7 @@ func configureDataAPI(ctx context.Context, client *api.Client, app api.AppRespon
 		}
 	}
 	// Optional owner opt-ins are stored only when requested; absence keeps them off.
-	for _, key := range []string{"DATA_API_PUBLIC_READ", "DATA_API_SQL_DEADLINE", "DATA_API_AGGREGATES"} {
+	for _, key := range []string{"DATA_API_PUBLIC_READ", "DATA_API_PUBLIC_RPC", "DATA_API_SQL_DEADLINE", "DATA_API_AGGREGATES"} {
 		if settings[key] == "" {
 			continue
 		}

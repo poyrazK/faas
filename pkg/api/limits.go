@@ -11345,9 +11345,10 @@ const (
 	DataAPIMaxRequestBytes               = 1 << 20
 	DataAPIMaxResponseBytes              = 16 << 20
 	DataAPIMaxOutputBytes                = 1 << 20
-	// Owner opt-ins (ADR 20261018170742): anonymous relation allowlist size and
-	// the subject a server-key request may act for.
+	// Owner opt-ins (ADR 20261018170742): anonymous relation and function
+	// allowlist sizes and the subject a server-key request may act for.
 	DataAPIPublicReadMaxRelations   = 64
+	DataAPIPublicRPCMaxFunctions    = 64
 	DataAPIServerKeySubjectMaxBytes = 255
 	// Edge freshness for canonical anonymous reads, within the gateway cache cap.
 	DataAPIPublicReadMaxAgeSeconds = ResponseCacheMaxAgeMaxSeconds

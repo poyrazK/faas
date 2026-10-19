@@ -11,6 +11,11 @@ closes five product gaps, all opt-in:
 - **Public reads.** `--public-read` lists relations that anonymous `GET`/`HEAD`
   requests may read. Startup requires RLS tables or security-invoker views.
   Embeddings must also be listed, and every anonymous client is rate limited.
+- **Public RPCs.** `--public-rpc` lists approved `STABLE` or `IMMUTABLE`
+  functions that anonymous callers may call by `GET`, which PostgREST runs
+  read-only. An anonymous `POST` returns `405 public_rpc_requires_get`.
+  Embeddings must be publicly readable, and the shared anonymous rate limit
+  and edge cache apply.
 - **Edge-cached public reads.** `configure --public-read-cache 30s` lets the
   gateway cache serve canonical anonymous reads. Responses are tagged per
   relation so `gregale cache purge --tag data-api:api.products` invalidates

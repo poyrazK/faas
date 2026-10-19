@@ -3,8 +3,8 @@ import assert from 'node:assert/strict'
 import http from 'node:http'
 import { createHash } from 'node:crypto'
 import { createServer } from '../server.mjs'
-import { runtimeConfig, publicReadConfig, serverKeyConfig, serverKeyPermissions, publicReadMaxAge, limits } from '../config.mjs'
-import { selectEmbeddings, clientKey, matchServerKey, serverKeyAllows, serverSubject, unsafePublicRelations, publicReadTarget, publicReadCache } from '../access.mjs'
+import { runtimeConfig, publicReadConfig, publicRpcConfig, serverKeyConfig, serverKeyPermissions, publicReadMaxAge, limits } from '../config.mjs'
+import { selectEmbeddings, clientKey, matchServerKey, serverKeyAllows, serverSubject, unsafePublicRelations, unsafePublicFunctions, publicReadTarget, publicRpcTarget, publicReadCache } from '../access.mjs'
 
 const keyA = 'gdsk_' + 'A'.repeat(43)
 const keyB = 'gdsk_' + 'b'.repeat(42) + '-'
@@ -101,7 +101,7 @@ const claimsOf = authorization => JSON.parse(Buffer.from(authorization.split(' '
 async function fixture(t, env = {}, verify = async () => ({ sub: 'private-subject', exp: 9999999999, gregale_access: 'server', gregale_server_key: 'a' })) {
   const config = runtimeConfig({ ...baseEnv, DATA_API_PUBLIC_READ: 'api.products,api.categories', DATA_API_SERVER_KEY_A_SHA256: hash(keyA), DATA_API_SERVER_KEY_B_SHA256: hash(keyB), ...env })
   config.fingerprint = 'a'.repeat(64)
-  config.functions = [{ schema: 'api', name: 'save_note' }, { schema: 'api', name: 'ship_order' }]
+  config.functions = [{ schema: 'api', name: 'save_note' }, { schema: 'api', name: 'ship_order' }, { schema: 'api', name: 'search_products' }]
   const state = { calls: [], logs: [] }
   const upstream = http.createServer((req, res) => {
     req.resume()
@@ -241,7 +241,8 @@ test('public read freshness is bounded and requires public reads', () => {
   assert.equal(publicReadMaxAge(undefined, false), null)
   assert.equal(publicReadMaxAge('30', true), 30)
   for (const value of ['0', '-1', '1.5', '30s', String(limits.publicReadMaxAgeSeconds + 1), '']) assert.throws(() => publicReadMaxAge(value, true), /MAX_AGE/, value)
-  assert.throws(() => publicReadMaxAge('30', false), /requires DATA_API_PUBLIC_READ/)
+  assert.throws(() => publicReadMaxAge('30', false), /requires DATA_API_PUBLIC_READ or DATA_API_PUBLIC_RPC/)
+  assert.equal(runtimeConfig({ ...baseEnv, DATA_API_PUBLIC_RPC: 'api.search_products', DATA_API_PUBLIC_READ_MAX_AGE: '60' }).publicReadMaxAge, 60, 'public RPCs alone may be cached')
   assert.throws(() => runtimeConfig({ ...baseEnv, DATA_API_PUBLIC_READ_MAX_AGE: '30' }), /requires DATA_API_PUBLIC_READ/)
   assert.equal(runtimeConfig({ ...baseEnv, DATA_API_PUBLIC_READ: 'api.products', DATA_API_PUBLIC_READ_MAX_AGE: '60' }).publicReadMaxAge, 60)
 })
@@ -373,4 +374,117 @@ test('restricted server keys are refused before admission and logged as restrict
   assert.ok(restricted.every(entry => entry.access.server_key_slot === 'a'))
   assert.equal(state.logs.find(entry => entry.access?.server_key_slot === 'b').access.server_key_restricted, undefined)
   assert.doesNotMatch(JSON.stringify(state.logs), /gdsk_|user-1/)
+})
+
+test('public RPC functions are schema-qualified, exposed, unique and bounded', () => {
+  assert.equal(publicRpcConfig(undefined, ['api']), null)
+  assert.deepEqual(publicRpcConfig('api.search_products,catalog.featured', ['api', 'catalog']), [{ schema: 'api', name: 'search_products' }, { schema: 'catalog', name: 'featured' }])
+  const many = Array.from({ length: limits.publicRpcMaxFunctions + 1 }, (_, i) => `api.f${i}`).join(',')
+  for (const value of ['', 'search_products', 'api.Search', 'api.a.b', 'private.search', 'api.search,api.search', 'api.1search', many]) {
+    assert.throws(() => publicRpcConfig(value, ['api']), /DATA_API_PUBLIC_RPC/, value)
+  }
+  assert.deepEqual(runtimeConfig({ ...baseEnv, DATA_API_PUBLIC_RPC: 'api.search_products' }).publicRpc, [{ schema: 'api', name: 'search_products' }])
+  assert.equal(runtimeConfig(baseEnv).publicRpc, null)
+})
+
+test('only listed functions called by GET or HEAD can be anonymous, with publicly readable embeddings', () => {
+  const config = runtimeConfig({ ...baseEnv, DATA_API_SCHEMAS: 'api,catalog', DATA_API_PUBLIC_READ: 'api.products,api.categories', DATA_API_PUBLIC_RPC: 'api.search_products,catalog.featured' })
+  const target = (url, method = 'GET', rpc = { schema: 'api', name: 'search_products' }) => publicRpcTarget({ url, method, headers: {} }, config, rpc)
+  assert.deepEqual(target('/rest/v1/rpc/search_products?q=lamp'), { schema: 'api', rpc: 'search_products', embedded: [] })
+  assert.deepEqual(target('/rest/v1/rpc/search_products?select=id,categories(name)', 'HEAD'), { schema: 'api', rpc: 'search_products', embedded: ['categories'] })
+  assert.deepEqual(target('/rest/v1/rpc/featured', 'GET', { schema: 'catalog', name: 'featured' }), { schema: 'catalog', rpc: 'featured', embedded: [] })
+  assert.equal(target('/rest/v1/rpc/search_products', 'POST').code, 'public_rpc_requires_get')
+  assert.equal(target('/rest/v1/rpc/save_note', 'GET', { schema: 'api', name: 'save_note' }).code, 'token_required')
+  assert.equal(target('/rest/v1/rpc/search_products', 'GET', { schema: 'catalog', name: 'search_products' }).code, 'token_required', 'listing is per schema')
+  assert.equal(target('/rest/v1/rpc/search_products?select=*,notes(body)').code, 'public_read_not_allowed')
+  assert.equal(target('/rest/v1/rpc/search_products?select=id&select=notes(*)').code, 'public_read_not_allowed')
+  assert.equal(target('/rest/v1/rpc/featured?select=*,products(id)', 'GET', { schema: 'catalog', name: 'featured' }).code, 'public_read_not_allowed', 'embeddings resolve in the function schema')
+  const rpcOnly = runtimeConfig({ ...baseEnv, DATA_API_PUBLIC_RPC: 'api.search_products' })
+  assert.equal(publicRpcTarget({ url: '/rest/v1/rpc/search_products?select=*,products(id)', method: 'GET', headers: {} }, rpcOnly, { schema: 'api', name: 'search_products' }).code, 'public_read_not_allowed')
+  assert.equal(publicReadTarget({ url: '/rest/v1/products', method: 'GET', headers: {} }, rpcOnly).code, 'token_required', 'public RPCs do not open relations')
+})
+
+test('public RPCs must be approved STABLE or IMMUTABLE security-invoker functions', () => {
+  const entries = ['search', 'touch', 'unapproved', 'missing', 'owner', 'constant'].map(name => ({ schema: 'api', name }))
+  const rows = [
+    { schema: 'api', name: 'search', volatility: 's', definer: false },
+    { schema: 'api', name: 'touch', volatility: 'v', definer: false },
+    { schema: 'api', name: 'unapproved', volatility: 's', definer: false },
+    { schema: 'api', name: 'missing', volatility: null, definer: null },
+    { schema: 'api', name: 'owner', volatility: 's', definer: true },
+    { schema: 'api', name: 'constant', volatility: 'i', definer: false },
+  ]
+  const approved = ['search', 'touch', 'missing', 'owner', 'constant'].map(name => ({ schema: 'api', name }))
+  assert.deepEqual(unsafePublicFunctions(entries, rows, approved), ['api.touch', 'api.unapproved', 'api.missing', 'api.owner'])
+  assert.deepEqual(unsafePublicFunctions([entries[0]], [...rows, rows[0]], approved), ['api.search'], 'overloads are refused')
+})
+
+test('public RPC responses are tagged by function and embedded relation', () => {
+  const config = runtimeConfig({ ...baseEnv, DATA_API_PUBLIC_READ: 'api.categories', DATA_API_PUBLIC_RPC: 'api.search_products', DATA_API_PUBLIC_READ_MAX_AGE: '30' })
+  assert.deepEqual(publicReadCache({ headers: {} }, config, { schema: 'api', rpc: 'search_products', embedded: ['categories'] }),
+    { cacheControl: 'public, max-age=30', tags: 'data-api, data-api-rpc:api.search_products, data-api:api.categories' })
+  assert.equal(publicReadCache({ headers: { prefer: 'count=exact' } }, config, { schema: 'api', rpc: 'search_products', embedded: [] }), null)
+})
+
+test('anonymous public RPC calls run by GET as anonymous; other methods and functions need a token', async t => {
+  const { state, send } = await fixture(t, { DATA_API_PUBLIC_RPC: 'api.search_products', DATA_API_PUBLIC_READ_MAX_AGE: '30' })
+  const called = await send('/rest/v1/rpc/search_products?q=lamp&select=id,categories(name)', { headers: { 'x-faas-client-ip': '203.0.113.9' } })
+  assert.equal(called.status, 200)
+  assert.equal(called.headers['cache-control'], 'public, max-age=30')
+  assert.equal(called.headers['cache-tag'], 'data-api, data-api-rpc:api.search_products, data-api:api.categories')
+  assert.equal(state.calls[0].method, 'GET')
+  assert.equal(state.calls[0].path, '/rpc/search_products?q=lamp&select=id,categories(name)')
+  assert.equal(state.calls[0].claims.gregale_access, 'anonymous')
+  assert.equal(state.calls[0].claims.sub, undefined)
+  assert.equal((await send('/rest/v1/rpc/search_products', { method: 'HEAD' })).status, 200)
+  const posted = await send('/rest/v1/rpc/search_products', { method: 'POST' })
+  assert.equal(posted.status, 405)
+  assert.equal(posted.headers.allow, 'GET, HEAD')
+  assert.equal(JSON.parse(posted.body).code, 'public_rpc_requires_get')
+  for (const [path, method, status, code] of [
+    ['/rest/v1/rpc/save_note', 'POST', 401, 'token_required'],
+    ['/rest/v1/rpc/save_note', 'GET', 405, 'method_not_allowed'],
+    ['/rest/v1/rpc/search_products', 'DELETE', 405, 'method_not_allowed'],
+    ['/rest/v1/rpc/search_products?select=*,notes(body)', 'GET', 403, 'public_read_not_allowed'],
+    ['/rest/v1/rpc/unlisted', 'GET', 404, 'not_found'],
+  ]) {
+    const response = await send(path, { method })
+    assert.equal(response.status, status, `${method} ${path}`)
+    assert.equal(JSON.parse(response.body).code, code, `${method} ${path}`)
+  }
+  assert.equal(state.calls.length, 2, 'refused calls never dispatch')
+  const user = await send('/rest/v1/rpc/search_products?q=lamp', { headers: { Authorization: 'Bearer header.payload.signature' } })
+  assert.equal(user.status, 200)
+  assert.equal(user.headers['cache-control'], 'no-store', 'signed-in calls are never shared')
+  assert.equal(state.calls[2].claims.gregale_access, 'user')
+  assert.equal((await send('/rest/v1/rpc/search_products', { method: 'POST', headers: { Authorization: 'Bearer header.payload.signature' } })).status, 200, 'signed-in callers may still POST')
+  assert.ok(state.logs.some(entry => entry.code === 'public_rpc_requires_get' && entry.route === 'rpc'))
+})
+
+test('public RPCs alone enable the anonymous budget and keep relations closed', async t => {
+  const { send } = await fixture(t, { DATA_API_PUBLIC_READ: undefined, DATA_API_PUBLIC_RPC: 'api.search_products', DATA_API_RATE_LIMIT_PER_SECOND: '1', DATA_API_RATE_LIMIT_BURST: '1' })
+  const from = () => send('/rest/v1/rpc/search_products', { headers: { 'x-faas-client-ip': '198.51.100.40' } })
+  assert.equal((await from()).status, 200)
+  assert.equal((await from()).status, 429)
+  assert.equal((await send('/rest/v1/products')).status, 401, 'relations stay closed without DATA_API_PUBLIC_READ')
+})
+
+test('the OpenAPI catalog keeps GET only for public functions', async t => {
+  const config = runtimeConfig({ ...baseEnv, DATA_API_PUBLIC_RPC: 'api.search_products' })
+  config.functions = [{ schema: 'api', name: 'search_products' }, { schema: 'api', name: 'save_note' }]
+  const operation = () => ({ responses: { 200: { description: 'OK' } } })
+  const upstream = http.createServer((req, res) => {
+    req.resume()
+    res.writeHead(200, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({ swagger: '2.0', paths: { '/rpc/search_products': { get: operation(), post: operation() }, '/rpc/save_note': { get: operation(), post: operation() }, '/rpc/hidden': { post: operation() } } }))
+  })
+  await new Promise(resolve => upstream.listen(0, '127.0.0.1', resolve))
+  const gateway = createServer(config, async () => ({ sub: 'alice', exp: 9999999999 }), upstream.address().port)
+  await new Promise(resolve => gateway.listen(0, '127.0.0.1', resolve))
+  t.after(() => { gateway.closeAllConnections(); gateway.close(); upstream.closeAllConnections(); upstream.close() })
+  const response = await fetch(`http://127.0.0.1:${gateway.address().port}/openapi.json`, { headers: { Authorization: 'Bearer valid' } })
+  const document = await response.json()
+  assert.deepEqual(Object.keys(document.paths['/rpc/search_products']).sort(), ['get', 'post'])
+  assert.deepEqual(Object.keys(document.paths['/rpc/save_note']), ['post'])
+  assert.equal(document.paths['/rpc/hidden'], undefined)
 })

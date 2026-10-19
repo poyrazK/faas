@@ -992,9 +992,9 @@ it). `gregale data-api create` accepts the same `--public-read` flag, and
 `--no-public-read` turns the feature off again.
 
 A request without an `Authorization` header is then anonymous, but only when it
-is a `GET` or `HEAD` of a listed relation. Every other unauthenticated request
-still returns `401 token_required`, including RPCs, OpenAPI, writes and unlisted
-relations. A present but invalid token is never treated as anonymous. Embedded
+is a `GET` or `HEAD` of a listed relation (or of a [public RPC](#public-rpcs)).
+Every other unauthenticated request still returns `401 token_required`,
+including other RPCs, OpenAPI, writes and unlisted relations. A present but invalid token is never treated as anonymous. Embedded
 resources in `select` must also be listed: `select=*,categories(name)` works,
 while `select=*,orders(*)` returns `403 public_read_not_allowed` before any SQL
 runs.
@@ -1028,6 +1028,58 @@ never client addresses.
 Add `"public_read": ["api.products"]` to `data-api.dev.json` to try anonymous
 reads in `gregale data-api dev`; the same RLS check runs locally.
 
+### Public RPCs
+
+Search, featured items and other computed public data often belong in a
+function rather than a table. List the functions anyone may call:
+
+```sh
+gregale data-api configure shop-data --public-rpc api.search_products
+```
+
+`gregale data-api create` accepts the same `--public-rpc` flag, and
+`--no-public-rpc` turns it off. Public RPCs work with or without public reads.
+
+Anonymous callers must use `GET` (or `HEAD`) and pass arguments as query
+parameters:
+
+```sh
+curl 'https://shop-data.example.com/rest/v1/rpc/search_products?q=lamp&limit=20'
+```
+
+```ts
+const response = await fetch(`${dataURL}/rest/v1/rpc/search_products?q=${encodeURIComponent(q)}`)
+```
+
+An anonymous `POST` to a public function returns
+`405 public_rpc_requires_get` with `Allow: GET, HEAD`. PostgREST runs `GET`
+calls in a read-only transaction, so a public call cannot write, even through
+a `VOLATILE` function that a `STABLE` one calls. Signed-in users and server keys
+may call the same function by `GET` or `POST`. Other approved functions stay
+`POST`-only and need a token.
+
+The runtime refuses to start (`data_api_public_rpc_unsafe`) unless each listed
+function is an approved RPC (annotated `@gregale:rpc`, one signature, security
+invoker) declared `STABLE` or `IMMUTABLE`:
+
+```sql
+CREATE FUNCTION api.search_products(q text) RETURNS SETOF api.products
+  LANGUAGE sql STABLE AS $$
+    SELECT * FROM api.products WHERE name ILIKE '%' || q || '%'
+  $$;
+COMMENT ON FUNCTION api.search_products(text) IS '@gregale:rpc';
+```
+
+The function runs as the binding login with `gregale_access` set to
+`anonymous`, so row-level security on every table it reads applies to the
+caller. It can still read whatever that login may read in tables without RLS;
+reviewing the function body is part of making it public. Embedded resources in
+`select` must be listed in `--public-read`, as for relations.
+
+Public RPC calls share the anonymous rate limit with public reads. Add
+`"public_rpc": ["api.search_products"]` to `data-api.dev.json` to try them in
+`gregale data-api dev`, where the same startup check runs.
+
 ### Cache public reads at the edge
 
 Public rows are the same for every visitor, so the Gregale edge can serve them
@@ -1039,12 +1091,13 @@ gregale data-api configure shop-data --public-read-cache 30s
 
 This stores `DATA_API_PUBLIC_READ_MAX_AGE` and creates one gateway cache rule,
 `data-api-public-read-cache`, for `GET /rest/v1/*` on the app's canonical host.
-The maximum is one hour. `--public-read-cache off` removes the setting and the
-rule, and `--no-public-read` removes them too.
+The maximum is one hour. The same setting covers public RPC calls.
+`--public-read-cache off` removes the setting and the rule, and so does turning
+off the last of public reads and public RPCs.
 
 The rule covers the whole path, but only responses the runtime marks as
 `Cache-Control: public` are stored. Those are successful (`200`) anonymous
-reads of relations in the default schema, using the default JSON
+reads of relations and public RPC calls in the default schema, using the default JSON
 representation: no `Range`, `Range-Unit`, `Prefer`, `Cookie` or other-schema
 `Accept-Profile` header, and an `Accept` of `application/json`, `text/plain` or
 `*/*`. Every other response stays `no-store`. Signed-in and server-key requests
@@ -1068,6 +1121,12 @@ relation it contains, embedded ones included:
 gregale cache purge shop-data --tag data-api:api.products   # one table
 gregale cache purge shop-data --tag data-api                # every public read
 ```
+
+A public RPC response is tagged `data-api-rpc:SCHEMA.FUNCTION` plus its
+embedded relations. The gateway cannot see which tables a function reads, so
+purging a table's tag does not purge function results built from it. Purge
+`data-api-rpc:api.search_products` or `data-api` instead, or keep the max age
+short.
 
 Deployments, including single-app migrations, and rule changes also invalidate
 cached entries. In a two-app project, purge `data-api` after migrating. While

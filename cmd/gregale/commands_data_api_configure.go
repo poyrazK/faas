@@ -1,4 +1,4 @@
-// adr: 20261018170742 — owner settings for public reads, aggregates and server keys.
+// adr: 20261018170742 — owner settings for public reads and RPCs, aggregates and server keys.
 package main
 
 import (
@@ -25,13 +25,22 @@ var dataAPIPublicRelation = regexp.MustCompile(`^[a-z][a-z0-9_]{0,62}\.[A-Za-z_]
 
 // The runtime rechecks exposure, RLS and security-invoker views at startup.
 func validDataAPIPublicRead(value string) bool {
+	return validDataAPIAllowlist(value, dataAPIPublicRelation, api.DataAPIPublicReadMaxRelations)
+}
+
+// The runtime rechecks approval and STABLE or IMMUTABLE volatility at startup.
+func validDataAPIPublicRPC(value string) bool {
+	return validDataAPIAllowlist(value, dataAPIFunctionName, api.DataAPIPublicRPCMaxFunctions)
+}
+
+func validDataAPIAllowlist(value string, pattern *regexp.Regexp, limit int) bool {
 	names := strings.Split(value, ",")
-	if value == "" || len(names) > api.DataAPIPublicReadMaxRelations {
+	if value == "" || len(names) > limit {
 		return false
 	}
 	seen := map[string]bool{}
 	for _, name := range names {
-		if !dataAPIPublicRelation.MatchString(name) || seen[name] {
+		if !pattern.MatchString(name) || seen[name] {
 			return false
 		}
 		seen[name] = true
@@ -100,13 +109,34 @@ func syncDataAPIPublicReadCache(ctx context.Context, client *api.Client, app str
 	return nil
 }
 
-func dataAPISettingPresent(ctx context.Context, client *api.Client, app, key, scope string) (bool, error) {
+// dataAPIAnonymousSetting is one requested anonymous allowlist change: a value
+// stores it, remove unsets it, and neither keeps whatever is stored.
+type dataAPIAnonymousSetting struct {
+	key, value string
+	remove     bool
+}
+
+// dataAPIAnonymousRemains reports whether a public read or RPC allowlist is
+// left after the requested changes, listing stored settings only when needed.
+func dataAPIAnonymousRemains(ctx context.Context, client *api.Client, app, scope string, settings ...dataAPIAnonymousSetting) (bool, error) {
+	kept := map[string]bool{}
+	for _, setting := range settings {
+		if setting.value != "" {
+			return true, nil
+		}
+		if !setting.remove {
+			kept[setting.key] = true
+		}
+	}
+	if len(kept) == 0 {
+		return false, nil
+	}
 	secrets, err := client.ListSecretsWithScope(ctx, app, scope)
 	if err != nil {
 		return false, err
 	}
 	for _, secret := range secrets.Secrets {
-		if secret.Key == key && (secret.Scope == "" || secret.Scope == scope) {
+		if kept[secret.Key] && (secret.Scope == "" || secret.Scope == scope) {
 			return true, nil
 		}
 	}
@@ -117,6 +147,7 @@ type dataAPIConfigureReceipt struct {
 	App             string   `json:"app"`
 	Scope           string   `json:"scope"`
 	PublicRead      []string `json:"public_read,omitempty"`
+	PublicRPC       []string `json:"public_rpc,omitempty"`
 	PublicReadCache string   `json:"public_read_cache,omitempty"`
 	Changed         []string `json:"changed"`
 	Restarted       bool     `json:"restarted"`
@@ -128,15 +159,19 @@ func cmdDataAPIConfigure(args []string) int {
 	scope := fs.String("scope", api.DefaultEnvScope, "environment scope")
 	publicRead := fs.String("public-read", "", "comma-separated schema.relation list readable without a token")
 	noPublicRead := fs.Bool("no-public-read", false, "disable anonymous reads")
+	publicRPC := fs.String("public-rpc", "", "comma-separated schema.function list callable without a token by GET")
+	noPublicRPC := fs.Bool("no-public-rpc", false, "disable anonymous RPC calls")
 	aggregates := fs.String("aggregates", "", "on or off; on also enables the SQL deadline")
-	publicReadCache := fs.String("public-read-cache", "", "edge freshness for public reads such as 30s, or off")
+	publicReadCache := fs.String("public-read-cache", "", "edge freshness for public reads and RPC calls such as 30s, or off")
 	noRestart := fs.Bool("no-restart", false, "store settings without requesting a fresh restart")
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
-	if fs.NArg() != 1 || !api.ValidAppSlug(fs.Arg(0)) || api.ValidateScope(*scope) != nil || (*publicRead != "" && *noPublicRead) || (*publicRead == "" && !*noPublicRead && *aggregates == "" && *publicReadCache == "") || !dataAPIDiagnosticAllowed(*aggregates, "", "on", "off") ||
-		(*noPublicRead && *publicReadCache != "") {
-		PrintUsage(os.Stderr, "usage: gregale data-api configure NAME [--public-read SCHEMA.RELATION[,...] | --no-public-read] [--public-read-cache DURATION|off] [--aggregates on|off] [--scope SCOPE] [--no-restart]", "data-api")
+	anonymousOff := *noPublicRead && *noPublicRPC
+	if fs.NArg() != 1 || !api.ValidAppSlug(fs.Arg(0)) || api.ValidateScope(*scope) != nil || (*publicRead != "" && *noPublicRead) || (*publicRPC != "" && *noPublicRPC) ||
+		(*publicRead == "" && !*noPublicRead && *publicRPC == "" && !*noPublicRPC && *aggregates == "" && *publicReadCache == "") || !dataAPIDiagnosticAllowed(*aggregates, "", "on", "off") ||
+		(anonymousOff && *publicReadCache != "") {
+		PrintUsage(os.Stderr, "usage: gregale data-api configure NAME [--public-read SCHEMA.RELATION[,...] | --no-public-read] [--public-rpc SCHEMA.FUNCTION[,...] | --no-public-rpc] [--public-read-cache DURATION|off] [--aggregates on|off] [--scope SCOPE] [--no-restart]", "data-api")
 		return 1
 	}
 	cacheSeconds := 0
@@ -152,54 +187,20 @@ func cmdDataAPIConfigure(args []string) int {
 	if *publicRead != "" && !validDataAPIPublicRead(*publicRead) {
 		return printErr("Invalid --public-read", fmt.Errorf("list at most %d unique schema.relation names", api.DataAPIPublicReadMaxRelations))
 	}
+	if *publicRPC != "" && !validDataAPIPublicRPC(*publicRPC) {
+		return printErr("Invalid --public-rpc", fmt.Errorf("list at most %d unique schema.function names", api.DataAPIPublicRPCMaxFunctions))
+	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
 	ctx := context.Background()
 	app, receipt := fs.Arg(0), dataAPIConfigureReceipt{App: fs.Arg(0), Scope: *scope, Changed: []string{}}
-	switch {
-	case *publicRead != "":
-		err = client.SetSecretWithScope(ctx, app, "DATA_API_PUBLIC_READ", *publicRead, *scope)
-		receipt.PublicRead, receipt.Changed = strings.Split(*publicRead, ","), append(receipt.Changed, "public_read")
-	case *noPublicRead:
-		// Freshness without public reads is a startup error; remove both together.
-		if err = syncDataAPIPublicReadCache(ctx, client, app, 0); err == nil {
-			if err = unsetDataAPISetting(ctx, client, app, "DATA_API_PUBLIC_READ_MAX_AGE", *scope); err == nil {
-				err = unsetDataAPISetting(ctx, client, app, "DATA_API_PUBLIC_READ", *scope)
-			}
-		}
-		receipt.Changed = append(receipt.Changed, "public_read")
-	}
-	if err != nil {
-		return printErr("Could not store the public read setting", err)
-	}
-	switch {
-	case cacheSeconds > 0:
-		present := *publicRead != ""
-		if !present {
-			if present, err = dataAPISettingPresent(ctx, client, app, "DATA_API_PUBLIC_READ", *scope); err != nil {
-				return printErr("Could not inspect Data API settings", err)
-			}
-		}
-		if !present {
-			return printErr("Public reads are off", errors.New("edge caching serves only public reads; pass --public-read as well"))
-		}
-		if err = client.SetSecretWithScope(ctx, app, "DATA_API_PUBLIC_READ_MAX_AGE", strconv.Itoa(cacheSeconds), *scope); err == nil {
-			err = syncDataAPIPublicReadCache(ctx, client, app, cacheSeconds)
-		}
-		receipt.PublicReadCache = (time.Duration(cacheSeconds) * time.Second).String()
-	case *publicReadCache == "off":
-		if err = syncDataAPIPublicReadCache(ctx, client, app, 0); err == nil {
-			err = unsetDataAPISetting(ctx, client, app, "DATA_API_PUBLIC_READ_MAX_AGE", *scope)
-		}
-		receipt.PublicReadCache = "off"
-	}
-	if err != nil {
-		return printErr("Could not configure public read caching", err)
-	}
-	if *publicReadCache != "" {
-		receipt.Changed = append(receipt.Changed, "public_read_cache")
+	if err = configureDataAPIAnonymous(ctx, client, app, *scope, []dataAPIAnonymousSetting{
+		{key: "DATA_API_PUBLIC_READ", value: *publicRead, remove: *noPublicRead},
+		{key: "DATA_API_PUBLIC_RPC", value: *publicRPC, remove: *noPublicRPC},
+	}, cacheSeconds, *publicReadCache == "off", &receipt); err != nil {
+		return printErr("Could not configure anonymous access", err)
 	}
 	switch *aggregates {
 	case "on":
@@ -228,6 +229,9 @@ func cmdDataAPIConfigure(args []string) int {
 		return jsonOut(writeJSON(receipt))
 	}
 	PrintOK(osStdout, "Data API settings updated for %s (%s)", app, strings.Join(receipt.Changed, ", "))
+	if *publicRPC != "" {
+		_, _ = fmt.Fprintln(osStdout, "Public RPCs answer GET and HEAD only. Each function must be approved (@gregale:rpc) and STABLE or IMMUTABLE, or the runtime refuses to start.")
+	}
 	if *aggregates == "on" {
 		_, _ = fmt.Fprintln(osStdout, "Aggregates require the SQL deadline functions; install them first (docs: https://gregale.dev/docs/data-api#sql-deadlines-across-transaction-retries).")
 	}
@@ -235,6 +239,75 @@ func cmdDataAPIConfigure(args []string) int {
 		_, _ = fmt.Fprintf(osStdout, "Run gregale data-api refresh %s to apply the settings.\n", app)
 	}
 	return 0
+}
+
+// configureDataAPIAnonymous stores the public read and RPC allowlists and the
+// edge freshness that serves them. Freshness without an allowlist is a startup
+// error, so it is removed before the last allowlist and required before it is
+// set; nothing is written when that check fails.
+func configureDataAPIAnonymous(ctx context.Context, client *api.Client, app, scope string, settings []dataAPIAnonymousSetting, cacheSeconds int, cacheOff bool, receipt *dataAPIConfigureReceipt) error {
+	removing := false
+	for _, setting := range settings {
+		removing = removing || setting.remove
+	}
+	anonymous := true
+	if cacheSeconds > 0 || removing {
+		var err error
+		if anonymous, err = dataAPIAnonymousRemains(ctx, client, app, scope, settings...); err != nil {
+			return err
+		}
+	}
+	if cacheSeconds > 0 && !anonymous {
+		return errors.New("edge caching serves only public reads and RPC calls; pass --public-read or --public-rpc as well")
+	}
+	names := map[string]string{"DATA_API_PUBLIC_READ": "public_read", "DATA_API_PUBLIC_RPC": "public_rpc"}
+	for _, setting := range settings {
+		if setting.value == "" {
+			continue
+		}
+		if err := client.SetSecretWithScope(ctx, app, setting.key, setting.value, scope); err != nil {
+			return err
+		}
+		if setting.key == "DATA_API_PUBLIC_READ" {
+			receipt.PublicRead = strings.Split(setting.value, ",")
+		} else {
+			receipt.PublicRPC = strings.Split(setting.value, ",")
+		}
+		receipt.Changed = append(receipt.Changed, names[setting.key])
+	}
+	if cacheOff || (removing && !anonymous) {
+		if err := syncDataAPIPublicReadCache(ctx, client, app, 0); err != nil {
+			return err
+		}
+		if err := unsetDataAPISetting(ctx, client, app, "DATA_API_PUBLIC_READ_MAX_AGE", scope); err != nil {
+			return err
+		}
+	}
+	for _, setting := range settings {
+		if !setting.remove {
+			continue
+		}
+		if err := unsetDataAPISetting(ctx, client, app, setting.key, scope); err != nil {
+			return err
+		}
+		receipt.Changed = append(receipt.Changed, names[setting.key])
+	}
+	switch {
+	case cacheSeconds > 0:
+		if err := client.SetSecretWithScope(ctx, app, "DATA_API_PUBLIC_READ_MAX_AGE", strconv.Itoa(cacheSeconds), scope); err != nil {
+			return err
+		}
+		if err := syncDataAPIPublicReadCache(ctx, client, app, cacheSeconds); err != nil {
+			return err
+		}
+		receipt.PublicReadCache = (time.Duration(cacheSeconds) * time.Second).String()
+	case cacheOff:
+		receipt.PublicReadCache = "off"
+	}
+	if receipt.PublicReadCache != "" {
+		receipt.Changed = append(receipt.Changed, "public_read_cache")
+	}
+	return nil
 }
 
 var dataAPIServerKeySlots = map[string]string{"a": "DATA_API_SERVER_KEY_A_SHA256", "b": "DATA_API_SERVER_KEY_B_SHA256"}

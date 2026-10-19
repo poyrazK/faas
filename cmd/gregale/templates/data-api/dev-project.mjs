@@ -46,7 +46,7 @@ export async function loadDevProject(options) {
     legacy = true
     config = { version: 1, identities: { alice: { subject: 'alice' }, bob: { subject: 'bob' } } }
   }
-  if (!fields(config, ['version', 'migrations', 'output', 'identities', 'verify', 'seed', 'check', 'public_read']) || config.version !== 1) throw new Error('Use a version 1 development config with known fields.')
+  if (!fields(config, ['version', 'migrations', 'output', 'identities', 'verify', 'seed', 'check', 'public_read', 'public_rpc']) || config.version !== 1) throw new Error('Use a version 1 development config with known fields.')
   if (!object(config.identities) || Object.keys(config.identities).length < 2 || Object.keys(config.identities).length > 100) throw new Error('Configure two to 100 local test identities.')
   const identities = Object.fromEntries(Object.entries(config.identities).map(([name, value]) => {
     if (!identifier.test(name) || reserved.has(name) || !fields(value, ['subject', 'claims', 'read_only']) || (value.read_only !== undefined && typeof value.read_only !== 'boolean') || typeof value.subject !== 'string' || !value.subject || value.subject.length > 256 || (value.claims !== undefined && (!object(value.claims) || Object.keys(value.claims).some(key => reserved.has(key))))) throw new Error('Use named identities with subjects and non-reserved custom claims.')
@@ -77,7 +77,8 @@ export async function loadDevProject(options) {
   }
   // Anonymous reads use the hosted allowlist format; runtimeConfig validates entries.
   if (config.public_read !== undefined && (!Array.isArray(config.public_read) || !config.public_read.length || config.public_read.some(name => typeof name !== 'string'))) throw new Error('Use public_read as a list of schema.relation names.')
-  const project = { base, migrations, output, identities, verification, seedSQL, check: { directory: checkDirectory, commands: check.commands }, legacy, ...(config.public_read ? { publicRead: config.public_read.join(',') } : {}) }
+  if (config.public_rpc !== undefined && (!Array.isArray(config.public_rpc) || !config.public_rpc.length || config.public_rpc.some(name => typeof name !== 'string'))) throw new Error('Use public_rpc as a list of schema.function names.')
+  const project = { base, migrations, output, identities, verification, seedSQL, check: { directory: checkDirectory, commands: check.commands }, legacy, ...(config.public_read ? { publicRead: config.public_read.join(',') } : {}), ...(config.public_rpc ? { publicRpc: config.public_rpc.join(',') } : {}) }
   await verificationScenarios(project)
   return project
 }

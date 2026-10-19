@@ -109,19 +109,42 @@ export function publicReadTarget(req, config) {
   return { schema, relation, embedded }
 }
 
+export function publicRpcListed(config, rpc) {
+  return Boolean(rpc && config.publicRpc?.some(entry => entry.schema === rpc.schema && entry.name === rpc.name))
+}
+
+// Anonymous RPCs are listed functions called by GET or HEAD, which PostgREST
+// runs in a read-only transaction; a STABLE function can still call a VOLATILE
+// one, so the transaction, not volatility, stops writes. Embedded relations
+// must be publicly readable.
+export function publicRpcTarget(req, config, rpc) {
+  if (!publicRpcListed(config, rpc)) return { code: 'token_required' }
+  if (!['GET', 'HEAD'].includes(req.method)) return { code: 'public_rpc_requires_get' }
+  let url
+  try { url = new URL(req.url, 'http://127.0.0.1') } catch { return { code: 'token_required' } }
+  const selects = url.searchParams.getAll('select')
+  if (selects.length > 1) return { code: 'public_read_not_allowed' }
+  const embedded = selects.length ? selectEmbeddings(selects[0]) : []
+  const readable = name => config.publicRead?.some(entry => entry.schema === rpc.schema && entry.relation === name)
+  if (!embedded || !embedded.every(readable)) return { code: 'public_read_not_allowed' }
+  return { schema: rpc.schema, rpc: rpc.name, embedded }
+}
+
 const jsonMediaRange = /^\s*(application\/json|text\/plain|\*\/\*)\s*(;[^,]*)?$/i
 
 // The edge cache key covers method, host, path and query only. A response may
 // become a shared entry only when those fully determine it: the default schema
 // and the default full JSON representation. Everything else stays no-store.
 export function publicReadCache(req, config, target) {
-  if (!config.publicReadMaxAge || !target?.relation || target.schema !== config.schemas[0]) return null
+  if (!config.publicReadMaxAge || !(target?.relation || target?.rpc) || target.schema !== config.schemas[0]) return null
   const h = req.headers
   if (h.range !== undefined || h['range-unit'] !== undefined || h.prefer !== undefined || h.cookie !== undefined) return null
   if (h['accept-profile'] !== undefined && h['accept-profile'] !== config.schemas[0]) return null
   if (h.accept !== undefined && !h.accept.split(',').every(part => jsonMediaRange.test(part))) return null
-  // Tags let owners purge one relation; every relation in the body must be tagged.
-  const tags = ['data-api', ...new Set([target.relation, ...target.embedded].map(name => `data-api:${target.schema}.${name}`))]
+  // Tags let owners purge one relation or function; every relation in the body
+  // must be tagged. A function's own reads are not known, so its tag is separate.
+  const own = target.rpc ? `data-api-rpc:${target.schema}.${target.rpc}` : `data-api:${target.schema}.${target.relation}`
+  const tags = ['data-api', ...new Set([own, ...target.embedded.map(name => `data-api:${target.schema}.${name}`)])]
   if (tags.length > limits.cacheTagsMax || tags.some(tag => Buffer.byteLength(tag) > limits.cacheTagMaxBytes)) return null
   return Object.freeze({ cacheControl: `public, max-age=${config.publicReadMaxAge}`, tags: tags.join(', ') })
 }
@@ -164,6 +187,34 @@ export function unsafePublicRelations(rows) {
     if (!table && !view) unsafe.push(`${row.schema}.${row.relation}`)
   }
   return unsafe
+}
+
+const publicFunctionsQuery = `SELECT t.schema, t.name, p.provolatile AS volatility, p.prosecdef AS definer
+ FROM unnest($1::text[],$2::text[]) AS t(schema,name)
+ LEFT JOIN pg_namespace n ON n.nspname=t.schema
+ LEFT JOIN pg_proc p ON p.pronamespace=n.oid AND p.proname=t.name`
+
+// Public RPCs must be in the serving contract (annotated, one overload,
+// security invoker) and declared STABLE or IMMUTABLE, so their intent is to
+// read; the read-only transaction enforces it.
+export function unsafePublicFunctions(entries, rows, approved) {
+  const unsafe = []
+  for (const entry of entries) {
+    const found = rows.filter(row => row.schema === entry.schema && row.name === entry.name && row.volatility !== null)
+    const callable = approved.some(f => f.schema === entry.schema && f.name === entry.name)
+    if (!callable || found.length !== 1 || !['s', 'i'].includes(found[0].volatility) || found[0].definer !== false) unsafe.push(`${entry.schema}.${entry.name}`)
+  }
+  return unsafe
+}
+
+export async function checkPublicFunctions(connection, entries, approved) {
+  const client = new pg.Client({ connectionString: connection, statement_timeout: limits.queryMs, connectionTimeoutMillis: limits.healthProbeMs })
+  await client.connect()
+  try {
+    const { rows } = await client.query(publicFunctionsQuery, [entries.map(f => f.schema), entries.map(f => f.name)])
+    const unsafe = unsafePublicFunctions(entries, rows, approved)
+    if (unsafe.length) throw new Error(`Public RPCs require approved STABLE or IMMUTABLE functions: ${unsafe.join(', ')}`)
+  } finally { await client.end() }
 }
 
 export async function checkPublicRelations(connection, relations) {

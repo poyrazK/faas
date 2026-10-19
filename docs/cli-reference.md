@@ -14999,7 +14999,7 @@ gregale data-api dev --port 0 --check --once
 
 Deploy a managed PostgREST Data API
 
-`gregale data-api create --database <DATABASE> [--schema <SCHEMA>] [--scope <SCOPE>] [--issuer <HTTPS_URL>] [--jwks-url <HTTPS_URL>] [--audience <AUDIENCE>] [--origins <ORIGINS>] [--resume] [--public-read <SCHEMA.RELATION[,...]>] [--aggregates] [--migrations <DIR>] [--release-command <COMMAND>] <name>`
+`gregale data-api create --database <DATABASE> [--schema <SCHEMA>] [--scope <SCOPE>] [--issuer <HTTPS_URL>] [--jwks-url <HTTPS_URL>] [--audience <AUDIENCE>] [--origins <ORIGINS>] [--resume] [--public-read <SCHEMA.RELATION[,...]>] [--public-rpc <SCHEMA.FUNCTION[,...]>] [--aggregates] [--migrations <DIR>] [--release-command <COMMAND>] <name>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -15012,6 +15012,7 @@ Deploy a managed PostgREST Data API
 | `--origins <ORIGINS>` | comma-separated browser origins |  |
 | `--resume` | resume configuration and deployment of an existing app |  |
 | `--public-read <SCHEMA.RELATION[,...]>` | relations readable without a token (RLS tables or security-invoker views) |  |
+| `--public-rpc <SCHEMA.FUNCTION[,...]>` | approved STABLE or IMMUTABLE functions callable without a token by GET |  |
 | `--aggregates` | enable aggregate queries; requires installed SQL deadline functions |  |
 | `--migrations <DIR>` | single-app project: run this migration directory as the app&#39;s release task |  |
 | `--release-command <COMMAND>` | single-app release command (default node migrations/release.mjs) |  |
@@ -15037,15 +15038,17 @@ Deploy a single-app Data API with its migrations as the release task
 
 ### data-api configure
 
-Change public reads or aggregates and fresh-restart the runtime
+Change public reads, public RPCs or aggregates and fresh-restart the runtime
 
-`gregale data-api configure [--public-read <SCHEMA.RELATION[,...]>] [--no-public-read] [--public-read-cache <DURATION|off>] [--aggregates <on|off>] [--scope <SCOPE>] [--no-restart] <name>`
+`gregale data-api configure [--public-read <SCHEMA.RELATION[,...]>] [--no-public-read] [--public-rpc <SCHEMA.FUNCTION[,...]>] [--no-public-rpc] [--public-read-cache <DURATION|off>] [--aggregates <on|off>] [--scope <SCOPE>] [--no-restart] <name>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--public-read <SCHEMA.RELATION[,...]>` | relations readable without a token |  |
 | `--no-public-read` | disable anonymous reads |  |
-| `--public-read-cache <DURATION|off>` | cache canonical public reads at the edge (max 1h) |  |
+| `--public-rpc <SCHEMA.FUNCTION[,...]>` | approved STABLE or IMMUTABLE functions callable without a token by GET |  |
+| `--no-public-rpc` | disable anonymous RPC calls |  |
+| `--public-read-cache <DURATION|off>` | cache canonical public reads and RPC calls at the edge (max 1h) |  |
 | `--aggregates <on|off>` | aggregate queries; on also enables the SQL deadline | one of `on` · `off` |
 | `--scope <SCOPE>` | environment scope |  |
 | `--no-restart` | store settings without a fresh restart |  |

@@ -148,7 +148,7 @@ func TestDataAPIConfigureDisablesWithoutRestartWhenAsked(t *testing.T) {
 		t.Fatalf("exit = %d, output %s", code, out.String())
 	}
 	calls := server.calls()
-	if strings.Join(calls, "|") != "GET /v1/apps/shop-data/edge-rules|DELETE /v1/apps/shop-data/secrets/DATA_API_PUBLIC_READ_MAX_AGE|DELETE /v1/apps/shop-data/secrets/DATA_API_PUBLIC_READ|DELETE /v1/apps/shop-data/secrets/DATA_API_AGGREGATES" {
+	if strings.Join(calls, "|") != "GET /v1/apps/shop-data/secrets|GET /v1/apps/shop-data/edge-rules|DELETE /v1/apps/shop-data/secrets/DATA_API_PUBLIC_READ_MAX_AGE|DELETE /v1/apps/shop-data/secrets/DATA_API_PUBLIC_READ|DELETE /v1/apps/shop-data/secrets/DATA_API_AGGREGATES" {
 		t.Fatalf("calls = %v (an absent setting must count as removed, and no restart)", calls)
 	}
 	if !strings.Contains(out.String(), "data-api refresh shop-data") {
@@ -165,6 +165,9 @@ func TestDataAPIConfigureRejectsInvalidFlags(t *testing.T) {
 		{"shop-data", "--aggregates", "maybe"},
 		{"shop-data", "--public-read", "products"},
 		{"--public-read", "api.a"},
+		{"shop-data", "--public-rpc", "api.search", "--no-public-rpc"},
+		{"shop-data", "--public-rpc", "api.Search"},
+		{"shop-data", "--public-rpc", "search"},
 	} {
 		if code := cmdDataAPIConfigure(args); code != 1 {
 			t.Fatalf("%v exit = %d", args, code)
@@ -455,7 +458,7 @@ func TestDataAPIConfigurePublicReadCacheRequiresPublicReads(t *testing.T) {
 		{"shop-data", "--public-read-cache", "2h"},
 		{"shop-data", "--public-read-cache", "0s"},
 		{"shop-data", "--public-read-cache", "soon"},
-		{"shop-data", "--no-public-read", "--public-read-cache", "30s"},
+		{"shop-data", "--no-public-read", "--no-public-rpc", "--public-read-cache", "30s"},
 		{"shop-data", "--public-read-cache", "30s", "--scope", "preview"},
 	} {
 		if code := cmdDataAPIConfigure(args); code == 0 {
@@ -484,7 +487,7 @@ func TestDataAPIConfigurePublicReadCacheOffAndPublicReadRemoval(t *testing.T) {
 	if code := cmdDataAPIConfigure([]string{"shop-data", "--no-public-read", "--no-restart"}); code != 0 {
 		t.Fatal("public read removal failed")
 	}
-	if got := strings.Join(removal.calls(), "|"); got != "GET /v1/apps/shop-data/edge-rules|DELETE /v1/edge-rules/r9|DELETE /v1/apps/shop-data/secrets/DATA_API_PUBLIC_READ_MAX_AGE|DELETE /v1/apps/shop-data/secrets/DATA_API_PUBLIC_READ" {
+	if got := strings.Join(removal.calls(), "|"); got != "GET /v1/apps/shop-data/secrets|GET /v1/apps/shop-data/edge-rules|DELETE /v1/edge-rules/r9|DELETE /v1/apps/shop-data/secrets/DATA_API_PUBLIC_READ_MAX_AGE|DELETE /v1/apps/shop-data/secrets/DATA_API_PUBLIC_READ" {
 		t.Fatalf("removal calls = %s", got)
 	}
 }
@@ -545,5 +548,85 @@ func TestDataAPIServerKeyPermissionValidationAndListing(t *testing.T) {
 	}
 	if got := out.String(); !strings.Contains(got, "slot a: in use, updated 2026-10-01T00:00:00Z, restricted") || !strings.Contains(got, "slot b: empty") {
 		t.Fatalf("list = %q (orphan permissions without a key restrict nothing)", got)
+	}
+}
+
+var publicRPCSecret = api.AppSecretResponse{Key: "DATA_API_PUBLIC_RPC", Scope: api.DefaultEnvScope}
+
+func TestDataAPIConfigurePublicRPCStoresTheAllowlist(t *testing.T) {
+	resetJSONOut(t)
+	server := newSettingsAPI(t)
+	out, restore := captureStdout(t)
+	defer restore()
+	if code := cmdDataAPIConfigure([]string{"shop-data", "--public-rpc", "api.search_products,api.featured"}); code != 0 {
+		t.Fatalf("exit = %d: %s", code, out.String())
+	}
+	if got := strings.Join(server.calls(), "|"); got != "PUT /v1/apps/shop-data/secrets/DATA_API_PUBLIC_RPC|POST /v1/apps/shop-data/restart" {
+		t.Fatalf("calls = %s", got)
+	}
+	if !strings.Contains(server.bodyFor("/DATA_API_PUBLIC_RPC"), "api.search_products,api.featured") {
+		t.Fatalf("public RPC value not stored: %s", server.bodyFor("/DATA_API_PUBLIC_RPC"))
+	}
+	if !strings.Contains(out.String(), "GET and HEAD only") || !strings.Contains(out.String(), "STABLE or IMMUTABLE") {
+		t.Fatalf("missing public RPC guidance: %s", out.String())
+	}
+}
+
+func TestDataAPIConfigureKeepsTheCacheWhileAnyAnonymousAccessRemains(t *testing.T) {
+	resetJSONOut(t)
+	kept := newSettingsAPI(t, publicReadSecret, publicRPCSecret)
+	kept.rules = []api.EdgeRuleResponse{ownedCacheRule("r1")}
+	if code := cmdDataAPIConfigure([]string{"shop-data", "--no-public-read", "--no-restart"}); code != 0 {
+		t.Fatal("public read removal failed")
+	}
+	if got := strings.Join(kept.calls(), "|"); got != "GET /v1/apps/shop-data/secrets|DELETE /v1/apps/shop-data/secrets/DATA_API_PUBLIC_READ" {
+		t.Fatalf("calls = %s (public RPCs still use the cache)", got)
+	}
+	both := newSettingsAPI(t, publicReadSecret, publicRPCSecret)
+	both.rules = []api.EdgeRuleResponse{ownedCacheRule("r2")}
+	if code := cmdDataAPIConfigure([]string{"shop-data", "--no-public-read", "--no-public-rpc", "--no-restart"}); code != 0 {
+		t.Fatal("anonymous access removal failed")
+	}
+	if got := strings.Join(both.calls(), "|"); got != "GET /v1/apps/shop-data/edge-rules|DELETE /v1/edge-rules/r2|DELETE /v1/apps/shop-data/secrets/DATA_API_PUBLIC_READ_MAX_AGE|DELETE /v1/apps/shop-data/secrets/DATA_API_PUBLIC_READ|DELETE /v1/apps/shop-data/secrets/DATA_API_PUBLIC_RPC" {
+		t.Fatalf("calls = %s (freshness must go before the last allowlist)", got)
+	}
+}
+
+func TestDataAPIConfigurePublicRPCsAloneCanBeCached(t *testing.T) {
+	resetJSONOut(t)
+	stored := newSettingsAPI(t, publicRPCSecret)
+	if code := cmdDataAPIConfigure([]string{"shop-data", "--public-read-cache", "30s", "--no-restart"}); code != 0 {
+		t.Fatal("caching public RPCs failed")
+	}
+	if got := strings.Join(stored.calls(), "|"); got != "GET /v1/apps/shop-data/secrets|PUT /v1/apps/shop-data/secrets/DATA_API_PUBLIC_READ_MAX_AGE|GET /v1/apps/shop-data/edge-rules|GET /v1/apps/shop-data|POST /v1/apps/shop-data/edge-rules" {
+		t.Fatalf("calls = %s", got)
+	}
+	fresh := newSettingsAPI(t)
+	out, restore := captureStdout(t)
+	defer restore()
+	jsonOutput = true
+	if code := cmdDataAPIConfigure([]string{"shop-data", "--public-rpc", "api.search_products", "--public-read-cache", "1m", "--no-restart"}); code != 0 {
+		t.Fatalf("exit = %d: %s", code, out.String())
+	}
+	if got := strings.Join(fresh.calls(), "|"); got != "PUT /v1/apps/shop-data/secrets/DATA_API_PUBLIC_RPC|PUT /v1/apps/shop-data/secrets/DATA_API_PUBLIC_READ_MAX_AGE|GET /v1/apps/shop-data/edge-rules|GET /v1/apps/shop-data|POST /v1/apps/shop-data/edge-rules" {
+		t.Fatalf("calls = %s (a new allowlist needs no lookup)", got)
+	}
+	var receipt dataAPIConfigureReceipt
+	if err := json.Unmarshal(out.Bytes(), &receipt); err != nil || strings.Join(receipt.PublicRPC, ",") != "api.search_products" || receipt.PublicReadCache != "1m0s" || strings.Join(receipt.Changed, ",") != "public_rpc,public_read_cache" {
+		t.Fatalf("receipt = %+v (%v): %s", receipt, err, out.String())
+	}
+}
+
+func TestDataAPIPublicRPCDiagnostics(t *testing.T) {
+	c := newDataAPIDiagnosticsCollector("", "")
+	c.observe(dataAPIDiagnosticFixture(t, 1, "rpc", "rejected", 405, 1, "public_rpc_requires_get"))
+	c.finish()
+	if c.report.Failures.PublicRPCNotGET != 1 {
+		t.Fatalf("public RPC POSTs were misclassified: %+v", c.report.Failures)
+	}
+	stdout, _, restore := swapIO(t)
+	defer restore()
+	if err := writeDataAPIDiagnostics(c.report); err != nil || !strings.Contains(stdout.String(), "Public RPC calls without a token sent by POST: 1") {
+		t.Fatalf("missing public RPC text: %s (%v)", stdout.String(), err)
 	}
 }

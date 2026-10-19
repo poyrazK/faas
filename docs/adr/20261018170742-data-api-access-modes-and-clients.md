@@ -180,6 +180,40 @@ server-key live subscriptions are not supported yet. They need endpoint
 admission without a user token, and the public-read allowlist and key hashes
 delivered to realtimed.
 
+### Public RPCs
+
+`DATA_API_PUBLIC_RPC` (at most 64 `schema.function` entries in exposed schemas)
+lists approved functions callable without a token. Configure it with
+`data-api create|configure --public-rpc` and remove it with `--no-public-rpc`.
+
+- **GET only.** An anonymous call must be `GET` or `HEAD`; an anonymous `POST`
+  to a listed function answers `405 public_rpc_requires_get` with
+  `Allow: GET, HEAD`. PostgREST runs `GET` calls in a read-only transaction.
+  That transaction, not volatility, is what stops writes: a `STABLE` function
+  can call a `VOLATILE` one. Signed-in and server-key callers may use `GET` or
+  `POST` on listed functions; other approved functions remain `POST`-only.
+- **Startup check.** The runtime refuses to start
+  (`data_api_public_rpc_unsafe`) unless every entry is in the serving contract
+  (annotated `@gregale:rpc`, one signature, security invoker) and declared
+  `STABLE` or `IMMUTABLE`. Volatility is checked by its own catalog query
+  rather than added to the snapshot, so existing contract fingerprints do not
+  change.
+- **Row decisions.** Calls run as the binding login with
+  `gregale_access=anonymous`. RLS applies to the tables the function reads.
+  Unlike public relations, the gateway cannot prove the function reads only
+  RLS tables or security-invoker views. Listing a function is the owner's
+  statement that its body is safe for anyone; the docs say so.
+- **Embedding.** Relations embedded through `select` must be in
+  `DATA_API_PUBLIC_READ`, in the function's schema.
+- **Limits and cache.** Public RPCs alone enable the anonymous per-address rate
+  limit. `DATA_API_PUBLIC_READ_MAX_AGE` now requires either allowlist and
+  covers canonical anonymous `GET` calls in the default schema. Responses carry
+  `data-api-rpc:SCHEMA.FUNCTION` plus their embedded relations' tags; a
+  function's own reads are not tagged. `configure` removes the cache rule and
+  max age before it removes the last remaining allowlist.
+- **Catalog and logs.** `/openapi.json` keeps the `get` operation only for
+  public functions. Diagnostics count `public_rpc_requires_get` separately.
+
 ## Consequences
 
 - Public reads and server keys widen who can reach SQL. Both are owner opt-ins
