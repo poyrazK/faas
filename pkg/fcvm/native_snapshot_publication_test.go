@@ -117,7 +117,7 @@ func checkNativeSnapshotPublicationRefusal(t *testing.T, operation, namespace st
 		capture = v.Snapshot
 	}
 	info, err := capture(ctx, lease, spec)
-	if !errors.Is(err, state.ErrConflict) || info != (SnapshotInfo{}) {
+	if !errors.Is(err, state.ErrConflict) || !info.IsZero() {
 		t.Fatalf("unsupported native capture: info=%+v error=%v", info, err)
 	}
 	if trap.apiCalls.Load() != 0 || trap.storageCalls.Load() != 0 || v.clients[lease.Instance] == nil {

@@ -1,0 +1,12 @@
+hosting:
+  port: 8080
+  health: /healthz
+lifecycle:
+  before_checkpoint:
+    path: /internal/before-checkpoint
+    timeout_ms: 2000
+  after_restore:
+    path: /internal/after-restore
+    timeout_ms: 2000
+release:
+  command: python migrate.py

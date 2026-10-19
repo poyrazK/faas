@@ -38,7 +38,7 @@ func TestInvoiceRefreshPolarIdentityAndFacts(t *testing.T) {
 	defer srv.Close()
 	p := &Provider{apiKey: "test-key", baseURL: srv.URL, client: srv.Client()}
 	acct := state.Account{ID: "account", ProviderCustomerID: "customer_invoice"}
-	inv := state.Invoice{AccountID: acct.ID, Provider: "polar", ProviderInvoiceID: "order_invoice", Currency: "eur", TotalCents: 1190, TaxCents: 190}
+	inv := state.Invoice{AccountID: acct.ID, Provider: "polar", ProviderInvoiceID: "order_invoice", Currency: "usd", TotalCents: 1190, TaxCents: 190}
 	d, err := p.FetchInvoiceDetails(t.Context(), acct, inv)
 	if err != nil {
 		t.Fatal(err)
@@ -53,7 +53,7 @@ func TestInvoiceRefreshPolarIdentityAndFacts(t *testing.T) {
 	for _, tc := range []struct {
 		key   string
 		value any
-	}{{"customer_id", "customer_foreign"}, {"id", "order_foreign"}, {"currency", "usd"}, {"tax_amount", json.Number("190.5")}} {
+	}{{"customer_id", "customer_foreign"}, {"id", "order_foreign"}, {"currency", "eur"}, {"tax_amount", json.Number("190.5")}} {
 		old := data[tc.key]
 		data[tc.key] = tc.value
 		if _, err := p.FetchInvoiceDetails(t.Context(), acct, inv); !errors.Is(err, billing.ErrInvoiceSourceMismatch) {

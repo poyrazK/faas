@@ -6,7 +6,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 export interface IssueSourceMap {
   /** Exact absolute bundle path or file URL as it appears in error stacks. */
   generatedFile: string;
-  /** Map file JSON. The reporter never reads files or fetches map URLs. */
+  /** JSON supplied for manual registration. Capture never reads files or fetches map URLs. */
   payload: string;
 }
 
@@ -19,12 +19,12 @@ export interface ReportedIssueFrame {
 
 // Mirror pkg/api/limits.go, ADR-1113. Count decoded rows AND segments to bound
 // maps containing many empty lines as well as dense minified bundles.
-const maxMaps = 32;
-const maxMapBytes = 512 << 10;
-const maxTotalBytes = 4 << 20;
-const maxEntries = 100000;
-const maxSymbols = 8192;
-const maxFileBytes = 512;
+export const issueSourceMapLimits = Object.freeze({
+  maps: 32, mapBytes: 512 << 10, totalBytes: 4 << 20,
+  entries: 100000, symbols: 8192, fileBytes: 512,
+});
+const { maps: maxMaps, mapBytes: maxMapBytes, totalBytes: maxTotalBytes,
+  entries: maxEntries, symbols: maxSymbols, fileBytes: maxFileBytes } = issueSourceMapLimits;
 
 function invalid(): never {
   throw new Error('Invalid issue source map: expected bounded flat Source Map v3 JSON');

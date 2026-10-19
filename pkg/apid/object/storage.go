@@ -686,7 +686,7 @@ func (s *Service) SetBucketAccessGrant(w http.ResponseWriter, r *http.Request, a
 	if !decodeBucketRequest(w, r, &req) {
 		return
 	}
-	key, err := s.Host.Store().GetAPIKey(r.Context(), acct.ID, keyID)
+	key, err := s.objectGrantKey(r.Context(), acct.ID, keyID)
 	if err != nil {
 		BucketProblem(w, err)
 		return

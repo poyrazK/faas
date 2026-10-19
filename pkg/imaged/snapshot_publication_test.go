@@ -12,6 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/audit"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 	"github.com/onebox-faas/faas/pkg/storage"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -147,7 +148,7 @@ func TestWarmSnapshotStalePublicationHasNoPromotion(t *testing.T) {
 type snapshotUnlistedBackend struct{ storage.StorageBackend }
 
 type snapshotPolicyRaceStore struct {
-	*state.MemStore
+	MemStore  *state.MemStore
 	accountID string
 	appID     string
 	inserted  bool
@@ -279,7 +280,7 @@ func TestSnapshotPublicationRechecksEphemeralClassAfterRowInsert(t *testing.T) {
 	store := &snapshotPolicyRaceStore{MemStore: mem, accountID: acct.ID, appID: app.ID}
 	be := mustLocalStorage(t, t.TempDir())
 	ops := wire.NewOpsMetrics("imaged")
-	h := New(store, &fakeNotifier{}, fakePuller{}, &fakeBuilder{}, "./init", t.TempDir(), silentLogger()).WithStorage(be).WithOpsMetrics(ops)
+	h := New(statetest.NewMem(store), &fakeNotifier{}, fakePuller{}, &fakeBuilder{}, "./init", t.TempDir(), silentLogger()).WithStorage(be).WithOpsMetrics(ops)
 	key := state.SnapshotCaptureMemKey(dep.ID, state.SnapshotTierInit, "policy-race")
 	for _, part := range []string{key, state.SnapshotVMStateKey(state.Snapshot{StorageKey: key})} {
 		if err := be.Put(ctx, part, strings.NewReader(part)); err != nil {

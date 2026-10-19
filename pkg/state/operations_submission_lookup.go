@@ -51,7 +51,7 @@ func prepareOperationSubmissionLookup(account, tenant string, req api.OperationS
 
 func operationSubmissionObservation(op *Operation, expiry time.Time, now time.Time) api.OperationSubmissionLookupResponse {
 	result := api.OperationSubmissionLookupResponse{State: "expired", IdempotencyExpiresAt: &expiry}
-	if op == nil || !operationRetained(*op, now) || (expiry.Before(now) || expiry.Equal(now)) && op.State != api.OperationAccepted && op.State != api.OperationRunning {
+	if op == nil || !operationRetained(*op, now) || (expiry.Before(now) || expiry.Equal(now)) && !operationIsActive(*op) {
 		return result
 	}
 	result.State = "accepted"

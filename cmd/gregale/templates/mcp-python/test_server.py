@@ -1,5 +1,6 @@
 """Public HTTP regression contracts for the modern stateless starter."""
 import json
+import http.client
 import tempfile
 import threading
 import unittest
@@ -53,5 +54,54 @@ class MCPStarterTests(unittest.TestCase):
             with tempfile.TemporaryDirectory() as directory:
                 path=Path(directory)/"gregale-mcp.json";path.write_text(json.dumps({**self.config,**change}))
                 with self.assertRaises(AuthConfigurationError):load_config(path)
+
+
+class MCPCORSTests(unittest.TestCase):
+    setUp = MCPStarterTests.setUp
+    tearDown = MCPStarterTests.tearDown
+    def test_browser_preflight(self):
+        for origin, method, headers, path, status in [
+            ("https://trusted.example", "POST", "Authorization, Content-Type, MCP-Protocol-Version, MCP-Method, MCP-Name, MCP-Param-report", "/mcp", 204),
+            ("https://evil.example", "POST", "Authorization", "/mcp", 403),
+            (None, "POST", "Authorization", "/mcp", 405),
+            ("https://trusted.example", "DELETE", "Authorization", "/mcp", 400),
+            ("https://trusted.example", None, "Authorization", "/mcp", 400),
+            ("https://trusted.example", "POST", "X-Secret", "/mcp", 400),
+            ("https://trusted.example", "POST", "MCP-Param-", "/mcp", 400),
+            ("https://trusted.example", "POST", "Authorization", "/missing", 404),
+        ]:
+            with self.subTest(origin=origin,method=method,headers=headers,path=path):
+                request_headers={"Access-Control-Request-Headers":headers}
+                if origin is not None:request_headers["Origin"]=origin
+                if method is not None:request_headers["Access-Control-Request-Method"]=method
+                request=Request(self.base+path,method="OPTIONS",headers=request_headers)
+                try:response=urlopen(request,timeout=3)
+                except HTTPError as error:response=error
+                with response:
+                    self.assertEqual(response.status,status)
+                    if status==204:
+                        self.assertEqual(response.read(),b"")
+                        self.assertEqual(response.headers["Access-Control-Allow-Origin"],origin)
+                        self.assertIn("authorization",response.headers["Access-Control-Allow-Headers"])
+                    else:self.assertIsNone(response.headers.get("Access-Control-Allow-Methods"))
+                    if status==403:self.assertIsNone(response.headers.get("Access-Control-Allow-Origin"))
+    def test_duplicate_origin_is_rejected(self):
+        connection=http.client.HTTPConnection("127.0.0.1",self.http.server_address[1],timeout=3)
+        try:
+            connection.putrequest("OPTIONS","/mcp")
+            connection.putheader("Origin","https://trusted.example")
+            connection.putheader("Origin","https://trusted.example")
+            connection.putheader("Access-Control-Request-Method","POST")
+            connection.endheaders()
+            response=connection.getresponse()
+            self.assertEqual(response.status,403)
+            self.assertIsNone(response.getheader("Access-Control-Allow-Origin"))
+            response.read()
+        finally:connection.close()
+
+    def test_actual_response_headers(self):
+        with urlopen(Request(self.base+"/healthz",headers={"Origin":"https://trusted.example"}),timeout=3) as response:
+            self.assertEqual(response.headers["Access-Control-Allow-Origin"],"https://trusted.example")
+            self.assertEqual(response.headers["Access-Control-Expose-Headers"],"WWW-Authenticate, MCP-Protocol-Version, Streaming-Status")
 
 if __name__=="__main__":unittest.main()

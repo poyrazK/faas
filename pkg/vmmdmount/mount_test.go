@@ -45,10 +45,10 @@ func TestRegistry_RegisterOrEvict_HappyPath(t *testing.T) {
 	r := NewRegistry(8)
 	mpA := filepath.Join(MountRoot, "mnt-a")
 	mpB := filepath.Join(MountRoot, "mnt-b")
-	if ev := r.RegisterOrEvict(mpA, MountKindParentExt4, "key-a", "/src/a"); ev != "" {
+	if ev := registerMountForTest(t, r, mpA, MountKindParentExt4, "key-a", "/src/a"); ev != "" {
 		t.Errorf("unexpected eviction on first register: %q", ev)
 	}
-	if ev := r.RegisterOrEvict(mpB, MountKindParentExt4, "key-b", "/src/b"); ev != "" {
+	if ev := registerMountForTest(t, r, mpB, MountKindParentExt4, "key-b", "/src/b"); ev != "" {
 		t.Errorf("unexpected eviction on second register: %q", ev)
 	}
 	for _, mp := range []string{mpA, mpB} {
@@ -67,13 +67,13 @@ func TestRegistry_RegisterOrEvict_LoadShedsOldest(t *testing.T) {
 	mpOld := filepath.Join(MountRoot, "mnt-old1")
 	mpNew1 := filepath.Join(MountRoot, "mnt-new1")
 	mpNew2 := filepath.Join(MountRoot, "mnt-new2")
-	r.RegisterOrEvict(mpOld, MountKindParentExt4, "k1", "/s1")
+	registerMountForTest(t, r, mpOld, MountKindParentExt4, "k1", "/s1")
 	// Force a measurable mountedAt gap so the load-shed
 	// deterministically picks the OLDEST (old1), not new1.
 	timeSleep(t, 10)
-	r.RegisterOrEvict(mpNew1, MountKindParentExt4, "k2", "/s2")
+	registerMountForTest(t, r, mpNew1, MountKindParentExt4, "k2", "/s2")
 	timeSleep(t, 10)
-	ev := r.RegisterOrEvict(mpNew2, MountKindParentExt4, "k3", "/s3")
+	ev := registerMountForTest(t, r, mpNew2, MountKindParentExt4, "k3", "/s3")
 	if ev != mpOld {
 		t.Errorf("evicted = %q, want %q (oldest)", ev, mpOld)
 	}
@@ -91,7 +91,7 @@ func TestRegistry_RegisterOrEvict_LoadShedsOldest(t *testing.T) {
 func TestRegistry_Forget_Idempotent(t *testing.T) {
 	r := NewRegistry(8)
 	mp := filepath.Join(MountRoot, "mnt-x")
-	r.RegisterOrEvict(mp, MountKindParentExt4, "k", "/s")
+	registerMountForTest(t, r, mp, MountKindParentExt4, "k", "/s")
 	r.Forget(mp)
 	r.Forget(mp) // must not panic
 	if _, ok := r.Lookup(mp); ok {
@@ -191,7 +191,7 @@ func TestRegistry_Umount_RemovesEntryWithoutSyscall(t *testing.T) {
 	if err := os.WriteFile(src, []byte("hi"), 0o600); err != nil {
 		t.Fatalf("write src: %v", err)
 	}
-	r.RegisterOrEvict(mp, MountKindParentExt4, "k1", src)
+	registerMountForTest(t, r, mp, MountKindParentExt4, "k1", src)
 
 	found, err := r.Umount(context.Background(), mp)
 	if err != nil {
@@ -215,7 +215,7 @@ func TestRegistry_Umount_RemovesEntryWithoutSyscall(t *testing.T) {
 func TestRegistry_RegisterOrEvict_OverlayKind_NoStorageKey(t *testing.T) {
 	r := NewRegistry(8)
 	mp := filepath.Join(OverlayStagingRoot, "merged-overlay")
-	if ev := r.RegisterOrEvict(mp, MountKindOverlayParent, "", ""); ev != "" {
+	if ev := registerMountForTest(t, r, mp, MountKindOverlayParent, "", ""); ev != "" {
 		t.Errorf("unexpected eviction: %q", ev)
 	}
 	e, ok := r.Lookup(mp)
@@ -245,11 +245,11 @@ func TestRegistry_RegisterOrEvict_EvictionReturned(t *testing.T) {
 	mpOld := filepath.Join(MountRoot, "mnt-evict-old")
 	mpNew1 := filepath.Join(MountRoot, "mnt-evict-1")
 	mpNew2 := filepath.Join(MountRoot, "mnt-evict-2")
-	r.RegisterOrEvict(mpOld, MountKindParentExt4, "k", "/s")
+	registerMountForTest(t, r, mpOld, MountKindParentExt4, "k", "/s")
 	timeSleep(t, 10)
-	r.RegisterOrEvict(mpNew1, MountKindParentExt4, "k", "/s")
+	registerMountForTest(t, r, mpNew1, MountKindParentExt4, "k", "/s")
 	timeSleep(t, 10)
-	ev := r.RegisterOrEvict(mpNew2, MountKindParentExt4, "k", "/s")
+	ev := registerMountForTest(t, r, mpNew2, MountKindParentExt4, "k", "/s")
 	if ev != mpOld {
 		t.Errorf("evicted = %q, want %q (B5 — caller must act on this)", ev, mpOld)
 	}
@@ -305,7 +305,7 @@ func TestRegistry_ConcurrentRegisterUmountSweep_RaceFree(t *testing.T) {
 		defer wg.Done()
 		for i := 0; i < iters; i++ {
 			mp := filepath.Join(MountRoot, ParentMountPrefix+fmt.Sprintf("raceA-%d", i%8))
-			_ = r.RegisterOrEvict(mp, MountKindParentExt4, "k", "/s")
+			_, _ = r.RegisterOrEvict(mp, MountKindParentExt4, "k", "/s")
 		}
 	}()
 
@@ -314,7 +314,7 @@ func TestRegistry_ConcurrentRegisterUmountSweep_RaceFree(t *testing.T) {
 		defer wg.Done()
 		for i := 0; i < iters; i++ {
 			mp := filepath.Join(MountRoot, ParentMountPrefix+fmt.Sprintf("raceB-%d", i%8))
-			_ = r.RegisterOrEvict(mp, MountKindParentExt4, "k", "/s")
+			_, _ = r.RegisterOrEvict(mp, MountKindParentExt4, "k", "/s")
 		}
 	}()
 
@@ -379,7 +379,7 @@ func TestRegistry_ConcurrentRegisterSameMountpoint_NoLostUpdate(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for i := 0; i < iters; i++ {
-				_ = r.RegisterOrEvict(mp, MountKindParentExt4, fmt.Sprintf("k-%d-%d", w, i), "/s")
+				_, _ = r.RegisterOrEvict(mp, MountKindParentExt4, fmt.Sprintf("k-%d-%d", w, i), "/s")
 			}
 		}()
 	}
@@ -392,4 +392,13 @@ func TestRegistry_ConcurrentRegisterSameMountpoint_NoLostUpdate(t *testing.T) {
 	if n := len(r.entries); n != 1 {
 		t.Errorf("len(entries) = %d after same-mountpoint writes, want 1", n)
 	}
+}
+
+func registerMountForTest(t *testing.T, r *Registry, mountpoint string, kind MountKind, key, source string) string {
+	t.Helper()
+	evicted, err := r.RegisterOrEvict(mountpoint, kind, key, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return evicted
 }

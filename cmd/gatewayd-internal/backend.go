@@ -188,14 +188,14 @@ func (r pgRouter) environmentHost(ctx context.Context, environmentID, appID stri
 	}
 	deployment, found, err := r.environmentDeployment(ctx, app, environment)
 	if errors.Is(err, errProjectEnvironmentCloneNotReady) {
-		acct, acctErr := r.store.AccountByID(ctx, app.AccountID)
+		acct, acctErr := state.AppResourceAccount(ctx, r.store, app)
 		if acctErr != nil {
 			return gateway.App{}, false, acctErr
 		}
 		if app.Status == state.AppDeleted || api.NormalizeAppVisibility(app.Visibility) == api.AppVisibilityInternal {
 			return gateway.App{}, false, nil
 		}
-		return gateway.App{ID: app.ID, AccountID: acct.ID, Plan: acct.Plan, AccountStatus: string(acct.Status),
+		return gateway.App{ID: app.ID, AccountID: acct.ID, ResourceOwnerID: acct.ResourceOrgID, Plan: acct.Plan, AccountStatus: string(acct.Status),
 			AccountAbuseHeld: acct.AbuseHeld(), EnvironmentNotReady: true, DynamicRoute: true}, true, nil
 	}
 	if err != nil || !found {
@@ -567,7 +567,7 @@ func (r pgRouter) toAppWithDeployment(ctx context.Context, app state.App, exact 
 		}
 		app = resolved
 	}
-	acct, err := r.store.AccountByID(ctx, app.AccountID)
+	acct, err := state.AppResourceAccount(ctx, r.store, app)
 	if err != nil {
 		return gateway.App{}, false, err
 	}
@@ -629,6 +629,7 @@ func (r pgRouter) toAppWithDeployment(ctx context.Context, app state.App, exact 
 	return gateway.App{
 		ID:                           app.ID,
 		AccountID:                    acct.ID,
+		ResourceOwnerID:              acct.ResourceOrgID,
 		SecurityQuarantined:          securityQuarantined,
 		Visibility:                   api.NormalizeAppVisibility(app.Visibility),
 		AccountStatus:                string(acct.Status),
@@ -1062,6 +1063,9 @@ func handleDeploymentRouteInvalidation(ctx context.Context, inv invalidator, raw
 	if err != nil {
 		log.Warn("gatewayd: bad deployment_route_changed payload", "err", err)
 		return db.DeploymentRouteChangedPayload{}, false
+	}
+	if admission, ok := inv.(interface{ InvalidateWorkloadAdmission(string) }); ok {
+		admission.InvalidateWorkloadAdmission(payload.AppID)
 	}
 	inv.InvalidateResponseCacheByApp(payload.AppID)
 	// Load the candidate target before publishing its 100% weight into this

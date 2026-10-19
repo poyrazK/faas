@@ -26,7 +26,7 @@ func TestComputePushReservesEarlierLiveEgressAgainstCap(t *testing.T) {
 		start := time.Date(2026, 9, 10, 0, 0, 0, 0, time.UTC)
 		// Hour 0 has no compute overage but two cents of egress. Hour 1's
 		// one-cent compute window cannot be sent against the same two-cent cap.
-		if err := store.AppendUsage(ctx, acct.ID, "app", "instance", start, 50*api.SecondsPerGBHour, 0, 0, 0, 2<<30, 0, 0, 0); err != nil {
+		if err := store.AppendUsage(ctx, acct.ID, "app", "instance", start, api.IncludedMBSeconds(api.PlanHobby), 0, 0, 0, 2<<30, 0, 0, 0); err != nil {
 			t.Fatal(err)
 		}
 		if err := store.AppendUsage(ctx, acct.ID, "app", "instance", start.Add(time.Hour), api.SecondsPerGBHour, 0, 0, 0, 0, 0, 0, 0); err != nil {
@@ -63,7 +63,7 @@ func TestEgressCapDoesNotRoundFractionalComputeDown(t *testing.T) {
 	store.SetOverageCapCentsForTest(acct.ID, 1)
 	start := time.Date(2026, 9, 10, 0, 0, 0, 0, time.UTC)
 	// Half a cent of compute plus one cent of egress exceeds a one-cent cap.
-	if err := store.AppendUsage(ctx, acct.ID, "app", "instance", start, 50*api.SecondsPerGBHour+api.SecondsPerGBHour/2, 0, 0, 0, 3<<29, 0, 0, 0); err != nil {
+	if err := store.AppendUsage(ctx, acct.ID, "app", "instance", start, api.IncludedMBSeconds(api.PlanHobby)+api.SecondsPerGBHour/2, 0, 0, 0, 3<<29, 0, 0, 0); err != nil {
 		t.Fatal(err)
 	}
 	provider := &combinedOverageProvider{recordingEgressProvider: recordingEgressProvider{mode: billing.MeterDeliveryLive}}
@@ -87,7 +87,7 @@ func TestCombinedFractionalUsageCanExactlyFillCap(t *testing.T) {
 	store.SetOverageCapCentsForTest(acct.ID, 1)
 	start := time.Date(2026, 9, 30, 23, 0, 0, 0, time.UTC)
 	// Each meter costs half a cent. Do not round each one up independently.
-	if err := store.AppendUsage(ctx, acct.ID, "app", "instance", start, 50*api.SecondsPerGBHour+api.SecondsPerGBHour/2, 0, 0, 0, 5<<28, 0, 0, 0); err != nil {
+	if err := store.AppendUsage(ctx, acct.ID, "app", "instance", start, api.IncludedMBSeconds(api.PlanHobby)+api.SecondsPerGBHour/2, 0, 0, 0, 5<<28, 0, 0, 0); err != nil {
 		t.Fatal(err)
 	}
 	provider := &combinedOverageProvider{recordingEgressProvider: recordingEgressProvider{mode: billing.MeterDeliveryLive}}
@@ -122,7 +122,7 @@ func TestCombinedCapReadFailureLeavesUsagePending(t *testing.T) {
 	acct := makeBillableAccount(t, ctx, mem, api.PlanHobby)
 	mem.SetOverageCapCentsForTest(acct.ID, 2)
 	start := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
-	if err := mem.AppendUsage(ctx, acct.ID, "app", "instance", start, 51*api.SecondsPerGBHour, 0, 0, 0, 0, 0, 0, 0); err != nil {
+	if err := mem.AppendUsage(ctx, acct.ID, "app", "instance", start, api.IncludedMBSeconds(api.PlanHobby)+api.SecondsPerGBHour, 0, 0, 0, 0, 0, 0, 0); err != nil {
 		t.Fatal(err)
 	}
 	readErr := errors.New("cannot read egress liability")

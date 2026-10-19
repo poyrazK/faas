@@ -56,17 +56,25 @@ func UnitGatewaydInternal() daemonunit.Unit {
 		// only produced "Unit is masked" noise at every start. It dials
 		// both over the split-box mTLS transport, so vmmd is the only
 		// local dependency.
+		// faas-gatewayd-internal.socket is opt-in: the gatewayd_internal_service
+		// role adds Wants=/After= on it in a drop-in when
+		// faas_compute_durable_listeners is on (ADR-1736).
 		After:                 []string{"faas-cp.slice", "network-online.target", "faas-vmmd.service", "faas-realtimed.service"},
 		Wants:                 []string{"faas-cp.slice", "faas-vmmd.service", "faas-realtimed.service"},
 		StartLimitIntervalSec: "60s",
 		StartLimitBurst:       "5",
 
-		Type:       "notify",
-		User:       "faas",
-		Group:      "faas",
-		ExecStart:  `/opt/faas/current/bin/gatewayd-internal --config /etc/faas/gatewayd-internal.toml`,
-		Restart:    "on-failure",
-		RestartSec: "2s",
+		Type: "notify",
+		// `systemctl reload` hands off to a second generation that serves
+		// new connections while this one finishes its own (ADR-1736).
+		NotifyAccess: "main",
+		ExecReload:   handoffReload,
+		OOMPolicy:    "continue",
+		User:         "faas",
+		Group:        "faas",
+		ExecStart:    `/opt/faas/current/bin/gatewayd-internal --config /etc/faas/gatewayd-internal.toml`,
+		Restart:      "on-failure",
+		RestartSec:   "2s",
 		// ADR-190: hot-path daemon; a stalled runtime must be replaced
 		// quickly since every request on the node routes through it.
 		WatchdogSec: "60s",
@@ -124,7 +132,7 @@ func UnitGatewaydInternal() daemonunit.Unit {
 		ProtectProc:             "invisible",
 
 		ReadOnlyPaths:  []string{"/etc/faas"},
-		ReadWritePaths: []string{"/run/faas", "/var/lib/faas/log-drains", "/var/lib/faas/egress-meter", "/var/lib/faas/consumer-usage"},
+		ReadWritePaths: []string{"/run/faas", "/var/lib/faas/log-drains", "/var/lib/faas/egress-meter", "/var/lib/faas/consumer-usage", "/var/lib/faas/wake-ahead"},
 
 		WantedBy: "multi-user.target",
 	}

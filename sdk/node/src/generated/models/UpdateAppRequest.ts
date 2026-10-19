@@ -78,6 +78,10 @@ export type UpdateAppRequest = {
    */
   before_checkpoint?: BeforeCheckpointHook;
   /**
+   * When the platform may pause the app's VM (ADR-1151): between_requests pauses it between requests and freezes it at the idle timeout, when_idle freezes it at the idle timeout, never parks it as before. Omitted uses the default: between_requests for functions, when_idle for request-mode apps. Worker, service and job execution modes accept only never. Omit to preserve; an empty string restores the default.
+   */
+  pause?: 'between_requests' | 'when_idle' | 'never' | '';
+  /**
    * Upper bound on time-to-ready in seconds. Omit for no change; 0 uses the plan default.
    */
   startup_deadline_s?: number | null;
@@ -101,6 +105,10 @@ export type UpdateAppRequest = {
    * Per-app request wall-clock timeout in seconds. 0 inherits the plan/type default.
    */
   request_timeout_s?: number | null;
+  /**
+   * Changes how many requests one Node or Python function worker serves at once (ADR-1342). 0 or 1 restores one request per worker; capped by the plan's concurrency_per_vm. Existing functions pick up the change on their next deploy.
+   */
+  function_concurrency?: number | null;
   /**
    * Runtime override for the app-wide edge rate-limit refill rate. 0 restores the plan default; positive values may only tighten the plan ceiling. Does not create a deployment.
    */
@@ -165,6 +173,14 @@ export type UpdateAppRequest = {
    * Set the revision pin window in seconds; zero disables future retention. Omit for no change.
    */
   revision_pin_ttl_seconds?: number | null;
+  /**
+   * Set the default rollout for production releases (ADR-1446, ADR-1450). Omit for no change.
+   */
+  release_policy?: 'safe' | 'fast' | 'immediate';
+  /**
+   * Replace the paths the default rollout probe checks (ADR-1449). An empty list restores /. Omit for no change.
+   */
+  release_probe_paths?: any[] | null;
   min_instances?: number | null;
   /**
    * v4 or v6 CIDR allowlist; empty array clears to chain-default-accept.
@@ -260,5 +276,9 @@ export type UpdateAppRequest = {
   overflow_node?: string | null;
   cors_default_enabled?: boolean | null;
   cors_default_origins?: Array<string>;
+  /**
+   * Apply only if the locked app service settings still match this fingerprint. Supported only for app-level service-only updates; returns 409 on conflict. Omit for the existing unguarded behavior.
+   */
+  expected_service_binding_fingerprint?: string;
 };
 

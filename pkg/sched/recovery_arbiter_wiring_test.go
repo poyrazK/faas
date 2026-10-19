@@ -1,3 +1,5 @@
+// adr: 137
+// adr: 1528
 // recovery_arbiter_wiring_test.go — pin the Engine ↔ Arbiter
 // wiring (Task #61 / ADR-137). The MigrateLiveInstances path
 // must consult the arbiter for cold_booting rows on unavailable
@@ -40,12 +42,12 @@ func arbiterTestEngine(t *testing.T) (*Engine, *state.MemStore) {
 }
 
 // seedUnavailableNodeWithColdBooting — the case the arbiter's
-// Recreate verdict covers. Inserts a node with lifecycle='unavailable'
-// (the heartbeat-dead stamp) and a cold_booting instance on it.
+// Recreate verdict covers. Admit a cold_booting instance, then stamp its node
+// unavailable as the heartbeat loop would after losing the host.
 func seedUnavailableNodeWithColdBooting(t *testing.T, store *state.MemStore) (state.ComputeNode, state.Instance) {
 	t.Helper()
 	node, err := store.UpsertComputeNode(context.Background(), state.ComputeNode{
-		Name: "node-dead", Lifecycle: state.NodeLifecycleUnavailable, Active: false,
+		Name: "node-dead", Lifecycle: state.NodeLifecycleActive, Active: true,
 	})
 	if err != nil {
 		t.Fatalf("UpsertComputeNode: %v", err)
@@ -54,6 +56,13 @@ func seedUnavailableNodeWithColdBooting(t *testing.T, store *state.MemStore) (st
 		"app-r", "dep-r", "cold_booting", 256, node.ID, "wake-r")
 	if err != nil {
 		t.Fatalf("CreateInstance: %v", err)
+	}
+	if err := store.NodeSetLifecycle(t.Context(), node.ID, state.NodeLifecycleActive, state.NodeLifecycleUnavailable); err != nil {
+		t.Fatal(err)
+	}
+	node, err = store.NodeGet(t.Context(), node.ID)
+	if err != nil {
+		t.Fatal(err)
 	}
 	return node, ins
 }

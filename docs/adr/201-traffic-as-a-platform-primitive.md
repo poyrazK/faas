@@ -413,3 +413,13 @@ Production-us hunt #4 found that §2 had shipped only half-wired:
 **Evidence still owed (§4):** a recorded run showing a retry turning a 502
 into a 200 against a killed instance, now runnable on production-us. The
 egress breaker (`FAAS_EGRESS_CIRCUIT_BREAKER`) stays off.
+
+## Amendment 2026-10-12 — undelivered service calls re-route outside the budget (ADR-1133)
+
+When the forwarding bridge proves a service-proxy request reached no guest
+(no node client, stream open `Unavailable`, or vmmd `NotFound` before any
+response), the call gets one extra attempt for any method without spending the
+aggregate retry budget or waiting out backoff. Retries of requests that may
+have reached a guest keep every rule above. The service proxy also buffers
+declared-length bodies up to 1 MiB so both kinds of replay can resend them.
+See ADR-1133.

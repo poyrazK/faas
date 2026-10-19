@@ -1,0 +1,54 @@
+[Unit]
+Description=onebox-faas gatewayd-public — compute-node app edge behind Cloudflare Tunnel (ADR-1343)
+Documentation=https://gregale.dev/docs/ops/gatewayd-public
+After=faas-cp.slice network-online.target faas-gatewayd-internal.service
+Wants=faas-cp.slice faas-gatewayd-internal.service
+Requires=faas-gatewayd-public-edge.socket
+StartLimitIntervalSec=60s
+StartLimitBurst=5
+
+[Service]
+Type=notify
+NotifyAccess=main
+User=faas
+Group=faas
+ExecStart=/opt/faas/current/bin/gatewayd-public
+ExecReload=/bin/kill -USR2 $MAINPID
+Restart=on-failure
+RestartSec=2s
+WatchdogSec=60s
+Slice=faas-cp.slice
+MemoryMax=512M
+OOMPolicy=continue
+AmbientCapabilities=
+EnvironmentFile=-/etc/faas/compute-db.env
+EnvironmentFile=-/etc/faas/otel.env
+Environment=GOMEMLIMIT=384MiB
+Environment=FAAS_PUBLIC_EDGE_MODE=compute
+Environment=FAAS_GATEWAYD_PUBLIC_ROLE=compute-only
+Environment=FAAS_PUBLIC_LISTEN_ADDR=127.0.0.1:8090
+Environment=FAAS_PUBLIC_CONTROL_ADDR=0.0.0.0:9092
+Environment=FAAS_TRUSTED_INGRESS_CIDRS=127.0.0.0/8,::1/128
+Environment=FAAS_OTEL_SPANS_WRITER_ENABLED=false
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+SystemCallArchitectures=native
+LockPersonality=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX AF_INET
+ProtectHostname=yes
+ProtectClock=yes
+ProtectProc=invisible
+ReadOnlyPaths=/etc/faas
+ReadWritePaths=/run/faas
+
+[Install]
+WantedBy=multi-user.target

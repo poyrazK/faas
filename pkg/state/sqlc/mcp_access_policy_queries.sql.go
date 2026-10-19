@@ -220,7 +220,7 @@ func (q *Queries) ListDueMCPCatalogOAuthRevocations(ctx context.Context, db DBTX
 const listDueMCPCatalogObservers = `-- name: ListDueMCPCatalogObservers :many
 SELECT m.app_id,m.account_id,a.slug,views.key::text AS role,views.value::jsonb AS view
 FROM mcp_catalog_monitors m JOIN apps a ON a.id=m.app_id AND a.account_id=m.account_id
-JOIN accounts ac ON ac.id=a.account_id
+JOIN app_resource_accounts ac ON ac.app_id = a.id
 CROSS JOIN LATERAL jsonb_each(jsonb_build_object('default',m.payload)||COALESCE(m.payload->'roles','{}'::jsonb)) views
 WHERE a.workload_class='http' AND a.status IN ('active','evicted_cold') AND ac.plan IN ('hobby','pro','scale')
 AND a.public_auth_mode<>'internal_only'
@@ -464,7 +464,7 @@ func (q *Queries) MCPAdmissionEvidenceExists(ctx context.Context, db DBTX, arg M
 }
 
 const mCPConnectionHealthBindings = `-- name: MCPConnectionHealthBindings :many
-SELECT jsonb_build_object('app_id',a.id,'app_slug',a.slug,'role',v.key,
+SELECT jsonb_build_object('app_id',a.id,'app_slug',a.slug,'role',v.key,'scope',COALESCE(NULLIF(v.value#>>'{config,scope}',''),'default'),
 'observer_state',v.value->'observer_status'->>'state','oauth_state',v.value->'observer_status'->'oauth'->>'state','credential_state',v.value->'oauth_lifecycle'->>'credential_state',
 'guided',COALESCE((v.value->'config'->'observer'->'oauth'->>'guided')::boolean,false),
 'enabled',COALESCE((v.value->'config'->>'enabled')::boolean,false) AND COALESCE((v.value->'config'->'observer'->>'enabled')::boolean,false),
@@ -506,7 +506,7 @@ func (q *Queries) MCPConnectionHealthBindings(ctx context.Context, db DBTX, arg 
 }
 
 const mCPConnectionHealthRetirements = `-- name: MCPConnectionHealthRetirements :many
-SELECT jsonb_build_object('app_id',r.app_id,'app_slug',r.payload->>'app_slug','role',r.payload->>'role',
+SELECT jsonb_build_object('app_id',r.app_id,'app_slug',r.payload->>'app_slug','role',r.payload->>'role','scope',COALESCE(NULLIF(r.payload->>'scope',''),'default'),
 'retirement_id',r.id,'retirement_state',r.state,'retirement_reason',r.payload->>'reason','retain_until',r.retain_until,
 'next_attempt_at',r.next_attempt_at,'app_deleted',a.id IS NULL OR a.status='deleted') AS health
 FROM mcp_oauth_retirements r LEFT JOIN apps a ON a.id=r.app_id AND a.account_id=r.account_id
@@ -594,17 +594,23 @@ func (q *Queries) MCPOAuthRetirementBindingBusy(ctx context.Context, db DBTX, ar
 
 const mCPOAuthRetirementClientCiphertext = `-- name: MCPOAuthRetirementClientCiphertext :one
 SELECT ciphertext FROM app_secrets WHERE account_id=$1::uuid AND app_id=$2::uuid AND key=$3::text
-AND scope='default' AND managed_postgres_binding_id IS NULL AND managed_object_storage_credential_id IS NULL AND managed_credential_ref IS NULL
+AND scope=$4::text AND managed_postgres_binding_id IS NULL AND managed_object_storage_credential_id IS NULL AND managed_credential_ref IS NULL
 `
 
 type MCPOAuthRetirementClientCiphertextParams struct {
 	AccountID pgtype.UUID
 	AppID     pgtype.UUID
 	Key       string
+	Scope     string
 }
 
 func (q *Queries) MCPOAuthRetirementClientCiphertext(ctx context.Context, db DBTX, arg MCPOAuthRetirementClientCiphertextParams) ([]byte, error) {
-	row := db.QueryRow(ctx, mCPOAuthRetirementClientCiphertext, arg.AccountID, arg.AppID, arg.Key)
+	row := db.QueryRow(ctx, mCPOAuthRetirementClientCiphertext,
+		arg.AccountID,
+		arg.AppID,
+		arg.Key,
+		arg.Scope,
+	)
 	var ciphertext []byte
 	err := row.Scan(&ciphertext)
 	return ciphertext, err

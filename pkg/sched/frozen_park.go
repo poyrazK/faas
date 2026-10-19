@@ -25,6 +25,7 @@ func (e *Engine) ParkFrozen(ctx context.Context, instanceID, reason string) erro
 // the app lock. The deployment's snapshot is untouched, so the next request
 // restores from it.
 func (e *Engine) parkFrozenLocked(ctx context.Context, frozen state.Instance, reason string) {
+	e.thawTickets.drop(frozen.ID)
 	cleanupCtx := context.WithoutCancel(ctx)
 	if e.frozenNodeUnreachable(cleanupCtx, frozen.NodeID) {
 		// The VM went with its node or vmmd. Parking the row is enough:
@@ -56,6 +57,12 @@ func (e *Engine) frozenNodeUnreachable(ctx context.Context, nodeID string) bool 
 	if err != nil {
 		return errors.Is(err, state.ErrNotFound)
 	}
+	return e.frozenNodeRowUnreachable(node)
+}
+
+// frozenNodeRowUnreachable is frozenNodeUnreachable for a node row the
+// caller already read.
+func (e *Engine) frozenNodeRowUnreachable(node state.ComputeNode) bool {
 	if node.Lifecycle == state.NodeLifecycleUnavailable {
 		return true
 	}
@@ -73,9 +80,7 @@ func (e *Engine) freezeRefusal(ctx context.Context, ins state.Instance) (string,
 	if err != nil {
 		return "", err
 	}
-	// The first release covers function apps that serve HTTP, woken as
-	// ordinary instances outside private networks (quiet pause's rule).
-	if quietPauseAfterMS(app, ins.Mode, e.privateNetworkProjection(ctx, app).NetworkID) == 0 || app.Status != state.AppActive {
+	if app.Status != state.AppActive || !e.frozenTierAllows(app, ins.Mode, e.privateNetworkProjection(ctx, app).NetworkID) {
 		return "ineligible", nil
 	}
 	if ins.RAMMB != app.RAMMB || e.runtimeConfigStale(ctx, ins) {
@@ -118,7 +123,7 @@ func (e *Engine) warmCapturePending(ctx context.Context, app state.App, ins stat
 	if !app.WarmSnapshotEnabled || ins.FrameworkReadyAt == nil || app.Manifest.BeforeCheckpoint != nil {
 		return false
 	}
-	acct, err := e.store.AccountByID(ctx, app.AccountID)
+	acct, err := state.AppResourceAccount(ctx, e.store, app)
 	if err != nil || !acct.Plan.WarmSnapshotAllowed() {
 		return false
 	}

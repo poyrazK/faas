@@ -18,3 +18,13 @@ nav { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; 
 a { color: var(--accent); }
 .status { color: var(--muted); margin: 0 0 12px; }
 .status:empty { margin: 0; }
+.logo { display: block; max-height: 48px; max-width: 200px; margin: 0 auto 16px; }
+.captcha { min-height: 65px; }
+main.wide { max-width: 560px; }
+section { border-top: 1px solid var(--border); padding-top: 16px; margin-bottom: 16px; }
+h2 { font-size: 1.05rem; margin: 0 0 12px; }
+.row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+.row button { flex: none; padding: 6px 10px; }
+.qr { display: block; width: 180px; height: 180px; margin: 0 auto 12px; background: #fff; }
+.codes { columns: 2; font-size: 0.95rem; }
+.danger button[type=submit] { background: #b91c1c; }

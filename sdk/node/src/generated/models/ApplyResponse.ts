@@ -59,5 +59,12 @@ export type ApplyResponse = {
    *
    */
   builds?: Array<AppliedBuild>;
+  /**
+   * Slugs in apps that this apply did not rebuild: nothing in them
+   * changed, or --only left them out. apps is the whole project
+   * membership, so a client compares it with builds plus unchanged.
+   *
+   */
+  unchanged?: Array<string>;
 };
 

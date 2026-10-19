@@ -314,6 +314,11 @@ the task finishes (ADR-1163).
 
 ## Image runs
 
+> **Preview.** Image runs are enabled by the platform operator. Until
+> `FAAS_IMAGE_RUNS=1` is set on the control plane, `POST /v1/image-runs`
+> returns 404. Interactive runs (`-it`) also need `FAAS_INTERACTIVE_IMAGE_RUNS=1`;
+> without it they return 501.
+
 `gregale run --image IMAGE [ARG...]` runs one command from an OCI image in a
 fresh microVM, the way `docker run` does (ADR-1161):
 
@@ -343,6 +348,39 @@ plan's maximum) and concurrent tasks. Plans cache a limited number of images
 new image evicts the least recently used cached image that has no queued or
 running work. Free plans do not include Jobs or image runs. Output streams
 while the command runs (ADR-1163).
+
+The command runs the way `docker run` runs it (ADR-1790): with the image's
+`ENV` (your `-e` and `--env-file` values win), as the image's `USER` (root
+when the image sets none), in the image's `WORKDIR`, and a bare command name
+is looked up on the image `PATH`. Docker's flags override them:
+
+```sh
+gregale run -u nobody -w /data alpine sh -c 'id; pwd'
+gregale run --env-file .env -e DEBUG -e MODE=batch python:3.12-slim python job.py
+```
+
+- `-u/--user name|uid[:group|gid]` resolves in the image's own passwd and
+  group files.
+- `-w/--workdir DIR` takes an absolute path and creates it when missing.
+- `--env-file FILE` reads docker's env-file format: `KEY=VALUE` or `KEY` per
+  line, `#` comments, values taken literally. `-e KEY` without a value (or a
+  bare `KEY` line) passes your local value and is skipped when it is unset.
+  Files apply in order, then `-e` flags.
+- The image can be the first argument instead of `--image`.
+
+For a private registry, pass `--registry-username` and the password or token
+on stdin (`--registry-password-stdin`), in `GREGALE_REGISTRY_PASSWORD`, or at
+the prompt:
+
+```sh
+printf '%s' "$GHCR_TOKEN" | gregale run --registry-username ci --registry-password-stdin ghcr.io/acme/tool:1.4 --version
+```
+
+The credential is stored sealed on the image's runner job and is used for
+that image's registry only. Every run that passes it refreshes it, so it
+survives the runner job being evicted from the image cache. Without it, a
+runner job's credential can still be managed with
+`gregale jobs registry set ir-<hash> ...`.
 
 ### Interactive image runs
 

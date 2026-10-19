@@ -236,7 +236,7 @@ func renderAppsNewPage(w http.ResponseWriter, log *slog.Logger, r *http.Request,
 func fetchTemplatesForWizard(log *slog.Logger) []templateView {
 	_ = log
 	rows := make([]templateView, 0, len(templates.Names))
-	for _, name := range templates.Names {
+	for _, name := range templates.ListedNames() {
 		cat := templates.CategoryFor(name)
 		desc := templateDescription(name)
 		if cat == "" || desc == "" {

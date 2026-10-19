@@ -14,6 +14,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.object_storage_release_requirements import ObjectStorageReleaseRequirements
+    from ..models.queue_release_requirements import QueueReleaseRequirements
 
 
 T = TypeVar("T", bound="SetObjectStorageBindingReleasePolicyRequest")
@@ -29,6 +30,10 @@ class SetObjectStorageBindingReleasePolicyRequest:
     """Managed environment prefix to required canary mode in the selected scope. Prefixes match
     ^[A-Z][A-Z0-9_]{0,47}$. read covers listing; read_write requires byte transfer; write and read_write require
     successful cleanup. No implicit probes or writes."""
+    queue_requirements: QueueReleaseRequirements | Unset = UNSET
+    """Binding name to explicit required queue evidence. Names match ^[a-z][a-z0-9-]{0,62}$. consumer_readiness
+    requires one enabled push consumer with a healthy poll no older than thirty seconds; connectivity coverage
+    remains partial."""
     max_verification_age: str | Unset = "10m"
     """Whole-second Go duration between 1s and 24h."""
     require_application_ack: bool | Unset = False
@@ -42,6 +47,10 @@ class SetObjectStorageBindingReleasePolicyRequest:
         expected_revision = self.expected_revision
 
         object_storage_requirements = self.object_storage_requirements.to_dict()
+
+        queue_requirements: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.queue_requirements, Unset):
+            queue_requirements = self.queue_requirements.to_dict()
 
         max_verification_age = self.max_verification_age
 
@@ -58,6 +67,8 @@ class SetObjectStorageBindingReleasePolicyRequest:
                 "object_storage_requirements": object_storage_requirements,
             }
         )
+        if queue_requirements is not UNSET:
+            field_dict["queue_requirements"] = queue_requirements
         if max_verification_age is not UNSET:
             field_dict["max_verification_age"] = max_verification_age
         if require_application_ack is not UNSET:
@@ -70,6 +81,7 @@ class SetObjectStorageBindingReleasePolicyRequest:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.object_storage_release_requirements import ObjectStorageReleaseRequirements
+        from ..models.queue_release_requirements import QueueReleaseRequirements
 
         d = dict(src_dict)
         mode = check_set_binding_release_policy_request_mode(d.pop("mode"))
@@ -77,6 +89,13 @@ class SetObjectStorageBindingReleasePolicyRequest:
         expected_revision = d.pop("expected_revision")
 
         object_storage_requirements = ObjectStorageReleaseRequirements.from_dict(d.pop("object_storage_requirements"))
+
+        _queue_requirements = d.pop("queue_requirements", UNSET)
+        queue_requirements: QueueReleaseRequirements | Unset
+        if isinstance(_queue_requirements, Unset):
+            queue_requirements = UNSET
+        else:
+            queue_requirements = QueueReleaseRequirements.from_dict(_queue_requirements)
 
         max_verification_age = d.pop("max_verification_age", UNSET)
 
@@ -88,6 +107,7 @@ class SetObjectStorageBindingReleasePolicyRequest:
             mode=mode,
             expected_revision=expected_revision,
             object_storage_requirements=object_storage_requirements,
+            queue_requirements=queue_requirements,
             max_verification_age=max_verification_age,
             require_application_ack=require_application_ack,
             reason=reason,

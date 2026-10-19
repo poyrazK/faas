@@ -25,30 +25,41 @@ func (m *MemStore) operationClaimLocked(inv Invocation) (Invocation, error) {
 	if !exists {
 		return inv, nil
 	}
-	capability, event, err := operationClaim(&op, inv, time.Now().UTC())
+	now := time.Now().UTC()
+	capability, event, err := operationClaim(&op, inv, now)
 	if err != nil {
 		return Invocation{}, err
 	}
 	m.operationSaveLocked(op, event)
+	inv.DeadlineAt = operationClaimDeadline(op, inv, now)
 	return operationExecutionHeaders(inv, op, def, capability), nil
 }
 
 func (m *MemStore) operationSaveLocked(op Operation, event api.OperationEvent) {
+	m.settleProductOperationLocked(op)
 	m.operationPinsLocked(op)
 	m.operationRetainIdentityLocked(op)
 	m.operationData.operations[op.ID] = cloneOperation(op)
 	m.operationData.events[op.ID] = append(m.operationData.events[op.ID], event)
 }
 
-func (m *MemStore) operationTransitionLocked(inv Invocation, uncertain bool) error {
+// operationTransitionLocked projects an invocation transition. When the
+// Operation's limits forbid a pending retry it cancels that retry in place;
+// the caller then stores the cancelled invocation, as PostgreSQL does.
+func (m *MemStore) operationTransitionLocked(inv *Invocation, uncertain bool) error {
 	op, def, exists := m.operationForInvocationLocked(inv.ID)
 	if !exists {
 		return nil
 	}
 	limits := api.MustLimitsFor(m.accounts[op.AccountID].Plan)
-	event, err := operationInvocationTransition(&op, inv, def, limits, uncertain, time.Now().UTC())
+	now := time.Now().UTC()
+	event, err := operationInvocationTransition(&op, *inv, def, limits, uncertain, now)
 	if err != nil {
 		return err
+	}
+	if operationRetryCancelled(op, *inv) {
+		m.setInvocationLocked(inv.ID, *inv)
+		inv.State, inv.QuotaReserved, inv.CompletedAt = InvocationCancelled, false, &now
 	}
 	if op.State.Terminal() {
 		if err := m.operationCompletionLocked(&op, def); err != nil {

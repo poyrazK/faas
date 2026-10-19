@@ -484,7 +484,7 @@ func newMirrorResponseCapture() *mirrorResponseCapture {
 func (w *mirrorResponseCapture) Header() http.Header { return w.header }
 
 func (w *mirrorResponseCapture) WriteHeader(status int) {
-	if w.status == 0 {
+	if w.status == 0 && !isInformationalStatus(status) {
 		w.status = status
 	}
 }

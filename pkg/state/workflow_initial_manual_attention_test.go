@@ -158,7 +158,7 @@ func TestWorkflowInitialManualAttention(t *testing.T) {
 					t.Fatal(err)
 				}
 				if pg, ok := s.(*PgStore); ok {
-					s = NewPgStore(pg.pool)
+					s = NewPgStore(pg.pool.Pool)
 				}
 				poll()
 				final := initialAutomaticReview(t, s, app, r.ID)

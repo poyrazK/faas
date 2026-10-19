@@ -66,7 +66,7 @@ func TestPgCloneEnvironmentBorrowersAuthenticationAndCleanup(t *testing.T) {
 				}
 				return
 			}
-			if err != nil || report.OperationID != l.Operation.ID || report.EnvironmentID != original.Plan.EnvironmentID || len(report.OwnershipSHA256) != 64 || report.NativePlanSHA256 != state.ProjectEnvironmentCloneCheckpointWorkloadRetirementPlanSHA256(original.Plan) || len(report.NativeObservationSHA256) != 64 || len(report.References) != 22 || report.OwnedDeployments != 1 || report.ForeignDeployments != 0 {
+			if err != nil || report.OperationID != l.Operation.ID || report.EnvironmentID != original.Plan.EnvironmentID || len(report.OwnershipSHA256) != 64 || report.NativePlanSHA256 != state.ProjectEnvironmentCloneCheckpointWorkloadRetirementPlanSHA256(original.Plan) || len(report.NativeObservationSHA256) != 64 || len(report.References) != 25 || report.OwnedDeployments != 1 || report.ForeignDeployments != 0 {
 				t.Fatal("inventory lost original authority", report, err)
 			}
 			specs := int64(1)
@@ -161,6 +161,18 @@ func TestPgCloneEnvironmentBorrowersRetainInactiveAndScopeOnlyRows(t *testing.T)
 	if _, err = tx.Exec(t.Context(), "INSERT INTO environment_workload_graphs(source_id,environment_id,revision_id,generation,intent_version,plan_hash,definition_digest,members,resource_ids) VALUES($1,$2,$3,1,0,$4,$4,'[]','{}')", gitID, envID, revisionID, strings.Repeat("a", 64)); err != nil {
 		t.Fatal(err)
 	}
+	// Historical fixture only: a cancelled journal remains an environment
+	// borrower after its source detaches. Runtime lease authorization is covered
+	// by the GitOps retirement integration tests; FK and CHECK guards stay active.
+	if _, err = tx.Exec(t.Context(), "ALTER TABLE environment_workload_retirements DISABLE TRIGGER guard_environment_workload_retirement"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(t.Context(), `INSERT INTO environment_workload_retirements(source_id,account_id,project_id,environment_id,app_id,resource,revision_id,generation,plan_hash,phase,deployment_ids,route_deployment_id) VALUES($1,$2,$3,$4,$5,'workload/api',$6,1,$7,'cancelled',ARRAY[$8::uuid],$8)`, gitID, l.Operation.AccountID, l.Operation.ProjectID, envID, appID, revisionID, strings.Repeat("a", 64), native.Plan.Workloads[0].TargetDeploymentID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(t.Context(), "ALTER TABLE environment_workload_retirements ENABLE TRIGGER guard_environment_workload_retirement"); err != nil {
+		t.Fatal(err)
+	}
 	if err = tx.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -205,9 +217,15 @@ func TestPgCloneEnvironmentBorrowersRetainInactiveAndScopeOnlyRows(t *testing.T)
 		expected[table]++
 	}
 	expected["invocations"] += 3
+	expected["environment_workload_retirements"]++
 	expected["runtime_environment_scaling_states"] += 3
 	if !reflect.DeepEqual(after.References, expected) || after.OwnedDeployments != 1 || after.ForeignDeployments != 1 || after.OwnershipSHA256 != before.OwnershipSHA256 || after.NativePlanSHA256 != before.NativePlanSHA256 {
 		t.Fatal("retained metadata omitted or ownership adopted", after, expected)
+	}
+	deployments, err := s.ProjectEnvironmentCloneDeploymentBorrowersForLease(t.Context(), l)
+	target := native.Plan.Workloads[0].TargetDeploymentID
+	if err != nil || deployments.Deployments[target]["environment_workload_retirements_route_deployment_id_fkey"] != 1 || deployments.SoftReferences[target]["environment_workload_retirements.deployment_ids"] != 1 {
+		t.Fatal("completed retirement lost its original deployment references", deployments, err)
 	}
 	replay, err := s.ProjectEnvironmentCloneEnvironmentBorrowersForLease(t.Context(), l)
 	if err != nil || !reflect.DeepEqual(after, replay) {
@@ -234,7 +252,7 @@ func TestPgCloneEnvironmentBorrowerForeignKeyInventory(t *testing.T) {
 		t.Fatal(err)
 	}
 	expected := []string{
-		"app_environment_route_budgets(environment_id)", "app_environment_secret_ref_suppressions(environment_id)", "app_environment_secret_refs(environment_id)", "app_environment_workload_intents(environment_id)", "custom_domains(environment_id)", "dev_bridge_sessions(environment_id)", "environment_external_field_owners(environment_id)", "environment_git_sources(account_id,project_id,environment_id)", "environment_managed_fields(environment_id)", "environment_workload_graphs(environment_id)", "feature_flag_versions(environment_id)", "invocation_environment_queue_admissions(environment_id)", "invocation_work_environment_admissions(environment_id)", "invocation_work_environment_domains(environment_id)", "invocations(environment_id)", "project_environment_edge_policies(project_id,environment_slug)", "project_environment_qualifications(project_id,environment_slug)", "project_environment_queue_runtime_sets(environment_id)", "project_environment_route_policies(project_id,environment_slug)", "project_environment_workload_specs(environment_id)", "project_release_sets(project_id,environment_slug)", "runtime_environment_scaling_states(environment_id)",
+		"app_environment_route_budgets(environment_id)", "app_environment_secret_ref_suppressions(environment_id)", "app_environment_secret_refs(environment_id)", "app_environment_workload_intents(environment_id)", "custom_domains(environment_id)", "dev_bridge_sessions(environment_id)", "environment_external_field_owners(environment_id)", "environment_git_sources(account_id,project_id,environment_id)", "environment_managed_fields(environment_id)", "environment_workload_graphs(environment_id)", "environment_workload_retirements(environment_id)", "feature_flag_versions(environment_id)", "hosting_sites(project_id,environment)", "invocation_environment_queue_admissions(environment_id)", "invocation_work_environment_admissions(environment_id)", "invocation_work_environment_domains(environment_id)", "invocations(environment_id)", "project_environment_edge_policies(project_id,environment_slug)", "project_environment_qualifications(project_id,environment_slug)", "project_environment_queue_runtime_sets(environment_id)", "project_environment_route_policies(project_id,environment_slug)", "project_environment_workload_specs(environment_id)", "project_release_sets(project_id,environment_slug)", "project_release_stages(project_id,environment_slug)", "runtime_environment_scaling_states(environment_id)",
 	}
 	if !reflect.DeepEqual(actual, expected) {
 		t.Fatal("environment borrower inventory changed; review explicit counts before metadata retirement", actual)

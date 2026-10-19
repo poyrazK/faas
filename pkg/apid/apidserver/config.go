@@ -29,6 +29,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/datapipeline"
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -38,6 +39,12 @@ import (
 // many tools; pinning it here makes the daemon's config story
 // explicit).
 type Config struct {
+	// Empty keeps managed selective repair admission closed.
+	DataRepairBindingsPath          string              `toml:"data_repair_bindings_path"`
+	ProductControlEnabled           bool                `toml:"product_control_enabled"`
+	EventAcknowledgmentWriterSlot   string              `toml:"event_acknowledgment_writer_slot"`
+	EventAcknowledgmentWriterRoster string              `toml:"event_acknowledgment_writer_roster"`
+	DataPipelines                   datapipeline.Config `toml:"data_pipelines"`
 	// Empty preview policy path keeps admission closed. No boolean/env override.
 	OperationsPreviewPolicyPath string `toml:"operations_preview_policy_path"`
 	// Runtime trust remains available independently of new admission.
@@ -239,6 +246,7 @@ func LoadConfig(path string) (*Config, error) {
 			// TOML default. role.FromConfig falls back to
 			// RoleSingleBox when the env is unset.
 			c.Role = role.FromConfig(string(c.Role), "FAAS_APID_ROLE")
+			c.overlayEventAcknowledgmentWriterEnv()
 			return c, nil
 		}
 		return nil, fmt.Errorf("apid: read %q: %w", path, err)
@@ -262,6 +270,7 @@ func LoadConfig(path string) (*Config, error) {
 	// control_plane_service/templates/99-faas-node-name.conf.j2)
 	// can override the TOML node_name on every control-plane box.
 	// Empty keeps the TOML value (single-box dev back-compat).
+	c.overlayEventAcknowledgmentWriterEnv()
 	if v := os.Getenv("FAAS_NODE_NAME"); v != "" {
 		c.NodeName = v
 	}
@@ -657,4 +666,13 @@ func (c *Config) LoadGithubdTLSWithPrefixAndVerifierAndReload(v wire.NodeVerifie
 		return nil, nil
 	}
 	return wire.LoadClientTLSConfigWithPrefixAndVerifierAndReload("githubd_", c.GithubdClientTLSCertPath, c.GithubdClientTLSKeyPath, c.GithubdClientTLSCAPath, v, reload)
+}
+
+func (c *Config) overlayEventAcknowledgmentWriterEnv() {
+	if v := os.Getenv("FAAS_EVENT_ACK_WRITER_SLOT"); v != "" {
+		c.EventAcknowledgmentWriterSlot = v
+	}
+	if v := os.Getenv("FAAS_EVENT_ACK_WRITER_ROSTER"); v != "" {
+		c.EventAcknowledgmentWriterRoster = v
+	}
 }

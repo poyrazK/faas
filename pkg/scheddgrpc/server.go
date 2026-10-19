@@ -34,6 +34,7 @@ import (
 )
 
 func withIncomingCorrelation(ctx context.Context) context.Context {
+	ctx = withPreferredInstanceIncoming(ctx)
 	fields, ok := wire.CorrelationFromIncoming(ctx)
 	if !ok {
 		return ctx

@@ -32,6 +32,9 @@ test('OpenAPI and TypeScript share row, write and approved RPC contracts', () =>
   assert.match(generate(snapshot), /"id"\?: never/)
   assert.match(generate(snapshot), /"body": string \| null/)
   assert.equal(document.paths['/notes'].get.responses[401].schema.$ref, '#/definitions/GregaleProblem')
+  assert.equal(document.paths['/notes'].get.responses[429].schema.$ref, '#/definitions/GregaleProblem')
+  assert.equal(document.paths['/notes'].get.responses[429].headers['Retry-After'].type, 'integer')
+  assert.equal(document.definitions.GregaleProblem.properties.retry_after_seconds.minimum, 1)
 })
 
 test('zero-argument void RPCs omit required and response bodies; profiles stay isolated', () => {

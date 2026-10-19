@@ -1,6 +1,8 @@
 // Package workerpool keeps generated function adapters alive between
 // invocations. Legacy protocol handlers remain one-process-per-request and are
-// selected automatically when the adapter marker is absent.
+// selected automatically when the adapter marker is absent. A worker serves
+// one request at a time unless its ready handshake advertises more; such a
+// shared worker multiplexes requests by id (mux.go, ADR-1342).
 package workerpool
 
 import (
@@ -70,12 +72,19 @@ type Lines struct {
 	ctx  context.Context
 	pool *pool
 	w    *worker
+	// s and id name the request on a shared worker; s is nil on an
+	// exclusive one, whose stdout carries only this request.
+	s    *stream
+	id   string
 	once sync.Once
 }
 
 // Next returns the worker's next stdout line, or ctx's error once the
 // invocation is canceled or out of time.
 func (l *Lines) Next() ([]byte, error) {
+	if l.s != nil {
+		return l.s.next(l.ctx)
+	}
 	type readResult struct {
 		line []byte
 		err  error
@@ -94,8 +103,27 @@ func (l *Lines) Next() ([]byte, error) {
 }
 
 // Close returns the worker to its pool, or retires it when healthy is false.
+// A shared worker keeps serving its other requests: an unhealthy close
+// cancels only this one.
 func (l *Lines) Close(healthy bool) {
-	l.once.Do(func() { l.pool.release(l.w, healthy) })
+	l.once.Do(func() {
+		if l.s == nil {
+			l.pool.release(l.w, healthy)
+			return
+		}
+		l.w.mux.unregister(l.id)
+		if !healthy {
+			// Cancellation is not completion. Retain the slot until the adapter
+			// has finished cleanup or the worker has been retired.
+			grace := cancelAckGrace
+			go func() {
+				defer l.pool.release(l.w, true)
+				l.pool.cancel(l.ctx, l.w, l.id, grace)
+			}()
+			return
+		}
+		l.pool.release(l.w, true)
+	})
 }
 
 // PrewarmIfSupported starts and fully initializes one generated adapter before
@@ -168,11 +196,18 @@ func containsMarker(r io.Reader) (bool, error) {
 }
 
 type pool struct {
-	spec    Spec
-	mu      sync.Mutex
-	idle    []*worker
-	live    int
-	changed chan struct{}
+	spec Spec
+	mu   sync.Mutex
+	idle []*worker
+	// shared holds the live workers that serve several requests at once.
+	shared []*worker
+	live   int
+	// starting counts workers being started; slots is the concurrency the
+	// latest worker advertised. While a shared worker is starting, others
+	// wait for its slots instead of starting more interpreters.
+	starting int
+	slots    int
+	changed  chan struct{}
 	// generation advances on Recycle; a worker from an older generation is
 	// closed instead of being reused.
 	generation uint64
@@ -201,6 +236,11 @@ func (p *pool) recycle() int {
 	stale := p.idle
 	p.idle = nil
 	p.live -= len(stale)
+	for _, w := range append([]*worker(nil), p.shared...) {
+		if w.active == 0 && p.dropSharedLocked(w) {
+			stale = append(stale, w)
+		}
+	}
 	p.notifyLocked()
 	p.mu.Unlock()
 	for _, w := range stale {
@@ -215,26 +255,23 @@ func (p *pool) acquire(ctx context.Context) (*worker, error) {
 			return nil, err
 		}
 		p.mu.Lock()
+		if w := p.sharedWithRoomLocked(); w != nil {
+			w.active++
+			p.mu.Unlock()
+			return w, nil
+		}
 		if n := len(p.idle); n > 0 {
 			w := p.idle[n-1]
 			p.idle = p.idle[:n-1]
 			p.mu.Unlock()
 			return w, nil
 		}
-		if p.live < maxWorkers {
+		if p.live < maxWorkers && (p.slots <= 1 || p.starting == 0) {
 			p.live++ // Reserve before starting: concurrent misses cannot oversubscribe.
+			p.starting++
 			generation := p.generation
 			p.mu.Unlock()
-			w, err := startWorker(ctx, p.spec)
-			if err != nil {
-				p.mu.Lock()
-				p.live--
-				p.notifyLocked()
-				p.mu.Unlock()
-				return nil, err
-			}
-			w.generation = generation
-			return w, nil
+			return p.start(ctx, generation)
 		}
 		changed := p.changed
 		p.mu.Unlock()
@@ -246,12 +283,81 @@ func (p *pool) acquire(ctx context.Context) (*worker, error) {
 	}
 }
 
+// start runs a new worker in a slot acquire reserved. A shared worker joins
+// the pool with this request already holding one of its slots.
+func (p *pool) start(ctx context.Context, generation uint64) (*worker, error) {
+	w, err := startWorker(ctx, p.spec)
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.starting--
+	defer p.notifyLocked()
+	if err != nil {
+		p.live--
+		return nil, err
+	}
+	w.generation = generation
+	p.slots = w.slots
+	if w.slots > 1 {
+		w.mux = newMux()
+		w.active = 1
+		p.shared = append(p.shared, w)
+		go p.demux(w)
+	}
+	return w, nil
+}
+
+// sharedWithRoomLocked returns the least busy current shared worker with a
+// free slot.
+func (p *pool) sharedWithRoomLocked() *worker {
+	var best *worker
+	for _, w := range p.shared {
+		if w.gone || w.generation != p.generation || w.active >= w.slots {
+			continue
+		}
+		if best == nil || w.active < best.active {
+			best = w
+		}
+	}
+	return best
+}
+
+// dropSharedLocked removes a shared worker from the pool, once.
+func (p *pool) dropSharedLocked(w *worker) bool {
+	if w.removed {
+		return false
+	}
+	w.removed = true
+	p.live--
+	for i, candidate := range p.shared {
+		if candidate == w {
+			p.shared = append(p.shared[:i], p.shared[i+1:]...)
+			break
+		}
+	}
+	return true
+}
+
+// retire removes a shared worker that exited or stopped responding and
+// kills it. Its in-flight requests fail with the worker.
+func (p *pool) retire(w *worker) {
+	p.mu.Lock()
+	w.gone = true
+	p.dropSharedLocked(w)
+	p.notifyLocked()
+	p.mu.Unlock()
+	w.close()
+}
+
 func (p *pool) notifyLocked() {
 	close(p.changed)
 	p.changed = make(chan struct{})
 }
 
 func (p *pool) release(w *worker, healthy bool) {
+	if w.mux != nil {
+		p.releaseSlot(w)
+		return
+	}
 	p.mu.Lock()
 	reuse := healthy && w.generation == p.generation
 	if reuse {
@@ -262,6 +368,19 @@ func (p *pool) release(w *worker, healthy bool) {
 	p.notifyLocked()
 	p.mu.Unlock()
 	if !reuse {
+		w.close()
+	}
+}
+
+// releaseSlot returns one request's slot on a shared worker. A worker from
+// before a Recycle is closed when its last request leaves.
+func (p *pool) releaseSlot(w *worker) {
+	p.mu.Lock()
+	w.active--
+	stale := w.active == 0 && w.generation != p.generation && p.dropSharedLocked(w)
+	p.notifyLocked()
+	p.mu.Unlock()
+	if stale {
 		w.close()
 	}
 }
@@ -289,14 +408,16 @@ func (p *pool) invoke(ctx context.Context, request, response any) error {
 }
 
 func (p *pool) open(ctx context.Context, request any) (*Lines, error) {
+	payload, err := json.Marshal(request)
+	if err != nil {
+		return nil, fmt.Errorf("workerpool: encode request: %w", err)
+	}
 	w, err := p.acquire(ctx)
 	if err != nil {
 		return nil, err
 	}
-	payload, err := json.Marshal(request)
-	if err != nil {
-		p.release(w, false)
-		return nil, fmt.Errorf("workerpool: encode request: %w", err)
+	if w.mux != nil {
+		return p.openShared(ctx, w, payload)
 	}
 	payload = append(payload, '\n')
 	if _, err := w.stdin.Write(payload); err != nil {
@@ -306,12 +427,38 @@ func (p *pool) open(ctx context.Context, request any) (*Lines, error) {
 	return &Lines{ctx: ctx, pool: p, w: w}, nil
 }
 
+func (p *pool) openShared(ctx context.Context, w *worker, payload []byte) (*Lines, error) {
+	id, s := w.mux.register()
+	line, err := withID(payload, id)
+	if err == nil {
+		var broken bool
+		if broken, err = w.send(ctx, line); broken {
+			p.retire(w)
+		}
+	}
+	if err != nil {
+		w.mux.unregister(id)
+		p.releaseSlot(w)
+		return nil, err
+	}
+	return &Lines{ctx: ctx, pool: p, w: w, s: s, id: id}, nil
+}
+
 type worker struct {
 	cmd        *exec.Cmd
 	stdin      io.WriteCloser
 	stdout     *bufio.Reader
 	once       sync.Once
 	generation uint64
+	// slots is how many requests the worker serves at once, from its ready
+	// handshake; 1 is the exclusive protocol.
+	slots int
+	// mux is set on a shared worker (slots > 1). The pool's mutex guards
+	// active, gone and removed.
+	mux     *mux
+	active  int
+	gone    bool
+	removed bool
 }
 
 func startWorker(ctx context.Context, spec Spec) (*worker, error) {
@@ -343,7 +490,8 @@ func startWorker(ctx context.Context, spec Spec) (*worker, error) {
 			return
 		}
 		var handshake struct {
-			Ready bool `json:"__faas_ready"`
+			Ready       bool `json:"__faas_ready"`
+			Concurrency int  `json:"concurrency"`
 		}
 		if err := json.Unmarshal(line, &handshake); err != nil {
 			ready <- fmt.Errorf("decode ready handshake: %w", err)
@@ -353,6 +501,7 @@ func startWorker(ctx context.Context, spec Spec) (*worker, error) {
 			ready <- errors.New("missing ready handshake")
 			return
 		}
+		w.slots = min(max(handshake.Concurrency, 1), maxWorkerSlots)
 		ready <- nil
 	}()
 	select {

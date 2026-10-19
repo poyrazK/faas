@@ -86,3 +86,6 @@ func (c *Client) GetEventRecipientBlockers(ctx context.Context, request EventRec
 
 const EventRecipientBlockerIdentityMaxBytes = 256
 const EventRecipientBlockerBatchMax = 50
+
+// Mirrors the existing request byte bound in pkg/api/limits.go.
+const EventRecipientBlockerBatchBodyMaxBytes = 65536

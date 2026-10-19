@@ -59,6 +59,10 @@ const (
 	workQueuePushDispatch    workKind = "queue_push_dispatch"
 	workEventFanout          workKind = "event_fanout"
 	workReaper               workKind = "reaper"
+	workRehearsalFault       workKind = "rehearsal_worker_fault"
+	workRehearsalSuspend     workKind = "rehearsal_suspend_resume"
+	workWorkerRecovery       workKind = "worker_recovery"
+	workWorkerRecoverySweep  workKind = "worker_recovery_sweep"
 )
 
 // workKinds is the iteration order for metric pre-instantiation.
@@ -66,7 +70,7 @@ var workKinds = []workKind{
 	workServiceRecovery, workServiceRecoverySweep,
 	workPrime, workRestart, workAppReconcile, workDeploymentReconcile, workJobCancel, workJobDispatch, workPrimeRecovery,
 	workWorkflowDispatch, workWorkflowSchedules, workTriggerDispatch, workQueuePushDispatch, workEventFanout,
-	workReaper,
+	workReaper, workRehearsalFault, workRehearsalSuspend, workWorkerRecovery, workWorkerRecoverySweep,
 }
 
 // overflowPolicy decides what submit does when a kind has no free slot.
@@ -106,6 +110,8 @@ type workSpec struct {
 var workSpecs = map[workKind]workSpec{
 	workServiceRecovery:      {slots: api.ServiceRecoveryConcurrentApps, overflow: overflowDrop},
 	workServiceRecoverySweep: {slots: 1, overflow: overflowDrop},
+	workWorkerRecovery:       {slots: api.WorkerRecoveryConcurrentApps, overflow: overflowDrop},
+	workWorkerRecoverySweep:  {slots: 1, overflow: overflowDrop},
 	workPrime:                {slots: maxConcurrentPrimes, overflow: overflowInline},
 	workRestart:              {slots: 8, overflow: overflowDrop},
 	workAppReconcile:         {slots: 8, overflow: overflowDrop},
@@ -123,7 +129,9 @@ var workSpecs = map[workKind]workSpec{
 	// One reaper tick at a time, sequential inside, as before it moved off
 	// the loop. A tick that fires while the previous one still runs
 	// coalesces into it; the next tick re-reads the instance table.
-	workReaper: {slots: 1, overflow: overflowDrop},
+	workReaper:           {slots: 1, overflow: overflowDrop},
+	workRehearsalFault:   {slots: 1, overflow: overflowDrop},
+	workRehearsalSuspend: {slots: 1, overflow: overflowDrop},
 }
 
 // workPool runs bounded, coalesced, off-loop tasks for Loop.

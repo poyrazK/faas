@@ -17,6 +17,7 @@ type MCPConnectionHealthStore interface {
 	MCPConnectionHealth(context.Context, string, string, int, time.Time) (api.MCPConnectionHealthSnapshot, error)
 }
 type mcpHealthRow struct {
+	Scope            string     `json:"scope,omitempty"`
 	ObserverState    string     `json:"observer_state"`
 	AppID            string     `json:"app_id"`
 	AppSlug          string     `json:"app_slug"`
@@ -52,7 +53,7 @@ func healthIssues(row mcpHealthRow, at time.Time) []api.MCPConnectionHealthIssue
 			id = "retirement/" + row.RetirementID + "/" + kind
 			path = "/v1/mcp-oauth-retirements"
 		}
-		out = append(out, api.MCPConnectionHealthIssue{ID: id, AppID: row.AppID, AppSlug: row.AppSlug, Role: row.Role, Kind: kind, State: state, AppDeleted: row.AppDeleted, RetirementID: row.RetirementID, ExpiresAt: expiry, RecoveryAction: action, RecoveryPath: path})
+		out = append(out, api.MCPConnectionHealthIssue{ID: id, AppID: row.AppID, AppSlug: row.AppSlug, Scope: api.MCPConnectionScope(row.Scope), Role: row.Role, Kind: kind, State: state, AppDeleted: row.AppDeleted, RetirementID: row.RetirementID, ExpiresAt: expiry, RecoveryAction: action, RecoveryPath: path})
 	}
 	if row.RetirementID != "" {
 		if row.RetirementReason == "issuance_unknown" || row.RetirementState == "awaiting_issuance" && row.NextAttemptAt != nil && !row.NextAttemptAt.After(at) {
@@ -179,7 +180,7 @@ func (m *MemStore) MCPConnectionHealth(_ context.Context, account, app string, o
 				continue
 			}
 			cfg := view.Config.Observer
-			row := mcpHealthRow{AppID: id, AppSlug: a.Slug, Role: role, Guided: cfg.OAuth.Guided, Enabled: view.Config.Enabled && cfg.Enabled, Paused: cfg.Paused}
+			row := mcpHealthRow{AppID: id, AppSlug: a.Slug, Scope: api.MCPConnectionScope(view.Config.Scope), Role: role, Guided: cfg.OAuth.Guided, Enabled: view.Config.Enabled && cfg.Enabled, Paused: cfg.Paused}
 			if st := view.ObserverStatus; st != nil {
 				row.ObserverState = st.State
 				row.LeaseUntil = st.LeaseUntil
@@ -214,7 +215,7 @@ func (m *MemStore) MCPConnectionHealth(_ context.Context, account, app string, o
 		}
 		a, exists := m.apps[r.AppID]
 		next := r.Revocation.NextAttemptAt
-		rows = append(rows, mcpHealthRow{AppID: r.AppID, AppSlug: r.AppSlug, Role: r.Role, RetirementID: r.ID, RetirementState: r.State, RetirementReason: r.Reason, RetainUntil: &r.RetainUntil, NextAttemptAt: &next, AppDeleted: !exists || a.Status == AppDeleted})
+		rows = append(rows, mcpHealthRow{AppID: r.AppID, AppSlug: r.AppSlug, Scope: api.MCPConnectionScope(r.Scope), Role: r.Role, RetirementID: r.ID, RetirementState: r.State, RetirementReason: r.Reason, RetainUntil: &r.RetainUntil, NextAttemptAt: &next, AppDeleted: !exists || a.Status == AppDeleted})
 	}
 	sort.Slice(rows, func(i, j int) bool {
 		return rows[i].AppID+rows[i].Role+rows[i].RetirementID < rows[j].AppID+rows[j].Role+rows[j].RetirementID

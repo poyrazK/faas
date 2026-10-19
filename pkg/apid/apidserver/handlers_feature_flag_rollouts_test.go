@@ -10,6 +10,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/flags"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
@@ -45,7 +46,7 @@ func (s *rolloutEvidenceStore) ListFeatureFlagRequestEvidence(context.Context, s
 func setupProgressiveRollout(t *testing.T, evidence []sqlc.FeatureFlagRequestOutcomesRow) (apidserver.TestEnv, state.FeatureFlagScope, *rolloutEvidenceStore) {
 	t.Helper()
 	e := apidserver.Setup(t, api.PlanPro)
-	(*(*e.S()).FeatureFlagsEnabled()) = true
+	(*e.S()).EnablePlatformFlagForAll(platformflags.CustomerFlags)
 	ctx := context.Background()
 	project, err := (*e.Store()).CreateProject(ctx, state.Project{AccountID: (*e.Acct()).ID, Slug: "rollouts", ProductionBranch: "main", ScanSource: state.ProjectScanSourceCompose})
 	if err != nil {

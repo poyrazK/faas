@@ -63,7 +63,8 @@ const jobRunSelectCols = `id, job_id, account_id, trigger_kind, env_overrides, t
        coalesce(image_storage_key_snapshot, ''), ram_mb_snapshot,
        effective_env_snapshot, source_run_id,
        coalesce(input_manifest_uri, ''), coalesce(input_manifest_sha256, ''), failure_rules, coalesce(occurrence_id::text, ''), start_deadline_at,
-       coalesce(exclusive_operation_id::text, ''), coalesce(exclusive_generation, 0)`
+       coalesce(exclusive_operation_id::text, ''), coalesce(exclusive_generation, 0),
+       coalesce(process_user, ''), coalesce(process_workdir, '')`
 
 // jobTaskSelectCols is the canonical column order for job_tasks.
 // Includes exit_code + next_attempt_at (00571), lease_token +
@@ -126,7 +127,7 @@ func scanJobRunCols(scan func(...any) error) (JobRun, error) {
 		&r.ImageRefSnapshot, &r.ImageResolvedDigestSnapshot,
 		&r.ImageStorageKeySnapshot, &r.RAMMBSnapshot, &effectiveEnv,
 		&r.SourceRunID, &r.InputManifestURI, &r.InputManifestSHA256, &r.FailureRules, &r.OccurrenceID, &r.StartDeadlineAt,
-		&r.ExclusiveOperationID, &r.ExclusiveGeneration); err != nil {
+		&r.ExclusiveOperationID, &r.ExclusiveGeneration, &r.ProcessUser, &r.ProcessWorkdir); err != nil {
 		return JobRun{}, err
 	}
 	if len(envOverrides) > 0 {
@@ -883,6 +884,9 @@ func (s *PgStore) JobRunCreate(ctx context.Context, jobID, accountID, triggerKin
 	if len(inputs) > 0 && len(inputs) != tasks {
 		return JobRun{}, nil, fmt.Errorf("state: input count %d must equal tasks %d", len(inputs), tasks)
 	}
+	if err := validateJobRunProcess(opts); err != nil {
+		return JobRun{}, nil, err
+	}
 	if err := validateJobRunAttach(opts, tasks, retryMaxOverride); err != nil {
 		return JobRun{}, nil, err
 	}
@@ -927,7 +931,8 @@ func (s *PgStore) JobRunCreate(ctx context.Context, jobID, accountID, triggerKin
 		                       image_ref_snapshot, image_resolved_digest_snapshot,
 		                       image_storage_key_snapshot, ram_mb_snapshot,
 		                       effective_env_snapshot, input_manifest_uri,
-						input_manifest_sha256, failure_rules, exclusive_operation_id, exclusive_generation)
+						input_manifest_sha256, failure_rules, exclusive_operation_id, exclusive_generation,
+		                       process_user, process_workdir)
 		 select coalesce(nullif($19, '')::uuid, gen_random_uuid()), j.id, $2::uuid, $3, $4::jsonb, $5,
 		        coalesce($6, j.max_parallelism), coalesce($7, j.retry_max),
 		        coalesce($8, j.task_timeout_s),
@@ -936,7 +941,8 @@ func (s *PgStore) JobRunCreate(ctx context.Context, jobID, accountID, triggerKin
 		        $10, $11, $12, $13, $14, nullif($15, ''),
 		        j.image_ref, j.image_resolved_digest, j.image_storage_key,
 		        j.ram_mb, j.env_overrides || $4::jsonb,
-		        nullif($16, ''), nullif($17, ''), coalesce($18::jsonb, j.failure_rules), nullif($20, '')::uuid, nullif($21::bigint, 0)
+		        nullif($16, ''), nullif($17, ''), coalesce($18::jsonb, j.failure_rules), nullif($20, '')::uuid, nullif($21::bigint, 0),
+		        nullif($22, ''), nullif($23, '')
 		   from jobs j
 		  where j.id = $1::uuid
 		    and j.account_id = $2::uuid
@@ -946,7 +952,8 @@ func (s *PgStore) JobRunCreate(ctx context.Context, jobID, accountID, triggerKin
 		tasks, parallelism, retryMaxOverride, taskTimeoutOverride, commandArgs,
 		executionClass, eligibleAt, latestStartAt, failurePolicy,
 		manifestVersion, inputDigest, inputManifestURI, inputManifestSHA256,
-		policyJSON(opts.FailureRules), runID, exclusiveOperationID, exclusiveGeneration)
+		policyJSON(opts.FailureRules), runID, exclusiveOperationID, exclusiveGeneration,
+		opts.ProcessUser, opts.ProcessWorkdir)
 	run, err := scanJobRun(row)
 	if err != nil {
 		// mapErr unwraps FK violations + ErrNoRows to ErrNotFound.
@@ -1009,6 +1016,12 @@ func (s *PgStore) JobRunCreate(ctx context.Context, jobID, accountID, triggerKin
 // and creates a linked run. The current image must resolve to the same digest
 // so replay never silently runs the old command against different bits.
 func (s *PgStore) JobRunReplayFailed(ctx context.Context, sourceRunID, accountID string) (JobRun, []JobTask, error) {
+	if owned, err := s.ciJobRunOwned(ctx, accountID, sourceRunID); err != nil || owned {
+		if err == nil {
+			err = ErrConflict
+		}
+		return JobRun{}, nil, err
+	}
 	if owned, err := sqlc.New().CustomerOperationJobOwned(ctx, s.pool, mustPgUUID(sourceRunID)); err != nil || owned {
 		if err == nil {
 			err = ErrConflict
@@ -1106,14 +1119,16 @@ func (s *PgStore) JobRunReplayFailed(ctx context.Context, sourceRunID, accountID
 		job_id, account_id, trigger_kind, env_overrides, tasks, parallelism,
 		retry_max, task_timeout_s, command, failure_policy, input_manifest_version,
 		input_digest, image_ref_snapshot, image_resolved_digest_snapshot,
-		image_storage_key_snapshot, ram_mb_snapshot, effective_env_snapshot, source_run_id, failure_rules)
+		image_storage_key_snapshot, ram_mb_snapshot, effective_env_snapshot, source_run_id, failure_rules,
+		process_user, process_workdir)
 		values ($1::uuid,$2::uuid,'manual',$3::jsonb,$4,$5,$6,$7,$8,$9,$10,
-			nullif($11,''),$12,$13,$14,$15,$16::jsonb,$17::uuid,$18::jsonb)
+			nullif($11,''),$12,$13,$14,$15,$16::jsonb,$17::uuid,$18::jsonb,nullif($19,''),nullif($20,''))
 		returning `+jobRunSelectCols,
 		job.ID, accountID, []byte(source.EnvOverrides), len(failed), source.Parallelism,
 		retryMax, timeout, command, source.FailurePolicy, manifestVersion, digest,
 		job.ImageRef, job.ImageResolvedDigest, job.ImageStorageKey, ramMB,
-		[]byte(effectiveEnv), sourceRunID, policyJSON(source.FailureRules)))
+		[]byte(effectiveEnv), sourceRunID, policyJSON(source.FailureRules),
+		source.ProcessUser, source.ProcessWorkdir))
 	if err != nil {
 		return JobRun{}, nil, err
 	}
@@ -1805,6 +1820,11 @@ func (s *PgStore) CreateAndClaimJobInstance(ctx context.Context, instanceID, job
 	if err := lockJobRunExclusiveOwner(ctx, tx, runID); err != nil {
 		return Instance{}, fmt.Errorf("state: lock exclusive owner for job run %s: %w", runID, err)
 	}
+	if IsLive(instanceState) {
+		if err := checkNodeAdmissionDB(ctx, tx, computeNodeID); err != nil {
+			return Instance{}, err
+		}
+	}
 
 	var accountID, planName string
 	var runParallelism int
@@ -2029,6 +2049,12 @@ func (s *PgStore) jobTaskMarkTerminal(ctx context.Context, runID string, taskInd
 //
 // Returns ErrNotFound when (run_id, task_index) does not resolve.
 func (s *PgStore) JobTaskRetry(ctx context.Context, runID string, taskIndex int, nextAttemptAt time.Time) error {
+	if blocked, err := s.ciJobRetryBlocked(ctx, runID); err != nil || blocked {
+		if err == nil {
+			err = ErrConflict
+		}
+		return err
+	}
 	if owned, err := sqlc.New().CustomerOperationJobOwned(ctx, s.pool, mustPgUUID(runID)); err != nil || owned {
 		if err == nil {
 			err = ErrConflict
@@ -2103,6 +2129,11 @@ func (s *PgStore) JobTaskRetry(ctx context.Context, runID string, taskIndex int,
 // while the task remains at attempt 1, and a late boot failure must not touch
 // a replacement attempt or a task already settled by exit/cancellation.
 func (s *PgStore) JobTaskFailBoot(ctx context.Context, runID string, taskIndex int, instanceID, leaseToken string, retryMax int, nextAttemptAt time.Time, errorMessage string) (bool, error) {
+	if owned, err := s.ciJobRetryBlocked(ctx, runID); err != nil {
+		return false, err
+	} else if owned {
+		retryMax = 0
+	}
 	if owned, err := sqlc.New().CustomerOperationJobOwned(ctx, s.pool, mustPgUUID(runID)); err != nil {
 		return false, err
 	} else if owned {
@@ -2279,6 +2310,11 @@ func (s *PgStore) JobTaskFindStuck(ctx context.Context, ttl time.Duration) ([]Jo
 // JobTaskReapClaimed is a fenced, atomic retry/dead-letter transition.
 // Expiry is checked again so a heartbeat after JobTaskFindStuck wins safely.
 func (s *PgStore) JobTaskReapClaimed(ctx context.Context, runID string, taskIndex int, leaseToken string, cutoff time.Time, retryMax int, nextAttemptAt time.Time) (bool, error) {
+	if owned, err := s.ciJobRetryBlocked(ctx, runID); err != nil {
+		return false, err
+	} else if owned {
+		retryMax = 0
+	}
 	if owned, err := sqlc.New().CustomerOperationJobOwned(ctx, s.pool, mustPgUUID(runID)); err != nil {
 		return false, err
 	} else if owned {

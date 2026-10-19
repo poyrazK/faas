@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createPublicKey, generateKeyPairSync, verify } from 'node:crypto'
 import { once } from 'node:events'
-import { adminKeyHashes, createAdminHandler, importRecord, newAdminKey, serviceToken, signingKey } from '../admin.mjs'
+import { adminKeyHashes, createAdminHandler, deleteOwnAccount, importRecord, newAdminKey, serviceToken, signingKey } from '../admin.mjs'
 import { createServer, goTrueAdminPath } from '../server.mjs'
 
 const user = '0b5f2f0e-7a51-4d8f-8a3a-5c1b9d2e6f70'
@@ -180,4 +180,57 @@ test('lists organizations and shows members and pending invitations', async t =>
   assert.equal(detail.body.members[0].role, 'owner')
   assert.equal(detail.body.invitations[0].email, 'b@example.test')
   assert.equal((await call('GET', '/admin/v1/orgs/nope', { key })).status, 400)
+})
+
+test('lists sign-in activity newest first, for everyone or one user', async t => {
+  const { key, hash } = newAdminKey()
+  const entry = i => ({ id: `e${i}`, created_at: `t${i}`, action: 'login', actor: 'user', user_id: user, email: 'a@example.test' })
+  const pool = fakePool(() => ({ rows: [entry(1), entry(2), entry(3)] }))
+  const call = await serve(t, { admin: fakeAdmin([]).admin, pool, keys: adminKeyHashes({ AUTH_ADMIN_KEY_0A1B2C3D: hash }) })
+  const listed = await call('GET', `/admin/v1/activity?user=${user}&per_page=2&page=3&search=log%25in`, { key })
+  assert.equal(listed.status, 200)
+  // One extra row tells the page there is more, without counting the log.
+  assert.deepEqual(listed.body, { entries: [entry(1), entry(2)], more: true, page: 3, per_page: 2 })
+  const { sql, args } = pool.log.at(-1)
+  assert.match(sql, /FROM auth\.audit_log_entries/)
+  assert.match(sql, /ORDER BY created_at DESC/)
+  assert.deepEqual(args, [user, 'log%in', '%log\\%in%', 3, 4, '00000000-0000-0000-0000-000000000000'])
+  // An administrator's action counts against the affected user.
+  assert.match(sql, /payload->'traits'->>'user_id' = \$1/)
+  assert.deepEqual((await call('GET', '/admin/v1/activity', { key })).body.more, false)
+  assert.equal(pool.log.at(-1).args[0], '')
+  assert.equal((await call('GET', '/admin/v1/activity?user=not-a-uuid', { key })).status, 400)
+  assert.equal((await call('GET', '/admin/v1/activity')).status, 401)
+})
+
+test("deletes a user's own account only after a recent sign-in with any second step", async () => {
+  const session = '5c1b9d2e-0b5f-4d8f-8a3a-7a512f0e6f70'
+  let check = [{ allowed: true }]
+  const pool = fakePool(sql => {
+    if (sql.includes('make_interval')) return { rows: check }
+    if (sql.includes("m.role = 'owner'")) return { rows: [] }
+    if (sql.startsWith('SELECT m.org_id')) return { rows: [] }
+    throw new Error(`unexpected ${sql}`)
+  })
+  const { admin, calls } = fakeAdmin([[new RegExp(`^DELETE /admin/users/${user}$`), () => ({ status: 200, headers: {}, data: {} })]])
+  const claims = { sub: user, session_id: session }
+  assert.deepEqual(await deleteOwnAccount({ pool, admin }, claims), [200, { deleted: true, organizations_deleted: 0 }])
+  assert.deepEqual(pool.log[0].args, [user, session, 600], 'the session of the token, within AuthReauthenticationSeconds')
+  assert.match(pool.log[0].sql, /is_anonymous OR/)
+  assert.match(pool.log[0].sql, /aal = 'aal2' OR NOT EXISTS/)
+  check = [{ allowed: false }]
+  await assert.rejects(deleteOwnAccount({ pool, admin }, claims), { status: 403, code: 'reauthentication_required' })
+  check = []
+  await assert.rejects(deleteOwnAccount({ pool, admin }, claims), { status: 401, code: 'not_authenticated' })
+  assert.equal(calls.length, 1, 'refusals never reach GoTrue')
+})
+
+test('serves email templates behind the admin key', async t => {
+  const { key, hash } = newAdminKey()
+  const call = await serve(t, { admin: fakeAdmin([]).admin, pool: fakePool(() => ({ rows: [] })), keys: adminKeyHashes({ AUTH_ADMIN_KEY_0A1B2C3D: hash }) })
+  assert.equal((await call('GET', '/admin/v1/emails')).status, 401)
+  const listed = await call('GET', '/admin/v1/emails', { key })
+  assert.equal(listed.status, 200)
+  assert.equal(listed.body.emails.length, 8)
+  assert.equal((await call('PATCH', '/admin/v1/emails/signup', { key, body: { body: '{{nope}}' } })).body.code, 'unknown_placeholder')
 })

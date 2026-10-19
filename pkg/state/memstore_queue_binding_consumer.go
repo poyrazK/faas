@@ -10,22 +10,22 @@ import (
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
-func (m *MemStore) CreateQueueBindingWithConsumer(_ context.Context, in QueueBinding) (QueueBindingConsumerResult, error) {
+func (m *MemStore) CreateQueueBindingWithConsumer(ctx context.Context, in QueueBinding) (QueueBindingConsumerResult, error) {
 	if in.ID == "" {
 		in.ID = newID()
 	}
-	return m.mutateQueueBindingConsumer(in.AccountID, in.AppID, in.ID, &in, nil, false)
+	return m.mutateQueueBindingConsumer(ctx, in.AccountID, in.AppID, in.ID, &in, nil, false)
 }
 
-func (m *MemStore) UpdateQueueBindingWithConsumer(_ context.Context, accountID, appID, id string, p UpdateQueueBindingParams) (QueueBindingConsumerResult, error) {
-	return m.mutateQueueBindingConsumer(accountID, appID, id, nil, &p, false)
+func (m *MemStore) UpdateQueueBindingWithConsumer(ctx context.Context, accountID, appID, id string, p UpdateQueueBindingParams) (QueueBindingConsumerResult, error) {
+	return m.mutateQueueBindingConsumer(ctx, accountID, appID, id, nil, &p, false)
 }
 
-func (m *MemStore) DeleteQueueBindingWithConsumer(_ context.Context, accountID, appID, id string) (QueueBindingConsumerResult, error) {
-	return m.mutateQueueBindingConsumer(accountID, appID, id, nil, nil, true)
+func (m *MemStore) DeleteQueueBindingWithConsumer(ctx context.Context, accountID, appID, id string) (QueueBindingConsumerResult, error) {
+	return m.mutateQueueBindingConsumer(ctx, accountID, appID, id, nil, nil, true)
 }
 
-func (m *MemStore) mutateQueueBindingConsumer(accountID, appID, id string, create *QueueBinding, patch *UpdateQueueBindingParams, remove bool) (QueueBindingConsumerResult, error) {
+func (m *MemStore) mutateQueueBindingConsumer(ctx context.Context, accountID, appID, id string, create *QueueBinding, patch *UpdateQueueBindingParams, remove bool) (QueueBindingConsumerResult, error) {
 	for _, value := range []string{accountID, appID, id} {
 		if _, err := uuid.Parse(value); err != nil {
 			return QueueBindingConsumerResult{}, ErrInvalidArgument
@@ -33,6 +33,11 @@ func (m *MemStore) mutateQueueBindingConsumer(accountID, appID, id string, creat
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 QueueBindingConsumerResult
+		return zero0, err
+	}
+
 	return m.mutateQueueBindingConsumerLocked(accountID, appID, id, create, patch, remove, false)
 }
 
@@ -41,7 +46,7 @@ func (m *MemStore) mutateQueueBindingConsumerLocked(accountID, appID, id string,
 	if !ok || app.AccountID != accountID || app.Status == AppDeleted {
 		return QueueBindingConsumerResult{}, ErrNotFound
 	}
-	account, ok := m.accounts[accountID]
+	account, ok := m.queuePolicyAccountLocked(accountID, appID)
 	if !ok {
 		return QueueBindingConsumerResult{}, ErrNotFound
 	}
@@ -53,6 +58,10 @@ func (m *MemStore) mutateQueueBindingConsumerLocked(accountID, appID, id string,
 			return QueueBindingConsumerResult{}, ErrConflict
 		}
 		binding = applyQueueBindingPatch(*create, UpdateQueueBindingParams{})
+		if binding.OrgID != "" && binding.OrgID != app.OrgID {
+			return QueueBindingConsumerResult{}, ErrConflict
+		}
+		binding.OrgID = app.OrgID
 		binding.CreatedAt = time.Now().UTC()
 	} else {
 		binding, ok = m.queueBindings[id]
@@ -115,7 +124,7 @@ func (m *MemStore) mutateQueueBindingConsumerLocked(accountID, appID, id string,
 					return QueueBindingConsumerResult{}, ErrConflict
 				}
 			}
-			if otherApp, ok := m.triggerAppLocked(trigger); ok && otherApp.AccountID == accountID && otherApp.Status != AppDeleted && m.triggerConsumesQuotaLocked(trigger) {
+			if otherApp, ok := m.triggerAppLocked(trigger); ok && m.sameQueueQuotaSubjectLocked(otherApp, account.ResourceOwnerID()) && otherApp.Status != AppDeleted && m.triggerConsumesQuotaLocked(trigger) {
 				accountCount++
 			}
 		}

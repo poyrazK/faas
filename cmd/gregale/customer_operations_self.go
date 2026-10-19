@@ -21,6 +21,9 @@ func (c tenantCustomerOperationsClient) GetAccountOperationEvents(ctx context.Co
 func (c tenantCustomerOperationsClient) CancelOperation(ctx context.Context, _, id string, req api.OperationCancellationRequest) (api.OperationResponse, error) {
 	return c.client.CancelPlatformTenantSelfOperation(ctx, id, req)
 }
+func (c tenantCustomerOperationsClient) DecideOperationApproval(ctx context.Context, _, id, step string, req api.OperationApprovalRequest) (api.OperationResponse, error) {
+	return c.client.DecidePlatformTenantSelfOperationApproval(ctx, id, step, req)
+}
 func (c tenantCustomerOperationsClient) DownloadOperationArtifact(ctx context.Context, _, id, artifact string, dst io.Writer) (int64, error) {
 	return c.client.DownloadPlatformTenantSelfOperationArtifact(ctx, id, artifact, dst)
 }

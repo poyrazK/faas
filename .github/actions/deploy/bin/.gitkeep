@@ -1,10 +1,9 @@
 # The vendored gregale binary lands in this directory at release time.
-# The release.yml workflow cross-builds ./cmd/gregale for linux-amd64
-# (and optional darwin-arm64 for maintainer local dev), stamps the
-# version via -ldflags -X .../pkg/wire.Version, and writes the result
-# to bin/gregale. SHA256SUMS is generated alongside and attached to
-# the GitHub Release.
+# The release.yml workflow cross-builds ./cmd/gregale for linux-amd64,
+# stamps the version via -ldflags -X .../pkg/wire.Version, and commits
+# it gzip-compressed as bin/gregale.gz: GitHub refuses files over
+# 100 MB. src/cli.sh unpacks it and checks it against the release's
+# SHA256SUMS, which is generated alongside and attached to the GitHub
+# Release.
 #
-# This file is a placeholder so the directory is tracked in git. The
-# release workflow git-adds and commits the actual binary on every
-# v*.*.* tag.
+# This file is a placeholder so the directory is tracked in git.

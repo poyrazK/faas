@@ -1,14 +1,20 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 from io import BytesIO
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
 from .. import types
 from ..types import UNSET, File, Unset
+
+if TYPE_CHECKING:
+    from ..models.project_apply_request_app_slugs import ProjectApplyRequestAppSlugs
+    from ..models.project_initial_secrets import ProjectInitialSecrets
+
 
 T = TypeVar("T", bound="ProjectApplyRequest")
 
@@ -22,6 +28,12 @@ class ProjectApplyRequest:
     """
 
     source: File
+    migration: bool | Unset = False
+    """Apply the reviewed migration naming mode, preserving repository service identities and project-prefixed app
+    allocations. Automatic triggers and repository push bindings must be disabled."""
+    app_slugs: ProjectApplyRequestAppSlugs | Unset = UNSET
+    """Reviewed repository service-to-app allocations for this apply. Preserve existing project app names and
+    repeat the exact selected names from review; multipart clients encode this object as JSON."""
     project_slug: str | Unset = UNSET
     repo_full_name: str | Unset = UNSET
     production_branch: str | Unset = UNSET
@@ -37,10 +49,19 @@ class ProjectApplyRequest:
     platform_tenant_required: bool | Unset = UNSET
     """Override the customer identity policy for selected workloads (Hobby and above). Must match the scan
     override. Omitted uses Compose declarations and preserves existing app policy."""
+    initial_secrets: ProjectInitialSecrets | Unset = UNSET
+    """Request-only mapping of exact selected workload names to initial sealed environment values. Values stay in
+    memory until sealing and never enter responses or source caches."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         source = self.source.to_tuple()
+
+        migration = self.migration
+
+        app_slugs: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.app_slugs, Unset):
+            app_slugs = self.app_slugs.to_dict()
 
         project_slug = self.project_slug
 
@@ -60,6 +81,10 @@ class ProjectApplyRequest:
 
         platform_tenant_required = self.platform_tenant_required
 
+        initial_secrets: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.initial_secrets, Unset):
+            initial_secrets = self.initial_secrets.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -67,6 +92,10 @@ class ProjectApplyRequest:
                 "source": source,
             }
         )
+        if migration is not UNSET:
+            field_dict["migration"] = migration
+        if app_slugs is not UNSET:
+            field_dict["app_slugs"] = app_slugs
         if project_slug is not UNSET:
             field_dict["project_slug"] = project_slug
         if repo_full_name is not UNSET:
@@ -85,6 +114,8 @@ class ProjectApplyRequest:
             field_dict["no_triggers"] = no_triggers
         if platform_tenant_required is not UNSET:
             field_dict["platform_tenant_required"] = platform_tenant_required
+        if initial_secrets is not UNSET:
+            field_dict["initial_secrets"] = initial_secrets
 
         return field_dict
 
@@ -92,6 +123,12 @@ class ProjectApplyRequest:
         files: types.RequestFiles = []
 
         files.append(("source", self.source.to_tuple()))
+
+        if not isinstance(self.migration, Unset):
+            files.append(("migration", (None, str(self.migration).encode(), "text/plain")))
+
+        if not isinstance(self.app_slugs, Unset):
+            files.append(("app_slugs", (None, json.dumps(self.app_slugs.to_dict()).encode(), "application/json")))
 
         if not isinstance(self.project_slug, Unset):
             files.append(("project_slug", (None, str(self.project_slug).encode(), "text/plain")))
@@ -122,6 +159,11 @@ class ProjectApplyRequest:
                 ("platform_tenant_required", (None, str(self.platform_tenant_required).encode(), "text/plain"))
             )
 
+        if not isinstance(self.initial_secrets, Unset):
+            files.append(
+                ("initial_secrets", (None, json.dumps(self.initial_secrets.to_dict()).encode(), "application/json"))
+            )
+
         for prop_name, prop in self.additional_properties.items():
             files.append((prop_name, (None, str(prop).encode(), "text/plain")))
 
@@ -129,8 +171,20 @@ class ProjectApplyRequest:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.project_apply_request_app_slugs import ProjectApplyRequestAppSlugs
+        from ..models.project_initial_secrets import ProjectInitialSecrets
+
         d = dict(src_dict)
         source = File(payload=BytesIO(d.pop("source")))
+
+        migration = d.pop("migration", UNSET)
+
+        _app_slugs = d.pop("app_slugs", UNSET)
+        app_slugs: ProjectApplyRequestAppSlugs | Unset
+        if isinstance(_app_slugs, Unset):
+            app_slugs = UNSET
+        else:
+            app_slugs = ProjectApplyRequestAppSlugs.from_dict(_app_slugs)
 
         project_slug = d.pop("project_slug", UNSET)
 
@@ -150,8 +204,17 @@ class ProjectApplyRequest:
 
         platform_tenant_required = d.pop("platform_tenant_required", UNSET)
 
+        _initial_secrets = d.pop("initial_secrets", UNSET)
+        initial_secrets: ProjectInitialSecrets | Unset
+        if isinstance(_initial_secrets, Unset):
+            initial_secrets = UNSET
+        else:
+            initial_secrets = ProjectInitialSecrets.from_dict(_initial_secrets)
+
         project_apply_request = cls(
             source=source,
+            migration=migration,
+            app_slugs=app_slugs,
             project_slug=project_slug,
             repo_full_name=repo_full_name,
             production_branch=production_branch,
@@ -161,6 +224,7 @@ class ProjectApplyRequest:
             approval_token=approval_token,
             no_triggers=no_triggers,
             platform_tenant_required=platform_tenant_required,
+            initial_secrets=initial_secrets,
         )
 
         project_apply_request.additional_properties = d

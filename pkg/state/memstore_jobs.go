@@ -789,6 +789,9 @@ func (m *MemStore) JobRunCreate(_ context.Context, jobID, accountID, triggerKind
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.retirementJobBlockedLocked(jobID) {
+		return JobRun{}, nil, ErrEnvironmentWorkloadRetired
+	}
 	job, ok := m.jobs[jobID]
 	if !ok || job.AccountID != accountID || job.Status == "deleted" {
 		return JobRun{}, nil, ErrNotFound
@@ -827,6 +830,9 @@ func (m *MemStore) JobRunCreate(_ context.Context, jobID, accountID, triggerKind
 	}
 	if len(inputs) > 0 && len(inputs) != tasks {
 		return JobRun{}, nil, fmt.Errorf("state: input count %d must equal tasks %d", len(inputs), tasks)
+	}
+	if err := validateJobRunProcess(opts); err != nil {
+		return JobRun{}, nil, err
 	}
 	if err := validateJobRunAttach(opts, tasks, retryMaxOverride); err != nil {
 		return JobRun{}, nil, err
@@ -903,6 +909,8 @@ func (m *MemStore) JobRunCreate(_ context.Context, jobID, accountID, triggerKind
 		RetryMax:                    &retryMax,
 		TaskTimeoutS:                &timeout,
 		Command:                     command,
+		ProcessUser:                 opts.ProcessUser,
+		ProcessWorkdir:              opts.ProcessWorkdir,
 		ImageRefSnapshot:            job.ImageRef,
 		ImageResolvedDigestSnapshot: job.ImageResolvedDigest,
 		ImageStorageKeySnapshot:     job.ImageStorageKey,
@@ -992,7 +1000,8 @@ func (m *MemStore) JobRunReplayFailed(_ context.Context, sourceRunID, accountID 
 		Tasks: len(failed), Parallelism: source.Parallelism,
 		ExecutionClass: "standard", FailurePolicy: source.FailurePolicy,
 		RetryMax: source.RetryMax, TaskTimeoutS: source.TaskTimeoutS,
-		Command:          append([]string(nil), source.Command...),
+		Command:     append([]string(nil), source.Command...),
+		ProcessUser: source.ProcessUser, ProcessWorkdir: source.ProcessWorkdir,
 		ImageRefSnapshot: job.ImageRef, ImageResolvedDigestSnapshot: job.ImageResolvedDigest,
 		ImageStorageKeySnapshot: job.ImageStorageKey, RAMMBSnapshot: source.RAMMBSnapshot,
 		EffectiveEnvSnapshot: append(json.RawMessage(nil), source.EffectiveEnvSnapshot...),
@@ -1048,6 +1057,9 @@ func (m *MemStore) JobRunCreateScheduledOccurrence(_ context.Context, jobID, sch
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, managed := m.exclusiveTriggerBindings["job_schedule\x00"+jobID]; managed && options.Disposition == "" {
+		return JobRun{}, false, nil
+	}
+	if m.retirementJobBlockedLocked(jobID) {
 		return JobRun{}, false, nil
 	}
 	job, ok := m.jobs[jobID]
@@ -1507,7 +1519,7 @@ func (m *MemStore) JobTaskClaimBatch(_ context.Context, limit int) ([]JobTask, e
 			run, runOK := m.jobRuns[t.RunID]
 			job, jobOK := m.jobs[run.JobID]
 			_, operationOwned := m.operationForJobLocked(run.ID)
-			if !runOK || !jobOK || (!operationOwned && (job.ImageMaterializationStatus != "ready" || job.ImageStorageKey == "")) || !m.exclusiveJobRunCurrentLocked(run) {
+			if m.retirementJobBlockedLocked(run.JobID) || !runOK || !jobOK || (!operationOwned && (job.ImageMaterializationStatus != "ready" || job.ImageStorageKey == "")) || !m.exclusiveJobRunCurrentLocked(run) {
 				continue
 			}
 			if runHasPermanentFailure(run, tasks, job) {
@@ -1615,6 +1627,9 @@ func firstJobTaskStartedAt(tasks map[int]JobTask) *time.Time {
 func (m *MemStore) JobTaskMarkClaimed(_ context.Context, runID string, taskIndex int, instanceID, leaseToken string, leaseExpiresAt time.Time, nodeID string) (err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.retirementJobBlockedLocked(m.jobRuns[runID].JobID) {
+		return ErrEnvironmentWorkloadRetired
+	}
 	tasks, ok := m.jobTasks[runID]
 	if !ok {
 		return ErrNotFound
@@ -1641,12 +1656,17 @@ func (m *MemStore) JobTaskMarkClaimed(_ context.Context, runID string, taskIndex
 	return m.syncOperationJobLocked(runID)
 }
 
-func (m *MemStore) CreateAndClaimJobInstance(_ context.Context, instanceID, jobID, runID string, taskIndex int, instanceState string, ramMB int, computeNodeID, wakeID, leaseToken string, leaseExpiresAt time.Time, leaseOwnerNodeID string) (Instance, error) {
+func (m *MemStore) CreateAndClaimJobInstance(ctx context.Context, instanceID, jobID, runID string, taskIndex int, instanceState string, ramMB int, computeNodeID, wakeID, leaseToken string, leaseExpiresAt time.Time, leaseOwnerNodeID string) (Instance, error) {
 	if err := validateMemStoreCreateInstanceState(instanceState); err != nil {
 		return Instance{}, err
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if IsLive(instanceState) {
+		if err := m.checkNodeAdmissionLocked(ctx, computeNodeID); err != nil {
+			return Instance{}, err
+		}
+	}
 	job, ok := m.jobs[jobID]
 	if !ok {
 		return Instance{}, ErrNotFound

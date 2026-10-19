@@ -28,6 +28,10 @@ type EnvironmentQualificationSnapshot struct {
 	StoredBytes       int64  `json:"stored_bytes"`
 }
 
+func (s EnvironmentQualificationSnapshot) Equal(other EnvironmentQualificationSnapshot) bool {
+	return s == other
+}
+
 // Capture evidence is retained separately from reusable serving snapshots.
 // Recording it grants no health, smoke, restore, or activation authority.
 type EnvironmentQualificationSnapshotReceipt struct {

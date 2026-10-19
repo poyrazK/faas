@@ -2,6 +2,7 @@ package imaged
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -112,6 +113,7 @@ type fakeBuilder struct {
 	buildErr         error
 	buildHook        func()
 	runnerDigest     string
+	guestInitDigest  string
 	omitRunnerDigest bool
 }
 
@@ -140,9 +142,12 @@ func (b *fakeBuilder) Build(ctx context.Context, in rootfs.BuildInput) (rootfs.B
 			b.buildHook()
 		}
 		return rootfs.BuildResult{
-			ImageKey:     in.StorageKey,
-			ContentBytes: b.bytesOut,
-			RunnerDigest: runnerDigest,
+			ImageKey:        in.StorageKey,
+			ContentBytes:    b.bytesOut,
+			RunnerDigest:    runnerDigest,
+			GuestInitDigest: b.guestInitDigest,
+			ArtifactDigest:  fmt.Sprintf("sha256:%x", sha256.Sum256([]byte("fake ext4"))),
+			ArtifactBytes:   int64(len("fake ext4")),
 		}, nil
 	}
 	if in.OutImage != "" {
@@ -153,9 +158,12 @@ func (b *fakeBuilder) Build(ctx context.Context, in rootfs.BuildInput) (rootfs.B
 			b.buildHook()
 		}
 		return rootfs.BuildResult{
-			ImagePath:    in.OutImage,
-			ContentBytes: b.bytesOut,
-			RunnerDigest: runnerDigest,
+			ImagePath:       in.OutImage,
+			ContentBytes:    b.bytesOut,
+			RunnerDigest:    runnerDigest,
+			GuestInitDigest: b.guestInitDigest,
+			ArtifactDigest:  fmt.Sprintf("sha256:%x", sha256.Sum256([]byte("fake ext4"))),
+			ArtifactBytes:   int64(len("fake ext4")),
 		}, nil
 	}
 	return rootfs.BuildResult{ContentBytes: b.bytesOut, RunnerDigest: runnerDigest}, nil
@@ -214,7 +222,8 @@ func (b *fakeBuilder) BuildFullRootfs(ctx context.Context, in rootfs.BuildFullRo
 		if err := in.Storage.Put(ctx, in.StorageKey, strings.NewReader("fake ext4 full-rootfs")); err != nil {
 			return rootfs.BuildResult{}, err
 		}
-		return rootfs.BuildResult{ImageKey: in.StorageKey, ContentBytes: b.bytesOut}, nil
+		return rootfs.BuildResult{ImageKey: in.StorageKey, ContentBytes: b.bytesOut,
+			ArtifactDigest: fmt.Sprintf("sha256:%x", sha256.Sum256([]byte("fake ext4 full-rootfs"))), ArtifactBytes: int64(len("fake ext4 full-rootfs"))}, nil
 	}
 	return rootfs.BuildResult{ContentBytes: b.bytesOut}, nil
 }
@@ -986,9 +995,11 @@ func TestHandleDeployment_PullDigestSentinel_PersistsErrorCode(t *testing.T) {
 			want: api.CodeStatelessOnlyViolation,
 		},
 		{
-			name: "non-sentinel error leaves code empty (free-text only)",
+			// H10-107: an unmapped failure still gets a stable code;
+			// the free-text error keeps the detail.
+			name: "non-sentinel error gets deploy_failed",
 			err:  errors.New("net down"),
-			want: "",
+			want: api.CodeDeployFailed,
 		},
 	}
 	for _, tc := range cases {
@@ -1432,7 +1443,7 @@ func TestBuildFunctionLayer_OverrideEntrypointWinsOverRuntimeDefault(t *testing.
 	handler := New(h.store, h.notif, fakePuller{}, h.bld, "./init", h.appsR, silentLogger())
 	handler.WithFunctionRunnerNode22("/runners/node22")
 
-	if err := handler.buildFunctionLayer(context.Background(), h.app, h.dep, h.acct); err != nil {
+	if err := handler.buildFunctionLayer(context.Background(), h.app, h.dep, h.acct, nil); err != nil {
 		t.Fatalf("buildFunctionLayer: %v", err)
 	}
 	if len(h.bld.calls) != 1 {
@@ -1987,7 +1998,7 @@ func TestBuildFunctionLayer_Runtimes(t *testing.T) {
 			handler := New(h.store, h.notif, fakePuller{}, h.bld, "./init", h.appsR, silentLogger())
 			tc.wire(handler)
 
-			if err := handler.buildFunctionLayer(context.Background(), h.app, h.dep, h.acct); err != nil {
+			if err := handler.buildFunctionLayer(context.Background(), h.app, h.dep, h.acct, nil); err != nil {
 				t.Fatalf("buildFunctionLayer(%s): %v", tc.runtime, err)
 			}
 
@@ -2044,7 +2055,7 @@ func TestBuildFunctionLayer_StampsRunnerDigest(t *testing.T) {
 
 	handler := New(h.store, h.notif, fakePuller{}, h.bld, "./init", h.appsR, silentLogger())
 	handler.WithFunctionRunnerNode22("/runners/node22")
-	if err := handler.buildFunctionLayer(context.Background(), h.app, h.dep, h.acct); err != nil {
+	if err := handler.buildFunctionLayer(context.Background(), h.app, h.dep, h.acct, nil); err != nil {
 		t.Fatalf("buildFunctionLayer: %v", err)
 	}
 
@@ -2063,7 +2074,7 @@ func TestBuildFunctionLayer_MissingRunnerDigestFailsClosed(t *testing.T) {
 	handler := New(h.store, h.notif, fakePuller{}, h.bld, "./init", h.appsR, silentLogger())
 	handler.WithFunctionRunnerNode22("/runners/node22")
 
-	err := handler.buildFunctionLayer(context.Background(), h.app, h.dep, h.acct)
+	err := handler.buildFunctionLayer(context.Background(), h.app, h.dep, h.acct, nil)
 	if err == nil || !strings.Contains(err.Error(), "function runner digest missing") {
 		t.Fatalf("buildFunctionLayer error = %v, want missing digest", err)
 	}
@@ -2113,7 +2124,7 @@ func TestBuildFunctionLayer_MissingRunnerFailsLoud(t *testing.T) {
 			// Intentionally do NOT wire the matching runner path.
 			handler := New(h.store, h.notif, fakePuller{}, h.bld, "./init", h.appsR, silentLogger())
 
-			err := handler.buildFunctionLayer(context.Background(), h.app, h.dep, h.acct)
+			err := handler.buildFunctionLayer(context.Background(), h.app, h.dep, h.acct, nil)
 			if err == nil {
 				t.Fatal("expected error when function runner path is empty")
 			}
@@ -2327,5 +2338,61 @@ func TestHandleSnapshotWritten_ReplacesUnrestorableLegacyRow(t *testing.T) {
 	}
 	if !retired {
 		t.Fatal("legacy drive-less row was not retired")
+	}
+}
+
+// adr: 1344
+// TestHandleSnapshotWritten_ReplacesOtherFirecrackerVersionRow: with no
+// fleet-wide FC sweep, a restorable live row of another Firecracker version
+// would otherwise hold the unique (deployment, tier) slot and make every new
+// capture be discarded, so the deployment cold-booted forever on upgraded
+// nodes. The new capture replaces it; a capture of the same version still
+// does not.
+func TestHandleSnapshotWritten_ReplacesOtherFirecrackerVersionRow(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		captureFC   string
+		wantReplace bool
+	}{
+		{name: "other version", captureFC: "firecracker-1.11", wantReplace: true},
+		{name: "same version", captureFC: "firecracker-1.10", wantReplace: false},
+		{name: "unstamped capture", captureFC: "", wantReplace: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			store := state.NewMemStore()
+			acct, _ := store.CreateAccount(ctx, "u@example.com", "pro")
+			app, _ := store.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "fc-upgrade", RAMMB: 256})
+			dep, _ := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, ImageDigest: "sha256:abc", Kind: state.DeploymentKindImage})
+			oldKey := state.SnapshotCaptureMemKey(dep.ID, state.SnapshotTierInit, "old1")
+			old, err := store.CreateSnapshot(ctx, state.Snapshot{
+				DeploymentID: dep.ID, FCVersion: "firecracker-1.10", MemBytes: 256 << 20,
+				StorageKey: oldKey, Tier: state.SnapshotTierInit,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if state.SnapshotDriveKey(old) == "" {
+				t.Fatal("fixture must be a restorable capture with a drive")
+			}
+			_ = store.UpdateDeploymentStatus(ctx, dep.ID, state.DeployLive, "")
+			h := New(store, &fakeNotifier{}, fakePuller{}, &fakeBuilder{}, "./init", t.TempDir(), silentLogger())
+			newKey := state.SnapshotCaptureMemKey(dep.ID, state.SnapshotTierInit, "new1")
+			h.HandleNotification(ctx, db.Notification{
+				Channel: db.NotifySnapshotWritten,
+				Payload: `{"deployment_id":"` + dep.ID + `","storage_key":"` + newKey + `","mem_bytes":268435456,"fc_version":"` + tc.captureFC + `"}`,
+			})
+			live, err := store.LatestSnapshotForTier(ctx, dep.ID, state.SnapshotTierInit)
+			if err != nil {
+				t.Fatalf("LatestSnapshotForTier: %v", err)
+			}
+			want := oldKey
+			if tc.wantReplace {
+				want = newKey
+			}
+			if live.StorageKey != want {
+				t.Fatalf("live snapshot = %q, want %q", live.StorageKey, want)
+			}
+		})
 	}
 }

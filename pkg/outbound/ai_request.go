@@ -43,7 +43,16 @@ func readAIRequest(r *http.Request, integration Integration, path string) (*aiRe
 	if integration.AIProvider == "" || r.Method != http.MethodPost || r.Body == nil || r.Body == http.NoBody {
 		return nil, nil, nil
 	}
-	if r.ContentLength > api.OutboundAIRequestBufferMaxBytes {
+	limit := api.OutboundAIRequestBufferMaxBytes
+	switch endpoint := classifyAIEndpoint(integration.AIProvider, path); {
+	case endpoint.batch:
+		// ADR-1431: a batch creation is sized from its body.
+		limit = api.OutboundAIBatchBodyMaxBytes
+	case endpoint.media == aiMediaVideo:
+		// ADR-1432: a video request carries its images or source video.
+		limit = api.OutboundAIVideoBodyMaxBytes
+	}
+	if r.ContentLength > limit {
 		if !multipartRequest(r.Header.Get("Content-Type")) {
 			return nil, nil, nil
 		}
@@ -56,12 +65,12 @@ func readAIRequest(r *http.Request, integration Integration, path string) (*aiRe
 		r.Body = prefixedReadCloser{Reader: io.MultiReader(bytes.NewReader(prefix), r.Body), src: r.Body}
 		return nil, multipartFields(r.Header.Get("Content-Type"), prefix), nil
 	}
-	body, err := io.ReadAll(io.LimitReader(r.Body, api.OutboundAIRequestBufferMaxBytes+1))
+	body, err := io.ReadAll(io.LimitReader(r.Body, limit+1))
 	if err != nil {
 		return nil, nil, err
 	}
 	form := multipartFields(r.Header.Get("Content-Type"), body)
-	if int64(len(body)) > api.OutboundAIRequestBufferMaxBytes {
+	if int64(len(body)) > limit {
 		r.Body = prefixedReadCloser{Reader: io.MultiReader(bytes.NewReader(body), r.Body), src: r.Body}
 		return nil, form, nil
 	}
@@ -174,10 +183,10 @@ func setReplayableBody(req *http.Request, body []byte) {
 	}
 }
 
-// aiCacheEligible extends the opt-in response cache (ADR-294) to buffered,
-// non-streaming JSON POST calls of an AI integration.
+// aiCacheEligible extends the opt-in response cache (ADR-294) to buffered
+// JSON POST calls of an AI integration, streaming ones included (ADR-1440).
 func aiCacheEligible(req *http.Request, ai *aiRequest, ttlSeconds int) bool {
-	if ai == nil || ai.streaming || ttlSeconds <= 0 || req == nil || req.Method != http.MethodPost {
+	if ai == nil || ttlSeconds <= 0 || req == nil || req.Method != http.MethodPost {
 		return false
 	}
 	return jsonRequest(req.Header.Get("Content-Type"), ai.body) && !requestCacheControlDisablesCaching(req.Header)

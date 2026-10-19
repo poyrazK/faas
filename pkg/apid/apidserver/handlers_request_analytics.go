@@ -288,7 +288,7 @@ func (s *server) requestAnalyticsResponse(ctx context.Context, app state.App, ac
 	groups := make([]api.RequestAnalyticsGroup, 0, len(groupRows))
 	routes := make([]api.RequestAnalyticsRoute, 0, len(groupRows))
 	groupsTruncated := false
-	var otherRouteRequests int64
+	var otherRouteRequests, otherRouteTimeMS int64
 	for _, row := range groupRows {
 		value := requestAnalyticsDimensionString(row.Dimension)
 		method := requestAnalyticsDimensionString(row.Method)
@@ -314,7 +314,7 @@ func (s *server) requestAnalyticsResponse(ctx context.Context, app state.App, ac
 		if group.Value == "__other__" {
 			groupsTruncated = true
 			if groupBy == "route" {
-				otherRouteRequests = group.Requests
+				otherRouteRequests, otherRouteTimeMS = group.Requests, row.RequestTimeMs
 			}
 			continue
 		}
@@ -336,6 +336,7 @@ func (s *server) requestAnalyticsResponse(ctx context.Context, app state.App, ac
 				GuestCPUAvgMS:       group.GuestCPUAvgMS,
 				GuestCPUP95MS:       group.GuestCPUP95MS,
 				GuestPeakRSSMaxMB:   group.GuestPeakRSSMaxMB,
+				RequestTimeMS:       row.RequestTimeMs,
 			})
 		}
 	}
@@ -372,7 +373,8 @@ func (s *server) requestAnalyticsResponse(ctx context.Context, app state.App, ac
 	if groupBy == "route" {
 		// Usage and request analytics use the exact same bounded window. The
 		// app's raw RAM-hours are valued at Gregale's current compute overage
-		// rate, then distributed across the observed route request counts. This
+		// rate, then distributed across routes by observed request time
+		// (ADR-743), or request count when no timing exists. This
 		// intentionally excludes the account's shared included allowance and
 		// any egress charge: it is a cost allocation estimate, not invoice math.
 		usage, _, err := meter.BuildAppWindowSummary(ctx, s.store, acct.ID, app.ID, window.From, window.Until)
@@ -380,7 +382,7 @@ func (s *server) requestAnalyticsResponse(ctx context.Context, app state.App, ac
 			return api.RequestAnalyticsResponse{}, err
 		}
 		estimatedMillicents := api.OverageMillicentsForBillableMBSeconds(usage.MBSeconds)
-		requestCount, allocatedMillicents, otherRouteMillicents := allocateRequestAnalyticsRouteCost(routes, otherRouteRequests, estimatedMillicents)
+		requestCount, allocatedMillicents, otherRouteMillicents, allocationMethod := allocateRequestAnalyticsRouteCostByTime(routes, otherRouteRequests, otherRouteTimeMS, estimatedMillicents)
 		otherRouteRequestSharePct := 0.0
 		if requestCount > 0 {
 			otherRouteRequestSharePct = float64(otherRouteRequests) * 100 / float64(requestCount)
@@ -393,8 +395,8 @@ func (s *server) requestAnalyticsResponse(ctx context.Context, app state.App, ac
 			OtherRouteRequests:        otherRouteRequests,
 			OtherRouteRequestSharePct: otherRouteRequestSharePct,
 			RateMillicentsPerGBHour:   api.OverageMillicentsPerGBHour,
-			Currency:                  "EUR",
-			AllocationMethod:          "request_share",
+			Currency:                  api.BillingCurrency,
+			AllocationMethod:          allocationMethod,
 			Basis:                     "raw_ram_hours_at_current_overage_rate_before_allowance",
 			RequestCount:              requestCount,
 		}
@@ -1224,7 +1226,7 @@ func (s *server) fetchDashboardRequestAnalytics(ctx context.Context, log *slog.L
 				CreatedAt:                observation.DeploymentCreatedAt,
 				Requests:                 observation.Requests,
 				RequestSharePct:          observation.RequestSharePct,
-				EstimatedComputeEUR:      millicentsAsEUR(observation.EstimatedComputeCostMillicents),
+				EstimatedComputeEUR:      millicentsAsCurrency(observation.EstimatedComputeCostMillicents),
 				GuestCPUAvailable:        observation.GuestCPUAvgMS != nil,
 				GuestCPUMeasuredRequests: observation.GuestCPUMeasuredRequests,
 				GuestCPUChangeAvailable:  observation.GuestCPUChangePct != nil,
@@ -1265,8 +1267,8 @@ func (s *server) fetchDashboardRequestAnalytics(ctx context.Context, log *slog.L
 			Dependencies:                route.Dependencies,
 			DeploymentObservations:      deploymentObservations,
 			OtherDeploymentRequests:     route.OtherDeploymentRequests,
-			OtherDeploymentComputeEUR:   millicentsAsEUR(route.OtherDeploymentEstimatedComputeCostMillicents),
-			EstimatedComputeCostEUR:     millicentsAsEUR(route.EstimatedComputeCostMillicents),
+			OtherDeploymentComputeEUR:   millicentsAsCurrency(route.OtherDeploymentEstimatedComputeCostMillicents),
+			EstimatedComputeCostEUR:     millicentsAsCurrency(route.EstimatedComputeCostMillicents),
 			RequestSharePct:             route.RequestSharePct,
 			TrendURL:                    "/dashboard/apps/" + app.Slug + "?" + trendQuery.Encode(),
 			DebugURL:                    "/dashboard/apps/" + app.Slug + "/debug?" + debugQuery.Encode(),
@@ -1353,13 +1355,13 @@ func requestAnalyticsComputeCostView(cost *api.RequestAnalyticsComputeCost) *das
 		return nil
 	}
 	return &dashboard.RequestAnalyticsComputeCostView{
-		EstimatedEUR:               millicentsAsEUR(cost.EstimatedMillicents),
-		AllocatedEUR:               millicentsAsEUR(cost.AllocatedMillicents),
-		UnallocatedEUR:             millicentsAsEUR(cost.UnallocatedMillicents),
-		OtherRoutesEUR:             millicentsAsEUR(cost.OtherRouteMillicents),
+		EstimatedEUR:               millicentsAsCurrency(cost.EstimatedMillicents),
+		AllocatedEUR:               millicentsAsCurrency(cost.AllocatedMillicents),
+		UnallocatedEUR:             millicentsAsCurrency(cost.UnallocatedMillicents),
+		OtherRoutesEUR:             millicentsAsCurrency(cost.OtherRouteMillicents),
 		OtherRoutesRequests:        cost.OtherRouteRequests,
 		OtherRoutesRequestSharePct: cost.OtherRouteRequestSharePct,
-		RateEUR:                    millicentsAsEUR(cost.RateMillicentsPerGBHour),
+		RateEUR:                    millicentsAsCurrency(cost.RateMillicentsPerGBHour),
 		RequestCount:               cost.RequestCount,
 	}
 }
@@ -1381,7 +1383,7 @@ func requestAnalyticsDeploymentCostBreakdownView(cost *api.RequestAnalyticsDeplo
 			CreatedAt:                deployment.DeploymentCreatedAt,
 			Requests:                 deployment.Requests,
 			RequestSharePct:          deployment.RequestSharePct,
-			EstimatedEUR:             millicentsAsEUR(deployment.EstimatedComputeCostMillicents),
+			EstimatedEUR:             millicentsAsCurrency(deployment.EstimatedComputeCostMillicents),
 			GuestCPUAvailable:        deployment.GuestCPUAvgMS != nil,
 			GuestCPUMeasuredRequests: deployment.GuestCPUMeasuredRequests,
 			GuestCPUChangeAvailable:  deployment.GuestCPUChangePct != nil,
@@ -1397,10 +1399,10 @@ func requestAnalyticsDeploymentCostBreakdownView(cost *api.RequestAnalyticsDeplo
 		deployments = append(deployments, view)
 	}
 	return &dashboard.RequestAnalyticsDeploymentCostBreakdownView{
-		EstimatedEUR:   millicentsAsEUR(cost.EstimatedMillicents),
-		AllocatedEUR:   millicentsAsEUR(cost.AllocatedMillicents),
-		UnallocatedEUR: millicentsAsEUR(cost.UnallocatedMillicents),
-		OtherEUR:       millicentsAsEUR(cost.OtherMillicents),
+		EstimatedEUR:   millicentsAsCurrency(cost.EstimatedMillicents),
+		AllocatedEUR:   millicentsAsCurrency(cost.AllocatedMillicents),
+		UnallocatedEUR: millicentsAsCurrency(cost.UnallocatedMillicents),
+		OtherEUR:       millicentsAsCurrency(cost.OtherMillicents),
 		OtherRequests:  cost.OtherRequests,
 		OtherSharePct:  cost.OtherRequestSharePct,
 		RequestCount:   cost.RequestCount,
@@ -1408,9 +1410,9 @@ func requestAnalyticsDeploymentCostBreakdownView(cost *api.RequestAnalyticsDeplo
 	}
 }
 
-// One euro is 100,000 millicents (1/1000 of a cent). Integer formatting keeps
+// One dollar is 100,000 millicents (1/1000 of a cent). Integer formatting keeps
 // these small estimates precise without floating-point rounding in templates.
-func millicentsAsEUR(value int64) string {
+func millicentsAsCurrency(value int64) string {
 	if value < 0 {
 		return fmt.Sprintf("-%d.%05d", -(value / 100_000), -(value % 100_000))
 	}

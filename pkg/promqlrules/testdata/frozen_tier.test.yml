@@ -1,0 +1,210 @@
+# Synthetic coverage for the ADR-1151 frozen tier and quiet pause alerts:
+# each fires on its failure shape and stays quiet on a healthy one.
+
+rule_files:
+  - ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
+
+evaluation_interval: 30s
+
+tests:
+  - interval: 30s
+    name: "FaasFrozenThawFailing fires"
+    input_series:
+      - series: 'schedd_frozen_thaw_total{job="schedd",instance="node-a:9103",outcome="failed"}'
+        values: '0+1x60'
+      - series: 'schedd_frozen_thaw_total{job="schedd",instance="node-a:9103",outcome="success"}'
+        values: '0+1x60'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: FaasFrozenThawFailing
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: schedd
+              family: frozen_tier
+              instance: node-a:9103
+            exp_annotations:
+              summary: "Thaws of frozen instances are failing on node-a:9103"
+              description: "More than 10% of thaws failed in 15m, at least three. A failed thaw parks the frozen VM and the request restores from the snapshot instead, so wakes are slower but still served. Check vmmd thaw errors and apps whose after_restore hook fails."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasFrozenTier.md"
+
+  - interval: 30s
+    name: "thaws that mostly succeed stay quiet"
+    input_series:
+      - series: 'schedd_frozen_thaw_total{job="schedd",instance="node-a:9103",outcome="failed"}'
+        values: '0+0x60'
+      - series: 'schedd_frozen_thaw_total{job="schedd",instance="node-a:9103",outcome="success"}'
+        values: '0+5x60'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: FaasFrozenThawFailing
+        exp_alerts: []
+
+  - interval: 30s
+    name: "FaasFrozenFreezeErrors fires"
+    input_series:
+      - series: 'schedd_frozen_total{job="schedd",instance="node-a:9103",outcome="error"}'
+        values: '0+1x80'
+      - series: 'schedd_frozen_total{job="schedd",instance="node-a:9103",outcome="frozen"}'
+        values: '0+1x80'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: FaasFrozenFreezeErrors
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: schedd
+              family: frozen_tier
+              instance: node-a:9103
+            exp_annotations:
+              summary: "Idle instances are failing to freeze on node-a:9103"
+              description: "More than 10% of idle-timeout freeze attempts errored in 15m, at least three. Those instances park as before, so customers are unaffected, but the frozen tier is not freezing. Check vmmd FreezeInstance errors and vmmd and schedd version skew."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasFrozenTier.md"
+
+  - interval: 30s
+    name: "freezes that succeed stay quiet"
+    input_series:
+      - series: 'schedd_frozen_total{job="schedd",instance="node-a:9103",outcome="error"}'
+        values: '0+0x80'
+      - series: 'schedd_frozen_total{job="schedd",instance="node-a:9103",outcome="frozen"}'
+        values: '0+3x80'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: FaasFrozenFreezeErrors
+        exp_alerts: []
+
+  - interval: 30s
+    name: "FaasFrozenMemoryPressureParks fires"
+    input_series:
+      - series: 'schedd_frozen_parks_total{job="schedd",instance="node-a:9103",reason="memory_pressure"}'
+        values: '0+1x120'
+      - series: 'schedd_frozen_parks_total{job="schedd",instance="node-a:9103",reason="ttl"}'
+        values: '0+0x120'
+    alert_rule_test:
+      - eval_time: 50m
+        alertname: FaasFrozenMemoryPressureParks
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: schedd
+              family: frozen_tier
+              instance: node-a:9103
+            exp_annotations:
+              summary: "Frozen instances keep being evicted for memory on node-a:9103"
+              description: "More than half of the frozen parks in 30m, at least ten, were memory-pressure evictions: frozen VMs are destroyed before a request can thaw them, so they hold memory without saving restores. Check node_frozen_resident_bytes and the node's measured memory; turn frozen_tier_apps off for the node or add capacity."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasFrozenTier.md"
+
+  - interval: 30s
+    name: "frozen instances that mostly reach their TTL stay quiet"
+    input_series:
+      - series: 'schedd_frozen_parks_total{job="schedd",instance="node-a:9103",reason="memory_pressure"}'
+        values: '0+1x120'
+      - series: 'schedd_frozen_parks_total{job="schedd",instance="node-a:9103",reason="ttl"}'
+        values: '0+5x120'
+    alert_rule_test:
+      - eval_time: 50m
+        alertname: FaasFrozenMemoryPressureParks
+        exp_alerts: []
+
+  - interval: 30s
+    name: "FaasFrozenThawSlow fires"
+    input_series:
+      - series: 'vmmd_thaw_seconds_bucket{job="vmmd",instance="node-a:9104",le="0.25"}'
+        values: '0+0x90'
+      - series: 'vmmd_thaw_seconds_bucket{job="vmmd",instance="node-a:9104",le="0.5"}'
+        values: '0+0x90'
+      - series: 'vmmd_thaw_seconds_bucket{job="vmmd",instance="node-a:9104",le="1"}'
+        values: '0+1x90'
+      - series: 'vmmd_thaw_seconds_bucket{job="vmmd",instance="node-a:9104",le="+Inf"}'
+        values: '0+1x90'
+      - series: 'vmmd_thaw_seconds_count{job="vmmd",instance="node-a:9104"}'
+        values: '0+1x90'
+    alert_rule_test:
+      - eval_time: 40m
+        alertname: FaasFrozenThawSlow
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: vmmd
+              family: frozen_tier
+              instance: node-a:9104
+            exp_annotations:
+              summary: "Thaws of frozen instances are slow on node-a:9104"
+              description: "The p95 thaw took longer than 500ms over 15m. A thaw should take milliseconds; slow thaws come from memory faulting back in after reclaim or swap, or from a slow image healthcheck or after_restore hook. Check node_frozen_resident_bytes, host swap activity and the vmmd thaw logs."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasFrozenTier.md"
+
+  - interval: 30s
+    name: "millisecond thaws stay quiet"
+    input_series:
+      - series: 'vmmd_thaw_seconds_bucket{job="vmmd",instance="node-a:9104",le="0.25"}'
+        values: '0+1x90'
+      - series: 'vmmd_thaw_seconds_bucket{job="vmmd",instance="node-a:9104",le="0.5"}'
+        values: '0+1x90'
+      - series: 'vmmd_thaw_seconds_bucket{job="vmmd",instance="node-a:9104",le="1"}'
+        values: '0+1x90'
+      - series: 'vmmd_thaw_seconds_bucket{job="vmmd",instance="node-a:9104",le="+Inf"}'
+        values: '0+1x90'
+      - series: 'vmmd_thaw_seconds_count{job="vmmd",instance="node-a:9104"}'
+        values: '0+1x90'
+    alert_rule_test:
+      - eval_time: 40m
+        alertname: FaasFrozenThawSlow
+        exp_alerts: []
+
+  - interval: 30s
+    name: "FaasFrozenNodeNearCap fires"
+    input_series:
+      - series: 'node_frozen_instances{job="vmmd",instance="node-a:9104"}'
+        values: '950x60'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: FaasFrozenNodeNearCap
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: vmmd
+              family: frozen_tier
+              instance: node-a:9104
+            exp_annotations:
+              summary: "node-a:9104 is near the frozen instance cap"
+              description: "The node holds at least 900 frozen instances, close to FrozenMaxPerNode (1000). At the cap, idle instances park instead of freezing. Check that TTL parks are running and why the node holds so many idle instances."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasFrozenTier.md"
+
+  - interval: 30s
+    name: "a node well under the cap stays quiet"
+    input_series:
+      - series: 'node_frozen_instances{job="vmmd",instance="node-a:9104"}'
+        values: '100x60'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: FaasFrozenNodeNearCap
+        exp_alerts: []
+
+  - interval: 30s
+    name: "FaasQuietResumeErrors fires"
+    input_series:
+      - series: 'vmmd_quiet_resume_errors_total{job="vmmd",instance="node-a:9104"}'
+        values: '0+1x60'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: FaasQuietResumeErrors
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: vmmd
+              family: frozen_tier
+              instance: node-a:9104
+            exp_annotations:
+              summary: "Quiet-paused instances fail to resume on node-a:9104"
+              description: "vmmd failed to resume at least three quiet-paused instances in 10m. Each failure fails or retries the request that arrived. Check vmmd logs for ResumeVM errors and the node's Firecracker processes; turning vmmd's quiet_pause off stops new pauses."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasFrozenTier.md"
+
+  - interval: 30s
+    name: "resumes without errors stay quiet"
+    input_series:
+      - series: 'vmmd_quiet_resume_errors_total{job="vmmd",instance="node-a:9104"}'
+        values: '0+0x60'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: FaasQuietResumeErrors
+        exp_alerts: []

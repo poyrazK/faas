@@ -1,0 +1,22 @@
+# ADR-1318: App-reported usage units
+
+- **Status:** accepted
+- **Date:** 2026-10-15
+- **Decision:** An app can report billable units for each request, such as tokens or images, and app consumer cards can price them.
+  - **Reporting.** The app adds a `Gregale-Usage` response header with comma-separated `meter=units` pairs, for example `Gregale-Usage: input_tokens=1200, output_tokens=332`. On a streamed response it can send the header as a trailer, so units counted while streaming are known at the end.
+    - Meter names are lowercase letters, digits and underscores, up to 32 characters, starting with a letter.
+    - A request keeps at most 8 meters, each up to 10^12 units. Repeated meters are summed.
+    - Malformed pairs are ignored.
+  - **Removal.** The gateway records the header or trailer and removes it from the response, so the client never sees it.
+  - **Which requests.** Only billable consumer requests carry reported units. Anonymous requests, tenant surface and JWT-rule requests, and requests the customer is not billed for ignore them.
+  - **Ledger.** The usage event carries the units to apid, which sums them per consumer, meter and UTC minute (`api_consumer_meter_usage_minutes`). A receipt flag acknowledges stored units, so a gateway keeps such an event until an apid that records them takes it.
+  - **Pricing.** A card with unit `app:<meter>` prices that meter's units as its own stream (ADR-1317), with included units, tiers, volume, plans, trials and fees like any card.
+- **Why:** AI and media APIs charge for what a request produced, which only the app knows. Requests, compute time and response size cannot express per-token prices.
+- **Consequences:**
+  - **Trust.** Reported units are what the app says; Gregale bounds them but cannot verify them. Operators bill their own customers from their own app's counts.
+  - **Trailers and length.** A trailer is read only when the response is streamed (chunked). On a response with a declared length, Gregale records the usage as soon as the body completes, so the units must come in the header.
+  - **App consumers only.** Customer-wide (platform tenant) cards cannot price app meters, and gateway plan limits (ADR-953) still count requests. *Superseded for tenants by ADR-1319: tenant cards price app meters, including surface and JWT-rule requests.*
+  - **Rollout.** apid must be upgraded before gateways. Events with reported units wait for an apid that acknowledges them.
+- **Rejected alternatives:**
+  - An ingestion API for usage events would decouple counts from requests, but needs its own idempotency, consumer attribution and late-arrival rules. The response already carries the consumer, the minute and exactly-once delivery (ADR-1505).
+  - Parsing token counts from model responses would tie billing to one response format.

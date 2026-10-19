@@ -97,6 +97,10 @@ const (
 	TriggerKindAMQP TriggerKind = "amqp"
 	// TriggerKindRabbitMQ is an alias for TriggerKindAMQP.
 	TriggerKindRabbitMQ TriggerKind = "rabbitmq"
+	// TriggerKindRealtime — deliver a bound realtime consumer group's
+	// messages as invocations (ADR-1322). Config schema:
+	// api.RealtimeTriggerConfig{EndpointID, Channel, Group, MaxConcurrency}.
+	TriggerKindRealtime TriggerKind = "realtime"
 )
 
 // EventTrigger is a content-based internal event subscription declaration.
@@ -772,6 +776,9 @@ type Trigger struct {
 	// so a YAML typo surfaces at load time rather than at
 	// poison-record dispatch time.
 	BrokerPoisonStrategy string `yaml:"broker_poison_strategy,omitempty"`
+	// Delivery is "record" (default: one invocation per record) or
+	// "batch" (one invocation per dispatch batch, ADR-1321).
+	Delivery string `yaml:"delivery,omitempty"`
 	// FilterCriteria (ADR-118 / issue #757 closure, migration
 	// 00300) is the per-source record filter tree. nil means
 	// "every record passes through". The shape is evaluated
@@ -1614,12 +1621,15 @@ type LifecycleConfig struct {
 	RestartPolicy    *string                   `yaml:"restart_policy,omitempty"`
 	AfterRestore     *api.AfterRestoreHook     `yaml:"after_restore,omitempty"`
 	BeforeCheckpoint *api.BeforeCheckpointHook `yaml:"before_checkpoint,omitempty"`
-	StartupDeadlineS *int                      `yaml:"startup_deadline_s,omitempty"`
-	MaxRetries       *int                      `yaml:"max_retries,omitempty"`
-	RequestTimeoutS  *int                      `yaml:"request_timeout_s,omitempty"`
-	StopGracePeriodS *int                      `yaml:"stop_grace_period_s,omitempty"`
-	StopSignal       *string                   `yaml:"stop_signal,omitempty"`
-	ServiceReplicas  *api.ServiceReplicas      `yaml:"service_replicas,omitempty"`
+	// Pause declares when the platform may pause the VM (ADR-1151):
+	// between_requests, when_idle or never.
+	Pause            *string              `yaml:"pause,omitempty"`
+	StartupDeadlineS *int                 `yaml:"startup_deadline_s,omitempty"`
+	MaxRetries       *int                 `yaml:"max_retries,omitempty"`
+	RequestTimeoutS  *int                 `yaml:"request_timeout_s,omitempty"`
+	StopGracePeriodS *int                 `yaml:"stop_grace_period_s,omitempty"`
+	StopSignal       *string              `yaml:"stop_signal,omitempty"`
+	ServiceReplicas  *api.ServiceReplicas `yaml:"service_replicas,omitempty"`
 }
 
 // ToAPI returns the lifecycle portion of an app PATCH request.
@@ -1632,6 +1642,7 @@ func (c *LifecycleConfig) ToAPI() api.UpdateAppRequest {
 		RestartPolicy:    c.RestartPolicy,
 		AfterRestore:     c.AfterRestore,
 		BeforeCheckpoint: c.BeforeCheckpoint,
+		Pause:            c.Pause,
 		Profiling:        c.Profiling,
 		Tracing:          c.Tracing,
 		StartupDeadlineS: c.StartupDeadlineS,
@@ -1645,7 +1656,7 @@ func (c *LifecycleConfig) ToAPI() api.UpdateAppRequest {
 
 // Empty reports whether the block contains no desired lifecycle changes.
 func (c *LifecycleConfig) Empty() bool {
-	return c == nil || (c.ExecutionMode == nil && c.RestartPolicy == nil && c.AfterRestore == nil && c.BeforeCheckpoint == nil && c.Profiling == nil && c.Tracing == nil &&
+	return c == nil || (c.ExecutionMode == nil && c.RestartPolicy == nil && c.AfterRestore == nil && c.BeforeCheckpoint == nil && c.Pause == nil && c.Profiling == nil && c.Tracing == nil &&
 		c.StartupDeadlineS == nil && c.MaxRetries == nil && c.RequestTimeoutS == nil &&
 		c.StopGracePeriodS == nil && c.StopSignal == nil && c.ServiceReplicas == nil)
 }
@@ -1668,6 +1679,9 @@ func (c *LifecycleConfig) Validate() error {
 	}
 	if c.BeforeCheckpoint != nil && (c.BeforeCheckpoint.Path != "" || c.BeforeCheckpoint.TimeoutMS != 0) {
 		m.BeforeCheckpoint = c.BeforeCheckpoint
+	}
+	if c.Pause != nil {
+		m.Pause = *c.Pause
 	}
 	if c.StartupDeadlineS != nil {
 		m.StartupDeadlineS = *c.StartupDeadlineS
@@ -2264,7 +2278,8 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 			TriggerKindSQSCompat,
 			TriggerKindQueue,
 			TriggerKindAMQP,
-			TriggerKindRabbitMQ:
+			TriggerKindRabbitMQ,
+			TriggerKindRealtime:
 			// fall through to per-kind validation below
 		case "":
 			return fmt.Errorf("trigger[%d]: missing kind (want one of %s)", i, supportedKindsList())
@@ -2364,6 +2379,11 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 				return fmt.Errorf("trigger[%d]: broker_poison_strategy=%q invalid; must be one of commit, seek-to-offset", i, t.BrokerPoisonStrategy)
 			}
 		}
+		if t.Delivery != "" {
+			if err := api.ValidateTriggerDelivery(api.TriggerKind(t.Kind), t.Delivery); err != nil {
+				return fmt.Errorf("trigger[%d]: %w", i, err)
+			}
+		}
 		k := triggerKey{app: t.App, kind: t.Kind, schedule: t.Schedule, path: t.Path, slug: t.Slug}
 		if _, dup := seen[k]; dup {
 			return fmt.Errorf("trigger[%d]: duplicate (app, kind, slug) — %q / %q / %q",
@@ -2415,7 +2435,8 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 		}
 		access := dependency.EffectiveAccess()
 		if access != "read_write" && access != "read_only" && access != "migration" && access != "data_api" && access != "auth" {
-			return fmt.Errorf("database[%d]: access %q not in {read_write, read_only, migration, data_api, auth}", i, access)
+			// auth (application Auth, ADR-1190) is accepted but not yet listed.
+			return fmt.Errorf("database[%d]: access %q not in {read_write, read_only, migration, data_api}", i, access)
 		}
 		// A database dependency targets one environment variable on one
 		// workload. Different databases must not silently compete for the
@@ -2543,7 +2564,7 @@ func validateAppRetryPolicy(policy *RetryPolicyConfig) error {
 // shape — then alphabetical) so a customer grep'ing for "kafka" in
 // the error message finds it consistently.
 func supportedKindsList() string {
-	return "cron, kafka, nats, redis_streams, sqs_compat, queue, amqp, rabbitmq"
+	return "cron, kafka, nats, redis_streams, sqs_compat, queue, amqp, rabbitmq, realtime"
 }
 
 // validateKindConfig runs the per-kind config check. The cron kind's
@@ -2681,6 +2702,8 @@ func (t Trigger) validateKindConfig(idx int) error {
 			return fmt.Errorf("trigger[%d]: %s config requires non-empty queue", idx, t.Kind)
 		}
 		return nil
+	case TriggerKindRealtime:
+		return t.validateRealtime(idx)
 	}
 	// Unreachable: the outer switch in Validate already rejected
 	// unknown kinds. Returning nil here keeps the linter quiet and

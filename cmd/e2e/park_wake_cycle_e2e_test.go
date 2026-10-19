@@ -24,6 +24,7 @@
 package e2e_test
 
 import (
+	"github.com/jackc/pgx/v5/pgxpool"
 	"os"
 	"path/filepath"
 	"testing"
@@ -42,9 +43,8 @@ import (
 // newParkWakeFixture is the normal-path fixture with imaged in the loop.
 //
 // imaged needs its builder base pre-provisioned on a CI runner — the base is
-// not stubbable (it must contain railpack, buildctl, runc and guest-init), and
-// a runner has none. Pointing FAAS_BUILDER_BASE_REF at an unservable digest
-// makes imaged take its normal registry-outage fallback onto what is staged.
+// modeled with a matching producer record and a debugfs shim. This fixture
+// exercises the daemon handoff without claiming native ext4 acceptance.
 func newParkWakeFixture(t *testing.T, slug string) *normalPathFixture {
 	t.Helper()
 	storageRoot := t.TempDir()
@@ -57,7 +57,6 @@ func newParkWakeFixture(t *testing.T, slug string) *normalPathFixture {
 		t.Fatalf("write guest-init: %v", err)
 	}
 	t.Setenv("FAAS_GUEST_INIT", guestInit)
-	seedBootContractBuilderBase(t, storageRoot, guestInitBody)
 
 	// imaged validates an existing base read-only through debugfs. The cycle
 	// is what is under test, not ext4 mechanics.
@@ -67,10 +66,13 @@ func newParkWakeFixture(t *testing.T, slug string) *normalPathFixture {
 	}
 	t.Setenv("PATH", shimDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	f := newNormalPathFixtureWith(t, slug, api.PlanHobby, e2etest.Imaged,
+	f := newNormalPathFixtureWithSetup(t, slug, api.PlanHobby, e2etest.Imaged,
+		api.CreateAppRequest{Slug: slug, Type: string(state.AppTypeApp), RequireAuthn: boolPtr(false)},
+		func(pool *pgxpool.Pool) []string {
+			return []string{"FAAS_BUILDER_BASE_REF=" + seedBootContractBuilderBase(t, pool, storageRoot, guestInitBody)}
+		},
 		"FAAS_STORAGE_BACKEND=local",
 		"FAAS_STORAGE_ROOT="+storageRoot,
-		"FAAS_BUILDER_BASE_REF=127.0.0.1:1/onebox-faas/builder-base@sha256:"+repeatChar("0", 64),
 	)
 	if f == nil {
 		return nil

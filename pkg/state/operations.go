@@ -20,6 +20,9 @@ var (
 	ErrOperationExpired                    = errors.New("state: operation result expired within deduplication window")
 	ErrOperationStaleAttempt               = errors.New("state: operation report belongs to a stale execution attempt")
 	ErrOperationQuota                      = errors.New("state: operation plan limit exceeded")
+	// ErrOperationLimitExceeded: the Operation's own deadline has passed or
+	// its execution budget is spent (ADR-1196).
+	ErrOperationLimitExceeded = errors.New("state: operation deadline or execution budget exceeded")
 )
 
 type OperationDefinition struct {
@@ -30,6 +33,7 @@ type OperationDefinition struct {
 // Operation is the internal durable projection. Customer responses omit owner,
 // execution authority and source input; callers use the scoped read boundary.
 type Operation struct {
+	ProductControl *api.ProductOperationReceipt `json:"product_control,omitempty"`
 	api.OperationResponse
 	AccountID                 string                                      `json:"account_id"`
 	AppID                     string                                      `json:"app_id"`
@@ -57,6 +61,11 @@ type Operation struct {
 	WorkflowArtifactReceipts  map[string]OperationWorkflowArtifactReceipt `json:"workflow_artifact_receipts,omitempty"`
 	JobArtifactReceipts       map[string]OperationJobArtifactReceipt      `json:"job_artifact_receipts,omitempty"`
 	MilestoneCount            int                                         `json:"milestone_count,omitempty"`
+	// LimitExceeded is set by the deadline sweeper before it stops a
+	// workflow run, so the projection settles failed rather than cancelled.
+	LimitExceeded     string `json:"limit_exceeded,omitempty"`
+	DataRepairID      string `json:"data_repair_id,omitempty"`
+	DataRepairBinding string `json:"data_repair_binding,omitempty"`
 }
 
 // operationRecordJSON adds the normalized backend identity consumed by the
@@ -65,6 +74,8 @@ type Operation struct {
 func operationRecordJSON(op Operation) ([]byte, error) {
 	var executionID, executionKind string
 	switch {
+	case op.DataRepairID != "" && op.CurrentInvocationID == "" && op.WorkflowRunID == "" && op.JobRunID == "":
+		executionID, executionKind = op.DataRepairID, "data_repair"
 	case op.CurrentInvocationID != "" && op.WorkflowRunID == "" && op.JobRunID == "":
 		executionID, executionKind = op.CurrentInvocationID, "http"
 	case op.CurrentInvocationID == "" && op.WorkflowRunID != "" && op.JobRunID == "":
@@ -83,14 +94,20 @@ func operationRecordJSON(op Operation) ([]byte, error) {
 }
 
 type OperationAdmission struct {
-	AccountID        string
-	DefinitionID     string
-	PlatformTenantID string
-	IdempotencyKey   string
-	ReleaseID        string
-	Input            json.RawMessage
-	ExpectedScope    *api.OperationSubmissionScope
-	ExpectedIdentity *api.OperationTenantIdentity
+	ProductAuthOrganizationID string
+	ProductAuthApp            string
+	ExpectedProductQuote      string
+	RequireProductQuote       bool
+	ProductFeature            string
+	ProductControlEnabled     bool
+	AccountID                 string
+	DefinitionID              string
+	PlatformTenantID          string
+	IdempotencyKey            string
+	ReleaseID                 string
+	Input                     json.RawMessage
+	ExpectedScope             *api.OperationSubmissionScope
+	ExpectedIdentity          *api.OperationTenantIdentity
 }
 
 type operationIdentityReceipt struct {
@@ -145,6 +162,9 @@ func prepareOperationAdmission(def OperationDefinition, admission OperationAdmis
 		return Operation{}, Invocation{}, "", "", err
 	}
 	key := operations.IdentityScope(def.AccountID, def.AppID, def.Scope, admission.PlatformTenantID, def.Spec.Name, admission.IdempotencyKey)
+	if admission.ProductFeature != "" {
+		key = productOperationKey(def.AccountID, def.AppID, admission.PlatformTenantID, admission.ProductFeature, admission.IdempotencyKey)
+	}
 	operationID, invocationID := newOperationID(), newOperationID()
 	headers := map[string]string{"Content-Type": "application/json"}
 	if def.Spec.TransactionReceipt == api.OperationTransactionPostgres {
@@ -175,6 +195,9 @@ func prepareOperationAdmission(def OperationDefinition, admission OperationAdmis
 		EventExpiresAt: now.Add(time.Duration(limits.Operations.EventRetentionSeconds) * time.Second)}
 	if def.Spec.CompletionWebhookID != "" {
 		op.CompletionDelivery.State = "awaiting_outcome"
+	}
+	if err := applyOperationLimits(&op, &inv, def.Spec.Limits, now); err != nil {
+		return Operation{}, Invocation{}, "", "", err
 	}
 	return op, inv, key, fingerprint, nil
 }

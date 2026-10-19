@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>Confirm MFA disable — Gregale</title>
+  <style nonce="{{.Nonce}}">
+    :root { color-scheme: light dark; }
+    body { font-family: ui-sans-serif, system-ui, sans-serif; max-width: 520px; margin: 3rem auto; padding: 0 1.5rem; }
+    button { padding: .6rem 1rem; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Confirm MFA disable</h1>
+    <p>This will remove the authenticator and recovery codes for <strong>{{.Account.Email}}</strong>.</p>
+    <p>You must wait until the confirmation time in your email. The link expires 24 hours after that time.</p>
+    <form id="disable-form">
+      <input type="hidden" id="disable-token" value="{{.Data}}">
+      <button type="submit" id="disable-submit">Disable MFA</button>
+    </form>
+    <p id="result" role="status" aria-live="polite"></p>
+    <p><a href="/login">Sign in</a></p>
+    <noscript>Enable JavaScript to confirm this request.</noscript>
+  </main>
+  <script nonce="{{.Nonce}}">
+    'use strict';
+    const form = document.getElementById('disable-form');
+    const token = document.getElementById('disable-token').value;
+    const button = document.getElementById('disable-submit');
+    const result = document.getElementById('result');
+    history.replaceState(null, '', location.pathname);
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      button.disabled = true;
+      result.textContent = 'Confirming…';
+      try {
+        const csrfResponse = await fetch('/v1/auth/csrf?action=mfa_disable_email_confirm', { credentials: 'same-origin', cache: 'no-store', referrerPolicy: 'no-referrer' });
+        if (!csrfResponse.ok) { result.textContent = 'Sign in to this account, then open the email link again.'; return; }
+        const csrf = await csrfResponse.json();
+        const response = await fetch('/v1/account/mfa/disable-email/confirm', {
+          method: 'POST', credentials: 'same-origin', cache: 'no-store', referrerPolicy: 'no-referrer',
+          headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: token, csrf_token: csrf.csrf_token })
+        });
+        if (response.ok) { form.hidden = true; result.textContent = 'MFA is disabled. Sign in again to continue.'; }
+        else if (response.status === 425) { result.textContent = 'The waiting period is still active. Try again after the confirmation time in your email.'; }
+        else if (response.status === 401) { result.textContent = 'This link is invalid, expired or already used. Sign in and request a new link.'; }
+        else { result.textContent = 'Could not confirm this request. Sign in and try again.'; }
+      } catch (_) { result.textContent = 'Could not reach Gregale. Try again.'; }
+      finally { button.disabled = false; }
+    });
+  </script>
+</body>
+</html>

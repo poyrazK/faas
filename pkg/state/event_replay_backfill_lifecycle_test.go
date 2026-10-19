@@ -369,7 +369,8 @@ func TestEventBackfillInspectionAfterAppTransfer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.pool.Exec(ctx, "UPDATE apps SET account_id=$1, slug='private-new-owner' WHERE id=$2", other.ID, f.app); err != nil {
+	seedLegacyForeignCreatingAccount(t, ctx, f.pool, f.app, other.ID)
+	if _, err := f.pool.Exec(ctx, "UPDATE apps SET slug='private-new-owner' WHERE id=$1", f.app); err != nil {
 		t.Fatal(err)
 	}
 	r := readBackfillReceipt(t, f, "transferred")

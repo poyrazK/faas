@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime
 from collections.abc import Mapping
 from typing import Any, TypeVar
+from uuid import UUID
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -14,7 +15,7 @@ T = TypeVar("T", bound="ProjectSummaryResponse")
 
 @_attrs_define
 class ProjectSummaryResponse:
-    """Stable account-scoped project list item."""
+    """Project list item with its persisted organization owner."""
 
     id: str
     slug: str
@@ -22,6 +23,7 @@ class ProjectSummaryResponse:
     workload_count: int
     created_at: datetime.datetime
     updated_at: datetime.datetime
+    org_id: UUID | Unset = UNSET
     repo_full_name: str | Unset = UNSET
     production_branch: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -39,6 +41,10 @@ class ProjectSummaryResponse:
 
         updated_at = self.updated_at.isoformat()
 
+        org_id: str | Unset = UNSET
+        if not isinstance(self.org_id, Unset):
+            org_id = str(self.org_id)
+
         repo_full_name = self.repo_full_name
 
         production_branch = self.production_branch
@@ -55,6 +61,8 @@ class ProjectSummaryResponse:
                 "updated_at": updated_at,
             }
         )
+        if org_id is not UNSET:
+            field_dict["org_id"] = org_id
         if repo_full_name is not UNSET:
             field_dict["repo_full_name"] = repo_full_name
         if production_branch is not UNSET:
@@ -77,6 +85,13 @@ class ProjectSummaryResponse:
 
         updated_at = datetime.datetime.fromisoformat(d.pop("updated_at"))
 
+        _org_id = d.pop("org_id", UNSET)
+        org_id: UUID | Unset
+        if isinstance(_org_id, Unset):
+            org_id = UNSET
+        else:
+            org_id = UUID(_org_id)
+
         repo_full_name = d.pop("repo_full_name", UNSET)
 
         production_branch = d.pop("production_branch", UNSET)
@@ -88,6 +103,7 @@ class ProjectSummaryResponse:
             workload_count=workload_count,
             created_at=created_at,
             updated_at=updated_at,
+            org_id=org_id,
             repo_full_name=repo_full_name,
             production_branch=production_branch,
         )

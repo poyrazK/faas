@@ -2,19 +2,17 @@ package main
 
 import (
 	"context"
-	"crypto/ecdh"
 	"crypto/rand"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"net/http"
-	"net/mail"
 	"net/url"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -33,7 +31,7 @@ const (
 
 func cmdAuth(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale auth <create|status|config|providers|keys|admin-key|import>", "auth")
+		PrintUsage(os.Stderr, "usage: gregale auth <create|status|config|providers|keys|admin-key|users|orgs|emails|import|activity|sso|oauth-clients>", "auth")
 		return 1
 	}
 	switch args[0] {
@@ -49,14 +47,26 @@ func cmdAuth(args []string) int {
 		return cmdAuthStatus(args[1:])
 	case "admin-key":
 		return cmdAuthAdminKey(args[1:])
+	case "users":
+		return cmdAuthUsers(args[1:])
+	case "orgs":
+		return cmdAuthOrgs(args[1:])
+	case "emails":
+		return cmdAuthEmails(args[1:])
 	case "import":
 		return cmdAuthImport(args[1:])
+	case "activity":
+		return cmdAuthActivity(args[1:])
+	case "sso":
+		return cmdAuthSSO(args[1:])
+	case "oauth-clients":
+		return cmdAuthOAuthClients(args[1:])
 	case "login", "logout", "whoami", "token":
 		// `gregale auth` manages an application's own users, not the
 		// Gregale account; other CLIs use the same verbs for account login.
 		return printErr("Not an account command", errors.New("`gregale auth` manages application Auth; use `gregale "+args[0]+"` for your Gregale account"))
 	default:
-		return printErr("Unknown auth command", errors.New("use create, status, config, providers, keys, admin-key or import"))
+		return printErr("Unknown auth command", errors.New("use create, status, config, providers, keys, admin-key, users, orgs, emails, import, activity, sso or oauth-clients"))
 	}
 }
 
@@ -226,14 +236,7 @@ func configureAuth(ctx context.Context, client *api.Client, app api.AppResponse,
 		}
 	}
 	if opts.workflows && !present[authEventsKeyName] {
-		// The key can only publish events: a compromised Auth app cannot
-		// deploy, read secrets or administer the account with it.
-		key, err := client.CreateKey(ctx, "auth-"+app.Slug+"-events", []string{api.ScopeEventsPublish})
-		if err != nil {
-			return fmt.Errorf("mint the workflow events key: %w", err)
-		}
-		if err := client.SetSecretWithScope(ctx, app.Slug, authEventsKeyName, key.Plaintext, opts.scope); err != nil {
-			_ = client.DeleteKey(ctx, key.ID)
+		if err := mintAuthEventsKey(ctx, client, app.Slug, opts.scope); err != nil {
 			return err
 		}
 	}
@@ -259,19 +262,18 @@ func configureAuth(ctx context.Context, client *api.Client, app api.AppResponse,
 // authEmailSettings validates the HTTPS email provider. The API key comes
 // only from stdin or a terminal prompt, never from an argument.
 func authEmailSettings(opts *authCreateOptions, provider, from string, keyFromStdin bool) error {
-	if provider != "resend" && provider != "postmark" {
+	if !slices.Contains(authsettings.EmailProviders, provider) {
 		return errors.New("--email-provider must be resend or postmark")
 	}
-	address, err := mail.ParseAddress(from)
-	if err != nil || strings.ContainsAny(from, "\r\n") || !strings.Contains(address.Address, ".") {
+	if !authsettings.EmailFrom(from) {
 		return errors.New(`--email-from must be an address or "Name <address>"`)
 	}
 	key, _, err := readRealtimeEndpointSecret("", keyFromStdin, "email-api-key", "Email provider API key: ", api.AuthEmailAPIKeyMaxBytes, true)
 	if err != nil {
 		return err
 	}
-	if len(key) < 8 || strings.ContainsAny(key, " \t\r\n") {
-		return errors.New("the email provider API key looks malformed")
+	if _, _, err := (authsettings.Change{Email: &authsettings.Email{Provider: provider, From: from, APIKey: key}}).Secrets(); err != nil {
+		return err
 	}
 	opts.emailProvider, opts.emailFrom, opts.emailAPIKey = provider, from, key
 	return nil
@@ -353,26 +355,35 @@ func authExternalOrigin(app api.AppResponse) (string, error) {
 // newAuthSigningKey returns a key ID and one ES256 private JWK for the
 // AUTH_JWT_KEY_<ID> secret. The key leaves this process only as a sealed app
 // secret and is never printed.
-func newAuthSigningKey() (string, string, error) {
-	private, err := ecdh.P256().GenerateKey(rand.Reader)
+func newAuthSigningKey() (string, string, error) { return authsettings.NewSigningKey() }
+
+// mintAuthEventsKey seals a key that can only publish events, for workflow
+// starts and lifecycle events: a compromised Auth app cannot deploy, read
+// secrets or administer the account with it.
+func mintAuthEventsKey(ctx context.Context, client *api.Client, app, scope string) error {
+	key, err := client.CreateKey(ctx, "auth-"+app+"-events", []string{api.ScopeEventsPublish})
 	if err != nil {
-		return "", "", fmt.Errorf("generate signing key: %w", err)
+		return fmt.Errorf("mint the events key: %w", err)
 	}
-	point := private.PublicKey().Bytes() // 0x04 || X || Y
-	var raw [4]byte
-	if _, err := rand.Read(raw[:]); err != nil {
-		return "", "", fmt.Errorf("generate key id: %w", err)
+	if err := client.SetSecretWithScope(ctx, app, authEventsKeyName, key.Plaintext, scope); err != nil {
+		_ = client.DeleteKey(ctx, key.ID)
+		return err
 	}
-	id := strings.ToUpper(hex.EncodeToString(raw[:]))
-	b64 := base64.RawURLEncoding.EncodeToString
-	jwk, err := json.Marshal(map[string]string{
-		"kty": "EC", "crv": "P-256", "alg": "ES256", "kid": authKeyKID(id),
-		"x": b64(point[1:33]), "y": b64(point[33:65]), "d": b64(private.Bytes()),
-	})
+	return nil
+}
+
+// ensureAuthEventsKey mints the events key unless the app already has one.
+func ensureAuthEventsKey(ctx context.Context, client *api.Client, app, scope string) error {
+	list, err := client.ListSecretsWithScope(ctx, app, scope)
 	if err != nil {
-		return "", "", fmt.Errorf("encode signing key: %w", err)
+		return err
 	}
-	return id, string(jwk), nil
+	for _, secret := range list.Secrets {
+		if secret.Key == authEventsKeyName && (secret.Scope == "" || secret.Scope == scope) {
+			return nil
+		}
+	}
+	return mintAuthEventsKey(ctx, client, app, scope)
 }
 
 func randomAuthSecret() (string, error) {

@@ -46,6 +46,10 @@ import (
 // pkg/api for api.Plans, creating a cycle).
 const docsBase = "https://gregale.dev/docs"
 
+const CodeApplicationStandardVersionStale = "application_standard_version_stale"
+
+const CodeApplicationStandardsPending = "application_standards_pending"
+
 // dashboardBillingURL is duplicated from pkg/wire because pkg/api cannot
 // import pkg/wire without creating an import cycle.
 const dashboardBillingURL = "https://gregale.dev/dashboard/billing"
@@ -81,6 +85,10 @@ type Problem struct {
 	ExpectedSequence *int64              `json:"expected_sequence,omitempty"`
 	CurrentSequence  *int64              `json:"current_sequence,omitempty"`
 	BindingsCheck    *BindingCheckReport `json:"bindings_check,omitempty"`
+	// CrossedReleases and RestorePoints explain rollback_crosses_release
+	// (ADR-1448).
+	CrossedReleases []RollbackCrossedRelease `json:"crossed_releases,omitempty"`
+	RestorePoints   []ReleaseRestorePoint    `json:"restore_points,omitempty"`
 	// Type is a URI identifying the problem class (RFC 9457 "type").
 	Type string `json:"type"`
 	// Title is a short, stable, human-readable summary.
@@ -809,6 +817,10 @@ const (
 	CodeInstanceBusy          = "instance_busy"
 	CodeFrozenInstanceRefused = "frozen_instance_refused"
 	CodeInstanceFrozen        = "instance_frozen"
+	// CodeFrozenCompressUnavailable refuses to compress a frozen instance on
+	// a host without memory-only swap (zswap with writeback disabled, ADR-906
+	// decision 6); schedd parks it instead.
+	CodeFrozenCompressUnavailable = "frozen_compress_unavailable"
 	// CodeDevDebugSessionLimit (ADR-741) caps concurrent debugger tunnels to
 	// one developer environment.
 	CodeDevDebugSessionLimit = "dev_debug_session_limit"
@@ -866,6 +878,16 @@ const (
 	// state, but its immutable cold-boot artifact or attestation cannot be
 	// verified. The current serving deployment is left untouched.
 	CodeRollbackTargetUnavailable = "rollback_target_unavailable"
+	// CodeRollbackCrossesRelease means release commands ran after the
+	// rollback target last served (ADR-1448). Rollback does not undo them,
+	// so the caller must acknowledge them; the problem lists them with
+	// restore points for managed PostgreSQL databases.
+	CodeRollbackCrossesRelease = "rollback_crosses_release"
+	// CodeConfigRevisionNotFound means the scope has no such config revision
+	// (ADR-1451), or it was pruned past ConfigRevisionsRetained.
+	CodeConfigRevisionNotFound = "config_revision_not_found"
+	// CodeConfigGuardNotFound means no config change in the scope was guarded.
+	CodeConfigGuardNotFound = "config_guard_not_found"
 	// CodeDeploySignatureInvalid is returned by apid when the
 	// customer's OCI image deploy is rejected at the accept-time
 	// signature-enforcement gate (issue #472 / ADR-054). Three
@@ -1028,6 +1050,7 @@ const (
 	CodeDeploymentScopeCollision = "deployment_scope_collision"
 	// ADR-1239: app/release review changed before the atomic candidate insert.
 	CodeReleaseReviewChanged = "release_review_changed"
+	CodeRegressionChanged    = "regression_changed"
 
 	// Trusted cosign signers (issue #472 / ADR-054). Same shape as
 	// the env-var quota — config cap, not a credential one — but a
@@ -1623,6 +1646,10 @@ const (
 	// Distinct from app_startup_timeout (still running, never ready) and
 	// app_not_listening (running, nothing bound).
 	CodeAppStartupCrash = "app_startup_crash"
+	// CodeExecutionModeConflict means the workload's startup behavior
+	// contradicts its declared execution mode: a worker that bound a port or
+	// exited, or a job that served. Customer-caused, like app_startup_crash.
+	CodeExecutionModeConflict = "execution_mode_conflict"
 	// CodeDeploymentSmokeFailed means the public post-readiness health
 	// request did not complete successfully. It is distinct from guest boot
 	// failures so operators can tell serving-path regressions from image
@@ -1940,7 +1967,7 @@ const MaxOrgSlugLen = 32
 // 500 — a reconstructed Problem is never served without a real status.
 func StatusForCode(code string) int {
 	switch code {
-	case CodeProfileGateBlocked, CodeReleaseReviewChanged:
+	case CodeProfileGateBlocked, CodeRegressionChanged, CodeReleaseReviewChanged, CodeGitHubAccountConflict:
 		return http.StatusConflict
 	case CodeProfileInvestigationLimit:
 		return http.StatusTooManyRequests
@@ -2030,9 +2057,9 @@ func StatusForCode(code string) int {
 		CodeDeploymentReorderNotPending, CodeDebugReplayUnsupported,
 		CodeWildcardDomainTenantSurfaceOverlap, CodeOpenAPIPolicyStale,
 		CodeSecurityQuarantineRecoveryBlocked, CodeDevSourceDiverged,
-		CodeInstanceNotFreezable, CodeInstanceBusy, CodeFrozenInstanceRefused:
+		CodeInstanceNotFreezable, CodeInstanceBusy, CodeFrozenInstanceRefused, CodeFrozenCompressUnavailable:
 		return http.StatusConflict
-	case CodeMCPAccessPolicyChanged, CodeBindingReleaseRequired, CodeBindingReleasePolicyChanged, CodeTrafficPercentSumInvalid, CodeTrafficServingChanged, CodeTrafficChangeDuringCanary, CodeMCPTaskCompatibilityGate, CodeCanaryStepConflict, CodeRouteGateBlocked, CodeRouteHealthBlocked, CodeDeploymentNotLive:
+	case CodeMCPReadinessRequired, CodeMCPAccessPolicyChanged, CodeBindingReleaseRequired, CodeBindingReleasePolicyChanged, CodeTrafficPercentSumInvalid, CodeTrafficServingChanged, CodeTrafficChangeDuringCanary, CodeMCPTaskCompatibilityGate, CodeCanaryStepConflict, CodeRouteGateBlocked, CodeRouteHealthBlocked, CodeDeploymentNotLive:
 		// 409 — traffic state conflicts, including a stale expected
 		// serving revision. Sits next to CodeConflict /
 		// CodeDomainNotVerified / CodeNoRollbackTarget because the
@@ -2121,6 +2148,7 @@ func StatusForCode(code string) int {
 		CodeDepInstallFailed,
 		CodeAppStartupTimeout,
 		CodeAppStartupCrash,
+		CodeExecutionModeConflict,
 		CodeDeploymentSmokeFailed,
 		CodeReleaseCommandFailed,
 		CodeReleasePhaseUnavailable:
@@ -3525,7 +3553,29 @@ const (
 	// cannot reach the managed realtime service. It is deliberately distinct
 	// from invalid endpoint configuration: retrying is appropriate here.
 	CodeRealtimeUnavailable = "realtime_unavailable"
+	// CodeRealtimeConnectionLimit is the 429 a realtime client sees when its
+	// account is at its plan's concurrent-connection allowance, or holds the
+	// most one account may on a single realtime node (ADR-1323 fair use).
+	CodeRealtimeConnectionLimit = "realtime_connection_limit"
 )
+
+// Realtime connection limit scopes (ADR-1323).
+const (
+	RealtimeConnectionLimitAccount     = "account"
+	RealtimeConnectionLimitAccountNode = "account_node"
+)
+
+// ErrRealtimeConnectionLimit reports a refused realtime connection with the
+// limit that applied and the connections observed against it.
+func ErrRealtimeConnectionLimit(scope string, limit, observed int64) *Problem {
+	detail := fmt.Sprintf("Your plan allows %d concurrent realtime connections per account across all endpoints; %d are open. Close idle connections or upgrade the plan.", limit, observed)
+	if scope == RealtimeConnectionLimitAccountNode {
+		detail = fmt.Sprintf("One account may hold at most %d connections on a single realtime node; %d are open on this node. Retry with backoff.", limit, observed)
+	}
+	return NewProblem(http.StatusTooManyRequests, CodeRealtimeConnectionLimit, "Realtime connection limit reached", detail).
+		WithLimit(limit, observed).
+		WithDocs(docsBase + "/realtime#fair-use-limits")
+}
 
 // CodePlanLogDrainsNotAllowed is the 402 returned when the plan does not
 // include customer-configurable runtime log destinations.
@@ -6683,7 +6733,7 @@ func ErrMCPGatewayPromotion(code string) *Problem {
 
 func IsMCPPromotionConditionFailure(code string) bool {
 	switch code {
-	case CodeMCPAdmissionEvidenceUnavailable, CodeMCPAccessPolicyChanged, CodeMCPAccountRevisionChanged, CodeMCPGatewayEvidenceUnavailable, CodeMCPGatewayEvidenceStale, CodeMCPGatewayReplayPending:
+	case CodeMCPReadinessRequired, CodeMCPAdmissionEvidenceUnavailable, CodeMCPAccessPolicyChanged, CodeMCPAccountRevisionChanged, CodeMCPGatewayEvidenceUnavailable, CodeMCPGatewayEvidenceStale, CodeMCPGatewayReplayPending:
 		return true
 	}
 	return false

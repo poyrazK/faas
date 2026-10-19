@@ -81,6 +81,23 @@ func HelloQueueWorkerImage(repo string) (fakeImage, string) {
 	return layeredHelloImageOnPortWithCmd(repo, "queue worker", false, 8080, []string{"/hello-server", "-queue-ack"})
 }
 
+// HelloGitOpsRequestImage adds bounded slow requests for native cutover tests.
+func HelloGitOpsRequestImage(repo, body string) (fakeImage, string) {
+	return layeredHelloImageOnPortWithCmd(repo, body, false, 8080, []string{"/hello-server", "-gitops-resilience"})
+}
+
+// HelloGitOpsWorkerImage can hold a specifically marked customer delivery.
+// Qualification smoke payloads remain immediate and never enter that hold.
+func HelloGitOpsWorkerImage(repo string) (fakeImage, string) {
+	return layeredHelloImageOnPortWithCmd(repo, "queue worker", false, 8080, []string{"/hello-server", "-queue-ack", "-gitops-resilience"})
+}
+
+// HelloManagedServiceWorkerImage adds a private startup marker and an explicit
+// task-only assertion mode to the normal qualification-capable worker image.
+func HelloManagedServiceWorkerImage(repo string) (fakeImage, string) {
+	return layeredHelloImageOnPortWithCmd(repo, "service-bound worker", false, 8080, []string{"/hello-server", "-queue-ack", "-gitops-resilience", "-worker-startup-marker"})
+}
+
 // ImageOnlyBuilderBaseImage is a startup fixture for metal tests that deploy
 // full-rootfs OCI images and never launch a source builder. imaged still stages
 // and validates its builder base before subscribing, so this image carries the
@@ -180,17 +197,23 @@ func HelloImageWithoutHealthz(repo, helloBody string) (fakeImage, string) {
 // numeric user/group, working directory, and image environment in a shell-free
 // full-rootfs image. Its /contract endpoint exposes only fixed fixture fields.
 func HelloImageWithProcessContract(repo, body, user string) (fakeImage, string) {
-	return helloImageWithProcessContract(repo, body, user, false)
+	return helloImageWithProcessContract(repo, body, user, false, 8080)
+}
+
+// HelloImageWithProcessContractOnPort is HelloImageWithProcessContract served
+// on an image-declared port. An empty user models an image without USER.
+func HelloImageWithProcessContractOnPort(repo, body, user string, port int) (fakeImage, string) {
+	return helloImageWithProcessContract(repo, body, user, false, port)
 }
 
 // HelloImageWithProcessHealthcheck adds a shell-free OCI exec probe that
 // reports its process context to the fixture's /contract endpoint.
 func HelloImageWithProcessHealthcheck(repo, body, user string) (fakeImage, string) {
-	return helloImageWithProcessContract(repo, body, user, true)
+	return helloImageWithProcessContract(repo, body, user, true, 8080)
 }
 
-func helloImageWithProcessContract(repo, body, user string, healthcheck bool) (fakeImage, string) {
-	img, _ := HelloImage(repo, body)
+func helloImageWithProcessContract(repo, body, user string, healthcheck bool, port int) (fakeImage, string) {
+	img, _ := layeredHelloImageOnPort(repo, body, false, port)
 	var cfg map[string]any
 	if err := json.Unmarshal(img.configBytes, &cfg); err != nil {
 		panic(err)
@@ -223,13 +246,42 @@ func helloImageWithProcessContract(repo, body, user string, healthcheck bool) (f
 }
 
 // HelloImageAboveBase returns an image identical to HelloImage except it has
-// TWO layers: the hardcoded helloLayerDiffID (matching BaseLayerImage's
+// TWO layers: the actual base layer diff ID (matching BaseLayerImage's
 // layer) followed by an additional layer whose diff_id is computed from the
 // tar blob. Use this with BaseLayerImage as the deploy-time base — the base's
 // single layer prefixes the app's two layers, so oci.LayersAboveBase puts
 // the second (above-base) layer into `above`.
 func HelloImageAboveBase(repo, helloBody string) (fakeImage, string) {
 	return layeredHelloImageOnPort(repo, helloBody, true, 8080)
+}
+
+// FailingAPIImageAboveBase is HelloImageAboveBase whose /api answers 500
+// while / and /healthz stay healthy: a release that passes its startup gate
+// and the post-readiness smoke, then fails real API requests. The
+// safe-release drill deploys it as a bad canary.
+func FailingAPIImageAboveBase(repo, helloBody string) (fakeImage, string) {
+	return HelloImageAboveBaseWithArgs(repo, helloBody, "-fail-api")
+}
+
+// HelloImageAboveBaseWithArgs is HelloImageAboveBase with extra hello-server
+// arguments. Distinct arguments give a distinct image digest, which lets a
+// test deploy a second healthy revision of the same app.
+func HelloImageAboveBaseWithArgs(repo, helloBody string, args ...string) (fakeImage, string) {
+	return layeredHelloImageOnPortWithCmd(repo, helloBody, true, 8080, append([]string{"/hello-server"}, args...))
+}
+
+// FailingLivenessImageAboveBase is HelloImageAboveBase whose /livez answers
+// 500 while / and /healthz stay healthy, so a liveness probe on /livez keeps
+// restarting it. The safe-release drill deploys it as a crash-looping canary.
+func FailingLivenessImageAboveBase(repo, helloBody string) (fakeImage, string) {
+	return HelloImageAboveBaseWithArgs(repo, helloBody, "-fail-livez")
+}
+
+// DelayedRootFailureImageAboveBase is HelloImageAboveBase whose / answers 500
+// after its first few requests, so the release passes the post-readiness
+// smoke and then fails / under synthetic probes (ADR-1446).
+func DelayedRootFailureImageAboveBase(repo, helloBody string) (fakeImage, string) {
+	return HelloImageAboveBaseWithArgs(repo, helloBody, "-fail-root-after-requests", "3")
 }
 
 // CPUBoundImage returns a single-layer image whose entrypoint is hello-server
@@ -286,9 +338,9 @@ func WedgedLoopImage(repo string) (fakeImage, string) {
 // adding command-shape branches to the ordinary image builder.
 func layeredHelloImageWithCmd(repo string, cmd []string) (fakeImage, string) {
 	// Layer shape identical to layeredHelloImage (one base layer with
-	// the hardcoded diff_id; no above-base layer — pairs with the
+	// the same diff_id; no above-base layer — pairs with the
 	// shared deploy-base via the same prefix trick). Re-use
-	// buildHelloLayer("") so the diff_id stays helloLayerDiffID.
+	// buildHelloLayer("") so the base diff_id stays identical.
 	baseBlob := buildHelloLayer("")
 	baseSum := sha256.Sum256(baseBlob)
 	baseDigest := "sha256:" + hex.EncodeToString(baseSum[:])
@@ -304,7 +356,7 @@ func layeredHelloImageWithCmd(repo string, cmd []string) (fakeImage, string) {
 		},
 		"rootfs": map[string]any{
 			"type":     "layers",
-			"diff_ids": []string{helloLayerDiffID},
+			"diff_ids": []string{fixtureLayerDiffID(baseBlob)},
 		},
 	}
 	cfgBytes, _ := json.Marshal(cfg)
@@ -346,12 +398,8 @@ func layeredHelloImageOnPort(repo, helloBody string, aboveBase bool, port int) (
 }
 
 func layeredHelloImageOnPortWithCmd(repo, helloBody string, aboveBase bool, port int, cmd []string) (fakeImage, string) {
-	// Optimized two-layer fixtures advertise helloLayerDiffID to match
-	// BaseLayerImage. Portable single-layer fixtures use a foreign digest
-	// and retain their body in that sole layer. The above-base layer is the
-	// hello.txt content; its diff_id is whatever sha256(uncompressed tar)
-	// yields, which doesn't need to match anything because LayersAboveBase
-	// only compares prefixes, not tails.
+	// Optimized fixtures share the base bytes; standalone images use their
+	// complete body and retain its actual layer identity.
 	baseBody := ""
 	if !aboveBase {
 		baseBody = helloBody
@@ -365,41 +413,17 @@ func layeredHelloImageOnPortWithCmd(repo, helloBody string, aboveBase bool, port
 		digest string
 		diffID string
 	}
-	baseDiffID := helloLayerDiffID
-	if !aboveBase {
-		// Portable images must not advertise the fake optimized-base prefix:
-		// doing so bypasses full-rootfs dispatch and drops their only layer.
-		zr, err := gzip.NewReader(bytes.NewReader(baseBlob))
-		if err != nil {
-			panic(err)
-		}
-		hash := sha256.New()
-		size, err := io.Copy(hash, io.LimitReader(zr, api.MaxExportedLayerBytes+1))
-		if err != nil {
-			panic(err)
-		}
-		if size > api.MaxExportedLayerBytes {
-			panic("portable fixture exceeds exported layer byte cap")
-		}
-		if err := zr.Close(); err != nil {
-			panic(err)
-		}
-		baseDiffID = "sha256:" + hex.EncodeToString(hash.Sum(nil))
-	}
+	baseDiffID := fixtureLayerDiffID(baseBlob)
 	layers := []layerRec{{blob: baseBlob, digest: baseDigest, diffID: baseDiffID}}
 
 	if aboveBase {
 		appBlob := buildHelloLayer(helloBody)
 		appSum := sha256.Sum256(appBlob)
 		appDigest := "sha256:" + hex.EncodeToString(appSum[:])
-		// diff_ids are rootfs-level (uncompressed-tar sha256), not
-		// blob-level (compressed). We don't actually compute the
-		// uncompressed sha256 because LayersAboveBase only checks
-		// string equality of the listed diff_ids — picking a unique
-		// label per call is enough.
+		// OCI diff IDs bind the actual uncompressed tar bytes.
 		layers = append(layers, layerRec{
 			blob: appBlob, digest: appDigest,
-			diffID: "sha256:" + hex.EncodeToString(appSum[:]) + "a", // unique marker
+			diffID: fixtureLayerDiffID(appBlob),
 		})
 	}
 
@@ -473,12 +497,26 @@ func layeredHelloImageOnPortWithCmd(repo, helloBody string, aboveBase bool, port
 	return img, ref
 }
 
-// helloLayerDiffID is the uncompressed-tar (diff_id) of the single layer
-// HelloImage and BaseLayerImage advertise. Both helpers use buildHelloLayer
-// to construct the gzip'd tar blob, so the diff_id is identical — and that
-// is the property oci.LayersAboveBase relies on for the deploy-time base
-// prefix test.
-const helloLayerDiffID = "sha256:" + "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+// fixtureLayerDiffID hashes the actual uncompressed layer, so fixture claims
+// survive the same complete-read verification as production OCI images.
+func fixtureLayerDiffID(blob []byte) string {
+	zr, err := gzip.NewReader(bytes.NewReader(blob))
+	if err != nil {
+		panic(err)
+	}
+	hash := sha256.New()
+	size, err := io.Copy(hash, io.LimitReader(zr, api.MaxExportedLayerBytes+1))
+	if err != nil {
+		panic(err)
+	}
+	if size > api.MaxExportedLayerBytes {
+		panic("fixture exceeds exported layer byte cap")
+	}
+	if err := zr.Close(); err != nil {
+		panic(err)
+	}
+	return "sha256:" + hex.EncodeToString(hash.Sum(nil))
+}
 
 // buildHelloLayer returns the gzipped tar blob that HelloImage and
 // BaseLayerImage serve as their single layer. Centralising the encoder
@@ -548,7 +586,7 @@ func BaseLayerImage(repo, body string) (fakeImage, string) {
 		"config":       map[string]any{"Entrypoint": []string{"/bin/true"}, "Env": []string{}},
 		"rootfs": map[string]any{
 			"type":     "layers",
-			"diff_ids": []string{"sha256:" + repeat("b", 64)}, // == helloLayerDiffID
+			"diff_ids": []string{fixtureLayerDiffID(layerBytes)},
 		},
 	}
 	cfgBytes, _ := json.Marshal(cfg)
@@ -597,6 +635,7 @@ type FakeRegistry struct {
 	authUser string
 	authPass string
 	tokens   map[string]struct{} // issued bearer tokens; opaque random strings
+	holds    map[string]*registryRepositoryHold
 }
 
 // NewFakeRegistry returns a running registry bound to 127.0.0.1. The caller
@@ -733,12 +772,21 @@ func (f *FakeRegistry) Host() string {
 // AddImage installs an image under repo (e.g. "library/hello"). Returns the
 // digest-pinned reference the e2e test passes to apid.
 func (f *FakeRegistry) AddImage(repo string, img fakeImage) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.images[repo] = img
 	return fmt.Sprintf("%s/%s@%s", f.Host(), repo, img.manifestDigest)
 }
 
 // Close shuts down the httptest server.
-func (f *FakeRegistry) Close() { f.srv.Close() }
+func (f *FakeRegistry) Close() {
+	f.mu.Lock()
+	for _, hold := range f.holds {
+		hold.release()
+	}
+	f.mu.Unlock()
+	f.srv.Close()
+}
 
 // route dispatches /v2/<repo>/manifests/<ref> and /v2/<repo>/blobs/<digest>.
 // No auth — the harness is local-only.
@@ -766,10 +814,21 @@ func (f *FakeRegistry) route(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	f.mu.Lock()
 	img, ok := f.images[repo]
+	hold := f.holds[repo]
+	f.mu.Unlock()
 	if !ok {
 		http.Error(w, "unknown repo", http.StatusNotFound)
 		return
+	}
+	if hold != nil {
+		hold.enteredOnce.Do(func() { close(hold.entered) })
+		select {
+		case <-hold.done:
+		case <-r.Context().Done():
+			return
+		}
 	}
 	switch kind {
 	case "manifests":

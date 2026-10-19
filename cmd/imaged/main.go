@@ -499,6 +499,7 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 		// "scan-critical" failure rather than the supply-chain
 		// installation gap it actually is.
 		WithGrypeRun(makeGrypeRunner(os.Getenv("FAAS_GRYPE_BIN"))).
+		WithRuntimeGrypeRun(makeRuntimeGrypeRunner(os.Getenv("FAAS_GRYPE_BIN"))).
 		WithSyftRun(makeSyftRunner(os.Getenv("FAAS_SYFT_BIN"))).
 		// PR-A: layer-side secret-scan walker. Wired
 		// unconditionally so the default in
@@ -637,79 +638,6 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 		log.Info("imaged: test deploy base ref override", "ref", dbr)
 	}
 
-	// F1 + F2: stage the builder-base ext4 on startup, then hand off to the
-	// M8 loop which drives the LISTEN subscriber + nightly GC + one-shot FC
-	// sweep. The stage is still required for cold-boot of builder microVMs
-	// (see spec §4.6 two-drive scheme).
-	baseRef, err := builderBaseRefFromEnv()
-	if err != nil {
-		return err
-	}
-	arch := imaged.BuilderArch()
-	basePath := builderBasePathFromEnv(arch)
-	// #96 / ADR-025 axis 2: EnsureBaseExt4 publishes via the StorageBackend
-	// under sched.BaseKeyForArch / sched.BaseDigestKeyForArch, partitioned
-	// by the imaged binary's host arch (issue #197 B3.3). basePath is the
-	// canonical local resolution target for Grype and builderd identity checks;
-	// explicit FAAS_BUILDER_BASE_PATH remains a development harness override.
-	baseKey := sched.BaseKeyForArch("builder", arch)
-	digestKey := sched.BaseDigestKeyForArch("builder", arch)
-	baseRes, err := h.EnsureBaseExt4(ctx, baseRef, baseKey, digestKey, basePath, "", "")
-	if err != nil {
-		return fmt.Errorf("imaged: stage builder base %s → %s: %w", baseRef, basePath, err)
-	}
-	assignedBases, err := h.EnsureAssignedBases(ctx, arch, getenv)
-	if err != nil {
-		return err
-	}
-	profileBases, err := h.EnsureExecutionProfileBases(ctx, arch, getenv)
-	if err != nil {
-		return err
-	}
-	for _, base := range profileBases {
-		log.Info("imaged execution profile base ready", "profile", base.Runtime, "digest", base.ConfigDigest, "skipped", base.Skipped)
-	}
-	if prestageOnlyFromEnv(getenv) {
-		log.Info("imaged runtime-base pre-stage complete",
-			"arch", arch,
-			"assigned_runtimes", assignedBases.Runtimes,
-			"assigned_minimal", assignedBases.Minimal,
-		)
-		return nil
-	}
-
-	loop := imaged.NewLoop(imaged.LoopConfig{
-		Handler:     h,
-		Store:       store,
-		Pool:        pool,
-		Log:         log,
-		Now:         d.now,
-		LvUsedPct:   d.lvUsedPct,
-		DetectFC:    d.detectFC,
-		AppsRoot:    appsRoot,
-		StorageRoot: envOr("FAAS_STORAGE_ROOT", "/srv/fc"),
-		GCEvery:     envDuration("FAAS_GC_INTERVAL", 24*time.Hour),
-		// PR-B: builderd owns the build-queue durability surface now;
-		// imaged no longer runs a reaper tick or subscribes to
-		// NotifyBuildQueued. FAAS_REAP_INTERVAL +
-		// FAAS_REAP_THRESHOLD env vars retired.
-	})
-
-	log.Info("imaged ready",
-		"min_layer_mb", rootfs.MinLayerMB,
-		"arch", arch,
-		"builder_base_path", basePath,
-		"builder_base_ref", baseRef,
-		"builder_base_digest", baseRes.ConfigDigest,
-		"builder_base_skipped", baseRes.Skipped,
-		"runtime_bases", "assigned",
-		"assigned_runtimes", assignedBases.Runtimes,
-		"assigned_minimal", assignedBases.Minimal,
-	)
-	// ADR-567: keep every staged base byte-identical to its shared
-	// publication so snapshots restore on any node (ADR-510).
-	go h.RunBaseConvergence(ctx, imaged.BaseConvergenceInterval)
-
 	// Issue #571 PR-A2: construct the daemon-level readiness probe
 	// independently of the optional metrics listener. systemd's
 	// Type=notify state must use the same storage/cache signal as
@@ -723,6 +651,12 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 		ops.MarkReady("imaged", ready, reason)
 	})
 	defer imagedProbe.Drain("imaged", log)
+	// H10-105: the listener below starts before boot staging so a long
+	// re-stage (scan renewals, a rebuilt base) keeps up==1 instead of paging
+	// FaasDaemonDown. /readyz, the ready metric and systemd READY still wait
+	// for staging through this signal.
+	bootStaging := imagedProbe.Register()
+	bootStaging.Set(false, "staging boot-critical bases")
 
 	// Optional /metrics listener (this PR). Mirrors cmd/apid/main.go
 	// and cmd/builderd/main.go:146-157 — separate bind so a port
@@ -747,41 +681,92 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	// Bind target resolves via cfg.GetMetricsAddr: env wins when
 	// non-empty, else TOML metrics_addr, else the default in
 	// cmd/imaged/config.go::LoadConfig.
+	// The pre-stage one-shot runs beside the serving imaged with the same
+	// config, so it never binds the metrics listener.
 	metricsAddr := imgCfg.GetMetricsAddr(os.Getenv)
-	if metricsAddr != "" {
-		mux := http.NewServeMux()
-		mux.Handle("/metrics", ops.Handler())
-		wire.ControlMuxLite(mux, imagedProbe.ReadyFunc(), imagedProbe.ReasonFunc())
-		// ADR-122: apply the canonical metrics-listener shape —
-		// RT/WT/IT/MHB from cfg.MetricsListener (cfg → constant
-		// fallback). ReadHeaderTimeout=10s stays from before ADR-122.
-		readTimeout, writeTimeout, idleTimeout, maxHeaderBytes := imgCfg.MetricsListener()
-		msrv := &http.Server{
-			Addr:              metricsAddr,
-			Handler:           mux,
-			ReadHeaderTimeout: 10 * time.Second,
-			ReadTimeout:       readTimeout,
-			WriteTimeout:      writeTimeout,
-			IdleTimeout:       idleTimeout,
-			MaxHeaderBytes:    int(maxHeaderBytes),
-		}
-		mlis, err := net.Listen("tcp", metricsAddr)
+	if metricsAddr != "" && !prestageOnlyFromEnv(getenv) {
+		_, stopMetrics, err := startImagedMetricsListener(ctx, metricsAddr, imgCfg, ops, imagedProbe, log)
 		if err != nil {
-			return fmt.Errorf("imaged: metrics listen %q: %w", metricsAddr, err)
+			return err
 		}
-		go func() {
-			log.Info("imaged /metrics listening", "addr", metricsAddr)
-			if err := msrv.Serve(mlis); err != nil && err != http.ErrServerClosed {
-				log.Error("imaged /metrics serve", "err", err)
-			}
-		}()
-		//nolint:contextcheck // shutdown ctx must outlive request ctx.
-		defer func() {
-			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			_ = msrv.Shutdown(shutdownCtx)
-		}()
+		defer stopMetrics()
 	}
+
+	// F1 + F2: stage the builder-base ext4 on startup, then hand off to the
+	// M8 loop which drives the LISTEN subscriber + nightly GC + one-shot FC
+	// sweep. The stage is still required for cold-boot of builder microVMs
+	// (see spec §4.6 two-drive scheme).
+	baseRef, err := builderBaseRefFromEnv()
+	if err != nil {
+		return err
+	}
+	arch := imaged.BuilderArch()
+	basePath := builderBasePathFromEnv(arch)
+	// #96 / ADR-025 axis 2: EnsureBaseExt4 publishes via the StorageBackend
+	// under sched.BaseKeyForArch / sched.BaseDigestKeyForArch, partitioned
+	// by the imaged binary's host arch (issue #197 B3.3). basePath is the
+	// canonical local resolution target for Grype and builderd identity checks;
+	// explicit FAAS_BUILDER_BASE_PATH remains a development harness override.
+	baseKey := sched.BaseKeyForArch("builder", arch)
+	digestKey := sched.BaseDigestKeyForArch("builder", arch)
+	baseRes, err := h.EnsureBaseExt4(ctx, baseRef, baseKey, digestKey, basePath, "", "")
+	if err != nil {
+		return fmt.Errorf("imaged: stage builder base %s → %s: %w", baseRef, basePath, err)
+	}
+	h.WithLegacyParentDeferral(prestageOnlyFromEnv(getenv))
+	assignedBases, err := h.EnsureAssignedBases(ctx, arch, getenv)
+	if err != nil {
+		return err
+	}
+	profileBases, err := h.EnsureExecutionProfileBases(ctx, arch, getenv)
+	if err != nil {
+		return err
+	}
+	for _, base := range profileBases {
+		log.Info("imaged execution profile base ready", "profile", base.Runtime, "digest", base.ConfigDigest, "skipped", base.Skipped)
+	}
+	if prestageOnlyFromEnv(getenv) {
+		log.Info("imaged runtime-base pre-stage complete",
+			"arch", arch,
+			"assigned_runtimes", assignedBases.Runtimes,
+			"assigned_minimal", assignedBases.Minimal,
+			"deferred_to_serving_imaged", assignedBases.Deferred,
+		)
+		return nil
+	}
+
+	loop := imaged.NewLoop(imaged.LoopConfig{
+		Handler:     h,
+		Store:       store,
+		Pool:        pool,
+		Log:         log,
+		Now:         d.now,
+		LvUsedPct:   d.lvUsedPct,
+		DetectFC:    d.detectFC,
+		AppsRoot:    appsRoot,
+		StorageRoot: envOr("FAAS_STORAGE_ROOT", "/srv/fc"),
+		GCEvery:     envDuration("FAAS_GC_INTERVAL", 24*time.Hour),
+		// PR-B: builderd owns the build-queue durability surface now;
+		// imaged no longer runs a reaper tick or subscribes to
+		// NotifyBuildQueued. FAAS_REAP_INTERVAL +
+		// FAAS_REAP_THRESHOLD env vars retired.
+	})
+
+	bootStaging.Set(true, "")
+	log.Info("imaged ready",
+		"min_layer_mb", rootfs.MinLayerMB,
+		"arch", arch,
+		"builder_base_path", basePath,
+		"builder_base_ref", baseRef,
+		"builder_base_digest", baseRes.ConfigDigest,
+		"builder_base_skipped", baseRes.Skipped,
+		"runtime_bases", "assigned",
+		"assigned_runtimes", assignedBases.Runtimes,
+		"assigned_minimal", assignedBases.Minimal,
+	)
+	// ADR-567: keep every staged base byte-identical to its shared
+	// publication so snapshots restore on any node (ADR-510).
+	go h.RunBaseConvergence(ctx, imaged.BaseConvergenceInterval)
 
 	// ADR-053: release the vmmd gRPC conn on shutdown so SIGTERM
 	// doesn't leak the dial. Idempotent on a nil receiver; the
@@ -1041,6 +1026,15 @@ func makeGrypeRunner(bin string) func(ctx context.Context, dir string) (*imaged.
 	}
 }
 
+func makeRuntimeGrypeRunner(bin string) func(context.Context, string) (*imaged.ScanResult, error) {
+	if bin == "" {
+		bin = "grype"
+	}
+	return func(ctx context.Context, dir string) (*imaged.ScanResult, error) {
+		return imaged.RunRuntimeGrypeAt(ctx, bin, dir)
+	}
+}
+
 // makeSyftRunner wires an explicit Syft subprocess runner bound
 // to the operator-supplied binary path (issue #299 / ADR-038
 // Phase 3). As with makeGrypeRunner, the empty-string path means
@@ -1131,4 +1125,46 @@ func reconcileManifestBuilderBase() error {
 
 func digestHex(digest string) string {
 	return strings.TrimPrefix(strings.TrimSpace(digest), "sha256:")
+}
+
+// startImagedMetricsListener serves /metrics and the control endpoints
+// (/readyz, /healthz) on addr and returns the bound address and a stop func.
+// run starts it before boot staging (H10-105) so Prometheus keeps scraping a
+// daemon that is still staging; /readyz reports not-ready from probe's
+// boot-staging signal until staging finishes.
+func startImagedMetricsListener(ctx context.Context, addr string, cfg *Config, ops *wire.OpsMetrics, probe *wire.ReadyzProbe, log *slog.Logger) (string, func(), error) {
+	mux := http.NewServeMux()
+	mux.Handle("/metrics", ops.Handler())
+	wire.ControlMuxLite(mux, probe.ReadyFunc(), probe.ReasonFunc())
+	// ADR-122: apply the canonical metrics-listener shape —
+	// RT/WT/IT/MHB from cfg.MetricsListener (cfg → constant
+	// fallback). ReadHeaderTimeout=10s stays from before ADR-122.
+	readTimeout, writeTimeout, idleTimeout, maxHeaderBytes := cfg.MetricsListener()
+	msrv := &http.Server{
+		Addr:              addr,
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       readTimeout,
+		WriteTimeout:      writeTimeout,
+		IdleTimeout:       idleTimeout,
+		MaxHeaderBytes:    int(maxHeaderBytes),
+	}
+	mlis, err := net.Listen("tcp", addr)
+	if err != nil {
+		return "", nil, fmt.Errorf("imaged: metrics listen %q: %w", addr, err)
+	}
+	go func() {
+		log.Info("imaged /metrics listening", "addr", mlis.Addr().String())
+		if err := msrv.Serve(mlis); err != nil && err != http.ErrServerClosed {
+			log.Error("imaged /metrics serve", "err", err)
+		}
+	}()
+	stop := func() {
+		// Shutdown runs after run's ctx is cancelled, so it must not inherit
+		// that cancellation; it keeps only a bounded deadline.
+		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		_ = msrv.Shutdown(shutdownCtx)
+	}
+	return mlis.Addr().String(), stop, nil
 }

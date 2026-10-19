@@ -37,6 +37,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -220,6 +221,13 @@ func newPollerForTrigger(t sqlc.Trigger) (triggerSource, bool, error) {
 // External broker factories remain process-wide and immutable after init;
 // the in-platform queue receives the exact pgx pool passed to NewLoop.
 func (l *Loop) newPollerForTrigger(t sqlc.Trigger) (triggerSource, bool, error) {
+	if t.Kind == string(api.TriggerKindRealtime) {
+		if l == nil || l.engine == nil {
+			return nil, true, fmt.Errorf("poller_realtime: schedd store is not configured")
+		}
+		src, err := newRealtimePoller(l.engine.Store(), t)
+		return src, true, err
+	}
 	if t.Kind == "queue" {
 		if l == nil || l.pool == nil {
 			return nil, true, fmt.Errorf("poller_queue: schedd database pool is not configured")

@@ -30,6 +30,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/githubdgrpc"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -104,6 +105,11 @@ func (m *memStoreInstalls) Upsert(_ context.Context, inst state.GitHubInstall) e
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	for _, existing := range m.items {
+		if existing.InstallationID == inst.InstallationID && existing.AccountID != inst.AccountID {
+			return state.ErrConflict
+		}
+	}
 	inst.SealedAt = time.Now()
 	m.items[inst.AccountID+"\x00"+strconv.FormatInt(inst.InstallationID, 10)] = inst
 	return nil
@@ -326,10 +332,47 @@ func TestRealService_ExchangeOAuthCode_MakesRealAPICall(t *testing.T) {
 	}
 }
 
-// TestRealService_ExchangeOAuthCode_RejectsExpiredCode pins the
-// "user OAuth code rejected" path: a 200 + {"error":"bad_verification_code"}
-// from /login/oauth/access_token must surface as a non-nil err and
-// leave the store untouched.
+// A verified GitHub installation still cannot be reassigned to another
+// Gregale account by reconnecting it. Failure must leave storage and caches
+// unchanged and must not report a successful connection.
+func TestRealService_ExchangeOAuthCode_AccountConflict(t *testing.T) {
+	ident, recipient := newTestAgeKeypair(t)
+	fake := newFakeGithubServer(t, fakeGithubOpts{
+		accessToken: "user-token", installToken: "installation-token", appID: "100",
+		installs:  []map[string]any{{"id": float64(4242), "account": map[string]any{"login": "octocat"}}},
+		expiresAt: time.Now().Add(time.Hour).UTC().Format(time.RFC3339),
+	})
+	defer fake.Close()
+	store := newMemStoreInstalls()
+	if err := store.Upsert(context.Background(), state.GitHubInstall{
+		AccountID: "original", InstallationID: 4242, AuditGithubLogin: "octocat", SealedToken: []byte("original-seal"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	audit := newRecordingAuditFn()
+	auth := newTestAppAuth(t, "100", fake.URL)
+	svc := NewRealService(auth, NewTokenCache(auth, time.Minute), nil, newMemBindingsStore(), store, recipient, ident, audit.AuditEvent)
+	installID, branch, err := svc.ExchangeOAuthCode("other", "oauth-code", "state")
+	p := api.AsProblem(err)
+	if p == nil || p.Code != api.CodeGitHubAccountConflict || p.Status != http.StatusConflict || installID != "" || branch != "" {
+		t.Fatalf("conflicting OAuth exchange = (%q, %q, %v), want account conflict", installID, branch, err)
+	}
+	got, err := store.ForAccount(context.Background(), "original")
+	if err != nil || string(got.SealedToken) != "original-seal" {
+		t.Fatalf("original binding changed: %v", err)
+	}
+	st, _, _, err := svc.GetInstallState("other")
+	if err != nil || st != githubdgrpc.InstallStateUnspecified {
+		t.Fatalf("rejected account appears connected: %v, %v", st, err)
+	}
+	for _, event := range audit.events {
+		if event.event == "auth.install.token_sealed" {
+			t.Fatal("rejected reconnect emitted a successful connection audit")
+		}
+	}
+}
+
+// A rejected OAuth code must leave the store untouched.
 func TestRealService_ExchangeOAuthCode_RejectsExpiredCode(t *testing.T) {
 	ident, recipient := newTestAgeKeypair(t)
 	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

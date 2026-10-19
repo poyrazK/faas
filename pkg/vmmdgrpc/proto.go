@@ -17,6 +17,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/executionproto"
 	"github.com/onebox-faas/faas/pkg/fcvm"
+	"github.com/onebox-faas/faas/pkg/ociidentity"
 	"github.com/onebox-faas/faas/pkg/wakeownershipwire"
 	"github.com/onebox-faas/faas/pkg/wire"
 	"google.golang.org/grpc/codes"
@@ -92,8 +93,14 @@ func jobBootRequestFromProto(req *vmmdpb.JobColdBootRequest) (fcvm.JobBootReques
 	if problem != nil {
 		return fcvm.JobBootRequest{}, problem
 	}
+	if problem := validateJobImageProcess(req); problem != nil {
+		return fcvm.JobBootRequest{}, problem
+	}
 	return fcvm.JobBootRequest{
 		Interactive:      interactive,
+		ImageProcess:     req.GetImageProcess(),
+		ProcessUser:      req.GetProcessUser(),
+		ProcessWorkdir:   req.GetProcessWorkdir(),
 		Instance:         req.GetInstance(),
 		AccountID:        req.GetAccountId(),
 		NodeID:           req.GetNodeId(),
@@ -138,6 +145,28 @@ func jobInteractiveFromProto(req *vmmdpb.JobColdBootRequest) (*fcvm.JobInteracti
 		window = min(time.Duration(seconds)*time.Second, fcvm.JobInteractiveMaxAttachTimeout)
 	}
 	return &fcvm.JobInteractive{TTY: in.GetTty(), AttachTimeoutSec: int(window / time.Second)}, nil
+}
+
+// validateJobImageProcess checks ADR-1790's user and workdir overrides, which
+// apply only to an image process.
+func validateJobImageProcess(req *vmmdpb.JobColdBootRequest) *api.Problem {
+	invalid := func(detail string) *api.Problem {
+		return api.NewProblem(int(codes.InvalidArgument), api.CodeValidation, "Invalid job process", detail)
+	}
+	user, workdir := req.GetProcessUser(), req.GetProcessWorkdir()
+	if !req.GetImageProcess() {
+		if user != "" || workdir != "" {
+			return invalid("process_user and process_workdir require image_process")
+		}
+		return nil
+	}
+	if len(user) > api.ImageRunUserMaxBytes || ociidentity.ValidateSpec(user) != nil {
+		return invalid("process_user is not a valid user[:group]")
+	}
+	if err := api.ValidateImageRunWorkdir(workdir); err != nil {
+		return invalid(err.Error())
+	}
+	return nil
 }
 
 func cloneStringMap(in map[string]string) map[string]string {
@@ -372,7 +401,8 @@ func toWakeRequest(ctx context.Context, req *vmmdpb.CreateFromSnapshotRequest) (
 		// it was woken for. The scheduler already knows the app
 		// when it calls CreateFromSnapshot; passing it on the wire
 		// means vmmd doesn't have to round-trip back to apid.
-		AppID: app.GetAppId(),
+		AppID:          app.GetAppId(),
+		RehearsalRunID: app.GetRehearsalRunId(),
 		// issue #301 / ADR-044 — Plan + AccountID thread the
 		// apps-row context onto the wire so vmmd can land the VM
 		// under the per-plan cgroup sub-slice
@@ -546,7 +576,8 @@ func toColdBootRequest(ctx context.Context, req *vmmdpb.CreateColdBootRequest) (
 		// the very first UpdateEgressAllowlist fan-out finds the
 		// instance via m.live[].AppID without a separate
 		// bootstrap path.
-		AppID: app.GetAppId(),
+		AppID:          app.GetAppId(),
+		RehearsalRunID: app.GetRehearsalRunId(),
 		// issue #301 / ADR-044 — see toWakeRequest. Cold-boot
 		// mirrors Plan + AccountID so deploy's first boot on a
 		// fresh VM lands under the per-plan cgroup sub-slice
@@ -790,6 +821,7 @@ func workloadDependenciesFromProto(pbs []*vmmdpb.WorkloadDependency) []api.Workl
 // is inherited from the apps row captured in the original cold boot).
 func wakeResponseFromInstance(instance string, req fcvm.WakeRequest, inst *fcvm.Instance, requestMethod vmmdpb.WakeMethod) *vmmdpb.WakeResponse {
 	resp := &vmmdpb.WakeResponse{
+		RehearsalRunId:                     inst.Net.RehearsalRunID,
 		SupportsSecretAliases:              true,
 		SupportsImageHealthcheck:           true,
 		SupportsImageHealthcheckMonitoring: true,

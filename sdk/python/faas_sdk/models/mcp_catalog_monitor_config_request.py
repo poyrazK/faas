@@ -24,6 +24,8 @@ class MCPCatalogMonitorConfigRequest:
     baseline: MCPCatalogMonitorConfigRequestBaseline
     """Reviewed format-2 MCP catalog contract"""
     freshness_seconds: int = 90
+    scope: str | Unset = UNSET
+    """Environment selected when configuring catalog monitoring. Omit for default."""
     observer: MCPCatalogObserverConfig | Unset = UNSET
     """Opt-in platform observer intent for one MCP role using its canonical app origin and an optional sealed
     secret reference."""
@@ -38,6 +40,8 @@ class MCPCatalogMonitorConfigRequest:
         baseline = self.baseline.to_dict()
 
         freshness_seconds = self.freshness_seconds
+
+        scope = self.scope
 
         observer: dict[str, Any] | Unset = UNSET
         if not isinstance(self.observer, Unset):
@@ -56,6 +60,8 @@ class MCPCatalogMonitorConfigRequest:
                 "freshness_seconds": freshness_seconds,
             }
         )
+        if scope is not UNSET:
+            field_dict["scope"] = scope
         if observer is not UNSET:
             field_dict["observer"] = observer
         if token_env is not UNSET:
@@ -77,6 +83,8 @@ class MCPCatalogMonitorConfigRequest:
 
         freshness_seconds = d.pop("freshness_seconds")
 
+        scope = d.pop("scope", UNSET)
+
         _observer = d.pop("observer", UNSET)
         observer: MCPCatalogObserverConfig | Unset
         if isinstance(_observer, Unset):
@@ -92,6 +100,7 @@ class MCPCatalogMonitorConfigRequest:
             enabled=enabled,
             baseline=baseline,
             freshness_seconds=freshness_seconds,
+            scope=scope,
             observer=observer,
             token_env=token_env,
             role=role,

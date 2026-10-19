@@ -290,7 +290,11 @@ func SubscribeClusterKeyChanges(
 	if log == nil {
 		log = slog.Default()
 	}
-	notifs, err := db.SubscribeWithReconnect(ctx, pool,
+	// The minter has no table poll of its own, so a rotation notified while
+	// the LISTEN connection was down would otherwise be missed until restart.
+	// SubscribeWithResync re-runs the load after a reconnect (ADR-1344 §5
+	// rule 3); re-installing an unchanged key is harmless.
+	notifs, err := db.SubscribeWithResync(ctx, pool,
 		[]string{db.NotifyClusterSigningKeysChanged}, log)
 	if err != nil {
 		return fmt.Errorf("schedd: subscribe cluster_signing_keys_changed: %w", err)
@@ -300,7 +304,7 @@ func SubscribeClusterKeyChanges(
 			select {
 			case <-ctx.Done():
 				return
-			case _, ok := <-notifs:
+			case n, ok := <-notifs:
 				if !ok {
 					// SubscribeWithReconnect only closes the
 					// outer channel on ctx.Done; a closed
@@ -326,7 +330,7 @@ func SubscribeClusterKeyChanges(
 					continue
 				}
 				log.Info("schedd: cluster key rotated",
-					"new_kid", kid)
+					"new_kid", kid, "trigger", n.Channel)
 			}
 		}
 	}()

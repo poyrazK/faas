@@ -87,7 +87,37 @@ const (
 	// OrgActionCreateApp gates provisioning an app in the active org.
 	// Owners, admins, and developers may create; viewer and billing roles
 	// cannot provision infrastructure.
-	OrgActionCreateApp OrgAction = "org.create_app"
+	OrgActionCreateApp                         OrgAction = "org.create_app"
+	OrgActionReadApp                           OrgAction = "org.read_app"
+	OrgActionConfigureApp                      OrgAction = "org.configure_app"
+	OrgActionDeployApp                         OrgAction = "org.deploy_app"
+	OrgActionReadAppLogs                       OrgAction = "org.read_app_logs"
+	OrgActionManageAppSecrets                  OrgAction = "org.manage_app_secrets"
+	OrgActionManageAppSecurity                 OrgAction = "org.manage_app_security"
+	OrgActionDeleteApp                         OrgAction = "org.delete_app"
+	ReadObjectStorage                          OrgAction = "org.read_object_storage"
+	ManageObjectStorage                        OrgAction = "org.manage_object_storage"
+	BindObjectStorage                          OrgAction = "org.bind_object_storage"
+	ReadObjectStorageUsage                     OrgAction = "org.read_object_storage_usage"
+	OrgActionReadQueues                        OrgAction = "org.read_queues"
+	OrgActionConfigureQueues                   OrgAction = "org.configure_queues"
+	OrgActionOperateQueues                     OrgAction = "org.operate_queues"
+	OrgActionReplayQueues                      OrgAction = "org.replay_queues"
+	OrgActionReadQueueUsage                    OrgAction = "org.read_queue_usage"
+	OrgActionReadPostgres                      OrgAction = "org.read_postgres"
+	OrgActionManagePostgres                    OrgAction = "org.manage_postgres"
+	OrgActionBindPostgres                      OrgAction = "org.bind_postgres"
+	OrgActionReadPostgresUsage                 OrgAction = "org.read_postgres_usage"
+	OrgActionReadProject                       OrgAction = "org.read_project"
+	OrgActionConfigureProject                  OrgAction = "org.configure_project"
+	OrgActionDeployProject                     OrgAction = "org.deploy_project"
+	OrgActionManageProjectSecurity             OrgAction = "org.manage_project_security"
+	OrgActionApproveProjectEnvironment         OrgAction = "org.approve_project_environment"
+	OrgActionDeleteProject                     OrgAction = "org.delete_project"
+	OrgActionViewApplicationStandards          OrgAction = "org.view_application_standards"
+	OrgActionManageApplicationStandards        OrgAction = "org.manage_application_standards"
+	OrgActionApproveApplicationStandards       OrgAction = "org.approve_application_standards"
+	OrgActionSetApplicationStandardLocalIntent OrgAction = "org.set_application_standard_local_intent"
 )
 
 // AllOrgActions is the closed vocabulary in iteration order. Used by
@@ -106,6 +136,33 @@ var AllOrgActions = []OrgAction{
 	OrgActionCreateApiKey,
 	OrgActionRevokeApiKey,
 	OrgActionCreateApp,
+	OrgActionReadApp,
+	OrgActionConfigureApp,
+	OrgActionDeployApp,
+	OrgActionReadAppLogs,
+	OrgActionManageAppSecrets,
+	OrgActionManageAppSecurity,
+	OrgActionDeleteApp,
+	ReadObjectStorage, ManageObjectStorage, BindObjectStorage, ReadObjectStorageUsage,
+	OrgActionReadQueues,
+	OrgActionConfigureQueues,
+	OrgActionOperateQueues,
+	OrgActionReplayQueues,
+	OrgActionReadQueueUsage,
+	OrgActionReadPostgres,
+	OrgActionManagePostgres,
+	OrgActionBindPostgres,
+	OrgActionReadPostgresUsage,
+	OrgActionReadProject,
+	OrgActionConfigureProject,
+	OrgActionDeployProject,
+	OrgActionManageProjectSecurity,
+	OrgActionApproveProjectEnvironment,
+	OrgActionDeleteProject,
+	OrgActionViewApplicationStandards,
+	OrgActionManageApplicationStandards,
+	OrgActionApproveApplicationStandards,
+	OrgActionSetApplicationStandardLocalIntent,
 }
 
 // AllOrgRoles is the closed role vocabulary in priority order. The

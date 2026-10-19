@@ -30,6 +30,7 @@ func MCPConnectionHealthKind(metric string) string {
 func IsMCPConnectionHealthMetric(metric string) bool { return MCPConnectionHealthKind(metric) != "" }
 
 type MCPConnectionHealthIssue struct {
+	Scope          string     `json:"scope,omitempty"`
 	ID             string     `json:"id"`
 	AppID          string     `json:"app_id"`
 	AppSlug        string     `json:"app_slug"`

@@ -114,7 +114,7 @@ func (s *server) createInboundWebhookEndpointValidated(w http.ResponseWriter, r 
 		api.WriteProblem(w, api.ErrCapacity("inbound webhook store unavailable"))
 		return
 	}
-	recipient := setSecretRecipient()
+	recipient := hostSecretRecipient()
 	if recipient == nil {
 		api.WriteProblem(w, api.ErrCapacity("host identity not loaded — refusing to seal webhook secret"))
 		return
@@ -242,7 +242,7 @@ func sealInboundWebhookSecret(plaintext string, provider state.InboundWebhookPro
 	if provider == state.InboundWebhookProviderGeneric && len(plaintext) < api.InboundWebhookGenericSecretMinBytes {
 		return nil, inboundWebhookProblem(http.StatusBadRequest, "generic signing_secret must contain at least 32 bytes")
 	}
-	recipient := setSecretRecipient()
+	recipient := hostSecretRecipient()
 	if recipient == nil {
 		return nil, api.ErrCapacity("host identity not loaded — refusing to seal webhook secret")
 	}
@@ -339,7 +339,7 @@ func (s *server) receiveVerifiedInboundWebhook(w http.ResponseWriter, r *http.Re
 		api.WriteProblem(w, api.ErrCapacity("could not resolve inbound webhook app"))
 		return
 	}
-	acct, err := s.store.AccountByID(r.Context(), app.AccountID)
+	acct, err := state.AppResourceAccount(r.Context(), s.store, app)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not resolve inbound webhook account"))
 		return
@@ -356,6 +356,10 @@ func (s *server) receiveVerifiedInboundWebhook(w http.ResponseWriter, r *http.Re
 	}
 	if !acct.Active() {
 		api.WriteProblem(w, acct.InactiveProblem())
+		return
+	}
+	// ADR-1193: an operation binding takes over delivery for this endpoint.
+	if s.operation.ReceiveBoundWebhook(w, r, endpoint, providerEventID, eventType, body) {
 		return
 	}
 	limits := api.MustLimitsFor(acct.Plan)
@@ -553,4 +557,13 @@ func inboundWebhookReceiptMatches(invocation state.Invocation, endpoint state.In
 		}
 	}
 	return true
+}
+
+// endpointOperation authorizes the endpoint before an ADR-1193 binding handler.
+func (s *server) endpointOperation(next func(http.ResponseWriter, *http.Request, state.Account, state.InboundWebhookEndpoint)) func(http.ResponseWriter, *http.Request, state.Account) {
+	return func(w http.ResponseWriter, r *http.Request, acct state.Account) {
+		if endpoint, ok := s.loadInboundWebhookEndpoint(w, r, acct); ok {
+			next(w, r, acct, endpoint)
+		}
+	}
 }

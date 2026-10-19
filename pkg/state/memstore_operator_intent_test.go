@@ -7,7 +7,7 @@
 //  2. ClaimPendingOperatorIntent returns the row FIFO
 //     (oldest requested_at first), transitions to
 //     status='running', stamps started_at.
-//  3. MarkOperatorIntentSucceeded / Failed stamp terminal
+//  3. Claim-fenced node execution stamps terminal
 //     state with finished_at.
 //  4. GetOperatorIntent returns ErrOperatorIntentNotFound
 //     for missing id.
@@ -36,11 +36,16 @@ func TestMemStore_OperatorIntent_FullLifecycle(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemStore()
 
+	node, err := store.ComputeNodeByName(ctx, state.DefaultLocalNodeName)
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	acct := "11111111-1111-1111-1111-111111111111"
 	actor := "22222222-2222-2222-2222-222222222222"
 	id, err := store.InsertOperatorIntent(
-		ctx, state.OperatorIntentKindForcePark,
-		"33333333-3333-3333-3333-333333333333",
+		ctx, state.OperatorIntentKindNodeDrain,
+		node.ID,
 		&acct, actor, "wedged instance", json.RawMessage(`{}`), nil,
 	)
 	if err != nil {
@@ -64,8 +69,8 @@ func TestMemStore_OperatorIntent_FullLifecycle(t *testing.T) {
 		t.Errorf("Claim did not stamp started_at")
 	}
 
-	if err := store.MarkOperatorIntentSucceeded(ctx, id, []string{"snap-1"}); err != nil {
-		t.Fatalf("MarkOperatorIntentSucceeded: %v", err)
+	if err := finishOperatorNodeCRUD(t, store, ctx, id); err != nil {
+		t.Fatalf("ExecuteOperatorNode: %v", err)
 	}
 
 	got2, err := store.GetOperatorIntent(ctx, id)
@@ -136,7 +141,7 @@ func TestMemStore_OperatorIntent_MarkFailed(t *testing.T) {
 
 	actor := "22222222-2222-2222-2222-222222222222"
 	id, err := store.InsertOperatorIntent(
-		ctx, state.OperatorIntentKindForceColdBoot,
+		ctx, state.OperatorIntentKindNodeDrain,
 		"44444444-4444-4444-4444-444444444444", nil, actor, "stale snap", nil, nil,
 	)
 	if err != nil {
@@ -145,8 +150,8 @@ func TestMemStore_OperatorIntent_MarkFailed(t *testing.T) {
 	if _, err := store.ClaimPendingOperatorIntent(ctx); err != nil {
 		t.Fatalf("Claim: %v", err)
 	}
-	if err := store.MarkOperatorIntentFailed(ctx, id, "deployment not found", nil); err != nil {
-		t.Fatalf("MarkOperatorIntentFailed: %v", err)
+	if err := finishOperatorNodeCRUD(t, store, ctx, id); err != nil {
+		t.Fatalf("ExecuteOperatorNode failed outcome: %v", err)
 	}
 	got, err := store.GetOperatorIntent(ctx, id)
 	if err != nil {
@@ -155,8 +160,8 @@ func TestMemStore_OperatorIntent_MarkFailed(t *testing.T) {
 	if got.Status != state.OperatorIntentFailed {
 		t.Errorf("status=%q, want failed", got.Status)
 	}
-	if got.Error != "deployment not found" {
-		t.Errorf("error=%q, want %q", got.Error, "deployment not found")
+	if got.Error != "Compute node is unavailable." {
+		t.Errorf("error=%q, want %q", got.Error, "Compute node is unavailable.")
 	}
 }
 
@@ -173,7 +178,7 @@ func TestMemStore_OperatorIntent_MarkWithoutClaimReturnsNotFound(t *testing.T) {
 	store := state.NewMemStore()
 	actor := "22222222-2222-2222-2222-222222222222"
 	id, err := store.InsertOperatorIntent(
-		ctx, state.OperatorIntentKindForcePark,
+		ctx, state.OperatorIntentKindNodeDrain,
 		"55555555-5555-5555-5555-555555555555", nil, actor, "no claim", nil, nil,
 	)
 	if err != nil {
@@ -209,11 +214,16 @@ func TestMemStore_OperatorIntent_ReclaimStuckRunning(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemStore()
 
+	node, err := store.ComputeNodeByName(ctx, state.DefaultLocalNodeName)
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	actor := "22222222-2222-2222-2222-222222222222"
 	acct := "11111111-1111-1111-1111-111111111111"
 
 	stuckID, err := store.InsertOperatorIntent(
-		ctx, state.OperatorIntentKindForcePark,
+		ctx, state.OperatorIntentKindNodeDrain,
 		"66666666-6666-6666-6666-666666666666",
 		&acct, actor, "stuck", nil, nil,
 	)
@@ -224,10 +234,10 @@ func TestMemStore_OperatorIntent_ReclaimStuckRunning(t *testing.T) {
 		t.Fatalf("ClaimPendingOperatorIntent(stuck): %v", err)
 	}
 
-	// Terminal row: insert + claim + MarkSucceeded.
+	// Terminal row: insert + claim + atomic completion.
 	terminalID, err := store.InsertOperatorIntent(
-		ctx, state.OperatorIntentKindForceColdBoot,
-		"77777777-7777-7777-7777-777777777777",
+		ctx, state.OperatorIntentKindNodeDrain,
+		node.ID,
 		&acct, actor, "terminal", nil, nil,
 	)
 	if err != nil {
@@ -236,8 +246,8 @@ func TestMemStore_OperatorIntent_ReclaimStuckRunning(t *testing.T) {
 	if _, err := store.ClaimPendingOperatorIntent(ctx); err != nil {
 		t.Fatalf("ClaimPendingOperatorIntent(terminal): %v", err)
 	}
-	if err := store.MarkOperatorIntentSucceeded(ctx, terminalID, []string{"s1"}); err != nil {
-		t.Fatalf("MarkOperatorIntentSucceeded(terminal): %v", err)
+	if err := finishOperatorNodeCRUD(t, store, ctx, terminalID); err != nil {
+		t.Fatalf("ExecuteOperatorNode(terminal): %v", err)
 	}
 
 	// Future threshold matches the just-claimed row (whose
@@ -434,3 +444,17 @@ func TestMemStore_OperatorActionTraceCompleteness_CoversPgStore(t *testing.T) {
 // AppendEventWithTrace expects for trace_id; avoiding a
 // package-level var keeps the test self-contained.
 func strPtr(s string) *string { return &s }
+
+// Completion is claim-fenced for every supported operator kind (ADR-1526).
+func finishOperatorNodeCRUD(t *testing.T, store interface {
+	state.OperatorNodeStore
+	GetOperatorIntent(context.Context, string) (state.OperatorIntent, error)
+}, ctx context.Context, id string) error {
+	t.Helper()
+	i, err := store.GetOperatorIntent(ctx, id)
+	if err != nil {
+		return err
+	}
+	_, err = store.ExecuteOperatorNode(ctx, id, i.ClaimToken)
+	return err
+}

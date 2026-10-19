@@ -1,0 +1,34 @@
+# The account dashboard sums the hourly gateway rollups over 7d and 15d
+# windows (hunt #10). This case pins that consecutive hourly evaluations add
+# up to the raw increase across gateway instances. Rules run hourly here, as
+# the faas_gateway_account_rollups_1h group does in production; the query sits
+# off that grid so range boundaries do not decide which hours are counted.
+
+rule_files:
+  - ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
+
+evaluation_interval: 1h
+
+tests:
+  - interval: 1m
+    name: "hourly rollups sum the raw increase across gateway instances"
+    input_series:
+      # app-1 serves 1 rps on gw-1 and 2 rps on gw-2 for 6h, all 2xx.
+      - series: 'gateway_request_duration_seconds_count{app="app-1",class="2xx",instance="gw-1",job="gatewayd-internal",node="n1",node_id="1"}'
+        values: '0+60x360'
+      - series: 'gateway_request_duration_seconds_count{app="app-1",class="2xx",instance="gw-2",job="gatewayd-internal",node="n2",node_id="2"}'
+        values: '0+120x360'
+      - series: 'gateway_request_duration_seconds_bucket{app="app-1",class="2xx",le="+Inf",instance="gw-1",job="gatewayd-internal",node="n1",node_id="1"}'
+        values: '0+60x360'
+    promql_expr_test:
+      # Evaluations at 4h, 5h and 6h each cover the preceding hour.
+      - expr: 'sum by (app, class) (sum_over_time(app_class:gateway_request_duration_seconds_count:increase1h[3h]))'
+        eval_time: 6h5m
+        exp_samples:
+          - labels: '{app="app-1",class="2xx"}'
+            value: 32400
+      - expr: 'sum by (app, le) (sum_over_time(app_class_le:gateway_request_duration_seconds_bucket:increase1h{class="2xx"}[3h]))'
+        eval_time: 6h5m
+        exp_samples:
+          - labels: '{app="app-1",le="+Inf"}'
+            value: 10800

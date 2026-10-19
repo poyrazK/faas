@@ -379,6 +379,12 @@ source) before bootstrapping; the role refuses to expose PostgreSQL without
 that password. The manifest's `postgresql.dsn` must use the same control-plane
 mesh address, not `127.0.0.1` or a local Unix socket.
 
+A manifest that declares `postgresql.standby` (ADR-1344 §8 warm standby) also
+needs `faas_postgres_replication_password` in Vault, at least 16 characters,
+visible to both the control plane and the `postgres_standby` host. Converge
+the control plane first, then `make bootstrap-postgres-standby`; operations
+are in `docs/runbooks/FaasPostgresStandby.md`.
+
 ## Do NOT run this on a non-bare-metal host without reading this section
 
 The XFS `prjquota` requirement and the LVM `lv-system`/`lv-fc`

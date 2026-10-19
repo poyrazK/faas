@@ -94,7 +94,7 @@ func (m *MemStore) workflowRetainsDeploymentLocked(id string) bool {
 }
 
 func (m *MemStore) durableWorkRetainsDeploymentLocked(id string) bool {
-	return m.operationRetainsDeploymentLocked(id) || m.workflowRetainsDeploymentLocked(id)
+	return m.operationRetainsDeploymentLocked(id) || m.workflowRetainsDeploymentLocked(id) || m.workloadRetirementRetainsDeploymentLocked(id)
 }
 
 func (m *MemStore) pinWorkflowEventRecipientsLocked(recipients []PublishedEventRecipient) error {

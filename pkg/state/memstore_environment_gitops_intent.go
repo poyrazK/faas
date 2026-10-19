@@ -199,7 +199,34 @@ func (m *MemStore) gitOpsSnapshotLocked(memory *environmentGitOpsMemory) gitOpsI
 			rules := cloneProjectEnvironmentEdgeRules(policy.Rules)
 			row.Policies = &rules
 		}
+		for _, inv := range m.invocations {
+			if inv.AppID == app.ID && (inv.EnvironmentID == source.EnvironmentID || workloadRetirementAdmissionScope(inv.DeploymentScope) == workloadRetirementAdmissionScope(source.EnvironmentSlug)) {
+				if inv.State == InvocationPending {
+					row.PendingInvocations++
+				}
+				if inv.State == InvocationDispatching {
+					row.InFlightInvocations++
+				}
+			}
+		}
+		if row.WorkloadIntent != nil && row.WorkloadIntent.JobID != "" {
+			for id, run := range m.jobRuns {
+				if run.JobID == row.WorkloadIntent.JobID {
+					for _, task := range m.jobTasks[id] {
+						if task.Status == "queued" {
+							row.QueuedTasks++
+						}
+						if task.Status == "claimed" {
+							row.InFlightTasks++
+						}
+					}
+				}
+			}
+		}
 		snapshot.Apps = append(snapshot.Apps, row)
+	}
+	for _, retirement := range memory.retirements {
+		snapshot.Retirements = append(snapshot.Retirements, cloneWorkloadRetirement(retirement))
 	}
 	return snapshot
 }
@@ -554,7 +581,9 @@ func (m *MemStore) applyEnvironmentGitOps(_ context.Context, lease EnvironmentGi
 	}
 	if configChanged {
 		key := projectEnvironmentConfigKey(source.ProjectID, source.EnvironmentSlug)
+		before := m.latestProjectEnvironmentConfigValuesLocked(source.ProjectID, source.EnvironmentSlug)
 		m.projectEnvironmentConfigs[key] = append(m.projectEnvironmentConfigs[key], ProjectEnvironmentConfig{ID: newID(), AccountID: source.AccountID, ProjectID: source.ProjectID, EnvironmentSlug: source.EnvironmentSlug, Version: int64(len(m.projectEnvironmentConfigs[key]) + 1), Values: configValues, ConfigHash: configHash, CreatedAt: now})
+		m.projectConfigRuntimeChangeLocked(source.ProjectID, source.EnvironmentSlug, before, configValues, now)
 	}
 	if len(steps) > 0 {
 		memory.source.IntentVersion++

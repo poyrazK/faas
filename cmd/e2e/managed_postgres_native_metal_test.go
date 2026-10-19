@@ -25,6 +25,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/e2etest"
 	"github.com/onebox-faas/faas/pkg/e2etest/postgresfixture"
 	"github.com/onebox-faas/faas/pkg/e2etest/postgresprobe"
+	"github.com/onebox-faas/faas/pkg/e2etest/postgresstarter"
 	mp "github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/managedpostgres/guestqualification"
 	"github.com/onebox-faas/faas/pkg/secretbox"
@@ -160,28 +161,44 @@ func TestManagedPostgresNativeMetal(t *testing.T) {
 	key := h.SeedAccount(t.Context(), api.PlanPro)
 	store := state.NewPgStore(pool)
 	account := accountIDFromKey(t, t.Context(), pool, key)
-	recordRuntime := func(t *testing.T, deploymentID, runtimeName string) {
+	recordRuntime := func(t *testing.T, deploymentID, workload, sourceArchive string) {
 		t.Helper()
 		deployment, err := store.DeploymentByID(t.Context(), deploymentID)
 		if err != nil {
-			t.Fatal("guest runtime deployment missing")
+			t.Fatal("guest deployment identity missing")
 		}
-		release, err := store.RuntimeReleaseForArtifact(t.Context(), account, deployment.RootfsKey)
-		if err != nil || release.Validate() != nil || (runtimeName == "node22" && release.Runtime != runtimeName) || release.Architecture != "amd64" || release.GuestInitSHA256 != guestIdentity.Runtime.Artifacts["guest_init"] {
-			t.Fatal("guest runtime release identity unverified")
+		app, err := store.AppByID(t.Context(), deployment.AppID)
+		if err != nil {
+			t.Fatal("guest application identity missing")
+		}
+		build, err := store.BuildByDeployment(t.Context(), deploymentID)
+		if err != nil {
+			t.Fatal("guest source build missing")
+		}
+		provenance, err := store.BuildProvenanceByBuildID(t.Context(), build.ID)
+		if err != nil {
+			t.Fatal("guest source build provenance missing")
 		}
 		storageRoot := os.Getenv("FAAS_STORAGE_ROOT")
 		if storageRoot == "" {
 			storageRoot = "/srv/fc"
 		}
-		path := filepath.Join(storageRoot, release.BaseKey())
-		digest, err := e2etest.PostgresGuestArtifactDigest(path)
-		if err != nil || digest != release.BaseSHA256 {
-			t.Fatal("guest runtime base bytes differ from published release")
+		paths, err := e2etest.PostgresGuestAppArtifacts(workload, storageRoot, sourceArchive, app, deployment, build, provenance)
+		if err != nil {
+			t.Fatal(err)
 		}
-		artifactPaths[runtimeName+"_base"] = path
-		guestIdentity.Runtime.Artifacts[runtimeName+"_base"] = digest
+		for name, path := range paths {
+			digest, err := e2etest.PostgresGuestArtifactDigest(path)
+			if err != nil {
+				t.Fatal("guest deployed artifact bytes unverified")
+			}
+			if previous := guestIdentity.Runtime.Artifacts[name]; previous != "" && previous != digest {
+				t.Fatal("shared guest artifact changed between workloads")
+			}
+			artifactPaths[name], guestIdentity.Runtime.Artifacts[name] = path, digest
+		}
 	}
+
 	slug := "postgres-native-" + randHexSuffix()
 	falsy := false
 	if status := postOK(t, h, key, "/v1/apps", api.CreateAppRequest{Slug: slug, Type: "app", RAMMB: 256, RequireAuthn: &falsy}); status != http.StatusCreated {
@@ -279,6 +296,7 @@ func TestManagedPostgresNativeMetal(t *testing.T) {
 			t.FailNow()
 		}
 	}
+	probeSource := filepath.Join(t.TempDir(), "probe-source.tar.gz")
 	phase("release_and_initial_restore", func(t *testing.T) {
 		binary, err := e2etest.PostgresProbeExecutable()
 		if err != nil {
@@ -290,6 +308,9 @@ func TestManagedPostgresNativeMetal(t *testing.T) {
 			"gregale.yaml":     "hosting:\n  port: 8080\n  health: /healthz\nlifecycle:\n  after_restore:\n    path: /internal/after-restore\n    timeout_ms: 2000\nrelease:\n  command: /postgres-probe migrate\n",
 			"faas-build-token": runID,
 		})
+		if err := os.WriteFile(probeSource, source, 0600); err != nil {
+			t.Fatal("retain exact SQL probe source")
+		}
 		body, status := postMultipartDeployment(t, h, key, slug, source, true, "")
 		if status != http.StatusAccepted {
 			t.Fatalf("deploy SQL source: status=%d", status)
@@ -303,7 +324,7 @@ func TestManagedPostgresNativeMetal(t *testing.T) {
 			}
 			t.Fatalf("SQL source deployment: %v", err)
 		}
-		recordRuntime(t, deploymentID, "probe")
+		recordRuntime(t, deploymentID, "probe", probeSource)
 		release, err := store.ReleaseAppTaskByDeployment(ctx, deploymentID)
 		if err != nil || release.Kind != state.AppTaskKindRelease || release.Status != state.AppTaskSucceeded {
 			t.Fatal("normal deployment did not complete its SQL migration release")
@@ -457,7 +478,10 @@ func TestManagedPostgresNativeMetal(t *testing.T) {
 		}
 		rotate(t, true)
 	})
-	postgresNativeStarterPhases(t, h, key, slug, appID, account, pool, store, fixture, proxy, bindings, phase, rotate, &workload, &deploymentID, &initialSnapshot, recordRuntime)
+	expectedNotes := make(map[int64]string)
+	for _, starter := range postgresstarter.Starters() {
+		postgresNativeStarterPhases(t, starter, expectedNotes, h, key, slug, appID, account, pool, store, fixture, proxy, bindings, phase, rotate, &workload, &deploymentID, &initialSnapshot, recordRuntime)
+	}
 	phase("independent_cleanup", func(t *testing.T) {
 		cleanup()
 		after, err := e2etest.PostgresGuestRuntimeManifest(artifactPaths, guestIdentity.Runtime.SourceRevision, true)

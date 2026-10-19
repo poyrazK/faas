@@ -15,9 +15,36 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const issuesCmdUsage = "usage: gregale issues <list|get|assign|resolve|reopen|ignore|merge|split|impact-alert|ownership-rules|tokens|create-token|revoke-token> --app <slug> [<issue-id>] [--sort recent|impact] [--min-customers N] [flags]"
+const issuesCmdUsage = "usage: gregale issues <list|get|assign|resolve|reopen|ignore|merge|split|impact-alert|lifecycle-alerts|compound-alerts|ownership-rules|source-maps|compare-releases|bulk|tickets|links|teams|views|codeowners|tokens|create-token|revoke-token> --app <slug> [<issue-id>] [--sort recent|impact] [--min-customers N] [flags]"
 
 func cmdIssues(args []string) int {
+	if len(args) > 0 && args[0] == "compound-alerts" {
+		return cmdIssueCompoundAlerts(args[1:])
+	}
+	if len(args) > 0 && args[0] == "lifecycle-alerts" {
+		return cmdIssueLifecycleAlerts(args[1:])
+	}
+	if len(args) > 0 && args[0] == "tickets" {
+		return cmdIssueTickets(args[1:])
+	}
+	if len(args) > 0 && args[0] == "links" {
+		return cmdIssueTrackerLinks(args[1:])
+	}
+	if len(args) > 0 && args[0] == "teams" {
+		return cmdIssueTeams(args[1:])
+	}
+	if len(args) > 0 && args[0] == "codeowners" {
+		return cmdIssueCodeowners(args[1:])
+	}
+	if len(args) > 0 && args[0] == "views" {
+		return cmdIssueSavedViews(args[1:])
+	}
+	if len(args) > 0 && (args[0] == "compare-releases" || args[0] == "bulk") {
+		return cmdIssueTriage(args)
+	}
+	if len(args) > 0 && args[0] == "source-maps" {
+		return cmdIssueSourceMaps(args[1:])
+	}
 	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" {
 		PrintUsage(os.Stderr, issuesCmdUsage, "issues")
 		if len(args) > 0 {
@@ -56,14 +83,16 @@ func cmdIssues(args []string) int {
 	deployment := fs.String("deployment", "", "fixed or token-bound deployment UUID")
 	targetIssue := fs.String("target", "", "merge destination issue UUID")
 	memberIssue := fs.String("member", "", "original group UUID to split out")
+	team := fs.String("team", "", "team UUID for assignment or inbox filter")
 	assignee := fs.String("assignee", "", "list filter: me, unassigned, or account UUID; assignment owner UUID (empty unassigns)")
 	sortBy := fs.String("sort", "", "list order: recent (default) or impact by verified customers in 24h")
+	tag := fs.String("tag", "", "list filter: allowed operational key=value")
 	minCustomers := fs.Int64("min-customers", 0, "list filter: minimum verified customers affected in 24h")
 	until := fs.String("until", "", "ignore until (RFC3339)")
 	name := fs.String("name", "issues", "ingest token name")
 	expires := fs.Duration("expires-in", 24*time.Hour, "ingest token lifetime (max 90 days)")
 	rulesFile := fs.String("rules-file", "", "JSON policy file for ownership-rules; omit to read the current policy")
-	flags, positionals := normalizeDebugFlagArgs(args[1:], map[string]bool{"app": true, "state": true, "environment": true, "cursor": true, "release-cursor": true, "activity-cursor": true, "since": true, "deployment": true, "target": true, "member": true, "assignee": true, "sort": true, "min-customers": true, "until": true, "name": true, "expires-in": true, "rules-file": true})
+	flags, positionals := normalizeDebugFlagArgs(args[1:], map[string]bool{"app": true, "state": true, "environment": true, "cursor": true, "release-cursor": true, "activity-cursor": true, "since": true, "deployment": true, "target": true, "member": true, "team": true, "assignee": true, "sort": true, "min-customers": true, "tag": true, "until": true, "name": true, "expires-in": true, "rules-file": true})
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
@@ -94,8 +123,8 @@ func cmdIssues(args []string) int {
 			return printErr("Invalid customer threshold", fmt.Errorf("min-customers must be non-negative"))
 		}
 		out, err := c.ListIssuesWithOptions(ctx, *app, api.IssueListOptions{
-			State: *stateFilter, Environment: *environment, Assignee: *assignee,
-			Sort: *sortBy, MinCustomers: *minCustomers, Cursor: *cursor,
+			State: *stateFilter, Environment: *environment, Assignee: *assignee, Team: *team,
+			Sort: *sortBy, MinCustomers: *minCustomers, Tag: *tag, Cursor: *cursor,
 		})
 		if err != nil {
 			return printErr("Could not list issues", err)
@@ -109,6 +138,9 @@ func cmdIssues(args []string) int {
 		}
 		for _, i := range out.Items {
 			owner := i.AssigneeAccountID
+			if i.AssigneeTeamID != "" {
+				owner = "team:" + i.AssigneeTeamID
+			}
 			if owner == "" {
 				owner = "unassigned"
 			}
@@ -208,7 +240,7 @@ func cmdIssues(args []string) int {
 			if rule.RoutePrefix != "" {
 				matchers = append(matchers, "route="+rule.RoutePrefix)
 			}
-			if _, err := fmt.Fprintf(osStdout, "%d. %s -> %s\n", i+1, strings.Join(matchers, " & "), rule.AssigneeAccountID); err != nil {
+			if _, err := fmt.Fprintf(osStdout, "%d. %s -> %s\n", i+1, strings.Join(matchers, " & "), issueRuleTargetLabel(rule)); err != nil {
 				return printErr("Could not write ownership rules", err)
 			}
 		}
@@ -226,7 +258,7 @@ func cmdIssues(args []string) int {
 		if action == "merge" && strings.TrimSpace(*targetIssue) == "" || action == "split" && strings.TrimSpace(*memberIssue) == "" {
 			return printErr("Invalid issue regrouping", errors.New("merge requires --target <uuid>; split requires --member <uuid>"))
 		}
-		in := api.IssueActionRequest{Action: action, AssigneeAccountID: *assignee, FixedDeploymentID: *deployment, TargetIssueID: *targetIssue, MemberIssueID: *memberIssue}
+		in := api.IssueActionRequest{Action: action, AssigneeAccountID: *assignee, AssigneeTeamID: *team, FixedDeploymentID: *deployment, TargetIssueID: *targetIssue, MemberIssueID: *memberIssue}
 		if *until != "" {
 			v, err := time.Parse(time.RFC3339, *until)
 			if err != nil {
@@ -279,3 +311,10 @@ func cmdIssues(args []string) int {
 	}
 }
 func issueCLIUsage() int { PrintUsage(os.Stderr, issuesCmdUsage, "issues"); return 1 }
+
+func issueRuleTargetLabel(rule api.IssueOwnershipRule) string {
+	if rule.AssigneeTeamID != "" {
+		return "team:" + rule.AssigneeTeamID
+	}
+	return rule.AssigneeAccountID
+}

@@ -70,7 +70,10 @@ func TestListSidecarTimeline_CrossAccountRowsAreInvisible(t *testing.T) {
 
 func TestListSidecarTimeline_FreePlanAndLimitValidation(t *testing.T) {
 	e := apidserver.Setup(t, api.PlanFree)
-	rec := e.Do(t, http.MethodGet, "/v1/apps/unknown/sidecars/metrics/timeline", nil, nil)
+	// App access resolves the addressed app before any handler runs (#4882),
+	// so the gate is observed on an app the caller owns.
+	apidserver.MustSeedApp(t, e, "sidecar-gate")
+	rec := e.Do(t, http.MethodGet, "/v1/apps/sidecar-gate/sidecars/metrics/timeline", nil, nil)
 	apidserver.AssertProblem(t, rec, http.StatusPaymentRequired, api.CodePlanPerAppMetricsNotAllowed)
 
 	e = apidserver.Setup(t, api.PlanPro)

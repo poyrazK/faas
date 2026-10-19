@@ -66,6 +66,7 @@ type testChannelHooks struct {
 	NopHooks
 	mu      sync.Mutex
 	allowed bool
+	err     error
 	events  []Event
 }
 
@@ -73,7 +74,7 @@ func (h *testChannelHooks) AuthorizeChannel(_ context.Context, event Event) (boo
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.events = append(h.events, event)
-	return h.allowed, nil
+	return h.allowed, h.err
 }
 
 type testChannelRouteReport struct {

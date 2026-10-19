@@ -127,6 +127,7 @@ func (b *PostgresBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decisi
 	state, err := lockAdmissionState(ctx, tx, admissionLock{
 		integrationID: integrationID, now: now, burst: spec.Burst, bindingAppID: bindingAppID,
 		today: today, minuteWindow: utcNow.Truncate(time.Minute), endUser: spec.AIEndUser, userLimited: userLimited,
+		tags: spec.AITags,
 	})
 	if err != nil {
 		return Decision{}, err
@@ -194,7 +195,7 @@ func (b *PostgresBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decisi
 	write.state.tokens--
 	write.state.dailyRequestCount++
 	write.lease = &admissionLease{id: uuid.New(), expiresAt: now.Add(ttl), bindingAppID: bindingAppID,
-		reserve: reserve, endUser: spec.AIEndUser}
+		reserve: reserve, endUser: spec.AIEndUser, tags: spec.AITags}
 	if err := writeAdmission(ctx, tx, write); err != nil {
 		return Decision{}, err
 	}
@@ -316,6 +317,9 @@ type admissionLock struct {
 	minuteWindow  time.Time
 	endUser       string
 	userLimited   bool
+	// tags are the call's usage tags, whose limits admission reads
+	// (ADR-1436).
+	tags []string
 }
 
 // lockedAdmission is the integration's admission state as admission holds
@@ -342,6 +346,7 @@ type lockedAdmission struct {
 	inflightTokens, inflightBindingTokens, inflightCost int64
 	probeLeaseLive                                      bool
 	user                                                aiBudgetState
+	tags                                                []aiTagState
 }
 
 // lockAdmissionState creates the state row on first use, locks it, and reads
@@ -395,15 +400,25 @@ func lockAdmissionState(ctx context.Context, tx pgx.Tx, lock admissionLock) (loc
 		WITH expired AS (
 		    DELETE FROM outbound_admission_leases WHERE integration_id = $1 AND expires_at <= $2 RETURNING lease_id)
 		SELECT count(*)::int, COALESCE(min(expires_at), $2),
-		       COALESCE(sum(ai_reserved_tokens), 0)::bigint,
-		       COALESCE(sum(ai_reserved_tokens) FILTER (WHERE binding_app_id = $3), 0)::bigint,
-		       COALESCE(sum(ai_reserved_cost_millicents), 0)::bigint,
+		       -- ADR-1431: a created batch's reservation counts until it settles.
+		       (COALESCE(sum(ai_reserved_tokens), 0) +
+		        (SELECT COALESCE(sum(reserved_tokens), 0) FROM outbound_ai_batches
+		          WHERE integration_id = $1 AND state <> 'settled'))::bigint,
+		       (COALESCE(sum(ai_reserved_tokens) FILTER (WHERE binding_app_id = $3), 0) +
+		        (SELECT COALESCE(sum(reserved_tokens), 0) FROM outbound_ai_batches
+		          WHERE integration_id = $1 AND state <> 'settled' AND binding_app_id = $3))::bigint,
+		       (COALESCE(sum(ai_reserved_cost_millicents), 0) +
+		        (SELECT COALESCE(sum(reserved_cost_millicents), 0) FROM outbound_ai_batches
+		          WHERE integration_id = $1 AND state <> 'settled'))::bigint,
 		       COALESCE(bool_or(lease_id = (SELECT circuit_probe_lease_id FROM outbound_admission_state
 		                                     WHERE integration_id = $1)), false)
 		  FROM outbound_admission_leases
 		 WHERE integration_id = $1 AND expires_at > $2`, lock.integrationID, lock.now, lock.bindingAppID)
 	if lock.userLimited {
 		queueAIUserState(batch, lock.integrationID, lock.today, lock.endUser)
+	}
+	if len(lock.tags) > 0 {
+		queueAITagState(batch, lock.integrationID, lock.today, lock.now, lock.tags)
 	}
 	results := tx.SendBatch(ctx, batch)
 	state, err := scanLockedAdmission(results, lock)
@@ -443,6 +458,13 @@ func scanLockedAdmission(results pgx.BatchResults, lock admissionLock) (lockedAd
 			return state, err
 		}
 		state.user = user
+	}
+	if len(lock.tags) > 0 {
+		tags, err := scanAITagState(results)
+		if err != nil {
+			return state, err
+		}
+		state.tags = tags
 	}
 	return state, nil
 }
@@ -490,6 +512,9 @@ func admissionRejection(utcNow, today time.Time, ttl time.Duration, spec Admissi
 	}, ai, reserve); limited {
 		return reason, retry
 	}
+	if reason, retry, limited := aiTagBudgetExhausted(utcNow, state.tags, reserve); limited {
+		return reason, retry
+	}
 	if bound {
 		if reason, retry, limited := aiMinuteExhausted(utcNow, state.minute, limits.bindingRequestsPerMinute,
 			limits.bindingTokensPerMinute, reserve); limited {
@@ -506,6 +531,7 @@ type admissionLease struct {
 	bindingAppID uuid.UUID
 	reserve      aiReservation
 	endUser      string
+	tags         []string
 }
 
 // admissionWrite is the state an admission persists, and the lease it
@@ -542,9 +568,10 @@ func writeAdmission(ctx context.Context, tx pgx.Tx, write admissionWrite) error 
 		}
 		batch.Queue(`
 			INSERT INTO outbound_admission_leases
-			    (lease_id, integration_id, expires_at, binding_app_id, ai_reserved_tokens, ai_reserved_cost_millicents, ai_end_user)
-			VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7, ''))`, lease.id, write.integrationID, lease.expiresAt, leaseBindingApp,
-			lease.reserve.tokens, lease.reserve.cost, lease.endUser)
+			    (lease_id, integration_id, expires_at, binding_app_id, ai_reserved_tokens, ai_reserved_cost_millicents, ai_end_user,
+			     ai_tags)
+			VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7, ''), $8)`, lease.id, write.integrationID, lease.expiresAt, leaseBindingApp,
+			lease.reserve.tokens, lease.reserve.cost, lease.endUser, nilIfEmpty(lease.tags))
 		if lease.bindingAppID != uuid.Nil {
 			batch.Queue(`UPDATE outbound_app_binding_usage
 				SET daily_request_count = daily_request_count + 1, minute_request_count = minute_request_count + 1

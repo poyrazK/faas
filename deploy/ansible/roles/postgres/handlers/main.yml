@@ -24,11 +24,27 @@
     - reload postgresql
     - daemon-reload postgres
 
+# The host-configuration lane (ADR 20261018133100) runs with
+# faas_stateful_restart_allowed false: a restart-needing change fails the
+# run instead of restarting the postmaster. Its tasks ran in check mode, so
+# postgresql.conf is unchanged and no restart is left pending. A full
+# release or `make bootstrap-control-plane` restarts as before.
+- name: refuse a postmaster restart outside a full release
+  ansible.builtin.fail:
+    msg: >-
+      This change needs a PostgreSQL restart, which the host-configuration
+      lane never does (docs/adr/20261018133100-host-configuration-lane.md).
+      Deploy it with a full release or in a maintenance window.
+  listen: restart postgresql
+  when: not (faas_stateful_restart_allowed | default(true) | bool)
+
 - name: restart postgresql
   ansible.builtin.service:
     name: "postgresql@{{ postgres_major_version }}-main.service"
     state: restarted
-  when: postgres_handlers_systemd.stat.exists | default(false) | bool
+  when:
+    - postgres_handlers_systemd.stat.exists | default(false) | bool
+    - faas_stateful_restart_allowed | default(true) | bool
 
 - name: reload postgresql
   ansible.builtin.service:

@@ -261,10 +261,21 @@ func deriveGuestCharacterizationClass(port int, l7Hint string, exitCode int, exi
 // host's wait in pkg/fcvm/manager.go.
 func waitForBind(ctx context.Context, args RunArgs, res *CharacterizationResult) (bool, string, int, bool) {
 	deadline := args.Now().Add(api.CharacterizationDeadline)
+	want := args.Manifest.EffectivePort()
+	var firstSeen time.Time
 	for {
-		if port, addr, ok := probeListening(args.AppPID(), args.Manifest.EffectivePort()); ok {
-			res.Port = port
-			return true, addr, 0, false
+		if port, addr, ok := probeListening(args.AppPID(), want); ok {
+			// Another listener (a private TCP or admin port) may come up
+			// before the serving port: give the expected port a short
+			// grace before settling on the first one.
+			now := args.Now()
+			if firstSeen.IsZero() {
+				firstSeen = now
+			}
+			if port == want || now.Sub(firstSeen) >= api.CharacterizationPreferredPortGrace || now.After(deadline) {
+				res.Port = port
+				return true, addr, 0, false
+			}
 		}
 		if args.ExitStatus != nil {
 			if code, exited := args.ExitStatus(); exited {

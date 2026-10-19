@@ -30,10 +30,12 @@ func (s *server) getManagedPostgresCapabilities(w http.ResponseWriter, r *http.R
 		managedPostgresProblem(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, managedPostgresCapabilitiesView(discovery, limits))
+	writeJSON(w, http.StatusOK, managedPostgresCapabilitiesView(discovery, limits, s.applicationAuthEnabled(acct)))
 }
 
-func managedPostgresCapabilitiesView(d managedpostgres.CapabilityDiscovery, limits api.ManagedPostgresPlanLimits) api.ManagedPostgresCapabilities {
+// managedPostgresCapabilitiesView lists the `auth` credential mode only
+// where application Auth is available (authVisible).
+func managedPostgresCapabilitiesView(d managedpostgres.CapabilityDiscovery, limits api.ManagedPostgresPlanLimits, authVisible bool) api.ManagedPostgresCapabilities {
 	c := d.Capabilities
 	out := api.ManagedPostgresCapabilities{ContractVersion: managedpostgres.CapabilityContractVersion, Region: d.Region,
 		DatabaseLimit: min(d.DatabaseLimit, limits.DatabasesMax), PostgresMajors: []int{}, ServiceClasses: []string{},
@@ -53,6 +55,9 @@ func managedPostgresCapabilitiesView(d managedpostgres.CapabilityDiscovery, limi
 		out.Availability = append(out.Availability, string(availability))
 	}
 	for _, access := range c.CredentialAccess {
+		if access == managedpostgres.CredentialAuth && !authVisible {
+			continue
+		}
 		out.CredentialAccess = append(out.CredentialAccess, string(access))
 	}
 	sort.Ints(out.PostgresMajors)

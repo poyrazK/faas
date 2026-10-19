@@ -1,6 +1,11 @@
 package oci
 
-import "context"
+import (
+	"context"
+	"fmt"
+
+	"github.com/onebox-faas/faas/pkg/imagechain"
+)
 
 // ImageResolution records both the original immutable object (possibly an
 // index) and the selected image. SourceReference is the signature subject;
@@ -12,6 +17,9 @@ type ImageResolution struct {
 	Reference       string
 	Digest          string
 	Config          ImageConfig
+	// Retained config may contain image environment values. Only private
+	// producer records serialize this evidence; preflight JSON never does.
+	Evidence *imagechain.Evidence `json:"-"`
 }
 
 // ImageInspection preserves the preflight API while sharing deployment resolution.
@@ -41,11 +49,12 @@ func (c *RegistryClient) ResolveImage(ctx context.Context, ref string, auth *Bas
 	}
 	cfg := resolved.config
 	if cfg == nil {
-		parsed, err := c.verifiedImageConfig(ctx, r, resolved.manifest, auth)
+		parsed, body, err := c.verifiedImageConfigBytes(ctx, r, resolved.manifest, auth)
 		if err != nil {
 			return result, err
 		}
 		cfg = &parsed
+		resolved.configBody = body
 	}
 	if !cfg.SupportsProductionPlatform() {
 		return result, &PlatformSelectionError{Reason: "image config is incompatible with the production fleet", Available: []string{cfg.OS + "/" + cfg.Architecture + "/" + cfg.Variant}}
@@ -53,5 +62,12 @@ func (c *RegistryClient) ResolveImage(ctx context.Context, ref string, auth *Bas
 	r.Tag, r.Digest = "", resolved.sourceDigest
 	sourceRef := r.String()
 	r.Digest = resolved.digest
-	return ImageResolution{InputReference: ref, SourceReference: sourceRef, SourceDigest: resolved.sourceDigest, Reference: r.String(), Digest: resolved.digest, Config: *cfg}, nil
+	evidence := &imagechain.Evidence{SourceManifest: resolved.sourceBody, Config: resolved.configBody}
+	if resolved.sourceDigest != resolved.digest {
+		evidence.SelectedManifest = resolved.body
+	}
+	if _, err := imagechain.Validate(evidence, resolved.sourceDigest, resolved.digest); err != nil {
+		return result, fmt.Errorf("%w: retained image chain: %w", ErrImageManifestInvalid, err)
+	}
+	return ImageResolution{InputReference: ref, SourceReference: sourceRef, SourceDigest: resolved.sourceDigest, Reference: r.String(), Digest: resolved.digest, Config: *cfg, Evidence: evidence.Clone()}, nil
 }

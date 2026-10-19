@@ -47,9 +47,14 @@ func TestCmdInit_AllTemplatesMaterialize(t *testing.T) {
 		readmeHas []string // substrings the README must contain
 	}{
 		{
+			name:      "object-storage-python",
+			files:     []string{"handler.py", "app.py", "storage.py", "gregale.yaml", "Dockerfile", "requirements.txt", "runtime/__init__.py", "runtime/_async_binding_client_runtime.py", "runtime/async_object_storage_runtime.py", "runtime/async_secret_reload_runtime.py", "README.md"},
+			readmeHas: []string{"GREGALE_S3_ASSETS", "STORAGE_APP_TOKEN", "gregale add bucket", "--create-only", "SIGHUP", "lease", "after_restore"},
+		},
+		{
 			name:      "object-storage-node",
-			files:     []string{"app.mjs", "server.mjs", "runtime/object-storage-runtime.js", "runtime/secret-reload-runtime.js", "package.json", "package-lock.json", "Dockerfile", "README.md"},
-			readmeHas: []string{"GREGALE_S3_ASSETS", "gregale add bucket", "STORAGE_APP_TOKEN", "SIGHUP", "lease", "--create-only"},
+			files:     []string{"app.mjs", "server.mjs", "gregale.yaml", "runtime/object-storage-runtime.js", "runtime/secret-reload-runtime.js", "package.json", "package-lock.json", "Dockerfile", "README.md"},
+			readmeHas: []string{"GREGALE_S3_ASSETS", "gregale add bucket", "STORAGE_APP_TOKEN", "SIGHUP", "lease", "--create-only", "after_restore"},
 		},
 		{
 			name:      "customer-platform",
@@ -78,7 +83,7 @@ func TestCmdInit_AllTemplatesMaterialize(t *testing.T) {
 		},
 		{
 			name:  "rest-api-postgres",
-			files: []string{"handler.js", "migrate.js", "schema.sql", "Procfile", "package.json", "README.md"},
+			files: []string{"handler.js", "database.js", "runtime/postgres-pool-runtime.js", "runtime/binding-client-runtime.js", "runtime/secret-reload-runtime.js", "Dockerfile", "migrate.js", "schema.sql", "Procfile", "package.json", "README.md"},
 			readmeHas: []string{
 				"MIGRATION_DATABASE_URL",
 				"DATABASE_URL",
@@ -88,8 +93,13 @@ func TestCmdInit_AllTemplatesMaterialize(t *testing.T) {
 			},
 		},
 		{
+			name:      "rest-api-postgres-python",
+			files:     []string{"handler.py", "app.py", "database.py", "migrate.py", "schema.sql", "Procfile", "gregale.yaml", "Dockerfile", "requirements.txt", "runtime/__init__.py", "runtime/_binding_client_runtime.py", "runtime/async_postgres_pool_runtime.py", "runtime/async_secret_reload_runtime.py", "README.md"},
+			readmeHas: []string{"DATABASE_URL", "MIGRATION_DATABASE_URL", "--create-only", "Neon", "after_restore", "gregale secrets set"},
+		},
+		{
 			name:  "secret-reload-node",
-			files: []string{"handler.js", "secret-reload.js", "secret-reload.test.js", "package.json", "package-lock.json", "Dockerfile", "README.md"},
+			files: []string{"handler.js", "database.js", "runtime/postgres-pool-runtime.js", "runtime/binding-client-runtime.js", "runtime/secret-reload-runtime.js", "secret-reload.test.js", "package.json", "package-lock.json", "Dockerfile", "README.md"},
 			readmeHas: []string{
 				"SIGHUP",
 				"DATABASE_URL",
@@ -414,9 +424,11 @@ func TestCmdInit_NextStepsFor(t *testing.T) {
 	}{
 		{"customer-platform", []string{"DATABASE_URL", "BYPASSRLS", "--platform-tenant-required", "--no-require-authn", "tools/customer.js"}},
 		{"object-storage-node", []string{"--create-only", "--secrets-file", "GREGALE_S3_ASSETS", "STORAGE_APP_TOKEN", "read_write"}},
+		{"object-storage-python", []string{"object-storage-python", "--create-only", "--secrets-file", "GREGALE_S3_ASSETS", "STORAGE_APP_TOKEN", "read_write", "python"}},
 		{"s3-uploader", []string{"--create-only", "s3-uploader", "S3_BUCKET", "gregale secrets set", "cd <dest>"}},
 		{"slack-bot", []string{"--create-only", "slack-bot", "SLACK_SIGNING_SECRET", "gregale secrets set", "cd <dest>"}},
 		{"rest-api-postgres", []string{"--create-only", "rest-api-postgres", "DATABASE_URL", "gregale secrets set", "cd <dest>"}},
+		{"rest-api-postgres-python", []string{"--create-only", "rest-api-postgres-python", "DATABASE_URL", "MIGRATION_DATABASE_URL", "cd <dest>"}},
 		{"secret-reload-node", []string{"--secrets-file", "DATABASE_URL", "gregale secrets rotate", "--wait-for-ack"}},
 		{"cron-worker", []string{"--create-only", "cron-worker", "QSTASH_CURRENT_SIGNING_KEY", "QSTASH_NEXT_SIGNING_KEY", "UPSTASH_REDIS_REST_URL", "gregale secrets set", "cd <dest>"}},
 		{"webhook-receiver", []string{"WEBHOOK_SECRET", "openssl rand", "gregale secrets set", "cd <dest>"}},
@@ -471,6 +483,8 @@ func TestValidateTemplateSecrets(t *testing.T) {
 		noErr bool
 	}{
 		{tpl: "object-storage-node", want: "missing required secret(s): STORAGE_APP_TOKEN"},
+		{tpl: "object-storage-python", want: "missing required secret(s): STORAGE_APP_TOKEN"},
+		{tpl: "object-storage-python", pairs: []secretsPair{{Key: "STORAGE_APP_TOKEN", Value: strings.Repeat("a", 48)}}, noErr: true},
 		{tpl: "object-storage-node", pairs: []secretsPair{{Key: "STORAGE_APP_TOKEN", Value: strings.Repeat("a", 48)}}, noErr: true},
 		{tpl: "customer-platform", want: "missing required secret(s): DATABASE_URL"},
 		{tpl: "customer-platform", pairs: []secretsPair{{Key: "DATABASE_URL", Value: "postgres://host/db?sslmode=require"}}, noErr: true},
@@ -691,7 +705,9 @@ func TestTemplateDocsMatchTemplatePurpose(t *testing.T) {
 		"secret-reload-node": secretsDocsURL,
 		"customer-platform":  deployFromSourceDocsURL,
 	}
-	for _, name := range templates.Names {
+	// Unlisted templates (operator previews, dark launches such as auth) have
+	// no customer guide to point at.
+	for _, name := range templates.ListedNames() {
 		got := docsURLForTemplate(name)
 		if got == "" || got == cliDocsURL {
 			t.Errorf("docsURLForTemplate(%q) = %q, want a template-specific guide", name, got)

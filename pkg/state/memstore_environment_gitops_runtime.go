@@ -13,8 +13,15 @@ import (
 var _ EnvironmentGitOpsRuntimeStore = (*MemStore)(nil)
 
 func (m *MemStore) gitOpsRuntimeTargetsLocked(memory *environmentGitOpsMemory) []EnvironmentGitOpsRuntimeTarget {
+	desired, err := desiredEnvironmentRevision(memory.revisions[memory.source.ApprovedRevisionID])
+	if err != nil {
+		return []EnvironmentGitOpsRuntimeTarget{{UnqualifiedWorkloads: 1}}
+	}
 	targets := []EnvironmentGitOpsRuntimeTarget{}
 	for resource, appID := range memory.resources {
+		if _, wanted := desired.Definition.Workloads[strings.TrimPrefix(resource, "workload/")]; !wanted {
+			continue
+		}
 		if appID == "" {
 			continue
 		}

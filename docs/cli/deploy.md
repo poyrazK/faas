@@ -6,26 +6,58 @@ inferred from flags + the cwd's git state; this page captures the
 non-obvious pieces (which files actually get shipped and what the
 `--json` envelope looks like).
 
+Use `gregale deploy --help` for common options and runnable examples. Add
+`--all` for every flag grouped into source, resources, projects, rollout,
+access, and other tasks. `gregale app --help` follows the same pattern;
+`gregale app my-api scale --help` explains resource changes and saved plans.
+Connection profiles go before the command (`gregale --profile staging deploy`);
+RAM/CPU resource profiles go after it (`gregale deploy --profile small`).
+
 ## Your first deployment with `gregale start`
 
 Run one command in a terminal:
 
 ```bash
 gregale start
+# Or select a project from another directory:
+gregale start ./my-api
 ```
 
-`start` takes no flags or arguments. It asks what to launch, chooses sensible
-defaults, and gets your first app live. For an existing project with a saved
-login, the healthy path needs just two answers:
-
-1. Deploy this directory, create a starter, or choose another directory.
-2. Review the source, app name, account, access, and billing, then confirm deployment.
+`start` accepts one optional project directory and needs no deployment flags.
+It selects an unambiguous app automatically. For a healthy project with a saved
+login, review the source, app, connection, detected build, environment, access,
+and resources, then confirm deployment. New apps use account plan resource
+defaults; existing apps keep their resource settings.
 
 Browser login appears only when needed. Starters ask for a language (Node.js,
 Python, or Go) and a local directory. Recognized workspaces offer a service picker.
-The app name comes from the selected directory. Existing apps retain their access
-settings; new apps use the current plan's defaults. Use `gregale deploy` and
+Before deployment review, Start checks that the server can verify the accepted
+deployment. It repeats this read immediately before creating an app, configuring
+secrets, or uploading source. Unsupported installations show version/configuration
+guidance; a temporary service outage asks you to retry later. These checks submit
+no remote work and keep any previous saved launch. They take at most five seconds
+per read and do not guarantee that capacity will remain available after review.
+Start uses the selected source's nearest `.gregale/project.json` when it is linked
+with `gregale link`. It verifies the project, workload membership, and any named
+environment, then shows that target in the review. A project without a default
+app offers a workload picker when needed. After a successful launch finishes,
+Start remembers the selected app next to the source, including standalone apps.
+It preserves conflicting saved defaults and keeps accepted-deployment recovery
+available. A link in the original working directory
+does not apply to a different source tree you select.
+
+Without a link, the app name comes from the selected directory and the environment
+is `default`. A name collision offers a choice:
+create an app with another name, update the existing app, or finish. Updating a
+recorded app checks its identity again before deployment; a new-app conflict does
+not fall back to updating another app. Existing apps retain their access settings;
+new apps use the current plan's defaults. Use `gregale deploy` and
 `gregale app` when you want to customize deployment or access settings.
+
+The review includes app slots in use and remaining, whether this launch needs a
+new slot, plan RAM and concurrency defaults, and included compute usage when the
+account API supplies them. It links to usage and explains idle parking. These
+observations are a review aid; the server enforces current limits at deployment.
 
 **Start uploads working files, including uncommitted changes**, with the normal
 source exclusions and secret scan. Starter destinations must be empty. Declining
@@ -40,22 +72,73 @@ message until the deployment's final state is confirmed.
 After the build and readiness checks, the session automatically sends the first
 GET request. Starters use `/`; existing projects use a verified or detected health
 path when available. Public requests carry no account credentials and report the
-actual HTTP status and a bounded response body. Private apps use the authenticated
-control-plane invocation API and report its result without assuming an HTTP status.
+actual HTTP status and a bounded response body. A health response answered at the
+gateway does not verify the app; choose **Check another GET path** and use an app
+route such as `/` to continue. Private apps use an authenticated
+control-plane response check pinned to the accepted app, deployment and environment.
+The gateway can wake that exact deployment through the normal scheduler admission
+path. The check reports the actual HTTP status and a response preview; an HTTP
+401 or 403 from application-owned authentication remains a failed check.
+For named environments, public checks require a live URL identifying the accepted
+app and deployment. An unavailable URL stops the check.
+Default-environment preview URLs must also identify the accepted app and deployment
+before Start sends a request. An unavailable default preview can use the app URL;
+the response must still supply accepted-deployment evidence.
 The success screen shows the exact public URL that answered, including the tested
 health path or deployment preview, response time, and total session time. Private
-app URLs are labeled separately because the invocation does not verify public HTTP
-access. Response previews show up to eight lines and 4096 characters.
-Serving deployment headers are checked against the accepted deployment when present.
+app URLs are labeled separately because an owner-authorized check does not verify
+public ingress or customer authentication. Account credentials stay on the control
+plane; checks do not follow redirects or submit durable invocation work. Private
+checks have a 20-second bound and a 4096-byte UTF-8 response preview, with truncation
+shown explicitly. Response previews show up to eight lines. Older servers without
+response-check support fail visibly; Start never substitutes a default-environment
+invocation. Deploy gatewayd-internal support before enabling the new API/CLI flow.
+Every launch, including a first launch or an older saved session, requires evidence
+identifying the accepted deployment. Serving deployment headers must match it.
+A successful public response without deployment
+identity is followed by an owner-authorized check of the accepted deployment.
+That result is labeled as an owner check and does not claim public URL verification.
+If an older server cannot provide this check, the launch remains unverified and
+keeps its accepted ID for recovery; an HTTP 200 alone cannot mark it successful.
+Public denials, redirects, edge health answers, and mismatched deployment headers
+remain failures; they do not trigger this check.
+If server support disappears while continuing an accepted launch, Start prints
+the saved deployment ID and instructions to check the installation and CLI versions.
+It does not offer app logs or alternate paths for an incompatible server. A
+temporary verification-service outage offers retry or finish while keeping the
+accepted ID. Retrying after recovery submits no replacement deployment.
 If the request fails, the session explains the failure and stays open. Retry the
-GET check on the accepted deployment, view recent app logs, or finish. A missing
-route also offers another app-relative GET path. Request retries do not submit a
+GET check on the accepted deployment, view recent app logs, choose another
+app-relative GET path, or finish. This also helps when a root route redirects or
+requires authentication. The starter greeting check keeps its original path and
+expected message. Request retries do not submit a
 deployment or change access settings. Logs use a short, bounded preview with
 credential redaction; unavailable logs do not prevent a retry. Finishing or closing
 an unresolved check keeps its failure exit code. Ctrl-C returns 130.
 
-The session ends with commands for deploying changes, reading logs, and opening
-the app. Built-in starters offer one optional next step with two answers: enter a
+After the first successful check, existing projects offer **Finish** or
+**I've made changes — review and deploy again**. Finish is the default. Edit your
+project in another terminal or editor, then choose the review option. Start shows
+added, modified, and deleted file names since the previous source review, including
+uncommitted files, with normal source exclusions and the selected secrets file
+excluded. File contents stay out of the change summary. Workspace projects review
+the complete build context, including shared files. After resuming a session,
+the earlier source comparison is unavailable, so the review lists current files.
+
+Each update repeats source and required-configuration checks and asks for a fresh
+deployment confirmation against the recorded account, app, and environment. Edits
+after the preview require another review. A new response check reuses the previous
+successful GET path and requires evidence identifying the accepted deployment;
+an older deployment or a response without deployment identity cannot verify the
+update. Request failures keep the usual retry, logs, and alternate-path options.
+After a successful update, you can edit and deploy again or finish. Closing or
+declining before confirmation submits no update.
+Function-set manifests use the regular `gregale deploy` flow; a guided launch
+keeps its single app target.
+
+Finishing prints commands for deploying changes, reading logs, opening
+the app, and deleting it. Commands retain the connection, source, and deployment
+scope; deletion still asks for confirmation. Built-in starters offer an optional next step with two answers: enter a
 greeting, then approve a combined file-edit and deployment preview. Press Enter at
 the greeting prompt to finish. Declining or closing before confirmation keeps the
 original files and submits no deployment. After approval, the local edit remains
@@ -66,17 +149,51 @@ complete the walkthrough, and serving deployment headers are checked when presen
 ### Continue an interrupted launch
 
 An accepted deployment ID is saved before waiting. Ctrl-C stops the local session
-and leaves the remote deployment running. Run `gregale start` again from the same
-original directory and choose **Continue** to reconnect without submitting another
+and leaves the remote deployment running. Repeat `gregale start [path]` with the same
+original project directory and choose **Continue** to reconnect without submitting another
 deployment. The saved session also remembers source selected from another directory.
-Recovery checks the API, account, app, and deployment identity and does not require
+For an update, the newly accepted ID is saved immediately while the previous
+successful response check's deployment ID remains recorded until the new check
+succeeds. A failed or interrupted update shows an inspection command for that
+previous deployment. Continue reconnects to the accepted update without submitting
+another deployment.
+Recovery checks the API, account, project, environment, app, and deployment identity and does not require
 local source files to still exist. A new deployment still needs those files.
 
+A saved launch under another account, API, or linked target offers **Start a new launch** or
+**Finish and keep the saved launch**. A separate launch uses its own local record;
+the previous accepted deployment remains recoverable when you switch back.
+Neither option resumes a deployment using a different account, API, or linked target.
+Changing a source link after review stops submission. Retrying a saved deployment
+uses its recorded target; restore its source link before submitting another revision.
+Follow-up deploy commands explicitly preserve the selected environment, and logs
+are filtered to the accepted deployment. Named environments show the tested URL
+or a deployment inspection command.
+
 Local records use mode `0600` in `$XDG_STATE_HOME/gregale/start` or the Gregale
-user-config directory. They contain recovery metadata: paths, app and account IDs,
+user-config directory. They contain recovery metadata: paths, project, environment, app and account IDs,
 deployment IDs, revisions, status, timestamps, and health paths without query strings.
-Tokens, secret values, secrets-file paths, greetings, response bodies, and request
+Local source comparisons and file hashes stay in memory. Tokens, secret values,
+secrets-file paths, greetings, response bodies, and request
 query values are omitted. Concurrent sessions in the same directory are refused.
+
+If the server accepts source but its reply is lost, a saved pending submission
+lets Start recover the exact deployment through its upload ID. This check happens
+before another launch can be offered, and an update keeps its previous accepted
+and verified IDs until the new ID is recovered. A fully uploaded source can
+continue its original commit. Recovery of a committed upload uses reads only;
+it does not need the source files or the normal upload cache, and does not repeat
+app creation, secrets or source upload. The normal readiness and response checks
+still have to succeed.
+
+The pending record adds only a retry key, transport, upload ID and byte count.
+An older CLI refuses a pending record; after recovery the record remains readable
+by older versions. Missing discovery records, service outages or changed target
+identities keep the launch pending. You can finish and keep its record. You can
+also cancel an unfinished upload before reviewing source again; a committed
+deployment is recovered rather than cancelled. On older servers using legacy
+multipart upload, an uncertain reply needs manual deployment-history inspection.
+Start preserves that record and does not automatically submit another deployment.
 
 The deployment wait uses the normal 1200-second default. Timeout returns exit code
 3; interruption returns 130. For a custom timeout or automation, use `gregale deploy`.
@@ -90,14 +207,30 @@ reviewed fix to `0.0.0.0`; the session asks before writing. Guided edits preserv
 permissions and refuse changed files, symlinks, and paths outside the source tree.
 Complex source issues need a manual fix. Healthy source checks stay brief.
 
-Missing environment keys offer a local `KEY=VALUE` secrets-file prompt. Only keys
-present in a validated file resolve their findings. The file is excluded from the
-source upload and values are sealed through the normal deployment path. Its values
-and path stay out of saved session metadata. Selecting another source directory
-clears the secrets-file selection. A failed deployment offers logs and a reviewed
-retry, including secrets-file configuration when needed.
+Required runtime keys come from source references and the selected source's
+`.gregale/required-secrets.json`, when present. Optional source references remain
+optional unless explicitly declared required. Start reconciles these names with
+the selected app's environment and sealed-secret metadata in the reviewed scope and the
+validated secrets file you select. Explicit required-secret declarations need a
+sealed secret; ordinary environment metadata cannot satisfy them. Metadata proves
+key presence, not value validity, delivery, or application adoption. Failed metadata
+reads remain errors rather than being treated as missing or valid configuration.
+
+A local `.env` or `.gregale/env.json` alone does not deliver runtime configuration.
+Missing keys offer a local `KEY=VALUE` secrets-file prompt; selected required values
+must be nonempty. The deployment review lists the keys that will be sealed before
+upload. The selected file is excluded from source and values are sealed through
+the normal deployment path. Its values and path stay out of saved session metadata.
+Selecting another source directory clears the secrets-file selection. A failed
+deployment offers logs and a reviewed retry, including secrets-file configuration
+when needed.
 
 ## Source-root semantics
+
+App and environment defaults come from the selected source directory's nearest
+saved context. `--name` and `--environment` override those defaults. Selecting
+`--path` does not replace a saved app name with the directory name or inherit an
+unrelated environment from the caller's directory.
 
 When cwd is inside a git repository with an `origin` remote, `gregale
 deploy` without a source selector still ships the
@@ -186,26 +319,52 @@ output remains a single machine-readable deployment receipt and does not
 include this human preflight block. A dirty checkout also prints an exclusion
 warning to stderr, including with `--json`, so a script's stdout stays parseable.
 
+## Understand a preview
+
+`deploy --plan` and `deploy --dry-run` show the same connection, app,
+environment, source, and local-change summary. Their verification differs:
+
+- `--plan` performs local inference without authentication. It does not check
+  the app's current remote configuration or guarantee build success.
+- `--dry-run` compares supported changes against remote state. It does not run
+  the build or verify readiness, and state can change before deployment.
+
+The single-app diff engine cannot compare named project environments. A saved
+or explicit named environment produces an explanation; use a project preview,
+or `--environment=` to intentionally compare the default scope. It never silently
+switches a named environment to the default scope.
+
+Structured previews retain their existing fields and add summary metadata.
+Scale plans and secret-update previews use the same human summary and explain
+their verification limits. Secret previews compare key metadata without reading
+remote secret values or verifying their delivery.
+
 ## Safe production rollouts
 
-For a health-gated production release, use the opt-in safe path:
+A production release of an app that already serves traffic uses the
+adaptive health-gated canary and first-wake 5xx rollback by default
+([ADR-1446](../adr/1446-safe-releases-by-default.md),
+[ADR-1321](../adr/1321-evidence-paced-default-rollouts.md)); see
+[Safe by default](../deploys.md#safe-by-default). To also wait for the
+rollout to reach 100% before the command returns, use the safe path:
 
 ```bash
-gregale deploy --safe
+gregale deploy --rollout safe
 ```
 
-`--safe` selects Gregale's balanced 1% → 10% → 50% → 100% rollout, enables
+`--rollout safe` (formerly `--safe`) selects Gregale's adaptive 1% → 10% → 50% → 100% rollout, where
+each stage advances as soon as the evidence is clean after a minute, enables
 first-wake 5xx auto-rollback, and waits for the rollout to reach 100% traffic
 before returning success. The server's smoke verification, configured health
-gates, and rollback behavior remain the source of truth. Safe rollouts require
-a Pro or Scale plan, and the 5xx rollback protection cannot be disabled on a
-safe deploy.
+gates, and rollback behavior remain the source of truth. Safe rollouts are
+available on every plan, and the 5xx rollback protection cannot be disabled on
+a safe deploy.
 
 Preview the safe-release plan before uploading:
 
 ```bash
-gregale deploy --safe --dry-run
-gregale deploy --safe --dry-run --json | jq '.diff.safe_release'
+gregale deploy --rollout safe --dry-run
+gregale deploy --rollout safe --dry-run --json | jq '.diff.safe_release'
 ```
 
 The preview shows the next rollout step, the actionable alert-gate status,
@@ -222,8 +381,9 @@ gregale alerts add --app APP_ID --name release-errors \
   --webhook-secret-stdin
 ```
 
-The existing deploy default remains unchanged. For an explicitly configured
-canary, a normal deploy returns once the candidate is live; inspect or wait
+The always-on circuit breaker gates every canary even without an alert rule;
+an alert rule adds your own signal on top. Outside a terminal and without `--rollout safe`, a canary deploy
+(defaulted or explicit) returns once the candidate is live; inspect or wait
 for the full rollout with:
 
 ```bash
@@ -474,6 +634,11 @@ Submission failures now include recovery details: the stage (`upload`,
 `submission`, or `deployment`), app, any confirmed deployment ID, an inspection
 command, and the logical idempotency key when that transport uses one.
 In JSON mode, these appear in the stderr Problem object's `recovery` field.
+Its `next_command` identifies the recommended action: resume observation of an
+accepted deployment, or inspect history when acceptance is unknown. Failed
+deployment receipts recommend logs for that exact deployment instead of waiting
+again. `inspect --errors` includes the same recovery data alongside its existing
+deployment fields, including when the server has not recorded a failure code.
 
 If no deployment ID was confirmed, inspect the app's history before retrying:
 

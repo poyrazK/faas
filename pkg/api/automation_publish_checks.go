@@ -35,6 +35,7 @@ type AutomationPublishCheckScenario struct {
 	Name         string                       `json:"name"`
 	Simulation   SimulateAutomationRequest    `json:"simulation"`
 	Expectations []AutomationCheckExpectation `json:"expectations"`
+	Live         *AutomationLiveTest          `json:"live,omitempty"`
 }
 type CheckAutomationPublicationRequest struct {
 	ExpectedVersion int64                            `json:"expected_version"`

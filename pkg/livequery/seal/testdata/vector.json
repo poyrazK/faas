@@ -1,0 +1,17 @@
+{
+  "secret": "glsk1_0123456789abcdef_AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+  "nonce": "oKGio6Slpqeoqaqr",
+  "query": {
+    "db": "db_7f3a",
+    "sql": "SELECT id, body FROM messages WHERE channel_id = $1 AND body <> $2 AND tag = $3",
+    "params": [
+      "42",
+      null,
+      "<\"ünïcode\">"
+    ],
+    "iat": 1800000000,
+    "exp": 1800000060
+  },
+  "plaintext": "{\"db\":\"db_7f3a\",\"sql\":\"SELECT id, body FROM messages WHERE channel_id = $1 AND body <> $2 AND tag = $3\",\"params\":[\"42\",null,\"<\\\"ünïcode\\\">\"],\"iat\":1800000000,\"exp\":1800000060}",
+  "token": "gls1.0123456789abcdef.oKGio6SlpqeoqaqrZbMSfmLzOtQ0aFoimf_AcrNG4s5sWDzUtfGpSvrXscXtEswyN-f1m0CxYsYm4zq65L-Sxox9DOFLUABW9A5eBHoDvWwDBtrWCgJktYE53j7AXWMZhzCQVkbjGkmU618oDkRq3UNLE3NiOlHE2QhU7m5_Tn6SFY-RdlTtSmh87eiF9uaZN8aPxYtKL75js8DUszUBJ5r25O9BzCT0BA_Btf7_X2JIMi-TRQIEfF1I17Ytej3t-oiVMbEzAIiVXy0LWQ"
+}

@@ -1,16 +1,29 @@
 package imaged
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // localOCIManifestDigest verifies the manifest's content address rather than
 // allowing an empty source-build identity or trusting the index's claim.
 func localOCIManifestDigest(archive string) (string, error) {
-	data, err := readLocalOCIEntry(archive, "index.json", 1<<20)
+	return localOCIManifestDigestContext(context.Background(), archive)
+}
+
+func localOCIManifestDigestContext(ctx context.Context, archivePath string) (string, error) {
+	archive, err := openLocalOCIArchive(archivePath)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = archive.Close() }()
+
+	data, err := readLocalOCIEntryFrom(ctx, archive, "index.json", api.LocalOCIMaxIndexBytes)
 	if err != nil {
 		return "", err
 	}
@@ -26,7 +39,7 @@ func localOCIManifestDigest(archive string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	manifest, err := readLocalOCIEntry(archive, name, 8<<20)
+	manifest, err := readLocalOCIEntryFrom(ctx, archive, name, api.LocalOCIMaxManifestBytes)
 	if err != nil {
 		return "", err
 	}

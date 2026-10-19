@@ -4,7 +4,9 @@
   decision, 2026-10-13); services follow once functions have run well in
   production. Steps 1 and 2 are built, each behind switches that are off by
   default: vmmd `quiet_pause`, schedd `quiet_pause_admission` and schedd
-  `frozen_tier` (2026-10-13). Both canaries are pending.
+  `frozen_tier` (2026-10-13). Step 3 is built for request-mode apps behind
+  schedd `frozen_tier_apps`, also off by default (2026-10-15). The canaries
+  are pending.
 - Date: 2026-10-12
 - Builds on: ADR-906 (frozen instances: prototype, measurements,
   economics), ADR-909 (measured admission), ADR-074 (warm pool), ADR-159
@@ -102,6 +104,20 @@ Two tiers built on the same Firecracker pause, with different owners.
   then frozen; the default for services) or `always` (never paused or
   frozen). The platform cannot see in-process timers or heartbeat
   protocols from outside, so the app declares them.
+  (Amended 2026-10-15, step 3 as built: the setting is `lifecycle.pause` in
+  `gregale.yaml` and `pause` on the app API, stored in the app manifest that
+  apid owns, with the values `between_requests` (`request`), `when_idle`
+  (`idle`) and `never` (`always`); under a `lifecycle:` block, `pause:
+  always` would read as the opposite of what it does. Functions default to
+  `between_requests` and request-mode apps to `when_idle`. Worker, service
+  and job execution modes never idle out and accept only `never`. Apps
+  freeze only when schedd's `frozen_tier_apps` switch is on as well as
+  `frozen_tier`, so the operator turns the tier on for functions and apps
+  separately; an app that declares `between_requests` is quiet-paused
+  wherever vmmd's `quiet_pause` is on, because it opted in. A thaw prefers
+  the frozen instance a session-affinity cookie names: the gateway passes
+  that instance to schedd as a wake hint, and schedd thaws it first when it
+  is one of the deployment's frozen candidates.)
 
 ### 2. Frozen: a new instance state, owned by schedd, not billed
 
@@ -136,7 +152,19 @@ Two tiers built on the same Firecracker pause, with different owners.
   warm-pool promotion generalised: config-fence check, ledger re-admission,
   vmmd `Thaw` (resume and restart probes), `PublishOwnedInstanceRuntime`
   (FROZEN → RUNNING compare-and-set), route publication. No resume hook
-  (ADR-906 decision 5).
+  (ADR-906 decision 5), except for an app that declares `after_restore`.
+  (Amended 2026-10-15: such an app reconnects its clients after sleeping, so
+  the thaw runs the resume hook and its callback. `ThawInstance` carries
+  `run_after_restore`; a vmmd that does not confirm it in
+  `after_restore_ran` fails the thaw, and the request restores from the
+  snapshot, whose restore runs the hook.)
+- Service calls (amended 2026-10-15): the internal HTTP and TCP service
+  proxies treat vmmd's `instance_frozen` refusal like the public gateway:
+  the replica leaves the proxy's endpoint cache without a circuit-breaker
+  failure, the target is woken (which thaws it), and the call is retried
+  once on the thawed replica. vmmd refuses before it dials the guest, so
+  the retry sits outside the caller's retry policy; a request body that
+  cannot be replayed is not retried.
 - Bounds: `FrozenTTL` (10 min), then park. Under memory pressure (ADR-909
   eviction) frozen instances go first, least recently used, before any
   running one. `FrozenMaxPerNode` caps Firecracker processes and jail uids.
@@ -197,7 +225,10 @@ write the services' lifecycle setting when services are added.
 (Amended 2026-10-13: schedd metrics are prefixed `schedd_`, as every schedd
 series is. A thaw answers the gateway as a restore, as a warm-pool resume
 does; `gateway_wake_latency_seconds` stays unlabeled because ADR-092 pins it
-as a §12 contract, and thaw latency is `vmmd_thaw_seconds`.)
+as a §12 contract, and thaw latency is `vmmd_thaw_seconds`.) The canary
+watches them on `deploy/grafana/frozen-tier.json`; the `frozen_tier` alert
+family covers failing and slow thaws, freeze errors, memory-pressure parks,
+the per-node cap and quiet resume errors (`docs/runbooks/FaasFrozenTier.md`).
 
 ## Rollout
 
@@ -235,7 +266,9 @@ canary; turn it on only after step 1 has run well in production):
    in step 1.
 
 Step 3, services: the declared lifecycle (`request`, `idle`, `always`)
-through apid, the CLI and docs, then the same canary.
+through apid, the CLI and docs, then the same canary. (Built 2026-10-15 as
+`lifecycle.pause` with schedd's `frozen_tier_apps` switch; see the
+amendment under "Decision".)
 
 ## Consequences
 
@@ -244,6 +277,9 @@ through apid, the CLI and docs, then the same canary.
   back to a release without the `frozen` state only after
   `schedd_frozen_instances` reads 0: an older schedd neither thaws nor parks
   a frozen row. The migration's down step parks any frozen rows left.
+- Hosts with the `zswap` role (ADR-906 decision 6) compress frozen VMs under
+  memory pressure instead of parking them; a compressed VM thaws more
+  slowly, as its pages fault back in, but still skips a snapshot restore.
 - Turning the tier on needs vmmd with `FreezeInstance` first. An older vmmd
   answers Unimplemented and the instance parks as before.
 - In the simulation, a request that finds no running VM waits 3.4 ms on

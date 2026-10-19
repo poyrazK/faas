@@ -12,10 +12,12 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// Short payloads are valid on the resume wire. Successful diagnostics used
-// to slice entropy[:8], panicking before reseeding for lengths 1 through 7.
+// Short non-empty payloads are valid on the resume wire. Successful
+// diagnostics used to slice entropy[:8], panicking before reseeding for
+// lengths 1 through 7. An empty payload is refused (ADR-022); see
+// TestAddHostEntropyRejectsEmpty.
 func TestAddHostEntropyAcceptsShortPayloads(t *testing.T) {
-	for _, size := range []int{0, 1, 7, 8, 256} {
+	for _, size := range []int{1, 7, 8, 256} {
 		t.Run(fmt.Sprint(size), func(t *testing.T) {
 			entropy := make([]byte, size)
 			if _, err := rand.Read(entropy); err != nil {

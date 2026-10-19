@@ -1923,8 +1923,10 @@ func TestPg_ComputeNodes_UsedMB_SumsLiveInstancesOnly(t *testing.T) {
 		t.Errorf("ComputeNodeUsedMB=%d, want %d (5 live × (256+%d))", got, want, api.PerVMOverheadMB)
 	}
 
-	// Unknown node → 0 (COALESCE wraps the aggregate in the SELECT).
-	gotU, err := s.ComputeNodeUsedMB(ctx, "00000000-0000-0000-0000-000000000000")
+	// Unknown node → 0 (COALESCE wraps the aggregate in the SELECT). The nil
+	// UUID is never a node id and is rejected, so use a well-formed stranger.
+	unknownNodeID := uuid.NewString()
+	gotU, err := s.ComputeNodeUsedMB(ctx, unknownNodeID)
 	if err != nil {
 		t.Fatalf("ComputeNodeUsedMB(unknown): %v", err)
 	}
@@ -1932,15 +1934,15 @@ func TestPg_ComputeNodes_UsedMB_SumsLiveInstancesOnly(t *testing.T) {
 		t.Errorf("ComputeNodeUsedMB(unknown)=%d, want 0", gotU)
 	}
 
-	cpu, err := s.ComputeNodeUsedCPUMillicoresByNode(ctx, []string{nodeID, "00000000-0000-0000-0000-000000000000"})
+	cpu, err := s.ComputeNodeUsedCPUMillicoresByNode(ctx, []string{nodeID, unknownNodeID})
 	if err != nil {
 		t.Fatalf("ComputeNodeUsedCPUMillicoresByNode: %v", err)
 	}
 	if cpu[nodeID] != 5*api.DefaultAppCPUMillicores {
 		t.Errorf("used CPU for live instances = %d, want %d", cpu[nodeID], 5*api.DefaultAppCPUMillicores)
 	}
-	if cpu["00000000-0000-0000-0000-000000000000"] != 0 {
-		t.Errorf("used CPU for unknown node = %d, want 0", cpu["00000000-0000-0000-0000-000000000000"])
+	if cpu[unknownNodeID] != 0 {
+		t.Errorf("used CPU for unknown node = %d, want 0", cpu[unknownNodeID])
 	}
 }
 
@@ -2958,8 +2960,8 @@ func TestPg_CountLiveInstancesByDeployment(t *testing.T) {
 	// The seedLiveDeploy helper takes email + slug suffixes; pass
 	// both so we don't collide on the global apps.slug UNIQUE key
 	// (the first seed created "pg-app").
-	_, _, otherDepID := seedLiveDeploy(t, s, ctx, "555-other", "other")
-	otherRunning, err := s.CreateInstance(ctx, appID, otherDepID, string(state.StateRunning), 256, nodeID, "")
+	_, otherAppID, otherDepID := seedLiveDeploy(t, s, ctx, "555-other", "other")
+	otherRunning, err := s.CreateInstance(ctx, otherAppID, otherDepID, string(state.StateRunning), 256, nodeID, "")
 	if err != nil {
 		t.Fatalf("CreateInstance other: %v", err)
 	}
