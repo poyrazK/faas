@@ -255,6 +255,36 @@ applies to instances started afterwards. On a multi-node control plane, an
 instance on a node whose schedd did not admit it has no quota there and is
 not checked.
 
+## Amendment: collecting from net/http/pprof
+
+Captures of a Go image that never calls `guestprofiling.Start` finished
+`ready` with zero processes, although many Go services already serve
+`net/http/pprof`. `profiling.pprof_port` names that guest-local port; guest-init
+then collects for the workload:
+
+- A collector inside guest-init, started with each run of the workload and
+  labelled with its PID, follows the bridge's control exactly as the Go SDK
+  does: CPU from `/debug/pprof/profile?seconds=<window>`, heap from
+  `/debug/pprof/heap` at the window end and at each checkpoint, stacks from
+  `/debug/pprof/goroutine` when a capture starts. Continuous collection works
+  the same way, without route labels. It reads loopback only; nothing is
+  exposed beyond the VM and no host component changes, so the profiles enter
+  the existing bounds, storage and parsing.
+- It registers with the bridge only after `/debug/pprof/` answers, so an
+  endpoint that never comes up neither counts as a process nor enables
+  memory-pressure reports; a capture then says so in its reason. A kind the
+  endpoint fails to produce is named in the reason too, by status only, never
+  the response body.
+- It stands down while a collector of the application's own polls the
+  bridge: Go allows one CPU profiler per process, and two heap collectors
+  would double-count. It acknowledges checkpoints like a collector, abandoning
+  an in-flight window, so continuous profiling keeps its snapshot handshake.
+- Ports 9191 (profile bridge) and 4318 (trace bridge) are refused; the
+  application's own port is allowed, since the handlers often share its mux.
+
+`pprof_port` is an `omitempty` field of the existing profiling configuration,
+stored in the app manifest JSON: no migration, and older guests ignore it.
+
 ## Rejected alternatives
 
 - **apid → schedd gRPC.** Violates the ownership rule (apid records intent in

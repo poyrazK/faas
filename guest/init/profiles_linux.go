@@ -62,6 +62,10 @@ type profileCapture struct {
 	// oomKilled marks a window ended by an OOM kill of the workload.
 	oomKilled bool
 	oomPeakMB int
+	// scrapeNote explains a profile guest-init could not collect from the
+	// application's pprof endpoint (profiling.pprof_port); probeNote explains
+	// an endpoint that never answered, and applies only with no processes.
+	scrapeNote, probeNote string
 	// replied closes once the reply has been written to the host.
 	replied     chan struct{}
 	repliedOnce sync.Once
@@ -86,6 +90,11 @@ type profileBridge struct {
 	acks      map[string]string
 	slots     chan struct{}
 	send      func(context.Context, profileproto.Upload) error
+	// pprofSeen and pprofAck are the pprof scraper's poll and suspend
+	// acknowledgement; it registers here rather than in processes so a
+	// collector of the application's own can be told apart from it.
+	pprofSeen time.Time
+	pprofAck  string
 }
 
 var guestProfiles struct {
@@ -360,6 +369,9 @@ func (b *profileBridge) checkpoint() {
 				done = false
 			}
 		}
+		if time.Since(b.pprofSeen) < api.ProfileProcessStaleAfter && b.pprofAck != b.control.Epoch {
+			done = false
+		}
 		b.mu.Unlock()
 		if done {
 			return
@@ -395,6 +407,7 @@ func resumeGuestProfiles() {
 	b.control.Epoch = newProfileEpoch()
 	b.processes = map[string]time.Time{}
 	b.acks = map[string]string{}
+	b.pprofSeen, b.pprofAck = time.Time{}, ""
 }
 
 func sendProfileUpload(ctx context.Context, upload profileproto.Upload) error {

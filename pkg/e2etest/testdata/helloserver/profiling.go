@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"log"
 	"net/http"
+	"net/http/pprof"
 	"strconv"
 	"sync"
 	"time"
@@ -14,6 +16,19 @@ import (
 // stays dormant unless guest-init stamps the collector environment, so every
 // other e2e test sees the plain hello server (ADR-1155).
 func startProfiling() { guestprofiling.Start(context.Background()) }
+
+// servePprof is the uninstrumented variant: it serves net/http/pprof on addr
+// and never starts the Gregale collector, like a Go application that only
+// sets profiling.pprof_port.
+func servePprof(addr string) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/debug/pprof/", pprof.Index)
+	mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+	mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+	go func() { log.Fatal(http.ListenAndServe(addr, mux)) }()
+}
 
 var (
 	retainedMu sync.Mutex

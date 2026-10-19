@@ -104573,6 +104573,11 @@ components:
           type: array
           maxItems: 2
           items: { type: string, enum: [cpu, heap] }
+        pprof_port:
+          description: Guest-local port where a Go application serves net/http/pprof (ADR-1155). The platform then collects CPU, heap and goroutine profiles from it, so the application needs no Gregale SDK. 9191 and 4318 are reserved.
+          type: integer
+          minimum: 1
+          maximum: 65535
     CreateProfileCaptureRequest:
       description: On-demand capture request (ADR-1155). Kinds defaults to [cpu]; duration_seconds to 10. Stacks is an instant snapshot of where every goroutine or thread is waiting, taken when the capture starts.
       type: object

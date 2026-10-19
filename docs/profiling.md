@@ -97,6 +97,31 @@ profiler concurrently. Custom container images must include the runtime bootstra
 and its pinned dependencies; enabling the manifest alone cannot instrument an
 arbitrary binary. Go source locations require the binary's symbol information.
 
+### Go applications that already serve `net/http/pprof`
+
+A Go application that serves the standard `net/http/pprof` handlers needs no
+Gregale code. Name the port they listen on:
+
+```yaml
+profiling:
+  pprof_port: 6060
+```
+
+guest-init then reads `/debug/pprof/profile`, `/debug/pprof/heap` and
+`/debug/pprof/goroutine` from `127.0.0.1:6060` inside the VM, for on-demand
+captures and, with `enabled: true`, for continuous collection. The port may be
+the application's own port when the handlers share its mux; 9191 and 4318
+belong to the platform. The endpoint is never exposed outside the VM by this
+setting.
+
+Collection starts once `/debug/pprof/` answers. If the application also calls
+`guestprofiling.Start`, that collector is used and the endpoint is left alone,
+because Go has one CPU profiler per process. Continuous profiles collected this
+way carry no route labels. A profile the endpoint cannot produce (an error
+status, no answer in time, or more than 1 MiB) is named in the capture's
+`reason`; Go's `net/http/pprof` refuses a CPU profile longer than the server's
+`WriteTimeout`.
+
 ## Compare deployments
 
 The dashboard's **Differential flamegraph** compares complete caller paths.
@@ -416,7 +441,9 @@ The REST API is `POST /v1/apps/{slug}/profiles/captures` with optional
 `GET …/captures/{id}/pprof?kind=cpu|heap`. Compare two ready captures with
 `GET …/captures/{id}/diff?base={earlier-id}&kind=cpu|heap`. A ready capture with zero
 `processes` means the instance has no collector: a custom image without an
-instrumented runtime, or a Go app that does not call `guestprofiling.Start`.
+instrumented runtime, or a Go app that neither calls `guestprofiling.Start` nor
+sets `profiling.pprof_port`. With `pprof_port` set, the `reason` says when
+nothing answered on that port.
 
 ## Continuous heap profiles
 

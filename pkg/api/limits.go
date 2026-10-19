@@ -483,6 +483,14 @@ const (
 	ProfileCaptureMaxProfileBytes = 3 << 20
 	// ProfileCaptureMaxPerAccountHour bounds captures started per account.
 	ProfileCaptureMaxPerAccountHour = 60
+	// net/http/pprof collection by guest-init (profiling.pprof_port). A heap
+	// or goroutine fetch, and a CPU fetch beyond its window, must answer
+	// within ProfilePprofFetchTimeout. An endpoint that has not answered yet
+	// is probed every ProfilePprofProbeInterval; until it answers guest-init
+	// does not register a collector, so captures and memory-pressure reports
+	// behave as for an uninstrumented process.
+	ProfilePprofFetchTimeout  = 5 * time.Second
+	ProfilePprofProbeInterval = 2 * time.Second
 	// Automatic heap captures on memory pressure (ADR-1155). guest-init reports
 	// pressure when MemAvailable falls to the threshold share of MemTotal and
 	// re-arms once it recovers above the re-arm share.

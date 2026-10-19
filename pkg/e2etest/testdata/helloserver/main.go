@@ -20,6 +20,7 @@
 //	-no-healthz    omit /healthz so TCP readiness is the only boot contract
 //	-durable-counter serve the pure durable entity counter protocol
 //	-echo-session  interactive app-task fixture: report tty and size, echo lines
+//	-pprof-addr A  serve net/http/pprof on A and skip the Gregale collector
 //
 // GET /work burns CPU and retains heap for profile captures (ADR-1155).
 package main
@@ -74,6 +75,7 @@ func main() {
 	durableCounter := flag.Bool("durable-counter", false, "serve pure durable entity transitions")
 	echoSession := flag.Bool("echo-session", false, "run the interactive app-task fixture instead of serving")
 	identityProbe := flag.Bool("identity-probe", false, "serve /identity, which fetches a workload identity token from guest-init")
+	pprofAddr := flag.String("pprof-addr", "", "serve net/http/pprof on this address instead of starting the Gregale collector")
 	flag.Parse()
 	if *echoSession {
 		runEchoSession()
@@ -112,7 +114,11 @@ func main() {
 		return
 	}
 
-	startProfiling()
+	if *pprofAddr != "" {
+		servePprof(*pprofAddr)
+	} else {
+		startProfiling()
+	}
 	if *ignoreTerm {
 		signal.Ignore(syscall.SIGTERM)
 	}

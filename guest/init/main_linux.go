@@ -704,6 +704,14 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 		go WatchMemoryPressure(pressureCtx, "/proc/meminfo", profileCollectorsActive, EmitMemoryPressure, slog.Default())
 		defer pressureCancel()
 	}
+	// ADR-1155: a Go application serving net/http/pprof is profiled through
+	// that endpoint, labelled with this run's process, when the deployment
+	// names its port and the profile bridge is running.
+	if bridge := activeProfileBridge(); bridge != nil && m.Profiling != nil && m.Profiling.PprofPort > 0 {
+		scrapeCtx, scrapeCancel := context.WithCancel(context.Background())
+		go runPprofScraper(scrapeCtx, bridge, m.Profiling.PprofPort, cmd.Process.Pid, slog.Default())
+		defer scrapeCancel()
+	}
 	if err := cmd.Wait(); err != nil {
 		if oomKilled(err, oomKillsBefore, oomKillsKnown, func() (uint64, bool) { return readVMStatOOMKills(procVMStat) }) {
 			// ADR-1155: a capture running when the app was OOM-killed returns

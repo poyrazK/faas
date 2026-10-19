@@ -101,6 +101,12 @@ func (b *profileBridge) runCapture(req profileproto.CaptureRequest, sleep func(t
 			b.control.Epoch = newProfileEpoch()
 		}
 	}
+	if result.Reason == "" {
+		result.Reason = c.scrapeNote
+	}
+	if result.Reason == "" && result.Processes == 0 {
+		result.Reason = c.probeNote
+	}
 	if result.Reason == "" && result.Processes == 0 {
 		result.Reason = "no instrumented process polled the profiler during the capture"
 	}

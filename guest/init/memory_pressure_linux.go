@@ -99,7 +99,8 @@ func EmitMemoryPressure(report memoryPressureWire) error {
 }
 
 // profileCollectorsActive reports whether any collector polled the local
-// profile bridge recently. Dormant collectors poll once per second.
+// profile bridge recently. Dormant collectors poll once per second; the pprof
+// scraper counts once its endpoint has answered.
 func profileCollectorsActive() bool {
 	b := activeProfileBridge()
 	if b == nil {
@@ -107,6 +108,9 @@ func profileCollectorsActive() bool {
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	if time.Since(b.pprofSeen) < api.ProfileProcessStaleAfter {
+		return true
+	}
 	for _, seen := range b.processes {
 		if time.Since(seen) < api.ProfileProcessStaleAfter {
 			return true

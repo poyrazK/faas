@@ -2,7 +2,10 @@ package api
 
 import (
 	"fmt"
+	"net"
 	"slices"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -26,11 +29,14 @@ func ValidCaptureProfileKind(kind string) bool {
 
 // ProfilingConfig enables sampled CPU profiles (ADR-819). Settings are baked
 // into the deployment; changing them requires a redeploy. Kinds adds
-// continuous heap profiles (ADR-1155); empty means CPU only.
+// continuous heap profiles (ADR-1155); empty means CPU only. PprofPort names
+// the guest-local port where a Go application serves net/http/pprof;
+// guest-init then collects from it, so the application needs no Gregale SDK.
 type ProfilingConfig struct {
 	Enabled       bool     `json:"enabled" yaml:"enabled" toml:"enabled"`
 	WindowSeconds int      `json:"window_seconds,omitempty" yaml:"window_seconds,omitempty" toml:"window_seconds"`
 	Kinds         []string `json:"kinds,omitempty" yaml:"kinds,omitempty" toml:"kinds"`
+	PprofPort     int      `json:"pprof_port,omitempty" yaml:"pprof_port,omitempty" toml:"pprof_port"`
 }
 
 // Equal compares two configurations by their effective settings.
@@ -38,7 +44,22 @@ func (c *ProfilingConfig) Equal(o *ProfilingConfig) bool {
 	if c == nil || o == nil {
 		return c == o
 	}
-	return c.Enabled == o.Enabled && c.WindowSeconds == o.WindowSeconds && slices.Equal(c.EffectiveKinds(), o.EffectiveKinds())
+	return c.Enabled == o.Enabled && c.WindowSeconds == o.WindowSeconds && slices.Equal(c.EffectiveKinds(), o.EffectiveKinds()) &&
+		c.PprofPort == o.PprofPort
+}
+
+// ProfilePprofReservedPorts are guest-init's own loopback listeners. A pprof
+// port naming one would make guest-init profile itself.
+func ProfilePprofReservedPorts() []int {
+	var ports []int
+	for _, addr := range []string{strings.TrimPrefix(ProfileLocalEndpoint, "http://"), TraceLocalListen} {
+		if _, port, err := net.SplitHostPort(addr); err == nil {
+			if n, err := strconv.Atoi(port); err == nil {
+				ports = append(ports, n)
+			}
+		}
+	}
+	return ports
 }
 
 // EffectiveKinds returns the continuous profile kinds, defaulting to CPU.
@@ -72,6 +93,12 @@ func (c *ProfilingConfig) Validate(plan Plan) error {
 			return fmt.Errorf("profiling.kinds must list distinct values of cpu or heap")
 		}
 		seen[kind] = true
+	}
+	if c.PprofPort != 0 && (c.PprofPort < 1 || c.PprofPort > 65535) {
+		return fmt.Errorf("profiling.pprof_port must be between 1 and 65535")
+	}
+	if slices.Contains(ProfilePprofReservedPorts(), c.PprofPort) {
+		return fmt.Errorf("profiling.pprof_port %d is reserved for the platform's profiling and tracing bridges", c.PprofPort)
 	}
 	return nil
 }

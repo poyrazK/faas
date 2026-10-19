@@ -20,6 +20,9 @@ class ProfilingConfig:
     window_seconds: int | Unset = 10
     kinds: list[ProfilingConfigKindsItem] | Unset = UNSET
     """Continuous profile kinds (ADR-1155); defaults to cpu."""
+    pprof_port: int | Unset = UNSET
+    """Guest-local port where a Go application serves net/http/pprof (ADR-1155). The platform then collects CPU,
+    heap and goroutine profiles from it, so the application needs no Gregale SDK. 9191 and 4318 are reserved."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -34,6 +37,8 @@ class ProfilingConfig:
                 kinds_item: str = kinds_item_data
                 kinds.append(kinds_item)
 
+        pprof_port = self.pprof_port
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -45,6 +50,8 @@ class ProfilingConfig:
             field_dict["window_seconds"] = window_seconds
         if kinds is not UNSET:
             field_dict["kinds"] = kinds
+        if pprof_port is not UNSET:
+            field_dict["pprof_port"] = pprof_port
 
         return field_dict
 
@@ -64,10 +71,13 @@ class ProfilingConfig:
 
                 kinds.append(kinds_item)
 
+        pprof_port = d.pop("pprof_port", UNSET)
+
         profiling_config = cls(
             enabled=enabled,
             window_seconds=window_seconds,
             kinds=kinds,
+            pprof_port=pprof_port,
         )
 
         profiling_config.additional_properties = d
