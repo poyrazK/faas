@@ -720,6 +720,8 @@ from .complete_object_multipart_upload_request import CompleteObjectMultipartUpl
 from .complete_workflow_callback_response import CompleteWorkflowCallbackResponse
 from .complete_workflow_callback_response_status import CompleteWorkflowCallbackResponseStatus
 from .compose_healthcheck import ComposeHealthcheck
+from .compose_process import ComposeProcess
+from .compose_process_stop_signal import ComposeProcessStopSignal
 from .config_change_receipt import ConfigChangeReceipt
 from .config_guard import ConfigGuard
 from .config_guard_decision import ConfigGuardDecision
@@ -6455,6 +6457,8 @@ __all__ = (
     "CompleteWorkflowCallbackResponse",
     "CompleteWorkflowCallbackResponseStatus",
     "ComposeHealthcheck",
+    "ComposeProcess",
+    "ComposeProcessStopSignal",
     "ConfigChangeReceipt",
     "ConfigGuard",
     "ConfigGuardDecision",

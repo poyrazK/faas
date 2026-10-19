@@ -376,6 +376,7 @@ export type { CommitSourceResponse } from './models/CommitSourceResponse.js';
 export type { CompleteObjectMultipartUploadRequest } from './models/CompleteObjectMultipartUploadRequest.js';
 export type { CompleteWorkflowCallbackResponse } from './models/CompleteWorkflowCallbackResponse.js';
 export type { ComposeHealthcheck } from './models/ComposeHealthcheck.js';
+export type { ComposeProcess } from './models/ComposeProcess.js';
 export type { ConfigChangeReceipt } from './models/ConfigChangeReceipt.js';
 export type { ConfigGuard } from './models/ConfigGuard.js';
 export type { ConfigGuardDecision } from './models/ConfigGuardDecision.js';
