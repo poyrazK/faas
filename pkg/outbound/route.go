@@ -168,6 +168,12 @@ func (h *Handler) serveRoute(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusForbidden, "outbound_route_requires_relay", "AI routes are available only through GREGALE_OUTBOUND_URL or an access token", "")
 		return
 	}
+	if isWebSocketUpgrade(r) {
+		// ADR 20261019072722: a session cannot fall back to another target
+		// midway.
+		writeProblem(w, realtimeRouteRejection.status, realtimeRouteRejection.code, realtimeRouteRejection.title, "")
+		return
+	}
 	routeID, providerPath, ok := parseRoutePath(r.URL.EscapedPath())
 	if !ok || h.Routes == nil || !h.AIGatewayEnabled {
 		writeProblem(w, http.StatusNotFound, "outbound_route_not_found", "AI route not found", "")

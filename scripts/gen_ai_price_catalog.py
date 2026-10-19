@@ -58,7 +58,8 @@ PROVIDERS = {
         ("vertex_ai/",),
     ),
 }
-MODES = {"chat", "completion", "responses", "embedding", "image_generation", "audio_transcription", "audio_speech"}
+# Realtime models are priced per token like chat (ADR 20261019072722).
+MODES = {"chat", "completion", "responses", "embedding", "image_generation", "audio_transcription", "audio_speech", "realtime"}
 AUDIO_MODES = {"audio_transcription", "audio_speech"}
 # Video generation is metered for Veo on Gemini and Vertex (ADR-1432).
 VIDEO_MODE = "video_generation"
@@ -144,8 +145,17 @@ def tool_prices(entry, gateway, usd_per_eur, container_usd):
     return [web_search, file_search, code_session]
 
 
+def audio_prices(entry, usd_per_eur):
+    """input_audio, cached_input_audio, output_audio per million audio tokens (ADR 20261019072722)."""
+    return [
+        optional(entry, "input_cost_per_audio_token", convert, usd_per_eur),
+        optional(entry, "cache_read_input_audio_token_cost", convert, usd_per_eur),
+        optional(entry, "output_cost_per_audio_token", convert, usd_per_eur),
+    ]
+
+
 def within_limits(row):
-    limits = [MAX_PRICE] * 6 + [MAX_UNIT_PRICE, MAX_UNIT_PRICE, MAX_PRICE, MAX_UNIT_PRICE] + [MAX_UNIT_PRICE] * 3
+    limits = [MAX_PRICE] * 6 + [MAX_UNIT_PRICE, MAX_UNIT_PRICE, MAX_PRICE, MAX_UNIT_PRICE] + [MAX_UNIT_PRICE] * 3 + [MAX_PRICE] * 3
     return all(value is None or 0 <= value <= limit for value, limit in zip(row, limits))
 
 
@@ -193,7 +203,7 @@ def build(data, usd_per_eur):
                 input_price if cached is None else convert(cached, usd_per_eur),
                 input_price if write is None else convert(write, usd_per_eur),
                 0 if output is None else convert(output, usd_per_eur),
-            ] + media + tool_prices(entry, gateway, usd_per_eur, container_usd)
+            ] + media + tool_prices(entry, gateway, usd_per_eur, container_usd) + audio_prices(entry, usd_per_eur)
             # Free experimental entries say nothing about spend; without a
             # row the call stays unpriced exactly as before the catalog.
             if not within_limits(row) or not any(row):
@@ -205,7 +215,7 @@ def build(data, usd_per_eur):
             if video:
                 for resolution, price in video_tiers(entry, usd_per_eur).items():
                     tier_name = name + "@" + resolution
-                    tier_row = [0, 0, 0, 0, None, None, None, None, None, price, None, None, None]
+                    tier_row = [0, 0, 0, 0, None, None, None, None, None, price, None, None, None, None, None, None]
                     if len(tier_name) <= MAX_MODEL_BYTES and within_limits(tier_row) and (
                             tier_name not in models or price_weight(tier_row) > price_weight(models[tier_name])):
                         models[tier_name] = tier_row
@@ -256,9 +266,9 @@ def main():
         "usd_per_eur": args.usd_per_eur,
         "fx_source": "ECB euro foreign exchange reference rate of " + args.fx_date,
         "unit": "EUR millicents, rounded up: per million tokens or characters, per image, per audio minute, per second of video, "
-                "per web search, per file search, per GB container session",
+                "per web search, per file search, per GB container session, per million audio tokens",
         "fields": ["input", "cached_input", "cache_write", "output", "input_image", "output_image", "image", "audio_minute", "characters",
-                   "video_second", "web_search", "file_search", "code_session_gb"],
+                   "video_second", "web_search", "file_search", "code_session_gb", "input_audio", "cached_input_audio", "output_audio"],
     }
     with open(args.output, "w", encoding="utf-8") as handle:
         handle.write(render(meta, build(data, usd_per_eur)))

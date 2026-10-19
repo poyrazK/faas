@@ -1349,6 +1349,15 @@ const (
 	OutboundAIResponseCheckMaxBytes     int64 = 4 << 20
 	OutboundAIResponseHoldBackBytes           = 512
 	OutboundAIResponseScanLookbackBytes       = 8 << 10
+	// Realtime sessions (ADR 20261019072722): the longest session, the
+	// largest provider message outboundd reads to meter it, and each
+	// response's reservation: the first response's input (later ones reserve
+	// the previous response's input, since context only grows) and every
+	// response's output, priced as audio.
+	OutboundAIRealtimeSessionMaxSeconds         = 3600
+	OutboundAIRealtimeMaxMessageBytes     int64 = 4 << 20
+	OutboundAIRealtimeInputReserveTokens  int64 = 4096
+	OutboundAIRealtimeOutputReserveTokens int64 = 4096
 	// Batches (ADR-1431): the share of the list price a batch costs; the
 	// largest OpenAI input file read at creation, Anthropic batch body and
 	// JSONL line the gateway parses; how often open batches are polled and

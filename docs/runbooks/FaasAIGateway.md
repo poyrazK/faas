@@ -248,6 +248,23 @@ ADR-1433 to ADR-1440 add dashboard panels and no alerts:
 - **Response cache** (ADR-1440). *Provider cost the response cache avoided*
   is the saving customers see as `cache_saved_millicents`.
 
+## Realtime sessions
+
+ADR 20261019072722 carries OpenAI and Azure OpenAI Realtime sessions; none
+pages. The dashboard's *Realtime sessions* panels show them.
+
+- **`closed_cap`** is a customer's cap refusing a response: expected.
+- **`closed_unreadable` rising** means providers send messages the gateway
+  cannot read: compressed frames (the provider ignored the dropped
+  `Sec-WebSocket-Extensions`), messages over 4 MiB, or a changed event format.
+  Customers' sessions end with 1008. Check the provider's realtime changelog;
+  a format change needs a gateway release.
+- **`closed_error`** is admission failing mid-session: work through
+  `FaasOutboundAdmissionUnavailable`.
+- **Active sessions** hold one connection each on outboundd until they end.
+  The HTTP drain does not wait for them: a deploy ends them when the old
+  process exits, and callers reconnect.
+
 ## Failure drills
 
 `pkg/outbound/ai_gateway_drills_test.go` runs these against Postgres on every

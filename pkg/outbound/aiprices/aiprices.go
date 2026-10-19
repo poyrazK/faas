@@ -3,8 +3,9 @@
 // from LiteLLM's MIT-licensed price data (see NOTICE) and holds list prices
 // in EUR millicents: per million tokens or characters, per image, per
 // audio minute (ADR-997), per second of video (ADR-1432), and per web
-// search, file search and GB container session (ADR-1433). An integration's own price list always wins; the
-// catalog prices the models it does not name.
+// search, file search and GB container session (ADR-1433), with separate
+// audio token prices (ADR 20261019072722). An integration's own price list
+// always wins; the catalog prices the models it does not name.
 package aiprices
 
 import (
@@ -28,15 +29,21 @@ var catalogJSON []byte
 // VideoSecond prices each second of generated video (ADR-1432); a
 // "<model>@<resolution>" row prices one resolution apart. WebSearch,
 // FileSearch and CodeSessionGB price built-in tool uses (ADR-1433).
+// InputAudio, CachedInputAudio and OutputAudio price audio tokens per
+// million (ADR 20261019072722).
 type Price struct {
 	Input, CachedInput, CacheWrite, Output                               int64
 	InputImage, OutputImage, Image, AudioMinute, Characters, VideoSecond *int64
 	WebSearch, FileSearch, CodeSessionGB                                 *int64
+	InputAudio, CachedInputAudio, OutputAudio                            *int64
 }
 
 // catalogFields is the column order of a catalog row.
 const catalogFields = "input,cached_input,cache_write,output,input_image,output_image,image,audio_minute,characters,video_second," +
-	"web_search,file_search,code_session_gb"
+	"web_search,file_search,code_session_gb,input_audio,cached_input_audio,output_audio"
+
+// catalogWidth is the number of columns in a catalog row.
+const catalogWidth = 16
 
 // Entry is one catalog model and its price.
 type Entry struct {
@@ -54,12 +61,12 @@ type Catalog struct {
 }
 
 type catalogFile struct {
-	Source    string                           `json:"source"`
-	Generated string                           `json:"generated"`
-	USDPerEUR string                           `json:"usd_per_eur"`
-	FXSource  string                           `json:"fx_source"`
-	Fields    []string                         `json:"fields"`
-	Providers map[string]map[string][13]*int64 `json:"providers"`
+	Source    string                                     `json:"source"`
+	Generated string                                     `json:"generated"`
+	USDPerEUR string                                     `json:"usd_per_eur"`
+	FXSource  string                                     `json:"fx_source"`
+	Fields    []string                                   `json:"fields"`
+	Providers map[string]map[string][catalogWidth]*int64 `json:"providers"`
 }
 
 // Parse validates a catalog file.
@@ -88,7 +95,8 @@ func Parse(data []byte) (*Catalog, error) {
 			}
 			prices[model] = Price{Input: *row[0], CachedInput: *row[1], CacheWrite: *row[2], Output: *row[3],
 				InputImage: row[4], OutputImage: row[5], Image: row[6], AudioMinute: row[7], Characters: row[8],
-				VideoSecond: row[9], WebSearch: row[10], FileSearch: row[11], CodeSessionGB: row[12]}
+				VideoSecond: row[9], WebSearch: row[10], FileSearch: row[11], CodeSessionGB: row[12],
+				InputAudio: row[13], CachedInputAudio: row[14], OutputAudio: row[15]}
 		}
 		catalog.providers[provider] = prices
 	}
@@ -96,7 +104,7 @@ func Parse(data []byte) (*Catalog, error) {
 }
 
 // validRow requires the four token prices and bounds every price present.
-func validRow(row [13]*int64) bool {
+func validRow(row [catalogWidth]*int64) bool {
 	for index, value := range row {
 		maximum := api.MaxOutboundAIPriceMillicentsPerMTok
 		switch index {

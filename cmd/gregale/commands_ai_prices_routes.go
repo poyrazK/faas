@@ -65,6 +65,8 @@ func formatMediaPrices(entry api.OutboundAIPriceEntry) string {
 		{"per video second", entry.MillicentsPerVideoSecond},
 		{"per web search", entry.MillicentsPerWebSearch}, {"per file search", entry.MillicentsPerFileSearch},
 		{"per GB code session", entry.MillicentsPerCodeSessionGB},
+		{"input audio tokens", entry.InputAudioMillicentsPerMTok}, {"cached audio tokens", entry.CachedInputAudioMillicentsPerMTok},
+		{"output audio tokens", entry.OutputAudioMillicentsPerMTok},
 	} {
 		if price.value != nil {
 			parts = append(parts, price.label+" "+financialMoney(*price.value))
@@ -122,7 +124,9 @@ func cmdAIPricesSet(args []string) int {
 // parseAIPriceSpec reads model=... and its prices: input, output, cached,
 // cache-write, input-image and output-image per million tokens, image per
 // image, audio-minute per minute and characters per million characters
-// (ADR-997). A media-only model may leave input and output out.
+// (ADR-997), and input-audio, cached-audio and output-audio per million
+// audio tokens (ADR 20261019072722). A media-only model may leave input and
+// output out.
 func parseAIPriceSpec(spec string) (api.OutboundAIPriceEntry, error) {
 	var entry api.OutboundAIPriceEntry
 	seen := map[string]bool{}
@@ -167,6 +171,12 @@ func parseAIPriceSpec(spec string) (api.OutboundAIPriceEntry, error) {
 			entry.MillicentsPerFileSearch = &millicents
 		case "code-session-gb":
 			entry.MillicentsPerCodeSessionGB = &millicents
+		case "input-audio":
+			entry.InputAudioMillicentsPerMTok = &millicents
+		case "cached-audio":
+			entry.CachedInputAudioMillicentsPerMTok = &millicents
+		case "output-audio":
+			entry.OutputAudioMillicentsPerMTok = &millicents
 		default:
 			return entry, fmt.Errorf("%q: unknown key %q", spec, key)
 		}

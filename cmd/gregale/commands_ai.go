@@ -254,15 +254,16 @@ func formatSaved(millicents int64) string {
 }
 
 // formatMediaUsage lists a rollup's images, audio seconds and characters
-// (ADR-997), video seconds (ADR-1432) and built-in tool uses (ADR-1433),
-// or "-".
+// (ADR-997), video seconds (ADR-1432), built-in tool uses (ADR-1433) and
+// audio tokens (ADR 20261019072722), or "-".
 func formatMediaUsage(item api.OutboundAIUsageItem) string {
 	var parts []string
 	for _, count := range []struct {
 		value int64
 		unit  string
 	}{{item.Images, "images"}, {item.AudioSeconds, "audio s"}, {item.Characters, "chars"}, {item.VideoSeconds, "video s"},
-		{item.WebSearches, "web searches"}, {item.FileSearches, "file searches"}, {item.CodeSessionGB, "GB code sessions"}} {
+		{item.WebSearches, "web searches"}, {item.FileSearches, "file searches"}, {item.CodeSessionGB, "GB code sessions"},
+		{item.InputAudioTokens, "audio in tokens"}, {item.OutputAudioTokens, "audio out tokens"}} {
 		if count.value > 0 {
 			parts = append(parts, strconv.FormatInt(count.value, 10)+" "+count.unit)
 		}

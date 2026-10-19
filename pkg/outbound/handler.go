@@ -320,6 +320,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				"letters, digits, _ . or - starting with a letter, values of 1 to 64 letters, digits or . _ : @ + / -", "")
 		return
 	}
+	// ADR 20261019072722: a WebSocket upgrade on an AI integration is a
+	// realtime session, metered or let through unmetered, or refused.
+	realtime, realtimeRejection := planRealtime(r, integration, path)
+	if realtimeRejection != nil {
+		h.Metrics.ObserveRejection(metricIntegrationID, realtimeRejection.code)
+		writeProblem(w, realtimeRejection.status, realtimeRejection.code, realtimeRejection.title, "")
+		return
+	}
 	var managedAuthorization string
 	var poolKeys []ManagedKey
 	if integration.ProviderAuthMode == ProviderAuthManaged && integration.CredentialSource != CredentialSourceCustomerSealed {
@@ -391,7 +399,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if aiPlan != nil {
 		reserve, guard = aiPlan.reserve, aiPlan.guard
 	}
-	decision, err := h.Backend.Admit(r.Context(), AdmissionSpec{
+	spec := AdmissionSpec{
 		IntegrationID: integration.ID, RatePerSecond: integration.RatePerSecond,
 		Burst: integration.Burst, MaxInFlight: integration.MaxInFlight,
 		DailyRequestLimit:              integration.DailyRequestLimit,
@@ -415,7 +423,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		RetryBudgetPerMinute:           integration.RetryBudgetPerMinute,
 		LeaseTTL:                       integration.RequestTimeout,
 		PolicyRevision:                 integration.PolicyRevision,
-	})
+	}
+	decision, err := h.Backend.Admit(r.Context(), spec)
 	if err != nil {
 		h.Metrics.ObserveAdmission(metricIntegrationID, "error")
 		h.Metrics.ObserveRejection(metricIntegrationID, "backend_unavailable")
@@ -547,6 +556,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			writeProblem(w, http.StatusServiceUnavailable, "outbound_provider_credential_unavailable", "Outbound provider credential is unavailable", "1")
 			return
 		}
+	}
+	if realtime != realtimeNone {
+		// The upgrade itself was admitted like a call, with no reservation;
+		// each response is admitted with its own (ADR 20261019072722).
+		h.serveRealtime(w, r, &realtimeSession{h: h, integration: integration, appID: appID, metricID: metricIntegrationID,
+			metered: realtime == realtimeMetered, spec: spec, endUser: aiEndUser, tags: aiTags,
+			model: realtimeURLModel(r.URL.Query())}, upstreamReq)
+		return
 	}
 	var resp *http.Response
 	attempts := 0

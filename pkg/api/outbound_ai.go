@@ -52,6 +52,11 @@ type OutboundAIPriceEntry struct {
 	MillicentsPerWebSearch     *int64 `json:"millicents_per_web_search,omitempty"`
 	MillicentsPerFileSearch    *int64 `json:"millicents_per_file_search,omitempty"`
 	MillicentsPerCodeSessionGB *int64 `json:"millicents_per_code_session_gb,omitempty"`
+	// Audio token prices per million (ADR 20261019072722). Each falls back
+	// to the text price of the same kind: input, cached input or output.
+	InputAudioMillicentsPerMTok       *int64 `json:"input_audio_millicents_per_mtok,omitempty"`
+	CachedInputAudioMillicentsPerMTok *int64 `json:"cached_input_audio_millicents_per_mtok,omitempty"`
+	OutputAudioMillicentsPerMTok      *int64 `json:"output_audio_millicents_per_mtok,omitempty"`
 }
 
 // ValidOutboundAIPriceEntries checks one complete price list.
@@ -66,7 +71,8 @@ func ValidOutboundAIPriceEntries(entries []OutboundAIPriceEntry) bool {
 			return false
 		}
 		for _, optional := range []*int64{entry.CachedInputMillicentsPerMTok, entry.CacheWriteMillicentsPerMTok,
-			entry.InputImageMillicentsPerMTok, entry.OutputImageMillicentsPerMTok, entry.MillicentsPerMillionCharacters} {
+			entry.InputImageMillicentsPerMTok, entry.OutputImageMillicentsPerMTok, entry.MillicentsPerMillionCharacters,
+			entry.InputAudioMillicentsPerMTok, entry.CachedInputAudioMillicentsPerMTok, entry.OutputAudioMillicentsPerMTok} {
 			if optional != nil && !validPrice(*optional) {
 				return false
 			}

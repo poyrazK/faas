@@ -378,6 +378,33 @@
       ],
       "fieldConfig": {"defaults": {"unit": "short", "min": 0, "custom": {"thresholdsStyle": {"mode": "line"}}, "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 0.28}]}}, "overrides": []},
       "options": {"legend": {"displayMode": "table", "placement": "right", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+    {"type": "row", "title": "Realtime sessions (ADR 20261019072722)", "id": 33, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 116}, "collapsed": false, "panels": []},
+    {
+      "type": "timeseries",
+      "title": "Realtime sessions open",
+      "id": 34,
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 117},
+      "description": "Realtime WebSocket sessions open on each outboundd. Each holds one caller and one provider connection until it ends.",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"expr": "sum by (instance) (outbound_ai_realtime_sessions_active)", "legendFormat": "{{instance}}", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "right", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+    {
+      "type": "timeseries",
+      "title": "Realtime session events (1h)",
+      "id": 35,
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 117},
+      "description": "Sessions opened, let through unmetered, and ended: by the client, the provider, a cap refusing a response, the one-hour bound, a provider message the gateway could not read, or failed admission.",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"expr": "sum by (event) (increase(outbound_ai_realtime_sessions_total[1h]))", "legendFormat": "{{event}}", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "right", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
     }
   ],
   "refresh": "1m",

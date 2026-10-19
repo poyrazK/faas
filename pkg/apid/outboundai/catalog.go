@@ -41,7 +41,11 @@ func (s *Service) GetPriceCatalog(w http.ResponseWriter, r *http.Request, _ stat
 			MillicentsPerVideoSecond:       copyInt64(entry.Price.VideoSecond),
 			// ADR-1433 built-in tool prices.
 			MillicentsPerWebSearch: copyInt64(entry.Price.WebSearch), MillicentsPerFileSearch: copyInt64(entry.Price.FileSearch),
-			MillicentsPerCodeSessionGB: copyInt64(entry.Price.CodeSessionGB)})
+			MillicentsPerCodeSessionGB: copyInt64(entry.Price.CodeSessionGB),
+			// ADR 20261019072722 audio token prices.
+			InputAudioMillicentsPerMTok:       copyInt64(entry.Price.InputAudio),
+			CachedInputAudioMillicentsPerMTok: copyInt64(entry.Price.CachedInputAudio),
+			OutputAudioMillicentsPerMTok:      copyInt64(entry.Price.OutputAudio)})
 	}
 	w.Header().Set("Cache-Control", "private, max-age=300")
 	httpkit.WriteJSON(w, http.StatusOK, out)

@@ -89,3 +89,45 @@ func TestDependencyTransportCreatesSafeClientSpan(t *testing.T) {
 		}
 	}
 }
+
+// A switched protocol's body stays writable through the traced transport,
+// so a WebSocket can be carried (ADR 20261019072722).
+func TestDependencyTransportKeepsUpgradedConnectionsWritable(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		conn, buffered, err := http.NewResponseController(w).Hijack()
+		if err != nil {
+			return
+		}
+		defer func() { _ = conn.Close() }()
+		_, _ = buffered.WriteString("HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: echo\r\n\r\n")
+		_ = buffered.Flush()
+		line := make([]byte, 4)
+		if _, err := io.ReadFull(buffered, line); err == nil {
+			_, _ = conn.Write(line)
+		}
+	}))
+	defer server.Close()
+	client := &http.Client{Transport: dependencytrace.NewDependencyTransport(server.Client().Transport)}
+	request, err := http.NewRequest(http.MethodGet, server.URL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Connection", "Upgrade")
+	request.Header.Set("Upgrade", "echo")
+	response, err := client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = response.Body.Close() }()
+	conn, ok := response.Body.(io.ReadWriteCloser)
+	if response.StatusCode != http.StatusSwitchingProtocols || !ok {
+		t.Fatalf("status %d, writable body %v", response.StatusCode, ok)
+	}
+	if _, err := io.WriteString(conn, "ping"); err != nil {
+		t.Fatal(err)
+	}
+	echo := make([]byte, 4)
+	if _, err := io.ReadFull(conn, echo); err != nil || string(echo) != "ping" {
+		t.Fatalf("echo = %q, %v", echo, err)
+	}
+}

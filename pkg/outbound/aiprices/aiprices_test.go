@@ -64,7 +64,7 @@ func TestDefaultCatalogCoversEveryProvider(t *testing.T) {
 func TestLookup(t *testing.T) {
 	catalog, err := Parse([]byte(`{
 		"source": "test", "generated": "2026-10-12", "usd_per_eur": "1", "fx_source": "test",
-		"fields": ["input", "cached_input", "cache_write", "output", "input_image", "output_image", "image", "audio_minute", "characters", "video_second", "web_search", "file_search", "code_session_gb"],
+		"fields": ["input", "cached_input", "cache_write", "output", "input_image", "output_image", "image", "audio_minute", "characters", "video_second", "web_search", "file_search", "code_session_gb", "input_audio", "cached_input_audio", "output_audio"],
 		"providers": {
 			"openai": {"gpt-4o": [1, 1, 1, 4], "gpt-4o-mini": [2, 2, 2, 8], "o1": [3, 3, 3, 12]},
 			"bedrock": {"anthropic.claude-3-5-sonnet-20241022-v2:0": [5, 5, 5, 20], "anthropic.claude-3-5-haiku": [6, 6, 6, 24]},
@@ -97,7 +97,7 @@ func TestLookup(t *testing.T) {
 }
 
 func TestParseRejectsInvalidCatalogs(t *testing.T) {
-	header := `"source": "s", "generated": "g", "usd_per_eur": "1", "fx_source": "f", "fields": ["input", "cached_input", "cache_write", "output", "input_image", "output_image", "image", "audio_minute", "characters", "video_second", "web_search", "file_search", "code_session_gb"]`
+	header := `"source": "s", "generated": "g", "usd_per_eur": "1", "fx_source": "f", "fields": ["input", "cached_input", "cache_write", "output", "input_image", "output_image", "image", "audio_minute", "characters", "video_second", "web_search", "file_search", "code_session_gb", "input_audio", "cached_input_audio", "output_audio"]`
 	for name, body := range map[string]string{
 		"unknown provider": `{` + header + `, "providers": {"mistral": {"m": [1, 1, 1, 1]}}}`,
 		"negative price":   `{` + header + `, "providers": {"openai": {"m": [-1, 1, 1, 1]}}}`,
@@ -107,6 +107,7 @@ func TestParseRejectsInvalidCatalogs(t *testing.T) {
 		"negative media":   `{` + header + `, "providers": {"openai": {"m": [1, 1, 1, 1, null, null, null, -1]}}}`,
 		"video too dear":   `{` + header + `, "providers": {"gemini": {"veo": [0, 0, 0, 0, null, null, null, null, null, 10000001]}}}`,
 		"search too dear":  `{` + header + `, "providers": {"openai": {"m": [1, 1, 1, 1, null, null, null, null, null, null, 10000001]}}}`,
+		"audio too dear":   `{` + header + `, "providers": {"openai": {"m": [1, 1, 1, 1, null, null, null, null, null, null, null, null, null, 1000000001]}}}`,
 		"field order":      `{"source": "s", "generated": "g", "usd_per_eur": "1", "fx_source": "f", "fields": ["output"], "providers": {}}`,
 	} {
 		if _, err := Parse([]byte(body)); err == nil {
@@ -134,5 +135,30 @@ func TestCatalogMediaPrices(t *testing.T) {
 		if !ok || !tc.check(entry.Price) {
 			t.Errorf("%s %s = %+v, %v", tc.provider, tc.model, entry.Price, ok)
 		}
+	}
+}
+
+// adr: 20261019072722 — realtime models are in the catalog with audio token
+// prices dearer than their text prices, and audio chat models carry them too.
+func TestCatalogAudioPrices(t *testing.T) {
+	catalog := Default()
+	for _, tc := range []struct{ provider, model string }{
+		{api.OutboundAIProviderOpenAI, "gpt-realtime"},
+		{api.OutboundAIProviderOpenAI, "gpt-realtime-mini"},
+		{api.OutboundAIProviderAzureOpenAI, "gpt-realtime"},
+		{api.OutboundAIProviderOpenAI, "gpt-audio"},
+	} {
+		entry, ok := catalog.Lookup(tc.provider, tc.model)
+		p := entry.Price
+		if !ok || p.InputAudio == nil || p.OutputAudio == nil || *p.InputAudio <= p.Input || *p.OutputAudio <= p.Output {
+			t.Errorf("%s %s = %+v, %v", tc.provider, tc.model, p, ok)
+		}
+	}
+	if entry, _ := catalog.Lookup(api.OutboundAIProviderOpenAI, "gpt-realtime"); entry.Price.CachedInputAudio == nil ||
+		*entry.Price.CachedInputAudio >= *entry.Price.InputAudio {
+		t.Errorf("gpt-realtime cached audio is not cheaper: %+v", entry.Price)
+	}
+	if entry, _ := catalog.Lookup(api.OutboundAIProviderOpenAI, "gpt-4o"); entry.Price.InputAudio != nil || entry.Price.OutputAudio != nil {
+		t.Errorf("gpt-4o has audio prices: %+v", entry.Price)
 	}
 }
