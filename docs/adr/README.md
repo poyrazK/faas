@@ -231,6 +231,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 1333 | [Durable managed PostgreSQL activation preflight](1333-managed-postgres-activation-preflight.md) | accepted for catalog inspection; customer activation disabled | Recoverable preflight revisions check restored targets, staged SQL verification and source bindings without publishing credentials |
 | 1334 | [Durable cutover source SQL connection fences](1334-managed-postgres-cutover-source-fences.md) | accepted for internal controller plumbing; customer activation disabled | Owned SQL fences share maintenance authority, survive lost replies and retain pins until confirmed cancellation cleanup |
 | 1335 | [Source writer inventory and provider isolation evidence](1335-managed-postgres-source-writer-isolation.md) | accepted for internal recovery plumbing; customer activation disabled | Immutable catalog baselines, writer diagnostics and expiring provider evidence fail closed on drift or unsupported guarantees |
+| 1337 | [Compose process overrides and unsupported-key reporting](1337-compose-process-overrides-and-key-reporting.md) | accepted | Prebuilt image services honour entrypoint/user/working_dir/stop_signal/stop_grace_period via a frozen `image_command` v2; `env_file` adds variable names; other keys, including unresolved `extends`/`include`, warn |
 | 1170 | [Developer watch mode for apps with a build step](1170-developer-watch-mode.md) | proposed | Opt-in `gregale dev --watch`: a builder-made developer image runs the framework's dev server and ADR-740 patches reach its own hot reload |
 | 1114 | [Reversible issue group links](1114-reversible-issue-group-links.md) | accepted | Merge fingerprint groups without moving evidence; split an original group back out with its lifetime history |
 | 1113 | [Deployment-local issue source maps](1113-deployment-local-issue-source-maps.md) | accepted | Node reporters map bounded local artifacts to original frames while preserving generated stack evidence |
@@ -766,6 +767,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 1162 | [Billing delivery finality, a hard spend cap, and plan-history allowances](1162-billing-delivery-finality-spend-cap-and-plan-history.md) | accepted | `MeterUsageFinalAfter` gates provider delivery on final minutes; the spend cap bills up to the cap and parks capped accounts (`SpendCapJobDeferInterval` defers queued job tasks); app purge keeps usage; the month's allowance follows recorded plan activations |
 | 1163 | [Live job task output](1163-live-job-task-output.md) | accepted | Compute-gateway SSE `GET /v1/jobs/{name}/runs/{id}/tasks/{idx}/logs/stream` follows the task VM ring; `gregale run --image` streams live, `gregale jobs logs --follow` |
 | 1330 | [Interactive image runs (`gregale run -it --image`)](1330-interactive-image-runs.md) | accepted for an operator-gated preview | The job guest holds its command until one client attaches over ADR-1037's token, WebSocket and `AttachAppTask` transport; the job supervisor keeps timeout, cancellation and exit receipt; gate `FAAS_INTERACTIVE_IMAGE_RUNS` |
+| 1790 | [Image runs: Docker process semantics, `-u/-w`, env files and private registries](1790-image-run-docker-process-and-registry-auth.md) | accepted | Image runs take the image's ENV, USER, WORKDIR and PATH lookup; `gregale run` adds `-u`, `-w`, `--env-file`, `-e KEY`, a positional image and `--registry-username` (credential sealed on the runner job, refreshed per run) |
 | 1235 | [Spec §12 operator alerts ship at warn](1235-spec12-operator-alerts-at-warn.md) | accepted | 26 §12 alerts that had no rule are implemented with fixtures, all warn and `public_status: internal` until paging is triaged; write-relay and safe-deploy names corrected to the exported `gatewayd_` / `meterd_` series |
 | 1236 | [Paging set: page only on symptoms that need a human now](1236-paging-set.md) | accepted | 96 page alerts become 27: 24 kept, 72 demoted to warn, near-expiry certificate pages and access-gating edge-rule compile errors added; every page alert has a firing fixture |
 | 1320 | [Object-storage plan allowances, plan ceilings, and the overage cap](1320-object-storage-plan-allowances-ceilings-and-overage-cap.md) | accepted; every plan at zero until pricing | `Limits.ObjectStorage` holds per-plan ceilings and allowances; allowances are removed before month-close pricing and follow plan history; ceilings tighten the operator policy at URL admission and gateway checks; the month-close charge is held under the overage cap after the month's compute and live egress |
@@ -1001,6 +1003,9 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-1152: Route feature evidence, advisor settings, and token-free rollout completion](1152-route-feature-evidence-and-rollout-completion.md) — show learned wake-ahead edges and queue outcomes, suggest the settings, and complete finished rollouts without the safe-release tokens (#1926)
 - [ADR-1187: Route awake report](1187-route-awake-report.md) — which routes keep a scale-to-zero app awake, what removing each would save, and edge-cache or polling suggestions
 - [ADR-1188: Learned cacheability](1188-learned-cacheability.md) — compare anonymous GET bodies with the previous response per URL to measure whether a route is safe to cache, and for how long
+- [ADR-1189: Safe Deploy and scheduled prewarm on by default](1189-safe-releases-and-prewarm-on-by-default.md) — the control-plane role provisions the Safe Deploy token pair and schedd runs the prewarm drain
+- [ADR-1198: Proactive route insights](1198-proactive-route-insights.md) — apid records routes that keep apps awake or are safe to cache, and notifies app webhooks of each transition
+- [ADR-1199: Route evidence — cache rules and awake sources](1199-route-evidence-cache-rules-and-awake-sources.md) — the gateway observes cache rule refills so stale or too-short rules become insights, and the awake report credits route probes and prewarm
 - [ADR-480: Platform paths reserved on platform hosts only](480-platform-paths-reserved-on-platform-hosts.md)
 - [ADR-493: Observed customer exposure for route changes](493-route-customer-exposure.md) — bounded, read-only request-time customer usage evidence in preview reports
 - [ADR-494: Advisory customer route health](494-advisory-customer-route-health.md) — compare tenant or consumer route health while preserving sparse and attribution coverage
@@ -1675,6 +1680,7 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [Worker recovery diagnostics and alerts](20261017223000-worker-recovery-diagnostics.md)
 - [Worker admission explanations](20261018090000-worker-admission-explanations.md)
 - [ADR 202610171900: Release compatibility gates (N±1, deploy order, skew and migration checks, SLO gate)](202610171900-release-compatibility-gates.md)
+- [ADR-1700: Platform flags: per-account release gates managed at runtime](1700-platform-flags.md)
 
 - [ADR-1650: Per-unit control-plane releases](1650-per-unit-control-plane-releases.md)
 
@@ -1687,3 +1693,8 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-20261017232000: Incident evidence bundles through management MCP](20261017232000-management-mcp-incident-bundles.md)
 
 - [ADR-20261017233500: Explicit selected-app traces through management MCP](20261017233500-management-mcp-selected-traces.md)
+
+- [ADR-1136: Project environment configuration reaches every service as environment variables](1136-project-environment-config-as-environment-variables.md)
+- [ADR-1137: Declared dependencies seed opt-in wake-ahead](1137-declared-dependencies-seed-wake-ahead.md) — an opted-in app wakes its declared dependencies until 20 wakes of evidence decide (amends ADR-977)
+
+- [ADR-20261018181846: Route priority in the cold-wake queue](20261018181846-route-priority-in-the-wake-queue.md)

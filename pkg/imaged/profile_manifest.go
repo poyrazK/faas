@@ -65,10 +65,7 @@ func manifestFromLocalOCIConfig(config oci.Config, dep state.Deployment) (api.Ap
 // the same precedence used by source-built apps.
 func manifestFromImageConfigWithApp(config oci.ImageConfig, app state.App) (api.AppManifest, error) {
 	if app.Manifest.ProjectImage != "" {
-		if app.Manifest.ProjectImageCommand != nil {
-			config.Cmd = append([]string(nil), app.Manifest.ProjectImageCommand...)
-		}
-		return manifestFromImageConfig(config)
+		return manifestFromImageConfig(applyComposeProcess(config, app.Manifest.ProjectImageProcess, app.Manifest.ProjectImageCommand))
 	}
 	if len(config.Entrypoint) == 0 && len(config.Cmd) == 0 {
 		if start := strings.TrimSpace(app.StartCommand); start != "" {
@@ -116,12 +113,39 @@ func manifestFromImageConfigWithDeployment(config oci.ImageConfig, app state.App
 		return api.AppManifest{}, fmt.Errorf("imaged: frozen image command: %w", err)
 	}
 	if command != nil {
-		if command.Cmd != nil {
-			config.Cmd = slices.Clone(command.Cmd)
-		}
-		return manifestFromImageConfig(config)
+		return manifestFromImageConfig(applyComposeProcess(config, command.Process, command.Cmd))
 	}
 	return manifestFromImageConfigWithApp(config, app)
+}
+
+// applyComposeProcess applies a project image's Compose command and process
+// overrides (ADR-1337) to its OCI config. A nil cmd keeps the image CMD. An
+// entrypoint override drops the image CMD, as `docker run --entrypoint` and
+// Compose do, so cmd becomes the only arguments.
+func applyComposeProcess(config oci.ImageConfig, process *api.ComposeProcess, cmd []string) oci.ImageConfig {
+	if cmd != nil {
+		config.Cmd = slices.Clone(cmd)
+	}
+	if process == nil {
+		return config
+	}
+	if process.Entrypoint != nil {
+		config.Entrypoint = slices.Clone(*process.Entrypoint)
+		config.Cmd = slices.Clone(cmd)
+	}
+	if process.User != "" {
+		config.User = process.User
+	}
+	if process.WorkingDir != "" {
+		config.WorkingDir = process.WorkingDir
+	}
+	if process.StopSignal != "" {
+		config.StopSignal = process.StopSignal
+	}
+	if process.StopGracePeriodS != nil {
+		config.StopGracePeriodS = *process.StopGracePeriodS
+	}
+	return config
 }
 
 // applyAppStartCommand enforces the documented app-level command override.

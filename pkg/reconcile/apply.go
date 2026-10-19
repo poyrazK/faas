@@ -447,6 +447,7 @@ func applyProjectImage(manifest *state.AppManifest, w reposcan.Workload) {
 	manifest.ProjectImageCommand = nil
 	manifest.ProjectImagePort = 0
 	manifest.ProjectImageHealthcheck = nil
+	manifest.ProjectImageProcess = nil
 	if manifest.ExecutionMode == "" {
 		manifest.ExecutionMode = scanExecutionMode(w)
 	}
@@ -454,6 +455,7 @@ func applyProjectImage(manifest *state.AppManifest, w reposcan.Workload) {
 		return
 	}
 	manifest.ProjectImageHealthcheck = w.ImageHealthcheck.Clone()
+	manifest.ProjectImageProcess = w.ImageProcess.Clone()
 	manifest.ProjectImageCommand = append([]string(nil), w.Command...)
 	if w.CommandShell && len(w.Command) > 0 {
 		manifest.ProjectImageCommand = []string{"/bin/sh", "-c", w.Command[0]}

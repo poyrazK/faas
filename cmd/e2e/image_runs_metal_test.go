@@ -11,7 +11,37 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/e2etest"
 )
+
+// adr: 1790
+// TestImageRunProcessMetal checks `docker run` process semantics on a real
+// VM: an image run takes the image's USER, WORKDIR (created when missing),
+// ENV and PATH (the CMD is a bare command name), and -u/-w override the user
+// and directory.
+func TestImageRunProcessMetal(t *testing.T) {
+	h := newMetalHarness(t, "FAAS_IMAGE_RUNS=1")
+	defer h.Close()
+	h.mustSeedProcessImage(t, "busybox:image-process")
+	image := h.imageRef(t, "busybox:image-process")
+
+	defaults := h.mustStartImageRun(t, api.CreateImageRunRequest{Image: image}, 5*time.Minute)
+	h.mustFinishImageRun(t, defaults, "succeeded", 0, "uid=1234 gid=1234 cwd=/srv/app home=/home/app from_image=yes")
+
+	overridden := h.mustStartImageRun(t, api.CreateImageRunRequest{Image: image, User: "0", Workdir: "/tmp"}, time.Minute)
+	h.mustFinishImageRun(t, overridden, "succeeded", 0, "uid=0 gid=0 cwd=/tmp home=/root from_image=yes")
+}
+
+// mustSeedProcessImage seeds e2etest.ProcessJobImage under imageRef.
+func (h *MetalJobHarness) mustSeedProcessImage(t *testing.T, imageRef string) {
+	t.Helper()
+	repo, _, _ := strings.Cut(imageRef, ":")
+	img, _ := e2etest.ProcessJobImage(repo)
+	pinned := h.registry.AddImage(repo, img)
+	h.mu.Lock()
+	h.imageRefs[imageRef] = pinned
+	h.mu.Unlock()
+}
 
 // adr: 1161
 // TestImageRunsMetal drives `gregale run --image` end to end on real

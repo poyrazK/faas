@@ -73,6 +73,13 @@ func buildRuntimeDeploymentValues(app state.App, dep state.Deployment, reads run
 		}
 	}
 	result := runtimeDeploymentValues{Snapshot: snapshot, Inputs: state.RuntimeConfigInputs{Scope: snapshot.Scope, Boundary: boundary, Variables: map[string]string{}, SecretVersions: map[string]int64{}}}
+	// ADR-1136: project environment variables sit below the app's own rows,
+	// which the state layer already removed from Inherited. They are not
+	// receipt inputs: freshness compares receipts with app_envs exactly, and a
+	// configuration change stamps the scope instead.
+	for _, row := range snapshot.Inherited {
+		result.APIEnv = append(result.APIEnv, fcvm.APIEnvEntry{Key: row.Key, Value: row.Value})
+	}
 	keys := map[string]bool{}
 	for _, row := range snapshot.Values {
 		if row.AccountID != accountID || row.AppID != dep.AppID || row.Scope != snapshot.Scope || api.ValidateEnvKey(row.Key) != nil || keys[row.Key] {

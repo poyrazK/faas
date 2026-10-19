@@ -106,7 +106,10 @@ type Workload struct {
 	Dockerfile       string                  // explicit path if declared (relative to RootDir)
 	Image            string                  // prebuilt OCI image when the source declares one
 	ImageHealthcheck *api.ComposeHealthcheck // partial Compose override for prebuilt images
-	Command          []string                // start-command override (compose `command:`, Procfile rhs)
+	// ImageProcess carries a prebuilt image's Compose entrypoint, user,
+	// working_dir and stop contract (ADR-1337). Nil inherits the image.
+	ImageProcess *api.ComposeProcess
+	Command      []string // start-command override (compose `command:`, Procfile rhs)
 	// CommandShell distinguishes shell-form strings from exec-form argv. The
 	// plan wire keeps Command as an array, while reconciliation uses this bit
 	// to preserve argument boundaries when persisting start_command.

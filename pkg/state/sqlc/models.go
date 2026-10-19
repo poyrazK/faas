@@ -6650,6 +6650,8 @@ type JobRun struct {
 	OperationID                 pgtype.UUID
 	ExclusiveOperationID        pgtype.UUID
 	ExclusiveGeneration         pgtype.Int8
+	ProcessUser                 pgtype.Text
+	ProcessWorkdir              pgtype.Text
 }
 
 type JobRunAttachSession struct {
@@ -12066,6 +12068,21 @@ type RouteHealthNotificationState struct {
 	UpdatedAt         pgtype.Timestamptz
 }
 
+type RouteInsight struct {
+	ID              pgtype.UUID
+	AccountID       pgtype.UUID
+	AppID           pgtype.UUID
+	Kind            string
+	Method          string
+	Route           string
+	State           string
+	Message         string
+	Evidence        []byte
+	FirstDetectedAt pgtype.Timestamptz
+	LastDetectedAt  pgtype.Timestamptz
+	ResolvedAt      pgtype.Timestamptz
+}
+
 type RouteLifecycleApproval struct {
 	ID                    pgtype.UUID
 	AccountID             pgtype.UUID
@@ -12168,6 +12185,18 @@ type RuntimeArtifactBinding struct {
 	AccountID pgtype.UUID
 	RootfsKey string
 	ReleaseID string
+}
+
+type RuntimeConfigApplyReceipt struct {
+	ConfigKey  string
+	Scope      string
+	ScopeID    string
+	Daemon     string
+	Instance   string
+	Version    int64
+	Status     string
+	Error      pgtype.Text
+	ReportedAt pgtype.Timestamptz
 }
 
 type RuntimeConfigEntry struct {

@@ -2,7 +2,9 @@
 #
 # Triggered by a tag push matching v*.*.*. Cross-builds the gregale CLI
 # for linux-amd64 (and optional darwin-arm64 for maintainer local dev),
-# vendors the linux-amd64 binary into .github/actions/deploy/bin/gregale,
+# vendors the linux-amd64 binary gzip-compressed into
+# .github/actions/deploy/bin/gregale.gz (GitHub refuses files over 100 MB;
+# the Action unpacks it, see .github/actions/deploy/src/cli.sh),
 # updates src/version.txt, generates SHA256SUMS, commits everything back
 # to a release branch, force-updates the MAJOR moving tag so customers
 # pinned at @vN always resolve to the latest vendored binary, and
@@ -198,19 +200,31 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-      - name: Vendor binary + SHA256SUMS into action repo
+      # The Action vendors the CLI gzip-compressed: GitHub rejects any file
+      # over 100 MB, and the bare linux-amd64 binary reached 102 MB in
+      # rc.274. src/cli.sh unpacks it and checks it against SHA256SUMS.
+      - name: Vendor compressed binary + SHA256SUMS into action repo
         env:
           VERSION: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          cp /tmp/gregale-build/gregale .github/actions/deploy/bin/gregale
-          chmod +x .github/actions/deploy/bin/gregale
+          packed=.github/actions/deploy/bin/gregale.gz
+          gzip -9 -n -c /tmp/gregale-build/gregale > "$packed"
+          size="$(stat -c %s "$packed")"
+          limit=$((95 * 1024 * 1024))
+          if [ "$size" -gt "$limit" ]; then
+            echo "::error::$packed is $size bytes; GitHub refuses files over 100 MB (limit kept at 95 MB)" >&2
+            exit 1
+          fi
+          echo "vendored $packed: $size bytes (binary $(stat -c %s /tmp/gregale-build/gregale) bytes)"
           cp /tmp/gregale-build/CLI-SHA256SUMS SHA256SUMS
           echo "$VERSION" > .github/actions/deploy/src/version.txt
-          # Sanity-check: the vendored binary should report the right
-          # version when invoked. Smoke asserts the LDFLAGS stamping
-          # worked end-to-end.
-          ./.github/actions/deploy/bin/gregale version
+          # Sanity-check through the Action's own unpacking: the CLI it
+          # resolves must match SHA256SUMS and report the stamped version.
+          # shellcheck source=/dev/null
+          source .github/actions/deploy/src/cli.sh
+          cli="$(gregale_cli .github/actions/deploy)"
+          "$cli" version
 
       - name: Start fixture Gregale API
         run: |
@@ -264,7 +278,7 @@ jobs:
             git branch -D "${BRANCH}"
           fi
           git checkout -b "$BRANCH"
-          git add .github/actions/deploy/bin/gregale .github/actions/deploy/src/version.txt SHA256SUMS
+          git add .github/actions/deploy/bin/gregale.gz .github/actions/deploy/src/version.txt SHA256SUMS
           git commit -m "release: bundle gregale ${TAG}"
           git push -u origin "$BRANCH"
 
@@ -307,7 +321,7 @@ jobs:
             exit 1
           fi
           printf '%s\n' "$SNIPPET" | grep -Fq "https://gregale.dev/docs/deploy-from-github"
-          for path in .github/actions/deploy/action.yml .github/actions/deploy/bin/gregale; do
+          for path in .github/actions/deploy/action.yml .github/actions/deploy/bin/gregale.gz; do
             gh api "repos/${GITHUB_REPOSITORY}/contents/${path}?ref=${ACTION_SHA}" \
               | jq -e '.type == "file" and .size > 0' >/dev/null
             # The moving major tag still needs to expose this release's bundle
@@ -390,7 +404,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.ref_name }}
           CLI_RELEASE_ASSETS: |
-            .github/actions/deploy/bin/gregale
+            /tmp/gregale-build/gregale
             /tmp/gregale-build/gregale-darwin-arm64
             /tmp/gregale-build/gregale_*.tar.gz
             scripts/install.sh

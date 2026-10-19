@@ -3861,7 +3861,7 @@
       "reason",
       "used_at"
     ],
-    "kind": "configuration"
+    "kind": "operational"
   },
   {
     "table": "deployment_mcp_task_holds",
@@ -7838,6 +7838,8 @@
       "occurrence_id",
       "operation_id",
       "parallelism",
+      "process_user",
+      "process_workdir",
       "ram_mb_snapshot",
       "retry_max",
       "source_run_id",
@@ -9334,7 +9336,7 @@
       "request",
       "request_id"
     ],
-    "kind": "customer_data"
+    "kind": "operational"
   },
   {
     "table": "mcp_readiness_fallback_policies",
@@ -9397,7 +9399,7 @@
       "sequence",
       "suppression_reason"
     ],
-    "kind": "customer_data"
+    "kind": "operational"
   },
   {
     "table": "mcp_readiness_incidents",
@@ -14110,6 +14112,24 @@
     "kind": "operational"
   },
   {
+    "table": "route_insights",
+    "columns": [
+      "account_id",
+      "app_id",
+      "evidence",
+      "first_detected_at",
+      "id",
+      "kind",
+      "last_detected_at",
+      "message",
+      "method",
+      "resolved_at",
+      "route",
+      "state"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "route_lifecycle_approvals",
     "columns": [
       "account_id",
@@ -16000,5 +16020,20 @@
       "workflow_name"
     ],
     "kind": "operational"
+  },
+  {
+    "table": "runtime_config_apply_receipts",
+    "columns": [
+      "config_key",
+      "daemon",
+      "error",
+      "instance",
+      "reported_at",
+      "scope",
+      "scope_id",
+      "status",
+      "version"
+    ],
+    "kind": "platform_configuration"
   }
 ]

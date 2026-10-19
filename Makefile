@@ -399,6 +399,10 @@ shell-quoting-check-test: ## Exercise the shell-quoting gate against fixture tre
 deploy-action-head-check: ## Verify stale branch and invalid release-tag pushes cannot submit Action deployments
 	@bash scripts/ci/test_deploy_action_head.sh
 
+.PHONY: deploy-action-cli-check
+deploy-action-cli-check: ## Verify the deploy Action unpacks and checks the gzip-compressed vendored CLI
+	@bash scripts/ci/deploy_action_cli_test.sh
+
 .PHONY: environment-preflight-action-check
 environment-preflight-action-check: ## Verify the OIDC capability and promotion gate contract in the environment preflight Action
 	@bash scripts/ci/test_environment_preflight_action.sh
@@ -844,6 +848,10 @@ ha-write-redirect-drill: ## Tier A9 / ADR-089: standby write-redirect drill on t
 	  echo "  mirror the Tier A8 ha-failover-drill. Run the script directly when the operator wants a non-"; \
 	  echo "  interactive pass; the bash block above is the manual form."; \
 	  exit 0'
+
+.PHONY: lint-changed
+lint-changed: ## golangci-lint only what your change touches (ci-light's selection vs origin/main) + teststorecheck; BASE=<ref>, DRY_RUN=1
+	@GO=$(GO) bash scripts/lint-changed.sh
 
 .PHONY: lint
 lint: egress-check lint-incompatible-mods image-validate sealed-env-scope-check runbook-sql-check text-encoding-check shell-quoting-check adr-number-uniqueness-check check-durable-entity-sdk-contract check-binding-runner-sync ## golangci-lint via go tool (matches CI version v2.14.0) + repository policy gates

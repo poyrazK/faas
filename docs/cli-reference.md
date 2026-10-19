@@ -10187,7 +10187,7 @@ Add an edge rule
 | `--throttle-missing-key-policy <POLICY>` | kind=throttle: behavior when identity is missing | one of `shared` · `reject` |
 | `--throttle-key-field <FIELD>` | kind=throttle: composite key field (ip\|country\|api_key\|consumer_id\|jwt_subject\|jwt_claim\|method\|path\|header:&lt;name&gt;; repeat) |  |
 | `--throttle-count-status <CODE>` | kind=throttle: charge the bucket only for responses with this status (repeat) |  |
-| `--cache-stale-if-error-seconds <SECONDS>` | kind=cache: serve stale on origin failure (max 300) |  |
+| `--cache-stale-if-error-seconds <SECONDS>` | kind=cache: serve stale on origin failure (default 300; 0 disables; max 300) |  |
 | `--budget-allow-override-header <HEADER>` | kind=budget: header allowed to override the budget |  |
 | `--retry-allow-non-idempotent` | kind=retry: allow POST/PATCH replay when Idempotency-Key is honored |  |
 | `--retry-min-remaining-ms <MS>` | kind=retry: remaining request budget required before replay |  |
@@ -10300,7 +10300,7 @@ Update one edge rule
 | `--throttle-count-status <CODE>` | kind=throttle: charge the bucket only for responses with this status (repeat) |  |
 | `--cache-max-age-seconds <SECONDS>` | kind=cache: fresh window |  |
 | `--cache-stale-while-revalidate-seconds <SECONDS>` | kind=cache: stale-while-revalidate window |  |
-| `--cache-stale-if-error-seconds <SECONDS>` | kind=cache: serve stale on origin failure |  |
+| `--cache-stale-if-error-seconds <SECONDS>` | kind=cache: serve stale on origin failure (default 300; 0 disables) |  |
 | `--cache-vary-on <HEADER>` | kind=cache: header to vary on (repeatable) |  |
 | `--cache-methods <METHOD>` | kind=cache: cacheable method (repeatable) |  |
 | `--budget-ms <MS>` | kind=budget: per-request wall-clock budget |  |
@@ -10583,6 +10583,19 @@ Examples:
 ```sh
 gregale routes awake my-api
 gregale routes awake my-api --since 24h --json
+```
+
+### routes insights
+
+List findings about routes that keep the app awake or are safe to cache, evaluated every six hours
+
+`gregale routes insights <slug>`
+
+Examples:
+
+```sh
+gregale routes insights my-api
+gregale routes insights my-api --json
 ```
 
 ### routes priority
@@ -11550,15 +11563,20 @@ Functional smoke test (invoke [--async] &lt;slug&gt; [--payload J|@file|-]; slug
 
 Run untrusted code in an isolated disposable microVM, or one command from an OCI image (--image)
 
-`gregale run [--image <REF>] [--interactive] [--tty] [--entrypoint <CMD|FILE>] [--env <KEY=VALUE>] [--ram <MB>] [--timeout <D>] [--pull <P>] [--detach] [--workflow-id <ID>] [--step-label <LABEL>] [--profile <P>] [--runtime <R>] [--source <CODE>] [--file <PATH>] [--input <J|@file|->] [--timeout-ms <N>] [--memory-mb <N>] [--cpu-millicores <N>] [--ephemeral-disk-mb <N>] [--max-output-bytes <N>] [--output-file <PATH>] [--output-dir <DIR>] [--wait] [--watch] [--poll-interval <D>] [--wait-timeout <D>]`
+`gregale run [--image <REF>] [--interactive] [--tty] [--entrypoint <CMD|FILE>] [--env <KEY[=VALUE]>] [--env-file <FILE>] [--user <USER>] [--workdir <DIR>] [--registry-username <USER>] [--registry-password-stdin] [--ram <MB>] [--timeout <D>] [--pull <P>] [--detach] [--workflow-id <ID>] [--step-label <LABEL>] [--profile <P>] [--runtime <R>] [--source <CODE>] [--file <PATH>] [--input <J|@file|->] [--timeout-ms <N>] [--memory-mb <N>] [--cpu-millicores <N>] [--ephemeral-disk-mb <N>] [--max-output-bytes <N>] [--output-file <PATH>] [--output-dir <DIR>] [--wait] [--watch] [--poll-interval <D>] [--wait-timeout <D>]`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--image <REF>` | run one command from this OCI image in a fresh microVM; arguments after the flags replace the image CMD (ADR-1161) |  |
+| `--image <REF>` | run one command from this OCI image in a fresh microVM; arguments after the flags replace the image CMD (ADR-1161); the image can also be the first positional argument |  |
 | `--interactive` | with --image, attach stdin and relay the session until the command exits (-i; ADR-1330) |  |
 | `--tty` | with --image --interactive, give the command a terminal (-t; -it for both) |  |
 | `--entrypoint <CMD|FILE>` | with --image, override the image ENTRYPOINT; with --dir, the bundle file to execute |  |
-| `--env <KEY=VALUE>` | with --image, KEY=VALUE environment variable (repeatable; -e) |  |
+| `--env <KEY[=VALUE]>` | with --image, KEY=VALUE environment variable, or KEY to pass the local value (repeatable; -e) |  |
+| `--env-file <FILE>` | with --image, read KEY=VALUE lines from a file, docker env-file format (repeatable) |  |
+| `--user <USER>` | with --image, run as name\|uid[:group\|gid] instead of the image USER (-u; ADR-1790) |  |
+| `--workdir <DIR>` | with --image, absolute working directory instead of the image WORKDIR (-w) |  |
+| `--registry-username <USER>` | with --image, username for a private registry; the password comes from --registry-password-stdin, $GREGALE_REGISTRY_PASSWORD or a prompt |  |
+| `--registry-password-stdin` | with --registry-username, read the registry password or token from stdin |  |
 | `--ram <MB>` | with --image, memory in MB (default: Job default) |  |
 | `--timeout <D>` | with --image, task deadline (default: the plan&#39;s Job ceiling) |  |
 | `--pull <P>` | with --image, re-pull a cached tag (always) or reuse it (missing) | one of `missing` · `always` |
@@ -11588,6 +11606,8 @@ Examples:
 gregale run --image alpine echo hello
 gregale run --image python:3.12-slim -e MODE=batch python -c 'print(42)'
 gregale run -it --image alpine sh
+gregale run -u nobody -w /data --env-file .env alpine env
+printf '%s' "$TOKEN" | gregale run --registry-username ci --registry-password-stdin ghcr.io/acme/tool:1.4 --version
 ```
 
 

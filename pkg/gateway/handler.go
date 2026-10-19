@@ -1241,7 +1241,8 @@ type Handler struct {
 	// commit 14.
 	responseCache *ResponseCache
 	// contentObserver compares anonymous GET responses on routes without a
-	// cache rule (ADR-1188); only the outcome reaches request telemetry.
+	// cache rule (ADR-1188) and the bodies a cache rule stores (ADR-1199);
+	// only the outcome reaches request telemetry.
 	contentObserver *contentObserver
 	// cacheRefresh coalesces detached stale-while-waking refreshes by
 	// response-cache key. The customer request returns the stale body while
@@ -1479,6 +1480,8 @@ func NewHandlerWith(backend Backend, m *Metrics, log *slog.Logger) *Handler {
 	// race with parallel ServeHTTP readers — the load test under -race
 	// caught that pattern; see the field doc).
 	h.proxyFor = defaultProxy
+	// Route priorities also order the cold-wake queue (ADR-20261018181846).
+	h.gate.classifier = h
 	return h
 }
 
@@ -6563,6 +6566,11 @@ haveApp:
 		cw.excludeManagedVersionCookie(managedVersionSetCookie)
 		cw.excludeManagedCookie(managedReleaseContextSetCookie)
 		w = cw
+		if h.contentObserver != nil && contentObservable(r) {
+			// Compare the body this miss stores with the previous one for the
+			// URL, so the rule's max-age can be checked (ADR-1199).
+			r = r.WithContext(withContentTee(r.Context(), newRefillObserver(cw, h.contentObserver, app.ID, r, rule)))
+		}
 		defer func() {
 			// Proxy aborts unwind through this defer after a partial body has
 			// been written. Preserve the abort without caching those bytes.
@@ -6930,6 +6938,8 @@ haveApp:
 			attribute.String("app_plan", string(app.Plan)),
 			attribute.Int("desired_instances", maxInstances),
 		)
+		// The wake queue orders and admits waiters by route priority.
+		wakeCtx = withRoutePriorityRequest(wakeCtx, r)
 		//nolint:contextcheck // request ctx at handler boundary.
 		cold, wakeID, wakeMethod, err = h.ensureCapacity(wakeCtx, app.ID, app.AccountID, app.Scope, maxInstances, app.Plan, app.AutoscaleTargetRPS, sched.TriggerGateway, concurrencyConfigForApp(app))
 		wakeSpan.SetAttributes(

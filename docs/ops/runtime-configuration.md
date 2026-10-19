@@ -32,6 +32,25 @@ by both schedd and meterd. The environment value is only a bootstrap fallback;
 once a durable operator value has been applied, a restart cannot replace it
 with the environment value.
 
+Platform flags (ADR-1700, [platform-flags.md](platform-flags.md)) are hot
+settings too: `platform_flag.<key>` rows hold per-account release rules and
+`platform_flag_groups` holds the shared account groups. They appear in this
+catalog under "Platform flags"; `gregalectl flags` is the convenient way to
+edit them.
+
+## Apply receipts
+
+Every consumer of a hot setting records what it applied in
+`runtime_config_apply_receipts`: one row per key, daemon and host with the
+version and `applied` or `failed` (with the error). apid writes its own
+receipt when it applies a value, and the shared watcher writes one in each
+edge daemon, schedd, meterd and outboundd. A row is rewritten only when the
+version changes or an apply fails, never per request. `GET /v1/admin/flags`
+turns them into per-consumer convergence; for any key the table shows whether
+a value reached the daemons that use it, not only that apid accepted it.
+Receipts for a decommissioned host remain until deleted; their
+`reported_at` shows their age.
+
 `graceful`, `rolling`, and `break_glass` settings are never reported as live
 just because the database write succeeded. The PATCH returns `202` with a
 durable row in `runtime_config_operations`; a deployment/daemon controller
