@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/routerequirements"
 )
@@ -48,8 +49,8 @@ func TestPreviewCoverageCLIUsesCandidateInventoryAndReadOnlyGate(t *testing.T) {
 		{name: "gate opt in", selector: "/orders/x", status: "unknown"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			resetJSONOut(t)
-			setPreviewTestAuth(t)
+			main.ResetJSONOut(t)
+			main.SetPreviewTestAuth(t)
 			configPath := filepath.Join(t.TempDir(), "coverage.yaml")
 			if err := os.WriteFile(configPath, []byte(previewCoverageConfig), 0o600); err != nil {
 				t.Fatal(err)
@@ -62,7 +63,7 @@ func TestPreviewCoverageCLIUsesCandidateInventoryAndReadOnlyGate(t *testing.T) {
 				}
 				switch r.URL.Path {
 				case "/v1/preview/pr-42-api":
-					writeJSONTest(w, api.PreviewResourceResponse{App: api.AppResponse{ID: "preview-id", Slug: "pr-42-api", PreviewOfSlug: "api"}, Parent: &api.AppResponse{ID: "parent-id", Slug: "api"}, LatestDeployment: &api.DeploymentResponse{ID: "candidate", Status: "live"}, ProductionDeployment: &api.DeploymentResponse{ID: "baseline", Status: "live"}})
+					main.WriteJSONTest(w, api.PreviewResourceResponse{App: api.AppResponse{ID: "preview-id", Slug: "pr-42-api", PreviewOfSlug: "api"}, Parent: &api.AppResponse{ID: "parent-id", Slug: "api"}, LatestDeployment: &api.DeploymentResponse{ID: "candidate", Status: "live"}, ProductionDeployment: &api.DeploymentResponse{ID: "baseline", Status: "live"}})
 				case "/v1/apps/api/deployments/baseline/openapi":
 					if test.baselineMissing {
 						http.NotFound(w, r)
@@ -70,7 +71,7 @@ func TestPreviewCoverageCLIUsesCandidateInventoryAndReadOnlyGate(t *testing.T) {
 					}
 					// Removed baseline operations and policy-observed operations
 					// must never enter the candidate requirement inventory.
-					writePreviewReportDoc(t, w, "baseline", strings.Replace(previewCoverageContract, `"/health":`, `"/removed":{"get":{"responses":{}}},"/health":`, 1))
+					main.WritePreviewReportDoc(t, w, "baseline", strings.Replace(previewCoverageContract, `"/health":`, `"/removed":{"get":{"responses":{}}},"/health":`, 1))
 				case "/v1/apps/pr-42-api/deployments/candidate/openapi":
 					if test.candidateMissing {
 						http.NotFound(w, r)
@@ -83,19 +84,19 @@ func TestPreviewCoverageCLIUsesCandidateInventoryAndReadOnlyGate(t *testing.T) {
 					if test.addedUncovered {
 						contract = strings.Replace(contract, `"/health":`, `"/new":{"get":{"responses":{}}},"/health":`, 1)
 					}
-					writePreviewReportDoc(t, w, "candidate", contract)
+					main.WritePreviewReportDoc(t, w, "candidate", contract)
 				case "/v1/apps/api/deployments/baseline/route-policy":
-					writePreviewPolicySnapshotTest(w, "baseline", "parent-id", []api.EdgeRuleResponse{})
+					main.WritePreviewPolicySnapshotTest(w, "baseline", "parent-id", []api.EdgeRuleResponse{})
 				case "/v1/apps/pr-42-api/deployments/candidate/route-policy":
-					writePreviewPolicySnapshotTest(w, "candidate", "preview-id", []api.EdgeRuleResponse{})
+					main.WritePreviewPolicySnapshotTest(w, "candidate", "preview-id", []api.EdgeRuleResponse{})
 				case "/v1/apps/pr-42-api/openapi/preview":
-					writeJSONTest(w, api.AppOpenAPIPolicyPreviewResponse{Routes: []api.AppOpenAPIPolicyPreviewRoute{{Method: "get", Path: "/observed-only"}}})
+					main.WriteJSONTest(w, api.AppOpenAPIPolicyPreviewResponse{Routes: []api.AppOpenAPIPolicyPreviewRoute{{Method: "get", Path: "/observed-only"}}})
 				case "/v1/apps/pr-42-api":
-					writeJSONTest(w, api.AppResponse{ID: "preview-id", Slug: "pr-42-api", URL: "https://pr-42-api.gregale.dev", ConsumerAuthMode: "required", RequestTimeoutS: 2, EffectiveLimits: api.AppEffectiveLimits{RequestBudgetMS: 10000, RequestBudgetMaxMS: 20000}})
+					main.WriteJSONTest(w, api.AppResponse{ID: "preview-id", Slug: "pr-42-api", URL: "https://pr-42-api.gregale.dev", ConsumerAuthMode: "required", RequestTimeoutS: 2, EffectiveLimits: api.AppEffectiveLimits{RequestBudgetMS: 10000, RequestBudgetMaxMS: 20000}})
 				case "/v1/apps/api/edge-rules":
-					writeJSONTest(w, []api.EdgeRuleResponse{})
+					main.WriteJSONTest(w, []api.EdgeRuleResponse{})
 				case "/v1/apps/pr-42-api/edge-rules":
-					writeJSONTest(w, []api.EdgeRuleResponse{{ID: "consumer-limit", AppID: "preview-id", Enabled: true, Kind: "throttle", MatchHost: "*.gregale.dev", MatchPath: test.selector, Priority: 1, Action: json.RawMessage(`{"throttle":{"requests_per_second":10,"burst":20,"key_by":"consumer_id","missing_key_policy":"reject"}}`)}})
+					main.WriteJSONTest(w, []api.EdgeRuleResponse{{ID: "consumer-limit", AppID: "preview-id", Enabled: true, Kind: "throttle", MatchHost: "*.gregale.dev", MatchPath: test.selector, Priority: 1, Action: json.RawMessage(`{"throttle":{"requests_per_second":10,"burst":20,"key_by":"consumer_id","missing_key_policy":"reject"}}`)}})
 				default:
 					http.NotFound(w, r)
 				}
@@ -103,18 +104,18 @@ func TestPreviewCoverageCLIUsesCandidateInventoryAndReadOnlyGate(t *testing.T) {
 			defer srv.Close()
 			t.Setenv("FAAS_API", srv.URL)
 			var out bytes.Buffer
-			oldOut := osStdout
-			osStdout = &out
-			t.Cleanup(func() { osStdout = oldOut })
-			jsonOutput = true
+			oldOut := (*main.OsStdout)
+			(*main.OsStdout) = &out
+			t.Cleanup(func() { (*main.OsStdout) = oldOut })
+			(*main.JsonOutput) = true
 			args := []string{"report", "pr-42-api", "--requirements", configPath}
 			if test.gate {
 				args = append(args, "--fail-on-requirements")
 			}
-			if code := cmdPreview(args); code != test.exit {
+			if code := main.CmdPreview(args); code != test.exit {
 				t.Fatalf("exit %d want %d: %s", code, test.exit, out.String())
 			}
-			var report previewRouteReport
+			var report main.PreviewRouteReport
 			if err := json.Unmarshal(out.Bytes(), &report); err != nil {
 				t.Fatal(err)
 			}
@@ -138,7 +139,7 @@ func TestPreviewCoverageCLIUsesCandidateInventoryAndReadOnlyGate(t *testing.T) {
 			if test.status == "violated" || test.candidateMissing || test.serverBasePath {
 				found := false
 				for _, review := range report.ReviewPriorities {
-					if review.Scope == "route_coverage" || containsString(review.Reasons, "declared_requirement_violated") {
+					if review.Scope == "route_coverage" || main.ContainsString(review.Reasons, "declared_requirement_violated") {
 						found = true
 					}
 				}
@@ -151,8 +152,8 @@ func TestPreviewCoverageCLIUsesCandidateInventoryAndReadOnlyGate(t *testing.T) {
 }
 
 func TestPreviewCoveragePlannerRejectsV2BeforeNetwork(t *testing.T) {
-	resetJSONOut(t)
-	setPreviewTestAuth(t)
+	main.ResetJSONOut(t)
+	main.SetPreviewTestAuth(t)
 	path := filepath.Join(t.TempDir(), "coverage.yaml")
 	if err := os.WriteFile(path, []byte(previewCoverageConfig), 0o600); err != nil {
 		t.Fatal(err)
@@ -161,7 +162,7 @@ func TestPreviewCoveragePlannerRejectsV2BeforeNetwork(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls++; http.NotFound(w, r) }))
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
-	if code := cmdRoutes([]string{"plan", "pr-42-api", "--requirements", path}); code != 1 || calls != 0 {
+	if code := main.CmdRoutes([]string{"plan", "pr-42-api", "--requirements", path}); code != 1 || calls != 0 {
 		t.Fatalf("planner admitted preview-only config: exit=%d calls=%d", code, calls)
 	}
 }
@@ -172,13 +173,13 @@ func TestPreviewCoverageGroupReviewAndRendering(t *testing.T) {
 		t.Fatal(err)
 	}
 	result := routerequirements.EvaluatePreview(config, "digest", routerequirements.Context{}, routerequirements.CoverageInventory{Status: "available", Source: "captured_candidate_contract", Routes: []routerequirements.CapturedRoute{{Method: "GET", Path: "/health"}}})
-	report := previewRouteReport{Outcome: "policy_violations", Requirements: &result}
-	prioritizePreviewRouteReview(&report)
+	report := main.PreviewRouteReport{Outcome: "policy_violations", Requirements: &result}
+	main.PrioritizePreviewRouteReview(&report)
 	if len(report.ReviewPriorities) != 1 || report.ReviewPriorities[0].Priority != "blocker" || report.ReviewPriorities[0].Reasons[0] != "group_no_routes" {
 		t.Fatal(report.ReviewPriorities)
 	}
 	var out bytes.Buffer
-	renderPreviewRequirements(&out, &result, true)
+	main.RenderPreviewRequirements(&out, &result, true)
 	if strings.Contains(out.String(), "<script>") || strings.Contains(out.String(), "secret-") || !strings.Contains(out.String(), "group_no_routes") || !strings.Contains(out.String(), "public_exception") {
 		t.Fatal(out.String())
 	}
@@ -190,9 +191,9 @@ func TestPreviewCoveragePassingSamplesCannotEraseFamilyViolation(t *testing.T) {
 		t.Fatal(err)
 	}
 	result := routerequirements.EvaluatePreview(config, "digest", routerequirements.Context{App: api.AppResponse{ConsumerAuthMode: "required", RequestTimeoutS: 2, EffectiveLimits: api.AppEffectiveLimits{RequestBudgetMS: 10000, RequestBudgetMaxMS: 20000}}}, routerequirements.CoverageInventory{Status: "available", Source: "captured_candidate_contract", Routes: []routerequirements.CapturedRoute{{Method: "POST", Path: "/orders/{id}"}, {Method: "GET", Path: "/health"}}})
-	report := previewRouteReport{Outcome: "policy_violations", Requirements: &result, Routes: []previewReportRoute{{Method: "POST", Path: "/orders/{id}", RouteSource: "captured_deployment_contract", TestProfiles: []previewReportTest{{Passed: 1}}}}}
-	prioritizePreviewRouteReview(&report)
-	if len(report.ReviewPriorities) != 1 || report.ReviewPriorities[0].Priority != "blocker" || report.ReviewPriorities[0].CandidateChecks != "passed_samples" || !containsString(report.ReviewPriorities[0].Reasons, "declared_requirement_violated") {
+	report := main.PreviewRouteReport{Outcome: "policy_violations", Requirements: &result, Routes: []main.PreviewReportRoute{{Method: "POST", Path: "/orders/{id}", RouteSource: "captured_deployment_contract", TestProfiles: []main.PreviewReportTest{{Passed: 1}}}}}
+	main.PrioritizePreviewRouteReview(&report)
+	if len(report.ReviewPriorities) != 1 || report.ReviewPriorities[0].Priority != "blocker" || report.ReviewPriorities[0].CandidateChecks != "passed_samples" || !main.ContainsString(report.ReviewPriorities[0].Reasons, "declared_requirement_violated") {
 		t.Fatal(report.ReviewPriorities)
 	}
 }

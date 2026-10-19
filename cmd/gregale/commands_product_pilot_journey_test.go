@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"crypto/sha256"
@@ -11,20 +11,21 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-func addProductPilotJourneys(t *testing.T, f *productPilotFixture, m *api.ProductPilotManifest, c productCommand) {
+func addProductPilotJourneys(t *testing.T, f *main.ProductPilotFixture, m *api.ProductPilotManifest, c main.ProductCommand) {
 	t.Helper()
 	addProductPilotHelp(t, f, m)
 	for i, item := range m.Cases {
 		help := m.HelpCases[i]
-		start := f.help[help.RequestID].CreatedAt.Add(-6 * time.Minute)
+		start := (*f.Help())[help.RequestID].CreatedAt.Add(-6 * time.Minute)
 		j := api.ProductPilotJourney{Name: item.Name + "-journey", TenantID: item.TenantID, OperationID: item.OperationID, HelpRequestID: help.RequestID, StartedAt: start}
 		for n, stage := range []string{"sign_in", "paid_feature", "usage", "plan_change", "help_request", "owner_response"} {
 			path := item.Name + "-" + stage + ".json"
 			data := []byte(`{"fixture":"PRIVATE_ARTIFACT_CONTENT","stage":"` + stage + `"}`)
-			if err := os.WriteFile(filepath.Join(filepath.Dir(c.file), path), data, 0600); err != nil {
+			if err := os.WriteFile(filepath.Join(filepath.Dir((*c.File())), path), data, 0600); err != nil {
 				t.Fatal(err)
 			}
 			hash := sha256.Sum256(data)
@@ -35,16 +36,16 @@ func addProductPilotJourneys(t *testing.T, f *productPilotFixture, m *api.Produc
 }
 
 func TestProductPilotJourneysMeasuredWithoutQualification(t *testing.T) {
-	f, m, c := newProductPilotFixture(t)
+	f, m, c := main.NewProductPilotFixture(t)
 	addProductPilotJourneys(t, f, &m, c)
 	j := &m.Journeys[0]
 	blocked := j.Steps[1]
 	blocked.Outcome = "blocked"
 	blocked.ObservedAt = j.StartedAt.Add(75 * time.Second)
 	j.Steps = append(j.Steps[:1], append([]api.ProductPilotJourneyStep{blocked}, j.Steps[1:]...)...)
-	saveProductPilot(t, c.file, m)
-	r, err := verifyProductPilot(t.Context(), f, c)
-	if err != nil || r.JourneyState != "recorded" || r.QualificationState != "unverified" || len(r.Journeys) != 3 || productReportExit(r) != 0 {
+	main.SaveProductPilot(t, (*c.File()), m)
+	r, err := main.VerifyProductPilot(t.Context(), f, c)
+	if err != nil || r.JourneyState != "recorded" || r.QualificationState != "unverified" || len(r.Journeys) != 3 || main.ProductReportExit(r) != 0 {
 		t.Fatalf("journeys: %+v %v", r, err)
 	}
 	first := r.Journeys[0]
@@ -65,7 +66,7 @@ func TestProductPilotJourneysMeasuredWithoutQualification(t *testing.T) {
 func TestProductPilotJourneyIncompleteAndChangedArtifacts(t *testing.T) {
 	for _, name := range []string{"missing customer", "missing stage", "no response", "changed artifact", "future observation"} {
 		t.Run(name, func(t *testing.T) {
-			f, m, c := newProductPilotFixture(t)
+			f, m, c := main.NewProductPilotFixture(t)
 			addProductPilotJourneys(t, f, &m, c)
 			switch name {
 			case "missing customer":
@@ -74,31 +75,31 @@ func TestProductPilotJourneyIncompleteAndChangedArtifacts(t *testing.T) {
 				m.Journeys[0].Steps = m.Journeys[0].Steps[:5]
 			case "no response":
 				id := m.HelpCases[0].RequestID
-				value := f.help[id]
+				value := (*f.Help())[id]
 				value.Response = ""
 				value.Status, value.Version, value.UpdatedAt = "open", 1, value.CreatedAt
-				f.help[id] = value
+				(*f.Help())[id] = value
 				m.HelpCases[0].ExpectedStatus, m.HelpCases[0].ExpectedVersion = "open", 1
-				m.HelpCases[0].ResponseSHA256 = emptyPilotTextSHA256()
+				m.HelpCases[0].ResponseSHA256 = main.EmptyPilotTextSHA256()
 			case "changed artifact":
-				path := filepath.Join(filepath.Dir(c.file), m.Journeys[0].Steps[0].EvidenceFile)
+				path := filepath.Join(filepath.Dir((*c.File())), m.Journeys[0].Steps[0].EvidenceFile)
 				if err := os.WriteFile(path, []byte("changed"), 0600); err != nil {
 					t.Fatal(err)
 				}
 			case "future observation":
 				m.Journeys[0].Steps[5].ObservedAt = time.Now().Add(time.Hour)
 			}
-			saveProductPilot(t, c.file, m)
-			r, err := verifyProductPilot(t.Context(), f, c)
+			main.SaveProductPilot(t, (*c.File()), m)
+			r, err := main.VerifyProductPilot(t.Context(), f, c)
 			if name == "future observation" {
 				if err == nil {
 					t.Fatal("future observation accepted")
 				}
 			} else if name == "changed artifact" {
-				if err != nil || r.JourneyState != "blocked" || productReportExit(r) != 1 {
+				if err != nil || r.JourneyState != "blocked" || main.ProductReportExit(r) != 1 {
 					t.Fatalf("changed artifact accepted: %+v %v", r, err)
 				}
-			} else if err != nil || r.JourneyState != "incomplete" || productReportExit(r) != 3 {
+			} else if err != nil || r.JourneyState != "incomplete" || main.ProductReportExit(r) != 3 {
 				t.Fatalf("partial journey claimed completion: %+v %v", r, err)
 			}
 		})
@@ -108,7 +109,7 @@ func TestProductPilotJourneyIncompleteAndChangedArtifacts(t *testing.T) {
 func TestProductPilotJourneyReferencesRejectBeforeReads(t *testing.T) {
 	for _, name := range []string{"foreign customer", "foreign help", "foreign run", "duplicate customer", "time order", "unknown stage", "path", "hash", "step bound"} {
 		t.Run(name, func(t *testing.T) {
-			f, m, c := newProductPilotFixture(t)
+			f, m, c := main.NewProductPilotFixture(t)
 			addProductPilotJourneys(t, f, &m, c)
 			switch name {
 			case "foreign customer":
@@ -133,8 +134,8 @@ func TestProductPilotJourneyReferencesRejectBeforeReads(t *testing.T) {
 					m.Journeys[0].Steps = append(m.Journeys[0].Steps, m.Journeys[0].Steps[5])
 				}
 			}
-			saveProductPilot(t, c.file, m)
-			if _, err := verifyProductPilot(t.Context(), f, c); err == nil || f.reads != 0 {
+			main.SaveProductPilot(t, (*c.File()), m)
+			if _, err := main.VerifyProductPilot(t.Context(), f, c); err == nil || (*f.Reads()) != 0 {
 				t.Fatal("invalid journey reached the API")
 			}
 		})
@@ -144,9 +145,9 @@ func TestProductPilotJourneyReferencesRejectBeforeReads(t *testing.T) {
 func TestProductPilotJourneyEvidenceCannotEscapeOrReadSpecialFiles(t *testing.T) {
 	for _, name := range []string{"symlink", "directory", "empty", "oversize"} {
 		t.Run(name, func(t *testing.T) {
-			f, m, c := newProductPilotFixture(t)
+			f, m, c := main.NewProductPilotFixture(t)
 			addProductPilotJourneys(t, f, &m, c)
-			path := filepath.Join(filepath.Dir(c.file), m.Journeys[0].Steps[0].EvidenceFile)
+			path := filepath.Join(filepath.Dir((*c.File())), m.Journeys[0].Steps[0].EvidenceFile)
 			if err := os.Remove(path); err != nil {
 				t.Fatal(err)
 			}
@@ -177,8 +178,8 @@ func TestProductPilotJourneyEvidenceCannotEscapeOrReadSpecialFiles(t *testing.T)
 					t.Fatal(err)
 				}
 			}
-			saveProductPilot(t, c.file, m)
-			if _, err := verifyProductPilot(t.Context(), f, c); err == nil {
+			main.SaveProductPilot(t, (*c.File()), m)
+			if _, err := main.VerifyProductPilot(t.Context(), f, c); err == nil {
 				t.Fatal("unsafe evidence file accepted")
 			}
 		})

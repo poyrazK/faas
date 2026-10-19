@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -6,36 +6,37 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func TestMCPReadinessPagerDutyCLI(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	t.Setenv("PAGERDUTY_TEST_KEY", strings.Repeat("a", 32))
-	f := authedFakeAPI(t, `{"version":1,"enabled":true,"integration_key_masked":"***"}`, http.StatusOK)
+	f := main.AuthedFakeAPI(t, `{"version":1,"enabled":true,"integration_key_masked":"***"}`, http.StatusOK)
 	id := "00000000-0000-0000-0000-000000000001"
 	base := []string{"--app", "demo", "--rule", id}
-	if code := cmdMCPReadiness(append([]string{"pagerduty", "get"}, base...)); code != 0 || f.sawMethod != "GET" || f.sawPath != "/v1/apps/demo/alerts/"+id+"/mcp-readiness-pagerduty" {
-		t.Fatal(code, f.sawPath)
+	if code := main.CmdMCPReadiness(append([]string{"pagerduty", "get"}, base...)); code != 0 || (*f.SawMethod()) != "GET" || (*f.SawPath()) != "/v1/apps/demo/alerts/"+id+"/mcp-readiness-pagerduty" {
+		t.Fatal(code, (*f.SawPath()))
 	}
 	args := append(append([]string{"set"}, base...), "--expected-version", "0", "--key-env", "PAGERDUTY_TEST_KEY", "--region", "eu")
-	if code := cmdMCPReadinessPagerDuty(args); code != 0 || f.sawMethod != "PUT" {
+	if code := main.CmdMCPReadinessPagerDuty(args); code != 0 || (*f.SawMethod()) != "PUT" {
 		t.Fatal(code)
 	}
 	var req api.SetMCPReadinessPagerDutyRequest
-	if e := json.Unmarshal(f.sawBody, &req); e != nil || req.ExpectedVersion == nil || *req.ExpectedVersion != 0 || req.Enabled == nil || !*req.Enabled || req.IntegrationKey != strings.Repeat("a", 32) || req.Region != "eu" {
+	if e := json.Unmarshal((*f.SawBody()), &req); e != nil || req.ExpectedVersion == nil || *req.ExpectedVersion != 0 || req.Enabled == nil || !*req.Enabled || req.IntegrationKey != strings.Repeat("a", 32) || req.Region != "eu" {
 		t.Fatal(req, e)
 	}
-	if code := cmdMCPReadinessPagerDuty(append(append([]string{"disable"}, base...), "--expected-version", "1")); code != 0 {
+	if code := main.CmdMCPReadinessPagerDuty(append(append([]string{"disable"}, base...), "--expected-version", "1")); code != 0 {
 		t.Fatal(code)
 	}
 	req = api.SetMCPReadinessPagerDutyRequest{}
-	if e := json.Unmarshal(f.sawBody, &req); e != nil || req.Enabled == nil || *req.Enabled || req.IntegrationKey != "" {
+	if e := json.Unmarshal((*f.SawBody()), &req); e != nil || req.Enabled == nil || *req.Enabled || req.IntegrationKey != "" {
 		t.Fatal(req, e)
 	}
 	for _, suffix := range [][]string{{"get", "--region", "eu"}, {"disable", "--expected-version", "1", "--region", "us"}, {"set", "--expected-version", "0", "--key-env", "PAGERDUTY_TEST_KEY", "--region", "ap"}, {"get", "--expected-version", "0"}, {"disable"}, {"set", "--expected-version", "0"}, {"set", "--expected-version", "0", "--key-env", "MISSING_KEY"}, {"disable", "--expected-version", "0", "--key-env", "PAGERDUTY_TEST_KEY"}} {
-		f.sawMethod = ""
-		if code := cmdMCPReadinessPagerDuty(append(suffix, base...)); code == 0 || f.sawMethod != "" {
+		(*f.SawMethod()) = ""
+		if code := main.CmdMCPReadinessPagerDuty(append(suffix, base...)); code == 0 || (*f.SawMethod()) != "" {
 			t.Fatal("invalid reached API", suffix)
 		}
 	}

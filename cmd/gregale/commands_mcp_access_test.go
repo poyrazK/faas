@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"context"
@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/mcphosting"
 )
@@ -21,7 +22,7 @@ func accessTestConfig() mcphosting.Config {
 }
 
 func accessTestRule(cfg mcphosting.Config) api.EdgeRuleResponse {
-	action, _ := json.Marshal(mcpExpectedGatewayAction(cfg, []string{"RS256", "ES256"}))
+	action, _ := json.Marshal(main.McpExpectedGatewayAction(cfg, []string{"RS256", "ES256"}))
 	return api.EdgeRuleResponse{ID: "managed", AppID: "app-id", MatchHost: "my-mcp.example", MatchPath: "/**", Kind: "jwt", Enabled: true, Mode: "enforce", Action: action}
 }
 
@@ -31,7 +32,7 @@ func TestMCPAccessAuditStoredGatewayDrift(t *testing.T) {
 			cfg := accessTestConfig()
 			rule := accessTestRule(cfg)
 			rules := []api.EdgeRuleResponse{rule}
-			options := mcpAccessAuditOptions{AuthPlacement: "gateway", Algorithms: []string{"RS256", "ES256"}}
+			options := main.McpAccessAuditOptions{AuthPlacement: "gateway", Algorithms: []string{"RS256", "ES256"}}
 			var action api.EdgeRuleJWTAction
 			_ = json.Unmarshal(rule.Action, &action)
 			switch scenario {
@@ -105,12 +106,12 @@ func TestMCPAccessAuditStoredGatewayDrift(t *testing.T) {
 			case "wrong resource":
 				cfg.Auth.Resource = "https://other.example/mcp"
 			case "guest-only":
-				options = mcpAccessAuditOptions{AuthPlacement: "guest-only"}
+				options = main.McpAccessAuditOptions{AuthPlacement: "guest-only"}
 				rules = nil
 			case "guest-only conflict":
-				options = mcpAccessAuditOptions{AuthPlacement: "guest-only"}
+				options = main.McpAccessAuditOptions{AuthPlacement: "guest-only"}
 			case "guest-only inactive":
-				options = mcpAccessAuditOptions{AuthPlacement: "guest-only"}
+				options = main.McpAccessAuditOptions{AuthPlacement: "guest-only"}
 				rules[0].Enabled = false
 			}
 			if len(rules) > 0 && scenario != "invalid action" && scenario != "unsupported action" {
@@ -137,16 +138,16 @@ func TestMCPAccessAuditStoredGatewayDrift(t *testing.T) {
 						_, _ = w.Write([]byte("PRIVATE_RESPONSE_SENTINEL"))
 						return
 					}
-					writeJSONTest(w, api.AppResponse{ID: "app-id", Slug: "my-mcp", URL: "https://my-mcp.example"})
+					main.WriteJSONTest(w, api.AppResponse{ID: "app-id", Slug: "my-mcp", URL: "https://my-mcp.example"})
 				case "/v1/apps/my-mcp/policy/status":
-					writeJSONTest(w, api.RuntimePolicyStatusResponse{AppID: "app-id", EdgeRules: api.RuntimePolicyComponentStatus{Scope: "account", DesiredRevision: 1, State: "active", ServingGateways: 1, AppliedGateways: 1}})
+					main.WriteJSONTest(w, api.RuntimePolicyStatusResponse{AppID: "app-id", EdgeRules: api.RuntimePolicyComponentStatus{Scope: "account", DesiredRevision: 1, State: "active", ServingGateways: 1, AppliedGateways: 1}})
 				case "/v1/edge-rules":
 					if scenario == "permission denied" {
 						w.WriteHeader(403)
 						_, _ = w.Write([]byte("PRIVATE_RESPONSE_SENTINEL"))
 						return
 					}
-					writeJSONTest(w, rules)
+					main.WriteJSONTest(w, rules)
 				default:
 					endpoint.Add(1)
 					t.Errorf("unexpected request %s", r.URL.Path)
@@ -158,7 +159,7 @@ func TestMCPAccessAuditStoredGatewayDrift(t *testing.T) {
 			// behavior is covered by TestMCPAccessConvergence separately.
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
-			report := collectMCPAccessAudit(ctx, NewClient(server.URL, "OPERATOR_TOKEN_SENTINEL"), "my-mcp", cfg, nil, options)
+			report := main.CollectMCPAccessAudit(ctx, main.NewClient(server.URL, "OPERATOR_TOKEN_SENTINEL"), "my-mcp", cfg, nil, options)
 			healthy := scenario == "healthy" || scenario == "tagged API action" || scenario == "reordered" || scenario == "later jwt" || scenario == "other host" || scenario == "guest-only" || scenario == "guest-only inactive"
 			if report.OK != healthy || report.RuntimeVerified || report.RolesRequested || writes.Load() != 0 || endpoint.Load() != 0 {
 				t.Fatalf("audit %s: %+v, writes=%d endpoint=%d", scenario, report, writes.Load(), endpoint.Load())
@@ -183,7 +184,7 @@ func TestMCPAccessAuditStoredGatewayDrift(t *testing.T) {
 	}
 }
 
-func accessHasCheck(report mcpAccessAuditReport, name, status string) bool {
+func accessHasCheck(report main.McpAccessAuditReport, name, status string) bool {
 	for _, check := range report.Checks {
 		if check.Name == name && check.Status == status {
 			return true
@@ -206,21 +207,21 @@ func TestMCPAccessAuditRoleStructureWithoutCredentials(t *testing.T) {
 	}
 	t.Setenv("_UNSET_READER_TOKEN", "")
 	t.Setenv("unset_scope_token", "")
-	roles, err := loadMCPReleasePolicyWithTokens(path, false)
-	if err != nil || len(roles) != 1 || roles[0].token != "" || roles[0].Authorization.insufficientToken != "" {
+	roles, err := main.LoadMCPReleasePolicyWithTokens(path, false)
+	if err != nil || len(roles) != 1 || (*roles[0].Token()) != "" || (*roles[0].Authorization.InsufficientToken()) != "" {
 		t.Fatalf("tokenless load failed: %v", err)
 	}
 	cfg := accessTestConfig()
 	cfg.Auth.ResourceScopes = mcphosting.ScopePolicy{"file:///reports/{id}": []string{"mcp:read"}}
 	cfg.Auth.PromptScopes = mcphosting.ScopePolicy{"summary": []string{}}
-	if !mcpAuthorizationChecksPassed(mcpAccessSourceChecks(cfg, roles)) {
+	if !main.McpAuthorizationChecksPassed(main.McpAccessSourceChecks(cfg, roles)) {
 		t.Fatal("consistent role structure rejected")
 	}
 	cfg.Auth.ToolScopes = mcphosting.ScopePolicy{}
-	if mcpAuthorizationChecksPassed(mcpAccessSourceChecks(cfg, roles)) {
+	if main.McpAuthorizationChecksPassed(main.McpAccessSourceChecks(cfg, roles)) {
 		t.Fatal("deny-all source admitted visible role tools")
 	}
-	if _, err := loadMCPReleasePolicy(path); err == nil {
+	if _, err := main.LoadMCPReleasePolicy(path); err == nil {
 		t.Fatal("live loader bypassed missing credentials")
 	}
 }
@@ -228,7 +229,7 @@ func TestMCPAccessAuditRoleStructureWithoutCredentials(t *testing.T) {
 func TestMCPAccessAuditDeadlineAndInvalidFlags(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/v1/apps/my-mcp" {
-			writeJSONTest(w, api.AppResponse{ID: "app-id", Slug: "my-mcp", URL: "https://my-mcp.example"})
+			main.WriteJSONTest(w, api.AppResponse{ID: "app-id", Slug: "my-mcp", URL: "https://my-mcp.example"})
 			return
 		}
 		<-r.Context().Done()
@@ -236,21 +237,21 @@ func TestMCPAccessAuditDeadlineAndInvalidFlags(t *testing.T) {
 	defer server.Close()
 	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
 	defer cancel()
-	report := collectMCPAccessAudit(ctx, NewClient(server.URL, "token"), "my-mcp", accessTestConfig(), nil, mcpAccessAuditOptions{AuthPlacement: "gateway"})
+	report := main.CollectMCPAccessAudit(ctx, main.NewClient(server.URL, "token"), "my-mcp", accessTestConfig(), nil, main.McpAccessAuditOptions{AuthPlacement: "gateway"})
 	if report.OK || !accessHasCheck(report, "account_gateway_rules", "unknown") {
 		t.Fatal("deadline certified missing rules")
 	}
-	_, _, restore := swapIO(t)
+	_, _, restore := main.SwapIO(t)
 	defer restore()
 	for _, args := range [][]string{{"access"}, {"access", "audit"}, {"access", "audit", "--app", "my-mcp", "--auth-placement", "guest-only", "--algorithms", "RS256"}, {"access", "audit", "--app", "my-mcp", "--auth-placement", "gateway", "--timeout", "0"}, {"access", "audit", "--app", "my-mcp", "--auth-placement", "gateway", "--path", "/nonexistent"}} {
-		if cmdMCP(args) == 0 {
+		if main.CmdMCP(args) == 0 {
 			t.Fatal(args)
 		}
 	}
-	if _, err := newMCPAccessAuditOptions("", "RS256"); err == nil {
+	if _, err := main.NewMCPAccessAuditOptions("", "RS256"); err == nil {
 		t.Fatal("algorithm flag silently enabled no gate")
 	}
-	if _, err := newMCPAccessAuditOptions("gateway", "HS256"); err == nil {
+	if _, err := main.NewMCPAccessAuditOptions("gateway", "HS256"); err == nil {
 		t.Fatal("unsupported starter algorithm accepted")
 	}
 }
@@ -267,8 +268,8 @@ func TestMCPAccessAuditReleasePlanFingerprint(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	plan := mcpNativeReleasePlan{WebApp: "web-app", WebPath: web, WorkerApp: "worker-app", WorkerPath: worker, ObserverApp: "observer-app", ObserverMetricApp: "worker-app", TimeoutSeconds: 300}
-	original, err := mcpNativeFingerprint(plan)
+	plan := main.McpNativeReleasePlan{WebApp: "web-app", WebPath: web, WorkerApp: "worker-app", WorkerPath: worker, ObserverApp: "observer-app", ObserverMetricApp: "worker-app", TimeoutSeconds: 300}
+	original, err := main.McpNativeFingerprint(plan)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -276,26 +277,26 @@ func TestMCPAccessAuditReleasePlanFingerprint(t *testing.T) {
 	if strings.Contains(string(encoded), "access_audit") {
 		t.Fatal("legacy plan serialization changed")
 	}
-	plan.AccessAudit = &mcpAccessAuditOptions{AuthPlacement: "gateway"}
+	plan.AccessAudit = &main.McpAccessAuditOptions{AuthPlacement: "gateway"}
 	path := filepath.Join(dir, "release.json")
 	encoded, _ = json.Marshal(plan)
 	if err := os.WriteFile(path, encoded, 0600); err != nil {
 		t.Fatal(err)
 	}
-	loaded, err := readMCPNativePlan(path)
+	loaded, err := main.ReadMCPNativePlan(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(loaded.AccessAudit.Algorithms) != 2 {
 		t.Fatal("gateway default algorithms missing")
 	}
-	guarded, err := mcpNativeFingerprint(loaded)
+	guarded, err := main.McpNativeFingerprint(loaded)
 	if err != nil || guarded == original {
 		t.Fatal("audit declaration omitted from release fingerprint")
 	}
 	loaded.AccessAudit.AuthPlacement = "guest-only"
 	loaded.AccessAudit.Algorithms = nil
-	changed, err := mcpNativeFingerprint(loaded)
+	changed, err := main.McpNativeFingerprint(loaded)
 	if err != nil || changed == guarded {
 		t.Fatal("auth placement change did not invalidate review identity")
 	}
@@ -304,7 +305,7 @@ func TestMCPAccessAuditReleasePlanFingerprint(t *testing.T) {
 	if err := os.WriteFile(path, encoded, 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := readMCPNativePlan(path); err == nil {
+	if _, err := main.ReadMCPNativePlan(path); err == nil {
 		t.Fatal("invalid guest algorithm plan accepted")
 	}
 }

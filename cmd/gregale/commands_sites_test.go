@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"context"
@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -19,14 +20,14 @@ func TestStaticHostingManifestRejectsLinks(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte("<html>ok</html>"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	manifest, err := staticHostingManifest(dir, true)
+	manifest, err := main.StaticHostingManifest(dir, true)
 	if err != nil || len(manifest.Files) != 1 || !manifest.SPAFallback {
 		t.Fatalf("manifest %+v %v", manifest, err)
 	}
 	if err := os.Symlink("index.html", filepath.Join(dir, "linked.html")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := staticHostingManifest(dir, false); err == nil {
+	if _, err := main.StaticHostingManifest(dir, false); err == nil {
 		t.Fatal("accepted symlink")
 	}
 }
@@ -52,7 +53,7 @@ func TestHostingUploadDoesNotForwardPlatformCredentialsOrRedirect(t *testing.T) 
 	}
 	client := server.Client()
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	err := uploadHostingFile(context.Background(), client, path, api.HostingFile{Path: "index.html", Size: 4, ContentType: "text/html"}, api.HostingUpload{URL: server.URL + "?secret=must-not-print"})
+	err := main.UploadHostingFile(context.Background(), client, path, api.HostingFile{Path: "index.html", Size: 4, ContentType: "text/html"}, api.HostingUpload{URL: server.URL + "?secret=must-not-print"})
 	if err == nil || redirected || strings.Contains(err.Error(), "must-not-print") {
 		t.Fatalf("redirect or secret exposure: %v", err)
 	}
@@ -60,7 +61,7 @@ func TestHostingUploadDoesNotForwardPlatformCredentialsOrRedirect(t *testing.T) 
 
 func TestSitesCommandDefaultOff(t *testing.T) {
 	t.Setenv("FAAS_FRONTEND_HOSTING_ENABLED", "")
-	if status := cmdSites([]string{"list"}); status == 0 {
+	if status := main.CmdSites([]string{"list"}); status == 0 {
 		t.Fatal("internal CLI enabled by default")
 	}
 }
@@ -79,7 +80,7 @@ func TestSitesStatusUsesAuthenticatedReadEndpoint(t *testing.T) {
 	}))
 	defer server.Close()
 	t.Setenv("FAAS_API", server.URL)
-	if code := cmdSites([]string{"status", "--site", "11111111-1111-4111-8111-111111111111"}); code != 0 || calls != 1 {
+	if code := main.CmdSites([]string{"status", "--site", "11111111-1111-4111-8111-111111111111"}); code != 0 || calls != 1 {
 		t.Fatalf("status command=%d calls=%d", code, calls)
 	}
 }
@@ -115,7 +116,7 @@ func TestSitesSuspensionUsesCurrentRevision(t *testing.T) {
 			}))
 			defer server.Close()
 			t.Setenv("FAAS_API", server.URL)
-			if code := cmdSites([]string{verb, "--site", "11111111-1111-4111-8111-111111111111"}); code != 0 || calls != 2 {
+			if code := main.CmdSites([]string{verb, "--site", "11111111-1111-4111-8111-111111111111"}); code != 0 || calls != 2 {
 				t.Fatalf("command=%d calls=%d", code, calls)
 			}
 		})
@@ -131,11 +132,11 @@ func TestStaticHostingReleaseConfiguration(t *testing.T) {
 		}
 	}
 	t.Setenv("FAAS_FRONTEND_HOSTING_CONFIG_ENABLED", "")
-	if _, err := staticHostingManifest(dir, false); err == nil {
+	if _, err := main.StaticHostingManifest(dir, false); err == nil {
 		t.Fatal("configuration enabled by default")
 	}
 	t.Setenv("FAAS_FRONTEND_HOSTING_CONFIG_ENABLED", "1")
-	m, err := staticHostingManifest(dir, false)
+	m, err := main.StaticHostingManifest(dir, false)
 	if err != nil || m.Config == nil || m.Config.NotFound != "404.html" || len(m.Files) != 2 {
 		t.Fatalf("manifest %+v %v", m, err)
 	}
@@ -147,7 +148,7 @@ func TestStaticHostingReleaseConfiguration(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "gregale-hosting.json"), []byte(`{"version":1,"not_found":"missing.html"}`), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := staticHostingManifest(dir, false); err == nil {
+	if _, err := main.StaticHostingManifest(dir, false); err == nil {
 		t.Fatal("accepted missing custom 404")
 	}
 	if err := os.Remove(filepath.Join(dir, "gregale-hosting.json")); err != nil {
@@ -156,7 +157,7 @@ func TestStaticHostingReleaseConfiguration(t *testing.T) {
 	if err := os.Symlink("index.html", filepath.Join(dir, "gregale-hosting.json")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := staticHostingManifest(dir, false); err == nil {
+	if _, err := main.StaticHostingManifest(dir, false); err == nil {
 		t.Fatal("accepted symlink config")
 	}
 }

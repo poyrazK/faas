@@ -1,8 +1,9 @@
-package main
+package main_test
 
 import (
 	"bytes"
 	"encoding/json"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"net/http"
 	"net/http/httptest"
@@ -42,27 +43,27 @@ func TestIssueTrackerLinksCLIJourney(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_test")
-	previousOut, previousJSON := osStdout, jsonOutput
+	previousOut, previousJSON := (*main.OsStdout), (*main.JsonOutput)
 	var out bytes.Buffer
-	osStdout, jsonOutput = &out, true
-	t.Cleanup(func() { osStdout, jsonOutput = previousOut, previousJSON })
+	(*main.OsStdout), (*main.JsonOutput) = &out, true
+	t.Cleanup(func() { (*main.OsStdout), (*main.JsonOutput) = previousOut, previousJSON })
 	for _, args := range [][]string{
 		{"links", "save", "--app", "payments", "--issue", issue, "--url", "https://GitHub.com/OWNER/Repo/issues/0042?x=y", "--title", "Fix checkout"},
 		{"links", "list", "--app", "payments", "--issue", issue, "--cursor", "next+/="},
 		{"links", "delete", "--app", "payments", "--issue", issue, "--link", linkID},
 	} {
 		out.Reset()
-		if cmdIssues(args) != 0 {
+		if main.CmdIssues(args) != 0 {
 			t.Fatalf("failed: %v", args)
 		}
 		if !json.Valid(out.Bytes()) {
 			t.Fatalf("invalid JSON: %s", out.String())
 		}
 	}
-	if cmdIssues([]string{"links", "save", "--app", "payments", "--issue", issue, "--url", "javascript:attack"}) == 0 {
+	if main.CmdIssues([]string{"links", "save", "--app", "payments", "--issue", issue, "--url", "javascript:attack"}) == 0 {
 		t.Fatal("unsafe URL accepted")
 	}
-	if cmdIssues([]string{"links", "list", "--app", "payments", "--issue", issue, "--title", "ignored"}) == 0 {
+	if main.CmdIssues([]string{"links", "list", "--app", "payments", "--issue", issue, "--title", "ignored"}) == 0 {
 		t.Fatal("ignored mutation flag")
 	}
 	if calls != 3 {

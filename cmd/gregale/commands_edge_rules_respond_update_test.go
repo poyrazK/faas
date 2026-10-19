@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -26,7 +27,7 @@ func TestCmdEdgeRulesUpdate_RespondAction(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	if code := cmdEdgeRulesUpdate([]string{
+	if code := main.CmdEdgeRulesUpdate([]string{
 		"--kind", "respond",
 		"--respond-status", "500",
 		"--respond-body", `{"error":"backend unavailable"}`,

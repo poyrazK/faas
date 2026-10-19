@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -34,13 +35,13 @@ func TestFinancialCLI(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
-	stdout, restore := captureStdout(t)
+	stdout, restore := main.CaptureStdout(t)
 	defer restore()
-	stderr, restoreErr := captureStderr(t)
+	stderr, restoreErr := main.CaptureStderr(t)
 	defer restoreErr()
 	for _, command := range []string{"costs", "forecast"} {
 		before := len(stdout.Bytes())
-		if code := cmdBilling([]string{command, "--month", "2026-09", "--json"}); code != 0 {
+		if code := main.CmdBilling([]string{command, "--month", "2026-09", "--json"}); code != 0 {
 			t.Fatalf("%s exit=%d stderr=%s", command, code, stderr)
 		}
 		var response map[string]json.RawMessage
@@ -49,7 +50,7 @@ func TestFinancialCLI(t *testing.T) {
 		}
 	}
 	for _, args := range [][]string{{"--month", "bad"}, {"--month", "9999-01"}, {"unexpected"}, {"--account", "other"}} {
-		if code := cmdBillingFinancial("costs", args); code == 0 {
+		if code := main.CmdBillingFinancial("costs", args); code == 0 {
 			t.Fatalf("invalid arguments accepted: %v", args)
 		}
 	}
@@ -58,10 +59,10 @@ func TestFinancialCLI(t *testing.T) {
 	}
 	fail = true
 	before := stdout.String()
-	if code := cmdBillingFinancial("costs", []string{"--month", "2026-09", "--json"}); code == 0 || stdout.String() != before {
+	if code := main.CmdBillingFinancial("costs", []string{"--month", "2026-09", "--json"}); code == 0 || stdout.String() != before {
 		t.Fatal("failed API emitted successful output")
 	}
-	if got := financialMoney(12345); got != "USD 0.12345" {
+	if got := main.FinancialMoney(12345); got != "USD 0.12345" {
 		t.Fatalf("money rendering lost precision: %s", got)
 	}
 }

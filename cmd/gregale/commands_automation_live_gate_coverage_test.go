@@ -1,8 +1,9 @@
 // adr: 1300
-package main
+package main_test
 
 import (
 	"encoding/json"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -13,12 +14,12 @@ import (
 func TestAutomationGateCoverageCLI(t *testing.T) {
 	for _, mode := range []string{"covered", "missing", "invalid", "request-error"} {
 		t.Run(mode, func(t *testing.T) {
-			resetJSONOut(t)
-			jsonOutput = true
-			out := captureAutomationStdout(t)
-			f := authedFakeAPI(t, "", http.StatusOK)
+			main.ResetJSONOut(t)
+			(*main.JsonOutput) = true
+			out := main.CaptureAutomationStdout(t)
+			f := main.AuthedFakeAPI(t, "", http.StatusOK)
 			calls := 0
-			f.srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			(*f.Srv()).Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				calls++
 				if r.Method != http.MethodGet {
 					t.Error("mutating request")
@@ -41,7 +42,7 @@ func TestAutomationGateCoverageCLI(t *testing.T) {
 				t.Fatal(err)
 			}
 			args := append(automationGateArgs(), "--policy", path)
-			code, stderr := runWithStderr(t, func() int { return run(args) })
+			code, stderr := main.RunWithStderr(t, func() int { return main.Run(args) })
 			want := map[string]int{"covered": 0, "missing": 7, "invalid": 1, "request-error": 3}[mode]
 			if code != want {
 				t.Fatalf("exit %d: %s", code, stderr)
@@ -55,7 +56,7 @@ func TestAutomationGateCoverageCLI(t *testing.T) {
 			if calls != 1 {
 				t.Fatalf("requests: %d", calls)
 			}
-			var report automationLiveGateReport
+			var report main.AutomationLiveGateReport
 			if err := json.Unmarshal([]byte(out.String()), &report); err != nil {
 				t.Fatal(err)
 			}

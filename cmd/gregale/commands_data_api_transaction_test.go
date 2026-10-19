@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -8,12 +8,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/cmd/gregale/templates"
 )
 
 func TestDataAPITransactionPackageRequiresReviewAndPreservesExistingFiles(t *testing.T) {
 	output := filepath.Join(t.TempDir(), "package")
-	if err := buildDataAPITransaction("place_order", output); err != nil {
+	if err := main.BuildDataAPITransaction("place_order", output); err != nil {
 		t.Fatal(err)
 	}
 	for _, file := range []string{"migration.sql", "fixture.sql", "client.ts", "README.md", "access-checks.json", "data-checks.json"} {
@@ -29,7 +30,7 @@ func TestDataAPITransactionPackageRequiresReviewAndPreservesExistingFiles(t *tes
 		}
 	}
 	before, _ := os.ReadFile(filepath.Join(output, "migration.sql"))
-	if err := buildDataAPITransaction("other", output); err == nil {
+	if err := main.BuildDataAPITransaction("other", output); err == nil {
 		t.Fatal("existing output replaced")
 	}
 	after, _ := os.ReadFile(filepath.Join(output, "migration.sql"))
@@ -37,12 +38,12 @@ func TestDataAPITransactionPackageRequiresReviewAndPreservesExistingFiles(t *tes
 		t.Fatal("existing migration changed")
 	}
 	for _, name := range []string{"", "pg_unsafe", "gregale_unsafe", "bad;DROP", "Upper", "../bad", strings.Repeat("a", 33)} {
-		if err := buildDataAPITransaction(name, filepath.Join(t.TempDir(), "new")); err == nil {
+		if err := main.BuildDataAPITransaction(name, filepath.Join(t.TempDir(), "new")); err == nil {
 			t.Fatalf("accepted %q", name)
 		}
 	}
 	for _, args := range [][]string{nil, {"apply"}, {"init"}, {"init", "--name", "place_order"}, {"init", "--name", "bad;DROP", "--output", output}} {
-		if cmdDataAPITransaction(args) == 0 {
+		if main.CmdDataAPITransaction(args) == 0 {
 			t.Fatalf("accepted %v", args)
 		}
 	}
@@ -52,7 +53,7 @@ func TestDataAPITransactionContracts(t *testing.T) {
 	for _, contract := range []string{"v1", "v2"} {
 		t.Run(contract, func(t *testing.T) {
 			output := filepath.Join(t.TempDir(), "package")
-			if err := buildDataAPITransactionContract("place_order", output, contract); err != nil {
+			if err := main.BuildDataAPITransactionContract("place_order", output, contract); err != nil {
 				t.Fatal(err)
 			}
 			source := "data-api/transactions/"
@@ -78,13 +79,13 @@ func TestDataAPITransactionContracts(t *testing.T) {
 					t.Fatalf("unresolved placeholder or invalid JSON: %s", file)
 				}
 			}
-			if err := buildDataAPITransactionContract("other", output, contract); err == nil {
+			if err := main.BuildDataAPITransactionContract("other", output, contract); err == nil {
 				t.Fatal("existing output replaced")
 			}
 		})
 	}
 	output := filepath.Join(t.TempDir(), "invalid")
-	if err := buildDataAPITransactionContract("place_order", output, "v3"); err == nil {
+	if err := main.BuildDataAPITransactionContract("place_order", output, "v3"); err == nil {
 		t.Fatal("unknown contract accepted")
 	}
 	if _, err := os.Stat(output); !os.IsNotExist(err) {
@@ -93,14 +94,14 @@ func TestDataAPITransactionContracts(t *testing.T) {
 }
 
 func TestDataAPITransactionV2CommandReport(t *testing.T) {
-	resetJSONOut(t)
-	jsonOutput = true
+	main.ResetJSONOut(t)
+	(*main.JsonOutput) = true
 	var output bytes.Buffer
-	previous := osStdout
-	osStdout = &output
-	t.Cleanup(func() { osStdout = previous })
+	previous := (*main.OsStdout)
+	(*main.OsStdout) = &output
+	t.Cleanup(func() { (*main.OsStdout) = previous })
 	dir := filepath.Join(t.TempDir(), "package")
-	if cmdDataAPITransaction([]string{"init", "--name", "place_order", "--output", dir, "--contract", "v2"}) != 0 {
+	if main.CmdDataAPITransaction([]string{"init", "--name", "place_order", "--output", dir, "--contract", "v2"}) != 0 {
 		t.Fatal("v2 generation failed")
 	}
 	var report map[string]any

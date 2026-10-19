@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -31,19 +32,19 @@ func configCLIServer(t *testing.T, guard api.ConfigGuard) (*[]configCLIRequest, 
 		mu.Unlock()
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/my-api/config/revisions":
-			writeJSONTest(w, api.ListConfigRevisionsResponse{Guard: &guard, Revisions: []api.ConfigRevision{
+			main.WriteJSONTest(w, api.ListConfigRevisionsResponse{Guard: &guard, Revisions: []api.ConfigRevision{
 				{Revision: 4, Source: "config.guard_restore", RestoredRevision: 2, Actor: "gregale:config-guard", CreatedAt: "2026-10-17T10:05:00Z"},
 				{Revision: 3, Source: "env.set", Key: "DATABASE_URL", Actor: "dev@example.com", CreatedAt: "2026-10-17T10:00:00Z", GuardStatus: "restored"},
 			}})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/my-api/config/guard":
-			writeJSONTest(w, guard)
+			main.WriteJSONTest(w, guard)
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/apps/my-api/config/rollback":
-			writeJSONTest(w, api.ConfigRollbackResponse{RestoredRevision: 2, Set: []string{"DATABASE_URL"}, Deleted: []string{},
+			main.WriteJSONTest(w, api.ConfigRollbackResponse{RestoredRevision: 2, Set: []string{"DATABASE_URL"}, Deleted: []string{},
 				SecretsNotRestored: []api.ConfigSecretDifference{{Key: "TOKEN", TargetVersion: 1, CurrentVersion: 2}}})
 		case r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/v1/apps/my-api/secrets/"):
-			writeJSONTest(w, map[string]string{"key": strings.TrimPrefix(r.URL.Path, "/v1/apps/my-api/secrets/")})
+			main.WriteJSONTest(w, map[string]string{"key": strings.TrimPrefix(r.URL.Path, "/v1/apps/my-api/secrets/")})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/my-api/secrets":
-			writeJSONTest(w, api.AppSecretListResponse{})
+			main.WriteJSONTest(w, api.AppSecretListResponse{})
 		default:
 			http.NotFound(w, r)
 		}
@@ -56,9 +57,9 @@ func configCLIServer(t *testing.T, guard api.ConfigGuard) (*[]configCLIRequest, 
 func captureConfigCLI(t *testing.T, run func() int) (string, int) {
 	t.Helper()
 	var stdout bytes.Buffer
-	old := osStdout
-	osStdout = &stdout
-	defer func() { osStdout = old }()
+	old := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	defer func() { (*main.OsStdout) = old }()
 	code := run()
 	return stdout.String(), code
 }
@@ -68,7 +69,7 @@ func TestEnvHistoryShowsRevisionsAndTheGuardVerdict(t *testing.T) {
 		Decision: &api.ConfigGuardDecision{Rule: "fail_first_wake_5xx", Summary: "5xx after the config change (new config 8/8, 100.0%; old config 1/120, 0.8%)"}}
 	_, done := configCLIServer(t, guard)
 	defer done()
-	out, code := captureConfigCLI(t, func() int { return cmdEnv([]string{"history", "--app", "my-api"}) })
+	out, code := captureConfigCLI(t, func() int { return main.CmdEnv([]string{"history", "--app", "my-api"}) })
 	if code != 0 {
 		t.Fatalf("env history exit = %d\n%s", code, out)
 	}
@@ -83,7 +84,7 @@ func TestEnvRollbackSendsTheRevisionAndGuardOptOut(t *testing.T) {
 	seen, done := configCLIServer(t, api.ConfigGuard{})
 	defer done()
 	out, code := captureConfigCLI(t, func() int {
-		return cmdEnv([]string{"rollback", "2", "--app", "my-api", "--scope", "staging", "--yes", "--no-guard"})
+		return main.CmdEnv([]string{"rollback", "2", "--app", "my-api", "--scope", "staging", "--yes", "--no-guard"})
 	})
 	if code != 0 {
 		t.Fatalf("env rollback exit = %d\n%s", code, out)
@@ -109,7 +110,7 @@ func TestEnvRollbackSendsTheRevisionAndGuardOptOut(t *testing.T) {
 func TestEnvRollbackRejectsABadRevision(t *testing.T) {
 	_, done := configCLIServer(t, api.ConfigGuard{})
 	defer done()
-	if _, code := captureConfigCLI(t, func() int { return cmdEnv([]string{"rollback", "zero", "--app", "my-api", "--yes"}) }); code == 0 {
+	if _, code := captureConfigCLI(t, func() int { return main.CmdEnv([]string{"rollback", "zero", "--app", "my-api", "--yes"}) }); code == 0 {
 		t.Fatal("env rollback accepted a non-numeric revision")
 	}
 }
@@ -118,12 +119,12 @@ func TestSecretsSetNoGuardAndGuardNotice(t *testing.T) {
 	guard := api.ConfigGuard{ID: "g1", Status: "watching", LastChangeAt: time.Now().UTC().Format(time.RFC3339Nano)}
 	seen, done := configCLIServer(t, guard)
 	defer done()
-	out, code := captureConfigCLI(t, func() int { return cmdSecrets([]string{"set", "--app", "my-api", "API_KEY=v1"}) })
+	out, code := captureConfigCLI(t, func() int { return main.CmdSecrets([]string{"set", "--app", "my-api", "API_KEY=v1"}) })
 	if code != 0 || !strings.Contains(out, "Config guard: if the app starts failing") {
 		t.Fatalf("secrets set exit=%d, want the guard notice:\n%s", code, out)
 	}
 	*seen = (*seen)[:0]
-	if _, code := captureConfigCLI(t, func() int { return cmdSecrets([]string{"set", "--app", "my-api", "--no-guard", "API_KEY=v2"}) }); code != 0 {
+	if _, code := captureConfigCLI(t, func() int { return main.CmdSecrets([]string{"set", "--app", "my-api", "--no-guard", "API_KEY=v2"}) }); code != 0 {
 		t.Fatalf("secrets set --no-guard exit = %d", code)
 	}
 	for _, r := range *seen {

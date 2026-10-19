@@ -1,5 +1,5 @@
 // adr: 1027 — writable canaries require explicit opt-in and matching operation evidence.
-package main
+package main_test
 
 import (
 	"bytes"
@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/bindingprobe"
 )
@@ -56,7 +57,7 @@ func TestCLIObjectStorageWriteCanaryJourney(t *testing.T) {
 					env := map[string]string{"ASSETS_ENDPOINT": storage.URL, "ASSETS_REGION": "auto", "ASSETS_BUCKET": "assets", "ASSETS_ACCESS_KEY_ID": "private-access", "ASSETS_SECRET_ACCESS_KEY": "private-secret", "ASSETS_ADDRESSING_STYLE": "path"}
 					report := bindingprobe.ObjectStorageWrite(r.Context(), request.Command[1], request.Command[2], func(k string) string { return env[k] })
 					if legacy {
-						report = passedObjectStorageCLIReport("ASSETS")
+						report = main.PassedObjectStorageCLIReport("ASSETS")
 					}
 					body, _ := json.Marshal(report)
 					_ = json.NewEncoder(w).Encode(api.AppTaskResponse{ID: "task", DeploymentID: "dep", DeploymentScope: "production", Status: api.AppTaskStatusSucceeded, ExitCode: new(int), StdoutTail: string(body)})
@@ -65,10 +66,10 @@ func TestCLIObjectStorageWriteCanaryJourney(t *testing.T) {
 				t.Setenv("FAAS_API", server.URL)
 				t.Setenv("FAAS_TOKEN", "fp_live_test")
 				var out, err bytes.Buffer
-				oldOut, oldErr, oldJSON := osStdout, osStderr, jsonOutput
-				osStdout, osStderr, jsonOutput = &out, &err, true
-				t.Cleanup(func() { osStdout, osStderr, jsonOutput = oldOut, oldErr, oldJSON })
-				code := run([]string{"bindings", "verify", "api", "--object-storage", "ASSETS", "--object-storage-write"})
+				oldOut, oldErr, oldJSON := (*main.OsStdout), (*main.OsStderr), (*main.JsonOutput)
+				(*main.OsStdout), (*main.OsStderr), (*main.JsonOutput) = &out, &err, true
+				t.Cleanup(func() { (*main.OsStdout), (*main.OsStderr), (*main.JsonOutput) = oldOut, oldErr, oldJSON })
+				code := main.Run([]string{"bindings", "verify", "api", "--object-storage", "ASSETS", "--object-storage-write"})
 				if (code == 0) != (permission != "read" && !legacy) {
 					t.Fatalf("exit=%d stdout=%s stderr=%s", code, out.String(), err.String())
 				}
@@ -85,19 +86,19 @@ func TestCLIObjectStorageWriteCanaryJourney(t *testing.T) {
 
 func TestCLIObjectStorageWriteRequiresExplicitSelection(t *testing.T) {
 	var out bytes.Buffer
-	oldErr := osStderr
-	osStderr = &out
-	t.Cleanup(func() { osStderr = oldErr })
+	oldErr := (*main.OsStderr)
+	(*main.OsStderr) = &out
+	t.Cleanup(func() { (*main.OsStderr) = oldErr })
 	for _, args := range [][]string{{"api", "--all", "--object-storage-write"}, {"api", "--object-storage-write"}, {"api", "service", "--object-storage-write"}, {"api", "--postgres", "DATABASE_URL", "--object-storage-write"}, {"api", "--outbound", "c1b76d53-ded7-4ccd-8714-bc3dcb32e9cc", "--object-storage-write"}} {
 		out.Reset()
-		if cmdBindingsVerify(args) != 1 {
+		if main.CmdBindingsVerify(args) != 1 {
 			t.Fatal("write opt-in without an object-storage binding accepted")
 		}
 		if !strings.Contains(out.String(), "usage:") {
 			t.Fatalf("invalid selection reached login or API handling: %s", out.String())
 		}
 	}
-	status, reason := bindingProbeOmission(api.AppBindingInventoryItem{Type: api.BindingTypeObjectStorage, Access: "write", Scope: "default"}, "default")
+	status, reason := main.BindingProbeOmission(api.AppBindingInventoryItem{Type: api.BindingTypeObjectStorage, Access: "write", Scope: "default"}, "default")
 	if status != "unsupported" || reason != "write_probe_requires_opt_in" {
 		t.Fatal("batch probe would attempt a forbidden list or implicit write")
 	}

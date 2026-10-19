@@ -1,9 +1,10 @@
-package main
+package main_test
 
 import (
 	"bytes"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -32,7 +33,7 @@ func TestPrintDomainDNSRecords(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var buf bytes.Buffer
-			printDomainDNSRecords(&buf, tc.resp)
+			main.PrintDomainDNSRecords(&buf, tc.resp)
 			if buf.String() != tc.want {
 				t.Fatalf("output:\n%s\nwant:\n%s", buf.String(), tc.want)
 			}

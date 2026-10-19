@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -34,17 +35,17 @@ func runRoutePriorityCLI(t *testing.T, args ...string) (int, string, []routePrio
 			resp.Source, resp.Routes = api.RoutePrioritySourceConfigured, call.body.Routes
 		}
 		calls = append(calls, call)
-		writeJSONTest(w, resp)
+		main.WriteJSONTest(w, resp)
 	}))
 	t.Cleanup(server.Close)
-	resetJSONOut(t)
-	setPreviewTestAuth(t)
+	main.ResetJSONOut(t)
+	main.SetPreviewTestAuth(t)
 	t.Setenv("FAAS_API", server.URL)
 	var output bytes.Buffer
-	old := osStdout
-	osStdout = &output
-	t.Cleanup(func() { osStdout = old })
-	code := run(append([]string{"routes", "priority"}, args...))
+	old := (*main.OsStdout)
+	(*main.OsStdout) = &output
+	t.Cleanup(func() { (*main.OsStdout) = old })
+	code := main.Run(append([]string{"routes", "priority"}, args...))
 	return code, output.String(), calls
 }
 

@@ -1,7 +1,8 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"net/http"
 	"net/http/httptest"
@@ -45,7 +46,7 @@ func TestBindingAutomaticDiagnosticsCLI(t *testing.T) {
 				if !plain {
 					args = append(args, "--json")
 				}
-				code, stdout, stderr := captureBindingCLI(t, server.URL, args...)
+				code, stdout, stderr := main.CaptureBindingCLI(t, server.URL, args...)
 				if code != 1 || reads != 1 || resumes != 1 {
 					t.Fatalf("failure routing: code=%d reads=%d resumes=%d %s %s", code, reads, resumes, stdout, stderr)
 				}

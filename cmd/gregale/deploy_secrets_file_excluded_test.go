@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"archive/tar"
@@ -14,6 +14,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -31,13 +32,13 @@ func TestDeploySecretsFileStaysOutOfSourceArchive(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	withCwd(t, repo)
+	main.WithCwd(t, repo)
 	secretsPath := filepath.Join(repo, ".env.prod")
 	if err := os.WriteFile(secretsPath, []byte("H10_TOKEN=4f1c9a7e22b06d38\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	var archived []string
-	stub := newZeroConfigStubServer(t, func(w http.ResponseWriter, r *http.Request, _ *zeroConfigStubServer) {
+	stub := main.NewZeroConfigStubServer(t, func(w http.ResponseWriter, r *http.Request, _ *main.ZeroConfigStubServer) {
 		switch {
 		case r.URL.Path == "/v1/apps" && r.Method == http.MethodPost:
 			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "a1", Slug: "demo-secrets"})
@@ -50,10 +51,10 @@ func TestDeploySecretsFileStaysOutOfSourceArchive(t *testing.T) {
 			http.Error(w, "no", http.StatusNotFound)
 		}
 	})
-	t.Setenv("FAAS_API", stub.srv.URL)
+	t.Setenv("FAAS_API", (*stub.Srv()).URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	if code := cmdDeployTarball([]string{"--name", "demo-secrets", "--secrets-file", secretsPath, "--no-wait"}); code != 0 {
+	if code := main.CmdDeployTarball([]string{"--name", "demo-secrets", "--secrets-file", secretsPath, "--no-wait"}); code != 0 {
 		t.Fatalf("deploy exit = %d, want 0", code)
 	}
 	if len(archived) == 0 {

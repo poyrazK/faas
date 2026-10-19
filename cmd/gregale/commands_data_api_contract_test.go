@@ -1,7 +1,8 @@
-package main
+package main_test
 
 import (
 	"context"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -48,7 +49,7 @@ func TestDataAPIServingContract(t *testing.T) {
 				if scenario == "version" {
 					version = 2
 				}
-				writeJSONTest(w, map[string]any{"version": version, "ready": ready, "fingerprint": fingerprint})
+				main.WriteJSONTest(w, map[string]any{"version": version, "ready": ready, "fingerprint": fingerprint})
 			}))
 			defer server.Close()
 			original := http.DefaultTransport
@@ -61,7 +62,7 @@ func TestDataAPIServingContract(t *testing.T) {
 				ctx, cancel = context.WithTimeout(context.Background(), 100*time.Millisecond)
 				defer cancel()
 			}
-			err := verifyDataAPIServingContract(ctx, server.URL+"/healthz", "secret.token.sentinel", strings.Repeat("a", 64))
+			err := main.VerifyDataAPIServingContract(ctx, server.URL+"/healthz", "secret.token.sentinel", strings.Repeat("a", 64))
 			if (err == nil) != (scenario == "match") {
 				t.Fatalf("unexpected contract result: %v", err)
 			}

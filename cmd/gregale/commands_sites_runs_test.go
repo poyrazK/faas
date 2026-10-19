@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/hosting/activity"
 )
@@ -28,21 +29,21 @@ func TestSitesRunsReadsOnlyTheExplicitPageWithIndependentOptIn(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(page)
 	})
 	var out bytes.Buffer
-	old := osStdout
-	osStdout = &out
-	t.Cleanup(func() { osStdout = old })
+	old := (*main.OsStdout)
+	(*main.OsStdout) = &out
+	t.Cleanup(func() { (*main.OsStdout) = old })
 	args := []string{"runs", "--site", reviewSiteID, "--before", cursor}
 	t.Setenv("FAAS_FRONTEND_HOSTING_ACTIVITY_ENABLED", "")
-	if cmdSites(args) == 0 || calls != 0 {
+	if main.CmdSites(args) == 0 || calls != 0 {
 		t.Fatal("default off")
 	}
 	t.Setenv("FAAS_FRONTEND_HOSTING_ACTIVITY_ENABLED", "1")
 	for _, invalid := range [][]string{{"runs", "--site", "bad"}, {"runs", "--site", reviewSiteID, "--before", "bad"}, {"runs", "--site", reviewSiteID, "unexpected"}} {
-		if cmdSites(invalid) == 0 || calls != 0 {
+		if main.CmdSites(invalid) == 0 || calls != 0 {
 			t.Fatal("invalid input reached API")
 		}
 	}
-	if cmdSites(args) != 0 || calls != 1 {
+	if main.CmdSites(args) != 0 || calls != 1 {
 		t.Fatal("page read", out.String())
 	}
 	var page api.HostingActivityPage
@@ -51,7 +52,7 @@ func TestSitesRunsReadsOnlyTheExplicitPageWithIndependentOptIn(t *testing.T) {
 	}
 	out.Reset()
 	badResponse = true
-	if cmdSites(args) == 0 || out.Len() != 0 {
+	if main.CmdSites(args) == 0 || out.Len() != 0 {
 		t.Fatal("foreign/partial report accepted", out.String())
 	}
 }

@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -23,8 +24,8 @@ func automaticResultFixture() api.AutomaticRouteCheck {
 func TestAutomaticRouteResultCLIExportGateAndBinding(t *testing.T) {
 	for _, scenario := range []string{"satisfied", "violated", "unknown", "stale", "pending", "running", "retrying", "foreign deployment", "foreign app", "stale pin", "false freshness", "missing check", "unrecognized state", "existing output", "symlink output"} {
 		t.Run(scenario, func(t *testing.T) {
-			resetJSONOut(t)
-			setPreviewTestAuth(t)
+			main.ResetJSONOut(t)
+			main.SetPreviewTestAuth(t)
 			result := automaticResultFixture()
 			deployment := result.DeploymentID
 			want := 1
@@ -67,13 +68,13 @@ func TestAutomaticRouteResultCLIExportGateAndBinding(t *testing.T) {
 			case "existing output", "symlink output":
 				exported = false
 			}
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { writeJSONTest(w, result) }))
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { main.WriteJSONTest(w, result) }))
 			defer server.Close()
 			t.Setenv("FAAS_API", server.URL)
 			var out bytes.Buffer
-			oldOut := osStdout
-			osStdout = &out
-			t.Cleanup(func() { osStdout = oldOut })
+			oldOut := (*main.OsStdout)
+			(*main.OsStdout) = &out
+			t.Cleanup(func() { (*main.OsStdout) = oldOut })
 			path := filepath.Join(t.TempDir(), "result.json")
 			if scenario == "existing output" || scenario == "symlink output" {
 				target := path
@@ -89,7 +90,7 @@ func TestAutomaticRouteResultCLIExportGateAndBinding(t *testing.T) {
 					}
 				}
 			}
-			code := run([]string{"routes", "results", "my-api", "--deployment", deployment, "--expected-revision", "1", "--out", path, "--fail-on-requirements", "--json"})
+			code := main.Run([]string{"routes", "results", "my-api", "--deployment", deployment, "--expected-revision", "1", "--out", path, "--fail-on-requirements", "--json"})
 			if code != want {
 				t.Fatalf("exit %d want %d; %s", code, want, out.String())
 			}
@@ -113,8 +114,8 @@ func TestAutomaticRouteResultCLIExportGateAndBinding(t *testing.T) {
 func TestAutomaticRouteResultCLIRefreshWaitAndTimeout(t *testing.T) {
 	for _, timeout := range []bool{false, true} {
 		t.Run(map[bool]string{false: "completes", true: "timeout exports pending"}[timeout], func(t *testing.T) {
-			resetJSONOut(t)
-			setPreviewTestAuth(t)
+			main.ResetJSONOut(t)
+			main.SetPreviewTestAuth(t)
 			fixture := automaticResultFixture()
 			refreshed, reads := false, 0
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -137,15 +138,15 @@ func TestAutomaticRouteResultCLIRefreshWaitAndTimeout(t *testing.T) {
 						result.Check = nil
 						result.CheckedAt = nil
 					}
-					writeJSONTest(w, result)
+					main.WriteJSONTest(w, result)
 				}
 			}))
 			defer server.Close()
 			t.Setenv("FAAS_API", server.URL)
 			var out bytes.Buffer
-			oldOut := osStdout
-			osStdout = &out
-			t.Cleanup(func() { osStdout = oldOut })
+			oldOut := (*main.OsStdout)
+			(*main.OsStdout) = &out
+			t.Cleanup(func() { (*main.OsStdout) = oldOut })
 			duration := "10s"
 			want := 0
 			if timeout {
@@ -153,7 +154,7 @@ func TestAutomaticRouteResultCLIRefreshWaitAndTimeout(t *testing.T) {
 				want = 1
 			}
 			path := filepath.Join(t.TempDir(), "latest.json")
-			code := run([]string{"routes", "results", "my-api", "--deployment", fixture.DeploymentID, "--refresh", "--wait", "--timeout", duration, "--out", path, "--fail-on-requirements", "--json"})
+			code := main.Run([]string{"routes", "results", "my-api", "--deployment", fixture.DeploymentID, "--refresh", "--wait", "--timeout", duration, "--out", path, "--fail-on-requirements", "--json"})
 			if code != want || !refreshed || reads < 1 || !timeout && reads < 2 {
 				t.Fatalf("wait: %d refresh=%v reads=%d; %s", code, refreshed, reads, out.String())
 			}

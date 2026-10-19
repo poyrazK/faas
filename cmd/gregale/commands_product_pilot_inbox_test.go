@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"crypto/sha256"
@@ -11,19 +11,20 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-func saveProductPilotEvidence(t *testing.T, c productCommand, path string, raw []byte) string {
+func saveProductPilotEvidence(t *testing.T, c main.ProductCommand, path string, raw []byte) string {
 	t.Helper()
-	if err := os.WriteFile(filepath.Join(filepath.Dir(c.file), path), raw, 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(filepath.Dir((*c.File())), path), raw, 0600); err != nil {
 		t.Fatal(err)
 	}
 	hash := sha256.Sum256(raw)
 	return hex.EncodeToString(hash[:])
 }
 
-func saveProductPilotInbox(t *testing.T, c productCommand, step *api.ProductPilotJourneyStep, page api.ProductNotificationPage) {
+func saveProductPilotInbox(t *testing.T, c main.ProductCommand, step *api.ProductPilotJourneyStep, page api.ProductNotificationPage) {
 	t.Helper()
 	raw, err := json.Marshal(page)
 	if err != nil {
@@ -32,7 +33,7 @@ func saveProductPilotInbox(t *testing.T, c productCommand, step *api.ProductPilo
 	step.EvidenceSHA256 = saveProductPilotEvidence(t, c, step.EvidenceFile, raw)
 }
 
-func addCompleteProductPilotJourneys(t *testing.T, f *productPilotFixture, m *api.ProductPilotManifest, c productCommand) []api.ProductNotificationPage {
+func addCompleteProductPilotJourneys(t *testing.T, f *main.ProductPilotFixture, m *api.ProductPilotManifest, c main.ProductCommand) []api.ProductNotificationPage {
 	t.Helper()
 	addProductPilotJourneys(t, f, m, c)
 	m.Version = 2
@@ -41,11 +42,11 @@ func addCompleteProductPilotJourneys(t *testing.T, f *productPilotFixture, m *ap
 		item, j := &m.Cases[i], &m.Journeys[i]
 		item.OutputFile = item.Name + ".csv"
 		item.OutputSHA256 = saveProductPilotEvidence(t, c, item.OutputFile, []byte("id,value\n1,PRIVATE_CSV\n"))
-		h := f.help[j.HelpRequestID]
+		h := (*f.Help())[j.HelpRequestID]
 		at := h.CreatedAt.Add(-4 * time.Minute).Truncate(time.Microsecond)
-		op := f.operations[j.OperationID]
+		op := (*f.Operations())[j.OperationID]
 		op.Evidence.ResolvedAt, op.Evidence.SucceededAt = &at, &at
-		f.operations[j.OperationID] = op
+		(*f.Operations())[j.OperationID] = op
 		now := h.UpdatedAt.Add(time.Second)
 		page := api.ProductNotificationPage{AccountID: uuid.NewString(), AppID: m.AppID, TenantID: j.TenantID, ReadStateScope: "workspace", ObservedAt: now, WindowStart: now.Add(-api.ProductControlNotificationWindow), UnreadCount: 2, Items: []api.ProductNotification{
 			{ID: "work/" + j.OperationID, ReferenceID: j.OperationID, Kind: "work_succeeded", Feature: m.Feature, OccurredAt: at, Revision: strings.Repeat("c", 64)},
@@ -62,7 +63,7 @@ func addCompleteProductPilotJourneys(t *testing.T, f *productPilotFixture, m *ap
 func TestProductPilotCompleteJourneyRequiresCurrentInboxSources(t *testing.T) {
 	for _, name := range []string{"complete", "missing stage", "missing work", "stale help", "wrong work outcome", "blocked observation", "changed artifact", "split pages"} {
 		t.Run(name, func(t *testing.T) {
-			f, m, c := newProductPilotFixture(t)
+			f, m, c := main.NewProductPilotFixture(t)
 			pages := addCompleteProductPilotJourneys(t, f, &m, c)
 			j, page := &m.Journeys[0], pages[0]
 			step := &j.Steps[6]
@@ -92,15 +93,15 @@ func TestProductPilotCompleteJourneyRequiresCurrentInboxSources(t *testing.T) {
 				saveProductPilotInbox(t, c, &second, page)
 				j.Steps = append(j.Steps, second)
 			}
-			saveProductPilot(t, c.file, m)
-			r, err := verifyProductPilot(t.Context(), f, c)
+			main.SaveProductPilot(t, (*c.File()), m)
+			r, err := main.VerifyProductPilot(t.Context(), f, c)
 			want, exit := "incomplete", 3
 			if name == "complete" || name == "split pages" {
 				want, exit = "recorded", 0
 			} else if name == "changed artifact" {
 				want, exit = "blocked", 1
 			}
-			if err != nil || r.Version != 2 || r.JourneyState != want || productReportExit(r) != exit || r.QualificationState != "unverified" {
+			if err != nil || r.Version != 2 || r.JourneyState != want || main.ProductReportExit(r) != exit || r.QualificationState != "unverified" {
 				t.Fatalf("journey result: %+v %v", r, err)
 			}
 			raw, err := json.Marshal(r)
@@ -119,7 +120,7 @@ func TestProductPilotCompleteJourneyRequiresCurrentInboxSources(t *testing.T) {
 func TestProductPilotInboxRejectsUntrustedPageEvidence(t *testing.T) {
 	for _, name := range []string{"app", "tenant", "account", "reference", "revision", "read version", "window", "expired item", "future item", "future page", "unread count", "scope", "duplicate item", "unknown field", "duplicate JSON", "trailing JSON", "oversize"} {
 		t.Run(name, func(t *testing.T) {
-			f, m, c := newProductPilotFixture(t)
+			f, m, c := main.NewProductPilotFixture(t)
 			pages := addCompleteProductPilotJourneys(t, f, &m, c)
 			page, step := pages[0], &m.Journeys[0].Steps[6]
 			switch name {
@@ -166,8 +167,8 @@ func TestProductPilotInboxRejectsUntrustedPageEvidence(t *testing.T) {
 				raw = append(raw, []byte(strings.Repeat(" ", api.ProductControlNotificationResponseMaxBytes))...)
 			}
 			step.EvidenceSHA256 = saveProductPilotEvidence(t, c, step.EvidenceFile, raw)
-			saveProductPilot(t, c.file, m)
-			if _, err := verifyProductPilot(t.Context(), f, c); err == nil || strings.Contains(err.Error(), "PRIVATE_SECRET") {
+			main.SaveProductPilot(t, (*c.File()), m)
+			if _, err := main.VerifyProductPilot(t.Context(), f, c); err == nil || strings.Contains(err.Error(), "PRIVATE_SECRET") {
 				t.Fatal("untrusted page accepted or its contents included in error", err)
 			}
 		})
@@ -177,7 +178,7 @@ func TestProductPilotInboxRejectsUntrustedPageEvidence(t *testing.T) {
 func TestProductPilotCompleteManifestCannotSilentlyFallBack(t *testing.T) {
 	for _, name := range []string{"missing customer", "missing CSV", "other run help", "empty CSV"} {
 		t.Run(name, func(t *testing.T) {
-			f, m, c := newProductPilotFixture(t)
+			f, m, c := main.NewProductPilotFixture(t)
 			_ = addCompleteProductPilotJourneys(t, f, &m, c)
 			switch name {
 			case "missing customer":
@@ -189,8 +190,8 @@ func TestProductPilotCompleteManifestCannotSilentlyFallBack(t *testing.T) {
 			case "empty CSV":
 				m.Cases[0].OutputSHA256 = saveProductPilotEvidence(t, c, m.Cases[0].OutputFile, nil)
 			}
-			saveProductPilot(t, c.file, m)
-			if _, err := verifyProductPilot(t.Context(), f, c); err == nil || (name != "empty CSV" && f.reads != 0) {
+			main.SaveProductPilot(t, (*c.File()), m)
+			if _, err := main.VerifyProductPilot(t.Context(), f, c); err == nil || (name != "empty CSV" && (*f.Reads()) != 0) {
 				t.Fatal("incomplete manifest accepted or invalid references reached API", err)
 			}
 		})

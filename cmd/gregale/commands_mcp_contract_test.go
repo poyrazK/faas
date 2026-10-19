@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -12,14 +12,15 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/mcphosting"
 )
 
 func TestMCPContractCLIJourney(t *testing.T) {
-	oldOut, oldJSON := osStdout, jsonOutput
+	oldOut, oldJSON := (*main.OsStdout), (*main.JsonOutput)
 	var output bytes.Buffer
-	osStdout, jsonOutput = &output, true
-	t.Cleanup(func() { osStdout, jsonOutput = oldOut, oldJSON })
+	(*main.OsStdout), (*main.JsonOutput) = &output, true
+	t.Cleanup(func() { (*main.OsStdout), (*main.JsonOutput) = oldOut, oldJSON })
 	var candidate atomic.Bool
 	var calls atomic.Int32
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -53,7 +54,7 @@ func TestMCPContractCLIJourney(t *testing.T) {
 	after := filepath.Join(dir, "candidate.json")
 	lock := func(path string) int {
 		output.Reset()
-		return cmdMCP([]string{"lock", "--url", s.URL + "/mcp", "--token-env", "GREG_TEST_MCP_CLIENT_TOKEN", "--out", path})
+		return main.CmdMCP([]string{"lock", "--url", s.URL + "/mcp", "--token-env", "GREG_TEST_MCP_CLIENT_TOKEN", "--out", path})
 	}
 	if code := lock(before); code != 0 {
 		t.Fatalf("baseline exit=%d: %s", code, output.String())
@@ -82,7 +83,7 @@ func TestMCPContractCLIJourney(t *testing.T) {
 		if check {
 			args = append(args, "--check")
 		}
-		code := cmdMCP(args)
+		code := main.CmdMCP(args)
 		want := 0
 		if check {
 			want = 1
@@ -93,7 +94,7 @@ func TestMCPContractCLIJourney(t *testing.T) {
 		}
 	}
 	output.Reset()
-	if code := cmdMCP([]string{"diff", "--before", before, "--after", before, "--check"}); code != 0 {
+	if code := main.CmdMCP([]string{"diff", "--before", before, "--after", before, "--check"}); code != 0 {
 		t.Fatalf("unchanged exit=%d", code)
 	}
 	if calls.Load() != 0 {
@@ -102,10 +103,10 @@ func TestMCPContractCLIJourney(t *testing.T) {
 }
 
 func TestMCPResourcePromptOnlyServerJourneyAndPrivateSnapshot(t *testing.T) {
-	oldOut, oldJSON := osStdout, jsonOutput
+	oldOut, oldJSON := (*main.OsStdout), (*main.JsonOutput)
 	var output bytes.Buffer
-	osStdout, jsonOutput = &output, true
-	t.Cleanup(func() { osStdout, jsonOutput = oldOut, oldJSON })
+	(*main.OsStdout), (*main.JsonOutput) = &output, true
+	t.Cleanup(func() { (*main.OsStdout), (*main.JsonOutput) = oldOut, oldJSON })
 	var reads, renders, toolCalls atomic.Int32
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Origin") != "" {
@@ -156,7 +157,7 @@ func TestMCPResourcePromptOnlyServerJourneyAndPrivateSnapshot(t *testing.T) {
 	commands = append(commands, []string{"lock", "--url", s.URL + "/mcp", "--out", lock})
 	for _, command := range commands {
 		output.Reset()
-		if code := cmdMCP(command); code != 0 {
+		if code := main.CmdMCP(command); code != 0 {
 			t.Fatalf("%v exit=%d: %s", command, code, output.String())
 		}
 		if strings.Contains(output.String(), "PRIVATE_RESOURCE_BODY") || strings.Contains(output.String(), "PRIVATE_RENDERED_PROMPT") {
@@ -175,11 +176,11 @@ func TestMCPResourcePromptOnlyServerJourneyAndPrivateSnapshot(t *testing.T) {
 		t.Fatalf("unsafe or incomplete lock: %s", data)
 	}
 	output.Reset()
-	if code := cmdMCP([]string{"resource-read", "--url", s.URL + "/mcp", "--uri", "file:///reports/latest"}); code != 0 || !strings.Contains(output.String(), "PRIVATE_RESOURCE_BODY") {
+	if code := main.CmdMCP([]string{"resource-read", "--url", s.URL + "/mcp", "--uri", "file:///reports/latest"}); code != 0 || !strings.Contains(output.String(), "PRIVATE_RESOURCE_BODY") {
 		t.Fatalf("explicit resource read exit=%d: %s", code, output.String())
 	}
 	output.Reset()
-	if code := cmdMCP([]string{"prompt-get", "--url", s.URL + "/mcp", "--prompt", "summarize", "--arguments", `{"period":"week"}`}); code != 0 || !strings.Contains(output.String(), "PRIVATE_RENDERED_PROMPT") {
+	if code := main.CmdMCP([]string{"prompt-get", "--url", s.URL + "/mcp", "--prompt", "summarize", "--arguments", `{"period":"week"}`}); code != 0 || !strings.Contains(output.String(), "PRIVATE_RENDERED_PROMPT") {
 		t.Fatalf("explicit prompt render exit=%d: %s", code, output.String())
 	}
 	if reads.Load() != 1 || renders.Load() != 1 || toolCalls.Load() != 0 {
@@ -188,10 +189,10 @@ func TestMCPResourcePromptOnlyServerJourneyAndPrivateSnapshot(t *testing.T) {
 }
 
 func TestMCPContractLockRejectsIncompleteDiscovery(t *testing.T) {
-	oldOut, oldJSON := osStdout, jsonOutput
+	oldOut, oldJSON := (*main.OsStdout), (*main.JsonOutput)
 	var output bytes.Buffer
-	osStdout, jsonOutput = &output, true
-	t.Cleanup(func() { osStdout, jsonOutput = oldOut, oldJSON })
+	(*main.OsStdout), (*main.JsonOutput) = &output, true
+	t.Cleanup(func() { (*main.OsStdout), (*main.JsonOutput) = oldOut, oldJSON })
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var request struct {
 			ID     int    `json:"id"`
@@ -210,7 +211,7 @@ func TestMCPContractLockRejectsIncompleteDiscovery(t *testing.T) {
 	if err := os.WriteFile(path, []byte("preserve baseline"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if code := cmdMCP([]string{"lock", "--url", s.URL + "/mcp", "--out", path, "--force"}); code != 1 {
+	if code := main.CmdMCP([]string{"lock", "--url", s.URL + "/mcp", "--out", path, "--force"}); code != 1 {
 		t.Fatalf("exit=%d", code)
 	}
 	data, _ := os.ReadFile(path)
@@ -226,17 +227,17 @@ func TestMCPContractLockRejectsIncompleteDiscovery(t *testing.T) {
 func TestMCPContractAtomicFileSafety(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "lock.json")
-	if err := writeMCPContract(path, []byte("old"), false); err != nil {
+	if err := main.WriteMCPContract(path, []byte("old"), false); err != nil {
 		t.Fatal(err)
 	}
 	info, err := os.Stat(path)
 	if err != nil || info.Mode().Perm() != 0600 {
 		t.Fatalf("permissions=%v err=%v", info, err)
 	}
-	if err := writeMCPContract(path, []byte("new"), false); err == nil {
+	if err := main.WriteMCPContract(path, []byte("new"), false); err == nil {
 		t.Fatal("existing snapshot replaced")
 	}
-	if err := writeMCPContract(path, []byte("new"), true); err != nil {
+	if err := main.WriteMCPContract(path, []byte("new"), true); err != nil {
 		t.Fatal(err)
 	}
 	data, _ := os.ReadFile(path)
@@ -248,14 +249,14 @@ func TestMCPContractAtomicFileSafety(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, force := range []bool{false, true} {
-		if err := writeMCPContract(link, []byte("unsafe"), force); err == nil {
+		if err := main.WriteMCPContract(link, []byte("unsafe"), force); err == nil {
 			t.Fatal("symlink destination accepted")
 		}
 	}
-	if _, err := readMCPContract(link); err == nil {
+	if _, err := main.ReadMCPContract(link); err == nil {
 		t.Fatal("symlink snapshot read")
 	}
-	if err := writeMCPContract(dir, []byte("unsafe"), true); err == nil {
+	if err := main.WriteMCPContract(dir, []byte("unsafe"), true); err == nil {
 		t.Fatal("directory destination accepted")
 	}
 	entries, _ := os.ReadDir(dir)
@@ -267,10 +268,10 @@ func TestMCPContractAtomicFileSafety(t *testing.T) {
 }
 
 func TestMCPContractCLICheckRejectsReview(t *testing.T) {
-	oldOut, oldJSON := osStdout, jsonOutput
+	oldOut, oldJSON := (*main.OsStdout), (*main.JsonOutput)
 	var output bytes.Buffer
-	osStdout, jsonOutput = &output, true
-	t.Cleanup(func() { osStdout, jsonOutput = oldOut, oldJSON })
+	(*main.OsStdout), (*main.JsonOutput) = &output, true
+	t.Cleanup(func() { (*main.OsStdout), (*main.JsonOutput) = oldOut, oldJSON })
 	dir := t.TempDir()
 	paths := []string{filepath.Join(dir, "before.json"), filepath.Join(dir, "after.json")}
 	for i, path := range paths {
@@ -283,16 +284,16 @@ func TestMCPContractCLICheckRejectsReview(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if code := cmdMCP([]string{"diff", "--before", paths[0], "--after", paths[1], "--check"}); code != 1 || !strings.Contains(output.String(), `"needs_review": true`) {
+	if code := main.CmdMCP([]string{"diff", "--before", paths[0], "--after", paths[1], "--check"}); code != 1 || !strings.Contains(output.String(), `"needs_review": true`) {
 		t.Fatalf("review gate exit=%d: %s", code, output.String())
 	}
 }
 
 func TestMCPContractCLIStrictCatalog(t *testing.T) {
-	oldOut, oldJSON := osStdout, jsonOutput
+	oldOut, oldJSON := (*main.OsStdout), (*main.JsonOutput)
 	var output bytes.Buffer
-	osStdout, jsonOutput = &output, true
-	t.Cleanup(func() { osStdout, jsonOutput = oldOut, oldJSON })
+	(*main.OsStdout), (*main.JsonOutput) = &output, true
+	t.Cleanup(func() { (*main.OsStdout), (*main.JsonOutput) = oldOut, oldJSON })
 	dir := t.TempDir()
 	paths := []string{filepath.Join(dir, "reader.json"), filepath.Join(dir, "expanded-reader.json")}
 	for i, path := range paths {
@@ -328,7 +329,7 @@ func TestMCPContractCLIStrictCatalog(t *testing.T) {
 				after = paths[0]
 			}
 			args := append([]string{"diff", "--before", paths[0], "--after", after}, tc.flags...)
-			code := cmdMCP(args)
+			code := main.CmdMCP(args)
 			var diff mcphosting.ContractDiff
 			if err := json.Unmarshal(output.Bytes(), &diff); err != nil || code != tc.code || diff.StrictCatalog != tc.strict || diff.NeedsReview != tc.review || diff.Breaking || diff.Compatible == tc.review {
 				t.Fatalf("exit=%d receipt=%s err=%v", code, output.String(), err)

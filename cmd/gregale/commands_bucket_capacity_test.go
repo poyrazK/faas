@@ -1,9 +1,10 @@
-package main
+package main_test
 
 import (
 	"context"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -25,7 +26,7 @@ func TestBucketCapacityCLI(t *testing.T) {
 	for _, action := range []string{"start", "status", "cancel"} {
 		t.Run(action, func(t *testing.T) {
 			c := &capacityCLIClient{}
-			j, err := runBucketCapacity(context.Background(), c, action, "demo", "bucket", []string{"job"})
+			j, err := main.RunBucketCapacity(context.Background(), c, action, "demo", "bucket", []string{"job"})
 			if err != nil || j.ID == "" || c.action != action || c.app != "demo" || c.bucket != "bucket" {
 				t.Fatal(c, j, err)
 			}

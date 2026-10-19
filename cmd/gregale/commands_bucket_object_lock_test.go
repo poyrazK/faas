@@ -1,9 +1,10 @@
-package main
+package main_test
 
 import (
 	"context"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -42,7 +43,7 @@ func TestBucketObjectLockCLI(t *testing.T) {
 		{[]string{"COMPLIANCE", "demo", "bucket", "--event-years", "1"}, "PUT", false, true},
 	} {
 		c := &objectLockCLIClient{}
-		if _, err := runBucketObjectLock(t.Context(), c, tc.args); err != nil || c.method != tc.method {
+		if _, err := main.RunBucketObjectLock(t.Context(), c, tc.args); err != nil || c.method != tc.method {
 			t.Fatal(tc, c, err)
 		}
 		if tc.method != "PUT" {
@@ -70,7 +71,7 @@ func TestBucketObjectLockCLI(t *testing.T) {
 		{"COMPLIANCE", "demo", "bucket", "--unknown", "1"},
 	} {
 		c := &objectLockCLIClient{}
-		if _, err := runBucketObjectLock(t.Context(), c, args); err == nil || c.method != "" {
+		if _, err := main.RunBucketObjectLock(t.Context(), c, args); err == nil || c.method != "" {
 			t.Fatal("invalid args contacted service", args, c, err)
 		}
 	}

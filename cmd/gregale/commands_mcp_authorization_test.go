@@ -1,7 +1,8 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/mcphosting"
 	"os"
 	"path/filepath"
@@ -44,7 +45,7 @@ func TestMCPAuthorizationPolicyPreflight(t *testing.T) {
 		if err := os.WriteFile(path, policy, 0600); err != nil {
 			t.Fatal(err)
 		}
-		roles, err := loadMCPReleasePolicy(path)
+		roles, err := main.LoadMCPReleasePolicy(path)
 		if (err == nil) != tc.valid {
 			t.Fatalf("policy %s result=%v", tc.authorization, err)
 		}

@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"crypto/sha256"
@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -22,23 +23,23 @@ func artifactReceipt() api.ExecutionResponse {
 func TestExecutionArtifactSaveValidatesAndDoesNotOverwrite(t *testing.T) {
 	dir := t.TempDir()
 	receipt := artifactReceipt()
-	if err := saveExecutionArtifacts(receipt, dir); err != nil {
+	if err := main.SaveExecutionArtifacts(receipt, dir); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(filepath.Join(dir, "nested", "patch.diff"))
 	if err != nil || string(data) != "patch" {
 		t.Fatalf("saved = %q, %v", data, err)
 	}
-	if err := saveExecutionArtifacts(receipt, dir); err == nil {
+	if err := main.SaveExecutionArtifacts(receipt, dir); err == nil {
 		t.Fatal("overwrote existing output")
 	}
 	receipt.Artifacts[0].Content[0] = 'X'
-	if err := saveExecutionArtifacts(receipt, t.TempDir()); err == nil {
+	if err := main.SaveExecutionArtifacts(receipt, t.TempDir()); err == nil {
 		t.Fatal("saved checksum mismatch")
 	}
 	receipt = artifactReceipt()
 	receipt.Artifacts[0].Name = "../escape"
-	if err := saveExecutionArtifacts(receipt, t.TempDir()); err == nil {
+	if err := main.SaveExecutionArtifacts(receipt, t.TempDir()); err == nil {
 		t.Fatal("saved traversal")
 	}
 	// An existing directory symlink must not escape the selected destination.
@@ -47,7 +48,7 @@ func TestExecutionArtifactSaveValidatesAndDoesNotOverwrite(t *testing.T) {
 	if err := os.Symlink(outside, filepath.Join(dir, "nested")); err != nil {
 		t.Fatal(err)
 	}
-	if err := saveExecutionArtifacts(artifactReceipt(), dir); err == nil {
+	if err := main.SaveExecutionArtifacts(artifactReceipt(), dir); err == nil {
 		t.Fatal("followed symlink outside destination")
 	}
 }
@@ -70,16 +71,16 @@ func TestCmdRunSelectsAndSavesArtifacts(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "test-token")
-	_, _, restore := swapIO(t)
+	_, _, restore := main.SwapIO(t)
 	defer restore()
 	dir := t.TempDir()
-	if code := cmdRun([]string{"--source", "export default () => null", "--output-file", "nested/patch.diff", "--output-dir", dir}); code != 0 {
+	if code := main.CmdRun([]string{"--source", "export default () => null", "--output-file", "nested/patch.diff", "--output-dir", dir}); code != 0 {
 		t.Fatalf("exit = %d", code)
 	}
 	if data, err := os.ReadFile(filepath.Join(dir, "nested", "patch.diff")); err != nil || string(data) != "patch" {
 		t.Fatalf("artifact = %q, %v", data, err)
 	}
-	if code := cmdRuns([]string{"artifacts", "run", "--output-dir", t.TempDir()}); code != 0 {
+	if code := main.CmdRuns([]string{"artifacts", "run", "--output-dir", t.TempDir()}); code != 0 {
 		t.Fatalf("artifacts exit = %d", code)
 	}
 }

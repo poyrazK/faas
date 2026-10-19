@@ -16,7 +16,7 @@
 // the e2e fixture in poyrazK/faas/.github/actions/deploy/test/e2e. This
 // suite is the snippet-shape contract.
 
-package main
+package main_test
 
 import (
 	"bytes"
@@ -26,6 +26,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"gopkg.in/yaml.v3"
 )
 
@@ -227,7 +228,7 @@ func TestReleaseWorkflowGithubSnippetDocsGate(t *testing.T) {
 	}
 	const prefix = "# For production safety, see "
 	var docsURL string
-	for _, line := range strings.Split(renderGithubSnippet(githubSnippetEnv{}, "action-ref-canary", "", false), "\n") {
+	for _, line := range strings.Split(main.RenderGithubSnippet(main.GithubSnippetEnv{}, "action-ref-canary", "", false), "\n") {
 		if strings.HasPrefix(line, prefix) {
 			docsURL = strings.TrimSuffix(strings.TrimPrefix(line, prefix), ".")
 			break
@@ -265,7 +266,7 @@ func TestReleaseWorkflowEmbedsCurrentGithubActionPin(t *testing.T) {
 func TestRenderGithubSnippet(t *testing.T) {
 	cases := []struct {
 		name      string
-		env       githubSnippetEnv
+		env       main.GithubSnippetEnv
 		app       string
 		pinnedSHA string
 		mustLines []string // substrings that MUST appear
@@ -273,7 +274,7 @@ func TestRenderGithubSnippet(t *testing.T) {
 	}{
 		{
 			name: "bare invocation emits ${{ github.* }} placeholders",
-			env:  githubSnippetEnv{Runner: false},
+			env:  main.GithubSnippetEnv{Runner: false},
 			app:  "my-app",
 			mustLines: []string{
 				"# Gregale deploy",
@@ -281,9 +282,9 @@ func TestRenderGithubSnippet(t *testing.T) {
 				"Repo: ${{ github.repository }}",
 				"Ref: ${{ github.sha }}",
 				`app: "my-app"`,
-				"# Action: poyrazK/faas/.github/actions/deploy@" + githubActionDefaultSHA,
-				"# pin this Action for reproducibility: poyrazK/faas/.github/actions/deploy@" + githubActionDefaultSHA,
-				"uses: poyrazK/faas/.github/actions/deploy@" + githubActionDefaultSHA + " # v0",
+				"# Action: poyrazK/faas/.github/actions/deploy@" + (*main.GithubActionDefaultSHA),
+				"# pin this Action for reproducibility: poyrazK/faas/.github/actions/deploy@" + (*main.GithubActionDefaultSHA),
+				"uses: poyrazK/faas/.github/actions/deploy@" + (*main.GithubActionDefaultSHA) + " # v0",
 				"https://gregale.dev/docs/deploy-from-github",
 				"id-token: write",
 				"checks: write",
@@ -297,7 +298,7 @@ func TestRenderGithubSnippet(t *testing.T) {
 		},
 		{
 			name: "runner env hard-codes GITHUB_REPOSITORY + GITHUB_SHA",
-			env: githubSnippetEnv{
+			env: main.GithubSnippetEnv{
 				Repository: "onebox-faas/hello",
 				SHA:        "a1b2c3d4e5f6789012345678901234567890abcd",
 				Runner:     true,
@@ -318,7 +319,7 @@ func TestRenderGithubSnippet(t *testing.T) {
 		},
 		{
 			name:      "pinned SHA emits an immutable uses reference and comment",
-			env:       githubSnippetEnv{Runner: false},
+			env:       main.GithubSnippetEnv{Runner: false},
 			app:       "my-app",
 			pinnedSHA: "f1e2d3c4b5a6987654321098765432109abcdef0",
 			mustLines: []string{
@@ -328,7 +329,7 @@ func TestRenderGithubSnippet(t *testing.T) {
 		},
 		{
 			name: "runner env + pinned SHA coexist",
-			env: githubSnippetEnv{
+			env: main.GithubSnippetEnv{
 				Repository: "onebox-faas/hello",
 				SHA:        "a1b2c3d4e5f6789012345678901234567890abcd",
 				Runner:     true,
@@ -344,7 +345,7 @@ func TestRenderGithubSnippet(t *testing.T) {
 		},
 		{
 			name: "OIDC is the default and no long-lived secret is emitted",
-			env:  githubSnippetEnv{Runner: true, Repository: "acme/widget", SHA: "0000000000000000000000000000000000000000"},
+			env:  main.GithubSnippetEnv{Runner: true, Repository: "acme/widget", SHA: "0000000000000000000000000000000000000000"},
 			app:  "widget",
 			mustLines: []string{
 				"id-token: write",
@@ -369,7 +370,7 @@ func TestRenderGithubSnippet(t *testing.T) {
 			// specifically — the body contains a static comment
 			// with `${{ github.sha }}` regardless of the header.
 			name: "ConcreteRepository only flips Repo, leaves Ref as ${{ github.sha }}",
-			env: githubSnippetEnv{
+			env: main.GithubSnippetEnv{
 				ConcreteRepository: "acme/widget",
 			},
 			app: "widget",
@@ -387,7 +388,7 @@ func TestRenderGithubSnippet(t *testing.T) {
 			// Per-field concrete override (--ref only). Symmetric
 			// case to the repo-only override.
 			name: "ConcreteSHA only flips Ref, leaves Repo as ${{ github.repository }}",
-			env: githubSnippetEnv{
+			env: main.GithubSnippetEnv{
 				ConcreteSHA: "a1b2c3d4e5f6789012345678901234567890abcd",
 			},
 			app: "widget",
@@ -398,7 +399,7 @@ func TestRenderGithubSnippet(t *testing.T) {
 		{
 			// Both per-field overrides. Independent of Runner mode.
 			name: "ConcreteRepository + ConcreteSHA both flip, Runner=false",
-			env: githubSnippetEnv{
+			env: main.GithubSnippetEnv{
 				ConcreteRepository: "acme/widget",
 				ConcreteSHA:        "a1b2c3d4e5f6789012345678901234567890abcd",
 			},
@@ -411,7 +412,7 @@ func TestRenderGithubSnippet(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := renderGithubSnippet(tc.env, tc.app, tc.pinnedSHA, false)
+			got := main.RenderGithubSnippet(tc.env, tc.app, tc.pinnedSHA, false)
 			if !strings.HasPrefix(got, "# Gregale deploy") {
 				t.Fatalf("snippet missing leading sentinel; got:\n%s", got)
 			}
@@ -431,15 +432,15 @@ func TestRenderGithubSnippet(t *testing.T) {
 
 func TestRenderGithubSnippetAddsDependabotVersionToDefaultAndAutoPins(t *testing.T) {
 	sha := "f1e2d3c4b5a6987654321098765432109abcdef0"
-	defaultPin := renderGithubSnippet(githubSnippetEnv{}, "api", "", false)
-	if !strings.Contains(defaultPin, "uses: poyrazK/faas/.github/actions/deploy@"+githubActionDefaultSHA+" # v0") {
+	defaultPin := main.RenderGithubSnippet(main.GithubSnippetEnv{}, "api", "", false)
+	if !strings.Contains(defaultPin, "uses: poyrazK/faas/.github/actions/deploy@"+(*main.GithubActionDefaultSHA)+" # v0") {
 		t.Fatalf("default workflow is not pinned with Dependabot version metadata: %s", defaultPin)
 	}
-	manual := renderGithubSnippet(githubSnippetEnv{}, "api", sha, false)
+	manual := main.RenderGithubSnippet(main.GithubSnippetEnv{}, "api", sha, false)
 	if strings.Contains(manual, "# v0") {
 		t.Fatalf("manual SHA pin was labeled as v0: %s", manual)
 	}
-	automatic := renderGithubSnippet(githubSnippetEnv{}, "api", sha, true)
+	automatic := main.RenderGithubSnippet(main.GithubSnippetEnv{}, "api", sha, true)
 	if !strings.Contains(automatic, "uses: poyrazK/faas/.github/actions/deploy@"+sha+" # v0") {
 		t.Fatalf("auto-pinned workflow lacks same-line Dependabot version metadata: %s", automatic)
 	}
@@ -451,7 +452,7 @@ func TestRenderGithubSnippetAddsDependabotVersionToDefaultAndAutoPins(t *testing
 
 func TestNormalizeGithubActionSHA(t *testing.T) {
 	valid := "F1E2D3C4B5A6987654321098765432109ABCDEF0"
-	got, err := normalizeGithubActionSHA("  " + valid + "\n")
+	got, err := main.NormalizeGithubActionSHA("  " + valid + "\n")
 	if err != nil {
 		t.Fatalf("normalize valid SHA: %v", err)
 	}
@@ -459,7 +460,7 @@ func TestNormalizeGithubActionSHA(t *testing.T) {
 		t.Fatalf("normalized SHA = %q, want %q", got, want)
 	}
 	for _, invalid := range []string{"", "f1e2", strings.Repeat("z", 40), strings.Repeat("a", 41)} {
-		if _, err := normalizeGithubActionSHA(invalid); err == nil {
+		if _, err := main.NormalizeGithubActionSHA(invalid); err == nil {
 			t.Errorf("normalizeGithubActionSHA(%q) succeeded, want error", invalid)
 		}
 	}
@@ -472,19 +473,19 @@ func TestDetectGithubSnippetEnv(t *testing.T) {
 	t.Setenv("GITHUB_SHA", "")
 
 	// Bare: both unset → not a runner.
-	if got := detectGithubSnippetEnv(); got.Runner {
+	if got := main.DetectGithubSnippetEnv(); got.Runner {
 		t.Errorf("bare env: Runner=true, want false (env=%+v)", got)
 	}
 
 	// Partial: only repo → not a runner (we require BOTH).
 	t.Setenv("GITHUB_REPOSITORY", "acme/widget")
-	if got := detectGithubSnippetEnv(); got.Runner {
+	if got := main.DetectGithubSnippetEnv(); got.Runner {
 		t.Errorf("partial env: Runner=true, want false (env=%+v)", got)
 	}
 
 	// Full: both set → runner.
 	t.Setenv("GITHUB_SHA", "a1b2c3d4e5f6789012345678901234567890abcd")
-	got := detectGithubSnippetEnv()
+	got := main.DetectGithubSnippetEnv()
 	if !got.Runner {
 		t.Errorf("full env: Runner=false, want true (env=%+v)", got)
 	}
@@ -499,17 +500,17 @@ func TestDetectGithubSnippetEnv(t *testing.T) {
 func TestCmdDeployGithubSnippet(t *testing.T) {
 	t.Run("missing --app exits 1", func(t *testing.T) {
 		var buf bytes.Buffer
-		oldOut := osStdout
-		oldErr := osStderr
-		osStdout = &buf
-		osStderr = &buf
+		oldOut := (*main.OsStdout)
+		oldErr := (*main.OsStderr)
+		(*main.OsStdout) = &buf
+		(*main.OsStderr) = &buf
 		defer func() {
-			osStdout = oldOut
-			osStderr = oldErr
+			(*main.OsStdout) = oldOut
+			(*main.OsStderr) = oldErr
 		}()
 
 		// No --app → exit 1.
-		if code := cmdDeployGithubSnippet(context.Background(), []string{}); code != 1 {
+		if code := main.CmdDeployGithubSnippet(context.Background(), []string{}); code != 1 {
 			t.Errorf("missing --app: exit code = %d, want 1", code)
 		}
 		if !strings.Contains(buf.String(), "missing --app") {
@@ -519,20 +520,20 @@ func TestCmdDeployGithubSnippet(t *testing.T) {
 
 	t.Run("happy path prints snippet to stdout", func(t *testing.T) {
 		var stdout, stderr bytes.Buffer
-		oldOut := osStdout
-		oldErr := osStderr
-		osStdout = &stdout
-		osStderr = &stderr
+		oldOut := (*main.OsStdout)
+		oldErr := (*main.OsStderr)
+		(*main.OsStdout) = &stdout
+		(*main.OsStderr) = &stderr
 		defer func() {
-			osStdout = oldOut
-			osStderr = oldErr
+			(*main.OsStdout) = oldOut
+			(*main.OsStderr) = oldErr
 		}()
 
 		// Clear env so the snippet uses ${{ github.* }} placeholders.
 		t.Setenv("GITHUB_REPOSITORY", "")
 		t.Setenv("GITHUB_SHA", "")
 
-		if code := cmdDeployGithubSnippet(context.Background(), []string{"--app", "my-app"}); code != 0 {
+		if code := main.CmdDeployGithubSnippet(context.Background(), []string{"--app", "my-app"}); code != 0 {
 			t.Errorf("happy path: exit code = %d, want 0; stderr=%q", code, stderr.String())
 		}
 		out := stdout.String()
@@ -549,19 +550,19 @@ func TestCmdDeployGithubSnippet(t *testing.T) {
 
 	t.Run("runner env produces concrete values", func(t *testing.T) {
 		var stdout, stderr bytes.Buffer
-		oldOut := osStdout
-		oldErr := osStderr
-		osStdout = &stdout
-		osStderr = &stderr
+		oldOut := (*main.OsStdout)
+		oldErr := (*main.OsStderr)
+		(*main.OsStdout) = &stdout
+		(*main.OsStderr) = &stderr
 		defer func() {
-			osStdout = oldOut
-			osStderr = oldErr
+			(*main.OsStdout) = oldOut
+			(*main.OsStderr) = oldErr
 		}()
 
 		t.Setenv("GITHUB_REPOSITORY", "acme/widget")
 		t.Setenv("GITHUB_SHA", "a1b2c3d4e5f6789012345678901234567890abcd")
 
-		if code := cmdDeployGithubSnippet(context.Background(), []string{"--app", "widget"}); code != 0 {
+		if code := main.CmdDeployGithubSnippet(context.Background(), []string{"--app", "widget"}); code != 0 {
 			t.Errorf("runner env: exit code = %d, want 0", code)
 		}
 		out := stdout.String()
@@ -581,13 +582,13 @@ func TestCmdDeployGithubSnippet(t *testing.T) {
 
 	t.Run("--repo only flips Repo, leaves Ref as ${{ github.sha }}", func(t *testing.T) {
 		var stdout, stderr bytes.Buffer
-		oldOut := osStdout
-		oldErr := osStderr
-		osStdout = &stdout
-		osStderr = &stderr
+		oldOut := (*main.OsStdout)
+		oldErr := (*main.OsStderr)
+		(*main.OsStdout) = &stdout
+		(*main.OsStderr) = &stderr
 		defer func() {
-			osStdout = oldOut
-			osStderr = oldErr
+			(*main.OsStdout) = oldOut
+			(*main.OsStderr) = oldErr
 		}()
 
 		// Bare env (no GITHUB_REPOSITORY / GITHUB_SHA). The CLI
@@ -595,7 +596,7 @@ func TestCmdDeployGithubSnippet(t *testing.T) {
 		t.Setenv("GITHUB_REPOSITORY", "")
 		t.Setenv("GITHUB_SHA", "")
 
-		if code := cmdDeployGithubSnippet(context.Background(), []string{"--app", "widget", "--repo", "acme/widget"}); code != 0 {
+		if code := main.CmdDeployGithubSnippet(context.Background(), []string{"--app", "widget", "--repo", "acme/widget"}); code != 0 {
 			t.Errorf("--repo only: exit code = %d, want 0; stderr=%q", code, stderr.String())
 		}
 		out := stdout.String()
@@ -609,19 +610,19 @@ func TestCmdDeployGithubSnippet(t *testing.T) {
 
 	t.Run("--ref only flips Ref, leaves Repo as ${{ github.repository }}", func(t *testing.T) {
 		var stdout, stderr bytes.Buffer
-		oldOut := osStdout
-		oldErr := osStderr
-		osStdout = &stdout
-		osStderr = &stderr
+		oldOut := (*main.OsStdout)
+		oldErr := (*main.OsStderr)
+		(*main.OsStdout) = &stdout
+		(*main.OsStderr) = &stderr
 		defer func() {
-			osStdout = oldOut
-			osStderr = oldErr
+			(*main.OsStdout) = oldOut
+			(*main.OsStderr) = oldErr
 		}()
 
 		t.Setenv("GITHUB_REPOSITORY", "")
 		t.Setenv("GITHUB_SHA", "")
 
-		if code := cmdDeployGithubSnippet(context.Background(), []string{"--app", "widget", "--ref", "feature-branch"}); code != 0 {
+		if code := main.CmdDeployGithubSnippet(context.Background(), []string{"--app", "widget", "--ref", "feature-branch"}); code != 0 {
 			t.Errorf("--ref only: exit code = %d, want 0; stderr=%q", code, stderr.String())
 		}
 		out := stdout.String()

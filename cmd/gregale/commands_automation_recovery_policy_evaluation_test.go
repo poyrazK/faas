@@ -1,7 +1,8 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"net/http"
 	"os"
@@ -30,20 +31,20 @@ func TestAutomationRecoveryPolicyEvaluationCLI(t *testing.T) {
 		}
 		_ = json.NewEncoder(w).Encode(api.WorkflowRecoveryPolicyEvaluation{FailureCoverage: api.WorkflowRecoveryFailureCoverage{Coverage: "partial", CapturedFailures: 2, ReviewedFailures: 1, UnreviewedFailures: 1, MissingEligibilityEvidence: 1}, Current: api.WorkflowRecoveryPolicyResponse{Version: 4}, CurrentTotals: api.WorkflowRecoveryPolicyEvaluationTotals{WouldPrepare: 2}, ProposedTotals: api.WorkflowRecoveryPolicyEvaluationTotals{Unknown: 1}, Candidates: []api.WorkflowRecoveryPolicyEvaluationCandidate{{ReviewID: "review", Workflow: "orders", Proposed: api.WorkflowRecoveryPolicyAssessment{Eligibility: "unknown", Reason: "failure_status_ambiguous"}}, {LaterEligibility: &api.WorkflowRecoveryFailureEligibilityAssessment{Observation: api.WorkflowRecoveryFailureEligibility{ObservedAt: time.Now(), Reason: "resume_ineligible", Blockers: []string{"operation_owned"}}, Freshness: "fresh", Proposed: api.WorkflowRecoveryPolicyAssessment{Eligibility: "excluded", Reason: "later_preflight_resume_ineligible"}}, EvidenceSource: "failure_inventory", FailureEvidenceID: "failure:proof", Workflow: "orders", Proposed: api.WorkflowRecoveryPolicyAssessment{Eligibility: "unknown", Reason: "historical_preflight_not_captured"}}}, CoverageNotes: []string{"conditional preparation replay"}})
 	})
-	out := captureAutomationStdout(t)
-	if code := cmdAutomations([]string{"recovery-policy-evaluate", "--app", "consumer", "--file", path, "--since", "7d"}); code != 0 || calls != 1 || !strings.Contains(out.String(), "2 captured, 1 reviewed, 1 unreviewed, 1 missing eligibility checks") || !strings.Contains(out.String(), "Later retry checks:") || !strings.Contains(out.String(), "operation_owned") || !strings.Contains(out.String(), "Failure evidence: failure:proof") || !strings.Contains(out.String(), "conditional preparations 2") || !strings.Contains(out.String(), "failure_status_ambiguous") || !strings.Contains(out.String(), "/v1/apps/consumer/recovery-policy/reviews/review") {
+	out := main.CaptureAutomationStdout(t)
+	if code := main.CmdAutomations([]string{"recovery-policy-evaluate", "--app", "consumer", "--file", path, "--since", "7d"}); code != 0 || calls != 1 || !strings.Contains(out.String(), "2 captured, 1 reviewed, 1 unreviewed, 1 missing eligibility checks") || !strings.Contains(out.String(), "Later retry checks:") || !strings.Contains(out.String(), "operation_owned") || !strings.Contains(out.String(), "Failure evidence: failure:proof") || !strings.Contains(out.String(), "conditional preparations 2") || !strings.Contains(out.String(), "failure_status_ambiguous") || !strings.Contains(out.String(), "/v1/apps/consumer/recovery-policy/reviews/review") {
 		t.Fatalf("evaluate %d %s", code, out)
 	}
 	for _, args := range [][]string{{}, {"--app", "consumer"}, {"--app", "consumer", "--file", path, "--since", "31d"}, {"--app", "consumer", "--file", path, "--since", "7d", "--created-after", "2026-10-01T00:00:00Z"}} {
-		if code := cmdAutomationsRecoveryPolicyEvaluate(args); code != 1 || calls != 1 {
+		if code := main.CmdAutomationsRecoveryPolicyEvaluate(args); code != 1 || calls != 1 {
 			t.Fatalf("accepted %+v code %d calls %d", args, code, calls)
 		}
 	}
-	previous := jsonOutput
-	jsonOutput = true
-	t.Cleanup(func() { jsonOutput = previous })
+	previous := (*main.JsonOutput)
+	(*main.JsonOutput) = true
+	t.Cleanup(func() { (*main.JsonOutput) = previous })
 	out.Reset()
-	if code := cmdAutomationsRecoveryPolicyEvaluate([]string{"--app", "consumer", "--file", path}); code != 0 {
+	if code := main.CmdAutomationsRecoveryPolicyEvaluate([]string{"--app", "consumer", "--file", path}); code != 0 {
 		t.Fatalf("JSON %d", code)
 	}
 	var exported api.WorkflowRecoveryPolicyEvaluation
