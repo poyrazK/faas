@@ -45,14 +45,16 @@ waived, because the online pattern always exists:
       ADD CONSTRAINT ... FOREIGN KEY or CHECK on an existing table checks
       every row while holding a lock that blocks writes. Add it NOT VALID
       (new writes are checked at once) and VALIDATE CONSTRAINT it in a later
-      migration; validation does not block writes. A VALIDATE in the
-      migration that adds the constraint, an ADD COLUMN with a CHECK, and an
-      ADD COLUMN ... REFERENCES with a DEFAULT validate under the lock too.
+      transaction; validation does not block writes. A VALIDATE in the
+      transaction that adds the constraint, an ADD COLUMN with a CHECK, and
+      an ADD COLUMN ... REFERENCES with a DEFAULT validate under the lock too.
   constraint-churn
       One migration both drops and adds constraints of one existing table.
-      Replace a constraint across migrations: add the new one NOT VALID
-      under a new name, validate it, then drop the old one. Attaching a
-      concurrently built index (ADD CONSTRAINT ... USING INDEX) is exempt.
+      Replace a constraint in three transactions: add the new one NOT VALID
+      under a new name, validate it, then drop the old one (separate
+      migrations, or goose statements of a NO TRANSACTION migration in that
+      order). Attaching a concurrently built index (ADD CONSTRAINT ... USING
+      INDEX) is exempt.
   unbatched-write
       An UPDATE or DELETE of an existing table must take its rows from a
       `SELECT ... FROM <that table> ... LIMIT n` (n at most MAX_BATCH_ROWS,
@@ -436,6 +438,30 @@ class DoBlock:
 
     loops: bool
     commits: bool
+    # (variable, table) -> batch size, for `SELECT ... INTO variable` from a
+    # query that reads table with a LIMIT: the keys of one batch.
+    batches: dict[tuple[str, str], int] = field(default_factory=dict)
+
+
+def do_block(body: list[Token]) -> DoBlock:
+    block = DoBlock(loops=any(is_word(t, "loop") for t in body), commits=any(is_word(t, "commit") for t in body))
+    for chunk in split_statements(body):
+        for stmt in plpgsql_statements(chunk):
+            if not is_word(stmt[0], "select", "with"):
+                continue
+            into = next((i for i in range(len(stmt) - 1)
+                         if is_word(stmt[i], "into") and depth_at(stmt, 0, i) == 0 and stmt[i + 1].kind in ("word", "ident")), None)
+            if into is None:
+                continue
+            var = stmt[into + 2] if is_word(stmt[into + 1], "strict") and into + 2 < len(stmt) else stmt[into + 1]
+            for i in range(len(stmt)):
+                size = limit_size(stmt, i)
+                if size is None:
+                    continue
+                for table in limit_sources(stmt, i):
+                    key = (var.value, table)
+                    block.batches[key] = min(size, block.batches.get(key, size))
+    return block
 
 
 @dataclass
@@ -456,10 +482,11 @@ class Context:
     do_block: DoBlock | None = None
     # group -> existing table -> line of the first write-blocking lock.
     locks: dict[int, dict[str, int]] = field(default_factory=dict)
-    # existing table -> line of the first constraint dropped / added.
-    constraint_drops: dict[str, int] = field(default_factory=dict)
-    constraint_adds: dict[str, int] = field(default_factory=dict)
-    added_constraints: set[tuple[str, str]] = field(default_factory=set)
+    # existing table -> (group, "add" | "validate" | "drop", line) of each
+    # constraint change, in order.
+    constraint_changes: dict[str, list[tuple[int, str, int]]] = field(default_factory=dict)
+    # (group, table, name) of every constraint added.
+    added_constraints: set[tuple[int, str, str]] = field(default_factory=set)
 
     def exists(self, relation: str) -> bool:
         return relation in self.catalogue.relations and relation not in self.created
@@ -527,12 +554,27 @@ def lint_context(path: str, text: str, catalogue: Catalogue, referenced) -> Cont
                 ctx.group += 1
             block = mine
         body = do_body(top)
-        ctx.do_block = None if body is None else DoBlock(
-            loops=any(is_word(t, "loop") for t in body), commits=any(is_word(t, "commit") for t in body))
+        ctx.do_block = None if body is None else do_block(body)
         for stmt in expand(top):
             lint_statement(ctx, stmt)
     lint_migration_locks(ctx)
     return ctx
+
+
+def churn_line(changes: list[tuple[int, str, int]]) -> int | None:
+    """Where a table's constraint changes break add -> validate -> drop, or
+    None. Each step must be its own transaction (group), and a constraint
+    is dropped only after a replacement added before it is validated."""
+    adds = [c for c in changes if c[1] == "add"]
+    drops = [c for c in changes if c[1] == "drop"]
+    if not adds or not drops:
+        return None
+    last_add = max(group for group, _, _ in adds)
+    first_drop = min(group for group, _, _ in drops)
+    validated = any(last_add < group < first_drop for group, kind, _ in changes if kind == "validate")
+    if last_add < first_drop and validated:
+        return None
+    return min(line for _, _, line in adds)
 
 
 def statement_blocks(up: str, first_line: int) -> list[tuple[int, int]]:
@@ -551,12 +593,14 @@ def statement_blocks(up: str, first_line: int) -> list[tuple[int, int]]:
 
 def lint_migration_locks(ctx: Context) -> None:
     """constraint-churn and lock-fanout, which judge the whole migration."""
-    for table, line in sorted(ctx.constraint_adds.items(), key=lambda kv: kv[1]):
-        if table in ctx.constraint_drops:
+    for table, changes in ctx.constraint_changes.items():
+        line = churn_line(changes)
+        if line is not None:
             ctx.add(line, "constraint-churn", table,
-                    f"this migration drops and adds constraints of existing {table}. Replace a constraint across migrations: "
-                    "add the new one NOT VALID under a new name, VALIDATE it in a later migration, then drop the old one "
-                    "(expand, validate, switch, contract). No waiver applies.")
+                    f"this migration drops and adds constraints of existing {table}. Replace a constraint in three steps, "
+                    "each its own transaction: add the new one NOT VALID under a new name, VALIDATE it, then drop the old "
+                    "one. Use separate migrations, or separate goose statements of one `-- +goose NO TRANSACTION` "
+                    "migration in that order. No waiver applies.")
     for tables in ctx.locks.values():
         if len(tables) > MAX_LOCKED_TABLES:
             over, line = list(tables.items())[MAX_LOCKED_TABLES]
@@ -755,13 +799,15 @@ def lint_alter_table(ctx: Context, stmt: list[Token], line: int) -> None:
         if aw[0] == "rename":
             lint_rename(ctx, action, relation, line)
         elif aw[:2] == ["drop", "constraint"]:
-            ctx.constraint_drops.setdefault(relation, line)
+            ctx.constraint_changes.setdefault(relation, []).append((ctx.group, "drop", line))
         elif aw[:2] == ["validate", "constraint"]:
+            ctx.constraint_changes.setdefault(relation, []).append((ctx.group, "validate", line))
             name = constraint_parts(action, "validate")[0]
-            if (relation, name) in ctx.added_constraints:
+            if (ctx.group, relation, name) in ctx.added_constraints:
                 ctx.add(line, "constraint-validation", f"{relation}.{name}",
-                        f"VALIDATE CONSTRAINT {name} in the migration that adds it scans {relation} while the ADD's lock "
-                        "blocks writes. Validate it in a later migration. No waiver applies.")
+                        f"VALIDATE CONSTRAINT {name} in the transaction that adds it scans {relation} while the ADD's lock "
+                        "blocks writes. Validate it in a later migration, or in a later goose statement of a "
+                        "`-- +goose NO TRANSACTION` migration. No waiver applies.")
         elif aw[0] == "drop" and len(aw) > 1 and aw[1] != "constraint":
             j = 2 if aw[1] == "column" else 1
             rest = aw[j:]
@@ -798,9 +844,9 @@ def lint_add(ctx: Context, action: list[Token], aw: list[str], relation: str, li
                     "with CREATE UNIQUE INDEX CONCURRENTLY, then ADD CONSTRAINT ... USING INDEX.")
         name, kind = constraint_parts(action, "add")
         if not has_sequence(aw, "using", "index"):
-            ctx.constraint_adds.setdefault(relation, line)
+            ctx.constraint_changes.setdefault(relation, []).append((ctx.group, "add", line))
         if name:
-            ctx.added_constraints.add((relation, name))
+            ctx.added_constraints.add((ctx.group, relation, name))
         if kind in ("foreign", "check") and not has_sequence(aw, "not", "valid"):
             what = "FOREIGN KEY" if kind == "foreign" else "CHECK"
             ctx.add(line, "constraint-validation", f"{relation}.{name}" if name else relation,
@@ -871,7 +917,8 @@ def lint_write(ctx: Context, stmt: list[Token], line: int) -> None:
         what = f"{verb.upper()} of existing {table}"
         bound = batch_bound(stmt, start, end, table)
         if bound is None:
-            bound = keyed_rows(stmt, start, end, ctx.catalogue.unique_keys.get(table, []))
+            bound = keyed_rows(stmt, start, end, ctx.catalogue.unique_keys.get(table, []), table,
+                               ctx.do_block.batches if ctx.do_block else {})
         if bound is None:
             ctx.add(line, "unbatched-write", table,
                     f"{what} is not batched: one statement locks every row it changes until the migration commits, and live "
@@ -941,24 +988,33 @@ def batch_bound(stmt: list[Token], start: int, end: int, table: str) -> int | No
     if any(is_word(stmt[i], "current") and i + 1 < len(stmt) and is_word(stmt[i + 1], "of") for i in region):
         return 0
     region += [i for i in range(len(stmt)) if i < start or i >= end]
-    bounds = []
-    for i in region:
-        if not is_word(stmt[i], "limit") or i + 1 >= len(stmt) or not selects_from(stmt, i, table):
-            continue
-        size = stmt[i + 1]
-        if size.kind == "number":
-            bounds.append(int(float(size.value)))
-        elif size.kind in ("word", "ident") and not is_word(size, "all"):
-            bounds.append(0)
+    bounds = [limit_size(stmt, i) for i in region if table in limit_sources(stmt, i)]
+    bounds = [b for b in bounds if b is not None]
     return min(bounds) if bounds else None
 
 
-def keyed_rows(stmt: list[Token], start: int, end: int, keys: list[frozenset[str]]) -> int | None:
+def limit_size(stmt: list[Token], i: int) -> int | None:
+    """The row count of a LIMIT at index i: its number, 0 for a variable,
+    None for LIMIT ALL or a token that is not a LIMIT."""
+    if not is_word(stmt[i], "limit") or i + 1 >= len(stmt):
+        return None
+    size = stmt[i + 1]
+    if size.kind == "number":
+        return int(float(size.value))
+    if size.kind in ("word", "ident") and not is_word(size, "all"):
+        return 0
+    return None
+
+
+def keyed_rows(stmt: list[Token], start: int, end: int, keys: list[frozenset[str]], table: str = "",
+               batches: dict[tuple[str, str], int] | None = None) -> int | None:
     """At most how many rows a WHERE clause selects when it ANDs `column =
     constant` or `column IN (constants)` over every column of one unique
-    key of the target; None otherwise."""
+    key of the target, or ANDs `column = ANY (variable)` with a variable the
+    DO block fills from a LIMITed query of the target (batches); None
+    otherwise."""
     where = next((i for i in range(start, end) if is_word(stmt[i], "where") and depth_at(stmt, start, i) == 0), None)
-    if where is None or not keys:
+    if where is None:
         return None
     conjuncts, current, depth = [], [], 0
     for tok in stmt[where + 1 : end]:
@@ -982,6 +1038,9 @@ def keyed_rows(stmt: list[Token], start: int, end: int, keys: list[frozenset[str
             column, rest = c[0].value, c[1:]
             if len(c) > 4 and c[1].value == "." and c[2].kind in ("word", "ident"):
                 column, rest = c[2].value, c[3:]
+            if (len(rest) == 5 and rest[0].value == "=" and is_word(rest[1], "any") and rest[2].value == "("
+                    and rest[3].kind in ("word", "ident") and rest[4].value == ")" and (rest[3].value, table) in (batches or {})):
+                return (batches or {})[(rest[3].value, table)]
             if rest[0].kind == "op" and rest[0].value == "=" and constants(rest[1:]) == 1:
                 pinned[column] = 1
             elif is_word(rest[0], "in") and rest[1].value == "(" and rest[-1].value == ")" and constants(rest[2:-1]):
@@ -1018,9 +1077,11 @@ def depth_at(stmt: list[Token], start: int, index: int) -> int:
     return depth
 
 
-def selects_from(stmt: list[Token], limit: int, table: str) -> bool:
-    """Whether the query that a LIMIT at index limit ends reads FROM table:
+def limit_sources(stmt: list[Token], limit: int) -> list[str]:
+    """The tables the query that a LIMIT at index limit ends reads FROM:
     the innermost parenthesized query around it, or the statement."""
+    if not is_word(stmt[limit], "limit"):
+        return []
     depth, start = 0, 0
     for i in range(limit - 1, -1, -1):
         tok = stmt[i]
@@ -1031,16 +1092,16 @@ def selects_from(stmt: list[Token], limit: int, table: str) -> bool:
                 start = i + 1
                 break
             depth -= 1
-    depth = 0
+    depth, tables = 0, []
     for i in range(start, limit):
         tok = stmt[i]
         if tok.kind == "punct" and tok.value == "(":
             depth += 1
         elif tok.kind == "punct" and tok.value == ")":
             depth -= 1
-        elif depth == 0 and is_word(tok, "from") and name_at(stmt, skip(stmt, i + 1, "only"))[0] == table:
-            return True
-    return False
+        elif depth == 0 and is_word(tok, "from"):
+            tables.append(name_at(stmt, skip(stmt, i + 1, "only"))[0])
+    return tables
 
 
 def lint_rename(ctx: Context, action: list[Token], relation: str, line: int) -> None:

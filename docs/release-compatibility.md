@@ -140,8 +140,8 @@ always exists:
 
 | Rule | Fails on | Do instead |
 |---|---|---|
-| `constraint-validation` | `ADD CONSTRAINT … FOREIGN KEY` or `CHECK` on an existing table without `NOT VALID`; `VALIDATE CONSTRAINT` in the migration that adds the constraint; `ADD COLUMN` with a `CHECK`, or with `REFERENCES` and a `DEFAULT` | add it `NOT VALID`, then `VALIDATE CONSTRAINT` in a later migration |
-| `constraint-churn` | one migration that both drops and adds constraints of one existing table (`ADD CONSTRAINT … USING INDEX` is exempt) | add the replacement `NOT VALID` under a new name; validate it and drop the old one in a later migration |
+| `constraint-validation` | `ADD CONSTRAINT … FOREIGN KEY` or `CHECK` on an existing table without `NOT VALID`; `VALIDATE CONSTRAINT` in the transaction that adds the constraint; `ADD COLUMN` with a `CHECK`, or with `REFERENCES` and a `DEFAULT` | add it `NOT VALID`, then `VALIDATE CONSTRAINT` in a later migration (or a later goose statement under `NO TRANSACTION`) |
+| `constraint-churn` | one migration that both drops and adds constraints of one existing table, unless it is a `NO TRANSACTION` migration whose goose statements add, then validate, then drop (`ADD CONSTRAINT … USING INDEX` is exempt) | add the replacement `NOT VALID` under a new name; validate it and drop the old one in a later migration |
 | `unbatched-write` | an `UPDATE` or `DELETE` of an existing table that is not batched (definition below); a loop of batches inside one transaction | the [batched backfill](#batched-backfill), or a job |
 | `lock-fanout` | one transaction that takes write-blocking locks on more than 3 existing tables. A foreign key also locks the table it references | split the migration, or use `-- +goose NO TRANSACTION` |
 
@@ -169,7 +169,14 @@ these holds:
 - its `WHERE` sets every column of one primary key or unique constraint
   (from the base `schema.sql`) to a constant with `=` or `IN (…)`, with
   `AND` only between the conditions. Such a statement changes a known
-  handful of rows, such as one seeded preset.
+  handful of rows, such as one seeded preset;
+- inside a `DO` block, its `WHERE` ANDs `<column> = ANY (<variable>)`, and
+  the same block fills that variable with `SELECT … INTO <variable>` from a
+  `SELECT … FROM <that table> … LIMIT n`: the keys of one batch.
+
+A whole-table `UPDATE` after `LOCK TABLE` is not batched: the lock blocks
+writes for the whole scan. To cover rows written during a backfill, install
+the trigger that maintains the new column first, then backfill in batches.
 
 A loop of batches inside one transaction keeps every batch's row locks
 until the migration commits. It must run in a `-- +goose NO TRANSACTION`

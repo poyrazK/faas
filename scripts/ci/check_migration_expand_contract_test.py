@@ -208,6 +208,23 @@ BEGIN
 END
 $backfill$;"""
 
+# Keyset batches whose keys go through an array variable.
+ARRAY_BACKFILL = """DO $backfill$
+DECLARE
+  last uuid := '00000000-0000-0000-0000-000000000000';
+  ids uuid[];
+BEGIN
+  LOOP
+    PERFORM set_config('lock_timeout', '500ms', true);
+    SELECT array_agg(id ORDER BY id) INTO ids FROM (SELECT id FROM apps WHERE id > last ORDER BY id LIMIT 500) batch;
+    EXIT WHEN ids IS NULL;
+    UPDATE apps a SET org_id = a.account_id WHERE a.id = ANY (ids) AND a.org_id IS NULL;
+    last := ids[cardinality(ids)];
+    COMMIT;
+  END LOOP;
+END
+$backfill$;"""
+
 
 class NoDowntimeTest(unittest.TestCase):
     """The rules that keep a migration from needing writers stopped
@@ -229,6 +246,9 @@ class NoDowntimeTest(unittest.TestCase):
         ("quoted name", "", LT + "ALTER TABLE apps ADD CONSTRAINT \"Apps_Tier\" CHECK (tier <> '');",
          [("constraint-validation", "apps.Apps_Tier")]),
         ("validate on its own", "", "ALTER TABLE apps VALIDATE CONSTRAINT apps_tier_chk;", []),
+        ("validate in a later NO TRANSACTION statement", NO_TX,
+         "-- +goose StatementBegin\n" + LT + "ALTER TABLE apps ADD CONSTRAINT apps_tier_chk CHECK (tier <> '') NOT VALID;\n"
+         "-- +goose StatementEnd\nALTER TABLE apps VALIDATE CONSTRAINT apps_tier_chk;", []),
         ("validate in the migration that adds it", "",
          LT + "ALTER TABLE apps ADD CONSTRAINT apps_tier_chk CHECK (tier <> '') NOT VALID;\n"
               "ALTER TABLE apps VALIDATE CONSTRAINT apps_tier_chk;",
@@ -268,6 +288,18 @@ class NoDowntimeTest(unittest.TestCase):
         ("drop on one table, add on another", "",
          LT + "ALTER TABLE apps DROP CONSTRAINT apps_tier_chk;\n"
               "ALTER TABLE events ADD CONSTRAINT events_kind_chk CHECK (kind <> '') NOT VALID;", []),
+        ("add, validate, drop as NO TRANSACTION steps", NO_TX,
+         "-- +goose StatementBegin\n" + LT + "ALTER TABLE apps ADD CONSTRAINT apps_tier_v2 CHECK (tier <> '') NOT VALID;\n"
+         "-- +goose StatementEnd\nALTER TABLE apps VALIDATE CONSTRAINT apps_tier_v2;\n-- +goose StatementBegin\n" + LT +
+         "ALTER TABLE apps DROP CONSTRAINT apps_tier_chk;\n-- +goose StatementEnd", []),
+        ("NO TRANSACTION steps that drop before validating", NO_TX,
+         "-- +goose StatementBegin\n" + LT + "ALTER TABLE apps ADD CONSTRAINT apps_tier_v2 CHECK (tier <> '') NOT VALID;\n"
+         "-- +goose StatementEnd\n-- +goose StatementBegin\n" + LT + "ALTER TABLE apps DROP CONSTRAINT apps_tier_chk;\n"
+         "-- +goose StatementEnd\nALTER TABLE apps VALIDATE CONSTRAINT apps_tier_v2;", [("constraint-churn", "apps")]),
+        ("NO TRANSACTION steps that drop first", NO_TX,
+         "-- +goose StatementBegin\n" + LT + "ALTER TABLE apps DROP CONSTRAINT apps_tier_chk;\n-- +goose StatementEnd\n"
+         "-- +goose StatementBegin\n" + LT + "ALTER TABLE apps ADD CONSTRAINT apps_tier_v2 CHECK (tier <> '') NOT VALID;\n"
+         "-- +goose StatementEnd\nALTER TABLE apps VALIDATE CONSTRAINT apps_tier_v2;", [("constraint-churn", "apps")]),
         ("primary key swapped to a concurrently built index", "",
          LT + "ALTER TABLE apps DROP CONSTRAINT apps_pkey, ADD CONSTRAINT apps_pkey PRIMARY KEY USING INDEX apps_pkey_v2;", []),
         # unbatched-write
@@ -306,6 +338,13 @@ class NoDowntimeTest(unittest.TestCase):
         ("a key from a subquery", "", "DELETE FROM apps WHERE id IN (SELECT id FROM apps);", [("unbatched-write", "apps")]),
         ("the documented backfill", NO_TX, BACKFILL, []),
         ("backfill loop inside one transaction", "", BACKFILL, [("unbatched-write", "apps")]),
+        ("keys of one batch in an array variable", NO_TX, ARRAY_BACKFILL, []),
+        ("array batches without a COMMIT", NO_TX, ARRAY_BACKFILL.replace("COMMIT;", ""), [("unbatched-write", "apps")]),
+        ("an array of another table's keys", NO_TX, ARRAY_BACKFILL.replace("SELECT id FROM apps", "SELECT id FROM accounts"),
+         [("unbatched-write", "apps")]),
+        ("a catch-up of the whole table under a write lock", NO_TX,
+         "DO $$ BEGIN PERFORM set_config('lock_timeout', '500ms', true); LOCK TABLE apps IN SHARE ROW EXCLUSIVE MODE;\n"
+         "UPDATE apps SET org_id = account_id WHERE org_id IS NULL; END $$;", [("unbatched-write", "apps")]),
         ("backfill loop that never commits", NO_TX, BACKFILL.replace("COMMIT;", ""), [("unbatched-write", "apps")]),
         ("row-by-row loop", NO_TX,
          "DO $$ DECLARE r record; BEGIN FOR r IN SELECT id FROM apps LOOP UPDATE apps SET tier = 'free' WHERE id = r.id; "

@@ -109,11 +109,15 @@ customer-path baseline gate. No check stood in the way.
    (docs/release-compatibility.md, "No downtime, no exceptions").
 3. **Four linter rules, none waivable**, on tables that exist on the base:
    - `constraint-validation`: a FOREIGN KEY or CHECK is added `NOT VALID`
-     and validated in a later migration.
-   - `constraint-churn`: no migration both drops and adds constraints of
-     one table. `ADD CONSTRAINT … USING INDEX` is exempt.
-   - `unbatched-write`: an `UPDATE` or `DELETE` either takes its rows from
-     a `SELECT … FROM <that table> … LIMIT n` (n ≤ 10,000) or pins a whole
+     and validated in a later transaction.
+   - `constraint-churn`: a constraint is replaced in three transactions:
+     add the new one `NOT VALID`, validate it, then drop the old one. A
+     migration may not both drop and add constraints of one table unless
+     it is `NO TRANSACTION` and its goose statements follow that order.
+     `ADD CONSTRAINT … USING INDEX` is exempt.
+   - `unbatched-write`: an `UPDATE` or `DELETE` takes its rows from a
+     `SELECT … FROM <that table> … LIMIT n` (n ≤ 10,000), directly or
+     through an array variable of the same `DO` block, or it pins a whole
      unique key to constants. A loop of batches runs under
      `-- +goose NO TRANSACTION` and commits after each batch.
    - `lock-fanout`: one transaction takes write-blocking locks on at most 3
