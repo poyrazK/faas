@@ -5,6 +5,7 @@ package state_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"reflect"
 	"strings"
@@ -16,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/onebox-faas/faas/migrations"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -144,6 +146,57 @@ func TestPgCloneDeploymentCleanupAtomicRecovery(t *testing.T) {
 			}
 			if _, dispatch, err = s.ClaimProjectEnvironmentCloneCheckpointWorkloadRetirement(t.Context(), l); err != nil || dispatch {
 				t.Fatal("native replay after environment removal", err)
+			}
+		})
+	}
+}
+
+func TestPgCloneDeploymentCleanupPreservesMigrationBuildRecords(t *testing.T) {
+	for _, status := range []string{"waiting", "ready", "failed", "public_build_urls"} {
+		t.Run(status, func(t *testing.T) {
+			s, pool, lease, native := deploymentCleanupFixture(t)
+			deploymentID := native.Plan.Workloads[0].TargetDeploymentID
+			var constraint, read string
+			if status == "public_build_urls" {
+				constraint = "deployment_public_build_urls_deployment_id_fkey"
+				read = "SELECT to_jsonb(r) FROM deployment_public_build_urls r WHERE deployment_id=$1"
+				if _, err := pool.Exec(t.Context(), `INSERT INTO deployment_public_build_urls(deployment_id,urls) VALUES($1,'{"API_URL":"https://captured.example.invalid"}')`, deploymentID); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				constraint = "deployment_build_dependency_gates_deployment_id_fkey"
+				read = "SELECT to_jsonb(r) FROM deployment_build_dependency_gates r WHERE deployment_id=$1"
+				gate := state.BuildDependencyGate{
+					Dependencies: []state.DeploymentDependencyPin{{Service: "api", AppID: uuid.NewString(), DeploymentID: uuid.NewString()}},
+					Status:       status,
+					DeadlineAt:   time.Now().UTC().Add(api.ProjectMigrationBuildWaitTimeout),
+				}
+				progress, err := json.Marshal(gate)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := pool.Exec(t.Context(), "INSERT INTO deployment_build_dependency_gates(deployment_id,progress) VALUES($1,$2::jsonb)", deploymentID, progress); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var before []byte
+			if err := pool.QueryRow(t.Context(), read, deploymentID).Scan(&before); err != nil {
+				t.Fatal(err)
+			}
+			report, err := s.ProjectEnvironmentCloneDeploymentBorrowersForLease(t.Context(), lease)
+			if err != nil || report.Deployments[deploymentID][constraint] != 1 {
+				t.Fatal("migration build record missing from retained references", report, err)
+			}
+			if err = s.CleanupProjectEnvironmentCloneDeploymentsForLease(t.Context(), lease); !errors.Is(err, state.ErrConflict) || !strings.Contains(err.Error(), constraint) {
+				t.Fatal("migration build record did not block deployment removal", err)
+			}
+			var after []byte
+			if err := pool.QueryRow(t.Context(), read, deploymentID).Scan(&after); err != nil || !reflect.DeepEqual(before, after) {
+				t.Fatal("cleanup changed saved migration build data", err)
+			}
+			var live, owner, receipt bool
+			if err := pool.QueryRow(t.Context(), "SELECT EXISTS(SELECT 1 FROM deployments WHERE id=$1),EXISTS(SELECT 1 FROM deployment_runtime_environment_owners WHERE deployment_id=$1),EXISTS(SELECT 1 FROM project_environment_clone_deployment_cleanups WHERE operation_id=$2)", deploymentID, lease.Operation.ID).Scan(&live, &owner, &receipt); err != nil || !live || !owner || receipt {
+				t.Fatal("blocked cleanup changed deployment ownership or committed a receipt", live, owner, receipt, err)
 			}
 		})
 	}

@@ -32,14 +32,29 @@ func cmdAITokens(args []string) int {
 	if err := parseInterspersed(fs, args[1:]); err != nil || *slug == "" {
 		return printErr("Invalid ai tokens arguments", errors.New(aiTokensUsage))
 	}
+	switch args[0] {
+	case "list", "create":
+		if rejectUnexpectedFlagArgs(fs) {
+			return 1
+		}
+	case "revoke":
+		if fs.NArg() != 1 {
+			if fs.NArg() > 1 {
+				rejectUnexpectedFlagArgs(fs)
+			}
+			return printErr("Invalid ai tokens arguments", errors.New(aiTokensUsage))
+		}
+	default:
+		return printErr("Invalid ai tokens arguments", errors.New(aiTokensUsage))
+	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	switch {
-	case args[0] == "list" && fs.NArg() == 0:
+	switch args[0] {
+	case "list":
 		return cmdAITokensList(client, *slug)
-	case args[0] == "create" && fs.NArg() == 0:
+	case "create":
 		req := api.CreateOutboundAIAccessTokenRequest{Name: *name, ExpiresInHours: expires, IntegrationIDs: integrations}
 		if !req.Valid() {
 			return printErr("Invalid token", errors.New(aiTokensUsage))
@@ -56,7 +71,7 @@ func cmdAITokens(args []string) int {
 		_, _ = fmt.Fprintln(osStderr, "Store it now; it is not shown again. Use it as your SDK's API key with the base URL "+
 			"https://<AI gateway host>/i/<integration-id> (or /r/<route-id>).")
 		return 0
-	case args[0] == "revoke" && fs.NArg() == 1:
+	case "revoke":
 		if err := client.RevokeOutboundAIAccessToken(context.Background(), *slug, fs.Arg(0)); err != nil {
 			return printErr("Could not revoke the access token", err)
 		}

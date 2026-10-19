@@ -8,11 +8,41 @@ import (
 	"go/token"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 var errOverride = errors.New("override")
+
+type restoreFailureFake struct {
+	MemStore *state.MemStore
+}
+
+func (restoreFailureFake) RestoreApp(context.Context, string, api.Limits) (state.App, error) {
+	return state.App{}, errOverride
+}
+
+func (restoreFailureFake) RestoreAppWithActivity(context.Context, string, api.Limits, state.OrgActivity) (state.App, int64, error) {
+	return state.App{}, 0, errOverride
+}
+
+func TestMemDispatchesBothRestoreMutationPaths(t *testing.T) {
+	store := NewMem(restoreFailureFake{MemStore: state.NewMemStore()})
+	ctx := context.Background()
+	limits := api.MustLimitsFor(api.PlanPro)
+	if _, err := store.RestoreApp(ctx, "identified-app", limits); !errors.Is(err, errOverride) {
+		t.Fatalf("RestoreApp = %v, want override", err)
+	}
+	if _, outbox, err := store.RestoreAppWithActivity(ctx, "identified-app", limits, state.OrgActivity{}); !errors.Is(err, errOverride) || outbox != 0 {
+		t.Fatalf("RestoreAppWithActivity = %d, %v, want override without outbox", outbox, err)
+	}
+	var inventory state.AccountDeletedAppsStore = store
+	if rows, err := inventory.ListAccountDeletedApps(ctx, "owned-account", time.Time{}, "", 2); err != nil || len(rows) != 0 {
+		t.Fatalf("inventory delegation = %v, %v", rows, err)
+	}
+}
 
 type appBySlugFake struct {
 	MemStore *state.MemStore

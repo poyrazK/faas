@@ -26,11 +26,7 @@ func TestGatewayCopyReceiptsPG(t *testing.T) {
 	gatewayWriteReceiptsSuite(t, st, true)
 }
 
-type gatewayUploadStore interface {
-	accountingStore
-	state.ObjectTrackedGatewayCopyStore
-	state.ObjectCapacityStore
-}
+type gatewayUploadStore = contractTestStore
 
 func gatewayUploadReceiptsSuite(t *testing.T, st gatewayUploadStore) {
 	gatewayWriteReceiptsSuite(t, st, false)

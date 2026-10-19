@@ -64,6 +64,10 @@ func (m *MemStore) ActivateEnvironmentGitOpsWorkloadGraph(ctx context.Context, l
 		}
 		return ProjectReleaseSet{}, false, err
 	}
+	bindingDeadline, err := m.environmentBindingGraphDeadlineLocked(memory, graph, members)
+	if err != nil {
+		return ProjectReleaseSet{}, false, err
+	}
 	rollback := m.stageWorkloadRetirementCutoverLocked(memory)
 	defer func() { rollback() }()
 	previous := make(map[string]Deployment)
@@ -107,7 +111,7 @@ func (m *MemStore) ActivateEnvironmentGitOpsWorkloadGraph(ctx context.Context, l
 	if err := m.activateWorkloadRetirementsLocked(memory, lease); err != nil {
 		return ProjectReleaseSet{}, false, err
 	}
-	release, err := m.publishProjectReleaseSetLocked(memory.source.AccountID, memory.source.ProjectID, memory.source.EnvironmentSlug, ttl, members, true)
+	release, err := m.publishProjectReleaseSetLocked(memory.source.AccountID, memory.source.ProjectID, memory.source.EnvironmentSlug, ttl, members, true, &environmentBindingPublication{graph: graph, members: candidateBindingMemberIDs(members), validUntil: bindingDeadline})
 	if err != nil {
 		for id, deployment := range previous {
 			m.deployments[id] = deployment
@@ -129,6 +133,10 @@ func (m *MemStore) ActivateEnvironmentGitOpsWorkloadGraph(ctx context.Context, l
 		}
 	}
 	rollback = func() {}
+	if memory.bindingReleases == nil {
+		memory.bindingReleases = map[string]string{}
+	}
+	memory.bindingReleases[release.ID] = graph.ID
 	return release, true, nil
 }
 

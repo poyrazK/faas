@@ -61,7 +61,7 @@ func (f *fixture) suspend(t *testing.T, resumeMS int64) rehearsalresume.Receipt 
 	step("paused", "resuming", 1, 0)
 	if pg, ok := f.store.(*state.PgStore); ok {
 		callers, lookupErr := pg.LiveServiceCallersByHostIP(ctx, "", "10.100.0.6")
-		if lookupErr != nil || len(callers) != 1 || callers[0].AppID != id.AppID || callers[0].DeploymentID != id.DeploymentID {
+		if lookupErr != nil || len(callers) != 1 || callers[0].ID != id.InstanceID || callers[0].AppID != id.AppID || callers[0].DeploymentID != id.DeploymentID {
 			t.Fatal("original resume hook could not reconnect to contained dependencies")
 		}
 		if live, lookupErr := pg.LiveInstancesByHostIP(ctx, "", "10.100.0.6"); lookupErr != nil || len(live) != 0 {

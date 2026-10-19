@@ -761,6 +761,9 @@ type Metrics struct {
 	// routePriorityQueue (ADR-978) counts warm-capacity queue entries by route
 	// priority class and outcome.
 	routePriorityQueue *prometheus.CounterVec
+	// routePriorityWake (ADR-20261018181846) counts cold-wake queue outcomes
+	// that route priority decided.
+	routePriorityWake *prometheus.CounterVec
 	// servicePreviewToProduction counts internal calls made by a PR preview
 	// app into a production service because no same-PR sibling was available.
 	// This is the fleet-wide signal that preview traffic is exercising live
@@ -1698,6 +1701,12 @@ func NewMetrics() *Metrics {
 				Help: "Warm-capacity queue entries by route priority class (critical, normal, bulk) and outcome: queued, displacing (entered by taking a lower-class waiter's place), displaced (lost its place to a higher class), rejected (queue full).",
 			}, []string{"app", "class", "outcome"},
 		),
+		routePriorityWake: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "gateway_route_priority_wake_total",
+				Help: "Cold-wake queue outcomes decided by route priority class (critical, normal, bulk) (ADR-20261018181846): displacing (joined a full queue by taking a lower-class waiter's place), displaced (turned away for a higher class), rejected (full queue, no lower class to displace), released_later (released after a higher class when the wake finished).",
+			}, []string{"app", "class", "outcome"},
+		),
 		serviceWakeLatency: prometheus.NewHistogram(
 			prometheus.HistogramOpts{
 				Name:    "gateway_service_wake_latency_seconds",
@@ -2079,7 +2088,7 @@ func NewMetrics() *Metrics {
 	reg.MustRegister(m.serviceDependencyEdges, m.serviceDependencyDuration, m.serviceDependencyEdgeWakes)
 	reg.MustRegister(m.serviceTCPEdgeSessions, m.serviceTCPEdgeWakes)
 	reg.MustRegister(m.serviceWakeAhead)
-	reg.MustRegister(m.routePriorityQueue, m.serviceWakeAheadEdgeShare, m.serviceWakeAheadCallerWakes, m.serviceWakeAheadEdgeTotal)
+	reg.MustRegister(m.routePriorityQueue, m.routePriorityWake, m.serviceWakeAheadEdgeShare, m.serviceWakeAheadCallerWakes, m.serviceWakeAheadEdgeTotal)
 	reg.MustRegister(m.usageOutboxPending, m.usageOutboxBytes, m.usageOutboxFailures, m.usageCommitAborts, m.usageDelivered, m.usageDeliveryFailures)
 	// Issue #587 / PR-A: per-daemon graceful-shutdown drain
 	// observability. Same shape as the wire.OpsMetrics series,
@@ -3858,6 +3867,15 @@ func (m *Metrics) IncRoutePriorityQueue(appID, class, outcome string) {
 		return
 	}
 	m.routePriorityQueue.WithLabelValues(appID, class, outcome).Inc()
+}
+
+// IncRoutePriorityWake counts a cold-wake queue outcome decided by route
+// priority (ADR-20261018181846). Nil-safe for gates without metrics.
+func (m *Metrics) IncRoutePriorityWake(appID, class, outcome string) {
+	if m == nil || m.routePriorityWake == nil {
+		return
+	}
+	m.routePriorityWake.WithLabelValues(appID, class, outcome).Inc()
 }
 
 func wakeAheadAppIDs(ids ...string) bool {

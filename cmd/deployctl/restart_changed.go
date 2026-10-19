@@ -22,7 +22,7 @@ import (
 // since they started: the unit, its drop-ins and drop-in directory, its
 // environment files and credentials (what a hand-off would not pick up),
 // and the --config file it reads. A daemon whose only change is its
-// --config file hands off (ADR-1580); the others restart through their
+// --config file hands off (ADR-1736); the others restart through their
 // socket units. A stopped daemon stays stopped, as the roles' try-restart
 // handlers leave it.
 

@@ -15,6 +15,9 @@ type ContentStats struct {
 	Uncacheable int64
 	Same        []int64
 	Changed     []int64
+	// Stale counts refills under a cache rule whose body changed within the
+	// rule's max-age (ADR-1199).
+	Stale int64
 }
 
 // ContentVerdict is what the observed responses say about caching a route.

@@ -30,7 +30,7 @@ func open(t *testing.T) *pgxpool.Pool {
 	if _, err := pool.Exec(ctx, `CREATE TABLE apps (id uuid PRIMARY KEY, account_id uuid NOT NULL, deleted_at timestamptz)`); err != nil {
 		t.Fatal(err)
 	}
-	raw, err := migrations.FS.ReadFile("20261019102108412_data_api_usage.sql")
+	raw, err := migrations.FS.ReadFile("20261019131100664_data_api_usage.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

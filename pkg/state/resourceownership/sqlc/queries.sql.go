@@ -366,6 +366,18 @@ func (q *Queries) PurgePersonalInvocations(ctx context.Context, db DBTX, account
 	return err
 }
 
+const purgePersonalOperations = `-- name: PurgePersonalOperations :exec
+DELETE FROM customer_operations target WHERE target.account_id=$1 AND target.app_id IN
+ (SELECT a.id FROM apps a LEFT JOIN orgs o ON o.id=a.org_id WHERE a.account_id=$1 AND (a.org_id IS NULL OR o.personal_org))
+`
+
+// Customer operations pin their invocations (ON DELETE RESTRICT), so they go
+// before PurgePersonalInvocations; their executions and events cascade.
+func (q *Queries) PurgePersonalOperations(ctx context.Context, db DBTX, accountID pgtype.UUID) error {
+	_, err := db.Exec(ctx, purgePersonalOperations, accountID)
+	return err
+}
+
 const purgePersonalProjects = `-- name: PurgePersonalProjects :exec
 DELETE FROM projects WHERE account_id=$1 AND org_id IN (SELECT id FROM orgs WHERE personal_org)
 `

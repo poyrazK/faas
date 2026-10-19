@@ -10,7 +10,7 @@
 - **Why:** With collection (ADR-1311) invoices reach customers on their own, so operators wanted unpaid customers cut off without watching the overdue digest and revoking keys by hand.
 - **Consequences:**
   - **Lag.** A hold follows payment status, which ADR-1504 reads every 6 hours for an overdue invoice. While an invoice holds its consumer, each recomputation brings its next read within 15 minutes. With holds recomputed every 5 minutes and the gateway caching the policy for 15 seconds, paying lifts a hold within about 20 minutes. Operators can delete the policy to lift every hold at the next check.
-  - **App consumers only.** Customer-wide (platform tenant) statements are not checked. Tenants keep their request budgets (ADR-240).
+  - **App consumers only.** Customer-wide (platform tenant) statements are not checked. Tenants keep their request budgets (ADR-240). *ADR-1324 adds an account rule for tenants.*
   - **Statement totals unchanged.** A blocked consumer adds no usage, so its later statements only bill what it used before the hold.
 - **Rejected alternatives:**
   - Revoking consumer keys would lose them for good and need reissuing after payment.

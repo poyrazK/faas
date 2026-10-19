@@ -955,7 +955,10 @@ type Handler struct {
 	consumerPlanStore          ConsumerPlanStore
 	consumerPlanPolicies       *consumerPlanPolicyCache
 	tenantRequestBudgetEnabled bool
-	gate                       *WakeGate
+	// apiMonetization is the API monetization release gate
+	// (ADR-20261018090210); nil keeps monetization off.
+	apiMonetization func() bool
+	gate            *WakeGate
 	// admissionQueue protects the control plane from a simultaneous cold
 	// burst across many apps. It is intentionally separate from gate:
 	// gate coalesces waiters for one app, while admissionQueue orders the
@@ -1238,7 +1241,8 @@ type Handler struct {
 	// commit 14.
 	responseCache *ResponseCache
 	// contentObserver compares anonymous GET responses on routes without a
-	// cache rule (ADR-1188); only the outcome reaches request telemetry.
+	// cache rule (ADR-1188) and the bodies a cache rule stores (ADR-1199);
+	// only the outcome reaches request telemetry.
 	contentObserver *contentObserver
 	// cacheRefresh coalesces detached stale-while-waking refreshes by
 	// response-cache key. The customer request returns the stale body while
@@ -1476,6 +1480,8 @@ func NewHandlerWith(backend Backend, m *Metrics, log *slog.Logger) *Handler {
 	// race with parallel ServeHTTP readers — the load test under -race
 	// caught that pattern; see the field doc).
 	h.proxyFor = defaultProxy
+	// Route priorities also order the cold-wake queue (ADR-20261018181846).
+	h.gate.classifier = h
 	return h
 }
 
@@ -5567,6 +5573,19 @@ func (h *Handler) WithRequestIDJournalWriter(writer RequestIDJournalWriter) {
 // telemetry. It must be opened before the gateway accepts requests.
 func (h *Handler) WithUsageOutbox(q *usageoutbox.Outbox) { h.usageOutbox = q }
 
+// WithAPIMonetization installs the API monetization release gate
+// (ADR-20261018090210), read per request. Off, the gateway enforces no
+// consumer plan, spend cap or overdue hold, does not hold responses for
+// their usage (ADR-1505) and passes Gregale-Usage through untouched.
+func (h *Handler) WithAPIMonetization(enabled func() bool) *Handler {
+	h.apiMonetization = enabled
+	return h
+}
+
+func (h *Handler) apiMonetizationEnabled() bool {
+	return h.apiMonetization != nil && h.apiMonetization()
+}
+
 // WithRequestAudit enables exact completed-request evidence in the fsynced
 // usage envelope. Enable only after apid supports the audit receipt field.
 func (h *Handler) WithRequestAudit(enabled bool) { h.requestAuditEnabled = enabled }
@@ -5745,7 +5764,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Keep a request-local sink for platform-owned runner execution markers.
 	// The forwarder consumes and redacts the headers; observe persists the
 	// bounded values with the request telemetry row.
-	r = withGuestExecutionEvidence(r)
+	r = withGuestExecutionEvidence(r, h.apiMonetizationEnabled())
 
 	// Request ID is generated once per request and set on the response BEFORE
 	// any error path so even 4xx responses are correlatable. Inbound
@@ -6547,6 +6566,11 @@ haveApp:
 		cw.excludeManagedVersionCookie(managedVersionSetCookie)
 		cw.excludeManagedCookie(managedReleaseContextSetCookie)
 		w = cw
+		if h.contentObserver != nil && contentObservable(r) {
+			// Compare the body this miss stores with the previous one for the
+			// URL, so the rule's max-age can be checked (ADR-1199).
+			r = r.WithContext(withContentTee(r.Context(), newRefillObserver(cw, h.contentObserver, app.ID, r, rule)))
+		}
 		defer func() {
 			// Proxy aborts unwind through this defer after a partial body has
 			// been written. Preserve the abort without caching those bytes.
@@ -6914,6 +6938,8 @@ haveApp:
 			attribute.String("app_plan", string(app.Plan)),
 			attribute.Int("desired_instances", maxInstances),
 		)
+		// The wake queue orders and admits waiters by route priority.
+		wakeCtx = withRoutePriorityRequest(wakeCtx, r)
 		//nolint:contextcheck // request ctx at handler boundary.
 		cold, wakeID, wakeMethod, err = h.ensureCapacity(wakeCtx, app.ID, app.AccountID, app.Scope, maxInstances, app.Plan, app.AutoscaleTargetRPS, sched.TriggerGateway, concurrencyConfigForApp(app))
 		wakeSpan.SetAttributes(

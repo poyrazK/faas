@@ -8,7 +8,7 @@ import type { DataAPIUsageCounts } from './DataAPIUsageCounts.js';
  */
 export type DataAPIUsageHour = (DataAPIUsageCounts & {
   /**
-   * Start of the UTC hour.
+   * UTC hour the delta belongs to; aligned to the hour.
    */
   hour: string;
 });

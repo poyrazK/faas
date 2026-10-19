@@ -3,6 +3,7 @@ package state
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"github.com/onebox-faas/faas/pkg/api"
 	"time"
@@ -23,7 +24,7 @@ func (m *MemStore) queueCanarySnapshotLocked(account, appID, deployment, binding
 	if !ok || !found || app.AccountID != account || app.Status == AppDeleted || dep.AppID != appID || dep.Status != "live" || dep.DeletedAt != nil {
 		return queueCanarySnapshot{}, ErrNotFound
 	}
-	if app.Manifest.RevisionPinTTLSeconds <= 0 || dep.TrafficPercent == 0 && !m.revisionPins[deployment].After(time.Now()) {
+	if !dep.EnvironmentWorkloadManaged() && (app.Manifest.RevisionPinTTLSeconds <= 0 || dep.TrafficPercent == 0 && !m.revisionPins[deployment].After(time.Now())) {
 		return queueCanarySnapshot{}, ErrConflict
 	}
 	var out queueCanarySnapshot
@@ -42,11 +43,37 @@ func (m *MemStore) queueCanarySnapshotLocked(account, appID, deployment, binding
 			}
 			out = queueCanarySnapshot{BindingID: b.ID, Name: b.Name, QueueName: b.QueueName, Scope: dep.Scope, EnvironmentID: b.EnvironmentID, BindingScope: b.DeploymentScope,
 				MaxAttempts: int(t.MaxAttempts), PayloadMaxBytes: int(t.PayloadMaxBytes), FilterCriteria: t.FilterCriteria, PoisonStrategy: t.BrokerPoisonStrategy, RevisionTTLSeconds: app.Manifest.RevisionPinTTLSeconds, TriggerID: t.ID.String(), Config: t.Config, BatchSize: int(t.BatchSizeMax), BatchWindow: int(t.BatchWindowMs), Retry: b.RetryPolicyJSON, Concurrency: b.MaxConcurrency,
-				DeploymentID: dep.ID, OverrideEnv: dep.OverrideEnv, RootfsKey: dep.RootfsKey, ImageDigest: dep.ImageDigest}
+				ConsumerClass: string(b.WorkloadClass), DeploymentID: dep.ID, OverrideEnv: dep.OverrideEnv, RootfsKey: dep.RootfsKey, ImageDigest: dep.ImageDigest}
 		}
 	}
 	if count != 1 {
 		return out, ErrConflict
+	}
+	var err error
+	out.Artifact, err = bindingVerificationArtifact(dep)
+	if err != nil {
+		return out, ErrNotFound
+	}
+	if dep.EnvironmentWorkloadManaged() {
+		out.ManagedRuntime = json.RawMessage(dep.EnvironmentWorkloadRuntime)
+		if err := managedQueueCanarySnapshot(&out, dep); err != nil {
+			return out, err
+		}
+		frozen, _ := dep.ScopedWorkloadRuntime()
+		source := m.environmentGitOps[frozen.SourceID]
+		release := m.projectReleaseSets[m.activeProjectReleaseSets[releaseKey(app.ProjectID, dep.Scope)]]
+		if source == nil || source.source.Detached || source.source.Suspended || source.source.Spec.Mode != "enforce" ||
+			source.source.AccountID != account || source.source.ProjectID != app.ProjectID || source.source.EnvironmentID != frozen.EnvironmentID || source.source.EnvironmentSlug != dep.Scope ||
+			app.PreviewOfSlug != "" || !release.Active || release.AccountID != account || release.ProjectID != app.ProjectID || release.EnvironmentSlug != dep.Scope || releaseMemberForApp(release, appID) != dep.ID {
+			return out, ErrNotFound
+		}
+		out.ReleaseID, out.SourceGeneration = release.ID, source.source.Generation
+		var err error
+		out.ServiceRevision, err = m.serviceBindingRevisionLocked(account)
+		if err != nil {
+			return out, err
+		}
+		out.PolicyRevision = m.bindingReleasePolicyLocked(appID, dep.Scope).Revision
 	}
 	return out, nil
 }

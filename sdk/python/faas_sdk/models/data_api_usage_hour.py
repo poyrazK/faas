@@ -23,7 +23,7 @@ class DataAPIUsageHour:
     rows_returned: int
     response_bytes: int
     hour: datetime.datetime
-    """Start of the UTC hour."""
+    """UTC hour the delta belongs to; aligned to the hour."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

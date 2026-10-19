@@ -44,7 +44,7 @@ node "$starter_dir/tools/install-sdk.mjs" "$starter_dir/$package_file"
 npm test --prefix "$starter_dir"
 node --test tests/data-api/install-sdk.test.mjs
 node --test tests/data-api/artifacts.test.mjs
-node --test tests/data-api/browser-inspector.test.mjs tests/data-api/browser-cors.test.mjs cmd/gregale/templates/data-api-teams/workers/order-webhooks.test.mjs
+node --test tests/data-api/browser-inspector.test.mjs tests/data-api/inspector-refresh.test.mjs tests/data-api/browser-cors.test.mjs cmd/gregale/templates/data-api-teams/workers/order-webhooks.test.mjs
 node --test tests/data-api/staging/*.test.mjs
 node --test tests/data-api/load/*.test.mjs
 if [[ "${1:-}" == "--integration" ]]; then

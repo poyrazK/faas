@@ -515,6 +515,7 @@ func secretsSet(args []string) int {
 	waitForAck := fs.Bool("wait-for-ack", false, "wait for application acknowledgements for every updated key")
 	timeout := fs.Duration("timeout", 2*time.Minute, "maximum restart and acknowledgement wait after saving values")
 	restart := fs.Bool("restart", false, "restart app with the updated secrets")
+	noGuard := fs.Bool("no-guard", false, "do not open a config guard for this change (ADR-1451)")
 	orderedArgs, err := reorderSecretsSetArgs(args)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "secret set:", err)
@@ -629,6 +630,9 @@ func secretsSet(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
+	if *noGuard {
+		client = client.WithoutConfigGuard()
+	}
 
 	printMutationTarget(*app, *scope, appSource, scopeSource)
 	return writeSecretsPairs(context.Background(), client, *app, pairs, *scope, *secretClass, *restart, secretSetWaitOptions{enabled: *waitForAck, timeout: *timeout})
@@ -648,6 +652,7 @@ func writeSecretsPairs(ctx context.Context, client *Client, app string, pairs []
 			PrintOK(osStdout, "%s set (scope=%s)", p.Key, scopeOrDefault(scope))
 		}
 	}
+	printConfigGuardNotice(ctx, client, app, scope)
 	if len(waitOptions) > 0 && waitOptions[0].enabled {
 		return finishSecretSetWait(ctx, client, app, scope, keys, restart, waitOptions[0].timeout)
 	}
@@ -892,11 +897,27 @@ func setDeploySecretsWithScope(ctx context.Context, client *Client, app string, 
 	return nil
 }
 
-// setProjectDeploySecrets applies a validated deploy bundle to each workload
-// in a project plan. Project plans can contain duplicate names only when a
-// detector has merged the same workload, so de-duplicate by the API slug to
-// avoid issuing duplicate writes. Values remain in memory and are passed only
-// to the existing sealed app-secret endpoint; they are never logged.
+// projectDeployInitialSecrets keeps the bundle in the request for the reviewed
+// selection, so the server can seal it before any builds are enqueued.
+func projectDeployInitialSecrets(workloads []api.PlanWorkload, pairs []secretsPair) api.ProjectInitialSecrets {
+	if len(pairs) == 0 {
+		return nil
+	}
+	values := make(api.ProjectInitialSecrets)
+	for _, workload := range workloads {
+		if workload.Name == "" {
+			continue
+		}
+		values[workload.Name] = make(map[string]string, len(pairs))
+		for _, pair := range pairs {
+			values[workload.Name][pair.Key] = pair.Value
+		}
+	}
+	return values
+}
+
+// setProjectDeploySecrets preserves the legacy direct-write helper for callers
+// that already have saved apps. Deploy itself sends the bundle during apply.
 func setProjectDeploySecrets(ctx context.Context, client *Client, workloads []api.PlanWorkload, pairs []secretsPair) (int, error) {
 	return setProjectDeploySecretsWithScope(ctx, client, workloads, pairs, "")
 }
@@ -933,6 +954,7 @@ func secretsUnset(args []string) int {
 	waitForAck := fs.Bool("wait-for-ack", false, "wait until every active authorized runtime confirms it removed the secret")
 	timeout := fs.Duration("timeout", 2*time.Minute, "maximum time to wait for runtime acknowledgements")
 	restart := fs.Bool("restart", false, "restart the app so running instances drop the removed secret now")
+	noGuard := fs.Bool("no-guard", false, "do not open a config guard for this change (ADR-1451)")
 	orderedArgs, err := reorderSecretsSetArgs(args)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "secret unset:", err)
@@ -1003,6 +1025,9 @@ func secretsUnset(args []string) int {
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
+	}
+	if *noGuard {
+		client = client.WithoutConfigGuard()
 	}
 	printMutationTarget(*app, *scope, appSource, scopeSource)
 	if len(keys) > 1 {

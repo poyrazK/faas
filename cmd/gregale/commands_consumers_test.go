@@ -27,6 +27,7 @@ func withConsumersTestAPI(t *testing.T, handler http.HandlerFunc) *bytes.Buffer 
 
 // adr: 949 — the CLI drives the consumer monetization lifecycle end to end.
 func TestCmdConsumersMonetizationLifecycle(t *testing.T) {
+	t.Setenv("FAAS_API_MONETIZATION_ENABLED", "1") // adr: 20261018090210 — exercises released monetization
 	var key api.CreateConsumerKeyRequest
 	var card api.CreateAPIConsumerRateCardRequest
 	var period api.CreateAPIConsumerUsageStatementRequest
@@ -86,6 +87,7 @@ func TestCmdConsumersMonetizationLifecycle(t *testing.T) {
 }
 
 func TestCmdConsumersRejectsBadArgumentsBeforeCallingAPI(t *testing.T) {
+	t.Setenv("FAAS_API_MONETIZATION_ENABLED", "1") // adr: 20261018090210 — exercises released monetization
 	withConsumersTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
 		t.Errorf("unexpected API call %s %s", r.Method, r.URL.Path)
 	})
@@ -127,6 +129,7 @@ func TestCmdConsumersRejectsBadArgumentsBeforeCallingAPI(t *testing.T) {
 
 // adr: 951
 func TestCmdConsumersTieredRateCard(t *testing.T) {
+	t.Setenv("FAAS_API_MONETIZATION_ENABLED", "1") // adr: 20261018090210 — exercises released monetization
 	var card api.CreateAPIConsumerRateCardRequest
 	stdout := withConsumersTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewDecoder(r.Body).Decode(&card)
@@ -145,6 +148,7 @@ func TestCmdConsumersTieredRateCard(t *testing.T) {
 
 // adr: 952
 func TestCmdConsumersRouteWeights(t *testing.T) {
+	t.Setenv("FAAS_API_MONETIZATION_ENABLED", "1") // adr: 20261018090210 — exercises released monetization
 	var card api.CreateAPIConsumerRateCardRequest
 	stdout := withConsumersTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewDecoder(r.Body).Decode(&card)
@@ -164,6 +168,7 @@ func TestCmdConsumersRouteWeights(t *testing.T) {
 
 // adr: 953
 func TestCmdConsumersPlans(t *testing.T) {
+	t.Setenv("FAAS_API_MONETIZATION_ENABLED", "1") // adr: 20261018090210 — exercises released monetization
 	var created api.CreateAPIConsumerPlanRequest
 	var updated api.UpdateAPIConsumerPlanLimitsRequest
 	var assigned api.AssignAPIConsumerPlanRequest
@@ -239,6 +244,7 @@ func TestFormatMillicents(t *testing.T) {
 }
 
 func TestCmdPlatformTenantStatementVerbs(t *testing.T) {
+	t.Setenv("FAAS_API_MONETIZATION_ENABLED", "1") // adr: 20261018090210 — exercises released monetization
 	var period api.CreateAPIConsumerUsageStatementRequest
 	var listQuery string
 	stdout := withConsumersTestAPI(t, func(w http.ResponseWriter, r *http.Request) {

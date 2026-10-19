@@ -916,7 +916,7 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, log *sl
 	page := dashboard.Page{Title: app.Slug, Body: "app_detail", Account: dashboardAccountView(view, appCount), Data: dashboard.AppDetailData{
 		ProductControlURL:  s.productControlConsoleURL(app.Slug),
 		ProfilingAvailable: s.profileBackend != nil && api.MustLimitsFor(acct.Plan).Profiling.Enabled,
-		ApplicationAuth:    api.ApplicationAuthEnabled(acct.ID),
+		ApplicationAuth:    s.applicationAuthEnabled(acct),
 		Operational:        &operational,
 		App:                appRow,
 		AppCosts:           appCosts,
@@ -2245,33 +2245,43 @@ func (s *server) renderAuditEvents(w http.ResponseWriter, r *http.Request, log *
 // "everything in-flight" surface for the canary + safedeploy
 // lifecycle. Three sections, bounded by the
 // safedeploy_in_flight_rollouts gauge that PR-B's
-// canary_fleet_in_flight_high alert tripwires at 50. Operator-only
-// (gated upstream by role.IsOperator — see cmd/apid/handlers.go).
+// canary_fleet_in_flight_high alert tripwires at 50. The dashboard router
+// has no operator gate, so a customer session sees only its own account's
+// rollouts and alerts; accounts on the operator allowlist see the fleet.
 func (s *server) renderSafeReleasesDashboard(w http.ResponseWriter, r *http.Request, log *slog.Logger, acct state.Account) {
 	ctx := r.Context()
 	now := time.Now().UTC()
+	operator, _ := s.adminAllows(acct)
 
 	// (1) In-flight rollouts.
-	rows, err := s.store.SafedeployListPendingRollouts(ctx)
+	pending, err := s.store.SafedeployListPendingRollouts(ctx)
 	if err != nil {
 		log.Warn("dashboard renderSafeReleasesDashboard: list pending rollouts",
 			"account_id", acct.ID, "err", err)
 		renderProblem(w, log, err)
 		return
 	}
-	inFlight := make([]dashboard.DeploymentItem, 0, len(rows))
-	slugByID := make(map[string]string, len(rows))
-	for _, d := range rows {
-		inFlight = append(inFlight, dashboardDeploymentItem(d))
-		// Resolve AppID → slug once per deployment so the
-		// audit-row table can deep-link back to the per-app
-		// drill-down. Best-effort: an AppByID miss just leaves
-		// the row without a deep link.
-		if _, ok := slugByID[d.AppID]; !ok {
-			if app, err := s.store.AppByID(ctx, d.AppID); err == nil && app.AccountID == acct.ID {
+	rows := make([]state.Deployment, 0, len(pending))
+	inFlight := make([]dashboard.DeploymentItem, 0, len(pending))
+	slugByID := make(map[string]string, len(pending))
+	ownedByID := make(map[string]bool, len(pending))
+	for _, d := range pending {
+		// Resolve AppID → owner (and slug, for the audit-row deep
+		// link) once per app. An AppByID miss is treated as not owned.
+		owned, seen := ownedByID[d.AppID]
+		if !seen {
+			app, err := s.store.AppByID(ctx, d.AppID)
+			owned = err == nil && app.AccountID == acct.ID
+			ownedByID[d.AppID] = owned
+			if owned {
 				slugByID[d.AppID] = app.Slug
 			}
 		}
+		if !owned && !operator {
+			continue
+		}
+		rows = append(rows, d)
+		inFlight = append(inFlight, dashboardDeploymentItem(d))
 	}
 
 	// (2) Recent audit per in-flight deployment, filtered to the 5
@@ -2308,6 +2318,9 @@ func (s *server) renderSafeReleasesDashboard(w http.ResponseWriter, r *http.Requ
 	active := make([]dashboard.SafeReleasesAlertRow, 0)
 	for _, rule := range allAlerts {
 		if !safeReleasesAlertMetric(string(rule.Metric)) {
+			continue
+		}
+		if !operator && rule.AccountID != acct.ID {
 			continue
 		}
 		active = append(active, dashboard.SafeReleasesAlertRow{
@@ -2379,15 +2392,10 @@ func safeReleasesAlertMetric(m string) bool {
 //     deliveries, so the operator can see "rule fired, here are the
 //     Slack webhooks that went out".
 //
-// Operator-gated: the URL is registered only when role.IsOperator is
-// true (the dashboard router at line 138 onward gates that). Missing
-// rule renders a "rule no longer exists" chip (forward-compat with
-// the migration comment — a rule can be deleted while its audit
-// trail outlives it).
-//
-// IDOR posture: AlertRuleByID is keyed on the alert_rules.id UUID,
-// which is opaque to the caller. No account scoping — alert rules
-// are operator-side state, not customer data.
+// The page is linked from the customer MCP operations page, and the
+// dashboard router has no operator gate, so alert rules are customer
+// data here: a rule of another account answers 404 exactly like a
+// missing one, unless the session is on the operator allowlist.
 func (s *server) renderAlertRuleDetail(w http.ResponseWriter, r *http.Request, log *slog.Logger, acct state.Account, ruleID string) {
 	if _, err := uuid.Parse(ruleID); err != nil {
 		s.notFound(w, "invalid rule id")
@@ -2403,6 +2411,10 @@ func (s *server) renderAlertRuleDetail(w http.ResponseWriter, r *http.Request, l
 		log.Warn("dashboard renderAlertRuleDetail: lookup rule",
 			"rule", ruleID, "err", err.Error())
 		renderProblem(w, log, fmt.Errorf("alert rule lookup failed: %w", err))
+		return
+	}
+	if operator, _ := s.adminAllows(acct); !operator && rule.AccountID != acct.ID {
+		s.notFound(w, "alert rule not found")
 		return
 	}
 	auditRows, err := s.store.ListDeploymentAuditByAlertRule(ctx, ruleID, 100)

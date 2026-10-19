@@ -58,7 +58,7 @@ func (s *server) renderAppWebhooks(w http.ResponseWriter, r *http.Request, log *
 	data := dashboard.AppWebhooksData{
 		App:           dashboard.AppListItem{Slug: app.Slug, Status: string(app.Status), URL: appURLForDomain(app.Slug, s.domain)},
 		PlanAllowed:   planKnown && limits.WebhookPerApp > 0,
-		Events:        append([]string(nil), api.AllowedAppWebhookEvents...),
+		Events:        s.appWebhookEvents(),
 		RetryPolicies: append([]string(nil), api.AllowedAppWebhookRetryPolicies...),
 		Action:        dashboardWebhooksActionFlash(r),
 	}

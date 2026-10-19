@@ -194,6 +194,25 @@ func TestReapIdleSkipsInstanceWithTailCount(t *testing.T) {
 // Scale-app RPS burst could evict a wake whose runner is still
 // draining waitUntil tasks — the customer loses the side effects
 // of those tasks (email send, log flush, etc.) silently.
+// Scale-in keeps the freshest replica: one scaled out 45 s ago whose first
+// request has not been recorded is fresher than one idle for two minutes.
+func TestReapAggressiveTreatsUnrecordedRequestAsStartTime(t *testing.T) {
+	now := time.Now()
+	instances := []InstanceInfo{
+		{Instance: "scaled-out", AppID: "app1", Plan: api.PlanPro, State: state.StateRunning,
+			Started: now.Add(-45 * time.Second)},
+		{Instance: "stale", AppID: "app1", Plan: api.PlanPro, State: state.StateRunning,
+			LastRequest: now.Add(-2 * time.Minute), Started: now.Add(-time.Hour)},
+		{Instance: "busy", AppID: "app1", Plan: api.PlanPro, State: state.StateRunning,
+			LastRequest: now.Add(-time.Second), Started: now.Add(-time.Hour)},
+	}
+	// desired=1 → limit 2 → park exactly one.
+	got := ReapAggressive(now, instances, map[string]int{"app1": 1}, nil, nil)
+	if len(got) != 1 || got[0] != "stale" {
+		t.Fatalf("expected [stale], got %v", got)
+	}
+}
+
 func TestReapAggressiveSkipsInstanceWithTailCount(t *testing.T) {
 	now := time.Now()
 	instances := []InstanceInfo{
@@ -251,6 +270,21 @@ func TestSelectEvictionsLRUAndScaleLast(t *testing.T) {
 	got := SelectEvictions(EvictionThresholdMB+1, now, instances)
 	if len(got) != 1 || got[0] != "pro-oldest" {
 		t.Errorf("expected [pro-oldest] (LRU non-Scale), got %v", got)
+	}
+}
+
+// An instance whose last request has not been recorded yet is as recent as
+// its start, not infinitely old: RAM pressure must evict the instance idle
+// for an hour first.
+func TestSelectEvictionsTreatsUnrecordedRequestAsStartTime(t *testing.T) {
+	now := time.Now()
+	instances := []InstanceInfo{
+		{Instance: "woken-a-minute-ago", Plan: api.PlanPro, State: state.StateRunning, RAMMB: 512, Started: now.Add(-time.Minute)},
+		{Instance: "idle-an-hour", Plan: api.PlanPro, State: state.StateRunning, RAMMB: 512, LastRequest: now.Add(-time.Hour), Started: now.Add(-2 * time.Hour)},
+	}
+	got := SelectEvictions(EvictionThresholdMB+1, now, instances)
+	if len(got) != 1 || got[0] != "idle-an-hour" {
+		t.Fatalf("expected [idle-an-hour], got %v", got)
 	}
 }
 

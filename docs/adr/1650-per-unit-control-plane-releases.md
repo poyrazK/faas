@@ -2,7 +2,7 @@
 
 - **Status:** proposed
 - **Date:** 2026-10-17 (slice 2: 2026-10-18)
-- **Related:** ADR-113 (canonical signed release), ADR-129 (deploy version gauge), ADR-580 (control-plane convergence in CD), ADR-1580 (zero-downtime restarts), ADR 202610171900 (release compatibility gates), ADR 20261018084150 (expand-only migrations in per-unit releases), ADR 20261018133100 (host-configuration lane)
+- **Related:** ADR-113 (canonical signed release), ADR-129 (deploy version gauge), ADR-580 (control-plane convergence in CD), ADR-1736 (zero-downtime restarts), ADR 202610171900 (release compatibility gates), ADR 20261018084150 (expand-only migrations in per-unit releases), ADR 20261018133100 (host-configuration lane)
 
 ## Context
 
@@ -209,7 +209,7 @@ masked. A rollback is not guarded: recovery takes priority, and the deploy
 it undoes already passed the guard.
 
 **Restart or reload.** deployctl decides how a service restarts. With
-ADR-1580's two-generation hand-off (#4898), it reloads a gateway when both the
+ADR-1736's two-generation hand-off (#4898), it reloads a gateway when both the
 running and the new binary support the hand-off and nothing the unit read at
 start has changed, and restarts it otherwise. The lanes call `deployctl
 deploy --only` and inherit that choice.
@@ -306,7 +306,7 @@ a node pays its one-time hashing.
   most often close the lane.
 - **Compute daemons beyond the gateways.** schedd and realtimed restart
   without touching VMs and could join the edge lane once their restarts are
-  covered (ADR-1580). vmmd needs the restart-adoption work.
+  covered (ADR-1736). vmmd needs the restart-adoption work.
 - **Edge target inventory.** The edge lane trusts `edge_targets` or
   `UNIT_RELEASE_EDGE_TARGETS` to list the compute nodes. A node left out stays
   on its current gateways, which N±1 allows. Reading the node list from the

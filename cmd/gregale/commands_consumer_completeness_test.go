@@ -13,6 +13,7 @@ import (
 
 // adr: 954 — completeness is reported on demand and warned after a draft.
 func TestCmdConsumersCompleteness(t *testing.T) {
+	t.Setenv("FAAS_API_MONETIZATION_ENABLED", "1") // adr: 20261018090210 — exercises released monetization
 	start := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	end := start.AddDate(0, 1, 0)
 	var since, until string

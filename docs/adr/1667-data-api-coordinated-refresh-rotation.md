@@ -4,7 +4,7 @@ Status: Accepted
 
 ## Context
 
-ADR-1666 automates deadline-only grants but excludes coordinated SQL refresh.
+ADR-1735 automates deadline-only grants but excludes coordinated SQL refresh.
 Its legacy pause/fingerprint gate belongs to one login. Copying that gate during
 credential preparation cannot preserve pause state while the predecessor still
 serves: preparation commits before secret publication and runtime activation.
@@ -54,7 +54,7 @@ returning credential material. Explicitly assume the stable schema owner before
 private lookup. Validate and lock table metadata, then verify all four exact body
 hashes, signatures, language, security/configuration and protected ACLs. Tests pin
 the hashes to the embedded installer. Validate optional deadline hooks through
-ADR-1666's fixed contract. Preparation exclusively locks the binding, verifies its
+ADR-1735's fixed contract. Preparation exclusively locks the binding, verifies its
 source role/OID and unchanged approved witness, grants only fixed refresh/optional
 deadline hooks and owner-approved supported RPCs, and requires the candidate's
 witness to match before registering its fingerprint and advancing the source

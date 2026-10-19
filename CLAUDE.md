@@ -29,6 +29,7 @@ make test-changed   # vet + test only what your diff affects (ci-light's selecti
 make test-metal     # integration tests tagged //go:build metal — needs KVM + root
 make leakcheck      # asserts zero leaked netns/TAPs/jail uids/cgroups after tests
 make lint           # golangci-lint + custom checks (see Conventions)
+make lint-changed   # golangci-lint only the packages your diff touches + teststorecheck; use before a PR
 make native-m9-acceptance # guarded two-node failure-safe acceptance on native x86_64
 ```
 
@@ -108,7 +109,7 @@ docs/adr/
 Plans (deployed/concurrent/RAM MB/GB-h): Free 1/1/256/20 · Hobby 5/2/512/200 ·
 Pro 25/5/1024/1000 · Scale 100/20/2048/3000. Overage $0.01/GB-h (USD, ADR-1430). Source tarball ≤100 MB
 (≤250 MB Pro+). App layer ≤256 MB/512 MB/1 GB/2 GB by plan. Build VM: 2 vCPU, 2048 MB,
-15 min (ADR-791). Idle timeouts: 30/60/300/600 s (functions default to 30 s, ADR-974). RAM admission ceiling: 47,600 MB.
+15 min (ADR-791). Idle timeouts: 60/60/300/600 s by plan (functions default to 30 s on every plan, ADR-974; spec §4.3). RAM admission ceiling: 47,600 MB.
 Fleet snapshot average target: 130 MB — `snapshot_fleet_avg_mb` alerts at 160.
 Cron limits: Free 0 · Hobby 5/app 10/acct · Pro 20/app 50/acct · Scale 100/app 500/acct (`cron_limit_per_app`, `cron_limit_per_account` in pkg/api/limits.go).
 
@@ -187,3 +188,11 @@ Cron limits: Free 0 · Hobby 5/app 10/acct · Pro 20/app 50/acct · Scale 100/ap
   `statetest.NewMem(fake)` (or `NewPg`, `NewStore`) where a store is needed. Overriding a method
   for the first time needs a dispatch method in `pkg/state/statetest/dispatch.go`; the
   constructor panics with that instruction if it is missing.
+- Test code must not declare its own interface that embeds `state.Store` (named or as a literal
+  parameter type): the compiler generates a wrapper for every method of every interface a package
+  declares and converts to, ~10 MB per Store-sized interface. In `pkg/state` contract tests, alias
+  the shared one (`type fooTestStore = contractTestStore`) and add any new optional store
+  interface to `contractTestStore`. `scripts/ci/teststorecheck` (ci-light, `make lint-changed`)
+  fails a change that adds either kind; a fake that must keep an embedding, because it implements
+  an optional interface a statetest wrapper would hide, marks the field
+  `// teststorecheck:allow <reason>`.

@@ -124,6 +124,8 @@ func lifecycleManifestFromCreate(req api.CreateAppRequest) api.AppManifest {
 		VersionAffinityCookie:        req.VersionAffinityCookie,
 		VersionAffinityManagedCookie: req.VersionAffinityManagedCookie,
 		RevisionPinTTLSeconds:        req.RevisionPinTTLSeconds,
+		ReleasePolicy:                req.ReleasePolicy,
+		ReleaseProbePaths:            req.ReleaseProbePaths,
 	}
 }
 
@@ -175,6 +177,8 @@ func stateManifestFromAPI(manifest api.AppManifest) state.AppManifest {
 		VersionAffinityCookie:        manifest.VersionAffinityCookie,
 		VersionAffinityManagedCookie: manifest.VersionAffinityManagedCookie,
 		RevisionPinTTLSeconds:        manifest.RevisionPinTTLSeconds,
+		ReleasePolicy:                manifest.ReleasePolicy,
+		ReleaseProbePaths:            manifest.ReleaseProbePaths,
 	}
 }
 
@@ -226,6 +230,8 @@ func apiManifestFromState(manifest state.AppManifest) api.AppManifest {
 		VersionAffinityCookie:        manifest.VersionAffinityCookie,
 		VersionAffinityManagedCookie: manifest.VersionAffinityManagedCookie,
 		RevisionPinTTLSeconds:        manifest.RevisionPinTTLSeconds,
+		ReleasePolicy:                manifest.ReleasePolicy,
+		ReleaseProbePaths:            manifest.ReleaseProbePaths,
 	}
 }
 
@@ -236,7 +242,8 @@ func mergedLifecycleManifest(app state.App, req *api.UpdateAppRequest) (api.AppM
 		req.BeforeCheckpoint != nil || req.Profiling != nil || req.Tracing != nil ||
 		req.WorkerReplicas != nil || req.StopGracePeriodS != nil || req.StopSignal != nil ||
 		req.Favicon != nil || req.RobotsTxt != nil || req.HeadWakes != nil || req.CrawlerPolicy != nil || req.PreAuthRateLimit != nil ||
-		req.HealthPath != nil || req.HealthPathWakes != nil || req.SessionAffinity != nil || req.VersionAffinityCookie != nil || req.VersionAffinityManagedCookie != nil || req.RevisionPinTTLSeconds != nil || req.Ports != nil
+		req.HealthPath != nil || req.HealthPathWakes != nil || req.SessionAffinity != nil || req.VersionAffinityCookie != nil || req.VersionAffinityManagedCookie != nil || req.RevisionPinTTLSeconds != nil || req.Ports != nil ||
+		req.ReleasePolicy != nil || req.ReleaseProbePaths != nil
 	if !changed {
 		return api.AppManifest{}, false
 	}
@@ -339,6 +346,12 @@ func mergedLifecycleManifest(app state.App, req *api.UpdateAppRequest) (api.AppM
 	if req.RevisionPinTTLSeconds != nil {
 		manifest.RevisionPinTTLSeconds = *req.RevisionPinTTLSeconds
 	}
+	if req.ReleasePolicy != nil {
+		manifest.ReleasePolicy = *req.ReleasePolicy
+	}
+	if req.ReleaseProbePaths != nil {
+		manifest.ReleaseProbePaths = *req.ReleaseProbePaths
+	}
 	return manifest, true
 }
 
@@ -375,5 +388,7 @@ func stateManifestForUpdate(app state.App, req *api.UpdateAppRequest) (*state.Ap
 	updated.VersionAffinityCookie = manifest.VersionAffinityCookie
 	updated.VersionAffinityManagedCookie = manifest.VersionAffinityManagedCookie
 	updated.RevisionPinTTLSeconds = manifest.RevisionPinTTLSeconds
+	updated.ReleasePolicy = manifest.ReleasePolicy
+	updated.ReleaseProbePaths = manifest.ReleaseProbePaths
 	return &updated, true
 }

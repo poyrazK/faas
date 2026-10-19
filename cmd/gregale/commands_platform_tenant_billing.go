@@ -15,15 +15,28 @@ import (
 // platformTenantBillingVerbs are the cross-app pricing and statement verbs of
 // `gregale platform-tenants`, mapped to the flags each accepts.
 var platformTenantBillingVerbs = map[string][]string{
-	"rate-cards":         {"id"},
-	"rate-card-create":   {"id", "currency", "price-millicents", "included-units", "tier", "weight", "effective-from", "unit", "tier-mode"},
+	"rate-cards": {"id"},
+	"rate-card-create": {"id", "currency", "price-millicents", "included-units", "tier", "weight", "effective-from", "unit", "tier-mode",
+		"base-fee-millicents", "minimum-millicents", "prorate-monthly-fees"},
 	"statements":         {"id", "month", "period-start", "period-end"},
 	"statement-draft":    {"id", "month", "period-start", "period-end"},
 	"statement-show":     {"id", "statement-id"},
 	"statement-finalize": {"id", "statement-id"},
 	"statement-handoff":  {"id", "statement-id", "invoice-id"},
 	"statement-export":   {"id", "statement-id", "customer", "provider"},
+	// Trials (ADR-1322) and the account's overdue rule (ADR-1324).
+	"trial":                 {"id"},
+	"trial-set":             {"id", "days", "ends-at"},
+	"trial-end":             {"id"},
+	"billing-policy":        {},
+	"billing-policy-set":    {"block-overdue-after-days"},
+	"billing-policy-delete": {},
+	"overdue-holds":         {},
 }
+
+// accountTenantVerbs address the account's tenants as a whole, not one
+// tenant.
+var accountTenantVerbs = map[string]bool{"billing-policy": true, "billing-policy-set": true, "billing-policy-delete": true, "overdue-holds": true}
 
 type platformTenantBillingFlags struct {
 	id, statementID, invoiceID    string
@@ -34,6 +47,10 @@ type platformTenantBillingFlags struct {
 	includedUnits                 int64
 	tiers, weights                multiFlag
 	month, periodStart, periodEnd string
+	baseFee, minimum              int64
+	prorate                       bool
+	days, blockAfterDays          int
+	endsAt                        string
 }
 
 // cmdPlatformTenantBilling handles the billing verbs; handled is false for
@@ -56,7 +73,13 @@ func cmdPlatformTenantBilling(verb string, args []string) (handled bool, code in
 	fs.Var(&f.tiers, "tier", "graduated step UP_TO:PRICE_MILLICENTS counted per tenant per UTC month, repeatable; the last step's UP_TO is inf")
 	fs.Var(&f.weights, "weight", "route weight \"METHOD /template=N\", repeatable; unlisted routes count 1")
 	fs.StringVar(&f.effectiveFrom, "effective-from", "", "UTC minute the price starts, RFC3339 (default: next minute)")
-	fs.StringVar(&f.unit, "unit", "", "what the card prices: request (default), compute_second or response_megabyte")
+	fs.StringVar(&f.unit, "unit", "", "what the card prices: request (default), compute_second, response_megabyte or app:<meter>")
+	fs.Int64Var(&f.baseFee, "base-fee-millicents", 0, "fixed charge per tenant per UTC month; 100000 = 1.00")
+	fs.Int64Var(&f.minimum, "minimum-millicents", 0, "minimum usage charge per tenant per UTC month, topped up when usage costs less")
+	fs.BoolVar(&f.prorate, "prorate-monthly-fees", false, "scale the fee and minimum in a tenant's first month to the share left after it was created")
+	fs.IntVar(&f.days, "days", 0, "trial length in days from its start (trial-set)")
+	fs.StringVar(&f.endsAt, "ends-at", "", "trial end, RFC3339 UTC minute (trial-set)")
+	fs.IntVar(&f.blockAfterDays, "block-overdue-after-days", -1, "days past an invoice's due date before the tenant is refused (billing-policy-set)")
 	fs.StringVar(&f.tierMode, "tier-mode", "", "how --tier steps price a month: graduated (default) or volume")
 	fs.StringVar(&f.month, "month", "", "statement calendar month YYYY-MM")
 	fs.StringVar(&f.periodStart, "period-start", "", "statement period start, RFC3339 UTC minute")
@@ -67,7 +90,8 @@ func cmdPlatformTenantBilling(verb string, args []string) (handled bool, code in
 		}
 		return true, 1
 	}
-	if fs.NArg() != 0 || !flagsWithin(fs, allowed) || f.id == "" || (strings.HasPrefix(verb, "statement-") && verb != "statement-draft" && f.statementID == "") {
+	if fs.NArg() != 0 || !flagsWithin(fs, allowed) || (f.id == "" && !accountTenantVerbs[verb]) ||
+		(strings.HasPrefix(verb, "statement-") && verb != "statement-draft" && f.statementID == "") {
 		PrintUsage(osStderr, platformTenantBillingUsage(verb, allowed), "platform-tenants")
 		return true, 1
 	}
@@ -114,7 +138,15 @@ func runPlatformTenantBilling(verb string, f platformTenantBillingFlags) int {
 		if strings.TrimSpace(f.invoiceID) == "" {
 			err = errors.New("--invoice-id is required")
 		}
+	case "billing-policy-set":
+		if f.blockAfterDays < 0 {
+			err = errors.New("--block-overdue-after-days is required")
+		}
 	}
+	if err != nil {
+		return printErr("Invalid platform-tenants arguments", err)
+	}
+	trial, err := trialRequest(verb, f.days, f.endsAt)
 	if err != nil {
 		return printErr("Invalid platform-tenants arguments", err)
 	}
@@ -132,6 +164,7 @@ func runPlatformTenantBilling(verb string, f platformTenantBillingFlags) int {
 			Currency: rateCard.Currency, PriceMillicentsPerUnit: rateCard.PriceMillicentsPerUnit, EffectiveFrom: rateCard.EffectiveFrom,
 			IncludedUnitsPerMonth: rateCard.IncludedUnitsPerMonth, Tiers: rateCard.Tiers, RouteWeights: rateCard.RouteWeights,
 			Unit: strings.TrimSpace(f.unit), TierMode: strings.TrimSpace(f.tierMode),
+			BaseFeeMillicentsPerMonth: f.baseFee, MinimumMillicentsPerMonth: f.minimum, ProrateMonthlyFees: f.prorate,
 		})
 	case "statements":
 		out, err = client.ListPlatformTenantStatements(ctx, f.id, start, end)
@@ -145,6 +178,8 @@ func runPlatformTenantBilling(verb string, f platformTenantBillingFlags) int {
 		out, err = client.ClaimPlatformTenantStatement(ctx, f.id, f.statementID, api.ClaimAPIConsumerUsageStatementRequest{ExternalInvoiceID: f.invoiceID})
 	case "statement-export":
 		out, err = client.ExportPlatformTenantStatementInvoice(ctx, f.id, f.statementID, api.CreateStatementInvoiceRequest{Provider: strings.TrimSpace(f.provider), Customer: strings.TrimSpace(f.customer)})
+	default:
+		out, err = callTenantControls(ctx, client, verb, f, trial)
 	}
 	if err != nil {
 		return printErr("Platform tenant "+verb+" failed", err)
@@ -156,6 +191,30 @@ func runPlatformTenantBilling(verb string, f platformTenantBillingFlags) int {
 		return printErr("Could not print result", err)
 	}
 	return 0
+}
+
+// callTenantControls runs the trial and overdue verbs; a nil result with a
+// nil error means the verb printed nothing to report.
+func callTenantControls(ctx context.Context, client *Client, verb string, f platformTenantBillingFlags,
+	trial api.PutAPIConsumerTrialRequest) (any, error) {
+	switch verb {
+	case "trial":
+		return client.GetPlatformTenantTrial(ctx, f.id)
+	case "trial-set":
+		return client.PutPlatformTenantTrial(ctx, f.id, trial)
+	case "trial-end":
+		return map[string]string{"status": "ended"}, client.EndPlatformTenantTrial(ctx, f.id)
+	case "billing-policy":
+		return client.GetPlatformTenantBillingPolicy(ctx)
+	case "billing-policy-set":
+		days := f.blockAfterDays
+		return client.PutPlatformTenantBillingPolicy(ctx, api.PutAPIConsumerBillingPolicyRequest{BlockOverdueAfterDays: &days})
+	case "billing-policy-delete":
+		return map[string]string{"status": "deleted"}, client.DeletePlatformTenantBillingPolicy(ctx)
+	case "overdue-holds":
+		return client.ListPlatformTenantOverdueHolds(ctx)
+	}
+	return nil, fmt.Errorf("unknown platform-tenants verb %q", verb)
 }
 
 // formatTenantRateCardPrice summarizes a tenant card's flat price or ladder.
@@ -185,6 +244,16 @@ func printPlatformTenantBilling(out any) error {
 		printStatementInvoiceExport(tw, v)
 	case api.PlatformTenantStatementHandoffResponse:
 		_, _ = fmt.Fprintf(tw, "Statement\t%s\nInvoice\t%s\nAmount\t%s\n", v.StatementID, v.ExternalInvoiceID, formatMillicents(v.Currency, v.AmountMillicents))
+	case api.PlatformTenantTrialResponse:
+		_, _ = fmt.Fprintf(tw, "Tenant\t%s\nStarts\t%s\nEnds\t%s\nActive\t%t\n", v.TenantID,
+			v.StartsAt.Format(time.RFC3339), v.EndsAt.Format(time.RFC3339), v.Active)
+	case api.PlatformTenantBillingPolicyResponse:
+		_, _ = fmt.Fprintf(tw, "Block overdue after\t%d days\nUpdated\t%s\n", v.BlockOverdueAfterDays, v.UpdatedAt.Format(time.RFC3339))
+	case api.PlatformTenantOverdueHoldListResponse:
+		_, _ = fmt.Fprintln(tw, "TENANT\tINVOICE EXPORT\tDUE\tBLOCKED SINCE")
+		for _, h := range v.Holds {
+			_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", h.TenantID, h.ExportID, h.DueAt.Format(time.RFC3339), h.Since.Format(time.RFC3339))
+		}
 	default:
 		return writeJSONTo(tw, out)
 	}

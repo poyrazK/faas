@@ -63,7 +63,7 @@ func TestForwardedResponseHeaderStripsEvidence(t *testing.T) {
 
 func TestStripGuestEvidenceResponseHeaders(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "http://example.test/", nil)
-	r = withGuestExecutionEvidence(r)
+	r = withGuestExecutionEvidence(r, true)
 	resp := &http.Response{Request: r, Header: make(http.Header)}
 	resp.Header.Set("X-Faas-Guest-Runtime", "python312")
 	resp.Header.Set("X-Faas-Guest-Duration-Ms", "31")
@@ -92,7 +92,7 @@ func TestDefaultProxyStripsGuestEvidenceHeaders(t *testing.T) {
 	}))
 	defer upstream.Close()
 	r := httptest.NewRequest(http.MethodGet, upstream.URL+"/", nil)
-	r = withGuestExecutionEvidence(r)
+	r = withGuestExecutionEvidence(r, true)
 	rec := httptest.NewRecorder()
 	defaultProxy(strings.TrimPrefix(upstream.URL, "http://"), 0).ServeHTTP(rec, r)
 	if rec.Code != http.StatusNoContent || rec.Header().Get("X-Faas-Guest-Runtime") != "" || rec.Header().Get("X-Faas-Guest-CPU-Time-Ms") != "" || rec.Header().Get("X-Customer-Header") != "safe" {
@@ -106,5 +106,5 @@ func TestDefaultProxyStripsGuestEvidenceHeaders(t *testing.T) {
 
 func httptestRequestWithGuestEvidence() *http.Request {
 	r, _ := http.NewRequest(http.MethodGet, "http://example.test/", nil)
-	return withGuestExecutionEvidence(r)
+	return withGuestExecutionEvidence(r, true)
 }

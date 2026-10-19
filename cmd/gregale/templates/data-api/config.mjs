@@ -226,6 +226,8 @@ export function runtimeConfig(env) {
   if (env.DATA_API_SQL_DEADLINE !== undefined && env.DATA_API_SQL_DEADLINE !== '1') throw new Error('Invalid SQL deadline setting')
   if (env.DATA_API_QUERY_SHAPES !== undefined && env.DATA_API_QUERY_SHAPES !== '1') throw new Error('Invalid query-shape logging setting')
   const queryShapes = env.DATA_API_QUERY_SHAPES === '1'
+  if (env.DATA_API_READ_ONLY !== undefined && !['true', 'false'].includes(env.DATA_API_READ_ONLY)) throw new Error('Invalid read-only setting')
+  const readOnly = env.DATA_API_READ_ONLY === 'true'
   const coordinatedRefresh = env.DATA_API_COORDINATED_REFRESH === '1'
   const sqlDeadline = env.DATA_API_SQL_DEADLINE === '1'
   if (env.DATA_API_AGGREGATES !== undefined && env.DATA_API_AGGREGATES !== '1') throw new Error('Invalid aggregates setting')
@@ -234,7 +236,7 @@ export function runtimeConfig(env) {
   if (aggregates && !sqlDeadline) throw new Error('Aggregates require DATA_API_SQL_DEADLINE=1')
   if (schemas.includes('gregale_data_api')) throw new Error('Refresh control schema cannot be exposed')
   const secret = randomBytes(32)
-  return { connection, role, schemas, auth, secret, coordinatedRefresh, sqlDeadline, queryShapes, aggregates, publicRead: publicReadConfig(env.DATA_API_PUBLIC_READ, schemas), serverKeys: serverKeyConfig(env),
+  return { connection, role, schemas, auth, secret, coordinatedRefresh, sqlDeadline, queryShapes, readOnly, aggregates, publicRead: publicReadConfig(env.DATA_API_PUBLIC_READ, schemas), serverKeys: serverKeyConfig(env),
     publicRpc: publicRpcConfig(env.DATA_API_PUBLIC_RPC, schemas), usage: usageConfig(env), publicReadMaxAge: publicReadMaxAge(env.DATA_API_PUBLIC_READ_MAX_AGE, env.DATA_API_PUBLIC_READ !== undefined || env.DATA_API_PUBLIC_RPC !== undefined), connectionObservation: connectionObservationConfig(env), rateLimit: rateLimitConfig(env), userConcurrency: userConcurrencyConfig(env, coordinatedRefresh ? limits.pool - 1 : limits.pool), acceptedContracts: acceptedContracts(env.DATA_API_ACCEPTED_CONTRACTS), origins: (env.DATA_API_ALLOWED_ORIGINS ?? '').split(',').filter(Boolean),
     postgrestEnv: { PGRST_DB_URI: connection, PGRST_DB_SCHEMAS: schemas.join(','), PGRST_JWT_SECRET: secret.toString('base64url'),
       PGRST_SERVER_HOST: '127.0.0.1', PGRST_SERVER_PORT: '3000', PGRST_ADMIN_SERVER_PORT: '3001', PGRST_SERVER_TIMING_ENABLED: 'true',

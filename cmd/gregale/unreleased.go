@@ -1,8 +1,8 @@
 package main
 
 // adr: 1190 — application Auth is a dark launch. The CLI keeps its command,
-// its flags on other commands (data-api create --auth, realtime create
-// --auth, edge-rules --jwt-auth) and its template out of every customer
+// its flags on other commands (data-api create --auth, pipeline create
+// --api/--auth, realtime create --auth, edge-rules --jwt-auth) and its template out of every customer
 // surface: help, completions, man pages, the generated reference, command
 // suggestions, dispatch and flag parsing. Setting FAAS_APPLICATION_AUTH_ENABLED
 // in the shell, the variable that also turns Auth on in apid, shows them.
@@ -24,18 +24,25 @@ func applicationAuthCLI() bool {
 }
 
 // visibleCliCommands is the manifest every discovery surface reads: without
-// unreleased commands and flags unless they are turned on.
+// unreleased Auth commands and flags, or API monetization's verbs and flags
+// (monetization.go), unless they are turned on.
 func visibleCliCommands() []cliCommand {
-	if applicationAuthCLI() {
+	auth, monetization := applicationAuthCLI(), monetizationCLI()
+	if auth && monetization {
 		return cliCommands
 	}
 	visible := make([]cliCommand, 0, len(cliCommands))
 	for _, command := range cliCommands {
-		if command.Unreleased {
-			continue
+		if !auth {
+			if command.Unreleased {
+				continue
+			}
+			command.Flags = releasedFlags(command.Flags)
+			command.Subcommands = releasedSubcommands(command.Subcommands)
 		}
-		command.Flags = releasedFlags(command.Flags)
-		command.Subcommands = releasedSubcommands(command.Subcommands)
+		if !monetization {
+			command = withoutMonetization(command)
+		}
 		visible = append(visible, command)
 	}
 	return visible

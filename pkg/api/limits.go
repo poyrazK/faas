@@ -21,6 +21,55 @@ import (
 	"time"
 )
 
+// Migration verification shares normal task and wake admission. These bounds
+// limit orchestration receipts, not customer compute entitlements.
+const (
+	AppSlugMaxLength                      = 40
+	ProjectAppSlugsMaxBytes               = 16 << 10
+	ProjectMigrationMaxServices           = 10
+	ProjectMigrationListLimit             = 20
+	ProjectMigrationMaxAttempts           = 8
+	ProjectMigrationMaxServiceConnections = 10
+	ProjectMigrationRetention             = 90 * 24 * time.Hour
+	ProjectMigrationRequestMaxBytes       = 2 << 20
+	ProjectMigrationPersistTimeout        = 5 * time.Second
+	ProjectMigrationLeaseGrace            = 15 * time.Second
+
+	MigrationCutoverMaxHostnameBytes       = 253
+	MigrationCutoverMaxLabelBytes          = 63
+	MigrationCutoverMaxRecords             = 16
+	MigrationCutoverListLimit              = 20
+	MigrationCutoverRetention              = 90 * 24 * time.Hour
+	MigrationCutoverMinTTL                 = 0
+	MigrationCutoverMaxTTL                 = 2147483647
+	MigrationCutoverCheckDuration          = 30 * time.Minute
+	MigrationCutoverLease                  = 40 * time.Second
+	MigrationCutoverProbeTimeout           = 10 * time.Second
+	MigrationCutoverCheckInterval          = 30 * time.Second
+	MigrationCutoverPollInterval           = 5 * time.Second
+	MigrationCutoverWorkerBatch            = 16
+	MigrationCutoverWorkers                = 2
+	MigrationCutoverRequestMaxBytes        = 16 << 10
+	MigrationCutoverDefaultErrorBPS  int64 = 100
+	MigrationCutoverDefaultP95MS     int64 = 1000
+
+	MigrationVerificationTTL            = 10 * time.Minute
+	MigrationVerificationLease          = 55 * time.Second
+	MigrationVerificationRetention      = 30 * 24 * time.Hour
+	MigrationVerificationMaxActive      = 1
+	MigrationVerificationListLimit      = 20
+	MigrationVerificationMaxPathBytes   = 512
+	MigrationVerificationTaskTimeout    = 30
+	MigrationVerificationMaxOutputBytes = 8192
+	MigrationVerificationPollInterval   = time.Second
+	MigrationVerificationStepInterval   = 2 * time.Second
+	MigrationVerificationRetryMax       = 30 * time.Second
+	MigrationVerificationWorkerBatch    = 32
+	MigrationVerificationWorkers        = 4
+	MigrationVerificationCancelAttempts = 8
+	MigrationVerificationPersistTimeout = 5 * time.Second
+)
+
 // Email verification keeps its existing 24-hour, single-use credential policy.
 const (
 	EmailVerificationTTL        = 24 * time.Hour
@@ -548,12 +597,13 @@ const (
 	ConsumerSpendCapBatchSize     = 500
 )
 
-// Consumer controls (ADR-1314, ADR-1315).
+// Consumer and platform tenant controls (ADR-1314, ADR-1315, ADR-1322,
+// ADR-1324).
 const (
-	// ConsumerTrialMaxDays bounds one consumer's free trial.
+	// ConsumerTrialMaxDays bounds one consumer's or tenant's free trial.
 	ConsumerTrialMaxDays = 365
 	// ConsumerOverdueBlockMaxDays bounds how long after its due date an
-	// unpaid invoice blocks its consumer.
+	// unpaid invoice blocks its consumer or tenant.
 	ConsumerOverdueBlockMaxDays = 365
 	// apid recomputes overdue holds this often; payment status itself is
 	// synced on the ADR-1504 schedule.
@@ -703,6 +753,58 @@ const RollbackOn5xxTelemetryGrace = 2 * time.Minute
 const RollbackOn5xxCheckIntervalSeconds = 15
 const RollbackOn5xxBatchSize = 100
 
+// Post-release watch (ADR-1445). For PostReleaseWatchWindow after a release
+// reaches 100%, apid compares it with its predecessor's traffic in the
+// PostReleaseWatchBaseline before the rollout started, and rolls back a
+// clear 5xx or p95 regression. Plan-independent, like ADR-625.
+const PostReleaseWatchWindow = 30 * time.Minute
+const PostReleaseWatchBaseline = 30 * time.Minute
+const PostReleaseWatchCheckIntervalSeconds = 15
+const PostReleaseWatchBatchSize = 100
+
+// Guarded, reversible config changes (ADR-1451). Each customer write to an
+// app scope's variables or secrets records a revision; apid keeps the newest
+// ConfigRevisionsRetained per scope (plus any watching guard's base). A write
+// opens or joins the scope's config guard. Its window opens on the first
+// new-config request and lasts ConfigGuardWindowMinutes; a guard that sees no
+// new-config traffic within ConfigGuardMaxWait closes as no_traffic. The
+// old-config sample is the ConfigGuardBaseline before the guard opened. The
+// failure bar reuses RollbackOn5xxMinServerErrors / RollbackOn5xxMinErrorPct.
+// Plan-independent, like the first-wake rollback.
+const ConfigRevisionsRetained = 100
+const ConfigRevisionsListMax = 100
+const ConfigGuardWindowMinutes = 10
+const ConfigGuardMaxWait = 24 * time.Hour
+const ConfigGuardBaseline = time.Hour
+const ConfigGuardCheckIntervalSeconds = 15
+const ConfigGuardBatchSize = 50
+
+// Verified rollback outcomes (ADR-1446). apid resolves each plain rollback
+// every RollbackOutcomeCheckInterval: complete once the target serves,
+// failed when it leaves activation without serving or when
+// RollbackOutcomeTimeout passes. The timeout covers a cold-boot activation
+// with the post-readiness smoke; the drill's recovery was under 10 s.
+const RollbackOutcomeCheckInterval = 5 * time.Second
+const RollbackOutcomeTimeout = 10 * time.Minute
+const RollbackOutcomeBatchSize = 100
+
+// CanaryLowTrafficMaxHold bounds how long the canary circuit breaker holds a
+// stage past its dwell time only because too few requests arrived to compare
+// the candidate with its predecessor (ADR-1446). After the bound, the stage
+// advances if no negative evidence was observed: zero candidate 5xx and a
+// readable, zero OOM-kill signal. Unavailable signals still hold indefinitely.
+// Plan-independent: it bounds a wait, it does not price anything.
+const CanaryLowTrafficMaxHold = 5 * time.Minute
+
+// Explained rollout decisions (ADR-1447). A decision record is aggregate-only
+// evidence, bounded so a malformed worker request cannot grow the deployment
+// row or its audit timeline. A held canary records its hold again only after
+// RolloutHoldRefreshInterval unless the hold's rule changes, so a long hold
+// adds at most one audit row per rule per interval.
+const RolloutDecisionMaxBytes = 2048
+const RolloutDecisionSummaryMaxBytes = 256
+const RolloutHoldRefreshInterval = 5 * time.Minute
+
 // Synchronous invoke (POST /v1/apps/{slug}/invoke) long-poll. The wait stays
 // below DefaultClientTimeout so a slow invocation answers with a 504 naming
 // the invocation rather than a client-side "could not reach Gregale".
@@ -745,6 +847,47 @@ const QueueBindingMaxConcurrency = 10000
 // one binding can run, so a binding allowed thousands of concurrent records
 // cannot flood the pool with lanes it would only drop.
 const QueuePushDispatchSlotsPerNode = 32
+
+// Trigger ledger retention: terminal trigger_records rows without an explicit
+// result_retention_until are deleted this long after their last dispatch.
+// Dead letters stay longer so operators can review, retry or drop them.
+const (
+	TriggerRecordRetention     = 7 * 24 * time.Hour
+	TriggerDeadLetterRetention = 30 * 24 * time.Hour
+	// TriggerRetentionBatchMax and TriggerRetentionPassesMax bound one sweep
+	// to 10,000 deletions so a large backlog drains over several sweeps.
+	TriggerRetentionBatchMax  = 1000
+	TriggerRetentionPassesMax = 10
+)
+
+// RealtimeTriggerMinLeaseSeconds is the shortest consumer-group lease a
+// realtime trigger may bind (ADR-1322): one GatewaySynthDispatchTimeout
+// invocation plus wake and queueing margin.
+const RealtimeTriggerMinLeaseSeconds = 120
+
+// RealtimeTriggerDefaultBatchSize is how many messages one invocation of a
+// batch-delivery realtime trigger receives when batch_size_max is not set
+// (ADR-1321); RealtimeConsumerGroupBatchMax caps it.
+const RealtimeTriggerDefaultBatchSize = 10
+
+// Realtime usage recording (ADR-1323: recorded, never billed). Each
+// realtimed process reports its cumulative per-endpoint usage for the current
+// UTC hour once per RealtimeUsageReportInterval, in reports of at most
+// RealtimeUsageReportMaxEndpoints endpoints. It keeps completed hours it could
+// not deliver for RealtimeUsageReportMaxAge, and apid refuses reports for
+// older hours. Rows live as long as usage_minutes (13 months).
+const (
+	RealtimeUsageReportInterval     = time.Minute
+	RealtimeUsageReportMaxEndpoints = 200
+	RealtimeUsageReportMaxBytes     = 256 << 10
+	RealtimeUsageReportMaxAge       = 24 * time.Hour
+	RealtimeUsageReadMaxRows        = 10_000
+	// The customer usage view (GET /v1/usage/realtime) covers the last
+	// RealtimeUsageQueryDefaultHours hours unless asked for up to
+	// RealtimeUsageQueryMaxHours (31 days).
+	RealtimeUsageQueryDefaultHours = 24
+	RealtimeUsageQueryMaxHours     = 744
+)
 
 // Pull leases (ADR-1140). One call leases at most QueueLeaseMaxMessages and
 // takes at most QueueLeaseMaxReceipts receipts. A lease without an explicit
@@ -1160,6 +1303,17 @@ const (
 	FlagsMaxProgressiveLatencyMS             = 600000
 	FlagsMinProgressiveWindowSeconds         = 60
 	FlagsMaxProgressiveWindowSeconds         = 604800
+)
+
+// Platform flag (ADR-1700) structural bounds. They keep every daemon's
+// compiled snapshot small; larger audiences belong in a group or a rollout.
+const (
+	PlatformFlagsMaxRules            = 32
+	PlatformFlagsMaxAccountsPerRule  = 1000
+	PlatformFlagsMaxGroups           = 100
+	PlatformFlagsMaxAccountsPerGroup = 5000
+	PlatformFlagsMaxDefinitionBytes  = 64 << 10
+	PlatformFlagsMaxGroupsBytes      = 512 << 10
 )
 
 // MaxOutboundRequestsPerDay is the structural upper bound for a
@@ -2102,6 +2256,82 @@ var FullRootfsAllowAutoDefault = map[Plan]bool{
 	PlanHobby: true,
 	PlanPro:   true,
 	PlanScale: true,
+}
+
+// RealtimeLimits describes the managed realtime allowance for a plan. It is
+// kept separate from Limits so the opt-in realtime surface does not change the
+// long-lived Limits struct consumed by every daemon.
+//
+// Realtime is free (ADR-1323): Gregale sells compute, and realtime features are
+// software. Limits exist only where realtime holds a real resource. An open
+// connection holds about 52 KB of realtimed memory (measured idle, 2026-10-14),
+// so ConnectionsPerAccount caps the concurrent connections an account holds
+// across the fleet: Hobby 200 (~10 MB), Pro 1,000 (~50 MB), Scale 5,000
+// (~260 MB, half a node). Retained history is already bounded per endpoint, and
+// fan-out bandwidth is not billed, like application egress.
+type RealtimeLimits struct {
+	Plan                  Plan
+	EndpointsPerApp       int
+	EndpointsPerAccount   int
+	ConnectionsPerAccount int
+}
+
+var realtimeLimits = map[Plan]RealtimeLimits{
+	PlanFree:  {Plan: PlanFree},
+	PlanHobby: {Plan: PlanHobby, EndpointsPerApp: 2, EndpointsPerAccount: 10, ConnectionsPerAccount: 200},
+	PlanPro:   {Plan: PlanPro, EndpointsPerApp: 10, EndpointsPerAccount: 50, ConnectionsPerAccount: 1_000},
+	PlanScale: {Plan: PlanScale, EndpointsPerApp: 25, EndpointsPerAccount: 250, ConnectionsPerAccount: 5_000},
+}
+
+// Platform side of realtime fair use (ADR-1323). realtimed runs with
+// MemoryMax=512M; at ~52 KB per idle connection, RealtimeNodeConnectionsDefault
+// leaves room for queued frames and subscription pumps. Until fair use is
+// enabled (FAAS_REALTIME_FAIR_USE_ENABLED=1) a node keeps the earlier
+// RealtimeNodeConnectionsWithoutFairUse default. One account may hold at
+// most RealtimeAccountNodeSharePercent of a node's connections, so a single
+// account cannot fill a node even within its plan allowance.
+//
+// Each realtimed process reports its per-account connection counts to apid
+// every RealtimeConnectionSyncInterval and learns the other nodes' counts in
+// return. Counts older than RealtimeConnectionSyncStaleAfter are ignored, and a
+// node whose own sync is that stale enforces its local count only.
+//
+// RealtimeNodeOutboundBytesDefault bounds the payload bytes queued for clients
+// across a whole node. Each connection may queue up to 4 MiB, so without it
+// 6,000 connections could buffer ~24 GiB; 64 MiB fits beside a full node of
+// idle connections under RealtimeMemoryLimitBytes, the soft memory limit
+// realtimed sets with the budget. realtimed disconnects the largest backlogs
+// before the budget is reached. Both apply only with
+// FAAS_REALTIME_OUTBOUND_BUDGET_ENABLED=1.
+const (
+	RealtimeNodeConnectionsDefault        = 6_000
+	RealtimeNodeConnectionsWithoutFairUse = 10_000
+	RealtimeNodeOutboundBytesDefault      = 64 << 20
+	RealtimeMemoryLimitBytes              = 384 << 20
+	RealtimeAccountNodeSharePercent       = 50
+	RealtimeConnectionSyncInterval        = 5 * time.Second
+	RealtimeConnectionSyncStaleAfter      = 30 * time.Second
+	RealtimeConnectionSyncMaxAccounts     = 10_000
+)
+
+// Channel occupancy (ADR-1324). One read covers at most
+// RealtimeOccupancyChannelsMax channels and asks every realtime node. Live
+// occupancy frames go out at most once per RealtimeOccupancyFrameInterval per
+// channel. A node refreshes the other nodes' counts every
+// RealtimeOccupancyRemoteRefresh, from an apid cache kept for
+// RealtimeOccupancyCacheTTL, and watches at most RealtimeOccupancyWatchedMax
+// channels, which bounds that refresh to 50 small apid calls per interval.
+const (
+	RealtimeOccupancyChannelsMax   = 20
+	RealtimeOccupancyFrameInterval = time.Second
+	RealtimeOccupancyRemoteRefresh = 5 * time.Second
+	RealtimeOccupancyCacheTTL      = 2 * time.Second
+	RealtimeOccupancyWatchedMax    = 1_000
+)
+
+func RealtimeLimitsFor(p Plan) (RealtimeLimits, bool) {
+	l, ok := realtimeLimits[p]
+	return l, ok
 }
 
 // GDPR self-service export rate limit (issue #755 / PR-5.1). Single
@@ -6766,10 +6996,10 @@ const (
 	// ComputeGatewayRestartWaitSeconds caps how long gatewayd-public keeps
 	// sending new requests to a compute node whose gatewayd-internal stopped
 	// answering (for example while it restarts behind its durable socket)
-	// before failing over to another node (ADR-1580). Override with
+	// before failing over to another node (ADR-1736). Override with
 	// FAAS_COMPUTE_GATEWAY_RESTART_WAIT.
 	ComputeGatewayRestartWaitSeconds = 3
-	// Two-generation hand-off (ADR-1580). A hand-off starts the new release
+	// Two-generation hand-off (ADR-1736). A hand-off starts the new release
 	// beside the running one on the same listening sockets; the old generation
 	// stops accepting and finishes what it holds.
 	//
@@ -6792,7 +7022,7 @@ const (
 	HandoffMemoryWaitSeconds = 60
 	// APIDMemoryMaxMB is faas-apid.service's MemoryMax, and APIDGoMemLimitMB
 	// its GOMEMLIMIT, a soft per-process bound. A reload runs two apid
-	// generations in one cgroup (ADR-1580). Production over 14 days
+	// generations in one cgroup (ADR-1736). Production over 14 days
 	// (2026-10-18): steady state 51-94 MB per process, spikes to 257 MB, and
 	// two OOM kills at the previous 256 MB cap (ADR 20261018132058).
 	APIDMemoryMaxMB                 = 512
@@ -7135,7 +7365,7 @@ const (
 	// graceful-restart GOAWAY was never processed; the transport retries it on
 	// a new connection only when it can rewind the body. Larger or chunked
 	// bodies keep streaming and can still fail in that window
-	// (docs/adr/1580-zero-downtime-daemon-restarts.md).
+	// (docs/adr/1736-zero-downtime-daemon-restarts.md).
 	InternalHopReplayableBodyBytes = 64 << 10 // 64 KiB
 )
 
@@ -9150,6 +9380,7 @@ var externalTriggerKinds = []TriggerKind{
 	TriggerKindRedisStreams,
 	TriggerKindSQSCompat,
 	TriggerKindQueue,
+	TriggerKindRealtime,
 }
 
 // AllowedTriggerKinds returns the non-cron event sources the plan may
@@ -9158,7 +9389,7 @@ func (p Plan) AllowedTriggerKinds() []TriggerKind {
 	var kinds []TriggerKind
 	switch p {
 	case PlanHobby:
-		kinds = []TriggerKind{TriggerKindSQSCompat, TriggerKindQueue}
+		kinds = []TriggerKind{TriggerKindSQSCompat, TriggerKindQueue, TriggerKindRealtime}
 	case PlanPro, PlanScale:
 		kinds = externalTriggerKinds
 	}
@@ -9679,12 +9910,163 @@ const (
 	// operator incident inbox. The inbox composes several already-bounded
 	// read paths, so its page stays small enough for a terminal or console
 	// poll while leaving the larger fleet list caps unchanged.
-	ObsIncidentLimitDefault  = 50
-	ObsIncidentLimitMax      = 200
-	ObsIncidentStuckAfter    = 5 * time.Minute
-	ObsOverviewTopN          = 5
-	ObsOverviewAuditWindow   = 24 * time.Hour
-	ObsOverviewFailureWindow = time.Hour
+	ObsIncidentLimitDefault   = 50
+	ObsIncidentLimitMax       = 200
+	ObsIncidentStuckAfter     = 5 * time.Minute
+	ObsOverviewTopN           = 5
+	ObsOverviewAuditWindow    = 24 * time.Hour
+	ObsOverviewFailureWindow  = time.Hour
+	ObsOverviewCohortWindow   = 14 * 24 * time.Hour
+	ObsOverviewNodeStaleAfter = time.Minute
+
+	ObsAlertCollectionHistoryRetention               = 30 * 24 * time.Hour
+	ObsAlertCollectionHistoryWindowDefault           = 24 * time.Hour
+	ObsAlertCollectionHistoryBudget                  = 5 * time.Second
+	ObsAlertCollectionOutcomeWriteBudget             = 2 * time.Second
+	ObsAlertCollectionOutcomeMaxAge                  = time.Minute
+	ObsAlertCollectionHistoryOutcomesMax             = 100000
+	ObsAlertCollectionHistoryIntervalsMax            = 200
+	ObsAlertCollectionHistoryPruneBatch              = 5000
+	ObsAlertCollectionFailureDetailsMax              = 20
+	ObsAlertCollectionRejectionItemsMax              = 10
+	ObsAlertCollectionRejectionMaxBytes              = 16 * 1024
+	ObsAlertCollectionRejectionStorageMaxBytes       = 32 * 1024
+	ObsAlertCollectionInterval                       = 30 * time.Second
+	ObsAlertCollectionBudget                         = 10 * time.Second
+	ObsAlertHistoryRetention                         = 30 * 24 * time.Hour
+	ObsAlertHistoryPruneBatch                        = 500
+	ObsAlertTriageSnoozeMax                          = 24 * time.Hour
+	ObsAlertTriageHistoryLimitDefault                = 25
+	ObsAlertTriageHistoryLimitMax                    = 100
+	ObsAlertTriageHistoryCursorTTL                   = 15 * time.Minute
+	ObsAlertTriageHistoryCursorMaxBytes              = 1024
+	ObsAlertTriageHistoryBudget                      = 5 * time.Second
+	ObsAlertWorkloadBudget                           = 5 * time.Second
+	ObsAlertResponseTimesBudget                      = 5 * time.Second
+	ObsAlertResponseTimesWindowDefault               = 24 * time.Hour
+	ObsAlertResponseTimesWindowMax                   = 30 * 24 * time.Hour
+	ObsAlertResponseTimesEpisodesMax                 = 1000
+	ObsAlertResponseTimesReceiptsMax                 = 10000
+	ObsAlertRecurrenceBudget                         = 5 * time.Second
+	ObsAlertRecurrenceWindowDefault                  = 24 * time.Hour
+	ObsAlertRecurrenceWindowMax                      = 30 * 24 * time.Hour
+	ObsAlertRecurrenceEpisodesMax                    = 1000
+	ObsAlertRecurrenceSeriesMax                      = 200
+	ObsAlertRecurrenceRecentMax                      = 5
+	ObsAlertWorkloadGroupMax                         = 72 // 3 statuses * 3 severities * 2 acknowledgment * 2 ownership * 2 snooze
+	ObsAlertTriageRevisionMax                  int64 = 9007199254740991
+	ObsAlertRetentionInterval                        = 30 * time.Second
+	ObsAlertRetentionBudget                          = 10 * time.Second
+	ObsAlertMaintenanceReadBudget                    = 5 * time.Second
+	ObsAlertRetentionFreshnessMaxAge                 = 2 * time.Minute
+	ObsAlertSnapshotMaxRules                         = 4096
+	ObsAlertSnapshotMaxAlerts                        = 4096
+	ObsAlertNameMaxBytes                             = 128
+	ObsAlertComponentMaxBytes                        = 64
+	ObsAlertRunbookMaxBytes                          = 2048
+
+	// Queue telemetry uses one sequential store read, independent of scrapes.
+	// Keep the freshness bound aligned with the Prometheus queue alert rules.
+	ObsBuildQueueCollectionInterval = 30 * time.Second
+	ObsBuildQueueCollectionBudget   = 3 * time.Second
+	ObsBuildQueueFreshnessMaxAge    = 2 * time.Minute
+
+	// Recovery observations have the same bounded, scrape-independent cadence.
+	ObsBuildRecoveryCollectionInterval = 30 * time.Second
+	ObsBuildRecoveryCollectionBudget   = 3 * time.Second
+	ObsBuildRecoveryFreshnessMaxAge    = 2 * time.Minute
+
+	// Image-handoff observations run independently of synchronous image work.
+	ObsBuildImageHandoffCollectionInterval = 30 * time.Second
+	ObsBuildImageHandoffCollectionBudget   = 3 * time.Second
+	ObsBuildImageHandoffFreshnessMaxAge    = 2 * time.Minute
+
+	// Durable image phase timing is observed independently of image execution.
+	ObsImagePreparationCollectionInterval = 30 * time.Second
+	ObsImagePreparationCollectionBudget   = 3 * time.Second
+	ObsImagePreparationFreshnessMaxAge    = 2 * time.Minute
+
+	ObsSnapshotPrimeCollectionInterval = 30 * time.Second
+	ObsSnapshotPrimeCollectionBudget   = 3 * time.Second
+	ObsSnapshotPrimeFreshnessMaxAge    = 2 * time.Minute
+	// Matches the existing prime recovery instance lookback, not a fleet cap.
+	ObsSnapshotPrimeInstanceLookback = 64
+
+	ObsCommandCronCollectionInterval = 30 * time.Second
+	ObsCommandCronCollectionBudget   = 3 * time.Second
+	ObsCommandCronFreshnessMaxAge    = 2 * time.Minute
+
+	ObsAppTaskCollectionInterval = 30 * time.Second
+	ObsAppTaskCollectionBudget   = 3 * time.Second
+	ObsAppTaskFreshnessMaxAge    = 2 * time.Minute
+
+	ObsPostCaptureCollectionInterval = 30 * time.Second
+	ObsPostCaptureCollectionBudget   = 3 * time.Second
+	ObsPostCaptureFreshnessMaxAge    = 2 * time.Minute
+
+	// Evidence reads over-fetch one row to make history truncation explicit.
+	ObsIncidentEvidenceLimitDefault = 25
+	ObsIncidentEvidenceLimitMax     = 100
+	ObsIncidentContextLimitDefault  = 25
+	ObsIncidentContextLimitMax      = 100
+	ObsIncidentContextWindow        = 24 * time.Hour
+	ObsIncidentContextCursorTTL     = 15 * time.Minute
+	ObsIncidentContextBudget        = 5 * time.Second
+
+	// A portable operator bundle captures bounded sections under one deadline.
+	// Current servers advertise an optional fourth rule-diagnostics section.
+	// It never follows resource pagination or arbitrary diagnostic links.
+	ObsIncidentBundleTimeoutDefault   = 30 * time.Second
+	ObsIncidentBundleTimeoutMax       = time.Minute
+	ObsIncidentBundleResponseMaxBytes = 1 << 20
+	ObsIncidentBundleMaxBytes         = 4 << 20
+
+	// Operator health has one shared Prometheus budget, including freshness
+	// reads, so an outage cannot multiply the per-query timeout by six.
+	ObsHealthPrometheusBudget    = 3 * time.Second
+	ObsHealthWindow              = 5 * time.Minute
+	ObsHealthObservationLookback = 15 * time.Minute
+	ObsHealthObservationStep     = 15 * time.Second
+	ObsHealthFreshnessMaxAge     = 2 * time.Minute
+	ObsHealthClockSkewTolerance  = 30 * time.Second
+
+	// Read-only notification observations never follow remote configuration,
+	// fetch credentials, or accept a destination from the request.
+	ObsNotificationBudget           = 3 * time.Second
+	ObsNotificationWindow           = 10 * time.Minute
+	ObsAlertmanagerResponseMaxBytes = 1 << 20
+	ObsAlertmanagerAlertsMax        = 4096
+	ObsNotificationIntegrationsMax  = 32
+
+	// Rule diagnostics assess the full bounded Prometheus rule snapshot and
+	// expose only a bounded, unhealthy-first metadata preview.
+	ObsRuleHealthBudget           = 3 * time.Second
+	ObsRuleHealthItemsMax         = 200
+	ObsRuleHealthIdentityMaxBytes = 128
+	ObsRuleHealthRunbookMaxBytes  = 512
+
+	// Expected rule coverage is explicit and bounded independently of health.
+	ObsRuleCoverageBudget = 3 * time.Second
+	// Critical input diagnostics pin reads to one time and bound work to six
+	// jobs, one always-instantiated readiness gauge each, and strict vectors.
+	ObsInputHealthBudget              = 3 * time.Second
+	ObsInputHealthMaxAge              = 120 * time.Second
+	ObsInputHealthLookback            = 10 * time.Minute
+	ObsInputHealthStep                = 15 * time.Second
+	ObsInputHealthJobsMax             = 6
+	ObsInputHealthTargetsMax          = 4096
+	ObsRuleCoverageItemsMax           = 200
+	ObsRuleCoverageExpectedSetsMax    = 8
+	ObsRuleCoverageExpectedFilesMax   = 8
+	ObsRuleCoverageExpressionMaxBytes = 16 * 1024
+	ObsRuleCoverageLabelsMax          = 64
+	ObsRuleCoverageLabelNameMaxBytes  = 128
+	ObsRuleCoverageLabelValueMaxBytes = 2048
+	ObsRuleCatalogMaxBytes            = 4 << 20
+	ObsRecordingDependentAlertsMax    = 5
+	ObsRecordingUnknownAlertsMax      = 5
+	ObsRecordingDependencyLinksMax    = 16384
+
 	// ObsIncidentWindowDefaultHours is the look-back used when an operator
 	// does not provide ?since. The API clamps explicit windows to the shared
 	// seven-day operator observability budget.
@@ -10383,6 +10765,15 @@ const (
 	IssueMaxClockSkew     = 5 * time.Minute
 )
 
+// Offline grouping evaluation and reviewed partition snapshots (ADR-1744).
+const (
+	IssueGroupingEvaluationCasesMax         = 10000
+	IssueGroupingEvaluationCorpusMaxBytes   = 8 << 20
+	IssueGroupingEvaluationBaselineMaxBytes = 8 << 20
+	IssueGroupingEvaluationCaseIDMaxBytes   = 128
+	IssueGroupingEvaluationJSONDepthMax     = 64
+)
+
 // Deployment-local Node source-map registration (ADR-1113). SDK mirrors these
 // bounds; map artifacts and source content never enter ingestion.
 const (
@@ -10400,6 +10791,17 @@ const (
 	IssueTagsMax                   = 16
 	IssueTagKeyMaxBytes            = 64
 	IssueTagValueMaxBytes          = 128
+)
+
+// Match Node build discovery's bundle hashing bounds (ADR-1742).
+const (
+	IssueSourceMapBundleMaxBytes      = 16 << 20
+	IssueSourceMapBundlesMaxBytes     = 64 << 20
+	IssueSourceMapDiscoveryEntriesMax = 4096
+	IssueSourceMapBuildConfigMaxBytes = 4096
+	// Includes build binding fields or cache toolchain metadata around the
+	// bounded, sanitized publication request.
+	IssueSourceMapBuildMetadataMaxBytes = IssueSourceMapsUploadMaxBytes + (64 << 10)
 )
 
 // IssueGroupMembersMax bounds reversible manual group links (ADR-1114).
@@ -10724,16 +11126,30 @@ const (
 // RouteHealthProbeMaxRoutes selectors and RouteHealthProbeRequestsPerMinute
 // requests per route and deployment, only while a canary is in flight.
 // Probe requests are never written to request telemetry or usage.
+//
+// Rounds are claimed once per app and minute. The worker polls every
+// RouteHealthProbePollInterval so a minute's round starts within about
+// that long of the minute (ADR-1321), and a round may take
+// RouteHealthProbeRoundTimeout. The ADR-1446 default probe sends
+// DefaultRouteProbeRequestsPerRound per deployment, the circuit breaker's
+// request floor (canary.CircuitBreakerMinRequests), so one round inside a
+// canary stage is enough evidence.
 const (
 	RouteHealthProbeMaxRoutes         = 5
 	RouteHealthProbeRequestsPerMinute = 10
+	DefaultRouteProbeRequestsPerRound = 20
 	RouteHealthProbeRequestTimeout    = 10 * time.Second
 	RouteHealthProbeChallengeTTL      = 2 * time.Minute
-	RouteHealthProbePollInterval      = time.Minute
+	RouteHealthProbePollInterval      = 15 * time.Second
+	RouteHealthProbeRoundTimeout      = 55 * time.Second
+	RouteHealthProbePruneInterval     = time.Minute
 	RouteHealthProbeRetention         = 24 * time.Hour
 	// A probe window is unknown when at least this share of responses were
 	// 401/403: customer auth gates stay in force for probes.
 	RouteHealthProbeUnauthenticatedShare = 0.5
+	// ReleaseProbePathsMax bounds an app's release_probe_paths (ADR-1449);
+	// a round splits DefaultRouteProbeRequestsPerRound across them.
+	ReleaseProbePathsMax = 3
 )
 
 // ServiceWakeAhead bounds opt-in wake-ahead along measured service edges
@@ -10742,8 +11158,10 @@ const (
 // only after ServiceWakeAheadMinWakes observed caller wakes, when at least
 // ServiceWakeAheadMinCallShare of them called it and at least
 // ServiceWakeAheadMinColdShare of those calls found it parked (or warm only
-// because of a wake-ahead). Wake-ahead never starts while fleet residency is
-// at or above ServiceWakeAheadMaxResidentPercent of the admission ceiling.
+// because of a wake-ahead). Before ServiceWakeAheadMinWakes, the caller's
+// declared dependencies stand in, at most ServiceWakeAheadMaxTargets of them
+// (ADR-1137). Wake-ahead never starts while fleet residency is at or above
+// ServiceWakeAheadMaxResidentPercent of the admission ceiling.
 const (
 	ServiceWakeAheadFollowWindow       = 10 * time.Second
 	ServiceWakeAheadMinWakes           = 20
@@ -10823,13 +11241,53 @@ const (
 	RouteContentMaxUncacheableShare = 0.5
 )
 
+// RouteCacheRule checks existing cache rules from refill evidence (ADR-1199).
+// On a route with a cache rule the gateway compares each body it stores with
+// the previous one for the URL. A changed body stored no later than the
+// rule's max-age plus RouteContentStaleLagShare of it (at least
+// RouteContentStaleMinLag) is a stale refill: the content almost certainly
+// changed while the cached copy was still being served. A rule is stale when
+// at least RouteCacheRuleMinRefills refills were observed and more than
+// RouteCacheRuleMaxStaleShare of them were stale, and too short when none was
+// stale and the measured safe max-age is at least RouteCacheRuleTooShortFactor
+// times the rule's.
+const (
+	RouteContentStaleLagShare    = 0.1
+	RouteContentStaleMinLag      = 5 * time.Second
+	RouteCacheRuleMinRefills     = 20
+	RouteCacheRuleMaxStaleShare  = 0.05
+	RouteCacheRuleTooShortFactor = 2
+)
+
+// RouteInsight bounds proactive route insights (ADR-1198): every
+// RouteInsightInterval apid evaluates at most RouteInsightMaxApps apps that
+// ran in the last RouteInsightWindow. An insight no evaluation has observed
+// for RouteInsightResolveAfter resolves. A kept_awake insight needs the app
+// awake for at least RouteInsightKeptAwakeMinShare of the window. Listings
+// show active insights and those resolved within RouteInsightResolvedListWindow,
+// at most RouteInsightListLimit rows.
+const (
+	RouteInsightInterval           = 6 * time.Hour
+	RouteInsightWindow             = 24 * time.Hour
+	RouteInsightResolveAfter       = 24 * time.Hour
+	RouteInsightMaxApps            = 500
+	RouteInsightKeptAwakeMinShare  = 0.5
+	RouteInsightListLimit          = 50
+	RouteInsightResolvedListWindow = 7 * 24 * time.Hour
+)
+
 // RoutePriority bounds per-app route priorities for the warm-capacity queue
 // (ADR-978): at most RoutePriorityMaxRules rules, cached by each gateway for
-// RoutePriorityCacheTTL and read only when a request has to queue.
+// RoutePriorityCacheTTL and read only when a request has to queue. The
+// cold-wake queue (ADR-20261018181846) prefetches the rules in the background,
+// bounded by RoutePriorityPrefetchTimeout, and releases each lower class
+// RoutePriorityWakeReleaseStagger after the one above it.
 const (
-	RoutePriorityMaxRules = 20
-	RoutePriorityCacheTTL = 30 * time.Second
-	RoutePriorityMaxApps  = 4096
+	RoutePriorityMaxRules           = 20
+	RoutePriorityCacheTTL           = 30 * time.Second
+	RoutePriorityMaxApps            = 4096
+	RoutePriorityPrefetchTimeout    = 5 * time.Second
+	RoutePriorityWakeReleaseStagger = 25 * time.Millisecond
 )
 
 // RouteHealthPooled bounds stage-pooled evidence for low-traffic routes
@@ -12379,6 +12837,9 @@ const (
 
 // Issue frequency alert bounds cap configuration and per-capture evaluation work.
 const (
+	IssueApplicationSlackMaxEvents        = 5
+	IssueCompoundAlertMaxRules            = 10
+	IssueCompoundAlertMaxCustomers        = IssueImpactAlertMaxCustomers
 	IssueFrequencyAlertMaxRules           = 10
 	IssueFrequencyAlertMaxEvents          = 100000
 	IssueFrequencyAlertMinWindowSeconds   = 60
@@ -13078,6 +13539,14 @@ const ServiceMapMaxEdges = 500
 // default of the per-app metrics endpoints.
 const ServiceMapDefaultRange = "1h"
 
+// Public build configuration is intentionally limited to reviewed URL values.
+const (
+	PublicBuildURLsMaxPerApp       = 10
+	PublicBuildURLsEncodedMaxBytes = 24000 // Mirrored by the deployment_public_build_urls CHECK.
+	PublicBuildURLMaxBytes         = 2048
+	PublicBuildPlanMaxBytes        = 8 << 20
+)
+
 // ServiceMapHighErrorRatePct is the edge error rate the dashboard highlights.
 const ServiceMapHighErrorRatePct = 5.0
 
@@ -13105,6 +13574,83 @@ const (
 	WorkerRecoveryFailureCountMax         = 32
 	WorkerRecoveryConcurrentApps          = 8
 	WorkerRecoveryBatchSize               = 32
+)
+
+// Pipeline limits are intentionally separate from Data API request limits.
+// Native replication holds connections independently of application traffic.
+const (
+	DataPipelinePilotAccountsMax           = 100
+	DataPipelineConnectionsMax             = 10
+	DataPipelinesMax                       = 3
+	DataPipelineGenerationsMax             = 1000
+	DataPipelineHistoryMax                 = 100
+	DataPipelineSchemaRefreshAppsMax       = 100
+	DataPipelineSchemaRetriesMax           = 10
+	DataPipelineSetupsMax                  = 3
+	DataPipelineSetupsPerConnection        = 1
+	DataPipelineSetupHistoryMax            = 100
+	DataPipelineObservationMaxAge          = 90 * time.Second
+	DataPipelineRetentionWarningBytes      = DataPipelineRetainedWALMaxBytes * 4 / 5
+	DataPipelineLiveLagMaxBytes            = int64(16 << 20)
+	DataPipelineTablesMax                  = 16
+	DataPipelineRetainedTablesMax          = 32
+	DataPipelineColumnsMax                 = 128
+	DataPipelineSubjectsMax                = 32
+	DataPipelineSubjectMaxBytes            = 256
+	DataPipelineCredentialMaxBytes         = 8192
+	DataPipelineRequestMaxBytes            = 32768
+	DataPipelineLease                      = 60 * time.Second
+	DataPipelineOperationTimeout           = 20 * time.Second
+	DataPipelinePollInterval               = 15 * time.Second
+	DataPipelineVerificationChunkRows      = 2000
+	DataPipelineVerificationChunkBytes     = 4 << 20
+	DataPipelineVerificationRangesMax      = 4096
+	DataPipelineVerificationSealRangesMax  = 2
+	DataPipelineVerificationChunksPerTick  = 4
+	DataPipelineVerificationLockTimeout    = 250 * time.Millisecond
+	DataPipelineVerificationCatchupTimeout = 2 * time.Second
+	DataPipelineVerificationQueryTimeout   = 2 * time.Second
+	DataPipelineVerificationPoll           = 25 * time.Millisecond
+	DataPipelineVerificationBytesMax       = 16 << 20
+	DataPipelineRetainedWALMaxBytes        = int64(1 << 30)
+	DataPipelineDiscoveryTablesMax         = 128
+	DataPipelineCheckMaxBytes              = 4 << 20
+	DataPipelineCheckEnvelopeBytes         = 4096
+	DataPipelineCheckMaxAge                = 90 * time.Second
+	DataPipelineCheckRetryInterval         = 15 * time.Second
+	DataPipelineCopyWorkersMax             = 2
+	DataPipelineCopyStallTimeout           = 5 * time.Minute
+	// Admission reserves the copy peak until confirmed deletion, including
+	// control/verification sessions. Credential rotations reserve both logins.
+	DataPipelineControlConnections        = 2
+	DataPipelineBindingConnections        = 42 // 2 connections × (Scale concurrency 20 + rollout 1)
+	DataPipelineAuthBindingConnections    = 84 // 4 connections × (Scale concurrency 20 + rollout 1)
+	DataPipelineBindingControlConnections = 2
+	DataPipelineCapacityMaxAge            = 30 * time.Second
+	DataPipelineQualificationMaxAge       = 24 * time.Hour
+	DataPipelineQualificationsMax         = 200
+	DataPipelineDashboardRefresh          = 2 * time.Second
+)
+
+// Pipeline health webhooks have one encrypted destination per pipeline. The
+// independent catalog worker debounces incidents and recovery before delivery.
+const (
+	DataPipelineAlertDebounce           = 2 * time.Minute
+	DataPipelineAlertRecoveryDebounce   = 30 * time.Second
+	DataPipelineAlertCheckInterval      = 15 * time.Second
+	DataPipelineAlertWorkerInterval     = time.Second
+	DataPipelineAlertBatch              = 32
+	DataPipelineAlertHistoryMax         = 100
+	DataPipelineAlertPendingMax         = 100
+	DataPipelineAlertAttemptsMax        = 7
+	DataPipelineAlertAttemptTimeout     = 10 * time.Second
+	DataPipelineAlertLease              = 30 * time.Second
+	DataPipelineAlertRetryBase          = 30 * time.Second
+	DataPipelineAlertRetryMax           = 6 * time.Hour
+	DataPipelineAlertURLMaxBytes        = 2048
+	DataPipelineAlertSecretMinBytes     = 32
+	DataPipelineAlertSecretMaxBytes     = 256
+	DataPipelineAlertRetryAfterMaxBytes = 256
 )
 
 // MCPReadinessFallbackMaxFailures bounds completed primary failures before failover.
@@ -13141,6 +13687,13 @@ const (
 	MCPReadinessPagerDutySummaryMaxBytes          = 1024
 	MCPReadinessPagerDutyTimeoutSeconds           = 30
 	MCPReadinessPagerDutyMaxRetryAfterSeconds     = 86400
+)
+
+// Migration builds may wait for APIs without consuming a builder slot.
+const (
+	ProjectMigrationBuildGateMaxBytes = 16000 // Mirrored by the deployment_build_dependency_gates CHECK.
+	ProjectMigrationBuildWaitTimeout  = 30 * time.Minute
+	ProjectMigrationBuildWaitPoll     = 5 * time.Second
 )
 
 // Selective repair is an internal, explicitly enrolled PostgreSQL contract.

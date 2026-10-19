@@ -102,6 +102,7 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
     markAccess(res, { kind: access, ...(serverKeySlot ? { server_key_slot: serverKeySlot, ...(serverKeyPermissions ? { server_key_restricted: true } : {}) } : {}) })
     if (counted) counted.access = access
     if (serverKeyPermissions && !serverKeyAllows(req, serverKeyPermissions, config, rpc)) return problem(res, 403, 'server_key_permission_denied')
+    if (access === 'server' && config.readOnly === true && !['GET', 'HEAD'].includes(req.method)) return problem(res, 403, 'read_only_identity')
     // Owner caps are checked before admission, against month-to-date totals.
     const cap = usage?.capReached(access)
     if (cap) {
@@ -128,7 +129,7 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
           if (typeof payload.sub !== 'string' || !payload.sub || typeof payload.exp !== 'number') return problem(res, 401, 'token_invalid')
           if (payload.gregale_read_only !== undefined && typeof payload.gregale_read_only !== 'boolean') return problem(res, 401, 'token_invalid')
           if (!admitRateLimit(rateLimiter, payload.sub, res, problem)) return
-          if (payload.gregale_read_only === true && !['GET','HEAD'].includes(req.method)) return problem(res, 403, 'read_only_identity')
+          if ((config.readOnly === true || payload.gregale_read_only === true) && !['GET','HEAD'].includes(req.method)) return problem(res, 403, 'read_only_identity')
           concurrencyKey = payload.sub
         } else if (access === 'anonymous') {
           const client = ['anonymous', clientKey(req)]

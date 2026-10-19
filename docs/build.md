@@ -22,3 +22,15 @@ Build failures are classified as user, dependency, resource, timeout, or
 platform failures. The CLI prints the failing stage and one next action. Use
 `gregale deployments`, `gregale deploys status ID`, and `gregale logs APP` to
 inspect the retained evidence.
+
+Node source builds can automatically collect source maps from the final built
+image. Add `gregale.issue-source-maps.json` at the selected workload root:
+
+```json
+{"version": 1, "directory": "/app/dist"}
+```
+
+Configure the bundler to emit flat Source Map v3 files in that final directory,
+then deploy normally. The build publishes sanitized maps before it can become
+ready. See [automatic build source maps](issues.md#publish-source-maps-from-node-builds)
+for limits, supported paths and rollout requirements.
