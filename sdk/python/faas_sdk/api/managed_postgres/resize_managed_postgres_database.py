@@ -63,22 +63,19 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: ResizeManagedPostgresDatabaseRequest,
 ) -> Response[ManagedPostgresResize | Problem]:
-    """Resize managed PostgreSQL compute or storage
+    """Resize managed PostgreSQL compute
 
-     Durably reserves a service-class change, a storage-limit increase, or both, on the pinned dataset.
-    Clients may disconnect during resizing. The request_id UUID is the durable idempotency key; repeat
-    the same UUID and target to recover progress. Another resize, deletion, binding change, restore or
-    cutover conflicts while updating. Existing accepted requests remain replayable after admission
-    closes. Storage only grows; a lower limit is rejected, and a limit above the plan's per-database
-    allowance fails with limit, observed and docs_url. Only class and storage limit change; ready
-    confirms provider observation, not uninterrupted connections. Published environment-clone targets
-    and databases without a pinned data identity are currently unsupported.
+     Durably reserves a service-class change on the pinned dataset. Clients may disconnect during
+    resizing. The request_id UUID is the durable idempotency key; repeat the same UUID and target to
+    recover progress. Another resize, deletion, binding change, restore or cutover conflicts while
+    updating. Existing accepted requests remain replayable after admission closes. Only compute class
+    changes; ready confirms provider observation, not uninterrupted connections. Published environment-
+    clone targets and databases without a pinned data identity are currently unsupported.
 
     Args:
         id (str):
         body (ResizeManagedPostgresDatabaseRequest): Canonical UUID request for a compute-class
-            change, a storage-limit increase, or both, on an existing managed PostgreSQL database. At
-            least one of service_class and storage_limit_bytes is required.
+            change on an existing managed PostgreSQL database.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -106,22 +103,19 @@ def sync(
     client: AuthenticatedClient | Client,
     body: ResizeManagedPostgresDatabaseRequest,
 ) -> ManagedPostgresResize | Problem | None:
-    """Resize managed PostgreSQL compute or storage
+    """Resize managed PostgreSQL compute
 
-     Durably reserves a service-class change, a storage-limit increase, or both, on the pinned dataset.
-    Clients may disconnect during resizing. The request_id UUID is the durable idempotency key; repeat
-    the same UUID and target to recover progress. Another resize, deletion, binding change, restore or
-    cutover conflicts while updating. Existing accepted requests remain replayable after admission
-    closes. Storage only grows; a lower limit is rejected, and a limit above the plan's per-database
-    allowance fails with limit, observed and docs_url. Only class and storage limit change; ready
-    confirms provider observation, not uninterrupted connections. Published environment-clone targets
-    and databases without a pinned data identity are currently unsupported.
+     Durably reserves a service-class change on the pinned dataset. Clients may disconnect during
+    resizing. The request_id UUID is the durable idempotency key; repeat the same UUID and target to
+    recover progress. Another resize, deletion, binding change, restore or cutover conflicts while
+    updating. Existing accepted requests remain replayable after admission closes. Only compute class
+    changes; ready confirms provider observation, not uninterrupted connections. Published environment-
+    clone targets and databases without a pinned data identity are currently unsupported.
 
     Args:
         id (str):
         body (ResizeManagedPostgresDatabaseRequest): Canonical UUID request for a compute-class
-            change, a storage-limit increase, or both, on an existing managed PostgreSQL database. At
-            least one of service_class and storage_limit_bytes is required.
+            change on an existing managed PostgreSQL database.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -144,22 +138,19 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: ResizeManagedPostgresDatabaseRequest,
 ) -> Response[ManagedPostgresResize | Problem]:
-    """Resize managed PostgreSQL compute or storage
+    """Resize managed PostgreSQL compute
 
-     Durably reserves a service-class change, a storage-limit increase, or both, on the pinned dataset.
-    Clients may disconnect during resizing. The request_id UUID is the durable idempotency key; repeat
-    the same UUID and target to recover progress. Another resize, deletion, binding change, restore or
-    cutover conflicts while updating. Existing accepted requests remain replayable after admission
-    closes. Storage only grows; a lower limit is rejected, and a limit above the plan's per-database
-    allowance fails with limit, observed and docs_url. Only class and storage limit change; ready
-    confirms provider observation, not uninterrupted connections. Published environment-clone targets
-    and databases without a pinned data identity are currently unsupported.
+     Durably reserves a service-class change on the pinned dataset. Clients may disconnect during
+    resizing. The request_id UUID is the durable idempotency key; repeat the same UUID and target to
+    recover progress. Another resize, deletion, binding change, restore or cutover conflicts while
+    updating. Existing accepted requests remain replayable after admission closes. Only compute class
+    changes; ready confirms provider observation, not uninterrupted connections. Published environment-
+    clone targets and databases without a pinned data identity are currently unsupported.
 
     Args:
         id (str):
         body (ResizeManagedPostgresDatabaseRequest): Canonical UUID request for a compute-class
-            change, a storage-limit increase, or both, on an existing managed PostgreSQL database. At
-            least one of service_class and storage_limit_bytes is required.
+            change on an existing managed PostgreSQL database.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -185,22 +176,19 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: ResizeManagedPostgresDatabaseRequest,
 ) -> ManagedPostgresResize | Problem | None:
-    """Resize managed PostgreSQL compute or storage
+    """Resize managed PostgreSQL compute
 
-     Durably reserves a service-class change, a storage-limit increase, or both, on the pinned dataset.
-    Clients may disconnect during resizing. The request_id UUID is the durable idempotency key; repeat
-    the same UUID and target to recover progress. Another resize, deletion, binding change, restore or
-    cutover conflicts while updating. Existing accepted requests remain replayable after admission
-    closes. Storage only grows; a lower limit is rejected, and a limit above the plan's per-database
-    allowance fails with limit, observed and docs_url. Only class and storage limit change; ready
-    confirms provider observation, not uninterrupted connections. Published environment-clone targets
-    and databases without a pinned data identity are currently unsupported.
+     Durably reserves a service-class change on the pinned dataset. Clients may disconnect during
+    resizing. The request_id UUID is the durable idempotency key; repeat the same UUID and target to
+    recover progress. Another resize, deletion, binding change, restore or cutover conflicts while
+    updating. Existing accepted requests remain replayable after admission closes. Only compute class
+    changes; ready confirms provider observation, not uninterrupted connections. Published environment-
+    clone targets and databases without a pinned data identity are currently unsupported.
 
     Args:
         id (str):
         body (ResizeManagedPostgresDatabaseRequest): Canonical UUID request for a compute-class
-            change, a storage-limit increase, or both, on an existing managed PostgreSQL database. At
-            least one of service_class and storage_limit_bytes is required.
+            change on an existing managed PostgreSQL database.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

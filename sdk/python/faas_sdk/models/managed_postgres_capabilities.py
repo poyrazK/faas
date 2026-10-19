@@ -48,9 +48,6 @@ class ManagedPostgresCapabilities:
     class_resize: bool
     """Compute-class resizing supported by the configured regional backend. Reservations still require admission
     and the database pinned backend."""
-    storage_resize: bool
-    """Growing the storage limit of existing databases is supported by the configured regional backend, up to
-    storage_limit_bytes. Storage never shrinks."""
     storage_limit_bytes: int
     restore_window_seconds: int
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -93,8 +90,6 @@ class ManagedPostgresCapabilities:
 
         class_resize = self.class_resize
 
-        storage_resize = self.storage_resize
-
         storage_limit_bytes = self.storage_limit_bytes
 
         restore_window_seconds = self.restore_window_seconds
@@ -117,7 +112,6 @@ class ManagedPostgresCapabilities:
                 "point_in_time_restore": point_in_time_restore,
                 "scale_to_zero_update": scale_to_zero_update,
                 "class_resize": class_resize,
-                "storage_resize": storage_resize,
                 "storage_limit_bytes": storage_limit_bytes,
                 "restore_window_seconds": restore_window_seconds,
             }
@@ -173,8 +167,6 @@ class ManagedPostgresCapabilities:
 
         class_resize = d.pop("class_resize")
 
-        storage_resize = d.pop("storage_resize")
-
         storage_limit_bytes = d.pop("storage_limit_bytes")
 
         restore_window_seconds = d.pop("restore_window_seconds")
@@ -194,7 +186,6 @@ class ManagedPostgresCapabilities:
             point_in_time_restore=point_in_time_restore,
             scale_to_zero_update=scale_to_zero_update,
             class_resize=class_resize,
-            storage_resize=storage_resize,
             storage_limit_bytes=storage_limit_bytes,
             restore_window_seconds=restore_window_seconds,
         )

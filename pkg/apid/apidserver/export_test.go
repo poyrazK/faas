@@ -838,6 +838,7 @@ func (r *server) MailBounce() *mailBounceHandler                     { return &r
 func (r *server) Mailer() *Mailer                                    { return &r.mailer }
 func (r *server) ManagedPostgres() **managedpostgres.Service         { return &r.managedPostgres }
 func (r *server) PostgresUpgrades() *managedpg.Rollout               { return &r.postgresUpgrades }
+func (r *server) PostgresStorage() *managedpg.Rollout                { return &r.postgresStorage }
 func (r *server) ManagedPostgresBindings() **managedpostgres.BindingService {
 	return &r.managedPostgresBindings
 }

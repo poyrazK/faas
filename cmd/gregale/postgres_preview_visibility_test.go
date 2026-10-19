@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"strings"
 	"testing"
@@ -33,5 +34,20 @@ func TestPostgresUpgradeHiddenFromCustomerDiscovery(t *testing.T) {
 	}
 	if strings.Contains(string(source), "|upgrade|") {
 		t.Error("the postgres usage line lists upgrade")
+	}
+}
+
+// adr: 1027 — storage growth is a preview until launch: `postgres resize`
+// keeps --storage-bytes for its accounts but never shows it in help or a
+// usage line, and capabilities print storage_resize only to its accounts.
+func TestPostgresStorageGrowthHiddenFromCustomerHelp(t *testing.T) {
+	var stderr bytes.Buffer
+	_ = captureStderrSwap(t, &stderr, func() int {
+		code := cmdPostgres([]string{"resize", "-h"})
+		_ = cmdPostgres([]string{"resize", "orders"}) // a usage error
+		return code
+	})
+	if !strings.Contains(stderr.String(), "usage: gregale postgres resize") || strings.Contains(stderr.String(), "storage") {
+		t.Fatalf("resize help = %q; want the usage without storage", stderr.String())
 	}
 }

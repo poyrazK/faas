@@ -398,3 +398,63 @@ to `api/openapi.yaml` and regenerate the SDKs. Drop them from both
 `routeExclude` lists (`scripts/ci/speccompliance` and `cmd/sdk-coverage`),
 and add the subcommands back to `cli_meta.go`. Move this section to
 docs/managed-postgres.md.
+
+## Previewing storage growth
+
+Growing a database's storage limit (ADR-1027) is hidden from customers
+until it is tested on production. Outside
+`FAAS_MANAGED_POSTGRES_STORAGE_RESIZE_ACCOUNTS` (apid, comma-separated
+account UUIDs; `*` at launch; unset is nobody), `storage_limit_bytes` is an
+unknown resize field. Resize views carry no storage limits, and
+capabilities no `storage_resize`. None of it is in the OpenAPI spec or the
+generated SDKs (spec-compliance `previewFields`), and `gregale postgres
+resize --storage-bytes` is out of help. What a listed account gets, and
+what the customer guide will say at launch:
+
+A database's storage limit starts at the plan's per-database allowance unless
+the create request names a lower one. A backend that advertises
+`storage_resize` grows it in place through the resize request, alone or
+together with a class change:
+
+```sh
+gregale postgres resize DATABASE --storage-bytes 21474836480 --request-id REQUEST_UUID
+gregale postgres resize DATABASE --class burstable --storage-bytes 21474836480 --request-id REQUEST_UUID
+```
+
+The POST body takes `storage_limit_bytes`; `service_class` becomes optional,
+and at least one of the two is required. Omitting the limit, or repeating the
+current one, keeps it. Storage only grows: a lower limit is rejected
+(`managed_postgres_invalid`), because a volume cannot shrink under its data. A
+limit above the plan's per-database allowance fails with
+`managed_postgres_quota_exceeded`, carrying `limit`, `observed` and
+`docs_url`; the backend's own ceiling (`storage_limit_bytes` in capabilities)
+also applies. The resize view reports `from_storage_limit_bytes` and
+`target_storage_limit_bytes`, and the same request UUID rules apply: replaying
+the same target returns progress, a different one conflicts.
+
+On the native backend (ADR-1027) a running database parks, its volume grows
+offline (`e2fsck`, then `resize2fs`) and it wakes on the larger filesystem;
+a parked database grows before its next wake. Storage is billed by the
+provisioned limit, so the larger limit is metered from completion on. Neon
+does not advertise `storage_resize`.
+
+A native database that nearly fills its limit turns read-only rather than
+crash. Below 5% free space (at least 128 MiB, at most 2 GiB), writes fail
+with SQLSTATE `25006` ("cannot execute … in a read-only transaction"), and
+reads keep working. Growing the storage ends it at the next wake. Freeing
+space ends it within seconds once twice that much is free: run `SET
+default_transaction_read_only = off` in a session, then `TRUNCATE`, `DROP`,
+or `DELETE` plus `VACUUM FULL`. A plain `VACUUM` keeps the space inside the
+table.
+
+Qualification artifacts record `storage_resize`. A backend that advertises it
+must pass `storage_resize_probe`: the limit grows on the disposable
+qualification database with its identity, data, credentials and a stable
+replay intact, and the database reports the new limit. The probe runs last,
+since storage cannot return to the qualification spec.
+
+At launch, set `*`, then add `storage_limit_bytes`, the resize view's
+storage limits and `storage_resize` back to `api/openapi.yaml` and
+regenerate the SDKs. Drop them from `previewFields`, put `--storage-bytes`
+back in the resize usage line, and move this section back to
+docs/managed-postgres.md.

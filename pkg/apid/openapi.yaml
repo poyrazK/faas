@@ -1779,8 +1779,8 @@ paths:
       - $ref: '#/components/parameters/ManagedPostgresID'
     post:
       operationId: resizeManagedPostgresDatabase
-      summary: Resize managed PostgreSQL compute or storage
-      description: Durably reserves a service-class change, a storage-limit increase, or both, on the pinned dataset. Clients may disconnect during resizing. The request_id UUID is the durable idempotency key; repeat the same UUID and target to recover progress. Another resize, deletion, binding change, restore or cutover conflicts while updating. Existing accepted requests remain replayable after admission closes. Storage only grows; a lower limit is rejected, and a limit above the plan's per-database allowance fails with limit, observed and docs_url. Only class and storage limit change; ready confirms provider observation, not uninterrupted connections. Published environment-clone targets and databases without a pinned data identity are currently unsupported.
+      summary: Resize managed PostgreSQL compute
+      description: Durably reserves a service-class change on the pinned dataset. Clients may disconnect during resizing. The request_id UUID is the durable idempotency key; repeat the same UUID and target to recover progress. Another resize, deletion, binding change, restore or cutover conflicts while updating. Existing accepted requests remain replayable after admission closes. Only compute class changes; ready confirms provider observation, not uninterrupted connections. Published environment-clone targets and databases without a pinned data identity are currently unsupported.
       tags: [managed_postgres]
       requestBody:
         required: true
@@ -49944,7 +49944,7 @@ components:
     ManagedPostgresCapabilities:
       description: Versioned PostgreSQL support for the default backend in a region, intersected with customer plan limits. Provider identities, costs, endpoints and credentials are excluded. Capabilities remain visible while the rollout gate is closed.
       type: object
-      required: [contract_version, region, provisioning_enabled, database_limit, postgres_majors, service_classes, availability, credential_access, scale_to_zero, always_on, pooled_connections, point_in_time_restore, class_resize, storage_resize, scale_to_zero_update, storage_limit_bytes, restore_window_seconds]
+      required: [contract_version, region, provisioning_enabled, database_limit, postgres_majors, service_classes, availability, credential_access, scale_to_zero, always_on, pooled_connections, point_in_time_restore, class_resize, scale_to_zero_update, storage_limit_bytes, restore_window_seconds]
       properties:
         contract_version: { type: integer, minimum: 1 }
         region: { type: string }
@@ -49960,7 +49960,6 @@ components:
         point_in_time_restore: { type: boolean }
         scale_to_zero_update: { type: boolean, description: "Changing scale-to-zero on existing databases is supported. Disabling suspension additionally requires always_on plan entitlement; reservations require the pinned backend and admission." }
         class_resize: { type: boolean, description: "Compute-class resizing supported by the configured regional backend. Reservations still require admission and the database pinned backend." }
-        storage_resize: { type: boolean, description: "Growing the storage limit of existing databases is supported by the configured regional backend, up to storage_limit_bytes. Storage never shrinks." }
         storage_limit_bytes: { type: integer, format: int64, minimum: 0 }
         restore_window_seconds: { type: integer, format: int64, minimum: 0 }
     ChangeManagedPostgresComputePolicyRequest:
@@ -49987,25 +49986,22 @@ components:
         created_at: { type: string, format: date-time }
         completed_at: { type: string, format: date-time }
     ResizeManagedPostgresDatabaseRequest:
-      description: Canonical UUID request for a compute-class change, a storage-limit increase, or both, on an existing managed PostgreSQL database. At least one of service_class and storage_limit_bytes is required.
+      description: Canonical UUID request for a compute-class change on an existing managed PostgreSQL database.
       type: object
       additionalProperties: false
-      required: [request_id]
+      required: [request_id, service_class]
       properties:
         request_id: { type: string, format: uuid, description: "Canonical nonzero UUID; reuse with the same database and target after uncertain responses." }
-        service_class: { type: string, enum: [development, burstable, production], description: "Target class; omitted keeps the class." }
-        storage_limit_bytes: { type: integer, format: int64, minimum: 0, description: "Target storage limit; omitted, zero or the current limit keeps it. Must not be lower than the current limit." }
+        service_class: { type: string, enum: [development, burstable, production] }
     ManagedPostgresResize:
       description: Durable compute resize progress. Provider identity and credentials are never returned; existing connections may be interrupted.
       type: object
-      required: [id, database_id, from_class, target_class, from_storage_limit_bytes, target_storage_limit_bytes, generation, state, connection_interruption_expected, created_at]
+      required: [id, database_id, from_class, target_class, generation, state, connection_interruption_expected, created_at]
       properties:
         id: { type: string, format: uuid }
         database_id: { type: string }
         from_class: { type: string, enum: [development, burstable, production] }
         target_class: { type: string, enum: [development, burstable, production] }
-        from_storage_limit_bytes: { type: integer, format: int64, minimum: 0 }
-        target_storage_limit_bytes: { type: integer, format: int64, minimum: 0 }
         generation: { type: integer, format: int64, minimum: 2 }
         state: { type: string, enum: [pending, succeeded] }
         connection_interruption_expected: { type: boolean }

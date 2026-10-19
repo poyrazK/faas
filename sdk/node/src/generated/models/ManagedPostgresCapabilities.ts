@@ -26,10 +26,6 @@ export type ManagedPostgresCapabilities = {
    * Compute-class resizing supported by the configured regional backend. Reservations still require admission and the database pinned backend.
    */
   class_resize: boolean;
-  /**
-   * Growing the storage limit of existing databases is supported by the configured regional backend, up to storage_limit_bytes. Storage never shrinks.
-   */
-  storage_resize: boolean;
   storage_limit_bytes: number;
   restore_window_seconds: number;
 };

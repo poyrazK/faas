@@ -79,7 +79,10 @@ type server struct {
 	managedPostgres *managedpostgres.Service
 	// postgresUpgrades is who sees in-place major upgrades
 	// (FAAS_MANAGED_POSTGRES_UPGRADE_ACCOUNTS); nobody until configured.
-	postgresUpgrades                 managedpg.Rollout
+	postgresUpgrades managedpg.Rollout
+	// postgresStorage is who sees storage growth
+	// (FAAS_MANAGED_POSTGRES_STORAGE_RESIZE_ACCOUNTS).
+	postgresStorage                  managedpg.Rollout
 	clonePostgresContentsReadPool    *copycontents.ReadPool
 	cloneWorkerAdmission             func(context.Context) error
 	managedPostgresReconciler        *managedpostgres.Reconciler
@@ -1309,8 +1312,8 @@ func (s *server) handler() http.Handler {
 	// frozen by the generic HTTP idempotency response cache.
 	mux.HandleFunc("POST /v1/postgres/databases/{id}/compute-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.changeManagedPostgresComputePolicy)))))
 	mux.HandleFunc("GET /v1/postgres/databases/{id}/compute-policy-changes/{change_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.getManagedPostgresComputePolicyChange))))
-	mux.HandleFunc("POST /v1/postgres/databases/{id}/resize", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.resizeManagedPostgresDatabase)))))
-	mux.HandleFunc("GET /v1/postgres/databases/{id}/resizes/{resize_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.getManagedPostgresResize))))
+	mux.HandleFunc("POST /v1/postgres/databases/{id}/resize", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.managedPostgresResize(managedpg.Resizes.Post))))))
+	mux.HandleFunc("GET /v1/postgres/databases/{id}/resizes/{resize_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.managedPostgresResize(managedpg.Resizes.Get)))))
 	// ADR-1027 in-place major upgrades, served by pkg/apid/managedpg: hidden
 	// like unregistered routes outside FAAS_MANAGED_POSTGRES_UPGRADE_ACCOUNTS.
 	mux.HandleFunc("POST /v1/postgres/databases/{id}/upgrade", managedpg.RolloutRoute(s.upgrades, s.authLimited(managedpg.RolloutAccount(s.upgrades, s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.managedPostgresUpgrade(managedpg.Upgrades.Post))))))))

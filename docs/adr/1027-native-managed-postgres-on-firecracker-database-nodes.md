@@ -1319,7 +1319,11 @@ drives it (migration `20261017145204318_managed_postgres_major_upgrade`):
 - **API.** `POST /v1/postgres/databases/{id}/upgrade` and `GET
   .../upgrades/{upgrade_id}` (served from `pkg/apid/managedpg`) and `gregale
   postgres upgrade|upgrade-status`. Every plan may upgrade.
-- **Hidden until launch.** Customers see nothing of upgrades until the owner
+- **Hidden until launch** (so is storage growth, behind
+  `FAAS_MANAGED_POSTGRES_STORAGE_RESIZE_ACCOUNTS`: `storage_limit_bytes`
+  is an unknown resize field outside it, and spec-compliance's
+  `previewFields` keeps the storage fields out of the public spec).
+  Customers see nothing of upgrades until the owner
   has tested them on production. `FAAS_MANAGED_POSTGRES_UPGRADE_ACCOUNTS`
   (empty: nobody; `*` at launch) lists who sees them. Everyone else gets
   what an unregistered route answers: before authentication while nobody

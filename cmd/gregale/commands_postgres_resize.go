@@ -11,17 +11,21 @@ import (
 )
 
 func cmdPostgresResize(args []string) int {
+	const usage = "usage: gregale postgres resize DATABASE --class CLASS --request-id UUID"
 	fs := newFlagSet("postgres resize", flag.ContinueOnError)
-	class := fs.String("class", "", "target service class (omit to keep it)")
-	storage := fs.Int64("storage-bytes", 0, "target storage limit in bytes; storage only grows (omit to keep it)")
+	class := fs.String("class", "", "target service class")
+	// Storage growth (ADR-1027) is a preview until launch: the flag works
+	// for accounts in it but stays out of help (fs.Usage) and usage lines.
+	storage := fs.Int64("storage-bytes", 0, "target storage limit in bytes; storage only grows")
 	request := fs.String("request-id", "", "stable nonzero UUID; reuse after an uncertain response")
+	fs.Usage = func() { PrintUsage(os.Stderr, usage, "postgres") }
 	if err := fs.Parse(normalizePostgresAttachArgs(args)); err != nil {
 		return 1
 	}
 	id, err := uuid.Parse(*request)
 	if fs.NArg() != 1 || (*class != "" && !postgresServiceClassOK(*class)) || *storage < 0 || (*class == "" && *storage == 0) ||
 		err != nil || id == uuid.Nil || id.String() != *request {
-		PrintUsage(os.Stderr, "usage: gregale postgres resize DATABASE [--class CLASS] [--storage-bytes N] --request-id UUID", "postgres")
+		PrintUsage(os.Stderr, usage, "postgres")
 		return 1
 	}
 	client, err := authedClient()

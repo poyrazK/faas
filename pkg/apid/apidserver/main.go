@@ -1475,8 +1475,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return fmt.Errorf("apid managed postgres configuration: %w", err)
 	}
 	srv.WithManagedPostgres(managedPostgresService, managedPostgresReconciler, managedPostgresBindings, managedPostgresBindingReconciler, managedPostgresUsageCollector, managedPostgresHealthCollector)
-	// ADR-1027 major-upgrade preview: nobody sees it unless listed.
+	// ADR-1027 major-upgrade and storage-growth previews: nobody sees them
+	// unless listed.
 	if srv.postgresUpgrades, err = managedpg.ParseRollout("FAAS_MANAGED_POSTGRES_UPGRADE_ACCOUNTS", deps.getenv("FAAS_MANAGED_POSTGRES_UPGRADE_ACCOUNTS")); err != nil {
+		return fmt.Errorf("apid managed postgres configuration: %w", err)
+	}
+	if srv.postgresStorage, err = managedpg.ParseRollout("FAAS_MANAGED_POSTGRES_STORAGE_RESIZE_ACCOUNTS", deps.getenv("FAAS_MANAGED_POSTGRES_STORAGE_RESIZE_ACCOUNTS")); err != nil {
 		return fmt.Errorf("apid managed postgres configuration: %w", err)
 	}
 	srv.WithResendWebhookSecret(resendSecret)

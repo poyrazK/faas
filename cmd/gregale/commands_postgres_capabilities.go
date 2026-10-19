@@ -37,7 +37,9 @@ func cmdPostgresCapabilities(args []string) int {
 	_, _ = fmt.Fprintf(osStdout, "  always_on:            %t\n", result.AlwaysOn)
 	_, _ = fmt.Fprintf(osStdout, "  pooled_connections:   %t\n", result.PooledConnections)
 	_, _ = fmt.Fprintf(osStdout, "  class_resize:         %t\n", result.ClassResize)
-	_, _ = fmt.Fprintf(osStdout, "  storage_resize:       %t\n", result.StorageResize)
+	if result.StorageResize { // storage growth is a preview: only its accounts see it
+		_, _ = fmt.Fprintf(osStdout, "  storage_resize:       %t\n", result.StorageResize)
+	}
 	_, _ = fmt.Fprintf(osStdout, "  point_in_time_restore: %t\n", result.PointInTimeRestore)
 	_, _ = fmt.Fprintf(osStdout, "  storage_limit:        %s\n", formatPostgresStorage(result.StorageLimitBytes))
 	_, _ = fmt.Fprintf(osStdout, "  restore_window:       %s\n", formatPostgresDuration(result.RestoreWindowSeconds))

@@ -18,7 +18,6 @@ type ManagedPostgresCapabilities struct {
 	PointInTimeRestore   bool     `json:"point_in_time_restore"`
 	ScaleToZeroUpdate    bool     `json:"scale_to_zero_update"`
 	ClassResize          bool     `json:"class_resize"`
-	StorageResize        bool     `json:"storage_resize"`
 	StorageLimitBytes    int64    `json:"storage_limit_bytes"`
 	RestoreWindowSeconds int64    `json:"restore_window_seconds"`
 }

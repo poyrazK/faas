@@ -79,6 +79,16 @@ const (
 	runtimeReleasesFile           = "runtime_releases.go"            // ADR-736 immutable runtime identity and update preview DTOs
 )
 
+// previewFields are DTO fields that apid shows only to accounts in a
+// preview's rollout and omits for everyone else, so they stay out of the
+// public spec and generated SDKs until launch.
+var previewFields = map[string]map[string]bool{
+	// ADR-1027 storage growth (FAAS_MANAGED_POSTGRES_STORAGE_RESIZE_ACCOUNTS).
+	"ResizeManagedPostgresDatabaseRequest": {"storage_limit_bytes": true},
+	"ManagedPostgresResize":                {"from_storage_limit_bytes": true, "target_storage_limit_bytes": true},
+	"ManagedPostgresCapabilities":          {"storage_resize": true},
+}
+
 // routeExclude lists server.go routes that are deliberately not in the
 // public OpenAPI spec. Keep this in sync with the explanatory comments in
 // server.go's handler() method. Sorted alphabetically for diff stability.
@@ -1399,6 +1409,9 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 	// Per-schema: every JSON-named field must appear in the spec properties.
 	// Catches: field added to DTO but not to spec, renamed, etc.
 	for name, fields := range dtos {
+		for f := range previewFields[name] {
+			delete(fields, f)
+		}
 		specBody, ok := spec.Schemas[name]
 		if !ok {
 			continue

@@ -10,8 +10,6 @@ export type ManagedPostgresResize = {
   database_id: string;
   from_class: 'development' | 'burstable' | 'production';
   target_class: 'development' | 'burstable' | 'production';
-  from_storage_limit_bytes: number;
-  target_storage_limit_bytes: number;
   generation: number;
   state: 'pending' | 'succeeded';
   connection_interruption_expected: boolean;

@@ -10,7 +10,7 @@ test('PostgreSQL capabilities preserve reader support with a closed rollout gate
     database_limit: 1, postgres_majors: [16, 17], service_classes: ['development', 'burstable'],
     availability: ['single_zone'], credential_access: ['read_only', 'read_write', 'migration'],
     scale_to_zero: true, always_on: false, pooled_connections: true,
-    point_in_time_restore: true, class_resize: true, storage_resize: true, scale_to_zero_update: true, storage_limit_bytes: 10737418240, restore_window_seconds: 604800,
+    point_in_time_restore: true, class_resize: true, scale_to_zero_update: true, storage_limit_bytes: 10737418240, restore_window_seconds: 604800,
   };
   let requests = 0;
   const server = createServer((req, res) => {
