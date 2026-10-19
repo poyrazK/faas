@@ -3069,7 +3069,7 @@ func startImaged(t *testing.T, h *Harness, bin, dbURL, tmp, appsRoot string, ext
 	// until the test gave up, in every image-deploy test. Wait for the
 	// subscription itself, not the process.
 	imagedStart := time.Now()
-	if err := h.waitImagedListens(3 * time.Minute); err != nil {
+	if err := h.waitImagedListens(imagedSubscribeTimeout(t)); err != nil {
 		// Say why: an imaged that exited (metrics port taken, base
 		// staging failed) is otherwise reported only as "never
 		// subscribed", with its last words lost — smoke run
@@ -3078,6 +3078,22 @@ func startImaged(t *testing.T, h *Harness, bin, dbURL, tmp, appsRoot string, ext
 		t.Fatalf("e2etest: imaged did not subscribe to its notify channels: %v", err)
 	}
 	t.Logf("e2etest: imaged subscribed after %s", time.Since(imagedStart).Round(time.Millisecond))
+}
+
+// imagedSubscribeTimeout bounds imaged's base staging before it subscribes.
+// FAAS_E2E_IMAGED_SUBSCRIBE_TIMEOUT (a Go duration) raises it on a shared
+// test node, where other runs rewriting the same base images can keep the
+// disk busy past the default.
+func imagedSubscribeTimeout(t *testing.T) time.Duration {
+	raw := os.Getenv("FAAS_E2E_IMAGED_SUBSCRIBE_TIMEOUT")
+	if raw == "" {
+		return 3 * time.Minute
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d <= 0 {
+		t.Fatalf("e2etest: FAAS_E2E_IMAGED_SUBSCRIBE_TIMEOUT=%q: want a positive duration", raw)
+	}
+	return d
 }
 
 // A placeholder is safe only when no guest kernel is configured. Otherwise
