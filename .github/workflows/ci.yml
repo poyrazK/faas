@@ -1887,10 +1887,12 @@ jobs:
           python3 -m json.tool examples/event-acknowledgment-monitoring/recovery-dashboard.json >/dev/null
           # Every rule fixture, not a hand-picked list: an unlisted
           # fixture (slo_low_traffic) broke unnoticed when an alert changed.
-          for fixture in deploy/ansible/roles/prometheus/files/*.test.yml pkg/promqlrules/testdata/*.test.yml; do
-            echo "promtool test rules ${fixture}"
-            promtool test rules "${fixture}"
-          done
+          # Fixtures are independent and several take minutes each; serially
+          # they ran past 40 minutes and the job hit its 70-minute budget (run
+          # 39181126528). Run them on every core and print each fixture's
+          # output as one block; xargs fails the step if any fixture fails.
+          printf '%s\n' deploy/ansible/roles/prometheus/files/*.test.yml pkg/promqlrules/testdata/*.test.yml |
+            xargs -P "$(nproc)" -I{} sh -c 'out=$(promtool test rules "$1" 2>&1); status=$?; printf "promtool test rules %s\n%s\n" "$1" "$out"; exit $status' _ {}
           go test -count=1 -tags=integration ./pkg/promqlrules -run '^TestComputeMetricsDiscoveryScrapeLabels$'
 
       - name: Prometheus alert metadata check
