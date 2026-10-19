@@ -486,6 +486,8 @@ export type { CreateProjectEnvironmentQualificationRequest } from './models/Crea
 export type { CreateProjectEnvironmentRequest } from './models/CreateProjectEnvironmentRequest.js';
 export type { CreateQueueBindingCanaryRequest } from './models/CreateQueueBindingCanaryRequest.js';
 export type { CreateQueueBindingRequest } from './models/CreateQueueBindingRequest.js';
+export type { CreateReleaseFreezeRequest } from './models/CreateReleaseFreezeRequest.js';
+export type { CreateReleaseGateRequest } from './models/CreateReleaseGateRequest.js';
 export type { CreateScenarioObjectsRequest } from './models/CreateScenarioObjectsRequest.js';
 export type { CreateScenarioPostgresRequest } from './models/CreateScenarioPostgresRequest.js';
 export type { CreateSLORequest } from './models/CreateSLORequest.js';
@@ -1089,6 +1091,8 @@ export type { ListOrgAPIKeysResponse } from './models/ListOrgAPIKeysResponse.js'
 export type { ListProfileDeploymentChecksResponse } from './models/ListProfileDeploymentChecksResponse.js';
 export type { ListProfileInvestigationsResponse } from './models/ListProfileInvestigationsResponse.js';
 export type { ListProfilePeriodicMonitorsResponse } from './models/ListProfilePeriodicMonitorsResponse.js';
+export type { ListReleaseFreezesResponse } from './models/ListReleaseFreezesResponse.js';
+export type { ListReleaseGatesResponse } from './models/ListReleaseGatesResponse.js';
 export type { ListScheduleOccurrencesResponse } from './models/ListScheduleOccurrencesResponse.js';
 export type { ListSecretsForAccountResponse } from './models/ListSecretsForAccountResponse.js';
 export type { ListTenantSurfacesResponse } from './models/ListTenantSurfacesResponse.js';
@@ -2253,6 +2257,11 @@ export type { RegisterScenarioTestRequest } from './models/RegisterScenarioTestR
 export type { RegisterScenarioTestResponse } from './models/RegisterScenarioTestResponse.js';
 export type { RekeyProgress } from './models/RekeyProgress.js';
 export type { ReleaseDatabaseRef } from './models/ReleaseDatabaseRef.js';
+export type { ReleaseFreeze } from './models/ReleaseFreeze.js';
+export type { ReleaseFreezeStatus } from './models/ReleaseFreezeStatus.js';
+export type { ReleaseFreezeWeekly } from './models/ReleaseFreezeWeekly.js';
+export type { ReleaseGate } from './models/ReleaseGate.js';
+export type { ReleaseGateResult } from './models/ReleaseGateResult.js';
 export type { ReleaseRestorePoint } from './models/ReleaseRestorePoint.js';
 export type { RemoveEnvironmentGitOpsOverrideRequest } from './models/RemoveEnvironmentGitOpsOverrideRequest.js';
 export type { RenameAppRequest } from './models/RenameAppRequest.js';

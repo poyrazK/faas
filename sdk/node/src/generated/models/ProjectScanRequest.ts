@@ -39,5 +39,9 @@ export type ProjectScanRequest = {
    * Override the customer identity policy for selected workloads in this scan/apply pair (Hobby and above). Omitted uses Compose declarations and preserves existing app policy. Apply must repeat the same override as scan.
    */
   platform_tenant_required?: boolean;
+  /**
+   * Apply only: release frozen apps to production anyway; the reason is audited (ADR-20261019071733).
+   */
+  override_freeze?: string;
 };
 
