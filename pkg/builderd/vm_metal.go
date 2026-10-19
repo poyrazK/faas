@@ -178,26 +178,30 @@ func buildManifestForRequest(req VMRequest, timeoutSec int) (api.BuildManifest, 
 		return api.BuildManifest{}, fmt.Errorf("builderd: Dockerfile path: %w", err)
 	}
 	return api.BuildManifest{
-		SchemaVersion:   1,
-		BuildID:         req.BuildID,
-		TenantID:        req.TenantID,
-		DeploymentID:    req.DeploymentID,
-		SourceTarPath:   "/build/src.tar",
-		BuildContext:    "/build/src",
-		Workdir:         workdir,
-		DockerfilePath:  dockerfilePath,
-		OutDir:          "/build/out",
-		Framework:       MapFramework(req.Framework),
-		Runtime:         req.Runtime,
-		RuntimeBaseRef:  req.RuntimeBaseRef,
-		Function:        req.Function,
-		SharedRuntime:   req.SharedRuntime,
-		DevWatchCommand: req.DevWatchCommand,
-		DevWatchHost:    req.DevWatchHost,
-		DependencyCache: req.DependencyCacheKey != "",
-		KeepWarm:        req.KeepWarm,
-		TimeoutSec:      timeoutSec,
-		LogTailBytes:    64 * 1024,
+		PublicBuildURLs:       req.PublicBuildURLs,
+		BuildDependencyDigest: req.BuildDependencyDigest,
+		SchemaVersion:         1,
+		BuildID:               req.BuildID,
+		TenantID:              req.TenantID,
+		DeploymentID:          req.DeploymentID,
+		SourceTarPath:         "/build/src.tar",
+		BuildContext:          "/build/src",
+		Workdir:               workdir,
+		DockerfilePath:        dockerfilePath,
+		OutDir:                "/build/out",
+		Framework:             MapFramework(req.Framework),
+		Runtime:               req.Runtime,
+		RuntimeBaseRef:        req.RuntimeBaseRef,
+		IssueSourceMaps:       req.IssueSourceMaps,
+		SourceSHA256:          req.SourceSHA256,
+		Function:              req.Function,
+		SharedRuntime:         req.SharedRuntime,
+		DevWatchCommand:       req.DevWatchCommand,
+		DevWatchHost:          req.DevWatchHost,
+		DependencyCache:       req.DependencyCacheKey != "",
+		KeepWarm:              req.KeepWarm,
+		TimeoutSec:            timeoutSec,
+		LogTailBytes:          64 * 1024,
 	}, nil
 }
 
@@ -670,6 +674,8 @@ func (d *VMMDriver) waitForCompletion(ctx context.Context, h BuildHandle, retain
 		}
 		exitCode = done.ExitCode
 		res.ExitCode = exitCode
+		res.PublicBuildURLsSHA256 = done.PublicBuildURLsSHA256
+		res.BuildDependencyDigest = done.BuildDependencyDigest
 		res.LogTailBytes = int64(len(done.LogTail))
 		res.LogTail = done.LogTail
 		res.FailureClass = done.FailureClass

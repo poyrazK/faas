@@ -110,6 +110,15 @@ func OverrideDeployBase(t *testing.T, stubRef string) {
 	t.Setenv("FAAS_TEST_DEPLOY_BASE_REF", stubRef)
 }
 
+// ClearDeployBaseOverride removes any inherited runtime-base override, for
+// tests that must resolve the host-approved base through the production
+// producer path. It lives here so cmd/e2e tests never set the variable
+// directly (TestMetalTestsDoNotSetTheBuilderBaseOverrideDirectly).
+func ClearDeployBaseOverride(t *testing.T) {
+	t.Helper()
+	t.Setenv("FAAS_TEST_DEPLOY_BASE_REF", "")
+}
+
 // PointDeployBaseAtUnreachable points imaged's runtime base at a ref that
 // cannot be pulled, for tests that stage a validated local base first and
 // exercise imaged's fallback to it. Unlike OverrideDeployBase it always

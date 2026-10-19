@@ -1,0 +1,51 @@
+[Unit]
+Description=Gregale private pipeline health notification worker (ADR-1591)
+Documentation=https://gregale.dev/docs/ops/apid
+After=network.target postgresql.service faas-cp.slice
+Wants=faas-cp.slice
+Requires=postgresql.service
+StartLimitIntervalSec=60s
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=faas-apid
+Group=faas
+ExecStart=/opt/faas/current/bin/apid --data-pipeline-alert-worker --config /etc/faas/apid.toml
+Restart=on-failure
+RestartSec=2s
+Slice=faas-cp.slice
+MemoryHigh=768M
+MemoryMax=1073741824
+CPUQuota=100%
+TasksMax=64
+CapabilityBoundingSet=
+AmbientCapabilities=
+EnvironmentFile=-/etc/faas/storage.env
+EnvironmentFile=-/etc/faas/otel.env
+# Catalog monitoring needs no source, fleet, or managed-database credentials.
+# Data-pipeline identity_path/recipient_path are read lazily for delivery only.
+Environment=FAAS_APID_ROLE=control-plane
+Environment=GOMAXPROCS=1
+Environment=GOMEMLIMIT=768MiB
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+SystemCallArchitectures=native
+LockPersonality=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ProtectHostname=yes
+ProtectClock=yes
+ProtectProc=invisible
+ReadOnlyPaths=/etc/faas
+
+[Install]
+WantedBy=multi-user.target

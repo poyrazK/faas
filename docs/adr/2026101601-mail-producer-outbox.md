@@ -1,8 +1,8 @@
-# Durable producer handoff for internal account-deletion email
+# ADR-1738: Durable producer handoff for internal account-deletion email
 
 - Status: accepted for an internal experiment; activation remains disabled.
 - Date: 2026-10-16
-- Builds on: [internal mail service](2026101501-internal-mail-service.md), ADR-021 account lifecycle, ADR-982 apid ownership.
+- Builds on: [ADR-1737 internal mail service](2026101501-internal-mail-service.md), ADR-021 account lifecycle, ADR-982 apid ownership.
 
 ## Context
 

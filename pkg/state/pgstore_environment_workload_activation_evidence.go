@@ -248,6 +248,25 @@ func environmentWorkloadActivationEvidenceTx(ctx context.Context, tx sqlc.DBTX, 
 		return zero, err
 	}
 	evidence := graphActivationEvidenceWithReleaseTargets(graph, captures, restores, smokes, configs, frameworkReady, jobSmokes, activeTargets)
+	if evidence.Qualified && !evidence.Activated {
+		var projectID, scope string
+		source, err := q.GetEnvironmentGitSourceByID(ctx, tx, mustPgUUID(graph.SourceID))
+		if err != nil {
+			return zero, mapErr(err)
+		}
+		projectID = pgUUIDString(source.ProjectID)
+		// The frozen scope is checked against the graph environment by the native
+		// evidence reader before binding evidence is considered.
+		if len(requests) > 0 {
+			scope = qualificationRequestFromSQL(requests[0]).FrozenInputs.Scope
+		}
+		if _, err := checkEnvironmentBindingGraphTx(ctx, tx, projectID, scope, graph, candidateBindingGraphMembers(graph)); err != nil {
+			if !IsBindingReleaseRequired(err) && !errors.Is(err, ErrBindingPromotionExpired) {
+				return zero, err
+			}
+			evidence.BlockingReasons = append(evidence.BlockingReasons, candidateBindingBlocker(err))
+		}
+	}
 	jobStatus := "paused"
 	if evidence.Activated {
 		jobStatus = "active"

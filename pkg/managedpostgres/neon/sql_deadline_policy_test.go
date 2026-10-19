@@ -42,7 +42,7 @@ func deadlineBodies(t *testing.T) []string {
 func TestSQLDeadlinePolicyMatchesRuntime(t *testing.T) { deadlineBodies(t) }
 
 func TestSQLDeadlineBindingIdentityValidationAndForwarding(t *testing.T) {
-	request := managedpostgres.CredentialRequest{ProviderResourceID: "project-123", IdentityKey: "generation", IdempotencyKey: "issue", Access: managedpostgres.CredentialDataAPI}
+	request := managedpostgres.CredentialRequest{ProviderResourceID: "project-123", IdentityKey: "generation", IdempotencyKey: "issue", Access: managedpostgres.CredentialDataAPI, ConnectionLimit: api.DataPipelineBindingConnections}
 	p := &Provider{organizationID: "org", databaseName: "app"}
 	legacy := p.credentialRole(request)
 	for _, id := range []string{"invalid", uuid.Nil.String(), strings.ToUpper("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")} {
@@ -56,8 +56,12 @@ func TestSQLDeadlineBindingIdentityValidationAndForwarding(t *testing.T) {
 		t.Fatal(err)
 	}
 	role := p.credentialRole(request)
-	if role.bindingID != request.BindingID || role.name != legacy.name || role.marker != legacy.marker {
-		t.Fatal("policy identity changed credential derivation or was lost")
+	if role.bindingID != request.BindingID || role.connectionLimit != request.ConnectionLimit || role.name != legacy.name || role.marker != legacy.marker {
+		t.Fatal("policy identity or connection ceiling was lost, or credential derivation changed")
+	}
+	request.ConnectionLimit = api.DataPipelineAuthBindingConnections + 1
+	if err := validateCredentialRequest(request); !errors.Is(err, managedpostgres.ErrInvalid) {
+		t.Fatal("binding identity bypassed the credential connection ceiling", err)
 	}
 }
 

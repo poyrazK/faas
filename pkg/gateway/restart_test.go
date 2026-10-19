@@ -1,9 +1,9 @@
 //go:build unix
 
 // spec: §4.1
-// adr: 1580
+// adr: 1736
 // Zero-downtime gateway restarts
-// (docs/adr/1580-zero-downtime-daemon-restarts.md).
+// (docs/adr/1736-zero-downtime-daemon-restarts.md).
 
 package gateway
 

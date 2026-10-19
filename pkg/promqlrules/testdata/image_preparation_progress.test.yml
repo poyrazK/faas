@@ -1,0 +1,1917 @@
+# Durable phase progress: unknown history, active work, retries and truthful freshness.
+rule_files:
+- ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
+evaluation_interval: 1m
+tests:
+- name: known empty phases are zero ages and healthy
+  interval: 1m
+  input_series:
+  - &id001
+    series: up{job="imaged",instance="a"}
+    values: 1x100
+  - &id002
+    series: imaged_image_preparation_collection_success{job="imaged",instance="a"}
+    values: 1x100
+  - &id003
+    series: imaged_image_preparation_collection_last_success_timestamp_seconds{job="imaged",instance="a"}
+    values: 0+60x100
+  - &id004
+    series: imaged_image_preparation_observation_enabled{job="imaged",instance="a"}
+    values: 1x100
+  - &id012
+    series: imaged_image_preparation_pending{job="imaged",instance="a",phase="preparing"}
+    values: '0x100'
+  - &id005
+    series: imaged_image_preparation_phase_age_unknown{job="imaged",instance="a",phase="preparing"}
+    values: '0x100'
+  - &id013
+    series: imaged_image_preparation_oldest_phase_started_timestamp_seconds{job="imaged",instance="a",phase="preparing"}
+    values: '0x100'
+  - &id006
+    series: imaged_image_preparation_pending{job="imaged",instance="a",phase="layer_published"}
+    values: '0x100'
+  - &id007
+    series: imaged_image_preparation_phase_age_unknown{job="imaged",instance="a",phase="layer_published"}
+    values: '0x100'
+  - &id008
+    series: imaged_image_preparation_oldest_phase_started_timestamp_seconds{job="imaged",instance="a",phase="layer_published"}
+    values: '0x100'
+  - &id009
+    series: imaged_image_preparation_pending{job="imaged",instance="a",phase="scan_complete"}
+    values: '0x100'
+  - &id010
+    series: imaged_image_preparation_phase_age_unknown{job="imaged",instance="a",phase="scan_complete"}
+    values: '0x100'
+  - &id011
+    series: imaged_image_preparation_oldest_phase_started_timestamp_seconds{job="imaged",instance="a",phase="scan_complete"}
+    values: '0x100'
+  alert_rule_test:
+  - eval_time: 40m
+    alertname: FaasImagePreparationTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasImagePreparationPhaseProlonged
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasImagePreparationPhaseAgeUnknown
+    exp_alerts: []
+  promql_expr_test:
+  - expr: imaged_image_preparation_oldest_known_phase_age_seconds{phase="preparing"}
+    eval_time: 6m
+    exp_samples:
+    - labels: '{__name__="imaged_image_preparation_oldest_known_phase_age_seconds",job="imaged",instance="a",phase="preparing"}'
+      value: 0
+  - expr: imaged_image_preparation_oldest_known_phase_age_seconds{phase="layer_published"}
+    eval_time: 6m
+    exp_samples:
+    - labels: '{__name__="imaged_image_preparation_oldest_known_phase_age_seconds",job="imaged",instance="a",phase="layer_published"}'
+      value: 0
+  - expr: imaged_image_preparation_oldest_known_phase_age_seconds{phase="scan_complete"}
+    eval_time: 6m
+    exp_samples:
+    - labels: '{__name__="imaged_image_preparation_oldest_known_phase_age_seconds",job="imaged",instance="a",phase="scan_complete"}'
+      value: 0
+  - expr: imaged_image_preparation_observation_healthy
+    eval_time: 6m
+    exp_samples:
+    - labels: '{__name__="imaged_image_preparation_observation_healthy",job="imaged",instance="a"}'
+      value: 1
+- name: preparing exact threshold and five minute hold without arrivals
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - series: imaged_image_preparation_pending{job="imaged",instance="a",phase="preparing"}
+    values: 1x100
+  - *id005
+  - series: imaged_image_preparation_oldest_phase_started_timestamp_seconds{job="imaged",instance="a",phase="preparing"}
+    values: 60x100
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  alert_rule_test:
+  - eval_time: 31m
+    alertname: FaasImagePreparationPhaseProlonged
+    exp_alerts: []
+  - eval_time: 32m
+    alertname: FaasImagePreparationPhaseProlonged
+    exp_alerts: []
+  - eval_time: 36m
+    alertname: FaasImagePreparationPhaseProlonged
+    exp_alerts: []
+  - eval_time: 37m
+    alertname: FaasImagePreparationPhaseProlonged
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: image_preparation
+        public_status: internal
+        job: imaged
+        instance: a
+        phase: preparing
+      exp_annotations:
+        summary: Image preparation has remained in one phase for an extended period
+        description: The oldest known preparing checkpoint exceeded its phase-age threshold for five minutes. Thresholds
+          are 30m for preparing and layer_published, and 10m for scan_complete. Age includes active execution and
+          waiting to resume; retries do not renew it. This is a triage warning, not proof of a stalled daemon, a
+          failed image or deployment readiness.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasImagePreparation.md
+  - eval_time: 37m
+    alertname: FaasImagePreparationTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 37m
+    alertname: FaasImagePreparationPhaseAgeUnknown
+    exp_alerts: []
+  promql_expr_test:
+  - expr: imaged_image_preparation_oldest_known_phase_age_seconds{phase="preparing"}
+    eval_time: 31m
+    exp_samples:
+    - labels: '{__name__="imaged_image_preparation_oldest_known_phase_age_seconds",job="imaged",instance="a",phase="preparing"}'
+      value: 1800
+  - expr: imaged_image_preparation_oldest_known_phase_age_seconds{phase="preparing"}
+    eval_time: 37m
+    exp_samples:
+    - labels: '{__name__="imaged_image_preparation_oldest_known_phase_age_seconds",job="imaged",instance="a",phase="preparing"}'
+      value: 2160
+- name: layer_published exact threshold and five minute hold without arrivals
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id012
+  - *id005
+  - *id013
+  - series: imaged_image_preparation_pending{job="imaged",instance="a",phase="layer_published"}
+    values: 1x100
+  - *id007
+  - series: imaged_image_preparation_oldest_phase_started_timestamp_seconds{job="imaged",instance="a",phase="layer_published"}
+    values: 60x100
+  - *id009
+  - *id010
+  - *id011
+  alert_rule_test:
+  - eval_time: 31m
+    alertname: FaasImagePreparationPhaseProlonged
+    exp_alerts: []
+  - eval_time: 32m
+    alertname: FaasImagePreparationPhaseProlonged
+    exp_alerts: []
+  - eval_time: 36m
+    alertname: FaasImagePreparationPhaseProlonged
+    exp_alerts: []
+  - eval_time: 37m
+    alertname: FaasImagePreparationPhaseProlonged
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: image_preparation
+        public_status: internal
+        job: imaged
+        instance: a
+        phase: layer_published
+      exp_annotations:
+        summary: Image preparation has remained in one phase for an extended period
+        description: The oldest known layer_published checkpoint exceeded its phase-age threshold for five minutes.
+          Thresholds are 30m for preparing and layer_published, and 10m for scan_complete. Age includes active execution
+          and waiting to resume; retries do not renew it. This is a triage warning, not proof of a stalled daemon,
+          a failed image or deployment readiness.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasImagePreparation.md
+  - eval_time: 37m
+    alertname: FaasImagePreparationTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 37m
+    alertname: FaasImagePreparationPhaseAgeUnknown
+    exp_alerts: []
+  promql_expr_test:
+  - expr: imaged_image_preparation_oldest_known_phase_age_seconds{phase="layer_published"}
+    eval_time: 31m
+    exp_samples:
+    - labels: '{__name__="imaged_image_preparation_oldest_known_phase_age_seconds",job="imaged",instance="a",phase="layer_published"}'
+      value: 1800
+  - expr: imaged_image_preparation_oldest_known_phase_age_seconds{phase="layer_published"}
+    eval_time: 37m
+    exp_samples:
+    - labels: '{__name__="imaged_image_preparation_oldest_known_phase_age_seconds",job="imaged",instance="a",phase="layer_published"}'
+      value: 2160
+- name: scan_complete exact threshold and five minute hold without arrivals
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id012
+  - *id005
+  - *id013
+  - *id006
+  - *id007
+  - *id008
+  - series: imaged_image_preparation_pending{job="imaged",instance="a",phase="scan_complete"}
+    values: 1x100
+  - *id010
+  - series: imaged_image_preparation_oldest_phase_started_timestamp_seconds{job="imaged",instance="a",phase="scan_complete"}
+    values: 60x100
+  alert_rule_test:
+  - eval_time: 11m
+    alertname: FaasImagePreparationPhaseProlonged
+    exp_alerts: []
+  - eval_time: 12m
+    alertname: FaasImagePreparationPhaseProlonged
+    exp_alerts: []
+  - eval_time: 16m
+    alertname: FaasImagePreparationPhaseProlonged
+    exp_alerts: []
+  - eval_time: 17m
+    alertname: FaasImagePreparationPhaseProlonged
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: image_preparation
+        public_status: internal
+        job: imaged
+        instance: a
+        phase: scan_complete
+      exp_annotations:
+        summary: Image preparation has remained in one phase for an extended period
+        description: The oldest known scan_complete checkpoint exceeded its phase-age threshold for five minutes.
+          Thresholds are 30m for preparing and layer_published, and 10m for scan_complete. Age includes active execution
+          and waiting to resume; retries do not renew it. This is a triage warning, not proof of a stalled daemon,
+          a failed image or deployment readiness.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasImagePreparation.md
+  - eval_time: 17m
+    alertname: FaasImagePreparationTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 17m
+    alertname: FaasImagePreparationPhaseAgeUnknown
+    exp_alerts: []
+  promql_expr_test:
+  - expr: imaged_image_preparation_oldest_known_phase_age_seconds{phase="scan_complete"}
+    eval_time: 11m
+    exp_samples:
+    - labels: '{__name__="imaged_image_preparation_oldest_known_phase_age_seconds",job="imaged",instance="a",phase="scan_complete"}'
+      value: 600
+  - expr: imaged_image_preparation_oldest_known_phase_age_seconds{phase="scan_complete"}
+    eval_time: 17m
+    exp_samples:
+    - labels: '{__name__="imaged_image_preparation_oldest_known_phase_age_seconds",job="imaged",instance="a",phase="scan_complete"}'
+      value: 960
+- name: repeated claims cannot renew preparing age
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - series: imaged_image_preparation_pending{job="imaged",instance="a",phase="preparing"}
+    values: 1x100
+  - *id005
+  - series: imaged_image_preparation_oldest_phase_started_timestamp_seconds{job="imaged",instance="a",phase="preparing"}
+    values: 60x100
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - series: imaged_image_preparation_commits_total{job="imaged",instance="a",transition="claimed"}
+    values: 0+100x100
+  alert_rule_test:
+  - eval_time: 37m
+    alertname: FaasImagePreparationPhaseProlonged
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: image_preparation
+        public_status: internal
+        job: imaged
+        instance: a
+        phase: preparing
+      exp_annotations:
+        summary: Image preparation has remained in one phase for an extended period
+        description: The oldest known preparing checkpoint exceeded its phase-age threshold for five minutes. Thresholds
+          are 30m for preparing and layer_published, and 10m for scan_complete. Age includes active execution and
+          waiting to resume; retries do not renew it. This is a triage warning, not proof of a stalled daemon, a
+          failed image or deployment readiness.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasImagePreparation.md
+  promql_expr_test:
+  - expr: imaged_image_preparation_oldest_known_phase_age_seconds{phase="preparing"}
+    eval_time: 45m
+    exp_samples:
+    - labels: '{__name__="imaged_image_preparation_oldest_known_phase_age_seconds",job="imaged",instance="a",phase="preparing"}'
+      value: 2640
+- name: healthy active preparation under triage budget does not warn
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - series: imaged_image_preparation_pending{job="imaged",instance="a",phase="preparing"}
+    values: 1x100
+  - *id005
+  - series: imaged_image_preparation_oldest_phase_started_timestamp_seconds{job="imaged",instance="a",phase="preparing"}
+    values: 60x100
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  alert_rule_test:
+  - eval_time: 29m
+    alertname: FaasImagePreparationPhaseProlonged
+    exp_alerts: []
+  promql_expr_test:
+  - expr: imaged_image_preparation_oldest_known_phase_age_seconds{phase="preparing"}
+    eval_time: 29m
+    exp_samples:
+    - labels: '{__name__="imaged_image_preparation_oldest_known_phase_age_seconds",job="imaged",instance="a",phase="preparing"}'
+      value: 1680
+- name: phase advance clears old warning and starts next phase clock
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - series: imaged_image_preparation_pending{job="imaged",instance="a",phase="preparing"}
+    values: 1x39 0x60
+  - *id005
+  - series: imaged_image_preparation_oldest_phase_started_timestamp_seconds{job="imaged",instance="a",phase="preparing"}
+    values: 60x39 0x60
+  - series: imaged_image_preparation_pending{job="imaged",instance="a",phase="layer_published"}
+    values: 0x39 1x60
+  - *id007
+  - series: imaged_image_preparation_oldest_phase_started_timestamp_seconds{job="imaged",instance="a",phase="layer_published"}
+    values: 0x39 2400x60
+  - *id009
+  - *id010
+  - *id011
+  alert_rule_test:
+  - eval_time: 39m
+    alertname: FaasImagePreparationPhaseProlonged
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: image_preparation
+        public_status: internal
+        job: imaged
+        instance: a
+        phase: preparing
+      exp_annotations:
+        summary: Image preparation has remained in one phase for an extended period
+        description: The oldest known preparing checkpoint exceeded its phase-age threshold for five minutes. Thresholds
+          are 30m for preparing and layer_published, and 10m for scan_complete. Age includes active execution and
+          waiting to resume; retries do not renew it. This is a triage warning, not proof of a stalled daemon, a
+          failed image or deployment readiness.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasImagePreparation.md
+  - eval_time: 40m
+    alertname: FaasImagePreparationPhaseProlonged
+    exp_alerts: []
+  - eval_time: 75m
+    alertname: FaasImagePreparationPhaseProlonged
+    exp_alerts: []
+  - eval_time: 76m
+    alertname: FaasImagePreparationPhaseProlonged
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: image_preparation
+        public_status: internal
+        job: imaged
+        instance: a
+        phase: layer_published
+      exp_annotations:
+        summary: Image preparation has remained in one phase for an extended period
+        description: The oldest known layer_published checkpoint exceeded its phase-age threshold for five minutes.
+          Thresholds are 30m for preparing and layer_published, and 10m for scan_complete. Age includes active execution
+          and waiting to resume; retries do not renew it. This is a triage warning, not proof of a stalled daemon,
+          a failed image or deployment readiness.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasImagePreparation.md
+  promql_expr_test:
+  - expr: imaged_image_preparation_oldest_known_phase_age_seconds{phase="layer_published"}
+    eval_time: 40m
+    exp_samples:
+    - labels: '{__name__="imaged_image_preparation_oldest_known_phase_age_seconds",job="imaged",instance="a",phase="layer_published"}'
+      value: 0
+- name: legacy only is not empty or zero wait
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - series: imaged_image_preparation_pending{job="imaged",instance="a",phase="preparing"}
+    values: 2x100
+  - series: imaged_image_preparation_phase_age_unknown{job="imaged",instance="a",phase="preparing"}
+    values: 2x100
+  - *id013
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  alert_rule_test:
+  - eval_time: 15m
+    alertname: FaasImagePreparationPhaseAgeUnknown
+    exp_alerts: []
+  - eval_time: 16m
+    alertname: FaasImagePreparationPhaseAgeUnknown
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: image_preparation_telemetry
+        public_status: internal
+        job: imaged
+        instance: a
+        phase: preparing
+      exp_annotations:
+        summary: Pending image preparations have unknown historical phase ages
+        description: At least one preparing checkpoint has lacked a historical phase-start timestamp for 15m in
+          fresh snapshots. Pre-migration checkpoints remain unknown until a real phase transition; repeated claims
+          cannot establish their age. Known rows still contribute to prolonged-phase warnings. Inspect durable work
+          and recovery outcomes without inventing timestamps or forcing a transition.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasImagePreparation.md
+  - eval_time: 45m
+    alertname: FaasImagePreparationPhaseProlonged
+    exp_alerts: []
+  - eval_time: 45m
+    alertname: FaasImagePreparationTelemetryUnavailable
+    exp_alerts: []
+  promql_expr_test:
+  - expr: imaged_image_preparation_observation_healthy
+    eval_time: 6m
+    exp_samples:
+    - labels: '{__name__="imaged_image_preparation_observation_healthy",job="imaged",instance="a"}'
+      value: 1
+  - expr: imaged_image_preparation_oldest_known_phase_age_seconds{phase="preparing"}
+    eval_time: 6m
+    exp_samples: []
+- name: known slow rows remain visible beside legacy unknowns
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - series: imaged_image_preparation_pending{job="imaged",instance="a",phase="preparing"}
+    values: 3x100
+  - series: imaged_image_preparation_phase_age_unknown{job="imaged",instance="a",phase="preparing"}
+    values: 1x100
+  - series: imaged_image_preparation_oldest_phase_started_timestamp_seconds{job="imaged",instance="a",phase="preparing"}
+    values: 60x100
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  alert_rule_test:
+  - eval_time: 37m
+    alertname: FaasImagePreparationPhaseProlonged
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: image_preparation
+        public_status: internal
+        job: imaged
+        instance: a
+        phase: preparing
+      exp_annotations:
+        summary: Image preparation has remained in one phase for an extended period
+        description: The oldest known preparing checkpoint exceeded its phase-age threshold for five minutes. Thresholds
+          are 30m for preparing and layer_published, and 10m for scan_complete. Age includes active execution and
+          waiting to resume; retries do not renew it. This is a triage warning, not proof of a stalled daemon, a
+          failed image or deployment readiness.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasImagePreparation.md
+  - eval_time: 37m
+    alertname: FaasImagePreparationPhaseAgeUnknown
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: image_preparation_telemetry
+        public_status: internal
+        job: imaged
+        instance: a
+        phase: preparing
+      exp_annotations:
+        summary: Pending image preparations have unknown historical phase ages
+        description: At least one preparing checkpoint has lacked a historical phase-start timestamp for 15m in
+          fresh snapshots. Pre-migration checkpoints remain unknown until a real phase transition; repeated claims
+          cannot establish their age. Known rows still contribute to prolonged-phase warnings. Inspect durable work
+          and recovery outcomes without inventing timestamps or forcing a transition.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasImagePreparation.md
+  - eval_time: 37m
+    alertname: FaasImagePreparationTelemetryUnavailable
+    exp_alerts: []
+  promql_expr_test:
+  - expr: imaged_image_preparation_oldest_known_phase_age_seconds{phase="preparing"}
+    eval_time: 37m
+    exp_samples:
+    - labels: '{__name__="imaged_image_preparation_oldest_known_phase_age_seconds",job="imaged",instance="a",phase="preparing"}'
+      value: 2160
+- name: unknown history clears only after observed progress
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - series: imaged_image_preparation_pending{job="imaged",instance="a",phase="preparing"}
+    values: 1x19 0x80
+  - series: imaged_image_preparation_phase_age_unknown{job="imaged",instance="a",phase="preparing"}
+    values: 1x19 0x80
+  - *id013
+  - series: imaged_image_preparation_pending{job="imaged",instance="a",phase="layer_published"}
+    values: 0x19 1x80
+  - *id007
+  - series: imaged_image_preparation_oldest_phase_started_timestamp_seconds{job="imaged",instance="a",phase="layer_published"}
+    values: 0x19 1200x80
+  - *id009
+  - *id010
+  - *id011
+  alert_rule_test:
+  - eval_time: 16m
+    alertname: FaasImagePreparationPhaseAgeUnknown
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: image_preparation_telemetry
+        public_status: internal
+        job: imaged
+        instance: a
+        phase: preparing
+      exp_annotations:
+        summary: Pending image preparations have unknown historical phase ages
+        description: At least one preparing checkpoint has lacked a historical phase-start timestamp for 15m in
+          fresh snapshots. Pre-migration checkpoints remain unknown until a real phase transition; repeated claims
+          cannot establish their age. Known rows still contribute to prolonged-phase warnings. Inspect durable work
+          and recovery outcomes without inventing timestamps or forcing a transition.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasImagePreparation.md
+  - eval_time: 20m
+    alertname: FaasImagePreparationPhaseAgeUnknown
+    exp_alerts: []
+  promql_expr_test:
+  - expr: imaged_image_preparation_oldest_known_phase_age_seconds{phase="layer_published"}
+    eval_time: 20m
+    exp_samples:
+    - labels: '{__name__="imaged_image_preparation_oldest_known_phase_age_seconds",job="imaged",instance="a",phase="layer_published"}'
+      value: 0
+- name: failed read
+  interval: 1m
+  input_series:
+  - *id001
+  - series: imaged_image_preparation_collection_success{job="imaged",instance="a"}
+    values: '0x100'
+  - *id003
+  - *id004
+  - *id012
+  - *id005
+  - *id013
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasImagePreparationTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 6m
+    alertname: FaasImagePreparationTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: image_preparation_telemetry
+        public_status: internal
+        job: imaged
+        instance: a
+      exp_annotations:
+        summary: Durable image-preparation diagnostics are unavailable
+        description: Imaged is scraped but its phase snapshot is failed, missing, inconsistent or older than two
+          minutes. Counts and ages are unknown. Inspect the reader, database, clocks and deployed binary. Historical
+          unknown ages are reported separately; intentional observer shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasImagePreparation.md
+  - eval_time: 40m
+    alertname: FaasImagePreparationPhaseProlonged
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasImagePreparationPhaseAgeUnknown
+    exp_alerts: []
+  promql_expr_test:
+  - expr: imaged_image_preparation_oldest_known_phase_age_seconds{phase="preparing"}
+    eval_time: 6m
+    exp_samples: []
+  - expr: imaged_image_preparation_observation_healthy
+    eval_time: 6m
+    exp_samples: []
+- name: missing read success
+  interval: 1m
+  input_series:
+  - *id001
+  - *id003
+  - *id004
+  - *id012
+  - *id005
+  - *id013
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasImagePreparationTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 6m
+    alertname: FaasImagePreparationTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: image_preparation_telemetry
+        public_status: internal
+        job: imaged
+        instance: a
+      exp_annotations:
+        summary: Durable image-preparation diagnostics are unavailable
+        description: Imaged is scraped but its phase snapshot is failed, missing, inconsistent or older than two
+          minutes. Counts and ages are unknown. Inspect the reader, database, clocks and deployed binary. Historical
+          unknown ages are reported separately; intentional observer shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasImagePreparation.md
+  - eval_time: 40m
+    alertname: FaasImagePreparationPhaseProlonged
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasImagePreparationPhaseAgeUnknown
+    exp_alerts: []
+  promql_expr_test:
+  - expr: imaged_image_preparation_oldest_known_phase_age_seconds{phase="preparing"}
+    eval_time: 6m
+    exp_samples: []
+  - expr: imaged_image_preparation_observation_healthy
+    eval_time: 6m
+    exp_samples: []
+- name: missing last success
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id004
+  - *id012
+  - *id005
+  - *id013
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasImagePreparationTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 6m
+    alertname: FaasImagePreparationTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: image_preparation_telemetry
+        public_status: internal
+        job: imaged
+        instance: a
+      exp_annotations:
+        summary: Durable image-preparation diagnostics are unavailable
+        description: Imaged is scraped but its phase snapshot is failed, missing, inconsistent or older than two
+          minutes. Counts and ages are unknown. Inspect the reader, database, clocks and deployed binary. Historical
+          unknown ages are reported separately; intentional observer shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasImagePreparation.md
+  - eval_time: 40m
+    alertname: FaasImagePreparationPhaseProlonged
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasImagePreparationPhaseAgeUnknown
+    exp_alerts: []
+  promql_expr_test:
+  - expr: imaged_image_preparation_oldest_known_phase_age_seconds{phase="preparing"}
+    eval_time: 6m
+    exp_samples: []
+  - expr: imaged_image_preparation_observation_healthy
+    eval_time: 6m
+    exp_samples: []
+- name: missing expectation
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id012
+  - *id005
+  - *id013
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasImagePreparationTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 6m
+    alertname: FaasImagePreparationTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: image_preparation_telemetry
+        public_status: internal
+        job: imaged
+        instance: a
+      exp_annotations:
+        summary: Durable image-preparation diagnostics are unavailable
+        description: Imaged is scraped but its phase snapshot is failed, missing, inconsistent or older than two
+          minutes. Counts and ages are unknown. Inspect the reader, database, clocks and deployed binary. Historical
+          unknown ages are reported separately; intentional observer shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasImagePreparation.md
+  - eval_time: 40m
+    alertname: FaasImagePreparationPhaseProlonged
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasImagePreparationPhaseAgeUnknown
+    exp_alerts: []
+  promql_expr_test:
+  - expr: imaged_image_preparation_oldest_known_phase_age_seconds{phase="preparing"}
+    eval_time: 6m
+    exp_samples: []
+  - expr: imaged_image_preparation_observation_healthy
+    eval_time: 6m
+    exp_samples: []
+- name: nonbinary expectation
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - series: imaged_image_preparation_observation_enabled{job="imaged",instance="a"}
+    values: 2x100
+  - *id012
+  - *id005
+  - *id013
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasImagePreparationTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 6m
+    alertname: FaasImagePreparationTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: image_preparation_telemetry
+        public_status: internal
+        job: imaged
+        instance: a
+      exp_annotations:
+        summary: Durable image-preparation diagnostics are unavailable
+        description: Imaged is scraped but its phase snapshot is failed, missing, inconsistent or older than two
+          minutes. Counts and ages are unknown. Inspect the reader, database, clocks and deployed binary. Historical
+          unknown ages are reported separately; intentional observer shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasImagePreparation.md
+  - eval_time: 40m
+    alertname: FaasImagePreparationPhaseProlonged
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasImagePreparationPhaseAgeUnknown
+    exp_alerts: []
+  promql_expr_test:
+  - expr: imaged_image_preparation_oldest_known_phase_age_seconds{phase="preparing"}
+    eval_time: 6m
+    exp_samples: []
+  - expr: imaged_image_preparation_observation_healthy
+    eval_time: 6m
+    exp_samples: []
+- name: zero success timestamp
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - series: imaged_image_preparation_collection_last_success_timestamp_seconds{job="imaged",instance="a"}
+    values: '0x100'
+  - *id004
+  - *id012
+  - *id005
+  - *id013
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasImagePreparationTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 6m
+    alertname: FaasImagePreparationTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: image_preparation_telemetry
+        public_status: internal
+        job: imaged
+        instance: a
+      exp_annotations:
+        summary: Durable image-preparation diagnostics are unavailable
+        description: Imaged is scraped but its phase snapshot is failed, missing, inconsistent or older than two
+          minutes. Counts and ages are unknown. Inspect the reader, database, clocks and deployed binary. Historical
+          unknown ages are reported separately; intentional observer shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasImagePreparation.md
+  - eval_time: 40m
+    alertname: FaasImagePreparationPhaseProlonged
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasImagePreparationPhaseAgeUnknown
+    exp_alerts: []
+  promql_expr_test:
+  - expr: imaged_image_preparation_oldest_known_phase_age_seconds{phase="preparing"}
+    eval_time: 6m
+    exp_samples: []
+  - expr: imaged_image_preparation_observation_healthy
+    eval_time: 6m
+    exp_samples: []
+- name: future success timestamp
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - series: imaged_image_preparation_collection_last_success_timestamp_seconds{job="imaged",instance="a"}
+    values: 120+60x100
+  - *id004
+  - *id012
+  - *id005
+  - *id013
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasImagePreparationTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 6m
+    alertname: FaasImagePreparationTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: image_preparation_telemetry
+        public_status: internal
+        job: imaged
+        instance: a
+      exp_annotations:
+        summary: Durable image-preparation diagnostics are unavailable
+        description: Imaged is scraped but its phase snapshot is failed, missing, inconsistent or older than two
+          minutes. Counts and ages are unknown. Inspect the reader, database, clocks and deployed binary. Historical
+          unknown ages are reported separately; intentional observer shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasImagePreparation.md
+  - eval_time: 40m
+    alertname: FaasImagePreparationPhaseProlonged
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasImagePreparationPhaseAgeUnknown
+    exp_alerts: []
+  promql_expr_test:
+  - expr: imaged_image_preparation_oldest_known_phase_age_seconds{phase="preparing"}
+    eval_time: 6m
+    exp_samples: []
+  - expr: imaged_image_preparation_observation_healthy
+    eval_time: 6m
+    exp_samples: []
+- name: negative pending
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - series: imaged_image_preparation_pending{job="imaged",instance="a",phase="preparing"}
+    values: -1x100
+  - *id005
+  - *id013
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasImagePreparationTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 6m
+    alertname: FaasImagePreparationTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: image_preparation_telemetry
+        public_status: internal
+        job: imaged
+        instance: a
+      exp_annotations:
+        summary: Durable image-preparation diagnostics are unavailable
+        description: Imaged is scraped but its phase snapshot is failed, missing, inconsistent or older than two
+          minutes. Counts and ages are unknown. Inspect the reader, database, clocks and deployed binary. Historical
+          unknown ages are reported separately; intentional observer shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasImagePreparation.md
+  - eval_time: 40m
+    alertname: FaasImagePreparationPhaseProlonged
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasImagePreparationPhaseAgeUnknown
+    exp_alerts: []
+  promql_expr_test:
+  - expr: imaged_image_preparation_oldest_known_phase_age_seconds{phase="preparing"}
+    eval_time: 6m
+    exp_samples: []
+  - expr: imaged_image_preparation_observation_healthy
+    eval_time: 6m
+    exp_samples: []
+- name: fractional pending
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - series: imaged_image_preparation_pending{job="imaged",instance="a",phase="preparing"}
+    values: 0.5x100
+  - *id005
+  - *id013
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasImagePreparationTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 6m
+    alertname: FaasImagePreparationTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: image_preparation_telemetry
+        public_status: internal
+        job: imaged
+        instance: a
+      exp_annotations:
+        summary: Durable image-preparation diagnostics are unavailable
+        description: Imaged is scraped but its phase snapshot is failed, missing, inconsistent or older than two
+          minutes. Counts and ages are unknown. Inspect the reader, database, clocks and deployed binary. Historical
+          unknown ages are reported separately; intentional observer shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasImagePreparation.md
+  - eval_time: 40m
+    alertname: FaasImagePreparationPhaseProlonged
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasImagePreparationPhaseAgeUnknown
+    exp_alerts: []
+  promql_expr_test:
+  - expr: imaged_image_preparation_oldest_known_phase_age_seconds{phase="preparing"}
+    eval_time: 6m
+    exp_samples: []
+  - expr: imaged_image_preparation_observation_healthy
+    eval_time: 6m
+    exp_samples: []
+- name: infinite pending
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - series: imaged_image_preparation_pending{job="imaged",instance="a",phase="preparing"}
+    values: +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf
+      +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf
+      +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf
+      +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf
+      +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf
+  - *id005
+  - series: imaged_image_preparation_oldest_phase_started_timestamp_seconds{job="imaged",instance="a",phase="preparing"}
+    values: 60x100
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasImagePreparationTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 6m
+    alertname: FaasImagePreparationTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: image_preparation_telemetry
+        public_status: internal
+        job: imaged
+        instance: a
+      exp_annotations:
+        summary: Durable image-preparation diagnostics are unavailable
+        description: Imaged is scraped but its phase snapshot is failed, missing, inconsistent or older than two
+          minutes. Counts and ages are unknown. Inspect the reader, database, clocks and deployed binary. Historical
+          unknown ages are reported separately; intentional observer shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasImagePreparation.md
+  - eval_time: 40m
+    alertname: FaasImagePreparationPhaseProlonged
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasImagePreparationPhaseAgeUnknown
+    exp_alerts: []
+  promql_expr_test:
+  - expr: imaged_image_preparation_oldest_known_phase_age_seconds{phase="preparing"}
+    eval_time: 6m
+    exp_samples: []
+  - expr: imaged_image_preparation_observation_healthy
+    eval_time: 6m
+    exp_samples: []
+- name: nan pending
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - series: imaged_image_preparation_pending{job="imaged",instance="a",phase="preparing"}
+    values: NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN
+      NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN
+      NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN
+      NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN
+  - *id005
+  - *id013
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasImagePreparationTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 6m
+    alertname: FaasImagePreparationTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: image_preparation_telemetry
+        public_status: internal
+        job: imaged
+        instance: a
+      exp_annotations:
+        summary: Durable image-preparation diagnostics are unavailable
+        description: Imaged is scraped but its phase snapshot is failed, missing, inconsistent or older than two
+          minutes. Counts and ages are unknown. Inspect the reader, database, clocks and deployed binary. Historical
+          unknown ages are reported separately; intentional observer shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasImagePreparation.md
+  - eval_time: 40m
+    alertname: FaasImagePreparationPhaseProlonged
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasImagePreparationPhaseAgeUnknown
+    exp_alerts: []
+  promql_expr_test:
+  - expr: imaged_image_preparation_oldest_known_phase_age_seconds{phase="preparing"}
+    eval_time: 6m
+    exp_samples: []
+  - expr: imaged_image_preparation_observation_healthy
+    eval_time: 6m
+    exp_samples: []
+- name: negative unknown
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id012
+  - series: imaged_image_preparation_phase_age_unknown{job="imaged",instance="a",phase="preparing"}
+    values: -1x100
+  - *id013
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasImagePreparationTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 6m
+    alertname: FaasImagePreparationTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: image_preparation_telemetry
+        public_status: internal
+        job: imaged
+        instance: a
+      exp_annotations:
+        summary: Durable image-preparation diagnostics are unavailable
+        description: Imaged is scraped but its phase snapshot is failed, missing, inconsistent or older than two
+          minutes. Counts and ages are unknown. Inspect the reader, database, clocks and deployed binary. Historical
+          unknown ages are reported separately; intentional observer shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasImagePreparation.md
+  - eval_time: 40m
+    alertname: FaasImagePreparationPhaseProlonged
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasImagePreparationPhaseAgeUnknown
+    exp_alerts: []
+  promql_expr_test:
+  - expr: imaged_image_preparation_oldest_known_phase_age_seconds{phase="preparing"}
+    eval_time: 6m
+    exp_samples: []
+  - expr: imaged_image_preparation_observation_healthy
+    eval_time: 6m
+    exp_samples: []
+- name: fractional unknown
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - series: imaged_image_preparation_pending{job="imaged",instance="a",phase="preparing"}
+    values: 1x100
+  - series: imaged_image_preparation_phase_age_unknown{job="imaged",instance="a",phase="preparing"}
+    values: 0.5x100
+  - series: imaged_image_preparation_oldest_phase_started_timestamp_seconds{job="imaged",instance="a",phase="preparing"}
+    values: 60x100
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasImagePreparationTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 6m
+    alertname: FaasImagePreparationTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: image_preparation_telemetry
+        public_status: internal
+        job: imaged
+        instance: a
+      exp_annotations:
+        summary: Durable image-preparation diagnostics are unavailable
+        description: Imaged is scraped but its phase snapshot is failed, missing, inconsistent or older than two
+          minutes. Counts and ages are unknown. Inspect the reader, database, clocks and deployed binary. Historical
+          unknown ages are reported separately; intentional observer shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasImagePreparation.md
+  - eval_time: 40m
+    alertname: FaasImagePreparationPhaseProlonged
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasImagePreparationPhaseAgeUnknown
+    exp_alerts: []
+  promql_expr_test:
+  - expr: imaged_image_preparation_oldest_known_phase_age_seconds{phase="preparing"}
+    eval_time: 6m
+    exp_samples: []
+  - expr: imaged_image_preparation_observation_healthy
+    eval_time: 6m
+    exp_samples: []
+- name: unknown exceeds pending
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id012
+  - series: imaged_image_preparation_phase_age_unknown{job="imaged",instance="a",phase="preparing"}
+    values: 1x100
+  - *id013
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasImagePreparationTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 6m
+    alertname: FaasImagePreparationTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: image_preparation_telemetry
+        public_status: internal
+        job: imaged
+        instance: a
+      exp_annotations:
+        summary: Durable image-preparation diagnostics are unavailable
+        description: Imaged is scraped but its phase snapshot is failed, missing, inconsistent or older than two
+          minutes. Counts and ages are unknown. Inspect the reader, database, clocks and deployed binary. Historical
+          unknown ages are reported separately; intentional observer shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasImagePreparation.md
+  - eval_time: 40m
+    alertname: FaasImagePreparationPhaseProlonged
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasImagePreparationPhaseAgeUnknown
+    exp_alerts: []
+  promql_expr_test:
+  - expr: imaged_image_preparation_oldest_known_phase_age_seconds{phase="preparing"}
+    eval_time: 6m
+    exp_samples: []
+  - expr: imaged_image_preparation_observation_healthy
+    eval_time: 6m
+    exp_samples: []
+- name: known count without time
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - series: imaged_image_preparation_pending{job="imaged",instance="a",phase="preparing"}
+    values: 1x100
+  - *id005
+  - *id013
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasImagePreparationTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 6m
+    alertname: FaasImagePreparationTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: image_preparation_telemetry
+        public_status: internal
+        job: imaged
+        instance: a
+      exp_annotations:
+        summary: Durable image-preparation diagnostics are unavailable
+        description: Imaged is scraped but its phase snapshot is failed, missing, inconsistent or older than two
+          minutes. Counts and ages are unknown. Inspect the reader, database, clocks and deployed binary. Historical
+          unknown ages are reported separately; intentional observer shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasImagePreparation.md
+  - eval_time: 40m
+    alertname: FaasImagePreparationPhaseProlonged
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasImagePreparationPhaseAgeUnknown
+    exp_alerts: []
+  promql_expr_test:
+  - expr: imaged_image_preparation_oldest_known_phase_age_seconds{phase="preparing"}
+    eval_time: 6m
+    exp_samples: []
+  - expr: imaged_image_preparation_observation_healthy
+    eval_time: 6m
+    exp_samples: []
+- name: time without known count
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id012
+  - *id005
+  - series: imaged_image_preparation_oldest_phase_started_timestamp_seconds{job="imaged",instance="a",phase="preparing"}
+    values: 60x100
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasImagePreparationTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 6m
+    alertname: FaasImagePreparationTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: image_preparation_telemetry
+        public_status: internal
+        job: imaged
+        instance: a
+      exp_annotations:
+        summary: Durable image-preparation diagnostics are unavailable
+        description: Imaged is scraped but its phase snapshot is failed, missing, inconsistent or older than two
+          minutes. Counts and ages are unknown. Inspect the reader, database, clocks and deployed binary. Historical
+          unknown ages are reported separately; intentional observer shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasImagePreparation.md
+  - eval_time: 40m
+    alertname: FaasImagePreparationPhaseProlonged
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasImagePreparationPhaseAgeUnknown
+    exp_alerts: []
+  promql_expr_test:
+  - expr: imaged_image_preparation_oldest_known_phase_age_seconds{phase="preparing"}
+    eval_time: 6m
+    exp_samples: []
+  - expr: imaged_image_preparation_observation_healthy
+    eval_time: 6m
+    exp_samples: []
+- name: unknown only with time
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - series: imaged_image_preparation_pending{job="imaged",instance="a",phase="preparing"}
+    values: 1x100
+  - series: imaged_image_preparation_phase_age_unknown{job="imaged",instance="a",phase="preparing"}
+    values: 1x100
+  - series: imaged_image_preparation_oldest_phase_started_timestamp_seconds{job="imaged",instance="a",phase="preparing"}
+    values: 60x100
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasImagePreparationTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 6m
+    alertname: FaasImagePreparationTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: image_preparation_telemetry
+        public_status: internal
+        job: imaged
+        instance: a
+      exp_annotations:
+        summary: Durable image-preparation diagnostics are unavailable
+        description: Imaged is scraped but its phase snapshot is failed, missing, inconsistent or older than two
+          minutes. Counts and ages are unknown. Inspect the reader, database, clocks and deployed binary. Historical
+          unknown ages are reported separately; intentional observer shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasImagePreparation.md
+  - eval_time: 40m
+    alertname: FaasImagePreparationPhaseProlonged
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasImagePreparationPhaseAgeUnknown
+    exp_alerts: []
+  promql_expr_test:
+  - expr: imaged_image_preparation_oldest_known_phase_age_seconds{phase="preparing"}
+    eval_time: 6m
+    exp_samples: []
+  - expr: imaged_image_preparation_observation_healthy
+    eval_time: 6m
+    exp_samples: []
+- name: future phase start
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - series: imaged_image_preparation_pending{job="imaged",instance="a",phase="preparing"}
+    values: 1x100
+  - *id005
+  - series: imaged_image_preparation_oldest_phase_started_timestamp_seconds{job="imaged",instance="a",phase="preparing"}
+    values: 6000x100
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasImagePreparationTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 6m
+    alertname: FaasImagePreparationTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: image_preparation_telemetry
+        public_status: internal
+        job: imaged
+        instance: a
+      exp_annotations:
+        summary: Durable image-preparation diagnostics are unavailable
+        description: Imaged is scraped but its phase snapshot is failed, missing, inconsistent or older than two
+          minutes. Counts and ages are unknown. Inspect the reader, database, clocks and deployed binary. Historical
+          unknown ages are reported separately; intentional observer shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasImagePreparation.md
+  - eval_time: 40m
+    alertname: FaasImagePreparationPhaseProlonged
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasImagePreparationPhaseAgeUnknown
+    exp_alerts: []
+  promql_expr_test:
+  - expr: imaged_image_preparation_oldest_known_phase_age_seconds{phase="preparing"}
+    eval_time: 6m
+    exp_samples: []
+  - expr: imaged_image_preparation_observation_healthy
+    eval_time: 6m
+    exp_samples: []
+- name: missing phase
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id012
+  - *id005
+  - *id013
+  - *id006
+  - *id007
+  - *id008
+  - *id010
+  - *id011
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasImagePreparationTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 6m
+    alertname: FaasImagePreparationTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: image_preparation_telemetry
+        public_status: internal
+        job: imaged
+        instance: a
+      exp_annotations:
+        summary: Durable image-preparation diagnostics are unavailable
+        description: Imaged is scraped but its phase snapshot is failed, missing, inconsistent or older than two
+          minutes. Counts and ages are unknown. Inspect the reader, database, clocks and deployed binary. Historical
+          unknown ages are reported separately; intentional observer shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasImagePreparation.md
+  - eval_time: 40m
+    alertname: FaasImagePreparationPhaseProlonged
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasImagePreparationPhaseAgeUnknown
+    exp_alerts: []
+  promql_expr_test:
+  - expr: imaged_image_preparation_oldest_known_phase_age_seconds{phase="preparing"}
+    eval_time: 6m
+    exp_samples: []
+  - expr: imaged_image_preparation_observation_healthy
+    eval_time: 6m
+    exp_samples: []
+- name: missing oldest time
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id012
+  - *id005
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasImagePreparationTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 6m
+    alertname: FaasImagePreparationTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: image_preparation_telemetry
+        public_status: internal
+        job: imaged
+        instance: a
+      exp_annotations:
+        summary: Durable image-preparation diagnostics are unavailable
+        description: Imaged is scraped but its phase snapshot is failed, missing, inconsistent or older than two
+          minutes. Counts and ages are unknown. Inspect the reader, database, clocks and deployed binary. Historical
+          unknown ages are reported separately; intentional observer shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasImagePreparation.md
+  - eval_time: 40m
+    alertname: FaasImagePreparationPhaseProlonged
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasImagePreparationPhaseAgeUnknown
+    exp_alerts: []
+  promql_expr_test:
+  - expr: imaged_image_preparation_oldest_known_phase_age_seconds{phase="preparing"}
+    eval_time: 6m
+    exp_samples: []
+  - expr: imaged_image_preparation_observation_healthy
+    eval_time: 6m
+    exp_samples: []
+- name: missing unknown count
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id012
+  - *id013
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasImagePreparationTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 6m
+    alertname: FaasImagePreparationTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: image_preparation_telemetry
+        public_status: internal
+        job: imaged
+        instance: a
+      exp_annotations:
+        summary: Durable image-preparation diagnostics are unavailable
+        description: Imaged is scraped but its phase snapshot is failed, missing, inconsistent or older than two
+          minutes. Counts and ages are unknown. Inspect the reader, database, clocks and deployed binary. Historical
+          unknown ages are reported separately; intentional observer shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasImagePreparation.md
+  - eval_time: 40m
+    alertname: FaasImagePreparationPhaseProlonged
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasImagePreparationPhaseAgeUnknown
+    exp_alerts: []
+  promql_expr_test:
+  - expr: imaged_image_preparation_oldest_known_phase_age_seconds{phase="preparing"}
+    eval_time: 6m
+    exp_samples: []
+  - expr: imaged_image_preparation_observation_healthy
+    eval_time: 6m
+    exp_samples: []
+- name: exact freshness and stale hold boundaries
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - series: imaged_image_preparation_collection_last_success_timestamp_seconds{job="imaged",instance="a"}
+    values: 60x100
+  - *id004
+  - *id012
+  - *id005
+  - *id013
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  alert_rule_test:
+  - eval_time: 8m
+    alertname: FaasImagePreparationTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 9m
+    alertname: FaasImagePreparationTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: image_preparation_telemetry
+        public_status: internal
+        job: imaged
+        instance: a
+      exp_annotations:
+        summary: Durable image-preparation diagnostics are unavailable
+        description: Imaged is scraped but its phase snapshot is failed, missing, inconsistent or older than two
+          minutes. Counts and ages are unknown. Inspect the reader, database, clocks and deployed binary. Historical
+          unknown ages are reported separately; intentional observer shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasImagePreparation.md
+  promql_expr_test:
+  - expr: imaged_image_preparation_observation_healthy
+    eval_time: 3m
+    exp_samples:
+    - labels: '{__name__="imaged_image_preparation_observation_healthy",job="imaged",instance="a"}'
+      value: 1
+  - expr: imaged_image_preparation_observation_healthy
+    eval_time: 4m
+    exp_samples: []
+  - expr: imaged_image_preparation_oldest_known_phase_age_seconds{phase="preparing"}
+    eval_time: 4m
+    exp_samples: []
+- name: fresh recovery clears unavailable warning
+  interval: 1m
+  input_series:
+  - *id001
+  - series: imaged_image_preparation_collection_success{job="imaged",instance="a"}
+    values: 0x9 1x90
+  - *id003
+  - *id004
+  - *id012
+  - *id005
+  - *id013
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  alert_rule_test:
+  - eval_time: 6m
+    alertname: FaasImagePreparationTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: image_preparation_telemetry
+        public_status: internal
+        job: imaged
+        instance: a
+      exp_annotations:
+        summary: Durable image-preparation diagnostics are unavailable
+        description: Imaged is scraped but its phase snapshot is failed, missing, inconsistent or older than two
+          minutes. Counts and ages are unknown. Inspect the reader, database, clocks and deployed binary. Historical
+          unknown ages are reported separately; intentional observer shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasImagePreparation.md
+  - eval_time: 10m
+    alertname: FaasImagePreparationTelemetryUnavailable
+    exp_alerts: []
+  promql_expr_test:
+  - expr: imaged_image_preparation_observation_healthy
+    eval_time: 10m
+    exp_samples:
+    - labels: '{__name__="imaged_image_preparation_observation_healthy",job="imaged",instance="a"}'
+      value: 1
+- name: short collection failure does not pass hold
+  interval: 1m
+  input_series:
+  - *id001
+  - series: imaged_image_preparation_collection_success{job="imaged",instance="a"}
+    values: 0x3 1x96
+  - *id003
+  - *id004
+  - *id012
+  - *id005
+  - *id013
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasImagePreparationTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 10m
+    alertname: FaasImagePreparationTelemetryUnavailable
+    exp_alerts: []
+- name: shutdown withdraws expectation while pending ages remain
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - series: imaged_image_preparation_observation_enabled{job="imaged",instance="a"}
+    values: 1x39 0x60
+  - series: imaged_image_preparation_pending{job="imaged",instance="a",phase="preparing"}
+    values: 1x100
+  - *id005
+  - series: imaged_image_preparation_oldest_phase_started_timestamp_seconds{job="imaged",instance="a",phase="preparing"}
+    values: 60x100
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  alert_rule_test:
+  - eval_time: 39m
+    alertname: FaasImagePreparationPhaseProlonged
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: image_preparation
+        public_status: internal
+        job: imaged
+        instance: a
+        phase: preparing
+      exp_annotations:
+        summary: Image preparation has remained in one phase for an extended period
+        description: The oldest known preparing checkpoint exceeded its phase-age threshold for five minutes. Thresholds
+          are 30m for preparing and layer_published, and 10m for scan_complete. Age includes active execution and
+          waiting to resume; retries do not renew it. This is a triage warning, not proof of a stalled daemon, a
+          failed image or deployment readiness.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasImagePreparation.md
+  - eval_time: 40m
+    alertname: FaasImagePreparationPhaseProlonged
+    exp_alerts: []
+  promql_expr_test:
+  - expr: imaged_image_preparation_oldest_known_phase_age_seconds{phase="preparing"}
+    eval_time: 40m
+    exp_samples:
+    - labels: '{__name__="imaged_image_preparation_oldest_known_phase_age_seconds",job="imaged",instance="a",phase="preparing"}'
+      value: 2340
+- name: disabled observer suppresses unavailable and history warnings
+  interval: 1m
+  input_series:
+  - *id001
+  - series: imaged_image_preparation_collection_success{job="imaged",instance="a"}
+    values: '0x100'
+  - *id003
+  - series: imaged_image_preparation_observation_enabled{job="imaged",instance="a"}
+    values: '0x100'
+  - *id012
+  - *id005
+  - *id013
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  alert_rule_test:
+  - eval_time: 40m
+    alertname: FaasImagePreparationTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasImagePreparationPhaseProlonged
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasImagePreparationPhaseAgeUnknown
+    exp_alerts: []
+- name: failed scrape does not become phase telemetry warning
+  interval: 1m
+  input_series:
+  - series: up{job="imaged",instance="a"}
+    values: '0x100'
+  - *id002
+  - *id003
+  - *id004
+  - *id012
+  - *id005
+  - *id013
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  alert_rule_test:
+  - eval_time: 40m
+    alertname: FaasImagePreparationTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasImagePreparationPhaseProlonged
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasImagePreparationPhaseAgeUnknown
+    exp_alerts: []
+- name: absent installation is silent
+  interval: 1m
+  input_series: []
+  alert_rule_test:
+  - eval_time: 40m
+    alertname: FaasImagePreparationTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasImagePreparationPhaseProlonged
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasImagePreparationPhaseAgeUnknown
+    exp_alerts: []
+- name: replica evidence cannot fill missing phase
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id012
+  - *id005
+  - *id013
+  - *id006
+  - *id007
+  - *id008
+  - *id010
+  - *id011
+  - series: up{job="imaged",instance="b"}
+    values: 1x100
+  - series: imaged_image_preparation_collection_success{job="imaged",instance="b"}
+    values: 1x100
+  - series: imaged_image_preparation_collection_last_success_timestamp_seconds{job="imaged",instance="b"}
+    values: 0+60x100
+  - series: imaged_image_preparation_observation_enabled{job="imaged",instance="b"}
+    values: 1x100
+  - series: imaged_image_preparation_pending{job="imaged",instance="b",phase="preparing"}
+    values: '0x100'
+  - series: imaged_image_preparation_phase_age_unknown{job="imaged",instance="b",phase="preparing"}
+    values: '0x100'
+  - series: imaged_image_preparation_oldest_phase_started_timestamp_seconds{job="imaged",instance="b",phase="preparing"}
+    values: '0x100'
+  - series: imaged_image_preparation_pending{job="imaged",instance="b",phase="layer_published"}
+    values: '0x100'
+  - series: imaged_image_preparation_phase_age_unknown{job="imaged",instance="b",phase="layer_published"}
+    values: '0x100'
+  - series: imaged_image_preparation_oldest_phase_started_timestamp_seconds{job="imaged",instance="b",phase="layer_published"}
+    values: '0x100'
+  - series: imaged_image_preparation_pending{job="imaged",instance="b",phase="scan_complete"}
+    values: '0x100'
+  - series: imaged_image_preparation_phase_age_unknown{job="imaged",instance="b",phase="scan_complete"}
+    values: '0x100'
+  - series: imaged_image_preparation_oldest_phase_started_timestamp_seconds{job="imaged",instance="b",phase="scan_complete"}
+    values: '0x100'
+  alert_rule_test:
+  - eval_time: 6m
+    alertname: FaasImagePreparationTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: image_preparation_telemetry
+        public_status: internal
+        job: imaged
+        instance: a
+      exp_annotations:
+        summary: Durable image-preparation diagnostics are unavailable
+        description: Imaged is scraped but its phase snapshot is failed, missing, inconsistent or older than two
+          minutes. Counts and ages are unknown. Inspect the reader, database, clocks and deployed binary. Historical
+          unknown ages are reported separately; intentional observer shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasImagePreparation.md

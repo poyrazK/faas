@@ -2,7 +2,7 @@
 
 package wire
 
-// Two-generation hand-off (docs/adr/1580-zero-downtime-daemon-restarts.md).
+// Two-generation hand-off (docs/adr/1736-zero-downtime-daemon-restarts.md).
 //
 // systemd restarts a service by stopping it and then starting it, so a
 // request still running when the stop's grace ends is cut. A hand-off avoids

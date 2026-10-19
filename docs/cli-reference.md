@@ -91,6 +91,7 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 | [`overage-cap`](#overage-cap) | Set / clear the account&#39;s overage cap (--clear \| &lt;cents&gt;) |
 | [`park`](#park) | Park an app cold (kill all live instances); a min-instances floor stays off, and unbilled, until the next request |
 | [`plan`](#plan) | Change plan (free\|hobby\|pro\|scale); paid upgrades open the provider checkout |
+| [`pipeline`](#pipeline) | Connect PostgreSQL sources and operate synchronized read-only mirrors |
 | [`data-api`](#data-api) | Create schema-generated PostgreSQL APIs and export application types |
 | [`ps`](#ps) | Show live instances + state for an app (slug defaults to linked context) |
 | [`queue`](#queue) | Inspect queues and manage first-class queue bindings |
@@ -2542,10 +2543,11 @@ Suspend versioning while retaining older versions
 
 Inspect app bindings, verification, runtime freshness, and rotation progress
 
-`gregale bindings [<subcommand>] <app> [--require-complete] [--scope <SCOPE>]`
+`gregale bindings [<subcommand>] <app> [--deployment <ID|vN>] [--require-complete] [--scope <SCOPE>]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--deployment <ID|vN>` | inspect exact deployment service bindings, including frozen environment routes |  |
 | `--require-complete` | fail if binding metadata, verification, runtime freshness or refresh progress is incomplete |  |
 | `--scope <SCOPE>` | filter resource bindings by environment scope; app-wide bindings remain included |  |
 
@@ -2595,12 +2597,14 @@ Configure standalone service bindings
 
 #### bindings service explain
 
-Explain app-level service authorization; exits 0 allowed, 1 denied, 2 indeterminate/error
+Explain service authorization, optionally for an exact deployment; exits 0 allowed, 1 denied, 2 indeterminate/error
 
-`gregale bindings service explain [--method <METHOD>] [--path <PATH>] <caller> <target>`
+`gregale bindings service explain [--deployment <ID>] [--scope <ENV>] [--method <METHOD>] [--path <PATH>] <caller> <target>`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--deployment <ID>` | exact caller deployment UUID; use server routing and effective policy |  |
+| `--scope <ENV>` | assert deployment environment; requires --deployment |  |
 | `--method <METHOD>` | HTTP method (default GET) |  |
 | `--path <PATH>` | origin-form request path (default /) |  |
 
@@ -8828,7 +8832,7 @@ Retry a failed deployment from a specific stage (--from=&lt;stage&gt;)
 
 Deploy an app, function, or project
 
-`gregale deploy [--image <REF>] [--tarball <PATH>] [--path <DIR>] [--source <auto|head|worktree>] [--worktree] [--repo <OWNER/NAME>] [--repository <OWNER/NAME>] [--install-id <N>] [--production-branch <BRANCH>] [--ref <REF>] [--source-branch <BRANCH>] [--github] [--pinned-sha <SHA>] [--pin-action] [--template <NAME>] [--dockerfile] [--runtime <RUNTIME>] [--handler <HANDLER>] [--name <SLUG>] [--profile <SIZE>] [--vcpu <N>] [--execution-mode <MODE>] [--restart-policy <POLICY>] [--startup-deadline-s <SECONDS>] [--max-retries <N>] [--function] [--app] [--only <SLUGS>] [--project] [--environment <SLUG>] [--reason <text>] [--tag <TAG>] [--deployed-by <NAME>] [--pr-number <N>] [--exclude <SLUGS>] [--show-affected] [--persist-exclude] [--project-slug <SLUG>] [--rollout <MODE>] [--canary-preset <PRESET>] [--canary-stages <STAGES>] [--safe] [--require-authn] [--no-require-authn] [--platform-tenant-required] [--no-platform-tenant-required] [--app-protocol <PROTOCOL>] [--traffic-percent <PERCENT>] [--no-traffic] [--rollback-on-5xx] [--queue-canary-binding <NAME>]... [--healthcheck-path <PATH>] [--healthcheck-grpc] [--healthcheck-grpc-service <SERVICE>] [--disable-startup-cpu-boost] [--mcp-task-migration-override] [--no-triggers] [--wait] [--no-wait] [--create-only] [--timeout <DURATION>] [--idempotency-key <KEY>] [--secrets-file <PATH>] [--secret-scan <on|off>] [--diff] [--plan] [--dry-run] [--yes] [--strict] [--lenient] [--server-diff] [--doctor-strict] [--no-doctor]`
+`gregale deploy [--image <REF>] [--tarball <PATH>] [--path <DIR>] [--source <auto|head|worktree>] [--worktree] [--repo <OWNER/NAME>] [--repository <OWNER/NAME>] [--install-id <N>] [--production-branch <BRANCH>] [--ref <REF>] [--source-branch <BRANCH>] [--github] [--pinned-sha <SHA>] [--pin-action] [--template <NAME>] [--dockerfile] [--issue-source-maps <PATH>] [--issue-source-map-directory <PATH>] [--runtime <RUNTIME>] [--handler <HANDLER>] [--name <SLUG>] [--profile <SIZE>] [--vcpu <N>] [--execution-mode <MODE>] [--restart-policy <POLICY>] [--startup-deadline-s <SECONDS>] [--max-retries <N>] [--function] [--app] [--only <SLUGS>] [--project] [--environment <SLUG>] [--reason <text>] [--tag <TAG>] [--deployed-by <NAME>] [--pr-number <N>] [--exclude <SLUGS>] [--show-affected] [--persist-exclude] [--project-slug <SLUG>] [--rollout <MODE>] [--canary-preset <PRESET>] [--canary-stages <STAGES>] [--safe] [--require-authn] [--no-require-authn] [--platform-tenant-required] [--no-platform-tenant-required] [--app-protocol <PROTOCOL>] [--traffic-percent <PERCENT>] [--no-traffic] [--rollback-on-5xx] [--queue-canary-binding <NAME>]... [--healthcheck-path <PATH>] [--healthcheck-grpc] [--healthcheck-grpc-service <SERVICE>] [--disable-startup-cpu-boost] [--mcp-task-migration-override] [--no-triggers] [--wait] [--no-wait] [--create-only] [--timeout <DURATION>] [--idempotency-key <KEY>] [--secrets-file <PATH>] [--secret-scan <on|off>] [--diff] [--plan] [--dry-run] [--yes] [--strict] [--lenient] [--server-diff] [--doctor-strict] [--no-doctor]`
 
 Source defaults to committed HEAD when origin exists; otherwise local files. Use --source=worktree to include local changes.
 
@@ -8852,6 +8856,8 @@ Connection: use --profile NAME before the command; RAM/CPU: use --profile SIZE a
 | `--pin-action` | with --github only, resolve the current v0 Action tag to its commit SHA |  |
 | `--template <NAME>` | scaffold from a built-in template | one of `hello-node` · `hello-python` · `hello-go` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `function-rust` · `event-worker` · `queue-worker` · `s3-uploader` · `object-storage-node` · `object-storage-python` · `slack-bot` · `rest-api-postgres` · `rest-api-postgres-python` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` · `customer-platform` · `mcp-node` · `mcp-go` · `mcp-python` · `customer-operation-export` · `customer-operation-job-export` · `customer-operation-workflow-export` · `data-api` · `data-api-starter` · `data-api-teams` · `data-api-support-console` |
 | `--dockerfile` | build with the supplied Dockerfile inside --tarball |  |
+| `--issue-source-maps <PATH>` | publish a portable manifest from the selected source; requires zero production traffic |  |
+| `--issue-source-map-directory <PATH>` | deployed bundle directory corresponding to the manifest directory |  |
 | `--runtime <RUNTIME>` | function runtime | one of `node22` · `python312` · `go124` · `go124-alpine` · `node24` · `python313` · `binary` |
 | `--handler <HANDLER>` | function handler |  |
 | `--name <SLUG>` | app slug (default: source directory name) |  |
@@ -12432,6 +12438,25 @@ Read or configure customer-impact alert threshold
 |---|---|---|
 | `--app <SLUG>` | application slug | required |
 
+### issues compound-alerts
+
+Manage and preview shared-window event and customer conditions
+
+`gregale issues compound-alerts --app <SLUG> [--key <KEY>] [--environment <NAME>] [--minimum-events <N>] [--minimum-customers <N>] [--window-seconds <N>] [--cooldown-seconds <N>] [--enabled[=true|false]] [--expected-revision <N>] [--issue <UUID>] <get|save|remove|preview>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` |  | required |
+| `--key <KEY>` | stable rule key |  |
+| `--environment <NAME>` | exact environment; empty matches all |  |
+| `--minimum-events <N>` | event threshold in the shared window |  |
+| `--minimum-customers <N>` | verified distinct customer threshold in the shared window |  |
+| `--window-seconds <N>` |  |  |
+| `--cooldown-seconds <N>` |  |  |
+| `--enabled[=true|false]` | use --enabled=false to disable a saved rule | one of `true` · `false` |
+| `--expected-revision <N>` | required for save/remove |  |
+| `--issue <UUID>` | existing issue for an unsaved preview |  |
+
 ### issues tickets
 
 Create tracker tickets or preview and apply lifecycle sync
@@ -14772,6 +14797,170 @@ Change plan (free|hobby|pro|scale); paid upgrades open the provider checkout
 `gregale plan`
 
 
+## pipeline
+
+Connect PostgreSQL sources and operate synchronized read-only mirrors
+
+`gregale pipeline [<subcommand>]`
+
+### pipeline connection
+
+Register and manage encrypted source connections
+
+#### pipeline connection add
+
+Register a PostgreSQL source
+
+`gregale pipeline connection add --url-file <FILE> <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--url-file <FILE>` | private file containing a verified-TLS source URL | required |
+
+#### pipeline connection list
+
+List sources without credentials
+
+`gregale pipeline connection list`
+
+#### pipeline connection check
+
+Check source compatibility and discover public tables
+
+`gregale pipeline connection check [--database <ID>] [--wait] [--timeout <DURATION>] <id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--database <ID>` | also check an existing empty managed mirror |  |
+| `--wait` | wait for a fresh result (default true; use --wait=false to queue only) |  |
+| `--timeout <DURATION>` | maximum wait (default 2m; maximum 1h) |  |
+
+#### pipeline connection tables
+
+Read the latest checked source schema and compatibility issues
+
+`gregale pipeline connection tables [--wait] [--timeout <DURATION>] <id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--wait` | wait for a fresh result (default true) |  |
+| `--timeout <DURATION>` | maximum wait (default 2m; maximum 1h) |  |
+
+#### pipeline connection rotate
+
+Rotate a source credential without changing its database identity
+
+`gregale pipeline connection rotate --url-file <FILE> <id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--url-file <FILE>` | private file containing the new source URL | required |
+
+#### pipeline connection delete
+
+Delete an unused source credential
+
+`gregale pipeline connection delete <id>`
+
+### pipeline create
+
+Create a managed mirror and begin initial copying
+
+`gregale pipeline create [--connection <ID>] [--url-file <FILE>] [--database <DATABASE>] [--region <REGION>] --tables <TABLES> --read-subjects <SUBJECTS> [--wait] [--timeout <DURATION>] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--connection <ID>` | registered source connection (or use --url-file) |  |
+| `--url-file <FILE>` | register a source from a private URL file |  |
+| `--database <DATABASE>` | existing empty managed database; otherwise create NAME-mirror |  |
+| `--region <REGION>` | placement of an automatically created mirror |  |
+| `--tables <TABLES>` | comma-separated public table names | required |
+| `--read-subjects <SUBJECTS>` | application identities allowed to read the mirror | required |
+| `--wait` | wait for initial copying and catch-up |  |
+| `--timeout <DURATION>` | maximum wait (default 10m; maximum 1h) |  |
+
+### pipeline list
+
+List pipeline intent and observations
+
+### pipeline status
+
+Read pipeline intent and observed progress
+
+`gregale pipeline status [--wait] [--timeout <DURATION>] <id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--wait` | wait for the requested observation |  |
+| `--timeout <DURATION>` | maximum wait (default 10m; maximum 1h) |  |
+
+### pipeline wait
+
+Wait for the pipeline to become live
+
+`gregale pipeline wait [--wait] [--timeout <DURATION>] <id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--wait` | wait for the requested observation |  |
+| `--timeout <DURATION>` | maximum wait (default 10m; maximum 1h) |  |
+
+### pipeline pause
+
+Request a pause
+
+`gregale pipeline pause [--wait] [--timeout <DURATION>] <id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--wait` | wait for the requested observation |  |
+| `--timeout <DURATION>` | maximum wait (default 10m; maximum 1h) |  |
+
+### pipeline resume
+
+Resume replication
+
+`gregale pipeline resume [--wait] [--timeout <DURATION>] <id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--wait` | wait for the requested observation |  |
+| `--timeout <DURATION>` | maximum wait (default 10m; maximum 1h) |  |
+
+### pipeline resync
+
+Replace the owned mirror with a fresh copy
+
+`gregale pipeline resync [--wait] [--timeout <DURATION>] <id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--wait` | wait for the requested observation |  |
+| `--timeout <DURATION>` | maximum wait (default 10m; maximum 1h) |  |
+
+### pipeline verify
+
+Request a bounded consistency check
+
+`gregale pipeline verify [--wait] [--timeout <DURATION>] <id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--wait` | wait for the requested observation |  |
+| `--timeout <DURATION>` | maximum wait (default 10m; maximum 1h) |  |
+
+### pipeline delete
+
+Clean up replication while retaining mirror data
+
+`gregale pipeline delete [--wait] [--timeout <DURATION>] <id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--wait` | wait for the requested observation |  |
+| `--timeout <DURATION>` | maximum wait (default 10m; maximum 1h) |  |
+
+
 ## data-api
 
 Create schema-generated PostgreSQL APIs and export application types
@@ -15044,12 +15233,13 @@ gregale data-api dev --port 0 --check --once
 
 Deploy a managed PostgREST Data API
 
-`gregale data-api create --database <DATABASE> [--schema <SCHEMA>] [--scope <SCOPE>] [--issuer <HTTPS_URL>] [--jwks-url <HTTPS_URL>] [--audience <AUDIENCE>] [--origins <ORIGINS>] [--resume] <name>`
+`gregale data-api create --database <DATABASE> [--schema <SCHEMA>] [--read-only] [--scope <SCOPE>] [--issuer <HTTPS_URL>] [--jwks-url <HTTPS_URL>] [--audience <AUDIENCE>] [--origins <ORIGINS>] [--resume] <name>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--database <DATABASE>` | ready managed database name or ID | required |
-| `--schema <SCHEMA>` | exposed schema (api) |  |
+| `--schema <SCHEMA>` | exposed schema (api, or public with --read-only) |  |
+| `--read-only` | use a SELECT-only public-schema binding and reject mutations |  |
 | `--scope <SCOPE>` | environment scope |  |
 | `--issuer <HTTPS_URL>` | application JWT issuer |  |
 | `--jwks-url <HTTPS_URL>` | application JWKS URL |  |

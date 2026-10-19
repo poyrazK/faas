@@ -584,6 +584,13 @@ service Vmmd {
   // Generic Destroy and process inventory cannot acknowledge this contract.
   rpc RetireManagedPostgresDrain(RetireManagedPostgresDrainRequest) returns (RetireManagedPostgresDrainResponse);
 
+  // Fresh host-owned identity for the tenant service listener. App-task VMs
+  // are deliberately absent from serving instances. No guest assertion or
+  // cached address mapping may substitute for this lookup.
+  rpc ResolveServiceCaller(ResolveServiceCallerRequest) returns (ResolveServiceCallerResponse);
+  // Command-free managed probe boot. A distinct method rejects older nodes
+  // before allocating resources or starting a guest.
+  rpc RestoreManagedServiceProbe(RestoreAppTaskRequest) returns (RestoreAppTaskResponse);
 }
 
 // AppSpec flattens what the caller knows about an app. vmmd stores none of
@@ -3061,6 +3068,20 @@ message RetireManagedPostgresDrainRequest { ManagedPostgresDrainFrame frame = 1;
 message RetireManagedPostgresDrainResponse {
   ManagedPostgresDrainFrame frame = 1;
   ManagedPostgresDrainProof proof = 2;
+}
+
+message ResolveServiceCallerRequest {
+  string source_ip = 1;
+}
+
+message ResolveServiceCallerResponse {
+  bool matched = 1;
+  string instance_id = 2;
+  string account_id = 3;
+  string app_id = 4;
+  string deployment_id = 5;
+  bool app_task = 6;
+  bool job_task = 7;
 }
 
 message DataRepairRehearsalIdentityRequest {}

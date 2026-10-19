@@ -46,46 +46,67 @@ type InstanceApplicationStandardAdmissionStore interface {
 // inputs. The publication guard independently checks current persisted inputs.
 // This check and that guard do not replace a native, revision-bound boot receipt.
 func CheckInstanceApplicationStandardAdmission(ctx context.Context, store InstanceApplicationStandardAdmissionStore, id string, app App, account Account, deployment Deployment) error {
+	_, err := CheckedInstanceApplicationStandardAdmission(ctx, store, id, app, account, deployment)
+	return err
+}
+
+// CheckedInstanceApplicationStandardAdmission is
+// CheckInstanceApplicationStandardAdmission returning the capture it checked,
+// so a boot does not read it again (ADR-1741).
+func CheckedInstanceApplicationStandardAdmission(ctx context.Context, store InstanceApplicationStandardAdmissionStore, id string, app App, account Account, deployment Deployment) (InstanceApplicationStandardAdmission, error) {
 	if !sameStandardUUID(account.ID, app.AccountID) || deployment.ID != "" && !sameStandardUUID(deployment.AppID, app.ID) {
-		return ErrApplicationStandardRuntimeStale
-	}
-	capture, err := store.GetInstanceApplicationStandardAdmission(ctx, id)
-	if err != nil {
-		return fmt.Errorf("read runtime admission: %w", err)
+		return InstanceApplicationStandardAdmission{}, ErrApplicationStandardRuntimeStale
 	}
 	reader, ok := store.(interface {
 		GetApplicationStandardEnrollment(context.Context, string, string) (ApplicationStandardEnrollment, error)
 	})
 	if !ok {
-		return fmt.Errorf("runtime enrollment reader unavailable")
+		return InstanceApplicationStandardAdmission{}, fmt.Errorf("runtime enrollment reader unavailable")
 	}
-	enrollment, err := reader.GetApplicationStandardEnrollment(ctx, app.OrgID, app.ID)
-	if err != nil {
-		return fmt.Errorf("read captured runtime enrollment: %w", err)
+	// The capture and the enrollment are independent reads; a wake waits for
+	// them before vmmd, so they run concurrently (ADR-1741).
+	var (
+		capture               InstanceApplicationStandardAdmission
+		enrollment            ApplicationStandardEnrollment
+		captureErr, enrollErr error
+		enrollmentRead        = make(chan struct{})
+	)
+	go func() {
+		defer close(enrollmentRead)
+		enrollment, enrollErr = reader.GetApplicationStandardEnrollment(ctx, app.OrgID, app.ID)
+	}()
+	capture, captureErr = store.GetInstanceApplicationStandardAdmission(ctx, id)
+	<-enrollmentRead
+	if captureErr != nil {
+		return InstanceApplicationStandardAdmission{}, fmt.Errorf("read runtime admission: %w", captureErr)
+	}
+	if enrollErr != nil {
+		return InstanceApplicationStandardAdmission{}, fmt.Errorf("read captured runtime enrollment: %w", enrollErr)
 	}
 	if !ApplicationStandardEnrollmentPermitsRuntime(app, enrollment) {
-		return ErrApplicationStandardsPending
+		return InstanceApplicationStandardAdmission{}, ErrApplicationStandardsPending
 	}
 	if capture.DesiredRevision != enrollment.DesiredRevision || capture.PersistedRevision != enrollment.PersistedRevision || capture.EffectiveHash != enrollment.EffectiveHash {
-		return ErrApplicationStandardRuntimeStale
+		return InstanceApplicationStandardAdmission{}, ErrApplicationStandardRuntimeStale
 	}
 	var actual map[string]json.RawMessage
 	if err := json.Unmarshal(capture.inputs, &actual); err != nil {
-		return fmt.Errorf("decode runtime admission: %w", err)
+		return InstanceApplicationStandardAdmission{}, fmt.Errorf("decode runtime admission: %w", err)
 	}
 	var artifact map[string]json.RawMessage
 	if json.Unmarshal(actual["artifact"], &artifact) != nil {
-		return ErrApplicationStandardRuntimeStale
+		return InstanceApplicationStandardAdmission{}, ErrApplicationStandardRuntimeStale
 	}
 	delete(artifact, "sidecars") // checked by the durable guard; resolved separately by schedd
 	if capture.ArtifactInputHash != "" {
 		delete(artifact, "scan_status")
 		delete(artifact, "scan_result_hash")
 	}
-	actual["artifact"], err = json.Marshal(artifact)
+	artifactJSON, err := json.Marshal(artifact)
 	if err != nil {
-		return err
+		return InstanceApplicationStandardAdmission{}, err
 	}
+	actual["artifact"] = artifactJSON
 	expected := standardRuntimeCallerInputs(app, account, deployment)
 	if capture.ArtifactInputHash != "" {
 		removeStandardApprovalMirrors(expected["artifact"].(map[string]any))
@@ -93,26 +114,26 @@ func CheckInstanceApplicationStandardAdmission(ctx context.Context, store Instan
 	for field, value := range expected {
 		raw, err := json.Marshal(value)
 		if err != nil {
-			return err
+			return InstanceApplicationStandardAdmission{}, err
 		}
 		var want, got any
 		if json.Unmarshal(raw, &want) != nil || json.Unmarshal(actual[field], &got) != nil {
-			return fmt.Errorf("%w: %s", ErrApplicationStandardRuntimeStale, field)
+			return InstanceApplicationStandardAdmission{}, fmt.Errorf("%w: %s", ErrApplicationStandardRuntimeStale, field)
 		}
 		if !reflect.DeepEqual(want, got) {
 			if field == "account_plan" && !capture.Managed && !ApplicationStandardEnrollmentRequiresNative(enrollment) {
 				allowed, err := unmanagedStandardResidentPlanChange(ctx, store, id)
 				if err != nil {
-					return fmt.Errorf("read unmanaged residency: %w", err)
+					return InstanceApplicationStandardAdmission{}, fmt.Errorf("read unmanaged residency: %w", err)
 				}
 				if allowed {
 					continue
 				}
 			}
-			return fmt.Errorf("%w: %s", ErrApplicationStandardRuntimeStale, field)
+			return InstanceApplicationStandardAdmission{}, fmt.Errorf("%w: %s", ErrApplicationStandardRuntimeStale, field)
 		}
 	}
-	return nil
+	return capture, nil
 }
 
 func unmanagedStandardResidentPlanChange(ctx context.Context, store InstanceApplicationStandardAdmissionStore, id string) (bool, error) {

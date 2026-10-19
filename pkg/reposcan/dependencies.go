@@ -12,7 +12,7 @@ import (
 // project plan. Managed services are accepted as external dependencies: they
 // are surfaced by the scanner but Gregale does not provision them, so there
 // is no local workload edge to order.
-func DependencyValidationReasons(workloads []Workload, managed []Managed) []string {
+func DependencyValidationReasons(workloads []Workload, managed []Managed, references ...[]Workload) []string {
 	managedNames := make(map[string]struct{}, len(managed))
 	for _, m := range managed {
 		managedNames[strings.ToLower(m.Name)] = struct{}{}
@@ -26,6 +26,14 @@ func DependencyValidationReasons(workloads []Workload, managed []Managed) []stri
 			continue
 		}
 		byName[key] = w
+	}
+	for _, group := range references {
+		for _, w := range group {
+			key := strings.ToLower(w.Name)
+			if _, selected := byName[key]; !selected {
+				byName[key] = w
+			}
+		}
 	}
 	for _, w := range workloads {
 		if err := api.ValidateComposeDependencyConditions(w.DependsOnConditions, w.DependsOn); err != nil {
@@ -60,7 +68,7 @@ func DependencyValidationReasons(workloads []Workload, managed []Managed) []stri
 		}
 	}
 	if len(reasons) == 0 {
-		if _, err := DependencyOrder(workloads, managed); err != nil {
+		if _, err := DependencyOrder(workloads, managed, references...); err != nil {
 			reasons = append(reasons, err.Error())
 		}
 	}
@@ -72,8 +80,8 @@ func DependencyValidationReasons(workloads []Workload, managed []Managed) []stri
 // case-insensitively by workload name, so a plan is reproducible regardless of
 // map iteration order. Managed services are external nodes and do not appear
 // in the returned order.
-func DependencyOrder(workloads []Workload, managed []Managed) ([]string, error) {
-	if reasons := dependencyReferenceReasons(workloads, managed); len(reasons) > 0 {
+func DependencyOrder(workloads []Workload, managed []Managed, references ...[]Workload) ([]string, error) {
+	if reasons := dependencyReferenceReasons(workloads, managed, references...); len(reasons) > 0 {
 		return nil, fmt.Errorf("invalid workload dependencies: %s", strings.Join(reasons, "; "))
 	}
 	byName := make(map[string]Workload, len(workloads))
@@ -128,10 +136,15 @@ func DependencyOrder(workloads []Workload, managed []Managed) ([]string, error) 
 
 // dependencyReferenceReasons contains the local reference checks shared by the
 // public validator and the topological sorter.
-func dependencyReferenceReasons(workloads []Workload, managed []Managed) []string {
+func dependencyReferenceReasons(workloads []Workload, managed []Managed, references ...[]Workload) []string {
 	managedNames := make(map[string]struct{}, len(managed))
 	for _, m := range managed {
 		managedNames[strings.ToLower(m.Name)] = struct{}{}
+	}
+	for _, group := range references {
+		for _, w := range group {
+			managedNames[strings.ToLower(w.Name)] = struct{}{}
+		}
 	}
 	byName := make(map[string]struct{}, len(workloads))
 	var reasons []string

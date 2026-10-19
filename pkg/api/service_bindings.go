@@ -342,6 +342,7 @@ type ServiceBindingProbeCheck struct {
 // ServiceBindingProbeReport contains only bounded, non-secret diagnostics
 // from a canary executed in the caller's deployment-attached task guest.
 type ServiceBindingProbeReport struct {
+	ManagedService     *ManagedServiceProbeSpec `json:"managed_service,omitempty"`
 	TargetDeploymentID string                   `json:"target_deployment_id,omitempty"`
 	App                string                   `json:"app,omitempty"`
 	Service            string                   `json:"service"`
@@ -358,6 +359,9 @@ type ServiceBindingProbeReport struct {
 
 // Passed reports whether every canary stage succeeded.
 func (r ServiceBindingProbeReport) Passed() bool {
+	if r.ManagedService != nil && (!r.ManagedService.Valid() || r.Service != r.ManagedService.Service || r.TargetDeploymentID != r.ManagedService.TargetDeploymentID || r.HTTPStatus != http.StatusNoContent) {
+		return false
+	}
 	return r.DNS.Status == "passed" && r.TLS.Status == "passed" &&
 		r.Authorization.Status == "passed" && r.Routing.Status == "passed"
 }

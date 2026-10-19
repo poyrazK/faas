@@ -15,9 +15,9 @@ func VerificationConfiguration(i api.AppBindingInventory, p api.BindingReleasePo
 		if !verificationItemInScope(item, p.Scope) {
 			continue
 		}
-		items = append(items, api.AppBindingInventoryItem{Type: item.Type, Name: item.Name, Binding: item.Binding, Scope: item.Scope, Access: item.Access, State: item.State,
+		items = append(items, api.AppBindingInventoryItem{Type: item.Type, Name: item.Name, Binding: item.Binding, Scope: item.Scope, Access: item.Access, State: item.State, ServiceContext: item.ServiceContext,
 			ServiceTargetDeploymentID: item.ServiceTargetDeploymentID, Transport: item.Transport, CredentialGeneration: item.CredentialGeneration, RotationPending: item.RotationPending,
-			QueueCanarySupported: item.QueueCanarySupported, QueueEnvironment: item.QueueEnvironment, CredentialConfigured: item.CredentialConfigured, OutboundProbe: item.OutboundProbe,
+			QueueCanarySupported: item.QueueCanarySupported, QueueCanaryReason: item.QueueCanaryReason, QueueEnvironment: item.QueueEnvironment, CredentialConfigured: item.CredentialConfigured, OutboundProbe: item.OutboundProbe,
 			HTTPURL: item.HTTPURL, HTTPSURL: item.HTTPSURL, HTTPSEnv: item.HTTPSEnv,
 			AllowedMethods: sortedVerificationStrings(item.AllowedMethods), AllowedPathPrefixes: sortedVerificationStrings(item.AllowedPathPrefixes)})
 	}

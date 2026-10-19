@@ -14,14 +14,14 @@ SELECT * FROM binding_verification_run_steps WHERE run_id=sqlc.arg(run_id) ORDER
 -- name: SetBindingVerificationRunStatus :exec
 UPDATE binding_verification_runs SET status=sqlc.arg(status) WHERE id=sqlc.arg(id) AND account_id=sqlc.arg(account_id) AND app_id=sqlc.arg(app_id);
 -- name: ReadBindingVerificationRunAuthority :one
-SELECT jsonb_build_object('rootfs',d.rootfs_key,'image',d.image_digest,'override',d.override_env)::jsonb AS artifact,
+SELECT to_jsonb(d)::jsonb AS artifact,
  c.changed_at, to_jsonb(p)::jsonb AS policy
 FROM apps a JOIN deployments d ON d.app_id=a.id
 JOIN app_runtime_config_changes c ON c.app_id=a.id
 JOIN app_binding_release_policies p ON p.app_id=a.id AND p.scope=sqlc.arg(scope)
 WHERE a.id=sqlc.arg(app_id) AND a.account_id=sqlc.arg(account_id) AND a.status<>'deleted'
 AND d.id=sqlc.arg(deployment_id) AND d.status='live' AND d.deleted_at IS NULL
-AND d.rootfs_key<>'' AND d.image_digest<>''
+AND d.rootfs_key<>''
 FOR SHARE OF d,c,p;
 -- name: SetVerificationRunTaskDeadline :exec
 UPDATE app_tasks SET start_deadline_at=sqlc.arg(expires_at) WHERE id=sqlc.arg(id);

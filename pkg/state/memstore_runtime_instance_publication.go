@@ -12,8 +12,21 @@ func (m *MemStore) PublishOwnedInstanceRuntime(ctx context.Context, p RuntimeIns
 	if err := validateRuntimeInstancePublication(p); err != nil {
 		return Instance{}, err
 	}
+	// MemStore has no notification channel to commit a notification with.
+	if p.Bookkeeping != nil && p.Bookkeeping.NotifyChannel != "" {
+		return Instance{}, ErrInvalidArgument
+	}
+	_, guarded, err := generationGuardedPublication(ctx, p)
+	if err != nil {
+		return Instance{}, err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if guarded {
+		if err := m.checkRuntimeGenerationLocked(ctx); err != nil {
+			return Instance{}, err
+		}
+	}
 	instance, err := m.checkOwnedRuntimePublicationLocked(p)
 	if err != nil {
 		return Instance{}, err
@@ -37,6 +50,7 @@ func (m *MemStore) PublishOwnedInstanceRuntime(ctx context.Context, p RuntimeIns
 			}
 			m.runtimeUpgradeAcceptances[acceptance.DeploymentID] = *acceptance
 		}
+		m.recordPublicationBookkeepingLocked(p, instance.DeploymentID)
 		return instance, nil
 	}
 	prior := instance
@@ -59,7 +73,23 @@ func (m *MemStore) PublishOwnedInstanceRuntime(ctx context.Context, p RuntimeIns
 		}
 		m.runtimeUpgradeAcceptances[acceptance.DeploymentID] = *acceptance
 	}
+	m.recordPublicationBookkeepingLocked(p, instance.DeploymentID)
 	return instance, nil
+}
+
+// recordPublicationBookkeepingLocked mirrors the bookkeeping PgStore commits
+// with a publication.
+func (m *MemStore) recordPublicationBookkeepingLocked(p RuntimeInstancePublication, deploymentID string) {
+	b := p.Bookkeeping
+	if b == nil {
+		return
+	}
+	if b.EventKind != "" {
+		subject := p.InstanceID
+		_ = m.appendEventLocked("schedd", b.EventKind, &subject, b.EventData, nil, time.Now())
+	}
+	d := m.deployments[deploymentID]
+	b.SnapshotBackoffRecorded = d.SnapshotMissCount != 0 || d.SnapshotMissLastAt != nil || d.SnapshotMissBackoffUntil != nil
 }
 
 func (m *MemStore) checkOwnedRuntimePublicationLocked(p RuntimeInstancePublication) (Instance, error) {

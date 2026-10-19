@@ -1,0 +1,56 @@
+name: Data pipeline acceptance
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - 'pkg/datapipeline/**'
+      - 'pkg/connectioncapacity/**'
+      - 'pkg/apid/datapipelines/**'
+      - 'pkg/apid/apidsource/**'
+      - 'pkg/apid/apidserver/data_pipeline*'
+      - 'pkg/apid/apidserver/data_pipelines.go'
+      - 'pkg/managedpostgres/**'
+      - 'pkg/api/data_pipelines.go'
+      - 'pkg/api/data_connection_checks.go'
+      - 'pkg/api/client_data_pipelines.go'
+      - 'pkg/dashboard/data_pipelines*'
+      - 'pkg/dashboard/templates/data_pipelines.html'
+      - 'pkg/apid/apidserver/dashboard_data_pipelines*'
+      - 'pkg/api/limits.go'
+      - 'cmd/gregale/**'
+      - 'migrations/**'
+      - 'deploy/systemd/faas-apid-data-pipeline-worker.service'
+      - 'deploy/systemd/faas-apid-data-pipeline-alert-worker.service'
+      - 'pkg/commit/connection.go'
+      - 'deploy/ansible/roles/control_plane_service/**'
+      - 'scripts/test-data-pipeline.sh'
+      - 'sqlc.yaml'
+      - 'Makefile'
+      - 'tests/data-pipelines/**'
+      - '.github/workflows/data-pipelines.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  native-postgres:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GOMAXPROCS: 2
+      GOMEMLIMIT: 3GiB
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+      - run: npm ci --prefix cmd/gregale/templates/data-api
+      - run: python3 -m unittest discover -s tests/data-pipelines -p '*_test.py'
+      - run: make test-data-pipeline

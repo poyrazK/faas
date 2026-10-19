@@ -36,6 +36,17 @@ func (s *PgStore) PublishIssueSourceMaps(ctx context.Context, account, app, dep,
 	if _, err = q.IssueSourceMapDeploymentOwner(ctx, tx, sqlc.IssueSourceMapDeploymentOwnerParams{AccountID: issueUUID(account), AppID: issueUUID(app), DeploymentID: issueUUID(dep)}); err != nil {
 		return api.IssueSourceMapsMetadata{}, mapErr(err)
 	}
+	out, err := publishIssueSourceMapsLocked(ctx, tx, app, dep, actor, set)
+	if err != nil {
+		return api.IssueSourceMapsMetadata{}, err
+	}
+	return out, tx.Commit(ctx)
+}
+
+// Caller holds the app lock and has verified the deployment's owner. Build
+// completion also holds its original running claim and deployment lock.
+func publishIssueSourceMapsLocked(ctx context.Context, tx pgx.Tx, app, dep, actor string, set *issues.SourceMapSet) (api.IssueSourceMapsMetadata, error) {
+	q := sqlc.New()
 	old, err := q.IssueReadSourceMaps(ctx, tx, sqlc.IssueReadSourceMapsParams{AppID: issueUUID(app), DeploymentID: issueUUID(dep)})
 	if err == nil {
 		if old.ManifestSha256 != set.Digest {
@@ -62,7 +73,7 @@ func (s *PgStore) PublishIssueSourceMaps(ctx context.Context, account, app, dep,
 	if err != nil {
 		return api.IssueSourceMapsMetadata{}, mapErr(err)
 	}
-	return sourceMapMetadata(row), tx.Commit(ctx)
+	return sourceMapMetadata(row), nil
 }
 func (s *PgStore) GetIssueSourceMaps(ctx context.Context, account, app, dep string) (api.IssueSourceMapsMetadata, error) {
 	q := sqlc.New()

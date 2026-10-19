@@ -12,6 +12,10 @@ import unittest
 
 HERE = pathlib.Path(__file__).parent
 REPO = HERE.parent.parent
+# Throwaway repositories must not start git's detached auto-maintenance:
+# it writes maintenance.lock and pack bitmaps while tearDown deletes the
+# tree, which fails the test with FileNotFoundError.
+GIT = ("git", "-c", "maintenance.auto=false", "-c", "gc.auto=0")
 spec = importlib.util.spec_from_file_location("affected_units", HERE / "affected_units.py")
 au = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(au)
@@ -313,7 +317,7 @@ class StatefulRestartHistoryTest(unittest.TestCase):
     classified through host_view (no Go toolchain needed)."""
 
     def run_git(self, *args):
-        return subprocess.run(["git", *args], cwd=self.root, check=True, capture_output=True, text=True).stdout.strip()
+        return subprocess.run([*GIT, *args], cwd=self.root, check=True, capture_output=True, text=True).stdout.strip()
 
     def commit(self):
         self.run_git("add", "-A")
@@ -563,7 +567,7 @@ class RepositoryContractTest(unittest.TestCase):
     def test_edge_lane_is_the_gateways(self):
         # The edge lane rolls host by host without draining: only the
         # gateways hand traffic over that way. vmmd and compute schedd are
-        # the vmmd session's (restart survival, ADR-1580 and node drain).
+        # the vmmd session's (restart survival, ADR-1736 and node drain).
         edge = sorted(n for n, e in self.config["binaries"].items() if e["lane"] == "edge")
         self.assertEqual(edge, ["gatewayd-internal", "gatewayd-public"])
 
@@ -573,7 +577,7 @@ class EndToEndTest(unittest.TestCase):
     """report() on a throwaway module: real go list, real git history."""
 
     def run_git(self, *args):
-        subprocess.run(["git", *args], cwd=self.root, check=True, capture_output=True)
+        subprocess.run([*GIT, *args], cwd=self.root, check=True, capture_output=True)
 
     def write(self, path, body):
         full = os.path.join(self.root, path)
