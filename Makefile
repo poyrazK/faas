@@ -403,6 +403,10 @@ deploy-action-head-check: ## Verify stale branch and invalid release-tag pushes 
 deploy-action-cli-check: ## Verify the deploy Action unpacks and checks the gzip-compressed vendored CLI
 	@bash scripts/ci/deploy_action_cli_test.sh
 
+.PHONY: verify-action-ref-contents-check
+verify-action-ref-contents-check: ## Verify release.yml's Contents API check accepts a pinned ref that vendors the bare CLI
+	@bash scripts/ci/verify-action-ref-contents_test.sh
+
 .PHONY: environment-preflight-action-check
 environment-preflight-action-check: ## Verify the OIDC capability and promotion gate contract in the environment preflight Action
 	@bash scripts/ci/test_environment_preflight_action.sh
