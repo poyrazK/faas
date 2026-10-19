@@ -97,6 +97,10 @@ const (
 	TriggerKindAMQP TriggerKind = "amqp"
 	// TriggerKindRabbitMQ is an alias for TriggerKindAMQP.
 	TriggerKindRabbitMQ TriggerKind = "rabbitmq"
+	// TriggerKindRealtime — deliver a bound realtime consumer group's
+	// messages as invocations (ADR-1322). Config schema:
+	// api.RealtimeTriggerConfig{EndpointID, Channel, Group, MaxConcurrency}.
+	TriggerKindRealtime TriggerKind = "realtime"
 )
 
 // EventTrigger is a content-based internal event subscription declaration.
@@ -772,6 +776,9 @@ type Trigger struct {
 	// so a YAML typo surfaces at load time rather than at
 	// poison-record dispatch time.
 	BrokerPoisonStrategy string `yaml:"broker_poison_strategy,omitempty"`
+	// Delivery is "record" (default: one invocation per record) or
+	// "batch" (one invocation per dispatch batch, ADR-1321).
+	Delivery string `yaml:"delivery,omitempty"`
 	// FilterCriteria (ADR-118 / issue #757 closure, migration
 	// 00300) is the per-source record filter tree. nil means
 	// "every record passes through". The shape is evaluated
@@ -2271,7 +2278,8 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 			TriggerKindSQSCompat,
 			TriggerKindQueue,
 			TriggerKindAMQP,
-			TriggerKindRabbitMQ:
+			TriggerKindRabbitMQ,
+			TriggerKindRealtime:
 			// fall through to per-kind validation below
 		case "":
 			return fmt.Errorf("trigger[%d]: missing kind (want one of %s)", i, supportedKindsList())
@@ -2369,6 +2377,11 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 			// time.
 			if t.BrokerPoisonStrategy != "" && t.BrokerPoisonStrategy != "commit" && t.BrokerPoisonStrategy != "seek-to-offset" {
 				return fmt.Errorf("trigger[%d]: broker_poison_strategy=%q invalid; must be one of commit, seek-to-offset", i, t.BrokerPoisonStrategy)
+			}
+		}
+		if t.Delivery != "" {
+			if err := api.ValidateTriggerDelivery(api.TriggerKind(t.Kind), t.Delivery); err != nil {
+				return fmt.Errorf("trigger[%d]: %w", i, err)
 			}
 		}
 		k := triggerKey{app: t.App, kind: t.Kind, schedule: t.Schedule, path: t.Path, slug: t.Slug}
@@ -2551,7 +2564,7 @@ func validateAppRetryPolicy(policy *RetryPolicyConfig) error {
 // shape — then alphabetical) so a customer grep'ing for "kafka" in
 // the error message finds it consistently.
 func supportedKindsList() string {
-	return "cron, kafka, nats, redis_streams, sqs_compat, queue, amqp, rabbitmq"
+	return "cron, kafka, nats, redis_streams, sqs_compat, queue, amqp, rabbitmq, realtime"
 }
 
 // validateKindConfig runs the per-kind config check. The cron kind's
@@ -2689,6 +2702,8 @@ func (t Trigger) validateKindConfig(idx int) error {
 			return fmt.Errorf("trigger[%d]: %s config requires non-empty queue", idx, t.Kind)
 		}
 		return nil
+	case TriggerKindRealtime:
+		return t.validateRealtime(idx)
 	}
 	// Unreachable: the outer switch in Validate already rejected
 	// unknown kinds. Returning nil here keeps the linter quiet and

@@ -2696,7 +2696,7 @@ values ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10, $11, $12, $13)
 returning id, account_id, app_id, kind, slug, enabled, config,
           batch_size_max, batch_window_ms, max_attempts,
           cron_id, source, payload_max_bytes, broker_poison_strategy,
-          created_at, updated_at;
+          delivery, created_at, updated_at;
 
 -- name: UpdateTrigger :one
 -- Review finding MED-1 (PR #993): the inline SQL at
@@ -2722,6 +2722,12 @@ returning id, account_id, app_id, kind, slug, enabled, config,
           filter_criteria,
           created_at, updated_at;
 
+-- name: SetTriggerDelivery :execrows
+-- ADR-1321: switch a public trigger between per-record and batch delivery.
+-- The CHECK constraint refuses batch for cron and queue triggers.
+update triggers set delivery = $2, updated_at = now()
+where id = $1 and queue_binding_id is null;
+
 -- name: DeleteTrigger :exec
 delete from triggers where id = $1 and app_id = $2 and queue_binding_id is null;
 
@@ -2735,7 +2741,7 @@ delete from triggers where id = $1 and app_id = $2 and queue_binding_id is null;
 select id, account_id, app_id, kind, slug, enabled, config, queue_binding_id, queue_binding_scope, queue_binding_environment_id,
        batch_size_max, batch_window_ms, max_attempts,
        cron_id, source, payload_max_bytes, broker_poison_strategy,
-       filter_criteria,
+       filter_criteria, delivery,
        created_at, updated_at
 from triggers where id = $1;
 
@@ -2746,7 +2752,7 @@ from triggers where id = $1;
 select id, account_id, app_id, kind, slug, enabled, config, queue_binding_id, queue_binding_scope, queue_binding_environment_id,
        batch_size_max, batch_window_ms, max_attempts,
        cron_id, source, payload_max_bytes, broker_poison_strategy,
-       filter_criteria,
+       filter_criteria, delivery,
        created_at, updated_at
 from triggers where app_id = $1 order by created_at desc;
 
@@ -2762,7 +2768,7 @@ from triggers where app_id = $1 order by created_at desc;
 select id, account_id, app_id, kind, slug, enabled, config, queue_binding_id, queue_binding_scope, queue_binding_environment_id,
        batch_size_max, batch_window_ms, max_attempts,
        cron_id, source, payload_max_bytes, broker_poison_strategy,
-       filter_criteria,
+       filter_criteria, delivery,
        created_at, updated_at
 from triggers where enabled = true AND NOT environment_workload_admission_retired(app_id,queue_binding_scope);
 
@@ -2850,6 +2856,42 @@ UPDATE trigger_records
        last_dispatched_at = now(), next_fire_at = $4, claim_expires_at = NULL
  WHERE id = $1 AND state = 'claimed' AND claim_generation = $2
    AND claim_expires_at > now();
+
+-- name: DeleteExpiredTriggerRecords :execrows
+-- One bounded retention batch: rows past an explicit result_retention_until,
+-- and unpinned terminal rows older than the default ages. Dead letters keep
+-- the longer age; work-policy records keep explicit retention only.
+WITH candidates AS (
+    (SELECT id FROM trigger_records
+      WHERE result_retention_until IS NOT NULL AND result_retention_until <= sqlc.arg(now)::timestamptz
+        AND state IN ('succeeded', 'dead_letter', 'superseded', 'cancelled', 'expired')
+      LIMIT sqlc.arg(batch)::integer)
+    UNION ALL
+    (SELECT id FROM trigger_records
+      WHERE result_retention_until IS NULL AND work_policy_name IS NULL
+        AND state IN ('succeeded', 'superseded', 'cancelled', 'expired')
+        AND coalesce(last_dispatched_at, received_at) < sqlc.arg(terminal_before)::timestamptz
+      LIMIT sqlc.arg(batch)::integer)
+    UNION ALL
+    (SELECT id FROM trigger_records
+      WHERE result_retention_until IS NULL AND work_policy_name IS NULL AND state = 'dead_letter'
+        AND coalesce(last_dispatched_at, received_at) < sqlc.arg(dead_letter_before)::timestamptz
+      LIMIT sqlc.arg(batch)::integer)
+), doomed AS (
+    SELECT r.id FROM trigger_records r WHERE r.id IN (SELECT id FROM candidates)
+     LIMIT sqlc.arg(batch)::integer FOR UPDATE SKIP LOCKED
+)
+DELETE FROM trigger_records USING doomed WHERE trigger_records.id = doomed.id;
+
+-- name: SupersedeTriggerRecordItems :execrows
+-- Ends one realtime delivery's records whatever stage they reached; the
+-- consumer group redelivers under a new item identifier (ADR-1322).
+UPDATE trigger_records
+   SET state = 'superseded', last_error = sqlc.arg(last_error),
+       last_dispatched_at = now(), claim_expires_at = NULL
+ WHERE trigger_id = sqlc.arg(trigger_id)
+   AND item_identifier = ANY(sqlc.arg(item_identifiers)::text[])
+   AND state IN ('pending', 'claimed', 'retry');
 
 -- name: MarkClaimedTriggerRecordDeadLetter :execrows
 UPDATE trigger_records

@@ -38120,6 +38120,46 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/CapacityUnavailable' }
 
+  /v1/apps/{slug}/realtime/endpoints/{id}/occupancy:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/Id32'
+      - name: channel
+        in: query
+        required: true
+        style: form
+        explode: true
+        schema:
+          type: array
+          minItems: 1
+          maxItems: 20
+          items: { type: string, minLength: 1, maxLength: 256, pattern: '^[^/?#\\r\\n ]+$' }
+        description: Channel to count; repeat the parameter for up to 20 channels.
+    get:
+      tags: [realtime]
+      operationId: getManagedRealtimeOccupancy
+      summary: Count a managed realtime channel's subscribers and presence members.
+      description: |
+        Returns fleet-wide counts for each requested channel (ADR-1324).
+        `subscribers` counts every open subscription: WebSocket, read-only
+        ticket and SSE. `presence_members` counts distinct presence members;
+        a principal-scoped member with several connections counts once.
+        Counts are a point-in-time snapshot. `partial` is true when one or
+        more active realtime nodes could not be asked; the counts then cover
+        the nodes that answered.
+      responses:
+        '200':
+          description: Channel occupancy.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedRealtimeOccupancyResponse' }
+        '400': { $ref: '#/components/responses/RealtimeInvalid' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanRealtimeNotAllowed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
   /v1/apps/{slug}/realtime/endpoints/{id}/connections/drain:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -38252,6 +38292,82 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/RealtimeTicketResponse'
+    delete:
+      operationId: revokeRealtimeSubscriptionTickets
+      tags:
+        - realtime
+      summary: Revoke every live subscription ticket of one principal
+      description: Operator preview. Backend-only app-scoped write with MFA, for example at logout. Connections using a revoked ticket close within about a second, when they next re-read their ticket. Expired tickets are not counted.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Application slug owning the endpoint whose principal tickets are revoked.
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Realtime endpoint whose principal tickets are revoked.
+        - name: principal
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 256
+          description: Principal whose tickets are revoked.
+      responses:
+        '200':
+          description: Number of live tickets revoked.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RealtimeTicketsRevokeResponse'
+        '400': { $ref: '#/components/responses/RealtimeInvalid' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanRealtimeNotAllowed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /v1/apps/{slug}/realtime/endpoints/{id}/tickets/{ticket}:
+    delete:
+      operationId: revokeRealtimeSubscriptionTicket
+      tags:
+        - realtime
+      summary: Revoke one subscription ticket
+      description: Operator preview. Backend-only app-scoped write with MFA. Uses the ticket_id returned when the ticket was issued, so the backend never needs to keep the bearer token. Connections using the ticket close within about a second.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Application slug owning the endpoint of the revoked ticket.
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Realtime endpoint that issued the revoked ticket.
+        - name: ticket
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: ticket_id returned when the ticket was issued.
+      responses:
+        '204':
+          description: Ticket revoked.
+        '400': { $ref: '#/components/responses/RealtimeInvalid' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanRealtimeNotAllowed' }
+        '404': { $ref: '#/components/responses/NotFound' }
   /v1/apps/{slug}/realtime/endpoints/{id}/principals/{principal}/access:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -48868,6 +48984,33 @@ paths:
               example: {"items":[{"app_id":"0123456789abcdef0123456789abcdef","day":"2026-07-29","snapshot_bytes":130000000,"layer_bytes":256000000}]}
         '400':
           description: Missing or malformed `day` query parameter on the storage rollup surface.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/usage/realtime:
+    get:
+      tags: [usage]
+      operationId: getRealtimeUsage
+      summary: Realtime connections against the plan's fair-use limit, and recorded usage per hour.
+      description: Realtime is free (ADR-1323). open_connections counts connections on realtime nodes that reported in the last 30 seconds. Hourly usage appears only when the operator records realtime usage; the peak is the most connections open at once in any minute of the hour.
+      parameters:
+        - name: hours
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 744, default: 24 }
+          description: How many most recent UTC hours of usage to return, including the current one.
+      responses:
+        '200':
+          description: Open connections, the plan limit, and hourly usage for the account and each endpoint.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RealtimeUsageResponse'
+        '400':
+          description: The hours query parameter is not a whole number from 1 to 744.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -65993,6 +66136,10 @@ components:
           type: boolean
         capacity_blocked:
           type: boolean
+        trigger_id:
+          type: string
+          format: uuid
+          description: "Realtime trigger consuming this group (ADR-1322). Absent when workers consume it directly."
         lease_seconds:
           type: integer
         max_attempts:
@@ -66404,15 +66551,69 @@ components:
       type: object
       required:
         - ticket
+        - ticket_id
         - expires_at
       properties:
         ticket:
           type: string
           description: Opaque bearer credential returned once; store only in client memory.
+        ticket_id:
+          type: string
+          format: uuid
+          description: Identifies the ticket for revocation; safe to log and store.
         expires_at:
           type: string
           format: date-time
       description: Realtime Ticket Response.
+    RealtimeUsageHour:
+      type: object
+      required: [hour, peak_connections, connection_seconds, delivered_messages, delivered_bytes, received_messages, received_bytes]
+      properties:
+        hour: { type: string, format: date-time, description: Start of the UTC hour. }
+        peak_connections: { type: integer, format: int64, minimum: 0, description: Most connections open at once in any minute of the hour. }
+        connection_seconds: { type: integer, format: int64, minimum: 0, description: Connections held multiplied by seconds. }
+        delivered_messages: { type: integer, format: int64, minimum: 0, description: Messages sent to clients, one per recipient. }
+        delivered_bytes: { type: integer, format: int64, minimum: 0, description: Bytes of delivered messages. }
+        received_messages: { type: integer, format: int64, minimum: 0, description: Client messages forwarded to the app. }
+        received_bytes: { type: integer, format: int64, minimum: 0, description: Bytes of received client messages. }
+      description: Realtime usage in one UTC hour.
+    RealtimeEndpointUsageHour:
+      allOf:
+        - $ref: '#/components/schemas/RealtimeUsageHour'
+        - type: object
+          required: [endpoint_id, app_id]
+          properties:
+            endpoint_id: { type: string, description: Realtime endpoint. }
+            app_id: { type: string, description: App that owns the endpoint. }
+      description: One endpoint's realtime usage in one UTC hour.
+    RealtimeUsageResponse:
+      type: object
+      required: [plan, connection_limit, open_connections, from, to, hours, endpoints]
+      properties:
+        plan: { type: string, description: The account's plan. }
+        connection_limit: { type: integer, minimum: 0, description: Concurrent connections the plan allows per account; zero when the plan has no realtime. }
+        open_connections: { type: integer, format: int64, minimum: 0, description: Connections open now on nodes that reported in the last 30 seconds. }
+        from: { type: string, format: date-time, description: Start of the first hour returned. }
+        to: { type: string, format: date-time, description: End of the last hour returned (exclusive). }
+        hours:
+          type: array
+          items: { $ref: '#/components/schemas/RealtimeUsageHour' }
+          description: Account usage per hour, oldest first.
+        endpoints:
+          type: array
+          items: { $ref: '#/components/schemas/RealtimeEndpointUsageHour' }
+          description: Usage per endpoint and hour, oldest first.
+      description: An account's realtime usage against its fair-use limits.
+    RealtimeTicketsRevokeResponse:
+      type: object
+      required:
+        - revoked
+      properties:
+        revoked:
+          type: integer
+          minimum: 0
+          description: Live tickets revoked.
+      description: Result of revoking a principal's subscription tickets.
     RealtimeChannelWebhookFilter:
       type: object
       additionalProperties: false
@@ -96469,10 +96670,30 @@ components:
     # same batch / filter / retry / ReportBatchItemFailures machinery;
     # cron retains its pre-existing (schedule, path) shape.
 
+    RealtimeTriggerConfig:
+      description: |
+        Config of a `kind: realtime` trigger (ADR-1322). Each message of the bound consumer group is delivered as one
+        invocation. The group must already exist in the caller's account with `lease_seconds` of at least 120, and binds
+        to at most one trigger; while bound, direct claims and settlements return 409 `realtime_group_bound_to_trigger`.
+        The group's ordering, filters, retry policy and dead-letter queue govern delivery. The binding is immutable;
+        only `max_concurrency` can change.
+      type: object
+      additionalProperties: false
+      required: [endpoint_id, channel, group]
+      properties:
+        endpoint_id: { type: string, format: uuid }
+        channel: { type: string, minLength: 1, maxLength: 256 }
+        group: { type: string, minLength: 1, maxLength: 128 }
+        max_concurrency:
+          type: integer
+          minimum: 0
+          maximum: 32
+          description: "Parallel invocations; 0 means 1. Also capped by the plan's concurrency."
+
     TriggerKind:
       description: "Discriminator for the underlying event source."
       type: string
-      enum: [cron, kafka, nats, redis_streams, sqs_compat, queue]
+      enum: [cron, kafka, nats, redis_streams, sqs_compat, queue, realtime]
 
     Trigger:
       description: |
@@ -96523,6 +96744,10 @@ components:
           minimum: 1
           maximum: 25
           description: "Omitted create values use min(5, the account plan cap)."
+        delivery:
+          type: string
+          enum: [record, batch]
+          description: "record invokes the function once per record; batch invokes it once per dispatch batch with every record (ADR-1321)."
         retry_policy:
           allOf:
             - $ref: '#/components/schemas/RetryPolicyDTO'
@@ -96605,10 +96830,18 @@ components:
         config:
           type: object
           additionalProperties: true
-          description: "Per-kind opaque config blob. Kafka password and client_key leaves are plaintext-on-write and sealed before persistence."
+          description: |
+            Per-kind opaque config blob. Kafka password and client_key leaves are plaintext-on-write and sealed before persistence.
+            For `kind: realtime` (ADR-1322) the shape is `RealtimeTriggerConfig`; `batch_window_ms`, `max_attempts`,
+            `retry_policy`, `broker_poison_strategy` and `filter_criteria` are rejected because the bound consumer group owns them,
+            and `batch_size_max` may only be 1.
         batch_size_max: { type: [integer, "null"], minimum: 1, maximum: 5000 }
         batch_window_ms: { type: [integer, "null"], minimum: 10, maximum: 600000 }
         max_attempts: { type: [integer, "null"], minimum: 1, maximum: 25 }
+        delivery:
+          type: string
+          enum: [record, batch]
+          description: "Defaults to record. batch delivers every claimed record in one invocation; not available for cron or queue triggers (ADR-1321)."
         retry_policy:
           allOf:
             - $ref: '#/components/schemas/RetryPolicyDTO'
@@ -96647,6 +96880,10 @@ components:
         batch_size_max: { type: [integer, "null"], minimum: 1, maximum: 5000 }
         batch_window_ms: { type: [integer, "null"], minimum: 10, maximum: 600000 }
         max_attempts: { type: [integer, "null"], minimum: 1, maximum: 25 }
+        delivery:
+          type: string
+          enum: [record, batch]
+          description: "Switch between record and batch delivery; not available for cron or queue triggers (ADR-1321)."
         retry_policy:
           allOf:
             - $ref: '#/components/schemas/RetryPolicyDTO'
@@ -110594,6 +110831,27 @@ components:
         truncated: { type: boolean }
         next_cursor: { type: string, maxLength: 2048, description: Opaque cursor for the next page when truncated is true. }
         partial: { type: boolean, description: True when one or more active realtime nodes did not answer. }
+        nodes_queried: { type: integer, minimum: 0 }
+        nodes_unavailable: { type: integer, minimum: 0 }
+
+    ManagedRealtimeChannelOccupancy:
+      type: object
+      description: Fleet-wide subscription and presence counts for one channel.
+      required: [channel, subscribers, presence_members]
+      properties:
+        channel: { type: string, minLength: 1, maxLength: 256 }
+        subscribers: { type: integer, minimum: 0, description: Open subscriptions on every transport (WebSocket, read-only ticket, SSE). }
+        presence_members: { type: integer, minimum: 0, description: Distinct presence members; a principal-scoped member counts once. }
+
+    ManagedRealtimeOccupancyResponse:
+      type: object
+      description: Point-in-time channel occupancy across the realtime fleet.
+      required: [channels, partial, nodes_queried, nodes_unavailable]
+      properties:
+        channels:
+          type: array
+          items: { $ref: '#/components/schemas/ManagedRealtimeChannelOccupancy' }
+        partial: { type: boolean, description: True when some active realtime nodes did not answer and counts may be low. }
         nodes_queried: { type: integer, minimum: 0 }
         nodes_unavailable: { type: integer, minimum: 0 }
 

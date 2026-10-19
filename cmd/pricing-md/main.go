@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -69,10 +70,36 @@ func render() string {
 		}
 		fmt.Fprintf(&b, "| **%s** | %d | %s |\n", titlePlan(plan), l.DeveloperApps, formatDuration(l.DeveloperLeaseMaxHours*3600))
 	}
+	b.WriteString("\n## Managed realtime\n\n")
+	b.WriteString("Realtime is included on every paid plan at no extra charge: Gregale bills compute, and channels, consumer groups and delivery are software. Limits apply only where realtime holds real capacity. Retained history is bounded per endpoint, and functions triggered by channel messages bill as normal compute.\n\n")
+	b.WriteString("| Plan | Endpoints per app | Endpoints per account | Concurrent connections per account |\n")
+	b.WriteString("|---|---:|---:|---:|\n")
+	for _, plan := range api.Plans {
+		rl, ok := api.RealtimeLimitsFor(plan)
+		if !ok {
+			continue
+		}
+		if rl.EndpointsPerApp == 0 {
+			fmt.Fprintf(&b, "| **%s** | — | — | — |\n", titlePlan(plan))
+			continue
+		}
+		fmt.Fprintf(&b, "| **%s** | %d | %d | %s |\n", titlePlan(plan), rl.EndpointsPerApp, rl.EndpointsPerAccount, formatCount(rl.ConnectionsPerAccount))
+	}
+	fmt.Fprintf(&b, "\nThe connection limit counts open WebSocket and SSE connections across all of an account's endpoints. One account may also hold at most %d%% of a single realtime node's connections; see [realtime fair use](realtime.md#fair-use-limits).\n",
+		api.RealtimeAccountNodeSharePercent)
 	b.WriteString("\n## Choose a plan\n\n")
 	b.WriteString("Start on **Free** for a small public API or a trial. **Hobby** unlocks the paid observability, async, and data surfaces. **Pro** is the normal production tier for teams, while **Scale** raises the app, concurrency, RAM, and usage ceilings. Feature maturity and entitlement are listed in the [capability matrix](capabilities.md).\n\n")
 	b.WriteString("Plan changes are safe to preview with `gregale plan`; quota errors include the exact observed value, limit, and next action.\n")
 	return b.String()
+}
+
+// formatCount groups thousands with commas, e.g. 5000 → "5,000".
+func formatCount(n int) string {
+	s := strconv.Itoa(n)
+	for i := len(s) - 3; i > 0; i -= 3 {
+		s = s[:i] + "," + s[i:]
+	}
+	return s
 }
 
 func titlePlan(plan api.Plan) string {

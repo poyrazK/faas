@@ -1404,8 +1404,31 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("gatewayd: open db: %w", err)
 	}
-	defer pool.Close()
+	return runThenClosePool(ctx, log, pool.Close, func(ctx context.Context) error {
+		return runOnPool(ctx, log, pool)
+	})
+}
 
+// runThenClosePool runs body under a context that ends when body returns,
+// and closes the pool only after that. Goroutines body starts hold pooled
+// connections until their context ends (the notify hub's LISTEN connection,
+// the repair pollers), and pgxpool.Close waits for every one of them. Closing
+// first left a gateway that failed to start hanging instead of exiting, with
+// its error never logged. The error is logged before this cleanup so it
+// reaches the journal even if a close stalls.
+func runThenClosePool(ctx context.Context, log *slog.Logger, closePool func(), body func(context.Context) error) error {
+	bodyCtx, stop := context.WithCancel(ctx)
+	err := body(bodyCtx)
+	if err != nil {
+		log.Error("gatewayd-internal: stopping after error", "err", err)
+	}
+	stop()
+	closePool()
+	return err
+}
+
+// runOnPool is run's body; runThenClosePool owns the pool's lifetime.
+func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error {
 	cfg, err := LoadConfig(configPath)
 	if err != nil {
 		return err

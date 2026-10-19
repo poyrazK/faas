@@ -1936,8 +1936,8 @@ func validateSingleAppManifestTargets(cwd, slug string) error {
 		if trigger.App != slug {
 			return fmt.Errorf("trigger %d targets app %q, but this single-app deploy targets %q; fix the app name or use --project", i+1, trigger.App, slug)
 		}
-		if trigger.Kind != gregalemanifest.TriggerKindCron {
-			return fmt.Errorf("trigger %d uses kind %q; deploy does not reconcile non-cron manifest triggers yet; pass --no-triggers and create it with `gregale triggers add` after deployment", i+1, trigger.Kind)
+		if trigger.Kind != gregalemanifest.TriggerKindCron && trigger.Kind != gregalemanifest.TriggerKindRealtime {
+			return fmt.Errorf("trigger %d uses kind %q; deploy reconciles cron and realtime manifest triggers only; pass --no-triggers and create it with `gregale triggers add` after deployment", i+1, trigger.Kind)
 		}
 	}
 	for i, route := range m.AsyncRoutes {
@@ -2015,7 +2015,17 @@ func deployManifestTriggersWithRollback(ctx context.Context, client manifestCron
 	if err := m.Validate(); err != nil {
 		return txn, err
 	}
-	return reconcileManifestCronsWithRollback(ctx, client, slug, m)
+	txn, err = reconcileManifestCronsWithRollback(ctx, client, slug, m)
+	if err != nil {
+		return txn, err
+	}
+	if err := reconcileManifestRealtimeTriggers(ctx, client, slug, m, txn); err != nil {
+		if rollbackErr := txn.rollback(ctx); rollbackErr != nil {
+			err = errors.Join(err, fmt.Errorf("roll back manifest triggers: %w", rollbackErr))
+		}
+		return &manifestCronTransaction{}, err
+	}
+	return txn, nil
 }
 
 // reconcileManifestCronsWithRollback is deployManifestTriggersWithRollback

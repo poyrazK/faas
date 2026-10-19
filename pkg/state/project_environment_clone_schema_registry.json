@@ -8718,7 +8718,8 @@
       "priority_metadata_key",
       "priority_turn",
       "retry_policy",
-      "throttled_claim_requests"
+      "throttled_claim_requests",
+      "trigger_id"
     ],
     "kind": "configuration"
   },
@@ -9257,6 +9258,7 @@
       "channels",
       "endpoint_id",
       "expires_at",
+      "id",
       "issued_at",
       "principal",
       "token_hash"
@@ -13739,6 +13741,42 @@
     "kind": "configuration"
   },
   {
+    "table": "realtime_node_connection_syncs",
+    "columns": [
+      "node_name",
+      "synced_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "realtime_node_connections",
+    "columns": [
+      "account_id",
+      "connections",
+      "node_name"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "realtime_usage_hours",
+    "columns": [
+      "account_id",
+      "app_id",
+      "connection_seconds",
+      "delivered_bytes",
+      "delivered_messages",
+      "endpoint_id",
+      "hour",
+      "incarnation",
+      "minute_peak_connections",
+      "node_name",
+      "received_bytes",
+      "received_messages",
+      "reported_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "recent_build_claims",
     "columns": [
       "account_id",
@@ -15143,6 +15181,7 @@
       "config",
       "created_at",
       "cron_id",
+      "delivery",
       "enabled",
       "filter_criteria",
       "id",

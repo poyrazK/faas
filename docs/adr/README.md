@@ -1,5 +1,6 @@
 # Architecture Decision Records
 
+- [Tenant egress denies the NAT64 prefixes](20261018194214-tenant-egress-deny-nat64.md)
 - [ADR-1745: Shared-window compound Issues alerts](1745-shared-window-issue-compound-alerts.md)
 - [ADR-1744: Offline grouping previews and reviewed regression baselines](1744-issue-grouping-previews-and-baselines.md)
 - [ADR-1743: Publish final Node build source maps with build completion](1743-builder-issue-source-map-publication.md)
@@ -1193,6 +1194,10 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-1115: HTTP SSE subscriptions for retained realtime channels](1115-realtime-sse-subscriptions.md)
 - [ADR-1116: Transactional retained-channel webhooks](1116-realtime-channel-webhooks.md)
 - [ADR-1117: Short-lived channel subscription tickets](1117-realtime-subscription-tickets.md)
+- [ADR-1322: Realtime channels as function triggers](1322-realtime-channel-function-triggers.md)
+- [ADR-1323: Realtime is free, with fair-use limits](1323-realtime-usage-metering-and-plan-limits.md)
+- [ADR-1324: Realtime channel occupancy](1324-realtime-channel-occupancy.md)
+- [ADR-1321: Batched trigger delivery](1321-batched-trigger-delivery.md)
 - [ADR-1027: Receive-only SDK transport fallback](1027-realtime-transport-fallback.md)
 - [ADR-1028: Realtime event inspector](1028-realtime-event-inspector.md)
 - [ADR 1029: Backend-visible channel processing acknowledgements](1029-realtime-processing-acknowledgement-status.md)

@@ -1795,6 +1795,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// ADR-134 PR-B / EPIC #1278: expire async invocations and route
 		// deadline-breached rows through their configured failure destination.
 		WithInvocationsRetention(sched.NewInvocationsRetention(store, log)).
+		// Terminal trigger_records past their explicit retention or the
+		// default ages in pkg/api (TriggerRecordRetention and
+		// TriggerDeadLetterRetention). Off until
+		// FAAS_TRIGGER_LEDGER_RETENTION_ENABLED=1; nil opts out.
+		WithTriggersRetention(triggersRetention(store, log, os.Getenv("FAAS_TRIGGER_LEDGER_RETENTION_ENABLED"))).
 		WithHeartbeat(hb).
 		WithInstanceStats(statsPoller).
 		WithInstanceActivity(autoscaleReader).
@@ -2549,6 +2554,16 @@ func workflowsDispatchEnabled(value string) bool {
 // only the explicit value 1 enables the scheduler during rollout.
 func prewarmEnabled(value string) bool {
 	return strings.TrimSpace(value) == "1"
+}
+
+// triggersRetention returns the trigger-ledger reaper when value is exactly
+// "1". It deletes terminal rows past their explicit retention or the default
+// ages, so it stays off until trigger ledgers have been tested end to end.
+func triggersRetention(store state.Store, log *slog.Logger, value string) *sched.TriggersRetention {
+	if strings.TrimSpace(value) != "1" {
+		return nil
+	}
+	return sched.NewTriggersRetention(store, log)
 }
 
 // subscribeWithReconnect drains a pg_notify-style feed via the
