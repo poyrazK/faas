@@ -31,6 +31,11 @@ type PlatformTenantPlan struct {
 	// tiers price a month (ADR-1309); empty means request and graduated.
 	Unit     string
 	TierMode string
+	// Monthly base fee and minimum spend the plan's card charges
+	// (ADR-1322), optionally prorated in a tenant's first month (ADR-1325).
+	BaseFeeMillicentsPerMonth int64
+	MinimumMillicentsPerMonth int64
+	ProrateMonthlyFees        bool
 	// MaxRequestsPerMinute and MaxRequestsPerDay are set together, or
 	// both nil when the plan leaves the tenant's budget alone (ADR-240).
 	MaxRequestsPerMinute *int64
@@ -85,7 +90,8 @@ func ValidatePlatformTenantPlan(p PlatformTenantPlan) error {
 	if !platformTenantPlanNameRE.MatchString(p.Name) {
 		return fmt.Errorf("%w: plan name must be 1-63 lowercase letters, digits or hyphens", ErrInvalidArgument)
 	}
-	if !isUpperASCIICurrency(p.Currency) || p.PriceMillicentsPerUnit < 0 || p.IncludedUnitsPerMonth < 0 {
+	if !isUpperASCIICurrency(p.Currency) || p.PriceMillicentsPerUnit < 0 || p.IncludedUnitsPerMonth < 0 ||
+		p.BaseFeeMillicentsPerMonth < 0 || p.MinimumMillicentsPerMonth < 0 {
 		return fmt.Errorf("%w: invalid plan price", ErrInvalidArgument)
 	}
 	if len(p.Tiers) > 0 && p.IncludedUnitsPerMonth != 0 {
@@ -98,7 +104,7 @@ func ValidatePlatformTenantPlan(p PlatformTenantPlan) error {
 		return fmt.Errorf("%w: %w", ErrInvalidArgument, err)
 	}
 	if p.Unit != "" && (!ValidAPIConsumerRateCardUnit(p.Unit) || (p.Unit != PlatformTenantRateCardUnitRequest && len(p.RouteWeights) > 0)) {
-		return fmt.Errorf("%w: unit must be request, compute_second or response_megabyte, and route weights apply to request plans only", ErrInvalidArgument)
+		return fmt.Errorf("%w: unit must be request, compute_second, response_megabyte or app:<meter>, and route weights apply to request plans only", ErrInvalidArgument)
 	}
 	if _, err := normalizeRateCardTierMode(p.TierMode, p.Tiers); err != nil {
 		return err

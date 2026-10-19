@@ -31,14 +31,11 @@
       "id": "api-monetization",
       "name": "API monetization",
       "category": "billing",
-      "description": "Identify your API's consumers with keys, package prices and edge-enforced request limits as named plans that warn consumers before their cap, price usage per request, compute second, response megabyte or unit your app reports, several at once, with versioned rate cards (monthly included units, graduated or volume tiers, per-route weights, base fees, minimum spend and free trials, per app or per customer with reusable customer plans), bill every customer's month in one run, sell prepaid credit and cap each customer's monthly spend, and send the statements to your own Stripe, Paddle or Lago as invoices your provider can also send, charge and tax, whose payment status Gregale follows and can block unpaid customers on. Usage is durable before a billed response completes.",
-      "maturity": "beta",
-      "plans": [
-        "hobby",
-        "pro",
-        "scale"
-      ],
+      "description": "Identify your API's consumers with keys, package prices and edge-enforced request limits as named plans that warn consumers before their cap, price usage per request, compute second, response megabyte or unit your app reports, several at once, with versioned rate cards (monthly included units, graduated or volume tiers, per-route weights, base fees and minimum spend optionally prorated, and free trials, per app or per customer with reusable customer plans), bill every customer's month in one run, sell prepaid credit and cap each customer's monthly spend, and send the statements to your own Stripe, Paddle or Lago as invoices your provider can also send, charge and tax, whose payment status Gregale follows and can block unpaid customers on. Usage is durable before a billed response completes.",
+      "maturity": "internal",
+      "plans": [],
       "docs_url": "/docs/api-monetization",
+      "operator_flag": "FAAS_API_MONETIZATION_ENABLED",
       "acceptance_test": "pkg/apid/apidserver/billing_runs_test.go::TestBillingRunExportsEveryCustomer"
     },
     {

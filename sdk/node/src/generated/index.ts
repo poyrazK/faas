@@ -1983,6 +1983,7 @@ export type { PlatformTenantActivationSurfaceResponse } from './models/PlatformT
 export type { PlatformTenantActivityFilters } from './models/PlatformTenantActivityFilters.js';
 export type { PlatformTenantActivityItem } from './models/PlatformTenantActivityItem.js';
 export type { PlatformTenantActivityResponse } from './models/PlatformTenantActivityResponse.js';
+export type { PlatformTenantBillingPolicyResponse } from './models/PlatformTenantBillingPolicyResponse.js';
 export type { PlatformTenantConsumerProvisioningPolicyResponse } from './models/PlatformTenantConsumerProvisioningPolicyResponse.js';
 export type { PlatformTenantCredentialIntent } from './models/PlatformTenantCredentialIntent.js';
 export type { PlatformTenantCredentialMetadata } from './models/PlatformTenantCredentialMetadata.js';
@@ -2001,6 +2002,8 @@ export type { PlatformTenantOffboardingPlanResponse } from './models/PlatformTen
 export type { PlatformTenantOffboardingReceiptListResponse } from './models/PlatformTenantOffboardingReceiptListResponse.js';
 export type { PlatformTenantOffboardingReceiptResponse } from './models/PlatformTenantOffboardingReceiptResponse.js';
 export type { PlatformTenantOffboardingReceiptSummary } from './models/PlatformTenantOffboardingReceiptSummary.js';
+export type { PlatformTenantOverdueHoldListResponse } from './models/PlatformTenantOverdueHoldListResponse.js';
+export type { PlatformTenantOverdueHoldResponse } from './models/PlatformTenantOverdueHoldResponse.js';
 export type { PlatformTenantPlanAssignmentListResponse } from './models/PlatformTenantPlanAssignmentListResponse.js';
 export type { PlatformTenantPlanAssignmentResponse } from './models/PlatformTenantPlanAssignmentResponse.js';
 export type { PlatformTenantPlanBudget } from './models/PlatformTenantPlanBudget.js';
@@ -2038,6 +2041,7 @@ export type { PlatformTenantStatementSummaryResponse } from './models/PlatformTe
 export type { PlatformTenantSurfaceCertificateChangedWebhookPayload } from './models/PlatformTenantSurfaceCertificateChangedWebhookPayload.js';
 export type { PlatformTenantSurfaceDeploymentChangedWebhookPayload } from './models/PlatformTenantSurfaceDeploymentChangedWebhookPayload.js';
 export type { PlatformTenantSurfaceResponse } from './models/PlatformTenantSurfaceResponse.js';
+export type { PlatformTenantTrialResponse } from './models/PlatformTenantTrialResponse.js';
 export type { PlatformTenantUsageBucketResponse } from './models/PlatformTenantUsageBucketResponse.js';
 export type { PlatformTenantUsageResponse } from './models/PlatformTenantUsageResponse.js';
 export type { PlatformTenantWebhookListResponse } from './models/PlatformTenantWebhookListResponse.js';

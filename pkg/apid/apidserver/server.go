@@ -1972,6 +1972,14 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/account/platform-tenants/{id}/plan-assignments", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.tenantPlans.ListAssignments))))
 	mux.HandleFunc("POST /v1/account/platform-tenants/{id}/plan-assignments", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.tenantPlans.AssignPlan)))))
 	mux.HandleFunc("POST /v1/account/platform-tenants/{id}/rate-cards", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createPlatformTenantRateCard)))))
+	// ADR-1322, ADR-1324: tenant trials and the account's tenant overdue rule.
+	mux.HandleFunc("GET /v1/account/platform-tenants/{id}/trial", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.consumerControls.GetTenantTrial))))
+	mux.HandleFunc("PUT /v1/account/platform-tenants/{id}/trial", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.consumerControls.PutTenantTrial))))
+	mux.HandleFunc("DELETE /v1/account/platform-tenants/{id}/trial", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.consumerControls.EndTenantTrial))))
+	mux.HandleFunc("GET /v1/account/platform-tenant-billing-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.consumerControls.GetTenantBillingPolicy))))
+	mux.HandleFunc("PUT /v1/account/platform-tenant-billing-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.consumerControls.PutTenantBillingPolicy))))
+	mux.HandleFunc("DELETE /v1/account/platform-tenant-billing-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.consumerControls.DeleteTenantBillingPolicy))))
+	mux.HandleFunc("GET /v1/account/platform-tenant-overdue-holds", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.consumerControls.ListTenantOverdueHolds))))
 	mux.HandleFunc("GET /v1/account/platform-tenants/{id}/usage-statements", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listPlatformTenantStatements))))
 	mux.HandleFunc("POST /v1/account/platform-tenants/{id}/usage-statements", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createPlatformTenantStatement)))))
 	mux.HandleFunc("GET /v1/account/platform-tenants/{id}/usage-statements/{statement_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getPlatformTenantStatement))))
@@ -4927,10 +4935,13 @@ func (s *server) handler() http.Handler {
 	// /v1/openapi.yaml and /v1/openapi.json let SDK codegen and
 	// `curl` reach the same spec the repo CI gate (make spec-check)
 	// keeps the code aligned to.
-	mux.HandleFunc("GET /v1/openapi.yaml", apid.ServeOpenAPISpec)
-	mux.HandleFunc("GET /v1/openapi.json", apid.ServeOpenAPISpecJSON)
-	mux.HandleFunc("GET /docs", apid.ServeDocs)
-	mux.HandleFunc("GET /docs/", apid.ServeDocs)
+	// The served spec publishes API monetization only while it is released
+	// (ADR-20261018090210).
+	openAPI := apid.OpenAPI{Monetization: s.apiMonetizationEnabled}
+	mux.HandleFunc("GET /v1/openapi.yaml", openAPI.ServeYAML)
+	mux.HandleFunc("GET /v1/openapi.json", openAPI.ServeJSON)
+	mux.HandleFunc("GET /docs", openAPI.ServeDocs)
+	mux.HandleFunc("GET /docs/", openAPI.ServeDocs)
 
 	// observeWrap (the outermost layer) feeds apid_ops_total +
 	// apid_op_duration_seconds. It's last so it sees the final
@@ -4948,11 +4959,11 @@ func (s *server) handler() http.Handler {
 	// + JSON so the gate is unconditionally true.
 	return middleware.RequestID(httpsec.Static(httpsec.Nonce(
 		func(*http.Request) bool { return true },
-		s.observeWrap(s.hosting.HideDisabled(operation.OperationCustomerCORS(s.productControl.SurfaceGate(ciapi.HideDisabledRoutes(
+		s.observeWrap(s.hosting.HideDisabled(s.hideDisabledMonetization(operation.OperationCustomerCORS(s.productControl.SurfaceGate(ciapi.HideDisabledRoutes(
 			func() ci.Config { return s.ciConfig }, apiContractHandler(mux, func(r *http.Request) bool {
 				return s.durable.Hidden(r) || s.liveRollout.Hidden(r)
 			}),
-		))))),
+		)))))),
 	)))
 }
 

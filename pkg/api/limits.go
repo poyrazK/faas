@@ -597,12 +597,13 @@ const (
 	ConsumerSpendCapBatchSize     = 500
 )
 
-// Consumer controls (ADR-1314, ADR-1315).
+// Consumer and platform tenant controls (ADR-1314, ADR-1315, ADR-1322,
+// ADR-1324).
 const (
-	// ConsumerTrialMaxDays bounds one consumer's free trial.
+	// ConsumerTrialMaxDays bounds one consumer's or tenant's free trial.
 	ConsumerTrialMaxDays = 365
 	// ConsumerOverdueBlockMaxDays bounds how long after its due date an
-	// unpaid invoice blocks its consumer.
+	// unpaid invoice blocks its consumer or tenant.
 	ConsumerOverdueBlockMaxDays = 365
 	// apid recomputes overdue holds this often; payment status itself is
 	// synced on the ADR-1504 schedule.

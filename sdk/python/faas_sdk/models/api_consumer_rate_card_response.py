@@ -40,6 +40,8 @@ class APIConsumerRateCardResponse:
     """The card's fixed monthly charge per consumer (ADR-1316)."""
     minimum_millicents_per_month: int | Unset = UNSET
     """The card's minimum monthly usage charge per consumer (ADR-1316)."""
+    prorate_monthly_fees: bool | Unset = UNSET
+    """Whether a consumer's first-month fees are prorated (ADR-1325)."""
     tiers: list[APIConsumerRateCardTier] | Unset = UNSET
     tier_mode: APIConsumerRateCardResponseTierMode | Unset = UNSET
     """How the ladder prices a consumer's month (ADR-1309)."""
@@ -68,6 +70,8 @@ class APIConsumerRateCardResponse:
         base_fee_millicents_per_month = self.base_fee_millicents_per_month
 
         minimum_millicents_per_month = self.minimum_millicents_per_month
+
+        prorate_monthly_fees = self.prorate_monthly_fees
 
         tiers: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.tiers, Unset):
@@ -106,6 +110,8 @@ class APIConsumerRateCardResponse:
             field_dict["base_fee_millicents_per_month"] = base_fee_millicents_per_month
         if minimum_millicents_per_month is not UNSET:
             field_dict["minimum_millicents_per_month"] = minimum_millicents_per_month
+        if prorate_monthly_fees is not UNSET:
+            field_dict["prorate_monthly_fees"] = prorate_monthly_fees
         if tiers is not UNSET:
             field_dict["tiers"] = tiers
         if tier_mode is not UNSET:
@@ -142,6 +148,8 @@ class APIConsumerRateCardResponse:
         base_fee_millicents_per_month = d.pop("base_fee_millicents_per_month", UNSET)
 
         minimum_millicents_per_month = d.pop("minimum_millicents_per_month", UNSET)
+
+        prorate_monthly_fees = d.pop("prorate_monthly_fees", UNSET)
 
         _tiers = d.pop("tiers", UNSET)
         tiers: list[APIConsumerRateCardTier] | Unset = UNSET
@@ -184,6 +192,7 @@ class APIConsumerRateCardResponse:
             created_at=created_at,
             base_fee_millicents_per_month=base_fee_millicents_per_month,
             minimum_millicents_per_month=minimum_millicents_per_month,
+            prorate_monthly_fees=prorate_monthly_fees,
             tiers=tiers,
             tier_mode=tier_mode,
             route_weights=route_weights,

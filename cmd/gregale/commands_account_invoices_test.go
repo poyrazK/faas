@@ -13,6 +13,7 @@ import (
 // adr: 1504 — invoices pages through every exported invoice with its
 // payment status, marking overdue ones.
 func TestCmdAccountInvoices(t *testing.T) {
+	t.Setenv("FAAS_API_MONETIZATION_ENABLED", "1") // adr: 20261018090210 — exercises released monetization
 	var statuses []string
 	remaining := int64(375)
 	due := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)

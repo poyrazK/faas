@@ -13,7 +13,7 @@ import (
 func TestEnforceConsumerOverdueHold(t *testing.T) {
 	due := time.Date(2026, 9, 30, 0, 0, 0, 0, time.UTC)
 	store := &fakeConsumerPlanStore{policy: ConsumerPlanPolicy{OverdueBlocked: true, OverdueDueAt: due}}
-	h := (&Handler{}).WithConsumerPlanStore(store)
+	h := (&Handler{apiMonetization: monetizationOn}).WithConsumerPlanStore(store)
 	w, r := httptest.NewRecorder(), planRequest("GET /items")
 	if h.enforceConsumerPlan(w, r, &statusRecorder{}, App{ID: "app-1", AccountID: "acct-1"}, false) {
 		t.Fatal("overdue consumer admitted")

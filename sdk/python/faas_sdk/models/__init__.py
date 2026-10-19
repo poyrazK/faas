@@ -926,7 +926,6 @@ from .create_platform_tenant_access_token_response_scopes_item import CreatePlat
 from .create_platform_tenant_rate_card_request import CreatePlatformTenantRateCardRequest
 from .create_platform_tenant_rate_card_request_route_weights import CreatePlatformTenantRateCardRequestRouteWeights
 from .create_platform_tenant_rate_card_request_tier_mode import CreatePlatformTenantRateCardRequestTierMode
-from .create_platform_tenant_rate_card_request_unit import CreatePlatformTenantRateCardRequestUnit
 from .create_platform_tenant_request import CreatePlatformTenantRequest
 from .create_platform_tenant_self_consumer_request import CreatePlatformTenantSelfConsumerRequest
 from .create_platform_tenant_self_hostname_request import CreatePlatformTenantSelfHostnameRequest
@@ -3894,6 +3893,7 @@ from .platform_tenant_activation_surface_response import PlatformTenantActivatio
 from .platform_tenant_activity_filters import PlatformTenantActivityFilters
 from .platform_tenant_activity_item import PlatformTenantActivityItem
 from .platform_tenant_activity_response import PlatformTenantActivityResponse
+from .platform_tenant_billing_policy_response import PlatformTenantBillingPolicyResponse
 from .platform_tenant_consumer_provisioning_policy_response import PlatformTenantConsumerProvisioningPolicyResponse
 from .platform_tenant_credential_intent import PlatformTenantCredentialIntent
 from .platform_tenant_credential_intent_scopes_item import PlatformTenantCredentialIntentScopesItem
@@ -3924,6 +3924,8 @@ from .platform_tenant_offboarding_plan_response_status import PlatformTenantOffb
 from .platform_tenant_offboarding_receipt_list_response import PlatformTenantOffboardingReceiptListResponse
 from .platform_tenant_offboarding_receipt_response import PlatformTenantOffboardingReceiptResponse
 from .platform_tenant_offboarding_receipt_summary import PlatformTenantOffboardingReceiptSummary
+from .platform_tenant_overdue_hold_list_response import PlatformTenantOverdueHoldListResponse
+from .platform_tenant_overdue_hold_response import PlatformTenantOverdueHoldResponse
 from .platform_tenant_plan_assignment_list_response import PlatformTenantPlanAssignmentListResponse
 from .platform_tenant_plan_assignment_response import PlatformTenantPlanAssignmentResponse
 from .platform_tenant_plan_budget import PlatformTenantPlanBudget
@@ -3931,17 +3933,14 @@ from .platform_tenant_plan_list_response import PlatformTenantPlanListResponse
 from .platform_tenant_plan_request import PlatformTenantPlanRequest
 from .platform_tenant_plan_request_route_weights import PlatformTenantPlanRequestRouteWeights
 from .platform_tenant_plan_request_tier_mode import PlatformTenantPlanRequestTierMode
-from .platform_tenant_plan_request_unit import PlatformTenantPlanRequestUnit
 from .platform_tenant_plan_response import PlatformTenantPlanResponse
 from .platform_tenant_plan_response_route_weights import PlatformTenantPlanResponseRouteWeights
 from .platform_tenant_plan_response_tier_mode import PlatformTenantPlanResponseTierMode
-from .platform_tenant_plan_response_unit import PlatformTenantPlanResponseUnit
 from .platform_tenant_publish_event_response import PlatformTenantPublishEventResponse
 from .platform_tenant_rate_card_list_response import PlatformTenantRateCardListResponse
 from .platform_tenant_rate_card_response import PlatformTenantRateCardResponse
 from .platform_tenant_rate_card_response_route_weights import PlatformTenantRateCardResponseRouteWeights
 from .platform_tenant_rate_card_response_tier_mode import PlatformTenantRateCardResponseTierMode
-from .platform_tenant_rate_card_response_unit import PlatformTenantRateCardResponseUnit
 from .platform_tenant_reconciliation_applied_webhook_payload import PlatformTenantReconciliationAppliedWebhookPayload
 from .platform_tenant_reconciliation_apply_response import PlatformTenantReconciliationApplyResponse
 from .platform_tenant_reconciliation_plan_change import PlatformTenantReconciliationPlanChange
@@ -3998,6 +3997,7 @@ from .platform_tenant_surface_deployment_changed_webhook_payload_deployment_stat
     PlatformTenantSurfaceDeploymentChangedWebhookPayloadDeploymentStatus,
 )
 from .platform_tenant_surface_response import PlatformTenantSurfaceResponse
+from .platform_tenant_trial_response import PlatformTenantTrialResponse
 from .platform_tenant_usage_bucket_response import PlatformTenantUsageBucketResponse
 from .platform_tenant_usage_response import PlatformTenantUsageResponse
 from .platform_tenant_webhook_list_response import PlatformTenantWebhookListResponse
@@ -6647,7 +6647,6 @@ __all__ = (
     "CreatePlatformTenantRateCardRequest",
     "CreatePlatformTenantRateCardRequestRouteWeights",
     "CreatePlatformTenantRateCardRequestTierMode",
-    "CreatePlatformTenantRateCardRequestUnit",
     "CreatePlatformTenantRequest",
     "CreatePlatformTenantSelfConsumerRequest",
     "CreatePlatformTenantSelfHostnameRequest",
@@ -9384,6 +9383,7 @@ __all__ = (
     "PlatformTenantActivityFilters",
     "PlatformTenantActivityItem",
     "PlatformTenantActivityResponse",
+    "PlatformTenantBillingPolicyResponse",
     "PlatformTenantConsumerProvisioningPolicyResponse",
     "PlatformTenantCredentialIntent",
     "PlatformTenantCredentialIntentScopesItem",
@@ -9410,6 +9410,8 @@ __all__ = (
     "PlatformTenantOffboardingReceiptListResponse",
     "PlatformTenantOffboardingReceiptResponse",
     "PlatformTenantOffboardingReceiptSummary",
+    "PlatformTenantOverdueHoldListResponse",
+    "PlatformTenantOverdueHoldResponse",
     "PlatformTenantPlanAssignmentListResponse",
     "PlatformTenantPlanAssignmentResponse",
     "PlatformTenantPlanBudget",
@@ -9417,17 +9419,14 @@ __all__ = (
     "PlatformTenantPlanRequest",
     "PlatformTenantPlanRequestRouteWeights",
     "PlatformTenantPlanRequestTierMode",
-    "PlatformTenantPlanRequestUnit",
     "PlatformTenantPlanResponse",
     "PlatformTenantPlanResponseRouteWeights",
     "PlatformTenantPlanResponseTierMode",
-    "PlatformTenantPlanResponseUnit",
     "PlatformTenantPublishEventResponse",
     "PlatformTenantRateCardListResponse",
     "PlatformTenantRateCardResponse",
     "PlatformTenantRateCardResponseRouteWeights",
     "PlatformTenantRateCardResponseTierMode",
-    "PlatformTenantRateCardResponseUnit",
     "PlatformTenantReconciliationAppliedWebhookPayload",
     "PlatformTenantReconciliationApplyResponse",
     "PlatformTenantReconciliationPlanChange",
@@ -9472,6 +9471,7 @@ __all__ = (
     "PlatformTenantSurfaceDeploymentChangedWebhookPayload",
     "PlatformTenantSurfaceDeploymentChangedWebhookPayloadDeploymentStatus",
     "PlatformTenantSurfaceResponse",
+    "PlatformTenantTrialResponse",
     "PlatformTenantUsageBucketResponse",
     "PlatformTenantUsageResponse",
     "PlatformTenantWebhookListResponse",

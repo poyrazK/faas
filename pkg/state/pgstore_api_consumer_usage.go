@@ -116,15 +116,8 @@ func (s *PgStore) RecordAPIConsumerUsage(ctx context.Context, event APIConsumerU
 	if err != nil {
 		return false, err
 	}
-	for meter, units := range event.MeterUnits {
-		if _, err := tx.Exec(ctx, `
-			insert into api_consumer_meter_usage_minutes (account_id, app_id, consumer_key, meter, window_start, units)
-			values ($1::uuid, $2::uuid, $3, $4, $5, $6)
-			on conflict (account_id, app_id, consumer_key, meter, window_start) do update
-			set units = api_consumer_meter_usage_minutes.units + excluded.units, updated_at = now()`,
-			event.AccountID, event.AppID, event.ConsumerKey, meter, event.WindowStart.UTC(), units); err != nil {
-			return false, err
-		}
+	if err := recordMeterUnitsTx(ctx, tx, event); err != nil {
+		return false, err
 	}
 	if route := billingRouteFor(event); route != "" {
 		_, err = tx.Exec(ctx, `
@@ -209,6 +202,37 @@ func (s *PgStore) ListPlatformTenantSourceRouteUsage(ctx context.Context, accoun
 
 // insertRequestAuditTx is idempotent but refuses a reused event ID from a
 // different account/app. The matching usage row already exists in this tx.
+// recordMeterUnitsTx adds an event's app-reported units to its consumer's
+// ledger (ADR-1318) and its tenant's (ADR-1319).
+func recordMeterUnitsTx(ctx context.Context, tx pgx.Tx, event APIConsumerUsageEvent) error {
+	kind, subject := tenantUsageSubject(event)
+	for meter, units := range event.MeterUnits {
+		if event.ConsumerKey != AnonymousConsumerKey {
+			if _, err := tx.Exec(ctx, `
+				insert into api_consumer_meter_usage_minutes (account_id, app_id, consumer_key, meter, window_start, units)
+				values ($1::uuid, $2::uuid, $3, $4, $5, $6)
+				on conflict (account_id, app_id, consumer_key, meter, window_start) do update
+				set units = api_consumer_meter_usage_minutes.units + excluded.units, updated_at = now()`,
+				event.AccountID, event.AppID, event.ConsumerKey, meter, event.WindowStart.UTC(), units); err != nil {
+				return err
+			}
+		}
+		if event.PlatformTenantID == "" {
+			continue
+		}
+		if _, err := tx.Exec(ctx, `
+			insert into platform_tenant_meter_usage_minutes
+			       (account_id, platform_tenant_id, app_id, source_kind, subject_key, meter, window_start, units)
+			values ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6, $7, $8)
+			on conflict (account_id, platform_tenant_id, app_id, source_kind, subject_key, meter, window_start) do update
+			set units = platform_tenant_meter_usage_minutes.units + excluded.units, updated_at = now()`,
+			event.AccountID, event.PlatformTenantID, event.AppID, kind, subject, meter, event.WindowStart.UTC(), units); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func insertRequestAuditTx(ctx context.Context, tx pgx.Tx, event APIConsumerUsageEvent) error {
 	audit := event.Audit
 	if audit == nil {

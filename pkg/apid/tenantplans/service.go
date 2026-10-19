@@ -15,6 +15,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
+	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -53,7 +54,8 @@ func (s *Service) store(w http.ResponseWriter, acct state.Account) (state.Platfo
 func planResponse(p state.PlatformTenantPlan) api.PlatformTenantPlanResponse {
 	out := api.PlatformTenantPlanResponse{ID: p.ID, Name: p.Name, Currency: p.Currency, PriceMillicentsPerUnit: p.PriceMillicentsPerUnit,
 		IncludedUnitsPerMonth: p.IncludedUnitsPerMonth, RouteWeights: p.RouteWeights, Unit: p.Unit, TierMode: p.TierMode,
-		CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt}
+		BaseFeeMillicentsPerMonth: p.BaseFeeMillicentsPerMonth, MinimumMillicentsPerMonth: p.MinimumMillicentsPerMonth,
+		ProrateMonthlyFees: p.ProrateMonthlyFees, CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt}
 	if out.Unit == "" {
 		out.Unit = state.PlatformTenantRateCardUnitRequest
 	}
@@ -77,7 +79,9 @@ func validation(detail string) *api.Problem {
 func planFromRequest(req api.PlatformTenantPlanRequest, accountID string) (state.PlatformTenantPlan, *api.Problem) {
 	p := state.PlatformTenantPlan{AccountID: accountID, Name: strings.TrimSpace(req.Name),
 		Currency: strings.ToUpper(strings.TrimSpace(req.Currency)), PriceMillicentsPerUnit: req.PriceMillicentsPerUnit,
-		IncludedUnitsPerMonth: req.IncludedUnitsPerMonth, RouteWeights: req.RouteWeights, Unit: req.Unit, TierMode: req.TierMode}
+		IncludedUnitsPerMonth: req.IncludedUnitsPerMonth, RouteWeights: req.RouteWeights, Unit: req.Unit, TierMode: req.TierMode,
+		BaseFeeMillicentsPerMonth: req.BaseFeeMillicentsPerMonth, MinimumMillicentsPerMonth: req.MinimumMillicentsPerMonth,
+		ProrateMonthlyFees: req.ProrateMonthlyFees}
 	for _, tier := range req.Tiers {
 		p.Tiers = append(p.Tiers, state.APIConsumerRateCardTier{UpTo: tier.UpTo, PriceMillicentsPerUnit: tier.PriceMillicentsPerUnit})
 	}
@@ -194,7 +198,8 @@ func (s *Service) UpdatePlan(w http.ResponseWriter, r *http.Request, acct state.
 }
 
 // AssignPlan creates the tenant's rate card from the plan, effective the
-// next minute, sets the plan's request budget, and records the assignment.
+// next minute, stops the tenant's other priced units at that minute, sets
+// the plan's request budget, and records the assignment.
 func (s *Service) AssignPlan(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	store, ok := s.store(w, acct)
 	if !ok {
@@ -222,43 +227,99 @@ func (s *Service) AssignPlan(w http.ResponseWriter, r *http.Request, acct state.
 	httpkit.WriteJSON(w, http.StatusCreated, assignmentResponse(assignment, plan.Name))
 }
 
-// unitChangeStart is when an assigned plan's card starts: the next minute,
-// unless the plan prices a different unit than the tenant's current card,
-// which can only change at the next UTC month boundary (ADR-1310).
-func (s *Service) unitChangeStart(ctx context.Context, accountID, tenantID, unit string) *time.Time {
-	if unit == "" {
-		unit = state.PlatformTenantRateCardUnitRequest
+// planStart is when an assigned plan's card starts: the next minute, or the
+// minute after the tenant's latest card of another unit when that is later,
+// so the free cards stopOtherUnits adds never share a minute with one.
+func (s *Service) planStart(ctx context.Context, acct state.Account, tenantID, unit string) (time.Time, *api.Problem) {
+	start := time.Now().UTC().Truncate(time.Minute).Add(time.Minute)
+	cards, problem := s.tenantCards(ctx, acct, tenantID)
+	if problem != nil {
+		return start, problem
 	}
+	for _, card := range cards {
+		if billing.StreamUnit(card.Unit) != billing.StreamUnit(unit) && !card.EffectiveFrom.Before(start) {
+			start = card.EffectiveFrom.Add(time.Minute)
+		}
+	}
+	return start, nil
+}
+
+func (s *Service) tenantCards(ctx context.Context, acct state.Account, tenantID string) ([]state.PlatformTenantRateCard, *api.Problem) {
 	store, ok := s.Host.Store().(state.PlatformTenantRateCardStore)
 	if !ok {
-		return nil
+		return nil, api.ErrInternal("platform tenant pricing is unavailable")
 	}
-	cards, err := store.ListPlatformTenantRateCards(ctx, accountID, tenantID)
-	if err != nil || len(cards) == 0 {
-		return nil
+	cards, err := store.ListPlatformTenantRateCards(ctx, acct.ID, tenantID)
+	if err != nil {
+		return nil, api.ErrInternal("could not load platform tenant rate cards")
 	}
-	current := cards[len(cards)-1].Unit
-	if current == "" {
-		current = state.PlatformTenantRateCardUnitRequest
+	return cards, nil
+}
+
+// stopOtherUnits stops the tenant's other priced units when a plan's card
+// starts: a plan is the tenant's whole price, and each unit is its own
+// price history (ADR-1319), so a free card of each other unit starts at the
+// same minute.
+func (s *Service) stopOtherUnits(ctx context.Context, acct state.Account, tenantID string, card state.PlatformTenantRateCard) *api.Problem {
+	cards, problem := s.tenantCards(ctx, acct, tenantID)
+	if problem != nil {
+		return problem
 	}
-	if current == unit {
-		return nil
+	units, streams := billing.TenantUnitStreams(cards)
+	for _, unit := range units {
+		if unit == billing.StreamUnit(card.Unit) {
+			continue
+		}
+		var current *state.PlatformTenantRateCard
+		for i, c := range streams[unit] {
+			if !c.EffectiveFrom.After(card.EffectiveFrom) {
+				current = &streams[unit][i]
+			}
+		}
+		if current == nil || freeCard(*current) {
+			continue
+		}
+		start := card.EffectiveFrom
+		if _, problem := s.Host.CreateTenantRateCard(ctx, acct, tenantID, api.CreatePlatformTenantRateCardRequest{
+			Currency: card.Currency, Unit: unit, EffectiveFrom: &start}); problem != nil {
+			return problem
+		}
 	}
-	now := time.Now().UTC()
-	next := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC).AddDate(0, 1, 0)
-	return &next
+	return nil
+}
+
+// freeCard reports whether a card charges nothing.
+func freeCard(c state.PlatformTenantRateCard) bool {
+	if c.PriceMillicentsPerUnit != 0 || c.MonthlyFees() {
+		return false
+	}
+	for _, tier := range c.Tiers {
+		if tier.PriceMillicentsPerUnit != 0 {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Service) assign(ctx context.Context, acct state.Account, tenant state.PlatformTenant, plan state.PlatformTenantPlan,
 	store state.PlatformTenantPlanStore) (state.PlatformTenantPlanAssignment, *api.Problem) {
 	cardReq := api.CreatePlatformTenantRateCardRequest{Currency: plan.Currency, PriceMillicentsPerUnit: plan.PriceMillicentsPerUnit,
-		IncludedUnitsPerMonth: plan.IncludedUnitsPerMonth, RouteWeights: plan.RouteWeights, Unit: plan.Unit, TierMode: plan.TierMode}
+		IncludedUnitsPerMonth: plan.IncludedUnitsPerMonth, RouteWeights: plan.RouteWeights, Unit: plan.Unit, TierMode: plan.TierMode,
+		BaseFeeMillicentsPerMonth: plan.BaseFeeMillicentsPerMonth, MinimumMillicentsPerMonth: plan.MinimumMillicentsPerMonth,
+		ProrateMonthlyFees: plan.ProrateMonthlyFees}
 	for _, tier := range plan.Tiers {
 		cardReq.Tiers = append(cardReq.Tiers, api.APIConsumerRateCardTier{UpTo: tier.UpTo, PriceMillicentsPerUnit: tier.PriceMillicentsPerUnit})
 	}
-	cardReq.EffectiveFrom = s.unitChangeStart(ctx, acct.ID, tenant.ID, plan.Unit)
+	start, problem := s.planStart(ctx, acct, tenant.ID, plan.Unit)
+	if problem != nil {
+		return state.PlatformTenantPlanAssignment{}, problem
+	}
+	cardReq.EffectiveFrom = &start
 	card, problem := s.Host.CreateTenantRateCard(ctx, acct, tenant.ID, cardReq)
 	if problem != nil {
+		return state.PlatformTenantPlanAssignment{}, problem
+	}
+	if problem := s.stopOtherUnits(ctx, acct, tenant.ID, card); problem != nil {
 		return state.PlatformTenantPlanAssignment{}, problem
 	}
 	if plan.MaxRequestsPerMinute != nil {

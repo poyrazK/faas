@@ -873,6 +873,12 @@ func run(ctx context.Context, log *slog.Logger) error {
 		// that the apid gRPC receiver (Stage 4) already honors.
 		startDebugRegressionCron(ctx, srv, log, deps.getenv)
 		startProfileDeploymentChecks(ctx, srv, log)
+		// API monetization workers pause while its runtime setting is off
+		// (ADR-20261018090210).
+		srv.billingRuns.Enabled = srv.apiMonetizationEnabled
+		srv.statementInvoices.Enabled = srv.apiMonetizationEnabled
+		srv.consumerCredits.Enabled = srv.apiMonetizationEnabled
+		srv.consumerControls.Enabled = srv.apiMonetizationEnabled
 		srv.billingRuns.Start(ctx, log)       // ADR-1503
 		srv.statementInvoices.Start(ctx, log) // ADR-1504
 		srv.consumerCredits.Start(ctx, log)   // ADR-1306

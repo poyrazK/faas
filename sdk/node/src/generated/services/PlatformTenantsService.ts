@@ -34,6 +34,7 @@ import type { PlatformTenantAccessTokenListResponse } from '../models/PlatformTe
 import type { PlatformTenantAccessTokenResponse } from '../models/PlatformTenantAccessTokenResponse.js';
 import type { PlatformTenantActivationResponse } from '../models/PlatformTenantActivationResponse.js';
 import type { PlatformTenantActivityResponse } from '../models/PlatformTenantActivityResponse.js';
+import type { PlatformTenantBillingPolicyResponse } from '../models/PlatformTenantBillingPolicyResponse.js';
 import type { PlatformTenantConsumerProvisioningPolicyResponse } from '../models/PlatformTenantConsumerProvisioningPolicyResponse.js';
 import type { PlatformTenantCredentialPolicyResponse } from '../models/PlatformTenantCredentialPolicyResponse.js';
 import type { PlatformTenantCredentialsResponse } from '../models/PlatformTenantCredentialsResponse.js';
@@ -45,6 +46,7 @@ import type { PlatformTenantOffboardingApplyResponse } from '../models/PlatformT
 import type { PlatformTenantOffboardingPlanResponse } from '../models/PlatformTenantOffboardingPlanResponse.js';
 import type { PlatformTenantOffboardingReceiptListResponse } from '../models/PlatformTenantOffboardingReceiptListResponse.js';
 import type { PlatformTenantOffboardingReceiptResponse } from '../models/PlatformTenantOffboardingReceiptResponse.js';
+import type { PlatformTenantOverdueHoldListResponse } from '../models/PlatformTenantOverdueHoldListResponse.js';
 import type { PlatformTenantPlanAssignmentListResponse } from '../models/PlatformTenantPlanAssignmentListResponse.js';
 import type { PlatformTenantPlanAssignmentResponse } from '../models/PlatformTenantPlanAssignmentResponse.js';
 import type { PlatformTenantPlanListResponse } from '../models/PlatformTenantPlanListResponse.js';
@@ -68,9 +70,12 @@ import type { PlatformTenantStatementHandoffResponse } from '../models/PlatformT
 import type { PlatformTenantStatementListResponse } from '../models/PlatformTenantStatementListResponse.js';
 import type { PlatformTenantStatementResponse } from '../models/PlatformTenantStatementResponse.js';
 import type { PlatformTenantSurfaceResponse } from '../models/PlatformTenantSurfaceResponse.js';
+import type { PlatformTenantTrialResponse } from '../models/PlatformTenantTrialResponse.js';
 import type { PlatformTenantUsageResponse } from '../models/PlatformTenantUsageResponse.js';
 import type { PlatformTenantWebhookListResponse } from '../models/PlatformTenantWebhookListResponse.js';
 import type { PlatformTenantWebhookResponse } from '../models/PlatformTenantWebhookResponse.js';
+import type { PutAPIConsumerBillingPolicyRequest } from '../models/PutAPIConsumerBillingPolicyRequest.js';
+import type { PutAPIConsumerTrialRequest } from '../models/PutAPIConsumerTrialRequest.js';
 import type { RevokePlatformTenantSelfConsumersRequest } from '../models/RevokePlatformTenantSelfConsumersRequest.js';
 import type { RotateAppWebhookSecretRequest } from '../models/RotateAppWebhookSecretRequest.js';
 import type { RotateAppWebhookSecretResponse } from '../models/RotateAppWebhookSecretResponse.js';
@@ -888,6 +893,167 @@ export class PlatformTenantsService {
         404: `code: not_found`,
         409: `code: conflict`,
         422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+      },
+    });
+  }
+  /**
+   * Read a tenant's free trial (ADR-1322).
+   * @returns PlatformTenantTrialResponse The tenant's trial.
+   * @throws ApiError
+   */
+  public static getPlatformTenantTrial({
+    id,
+  }: {
+    /**
+     * Tenant whose free trial is read or changed.
+     */
+    id: string,
+  }): CancelablePromise<PlatformTenantTrialResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/platform-tenants/{id}/trial',
+      path: {
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Start a tenant's one free trial, or move the end of a running one.
+   * The tenant's usage in the trial is priced at zero and consumes no
+   * included units, and a month that starts during it has no base fee or
+   * minimum. A new trial starts at the next UTC minute; a running trial's
+   * end can move, never before the next minute. A tenant whose trial has
+   * ended cannot get another (409).
+   *
+   * @returns PlatformTenantTrialResponse The tenant's stored trial.
+   * @throws ApiError
+   */
+  public static putPlatformTenantTrial({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Tenant whose free trial is read or changed.
+     */
+    id: string,
+    requestBody: PutAPIConsumerTrialRequest,
+  }): CancelablePromise<PlatformTenantTrialResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/account/platform-tenants/{id}/trial',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        422: `Invalid tenant trial length or end.`,
+      },
+    });
+  }
+  /**
+   * End a tenant's running trial at the next minute.
+   * @returns void
+   * @throws ApiError
+   */
+  public static endPlatformTenantTrial({
+    id,
+  }: {
+    /**
+     * Tenant whose free trial is read or changed.
+     */
+    id: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/account/platform-tenants/{id}/trial',
+      path: {
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Read the account's overdue-invoice rule for tenants (ADR-1324).
+   * @returns PlatformTenantBillingPolicyResponse The account's tenant overdue rule.
+   * @throws ApiError
+   */
+  public static getPlatformTenantBillingPolicy(): CancelablePromise<PlatformTenantBillingPolicyResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/platform-tenant-billing-policy',
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Refuse tenants whose exported invoice is unpaid some days after its due date.
+   * Every 5 minutes apid places a hold on each tenant whose exported
+   * invoice is open or uncollectible with an amount left at least
+   * block_overdue_after_days past its due date, and lifts holds that no
+   * longer apply. The gateway answers every request of a held tenant
+   * (its consumers, surfaces and JWT rules) with 402
+   * `tenant_invoice_overdue`.
+   *
+   * @returns PlatformTenantBillingPolicyResponse The account's stored tenant rule.
+   * @throws ApiError
+   */
+  public static putPlatformTenantBillingPolicy({
+    requestBody,
+  }: {
+    requestBody: PutAPIConsumerBillingPolicyRequest,
+  }): CancelablePromise<PlatformTenantBillingPolicyResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/account/platform-tenant-billing-policy',
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        422: `block_overdue_after_days is outside 0 to 365.`,
+      },
+    });
+  }
+  /**
+   * Remove the account's tenant overdue rule; holds lift at the next check.
+   * @returns void
+   * @throws ApiError
+   */
+  public static deletePlatformTenantBillingPolicy(): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/account/platform-tenant-billing-policy',
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * List the tenants the gateway refuses because of an overdue invoice.
+   * @returns PlatformTenantOverdueHoldListResponse The account's held tenants, oldest due date first.
+   * @throws ApiError
+   */
+  public static listPlatformTenantOverdueHolds(): CancelablePromise<PlatformTenantOverdueHoldListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/platform-tenant-overdue-holds',
+      errors: {
+        401: `code: unauthorized`,
       },
     });
   }

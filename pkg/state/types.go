@@ -921,8 +921,12 @@ type APIConsumerRateCard struct {
 	// starts.
 	BaseFeeMillicentsPerMonth int64
 	MinimumMillicentsPerMonth int64
-	EffectiveFrom             time.Time
-	CreatedAt                 time.Time
+	// ProrateMonthlyFees scales the fee and minimum of a consumer's first
+	// month by the share of it left after the consumer was created
+	// (ADR-1325).
+	ProrateMonthlyFees bool
+	EffectiveFrom      time.Time
+	CreatedAt          time.Time
 }
 
 // MonthlyFees reports whether the card charges a base fee or a minimum.
@@ -1018,17 +1022,31 @@ type PlatformTenantRateCard struct {
 	// RouteWeights charge a request on a route that many units (ADR-1307);
 	// unlisted routes count 1. Surface and JWT-rule requests are weighted
 	// by their own route (ADR-1310).
-	RouteWeights  map[string]int64
-	EffectiveFrom time.Time
-	CreatedAt     time.Time
+	RouteWeights map[string]int64
+	// BaseFeeMillicentsPerMonth and MinimumMillicentsPerMonth are a fixed
+	// monthly charge and a minimum monthly usage charge per tenant
+	// (ADR-1322), taken from the card in force when the tenant's month
+	// starts; ProrateMonthlyFees scales them in the tenant's first month
+	// (ADR-1325).
+	BaseFeeMillicentsPerMonth int64
+	MinimumMillicentsPerMonth int64
+	ProrateMonthlyFees        bool
+	EffectiveFrom             time.Time
+	CreatedAt                 time.Time
 }
 
 // MonthlyPricing reports whether statements must re-price whole months:
 // the card prices usage by its position in the tenant's UTC month, weights
-// routes, or prices compute or response size (ADR-1310), none of which
-// per-minute request coverage deltas can express.
+// routes, prices compute or response size (ADR-1310) or app-reported
+// units, or charges monthly fees (ADR-1322), none of which per-minute
+// request coverage deltas can express.
 func (c PlatformTenantRateCard) MonthlyPricing() bool {
-	return c.IncludedUnitsPerMonth > 0 || len(c.Tiers) > 0 || len(c.RouteWeights) > 0 || !c.PricesRequests()
+	return c.IncludedUnitsPerMonth > 0 || len(c.Tiers) > 0 || len(c.RouteWeights) > 0 || !c.PricesRequests() || c.MonthlyFees()
+}
+
+// MonthlyFees reports whether the card charges a base fee or a minimum.
+func (c PlatformTenantRateCard) MonthlyFees() bool {
+	return c.BaseFeeMillicentsPerMonth > 0 || c.MinimumMillicentsPerMonth > 0
 }
 
 // PricesRequests reports whether the card counts requests rather than

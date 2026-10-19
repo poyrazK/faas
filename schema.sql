@@ -7855,6 +7855,7 @@ BEGIN
     'amount_millicents', NEW.amount_millicents,
     'priced', NEW.unpriced_units = 0 AND NEW.currency <> '',
     'lines', NEW.lines,
+    'fees', NEW.fees,
     'as_of', NEW.as_of,
     'finalized_at', NEW.finalized_at
   );
@@ -25702,6 +25703,7 @@ CREATE TABLE public.api_consumer_rate_cards (
     tier_mode text DEFAULT 'graduated'::text NOT NULL,
     base_fee_millicents_per_month bigint DEFAULT 0 NOT NULL,
     minimum_millicents_per_month bigint DEFAULT 0 NOT NULL,
+    prorate_monthly_fees boolean DEFAULT false NOT NULL,
     CONSTRAINT api_consumer_rate_cards_currency_chk CHECK ((currency ~ '^[A-Z]{3}$'::text)),
     CONSTRAINT api_consumer_rate_cards_effective_minute_chk CHECK ((effective_from = date_trunc('minute'::text, effective_from))),
     CONSTRAINT api_consumer_rate_cards_included_units_chk CHECK ((included_units_per_month >= 0)),
@@ -42570,6 +42572,26 @@ CREATE TABLE public.platform_tenant_access_tokens (
 
 
 --
+-- Name: platform_tenant_billing_policies; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.platform_tenant_billing_policies (
+    account_id uuid NOT NULL,
+    block_overdue_after_days integer NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT platform_tenant_billing_policies_days_chk CHECK (((block_overdue_after_days >= 0) AND (block_overdue_after_days <= 365)))
+);
+
+
+--
+-- Name: TABLE platform_tenant_billing_policies; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.platform_tenant_billing_policies IS 'Per-account rule blocking platform tenants whose exported invoice is unpaid that many days after its due date (ADR-1324).';
+
+
+--
 -- Name: platform_tenant_consumer_provisioning_policies; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -42620,6 +42642,35 @@ CREATE TABLE public.platform_tenant_hostname_policies (
 
 
 --
+-- Name: platform_tenant_meter_usage_minutes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.platform_tenant_meter_usage_minutes (
+    account_id uuid NOT NULL,
+    platform_tenant_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    source_kind text NOT NULL,
+    subject_key text NOT NULL,
+    meter text NOT NULL,
+    window_start timestamp with time zone NOT NULL,
+    units bigint DEFAULT 0 NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT platform_tenant_meter_usage_minutes_kind_chk CHECK ((source_kind = ANY (ARRAY['consumer'::text, 'surface'::text, 'jwt'::text]))),
+    CONSTRAINT platform_tenant_meter_usage_minutes_meter_chk CHECK ((meter ~ '^[a-z][a-z0-9_]{0,31}$'::text)),
+    CONSTRAINT platform_tenant_meter_usage_minutes_minute_chk CHECK ((window_start = (date_trunc('minute'::text, (window_start AT TIME ZONE 'UTC'::text)) AT TIME ZONE 'UTC'::text))),
+    CONSTRAINT platform_tenant_meter_usage_minutes_subject_chk CHECK ((subject_key ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'::text)),
+    CONSTRAINT platform_tenant_meter_usage_minutes_units_chk CHECK ((units >= 0))
+);
+
+
+--
+-- Name: TABLE platform_tenant_meter_usage_minutes; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.platform_tenant_meter_usage_minutes IS 'Units an app reported per platform tenant subject, meter and UTC minute for billable requests (ADR-1319).';
+
+
+--
 -- Name: platform_tenant_offboarding_receipts; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -42633,6 +42684,26 @@ CREATE TABLE public.platform_tenant_offboarding_receipts (
     CONSTRAINT platform_tenant_offboarding_receipts_actions_check CHECK ((jsonb_typeof(actions) = 'object'::text)),
     CONSTRAINT platform_tenant_offboarding_receipts_plan_hash_check CHECK ((plan_hash ~ '^[0-9a-f]{64}$'::text))
 );
+
+
+--
+-- Name: platform_tenant_overdue_holds; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.platform_tenant_overdue_holds (
+    platform_tenant_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    export_id uuid NOT NULL,
+    due_at timestamp with time zone NOT NULL,
+    since timestamp with time zone NOT NULL
+);
+
+
+--
+-- Name: TABLE platform_tenant_overdue_holds; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.platform_tenant_overdue_holds IS 'Platform tenants the gateway refuses because of an overdue invoice; recomputed by apid (ADR-1324).';
 
 
 --
@@ -42669,14 +42740,18 @@ CREATE TABLE public.platform_tenant_plans (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     tier_mode text DEFAULT 'graduated'::text NOT NULL,
     unit text DEFAULT 'request'::text NOT NULL,
+    base_fee_millicents_per_month bigint DEFAULT 0 NOT NULL,
+    minimum_millicents_per_month bigint DEFAULT 0 NOT NULL,
+    prorate_monthly_fees boolean DEFAULT false NOT NULL,
     CONSTRAINT platform_tenant_plans_budget_chk CHECK ((((max_requests_per_minute IS NULL) = (max_requests_per_day IS NULL)) AND ((max_requests_per_minute IS NULL) OR ((max_requests_per_minute >= 0) AND (max_requests_per_day >= 0))))),
     CONSTRAINT platform_tenant_plans_currency_chk CHECK ((currency ~ '^[A-Z]{3}$'::text)),
+    CONSTRAINT platform_tenant_plans_monthly_fees_chk CHECK (((base_fee_millicents_per_month >= 0) AND (minimum_millicents_per_month >= 0))),
     CONSTRAINT platform_tenant_plans_name_chk CHECK ((name ~ '^[a-z0-9][a-z0-9-]{0,62}$'::text)),
     CONSTRAINT platform_tenant_plans_price_chk CHECK (((price_millicents_per_unit >= 0) AND (included_units_per_month >= 0))),
     CONSTRAINT platform_tenant_plans_route_weights_chk CHECK ((jsonb_typeof(route_weights) = 'object'::text)),
     CONSTRAINT platform_tenant_plans_tier_mode_chk CHECK (((tier_mode = 'graduated'::text) OR ((tier_mode = 'volume'::text) AND (jsonb_array_length(tiers) > 0)))),
     CONSTRAINT platform_tenant_plans_tiers_chk CHECK (((jsonb_typeof(tiers) = 'array'::text) AND (jsonb_array_length(tiers) <= 10) AND ((jsonb_array_length(tiers) = 0) OR (included_units_per_month = 0)))),
-    CONSTRAINT platform_tenant_plans_unit_chk CHECK ((unit = ANY (ARRAY['request'::text, 'compute_second'::text, 'response_megabyte'::text])))
+    CONSTRAINT platform_tenant_plans_unit_chk CHECK (((unit = ANY (ARRAY['request'::text, 'compute_second'::text, 'response_megabyte'::text])) OR (unit ~ '^app:[a-z][a-z0-9_]{0,31}$'::text)))
 );
 
 
@@ -42704,14 +42779,18 @@ CREATE TABLE public.platform_tenant_rate_cards (
     tiers jsonb DEFAULT '[]'::jsonb NOT NULL,
     route_weights jsonb DEFAULT '{}'::jsonb NOT NULL,
     tier_mode text DEFAULT 'graduated'::text NOT NULL,
+    base_fee_millicents_per_month bigint DEFAULT 0 NOT NULL,
+    minimum_millicents_per_month bigint DEFAULT 0 NOT NULL,
+    prorate_monthly_fees boolean DEFAULT false NOT NULL,
     CONSTRAINT platform_tenant_rate_cards_currency_check CHECK ((currency ~ '^[A-Z]{3}$'::text)),
     CONSTRAINT platform_tenant_rate_cards_effective_from_check CHECK ((effective_from = (date_trunc('minute'::text, (effective_from AT TIME ZONE 'UTC'::text)) AT TIME ZONE 'UTC'::text))),
     CONSTRAINT platform_tenant_rate_cards_included_units_chk CHECK ((included_units_per_month >= 0)),
+    CONSTRAINT platform_tenant_rate_cards_monthly_fees_chk CHECK (((base_fee_millicents_per_month >= 0) AND (minimum_millicents_per_month >= 0))),
     CONSTRAINT platform_tenant_rate_cards_price_millicents_per_unit_check CHECK ((price_millicents_per_unit >= 0)),
     CONSTRAINT platform_tenant_rate_cards_route_weights_chk CHECK ((jsonb_typeof(route_weights) = 'object'::text)),
     CONSTRAINT platform_tenant_rate_cards_tier_mode_chk CHECK (((tier_mode = 'graduated'::text) OR ((tier_mode = 'volume'::text) AND (jsonb_array_length(tiers) > 0)))),
     CONSTRAINT platform_tenant_rate_cards_tiers_chk CHECK (((jsonb_typeof(tiers) = 'array'::text) AND (jsonb_array_length(tiers) <= 10) AND ((jsonb_array_length(tiers) = 0) OR (included_units_per_month = 0)))),
-    CONSTRAINT platform_tenant_rate_cards_unit_check CHECK ((unit = ANY (ARRAY['request'::text, 'compute_second'::text, 'response_megabyte'::text])))
+    CONSTRAINT platform_tenant_rate_cards_unit_check CHECK (((unit = ANY (ARRAY['request'::text, 'compute_second'::text, 'response_megabyte'::text])) OR (unit ~ '^app:[a-z][a-z0-9_]{0,31}$'::text)))
 );
 
 
@@ -42878,12 +42957,14 @@ CREATE TABLE public.platform_tenant_statements (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     finalized_at timestamp with time zone,
     coverage jsonb NOT NULL,
+    fees jsonb DEFAULT '[]'::jsonb NOT NULL,
     CONSTRAINT platform_tenant_statements_amount_millicents_check CHECK ((amount_millicents >= 0)),
     CONSTRAINT platform_tenant_statements_billable_units_check CHECK ((billable_units >= 0)),
     CONSTRAINT platform_tenant_statements_check CHECK (((period_start = date_trunc('minute'::text, period_start)) AND (period_end = date_trunc('minute'::text, period_end)) AND (period_end > period_start))),
     CONSTRAINT platform_tenant_statements_check1 CHECK ((((status = ANY (ARRAY['draft'::text, 'superseded'::text])) AND (finalized_at IS NULL)) OR ((status = 'finalized'::text) AND (finalized_at IS NOT NULL)))),
     CONSTRAINT platform_tenant_statements_coverage_array CHECK ((jsonb_typeof(coverage) = 'array'::text)),
     CONSTRAINT platform_tenant_statements_currency_check CHECK (((currency = ''::text) OR (currency ~ '^[A-Z]{3}$'::text))),
+    CONSTRAINT platform_tenant_statements_fees_chk CHECK (((jsonb_typeof(fees) = 'array'::text) AND (jsonb_array_length(fees) <= 64))),
     CONSTRAINT platform_tenant_statements_lines_check CHECK ((jsonb_typeof(lines) = 'array'::text)),
     CONSTRAINT platform_tenant_statements_revision_check CHECK ((revision > 0)),
     CONSTRAINT platform_tenant_statements_status_check CHECK ((status = ANY (ARRAY['draft'::text, 'finalized'::text, 'superseded'::text]))),
@@ -42903,6 +42984,29 @@ COMMENT ON COLUMN public.platform_tenant_statements.lines IS 'Compact immutable 
 --
 
 COMMENT ON COLUMN public.platform_tenant_statements.coverage IS 'Private immutable minute-level billable-unit evidence used to calculate additive statement revisions.';
+
+
+--
+-- Name: platform_tenant_trials; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.platform_tenant_trials (
+    platform_tenant_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    starts_at timestamp with time zone NOT NULL,
+    ends_at timestamp with time zone NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT platform_tenant_trials_minute_chk CHECK (((starts_at = (date_trunc('minute'::text, (starts_at AT TIME ZONE 'UTC'::text)) AT TIME ZONE 'UTC'::text)) AND (ends_at = (date_trunc('minute'::text, (ends_at AT TIME ZONE 'UTC'::text)) AT TIME ZONE 'UTC'::text)))),
+    CONSTRAINT platform_tenant_trials_window_chk CHECK ((ends_at > starts_at))
+);
+
+
+--
+-- Name: TABLE platform_tenant_trials; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.platform_tenant_trials IS 'A platform tenant''s free trial: its usage in [starts_at, ends_at) is priced at zero (ADR-1322).';
 
 
 --
@@ -57170,6 +57274,14 @@ ALTER TABLE ONLY public.platform_tenant_access_tokens
 
 
 --
+-- Name: platform_tenant_billing_policies platform_tenant_billing_policies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_tenant_billing_policies
+    ADD CONSTRAINT platform_tenant_billing_policies_pkey PRIMARY KEY (account_id);
+
+
+--
 -- Name: platform_tenant_consumer_provisioning_policies platform_tenant_consumer_provisioning_policies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -57194,11 +57306,27 @@ ALTER TABLE ONLY public.platform_tenant_hostname_policies
 
 
 --
+-- Name: platform_tenant_meter_usage_minutes platform_tenant_meter_usage_minutes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_tenant_meter_usage_minutes
+    ADD CONSTRAINT platform_tenant_meter_usage_minutes_pkey PRIMARY KEY (account_id, platform_tenant_id, app_id, source_kind, subject_key, meter, window_start);
+
+
+--
 -- Name: platform_tenant_offboarding_receipts platform_tenant_offboarding_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.platform_tenant_offboarding_receipts
     ADD CONSTRAINT platform_tenant_offboarding_receipts_pkey PRIMARY KEY (receipt_id);
+
+
+--
+-- Name: platform_tenant_overdue_holds platform_tenant_overdue_holds_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_tenant_overdue_holds
+    ADD CONSTRAINT platform_tenant_overdue_holds_pkey PRIMARY KEY (platform_tenant_id);
 
 
 --
@@ -57226,19 +57354,19 @@ ALTER TABLE ONLY public.platform_tenant_plans
 
 
 --
--- Name: platform_tenant_rate_cards platform_tenant_rate_cards_account_id_platform_tenant_id_ef_key; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.platform_tenant_rate_cards
-    ADD CONSTRAINT platform_tenant_rate_cards_account_id_platform_tenant_id_ef_key UNIQUE (account_id, platform_tenant_id, effective_from);
-
-
---
 -- Name: platform_tenant_rate_cards platform_tenant_rate_cards_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.platform_tenant_rate_cards
     ADD CONSTRAINT platform_tenant_rate_cards_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: platform_tenant_rate_cards platform_tenant_rate_cards_unit_effective_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_tenant_rate_cards
+    ADD CONSTRAINT platform_tenant_rate_cards_unit_effective_key UNIQUE (account_id, platform_tenant_id, unit, effective_from);
 
 
 --
@@ -57327,6 +57455,14 @@ ALTER TABLE ONLY public.platform_tenant_statements
 
 ALTER TABLE ONLY public.platform_tenant_statements
     ADD CONSTRAINT platform_tenant_statements_platform_tenant_id_period_start__key UNIQUE (platform_tenant_id, period_start, period_end, revision);
+
+
+--
+-- Name: platform_tenant_trials platform_tenant_trials_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_tenant_trials
+    ADD CONSTRAINT platform_tenant_trials_pkey PRIMARY KEY (platform_tenant_id);
 
 
 --
@@ -67257,10 +67393,24 @@ CREATE INDEX platform_tenant_access_tokens_tenant_idx ON public.platform_tenant_
 
 
 --
+-- Name: platform_tenant_meter_usage_minutes_read_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX platform_tenant_meter_usage_minutes_read_idx ON public.platform_tenant_meter_usage_minutes USING btree (account_id, platform_tenant_id, meter, window_start);
+
+
+--
 -- Name: platform_tenant_offboarding_receipts_history_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX platform_tenant_offboarding_receipts_history_idx ON public.platform_tenant_offboarding_receipts USING btree (account_id, tenant_id, applied_at DESC, receipt_id DESC);
+
+
+--
+-- Name: platform_tenant_overdue_holds_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX platform_tenant_overdue_holds_account_idx ON public.platform_tenant_overdue_holds USING btree (account_id, due_at);
 
 
 --
@@ -67310,6 +67460,13 @@ CREATE INDEX platform_tenant_statement_surfaces_lookup_idx ON public.platform_te
 --
 
 CREATE INDEX platform_tenant_statements_period_idx ON public.platform_tenant_statements USING btree (account_id, platform_tenant_id, period_start DESC, revision DESC);
+
+
+--
+-- Name: platform_tenant_trials_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX platform_tenant_trials_account_idx ON public.platform_tenant_trials USING btree (account_id);
 
 
 --
@@ -84961,6 +85118,14 @@ ALTER TABLE ONLY public.platform_tenant_access_tokens
 
 
 --
+-- Name: platform_tenant_billing_policies platform_tenant_billing_policies_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_tenant_billing_policies
+    ADD CONSTRAINT platform_tenant_billing_policies_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
 -- Name: platform_tenant_consumer_provisioning_policies platform_tenant_consumer_provisioning_account_id_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -84985,11 +85150,43 @@ ALTER TABLE ONLY public.platform_tenant_hostname_policies
 
 
 --
+-- Name: platform_tenant_meter_usage_minutes platform_tenant_meter_usage_minutes_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_tenant_meter_usage_minutes
+    ADD CONSTRAINT platform_tenant_meter_usage_minutes_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
 -- Name: platform_tenant_offboarding_receipts platform_tenant_offboarding_receipts_account_id_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.platform_tenant_offboarding_receipts
     ADD CONSTRAINT platform_tenant_offboarding_receipts_account_id_tenant_id_fkey FOREIGN KEY (account_id, tenant_id) REFERENCES public.platform_tenants(account_id, id) ON DELETE CASCADE;
+
+
+--
+-- Name: platform_tenant_overdue_holds platform_tenant_overdue_holds_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_tenant_overdue_holds
+    ADD CONSTRAINT platform_tenant_overdue_holds_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: platform_tenant_overdue_holds platform_tenant_overdue_holds_export_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_tenant_overdue_holds
+    ADD CONSTRAINT platform_tenant_overdue_holds_export_id_fkey FOREIGN KEY (export_id) REFERENCES public.usage_statement_invoice_exports(id) ON DELETE CASCADE;
+
+
+--
+-- Name: platform_tenant_overdue_holds platform_tenant_overdue_holds_platform_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_tenant_overdue_holds
+    ADD CONSTRAINT platform_tenant_overdue_holds_platform_tenant_id_fkey FOREIGN KEY (platform_tenant_id) REFERENCES public.platform_tenants(id) ON DELETE CASCADE;
 
 
 --
@@ -85158,6 +85355,22 @@ ALTER TABLE ONLY public.platform_tenant_statements
 
 ALTER TABLE ONLY public.platform_tenant_statements
     ADD CONSTRAINT platform_tenant_statements_account_id_platform_tenant_id_fkey FOREIGN KEY (account_id, platform_tenant_id) REFERENCES public.platform_tenants(account_id, id) ON DELETE CASCADE;
+
+
+--
+-- Name: platform_tenant_trials platform_tenant_trials_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_tenant_trials
+    ADD CONSTRAINT platform_tenant_trials_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: platform_tenant_trials platform_tenant_trials_platform_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_tenant_trials
+    ADD CONSTRAINT platform_tenant_trials_platform_tenant_id_fkey FOREIGN KEY (platform_tenant_id) REFERENCES public.platform_tenants(id) ON DELETE CASCADE;
 
 
 --

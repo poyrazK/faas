@@ -280,6 +280,10 @@ type ServiceProxyConfig struct {
 	// traffic (ADR-197). nil rejects internal upgrade requests with 501
 	// rather than letting the ordinary forwarder strip the handshake.
 	RawForward func(Target) http.Handler
+	// APIMonetization is the API monetization release gate
+	// (ADR-20261018090210): while it reports true Gregale-Usage is consumed
+	// like on public requests. Nil leaves the header untouched.
+	APIMonetization func() bool
 	// Wake is the optional wake-on-demand seam (ADR-196). nil keeps the
 	// legacy fail-fast behaviour for a parked target.
 	Wake ServiceProxyWaker
@@ -341,6 +345,7 @@ type ServiceProxyConfig struct {
 // endpoints that recently failed transport, and retries one alternate target
 // for safe idempotent requests.
 type ServiceProxy struct {
+	apiMonetization           func() bool
 	admitManagedAsync         ServiceProxyAsyncAdmitter
 	mintAssertion             ServiceCallerMinter
 	localNodeID               string
@@ -448,6 +453,7 @@ func NewServiceProxy(cfg ServiceProxyConfig) *ServiceProxy {
 		retryBudget = NewRetryBudget(0, now)
 	}
 	return &ServiceProxy{
+		apiMonetization:           cfg.APIMonetization,
 		mintAssertion:             cfg.MintCallerAssertion,
 		localNodeID:               strings.TrimSpace(cfg.LocalNodeID),
 		provider:                  cfg.Provider,
@@ -498,7 +504,7 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	// A service call uses the same bounded guest-evidence sink as public
 	// requests so target flag decisions can be attached to this dependency span.
-	r = withGuestExecutionEvidence(r)
+	r = withGuestExecutionEvidence(r, p.apiMonetization != nil && p.apiMonetization())
 	// The guest-facing service-proxy listener is a standalone http.Server, not
 	// wrapped by otelhttp. Extract W3C context here so a caller that forwards
 	// its inbound traceparent joins the original request instead of always

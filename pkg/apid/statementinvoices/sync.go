@@ -30,7 +30,7 @@ func (s *Service) Start(ctx context.Context, log *slog.Logger) {
 		ticker := time.NewTicker(api.StatementInvoiceSyncTickInterval)
 		defer ticker.Stop()
 		for {
-			if err := s.SyncOnce(ctx); err != nil && ctx.Err() == nil {
+			if err := s.tick(ctx); err != nil && ctx.Err() == nil {
 				log.Warn("statement invoice sync failed", "err", err)
 			}
 			select {
