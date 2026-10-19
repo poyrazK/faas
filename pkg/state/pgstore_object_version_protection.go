@@ -66,7 +66,7 @@ func (s *PgStore) BeginObjectVersionProtection(ctx context.Context, j ObjectVers
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 	q := sqlc.New()
-	if _, err = q.ObjectUsageLockAccount(ctx, tx, mustPgUUID(j.AccountID)); err != nil {
+	if _, err = lockObjectUsageScope(ctx, tx, mustPgUUID(j.AccountID), mustPgUUID(j.BucketID)); err != nil {
 		return j, mapErr(err)
 	}
 	if _, err = q.ObjectCapacityLockBucket(ctx, tx, sqlc.ObjectCapacityLockBucketParams{ID: mustPgUUID(j.BucketID), AccountID: mustPgUUID(j.AccountID), AppID: mustPgUUID(j.AppID)}); err != nil {
@@ -204,7 +204,7 @@ func (s *PgStore) mutateProtection(ctx context.Context, id string, fn func(Objec
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 	q := sqlc.New()
-	if _, err = q.ObjectUsageLockAccount(ctx, tx, mustPgUUID(old.AccountID)); err != nil {
+	if _, err = lockObjectUsageScope(ctx, tx, mustPgUUID(old.AccountID), mustPgUUID(old.BucketID)); err != nil {
 		return old, mapErr(err)
 	}
 	if _, err = q.ObjectCapacityLockBucket(ctx, tx, sqlc.ObjectCapacityLockBucketParams{ID: mustPgUUID(old.BucketID), AccountID: mustPgUUID(old.AccountID), AppID: mustPgUUID(old.AppID)}); err != nil {

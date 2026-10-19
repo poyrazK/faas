@@ -41,6 +41,12 @@ export type VerifiedClaims = Readonly<{
   issuedAt?: number
   appMetadata: Readonly<Record<string, unknown>>
   userMetadata: Readonly<Record<string, unknown>>
+  /**
+   * The session's active organization, the user's role in it and that
+   * role's permissions, when the Auth app has organization claims on. A
+   * changed membership shows at the next token, within its lifetime.
+   */
+  organization?: Readonly<{ id: string; slug: string; role: string; permissions: readonly string[] }>
   /** Every claim, including ones this type does not name. */
   raw: Readonly<Record<string, unknown>>
 }>
@@ -168,6 +174,9 @@ export function createVerifier(options: VerifierOptions) {
       sub: payload.sub, sessionId: str(payload.session_id), role: str(payload.role), email: str(payload.email), phone: str(payload.phone),
       aal: str(payload.aal), isAnonymous: payload.is_anonymous === true, expiresAt: exp, issuedAt: num(payload.iat),
       appMetadata: obj(payload.app_metadata), userMetadata: obj(payload.user_metadata), raw: payload,
+      ...(typeof payload.org_id === 'string' && typeof payload.org_slug === 'string' && typeof payload.org_role === 'string'
+        ? { organization: { id: payload.org_id, slug: payload.org_slug, role: payload.org_role, permissions: Array.isArray(payload.org_permissions) ? payload.org_permissions.filter((p): p is string => typeof p === 'string') : [] } }
+        : {}),
     }
   }
 

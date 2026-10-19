@@ -2,7 +2,7 @@
 
 - **Status:** proposed
 - **Date:** 2026-10-17 (slice 2: 2026-10-18)
-- **Related:** ADR-113 (canonical signed release), ADR-129 (deploy version gauge), ADR-580 (control-plane convergence in CD), ADR-1580 (zero-downtime restarts), ADR 202610171900 (release compatibility gates), ADR 20261018084150 (expand-only migrations in per-unit releases)
+- **Related:** ADR-113 (canonical signed release), ADR-129 (deploy version gauge), ADR-580 (control-plane convergence in CD), ADR-1736 (zero-downtime restarts), ADR 202610171900 (release compatibility gates), ADR 20261018084150 (expand-only migrations in per-unit releases), ADR 20261018133100 (host-configuration lane)
 
 ## Context
 
@@ -49,10 +49,10 @@ keeps in lockstep with `pkg/daemonunitspec` roles, units and readiness URLs.
 A range is eligible when at least one control-plane daemon changed and none of
 these did since the base: migrations (since ADR 20261018084150, only those
 that are not lane-eligible), `deploy/` (units, roles, rules,
-manifests), go.mod/go.sum, the files cd-controlplane copies into its bundle,
-and the release tarball's own contents. Roles only the compute play runs
-(`compute_only_paths`, which a test checks against bootstrap.yml) wait instead
-of blocking. Blocking go.mod also means a unit release never changes a
+manifests; since ADR 20261018133100, only paths no control-plane host role
+reads, and the release's own unit files), go.mod/go.sum, the files
+cd-controlplane copies into its bundle, and the release tarball's own
+contents. Paths only compute roles read wait instead of blocking. Blocking go.mod also means a unit release never changes a
 third-party dependency, so the release SBOM and its KGV baseline still
 describe the control plane. Shared daemons (schedd and
 gatewayd-public also run on compute hosts), compute daemons, CLIs, guest and
@@ -209,7 +209,7 @@ masked. A rollback is not guarded: recovery takes priority, and the deploy
 it undoes already passed the guard.
 
 **Restart or reload.** deployctl decides how a service restarts. With
-ADR-1580's two-generation hand-off (#4898), it reloads a gateway when both the
+ADR-1736's two-generation hand-off (#4898), it reloads a gateway when both the
 running and the new binary support the hand-off and nothing the unit read at
 start has changed, and restarts it otherwise. The lanes call `deployctl
 deploy --only` and inherit that choice.
@@ -306,7 +306,7 @@ a node pays its one-time hashing.
   most often close the lane.
 - **Compute daemons beyond the gateways.** schedd and realtimed restart
   without touching VMs and could join the edge lane once their restarts are
-  covered (ADR-1580). vmmd needs the restart-adoption work.
+  covered (ADR-1736). vmmd needs the restart-adoption work.
 - **Edge target inventory.** The edge lane trusts `edge_targets` or
   `UNIT_RELEASE_EDGE_TARGETS` to list the compute nodes. A node left out stays
   on its current gateways, which N±1 allows. Reading the node list from the
@@ -319,11 +319,12 @@ a node pays its one-time hashing.
   dedicated fleet runner (warm Go cache, no queue) keeps merge-to-prod near 10
   min, but puts builds of main on the host that holds deploy keys. That is the
   owner's decision.
-- **Full lane, outside this ADR.** Run host configuration in its own lane,
-  keyed by a per-role content hash, instead of inside every activation.
-  Content-address runtime bases and pre-stage them off the critical path.
-  Roll compute as a canary node, then parallel waves, once activation is
-  per-unit without a drain.
+- **Full lane, outside this ADR.** Host configuration of the control
+  plane now rides the control-plane lane, keyed by a per-role content hash
+  (ADR 20261018133100); compute host roles are designed there and still
+  wait for the full release. Content-address runtime bases and pre-stage
+  them off the critical path. Roll compute as a canary node, then parallel
+  waves, once activation is per-unit without a drain.
 - **Base discovery.** The base is the newest tag. A production that trails
   it must roll that full release out before unit releases resume.
 

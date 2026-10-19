@@ -1,4 +1,4 @@
-// adr: 1642 — provider delivery cannot outrun the funded meter contract.
+// adr: 1748 — provider delivery cannot outrun the funded meter contract.
 package meter
 
 import (

@@ -71,14 +71,26 @@ func (e *Engine) createRuntimeWithStandards(ctx context.Context, nodeID, instanc
 			ctx = wire.WithContext(ctx, fields)
 		}
 	}
-	runID, err := e.rehearsalNetworkRun(ctx, spec.AppID)
-	if err != nil {
-		return nil, err
+	// A wake hands over the rehearsal network and the standards capture it
+	// already read (ADR-1741); anything not handed over is read here, the
+	// two reads together.
+	prepared, _ := bootPreparedFor(ctx, instanceID)
+	runID, capture := prepared.rehearsalRunID, prepared.capture
+	var runErr, captureErr error
+	reads := make([]func(), 0, 2)
+	if !prepared.haveRehearsal {
+		reads = append(reads, func() { runID, runErr = e.rehearsalNetworkRun(ctx, spec.AppID) })
+	}
+	if !prepared.haveCapture {
+		reads = append(reads, func() { capture, captureErr = e.capturedStandardRuntime(ctx, spec.AppID, instanceID) })
+	}
+	concurrently(reads...)
+	if runErr != nil {
+		return nil, runErr
 	}
 	spec.RehearsalRunID = runID
-	capture, err := e.capturedStandardRuntime(ctx, spec.AppID, instanceID)
-	if err != nil {
-		return nil, applicationStandardRuntimeProblem(err)
+	if captureErr != nil {
+		return nil, applicationStandardRuntimeProblem(captureErr)
 	}
 	if capture.Managed && runID != "" {
 		return nil, errors.New("rehearsal containment does not yet support managed native admission")

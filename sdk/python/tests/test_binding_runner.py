@@ -569,7 +569,10 @@ def test_sync_stop_during_diagnostics_and_total_timeout(monkeypatch):
             try:
                 with pytest.raises(BindingVerificationRecoveryError) as caught:
                     run_binding_verification(client, "api", f.root["id"], poll_interval=0.001, stop_event=stopped)
-                assert time.monotonic() - started < 0.3
+                # The handler holds diagnostics for 1 s; the runner must give up at
+                # its 0.08 s diagnostics timeout. 0.75 s still catches a runner that
+                # waits, without failing on a loaded CI runner (0.47 s observed).
+                assert time.monotonic() - started < 0.75
                 assert "did not succeed" in str(caught.value.cause)
                 assert caught.value.diagnostics is None
             finally:

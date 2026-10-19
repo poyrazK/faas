@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/netip"
@@ -109,7 +110,15 @@ func (p *environmentQualificationServiceProxy) servePrivate(w http.ResponseWrite
 	defer stop()
 	request := privateQualificationRequest(ctx, r, route.Target, path)
 	target := route.Target
-	p.config.Forward(Target{AppID: target.AppID, NodeID: target.NodeID, InstanceID: target.InstanceID, DeploymentID: target.DeploymentID, WakeID: target.WakeID, Port: route.Port}).ServeHTTP(w, request)
+	observed := &qualificationExchangeWriter{ResponseWriter: w}
+	p.config.Forward(Target{AppID: target.AppID, NodeID: target.NodeID, InstanceID: target.InstanceID, DeploymentID: target.DeploymentID, WakeID: target.WakeID, Port: route.Port}).ServeHTTP(observed, request)
+	if route.RequireHTTPS && route.Caller.CaptureInstanceID != "" && route.Target.CaptureInstanceID != "" && observed.status >= 200 && observed.status <= 299 && !observed.failed && ctx.Err() == nil {
+		if receipts, ok := p.config.Store.(state.EnvironmentQualificationServiceReceiptStore); ok {
+			if err := receipts.RecordEnvironmentQualificationServiceExchange(ctx, state.EnvironmentQualificationServiceRequest{NodeID: nodeID, HostIP: hostIP, GraphID: graphID, Binding: binding}, route); err != nil {
+				slog.WarnContext(ctx, "candidate service exchange evidence was not recorded", "graph_id", graphID, "binding", binding, "error", err)
+			}
+		}
+	}
 }
 
 func privateQualificationRequest(ctx context.Context, r *http.Request, target state.EnvironmentQualificationExecution, path string) *http.Request {
@@ -172,4 +181,40 @@ func parseEnvironmentQualificationServicePath(u *url.URL) (string, string, strin
 	}
 	all := api.ServiceCallScope{Methods: []string{"*"}, PathPrefixes: []string{"/"}}
 	return parts[0], parts[1], path, all.Allows(http.MethodGet, path)
+}
+
+// Retain no app output. An incomplete write or cancelled stream cannot qualify
+// a candidate binding even if response headers already contained a 2xx status.
+type qualificationExchangeWriter struct {
+	http.ResponseWriter
+	status int
+	failed bool
+}
+
+func (w *qualificationExchangeWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+func (w *qualificationExchangeWriter) WriteHeader(status int) {
+	if status >= 100 && status < 200 {
+		w.ResponseWriter.WriteHeader(status)
+		return
+	}
+	if w.status == 0 {
+		w.status = status
+		w.ResponseWriter.WriteHeader(status)
+	}
+}
+func (w *qualificationExchangeWriter) Write(p []byte) (int, error) {
+	if w.status == 0 {
+		w.WriteHeader(http.StatusOK)
+	}
+	n, err := w.ResponseWriter.Write(p)
+	w.failed = w.failed || err != nil || n != len(p)
+	return n, err
+}
+func (w *qualificationExchangeWriter) Flush() {
+	if w.status == 0 {
+		w.WriteHeader(http.StatusOK)
+	}
+	if err := http.NewResponseController(w.ResponseWriter).Flush(); err != nil {
+		w.failed = true
+	}
 }

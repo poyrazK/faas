@@ -6,14 +6,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/issues"
 )
 
-const MaxCases = 10000
-const MaxCorpusBytes = 8 << 20
+const MaxCases = api.IssueGroupingEvaluationCasesMax
+const MaxCorpusBytes = api.IssueGroupingEvaluationCorpusMaxBytes
 
 type Case struct {
 	ID          string         `json:"id"`
@@ -41,20 +43,34 @@ func key(values ...string) string { raw, _ := json.Marshal(values); return strin
 // this offline evaluation: IDs/timestamps are synthesized, and read-only mapping
 // stamps are removed. Mapped frames themselves remain unchanged.
 func Evaluate(cases []Case, strategy string, now time.Time) (Report, error) {
-	report := Report{Strategy: strategy, Cases: len(cases), Pairs: pairs(int64(len(cases)))}
+	rows, err := normalize(cases, strategy, now)
+	if err != nil {
+		return Report{}, err
+	}
+	return summarize(rows, strategy), nil
+}
+
+type normalizedCase struct {
+	id, group, family string
+	decision          Decision
+}
+
+func validStrategy(strategy string) bool {
+	return strategy == "legacy" || strategy == issues.FailureSiteStrategy || strategy == issues.CauseStrategy
+}
+
+func normalize(cases []Case, strategy string, now time.Time) ([]normalizedCase, error) {
 	if len(cases) == 0 || len(cases) > MaxCases {
-		return report, fmt.Errorf("corpus must contain 1–%d cases", MaxCases)
+		return nil, fmt.Errorf("corpus must contain 1–%d cases", MaxCases)
 	}
-	if strategy != "legacy" && strategy != issues.FailureSiteStrategy && strategy != issues.CauseStrategy {
-		return report, fmt.Errorf("unsupported grouping strategy")
+	if !validStrategy(strategy) {
+		return nil, fmt.Errorf("unsupported grouping strategy")
 	}
+	rows := make([]normalizedCase, 0, len(cases))
 	seen := map[string]bool{}
-	groups := map[string]int64{}
-	families := map[string]int64{}
-	intersections := map[[2]string]int64{}
 	for i, c := range cases {
-		if c.ID == "" || c.Family == "" || seen[c.ID] {
-			return report, fmt.Errorf("case %d needs unique id and nonempty family", i)
+		if !validID(c.ID) || c.Family == "" || seen[c.ID] {
+			return nil, fmt.Errorf("case %d needs unique bounded printable id and nonempty family", i)
 		}
 		seen[c.ID] = true
 		event := c.Event
@@ -68,15 +84,50 @@ func Evaluate(cases []Case, strategy string, now time.Time) (Report, error) {
 		event.Symbolication = nil
 		event.SymbolicationStrategy = ""
 		event.GroupingStrategy = strategy
-		_, fp, _, err := issues.Normalize(event, now, api.PlanScale.IssueLimits())
+		event, fp, _, err := issues.Normalize(event, now, api.PlanScale.IssueLimits())
 		if err != nil {
-			return report, fmt.Errorf("case %d rejected: %w", i, err)
+			return nil, fmt.Errorf("case %d rejected: %w", i, err)
 		}
-		group := key(c.App, c.Environment, fp)
-		family := key(c.App, c.Environment, c.Family)
-		groups[group]++
-		families[family]++
-		intersections[[2]string{group, family}]++
+		explanation := issues.ExplainGrouping(event, issues.GroupingVersionFor(event), fp)
+		if explanation == nil {
+			return nil, fmt.Errorf("case %d grouping explanation could not be verified", i)
+		}
+		decision := Decision{
+			Basis: explanation.Basis, SourceKind: explanation.SourceKind,
+			DiscriminatorKind: explanation.DiscriminatorKind, CauseIndex: explanation.CauseIndex,
+		}
+		for _, frame := range explanation.Frames {
+			decision.FrameIndexes = append(decision.FrameIndexes, frame.FrameIndex)
+		}
+		rows = append(rows, normalizedCase{
+			id: c.ID, group: key(c.App, c.Environment, fp),
+			family: key(c.App, c.Environment, c.Family), decision: decision,
+		})
+	}
+	return rows, nil
+}
+
+func validID(id string) bool {
+	if id == "" || len(id) > api.IssueGroupingEvaluationCaseIDMaxBytes || !utf8.ValidString(id) {
+		return false
+	}
+	for _, r := range id {
+		if !unicode.IsPrint(r) || unicode.IsSpace(r) {
+			return false
+		}
+	}
+	return true
+}
+
+func summarize(rows []normalizedCase, strategy string) Report {
+	report := Report{Strategy: strategy, Cases: len(rows), Pairs: pairs(int64(len(rows)))}
+	groups := map[string]int64{}
+	families := map[string]int64{}
+	intersections := map[[2]string]int64{}
+	for _, row := range rows {
+		groups[row.group]++
+		families[row.family]++
+		intersections[[2]string{row.group, row.family}]++
 	}
 	var actualSame, expectedSame, trueSame int64
 	for _, n := range groups {
@@ -99,5 +150,5 @@ func Evaluate(cases []Case, strategy string, now time.Time) (Report, error) {
 		value := float64(trueSame) / float64(expectedSame)
 		report.Recall = &value
 	}
-	return report, nil
+	return report
 }

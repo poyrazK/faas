@@ -1,4 +1,4 @@
-// adr: 1642 — enforcement precedes the billable root veth RX boundary.
+// adr: 1748 — enforcement precedes the billable root veth RX boundary.
 package netns
 
 import (

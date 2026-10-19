@@ -168,7 +168,7 @@ func (s *MemoryStore) UsageSnapshot(_ context.Context, accountID string, periodS
 	var snapshot UsageSnapshot
 	snapshot.PeriodStart = periodStart
 	for _, database := range s.databases {
-		if database.AccountID == accountID && (database.State == StateReady || database.ProviderResourceID != "" || database.AccountingRequired) {
+		if s.billingSubject(database) == accountID && (database.State == StateReady || database.ProviderResourceID != "" || database.AccountingRequired) {
 			if database.State == StateReady {
 				snapshot.ReadyDatabases++
 			}
@@ -177,7 +177,7 @@ func (s *MemoryStore) UsageSnapshot(_ context.Context, accountID string, periodS
 		}
 	}
 	for _, record := range s.usage {
-		if record.AccountID != accountID || record.WindowFrom.Before(periodStart) || !record.WindowFrom.Before(periodEnd) {
+		if s.billingSubject(s.databases[record.DatabaseID]) != accountID || record.WindowFrom.Before(periodStart) || !record.WindowFrom.Before(periodEnd) {
 			continue
 		}
 		var err error

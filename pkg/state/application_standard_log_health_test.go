@@ -12,20 +12,13 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-type standardLogHealthTestStore interface {
-	standardLogDeliveryTestStore
-	standardLogInventoryTestStore
-	ApplicationStandardLogHealthStore
-}
+type standardLogHealthTestStore = contractTestStore
 
 func TestMemApplicationStandardLogHealth(t *testing.T) {
 	standardLogHealthLifecycle(t, NewMemStore())
 }
 
-type standardLogHealthExceptionTestStore interface {
-	standardLogHealthTestStore
-	ApplicationStandardExceptionStore
-}
+type standardLogHealthExceptionTestStore = contractTestStore
 
 func TestMemApplicationStandardLogHealthExceptionDeadline(t *testing.T) {
 	standardLogHealthExceptionDeadline(t, NewMemStore())

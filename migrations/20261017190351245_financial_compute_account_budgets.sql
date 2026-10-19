@@ -1,7 +1,7 @@
 -- +goose Up
 -- +goose StatementBegin
 SET LOCAL lock_timeout = '5s';
--- ADR-1640. A distinct account book prevents an
+-- ADR-1746. A distinct account book prevents an
 -- app UUID from being used as the shared allowance identity.
 CREATE TABLE IF NOT EXISTS financial_compute_account_books (
  account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,

@@ -1,7 +1,7 @@
 -- +goose Up
 -- +goose StatementBegin
 SET LOCAL lock_timeout = '5s';
--- ADR-1641. A job is not an app. Retain claims even when task projections
+-- ADR-1747. A job is not an app. Retain claims even when task projections
 -- advance; native cancellation and lost-response recovery need the old fence.
 CREATE TABLE IF NOT EXISTS financial_compute_job_books (
  account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
@@ -113,7 +113,7 @@ CREATE OR REPLACE TRIGGER financial_compute_job_task_guard BEFORE INSERT OR UPDA
 -- Refuse a rollback that would erase physical job funding or its fences.
 -- +goose StatementBegin
 DO $$ BEGIN
- RAISE EXCEPTION 'ADR-1641 compute authority migration requires a coordinated forward repair';
+ RAISE EXCEPTION 'ADR-1747 compute authority migration requires a coordinated forward repair';
 END $$;
 -- +goose StatementEnd
 

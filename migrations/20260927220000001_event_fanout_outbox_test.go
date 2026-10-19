@@ -62,7 +62,7 @@ func TestMigrations_PublishedEventCreatesDurableFanout(t *testing.T) {
 	if !errors.As(err, &pgErr) || pgErr.Code != "23505" || pgErr.ConstraintName != "event_fanout_identity_uniq" {
 		t.Fatalf("changed identity error = %v, want event_fanout_identity_uniq", err)
 	}
-	if _, err := pool.Exec(ctx, `DELETE FROM accounts WHERE id=$1`, accountID); err != nil {
+	if _, err := pool.Exec(ctx, deleteAccountSQL, accountID); err != nil {
 		t.Fatal(err)
 	}
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM event_fanout_outbox WHERE account_id=$1::uuid`, accountID).Scan(&count); err != nil {

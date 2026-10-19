@@ -1,4 +1,4 @@
-// adr: 1642 — one paid account ceiling covers compute and interface egress.
+// adr: 1748 — one paid account ceiling covers compute and interface egress.
 package financial
 
 import "math/big"

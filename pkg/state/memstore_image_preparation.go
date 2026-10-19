@@ -39,6 +39,7 @@ func (m *MemStore) BeginImagePreparation(ctx context.Context, id, node string) (
 			return ImagePreparation{}, ErrInvalidArgument
 		}
 		p = ImagePreparation{DeploymentID: id, NodeName: node, InputPath: inputPath, InputKey: d.RootfsKey, InputBytes: d.RootfsBytes, Phase: ImagePreparing}
+		p.PhaseStartedAt = time.Now().UTC()
 	}
 	p.ClaimToken, p.UpdatedAt = uuid.NewString(), time.Now().UTC()
 	if m.imagePreparations == nil {
@@ -67,6 +68,7 @@ func (m *MemStore) PublishImagePreparationLayer(ctx context.Context, id, token, 
 	}
 	d.RootfsPath, d.RootfsKey, d.RootfsBytes = path, key, bytes
 	p.Phase, p.UpdatedAt = ImageLayerPublished, time.Now().UTC()
+	p.PhaseStartedAt = p.UpdatedAt
 	m.putDeploymentLocked(id, d)
 	m.imagePreparations[id] = p
 	return nil
@@ -90,6 +92,7 @@ func (m *MemStore) AdvanceImagePreparation(ctx context.Context, id, token string
 		return ErrConflict
 	}
 	p.Phase, p.UpdatedAt = to, time.Now().UTC()
+	p.PhaseStartedAt = p.UpdatedAt
 	m.imagePreparations[id] = p
 	return nil
 }

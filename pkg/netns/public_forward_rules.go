@@ -1,4 +1,4 @@
-// adr: 1643 — node-local public bridges cross the public veth before delivery.
+// adr: 1749 — node-local public bridges cross the public veth before delivery.
 package netns
 
 import "strconv"

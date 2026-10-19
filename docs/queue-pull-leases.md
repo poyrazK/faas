@@ -5,6 +5,9 @@ listen for deliveries. A worker or job that runs its own loop with no HTTP
 listener consumes a queue by leasing its messages instead (ADR-1140): it asks
 for messages when it has capacity, and acks or nacks each one.
 
+[Organization queues](organization-queues.md) use the same lease contract and
+keep their backlog and receipts through creator departure or erasure.
+
 ## Set up
 
 Give the app a **pull** binding for the queue:

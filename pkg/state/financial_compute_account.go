@@ -1,4 +1,4 @@
-// adr: 1640 — account and app authority is atomic.
+// adr: 1746 — account and app authority is atomic.
 package state
 
 import (

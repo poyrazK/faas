@@ -12,7 +12,7 @@ import (
 )
 
 func TestMCPReadinessStoreRoundTrip(t *testing.T) {
-	check := func(t *testing.T, s Store) {
+	check := func(t *testing.T, s Store, kind DeploymentKind) {
 		ctx := context.Background()
 		source := s.(MCPReadinessStore)
 		account, err := s.CreateAccount(ctx, "readiness-gate@example.com", api.PlanPro)
@@ -30,9 +30,20 @@ func TestMCPReadinessStoreRoundTrip(t *testing.T) {
 		if err = s.MarkDeploymentLive(ctx, stable.ID); err != nil {
 			t.Fatal(err)
 		}
-		candidate, err := s.CreateDeployment(ctx, Deployment{AppID: app.ID, Kind: DeploymentKindImage, ImageDigest: "sha256:candidate", TrafficPercentExplicit: true, TrafficPercent: 0})
+		buildURLs := s.(PublicBuildURLStore)
+		if kind == DeploymentKindTarball {
+			if err := buildURLs.SetAppPublicBuildURLs(ctx, account.ID, app.ID, map[string]string{"VITE_API_URL": "https://api.example.com/v1"}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		candidate, err := s.CreateDeployment(ctx, Deployment{AppID: app.ID, Kind: kind, SourcePath: "/tmp/readiness-source.tar.gz", ImageDigest: "sha256:candidate", TrafficPercentExplicit: true, TrafficPercent: 0})
 		if err != nil {
 			t.Fatal(err)
+		}
+		if kind == DeploymentKindTarball {
+			if err := buildURLs.SetAppPublicBuildURLs(ctx, account.ID, app.ID, map[string]string{"VITE_API_URL": "https://new-api.example.com"}); err != nil {
+				t.Fatal(err)
+			}
 		}
 		if err = s.MarkDeploymentLive(ctx, candidate.ID); err != nil {
 			t.Fatal(err)
@@ -90,6 +101,12 @@ func TestMCPReadinessStoreRoundTrip(t *testing.T) {
 		snapshot, err := source.ListMCPReadiness(ctx, account.ID, app.ID, candidate.ID)
 		if err != nil || len(snapshot.Overrides) != 1 || snapshot.Overrides[0].UsedAt == nil || len(snapshot.Evidence) != 1 {
 			t.Fatalf("audit: %+v %v", snapshot, err)
+		}
+		if kind == DeploymentKindTarball {
+			urls, err := buildURLs.DeploymentPublicBuildURLs(ctx, candidate.ID)
+			if err != nil || urls["VITE_API_URL"] != "https://api.example.com/v1" {
+				t.Fatalf("readiness override promotion changed the captured build URLs: %v %v", urls, err)
+			}
 		}
 		blocked() // The same override cannot authorize the next increase.
 		oldSubject, err := source.MCPReadinessSubject(ctx, account.ID, candidate.ID)
@@ -200,8 +217,12 @@ func TestMCPReadinessStoreRoundTrip(t *testing.T) {
 			t.Fatalf("failed activation changed serving deployment: %+v %v", live, err)
 		}
 	}
-	t.Run("memory", func(t *testing.T) { check(t, NewMemStore()) })
-	t.Run("postgres", func(t *testing.T) { check(t, NewPgStore(pgtest.OpenMigrated(t))) })
+	for _, kind := range []DeploymentKind{DeploymentKindImage, DeploymentKindTarball} {
+		t.Run(string(kind), func(t *testing.T) {
+			t.Run("memory", func(t *testing.T) { check(t, NewMemStore(), kind) })
+			t.Run("postgres", func(t *testing.T) { check(t, NewPgStore(pgtest.OpenMigrated(t)), kind) })
+		})
+	}
 }
 
 func TestMCPReadinessAlternativeMemoryPaths(t *testing.T) {

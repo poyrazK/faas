@@ -10,7 +10,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 1641 — stale residency and a deleted definition cannot bill past a
+// adr: 1747 — stale residency and a deleted definition cannot bill past a
 // strict job's funded envelope, or erase the job's retained compute history.
 func TestFinancialComputeJobFundedBilling(t *testing.T) {
 	for _, backend := range []string{"memory", "postgres"} {

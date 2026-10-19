@@ -11,10 +11,10 @@ import (
 
 const platformTenantStatementCols = `id, account_id, platform_tenant_id, period_start, period_end,
        revision, status, currency, billable_units, unpriced_units, amount_millicents,
-       lines, coverage, as_of, created_at, finalized_at`
+       lines, fees, coverage, as_of, created_at, finalized_at`
 const platformTenantStatementHeaderCols = `id, account_id, platform_tenant_id, period_start, period_end,
        revision, status, currency, billable_units, unpriced_units, amount_millicents,
-       lines, as_of, created_at, finalized_at`
+       lines, fees, as_of, created_at, finalized_at`
 const platformTenantStatementSummaryCols = `id, account_id, platform_tenant_id, period_start, period_end,
        revision, status, currency, billable_units, unpriced_units, amount_millicents,
        as_of, created_at, finalized_at`
@@ -24,15 +24,18 @@ const platformTenantHandoffCols = `id, account_id, platform_tenant_id, statement
 func scanPlatformTenantStatement(row pgx.Row) (PlatformTenantStatement, error) {
 	var out PlatformTenantStatement
 	var status string
-	var rawLines, rawCoverage []byte
+	var rawLines, rawFees, rawCoverage []byte
 	err := row.Scan(&out.ID, &out.AccountID, &out.TenantID, &out.PeriodStart, &out.PeriodEnd,
 		&out.Revision, &status, &out.Currency, &out.BillableUnits, &out.UnpricedUnits,
-		&out.AmountMillicents, &rawLines, &rawCoverage, &out.AsOf, &out.CreatedAt, &out.FinalizedAt)
+		&out.AmountMillicents, &rawLines, &rawFees, &rawCoverage, &out.AsOf, &out.CreatedAt, &out.FinalizedAt)
 	if err != nil {
 		return out, err
 	}
 	out.Status = APIConsumerUsageStatementStatus(status)
 	if err := json.Unmarshal(rawLines, &out.Lines); err != nil {
+		return out, err
+	}
+	if err := unmarshalStatementFees(rawFees, &out.Fees); err != nil {
 		return out, err
 	}
 	if err := json.Unmarshal(rawCoverage, &out.Coverage); err != nil {
@@ -63,15 +66,18 @@ func scanPlatformTenantStatement(row pgx.Row) (PlatformTenantStatement, error) {
 func scanPlatformTenantStatementHeader(row pgx.Row) (PlatformTenantStatement, error) {
 	var out PlatformTenantStatement
 	var status string
-	var rawLines []byte
+	var rawLines, rawFees []byte
 	err := row.Scan(&out.ID, &out.AccountID, &out.TenantID, &out.PeriodStart, &out.PeriodEnd,
 		&out.Revision, &status, &out.Currency, &out.BillableUnits, &out.UnpricedUnits,
-		&out.AmountMillicents, &rawLines, &out.AsOf, &out.CreatedAt, &out.FinalizedAt)
+		&out.AmountMillicents, &rawLines, &rawFees, &out.AsOf, &out.CreatedAt, &out.FinalizedAt)
 	if err != nil {
 		return out, err
 	}
 	out.Status = APIConsumerUsageStatementStatus(status)
 	if err := json.Unmarshal(rawLines, &out.Lines); err != nil {
+		return out, err
+	}
+	if err := unmarshalStatementFees(rawFees, &out.Fees); err != nil {
 		return out, err
 	}
 	out.PeriodStart, out.PeriodEnd, out.AsOf = out.PeriodStart.UTC(), out.PeriodEnd.UTC(), out.AsOf.UTC()
@@ -265,11 +271,16 @@ func (s *PgStore) CreatePlatformTenantStatement(ctx context.Context, in Platform
 	if err := validatePlatformTenantStatementInput(in); err != nil {
 		return PlatformTenantStatement{}, false, err
 	}
-	lines, err := json.Marshal(in.Lines)
+	// A fee-only revision (ADR-1322) has neither; store empty arrays.
+	lines, err := json.Marshal(append([]PlatformTenantStatementLine{}, in.Lines...))
 	if err != nil {
 		return PlatformTenantStatement{}, false, err
 	}
-	coverage, err := json.Marshal(in.Coverage)
+	coverage, err := json.Marshal(append([]PlatformTenantStatementCoverage{}, in.Coverage...))
+	if err != nil {
+		return PlatformTenantStatement{}, false, err
+	}
+	fees, err := json.Marshal(append([]APIConsumerStatementFee{}, in.Fees...))
 	if err != nil {
 		return PlatformTenantStatement{}, false, err
 	}
@@ -305,11 +316,11 @@ func (s *PgStore) CreatePlatformTenantStatement(ctx context.Context, in Platform
 	if latestStatus == string(APIConsumerUsageStatementDraft) {
 		var sameSnapshot bool
 		if err := tx.QueryRow(ctx, `select currency = $6 and billable_units = $7 and unpriced_units = $8
-			and amount_millicents = $9 and lines = $10::jsonb and coverage = $11::jsonb
+			and amount_millicents = $9 and lines = $10::jsonb and coverage = $11::jsonb and fees = $12::jsonb
 			from platform_tenant_statements
 			where account_id = $1::uuid and platform_tenant_id = $2::uuid and period_start = $3 and period_end = $4
 			and revision = $5 and status = 'draft'`, in.AccountID, in.TenantID, in.PeriodStart, in.PeriodEnd,
-			latestRevision, in.Currency, in.BillableUnits, in.UnpricedUnits, in.AmountMillicents, lines, coverage).Scan(&sameSnapshot); err != nil {
+			latestRevision, in.Currency, in.BillableUnits, in.UnpricedUnits, in.AmountMillicents, lines, coverage, fees).Scan(&sameSnapshot); err != nil {
 			return PlatformTenantStatement{}, false, err
 		}
 		if sameSnapshot {
@@ -336,11 +347,11 @@ func (s *PgStore) CreatePlatformTenantStatement(ctx context.Context, in Platform
 	}
 	out, err := scanPlatformTenantStatementHeader(tx.QueryRow(ctx, `insert into platform_tenant_statements
 		(account_id, platform_tenant_id, period_start, period_end, revision, status,
-		 currency, billable_units, unpriced_units, amount_millicents, lines, coverage, as_of)
-		values ($1::uuid, $2::uuid, $3, $4, $5, 'draft', $6, $7, $8, $9, $10::jsonb, $11::jsonb, $12)
+		 currency, billable_units, unpriced_units, amount_millicents, lines, coverage, as_of, fees)
+		values ($1::uuid, $2::uuid, $3, $4, $5, 'draft', $6, $7, $8, $9, $10::jsonb, $11::jsonb, $12, $13::jsonb)
 		returning `+platformTenantStatementHeaderCols,
 		in.AccountID, in.TenantID, in.PeriodStart, in.PeriodEnd, in.Revision,
-		in.Currency, in.BillableUnits, in.UnpricedUnits, in.AmountMillicents, lines, coverage, in.AsOf))
+		in.Currency, in.BillableUnits, in.UnpricedUnits, in.AmountMillicents, lines, coverage, in.AsOf, fees))
 	if err != nil {
 		return PlatformTenantStatement{}, false, err
 	}
@@ -545,4 +556,16 @@ func (s *PgStore) GetPlatformTenantStatementHandoff(ctx context.Context, account
 		return PlatformTenantStatementHandoff{}, ErrNotFound
 	}
 	return out, err
+}
+
+// unmarshalStatementFees reads a statement's fees column (ADR-1322); an
+// empty array reads as no fees.
+func unmarshalStatementFees(raw []byte, fees *[]APIConsumerStatementFee) error {
+	if err := json.Unmarshal(raw, fees); err != nil {
+		return err
+	}
+	if len(*fees) == 0 {
+		*fees = nil
+	}
+	return nil
 }

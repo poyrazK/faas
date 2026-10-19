@@ -1,7 +1,7 @@
 -- +goose Up
 -- +goose StatementBegin
 SET LOCAL lock_timeout = '5s';
--- ADR-1642. An attestation is incarnation-bound and retained on old registration.
+-- ADR-1748. An attestation is incarnation-bound and retained on old registration.
 ALTER TABLE financial_compute_owners ADD COLUMN IF NOT EXISTS egress_budget_incarnation uuid;
 DO $$ BEGIN
  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='financial_compute_owners'::regclass AND conname='financial_egress_owner_incarnation') THEN

@@ -219,6 +219,8 @@ type OrgAppSummary struct {
 	Runtime   string `json:"runtime,omitempty"`
 	Status    string `json:"status"`
 	CreatedAt string `json:"created_at"`
+	// ProjectID is the parent project's UUID; omitted for standalone apps.
+	ProjectID string `json:"project_id,omitempty"`
 }
 
 // OrgAppListResponse is the inventory envelope for GET /v1/orgs/{slug}/apps.

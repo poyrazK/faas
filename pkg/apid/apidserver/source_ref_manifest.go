@@ -506,6 +506,10 @@ func (s *server) applySourceRefManifest(ctx context.Context, acct state.Account,
 		if problem := applyTriggerRetryPolicy(&createReq); problem != nil {
 			return staged, problem
 		}
+		delivery, deliveryProblem := s.requestedTriggerDelivery(acct, kind, nonEmptyStringPointer(declaration.Delivery))
+		if deliveryProblem != nil {
+			return staged, deliveryProblem
+		}
 		bsm, bwm, attempts, payload, poison, capProblem := enforceCreateTriggerCaps(&createReq, acct.Plan, limits)
 		if capProblem != nil {
 			return staged, capProblem
@@ -514,10 +518,17 @@ func (s *server) applySourceRefManifest(ctx context.Context, acct state.Account,
 		if sealProblem != nil {
 			return staged, sealProblem
 		}
-		initialEnabled := declaration.IsEnabled() && declaration.WorkPolicy == ""
-		created, createErr := s.store.CreateTriggerIfUnderQuota(ctx, app.ID, string(kind), declaration.Slug, initialEnabled, sealed, triggerSourceForConfig(kind, sealed), bsm, bwm, attempts, payload, poison, limits)
+		enableAtCreate := declaration.IsEnabled() && declaration.WorkPolicy == ""
+		created, createErr := s.store.CreateTriggerIfUnderQuota(ctx, app.ID, string(kind), declaration.Slug, enableAtCreate && delivery == api.TriggerDeliveryRecord, sealed, triggerSourceForConfig(kind, sealed), bsm, bwm, attempts, payload, poison, limits)
 		if createErr != nil {
 			return staged, sourceRefManifestStoreProblem(createErr, acct.Plan, false)
+		}
+		if delivery != api.TriggerDeliveryRecord {
+			// A failed switch deletes the trigger, so it is not staged.
+			var problem *api.Problem
+			if created, problem = s.applyTriggerDelivery(ctx, created, delivery, enableAtCreate); problem != nil {
+				return staged, problem
+			}
 		}
 		id := uuidFromPgtype(created.ID).String()
 		staged.triggerIDs = append(staged.triggerIDs, id)

@@ -35,7 +35,7 @@ func UnitSchedd() daemonunit.Unit {
 		Description: "onebox-faas schedd — scheduler + lifecycle owner",
 		// faas-schedd.socket is opt-in: the control-plane role adds
 		// Wants=/After= on it, with the matching listen address, in a
-		// drop-in when faas_schedd_listen_addr is set (ADR-1580).
+		// drop-in when faas_schedd_listen_addr is set (ADR-1736).
 		After: []string{"network.target", "postgresql.service", "faas-cp.slice", "faas-brokerq.slice"},
 		Wants: []string{"faas-cp.slice", "faas-brokerq.slice"},
 		// PostgreSQL is local on the control plane and remote on
@@ -113,6 +113,9 @@ func UnitSchedd() daemonunit.Unit {
 			{Key: "FAAS_CI_TRANSPORT_ENABLED", Value: "0"},
 			{Key: "FAAS_CI_RUNTIME_URL", Value: ""},
 			{Key: "FAAS_WORKFLOWS_ENABLED", Value: "1"},
+			// ADR-1189: fire the prewarm intents the API accepts (ADR-160);
+			// without the drain they would stay pending.
+			{Key: "FAAS_PREWARM_ENABLED", Value: "1"},
 		},
 		LoadCredential: []daemonunit.LoadCred{
 			{Name: "fleet.age", Path: "/etc/faas/secrets/fleet.age"},

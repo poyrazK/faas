@@ -1,7 +1,7 @@
 -- +goose Up
 -- +goose StatementBegin
 SET LOCAL lock_timeout = '5s';
--- ADR-1430 / ADR-1642: new funding is USD. Historical EUR budget revisions,
+-- ADR-1430 / ADR-1748: new funding is USD. Historical EUR budget revisions,
 -- prices and invoices remain unchanged. Pre-release books lack a currency tag;
 -- never reinterpret their retained money as USD during an upgrade.
 CREATE TABLE IF NOT EXISTS financial_funding_currency (

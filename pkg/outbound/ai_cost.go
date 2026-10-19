@@ -13,7 +13,8 @@ import (
 // cached-input, cache-write and input-image prices with the input price and
 // an absent output-image price with the output price. The other media
 // prices (ADR-997) are zero when absent: Image per image, AudioMinute per
-// minute of input audio and Characters per million input characters.
+// minute of input audio and Characters per million input characters, and
+// VideoSecond per second of generated video (ADR-1432).
 type AIPrice struct {
 	ModelPrefix string
 	Input       int64
@@ -25,10 +26,28 @@ type AIPrice struct {
 	Image       int64
 	AudioMinute int64
 	Characters  int64
+	VideoSecond int64
+	// Built-in tool prices (ADR-1433): per web search, per file search and
+	// per GB container session; zero when absent.
+	WebSearch     int64
+	FileSearch    int64
+	CodeSessionGB int64
+}
+
+// resolveToolPrices fills the built-in tool prices of a resolved price.
+func resolveToolPrices(price *AIPrice, webSearch, fileSearch, codeSessionGB *int64) {
+	for _, field := range []struct {
+		dst *int64
+		src *int64
+	}{{&price.WebSearch, webSearch}, {&price.FileSearch, fileSearch}, {&price.CodeSessionGB, codeSessionGB}} {
+		if field.src != nil {
+			*field.dst = *field.src
+		}
+	}
 }
 
 // resolveMediaPrices fills the media prices of a resolved price.
-func resolveMediaPrices(price *AIPrice, inputImage, outputImage, image, audioMinute, characters *int64) {
+func resolveMediaPrices(price *AIPrice, inputImage, outputImage, image, audioMinute, characters, videoSecond *int64) {
 	price.InputImage, price.OutputImage = price.Input, price.Output
 	if inputImage != nil {
 		price.InputImage = *inputImage
@@ -39,7 +58,7 @@ func resolveMediaPrices(price *AIPrice, inputImage, outputImage, image, audioMin
 	for _, field := range []struct {
 		dst *int64
 		src *int64
-	}{{&price.Image, image}, {&price.AudioMinute, audioMinute}, {&price.Characters, characters}} {
+	}{{&price.Image, image}, {&price.AudioMinute, audioMinute}, {&price.Characters, characters}, {&price.VideoSecond, videoSecond}} {
 		if field.src != nil {
 			*field.dst = *field.src
 		}
@@ -62,7 +81,8 @@ func ResolveAIPrices(entries []api.OutboundAIPriceEntry) []AIPrice {
 			price.CacheWrite = *entry.CacheWriteMillicentsPerMTok
 		}
 		resolveMediaPrices(&price, entry.InputImageMillicentsPerMTok, entry.OutputImageMillicentsPerMTok,
-			entry.MillicentsPerImage, entry.MillicentsPerAudioMinute, entry.MillicentsPerMillionCharacters)
+			entry.MillicentsPerImage, entry.MillicentsPerAudioMinute, entry.MillicentsPerMillionCharacters, entry.MillicentsPerVideoSecond)
+		resolveToolPrices(&price, entry.MillicentsPerWebSearch, entry.MillicentsPerFileSearch, entry.MillicentsPerCodeSessionGB)
 		prices = append(prices, price)
 	}
 	return prices
@@ -100,13 +120,14 @@ func aiPriceFor(integration Integration, model string) (AIPrice, bool) {
 	price := AIPrice{ModelPrefix: entry.Model, Input: entry.Price.Input, CachedInput: entry.Price.CachedInput,
 		CacheWrite: entry.Price.CacheWrite, Output: entry.Price.Output}
 	resolveMediaPrices(&price, entry.Price.InputImage, entry.Price.OutputImage, entry.Price.Image,
-		entry.Price.AudioMinute, entry.Price.Characters)
+		entry.Price.AudioMinute, entry.Price.Characters, entry.Price.VideoSecond)
+	resolveToolPrices(&price, entry.Price.WebSearch, entry.Price.FileSearch, entry.Price.CodeSessionGB)
 	return price, true
 }
 
 // aiCallCostMillicents prices one call of an integration.
 func aiCallCostMillicents(integration Integration, usage AIUsage) int64 {
-	price, ok := aiPriceFor(integration, usage.Model)
+	price, ok := aiPriceFor(integration, usage.priceModel())
 	if !ok {
 		return 0
 	}
@@ -115,7 +136,7 @@ func aiCallCostMillicents(integration Integration, usage AIUsage) int64 {
 
 // aiCostMillicents prices one call from a price list alone.
 func aiCostMillicents(prices []AIPrice, usage AIUsage) int64 {
-	price, ok := matchAIPrice(prices, usage.Model)
+	price, ok := matchAIPrice(prices, usage.priceModel())
 	if !ok {
 		return 0
 	}
@@ -136,13 +157,17 @@ func priceCostMillicents(price AIPrice, usage AIUsage) int64 {
 	uncached := max(usage.InputTokens-usage.CachedInputTokens-usage.CacheWriteTokens-usage.InputImageTokens, 0)
 	textOutput := max(usage.OutputTokens-usage.OutputImageTokens, 0)
 	// Every term is scaled to sixty million: per-million prices by 60,
-	// per-image prices by 60,000,000 and per-minute prices by 1,000,000.
+	// per-image, per-second and per-use prices by 60,000,000 and per-minute
+	// prices by 1,000,000.
 	total := new(big.Int)
 	for _, term := range [][3]int64{
 		{uncached, price.Input, 60}, {usage.CachedInputTokens, price.CachedInput, 60},
 		{usage.CacheWriteTokens, price.CacheWrite, 60}, {usage.InputImageTokens, price.InputImage, 60},
 		{textOutput, price.Output, 60}, {usage.OutputImageTokens, price.OutputImage, 60},
 		{usage.Characters, price.Characters, 60}, {usage.AudioSeconds, price.AudioMinute, 1_000_000},
+		{usage.VideoSeconds, price.VideoSecond, 60_000_000},
+		{usage.WebSearches, price.WebSearch, 60_000_000}, {usage.FileSearches, price.FileSearch, 60_000_000},
+		{usage.CodeSessionGB, price.CodeSessionGB, 60_000_000},
 	} {
 		total.Add(total, new(big.Int).Mul(big.NewInt(term[0]), big.NewInt(term[1]*term[2])))
 	}

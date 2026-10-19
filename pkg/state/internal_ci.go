@@ -18,12 +18,12 @@ func (s *MemStore) CIStore() ci.Store {
 	return s.internalCI
 }
 
-func (s *PgStore) CIStore() ci.Store { return ci.NewPostgresStore(s.pool) }
+func (s *PgStore) CIStore() ci.Store { return ci.NewPostgresStore(s.pool.Pool) }
 
 func (s *PgStore) ciJobRunOwned(ctx context.Context, account, runID string) (bool, error) {
-	return ci.NewPostgresStore(s.pool).JobsRunOwned(ctx, account, runID)
+	return ci.NewPostgresStore(s.pool.Pool).JobsRunOwned(ctx, account, runID)
 }
 
 func (s *PgStore) ciJobRetryBlocked(ctx context.Context, runID string) (bool, error) {
-	return ci.NewPostgresStore(s.pool).JobsRetryBlocked(ctx, runID)
+	return ci.NewPostgresStore(s.pool.Pool).JobsRetryBlocked(ctx, runID)
 }

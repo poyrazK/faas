@@ -34,7 +34,7 @@ func (s *PostgresStore) FinishCloneRestoreProvision(ctx context.Context, databas
 	if err != nil {
 		return Database{}, ErrInvalid
 	}
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.catalog.Begin(ctx)
 	if err != nil {
 		return Database{}, err
 	}
@@ -80,7 +80,7 @@ func (s *PostgresStore) GetCloneRestoreProof(ctx context.Context, accountID, dat
 	if err != nil {
 		return RestoreProof{}, err
 	}
-	row, err := new(sqlc.Queries).ReadManagedPostgresCloneRestoreProof(ctx, s.pool, sqlc.ReadManagedPostgresCloneRestoreProofParams{AccountID: account, DatabaseID: id})
+	row, err := new(sqlc.Queries).ReadManagedPostgresCloneRestoreProof(ctx, s.catalog, sqlc.ReadManagedPostgresCloneRestoreProofParams{AccountID: account, DatabaseID: id})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return RestoreProof{}, ErrConflict
 	}

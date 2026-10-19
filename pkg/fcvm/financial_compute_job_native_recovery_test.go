@@ -15,7 +15,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
-// adr: 1641 — a job stop without a local journal resolves the immutable claim
+// adr: 1747 — a job stop without a local journal resolves the immutable claim
 // by instance. A replacement owner cannot revive the cancelled task's RPC.
 func TestFinancialComputeJobCancellationFencesLateNativeCreate(t *testing.T) {
 	store := state.NewMemStore()

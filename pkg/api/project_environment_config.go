@@ -71,6 +71,53 @@ func NormalizeProjectEnvironmentConfig(raw []byte) (json.RawMessage, string, err
 	return json.RawMessage(canonical), hex.EncodeToString(sum[:]), nil
 }
 
+// ProjectEnvironmentConfigEnv returns the configuration entries delivered to a
+// project environment's services as environment variables (ADR-1136):
+// top-level keys that are valid variable names whose value is a JSON string,
+// number or boolean. Strings are delivered as-is, numbers as their JSON text
+// and booleans as "true" or "false"; every other entry stays document-only.
+// The database trigger that invalidates snapshots applies the same rule.
+func ProjectEnvironmentConfigEnv(values json.RawMessage) (map[string]string, error) {
+	env := map[string]string{}
+	if len(bytes.TrimSpace(values)) == 0 {
+		return env, nil
+	}
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(values, &object); err != nil {
+		return nil, fmt.Errorf("configuration must be a JSON object: %w", err)
+	}
+	for key, raw := range object {
+		if ValidateEnvKey(key) != nil {
+			continue
+		}
+		raw = bytes.TrimSpace(raw)
+		if len(raw) == 0 {
+			continue
+		}
+		switch raw[0] {
+		case '"':
+			var text string
+			if err := json.Unmarshal(raw, &text); err != nil {
+				return nil, fmt.Errorf("configuration value for %q: %w", key, err)
+			}
+			env[key] = text
+		case 't', 'f':
+			env[key] = string(raw)
+		case '{', '[', 'n':
+			// Objects, arrays and null stay document-only.
+		default:
+			dec := json.NewDecoder(bytes.NewReader(raw))
+			dec.UseNumber()
+			var number json.Number
+			if err := dec.Decode(&number); err != nil {
+				return nil, fmt.Errorf("configuration value for %q: %w", key, err)
+			}
+			env[key] = number.String()
+		}
+	}
+	return env, nil
+}
+
 // EmptyProjectEnvironmentConfigHash is the hash used for an environment
 // which has not received an explicit configuration version yet.
 func EmptyProjectEnvironmentConfigHash() string {

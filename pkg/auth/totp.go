@@ -88,10 +88,18 @@ func GenerateSecret() (string, error) {
 // URL exposed in the MFAEnrollResponse so the customer can copy
 // either form.
 func KeyFromSecret(secret, accountEmail string) (*otp.Key, error) {
+	// GenerateOpts.Secret takes the raw key bytes and base32-encodes
+	// them into the URL; passing the base32 text itself would make the
+	// QR carry a different key than VerifyCode checks.
+	raw, err := base32.StdEncoding.WithPadding(base32.NoPadding).
+		DecodeString(strings.ToUpper(strings.TrimRight(secret, "=")))
+	if err != nil {
+		return nil, fmt.Errorf("auth/totp: decode secret: %w", err)
+	}
 	return totp.Generate(totp.GenerateOpts{
 		Issuer:      TOTPIssuer,
 		AccountName: accountEmail,
-		Secret:      []byte(secret),
+		Secret:      raw,
 		// otp.DigitsSix + otp.AlgorithmSHA1 are the pquerna/otp
 		// defaults; explicit here so a future default flip doesn't
 		// silently de-link existing enrollments.

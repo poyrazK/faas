@@ -14,7 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
-// adr: 1641 — old queue writers may retain intent, but a legacy owner cannot
+// adr: 1747 — old queue writers may retain intent, but a legacy owner cannot
 // receive a capped physical claim, even through the driver's bulk-copy path.
 func TestFinancialComputeAccountLegacyJobWriter(t *testing.T) {
 	store, pool, ctx := financialPostgres(t)
@@ -41,7 +41,7 @@ func TestFinancialComputeAccountLegacyJobWriter(t *testing.T) {
 	}
 	nodeID := pgtype.UUID{Bytes: uuid.MustParse(node.ID), Valid: true}
 	inc := pgtype.UUID{Bytes: uuid.MustParse(owner.Incarnation), Valid: true}
-	// ADR-1640 knows account apps but omits the new job attestation.
+	// ADR-1746 knows account apps but omits the new job attestation.
 	if err := sqlc.New().FinancialComputeOwnerPut(ctx, pool, sqlc.FinancialComputeOwnerPutParams{NodeID: nodeID, Incarnation: inc, AccountComputeIncarnation: inc}); err != nil {
 		t.Fatal(err)
 	}

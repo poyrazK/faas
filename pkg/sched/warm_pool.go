@@ -124,7 +124,7 @@ func (e *Engine) reconcileWarmPoolLocked(ctx context.Context, appID string, budg
 	if err := e.checkApplicationStandardAdmission(ctx, app); err != nil {
 		return err
 	}
-	acct, err := e.store.AccountByID(ctx, app.AccountID)
+	acct, err := state.AppResourceAccount(ctx, e.store, app)
 	if err != nil {
 		return fmt.Errorf("sched: warm pool: load account: %w", err)
 	}

@@ -27,6 +27,10 @@
 //	                      services, --expect-current refuses unless that
 //	                      release is still active (per-unit releases)
 //	rollback [--only a,b] activate the newest other verified release
+//	restart-changed [--only a,b] [--dry-run] [--json]
+//	                      restart, one at a time to readiness, the active
+//	                      daemons whose start inputs changed since they
+//	                      started (host-configuration lane)
 //
 // Invocation sites:
 //
@@ -56,7 +60,7 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: deployctl <generate|check|diff|deploy|rollback|bundle-create|unit-overlay|bundle-check|bundle-check-installed|migration-dry-run|legacy-import|upgrade-node> [args...]")
+		fmt.Fprintln(os.Stderr, "usage: deployctl <generate|check|diff|deploy|rollback|restart-changed|bundle-create|unit-overlay|bundle-check|bundle-check-installed|migration-dry-run|legacy-import|upgrade-node> [args...]")
 		os.Exit(2)
 	}
 	cmd := os.Args[1]
@@ -105,6 +109,11 @@ func main() {
 	case "rollback":
 		if err := runRollback(args); err != nil {
 			fmt.Fprintln(os.Stderr, "deployctl rollback:", err)
+			os.Exit(1)
+		}
+	case "restart-changed":
+		if err := runRestartChanged(args); err != nil {
+			fmt.Fprintln(os.Stderr, "deployctl restart-changed:", err)
 			os.Exit(1)
 		}
 	case "migration-dry-run":

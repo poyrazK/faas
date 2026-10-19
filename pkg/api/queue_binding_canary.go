@@ -10,7 +10,7 @@ import (
 
 const QueueEvidenceHandlerCompletion = "handler_completion"
 
-// A deployment explicitly declares safe handling through this non-secret override.
+// Safe handling is declared in deployment overrides or frozen reviewed variables.
 const QueueCanaryCapabilityEnv = "GREGALE_QUEUE_CANARY_BINDINGS"
 
 type CreateQueueBindingCanaryRequest struct {
@@ -24,6 +24,7 @@ type QueueBindingCanary struct {
 	Binding      string     `json:"binding"`
 	DeploymentID string     `json:"deployment_id"`
 	Scope        string     `json:"scope"`
+	ReleaseID    string     `json:"release_id,omitempty"`
 	Status       string     `json:"status"`
 	Reason       string     `json:"reason,omitempty"`
 	PublishedAt  time.Time  `json:"published_at"`

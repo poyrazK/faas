@@ -113,6 +113,9 @@ func TestVerifyRejectsMalformedPHC(t *testing.T) {
 		"params_huge_p":    "$argon2id$v=19$m=65536,t=1,p=99999$AAAA$BBBB",
 		"salt_invalid_b64": "$argon2id$v=19$m=65536,t=1,p=2$%%%%$BBBB",
 		"hash_invalid_b64": "$argon2id$v=19$m=65536,t=1,p=2$AAAA$%%%%",
+		// An empty hash must not verify every password.
+		"hash_empty": "$argon2id$v=19$m=65536,t=1,p=2$AAAA$",
+		"salt_empty": "$argon2id$v=19$m=65536,t=1,p=2$$KKo93VKUFEZKsJPb2ovaTfi0MbZQdU4EWw7DjfV9j1c",
 	}
 	for name, phc := range cases {
 		t.Run(name, func(t *testing.T) {

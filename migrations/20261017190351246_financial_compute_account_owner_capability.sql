@@ -1,7 +1,7 @@
 -- +goose Up
 -- +goose StatementBegin
 SET LOCAL lock_timeout = '5s';
--- ADR-1640. Protocol-1 registration alone proves only app compute support.
+-- ADR-1746. Protocol-1 registration alone proves only app compute support.
 -- A current binary attests account support for its exact native incarnation.
 -- A legacy upsert omits this field: it cannot change incarnation after an
 -- attested owner without violating the constraint and failing daemon startup.

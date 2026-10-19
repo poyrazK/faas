@@ -32,6 +32,20 @@ class PutOutboundAIPolicyRequest:
     request_log_content: bool | Unset = UNSET
     """Also keep the first 32 KiB of each logged call's request and response bodies, never headers, for 3 days and
     at most 1,000 calls per UTC day (ADR-996). Requires request_log_enabled."""
+    log_export: bool | Unset = UNSET
+    """Send each settled app call to the app's log drains as one JSON line of metadata, never prompts or
+    completions, about 15 seconds after it settles (ADR-1340). Requires ai_provider."""
+    allow_unmetered: bool | Unset = UNSET
+    """Let through writes the gateway can neither meter nor knows to be free, such as realtime client secrets,
+    vector stores, containers, fine-tuning jobs and context caches. They are otherwise refused with 403
+    outbound_ai_endpoint_unmetered; let through, they carry X-Gregale-AI-Unmetered and their spend is outside the
+    caps (ADR-1432). Requires ai_provider."""
+    auto_prompt_cache: bool | Unset = UNSET
+    """Add prompt-cache breakpoints to Claude requests on the Anthropic API, Vertex AI and Amazon Bedrock that
+    carry none: after a system prompt or tool list seen again within five minutes, and after the last message of a
+    conversation that carries earlier turns or names X-Gregale-AI-Session. Prompts under about 1,024 tokens are not
+    marked; the response names the added breakpoints in X-Gregale-AI-Prompt-Cache (ADR-1437). Requires ai_provider.
+   """
     user_daily_token_limit: int | None | Unset = UNSET
     """Per-end-user UTC-day token limit for calls that send X-Gregale-AI-User (ADR-994). Requires ai_provider."""
     user_daily_cost_limit_millicents: int | None | Unset = UNSET
@@ -59,6 +73,12 @@ class PutOutboundAIPolicyRequest:
         request_log_enabled = self.request_log_enabled
 
         request_log_content = self.request_log_content
+
+        log_export = self.log_export
+
+        allow_unmetered = self.allow_unmetered
+
+        auto_prompt_cache = self.auto_prompt_cache
 
         user_daily_token_limit: int | None | Unset
         if isinstance(self.user_daily_token_limit, Unset):
@@ -88,6 +108,12 @@ class PutOutboundAIPolicyRequest:
             field_dict["request_log_enabled"] = request_log_enabled
         if request_log_content is not UNSET:
             field_dict["request_log_content"] = request_log_content
+        if log_export is not UNSET:
+            field_dict["log_export"] = log_export
+        if allow_unmetered is not UNSET:
+            field_dict["allow_unmetered"] = allow_unmetered
+        if auto_prompt_cache is not UNSET:
+            field_dict["auto_prompt_cache"] = auto_prompt_cache
         if user_daily_token_limit is not UNSET:
             field_dict["user_daily_token_limit"] = user_daily_token_limit
         if user_daily_cost_limit_millicents is not UNSET:
@@ -131,6 +157,12 @@ class PutOutboundAIPolicyRequest:
 
         request_log_content = d.pop("request_log_content", UNSET)
 
+        log_export = d.pop("log_export", UNSET)
+
+        allow_unmetered = d.pop("allow_unmetered", UNSET)
+
+        auto_prompt_cache = d.pop("auto_prompt_cache", UNSET)
+
         def _parse_user_daily_token_limit(data: object) -> int | None | Unset:
             if data is None:
                 return data
@@ -158,6 +190,9 @@ class PutOutboundAIPolicyRequest:
             monthly_cost_limit_millicents=monthly_cost_limit_millicents,
             request_log_enabled=request_log_enabled,
             request_log_content=request_log_content,
+            log_export=log_export,
+            allow_unmetered=allow_unmetered,
+            auto_prompt_cache=auto_prompt_cache,
             user_daily_token_limit=user_daily_token_limit,
             user_daily_cost_limit_millicents=user_daily_cost_limit_millicents,
         )

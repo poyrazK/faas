@@ -764,6 +764,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 		recordServiceAddressReadiness(ctx, store, nodeID, cfg.ComputeNode.ServiceTCPEnabled, log)
 	}
+	identityNodeID, err := physicalNodeID(ctx, store, nodeID)
+	if err != nil {
+		return err
+	}
 
 	cbm := fcvm.NewColdBootMetrics()
 	// PR #470-FU-B (issue #470): the framework-ready receiver
@@ -957,7 +961,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		log,
 		cbm,
 	).WithFrameworkReady(frm).
-		WithRuntimeAdmissionNodeID(nodeID).
+		WithRuntimeAdmissionNodeID(identityNodeID).
 		WithCaptureRunner(wire.ExecRunner{}).
 		WithPrivateNetworkTransport(privateNetworkTransport).
 		WithDiskMetrics(dsm).
@@ -1030,14 +1034,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			"interval", nativeArtifactRetirementRecoveryInterval.String())
 	}
 	// ADR-471: install durable failure delivery before accepting Wake RPCs.
-	failureNodeID := nodeID
-	if deps.scheddTarget != "" && failureNodeID == "" && store != nil {
-		localNode, lookupErr := store.ComputeNodeByName(ctx, state.DefaultLocalNodeName)
-		if lookupErr != nil {
-			return fmt.Errorf("vmmd: resolve local failure-report node: %w", lookupErr)
-		}
-		failureNodeID = localNode.ID
-	}
+	failureNodeID := identityNodeID
 	// The native qualification journal and RPC envelope must agree on the
 	// physical node that owns an attempt. A named node uses its registered
 	// identity; the single-box path uses the already-resolved default-local
@@ -1654,7 +1651,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	)...)
 	impl := vmmdgrpc.NewWithCPUAndNetAndActivity(signalAdapter{mgr}, ops, fcVersion, log, cpuCache, netCache, activityTracker).
 		WithFlowCounter(flowcount.NewReader(wire.ExecRunner{})).
-		WithNodeID(nodeID).
+		// The physical node identity: runtime admission and promotion grants,
+		// wake.boot_observed events and migration ownership all compare it
+		// with rows that a single box records on default-local.
+		WithNodeID(identityNodeID).
 		WithQualificationNodeID(qualificationNodeID).
 		WithExecutionIdentitySigner(identitySigner).
 		WithDivergedInstances(divergedInstances)

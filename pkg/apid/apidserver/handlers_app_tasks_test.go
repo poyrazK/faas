@@ -66,7 +66,10 @@ func createAppTaskForTest(t *testing.T, e testEnv, slug string, request api.Crea
 
 func TestAppTaskAPIIsDisabledByDefault(t *testing.T) {
 	e := setup(t, api.PlanHobby)
-	rec := e.do(t, http.MethodPost, "/v1/apps/not-loaded/tasks", api.CreateAppTaskRequest{
+	// App access resolves the addressed app before any handler runs (#4882),
+	// so the gate is observed on an app the caller owns.
+	seedAppTaskDeployment(t, e, "gate-off")
+	rec := e.do(t, http.MethodPost, "/v1/apps/gate-off/tasks", api.CreateAppTaskRequest{
 		Command: []string{"bin/maintenance"},
 	}, nil)
 	if rec.Code != http.StatusNotImplemented {

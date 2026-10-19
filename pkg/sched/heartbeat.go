@@ -85,8 +85,18 @@ func ClassifyHeartbeatGap(prev, curr time.Time, interval, staleness time.Duratio
 // stateless across ticks — each tick queries the store fresh —
 // so a panicking tick does not corrupt subsequent ticks (same
 // shape as Watchdog).
+// TakeoverGuard vetoes acting on a stale-looking node whose liveness lease
+// is still live (ADR-1344 §4, phase 2). nodelease.Guard implements it; nil
+// leaves the heartbeat rules alone.
+type TakeoverGuard interface {
+	MayTakeOver(ctx context.Context, path, nodeID string) bool
+}
+
 type Heartbeat struct {
-	store state.Store
+	// takeoverGuard, when set, must agree before a stale peer is marked
+	// unavailable.
+	takeoverGuard TakeoverGuard
+	store         state.Store
 	// dialer is the per-tick fresh-dial path (issue #120). The
 	// heartbeat dials a fresh *VMMClient per node per tick instead
 	// of reusing the VMMRouter's cached conn, matching the
@@ -208,6 +218,16 @@ func (h *Heartbeat) WithStalePeerObserver(enabled bool) *Heartbeat {
 		return h
 	}
 	h.observeStalePeers = enabled
+	return h
+}
+
+// WithTakeoverGuard makes the stale-peer observer consult guard before it
+// marks a peer unavailable (ADR-1344 §4, phase 2).
+func (h *Heartbeat) WithTakeoverGuard(guard TakeoverGuard) *Heartbeat {
+	if h == nil {
+		return h
+	}
+	h.takeoverGuard = guard
 	return h
 }
 
@@ -450,6 +470,11 @@ func (h *Heartbeat) observeStalePeerNodes(ctx context.Context, tickNow time.Time
 		// Preserve operator intent. A peer in a drain/maintenance/terminal
 		// lifecycle is not a liveness candidate for this observer.
 		if n.Lifecycle != state.NodeLifecycleActive && n.Lifecycle != state.NodeLifecycleRecovering {
+			continue
+		}
+		// ADR-1344 §4 phase 2: a stale heartbeat is not enough while the
+		// peer's liveness lease is still live.
+		if h.takeoverGuard != nil && !h.takeoverGuard.MayTakeOver(ctx, "peer_observer", n.ID) {
 			continue
 		}
 

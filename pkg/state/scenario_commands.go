@@ -319,14 +319,14 @@ func (s *PgStore) LiveServiceCallersByHostIP(ctx context.Context, nodeName, host
 		return nil, err
 	}
 	for _, r := range rows {
-		instances = append(instances, Instance{AppID: r.AppID, DeploymentID: r.DeploymentID, HostIP: hostIP, NodeID: nodeName, State: string(StateRunning)})
+		instances = append(instances, Instance{ID: r.InstanceID, AppID: r.AppID, DeploymentID: r.DeploymentID, HostIP: hostIP, NodeID: nodeName, State: string(StateRunning)})
 	}
 	resuming, err := sqlc.New().ScenarioResumingCallersByHostIP(ctx, s.pool, sqlc.ScenarioResumingCallersByHostIPParams{NodeName: nodeName, HostIp: hostIP})
 	if err != nil {
 		return nil, err
 	}
 	for _, r := range resuming {
-		instances = append(instances, Instance{AppID: r.AppID, DeploymentID: r.DeploymentID, HostIP: hostIP, NodeID: nodeName, State: string(StateRunning)})
+		instances = append(instances, Instance{ID: r.InstanceID, AppID: r.AppID, DeploymentID: r.DeploymentID, HostIP: hostIP, NodeID: nodeName, State: string(StateRunning)})
 	}
 	return instances, nil
 }

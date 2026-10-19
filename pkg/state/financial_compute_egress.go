@@ -1,4 +1,4 @@
-// adr: 1642 — byte and compute candidates commit atomically under account lock.
+// adr: 1748 — byte and compute candidates commit atomically under account lock.
 package state
 
 import (

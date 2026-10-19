@@ -10,7 +10,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/financial"
 )
 
-// adr: 1641 — ordinary, held and interactive jobs all fund before allocation.
+// adr: 1747 — ordinary, held and interactive jobs all fund before allocation.
 func TestFinancialComputeJobDeniesBeforeAllocation(t *testing.T) {
 	for _, mode := range []string{"ordinary", "held", "interactive"} {
 		t.Run(mode, func(t *testing.T) {

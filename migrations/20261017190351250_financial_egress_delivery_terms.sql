@@ -1,7 +1,7 @@
 -- +goose Up
 -- +goose StatementBegin
 SET LOCAL lock_timeout = '5s';
--- ADR-1642. Delivery must remain bounded under changing per-hour allowances.
+-- ADR-1748. Delivery must remain bounded under changing per-hour allowances.
 -- This feature is unpublished. Never silently reprice existing funded books.
 DO $$
 DECLARE retained_currency text;

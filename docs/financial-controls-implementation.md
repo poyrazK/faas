@@ -25,7 +25,7 @@ required. Other stopping actions and strict scopes remain deferred.
 - Atomic app/job gross compute and shared account compute/egress funding,
   fenced native execution leases, kernel byte quotas, local deadlines, durable
   recovery, funded billing windows and conservative balances
-  in the API, CLI, SDKs and console. See [strict compute decision](adr/1644-strict-app-compute-reservations.md).
+  in the API, CLI, SDKs and console. See [strict compute decision](adr/1750-strict-app-compute-reservations.md).
 - Account ownership, usage-read/admin authorization, MFA, bounded idempotency
   keys and optimistic revisions. Recovery reads remain available during billing
   suspension without changing payment status.
@@ -62,7 +62,7 @@ egress rate ceiling; incompatible pricing changes must wait for a new period. Eg
 pins its lowest recorded allowance; increases benefit funding in a new month.
 Provider events are held if pricing, allowances or sampled quantities exceed
 the funded contract.
-See [shared egress funding](adr/1642-account-strict-egress.md). A monitored preview budget can be exceeded during
+See [shared egress funding](adr/1748-account-strict-egress.md). A monitored preview budget can be exceeded during
 evidence ingestion, scheduler sweeps, the configured drain interval, and bounded
 VM teardown. Broad scopes leave production spending explicitly continuing.
 
@@ -103,7 +103,7 @@ raw provider/receipt vectors. These are implementation and execution gates;
 the required remote HTTP payload evidence, the full workload matrix and performance still block
 promotion. No physical two-host execution has been performed locally.
 
-ADR-1643 adds public forwarding through the native-recovery owner's funded
+ADR-1749 adds public forwarding through the native-recovery owner's funded
 interface for HTTP, Upgrade, TCP and UDP, with captured-interface checks and
 separate authorized private bridges. The full-daemon report now requires v1/v2
 streamed payload measurements, quota exhaustion without the DB, private

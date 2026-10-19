@@ -1,0 +1,4089 @@
+# Command admission evidence and shared sweep progress.
+rule_files:
+- ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
+evaluation_interval: 1m
+tests:
+- name: known empty schedule list and sweep success
+  interval: 1m
+  input_series:
+  - &id001
+    series: up{job="schedd",instance="a"}
+    values: 1x90
+  - &id002
+    series: schedd_command_cron_collection_success{job="schedd",instance="a"}
+    values: 1x90
+  - &id003
+    series: schedd_command_cron_collection_last_success_timestamp_seconds{job="schedd",instance="a"}
+    values: 0+60x90
+  - &id004
+    series: schedd_command_cron_observation_enabled{job="schedd",instance="a"}
+    values: 1x90
+  - &id005
+    series: schedd_command_cron_sweep_running{job="schedd",instance="a"}
+    values: '0x90'
+  - &id006
+    series: schedd_command_cron_sweep_last_start_timestamp_seconds{job="schedd",instance="a"}
+    values: 0+60x90
+  - &id007
+    series: schedd_command_cron_sweep_last_success_timestamp_seconds{job="schedd",instance="a"}
+    values: 0+60x90
+  - &id069
+    series: schedd_command_cron_schedules{job="schedd",instance="a",class="due"}
+    values: '0x90'
+  - &id008
+    series: schedd_command_cron_age_unknown{job="schedd",instance="a",class="due"}
+    values: '0x90'
+  - &id070
+    series: schedd_command_cron_oldest_due_timestamp_seconds{job="schedd",instance="a",class="due"}
+    values: '0x90'
+  - &id009
+    series: schedd_command_cron_schedules{job="schedd",instance="a",class="overlap_due"}
+    values: '0x90'
+  - &id010
+    series: schedd_command_cron_age_unknown{job="schedd",instance="a",class="overlap_due"}
+    values: '0x90'
+  - &id011
+    series: schedd_command_cron_oldest_due_timestamp_seconds{job="schedd",instance="a",class="overlap_due"}
+    values: '0x90'
+  - &id012
+    series: schedd_command_cron_schedules{job="schedd",instance="a",class="replacement_wait"}
+    values: '0x90'
+  - &id013
+    series: schedd_command_cron_age_unknown{job="schedd",instance="a",class="replacement_wait"}
+    values: '0x90'
+  - &id014
+    series: schedd_command_cron_oldest_due_timestamp_seconds{job="schedd",instance="a",class="replacement_wait"}
+    values: '0x90'
+  - &id015
+    series: schedd_command_cron_schedules{job="schedd",instance="a",class="deployment_missing"}
+    values: '0x90'
+  - &id016
+    series: schedd_command_cron_age_unknown{job="schedd",instance="a",class="deployment_missing"}
+    values: '0x90'
+  - &id017
+    series: schedd_command_cron_oldest_due_timestamp_seconds{job="schedd",instance="a",class="deployment_missing"}
+    values: '0x90'
+  - &id018
+    series: schedd_command_cron_schedules{job="schedd",instance="a",class="exclusive_due"}
+    values: '0x90'
+  - &id019
+    series: schedd_command_cron_age_unknown{job="schedd",instance="a",class="exclusive_due"}
+    values: '0x90'
+  - &id020
+    series: schedd_command_cron_oldest_due_timestamp_seconds{job="schedd",instance="a",class="exclusive_due"}
+    values: '0x90'
+  - &id021
+    series: schedd_command_cron_schedules{job="schedd",instance="a",class="disabled"}
+    values: '0x90'
+  - &id022
+    series: schedd_command_cron_age_unknown{job="schedd",instance="a",class="disabled"}
+    values: '0x90'
+  - &id023
+    series: schedd_command_cron_oldest_due_timestamp_seconds{job="schedd",instance="a",class="disabled"}
+    values: '0x90'
+  - &id024
+    series: schedd_command_cron_schedules{job="schedd",instance="a",class="suspended"}
+    values: '0x90'
+  - &id025
+    series: schedd_command_cron_age_unknown{job="schedd",instance="a",class="suspended"}
+    values: '0x90'
+  - &id026
+    series: schedd_command_cron_oldest_due_timestamp_seconds{job="schedd",instance="a",class="suspended"}
+    values: '0x90'
+  - &id027
+    series: schedd_command_cron_schedules{job="schedd",instance="a",class="account_held"}
+    values: '0x90'
+  - &id028
+    series: schedd_command_cron_age_unknown{job="schedd",instance="a",class="account_held"}
+    values: '0x90'
+  - &id029
+    series: schedd_command_cron_oldest_due_timestamp_seconds{job="schedd",instance="a",class="account_held"}
+    values: '0x90'
+  - &id030
+    series: schedd_command_cron_schedules{job="schedd",instance="a",class="not_due"}
+    values: '0x90'
+  - &id031
+    series: schedd_command_cron_age_unknown{job="schedd",instance="a",class="not_due"}
+    values: '0x90'
+  - &id032
+    series: schedd_command_cron_oldest_due_timestamp_seconds{job="schedd",instance="a",class="not_due"}
+    values: '0x90'
+  - &id033
+    series: schedd_command_cron_schedules{job="schedd",instance="a",class="unknown"}
+    values: '0x90'
+  - &id034
+    series: schedd_command_cron_age_unknown{job="schedd",instance="a",class="unknown"}
+    values: '0x90'
+  - &id035
+    series: schedd_command_cron_oldest_due_timestamp_seconds{job="schedd",instance="a",class="unknown"}
+    values: '0x90'
+  - &id036
+    series: schedd_command_cron_sweeps_total{job="schedd",instance="a",outcome="success"}
+    values: '0x90'
+  - &id037
+    series: schedd_command_cron_sweeps_total{job="schedd",instance="a",outcome="error"}
+    values: '0x90'
+  - &id038
+    series: schedd_command_cron_sweeps_total{job="schedd",instance="a",outcome="canceled"}
+    values: '0x90'
+  - &id039
+    series: schedd_command_cron_decisions_total{job="schedd",instance="a",outcome="disabled"}
+    values: '0x90'
+  - &id040
+    series: schedd_command_cron_decisions_total{job="schedd",instance="a",outcome="not_due"}
+    values: '0x90'
+  - &id041
+    series: schedd_command_cron_decisions_total{job="schedd",instance="a",outcome="account_held"}
+    values: '0x90'
+  - &id042
+    series: schedd_command_cron_decisions_total{job="schedd",instance="a",outcome="replacement_wait"}
+    values: '0x90'
+  - &id043
+    series: schedd_command_cron_decisions_total{job="schedd",instance="a",outcome="not_owned"}
+    values: '0x90'
+  - &id044
+    series: schedd_command_cron_decisions_total{job="schedd",instance="a",outcome="invalid_schedule"}
+    values: '0x90'
+  - &id045
+    series: schedd_command_cron_decisions_total{job="schedd",instance="a",outcome="lookup_error"}
+    values: '0x90'
+  - &id046
+    series: schedd_command_cron_decisions_total{job="schedd",instance="a",outcome="store_unavailable"}
+    values: '0x90'
+  - &id047
+    series: schedd_command_cron_decisions_total{job="schedd",instance="a",outcome="no_live_deployment"}
+    values: '0x90'
+  - &id048
+    series: schedd_command_cron_decisions_total{job="schedd",instance="a",outcome="canceled"}
+    values: '0x90'
+  - &id049
+    series: schedd_command_cron_decisions_total{job="schedd",instance="a",outcome="legacy_queued"}
+    values: '0x90'
+  - &id050
+    series: schedd_command_cron_decisions_total{job="schedd",instance="a",outcome="legacy_skipped"}
+    values: '0x90'
+  - &id051
+    series: schedd_command_cron_decisions_total{job="schedd",instance="a",outcome="legacy_stale"}
+    values: '0x90'
+  - &id052
+    series: schedd_command_cron_decisions_total{job="schedd",instance="a",outcome="legacy_error"}
+    values: '0x90'
+  - &id053
+    series: schedd_command_cron_admissions_total{job="schedd",instance="a",outcome="queued"}
+    values: '0x90'
+  - &id054
+    series: schedd_command_cron_admissions_total{job="schedd",instance="a",outcome="exclusive_pending"}
+    values: '0x90'
+  - &id055
+    series: schedd_command_cron_admissions_total{job="schedd",instance="a",outcome="coalesced"}
+    values: '0x90'
+  - &id056
+    series: schedd_command_cron_admissions_total{job="schedd",instance="a",outcome="skipped_overlap"}
+    values: '0x90'
+  - &id057
+    series: schedd_command_cron_admissions_total{job="schedd",instance="a",outcome="missed_deadline"}
+    values: '0x90'
+  - &id058
+    series: schedd_command_cron_admissions_total{job="schedd",instance="a",outcome="stale"}
+    values: '0x90'
+  - &id059
+    series: schedd_command_cron_admissions_total{job="schedd",instance="a",outcome="deployment_unavailable"}
+    values: '0x90'
+  - &id060
+    series: schedd_command_cron_admissions_total{job="schedd",instance="a",outcome="rejected"}
+    values: '0x90'
+  - &id061
+    series: schedd_command_cron_admissions_total{job="schedd",instance="a",outcome="error"}
+    values: '0x90'
+  - &id062
+    series: schedd_command_cron_admissions_total{job="schedd",instance="a",outcome="canceled"}
+    values: '0x90'
+  - &id063
+    series: schedd_command_cron_admissions_total{job="schedd",instance="a",outcome="unknown"}
+    values: '0x90'
+  - &id064
+    series: schedd_command_cron_admission_lag_unknown_total{job="schedd",instance="a"}
+    values: '0x90'
+  - &id065
+    series: schedd_command_cron_admission_lag_seconds_count{job="schedd",instance="a"}
+    values: '0x90'
+  - &id066
+    series: schedd_command_cron_admission_lag_seconds_sum{job="schedd",instance="a"}
+    values: '0x90'
+  - &id067
+    series: schedd_command_cron_sweep_duration_seconds_count{job="schedd",instance="a"}
+    values: '0x90'
+  - &id068
+    series: schedd_command_cron_sweep_duration_seconds_sum{job="schedd",instance="a"}
+    values: '0x90'
+  alert_rule_test:
+  - eval_time: 30m
+    alertname: FaasCommandCronTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 30m
+    alertname: FaasCommandCronSweepStalled
+    exp_alerts: []
+  - eval_time: 30m
+    alertname: FaasCommandCronDecisionOverdue
+    exp_alerts: []
+  - eval_time: 30m
+    alertname: FaasCommandCronReplacementWaiting
+    exp_alerts: []
+  - eval_time: 30m
+    alertname: FaasCommandCronEvidenceUnknown
+    exp_alerts: []
+  - eval_time: 30m
+    alertname: FaasCommandCronAdmissionErrors
+    exp_alerts: []
+  promql_expr_test:
+  - expr: schedd_command_cron_observation_healthy{job="schedd",instance="a"}
+    eval_time: 6m
+    exp_samples:
+    - labels: '{__name__="schedd_command_cron_observation_healthy",job="schedd",instance="a"}'
+      value: 1
+  - expr: schedd_command_cron_oldest_known_due_age_seconds{job="schedd",instance="a",class="due"}
+    eval_time: 6m
+    exp_samples:
+    - labels: '{__name__="schedd_command_cron_oldest_known_due_age_seconds",job="schedd",instance="a",class="due"}'
+      value: 0
+- name: due nominal boundary threshold and hold
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - series: schedd_command_cron_schedules{job="schedd",instance="a",class="due"}
+    values: 1x90
+  - *id008
+  - series: schedd_command_cron_oldest_due_timestamp_seconds{job="schedd",instance="a",class="due"}
+    values: 60x90
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  - *id035
+  - *id036
+  - *id037
+  - *id038
+  - *id039
+  - *id040
+  - *id041
+  - *id042
+  - *id043
+  - *id044
+  - *id045
+  - *id046
+  - *id047
+  - *id048
+  - *id049
+  - *id050
+  - *id051
+  - *id052
+  - *id053
+  - *id054
+  - *id055
+  - *id056
+  - *id057
+  - *id058
+  - *id059
+  - *id060
+  - *id061
+  - *id062
+  - *id063
+  - *id064
+  - *id065
+  - *id066
+  - *id067
+  - *id068
+  alert_rule_test:
+  - eval_time: 6m
+    alertname: FaasCommandCronDecisionOverdue
+    exp_alerts: []
+  - eval_time: 7m
+    alertname: FaasCommandCronDecisionOverdue
+    exp_alerts: []
+  - eval_time: 11m
+    alertname: FaasCommandCronDecisionOverdue
+    exp_alerts: []
+  - eval_time: 12m
+    alertname: FaasCommandCronDecisionOverdue
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: schedd
+        family: command_cron
+        public_status: internal
+        job: schedd
+        instance: a
+        class: due
+      exp_annotations:
+        summary: A command schedule has unconsumed due history
+        description: A due command schedule has a first unconsumed nominal boundary older than five minutes, sustained
+          for five minutes. This is pending admission or a policy decision, not continuous execution eligibility
+          or a missed delivery SLO. Inspect cursor, deadline, overlap, deployment and exclusive policy before acting.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCommandCrons.md
+  promql_expr_test:
+  - expr: schedd_command_cron_oldest_known_due_age_seconds{job="schedd",instance="a",class="due"}
+    eval_time: 30m
+    exp_samples:
+    - labels: '{__name__="schedd_command_cron_oldest_known_due_age_seconds",job="schedd",instance="a",class="due"}'
+      value: 1740
+- name: overlap_due nominal boundary threshold and hold
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - *id069
+  - *id008
+  - *id070
+  - series: schedd_command_cron_schedules{job="schedd",instance="a",class="overlap_due"}
+    values: 1x90
+  - *id010
+  - series: schedd_command_cron_oldest_due_timestamp_seconds{job="schedd",instance="a",class="overlap_due"}
+    values: 60x90
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  - *id035
+  - *id036
+  - *id037
+  - *id038
+  - *id039
+  - *id040
+  - *id041
+  - *id042
+  - *id043
+  - *id044
+  - *id045
+  - *id046
+  - *id047
+  - *id048
+  - *id049
+  - *id050
+  - *id051
+  - *id052
+  - *id053
+  - *id054
+  - *id055
+  - *id056
+  - *id057
+  - *id058
+  - *id059
+  - *id060
+  - *id061
+  - *id062
+  - *id063
+  - *id064
+  - *id065
+  - *id066
+  - *id067
+  - *id068
+  alert_rule_test:
+  - eval_time: 6m
+    alertname: FaasCommandCronDecisionOverdue
+    exp_alerts: []
+  - eval_time: 7m
+    alertname: FaasCommandCronDecisionOverdue
+    exp_alerts: []
+  - eval_time: 11m
+    alertname: FaasCommandCronDecisionOverdue
+    exp_alerts: []
+  - eval_time: 12m
+    alertname: FaasCommandCronDecisionOverdue
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: schedd
+        family: command_cron
+        public_status: internal
+        job: schedd
+        instance: a
+        class: overlap_due
+      exp_annotations:
+        summary: A command schedule has unconsumed due history
+        description: A overlap_due command schedule has a first unconsumed nominal boundary older than five minutes,
+          sustained for five minutes. This is pending admission or a policy decision, not continuous execution eligibility
+          or a missed delivery SLO. Inspect cursor, deadline, overlap, deployment and exclusive policy before acting.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCommandCrons.md
+  promql_expr_test:
+  - expr: schedd_command_cron_oldest_known_due_age_seconds{job="schedd",instance="a",class="overlap_due"}
+    eval_time: 30m
+    exp_samples:
+    - labels: '{__name__="schedd_command_cron_oldest_known_due_age_seconds",job="schedd",instance="a",class="overlap_due"}'
+      value: 1740
+- name: replacement_wait nominal boundary threshold and hold
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - *id069
+  - *id008
+  - *id070
+  - *id009
+  - *id010
+  - *id011
+  - series: schedd_command_cron_schedules{job="schedd",instance="a",class="replacement_wait"}
+    values: 1x90
+  - *id013
+  - series: schedd_command_cron_oldest_due_timestamp_seconds{job="schedd",instance="a",class="replacement_wait"}
+    values: 60x90
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  - *id035
+  - *id036
+  - *id037
+  - *id038
+  - *id039
+  - *id040
+  - *id041
+  - *id042
+  - *id043
+  - *id044
+  - *id045
+  - *id046
+  - *id047
+  - *id048
+  - *id049
+  - *id050
+  - *id051
+  - *id052
+  - *id053
+  - *id054
+  - *id055
+  - *id056
+  - *id057
+  - *id058
+  - *id059
+  - *id060
+  - *id061
+  - *id062
+  - *id063
+  - *id064
+  - *id065
+  - *id066
+  - *id067
+  - *id068
+  alert_rule_test:
+  - eval_time: 6m
+    alertname: FaasCommandCronReplacementWaiting
+    exp_alerts: []
+  - eval_time: 7m
+    alertname: FaasCommandCronReplacementWaiting
+    exp_alerts: []
+  - eval_time: 11m
+    alertname: FaasCommandCronReplacementWaiting
+    exp_alerts: []
+  - eval_time: 12m
+    alertname: FaasCommandCronReplacementWaiting
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: schedd
+        family: command_cron
+        public_status: internal
+        job: schedd
+        instance: a
+        class: replacement_wait
+      exp_annotations:
+        summary: A replacement schedule is waiting on prior work
+        description: An unbound replacement schedule still has active prior tasks and old unconsumed due history
+          for five minutes. Age is nominal schedule history, not cancellation duration. Inspect task cancellation,
+          leases and teardown; do not replay commands or bypass fencing.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCommandCrons.md
+  promql_expr_test:
+  - expr: schedd_command_cron_oldest_known_due_age_seconds{job="schedd",instance="a",class="replacement_wait"}
+    eval_time: 30m
+    exp_samples:
+    - labels: '{__name__="schedd_command_cron_oldest_known_due_age_seconds",job="schedd",instance="a",class="replacement_wait"}'
+      value: 1740
+- name: deployment_missing nominal boundary threshold and hold
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - *id069
+  - *id008
+  - *id070
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - series: schedd_command_cron_schedules{job="schedd",instance="a",class="deployment_missing"}
+    values: 1x90
+  - *id016
+  - series: schedd_command_cron_oldest_due_timestamp_seconds{job="schedd",instance="a",class="deployment_missing"}
+    values: 60x90
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  - *id035
+  - *id036
+  - *id037
+  - *id038
+  - *id039
+  - *id040
+  - *id041
+  - *id042
+  - *id043
+  - *id044
+  - *id045
+  - *id046
+  - *id047
+  - *id048
+  - *id049
+  - *id050
+  - *id051
+  - *id052
+  - *id053
+  - *id054
+  - *id055
+  - *id056
+  - *id057
+  - *id058
+  - *id059
+  - *id060
+  - *id061
+  - *id062
+  - *id063
+  - *id064
+  - *id065
+  - *id066
+  - *id067
+  - *id068
+  alert_rule_test:
+  - eval_time: 6m
+    alertname: FaasCommandCronDecisionOverdue
+    exp_alerts: []
+  - eval_time: 7m
+    alertname: FaasCommandCronDecisionOverdue
+    exp_alerts: []
+  - eval_time: 11m
+    alertname: FaasCommandCronDecisionOverdue
+    exp_alerts: []
+  - eval_time: 12m
+    alertname: FaasCommandCronDecisionOverdue
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: schedd
+        family: command_cron
+        public_status: internal
+        job: schedd
+        instance: a
+        class: deployment_missing
+      exp_annotations:
+        summary: A command schedule has unconsumed due history
+        description: A deployment_missing command schedule has a first unconsumed nominal boundary older than five
+          minutes, sustained for five minutes. This is pending admission or a policy decision, not continuous execution
+          eligibility or a missed delivery SLO. Inspect cursor, deadline, overlap, deployment and exclusive policy
+          before acting.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCommandCrons.md
+  promql_expr_test:
+  - expr: schedd_command_cron_oldest_known_due_age_seconds{job="schedd",instance="a",class="deployment_missing"}
+    eval_time: 30m
+    exp_samples:
+    - labels: '{__name__="schedd_command_cron_oldest_known_due_age_seconds",job="schedd",instance="a",class="deployment_missing"}'
+      value: 1740
+- name: exclusive_due nominal boundary threshold and hold
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - *id069
+  - *id008
+  - *id070
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - series: schedd_command_cron_schedules{job="schedd",instance="a",class="exclusive_due"}
+    values: 1x90
+  - *id019
+  - series: schedd_command_cron_oldest_due_timestamp_seconds{job="schedd",instance="a",class="exclusive_due"}
+    values: 60x90
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  - *id035
+  - *id036
+  - *id037
+  - *id038
+  - *id039
+  - *id040
+  - *id041
+  - *id042
+  - *id043
+  - *id044
+  - *id045
+  - *id046
+  - *id047
+  - *id048
+  - *id049
+  - *id050
+  - *id051
+  - *id052
+  - *id053
+  - *id054
+  - *id055
+  - *id056
+  - *id057
+  - *id058
+  - *id059
+  - *id060
+  - *id061
+  - *id062
+  - *id063
+  - *id064
+  - *id065
+  - *id066
+  - *id067
+  - *id068
+  alert_rule_test:
+  - eval_time: 6m
+    alertname: FaasCommandCronDecisionOverdue
+    exp_alerts: []
+  - eval_time: 7m
+    alertname: FaasCommandCronDecisionOverdue
+    exp_alerts: []
+  - eval_time: 11m
+    alertname: FaasCommandCronDecisionOverdue
+    exp_alerts: []
+  - eval_time: 12m
+    alertname: FaasCommandCronDecisionOverdue
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: schedd
+        family: command_cron
+        public_status: internal
+        job: schedd
+        instance: a
+        class: exclusive_due
+      exp_annotations:
+        summary: A command schedule has unconsumed due history
+        description: A exclusive_due command schedule has a first unconsumed nominal boundary older than five minutes,
+          sustained for five minutes. This is pending admission or a policy decision, not continuous execution eligibility
+          or a missed delivery SLO. Inspect cursor, deadline, overlap, deployment and exclusive policy before acting.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCommandCrons.md
+  promql_expr_test:
+  - expr: schedd_command_cron_oldest_known_due_age_seconds{job="schedd",instance="a",class="exclusive_due"}
+    eval_time: 30m
+    exp_samples:
+    - labels: '{__name__="schedd_command_cron_oldest_known_due_age_seconds",job="schedd",instance="a",class="exclusive_due"}'
+      value: 1740
+- name: disabled is intentional unknown age
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - *id069
+  - *id008
+  - *id070
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - series: schedd_command_cron_schedules{job="schedd",instance="a",class="disabled"}
+    values: 2x90
+  - series: schedd_command_cron_age_unknown{job="schedd",instance="a",class="disabled"}
+    values: 2x90
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  - *id035
+  - *id036
+  - *id037
+  - *id038
+  - *id039
+  - *id040
+  - *id041
+  - *id042
+  - *id043
+  - *id044
+  - *id045
+  - *id046
+  - *id047
+  - *id048
+  - *id049
+  - *id050
+  - *id051
+  - *id052
+  - *id053
+  - *id054
+  - *id055
+  - *id056
+  - *id057
+  - *id058
+  - *id059
+  - *id060
+  - *id061
+  - *id062
+  - *id063
+  - *id064
+  - *id065
+  - *id066
+  - *id067
+  - *id068
+  alert_rule_test:
+  - eval_time: 40m
+    alertname: FaasCommandCronTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasCommandCronSweepStalled
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasCommandCronDecisionOverdue
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasCommandCronReplacementWaiting
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasCommandCronEvidenceUnknown
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasCommandCronAdmissionErrors
+    exp_alerts: []
+  promql_expr_test:
+  - expr: schedd_command_cron_oldest_known_due_age_seconds{job="schedd",instance="a",class="disabled"}
+    eval_time: 6m
+    exp_samples: []
+- name: suspended is intentional unknown age
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - *id069
+  - *id008
+  - *id070
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - series: schedd_command_cron_schedules{job="schedd",instance="a",class="suspended"}
+    values: 2x90
+  - series: schedd_command_cron_age_unknown{job="schedd",instance="a",class="suspended"}
+    values: 2x90
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  - *id035
+  - *id036
+  - *id037
+  - *id038
+  - *id039
+  - *id040
+  - *id041
+  - *id042
+  - *id043
+  - *id044
+  - *id045
+  - *id046
+  - *id047
+  - *id048
+  - *id049
+  - *id050
+  - *id051
+  - *id052
+  - *id053
+  - *id054
+  - *id055
+  - *id056
+  - *id057
+  - *id058
+  - *id059
+  - *id060
+  - *id061
+  - *id062
+  - *id063
+  - *id064
+  - *id065
+  - *id066
+  - *id067
+  - *id068
+  alert_rule_test:
+  - eval_time: 40m
+    alertname: FaasCommandCronTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasCommandCronSweepStalled
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasCommandCronDecisionOverdue
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasCommandCronReplacementWaiting
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasCommandCronEvidenceUnknown
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasCommandCronAdmissionErrors
+    exp_alerts: []
+  promql_expr_test:
+  - expr: schedd_command_cron_oldest_known_due_age_seconds{job="schedd",instance="a",class="suspended"}
+    eval_time: 6m
+    exp_samples: []
+- name: account_held is intentional unknown age
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - *id069
+  - *id008
+  - *id070
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - series: schedd_command_cron_schedules{job="schedd",instance="a",class="account_held"}
+    values: 2x90
+  - series: schedd_command_cron_age_unknown{job="schedd",instance="a",class="account_held"}
+    values: 2x90
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  - *id035
+  - *id036
+  - *id037
+  - *id038
+  - *id039
+  - *id040
+  - *id041
+  - *id042
+  - *id043
+  - *id044
+  - *id045
+  - *id046
+  - *id047
+  - *id048
+  - *id049
+  - *id050
+  - *id051
+  - *id052
+  - *id053
+  - *id054
+  - *id055
+  - *id056
+  - *id057
+  - *id058
+  - *id059
+  - *id060
+  - *id061
+  - *id062
+  - *id063
+  - *id064
+  - *id065
+  - *id066
+  - *id067
+  - *id068
+  alert_rule_test:
+  - eval_time: 40m
+    alertname: FaasCommandCronTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasCommandCronSweepStalled
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasCommandCronDecisionOverdue
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasCommandCronReplacementWaiting
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasCommandCronEvidenceUnknown
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasCommandCronAdmissionErrors
+    exp_alerts: []
+  promql_expr_test:
+  - expr: schedd_command_cron_oldest_known_due_age_seconds{job="schedd",instance="a",class="account_held"}
+    eval_time: 6m
+    exp_samples: []
+- name: not_due is intentional unknown age
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - *id069
+  - *id008
+  - *id070
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - series: schedd_command_cron_schedules{job="schedd",instance="a",class="not_due"}
+    values: 2x90
+  - series: schedd_command_cron_age_unknown{job="schedd",instance="a",class="not_due"}
+    values: 2x90
+  - *id032
+  - *id033
+  - *id034
+  - *id035
+  - *id036
+  - *id037
+  - *id038
+  - *id039
+  - *id040
+  - *id041
+  - *id042
+  - *id043
+  - *id044
+  - *id045
+  - *id046
+  - *id047
+  - *id048
+  - *id049
+  - *id050
+  - *id051
+  - *id052
+  - *id053
+  - *id054
+  - *id055
+  - *id056
+  - *id057
+  - *id058
+  - *id059
+  - *id060
+  - *id061
+  - *id062
+  - *id063
+  - *id064
+  - *id065
+  - *id066
+  - *id067
+  - *id068
+  alert_rule_test:
+  - eval_time: 40m
+    alertname: FaasCommandCronTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasCommandCronSweepStalled
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasCommandCronDecisionOverdue
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasCommandCronReplacementWaiting
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasCommandCronEvidenceUnknown
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasCommandCronAdmissionErrors
+    exp_alerts: []
+  promql_expr_test:
+  - expr: schedd_command_cron_oldest_known_due_age_seconds{job="schedd",instance="a",class="not_due"}
+    eval_time: 6m
+    exp_samples: []
+- name: unknown timing retained
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - *id069
+  - *id008
+  - *id070
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - series: schedd_command_cron_schedules{job="schedd",instance="a",class="unknown"}
+    values: 1x90
+  - series: schedd_command_cron_age_unknown{job="schedd",instance="a",class="unknown"}
+    values: 1x90
+  - *id035
+  - *id036
+  - *id037
+  - *id038
+  - *id039
+  - *id040
+  - *id041
+  - *id042
+  - *id043
+  - *id044
+  - *id045
+  - *id046
+  - *id047
+  - *id048
+  - *id049
+  - *id050
+  - *id051
+  - *id052
+  - *id053
+  - *id054
+  - *id055
+  - *id056
+  - *id057
+  - *id058
+  - *id059
+  - *id060
+  - *id061
+  - *id062
+  - *id063
+  - *id064
+  - *id065
+  - *id066
+  - *id067
+  - *id068
+  alert_rule_test:
+  - eval_time: 15m
+    alertname: FaasCommandCronEvidenceUnknown
+    exp_alerts: []
+  - eval_time: 16m
+    alertname: FaasCommandCronEvidenceUnknown
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: schedd
+        family: command_cron_telemetry
+        public_status: internal
+        job: schedd
+        instance: a
+        class: unknown
+      exp_annotations:
+        summary: Command schedule timing or policy evidence is incomplete
+        description: Fresh observations have contained unknown command schedules with incomplete timing or policy
+          evidence for 15m. Disabled, suspended, held and not-due schedules intentionally have unknown age and are
+          excluded. Inspect supported durable evidence without rewriting cursors.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCommandCrons.md
+  promql_expr_test:
+  - expr: schedd_command_cron_oldest_known_due_age_seconds{job="schedd",instance="a",class="unknown"}
+    eval_time: 6m
+    exp_samples: []
+- name: mixed known and unknown due ages
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - series: schedd_command_cron_schedules{job="schedd",instance="a",class="due"}
+    values: 2x90
+  - series: schedd_command_cron_age_unknown{job="schedd",instance="a",class="due"}
+    values: 1x90
+  - series: schedd_command_cron_oldest_due_timestamp_seconds{job="schedd",instance="a",class="due"}
+    values: 60x90
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  - *id035
+  - *id036
+  - *id037
+  - *id038
+  - *id039
+  - *id040
+  - *id041
+  - *id042
+  - *id043
+  - *id044
+  - *id045
+  - *id046
+  - *id047
+  - *id048
+  - *id049
+  - *id050
+  - *id051
+  - *id052
+  - *id053
+  - *id054
+  - *id055
+  - *id056
+  - *id057
+  - *id058
+  - *id059
+  - *id060
+  - *id061
+  - *id062
+  - *id063
+  - *id064
+  - *id065
+  - *id066
+  - *id067
+  - *id068
+  alert_rule_test:
+  - eval_time: 16m
+    alertname: FaasCommandCronDecisionOverdue
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: schedd
+        family: command_cron
+        public_status: internal
+        job: schedd
+        instance: a
+        class: due
+      exp_annotations:
+        summary: A command schedule has unconsumed due history
+        description: A due command schedule has a first unconsumed nominal boundary older than five minutes, sustained
+          for five minutes. This is pending admission or a policy decision, not continuous execution eligibility
+          or a missed delivery SLO. Inspect cursor, deadline, overlap, deployment and exclusive policy before acting.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCommandCrons.md
+  - eval_time: 16m
+    alertname: FaasCommandCronEvidenceUnknown
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: schedd
+        family: command_cron_telemetry
+        public_status: internal
+        job: schedd
+        instance: a
+        class: due
+      exp_annotations:
+        summary: Command schedule timing or policy evidence is incomplete
+        description: Fresh observations have contained due command schedules with incomplete timing or policy evidence
+          for 15m. Disabled, suspended, held and not-due schedules intentionally have unknown age and are excluded.
+          Inspect supported durable evidence without rewriting cursors.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCommandCrons.md
+  promql_expr_test: []
+- name: actual sweep progress freezes
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - series: schedd_command_cron_sweep_last_success_timestamp_seconds{job="schedd",instance="a"}
+    values: 60x90
+  - *id069
+  - *id008
+  - *id070
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  - *id035
+  - *id036
+  - *id037
+  - *id038
+  - *id039
+  - *id040
+  - *id041
+  - *id042
+  - *id043
+  - *id044
+  - *id045
+  - *id046
+  - *id047
+  - *id048
+  - *id049
+  - *id050
+  - *id051
+  - *id052
+  - *id053
+  - *id054
+  - *id055
+  - *id056
+  - *id057
+  - *id058
+  - *id059
+  - *id060
+  - *id061
+  - *id062
+  - *id063
+  - *id064
+  - *id065
+  - *id066
+  - *id067
+  - *id068
+  alert_rule_test:
+  - eval_time: 9m
+    alertname: FaasCommandCronSweepStalled
+    exp_alerts: []
+  - eval_time: 10m
+    alertname: FaasCommandCronSweepStalled
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: schedd
+        family: command_cron
+        public_status: internal
+        job: schedd
+        instance: a
+      exp_annotations:
+        summary: Cron scanning is not demonstrating progress
+        description: No actual cron scan with successful enumeration and owner lookups completed within three minutes,
+          sustained for five minutes. Empty scans count as success. Shared scans include inline HTTP cron work;
+          this alone does not identify a command runner failure.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCommandCrons.md
+  promql_expr_test: []
+- name: long shared HTTP scan still requires triage
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - series: schedd_command_cron_sweep_running{job="schedd",instance="a"}
+    values: 1x90
+  - *id006
+  - series: schedd_command_cron_sweep_last_success_timestamp_seconds{job="schedd",instance="a"}
+    values: 60x90
+  - *id069
+  - *id008
+  - *id070
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  - *id035
+  - *id036
+  - *id037
+  - *id038
+  - *id039
+  - *id040
+  - *id041
+  - *id042
+  - *id043
+  - *id044
+  - *id045
+  - *id046
+  - *id047
+  - *id048
+  - *id049
+  - *id050
+  - *id051
+  - *id052
+  - *id053
+  - *id054
+  - *id055
+  - *id056
+  - *id057
+  - *id058
+  - *id059
+  - *id060
+  - *id061
+  - *id062
+  - *id063
+  - *id064
+  - *id065
+  - *id066
+  - *id067
+  - *id068
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: FaasCommandCronSweepStalled
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: schedd
+        family: command_cron
+        public_status: internal
+        job: schedd
+        instance: a
+      exp_annotations:
+        summary: Cron scanning is not demonstrating progress
+        description: No actual cron scan with successful enumeration and owner lookups completed within three minutes,
+          sustained for five minutes. Empty scans count as success. Shared scans include inline HTTP cron work;
+          this alone does not identify a command runner failure.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCommandCrons.md
+  promql_expr_test: []
+- name: failed read
+  interval: 1m
+  input_series:
+  - *id001
+  - series: schedd_command_cron_collection_success{job="schedd",instance="a"}
+    values: '0x90'
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - *id069
+  - *id008
+  - *id070
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  - *id035
+  - *id036
+  - *id037
+  - *id038
+  - *id039
+  - *id040
+  - *id041
+  - *id042
+  - *id043
+  - *id044
+  - *id045
+  - *id046
+  - *id047
+  - *id048
+  - *id049
+  - *id050
+  - *id051
+  - *id052
+  - *id053
+  - *id054
+  - *id055
+  - *id056
+  - *id057
+  - *id058
+  - *id059
+  - *id060
+  - *id061
+  - *id062
+  - *id063
+  - *id064
+  - *id065
+  - *id066
+  - *id067
+  - *id068
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasCommandCronTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasCommandCronTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: schedd
+        family: command_cron_telemetry
+        public_status: internal
+        job: schedd
+        instance: a
+      exp_annotations:
+        summary: Command-cron admission diagnostics are unavailable
+        description: Schedd is scraped but command schedule observations are missing, failed, inconsistent or older
+          than two minutes, or initialized counters and sweep gauges are incomplete. Counts and ages are unknown.
+          Check observer, database, clocks and binary. Intentional observer shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCommandCrons.md
+  - eval_time: 40m
+    alertname: FaasCommandCronDecisionOverdue
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasCommandCronSweepStalled
+    exp_alerts: []
+  promql_expr_test:
+  - expr: schedd_command_cron_observation_healthy{job="schedd",instance="a"}
+    eval_time: 6m
+    exp_samples: []
+- name: missing cohort
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - *id069
+  - *id008
+  - *id070
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  - *id035
+  - *id036
+  - *id037
+  - *id038
+  - *id039
+  - *id040
+  - *id041
+  - *id042
+  - *id043
+  - *id044
+  - *id045
+  - *id046
+  - *id047
+  - *id048
+  - *id049
+  - *id050
+  - *id051
+  - *id052
+  - *id053
+  - *id054
+  - *id055
+  - *id056
+  - *id057
+  - *id058
+  - *id059
+  - *id060
+  - *id061
+  - *id062
+  - *id063
+  - *id064
+  - *id065
+  - *id066
+  - *id067
+  - *id068
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasCommandCronTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasCommandCronTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: schedd
+        family: command_cron_telemetry
+        public_status: internal
+        job: schedd
+        instance: a
+      exp_annotations:
+        summary: Command-cron admission diagnostics are unavailable
+        description: Schedd is scraped but command schedule observations are missing, failed, inconsistent or older
+          than two minutes, or initialized counters and sweep gauges are incomplete. Counts and ages are unknown.
+          Check observer, database, clocks and binary. Intentional observer shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCommandCrons.md
+  - eval_time: 40m
+    alertname: FaasCommandCronDecisionOverdue
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasCommandCronSweepStalled
+    exp_alerts: []
+  promql_expr_test:
+  - expr: schedd_command_cron_observation_healthy{job="schedd",instance="a"}
+    eval_time: 6m
+    exp_samples: []
+- name: fractional count
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - series: schedd_command_cron_schedules{job="schedd",instance="a",class="due"}
+    values: 0.5x90
+  - *id008
+  - *id070
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  - *id035
+  - *id036
+  - *id037
+  - *id038
+  - *id039
+  - *id040
+  - *id041
+  - *id042
+  - *id043
+  - *id044
+  - *id045
+  - *id046
+  - *id047
+  - *id048
+  - *id049
+  - *id050
+  - *id051
+  - *id052
+  - *id053
+  - *id054
+  - *id055
+  - *id056
+  - *id057
+  - *id058
+  - *id059
+  - *id060
+  - *id061
+  - *id062
+  - *id063
+  - *id064
+  - *id065
+  - *id066
+  - *id067
+  - *id068
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasCommandCronTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasCommandCronTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: schedd
+        family: command_cron_telemetry
+        public_status: internal
+        job: schedd
+        instance: a
+      exp_annotations:
+        summary: Command-cron admission diagnostics are unavailable
+        description: Schedd is scraped but command schedule observations are missing, failed, inconsistent or older
+          than two minutes, or initialized counters and sweep gauges are incomplete. Counts and ages are unknown.
+          Check observer, database, clocks and binary. Intentional observer shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCommandCrons.md
+  - eval_time: 40m
+    alertname: FaasCommandCronDecisionOverdue
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasCommandCronSweepStalled
+    exp_alerts: []
+  promql_expr_test:
+  - expr: schedd_command_cron_observation_healthy{job="schedd",instance="a"}
+    eval_time: 6m
+    exp_samples: []
+- name: negative count
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - series: schedd_command_cron_schedules{job="schedd",instance="a",class="due"}
+    values: -1x90
+  - *id008
+  - *id070
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  - *id035
+  - *id036
+  - *id037
+  - *id038
+  - *id039
+  - *id040
+  - *id041
+  - *id042
+  - *id043
+  - *id044
+  - *id045
+  - *id046
+  - *id047
+  - *id048
+  - *id049
+  - *id050
+  - *id051
+  - *id052
+  - *id053
+  - *id054
+  - *id055
+  - *id056
+  - *id057
+  - *id058
+  - *id059
+  - *id060
+  - *id061
+  - *id062
+  - *id063
+  - *id064
+  - *id065
+  - *id066
+  - *id067
+  - *id068
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasCommandCronTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasCommandCronTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: schedd
+        family: command_cron_telemetry
+        public_status: internal
+        job: schedd
+        instance: a
+      exp_annotations:
+        summary: Command-cron admission diagnostics are unavailable
+        description: Schedd is scraped but command schedule observations are missing, failed, inconsistent or older
+          than two minutes, or initialized counters and sweep gauges are incomplete. Counts and ages are unknown.
+          Check observer, database, clocks and binary. Intentional observer shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCommandCrons.md
+  - eval_time: 40m
+    alertname: FaasCommandCronDecisionOverdue
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasCommandCronSweepStalled
+    exp_alerts: []
+  promql_expr_test:
+  - expr: schedd_command_cron_observation_healthy{job="schedd",instance="a"}
+    eval_time: 6m
+    exp_samples: []
+- name: excess unknown
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - *id069
+  - series: schedd_command_cron_age_unknown{job="schedd",instance="a",class="due"}
+    values: 1x90
+  - *id070
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  - *id035
+  - *id036
+  - *id037
+  - *id038
+  - *id039
+  - *id040
+  - *id041
+  - *id042
+  - *id043
+  - *id044
+  - *id045
+  - *id046
+  - *id047
+  - *id048
+  - *id049
+  - *id050
+  - *id051
+  - *id052
+  - *id053
+  - *id054
+  - *id055
+  - *id056
+  - *id057
+  - *id058
+  - *id059
+  - *id060
+  - *id061
+  - *id062
+  - *id063
+  - *id064
+  - *id065
+  - *id066
+  - *id067
+  - *id068
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasCommandCronTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasCommandCronTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: schedd
+        family: command_cron_telemetry
+        public_status: internal
+        job: schedd
+        instance: a
+      exp_annotations:
+        summary: Command-cron admission diagnostics are unavailable
+        description: Schedd is scraped but command schedule observations are missing, failed, inconsistent or older
+          than two minutes, or initialized counters and sweep gauges are incomplete. Counts and ages are unknown.
+          Check observer, database, clocks and binary. Intentional observer shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCommandCrons.md
+  - eval_time: 40m
+    alertname: FaasCommandCronDecisionOverdue
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasCommandCronSweepStalled
+    exp_alerts: []
+  promql_expr_test:
+  - expr: schedd_command_cron_observation_healthy{job="schedd",instance="a"}
+    eval_time: 6m
+    exp_samples: []
+- name: future read
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - series: schedd_command_cron_collection_last_success_timestamp_seconds{job="schedd",instance="a"}
+    values: 120+60x90
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - *id069
+  - *id008
+  - *id070
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  - *id035
+  - *id036
+  - *id037
+  - *id038
+  - *id039
+  - *id040
+  - *id041
+  - *id042
+  - *id043
+  - *id044
+  - *id045
+  - *id046
+  - *id047
+  - *id048
+  - *id049
+  - *id050
+  - *id051
+  - *id052
+  - *id053
+  - *id054
+  - *id055
+  - *id056
+  - *id057
+  - *id058
+  - *id059
+  - *id060
+  - *id061
+  - *id062
+  - *id063
+  - *id064
+  - *id065
+  - *id066
+  - *id067
+  - *id068
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasCommandCronTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasCommandCronTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: schedd
+        family: command_cron_telemetry
+        public_status: internal
+        job: schedd
+        instance: a
+      exp_annotations:
+        summary: Command-cron admission diagnostics are unavailable
+        description: Schedd is scraped but command schedule observations are missing, failed, inconsistent or older
+          than two minutes, or initialized counters and sweep gauges are incomplete. Counts and ages are unknown.
+          Check observer, database, clocks and binary. Intentional observer shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCommandCrons.md
+  - eval_time: 40m
+    alertname: FaasCommandCronDecisionOverdue
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasCommandCronSweepStalled
+    exp_alerts: []
+  promql_expr_test:
+  - expr: schedd_command_cron_observation_healthy{job="schedd",instance="a"}
+    eval_time: 6m
+    exp_samples: []
+- name: future boundary
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - series: schedd_command_cron_schedules{job="schedd",instance="a",class="due"}
+    values: 1x90
+  - *id008
+  - series: schedd_command_cron_oldest_due_timestamp_seconds{job="schedd",instance="a",class="due"}
+    values: 6000x90
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  - *id035
+  - *id036
+  - *id037
+  - *id038
+  - *id039
+  - *id040
+  - *id041
+  - *id042
+  - *id043
+  - *id044
+  - *id045
+  - *id046
+  - *id047
+  - *id048
+  - *id049
+  - *id050
+  - *id051
+  - *id052
+  - *id053
+  - *id054
+  - *id055
+  - *id056
+  - *id057
+  - *id058
+  - *id059
+  - *id060
+  - *id061
+  - *id062
+  - *id063
+  - *id064
+  - *id065
+  - *id066
+  - *id067
+  - *id068
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasCommandCronTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasCommandCronTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: schedd
+        family: command_cron_telemetry
+        public_status: internal
+        job: schedd
+        instance: a
+      exp_annotations:
+        summary: Command-cron admission diagnostics are unavailable
+        description: Schedd is scraped but command schedule observations are missing, failed, inconsistent or older
+          than two minutes, or initialized counters and sweep gauges are incomplete. Counts and ages are unknown.
+          Check observer, database, clocks and binary. Intentional observer shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCommandCrons.md
+  - eval_time: 40m
+    alertname: FaasCommandCronDecisionOverdue
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasCommandCronSweepStalled
+    exp_alerts: []
+  promql_expr_test:
+  - expr: schedd_command_cron_observation_healthy{job="schedd",instance="a"}
+    eval_time: 6m
+    exp_samples: []
+- name: invented suspended age
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - *id069
+  - *id008
+  - *id070
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - series: schedd_command_cron_schedules{job="schedd",instance="a",class="suspended"}
+    values: 1x90
+  - *id025
+  - series: schedd_command_cron_oldest_due_timestamp_seconds{job="schedd",instance="a",class="suspended"}
+    values: 60x90
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  - *id035
+  - *id036
+  - *id037
+  - *id038
+  - *id039
+  - *id040
+  - *id041
+  - *id042
+  - *id043
+  - *id044
+  - *id045
+  - *id046
+  - *id047
+  - *id048
+  - *id049
+  - *id050
+  - *id051
+  - *id052
+  - *id053
+  - *id054
+  - *id055
+  - *id056
+  - *id057
+  - *id058
+  - *id059
+  - *id060
+  - *id061
+  - *id062
+  - *id063
+  - *id064
+  - *id065
+  - *id066
+  - *id067
+  - *id068
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasCommandCronTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasCommandCronTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: schedd
+        family: command_cron_telemetry
+        public_status: internal
+        job: schedd
+        instance: a
+      exp_annotations:
+        summary: Command-cron admission diagnostics are unavailable
+        description: Schedd is scraped but command schedule observations are missing, failed, inconsistent or older
+          than two minutes, or initialized counters and sweep gauges are incomplete. Counts and ages are unknown.
+          Check observer, database, clocks and binary. Intentional observer shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCommandCrons.md
+  - eval_time: 40m
+    alertname: FaasCommandCronDecisionOverdue
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasCommandCronSweepStalled
+    exp_alerts: []
+  promql_expr_test:
+  - expr: schedd_command_cron_observation_healthy{job="schedd",instance="a"}
+    eval_time: 6m
+    exp_samples: []
+- name: timestamp without schedules
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - *id069
+  - *id008
+  - series: schedd_command_cron_oldest_due_timestamp_seconds{job="schedd",instance="a",class="due"}
+    values: 60x90
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  - *id035
+  - *id036
+  - *id037
+  - *id038
+  - *id039
+  - *id040
+  - *id041
+  - *id042
+  - *id043
+  - *id044
+  - *id045
+  - *id046
+  - *id047
+  - *id048
+  - *id049
+  - *id050
+  - *id051
+  - *id052
+  - *id053
+  - *id054
+  - *id055
+  - *id056
+  - *id057
+  - *id058
+  - *id059
+  - *id060
+  - *id061
+  - *id062
+  - *id063
+  - *id064
+  - *id065
+  - *id066
+  - *id067
+  - *id068
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasCommandCronTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasCommandCronTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: schedd
+        family: command_cron_telemetry
+        public_status: internal
+        job: schedd
+        instance: a
+      exp_annotations:
+        summary: Command-cron admission diagnostics are unavailable
+        description: Schedd is scraped but command schedule observations are missing, failed, inconsistent or older
+          than two minutes, or initialized counters and sweep gauges are incomplete. Counts and ages are unknown.
+          Check observer, database, clocks and binary. Intentional observer shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCommandCrons.md
+  - eval_time: 40m
+    alertname: FaasCommandCronDecisionOverdue
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasCommandCronSweepStalled
+    exp_alerts: []
+  promql_expr_test:
+  - expr: schedd_command_cron_observation_healthy{job="schedd",instance="a"}
+    eval_time: 6m
+    exp_samples: []
+- name: missing admission outcome
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - *id069
+  - *id008
+  - *id070
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  - *id035
+  - *id036
+  - *id037
+  - *id038
+  - *id039
+  - *id040
+  - *id041
+  - *id042
+  - *id043
+  - *id044
+  - *id045
+  - *id046
+  - *id047
+  - *id048
+  - *id049
+  - *id050
+  - *id051
+  - *id052
+  - *id054
+  - *id055
+  - *id056
+  - *id057
+  - *id058
+  - *id059
+  - *id060
+  - *id061
+  - *id062
+  - *id063
+  - *id064
+  - *id065
+  - *id066
+  - *id067
+  - *id068
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasCommandCronTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasCommandCronTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: schedd
+        family: command_cron_telemetry
+        public_status: internal
+        job: schedd
+        instance: a
+      exp_annotations:
+        summary: Command-cron admission diagnostics are unavailable
+        description: Schedd is scraped but command schedule observations are missing, failed, inconsistent or older
+          than two minutes, or initialized counters and sweep gauges are incomplete. Counts and ages are unknown.
+          Check observer, database, clocks and binary. Intentional observer shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCommandCrons.md
+  - eval_time: 40m
+    alertname: FaasCommandCronDecisionOverdue
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasCommandCronSweepStalled
+    exp_alerts: []
+  promql_expr_test:
+  - expr: schedd_command_cron_observation_healthy{job="schedd",instance="a"}
+    eval_time: 6m
+    exp_samples: []
+- name: missing pre-admission outcome
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - *id069
+  - *id008
+  - *id070
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  - *id035
+  - *id036
+  - *id037
+  - *id038
+  - *id039
+  - *id040
+  - *id041
+  - *id042
+  - *id043
+  - *id044
+  - *id046
+  - *id047
+  - *id048
+  - *id049
+  - *id050
+  - *id051
+  - *id052
+  - *id053
+  - *id054
+  - *id055
+  - *id056
+  - *id057
+  - *id058
+  - *id059
+  - *id060
+  - *id061
+  - *id062
+  - *id063
+  - *id064
+  - *id065
+  - *id066
+  - *id067
+  - *id068
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasCommandCronTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasCommandCronTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: schedd
+        family: command_cron_telemetry
+        public_status: internal
+        job: schedd
+        instance: a
+      exp_annotations:
+        summary: Command-cron admission diagnostics are unavailable
+        description: Schedd is scraped but command schedule observations are missing, failed, inconsistent or older
+          than two minutes, or initialized counters and sweep gauges are incomplete. Counts and ages are unknown.
+          Check observer, database, clocks and binary. Intentional observer shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCommandCrons.md
+  - eval_time: 40m
+    alertname: FaasCommandCronDecisionOverdue
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasCommandCronSweepStalled
+    exp_alerts: []
+  promql_expr_test:
+  - expr: schedd_command_cron_observation_healthy{job="schedd",instance="a"}
+    eval_time: 6m
+    exp_samples: []
+- name: missing sweep outcome
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - *id069
+  - *id008
+  - *id070
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  - *id035
+  - *id036
+  - *id038
+  - *id039
+  - *id040
+  - *id041
+  - *id042
+  - *id043
+  - *id044
+  - *id045
+  - *id046
+  - *id047
+  - *id048
+  - *id049
+  - *id050
+  - *id051
+  - *id052
+  - *id053
+  - *id054
+  - *id055
+  - *id056
+  - *id057
+  - *id058
+  - *id059
+  - *id060
+  - *id061
+  - *id062
+  - *id063
+  - *id064
+  - *id065
+  - *id066
+  - *id067
+  - *id068
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasCommandCronTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasCommandCronTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: schedd
+        family: command_cron_telemetry
+        public_status: internal
+        job: schedd
+        instance: a
+      exp_annotations:
+        summary: Command-cron admission diagnostics are unavailable
+        description: Schedd is scraped but command schedule observations are missing, failed, inconsistent or older
+          than two minutes, or initialized counters and sweep gauges are incomplete. Counts and ages are unknown.
+          Check observer, database, clocks and binary. Intentional observer shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCommandCrons.md
+  - eval_time: 40m
+    alertname: FaasCommandCronDecisionOverdue
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasCommandCronSweepStalled
+    exp_alerts: []
+  promql_expr_test:
+  - expr: schedd_command_cron_observation_healthy{job="schedd",instance="a"}
+    eval_time: 6m
+    exp_samples: []
+- name: missing lag diagnostics
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - *id069
+  - *id008
+  - *id070
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  - *id035
+  - *id036
+  - *id037
+  - *id038
+  - *id039
+  - *id040
+  - *id041
+  - *id042
+  - *id043
+  - *id044
+  - *id045
+  - *id046
+  - *id047
+  - *id048
+  - *id049
+  - *id050
+  - *id051
+  - *id052
+  - *id053
+  - *id054
+  - *id055
+  - *id056
+  - *id057
+  - *id058
+  - *id059
+  - *id060
+  - *id061
+  - *id062
+  - *id063
+  - *id065
+  - *id066
+  - *id067
+  - *id068
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasCommandCronTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasCommandCronTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: schedd
+        family: command_cron_telemetry
+        public_status: internal
+        job: schedd
+        instance: a
+      exp_annotations:
+        summary: Command-cron admission diagnostics are unavailable
+        description: Schedd is scraped but command schedule observations are missing, failed, inconsistent or older
+          than two minutes, or initialized counters and sweep gauges are incomplete. Counts and ages are unknown.
+          Check observer, database, clocks and binary. Intentional observer shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCommandCrons.md
+  - eval_time: 40m
+    alertname: FaasCommandCronDecisionOverdue
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasCommandCronSweepStalled
+    exp_alerts: []
+  promql_expr_test:
+  - expr: schedd_command_cron_observation_healthy{job="schedd",instance="a"}
+    eval_time: 6m
+    exp_samples: []
+- name: invalid sweep state
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - series: schedd_command_cron_sweep_running{job="schedd",instance="a"}
+    values: 2x90
+  - *id006
+  - *id007
+  - *id069
+  - *id008
+  - *id070
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  - *id035
+  - *id036
+  - *id037
+  - *id038
+  - *id039
+  - *id040
+  - *id041
+  - *id042
+  - *id043
+  - *id044
+  - *id045
+  - *id046
+  - *id047
+  - *id048
+  - *id049
+  - *id050
+  - *id051
+  - *id052
+  - *id053
+  - *id054
+  - *id055
+  - *id056
+  - *id057
+  - *id058
+  - *id059
+  - *id060
+  - *id061
+  - *id062
+  - *id063
+  - *id064
+  - *id065
+  - *id066
+  - *id067
+  - *id068
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasCommandCronTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasCommandCronTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: schedd
+        family: command_cron_telemetry
+        public_status: internal
+        job: schedd
+        instance: a
+      exp_annotations:
+        summary: Command-cron admission diagnostics are unavailable
+        description: Schedd is scraped but command schedule observations are missing, failed, inconsistent or older
+          than two minutes, or initialized counters and sweep gauges are incomplete. Counts and ages are unknown.
+          Check observer, database, clocks and binary. Intentional observer shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCommandCrons.md
+  - eval_time: 40m
+    alertname: FaasCommandCronDecisionOverdue
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasCommandCronSweepStalled
+    exp_alerts: []
+  promql_expr_test:
+  - expr: schedd_command_cron_observation_healthy{job="schedd",instance="a"}
+    eval_time: 6m
+    exp_samples: []
+- name: invalid observation switch
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - series: schedd_command_cron_observation_enabled{job="schedd",instance="a"}
+    values: 2x90
+  - *id005
+  - *id006
+  - *id007
+  - *id069
+  - *id008
+  - *id070
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  - *id035
+  - *id036
+  - *id037
+  - *id038
+  - *id039
+  - *id040
+  - *id041
+  - *id042
+  - *id043
+  - *id044
+  - *id045
+  - *id046
+  - *id047
+  - *id048
+  - *id049
+  - *id050
+  - *id051
+  - *id052
+  - *id053
+  - *id054
+  - *id055
+  - *id056
+  - *id057
+  - *id058
+  - *id059
+  - *id060
+  - *id061
+  - *id062
+  - *id063
+  - *id064
+  - *id065
+  - *id066
+  - *id067
+  - *id068
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasCommandCronTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasCommandCronTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: schedd
+        family: command_cron_telemetry
+        public_status: internal
+        job: schedd
+        instance: a
+      exp_annotations:
+        summary: Command-cron admission diagnostics are unavailable
+        description: Schedd is scraped but command schedule observations are missing, failed, inconsistent or older
+          than two minutes, or initialized counters and sweep gauges are incomplete. Counts and ages are unknown.
+          Check observer, database, clocks and binary. Intentional observer shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCommandCrons.md
+  - eval_time: 40m
+    alertname: FaasCommandCronDecisionOverdue
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasCommandCronSweepStalled
+    exp_alerts: []
+  promql_expr_test:
+  - expr: schedd_command_cron_observation_healthy{job="schedd",instance="a"}
+    eval_time: 6m
+    exp_samples: []
+- name: future sweep progress
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - series: schedd_command_cron_sweep_last_success_timestamp_seconds{job="schedd",instance="a"}
+    values: 120+60x90
+  - *id069
+  - *id008
+  - *id070
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  - *id035
+  - *id036
+  - *id037
+  - *id038
+  - *id039
+  - *id040
+  - *id041
+  - *id042
+  - *id043
+  - *id044
+  - *id045
+  - *id046
+  - *id047
+  - *id048
+  - *id049
+  - *id050
+  - *id051
+  - *id052
+  - *id053
+  - *id054
+  - *id055
+  - *id056
+  - *id057
+  - *id058
+  - *id059
+  - *id060
+  - *id061
+  - *id062
+  - *id063
+  - *id064
+  - *id065
+  - *id066
+  - *id067
+  - *id068
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasCommandCronTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasCommandCronTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: schedd
+        family: command_cron_telemetry
+        public_status: internal
+        job: schedd
+        instance: a
+      exp_annotations:
+        summary: Command-cron admission diagnostics are unavailable
+        description: Schedd is scraped but command schedule observations are missing, failed, inconsistent or older
+          than two minutes, or initialized counters and sweep gauges are incomplete. Counts and ages are unknown.
+          Check observer, database, clocks and binary. Intentional observer shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCommandCrons.md
+  - eval_time: 40m
+    alertname: FaasCommandCronDecisionOverdue
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasCommandCronSweepStalled
+    exp_alerts: []
+  promql_expr_test:
+  - expr: schedd_command_cron_observation_healthy{job="schedd",instance="a"}
+    eval_time: 6m
+    exp_samples: []
+- name: infinite counter
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - *id069
+  - *id008
+  - *id070
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  - *id035
+  - *id036
+  - *id037
+  - *id038
+  - *id039
+  - *id040
+  - *id041
+  - *id042
+  - *id043
+  - *id044
+  - *id045
+  - *id046
+  - *id047
+  - *id048
+  - *id049
+  - *id050
+  - *id051
+  - *id052
+  - *id053
+  - *id054
+  - *id055
+  - *id056
+  - *id057
+  - *id058
+  - *id059
+  - *id060
+  - series: schedd_command_cron_admissions_total{job="schedd",instance="a",outcome="error"}
+    values: +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf
+      +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf
+      +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf
+      +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf
+      +Inf +Inf +Inf +Inf +Inf
+  - *id062
+  - *id063
+  - *id064
+  - *id065
+  - *id066
+  - *id067
+  - *id068
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasCommandCronTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasCommandCronTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: schedd
+        family: command_cron_telemetry
+        public_status: internal
+        job: schedd
+        instance: a
+      exp_annotations:
+        summary: Command-cron admission diagnostics are unavailable
+        description: Schedd is scraped but command schedule observations are missing, failed, inconsistent or older
+          than two minutes, or initialized counters and sweep gauges are incomplete. Counts and ages are unknown.
+          Check observer, database, clocks and binary. Intentional observer shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCommandCrons.md
+  - eval_time: 40m
+    alertname: FaasCommandCronDecisionOverdue
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasCommandCronSweepStalled
+    exp_alerts: []
+  promql_expr_test:
+  - expr: schedd_command_cron_observation_healthy{job="schedd",instance="a"}
+    eval_time: 6m
+    exp_samples: []
+- name: exact freshness ceiling
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - series: schedd_command_cron_collection_last_success_timestamp_seconds{job="schedd",instance="a"}
+    values: 60x90
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - *id069
+  - *id008
+  - *id070
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  - *id035
+  - *id036
+  - *id037
+  - *id038
+  - *id039
+  - *id040
+  - *id041
+  - *id042
+  - *id043
+  - *id044
+  - *id045
+  - *id046
+  - *id047
+  - *id048
+  - *id049
+  - *id050
+  - *id051
+  - *id052
+  - *id053
+  - *id054
+  - *id055
+  - *id056
+  - *id057
+  - *id058
+  - *id059
+  - *id060
+  - *id061
+  - *id062
+  - *id063
+  - *id064
+  - *id065
+  - *id066
+  - *id067
+  - *id068
+  alert_rule_test:
+  - eval_time: 8m
+    alertname: FaasCommandCronTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 9m
+    alertname: FaasCommandCronTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: schedd
+        family: command_cron_telemetry
+        public_status: internal
+        job: schedd
+        instance: a
+      exp_annotations:
+        summary: Command-cron admission diagnostics are unavailable
+        description: Schedd is scraped but command schedule observations are missing, failed, inconsistent or older
+          than two minutes, or initialized counters and sweep gauges are incomplete. Counts and ages are unknown.
+          Check observer, database, clocks and binary. Intentional observer shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCommandCrons.md
+  promql_expr_test:
+  - expr: schedd_command_cron_observation_healthy{job="schedd",instance="a"}
+    eval_time: 3m
+    exp_samples:
+    - labels: '{__name__="schedd_command_cron_observation_healthy",job="schedd",instance="a"}'
+      value: 1
+  - expr: schedd_command_cron_observation_healthy{job="schedd",instance="a"}
+    eval_time: 4m
+    exp_samples: []
+- name: persistent error
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - *id069
+  - *id008
+  - *id070
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  - *id035
+  - *id036
+  - *id037
+  - *id038
+  - *id039
+  - *id040
+  - *id041
+  - *id042
+  - *id043
+  - *id044
+  - *id045
+  - *id046
+  - *id047
+  - *id048
+  - *id049
+  - *id050
+  - *id051
+  - *id052
+  - *id053
+  - *id054
+  - *id055
+  - *id056
+  - *id057
+  - *id058
+  - *id059
+  - *id060
+  - series: schedd_command_cron_admissions_total{job="schedd",instance="a",outcome="error"}
+    values: 0+10x90
+  - *id062
+  - *id063
+  - *id064
+  - *id065
+  - *id066
+  - *id067
+  - *id068
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: FaasCommandCronAdmissionErrors
+    exp_alerts: []
+  - eval_time: 6m
+    alertname: FaasCommandCronAdmissionErrors
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: schedd
+        family: command_cron
+        public_status: internal
+        job: schedd
+        instance: a
+      exp_annotations:
+        summary: Command-cron admission calls are persistently failing
+        description: At least three admission or pre-admission store errors occurred per rolling five-minute window,
+          sustained for five minutes. Policy rejections, overlap skips, coalescing, missed deadlines, deployment-unavailable
+          returns and parent cancellation are separate outcomes. Inspect bounded logs before attributing infrastructure
+          failure.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCommandCrons.md
+  promql_expr_test: []
+- name: persistent lookup_error
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - *id069
+  - *id008
+  - *id070
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  - *id035
+  - *id036
+  - *id037
+  - *id038
+  - *id039
+  - *id040
+  - *id041
+  - *id042
+  - *id043
+  - *id044
+  - series: schedd_command_cron_decisions_total{job="schedd",instance="a",outcome="lookup_error"}
+    values: 0+10x90
+  - *id046
+  - *id047
+  - *id048
+  - *id049
+  - *id050
+  - *id051
+  - *id052
+  - *id053
+  - *id054
+  - *id055
+  - *id056
+  - *id057
+  - *id058
+  - *id059
+  - *id060
+  - *id061
+  - *id062
+  - *id063
+  - *id064
+  - *id065
+  - *id066
+  - *id067
+  - *id068
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: FaasCommandCronAdmissionErrors
+    exp_alerts: []
+  - eval_time: 6m
+    alertname: FaasCommandCronAdmissionErrors
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: schedd
+        family: command_cron
+        public_status: internal
+        job: schedd
+        instance: a
+      exp_annotations:
+        summary: Command-cron admission calls are persistently failing
+        description: At least three admission or pre-admission store errors occurred per rolling five-minute window,
+          sustained for five minutes. Policy rejections, overlap skips, coalescing, missed deadlines, deployment-unavailable
+          returns and parent cancellation are separate outcomes. Inspect bounded logs before attributing infrastructure
+          failure.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCommandCrons.md
+  promql_expr_test: []
+- name: persistent legacy_error
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - *id069
+  - *id008
+  - *id070
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  - *id035
+  - *id036
+  - *id037
+  - *id038
+  - *id039
+  - *id040
+  - *id041
+  - *id042
+  - *id043
+  - *id044
+  - *id045
+  - *id046
+  - *id047
+  - *id048
+  - *id049
+  - *id050
+  - *id051
+  - series: schedd_command_cron_decisions_total{job="schedd",instance="a",outcome="legacy_error"}
+    values: 0+10x90
+  - *id053
+  - *id054
+  - *id055
+  - *id056
+  - *id057
+  - *id058
+  - *id059
+  - *id060
+  - *id061
+  - *id062
+  - *id063
+  - *id064
+  - *id065
+  - *id066
+  - *id067
+  - *id068
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: FaasCommandCronAdmissionErrors
+    exp_alerts: []
+  - eval_time: 6m
+    alertname: FaasCommandCronAdmissionErrors
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: schedd
+        family: command_cron
+        public_status: internal
+        job: schedd
+        instance: a
+      exp_annotations:
+        summary: Command-cron admission calls are persistently failing
+        description: At least three admission or pre-admission store errors occurred per rolling five-minute window,
+          sustained for five minutes. Policy rejections, overlap skips, coalescing, missed deadlines, deployment-unavailable
+          returns and parent cancellation are separate outcomes. Inspect bounded logs before attributing infrastructure
+          failure.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCommandCrons.md
+  promql_expr_test: []
+- name: insufficient error volume
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - *id069
+  - *id008
+  - *id070
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  - *id035
+  - *id036
+  - *id037
+  - *id038
+  - *id039
+  - *id040
+  - *id041
+  - *id042
+  - *id043
+  - *id044
+  - *id045
+  - *id046
+  - *id047
+  - *id048
+  - *id049
+  - *id050
+  - *id051
+  - *id052
+  - *id053
+  - *id054
+  - *id055
+  - *id056
+  - *id057
+  - *id058
+  - *id059
+  - *id060
+  - series: schedd_command_cron_admissions_total{job="schedd",instance="a",outcome="error"}
+    values: 0+0.1x90
+  - *id062
+  - *id063
+  - *id064
+  - *id065
+  - *id066
+  - *id067
+  - *id068
+  alert_rule_test:
+  - eval_time: 40m
+    alertname: FaasCommandCronAdmissionErrors
+    exp_alerts: []
+  promql_expr_test: []
+- name: policy dispositions are not store failures
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - *id069
+  - *id008
+  - *id070
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  - *id035
+  - *id036
+  - *id037
+  - *id038
+  - *id039
+  - *id040
+  - *id041
+  - *id042
+  - *id043
+  - *id044
+  - *id045
+  - *id046
+  - *id047
+  - *id048
+  - *id049
+  - *id050
+  - *id051
+  - *id052
+  - *id053
+  - *id054
+  - series: schedd_command_cron_admissions_total{job="schedd",instance="a",outcome="coalesced"}
+    values: 0+100x90
+  - series: schedd_command_cron_admissions_total{job="schedd",instance="a",outcome="skipped_overlap"}
+    values: 0+100x90
+  - series: schedd_command_cron_admissions_total{job="schedd",instance="a",outcome="missed_deadline"}
+    values: 0+100x90
+  - *id058
+  - series: schedd_command_cron_admissions_total{job="schedd",instance="a",outcome="deployment_unavailable"}
+    values: 0+100x90
+  - series: schedd_command_cron_admissions_total{job="schedd",instance="a",outcome="rejected"}
+    values: 0+100x90
+  - *id061
+  - series: schedd_command_cron_admissions_total{job="schedd",instance="a",outcome="canceled"}
+    values: 0+100x90
+  - *id063
+  - *id064
+  - *id065
+  - *id066
+  - *id067
+  - *id068
+  alert_rule_test:
+  - eval_time: 40m
+    alertname: FaasCommandCronAdmissionErrors
+    exp_alerts: []
+  promql_expr_test: []
+- name: scrape failure belongs to target health
+  interval: 1m
+  input_series:
+  - series: up{job="schedd",instance="a"}
+    values: '0x90'
+  - *id002
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - *id069
+  - *id008
+  - *id070
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  - *id035
+  - *id036
+  - *id037
+  - *id038
+  - *id039
+  - *id040
+  - *id041
+  - *id042
+  - *id043
+  - *id044
+  - *id045
+  - *id046
+  - *id047
+  - *id048
+  - *id049
+  - *id050
+  - *id051
+  - *id052
+  - *id053
+  - *id054
+  - *id055
+  - *id056
+  - *id057
+  - *id058
+  - *id059
+  - *id060
+  - *id061
+  - *id062
+  - *id063
+  - *id064
+  - *id065
+  - *id066
+  - *id067
+  - *id068
+  alert_rule_test:
+  - eval_time: 40m
+    alertname: FaasCommandCronTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasCommandCronSweepStalled
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasCommandCronDecisionOverdue
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasCommandCronReplacementWaiting
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasCommandCronEvidenceUnknown
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasCommandCronAdmissionErrors
+    exp_alerts: []
+  promql_expr_test: []
+- name: observer shutdown withdraws expectation
+  interval: 1m
+  input_series:
+  - *id001
+  - series: schedd_command_cron_collection_success{job="schedd",instance="a"}
+    values: '0x90'
+  - *id003
+  - series: schedd_command_cron_observation_enabled{job="schedd",instance="a"}
+    values: '0x90'
+  - *id005
+  - *id006
+  - series: schedd_command_cron_sweep_last_success_timestamp_seconds{job="schedd",instance="a"}
+    values: '0x90'
+  - *id069
+  - *id008
+  - *id070
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  - *id035
+  - *id036
+  - *id037
+  - *id038
+  - *id039
+  - *id040
+  - *id041
+  - *id042
+  - *id043
+  - *id044
+  - *id045
+  - *id046
+  - *id047
+  - *id048
+  - *id049
+  - *id050
+  - *id051
+  - *id052
+  - *id053
+  - *id054
+  - *id055
+  - *id056
+  - *id057
+  - *id058
+  - *id059
+  - *id060
+  - *id061
+  - *id062
+  - *id063
+  - *id064
+  - *id065
+  - *id066
+  - *id067
+  - *id068
+  alert_rule_test:
+  - eval_time: 40m
+    alertname: FaasCommandCronTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasCommandCronSweepStalled
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasCommandCronDecisionOverdue
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasCommandCronReplacementWaiting
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasCommandCronEvidenceUnknown
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasCommandCronAdmissionErrors
+    exp_alerts: []
+  promql_expr_test: []

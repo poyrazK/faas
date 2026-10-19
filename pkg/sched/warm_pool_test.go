@@ -3,6 +3,7 @@ package sched
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"strings"
 	"testing"
@@ -121,6 +122,50 @@ func TestWakePromotesWarmRowRecordsResumePhase(t *testing.T) {
 		t.Fatalf("resume count = %v, want 1", got)
 	}
 	assertWarmPoolGauge(t, e.ops, string(api.PlanPro), 0)
+}
+
+// ADR-1741: a warm promotion decided from a stale owner cache entry is
+// refused before vmmd resumes the VM.
+func TestWarmPromotionChecksTheOwnerCacheGeneration(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	_, app, dep := seedApp(t, store, api.PlanPro, 256, 5)
+	target := 1
+	if _, err := store.UpdateApp(ctx, app.ID, state.UpdateAppParams{WarmPoolSize: &target, SetWarmPoolSize: true}); err != nil {
+		t.Fatalf("UpdateApp warm_pool_size: %v", err)
+	}
+	node, err := store.ComputeNodeByName(ctx, state.DefaultLocalNodeName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	warm, err := store.CreateInstanceWithMode(ctx, app.ID, dep.ID, string(state.StateWaking), app.RAMMB, node.ID, uuid.NewString(), string(state.InstanceModeNormal))
+	if err != nil {
+		t.Fatalf("Create warm instance: %v", err)
+	}
+	warm = publishWarmFixture(t, store, warm)
+	limits := api.MustLimitsFor(api.PlanPro)
+	vmm := &warmResumeFakeVMM{fakeVMM: &fakeVMM{}}
+	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0").WithOpsMetrics(wire.NewOpsMetrics("schedd")).WithOwnerCache()
+	if err := e.Ledger().Admit(Request{
+		Instance: warm.ID, AppID: app.ID, DeploymentID: dep.ID, Plan: api.PlanPro,
+		RAMMB: app.RAMMB, VCPU: limits.VCPU, MaxConcurrency: app.MaxConcurrency,
+		NodeID: node.ID, Kind: KindWarmPool,
+	}); err != nil {
+		t.Fatalf("Admit warm reservation: %v", err)
+	}
+	if _, err := e.ownerEntryFor(ctx, app.ID); err != nil {
+		t.Fatalf("load owner cache entry: %v", err)
+	}
+	// The suspension moves the generation; its notification never arrives.
+	if err := store.UpdateAccountStatus(ctx, app.AccountID, state.AccountSuspended); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.Wake(ctx, app.ID, "", "", ""); !errors.Is(err, ErrPermanentWake) {
+		t.Fatalf("Wake of a suspended account = %v, want %v", err, ErrPermanentWake)
+	}
+	if row, _ := store.InstanceByID(ctx, warm.ID); vmm.resumeCalls != 0 || row.State != string(state.StateWarm) {
+		t.Fatalf("resume calls %d, warm row %q; want the VM left warm and not resumed", vmm.resumeCalls, row.State)
+	}
 }
 
 type warmResumeFakeVMM struct {

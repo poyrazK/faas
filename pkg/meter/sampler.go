@@ -132,6 +132,13 @@ type instanceBillingSecondsStore interface {
 	InstanceBillingSeconds(ctx context.Context, start, end time.Time) (map[string]int64, error)
 }
 
+// billingWindowInstanceStore lists, in one read, the instances a roll of a
+// minute can write rows for (PgStore and MemStore implement it). Without it
+// the sampler falls back to every app's full instance history.
+type billingWindowInstanceStore interface {
+	ListBillingWindowInstances(ctx context.Context, since, end time.Time) ([]state.Instance, error)
+}
+
 // Sampler writes one minute of billable usage per live instance. It walks
 // every app on the box (one-box scale; schedd's ListAllApps is the canonical
 // source) and lists its instances; for each one in a state that counts
@@ -510,10 +517,14 @@ func (s *Sampler) rollApps(ctx context.Context, observedAt, minute time.Time, ex
 	// treats empty as free) so a transient Postgres blip doesn't
 	// drop the entire tick's metric.
 	planByAccount := make(map[string]api.Plan)
-	if accounts, accErr := s.store.ListAllAccounts(ctx); accErr == nil {
+	if accounts, accErr := state.ListBillingResourceAccounts(ctx, s.store); accErr == nil {
 		for _, a := range accounts {
 			planByAccount[a.ID] = a.Plan
 		}
+	}
+	instancesByApp, err := s.billingWindowInstances(ctx, minute)
+	if err != nil {
+		return nil, err
 	}
 	var out []RolledRow
 	for _, app := range apps {
@@ -529,9 +540,12 @@ func (s *Sampler) rollApps(ctx context.Context, observedAt, minute time.Time, ex
 		if app.Status == state.AppDeleted && !exactResidency {
 			continue
 		}
-		ins, err := s.store.ListInstancesForApp(ctx, app.ID)
-		if err != nil {
-			return nil, err
+		ins := instancesByApp[app.ID]
+		if instancesByApp == nil {
+			ins, err = s.store.ListInstancesForApp(ctx, app.ID)
+			if err != nil {
+				return nil, err
+			}
 		}
 		// liveCount tracks CountsForRAM() instances for the
 		// floor math below (ADR-060, issue #515). CountsForRAM
@@ -540,24 +554,26 @@ func (s *Sampler) rollApps(ctx context.Context, observedAt, minute time.Time, ex
 		// wrote — never over- nor under-counting.
 		liveCount := 0
 		var liveSeconds int64
-		// Issue #463 / ADR-070 / PR-C: pre-load sidecar MBs
-		// once per app (not once per instance) so a 100-instance
-		// fleet is 1 DB read per app, not 100. Missing keys
-		// (deployment_id empty / lookup failed) collapse to
-		// nil = no-sidecar admission form.
-		sidecarByDeploy := make(map[string][]int, len(ins))
-		for _, inst := range ins {
-			if inst.DeploymentID == "" {
-				continue
+		// Issue #463 / ADR-070 / PR-C: sidecar MBs are read once per
+		// deployment, and only for deployments with a billable row this
+		// minute: ins is the app's whole retained wake history, so reading
+		// every deployment in it cost one query per historical deployment
+		// per app per minute. An empty deployment_id is the no-sidecar
+		// admission form.
+		sidecarByDeploy := make(map[string][]int)
+		sidecarsFor := func(deploymentID string) ([]int, error) {
+			if deploymentID == "" {
+				return nil, nil
 			}
-			if _, seen := sidecarByDeploy[inst.DeploymentID]; seen {
-				continue
+			if mbs, seen := sidecarByDeploy[deploymentID]; seen {
+				return mbs, nil
 			}
-			mbs, err := s.store.DeploymentSidecarRAMs(ctx, inst.DeploymentID)
+			mbs, err := s.store.DeploymentSidecarRAMs(ctx, deploymentID)
 			if err != nil {
-				return out, fmt.Errorf("meter: billable sidecar RAM %s: %w", inst.DeploymentID, err)
+				return nil, fmt.Errorf("meter: billable sidecar RAM %s: %w", deploymentID, err)
 			}
-			sidecarByDeploy[inst.DeploymentID] = mbs
+			sidecarByDeploy[deploymentID] = mbs
+			return mbs, nil
 		}
 		for _, ins := range ins {
 			// Issue #72 / ADR-125: skip mode='mirror' instances at
@@ -609,10 +625,10 @@ func (s *Sampler) rollApps(ctx context.Context, observedAt, minute time.Time, ex
 				row := RolledRow{
 					InstanceID:    ins.ID,
 					AppID:         app.ID,
-					AccountID:     app.AccountID,
+					AccountID:     meterAppSubject(app, planByAccount),
 					Minute:        minute,
 					Mode:          ins.Mode,
-					Plan:          string(planByAccount[app.AccountID]),
+					Plan:          string(planByAccount[meterAppSubject(app, planByAccount)]),
 					TXBytes:       int64(usage.TXBytes),
 					NetTxBytes:    int64(usage.NetTXBytes),
 					NetRxBytes:    int64(usage.NetRXBytes),
@@ -624,16 +640,19 @@ func (s *Sampler) rollApps(ctx context.Context, observedAt, minute time.Time, ex
 				out = append(out, row)
 				continue
 			}
-			sidecarMBs := sidecarByDeploy[ins.DeploymentID]
+			sidecarMBs, err := sidecarsFor(ins.DeploymentID)
+			if err != nil {
+				return out, err
+			}
 			row := RolledRow{
 				InstanceID:  ins.ID,
 				AppID:       app.ID,
-				AccountID:   app.AccountID,
+				AccountID:   meterAppSubject(app, planByAccount),
 				Minute:      minute,
 				AdmissionMB: api.BillableRAMMBWithSidecars(ins.RAMMB, sidecarMBs),
 				MBSeconds:   int64(api.BillableRAMMBWithSidecars(ins.RAMMB, sidecarMBs)) * seconds,
 				Mode:        ins.Mode,
-				Plan:        string(planByAccount[app.AccountID]),
+				Plan:        string(planByAccount[meterAppSubject(app, planByAccount)]),
 			}
 			// Production traffic is pushed by gatewayd-internal and drained
 			// atomically here. The invocation-table fallback preserves the
@@ -925,6 +944,27 @@ func (s *Sampler) cpuDeltaForMinute(instanceID string, minute time.Time) int64 {
 		lastMinute:  minute,
 	}
 	return int64(delta)
+}
+
+// billingWindowInstances groups by app the instances a roll of minute can
+// write rows for, in one store read. The window reaches back
+// api.MeterCatchUpWindow so an instance that ended recently still drains the
+// gateway and network telemetry its sources hold for it. nil means the store
+// cannot list the window and the caller reads each app's history instead.
+func (s *Sampler) billingWindowInstances(ctx context.Context, minute time.Time) (map[string][]state.Instance, error) {
+	windowStore, ok := s.store.(billingWindowInstanceStore)
+	if !ok {
+		return nil, nil
+	}
+	rows, err := windowStore.ListBillingWindowInstances(ctx, minute.Add(-api.MeterCatchUpWindow), minute.Add(time.Minute))
+	if err != nil {
+		return nil, fmt.Errorf("meter: list billing window instances: %w", err)
+	}
+	byApp := make(map[string][]state.Instance)
+	for _, ins := range rows {
+		byApp[ins.AppID] = append(byApp[ins.AppID], ins)
+	}
+	return byApp, nil
 }
 
 // egressBytes returns (txBytes, netTxBytes, ok) for the given

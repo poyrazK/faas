@@ -1,7 +1,7 @@
 -- +goose Up
 -- +goose StatementBegin
 SET LOCAL lock_timeout = '5s';
--- ADR-1640. Legacy intent and task writers must not bypass the unsupported
+-- ADR-1746. Legacy intent and task writers must not bypass the unsupported
 -- producer boundary. Serialize with policy activation on the same account row.
 CREATE OR REPLACE FUNCTION financial_compute_require_job_support(target_account uuid) RETURNS void
 LANGUAGE plpgsql AS $$

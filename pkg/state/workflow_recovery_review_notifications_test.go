@@ -153,7 +153,7 @@ func TestWorkflowRecoveryReviewNotifications(t *testing.T) {
 				}
 				// A process restart and repeated polls must not create another event.
 				if pg, ok := s.(*PgStore); ok {
-					s = NewPgStore(pg.pool)
+					s = NewPgStore(pg.pool.Pool)
 					notices = s.(WorkflowRecoveryReviewNotificationStore)
 				}
 				if worked, e := notices.ProcessNextWorkflowRecoveryReviewNotification(ctx, now.Add(time.Hour)); worked || e != nil {

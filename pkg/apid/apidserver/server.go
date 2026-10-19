@@ -17,6 +17,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid"
+	"github.com/onebox-faas/faas/pkg/apid/appaccess"
 	"github.com/onebox-faas/faas/pkg/apid/appevents"
 	"github.com/onebox-faas/faas/pkg/apid/automationconsole"
 	"github.com/onebox-faas/faas/pkg/apid/billingruns"
@@ -24,6 +25,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/consumerbilling"
 	"github.com/onebox-faas/faas/pkg/apid/consumercontrols"
 	"github.com/onebox-faas/faas/pkg/apid/consumercredits"
+	pipelineapi "github.com/onebox-faas/faas/pkg/apid/datapipelines"
 	repairapi "github.com/onebox-faas/faas/pkg/apid/datarepair"
 	"github.com/onebox-faas/faas/pkg/apid/durable"
 	"github.com/onebox-faas/faas/pkg/apid/edgerules"
@@ -32,14 +34,19 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/mailoutbox"
 
 	"github.com/onebox-faas/faas/pkg/apid/issuetrackers"
+	"github.com/onebox-faas/faas/pkg/apid/livequeries"
 	"github.com/onebox-faas/faas/pkg/apid/managedrealtime"
 	"github.com/onebox-faas/faas/pkg/apid/mcpadmission"
 	"github.com/onebox-faas/faas/pkg/apid/mcpcatalog"
 	"github.com/onebox-faas/faas/pkg/apid/mcpreadiness"
 	"github.com/onebox-faas/faas/pkg/apid/object"
 	"github.com/onebox-faas/faas/pkg/apid/operation"
+	"github.com/onebox-faas/faas/pkg/apid/operatorobs"
 	"github.com/onebox-faas/faas/pkg/apid/outboundai"
+	"github.com/onebox-faas/faas/pkg/apid/platformflagadmin"
+	"github.com/onebox-faas/faas/pkg/apid/postgresaccess"
 	"github.com/onebox-faas/faas/pkg/apid/product"
+	"github.com/onebox-faas/faas/pkg/apid/projectaccess"
 	"github.com/onebox-faas/faas/pkg/apid/queueleases"
 	"github.com/onebox-faas/faas/pkg/apid/servicemap"
 	"github.com/onebox-faas/faas/pkg/apid/statementinvoices"
@@ -62,7 +69,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/oidc"
 	"github.com/onebox-faas/faas/pkg/openapidiff"
-	"github.com/onebox-faas/faas/pkg/outbound"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/preflight"
 	"github.com/onebox-faas/faas/pkg/profiling"
 	"github.com/onebox-faas/faas/pkg/promql"
@@ -118,6 +125,7 @@ type server struct {
 	nativeLinearVerifier                   issuetrackers.LinearConnectionVerifier
 	nativeTrackerProvider                  issuetracker.StatusProvider
 	nativeTicketProvider                   issuetracker.Provider
+	dataPipelines                          *pipelineapi.Handler
 	environmentGitOpsAcceptanceEnforcement atomic.Bool
 	profileBackend                         profiling.Backend
 	profileQuerySlots                      chan struct{}
@@ -134,23 +142,34 @@ type server struct {
 	productControl                         product.Service
 	appEvents                              appevents.Service  // ADR-977; Host wired in newServer
 	serviceMap                             servicemap.Service // ADR-1131; Host wired in newServer
-	featureFlagsEnabled                    bool
-	aiGatewayEnabled                       bool
-	aiGatewayRollout                       outbound.AIGatewayRollout // ADR-998
-	outboundAI                             outboundai.Service        // ADR-977; Host wired in newServer
-	flagsWorkloadVerifier                  *workloadidentity.Verifier
-	statementInvoices                      statementinvoices.Service // ADR-1502; Host wired in newServer
-	billingRuns                            billingruns.Service       // ADR-1503; Host wired in newServer
-	consumerBilling                        consumerbilling.Service   // ADR-1506; Host wired in newServer
-	consumerCredits                        consumercredits.Service   // ADR-1306; Host wired in newServer
-	consumerControls                       consumercontrols.Service  // ADR-1314, ADR-1315; Host wired in newServer
-	tenantPlans                            tenantplans.Service       // ADR-1307; Host wired in newServer
+	// configGuardTelemetry overrides the store's request telemetry for
+	// config guards (ADR-1451); nil reads it from the store.
+	configGuardTelemetry state.ConfigGuardTelemetryStore
+	// postReleaseTelemetry overrides the store's request telemetry for the
+	// post-release watch (ADR-1445); nil reads it from the store.
+	postReleaseTelemetry  rollbackOn5xxTelemetry
+	outboundAI            outboundai.Service // ADR-977; Host wired in newServer
+	flagsWorkloadVerifier *workloadidentity.Verifier
+	statementInvoices     statementinvoices.Service // ADR-1502; Host wired in newServer
+	billingRuns           billingruns.Service       // ADR-1503; Host wired in newServer
+	consumerBilling       consumerbilling.Service   // ADR-1506; Host wired in newServer
+	consumerCredits       consumercredits.Service   // ADR-1306; Host wired in newServer
+	consumerControls      consumercontrols.Service  // ADR-1314, ADR-1315; Host wired in newServer
+	tenantPlans           tenantplans.Service       // ADR-1307; Host wired in newServer
+	// platformFlagBootstrap holds the boot-time fallbacks for platform flags
+	// (ADR-1700): customer Flags and the AI gateway gate and rollout.
+	platformFlagBootstrap map[string]platformflags.Definition
+	platformFlagAdmin     platformflagadmin.Service // ADR-1700; Host wired in newServer
 	// workloadVerifier is the cluster workload trust (ADR-1141); nil when unset.
 	workloadVerifier *workloadidentity.Verifier
 	// totp limits TOTP guesses per account (totp_guard.go).
-	totp                          *totpGuard
-	objectStorage                 *objectstorage.Registry
-	managedPostgres               *managedpostgres.Service
+	totp            *totpGuard
+	objectStorage   *objectstorage.Registry
+	managedPostgres *managedpostgres.Service
+	liveQueries     *livequeries.Service // ADR-20261016151947 live queries per managed database
+	// liveRollout is who sees live queries (FAAS_LIVE_QUERIES_ACCOUNTS);
+	// nobody until configured.
+	liveRollout                   livequeries.Rollout
 	clonePostgresContentsReadPool *copycontents.ReadPool
 	cloneWorkerAdmission          func(context.Context) error
 	// Installed only by private wiring for an independently qualified owner.
@@ -178,6 +197,9 @@ type server struct {
 	notif          Notifier
 	// routeProbes sends ADR-847 synthetic route probes; nil disables them.
 	routeProbes routeProbeSender
+	// routeProbePrunedAt is the last probe data prune; only the route
+	// probe worker goroutine reads or writes it.
+	routeProbePrunedAt time.Time
 	// edgeRules is the edge rules surface (ADR-977); Host wired in newServer.
 	edgeRules edgerules.Service
 	// queueLeases is the pull-lease surface (ADR-1140); Host wired in newServer.
@@ -362,7 +384,8 @@ type server struct {
 	// reuses the same tested transport; the client is nil-safe (the
 	// handler falls back to a degraded zero-valued payload when
 	// Prometheus isn't configured). See pkg/promql/client.go.
-	promqlClient *promql.Client
+	promqlClient       *promql.Client
+	alertmanagerClient *operatorobs.AlertmanagerClient
 	// statusPagePath is the on-disk path of the static HTML served
 	// at GET /status. Empty uses /etc/faas/statuspage/index.html.
 	statusPagePath string
@@ -482,6 +505,9 @@ type server struct {
 	// interactiveImageRunsEnabled admits `interactive: true` image runs
 	// (ADR-1330, FAAS_INTERACTIVE_IMAGE_RUNS).
 	interactiveImageRunsEnabled bool
+	// triggerBatchDeliveryEnabled admits `delivery: batch` on triggers
+	// (ADR-1321, FAAS_TRIGGER_BATCH_DELIVERY_PREVIEW_ENABLED).
+	triggerBatchDeliveryEnabled bool
 	outboundProbeGatewayURL     string
 	// runtimeConfig is the durable operator configuration snapshot. It is
 	// deliberately in-memory for request hot paths; the admin handler writes
@@ -670,6 +696,13 @@ func (s *server) WithStatusCache(promURL, htmlPath string) *server {
 		s.promqlClient = promql.NewClient(promURL, nil)
 	}
 	s.statusPagePath = htmlPath
+	return s
+}
+
+// WithAlertmanagerObservability configures only the bounded read-only API.
+// Invalid destinations degrade observations; they never trigger remote reads.
+func (s *server) WithAlertmanagerObservability(baseURL string) *server {
+	s.alertmanagerClient = operatorobs.NewAlertmanagerClient(baseURL, nil)
 	return s
 }
 
@@ -908,6 +941,31 @@ func (s *server) WithRealtimeHistoryPreviewEnabled(enabled bool) *server {
 	return s
 }
 
+// WithRealtimeOccupancyPreviewEnabled serves channel occupancy (ADR-1324).
+func (s *server) WithRealtimeOccupancyPreviewEnabled(enabled bool) *server {
+	s.realtime.OccupancyPreviewEnabled = enabled
+	return s
+}
+
+// WithRealtimeUsageEnabled serves GET /v1/usage/realtime (ADR-1323).
+func (s *server) WithRealtimeUsageEnabled(enabled bool) *server {
+	s.realtime.UsageEnabled = enabled
+	return s
+}
+
+// WithRealtimeFairUseEnabled sends each endpoint's account connection limit
+// to realtimed (ADR-1323).
+func (s *server) WithRealtimeFairUseEnabled(enabled bool) *server {
+	s.realtime.FairUseEnabled = enabled
+	return s
+}
+
+// WithTriggerBatchDeliveryEnabled admits `delivery: batch` (ADR-1321).
+func (s *server) WithTriggerBatchDeliveryEnabled(enabled bool) *server {
+	s.triggerBatchDeliveryEnabled = enabled
+	return s
+}
+
 func (s *server) WithGitHubDeploysAvailable(probe func(context.Context) bool) *server {
 	s.githubDeploysAvailable = probe
 	return s
@@ -924,6 +982,9 @@ func (s *server) WithRuntimeConfigManager(manager *runtimeConfigManager) *server
 		// used by a later hot update. This keeps the environment fallback
 		// and the durable operator override on one source of truth.
 		_ = s.runtimeConfig.apply(runtimeConfigHSTS, s.runtimeConfig.Value(runtimeConfigHSTS))
+		for key, def := range s.platformFlagBootstrap {
+			s.runtimeConfig.seedPlatformFlag(key, def)
+		}
 	}
 	return s
 }
@@ -1355,6 +1416,7 @@ func newServerWithDeps(
 	s.consumerControls.Host = consumerControlsHost{s}
 	s.tenantPlans.Host = tenantPlansHost{s}
 	s.serviceMap.Host = serviceMapHost{s}
+	s.platformFlagAdmin.Host = platformFlagAdminHost{s}
 	// ADR-120: wire the package-level appsDomainFunc seam (declared at
 	// cmd/apid/dns_probes.go:125) to the server's apps base domain so
 	// checkPointsToGregale has the configured Gregale apex in
@@ -1425,6 +1487,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /integrations/slack/events", s.issueSlackManagedEvents)
 	mux.HandleFunc("GET /v1/apps/{slug}/operational-summary", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAppOperationalSummary))))
 	mux.HandleFunc("GET /v1/apps/{slug}/bindings", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAppBindingInventory))))
+	mux.HandleFunc("GET /v1/apps/{slug}/bindings/services/{service}/explanation", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.explainAppServiceBinding))))
+
 	// Internal static hosting remains default-off and operator-only. The
 	// handler repeats the gate so direct invocation cannot bypass it.
 	mux.HandleFunc("GET /v1/internal/hosting/capabilities", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.requireOperator(s.hosting.Capabilities)))))
@@ -1531,9 +1595,22 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/buckets/{bucket}/multipart-uploads/{upload}/parts", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageWriteSurface...)(s.object.ListObjectMultipartParts))))
 	mux.HandleFunc("POST /v1/apps/{slug}/buckets/{bucket}/multipart-uploads/{upload}/parts/{part}/signed-url", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageWriteSurface...)(s.object.SignObjectMultipartPart))))
 	mux.HandleFunc("POST /v1/apps/{slug}/buckets/{bucket}/multipart-uploads/{upload}/complete", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageWriteSurface...)(s.object.CompleteObjectMultipartUpload))))
-	// Managed PostgreSQL is an account-scoped control-plane resource. The
+	s.registerOrgPostgresRoutes(mux)
+	s.registerOrgObjectRoutes(mux)
+	s.registerOrgQueueRoutes(mux)
+	// Managed PostgreSQL has immutable organization ownership. The
 	// read/write scopes are intentionally separate from generic app scopes so
 	// CI credentials can bind workloads without receiving unrelated access.
+	mux.HandleFunc("GET /v1/data/connections", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.pipelineConnections))))
+	mux.HandleFunc("POST /v1/data/connections", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.idempotent(s.pipelineCreateConnection))))))
+	mux.HandleFunc("PUT /v1/data/connections/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.pipelineRotateConnection))))
+	mux.HandleFunc("DELETE /v1/data/connections/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.pipelineDeleteConnection))))
+	mux.HandleFunc("GET /v1/data/connections/{id}/check", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.pipelineGetCheck))))
+	mux.HandleFunc("POST /v1/data/connections/{id}/check", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.pipelineRequestCheck)))))
+	mux.HandleFunc("GET /v1/data/pipelines", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.pipelineList))))
+	mux.HandleFunc("POST /v1/data/pipelines", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.idempotent(s.pipelineCreate))))))
+	mux.HandleFunc("GET /v1/data/pipelines/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.pipelineGet))))
+	mux.HandleFunc("POST /v1/data/pipelines/{id}/control", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.pipelineControl))))
 	mux.HandleFunc("GET /v1/postgres/databases", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.listManagedPostgresDatabases))))
 	mux.HandleFunc("GET /v1/postgres/capabilities", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.getManagedPostgresCapabilities))))
 	mux.HandleFunc("POST /v1/postgres/databases", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.idempotent(s.createManagedPostgresDatabase))))))
@@ -1554,6 +1631,12 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/postgres/databases/{id}/bindings", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.idempotent(s.createManagedPostgresBinding))))))
 	mux.HandleFunc("GET /v1/postgres/bindings/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.getManagedPostgresBinding))))
 	mux.HandleFunc("DELETE /v1/postgres/bindings/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.idempotent(s.deleteManagedPostgresBinding)))))
+	// ADR-20261016151947 live queries: hidden like unregistered routes outside
+	// FAAS_LIVE_QUERIES_ACCOUNTS (liveRoute, liveAccount).
+	mux.HandleFunc("GET /v1/postgres/databases/{id}/live", s.liveRoute(s.authLimited(s.liveAccount(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.getLiveQueries))))))
+	mux.HandleFunc("POST /v1/postgres/databases/{id}/live", s.liveRoute(s.authLimited(s.liveAccount(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.enableLiveQueries)))))))
+	mux.HandleFunc("POST /v1/postgres/databases/{id}/live/rotate", s.liveRoute(s.authLimited(s.liveAccount(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.rotateLiveSecret)))))))
+	mux.HandleFunc("DELETE /v1/postgres/databases/{id}/live", s.liveRoute(s.authLimited(s.liveAccount(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.disableLiveQueries))))))
 	mux.HandleFunc("POST /v1/postgres/bindings/{id}/rotate", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.idempotent(s.rotateManagedPostgresBinding))))))
 	mux.HandleFunc("POST /v1/postgres/cutovers", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.cutoverMutation(s.prepareManagedPostgresCutover))))))
 	mux.HandleFunc("GET /v1/postgres/cutovers/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.getManagedPostgresCutover))))
@@ -1605,6 +1688,15 @@ func (s *server) handler() http.Handler {
 	// before app lookup so a disabled host reveals no app existence. Public
 	// admission is manual-only; release tasks remain an internal consumer.
 	mux.HandleFunc("GET /v1/apps/{slug}/tasks", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAppTasks))))
+	mux.HandleFunc("POST /v1/apps/{slug}/migration-cutovers", s.authLimited(s.requireMFA(s.requireVerifiedEmail(s.requireScope(api.ScopesDeployWriteSurface...)(s.createMigrationCutover)))))
+	mux.HandleFunc("GET /v1/apps/{slug}/migration-cutovers", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listMigrationCutovers))))
+	mux.HandleFunc("GET /v1/apps/{slug}/migration-cutovers/{plan}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getMigrationCutover))))
+	mux.HandleFunc("POST /v1/apps/{slug}/migration-cutovers/{plan}/actions", s.authLimited(s.requireMFA(s.requireVerifiedEmail(s.requireScope(api.ScopesDeployWriteSurface...)(s.actOnMigrationCutover)))))
+	mux.HandleFunc("POST /v1/apps/{slug}/migration-verifications", s.authLimited(s.requireMFA(s.requireVerifiedEmail(s.requireScope(api.ScopesDeployWriteSurface...)(s.createMigrationVerification)))))
+	mux.HandleFunc("GET /v1/apps/{slug}/migration-verifications", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listMigrationVerifications))))
+	mux.HandleFunc("GET /v1/apps/{slug}/migration-verifications/{run}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getMigrationVerification))))
+	mux.HandleFunc("POST /v1/apps/{slug}/migration-verifications/{run}/advance", s.authLimited(s.requireMFA(s.requireVerifiedEmail(s.requireScope(api.ScopesDeployWriteSurface...)(s.advanceMigrationVerification)))))
+	mux.HandleFunc("POST /v1/apps/{slug}/migration-verifications/{run}/cancel", s.authLimited(s.requireMFA(s.requireVerifiedEmail(s.requireScope(api.ScopesDeployWriteSurface...)(s.cancelMigrationVerification)))))
 	mux.HandleFunc("POST /v1/apps/{slug}/tasks", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createAppTask)))))
 	mux.HandleFunc("GET /v1/apps/{slug}/tasks/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAppTask))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/tasks/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.cancelAppTask)))))
@@ -1727,13 +1819,13 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("PATCH /v1/account/keys/grace_window_days", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.setGraceWindow))))
 	// Per-account additive budget on top of the plan's
 	// apps.egress_allowlist cap (issue #679 / PR-B / ADR-082).
-	// The override is admin-settable only; the customer-facing
-	// validator reads the value but has no API surface to write it.
-	// Mirrors the grace-window chain shape (admin + MFA + no
-	// additional step-up since the cost surface is small — a typo
-	// reverts by setting extra=0).
+	// Customers may read it; only a platform operator may write it.
+	// The admin scope alone is not that gate: every customer's
+	// dashboard session and default key hold it, so a customer could
+	// raise their own allowlist cap past the plan limit.
+	// requireOperator checks the operator allowlist.
 	mux.HandleFunc("GET /v1/account/egress_allowlist_extra", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.getAccountEgressAllowlistExtra))))
-	mux.HandleFunc("PATCH /v1/account/egress_allowlist_extra", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.setAccountEgressAllowlistExtra))))
+	mux.HandleFunc("PATCH /v1/account/egress_allowlist_extra", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireOperator(s.setAccountEgressAllowlistExtra)))))
 	// G6 account self-service (spec §17 G6, ADR-021). /v1/account/dpa
 	// is intentionally mounted without s.auth — the DPA is a public
 	// artefact a prospect reads before signing up. The export + delete
@@ -1886,6 +1978,14 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/account/platform-tenants/{id}/plan-assignments", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.tenantPlans.ListAssignments))))
 	mux.HandleFunc("POST /v1/account/platform-tenants/{id}/plan-assignments", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.tenantPlans.AssignPlan)))))
 	mux.HandleFunc("POST /v1/account/platform-tenants/{id}/rate-cards", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createPlatformTenantRateCard)))))
+	// ADR-1322, ADR-1324: tenant trials and the account's tenant overdue rule.
+	mux.HandleFunc("GET /v1/account/platform-tenants/{id}/trial", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.consumerControls.GetTenantTrial))))
+	mux.HandleFunc("PUT /v1/account/platform-tenants/{id}/trial", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.consumerControls.PutTenantTrial))))
+	mux.HandleFunc("DELETE /v1/account/platform-tenants/{id}/trial", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.consumerControls.EndTenantTrial))))
+	mux.HandleFunc("GET /v1/account/platform-tenant-billing-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.consumerControls.GetTenantBillingPolicy))))
+	mux.HandleFunc("PUT /v1/account/platform-tenant-billing-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.consumerControls.PutTenantBillingPolicy))))
+	mux.HandleFunc("DELETE /v1/account/platform-tenant-billing-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.consumerControls.DeleteTenantBillingPolicy))))
+	mux.HandleFunc("GET /v1/account/platform-tenant-overdue-holds", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.consumerControls.ListTenantOverdueHolds))))
 	mux.HandleFunc("GET /v1/account/platform-tenants/{id}/usage-statements", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listPlatformTenantStatements))))
 	mux.HandleFunc("POST /v1/account/platform-tenants/{id}/usage-statements", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createPlatformTenantStatement)))))
 	mux.HandleFunc("GET /v1/account/platform-tenants/{id}/usage-statements/{statement_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getPlatformTenantStatement))))
@@ -2175,6 +2275,9 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/policy/status", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getRuntimePolicyStatus)))
 	mux.HandleFunc("DELETE /v1/apps/{slug}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteApp))))
 	mux.HandleFunc("POST /v1/apps/{slug}/restore", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.restoreApp))))
+	mux.HandleFunc("GET /v1/deleted-apps", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listDeletedApps))))
+	mux.HandleFunc("GET /v1/deleted-apps/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getDeletedApp))))
+	mux.HandleFunc("POST /v1/deleted-apps/{id}/restore", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.restoreDeletedApp))))
 	// First-class preview state keeps URL, expiry, production diff, and
 	// observability/configuration links behind the normal read surface.
 	mux.HandleFunc("GET /v1/preview/{slug}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getPreviewStatus)))
@@ -2369,6 +2472,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/route-policy/receipts/{receipt_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getRoutePolicyReceipt))))
 	mux.HandleFunc("GET /v1/apps/{slug}/routes/advice", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getRouteAdvice))))
 	mux.HandleFunc("GET /v1/apps/{slug}/routes/awake", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getRouteAwake))))
+	mux.HandleFunc("GET /v1/apps/{slug}/routes/insights", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getRouteInsights))))
 	mux.HandleFunc("GET /v1/apps/{slug}/service-wake-ahead", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getServiceWakeAhead))))
 	mux.HandleFunc("PUT /v1/apps/{slug}/service-wake-ahead", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.putServiceWakeAhead))))
 	mux.HandleFunc("GET /v1/apps/{slug}/route-priorities", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getRoutePriorities))))
@@ -3017,13 +3121,19 @@ func (s *server) handler() http.Handler {
 	// over-quota on /apply.
 	mux.HandleFunc("POST /v1/projects/scan", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.scanProject))))
 	mux.HandleFunc("POST /v1/projects/scan/source-ref", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.scanProjectSourceRef))))
-	mux.HandleFunc("POST /v1/projects", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.applyProject))))))
+	mux.HandleFunc("POST /v1/project-migrations", s.authLimited(s.requireMFA(s.requireVerifiedEmail(s.requireScope(api.ScopesDeployWriteSurface...)(s.createProjectMigration)))))
+	mux.HandleFunc("GET /v1/project-migrations", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listProjectMigrations))))
+	mux.HandleFunc("GET /v1/project-migrations/{migration}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getProjectMigration))))
+	mux.HandleFunc("POST /v1/project-migrations/{migration}/resume", s.authLimited(s.requireMFA(s.requireVerifiedEmail(s.requireScope(api.ScopesDeployWriteSurface...)(s.resumeProjectMigration)))))
+	mux.HandleFunc("POST /v1/projects/apply-plan", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.applyCachedProjectPlan))))))
+	mux.HandleFunc("POST /v1/projects", s.authVerifiedLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.applyProject))))))
+	s.registerOrganizationProjectRoutes(mux)
 	mux.HandleFunc("GET /v1/projects", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listProjects))))
 	mux.HandleFunc("GET /v1/projects/{slug}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getProject))))
 	mux.HandleFunc("PATCH /v1/projects/{slug}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateProject))))
 	mux.HandleFunc("GET /v1/projects/{slug}/environments", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listProjectEnvironments))))
-	mux.HandleFunc("POST /v1/projects/{slug}/environments", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.createProjectEnvironment))))))
-	mux.HandleFunc("POST /v1/projects/{slug}/environment-clones", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.createFullProjectEnvironmentClone))))))
+	mux.HandleFunc("POST /v1/projects/{slug}/environments", s.authVerifiedLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.createProjectEnvironment))))))
+	mux.HandleFunc("POST /v1/projects/{slug}/environment-clones", s.authVerifiedLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.createFullProjectEnvironmentClone))))))
 	mux.HandleFunc("GET /v1/projects/{slug}/environment-clones/{clone}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getProjectEnvironmentCloneOperation))))
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getProjectEnvironment))))
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/releases", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getProjectEnvironmentReleases))))
@@ -3031,40 +3141,40 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/release-sets", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listProjectReleaseSets))))
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/release-sets/active", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getActiveProjectReleaseSet))))
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/release-sets/{release}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getProjectReleaseSet))))
-	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/release-sets/staging", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.stageCheckedProjectRelease))))))
+	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/release-sets/staging", s.authVerifiedLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.stageCheckedProjectRelease))))))
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/release-sets/staging/{stage}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getProjectReleaseStage))))
-	mux.HandleFunc("DELETE /v1/projects/{slug}/environments/{environment}/release-sets/staging/{stage}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.cancelProjectReleaseStage))))))
-	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/release-sets/prepare-deactivation", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.prepareCheckedProjectDeactivation)))))
-	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/release-sets/deactivate", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.deactivateCheckedProjectRelease))))))
-	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/release-sets/prepare-rollback", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.prepareCheckedProjectRollback)))))
-	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/release-sets/rollback", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.rollbackCheckedProjectRelease))))))
+	mux.HandleFunc("DELETE /v1/projects/{slug}/environments/{environment}/release-sets/staging/{stage}", s.authVerifiedLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.cancelProjectReleaseStage))))))
+	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/release-sets/prepare-deactivation", s.authVerifiedLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.prepareCheckedProjectDeactivation)))))
+	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/release-sets/deactivate", s.authVerifiedLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.deactivateCheckedProjectRelease))))))
+	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/release-sets/prepare-rollback", s.authVerifiedLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.prepareCheckedProjectRollback)))))
+	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/release-sets/rollback", s.authVerifiedLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.rollbackCheckedProjectRelease))))))
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/release-sets/verification-runs/{run}/diagnostics", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getProjectBindingVerificationRunDiagnostics))))
 	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/release-sets/verification-runs/review", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.reviewProjectBindingVerification))))
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/release-sets/verification-runs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listProjectBindingVerificationRuns))))
-	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/release-sets/verification-runs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.createProjectBindingVerificationRun))))))
+	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/release-sets/verification-runs", s.authVerifiedLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.createProjectBindingVerificationRun))))))
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/release-sets/verification-runs/{run}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.handleProjectBindingVerificationRun))))
 	mux.HandleFunc("DELETE /v1/projects/{slug}/environments/{environment}/release-sets/verification-runs/{run}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.handleProjectBindingVerificationRun))))
 	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/release-sets/verification-runs/{run}/resume", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.resumeProjectBindingVerificationRun))))
 	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/release-sets/verification-runs/{run}/complete", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.completeProjectBindingVerificationRun))))
-	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/release-sets/prepare", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.prepareCheckedProjectRelease)))))
-	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/release-sets/activate", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.activateCheckedProjectRelease))))))
-	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/release-sets", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.publishProjectReleaseSet))))))
+	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/release-sets/prepare", s.authVerifiedLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.prepareCheckedProjectRelease)))))
+	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/release-sets/activate", s.authVerifiedLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.activateCheckedProjectRelease))))))
+	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/release-sets", s.authVerifiedLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.publishProjectReleaseSet))))))
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/state", s.authLimited(s.requireMFA(s.requireScope(api.ScopesProjectEnvironmentReadSurface...)(s.getProjectEnvironmentState))))
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/gitops", s.authLimited(s.requireMFA(s.requireScope(api.ScopesProjectEnvironmentReadSurface...)(s.getEnvironmentGitOps))))
-	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/gitops/source", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.createEnvironmentGitSource))))))
-	mux.HandleFunc("PATCH /v1/projects/{slug}/environments/{environment}/gitops/source", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.updateEnvironmentGitSource))))))
-	mux.HandleFunc("DELETE /v1/projects/{slug}/environments/{environment}/gitops/source", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.detachEnvironmentGitSource))))))
-	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/gitops/source/rebind", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.rebindEnvironmentGitSource))))))
+	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/gitops/source", s.authVerifiedLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.createEnvironmentGitSource))))))
+	mux.HandleFunc("PATCH /v1/projects/{slug}/environments/{environment}/gitops/source", s.authVerifiedLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.updateEnvironmentGitSource))))))
+	mux.HandleFunc("DELETE /v1/projects/{slug}/environments/{environment}/gitops/source", s.authVerifiedLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.detachEnvironmentGitSource))))))
+	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/gitops/source/rebind", s.authVerifiedLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.rebindEnvironmentGitSource))))))
 	mux.HandleFunc("PUT /v1/environment-field-ownership", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.claimEnvironmentFieldOwnership))))))
 	mux.HandleFunc("DELETE /v1/environment-field-ownership", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.releaseEnvironmentFieldOwnership))))))
 
 	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/gitops/revisions/preview", s.authLimited(s.requireMFA(s.requireScope(api.ScopesProjectEnvironmentReadSurface...)(s.previewEnvironmentGitRevision))))
 	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/gitops/plan", s.authLimited(s.requireMFA(s.requireScope(api.ScopesProjectEnvironmentReadSurface...)(s.previewEnvironmentGitPlan))))
-	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/gitops/revisions/approve", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.approveEnvironmentGitRevision))))))
+	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/gitops/revisions/approve", s.authVerifiedLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.approveEnvironmentGitRevision))))))
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/gitops/adoption-preview", s.authLimited(s.requireMFA(s.requireScope(api.ScopesProjectEnvironmentReadSurface...)(s.previewEnvironmentGitOpsAdoption))))
-	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/gitops/adopt", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.adoptEnvironmentGitOps))))))
-	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/gitops/overrides", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.createEnvironmentGitOpsOverride))))))
-	mux.HandleFunc("DELETE /v1/projects/{slug}/environments/{environment}/gitops/overrides", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.removeEnvironmentGitOpsOverride))))))
+	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/gitops/adopt", s.authVerifiedLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.adoptEnvironmentGitOps))))))
+	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/gitops/overrides", s.authVerifiedLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.createEnvironmentGitOpsOverride))))))
+	mux.HandleFunc("DELETE /v1/projects/{slug}/environments/{environment}/gitops/overrides", s.authVerifiedLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.removeEnvironmentGitOpsOverride))))))
 	mux.HandleFunc("PUT /v1/projects/{slug}/environments/{environment}/workloads/{workload}/routes", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.updateProjectEnvironmentRoutes)))))
 	mux.HandleFunc("PUT /v1/projects/{slug}/environments/{environment}/workloads/{workload}/policies", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.updateProjectEnvironmentPolicies)))))
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/workloads/{workload}/queue-bindings", s.authLimited(s.requireMFA(s.requireScope(api.ScopesProjectEnvironmentReadSurface...)(s.getProjectEnvironmentQueueBindings))))
@@ -3082,7 +3192,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/approval-requests", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requestBrowserPromotionApproval))))
 	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/approval-requests/exchange", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.exchangeBrowserPromotionApproval))))
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/approvals/{approval}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getProjectEnvironmentApprovalStatus))))
-	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/promote", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.promoteProjectEnvironment))))))
+	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/promote", s.authVerifiedLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.promoteProjectEnvironment))))))
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/promotions/{promotion}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getProjectEnvironmentPromotionStatus))))
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/promotions", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listProjectEnvironmentPromotions))))
 	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/promotions/{promotion}/rollback", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.rollbackProjectEnvironmentPromotion)))))
@@ -3309,6 +3419,13 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/outbound/ai-routes/{route}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.GetRoute)))))
 	mux.HandleFunc("PUT /v1/outbound/ai-routes/{route}/targets", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.aiGateway(s.outboundAI.PutRouteTargets)))))
 	mux.HandleFunc("DELETE /v1/outbound/ai-routes/{route}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.aiGateway(s.outboundAI.DeleteRoute)))))
+	// ADR-1340: a route's model canary.
+	mux.HandleFunc("PUT /v1/outbound/ai-routes/{route}/canary", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.aiGateway(s.outboundAI.PutRouteCanary)))))
+	mux.HandleFunc("GET /v1/outbound/ai-routes/{route}/canary", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.GetRouteCanary)))))
+	mux.HandleFunc("POST /v1/outbound/ai-routes/{route}/canary/promote", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.aiGateway(s.outboundAI.PromoteRouteCanary)))))
+	mux.HandleFunc("DELETE /v1/outbound/ai-routes/{route}/canary", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.aiGateway(s.outboundAI.DeleteRouteCanary)))))
+	// ADR-1434: each target's attempts over the strategy window.
+	mux.HandleFunc("GET /v1/outbound/ai-routes/{route}/stats", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.GetRouteStats)))))
 	// ADR-991: per-app guardrails, extra key pools, budget alerts and the
 	// opt-in AI request log.
 	mux.HandleFunc("PUT /v1/apps/{slug}/outbound-bindings/{integration}/ai-guardrails", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.aiGateway(s.outboundAI.PutBindingGuardrails)))))
@@ -3317,11 +3434,24 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("DELETE /v1/outbound/integrations/{integration}/credential-keys/{key}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.aiGateway(s.outboundAI.DeleteCredentialKey)))))
 	mux.HandleFunc("GET /v1/outbound/integrations/{integration}/ai-usage/users", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.GetUserUsage)))))
 	mux.HandleFunc("GET /v1/outbound/integrations/{integration}/ai-usage/users/export", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.ExportUserUsage)))))
+	// ADR-1436: usage by tag, and per-tag daily cost limits.
+	mux.HandleFunc("GET /v1/outbound/integrations/{integration}/ai-usage/tags", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.GetTagUsage)))))
+	mux.HandleFunc("GET /v1/outbound/integrations/{integration}/ai-usage/tags/export", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.ExportTagUsage)))))
+	mux.HandleFunc("GET /v1/outbound/integrations/{integration}/ai-tag-limits", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.GetTagLimits)))))
+	mux.HandleFunc("PUT /v1/outbound/integrations/{integration}/ai-tag-limits", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.aiGateway(s.outboundAI.PutTagLimits)))))
 	mux.HandleFunc("GET /v1/outbound/integrations/{integration}/ai-alerts", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.ListBudgetAlerts)))))
 	mux.HandleFunc("GET /v1/outbound/integrations/{integration}/ai-requests", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.ListRequestLog)))))
 	mux.HandleFunc("GET /v1/outbound/integrations/{integration}/ai-requests/{request}/content", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.GetRequestContent)))))
 	mux.HandleFunc("POST /v1/outbound/integrations/{integration}/ai-requests/{request}/replays", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.aiGateway(s.outboundAI.CreateReplay)))))
 	mux.HandleFunc("GET /v1/outbound/ai-replays/{replay}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.GetReplay)))))
+	// ADR-1431: evaluations before a canary, and access tokens for callers
+	// outside Gregale.
+	mux.HandleFunc("POST /v1/outbound/ai-routes/{route}/evaluations", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.aiGateway(s.outboundAI.CreateEvaluation)))))
+	mux.HandleFunc("GET /v1/outbound/ai-routes/{route}/evaluations", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.ListEvaluations)))))
+	mux.HandleFunc("GET /v1/outbound/ai-evaluations/{evaluation}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.GetEvaluation)))))
+	mux.HandleFunc("POST /v1/apps/{slug}/ai-access-tokens", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.aiGateway(s.outboundAI.CreateAccessToken)))))
+	mux.HandleFunc("GET /v1/apps/{slug}/ai-access-tokens", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.ListAccessTokens)))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/ai-access-tokens/{token}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.aiGateway(s.outboundAI.RevokeAccessToken)))))
 	mux.HandleFunc("PUT /v1/outbound/integrations/{integration}/ai-content-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.aiGateway(s.outboundAI.PutContentPolicy)))))
 	mux.HandleFunc("PUT /v1/outbound/integrations/{integration}/runs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.putOutboundRunsBinding))))
 
@@ -3351,6 +3481,7 @@ func (s *server) handler() http.Handler {
 	// never address a connection or channel outside an app it owns. The same
 	// owner seam serves the local Unix fast path and leased cross-node resolver.
 	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/connections", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.realtime.ListManagedRealtimeConnections))))
+	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/occupancy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.realtime.GetManagedRealtimeOccupancy))))
 	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/connections/drain", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.realtime.DrainManagedRealtimeConnections)))))
 	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/connections/drain/{drain_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.realtime.GetManagedRealtimeDrainOperation))))
 	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/connections/{connection_id}/send", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.realtime.SendManagedRealtimeConnection))))
@@ -3479,6 +3610,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/resume", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.realtime.ResumeRealtimeConsumerGroup))))
 	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/acknowledgement", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.realtime.ManagedRealtimeAcknowledgement))))
 	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/tickets", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.realtime.IssueRealtimeTicket))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/realtime/endpoints/{id}/tickets", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.realtime.RevokeRealtimeTickets))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/realtime/endpoints/{id}/tickets/{ticket}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.realtime.RevokeRealtimeTicket))))
 	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/principals/{principal}/access", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.realtime.ManageRealtimeAccess))))
 	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/principals/{principal}/access", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.realtime.ManageRealtimeAccess))))
 	// Customer runtime log drains (issue #1398 O4). Each destination is
@@ -3816,6 +3949,11 @@ func (s *server) handler() http.Handler {
 	// because the snapshot exposes alert-state metadata.
 	mux.HandleFunc("GET /v1/admin/obs/health",
 		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsHealthHandler))))
+	mux.HandleFunc("GET /v1/admin/obs/notification-health", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsNotificationHealth))))
+	mux.HandleFunc("GET /v1/admin/obs/rule-health", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsRuleHealth))))
+	mux.HandleFunc("GET /v1/admin/obs/rule-coverage", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsRuleCoverage))))
+	mux.HandleFunc("GET /v1/admin/obs/recording-coverage", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsRecordingCoverage))))
+	mux.HandleFunc("GET /v1/admin/obs/input-health", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsInputHealth))))
 	mux.HandleFunc("GET /v1/admin/ops/data-repairs",
 		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.getOperatorDataRepairHealth))))
 	// Unified incident inbox. This is a read-only correlation projection over
@@ -3823,6 +3961,18 @@ func (s *server) handler() http.Handler {
 	// it keeps operator triage out of the deployment request path.
 	mux.HandleFunc("GET /v1/admin/obs/incidents",
 		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsIncidents))))
+	mux.HandleFunc("GET /v1/admin/obs/incidents/{kind}/{id}/evidence",
+		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsIncidentEvidence))))
+	mux.HandleFunc("GET /v1/admin/obs/incidents/{kind}/{id}/context",
+		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsIncidentContext))))
+
+	mux.HandleFunc("GET /v1/admin/obs/incidents/platform_alert/response-times", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsAlertResponseTimes))))
+	mux.HandleFunc("GET /v1/admin/obs/incidents/platform_alert/recurrence", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsAlertRecurrence))))
+	mux.HandleFunc("GET /v1/admin/obs/collection-history", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsAlertCollectionHistory))))
+	mux.HandleFunc("GET /v1/admin/obs/incidents/platform_alert/summary", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsAlertWorkload))))
+	mux.HandleFunc("GET /v1/admin/obs/incidents/platform_alert/{id}/triage-history", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsAlertTriageHistory))))
+
+	mux.Handle("POST /v1/admin/obs/incidents/platform_alert/{id}/triage", middleware.TraceID(s.authLimited(s.requireAdminMutation(s.postObsAlertTriage))))
 
 	// P2a + P2b + P2d — operator recovery primitives. All three
 	// routes mount under requireScope(admin-only) so the admin
@@ -3926,6 +4076,17 @@ func (s *server) handler() http.Handler {
 		s.authLimited(s.requireScope(api.ScopesAdminOnly...)(s.adminRuntimeConfigOperationGet)))
 	mux.HandleFunc("GET /v1/admin/config/{key}/revisions",
 		s.authLimited(s.requireScope(api.ScopesAdminOnly...)(s.adminRuntimeConfigRevisions)))
+	// ADR-1700 — platform flags. Reads join the catalog, the durable rows,
+	// apid's compiled snapshot and per-daemon apply receipts; writes go
+	// through PATCH /v1/admin/config/platform_flag.<key>.
+	mux.HandleFunc("GET /v1/admin/flags",
+		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.platformFlagAdmin.List))))
+	mux.HandleFunc("GET /v1/admin/flags/{key}",
+		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.platformFlagAdmin.Get))))
+	mux.HandleFunc("GET /v1/admin/flags/{key}/decision",
+		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.platformFlagAdmin.Decision))))
+	mux.HandleFunc("GET /v1/admin/accounts/{id}/flags",
+		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.platformFlagAdmin.AccountFlags))))
 
 	// IAM-4 (ADR-035) — auth audit log surface. Read-only; the
 	// events table is append-only (spec §5). Scope gating: session
@@ -4030,6 +4191,14 @@ func (s *server) handler() http.Handler {
 	// same ScopesReadSurface gate as listEnv.
 	mux.HandleFunc("GET /v1/apps/{slug}/env-diff", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.envDiff)))
 
+	// ADR-1451: config history, rollback and guard. Revisions carry variable
+	// values (readable like GET /env) and secret versions, never secret
+	// values. Rollback writes variables only, so it takes env:write.
+	mux.HandleFunc("GET /v1/apps/{slug}/config/revisions", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.listConfigRevisions)))
+	mux.HandleFunc("GET /v1/apps/{slug}/config/revisions/{revision}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getConfigRevision)))
+	mux.HandleFunc("GET /v1/apps/{slug}/config/guard", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getConfigGuard)))
+	mux.HandleFunc("POST /v1/apps/{slug}/config/rollback", s.authLimited(s.requireScope(api.ScopesEnvWriteSurface...)(s.rollbackConfig)))
+
 	// Data upstreams (ADR-098 §D4 / PR-B). The full handler family is
 	// gated on s.dataPlacementEnabled (FAAS_DATA_PLACEMENT=1); when
 	// the flag is off, each handler returns 402 plan_feature_gated so
@@ -4051,6 +4220,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/usage/summary", s.authLimited(s.requireMFA(s.requireScope(api.ScopesUsageReadSurface...)(s.usageSummary))))
 	mux.HandleFunc("GET /v1/usage/daily", s.authLimited(s.requireMFA(s.requireScope(api.ScopesUsageReadSurface...)(s.usageDaily))))
 	mux.HandleFunc("GET /v1/usage/storage", s.authLimited(s.requireMFA(s.requireScope(api.ScopesUsageReadSurface...)(s.usageStorage))))
+	mux.HandleFunc("GET /v1/usage/realtime", s.authLimited(s.requireMFA(s.requireScope(api.ScopesUsageReadSurface...)(s.realtime.RealtimeUsage))))
 	// Billing history (issue #259). Listing one's own invoices is the
 	// same access tier as usage/summary — usage:read is enough.
 	// Wrapped in requireMFA for consistency with the other
@@ -4079,6 +4249,12 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/billing/portal", s.authLimited(s.requireScope(api.ScopesUsageReadSurface...)(s.requireVerifiedEmail(s.getBillingPortal))))
 	// Customer billing status is a read-only account projection. It must not
 	// depend on operator allowlists or provider-specific catalog APIs.
+
+	mux.HandleFunc("GET /v1/orgs/{slug}/billing/status", s.orgBillingRoute(authz.OrgActionView, s.getBillingStatus))
+	mux.HandleFunc("GET /v1/orgs/{slug}/usage", s.orgBillingRoute(authz.OrgActionView, s.getUsage))
+	mux.HandleFunc("GET /v1/orgs/{slug}/invoices", s.orgBillingRoute(authz.OrgActionManageBilling, s.listInvoices))
+	mux.HandleFunc("GET /v1/orgs/{slug}/billing/portal", s.orgBillingRoute(authz.OrgActionChangePlan, s.getBillingPortal))
+	mux.HandleFunc("PATCH /v1/orgs/{slug}/plan", s.orgBillingRoute(authz.OrgActionChangePlan, s.changeOrgPlan))
 	mux.HandleFunc("GET /v1/billing/status", s.authLimited(s.requireScope(api.ScopesUsageReadSurface...)(s.getBillingStatus)))
 
 	// Billing retry (issue #242). Closes the customer-trust lie in
@@ -4352,6 +4528,8 @@ func (s *server) handler() http.Handler {
 	mux.Handle("POST /dashboard/apps/{slug}/automations/live-verifications/{run_id}", s.dashboardChain(s.sessionAuth(http.HandlerFunc(console.CheckLiveProgress))))
 	mux.Handle("POST /dashboard/apps/{slug}/automations/live-suites/{suite_id}/advance", s.dashboardChain(s.sessionAuth(http.HandlerFunc(console.AdvanceLiveSuite))))
 	mux.Handle("POST /dashboard/apps/{slug}/automations/{action}", s.dashboardChain(s.sessionAuth(http.HandlerFunc(console.Act))))
+	mux.Handle("GET /dashboard/data", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderDashboardPipelines))))
+	mux.Handle("POST /dashboard/data", s.dashboardChain(s.sessionAuth(s.requireVerifiedEmailHandler(http.HandlerFunc(s.dashboardPipelineAction)))))
 	mux.Handle("GET /dashboard/apps/{slug}/data-api", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderDashboardDataAPI))))
 	mux.Handle("GET /dashboard/apps/{slug}/auth", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderDashboardAuth))))
 	mux.Handle("POST /dashboard/apps/{slug}/auth/settings", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardAuthSettings))))
@@ -4614,6 +4792,8 @@ func (s *server) handler() http.Handler {
 	mux.Handle("POST /dashboard/apps/{slug}/issues/{issue_id}/actions", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardIssueActionHandler))))
 	mux.Handle("GET /dashboard/apps/{slug}/issues/lifecycle-alerts", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardIssueLifecycleAlerts))))
 	mux.Handle("POST /dashboard/apps/{slug}/issues/lifecycle-alerts", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardIssueLifecycleAlerts))))
+	mux.Handle("GET /dashboard/apps/{slug}/issues/compound-alerts", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardIssueCompoundAlerts))))
+	mux.Handle("POST /dashboard/apps/{slug}/issues/compound-alerts", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardIssueCompoundAlerts))))
 	mux.Handle("POST /dashboard/apps/{slug}/issues/frequency-alerts", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardIssueFrequencyAlerts))))
 	mux.Handle("POST /dashboard/apps/{slug}/issues/impact-alert-policy", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardIssueImpactAlertPolicyHandler))))
 	mux.Handle("POST /dashboard/apps/{slug}/issues/ownership-rules", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardIssueOwnershipRulesHandler))))
@@ -4776,10 +4956,13 @@ func (s *server) handler() http.Handler {
 	// /v1/openapi.yaml and /v1/openapi.json let SDK codegen and
 	// `curl` reach the same spec the repo CI gate (make spec-check)
 	// keeps the code aligned to.
-	mux.HandleFunc("GET /v1/openapi.yaml", apid.ServeOpenAPISpec)
-	mux.HandleFunc("GET /v1/openapi.json", apid.ServeOpenAPISpecJSON)
-	mux.HandleFunc("GET /docs", apid.ServeDocs)
-	mux.HandleFunc("GET /docs/", apid.ServeDocs)
+	// The served spec publishes API monetization only while it is released
+	// (ADR-20261018090210).
+	openAPI := apid.OpenAPI{Monetization: s.apiMonetizationEnabled}
+	mux.HandleFunc("GET /v1/openapi.yaml", openAPI.ServeYAML)
+	mux.HandleFunc("GET /v1/openapi.json", openAPI.ServeJSON)
+	mux.HandleFunc("GET /docs", openAPI.ServeDocs)
+	mux.HandleFunc("GET /docs/", openAPI.ServeDocs)
 
 	// observeWrap (the outermost layer) feeds apid_ops_total +
 	// apid_op_duration_seconds. It's last so it sees the final
@@ -4797,9 +4980,11 @@ func (s *server) handler() http.Handler {
 	// + JSON so the gate is unconditionally true.
 	return middleware.RequestID(httpsec.Static(httpsec.Nonce(
 		func(*http.Request) bool { return true },
-		s.observeWrap(s.hosting.HideDisabled(operation.OperationCustomerCORS(s.productControl.SurfaceGate(ciapi.HideDisabledRoutes(
-			func() ci.Config { return s.ciConfig }, apiContractHandler(mux, s.durable.Hidden),
-		))))),
+		s.observeWrap(s.hosting.HideDisabled(s.hideDisabledMonetization(operation.OperationCustomerCORS(s.productControl.SurfaceGate(ciapi.HideDisabledRoutes(
+			func() ci.Config { return s.ciConfig }, apiContractHandler(mux, func(r *http.Request) bool {
+				return s.durable.Hidden(r) || s.liveGate().Hidden(r)
+			}),
+		)))))),
 	)))
 }
 
@@ -5246,6 +5431,10 @@ func (s *server) idempotentWithInEnvironment(environmentID string, next accountH
 			next(w, r, acct)
 			return
 		}
+		// Shared app handlers use the legacy resource account for storage.
+		// Partition receipts by the actual caller and credential so another
+		// member cannot replay an earlier member's response under that account.
+		key = postgresaccess.IdempotencyKey(r, projectaccess.IdempotencyKey(r, appaccess.IdempotencyKey(r, key)))
 		if strings.HasPrefix(r.URL.Path, "/v1/executions") || strings.HasPrefix(r.URL.Path, "/v1/execution-artifact-grants/") {
 			access, problem := executionAccessForRequest(r)
 			if problem != nil {

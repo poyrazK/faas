@@ -13,7 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 1641 — different workload kinds must contend at the real native owner
+// adr: 1747 — different workload kinds must contend at the real native owner
 // boundary. The loser cannot allocate a journal, slot, network or guest.
 func TestMetalFinancialComputePostgresAppJobContention(t *testing.T) {
 	f := newFinancialNativeFixture(t)

@@ -6,7 +6,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// adr: 1641 — an app UUID must never alias a job partition's financial identity.
+// adr: 1747 — an app UUID must never alias a job partition's financial identity.
 func TestFinancialComputeJobIdentitySeparatesResourceKinds(t *testing.T) {
 	run, token := uuid.NewString(), uuid.NewString()
 	job := ComputeRequest{AccountID: uuid.NewString(), InstanceID: uuid.NewString(), JobRunID: run, JobTaskIndex: 1, AttemptID: ComputeJobAttemptID(run, 1, token)}

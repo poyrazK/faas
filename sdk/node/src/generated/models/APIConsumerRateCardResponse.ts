@@ -22,6 +22,10 @@ export type APIConsumerRateCardResponse = {
    * The card's minimum monthly usage charge per consumer (ADR-1316).
    */
   minimum_millicents_per_month?: number;
+  /**
+   * Whether a consumer's first-month fees are prorated (ADR-1325).
+   */
+  prorate_monthly_fees?: boolean;
   price_millicents_per_unit: number;
   included_units_per_month: number;
   tiers?: Array<APIConsumerRateCardTier>;

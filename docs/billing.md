@@ -549,7 +549,7 @@ local shutdown. Gregale absorbs unfunded teardown tail. Strict budgets preempt
 capacity floors; the book waives synthetic floor charges for that UTC month,
 including replay after policy deletion. This bounds supported customer compute
 charges, rather than promising a ceiling on host cost or the complete invoice.
-See the [decision](adr/1644-strict-app-compute-reservations.md) and
+See the [decision](adr/1750-strict-app-compute-reservations.md) and
 [native acceptance procedure](runbooks/financial-strict-compute-acceptance.md).
 
 ### Currency and retained funding

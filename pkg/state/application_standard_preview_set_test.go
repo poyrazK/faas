@@ -13,14 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/appstandards"
 )
 
-type standardPreviewSetTestStore interface {
-	Store
-	ApplicationStandardStore
-	ApplicationStandardEnrollmentStore
-	PRPreviewBatchStore
-	PRPreviewSetBatchStore
-	PRPreviewSetStore
-}
+type standardPreviewSetTestStore = contractTestStore
 
 func TestMemApplicationStandardPreviewSetOnboarding(t *testing.T) {
 	m := NewMemStore()

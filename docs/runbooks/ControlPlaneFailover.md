@@ -57,7 +57,17 @@ standby is lost too, rebuild from the off-host state backup instead
 4. **CD can reach the standby.** Its SSH host key is in
    `COMPUTE_KNOWN_HOSTS`, so changing `CP_HOST` is the only edit at
    switchover time.
-5. **The control-plane address name has a low TTL.** Fleet hosts resolve it
+5. **The slow software is pre-installed and the primary's release is
+   recorded.** `make bootstrap-postgres-standby` also:
+   - builds the Firecracker guest kernel and fetches the pinned Firecracker
+     and scanner binaries on the standby. These start nothing, and the
+     takeover's bootstrap then skips them;
+   - records the release the primary runs (commit, manifest hash, per-unit
+     versions) in `/var/lib/faas-standby/release.json`.
+
+   Rerun it after every control-plane release, so the record and the pins
+   match the primary.
+6. **The control-plane address name has a low TTL.** Fleet hosts resolve it
    privately (`/etc/hosts`, rendered from the manifest). Ansible and CD
    reach it through public DNS (`ansible_host` is the address's host part),
    so its public record must be quick to repoint.
@@ -93,10 +103,15 @@ standby is lost too, rebuild from the off-host state backup instead
    re-render: `make manifest-ansible MANIFEST=…`.
 6. **Converge the new control plane:** `make … bootstrap-control-plane`.
    The `postgres` role removes the standby settings and restarts PostgreSQL
-   as a primary.
+   as a primary. The kernel build and the binary downloads were done ahead
+   of time, so this run mostly installs packages and configuration.
 7. **Install the release.** Set `CP_HOST` to the new host and run the
    control-plane deploy (`cd-controlplane`) for the release the old primary
-   ran. That starts the daemons.
+   ran. That starts the daemons. The takeover step printed that release
+   from `/var/lib/faas-standby/release.json`: its commit (find the tag with
+   `git tag --points-at <commit>`) and any per-unit versions, which need
+   their unit deploys too. Deploy that release, not a newer one: the
+   database is already at its migrations.
 8. **Repoint the compute nodes:**
 
    ```bash

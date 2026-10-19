@@ -11,7 +11,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 1644 — a wake without a persisted attempt identity cannot be funded,
+// adr: 1750 — a wake without a persisted attempt identity cannot be funded,
 // but an app without a strict cap is still registered and allowed to run.
 func TestFinancialComputeUnfencedDeniedOnlyWhenStrict(t *testing.T) {
 	store := state.NewMemStore()

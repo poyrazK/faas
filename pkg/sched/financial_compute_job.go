@@ -1,4 +1,4 @@
-// adr: 1641 — a denied boot must not consume a customer execution retry.
+// adr: 1747 — a denied boot must not consume a customer execution retry.
 package sched
 
 import (

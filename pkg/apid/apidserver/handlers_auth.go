@@ -306,7 +306,7 @@ func (s *server) sessionAuth(next http.Handler) http.Handler {
 		//
 		//nolint:contextcheck // pointer-mutation contract (same as withSession/withPrincipal/withMFAPending at middleware.go:530-554): r.Context() must be the inherited ctx; capturing into a local would break observeWrap.
 		r = r.WithContext(authmw.WithStepUp(r.Context(), env.StepUpAt))
-		next.ServeHTTP(w, r)
+		s.authorizeDashboardProject(next, w, r, acct)
 	})
 }
 

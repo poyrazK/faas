@@ -18,6 +18,11 @@ import (
 func preparedQualificationFixture(t *testing.T, basic gitOpsTestStore) (state.EnvironmentGitOpsLease, environmentsync.Plan, []state.EnvironmentWorkloadQualificationRequest) {
 	t.Helper()
 	lease, plan, _ := workloadGraphFixture(t, basic)
+	return prepareQualificationFixture(t, basic, lease, plan)
+}
+
+func prepareQualificationFixture(t *testing.T, basic gitOpsTestStore, lease state.EnvironmentGitOpsLease, plan environmentsync.Plan) (state.EnvironmentGitOpsLease, environmentsync.Plan, []state.EnvironmentWorkloadQualificationRequest) {
+	t.Helper()
 	candidates, err := basic.(state.EnvironmentGitOpsPreparationStore).PrepareEnvironmentGitOpsImageCandidates(t.Context(), lease, plan)
 	if err != nil {
 		t.Fatal(err)

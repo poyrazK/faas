@@ -1,4 +1,4 @@
-// adr: 1641 — jobs retain their own identity; an app UUID is never invented.
+// adr: 1747 — jobs retain their own identity; an app UUID is never invented.
 package financial
 
 import (

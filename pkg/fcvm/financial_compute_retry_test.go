@@ -107,7 +107,7 @@ func strictLocalLease(t *testing.T, m *Manager, a *durableComputeAuthority, inst
 	return local
 }
 
-// adr: 1644 — a renewal whose reply was lost is replayed, not abandoned or
+// adr: 1750 — a renewal whose reply was lost is replayed, not abandoned or
 // fenced, and the committed revision is what settlement later uses.
 func TestFinancialComputeLostRenewalIsReplayed(t *testing.T) {
 	a := &durableComputeAuthority{strict: true, loseRenew: true}
@@ -130,7 +130,7 @@ func TestFinancialComputeLostRenewalIsReplayed(t *testing.T) {
 	}
 }
 
-// adr: 1644 — a denial or fence stops renewal; a transient error does not.
+// adr: 1750 — a denial or fence stops renewal; a transient error does not.
 func TestFinancialComputeRenewalStopsOnlyWhenFinal(t *testing.T) {
 	a := &durableComputeAuthority{strict: true}
 	m := newTestManager(&fakeRunner{}, &fakeVMM{}).WithFinancialComputeAuthority(a, "node", "incarnation")
@@ -143,7 +143,7 @@ func TestFinancialComputeRenewalStopsOnlyWhenFinal(t *testing.T) {
 	}
 }
 
-// adr: 1644 — a lost renewal reply cannot leave settlement fenced forever
+// adr: 1750 — a lost renewal reply cannot leave settlement fenced forever
 // after the instance is confirmed absent.
 func TestFinancialComputeSettleAdoptsUnseenRevision(t *testing.T) {
 	a := &durableComputeAuthority{strict: true}
@@ -160,7 +160,7 @@ func TestFinancialComputeSettleAdoptsUnseenRevision(t *testing.T) {
 	}
 }
 
-// adr: 1644 — an acquire whose reply was lost may adopt only its own receipt.
+// adr: 1750 — an acquire whose reply was lost may adopt only its own receipt.
 func TestFinancialComputeRecoveryFencesUncertainAcquire(t *testing.T) {
 	a := &durableComputeAuthority{strict: true}
 	m := newTestManager(&fakeRunner{}, &fakeVMM{}).WithFinancialComputeAuthority(a, "node", "incarnation")
@@ -175,7 +175,7 @@ func TestFinancialComputeRecoveryFencesUncertainAcquire(t *testing.T) {
 	}
 }
 
-// adr: 1644 — an unbudgeted VM funds nothing, so a failed settlement releases
+// adr: 1750 — an unbudgeted VM funds nothing, so a failed settlement releases
 // its slot and is retried by recovery.
 func TestFinancialComputeUnbudgetedSettleFailureReleasesCapacity(t *testing.T) {
 	a := &durableComputeAuthority{}

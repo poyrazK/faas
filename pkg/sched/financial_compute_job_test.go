@@ -29,7 +29,7 @@ func (*financialJobVMM) WaitJobExit(context.Context, JobExitSpec) (JobExitResult
 	return JobExitResult{}, errors.New("denied job must not wait for an exit")
 }
 
-// adr: 1641 — a refusal to fund a boot preserves the queued task and retry
+// adr: 1747 — a refusal to fund a boot preserves the queued task and retry
 // count, but uncertain native cleanup retains the original physical claim.
 func TestFinancialComputeJobBudgetDeferral(t *testing.T) {
 	for _, failedDestroy := range []bool{false, true} {

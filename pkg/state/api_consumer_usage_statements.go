@@ -153,26 +153,42 @@ func validateAPIConsumerUsageStatementInput(input APIConsumerUsageStatementInput
 		units += bucket.BillableUnits
 		amount += bucket.AmountMillicents
 	}
-	if len(input.Fees) > MaxAPIConsumerStatementFees {
-		return fmt.Errorf("consumer usage statement: at most %d fees", MaxAPIConsumerStatementFees)
+	fees, err := sumStatementFees(input.Fees, input.Currency)
+	if err != nil {
+		return fmt.Errorf("consumer usage statement: %w", err)
 	}
-	for i, fee := range input.Fees {
-		if (fee.Kind != StatementFeeBase && fee.Kind != StatementFeeMinimum) || (fee.Kind == StatementFeeBase && fee.AmountMillicents < 0) {
-			return fmt.Errorf("consumer usage statement: fee %d must be a non-negative base_fee or a minimum", i)
-		}
-		if _, err := uuid.Parse(fee.RateCardID); err != nil || input.Currency == "" {
-			return fmt.Errorf("consumer usage statement: fee %d needs a rate card and a statement currency", i)
-		}
-		if (fee.AmountMillicents > 0 && amount > maxAPIConsumerUsageStatementInt64-fee.AmountMillicents) ||
-			(fee.AmountMillicents < 0 && amount < -maxAPIConsumerUsageStatementInt64-fee.AmountMillicents) {
-			return fmt.Errorf("consumer usage statement: fee totals overflow")
-		}
-		amount += fee.AmountMillicents
+	if !addsWithin(amount, fees) {
+		return fmt.Errorf("consumer usage statement: fee totals overflow")
 	}
+	amount += fees
 	if units != input.BillableUnits || unpriced != input.UnpricedUnits || amount != input.AmountMillicents {
 		return fmt.Errorf("consumer usage statement: bucket and fee totals do not match statement totals")
 	}
 	return nil
+}
+
+// sumStatementFees validates a statement's fees (ADR-1316, ADR-1322) and
+// returns their total: at most MaxAPIConsumerStatementFees, each a
+// non-negative base fee or a minimum top-up of a rate card, in a priced
+// statement.
+func sumStatementFees(fees []APIConsumerStatementFee, currency string) (int64, error) {
+	if len(fees) > MaxAPIConsumerStatementFees {
+		return 0, fmt.Errorf("at most %d fees", MaxAPIConsumerStatementFees)
+	}
+	var total int64
+	for i, fee := range fees {
+		if (fee.Kind != StatementFeeBase && fee.Kind != StatementFeeMinimum) || (fee.Kind == StatementFeeBase && fee.AmountMillicents < 0) {
+			return 0, fmt.Errorf("fee %d must be a non-negative base_fee or a minimum", i)
+		}
+		if _, err := uuid.Parse(fee.RateCardID); err != nil || currency == "" {
+			return 0, fmt.Errorf("fee %d needs a rate card and a statement currency", i)
+		}
+		if !addsWithin(total, fee.AmountMillicents) {
+			return 0, fmt.Errorf("fee totals overflow")
+		}
+		total += fee.AmountMillicents
+	}
+	return total, nil
 }
 
 func cloneAPIConsumerUsageStatement(statement APIConsumerUsageStatement) APIConsumerUsageStatement {

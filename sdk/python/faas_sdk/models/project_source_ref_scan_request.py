@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, TypeVar, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.project_source_ref_scan_request_app_slugs import ProjectSourceRefScanRequestAppSlugs
+
 
 T = TypeVar("T", bound="ProjectSourceRefScanRequest")
 
@@ -20,6 +24,9 @@ class ProjectSourceRefScanRequest:
     ref: str
     """Branch, tag, or commit ref to scan."""
     project_slug: str
+    app_slugs: ProjectSourceRefScanRequestAppSlugs | Unset = UNSET
+    """App allocations for this connected repository review. Keys are exact service names. Existing project apps
+    keep their names; new names are checked for format, reservation and availability without being allocated."""
     repo_full_name: str | Unset = UNSET
     """Repository binding stored if the plan is later applied; defaults to repo."""
     production_branch: str | Unset = "main"
@@ -30,6 +37,10 @@ class ProjectSourceRefScanRequest:
     environment: str | Unset = UNSET
     """Environment slug applied to deployments created by this scan"""
     no_triggers: bool | Unset = False
+    migration: bool | Unset = False
+    """Prepare a manual migration: preserve repository service names, suggest project-prefixed app names, leave the
+    project unbound from GitHub push deployments and suppress schedules and async routes. Credentials remain inside
+    githubd."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -38,6 +49,10 @@ class ProjectSourceRefScanRequest:
         ref = self.ref
 
         project_slug = self.project_slug
+
+        app_slugs: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.app_slugs, Unset):
+            app_slugs = self.app_slugs.to_dict()
 
         repo_full_name = self.repo_full_name
 
@@ -57,6 +72,8 @@ class ProjectSourceRefScanRequest:
 
         no_triggers = self.no_triggers
 
+        migration = self.migration
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -66,6 +83,8 @@ class ProjectSourceRefScanRequest:
                 "project_slug": project_slug,
             }
         )
+        if app_slugs is not UNSET:
+            field_dict["app_slugs"] = app_slugs
         if repo_full_name is not UNSET:
             field_dict["repo_full_name"] = repo_full_name
         if production_branch is not UNSET:
@@ -80,17 +99,28 @@ class ProjectSourceRefScanRequest:
             field_dict["environment"] = environment
         if no_triggers is not UNSET:
             field_dict["no_triggers"] = no_triggers
+        if migration is not UNSET:
+            field_dict["migration"] = migration
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.project_source_ref_scan_request_app_slugs import ProjectSourceRefScanRequestAppSlugs
+
         d = dict(src_dict)
         repo = d.pop("repo")
 
         ref = d.pop("ref")
 
         project_slug = d.pop("project_slug")
+
+        _app_slugs = d.pop("app_slugs", UNSET)
+        app_slugs: ProjectSourceRefScanRequestAppSlugs | Unset
+        if isinstance(_app_slugs, Unset):
+            app_slugs = UNSET
+        else:
+            app_slugs = ProjectSourceRefScanRequestAppSlugs.from_dict(_app_slugs)
 
         repo_full_name = d.pop("repo_full_name", UNSET)
 
@@ -106,10 +136,13 @@ class ProjectSourceRefScanRequest:
 
         no_triggers = d.pop("no_triggers", UNSET)
 
+        migration = d.pop("migration", UNSET)
+
         project_source_ref_scan_request = cls(
             repo=repo,
             ref=ref,
             project_slug=project_slug,
+            app_slugs=app_slugs,
             repo_full_name=repo_full_name,
             production_branch=production_branch,
             install_id=install_id,
@@ -117,6 +150,7 @@ class ProjectSourceRefScanRequest:
             exclude=exclude,
             environment=environment,
             no_triggers=no_triggers,
+            migration=migration,
         )
 
         project_source_ref_scan_request.additional_properties = d

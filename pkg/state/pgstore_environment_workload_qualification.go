@@ -22,6 +22,7 @@ func qualificationRequestFromSQL(row sqlc.EnvironmentWorkloadQualificationReques
 		WorkerID: row.WorkerID, LeaseToken: row.LeaseToken, Attempt: row.Attempt, ReservedInstanceID: pgUUIDString(row.ReservedInstanceID)}
 	_ = json.Unmarshal(row.Artifact, &request.Artifact)
 	_ = json.Unmarshal(row.FrozenInputs, &request.FrozenInputs)
+	_ = json.Unmarshal(row.BindingContext, &request.BindingContext)
 	if row.LeaseUntil.Valid {
 		until := row.LeaseUntil.Time
 		request.LeaseUntil = &until
@@ -58,8 +59,12 @@ func (s *PgStore) QueueEnvironmentGitOpsQualification(ctx context.Context, lease
 			continue
 		}
 		expected++
+		bindingContext, err := candidateBindingContextTx(ctx, tx, lease.Source.AccountID, member.CandidateDeploymentID)
+		if err != nil {
+			return nil, err
+		}
 		count, err := q.CreateEnvironmentWorkloadQualification(ctx, tx, sqlc.CreateEnvironmentWorkloadQualificationParams{
-			GraphID: row.ID, DeploymentID: mustPgUUID(member.CandidateDeploymentID), Resource: member.Resource})
+			GraphID: row.ID, DeploymentID: mustPgUUID(member.CandidateDeploymentID), Resource: member.Resource, BindingContext: bindingContext})
 		if err != nil {
 			return nil, mapErr(err)
 		}
