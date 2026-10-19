@@ -1249,6 +1249,12 @@ type PostReleaseTelemetry = rollbackOn5xxTelemetry
 func (r *server) SetPostReleaseTelemetry(t PostReleaseTelemetry) {
 	r.postReleaseTelemetry = t
 }
+
+// SetReleaseGateEvidence stands in for Postgres release gate evidence
+// (ADR-20261019071734).
+func (r *server) SetReleaseGateEvidence(e state.ReleaseGateEvidenceStore) {
+	r.releaseGateEvidence = e
+}
 func (r *server) RollbackProjectEnvironmentPromotion(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
 	r.rollbackProjectEnvironmentPromotion(p0, p1, p2)
 }

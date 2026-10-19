@@ -38,8 +38,8 @@ type ReleaseGate struct {
 	CreatedAt    time.Time
 }
 
-// ReleaseGateSLO is the part of an SLO a gate judges by.
-type ReleaseGateSLO struct {
+// ReleaseGateSLOTarget is the part of an SLO a gate judges by.
+type ReleaseGateSLOTarget struct {
 	ID                 string
 	SLI                string
 	LatencyThresholdMS int
@@ -71,7 +71,7 @@ type ReleaseGateStore interface {
 
 // ReleaseGateEvidenceStore reads the signals gates judge (Postgres only).
 type ReleaseGateEvidenceStore interface {
-	ReleaseGateSLO(ctx context.Context, appID, sloID string) (ReleaseGateSLO, error)
+	ReleaseGateSLO(ctx context.Context, appID, sloID string) (ReleaseGateSLOTarget, error)
 	ReleaseGateDeploymentSLI(ctx context.Context, appID, deploymentID string, since, until time.Time, latencyThresholdMS int) (ReleaseGateSLISample, error)
 	ReleaseGateNewErrorGroups(ctx context.Context, appID, deploymentID string, minEvents int) ([]ReleaseGateErrorGroup, error)
 	ReleaseGateCustomMetricWindow(ctx context.Context, appID, name string, since, until time.Time) (samples int64, average float64, err error)

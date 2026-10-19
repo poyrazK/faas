@@ -77,18 +77,18 @@ func (s *PgStore) DeleteReleaseGate(ctx context.Context, appID, name string) (Re
 	return releaseGateFromRow(row), nil
 }
 
-func (s *PgStore) ReleaseGateSLO(ctx context.Context, appID, sloID string) (ReleaseGateSLO, error) {
+func (s *PgStore) ReleaseGateSLO(ctx context.Context, appID, sloID string) (ReleaseGateSLOTarget, error) {
 	if _, err := uuid.Parse(sloID); err != nil {
-		return ReleaseGateSLO{}, ErrNotFound
+		return ReleaseGateSLOTarget{}, ErrNotFound
 	}
 	row, err := sqlc.New().AppSLOForReleaseGate(ctx, s.pool, sqlc.AppSLOForReleaseGateParams{ID: mustPgUUID(sloID), AppID: mustPgUUID(appID)})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return ReleaseGateSLO{}, ErrNotFound
+		return ReleaseGateSLOTarget{}, ErrNotFound
 	}
 	if err != nil {
-		return ReleaseGateSLO{}, mapErr(err)
+		return ReleaseGateSLOTarget{}, mapErr(err)
 	}
-	return ReleaseGateSLO{ID: pgUUIDString(row.ID), SLI: row.Sli, LatencyThresholdMS: int(row.LatencyThresholdMs.Int32), ObjectiveBP: int(row.ObjectiveBp)}, nil
+	return ReleaseGateSLOTarget{ID: pgUUIDString(row.ID), SLI: row.Sli, LatencyThresholdMS: int(row.LatencyThresholdMs.Int32), ObjectiveBP: int(row.ObjectiveBp)}, nil
 }
 
 func (s *PgStore) ReleaseGateDeploymentSLI(ctx context.Context, appID, deploymentID string, since, until time.Time, latencyThresholdMS int) (ReleaseGateSLISample, error) {
