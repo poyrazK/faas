@@ -6,12 +6,10 @@ import (
 	"os"
 	"strings"
 	"testing"
-
-	"github.com/onebox-faas/faas/pkg/db/pgtest"
 )
 
 func TestCheckedBindingRetirementMigrationRoundTrip(t *testing.T) {
-	pool := pgtest.OpenMigrated(t)
+	pool := openMigrated(t)
 	source, err := os.ReadFile("20261018014811962_checked_binding_retirement.sql")
 	if err != nil {
 		t.Fatal(err)

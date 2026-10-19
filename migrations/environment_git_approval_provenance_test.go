@@ -94,7 +94,7 @@ func TestEnvironmentGitApprovalProvenanceGuardsAndReplay(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(retained, record) {
 		t.Fatalf("replay changed provenance: %+v %v", retained, err)
 	}
-	if _, err := pool.Exec(ctx, `delete from accounts where id=$1`, account.ID); err != nil {
+	if _, err := pool.Exec(ctx, deleteAccountSQL, account.ID); err != nil {
 		t.Fatalf("history blocked account cascade: %v", err)
 	}
 }
