@@ -124,6 +124,7 @@
     $('login').hidden = true; $('workspace').hidden = false;
     $('plan').textContent = view.catalog.spec.plans[view.customer.plan].label;
     $('account-status').textContent = view.customer.suspended ? 'New runs are paused. Contact your product team.' : 'Your workspace is active.';
+    renderOverdueHold();
     updateFeatureTerms();
     $('features-section').hidden = !allowed('run_work'); $('work-section').hidden = !allowed('view_work');
     $('usage-section').hidden = !allowed('view_billing'); $('billing-section').hidden = !allowed('view_billing');
@@ -162,6 +163,16 @@
       return value;
     } };
   }
+  // An overdue invoice pauses new runs until it is paid (ADR-20261018212918); this is separate from the product team pausing the workspace.
+  function renderOverdueHold() {
+    const hold = view.overdue_hold, status = $('overdue-status');
+    status.replaceChildren(); status.hidden = !hold;
+    if (!hold) return;
+    status.append(node('span', `New runs are paused until your invoice due ${String(hold.due_at).slice(0, 10)} is paid. Work already running continues.`));
+    let link = null;
+    try { link = new URL(hold.hosted_invoice_url); } catch { link = null; }
+    if (link?.protocol === 'https:') { const a = node('a', 'View and pay invoice'); a.href = link.href; a.target = '_blank'; a.rel = 'noopener noreferrer'; status.append(a); }
+  }
   function updateFeatureTerms() {
     const plan = view.catalog.spec.plans[view.customer.plan];
     for (const [name, card] of cards) {
@@ -169,7 +180,7 @@
       if (!grant) { card.button.disabled = true; card.info.textContent = 'This feature is no longer included in your plan.'; continue; }
       const remaining = Number.isSafeInteger(view.remaining_starts?.[name]) ? view.remaining_starts[name] : 0;
       card.info.textContent = `${amount(grant.unit_price_millicents, view.catalog.spec.currency)} per successful run · ${remaining} of ${grant.monthly_starts} starts remaining this month.`;
-      card.button.disabled = !allowed('run_work') || card.busy || !card.pending && (view.customer.suspended || view.bindings[name]?.available !== true || remaining === 0);
+      card.button.disabled = !allowed('run_work') || card.busy || !card.pending && (view.customer.suspended || Boolean(view.overdue_hold) || view.bindings[name]?.available !== true || remaining === 0);
     }
   }
   function renderFeatures() {
@@ -182,7 +193,7 @@
       let saved; try { saved = receipts.load(scope(name)); } catch (error) { message(error.message); }
       const pending = saved && !saved.operationID, input = inputForm(binding?.input_schema, inputs.get(name));
       const button = node('button', pending ? 'Check / retry saved request' : 'Run feature'); button.type = 'submit';
-      button.disabled = !pending && (view.customer.suspended || binding?.available !== true || remaining === 0);
+      button.disabled = !pending && (view.customer.suspended || Boolean(view.overdue_hold) || binding?.available !== true || remaining === 0);
       const info = node('p', `${amount(grant.unit_price_millicents, view.catalog.spec.currency)} per successful run · ${remaining} of ${grant.monthly_starts} starts remaining this month.`);
       const cardState = { info, button, pending, busy: false }; cards.set(name, cardState); card.append(node('h3', feature.label), info);
       if (pending) card.append(node('p', 'A saved submission needs confirmation. Enter the original details if it has not been accepted.'));

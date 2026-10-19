@@ -370,6 +370,33 @@ test('billing shows exported statement invoices and links only to the provider h
   assert.equal(unsynced.children.length, 1);
 });
 
+test('an overdue invoice hold pauses new runs and links only to the provider https page', async () => {
+  const held = hosted_invoice_url => async path => {
+    if (!path.endsWith('/product')) return;
+    const view = fixture(); view.overdue_hold = { due_at: '2026-10-15T00:00:00Z', hosted_invoice_url };
+    return { ok: true, status: 200, json: async () => view };
+  };
+  const b = browser(held('https://invoice.stripe.com/i/acct_1/in_2'));
+  await b.signIn();
+  const status = b.get('overdue-status');
+  assert.equal(status.hidden, false);
+  assert.equal(status.children[0].textContent, 'New runs are paused until your invoice due 2026-10-15 is paid. Work already running continues.');
+  const pay = status.children[1];
+  assert.equal(pay.tag, 'a'); assert.equal(pay.textContent, 'View and pay invoice'); assert.equal(pay.href, 'https://invoice.stripe.com/i/acct_1/in_2');
+  assert.equal(pay.target, '_blank'); assert.equal(pay.rel, 'noopener noreferrer');
+  assert.equal(b.get('account-status').textContent, 'Your workspace is active.', 'a hold is not the product team pausing the workspace');
+  const run = b.get('features').children[0].children.find(el => el.tag === 'form').children.at(-1);
+  assert.equal(run.disabled, true);
+
+  const unsafe = browser(held('javascript:alert(1)'));
+  await unsafe.signIn();
+  assert.equal(unsafe.get('overdue-status').children.length, 1, 'a non-https invoice link must not render');
+
+  const clear = browser();
+  await clear.signIn();
+  assert.equal(clear.get('overdue-status').hidden, true);
+});
+
 test('billing responses cannot restore another workspace after logout', async () => {
   let resolveBilling;
   const b = browser(path => path.includes('/billing?') ? new Promise(resolve => { resolveBilling = resolve; }) : undefined);

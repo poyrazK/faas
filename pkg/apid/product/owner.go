@@ -161,6 +161,35 @@ func (s *Service) ownerOverview(r *http.Request, c *ownerContext, q url.Values) 
 		c.data.Attention = append(c.data.Attention, dashboard.ProductControlAttention{TenantID: item.TenantID, Period: item.Period, Unresolved: item.Unresolved, NeedsReview: item.NeedsReview, URL: ownerURL(c, item.TenantID, item.Period, nil)})
 	}
 	c.data.NextAttentionURL = ownerPageURL(c, q, "attention_cursor", attention.NextCursor)
+	return s.ownerOverdue(r, c)
+}
+
+// ownerOverdue shows the app's overdue policy and held customers
+// (ADR-20261018212918).
+func (s *Service) ownerOverdue(r *http.Request, c *ownerContext) error {
+	store, ok := s.Host.Store().(state.ProductOverdueStore)
+	if !ok {
+		return nil
+	}
+	view := &dashboard.ProductControlOverdue{Policy: "No overdue policy. Customers with unpaid invoices can keep starting work."}
+	policy, err := store.GetProductOverduePolicy(r.Context(), c.account.ID, c.app.ID)
+	switch {
+	case err == nil && policy.BlockOverdueAfterDays == 0:
+		view.Policy = "New starts are refused as soon as an exported invoice is past its due date and unpaid."
+	case err == nil:
+		view.Policy = fmt.Sprintf("New starts are refused %d days after an exported invoice's due date while it is unpaid.", policy.BlockOverdueAfterDays)
+	case !errors.Is(err, state.ErrNotFound):
+		return err
+	}
+	holds, err := store.ListProductOverdueHolds(r.Context(), c.account.ID, c.app.ID)
+	if err != nil {
+		return err
+	}
+	for _, h := range holds {
+		view.Holds = append(view.Holds, dashboard.ProductControlOverdueHold{TenantID: h.TenantID, DueAt: h.DueAt.UTC().Format(time.DateOnly),
+			Since: h.Since.UTC().Format(time.RFC3339), URL: ownerURL(c, h.TenantID, c.data.Period, nil), InvoiceURL: api.ProviderHostedURL(h.HostedInvoiceURL)})
+	}
+	c.data.Overdue = view
 	return nil
 }
 
@@ -182,6 +211,11 @@ func (s *Service) ownerCustomer(r *http.Request, c *ownerContext, q url.Values) 
 		return err
 	}
 	c.data.Customer = &customer
+	if hold, err := customerOverdueHold(r.Context(), c.products, c.account.ID, c.app.ID, tenant.ID); err != nil {
+		return err
+	} else if hold != nil {
+		c.data.CustomerHold = "New starts are refused until the invoice due " + hold.DueAt.UTC().Format(time.DateOnly) + " is paid. Suspension is separate."
+	}
 	catalog, err := c.products.GetProductCatalog(r.Context(), c.account.ID, c.app.ID, customer.Revision)
 	if err != nil {
 		return err

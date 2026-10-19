@@ -1389,6 +1389,52 @@ kept only when the provider returned a plain `https` URL without credentials;
 the portal labels it **View and pay invoice** while the invoice is open. Gregale
 never renders a payment form.
 
+#### Overdue holds
+
+An app can refuse new starts from customers who have not paid an exported
+statement, mirroring API monetization's consumer holds
+([ADR-1315](../adr/1315-block-consumers-with-overdue-invoices.md)). The policy is
+off until the owner sets it, and it lives outside the immutable catalog.
+
+```sh
+gregale product billing overdue-policy set --app exports --block-overdue-after-days 14
+gregale product billing overdue-policy inspect --app exports --json
+gregale product billing overdue-policy clear --app exports
+```
+
+The owner API is `GET/PUT/DELETE /v1/apps/{slug}/product/billing/overdue-policy`
+with `{"block_overdue_after_days": 0..365}` (`0` holds as soon as an invoice is
+past due) and `GET /v1/apps/{slug}/product/billing/overdue-holds`.
+
+- **What counts.** A Product Control statement exported to Stripe, Paddle or Lago
+  whose payment status is `open` or `uncollectible`, with an amount remaining and
+  a due date at least the policy's days ago. Drafts have no due date and never
+  count; neither do paid, void or deleted invoices. Credit notes are not exported.
+- **Holds.** Every 5 minutes each apid replica tries to recompute one hold per
+  customer, naming its oldest qualifying statement; an advisory lock lets one
+  replica do it at a time. Placing and lifting are audited as
+  `product.customer.overdue_blocked` and `product.customer.overdue_unblocked`;
+  policy changes as `product.billing.overdue_policy_updated` and
+  `product.billing.overdue_policy_deleted`. A held invoice's payment status is
+  read at least every 15 minutes (ADR-1504).
+- **Enforcement.** Operations admission refuses a held customer's new start with
+  402 `product_invoice_overdue`, naming the invoice's due date and the provider's
+  hosted page. No start is consumed. A retry of work that was never admitted is
+  checked again; work already admitted keeps running and settling, and usage,
+  results and billing stay readable.
+- **Release.** A hold stops applying as soon as its invoice syncs as paid, void or
+  deleted, and the next recomputation removes it. Clearing the policy lifts every
+  hold at once. A customer with another overdue statement stays held by that one.
+- **Separate from suspension.** A hold is not the owner's `suspended` flag. Both
+  are shown separately, and lifting one never lifts the other.
+- **Where it shows.** The owner console lists the policy and held customers, and a
+  held customer's page shows a **Payment hold** row. Change the policy with the
+  CLI or API; the console does not edit it. The customer portal explains the
+  hold with the due date and a **View and pay invoice** link, disables new runs,
+  and its usage guidance marks features `invoice_overdue`.
+- **Rollback.** With `FAAS_PRODUCT_CONTROL_ENABLED` off, holds are not
+  recomputed or enforced, because no new Product Control starts are admitted.
+
 The customer portal's **Statements and credits** section reads a selected month
 and explicitly pages through finalized documents. It shows provisional charges
 when the month has not closed or been finalized, and separates finalized charges
@@ -1418,6 +1464,8 @@ MFA and verified-email policy. Tenant identity always comes from the credential.
 | `POST /v1/apps/{slug}/product/billing/receipts/{operation}/waive` | Permanently waive an unresolved charge |
 | `POST /v1/apps/{slug}/product/billing/credits` | Idempotent credit note for a finalized receipt |
 | `GET/POST /v1/apps/{slug}/product/billing/documents/{document}/handoff` | Recover or record the immutable invoice reference |
+| `GET/PUT/DELETE /v1/apps/{slug}/product/billing/overdue-policy` | Read, set `{block_overdue_after_days}` or clear the overdue policy; clearing lifts every hold |
+| `GET /v1/apps/{slug}/product/billing/overdue-holds` | Customers whose new starts are refused for an overdue invoice |
 | `GET /v1/platform-tenant-self/product/billing` | Authenticated tenant's selected month and documents, with completed invoices' payment status and hosted link |
 | `GET /v1/product-control/customer/{slug}/billing` | Cookie-authenticated workspace billing |
 | `GET /v1/apps/{slug}/product` | Current catalog; optional `revision` |

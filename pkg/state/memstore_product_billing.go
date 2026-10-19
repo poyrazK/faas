@@ -14,6 +14,14 @@ type productMemoryDocument struct {
 	document     api.ProductBillingDocument
 }
 
+// SeedProductBillingDocumentForTest stores a finalized document, which a
+// MemStore cannot otherwise create for a closed month.
+func (m *MemStore) SeedProductBillingDocumentForTest(accountID, appID string, doc api.ProductBillingDocument) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.productLocked().documents[doc.ID] = productMemoryDocument{account: accountID, app: appID, document: doc}
+}
+
 func (m *MemStore) productBillingScopeLocked(scope ProductBillingScope) (api.ProductCatalog, error) {
 	if err := validateProductBillingScope(scope); err != nil {
 		return api.ProductCatalog{}, err

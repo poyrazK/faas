@@ -31,6 +31,14 @@ type ProductControlDocument struct {
 }
 type ProductControlComparison struct{ Feature, Before, After string }
 
+// ProductControlOverdue is the app's overdue policy and the customers it
+// holds (ADR-20261018212918). Owners change it with the CLI or API.
+type ProductControlOverdue struct {
+	Policy string
+	Holds  []ProductControlOverdueHold
+}
+type ProductControlOverdueHold struct{ TenantID, DueAt, Since, URL, InvoiceURL string }
+
 // The console renders safe projections only. Input/result payloads and session
 // credentials are never placed in this view model.
 type ProductControlData struct {
@@ -65,6 +73,9 @@ type ProductControlData struct {
 	EmailRetry                                                        *api.ProductEmailRetryReceipt
 	EmailRecoveries                                                   *ProductControlEmailRecoveries
 	EmailOptOuts                                                      *ProductControlEmailOptOuts
+	Overdue                                                           *ProductControlOverdue
+	// CustomerHold explains an overdue-invoice hold, separate from Suspended.
+	CustomerHold string
 }
 
 type ProductControlEmail struct {

@@ -19,11 +19,7 @@ type productOverdueTestStore interface {
 
 func TestProductOverdueHoldsMemory(t *testing.T) {
 	s := NewMemStore()
-	productOverdueContract(t, s, func(account, app string, doc api.ProductBillingDocument) {
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		s.productLocked().documents[doc.ID] = productMemoryDocument{account: account, app: app, document: doc}
-	})
+	productOverdueContract(t, s, s.SeedProductBillingDocumentForTest)
 }
 
 // adr: 20261018212918 — a customer whose exported Product Control statement

@@ -286,6 +286,11 @@ func populateCustomerView(ctx context.Context, store state.ProductControlStore, 
 			view.Allowances[name] = max(0, remaining)
 		}
 	}
+	if permissions.RunWork || permissions.ViewBilling {
+		if view.OverdueHold, err = customerOverdueHold(ctx, store, view.AccountID, view.AppID, view.Customer.TenantID); err != nil {
+			return err
+		}
+	}
 	if permissions.RunWork {
 		view.Bindings, err = productBindings(ctx, store, view.AccountID, view.AppID, view.Customer.TenantID, view.Catalog)
 		if err != nil {

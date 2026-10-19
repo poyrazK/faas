@@ -122,8 +122,8 @@ func (s *Service) OverdueHolds(w http.ResponseWriter, r *http.Request, acct stat
 
 // customerOverdueHold is what a held customer's portal explains, nil when
 // the customer is not held.
-func (s *Service) customerOverdueHold(ctx context.Context, accountID, appID, tenantID string) (*api.ProductCustomerOverdueHold, error) {
-	store, ok := s.Host.Store().(state.ProductOverdueStore)
+func customerOverdueHold(ctx context.Context, products state.ProductControlStore, accountID, appID, tenantID string) (*api.ProductCustomerOverdueHold, error) {
+	store, ok := products.(state.ProductOverdueStore)
 	if !ok {
 		return nil, nil
 	}
