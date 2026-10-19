@@ -326,6 +326,10 @@ tags:
       CLI side. Cookie-session-authenticated (NOT API-key) per
       ADR-116 — the dashboard is the install-token trust root.
 
+  - name: data_pipelines
+    description: Staged managed PostgreSQL mirrors with encrypted source registration
+      and read-only application access.
+
 security:
   - bearerAuth: []
 
@@ -61716,6 +61720,259 @@ paths:
               schema:
                 $ref: '#/components/schemas/Problem'
 
+  /v1/data/connections:
+    get:
+      operationId: listDataConnections
+      summary: List sealed PostgreSQL pipeline source identities
+      tags:
+      - data_pipelines
+      responses:
+        '200':
+          description: Account-owned source identities with credentials omitted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DataConnectionList'
+        default:
+          description: Problem returned by listDataConnections after account, credential or pipeline validation.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+    post:
+      operationId: createDataConnection
+      summary: Seal a credential for a PostgreSQL pipeline source
+      tags:
+      - data_pipelines
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateDataConnectionRequest'
+      responses:
+        '201':
+          description: Registered source identity and its initial credential revision.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DataConnection'
+        default:
+          description: Problem returned by createDataConnection after account, credential or pipeline validation.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /v1/data/connections/{id}:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Sealed source connection to rotate or remove.
+    put:
+      operationId: rotateDataConnection
+      summary: Replace the credential of a PostgreSQL pipeline source
+      tags:
+      - data_pipelines
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RotateDataConnectionRequest'
+      responses:
+        '200':
+          description: Source identity with an incremented credential revision.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DataConnection'
+        default:
+          description: Problem returned by rotateDataConnection after account, credential or pipeline validation.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+    delete:
+      operationId: deleteDataConnection
+      summary: Remove an unused PostgreSQL pipeline source
+      tags:
+      - data_pipelines
+      responses:
+        '204':
+          description: Unused sealed source credential has been removed.
+        default:
+          description: Problem returned by deleteDataConnection after account, credential or pipeline validation.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /v1/data/connections/{id}/check:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      description: Account-owned sealed source connection.
+      schema:
+        type: string
+        format: uuid
+    post:
+      operationId: requestDataConnectionCheck
+      summary: Queue a private worker connection check and table discovery
+      description: Staging only. Coalesces active or very recent checks for the same credential revision and optional
+        mirror. No source SQL runs in the HTTP handler. Results are compatibility observations, not a production qualification.
+      tags:
+      - data_pipelines
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RequestDataConnectionCheck'
+      responses:
+        '202':
+          description: Accepted or coalesced durable connection check.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DataConnectionCheck'
+        default:
+          description: Problem returned by requestDataConnectionCheck after account, revision or target validation.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+    get:
+      operationId: getDataConnectionCheck
+      summary: Read the latest connection check and discovered source schema
+      description: Account-scoped, bounded metadata only. A credential rotation makes earlier evidence stale; completed
+        checks expire after 90 seconds. No source credentials or customer rows are returned.
+      tags:
+      - data_pipelines
+      responses:
+        '200':
+          description: Latest check, freshness, compatibility issues and discovered tables.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DataConnectionCheck'
+        default:
+          description: Problem returned by getDataConnectionCheck after account or connection validation.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /v1/data/pipelines:
+    get:
+      operationId: listDataPipelines
+      summary: List managed PostgreSQL table mirrors
+      tags:
+      - data_pipelines
+      responses:
+        '200':
+          description: Bounded account-owned pipeline intent and observation history.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DataPipelineList'
+        default:
+          description: Problem returned by listDataPipelines after account, credential or pipeline validation.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+    post:
+      operationId: createDataPipeline
+      summary: Start a managed PostgreSQL table mirror
+      tags:
+      - data_pipelines
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateDataPipelineRequest'
+      responses:
+        '202':
+          description: Durable replication intent accepted for asynchronous reconciliation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DataPipeline'
+        default:
+          description: Problem returned by createDataPipeline after account, credential or pipeline validation.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /v1/data/pipelines/{id}:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Managed table mirror whose progress to inspect.
+    get:
+      operationId: getDataPipeline
+      summary: Read synchronization progress for a PostgreSQL table mirror
+      tags:
+      - data_pipelines
+      responses:
+        '200':
+          description: Current desired action and the most recent replication observation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DataPipeline'
+        default:
+          description: Problem returned by getDataPipeline after account, credential or pipeline validation.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /v1/data/pipelines/{id}/control:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Managed table mirror receiving the lifecycle request.
+    post:
+      operationId: controlDataPipeline
+      summary: Change managed PostgreSQL table mirror intent
+      tags:
+      - data_pipelines
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ControlDataPipelineRequest'
+      responses:
+        '202':
+          description: Updated intent revision accepted for worker reconciliation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DataPipeline'
+        default:
+          description: Problem returned by controlDataPipeline after account, credential or pipeline validation.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+
 components:
 
   securitySchemes:
@@ -121621,6 +121878,457 @@ components:
         plan_change_status: { type: string }
         requested_plan: { type: string }
         effective_at: { type: string, format: date-time }
+
+    RequestDataConnectionCheck:
+      description: Queue inspection of the current credential, optionally including a ready, empty managed mirror.
+      type: object
+      additionalProperties: false
+      required:
+      - expected_revision
+      properties:
+        expected_revision:
+          type: integer
+          format: int64
+          minimum: 1
+        database_id:
+          type: string
+          format: uuid
+    DataConnectionCheck:
+      description: Durable, bounded compatibility observation. Capacity separately reports measured, operator-qualified allocations; a passed compatibility check does not establish production readiness.
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - connection_id
+      - connection_revision
+      - state
+      - fresh
+      - truncated
+      - checks
+      - tables
+      - created_at
+      properties:
+        capacity:
+          $ref: '#/components/schemas/DataPipelineCapacity'
+        id:
+          type: string
+          format: uuid
+        connection_id:
+          type: string
+          format: uuid
+        connection_revision:
+          type: integer
+          format: int64
+          minimum: 1
+        database_id:
+          type: string
+          format: uuid
+        state:
+          type: string
+          enum:
+          - pending
+          - running
+          - passed
+          - blocked
+          - stale
+        fresh:
+          type: boolean
+        truncated:
+          type: boolean
+        checks:
+          type: array
+          maxItems: 32
+          items:
+            $ref: '#/components/schemas/DataConnectionIssue'
+        tables:
+          type: array
+          maxItems: 128
+          items:
+            $ref: '#/components/schemas/DataSourceTable'
+        created_at:
+          type: string
+          format: date-time
+        observed_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+    DataPipelineCapacity:
+      description: New-allocation readiness at observation time. Admission atomically rechecks and reserves capacity; observations alone reserve nothing.
+      type: object
+      additionalProperties: false
+      required: [state]
+      properties:
+        state: { type: string, enum: [ready, insufficient_capacity, needs_qualification] }
+        source: { $ref: '#/components/schemas/DataEndpointCapacity' }
+        destination: { $ref: '#/components/schemas/DataEndpointCapacity' }
+    DataEndpointCapacity:
+      description: Credential-free shared physical allocation and initial-copy peak demand. Other Gregale reservations remain counted while paused or awaiting cleanup.
+      type: object
+      additionalProperties: false
+      required: [state, usable_connections, reserved_connections, required_connections]
+      properties:
+        state: { type: string, enum: [ready, insufficient_capacity, needs_qualification] }
+        usable_connections: { type: integer, format: int64, minimum: 0 }
+        reserved_connections: { type: integer, format: int64, minimum: 0 }
+        required_connections: { type: integer, format: int64, minimum: 0 }
+        limiting_resource: { type: string, enum: [connections, replication_slots, wal_senders, logical_workers] }
+        observed_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+    DataConnectionIssue:
+      description: Stable compatibility code and sanitized guidance; contains neither credentials nor raw database errors.
+      type: object
+      additionalProperties: false
+      required:
+      - code
+      - state
+      - message
+      properties:
+        code:
+          type: string
+          pattern: ^[a-z0-9_]{1,80}$
+        state:
+          type: string
+          enum:
+          - passed
+          - blocked
+          - unknown
+        message:
+          type: string
+          maxLength: 512
+        remediation:
+          type: string
+          maxLength: 512
+        column:
+          type: string
+          maxLength: 63
+    DataSourceTable:
+      description: A discovered public table. Unsupported tables remain visible with reasons and cannot be selected
+        for replication.
+      type: object
+      additionalProperties: false
+      required:
+      - name
+      - supported
+      - columns
+      - issues
+      properties:
+        name:
+          type: string
+          maxLength: 63
+        supported:
+          type: boolean
+        columns:
+          type: array
+          maxItems: 129
+          items:
+            $ref: '#/components/schemas/DataSourceColumn'
+        issues:
+          type: array
+          maxItems: 135
+          items:
+            $ref: '#/components/schemas/DataConnectionIssue'
+    DataSourceColumn:
+      description: Column metadata only; no stored customer values are read.
+      type: object
+      additionalProperties: false
+      required:
+      - name
+      - type
+      - nullable
+      - primary_key
+      properties:
+        name:
+          type: string
+          maxLength: 63
+        type:
+          type: string
+          maxLength: 128
+        nullable:
+          type: boolean
+        primary_key:
+          type: boolean
+    DataConnection:
+      description: Credential-free source identity retained by the pipeline catalog.
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - name
+      - revision
+      - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          minLength: 3
+          maxLength: 40
+        revision:
+          type: integer
+          format: int64
+          minimum: 1
+        created_at:
+          type: string
+          format: date-time
+    DataConnectionList:
+      description: Account-scoped registered PostgreSQL source identities.
+      type: object
+      additionalProperties: false
+      required:
+      - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/DataConnection'
+    CreateDataConnectionRequest:
+      description: Source registration containing a verified-TLS PostgreSQL URL for sealing.
+      type: object
+      additionalProperties: false
+      required:
+      - name
+      - connection_url
+      properties:
+        name:
+          type: string
+          minLength: 3
+          maxLength: 40
+        connection_url:
+          type: string
+          maxLength: 8192
+          writeOnly: true
+          description: PostgreSQL URL with sslmode=verify-full. Stored encrypted and never returned. Source host and
+            addresses must be operator-qualified.
+    RotateDataConnectionRequest:
+      description: Revision-checked replacement credential for the same source database identity.
+      type: object
+      additionalProperties: false
+      required:
+      - expected_revision
+      - connection_url
+      properties:
+        expected_revision:
+          type: integer
+          format: int64
+          minimum: 1
+        connection_url:
+          type: string
+          maxLength: 8192
+          writeOnly: true
+          description: Replacement verified-TLS URL with an explicit password for the existing source host, database and username.
+            addresses must be operator-qualified.
+    CreateDataPipelineRequest:
+      description: Selected public tables, dedicated destination and explicitly authorized JWT readers. A fresh passing connection check for the current source credential and all selected tables is required; otherwise returns data_connection_check_required.
+      type: object
+      additionalProperties: false
+      required:
+      - name
+      - source_connection_id
+      - database_id
+      - tables
+      - read_subjects
+      properties:
+        name:
+          type: string
+          minLength: 3
+          maxLength: 40
+        source_connection_id:
+          type: string
+          format: uuid
+        database_id:
+          type: string
+          format: uuid
+        tables:
+          type: array
+          items:
+            type: string
+            pattern: ^[a-z][a-z0-9_]{0,62}$
+          minItems: 1
+          maxItems: 16
+          uniqueItems: true
+        read_subjects:
+          type: array
+          items:
+            type: string
+            minLength: 1
+            maxLength: 256
+          minItems: 1
+          maxItems: 32
+          uniqueItems: true
+    ControlDataPipelineRequest:
+      description: Optimistic revision fence and requested pipeline lifecycle action.
+      type: object
+      additionalProperties: false
+      required:
+      - expected_revision
+      - action
+      properties:
+        expected_revision:
+          type: integer
+          format: int64
+          minimum: 1
+        action:
+          type: string
+          enum:
+          - pause
+          - resume
+          - resync
+          - verify
+          - delete
+    DataPipeline:
+      description: Managed replication intent with bounded, revision-specific worker observations.
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - name
+      - source_connection_id
+      - database_id
+      - tables
+      - read_subjects
+      - desired_state
+      - state
+      - revision
+      - observed_revision
+      - observation_fresh
+      - generation
+      - tables_ready
+      - verification
+      - created_at
+      properties:
+        applied_through_at:
+          type: string
+          format: date-time
+          description: Conservative source checkpoint time confirmed applied by the destination replication origin. Historical evidence, not measured time lag.
+        health:
+          $ref: '#/components/schemas/DataPipelineHealth'
+        capacity:
+          $ref: '#/components/schemas/DataPipelineCapacity'
+        observed_revision:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Intent revision covered by the latest observation.
+        observation_fresh:
+          type: boolean
+          description: True only when the current intent was observed within the last 90 seconds.
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          minLength: 3
+          maxLength: 40
+        source_connection_id:
+          type: string
+          format: uuid
+        database_id:
+          type: string
+          format: uuid
+        tables:
+          type: array
+          items:
+            type: string
+            pattern: ^[a-z][a-z0-9_]{0,62}$
+          minItems: 1
+          maxItems: 16
+          uniqueItems: true
+        read_subjects:
+          type: array
+          items:
+            type: string
+            minLength: 1
+            maxLength: 256
+          minItems: 1
+          maxItems: 32
+          uniqueItems: true
+        desired_state:
+          type: string
+          enum:
+          - running
+          - paused
+          - deleted
+        state:
+          type: string
+          enum:
+          - validating
+          - copying
+          - catching_up
+          - live
+          - paused
+          - blocked
+          - deleting
+          - deleted
+          - resync_required
+        revision:
+          type: integer
+          format: int64
+          minimum: 1
+        generation:
+          type: integer
+          format: int64
+          minimum: 1
+        reason:
+          type: string
+        tables_ready:
+          type: integer
+          minimum: 0
+          maximum: 16
+        retained_wal_bytes:
+          type: integer
+          format: int64
+          minimum: 0
+        observed_at:
+          type: string
+          format: date-time
+        verification:
+          type: string
+          enum:
+          - unknown
+          - pending
+          - passed
+          - mismatch
+          - inconclusive
+        verified_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+    DataPipelineHealth:
+      description: Read-time freshness assessment and safe recovery guidance. Unconfirmed checkpoints can occur on idle sources.
+      type: object
+      additionalProperties: false
+      required: [state, code, message, recovery, requires_confirmation]
+      properties:
+        state:
+          type: string
+          enum: [healthy, attention, unknown, pending, inactive]
+        code:
+          type: string
+        message:
+          type: string
+        recovery:
+          type: string
+        action:
+          type: string
+          enum: [resume, rotate_credentials, resync]
+        requires_confirmation:
+          type: boolean
+    DataPipelineList:
+      description: Bounded history of account-scoped managed data pipeline records.
+      type: object
+      additionalProperties: false
+      required:
+      - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/DataPipeline'
 
   responses:
     EdgeRulesVersionMismatch:

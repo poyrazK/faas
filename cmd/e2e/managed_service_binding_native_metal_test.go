@@ -350,7 +350,7 @@ func newServiceNativeJourney(t *testing.T, pool *pgxpool.Pool) *serviceNativeJou
 	// Source conversion resolves the host-approved runtime base through the
 	// production producer path; an image-only unreachable-base override cannot
 	// supply reviewed source-build acceptance.
-	t.Setenv("FAAS_TEST_DEPLOY_BASE_REF", "")
+	e2etest.ClearDeployBaseOverride(t)
 	storageRoot := filepath.Join(t.TempDir(), "storage")
 	t.Setenv("FAAS_STORAGE_ROOT", storageRoot)
 	t.Setenv("FAAS_STORAGE_BACKEND", "local")

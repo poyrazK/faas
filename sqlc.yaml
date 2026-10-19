@@ -430,6 +430,7 @@ sql:
         rename:
           id: "ID"
 
+
   - engine: postgresql
     queries: pkg/state/resourceownership/queries.sql
     schema: pkg/state/resourceownership/schema.sql
@@ -460,3 +461,23 @@ sql:
         sql_package: pgx/v5
         emit_methods_with_db_argument: true
         omit_unused_structs: true
+  - engine: "postgresql"
+    queries: "pkg/connectioncapacity/queries.sql"
+    schema: "pkg/connectioncapacity/schema.sql"
+    gen:
+      go:
+        package: "sqlc"
+        out: "pkg/connectioncapacity/sqlc"
+        sql_package: "pgx/v5"
+        emit_methods_with_db_argument: true
+        emit_empty_slices: true
+  - engine: "postgresql"
+    queries: "pkg/datapipeline/queries.sql"
+    schema: ["pkg/datapipeline/schema.sql", "pkg/datapipeline/catalog_schema.sql"]
+    gen:
+      go:
+        package: "sqlc"
+        out: "pkg/datapipeline/sqlc"
+        sql_package: "pgx/v5"
+        emit_methods_with_db_argument: true
+        emit_empty_slices: true

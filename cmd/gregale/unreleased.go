@@ -1,8 +1,8 @@
 package main
 
 // adr: 1190 — application Auth is a dark launch. The CLI keeps its command,
-// its flags on other commands (data-api create --auth, realtime create
-// --auth, edge-rules --jwt-auth) and its template out of every customer
+// its flags on other commands (data-api create --auth, pipeline create
+// --api/--auth, realtime create --auth, edge-rules --jwt-auth) and its template out of every customer
 // surface: help, completions, man pages, the generated reference, command
 // suggestions, dispatch and flag parsing. Setting FAAS_APPLICATION_AUTH_ENABLED
 // in the shell, the variable that also turns Auth on in apid, shows them.

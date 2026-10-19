@@ -1624,6 +1624,7 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-1499: Native issue lifecycle alert policy](1499-issue-lifecycle-alert-policy.md)
 - [ADR-1500: Source-built apps run on the shared runtime base](1500-shared-runtime-source-apps.md)
 - [ADR-1501: Reconcile worker pools once at scheduler start](1501-worker-startup-reconcile.md)
+- [ADR-1591: Managed Postgres data pipelines](1591-managed-postgres-data-pipelines.md)
 
 - [ADR-20261017191501: Browser and Task migration parity for Go/Python MCP starters](20261017191501-mcp-go-python-starter-parity.md)
 - [ADR-20261017191502: Bounded starter protocol observations](20261017191502-mcp-starter-protocol-telemetry.md)

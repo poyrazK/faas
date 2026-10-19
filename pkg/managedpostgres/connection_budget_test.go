@@ -60,18 +60,19 @@ func TestConnectionBudgetPlansWakeAndLifecycleOverlapWithoutDoubleCounting(t *te
 
 func TestConnectionBudgetMissingUnqualifiedAndStaleEvidenceCannotPass(t *testing.T) {
 	cases := map[string]func(*ConnectionBudgetSnapshot){
-		"capacity_unverified":                   func(s *ConnectionBudgetSnapshot) { s.Capacity = nil },
-		"runtime_pool_configuration_unverified": func(s *ConnectionBudgetSnapshot) { s.ModelsVerified = false },
-		"external_consumers_unobserved":         func(s *ConnectionBudgetSnapshot) { s.OtherConsumersCovered = false },
-		"inventory_stale":                       func(s *ConnectionBudgetSnapshot) { s.CheckedAt = s.CheckedAt.Add(-time.Hour) },
-		"database_not_ready":                    func(s *ConnectionBudgetSnapshot) { s.DatabaseState = "updating" },
-		"inventory_truncated":                   func(s *ConnectionBudgetSnapshot) { s.Truncated = true },
-		"runtime_inventory_unavailable":         func(s *ConnectionBudgetSnapshot) { s.InventoryUnavailable = true },
-		"node_observations_stale":               func(s *ConnectionBudgetSnapshot) { s.Bindings[0].StaleNodes = 1 },
-		"auxiliary_connections_unmodeled":       func(s *ConnectionBudgetSnapshot) { s.Bindings[0].Tasks = 1 },
-		"binding_transition":                    func(s *ConnectionBudgetSnapshot) { s.Bindings[0].State = "retiring" },
-		"multiple_runtime_bindings":             func(s *ConnectionBudgetSnapshot) { s.Bindings = append(s.Bindings, s.Bindings[0]) },
-		"inventory_invalid":                     func(s *ConnectionBudgetSnapshot) { s.Bindings[0].Residents = -1 },
+		"native_replication_connections_unmodeled": func(s *ConnectionBudgetSnapshot) { s.NativeReplication = true },
+		"capacity_unverified":                      func(s *ConnectionBudgetSnapshot) { s.Capacity = nil },
+		"runtime_pool_configuration_unverified":    func(s *ConnectionBudgetSnapshot) { s.ModelsVerified = false },
+		"external_consumers_unobserved":            func(s *ConnectionBudgetSnapshot) { s.OtherConsumersCovered = false },
+		"inventory_stale":                          func(s *ConnectionBudgetSnapshot) { s.CheckedAt = s.CheckedAt.Add(-time.Hour) },
+		"database_not_ready":                       func(s *ConnectionBudgetSnapshot) { s.DatabaseState = "updating" },
+		"inventory_truncated":                      func(s *ConnectionBudgetSnapshot) { s.Truncated = true },
+		"runtime_inventory_unavailable":            func(s *ConnectionBudgetSnapshot) { s.InventoryUnavailable = true },
+		"node_observations_stale":                  func(s *ConnectionBudgetSnapshot) { s.Bindings[0].StaleNodes = 1 },
+		"auxiliary_connections_unmodeled":          func(s *ConnectionBudgetSnapshot) { s.Bindings[0].Tasks = 1 },
+		"binding_transition":                       func(s *ConnectionBudgetSnapshot) { s.Bindings[0].State = "retiring" },
+		"multiple_runtime_bindings":                func(s *ConnectionBudgetSnapshot) { s.Bindings = append(s.Bindings, s.Bindings[0]) },
+		"inventory_invalid":                        func(s *ConnectionBudgetSnapshot) { s.Bindings[0].Residents = -1 },
 	}
 	for reason, change := range cases {
 		t.Run(reason, func(t *testing.T) {

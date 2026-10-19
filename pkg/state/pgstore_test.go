@@ -1925,8 +1925,8 @@ func TestPg_ComputeNodes_UsedMB_SumsLiveInstancesOnly(t *testing.T) {
 
 	// Unknown node → 0 (COALESCE wraps the aggregate in the SELECT). The nil
 	// UUID is never a node id and is rejected, so use a well-formed stranger.
-	unknown := uuid.NewString()
-	gotU, err := s.ComputeNodeUsedMB(ctx, unknown)
+	unknownNodeID := uuid.NewString()
+	gotU, err := s.ComputeNodeUsedMB(ctx, unknownNodeID)
 	if err != nil {
 		t.Fatalf("ComputeNodeUsedMB(unknown): %v", err)
 	}
@@ -1934,15 +1934,15 @@ func TestPg_ComputeNodes_UsedMB_SumsLiveInstancesOnly(t *testing.T) {
 		t.Errorf("ComputeNodeUsedMB(unknown)=%d, want 0", gotU)
 	}
 
-	cpu, err := s.ComputeNodeUsedCPUMillicoresByNode(ctx, []string{nodeID, unknown})
+	cpu, err := s.ComputeNodeUsedCPUMillicoresByNode(ctx, []string{nodeID, unknownNodeID})
 	if err != nil {
 		t.Fatalf("ComputeNodeUsedCPUMillicoresByNode: %v", err)
 	}
 	if cpu[nodeID] != 5*api.DefaultAppCPUMillicores {
 		t.Errorf("used CPU for live instances = %d, want %d", cpu[nodeID], 5*api.DefaultAppCPUMillicores)
 	}
-	if cpu[unknown] != 0 {
-		t.Errorf("used CPU for unknown node = %d, want 0", cpu[unknown])
+	if cpu[unknownNodeID] != 0 {
+		t.Errorf("used CPU for unknown node = %d, want 0", cpu[unknownNodeID])
 	}
 }
 

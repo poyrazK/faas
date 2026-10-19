@@ -95,6 +95,8 @@ time, task execution latency nor continuous eligibility. Invalid/future timestam
    `admissions_total{outcome="unknown"}` increase also needs code/store contract
    investigation; it cannot establish a successful admission.
 
+## Recover safely
+
 Do not rewrite cursors/timestamps, delete occurrence history, replay customer
 commands, bypass account/overlap/deadline policy or force an exclusive lease.
 Resume through normal scheduler recovery after correcting the cause. Frontend,

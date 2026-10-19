@@ -263,7 +263,7 @@ func (s *BindingService) Reconcile(ctx context.Context, accountID, bindingID str
 
 	credentialRequest := bindingCredentialRequest(binding, databaseDataResource(database))
 	providerContext, cancel := context.WithTimeout(ctx, s.providerTimeout)
-	material, err := backend.Provider.IssueCredentials(providerContext, credentialRequest)
+	material, err := issueAdmittedCredentials(providerContext, backend.Provider, credentialRequest)
 	cancel()
 	if err != nil {
 		return Binding{}, s.releaseProviderError(ctx, binding, BindingStateFailed, "credential_issue", err)
@@ -455,6 +455,7 @@ func bindingCredentialRequestForGeneration(binding Binding, providerResourceID s
 	identityKey := bindingCredentialIdentity(binding)
 	return CredentialRequest{
 		ProviderResourceID: providerResourceID,
+		ConnectionLimit:    binding.ConnectionLimit,
 		BindingID:          binding.ID,
 		IdentityKey:        identityKey,
 		Access:             binding.Access,
@@ -465,6 +466,17 @@ func bindingCredentialRequestForGeneration(binding Binding, providerResourceID s
 func bindingCredentialIdentity(binding Binding) string {
 	sum := sha256.Sum256([]byte(binding.ID + "\x00" + strconv.FormatInt(binding.CredentialGeneration, 10)))
 	return "gregale-binding-" + hex.EncodeToString(sum[:20])
+}
+
+func issueAdmittedCredentials(ctx context.Context, provider Provider, request CredentialRequest) (CredentialMaterial, error) {
+	if request.ConnectionLimit == 0 {
+		return provider.IssueCredentials(ctx, request)
+	}
+	bounded, ok := provider.(BoundedCredentialProvider)
+	if !ok {
+		return CredentialMaterial{}, ErrUnsupported
+	}
+	return bounded.IssueBoundedCredentials(ctx, request)
 }
 
 func clearCredentialMaterial(material *CredentialMaterial) {
