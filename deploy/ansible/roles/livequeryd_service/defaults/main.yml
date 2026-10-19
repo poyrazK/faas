@@ -1,0 +1,66 @@
+---
+# Live queries (ADR-20261016151947): the hub for one managed database. This
+# role is included only when faas_livequeryd_managed=true, so an unconfigured
+# hub cannot turn an unrelated control-plane bootstrap into a crash loop.
+# faas_livequeryd_enabled=false stops the hub and removes its configuration.
+faas_livequeryd_enabled: true
+
+# The database this hub serves: its ID as seals and live_hub_url name it.
+faas_livequeryd_database_id: ""
+
+# Controller-local secret files. Each is copied to /etc/faas/secrets/livequeryd/
+# as 0400 root:root and reaches the hub as a systemd credential, never on its
+# command line:
+# - the database connection string; its role needs REPLICATION, and superuser
+#   (or event-trigger rights) for the schema-change log;
+faas_livequeryd_database_url_src: ""
+# - a read-only control-plane connection string, where the database's live
+#   keys are read;
+faas_livequeryd_keys_dsn_src: ""
+# - the age identity that opens those keys. apid seals each live secret to its
+#   recipient (faas_livequeryd_keys_recipient_src).
+faas_livequeryd_keys_identity_src: ""
+
+# The age recipient (public key) paired with the identity above. The role gives
+# it to apid as FAAS_APID_LIVE_KEY_RECIPIENT_FILE; without it apid answers
+# live_queries_unavailable.
+faas_livequeryd_keys_recipient_src: ""
+
+# FAAS_LIVE_QUERIES_ACCOUNTS for apid: comma-separated account UUIDs that see
+# live queries, or "*" for every account. Empty keeps them hidden.
+faas_live_queries_accounts: ""
+
+faas_livequeryd_slot: gregale_live
+faas_livequeryd_publication: gregale_live
+# Install the schema-change log (event triggers) and create the publication.
+faas_livequeryd_install: true
+faas_livequeryd_create_publication: true
+
+# realtimed reaches the hub here. The nftables role opens the port to
+# faas_compute_allowed_cidrs only. A non-loopback listener requires TLS: a
+# server certificate and the CA that signed realtimed's client certificates.
+faas_livequeryd_listen: "0.0.0.0:9480"
+faas_livequeryd_tls_cert: /etc/faas/tls/livequeryd/server.crt
+faas_livequeryd_tls_key: /etc/faas/tls/livequeryd/server.key
+faas_livequeryd_client_ca: /etc/faas/tls/ca/ca.crt
+# Optional controller-local sources for the files above; when empty the role
+# requires them to exist on the host already.
+faas_livequeryd_tls_cert_src: ""
+faas_livequeryd_tls_key_src: ""
+
+# Loopback metrics, /readyz and /healthz.
+faas_livequeryd_metrics_listen: "127.0.0.1:9471"
+
+# realtimed carries every client of a database over one connection, so the
+# per-connection limit is the database's subscription limit.
+faas_livequeryd_max_per_connection: 10000
+
+# Scale to zero: release the database after this long with nothing to apply
+# (for example "5m"); empty never releases. Releasing needs a way to learn the
+# database runs again: "neon" polls the Neon API for the endpoint's compute.
+faas_livequeryd_release_after: ""
+faas_livequeryd_awake: ""
+faas_livequeryd_awake_every: 5s
+faas_livequeryd_neon_api_key_src: ""
+faas_livequeryd_neon_project: ""
+faas_livequeryd_neon_endpoint: ""

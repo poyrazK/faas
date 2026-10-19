@@ -30,6 +30,7 @@ import (
 
 var (
 	databaseURL       = flag.String("database-url", "", "PostgreSQL connection string; the role needs REPLICATION, and superuser to install the schema-change log")
+	databaseURLFile   = flag.String("database-url-file", "", "file holding the -database-url connection string, which keeps its password out of the process list")
 	databaseID        = flag.String("database-id", "", "the database ID seals name")
 	slotName          = flag.String("slot", "gregale_live", "logical replication slot")
 	publication       = flag.String("publication", "gregale_live", "publication the slot decodes")
@@ -57,10 +58,11 @@ func main() {
 // host with the parser and the memory it needs. -role all runs both in one
 // process.
 func run(ctx context.Context, log *slog.Logger) error {
-	if *databaseURL == "" {
-		return errors.New("livequeryd: -database-url is required")
+	dsn, err := databaseDSN()
+	if err != nil {
+		return err
 	}
-	pool, err := pgxpool.New(ctx, *databaseURL)
+	pool, err := pgxpool.New(ctx, dsn)
 	if err != nil {
 		return fmt.Errorf("livequeryd: connect: %w", err)
 	}
@@ -74,6 +76,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 		if err != nil {
 			return err
 		}
+		defer wire.NotifyReadyWhen(ctx, func() bool { return true })()
+		defer wire.StartWatchdog(ctx, wire.NewLiveness(), nil, log)()
 		<-ctx.Done()
 		shutdown, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
@@ -97,6 +101,10 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}
 	ops := wire.NewOpsMetrics("livequeryd")
 	metrics := liveserver.NewMetrics(ops.Registry())
+	readyProbe := &wire.ReadyzProbe{}
+	readySignal := readyProbe.Register()
+	readyProbe.SetReadyObserver(func(ready bool, reason string) { ops.MarkReady("livequeryd", ready, reason) })
+	defer readyProbe.Drain("livequeryd", log)
 	if *install {
 		if err := livequery.Install(ctx, pool); err != nil {
 			return err
@@ -107,7 +115,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 			return err
 		}
 	}
-	capture, err := livequery.OpenSlot(ctx, *databaseURL, *slotName, *publication)
+	capture, err := livequery.OpenSlot(ctx, dsn, *slotName, *publication)
 	if err != nil {
 		return err
 	}
@@ -135,7 +143,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		Pool:         pool,
 		ReleaseAfter: *releaseAfter, Awake: awake, AwakeEvery: *awakeEvery,
 		Reconnect: func(ctx context.Context) (*livequery.Capture, error) {
-			return livequery.OpenSlot(ctx, *databaseURL, *slotName, *publication)
+			return livequery.OpenSlot(ctx, dsn, *slotName, *publication)
 		},
 	})
 
@@ -172,7 +180,10 @@ func run(ctx context.Context, log *slog.Logger) error {
 		servers = append(servers, srv)
 	}
 	if *metricsListen != "" {
-		srv, err := serve(*metricsListen, ops.Handler(), log)
+		mux := http.NewServeMux()
+		mux.Handle("GET /metrics", ops.Handler())
+		wire.ControlMuxLite(mux, readyProbe.ReadyFunc(), readyProbe.ReasonFunc())
+		srv, err := serve(*metricsListen, mux, log)
 		if err != nil {
 			return err
 		}
@@ -192,7 +203,34 @@ func run(ctx context.Context, log *slog.Logger) error {
 		servers = append(servers, srv)
 		log.Warn("livequeryd: serving live frames without realtimed; development only", "addr", *devListen)
 	}
+	// Ready once every listener is up: a released hub still serves the
+	// results it holds, so releasing does not make it unready.
+	readySignal.Set(true, "")
+	defer wire.NotifyReadyWhen(ctx, readyProbe.ReadyFunc())()
+	defer wire.StartWatchdog(ctx, wire.NewLiveness(), ops, log)()
 	return hub.Run(ctx)
+}
+
+// databaseDSN returns the database connection string from -database-url or
+// -database-url-file.
+func databaseDSN() (string, error) {
+	switch {
+	case *databaseURL != "" && *databaseURLFile != "":
+		return "", errors.New("livequeryd: -database-url and -database-url-file are exclusive")
+	case *databaseURL != "":
+		return *databaseURL, nil
+	case *databaseURLFile != "":
+		data, err := os.ReadFile(*databaseURLFile) //nolint:forbidigo // operator-provisioned file named by a flag
+		if err != nil {
+			return "", fmt.Errorf("livequeryd: read -database-url-file: %w", err)
+		}
+		if dsn := strings.TrimSpace(string(data)); dsn != "" {
+			return dsn, nil
+		}
+		return "", errors.New("livequeryd: -database-url-file is empty")
+	default:
+		return "", errors.New("livequeryd: -database-url or -database-url-file is required")
+	}
 }
 
 // openEngine restores the engine from its checkpoint, or starts a new one.

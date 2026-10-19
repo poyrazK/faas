@@ -142,6 +142,11 @@ prom_targets:
     port: 9096
     box_roles: [control-plane]
     enabled: "{{ faas_object_storage_gateway_managed | default(false) | bool }}"
+  - job: livequeryd
+    host: 127.0.0.1
+    port: 9471
+    box_roles: [control-plane, single-box]
+    enabled: "{{ faas_livequeryd_managed | default(false) | bool }}"
   - job: prometheus
     host: 127.0.0.1
     port: 9095

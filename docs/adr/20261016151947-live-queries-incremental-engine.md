@@ -1031,6 +1031,19 @@ Phase 0 did not cover:
       concurrent writers (`LIVEQUERY_ORACLE_RELEASE_PERCENT`, default 8):
       8 seeds with 12 cycles, some on a lost slot, and 0 divergences.
     - Neon probe states and flag validation.
+  - **Deployment** (2026-10-19). The `livequeryd_service` Ansible role runs
+    one hub per control plane:
+    - The unit is an `OptionalRegistry` entry, generated like s3-gatewayd's.
+    - The role's drop-in holds the database's flags and loads its secrets
+      as systemd credentials.
+    - The role wires apid's recipient and account gate.
+    - nftables opens the hub port to compute nodes.
+    - cd-controlplane restarts the hub only where it is configured.
+    - livequeryd gained `-database-url-file`, `/readyz`, systemd readiness
+      and watchdog pings, and serves `/<database_id>/live`.
+
+    A backend's `live_hub_url` still names one hub, so each backend can
+    serve one live database until livequeryd hosts several.
   - **Unverified on Neon:** logical replication on the project, event
     triggers for the schema-change log, and slot persistence across a
     suspend.

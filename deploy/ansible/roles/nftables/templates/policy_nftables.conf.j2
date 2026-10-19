@@ -48,6 +48,11 @@ table inet faas {
     ip saddr {{ cidr }} tcp dport { {{ faas_compute_allowed_ports | join(', ') }} } accept comment "faas control services from compute"
 {% endfor -%}
 {% endif -%}
+{% if (faas_livequeryd_managed | default(false) | string | lower) in ["true", "yes", "on", "1"] and faas_compute_allowed_cidrs is defined and faas_compute_allowed_cidrs -%}
+{% for cidr in faas_compute_allowed_cidrs -%}
+    ip saddr {{ cidr }} tcp dport {{ (faas_livequeryd_listen | default('0.0.0.0:9480')).rsplit(':', 1)[1] }} accept comment "live-query hub from realtimed (ADR-20261016151947)"
+{% endfor -%}
+{% endif -%}
 {% if (faas_edge_on_compute_nodes | default(false) | string | lower) in ["true", "yes", "on", "1"] and faas_edge_private_listen_addr | default('') and faas_compute_allowed_cidrs is defined and faas_compute_allowed_cidrs -%}
 {% for cidr in faas_compute_allowed_cidrs -%}
     ip saddr {{ cidr }} tcp dport {{ faas_edge_private_listen_addr.rsplit(':', 1)[1] }} accept comment "faas app edge forwards from compute (ADR-1343)"
