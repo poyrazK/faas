@@ -160,8 +160,10 @@ func computeAcquire(tx financialComputeTxn, r financial.ComputeRequest) (financi
 	l := financial.ComputeLease{ID: r.LeaseID, Fence: r.Fence, RequestID: r.RequestID, Revision: 1, RequestOperation: "acquire", RateMillicents: api.OverageMillicentsPerGBHour, RateQuantity: api.SecondsPerGBHour, AccountID: r.AccountID, AppID: r.AppID, JobID: r.JobID, JobRunID: r.JobRunID, JobTaskIndex: r.JobTaskIndex, InstanceID: r.InstanceID, NodeID: r.NodeID, Incarnation: r.Incarnation, BillableMB: r.BillableMB, PeriodStart: financial.ComputeMonth(now), StartedAt: now, GrantedAt: tx.clock(), RunUntil: now.Add(api.FinancialComputeLeaseDuration), FundedUntil: now.Add(api.FinancialComputeLeaseDuration + api.FinancialComputeTeardownReserve), Strict: len(policies) > 0}
 	l.AttemptID = r.AttemptID
 	l.Fenced = r.Fenced
-	if !r.Fenced {
-		l.Strict = true
+	// Only funding needs a persisted attempt identity. An unbudgeted boot is
+	// still registered for activation, but a legacy path without a wake ID
+	// must not fail for customers who never set a strict cap.
+	if !r.Fenced && l.Strict {
 		l.Denied = true
 		l.DenialReason = "attempt_identity_missing"
 		l.RunUntil = l.StartedAt

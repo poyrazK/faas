@@ -55,24 +55,37 @@ func FinancialBudgetStopsForDeployment(ctx context.Context, store Store, app App
 }
 
 func CheckFinancialBudgetAdmission(ctx context.Context, store Store, app App, deploymentID string, now time.Time) error {
-	if compute, ok := store.(FinancialComputeStore); ok {
-		policies, err := compute.FinancialComputePolicies(ctx, app.AccountID, app.ID)
-		if err != nil {
-			return errors.Join(err, api.ErrCapacity("compute budget admission unavailable"))
+	if err := checkFinancialComputeHold(ctx, store, app, now); err != nil {
+		return err
+	}
+	return checkFinancialBudgetStops(ctx, store, app, deploymentID, now)
+}
+
+func checkFinancialComputeHold(ctx context.Context, store Store, app App, now time.Time) error {
+	compute, ok := store.(FinancialComputeStore)
+	if !ok {
+		return nil
+	}
+	policies, err := compute.FinancialComputePolicies(ctx, app.AccountID, app.ID)
+	if err != nil {
+		return errors.Join(err, api.ErrCapacity("compute budget admission unavailable"))
+	}
+	for _, p := range policies {
+		if !p.Spec.Enabled || !financial.StrictCompute(p.Spec) {
+			continue
 		}
-		for _, p := range policies {
-			if !p.Spec.Enabled || !financial.StrictCompute(p.Spec) {
-				continue
-			}
-			balance, err := compute.FinancialComputeBalance(ctx, p, now)
-			if err != nil {
-				return errors.Join(err, api.ErrCapacity("compute budget authority unavailable"))
-			}
-			if balance.Held {
-				return errors.Join(ErrFinancialBudgetHeld, api.NewProblem(402, "financial_budget_held", "Compute budget held", "A strict compute budget cannot fund another execution window. Change its policy or wait for its configured UTC reset."))
-			}
+		balance, err := compute.FinancialComputeBalance(ctx, p, now)
+		if err != nil {
+			return errors.Join(err, api.ErrCapacity("compute budget authority unavailable"))
+		}
+		if balance.Held {
+			return errors.Join(ErrFinancialBudgetHeld, api.NewProblem(402, "financial_budget_held", "Compute budget held", "A strict compute budget cannot fund another execution window. Change its policy or wait for its configured UTC reset."))
 		}
 	}
+	return nil
+}
+
+func checkFinancialBudgetStops(ctx context.Context, store Store, app App, deploymentID string, now time.Time) error {
 	stops, err := FinancialBudgetStopsForDeployment(ctx, store, app, deploymentID, now)
 	if err != nil {
 		return errors.Join(err, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity,
@@ -86,22 +99,26 @@ func CheckFinancialBudgetAdmission(ctx context.Context, store Store, app App, de
 
 // The scope comes from the authenticated routing/dispatch selection. A runtime
 // environment is resolved through its deployment, never by matching its name to
-// a budget's environment UUID.
+// a budget's environment UUID. Policies and stops are each read once.
 func CheckFinancialBudgetAdmissionForScope(ctx context.Context, store Store, app App, scope, deploymentID string, now time.Time) error {
-	if err := CheckFinancialBudgetAdmission(ctx, store, app, "", now); err != nil || app.PreviewOfSlug == "" {
+	if err := checkFinancialComputeHold(ctx, store, app, now); err != nil || app.PreviewOfSlug == "" {
 		return err
 	}
 	if deploymentID == "" {
 		dep, err := ResolveEnvironmentDeployment(ctx, store, app.ID, scope)
-		if errors.Is(err, ErrNotFound) {
-			return nil // No runtime exists to admit.
-		}
-		if err != nil {
+		if err != nil && !errors.Is(err, ErrNotFound) {
+			// An account- or app-scoped stop still answers before the
+			// unresolved environment does.
+			if stopErr := checkFinancialBudgetStops(ctx, store, app, "", now); stopErr != nil {
+				return stopErr
+			}
 			return err
 		}
-		deploymentID = dep.ID
+		if err == nil {
+			deploymentID = dep.ID
+		}
 	}
-	return CheckFinancialBudgetAdmission(ctx, store, app, deploymentID, now)
+	return checkFinancialBudgetStops(ctx, store, app, deploymentID, now)
 }
 
 // MatchFinancialBudgetEnvironment compares retained runtime ownership. An

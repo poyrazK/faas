@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/financial"
+	"github.com/onebox-faas/faas/pkg/netns"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
@@ -32,9 +33,16 @@ type localComputeLease struct {
 	lease          financial.ComputeLease
 	request        financial.ComputeRequest
 	deadline       time.Time // derived from a monotonic request-start time
-	cancelBoot     context.CancelFunc
-	done           chan struct{}
-	once           sync.Once
+	// pendingRenew is a renewal whose outcome is unknown. It is replayed with
+	// the same request identity, so a lost committed reply is adopted.
+	pendingRenew   *financial.ComputeRequest
+	pendingStarted time.Time
+	// cleaned marks an unbudgeted lease whose physical cleanup completed but
+	// whose settlement failed; recovery or the next wake settles it.
+	cleaned    bool
+	cancelBoot context.CancelFunc
+	done       chan struct{}
+	once       sync.Once
 }
 
 // Configure only after native recovery and durable node registration. The
@@ -60,7 +68,10 @@ func (m *Manager) beginFinancialCompute(ctx context.Context, req WakeRequest, fl
 	attempt := fields.WakeID
 	fenced := uuid.Validate(attempt) == nil
 	if !fenced {
-		attempt = uuid.NewSHA1(uuid.NameSpaceOID, []byte("financial-unfenced:"+req.Instance)).String()
+		// Without a persisted wake ID there is no replay identity to derive.
+		// The ledger only grants such an attempt when no strict cap applies,
+		// and a fresh ID keeps a later wake of a reused instance unfenced.
+		attempt = uuid.NewString()
 	}
 	r := financial.ComputeRequest{AttemptID: attempt, Fenced: fenced, LeaseID: uuid.NewString(), Fence: uuid.NewString(), RequestID: uuid.NewString(), AccountID: req.AccountID, AppID: req.AppID, InstanceID: req.Instance, NodeID: m.computeNode, Incarnation: m.computeIncarnation, BillableMB: api.BillableRAMMBWithSidecars(req.MemSizeMiB, mbs)}
 	return m.beginComputeRequest(ctx, r, flight)
@@ -77,9 +88,16 @@ func (m *Manager) beginComputeRequest(ctx context.Context, r financial.ComputeRe
 	if m.computeLeases == nil {
 		m.computeLeases = map[string]*localComputeLease{}
 	}
-	if m.computeLeases[r.InstanceID] != nil {
+	if previous := m.computeLeases[r.InstanceID]; previous != nil {
 		m.mu.Unlock()
-		return nil, financial.ErrComputeUnavailable
+		if !previous.isCleaned() || m.settleFinancialCompute(ctx, r.InstanceID) != nil {
+			return nil, financial.ErrComputeUnavailable
+		}
+		m.mu.Lock()
+		if m.computeLeases[r.InstanceID] != nil {
+			m.mu.Unlock()
+			return nil, financial.ErrComputeUnavailable
+		}
 	}
 	m.computeLeases[r.InstanceID] = local
 	m.mu.Unlock()
@@ -117,6 +135,30 @@ func (m *Manager) beginComputeRequest(ctx context.Context, r financial.ComputeRe
 	return local, nil
 }
 
+func (l *localComputeLease) egressFunded() bool {
+	if l == nil {
+		return false
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.lease.EgressFunded
+}
+
+// applyFinancialEgress installs the funded public-byte budget on a new
+// namespace and records the grant sequence it reflects.
+func (l *localComputeLease) applyFinancialEgress(nc *netns.Config) {
+	if l == nil {
+		return
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.lease.EgressFunded {
+		nc.EgressBudgetBytes = l.lease.EgressGrant
+		nc.EgressBudgetUntil = l.lease.RunUntil.Add(-2 * api.FinancialComputeAuthorityTimeout)
+		l.egressApplied = l.lease.EgressSequence
+	}
+}
+
 func computeRequest(l financial.ComputeLease) financial.ComputeRequest {
 	return financial.ComputeRequest{LeaseID: l.ID, Fence: l.Fence, RequestID: uuid.NewString(), Revision: l.Revision, AccountID: l.AccountID, AppID: l.AppID, JobID: l.JobID, JobRunID: l.JobRunID, JobTaskIndex: l.JobTaskIndex, InstanceID: l.InstanceID, NodeID: l.NodeID, Incarnation: l.Incarnation, BillableMB: l.BillableMB}
 }
@@ -128,7 +170,11 @@ func (m *Manager) watchFinancialCompute(ctx context.Context, local *localCompute
 		interval = api.FinancialEgressPollInterval
 	}
 	local.mu.Unlock()
-	lastRenew := time.Now()
+	// Ticks drift against a period equal to the renewal interval; half a
+	// tick of slack keeps a 20 s renewal from skipping every other tick.
+	renewEvery := api.FinancialComputeRenewInterval - interval/2
+	nextRenew := time.Now().Add(renewEvery)
+	var retryAt time.Time
 	tick := time.NewTicker(interval)
 	defer tick.Stop()
 	local.mu.Lock()
@@ -151,14 +197,21 @@ func (m *Manager) watchFinancialCompute(ctx context.Context, local *localCompute
 				renew = false
 				continue
 			}
-			if !refill && time.Since(lastRenew) < api.FinancialComputeRenewInterval {
+			now := time.Now()
+			if now.Before(retryAt) || !refill && now.Before(nextRenew) {
 				continue
 			}
-			if !m.renewFinancialComputeCredit(ctx, local, refill) {
+			renewed, stop := m.renewFinancialComputeCredit(ctx, local, refill)
+			if stop {
 				renew = false
+			}
+			if !renewed {
+				// A transient failure keeps the last deadline; retry
+				// before it, without polling the database every tick.
+				retryAt = time.Now().Add(api.FinancialComputeAuthorityTimeout)
 				continue
 			}
-			lastRenew = time.Now()
+			nextRenew = time.Now().Add(renewEvery)
 			local.mu.Lock()
 			deadline = local.deadline
 			local.mu.Unlock()
@@ -193,43 +246,59 @@ func (m *Manager) watchFinancialCompute(ctx context.Context, local *localCompute
 	}
 }
 
-func (m *Manager) renewFinancialComputeCredit(ctx context.Context, local *localComputeLease, refill bool) bool {
+// renewFinancialComputeCredit reports whether the local deadline moved, and
+// whether renewal must stop for this lease. Denial, fencing and broken egress
+// accounting are final; a failed or lost RPC is retried by the caller.
+func (m *Manager) renewFinancialComputeCredit(ctx context.Context, local *localComputeLease, refill bool) (renewed, stop bool) {
 	local.mu.Lock()
 	defer local.mu.Unlock()
 	select {
 	case <-local.done:
-		return false
+		return false, true
 	default:
 	}
 	if local.egressBroken || !time.Now().Add(api.FinancialComputeRenewMargin).Before(local.deadline) {
-		return false
+		return false, true
 	}
 	r := computeRequest(local.lease)
 	r.EgressRefill = refill
 	started := time.Now()
+	if p := local.pendingRenew; p != nil {
+		// Replay the exact request: a fresh identity against a revision the
+		// lost reply already advanced would be fenced.
+		r, started = *p, local.pendingStarted
+	}
 	callCtx, cancel := context.WithTimeout(ctx, api.FinancialComputeAuthorityTimeout)
 	defer cancel()
 	l, err := m.computeAuthority.RenewFinancialCompute(callCtx, r)
 	if err != nil {
-		return false
+		if errors.Is(err, financial.ErrComputeBudget) || errors.Is(err, financial.ErrComputeFence) {
+			local.pendingRenew = nil
+			return false, true
+		}
+		local.pendingRenew, local.pendingStarted = &r, started
+		return false, false
 	}
+	local.pendingRenew = nil
+	old := local.lease
+	// Settlement needs the committed revision, even when the reply is late
+	// or the network helper outcome is uncertain.
+	local.lease = l
 	// A late DB commit may fund more time, but cannot revive local execution.
 	if !time.Now().Before(local.deadline) {
-		return false
+		return false, true
 	}
-	old := local.lease
-	local.lease = l // retain even when the network helper outcome is uncertain
 	if l.EgressFunded {
 		if !financialEgressClockFits(l, started) {
 			local.egressBroken = true
-			return false
+			return false, true
 		}
-		if !m.syncFinancialEgress(ctx, local, l, refill && l.EgressSequence > old.EgressSequence) {
-			return false
+		if !m.syncFinancialEgress(ctx, local, l, r.EgressRefill && l.EgressSequence > old.EgressSequence) {
+			return false, true
 		}
 	}
 	local.deadline = started.Add(l.RunUntil.Sub(l.GrantedAt))
-	return true
+	return true, false
 }
 
 // Pin both attempt identity and destruction under Manager.mu. A delayed timer
@@ -353,9 +422,13 @@ func (m *Manager) settleFinancialCompute(ctx context.Context, instance string) e
 	callCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), api.FinancialComputeAuthorityTimeout)
 	defer cancel()
 	l, err := m.computeAuthority.SettleFinancialCompute(callCtx, r)
+	if errors.Is(err, financial.ErrComputeFence) {
+		l, err = m.settleRefreshedFinancialCompute(callCtx, local)
+	}
 	if err != nil {
 		return err
 	}
+	local.pendingRenew = nil
 	local.lease = l
 	local.once.Do(func() { close(local.done) })
 	m.mu.Lock()
@@ -363,6 +436,59 @@ func (m *Manager) settleFinancialCompute(ctx context.Context, instance string) e
 		delete(m.computeLeases, instance)
 	}
 	m.mu.Unlock()
+	return nil
+}
+
+// A renewal whose reply was lost may have advanced the durable revision.
+// Physical absence is already confirmed and local.mu excludes this lease's
+// renewals, so settle the same receipt at its current revision.
+func (m *Manager) settleRefreshedFinancialCompute(ctx context.Context, local *localComputeLease) (financial.ComputeLease, error) {
+	old := local.lease
+	current, found, err := m.computeAuthority.FinancialComputeLease(ctx, old.AccountID, old.ID)
+	if err != nil {
+		return financial.ComputeLease{}, err
+	}
+	if !found || current.ID != old.ID || current.Fence != old.Fence || current.NodeID != old.NodeID || current.Incarnation != old.Incarnation || current.InstanceID != old.InstanceID || current.Revision < old.Revision {
+		return financial.ComputeLease{}, financial.ErrComputeFence
+	}
+	if current.SettledAt != nil {
+		return current, nil
+	}
+	if current.Revision == old.Revision {
+		return financial.ComputeLease{}, financial.ErrComputeFence
+	}
+	local.lease = current
+	return m.computeAuthority.SettleFinancialCompute(ctx, computeRequest(current))
+}
+
+func (l *localComputeLease) isCleaned() bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.cleaned
+}
+
+// settleCleanedFinancialCompute settles after confirmed physical cleanup. An
+// unbudgeted lease funds nothing, so a failed settlement must not hold the
+// slot; its local receipt stays for the recovery loop or the next wake. A
+// strict or uncertain lease still retains capacity until settlement.
+func (m *Manager) settleCleanedFinancialCompute(ctx context.Context, instance string) error {
+	err := m.settleFinancialCompute(ctx, instance)
+	if err == nil {
+		return nil
+	}
+	m.mu.Lock()
+	local := m.computeLeases[instance]
+	m.mu.Unlock()
+	if local == nil {
+		return err
+	}
+	local.mu.Lock()
+	defer local.mu.Unlock()
+	if local.lease.Revision == 0 || local.lease.Strict || local.lease.SettledAt != nil {
+		return err
+	}
+	local.cleaned = true
+	m.log.Warn("financial compute settlement deferred for unbudgeted instance", "instance", instance, "err", err)
 	return nil
 }
 
@@ -394,9 +520,19 @@ func (m *Manager) RecoverFinancialComputeLease(ctx context.Context, l financial.
 	m.mu.Unlock()
 	if local != nil {
 		local.mu.Lock()
-		if local.lease.ID != "" && local.lease.ID != l.ID {
+		// An acquire whose reply was lost has no lease yet; its bound
+		// request still names the only durable receipt it may adopt.
+		id := local.lease.ID
+		if id == "" {
+			id = local.request.LeaseID
+		}
+		if id != l.ID {
 			local.mu.Unlock()
 			return financial.ErrComputeFence
+		}
+		if local.cleaned && flight == nil && !pending && !live {
+			local.mu.Unlock()
+			return m.settleFinancialCompute(ctx, l.InstanceID)
 		}
 		if flight != nil || (!pending && live && (!l.Strict || time.Now().Before(local.deadline))) {
 			local.mu.Unlock()

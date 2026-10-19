@@ -10807,7 +10807,10 @@ BEGIN
  IF NEW.status NOT IN ('queued','claimed') THEN RETURN NEW; END IF;
  SELECT account_id,job_id INTO target_account,target_job FROM job_runs WHERE id=NEW.run_id;
  IF target_account IS NULL THEN RETURN NEW; END IF;
- PERFORM financial_compute_require_job_support(target_account);
+ -- KEY SHARE conflicts with the FOR UPDATE that every policy and compute
+ -- transaction takes, but not with other task writers: a fan-out run's
+ -- claims serialize with activation, not with each other.
+ PERFORM 1 FROM accounts WHERE id=target_account FOR KEY SHARE;
  IF NEW.status!='claimed' THEN RETURN NEW; END IF;
  SELECT i.node_id,n.vmmd_incarnation,i.ram_mb INTO target_node,target_incarnation,target_ram FROM instances i
  JOIN jobs j ON j.id=i.job_id AND j.account_id=target_account

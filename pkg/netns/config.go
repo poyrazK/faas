@@ -3,6 +3,7 @@ package netns
 import (
 	"fmt"
 	"net/netip"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -341,6 +342,7 @@ func (c Config) SetupCommands() [][]string {
 		tap = append(tap, "user", strconv.Itoa(c.TapUID))
 	}
 
+	peerIntoNetns := cmd("ip", "link", "set", c.VethPeer, "netns", c.Netns)
 	cmds := [][]string{
 		// Namespace + loopback.
 		cmd("ip", "netns", "add", c.Netns),
@@ -349,7 +351,7 @@ func (c Config) SetupCommands() [][]string {
 		cmd("ip", "link", "add", c.VethHost, "type", "veth", "peer", "name", c.VethPeer),
 		cmd("ip", "link", "set", c.VethHost, "master", TenantBridge),
 		cmd("ip", "link", "set", c.VethHost, "up"),
-		cmd("ip", "link", "set", c.VethPeer, "netns", c.Netns),
+		peerIntoNetns,
 		// Lease IPs are reused with new veth MACs. Their bridge neighbor
 		// entries outlive veth teardown and can blackhole readiness traffic
 		// until ARP ages out. Invalidate only this lease before publishing it;
@@ -373,7 +375,8 @@ func (c Config) SetupCommands() [][]string {
 		cmds = append(cmds[:len(cmds)-1], c.EgressBudgetSegmentationCommands()...)
 		cmds = append(cmds, tapUp)
 		gate := c.EgressBudgetSetupCommands()
-		cmds = append(cmds[:6], append(gate, cmds[6:]...)...)
+		at := slices.IndexFunc(cmds, func(s []string) bool { return slices.Equal(s, peerIntoNetns) }) + 1
+		cmds = append(cmds[:at], append(gate, cmds[at:]...)...)
 	}
 	if c.PublicForwarding {
 		// The marked-socket host guard fixes output to this generation. Its

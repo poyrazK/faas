@@ -100,7 +100,7 @@ func (m *Manager) cleanup(ctx context.Context, lease Lease, nc netns.Config, wor
 		if err := v.confirmNativeCleanup(ctx, lease, nativeLeaseNetwork(lease)); err != nil {
 			return err
 		}
-		if err := m.settleFinancialCompute(ctx, lease.Instance); err != nil {
+		if err := m.settleCleanedFinancialCompute(ctx, lease.Instance); err != nil {
 			retained.failed = true
 			return err
 		}
@@ -120,7 +120,7 @@ func (m *Manager) cleanup(ctx context.Context, lease Lease, nc netns.Config, wor
 			return fmt.Errorf("cleanup %s: retire resource journal before release: %w", lease.Instance, err)
 		}
 	}
-	if err := m.settleFinancialCompute(ctx, lease.Instance); err != nil {
+	if err := m.settleCleanedFinancialCompute(ctx, lease.Instance); err != nil {
 		retained.failed = true
 		return err
 	}

@@ -3990,15 +3990,7 @@ func (m *Manager) BootJob(ctx context.Context, req JobBootRequest) (_ *Instance,
 	// (ADR-009, identical inner network world).
 	nc := netns.NewConfig(lease.Instance, lease.Netns, lease.VethHost, lease.VethPeer, lease.HostIP)
 	nc.PublicForwarding = m.nativeVMM() != nil
-	if computeLease != nil {
-		computeLease.mu.Lock()
-		if computeLease.lease.EgressFunded {
-			nc.EgressBudgetBytes = computeLease.lease.EgressGrant
-			nc.EgressBudgetUntil = computeLease.lease.RunUntil.Add(-2 * api.FinancialComputeAuthorityTimeout)
-			computeLease.egressApplied = computeLease.lease.EgressSequence
-		}
-		computeLease.mu.Unlock()
-	}
+	computeLease.applyFinancialEgress(&nc)
 	nc.TapUID = lease.UID
 	// Job VMs run tenant code with the same network policy as app
 	// instances: the plan's bandwidth cap, the conntrack cap and the
@@ -4327,7 +4319,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		}
 	}()
 
-	lease, preparedNetwork, err := m.acquireWakeNetwork(req) //nolint:contextcheck // Failed cache claims use bounded daemon-owned cleanup, independent of a canceled Wake RPC.
+	lease, preparedNetwork, err := m.acquireWakeNetwork(req, computeLease.egressFunded()) //nolint:contextcheck // Failed cache claims use bounded daemon-owned cleanup, independent of a canceled Wake RPC.
 	if err != nil {
 		return nil, fmt.Errorf("wake %s: acquire lease: %w", req.Instance, err)
 	}
@@ -4393,15 +4385,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		// never pass a tenant network plan to setup/teardown or host policy.
 		nc = netns.Config{Instance: lease.Instance}
 	}
-	if computeLease != nil {
-		computeLease.mu.Lock()
-		if computeLease.lease.EgressFunded {
-			nc.EgressBudgetBytes = computeLease.lease.EgressGrant
-			nc.EgressBudgetUntil = computeLease.lease.RunUntil.Add(-2 * api.FinancialComputeAuthorityTimeout)
-			computeLease.egressApplied = computeLease.lease.EgressSequence
-		}
-		computeLease.mu.Unlock()
-	}
+	computeLease.applyFinancialEgress(&nc)
 	nc.TapUID = lease.UID
 	nc.EgressMbit = req.EgressMbit
 	nc.GuestAppPort = req.Port

@@ -388,8 +388,10 @@ func (p *preparedNetworkPool) discard(e preparedNetworkEntry) {
 	}
 }
 
-func (m *Manager) acquireWakeNetwork(req WakeRequest) (Lease, *preparedNetworkEntry, error) {
-	if p := m.preparedNetworks; p != nil {
+// strictEgress skips the pool: a prewarmed namespace has already sent
+// unfinanced control traffic, so a byte-funded attempt builds its own.
+func (m *Manager) acquireWakeNetwork(req WakeRequest, strictEgress bool) (Lease, *preparedNetworkEntry, error) {
+	if p := m.preparedNetworks; p != nil && !strictEgress {
 		if policy, ok := m.preparedPolicy(req); ok {
 			if entry := p.claim(req.Instance, policy); entry != nil {
 				return entry.lease, entry, nil

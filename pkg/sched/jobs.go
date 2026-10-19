@@ -295,7 +295,7 @@ func (e *Engine) wakeJobOnce(ctx context.Context, accountID, runID string, taskI
 	if ciOwned {
 		ciProof, err = e.ciJobProof(ctx, runID, instanceID, tok)
 		if err != nil {
-			e.rollbackJobAdmission(ctx, runID, taskIndex, instanceID, tok, task.Attempt, 0, "ci_runtime_refused", "CI runtime authorization was refused")
+			e.rollbackUnbootedJobAdmission(ctx, runID, taskIndex, instanceID, tok, task.Attempt, 0, "ci_runtime_refused", "CI runtime authorization was refused")
 			return JobWakeResult{}, err
 		}
 	}
@@ -304,7 +304,7 @@ func (e *Engine) wakeJobOnce(ctx context.Context, accountID, runID string, taskI
 	if adapter, ok := e.store.(state.JobOperationStore); ok {
 		operationEnv, err = adapter.OperationJobDispatchEnv(ctx, runID, instanceID, string(tok))
 		if err != nil {
-			e.rollbackJobAdmission(ctx, runID, taskIndex, instanceID, tok, task.Attempt, 0, "job_operation_context_invalid", "operation execution context unavailable")
+			e.rollbackUnbootedJobAdmission(ctx, runID, taskIndex, instanceID, tok, task.Attempt, 0, "job_operation_context_invalid", "operation execution context unavailable")
 			return JobWakeResult{}, err
 		}
 	}
@@ -333,7 +333,7 @@ func (e *Engine) wakeJobOnce(ctx context.Context, accountID, runID string, taskI
 	}
 	env, err := mergeJobEnvOverrides(jobEnv, runEnv)
 	if err != nil {
-		e.rollbackJobAdmission(ctx, runID, taskIndex, instanceID, tok, task.Attempt, 0, "job_env_invalid", "job environment overrides are invalid; update the job or run")
+		e.rollbackUnbootedJobAdmission(ctx, runID, taskIndex, instanceID, tok, task.Attempt, 0, "job_env_invalid", "job environment overrides are invalid; update the job or run")
 		return JobWakeResult{}, fmt.Errorf("sched: WakeJob decode env overrides: %w", err)
 	}
 	scrubCIJobEnv(env)
@@ -379,7 +379,7 @@ func (e *Engine) wakeJobOnce(ctx context.Context, accountID, runID string, taskI
 	})
 	if !canReadWorkloadIntent {
 		if job.Kind == "recurring" {
-			e.rollbackJobAdmission(ctx, runID, taskIndex, instanceID, tok, task.Attempt,
+			e.rollbackUnbootedJobAdmission(ctx, runID, taskIndex, instanceID, tok, task.Attempt,
 				effectiveJobRetryMax(job, run), "job_gitops_intent_reader_unavailable",
 				"managed job runtime intent could not be verified; retry after the scheduler is updated")
 			return JobWakeResult{}, fmt.Errorf("sched: WakeJob requires workload intent lookup for recurring jobs")
@@ -387,21 +387,21 @@ func (e *Engine) wakeJobOnce(ctx context.Context, accountID, runID string, taskI
 	} else {
 		intent, intentErr := intentReader.EnvironmentWorkloadIntentByJob(ctx, accountID, job.ID)
 		if intentErr != nil && !errors.Is(intentErr, state.ErrNotFound) {
-			e.rollbackJobAdmission(ctx, runID, taskIndex, instanceID, tok, task.Attempt,
+			e.rollbackUnbootedJobAdmission(ctx, runID, taskIndex, instanceID, tok, task.Attempt,
 				effectiveJobRetryMax(job, run), "job_gitops_intent_lookup_failed",
 				"managed job runtime intent could not be verified; retry the run")
 			return JobWakeResult{}, fmt.Errorf("sched: WakeJob workload intent: %w", intentErr)
 		}
 		if intentErr == nil {
 			if !environmentGitOpsJobBindingIntentMatches(job, run, accountID, intent) {
-				e.rollbackJobAdmission(ctx, runID, taskIndex, instanceID, tok, task.Attempt,
+				e.rollbackUnbootedJobAdmission(ctx, runID, taskIndex, instanceID, tok, task.Attempt,
 					effectiveJobRetryMax(job, run), "job_gitops_binding_contract_mismatch",
 					"managed job service bindings no longer match the reviewed workload; reconcile the environment")
 				return JobWakeResult{}, fmt.Errorf("sched: WakeJob managed service binding contract mismatch")
 			}
 			inputs, sealedDelivery, inputErr := e.prepareEnvironmentGitOpsJobRuntimeInputs(ctx, accountID, intent)
 			if inputErr != nil {
-				e.rollbackJobAdmission(ctx, runID, taskIndex, instanceID, tok, task.Attempt,
+				e.rollbackUnbootedJobAdmission(ctx, runID, taskIndex, instanceID, tok, task.Attempt,
 					effectiveJobRetryMax(job, run), "job_gitops_runtime_inputs_invalid",
 					"managed Job configuration or secret references no longer match the reviewed workload")
 				return JobWakeResult{}, fmt.Errorf("sched: WakeJob managed runtime inputs: %w", inputErr)
@@ -415,7 +415,7 @@ func (e *Engine) wakeJobOnce(ctx context.Context, accountID, runID string, taskI
 				ReleaseJobStart(context.Context, JobStartSpec) error
 			})
 			if !canRelease {
-				e.rollbackJobAdmission(ctx, runID, taskIndex, instanceID, tok, task.Attempt,
+				e.rollbackUnbootedJobAdmission(ctx, runID, taskIndex, instanceID, tok, task.Attempt,
 					effectiveJobRetryMax(job, run), "job_vmm_start_gate_unavailable",
 					"managed Job configuration cannot be verified without a held-start gate")
 				return JobWakeResult{}, fmt.Errorf("sched: WakeJob managed job requires start-gate release capability")
@@ -425,7 +425,7 @@ func (e *Engine) wakeJobOnce(ctx context.Context, accountID, runID string, taskI
 				var bindErr error
 				env, bindErr = appendEnvironmentGitOpsJobServiceBindings(env, intent)
 				if bindErr != nil {
-					e.rollbackJobAdmission(ctx, runID, taskIndex, instanceID, tok, task.Attempt,
+					e.rollbackUnbootedJobAdmission(ctx, runID, taskIndex, instanceID, tok, task.Attempt,
 						effectiveJobRetryMax(job, run), "job_gitops_binding_injection_failed",
 						"managed job service bindings conflict with its environment; reconcile the environment")
 					return JobWakeResult{}, fmt.Errorf("sched: WakeJob inject managed service bindings: %w", bindErr)
@@ -451,7 +451,7 @@ func (e *Engine) wakeJobOnce(ctx context.Context, accountID, runID string, taskI
 		err = errors.New("an interactive run cannot be start-held")
 	}
 	if err != nil {
-		e.rollbackJobAdmission(ctx, runID, taskIndex, instanceID, tok, task.Attempt, 0,
+		e.rollbackUnbootedJobAdmission(ctx, runID, taskIndex, instanceID, tok, task.Attempt, 0,
 			"job_interactive_session_unavailable", "the interactive session could not be prepared; start a new run")
 		return JobWakeResult{}, fmt.Errorf("sched: WakeJob interactive session: %w", err)
 	}
@@ -657,6 +657,16 @@ func (e *Engine) prepareEnvironmentGitOpsJobRuntimeInputs(ctx context.Context, a
 // detached and bounded; otherwise a cancelled request can leak the lease and
 // ledger reservation until the reaper notices it.
 func (e *Engine) rollbackJobAdmission(ctx context.Context, runID string, taskIndex int, instanceID string, tok LeaseToken, attempt, retryMax int, reason, errorMessage string) {
+	e.rollbackJobAdmissionAfter(ctx, true, runID, taskIndex, instanceID, tok, attempt, retryMax, reason, errorMessage)
+}
+
+// rollbackUnbootedJobAdmission is for failures before the vmmd boot RPC: no VM
+// can exist, so there is nothing to destroy before releasing the claim.
+func (e *Engine) rollbackUnbootedJobAdmission(ctx context.Context, runID string, taskIndex int, instanceID string, tok LeaseToken, attempt, retryMax int, reason, errorMessage string) {
+	e.rollbackJobAdmissionAfter(ctx, false, runID, taskIndex, instanceID, tok, attempt, retryMax, reason, errorMessage)
+}
+
+func (e *Engine) rollbackJobAdmissionAfter(ctx context.Context, bootRequested bool, runID string, taskIndex int, instanceID string, tok LeaseToken, attempt, retryMax int, reason, errorMessage string) {
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
 	if e.ciJobs != nil && e.ciJobs.store != nil {
@@ -670,10 +680,11 @@ func (e *Engine) rollbackJobAdmission(ctx context.Context, runID string, taskInd
 			return
 		}
 	}
-	if e.vmm != nil {
+	if bootRequested && e.vmm != nil {
 		ins, err := e.store.InstanceByID(cleanupCtx, instanceID)
 		if err != nil {
-			return
+			e.log.Warn("sched: job boot cleanup still pending; instance lookup failed", "instance", instanceID, "err", err)
+			return // the node is unknown, so a late boot cannot be excluded
 		}
 		if err := e.vmm.Destroy(cleanupCtx, e.nodeForRoute(ins.NodeID), instanceID); err != nil {
 			e.log.Warn("sched: job boot cleanup still pending", "instance", instanceID, "err", err)

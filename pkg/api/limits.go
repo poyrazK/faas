@@ -5400,6 +5400,10 @@ const (
 	FinancialComputeRAMMaxMB         = 131_072
 	FinancialComputeActiveMax        = 10_000
 	FinancialComputeQuantityMax      = int64(9007199254740991)
+	// Gateways reuse a warm-traffic budget decision this long. vmmd's local
+	// funded deadline, not this check, bounds strict spending.
+	FinancialBudgetAdmissionCacheTTL  = time.Second
+	FinancialBudgetAdmissionCacheSize = 10_000
 
 	// PreflightRateLimitPerHour bounds anonymous "would this run here" checks per
 	// client IP. The check is unauthenticated, so the ceiling exists to protect

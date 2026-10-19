@@ -20,7 +20,9 @@ cannot use a previous claim. Cancellation can resolve the immutable receipt by
 instance even after task projection changes or the native owner restarts.
 
 The existing account lock serializes claims, policy mutation, reservations and
-settlement. The job gross book and account quantity/paid book commit atomically.
+settlement. Task writes take it in KEY SHARE mode: they conflict with the FOR
+UPDATE of policy and compute transactions, but not with each other, so a
+fan-out run's claims do not queue behind one another. The job gross book and account quantity/paid book commit atomically.
 Every matching cap must fit. Negative receipts and holds consume no allowance.
 Each retry uses a new physical instance and claim token. Earlier physical
 attempts retain their money until native cleanup confirms absence. Policy edits,

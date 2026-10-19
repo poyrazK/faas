@@ -10,12 +10,14 @@
 `apid` owns policy intent. `vmmd` obtains monetary authority before ordinary app
 VM allocation, including cold/restore, paused warm capacity, workers, command
 tasks and qualification cold boots. `schedd` remains the instance/dispatch owner.
-Gateways check durable holds for warm traffic; command claims retain queued work.
+Gateways check durable holds for warm traffic, reusing each decision for at
+most one second (store errors are not reused); command claims retain queued work.
 
 Physical attempt IDs, fences and acquire request identities derive from the
 persisted wake ID or command lease token, account, app and instance. The grant
 pins the physical owner incarnation. A replay cannot mint fresh funding after
-cleanup or a node restart. Unfenced legacy requests fail before allocation.
+cleanup or a node restart. Unfenced legacy requests fail before allocation when
+a strict policy applies; without one they register under a fresh attempt ID.
 Intent, reservations, renewal and settlement share the account
 lock. Books survive policy revisions, disable/re-enable, deletion and replacement.
 Negative corrections do not create execution authority. Limits cannot be lowered
@@ -42,10 +44,14 @@ lower-funded window. Separate monitored policies provide spending alerts.
 
 `vmmd` renews every twenty seconds. Database time chooses windows; conservative
 monotonic deadlines start from the local request start, accounting for latency.
-Failed/denied renewal keeps the last deadline. Expiry cancels in-flight creation
+Failed/denied renewal keeps the last deadline. Denial and fencing stop renewal;
+a failed or lost reply is replayed with the same request identity, and
+settlement adopts a revision a lost reply advanced. Expiry cancels in-flight creation
 and starts local retirement without the scheduler, meter or database. Warm/frozen
 instances retain the same authority. Timeouts, missing entries and superseded
-incarnations never prove retirement. Native confirmation precedes settlement
+incarnations never prove retirement. An unbudgeted lease funds nothing: when its
+settlement fails after confirmed cleanup, capacity is released and recovery or
+the next wake settles it. Native confirmation precedes settlement
 and capacity reuse. Restart recovery retries uncertain shutdown/settlement.
 Cleanup of an attempt that never acquired funding first confirms native resource
 absence, then records a durable cancellation under the destruction join. Delayed
