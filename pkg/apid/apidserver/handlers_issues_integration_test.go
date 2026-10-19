@@ -168,6 +168,16 @@ func TestIssueOwnershipRulesRouteNewIssuesAndPreserveManualAssignment(t *testing
 	if err := e.store.AddOrgMember(t.Context(), org.ID, member.ID, state.OrgRoleDeveloper, nil); err != nil {
 		t.Fatal(err)
 	}
+	// A company app takes a key bound to the company; the environment's
+	// personal key never reaches it (#4882).
+	orgKey, orgKeyHash, err := api.GenerateAPIKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.store.CreateOrgAPIKey(t.Context(), org.ID, e.acct.ID, orgKeyHash, "issue routing", api.ScopesAdminOnly, nil); err != nil {
+		t.Fatal(err)
+	}
+	e.key = orgKey
 	app, err := e.store.CreateApp(t.Context(), state.App{
 		AccountID: e.acct.ID, OrgID: org.ID, Slug: "issue-routing-app", Type: state.AppTypeApp,
 		Status: state.AppActive, RequireAuthn: e.acct.Plan.RequireAuthnDefault(), PublicAuthMode: e.acct.Plan.PublicAuthModeDefault(),

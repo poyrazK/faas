@@ -172,15 +172,12 @@ func authorize(r *http.Request, store Store, audit authz.AuditEmitter, actor sta
 	if !ok {
 		return state.Account{}, api.ErrCapacity("application authorization requires an authenticated principal")
 	}
-	// An account key is unbound (MemStore, OIDC bearers) or, once persisted,
-	// bound to its owner's personal org; either way it is not an org key.
-	accountKey := key != nil && (key.OrgID == "" || personalKey(r.Context(), store, key.OrgID, actor.ID))
-	if key != nil && (key.AppID != "" && key.AppID != app.ID || !accountKey && app.OrgID != "" && key.OrgID != app.OrgID) {
+	if key != nil && (key.AppID != "" && key.AppID != app.ID || key.OrgID != "" && app.OrgID != "" && key.OrgID != app.OrgID) {
 		return state.Account{}, notFound(r)
 	}
 	if app.OrgID == "" {
 		// Unattributed legacy apps never become shared by guessing a tenant.
-		if app.AccountID != actor.ID || key != nil && !accountKey {
+		if app.AccountID != actor.ID || key != nil && key.OrgID != "" && !personalKey(r.Context(), store, key.OrgID, actor.ID) {
 			return state.Account{}, notFound(r)
 		}
 		return actor, nil
@@ -195,10 +192,10 @@ func authorize(r *http.Request, store Store, audit authz.AuditEmitter, actor sta
 		}
 		return actor, nil
 	}
-	return authorizeShared(r, store, audit, actor, key, accountKey, app, org)
+	return authorizeShared(r, store, audit, actor, key, app, org)
 }
 
-func authorizeShared(r *http.Request, store Store, audit authz.AuditEmitter, actor state.Account, key *state.APIKey, accountKey bool, app state.App, org state.Org) (state.Account, *api.Problem) {
+func authorizeShared(r *http.Request, store Store, audit authz.AuditEmitter, actor state.Account, key *state.APIKey, app state.App, org state.Org) (state.Account, *api.Problem) {
 	mem, err := store.OrgMemberByAccount(r.Context(), org.ID, actor.ID)
 	if err != nil {
 		return state.Account{}, lookupProblem(r, err)
@@ -213,7 +210,7 @@ func authorizeShared(r *http.Request, store Store, audit authz.AuditEmitter, act
 	mem.Role = snapshot.Role
 	// Account keys retain their existing creator-owned boundary. Sharing an
 	// app across creators requires a session or a key explicitly bound to its org.
-	if accountKey && app.AccountID != actor.ID {
+	if key != nil && key.OrgID == "" && app.AccountID != actor.ID {
 		return state.Account{}, api.NewProblem(http.StatusConflict, api.CodeOrgAPIKeyRequiresOrg,
 			"Organization key required", "mint an API key bound to the application's organization")
 	}
@@ -280,8 +277,10 @@ func notFound(r *http.Request) *api.Problem {
 	path := r.URL.Path
 	what := "no such application resource"
 	switch {
-	case strings.HasPrefix(path, "/v1/builds/"):
+	case r.Pattern == "GET /v1/builds/{id}":
 		return api.ErrBuildNotFound()
+	case strings.HasPrefix(path, "/v1/builds/"):
+		what = "no such build" // provenance and SBOM
 	case strings.HasPrefix(path, "/v1/crons/") && r.PathValue("run_id") != "":
 		what = "no such cron run"
 	case strings.HasPrefix(path, "/v1/crons/"):
