@@ -1,5 +1,5 @@
 // adr: 20261017201006
-package main
+package main_test
 
 import (
 	"context"
@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -24,30 +25,30 @@ func testSimulatedActionSnapshot(runID string, count int) api.ScenarioActionSnap
 }
 
 func TestRehearsalSimulationCollectorAndReportsPreserveAttemptScope(t *testing.T) {
-	_, _ = captureSuiteTestOutput(t)
+	_, _ = main.CaptureSuiteTestOutput(t)
 	dir, scenario := behaviorTestScenario(t)
-	baseline := runSimulatedTest(t.Context(), "import", scenario, dir)
+	baseline := main.RunSimulatedTest(t.Context(), "import", scenario, dir)
 	baseline.Engine, baseline.Attempt, baseline.RunID = "real-vm", 1, strings.Repeat("a", 32)
-	attach := func(count int) testRunReceipt {
+	attach := func(count int) main.TestRunReceipt {
 		r := baseline
-		r.Actions = &testActionEvidence{Network: "contained", Webhooks: "capture", PolicyVersion: 1, Status: "applied", SimulationSHA256: strings.Repeat("d", 64)}
-		collect := newTestActionCollector(t.Context(), scenarioActionClientFunc(func(context.Context, string) (api.ScenarioActionSnapshot, error) {
+		r.Actions = &main.TestActionEvidence{Network: "contained", Webhooks: "capture", PolicyVersion: 1, Status: "applied", SimulationSHA256: strings.Repeat("d", 64)}
+		collect := main.NewTestActionCollector(t.Context(), scenarioActionClientFunc(func(context.Context, string) (api.ScenarioActionSnapshot, error) {
 			return testSimulatedActionSnapshot(r.RunID, count), nil
 		}), &r, []string{"primary"})
 		collect()
 		return r
 	}
 	before, after := attach(1), attach(2)
-	comparison, err := compareTestReports("before", "after", []testRunReceipt{before}, []testRunReceipt{after})
+	comparison, err := main.CompareTestReports("before", "after", []main.TestRunReceipt{before}, []main.TestRunReceipt{after})
 	if err != nil || comparison.ActionStatus != "failed" || comparison.Runs[0].Actions.Scope != api.ScenarioSimulationScope {
 		t.Fatalf("simulation comparison: %+v %v", comparison, err)
 	}
 	out := t.TempDir()
 	html, markdown := filepath.Join(out, "comparison.html"), filepath.Join(out, "comparison.md")
-	if err := writeTestComparisonHTML(html, comparison); err != nil {
+	if err := main.WriteTestComparisonHTML(html, comparison); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeTestComparisonMarkdown(markdown, comparison); err != nil {
+	if err := main.WriteTestComparisonMarkdown(markdown, comparison); err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range []string{html, markdown} {
@@ -57,7 +58,7 @@ func TestRehearsalSimulationCollectorAndReportsPreserveAttemptScope(t *testing.T
 		}
 	}
 	before.Actions.SimulationSHA256 = strings.Repeat("c", 64)
-	if c := compareTestActions(before, after); c.Status != "inconclusive" {
+	if c := main.CompareTestActions(before, after); c.Status != "inconclusive" {
 		t.Fatal("changed fixture identity compared as equivalent")
 	}
 }

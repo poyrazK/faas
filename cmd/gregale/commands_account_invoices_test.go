@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -7,12 +7,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // adr: 1504 — invoices pages through every exported invoice with its
 // payment status, marking overdue ones.
 func TestCmdAccountInvoices(t *testing.T) {
+	t.Setenv("FAAS_API_MONETIZATION_ENABLED", "1") // adr: 20261018090210 — exercises released monetization
 	var statuses []string
 	remaining := int64(375)
 	due := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
@@ -32,7 +34,7 @@ func TestCmdAccountInvoices(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(api.StatementInvoiceListResponse{Invoices: []api.StatementInvoiceExportResponse{
 			{InvoiceID: "in_2", Customer: "cus_B", PaymentStatus: "draft", Currency: "EUR", AmountMinor: 100}}})
 	})
-	if code := cmdAccount([]string{"invoices", "--status", "unpaid"}); code != 0 {
+	if code := main.CmdAccount([]string{"invoices", "--status", "unpaid"}); code != 0 {
 		t.Fatalf("invoices exit = %d", code)
 	}
 	out := stdout.String()

@@ -30,7 +30,7 @@ func (s *Service) Start(ctx context.Context, log *slog.Logger) {
 		ticker := time.NewTicker(api.StatementInvoiceSyncTickInterval)
 		defer ticker.Stop()
 		for {
-			if err := s.SyncOnce(ctx); err != nil && ctx.Err() == nil {
+			if err := s.tick(ctx); err != nil && ctx.Err() == nil {
 				log.Warn("statement invoice sync failed", "err", err)
 			}
 			select {
@@ -189,11 +189,20 @@ func overdueDigest(invoices []state.StatementInvoiceExport, now time.Time) (stri
 	return subject, b.String()
 }
 
-// formatMinor renders a two-decimal currency amount, e.g. EUR 37.50.
+// formatMinor renders an amount in currency's minor unit, e.g. EUR 37.50,
+// JPY 3750 or KWD 3.750 (ADR-20261019100330).
 func formatMinor(currency string, minor int64) string {
 	sign := ""
 	if minor < 0 {
 		sign, minor = "-", -minor
 	}
-	return fmt.Sprintf("%s %s%d.%02d", currency, sign, minor/100, minor%100)
+	exp, _ := api.CurrencyMinorExponent(currency)
+	if exp == 0 {
+		return fmt.Sprintf("%s %s%d", currency, sign, minor)
+	}
+	scale := int64(1)
+	for range exp {
+		scale *= 10
+	}
+	return fmt.Sprintf("%s %s%d.%0*d", currency, sign, minor/scale, exp, minor%scale)
 }

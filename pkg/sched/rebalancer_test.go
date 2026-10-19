@@ -24,7 +24,7 @@
 // "watcher does the right filtering and dispatch" half of the
 // contract.
 
-package sched
+package sched_test
 
 import (
 	"context"
@@ -35,6 +35,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/sched"
 )
 
 // recordingRebalancerHandle is the test stand-in for
@@ -84,7 +85,7 @@ func TestRebalancer_DrainPayload_CallsHandle(t *testing.T) {
 	defer cancel()
 	done := make(chan struct{})
 	go func() {
-		NewRebalancer(rec.fn, nil).Run(ctx, ch)
+		sched.NewRebalancer(rec.fn, nil).Run(ctx, ch)
 		close(done)
 	}()
 	waitForCalls(t, rec.calls.Load, 1, time.Second)
@@ -116,7 +117,7 @@ func TestRebalancer_ActiveTruePayload_DropsHandle(t *testing.T) {
 	defer cancel()
 	done := make(chan struct{})
 	go func() {
-		NewRebalancer(rec.fn, nil).Run(ctx, ch)
+		sched.NewRebalancer(rec.fn, nil).Run(ctx, ch)
 		close(done)
 	}()
 	// Give the watcher a tick to consume; nothing should happen.
@@ -147,7 +148,7 @@ func TestRebalancer_ComputeNodeKeysLiteral_NoDispatch(t *testing.T) {
 	defer cancel()
 	done := make(chan struct{})
 	go func() {
-		NewRebalancer(rec.fn, nil).Run(ctx, ch)
+		sched.NewRebalancer(rec.fn, nil).Run(ctx, ch)
 		close(done)
 	}()
 	time.Sleep(50 * time.Millisecond)
@@ -180,7 +181,7 @@ func TestRebalancer_MalformedJSON_LoopSurvives(t *testing.T) {
 	defer cancel()
 	done := make(chan struct{})
 	go func() {
-		NewRebalancer(rec.fn, nil).Run(ctx, ch)
+		sched.NewRebalancer(rec.fn, nil).Run(ctx, ch)
 		close(done)
 	}()
 	waitForCalls(t, rec.calls.Load, 1, time.Second)
@@ -219,7 +220,7 @@ func TestRebalancer_HandleError_LogsAndContinues(t *testing.T) {
 	defer cancel()
 	done := make(chan struct{})
 	go func() {
-		NewRebalancer(rec.fn, nil).Run(ctx, ch)
+		sched.NewRebalancer(rec.fn, nil).Run(ctx, ch)
 		close(done)
 	}()
 	waitForCalls(t, rec.calls.Load, 2, time.Second)
@@ -251,7 +252,7 @@ func TestRebalancer_BackToBack_DispatchesTwice(t *testing.T) {
 	defer cancel()
 	done := make(chan struct{})
 	go func() {
-		NewRebalancer(rec.fn, nil).Run(ctx, ch)
+		sched.NewRebalancer(rec.fn, nil).Run(ctx, ch)
 		close(done)
 	}()
 	waitForCalls(t, rec.calls.Load, 2, time.Second)
@@ -274,7 +275,7 @@ func TestRebalancer_CtxCancel_Returns(t *testing.T) {
 	defer cancel()
 	done := make(chan struct{})
 	go func() {
-		NewRebalancer(rec.fn, nil).Run(ctx, ch)
+		sched.NewRebalancer(rec.fn, nil).Run(ctx, ch)
 		close(done)
 	}()
 	select {
@@ -307,7 +308,7 @@ func TestRebalancer_EmptyNodeID_DropsHandle(t *testing.T) {
 	defer cancel()
 	done := make(chan struct{})
 	go func() {
-		NewRebalancer(rec.fn, nil).Run(ctx, ch)
+		sched.NewRebalancer(rec.fn, nil).Run(ctx, ch)
 		close(done)
 	}()
 	time.Sleep(50 * time.Millisecond)

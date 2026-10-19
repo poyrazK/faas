@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"net/http"
@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/cmd/gregale/templates"
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -16,8 +17,8 @@ import (
 func TestStartAutoSelectsUnambiguousSource(t *testing.T) {
 	for _, kind := range []string{"app", "function", "workspace"} {
 		t.Run(kind, func(t *testing.T) {
-			stdout, stderr := startTestEnvironment(t)
-			root := resolvedTempDir(t)
+			stdout, stderr := main.StartTestEnvironment(t)
+			root := main.ResolvedTempDir(t)
 			source := root
 			if kind == "workspace" {
 				if err := os.WriteFile(filepath.Join(root, "package.json"), []byte(`{"private":true,"workspaces":["packages/*"]}`), 0o600); err != nil {
@@ -35,11 +36,11 @@ func TestStartAutoSelectsUnambiguousSource(t *testing.T) {
 			} else if err := templates.Materialize("hello-node", source); err != nil {
 				t.Fatal(err)
 			}
-			runner := startTestRunner(t, root, "still unread\n")
-			if code := runner.selectSource(); code != 0 || runner.session.SourcePath != source {
-				t.Fatalf("code=%d source=%s stdout=%s stderr=%s", code, runner.session.SourcePath, stdout, stderr())
+			runner := main.StartTestRunner(t, root, "still unread\n")
+			if code := runner.SelectSource(); code != 0 || (*runner.Session()).SourcePath != source {
+				t.Fatalf("code=%d source=%s stdout=%s stderr=%s", code, (*runner.Session()).SourcePath, stdout, stderr())
 			}
-			if line, err := runner.prompt.reader.ReadString('\n'); err != nil || line != "still unread\n" {
+			if line, err := (*(*runner.Prompt()).Reader()).ReadString('\n'); err != nil || line != "still unread\n" {
 				t.Fatalf("source detection consumed input: %q %v", line, err)
 			}
 			if strings.Contains(stdout.String(), "Choose") {
@@ -52,7 +53,7 @@ func TestStartAutoSelectsUnambiguousSource(t *testing.T) {
 func TestStartRejectsInvalidSourceBeforeAuthentication(t *testing.T) {
 	for _, kind := range []string{"missing", "file", "multiple"} {
 		t.Run(kind, func(t *testing.T) {
-			_, stderr := startTestEnvironment(t)
+			_, stderr := main.StartTestEnvironment(t)
 			var requests atomic.Int32
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				requests.Add(1)
@@ -70,7 +71,7 @@ func TestStartRejectsInvalidSourceBeforeAuthentication(t *testing.T) {
 			if kind == "multiple" {
 				args = append(args, "extra")
 			}
-			if code := run(args); code != 1 || requests.Load() != 0 || stderr() == "" {
+			if code := main.Run(args); code != 1 || requests.Load() != 0 || stderr() == "" {
 				t.Fatalf("code=%d requests=%d stderr=%s", code, requests.Load(), stderr())
 			}
 		})
@@ -78,8 +79,8 @@ func TestStartRejectsInvalidSourceBeforeAuthentication(t *testing.T) {
 }
 
 func TestStartWorkspaceKeepsRunnableRootInPicker(t *testing.T) {
-	stdout, stderr := startTestEnvironment(t)
-	root := resolvedTempDir(t)
+	stdout, stderr := main.StartTestEnvironment(t)
+	root := main.ResolvedTempDir(t)
 	if err := templates.Materialize("hello-node", root); err != nil {
 		t.Fatal(err)
 	}
@@ -93,22 +94,22 @@ func TestStartWorkspaceKeepsRunnableRootInPicker(t *testing.T) {
 	if err := templates.Materialize("hello-node", child); err != nil {
 		t.Fatal(err)
 	}
-	runner := startTestRunner(t, root, "2\n")
-	if code := runner.selectSource(); code != 0 || runner.session.SourcePath != root || !strings.Contains(stdout.String(), "Deploy the root directory") {
-		t.Fatalf("code=%d source=%s stdout=%s stderr=%s", code, runner.session.SourcePath, stdout, stderr())
+	runner := main.StartTestRunner(t, root, "2\n")
+	if code := runner.SelectSource(); code != 0 || (*runner.Session()).SourcePath != root || !strings.Contains(stdout.String(), "Deploy the root directory") {
+		t.Fatalf("code=%d source=%s stdout=%s stderr=%s", code, (*runner.Session()).SourcePath, stdout, stderr())
 	}
 }
 
 func TestStartEmptyDirectoryOffersStarter(t *testing.T) {
-	stdout, stderr := startTestEnvironment(t)
-	root := resolvedTempDir(t)
-	runner := startTestRunner(t, root, "\n\n\n")
-	if code := runner.selectSource(); code != 0 {
+	stdout, stderr := main.StartTestEnvironment(t)
+	root := main.ResolvedTempDir(t)
+	runner := main.StartTestRunner(t, root, "\n\n\n")
+	if code := runner.SelectSource(); code != 0 {
 		t.Fatalf("code=%d stdout=%s stderr=%s", code, stdout, stderr())
 	}
 	want := filepath.Join(root, "gregale-node")
-	if runner.session.SourcePath != want || runner.session.Template != "hello-node" {
-		t.Fatalf("starter selection=%+v", runner.session)
+	if (*runner.Session()).SourcePath != want || (*runner.Session()).Template != "hello-node" {
+		t.Fatalf("starter selection=%+v", (*runner.Session()))
 	}
 	if _, err := os.Stat(filepath.Join(want, "package.json")); err != nil {
 		t.Fatalf("starter was not created under the selected directory: %v", err)
@@ -126,13 +127,13 @@ func TestStartPreviewShowsConnectionBuildAndResourcePolicy(t *testing.T) {
 		{name: "older API", exists: true, want: "Keep existing app settings"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			stdout, _ := startTestEnvironment(t)
-			old := profileOverride
-			profileOverride = "staging"
-			t.Cleanup(func() { profileOverride = old })
-			source := startTestSource(t)
-			runner := startTestRunner(t, source, "")
-			runner.renderLaunchDefaults(runDoctorChecks(source), tc.app, tc.exists)
+			stdout, _ := main.StartTestEnvironment(t)
+			old := (*main.ProfileOverride)
+			(*main.ProfileOverride) = "staging"
+			t.Cleanup(func() { (*main.ProfileOverride) = old })
+			source := main.StartTestSource(t)
+			runner := main.StartTestRunner(t, source, "")
+			runner.RenderLaunchDefaults(main.RunDoctorChecks(source), tc.app, tc.exists)
 			for _, want := range []string{"Connection  staging", "Build       express (auto-detected)", "Resources   " + tc.want} {
 				if !strings.Contains(stdout.String(), want) {
 					t.Errorf("preview missing %q: %s", want, stdout)
@@ -145,17 +146,17 @@ func TestStartPreviewShowsConnectionBuildAndResourcePolicy(t *testing.T) {
 func TestStartNextCommandsPreserveConnectionAndSource(t *testing.T) {
 	for _, profile := range []string{"", "staging", "default"} {
 		t.Run(profile, func(t *testing.T) {
-			stdout, _ := startTestEnvironment(t)
-			old := profileOverride
-			profileOverride = profile
-			t.Cleanup(func() { profileOverride = old })
-			scope := filepath.Join(resolvedTempDir(t), "my workspace")
+			stdout, _ := main.StartTestEnvironment(t)
+			old := (*main.ProfileOverride)
+			(*main.ProfileOverride) = profile
+			t.Cleanup(func() { (*main.ProfileOverride) = old })
+			scope := filepath.Join(main.ResolvedTempDir(t), "my workspace")
 			source := filepath.Join(scope, "app $demo")
-			runner := startTestRunner(t, source, "")
-			runner.session.ScopePath = scope
-			runner.session.DeploymentID = "deployment-1"
-			runner.finish()
-			runner.printRecovery()
+			runner := main.StartTestRunner(t, source, "")
+			(*runner.Session()).ScopePath = scope
+			(*runner.Session()).DeploymentID = "deployment-1"
+			runner.Finish()
+			runner.PrintRecovery()
 			cli := "gregale"
 			if profile != "" {
 				cli += " --profile " + profile

@@ -87,19 +87,22 @@ func (c *Config) AIGateway(getenv func(string) string) bool {
 	return c.AIGatewayEnabled
 }
 
-// ValidateAIGateway refuses an operator integration that declares an AI
-// provider while the AI gateway is off, so a configuration mistake fails at
-// startup instead of refusing that integration's traffic.
-func ValidateAIGateway(items []configuredIntegration, enabled bool) error {
+// AIIntegrationsWhileGatewayOff lists operator integrations that declare an
+// AI provider while the AI gateway kill switch is off. outboundd logs them at
+// startup instead of refusing to start (ADR-1700): the switch is a live
+// platform flag, and refusing to boot after an incident turned it off would
+// crash-loop the daemon. Their calls return 503 until the flag is on.
+func AIIntegrationsWhileGatewayOff(items []configuredIntegration, enabled bool) []string {
 	if enabled {
 		return nil
 	}
+	var ids []string
 	for _, item := range items {
 		if item.Record.Policy.AIProvider != "" {
-			return fmt.Errorf("outboundd: integration %q sets ai_provider but the AI gateway is disabled; set ai_gateway_enabled or FAAS_AI_GATEWAY_ENABLED=1", item.Record.Policy.ID)
+			ids = append(ids, item.Record.Policy.ID)
 		}
 	}
-	return nil
+	return ids
 }
 
 func (c *Config) IdentityVerifier(items []configuredIntegration) (outbound.IdentityVerifier, error) {

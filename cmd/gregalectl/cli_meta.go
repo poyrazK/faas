@@ -655,6 +655,44 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
+		Name:    dispatchFlags,
+		DocSlug: "flags",
+		Short:   "Release platform features to selected accounts (ADR-1700)",
+		Subcommands: []cliSub{
+			{Name: "list", Short: "List platform flags, groups and per-daemon convergence"},
+			{Name: "show", Short: "Show one flag's definition and apply receipts", Flags: []cliFlag{
+				{Name: "key", Short: "platform flag key", Req: true},
+			}},
+			{Name: "inspect", Short: "Explain one flag's decision for an account", Flags: []cliFlag{
+				{Name: "key", Short: "platform flag key", Req: true},
+				{Name: "account-id", Short: "account UUID", Req: true},
+			}},
+			{Name: "account", Short: "Show every flag decided for an account", Flags: []cliFlag{
+				{Name: "account-id", Short: "account UUID", Req: true},
+			}},
+			{Name: "enable", Short: "Turn a flag's kill switch on", Flags: flagsMutationCLIFlags(true)},
+			{Name: "disable", Short: "Turn a flag off for every account", Flags: flagsMutationCLIFlags(true)},
+			{Name: "allow", Short: "Enable a flag for one account", Flags: append(flagsMutationCLIFlags(true), cliFlag{Name: "account-id", Short: "account UUID", Req: true})},
+			{Name: "deny", Short: "Exclude one account from a flag", Flags: append(flagsMutationCLIFlags(true), cliFlag{Name: "account-id", Short: "account UUID", Req: true})},
+			{Name: "revoke", Short: "Remove an account's explicit allow or deny", Flags: append(flagsMutationCLIFlags(true), cliFlag{Name: "account-id", Short: "account UUID", Req: true})},
+			{Name: "rollout", Short: "Release a flag to a stable share of accounts", Flags: append(flagsMutationCLIFlags(true),
+				cliFlag{Name: "percent", Short: "share of eligible accounts, 0..100", Req: true},
+				cliFlag{Name: "plans", Short: "comma-separated plans the rollout is limited to"})},
+			{Name: "default", Short: "Set the value for accounts no rule matches", Flags: append(flagsMutationCLIFlags(true), cliFlag{Name: "value", Short: "true or false", Req: true})},
+			{Name: "set", Short: "Replace a flag's definition from a JSON file", Flags: append(flagsMutationCLIFlags(true), cliFlag{Name: "file", Short: "JSON definition file, or - for stdin", Req: true})},
+			{Name: "groups", Short: "List account groups and the flags that use them"},
+			{Name: "group-add", Short: "Add an account to a group", Flags: append(flagsMutationCLIFlags(false),
+				cliFlag{Name: "group", Short: "group name", Req: true}, cliFlag{Name: "account-id", Short: "account UUID", Req: true})},
+			{Name: "group-remove", Short: "Remove an account from a group", Flags: append(flagsMutationCLIFlags(false),
+				cliFlag{Name: "group", Short: "group name", Req: true}, cliFlag{Name: "account-id", Short: "account UUID", Req: true})},
+			{Name: "history", Short: "Show a flag's or the groups' revisions", Flags: []cliFlag{
+				{Name: "key", Short: "platform flag key, or groups", Req: true},
+				{Name: "limit", Short: "maximum revisions to return (1..200)"},
+			}},
+			{Name: "rollback", Short: "Restore an older flag or groups revision", Flags: append(flagsMutationCLIFlags(true), cliFlag{Name: "version", Short: "historical version to restore", Req: true})},
+		},
+	},
+	{
 		Name:    dispatchAudit,
 		DocSlug: "audit",
 		Short:   "Correlate durable operator intents and live events by trace ID",
@@ -908,6 +946,16 @@ var cliCommands = []cliCommand{
 				Name:  subPKIRecoverInstall,
 				Short: "Recover an interrupted trust bundle installation",
 				Flags: []cliFlag{{Name: "root-dir", Short: "active PKI root"}},
+			},
+			{
+				Name:  subPKIIssueFeature,
+				Short: "Issue or renew an operator-enabled feature's leaves (live-queries) from the CA",
+				Flags: []cliFlag{
+					{Name: "feature", Short: "feature whose leaves to issue", Req: true, ClosedSet: []string{"live-queries"}},
+					{Name: "box-role", Short: "host role the leaves are for", Req: true, ClosedSet: []string{"control-plane", "compute-only", "single-box"}},
+					{Name: "ca-dir", Short: "PKI root holding the CA"},
+					{Name: "root-dir", Short: "PKI root the leaves are written under"},
+				},
 			},
 			{
 				Name:  subPKIMetrics,
@@ -1190,6 +1238,20 @@ func accountMutationCLIFlags() []cliFlag {
 		{Name: "trace-id", Short: "OTel trace id (generated when omitted)"},
 		{Name: "yes", Short: "acknowledge the account mutation", Req: true},
 	}
+}
+
+// flagsMutationCLIFlags are the confirmation flags of every platform-flag
+// write; withKey adds --key for writes to one flag.
+func flagsMutationCLIFlags(withKey bool) []cliFlag {
+	flags := []cliFlag{
+		{Name: "reason", Short: "audit reason (3..500 characters)", Req: true},
+		{Name: "trace-id", Short: "OTel trace id (generated when omitted)"},
+		{Name: "yes", Short: "acknowledge the platform flag change", Req: true},
+	}
+	if withKey {
+		flags = append([]cliFlag{{Name: "key", Short: "platform flag key", Req: true}}, flags...)
+	}
+	return flags
 }
 
 func configMutationCLIFlags(set bool) []cliFlag {

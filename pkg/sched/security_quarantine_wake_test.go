@@ -1,4 +1,4 @@
-package sched
+package sched_test
 
 import (
 	"context"
@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -27,7 +28,7 @@ func quarantineLiveDeployment(t *testing.T, store *state.MemStore, app state.App
 func assertSecurityQuarantineRefusal(t *testing.T, err error) {
 	t.Helper()
 	var problem *api.Problem
-	if !errors.As(err, &problem) || problem.Code != api.CodeSecurityPostureBlocked || !errors.Is(err, ErrPermanentWake) {
+	if !errors.As(err, &problem) || problem.Code != api.CodeSecurityPostureBlocked || !errors.Is(err, sched.ErrPermanentWake) {
 		t.Fatalf("err = %v, want a permanent %s refusal", err, api.CodeSecurityPostureBlocked)
 	}
 }
@@ -37,12 +38,12 @@ func assertSecurityQuarantineRefusal(t *testing.T, err error) {
 // cron, service mesh, floors and prewarm reach schedd without passing the
 // gateway or apid checks that refuse quarantined traffic.
 func TestSecurityQuarantinedDeploymentNeverBoots(t *testing.T) {
-	for _, trigger := range []string{TriggerCronSched, TriggerServiceMesh, TriggerFloor, TriggerPrewarm, TriggerMeterd} {
+	for _, trigger := range []string{sched.TriggerCronSched, sched.TriggerServiceMesh, sched.TriggerFloor, sched.TriggerPrewarm, sched.TriggerMeterd} {
 		t.Run(trigger, func(t *testing.T) {
 			store := state.NewMemStore()
-			_, app, dep := seedApp(t, store, api.PlanPro, 512, 5)
-			vmm := &fakeVMM{}
-			e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+			_, app, dep := sched.SeedApp(t, store, api.PlanPro, 512, 5)
+			vmm := &sched.FakeVMM{}
+			e := sched.XNewEngine(t, store, vmm, &sched.FakeNotifier{}, "1.10.0")
 			quarantineLiveDeployment(t, store, app, dep)
 
 			_, err := e.EnsureWake(context.Background(), app.ID, trigger)
@@ -50,8 +51,8 @@ func TestSecurityQuarantinedDeploymentNeverBoots(t *testing.T) {
 			if _, err := e.AdmitInstanceForDeployment(context.Background(), app.ID, dep.ID, "", trigger); err == nil {
 				t.Fatal("explicit deployment admission booted a quarantined deployment")
 			}
-			if vmm.coldBoots != 0 || vmm.restores != 0 {
-				t.Fatalf("vmm boots = cold %d restore %d, want none", vmm.coldBoots, vmm.restores)
+			if (*vmm.ColdBoots()) != 0 || (*vmm.Restores()) != 0 {
+				t.Fatalf("vmm boots = cold %d restore %d, want none", (*vmm.ColdBoots()), (*vmm.Restores()))
 			}
 			got, _ := store.AppByID(context.Background(), app.ID)
 			if got.Status != state.AppEvictedCold {
@@ -66,9 +67,9 @@ func TestSecurityQuarantinedDeploymentNeverBoots(t *testing.T) {
 func TestSecurityQuarantineCleanReplacementWakes(t *testing.T) {
 	store := state.NewMemStore()
 	ctx := context.Background()
-	_, app, dep := seedApp(t, store, api.PlanPro, 512, 5)
-	vmm := &fakeVMM{}
-	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+	_, app, dep := sched.SeedApp(t, store, api.PlanPro, 512, 5)
+	vmm := &sched.FakeVMM{}
+	e := sched.XNewEngine(t, store, vmm, &sched.FakeNotifier{}, "1.10.0")
 	quarantineLiveDeployment(t, store, app, dep)
 	if err := store.UpdateDeploymentStatus(ctx, dep.ID, state.DeploySuperseded, ""); err != nil {
 		t.Fatalf("supersede quarantined deployment: %v", err)
@@ -78,23 +79,23 @@ func TestSecurityQuarantineCleanReplacementWakes(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("CreateDeployment: %v", err)
 	}
-	if _, err := e.EnsureWake(ctx, app.ID, TriggerCronSched); err != nil {
+	if _, err := e.EnsureWake(ctx, app.ID, sched.TriggerCronSched); err != nil {
 		t.Fatalf("wake with a clean live replacement: %v", err)
 	}
-	if vmm.coldBoots+vmm.restores != 1 {
-		t.Fatalf("vmm boots = %d, want 1", vmm.coldBoots+vmm.restores)
+	if (*vmm.ColdBoots())+(*vmm.Restores()) != 1 {
+		t.Fatalf("vmm boots = %d, want 1", (*vmm.ColdBoots())+(*vmm.Restores()))
 	}
 }
 
 // App tasks run the deployment's image, so a quarantined deployment refuses
 // them too.
 func TestSecurityQuarantineRefusesAppTasks(t *testing.T) {
-	store, account, app, deployment, tasks := newAppTaskCoordinatorFixture(t, 1, 30, 2048)
-	engine := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+	store, account, app, deployment, tasks := sched.NewAppTaskCoordinatorFixture(t, 1, 30, 2048)
+	engine := sched.XNewEngine(t, store, &sched.FakeVMM{}, &sched.FakeNotifier{}, "1.10.0")
 	if err := store.SetDeploymentParked(context.Background(), deployment.ID, string(state.ParkReasonSecurityScanRegressed), time.Now().UTC()); err != nil {
 		t.Fatalf("SetDeploymentParked: %v", err)
 	}
-	_, err := engine.ResolveAppTaskRuntime(context.Background(), AppTaskRestoreRequest{
+	_, err := engine.ResolveAppTaskRuntime(context.Background(), sched.AppTaskRestoreRequest{
 		ID: tasks[0].ID, AccountID: account.ID, AppID: app.ID, DeploymentID: deployment.ID,
 		Kind: tasks[0].Kind, DeploymentScope: tasks[0].DeploymentScope,
 		ArtifactKey: tasks[0].ArtifactKey, ImageDigest: tasks[0].ImageDigest,
@@ -108,12 +109,12 @@ func TestSecurityQuarantineRefusesAppTasks(t *testing.T) {
 // quarantined deployment.
 func TestSecurityQuarantineRefusesPrime(t *testing.T) {
 	store := state.NewMemStore()
-	_, app, dep := seedApp(t, store, api.PlanPro, 512, 5)
-	vmm := &fakeVMM{}
-	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+	_, app, dep := sched.SeedApp(t, store, api.PlanPro, 512, 5)
+	vmm := &sched.FakeVMM{}
+	e := sched.XNewEngine(t, store, vmm, &sched.FakeNotifier{}, "1.10.0")
 	quarantineLiveDeployment(t, store, app, dep)
 	assertSecurityQuarantineRefusal(t, e.Prime(context.Background(), app.ID, dep.ID))
-	if vmm.coldBoots != 0 {
-		t.Fatalf("Prime cold-booted %d quarantined VMs", vmm.coldBoots)
+	if (*vmm.ColdBoots()) != 0 {
+		t.Fatalf("Prime cold-booted %d quarantined VMs", (*vmm.ColdBoots()))
 	}
 }

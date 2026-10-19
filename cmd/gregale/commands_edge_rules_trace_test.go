@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/edgeruletrace"
 )
@@ -35,8 +36,8 @@ func TestPreviewEdgeRules(t *testing.T) {
 		makeRule("early", func(r *api.EdgeRuleResponse) { r.Priority = 5; r.CreatedAt = time.Unix(10, 0) }),
 		makeRule("other-kind", func(r *api.EdgeRuleResponse) { r.Kind = "headers" }),
 	}
-	got := previewEdgeRules("demo", "api.example.com", "/api/items", "GET", "", "", rules)
-	byID := make(map[string]edgeRuleTraceRow)
+	got := main.PreviewEdgeRules("demo", "api.example.com", "/api/items", "GET", "", "", rules)
+	byID := make(map[string]main.EdgeRuleTraceRow)
 	for _, row := range got.Rules {
 		byID[row.ID] = row
 	}
@@ -61,7 +62,7 @@ func TestPreviewEdgeRules_EqualPriorityIsAmbiguous(t *testing.T) {
 		{ID: "a", Enabled: true, Kind: "ip", MatchHost: "*", Priority: 10},
 		{ID: "b", Enabled: true, Kind: "ip", MatchHost: "*", Priority: 10},
 	}
-	got := previewEdgeRules("demo", "example.com", "/", "GET", "", "", rules)
+	got := main.PreviewEdgeRules("demo", "example.com", "/", "GET", "", "", rules)
 	for _, row := range got.Rules {
 		if row.Status != "tied_candidate" || !strings.Contains(row.Reason, "no guaranteed order") {
 			t.Errorf("tie not qualified: %#v", row)
@@ -128,7 +129,7 @@ func TestPreviewEdgeRules_DeterministicActionPreviews(t *testing.T) {
 				ID: "rule", Enabled: true, Kind: tc.kind, MatchHost: "*", MatchPath: "*",
 				Action: json.RawMessage(tc.action),
 			}
-			got := previewEdgeRules("demo", "example.com", requestPath, "GET", "", "", []api.EdgeRuleResponse{rule})
+			got := main.PreviewEdgeRules("demo", "example.com", requestPath, "GET", "", "", []api.EdgeRuleResponse{rule})
 			if len(got.Rules) != 1 {
 				t.Fatalf("got %d rows, want 1", len(got.Rules))
 			}
@@ -157,7 +158,7 @@ func TestPreviewEdgeRules_DeterministicActionPreviewIsExplicitlyPerRule(t *testi
 		ID: "respond", Enabled: true, Kind: "respond", MatchHost: "*", MatchPath: "*",
 		Action: json.RawMessage(`{"respond":{"status_code":200,"body":{"ok":true}}}`),
 	}
-	got := previewEdgeRules("demo", "example.com", "/", "GET", "", "", []api.EdgeRuleResponse{rule})
+	got := main.PreviewEdgeRules("demo", "example.com", "/", "GET", "", "", []api.EdgeRuleResponse{rule})
 	if !strings.Contains(got.Scope, "not that the app will return successfully") {
 		t.Fatalf("scope does not disclaim app/runtime execution: %q", got.Scope)
 	}
@@ -179,7 +180,7 @@ func TestSimulateEdgeRuleRequest_ComposesRewriteHeadersAndResponse(t *testing.T)
 			Action: json.RawMessage(`{"respond":{"status_code":202,"body":{"accepted":true}}}`)},
 	}
 	requestHeaders := http.Header{"X-Mode": []string{"on"}}
-	got := simulateEdgeRuleRequest("example.com", "/legacy/items", "GET", "", "", rules, requestHeaders)
+	got := main.SimulateEdgeRuleRequest("example.com", "/legacy/items", "GET", "", "", rules, requestHeaders)
 	if got.Outcome != "fixed_response" || got.StatusCode != http.StatusAccepted || got.FinalPath != "/v1/items" {
 		t.Fatalf("simulation = %#v", got)
 	}
@@ -206,7 +207,7 @@ func TestSimulateEdgeRuleRequest_StopsAtGatewayShortCircuit(t *testing.T) {
 		{ID: "headers", Enabled: true, Kind: "headers", MatchHost: "*", MatchPath: "/legacy/*", Priority: 10,
 			Action: json.RawMessage(`{"headers":{"request_headers":[{"name":"X-Should-Not-Apply","value":"yes","action":"set"}]}}`)},
 	}
-	got := simulateEdgeRuleRequest("example.com", "/legacy/items", "GET", "", "", rules, nil)
+	got := main.SimulateEdgeRuleRequest("example.com", "/legacy/items", "GET", "", "", rules, nil)
 	if got.Outcome != "redirect" || got.StatusCode != http.StatusTemporaryRedirect || got.Location != "/new" || got.FinalPath != "/legacy/items" {
 		t.Fatalf("simulation = %#v", got)
 	}
@@ -218,7 +219,7 @@ func TestSimulateEdgeRuleRequest_StopsAtGatewayShortCircuit(t *testing.T) {
 func TestSimulateEdgeRuleRequest_MaintenanceResponse(t *testing.T) {
 	rule := api.EdgeRuleResponse{ID: "maintenance", Enabled: true, Kind: "maintenance", MatchHost: "*", MatchPath: "/", Priority: 10,
 		Action: json.RawMessage(`{"maintenance":{"message":"back soon","retry_after_seconds":120}}`)}
-	got := simulateEdgeRuleRequest("example.com", "/", "GET", "", "", []api.EdgeRuleResponse{rule}, nil)
+	got := main.SimulateEdgeRuleRequest("example.com", "/", "GET", "", "", []api.EdgeRuleResponse{rule}, nil)
 	if got.Status != "complete" || got.Outcome != "maintenance" || got.StatusCode != http.StatusServiceUnavailable || got.RetryAfterSeconds != 120 || got.Message != "back soon" {
 		t.Fatalf("simulation = %#v", got)
 	}
@@ -234,7 +235,7 @@ func TestSimulateEdgeRuleRequest_StopsAtUnknownOrAmbiguousPhase(t *testing.T) {
 			{ID: "ip", Enabled: true, Kind: "ip", MatchHost: "*", MatchPath: "/", Priority: 10, Action: json.RawMessage(`{"ip":{"deny":["203.0.113.0/24"]}}`)},
 			{ID: "respond", Enabled: true, Kind: "respond", MatchHost: "*", MatchPath: "/", Priority: 10, Action: json.RawMessage(`{"respond":{"status_code":200}}`)},
 		}
-		got := simulateEdgeRuleRequest("example.com", "/", "GET", "203.0.113.5", "", rules, nil)
+		got := main.SimulateEdgeRuleRequest("example.com", "/", "GET", "203.0.113.5", "", rules, nil)
 		if got.Status != "incomplete" || got.StoppedAt != "jwt" || len(got.Steps) != 1 {
 			t.Fatalf("simulation crossed a context barrier: %#v", got)
 		}
@@ -245,7 +246,7 @@ func TestSimulateEdgeRuleRequest_StopsAtUnknownOrAmbiguousPhase(t *testing.T) {
 			{ID: "redirect-a", Enabled: true, Kind: "redirect", MatchHost: "*", MatchPath: "/", Priority: 10, Action: json.RawMessage(`{"redirect":{"to":"/a"}}`)},
 			{ID: "redirect-b", Enabled: true, Kind: "redirect", MatchHost: "*", MatchPath: "/", Priority: 10, Action: json.RawMessage(`{"redirect":{"to":"/b"}}`)},
 		}
-		got := simulateEdgeRuleRequest("example.com", "/", "GET", "", "", rules, nil)
+		got := main.SimulateEdgeRuleRequest("example.com", "/", "GET", "", "", rules, nil)
 		if got.Status != "incomplete" || got.Outcome != "ambiguous" || got.StoppedAt != "redirect" {
 			t.Fatalf("simulation hid priority tie: %#v", got)
 		}
@@ -263,7 +264,7 @@ func TestSimulateEdgeRuleRequest_EvaluatesExplicitIPAndGeoContext(t *testing.T) 
 	for _, tc := range cases {
 		t.Run(tc.kind, func(t *testing.T) {
 			rule := api.EdgeRuleResponse{ID: "gate", Enabled: true, Kind: tc.kind, MatchHost: "*", MatchPath: "/", Priority: 10, Action: json.RawMessage(tc.action)}
-			got := simulateEdgeRuleRequest("example.com", "/", "GET", tc.clientIP, tc.country, []api.EdgeRuleResponse{rule}, nil)
+			got := main.SimulateEdgeRuleRequest("example.com", "/", "GET", tc.clientIP, tc.country, []api.EdgeRuleResponse{rule}, nil)
 			if got.Outcome != "blocked" || got.StatusCode != http.StatusForbidden || got.StoppedAt != tc.wantPhase {
 				t.Fatalf("simulation = %#v", got)
 			}
@@ -274,7 +275,7 @@ func TestSimulateEdgeRuleRequest_EvaluatesExplicitIPAndGeoContext(t *testing.T) 
 func TestSimulateEdgeRuleRequest_RouteNeedsTargetRules(t *testing.T) {
 	rule := api.EdgeRuleResponse{ID: "route", Enabled: true, Kind: "route", MatchHost: "*", MatchPath: "/", Priority: 10,
 		Action: json.RawMessage(`{"route":{"target_app_slug":"other-app"}}`)}
-	got := simulateEdgeRuleRequest("example.com", "/", "GET", "", "", []api.EdgeRuleResponse{rule}, nil)
+	got := main.SimulateEdgeRuleRequest("example.com", "/", "GET", "", "", []api.EdgeRuleResponse{rule}, nil)
 	if got.Status != "incomplete" || got.Outcome != "route" || got.TargetApp != "other-app" || got.StoppedAt != "route" {
 		t.Fatalf("simulation = %#v", got)
 	}
@@ -291,22 +292,22 @@ func TestTraceHostAndPathSemantics(t *testing.T) {
 		{"*.example.com", "example.com", false},
 		{"*.example.com", "badexample.com", false},
 	} {
-		if got := traceHostMatches(tc.pattern, tc.host); got != tc.want {
+		if got := main.TraceHostMatches(tc.pattern, tc.host); got != tc.want {
 			t.Errorf("traceHostMatches(%q, %q) = %v, want %v", tc.pattern, tc.host, got, tc.want)
 		}
 	}
-	if !traceMethodMatches(nil, "GET") || !traceMethodMatches([]string{"get"}, "GET") || traceMethodMatches([]string{"POST"}, "GET") {
+	if !main.TraceMethodMatches(nil, "GET") || !main.TraceMethodMatches([]string{"get"}, "GET") || main.TraceMethodMatches([]string{"POST"}, "GET") {
 		t.Fatal("method filter differs from gateway")
 	}
 	rules := []api.EdgeRuleResponse{{ID: "all", Enabled: true, Kind: "route", MatchHost: "*", MatchPath: "*"}}
-	if got := previewEdgeRules("demo", "example.com", "/a/b", "GET", "", "", rules).Rules[0].Status; got != "first_candidate" {
+	if got := main.PreviewEdgeRules("demo", "example.com", "/a/b", "GET", "", "", rules).Rules[0].Status; got != "first_candidate" {
 		t.Fatalf("match-all path = %q", got)
 	}
 }
 
 func TestCmdEdgeRulesTrace_JSONAndReadOnly(t *testing.T) {
 	resetJSONEnv(t)
-	jsonOutput = true
+	(*main.JsonOutput) = true
 	defer resetJSONEnv(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -329,13 +330,13 @@ func TestCmdEdgeRulesTrace_JSONAndReadOnly(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 	var stdout bytes.Buffer
-	old := osStdout
-	osStdout = &stdout
-	defer func() { osStdout = old }()
-	if code := cmdEdgeRules([]string{"trace", "--app", "demo", "--url", "https://EXAMPLE.com/api/items?q=private", "--method", "post"}); code != 0 {
+	old := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	defer func() { (*main.OsStdout) = old }()
+	if code := main.CmdEdgeRules([]string{"trace", "--app", "demo", "--url", "https://EXAMPLE.com/api/items?q=private", "--method", "post"}); code != 0 {
 		t.Fatalf("trace exit = %d", code)
 	}
-	var result edgeRuleTraceResult
+	var result main.EdgeRuleTraceResult
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 		t.Fatal(err)
 	}
@@ -349,7 +350,7 @@ func TestCmdEdgeRulesTrace_JSONAndReadOnly(t *testing.T) {
 
 func TestCmdEdgeRulesTraceSimulatesAppMaintenance(t *testing.T) {
 	resetJSONEnv(t)
-	jsonOutput = true
+	(*main.JsonOutput) = true
 	defer resetJSONEnv(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -373,13 +374,13 @@ func TestCmdEdgeRulesTraceSimulatesAppMaintenance(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 	t.Setenv("FAAS_API_KEY", "")
 	var stdout bytes.Buffer
-	old := osStdout
-	osStdout = &stdout
-	defer func() { osStdout = old }()
-	if code := cmdEdgeRulesTrace([]string{"--app", "demo", "--url", "https://example.com/"}); code != 0 {
+	old := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	defer func() { (*main.OsStdout) = old }()
+	if code := main.CmdEdgeRulesTrace([]string{"--app", "demo", "--url", "https://example.com/"}); code != 0 {
 		t.Fatalf("trace exit = %d; output=%s", code, stdout.String())
 	}
-	var result edgeRuleTraceResult
+	var result main.EdgeRuleTraceResult
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 		t.Fatalf("unmarshal trace result: %v\n%s", err, stdout.String())
 	}
@@ -390,7 +391,7 @@ func TestCmdEdgeRulesTraceSimulatesAppMaintenance(t *testing.T) {
 
 func TestCmdEdgeRulesTraceLoadsDeclaredRouteOpenAPIFallback(t *testing.T) {
 	resetJSONEnv(t)
-	jsonOutput = true
+	(*main.JsonOutput) = true
 	defer resetJSONEnv(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -417,13 +418,13 @@ func TestCmdEdgeRulesTraceLoadsDeclaredRouteOpenAPIFallback(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 	t.Setenv("FAAS_API_KEY", "")
 	var stdout bytes.Buffer
-	old := osStdout
-	osStdout = &stdout
-	defer func() { osStdout = old }()
-	if code := cmdEdgeRulesTrace([]string{"--app", "demo", "--url", "https://example.com/widgets/42", "--method", "HEAD"}); code != 0 {
+	old := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	defer func() { (*main.OsStdout) = old }()
+	if code := main.CmdEdgeRulesTrace([]string{"--app", "demo", "--url", "https://example.com/widgets/42", "--method", "HEAD"}); code != 0 {
 		t.Fatalf("trace exit = %d; output=%s", code, stdout.String())
 	}
-	var result edgeRuleTraceResult
+	var result main.EdgeRuleTraceResult
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 		t.Fatalf("unmarshal trace result: %v\n%s", err, stdout.String())
 	}
@@ -434,7 +435,7 @@ func TestCmdEdgeRulesTraceLoadsDeclaredRouteOpenAPIFallback(t *testing.T) {
 
 func TestCmdEdgeRulesTraceUsesSelectedEnvironmentPolicies(t *testing.T) {
 	resetJSONEnv(t)
-	jsonOutput = true
+	(*main.JsonOutput) = true
 	defer resetJSONEnv(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -486,16 +487,16 @@ func TestCmdEdgeRulesTraceUsesSelectedEnvironmentPolicies(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 	t.Setenv("FAAS_API_KEY", "")
 	var stdout bytes.Buffer
-	old := osStdout
-	osStdout = &stdout
-	defer func() { osStdout = old }()
-	if code := cmdEdgeRulesTrace([]string{
+	old := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	defer func() { (*main.OsStdout) = old }()
+	if code := main.CmdEdgeRulesTrace([]string{
 		"--app", "demo", "--project", "shop", "--environment", "staging",
 		"--url", "https://staging.example.com/staging-only",
 	}); code != 0 {
 		t.Fatalf("trace exit = %d; output=%s", code, stdout.String())
 	}
-	var result edgeRuleTraceResult
+	var result main.EdgeRuleTraceResult
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 		t.Fatalf("unmarshal trace result: %v\n%s", err, stdout.String())
 	}
@@ -515,7 +516,7 @@ func TestCmdEdgeRulesTraceUsesSelectedEnvironmentPolicies(t *testing.T) {
 
 func TestCmdEdgeRulesTraceReportsMissingDeclaredRouteDocument(t *testing.T) {
 	resetJSONEnv(t)
-	jsonOutput = true
+	(*main.JsonOutput) = true
 	defer resetJSONEnv(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -535,13 +536,13 @@ func TestCmdEdgeRulesTraceReportsMissingDeclaredRouteDocument(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 	t.Setenv("FAAS_API_KEY", "")
 	var stdout bytes.Buffer
-	old := osStdout
-	osStdout = &stdout
-	defer func() { osStdout = old }()
-	if code := cmdEdgeRulesTrace([]string{"--app", "demo", "--url", "https://example.com/widgets/42"}); code != 0 {
+	old := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	defer func() { (*main.OsStdout) = old }()
+	if code := main.CmdEdgeRulesTrace([]string{"--app", "demo", "--url", "https://example.com/widgets/42"}); code != 0 {
 		t.Fatalf("trace exit = %d; output=%s", code, stdout.String())
 	}
-	var result edgeRuleTraceResult
+	var result main.EdgeRuleTraceResult
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 		t.Fatalf("unmarshal trace result: %v\n%s", err, stdout.String())
 	}
@@ -552,7 +553,7 @@ func TestCmdEdgeRulesTraceReportsMissingDeclaredRouteDocument(t *testing.T) {
 
 func TestCmdEdgeRulesTraceResolvesCORSRulePreset(t *testing.T) {
 	resetJSONEnv(t)
-	jsonOutput = true
+	(*main.JsonOutput) = true
 	defer resetJSONEnv(t)
 	presetID := "preset-1"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -581,13 +582,13 @@ func TestCmdEdgeRulesTraceResolvesCORSRulePreset(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 	t.Setenv("FAAS_API_KEY", "")
 	var stdout bytes.Buffer
-	old := osStdout
-	osStdout = &stdout
-	defer func() { osStdout = old }()
-	if code := cmdEdgeRules([]string{"trace", "--app", "demo", "--url", "https://example.com/", "--header", "Origin:https://app.example.com"}); code != 0 {
+	old := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	defer func() { (*main.OsStdout) = old }()
+	if code := main.CmdEdgeRules([]string{"trace", "--app", "demo", "--url", "https://example.com/", "--header", "Origin:https://app.example.com"}); code != 0 {
 		t.Fatalf("trace exit = %d; output=%s", code, stdout.String())
 	}
-	var result edgeRuleTraceResult
+	var result main.EdgeRuleTraceResult
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 		t.Fatalf("unmarshal trace result: %v\n%s", err, stdout.String())
 	}
@@ -598,7 +599,7 @@ func TestCmdEdgeRulesTraceResolvesCORSRulePreset(t *testing.T) {
 
 func TestCmdEdgeRulesTraceLoadsAppCORSDefaults(t *testing.T) {
 	resetJSONEnv(t)
-	jsonOutput = true
+	(*main.JsonOutput) = true
 	defer resetJSONEnv(t)
 	enabled := true
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -622,13 +623,13 @@ func TestCmdEdgeRulesTraceLoadsAppCORSDefaults(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 	t.Setenv("FAAS_API_KEY", "")
 	var stdout bytes.Buffer
-	old := osStdout
-	osStdout = &stdout
-	defer func() { osStdout = old }()
-	if code := cmdEdgeRulesTrace([]string{"--app", "demo", "--url", "https://example.com/", "--header", "Origin:https://app.example.com"}); code != 0 {
+	old := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	defer func() { (*main.OsStdout) = old }()
+	if code := main.CmdEdgeRulesTrace([]string{"--app", "demo", "--url", "https://example.com/", "--header", "Origin:https://app.example.com"}); code != 0 {
 		t.Fatalf("trace exit = %d; output=%s", code, stdout.String())
 	}
-	var result edgeRuleTraceResult
+	var result main.EdgeRuleTraceResult
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 		t.Fatalf("unmarshal trace result: %v\n%s", err, stdout.String())
 	}
@@ -639,7 +640,7 @@ func TestCmdEdgeRulesTraceLoadsAppCORSDefaults(t *testing.T) {
 
 func TestCmdEdgeRulesTraceReportsThrottlePolicyAndPlanCeiling(t *testing.T) {
 	resetJSONEnv(t)
-	jsonOutput = true
+	(*main.JsonOutput) = true
 	defer resetJSONEnv(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -667,13 +668,13 @@ func TestCmdEdgeRulesTraceReportsThrottlePolicyAndPlanCeiling(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 	t.Setenv("FAAS_API_KEY", "")
 	var stdout bytes.Buffer
-	old := osStdout
-	osStdout = &stdout
-	defer func() { osStdout = old }()
-	if code := cmdEdgeRulesTrace([]string{"--app", "demo", "--url", "https://example.com/api/orders", "--method", "POST"}); code != 0 {
+	old := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	defer func() { (*main.OsStdout) = old }()
+	if code := main.CmdEdgeRulesTrace([]string{"--app", "demo", "--url", "https://example.com/api/orders", "--method", "POST"}); code != 0 {
 		t.Fatalf("trace exit = %d; output=%s", code, stdout.String())
 	}
-	var result edgeRuleTraceResult
+	var result main.EdgeRuleTraceResult
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 		t.Fatalf("unmarshal trace result: %v\n%s", err, stdout.String())
 	}
@@ -688,7 +689,7 @@ func TestCmdEdgeRulesTraceReportsThrottlePolicyAndPlanCeiling(t *testing.T) {
 
 func TestCmdEdgeRulesTraceReportsRetryPolicy(t *testing.T) {
 	resetJSONEnv(t)
-	jsonOutput = true
+	(*main.JsonOutput) = true
 	defer resetJSONEnv(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -712,13 +713,13 @@ func TestCmdEdgeRulesTraceReportsRetryPolicy(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 	t.Setenv("FAAS_API_KEY", "")
 	var stdout bytes.Buffer
-	old := osStdout
-	osStdout = &stdout
-	defer func() { osStdout = old }()
-	if code := cmdEdgeRulesTrace([]string{"--app", "demo", "--url", "https://example.com/orders/42", "--method", "POST", "--header", "Idempotency-Key: opaque-key"}); code != 0 {
+	old := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	defer func() { (*main.OsStdout) = old }()
+	if code := main.CmdEdgeRulesTrace([]string{"--app", "demo", "--url", "https://example.com/orders/42", "--method", "POST", "--header", "Idempotency-Key: opaque-key"}); code != 0 {
 		t.Fatalf("trace exit = %d; output=%s", code, stdout.String())
 	}
-	var result edgeRuleTraceResult
+	var result main.EdgeRuleTraceResult
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 		t.Fatalf("unmarshal trace result: %v\n%s", err, stdout.String())
 	}
@@ -733,8 +734,8 @@ func TestCmdEdgeRulesTraceReportsRetryPolicy(t *testing.T) {
 		t.Fatalf("trace output leaked the Idempotency-Key value: %s", stdout.String())
 	}
 	stdout.Reset()
-	jsonOutput = false
-	renderEdgeRuleTrace(result)
+	(*main.JsonOutput) = false
+	main.RenderEdgeRuleTrace(result)
 	for _, want := range []string{
 		"retry policy: up to 3 total attempts (2 replay(s), rule)",
 		"method eligibility=non_idempotent_allowed_with_key", "idempotency_key_present=true",
@@ -761,10 +762,10 @@ func TestRenderEdgeRuleTraceReportsJWTPolicyWithoutValues(t *testing.T) {
 		t.Fatalf("Simulate: %v", err)
 	}
 	var stdout bytes.Buffer
-	old := osStdout
-	osStdout = &stdout
-	defer func() { osStdout = old }()
-	renderEdgeRuleTrace(result)
+	old := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	defer func() { (*main.OsStdout) = old }()
+	main.RenderEdgeRuleTrace(result)
 	for _, want := range []string{"JWT policy: bearer_token_present=true", "algorithms=[RS256]", "required_claim_names=[tenant_id]"} {
 		if !strings.Contains(stdout.String(), want) {
 			t.Errorf("human-readable trace missing %q\n%s", want, stdout.String())
@@ -779,7 +780,7 @@ func TestRenderEdgeRuleTraceReportsJWTPolicyWithoutValues(t *testing.T) {
 
 func TestCmdEdgeRulesTraceReportsEffectiveBudgetOverride(t *testing.T) {
 	resetJSONEnv(t)
-	jsonOutput = true
+	(*main.JsonOutput) = true
 	defer resetJSONEnv(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -805,13 +806,13 @@ func TestCmdEdgeRulesTraceReportsEffectiveBudgetOverride(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 	t.Setenv("FAAS_API_KEY", "")
 	var stdout bytes.Buffer
-	old := osStdout
-	osStdout = &stdout
-	defer func() { osStdout = old }()
-	if code := cmdEdgeRulesTrace([]string{"--app", "demo", "--url", "https://example.com/payments", "--method", "POST", "--header", "X-Faas-Budget-Ms:3000"}); code != 0 {
+	old := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	defer func() { (*main.OsStdout) = old }()
+	if code := main.CmdEdgeRulesTrace([]string{"--app", "demo", "--url", "https://example.com/payments", "--method", "POST", "--header", "X-Faas-Budget-Ms:3000"}); code != 0 {
 		t.Fatalf("trace exit = %d; output=%s", code, stdout.String())
 	}
-	var result edgeRuleTraceResult
+	var result main.EdgeRuleTraceResult
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 		t.Fatalf("unmarshal trace result: %v\n%s", err, stdout.String())
 	}
@@ -826,7 +827,7 @@ func TestCmdEdgeRulesTraceReportsEffectiveBudgetOverride(t *testing.T) {
 
 func TestCmdEdgeRulesTrace_BodyFileValidatesAndOmitsContents(t *testing.T) {
 	resetJSONEnv(t)
-	jsonOutput = true
+	(*main.JsonOutput) = true
 	defer resetJSONEnv(t)
 	body := `{"count":"private-value"}`
 	bodyPath := filepath.Join(t.TempDir(), "request.json")
@@ -855,13 +856,13 @@ func TestCmdEdgeRulesTrace_BodyFileValidatesAndOmitsContents(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 	t.Setenv("FAAS_API_KEY", "")
 	var stdout bytes.Buffer
-	old := osStdout
-	osStdout = &stdout
-	defer func() { osStdout = old }()
-	if code := cmdEdgeRulesTrace([]string{"--app", "demo", "--url", "https://example.com/submit", "--method", "POST", "--header", "Content-Type: application/json", "--body-file", bodyPath}); code != 0 {
+	old := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	defer func() { (*main.OsStdout) = old }()
+	if code := main.CmdEdgeRulesTrace([]string{"--app", "demo", "--url", "https://example.com/submit", "--method", "POST", "--header", "Content-Type: application/json", "--body-file", bodyPath}); code != 0 {
 		t.Fatalf("trace exit = %d; output=%s", code, stdout.String())
 	}
-	var result edgeRuleTraceResult
+	var result main.EdgeRuleTraceResult
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 		t.Fatalf("unmarshal trace result: %v\n%s", err, stdout.String())
 	}
@@ -875,7 +876,7 @@ func TestCmdEdgeRulesTrace_BodyFileValidatesAndOmitsContents(t *testing.T) {
 
 func TestCmdEdgeRulesTrace_LoadsScenarioConfig(t *testing.T) {
 	resetJSONEnv(t)
-	jsonOutput = true
+	(*main.JsonOutput) = true
 	defer resetJSONEnv(t)
 	const configSecret = "scenario-auth-sentinel-27491"
 	config := `{"version":1,"app":"demo","request":{"url":"https://example.com/submit","method":"POST","headers":["Content-Type: application/json","X-Repeat: first","X-Repeat: second","Authorization: Bearer ` + configSecret + `"],"body":"{\"count\":\"private-value\"}"}}`
@@ -905,13 +906,13 @@ func TestCmdEdgeRulesTrace_LoadsScenarioConfig(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 	var stdout bytes.Buffer
-	old := osStdout
-	osStdout = &stdout
-	defer func() { osStdout = old }()
-	if code := cmdEdgeRulesTrace([]string{"--config", configPath}); code != 0 {
+	old := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	defer func() { (*main.OsStdout) = old }()
+	if code := main.CmdEdgeRulesTrace([]string{"--config", configPath}); code != 0 {
 		t.Fatalf("trace exit = %d; output=%s", code, stdout.String())
 	}
-	var result edgeRuleTraceResult
+	var result main.EdgeRuleTraceResult
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 		t.Fatalf("unmarshal trace result: %v\n%s", err, stdout.String())
 	}
@@ -933,10 +934,10 @@ func TestCmdEdgeRulesTrace_LoadsScenarioConfig(t *testing.T) {
 }
 
 func TestReadEdgeRuleTraceConfigFromStdin(t *testing.T) {
-	oldStdin := osStdin
-	osStdin = strings.NewReader(`{"version":1,"app":"demo","request":{"url":"https://example.com"}}`)
-	defer func() { osStdin = oldStdin }()
-	config, err := readEdgeRuleTraceConfig("-")
+	oldStdin := (*main.OsStdin)
+	(*main.OsStdin) = strings.NewReader(`{"version":1,"app":"demo","request":{"url":"https://example.com"}}`)
+	defer func() { (*main.OsStdin) = oldStdin }()
+	config, err := main.ReadEdgeRuleTraceConfig("-")
 	if err != nil {
 		t.Fatalf("readEdgeRuleTraceConfig stdin: %v", err)
 	}
@@ -956,7 +957,7 @@ func TestCmdEdgeRulesTrace_InvalidURLDoesNotCallAPI(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
-	if code := cmdEdgeRulesTrace([]string{"--app", "demo", "--url", "file:///tmp/foo"}); code == 0 {
+	if code := main.CmdEdgeRulesTrace([]string{"--app", "demo", "--url", "file:///tmp/foo"}); code == 0 {
 		t.Fatal("expected invalid URL error")
 	}
 	if called {

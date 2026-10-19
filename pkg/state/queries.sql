@@ -1,3 +1,23 @@
+-- name: ListAccountDeletedApps :many
+SELECT id::text AS id, slug, deleted_at, delete_grace_until,
+       coalesce(deleted_at, created_at)::timestamptz AS sort_at,
+       (purge_claimed_at IS NOT NULL)::boolean AS purge_started
+FROM apps
+WHERE account_id = sqlc.arg(account_id)::text::uuid AND status = 'deleted'
+  AND (sqlc.arg(before_id)::text = '' OR
+       (coalesce(deleted_at, created_at), id::text) <
+       (sqlc.arg(before_at)::timestamptz, sqlc.arg(before_id)::text))
+ORDER BY coalesce(deleted_at, created_at) DESC, id::text DESC
+LIMIT sqlc.arg(page_limit)::int;
+
+-- name: AccountDeletedAppByID :one
+SELECT id::text AS id, slug, deleted_at, delete_grace_until,
+       coalesce(deleted_at, created_at)::timestamptz AS sort_at,
+       (purge_claimed_at IS NOT NULL)::boolean AS purge_started
+FROM apps
+WHERE account_id = sqlc.arg(account_id)::text::uuid
+  AND id = sqlc.arg(app_id)::text::uuid AND status = 'deleted';
+
 -- name: GetInstanceApplicationStandardAdmission :one
 SELECT input_snapshot, captured_at, coalesce(node_id::text,'')::text AS node_id, native_input_hash FROM instance_application_standard_admissions
 WHERE instance_id = sqlc.arg(instance_id)::uuid;
@@ -1512,6 +1532,33 @@ LEFT JOIN LATERAL (
 ) bc ON true
 ORDER BY p.started_at DESC, p.id DESC;
 
+-- The account trace view's per-request wakes: one canonical instance per wake
+-- (its first), scoped to the account's apps before reading wake metadata, with
+-- the same boot and completion reads as ListAppWakeHistoryPage.
+-- name: ListWakeHistoryByWakeIDs :many
+WITH page AS MATERIALIZED (
+ SELECT DISTINCT ON (wake_id) id, app_id, wake_id, state, started_at FROM instances
+ WHERE app_id = ANY(sqlc.arg(app_ids)::uuid[])
+   AND wake_id = ANY(sqlc.arg(wake_ids)::uuid[])
+   AND started_at IS NOT NULL
+ ORDER BY wake_id, started_at ASC, id ASC
+)
+SELECT p.id::text AS instance_id, p.app_id::text AS app_id, p.wake_id::text AS wake_id,
+       p.state, p.started_at, bs.data AS boot_data, bs.at AS boot_at,
+       (bs.id IS NOT NULL)::boolean AS has_meta, bc.at AS completed_at
+FROM page p
+LEFT JOIN LATERAL (
+ SELECT id, data, at FROM events
+ WHERE kind = 'wake.boot_started' AND data->>'app_id' = p.app_id::text AND data->>'wake_id' = p.wake_id::text
+ ORDER BY (actor = 'schedd') DESC, at ASC, id ASC LIMIT 1
+) bs ON true
+LEFT JOIN LATERAL (
+ SELECT at FROM events
+ WHERE kind = 'wake.boot_completed' AND data->>'app_id' = p.app_id::text AND data->>'wake_id' = p.wake_id::text
+ ORDER BY at ASC, id ASC LIMIT 1
+) bc ON true
+ORDER BY p.started_at ASC, p.wake_id;
+
 -- name: ListAllEventsPaged :many
 -- ADR-091 §3.7 / PR #3 — operator-obs backend audit-reading surface.
 -- Reads the live events table (NOT audit_log — distinct source of
@@ -2696,7 +2743,7 @@ values ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10, $11, $12, $13)
 returning id, account_id, app_id, kind, slug, enabled, config,
           batch_size_max, batch_window_ms, max_attempts,
           cron_id, source, payload_max_bytes, broker_poison_strategy,
-          created_at, updated_at;
+          delivery, created_at, updated_at;
 
 -- name: UpdateTrigger :one
 -- Review finding MED-1 (PR #993): the inline SQL at
@@ -2722,6 +2769,12 @@ returning id, account_id, app_id, kind, slug, enabled, config,
           filter_criteria,
           created_at, updated_at;
 
+-- name: SetTriggerDelivery :execrows
+-- ADR-1321: switch a public trigger between per-record and batch delivery.
+-- The CHECK constraint refuses batch for cron and queue triggers.
+update triggers set delivery = $2, updated_at = now()
+where id = $1 and queue_binding_id is null;
+
 -- name: DeleteTrigger :exec
 delete from triggers where id = $1 and app_id = $2 and queue_binding_id is null;
 
@@ -2735,7 +2788,7 @@ delete from triggers where id = $1 and app_id = $2 and queue_binding_id is null;
 select id, account_id, app_id, kind, slug, enabled, config, queue_binding_id, queue_binding_scope, queue_binding_environment_id,
        batch_size_max, batch_window_ms, max_attempts,
        cron_id, source, payload_max_bytes, broker_poison_strategy,
-       filter_criteria,
+       filter_criteria, delivery,
        created_at, updated_at
 from triggers where id = $1;
 
@@ -2746,7 +2799,7 @@ from triggers where id = $1;
 select id, account_id, app_id, kind, slug, enabled, config, queue_binding_id, queue_binding_scope, queue_binding_environment_id,
        batch_size_max, batch_window_ms, max_attempts,
        cron_id, source, payload_max_bytes, broker_poison_strategy,
-       filter_criteria,
+       filter_criteria, delivery,
        created_at, updated_at
 from triggers where app_id = $1 order by created_at desc;
 
@@ -2762,7 +2815,7 @@ from triggers where app_id = $1 order by created_at desc;
 select id, account_id, app_id, kind, slug, enabled, config, queue_binding_id, queue_binding_scope, queue_binding_environment_id,
        batch_size_max, batch_window_ms, max_attempts,
        cron_id, source, payload_max_bytes, broker_poison_strategy,
-       filter_criteria,
+       filter_criteria, delivery,
        created_at, updated_at
 from triggers where enabled = true AND NOT environment_workload_admission_retired(app_id,queue_binding_scope);
 
@@ -2850,6 +2903,42 @@ UPDATE trigger_records
        last_dispatched_at = now(), next_fire_at = $4, claim_expires_at = NULL
  WHERE id = $1 AND state = 'claimed' AND claim_generation = $2
    AND claim_expires_at > now();
+
+-- name: DeleteExpiredTriggerRecords :execrows
+-- One bounded retention batch: rows past an explicit result_retention_until,
+-- and unpinned terminal rows older than the default ages. Dead letters keep
+-- the longer age; work-policy records keep explicit retention only.
+WITH candidates AS (
+    (SELECT id FROM trigger_records
+      WHERE result_retention_until IS NOT NULL AND result_retention_until <= sqlc.arg(now)::timestamptz
+        AND state IN ('succeeded', 'dead_letter', 'superseded', 'cancelled', 'expired')
+      LIMIT sqlc.arg(batch)::integer)
+    UNION ALL
+    (SELECT id FROM trigger_records
+      WHERE result_retention_until IS NULL AND work_policy_name IS NULL
+        AND state IN ('succeeded', 'superseded', 'cancelled', 'expired')
+        AND coalesce(last_dispatched_at, received_at) < sqlc.arg(terminal_before)::timestamptz
+      LIMIT sqlc.arg(batch)::integer)
+    UNION ALL
+    (SELECT id FROM trigger_records
+      WHERE result_retention_until IS NULL AND work_policy_name IS NULL AND state = 'dead_letter'
+        AND coalesce(last_dispatched_at, received_at) < sqlc.arg(dead_letter_before)::timestamptz
+      LIMIT sqlc.arg(batch)::integer)
+), doomed AS (
+    SELECT r.id FROM trigger_records r WHERE r.id IN (SELECT id FROM candidates)
+     LIMIT sqlc.arg(batch)::integer FOR UPDATE SKIP LOCKED
+)
+DELETE FROM trigger_records USING doomed WHERE trigger_records.id = doomed.id;
+
+-- name: SupersedeTriggerRecordItems :execrows
+-- Ends one realtime delivery's records whatever stage they reached; the
+-- consumer group redelivers under a new item identifier (ADR-1322).
+UPDATE trigger_records
+   SET state = 'superseded', last_error = sqlc.arg(last_error),
+       last_dispatched_at = now(), claim_expires_at = NULL
+ WHERE trigger_id = sqlc.arg(trigger_id)
+   AND item_identifier = ANY(sqlc.arg(item_identifiers)::text[])
+   AND state IN ('pending', 'claimed', 'retry');
 
 -- name: MarkClaimedTriggerRecordDeadLetter :execrows
 UPDATE trigger_records
@@ -7587,7 +7676,7 @@ FROM invocation_environment_queue_admissions p WHERE p.invocation_id=i.id AND i.
 
 -- name: ReadRuntimeAppEnvForDeployment :one
 WITH owner AS (
-    SELECT d.id, a.id AS app_id, a.account_id,
+    SELECT d.id, a.id AS app_id, a.account_id, a.project_id,
         COALESCE(NULLIF(d.scope,''),'default')::text AS scope,
         COALESCE(bound.id::text,legacy.id::text,'')::text AS environment_id
     FROM deployments d
@@ -7613,7 +7702,13 @@ WITH owner AS (
 )
 SELECT owner.scope, owner.environment_id,
     COALESCE((SELECT jsonb_agg(jsonb_build_object('key',v.key,'value',v.value,'created_at',v.created_at,'updated_at',v.updated_at) ORDER BY v.key)
-        FROM app_envs v WHERE v.account_id=owner.account_id AND v.app_id=owner.app_id AND v.scope=owner.scope),'[]'::jsonb)::jsonb AS values
+        FROM app_envs v WHERE v.account_id=owner.account_id AND v.app_id=owner.app_id AND v.scope=owner.scope),'[]'::jsonb)::jsonb AS values,
+    -- ADR-1136: the project environment configuration the deployment inherits.
+    COALESCE((SELECT jsonb_build_object('values',c.config_json,'created_at',c.created_at)
+        FROM project_environment_config_versions c
+        WHERE owner.project_id IS NOT NULL AND c.account_id=owner.account_id AND c.project_id=owner.project_id
+            AND c.environment_slug=CASE WHEN owner.scope='default' THEN 'production' ELSE owner.scope END
+        ORDER BY c.version DESC LIMIT 1),'{}'::jsonb)::jsonb AS project_config
 FROM owner;
 
 -- name: LockRuntimeSecretEnvironment :one
@@ -7715,7 +7810,7 @@ WHERE o.app_id=sqlc.arg(app_id)::uuid AND o.scope=sqlc.arg(scope)::text AND o.ke
 
 -- name: ReadRuntimeAppValuesForDeployment :one
 WITH owner AS (
-    SELECT d.id, a.id AS app_id, a.account_id,
+    SELECT d.id, a.id AS app_id, a.account_id, a.project_id,
         COALESCE(NULLIF(d.scope,''),'default')::text AS scope,
         COALESCE(bound.id::text,legacy.id::text,'')::text AS environment_id,
         d.environment_workload_runtime,d.override_env_secrets,d.sidecars,COALESCE(d.secret_reload_signal,'')::text AS reload_signal,
@@ -7759,7 +7854,13 @@ SELECT owner.scope,owner.environment_id,owner.environment_workload_runtime,owner
         'managed_object_storage_credential_id',s.managed_object_storage_credential_id) ORDER BY s.key)
         FROM app_secrets s WHERE s.account_id=owner.account_id AND s.app_id=owner.app_id AND s.scope=owner.scope),'[]'::jsonb)::jsonb AS secrets,
     COALESCE((SELECT jsonb_object_agg(signal.sidecar_name,signal.signal) FROM deployment_sidecar_secret_reload_signals signal
-        WHERE signal.deployment_id=owner.id),'{}'::jsonb)::jsonb AS reload_signals
+        WHERE signal.deployment_id=owner.id),'{}'::jsonb)::jsonb AS reload_signals,
+    -- ADR-1136: the project environment configuration the deployment inherits.
+    COALESCE((SELECT jsonb_build_object('values',c.config_json,'created_at',c.created_at)
+        FROM project_environment_config_versions c
+        WHERE owner.project_id IS NOT NULL AND c.account_id=owner.account_id AND c.project_id=owner.project_id
+            AND c.environment_slug=CASE WHEN owner.scope='default' THEN 'production' ELSE owner.scope END
+        ORDER BY c.version DESC LIMIT 1),'{}'::jsonb)::jsonb AS project_config
 FROM owner;
 
 -- name: LockRuntimeConfigWorkloadSpec :many
@@ -11474,6 +11575,7 @@ WITH candidate AS (
  SELECT task.id FROM app_tasks task JOIN apps app ON app.id=task.app_id
  WHERE task.status='queued' AND task.cancel_requested_at IS NULL
  AND app.managed_postgres_admission_cutover_id IS NULL
+ AND NOT financial_app_command_held(task.app_id,task.deployment_id,sqlc.arg(claimed_at)::timestamptz)
  AND task.created_at<=sqlc.arg(claimed_at)::timestamptz
  AND (task.retry_at IS NULL OR task.retry_at<=sqlc.arg(claimed_at))
  AND (task.start_deadline_at IS NULL OR task.start_deadline_at>=sqlc.arg(claimed_at)
@@ -11497,6 +11599,7 @@ UPDATE app_tasks SET status='running',started_at=sqlc.arg(started_at)::timestamp
 retry_at=NULL,stdout_tail='',stderr_tail='',output_truncated=false,exit_code=NULL,failure_code=NULL,failure_message=NULL,updated_at=sqlc.arg(started_at)
 WHERE id=sqlc.arg(id)::text::uuid AND status='restoring' AND lease_token=sqlc.arg(token)::text::uuid
 AND cancel_requested_at IS NULL AND lease_expires_at>sqlc.arg(started_at)
+AND NOT financial_app_command_held(app_id,deployment_id,sqlc.arg(started_at)::timestamptz)
 AND (start_deadline_at IS NULL OR start_deadline_at>=sqlc.arg(started_at) OR EXISTS (
  SELECT 1 FROM schedule_occurrences occurrence WHERE occurrence.id=app_tasks.occurrence_id AND occurrence.started_at IS NOT NULL))
 RETURNING *;

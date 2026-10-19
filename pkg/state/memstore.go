@@ -304,6 +304,15 @@ type MemStore struct {
 	standardRuntimeRefreshRequests             map[string]ApplicationStandardRuntimeRefreshRequest
 	applicationStandardControlBindings         map[string]standardControlBinding
 	applicationStandardControlBackups          map[string]standardControlBackup
+	financialBudgetEvaluations                 map[string]financialBudgetMemoryEvaluation
+	financialBudgetAlerts                      map[string]FinancialBudgetAlertDelivery
+	financialBudgetStops                       map[string]FinancialBudgetStop
+	financialPreviewCommands                   map[string]FinancialPreviewCommandRuntime
+	financialComputeBooks                      map[string]financialComputeBook
+	financialComputeLeases                     map[string]financialComputeLease
+	financialComputeHolds                      map[string][]financialComputeHold
+	financialComputeOwners                     map[string]financialComputeOwner
+	financialComputeJobAttempts                map[string]financialComputeJobAttempt
 
 	eventCircuitBreakers              map[string]*eventCircuitRecord
 	eventSubscriptionControls         map[string]*memEventSubscriptionControl
@@ -466,10 +475,14 @@ type MemStore struct {
 	// apiConsumers is keyed by APIConsumer.ID. A separate map keeps the
 	// stable customer identity independent from rotatable credentials.
 	apiConsumers                         map[string]APIConsumer
-	apiConsumerTrials                    map[string]APIConsumerTrial            // ADR-1314
-	apiConsumerMeterUsage                map[string]APIConsumerMeterUsageBucket // ADR-1318
-	apiConsumerBillingPolicies           map[string]APIConsumerBillingPolicy    // ADR-1315, by app
-	apiConsumerOverdueHolds              map[string]APIConsumerOverdueHold      // ADR-1315, by consumer
+	apiConsumerTrials                    map[string]APIConsumerTrial               // ADR-1314
+	apiConsumerMeterUsage                map[string]APIConsumerMeterUsageBucket    // ADR-1318
+	platformTenantMeterUsage             map[string]PlatformTenantMeterUsageBucket // ADR-1319
+	platformTenantTrials                 map[string]PlatformTenantTrial            // ADR-1322, by tenant
+	platformTenantBillingPolicies        map[string]PlatformTenantBillingPolicy    // ADR-1324, by account
+	platformTenantOverdueHolds           map[string]PlatformTenantOverdueHold      // ADR-1324, by tenant
+	apiConsumerBillingPolicies           map[string]APIConsumerBillingPolicy       // ADR-1315, by app
+	apiConsumerOverdueHolds              map[string]APIConsumerOverdueHold         // ADR-1315, by consumer
 	platformTenants                      map[string]PlatformTenant
 	platformTenantReconciliationReceipts map[string]api.PlatformTenantReconciliationReceiptResponse
 	platformTenantOffboardingReceipts    map[string]api.PlatformTenantOffboardingReceiptResponse
@@ -645,6 +658,9 @@ type MemStore struct {
 	runtimeConfigs          map[string]RuntimeConfig
 	runtimeConfigOperations map[string]RuntimeConfigOperation
 	runtimeConfigRevisions  []RuntimeConfigRevision
+	// runtimeConfigApplyReceipts mirrors runtime_config_apply_receipts
+	// (ADR-1700), keyed by the table's primary key.
+	runtimeConfigApplyReceipts map[string]RuntimeConfigApplyReceipt
 	// alertRules mirrors alert_rules for handler tests. Keyed by
 	// ruleID. AlertDelivery rows are kept separately so the
 	// delivery list query can walk just the matching subset on
@@ -1052,6 +1068,12 @@ type MemStore struct {
 	apiConsumerCreditGrants       map[string]APIConsumerCreditGrant
 	apiConsumerCreditApplications []apiConsumerCreditApplication
 	apiConsumerSpendCaps          map[string]APIConsumerSpendCap
+	// platformTenantCreditGrants (by ID), platformTenantCreditApplications
+	// and platformTenantSpendCaps (by tenant ID) do the same for platform
+	// tenants (ADR-20261019100331).
+	platformTenantCreditGrants       map[string]PlatformTenantCreditGrant
+	platformTenantCreditApplications []platformTenantCreditApplication
+	platformTenantSpendCaps          map[string]PlatformTenantSpendCap
 	// billingConnections and statementInvoiceExports back statement invoice
 	// exports (ADR-1502); keyed by account/provider and export ID.
 	billingConnections      map[string]BillingConnection
@@ -1584,6 +1606,7 @@ func NewMemStore() *MemStore {
 		fireNowRequests:                 map[string]FireNowRequest{},
 		operatorIntents:                 map[string]OperatorIntent{},
 		runtimeConfigs:                  map[string]RuntimeConfig{},
+		runtimeConfigApplyReceipts:      map[string]RuntimeConfigApplyReceipt{},
 		runtimeConfigOperations:         map[string]RuntimeConfigOperation{},
 		runtimeConfigRevisions:          []RuntimeConfigRevision{},
 		readinessMaintenance:            map[string]readinessMaintenanceRecord{},
@@ -13419,6 +13442,7 @@ func (m *MemStore) CreateTriggerIfUnderQuota(_ context.Context, appID, kind, slu
 		Source:               nullableTriggerSource(source),
 		PayloadMaxBytes:      payloadMaxBytes,
 		BrokerPoisonStrategy: brokerPoisonStrategy,
+		Delivery:             api.TriggerDeliveryRecord,
 		CreatedAt:            pgtype.Timestamptz{Time: time.Now(), Valid: true},
 		UpdatedAt:            pgtype.Timestamptz{Time: time.Now(), Valid: true},
 	}
@@ -13799,6 +13823,9 @@ func (m *MemStore) EnqueueInvocation(ctx context.Context, inv Invocation) (Invoc
 	}
 
 	if err := m.validateInvocationEnvironmentLocked(inv, info); err != nil {
+		return Invocation{}, err
+	}
+	if err := invocationAdmissionDepth(inv, m.pendingProductionInvocationsLocked(inv.AppID, inv.Source, nil)); err != nil {
 		return Invocation{}, err
 	}
 	return m.enqueueInvocationLocked(inv)
@@ -14400,17 +14427,7 @@ func (m *MemStore) FailInvocation(_ context.Context, id string, lastError string
 func (m *MemStore) CountPendingInvocations(_ context.Context, appID string, source InvocationSource) (int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	n := 0
-	for _, inv := range m.invocations {
-		if inv.AppID != appID || inv.Source != source || !m.productionInvocationWorkLocked(inv) {
-			continue
-		}
-		if inv.State != InvocationPending && inv.State != InvocationDispatching {
-			continue
-		}
-		n++
-	}
-	return n, nil
+	return m.pendingProductionInvocationsLocked(appID, source, nil), nil
 }
 
 // CancelInvocation moves any non-terminal row to state=cancelled.
@@ -15401,6 +15418,52 @@ func (m *MemStore) ListInstancesForApp(_ context.Context, appID string) ([]Insta
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].StartedAt.After(out[j].StartedAt) })
 	return out, nil
+}
+
+// ListBillingWindowInstances mirrors PgStore.ListBillingWindowInstances.
+// MemStore keeps no lifecycle ledger and does not stamp parked_at on every
+// transition, so it drops only instances it can show were inactive before
+// since: not live, with every recorded timestamp earlier than since.
+func (m *MemStore) ListBillingWindowInstances(_ context.Context, since, _ time.Time) ([]Instance, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []Instance
+	for _, ins := range m.instances {
+		if ins.AppID == "" {
+			continue
+		}
+		if IsLive(ins.State) || !memInstanceInactiveBefore(ins, since) {
+			out = append(out, ins)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].AppID != out[j].AppID {
+			return out[i].AppID < out[j].AppID
+		}
+		return out[i].StartedAt.After(out[j].StartedAt)
+	})
+	return out, nil
+}
+
+// memInstanceInactiveBefore reports whether every timestamp recorded on ins
+// is earlier than since. An instance with no timestamp is not provably
+// inactive.
+func memInstanceInactiveBefore(ins Instance, since time.Time) bool {
+	stamps := []time.Time{ins.StartedAt, ins.LastRequestAt, ins.ParkedAt}
+	if ins.TerminalAt != nil {
+		stamps = append(stamps, *ins.TerminalAt)
+	}
+	recorded := false
+	for _, at := range stamps {
+		if at.IsZero() {
+			continue
+		}
+		if !at.Before(since) {
+			return false
+		}
+		recorded = true
+	}
+	return recorded
 }
 
 func (m *MemStore) ListActiveInstancesForApp(_ context.Context, appID string, limit int) ([]Instance, error) {
@@ -23068,6 +23131,38 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 		if p.AccountID == id && !retainBilling {
 			delete(m.financialBudgets, key)
 			delete(m.financialBudgetRevisions, key)
+			delete(m.financialBudgetEvaluations, key)
+		}
+	}
+	for key, alert := range m.financialBudgetAlerts {
+		if alert.AccountID == id {
+			delete(m.financialBudgetAlerts, key)
+		}
+	}
+	for key, stop := range m.financialBudgetStops {
+		if stop.AccountID == id {
+			delete(m.financialBudgetStops, key)
+		}
+	}
+	for key, command := range m.financialPreviewCommands {
+		if command.AccountID == id {
+			delete(m.financialPreviewCommands, key)
+		}
+	}
+	for key, b := range m.financialComputeBooks {
+		if b.AccountID == id {
+			delete(m.financialComputeBooks, key)
+		}
+	}
+	for key, l := range m.financialComputeLeases {
+		if l.AccountID == id {
+			delete(m.financialComputeLeases, key)
+		}
+	}
+	delete(m.financialComputeHolds, id)
+	for key, a := range m.financialComputeJobAttempts {
+		if a.AccountID == id {
+			delete(m.financialComputeJobAttempts, key)
 		}
 	}
 	for key := range m.memberships {

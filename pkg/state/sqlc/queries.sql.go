@@ -238,6 +238,43 @@ func (q *Queries) AccountByOIDCIssuerSubject(ctx context.Context, db DBTX, arg A
 	return i, err
 }
 
+const accountDeletedAppByID = `-- name: AccountDeletedAppByID :one
+SELECT id::text AS id, slug, deleted_at, delete_grace_until,
+       coalesce(deleted_at, created_at)::timestamptz AS sort_at,
+       (purge_claimed_at IS NOT NULL)::boolean AS purge_started
+FROM apps
+WHERE account_id = $1::text::uuid
+  AND id = $2::text::uuid AND status = 'deleted'
+`
+
+type AccountDeletedAppByIDParams struct {
+	AccountID string
+	AppID     string
+}
+
+type AccountDeletedAppByIDRow struct {
+	ID               string
+	Slug             string
+	DeletedAt        pgtype.Timestamptz
+	DeleteGraceUntil pgtype.Timestamptz
+	SortAt           pgtype.Timestamptz
+	PurgeStarted     bool
+}
+
+func (q *Queries) AccountDeletedAppByID(ctx context.Context, db DBTX, arg AccountDeletedAppByIDParams) (AccountDeletedAppByIDRow, error) {
+	row := db.QueryRow(ctx, accountDeletedAppByID, arg.AccountID, arg.AppID)
+	var i AccountDeletedAppByIDRow
+	err := row.Scan(
+		&i.ID,
+		&i.Slug,
+		&i.DeletedAt,
+		&i.DeleteGraceUntil,
+		&i.SortAt,
+		&i.PurgeStarted,
+	)
+	return i, err
+}
+
 const accountIDByGitHubOIDCRepositoryIdentity = `-- name: AccountIDByGitHubOIDCRepositoryIdentity :one
 select min(a.github_install_account_id::text)::uuid as account_id
 from apps a
@@ -5472,6 +5509,7 @@ WITH candidate AS (
  SELECT task.id FROM app_tasks task JOIN apps app ON app.id=task.app_id
  WHERE task.status='queued' AND task.cancel_requested_at IS NULL
  AND app.managed_postgres_admission_cutover_id IS NULL
+ AND NOT financial_app_command_held(task.app_id,task.deployment_id,$3::timestamptz)
  AND task.created_at<=$3::timestamptz
  AND (task.retry_at IS NULL OR task.retry_at<=$3)
  AND (task.start_deadline_at IS NULL OR task.start_deadline_at>=$3
@@ -10995,7 +11033,7 @@ values ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10, $11, $12, $13)
 returning id, account_id, app_id, kind, slug, enabled, config,
           batch_size_max, batch_window_ms, max_attempts,
           cron_id, source, payload_max_bytes, broker_poison_strategy,
-          created_at, updated_at
+          delivery, created_at, updated_at
 `
 
 type CreateTriggerParams struct {
@@ -11029,6 +11067,7 @@ type CreateTriggerRow struct {
 	Source               pgtype.Text
 	PayloadMaxBytes      int32
 	BrokerPoisonStrategy string
+	Delivery             string
 	CreatedAt            pgtype.Timestamptz
 	UpdatedAt            pgtype.Timestamptz
 }
@@ -11079,6 +11118,7 @@ func (q *Queries) CreateTrigger(ctx context.Context, db DBTX, arg CreateTriggerP
 		&i.Source,
 		&i.PayloadMaxBytes,
 		&i.BrokerPoisonStrategy,
+		&i.Delivery,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -12774,6 +12814,53 @@ WHERE mirror_rule_id = $1::uuid
 
 func (q *Queries) DeleteExpiredMirrorSlotLeases(ctx context.Context, db DBTX, ruleID pgtype.UUID) (int64, error) {
 	result, err := db.Exec(ctx, deleteExpiredMirrorSlotLeases, ruleID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteExpiredTriggerRecords = `-- name: DeleteExpiredTriggerRecords :execrows
+WITH candidates AS (
+    (SELECT id FROM trigger_records
+      WHERE result_retention_until IS NOT NULL AND result_retention_until <= $1::timestamptz
+        AND state IN ('succeeded', 'dead_letter', 'superseded', 'cancelled', 'expired')
+      LIMIT $2::integer)
+    UNION ALL
+    (SELECT id FROM trigger_records
+      WHERE result_retention_until IS NULL AND work_policy_name IS NULL
+        AND state IN ('succeeded', 'superseded', 'cancelled', 'expired')
+        AND coalesce(last_dispatched_at, received_at) < $3::timestamptz
+      LIMIT $2::integer)
+    UNION ALL
+    (SELECT id FROM trigger_records
+      WHERE result_retention_until IS NULL AND work_policy_name IS NULL AND state = 'dead_letter'
+        AND coalesce(last_dispatched_at, received_at) < $4::timestamptz
+      LIMIT $2::integer)
+), doomed AS (
+    SELECT r.id FROM trigger_records r WHERE r.id IN (SELECT id FROM candidates)
+     LIMIT $2::integer FOR UPDATE SKIP LOCKED
+)
+DELETE FROM trigger_records USING doomed WHERE trigger_records.id = doomed.id
+`
+
+type DeleteExpiredTriggerRecordsParams struct {
+	Now              pgtype.Timestamptz
+	Batch            int32
+	TerminalBefore   pgtype.Timestamptz
+	DeadLetterBefore pgtype.Timestamptz
+}
+
+// One bounded retention batch: rows past an explicit result_retention_until,
+// and unpinned terminal rows older than the default ages. Dead letters keep
+// the longer age; work-policy records keep explicit retention only.
+func (q *Queries) DeleteExpiredTriggerRecords(ctx context.Context, db DBTX, arg DeleteExpiredTriggerRecordsParams) (int64, error) {
+	result, err := db.Exec(ctx, deleteExpiredTriggerRecords,
+		arg.Now,
+		arg.Batch,
+		arg.TerminalBefore,
+		arg.DeadLetterBefore,
+	)
 	if err != nil {
 		return 0, err
 	}
@@ -36917,6 +37004,67 @@ func (q *Queries) ListAccountCustomerOperationsBySubject(ctx context.Context, db
 	return items, nil
 }
 
+const listAccountDeletedApps = `-- name: ListAccountDeletedApps :many
+SELECT id::text AS id, slug, deleted_at, delete_grace_until,
+       coalesce(deleted_at, created_at)::timestamptz AS sort_at,
+       (purge_claimed_at IS NOT NULL)::boolean AS purge_started
+FROM apps
+WHERE account_id = $1::text::uuid AND status = 'deleted'
+  AND ($2::text = '' OR
+       (coalesce(deleted_at, created_at), id::text) <
+       ($3::timestamptz, $2::text))
+ORDER BY coalesce(deleted_at, created_at) DESC, id::text DESC
+LIMIT $4::int
+`
+
+type ListAccountDeletedAppsParams struct {
+	AccountID string
+	BeforeID  string
+	BeforeAt  pgtype.Timestamptz
+	PageLimit int32
+}
+
+type ListAccountDeletedAppsRow struct {
+	ID               string
+	Slug             string
+	DeletedAt        pgtype.Timestamptz
+	DeleteGraceUntil pgtype.Timestamptz
+	SortAt           pgtype.Timestamptz
+	PurgeStarted     bool
+}
+
+func (q *Queries) ListAccountDeletedApps(ctx context.Context, db DBTX, arg ListAccountDeletedAppsParams) ([]ListAccountDeletedAppsRow, error) {
+	rows, err := db.Query(ctx, listAccountDeletedApps,
+		arg.AccountID,
+		arg.BeforeID,
+		arg.BeforeAt,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListAccountDeletedAppsRow{}
+	for rows.Next() {
+		var i ListAccountDeletedAppsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Slug,
+			&i.DeletedAt,
+			&i.DeleteGraceUntil,
+			&i.SortAt,
+			&i.PurgeStarted,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listActiveRegressionsByApp = `-- name: ListActiveRegressionsByApp :many
 SELECT deployment_id, route,
        p95_ms, p95_base_ms, affected_count,
@@ -41972,7 +42120,7 @@ const listEnabledTriggers = `-- name: ListEnabledTriggers :many
 select id, account_id, app_id, kind, slug, enabled, config, queue_binding_id, queue_binding_scope, queue_binding_environment_id,
        batch_size_max, batch_window_ms, max_attempts,
        cron_id, source, payload_max_bytes, broker_poison_strategy,
-       filter_criteria,
+       filter_criteria, delivery,
        created_at, updated_at
 from triggers where enabled = true AND NOT environment_workload_admission_retired(app_id,queue_binding_scope)
 `
@@ -41996,6 +42144,7 @@ type ListEnabledTriggersRow struct {
 	PayloadMaxBytes           int32
 	BrokerPoisonStrategy      string
 	FilterCriteria            []byte
+	Delivery                  string
 	CreatedAt                 pgtype.Timestamptz
 	UpdatedAt                 pgtype.Timestamptz
 }
@@ -42036,6 +42185,7 @@ func (q *Queries) ListEnabledTriggers(ctx context.Context, db DBTX) ([]ListEnabl
 			&i.PayloadMaxBytes,
 			&i.BrokerPoisonStrategy,
 			&i.FilterCriteria,
+			&i.Delivery,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -47360,7 +47510,7 @@ const listTriggersForApp = `-- name: ListTriggersForApp :many
 select id, account_id, app_id, kind, slug, enabled, config, queue_binding_id, queue_binding_scope, queue_binding_environment_id,
        batch_size_max, batch_window_ms, max_attempts,
        cron_id, source, payload_max_bytes, broker_poison_strategy,
-       filter_criteria,
+       filter_criteria, delivery,
        created_at, updated_at
 from triggers where app_id = $1 order by created_at desc
 `
@@ -47384,6 +47534,7 @@ type ListTriggersForAppRow struct {
 	PayloadMaxBytes           int32
 	BrokerPoisonStrategy      string
 	FilterCriteria            []byte
+	Delivery                  string
 	CreatedAt                 pgtype.Timestamptz
 	UpdatedAt                 pgtype.Timestamptz
 }
@@ -47419,6 +47570,7 @@ func (q *Queries) ListTriggersForApp(ctx context.Context, db DBTX, appID pgtype.
 			&i.PayloadMaxBytes,
 			&i.BrokerPoisonStrategy,
 			&i.FilterCriteria,
+			&i.Delivery,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -47457,6 +47609,81 @@ func (q *Queries) ListUDPListenersForApp(ctx context.Context, db DBTX, appID str
 			&i.Enabled,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listWakeHistoryByWakeIDs = `-- name: ListWakeHistoryByWakeIDs :many
+WITH page AS MATERIALIZED (
+ SELECT DISTINCT ON (wake_id) id, app_id, wake_id, state, started_at FROM instances
+ WHERE app_id = ANY($1::uuid[])
+   AND wake_id = ANY($2::uuid[])
+   AND started_at IS NOT NULL
+ ORDER BY wake_id, started_at ASC, id ASC
+)
+SELECT p.id::text AS instance_id, p.app_id::text AS app_id, p.wake_id::text AS wake_id,
+       p.state, p.started_at, bs.data AS boot_data, bs.at AS boot_at,
+       (bs.id IS NOT NULL)::boolean AS has_meta, bc.at AS completed_at
+FROM page p
+LEFT JOIN LATERAL (
+ SELECT id, data, at FROM events
+ WHERE kind = 'wake.boot_started' AND data->>'app_id' = p.app_id::text AND data->>'wake_id' = p.wake_id::text
+ ORDER BY (actor = 'schedd') DESC, at ASC, id ASC LIMIT 1
+) bs ON true
+LEFT JOIN LATERAL (
+ SELECT at FROM events
+ WHERE kind = 'wake.boot_completed' AND data->>'app_id' = p.app_id::text AND data->>'wake_id' = p.wake_id::text
+ ORDER BY at ASC, id ASC LIMIT 1
+) bc ON true
+ORDER BY p.started_at ASC, p.wake_id
+`
+
+type ListWakeHistoryByWakeIDsParams struct {
+	AppIds  []pgtype.UUID
+	WakeIds []pgtype.UUID
+}
+
+type ListWakeHistoryByWakeIDsRow struct {
+	InstanceID  string
+	AppID       string
+	WakeID      string
+	State       string
+	StartedAt   pgtype.Timestamptz
+	BootData    []byte
+	BootAt      pgtype.Timestamptz
+	HasMeta     bool
+	CompletedAt pgtype.Timestamptz
+}
+
+// The account trace view's per-request wakes: one canonical instance per wake
+// (its first), scoped to the account's apps before reading wake metadata, with
+// the same boot and completion reads as ListAppWakeHistoryPage.
+func (q *Queries) ListWakeHistoryByWakeIDs(ctx context.Context, db DBTX, arg ListWakeHistoryByWakeIDsParams) ([]ListWakeHistoryByWakeIDsRow, error) {
+	rows, err := db.Query(ctx, listWakeHistoryByWakeIDs, arg.AppIds, arg.WakeIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListWakeHistoryByWakeIDsRow{}
+	for rows.Next() {
+		var i ListWakeHistoryByWakeIDsRow
+		if err := rows.Scan(
+			&i.InstanceID,
+			&i.AppID,
+			&i.WakeID,
+			&i.State,
+			&i.StartedAt,
+			&i.BootData,
+			&i.BootAt,
+			&i.HasMeta,
+			&i.CompletedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -54116,6 +54343,7 @@ UPDATE app_tasks SET status='running',started_at=$1::timestamptz,attempt_count=a
 retry_at=NULL,stdout_tail='',stderr_tail='',output_truncated=false,exit_code=NULL,failure_code=NULL,failure_message=NULL,updated_at=$1
 WHERE id=$2::text::uuid AND status='restoring' AND lease_token=$3::text::uuid
 AND cancel_requested_at IS NULL AND lease_expires_at>$1
+AND NOT financial_app_command_held(app_id,deployment_id,$1::timestamptz)
 AND (start_deadline_at IS NULL OR start_deadline_at>=$1 OR EXISTS (
  SELECT 1 FROM schedule_occurrences occurrence WHERE occurrence.id=app_tasks.occurrence_id AND occurrence.started_at IS NOT NULL))
 RETURNING id, account_id, app_id, deployment_id, kind, command, command_shell, deployment_scope, artifact_key, image_digest, status, timeout_seconds, max_output_bytes, lease_token, lease_owner, lease_expires_at, cancel_requested_at, stdout_tail, stderr_tail, output_truncated, exit_code, failure_code, failure_message, started_at, finished_at, created_at, updated_at, cron_id, scheduled_for, retry_max, retry_backoff_seconds, attempt_count, retry_at, failure_rules, occurrence_id, start_deadline_at, work_decision, outcome_code, exclusive_operation_id, exclusive_generation, binding_verification
@@ -64973,7 +65201,7 @@ payload_max_bytes=coalesce($6::integer,payload_max_bytes),
 broker_poison_strategy=coalesce($7::text,broker_poison_strategy),
 filter_criteria=coalesce($8::jsonb,filter_criteria),
 source=coalesce($9::text,source)
-where id=$10 and queue_binding_id is null returning id, account_id, app_id, kind, slug, enabled, config, batch_size_max, batch_window_ms, max_attempts, cron_id, source, created_at, updated_at, payload_max_bytes, broker_poison_strategy, filter_criteria, queue_binding_id, queue_binding_scope, queue_binding_environment_id
+where id=$10 and queue_binding_id is null returning id, account_id, app_id, kind, slug, enabled, config, batch_size_max, batch_window_ms, max_attempts, cron_id, source, created_at, updated_at, payload_max_bytes, broker_poison_strategy, filter_criteria, queue_binding_id, queue_binding_scope, queue_binding_environment_id, delivery
 `
 
 type PublicPatchTriggerParams struct {
@@ -65024,6 +65252,7 @@ func (q *Queries) PublicPatchTrigger(ctx context.Context, db DBTX, arg PublicPat
 		&i.QueueBindingID,
 		&i.QueueBindingScope,
 		&i.QueueBindingEnvironmentID,
+		&i.Delivery,
 	)
 	return i, err
 }
@@ -66310,7 +66539,7 @@ insert into triggers (account_id,app_id,queue_binding_id,kind,source,slug,enable
 batch_size_max,batch_window_ms,max_attempts,payload_max_bytes,broker_poison_strategy)
 values ($1,$2,$3::uuid,'queue','queue',$4,
 $5,$6::jsonb,$7,$8,
-$9,$10,'commit') returning id, account_id, app_id, kind, slug, enabled, config, batch_size_max, batch_window_ms, max_attempts, cron_id, source, created_at, updated_at, payload_max_bytes, broker_poison_strategy, filter_criteria, queue_binding_id, queue_binding_scope, queue_binding_environment_id
+$9,$10,'commit') returning id, account_id, app_id, kind, slug, enabled, config, batch_size_max, batch_window_ms, max_attempts, cron_id, source, created_at, updated_at, payload_max_bytes, broker_poison_strategy, filter_criteria, queue_binding_id, queue_binding_scope, queue_binding_environment_id, delivery
 `
 
 type QueueConsumerCreateTriggerParams struct {
@@ -66361,6 +66590,7 @@ func (q *Queries) QueueConsumerCreateTrigger(ctx context.Context, db DBTX, arg Q
 		&i.QueueBindingID,
 		&i.QueueBindingScope,
 		&i.QueueBindingEnvironmentID,
+		&i.Delivery,
 	)
 	return i, err
 }
@@ -74382,7 +74612,7 @@ func (q *Queries) ReadRoutePolicyRules(ctx context.Context, db DBTX, appID strin
 
 const readRuntimeAppEnvForDeployment = `-- name: ReadRuntimeAppEnvForDeployment :one
 WITH owner AS (
-    SELECT d.id, a.id AS app_id, a.account_id,
+    SELECT d.id, a.id AS app_id, a.account_id, a.project_id,
         COALESCE(NULLIF(d.scope,''),'default')::text AS scope,
         COALESCE(bound.id::text,legacy.id::text,'')::text AS environment_id
     FROM deployments d
@@ -74408,7 +74638,13 @@ WITH owner AS (
 )
 SELECT owner.scope, owner.environment_id,
     COALESCE((SELECT jsonb_agg(jsonb_build_object('key',v.key,'value',v.value,'created_at',v.created_at,'updated_at',v.updated_at) ORDER BY v.key)
-        FROM app_envs v WHERE v.account_id=owner.account_id AND v.app_id=owner.app_id AND v.scope=owner.scope),'[]'::jsonb)::jsonb AS values
+        FROM app_envs v WHERE v.account_id=owner.account_id AND v.app_id=owner.app_id AND v.scope=owner.scope),'[]'::jsonb)::jsonb AS values,
+    -- ADR-1136: the project environment configuration the deployment inherits.
+    COALESCE((SELECT jsonb_build_object('values',c.config_json,'created_at',c.created_at)
+        FROM project_environment_config_versions c
+        WHERE owner.project_id IS NOT NULL AND c.account_id=owner.account_id AND c.project_id=owner.project_id
+            AND c.environment_slug=CASE WHEN owner.scope='default' THEN 'production' ELSE owner.scope END
+        ORDER BY c.version DESC LIMIT 1),'{}'::jsonb)::jsonb AS project_config
 FROM owner
 `
 
@@ -74422,18 +74658,24 @@ type ReadRuntimeAppEnvForDeploymentRow struct {
 	Scope         string
 	EnvironmentID string
 	Values        []byte
+	ProjectConfig []byte
 }
 
 func (q *Queries) ReadRuntimeAppEnvForDeployment(ctx context.Context, db DBTX, arg ReadRuntimeAppEnvForDeploymentParams) (ReadRuntimeAppEnvForDeploymentRow, error) {
 	row := db.QueryRow(ctx, readRuntimeAppEnvForDeployment, arg.AccountID, arg.AppID, arg.DeploymentID)
 	var i ReadRuntimeAppEnvForDeploymentRow
-	err := row.Scan(&i.Scope, &i.EnvironmentID, &i.Values)
+	err := row.Scan(
+		&i.Scope,
+		&i.EnvironmentID,
+		&i.Values,
+		&i.ProjectConfig,
+	)
 	return i, err
 }
 
 const readRuntimeAppValuesForDeployment = `-- name: ReadRuntimeAppValuesForDeployment :one
 WITH owner AS (
-    SELECT d.id, a.id AS app_id, a.account_id,
+    SELECT d.id, a.id AS app_id, a.account_id, a.project_id,
         COALESCE(NULLIF(d.scope,''),'default')::text AS scope,
         COALESCE(bound.id::text,legacy.id::text,'')::text AS environment_id,
         d.environment_workload_runtime,d.override_env_secrets,d.sidecars,COALESCE(d.secret_reload_signal,'')::text AS reload_signal,
@@ -74477,7 +74719,13 @@ SELECT owner.scope,owner.environment_id,owner.environment_workload_runtime,owner
         'managed_object_storage_credential_id',s.managed_object_storage_credential_id) ORDER BY s.key)
         FROM app_secrets s WHERE s.account_id=owner.account_id AND s.app_id=owner.app_id AND s.scope=owner.scope),'[]'::jsonb)::jsonb AS secrets,
     COALESCE((SELECT jsonb_object_agg(signal.sidecar_name,signal.signal) FROM deployment_sidecar_secret_reload_signals signal
-        WHERE signal.deployment_id=owner.id),'{}'::jsonb)::jsonb AS reload_signals
+        WHERE signal.deployment_id=owner.id),'{}'::jsonb)::jsonb AS reload_signals,
+    -- ADR-1136: the project environment configuration the deployment inherits.
+    COALESCE((SELECT jsonb_build_object('values',c.config_json,'created_at',c.created_at)
+        FROM project_environment_config_versions c
+        WHERE owner.project_id IS NOT NULL AND c.account_id=owner.account_id AND c.project_id=owner.project_id
+            AND c.environment_slug=CASE WHEN owner.scope='default' THEN 'production' ELSE owner.scope END
+        ORDER BY c.version DESC LIMIT 1),'{}'::jsonb)::jsonb AS project_config
 FROM owner
 `
 
@@ -74502,6 +74750,7 @@ type ReadRuntimeAppValuesForDeploymentRow struct {
 	Values                     []byte
 	Secrets                    []byte
 	ReloadSignals              []byte
+	ProjectConfig              []byte
 }
 
 func (q *Queries) ReadRuntimeAppValuesForDeployment(ctx context.Context, db DBTX, arg ReadRuntimeAppValuesForDeploymentParams) (ReadRuntimeAppValuesForDeploymentRow, error) {
@@ -74522,6 +74771,7 @@ func (q *Queries) ReadRuntimeAppValuesForDeployment(ctx context.Context, db DBTX
 		&i.Values,
 		&i.Secrets,
 		&i.ReloadSignals,
+		&i.ProjectConfig,
 	)
 	return i, err
 }
@@ -85943,6 +86193,26 @@ func (q *Queries) SetSyntheticCheckEnabled(ctx context.Context, db DBTX, arg Set
 	return i, err
 }
 
+const setTriggerDelivery = `-- name: SetTriggerDelivery :execrows
+update triggers set delivery = $2, updated_at = now()
+where id = $1 and queue_binding_id is null
+`
+
+type SetTriggerDeliveryParams struct {
+	ID       pgtype.UUID
+	Delivery string
+}
+
+// ADR-1321: switch a public trigger between per-record and batch delivery.
+// The CHECK constraint refuses batch for cron and queue triggers.
+func (q *Queries) SetTriggerDelivery(ctx context.Context, db DBTX, arg SetTriggerDeliveryParams) (int64, error) {
+	result, err := db.Exec(ctx, setTriggerDelivery, arg.ID, arg.Delivery)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const setUDPListenerEnabled = `-- name: SetUDPListenerEnabled :one
 UPDATE app_udp_listeners SET enabled = $1, updated_at = now()
 WHERE id = $2::text::uuid RETURNING id, account_id, app_id, listener_name, guest_port, public_port, protocol, enabled, created_at, updated_at
@@ -87188,6 +87458,31 @@ func (q *Queries) SupersedeEnvironmentGitOpsRuns(ctx context.Context, db DBTX, a
 	return err
 }
 
+const supersedeTriggerRecordItems = `-- name: SupersedeTriggerRecordItems :execrows
+UPDATE trigger_records
+   SET state = 'superseded', last_error = $1,
+       last_dispatched_at = now(), claim_expires_at = NULL
+ WHERE trigger_id = $2
+   AND item_identifier = ANY($3::text[])
+   AND state IN ('pending', 'claimed', 'retry')
+`
+
+type SupersedeTriggerRecordItemsParams struct {
+	LastError       pgtype.Text
+	TriggerID       pgtype.UUID
+	ItemIdentifiers []string
+}
+
+// Ends one realtime delivery's records whatever stage they reached; the
+// consumer group redelivers under a new item identifier (ADR-1322).
+func (q *Queries) SupersedeTriggerRecordItems(ctx context.Context, db DBTX, arg SupersedeTriggerRecordItemsParams) (int64, error) {
+	result, err := db.Exec(ctx, supersedeTriggerRecordItems, arg.LastError, arg.TriggerID, arg.ItemIdentifiers)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const suppressMCPReminder = `-- name: SuppressMCPReminder :exec
 UPDATE mcp_readiness_incident_events SET delivery_version=delivery_version+1,delivery_status='suppressed',suppression_reason=$1,lease_token=NULL,lease_until=NULL WHERE id=$2
 `
@@ -87744,7 +88039,7 @@ const triggerByID = `-- name: TriggerByID :one
 select id, account_id, app_id, kind, slug, enabled, config, queue_binding_id, queue_binding_scope, queue_binding_environment_id,
        batch_size_max, batch_window_ms, max_attempts,
        cron_id, source, payload_max_bytes, broker_poison_strategy,
-       filter_criteria,
+       filter_criteria, delivery,
        created_at, updated_at
 from triggers where id = $1
 `
@@ -87768,6 +88063,7 @@ type TriggerByIDRow struct {
 	PayloadMaxBytes           int32
 	BrokerPoisonStrategy      string
 	FilterCriteria            []byte
+	Delivery                  string
 	CreatedAt                 pgtype.Timestamptz
 	UpdatedAt                 pgtype.Timestamptz
 }
@@ -87800,6 +88096,7 @@ func (q *Queries) TriggerByID(ctx context.Context, db DBTX, id pgtype.UUID) (Tri
 		&i.PayloadMaxBytes,
 		&i.BrokerPoisonStrategy,
 		&i.FilterCriteria,
+		&i.Delivery,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)

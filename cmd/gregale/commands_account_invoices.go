@@ -55,10 +55,10 @@ func cmdAccountInvoices(args []string) int {
 		}
 		remaining := "-"
 		if invoice.AmountRemainingMinor != nil {
-			remaining = formatMillicents(invoice.Currency, *invoice.AmountRemainingMinor*1000)
+			remaining = formatMillicents(invoice.Currency, api.MinorToMillicents(invoice.Currency, *invoice.AmountRemainingMinor))
 		}
 		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", dashIfEmpty(invoice.Provider), invoice.InvoiceID, invoice.Customer, payment,
-			formatMillicents(invoice.Currency, invoice.AmountMinor*1000), remaining, formatDate(invoice.DueAt), formatDate(invoice.PaidAt))
+			formatMillicents(invoice.Currency, api.MinorToMillicents(invoice.Currency, invoice.AmountMinor)), remaining, formatDate(invoice.DueAt), formatDate(invoice.PaidAt))
 	}
 	_ = tw.Flush()
 	return 0

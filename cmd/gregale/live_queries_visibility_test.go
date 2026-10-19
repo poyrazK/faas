@@ -1,6 +1,7 @@
-package main
+package main_test
 
 import (
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"os"
 	"strings"
 	"testing"
@@ -10,7 +11,7 @@ import (
 // postgres live` stays callable but out of customer help, completions and
 // the published CLI reference.
 func TestLiveQueriesHiddenFromCustomerDiscovery(t *testing.T) {
-	for _, command := range customerCliCommands() {
+	for _, command := range main.CustomerCliCommands() {
 		if command.Name != "postgres" {
 			continue
 		}

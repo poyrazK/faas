@@ -1,6 +1,7 @@
-package sched
+package sched_test
 
 import (
+	"github.com/onebox-faas/faas/pkg/sched"
 	"sync"
 	"testing"
 	"time"
@@ -19,7 +20,7 @@ func frozenClockNow(t time.Time) func() time.Time {
 func TestPressureAggregator_ThresholdCrossing(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
-	agg := NewPressureAggregatorForTest(60*time.Second, 100, frozenClockNow(now))
+	agg := sched.NewPressureAggregatorForTest(60*time.Second, 100, frozenClockNow(now))
 
 	const appID = "app-1"
 	// 4 events under the threshold — must NOT show as pressured.
@@ -42,7 +43,7 @@ func TestPressureAggregator_ThresholdCrossing(t *testing.T) {
 func TestPressureAggregator_PerAppIsolation(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
-	agg := NewPressureAggregatorForTest(60*time.Second, 100, frozenClockNow(now))
+	agg := sched.NewPressureAggregatorForTest(60*time.Second, 100, frozenClockNow(now))
 
 	for i := 0; i < 5; i++ {
 		agg.IncAtCapacity("app-hot", now.Add(time.Duration(i)*time.Second))
@@ -59,7 +60,7 @@ func TestPressureAggregator_PerAppIsolation(t *testing.T) {
 func TestPressureAggregator_WindowEdgePruning(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
-	agg := NewPressureAggregatorForTest(60*time.Second, 100, frozenClockNow(now))
+	agg := sched.NewPressureAggregatorForTest(60*time.Second, 100, frozenClockNow(now))
 
 	// 5 events at now-59s (inside the 60s window) — pressured.
 	for i := 0; i < 5; i++ {
@@ -80,7 +81,7 @@ func TestPressureAggregator_WindowEdgePruning(t *testing.T) {
 func TestPressureAggregator_ResetClearsApp(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
-	agg := NewPressureAggregatorForTest(60*time.Second, 100, frozenClockNow(now))
+	agg := sched.NewPressureAggregatorForTest(60*time.Second, 100, frozenClockNow(now))
 
 	for i := 0; i < 5; i++ {
 		agg.IncAtCapacity("app", now.Add(time.Duration(i)*time.Second))
@@ -95,7 +96,7 @@ func TestPressureAggregator_ResetClearsApp(t *testing.T) {
 func TestPressureAggregator_SortedOutput(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
-	agg := NewPressureAggregatorForTest(60*time.Second, 100, frozenClockNow(now))
+	agg := sched.NewPressureAggregatorForTest(60*time.Second, 100, frozenClockNow(now))
 
 	for _, id := range []string{"zeta", "alpha", "mu", "beta"} {
 		for i := 0; i < 5; i++ {
@@ -116,7 +117,7 @@ func TestPressureAggregator_SortedOutput(t *testing.T) {
 
 func TestPressureAggregator_NilSafe(t *testing.T) {
 	t.Parallel()
-	var agg *PressureAggregator
+	var agg *sched.PressureAggregator
 	agg.IncAtCapacity("app", time.Now())
 	if got := agg.Count("app", time.Now()); got != 0 {
 		t.Fatalf("expected 0 from nil Count, got %d", got)
@@ -131,7 +132,7 @@ func TestPressureAggregator_NilSafe(t *testing.T) {
 func TestPressureAggregator_ConcurrentIncAtCapacity(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
-	agg := NewPressureAggregatorForTest(60*time.Second, 100_000, frozenClockNow(now))
+	agg := sched.NewPressureAggregatorForTest(60*time.Second, 100_000, frozenClockNow(now))
 
 	const goroutines = 32
 	const perGoroutine = 100
@@ -157,7 +158,7 @@ func TestPressureAggregator_MaxEventsPerAppCap(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
 	const cap = 5
-	agg := NewPressureAggregatorForTest(60*time.Second, cap, frozenClockNow(now))
+	agg := sched.NewPressureAggregatorForTest(60*time.Second, cap, frozenClockNow(now))
 
 	for i := 0; i < 10; i++ {
 		agg.IncAtCapacity("app", now.Add(time.Duration(i)*time.Millisecond))
@@ -172,7 +173,7 @@ func TestPressureAggregator_MaxEventsPerAppCap(t *testing.T) {
 func TestPressureAggregator_ResetAll(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
-	agg := NewPressureAggregatorForTest(60*time.Second, 100, frozenClockNow(now))
+	agg := sched.NewPressureAggregatorForTest(60*time.Second, 100, frozenClockNow(now))
 
 	for _, id := range []string{"a", "b", "c"} {
 		for i := 0; i < 5; i++ {
@@ -205,7 +206,7 @@ func TestPressureAggregator_NewPressureAggregatorForTest_Panics(t *testing.T) {
 					t.Fatalf("expected panic for case %q", tc.name)
 				}
 			}()
-			NewPressureAggregatorForTest(tc.window, tc.maxEventsPerApp, time.Now)
+			sched.NewPressureAggregatorForTest(tc.window, tc.maxEventsPerApp, time.Now)
 		})
 	}
 }
@@ -217,5 +218,5 @@ func TestPressureAggregator_NewPressureAggregatorForTest_NilNowPanics(t *testing
 			t.Fatalf("expected panic for nil now")
 		}
 	}()
-	NewPressureAggregatorForTest(60*time.Second, 100, nil)
+	sched.NewPressureAggregatorForTest(60*time.Second, 100, nil)
 }

@@ -7,6 +7,18 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Tenant egress denies NAT64 — 2026-10-18 (branch, not released)
+
+The shared egress denylist adds the NAT64 prefixes `64:ff9b::/96` (RFC 6052)
+and `64:ff9b:1::/48` (RFC 8215): their addresses embed an IPv4 destination,
+so a translator on the path could carry a guest past the IPv4 denies, the
+same class as 6to4 and Teredo
+([ADR 20261018194214](adr/20261018194214-tenant-egress-deny-nat64.md)). The
+per-netns and host renders, the Ansible template, the user-space checks and
+`docs/denylist.md` all follow the catalog; `make egress-render-matrix` passes
+on all nine rows. No deployment uses NAT64. Open: `nft -c` validation of the
+rendered ruleset and a metal run of the egress sweep.
+
 ## Checked binding retirement — 2026-10-17
 
 Complete reviewed GitOps graph removal can publish an empty release with binding
@@ -144,6 +156,7 @@ runner contracts. Native host classification, service isolation, per-runner
 locks, leak checks and independent provider/artifact approval remain required.
 Portable verification is separate from supported native execution. No native
 qualification or production admission is established by this implementation.
+
 ## Post-release watch — 2026-10-17
 
 [ADR-1445](adr/1445-post-release-watch.md): for 30 minutes after a release

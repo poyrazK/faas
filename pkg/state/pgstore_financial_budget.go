@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -36,6 +37,7 @@ func (s *PgStore) DeleteFinancialBudget(ctx context.Context, account, id string,
 }
 
 func (s *PgStore) mutateFinancialBudget(ctx context.Context, account, id string, expected int64, actor, mutation string, spec financial.BudgetSpec) (FinancialBudget, error) {
+	spec = NormalizeFinancialBudgetSpec(spec)
 	if !validFinancialBudgetMutation(account, id, actor, expected) || (mutation != "deleted" && ValidateFinancialBudgetSpec(spec) != nil) {
 		return FinancialBudget{}, ErrInvalidArgument
 	}
@@ -50,6 +52,7 @@ func (s *PgStore) mutateFinancialBudget(ctx context.Context, account, id string,
 	if _, err := q.FinancialBudgetAccountLock(ctx, tx, accountID); err != nil {
 		return FinancialBudget{}, financialBudgetStoreError(err)
 	}
+	continuingStrict := false
 	if mutation != "created" {
 		old, err := q.FinancialBudgetGet(ctx, tx, sqlc.FinancialBudgetGetParams{AccountID: accountID, ID: policyID})
 		if err != nil {
@@ -58,10 +61,42 @@ func (s *PgStore) mutateFinancialBudget(ctx context.Context, account, id string,
 		if old.Revision != expected || old.DeletedAt.Valid {
 			return FinancialBudget{}, ErrConflict
 		}
+		previous, err := financialBudgetFromRow(old)
+		if err != nil {
+			return FinancialBudget{}, err
+		}
+		continuingStrict = previous.Spec.Enabled && financial.StrictCompute(previous.Spec) && previous.Spec.Scope == spec.Scope && slices.Equal(previous.Spec.Meters, spec.Meters)
 	}
 	if mutation != "deleted" {
 		if err := financialBudgetScopeOwned(ctx, tx, q, accountID, spec); err != nil {
 			return FinancialBudget{}, err
+		}
+		if spec.Enabled && spec.Mode == "strict" {
+			if !financial.StrictCompute(spec) {
+				return FinancialBudget{}, ErrInvalidArgument
+			}
+			clock, err := q.FinancialComputeClock(ctx, tx)
+			if err != nil {
+				return FinancialBudget{}, err
+			}
+			compute := &pgFinancialComputeTxn{ctx: ctx, db: tx, q: q, account: accountID, now: clock.Time}
+			if !continuingStrict {
+				if err := compute.initialize(financial.ComputeScopeKey(spec.Scope), true); err != nil {
+					return FinancialBudget{}, err
+				}
+			}
+			if financial.StrictAccountEgress(spec) && !continuingStrict {
+				if err := compute.initializeEgress(); err != nil {
+					return FinancialBudget{}, err
+				}
+			}
+			b, err := compute.book(financial.ComputeScopeKey(spec.Scope), financial.ComputeMonth(clock.Time))
+			if err == nil {
+				b.Committed, b.Reserved, err = computePolicyMoney(b, spec)
+			}
+			if err := validateComputePolicyFunding(b, err, continuingStrict, spec.LimitMillicents); err != nil {
+				return FinancialBudget{}, err
+			}
 		}
 	}
 	data, err := json.Marshal(cloneFinancialBudgetSpec(spec))

@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -9,24 +9,25 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func TestDashboardJSONDoesNotLaunchBrowser(t *testing.T) {
 	for _, stateless := range []bool{false, true} {
 		t.Run(map[bool]string{false: "account", true: "stateless"}[stateless], func(t *testing.T) {
-			resetJSONOut(t)
-			jsonOutput = true
+			main.ResetJSONOut(t)
+			(*main.JsonOutput) = true
 			t.Setenv("FAAS_API", "https://api.example.test")
 			t.Setenv("FAAS_TOKEN", "fp_live_x")
-			rec := withRecorder(t)
-			out, restore := captureStdout(t)
+			rec := main.WithRecorder(t)
+			out, restore := main.CaptureStdout(t)
 			defer restore()
 			var args []string
 			if stateless {
 				args = append(args, "--stateless")
 			}
-			if code := cmdDashboard(args); code != 0 {
+			if code := main.CmdDashboard(args); code != 0 {
 				t.Fatalf("dashboard exit=%d", code)
 			}
 			var receipt struct {
@@ -36,12 +37,12 @@ func TestDashboardJSONDoesNotLaunchBrowser(t *testing.T) {
 			if err := json.Unmarshal(out.Bytes(), &receipt); err != nil {
 				t.Fatalf("stdout must be one JSON document: %v", err)
 			}
-			want := dashboardAccountURL(apiBase())
+			want := main.DashboardAccountURL(main.ApiBase())
 			if stateless {
-				want = dashboardStatelessURL(apiBase())
+				want = main.DashboardStatelessURL(main.ApiBase())
 			}
-			if receipt.URL != want || receipt.Stateless != stateless || len(rec.urls) != 0 {
-				t.Fatalf("receipt=%+v browser launches=%v", receipt, rec.urls)
+			if receipt.URL != want || receipt.Stateless != stateless || len((*rec.Urls())) != 0 {
+				t.Fatalf("receipt=%+v browser launches=%v", receipt, (*rec.Urls()))
 			}
 		})
 	}
@@ -50,8 +51,8 @@ func TestDashboardJSONDoesNotLaunchBrowser(t *testing.T) {
 func TestOpenJSONDoesNotWakeOrLaunchBrowser(t *testing.T) {
 	for _, dashboard := range []bool{false, true} {
 		t.Run(map[bool]string{false: "app", true: "dashboard"}[dashboard], func(t *testing.T) {
-			resetJSONOut(t)
-			jsonOutput = true
+			main.ResetJSONOut(t)
+			(*main.JsonOutput) = true
 			requests := 0
 			live := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				requests++
@@ -62,19 +63,19 @@ func TestOpenJSONDoesNotWakeOrLaunchBrowser(t *testing.T) {
 				if r.Method != http.MethodGet || r.URL.Path != "/v1/apps/demo" {
 					t.Errorf("unexpected API request: %s %s", r.Method, r.URL.Path)
 				}
-				writeJSONTest(w, api.AppResponse{Slug: "demo", URL: live.URL})
+				main.WriteJSONTest(w, api.AppResponse{Slug: "demo", URL: live.URL})
 			}))
 			defer srv.Close()
 			t.Setenv("FAAS_API", srv.URL)
 			t.Setenv("FAAS_TOKEN", "fp_live_x")
-			rec := withRecorder(t)
-			out, restore := captureStdout(t)
+			rec := main.WithRecorder(t)
+			out, restore := main.CaptureStdout(t)
 			defer restore()
 			args := []string{"demo"}
 			if dashboard {
 				args = append(args, "--dashboard")
 			}
-			if code := cmdOpen(args); code != 0 {
+			if code := main.CmdOpen(args); code != 0 {
 				t.Fatalf("open exit=%d", code)
 			}
 			var receipt struct {
@@ -87,13 +88,13 @@ func TestOpenJSONDoesNotWakeOrLaunchBrowser(t *testing.T) {
 			}
 			want := live.URL
 			if dashboard {
-				want = dashboardAppURL(srv.URL, "demo")
+				want = main.DashboardAppURL(srv.URL, "demo")
 			}
 			if receipt.Slug != "demo" || receipt.URL != want || receipt.Dashboard != dashboard {
 				t.Fatalf("receipt=%+v", receipt)
 			}
-			if requests != 0 || len(rec.urls) != 0 {
-				t.Fatalf("JSON URL lookup woke app %d times, browser=%v", requests, rec.urls)
+			if requests != 0 || len((*rec.Urls())) != 0 {
+				t.Fatalf("JSON URL lookup woke app %d times, browser=%v", requests, (*rec.Urls()))
 			}
 		})
 	}
@@ -102,8 +103,8 @@ func TestOpenJSONDoesNotWakeOrLaunchBrowser(t *testing.T) {
 func TestEnvPullJSONUsesScopedKeysAndPreservesLocalValues(t *testing.T) {
 	for _, existing := range []string{"", "A=local-secret\nLOCAL=preserved\n"} {
 		t.Run(map[bool]string{false: "new", true: "preserve"}[existing != ""], func(t *testing.T) {
-			resetJSONOut(t)
-			jsonOutput = true
+			main.ResetJSONOut(t)
+			(*main.JsonOutput) = true
 			t.Chdir(t.TempDir())
 			path := filepath.Join(t.TempDir(), ".env")
 			if existing != "" {
@@ -116,15 +117,15 @@ func TestEnvPullJSONUsesScopedKeysAndPreservesLocalValues(t *testing.T) {
 					t.Errorf("scope=%s", r.URL.RawQuery)
 				}
 				// Count is the account-wide quota count, not the selected scope.
-				writeJSONTest(w, api.AppSecretListResponse{Count: 9, Quota: 25,
+				main.WriteJSONTest(w, api.AppSecretListResponse{Count: 9, Quota: 25,
 					Secrets: []api.AppSecretResponse{{Key: "A"}, {Key: "B"}}})
 			}))
 			defer srv.Close()
 			t.Setenv("FAAS_API", srv.URL)
 			t.Setenv("FAAS_TOKEN", "fp_live_x")
-			out, restore := captureStdout(t)
+			out, restore := main.CaptureStdout(t)
 			defer restore()
-			if code := envPull([]string{"--app", "demo", "--scope", "staging", "-o", path}); code != 0 {
+			if code := main.EnvPull([]string{"--app", "demo", "--scope", "staging", "-o", path}); code != 0 {
 				t.Fatalf("pull exit=%d", code)
 			}
 			var receipt struct {
@@ -180,8 +181,8 @@ func TestEnvPushJSONReportsActualWritesAndFreshRestart(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			resetJSONOut(t)
-			jsonOutput = true
+			main.ResetJSONOut(t)
+			(*main.JsonOutput) = true
 			t.Chdir(t.TempDir())
 			sets, restarts := []string{}, 0
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -207,7 +208,7 @@ func TestEnvPushJSONReportsActualWritesAndFreshRestart(t *testing.T) {
 						api.WriteProblem(w, api.NewProblem(409, api.CodeValidation, "Rejected", "synthetic restart rejection"))
 						return
 					}
-					writeJSONTest(w, api.AppRestartResponse{WakeID: "wake-json"})
+					main.WriteJSONTest(w, api.AppRestartResponse{WakeID: "wake-json"})
 					return
 				}
 				t.Errorf("unexpected request %s", r.URL)
@@ -218,7 +219,7 @@ func TestEnvPushJSONReportsActualWritesAndFreshRestart(t *testing.T) {
 			t.Setenv("FAAS_TOKEN", "fp_live_x")
 			args := []string{"--app", "demo", "--scope", "staging", "--secret-scan", "off"}
 			if tc.stdin {
-				pipeStdin(t, "A=value-one\nB=value-two\n")
+				main.PipeStdin(t, "A=value-one\nB=value-two\n")
 				args = append(args, "--from-stdin")
 			} else {
 				path := filepath.Join(t.TempDir(), ".env")
@@ -230,14 +231,14 @@ func TestEnvPushJSONReportsActualWritesAndFreshRestart(t *testing.T) {
 			if tc.restart {
 				args = append(args, "--restart")
 			}
-			out, restore := captureStdout(t)
+			out, restore := main.CaptureStdout(t)
 			defer restore()
-			errOut, restoreErr := captureStderr(t)
+			errOut, restoreErr := main.CaptureStderr(t)
 			defer restoreErr()
-			if code := envPush(args); code != tc.code {
+			if code := main.EnvPush(args); code != tc.code {
 				t.Fatalf("exit=%d want=%d", code, tc.code)
 			}
-			var receipt envPushReceipt
+			var receipt main.EnvPushReceipt
 			if err := json.Unmarshal(out.Bytes(), &receipt); err != nil {
 				t.Fatalf("stdout must be one JSON document: %v", err)
 			}

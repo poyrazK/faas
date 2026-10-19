@@ -3,17 +3,24 @@ package main
 // gregale run --image (ADR-1161): run one command from an OCI image in a
 // fresh microVM, `docker run` style. Arguments after the flags are the
 // command; they replace the image CMD while the image ENTRYPOINT stays,
-// unless --entrypoint overrides it.
+// unless --entrypoint overrides it. ADR-1790 adds docker's -u, -w,
+// --env-file, `-e KEY` pass-through, a positional image and private
+// registry credentials.
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"strings"
 	"time"
+	"unicode"
+
+	"golang.org/x/term"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -26,46 +33,164 @@ const (
 	imageRunAttachWait = 5 * time.Minute
 )
 
-// imageRunEnvFlags collects repeatable KEY=VALUE flags.
-type imageRunEnvFlags map[string]string
+// imageRunEnvPasswordVar supplies the registry password without a flag
+// value that would land in shell history.
+const imageRunEnvPasswordVar = "GREGALE_REGISTRY_PASSWORD"
 
-func (f imageRunEnvFlags) String() string { return "" }
+// imageRunEnvFileMaxBytes bounds one --env-file.
+const imageRunEnvFileMaxBytes = 1 << 20
 
-func (f imageRunEnvFlags) Set(value string) error {
-	key, val, ok := strings.Cut(value, "=")
-	if !ok || key == "" {
-		return fmt.Errorf("expected KEY=VALUE, got %q", value)
-	}
-	f[key] = val
+// imageRunStringList collects a repeatable flag in order.
+type imageRunStringList []string
+
+func (f *imageRunStringList) String() string { return "" }
+
+func (f *imageRunStringList) Set(value string) error {
+	*f = append(*f, value)
 	return nil
 }
 
-// runImageRequested reports whether `gregale run` was given --image before
-// any "--" terminator, which selects image mode and its own flag set.
+// disposableRunFlags are the flags only `gregale run`'s disposable source
+// runs (ADR-171) take. Without one of them, a positional argument names an
+// image, as `docker run IMAGE` does; disposable runs take no positional.
+var disposableRunFlags = map[string]bool{
+	"runtime": true, "profile": true, "workflow-id": true, "step-label": true, "source": true,
+	"file": true, "dir": true, "output-file": true, "artifact-input": true, "output-dir": true,
+	"input": true, "timeout-ms": true, "memory-mb": true, "cpu-millicores": true,
+	"ephemeral-disk-mb": true, "max-output-bytes": true, "wait": true, "watch": true,
+	"poll-interval": true, "wait-timeout": true,
+}
+
+// runImageRequested reports whether `gregale run` selects image mode: an
+// --image flag, or a positional argument without any disposable-run flag,
+// before any "--" terminator.
 func runImageRequested(args []string) bool {
+	positional := false
 	for _, arg := range args {
 		if arg == "--" {
-			return false
+			break
 		}
-		if arg == "--image" || arg == "-image" || strings.HasPrefix(arg, "--image=") || strings.HasPrefix(arg, "-image=") {
+		if !strings.HasPrefix(arg, "-") {
+			positional = true
+			continue
+		}
+		name, _, _ := strings.Cut(strings.TrimLeft(arg, "-"), "=")
+		if name == "image" {
 			return true
 		}
+		if disposableRunFlags[name] {
+			return false
+		}
 	}
-	return false
+	return positional
+}
+
+// imageRunEnv builds the run environment as docker does: --env-file files
+// in order, then -e flags, later values winning. KEY without =VALUE passes
+// the local value through and is skipped when unset.
+func imageRunEnv(files, flags []string, lookup func(string) (string, bool)) (map[string]string, error) {
+	env := map[string]string{}
+	set := func(entry, where string) error {
+		key, val, explicit := strings.Cut(entry, "=")
+		switch {
+		case key == "":
+			return fmt.Errorf("%s: no variable name in %q", where, entry)
+		case strings.IndexFunc(key, unicode.IsSpace) >= 0:
+			return fmt.Errorf("%s: variable %q contains whitespace", where, key)
+		case explicit:
+			env[key] = val
+		default:
+			if local, ok := lookup(key); ok {
+				env[key] = local
+			}
+		}
+		return nil
+	}
+	for _, path := range files {
+		entries, err := readImageRunEnvFile(path)
+		if err != nil {
+			return nil, err
+		}
+		for _, entry := range entries {
+			if err := set(entry.text, fmt.Sprintf("%s:%d", path, entry.line)); err != nil {
+				return nil, err
+			}
+		}
+	}
+	for _, entry := range flags {
+		if err := set(entry, "-e"); err != nil {
+			return nil, err
+		}
+	}
+	return env, nil
+}
+
+type imageRunEnvLine struct {
+	text string
+	line int
+}
+
+// readImageRunEnvFile reads docker's env-file format: one KEY=VALUE or KEY
+// per line, leading whitespace ignored, `#` comments and blank lines
+// skipped, values taken literally (no quotes or interpolation).
+func readImageRunEnvFile(path string) ([]imageRunEnvLine, error) {
+	// The values ship to the server, so the file opens like every other
+	// customer file the CLI sends: no symlink, regular files only.
+	f, err := openCustomerFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("--env-file: %w", err)
+	}
+	defer func() { _ = f.Close() }()
+	body, err := io.ReadAll(io.LimitReader(f, imageRunEnvFileMaxBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("--env-file %s: %w", path, err)
+	}
+	if len(body) > imageRunEnvFileMaxBytes {
+		return nil, fmt.Errorf("--env-file %s exceeds %d bytes", path, imageRunEnvFileMaxBytes)
+	}
+	var out []imageRunEnvLine
+	scanner := bufio.NewScanner(strings.NewReader(string(body)))
+	scanner.Buffer(make([]byte, 0, 64*1024), imageRunEnvFileMaxBytes)
+	for n := 1; scanner.Scan(); n++ {
+		line := strings.TrimLeftFunc(strings.TrimSuffix(scanner.Text(), "\r"), unicode.IsSpace)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		out = append(out, imageRunEnvLine{text: line, line: n})
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("--env-file %s: %w", path, err)
+	}
+	return out, nil
 }
 
 type imageRunOptions struct {
 	request api.CreateImageRunRequest
 	detach  bool
+	// registryUsername and passwordStdin select private registry
+	// credentials; the password is read later, never from a flag value.
+	registryUsername string
+	passwordStdin    bool
 }
+
+const imageRunUsage = "usage: gregale run [-i [-t]] [-u USER] [-w DIR] [-e KEY[=VALUE]]... [--env-file FILE]... " +
+	"[--registry-username USER [--registry-password-stdin]] [--entrypoint CMD] [--ram MB] [--timeout D] " +
+	"[--pull missing|always] [--detach] (--image IMAGE | IMAGE) [ARG...]"
 
 func parseImageRunArgs(args []string) (imageRunOptions, bool) {
 	fs := newFlagSet("run", flag.ContinueOnError)
 	image := fs.String("image", "", "OCI image to run")
 	entrypoint := fs.String("entrypoint", "", "override the image ENTRYPOINT")
-	env := imageRunEnvFlags{}
-	fs.Var(env, "env", "KEY=VALUE environment variable (repeatable)")
-	fs.Var(env, "e", "shorthand for --env")
+	var envFlags, envFiles imageRunStringList
+	fs.Var(&envFlags, "env", "KEY=VALUE environment variable, or KEY to pass the local value (repeatable)")
+	fs.Var(&envFlags, "e", "shorthand for --env")
+	fs.Var(&envFiles, "env-file", "read KEY=VALUE lines from a file (repeatable)")
+	user := fs.String("user", "", "run as name|uid[:group|gid] instead of the image USER")
+	fs.StringVar(user, "u", "", "shorthand for --user")
+	workdir := fs.String("workdir", "", "absolute working directory instead of the image WORKDIR")
+	fs.StringVar(workdir, "w", "", "shorthand for --workdir")
+	registryUsername := fs.String("registry-username", "", "username for a private registry")
+	passwordStdin := fs.Bool("registry-password-stdin", false, "read the registry password or token from stdin")
 	ram := fs.Int("ram", 0, "memory in MB (0 = Job default)")
 	timeout := fs.Duration("timeout", 0, "task deadline (0 = the plan's Job ceiling)")
 	pull := fs.String("pull", api.ImageRunPullMissing, "pull policy: missing|always")
@@ -82,26 +207,80 @@ func parseImageRunArgs(args []string) (imageRunOptions, bool) {
 		return imageRunOptions{}, false
 	}
 	interactive, tty = interactive || both, tty || both
-	if strings.TrimSpace(*image) == "" || *ram < 0 || *timeout < 0 || *timeout%time.Second != 0 || (tty && !interactive) {
-		PrintUsage(osStderr, "usage: gregale run [-i [-t]] --image IMAGE [--entrypoint CMD] [-e KEY=VALUE]... [--ram MB] [--timeout D] [--pull missing|always] [--detach] [ARG...]", "run")
+	rest := fs.Args()
+	if strings.TrimSpace(*image) == "" && len(rest) > 0 {
+		*image, rest = rest[0], rest[1:]
+	}
+	if strings.TrimSpace(*image) == "" || *ram < 0 || *timeout < 0 || *timeout%time.Second != 0 || (tty && !interactive) ||
+		(*passwordStdin && *registryUsername == "") {
+		PrintUsage(osStderr, imageRunUsage, "run")
 		return imageRunOptions{}, false
 	}
 	if interactive && (*detach || jsonOutput) {
 		PrintFail(osStderr, "--interactive cannot be combined with --detach or --json")
 		return imageRunOptions{}, false
 	}
+	if interactive && *passwordStdin {
+		PrintFail(osStderr, "--registry-password-stdin cannot be combined with --interactive: stdin is the session; use "+imageRunEnvPasswordVar)
+		return imageRunOptions{}, false
+	}
+	env, err := imageRunEnv(envFiles, envFlags, os.LookupEnv)
+	if err != nil {
+		PrintFail(osStderr, "%v", err)
+		return imageRunOptions{}, false
+	}
 	req := api.CreateImageRunRequest{Image: *image, RAMMB: *ram, TimeoutSec: int(*timeout / time.Second), Pull: *pull,
-		Interactive: interactive, TTY: tty}
+		Interactive: interactive, TTY: tty, User: *user, Workdir: *workdir}
 	if len(env) > 0 {
 		req.Env = env
 	}
 	if *entrypoint != "" {
 		req.Entrypoint = &[]string{*entrypoint}
 	}
-	if rest := fs.Args(); len(rest) > 0 {
+	if len(rest) > 0 {
 		req.Args = &rest
 	}
-	return imageRunOptions{request: req, detach: *detach}, true
+	return imageRunOptions{request: req, detach: *detach, registryUsername: *registryUsername, passwordStdin: *passwordStdin}, true
+}
+
+// osStdinIsTerminal reports whether the CLI's stdin is a terminal that can
+// prompt.
+func osStdinIsTerminal() bool {
+	f, ok := osStdin.(*os.File)
+	return ok && term.IsTerminal(int(f.Fd()))
+}
+
+// imageRunRegistryAuth reads the registry password for --registry-username:
+// from stdin with --registry-password-stdin, else from
+// $GREGALE_REGISTRY_PASSWORD, else from a terminal prompt.
+func imageRunRegistryAuth(opts imageRunOptions) (*api.ImageRunRegistryAuth, error) {
+	if opts.registryUsername == "" {
+		return nil, nil
+	}
+	var password string
+	switch {
+	case opts.passwordStdin:
+		body, err := io.ReadAll(io.LimitReader(osStdin, int64(api.MaxRegistryPasswordBytes)+2))
+		if err != nil {
+			return nil, fmt.Errorf("read registry password: %w", err)
+		}
+		password = strings.TrimSuffix(strings.TrimSuffix(string(body), "\n"), "\r")
+	case os.Getenv(imageRunEnvPasswordVar) != "":
+		password = os.Getenv(imageRunEnvPasswordVar)
+	case osStdinIsTerminal():
+		value, err := readInteractivePassword(bufio.NewReader(osStdin), "Registry password/token: ")
+		if err != nil {
+			return nil, fmt.Errorf("read registry password: %w", err)
+		}
+		password = value
+	}
+	if password == "" {
+		return nil, fmt.Errorf("--registry-username needs a password: --registry-password-stdin, %s, or a terminal", imageRunEnvPasswordVar)
+	}
+	if len(password) > api.MaxRegistryPasswordBytes {
+		return nil, fmt.Errorf("registry password exceeds %d bytes", api.MaxRegistryPasswordBytes)
+	}
+	return &api.ImageRunRegistryAuth{Username: opts.registryUsername, Password: password}, nil
 }
 
 func cmdRunImage(args []string) int {
@@ -109,6 +288,11 @@ func cmdRunImage(args []string) int {
 	if !ok {
 		return 1
 	}
+	auth, err := imageRunRegistryAuth(opts)
+	if err != nil {
+		return printErr("Invalid registry credentials", err)
+	}
+	opts.request.RegistryAuth = auth
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
@@ -141,7 +325,9 @@ func startImageRun(ctx context.Context, client *api.Client, req api.CreateImageR
 	if !jsonOutput {
 		PrintProgress(osStderr, "Pulling %s", resp.Image)
 	}
-	req.Pull = api.ImageRunPullMissing
+	// The first request stored any registry credential on the runner job;
+	// polls do not resend the password.
+	req.Pull, req.RegistryAuth = api.ImageRunPullMissing, nil
 	pullCtx, cancel := context.WithTimeout(ctx, imageRunPullTimeout)
 	defer cancel()
 	lastErr := ""

@@ -61,6 +61,19 @@ type Service struct {
 	Lago   *lagoinvoice.Client
 	// Now is the payment sync clock; nil uses time.Now.
 	Now func() time.Time
+	// Enabled pauses the background worker while it reports false: API
+	// monetization is released by a runtime setting (ADR-20261018090210).
+	// Nil runs it.
+	Enabled func() bool
+}
+
+// tick runs one background tick unless Enabled pauses the worker; paused,
+// no provider reads and no overdue digests.
+func (s *Service) tick(ctx context.Context) error {
+	if s.Enabled != nil && !s.Enabled() {
+		return nil
+	}
+	return s.SyncOnce(ctx)
 }
 
 func (s *Service) stripeInvoiceClient() *stripeinvoice.Client {
@@ -415,7 +428,7 @@ type statementInvoiceItem struct {
 }
 
 // statementInvoiceItems renders invoice lines, then the rounding item that
-// makes the invoice equal the statement total rounded to the cent.
+// makes the invoice equal the statement total rounded to the minor unit.
 func statementInvoiceItems(inv billing.StatementInvoice) []statementInvoiceItem {
 	items := make([]statementInvoiceItem, 0, len(inv.Lines)+1)
 	for _, line := range inv.Lines {
@@ -436,7 +449,7 @@ func statementInvoiceItems(inv billing.StatementInvoice) []statementInvoiceItem 
 		items = append(items, statementInvoiceItem{amount: line.AmountMinor, description: description})
 	}
 	if inv.RoundingMinor != 0 {
-		items = append(items, statementInvoiceItem{amount: inv.RoundingMinor, description: "Rounding to the nearest cent"})
+		items = append(items, statementInvoiceItem{amount: inv.RoundingMinor, description: "Rounding to the currency's smallest unit"})
 	}
 	return items
 }
@@ -469,7 +482,7 @@ func statementInvoiceProblem(err error) *api.Problem {
 	switch {
 	case errors.Is(err, billing.ErrInvoiceCurrencyUnsupported):
 		return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation, "Currency not supported",
-			"statement invoices support two-decimal currencies only")
+			"statement invoices support currencies with at most three decimal places")
 	case errors.Is(err, billing.ErrStatementNotInvoiceable):
 		return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation, "Statement cannot be invoiced", err.Error())
 	default:

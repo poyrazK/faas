@@ -13,6 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 type standardNativeRuntimeVMM interface {
@@ -61,6 +62,15 @@ func (e *Engine) capturedStandardRuntimeForApp(ctx context.Context, app state.Ap
 }
 
 func (e *Engine) createRuntimeWithStandards(ctx context.Context, nodeID, instanceID, expectedState string, spec AppSpec, snap *SnapshotRef, paused bool) (*WakeOutcome, error) {
+	fields, _ := wire.FromContext(ctx)
+	if uuid.Validate(fields.WakeID) != nil || fields.InstanceID != instanceID {
+		if ins, err := e.store.InstanceByID(ctx, instanceID); err == nil {
+			fields.AppID = ins.AppID
+			fields.InstanceID = ins.ID
+			fields.WakeID = ins.WakeID
+			ctx = wire.WithContext(ctx, fields)
+		}
+	}
 	// A wake hands over the rehearsal network and the standards capture it
 	// already read (ADR-1741); anything not handed over is read here, the
 	// two reads together.

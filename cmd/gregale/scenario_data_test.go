@@ -1,7 +1,8 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -14,7 +15,7 @@ func TestScenarioDataPreservesJSONTypesAndCSVStrings(t *testing.T) {
 	if err := os.WriteFile(jsonPath, []byte(`[{"customer":"a/b","enabled":true,"count":9007199254740993},{"customer":"second","enabled":false,"count":2}]`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cases, fields, err := readTestData(jsonPath)
+	cases, fields, err := main.ReadTestData(jsonPath)
 	if err != nil || len(cases) != 2 || !reflect.DeepEqual(fields, []string{"count", "customer", "enabled"}) {
 		t.Fatalf("JSON cases = (%+v, %v, %v)", cases, fields, err)
 	}
@@ -25,11 +26,11 @@ func TestScenarioDataPreservesJSONTypesAndCSVStrings(t *testing.T) {
 	if err := os.WriteFile(csvPath, []byte("customer,count,enabled\n\"first, customer\",2,true\n\"second\ncustomer\",3,false\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cases, fields, err = readTestData(csvPath)
+	cases, fields, err = main.ReadTestData(csvPath)
 	if err != nil || len(cases) != 2 || len(fields) != 3 || cases[0].Values["customer"] != "first, customer" || cases[1].Values["customer"] != "second\ncustomer" || cases[0].Values["count"] != "2" || cases[0].Values["enabled"] != "true" {
 		t.Fatalf("CSV cases = (%+v, %v, %v)", cases, fields, err)
 	}
-	defaults, fields, err := readTestData("")
+	defaults, fields, err := main.ReadTestData("")
 	if err != nil || len(defaults) != 1 || defaults[0].Name != "" || len(fields) != 0 {
 		t.Fatalf("default case = (%+v, %v, %v)", defaults, fields, err)
 	}
@@ -55,9 +56,9 @@ func TestScenarioDataRejectsMalformedAndUnboundedInputs(t *testing.T) {
 		{"CSV bad header", "csv", "Customer\none\n"},
 		{"CSV no cases", "csv", "a,b\n"},
 		{"unknown format", "txt", `[{"a":1}]`},
-		{"too many rows", "json", "[" + strings.Repeat(`{"a":1},`, testDataCaseLimit) + `{"a":1}]`},
-		{"too many CSV rows", "csv", "a\n" + strings.Repeat("value\n", testDataCaseLimit+1)},
-		{"too large", "json", `[{"a":"` + strings.Repeat("x", testHTTPBodyLimit) + `"}]`},
+		{"too many rows", "json", "[" + strings.Repeat(`{"a":1},`, main.TestDataCaseLimit) + `{"a":1}]`},
+		{"too many CSV rows", "csv", "a\n" + strings.Repeat("value\n", main.TestDataCaseLimit+1)},
+		{"too large", "json", `[{"a":"` + strings.Repeat("x", main.TestHTTPBodyLimit) + `"}]`},
 	}
 	for _, input := range inputs {
 		t.Run(input.name, func(t *testing.T) {
@@ -65,7 +66,7 @@ func TestScenarioDataRejectsMalformedAndUnboundedInputs(t *testing.T) {
 			if err := os.WriteFile(path, []byte(input.body), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			if _, _, err := readTestData(path); err == nil {
+			if _, _, err := main.ReadTestData(path); err == nil {
 				t.Fatal("invalid case data was accepted")
 			} else if strings.Contains(err.Error(), "never-report") {
 				t.Fatalf("case data leaked into error: %v", err)

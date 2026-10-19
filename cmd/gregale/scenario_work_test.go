@@ -1,9 +1,10 @@
-package main
+package main_test
 
 import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/rehearsalwork"
 )
@@ -11,7 +12,7 @@ import (
 func TestWorkerTerminationRecipeRequiresMatchingWorkerCheckpoint(t *testing.T) {
 	for _, mode := range []string{"valid", "missing_checkpoint", "wrong_worker", "delayed_checkpoint"} {
 		t.Run(mode, func(t *testing.T) {
-			s := testScenario{Project: "primary", CommandExecution: &testCommandExecutionSpec{Version: 1, Runtime: "contained"}, Actions: &testActionSpec{Simulation: &api.ScenarioSimulationPlan{Version: 1, Fixtures: []api.ScenarioSimulationFixture{{Workload: "worker", Name: "after-commit", Integration: "checkpoint", Adapter: "http", Method: "POST", Path: "/after-commit", Responses: []api.ScenarioSimulationResponse{{Status: 200}}}}}}, Services: map[string]testService{"worker": {Source: "worker", AsyncRoutes: []testAsyncRoute{{Path: "/import", Methods: []string{"POST"}}}}}, ManagedWork: &rehearsalwork.Plan{Version: 1, Primary: "primary", Participants: []rehearsalwork.Participant{{Workload: "primary"}, {Workload: "worker", Async: true}}, WorkerTermination: &rehearsalwork.WorkerTermination{Workload: "worker", Checkpoint: "after-commit"}}}
+			s := main.TestScenario{Project: "primary", CommandExecution: &main.TestCommandExecutionSpec{Version: 1, Runtime: "contained"}, Actions: &main.TestActionSpec{Simulation: &api.ScenarioSimulationPlan{Version: 1, Fixtures: []api.ScenarioSimulationFixture{{Workload: "worker", Name: "after-commit", Integration: "checkpoint", Adapter: "http", Method: "POST", Path: "/after-commit", Responses: []api.ScenarioSimulationResponse{{Status: 200}}}}}}, Services: map[string]main.TestService{"worker": {Source: "worker", AsyncRoutes: []main.TestAsyncRoute{{Path: "/import", Methods: []string{"POST"}}}}}, ManagedWork: &rehearsalwork.Plan{Version: 1, Primary: "primary", Participants: []rehearsalwork.Participant{{Workload: "primary"}, {Workload: "worker", Async: true}}, WorkerTermination: &rehearsalwork.WorkerTermination{Workload: "worker", Checkpoint: "after-commit"}}}
 			switch mode {
 			case "missing_checkpoint":
 				s.Actions.Simulation.Fixtures = nil
@@ -20,13 +21,13 @@ func TestWorkerTerminationRecipeRequiresMatchingWorkerCheckpoint(t *testing.T) {
 			case "delayed_checkpoint":
 				s.Actions.Simulation.Fixtures[0].Responses[0].DelayMS = 1
 			}
-			if err := validateTestManagedWork(s); (err == nil) != (mode == "valid") {
+			if err := main.ValidateTestManagedWork(s); (err == nil) != (mode == "valid") {
 				t.Fatalf("%s: %v", mode, err)
 			}
 			if mode == "valid" {
-				digest := testManagedWorkDigest(s)
+				digest := main.TestManagedWorkDigest(s)
 				s.ManagedWork.WorkerTermination = nil
-				if testManagedWorkDigest(s) == digest {
+				if main.TestManagedWorkDigest(s) == digest {
 					t.Fatal("termination changed no recipe identity")
 				}
 			}
@@ -37,7 +38,7 @@ func TestWorkerTerminationRecipeRequiresMatchingWorkerCheckpoint(t *testing.T) {
 func TestManagedWorkRecipeRequiresExplicitResourcesAndWorkerRoutes(t *testing.T) {
 	for _, mode := range []string{"valid", "missing_route", "unknown_workload", "missing_fixture", "reserved_secret", "wrong_primary"} {
 		t.Run(mode, func(t *testing.T) {
-			s := testScenario{Project: "primary", CommandExecution: &testCommandExecutionSpec{Version: 1, Runtime: "contained"}, Actions: &testActionSpec{Simulation: &api.ScenarioSimulationPlan{Version: 1}}, ObjectsFixture: &testObjectSpec{Version: 1, Bucket: "imports"}, Services: map[string]testService{"worker": {Source: "worker", AsyncRoutes: []testAsyncRoute{{Path: "/import", Methods: []string{"POST"}}}}}, ManagedWork: &rehearsalwork.Plan{Version: 1, Primary: "primary", Participants: []rehearsalwork.Participant{{Workload: "primary", Objects: "read_write"}, {Workload: "worker", Async: true, Objects: "read_write"}}}}
+			s := main.TestScenario{Project: "primary", CommandExecution: &main.TestCommandExecutionSpec{Version: 1, Runtime: "contained"}, Actions: &main.TestActionSpec{Simulation: &api.ScenarioSimulationPlan{Version: 1}}, ObjectsFixture: &main.TestObjectSpec{Version: 1, Bucket: "imports"}, Services: map[string]main.TestService{"worker": {Source: "worker", AsyncRoutes: []main.TestAsyncRoute{{Path: "/import", Methods: []string{"POST"}}}}}, ManagedWork: &rehearsalwork.Plan{Version: 1, Primary: "primary", Participants: []rehearsalwork.Participant{{Workload: "primary", Objects: "read_write"}, {Workload: "worker", Async: true, Objects: "read_write"}}}}
 			v := s.Services["worker"]
 			switch mode {
 			case "missing_route":
@@ -52,13 +53,13 @@ func TestManagedWorkRecipeRequiresExplicitResourcesAndWorkerRoutes(t *testing.T)
 				s.ManagedWork.Primary = "worker"
 			}
 			s.Services["worker"] = v
-			if err := validateTestManagedWork(s); (err == nil) != (mode == "valid") {
+			if err := main.ValidateTestManagedWork(s); (err == nil) != (mode == "valid") {
 				t.Fatalf("validation %s: %v", mode, err)
 			}
 			if mode == "valid" {
-				old := testManagedWorkDigest(s)
+				old := main.TestManagedWorkDigest(s)
 				s.ManagedWork.Participants[1].Objects = "read"
-				if old == testManagedWorkDigest(s) || len(old) != 64 || strings.Trim(old, "0123456789abcdef") != "" {
+				if old == main.TestManagedWorkDigest(s) || len(old) != 64 || strings.Trim(old, "0123456789abcdef") != "" {
 					t.Fatal("permissions were not pinned")
 				}
 			}

@@ -1,5 +1,5 @@
 // adr: 063
-package sched
+package sched_test
 
 import (
 	"context"
@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -35,8 +36,8 @@ func TestWakeSnapshotProducerLocality(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
 			store := state.NewMemStore()
-			producer, replica := seedTwoNodes(t, store)
-			_, app, dep := seedApp(t, store, api.PlanPro, 256, 5)
+			producer, replica := sched.SeedTwoNodes(t, store)
+			_, app, dep := sched.SeedApp(t, store, api.PlanPro, 256, 5)
 			snap, err := store.CreateSnapshot(ctx, state.Snapshot{
 				DeploymentID: dep.ID, FCVersion: "1.10.0",
 				StorageKey: state.SnapshotCaptureMemKey(dep.ID, state.SnapshotTierInit, "locality"),
@@ -75,17 +76,17 @@ func TestWakeSnapshotProducerLocality(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			vmm := &fakeVMM{}
-			e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0").WithWarmAffinity(NewWarmAffinity(time.Minute))
+			vmm := &sched.FakeVMM{}
+			e := sched.XNewEngine(t, store, vmm, &sched.FakeNotifier{}, "1.10.0").WithWarmAffinity(sched.NewWarmAffinity(time.Minute))
 			if tc.originFull {
-				e.capacityTable.Replace(CapacityReport{NodeID: producer, UsedMB: 1024})
+				(*e.XCapacityTable()).Replace(sched.CapacityReport{NodeID: producer, UsedMB: 1024})
 			}
 			warm := map[string]string{"producer": producer, "replica": replica, "gone": "removed-node"}[tc.warm]
 			if warm != "" {
-				e.warmAffinity.RecordWake(app.ID, warm)
+				(*e.WarmAffinity()).RecordWake(app.ID, warm)
 			}
 			if tc.spread {
-				ctx = WithBurstPlacementSpread(ctx)
+				ctx = sched.WithBurstPlacementSpread(ctx)
 			}
 			got, err := e.Wake(ctx, app.ID, "", "", "gateway")
 			if err != nil {
@@ -98,8 +99,8 @@ func TestWakeSnapshotProducerLocality(t *testing.T) {
 			if got.NodeID != want {
 				t.Fatalf("wake node = %s, want %s", got.NodeID, want)
 			}
-			if vmm.restores != 1 || vmm.coldBoots != 0 {
-				t.Fatalf("restores=%d cold boots=%d", vmm.restores, vmm.coldBoots)
+			if (*vmm.Restores()) != 1 || (*vmm.ColdBoots()) != 0 {
+				t.Fatalf("restores=%d cold boots=%d", (*vmm.Restores()), (*vmm.ColdBoots()))
 			}
 		})
 	}
@@ -108,8 +109,8 @@ func TestWakeSnapshotProducerLocality(t *testing.T) {
 func TestDeploymentSmokeUsesSnapshotProducerDespiteCPUHeadroomSkew(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemStore()
-	producer, uncached := seedTwoNodes(t, store)
-	_, app, dep := seedApp(t, store, api.PlanPro, 256, 1)
+	producer, uncached := sched.SeedTwoNodes(t, store)
+	_, app, dep := sched.SeedApp(t, store, api.PlanPro, 256, 1)
 	// Production routes smoke through the app's owner schedd. The prime
 	// snapshot may have been captured on a peer, so owner affinity must not
 	// override the producer locality needed for the first restore.
@@ -140,8 +141,8 @@ func TestDeploymentSmokeUsesSnapshotProducerDespiteCPUHeadroomSkew(t *testing.T)
 	if err := store.RecordSnapshotOrigin(ctx, snap.ID, producer); err != nil {
 		t.Fatal(err)
 	}
-	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0").WithOwnerNodeID(uncached)
-	got, err := e.AdmitInstanceForDeployment(ctx, app.ID, dep.ID, "", TriggerDeploymentSmoke)
+	e := sched.XNewEngine(t, store, &sched.FakeVMM{}, &sched.FakeNotifier{}, "1.10.0").WithOwnerNodeID(uncached)
+	got, err := e.AdmitInstanceForDeployment(ctx, app.ID, dep.ID, "", sched.TriggerDeploymentSmoke)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,8 +159,8 @@ func (failedSnapshotLocalityStore) SnapshotLocalityFor(context.Context, string) 
 
 func TestSnapshotLocalityReadFailurePreservesFallback(t *testing.T) {
 	store := failedSnapshotLocalityStore{Store: state.NewMemStore()}
-	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
-	warm, replicas, known := e.snapshotPlacementHints(context.Background(), "snapshot", "last-warm-node")
+	e := sched.XNewEngine(t, store, &sched.FakeVMM{}, &sched.FakeNotifier{}, "1.10.0")
+	warm, replicas, known := e.SnapshotPlacementHints(context.Background(), "snapshot", "last-warm-node")
 	if warm != "last-warm-node" || len(replicas) != 0 || known {
 		t.Fatalf("warm=%q replicas=%v known=%t", warm, replicas, known)
 	}

@@ -1,7 +1,8 @@
-package main
+package main_test
 
 import (
 	"bytes"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"io"
 	"strings"
 	"testing"
@@ -11,8 +12,8 @@ import (
 // positional after the flags and a conflicting --app are still refused, each
 // with its own message.
 func TestMCPRemoteLeavesAcceptLeadingSlug(t *testing.T) {
-	oldOut, oldErr, oldJSON := osStdout, osStderr, jsonOutput
-	t.Cleanup(func() { osStdout, osStderr, jsonOutput = oldOut, oldErr, oldJSON })
+	oldOut, oldErr, oldJSON := (*main.OsStdout), (*main.OsStderr), (*main.JsonOutput)
+	t.Cleanup(func() { (*main.OsStdout), (*main.OsStderr), (*main.JsonOutput) = oldOut, oldErr, oldJSON })
 	t.Setenv("FAAS_API", "http://127.0.0.1:1")
 	t.Setenv("FAAS_TOKEN", "test-token")
 
@@ -26,8 +27,8 @@ func TestMCPRemoteLeavesAcceptLeadingSlug(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var stderr bytes.Buffer
-			osStdout, osStderr, jsonOutput = io.Discard, &stderr, false
-			if code := cmdMCPRemote("tools", tc.args); code == 0 {
+			(*main.OsStdout), (*main.OsStderr), (*main.JsonOutput) = io.Discard, &stderr, false
+			if code := main.CmdMCPRemote("tools", tc.args); code == 0 {
 				t.Fatal("invalid invocation exited 0")
 			}
 			if !strings.Contains(stderr.String(), tc.want) {
@@ -37,8 +38,8 @@ func TestMCPRemoteLeavesAcceptLeadingSlug(t *testing.T) {
 	}
 
 	var stderr bytes.Buffer
-	osStdout, osStderr, jsonOutput = io.Discard, &stderr, false
-	_ = cmdMCPRemote("tools", []string{"my-mcp", "--timeout", "1s"})
+	(*main.OsStdout), (*main.OsStderr), (*main.JsonOutput) = io.Discard, &stderr, false
+	_ = main.CmdMCPRemote("tools", []string{"my-mcp", "--timeout", "1s"})
 	if strings.Contains(stderr.String(), "Invalid MCP flags") {
 		t.Fatalf("leading slug was refused: %q", stderr.String())
 	}

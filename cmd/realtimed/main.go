@@ -12,10 +12,12 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apidgrpc"
 	"github.com/onebox-faas/faas/pkg/genslot"
 	"github.com/onebox-faas/faas/pkg/livequery/liveproxy"
@@ -106,12 +108,32 @@ func run(ctx context.Context, log *slog.Logger) error {
 	resumePreview := os.Getenv("FAAS_REALTIME_RESUME_PREVIEW_ENABLED") == "1"
 	ticketPreview := os.Getenv("FAAS_REALTIME_TICKETS_PREVIEW_ENABLED") == "1"
 	accessPreview := os.Getenv("FAAS_REALTIME_ACCESS_PREVIEW_ENABLED") == "1"
+	// ADR-1323: record per-endpoint usage with apid. Recorded only; nothing
+	// bills or limits from it yet.
+	usageEnabled := os.Getenv("FAAS_REALTIME_USAGE_ENABLED") == "1"
+	// ADR-1323 fair use and node outbound budget, and ADR-1324 occupancy, stay
+	// off until realtime has been tested end to end.
+	fairUse := os.Getenv("FAAS_REALTIME_FAIR_USE_ENABLED") == "1"
+	outboundBudget := os.Getenv("FAAS_REALTIME_OUTBOUND_BUDGET_ENABLED") == "1"
+	occupancyPreview := os.Getenv("FAAS_REALTIME_OCCUPANCY_PREVIEW_ENABLED") == "1"
+	var outboundNodeBytes int64
+	if outboundBudget {
+		outboundNodeBytes = int64(envInt("FAAS_REALTIME_OUTBOUND_NODE_BYTES", api.RealtimeNodeOutboundBytesDefault))
+		// The budget is sized against this soft limit; an explicit
+		// GOMEMLIMIT wins.
+		if strings.TrimSpace(os.Getenv("GOMEMLIMIT")) == "" {
+			debug.SetMemoryLimit(api.RealtimeMemoryLimitBytes)
+		}
+	}
 	var ticketReader realtime.SubscriptionTicketReader
 	var accessReader realtime.ManagedRealtimeAccessReader
 	var historyReader realtime.ManagedRealtimeHistoryReader
 	var routeReporter realtime.ManagedRealtimeChannelRouteReporter
 	var fleetClient realtime.ManagedRealtimeFleetClient
-	if resumePreview || accessPreview || ticketPreview {
+	var usageReporter realtime.UsageReporter
+	var connectionSync realtime.ConnectionSyncer
+	var occupancyClient realtime.ManagedRealtimeOccupancyClient
+	if resumePreview || accessPreview || ticketPreview || usageEnabled || fairUse || occupancyPreview {
 		historyTLS, tlsErr := wire.LoadClientTLSConfigWithPrefix("realtime_history_",
 			os.Getenv("FAAS_REALTIME_HISTORY_TLS_CERT_PATH"),
 			os.Getenv("FAAS_REALTIME_HISTORY_TLS_KEY_PATH"),
@@ -134,6 +156,18 @@ func run(ctx context.Context, log *slog.Logger) error {
 		ticketReader = reader
 		routeReporter = reader
 		fleetClient = reader
+		if usageEnabled {
+			usageReporter = reader
+		}
+		// Counts feed fair use and the customer usage API's open connections.
+		if fairUse || usageEnabled {
+			connectionSync = reader
+		}
+		// A single box has one realtime node, whose own counts are exact
+		// (ADR-1324); only split nodes ask apid for the others.
+		if occupancyPreview && observedRole == role.RoleComputeOnly {
+			occupancyClient = reader
+		}
 	}
 	// Live queries (ADR-20261016151947): apid registers each endpoint with the live
 	// routes of databases bound to its app.
@@ -144,11 +178,13 @@ func run(ctx context.Context, log *slog.Logger) error {
 	proxy.Metrics = liveproxy.NewMetrics(ops.Registry())
 	defer proxy.Close()
 	manager := realtime.NewManager(realtime.Config{
-		Live:                 liveproxy.ForRealtime(proxy),
-		MaxConnections:       envInt("FAAS_REALTIME_MAX_CONNECTIONS", 10_000),
+		Live: liveproxy.ForRealtime(proxy),
+		// Zero selects the package default, which depends on FairUse.
+		MaxConnections:       envInt("FAAS_REALTIME_MAX_CONNECTIONS", 0),
 		MaxMessageBytes:      int64(envInt("FAAS_REALTIME_MAX_MESSAGE_BYTES", 1<<20)),
 		OutboundQueue:        envInt("FAAS_REALTIME_OUTBOUND_QUEUE", 64),
 		OutboundQueueBytes:   int64(envInt("FAAS_REALTIME_OUTBOUND_QUEUE_BYTES", 4<<20)),
+		OutboundNodeBytes:    outboundNodeBytes,
 		Heartbeat:            envDuration("FAAS_REALTIME_HEARTBEAT", 30*time.Second),
 		PongWait:             envDuration("FAAS_REALTIME_PONG_WAIT", 10*time.Second),
 		WriteWait:            envDuration("FAAS_REALTIME_WRITE_WAIT", 5*time.Second),
@@ -162,12 +198,25 @@ func run(ctx context.Context, log *slog.Logger) error {
 		AccessReader:         accessReader,
 		HistoryReader:        historyReader,
 		ChannelRouteReporter: routeReporter,
+		OccupancyPreview:     occupancyPreview,
+		OccupancyClient:      occupancyClient,
 		FleetClient:          fleetClient,
 		FleetReportFailure: func(err error) {
 			log.Warn("realtimed: fleet presence or ephemeral relay failed", "err", err)
 		},
 		ChannelRouteReportFailure: func(err error) {
 			log.Warn("realtimed: channel route report failed; apid reconciliation will repair it", "err", err)
+		},
+		UsageReporter: usageReporter,
+		FairUse:       fairUse,
+		// Plan connection limits hold fleet-wide whenever apid is reachable;
+		// without it they hold per node (ADR-1323).
+		ConnectionSync: connectionSync,
+		ConnectionSyncFailure: func(err error) {
+			log.Warn("realtimed: connection count sync failed; account limits use local counts until it recovers", "err", err)
+		},
+		UsageReportFailure: func(err error) {
+			log.Warn("realtimed: usage report failed; the hour is kept and retried", "err", err)
 		},
 	}, hooks)
 	defer func() { _ = manager.Close() }()

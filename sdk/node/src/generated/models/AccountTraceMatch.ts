@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { AccountTraceWake } from './AccountTraceWake.js';
 import type { DebugTelemetryRequestItem } from './DebugTelemetryRequestItem.js';
 /**
  * One retained request-telemetry match for the trace.
@@ -9,5 +10,6 @@ import type { DebugTelemetryRequestItem } from './DebugTelemetryRequestItem.js';
 export type AccountTraceMatch = {
   app: string;
   request: DebugTelemetryRequestItem;
+  wake?: AccountTraceWake;
 };
 

@@ -921,8 +921,12 @@ type APIConsumerRateCard struct {
 	// starts.
 	BaseFeeMillicentsPerMonth int64
 	MinimumMillicentsPerMonth int64
-	EffectiveFrom             time.Time
-	CreatedAt                 time.Time
+	// ProrateMonthlyFees scales the fee and minimum of a consumer's first
+	// month by the share of it left after the consumer was created
+	// (ADR-1325).
+	ProrateMonthlyFees bool
+	EffectiveFrom      time.Time
+	CreatedAt          time.Time
 }
 
 // MonthlyFees reports whether the card charges a base fee or a minimum.
@@ -1018,17 +1022,31 @@ type PlatformTenantRateCard struct {
 	// RouteWeights charge a request on a route that many units (ADR-1307);
 	// unlisted routes count 1. Surface and JWT-rule requests are weighted
 	// by their own route (ADR-1310).
-	RouteWeights  map[string]int64
-	EffectiveFrom time.Time
-	CreatedAt     time.Time
+	RouteWeights map[string]int64
+	// BaseFeeMillicentsPerMonth and MinimumMillicentsPerMonth are a fixed
+	// monthly charge and a minimum monthly usage charge per tenant
+	// (ADR-1322), taken from the card in force when the tenant's month
+	// starts; ProrateMonthlyFees scales them in the tenant's first month
+	// (ADR-1325).
+	BaseFeeMillicentsPerMonth int64
+	MinimumMillicentsPerMonth int64
+	ProrateMonthlyFees        bool
+	EffectiveFrom             time.Time
+	CreatedAt                 time.Time
 }
 
 // MonthlyPricing reports whether statements must re-price whole months:
 // the card prices usage by its position in the tenant's UTC month, weights
-// routes, or prices compute or response size (ADR-1310), none of which
-// per-minute request coverage deltas can express.
+// routes, prices compute or response size (ADR-1310) or app-reported
+// units, or charges monthly fees (ADR-1322), none of which per-minute
+// request coverage deltas can express.
 func (c PlatformTenantRateCard) MonthlyPricing() bool {
-	return c.IncludedUnitsPerMonth > 0 || len(c.Tiers) > 0 || len(c.RouteWeights) > 0 || !c.PricesRequests()
+	return c.IncludedUnitsPerMonth > 0 || len(c.Tiers) > 0 || len(c.RouteWeights) > 0 || !c.PricesRequests() || c.MonthlyFees()
+}
+
+// MonthlyFees reports whether the card charges a base fee or a minimum.
+func (c PlatformTenantRateCard) MonthlyFees() bool {
+	return c.BaseFeeMillicentsPerMonth > 0 || c.MinimumMillicentsPerMonth > 0
 }
 
 // PricesRequests reports whether the card counts requests rather than
@@ -1945,11 +1963,14 @@ type AppManifest struct {
 	// ProjectImage preserves declared image intent (including a mutable tag).
 	// Each deployment resolves and pins its own immutable source. Command
 	// replaces the image CMD, retaining its ENTRYPOINT; nil inherits CMD.
-	ProjectImage                string                  `json:"project_image,omitempty"`
-	ProjectImageCommand         []string                `json:"project_image_command,omitempty"`
-	ProjectImagePort            int                     `json:"project_image_port,omitempty"`
-	ProjectImageHealthcheck     *api.ComposeHealthcheck `json:"project_image_healthcheck,omitempty"`
-	ProjectDependencyConditions map[string]string       `json:"project_dependency_conditions,omitempty"`
+	ProjectImage            string                  `json:"project_image,omitempty"`
+	ProjectImageCommand     []string                `json:"project_image_command,omitempty"`
+	ProjectImagePort        int                     `json:"project_image_port,omitempty"`
+	ProjectImageHealthcheck *api.ComposeHealthcheck `json:"project_image_healthcheck,omitempty"`
+	// ProjectImageProcess is the Compose entrypoint, user, working_dir and
+	// stop contract for the image (ADR-1337); nil inherits the image's.
+	ProjectImageProcess         *api.ComposeProcess `json:"project_image_process,omitempty"`
+	ProjectDependencyConditions map[string]string   `json:"project_dependency_conditions,omitempty"`
 	// ServiceBindings is the authoritative declared projection of Compose
 	// depends_on edges or standalone service_binding_targets. Keeping it beside
 	// generated service URLs makes it inspectable without parsing env text.
@@ -2054,7 +2075,7 @@ func (m AppManifest) EffectivePreviewServiceCallsPolicy() api.PreviewServiceCall
 // app rows to persist a non-empty contract.
 func (m AppManifest) IsZero() bool {
 	return len(m.PublicBuildURLs) == 0 && m.Entrypoint == nil && m.Env == nil && m.ProjectSourceSHA256 == "" &&
-		m.BuildDockerfile == "" && m.ProjectImage == "" && m.ProjectImageCommand == nil && m.ProjectImagePort == 0 && m.ProjectImageHealthcheck == nil && len(m.ProjectDependencyConditions) == 0 && len(m.ServiceBindings) == 0 && len(m.ServiceReliability) == 0 && m.ServiceBindingPolicy == "" && m.ServiceBindingTransport == "" && m.PreviewServiceCallsPolicy == "" && m.AllowedServiceCallers == nil && m.AllowedServiceCallScopes == nil && m.WorkingDir == "" &&
+		m.BuildDockerfile == "" && m.ProjectImage == "" && m.ProjectImageCommand == nil && m.ProjectImagePort == 0 && m.ProjectImageHealthcheck == nil && m.ProjectImageProcess == nil && len(m.ProjectDependencyConditions) == 0 && len(m.ServiceBindings) == 0 && len(m.ServiceReliability) == 0 && m.ServiceBindingPolicy == "" && m.ServiceBindingTransport == "" && m.PreviewServiceCallsPolicy == "" && m.AllowedServiceCallers == nil && m.AllowedServiceCallScopes == nil && m.WorkingDir == "" &&
 		m.Port == 0 && len(m.Ports) == 0 && m.Healthz == "" && m.User == "" &&
 		m.ExecutionMode == "" && m.RestartPolicy == "" && m.AfterRestore == nil && m.BeforeCheckpoint == nil && m.Pause == "" && m.Profiling == nil && m.Tracing == nil &&
 		m.StartupDeadlineS == 0 && m.MaxRetries == 0 && m.RequestTimeoutS == 0 && m.FunctionConcurrency == 0 &&
@@ -2075,6 +2096,7 @@ func mergeProjectManagedManifest(existing, desired AppManifest) AppManifest {
 	existing.ProjectImageCommand = desired.ProjectImageCommand
 	existing.ProjectImagePort = desired.ProjectImagePort
 	existing.ProjectImageHealthcheck = desired.ProjectImageHealthcheck.Clone()
+	existing.ProjectImageProcess = desired.ProjectImageProcess.Clone()
 	existing.ProjectDependencyConditions = maps.Clone(desired.ProjectDependencyConditions)
 	existing.ServiceBindings = append([]api.AppServiceBinding(nil), desired.ServiceBindings...)
 	existing.ServiceReliability = desired.ServiceReliability
@@ -3957,6 +3979,8 @@ const (
 	AppWebhookEventPlatformTenantStatementFinalized        AppWebhookEvent = "platform_tenant.statement.finalized"
 	AppWebhookEventDebugRegressionDetected                 AppWebhookEvent = "debug.regression.detected"
 	AppWebhookEventDebugRegressionResolved                 AppWebhookEvent = "debug.regression.resolved"
+	AppWebhookEventRouteInsightDetected                    AppWebhookEvent = "routes.insight.detected"
+	AppWebhookEventRouteInsightResolved                    AppWebhookEvent = "routes.insight.resolved"
 	AppWebhookEventRouteMonitorViolated                    AppWebhookEvent = "routes.monitor.violated"
 	AppWebhookEventRouteMonitorEscalated                   AppWebhookEvent = "routes.monitor.escalated"
 	AppWebhookEventRouteMonitorRecovered                   AppWebhookEvent = "routes.monitor.recovered"
@@ -4039,6 +4063,8 @@ var AllAppWebhookEvents = []AppWebhookEvent{
 	AppWebhookEventPlatformTenantStatementFinalized,
 	AppWebhookEventDebugRegressionDetected,
 	AppWebhookEventDebugRegressionResolved,
+	AppWebhookEventRouteInsightDetected,
+	AppWebhookEventRouteInsightResolved,
 	AppWebhookEventRouteMonitorViolated,
 	AppWebhookEventRouteMonitorEscalated,
 	AppWebhookEventRouteMonitorRecovered,
@@ -4515,6 +4541,10 @@ type Invocation struct {
 	// ExclusiveClaim is short-lived schedd-to-gateway capability metadata. It
 	// is never stored in the invocation ledger or exposed by the customer API.
 	ExclusiveClaim *exclusivework.Claim `json:"-"`
+	// AdmissionMaxPending is the producer's per-app cap on pending work of
+	// this Source, enforced inside the enqueue transaction (0 = uncapped).
+	// It is admission input only, never persisted or customer-authored.
+	AdmissionMaxPending int `json:"-"`
 	// Host-to-host operation metadata is trusted protocol state, never persisted or guest-authored.
 	OperationResultVersion     int    `json:"-"`
 	ManagedOperationID         string `json:"-"`

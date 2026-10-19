@@ -127,6 +127,26 @@ func TestNewDefaultDenySet_6to4AndTeredoPresent(t *testing.T) {
 	}
 }
 
+// ADR 20261018194214: NAT64 addresses embed an IPv4 destination, the same
+// lateral-movement class as 6to4 and Teredo.
+func TestNewDefaultDenySet_NAT64Present(t *testing.T) {
+	want := map[string]bool{"64:ff9b::/96": false, "64:ff9b:1::/48": false}
+	for _, e := range NewDefaultDenySet().Entries {
+		if _, ok := want[e.Prefix.String()]; !ok {
+			continue
+		}
+		want[e.Prefix.String()] = true
+		if e.Family != FamilyV6 || e.SourceADR != "ADR-20261018194214" {
+			t.Errorf("%s: family %v, SourceADR %q", e.Prefix, e.Family, e.SourceADR)
+		}
+	}
+	for prefix, found := range want {
+		if !found {
+			t.Errorf("NewDefaultDenySet missing NAT64 prefix %s — see ADR 20261018194214", prefix)
+		}
+	}
+}
+
 func TestNewDefaultDenySet_SMTPPortsAreComplete(t *testing.T) {
 	// Spec §11: "deny 25/465/587". A future edit that drops one
 	// would let the Hetzner abuse desk come knocking.
@@ -246,6 +266,8 @@ func TestDropCounterName(t *testing.T) {
 		{FamilyV6, "fc00::/7", "drop_v6_fc00___7"},
 		{FamilyV6, "2001::/32", "drop_v6_2001___32"},
 		{FamilyV6, "::/128", "drop_v6____128"},
+		{FamilyV6, "64:ff9b::/96", "drop_v6_64_ff9b___96"},
+		{FamilyV6, "64:ff9b:1::/48", "drop_v6_64_ff9b_1___48"},
 	}
 	for _, c := range cases {
 		got := DropCounterName(c.family, c.prefix)

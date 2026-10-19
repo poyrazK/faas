@@ -1,4 +1,4 @@
-package main
+package main_test
 
 // adr: 1152
 
@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -42,11 +43,11 @@ func (v *visibilityAPI) server(t *testing.T) *httptest.Server {
 		}
 		switch r.URL.Path {
 		case "/v1/apps/demo/routes/advice":
-			writeJSONTest(w, advice)
+			main.WriteJSONTest(w, advice)
 		case "/v1/apps/demo/service-wake-ahead":
-			writeJSONTest(w, api.ServiceWakeAheadResponse{Slug: "demo", Enabled: r.Method == http.MethodPut, Learned: &learned})
+			main.WriteJSONTest(w, api.ServiceWakeAheadResponse{Slug: "demo", Enabled: r.Method == http.MethodPut, Learned: &learned})
 		case "/v1/apps/demo/route-priorities":
-			writeJSONTest(w, api.RoutePrioritiesResponse{Slug: "demo", Source: api.RoutePrioritySourceConfigured,
+			main.WriteJSONTest(w, api.RoutePrioritiesResponse{Slug: "demo", Source: api.RoutePrioritySourceConfigured,
 				Routes: []api.RoutePriorityRule{{Method: "POST", Path: "/checkout", Class: "critical"}}, Queue: &queue})
 		default:
 			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
@@ -57,14 +58,14 @@ func (v *visibilityAPI) server(t *testing.T) *httptest.Server {
 
 func runVisibilityCLI(t *testing.T, server *httptest.Server, args ...string) (int, string) {
 	t.Helper()
-	resetJSONOut(t)
-	setPreviewTestAuth(t)
+	main.ResetJSONOut(t)
+	main.SetPreviewTestAuth(t)
 	t.Setenv("FAAS_API", server.URL)
 	var output bytes.Buffer
-	old := osStdout
-	osStdout = &output
-	t.Cleanup(func() { osStdout = old })
-	return run(args), output.String()
+	old := (*main.OsStdout)
+	(*main.OsStdout) = &output
+	t.Cleanup(func() { (*main.OsStdout) = old })
+	return main.Run(args), output.String()
 }
 
 func TestRoutesAdviseCLIAppliesSettingSuggestions(t *testing.T) {

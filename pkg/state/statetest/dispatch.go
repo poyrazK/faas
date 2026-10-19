@@ -25,6 +25,8 @@ import (
 
 // memDispatched lists the methods Mem forwards to its override.
 var memDispatched = map[string]bool{
+	"RestoreApp":                             true,
+	"RestoreAppWithActivity":                 true,
 	"AppTaskByID":                            true,
 	"LiveDeployment":                         true,
 	"ResolveEnvironmentGitOpsServiceBinding": true,
@@ -50,6 +52,9 @@ var memDispatched = map[string]bool{
 	"ProcessNextWorkflowInitialManualCompletion":              true,
 	"AcceptEntityOutboxDelivery":                              true,
 	"AccountPasswordByAccountID":                              true,
+	"DeploymentSidecarRAMs":                                   true,
+	"ListBillingWindowInstances":                              true,
+	"ListInstancesForApp":                                     true,
 	"ActiveComputeNodes":                                      true,
 	"ActivePrewarmFloor":                                      true,
 	"ActiveProjectReleaseSet":                                 true,
@@ -138,8 +143,13 @@ var memDispatched = map[string]bool{
 	"RouteAdviceConsumers":                                    true,
 	"RouteAdviceRouteStats":                                   true,
 	"RouteAdviceThrottleExcess":                               true,
+	"ListRouteInsights":                                       true,
+	"ResolveStaleRouteInsights":                               true,
 	"RouteAwakeMinutes":                                       true,
+	"RouteInsightCandidateApps":                               true,
+	"UpsertRouteInsight":                                      true,
 	"RouteAwakeRouteMinutes":                                  true,
+	"RouteAwakeSourceMinutes":                                 true,
 	"RuntimeAppValuesForDeployment":                           true,
 	"RuntimeScalingStateForDeployment":                        true,
 	"SafeReleaseWorkerLeaseHealth":                            true,
@@ -227,6 +237,24 @@ func (s *Mem) CompleteOperatorRestart(ctx context.Context, completion state.Oper
 		return override.CompleteOperatorRestart(ctx, completion)
 	}
 	return s.MemStore.CompleteOperatorRestart(ctx, completion)
+}
+
+func (s *Mem) RestoreApp(ctx context.Context, id string, limits api.Limits) (state.App, error) {
+	if o, ok := s.over.(interface {
+		RestoreApp(context.Context, string, api.Limits) (state.App, error)
+	}); ok {
+		return o.RestoreApp(ctx, id, limits)
+	}
+	return s.MemStore.RestoreApp(ctx, id, limits)
+}
+
+func (s *Mem) RestoreAppWithActivity(ctx context.Context, id string, limits api.Limits, entry state.OrgActivity) (state.App, int64, error) {
+	if o, ok := s.over.(interface {
+		RestoreAppWithActivity(context.Context, string, api.Limits, state.OrgActivity) (state.App, int64, error)
+	}); ok {
+		return o.RestoreAppWithActivity(ctx, id, limits, entry)
+	}
+	return s.MemStore.RestoreAppWithActivity(ctx, id, limits, entry)
 }
 
 func (s *Mem) AcceptEntityOutboxDelivery(p0 context.Context, p1 state.AppWebhookDelivery) (string, error) {
@@ -1048,6 +1076,42 @@ func (s *Mem) RouteAdviceThrottleExcess(p0 context.Context, p1 sqlc.RouteAdviceT
 	return s.MemStore.RouteAdviceThrottleExcess(p0, p1)
 }
 
+func (s *Mem) ListRouteInsights(p0 context.Context, p1 sqlc.ListRouteInsightsParams) ([]sqlc.ListRouteInsightsRow, error) {
+	if o, ok := s.over.(interface {
+		ListRouteInsights(context.Context, sqlc.ListRouteInsightsParams) ([]sqlc.ListRouteInsightsRow, error)
+	}); ok {
+		return o.ListRouteInsights(p0, p1)
+	}
+	return s.MemStore.ListRouteInsights(p0, p1)
+}
+
+func (s *Mem) ResolveStaleRouteInsights(p0 context.Context, p1 sqlc.ResolveStaleRouteInsightsParams) (int64, error) {
+	if o, ok := s.over.(interface {
+		ResolveStaleRouteInsights(context.Context, sqlc.ResolveStaleRouteInsightsParams) (int64, error)
+	}); ok {
+		return o.ResolveStaleRouteInsights(p0, p1)
+	}
+	return s.MemStore.ResolveStaleRouteInsights(p0, p1)
+}
+
+func (s *Mem) RouteInsightCandidateApps(p0 context.Context, p1 sqlc.RouteInsightCandidateAppsParams) ([]sqlc.RouteInsightCandidateAppsRow, error) {
+	if o, ok := s.over.(interface {
+		RouteInsightCandidateApps(context.Context, sqlc.RouteInsightCandidateAppsParams) ([]sqlc.RouteInsightCandidateAppsRow, error)
+	}); ok {
+		return o.RouteInsightCandidateApps(p0, p1)
+	}
+	return s.MemStore.RouteInsightCandidateApps(p0, p1)
+}
+
+func (s *Mem) UpsertRouteInsight(p0 context.Context, p1 sqlc.UpsertRouteInsightParams) error {
+	if o, ok := s.over.(interface {
+		UpsertRouteInsight(context.Context, sqlc.UpsertRouteInsightParams) error
+	}); ok {
+		return o.UpsertRouteInsight(p0, p1)
+	}
+	return s.MemStore.UpsertRouteInsight(p0, p1)
+}
+
 func (s *Mem) RouteAwakeMinutes(p0 context.Context, p1 sqlc.RouteAwakeMinutesParams) ([]sqlc.RouteAwakeMinutesRow, error) {
 	if o, ok := s.over.(interface {
 		RouteAwakeMinutes(context.Context, sqlc.RouteAwakeMinutesParams) ([]sqlc.RouteAwakeMinutesRow, error)
@@ -1064,6 +1128,15 @@ func (s *Mem) RouteAwakeRouteMinutes(p0 context.Context, p1 sqlc.RouteAwakeRoute
 		return o.RouteAwakeRouteMinutes(p0, p1)
 	}
 	return s.MemStore.RouteAwakeRouteMinutes(p0, p1)
+}
+
+func (s *Mem) RouteAwakeSourceMinutes(p0 context.Context, p1 sqlc.RouteAwakeSourceMinutesParams) ([]sqlc.RouteAwakeSourceMinutesRow, error) {
+	if o, ok := s.over.(interface {
+		RouteAwakeSourceMinutes(context.Context, sqlc.RouteAwakeSourceMinutesParams) ([]sqlc.RouteAwakeSourceMinutesRow, error)
+	}); ok {
+		return o.RouteAwakeSourceMinutes(p0, p1)
+	}
+	return s.MemStore.RouteAwakeSourceMinutes(p0, p1)
 }
 
 func (s *Mem) RuntimeAppValuesForDeployment(p0 context.Context, p1 string, p2 string, p3 string) (state.RuntimeAppValuesSnapshot, error) {
@@ -1136,6 +1209,33 @@ func (s *Mem) WarmPoolReconciliationAppIDs(p0 context.Context, p1 string) ([]str
 		return o.WarmPoolReconciliationAppIDs(p0, p1)
 	}
 	return s.MemStore.WarmPoolReconciliationAppIDs(p0, p1)
+}
+
+func (s *Mem) DeploymentSidecarRAMs(p0 context.Context, p1 string) ([]int, error) {
+	if o, ok := s.over.(interface {
+		DeploymentSidecarRAMs(context.Context, string) ([]int, error)
+	}); ok {
+		return o.DeploymentSidecarRAMs(p0, p1)
+	}
+	return s.MemStore.DeploymentSidecarRAMs(p0, p1)
+}
+
+func (s *Mem) ListBillingWindowInstances(p0 context.Context, p1, p2 time.Time) ([]state.Instance, error) {
+	if o, ok := s.over.(interface {
+		ListBillingWindowInstances(context.Context, time.Time, time.Time) ([]state.Instance, error)
+	}); ok {
+		return o.ListBillingWindowInstances(p0, p1, p2)
+	}
+	return s.MemStore.ListBillingWindowInstances(p0, p1, p2)
+}
+
+func (s *Mem) ListInstancesForApp(p0 context.Context, p1 string) ([]state.Instance, error) {
+	if o, ok := s.over.(interface {
+		ListInstancesForApp(context.Context, string) ([]state.Instance, error)
+	}); ok {
+		return o.ListInstancesForApp(p0, p1)
+	}
+	return s.MemStore.ListInstancesForApp(p0, p1)
 }
 
 // pgDispatched lists the methods Pg forwards to its override.

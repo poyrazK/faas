@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -8,12 +8,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func TestCmdDeploymentAliasesListShowsStableURL(t *testing.T) {
-	resetJSONOutput()
-	t.Cleanup(resetJSONOutput)
+	main.ResetJSONOutput()
+	t.Cleanup(main.ResetJSONOutput)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet || r.URL.Path != "/v1/apps/demo/deployment-aliases" {
 			t.Errorf("request = %s %s", r.Method, r.URL.Path)
@@ -27,11 +28,11 @@ func TestCmdDeploymentAliasesListShowsStableURL(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 	var stdout bytes.Buffer
-	oldOut := osStdout
-	osStdout = &stdout
-	t.Cleanup(func() { osStdout = oldOut })
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	t.Cleanup(func() { (*main.OsStdout) = oldOut })
 
-	if code := cmdDeployments([]string{"alias", "list", "--app", "demo"}); code != 0 {
+	if code := main.CmdDeployments([]string{"alias", "list", "--app", "demo"}); code != 0 {
 		t.Fatalf("deployments alias list = %d", code)
 	}
 	for _, want := range []string{"candidate", "v7", "https://tag-candidate-demo.gregale.dev"} {
@@ -42,8 +43,8 @@ func TestCmdDeploymentAliasesListShowsStableURL(t *testing.T) {
 }
 
 func TestCmdDeploymentAliasSetResolvesRevision(t *testing.T) {
-	resetJSONOutput()
-	t.Cleanup(resetJSONOutput)
+	main.ResetJSONOutput()
+	t.Cleanup(main.ResetJSONOutput)
 	const deploymentID = "0123456789abcdef0123456789abcdef"
 	var sawPut bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -71,12 +72,12 @@ func TestCmdDeploymentAliasSetResolvesRevision(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 	var stdout bytes.Buffer
-	oldOut := osStdout
-	osStdout = &stdout
-	t.Cleanup(func() { osStdout = oldOut })
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	t.Cleanup(func() { (*main.OsStdout) = oldOut })
 
 	args := []string{"--app", "demo", "--name", "candidate", "--deployment", "v7"}
-	if code := cmdDeploymentAliasSet(args); code != 0 {
+	if code := main.CmdDeploymentAliasSet(args); code != 0 {
 		t.Fatalf("set = %d", code)
 	}
 	if !sawPut || !strings.Contains(stdout.String(), "https://tag-candidate-demo.gregale.dev") {
@@ -94,15 +95,15 @@ func TestCmdDeploymentAliasDeleteJSON(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
-	resetJSONOutput()
-	jsonOutput = true
-	t.Cleanup(resetJSONOutput)
+	main.ResetJSONOutput()
+	(*main.JsonOutput) = true
+	t.Cleanup(main.ResetJSONOutput)
 	var stdout bytes.Buffer
-	oldOut := osStdout
-	osStdout = &stdout
-	t.Cleanup(func() { osStdout = oldOut })
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	t.Cleanup(func() { (*main.OsStdout) = oldOut })
 
-	if code := cmdDeploymentAliasDelete([]string{"--app", "demo", "--name", "candidate"}); code != 0 {
+	if code := main.CmdDeploymentAliasDelete([]string{"--app", "demo", "--name", "candidate"}); code != 0 {
 		t.Fatalf("delete = %d", code)
 	}
 	if !strings.Contains(stdout.String(), `"deleted": true`) || !strings.Contains(stdout.String(), `"name": "candidate"`) {
@@ -116,7 +117,7 @@ func TestCmdDeploymentAliasSetRejectsInvalidNameBeforeRequest(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
-	if code := cmdDeploymentAliasSet([]string{"--app", "demo", "--name", "Bad_Name", "--deployment", "v7"}); code == 0 {
+	if code := main.CmdDeploymentAliasSet([]string{"--app", "demo", "--name", "Bad_Name", "--deployment", "v7"}); code == 0 {
 		t.Fatal("invalid alias name unexpectedly succeeded")
 	}
 	if called {
@@ -134,7 +135,7 @@ func TestDeploymentAliasRevisionLabelMarksNonServingTargets(t *testing.T) {
 		{api.DeploymentAliasResponse{Revision: 2, DeploymentStatus: "superseded"}, "v2 (superseded, not serving)"},
 		{api.DeploymentAliasResponse{Revision: 3}, "v3"},
 	} {
-		if got := deploymentAliasRevisionLabel(tc.alias); got != tc.want {
+		if got := main.DeploymentAliasRevisionLabel(tc.alias); got != tc.want {
 			t.Errorf("label(%+v) = %q, want %q", tc.alias, got, tc.want)
 		}
 	}

@@ -17,6 +17,7 @@ import (
 	"errors"
 	"log/slog"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -53,6 +54,16 @@ type Config struct {
 	// subscriptions, which share maintenance only with identical claims.
 	Pool                *pgxpool.Pool
 	MaxRLSSubscriptions int
+	// Scale to zero (release.go). After ReleaseAfter without a transaction
+	// to apply, the hub releases the database; zero never releases.
+	// Reconnect opens the engine's slot again (livequery.OpenSlot). Awake,
+	// polled every AwakeEvery (default five seconds) while released,
+	// reports whether the database is running again; without it only Wake
+	// and subscriptions that need the database resume the hub.
+	ReleaseAfter time.Duration
+	Reconnect    func(ctx context.Context) (*livequery.Capture, error)
+	Awake        func(ctx context.Context) (bool, error)
+	AwakeEvery   time.Duration
 	// RestoredGrace is how long subscriptions restored from a checkpoint
 	// stay registered (default two minutes). Their connections are gone,
 	// but reconnecting clients that subscribe to the same queries join the
@@ -73,6 +84,10 @@ type Hub struct {
 	done     chan struct{} // closed when Run returns
 	prefix   string        // of this hub's engine subscription IDs
 	rlsSubs  int           // RLS-mode subscriptions
+	// Scale to zero: when the database last gave the hub work, and whether
+	// the hub has released it (read by other goroutines through Released).
+	lastActive time.Time
+	released   atomic.Bool
 }
 
 // sub is one client subscription.
@@ -117,6 +132,9 @@ func New(cfg Config) *Hub {
 	if cfg.RestoredGrace <= 0 {
 		cfg.RestoredGrace = 2 * time.Minute
 	}
+	if cfg.AwakeEvery <= 0 {
+		cfg.AwakeEvery = 5 * time.Second
+	}
 	// Engine subscription IDs must not repeat those a checkpoint restored
 	// from an earlier process, so each hub prefixes its own.
 	prefix := make([]byte, 6)
@@ -143,8 +161,14 @@ func (h *Hub) do(ctx context.Context, f func(context.Context)) {
 // stopped the engine, or nil on cancellation after a final checkpoint.
 func (h *Hub) Run(ctx context.Context) error {
 	defer close(h.done)
+	if h.cfg.ReleaseAfter > 0 && h.cfg.Reconnect == nil {
+		return errReleaseConfig
+	}
+	h.lastActive = h.cfg.Now()
 	idle := time.NewTicker(h.cfg.Idle)
 	defer idle.Stop()
+	awake := time.NewTicker(h.cfg.AwakeEvery)
+	defer awake.Stop()
 	checkpoint := time.NewTicker(h.cfg.CheckpointEvery)
 	defer checkpoint.Stop()
 	// Subscriptions restored from a checkpoint belong to no session.
@@ -164,9 +188,14 @@ func (h *Hub) Run(ctx context.Context) error {
 			f(ctx)
 			continue
 		case <-checkpoint.C:
+			if h.released.Load() {
+				break // nothing changed since the checkpoint written at release
+			}
 			if err := h.checkpoint(); err != nil {
 				h.cfg.Logger.Error("live query checkpoint failed", "err", err)
 			}
+		case <-awake.C:
+			h.probe(ctx)
 		case <-release.C:
 			for _, id := range restored {
 				if h.subs[id] == nil {
@@ -179,7 +208,13 @@ func (h *Hub) Run(ctx context.Context) error {
 		case <-idle.C:
 		}
 		h.expire()
+		if h.released.Load() {
+			continue // no rounds until something resumes the hub
+		}
 		if !h.dirty && !h.engine.Pending() {
+			if h.idleLongEnough() {
+				h.release() //nolint:contextcheck // Capture.Close bounds its own shutdown
+			}
 			continue
 		}
 		if err := h.round(ctx); err != nil {
@@ -221,6 +256,9 @@ func (h *Hub) round(ctx context.Context) error {
 		return err
 	}
 	now := h.cfg.Now()
+	if len(h.engine.LastApplied) > 0 || len(deltas) > 0 {
+		h.lastActive = now
+	}
 	h.cfg.Logger.Debug("live round", "deltas", len(deltas), "applied", len(h.engine.LastApplied), "took", now.Sub(start))
 	h.cfg.Metrics.observeRound(now.Sub(start), before, h.engine.Stats, h.engine.Subscriptions(), h.engine.Queries())
 	for _, d := range deltas {
@@ -408,6 +446,19 @@ func (h *Hub) register(ctx context.Context, sess *Session, f liveproto.ClientFra
 	}
 	h.nextID++
 	engineID := h.prefix + strconv.FormatUint(sess.id, 10) + "." + strconv.FormatUint(h.nextID, 10)
+	if h.join(engineID, sql, session, args) {
+		// A held result, served without waking the database.
+		s := h.newSub(sess, f, session, engineID, fingerprint, expires)
+		if d, ok := h.engine.Current(engineID); ok {
+			h.deliver(s, d)
+		}
+		return
+	}
+	if err := h.resume(ctx, "subscription"); err != nil {
+		refuse(liveproto.CodeUnavailable, "the database is unavailable", 0, 0)
+		return
+	}
+	h.lastActive = h.cfg.Now()
 	if _, err := h.engine.RegisterAs(ctx, engineID, sql, session, args...); err != nil {
 		code := liveproto.CodeInvalidQuery
 		if errors.Is(err, livequery.ErrUnsupported) {
@@ -417,6 +468,12 @@ func (h *Hub) register(ctx context.Context, sess *Session, f liveproto.ClientFra
 		return
 	}
 	h.cfg.Logger.Debug("live subscribe", "session", sess.id, "subscription", f.Subscription, "engine", engineID, "rls", session != nil)
+	h.newSub(sess, f, session, engineID, fingerprint, expires)
+	h.dirty = true
+}
+
+// newSub records a client subscription registered with the engine.
+func (h *Hub) newSub(sess *Session, f liveproto.ClientFrame, session *livequery.Session, engineID, fingerprint string, expires time.Time) *sub {
 	s := &sub{session: sess, client: f.Subscription, kid: seal.KeyID(f.Sealed), engineID: engineID, fingerprint: fingerprint, expires: expires}
 	if f.RLS() {
 		s.rls, s.rest = true, liveproto.ClientFrame{Database: f.Database, Schema: f.Schema, Rest: f.Rest}
@@ -424,7 +481,7 @@ func (h *Hub) register(ctx context.Context, sess *Session, f liveproto.ClientFra
 	}
 	h.subs[engineID] = s
 	sess.subs[f.Subscription] = s
-	h.dirty = true
+	return s
 }
 
 func (h *Hub) renew(sess *Session, f liveproto.ClientFrame) {
@@ -478,6 +535,10 @@ func (h *Hub) renew(sess *Session, f liveproto.ClientFrame) {
 // subscribeRLS registers an RLS-mode read as its user's session.
 func (h *Hub) subscribeRLS(ctx context.Context, sess *Session, f liveproto.ClientFrame, refuse func(code, msg string, limit, observed int)) {
 	session, expires, no := h.session(sess, f)
+	if no == nil && h.resume(ctx, "subscription") != nil {
+		// A Data API read compiles against the catalog.
+		no = &rlsRefusal{liveproto.CodeUnavailable, "the database is unavailable"}
+	}
 	if no == nil {
 		var compiled *rest.Compiled
 		if compiled, no = h.compileREST(ctx, f); no == nil {

@@ -1684,7 +1684,7 @@ func (l *Loop) runTriggersRetention(ctx context.Context) {
 	if l.triggersRetention == nil {
 		return
 	}
-	deleted, err := l.triggersRetention.SweepOnce(ctx, 1000)
+	deleted, err := l.triggersRetention.SweepOnce(ctx, api.TriggerRetentionBatchMax)
 	if err != nil {
 		l.log.Warn("trigger_records retention: sweep failed", "err", err)
 		return
@@ -2421,6 +2421,9 @@ func (l *Loop) runReaper(ctx context.Context) {
 	// lifecycle notification cannot leave unbillable VMs live. This runs
 	// before the normal idle snapshot.
 	for _, app := range apps {
+		if err := l.engine.ReconcileFinancialBudgetStops(ctx, app.ID); err != nil {
+			l.log.Warn("reaper: preview budget stop", "app", app.ID, "err", err)
+		}
 		mustPark := app.Status == state.AppEvictedCold
 		if !mustPark {
 			if account, accountErr := state.AppResourceAccount(ctx, store, app); accountErr == nil {

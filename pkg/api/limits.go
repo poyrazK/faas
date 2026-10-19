@@ -581,7 +581,8 @@ const (
 	ConsumerBillingStatementsMax = 24
 )
 
-// Consumer prepaid credits and spend caps (ADR-1306).
+// Consumer prepaid credits and spend caps (ADR-1306). Platform tenants'
+// credits and caps use the same limits (ADR-20261019100331).
 const (
 	// One grant and one monthly cap are at most 10,000,000.00 in their
 	// currency.
@@ -597,12 +598,13 @@ const (
 	ConsumerSpendCapBatchSize     = 500
 )
 
-// Consumer controls (ADR-1314, ADR-1315).
+// Consumer and platform tenant controls (ADR-1314, ADR-1315, ADR-1322,
+// ADR-1324).
 const (
-	// ConsumerTrialMaxDays bounds one consumer's free trial.
+	// ConsumerTrialMaxDays bounds one consumer's or tenant's free trial.
 	ConsumerTrialMaxDays = 365
 	// ConsumerOverdueBlockMaxDays bounds how long after its due date an
-	// unpaid invoice blocks its consumer.
+	// unpaid invoice blocks its consumer or tenant.
 	ConsumerOverdueBlockMaxDays = 365
 	// apid recomputes overdue holds this often; payment status itself is
 	// synced on the ADR-1504 schedule.
@@ -847,6 +849,47 @@ const QueueBindingMaxConcurrency = 10000
 // cannot flood the pool with lanes it would only drop.
 const QueuePushDispatchSlotsPerNode = 32
 
+// Trigger ledger retention: terminal trigger_records rows without an explicit
+// result_retention_until are deleted this long after their last dispatch.
+// Dead letters stay longer so operators can review, retry or drop them.
+const (
+	TriggerRecordRetention     = 7 * 24 * time.Hour
+	TriggerDeadLetterRetention = 30 * 24 * time.Hour
+	// TriggerRetentionBatchMax and TriggerRetentionPassesMax bound one sweep
+	// to 10,000 deletions so a large backlog drains over several sweeps.
+	TriggerRetentionBatchMax  = 1000
+	TriggerRetentionPassesMax = 10
+)
+
+// RealtimeTriggerMinLeaseSeconds is the shortest consumer-group lease a
+// realtime trigger may bind (ADR-1322): one GatewaySynthDispatchTimeout
+// invocation plus wake and queueing margin.
+const RealtimeTriggerMinLeaseSeconds = 120
+
+// RealtimeTriggerDefaultBatchSize is how many messages one invocation of a
+// batch-delivery realtime trigger receives when batch_size_max is not set
+// (ADR-1321); RealtimeConsumerGroupBatchMax caps it.
+const RealtimeTriggerDefaultBatchSize = 10
+
+// Realtime usage recording (ADR-1323: recorded, never billed). Each
+// realtimed process reports its cumulative per-endpoint usage for the current
+// UTC hour once per RealtimeUsageReportInterval, in reports of at most
+// RealtimeUsageReportMaxEndpoints endpoints. It keeps completed hours it could
+// not deliver for RealtimeUsageReportMaxAge, and apid refuses reports for
+// older hours. Rows live as long as usage_minutes (13 months).
+const (
+	RealtimeUsageReportInterval     = time.Minute
+	RealtimeUsageReportMaxEndpoints = 200
+	RealtimeUsageReportMaxBytes     = 256 << 10
+	RealtimeUsageReportMaxAge       = 24 * time.Hour
+	RealtimeUsageReadMaxRows        = 10_000
+	// The customer usage view (GET /v1/usage/realtime) covers the last
+	// RealtimeUsageQueryDefaultHours hours unless asked for up to
+	// RealtimeUsageQueryMaxHours (31 days).
+	RealtimeUsageQueryDefaultHours = 24
+	RealtimeUsageQueryMaxHours     = 744
+)
+
 // Pull leases (ADR-1140). One call leases at most QueueLeaseMaxMessages and
 // takes at most QueueLeaseMaxReceipts receipts. A lease without an explicit
 // timeout hides its message for QueueLeaseDefaultVisibilitySeconds; the
@@ -1032,6 +1075,15 @@ const (
 	FinancialBudgetHistoryMax        = 100
 	FinancialBudgetSpecBytes         = 16384
 	FinancialBudgetOperationKeyBytes = 255
+	FinancialBudgetAlertBatch        = 32
+	FinancialBudgetAlertLease        = time.Minute
+	FinancialBudgetDeliveryInterval  = 30 * time.Second
+	FinancialBudgetAlertSendTimeout  = 20 * time.Second
+	FinancialBudgetAlertRetryBase    = time.Minute
+	FinancialBudgetAlertRetryMax     = time.Hour
+	FinancialBudgetAlertAttemptsMax  = 2147483647
+	FinancialBudgetResidentCountMax  = 2147483647
+	FinancialBudgetCommandClockGrace = 5 * time.Second
 	FinancialSourceIDBytes           = 512
 	FinancialAdjustmentActorBytes    = 256
 	FinancialAdjustmentReasonBytes   = 512
@@ -1261,6 +1313,17 @@ const (
 	FlagsMaxProgressiveLatencyMS             = 600000
 	FlagsMinProgressiveWindowSeconds         = 60
 	FlagsMaxProgressiveWindowSeconds         = 604800
+)
+
+// Platform flag (ADR-1700) structural bounds. They keep every daemon's
+// compiled snapshot small; larger audiences belong in a group or a rollout.
+const (
+	PlatformFlagsMaxRules            = 32
+	PlatformFlagsMaxAccountsPerRule  = 1000
+	PlatformFlagsMaxGroups           = 100
+	PlatformFlagsMaxAccountsPerGroup = 5000
+	PlatformFlagsMaxDefinitionBytes  = 64 << 10
+	PlatformFlagsMaxGroupsBytes      = 512 << 10
 )
 
 // MaxOutboundRequestsPerDay is the structural upper bound for a
@@ -2203,6 +2266,82 @@ var FullRootfsAllowAutoDefault = map[Plan]bool{
 	PlanHobby: true,
 	PlanPro:   true,
 	PlanScale: true,
+}
+
+// RealtimeLimits describes the managed realtime allowance for a plan. It is
+// kept separate from Limits so the opt-in realtime surface does not change the
+// long-lived Limits struct consumed by every daemon.
+//
+// Realtime is free (ADR-1323): Gregale sells compute, and realtime features are
+// software. Limits exist only where realtime holds a real resource. An open
+// connection holds about 52 KB of realtimed memory (measured idle, 2026-10-14),
+// so ConnectionsPerAccount caps the concurrent connections an account holds
+// across the fleet: Hobby 200 (~10 MB), Pro 1,000 (~50 MB), Scale 5,000
+// (~260 MB, half a node). Retained history is already bounded per endpoint, and
+// fan-out bandwidth is not billed, like application egress.
+type RealtimeLimits struct {
+	Plan                  Plan
+	EndpointsPerApp       int
+	EndpointsPerAccount   int
+	ConnectionsPerAccount int
+}
+
+var realtimeLimits = map[Plan]RealtimeLimits{
+	PlanFree:  {Plan: PlanFree},
+	PlanHobby: {Plan: PlanHobby, EndpointsPerApp: 2, EndpointsPerAccount: 10, ConnectionsPerAccount: 200},
+	PlanPro:   {Plan: PlanPro, EndpointsPerApp: 10, EndpointsPerAccount: 50, ConnectionsPerAccount: 1_000},
+	PlanScale: {Plan: PlanScale, EndpointsPerApp: 25, EndpointsPerAccount: 250, ConnectionsPerAccount: 5_000},
+}
+
+// Platform side of realtime fair use (ADR-1323). realtimed runs with
+// MemoryMax=512M; at ~52 KB per idle connection, RealtimeNodeConnectionsDefault
+// leaves room for queued frames and subscription pumps. Until fair use is
+// enabled (FAAS_REALTIME_FAIR_USE_ENABLED=1) a node keeps the earlier
+// RealtimeNodeConnectionsWithoutFairUse default. One account may hold at
+// most RealtimeAccountNodeSharePercent of a node's connections, so a single
+// account cannot fill a node even within its plan allowance.
+//
+// Each realtimed process reports its per-account connection counts to apid
+// every RealtimeConnectionSyncInterval and learns the other nodes' counts in
+// return. Counts older than RealtimeConnectionSyncStaleAfter are ignored, and a
+// node whose own sync is that stale enforces its local count only.
+//
+// RealtimeNodeOutboundBytesDefault bounds the payload bytes queued for clients
+// across a whole node. Each connection may queue up to 4 MiB, so without it
+// 6,000 connections could buffer ~24 GiB; 64 MiB fits beside a full node of
+// idle connections under RealtimeMemoryLimitBytes, the soft memory limit
+// realtimed sets with the budget. realtimed disconnects the largest backlogs
+// before the budget is reached. Both apply only with
+// FAAS_REALTIME_OUTBOUND_BUDGET_ENABLED=1.
+const (
+	RealtimeNodeConnectionsDefault        = 6_000
+	RealtimeNodeConnectionsWithoutFairUse = 10_000
+	RealtimeNodeOutboundBytesDefault      = 64 << 20
+	RealtimeMemoryLimitBytes              = 384 << 20
+	RealtimeAccountNodeSharePercent       = 50
+	RealtimeConnectionSyncInterval        = 5 * time.Second
+	RealtimeConnectionSyncStaleAfter      = 30 * time.Second
+	RealtimeConnectionSyncMaxAccounts     = 10_000
+)
+
+// Channel occupancy (ADR-1324). One read covers at most
+// RealtimeOccupancyChannelsMax channels and asks every realtime node. Live
+// occupancy frames go out at most once per RealtimeOccupancyFrameInterval per
+// channel. A node refreshes the other nodes' counts every
+// RealtimeOccupancyRemoteRefresh, from an apid cache kept for
+// RealtimeOccupancyCacheTTL, and watches at most RealtimeOccupancyWatchedMax
+// channels, which bounds that refresh to 50 small apid calls per interval.
+const (
+	RealtimeOccupancyChannelsMax   = 20
+	RealtimeOccupancyFrameInterval = time.Second
+	RealtimeOccupancyRemoteRefresh = 5 * time.Second
+	RealtimeOccupancyCacheTTL      = 2 * time.Second
+	RealtimeOccupancyWatchedMax    = 1_000
+)
+
+func RealtimeLimitsFor(p Plan) (RealtimeLimits, bool) {
+	l, ok := realtimeLimits[p]
+	return l, ok
 }
 
 // GDPR self-service export rate limit (issue #755 / PR-5.1). Single
@@ -5589,6 +5728,31 @@ const (
 
 	// Metering (spec §1, §10).
 	OverageMillicentsPerGBHour = 1_000 // $0.01 per GB-RAM-hour (ADR-1430)
+	// ADR-566: strict compute reserves startup, execution, and bounded teardown.
+	// Strict egress credits are conservative interface-byte bounds, not invoice usage.
+	FinancialEgressMinimumCreditBytes = int64(4096)
+	FinancialEgressCreditBytes        = int64(8 * 1024 * 1024)
+	FinancialEgressPollInterval       = 250 * time.Millisecond
+	FinancialEgressFramingFactor      = int64(2)
+	FinancialEgressMinimumPacketBytes = 20
+	// Root bridge sockets reserve this mark bit; remaining bits identify the
+	// original output ifindex. Host policy rejects every other output device.
+	PublicForwardMarkFlag            = uint32(0x80000000)
+	PublicForwardIfIndexMax          = int(0x7fffffff)
+	FinancialComputeLeaseDuration    = 2 * time.Minute
+	FinancialComputeTeardownReserve  = 30 * time.Second
+	FinancialComputeRenewInterval    = 20 * time.Second
+	FinancialComputeRenewMargin      = 5 * time.Second
+	FinancialComputeAuthorityTimeout = 3 * time.Second
+	FinancialComputeOwnerHeartbeat   = 10 * time.Second
+	FinancialComputeInstanceBytes    = 128
+	FinancialComputeRAMMaxMB         = 131_072
+	FinancialComputeActiveMax        = 10_000
+	FinancialComputeQuantityMax      = int64(9007199254740991)
+	// Gateways reuse a warm-traffic budget decision this long. vmmd's local
+	// funded deadline, not this check, bounds strict spending.
+	FinancialBudgetAdmissionCacheTTL  = time.Second
+	FinancialBudgetAdmissionCacheSize = 10_000
 
 	// PreflightRateLimitPerHour bounds anonymous "would this run here" checks per
 	// client IP. The check is unauthenticated, so the ceiling exists to protect
@@ -9251,6 +9415,7 @@ var externalTriggerKinds = []TriggerKind{
 	TriggerKindRedisStreams,
 	TriggerKindSQSCompat,
 	TriggerKindQueue,
+	TriggerKindRealtime,
 }
 
 // AllowedTriggerKinds returns the non-cron event sources the plan may
@@ -9259,7 +9424,7 @@ func (p Plan) AllowedTriggerKinds() []TriggerKind {
 	var kinds []TriggerKind
 	switch p {
 	case PlanHobby:
-		kinds = []TriggerKind{TriggerKindSQSCompat, TriggerKindQueue}
+		kinds = []TriggerKind{TriggerKindSQSCompat, TriggerKindQueue, TriggerKindRealtime}
 	case PlanPro, PlanScale:
 		kinds = externalTriggerKinds
 	}
@@ -11028,8 +11193,10 @@ const (
 // only after ServiceWakeAheadMinWakes observed caller wakes, when at least
 // ServiceWakeAheadMinCallShare of them called it and at least
 // ServiceWakeAheadMinColdShare of those calls found it parked (or warm only
-// because of a wake-ahead). Wake-ahead never starts while fleet residency is
-// at or above ServiceWakeAheadMaxResidentPercent of the admission ceiling.
+// because of a wake-ahead). Before ServiceWakeAheadMinWakes, the caller's
+// declared dependencies stand in, at most ServiceWakeAheadMaxTargets of them
+// (ADR-1137). Wake-ahead never starts while fleet residency is at or above
+// ServiceWakeAheadMaxResidentPercent of the admission ceiling.
 const (
 	ServiceWakeAheadFollowWindow       = 10 * time.Second
 	ServiceWakeAheadMinWakes           = 20
@@ -11109,13 +11276,53 @@ const (
 	RouteContentMaxUncacheableShare = 0.5
 )
 
+// RouteCacheRule checks existing cache rules from refill evidence (ADR-1199).
+// On a route with a cache rule the gateway compares each body it stores with
+// the previous one for the URL. A changed body stored no later than the
+// rule's max-age plus RouteContentStaleLagShare of it (at least
+// RouteContentStaleMinLag) is a stale refill: the content almost certainly
+// changed while the cached copy was still being served. A rule is stale when
+// at least RouteCacheRuleMinRefills refills were observed and more than
+// RouteCacheRuleMaxStaleShare of them were stale, and too short when none was
+// stale and the measured safe max-age is at least RouteCacheRuleTooShortFactor
+// times the rule's.
+const (
+	RouteContentStaleLagShare    = 0.1
+	RouteContentStaleMinLag      = 5 * time.Second
+	RouteCacheRuleMinRefills     = 20
+	RouteCacheRuleMaxStaleShare  = 0.05
+	RouteCacheRuleTooShortFactor = 2
+)
+
+// RouteInsight bounds proactive route insights (ADR-1198): every
+// RouteInsightInterval apid evaluates at most RouteInsightMaxApps apps that
+// ran in the last RouteInsightWindow. An insight no evaluation has observed
+// for RouteInsightResolveAfter resolves. A kept_awake insight needs the app
+// awake for at least RouteInsightKeptAwakeMinShare of the window. Listings
+// show active insights and those resolved within RouteInsightResolvedListWindow,
+// at most RouteInsightListLimit rows.
+const (
+	RouteInsightInterval           = 6 * time.Hour
+	RouteInsightWindow             = 24 * time.Hour
+	RouteInsightResolveAfter       = 24 * time.Hour
+	RouteInsightMaxApps            = 500
+	RouteInsightKeptAwakeMinShare  = 0.5
+	RouteInsightListLimit          = 50
+	RouteInsightResolvedListWindow = 7 * 24 * time.Hour
+)
+
 // RoutePriority bounds per-app route priorities for the warm-capacity queue
 // (ADR-978): at most RoutePriorityMaxRules rules, cached by each gateway for
-// RoutePriorityCacheTTL and read only when a request has to queue.
+// RoutePriorityCacheTTL and read only when a request has to queue. The
+// cold-wake queue (ADR-20261018181846) prefetches the rules in the background,
+// bounded by RoutePriorityPrefetchTimeout, and releases each lower class
+// RoutePriorityWakeReleaseStagger after the one above it.
 const (
-	RoutePriorityMaxRules = 20
-	RoutePriorityCacheTTL = 30 * time.Second
-	RoutePriorityMaxApps  = 4096
+	RoutePriorityMaxRules           = 20
+	RoutePriorityCacheTTL           = 30 * time.Second
+	RoutePriorityMaxApps            = 4096
+	RoutePriorityPrefetchTimeout    = 5 * time.Second
+	RoutePriorityWakeReleaseStagger = 25 * time.Millisecond
 )
 
 // RouteHealthPooled bounds stage-pooled evidence for low-traffic routes
@@ -11211,6 +11418,7 @@ const (
 	MCPWakeHistoryTimeMaxBytes                    = 64
 	WakeHistoryPageDefault                        = 20
 	WakeHistoryPageMax                            = 100
+	AccountTraceWakesMax                          = 32 // wakes one account trace lookup reads to show each request's restore
 	WakeHistoryCursorMaxBytes                     = 2048
 	MCPWakeHistoryCursorMaxBytes                  = 8192
 	MCPProfileFunctionsDefault                    = 10
@@ -11620,6 +11828,21 @@ const (
 	DataAPIRuntimeConnectionReportMaxBytes = 4096
 	DataAPIRuntimeConnectionReportTimeout  = 5 * time.Second
 	DataAPIRuntimeConnectionReportInterval = 15 * time.Second
+	// Owner usage telemetry (ADR-20261019102108): the runtime reports hourly
+	// deltas under workload identity. Owner-facing counts, never billing records.
+	DataAPIUsageReportMaxBytes  = 16 << 10
+	DataAPIUsageReportTimeout   = 5 * time.Second
+	DataAPIUsageReportInterval  = 15 * time.Second
+	DataAPIUsageReportMaxHours  = 48
+	DataAPIUsageMaxDelta        = 1_000_000_000_000
+	DataAPIUsageDedupWindow     = 48 * time.Hour
+	DataAPIUsageRetentionDays   = 90
+	DataAPIUsageQueryMaxDays    = 90
+	DataAPIUsageMonthlyCapMax   = 1_000_000_000_000
+	DataAPIUsagePruneBatchLimit = 1000
+	// A wall-clock jump this large against the monotonic clock means a
+	// snapshot restore: pending counts are dropped, not reported per instance.
+	DataAPIUsageRestoreJump = 5 * time.Second
 	// Operator capacity observations never run in customer request handling.
 	DataAPIConnectionCapacityTimeout     = 10 * time.Second
 	DataAPIConnectionCapacityLease       = 15 * time.Second
@@ -11631,6 +11854,21 @@ const (
 	DataAPIMaxRequestBytes               = 1 << 20
 	DataAPIMaxResponseBytes              = 16 << 20
 	DataAPIMaxOutputBytes                = 1 << 20
+	// Owner opt-ins (ADR 20261018170742): anonymous relation and function
+	// allowlist sizes and the subject a server-key request may act for.
+	DataAPIPublicReadMaxRelations   = 64
+	DataAPIPublicRPCMaxFunctions    = 64
+	DataAPIServerKeySubjectMaxBytes = 255
+	// Edge freshness for canonical anonymous reads, within the gateway cache cap.
+	DataAPIPublicReadMaxAgeSeconds = ResponseCacheMaxAgeMaxSeconds
+	// Per-slot server-key permissions: serialized size and allowlist entries.
+	DataAPIServerKeyPermissionsMaxBytes   = 4096
+	DataAPIServerKeyPermissionsMaxEntries = 64
+	// Single-app projects upload migrations beside the runtime; structural
+	// bounds only, inside the plan's source-archive limit.
+	DataAPISingleAppMigrationsMaxFiles = 4096
+	DataAPISingleAppMigrationsMaxBytes = 16 << 20
+	DataAPIReleaseCommandMaxBytes      = 1024
 	// Fixed v2 customer SQL contract (ADR-1670). Never extend this window in
 	// place: doing so could revive keys whose receipts have already been purged.
 	DataAPIReplayV2WindowMS     = 86400000

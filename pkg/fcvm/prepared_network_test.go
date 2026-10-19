@@ -403,13 +403,26 @@ func TestPreparedNetworkClaimFailureFallsBack(t *testing.T) {
 	m, p := testPreparedPool(t, 1)
 	fillTestPreparedPool(t, m, p, 250)
 	p.move = func(string, string) error { return errors.New("bind failure") }
-	lease, entry, err := m.acquireWakeNetwork(WakeRequest{Instance: "fallback", Plan: "scale", EgressMbit: 250})
+	lease, entry, err := m.acquireWakeNetwork(WakeRequest{Instance: "fallback", Plan: "scale", EgressMbit: 250}, false)
 	if err != nil || entry != nil {
 		t.Fatalf("ordinary acquisition failed: %v", err)
 	}
 	defer func() { _ = m.alloc.Release(lease.Instance) }()
 	if len(m.alloc.reserved) != 0 || m.LeasedCount() != 1 {
 		t.Fatal("claim failure leaked a slot")
+	}
+}
+
+func TestPreparedNetworkStrictEgressBypassesPool(t *testing.T) {
+	m, p := testPreparedPool(t, 1)
+	fillTestPreparedPool(t, m, p, 250)
+	lease, entry, err := m.acquireWakeNetwork(WakeRequest{Instance: "strict-egress", Plan: "scale", EgressMbit: 250}, true)
+	if err != nil || entry != nil {
+		t.Fatalf("strict egress claimed a prepared namespace: entry=%v err=%v", entry, err)
+	}
+	defer func() { _ = m.alloc.Release(lease.Instance) }()
+	if len(p.ready) != 1 {
+		t.Fatalf("strict egress consumed the prepared pool: ready=%d", len(p.ready))
 	}
 }
 

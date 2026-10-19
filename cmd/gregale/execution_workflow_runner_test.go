@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"context"
@@ -8,26 +8,27 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func TestManagedExecutionWorkflowRequestPreservesDAGContract(t *testing.T) {
-	plan := executionWorkflowPlan{
+	plan := main.ExecutionWorkflowPlan{
 		WorkflowID: "managed-cli", Version: "v1", MaxParallelSteps: 2,
-		FailurePolicy: executionWorkflowFailurePolicyContinueIndependent,
-		Steps: []executionWorkflowStep{
+		FailurePolicy: main.ExecutionWorkflowFailurePolicyContinueIndependent,
+		Steps: []main.ExecutionWorkflowStep{
 			{Label: "inspect", Request: api.CreateExecutionRequest{Runtime: api.ExecutionRuntimeNode22, Source: "return 1"}},
 			{Label: "test", Request: api.CreateExecutionRequest{Runtime: api.ExecutionRuntimeNode22, Source: "return true"}},
 			{Label: "summarize", DependsOn: []string{"inspect", "test"}, IncludeDependencyResults: true, Request: api.CreateExecutionRequest{Runtime: api.ExecutionRuntimeNode22, Source: "return input"}},
 			{Label: "report", InputFromPreviousResult: true, Request: api.CreateExecutionRequest{Runtime: api.ExecutionRuntimeNode22, Source: "return input"}},
 		},
 	}
-	request, err := managedExecutionWorkflowRequest(plan)
+	request, err := main.ManagedExecutionWorkflowRequest(plan)
 	if err != nil {
 		t.Fatalf("managed request: %v", err)
 	}
 	if len(request.Steps) != 4 || request.WorkflowID != plan.WorkflowID || request.MaxParallelSteps != 2 ||
-		request.FailurePolicy != executionWorkflowFailurePolicyContinueIndependent ||
+		request.FailurePolicy != main.ExecutionWorkflowFailurePolicyContinueIndependent ||
 		!request.Steps[2].IncludeDependencyResults ||
 		len(request.Steps[2].DependsOn) != 2 || request.Steps[2].DependsOn[1] != "test" ||
 		!request.Steps[3].InputFromPreviousResult {
@@ -35,7 +36,7 @@ func TestManagedExecutionWorkflowRequestPreservesDAGContract(t *testing.T) {
 	}
 
 	plan.Steps[0].ResultSchema = json.RawMessage(`{"type":"integer"}`)
-	request, err = managedExecutionWorkflowRequest(plan)
+	request, err = main.ManagedExecutionWorkflowRequest(plan)
 	if err != nil {
 		t.Fatalf("managed result schema request: %v", err)
 	}
@@ -43,16 +44,16 @@ func TestManagedExecutionWorkflowRequestPreservesDAGContract(t *testing.T) {
 		t.Fatalf("managed result schema = %s; want %s", request.Steps[0].ResultSchema, plan.Steps[0].ResultSchema)
 	}
 	plan.Steps[0].ResultSchema = json.RawMessage(`{"$ref":"https://example.com/schema.json"}`)
-	if _, err := managedExecutionWorkflowRequest(plan); err == nil {
+	if _, err := main.ManagedExecutionWorkflowRequest(plan); err == nil {
 		t.Fatal("managed request accepted an external schema reference")
 	}
 	plan.Steps[0].ResultSchema = nil
-	artifactPlan := executionWorkflowPlan{WorkflowID: "managed-artifact-cli", Version: "v1", Steps: []executionWorkflowStep{
+	artifactPlan := main.ExecutionWorkflowPlan{WorkflowID: "managed-artifact-cli", Version: "v1", Steps: []main.ExecutionWorkflowStep{
 		{Label: "collect", Request: api.CreateExecutionRequest{Runtime: api.ExecutionRuntimeNode22, Source: "return null", OutputFiles: []string{"patch.diff"}}},
-		{Label: "review", ArtifactInputs: []executionWorkflowArtifactInput{{FromStep: "collect", Name: "patch.diff", Path: "input/patch.diff"}},
+		{Label: "review", ArtifactInputs: []main.ExecutionWorkflowArtifactInput{{FromStep: "collect", Name: "patch.diff", Path: "input/patch.diff"}},
 			Request: api.CreateExecutionRequest{Runtime: api.ExecutionRuntimePython313, Source: "print('review')"}},
 	}}
-	artifactRequest, err := managedExecutionWorkflowRequest(artifactPlan)
+	artifactRequest, err := main.ManagedExecutionWorkflowRequest(artifactPlan)
 	if err != nil {
 		t.Fatalf("managed artifact request: %v", err)
 	}
@@ -178,15 +179,15 @@ func (f *executionWorkflowFakeClient) GetExecution(_ context.Context, id string)
 }
 
 func TestRunExecutionWorkflowChainsResultAndArtifactAndResumes(t *testing.T) {
-	plan := executionWorkflowPlan{
+	plan := main.ExecutionWorkflowPlan{
 		WorkflowID: "support-case-42",
 		Version:    "v1",
-		Steps: []executionWorkflowStep{
+		Steps: []main.ExecutionWorkflowStep{
 			{Label: "collect", Request: api.CreateExecutionRequest{
 				Runtime: api.ExecutionRuntimeNode22, Source: "return {ok:true}", OutputFiles: []string{"report.json"},
 			}},
 			{Label: "analyze", InputFromPreviousResult: true,
-				ArtifactInputs: []executionWorkflowArtifactInput{{FromStep: "collect", Name: "report.json", Path: "input/report.json"}},
+				ArtifactInputs: []main.ExecutionWorkflowArtifactInput{{FromStep: "collect", Name: "report.json", Path: "input/report.json"}},
 				Request:        api.CreateExecutionRequest{Runtime: api.ExecutionRuntimePython313, Source: "print('analyze')"}},
 		},
 	}
@@ -201,7 +202,7 @@ func TestRunExecutionWorkflowChainsResultAndArtifactAndResumes(t *testing.T) {
 		return run
 	}
 
-	first, err := runExecutionWorkflow(context.Background(), client, plan, time.Millisecond)
+	first, err := main.RunExecutionWorkflow(context.Background(), client, plan, time.Millisecond)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -224,7 +225,7 @@ func TestRunExecutionWorkflowChainsResultAndArtifactAndResumes(t *testing.T) {
 		t.Fatalf("step idempotency keys = %q, %q", client.idemKeys[0], client.idemKeys[1])
 	}
 
-	resumed, err := runExecutionWorkflow(context.Background(), client, plan, time.Millisecond)
+	resumed, err := main.RunExecutionWorkflow(context.Background(), client, plan, time.Millisecond)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -234,12 +235,12 @@ func TestRunExecutionWorkflowChainsResultAndArtifactAndResumes(t *testing.T) {
 }
 
 func TestRunExecutionWorkflowPreflightsEveryPendingStepBeforeCreatingRuns(t *testing.T) {
-	plan := executionWorkflowPlan{WorkflowID: "preflight-13", Version: "v1", Steps: []executionWorkflowStep{
+	plan := main.ExecutionWorkflowPlan{WorkflowID: "preflight-13", Version: "v1", Steps: []main.ExecutionWorkflowStep{
 		{Label: "valid-first", Request: api.CreateExecutionRequest{Runtime: api.ExecutionRuntimeNode22, Source: "return null"}},
 		{Label: "invalid-second", Request: api.CreateExecutionRequest{Runtime: "unsupported", Source: "return null"}},
 	}}
 	client := newExecutionWorkflowFakeClient()
-	if _, err := runExecutionWorkflow(context.Background(), client, plan, time.Millisecond); err == nil {
+	if _, err := main.RunExecutionWorkflow(context.Background(), client, plan, time.Millisecond); err == nil {
 		t.Fatal("workflow with an invalid later step passed preflight")
 	}
 	if len(client.requests) != 0 {
@@ -251,7 +252,7 @@ func TestRunExecutionWorkflowPreflightsEveryPendingStepBeforeCreatingRuns(t *tes
 }
 
 func TestRunExecutionWorkflowStopsOnFailureAndRefusesChangedPlan(t *testing.T) {
-	plan := executionWorkflowPlan{WorkflowID: "case-9", Version: "v1", Steps: []executionWorkflowStep{
+	plan := main.ExecutionWorkflowPlan{WorkflowID: "case-9", Version: "v1", Steps: []main.ExecutionWorkflowStep{
 		{Label: "inspect", Request: api.CreateExecutionRequest{Runtime: api.ExecutionRuntimeNode22, Source: "return null"}},
 		{Label: "fix", Request: api.CreateExecutionRequest{Runtime: api.ExecutionRuntimeNode22, Source: "return null"}},
 	}}
@@ -263,7 +264,7 @@ func TestRunExecutionWorkflowStopsOnFailureAndRefusesChangedPlan(t *testing.T) {
 		}
 		return api.ExecutionResponse{ID: fmt.Sprintf("run-%d", index+1), WorkflowID: request.WorkflowID, StepLabel: request.StepLabel, Status: status}
 	}
-	if _, err := runExecutionWorkflow(context.Background(), client, plan, time.Millisecond); err == nil {
+	if _, err := main.RunExecutionWorkflow(context.Background(), client, plan, time.Millisecond); err == nil {
 		t.Fatal("failed step was not surfaced")
 	}
 	if len(client.requests) != 1 {
@@ -274,25 +275,25 @@ func TestRunExecutionWorkflowStopsOnFailureAndRefusesChangedPlan(t *testing.T) {
 	client.createRun = func(request api.CreateExecutionRequest, _ int) api.ExecutionResponse {
 		return api.ExecutionResponse{ID: "run-1", WorkflowID: request.WorkflowID, StepLabel: request.StepLabel, Status: api.ExecutionStatusSucceeded}
 	}
-	if _, err := runExecutionWorkflow(context.Background(), client, plan, time.Millisecond); err != nil {
+	if _, err := main.RunExecutionWorkflow(context.Background(), client, plan, time.Millisecond); err != nil {
 		t.Fatal(err)
 	}
 	plan.Steps[0].Request.Source = "return 'changed without changing version'"
-	if _, err := runExecutionWorkflow(context.Background(), client, plan, time.Millisecond); err == nil {
+	if _, err := main.RunExecutionWorkflow(context.Background(), client, plan, time.Millisecond); err == nil {
 		t.Fatal("changed plan body reused the same workflow ID and version")
 	}
 	plan.Steps[0].Request.Source = "return null"
 	plan.Version = "v2"
-	if _, err := runExecutionWorkflow(context.Background(), client, plan, time.Millisecond); err == nil {
+	if _, err := main.RunExecutionWorkflow(context.Background(), client, plan, time.Millisecond); err == nil {
 		t.Fatal("changed plan version reused prior workflow_id")
 	}
 }
 
 func TestRunExecutionWorkflowAdoptsConcurrentStepReceipt(t *testing.T) {
-	plan := executionWorkflowPlan{WorkflowID: "parallel-resume", Version: "v1", Steps: []executionWorkflowStep{
+	plan := main.ExecutionWorkflowPlan{WorkflowID: "parallel-resume", Version: "v1", Steps: []main.ExecutionWorkflowStep{
 		{Label: "inspect", Request: api.CreateExecutionRequest{Runtime: api.ExecutionRuntimeNode22, Source: "return null"}},
 	}}
-	planID, storageLabels, err := executionWorkflowPlanID(plan)
+	planID, storageLabels, err := main.ExecutionWorkflowPlanID(plan)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -307,7 +308,7 @@ func TestRunExecutionWorkflowAdoptsConcurrentStepReceipt(t *testing.T) {
 		}
 		return &api.APIError{Problem: *api.NewProblem(409, api.CodeExecutionWorkflowStepExists, "duplicate", "already admitted")}
 	}
-	result, err := runExecutionWorkflow(context.Background(), client, plan, time.Millisecond)
+	result, err := main.RunExecutionWorkflow(context.Background(), client, plan, time.Millisecond)
 	if err != nil {
 		t.Fatalf("runExecutionWorkflow: %v", err)
 	}
@@ -317,23 +318,23 @@ func TestRunExecutionWorkflowAdoptsConcurrentStepReceipt(t *testing.T) {
 }
 
 func TestExecutionWorkflowPlanRejectsForwardArtifactReferences(t *testing.T) {
-	plan := executionWorkflowPlan{WorkflowID: "case-10", Version: "v1", Steps: []executionWorkflowStep{
+	plan := main.ExecutionWorkflowPlan{WorkflowID: "case-10", Version: "v1", Steps: []main.ExecutionWorkflowStep{
 		{Label: "first", Request: api.CreateExecutionRequest{Runtime: api.ExecutionRuntimeNode22, Source: "return null"}},
-		{Label: "second", ArtifactInputs: []executionWorkflowArtifactInput{{FromStep: "third", Name: "out", Path: "input/out"}}, Request: api.CreateExecutionRequest{Runtime: api.ExecutionRuntimeNode22, Source: "return null"}},
+		{Label: "second", ArtifactInputs: []main.ExecutionWorkflowArtifactInput{{FromStep: "third", Name: "out", Path: "input/out"}}, Request: api.CreateExecutionRequest{Runtime: api.ExecutionRuntimeNode22, Source: "return null"}},
 		{Label: "third", Request: api.CreateExecutionRequest{Runtime: api.ExecutionRuntimeNode22, Source: "return null"}},
 	}}
-	if _, _, err := executionWorkflowPlanID(plan); err == nil {
+	if _, _, err := main.ExecutionWorkflowPlanID(plan); err == nil {
 		t.Fatal("forward reference was accepted")
 	}
 }
 
 func TestRunExecutionWorkflowWaitsForExistingStepBeforeLaunchingNext(t *testing.T) {
-	plan := executionWorkflowPlan{WorkflowID: "resume-11", Version: "v1", Steps: []executionWorkflowStep{
+	plan := main.ExecutionWorkflowPlan{WorkflowID: "resume-11", Version: "v1", Steps: []main.ExecutionWorkflowStep{
 		{Label: "prepare", Request: api.CreateExecutionRequest{Runtime: api.ExecutionRuntimeNode22, Source: "return null"}},
 		{Label: "wait", Request: api.CreateExecutionRequest{Runtime: api.ExecutionRuntimeNode22, Source: "return null"}},
 		{Label: "finish", Request: api.CreateExecutionRequest{Runtime: api.ExecutionRuntimeNode22, Source: "return null"}},
 	}}
-	planID, labels, err := executionWorkflowPlanID(plan)
+	planID, labels, err := main.ExecutionWorkflowPlanID(plan)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -341,7 +342,7 @@ func TestRunExecutionWorkflowWaitsForExistingStepBeforeLaunchingNext(t *testing.
 	client.runs["run-1"] = api.ExecutionResponse{ID: "run-1", WorkflowID: plan.WorkflowID, StepLabel: labels["prepare"], Status: api.ExecutionStatusSucceeded}
 	client.runs["run-2"] = api.ExecutionResponse{ID: "run-2", WorkflowID: plan.WorkflowID, StepLabel: labels["wait"], Status: api.ExecutionStatusRunning}
 
-	result, err := runExecutionWorkflow(context.Background(), client, plan, time.Millisecond)
+	result, err := main.RunExecutionWorkflow(context.Background(), client, plan, time.Millisecond)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -354,7 +355,7 @@ func TestRunExecutionWorkflowWaitsForExistingStepBeforeLaunchingNext(t *testing.
 }
 
 func TestRunExecutionWorkflowReturnsSubmittedReceiptWhenWaitIsInterrupted(t *testing.T) {
-	plan := executionWorkflowPlan{WorkflowID: "interrupted-12", Version: "v1", Steps: []executionWorkflowStep{
+	plan := main.ExecutionWorkflowPlan{WorkflowID: "interrupted-12", Version: "v1", Steps: []main.ExecutionWorkflowStep{
 		{Label: "first", Request: api.CreateExecutionRequest{Runtime: api.ExecutionRuntimeNode22, Source: "return null"}},
 	}}
 	client := newExecutionWorkflowFakeClient()
@@ -364,7 +365,7 @@ func TestRunExecutionWorkflowReturnsSubmittedReceiptWhenWaitIsInterrupted(t *tes
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	result, err := runExecutionWorkflow(ctx, client, plan, time.Millisecond)
+	result, err := main.RunExecutionWorkflow(ctx, client, plan, time.Millisecond)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("runner error = %v, want context.Canceled", err)
 	}

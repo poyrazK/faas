@@ -871,7 +871,6 @@ func (r *safeReleaseLeaseMetrics) SecondsLeft() *prometheus.Gauge  { return &r.s
 
 // Members of server
 func (r *server) AdminAllowlist() **adminAllowlist                   { return &r.adminAllowlist }
-func (r *server) AiGatewayEnabled() *bool                            { return &r.aiGatewayEnabled }
 func (r *server) AppEvents() *appevents.Service                      { return &r.appEvents }
 func (r *server) Audit() **auditor                                   { return &r.audit }
 func (r *server) DevBridgeEnabled() *bool                            { return &r.devBridgeEnabled }
@@ -879,7 +878,6 @@ func (r *server) DevBridgeURL() *string                              { return &r
 func (r *server) Domain() *string                                    { return &r.domain }
 func (r *server) Durable() *durable.Service                          { return &r.durable }
 func (r *server) EdgeRules() *edgerules.Service                      { return &r.edgeRules }
-func (r *server) FeatureFlagsEnabled() *bool                         { return &r.featureFlagsEnabled }
 func (r *server) FlagsWorkloadVerifier() **workloadidentity.Verifier { return &r.flagsWorkloadVerifier }
 func (r *server) WorkloadVerifier() **workloadidentity.Verifier      { return &r.workloadVerifier }
 func (r *server) Log() **slog.Logger                                 { return &r.log }

@@ -91,6 +91,7 @@ const (
 	configRevisionsFile              = "config_revisions.go"     // ADR-1451 guarded, reversible config changes
 	changeTimelineFile               = "change_timeline.go"      // ADR-751 app change timeline DTOs
 	customMetricSeriesFile           = "custom_metric_series.go" // ADR-745 custom metric history DTOs
+	operatorPlatformFlagsFile        = "operator_platform_flags.go"
 )
 
 // routeExclude lists server.go routes that are deliberately not in the
@@ -983,6 +984,17 @@ var schemaSpecOnly = map[string]bool{
 	"FailureRule":    true,
 	"FailureRules":   true,
 	"WorkDecision":   true,
+	// deployments.stage_state is served from pkg/state and
+	// pkg/apihostingreceipt structs, not pkg/api DTOs.
+	// TestSpecComplianceDeploymentStageState checks their fields and enums.
+	"DeploymentStageState":          true,
+	"DeploymentStageHistoryEntry":   true,
+	"DeploymentDependencyGate":      true,
+	"DeploymentDependencyPin":       true,
+	"DeploymentBuildDependencyGate": true,
+	"DeploymentHostingVerification": true,
+	"HostingRouteCheckSet":          true,
+	"HostingRouteCheckResult":       true,
 }
 
 // findRepoRoot walks up from the working directory until it finds a go.mod.
@@ -1029,6 +1041,9 @@ func TestSpecCompliance(t *testing.T) {
 	})
 	t.Run("ErrorCodes", func(t *testing.T) {
 		testErrorCodesParity(t, root, spec)
+	})
+	t.Run("EdgeRuleKinds", func(t *testing.T) {
+		testEdgeRuleKindsParity(t, root, spec)
 	})
 }
 
@@ -1413,13 +1428,16 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 	files := []string{
 		filepath.Join(root, "pkg", "api", "data_api_runtime_connections.go"), // ADR-1730 private runtime reporting.
 		filepath.Join(root, "pkg", "api", "data_api_connection_budget.go"),   // ADR-650 read-only shared database planning DTOs.
+		filepath.Join(root, "pkg", "api", "data_api_usage.go"),               // ADR-20261019102108 runtime usage reports and owner views.
 		filepath.Join(root, "pkg", "api", "compose_healthcheck.go"),
+		filepath.Join(root, "pkg", "api", "compose_process.go"), // ADR-1337 Compose process overrides for prebuilt images.
 		filepath.Join(root, "pkg", "api", "environment_gitops.go"),
 		filepath.Join(root, "pkg", "api", "environment_workload_retirement.go"), // ADR-1331 retained workload retirement and recovery DTO
 		filepath.Join(root, "pkg", "api", "environment_gitops_preview.go"),
 		filepath.Join(root, "pkg", "api", "environment_gitops_notifications.go"),
 		filepath.Join(root, "pkg", "api", "environment_definition.go"),
 		filepath.Join(root, "pkg", "api", dtoFile),
+		filepath.Join(root, "pkg", "api", "deleted_apps.go"),
 		filepath.Join(root, "pkg", "api", "deployment_response_check.go"),
 		filepath.Join(root, "pkg", "api", devBucketsFile),
 		filepath.Join(root, "pkg", "api", "mcp_policy.go"),
@@ -1601,6 +1619,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", realtimeFile),
 		filepath.Join(root, "pkg", "api", "realtime_access.go"),
 		filepath.Join(root, "pkg", "api", "realtime_tickets.go"),
+		filepath.Join(root, "pkg", "api", "realtime_usage.go"),
 		filepath.Join(root, "pkg", "api", "realtime_release_sdk_models.go"),
 		filepath.Join(root, "pkg", "api", "realtime_push.go"),
 		filepath.Join(root, "pkg", "api", "realtime_push_preferences.go"),
@@ -1619,6 +1638,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", oidcFile),
 		filepath.Join(root, "pkg", "api", envDiffFile),
 		filepath.Join(root, "pkg", "api", operatorConfigFile),
+		filepath.Join(root, "pkg", "api", operatorPlatformFlagsFile), // ADR-1700 — platform flags
 		filepath.Join(root, "pkg", "api", obsFile),
 		filepath.Join(root, "pkg", "api", "obs_triage.go"),
 		filepath.Join(root, "pkg", "api", "obs_triage_history.go"),
@@ -1774,6 +1794,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "service_wake_ahead.go"),
 		filepath.Join(root, "pkg", "api", "route_priority.go"),
 		filepath.Join(root, "pkg", "api", "route_awake.go"),
+		filepath.Join(root, "pkg", "api", "route_insights.go"),
 	}
 	dtos, err := scanDTOs(files)
 	if err != nil {
@@ -1786,11 +1807,21 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "financial", "contracts.go"),
 		filepath.Join(root, "pkg", "financial", "forecast.go"),
 		filepath.Join(root, "pkg", "financial", "budget.go"),
+		filepath.Join(root, "pkg", "financial", "monitor.go"),
+		filepath.Join(root, "pkg", "financial", "stop.go"),
+		filepath.Join(root, "pkg", "financial", "compute.go"),
+		filepath.Join(root, "pkg", "financial", "egress.go"),
 	})
 	if err != nil {
 		t.Fatalf("scan financial DTOs: %v", err)
 	}
-	for name, schema := range map[string]string{"Price": "FinancialPrice", "Attribution": "FinancialAttribution", "Allocation": "FinancialAllocation", "MeterCost": "FinancialMeterCost", "ContractCosts": "FinancialContractCosts", "Forecast": "FinancialForecast", "BudgetSpec": "FinancialBudgetSpec", "BudgetScope": "FinancialBudgetScope"} {
+	for name, schema := range map[string]string{
+		"Price": "FinancialPrice", "Attribution": "FinancialAttribution", "Allocation": "FinancialAllocation",
+		"MeterCost": "FinancialMeterCost", "ContractCosts": "FinancialContractCosts", "Forecast": "FinancialForecast",
+		"BudgetSpec": "FinancialBudgetSpec", "BudgetScope": "FinancialBudgetScope",
+		"BudgetEvaluation": "FinancialBudgetEvaluation", "BudgetAlert": "FinancialBudgetAlert", "BudgetRuntime": "FinancialBudgetRuntime",
+		"BudgetStop": "FinancialBudgetStop", "BudgetStopTarget": "FinancialBudgetStopTarget", "ComputeBalance": "FinancialComputeBalance", "EgressBalance": "FinancialEgressBalance",
+	} {
 		dtos[schema] = financialDTOs[name]
 	}
 	objectDTOs, err := scanDTOs([]string{filepath.Join(root, "pkg", "rehearsalobj", "protocol.go")})

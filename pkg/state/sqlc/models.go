@@ -406,6 +406,7 @@ type ApiConsumerRateCard struct {
 	TierMode                  string
 	BaseFeeMillicentsPerMonth int64
 	MinimumMillicentsPerMonth int64
+	ProrateMonthlyFees        bool
 }
 
 // Billable units per consumer, bounded route label, and UTC minute; per-minute totals stay in api_consumer_usage_minutes.
@@ -2962,6 +2963,28 @@ type DataApiRuntimeConnectionObservation struct {
 	ExpiresAt            pgtype.Timestamptz
 }
 
+// ADR-20261019102108 Data API usage per app and UTC hour, from runtime deltas; owner telemetry, not billing.
+type DataApiUsageHourly struct {
+	AppID             pgtype.UUID
+	Hour              pgtype.Timestamptz
+	UserRequests      int64
+	AnonymousRequests int64
+	ServerRequests    int64
+	RejectedRequests  int64
+	ErrorRequests     int64
+	CappedRequests    int64
+	RowsReturned      int64
+	ResponseBytes     int64
+	UpdatedAt         pgtype.Timestamptz
+}
+
+// ADR-20261019102108 applied Data API usage report ids, kept for the dedup window.
+type DataApiUsageReport struct {
+	AppID      pgtype.UUID
+	ReportID   string
+	ReceivedAt pgtype.Timestamptz
+}
+
 type DataConnectionCheck struct {
 	ConnectionID       pgtype.UUID
 	AccountID          pgtype.UUID
@@ -4981,6 +5004,32 @@ type FeatureFlagVersion struct {
 	CreatedAt     pgtype.Timestamptz
 }
 
+type FinancialBudgetAlert struct {
+	ID                  pgtype.UUID
+	AccountID           pgtype.UUID
+	PolicyID            pgtype.UUID
+	Revision            int64
+	PeriodStart         pgtype.Timestamptz
+	ThresholdMillicents int64
+	Payload             []byte
+	State               string
+	Attempts            int32
+	NextAttemptAt       pgtype.Timestamptz
+	LeaseToken          pgtype.UUID
+	DeliveredAt         pgtype.Timestamptz
+	LastError           string
+}
+
+type FinancialBudgetEvaluation struct {
+	AccountID         pgtype.UUID
+	PolicyID          pgtype.UUID
+	Revision          int64
+	PeriodStart       pgtype.Timestamptz
+	EvaluatedAt       pgtype.Timestamptz
+	EvidenceThroughID int64
+	Observation       []byte
+}
+
 type FinancialBudgetPolicy struct {
 	ID        pgtype.UUID
 	AccountID pgtype.UUID
@@ -5001,9 +5050,124 @@ type FinancialBudgetRevision struct {
 	RecordedAt pgtype.Timestamptz
 }
 
+type FinancialBudgetStop struct {
+	ID            pgtype.UUID
+	AccountID     pgtype.UUID
+	PolicyID      pgtype.UUID
+	Revision      int64
+	PeriodStart   pgtype.Timestamptz
+	PeriodEnd     pgtype.Timestamptz
+	RequestedAt   pgtype.Timestamptz
+	DrainDeadline pgtype.Timestamptz
+	ResumeRule    string
+	Payload       []byte
+}
+
+type FinancialBudgetStopTarget struct {
+	StopID        pgtype.UUID
+	AppID         pgtype.UUID
+	EnvironmentID string
+	State         string
+	ObservedAt    pgtype.Timestamptz
+	ResidentCount int32
+	LastError     string
+}
+
+type FinancialComputeAccountBook struct {
+	AccountID   pgtype.UUID
+	PeriodStart pgtype.Timestamptz
+	PeriodEnd   pgtype.Timestamptz
+	Payload     []byte
+}
+
+type FinancialComputeBook struct {
+	AccountID   pgtype.UUID
+	AppID       pgtype.UUID
+	PeriodStart pgtype.Timestamptz
+	PeriodEnd   pgtype.Timestamptz
+	Payload     []byte
+}
+
+type FinancialComputeHold struct {
+	AccountID   pgtype.UUID
+	PolicyID    pgtype.UUID
+	Revision    int64
+	PeriodStart pgtype.Timestamptz
+}
+
+type FinancialComputeJobAttempt struct {
+	InstanceID  pgtype.UUID
+	AccountID   pgtype.UUID
+	JobID       pgtype.UUID
+	RunID       pgtype.UUID
+	TaskIndex   int32
+	LeaseToken  pgtype.UUID
+	NodeID      pgtype.UUID
+	Incarnation pgtype.UUID
+	RamMb       int32
+	ClaimedAt   pgtype.Timestamptz
+}
+
+type FinancialComputeJobBook struct {
+	AccountID   pgtype.UUID
+	JobID       pgtype.UUID
+	PeriodStart pgtype.Timestamptz
+	PeriodEnd   pgtype.Timestamptz
+	Payload     []byte
+}
+
+type FinancialComputeLease struct {
+	ID           pgtype.UUID
+	AccountID    pgtype.UUID
+	AppID        pgtype.UUID
+	InstanceID   string
+	NodeID       pgtype.UUID
+	Incarnation  pgtype.UUID
+	PeriodStart  pgtype.Timestamptz
+	Strict       bool
+	StartedAt    pgtype.Timestamptz
+	FundedUntil  pgtype.Timestamptz
+	SettledAt    pgtype.Timestamptz
+	Payload      []byte
+	JobID        pgtype.UUID
+	JobRunID     pgtype.UUID
+	JobTaskIndex pgtype.Int4
+}
+
+type FinancialComputeOwner struct {
+	NodeID                    pgtype.UUID
+	Incarnation               pgtype.UUID
+	Protocol                  int16
+	ObservedAt                pgtype.Timestamptz
+	AccountComputeIncarnation pgtype.UUID
+	JobComputeIncarnation     pgtype.UUID
+	EgressBudgetIncarnation   pgtype.UUID
+}
+
 type FinancialEvidenceCoverage struct {
 	Singleton    bool
 	RetainedFrom pgtype.Timestamptz
+}
+
+type FinancialFundingCurrency struct {
+	Singleton bool
+	Currency  string
+}
+
+type FinancialPreviewCommandRuntime struct {
+	TaskID        pgtype.UUID
+	LeaseToken    pgtype.UUID
+	AccountID     pgtype.UUID
+	AppID         pgtype.UUID
+	DeploymentID  pgtype.UUID
+	NodeID        pgtype.UUID
+	EnvironmentID pgtype.UUID
+	Phase         string
+	RamMb         int32
+	CpuMillicores int32
+	RecordedAt    pgtype.Timestamptz
+	RetiredAt     pgtype.Timestamptz
+	PrepareUntil  pgtype.Timestamptz
 }
 
 type FinancialPriceSnapshot struct {
@@ -6649,6 +6813,8 @@ type JobRun struct {
 	OperationID                 pgtype.UUID
 	ExclusiveOperationID        pgtype.UUID
 	ExclusiveGeneration         pgtype.Int8
+	ProcessUser                 pgtype.Text
+	ProcessWorkdir              pgtype.Text
 }
 
 type JobRunAttachSession struct {
@@ -7387,6 +7553,7 @@ type ManagedRealtimeConsumerGroup struct {
 	DeduplicationMetadataKey   string
 	DeduplicationWindowSeconds int32
 	DuplicateMessages          int64
+	TriggerID                  pgtype.UUID
 }
 
 type ManagedRealtimeConsumerGroupAlert struct {
@@ -7873,6 +8040,7 @@ type ManagedRealtimeSubscriptionTicket struct {
 	Channels   []byte
 	IssuedAt   pgtype.Timestamptz
 	ExpiresAt  pgtype.Timestamptz
+	ID         pgtype.UUID
 }
 
 type ManagedRealtimeWorkerCredential struct {
@@ -9757,6 +9925,14 @@ type PlatformTenantAccessToken struct {
 	RevokedAt        pgtype.Timestamptz
 }
 
+// Per-account rule blocking platform tenants whose exported invoice is unpaid that many days after its due date (ADR-1324).
+type PlatformTenantBillingPolicy struct {
+	AccountID             pgtype.UUID
+	BlockOverdueAfterDays int32
+	CreatedAt             pgtype.Timestamptz
+	UpdatedAt             pgtype.Timestamptz
+}
+
 type PlatformTenantConsumerProvisioningPolicy struct {
 	TenantID     pgtype.UUID
 	AccountID    pgtype.UUID
@@ -9773,12 +9949,47 @@ type PlatformTenantCredentialPolicy struct {
 	UpdatedAt          pgtype.Timestamptz
 }
 
+type PlatformTenantCreditApplication struct {
+	GrantID          pgtype.UUID
+	StatementID      pgtype.UUID
+	AccountID        pgtype.UUID
+	AmountMillicents int64
+	CreatedAt        pgtype.Timestamptz
+}
+
+// Prepaid credit granted to a platform tenant; finalized tenant statements draw it down oldest-expiring first (ADR-20261019100331).
+type PlatformTenantCreditGrant struct {
+	ID                  pgtype.UUID
+	AccountID           pgtype.UUID
+	PlatformTenantID    pgtype.UUID
+	Currency            string
+	AmountMillicents    int64
+	RemainingMillicents int64
+	Note                string
+	ExpiresAt           pgtype.Timestamptz
+	VoidedAt            pgtype.Timestamptz
+	CreatedAt           pgtype.Timestamptz
+}
+
 type PlatformTenantHostnamePolicy struct {
 	TenantID        pgtype.UUID
 	AccountID       pgtype.UUID
 	AllowedSuffixes []string
 	MaxHostnames    int32
 	UpdatedAt       pgtype.Timestamptz
+}
+
+// Units an app reported per platform tenant subject, meter and UTC minute for billable requests (ADR-1319).
+type PlatformTenantMeterUsageMinute struct {
+	AccountID        pgtype.UUID
+	PlatformTenantID pgtype.UUID
+	AppID            pgtype.UUID
+	SourceKind       string
+	SubjectKey       string
+	Meter            string
+	WindowStart      pgtype.Timestamptz
+	Units            int64
+	UpdatedAt        pgtype.Timestamptz
 }
 
 type PlatformTenantOffboardingReceipt struct {
@@ -9790,22 +10001,34 @@ type PlatformTenantOffboardingReceipt struct {
 	Actions   []byte
 }
 
+// Platform tenants the gateway refuses because of an overdue invoice; recomputed by apid (ADR-1324).
+type PlatformTenantOverdueHold struct {
+	PlatformTenantID pgtype.UUID
+	AccountID        pgtype.UUID
+	ExportID         pgtype.UUID
+	DueAt            pgtype.Timestamptz
+	Since            pgtype.Timestamptz
+}
+
 // Reusable platform tenant price and request-budget bundle; assigning one creates the tenant's rate card and sets its budget (ADR-1307).
 type PlatformTenantPlan struct {
-	ID                     pgtype.UUID
-	AccountID              pgtype.UUID
-	Name                   string
-	Currency               string
-	PriceMillicentsPerUnit int64
-	IncludedUnitsPerMonth  int64
-	Tiers                  []byte
-	RouteWeights           []byte
-	MaxRequestsPerMinute   pgtype.Int8
-	MaxRequestsPerDay      pgtype.Int8
-	CreatedAt              pgtype.Timestamptz
-	UpdatedAt              pgtype.Timestamptz
-	TierMode               string
-	Unit                   string
+	ID                        pgtype.UUID
+	AccountID                 pgtype.UUID
+	Name                      string
+	Currency                  string
+	PriceMillicentsPerUnit    int64
+	IncludedUnitsPerMonth     int64
+	Tiers                     []byte
+	RouteWeights              []byte
+	MaxRequestsPerMinute      pgtype.Int8
+	MaxRequestsPerDay         pgtype.Int8
+	CreatedAt                 pgtype.Timestamptz
+	UpdatedAt                 pgtype.Timestamptz
+	TierMode                  string
+	Unit                      string
+	BaseFeeMillicentsPerMonth int64
+	MinimumMillicentsPerMonth int64
+	ProrateMonthlyFees        bool
 }
 
 type PlatformTenantPlanAssignment struct {
@@ -9832,8 +10055,11 @@ type PlatformTenantRateCard struct {
 	// Graduated price ladder [{up_to, price_millicents_per_unit}], counted per tenant per UTC calendar month across all attributed apps; empty means the single price and allowance apply.
 	Tiers []byte
 	// Units charged per consumer request on a route label ("METHOD /template" -> weight); unlisted routes and non-consumer subjects count 1.
-	RouteWeights []byte
-	TierMode     string
+	RouteWeights              []byte
+	TierMode                  string
+	BaseFeeMillicentsPerMonth int64
+	MinimumMillicentsPerMonth int64
+	ProrateMonthlyFees        bool
 }
 
 type PlatformTenantReconciliationReceipt struct {
@@ -9870,6 +10096,21 @@ type PlatformTenantSourceRouteUsageMinute struct {
 	UpdatedAt        pgtype.Timestamptz
 }
 
+// Monthly spend cap per platform tenant; apid checks the month to date and tenant admission denies capped tenants (ADR-20261019100331).
+type PlatformTenantSpendCap struct {
+	PlatformTenantID     pgtype.UUID
+	AccountID            pgtype.UUID
+	Currency             string
+	MonthlyCapMillicents int64
+	Capped               bool
+	MonthStart           pgtype.Timestamptz
+	AmountDueMillicents  pgtype.Int8
+	CheckedAt            pgtype.Timestamptz
+	NextCheckAt          pgtype.Timestamptz
+	CreatedAt            pgtype.Timestamptz
+	UpdatedAt            pgtype.Timestamptz
+}
+
 type PlatformTenantStatement struct {
 	ID               pgtype.UUID
 	AccountID        pgtype.UUID
@@ -9888,7 +10129,9 @@ type PlatformTenantStatement struct {
 	CreatedAt   pgtype.Timestamptz
 	FinalizedAt pgtype.Timestamptz
 	// Private immutable minute-level billable-unit evidence used to calculate additive statement revisions.
-	Coverage []byte
+	Coverage                []byte
+	Fees                    []byte
+	CreditAppliedMillicents int64
 }
 
 type PlatformTenantStatementConsumer struct {
@@ -9918,6 +10161,16 @@ type PlatformTenantStatementSurface struct {
 	StatementID pgtype.UUID
 	AppID       pgtype.UUID
 	SurfaceID   pgtype.UUID
+}
+
+// A platform tenant's free trial: its usage in [starts_at, ends_at) is priced at zero (ADR-1322).
+type PlatformTenantTrial struct {
+	PlatformTenantID pgtype.UUID
+	AccountID        pgtype.UUID
+	StartsAt         pgtype.Timestamptz
+	EndsAt           pgtype.Timestamptz
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
 }
 
 type PlatformTenantUsageMinute struct {
@@ -11612,6 +11865,33 @@ type QueueBindingCanary struct {
 	CompletedGeneration   pgtype.Int8
 }
 
+type RealtimeNodeConnection struct {
+	NodeName    string
+	AccountID   pgtype.UUID
+	Connections int32
+}
+
+type RealtimeNodeConnectionSync struct {
+	NodeName string
+	SyncedAt pgtype.Timestamptz
+}
+
+type RealtimeUsageHour struct {
+	EndpointID            pgtype.UUID
+	Hour                  pgtype.Timestamptz
+	NodeName              string
+	Incarnation           pgtype.UUID
+	AccountID             pgtype.UUID
+	AppID                 pgtype.UUID
+	MinutePeakConnections []int32
+	ConnectionSeconds     int64
+	DeliveredMessages     int64
+	DeliveredBytes        int64
+	ReceivedMessages      int64
+	ReceivedBytes         int64
+	ReportedAt            pgtype.Timestamptz
+}
+
 type RecentBuildClaim struct {
 	AccountID pgtype.UUID
 	ClaimedAt pgtype.Timestamptz
@@ -11951,6 +12231,21 @@ type RouteHealthNotificationState struct {
 	UpdatedAt         pgtype.Timestamptz
 }
 
+type RouteInsight struct {
+	ID              pgtype.UUID
+	AccountID       pgtype.UUID
+	AppID           pgtype.UUID
+	Kind            string
+	Method          string
+	Route           string
+	State           string
+	Message         string
+	Evidence        []byte
+	FirstDetectedAt pgtype.Timestamptz
+	LastDetectedAt  pgtype.Timestamptz
+	ResolvedAt      pgtype.Timestamptz
+}
+
 type RouteLifecycleApproval struct {
 	ID                    pgtype.UUID
 	AccountID             pgtype.UUID
@@ -12053,6 +12348,18 @@ type RuntimeArtifactBinding struct {
 	AccountID pgtype.UUID
 	RootfsKey string
 	ReleaseID string
+}
+
+type RuntimeConfigApplyReceipt struct {
+	ConfigKey  string
+	Scope      string
+	ScopeID    string
+	Daemon     string
+	Instance   string
+	Version    int64
+	Status     string
+	Error      pgtype.Text
+	ReportedAt pgtype.Timestamptz
 }
 
 type RuntimeConfigEntry struct {
@@ -12851,6 +13158,7 @@ type Trigger struct {
 	QueueBindingID            pgtype.UUID
 	QueueBindingScope         string
 	QueueBindingEnvironmentID pgtype.UUID
+	Delivery                  string
 }
 
 type TriggerConsumerHealth struct {
