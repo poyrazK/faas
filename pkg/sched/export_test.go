@@ -570,7 +570,7 @@ func (r *serviceReplicaStatus) Ready() *int { return &r.ready }
 
 // ReadyCount reads ready from a non-addressable value, such as a call result.
 func (r serviceReplicaStatus) ReadyCount() int { return r.ready }
-func (r serviceReplicaStatus) Managed() int { return r.managed() }
+func (r serviceReplicaStatus) Managed() int    { return r.managed() }
 
 // Members of stageSnapshotFixture
 func (r *stageSnapshotFixture) Account() *state.Account  { return &r.account }
