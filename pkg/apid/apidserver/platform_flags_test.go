@@ -268,6 +268,15 @@ func TestEnvGatesYieldToOperatorPlatformFlags(t *testing.T) {
 			t.Fatal("the operator rule must decide once written, whatever the environment says")
 		}
 	})
+	t.Run("trigger_batch_delivery", func(t *testing.T) {
+		if s.TriggerBatchDeliveryAllowedFor(acct, false) || !s.TriggerBatchDeliveryAllowedFor(acct, true) {
+			t.Fatal("FAAS_TRIGGER_BATCH_DELIVERY_PREVIEW_ENABLED must decide until an operator writes the flag")
+		}
+		apply(platformflags.TriggerBatchDelivery, only(acct.ID), 1)
+		if !s.TriggerBatchDeliveryAllowedFor(acct, false) || s.TriggerBatchDeliveryAllowedFor(other, true) {
+			t.Fatal("the operator rule must decide once written, whatever the environment says")
+		}
+	})
 	t.Run("live_queries", func(t *testing.T) {
 		if err := s.ConfigureLiveQueriesForTest(func(string) string { return "" }); err != nil {
 			t.Fatal(err)

@@ -31,12 +31,13 @@ const (
 // Flag keys. Each one is consumed through Set.Enabled by the daemons listed
 // in its Spec.Consumers.
 const (
-	AIGateway       = "ai_gateway"
-	CustomerFlags   = "customer_flags"
-	ApplicationAuth = "application_auth"
-	LiveQueries     = "live_queries"
-	ChangeTimeline  = "change_timeline"
-	AnomalyAlerts   = "anomaly_alerts"
+	AIGateway            = "ai_gateway"
+	CustomerFlags        = "customer_flags"
+	ApplicationAuth      = "application_auth"
+	LiveQueries          = "live_queries"
+	ChangeTimeline       = "change_timeline"
+	AnomalyAlerts        = "anomaly_alerts"
+	TriggerBatchDelivery = "trigger_batch_delivery"
 )
 
 // Spec declares one platform flag. Adding a flag is a code change: the
@@ -114,6 +115,14 @@ var catalog = []Spec{
 		ADR:         "ADR-744",
 		Consumers:   []string{"apid"},
 		LegacyEnv:   []string{"FAAS_ANOMALY_ALERTS_ENABLED"},
+	},
+	{
+		Key:         TriggerBatchDelivery,
+		Label:       "Trigger batch delivery",
+		Description: "Release batch delivery (delivery: batch) on triggers to accounts. Triggers that already deliver in batches keep doing so while it is off; only creating one or switching one to batch is refused.",
+		ADR:         "ADR-1321",
+		Consumers:   []string{"apid"},
+		LegacyEnv:   []string{"FAAS_TRIGGER_BATCH_DELIVERY_PREVIEW_ENABLED"},
 	},
 }
 

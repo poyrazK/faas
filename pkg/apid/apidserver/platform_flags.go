@@ -137,4 +137,5 @@ func (s *server) seedEnvPlatformFlags(getenv func(string) string) {
 	s.seedPlatformFlag(platformflags.ApplicationAuth, platformflags.FromAccountList(authAll || len(authAccounts) > 0, authAll, authAccounts))
 	s.seedPlatformFlag(platformflags.ChangeTimeline, platformflags.FromAccountList(s.changeTimelineEnabled, true, nil))
 	s.seedPlatformFlag(platformflags.AnomalyAlerts, platformflags.FromAccountList(s.anomalyAlertsEnabled, true, nil))
+	s.seedPlatformFlag(platformflags.TriggerBatchDelivery, platformflags.FromAccountList(s.triggerBatchDeliveryEnabled, true, nil))
 }

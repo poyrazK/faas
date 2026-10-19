@@ -54,11 +54,12 @@ flag still cannot use a capability its plan lacks; the inspector reports both.
 | `live_queries` | Live queries (ADR-20261016151947) | apid | `FAAS_LIVE_QUERIES_ACCOUNTS` |
 | `change_timeline` | App change timeline preview (ADR-751) | apid | `FAAS_CHANGE_TIMELINE_ENABLED` |
 | `anomaly_alerts` | Baseline alert comparisons (ADR-744) | apid | `FAAS_ANOMALY_ALERTS_ENABLED` |
+| `trigger_batch_delivery` | `delivery: batch` on triggers (ADR-1321) | apid | `FAAS_TRIGGER_BATCH_DELIVERY_PREVIEW_ENABLED` |
 
 The environment and TOML values seed the flag at boot. Once an operator has
 written the flag, they are ignored, including after a restart.
 
-The last four flags were added after their environment gates had shipped.
+The last five flags were added after their environment gates had shipped.
 Until an operator writes one of them, its existing gate still decides, and
 `FAAS_APPLICATION_AUTH_*` is still re-read on every call. The first operator
 write hands the decision to the flag.
@@ -71,7 +72,9 @@ Two of these flags have limits:
   hidden from accounts outside it.
 
 Turning `anomaly_alerts` off refuses only new or changed baseline rules.
-Existing rules keep evaluating.
+Existing rules keep evaluating. In the same way, turning
+`trigger_batch_delivery` off refuses only creating a batch trigger or switching
+one to batch. Triggers that already deliver in batches keep doing so.
 
 ## Day-to-day commands
 

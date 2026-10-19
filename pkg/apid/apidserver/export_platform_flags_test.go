@@ -3,6 +3,7 @@ package apidserver
 import (
 	"encoding/json"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/livequeries"
 	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -39,6 +40,15 @@ func (r *server) ChangeTimelineEnabledFor(acct state.Account, legacy bool) bool 
 func (r *server) AnomalyAlertsAllowedFor(acct state.Account, legacy bool) bool {
 	r.anomalyAlertsEnabled = legacy
 	return r.anomalyAlertsGate(acct, "above_baseline") == nil
+}
+
+// TriggerBatchDeliveryAllowedFor reports whether `delivery: batch` is
+// admitted for acct; legacy sets the environment gate's parsed value first.
+func (r *server) TriggerBatchDeliveryAllowedFor(acct state.Account, legacy bool) bool {
+	r.triggerBatchDeliveryEnabled = legacy
+	batch := api.TriggerDeliveryBatch
+	_, problem := r.requestedTriggerDelivery(acct, api.TriggerKindKafka, &batch)
+	return problem == nil
 }
 
 // LiveGate is the live-query gate currently in effect.

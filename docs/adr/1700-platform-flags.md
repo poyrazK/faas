@@ -26,6 +26,7 @@
     - `live_queries`: `FAAS_LIVE_QUERIES_ACCOUNTS` (ADR-20261016151947). It is decided by account only, because the realtime path knows only the account. Unless it includes every account, the live routes stay hidden before routing.
     - `change_timeline`: `FAAS_CHANGE_TIMELINE_ENABLED` (ADR-751).
     - `anomaly_alerts`: `FAAS_ANOMALY_ALERTS_ENABLED` (ADR-744). Existing baseline rules keep evaluating while it is off; only creating or changing one is refused.
+    - `trigger_batch_delivery`: `FAAS_TRIGGER_BATCH_DELIVERY_PREVIEW_ENABLED` (ADR-1321). Triggers that already deliver in batches keep doing so while it is off; only creating one or switching one to batch is refused.
   - **Operator surfaces.**
     - Read endpoints:
       - `GET /v1/admin/flags`: every flag with its definition, version and receipts, plus the groups.
@@ -87,3 +88,4 @@
 | apid, live-query routes and realtime live routes | `live_queries` for the account | unregistered-route answer; no live routes offered |
 | apid, `GET /v1/apps/{slug}/changes` | `change_timeline` for the account | `503 change_timeline_unavailable` |
 | apid, alert rule create/update with a baseline comparison | `anomaly_alerts` for the account | `503 anomaly_alerts_unavailable` |
+| apid, trigger create/update and manifest triggers with `delivery: batch` | `trigger_batch_delivery` for the account | `422 trigger_invalid_config` |
