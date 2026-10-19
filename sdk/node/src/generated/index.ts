@@ -376,6 +376,7 @@ export type { CommitSourceResponse } from './models/CommitSourceResponse.js';
 export type { CompleteObjectMultipartUploadRequest } from './models/CompleteObjectMultipartUploadRequest.js';
 export type { CompleteWorkflowCallbackResponse } from './models/CompleteWorkflowCallbackResponse.js';
 export type { ComposeHealthcheck } from './models/ComposeHealthcheck.js';
+export type { ComposeProcess } from './models/ComposeProcess.js';
 export type { ConfigChangeReceipt } from './models/ConfigChangeReceipt.js';
 export type { ConfigGuard } from './models/ConfigGuard.js';
 export type { ConfigGuardDecision } from './models/ConfigGuardDecision.js';
@@ -1009,6 +1010,7 @@ export type { HostingRouteCheckResult } from './models/HostingRouteCheckResult.j
 export type { HostingRouteCheckSet } from './models/HostingRouteCheckSet.js';
 export type { Id32 } from './models/Id32.js';
 export type { IdempotencyKey } from './models/IdempotencyKey.js';
+export type { ImageRunRegistryAuth } from './models/ImageRunRegistryAuth.js';
 export type { ImageRunResponse } from './models/ImageRunResponse.js';
 export type { InboundWebhookEndpointResponse } from './models/InboundWebhookEndpointResponse.js';
 export type { InboundWebhookReceiptResponse } from './models/InboundWebhookReceiptResponse.js';

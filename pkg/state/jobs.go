@@ -27,6 +27,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -171,7 +172,11 @@ type JobRun struct {
 	TaskTimeoutS         *int // effective policy; nil only for legacy runs
 	// Command is the executable and arguments captured when the run was
 	// created. Nil denotes a legacy row that predates run snapshots.
-	Command                     []string
+	Command []string
+	// ProcessUser and ProcessWorkdir override the image's USER and WORKDIR
+	// for an image run (ADR-1790); empty keeps the image's own.
+	ProcessUser                 string
+	ProcessWorkdir              string
 	ImageRefSnapshot            string
 	ImageResolvedDigestSnapshot string
 	ImageStorageKeySnapshot     string
@@ -212,6 +217,22 @@ type JobRunOptions struct {
 	// Attach admits the run as an interactive image run (ADR-1330). The
 	// session row is written in the run's transaction.
 	Attach *JobRunAttach
+	// ProcessUser and ProcessWorkdir snapshot an image run's USER and
+	// WORKDIR overrides (ADR-1790).
+	ProcessUser    string
+	ProcessWorkdir string
+}
+
+// validateJobRunProcess mirrors the job_runs process CHECKs (ADR-1790) so
+// both stores reject the same overrides.
+func validateJobRunProcess(opts JobRunOptions) error {
+	if len(opts.ProcessUser) > api.ImageRunUserMaxBytes || strings.ContainsRune(opts.ProcessUser, 0) {
+		return fmt.Errorf("%w: process user is invalid", ErrInvalidArgument)
+	}
+	if err := api.ValidateImageRunWorkdir(opts.ProcessWorkdir); err != nil {
+		return fmt.Errorf("%w: %w", ErrInvalidArgument, err)
+	}
+	return nil
 }
 
 // JobInput binds an ordered input identity to one task. InputRef is passed to

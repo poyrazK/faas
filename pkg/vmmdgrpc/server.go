@@ -819,13 +819,14 @@ func (s *Server) jobColdBoot(ctx context.Context, req *vmmdpb.JobColdBootRequest
 		go s.serveInteractiveJob(context.WithoutCancel(ctx), interactiveVMM, req.GetInstance(), attach, boot.Interactive, boot.TaskTimeoutSec)
 	}
 	return &vmmdpb.JobColdBootResponse{
-		Instance:    inst.Lease.Instance,
-		NodeId:      boot.NodeID,
-		Netns:       inst.Lease.Netns,
-		HostIp:      inst.Lease.HostIP.String(),
-		GuestUid:    int32(inst.Lease.UID),
-		StartHeld:   startHeld,
-		Interactive: attach != nil,
+		Instance:     inst.Lease.Instance,
+		NodeId:       boot.NodeID,
+		Netns:        inst.Lease.Netns,
+		HostIp:       inst.Lease.HostIP.String(),
+		GuestUid:     int32(inst.Lease.UID),
+		StartHeld:    startHeld,
+		Interactive:  attach != nil,
+		ImageProcess: boot.ImageProcess,
 	}, nil
 }
 

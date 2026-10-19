@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { ComposeHealthcheck } from './ComposeHealthcheck.js';
+import type { ComposeProcess } from './ComposeProcess.js';
 import type { PlanDetectedBy } from './PlanDetectedBy.js';
 import type { PreviewServiceCallsPolicy } from './PreviewServiceCallsPolicy.js';
 import type { ServiceBindingPolicy } from './ServiceBindingPolicy.js';
@@ -39,6 +40,10 @@ export type PlanWorkload = {
    * Compose healthcheck override for prebuilt image workloads, captured per deployment.
    */
   image_healthcheck?: ComposeHealthcheck;
+  /**
+   * Compose entrypoint, user, working_dir and stop overrides for prebuilt image workloads, captured per deployment.
+   */
+  image_process?: ComposeProcess;
   command: Array<string>;
   /**
    * Compose service dependencies. The apply path validates the graph, deploys in dependency order, and injects GREGALE_SERVICE_<NAME>_URL plus GREGALE_SERVICE_<NAME>_HTTPS_URL for workload dependencies.

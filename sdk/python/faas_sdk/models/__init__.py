@@ -720,6 +720,8 @@ from .complete_object_multipart_upload_request import CompleteObjectMultipartUpl
 from .complete_workflow_callback_response import CompleteWorkflowCallbackResponse
 from .complete_workflow_callback_response_status import CompleteWorkflowCallbackResponseStatus
 from .compose_healthcheck import ComposeHealthcheck
+from .compose_process import ComposeProcess
+from .compose_process_stop_signal import ComposeProcessStopSignal
 from .config_change_receipt import ConfigChangeReceipt
 from .config_guard import ConfigGuard
 from .config_guard_decision import ConfigGuardDecision
@@ -2044,6 +2046,7 @@ from .hosting_route_check_result_status import HostingRouteCheckResultStatus
 from .hosting_route_check_set import HostingRouteCheckSet
 from .hosting_route_check_set_source import HostingRouteCheckSetSource
 from .hosting_route_check_set_status import HostingRouteCheckSetStatus
+from .image_run_registry_auth import ImageRunRegistryAuth
 from .image_run_response import ImageRunResponse
 from .image_run_response_image_status import ImageRunResponseImageStatus
 from .image_run_response_status import ImageRunResponseStatus
@@ -6501,6 +6504,8 @@ __all__ = (
     "CompleteWorkflowCallbackResponse",
     "CompleteWorkflowCallbackResponseStatus",
     "ComposeHealthcheck",
+    "ComposeProcess",
+    "ComposeProcessStopSignal",
     "ConfigChangeReceipt",
     "ConfigGuard",
     "ConfigGuardDecision",
@@ -7763,6 +7768,7 @@ __all__ = (
     "HostingRouteCheckSet",
     "HostingRouteCheckSetSource",
     "HostingRouteCheckSetStatus",
+    "ImageRunRegistryAuth",
     "ImageRunResponse",
     "ImageRunResponseImageStatus",
     "ImageRunResponseStatus",
