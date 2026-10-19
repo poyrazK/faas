@@ -24,7 +24,7 @@ import (
 )
 
 const (
-	authUsersUsage = "usage: gregale auth users <list|get|sign-out|ban|unban|delete> NAME [USER] [--search TEXT] [--page N] [--limit N] [--for DURATION] [--yes] [--admin-key-stdin]"
+	authUsersUsage = "usage: gregale auth users <list|get|claims|sign-out|ban|unban|delete> NAME [USER] [--search TEXT] [--page N] [--limit N] [--set NAME=VALUE] [--unset NAME] [--for DURATION] [--yes] [--admin-key-stdin]"
 	authOrgsUsage  = "usage: gregale auth orgs <list|get> NAME [ORG] [--search TEXT] [--page N] [--limit N] [--admin-key-stdin]"
 	// authBanForever is the ban `--for forever` asks for: a hundred years,
 	// GoTrue's usual stand-in for a permanent ban.
@@ -36,6 +36,7 @@ const (
 var (
 	authBanDuration = regexp.MustCompile(`^([1-9][0-9]{0,5})([hd])$`)
 	authOrgSlug     = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{1,62}$`)
+	authClaimName   = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]{0,63}$`)
 )
 
 type authAdminUser struct {
@@ -48,6 +49,8 @@ type authAdminUser struct {
 	BannedUntil      *string  `json:"banned_until"`
 	Providers        []string `json:"providers"`
 	Anonymous        bool     `json:"anonymous"`
+	// Claims are the user's custom claims (app_metadata in tokens).
+	Claims map[string]json.RawMessage `json:"claims,omitempty"`
 }
 
 type authAdminUserPage struct {
@@ -125,7 +128,42 @@ func authAdminTarget(slug string, keyStdin bool) (origin, key string, code int) 
 // authUserFlags lists the flags each users subcommand takes besides
 // --admin-key-stdin.
 var authUserFlags = map[string][]string{
-	"list": {"search", "page", "limit"}, "get": nil, "sign-out": nil, "ban": {"for"}, "unban": nil, "delete": {"yes", "quiet"},
+	"list": {"search", "page", "limit"}, "get": nil, "claims": {"set", "unset"}, "sign-out": nil, "ban": {"for"}, "unban": nil, "delete": {"yes", "quiet"},
+}
+
+// authClaimSet collects repeated --set NAME=VALUE flags. A VALUE that is
+// JSON (5, true, {"a":1}, "quoted") keeps its type; anything else is text.
+type authClaimSet map[string]json.RawMessage
+
+func (s *authClaimSet) String() string { return "" }
+
+func (s *authClaimSet) Set(value string) error {
+	name, raw, ok := strings.Cut(value, "=")
+	if !ok || !authClaimName.MatchString(name) {
+		return errors.New("use NAME=VALUE with a name of letters, digits and _ that starts with a letter")
+	}
+	if *s == nil {
+		*s = authClaimSet{}
+	}
+	if !json.Valid([]byte(raw)) || raw == "null" {
+		quoted, _ := json.Marshal(raw)
+		raw = string(quoted)
+	}
+	(*s)[name] = json.RawMessage(raw)
+	return nil
+}
+
+// authClaimNames collects repeated --unset NAME flags.
+type authClaimNames []string
+
+func (n *authClaimNames) String() string { return strings.Join(*n, ",") }
+
+func (n *authClaimNames) Set(value string) error {
+	if !authClaimName.MatchString(value) {
+		return errors.New("a claim name is letters, digits and _, starting with a letter")
+	}
+	*n = append(*n, value)
+	return nil
 }
 
 func cmdAuthUsers(args []string) int {
@@ -138,6 +176,10 @@ func cmdAuthUsers(args []string) int {
 	duration := fs.String("for", "", "how long a ban lasts: hours (24h), days (7d) or forever")
 	yes := fs.Bool("yes", false, "delete without the typed confirmation")
 	fs.BoolVar(yes, "quiet", false, "delete without the typed confirmation (for scripts)")
+	var setClaims authClaimSet
+	var unsetClaims authClaimNames
+	fs.Var(&setClaims, "set", "set a custom claim, NAME=VALUE (repeatable; JSON values keep their type)")
+	fs.Var(&unsetClaims, "unset", "remove a custom claim (repeatable)")
 	keyStdin := fs.Bool("admin-key-stdin", false, "read the admin key from stdin (prompted on a terminal)")
 	if err := parseInterspersed(fs, args[1:]); err != nil {
 		return 1
@@ -194,6 +236,8 @@ func cmdAuthUsers(args []string) int {
 	switch args[0] {
 	case "get":
 		return authUsersGet(origin, key, user)
+	case "claims":
+		return authUsersClaims(origin, key, user, setClaims, unsetClaims)
 	case "sign-out":
 		return authUsersSignOut(origin, key, user)
 	case "delete":
@@ -296,6 +340,59 @@ func authUsersList(origin, key, query string) int {
 	}
 	if page.Total != nil && page.Page*page.PerPage < *page.Total {
 		_, _ = fmt.Fprintf(osStdout, "Page %d of %d users; next: --page %d\n", page.Page, *page.Total, page.Page+1)
+	}
+	return 0
+}
+
+// authUsersClaims shows a user's custom claims, after setting and removing
+// those the flags name. Tokens carry them as app_metadata from the next
+// refresh, within the access token lifetime.
+func authUsersClaims(origin, key string, ref authAdminUser, set authClaimSet, unset authClaimNames) int {
+	var claims map[string]json.RawMessage
+	if len(set) == 0 && len(unset) == 0 {
+		var detail struct {
+			User authAdminUser `json:"user"`
+		}
+		if err := authAdminCall(http.MethodGet, origin, key, "/admin/v1/users/"+ref.ID, nil, &detail); err != nil {
+			return printErr("Could not read the user", err)
+		}
+		ref, claims = detail.User, detail.User.Claims
+	} else {
+		for _, name := range unset {
+			if _, both := set[name]; both {
+				return printErr("Invalid claims", fmt.Errorf("%s is both set and removed", name))
+			}
+		}
+		body := map[string]any{"set": map[string]json.RawMessage(set), "unset": []string(unset)}
+		if set == nil {
+			body["set"] = map[string]json.RawMessage{}
+		}
+		if unset == nil {
+			body["unset"] = []string{}
+		}
+		var changed struct {
+			Claims map[string]json.RawMessage `json:"claims"`
+		}
+		if err := authAdminCall(http.MethodPatch, origin, key, "/admin/v1/users/"+ref.ID+"/claims", body, &changed); err != nil {
+			return printErr("Could not change the claims", err)
+		}
+		claims = changed.Claims
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(map[string]any{"user_id": ref.ID, "claims": claims}))
+	}
+	if len(claims) == 0 {
+		_, _ = fmt.Fprintf(osStdout, "%s has no custom claims.\n", authUserLabel(ref))
+		return 0
+	}
+	names := make([]string, 0, len(claims))
+	for name := range claims {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	_, _ = fmt.Fprintf(osStdout, "Custom claims of %s (tokens carry them as app_metadata from the next refresh):\n", authUserLabel(ref))
+	for _, name := range names {
+		_, _ = fmt.Fprintf(osStdout, "  %s = %s\n", name, claims[name])
 	}
 	return 0
 }

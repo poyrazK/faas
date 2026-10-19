@@ -173,6 +173,45 @@ func TestAuthUsersRefusesBeforeAnyRequest(t *testing.T) {
 	}
 }
 
+func TestAuthUsersClaimsSetsTypedValuesAndShowsThem(t *testing.T) {
+	resetJSONEnv(t)
+	authIssuerServer(t, func(http.ResponseWriter, *http.Request) bool { return false })
+	key := "gaak_" + strings.Repeat("k", 43)
+	const ada = "6a1b2c3d-0000-4000-8000-000000000001"
+	seen := fakeAuthAdmin(t, key, func(w http.ResponseWriter, r *http.Request, body map[string]any) {
+		switch {
+		case r.Method == http.MethodPatch:
+			writeJSONTest(w, map[string]any{"claims": body["set"]})
+		case r.URL.Path == "/admin/v1/users/"+ada:
+			writeJSONTest(w, map[string]any{"user": map[string]any{"id": ada, "email": "ada@example.com", "claims": map[string]any{"plan": "free"}}})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+	out := captureAuthStdout(t)
+	if code := runAuthAdmin(t, key, "users", "claims", "shop-auth", ada); code != 0 || !strings.Contains(out.String(), `plan = "free"`) {
+		t.Fatalf("show = %d\n%s", code, out)
+	}
+	if code := runAuthAdmin(t, key, "users", "claims", "shop-auth", ada, "--set", "plan=pro", "--set", "seats=5", "--set", `flags={"beta":true}`, "--set", `code="007"`, "--unset", "trial"); code != 0 {
+		t.Fatalf("set = %d\n%s", code, out)
+	}
+	want := `PATCH /admin/v1/users/` + ada + `/claims {"set":{"code":"007","flags":{"beta":true},"plan":"pro","seats":5},"unset":["trial"]}`
+	if got := (*seen)[len(*seen)-1]; got != want {
+		t.Fatalf("sent %s\nwant %s", got, want)
+	}
+	for _, args := range [][]string{
+		{"users", "claims", "shop-auth", ada, "--set", "1st=x"},
+		{"users", "claims", "shop-auth", ada, "--set", "plan"},
+		{"users", "claims", "shop-auth", ada, "--set", "plan=a", "--unset", "plan"},
+		{"users", "get", "shop-auth", ada, "--set", "plan=a"},
+	} {
+		before := len(*seen)
+		if code := runAuthAdmin(t, key, args...); code == 0 || len(*seen) != before {
+			t.Errorf("%v accepted", args)
+		}
+	}
+}
+
 func TestAuthUsersListAndOrgs(t *testing.T) {
 	resetJSONEnv(t)
 	authIssuerServer(t, func(http.ResponseWriter, *http.Request) bool { return false })

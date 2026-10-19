@@ -115,6 +115,38 @@ export async function handler(request: Request) {
 }
 ```
 
+### Custom claims
+
+Put your own values, such as a plan, a tenant or feature flags, in a user's
+tokens. Your backend sets them with the admin key whenever they change, for
+example from a billing webhook:
+
+```sh
+gregale auth users claims shop-auth ada@example.com --set plan=pro --set seats=5 --unset trial
+```
+
+```ts
+await fetch(`https://shop-auth.gregale.app/admin/v1/users/${userId}/claims`, {
+  method: 'PATCH',
+  headers: { Authorization: `Bearer ${adminKey}`, 'Content-Type': 'application/json' },
+  body: JSON.stringify({ set: { plan: 'pro', seats: 5 }, unset: ['trial'] }),
+})
+```
+
+Tokens carry them as `app_metadata`: `claims.appMetadata.plan` in Node,
+`claims.AppMetadata["plan"]` in Go, `claims.app_metadata["plan"]` in Python,
+and `gregale_auth.claims() -> 'app_metadata' ->> 'plan'` in row-level
+security. Only the admin API can write them; users cannot change their own.
+A change shows in the user's next token, issued at their next refresh, at
+most ten minutes later (the access token lifetime). Names are letters,
+digits and `_`, starting with a letter; `provider` and `providers` are
+GoTrue's own. Values are any JSON except null (unset a claim instead), and a
+user's claims are at most 1,000 bytes of JSON, because every token carries
+them. On the command line a value that is JSON (`5`, `true`, `{"beta":true}`,
+`"007"`) keeps its type, and anything else is text. `gregale auth users claims
+shop-auth USER` without flags shows them, as does the dashboard's user panel,
+where they can be edited as JSON.
+
 ## Your data
 
 Users, sessions and identities live in the `auth` schema of your own database,
@@ -781,6 +813,7 @@ gregale auth users get shop-auth ada@example.com
 gregale auth users sign-out shop-auth ada@example.com
 gregale auth users ban shop-auth ada@example.com --for 7d
 gregale auth users unban shop-auth ada@example.com
+gregale auth users claims shop-auth ada@example.com --set plan=pro
 gregale auth users delete shop-auth ada@example.com
 gregale auth orgs list shop-auth
 gregale auth orgs get shop-auth acme

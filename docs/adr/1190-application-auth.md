@@ -349,6 +349,18 @@ repeated addresses within a batch are skipped because concurrent creates of
 one address race inside GoTrue. Responses report rows by position and never
 echo addresses.
 
+Custom claims are the keys of a user's `app_metadata` other than GoTrue's
+`provider` and `providers`. Only the admin API writes `app_metadata`, and
+GoTrue already puts it in every access token, so applications get
+Firebase-style per-user claims without a token hook on every refresh.
+Dynamic claims computed from the application's own tables were rejected for
+now: the Auth binding cannot read customer schemas by design, so a claims
+function would need customers to grant a hashed role access to their schema
+and a security-definer function. `PATCH /admin/v1/users/{id}/claims`
+`{set, unset}` sends GoTrue a merge patch after checking names and
+`AuthCustomClaimsMaxBytes` (1,000 bytes, Firebase's bound) against the
+user's current claims.
+
 ### Lifecycle events and activity
 
 `gregale auth config --events on` sets `AUTH_LIFECYCLE_EVENTS` and, if needed,

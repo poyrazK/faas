@@ -82,6 +82,34 @@ export function goTrueError({ status, data }) {
 }
 
 // Only these fields leave the app; metadata stays in the database.
+// Custom claims are the keys of a user's app_metadata other than GoTrue's
+// own provider and providers. Only the admin API writes app_metadata, and
+// GoTrue puts it in every access token, so a backend or row-level security
+// reads them as app_metadata.<name> from the next token on.
+const goTrueMetadata = new Set(['provider', 'providers'])
+const claimName = /^[A-Za-z][A-Za-z0-9_]{0,63}$/
+
+export function customClaims(appMetadata) {
+  return Object.fromEntries(Object.entries(appMetadata ?? {}).filter(([name]) => !goTrueMetadata.has(name)))
+}
+
+// claimsChange checks {set, unset} against the user's current claims and
+// returns GoTrue's merge patch (null removes a key) and the result.
+export function claimsChange(current, body) {
+  const plain = value => value !== null && typeof value === 'object' && !Array.isArray(value)
+  if (!plain(body) || Object.keys(body).some(key => key !== 'set' && key !== 'unset')) throw new HTTPError(400, 'invalid_claims')
+  const set = body.set ?? {}, unset = body.unset ?? []
+  if (!plain(set) || !Array.isArray(unset) || (Object.keys(set).length === 0 && unset.length === 0)) throw new HTTPError(400, 'invalid_claims')
+  for (const name of [...Object.keys(set), ...unset]) {
+    if (typeof name !== 'string' || !claimName.test(name) || goTrueMetadata.has(name)) throw new HTTPError(400, 'invalid_claim_name')
+  }
+  if (Object.values(set).some(value => value === null) || unset.some(name => Object.hasOwn(set, name))) throw new HTTPError(400, 'invalid_claims')
+  const next = { ...customClaims(current), ...set }
+  for (const name of unset) delete next[name]
+  if (Buffer.byteLength(JSON.stringify(next)) > limits.customClaimsBytes) throw new HTTPError(400, 'claims_too_large')
+  return { patch: { ...set, ...Object.fromEntries(unset.map(name => [name, null])) }, next }
+}
+
 function userView(u) {
   return {
     id: u.id, email: u.email ?? null, phone: u.phone || null,
@@ -89,6 +117,7 @@ function userView(u) {
     email_confirmed_at: u.email_confirmed_at ?? null, banned_until: u.banned_until ?? null,
     providers: Array.isArray(u.app_metadata?.providers) ? u.app_metadata.providers.filter(p => typeof p === 'string') : [],
     anonymous: u.is_anonymous === true,
+    claims: customClaims(u.app_metadata),
   }
 }
 
@@ -254,6 +283,14 @@ export async function adminRoute({ pool, admin, external, emails = {} }, method,
       query('SELECT count(*)::int AS sessions FROM auth.sessions WHERE user_id = $1 AND (not_after IS NULL OR not_after > now())', [user]),
     ])
     return [200, { user: userView(response.data), organizations, active_sessions: sessions }]
+  }
+  if (user && parts[2] === 'claims' && parts.length === 3 && method === 'PATCH') {
+    const current = await admin('GET', `/admin/users/${user}`)
+    if (current.status !== 200) throw goTrueError(current)
+    const { patch } = claimsChange(current.data?.app_metadata, body)
+    const response = await admin('PUT', `/admin/users/${user}`, { app_metadata: patch })
+    if (response.status !== 200) throw goTrueError(response)
+    return [200, { claims: customClaims(response.data?.app_metadata) }]
   }
   if (user && parts[2] === 'sign-out' && parts.length === 3 && method === 'POST') {
     // GoTrue has no admin sign-out; deleting sessions ends their refresh
