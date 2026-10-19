@@ -320,6 +320,14 @@ are always in GoTrue's redirect allow list so recovery links return to them.
 single-flight because refresh tokens rotate, and `getAccessToken` plugs into
 `@gregale/data`.
 
+`@gregale/auth/react` (React 18+, an optional peer dependency) puts the same
+client behind a provider, hooks and plain-HTML components: an embedded sign-in
+form, `SignedIn`/`SignedOut`, a user menu, an organization switcher and
+`Authorized`. It treats a user with a verified authenticator app or phone as
+signed out until the second step is done, as the hosted pages do, by asking
+GoTrue for the user's factors once per aal1 session; that check only decides
+what to render, because aal2 is enforced where it matters (RLS, the Auth app).
+
 ### Administration and import
 
 Owners administer users through `/admin/v1` on the Auth app with a key they

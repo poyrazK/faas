@@ -649,6 +649,44 @@ organizations whose only member they were are deleted with them. With
 lifecycle events on, `auth.user.deleted` tells your app to remove the
 person's data.
 
+## In React
+
+`@gregale/auth/react` (React 18 or later) signs people in inside your own
+pages instead of sending them to the hosted ones:
+
+```tsx
+import { createAuthClient, resource } from '@gregale/auth'
+import { AuthProvider, Authorized, OrganizationSwitcher, SignedIn, SignedOut, SignIn, UserMenu } from '@gregale/auth/react'
+
+const auth = createAuthClient({ url: 'https://shop-auth.gregale.app' })
+
+<AuthProvider client={auth}>
+  <SignedOut><SignIn providers={['google']} magicLink passkeys /></SignedOut>
+  <SignedIn>
+    <OrganizationSwitcher /> <UserMenu />
+    <Authorized action="write" resource={resource(org.id, 'doc', 42)} fallback={<ReadOnly />}><Editor /></Authorized>
+  </SignedIn>
+</AuthProvider>
+```
+
+`AuthProvider` reads the stored session, completes a redirect from the hosted
+pages, a magic link or OAuth, and re-renders when the session changes.
+`SignIn` offers what you list (OAuth providers, which must be on in the Auth
+app, a sign-in link, passkeys, and email and password with sign-up unless
+`password={false}` or `signUp={false}`); `redirectTo` and every OAuth return
+must be your site URL or under `--redirect-urls`. A user with a verified
+authenticator app or phone stays signed out until `SignIn` has taken the
+second step, like on the hosted pages; turn that off with
+`requireSecondStep={false}`. `OrganizationSwitcher` needs `--org-claims on`.
+
+The hooks are `useAuth` (status, session, user, active organization),
+`useSession`, `useUser`, `useActiveOrganization`, `useAuthorized(action,
+resource)` and `useAuthClient`; `SignInButton` and `SignOutButton` go to the
+hosted sign-in page and sign out. Components render plain HTML with
+`gregale-auth-*` class names to style; `authErrorMessage(err)` gives the same
+sentences for your own forms. `Authorized` and `useAuthorized` decide what to
+show; enforce access in your backend or row-level security.
+
 ## Files, realtime channels and workflows
 
 Each check names a resource in an organization and goes through the same
