@@ -141,7 +141,7 @@ always exists:
 | Rule | Fails on | Do instead |
 |---|---|---|
 | `constraint-validation` | `ADD CONSTRAINT … FOREIGN KEY` or `CHECK` on an existing table without `NOT VALID`; `VALIDATE CONSTRAINT` in the transaction that adds the constraint; `ADD COLUMN` with a `CHECK`, or with `REFERENCES` and a `DEFAULT` | add it `NOT VALID`, then `VALIDATE CONSTRAINT` in a later migration (or a later goose statement under `NO TRANSACTION`) |
-| `constraint-churn` | one migration that both drops and adds constraints of one existing table, unless it is a `NO TRANSACTION` migration whose goose statements add, then validate, then drop (`ADD CONSTRAINT … USING INDEX` is exempt) | add the replacement `NOT VALID` under a new name; validate it and drop the old one in a later migration |
+| `constraint-churn` | one migration that both drops and adds constraints of one existing table, unless it is a `NO TRANSACTION` migration in which no goose statement both adds and drops, and every drop follows a `VALIDATE` of the constraint added before it (`ADD CONSTRAINT … USING INDEX` is exempt) | add the replacement `NOT VALID` under a new name; validate it and drop the old one in a later migration |
 | `unbatched-write` | an `UPDATE` or `DELETE` of an existing table that is not batched (definition below); a loop of batches inside one transaction | the [batched backfill](#batched-backfill), or a job |
 | `lock-fanout` | one transaction that takes write-blocking locks on more than 3 existing tables. A foreign key also locks the table it references | split the migration, or use `-- +goose NO TRANSACTION` |
 
@@ -183,14 +183,18 @@ until the migration commits. It must run in a `-- +goose NO TRANSACTION`
 migration and `COMMIT` after each batch.
 
 **`NO TRANSACTION` and `lock_timeout`.** Under `-- +goose NO TRANSACTION`,
-goose runs every statement on its own, on any connection of its pool. In
-that mode `SET LOCAL lock_timeout` on its own line has no effect, and a
-plain `SET` may reach another connection. The linter therefore counts a
-`lock_timeout` only inside the goose statement that sets it. That statement
-is a `DO` block using `set_config('lock_timeout', '5s', true)`, or a
-`StatementBegin`/`StatementEnd` block, which goose sends as one implicit
-transaction. A `COMMIT` inside a `DO` block resets the setting, so set it
-again after each `COMMIT`.
+goose runs every statement as its own transaction. It runs them all on one
+pinned connection: `pkg/db` applies migrations through goose's `Provider`.
+The consequences for `lock_timeout`:
+
+- A session-level `SET lock_timeout = '500ms';` at the top holds for the
+  rest of the file.
+- `SET LOCAL lock_timeout` on its own line ends with its own one-statement
+  transaction, so it does nothing.
+- `set_config('lock_timeout', '5s', true)` in a `DO` block holds until that
+  block's transaction ends, and a `COMMIT` inside the block resets it.
+
+The linter follows these rules.
 
 ### Batched backfill
 

@@ -300,6 +300,21 @@ class NoDowntimeTest(unittest.TestCase):
          "-- +goose StatementBegin\n" + LT + "ALTER TABLE apps DROP CONSTRAINT apps_tier_chk;\n-- +goose StatementEnd\n"
          "-- +goose StatementBegin\n" + LT + "ALTER TABLE apps ADD CONSTRAINT apps_tier_v2 CHECK (tier <> '') NOT VALID;\n"
          "-- +goose StatementEnd\nALTER TABLE apps VALIDATE CONSTRAINT apps_tier_v2;", [("constraint-churn", "apps")]),
+        ("two replacements on one table in one NO TRANSACTION file", NO_TX,
+         "SET lock_timeout = '500ms';\n"
+         "ALTER TABLE apps ADD CONSTRAINT apps_tier_nn CHECK (tier IS NOT NULL) NOT VALID;\n"
+         "ALTER TABLE apps VALIDATE CONSTRAINT apps_tier_nn;\n"
+         "-- migration-lint: allow not-null apps.tier: a validated CHECK (tier IS NOT NULL) proves it\n"
+         "ALTER TABLE apps ALTER COLUMN tier SET NOT NULL;\nALTER TABLE apps DROP CONSTRAINT apps_tier_nn;\n"
+         "ALTER TABLE apps ADD CONSTRAINT apps_org_fk_new FOREIGN KEY (org_id) REFERENCES orgs (id) NOT VALID;\n"
+         "ALTER TABLE apps VALIDATE CONSTRAINT apps_org_fk_new;\n"
+         "DO $$ BEGIN ALTER TABLE apps DROP CONSTRAINT apps_org_fk; "
+         "ALTER TABLE apps RENAME CONSTRAINT apps_org_fk_new TO apps_org_fk; END $$;", []),
+        ("the second drop before its validation", NO_TX,
+         "SET lock_timeout = '500ms';\n"
+         "ALTER TABLE apps ADD CONSTRAINT a2 CHECK (tier <> '') NOT VALID;\nALTER TABLE apps VALIDATE CONSTRAINT a2;\n"
+         "ALTER TABLE apps DROP CONSTRAINT a1;\nALTER TABLE apps ADD CONSTRAINT b2 CHECK (tier <> 'x') NOT VALID;\n"
+         "ALTER TABLE apps DROP CONSTRAINT b1;\nALTER TABLE apps VALIDATE CONSTRAINT b2;", [("constraint-churn", "apps")]),
         ("primary key swapped to a concurrently built index", "",
          LT + "ALTER TABLE apps DROP CONSTRAINT apps_pkey, ADD CONSTRAINT apps_pkey PRIMARY KEY USING INDEX apps_pkey_v2;", []),
         # unbatched-write
@@ -384,8 +399,12 @@ class NoDowntimeTest(unittest.TestCase):
         # lock_timeout under NO TRANSACTION
         ("SET LOCAL as its own statement does nothing", NO_TX, LT + "ALTER TABLE apps ADD COLUMN n int;",
          [("lock-timeout", "apps")]),
-        ("session SET may run on another pooled connection", NO_TX,
-         "SET lock_timeout = '5s';\nALTER TABLE apps ADD COLUMN n int;", [("lock-timeout", "apps")]),
+        # goose runs a migration on one pinned connection.
+        ("a session SET holds for the rest of the file", NO_TX,
+         "SET lock_timeout = '500ms';\nALTER TABLE apps ADD COLUMN n int;\nDO $$ BEGIN COMMIT; END $$;\n"
+         "ALTER TABLE events ADD COLUMN n int;", []),
+        ("so does a session set_config", NO_TX,
+         "SELECT set_config('lock_timeout', '5s', false);\nALTER TABLE apps ADD COLUMN n int;", []),
         ("lock_timeout in the same StatementBegin block", NO_TX,
          "-- +goose StatementBegin\n" + LT + "ALTER TABLE apps ADD COLUMN n int;\n-- +goose StatementEnd", []),
         ("lock_timeout set before a COMMIT does not survive it", NO_TX,

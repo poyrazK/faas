@@ -72,9 +72,11 @@ waived, because the online pattern always exists:
       In a NO TRANSACTION migration every goose statement is its own
       transaction.
 
-In a `-- +goose NO TRANSACTION` migration goose runs every statement on its
-own, on any pooled connection, so a lock_timeout covers only the goose
-statement (a DO block, or a StatementBegin/StatementEnd block) that sets it.
+In a `-- +goose NO TRANSACTION` migration goose runs every statement as its
+own transaction, on one pinned connection: a session-level lock_timeout
+(SET without LOCAL) holds for the rest of the file, but a SET LOCAL or a
+set_config(..., true) covers only the goose statement (a DO block, or a
+StatementBegin/StatementEnd block) that sets it.
 
 Tables, views and indexes that do not exist on the base (schema.sql there)
 are exempt: nothing old reads them and nothing queues on them.
@@ -472,6 +474,10 @@ class Context:
     referenced: object  # callable(name, table|None) -> (where, files)
     findings: list[Finding] = field(default_factory=list)
     lock_timeout_group: int | None = None
+    # A session-level lock_timeout (SET without LOCAL, or set_config(...,
+    # false)) holds for every later statement: goose runs a migration on one
+    # pinned connection.
+    session_lock_timeout: bool = False
     created: set[str] = field(default_factory=set)
     created_indexes: set[str] = field(default_factory=set)
     defaults_set: set[tuple[str, str]] = field(default_factory=set)
@@ -500,12 +506,14 @@ class Context:
         if (table or relation) != "*":
             self.locks.setdefault(self.group, {}).setdefault(table or relation, line)
         # One finding per relation: the fix is a single SET at the top.
-        if self.lock_timeout_group != self.group and not any(f.rule == "lock-timeout" and f.target == relation for f in self.findings):
+        if (self.lock_timeout_group != self.group and not self.session_lock_timeout
+                and not any(f.rule == "lock-timeout" and f.target == relation for f in self.findings)):
             fix = (f"add `SET LOCAL lock_timeout = '5s';` at the top of the Up section (at most {MAX_LOCK_TIMEOUT_MS // 1000}s)."
                    if not self.no_transaction else
-                   "in a `-- +goose NO TRANSACTION` migration every goose statement commits on its own, on any pooled "
-                   "connection, so set it inside the same statement: `DO $$ BEGIN PERFORM set_config('lock_timeout', '5s', "
-                   "true); ALTER TABLE ...; END $$;`, or in the same StatementBegin/StatementEnd block.")
+                   "in a `-- +goose NO TRANSACTION` migration every goose statement is its own transaction, so a SET LOCAL "
+                   "on its own line ends with it. Start the Up section with a session-level `SET lock_timeout = '5s';`, or "
+                   "set it inside the same statement: `DO $$ BEGIN PERFORM set_config('lock_timeout', '5s', true); "
+                   "ALTER TABLE ...; END $$;`.")
             self.add(line, "lock-timeout", relation,
                      f"{what} takes a strong lock on existing {relation} with no lock_timeout set before it; {fix}")
 
@@ -563,18 +571,24 @@ def lint_context(path: str, text: str, catalogue: Catalogue, referenced) -> Cont
 
 def churn_line(changes: list[tuple[int, str, int]]) -> int | None:
     """Where a table's constraint changes break add -> validate -> drop, or
-    None. Each step must be its own transaction (group), and a constraint
-    is dropped only after a replacement added before it is validated."""
-    adds = [c for c in changes if c[1] == "add"]
-    drops = [c for c in changes if c[1] == "drop"]
-    if not adds or not drops:
+    None. No transaction (group) both adds and drops; every drop follows a
+    validation of the latest constraint added before it; and no constraint
+    is added after a drop that no earlier add replaced."""
+    adds = [g for g, kind, _ in changes if kind == "add"]
+    validates = [g for g, kind, _ in changes if kind == "validate"]
+    if not adds:
         return None
-    last_add = max(group for group, _, _ in adds)
-    first_drop = min(group for group, _, _ in drops)
-    validated = any(last_add < group < first_drop for group, kind, _ in changes if kind == "validate")
-    if last_add < first_drop and validated:
-        return None
-    return min(line for _, _, line in adds)
+    for group, kind, line in changes:
+        if kind != "drop":
+            continue
+        prior = [g for g in adds if g < group]
+        if group in adds:
+            return line
+        if prior and not any(max(prior) < g < group for g in validates):
+            return line
+        if not prior and any(g > group for g in adds):
+            return line
+    return None
 
 
 def statement_blocks(up: str, first_line: int) -> list[tuple[int, int]]:
@@ -625,6 +639,8 @@ def lint_statement(ctx: Context, stmt: list[Token]) -> None:
             ctx.add(line, "lock-timeout", "*", f"lock_timeout {value!r} must be between 1ms and {MAX_LOCK_TIMEOUT_MS // 1000}s.")
         else:
             ctx.lock_timeout_group = ctx.group
+            local = w[:2] == ["set", "local"] if w[:1] == ["set"] else set_config_is_local(stmt)
+            ctx.session_lock_timeout = ctx.session_lock_timeout or not local
         return
 
     if w[0] == "commit":
@@ -669,6 +685,15 @@ def lock_timeout_value(stmt: list[Token]) -> str | None:
             value = "".join(t.value for t in rest)
             return value.strip("'")
     return None
+
+
+def set_config_is_local(stmt: list[Token]) -> bool:
+    """Whether a set_config('lock_timeout', ...) call is transaction-local
+    (its third argument is not false)."""
+    for idx in range(len(stmt) - 6):
+        if is_word(stmt[idx], "set_config") and stmt[idx + 5].value == ",":
+            return not is_word(stmt[idx + 6], "false")
+    return True
 
 
 def set_config_lock_timeout(stmt: list[Token]) -> str | None:

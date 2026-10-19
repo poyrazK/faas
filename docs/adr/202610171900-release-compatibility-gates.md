@@ -113,8 +113,8 @@ customer-path baseline gate. No check stood in the way.
    - `constraint-churn`: a constraint is replaced in three transactions:
      add the new one `NOT VALID`, validate it, then drop the old one. A
      migration may not both drop and add constraints of one table unless
-     it is `NO TRANSACTION` and its goose statements follow that order.
-     `ADD CONSTRAINT … USING INDEX` is exempt.
+     it is `NO TRANSACTION` and every drop follows a `VALIDATE` of the
+     constraint added before it. `ADD CONSTRAINT … USING INDEX` is exempt.
    - `unbatched-write`: an `UPDATE` or `DELETE` takes its rows from a
      `SELECT … FROM <that table> … LIMIT n` (n ≤ 10,000), directly or
      through an array variable of the same `DO` block, or it pins a whole
@@ -123,11 +123,12 @@ customer-path baseline gate. No check stood in the way.
    - `lock-fanout`: one transaction takes write-blocking locks on at most 3
      existing tables, counting the table a foreign key references.
 
-   Under `NO TRANSACTION`, a `lock_timeout` counts only inside the goose
-   statement that sets it. goose runs each statement on its own pooled
-   connection, so a separate `SET LOCAL` there does nothing. This was a
-   hole in the original `lock-timeout` rule. `TRUNCATE`, and a foreign key
-   from a new table to an existing one, now also need `lock_timeout`.
+   Under `NO TRANSACTION`, goose runs every statement as its own
+   transaction on one pinned connection. A session `SET lock_timeout`
+   holds for the rest of the file. A `SET LOCAL` on its own line does
+   nothing, yet the original `lock-timeout` rule accepted it; now it does
+   not. `TRUNCATE`, and a foreign key from a new table to an existing one,
+   now also need `lock_timeout`.
 4. **Deploy workflows.** `maintenance_mode` is removed from cd-platform and
    cd-controlplane. The rollout observer refuses to run without at least
    one healthy baseline sample.
