@@ -237,6 +237,9 @@ func (s *Service) syncManagedRealtimeEndpoint(ctx context.Context, row state.Man
 		LiveRoutes:       liveRoutes,
 
 		AccountMaxConnections: accountMaxConnections,
+		// Live queries ride the v2 protocol, so an endpoint with live routes
+		// (FAAS_LIVE_QUERIES_ACCOUNTS) is marked too.
+		Preview: s.PreviewVisible(row.AccountID) || len(liveRoutes) > 0,
 	})
 }
 

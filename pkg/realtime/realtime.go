@@ -200,6 +200,10 @@ type Endpoint struct {
 	// AccountMaxConnections is the account's plan allowance of concurrent
 	// connections across the fleet (ADR-1323). Zero enforces no account limit.
 	AccountMaxConnections int
+	// Preview marks an endpoint whose account is in the realtime preview
+	// rollout (ADR-20261019102657). Preview features need both this mark and
+	// the node's own flag, so an apid that sends no mark turns them off.
+	Preview bool
 
 	// LiveRoutes are the live-query keys this endpoint's connections may use
 	// (ADR-20261016151947): those of databases bound to the endpoint's app. A seal
@@ -895,12 +899,12 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		ticketToken = browserToken
 	}
 	usesTicket := isTicket(ticketToken)
-	if usesTicket && (!wantsResume || !m.cfg.TicketPreview || m.cfg.TicketReader == nil) {
+	if usesTicket && (!wantsResume || !m.ticketPreview(endpoint) || m.cfg.TicketReader == nil) {
 		http.Error(w, "ticket unavailable", http.StatusUnauthorized)
 		return
 	}
 	if wantsResume {
-		if !m.cfg.ResumePreview || m.cfg.HistoryReader == nil {
+		if !m.resumePreview(endpoint) || m.cfg.HistoryReader == nil {
 			http.Error(w, "realtime resume unavailable", http.StatusServiceUnavailable)
 			return
 		}
@@ -966,7 +970,7 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, "unauthorized", http.StatusUnauthorized)
 				return
 			}
-			if m.cfg.AccessPreview {
+			if m.accessPreview(endpoint) {
 				issuedAt, err = verifiedTokenIssuedAt(token)
 				if err != nil {
 					m.recordAuthOutcome(authMetricMode, authMetricOutcomeRejected)
@@ -993,7 +997,7 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "realtime resume requires a stable principal", http.StatusUnauthorized)
 		return
 	}
-	if !usesTicket && m.cfg.AccessPreview && endpoint.ClientAuth.Mode == AuthModeOIDCJWT {
+	if !usesTicket && m.accessPreview(endpoint) && endpoint.ClientAuth.Mode == AuthModeOIDCJWT {
 		if m.cfg.AccessReader == nil {
 			m.recordAuthOutcome(authMetricMode, authMetricOutcomeRejected)
 			m.rejectedConnections.Add(1)

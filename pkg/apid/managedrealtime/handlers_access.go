@@ -10,8 +10,7 @@ import (
 )
 
 func (s *Service) ManageRealtimeAccess(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	if !s.AccessPreviewEnabled {
-		httpkit.NotFound(w, "realtime access preview unavailable")
+	if s.previewUnavailable(w, acct.ID, s.AccessPreviewEnabled, "realtime access preview unavailable") {
 		return
 	}
 	ep, _, ok := s.loadManagedRealtimeEndpoint(w, r, acct)

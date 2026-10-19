@@ -53,7 +53,7 @@ func newLiveTestManager(t *testing.T, live LiveQueries) *httptest.Server {
 		JWTAuthorizer: &recordingJWTAuthorizer{}, ResumePreview: true,
 		HistoryReader: &testResumeHistory{}, ResumePollInterval: 15 * time.Millisecond, Live: live,
 	}, &testChannelHooks{})
-	if err := m.RegisterEndpoint(Endpoint{
+	if err := m.RegisterEndpoint(Endpoint{Preview: true,
 		ID: "resume-endpoint", AppID: "app-1", AccountID: "acct-1", CallbackURL: "https://app.example",
 		AllowedOrigins: []string{"https://app.example"},
 		ClientAuth: AuthPolicy{
@@ -91,7 +91,7 @@ func TestLiveRoutesFollowRegistration(t *testing.T) {
 		JWTAuthorizer: &recordingJWTAuthorizer{}, ResumePreview: true,
 		HistoryReader: &testResumeHistory{}, ResumePollInterval: 15 * time.Millisecond, Live: live,
 	}, &testChannelHooks{})
-	endpoint := Endpoint{
+	endpoint := Endpoint{Preview: true,
 		ID: "resume-endpoint", AppID: "app-1", AccountID: "acct-1", CallbackURL: "https://app.example",
 		AllowedOrigins: []string{"https://app.example"},
 		ClientAuth: AuthPolicy{
@@ -138,7 +138,7 @@ func TestLiveProtocolHiddenWithoutRoutes(t *testing.T) {
 		JWTAuthorizer: &claimsJWT{}, ResumePreview: true,
 		HistoryReader: &testResumeHistory{}, ResumePollInterval: 15 * time.Millisecond, Live: live,
 	}, &testChannelHooks{})
-	if err := m.RegisterEndpoint(Endpoint{
+	if err := m.RegisterEndpoint(Endpoint{Preview: true,
 		ID: "resume-endpoint", AppID: "app-1", AccountID: "acct-1", CallbackURL: "https://app.example",
 		AllowedOrigins: []string{"https://app.example"},
 		ClientAuth: AuthPolicy{
@@ -200,7 +200,7 @@ func TestLiveTokensBecomeClaims(t *testing.T) {
 		JWTAuthorizer: &claimsJWT{}, ResumePreview: true,
 		HistoryReader: &testResumeHistory{}, ResumePollInterval: 15 * time.Millisecond, Live: live,
 	}, &testChannelHooks{})
-	if err := m.RegisterEndpoint(Endpoint{
+	if err := m.RegisterEndpoint(Endpoint{Preview: true,
 		ID: "resume-endpoint", AppID: "app-1", AccountID: "acct-1", CallbackURL: "https://app.example",
 		AllowedOrigins: []string{"https://app.example"},
 		ClientAuth: AuthPolicy{
@@ -269,7 +269,7 @@ func TestLiveFramesUseTheOutboundBudget(t *testing.T) {
 		HistoryReader: &testResumeHistory{}, ResumePollInterval: 15 * time.Millisecond, Live: live,
 		OutboundQueueBytes: 1024,
 	}, &testChannelHooks{})
-	if err := m.RegisterEndpoint(Endpoint{
+	if err := m.RegisterEndpoint(Endpoint{Preview: true,
 		ID: "resume-endpoint", AppID: "app-1", AccountID: "acct-1", CallbackURL: "https://app.example",
 		AllowedOrigins: []string{"https://app.example"},
 		ClientAuth: AuthPolicy{

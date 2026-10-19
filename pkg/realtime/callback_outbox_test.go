@@ -114,7 +114,7 @@ func TestManagerRegistrationUpdatesOutboxCredentialForFutureEvents(t *testing.T)
 	queue := newTestCallbackOutbox(t, CallbackOutboxConfig{})
 	manager := NewManager(Config{}, HTTPHooks{DurableQueue: queue})
 	defer func() { _ = manager.Close() }()
-	if err := manager.RegisterEndpoint(Endpoint{ID: "endpoint-1", CallbackAuthToken: "callback-secret-next"}); err != nil {
+	if err := manager.RegisterEndpoint(Endpoint{Preview: true, ID: "endpoint-1", CallbackAuthToken: "callback-secret-next"}); err != nil {
 		t.Fatalf("RegisterEndpoint: %v", err)
 	}
 	event := testCallbackEvent()

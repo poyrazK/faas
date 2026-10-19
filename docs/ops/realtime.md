@@ -18,6 +18,18 @@ These features stay off until realtime has been tested end to end. Each flag
 defaults to `0`; with all of them off, realtimed, apid and schedd behave as
 they did before the features existed.
 
+**Who sees a preview.** A daemon flag says the daemon is ready for a feature;
+`FAAS_REALTIME_PREVIEW_ACCOUNTS` on apid says which accounts see it
+(ADR-20261019102657): comma-separated account IDs while you test on
+production, `*` at launch, empty (the default) for nobody. It covers retained
+history and everything built on it (consumer groups, inbox, push, schedules,
+snapshots, reducers, read progress, realtime triggers, publisher and worker
+credentials), tickets, access controls, occupancy, the usage API, and on
+realtimed the v2 protocol, SSE and live occupancy, which apply only to
+endpoints apid marks for a listed account. For any other account the routes
+answer as unregistered ones. Turn a preview on by setting its flag on apid and
+every realtime node and listing your account, then widen to `*`.
+
 | Flag | Daemons | Turns on |
 |---|---|---|
 | `FAAS_REALTIME_FAIR_USE_ENABLED` | apid, realtimed | plan connection limits per account, the 50% per-node account share, and the 6,000 node connection default (otherwise 10,000) (ADR-1323) |

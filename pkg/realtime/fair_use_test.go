@@ -48,7 +48,7 @@ func newFairUseNode(t *testing.T, cfg Config) *fairUseNode {
 func (n *fairUseNode) endpoint(t *testing.T, account string, limit int) string {
 	t.Helper()
 	id := uuid.NewString()
-	if err := n.m.RegisterEndpoint(Endpoint{ID: id, AppID: "app", AccountID: account, AccountMaxConnections: limit,
+	if err := n.m.RegisterEndpoint(Endpoint{Preview: true, ID: id, AppID: "app", AccountID: account, AccountMaxConnections: limit,
 		Authorize: func(context.Context, *http.Request) (string, error) { return "", nil }}); err != nil {
 		t.Fatal(err)
 	}

@@ -14,8 +14,7 @@ const realtimeOccupancyDocs = "https://gregale.dev/docs/realtime#channel-occupan
 // GetManagedRealtimeOccupancy reports how many subscriptions and presence
 // members each requested channel has across the fleet (ADR-1324).
 func (s *Service) GetManagedRealtimeOccupancy(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	if !s.OccupancyPreviewEnabled {
-		httpkit.NotFound(w, "channel occupancy preview unavailable")
+	if s.previewUnavailable(w, acct.ID, s.OccupancyPreviewEnabled, "channel occupancy preview unavailable") {
 		return
 	}
 	row, _, ok := s.loadManagedRealtimeEndpoint(w, r, acct)

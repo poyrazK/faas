@@ -582,7 +582,7 @@ func (m *Manager) resumeSubscribe(ctx context.Context, c *connection, frame resu
 // watchSubscriptionOccupancy starts live occupancy frames when the subscribe
 // frame asked for them and the preview is on (ADR-1324).
 func (m *Manager) watchSubscriptionOccupancy(ctx context.Context, c *connection, frame resumeClientFrame) {
-	if frame.Occupancy && m.cfg.OccupancyPreview && !m.watchOccupancy(c.info.EndpointID, frame.Channel, c) {
+	if frame.Occupancy && m.occupancyPreview(c.endpoint) && !m.watchOccupancy(c.info.EndpointID, frame.Channel, c) {
 		m.queueResumeControl(ctx, c, resumeServerFrame{Type: "error", Channel: frame.Channel, Code: "occupancy_limit"})
 	}
 }

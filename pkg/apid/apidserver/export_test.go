@@ -1541,3 +1541,13 @@ func (s *server) ConfigureLiveQueriesForTest(getenv func(string) string) error {
 func (s *server) LiveRoutesForTest(ctx context.Context, accountID, appID string) ([]realtime.LiveRoute, error) {
 	return s.liveRoutes(ctx, nil, accountID, appID)
 }
+
+// RealtimePreviewEveryone shows realtime preview features to every account
+// (ADR-20261019102657).
+func RealtimePreviewEveryone() managedrealtime.PreviewRollout {
+	r, err := managedrealtime.ParsePreviewRollout("*")
+	if err != nil {
+		panic(err)
+	}
+	return r
+}
