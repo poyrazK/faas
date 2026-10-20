@@ -91,12 +91,18 @@ func FuzzApplyLayerStaysInsideStaging(f *testing.F) {
 		if got, err := os.ReadFile(sentinel); err != nil || string(got) != "keep" {
 			t.Fatalf("sentinel outside staging changed: %q %v", got, err)
 		}
-		_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-			if err != nil || path == root || path == outside || path == sentinel {
+		_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
+			if path == root || path == outside || path == sentinel {
 				return nil
 			}
+			// Every path is checked, including one the walk could not read:
+			// a fuzzed layer may leave an unreadable directory, and where it
+			// sits still matters.
 			if rel, relErr := filepath.Rel(dst, path); relErr != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 				t.Fatalf("layer created %s outside staging %s", path, dst)
+			}
+			if walkErr != nil && d != nil && d.IsDir() {
+				return fs.SkipDir
 			}
 			return nil
 		})

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -27,11 +28,10 @@ func TestTenantHostnames_BothPathsValidateAndRespectWildcards(t *testing.T) {
 	if err := store.MarkDomainVerified(ctx, "*.zone.example.com"); err != nil {
 		t.Fatal(err)
 	}
-	surface := func(name string, hostnames ...string) *http.Response {
-		rec := e.Do(t, http.MethodPost, "/v1/apps/hostname-validation/tenant-surfaces", api.CreateTenantSurfaceRequest{
+	surface := func(name string, hostnames ...string) *httptest.ResponseRecorder {
+		return e.Do(t, http.MethodPost, "/v1/apps/hostname-validation/tenant-surfaces", api.CreateTenantSurfaceRequest{
 			AppID: appID, Name: name, CertKind: string(state.CertKindPerHostSAN), Hostnames: hostnames,
 		}, nil)
-		return rec.Result()
 	}
 	for _, tc := range []struct {
 		host   string
@@ -44,16 +44,16 @@ func TestTenantHostnames_BothPathsValidateAndRespectWildcards(t *testing.T) {
 		{"trailing.example.com.", http.StatusBadRequest},
 		{"shop.zone.example.com", http.StatusConflict},
 	} {
-		if got := surface("bad-"+tc.host, tc.host).StatusCode; got != tc.status {
+		if got := surface("bad-"+tc.host, tc.host).Code; got != tc.status {
 			t.Errorf("surface with %q: status %d, want %d", tc.host, got, tc.status)
 		}
 	}
 	created := surface("good", "tenant.example.com")
-	if created.StatusCode != http.StatusAccepted {
-		t.Fatalf("surface with a valid hostname: status %d", created.StatusCode)
+	if created.Code != http.StatusAccepted {
+		t.Fatalf("surface with a valid hostname: status %d", created.Code)
 	}
 	var surf api.TenantSurfaceResponse
-	if err := json.NewDecoder(created.Body).Decode(&surf); err != nil {
+	if err := json.Unmarshal(created.Body.Bytes(), &surf); err != nil {
 		t.Fatal(err)
 	}
 	for _, tc := range []struct {
