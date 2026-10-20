@@ -422,6 +422,29 @@ during which clients wait in pgproxyd and idle sessions drop. A parked
 database is left as it is: its next wake boots the current base. A
 database moving, waking, parking or failed is refused (`conflict`).
 
+## Switching a database over
+
+To take a production-class database off its node without copying it, for
+maintenance or to test that its standby can take over, switch it over to
+its synchronized standby:
+
+```sh
+gregalectl database-nodes switchover --database <id> [--reason node_maintenance]
+```
+
+It needs an operator session. apid records a `database_switchover`
+operator intent. schedd stops a running primary cleanly while its standby
+is synchronous, promotes the standby, and points the database at the
+standby's node. That takes a second or two, clients reconnect, and no
+commit is lost. A parked database moves to its standby's node, which
+promotes the standby at its next wake. The database then runs without a
+standby until the monitor attaches a new one, which copies it
+(`FaasDatabaseStandbyMissing` would follow if none can attach). A
+database without a synchronized standby on an active node is refused.
+If the promotion fails, the database is parked where it was, standby
+still trusted, and its next wake brings both back. Draining a node does
+this for every such database on it.
+
 ## Moving one database
 
 To take load off a node, or to move a noisy database, move it by its id

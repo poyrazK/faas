@@ -33,29 +33,10 @@ type Restart struct {
 // Post records the restart. ?confirm=true is required and ?reason=
 // defaults to operator_database_restart.
 func (rs Restart) Post(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	if allowed, prob := rs.AdminAllows(acct); !allowed {
-		api.WriteProblem(w, prob)
+	databaseID, reason, ok := acceptOperation(w, r, acct, rs.AdminAllows, "restart", "operator_database_restart")
+	if !ok {
 		return
 	}
-	q := r.URL.Query()
-	if q.Get("confirm") != "true" {
-		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "confirm required", "?confirm=true is required to restart a database"))
-		return
-	}
-	id, err := uuid.Parse(r.PathValue("id"))
-	if err != nil {
-		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "invalid database id", "the database id is the native database's UUID"))
-		return
-	}
-	reason := q.Get("reason")
-	if reason == "" {
-		reason = "operator_database_restart"
-	}
-	if !moveReasonShape.MatchString(reason) {
-		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "invalid reason", "reason must match [a-z0-9_]{1,64}"))
-		return
-	}
-	databaseID := id.String()
 	intentID, ok := enqueue(w, r, rs.Intents, rs.Notifier, rs.Audit, acct, state.OperatorIntentKindDatabaseRestart, databaseID, reason, nil, nil)
 	if !ok {
 		return
@@ -65,6 +46,37 @@ func (rs Restart) Post(w http.ResponseWriter, r *http.Request, acct state.Accoun
 		ExpiresAt: time.Now().UTC().Add(operatorIntentPollHorizon), Kind: string(state.OperatorIntentKindDatabaseRestart),
 		DatabaseID: databaseID, Reason: reason,
 	})
+}
+
+// acceptOperation checks an operator's request for one database
+// operation (verb): an operator, ?confirm=true, a database UUID and a
+// reason (defaultReason when empty). It answers the problem itself and
+// reports false when the request is refused.
+func acceptOperation(w http.ResponseWriter, r *http.Request, acct state.Account, adminAllows func(state.Account) (bool, *api.Problem),
+	verb, defaultReason string) (string, string, bool) {
+	if allowed, prob := adminAllows(acct); !allowed {
+		api.WriteProblem(w, prob)
+		return "", "", false
+	}
+	q := r.URL.Query()
+	if q.Get("confirm") != "true" {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "confirm required", "?confirm=true is required to "+verb+" a database"))
+		return "", "", false
+	}
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "invalid database id", "the database id is the native database's UUID"))
+		return "", "", false
+	}
+	reason := q.Get("reason")
+	if reason == "" {
+		reason = defaultReason
+	}
+	if !moveReasonShape.MatchString(reason) {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "invalid reason", "reason must match [a-z0-9_]{1,64}"))
+		return "", "", false
+	}
+	return id.String(), reason, true
 }
 
 // Operations are the operator's native database operations (ADR-1027).
@@ -79,11 +91,12 @@ type Operations struct {
 	}
 }
 
-// Register serves the move and the restart on mux behind apid's trace,
-// authentication and admin-mutation middleware.
+// Register serves the move, the restart and the switchover on mux behind
+// apid's trace, authentication and admin-mutation middleware.
 func (o Operations) Register(mux *http.ServeMux, trace func(http.Handler) http.Handler,
 	auth func(httpkit.AccountHandler) http.HandlerFunc, mutation func(httpkit.AccountHandler) httpkit.AccountHandler) {
-	move, restart := Move(o), Restart(o)
+	move, restart, switchover := Move(o), Restart(o), Switchover(o)
 	mux.Handle("POST /v1/admin/ops/databases/{id}/move", trace(auth(mutation(move.Post))))
 	mux.Handle("POST /v1/admin/ops/databases/{id}/restart", trace(auth(mutation(restart.Post))))
+	mux.Handle("POST /v1/admin/ops/databases/{id}/switchover", trace(auth(mutation(switchover.Post))))
 }

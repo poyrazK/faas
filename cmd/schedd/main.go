@@ -1690,7 +1690,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	liveness := wire.NewLiveness()
 	loop := sched.NewLoop(pool, engine, log)
 	if databases != nil {
-		loop.WithDatabaseMover(databaseMover{sched: databases}).WithDatabaseRestarter(databaseMover{sched: databases})
+		loop.WithDatabaseMover(databaseMover{sched: databases}).WithDatabaseRestarter(databaseMover{sched: databases}).
+			WithDatabaseSwitcher(databaseMover{sched: databases})
 	}
 	loop = loop.
 		WithEventRecipientClaims(eventRecipientClaimsEnabled(os.Getenv("FAAS_EVENT_RECIPIENT_CLAIMS_ENABLED"))).

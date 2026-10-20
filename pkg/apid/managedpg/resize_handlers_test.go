@@ -41,7 +41,10 @@ func TestResizesHideStorageOutsideThePreview(t *testing.T) {
 	var problems []error
 	serve := func(storage Rollout, body string) *httptest.ResponseRecorder {
 		rs := Resizes{Service: service, Storage: func() Rollout { return storage },
-			Problem:       func(w http.ResponseWriter, err error) { problems = append(problems, err); w.WriteHeader(http.StatusBadRequest) },
+			Problem: func(w http.ResponseWriter, err error) {
+				problems = append(problems, err)
+				w.WriteHeader(http.StatusBadRequest)
+			},
 			NotConfigured: func(w http.ResponseWriter) { w.WriteHeader(http.StatusServiceUnavailable) }}
 		r := httptest.NewRequest(http.MethodPost, "/v1/postgres/databases/orders/resize", strings.NewReader(body))
 		r.SetPathValue("id", "orders")

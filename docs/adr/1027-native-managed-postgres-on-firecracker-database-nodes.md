@@ -214,8 +214,12 @@ and woken, a parked one is left for its next wake, and any other state is
 `ErrConflict`. The stale sweep uses the same `Restart`. On metal, an adopted VM turned stale when its major's base
 changed and was current again after a restart.
 
-Not yet done: a planned switchover that patches a busy production
-database without stopping it.
+A production-class database can also change nodes without a copy:
+`gregalectl database-nodes switchover --database <id>` posts
+`POST /v1/admin/ops/databases/{id}/switchover`, and schedd runs
+`dbsched.Switchover` (below) for the `database_switchover` intent. That
+patches a busy database only when its standby already runs the current
+base. Restarting a stale standby on its own is not done yet.
 
 ### schedd surface
 
@@ -1651,6 +1655,10 @@ it fails.
 - It needs an active node for the standby, and counts as
   `schedd_database_failovers_total{trigger="switchover"}`, which the
   failover alerts leave out.
+- Operators run it on one database with `gregalectl database-nodes
+  switchover --database <id>`, a durable `database_switchover` operator
+  intent (admin mutation auth, `confirm=true`). A database without a
+  synchronized standby on an active node fails the intent.
 
 On metal, a running database holding 20,001 rows switched nodes in
 1.7 s (primary stop, promotion, first query on the new node), with every

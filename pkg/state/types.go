@@ -3313,6 +3313,13 @@ const (
 	// parked database is left for its next wake, which boots the current
 	// base anyway.
 	OperatorIntentKindDatabaseRestart OperatorIntentKind = "database_restart"
+	// OperatorIntentKindDatabaseSwitchover hands a production-class native
+	// managed database to its synchronized standby on purpose (ADR-1027).
+	// TargetID is the database id and AccountID is nil. schedd's database
+	// scheduler stops a running primary cleanly and promotes the standby,
+	// or moves a parked database's record to the standby's node, before
+	// stamping the intent.
+	OperatorIntentKindDatabaseSwitchover OperatorIntentKind = "database_switchover"
 )
 
 // DatabaseMoveIntentMetadata is a database_move intent's metadata: the

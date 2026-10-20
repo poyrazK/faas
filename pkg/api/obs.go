@@ -467,6 +467,19 @@ type ObsDatabaseRestartResponse struct {
 	Reason     string    `json:"reason"`
 }
 
+// ObsDatabaseSwitchoverResponse acknowledges an operator's planned
+// switchover of a production-class native managed database to its
+// synchronized standby (ADR-1027). Poll StatusURL for the intent.
+type ObsDatabaseSwitchoverResponse struct {
+	OK         bool      `json:"ok"`
+	IntentID   string    `json:"intent_id"`
+	StatusURL  string    `json:"status_url"`
+	ExpiresAt  time.Time `json:"expires_at"`
+	Kind       string    `json:"kind"`
+	DatabaseID string    `json:"database_id"`
+	Reason     string    `json:"reason"`
+}
+
 // ObsDatabaseMoveResponse acknowledges an operator's move of a native
 // managed database to another database node (ADR-1027). schedd parks the
 // database and records the move, then copies it in the background; poll

@@ -125,3 +125,46 @@ func TestDatabaseNodesRestart(t *testing.T) {
 		t.Fatalf("refused restart exit = %d, stderr = %q", code, stderr.String())
 	}
 }
+
+// An operator switches a production database over to its standby through
+// a durable intent, and sees a refusal when it has no synchronized one.
+func TestDatabaseNodesSwitchover(t *testing.T) {
+	const intentID = "44444444-4444-4444-4444-444444444444"
+	serve := func(status, errMsg string) *httptest.Server {
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch {
+			case r.Method == http.MethodPost && r.URL.Path == "/v1/admin/ops/databases/"+testDatabaseID+"/switchover":
+				if q := r.URL.Query(); q.Get("confirm") != "true" || q.Get("reason") != "node_maintenance" || r.Header.Get("Idempotency-Key") == "" {
+					t.Errorf("switchover request %s, idempotency key %q", r.URL.RawQuery, r.Header.Get("Idempotency-Key"))
+				}
+				writeTestJSON(w, http.StatusAccepted, api.ObsDatabaseSwitchoverResponse{OK: true, IntentID: intentID,
+					StatusURL: "/v1/admin/operator-intents/" + intentID, Kind: "database_switchover", DatabaseID: testDatabaseID})
+			case r.Method == http.MethodGet && r.URL.Path == "/v1/admin/operator-intents/"+intentID:
+				writeTestJSON(w, http.StatusOK, api.OperatorIntentResponse{IntentID: intentID, Status: status, Error: errMsg})
+			default:
+				http.NotFound(w, r)
+			}
+		}))
+	}
+	server := serve("succeeded", "")
+	defer server.Close()
+	installTestOperatorSession(t, server.URL, "opaque-session")
+	out, stderr, restore := captureOperatorIO()
+	defer restore()
+	if code := cmdDatabaseNodes([]string{"switchover", "--database", testDatabaseID, "--reason", "node_maintenance", "--timeout", "5s"}); code != 0 {
+		t.Fatalf("exit = %d, stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(out.String(), "switched "+testDatabaseID+" over") {
+		t.Fatalf("stdout = %q", out.String())
+	}
+	if code := cmdDatabaseNodes([]string{"switchover"}); code != 2 {
+		t.Fatalf("switchover without --database exit = %d, want 2", code)
+	}
+	refused := serve("failed", "database_switchover: dbsched: conflict: no synchronized standby to switch over to")
+	defer refused.Close()
+	installTestOperatorSession(t, refused.URL, "opaque-session")
+	stderr.Reset()
+	if code := switchoverDatabaseViaAPI(testDatabaseID, "node_maintenance", 5*time.Second); code != 1 || !strings.Contains(stderr.String(), "no synchronized standby") {
+		t.Fatalf("refused switchover exit = %d, stderr = %q", code, stderr.String())
+	}
+}

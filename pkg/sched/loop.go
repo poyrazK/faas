@@ -224,11 +224,13 @@ type Loop struct {
 	workflowOrch                      *WorkflowOrchestrator
 	workflowRetention                 *WorkflowRetention
 
-	// databaseMover starts database_move operator intents and
-	// databaseRestarter runs database_restart ones (nil: the database
-	// scheduler is not enabled).
+	// databaseMover starts database_move operator intents,
+	// databaseRestarter runs database_restart ones and databaseSwitcher
+	// database_switchover ones (nil: the database scheduler is not
+	// enabled).
 	databaseMover     DatabaseMover
 	databaseRestarter DatabaseRestarter
+	databaseSwitcher  DatabaseSwitcher
 }
 
 func NewLoop(pool *pgxpool.Pool, engine *Engine, log *slog.Logger) *Loop {
@@ -755,6 +757,14 @@ func (l *Loop) WithDatabaseMover(m DatabaseMover) *Loop {
 // those intents fail.
 func (l *Loop) WithDatabaseRestarter(r DatabaseRestarter) *Loop {
 	l.databaseRestarter = r
+	return l
+}
+
+// WithDatabaseSwitcher attaches the native database scheduler's planned
+// switchovers (ADR-1027) for database_switchover operator intents.
+// Without one those intents fail.
+func (l *Loop) WithDatabaseSwitcher(sw DatabaseSwitcher) *Loop {
+	l.databaseSwitcher = sw
 	return l
 }
 

@@ -226,7 +226,7 @@ var cliCommands = []cliCommand{
 		// durable operator intent schedd's database scheduler runs.
 		Name:    dispatchDatabaseNodes,
 		DocSlug: "database-nodes",
-		Short:   "Native managed-PostgreSQL database nodes (database-nodes move, restart)",
+		Short:   "Native managed-PostgreSQL database nodes (database-nodes move, restart, switchover)",
 		Subcommands: []cliSub{
 			{
 				Name:  "move",
@@ -245,6 +245,15 @@ var cliCommands = []cliCommand{
 					{Name: "database", Short: "the native database's id (required)"},
 					{Name: "reason", Short: "audit reason ([a-z0-9_]{1,64}; defaults to operator_database_restart)"},
 					{Name: "timeout", Short: "maximum wait for the restart (default 2m)"},
+				},
+			},
+			{
+				Name:  "switchover",
+				Short: "Hand a production-class native database to its synchronized standby, losing nothing (POST /v1/admin/ops/databases/{id}/switchover; durable operator intent)",
+				Flags: []cliFlag{
+					{Name: "database", Short: "the native database's id (required)"},
+					{Name: "reason", Short: "audit reason ([a-z0-9_]{1,64}; defaults to operator_database_switchover)"},
+					{Name: "timeout", Short: "maximum wait for the switchover (default 2m)"},
 				},
 			},
 		},

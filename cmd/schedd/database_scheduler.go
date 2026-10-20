@@ -198,3 +198,11 @@ func (m databaseMover) RestartDatabase(ctx context.Context, databaseID string) (
 	vm, err := m.sched.Restart(ctx, databaseID)
 	return string(vm.State), err
 }
+
+func (m databaseMover) SwitchoverDatabase(ctx context.Context, databaseID string) (string, error) {
+	if err := m.sched.Switchover(ctx, databaseID); err != nil {
+		return "", err
+	}
+	vm, err := m.sched.Get(ctx, databaseID)
+	return vm.NodeID, err
+}

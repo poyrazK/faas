@@ -1,6 +1,7 @@
-// adr: 1027 — the operator's in-place database restart only records a
-// durable database_restart intent after validating confirm, id and reason,
-// and both database operations are served from one registration.
+// adr: 1027 — the operator's in-place database restart and planned
+// switchover only record a durable intent after validating confirm, id
+// and reason, and every database operation is served from one
+// registration.
 package managedpg
 
 import (
@@ -61,7 +62,39 @@ func TestRestartRecordsADatabaseRestartIntent(t *testing.T) {
 	}
 }
 
-func TestOperationsRegisterServesMoveAndRestart(t *testing.T) {
+func TestSwitchoverRecordsADatabaseSwitchoverIntent(t *testing.T) {
+	intents, audit := &fakeIntents{}, &fakeAudit{}
+	sw := Switchover{AdminAllows: func(state.Account) (bool, *api.Problem) { return true, nil }, Intents: intents, Notifier: &fakeNotifier{}, Audit: audit}
+	serve := func(target string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodPost, target, nil)
+		r.SetPathValue("id", r.URL.Query().Get("_id"))
+		w := httptest.NewRecorder()
+		sw.Post(w, r, state.Account{ID: "operator-1"})
+		return w
+	}
+	w := serve("/switchover?confirm=true&reason=node_maintenance&_id=" + databaseID)
+	if w.Code != http.StatusAccepted || len(intents.got) != 1 {
+		t.Fatalf("status %d, intents %d: %s", w.Code, len(intents.got), w.Body.String())
+	}
+	if got := intents.got[0]; got.kind != state.OperatorIntentKindDatabaseSwitchover || got.target != databaseID || got.reason != "node_maintenance" || got.account != nil {
+		t.Fatalf("intent = %+v", got)
+	}
+	var resp api.ObsDatabaseSwitchoverResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil || resp.Kind != "database_switchover" || resp.DatabaseID != databaseID {
+		t.Fatalf("response = %+v, %v", resp, err)
+	}
+	if len(audit.kinds) != 1 || audit.kinds[0] != "operator.action.database_switchover" {
+		t.Fatalf("audit %v", audit.kinds)
+	}
+	if w := serve("/switchover?_id=" + databaseID); w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "switch over") || len(intents.got) != 1 {
+		t.Fatalf("no confirm: status %d, intents %d: %s", w.Code, len(intents.got), w.Body.String())
+	}
+	if w := serve("/switchover?confirm=true&_id=" + databaseID); w.Code != http.StatusAccepted || intents.got[1].reason != "operator_database_switchover" {
+		t.Fatalf("default reason: status %d, intent %+v", w.Code, intents.got)
+	}
+}
+
+func TestOperationsRegisterServesMoveRestartAndSwitchover(t *testing.T) {
 	intents := &fakeIntents{}
 	ops := Operations{AdminAllows: func(state.Account) (bool, *api.Problem) { return true, nil }, Intents: intents, Notifier: &fakeNotifier{}}
 	mux := http.NewServeMux()
@@ -72,14 +105,16 @@ func TestOperationsRegisterServesMoveAndRestart(t *testing.T) {
 	}
 	mutation := func(h httpkit.AccountHandler) httpkit.AccountHandler { wrapped++; return h }
 	ops.Register(mux, trace, auth, mutation)
-	for _, path := range []string{"/v1/admin/ops/databases/" + databaseID + "/move?confirm=true", "/v1/admin/ops/databases/" + databaseID + "/restart?confirm=true"} {
+	for _, path := range []string{"/v1/admin/ops/databases/" + databaseID + "/move?confirm=true", "/v1/admin/ops/databases/" + databaseID + "/restart?confirm=true",
+		"/v1/admin/ops/databases/" + databaseID + "/switchover?confirm=true"} {
 		w := httptest.NewRecorder()
 		mux.ServeHTTP(w, httptest.NewRequest(http.MethodPost, path, nil))
 		if w.Code != http.StatusAccepted {
 			t.Fatalf("%s: status %d: %s", path, w.Code, w.Body.String())
 		}
 	}
-	if wrapped != 2 || len(intents.got) != 2 || intents.got[0].kind != state.OperatorIntentKindDatabaseMove || intents.got[1].kind != state.OperatorIntentKindDatabaseRestart {
+	if wrapped != 3 || len(intents.got) != 3 || intents.got[0].kind != state.OperatorIntentKindDatabaseMove || intents.got[1].kind != state.OperatorIntentKindDatabaseRestart ||
+		intents.got[2].kind != state.OperatorIntentKindDatabaseSwitchover {
 		t.Fatalf("wrapped %d, intents %+v", wrapped, intents.got)
 	}
 }

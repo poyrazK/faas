@@ -182,6 +182,9 @@ func (l *Loop) processOperatorIntent(ctx context.Context, intent state.OperatorI
 	case state.OperatorIntentKindDatabaseRestart:
 		// A park and a wake: seconds, well inside the intent's claim.
 		err = l.restartDatabase(ctx, intent)
+	case state.OperatorIntentKindDatabaseSwitchover:
+		// A clean stop and a promotion: seconds too.
+		err = l.switchoverDatabase(ctx, intent)
 	default:
 		// Should be impossible — the schema CHECK rejects any
 		// unknown kind — but if we somehow receive one, stamp
@@ -302,6 +305,28 @@ func (l *Loop) restartDatabase(ctx context.Context, intent state.OperatorIntent)
 	}
 	l.log.Info("sched: operator_intent: database restarted", "intent_id", intent.ID,
 		"database_id", intent.TargetID, "state", after)
+	return nil
+}
+
+// DatabaseSwitcher hands a production-class native database to its
+// synchronized standby on purpose (ADR-1027): a running primary stops
+// cleanly and the standby is promoted, or a parked database's record
+// moves to the standby's node. It returns the node the database is on
+// afterwards.
+type DatabaseSwitcher interface {
+	SwitchoverDatabase(ctx context.Context, databaseID string) (string, error)
+}
+
+func (l *Loop) switchoverDatabase(ctx context.Context, intent state.OperatorIntent) error {
+	if l.databaseSwitcher == nil {
+		return errors.New("database_switchover: the database scheduler is not enabled on this schedd")
+	}
+	node, err := l.databaseSwitcher.SwitchoverDatabase(ctx, intent.TargetID)
+	if err != nil {
+		return fmt.Errorf("database_switchover: %w", err)
+	}
+	l.log.Info("sched: operator_intent: database switched over", "intent_id", intent.ID,
+		"database_id", intent.TargetID, "node_id", node)
 	return nil
 }
 
