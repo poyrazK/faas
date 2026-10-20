@@ -27,6 +27,10 @@ export type ReleaseApprovalPolicy = {
    * Whether the deployer's own approval counts.
    */
   allow_self_approval: boolean;
+  /**
+   * Notification channels told when a release waits, is approved or rejected, or times out.
+   */
+  notify_channels: Array<string>;
   updated_by: string;
   created_at: string;
   updated_at: string;

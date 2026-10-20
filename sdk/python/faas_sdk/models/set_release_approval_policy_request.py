@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -31,6 +31,9 @@ class SetReleaseApprovalPolicyRequest:
     """Default admin."""
     allow_self_approval: bool | Unset = UNSET
     """Default false; always true for an app outside an organization."""
+    notify_channels: list[str] | Unset = UNSET
+    """Names of Slack or email notification channels; PagerDuty channels are refused. Slack messages link to the
+    approval page."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -45,6 +48,10 @@ class SetReleaseApprovalPolicyRequest:
             approvers = self.approvers
 
         allow_self_approval = self.allow_self_approval
+
+        notify_channels: list[str] | Unset = UNSET
+        if not isinstance(self.notify_channels, Unset):
+            notify_channels = self.notify_channels
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -61,6 +68,8 @@ class SetReleaseApprovalPolicyRequest:
             field_dict["approvers"] = approvers
         if allow_self_approval is not UNSET:
             field_dict["allow_self_approval"] = allow_self_approval
+        if notify_channels is not UNSET:
+            field_dict["notify_channels"] = notify_channels
 
         return field_dict
 
@@ -82,12 +91,15 @@ class SetReleaseApprovalPolicyRequest:
 
         allow_self_approval = d.pop("allow_self_approval", UNSET)
 
+        notify_channels = cast(list[str], d.pop("notify_channels", UNSET))
+
         set_release_approval_policy_request = cls(
             required_approvals=required_approvals,
             after_stage=after_stage,
             timeout_minutes=timeout_minutes,
             approvers=approvers,
             allow_self_approval=allow_self_approval,
+            notify_channels=notify_channels,
         )
 
         set_release_approval_policy_request.additional_properties = d

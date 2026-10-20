@@ -23,5 +23,9 @@ export type SetReleaseApprovalPolicyRequest = {
    * Default false; always true for an app outside an organization.
    */
   allow_self_approval?: boolean;
+  /**
+   * Names of Slack or email notification channels; PagerDuty channels are refused. Slack messages link to the approval page.
+   */
+  notify_channels?: Array<string>;
 };
 
