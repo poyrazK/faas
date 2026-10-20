@@ -8,6 +8,8 @@ retention tick; every schedd reports the same values, so rules and panels read
 Dashboard: **faas Customer Operations (ADR-20261016123221)**
 (`deploy/grafana/customer-operations.json`).
 
+## Check telemetry freshness first
+
 ```sh
 curl -fsS http://127.0.0.1:9103/metrics | grep -E '^schedd_customer_operations'
 journalctl -u faas-schedd --since '30 minutes ago' --no-pager | grep -E 'operation (deadline sweep|telemetry)|deadline breach'
