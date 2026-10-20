@@ -55,6 +55,8 @@ var memDispatched = map[string]bool{
 	"DeploymentSidecarRAMs":                                   true,
 	"ListBillingWindowInstances":                              true,
 	"ListInstancesForApp":                                     true,
+	"AccountByID":                                             true,
+	"InstanceListByNodeForRecovery":                           true,
 	"ActiveComputeNodes":                                      true,
 	"ActivePrewarmFloor":                                      true,
 	"ActiveProjectReleaseSet":                                 true,
@@ -1236,6 +1238,24 @@ func (s *Mem) ListInstancesForApp(p0 context.Context, p1 string) ([]state.Instan
 		return o.ListInstancesForApp(p0, p1)
 	}
 	return s.MemStore.ListInstancesForApp(p0, p1)
+}
+
+func (s *Mem) AccountByID(p0 context.Context, p1 string) (state.Account, error) {
+	if o, ok := s.over.(interface {
+		AccountByID(context.Context, string) (state.Account, error)
+	}); ok {
+		return o.AccountByID(p0, p1)
+	}
+	return s.MemStore.AccountByID(p0, p1)
+}
+
+func (s *Mem) InstanceListByNodeForRecovery(p0 context.Context, p1 string) ([]state.RecoveryInstance, error) {
+	if o, ok := s.over.(interface {
+		InstanceListByNodeForRecovery(context.Context, string) ([]state.RecoveryInstance, error)
+	}); ok {
+		return o.InstanceListByNodeForRecovery(p0, p1)
+	}
+	return s.MemStore.InstanceListByNodeForRecovery(p0, p1)
 }
 
 // pgDispatched lists the methods Pg forwards to its override.
