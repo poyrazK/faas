@@ -479,6 +479,11 @@ completeness. It then finalizes the statement and, with `--export stripe`,
   tenant's statement, so those consumers are skipped in the app part of the
   run. Use `--sources app_consumers` to bill every consumer by app statement
   instead.
+- **Product Control customers.** With `--sources product_customers` (alone or
+  with the other sources), the run also bills each Product Control customer's
+  statement for the month, once per app. It is accepted only while Product
+  Control is enabled. See
+  [Product Control billing runs](ops/product-control.md#bill-every-customer-in-a-billing-run).
 - **Running a month again.** Late usage becomes adjustment statements.
   Statements already invoiced stay `up_to_date`. Every finalized statement of
   the month without a handoff is exported, oldest first. Statements with a

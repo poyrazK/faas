@@ -167,7 +167,7 @@ func (s *Service) advanceRun(ctx context.Context, store state.BillingRunStore) e
 }
 
 func (s *Service) processBatch(ctx context.Context, store state.BillingRunStore, run state.BillingRun, owner string) error {
-	if run.DiscoveredAt == nil {
+	if !run.Discovered() {
 		if err := store.DiscoverBillingRunItems(ctx, run.ID, owner, tenantSkipReason, s.now()); err != nil {
 			return fmt.Errorf("discover billing run items: %w", err)
 		}
@@ -197,9 +197,12 @@ func (s *Service) processItem(ctx context.Context, acct state.Account, run state
 	item.Attempts++
 	item.Reason = ""
 	var transient *api.Problem
-	if item.SourceKind == state.StatementSourceAppConsumer {
+	switch item.SourceKind {
+	case state.StatementSourceAppConsumer:
 		transient = s.billConsumer(ctx, acct, run, &item)
-	} else {
+	case state.StatementSourceProductControl:
+		transient = s.billProductCustomer(ctx, acct, run, &item)
+	default:
 		transient = s.billTenant(ctx, acct, run, &item)
 	}
 	if transient == nil {

@@ -167,6 +167,16 @@ type Querier interface {
 	BeginProjectEnvironmentClonePostgresCopyTargetCleanup(ctx context.Context, db DBTX, arg BeginProjectEnvironmentClonePostgresCopyTargetCleanupParams) (ProjectEnvironmentClonePostgresCopyTarget, error)
 	BeginProjectEnvironmentClonePostgresSnapshotCleanup(ctx context.Context, db DBTX, arg BeginProjectEnvironmentClonePostgresSnapshotCleanupParams) (ProjectEnvironmentClonePostgresSnapshot, error)
 	BeginProjectEnvironmentClonePostgresSnapshotRestoreCleanup(ctx context.Context, db DBTX, arg BeginProjectEnvironmentClonePostgresSnapshotRestoreCleanupParams) (ProjectEnvironmentClonePostgresSnapshotRestore, error)
+	// Product Control customers of billing runs (ADR-20261018212918 §4).
+	// Each assigned customer of an app with a published catalog that has receipts
+	// in the run's month.
+	BillingRunDiscoverProductItems(ctx context.Context, db DBTX, arg BillingRunDiscoverProductItemsParams) error
+	BillingRunDueProductItems(ctx context.Context, db DBTX, arg BillingRunDueProductItemsParams) ([]BillingRunDueProductItemsRow, error)
+	BillingRunMarkProductDiscovered(ctx context.Context, db DBTX, arg BillingRunMarkProductDiscoveredParams) error
+	BillingRunProductCounts(ctx context.Context, db DBTX, runIds []pgtype.UUID) ([]BillingRunProductCountsRow, error)
+	// Items are keyed product_control/<app>/<tenant>, after every other item kind.
+	BillingRunProductItems(ctx context.Context, db DBTX, arg BillingRunProductItemsParams) ([]BillingRunProductItemsRow, error)
+	BillingRunUpdateProductItem(ctx context.Context, db DBTX, arg BillingRunUpdateProductItemParams) (int64, error)
 	BindDeploymentRuntimeRelease(ctx context.Context, db DBTX, arg BindDeploymentRuntimeReleaseParams) (string, error)
 	BindEnvironmentGitOpsQueue(ctx context.Context, db DBTX, arg BindEnvironmentGitOpsQueueParams) (int64, error)
 	BindEnvironmentGitOpsResource(ctx context.Context, db DBTX, arg BindEnvironmentGitOpsResourceParams) (int64, error)

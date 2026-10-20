@@ -22,6 +22,16 @@ func (m *MemStore) SeedProductBillingDocumentForTest(accountID, appID string, do
 	m.productLocked().documents[doc.ID] = productMemoryDocument{account: accountID, app: appID, document: doc}
 }
 
+// SeedProductOperationForTest stores an operation's Product Control receipt
+// and, when the operation is terminal, its outcome, which a MemStore cannot
+// otherwise backdate into a closed month.
+func (m *MemStore) SeedProductOperationForTest(op Operation) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.insertProductOperationLocked(op)
+	m.settleProductOperationLocked(op)
+}
+
 func (m *MemStore) productBillingScopeLocked(scope ProductBillingScope) (api.ProductCatalog, error) {
 	if err := validateProductBillingScope(scope); err != nil {
 		return api.ProductCatalog{}, err

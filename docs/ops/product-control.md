@@ -1435,6 +1435,45 @@ past due) and `GET /v1/apps/{slug}/product/billing/overdue-holds`.
 - **Rollback.** With `FAAS_PRODUCT_CONTROL_ENABLED` off, holds are not
   recomputed or enforced, because no new Product Control starts are admitted.
 
+### Bill every customer in a billing run
+
+Instead of reviewing, finalizing and exporting each customer by hand, an
+account's month-end billing run
+([ADR-1503](../adr/1503-month-end-billing-runs.md)) can do it for every Product
+Control customer with the `product_customers` source:
+
+```sh
+gregale account billing-run start --month 2026-09 --sources product_customers --export stripe --wait
+gregale account billing-run show RUN_ID --outcome held
+gregale account billing-run schedule-set --sources app_consumers,platform_tenants,product_customers --export stripe
+```
+
+The source is accepted only while Product Control is enabled. It is never added
+by default, so existing runs and schedules keep billing what they did.
+
+- **Customers.** One item per app and assigned customer with receipts in the
+  month, for apps with a published catalog. A tenant that is a customer of two
+  apps gets two items. Items report `source_kind: product_control`, the app in
+  `app_id`, the customer in `platform_tenant_id` and the statement document in
+  `statement_id`.
+- **Steps.** The run reviews the month. It holds the customer when the month is
+  open (`product_billing_period_open`) or has runs with no recorded outcome
+  (`product_billing_unresolved`); waive or reconcile them, then start another run
+  for the month. Otherwise it finalizes with the review's hash (`--no-finalize`
+  only reviews, reported as `drafted`) and, with `--export`, exports the
+  statement like `statements export`. If the receipts change between the review
+  and finalizing, the item is retried.
+- **Already billed.** A statement that was already exported, or whose run is
+  re-done after the month was finalized, is `up_to_date`. A statement handed off
+  by hand is `skipped`. A zero total is never exported.
+- **Audit.** Finalizing and exporting emit the same `product.billing.finalized`
+  and `product.billing.invoice_exported` events as the endpoints.
+- **Rollback.** With Product Control disabled, pending Product Control items are
+  `held`; start another run for the month after enabling it. A previous apid
+  release ignores Product Control items. If one completes a run during a rolling
+  deploy before its Product Control items are billed, start another run for the
+  month.
+
 The customer portal's **Statements and credits** section reads a selected month
 and explicitly pages through finalized documents. It shows provisional charges
 when the month has not closed or been finalized, and separates finalized charges

@@ -12,7 +12,15 @@ import (
 
 func productBillingPGFixture(t *testing.T, s *PgStore) productBillingFixture {
 	t.Helper()
-	insert := func(op Operation) {
+	insert, settle := productBillingPGWriters(t, s)
+	return seedProductBilling(t, s, insert, settle)
+}
+
+// productBillingPGWriters insert and settle receipts in their own
+// transactions.
+func productBillingPGWriters(t *testing.T, s *PgStore) (insert, settle func(Operation)) {
+	t.Helper()
+	insert = func(op Operation) {
 		t.Helper()
 		tx, err := s.pool.Begin(t.Context())
 		if err != nil {
@@ -26,7 +34,7 @@ func productBillingPGFixture(t *testing.T, s *PgStore) productBillingFixture {
 			t.Fatal(err)
 		}
 	}
-	settle := func(op Operation) {
+	settle = func(op Operation) {
 		t.Helper()
 		tx, err := s.pool.Begin(t.Context())
 		if err != nil {
@@ -40,7 +48,14 @@ func productBillingPGFixture(t *testing.T, s *PgStore) productBillingFixture {
 			t.Fatal(err)
 		}
 	}
-	return seedProductBilling(t, s, insert, settle)
+	return insert, settle
+}
+
+// adr: 20261018212918
+func TestProductBillingRunItemsPostgres(t *testing.T) {
+	s := newPgStore(t)
+	insert, settle := productBillingPGWriters(t, s)
+	productBillingRunContract(t, s, seedProductBilling(t, s, insert, settle), insert, settle)
 }
 
 func TestProductControlBillingPostgres(t *testing.T) {

@@ -2090,6 +2090,26 @@
     "kind": "operational"
   },
   {
+    "table": "billing_run_product_items",
+    "columns": [
+      "amount_millicents",
+      "app_id",
+      "attempts",
+      "currency",
+      "document_id",
+      "exported_count",
+      "external_ref",
+      "invoice_id",
+      "next_attempt_at",
+      "outcome",
+      "reason",
+      "run_id",
+      "tenant_id",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "billing_run_schedules",
     "columns": [
       "account_id",
@@ -2122,6 +2142,7 @@
       "notified_at",
       "period_end",
       "period_start",
+      "product_discovered_at",
       "sources",
       "started_at",
       "status",

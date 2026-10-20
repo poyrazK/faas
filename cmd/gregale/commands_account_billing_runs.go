@@ -195,7 +195,12 @@ func billingRunShow(ctx context.Context, client *api.Client, runID, outcome stri
 		if item.AmountMillicents != nil {
 			amount = formatMillicents(item.Currency, *item.AmountMillicents)
 		}
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", item.SourceKind, item.ExternalRef, item.Outcome, amount,
+		customer := item.ExternalRef
+		if item.SourceKind == "product_control" && len(item.AppID) >= 8 {
+			// A tenant is a customer of each Product Control app separately.
+			customer += " · app " + item.AppID[:8]
+		}
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", item.SourceKind, customer, item.Outcome, amount,
 			dashIfEmpty(item.InvoiceID), dashIfEmpty(item.PaymentStatus), item.Reason)
 	}
 	_ = tw.Flush()

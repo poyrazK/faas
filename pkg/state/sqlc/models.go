@@ -1813,23 +1813,24 @@ type BillingResourceAccount struct {
 
 // Month-end billing runs (ADR-1301): one ended UTC month billed for every customer with billable usage; worker-leased.
 type BillingRun struct {
-	ID             pgtype.UUID
-	AccountID      pgtype.UUID
-	PeriodStart    pgtype.Timestamptz
-	PeriodEnd      pgtype.Timestamptz
-	Sources        []string
-	Finalize       bool
-	ExportProvider string
-	HoldOnGaps     bool
-	Trigger        string
-	Status         string
-	DiscoveredAt   pgtype.Timestamptz
-	LeaseOwner     pgtype.Text
-	LeaseUntil     pgtype.Timestamptz
-	CreatedAt      pgtype.Timestamptz
-	StartedAt      pgtype.Timestamptz
-	CompletedAt    pgtype.Timestamptz
-	NotifiedAt     pgtype.Timestamptz
+	ID                  pgtype.UUID
+	AccountID           pgtype.UUID
+	PeriodStart         pgtype.Timestamptz
+	PeriodEnd           pgtype.Timestamptz
+	Sources             []string
+	Finalize            bool
+	ExportProvider      string
+	HoldOnGaps          bool
+	Trigger             string
+	Status              string
+	DiscoveredAt        pgtype.Timestamptz
+	LeaseOwner          pgtype.Text
+	LeaseUntil          pgtype.Timestamptz
+	CreatedAt           pgtype.Timestamptz
+	StartedAt           pgtype.Timestamptz
+	CompletedAt         pgtype.Timestamptz
+	NotifiedAt          pgtype.Timestamptz
+	ProductDiscoveredAt pgtype.Timestamptz
 }
 
 // One customer of a billing run: the statement drafted, finalized or exported for it, or why it was held, skipped or failed.
@@ -1845,6 +1846,24 @@ type BillingRunItem struct {
 	Currency         pgtype.Text
 	AmountMillicents pgtype.Int8
 	Completeness     pgtype.Text
+	InvoiceID        pgtype.Text
+	ExportedCount    int32
+	Reason           pgtype.Text
+	Attempts         int32
+	NextAttemptAt    pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+}
+
+// One Product Control customer (app and platform tenant) of a billing run (ADR-20261018212918).
+type BillingRunProductItem struct {
+	RunID            pgtype.UUID
+	AppID            pgtype.UUID
+	TenantID         pgtype.UUID
+	ExternalRef      string
+	Outcome          string
+	DocumentID       pgtype.UUID
+	Currency         pgtype.Text
+	AmountMillicents pgtype.Int8
 	InvoiceID        pgtype.Text
 	ExportedCount    int32
 	Reason           pgtype.Text
