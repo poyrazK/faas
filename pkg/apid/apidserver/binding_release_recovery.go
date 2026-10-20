@@ -154,6 +154,9 @@ func (s *server) recoverPinnedCanaryRollout(w http.ResponseWriter, r *http.Reque
 			"action": "abort", "reason": req.Reason, "deployment_audit": auditID, "actor": acct.ID,
 		})
 	}
+	if isInternalSafeDeployRequest(r) {
+		s.freezeAfterAutomaticRollback(ctx, acct.ID, app, updated.ID, automaticRollbackCause("circuit_breaker", updated))
+	}
 	s.notifyCanaryTraffic(r, app, updated)
 	writeJSON(w, http.StatusOK, api.RolloutTransitionResponse{Deployment: s.deploymentResponse(ctx, updated, app), AuditID: int64ToAuditIDString(auditID), Recovery: receipt})
 }

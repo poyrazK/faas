@@ -1611,6 +1611,13 @@ remain open; production admission is disabled.
   (#4719): project apply stages a Compose-declared build service with its
   declared context as the archive root. The release-gate e2e test pins both
   that shape and the whole-repository shape.
+- **Compose build arguments and target.**
+  [ADR-20261019142544](adr/20261019142544-compose-build-args-and-target.md)
+  (2026-10-19): source-built Compose services pass `build.args` and
+  `build.target` to their Dockerfile build, captured per deployment, keyed into
+  the artifact cache and acknowledged by the builder guest.
+  - Unit tests pass. A native multi-stage build (with and without a target,
+    and a changed argument on identical source) has not run.
 - **No native run recorded.** The `containers` native lane has no recorded
   passing run; [container qualification](container-qualification.md) remains
   the coverage plan.

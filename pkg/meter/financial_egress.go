@@ -52,7 +52,8 @@ func (p *Pusher) checkFundedEgressDelivery(ctx context.Context, acct state.Accou
 	var ceiling financial.EgressBook
 	for _, row := range prices {
 		rate := row.Price
-		if rate.Meter != "egress" {
+		// Pre-switch snapshots in the legacy currency cannot bound a USD rate.
+		if rate.Meter != "egress" || rate.Currency != financial.BillingCurrency {
 			continue
 		}
 		if ceiling.RateQuantity == 0 || !financial.EgressContractFits(rate, ceiling) {

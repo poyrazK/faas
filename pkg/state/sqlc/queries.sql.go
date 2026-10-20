@@ -1555,7 +1555,9 @@ SELECT max(boundary.changed_at)::timestamptz AS changed_at FROM (
     SELECT changed_at FROM app_runtime_config_changes WHERE app_id = $1::uuid
     UNION ALL
     SELECT changed_at FROM app_runtime_config_scope_changes WHERE app_id = $1::uuid
-        AND scope IN ('default', $2::text)
+        AND (scope IN ('default', $2::text)
+            -- ADR-1136: default-scope deployments read production's project configuration.
+            OR ($2::text = 'default' AND scope = 'default:project-config'))
 ) AS boundary
 `
 
@@ -7107,6 +7109,8 @@ SELECT
  OR EXISTS(SELECT 1 FROM deployment_runtime_environment_owners p WHERE p.environment_id::text=($3::uuid)::text)
  OR EXISTS(SELECT 1 FROM environment_management_overrides p WHERE p.environment_id::text=($3::uuid)::text)
  OR EXISTS(SELECT 1 FROM exclusive_work_keys p WHERE p.environment_id::text=($3::uuid)::text)
+ OR EXISTS(SELECT 1 FROM financial_budget_stop_targets p WHERE p.environment_id=($3::uuid)::text AND p.state IN ('requested', 'draining'))
+ OR EXISTS(SELECT 1 FROM financial_preview_command_runtimes p WHERE p.environment_id::text=($3::uuid)::text AND p.phase <> 'retired')
  OR EXISTS(SELECT 1 FROM queue_bindings p WHERE p.environment_id::text=($3::uuid)::text OR (p.app_id IN (SELECT id FROM scoped_apps) AND p.deployment_scope=$1::text))
  OR EXISTS(SELECT 1 FROM triggers p WHERE p.queue_binding_environment_id=$3::uuid OR (p.app_id IN (SELECT id FROM scoped_apps) AND p.queue_binding_scope=$1::text))
  OR EXISTS(SELECT 1 FROM runtime_instance_config_proofs p JOIN instances i ON i.id=p.instance_id WHERE p.environment_id::text=($3::uuid)::text OR (i.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$1::text))
@@ -69230,7 +69234,9 @@ SELECT (jsonb_build_object(
     'deployment_runtime_scan_current_deployment_id_fkey', (SELECT count(*) FROM deployment_runtime_scan_current WHERE deployment_id = $1::uuid),
     'deployment_runtime_scans_deployment_id_fkey', (SELECT count(*) FROM deployment_runtime_scans WHERE deployment_id = $1::uuid),
     'source_build_rootfs_current_deployment_id_fkey', (SELECT count(*) FROM source_build_rootfs_current WHERE deployment_id = $1::uuid),
-    'source_build_rootfs_deployment_id_fkey', (SELECT count(*) FROM source_build_rootfs WHERE deployment_id = $1::uuid)
+    'source_build_rootfs_deployment_id_fkey', (SELECT count(*) FROM source_build_rootfs WHERE deployment_id = $1::uuid),
+    -- Preview command runtimes (financial previews) hold a deployment while preparing or active.
+    'financial_preview_command_runtimes_deployment_id_fkey', (SELECT count(*) FROM financial_preview_command_runtimes WHERE deployment_id = $1::uuid AND phase <> 'retired')
 ))::jsonb AS borrowers
 `
 
@@ -86584,6 +86590,53 @@ type StampDeadLetterEventReplayParams struct {
 func (q *Queries) StampDeadLetterEventReplay(ctx context.Context, db DBTX, arg StampDeadLetterEventReplayParams) error {
 	_, err := db.Exec(ctx, stampDeadLetterEventReplay, arg.ReplayedAt, arg.ID)
 	return err
+}
+
+const stampDefaultInvocationRetention = `-- name: StampDefaultInvocationRetention :execrows
+WITH plan_retention AS (
+    SELECT unnest($1::text[]) AS plan, unnest($2::bigint[]) AS seconds
+), batch AS (
+    SELECT i.id, coalesce(i.completed_at, i.created_at) AS settled_at,
+           CASE WHEN i.state IN ('failed', 'dead_letter') THEN greatest(r.seconds, $3::bigint)
+                ELSE r.seconds END AS seconds
+    FROM invocations i
+    LEFT JOIN accounts a ON a.id = i.account_id
+    LEFT JOIN orgs o ON o.id = i.account_id AND NOT o.personal_org AND o.resource_ownership_enabled
+    JOIN plan_retention r ON r.plan = coalesce(a.plan, o.plan)
+    WHERE i.result_retention_until IS NULL
+      AND i.state IN ('completed', 'failed', 'dead_letter', 'cancelled', 'superseded', 'expired')
+    ORDER BY i.created_at
+    LIMIT $4::integer
+    FOR UPDATE OF i SKIP LOCKED
+)
+UPDATE invocations
+SET result_retention_until = batch.settled_at + make_interval(secs => batch.seconds)
+FROM batch
+WHERE invocations.id = batch.id
+`
+
+type StampDefaultInvocationRetentionParams struct {
+	Plans               []string
+	RetentionSeconds    []int64
+	FailureFloorSeconds int64
+	BatchLimit          int32
+}
+
+// ADR 20261019104819: finished rows whose producer set no horizon get the
+// plan default from pkg/api/limits.go. Failed and dead-lettered rows keep at
+// least the failure floor so DLQ replay and execution recovery still find
+// them. The reaper prunes stamped rows once they are due.
+func (q *Queries) StampDefaultInvocationRetention(ctx context.Context, db DBTX, arg StampDefaultInvocationRetentionParams) (int64, error) {
+	result, err := db.Exec(ctx, stampDefaultInvocationRetention,
+		arg.Plans,
+		arg.RetentionSeconds,
+		arg.FailureFloorSeconds,
+		arg.BatchLimit,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const stampDeploymentRuntimeBase = `-- name: StampDeploymentRuntimeBase :exec

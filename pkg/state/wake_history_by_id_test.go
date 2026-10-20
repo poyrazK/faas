@@ -1,5 +1,5 @@
 // adr: 1638
-package state
+package state_test
 
 import (
 	"encoding/json"
@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // The trace view reads specific wakes: one record per wake (its first
@@ -17,17 +18,17 @@ import (
 func TestWakeHistoryByWakeIDsStores(t *testing.T) {
 	for _, backend := range []string{"mem", "postgres"} {
 		t.Run(backend, func(t *testing.T) {
-			mem := NewMemStore()
-			var s WakeHistoryByWakeIDsStore = mem
+			mem := state.NewMemStore()
+			var s state.WakeHistoryByWakeIDsStore = mem
 			at := time.Date(2026, 10, 19, 10, 0, 0, 123456000, time.UTC)
 			app, other := uuid.NewString(), uuid.NewString()
 			seed := func(id, appID, wake string, when time.Time) {
-				mem.instances[id] = Instance{ID: id, AppID: appID, WakeID: wake, State: "running", StartedAt: when}
+				(*mem.Instances())[id] = state.Instance{ID: id, AppID: appID, WakeID: wake, State: "running", StartedAt: when}
 			}
 			appendEvent := mem.AppendEventAt
 			if backend == "postgres" {
 				pool := pgtest.OpenMigrated(t)
-				pg := NewPgStore(pool)
+				pg := state.NewPgStore(pool)
 				s = pg
 				appendEvent = pg.AppendEventAt
 				acct, err := pg.CreateAccount(t.Context(), "history-by-wake@example.test", api.PlanPro)
@@ -35,7 +36,7 @@ func TestWakeHistoryByWakeIDsStores(t *testing.T) {
 					t.Fatal(err)
 				}
 				for _, p := range []*string{&app, &other} {
-					a, err := pg.CreateApp(t.Context(), App{AccountID: acct.ID, Slug: "history-by-wake-" + uuid.NewString()[:8], Status: AppActive})
+					a, err := pg.CreateApp(t.Context(), state.App{AccountID: acct.ID, Slug: "history-by-wake-" + uuid.NewString()[:8], Status: state.AppActive})
 					if err != nil {
 						t.Fatal(err)
 					}

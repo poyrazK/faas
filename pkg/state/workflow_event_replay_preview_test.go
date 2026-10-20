@@ -1,4 +1,4 @@
-package state
+package state_test
 
 // adr: 793
 
@@ -8,12 +8,13 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestWorkflowEventReplayPreviewIsReadOnlyBoundedAndDeduplicated(t *testing.T) {
-	workflowScheduleStores(t, func(t *testing.T, store Store) {
-		app, firstWork, claim := seedOwnedWorkflowRouting(t, store, 150)
-		var firstEvent publishedEventIdentity
+	state.WorkflowScheduleStores(t, func(t *testing.T, store state.Store) {
+		app, firstWork, claim := state.SeedOwnedWorkflowRouting(t, store, 150)
+		var firstEvent state.PublishedEventIdentity
 		if err := json.Unmarshal(firstWork.Payload, &firstEvent); err != nil {
 			t.Fatal(err)
 		}
@@ -22,7 +23,7 @@ func TestWorkflowEventReplayPreviewIsReadOnlyBoundedAndDeduplicated(t *testing.T
 			t.Helper()
 			payload, err := json.Marshal(map[string]any{
 				"specversion": "1.0", "id": id, "source": source, "type": "invoice.paid",
-				"accountid": canonicalMemUUID(app.AccountID), "datacontenttype": "application/json",
+				"accountid": state.CanonicalMemUUID(app.AccountID), "datacontenttype": "application/json",
 				"time": time.Now().UTC(), "data": map[string]any{"amount": amount},
 			})
 			if err != nil {
@@ -35,8 +36,8 @@ func TestWorkflowEventReplayPreviewIsReadOnlyBoundedAndDeduplicated(t *testing.T
 		publish("second-match", "billing.stripe", 200)
 		publish("not-captured", "shipping.us", 200)
 
-		preview := store.(WorkflowEventReplayPreviewStore)
-		q := WorkflowEventReplayPreviewQuery{AppID: app.ID, WorkflowName: "paid", WorkflowEventReplayPreviewOptions: api.WorkflowEventReplayPreviewOptions{
+		preview := store.(state.WorkflowEventReplayPreviewStore)
+		q := state.WorkflowEventReplayPreviewQuery{AppID: app.ID, WorkflowName: "paid", WorkflowEventReplayPreviewOptions: api.WorkflowEventReplayPreviewOptions{
 			From: time.Now().UTC().Add(-time.Hour), Until: time.Now().UTC().Add(time.Hour), Limit: 1,
 		}}
 		readAll := func() (api.WorkflowEventReplayPreviewResponse, []api.WorkflowEventReplayPreviewMatch) {
@@ -77,11 +78,11 @@ func TestWorkflowEventReplayPreviewIsReadOnlyBoundedAndDeduplicated(t *testing.T
 				t.Fatalf("unexpected potential admission: %+v", match)
 			}
 		}
-		if runs, _, err := store.ListWorkflowRuns(ctx, app.ID, ListWorkflowRunsOpts{Limit: 10}); err != nil || len(runs) != 0 {
+		if runs, _, err := store.ListWorkflowRuns(ctx, app.ID, state.ListWorkflowRunsOpts{Limit: 10}); err != nil || len(runs) != 0 {
 			t.Fatalf("preview created workflow runs: %+v %v", runs, err)
 		}
 
-		admitted, err := store.(EventWorkflowRecipientAdmissionStore).AdmitEventWorkflowRecipient(ctx, claim)
+		admitted, err := store.(state.EventWorkflowRecipientAdmissionStore).AdmitEventWorkflowRecipient(ctx, claim)
 		if err != nil || !admitted.RunCreated || admitted.RunID == "" {
 			t.Fatalf("admission=%+v err=%v", admitted, err)
 		}
@@ -95,11 +96,11 @@ func TestWorkflowEventReplayPreviewIsReadOnlyBoundedAndDeduplicated(t *testing.T
 				admittedMatch = &matches[i]
 			}
 		}
-		if admittedMatch == nil || !admittedMatch.AdmissionRecorded || admittedMatch.WorkflowRunID != admitted.RunID || admittedMatch.WorkflowRunStatus != WorkflowRunStatusPending {
+		if admittedMatch == nil || !admittedMatch.AdmissionRecorded || admittedMatch.WorkflowRunID != admitted.RunID || admittedMatch.WorkflowRunStatus != state.WorkflowRunStatusPending {
 			t.Fatalf("admitted match=%+v all=%+v", admittedMatch, matches)
 		}
 
-		if err := store.MarkWorkflowRunStatus(ctx, admitted.RunID, WorkflowRunStatusSucceeded, nil, nil); err != nil {
+		if err := store.MarkWorkflowRunStatus(ctx, admitted.RunID, state.WorkflowRunStatusSucceeded, nil, nil); err != nil {
 			t.Fatal(err)
 		}
 		if n, err := store.SweepExpiredWorkflowRuns(ctx, 0); err != nil || n != 1 {

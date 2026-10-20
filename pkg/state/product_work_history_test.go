@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -11,14 +11,15 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 type productWorkHistoryTestStore interface {
-	productRunDetailsTestStore
-	ProductWorkHistoryStore
+	state.ProductRunDetailsTestStore
+	state.ProductWorkHistoryStore
 }
 
-func readWorkHistory(t *testing.T, s ProductWorkHistoryStore, scope ProductWorkHistoryScope, f api.ProductWorkHistoryFilter, cursor string) api.ProductWorkHistoryPage {
+func readWorkHistory(t *testing.T, s state.ProductWorkHistoryStore, scope state.ProductWorkHistoryScope, f api.ProductWorkHistoryFilter, cursor string) api.ProductWorkHistoryPage {
 	t.Helper()
 	p, err := s.ListProductWorkHistory(t.Context(), scope, f, cursor)
 	if err != nil {
@@ -28,39 +29,47 @@ func readWorkHistory(t *testing.T, s ProductWorkHistoryStore, scope ProductWorkH
 }
 
 func TestProductControlWorkHistoryMemory(t *testing.T) {
-	s := NewMemStore()
-	insert := func(op Operation) { s.mu.Lock(); defer s.mu.Unlock(); s.insertProductOperationLocked(op) }
-	settle := func(op Operation) { s.mu.Lock(); defer s.mu.Unlock(); s.settleProductOperationLocked(op) }
-	productWorkHistoryContract(t, s, seedProductBilling(t, s, insert, settle), insert, settle)
+	s := state.NewMemStore()
+	insert := func(op state.Operation) {
+		(*s.Mu()).Lock()
+		defer (*s.Mu()).Unlock()
+		s.InsertProductOperationLocked(op)
+	}
+	settle := func(op state.Operation) {
+		(*s.Mu()).Lock()
+		defer (*s.Mu()).Unlock()
+		s.SettleProductOperationLocked(op)
+	}
+	productWorkHistoryContract(t, s, state.SeedProductBilling(t, s, insert, settle), insert, settle)
 }
 
-func productWorkHistoryContract(t *testing.T, s productWorkHistoryTestStore, f productBillingFixture, insert, settle func(Operation)) {
+func productWorkHistoryContract(t *testing.T, s productWorkHistoryTestStore, f state.ProductBillingFixture, insert, settle func(state.Operation)) {
 	t.Helper()
 	ctx := t.Context()
-	auth, err := s.CreateApp(ctx, App{AccountID: f.scope.AccountID, Slug: "history-auth-" + uuid.NewString()[:8]})
+	auth, err := s.CreateApp(ctx, state.App{AccountID: (*f.Scope()).AccountID, Slug: "history-auth-" + uuid.NewString()[:8]})
 	if err != nil {
 		t.Fatal(err)
 	}
-	catalog, err := s.GetProductCatalog(ctx, f.scope.AccountID, f.scope.AppID, "")
+	catalog, err := s.GetProductCatalog(ctx, (*f.Scope()).AccountID, (*f.Scope()).AppID, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	spec := catalog.Spec
 	spec.AuthApp = auth.Slug
 	spec.Access = &api.ProductAccessPolicy{Roles: map[string][]api.ProductPermission{"viewer": {api.ProductPermissionViewWork}, "billing": {api.ProductPermissionViewBilling}, "manager": {api.ProductPermissionManagePlan}}}
-	if _, err = s.PutProductCatalog(ctx, f.scope.AccountID, f.scope.AppID, spec); err != nil {
+	if _, err = s.PutProductCatalog(ctx, (*f.Scope()).AccountID, (*f.Scope()).AppID, spec); err != nil {
 		t.Fatal(err)
 	}
 	org := uuid.NewString()
-	customer := api.ProductCustomer{TenantID: f.scope.TenantID, Plan: "pro", AuthOrganizationID: org}
-	if _, err = s.SetProductCustomer(ctx, f.scope.AccountID, f.scope.AppID, customer); err != nil {
+	customer := api.ProductCustomer{TenantID: (*f.Scope()).TenantID, Plan: "pro", AuthOrganizationID: org}
+	if _, err = s.SetProductCustomer(ctx, (*f.Scope()).AccountID, (*f.Scope()).AppID, customer); err != nil {
 		t.Fatal(err)
 	}
-	scope := ProductWorkHistoryScope{ProductPlanScope{AccountID: f.scope.AccountID, AppID: f.scope.AppID, TenantID: f.scope.TenantID, AuthApp: auth.Slug, AuthAppID: auth.ID, OrganizationID: org, Role: "viewer"}}
-	at := f.ops["success"].ProductControl.AdmittedAt
+	scope := state.ProductWorkHistoryScope{state.ProductPlanScope{AccountID: (*f.Scope()).AccountID, AppID: (*f.Scope()).AppID, TenantID: (*f.Scope()).TenantID, AuthApp: auth.Slug, AuthAppID: auth.ID, OrganizationID: org, Role: "viewer"}}
+	at := (*f.Ops())["success"].ProductControl.AdmittedAt
 	oldIDs := map[string]bool{}
 	for i := 0; i < 66; i++ {
-		op := cloneOperation(f.ops["success"])
+		op := state.CloneOperation((*f.Ops())["success"])
 		op.ID = uuid.NewString()
 		op.ProductControl.Feature = "retired-feature"
 		op.ProductControl.Plan = "retired-plan"
@@ -74,7 +83,7 @@ func productWorkHistoryContract(t *testing.T, s productWorkHistoryTestStore, f p
 		settle(op)
 		oldIDs[op.ID] = true
 	}
-	before, err := s.ReviewProductBilling(ctx, f.scope)
+	before, err := s.ReviewProductBilling(ctx, (*f.Scope()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +100,7 @@ func productWorkHistoryContract(t *testing.T, s productWorkHistoryTestStore, f p
 				t.Fatal("duplicate", e.OperationID)
 			}
 			seen[e.OperationID] = true
-			if e.OperationID == f.ops["bob"].ID || e.OperationID == f.ops["carol"].ID {
+			if e.OperationID == (*f.Ops())["bob"].ID || e.OperationID == (*f.Ops())["carol"].ID {
 				t.Fatal("foreign receipt leaked")
 			}
 		}
@@ -113,7 +122,7 @@ func productWorkHistoryContract(t *testing.T, s productWorkHistoryTestStore, f p
 	if len(last.Entries) != 1 || last.Entries[0].Plan != "retired-plan" || last.Entries[0].Outcome.ResultAvailable || last.Entries[0].Outcome.DetailsAvailable {
 		t.Fatal("inclusive dates or retained outcomes lost", last)
 	}
-	id := f.ops["success"].ID
+	id := (*f.Ops())["success"].ID
 	byID := readWorkHistory(t, s, scope, api.ProductWorkHistoryFilter{OperationID: id}, "")
 	if len(byID.Entries) != 1 || byID.Entries[0].Plan != "starter" || byID.Entries[0].Outcome.State != "succeeded" {
 		t.Fatal(byID)
@@ -122,7 +131,7 @@ func productWorkHistoryContract(t *testing.T, s productWorkHistoryTestStore, f p
 	if readWorkHistory(t, s, scope, api.ProductWorkHistoryFilter{OperationID: id}, "").Entries[0].Outcome.ResolvedAt.IsZero() {
 		t.Fatal("aliased outcome")
 	}
-	for _, ref := range []string{uuid.NewString(), f.ops["bob"].ID} {
+	for _, ref := range []string{uuid.NewString(), (*f.Ops())["bob"].ID} {
 		if p := readWorkHistory(t, s, scope, api.ProductWorkHistoryFilter{OperationID: ref}, ""); len(p.Entries) != 0 || p.NextCursor != "" {
 			t.Fatal("foreign/missing reference leaked", p)
 		}
@@ -148,17 +157,17 @@ func productWorkHistoryContract(t *testing.T, s productWorkHistoryTestStore, f p
 		}
 	}
 	for _, bad := range []api.ProductWorkHistoryFilter{{State: "expired"}, {Feature: "../x"}, {OperationID: "bad"}, {From: "2026-02-30"}, {From: "2026-10-02", Through: "2026-10-01"}} {
-		if _, err = s.ListProductWorkHistory(ctx, scope, bad, ""); !errors.Is(err, ErrInvalidArgument) {
+		if _, err = s.ListProductWorkHistory(ctx, scope, bad, ""); !errors.Is(err, state.ErrInvalidArgument) {
 			t.Fatal(err)
 		}
 	}
-	if _, err = s.ListProductWorkHistory(ctx, scope, api.ProductWorkHistoryFilter{State: "failed"}, first.NextCursor); !errors.Is(err, ErrInvalidArgument) {
+	if _, err = s.ListProductWorkHistory(ctx, scope, api.ProductWorkHistoryFilter{State: "failed"}, first.NextCursor); !errors.Is(err, state.ErrInvalidArgument) {
 		t.Fatal("cursor changed filter accepted", err)
 	}
 	for _, role := range []string{"billing", "manager", "unknown"} {
 		sc := scope
 		sc.Role = role
-		if _, err = s.ListProductWorkHistory(ctx, sc, all, ""); !errors.Is(err, ErrProductAccess) {
+		if _, err = s.ListProductWorkHistory(ctx, sc, all, ""); !errors.Is(err, state.ErrProductAccess) {
 			t.Fatal("role read history", role, err)
 		}
 	}
@@ -170,7 +179,7 @@ func productWorkHistoryContract(t *testing.T, s productWorkHistoryTestStore, f p
 		case "app":
 			sc.AppID = uuid.NewString()
 		case "tenant":
-			sc.TenantID = f.other.TenantID
+			sc.TenantID = (*f.Other()).TenantID
 		case "auth":
 			sc.AuthAppID = uuid.NewString()
 		case "organization":
@@ -190,10 +199,10 @@ func productWorkHistoryContract(t *testing.T, s productWorkHistoryTestStore, f p
 	if _, err = s.PutProductCatalog(ctx, scope.AccountID, scope.AppID, spec); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.ListProductWorkHistory(ctx, scope, all, first.NextCursor); !errors.Is(err, ErrInvalidArgument) {
+	if _, err = s.ListProductWorkHistory(ctx, scope, all, first.NextCursor); !errors.Is(err, state.ErrInvalidArgument) {
 		t.Fatal("stale policy cursor accepted", err)
 	}
-	after, err := s.ReviewProductBilling(ctx, f.scope)
+	after, err := s.ReviewProductBilling(ctx, (*f.Scope()))
 	if err != nil || !reflect.DeepEqual(before, after) {
 		t.Fatal("read mutated billing", err)
 	}
@@ -206,32 +215,32 @@ func productWorkHistoryContract(t *testing.T, s productWorkHistoryTestStore, f p
 	if _, err = s.PutProductCatalog(ctx, scope.AccountID, scope.AppID, spec); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.ListProductWorkHistory(ctx, scope, all, ""); !errors.Is(err, ErrProductAccess) {
+	if _, err = s.ListProductWorkHistory(ctx, scope, all, ""); !errors.Is(err, state.ErrProductAccess) {
 		t.Fatal("stale role authority accepted", err)
 	}
 }
 
 func TestProductControlWorkHistoryLiveMemory(t *testing.T) {
-	s := NewMemStore()
-	persist := func(op Operation, settled bool) {
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		s.operationMemoryLocked().operations[op.ID] = cloneOperation(op)
+	s := state.NewMemStore()
+	persist := func(op state.Operation, settled bool) {
+		(*s.Mu()).Lock()
+		defer (*s.Mu()).Unlock()
+		(*s.OperationMemoryLocked().Operations())[op.ID] = state.CloneOperation(op)
 		if settled {
-			s.settleProductOperationLocked(op)
+			s.SettleProductOperationLocked(op)
 		}
 	}
 	productWorkHistoryLiveContract(t, s, persist)
 }
-func productWorkHistoryLiveContract(t *testing.T, s productWorkHistoryTestStore, persist func(Operation, bool)) {
+func productWorkHistoryLiveContract(t *testing.T, s productWorkHistoryTestStore, persist func(state.Operation, bool)) {
 	t.Helper()
-	f := helpFixture(t.Context(), t, s)
-	f.admission.IdempotencyKey = uuid.NewString()
-	op, _, err := s.AdmitOperation(t.Context(), f.admission)
+	f := state.HelpFixture(t.Context(), t, s)
+	(*f.Admission()).IdempotencyKey = uuid.NewString()
+	op, _, err := s.AdmitOperation(t.Context(), (*f.Admission()))
 	if err != nil {
 		t.Fatal(err)
 	}
-	scope := ProductWorkHistoryScope{f.scope}
+	scope := state.ProductWorkHistoryScope{(*f.Scope())}
 	scope.Role = "viewer"
 	check := func(state string, details, result bool) {
 		t.Helper()

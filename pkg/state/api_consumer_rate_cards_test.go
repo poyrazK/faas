@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -7,10 +7,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestMemStoreAPIConsumerRateCardsVersionedAndSorted(t *testing.T) {
-	store := NewMemStore()
+	store := state.NewMemStore()
 	accountID, appID := uuid.NewString(), uuid.NewString()
 	newer := time.Date(2026, 9, 12, 12, 1, 0, 0, time.UTC)
 	older := newer.Add(-time.Minute)
@@ -18,13 +19,13 @@ func TestMemStoreAPIConsumerRateCardsVersionedAndSorted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create newer rate card: %v", err)
 	}
-	if card.Currency != "EUR" || card.Unit != APIConsumerRateCardUnitRequest {
+	if card.Currency != "EUR" || card.Unit != state.APIConsumerRateCardUnitRequest {
 		t.Fatalf("normalized card = %+v", card)
 	}
 	if _, err := store.CreateAPIConsumerRateCard(context.Background(), accountID, appID, "EUR", 500, older); err != nil {
 		t.Fatalf("create older rate card: %v", err)
 	}
-	if _, err := store.CreateAPIConsumerRateCard(context.Background(), accountID, appID, "EUR", 750, older); !errors.Is(err, ErrConflict) {
+	if _, err := store.CreateAPIConsumerRateCard(context.Background(), accountID, appID, "EUR", 750, older); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("duplicate effective_from = %v, want ErrConflict", err)
 	}
 	cards, err := store.ListAPIConsumerRateCardsForApp(context.Background(), accountID, appID)
@@ -41,7 +42,7 @@ func TestMemStoreAPIConsumerRateCardsVersionedAndSorted(t *testing.T) {
 }
 
 func TestMemStoreAPIConsumerRateCardsRejectInvalidMinute(t *testing.T) {
-	store := NewMemStore()
+	store := state.NewMemStore()
 	_, err := store.CreateAPIConsumerRateCard(context.Background(), uuid.NewString(), uuid.NewString(), "EUR", 1, time.Now().UTC().Truncate(time.Minute).Add(30*time.Second))
 	if err == nil {
 		t.Fatal("rate card with partial minute: expected error")

@@ -6,9 +6,12 @@
 // pkg/meter/sampler.go (commit 9 wires the inline mirror check to
 // IsMeteredSkippableMode) and pkg/sched/admission.go (commit 6).
 
-package state
+package state_test
 
-import "testing"
+import (
+	"github.com/onebox-faas/faas/pkg/state"
+	"testing"
+)
 
 // TestIsMeteredSkippableMode pins the meter-skip predicate.
 // Pre-M-2: only mode='mirror' is skipped (ADR-125). Post-M-2
@@ -30,7 +33,7 @@ func TestIsMeteredSkippableMode(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.mode, func(t *testing.T) {
-			if got := IsMeteredSkippableMode(tt.mode); got != tt.want {
+			if got := state.IsMeteredSkippableMode(tt.mode); got != tt.want {
 				t.Errorf("IsMeteredSkippableMode(%q)=%v, want %v", tt.mode, got, tt.want)
 			}
 		})
@@ -58,7 +61,7 @@ func TestCountsForRAMByMode(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.mode, func(t *testing.T) {
-			if got := CountsForRAMByMode(tt.mode); got != tt.want {
+			if got := state.CountsForRAMByMode(tt.mode); got != tt.want {
 				t.Errorf("CountsForRAMByMode(%q)=%v, want %v", tt.mode, got, tt.want)
 			}
 		})
@@ -71,19 +74,19 @@ func TestCountsForRAMByMode(t *testing.T) {
 // These constants are the Go-side mirror of the SQL CHECK widened
 // in migrations/00532.
 func TestInstanceModeConstants(t *testing.T) {
-	want := map[InstanceMode]string{
-		InstanceModeNormal:  "normal",
-		InstanceModeMirror:  "mirror",
-		InstanceModeWorker:  "worker",
-		InstanceModeService: "service",
-		InstanceModeJob:     "job",
+	want := map[state.InstanceMode]string{
+		state.InstanceModeNormal:  "normal",
+		state.InstanceModeMirror:  "mirror",
+		state.InstanceModeWorker:  "worker",
+		state.InstanceModeService: "service",
+		state.InstanceModeJob:     "job",
 	}
-	got := map[InstanceMode]string{
-		InstanceModeNormal:  string(InstanceModeNormal),
-		InstanceModeMirror:  string(InstanceModeMirror),
-		InstanceModeWorker:  string(InstanceModeWorker),
-		InstanceModeService: string(InstanceModeService),
-		InstanceModeJob:     string(InstanceModeJob),
+	got := map[state.InstanceMode]string{
+		state.InstanceModeNormal:  string(state.InstanceModeNormal),
+		state.InstanceModeMirror:  string(state.InstanceModeMirror),
+		state.InstanceModeWorker:  string(state.InstanceModeWorker),
+		state.InstanceModeService: string(state.InstanceModeService),
+		state.InstanceModeJob:     string(state.InstanceModeJob),
 	}
 	for k, v := range want {
 		if got[k] != v {

@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -7,9 +7,10 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
-type invocationLeaseFixtureStore = contractTestStore
+type invocationLeaseFixtureStore = state.ContractTestStore
 
 // ADR-1180: a dispatcher keeps a long invocation's claim by renewing it, but
 // a stale attempt or a lapsed lease is never revived.
@@ -20,11 +21,11 @@ func testInvocationLease(t *testing.T, store invocationLeaseFixtureStore) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, err := store.CreateApp(ctx, App{AccountID: acct.ID, Slug: "invocation-lease"})
+	app, err := store.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "invocation-lease"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	inv, err := store.EnqueueInvocation(ctx, Invocation{AppID: app.ID, AccountID: acct.ID, Source: InvocationAsyncInvoke,
+	inv, err := store.EnqueueInvocation(ctx, state.Invocation{AppID: app.ID, AccountID: acct.ID, Source: state.InvocationAsyncInvoke,
 		Method: "POST", Path: "/", DueAt: time.Now().Add(-time.Second)})
 	if err != nil {
 		t.Fatal(err)
@@ -52,15 +53,15 @@ func testInvocationLease(t *testing.T, store invocationLeaseFixtureStore) {
 	if renewed, err := store.RenewInvocationLease(ctx, claimed.ID, claimed.Attempts, 60); err != nil || renewed {
 		t.Fatalf("requeued invocation was revived: %v %v", renewed, err)
 	}
-	if _, err := store.RenewInvocationLease(ctx, claimed.ID, claimed.Attempts, 0); !errors.Is(err, ErrInvalidArgument) {
+	if _, err := store.RenewInvocationLease(ctx, claimed.ID, claimed.Attempts, 0); !errors.Is(err, state.ErrInvalidArgument) {
 		t.Fatalf("zero lease accepted: %v", err)
 	}
 }
 
 func TestMemInvocationLease(t *testing.T) {
-	testInvocationLease(t, NewMemStore())
+	testInvocationLease(t, state.NewMemStore())
 }
 
 func TestPgInvocationLease(t *testing.T) {
-	testInvocationLease(t, newPgStore(t))
+	testInvocationLease(t, state.XNewPgStore(t))
 }

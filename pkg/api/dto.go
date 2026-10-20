@@ -2505,6 +2505,10 @@ type CreateDeploymentRequest struct {
 	// the final worker for a queued MCP task handler version. The grant is
 	// one-use and consumed atomically with the stable cutover.
 	MCPTaskMigrationOverride bool `json:"mcp_task_migration_override,omitempty"`
+	// OverrideFreeze releases to production while a freeze is active
+	// (ADR-20261019071733). It is the reason, 1-200 characters; apid audits
+	// it with the freezes it overrode.
+	OverrideFreeze string `json:"override_freeze,omitempty"`
 	// Overrides is the Fargate-shaped deploy-time override object
 	// (issue #460 / ADR-053). Lets a customer redeploy the same
 	// digest-pinned image with a different entrypoint/cmd/env/port
@@ -7240,6 +7244,8 @@ type SourceRefDeployRequest struct {
 	RollbackOn5xx            *bool                  `json:"rollback_on_5xx,omitempty"`
 	DisableStartupCPUBoost   *bool                  `json:"disable_startup_cpu_boost,omitempty"`
 	Healthcheck              *DeploymentHealthcheck `json:"healthcheck,omitempty"`
+	// OverrideFreeze is CreateDeploymentRequest.OverrideFreeze.
+	OverrideFreeze string `json:"override_freeze,omitempty"`
 }
 
 // SourceTarballDeployRequest is the CLI-uploaded tarball sidecar for
@@ -7271,6 +7277,8 @@ type SourceTarballDeployRequest struct {
 	RollbackOn5xx          *bool                  `json:"rollback_on_5xx,omitempty"`
 	DisableStartupCPUBoost *bool                  `json:"disable_startup_cpu_boost,omitempty"`
 	Healthcheck            *DeploymentHealthcheck `json:"healthcheck,omitempty"`
+	// OverrideFreeze is CreateDeploymentRequest.OverrideFreeze.
+	OverrideFreeze string `json:"override_freeze,omitempty"`
 }
 
 // PlanWorkload mirrors reposcan.Workload (Phase 3 wire shape).
@@ -7282,17 +7290,21 @@ type SourceTarballDeployRequest struct {
 // existing app, and which existing app row the update targets. ID is
 // empty when Action == "create".
 type PlanWorkload struct {
-	AppSlug             string              `json:"app_slug,omitempty"`
-	PublicURL           string              `json:"public_url,omitempty"`
-	Name                string              `json:"name"`
-	RootDir             string              `json:"root_dir"`
-	Dockerfile          string              `json:"dockerfile,omitempty"`
-	Image               string              `json:"image,omitempty"`
-	ImageHealthcheck    *ComposeHealthcheck `json:"image_healthcheck,omitempty"`
-	ImageProcess        *ComposeProcess     `json:"image_process,omitempty"`
-	Command             []string            `json:"command"`
-	DependsOn           []string            `json:"depends_on,omitempty"`
-	DependsOnConditions map[string]string   `json:"depends_on_conditions,omitempty"`
+	AppSlug          string              `json:"app_slug,omitempty"`
+	PublicURL        string              `json:"public_url,omitempty"`
+	Name             string              `json:"name"`
+	RootDir          string              `json:"root_dir"`
+	Dockerfile       string              `json:"dockerfile,omitempty"`
+	Image            string              `json:"image,omitempty"`
+	ImageHealthcheck *ComposeHealthcheck `json:"image_healthcheck,omitempty"`
+	ImageProcess     *ComposeProcess     `json:"image_process,omitempty"`
+	// BuildTarget and BuildArgs show a source-built service's Compose build
+	// options (ADR-20261019142544); argument values stay out of plans.
+	BuildTarget         string            `json:"build_target,omitempty"`
+	BuildArgs           []string          `json:"build_args,omitempty"`
+	Command             []string          `json:"command"`
+	DependsOn           []string          `json:"depends_on,omitempty"`
+	DependsOnConditions map[string]string `json:"depends_on_conditions,omitempty"`
 
 	ServiceBindingPolicy ServiceBindingPolicy `json:"service_binding_policy,omitempty"`
 	// ServiceBindingTransport opts a Compose workload into the HTTPS-first

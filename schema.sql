@@ -241,6 +241,7 @@ DECLARE moved record; total bigint:=0; changed integer;
 BEGIN
  PERFORM id FROM orgs WHERE id=company AND NOT personal_org AND resource_ownership_enabled FOR UPDATE;
  IF NOT FOUND THEN RETURN; END IF;
+ UPDATE orgs SET async_quota_pooled_at=now() WHERE id=company AND async_quota_pooled_at IS NULL;
  -- Lock accepted work before counters; completion has the same row-before-counter order.
  PERFORM i.id FROM invocations i JOIN apps a ON a.id=i.app_id WHERE a.org_id=company
    AND i.quota_reserved AND i.async_quota_subject_id<>company ORDER BY i.id FOR UPDATE OF i;
@@ -260,19 +261,6 @@ BEGIN
   UPDATE invocations i SET async_quota_subject_id=company FROM apps a
    WHERE a.id=i.app_id AND a.org_id=company AND i.quota_reserved AND i.async_quota_subject_id<>company;
  END IF;
-END $$;
-
-
---
--- Name: adopt_queue_reservations_on_org_adoption(); Type: FUNCTION; Schema: public; Owner: -
---
-
-CREATE FUNCTION public.adopt_queue_reservations_on_org_adoption() RETURNS trigger
-    LANGUAGE plpgsql
-    AS $$
-BEGIN
- IF NEW.resource_ownership_enabled AND NOT OLD.resource_ownership_enabled THEN PERFORM adopt_org_async_reservations(NEW.id); END IF;
- RETURN NEW;
 END $$;
 
 
@@ -8770,7 +8758,10 @@ CREATE FUNCTION public.environment_runtime_base_inputs_fresh(target_app uuid, ta
 SELECT
     NOT EXISTS (SELECT 1 FROM app_runtime_config_changes c WHERE c.app_id = target_app AND c.changed_at > boundary)
     AND NOT EXISTS (SELECT 1 FROM app_runtime_config_scope_changes c WHERE c.app_id = target_app
-        AND c.scope IN ('default', target_scope) AND c.changed_at > boundary)
+        AND (c.scope IN ('default', target_scope)
+            -- ADR-1136: default-scope deployments read production's project configuration.
+            OR (target_scope = 'default' AND c.scope = 'default:project-config'))
+        AND c.changed_at > boundary)
     AND observed_variables = coalesce((SELECT jsonb_object_agg(v.key, v.value) FROM app_envs v
         WHERE v.app_id = target_app AND v.scope = target_scope), '{}'::jsonb)
     AND NOT EXISTS (SELECT 1 FROM jsonb_each_text(observed_secrets) r WHERE NOT EXISTS (
@@ -17287,8 +17278,9 @@ END $$;
 CREATE FUNCTION public.invocation_async_subject(app uuid, namespace uuid) RETURNS uuid
     LANGUAGE sql STABLE
     AS $$
- SELECT CASE WHEN NOT o.personal_org AND o.resource_ownership_enabled THEN o.id ELSE a.account_id END
- FROM apps a JOIN orgs o ON o.id=a.org_id WHERE a.id=app AND a.account_id=namespace;
+ SELECT CASE WHEN o.id IS NOT NULL AND NOT o.personal_org AND o.resource_ownership_enabled
+             AND o.async_quota_pooled_at IS NOT NULL THEN o.id ELSE a.account_id END
+ FROM apps a LEFT JOIN orgs o ON o.id=a.org_id WHERE a.id=app AND a.account_id=namespace;
 $$;
 
 
@@ -17713,6 +17705,7 @@ CREATE TABLE public.orgs (
     billing_address text DEFAULT ''::text NOT NULL,
     tax_id text DEFAULT ''::text NOT NULL,
     object_storage_owned_from timestamp with time zone,
+    async_quota_pooled_at timestamp with time zone,
     CONSTRAINT org_object_storage_owned_from_finite CHECK (((object_storage_owned_from IS NULL) OR isfinite(object_storage_owned_from))),
     CONSTRAINT orgs_personal_owner_link CHECK ((((personal_org = true) AND (personal_owner_account_id IS NOT NULL)) OR ((personal_org = false) AND (personal_owner_account_id IS NULL)))),
     CONSTRAINT orgs_plan_chk CHECK ((plan = ANY (ARRAY['free'::text, 'hobby'::text, 'pro'::text, 'scale'::text]))),
@@ -20504,6 +20497,7 @@ CREATE FUNCTION public.project_environment_config_runtime_change() RETURNS trigg
     AS $$
 DECLARE
     previous jsonb;
+    changed timestamptz := clock_timestamp();
 BEGIN
     SELECT c.config_json INTO previous
       FROM project_environment_config_versions c
@@ -20514,16 +20508,12 @@ BEGIN
     IF project_environment_config_env(previous) = project_environment_config_env(NEW.config_json) THEN
         RETURN NULL;
     END IF;
-    -- The default scope reads production (workloadEnvironmentSlug).
     WITH member AS (
         SELECT a.id FROM apps a
          WHERE a.project_id = NEW.project_id AND a.account_id = NEW.account_id AND a.status <> 'deleted'
-    ), scopes AS (
-        SELECT unnest(CASE WHEN NEW.environment_slug = 'production'
-            THEN ARRAY['production', 'default'] ELSE ARRAY[NEW.environment_slug] END) AS scope
     ), stamped AS (
         INSERT INTO app_runtime_config_scope_changes (app_id, scope, changed_at)
-        SELECT member.id, scopes.scope, clock_timestamp() FROM member, scopes
+        SELECT member.id, NEW.environment_slug, changed FROM member
         ON CONFLICT (app_id, scope) DO UPDATE
             SET changed_at = greatest(app_runtime_config_scope_changes.changed_at, excluded.changed_at)
         RETURNING app_id, scope, changed_at
@@ -20533,6 +20523,22 @@ BEGIN
      WHERE snapshots.deployment_id = d.id AND d.app_id = stamped.app_id
        AND coalesce(nullif(d.scope, ''), 'default') = stamped.scope
        AND NOT snapshots.stale AND snapshots.created_at <= stamped.changed_at;
+    -- The default scope reads production (workloadEnvironmentSlug). It gets
+    -- its own boundary, never the shared 'default' one every environment
+    -- consults, and its snapshots go stale.
+    IF NEW.environment_slug = 'production' THEN
+        INSERT INTO app_runtime_config_scope_changes (app_id, scope, changed_at)
+        SELECT a.id, 'default:project-config', changed FROM apps a
+         WHERE a.project_id = NEW.project_id AND a.account_id = NEW.account_id AND a.status <> 'deleted'
+        ON CONFLICT (app_id, scope) DO UPDATE
+            SET changed_at = greatest(app_runtime_config_scope_changes.changed_at, excluded.changed_at);
+        UPDATE snapshots SET stale = true
+          FROM deployments d, apps a
+         WHERE snapshots.deployment_id = d.id AND d.app_id = a.id
+           AND a.project_id = NEW.project_id AND a.account_id = NEW.account_id AND a.status <> 'deleted'
+           AND coalesce(nullif(d.scope, ''), 'default') = 'default'
+           AND NOT snapshots.stale AND snapshots.created_at <= changed;
+    END IF;
     RETURN NULL;
 END;
 $$;
@@ -24602,8 +24608,7 @@ CREATE FUNCTION public.stamp_invocation_async_subject() RETURNS trigger
 DECLARE expected uuid;
 BEGIN
  IF NEW.quota_reserved THEN
-  expected:=invocation_async_subject(NEW.app_id,NEW.account_id);
-  IF expected IS NULL THEN RAISE EXCEPTION 'invalid invocation quota ownership' USING ERRCODE='23514'; END IF;
+  expected:=coalesce(invocation_async_subject(NEW.app_id,NEW.account_id),NEW.account_id);
   IF TG_OP='INSERT' OR NOT OLD.quota_reserved THEN
    NEW.async_quota_subject_id:=expected;
   ELSIF NEW.async_quota_subject_id IS DISTINCT FROM OLD.async_quota_subject_id AND NEW.async_quota_subject_id IS DISTINCT FROM expected THEN
@@ -27126,6 +27131,42 @@ CREATE TABLE public.app_registry_credentials (
     CONSTRAINT app_registry_credentials_password_chk CHECK ((length(password_encrypted) > 0)),
     CONSTRAINT app_registry_credentials_registry_chk CHECK (((length(registry) > 0) AND (length(registry) <= 253))),
     CONSTRAINT app_registry_credentials_username_chk CHECK (((length(username) > 0) AND (length(username) <= 256)))
+);
+
+
+--
+-- Name: app_release_gates; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_release_gates (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    name text NOT NULL,
+    kind text NOT NULL,
+    slo_id uuid,
+    max_burn_rate integer,
+    max_new_groups integer,
+    min_events integer,
+    metric_name text,
+    comparison text,
+    threshold double precision,
+    min_samples integer NOT NULL,
+    created_by text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT app_release_gates_check CHECK (((kind <> 'slo'::text) OR ((slo_id IS NOT NULL) AND (max_burn_rate IS NOT NULL) AND (max_new_groups IS NULL) AND (min_events IS NULL) AND (metric_name IS NULL) AND (comparison IS NULL) AND (threshold IS NULL)))),
+    CONSTRAINT app_release_gates_check1 CHECK (((kind <> 'new_errors'::text) OR ((max_new_groups IS NOT NULL) AND (min_events IS NOT NULL) AND (slo_id IS NULL) AND (max_burn_rate IS NULL) AND (metric_name IS NULL) AND (comparison IS NULL) AND (threshold IS NULL)))),
+    CONSTRAINT app_release_gates_check2 CHECK (((kind <> 'custom_metric'::text) OR ((metric_name IS NOT NULL) AND (comparison IS NOT NULL) AND (threshold IS NOT NULL) AND (slo_id IS NULL) AND (max_burn_rate IS NULL) AND (max_new_groups IS NULL) AND (min_events IS NULL)))),
+    CONSTRAINT app_release_gates_comparison_check CHECK (((comparison IS NULL) OR (comparison = ANY (ARRAY['below'::text, 'above'::text])))),
+    CONSTRAINT app_release_gates_created_by_check CHECK (((length(created_by) >= 1) AND (length(created_by) <= 320))),
+    CONSTRAINT app_release_gates_kind_check CHECK ((kind = ANY (ARRAY['slo'::text, 'new_errors'::text, 'custom_metric'::text]))),
+    CONSTRAINT app_release_gates_max_burn_rate_check CHECK (((max_burn_rate IS NULL) OR ((max_burn_rate >= 1) AND (max_burn_rate <= 1000)))),
+    CONSTRAINT app_release_gates_max_new_groups_check CHECK (((max_new_groups IS NULL) OR ((max_new_groups >= 0) AND (max_new_groups <= 100)))),
+    CONSTRAINT app_release_gates_metric_name_check CHECK (((metric_name IS NULL) OR (metric_name ~ '^[a-z][a-z0-9_]{0,62}$'::text))),
+    CONSTRAINT app_release_gates_min_events_check CHECK (((min_events IS NULL) OR ((min_events >= 1) AND (min_events <= 100000)))),
+    CONSTRAINT app_release_gates_min_samples_check CHECK (((min_samples >= 1) AND (min_samples <= 1000000))),
+    CONSTRAINT app_release_gates_name_check CHECK ((name ~ '^[a-z][a-z0-9_-]{0,62}$'::text)),
+    CONSTRAINT app_release_gates_threshold_check CHECK (((threshold IS NULL) OR ((threshold = threshold) AND (threshold > '-Infinity'::double precision) AND (threshold < 'Infinity'::double precision))))
 );
 
 
@@ -46764,6 +46805,47 @@ CREATE TABLE public.release_bundles (
 
 
 --
+-- Name: release_freezes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.release_freezes (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid,
+    kind text NOT NULL,
+    starts_at timestamp with time zone,
+    ends_at timestamp with time zone,
+    weekly_days smallint,
+    weekly_start_minute smallint,
+    weekly_duration_minutes integer,
+    time_zone text,
+    after_rollback_minutes integer,
+    reason text NOT NULL,
+    source text DEFAULT 'manual'::text NOT NULL,
+    source_deployment_id uuid,
+    created_by text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    lifted_at timestamp with time zone,
+    lifted_by text,
+    CONSTRAINT release_freezes_after_rollback_minutes_check CHECK (((after_rollback_minutes IS NULL) OR ((after_rollback_minutes >= 1) AND (after_rollback_minutes <= 1440)))),
+    CONSTRAINT release_freezes_check CHECK (((kind <> 'window'::text) OR ((starts_at IS NOT NULL) AND ((ends_at IS NULL) OR (ends_at > starts_at)) AND (weekly_days IS NULL) AND (after_rollback_minutes IS NULL)))),
+    CONSTRAINT release_freezes_check1 CHECK (((kind <> 'weekly'::text) OR ((weekly_days IS NOT NULL) AND (weekly_start_minute IS NOT NULL) AND (weekly_duration_minutes IS NOT NULL) AND (time_zone IS NOT NULL) AND (starts_at IS NULL) AND (ends_at IS NULL) AND (after_rollback_minutes IS NULL)))),
+    CONSTRAINT release_freezes_check2 CHECK (((kind <> 'after_rollback'::text) OR ((after_rollback_minutes IS NOT NULL) AND (starts_at IS NULL) AND (ends_at IS NULL) AND (weekly_days IS NULL)))),
+    CONSTRAINT release_freezes_check3 CHECK (((source = 'manual'::text) OR ((kind = 'window'::text) AND (app_id IS NOT NULL) AND (source_deployment_id IS NOT NULL)))),
+    CONSTRAINT release_freezes_check4 CHECK (((lifted_at IS NULL) = (lifted_by IS NULL))),
+    CONSTRAINT release_freezes_created_by_check CHECK (((length(created_by) >= 1) AND (length(created_by) <= 320))),
+    CONSTRAINT release_freezes_kind_check CHECK ((kind = ANY (ARRAY['window'::text, 'weekly'::text, 'after_rollback'::text]))),
+    CONSTRAINT release_freezes_lifted_by_check CHECK (((lifted_by IS NULL) OR ((length(lifted_by) >= 1) AND (length(lifted_by) <= 320)))),
+    CONSTRAINT release_freezes_reason_check CHECK (((length(reason) >= 1) AND (length(reason) <= 200))),
+    CONSTRAINT release_freezes_source_check CHECK ((source = ANY (ARRAY['manual'::text, 'automatic_rollback'::text]))),
+    CONSTRAINT release_freezes_time_zone_check CHECK (((time_zone IS NULL) OR ((length(time_zone) >= 1) AND (length(time_zone) <= 64)))),
+    CONSTRAINT release_freezes_weekly_days_check CHECK (((weekly_days IS NULL) OR ((weekly_days >= 1) AND (weekly_days <= 127)))),
+    CONSTRAINT release_freezes_weekly_duration_minutes_check CHECK (((weekly_duration_minutes IS NULL) OR ((weekly_duration_minutes >= 1) AND (weekly_duration_minutes <= 10080)))),
+    CONSTRAINT release_freezes_weekly_start_minute_check CHECK (((weekly_start_minute IS NULL) OR ((weekly_start_minute >= 0) AND (weekly_start_minute <= 1439))))
+);
+
+
+--
 -- Name: request_audit_events; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -51071,6 +51153,22 @@ ALTER TABLE ONLY public.app_registry_credentials
 
 ALTER TABLE ONLY public.app_registry_credentials
     ADD CONSTRAINT app_registry_credentials_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: app_release_gates app_release_gates_app_id_name_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_release_gates
+    ADD CONSTRAINT app_release_gates_app_id_name_key UNIQUE (app_id, name);
+
+
+--
+-- Name: app_release_gates app_release_gates_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_release_gates
+    ADD CONSTRAINT app_release_gates_pkey PRIMARY KEY (id);
 
 
 --
@@ -59962,6 +60060,14 @@ ALTER TABLE ONLY public.release_bundles
 
 
 --
+-- Name: release_freezes release_freezes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.release_freezes
+    ADD CONSTRAINT release_freezes_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: request_audit_events request_audit_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -62117,6 +62223,13 @@ CREATE INDEX app_private_network_attachments_network_idx ON public.app_private_n
 --
 
 CREATE INDEX app_registry_credentials_account_idx ON public.app_registry_credentials USING btree (account_id);
+
+
+--
+-- Name: app_release_gates_slo; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX app_release_gates_slo ON public.app_release_gates USING btree (slo_id) WHERE (slo_id IS NOT NULL);
 
 
 --
@@ -65995,6 +66108,20 @@ CREATE INDEX invocations_replayed_from_idx ON public.invocations USING btree (ac
 
 
 --
+-- Name: invocations_retention_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX invocations_retention_due_idx ON public.invocations USING btree (result_retention_until) WHERE ((result_retention_until IS NOT NULL) AND (state = ANY (ARRAY['completed'::text, 'failed'::text, 'dead_letter'::text, 'cancelled'::text, 'superseded'::text, 'expired'::text])));
+
+
+--
+-- Name: invocations_retention_unstamped_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX invocations_retention_unstamped_idx ON public.invocations USING btree (created_at) WHERE ((result_retention_until IS NULL) AND (state = ANY (ARRAY['completed'::text, 'failed'::text, 'dead_letter'::text, 'cancelled'::text, 'superseded'::text, 'expired'::text])));
+
+
+--
 -- Name: invocations_scoped_queue_demand_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -69296,6 +69423,20 @@ CREATE INDEX release_bundles_applied_at_idx ON public.release_bundles USING btre
 --
 
 CREATE INDEX release_bundles_git_sha_idx ON public.release_bundles USING btree (git_sha);
+
+
+--
+-- Name: release_freezes_one_per_rollback; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX release_freezes_one_per_rollback ON public.release_freezes USING btree (source_deployment_id) WHERE (source = 'automatic_rollback'::text);
+
+
+--
+-- Name: release_freezes_unlifted; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX release_freezes_unlifted ON public.release_freezes USING btree (account_id, created_at, id) WHERE (lifted_at IS NULL);
 
 
 --
@@ -75508,13 +75649,6 @@ CREATE TRIGGER org_queue_bindings_guard BEFORE UPDATE OF status, deleted_pending
 
 
 --
--- Name: orgs org_queue_reservation_adoption; Type: TRIGGER; Schema: public; Owner: -
---
-
-CREATE TRIGGER org_queue_reservation_adoption AFTER UPDATE OF resource_ownership_enabled ON public.orgs FOR EACH ROW EXECUTE FUNCTION public.adopt_queue_reservations_on_org_adoption();
-
-
---
 -- Name: orgs org_resource_namespace; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -78169,6 +78303,30 @@ ALTER TABLE ONLY public.app_registry_credentials
 
 ALTER TABLE ONLY public.app_registry_credentials
     ADD CONSTRAINT app_registry_credentials_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_release_gates app_release_gates_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_release_gates
+    ADD CONSTRAINT app_release_gates_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_release_gates app_release_gates_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_release_gates
+    ADD CONSTRAINT app_release_gates_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_release_gates app_release_gates_slo_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_release_gates
+    ADD CONSTRAINT app_release_gates_slo_id_fkey FOREIGN KEY (slo_id) REFERENCES public.app_slos(id) ON DELETE CASCADE;
 
 
 --
@@ -88929,6 +89087,22 @@ ALTER TABLE ONLY public.recent_build_claims
 
 ALTER TABLE ONLY public.recent_build_claims
     ADD CONSTRAINT recent_build_claims_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: release_freezes release_freezes_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.release_freezes
+    ADD CONSTRAINT release_freezes_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: release_freezes release_freezes_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.release_freezes
+    ADD CONSTRAINT release_freezes_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --

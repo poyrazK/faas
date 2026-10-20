@@ -142,6 +142,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		rollbackOn5xx            *bool
 		disableStartupCPUBoost   *bool
 		mcpTaskMigrationOverride bool
+		overrideFreeze           string
 		healthcheck              *api.DeploymentHealthcheck
 		overrideEnv              map[string]string
 		overrideEnvSeen          bool
@@ -306,6 +307,13 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 				return
 			}
 			mcpTaskMigrationOverride = value
+		case "override_freeze":
+			b, readErr := io.ReadAll(io.LimitReader(part, 4*api.ReleaseFreezeReasonMax+1))
+			if readErr != nil || len(b) > 4*api.ReleaseFreezeReasonMax {
+				api.WriteProblem(w, api.ErrValidation("override_freeze must be a reason of at most 200 characters"))
+				return
+			}
+			overrideFreeze = strings.TrimSpace(string(b))
 		case "healthcheck":
 			b, readErr := io.ReadAll(io.LimitReader(part, (64<<10)+1))
 			if readErr != nil || len(b) > 64<<10 || json.Unmarshal(b, &healthcheck) != nil {
@@ -367,7 +375,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, prob)
 		return
 	}
-	rolloutReq := &api.CreateDeploymentRequest{Scope: scope, Environment: environment, TrafficPercent: trafficPercent, Canary: canarySpec, RollbackOn5xx: rollbackOn5xx, DisableStartupCPUBoost: disableStartupCPUBoost, MCPTaskMigrationOverride: mcpTaskMigrationOverride, Sidecars: sidecars}
+	rolloutReq := &api.CreateDeploymentRequest{Scope: scope, Environment: environment, TrafficPercent: trafficPercent, Canary: canarySpec, RollbackOn5xx: rollbackOn5xx, DisableStartupCPUBoost: disableStartupCPUBoost, MCPTaskMigrationOverride: mcpTaskMigrationOverride, OverrideFreeze: overrideFreeze, Sidecars: sidecars}
 	rolloutReq.Overrides = sourceHealthcheckOverrides(healthcheck)
 	if len(overrideEnv) > 0 {
 		if rolloutReq.Overrides == nil {
@@ -389,6 +397,10 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 			api.WriteProblem(w, prob)
 			return
 		}
+	}
+	if prob := s.releaseFreezeProblem(r, acct, app, rolloutReq.Scope, rolloutReq.OverrideFreeze); prob != nil {
+		api.WriteProblem(w, prob)
+		return
 	}
 	release.ApplyDefault(r.Context(), s.store, s.log, app, acct.Plan, rolloutReq)
 	if prob := validateDeploymentTrafficOptions(rolloutReq, acct.Plan); prob != nil {

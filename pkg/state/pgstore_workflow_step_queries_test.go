@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"bytes"
@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
+	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -20,7 +21,7 @@ func TestPgCustomerOperationWorkflowStepQueriesFenceAndCommitAttempt(t *testing.
 	if err := db.MigrateUp(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
-	run, _ := seedResumeRun(t, NewPgStore(pool), simpleResumeSpec())
+	run, _ := state.SeedResumeRun(t, state.NewPgStore(pool), state.SimpleResumeSpec())
 
 	var runID pgtype.UUID
 	if err := runID.Scan(run.ID); err != nil {
@@ -34,7 +35,7 @@ func TestPgCustomerOperationWorkflowStepQueriesFenceAndCommitAttempt(t *testing.
 	if err != nil {
 		t.Fatalf("read initial workflow step: %v", err)
 	}
-	if initial.Status != WorkflowStepStatusPending {
+	if initial.Status != state.WorkflowStepStatusPending {
 		t.Fatalf("initial status = %q, want pending", initial.Status)
 	}
 
@@ -75,13 +76,13 @@ func TestPgCustomerOperationWorkflowStepQueriesFenceAndCommitAttempt(t *testing.
 
 	output := []byte(`{"delivered":true}`)
 	stepRows, err := queries.CompleteCustomerOperationWorkflowStep(ctx, tx, sqlc.CompleteCustomerOperationWorkflowStepParams{
-		RunID: runID, StepName: stepName, Attempt: attempt, Status: WorkflowStepStatusSucceeded, Output: output,
+		RunID: runID, StepName: stepName, Attempt: attempt, Status: state.WorkflowStepStatusSucceeded, Output: output,
 	})
 	if err != nil || stepRows != 1 {
 		t.Fatalf("complete step = rows %d, err %v; want one row", stepRows, err)
 	}
 	attemptRows, err := queries.CompleteCustomerOperationWorkflowStepAttempt(ctx, tx, sqlc.CompleteCustomerOperationWorkflowStepAttemptParams{
-		RunID: runID, StepName: stepName, Attempt: attempt, Status: WorkflowStepStatusSucceeded,
+		RunID: runID, StepName: stepName, Attempt: attempt, Status: state.WorkflowStepStatusSucceeded,
 		HttpStatus: pgtype.Int4{Int32: 204, Valid: true},
 	})
 	if err != nil || attemptRows != 1 {
@@ -97,7 +98,7 @@ func TestPgCustomerOperationWorkflowStepQueriesFenceAndCommitAttempt(t *testing.
 	if err != nil {
 		t.Fatalf("read completed workflow step: %v", err)
 	}
-	if gotStep.Status != WorkflowStepStatusSucceeded || gotStep.Attempt != attempt || compactWorkflowStepQueryJSON(t, gotStep.Input) != compactWorkflowStepQueryJSON(t, resolvedInput) || compactWorkflowStepQueryJSON(t, gotStep.Output) != compactWorkflowStepQueryJSON(t, output) || !gotStep.FinishedAt.Valid {
+	if gotStep.Status != state.WorkflowStepStatusSucceeded || gotStep.Attempt != attempt || compactWorkflowStepQueryJSON(t, gotStep.Input) != compactWorkflowStepQueryJSON(t, resolvedInput) || compactWorkflowStepQueryJSON(t, gotStep.Output) != compactWorkflowStepQueryJSON(t, output) || !gotStep.FinishedAt.Valid {
 		t.Fatalf("completed workflow step lost its attempt data: %+v", gotStep)
 	}
 	gotAttempt, err := queries.GetCustomerOperationWorkflowStepAttempt(ctx, pool, sqlc.GetCustomerOperationWorkflowStepAttemptParams{
@@ -106,7 +107,7 @@ func TestPgCustomerOperationWorkflowStepQueriesFenceAndCommitAttempt(t *testing.
 	if err != nil {
 		t.Fatalf("read completed attempt receipt: %v", err)
 	}
-	if gotAttempt.Status != WorkflowStepStatusSucceeded || !gotAttempt.HttpStatus.Valid || gotAttempt.HttpStatus.Int32 != 204 || !gotAttempt.FinishedAt.Valid {
+	if gotAttempt.Status != state.WorkflowStepStatusSucceeded || !gotAttempt.HttpStatus.Valid || gotAttempt.HttpStatus.Int32 != 204 || !gotAttempt.FinishedAt.Valid {
 		t.Fatalf("completed attempt receipt lost its terminal result: %+v", gotAttempt)
 	}
 

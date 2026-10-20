@@ -1,7 +1,7 @@
 //go:build !no_pg
 
 // adr: 595. Environment review inputs serialize with raw and typed writers.
-package state
+package state_test
 
 import (
 	"context"
@@ -10,15 +10,16 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestPgApplicationStandardEnvironmentReview(t *testing.T) {
-	s, _ := standardOperationPGStore(t)
+	s, _ := state.StandardOperationPGStore(t)
 	standardEnvironmentReviewRevisions(t, s)
 }
 
 func TestPgApplicationStandardEnvironmentReviewPinAndBody(t *testing.T) {
-	s, pool := standardOperationPGStore(t)
+	s, pool := state.StandardOperationPGStore(t)
 	standardEnvironmentReviewPinAndBody(t, s, func(f standardEnvironmentReviewFixture, specID string) {
 		if _, err := pool.Exec(t.Context(), `UPDATE project_environment_workload_deployment_specs SET spec_id=$2 WHERE deployment_id=$1`, f.dep.ID, specID); err != nil {
 			t.Fatal(err)
@@ -31,12 +32,12 @@ func TestPgApplicationStandardEnvironmentReviewPinAndBody(t *testing.T) {
 }
 
 func TestPgApplicationStandardEnvironmentMaterializationReview(t *testing.T) {
-	s, _ := standardOperationPGStore(t)
+	s, _ := state.StandardOperationPGStore(t)
 	standardEnvironmentMaterializationReview(t, s)
 }
 
 func TestPgApplicationStandardEnvironmentMaterializationCorruptBody(t *testing.T) {
-	s, pool := standardOperationPGStore(t)
+	s, pool := state.StandardOperationPGStore(t)
 	standardEnvironmentMaterializationDrift(t, s, func(f standardEnvironmentReviewFixture) {
 		if _, err := pool.Exec(t.Context(), `UPDATE project_environment_workload_specs SET settings=jsonb_set(settings::jsonb,'{ram_mb}','1024')::json WHERE id=$1`, f.spec.ID); err != nil {
 			t.Fatal(err)
@@ -47,7 +48,7 @@ func TestPgApplicationStandardEnvironmentMaterializationCorruptBody(t *testing.T
 func TestPgApplicationStandardEnvironmentReviewWriterFences(t *testing.T) {
 	for _, name := range []string{"head", "settings", "protection", "first head", "deployment pin"} {
 		t.Run(name, func(t *testing.T) {
-			s, pool := standardOperationPGStore(t)
+			s, pool := state.StandardOperationPGStore(t)
 			f := newStandardEnvironmentReviewFixture(t, s)
 			query, arg := `UPDATE project_environment_workload_heads SET spec_id=spec_id WHERE app_id=$1`, f.app.ID
 			switch name {
@@ -74,10 +75,10 @@ func TestPgApplicationStandardEnvironmentReviewWriterFences(t *testing.T) {
 			if _, err := writer.Exec(ctx, query, arg); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := s.ApproveApplicationStandardReview(ctx, f.app.OrgID, f.app.AccountID, p.ID, p.ApprovalHash); !errors.Is(err, ErrApplicationStandardReviewBusy) {
+			if _, err := s.ApproveApplicationStandardReview(ctx, f.app.OrgID, f.app.AccountID, p.ID, p.ApprovalHash); !errors.Is(err, state.ErrApplicationStandardReviewBusy) {
 				t.Fatalf("in-flight environment writer crossed approval: %v", err)
 			}
-			assertStandardApprovalNoWrites(t, ctx, pool)
+			state.AssertStandardApprovalNoWrites(t, ctx, pool)
 			if err := writer.Rollback(ctx); err != nil {
 				t.Fatal(err)
 			}
@@ -87,7 +88,7 @@ func TestPgApplicationStandardEnvironmentReviewWriterFences(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer func() { _ = approval.Rollback(t.Context()) }()
-			if _, err := lockStandardReviewInputs(ctx, approval, f.app.OrgID, f.app.AccountID, p.Request); err != nil {
+			if _, err := state.LockStandardReviewInputs(ctx, approval, f.app.OrgID, f.app.AccountID, p.Request); err != nil {
 				t.Fatal(err)
 			}
 			writer, err = pool.Begin(ctx)
@@ -115,7 +116,7 @@ func TestPgApplicationStandardEnvironmentReviewWriterFences(t *testing.T) {
 }
 
 func TestPgApplicationStandardEnvironmentMaterializationWriterFence(t *testing.T) {
-	s, pool := standardOperationPGStore(t)
+	s, pool := state.StandardOperationPGStore(t)
 	f := newStandardEnvironmentReviewFixture(t, s)
 	p := f.preview(t, s)
 	if _, err := s.ApproveApplicationStandardReview(t.Context(), f.app.OrgID, f.app.AccountID, p.ID, p.ApprovalHash); err != nil {
@@ -135,7 +136,7 @@ func TestPgApplicationStandardEnvironmentMaterializationWriterFence(t *testing.T
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
-	if _, err := s.MaterializeNextApplicationStandardTarget(ctx, c); !errors.Is(err, ErrApplicationStandardReviewBusy) {
+	if _, err := s.MaterializeNextApplicationStandardTarget(ctx, c); !errors.Is(err, state.ErrApplicationStandardReviewBusy) {
 		t.Fatalf("materialization crossed private settings writer: %v", err)
 	}
 	if err := writer.Rollback(t.Context()); err != nil {

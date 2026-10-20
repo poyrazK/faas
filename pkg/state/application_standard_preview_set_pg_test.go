@@ -1,7 +1,7 @@
 //go:build !no_pg
 
 // adr: 595. PostgreSQL and memory previews retain captured admission versions.
-package state
+package state_test
 
 import (
 	"testing"
@@ -9,6 +9,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/appstandards"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestPgApplicationStandardPreviewSetOnboarding(t *testing.T) {
@@ -17,7 +18,7 @@ func TestPgApplicationStandardPreviewSetOnboarding(t *testing.T) {
 	if err := db.MigrateUp(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
-	standardPreviewSetOnboarding(t, NewPgStore(pool), func(a appstandards.Assignment, actor string) {
+	standardPreviewSetOnboarding(t, state.NewPgStore(pool), func(a appstandards.Assignment, actor string) {
 		_, err := pool.Exec(ctx, `INSERT INTO application_standard_assignments
 			(id, org_id, scope, scope_id, standard_id, admission_version, active, created_by)
 			VALUES ($1, $2, $3, $4, $5, $6, true, $7)

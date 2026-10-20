@@ -122,6 +122,9 @@ type scanPlanRequest struct {
 	Environment            string // registered project environment; resolved to deployment scope
 	ApprovalToken          string // exact-plan approval credential for protected applies
 	InitialSecrets         api.ProjectInitialSecrets
+	// OverrideFreeze releases frozen apps anyway, audited
+	// (ADR-20261019071733).
+	OverrideFreeze string
 }
 
 func validProjectRepoFullName(repo string) bool {
@@ -252,6 +255,8 @@ func toPlanWorkload(w reposcan.Workload) api.PlanWorkload {
 		Image:               w.Image,
 		ImageHealthcheck:    w.ImageHealthcheck.Clone(),
 		ImageProcess:        w.ImageProcess.Clone(),
+		BuildTarget:         w.DockerfileBuild.TargetStage(),
+		BuildArgs:           w.DockerfileBuild.ArgNames(),
 		Command:             w.Command,
 		DependsOn:           w.DependsOn,
 		DependsOnConditions: maps.Clone(w.DependsOnConditions),
@@ -971,7 +976,7 @@ type appliedBuild = api.AppliedBuild
 func (s *server) applyBuildsForAddedChangedOrdered(
 	ctx context.Context, r *http.Request, acct state.Account, project state.Project,
 	scanDir string, workloads []reposcan.Workload, managed []reposcan.Managed, added, changed []state.App,
-	environment string,
+	environment, overrideFreeze string,
 	references ...[]reposcan.Workload,
 ) []appliedBuild {
 	workloadByName := make(map[string]reposcan.Workload, len(workloads))
@@ -999,6 +1004,11 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 		// later cannot deploy).
 		if !acct.MayDeploy() {
 			res.Error = acct.DeployBlockedProblem().Detail
+			out = append(out, res)
+			continue
+		}
+		if prob := s.releaseFreezeProblem(r, acct, app, environment, overrideFreeze); prob != nil {
+			res.Error = prob.Detail
 			out = append(out, res)
 			continue
 		}
@@ -1111,6 +1121,7 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 			SourceRoot:                sourceApp.RootDir,
 			Scope:                     environment,
 			DockerfilePath:            app.Manifest.BuildDockerfile,
+			DockerfileBuild:           app.Manifest.DockerfileBuild,
 			FunctionRuntime:           functionRuntimeForApp(app),
 			LogSpool:                  spoolRoot(),
 			Log:                       s.log,
@@ -2490,7 +2501,7 @@ func (s *server) scanService(
 		}
 		buildAdded = nil
 	}
-	builds := s.applyBuildsForAddedChangedOrdered(r.Context(), r, acct, project, req.ScanDir, filteredW, filteredMc, buildAdded, buildChanged, req.Environment, dependencyReferences)
+	builds := s.applyBuildsForAddedChangedOrdered(r.Context(), r, acct, project, req.ScanDir, filteredW, filteredMc, buildAdded, buildChanged, req.Environment, req.OverrideFreeze, dependencyReferences)
 	// ADR-124: surface the destructive subset on the response so the
 	// apply handler can render Removed in the same blast-radius
 	// envelope the preview offered. SoftDeleteAppCascade runs
@@ -2539,6 +2550,7 @@ func parseScanMultipart(r *http.Request, acct state.Account, limits api.Limits) 
 		platformTenantRequired *bool
 		environment            string
 		approvalToken          string
+		overrideFreeze         string
 		projectSlugSet         bool
 		initialSecrets         api.ProjectInitialSecrets
 		initialSecretsSet      bool
@@ -2683,6 +2695,12 @@ func parseScanMultipart(r *http.Request, acct state.Account, limits api.Limits) 
 				return nil, api.ErrSourceInvalid("environment is too long")
 			}
 			environment = strings.TrimSpace(string(b))
+		case "override_freeze":
+			b, readErr := io.ReadAll(io.LimitReader(part, 4*api.ReleaseFreezeReasonMax+1))
+			if readErr != nil || len(b) > 4*api.ReleaseFreezeReasonMax {
+				return nil, api.ErrValidation("override_freeze must be a reason of at most 200 characters")
+			}
+			overrideFreeze = strings.TrimSpace(string(b))
 		case "approval_token":
 			b, readErr := io.ReadAll(io.LimitReader(part, 512))
 			if readErr != nil {
@@ -2756,6 +2774,7 @@ func parseScanMultipart(r *http.Request, acct state.Account, limits api.Limits) 
 		PlatformTenantRequired: platformTenantRequired,
 		Environment:            environment,
 		ApprovalToken:          approvalToken,
+		OverrideFreeze:         overrideFreeze,
 	}, nil
 }
 

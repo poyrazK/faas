@@ -1,28 +1,29 @@
 //go:build !no_pg
 
-package state
+package state_test
 
 import (
 	"context"
 	"errors"
+	"github.com/onebox-faas/faas/pkg/state"
 	"testing"
 	"time"
 )
 
 func TestPgStandardRuntimeQualificationLifecycle(t *testing.T) {
-	s, _ := runtimeCapturePGStore(t)
+	s, _ := state.RuntimeCapturePGStore(t)
 	standardRuntimeQualificationLifecycle(t, s)
 }
 
 func TestPgStandardRuntimeQualificationScanSelection(t *testing.T) {
-	s, _ := runtimeCapturePGStore(t)
+	s, _ := state.RuntimeCapturePGStore(t)
 	standardRuntimeQualificationScanSelection(t, s)
 }
 
 func TestPgStandardRuntimeQualificationNonwaiting(t *testing.T) {
-	s, pool := runtimeCapturePGStore(t)
-	ins, receipt := issueConsumedNativeFixture(t, s)
-	ins, err := s.PublishInstanceApplicationStandardRuntime(t.Context(), ins.State, StateRunning, receipt)
+	s, pool := state.RuntimeCapturePGStore(t)
+	ins, receipt := state.IssueConsumedNativeFixture(t, s)
+	ins, err := s.PublishInstanceApplicationStandardRuntime(t.Context(), ins.State, state.StateRunning, receipt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +50,7 @@ func TestPgStandardRuntimeQualificationNonwaiting(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 			defer cancel()
 			q, err := s.GetInstanceApplicationStandardRuntimeQualification(ctx, app.OrgID, app.ID, ins.ID)
-			if q.Qualified || errors.Is(err, context.DeadlineExceeded) || err != nil && !errors.Is(err, ErrApplicationStandardRuntimeBusy) {
+			if q.Qualified || errors.Is(err, context.DeadlineExceeded) || err != nil && !errors.Is(err, state.ErrApplicationStandardRuntimeBusy) {
 				t.Fatalf("qualification waited or fabricated success: %+v %v", q, err)
 			}
 		})

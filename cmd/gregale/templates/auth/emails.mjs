@@ -36,7 +36,7 @@ function view(type, stored) {
 function sampleValues(type, { api, external, app }, to) {
   const all = {
     app, email: to, new_email: 'new.address@example.com', org: 'Acme', event: 'Your password was changed', code: '123456',
-    link: type === 'organization_invitation' ? `${external}/ui/invitation#token=preview` : `${api}/verify?token=preview&type=${type}`,
+    link: type === 'organization_invitation' ? `${external}/ui/invitation#token=preview` : type === 'signup_approved' ? `${external}/ui/sign-up` : `${api}/verify?token=preview&type=${type}`,
   }
   return Object.fromEntries(emailTypes[type].placeholders.map(name => [name, all[name]]))
 }

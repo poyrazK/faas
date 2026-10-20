@@ -1,4 +1,4 @@
-package state
+package state_test
 
 // Coverage for the MemStore side of the app_openapi_docs
 // surface (ADR-126 / issue #975 item #2, slot 00416). Mirrors
@@ -30,21 +30,22 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // openAPIImportFixture stands up a fresh MemStore + one account +
 // one app, returning the IDs. Required for the FK floor — the
 // app row must exist before UpsertAppOpenAPIDoc can write an
 // import row.
-func openAPIImportFixture(t *testing.T) (m *MemStore, ctx context.Context, accountID, appID string) {
+func openAPIImportFixture(t *testing.T) (m *state.MemStore, ctx context.Context, accountID, appID string) {
 	t.Helper()
 	ctx = context.Background()
-	m = NewMemStore()
+	m = state.NewMemStore()
 	acct, err := m.CreateAccount(ctx, "oimport-"+uuid.NewString()+"@example.com", api.PlanHobby)
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, err := m.CreateApp(ctx, App{
+	app, err := m.CreateApp(ctx, state.App{
 		AccountID:      acct.ID,
 		Slug:           "oimport-" + strconv.Itoa(int(time.Now().UnixNano())),
 		RAMMB:          256,
@@ -78,8 +79,8 @@ func TestMemStore_OpenAPIImport_RoundTrip(t *testing.T) {
 	if gotMeta.AppID != app {
 		t.Errorf("Meta.AppID: got %q, want %q", gotMeta.AppID, app)
 	}
-	if gotMeta.Source != OpenAPIImportSourceManualImport {
-		t.Errorf("Meta.Source: got %q, want %q", gotMeta.Source, OpenAPIImportSourceManualImport)
+	if gotMeta.Source != state.OpenAPIImportSourceManualImport {
+		t.Errorf("Meta.Source: got %q, want %q", gotMeta.Source, state.OpenAPIImportSourceManualImport)
 	}
 	if gotMeta.OpenAPIVersion != "3.1.0" {
 		t.Errorf("Meta.OpenAPIVersion: got %q, want 3.1.0", gotMeta.OpenAPIVersion)
@@ -102,7 +103,7 @@ func TestMemStore_OpenAPIImport_RoundTrip(t *testing.T) {
 	if err := m.DeleteAppOpenAPIDoc(ctx, app, acct); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
-	if _, _, err := m.GetAppOpenAPIDoc(ctx, app, acct); !errors.Is(err, ErrNotFound) {
+	if _, _, err := m.GetAppOpenAPIDoc(ctx, app, acct); !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("Get after Delete: got %v, want ErrNotFound", err)
 	}
 }
@@ -160,10 +161,10 @@ func TestMemStore_OpenAPIImport_IDOR(t *testing.T) {
 	}
 	// Foreign account.
 	foreignAcct := "00000000-0000-0000-0000-000000000000"
-	if _, _, err := m.GetAppOpenAPIDoc(ctx, app, foreignAcct); !errors.Is(err, ErrNotFound) {
+	if _, _, err := m.GetAppOpenAPIDoc(ctx, app, foreignAcct); !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("Get cross-account: got %v, want ErrNotFound", err)
 	}
-	if err := m.DeleteAppOpenAPIDoc(ctx, app, foreignAcct); !errors.Is(err, ErrNotFound) {
+	if err := m.DeleteAppOpenAPIDoc(ctx, app, foreignAcct); !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("Delete cross-account: got %v, want ErrNotFound", err)
 	}
 	// Same-account read still works (the cross-account probe
@@ -185,7 +186,7 @@ func TestMemStore_OpenAPIImport_CountByAccount(t *testing.T) {
 		t.Fatal(err)
 	}
 	acct2 := acct2Acct.ID
-	app2App, err := m.CreateApp(ctx, App{
+	app2App, err := m.CreateApp(ctx, state.App{
 		AccountID:      acct2,
 		Slug:           "oimport-acct2-" + strconv.Itoa(int(time.Now().UnixNano())),
 		RAMMB:          256,
@@ -226,7 +227,7 @@ func TestMemStore_OpenAPIImport_ParentMissing(t *testing.T) {
 	m, ctx, acct, _ := openAPIImportFixture(t)
 	ghostID := uuid.NewString()
 	err := m.UpsertAppOpenAPIDoc(ctx, ghostID, acct, []byte(`{"openapi":"3.1.0"}`), 0, "3.1.0")
-	if !errors.Is(err, ErrNotFound) {
+	if !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("Upsert on missing parent: got %v, want ErrNotFound", err)
 	}
 }
@@ -235,7 +236,7 @@ func TestMemStore_OpenAPIImport_ParentMissing(t *testing.T) {
 // delete-on-missing row contract.
 func TestMemStore_OpenAPIImport_DeleteMissing(t *testing.T) {
 	m, ctx, acct, _ := openAPIImportFixture(t)
-	if err := m.DeleteAppOpenAPIDoc(ctx, uuid.NewString(), acct); !errors.Is(err, ErrNotFound) {
+	if err := m.DeleteAppOpenAPIDoc(ctx, uuid.NewString(), acct); !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("Delete never-existing: got %v, want ErrNotFound", err)
 	}
 }
@@ -292,12 +293,12 @@ func TestMemStore_OpenAPIImport_IfUnderQuota(t *testing.T) {
 		if err == nil {
 			t.Fatalf("planMax=%d: expected QuotaError(NotAllowed=true), got nil", planMax)
 		}
-		var qe *QuotaError
+		var qe *state.QuotaError
 		if !errors.As(err, &qe) {
 			t.Fatalf("planMax=%d: expected *QuotaError, got %T: %v", planMax, err, err)
 		}
-		if qe.Kind != QuotaErrorKindOpenAPIImports {
-			t.Errorf("planMax=%d: Kind = %q, want %q", planMax, qe.Kind, QuotaErrorKindOpenAPIImports)
+		if qe.Kind != state.QuotaErrorKindOpenAPIImports {
+			t.Errorf("planMax=%d: Kind = %q, want %q", planMax, qe.Kind, state.QuotaErrorKindOpenAPIImports)
 		}
 		if !qe.NotAllowed {
 			t.Errorf("planMax=%d: NotAllowed = false, want true", planMax)
@@ -318,12 +319,12 @@ func TestMemStore_OpenAPIImport_IfUnderQuota(t *testing.T) {
 	if err == nil {
 		t.Fatal("second upsert at planMax=1: expected QuotaError, got nil")
 	}
-	var qe *QuotaError
+	var qe *state.QuotaError
 	if !errors.As(err, &qe) {
 		t.Fatalf("second upsert: expected *QuotaError, got %T: %v", err, err)
 	}
-	if qe.Kind != QuotaErrorKindOpenAPIImports {
-		t.Errorf("Kind = %q, want %q", qe.Kind, QuotaErrorKindOpenAPIImports)
+	if qe.Kind != state.QuotaErrorKindOpenAPIImports {
+		t.Errorf("Kind = %q, want %q", qe.Kind, state.QuotaErrorKindOpenAPIImports)
 	}
 	if qe.Limit != 1 {
 		t.Errorf("Limit = %d, want 1", qe.Limit)
@@ -338,7 +339,7 @@ func TestMemStore_OpenAPIImport_IfUnderQuota(t *testing.T) {
 	// --- Branch 4: missing parent (foreign account) — IDOR
 	// floor rejects with ErrNotFound even when planMax is
 	// generous.
-	if err := m.UpsertAppOpenAPIDocIfUnderQuota(ctx, app, "ghost-acct", doc, 1, "3.1.0", 5); !errors.Is(err, ErrNotFound) {
+	if err := m.UpsertAppOpenAPIDocIfUnderQuota(ctx, app, "ghost-acct", doc, 1, "3.1.0", 5); !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("foreign-account upsert: got %v, want ErrNotFound", err)
 	}
 }
