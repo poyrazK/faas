@@ -13,6 +13,9 @@ checks:
                                                             else wait
   healthy  no page alert fires on the control plane's Prometheus (tenant-
            signal families excepted) and Prometheus answers else wait
+  watch    no host already holds the most unwatched releases allowed
+           (release_units.json "watch".max_unwatched)      else wait while
+           its watch runs; fail when no watch runs for it (adopt it)
 
 A hold or a stand-down ends the job without deploying and without failing:
 a person froze deploys, or a newer cumulative unit release takes over.
@@ -71,6 +74,7 @@ def _tenant_signal_families() -> tuple[str, ...]:
 
 
 TENANT_SIGNAL_FAMILIES = _tenant_signal_families()
+MAX_UNWATCHED = json.loads((HERE / "release_units.json").read_text(encoding="utf-8"))["watch"]["max_unwatched"]
 
 OK, WAIT, HOLD, STAND_DOWN, FAIL = "ok", "wait", "hold", "stand down", "fail"
 
@@ -92,11 +96,18 @@ class GitHub:
         url = f"{self.api_url}/repos/{self.repo}/{path.lstrip('/')}"
         if params:
             url += "?" + urllib.parse.urlencode(params)
-        req = urllib.request.Request(url, headers={
-            "Accept": "application/vnd.github+json",
-            "Authorization": f"Bearer {self.token}",
-            "X-GitHub-Api-Version": "2022-11-28",
-        })
+        return self._send(urllib.request.Request(url, headers=self._headers()))
+
+    def post(self, path: str, body: dict) -> dict:
+        url = f"{self.api_url}/repos/{self.repo}/{path.lstrip('/')}"
+        headers = {**self._headers(), "Content-Type": "application/json"}
+        return self._send(urllib.request.Request(url, data=json.dumps(body).encode(), headers=headers, method="POST"))
+
+    def _headers(self) -> dict:
+        return {"Accept": "application/vnd.github+json", "Authorization": f"Bearer {self.token}",
+                "X-GitHub-Api-Version": "2022-11-28"}
+
+    def _send(self, req: urllib.request.Request):
         with urllib.request.urlopen(req, timeout=self.timeout) as resp:  # noqa: S310 - fixed API host
             return json.load(resp)
 
@@ -128,7 +139,7 @@ class Preflight:
             host = self.host_state()
         except (OSError, ValueError, subprocess.SubprocessError) as err:
             host = {"error": str(err)}
-        verdicts += [self.idle(host), self.healthy(host)]
+        verdicts += [self.idle(host), self.healthy(host), self.watch(host)]
         return verdicts
 
     # --- freeze -----------------------------------------------------------
@@ -232,6 +243,25 @@ class Preflight:
             return Verdict("healthy", WAIT, "page alerts firing: " + "; ".join(paging))
         note = f" (tenant-signal alerts ignored: {', '.join(ignored)})" if ignored else ""
         return Verdict("healthy", OK, "no page alert is firing" + note)
+
+
+    # --- watch ------------------------------------------------------------
+    def watch(self, host: dict) -> Verdict:
+        record = host.get("watch")
+        if host.get("error") or not record:
+            return Verdict("watch", OK, "no unit release awaits its post-deploy watch")
+        full = sorted(h for h, e in (record.get("hosts") or {}).items() if len(e.get("releases") or []) >= MAX_UNWATCHED)
+        owner = str(record.get("owner_run", ""))
+        if not full:
+            return Verdict("watch", OK, f"run {owner}'s watch covers the unwatched releases; this deploy joins it")
+        run = self.gh.get(f"actions/runs/{owner}") if owner.isdigit() else {}
+        where = ", ".join(full)
+        if run.get("status") not in (None, "completed"):
+            return Verdict("watch", WAIT, f"{where} already hold {MAX_UNWATCHED} unwatched releases; "
+                           f"waiting for run {owner}'s post-deploy watch ({run.get('html_url', '')})")
+        return Verdict("watch", FAIL, f"{where} hold {MAX_UNWATCHED} unwatched releases and no watch runs for "
+                       f"them (run {owner} ended); dispatch cd-unit-watch.yml with adopt=true "
+                       "(docs/runbooks/DeployFreeze.md)")
 
 
 @dataclass

@@ -1751,6 +1751,16 @@ jobs:
           remote="$(scripts/ci/unit_deploy.sh stage "$UNIT_PLAN" "$UNITS_DIR" "$UNITS_DIR/tools/deployctl")"
           echo "REMOTE_STAGE=$remote" >> "$GITHUB_ENV"
 
+      # The post-deploy watch (docs/adr/20261020214632-automatic-unit-deploy-
+      # safety-rails.md): record this release as unwatched over the host's
+      # known-good one and make this run the watch's owner before anything is
+      # activated. Exit 3: the host already holds the most unwatched releases
+      # allowed (release-units' preflight waits for that).
+      - name: Take over the post-deploy watch
+        id: watch_open
+        if: steps.plan.outputs.action == 'deploy' || steps.plan.outputs.action == 'converge'
+        run: scripts/ci/unit_deploy.sh watch-open "$UNIT_PLAN" control-plane
+
       - name: Activate the unit release
         id: activate
         if: steps.plan.outputs.action == 'deploy' || steps.plan.outputs.action == 'converge'
@@ -1778,6 +1788,12 @@ jobs:
             echo "::error::rolled $(jq -r '.units | join(", ")' "$UNIT_PLAN") back after the SLO gate (exit $status)" >&2
             exit 1
           fi
+
+      # A failed activation or gate put the host back on the release it ran
+      # before: the watch record forgets what this deploy added.
+      - name: Return the host to the watch record
+        if: failure() && steps.watch_open.outcome == 'success'
+        run: scripts/ci/unit_deploy.sh watch-revert control-plane
 
       - name: Upload unit rollout probe evidence
         if: always()

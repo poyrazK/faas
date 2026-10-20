@@ -38,6 +38,7 @@ class FakeGitHub:
         self.active = {"in_progress": [run_obj(ME, 50, sha=SHA)], "queued": [], "waiting": []}
         self.jobs = {}
         self.light = []
+        self.runs = {}
         self.requests = []
 
     def get(self, path, params=None):
@@ -55,6 +56,8 @@ class FakeGitHub:
             return {"workflow_runs": self.light}
         if path == "actions/runs":
             return {"workflow_runs": self.active[params["status"]]}
+        if path in self.runs:
+            return self.runs[path]
         if path.startswith("actions/runs/") and path.endswith("/jobs"):
             return {"jobs": self.jobs.get(int(path.split("/")[2]), [])}
         raise AssertionError(f"unexpected GitHub path {path}")
@@ -82,7 +85,7 @@ class Clock:
         self.t += s
 
 
-class PreflightTest(unittest.TestCase):
+class PreflightCase(unittest.TestCase):
     def setUp(self):
         self.gh = FakeGitHub()
         self.host = healthy_host()
@@ -100,6 +103,8 @@ class PreflightTest(unittest.TestCase):
 
         return dp.run(pre, wait, interval, now=self.clock.now, sleep=sleep, log=self.logs.append)
 
+
+class PreflightTest(PreflightCase):
     def test_go_when_idle_healthy_and_unfrozen(self):
         code, go, summary = self.run_preflight()
         self.assertEqual((code, go), (0, True))
@@ -243,6 +248,41 @@ class PreflightTest(unittest.TestCase):
         self.run_preflight(wait=40 * 60, interval=60)
         # 1,000 requests an hour per repository for the workflow token.
         self.assertLess(len(self.gh.requests), 400)
+
+
+class WatchCapTest(PreflightCase):
+    def watched(self, releases, owner="90"):
+        self.host = healthy_host()
+        self.host["watch"] = {"owner_run": owner, "hosts": {"control-plane": {"releases": releases}}}
+
+    def test_open_watch_below_the_cap_lets_the_deploy_join_it(self):
+        self.watched(["a" * 40])
+        code, go, summary = self.run_preflight()
+        self.assertEqual((code, go), (0, True))
+        self.assertIn("run 90's watch covers the unwatched releases", summary)
+
+    def test_at_the_cap_waits_for_the_running_watch(self):
+        self.watched(["a" * 40, "c" * 40])
+        self.gh.runs["actions/runs/90"] = {"status": "in_progress", "html_url": "https://r/90"}
+
+        def watch_done(t):
+            if t.clock.t >= 1_800_000_000.0 + 600:
+                t.host["watch"] = None
+        self.on_sleep = watch_done
+        code, go, summary = self.run_preflight(wait=40 * 60)
+        self.assertEqual((code, go), (0, True))
+        self.assertIn("waiting for run 90's post-deploy watch", summary)
+        self.assertIn("watch: 600 s", summary)
+
+    def test_at_the_cap_with_no_watch_running_fails_and_says_how_to_adopt(self):
+        self.watched(["a" * 40, "c" * 40])
+        self.gh.runs["actions/runs/90"] = {"status": "completed", "conclusion": "failure"}
+        code, go, summary = self.run_preflight()
+        self.assertEqual((code, go), (1, False))
+        self.assertIn("adopt=true", summary)
+
+    def test_cap_comes_from_the_release_units_config(self):
+        self.assertEqual(dp.MAX_UNWATCHED, 2)
 
 
 class MainTest(unittest.TestCase):

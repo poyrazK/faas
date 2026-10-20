@@ -274,4 +274,126 @@ if PROMETHEUS_URL=http://10.0.0.1:9095 bash "$helper" preflight-state >/dev/null
   fail "a non-loopback Prometheus URL was accepted"
 fi
 
+# 9. The post-deploy watch (docs/adr/20261020214632-automatic-unit-deploy-
+#    safety-rails.md): the record on the control plane, the watch over its
+#    units, and the rollback to each host's known-good release.
+export WATCH_RECORD="$test_root/deploy/unit-watch.json" WATCH_OWNER=500 UNITS_SHA=1111111111111111111111111111111111111111
+releases="$test_root/releases"
+known_good=00000000000000000000000000000000000000b0
+mkdir -p "$releases/$known_good" "$releases/0123456789abcdef0123456789abcdef01234567"
+for r in "$releases"/*; do
+  jq -n '{git_sha: "2222222222222222222222222222222222222222"}' > "$r/release-manifest.json"
+done
+real_readlink="$(command -v readlink)"
+cat > "$stub/readlink" <<EOF
+#!/usr/bin/env bash
+if [[ "\$*" == "-f /opt/faas/current" ]]; then cat "$test_root/current"; exit 0; fi
+exec "$real_readlink" "\$@"
+EOF
+chmod +x "$stub/readlink"
+printf '%s\n' "$releases/$known_good" > "$test_root/current"
+watch_dirs() { find /var/tmp -maxdepth 1 -name 'gregale-watch.*' 2>/dev/null | sort; }
+watch_dirs_before="$(watch_dirs)"
+
+bash "$helper" watch-open "$plan" control-plane || fail "watch-open refused the first deploy"
+jq -e --arg kg "$known_good" '.owner_run == "500" and .hosts["control-plane"].known_good == $kg
+    and .hosts["control-plane"].releases == ["0123456789abcdef0123456789abcdef01234567"]
+    and .hosts["control-plane"].commits == ["1111111111111111111111111111111111111111"]' "$WATCH_RECORD" >/dev/null \
+  || fail "watch-open did not record the release over its known-good one: $(cat "$WATCH_RECORD")"
+[[ "$(bash "$helper" watch-record | jq -r .owner_run)" == 500 ]] || fail "watch-record did not print the record"
+state="$(bash "$helper" preflight-state)"
+jq -e '.watch.owner_run == "500" and (.watch.hosts["control-plane"].releases | length) == 1' <<<"$state" >/dev/null \
+  || fail "preflight-state does not report the watch record: $state"
+[[ "$(watch_dirs)" == "$watch_dirs_before" ]] || fail "watch-open left its temp dir"
+
+# A node: its pinned target rides in the record.
+jq -n '{node: "fsn-2", ssh_host: "10.0.0.2", ssh_user: "root", ssh_port: "22", ssh_host_key_sha256: ("SHA256:" + ("x" * 43))}' > "$test_root/target.json"
+bash "$helper" watch-open "$plan" fsn-2 "$test_root/target.json" || fail "watch-open refused a node"
+jq -e '.hosts["fsn-2"].target.node == "fsn-2" and .order == ["control-plane", "fsn-2"]' "$WATCH_RECORD" >/dev/null \
+  || fail "the node's target or order was not recorded"
+if bash "$helper" watch-open "$plan" '../etc' 2>/dev/null; then fail "an unsafe host label was accepted"; fi
+
+# watch: one slo_gate per recorded unit, in watch mode, worst result wins.
+: > "$STUB_LOG"
+STUB_GATE_apid=0 STUB_GATE_meterd=0 bash "$helper" watch >/dev/null || fail "a clean watch did not pass"
+[[ "$(grep -c -- '--max-hold 1800s' "$STUB_LOG")" == 2 ]] || fail "watch did not hold each rule for its own for: $(cat "$STUB_LOG")"
+for case in "1 4 1" "4 0 4" "3 4 3" "0 0 0"; do
+  read -r apid meterd want <<<"$case"
+  status=0
+  STUB_GATE_apid="$apid" STUB_GATE_meterd="$meterd" bash "$helper" watch >/dev/null 2>&1 || status=$?
+  [[ "$status" == "$want" ]] || fail "watch with apid=$apid meterd=$meterd exited $status, want $want"
+done
+WATCH_OWNER=501 bash "$helper" watch >/dev/null 2>&1 && fail "a run that does not own the record watched it"
+status=0; WATCH_OWNER=501 bash "$helper" watch >/dev/null 2>&1 || status=$?
+[[ "$status" == 4 ]] || fail "watch by a non-owner exited $status, want 4"
+
+# watch-rollback: back to known-good, only when the host runs what the record expects.
+cat > "$units/tools/deployctl" <<'STUB'
+#!/usr/bin/env bash
+echo "deployctl $*" >> "$STUB_LOG"
+STUB
+chmod +x "$units/tools/deployctl"
+jq '.hosts["control-plane"]' "$WATCH_RECORD" > "$test_root/entry.json"
+remote_stage="$(bash "$helper" watch-stage "$units/tools/deployctl")"
+[[ -x "$remote_stage/bin/deployctl" && -f "$remote_stage/unit-release-verify.sh" ]] || fail "watch-stage did not stage deployctl and the verifier"
+printf '%s\n' "$releases/0123456789abcdef0123456789abcdef01234567" > "$test_root/current"
+: > "$STUB_LOG"
+UNIT_VERIFY_TIMEOUT=1 bash "$helper" watch-rollback "$test_root/entry.json" "$remote_stage" >/dev/null 2>&1 || true
+grep -Fq "deployctl rollback --only 'apid,meterd' --expect-current 0123456789abcdef0123456789abcdef01234567 --to $known_good" "$STUB_LOG" \
+  || grep -Fq "deployctl rollback --only apid,meterd --expect-current 0123456789abcdef0123456789abcdef01234567 --to $known_good" "$STUB_LOG" \
+  || fail "watch-rollback did not roll back to known-good: $(cat "$STUB_LOG")"
+printf '%s\n' "$releases/$known_good" > "$test_root/current"
+: > "$STUB_LOG"
+bash "$helper" watch-rollback "$test_root/entry.json" "$remote_stage" >/dev/null || fail "a host on known-good was not left as it is"
+grep -q deployctl "$STUB_LOG" && fail "watch-rollback restarted a host already on known-good"
+printf '%s\n' "$releases/ffffffffffffffffffffffffffffffffffffffff" > "$test_root/current"
+status=0; bash "$helper" watch-rollback "$test_root/entry.json" "$remote_stage" >/dev/null 2>&1 || status=$?
+[[ "$status" == 5 ]] || fail "a host changed since the record was not left alone (exit $status)"
+grep -q deployctl "$STUB_LOG" && fail "watch-rollback touched a host changed since the record"
+bash "$helper" cleanup "$remote_stage"
+
+# watch-revert after a failed deploy; watch-adopt; watch-close by its owner only.
+printf '%s\n' "$releases/$known_good" > "$test_root/current"
+bash "$helper" watch-revert fsn-2 || fail "watch-revert failed"
+jq -e '.hosts | has("fsn-2") | not' "$WATCH_RECORD" >/dev/null || fail "a node back on known-good stayed in the record"
+WATCH_OWNER=777 bash "$helper" watch-adopt >/dev/null || fail "watch-adopt failed"
+jq -e '.owner_run == "777" and (.watch_from | type) == "number"' "$WATCH_RECORD" >/dev/null || fail "watch-adopt did not take the record"
+status=0; bash "$helper" watch-close >/dev/null 2>&1 || status=$?
+[[ "$status" == 4 && -f "$WATCH_RECORD" ]] || fail "a non-owner closed the record (exit $status)"
+WATCH_OWNER=777 bash "$helper" watch-close >/dev/null || fail "the owner could not close the record"
+[[ ! -f "$WATCH_RECORD" ]] || fail "watch-close left the record"
+[[ "$(bash "$helper" watch-record)" == null ]] || fail "watch-record of no record is not null"
+
+# The cap: at most max_unwatched releases per host.
+printf '%s\n' "$releases/$known_good" > "$test_root/current"
+bash "$helper" watch-open "$plan" control-plane || fail "watch-open (1)"
+jq '.release_id = "0123456789abcdef0123456789abcdef0123456a" | .expect_current = "0123456789abcdef0123456789abcdef01234567"' "$plan" > "$test_root/plan2.json"
+printf '%s\n' "$releases/0123456789abcdef0123456789abcdef01234567" > "$test_root/current"
+bash "$helper" watch-open "$test_root/plan2.json" control-plane || fail "watch-open (2)"
+jq '.release_id = "0123456789abcdef0123456789abcdef0123456b" | .expect_current = "0123456789abcdef0123456789abcdef0123456a"' "$plan" > "$test_root/plan3.json"
+mkdir -p "$releases/0123456789abcdef0123456789abcdef0123456a"
+cp "$releases/$known_good/release-manifest.json" "$releases/0123456789abcdef0123456789abcdef0123456a/"
+printf '%s\n' "$releases/0123456789abcdef0123456789abcdef0123456a" > "$test_root/current"
+status=0; bash "$helper" watch-open "$test_root/plan3.json" control-plane 2>/dev/null || status=$?
+[[ "$status" == 3 ]] || fail "a third unwatched release was accepted (exit $status)"
+rm -f "$WATCH_RECORD"
+
+# pin-node keeps only keys with the pinned fingerprint.
+cat > "$stub/ssh-keyscan" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "10.0.0.2 ssh-ed25519 AAAAgood" "10.0.0.2 ssh-rsa AAAAother"
+EOF
+cat > "$stub/ssh-keygen" <<'EOF'
+#!/usr/bin/env bash
+line="$(cat)"
+case "$line" in *AAAAgood*) echo "256 SHA256:$(printf 'g%.0s' {1..43}) host (ED25519)" ;; *) echo "3072 SHA256:$(printf 'o%.0s' {1..43}) host (RSA)" ;; esac
+EOF
+chmod +x "$stub/ssh-keyscan" "$stub/ssh-keygen"
+bash "$helper" pin-node 10.0.0.2 22 "SHA256:$(printf 'g%.0s' {1..43})" "$test_root/pinned" || fail "pin-node refused the pinned key"
+[[ "$(cat "$test_root/pinned")" == "10.0.0.2 ssh-ed25519 AAAAgood" ]] || fail "pin-node kept another key: $(cat "$test_root/pinned")"
+if bash "$helper" pin-node 10.0.0.2 22 "SHA256:$(printf 'z%.0s' {1..43})" "$test_root/pinned" 2>/dev/null; then
+  fail "pin-node accepted a host without the pinned key"
+fi
+unset WATCH_RECORD WATCH_OWNER UNITS_SHA
+
 echo "unit_deploy tests passed"
