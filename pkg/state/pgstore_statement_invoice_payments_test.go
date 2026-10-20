@@ -92,6 +92,13 @@ func TestPgStoreBillingProviders(t *testing.T) {
 	checkBillingProviders(t, ctx, store, accountID)
 }
 
+// adr: 20261019180000
+func TestPgStoreStatementInvoiceExportClaims(t *testing.T) {
+	store, _, ctx := pgStoreWithPool(t)
+	accountID, _ := seedConsumerKeyAccountApp(t, ctx, store)
+	checkStatementInvoiceExportClaims(t, ctx, store, accountID)
+}
+
 // adr: 1306
 func TestPgStoreConsumerCredits(t *testing.T) {
 	store, _, ctx := pgStoreWithPool(t)
