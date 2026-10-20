@@ -1271,6 +1271,7 @@ var FormatGBHours = formatGBHours
 var FormatMillicents = formatMillicents
 var FormatRuntimeLogLine = formatRuntimeLogLine
 var FormatSuspectedDependency = formatSuspectedDependency
+var FreezeRequestFromFlags = freezeRequestFromFlags
 var FunctionConcurrencyDeployHint = functionConcurrencyDeployHint
 var GeneratedTestCICompareCommand = generatedTestCICompareCommand
 var GeneratedTestCIRunCommand = generatedTestCIRunCommand
@@ -1420,6 +1421,13 @@ var ParseCustomerOperationBindings = parseCustomerOperationBindings
 var ParseCustomerOperationCommand = parseCustomerOperationCommand
 var ParseCustomerOperationDelivery = parseCustomerOperationDelivery
 var ParseCustomerOperationSignal = parseCustomerOperationSignal
+
+// NewTenantCustomerOperationSignalClient builds the --self signal client
+// (ADR-20261017100853), whose fields are unexported.
+func NewTenantCustomerOperationSignalClient(client *api.Client, definition string) tenantCustomerOperationSignalClient {
+	return tenantCustomerOperationSignalClient{client: client, definition: definition}
+}
+
 var ParseDataAPIContract = parseDataAPIContract
 var ParseDataAPIHealthPool = parseDataAPIHealthPool
 var ParseDataAPIRequestRecord = parseDataAPIRequestRecord
@@ -1587,6 +1595,7 @@ var RedactErrorText = redactErrorText
 var RedactTestDiagnosticText = redactTestDiagnosticText
 var RehearsalTestRepo = rehearsalTestRepo
 var RejectDevTriggerAppSelection = rejectDevTriggerAppSelection
+var ReleaseGateRequest = releaseGateRequest
 var ReleaseSummaryLine = releaseSummaryLine
 var ReleasedUsage = releasedUsage
 var RemoveTestFaultRules = removeTestFaultRules

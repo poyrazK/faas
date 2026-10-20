@@ -120,14 +120,36 @@ func (s *Session) stop() {
 func (s *Session) write() {
 	defer close(s.done)
 	defer func() { _ = s.conn.Close() }()
-	for data := range s.out {
+	for {
+		var (
+			data []byte
+			ok   bool
+		)
+		select {
+		case data, ok = <-s.out:
+		case <-s.hub.done:
+			// The hub stopped. A session it never registered (one attached
+			// as it stopped) has nobody to stop it, so the connection
+			// closes here and the client reconnects to the next hub.
+			return
+		}
+		if !ok {
+			return
+		}
 		if err := s.conn.Send(data); err != nil {
 			// The transport failed: drop what is queued and let the hub
 			// forget the session.
 			go s.Close(context.Background())
-			for range s.out { //nolint:revive // drain until the hub stops the session
+			for {
+				select {
+				case _, ok := <-s.out:
+					if !ok {
+						return
+					}
+				case <-s.hub.done:
+					return
+				}
 			}
-			return
 		}
 	}
 }

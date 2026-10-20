@@ -95,6 +95,7 @@ type Querier interface {
 	// ADR-1741: the app's runtime generation, which triggers bump in the
 	// writer's transaction for every change a wake depends on.
 	AppRuntimeGeneration(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error)
+	AppSLOForReleaseGate(ctx context.Context, db DBTX, arg AppSLOForReleaseGateParams) (AppSLOForReleaseGateRow, error)
 	AppendAccountCreditLedgerEntry(ctx context.Context, db DBTX, arg AppendAccountCreditLedgerEntryParams) error
 	AppendEvent(ctx context.Context, db DBTX, arg AppendEventParams) error
 	AppendMCPAdmissionEvidence(ctx context.Context, db DBTX, arg AppendMCPAdmissionEvidenceParams) (int64, error)
@@ -520,6 +521,9 @@ type Querier interface {
 	CreateAPIKey(ctx context.Context, db DBTX, arg CreateAPIKeyParams) (CreateAPIKeyRow, error)
 	CreateAccount(ctx context.Context, db DBTX, arg CreateAccountParams) (CreateAccountRow, error)
 	CreateApp(ctx context.Context, db DBTX, arg CreateAppParams) (CreateAppRow, error)
+	// ADR-20261019071734: release gates on customer signals.
+	// Inserts a gate only while the app holds fewer than max_gates gates.
+	CreateAppReleaseGateWithinLimit(ctx context.Context, db DBTX, arg CreateAppReleaseGateWithinLimitParams) (AppReleaseGate, error)
 	CreateAppSecretRevocation(ctx context.Context, db DBTX, arg CreateAppSecretRevocationParams) (CreateAppSecretRevocationRow, error)
 	CreateAppSecretRevocationTarget(ctx context.Context, db DBTX, arg CreateAppSecretRevocationTargetParams) error
 	CreateApplicationStandard(ctx context.Context, db DBTX, arg CreateApplicationStandardParams) (pgtype.UUID, error)
@@ -560,6 +564,12 @@ type Querier interface {
 	// ConsumeRecoveryCode, ApplyProjectPlan) renders those inline.
 	CreateOrg(ctx context.Context, db DBTX, arg CreateOrgParams) (CreateOrgRow, error)
 	CreateProjectMigration(ctx context.Context, db DBTX, arg CreateProjectMigrationParams) error
+	// ADR-20261019071733: deploy freezes and release windows.
+	// Inserts a freeze only while the account holds fewer than max_unlifted
+	// unlifted freezes that have not ended.
+	CreateReleaseFreezeWithinLimit(ctx context.Context, db DBTX, arg CreateReleaseFreezeWithinLimitParams) (ReleaseFreeze, error)
+	// One automatic freeze per rolled-back deployment; a retried rollback reuses it.
+	CreateRollbackReleaseFreeze(ctx context.Context, db DBTX, arg CreateRollbackReleaseFreezeParams) (int64, error)
 	CreateRoutePolicyRule(ctx context.Context, db DBTX, arg CreateRoutePolicyRuleParams) error
 	CreateServiceBindingSmokeTask(ctx context.Context, db DBTX, arg CreateServiceBindingSmokeTaskParams) (AppTask, error)
 	// IAM-3 (ADR-039, issue #187 + #244 merged). One row per dashboard login.
@@ -595,6 +605,9 @@ type Querier interface {
 	CreateWorkflowForEachItem(ctx context.Context, db DBTX, arg CreateWorkflowForEachItemParams) error
 	CronByID(ctx context.Context, db DBTX, id pgtype.UUID) (CronByIDRow, error)
 	CustomerOperationAccountPlan(ctx context.Context, db DBTX, accountID pgtype.UUID) (string, error)
+	// ADR-20261016123221: fleet-wide pending Operations by state and wait kind, read
+	// through the partial index of pending Operations.
+	CustomerOperationActiveTelemetry(ctx context.Context, db DBTX, overdueBefore pgtype.Timestamptz) ([]CustomerOperationActiveTelemetryRow, error)
 	CustomerOperationBlobByKey(ctx context.Context, db DBTX, storageKey string) (CustomerOperationResultBlob, error)
 	CustomerOperationBlobMetrics(ctx context.Context, db DBTX) ([]CustomerOperationBlobMetricsRow, error)
 	CustomerOperationBlobUsage(ctx context.Context, db DBTX, accountID pgtype.UUID) (CustomerOperationBlobUsageRow, error)
@@ -611,10 +624,15 @@ type Querier interface {
 	CustomerOperationJobOwned(ctx context.Context, db DBTX, runID pgtype.UUID) (bool, error)
 	CustomerOperationJobRuntimeOwner(ctx context.Context, db DBTX, arg CustomerOperationJobRuntimeOwnerParams) (bool, error)
 	CustomerOperationJobSnapshotRetained(ctx context.Context, db DBTX, storageKey string) (bool, error)
+	// ADR-20261016123221: Operation outcomes since a point, by failure code.
+	CustomerOperationOutcomeTelemetry(ctx context.Context, db DBTX, since pgtype.Timestamptz) ([]CustomerOperationOutcomeTelemetryRow, error)
+	// ADR-20261016123221: accounts whose attempts ended with an unknown outcome since a point.
+	CustomerOperationOutcomeUnknownAccounts(ctx context.Context, db DBTX, since pgtype.Timestamptz) (int64, error)
 	CustomerOperationRecoveryTenantStatus(ctx context.Context, db DBTX, arg CustomerOperationRecoveryTenantStatusParams) (string, error)
 	CustomerOperationReleaseMemberCount(ctx context.Context, db DBTX, arg CustomerOperationReleaseMemberCountParams) (int64, error)
 	CustomerOperationStateMetrics(ctx context.Context, db DBTX, now pgtype.Timestamptz) ([]CustomerOperationStateMetricsRow, error)
 	CustomerOperationStreamMetric(ctx context.Context, db DBTX, now pgtype.Timestamptz) (int64, error)
+	// ADR-20261016110803: the Operation's execution budget also caps the attempt window.
 	CustomerOperationWorkflowAttemptWindow(ctx context.Context, db DBTX, arg CustomerOperationWorkflowAttemptWindowParams) (CustomerOperationWorkflowAttemptWindowRow, error)
 	CustomerOperationWorkflowDeliveryDeployment(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (CustomerOperationWorkflowDeliveryDeploymentRow, error)
 	CustomerOperationWorkflowEvidenceAlreadyUsed(ctx context.Context, db DBTX, arg CustomerOperationWorkflowEvidenceAlreadyUsedParams) (bool, error)
@@ -661,6 +679,7 @@ type Querier interface {
 	// 100 rows/fingerprint cap evicts oldest request rows first).
 	DeleteAppErrorRequestsOlderThan(ctx context.Context, db DBTX, arg DeleteAppErrorRequestsOlderThanParams) error
 	DeleteAppErrorsByIDs(ctx context.Context, db DBTX, dollar_1 []pgtype.UUID) error
+	DeleteAppReleaseGate(ctx context.Context, db DBTX, arg DeleteAppReleaseGateParams) (AppReleaseGate, error)
 	DeleteAppSLO(ctx context.Context, db DBTX, arg DeleteAppSLOParams) (int64, error)
 	DeleteAutomation(ctx context.Context, db DBTX, arg DeleteAutomationParams) error
 	DeleteAutomationLiveSuites(ctx context.Context, db DBTX, arg DeleteAutomationLiveSuitesParams) error
@@ -2548,6 +2567,7 @@ type Querier interface {
 	LayerArtifactHasReferences(ctx context.Context, db DBTX, storageKey string) (pgtype.Bool, error)
 	LifecycleApprovalClock(ctx context.Context, db DBTX) (pgtype.Timestamptz, error)
 	LifecycleHistoryCursorExists(ctx context.Context, db DBTX, arg LifecycleHistoryCursorExistsParams) (bool, error)
+	LiftReleaseFreeze(ctx context.Context, db DBTX, arg LiftReleaseFreezeParams) (ReleaseFreeze, error)
 	LinearOAuthFlowClaim(ctx context.Context, db DBTX, arg LinearOAuthFlowClaimParams) (IssueTrackerLinearOauthFlow, error)
 	LinearOAuthFlowCleanup(ctx context.Context, db DBTX, limit int32) error
 	LinearOAuthFlowDelete(ctx context.Context, db DBTX, arg LinearOAuthFlowDeleteParams) error
@@ -2658,6 +2678,7 @@ type Querier interface {
 	ListAppHealthHistory(ctx context.Context, db DBTX, arg ListAppHealthHistoryParams) ([][]byte, error)
 	ListAppPendingRestarts(ctx context.Context, db DBTX, arg ListAppPendingRestartsParams) ([]ListAppPendingRestartsRow, error)
 	ListAppPendingRollbacks(ctx context.Context, db DBTX, arg ListAppPendingRollbacksParams) ([][]byte, error)
+	ListAppReleaseGates(ctx context.Context, db DBTX, appID pgtype.UUID) ([]AppReleaseGate, error)
 	ListAppSLOs(ctx context.Context, db DBTX, appID pgtype.UUID) ([]AppSlo, error)
 	ListAppSecretRevocationTargets(ctx context.Context, db DBTX, revocationID pgtype.UUID) ([]ListAppSecretRevocationTargetsRow, error)
 	ListAppSecretRuntimeProcessObservations(ctx context.Context, db DBTX, arg ListAppSecretRuntimeProcessObservationsParams) ([]ListAppSecretRuntimeProcessObservationsRow, error)
@@ -2899,6 +2920,8 @@ type Querier interface {
 	ListFeatureFlagAutoRolloutCandidates(ctx context.Context, db DBTX, arg ListFeatureFlagAutoRolloutCandidatesParams) ([]ListFeatureFlagAutoRolloutCandidatesRow, error)
 	ListFeatureFlagRequestEvidence(ctx context.Context, db DBTX, arg ListFeatureFlagRequestEvidenceParams) ([]ListFeatureFlagRequestEvidenceRow, error)
 	ListFeatureFlagVersions(ctx context.Context, db DBTX, arg ListFeatureFlagVersionsParams) ([]FeatureFlagVersion, error)
+	// ADR-20261016110803: the finished step attempts an Operation's execution budget counts.
+	ListFinishedWorkflowRunAttempts(ctx context.Context, db DBTX, runID pgtype.UUID) ([]ListFinishedWorkflowRunAttemptsRow, error)
 	// Operator beta funnel: one bounded aggregate read replaces an N+1
 	// ListInstancesForAccount loop. last_request_at is stamped only after a
 	// successful public request and terminal instances remain for 30 days, which
@@ -3085,6 +3108,9 @@ type Querier interface {
 	// type. (commit 6 of the issue #757 mega-PR.)
 	ListTriggersForApp(ctx context.Context, db DBTX, appID pgtype.UUID) ([]ListTriggersForAppRow, error)
 	ListUDPListenersForApp(ctx context.Context, db DBTX, appID string) ([]AppUdpListener, error)
+	// Unlifted freezes that have not ended: active and upcoming windows, weekly
+	// windows and after-rollback policies.
+	ListUnliftedReleaseFreezes(ctx context.Context, db DBTX, arg ListUnliftedReleaseFreezesParams) ([]ReleaseFreeze, error)
 	// The account trace view's per-request wakes: one canonical instance per wake
 	// (its first), scoped to the account's apps before reading wake metadata, with
 	// the same boot and completion reads as ListAppWakeHistoryPage.
@@ -4809,6 +4835,14 @@ type Querier interface {
 	ReleaseEnvironmentGitSourceOverrides(ctx context.Context, db DBTX, sourceID pgtype.UUID) error
 	ReleaseEnvironmentGitSourceOwners(ctx context.Context, db DBTX, sourceID pgtype.UUID) error
 	ReleaseEnvironmentQueueDeliveryQuota(ctx context.Context, db DBTX, accountID pgtype.UUID) error
+	ReleaseGateCustomMetricWindow(ctx context.Context, db DBTX, arg ReleaseGateCustomMetricWindowParams) (ReleaseGateCustomMetricWindowRow, error)
+	// A deployment's organic requests in [since, until): all, 5xx, and those
+	// slower than latency_threshold_ms (0 counts none as slow).
+	ReleaseGateDeploymentSLI(ctx context.Context, db DBTX, arg ReleaseGateDeploymentSLIParams) (ReleaseGateDeploymentSLIRow, error)
+	// Error groups the deployment produced first, with at least min_events
+	// events, largest first. Error classes are a closed set; routes and
+	// messages are not returned.
+	ReleaseGateNewErrorGroups(ctx context.Context, db DBTX, arg ReleaseGateNewErrorGroupsParams) ([]ReleaseGateNewErrorGroupsRow, error)
 	ReleaseManagedPostgresCutover(ctx context.Context, db DBTX, arg ReleaseManagedPostgresCutoverParams) (int64, error)
 	ReleaseManagedPostgresDrainHostPorts(ctx context.Context, db DBTX, arg ReleaseManagedPostgresDrainHostPortsParams) error
 	ReleaseManagedPostgresLifecycleLease(ctx context.Context, db DBTX, arg ReleaseManagedPostgresLifecycleLeaseParams) (int64, error)

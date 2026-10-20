@@ -961,6 +961,11 @@ from .create_queue_binding_canary_request import CreateQueueBindingCanaryRequest
 from .create_queue_binding_request import CreateQueueBindingRequest
 from .create_queue_binding_request_mode import CreateQueueBindingRequestMode
 from .create_queue_binding_request_workload_class import CreateQueueBindingRequestWorkloadClass
+from .create_release_freeze_request import CreateReleaseFreezeRequest
+from .create_release_freeze_request_kind import CreateReleaseFreezeRequestKind
+from .create_release_gate_request import CreateReleaseGateRequest
+from .create_release_gate_request_comparison import CreateReleaseGateRequestComparison
+from .create_release_gate_request_kind import CreateReleaseGateRequestKind
 from .create_scenario_objects_request import CreateScenarioObjectsRequest
 from .create_scenario_postgres_request import CreateScenarioPostgresRequest
 from .create_slo_request import CreateSLORequest
@@ -2384,6 +2389,8 @@ from .list_profile_investigations_response import ListProfileInvestigationsRespo
 from .list_profile_periodic_monitors_response import ListProfilePeriodicMonitorsResponse
 from .list_project_binding_verification_runs_status import ListProjectBindingVerificationRunsStatus
 from .list_project_environment_promotions_status import ListProjectEnvironmentPromotionsStatus
+from .list_release_freezes_response import ListReleaseFreezesResponse
+from .list_release_gates_response import ListReleaseGatesResponse
 from .list_schedule_occurrences_response import ListScheduleOccurrencesResponse
 from .list_secrets_for_account_response import ListSecretsForAccountResponse
 from .list_statement_invoices_status import ListStatementInvoicesStatus
@@ -3232,6 +3239,8 @@ from .operation_waiting_state import OperationWaitingState
 from .operation_waiting_state_approver import OperationWaitingStateApprover
 from .operation_waiting_state_kind import OperationWaitingStateKind
 from .operation_webhook_binding_response import OperationWebhookBindingResponse
+from .operation_webhook_binding_response_mode import OperationWebhookBindingResponseMode
+from .operation_webhook_signal import OperationWebhookSignal
 from .operation_workflow_action_obligation import OperationWorkflowActionObligation
 from .operation_workflow_action_preview_request import OperationWorkflowActionPreviewRequest
 from .operation_workflow_action_preview_response import OperationWorkflowActionPreviewResponse
@@ -4048,6 +4057,7 @@ from .platform_tenant_statement_response import PlatformTenantStatementResponse
 from .platform_tenant_statement_response_status import PlatformTenantStatementResponseStatus
 from .platform_tenant_statement_summary_response import PlatformTenantStatementSummaryResponse
 from .platform_tenant_statement_summary_response_status import PlatformTenantStatementSummaryResponseStatus
+from .platform_tenant_subject_signal_request import PlatformTenantSubjectSignalRequest
 from .platform_tenant_surface_certificate_changed_webhook_payload import (
     PlatformTenantSurfaceCertificateChangedWebhookPayload,
 )
@@ -4446,6 +4456,7 @@ from .put_issue_team_request import PutIssueTeamRequest
 from .put_issue_tracker_link_request import PutIssueTrackerLinkRequest
 from .put_job_registry_credential_request import PutJobRegistryCredentialRequest
 from .put_operation_webhook_binding_request import PutOperationWebhookBindingRequest
+from .put_operation_webhook_binding_request_mode import PutOperationWebhookBindingRequestMode
 from .put_outbound_ai_policy_request import PutOutboundAIPolicyRequest
 from .put_outbound_ai_policy_request_ai_provider import PutOutboundAIPolicyRequestAiProvider
 from .put_outbound_ai_prices_request import PutOutboundAIPricesRequest
@@ -4637,6 +4648,17 @@ from .register_scenario_test_response_recorder_version import RegisterScenarioTe
 from .register_scenario_test_response_webhook_mode import RegisterScenarioTestResponseWebhookMode
 from .rekey_progress import RekeyProgress
 from .release_database_ref import ReleaseDatabaseRef
+from .release_freeze import ReleaseFreeze
+from .release_freeze_kind import ReleaseFreezeKind
+from .release_freeze_source import ReleaseFreezeSource
+from .release_freeze_status import ReleaseFreezeStatus
+from .release_freeze_weekly import ReleaseFreezeWeekly
+from .release_freeze_weekly_days_item import ReleaseFreezeWeeklyDaysItem
+from .release_gate import ReleaseGate
+from .release_gate_comparison import ReleaseGateComparison
+from .release_gate_kind import ReleaseGateKind
+from .release_gate_result import ReleaseGateResult
+from .release_gate_result_kind import ReleaseGateResultKind
 from .release_restore_point import ReleaseRestorePoint
 from .remove_environment_git_ops_override_request import RemoveEnvironmentGitOpsOverrideRequest
 from .rename_app_request import RenameAppRequest
@@ -6748,6 +6770,11 @@ __all__ = (
     "CreateQueueBindingRequest",
     "CreateQueueBindingRequestMode",
     "CreateQueueBindingRequestWorkloadClass",
+    "CreateReleaseFreezeRequest",
+    "CreateReleaseFreezeRequestKind",
+    "CreateReleaseGateRequest",
+    "CreateReleaseGateRequestComparison",
+    "CreateReleaseGateRequestKind",
     "CreateScenarioObjectsRequest",
     "CreateScenarioPostgresRequest",
     "CreateSLORequest",
@@ -8084,6 +8111,8 @@ __all__ = (
     "ListProfilePeriodicMonitorsResponse",
     "ListProjectBindingVerificationRunsStatus",
     "ListProjectEnvironmentPromotionsStatus",
+    "ListReleaseFreezesResponse",
+    "ListReleaseGatesResponse",
     "ListScheduleOccurrencesResponse",
     "ListSecretsForAccountResponse",
     "ListStatementInvoicesStatus",
@@ -8906,6 +8935,8 @@ __all__ = (
     "OperationWaitingStateApprover",
     "OperationWaitingStateKind",
     "OperationWebhookBindingResponse",
+    "OperationWebhookBindingResponseMode",
+    "OperationWebhookSignal",
     "OperationWorkflowActionObligation",
     "OperationWorkflowActionPreviewRequest",
     "OperationWorkflowActionPreviewResponse",
@@ -9604,6 +9635,7 @@ __all__ = (
     "PlatformTenantStatementResponseStatus",
     "PlatformTenantStatementSummaryResponse",
     "PlatformTenantStatementSummaryResponseStatus",
+    "PlatformTenantSubjectSignalRequest",
     "PlatformTenantSurfaceCertificateChangedWebhookPayload",
     "PlatformTenantSurfaceCertificateChangedWebhookPayloadCertState",
     "PlatformTenantSurfaceDeploymentChangedWebhookPayload",
@@ -9964,6 +9996,7 @@ __all__ = (
     "PutIssueTrackerLinkRequest",
     "PutJobRegistryCredentialRequest",
     "PutOperationWebhookBindingRequest",
+    "PutOperationWebhookBindingRequestMode",
     "PutOutboundAIPolicyRequest",
     "PutOutboundAIPolicyRequestAiProvider",
     "PutOutboundAIPricesRequest",
@@ -10149,6 +10182,17 @@ __all__ = (
     "RegisterScenarioTestResponseWebhookMode",
     "RekeyProgress",
     "ReleaseDatabaseRef",
+    "ReleaseFreeze",
+    "ReleaseFreezeKind",
+    "ReleaseFreezeSource",
+    "ReleaseFreezeStatus",
+    "ReleaseFreezeWeekly",
+    "ReleaseFreezeWeeklyDaysItem",
+    "ReleaseGate",
+    "ReleaseGateComparison",
+    "ReleaseGateKind",
+    "ReleaseGateResult",
+    "ReleaseGateResultKind",
     "ReleaseRestorePoint",
     "RemoveEnvironmentGitOpsOverrideRequest",
     "RenameAppRequest",

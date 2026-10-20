@@ -89,6 +89,8 @@ const (
 	rolloutDecisionFile              = "rollout_decision.go"     // ADR-1447 explained rollout decisions
 	releaseRollbackFile              = "release_rollback.go"     // ADR-1448 releases that change the database
 	configRevisionsFile              = "config_revisions.go"     // ADR-1451 guarded, reversible config changes
+	releaseFreezesFile               = "release_freezes.go"      // ADR-20261019071733 deploy freezes
+	releaseGatesFile                 = "release_gates.go"        // ADR-20261019071734 release gates
 	changeTimelineFile               = "change_timeline.go"      // ADR-751 app change timeline DTOs
 	customMetricSeriesFile           = "custom_metric_series.go" // ADR-745 custom metric history DTOs
 	operatorPlatformFlagsFile        = "operator_platform_flags.go"
@@ -1713,6 +1715,8 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", rolloutDecisionFile),
 		filepath.Join(root, "pkg", "api", releaseRollbackFile),
 		filepath.Join(root, "pkg", "api", configRevisionsFile),
+		filepath.Join(root, "pkg", "api", releaseFreezesFile),
+		filepath.Join(root, "pkg", "api", releaseGatesFile),
 		filepath.Join(root, "pkg", "api", platformTenantsFile),
 		filepath.Join(root, "pkg", "api", platformTenantCredentialsFile),
 		filepath.Join(root, "pkg", "api", runtimePolicyFile),
@@ -1771,11 +1775,12 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "operation_workflow_reconciliation.go"),
 		filepath.Join(root, "pkg", "api", "operations_doctor.go"),
 		filepath.Join(root, "pkg", "api", "operations_delivery.go"),
-		filepath.Join(root, "pkg", "api", "operation_timeline.go"), // ADR-1195 timeline DTOs
-		filepath.Join(root, "pkg", "api", "operation_limits.go"),   // ADR-1196 operation limit DTOs
-		filepath.Join(root, "pkg", "api", "operation_signals.go"),  // ADR-1197 operation signal DTOs
-		filepath.Join(root, "pkg", "api", "operation_waits.go"),    // ADR-1194 operation wait and approval DTOs
-		filepath.Join(root, "pkg", "api", "operation_webhooks.go"), // ADR-1193 operation webhook binding DTOs
+		filepath.Join(root, "pkg", "api", "operation_timeline.go"),       // ADR-1195 timeline DTOs
+		filepath.Join(root, "pkg", "api", "operation_limits.go"),         // ADR-1196 operation limit DTOs
+		filepath.Join(root, "pkg", "api", "operation_signals.go"),        // ADR-1197 operation signal DTOs
+		filepath.Join(root, "pkg", "api", "operation_tenant_signals.go"), // ADR-20261017100853 customer signal DTOs
+		filepath.Join(root, "pkg", "api", "operation_waits.go"),          // ADR-1194 operation wait and approval DTOs
+		filepath.Join(root, "pkg", "api", "operation_webhooks.go"),       // ADR-1193 operation webhook binding DTOs
 		filepath.Join(root, "pkg", "api", "route_policy.go"),
 		filepath.Join(root, "pkg", "api", "route_check_history.go"),
 		filepath.Join(root, "pkg", "api", "route_gate.go"),

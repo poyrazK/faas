@@ -208,6 +208,11 @@ func (m *MemStore) DeleteSLO(_ context.Context, appID, id string) error {
 		if slo.ID == id {
 			m.appSLOs[appID] = append(slos[:i:i], slos[i+1:]...)
 			delete(m.sloHours, id) // ON DELETE CASCADE
+			for gateID, gate := range m.releaseGates {
+				if gate.SLOID == id { // app_release_gates.slo_id ON DELETE CASCADE
+					delete(m.releaseGates, gateID)
+				}
+			}
 			return nil
 		}
 	}

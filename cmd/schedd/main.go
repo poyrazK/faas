@@ -1801,7 +1801,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			WithOpsMetrics(ops)).
 		// ADR-134 PR-B / EPIC #1278: expire async invocations and route
 		// deadline-breached rows through their configured failure destination.
-		WithInvocationsRetention(sched.NewInvocationsRetention(store, log)).
+		WithInvocationsRetention(sched.NewInvocationsRetention(store, log).
+			WithOperationTelemetry(sched.NewOperationTelemetry(ops.Registry(), ops.MetricPrefix(), operationTelemetryStore(store)))).
 		// Terminal trigger_records past their explicit retention or the
 		// default ages in pkg/api (TriggerRecordRetention and
 		// TriggerDeadLetterRetention). Off until
@@ -2923,4 +2924,11 @@ type schedTargetsLedger struct {
 // ledger's Concurrency accessor (pkg/sched/admission.go).
 func (s schedTargetsLedger) Concurrency(appID string) int {
 	return s.ledger.Concurrency(appID)
+}
+
+// operationTelemetryStore is the store's Customer Operations reader, or nil
+// for a store without one (ADR-20261016123221).
+func operationTelemetryStore(store state.Store) state.OperationTelemetryStore {
+	reader, _ := store.(state.OperationTelemetryStore)
+	return reader
 }
