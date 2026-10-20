@@ -1,0 +1,45 @@
+# ADR 20261020161811 · AI gateway: metered Gemini and Vertex Live sessions
+
+- **Status:** accepted
+- **Date:** 2026-10-20
+- **Amends:** ADR 20261019072722 (metered realtime sessions), which kept Gemini and Vertex Live unmetered until a measured session settled what their usage counts
+- **Relates to:** ADR-990 (prices, caps), ADR-994 (price catalog), ADR-996 (unknown usage), ADR-1120 (keyed settlement), ADR-1432 (unmetered endpoints), ADR-1433 (tool fees)
+- **Measurement (2026-10-20):**
+  - `TestGeminiLiveUsageProbe` ran one session of three turns against Vertex AI (`gemini-live-2.5-flash-native-audio`, audio responses) in `gregale-prod`, us-central1. The turns asked for a one-word answer, a fifty-word answer, then a one-word answer.
+  - The provider sent exactly one `usageMetadata` per turn, in the message that carries `serverContent.turnComplete`.
+  - `candidatesTokenCount` is the turn's own output: 20, 257 and 236 audio tokens in one run, 281 then 26 in another. A session-so-far total could not fall.
+  - `promptTokenCount` is everything the turn read, the earlier turns included, split by modality in `promptTokensDetails`: 16 text, then 29 text and 20 audio, then 41 text and 20 audio. Google bills each turn for the context it reads, so this is the turn's billable input.
+  - Every provider message, `setupComplete` and usage included, came in binary frames. ADR 20261019072722's proxy reads only text messages, so it would have seen none of them.
+  - The Gemini API (`generativelanguage.googleapis.com`) documents the same message with `responseTokenCount` and `responseTokensDetails` in place of the `candidates` names.
+  - With this decision implemented, `TestGeminiLiveThroughTheGatewayProbe` ran the same session against Vertex through outboundd's handler, which held the credential. The gateway settled three turns, 130 input tokens (44 audio) and 497 output tokens: exactly what the provider reported. At catalog prices that is 615 millicents.
+- **Decision:**
+  - **Live sessions pass through the gateway, metered, like OpenAI Realtime sessions.** A WebSocket upgrade opens a metered session when it targets:
+    - on a `gemini` integration, `/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent` (or `v1alpha`);
+    - on a `vertex` integration, `/ws/google.cloud.aiplatform.v1.LlmBidiService/BidiGenerateContent` (or `v1beta1`).
+    - The ephemeral-token endpoint (`…BidiGenerateContentConstrained`) stays unmetered (ADR-1432): its credential is the caller's, not the integration's.
+    - The upgrade's admission, the transparent byte copy, the content-policy and route refusals, the session bound and the fail-closed ends are those of ADR 20261019072722.
+  - **The model comes from the caller's `setup` message.** The Live protocol names the model only there: `setup.model` is the first message the caller sends.
+    - outboundd reads that one message, up to `OutboundAIRealtimeMaxMessageBytes`, before forwarding it unchanged. Everything after it is copied unread, as before.
+    - A first message that is not a readable `setup` naming a model ends the session with close code 1008, before the provider sees it.
+    - The model is the name after the last `models/` (`models/gemini-2.5-flash-native-audio-preview-12-2025`, `projects/…/publishers/google/models/gemini-live-2.5-flash-native-audio`).
+  - **Each model turn is admitted and settled.**
+    - A turn opens at the provider's first model output after the previous turn ended: `serverContent.modelTurn`, `serverContent.outputTranscription` or `toolCall`. outboundd admits it with the reservation of ADR 20261019072722: the previous turn's input tokens, or `OutboundAIRealtimeInputReserveTokens` for the first, and `OutboundAIRealtimeOutputReserveTokens` of output, priced as audio.
+    - A transcription of the caller's speech (`inputTranscription`) does not open a turn: the model may not answer it.
+    - `turnComplete` or `interrupted` ends the turn's output; the next model output opens the next turn.
+    - Each `usageMetadata` settles the oldest open turn under its own lease, with the Gemini usage reading: prompt tokens as input (cached content included), output and thinking tokens as output, each split into text, audio and image by modality. Video frames price as image tokens.
+    - Search grounding in a turn (`serverContent.groundingMetadata.webSearchQueries`) is a tool fee of that turn, as ADR-1433 bills it.
+  - **A refused turn ends the session with close code 1008** and the refusal (for example `outbound_budget_exhausted`) as the close reason. Live has no error message the gateway could send first.
+  - **Live messages are read in both frame types.** The provider's JSON messages are reassembled from text or binary frames.
+- **Why:**
+  - The measurement removes the open question: per-turn usage that re-counts the context is what Google bills, and the reading of ADR 20261019072722 (admit per response, settle from its usage) fits it unchanged.
+  - Reading the caller's first message is the only way to learn the model: neither the URL nor the provider's `setupComplete` names it. Reading one message, and only to price it, keeps the copy otherwise transparent.
+- **Consequences:**
+  - **A turn can overshoot slightly,** as an OpenAI response can: its admission follows the provider's first output, and output before a refusal closes the connection is not seen.
+  - **A turn with no usage** settles as unknown usage at its reservation when the session ends (ADR-996), and a session with more than 16 turns waiting for usage ends as unreadable.
+  - **Video frames price at the catalog's image price,** or the text price where the catalog has none. Google prices Live video with audio on some models, so such sessions read lower than their bill until the catalog carries that price.
+  - **Tool-use prompt tokens are not counted.** Gemini reports `toolUsePromptTokenCount` apart from the prompt, and Google does not say how it bills them; Gemini HTTP calls do not count them either. The measured sessions had none.
+  - **No new columns or metrics.** Sessions count in `outbound_ai_realtime_sessions_total` and turns in the usual request metrics.
+- **Rejected alternatives:**
+  - **Treating `usageMetadata` as session-so-far totals and settling differences.** The measurement shows per-turn counts; differences would go negative.
+  - **Pricing Live sessions at the integration's default model.** The caller chooses the model per session, and native-audio models cost several times text models.
+  - **Settling on `turnComplete` without waiting for usage.** Usage arrives with it in practice, but nothing in the protocol promises the order, and an early settlement would bill the reservation.
