@@ -73,9 +73,19 @@ class CandidatesTest(unittest.TestCase):
 
 class CompareTest(unittest.TestCase):
     def test_compare(self):
-        got = br.compare({"a": "1", "b": "2", "gone": "3"}, {"a": "1", "b": "9", "new": "4"},
-                         ["a", "b", "gone", "new"])
-        self.assertEqual(got, {"a": "same", "b": "changed", "gone": "removed", "new": "added"})
+        base = {"a": ("f1", "c1"), "b": ("f2", "c2"), "l": ("f3", "c3"), "gone": ("f4", "c4")}
+        head = {"a": ("f1", "c1"), "b": ("f9", "c9"), "l": ("f8", "c3"), "new": ("f5", "c5")}
+        got = br.compare(base, head, ["a", "b", "l", "gone", "new"])
+        self.assertEqual(got, {"a": "same", "b": "changed", "l": "lines", "gone": "removed", "new": "added"})
+
+
+class ElfDigestsTest(unittest.TestCase):
+    def test_rejects_other_formats(self):
+        with tempfile.NamedTemporaryFile() as fh:
+            fh.write(b"#!/bin/sh\n")
+            fh.flush()
+            with self.assertRaisesRegex(RuntimeError, "not a 64-bit little-endian ELF"):
+                br.elf_digests(fh.name)
 
 
 def sample_report(code):
@@ -87,9 +97,10 @@ def sample_report(code):
 
 class ReportTest(unittest.TestCase):
     def test_assemble(self):
-        rep = sample_report({"apid": "changed", "meterd": "same"})
+        rep = sample_report({"apid": "changed", "meterd": "lines"})
         self.assertEqual(rep["closure"], ["apid", "meterd"])
         self.assertEqual(rep["code"], ["apid"])
+        self.assertEqual(rep["lines"], ["meterd"])
         self.assertEqual(rep["binaries"]["vmmd"], {"lane": "compute", "closure": False, "reasons": [],
                                                     "reason_count": 0, "code": "same"})
         self.assertEqual(rep["binaries"]["meterd"]["lane"], "unlisted")
@@ -99,17 +110,24 @@ class ReportTest(unittest.TestCase):
     def test_assemble_without_builds(self):
         rep = sample_report(None)
         self.assertIsNone(rep["code"])
+        self.assertIsNone(rep["lines"])
         self.assertIsNone(rep["binaries"]["apid"]["code"])
 
     def test_markdown_lists_closure_binaries_changed_first(self):
         md = br.markdown(sample_report({"apid": "same", "meterd": "changed"}))
         self.assertTrue(md.startswith(br.MARKER + "\n"))
-        self.assertIn("the code of **1 of 3** release binaries changes", md)
+        self.assertIn("the code of **1 of 3** release binaries changes;", md)
         self.assertIn("ships **2 of 3**", md)
         rows = [line for line in md.splitlines() if line.startswith("| ") and "---" not in line][1:]
         self.assertEqual([r.split(" | ")[0] for r in rows], ["| meterd", "| apid"])
         self.assertIn("(+1 more)", rows[0])
         self.assertNotIn("vmmd", md)
+
+    def test_markdown_counts_line_table_only_binaries(self):
+        md = br.markdown(sample_report({"apid": "lines", "meterd": "changed"}))
+        self.assertIn("changes (1 more differ only in line tables);", md)
+        rows = [line for line in md.splitlines() if line.startswith("| ") and "---" not in line][1:]
+        self.assertEqual([r.split(" | ")[2] for r in rows], ["changed", "lines"])
 
     def test_markdown_without_changes(self):
         rep = sample_report({})
@@ -133,6 +151,13 @@ class RepositoryContractTest(unittest.TestCase):
         self.assertRegex(recipe, r"\$\(GO_BUILD_FLAGS\) \\\n\s+-ldflags '\$\(LDFLAGS\) -s -w' "
                                  r"-o \$\(BINDIR\)/ \$\(addprefix \./cmd/,\$\(CLIS\)\)")
         self.assertIn(f"LDFLAGS := -X github.com/onebox-faas/faas/{br.VERSION_VAR}=$(VERSION)", recipe)
+
+
+def lib(a="1", b="2", above_b=""):
+    """pkg/lib with two functions the linker keeps out of line, so their
+    code and line-table rows stay their own."""
+    return (f"package lib\n\n//go:noinline\nfunc A() int {{ return {a} }}\n\n"
+            f"{above_b}//go:noinline\nfunc B() int {{ return {b} }}\n")
 
 
 @unittest.skipUnless(shutil.which(os.environ.get("GO", "go")), "go toolchain not available")
@@ -173,7 +198,7 @@ class EndToEndTest(unittest.TestCase):
                                        '\t"example.com/m/pkg/wire"\n)\n\nfunc main() { println(lib.A(), wire.Version) }\n')
         self.write("cmd/vmmd/main.go", 'package main\n\nimport "example.com/m/pkg/lib"\n\nfunc main() { println(lib.B()) }\n')
         self.write("cmd/gregalectl/main.go", "package main\n\nfunc main() {}\n")
-        self.write("pkg/lib/lib.go", "package lib\n\nfunc A() int { return 1 }\n\nfunc B() int { return 2 }\n")
+        self.write("pkg/lib/lib.go", lib())
         self.config = os.path.join(self.root, "lanes.json")
         with open(self.config, "w", encoding="utf-8") as fh:
             json.dump({"binaries": {"apid": {"lane": "control-plane", "services": [{"name": "apid"}]},
@@ -186,7 +211,7 @@ class EndToEndTest(unittest.TestCase):
 
     def test_code_narrows_the_closure(self):
         # Same line count, so apid's pclntab line numbers do not move.
-        self.write("pkg/lib/lib.go", "package lib\n\nfunc A() int { return 1 }\n\nfunc B() int { return 3 }\n")
+        self.write("pkg/lib/lib.go", lib(b="3"))
         self.commit("change B")
         rep = self.report(self.base)
         self.assertEqual(rep["closure"], ["apid", "vmmd"])
@@ -197,14 +222,14 @@ class EndToEndTest(unittest.TestCase):
         self.assertEqual(rep["binaries"]["vmmd"]["reasons"], ["pkg/lib/lib.go"])
 
     def test_every_binary_agrees_with_the_closure_prefilter(self):
-        self.write("pkg/lib/lib.go", "package lib\n\nfunc A() int { return 4 }\n\nfunc B() int { return 2 }\n")
+        self.write("pkg/lib/lib.go", lib(a="4"))
         self.commit("change A")
         rep = self.report(self.base, every=True)
         self.assertEqual(rep["code"], ["apid"])
         self.assertEqual(rep["binaries"]["gregalectl"]["code"], "same")
 
     def test_range_starts_at_the_merge_base(self):
-        self.write("pkg/lib/lib.go", "package lib\n\nfunc A() int { return 5 }\n\nfunc B() int { return 2 }\n")
+        self.write("pkg/lib/lib.go", lib(a="5"))
         self.commit("main moves on")
         main = self.run_git("rev-parse", "HEAD").strip()
         self.run_git("checkout", "-q", "-b", "topic", self.base)
@@ -215,15 +240,31 @@ class EndToEndTest(unittest.TestCase):
         self.assertEqual(rep["closure"], ["gregalectl"])
         self.assertEqual(rep["code"], ["gregalectl"])
 
+    def test_a_line_shift_changes_only_the_line_table(self):
+        self.write("pkg/lib/lib.go", lib(above_b="// B moved down a line.\n"))
+        self.commit("comment above B")
+        rep = self.report(self.base)
+        self.assertEqual(rep["code"], [])
+        self.assertEqual(rep["lines"], ["vmmd"])
+        self.assertEqual(rep["binaries"]["apid"]["code"], "same")
+
+    def test_extra_tags_reach_closures_and_builds(self):
+        self.write("pkg/lib/tagged.go", "//go:build blast\n\npackage lib\n\nfunc init() { println(9) }\n")
+        self.commit("tagged file")
+        self.assertEqual(self.report(self.base)["closure"], [])
+        rep = self.report(self.base, extra_tags=["blast"])
+        self.assertEqual(rep["closure"], ["apid", "vmmd"])
+        self.assertEqual(rep["code"], ["apid", "vmmd"])
+
     def test_closure_only_builds_nothing(self):
-        self.write("pkg/lib/lib.go", "package lib\n\nfunc A() int { return 1 }\n\nfunc B() int { return 6 }\n")
+        self.write("pkg/lib/lib.go", lib(b="6"))
         self.commit("change B")
         rep = self.report(self.base, measure=False)
         self.assertEqual(rep["closure"], ["apid", "vmmd"])
         self.assertIsNone(rep["code"])
 
     def test_build_failure_names_the_commit(self):
-        self.write("pkg/lib/lib.go", "package lib\n\nfunc A() int { return }\n\nfunc B() int { return 2 }\n")
+        self.write("pkg/lib/lib.go", lib(a=""))
         head = self.commit("broken")
         with self.assertRaisesRegex(RuntimeError, f"go build at {head[:12]}"):
             self.report(self.base)
