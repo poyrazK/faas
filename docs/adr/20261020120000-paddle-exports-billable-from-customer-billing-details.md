@@ -1,0 +1,23 @@
+# ADR-20261020120000: Paddle exports become billable from customer billing details
+
+- **Status:** accepted for internal implementation; needs Paddle sandbox qualification before any owner turns it on
+- **Date:** 2026-10-20
+- **Amends:** ADR-1507 (Paddle exports stay drafts), ADR-1311 (Paddle connections use collection `none` only)
+- **Implements:** ADR-20261018212918 §6 and slice 5 ("customer billing details so Paddle exports can be billed")
+- **Decision:** A Paddle connection may use collection `send`. With it, a statement export reads the Paddle customer's active address and business from the owner's Paddle and, when the customer has an address, creates the transaction as `billed`, so Paddle issues the invoice with the connection's 30-day payment terms. Without an address the transaction stays a draft, as before. Product Control customers can enter that address and business themselves in the customer portal.
+  - **Owner opt-in.** `PUT /v1/account/billing-connections/paddle` accepts `"collection": "send"`; the default stays `none`. As for Stripe and Lago, the collection mode is fixed on each export when it begins (ADR-1311).
+  - **Where the address lives.** Only in the owner's Paddle, on the Paddle customer the export already bills (the tenant's `ctm_…` external reference). Gregale stores no postal address, business name or tax ID. The portal step and the export read them from Paddle when needed.
+  - **What counts.** The customer's most recently updated active address, and its most recently updated active business if any. An export never creates an address.
+  - **Customer portal.** A new customer permission, `manage_billing`, lets a workspace role read and change the workspace's billing address (country, postal code, region, city, two address lines) and business (name, tax identifier) at `GET`/`PUT /v1/product-control/customer/{slug}/billing-details`. The workspace `owner` role holds it by default. It is available only when the account has a Paddle connection and the customer's external reference is a Paddle customer ID. Each change is audited as `product.customer.billing_details_updated` with the changed parts only, never their values.
+  - **Other sources.** App consumer and platform tenant exports follow the same rule; their owners maintain addresses in Paddle directly.
+- **Why:** Paddle exports could never be billed, so every Paddle invoice needed the owner to open the draft in Paddle, attach an address and bill it by hand, customer by customer. ADR-1507 rejected billing on the owner's behalf because Gregale had no address and no owner consent. Collection `send` is that consent, as it already is for Stripe (ADR-1311), and the address now comes from the customer through the owner's own Paddle.
+- **Consequences:**
+  - **Billed transactions are legal records.** Paddle does not allow a billed transaction to be changed. A statement that was wrong must be corrected with a Paddle adjustment, as with any issued invoice. Owners should only turn on `send` once their statements are reviewed or billing runs hold unresolved months (ADR-20261018212918 §4).
+  - **Payment status works as for Stripe.** A billed transaction syncs as `open` with a due date (ADR-1504), so overdue holds (ADR-20261018212918 §3) can apply to Paddle customers.
+  - **No new personal data in Gregale.** The portal and the export call the owner's Paddle with the owner's sealed key (ADR-1507); Gregale keeps only the audit event.
+  - **Paddle permissions.** An owner key now also needs read and write access to customers' addresses and businesses. A key without it fails the billing-details step with a clear problem; exports with collection `none` are unaffected.
+  - **Qualification.** The Paddle request shapes are implemented from Paddle's Billing API v1 and recorded fakes. They must be checked against a Paddle sandbox account before an owner enables `send`.
+- **Rejected alternatives:**
+  - **Storing the address in Gregale** and sending it on each export would make Gregale hold customers' postal and tax data, sealed or not, and keep it in sync with Paddle.
+  - **Billing whenever an address exists, without an owner setting,** would change existing owners' exports from drafts to issued invoices without their consent.
+  - **Reusing `manage_plan` or `view_billing`** would let roles that choose plans or read statements also change where invoices are addressed.

@@ -286,9 +286,11 @@ func paddleCallProblem(err error) *api.Problem {
 	}
 }
 
-// push creates a draft, manually collected transaction once. Paddle has no
+// push creates a manually collected transaction once. Paddle has no
 // idempotency keys, so a resumed export first adopts the transaction whose
-// custom_data names it.
+// custom_data names it. With collection send and an address on the Paddle
+// customer the transaction is billed, so Paddle issues the invoice
+// (ADR-20261020120000); otherwise it stays a draft.
 func (p paddleProvider) push(ctx context.Context, conn connection, export *state.StatementInvoiceExport, src statementInvoiceSource,
 	resumed bool, record func(string) error) *api.Problem {
 	if export.ProviderInvoiceID != "" {
@@ -313,6 +315,11 @@ func (p paddleProvider) push(ctx context.Context, conn connection, export *state
 		for _, item := range items {
 			params.Items = append(params.Items, paddleinvoice.Item{Description: item.description, AmountMinor: item.amount})
 		}
+		if export.Collection == state.CollectionSend {
+			if err := p.billTo(ctx, conn, export, &params); err != nil {
+				return paddleCallProblem(err)
+			}
+		}
 		created, err := p.client.CreateTransaction(ctx, conn.key, params)
 		if err != nil {
 			return paddleCallProblem(err)
@@ -321,6 +328,25 @@ func (p paddleProvider) push(ctx context.Context, conn connection, export *state
 	}
 	if err := record(id); err != nil {
 		return api.ErrInternal("could not record the Paddle transaction")
+	}
+	return nil
+}
+
+// billTo bills the transaction when the Paddle customer has an active
+// address, with its business when it has one; an export never creates
+// either.
+func (p paddleProvider) billTo(ctx context.Context, conn connection, export *state.StatementInvoiceExport, params *paddleinvoice.TransactionParams) error {
+	address, ok, err := p.client.ActiveAddress(ctx, conn.key, export.Customer)
+	if err != nil || !ok {
+		return err
+	}
+	params.AddressID, params.Bill, params.TermsDays = address.ID, true, export.DaysUntilDue
+	business, ok, err := p.client.ActiveBusiness(ctx, conn.key, export.Customer)
+	if err != nil {
+		return err
+	}
+	if ok {
+		params.BusinessID = business.ID
 	}
 	return nil
 }

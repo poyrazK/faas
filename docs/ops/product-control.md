@@ -65,9 +65,10 @@ whose plan prices are pinned to an older revision.
 | `billing:read` — View billing | Usage totals, statements and credit notes |
 | `plans:manage` — Manage plan | Compare and confirm offered workspace plan changes; read their receipts/history |
 | `team:manage` — Manage team | Read the workspace team and reviewed team history; invite, revoke, change or remove explicitly delegated roles |
+| `billing:manage` — Manage billing details | Read and change the billing address and business the workspace is invoiced at, kept in your Paddle |
 
-With no explicit policy, owners and admins have work and billing permissions and members can
-only view work. **This narrows the earlier internal behavior where all members
+With no explicit policy, owners and admins have work and billing permissions, owners can
+also manage billing details, and members can only view work. **This narrows the earlier internal behavior where all members
 could run paid features and read billing.** Review role access before enabling
 an existing internal deployment. Custom roles are denied until granted. An
 explicit policy replaces the complete map, including owner/admin grants;
@@ -1360,8 +1361,33 @@ with `{"tenant_id","provider","customer"}` and the matching `GET` with `tenant_i
   ([ADR-1504](../adr/1504-statement-invoice-payment-status.md)).
 
 Gregale still does not collect money, calculate tax or act as merchant of record;
-the owner's provider does. Paddle exports stay drafts to finish in Paddle;
-Stripe and Lago can collect when the connection's collection mode asks them to.
+the owner's provider does. Stripe and Lago can collect when the connection's
+collection mode asks them to. Paddle exports stay drafts unless the Paddle
+connection uses collection `send` and the customer has a billing address.
+
+#### Customer billing details
+
+A Paddle customer can be billed only with an address
+([ADR-20261020120000](../adr/20261020120000-paddle-exports-billable-from-customer-billing-details.md)).
+Connect Paddle with `gregale account billing-connection connect paddle --collection send`
+and let customers enter their own details: the portal's **Billing details**
+section, for roles with `billing:manage` (the workspace owner by default), reads
+and saves the workspace's address (country, postal code, region, city, two lines)
+and, optionally, its business name and tax identifier. The routes are
+`GET`/`PUT /v1/product-control/customer/{slug}/billing-details`.
+
+- **Kept in Paddle only.** The details are written to the Paddle customer named by
+  the customer's platform tenant external reference (`ctm_…`). Gregale stores none
+  of them; the audit event `product.customer.billing_details_updated` names the
+  changed parts (`address`, `business`) and never their values.
+- **Unavailable** (409 `product_billing_details_unavailable`) when the account has
+  no Paddle connection, the tenant's external reference is not a Paddle customer ID,
+  or the Paddle key cannot manage customer addresses.
+- **Billing.** With collection `send`, each later export bills the transaction with
+  the customer's active address and business, so Paddle issues the invoice with the
+  connection's payment terms. Without an address it stays a draft. A billed invoice
+  cannot be changed in Paddle, so finalize statements only after review.
+- Leaving the business name empty keeps the current business.
 
 #### Payment status on statements
 

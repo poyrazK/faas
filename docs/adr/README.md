@@ -1,5 +1,6 @@
 # Architecture Decision Records
 
+- [Paddle exports become billable from customer billing details](20261020120000-paddle-exports-billable-from-customer-billing-details.md)
 - [Preserve request identity in response caching](20261017214848-response-cache-request-identity.md)
 
 - [Restart-safe Go acknowledgment recovery alerts](20261017182028-go-recovery-alert-checkpoints.md)

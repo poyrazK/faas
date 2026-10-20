@@ -20,8 +20,9 @@ type PutBillingConnectionRequest struct {
 	SecretKey string `json:"secret_key"`
 	APIURL    string `json:"api_url,omitempty"`
 	// Collection is what the provider does with exported invoices
-	// (ADR-1311): none (drafts, the default), send (Stripe only) or charge
-	// (Stripe and Lago). DaysUntilDue applies to send; default 30.
+	// (ADR-1311): none (drafts, the default), send (Stripe; Paddle bills
+	// customers that have an address, ADR-20261020120000) or charge (Stripe
+	// and Lago). DaysUntilDue applies to send; default 30.
 	Collection   string `json:"collection,omitempty"`
 	DaysUntilDue int    `json:"days_until_due,omitempty"`
 	// AutomaticTax has Stripe calculate tax on exported invoices (ADR-1313;

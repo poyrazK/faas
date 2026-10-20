@@ -50,6 +50,27 @@
   }
   $('billing-form').onsubmit = event => { event.preventDefault(); const generation = epoch; return loadBilling().catch(error => { if (generation === epoch) message(error.message); }); };
   $('billing-more').onclick = () => { const generation = epoch; return loadBilling(true).catch(error => { if (generation === epoch) message(error.message); }); };
+  // Billing details live in the product team's billing provider (ADR-20261020120000); Gregale only relays them.
+  const detailFields = [['country_code', 'billing-country', 'address'], ['postal_code', 'billing-postal', 'address'], ['region', 'billing-region', 'address'], ['city', 'billing-city', 'address'],
+    ['first_line', 'billing-line1', 'address'], ['second_line', 'billing-line2', 'address'], ['name', 'billing-business', 'business'], ['tax_identifier', 'billing-tax-id', 'business']];
+  function clearBillingDetails() { $('billing-details-form').hidden = true; $('billing-details-status').textContent = ''; for (const [, id] of detailFields) $(id).value = ''; }
+  function showBillingDetails(details) { for (const [key, id, part] of detailFields) $(id).value = details?.[part]?.[key] || ''; $('billing-details-form').hidden = false; }
+  async function billingDetails(request, done) {
+    const generation = epoch;
+    try { const details = await request(); current(generation); showBillingDetails(details); $('billing-details-status').textContent = done(details); }
+    catch (error) { if (generation === epoch) $('billing-details-status').textContent = error.message; }
+  }
+  $('billing-details-load').onclick = () => billingDetails(() => api(`${base()}/billing-details`),
+    details => details.address ? 'Invoices are addressed to these details.' : 'No billing address yet. Add one so invoices can be issued to you.');
+  $('billing-details-form').onsubmit = event => {
+    event.preventDefault();
+    const value = id => $(id).value.trim();
+    const body = { address: { country_code: value('billing-country').toUpperCase(), postal_code: value('billing-postal'), region: value('billing-region'),
+      city: value('billing-city'), first_line: value('billing-line1'), second_line: value('billing-line2') } };
+    if (value('billing-business')) body.business = { name: value('billing-business'), tax_identifier: value('billing-tax-id') };
+    $('billing-details-status').textContent = 'Saving billing details…';
+    return billingDetails(() => api(`${base()}/billing-details`, { method: 'PUT', body: JSON.stringify(body) }), () => 'Billing details saved. New invoices use them.');
+  };
   $('app').value = app;
   const base = () => `/v1/product-control/customer/${encodeURIComponent(app)}`;
   const scope = feature => [view.account_id, view.app_id, view.customer.tenant_id, feature];
@@ -88,7 +109,7 @@
     const body = await (blob ? response.blob() : response.json()); current(generation); return body;
   }
   function clear() {
-    epoch++; planControls?.reset(); teamControls?.reset(); guidanceControls?.reset(); helpControls?.reset(); notificationControls?.reset(); activityControls?.reset(); historyControls?.reset(); emailControls?.reset(); clearBilling(); clearTimeout(timer); controller.abort(); controller = new AbortController();
+    epoch++; planControls?.reset(); teamControls?.reset(); guidanceControls?.reset(); helpControls?.reset(); notificationControls?.reset(); activityControls?.reset(); historyControls?.reset(); emailControls?.reset(); clearBilling(); clearBillingDetails(); clearTimeout(timer); controller.abort(); controller = new AbortController();
     runControls?.reset(); view = undefined; receipts = undefined; organization = ''; work.clear(); inputs.clear(); cards.clear(); $('sign-in').disabled = false;
     $('workspace').hidden = true; $('login').hidden = false;
     for (const id of ['features', 'usage', 'work', 'organization']) $(id).replaceChildren();
@@ -127,10 +148,10 @@
     renderOverdueHold();
     updateFeatureTerms();
     $('features-section').hidden = !allowed('run_work'); $('work-section').hidden = !allowed('view_work');
-    $('usage-section').hidden = !allowed('view_billing'); $('billing-section').hidden = !allowed('view_billing');
+    $('usage-section').hidden = !allowed('view_billing'); $('billing-section').hidden = !allowed('view_billing'); $('billing-details-section').hidden = !allowed('manage_billing');
     planControls?.sync(); teamControls?.sync();
     guidanceControls?.sync(); helpControls?.sync(); notificationControls?.sync(); activityControls?.sync(); historyControls?.sync(); emailControls?.sync();
-    const permissions = [['view_work', 'View work'], ['run_work', 'Run work'], ['view_billing', 'View billing'], ['manage_plan', 'Manage plan'], ['manage_team', 'Manage team']].filter(([key]) => allowed(key)).map(([, label]) => label);
+    const permissions = [['view_work', 'View work'], ['run_work', 'Run work'], ['view_billing', 'View billing'], ['manage_plan', 'Manage plan'], ['manage_team', 'Manage team'], ['manage_billing', 'Manage billing details']].filter(([key]) => allowed(key)).map(([, label]) => label);
     $('access-status').textContent = `${view.access?.role || 'Workspace role'} · ${permissions.join(' · ')}`;
     $('period').textContent = view.usage ? `${view.usage.period} · ${view.usage.currency}` : '';
     $('usage').replaceChildren();
@@ -359,7 +380,7 @@
   };
   $('refresh').onclick = () => { const generation = epoch; return refresh(true).catch(error => { if (generation === epoch) message(error.message); }); };
   $('organization').onchange = async () => {
-    const selected = $('organization').value; epoch++; planControls?.reset(); teamControls?.reset(); guidanceControls?.reset(); helpControls?.reset(); notificationControls?.reset(); activityControls?.reset(); historyControls?.reset(); runControls?.reset(); emailControls?.reset(); clearBilling(); clearTimeout(timer); controller.abort(); controller = new AbortController(); organization = selected; inputs.clear(); work.clear(); cards.clear(); view = undefined; $('result').hidden = true; $('result').textContent = '';
+    const selected = $('organization').value; epoch++; planControls?.reset(); teamControls?.reset(); guidanceControls?.reset(); helpControls?.reset(); notificationControls?.reset(); activityControls?.reset(); historyControls?.reset(); runControls?.reset(); emailControls?.reset(); clearBilling(); clearBillingDetails(); clearTimeout(timer); controller.abort(); controller = new AbortController(); organization = selected; inputs.clear(); work.clear(); cards.clear(); view = undefined; $('result').hidden = true; $('result').textContent = '';
     const generation = epoch; try { await refresh(true, generation); await recover(generation); await planControls.connect(); await teamControls.connect(); await helpControls.connect(); await notificationControls.connect(); await activityControls.connect(); await emailControls.connect(); schedule(generation); } catch (error) { if (generation === epoch) { clear(); message(error.message); } }
   };
   $('disconnect').onclick = async () => {

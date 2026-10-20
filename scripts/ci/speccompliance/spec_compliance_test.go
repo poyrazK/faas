@@ -256,6 +256,8 @@ var routeExclude = map[string]bool{
 	"POST /v1/apps/{slug}/product/plan-policy/preview":                         true,
 	"PUT /v1/apps/{slug}/product/plan-policy":                                  true,
 	"GET /v1/product-control/customer/{slug}/plans":                            true,
+	"GET /v1/product-control/customer/{slug}/billing-details":                  true,
+	"PUT /v1/product-control/customer/{slug}/billing-details":                  true,
 	"POST /v1/product-control/customer/{slug}/plans/preview":                   true,
 	"POST /v1/product-control/customer/{slug}/plans/confirm":                   true,
 	"GET /v1/product-control/customer/{slug}/plans/changes":                    true,

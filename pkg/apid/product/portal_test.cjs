@@ -397,6 +397,36 @@ test('an overdue invoice hold pauses new runs and links only to the provider htt
   assert.equal(clear.get('overdue-status').hidden, true);
 });
 
+test('billing details load and save through the product team billing provider for roles that manage billing', async () => {
+  let saved;
+  const withManageBilling = manage => async (path, options) => {
+    if (path.endsWith('/product')) { const view = fixture(); view.access.permissions.manage_billing = manage; return { ok: true, status: 200, json: async () => view }; }
+    if (!path.endsWith('/billing-details')) return;
+    if (options?.method === 'PUT') { saved = JSON.parse(options.body); return { ok: true, status: 200, json: async () => ({ provider: 'paddle', ...saved }) }; }
+    return { ok: true, status: 200, json: async () => ({ provider: 'paddle', address: { country_code: 'DE', postal_code: '10115', city: 'Berlin', first_line: 'Unter den Linden 1' } }) };
+  };
+  const denied = browser(withManageBilling(false));
+  await denied.signIn();
+  assert.equal(denied.get('billing-details-section').hidden, true);
+
+  const b = browser(withManageBilling(true));
+  await b.signIn();
+  assert.equal(b.get('billing-details-section').hidden, false);
+  await b.get('billing-details-load').onclick();
+  assert.equal(b.get('billing-details-form').hidden, false);
+  assert.equal(b.get('billing-country').value, 'DE'); assert.equal(b.get('billing-city').value, 'Berlin'); assert.equal(b.get('billing-business').value, '');
+  assert.equal(b.get('billing-details-status').textContent, 'Invoices are addressed to these details.');
+  b.get('billing-country').value = ' gb '; b.get('billing-postal').value = 'SW1A 1AA'; b.get('billing-city').value = 'London'; b.get('billing-line1').value = '10 Downing St';
+  await b.get('billing-details-form').onsubmit({ preventDefault() {} });
+  assert.deepEqual(saved, { address: { country_code: 'GB', postal_code: 'SW1A 1AA', region: '', city: 'London', first_line: '10 Downing St', second_line: '' } }, 'an empty business name keeps the current business');
+  assert.equal(b.get('billing-details-status').textContent, 'Billing details saved. New invoices use them.');
+  b.get('billing-business').value = 'Acme Ltd'; b.get('billing-tax-id').value = 'GB123';
+  await b.get('billing-details-form').onsubmit({ preventDefault() {} });
+  assert.deepEqual(saved.business, { name: 'Acme Ltd', tax_identifier: 'GB123' });
+  const put = b.calls.filter(call => call.path.endsWith('/billing-details') && call.options?.method === 'PUT');
+  assert.equal(put.length, 2); assert.equal(put[0].path, '/v1/product-control/customer/exports/billing-details');
+});
+
 test('billing responses cannot restore another workspace after logout', async () => {
   let resolveBilling;
   const b = browser(path => path.includes('/billing?') ? new Promise(resolve => { resolveBilling = resolve; }) : undefined);

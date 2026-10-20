@@ -124,6 +124,8 @@ func (s *server) registerProductCustomers(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/product-control/customer/{slug}/help", limited(p.Customer("", p.CustomerHelpCreate)))
 	mux.HandleFunc("GET /v1/product-control/customer/{slug}/help", limited(p.Customer("", p.CustomerHelpList)))
 	mux.HandleFunc("GET /v1/product-control/customer/{slug}/help/{request}", limited(p.Customer("", p.CustomerHelpGet)))
+	mux.HandleFunc("GET /v1/product-control/customer/{slug}/billing-details", limited(p.Customer(api.ProductPermissionManageBilling, p.CustomerBillingDetails)))
+	mux.HandleFunc("PUT /v1/product-control/customer/{slug}/billing-details", limited(p.Customer(api.ProductPermissionManageBilling, p.PutCustomerBillingDetails)))
 	mux.HandleFunc("GET /v1/product-control/customer/{slug}/plans", limited(p.Customer(api.ProductPermissionManagePlan, p.CustomerPlans)))
 	mux.HandleFunc("GET /v1/product-control/customer/{slug}/team", limited(p.Customer(api.ProductPermissionManageTeam, p.CustomerTeam)))
 	mux.HandleFunc("POST /v1/product-control/customer/{slug}/team/preview", limited(p.Customer(api.ProductPermissionManageTeam, p.CustomerTeamPreview)))

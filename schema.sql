@@ -24020,7 +24020,7 @@ CREATE TABLE public.account_billing_connections (
     automatic_tax boolean DEFAULT false NOT NULL,
     CONSTRAINT account_billing_connections_api_url_chk CHECK (((api_url IS NULL) OR ((char_length(api_url) <= 512) AND (api_url ~~ 'https://%'::text)))),
     CONSTRAINT account_billing_connections_automatic_tax_chk CHECK (((NOT automatic_tax) OR (provider = 'stripe'::text))),
-    CONSTRAINT account_billing_connections_collection_chk CHECK ((((provider = 'stripe'::text) AND (collection = ANY (ARRAY['none'::text, 'send'::text, 'charge'::text]))) OR ((provider = 'paddle'::text) AND (collection = 'none'::text)) OR ((provider = 'lago'::text) AND (collection = ANY (ARRAY['none'::text, 'charge'::text]))))),
+    CONSTRAINT account_billing_connections_collection_chk CHECK ((((provider = 'stripe'::text) AND (collection = ANY (ARRAY['none'::text, 'send'::text, 'charge'::text]))) OR ((provider = 'paddle'::text) AND (collection = ANY (ARRAY['none'::text, 'send'::text]))) OR ((provider = 'lago'::text) AND (collection = ANY (ARRAY['none'::text, 'charge'::text]))))),
     CONSTRAINT account_billing_connections_days_until_due_chk CHECK (((days_until_due >= 1) AND (days_until_due <= 365))),
     CONSTRAINT account_billing_connections_last4_chk CHECK ((char_length(key_last4) = 4)),
     CONSTRAINT account_billing_connections_provider_chk CHECK ((provider = ANY (ARRAY['stripe'::text, 'paddle'::text, 'lago'::text])))

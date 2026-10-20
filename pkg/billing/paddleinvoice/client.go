@@ -148,12 +148,20 @@ type Item struct {
 	AmountMinor int64
 }
 
-// TransactionParams describe a draft manually collected transaction.
+// TransactionParams describe a manually collected transaction. With Bill and
+// an AddressID it is created billed, so Paddle issues the invoice
+// (ADR-20261020120000); otherwise it stays a draft.
 type TransactionParams struct {
 	CustomerID string
 	Currency   string
 	Items      []Item
 	CustomData map[string]string
+	AddressID  string
+	BusinessID string
+	Bill       bool
+	// TermsDays is when a billed invoice falls due; zero is
+	// PaymentTermsDays.
+	TermsDays int
 }
 
 type transactionData struct {
@@ -206,9 +214,16 @@ func (c *Client) FindTransaction(ctx context.Context, key, customerID, exportID 
 	return "", nil
 }
 
-// CreateTransaction creates a manually collected transaction without an
-// address, so it stays a draft until the operator bills it in Paddle.
+// CreateTransaction creates a manually collected transaction. Without an
+// address it stays a draft until the operator bills it in Paddle.
 func (c *Client) CreateTransaction(ctx context.Context, key string, p TransactionParams) (string, error) {
+	if p.Bill && p.AddressID == "" {
+		return "", errors.New("paddle can bill a transaction only with an address")
+	}
+	terms := p.TermsDays
+	if terms == 0 {
+		terms = PaymentTermsDays
+	}
 	type price struct {
 		Description string            `json:"description"`
 		UnitPrice   map[string]string `json:"unit_price"`
@@ -222,8 +237,17 @@ func (c *Client) CreateTransaction(ctx context.Context, key string, p Transactio
 		"customer_id":     p.CustomerID,
 		"currency_code":   strings.ToUpper(p.Currency),
 		"collection_mode": "manual",
-		"billing_details": map[string]any{"payment_terms": map[string]any{"interval": "day", "frequency": PaymentTermsDays}},
+		"billing_details": map[string]any{"payment_terms": map[string]any{"interval": "day", "frequency": terms}},
 		"custom_data":     p.CustomData,
+	}
+	if p.AddressID != "" {
+		body["address_id"] = p.AddressID
+	}
+	if p.BusinessID != "" {
+		body["business_id"] = p.BusinessID
+	}
+	if p.Bill {
+		body["status"] = "billed"
 	}
 	items := make([]item, 0, len(p.Items))
 	for _, it := range p.Items {

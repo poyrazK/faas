@@ -49,6 +49,11 @@ type Service struct {
 	DocumentInvoice func(context.Context, string, string) (*api.StatementInvoiceExportResponse, error)
 	// Now pins the overdue recomputation clock in tests.
 	Now func() time.Time
+	// BillingDetails and PutBillingDetails reach a customer's billing details
+	// in the owner's Paddle by provider customer ID (ADR-20261020120000);
+	// the put also returns the parts it changed.
+	BillingDetails    func(context.Context, state.Account, string) (api.ProductBillingDetails, *api.Problem)
+	PutBillingDetails func(context.Context, state.Account, string, api.PutProductBillingDetailsRequest) (api.ProductBillingDetails, []string, *api.Problem)
 }
 
 func (s *Service) Start(w http.ResponseWriter, r *http.Request, acct state.Account) {

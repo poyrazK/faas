@@ -408,8 +408,16 @@ gregale platform-tenants statement-export --id TENANT_ID --statement-id STATEMEN
   | Collection | Stripe | Lago | Paddle |
   |---|---|---|---|
   | `none` (default) | Draft invoice | Issued, not charged | Draft transaction |
-  | `send` | Finalized and emailed, due after `--days-until-due` (default 30) | Not available | Not available |
+  | `send` | Finalized and emailed, due after `--days-until-due` (default 30) | Not available | Billed when the Paddle customer has an address, due after `--days-until-due`; otherwise a draft |
   | `charge` | Finalized and charged to the customer's default payment method | Charged through Lago's payment provider | Not available |
+
+  With Paddle `send`, an export bills the transaction with the customer's most
+  recently updated active address, and business if any, as Paddle has them
+  ([ADR-20261020120000](adr/20261020120000-paddle-exports-billable-from-customer-billing-details.md)).
+  Gregale never creates an address during an export; add one in Paddle, or let
+  Product Control customers enter theirs in the portal. A billed transaction
+  is an issued invoice that Paddle does not let you change. The key also needs
+  access to customer addresses and businesses.
 
   Charges, retries and emails follow your own provider settings. The money
   never passes through Gregale. Each export keeps the mode it started with.

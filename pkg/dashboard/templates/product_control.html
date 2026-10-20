@@ -179,6 +179,7 @@
       <label><input type="checkbox" name="view_billing" value="true" {{if .ViewBilling}}checked{{end}}>View billing</label>
       <label><input type="checkbox" name="manage_plan" value="true" {{if .ManagePlan}}checked{{end}}>Manage plan</label>
       <label><input type="checkbox" name="manage_team" value="true" {{if .ManageTeam}}checked{{end}}>Manage team</label>
+      <label><input type="checkbox" name="manage_billing" value="true" {{if .ManageBilling}}checked{{end}}>Manage billing details</label>
       <button name="action" value="set">Review changes</button><button name="action" value="remove">Review removal</button>
     </form>
     {{end}}
@@ -189,6 +190,7 @@
       <label><input type="checkbox" name="view_work" value="true">View work</label><label><input type="checkbox" name="run_work" value="true">Run work</label><label><input type="checkbox" name="view_billing" value="true">View billing</label>
       <label><input type="checkbox" name="manage_plan" value="true">Manage plan</label>
       <label><input type="checkbox" name="manage_team" value="true">Manage team</label>
+      <label><input type="checkbox" name="manage_billing" value="true">Manage billing details</label>
       <button name="action" value="set">Review role permissions</button>
     </form>
     <p>Custom roles must already be configured in Application Auth. Assign or remove members through its workspace settings. This page changes product permissions for a role across every linked workspace.</p>

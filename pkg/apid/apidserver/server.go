@@ -1351,6 +1351,8 @@ func newServerWithDeps(
 	s.productControl.ExportInvoice = s.statementInvoices.ExportProductStatement
 	s.productControl.InvoiceExport = s.statementInvoices.GetProductStatementExport
 	s.productControl.DocumentInvoice = s.statementInvoices.ProductStatementInvoice
+	s.productControl.BillingDetails = s.statementInvoices.PaddleBillingDetails
+	s.productControl.PutBillingDetails = s.statementInvoices.PutPaddleBillingDetails
 	s.dataRepair.Host = operationHost{s}
 	s.edgeRules.Host = edgeRulesHost{s}
 	s.queueLeases.Host = queueLeasesHost{s}
