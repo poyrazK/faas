@@ -21135,8 +21135,23 @@ func (s *PgStore) UsageByMonth(ctx context.Context, accountID string, month time
 	// comparison. The literal `monthStart` is returned as Usage.Month
 	// so the API surface stays byte-stable for callers that format
 	// the value. (memory: pkg-state-usage-monthly-tz-compare)
+	//
+	// Months from usage_month_totals_tracking.tracked_from on read the
+	// trigger-kept usage_month_totals (one row per app or job); earlier
+	// months sum their minutes as before. Exactly one branch runs: each
+	// carries a one-time filter on tracked_from.
 	rows, err := s.pool.Query(ctx,
-		`select account_id, coalesce(app_id, job_id) as app_id,
+		`with tracking as (select tracked_from from usage_month_totals_tracking)
+		 select account_id, subject_id as app_id,
+		        $2::timestamptz as month,
+		        mb_seconds, cpu_usec, requests, tx_bytes, net_tx_bytes, net_rx_bytes, cold_boot_count
+		   from usage_month_totals
+		  where account_id = $1
+		    and month = $2
+		    and minute_rows > 0
+		    and $2 >= (select tracked_from from tracking)
+		 union all
+		 select account_id, coalesce(app_id, job_id) as app_id,
 		        $2::timestamptz as month,
 		        sum(mb_seconds)::bigint     as mb_seconds,
 		        sum(cpu_usec)::bigint       as cpu_usec,
@@ -21149,8 +21164,9 @@ func (s *PgStore) UsageByMonth(ctx context.Context, accountID string, month time
 		  where account_id = $1
 		    and minute >= $2
 		    and minute <  $3
+		    and $2 < coalesce((select tracked_from from tracking), 'infinity'::timestamptz)
 		  group by account_id, coalesce(app_id, job_id)
-		  order by coalesce(app_id, job_id)`,
+		  order by app_id`,
 		accountID, monthStart, monthEnd)
 	if err != nil {
 		return nil, err
