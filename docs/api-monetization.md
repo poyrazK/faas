@@ -226,9 +226,13 @@ request, and at least EUR 100.00 of usage a month.
   - after a plan change or a new card mid-month, the old card charges until
     the change and the new one from it, each minimum covered by the usage that
     card priced. A new card that doesn't prorate starts charging next month;
-  - a consumer revoked mid-month pays until the revocation, unless that
-    month's statement was already finalized: finalized fees are never reduced.
-    Finalize monthly statements after the month ends, as billing runs do.
+  - a consumer revoked mid-month pays until the revocation, unless a
+    statement of that month was priced before the revocation and finalized:
+    finalized fees are never reduced. Finalize monthly statements after the
+    month ends, as billing runs do.
+
+  A share that shrinks after its minimum was finalized never lowers that
+  minimum; only usage billed later does.
 - **Minimum.** When usage costs less than the minimum, the statement adds a
   top-up for the difference. Late usage lowers the top-up instead of adding
   to the total.
@@ -444,6 +448,12 @@ gregale platform-tenants statement-export --id TENANT_ID --statement-id STATEMEN
   resumes the same invoice and never adds an item twice. If Lago issued an
   invoice but the export stopped before tagging it, the retry names that
   invoice and stops; void it in Lago, then retry.
+- **One at a time.** While another request or a billing run is exporting a
+  statement, a second export gets `409 statement_invoice_export_in_progress`;
+  retry once it finishes.
+- **Wrong customer.** If the provider refuses the invoice before creating it,
+  for example because the customer doesn't exist, export again with the
+  right `--customer` or another provider.
 - **Currencies.** Any ISO 4217 currency with up to three decimal places:
   two-decimal ones such as EUR and USD, zero-decimal ones such as JPY and
   KRW, and three-decimal ones such as KWD and BHD. Invoices, payment amounts
@@ -583,6 +593,9 @@ gregale consumers overdue-holds my-api
 - **Timing.** Holds are recomputed every 5 minutes. While an invoice holds
   its consumer, Gregale checks its payment every 15 minutes, so paying lifts
   the hold within about 20 minutes.
+- **Can't check, won't block.** A hold needs a payment status Gregale read in
+  the last 24 hours. If your provider key is rotated or removed, Gregale
+  emails you to reconnect it and lets held customers through after a day.
 - **Lifting all holds.** `billing-policy-delete` removes the rule; holds lift
   at the next check.
 

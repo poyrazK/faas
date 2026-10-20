@@ -271,6 +271,18 @@ func (s *PgStore) ListDueBillingRunItems(ctx context.Context, runID, owner strin
 	return scanBillingRunItems(rows)
 }
 
+func (s *PgStore) RenewBillingRunLease(ctx context.Context, runID, owner string, until time.Time) error {
+	tag, err := s.pool.Exec(ctx, `update billing_runs set lease_until = greatest(lease_until, $3)
+		where id = $1::uuid and lease_owner = $2 and status <> 'completed'`, runID, owner, until.UTC())
+	if err != nil {
+		return fmt.Errorf("renew billing run lease: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrBillingRunLeaseLost
+	}
+	return nil
+}
+
 func (s *PgStore) UpdateBillingRunItem(ctx context.Context, owner string, item BillingRunItem) error {
 	if !validBillingRunItemOutcome(item.Outcome) || len(item.Reason) > 1000 {
 		return fmt.Errorf("%w: invalid billing run item", ErrInvalidArgument)
