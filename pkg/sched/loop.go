@@ -227,6 +227,11 @@ type Loop struct {
 	tenantWorkflowScheduleFailed      bool
 	workflowOrch                      *WorkflowOrchestrator
 	workflowRetention                 *WorkflowRetention
+
+	// triggerHealthMu guards triggerHealthLast, the last consumer health row
+	// written per trigger (trigger_health_throttle.go).
+	triggerHealthMu   sync.Mutex
+	triggerHealthLast map[string]triggerHealthWrite
 }
 
 func NewLoop(pool *pgxpool.Pool, engine *Engine, log *slog.Logger) *Loop {
