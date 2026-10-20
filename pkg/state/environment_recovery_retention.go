@@ -51,14 +51,18 @@ func selectRecoveryProtection(rows []recoveryProtection, policy *api.Environment
 	})
 	var position int
 	var charged int64
+	var newer *time.Time // first serving of the next newer release
 	for i := range rows {
 		row := &rows[i]
 		row.status, row.until = "disabled", time.Time{}
+		replaced := newer
+		served := row.served
+		newer = &served
 		if policy == nil {
 			continue
 		}
-		if i > 0 {
-			row.until = rows[i-1].served.Add(time.Duration(policy.Seconds) * time.Second)
+		if replaced != nil {
+			row.until = replaced.Add(time.Duration(policy.Seconds) * time.Second)
 			if !row.until.After(now) {
 				row.status = "expired"
 				continue
