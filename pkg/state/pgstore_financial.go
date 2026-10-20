@@ -183,7 +183,7 @@ func (s *PgStore) ListFinancialPriceSnapshots(ctx context.Context, account strin
 		if err := json.Unmarshal(r.Price, &p.Price); err != nil {
 			return nil, fmt.Errorf("financial price snapshot decode: %w", err)
 		}
-		if !validFinancialPrice(p) || p.Price.Meter != r.Meter || p.Price.Version != r.Version {
+		if !validStoredFinancialPrice(p) || p.Price.Meter != r.Meter || p.Price.Version != r.Version {
 			return nil, fmt.Errorf("financial price snapshot: %w", ErrInvalidArgument)
 		}
 		out = append(out, p)
