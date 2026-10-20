@@ -139,6 +139,8 @@ var memDispatched = map[string]bool{
 	"RecoverCanaryRouteHealth":                                true,
 	"RenewInvocationLease":                                    true,
 	"RenewOperationExecution":                                 true,
+	"RequestTelemetryAnalyticsByDimension":                    true,
+	"RequestTelemetryAnalyticsByRoute":                        true,
 	"RequestTelemetryRouteCustomers":                          true,
 	"ResolveEnvironmentQualificationService":                  true,
 	"ResolveInstanceMigrationCommit":                          true,
@@ -1022,6 +1024,24 @@ func (s *Mem) RenewOperationExecution(p0 context.Context, p1 string, p2 int, p3 
 		return o.RenewOperationExecution(p0, p1, p2, p3)
 	}
 	return s.MemStore.RenewOperationExecution(p0, p1, p2, p3)
+}
+
+func (s *Mem) RequestTelemetryAnalyticsByDimension(p0 context.Context, p1 sqlc.RequestTelemetryAnalyticsByDimensionParams) ([]sqlc.RequestTelemetryAnalyticsByDimensionRow, error) {
+	if o, ok := s.over.(interface {
+		RequestTelemetryAnalyticsByDimension(context.Context, sqlc.RequestTelemetryAnalyticsByDimensionParams) ([]sqlc.RequestTelemetryAnalyticsByDimensionRow, error)
+	}); ok {
+		return o.RequestTelemetryAnalyticsByDimension(p0, p1)
+	}
+	return s.MemStore.RequestTelemetryAnalyticsByDimension(p0, p1)
+}
+
+func (s *Mem) RequestTelemetryAnalyticsByRoute(p0 context.Context, p1 sqlc.RequestTelemetryAnalyticsByRouteParams) ([]sqlc.RequestTelemetryAnalyticsByRouteRow, error) {
+	if o, ok := s.over.(interface {
+		RequestTelemetryAnalyticsByRoute(context.Context, sqlc.RequestTelemetryAnalyticsByRouteParams) ([]sqlc.RequestTelemetryAnalyticsByRouteRow, error)
+	}); ok {
+		return o.RequestTelemetryAnalyticsByRoute(p0, p1)
+	}
+	return s.MemStore.RequestTelemetryAnalyticsByRoute(p0, p1)
 }
 
 func (s *Mem) RequestTelemetryRouteCustomers(p0 context.Context, p1 sqlc.RequestTelemetryRouteCustomersParams) ([]sqlc.RequestTelemetryRouteCustomersRow, error) {

@@ -1145,7 +1145,7 @@ func (l *Loop) Run(ctx context.Context) error {
 	triggerT := time.NewTicker(time.Second)
 	defer triggerT.Stop()
 	// Event fanout has an advisory LISTEN wake and a durable outbox sweep.
-	eventFanoutT := time.NewTicker(5 * time.Second)
+	eventFanoutT := time.NewTicker(eventFanoutSafetyTick)
 	defer eventFanoutT.Stop()
 	l.dispatchEventFanoutSweep(ctx)
 	serviceRecoveryT := time.NewTicker(time.Duration(api.ServiceRecoveryPollIntervalSeconds) * time.Second)

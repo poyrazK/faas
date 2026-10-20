@@ -215,6 +215,14 @@ var XBaseKey = baseKey
 var XDeploymentRuntimePort = deploymentRuntimePort
 var XLayerKey = layerKey
 var XNewEngine = newEngine
+
+// XEventFanoutSafetyTick and XRunEventFanoutSweep let the event substrate
+// benchmark schedule fanout exactly as Loop.Run does (spec Appendix D V12).
+// adr: 647 — the sweep admits independently routed recipients.
+const XEventFanoutSafetyTick = eventFanoutSafetyTick
+
+func (l *Loop) XRunEventFanoutSweep(ctx context.Context) { l.runEventFanoutSweep(ctx) }
+
 var XNewMemCacheOverageChecker = newMemCacheOverageChecker
 var XTestWorkerScopedDemandLifecycle = testWorkerScopedDemandLifecycle
 

@@ -83,6 +83,9 @@ type RequestTelemetryRow struct {
 	// and never contain customer payloads.
 	WakeID     string
 	InstanceID string
+	// TraceInferred marks a TraceID that Gregale inferred for a service call
+	// whose caller sent no traceparent (ADR-1138), not propagated context.
+	TraceInferred bool
 	// ConsumerID is the stable API consumer identity resolved by the
 	// consumer-key middleware. It is empty for anonymous/legacy traffic.
 	// Credentials are deliberately never persisted in telemetry.

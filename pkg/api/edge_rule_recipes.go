@@ -44,7 +44,35 @@ const (
 	EdgeRuleRecipeRateLimitPath       = "rate-limit-path"
 	EdgeRuleRecipeAllowIPsOnly        = "allow-ips-only"
 	EdgeRuleRecipeBlockCountries      = "block-countries"
+	EdgeRuleRecipeBlockScannerPaths   = "block-scanner-paths"
 )
+
+// EdgeRuleScannerPath is one path prefix vulnerability scanners probe.
+// Secret paths (credentials, version-control metadata) are never meant to
+// be public; the others belong to software an app could really run (a
+// WordPress site serves /wp-admin), so a suggestion leaves those out when
+// the app answers them successfully (ADR-20261020105000).
+type EdgeRuleScannerPath struct {
+	Prefix string
+	Secret bool
+}
+
+// EdgeRuleScannerPaths is block-scanner-paths' default list (ADR-986).
+var EdgeRuleScannerPaths = []EdgeRuleScannerPath{
+	{"/.env", true}, {"/.git/", true}, {"/.svn/", true}, {"/.hg/", true},
+	{"/.aws/", true}, {"/.ssh/", true}, {"/.DS_Store", true}, {"/vendor/phpunit/", true},
+	{"/wp-", false}, {"/xmlrpc.php", false}, {"/phpmyadmin", false}, {"/pma/", false},
+	{"/cgi-bin/", false}, {"/server-status", false},
+}
+
+// EdgeRuleScannerPrefixes returns the default scanner prefixes.
+func EdgeRuleScannerPrefixes() []string {
+	out := make([]string, len(EdgeRuleScannerPaths))
+	for i, p := range EdgeRuleScannerPaths {
+		out[i] = p.Prefix
+	}
+	return out
+}
 
 // Bounds on recipe inputs.
 const (
@@ -102,6 +130,17 @@ var EdgeRuleRecipes = []EdgeRuleRecipe{
 			{Name: "countries", Label: "Countries", Help: "ISO 3166-1 alpha-2 codes, comma- or space-separated.", Placeholder: "KP, IR", Required: true},
 		},
 		build: buildBlockCountries,
+	},
+	{
+		ID:      EdgeRuleRecipeBlockScannerPaths,
+		Kind:    "ip",
+		Title:   "Block vulnerability scanner paths",
+		Summary: "Answer 403 to requests for paths scanners probe on every public site, such as /.env, /.git/ and /wp-login.php. Remove any your app really serves.",
+		LogNote: "In log mode the match count is the requests it would block.",
+		Params: []EdgeRuleRecipeParam{
+			{Name: "paths", Label: "Path prefixes", Help: "Blocked when a request path starts with one of these; comma- or space-separated.", Default: strings.Join(EdgeRuleScannerPrefixes(), ", ")},
+		},
+		build: buildBlockScannerPaths,
 	},
 }
 
@@ -280,7 +319,69 @@ func buildBlockCountries(v recipeValues) (CreateEdgeRuleRequest, error) {
 	}, nil
 }
 
+func buildBlockScannerPaths(v recipeValues) (CreateEdgeRuleRequest, error) {
+	prefixes := recipeSplit(v["paths"])
+	if len(prefixes) == 0 {
+		return CreateEdgeRuleRequest{}, fmt.Errorf("list at least one path prefix")
+	}
+	if len(prefixes) > EdgeRuleMatchMaxValues {
+		return CreateEdgeRuleRequest{}, fmt.Errorf("at most %d path prefixes", EdgeRuleMatchMaxValues)
+	}
+	for _, p := range prefixes {
+		if !strings.HasPrefix(p, "/") || len(p) < 2 {
+			return CreateEdgeRuleRequest{}, fmt.Errorf("%q is not a path prefix such as /.env", p)
+		}
+	}
+	return CreateEdgeRuleRequest{
+		MatchPath: "/**",
+		Kind:      "ip",
+		Action:    recipeDenyAll(),
+		Match:     &EdgeRuleMatchExpr{Field: "path", Op: "prefix", Values: prefixes},
+	}, nil
+}
+
 // recipeSplit splits a comma- or whitespace-separated list.
 func recipeSplit(s string) []string {
 	return strings.FieldsFunc(s, func(r rune) bool { return r == ',' || r == ' ' || r == '\t' || r == '\n' || r == '\r' })
+}
+
+// Bounds on a recipe's "alert me" threshold (matches per hour).
+const (
+	EdgeRuleRecipeAlertDefaultPerHour = 100
+	edgeRuleRecipeAlertMaxPerHour     = 10_000_000
+)
+
+// EdgeRuleRecipeAlert builds the optional "alert me" rule for the edge rule a
+// recipe created (ADR-986 amendment): fire when the rule matches more than
+// perHour requests in an hour. It counts edge_rule_activity — matches in
+// either mode — so the alert keeps working when the rule moves from log mode
+// to enforce. Alerts deliver to a webhook only.
+func EdgeRuleRecipeAlert(recipeID, edgeRuleID string, perHour int, webhookURL, webhookSecret string) (CreateAlertRuleRequest, *Problem) {
+	recipe, ok := EdgeRuleRecipeByID(recipeID)
+	if !ok {
+		return CreateAlertRuleRequest{}, ErrValidation(fmt.Sprintf("unknown recipe %q", recipeID))
+	}
+	if edgeRuleID == "" {
+		return CreateAlertRuleRequest{}, ErrValidation("recipe alert needs the edge rule id")
+	}
+	if perHour < 1 || perHour > edgeRuleRecipeAlertMaxPerHour {
+		return CreateAlertRuleRequest{}, ErrValidation(fmt.Sprintf("alert threshold must be a whole number of matches per hour from 1 to %d", edgeRuleRecipeAlertMaxPerHour))
+	}
+	if strings.TrimSpace(webhookURL) == "" || webhookSecret == "" {
+		return CreateAlertRuleRequest{}, ErrValidation("recipe alert needs a webhook URL and secret")
+	}
+	suffix := edgeRuleID
+	if len(suffix) > 8 {
+		suffix = suffix[:8]
+	}
+	return CreateAlertRuleRequest{
+		Name:          fmt.Sprintf("%s spike (%s)", recipe.Title, suffix),
+		Metric:        AlertMetricEdgeRuleActivity,
+		Comparison:    "gt",
+		Threshold:     float64(perHour),
+		WindowSpec:    "1h",
+		EdgeRuleID:    edgeRuleID,
+		WebhookURL:    strings.TrimSpace(webhookURL),
+		WebhookSecret: webhookSecret,
+	}, nil
 }
