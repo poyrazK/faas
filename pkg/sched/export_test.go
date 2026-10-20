@@ -23,9 +23,11 @@ import (
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/nodereport"
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
+	"github.com/onebox-faas/faas/pkg/storagekey"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
@@ -64,7 +66,7 @@ type WorkPool = workPool
 
 // Package-level consts
 const ArchAMD64 = archAMD64
-const CapacityPayloadDomain = capacityPayloadDomain
+const CapacityPayloadDomain = nodereport.CapacityPayloadDomain
 const GatewayDispatchResponseMaxBytes = gatewayDispatchResponseMaxBytes
 const PressureParkFreshness = pressureParkFreshness
 const RuntimeConfigDrainReasonQuietPeriod = runtimeConfigDrainReasonQuietPeriod
@@ -152,7 +154,7 @@ var NewWarmHintBroadcaster = newWarmHintBroadcaster
 var Node = node
 var ObservationTask = observationTask
 var OutcomeFromProtocolResult = outcomeFromProtocolResult
-var ParentBaseKeyAliases = parentBaseKeyAliases
+var ParentBaseKeyAliases = storagekey.ParentBaseAliases
 var ParseJSONHeaders = parseJSONHeaders
 var ParseJSONMetadata = parseJSONMetadata
 var ParseSnapKey = parseSnapKey

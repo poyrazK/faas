@@ -5,6 +5,8 @@ import (
 	"encoding/binary"
 	"errors"
 	"io"
+
+	"github.com/onebox-faas/faas/pkg/safetext"
 )
 
 // WebSocket framing (RFC 6455) as far as a transparent realtime proxy needs
@@ -124,13 +126,11 @@ func wsServerFrame(opcode byte, payload []byte) []byte {
 }
 
 // wsCloseFrame builds a server close frame with a code and a reason cut to
-// the 123 bytes a control frame can carry.
+// the 123 bytes a control frame can carry. RFC 6455 requires the reason to be
+// valid UTF-8, so the cut never splits a rune.
 func wsCloseFrame(code int, reason string) []byte {
 	payload := binary.BigEndian.AppendUint16(nil, uint16(code))
-	if len(reason) > 123 {
-		reason = reason[:123]
-	}
-	return wsServerFrame(wsOpClose, append(payload, reason...))
+	return wsServerFrame(wsOpClose, append(payload, safetext.Truncate(reason, 123)...))
 }
 
 // wsMessage reassembles the text messages of one direction, and its binary

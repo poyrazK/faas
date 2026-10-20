@@ -5421,6 +5421,12 @@ UPDATE object_storage_multipart_uploads SET state='aborting',completion_error_co
  lease_token=NULL,lease_until=NULL,attempt_count=0,last_error_code=sqlc.arg(code),retry_at=now(),updated_at=now()
 WHERE id=sqlc.arg(id) AND lease_token=sqlc.arg(token) AND completion_dispatched AND state='completing_conditional';
 
+-- name: ObjectS3CredentialLockNamespace :exec
+-- The credential's account_id foreign key takes this KEY SHARE lock anyway;
+-- taking it before the bucket keeps object storage's account-before-bucket
+-- lock order (ADR-533).
+SELECT id FROM resource_namespaces WHERE id=$1 FOR KEY SHARE;
+
 -- name: ObjectS3CredentialLockBucket :one
 SELECT b.id FROM object_buckets b
 WHERE b.id=$1 AND b.account_id=$2 AND b.state='ready'
