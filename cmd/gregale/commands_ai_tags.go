@@ -76,14 +76,14 @@ func cmdAITagsExport(args []string) int {
 	return 0
 }
 
-const aiTagLimitsUsage = "usage: gregale ai tag-limits <integration-id> [--set KEY=VALUE:EUR]... [--remove KEY=VALUE]... [--clear]"
+const aiTagLimitsUsage = "usage: gregale ai tag-limits <integration-id> [--set KEY=VALUE:USD]... [--remove KEY=VALUE]... [--clear]"
 
 // cmdAITagLimits shows or changes an integration's per-tag daily cost
 // limits; flags left out keep the other limits.
 func cmdAITagLimits(args []string) int {
 	fs := newFlagSet("ai tag-limits", flag.ContinueOnError)
 	var set, remove stringListFlag
-	fs.Var(&set, "set", "cap a tag's UTC-day cost: key=value:EUR (repeatable)")
+	fs.Var(&set, "set", "cap a tag's UTC-day cost: key=value:USD (repeatable)")
 	fs.Var(&remove, "remove", "remove a tag's limit (repeatable)")
 	clear := fs.Bool("clear", false, "remove every limit before applying --set")
 	if err := parseInterspersed(fs, args); err != nil || fs.NArg() != 1 {
@@ -139,12 +139,12 @@ func applyTagLimitFlags(current []api.OutboundAITagLimit, set, remove []string, 
 		// A value may contain ":", an amount never does.
 		cut := strings.LastIndex(spec, ":")
 		if cut < 0 || !api.ValidOutboundAITag(spec[:cut]) {
-			return nil, fmt.Errorf("%q is not key=value:EUR", spec)
+			return nil, fmt.Errorf("%q is not key=value:USD", spec)
 		}
 		tag, amount := spec[:cut], spec[cut+1:]
-		millicents, err := parseEuroMillicents(amount)
+		millicents, err := parseUSDMillicents(amount)
 		if err != nil || millicents < 1 {
-			return nil, fmt.Errorf("%q needs a positive euro amount", spec)
+			return nil, fmt.Errorf("%q needs a positive dollar amount", spec)
 		}
 		byTag[tag] = millicents
 	}
@@ -154,7 +154,7 @@ func applyTagLimitFlags(current []api.OutboundAITagLimit, set, remove []string, 
 	}
 	slices.SortFunc(limits, func(a, b api.OutboundAITagLimit) int { return strings.Compare(a.Tag, b.Tag) })
 	if !api.ValidOutboundAITagLimits(limits) {
-		return nil, fmt.Errorf("at most %d limits of at most 10,000,000 EUR each", api.OutboundAITagLimitsMax)
+		return nil, fmt.Errorf("at most %d limits of at most 10,000,000 USD each", api.OutboundAITagLimitsMax)
 	}
 	return limits, nil
 }

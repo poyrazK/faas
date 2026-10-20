@@ -39,6 +39,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/sched/flowcount"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/storagekey"
 	pkgtrace "github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/vmmdmount"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -2037,7 +2038,7 @@ func (s *Server) SeccompStatus(ctx context.Context, req *vmmdpb.SeccompStatusReq
 //     a misbehaving caller or a leaked token from another
 //     `faas`-group member cannot read arbitrary storage bytes
 //     through vmmd's loopback mount; the allow-list is the
-//     host-arch + sibling-arch set from sched.IsParentBaseKey).
+//     host-arch + sibling-arch set from storagekey.IsParentBase).
 //  3. vmm.MountParentExt4 returns vmmdmount.ErrNotFound →
 //     NotFound (the storage backend has no such key — the
 //     load-bearing wire code for imaged's pre-staging checks).
@@ -2059,8 +2060,8 @@ func (s *Server) MountParentExt4ReadOnly(ctx context.Context, req *vmmdpb.MountP
 	// Allow-list check (review finding #4): only the canonical
 	// parent-base storage keys may be loopback-mounted. The set
 	// is per-arch (host + sibling for heterogenous clusters);
-	// see sched.IsParentBaseKey.
-	if !sched.IsParentBaseKey(req.GetStorageKey()) {
+	// see storagekey.IsParentBase.
+	if !storagekey.IsParentBase(req.GetStorageKey()) {
 		err := api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
 			"storage_key not in allow-list",
 			"only the canonical parent base ext4 key may be mounted").
@@ -2101,7 +2102,7 @@ func (s *Server) MaterializeParentExt4(ctx context.Context, req *vmmdpb.Material
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(err)
 	}
-	if !sched.IsParentBaseKey(req.GetStorageKey()) {
+	if !storagekey.IsParentBase(req.GetStorageKey()) {
 		err := api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
 			"storage_key not in allow-list",
 			"only the canonical parent base ext4 key may be materialized").

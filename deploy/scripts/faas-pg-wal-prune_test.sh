@@ -49,7 +49,10 @@ set -euo pipefail
 [[ "$1" == -c && "$2" == '%s %Y %n' ]]
 shift 2
 for path in "$@"; do
-  printf '%s %s %s\n' "$(wc -c <"$path" | tr -d ' ')" 1704067200 "$path"
+  mtime=1704067200
+  # Backup history files outlive the segments they describe.
+  [[ "$path" == *.backup ]] && mtime=1700000000
+  printf '%s %s %s\n' "$(wc -c <"$path" | tr -d ' ')" "$mtime" "$path"
 done
 EOF
 chmod +x "$BIN/pg_archivecleanup" "$BIN/rclone" "$BIN/stat" "$PRUNER"
@@ -86,6 +89,8 @@ new=000000010000000000000030
 printf old >"$ARCHIVE/$old"
 printf boundary >"$ARCHIVE/$boundary"
 printf new >"$ARCHIVE/$new"
+# pg_archivecleanup (PostgreSQL 16) never removes backup history files.
+printf label >"$ARCHIVE/$old.00000028.backup"
 make_backup basebackup-2026-01-01T000000Z "$boundary"
 
 out="$(run_pruner)"
@@ -104,8 +109,11 @@ run_pruner --apply >/dev/null
 [[ -e "$ARCHIVE/$boundary" ]]
 [[ -e "$ARCHIVE/$new" ]]
 [[ -s "$STATE/wal-prune-success" ]]
-# Stats cover the two remaining WAL files: "boundary" (8 bytes) + "new" (3).
-grep -Fqx 'bytes=11' "$STATE/wal-archive-stats"
+# Bytes cover the two remaining WAL files, "boundary" (8 bytes) + "new" (3),
+# and the history file (5). Ages cover segments only: the older history file
+# must not make the archive look like it reaches back further than its WAL.
+[[ -e "$ARCHIVE/$old.00000028.backup" ]]
+grep -Fqx 'bytes=16' "$STATE/wal-archive-stats"
 grep -Fqx 'oldest_timestamp_seconds=1704067200' "$STATE/wal-archive-stats"
 
 rm -rf "$BACKUPS" "$STATE"

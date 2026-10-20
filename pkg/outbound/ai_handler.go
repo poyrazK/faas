@@ -256,6 +256,26 @@ func (h *Handler) settleAIUsage(ctx context.Context, integration Integration, ap
 		usage, cost = estimated, estimatedCost
 		span.SetAttributes(attribute.Bool("gregale.ai.usage_estimated", true))
 	}
+	h.recordSettledAIUsage(ctx, integration, appID, settlement, settledAIUsage{
+		usage: usage, outcome: outcome, cost: cost, timeToFirstByte: timeToFirstByte, capture: observer.capture,
+	}, span, metricIntegrationID)
+}
+
+// settledAIUsage is one call's usage as it is recorded.
+type settledAIUsage struct {
+	usage           AIUsage
+	outcome         AIUsageOutcome
+	cost            int64
+	timeToFirstByte time.Duration
+	capture         *aiContentCapture
+}
+
+// recordSettledAIUsage counts and writes one call's settled usage: metrics,
+// span attributes, the usage rollup, the request log and the log export.
+// Ordinary calls and realtime responses (ADR 20261019072722) share it.
+func (h *Handler) recordSettledAIUsage(ctx context.Context, integration Integration, appID string, settlement aiSettlement,
+	settled settledAIUsage, span oteltrace.Span, metricIntegrationID string) {
+	usage, outcome, cost, timeToFirstByte := settled.usage, settled.outcome, settled.cost, settled.timeToFirstByte
 	h.Metrics.ObserveAIUsage(metricIntegrationID, outcome, usage, timeToFirstByte)
 	h.Metrics.ObserveAICost(metricIntegrationID, cost)
 	span.SetAttributes(aiSpanAttributes(integration.AIProvider, outcome, usage, timeToFirstByte)...)
@@ -294,8 +314,8 @@ func (h *Handler) settleAIUsage(ctx context.Context, integration Integration, ap
 	}
 	if integration.AIRequestLogEnabled {
 		record.Log = newAIRequestLog(settlement, timeToFirstByte, time.Now())
-		if observer.capture != nil {
-			record.Log.Content = observer.capture.finish()
+		if settled.capture != nil {
+			record.Log.Content = settled.capture.finish()
 		}
 	}
 	if settlement.route.tracked {
@@ -359,7 +379,7 @@ func promptCacheSavedMillicents(integration Integration, usage AIUsage, cost int
 		return 0
 	}
 	plain := usage
-	plain.CachedInputTokens, plain.CacheWriteTokens = 0, 0
+	plain.CachedInputTokens, plain.CacheWriteTokens, plain.CachedInputAudioTokens = 0, 0, 0
 	return aiCallCostMillicents(integration, plain) - cost
 }
 

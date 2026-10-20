@@ -1433,7 +1433,7 @@ func NewTenantCustomerOperationSignalClient(client *api.Client, definition strin
 var ParseDataAPIContract = parseDataAPIContract
 var ParseDataAPIHealthPool = parseDataAPIHealthPool
 var ParseDataAPIRequestRecord = parseDataAPIRequestRecord
-var ParseEuroMillicents = parseEuroMillicents
+var ParseUSDMillicents = parseUSDMillicents
 var ParseGithubSetupDeployBranches = parseGithubSetupDeployBranches
 var ParseImageRunArgs = parseImageRunArgs
 var ParseInterspersed = parseInterspersed

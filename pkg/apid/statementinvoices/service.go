@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"github.com/onebox-faas/faas/pkg/billing"
@@ -307,10 +309,17 @@ func exportConflict(detail string) *api.Problem {
 	return api.NewProblem(http.StatusConflict, api.CodeConflict, "Statement invoice conflict", detail)
 }
 
+func exportInProgress() *api.Problem {
+	return api.NewProblem(http.StatusConflict, api.CodeStatementInvoiceExportInProgress, "Statement invoice export in progress",
+		"another attempt is exporting this statement; retry once it finishes")
+}
+
 // exportStatementInvoice creates the statement's invoice in the provider,
 // or resumes an earlier attempt: the export row exists before any provider
-// call, and each provider adopts what an earlier attempt created, so a
-// retry never duplicates charges.
+// call, one attempt at a time claims it, and each provider adopts what an
+// earlier attempt created, so a retry never duplicates charges
+// (ADR-20261019180000). An export the provider refused before creating
+// anything can be retried with another customer or provider.
 func (s *Service) exportStatementInvoice(ctx context.Context, acct state.Account, store state.StatementInvoiceExportStore,
 	src statementInvoiceSource, providerName string) (state.StatementInvoiceExport, *api.Problem) {
 	p := s.provider(providerName)
@@ -318,7 +327,7 @@ func (s *Service) exportStatementInvoice(ctx context.Context, acct state.Account
 		return state.StatementInvoiceExport{}, providerProblem(http.StatusUnprocessableEntity, "Unknown billing provider", "provider must be stripe, paddle or lago")
 	}
 	prior, err := store.GetStatementInvoiceExport(ctx, acct.ID, src.kind, src.statementID)
-	if err == nil && prior.Provider != providerName {
+	if err == nil && prior.Provider != providerName && !prior.Retargetable() {
 		return state.StatementInvoiceExport{}, exportConflict("the statement was already exported to " + prior.Provider)
 	}
 	if err == nil && prior.Status == state.StatementInvoiceExportCompleted {
@@ -354,6 +363,23 @@ func (s *Service) exportStatementInvoice(ctx context.Context, acct state.Account
 	if err != nil {
 		return state.StatementInvoiceExport{}, api.ErrInternal("could not record the statement invoice export")
 	}
+	token := uuid.NewString()
+	claimed, err := store.ClaimStatementInvoiceExport(ctx, acct.ID, export.ID, token, time.Now().Add(api.StatementInvoiceExportClaimTTL))
+	if errors.Is(err, state.ErrStatementInvoiceExportInProgress) {
+		return state.StatementInvoiceExport{}, exportInProgress()
+	}
+	if err != nil {
+		return state.StatementInvoiceExport{}, api.ErrInternal("could not claim the statement invoice export")
+	}
+	defer func() { _ = store.ReleaseStatementInvoiceExport(context.WithoutCancel(ctx), acct.ID, export.ID, token) }()
+	// The claim reads the export as the attempt before it left it.
+	export = claimed
+	if export.Status == state.StatementInvoiceExportCompleted {
+		return export, nil
+	}
+	if export.Provider != providerName || export.Customer != src.customer {
+		return state.StatementInvoiceExport{}, exportConflict("an export for this statement already targets another customer or provider")
+	}
 	if export.Livemode != conn.livemode {
 		return state.StatementInvoiceExport{}, exportConflict("the export started with a " + p.title() + " key in the other mode; reconnect that key to finish it")
 	}
@@ -364,7 +390,12 @@ func (s *Service) exportStatementInvoice(ctx context.Context, acct state.Account
 		export.ProviderInvoiceID = invoiceID
 		return nil
 	}
-	if problem := p.push(ctx, conn, &export, src, resumed, record); problem != nil {
+	rejected := false
+	reject := func() { rejected = true }
+	if problem := p.push(ctx, conn, &export, src, resumed, record, reject); problem != nil {
+		if rejected && export.ProviderInvoiceID == "" {
+			_ = store.RejectStatementInvoiceExport(context.WithoutCancel(ctx), acct.ID, export.ID, token)
+		}
 		return state.StatementInvoiceExport{}, problem
 	}
 	if err := src.handoff(ctx, export.ProviderInvoiceID); err != nil {

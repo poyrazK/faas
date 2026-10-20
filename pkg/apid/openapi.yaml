@@ -5590,8 +5590,8 @@ paths:
       summary: Read the built-in AI price catalog of one provider.
       description: >-
         Requires MFA and read scope (ADR-994). The catalog prices the models an
-        integration's own price list does not name. Prices are list prices
-        converted to EUR at usd_per_eur and rounded up.
+        integration's own price list does not name. Prices are the providers' list
+        prices in US dollars, rounded up (ADR 20261019123822).
       parameters:
         - name: provider
           in: query
@@ -14315,16 +14315,19 @@ paths:
         Exports one finalized platform tenant statement revision to the
         provider in the body (default stripe; connect it with
         PUT /v1/account/billing-connections/{provider}), ADR-1502 and ADR-1507.
-        Stripe gets a draft invoice and Paddle a draft manually collected
-        transaction; neither is finalized or sent. Lago issues a one-off
-        invoice at once, without charging it. Items are one per rate card and
-        unit price plus a rounding item, so the invoice equals the statement
-        total rounded to the cent; Paddle and Lago receive one summary item
-        when a line is negative. On success the statement's handoff records
-        the provider invoice ID. Retrying after a failure resumes the same
-        invoice; repeating a completed export returns it. A statement exports
-        to one provider only. Two-decimal currencies only; Paddle allows USD,
-        EUR and GBP.
+        The connection's collection mode (ADR-1311) decides whether the
+        provider keeps a draft, sends it or charges it. Items are one per rate
+        card and unit price plus a rounding item, so the invoice equals the
+        statement total rounded to the currency's minor unit; Paddle and Lago
+        receive one summary item when a line is negative. On success the
+        statement's handoff records the provider invoice ID. Retrying after a
+        failure resumes the same invoice; repeating a completed export returns
+        it. A statement exports to one provider only. Another attempt still
+        exporting it answers 409 `statement_invoice_export_in_progress`, and an
+        export the provider refused before creating an invoice can be retried
+        with another customer or provider (ADR-20261019180000). Currencies with
+        up to three decimal places (ADR-20261019100330); Paddle allows USD, EUR
+        and GBP.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
@@ -18251,15 +18254,19 @@ paths:
         Exports one finalized app consumer statement revision to the
         provider in the body (default stripe; connect it with
         PUT /v1/account/billing-connections/{provider}), ADR-1502 and ADR-1507.
-        Stripe and Paddle receive drafts that Gregale never finalizes or
-        sends; Lago issues its one-off invoice immediately but never charges
-        it. One item per rate card and unit price, plus a rounding item, makes
-        the invoice equal the statement total rounded to the cent; with a
-        negative line, Paddle and Lago get a single summary item instead. The
+        The connection's collection mode (ADR-1311) decides whether the
+        provider keeps a draft, sends it or charges it. One item per rate card
+        and unit price, plus a rounding item, makes the invoice equal the
+        statement total rounded to the currency's minor unit; with a negative
+        line, Paddle and Lago get a single summary item instead. The
         statement's handoff records the provider invoice ID on success. A retry
         resumes the same invoice, a completed export is returned as is, and a
-        statement exports to one provider only. Two-decimal currencies only;
-        Paddle takes USD, EUR and GBP.
+        statement exports to one provider only. While another attempt is
+        exporting the statement the answer is 409
+        `statement_invoice_export_in_progress`; an export the provider refused
+        before creating an invoice can be retried with another customer or
+        provider (ADR-20261019180000). Currencies with up to three decimal
+        places (ADR-20261019100330); Paddle takes USD, EUR and GBP.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
@@ -76257,7 +76264,7 @@ components:
     OutboundAIUsageItem:
       type: object
       description: One UTC-day rollup for a caller and model. input_tokens includes cached reads and cache writes, which are also reported separately.
-      required: [caller, model, requests, error_requests, usage_unknown_requests, input_tokens, cached_input_tokens, cache_write_tokens, output_tokens, images, audio_seconds, characters, video_seconds, web_searches, file_searches, code_session_gb, cached_requests, cache_saved_millicents, prompt_cache_saved_millicents]
+      required: [caller, model, requests, error_requests, usage_unknown_requests, input_tokens, cached_input_tokens, cache_write_tokens, output_tokens, images, audio_seconds, characters, video_seconds, web_searches, file_searches, code_session_gb, cached_requests, cache_saved_millicents, prompt_cache_saved_millicents, input_audio_tokens, output_audio_tokens]
       properties:
         caller: { type: string, description: 'App UUID, "runs" for stateless Runs, or "replay" for replayed calls (ADR-997).' }
         model: { type: string, maxLength: 128, description: 'Provider-reported model; "other" collects models beyond the daily distinct-model cap and "unknown" covers responses without one.' }
@@ -76279,6 +76286,8 @@ components:
         cached_requests: { type: integer, format: int64, minimum: 0, description: 'Requests the response cache served, with no tokens or cost (ADR-1440).' }
         cache_saved_millicents: { type: integer, format: int64, minimum: 0, description: 'Provider cost the response cache avoided, priced from the cached responses at the current price list.' }
         prompt_cache_saved_millicents: { type: integer, format: int64, description: 'What provider prompt caching saved against plain input prices; negative when cache writes outweighed reads.' }
+        input_audio_tokens: { type: integer, format: int64, minimum: 0, description: 'Audio part of input_tokens, priced at the audio input price (ADR 20261019072722).' }
+        output_audio_tokens: { type: integer, format: int64, minimum: 0, description: 'Audio part of output_tokens, priced at the audio output price.' }
     OutboundAIUsageResponse:
       type: object
       description: One UTC day of AI gateway usage for an integration.
@@ -76499,6 +76508,24 @@ components:
           minimum: 0
           maximum: 10000000
           description: Charged per GB of code-interpreter container memory per session (ADR-1433).
+        input_audio_millicents_per_mtok:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 1000000000
+          description: Charged per million uncached audio input tokens (ADR 20261019072722); the input price when absent.
+        cached_input_audio_millicents_per_mtok:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 1000000000
+          description: Charged per million cached audio input tokens; the cached input price when absent.
+        output_audio_millicents_per_mtok:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 1000000000
+          description: Charged per million audio output tokens; the output price when absent.
     PutOutboundAIPricesRequest:
       type: object
       description: Replace an integration's price list. It takes effect immediately; earlier lists stay for costs already settled.
@@ -76522,13 +76549,14 @@ components:
       description: >-
         One provider's built-in AI price catalog (ADR-994), generated from LiteLLM's
         MIT-licensed price data. model_prefix holds the catalog model name.
-      required: [ai_provider, source, generated, usd_per_eur, fx_source, entries]
+      required: [ai_provider, source, generated, entries]
       properties:
         ai_provider: { type: string }
         source: { type: string, description: URL of the price data the catalog was generated from. }
         generated: { type: string, format: date }
-        usd_per_eur: { type: string, description: 'USD per EUR used for the conversion, as a decimal string.' }
-        fx_source: { type: string, description: Source and date of the exchange rate. }
+        currency: { type: string, description: 'ISO 4217 currency of every catalog price: the billing currency, USD. Absent from responses of releases before ADR 20261019123822.' }
+        usd_per_eur: { type: string, deprecated: true, description: 'Deprecated: always 1, since the catalog is in US dollars.' }
+        fx_source: { type: string, deprecated: true, description: 'Deprecated: names no exchange rate.' }
         entries:
           type: array
           items: { $ref: '#/components/schemas/OutboundAIPriceEntry' }

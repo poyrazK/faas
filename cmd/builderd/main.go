@@ -35,9 +35,9 @@ import (
 	"github.com/onebox-faas/faas/pkg/durableentity/validatorbundle"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/role"
-	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
+	"github.com/onebox-faas/faas/pkg/storagekey"
 	"github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/wire"
 
@@ -524,7 +524,7 @@ func resolveBuilderBasePath(configured string, sourceStorage storage.StorageBack
 	if sourceStorage == nil {
 		return configured, nil
 	}
-	key := sched.BaseKey("builder")
+	key := storagekey.Base("builder")
 	if resolver, ok := sourceStorage.(storage.LocalPathResolver); ok {
 		path, local, err := resolver.LocalPath(key)
 		if err != nil {
@@ -566,7 +566,7 @@ func resolveBuilderBaseDigestPath(ctx context.Context, sourceStorage storage.Sto
 	if !ok {
 		return "", nil
 	}
-	key := sched.BaseDigestKey("builder")
+	key := storagekey.BaseDigest("builder")
 	path, local, err := resolver.LocalPath(key)
 	if err != nil {
 		return "", fmt.Errorf("builderd: resolve builder base digest sidecar %q: %w", key, err)

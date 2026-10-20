@@ -250,6 +250,8 @@ sql:
       - "pkg/state/node_admission_queries.sql"
       - "pkg/state/node_lease_queries.sql"
       - "pkg/state/node_lifecycle_completion_queries.sql"
+      - "pkg/state/operation_children_queries.sql"
+      - "pkg/state/operation_schedule_queries.sql"
       - "pkg/state/operation_timeline_queries.sql"
       - "pkg/state/operation_webhook_queries.sql"
       - "pkg/state/operator_context_queries.sql"
