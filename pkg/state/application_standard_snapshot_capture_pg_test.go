@@ -1,6 +1,6 @@
 //go:build !no_pg
 
-package state
+package state_test
 
 import (
 	"encoding/json"
@@ -9,33 +9,34 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 func TestPgStandardSnapshotWarmLifecycle(t *testing.T) {
-	s, _ := runtimeCapturePGStore(t)
-	standardSnapshotLifecycle(t, s, "warm")
+	s, _ := state.RuntimeCapturePGStore(t)
+	state.StandardSnapshotLifecycle(t, s, "warm")
 }
 func TestPgStandardSnapshotParkLifecycle(t *testing.T) {
-	s, _ := runtimeCapturePGStore(t)
-	standardSnapshotLifecycle(t, s, "park")
+	s, _ := state.RuntimeCapturePGStore(t)
+	state.StandardSnapshotLifecycle(t, s, "park")
 }
 func TestPgStandardSnapshotProcessRestart(t *testing.T) {
-	s, _ := runtimeCapturePGStore(t)
-	standardSnapshotRestart(t, s)
+	s, _ := state.RuntimeCapturePGStore(t)
+	state.StandardSnapshotRestart(t, s)
 }
 func TestPgStandardSnapshotPolicyChange(t *testing.T) {
-	s, _ := runtimeCapturePGStore(t)
-	standardSnapshotPolicyChange(t, s)
+	s, _ := state.RuntimeCapturePGStore(t)
+	state.StandardSnapshotPolicyChange(t, s)
 }
 func TestPgStandardSnapshotRenewedApproval(t *testing.T) {
-	s, _ := runtimeCapturePGStore(t)
-	standardSnapshotRenewedApproval(t, s)
+	s, _ := state.RuntimeCapturePGStore(t)
+	state.StandardSnapshotRenewedApproval(t, s)
 }
 
 func TestPgStandardSnapshotRawGrantFence(t *testing.T) {
-	s, pool := runtimeCapturePGStore(t)
-	ins, req := standardSnapshotFixture(t, s, "warm")
+	s, pool := state.RuntimeCapturePGStore(t)
+	ins, req := state.StandardSnapshotFixture(t, s, "warm")
 	g, err := s.IssueApplicationStandardSnapshotCapture(t.Context(), ins.State, req)
 	if err != nil {
 		t.Fatal(err)
@@ -74,7 +75,7 @@ func TestPgStandardSnapshotRawGrantFence(t *testing.T) {
 			b := g.Parent.Binding
 			_, err := pool.Exec(t.Context(), `INSERT INTO application_standard_snapshot_captures(token,instance_id,app_id,deployment_id,account_id,node_id,parent_token,memory_key,expected_state,grant_data,input_snapshot)
 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,application_standard_lock_snapshot_capture($2,$9)->'input_snapshot')`, g.Token, b.InstanceID, b.AppID, b.DeploymentID, b.AccountID, b.NodeID, b.Token, g.MemoryKey, ins.State, raw)
-			if !errors.Is(mapErr(err), ErrApplicationStandardRuntimeStale) {
+			if !errors.Is(state.MapErr(err), state.ErrApplicationStandardRuntimeStale) {
 				t.Fatalf("raw grant escaped canonical ownership: %v", err)
 			}
 		})
@@ -86,19 +87,19 @@ VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,application_standard_lock_snapshot_
 	if err != nil {
 		t.Fatalf("refused raw grants prevented valid insertion: %v", err)
 	}
-	if !standardSnapshotGet(t, s, g).Grant.Equal(g) {
+	if !state.StandardSnapshotGet(t, s, g).Grant.Equal(g) {
 		t.Fatal("raw valid insertion changed authority")
 	}
 }
 
 func TestPgStandardSnapshotRawAcknowledgmentFence(t *testing.T) {
-	s, pool := runtimeCapturePGStore(t)
-	ins, req := standardSnapshotFixture(t, s, "warm")
+	s, pool := state.RuntimeCapturePGStore(t)
+	ins, req := state.StandardSnapshotFixture(t, s, "warm")
 	g, err := s.IssueApplicationStandardSnapshotCapture(t.Context(), ins.State, req)
 	if err != nil {
 		t.Fatal(err)
 	}
-	a := standardSnapshotAck(g)
+	a := state.StandardSnapshotAck(g)
 	for _, tc := range []struct {
 		name string
 		edit func(map[string]any)
@@ -133,11 +134,11 @@ func TestPgStandardSnapshotRawAcknowledgmentFence(t *testing.T) {
 			}
 			tc.edit(changed)
 			raw, _ = json.Marshal(changed)
-			_, err := sqlc.New().RecordApplicationStandardSnapshotCapture(t.Context(), pool, sqlc.RecordApplicationStandardSnapshotCaptureParams{Token: mustPgUUID(g.Token), Acknowledgment: raw})
-			if !errors.Is(mapErr(err), ErrApplicationStandardRuntimeStale) {
+			_, err := sqlc.New().RecordApplicationStandardSnapshotCapture(t.Context(), pool, sqlc.RecordApplicationStandardSnapshotCaptureParams{Token: state.MustPgUUID(g.Token), Acknowledgment: raw})
+			if !errors.Is(state.MapErr(err), state.ErrApplicationStandardRuntimeStale) {
 				t.Fatalf("raw acknowledgment escaped scalar guard: %v", err)
 			}
-			if standardSnapshotGet(t, s, g).Acknowledgment != nil {
+			if state.StandardSnapshotGet(t, s, g).Acknowledgment != nil {
 				t.Fatal("raw refusal partially published")
 			}
 		})
@@ -146,7 +147,7 @@ func TestPgStandardSnapshotRawAcknowledgmentFence(t *testing.T) {
 		t.Fatal("raw refusals prevented valid publication", err)
 	}
 	for _, statement := range []string{`UPDATE application_standard_snapshot_captures SET memory_key='other' WHERE token=$1`, `UPDATE application_standard_snapshot_captures SET acknowledgment=NULL,received_at=NULL WHERE token=$1`, `DELETE FROM application_standard_snapshot_captures WHERE token=$1`} {
-		if _, err := pool.Exec(t.Context(), statement, g.Token); !errors.Is(mapErr(err), ErrInvalidArgument) {
+		if _, err := pool.Exec(t.Context(), statement, g.Token); !errors.Is(state.MapErr(err), state.ErrInvalidArgument) {
 			t.Fatalf("mutable catalog history: %v", err)
 		}
 	}

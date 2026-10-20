@@ -100,13 +100,37 @@ test('authenticates owner keys and answers the dashboard origin only', async t =
 
 test('lists users through GoTrue and returns only the user projection', async t => {
   const { key, hash } = newAdminKey()
-  const { admin, calls } = fakeAdmin([[/^GET \/admin\/users\?/, () => ({ status: 200, headers: { 'x-total-count': '120' }, data: { users: [{ id: user, email: 'a@example.test', created_at: 'c', app_metadata: { providers: ['email', 7] }, user_metadata: { secret: 'x' }, encrypted_password: 'nope' }] } })]])
+  const { admin, calls } = fakeAdmin([[/^GET \/admin\/users\?/, () => ({ status: 200, headers: { 'x-total-count': '120' }, data: { users: [{ id: user, email: 'a@example.test', created_at: 'c', app_metadata: { provider: 'email', providers: ['email', 7], plan: 'pro' }, user_metadata: { secret: 'x' }, encrypted_password: 'nope' }] } })]])
   const call = await serve(t, { admin, pool: fakePool(() => ({ rows: [] })), keys: adminKeyHashes({ AUTH_ADMIN_KEY_0A1B2C3D: hash }) })
   const listed = await call('GET', '/admin/v1/users?page=2&per_page=50&search=ali%25', { key })
   assert.equal(listed.status, 200)
   assert.equal(calls[0].path, '/admin/users?page=2&per_page=50&filter=ali%25')
-  assert.deepEqual(listed.body, { users: [{ id: user, email: 'a@example.test', phone: null, created_at: 'c', last_sign_in_at: null, email_confirmed_at: null, banned_until: null, providers: ['email'], anonymous: false }], total: 120, page: 2, per_page: 50 })
+  assert.deepEqual(listed.body, { users: [{ id: user, email: 'a@example.test', phone: null, created_at: 'c', last_sign_in_at: null, email_confirmed_at: null, banned_until: null, providers: ['email'], anonymous: false, claims: { plan: 'pro' } }], total: 120, page: 2, per_page: 50 })
   for (const bad of ['per_page=500', 'page=0', 'search=%00']) assert.equal((await call('GET', `/admin/v1/users?${bad}`, { key })).status, 400, bad)
+})
+
+test('custom claims merge into app_metadata, never GoTrue\'s own keys, within the size limit', async t => {
+  const { key, hash } = newAdminKey()
+  let metadata = { provider: 'email', providers: ['email'], plan: 'free', trial: true }
+  const { admin, calls } = fakeAdmin([
+    [/^GET \/admin\/users\//, () => ({ status: 200, headers: {}, data: { id: user, app_metadata: metadata } })],
+    [/^PUT \/admin\/users\//, body => {
+      metadata = { ...metadata, ...body.app_metadata }
+      for (const [name, value] of Object.entries(metadata)) if (value === null) delete metadata[name]
+      return { status: 200, headers: {}, data: { id: user, app_metadata: metadata } }
+    }],
+  ])
+  const call = await serve(t, { admin, pool: fakePool(() => ({ rows: [] })), keys: adminKeyHashes({ AUTH_ADMIN_KEY_0A1B2C3D: hash }) })
+  const changed = await call('PATCH', `/admin/v1/users/${user}/claims`, { key, body: { set: { plan: 'pro', seats: 5, flags: { beta: true } }, unset: ['trial'] } })
+  assert.deepEqual(changed.body, { claims: { plan: 'pro', seats: 5, flags: { beta: true } } })
+  assert.deepEqual(calls.at(-1).body, { app_metadata: { plan: 'pro', seats: 5, flags: { beta: true }, trial: null } }, 'a merge patch; null removes')
+  assert.deepEqual(metadata.providers, ['email'], "GoTrue's keys stay")
+  for (const [body, code] of [
+    [{ set: { providers: ['x'] } }, 'invalid_claim_name'], [{ unset: ['provider'] }, 'invalid_claim_name'], [{ set: { '1st': 1 } }, 'invalid_claim_name'],
+    [{ set: { plan: null } }, 'invalid_claims'], [{ set: { plan: 'a' }, unset: ['plan'] }, 'invalid_claims'], [{}, 'invalid_claims'], [{ set: [] }, 'invalid_claims'], [{ add: {} }, 'invalid_claims'],
+    [{ set: { blob: 'x'.repeat(1000) } }, 'claims_too_large'],
+  ]) assert.deepEqual((await call('PATCH', `/admin/v1/users/${user}/claims`, { key, body })).body, { status: 400, code }, JSON.stringify(body).slice(0, 60))
+  assert.equal(calls.filter(c => c.method === 'PUT').length, 1, 'refused changes send nothing')
 })
 
 test('signs out, bans and deletes users with organization safety', async t => {
@@ -231,6 +255,6 @@ test('serves email templates behind the admin key', async t => {
   assert.equal((await call('GET', '/admin/v1/emails')).status, 401)
   const listed = await call('GET', '/admin/v1/emails', { key })
   assert.equal(listed.status, 200)
-  assert.equal(listed.body.emails.length, 8)
+  assert.equal(listed.body.emails.length, 9)
   assert.equal((await call('PATCH', '/admin/v1/emails/signup', { key, body: { body: '{{nope}}' } })).body.code, 'unknown_placeholder')
 })

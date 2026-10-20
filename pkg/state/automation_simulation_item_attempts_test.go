@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -9,10 +9,11 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func itemAttemptRequest() api.SimulateAutomationRequest {
-	return api.SimulateAutomationRequest{Definition: simulationLoopSpec(), Input: json.RawMessage(`{"items":[1,2]}`), MockItemAttempts: map[string]map[string][]api.AutomationSimulationMockAttempt{"batch": {"0": {{Outcome: "failure", Error: "private-mock-error"}, {Outcome: "success", Output: json.RawMessage(`false`)}}, "1": {{Outcome: "success", Output: json.RawMessage(`null`)}}}}, MockOutputs: map[string]json.RawMessage{"finish": json.RawMessage(`true`)}}
+	return api.SimulateAutomationRequest{Definition: state.SimulationLoopSpec(), Input: json.RawMessage(`{"items":[1,2]}`), MockItemAttempts: map[string]map[string][]api.AutomationSimulationMockAttempt{"batch": {"0": {{Outcome: "failure", Error: "private-mock-error"}, {Outcome: "success", Output: json.RawMessage(`false`)}}, "1": {{Outcome: "success", Output: json.RawMessage(`null`)}}}}, MockOutputs: map[string]json.RawMessage{"finish": json.RawMessage(`true`)}}
 }
 
 func TestAutomationSimulationItemAttemptOutcomes(t *testing.T) {
@@ -40,10 +41,10 @@ func TestAutomationSimulationItemAttemptOutcomes(t *testing.T) {
 			case "guard_skip":
 				request.Definition.Steps[0].ForEach.Action.When = &api.WorkflowGuardSpec{Ref: "input.item", Op: "eq", Value: json.RawMessage(`2`)}
 			}
-			response := simulateTest(t, request)
-			parent := simulationStep(t, response, "batch")
-			first := simulationStep(t, response, api.WorkflowForEachItemName("batch", 0))
-			second := simulationStep(t, response, api.WorkflowForEachItemName("batch", 1))
+			response := state.SimulateTest(t, request)
+			parent := state.SimulationStep(t, response, "batch")
+			first := state.SimulationStep(t, response, api.WorkflowForEachItemName("batch", 0))
+			second := state.SimulationStep(t, response, api.WorkflowForEachItemName("batch", 1))
 			if response.Complete != (mode != "pending_retry") {
 				t.Fatalf("complete: %+v", response)
 			}
@@ -112,9 +113,9 @@ func TestAutomationSimulationItemAttemptValidation(t *testing.T) {
 			case "too_many_attempts":
 				request.MockItemAttempts["batch"]["0"] = make([]api.AutomationSimulationMockAttempt, 26)
 			}
-			_, err := SimulateAutomation(context.Background(), request, api.PlanHobby)
-			var limit *AutomationSimulationLimitError
-			if !errors.Is(err, ErrAutomationSimulationInvalid) && !errors.As(err, &limit) {
+			_, err := state.SimulateAutomation(context.Background(), request, api.PlanHobby)
+			var limit *state.AutomationSimulationLimitError
+			if !errors.Is(err, state.ErrAutomationSimulationInvalid) && !errors.As(err, &limit) {
 				t.Fatalf("accepted invalid mocks: %v", err)
 			}
 		})
@@ -125,8 +126,8 @@ func TestAutomationSimulationUnsafeItemDoesNotRetry(t *testing.T) {
 	request := itemAttemptRequest()
 	request.Definition.Steps[0].ForEach.Action = api.WorkflowForEachActionSpec{Outbound: &api.WorkflowOutboundSpec{IntegrationID: "00000000-0000-4000-8000-000000000001", Method: "POST", Path: "/send"}}
 	// An unsafe outbound failure is terminal, so a following success must be rejected.
-	_, err := SimulateAutomation(context.Background(), request, api.PlanHobby)
-	if !errors.Is(err, ErrAutomationSimulationInvalid) {
+	_, err := state.SimulateAutomation(context.Background(), request, api.PlanHobby)
+	if !errors.Is(err, state.ErrAutomationSimulationInvalid) {
 		t.Fatalf("unsafe item retried: %v", err)
 	}
 }

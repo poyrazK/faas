@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -7,17 +7,18 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
-func appLogDrainFixture(t *testing.T) (*MemStore, context.Context, Account, App) {
+func appLogDrainFixture(t *testing.T) (*state.MemStore, context.Context, state.Account, state.App) {
 	t.Helper()
 	ctx := context.Background()
-	store := NewMemStore()
-	account, err := store.CreateAccount(ctx, "log-drain-"+newID()+"@example.com", api.PlanPro)
+	store := state.NewMemStore()
+	account, err := store.CreateAccount(ctx, "log-drain-"+state.NewID()+"@example.com", api.PlanPro)
 	if err != nil {
 		t.Fatalf("CreateAccount: %v", err)
 	}
-	app, err := store.CreateApp(ctx, App{AccountID: account.ID, Slug: "log-drain-" + newID()})
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "log-drain-" + state.NewID()})
 	if err != nil {
 		t.Fatalf("CreateApp: %v", err)
 	}
@@ -26,8 +27,8 @@ func appLogDrainFixture(t *testing.T) (*MemStore, context.Context, Account, App)
 
 func TestMemStoreAppLogDrainCRUDAndQuota(t *testing.T) {
 	store, ctx, account, app := appLogDrainFixture(t)
-	created, err := store.CreateAppLogDrain(ctx, AppLogDrain{
-		AppID: app.ID, AccountID: account.ID, Kind: AppLogDrainKindHTTPJSON,
+	created, err := store.CreateAppLogDrain(ctx, state.AppLogDrain{
+		AppID: app.ID, AccountID: account.ID, Kind: state.AppLogDrainKindHTTPJSON,
 		TargetURL: "https://logs.example/one", AuthHeaderSealed: []byte("sealed"), Enabled: true,
 	})
 	if err != nil {
@@ -54,7 +55,7 @@ func TestMemStoreAppLogDrainCRUDAndQuota(t *testing.T) {
 	}
 
 	lastSuccess := time.Now().UTC().Add(-time.Minute)
-	if err := store.UpsertAppLogDrainHealth(ctx, AppLogDrainHealth{
+	if err := store.UpsertAppLogDrainHealth(ctx, state.AppLogDrainHealth{
 		DrainID: created.ID, Status: "healthy", Active: true, QueueDepth: 2,
 		QueueCapacity: 100, DeliveredTotal: 7, LastSuccessAt: lastSuccess,
 		UpdatedAt: lastSuccess,
@@ -75,18 +76,18 @@ func TestMemStoreAppLogDrainCRUDAndQuota(t *testing.T) {
 	if len(healthRows) != 1 || healthRows[0].DrainID != created.ID {
 		t.Fatalf("app health list = %+v, want %q", healthRows, created.ID)
 	}
-	if _, err := store.AppLogDrainHealthByDrainID(ctx, "missing"); !errors.Is(err, ErrNotFound) {
+	if _, err := store.AppLogDrainHealthByDrainID(ctx, "missing"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("AppLogDrainHealthByDrainID missing = %v, want ErrNotFound", err)
 	}
 
-	disabled, err := store.CreateAppLogDrain(ctx, AppLogDrain{
-		AppID: app.ID, AccountID: account.ID, Kind: AppLogDrainKindOTLP,
+	disabled, err := store.CreateAppLogDrain(ctx, state.AppLogDrain{
+		AppID: app.ID, AccountID: account.ID, Kind: state.AppLogDrainKindOTLP,
 		TargetURL: "https://logs.example/two", Enabled: false,
 	})
 	if err != nil {
 		t.Fatalf("CreateAppLogDrain disabled: %v", err)
 	}
-	if err := store.UpsertAppLogDrainHealth(ctx, AppLogDrainHealth{DrainID: disabled.ID, Status: "degraded"}); err != nil {
+	if err := store.UpsertAppLogDrainHealth(ctx, state.AppLogDrainHealth{DrainID: disabled.ID, Status: "degraded"}); err != nil {
 		t.Fatalf("UpsertAppLogDrainHealth disabled: %v", err)
 	}
 	rows, err := store.ListAppLogDrainsForApp(ctx, app.ID)
@@ -104,11 +105,11 @@ func TestMemStoreAppLogDrainCRUDAndQuota(t *testing.T) {
 		t.Fatalf("enabled drain list = %+v, want only %q", enabled, created.ID)
 	}
 
-	newKind := AppLogDrainKindOTLP
+	newKind := state.AppLogDrainKindOTLP
 	newTarget := "https://logs.example/updated"
 	newSecret := []byte("new-sealed")
 	newEnabled := false
-	updated, err := store.UpdateAppLogDrain(ctx, created.ID, UpdateAppLogDrainParams{
+	updated, err := store.UpdateAppLogDrain(ctx, created.ID, state.UpdateAppLogDrainParams{
 		Kind: &newKind, TargetURL: &newTarget, AuthHeaderSealed: &newSecret, Enabled: &newEnabled,
 	})
 	if err != nil {
@@ -124,60 +125,60 @@ func TestMemStoreAppLogDrainCRUDAndQuota(t *testing.T) {
 	}
 
 	conflictTarget := disabled.TargetURL
-	if _, err := store.UpdateAppLogDrain(ctx, created.ID, UpdateAppLogDrainParams{TargetURL: &conflictTarget}); !errors.Is(err, ErrConflict) {
+	if _, err := store.UpdateAppLogDrain(ctx, created.ID, state.UpdateAppLogDrainParams{TargetURL: &conflictTarget}); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("UpdateAppLogDrain duplicate target = %v, want ErrConflict", err)
 	}
-	if _, err := store.UpdateAppLogDrain(ctx, "missing", UpdateAppLogDrainParams{}); !errors.Is(err, ErrNotFound) {
+	if _, err := store.UpdateAppLogDrain(ctx, "missing", state.UpdateAppLogDrainParams{}); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("UpdateAppLogDrain missing = %v, want ErrNotFound", err)
 	}
-	if _, err := store.AppLogDrainByID(ctx, "missing"); !errors.Is(err, ErrNotFound) {
+	if _, err := store.AppLogDrainByID(ctx, "missing"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("AppLogDrainByID missing = %v, want ErrNotFound", err)
 	}
 
 	if err := store.DeleteAppLogDrain(ctx, disabled.ID); err != nil {
 		t.Fatalf("DeleteAppLogDrain: %v", err)
 	}
-	if _, err := store.AppLogDrainHealthByDrainID(ctx, disabled.ID); !errors.Is(err, ErrNotFound) {
+	if _, err := store.AppLogDrainHealthByDrainID(ctx, disabled.ID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("deleted drain health = %v, want ErrNotFound", err)
 	}
-	if err := store.DeleteAppLogDrain(ctx, disabled.ID); !errors.Is(err, ErrNotFound) {
+	if err := store.DeleteAppLogDrain(ctx, disabled.ID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("DeleteAppLogDrain twice = %v, want ErrNotFound", err)
 	}
 
 	limits := api.Limits{LogDrainPerApp: 1, LogDrainPerAccount: 10}
-	if _, err := store.CreateAppLogDrainIfUnderQuota(ctx, AppLogDrain{
-		AppID: app.ID, AccountID: account.ID, Kind: AppLogDrainKindHTTPJSON, TargetURL: newTarget,
-	}, limits); !errors.Is(err, ErrConflict) {
+	if _, err := store.CreateAppLogDrainIfUnderQuota(ctx, state.AppLogDrain{
+		AppID: app.ID, AccountID: account.ID, Kind: state.AppLogDrainKindHTTPJSON, TargetURL: newTarget,
+	}, limits); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("duplicate CreateAppLogDrainIfUnderQuota = %v, want ErrConflict", err)
 	}
-	_, err = store.CreateAppLogDrainIfUnderQuota(ctx, AppLogDrain{
-		AppID: app.ID, AccountID: account.ID, Kind: AppLogDrainKindHTTPJSON, TargetURL: "https://logs.example/three",
+	_, err = store.CreateAppLogDrainIfUnderQuota(ctx, state.AppLogDrain{
+		AppID: app.ID, AccountID: account.ID, Kind: state.AppLogDrainKindHTTPJSON, TargetURL: "https://logs.example/three",
 	}, limits)
 	if err == nil {
 		t.Fatal("app quota unexpectedly allowed a second drain")
 	}
-	var appQuotaErr *AppLogDrainQuotaError
-	if !errors.As(err, &appQuotaErr) || appQuotaErr.Scope != AppLogDrainQuotaScopeApp || appQuotaErr.Observed != 1 {
+	var appQuotaErr *state.AppLogDrainQuotaError
+	if !errors.As(err, &appQuotaErr) || appQuotaErr.Scope != state.AppLogDrainQuotaScopeApp || appQuotaErr.Observed != 1 {
 		t.Fatalf("app quota error = %v, want app quota with observed=1", err)
 	}
 
-	otherApp, err := store.CreateApp(ctx, App{AccountID: account.ID, Slug: "log-drain-other-" + newID()})
+	otherApp, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "log-drain-other-" + state.NewID()})
 	if err != nil {
 		t.Fatalf("CreateApp other: %v", err)
 	}
-	if _, err := store.CreateAppLogDrainIfUnderQuota(ctx, AppLogDrain{
-		AppID: otherApp.ID, AccountID: account.ID, Kind: AppLogDrainKindHTTPJSON, TargetURL: "https://logs.example/four",
+	if _, err := store.CreateAppLogDrainIfUnderQuota(ctx, state.AppLogDrain{
+		AppID: otherApp.ID, AccountID: account.ID, Kind: state.AppLogDrainKindHTTPJSON, TargetURL: "https://logs.example/four",
 	}, api.Limits{LogDrainPerApp: 10, LogDrainPerAccount: 1}); err == nil {
 		t.Fatal("account quota unexpectedly allowed a second drain")
 	} else {
-		var quotaErr *AppLogDrainQuotaError
-		if !errors.As(err, &quotaErr) || quotaErr.Scope != AppLogDrainQuotaScopeAccount || quotaErr.Observed != 1 {
+		var quotaErr *state.AppLogDrainQuotaError
+		if !errors.As(err, &quotaErr) || quotaErr.Scope != state.AppLogDrainQuotaScopeAccount || quotaErr.Observed != 1 {
 			t.Fatalf("account quota error = %v, want account quota with observed=1", err)
 		}
 	}
-	if _, err := store.CreateAppLogDrainIfUnderQuota(ctx, AppLogDrain{
-		AppID: "missing", AccountID: account.ID, Kind: AppLogDrainKindHTTPJSON, TargetURL: "https://logs.example/missing",
-	}, api.Limits{LogDrainPerApp: 10, LogDrainPerAccount: 10}); !errors.Is(err, ErrNotFound) {
+	if _, err := store.CreateAppLogDrainIfUnderQuota(ctx, state.AppLogDrain{
+		AppID: "missing", AccountID: account.ID, Kind: state.AppLogDrainKindHTTPJSON, TargetURL: "https://logs.example/missing",
+	}, api.Limits{LogDrainPerApp: 10, LogDrainPerAccount: 10}); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("missing app quota create = %v, want ErrNotFound", err)
 	}
 }

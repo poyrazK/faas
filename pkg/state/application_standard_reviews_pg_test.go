@@ -1,6 +1,6 @@
 //go:build !no_pg
 
-package state
+package state_test
 
 import (
 	"context"
@@ -14,6 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/appstandards"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestPgApplicationStandardReviewEmptyProject(t *testing.T) {
@@ -22,7 +23,7 @@ func TestPgApplicationStandardReviewEmptyProject(t *testing.T) {
 	if err := db.MigrateUp(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
-	standardReviewEmptyProject(t, NewPgStore(pool), func(a appstandards.Assignment, actor string) {
+	standardReviewEmptyProject(t, state.NewPgStore(pool), func(a appstandards.Assignment, actor string) {
 		if _, err := pool.Exec(ctx, `INSERT INTO application_standard_assignments (id,org_id,scope,scope_id,standard_id,admission_version,active,created_by) VALUES ($1,$2,$3,$4,$5,$6,true,$7)`, a.ID, a.OrgID, a.Scope, a.ScopeID, a.StandardID, a.AdmissionVersion, actor); err != nil {
 			t.Fatal(err)
 		}
@@ -35,7 +36,7 @@ func TestPgApplicationStandardReviewBatchAccountQuota(t *testing.T) {
 	if err := db.MigrateUp(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
-	standardReviewBatchAccountQuota(t, NewPgStore(pool))
+	standardReviewBatchAccountQuota(t, state.NewPgStore(pool))
 }
 
 func TestPgApplicationStandardReviewSavedAdoptions(t *testing.T) {
@@ -44,7 +45,7 @@ func TestPgApplicationStandardReviewSavedAdoptions(t *testing.T) {
 	if err := db.MigrateUp(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
-	standardReviewSavedAdoptions(t, NewPgStore(pool), func(a appstandards.Assignment, actor string, active bool) {
+	standardReviewSavedAdoptions(t, state.NewPgStore(pool), func(a appstandards.Assignment, actor string, active bool) {
 		if _, err := pool.Exec(ctx, `INSERT INTO application_standard_assignments (id,org_id,scope,scope_id,standard_id,admission_version,active,created_by)
             VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (id) DO UPDATE SET admission_version = EXCLUDED.admission_version,
               active = EXCLUDED.active, revision = application_standard_assignments.revision + 1`, a.ID, a.OrgID, a.Scope, a.ScopeID, a.StandardID, a.AdmissionVersion, active, actor); err != nil {
@@ -59,7 +60,7 @@ func TestPgApplicationStandardReviews(t *testing.T) {
 	if err := db.MigrateUp(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
-	standardReviewLifecycle(t, NewPgStore(pool))
+	standardReviewLifecycle(t, state.NewPgStore(pool))
 	for _, query := range []string{`UPDATE application_standard_review_plans SET approval_hash = repeat('0',64)`, `DELETE FROM application_standard_review_plans`} {
 		_, err := pool.Exec(ctx, query)
 		var pgErr *pgconn.PgError
@@ -67,23 +68,23 @@ func TestPgApplicationStandardReviews(t *testing.T) {
 			t.Fatalf("immutable review: %v", err)
 		}
 	}
-	store := NewPgStore(pool)
+	store := state.NewPgStore(pool)
 	actor, err := store.AccountByEmail(ctx, "review-owner@example.com")
 	if err != nil {
 		t.Fatal(err)
 	}
-	org, err := store.CreateOrg(ctx, Org{Slug: "review-retention-org", Name: "Review retention", Plan: api.PlanPro})
+	org, err := store.CreateOrg(ctx, state.Org{Slug: "review-retention-org", Name: "Review retention", Plan: api.PlanPro})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.AddOrgMember(ctx, org.ID, actor.ID, OrgRoleOwner, nil); err != nil {
+	if err := store.AddOrgMember(ctx, org.ID, actor.ID, state.OrgRoleOwner, nil); err != nil {
 		t.Fatal(err)
 	}
-	v, err := store.PublishApplicationStandardVersion(ctx, ApplicationStandardPublish{OrgID: org.ID, ActorID: actor.ID, Slug: "retention-baseline", CreateApplicationStandardVersionRequest: api.CreateApplicationStandardVersionRequest{Definition: json.RawMessage(`{"security_policy":{"mode":"mandatory","value":"warn"}}`)}})
+	v, err := store.PublishApplicationStandardVersion(ctx, state.ApplicationStandardPublish{OrgID: org.ID, ActorID: actor.ID, Slug: "retention-baseline", CreateApplicationStandardVersionRequest: api.CreateApplicationStandardVersionRequest{Definition: json.RawMessage(`{"security_policy":{"mode":"mandatory","value":"warn"}}`)}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	p, err := store.PreviewApplicationStandardAssignment(ctx, org.ID, actor.ID, ApplicationStandardReviewRequest{Scope: "organization", ScopeID: org.ID, StandardID: v.StandardID, AdmissionVersion: 1, Active: true, BatchSize: 1})
+	p, err := store.PreviewApplicationStandardAssignment(ctx, org.ID, actor.ID, state.ApplicationStandardReviewRequest{Scope: "organization", ScopeID: org.ID, StandardID: v.StandardID, AdmissionVersion: 1, Active: true, BatchSize: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,11 +116,11 @@ func TestPgApplicationStandardReviews(t *testing.T) {
 	// holding account foreign keys or contact information in the review. The
 	// actor first hands the company over: an owner of a shared organization
 	// cannot be purged (#4882).
-	successor, err := store.CreateAccountWithPersonalOrg(ctx, CreateAccountWithPersonalOrgParams{Email: "review-successor@example.com", Plan: api.PlanPro})
+	successor, err := store.CreateAccountWithPersonalOrg(ctx, state.CreateAccountWithPersonalOrgParams{Email: "review-successor@example.com", Plan: api.PlanPro})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.AddOrgMember(ctx, org.ID, successor.Account.ID, OrgRoleAdmin, &actor.ID); err != nil {
+	if err := store.AddOrgMember(ctx, org.ID, successor.Account.ID, state.OrgRoleAdmin, &actor.ID); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.TransferOrgOwnership(ctx, org.ID, actor.ID, successor.Account.ID); err != nil {

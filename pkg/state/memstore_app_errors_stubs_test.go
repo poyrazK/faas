@@ -1,4 +1,4 @@
-package state
+package state_test
 
 // Coverage for the MemStore stub surface on ADR-096 customer-facing
 // automatic error grouping (memstore_app_errors.go). Mirrors the
@@ -40,6 +40,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -49,7 +50,7 @@ import (
 // a clear "use pgtest" message instead of silently returning a
 // false-zero increment that the test would misread.
 func TestMemStore_AppErrors_IncrementAppError(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	ok, err := m.IncrementAppError(context.Background(), sqlc.IncrementAppErrorParams{
 		ID:            pgtype.UUID{},
 		AccountID:     pgtype.UUID{},
@@ -65,7 +66,7 @@ func TestMemStore_AppErrors_IncrementAppError(t *testing.T) {
 	if ok {
 		t.Errorf("IncrementAppError: ok=true, want false (stub must not advertise a positive increment)")
 	}
-	if !errors.Is(err, errMemStoreAppErrors) {
+	if !errors.Is(err, (*state.ErrMemStoreAppErrors)) {
 		t.Errorf("IncrementAppError: err = %v, want errMemStoreAppErrors", err)
 	}
 }
@@ -73,8 +74,8 @@ func TestMemStore_AppErrors_IncrementAppError(t *testing.T) {
 // TestMemStore_AppErrors_InsertAppErrorRequest pins the per-
 // request drill-down row insert.
 func TestMemStore_AppErrors_InsertAppErrorRequest(t *testing.T) {
-	m := NewMemStore()
-	if err := m.InsertAppErrorRequest(context.Background(), sqlc.InsertAppErrorRequestParams{}); !errors.Is(err, errMemStoreAppErrors) {
+	m := state.NewMemStore()
+	if err := m.InsertAppErrorRequest(context.Background(), sqlc.InsertAppErrorRequestParams{}); !errors.Is(err, (*state.ErrMemStoreAppErrors)) {
 		t.Errorf("InsertAppErrorRequest: err = %v, want errMemStoreAppErrors", err)
 	}
 }
@@ -82,12 +83,12 @@ func TestMemStore_AppErrors_InsertAppErrorRequest(t *testing.T) {
 // TestMemStore_AppErrors_ListAppErrorGroups pins the per-app
 // groups list read path.
 func TestMemStore_AppErrors_ListAppErrorGroups(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	rows, err := m.ListAppErrorGroups(context.Background(), sqlc.ListAppErrorGroupsParams{})
 	if rows != nil {
 		t.Errorf("ListAppErrorGroups: rows = %v, want nil (empty result contract)", rows)
 	}
-	if !errors.Is(err, errMemStoreAppErrors) {
+	if !errors.Is(err, (*state.ErrMemStoreAppErrors)) {
 		t.Errorf("ListAppErrorGroups: err = %v, want errMemStoreAppErrors", err)
 	}
 }
@@ -95,12 +96,12 @@ func TestMemStore_AppErrors_ListAppErrorGroups(t *testing.T) {
 // TestMemStore_AppErrors_ListAppErrorRequests pins the per-
 // fingerprint drill-down list read path.
 func TestMemStore_AppErrors_ListAppErrorRequests(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	rows, err := m.ListAppErrorRequests(context.Background(), sqlc.ListAppErrorRequestsParams{})
 	if rows != nil {
 		t.Errorf("ListAppErrorRequests: rows = %v, want nil", rows)
 	}
-	if !errors.Is(err, errMemStoreAppErrors) {
+	if !errors.Is(err, (*state.ErrMemStoreAppErrors)) {
 		t.Errorf("ListAppErrorRequests: err = %v, want errMemStoreAppErrors", err)
 	}
 }
@@ -111,12 +112,12 @@ func TestMemStore_AppErrors_ListAppErrorRequests(t *testing.T) {
 // halves of the contract keeps a future "stub returns nil
 // interface" regression honest.
 func TestMemStore_AppErrors_GetAppErrorSample(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	row, err := m.GetAppErrorSample(context.Background(), sqlc.GetAppErrorSampleParams{})
 	if row.SampleMessage != "" {
 		t.Errorf("GetAppErrorSample: row.SampleMessage = %q, want zero value", row.SampleMessage)
 	}
-	if !errors.Is(err, errMemStoreAppErrors) {
+	if !errors.Is(err, (*state.ErrMemStoreAppErrors)) {
 		t.Errorf("GetAppErrorSample: err = %v, want errMemStoreAppErrors", err)
 	}
 }
@@ -124,12 +125,12 @@ func TestMemStore_AppErrors_GetAppErrorSample(t *testing.T) {
 // TestMemStore_AppErrors_ListAppErrorFingerprintsForPurge pins
 // the nightly retention purge read path.
 func TestMemStore_AppErrors_ListAppErrorFingerprintsForPurge(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	rows, err := m.ListAppErrorFingerprintsForPurge(context.Background(), sqlc.ListAppErrorFingerprintsForPurgeParams{})
 	if rows != nil {
 		t.Errorf("ListAppErrorFingerprintsForPurge: rows = %v, want nil", rows)
 	}
-	if !errors.Is(err, errMemStoreAppErrors) {
+	if !errors.Is(err, (*state.ErrMemStoreAppErrors)) {
 		t.Errorf("ListAppErrorFingerprintsForPurge: err = %v, want errMemStoreAppErrors", err)
 	}
 }
@@ -139,9 +140,9 @@ func TestMemStore_AppErrors_ListAppErrorFingerprintsForPurge(t *testing.T) {
 // payload that matters (returns sentinel), exercising it pins the
 // method body.
 func TestMemStore_AppErrors_DeleteAppErrorsByIDs(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	err := m.DeleteAppErrorsByIDs(context.Background(), []uuid.UUID{uuid.New(), uuid.New()})
-	if !errors.Is(err, errMemStoreAppErrors) {
+	if !errors.Is(err, (*state.ErrMemStoreAppErrors)) {
 		t.Errorf("DeleteAppErrorsByIDs: err = %v, want errMemStoreAppErrors", err)
 	}
 }
@@ -149,9 +150,9 @@ func TestMemStore_AppErrors_DeleteAppErrorsByIDs(t *testing.T) {
 // TestMemStore_AppErrors_DeleteAppErrorRequestsByIDs pins the
 // per-fingerprint drill-down retention delete path.
 func TestMemStore_AppErrors_DeleteAppErrorRequestsByIDs(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	err := m.DeleteAppErrorRequestsByIDs(context.Background(), []uuid.UUID{uuid.New()})
-	if !errors.Is(err, errMemStoreAppErrors) {
+	if !errors.Is(err, (*state.ErrMemStoreAppErrors)) {
 		t.Errorf("DeleteAppErrorRequestsByIDs: err = %v, want errMemStoreAppErrors", err)
 	}
 }
@@ -159,9 +160,9 @@ func TestMemStore_AppErrors_DeleteAppErrorRequestsByIDs(t *testing.T) {
 // TestMemStore_AppErrors_DeleteAppErrorRequestsOlderThan pins
 // the cursor-driven retention delete path.
 func TestMemStore_AppErrors_DeleteAppErrorRequestsOlderThan(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	err := m.DeleteAppErrorRequestsOlderThan(context.Background(), uuid.New(), time.Now())
-	if !errors.Is(err, errMemStoreAppErrors) {
+	if !errors.Is(err, (*state.ErrMemStoreAppErrors)) {
 		t.Errorf("DeleteAppErrorRequestsOlderThan: err = %v, want errMemStoreAppErrors", err)
 	}
 }

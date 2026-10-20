@@ -63,6 +63,8 @@ test('reads the active organization from organization claims', async () => {
   const claims = await auth.verify(signToken(key, claimsAt(t0, { org_id: 'o1', org_slug: 'acme', org_role: 'admin', org_permissions: ['org:read', 'members:manage'] })))
   assert.deepEqual(claims.organization, { id: 'o1', slug: 'acme', role: 'admin', permissions: ['org:read', 'members:manage'] })
   assert.equal((await auth.verify(signToken(key, claimsAt(t0)))).organization, undefined)
+  assert.equal((await auth.verify(signToken(key, claimsAt(t0, { act: { sub: 'admin:0A1B2C3D' } })))).actor, 'admin:0A1B2C3D')
+  assert.equal((await auth.verify(signToken(key, claimsAt(t0)))).actor, undefined)
 })
 
 test('refuses tokens it should not accept', async () => {

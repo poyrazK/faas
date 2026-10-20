@@ -16,10 +16,11 @@
 // the probe should report TableExists=false (let the CLI emit
 // "apply 00034 then 00041") rather than a false green light.
 
-package state
+package state_test
 
 import (
 	"context"
+	"github.com/onebox-faas/faas/pkg/state"
 	"testing"
 	"time"
 )
@@ -29,7 +30,7 @@ import (
 // reports TableExists=false and all four HasX=false. This is the
 // tripwire the CLI maps to "apply 00034 then 00041".
 func TestMemStorePaddleOverageDedupeSchema_FreshStaysMissing(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	res, err := m.PaddleOverageDedupeSchema(context.Background())
 	if err != nil {
 		t.Fatalf("PaddleOverageDedupeSchema: %v", err)
@@ -58,7 +59,7 @@ func TestMemStorePaddleOverageDedupeSchema_FreshStaysMissing(t *testing.T) {
 // (paddleOverageMonths, paddleOverageWindows) will flip this
 // test red; the memstore must key off paddleOverageWindows only.
 func TestMemStorePaddleOverageDedupeSchema_MonthsOnlyStaysMissing(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	ctx := context.Background()
 	month := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
 	if err := m.RecordPaddleOverageMonth(ctx, "acct-A", month); err != nil {
@@ -88,7 +89,7 @@ func TestMemStorePaddleOverageDedupeSchema_MonthsOnlyStaysMissing(t *testing.T) 
 // probe flips TableExists=true and all four HasX=true. The counts
 // then match the per-row state.
 func TestMemStorePaddleOverageDedupeSchema_WindowsRowsReportShape(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Hour)
 	lease := time.Hour

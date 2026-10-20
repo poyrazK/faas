@@ -1,6 +1,6 @@
 // adr: 576
 
-package state
+package state_test
 
 import (
 	"context"
@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // The MemStore allocator mirrors allocate_app_service_address_index once an
@@ -15,28 +16,28 @@ import (
 // pins the PostgreSQL side of the same scenario).
 func TestMemStoreServiceAddressReuseAfterExhaustion(t *testing.T) {
 	ctx := context.Background()
-	m := NewMemStore()
+	m := state.NewMemStore()
 	acct, err := m.CreateAccount(ctx, "svc-addr@example.com", api.PlanPro)
 	if err != nil {
 		t.Fatalf("CreateAccount: %v", err)
 	}
-	create := func(slug string) App {
+	create := func(slug string) state.App {
 		t.Helper()
-		app, err := m.CreateApp(ctx, App{AccountID: acct.ID, Slug: slug, Type: AppTypeApp, Runtime: "node22", RAMMB: 128, MaxConcurrency: 1})
+		app, err := m.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: slug, Type: state.AppTypeApp, Runtime: "node22", RAMMB: 128, MaxConcurrency: 1})
 		if err != nil {
 			t.Fatalf("CreateApp(%s): %v", slug, err)
 		}
 		return app
 	}
-	tombstone := func(app App, age time.Duration) {
+	tombstone := func(app state.App, age time.Duration) {
 		t.Helper()
 		deletedAt := time.Now().Add(-age)
-		m.mu.Lock()
-		app = m.apps[app.ID]
-		app.Status = AppDeleted
+		(*m.Mu()).Lock()
+		app = (*m.Apps())[app.ID]
+		app.Status = state.AppDeleted
 		app.DeletedAt = &deletedAt
-		m.apps[app.ID] = app
-		m.mu.Unlock()
+		(*m.Apps())[app.ID] = app
+		(*m.Mu()).Unlock()
 	}
 	index := func(id string) int {
 		t.Helper()
@@ -56,10 +57,9 @@ func TestMemStoreServiceAddressReuseAfterExhaustion(t *testing.T) {
 	if fresh := create("fresh"); index(fresh.ID) != 4 {
 		t.Fatalf("pre-exhaustion index = %d, want 4 (tombstones keep theirs)", index(fresh.ID))
 	}
-
-	m.mu.Lock()
-	m.serviceAddressCursors[acct.ID] = api.ServiceAddressIndexMax
-	m.mu.Unlock()
+	(*m.Mu()).Lock()
+	(*m.ServiceAddressCursors())[acct.ID] = api.ServiceAddressIndexMax
+	(*m.Mu()).Unlock()
 	if reclaimer := create("reclaimer"); index(reclaimer.ID) != 1 {
 		t.Fatalf("reclaimer index = %d, want the quarantined-out tombstone's 1", index(reclaimer.ID))
 	}
@@ -72,14 +72,15 @@ func TestMemStoreServiceAddressReuseAfterExhaustion(t *testing.T) {
 	if next := create("next"); index(next.ID) != 5 {
 		t.Fatalf("next index = %d, want 5", index(next.ID))
 	}
+	(*
 
 	// Mirror the trigger's restore path directly: RestoreApp also enforces
 	// the delete grace window, which these hand-made tombstones omit.
-	m.mu.Lock()
-	restored := m.apps[old.ID]
-	restored.Status, restored.DeletedAt = AppActive, nil
-	m.ensureServiceAddressIndexLocked(&restored)
-	m.mu.Unlock()
+	m.Mu()).Lock()
+	restored := (*m.Apps())[old.ID]
+	restored.Status, restored.DeletedAt = state.AppActive, nil
+	m.EnsureServiceAddressIndexLocked(&restored)
+	(*m.Mu()).Unlock()
 	if got := index(restored.ID); got != 6 {
 		t.Fatalf("restored tombstone without an index got %d, want 6", got)
 	}

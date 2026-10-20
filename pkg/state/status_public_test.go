@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -7,13 +7,14 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/publicstatus"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestMemStorePublicStatusEventIdempotencyAndTimeline(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
+	store := state.NewMemStore()
 	now := time.Date(2026, 9, 9, 10, 0, 0, 0, time.UTC)
-	create := StatusEventCreate{
+	create := state.StatusEventCreate{
 		IdempotencyKey: "create-incident-1", Actor: "operator@example.com",
 		Kind: publicstatus.KindIncident, Title: "Elevated API errors",
 		Impact: publicstatus.StateDegraded, Components: []publicstatus.Component{publicstatus.ComponentAPIConsole},
@@ -32,7 +33,7 @@ func TestMemStorePublicStatusEventIdempotencyAndTimeline(t *testing.T) {
 		t.Fatalf("replay IDs = %q and %q, want one stable public UUID", first.PublicID, second.PublicID)
 	}
 
-	identified, err := store.AppendPublicStatusUpdate(ctx, first.PublicID, StatusEventUpdateInput{
+	identified, err := store.AppendPublicStatusUpdate(ctx, first.PublicID, state.StatusEventUpdateInput{
 		IdempotencyKey: "update-incident-1", Actor: "operator@example.com",
 		State: publicstatus.LifecycleIdentified, Message: "The API database pool is saturated.", At: now.Add(10 * time.Minute),
 	})
@@ -46,7 +47,7 @@ func TestMemStorePublicStatusEventIdempotencyAndTimeline(t *testing.T) {
 		t.Fatalf("updates not chronological: %#v", identified.Updates)
 	}
 
-	replay, err := store.AppendPublicStatusUpdate(ctx, first.PublicID, StatusEventUpdateInput{
+	replay, err := store.AppendPublicStatusUpdate(ctx, first.PublicID, state.StatusEventUpdateInput{
 		IdempotencyKey: "update-incident-1", Actor: "operator@example.com",
 		State: publicstatus.LifecycleMonitoring, Message: "different replay body", At: now.Add(20 * time.Minute),
 	})
@@ -60,9 +61,9 @@ func TestMemStorePublicStatusEventIdempotencyAndTimeline(t *testing.T) {
 
 func TestMemStorePublicStatusTerminalEventCannotReopen(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
+	store := state.NewMemStore()
 	now := time.Date(2026, 9, 9, 10, 0, 0, 0, time.UTC)
-	event, err := store.CreatePublicStatusEvent(ctx, StatusEventCreate{
+	event, err := store.CreatePublicStatusEvent(ctx, state.StatusEventCreate{
 		IdempotencyKey: "create-2", Actor: "operator@example.com", Kind: publicstatus.KindIncident,
 		Title: "Build outage", Impact: publicstatus.StateMajorOutage,
 		Components: []publicstatus.Component{publicstatus.ComponentDeployments},
@@ -71,14 +72,14 @@ func TestMemStorePublicStatusTerminalEventCannotReopen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = store.AppendPublicStatusUpdate(ctx, event.PublicID, StatusEventUpdateInput{
+	_, err = store.AppendPublicStatusUpdate(ctx, event.PublicID, state.StatusEventUpdateInput{
 		IdempotencyKey: "resolve-2", Actor: "operator@example.com",
 		State: publicstatus.LifecycleResolved, Message: "Builds have recovered.", At: now.Add(time.Hour),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = store.AppendPublicStatusUpdate(ctx, event.PublicID, StatusEventUpdateInput{
+	_, err = store.AppendPublicStatusUpdate(ctx, event.PublicID, state.StatusEventUpdateInput{
 		IdempotencyKey: "reopen-2", Actor: "operator@example.com",
 		State: publicstatus.LifecycleMonitoring, Message: "Reopening.", At: now.Add(2 * time.Hour),
 	})
@@ -90,9 +91,9 @@ func TestMemStorePublicStatusTerminalEventCannotReopen(t *testing.T) {
 
 func TestMemStorePublicStatusReratingAndVisibleCorrectionsPreserveOrdering(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
+	store := state.NewMemStore()
 	startsAt := time.Now().UTC().Add(-time.Hour)
-	event, err := store.CreatePublicStatusEvent(ctx, StatusEventCreate{
+	event, err := store.CreatePublicStatusEvent(ctx, state.StatusEventCreate{
 		IdempotencyKey: "create-correctable", Actor: "operator@example.com", Kind: publicstatus.KindIncident,
 		Title: "Elevated eror rate", Impact: publicstatus.StateDegraded,
 		Components: []publicstatus.Component{publicstatus.ComponentAPIConsole},
@@ -103,7 +104,7 @@ func TestMemStorePublicStatusReratingAndVisibleCorrectionsPreserveOrdering(t *te
 	}
 	originalPostedAt := event.Updates[0].At
 	major := publicstatus.StateMajorOutage
-	event, err = store.AppendPublicStatusUpdate(ctx, event.PublicID, StatusEventUpdateInput{
+	event, err = store.AppendPublicStatusUpdate(ctx, event.PublicID, state.StatusEventUpdateInput{
 		IdempotencyKey: "rerate-major", Actor: "operator@example.com", State: publicstatus.LifecycleIdentified,
 		Message: "The outage affects application networking.", Impact: &major,
 		Components: []publicstatus.Component{publicstatus.ComponentNetworking}, At: event.UpdatedAt.Add(time.Minute),
@@ -120,7 +121,7 @@ func TestMemStorePublicStatusReratingAndVisibleCorrectionsPreserveOrdering(t *te
 	}
 
 	degraded := publicstatus.StateDegraded
-	event, err = store.AppendPublicStatusUpdate(ctx, event.PublicID, StatusEventUpdateInput{
+	event, err = store.AppendPublicStatusUpdate(ctx, event.PublicID, state.StatusEventUpdateInput{
 		IdempotencyKey: "rerate-degraded", Actor: "operator@example.com", State: publicstatus.LifecycleMonitoring,
 		Message: "Mitigation reduced the impact.", Impact: &degraded, At: event.UpdatedAt.Add(time.Minute),
 	})
@@ -131,7 +132,7 @@ func TestMemStorePublicStatusReratingAndVisibleCorrectionsPreserveOrdering(t *te
 		t.Fatalf("omitted components changed attribution: impact:%q components:%v", event.Impact, event.Components)
 	}
 	orderedAt := event.UpdatedAt
-	event, err = store.EditPublicStatusEventTitle(ctx, event.PublicID, StatusEventTitleEditInput{
+	event, err = store.EditPublicStatusEventTitle(ctx, event.PublicID, state.StatusEventTitleEditInput{
 		Actor: "operator@example.com", Title: "Elevated error rate", At: orderedAt.Add(time.Minute),
 	})
 	if err != nil {
@@ -141,7 +142,7 @@ func TestMemStorePublicStatusReratingAndVisibleCorrectionsPreserveOrdering(t *te
 		t.Fatalf("title correction changed ordering metadata: %#v", event)
 	}
 
-	event, err = store.AppendPublicStatusUpdate(ctx, event.PublicID, StatusEventUpdateInput{
+	event, err = store.AppendPublicStatusUpdate(ctx, event.PublicID, state.StatusEventUpdateInput{
 		IdempotencyKey: "resolve-correctable", Actor: "operator@example.com", State: publicstatus.LifecycleResolved,
 		Message: "Recovered.", At: orderedAt.Add(2 * time.Minute),
 	})
@@ -149,7 +150,7 @@ func TestMemStorePublicStatusReratingAndVisibleCorrectionsPreserveOrdering(t *te
 		t.Fatal(err)
 	}
 	terminalUpdatedAt := event.UpdatedAt
-	event, err = store.EditPublicStatusEventTitle(ctx, event.PublicID, StatusEventTitleEditInput{
+	event, err = store.EditPublicStatusEventTitle(ctx, event.PublicID, state.StatusEventTitleEditInput{
 		Actor: "operator@example.com", Title: "Elevated API error rate", At: terminalUpdatedAt.Add(time.Minute),
 	})
 	if err != nil {
@@ -159,7 +160,7 @@ func TestMemStorePublicStatusReratingAndVisibleCorrectionsPreserveOrdering(t *te
 		t.Fatalf("terminal title correction moved updated_at from %v to %v", terminalUpdatedAt, event.UpdatedAt)
 	}
 	titleEditedAt := *event.EditedAt
-	event, err = store.EditPublicStatusEventTitle(ctx, event.PublicID, StatusEventTitleEditInput{
+	event, err = store.EditPublicStatusEventTitle(ctx, event.PublicID, state.StatusEventTitleEditInput{
 		Actor: "operator@example.com", Title: "Elevated API error rate", At: terminalUpdatedAt.Add(5 * time.Minute),
 	})
 	if err != nil {
@@ -168,7 +169,7 @@ func TestMemStorePublicStatusReratingAndVisibleCorrectionsPreserveOrdering(t *te
 	if event.EditedAt == nil || !event.EditedAt.Equal(titleEditedAt) {
 		t.Fatalf("repeated title correction changed edited_at: got %v want %v", event.EditedAt, titleEditedAt)
 	}
-	event, err = store.EditPublicStatusUpdateMessage(ctx, event.PublicID, event.Updates[0].ID, StatusUpdateMessageEditInput{
+	event, err = store.EditPublicStatusUpdateMessage(ctx, event.PublicID, event.Updates[0].ID, state.StatusUpdateMessageEditInput{
 		Actor: "operator@example.com", Message: "We are investigating.", At: terminalUpdatedAt.Add(2 * time.Minute),
 	})
 	if err != nil {
@@ -181,7 +182,7 @@ func TestMemStorePublicStatusReratingAndVisibleCorrectionsPreserveOrdering(t *te
 		t.Fatalf("timeline correction moved event updated_at from %v to %v", terminalUpdatedAt, event.UpdatedAt)
 	}
 	messageEditedAt := *event.Updates[0].EditedAt
-	event, err = store.EditPublicStatusUpdateMessage(ctx, event.PublicID, event.Updates[0].ID, StatusUpdateMessageEditInput{
+	event, err = store.EditPublicStatusUpdateMessage(ctx, event.PublicID, event.Updates[0].ID, state.StatusUpdateMessageEditInput{
 		Actor: "operator@example.com", Message: "We are investigating.", At: terminalUpdatedAt.Add(6 * time.Minute),
 	})
 	if err != nil {
@@ -194,15 +195,15 @@ func TestMemStorePublicStatusReratingAndVisibleCorrectionsPreserveOrdering(t *te
 
 func TestMemStoreStatusBucketsDeduplicateFiveMinuteTimestamp(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
+	store := state.NewMemStore()
 	bucket := time.Date(2026, 9, 9, 10, 2, 20, 0, time.UTC)
-	if err := store.RecordStatusBucket(ctx, StatusBucket{
+	if err := store.RecordStatusBucket(ctx, state.StatusBucket{
 		Component: publicstatus.ComponentNetworking, BucketAt: bucket,
 		State: publicstatus.StateOperational, HasTelemetry: true,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.RecordStatusBucket(ctx, StatusBucket{
+	if err := store.RecordStatusBucket(ctx, state.StatusBucket{
 		Component: publicstatus.ComponentNetworking, BucketAt: bucket.Add(90 * time.Second),
 		State: publicstatus.StatePartialOutage, HasTelemetry: true,
 	}); err != nil {
@@ -219,8 +220,8 @@ func TestMemStoreStatusBucketsDeduplicateFiveMinuteTimestamp(t *testing.T) {
 
 func TestMemStoreLegacyStatusWritesPopulatePublicShape(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
-	created, err := store.InsertStatusIncident(ctx, StatusIncidentComponentFaasControlPlane, StatusIncidentSeverityFullOutage, "Control plane unavailable")
+	store := state.NewMemStore()
+	created, err := store.InsertStatusIncident(ctx, state.StatusIncidentComponentFaasControlPlane, state.StatusIncidentSeverityFullOutage, "Control plane unavailable")
 	if err != nil {
 		t.Fatal(err)
 	}

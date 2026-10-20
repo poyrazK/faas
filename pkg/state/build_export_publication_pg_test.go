@@ -1,26 +1,27 @@
 //go:build !no_pg
 
-package state
+package state_test
 
 import (
 	"context"
 	"errors"
+	"github.com/onebox-faas/faas/pkg/state"
 	"testing"
 	"time"
 )
 
 func TestPgBuildExportPublicationLifecycle(t *testing.T) {
-	s, _ := registryVerificationPGStore(t)
-	buildExportLifecycle(t, s)
+	s, _ := state.RegistryVerificationPGStore(t)
+	state.BuildExportLifecycle(t, s)
 }
 func TestPgBuildExportPublicationSubstitution(t *testing.T) {
-	s, _ := registryVerificationPGStore(t)
-	buildExportClaimSubstitution(t, s)
+	s, _ := state.RegistryVerificationPGStore(t)
+	state.BuildExportClaimSubstitution(t, s)
 }
 
 func TestPgBuildExportPublicationNonwaitingAndImmutable(t *testing.T) {
-	s, pool := registryVerificationPGStore(t)
-	in, app, dep, b, _ := buildExportFixture(t, s)
+	s, pool := state.RegistryVerificationPGStore(t)
+	in, app, dep, b, _ := state.BuildExportFixture(t, s)
 	for _, target := range []string{"app", "deployment", "build", "publisher", "artifact"} {
 		t.Run(target, func(t *testing.T) {
 			tx, err := pool.Begin(t.Context())
@@ -45,7 +46,7 @@ func TestPgBuildExportPublicationNonwaitingAndImmutable(t *testing.T) {
 			}
 			bounded, cancel := context.WithTimeout(t.Context(), time.Second)
 			defer cancel()
-			if _, err := s.RecordBuildExportPublication(bounded, in); !errors.Is(err, ErrApplicationStandardRuntimeBusy) {
+			if _, err := s.RecordBuildExportPublication(bounded, in); !errors.Is(err, state.ErrApplicationStandardRuntimeBusy) {
 				t.Fatal("publication waited or bypassed fence", err)
 			}
 		})
@@ -62,13 +63,13 @@ func TestPgBuildExportPublicationNonwaitingAndImmutable(t *testing.T) {
 }
 
 func TestPgBuildExportPublicationKeyRotation(t *testing.T) {
-	s, _ := registryVerificationPGStore(t)
-	buildExportKeyRotation(t, s)
+	s, _ := state.RegistryVerificationPGStore(t)
+	state.BuildExportKeyRotation(t, s)
 }
 
 func TestPgBuildExportPublicationOwnerErasure(t *testing.T) {
-	s, pool := registryVerificationPGStore(t)
-	buildID := buildExportOwnerErasure(t, s)
+	s, pool := state.RegistryVerificationPGStore(t)
+	buildID := state.BuildExportOwnerErasure(t, s)
 	var count int
 	if err := pool.QueryRow(t.Context(), `SELECT count(*) FROM build_export_publications WHERE build_id=$1`, buildID).Scan(&count); err != nil || count != 0 {
 		t.Fatal("erased export bytes retained", count, err)

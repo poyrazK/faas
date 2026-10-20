@@ -1,5 +1,5 @@
 // adr: 1638
-package state
+package state_test
 
 import (
 	"encoding/json"
@@ -10,29 +10,30 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestWakeHistoryPageStores(t *testing.T) {
 	for _, backend := range []string{"mem", "postgres"} {
 		t.Run(backend, func(t *testing.T) {
-			mem := NewMemStore()
-			var s WakeHistoryPageStore = mem
+			mem := state.NewMemStore()
+			var s state.WakeHistoryPageStore = mem
 			at := time.Date(2026, 10, 16, 10, 0, 0, 123456000, time.UTC)
 			app, wake := uuid.NewString(), uuid.NewString()
 			seed := func(id string, when time.Time) {
-				mem.instances[id] = Instance{ID: id, AppID: app, WakeID: wake, State: "running", StartedAt: when}
+				(*mem.Instances())[id] = state.Instance{ID: id, AppID: app, WakeID: wake, State: "running", StartedAt: when}
 			}
 			appendEvent := mem.AppendEventAt
 			if backend == "postgres" {
 				pool := pgtest.OpenMigrated(t)
-				pg := NewPgStore(pool)
+				pg := state.NewPgStore(pool)
 				s = pg
 				appendEvent = pg.AppendEventAt
 				acct, err := pg.CreateAccount(t.Context(), "history-page@example.test", api.PlanPro)
 				if err != nil {
 					t.Fatal(err)
 				}
-				a, err := pg.CreateApp(t.Context(), App{AccountID: acct.ID, Slug: "history-page", Status: AppActive})
+				a, err := pg.CreateApp(t.Context(), state.App{AccountID: acct.ID, Slug: "history-page", Status: state.AppActive})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -72,7 +73,7 @@ func TestWakeHistoryPageStores(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			var after WakeHistoryPosition
+			var after state.WakeHistoryPosition
 			seen := map[string]bool{}
 			for page := 0; page < 3; page++ {
 				rows, err := s.ListAppWakeHistoryPage(t.Context(), app, at, at.Add(time.Hour), after, 2)
@@ -95,7 +96,7 @@ func TestWakeHistoryPageStores(t *testing.T) {
 						t.Fatal("foreign/mirror metadata selected")
 					}
 					seen[r.InstanceID] = true
-					after = WakeHistoryPosition{At: r.StartedAt, ID: r.InstanceID}
+					after = state.WakeHistoryPosition{At: r.StartedAt, ID: r.InstanceID}
 				}
 			}
 			rows, err := s.ListAppWakeHistoryPage(t.Context(), app, at, at.Add(time.Hour), after, 2)
@@ -103,7 +104,7 @@ func TestWakeHistoryPageStores(t *testing.T) {
 				t.Fatal("terminal page repeated or skipped tied records")
 			}
 			for _, limit := range []int{-1, 0, 102} {
-				if _, err := s.ListAppWakeHistoryPage(t.Context(), app, at, at.Add(time.Hour), WakeHistoryPosition{}, limit); err == nil {
+				if _, err := s.ListAppWakeHistoryPage(t.Context(), app, at, at.Add(time.Hour), state.WakeHistoryPosition{}, limit); err == nil {
 					t.Fatal("invalid bound accepted")
 				}
 			}

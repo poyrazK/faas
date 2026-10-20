@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -8,12 +8,13 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestMemStorePrivateNetworkPeeringLifecycle(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
-	for _, network := range []PrivateNetwork{
+	store := state.NewMemStore()
+	for _, network := range []state.PrivateNetwork{
 		{ID: "frontend", AccountID: "acct-1", Name: "frontend", Region: "fra1", CIDR: netip.MustParsePrefix("10.42.0.0/20")},
 		{ID: "data", AccountID: "acct-1", Name: "data", Region: "fra1", CIDR: netip.MustParsePrefix("10.42.16.0/20")},
 	} {
@@ -21,7 +22,7 @@ func TestMemStorePrivateNetworkPeeringLifecycle(t *testing.T) {
 			t.Fatalf("CreatePrivateNetwork(%s): %v", network.ID, err)
 		}
 	}
-	created, err := store.CreatePrivateNetworkPeering(ctx, PrivateNetworkPeering{
+	created, err := store.CreatePrivateNetworkPeering(ctx, state.PrivateNetworkPeering{
 		ID: "peer-frontend-data", AccountID: "acct-1", LeftNetworkID: "data", RightNetworkID: "frontend", Region: "fra1",
 	})
 	if err != nil {
@@ -34,10 +35,10 @@ func TestMemStorePrivateNetworkPeeringLifecycle(t *testing.T) {
 	if err != nil || len(listed) != 1 || listed[0].ID != created.ID {
 		t.Fatalf("ListPrivateNetworkPeerings = %+v, %v", listed, err)
 	}
-	if _, err := store.CreatePrivateNetworkPeering(ctx, PrivateNetworkPeering{ID: "peer-reverse", AccountID: "acct-1", LeftNetworkID: "frontend", RightNetworkID: "data", Region: "fra1"}); !errors.Is(err, ErrConflict) {
+	if _, err := store.CreatePrivateNetworkPeering(ctx, state.PrivateNetworkPeering{ID: "peer-reverse", AccountID: "acct-1", LeftNetworkID: "frontend", RightNetworkID: "data", Region: "fra1"}); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("reverse duplicate error = %v, want conflict", err)
 	}
-	if err := store.DeletePrivateNetwork(ctx, "acct-1", "frontend"); !errors.Is(err, ErrConflict) {
+	if err := store.DeletePrivateNetwork(ctx, "acct-1", "frontend"); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("delete network with peering error = %v, want conflict", err)
 	}
 	if err := store.DeletePrivateNetworkPeering(ctx, "acct-1", created.ID); err != nil {
@@ -50,8 +51,8 @@ func TestMemStorePrivateNetworkPeeringLifecycle(t *testing.T) {
 
 func TestMemStorePrivateNetworkPeeringRejectsUnsafeRelationships(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
-	for _, network := range []PrivateNetwork{
+	store := state.NewMemStore()
+	for _, network := range []state.PrivateNetwork{
 		{ID: "left", AccountID: "acct-1", Name: "left", Region: "fra1", CIDR: netip.MustParsePrefix("10.50.0.0/20")},
 		{ID: "right", AccountID: "acct-1", Name: "right", Region: "ams1", CIDR: netip.MustParsePrefix("10.50.16.0/20")},
 	} {
@@ -59,18 +60,18 @@ func TestMemStorePrivateNetworkPeeringRejectsUnsafeRelationships(t *testing.T) {
 			t.Fatalf("CreatePrivateNetwork(%s): %v", network.ID, err)
 		}
 	}
-	if _, err := store.CreatePrivateNetworkPeering(ctx, PrivateNetworkPeering{ID: "peer-cross-region", AccountID: "acct-1", LeftNetworkID: "left", RightNetworkID: "right", Region: "fra1"}); !errors.Is(err, ErrInvalidArgument) {
+	if _, err := store.CreatePrivateNetworkPeering(ctx, state.PrivateNetworkPeering{ID: "peer-cross-region", AccountID: "acct-1", LeftNetworkID: "left", RightNetworkID: "right", Region: "fra1"}); !errors.Is(err, state.ErrInvalidArgument) {
 		t.Fatalf("cross-region error = %v, want invalid argument", err)
 	}
-	if _, err := store.CreatePrivateNetworkPeering(ctx, PrivateNetworkPeering{ID: "peer-foreign", AccountID: "acct-2", LeftNetworkID: "left", RightNetworkID: "right", Region: "fra1"}); !errors.Is(err, ErrNotFound) {
+	if _, err := store.CreatePrivateNetworkPeering(ctx, state.PrivateNetworkPeering{ID: "peer-foreign", AccountID: "acct-2", LeftNetworkID: "left", RightNetworkID: "right", Region: "fra1"}); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("cross-account error = %v, want not found", err)
 	}
 }
 
 func TestMemStorePrivateNetworkPeeringValidationAndOrdering(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
-	for _, network := range []PrivateNetwork{
+	store := state.NewMemStore()
+	for _, network := range []state.PrivateNetwork{
 		{ID: "alpha", AccountID: "acct-1", Name: "alpha", Region: "fra1", CIDR: netip.MustParsePrefix("10.70.0.0/20")},
 		{ID: "beta", AccountID: "acct-1", Name: "beta", Region: "fra1", CIDR: netip.MustParsePrefix("10.70.16.0/20")},
 		{ID: "gamma", AccountID: "acct-1", Name: "gamma", Region: "fra1", CIDR: netip.MustParsePrefix("10.70.32.0/20")},
@@ -79,13 +80,14 @@ func TestMemStorePrivateNetworkPeeringValidationAndOrdering(t *testing.T) {
 			t.Fatalf("CreatePrivateNetwork(%s): %v", network.ID, err)
 		}
 	}
+	(*
 	// Bypass CreatePrivateNetwork's own overlap guard so the peering guard is
 	// exercised independently.
-	store.mu.Lock()
-	store.privateNetworks["overlap"] = PrivateNetwork{ID: "overlap", AccountID: "acct-1", Name: "overlap", Region: "fra1", CIDR: netip.MustParsePrefix("10.70.0.0/21")}
-	store.mu.Unlock()
+	store.Mu()).Lock()
+	(*store.PrivateNetworks())["overlap"] = state.PrivateNetwork{ID: "overlap", AccountID: "acct-1", Name: "overlap", Region: "fra1", CIDR: netip.MustParsePrefix("10.70.0.0/21")}
+	(*store.Mu()).Unlock()
 
-	invalid := []PrivateNetworkPeering{
+	invalid := []state.PrivateNetworkPeering{
 		{},
 		{AccountID: "acct-1", LeftNetworkID: "alpha", RightNetworkID: "beta", Region: "fra1", Status: "bogus"},
 		{ID: "bad id", AccountID: "acct-1", LeftNetworkID: "alpha", RightNetworkID: "beta", Region: "fra1"},
@@ -94,28 +96,28 @@ func TestMemStorePrivateNetworkPeeringValidationAndOrdering(t *testing.T) {
 		{AccountID: "acct-1", LeftNetworkID: "alpha", RightNetworkID: "beta", Region: "bad region"},
 	}
 	for _, peering := range invalid {
-		if _, err := store.CreatePrivateNetworkPeering(ctx, peering); !errors.Is(err, ErrInvalidArgument) {
+		if _, err := store.CreatePrivateNetworkPeering(ctx, peering); !errors.Is(err, state.ErrInvalidArgument) {
 			t.Fatalf("invalid peering %+v error = %v, want invalid argument", peering, err)
 		}
 	}
-	if _, err := store.CreatePrivateNetworkPeering(ctx, PrivateNetworkPeering{
+	if _, err := store.CreatePrivateNetworkPeering(ctx, state.PrivateNetworkPeering{
 		AccountID: "acct-1", LeftNetworkID: "alpha", RightNetworkID: "overlap", Region: "fra1",
-	}); !errors.Is(err, ErrInvalidArgument) {
+	}); !errors.Is(err, state.ErrInvalidArgument) {
 		t.Fatalf("overlapping CIDRs error = %v, want invalid argument", err)
 	}
 
-	first, err := store.CreatePrivateNetworkPeering(ctx, PrivateNetworkPeering{
+	first, err := store.CreatePrivateNetworkPeering(ctx, state.PrivateNetworkPeering{
 		ID: "peer-alpha-beta", AccountID: "acct-1", LeftNetworkID: "beta", RightNetworkID: "alpha", Region: "fra1",
 	})
 	if err != nil {
 		t.Fatalf("CreatePrivateNetworkPeering(first): %v", err)
 	}
-	if _, err := store.CreatePrivateNetworkPeering(ctx, PrivateNetworkPeering{
+	if _, err := store.CreatePrivateNetworkPeering(ctx, state.PrivateNetworkPeering{
 		ID: first.ID, AccountID: "acct-1", LeftNetworkID: "beta", RightNetworkID: "gamma", Region: "fra1",
-	}); !errors.Is(err, ErrConflict) {
+	}); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("duplicate ID error = %v, want conflict", err)
 	}
-	if _, err := store.CreatePrivateNetworkPeering(ctx, PrivateNetworkPeering{
+	if _, err := store.CreatePrivateNetworkPeering(ctx, state.PrivateNetworkPeering{
 		ID: "peer-alpha-gamma", AccountID: "acct-1", LeftNetworkID: "gamma", RightNetworkID: "alpha", Region: "fra1", Status: api.PrivateNetworkPeeringStatusReady,
 	}); err != nil {
 		t.Fatalf("CreatePrivateNetworkPeering(second): %v", err)
@@ -126,7 +128,7 @@ func TestMemStorePrivateNetworkPeeringValidationAndOrdering(t *testing.T) {
 	}
 	canceled, cancel := context.WithCancel(ctx)
 	cancel()
-	if _, err := store.CreatePrivateNetworkPeering(canceled, PrivateNetworkPeering{
+	if _, err := store.CreatePrivateNetworkPeering(canceled, state.PrivateNetworkPeering{
 		AccountID: "acct-1", LeftNetworkID: "alpha", RightNetworkID: "beta", Region: "fra1",
 	}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("canceled create error = %v, want context canceled", err)
@@ -135,8 +137,8 @@ func TestMemStorePrivateNetworkPeeringValidationAndOrdering(t *testing.T) {
 
 func TestMemStorePrivateNetworkPeeringReadsAndGuards(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
-	for _, network := range []PrivateNetwork{
+	store := state.NewMemStore()
+	for _, network := range []state.PrivateNetwork{
 		{ID: "alpha", AccountID: "acct-1", Name: "alpha", Region: "fra1", CIDR: netip.MustParsePrefix("10.60.0.0/20")},
 		{ID: "beta", AccountID: "acct-1", Name: "beta", Region: "fra1", CIDR: netip.MustParsePrefix("10.60.16.0/20")},
 	} {
@@ -144,7 +146,7 @@ func TestMemStorePrivateNetworkPeeringReadsAndGuards(t *testing.T) {
 			t.Fatalf("CreatePrivateNetwork(%s): %v", network.ID, err)
 		}
 	}
-	created, err := store.CreatePrivateNetworkPeering(ctx, PrivateNetworkPeering{
+	created, err := store.CreatePrivateNetworkPeering(ctx, state.PrivateNetworkPeering{
 		AccountID: "acct-1", LeftNetworkID: "beta", RightNetworkID: "alpha", Region: "fra1",
 	})
 	if err != nil {
@@ -161,15 +163,15 @@ func TestMemStorePrivateNetworkPeeringReadsAndGuards(t *testing.T) {
 	if err != nil || len(all) != 1 || all[0].LeftNetworkID != "alpha" {
 		t.Fatalf("ListPrivateNetworkPeerings(all) = %+v, %v", all, err)
 	}
-	if _, err := store.GetPrivateNetworkPeering(ctx, "acct-1", "peer-missing"); !errors.Is(err, ErrNotFound) {
+	if _, err := store.GetPrivateNetworkPeering(ctx, "acct-1", "peer-missing"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("missing peering error = %v, want not found", err)
 	}
-	if err := store.DeletePrivateNetworkPeering(ctx, "acct-1", "peer-missing"); !errors.Is(err, ErrNotFound) {
+	if err := store.DeletePrivateNetworkPeering(ctx, "acct-1", "peer-missing"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("delete missing peering error = %v, want not found", err)
 	}
-	if _, err := store.CreatePrivateNetworkPeering(ctx, PrivateNetworkPeering{
+	if _, err := store.CreatePrivateNetworkPeering(ctx, state.PrivateNetworkPeering{
 		ID: "peer-self", AccountID: "acct-1", LeftNetworkID: "alpha", RightNetworkID: "alpha", Region: "fra1",
-	}); !errors.Is(err, ErrInvalidArgument) {
+	}); !errors.Is(err, state.ErrInvalidArgument) {
 		t.Fatalf("self peering error = %v, want invalid argument", err)
 	}
 
@@ -188,8 +190,8 @@ func TestMemStorePrivateNetworkPeeringReadsAndGuards(t *testing.T) {
 
 func TestMemStorePrivateNetworkPeeringReconcileSurface(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
-	for _, network := range []PrivateNetwork{
+	store := state.NewMemStore()
+	for _, network := range []state.PrivateNetwork{
 		{ID: "alpha", AccountID: "acct-1", Name: "alpha", Region: "fra1", CIDR: netip.MustParsePrefix("10.80.0.0/20")},
 		{ID: "beta", AccountID: "acct-1", Name: "beta", Region: "fra1", CIDR: netip.MustParsePrefix("10.80.16.0/20")},
 	} {
@@ -197,7 +199,7 @@ func TestMemStorePrivateNetworkPeeringReconcileSurface(t *testing.T) {
 			t.Fatalf("CreatePrivateNetwork(%s): %v", network.ID, err)
 		}
 	}
-	created, err := store.CreatePrivateNetworkPeering(ctx, PrivateNetworkPeering{
+	created, err := store.CreatePrivateNetworkPeering(ctx, state.PrivateNetworkPeering{
 		ID: "peer-reconcile", AccountID: "acct-1", LeftNetworkID: "alpha", RightNetworkID: "beta", Region: "fra1",
 	})
 	if err != nil {
@@ -207,20 +209,20 @@ func TestMemStorePrivateNetworkPeeringReconcileSurface(t *testing.T) {
 	if err != nil || len(rows) != 1 || rows[0].ID != created.ID {
 		t.Fatalf("ListPrivateNetworkPeeringsForReconcile = %+v, %v", rows, err)
 	}
-	if _, err := store.ListPrivateNetworkPeeringsForReconcile(ctx, []string{"bogus"}, 10); !errors.Is(err, ErrInvalidArgument) {
+	if _, err := store.ListPrivateNetworkPeeringsForReconcile(ctx, []string{"bogus"}, 10); !errors.Is(err, state.ErrInvalidArgument) {
 		t.Fatalf("invalid status error = %v, want invalid argument", err)
 	}
-	if _, err := store.ListPrivateNetworkPeeringsForReconcile(ctx, nil, 0); !errors.Is(err, ErrInvalidArgument) {
+	if _, err := store.ListPrivateNetworkPeeringsForReconcile(ctx, nil, 0); !errors.Is(err, state.ErrInvalidArgument) {
 		t.Fatalf("invalid limit error = %v, want invalid argument", err)
 	}
 	updated, err := store.UpdatePrivateNetworkPeeringStatus(ctx, created.AccountID, created.ID, api.PrivateNetworkPeeringStatusReady, "routes active")
 	if err != nil || updated.Status != api.PrivateNetworkPeeringStatusReady || updated.StatusDetail != "routes active" {
 		t.Fatalf("UpdatePrivateNetworkPeeringStatus = %+v, %v", updated, err)
 	}
-	if _, err := store.UpdatePrivateNetworkPeeringStatus(ctx, created.AccountID, created.ID, "bogus", ""); !errors.Is(err, ErrInvalidArgument) {
+	if _, err := store.UpdatePrivateNetworkPeeringStatus(ctx, created.AccountID, created.ID, "bogus", ""); !errors.Is(err, state.ErrInvalidArgument) {
 		t.Fatalf("invalid update status error = %v, want invalid argument", err)
 	}
-	if _, err := store.UpdatePrivateNetworkPeeringStatus(ctx, "acct-missing", created.ID, api.PrivateNetworkPeeringStatusError, ""); !errors.Is(err, ErrNotFound) {
+	if _, err := store.UpdatePrivateNetworkPeeringStatus(ctx, "acct-missing", created.ID, api.PrivateNetworkPeeringStatusError, ""); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("foreign update error = %v, want not found", err)
 	}
 }

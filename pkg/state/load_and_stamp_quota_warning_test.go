@@ -12,18 +12,19 @@
 //   - Same-day repeat     → (true, nil).  Stamp unchanged.
 //   - Next-day call       → (false, nil). Stamp = next UTC midnight.
 //   - Missing account id  → ErrNotFound.
-package state
+package state_test
 
 import (
 	"context"
 	"errors"
+	"github.com/onebox-faas/faas/pkg/state"
 	"testing"
 	"time"
 )
 
 func TestLoadAndStampLastQuotaWarning_DedupesPerDay(t *testing.T) {
 	ctx := context.Background()
-	s := NewMemStore()
+	s := state.NewMemStore()
 	acct, err := s.CreateAccount(ctx, "alice@example.com", "pro")
 	if err != nil {
 		t.Fatal(err)
@@ -95,7 +96,7 @@ func TestLoadAndStampLastQuotaWarning_DedupesPerDay(t *testing.T) {
 // fresh warning rather than being skipped.
 func TestClearQuotaWarning(t *testing.T) {
 	ctx := context.Background()
-	s := NewMemStore()
+	s := state.NewMemStore()
 	acct, err := s.CreateAccount(ctx, "bob@example.com", "hobby")
 	if err != nil {
 		t.Fatal(err)
@@ -139,16 +140,16 @@ func TestClearQuotaWarning(t *testing.T) {
 // MarkAccountDeletionPending pattern (compare-and-flip + ErrNotFound).
 func TestMarkDunningStep(t *testing.T) {
 	ctx := context.Background()
-	s := NewMemStore()
+	s := state.NewMemStore()
 	acct, err := s.CreateAccount(ctx, "carol@example.com", "hobby")
 	if err != nil {
 		t.Fatal(err)
 	}
 	// Flip to past_due manually + verify past_due_at stamped.
-	if err := s.UpdateAccountStatus(ctx, acct.ID, AccountPastDue); err != nil {
+	if err := s.UpdateAccountStatus(ctx, acct.ID, state.AccountPastDue); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.MarkDunningStep(ctx, acct.ID, AccountPastDue, AccountPastDue); err != nil {
+	if err := s.MarkDunningStep(ctx, acct.ID, state.AccountPastDue, state.AccountPastDue); err != nil {
 		t.Fatalf("backfill stamp via no-op flip: %v", err)
 	}
 	got, err := s.AccountByID(ctx, acct.ID)
@@ -161,14 +162,14 @@ func TestMarkDunningStep(t *testing.T) {
 	pastDueAt := *got.PastDueAt
 
 	// past_due → suspended advances the status, preserves past_due_at.
-	if err := s.MarkDunningStep(ctx, acct.ID, AccountPastDue, AccountSuspended); err != nil {
+	if err := s.MarkDunningStep(ctx, acct.ID, state.AccountPastDue, state.AccountSuspended); err != nil {
 		t.Fatalf("past_due → suspended: %v", err)
 	}
 	got, err = s.AccountByID(ctx, acct.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Status != AccountSuspended {
+	if got.Status != state.AccountSuspended {
 		t.Errorf("status = %s, want suspended", got.Status)
 	}
 	if got.PastDueAt == nil || !got.PastDueAt.Equal(pastDueAt) {
@@ -176,24 +177,24 @@ func TestMarkDunningStep(t *testing.T) {
 	}
 
 	// suspended → deleted_pending.
-	if err := s.MarkDunningStep(ctx, acct.ID, AccountSuspended, AccountDeletedPending); err != nil {
+	if err := s.MarkDunningStep(ctx, acct.ID, state.AccountSuspended, state.AccountDeletedPending); err != nil {
 		t.Fatalf("suspended → deleted_pending: %v", err)
 	}
 	got, err = s.AccountByID(ctx, acct.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Status != AccountDeletedPending {
+	if got.Status != state.AccountDeletedPending {
 		t.Errorf("status = %s, want deleted_pending", got.Status)
 	}
 
 	// Wrong from-status → ErrNotFound (compare-and-flip guard).
-	if err := s.MarkDunningStep(ctx, acct.ID, AccountPastDue, AccountSuspended); !errors.Is(err, ErrNotFound) {
+	if err := s.MarkDunningStep(ctx, acct.ID, state.AccountPastDue, state.AccountSuspended); !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("wrong from-status: err = %v, want ErrNotFound", err)
 	}
 
 	// Unknown id → ErrNotFound.
-	if err := s.MarkDunningStep(ctx, "missing", AccountPastDue, AccountSuspended); !errors.Is(err, ErrNotFound) {
+	if err := s.MarkDunningStep(ctx, "missing", state.AccountPastDue, state.AccountSuspended); !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("unknown id: err = %v, want ErrNotFound", err)
 	}
 
@@ -202,7 +203,7 @@ func TestMarkDunningStep(t *testing.T) {
 	// is the backfill-stamp path used by pkg/meter.Dunning; it
 	// succeeds and stamps PastDueAt. We don't test that here — it
 	// is exercised by pkg/meter/dunning_test.go.
-	if err := s.MarkDunningStep(ctx, acct.ID, AccountDeletedPending, AccountDeletedPending); err != nil {
+	if err := s.MarkDunningStep(ctx, acct.ID, state.AccountDeletedPending, state.AccountDeletedPending); err != nil {
 		t.Errorf("from==to (deleted_pending): err = %v, want nil", err)
 	}
 }

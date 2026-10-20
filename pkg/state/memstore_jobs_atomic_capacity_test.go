@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -7,16 +7,17 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestMemStoreJobsAtomicAccountAndRunCapacity(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
+	store := state.NewMemStore()
 	job, run, _ := newJobAndRun(t, store, "acct-capacity", "capacity")
 	claim := func(runID string, index int) (string, error) {
-		id := newUUIDString()
+		id := state.NewUUIDString()
 		_, err := store.CreateAndClaimJobInstance(ctx, id, job.ID, runID, index,
-			"cold_booting", 128, DefaultLocalNodeName, id, newUUIDString(), time.Now().Add(time.Minute), DefaultLocalNodeName)
+			"cold_booting", 128, state.DefaultLocalNodeName, id, state.NewUUIDString(), time.Now().Add(time.Minute), state.DefaultLocalNodeName)
 		return id, err
 	}
 	for index := 0; index < 2; index++ {
@@ -25,11 +26,11 @@ func TestMemStoreJobsAtomicAccountAndRunCapacity(t *testing.T) {
 		}
 	}
 	rejectedID, err := claim(run.ID, 2)
-	var quota *JobQuotaError
-	if !errors.As(err, &quota) || quota.Scope != JobQuotaScopeParallelism || quota.Limit != 2 {
+	var quota *state.JobQuotaError
+	if !errors.As(err, &quota) || quota.Scope != state.JobQuotaScopeParallelism || quota.Limit != 2 {
 		t.Fatalf("third run claim = %v, want parallelism cap 2", err)
 	}
-	if _, err := store.InstanceByID(ctx, rejectedID); !errors.Is(err, ErrNotFound) {
+	if _, err := store.InstanceByID(ctx, rejectedID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("rejected run instance exists: %v", err)
 	}
 
@@ -41,10 +42,10 @@ func TestMemStoreJobsAtomicAccountAndRunCapacity(t *testing.T) {
 		t.Fatalf("claim third account slot: %v", err)
 	}
 	rejectedID, err = claim(other.ID, 1)
-	if !errors.As(err, &quota) || quota.Scope != JobQuotaScopeConcurrent || quota.Limit != 3 {
+	if !errors.As(err, &quota) || quota.Scope != state.JobQuotaScopeConcurrent || quota.Limit != 3 {
 		t.Fatalf("fourth account claim = %v, want account cap 3", err)
 	}
-	if _, err := store.InstanceByID(ctx, rejectedID); !errors.Is(err, ErrNotFound) {
+	if _, err := store.InstanceByID(ctx, rejectedID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("rejected account instance exists: %v", err)
 	}
 	queued, err := store.JobTaskGet(ctx, other.ID, 1)
@@ -55,7 +56,7 @@ func TestMemStoreJobsAtomicAccountAndRunCapacity(t *testing.T) {
 
 func TestMemStoreJobsRunParallelismOverrideCanExceedTemplateDefault(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
+	store := state.NewMemStore()
 	account, err := store.CreateAccount(ctx, "job-override@example.com", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
@@ -67,9 +68,9 @@ func TestMemStoreJobsRunParallelismOverrideCanExceedTemplateDefault(t *testing.T
 		t.Fatal(err)
 	}
 	for index := 0; index < 5; index++ {
-		id := newUUIDString()
+		id := state.NewUUIDString()
 		if _, err := store.CreateAndClaimJobInstance(ctx, id, job.ID, run.ID, index,
-			"cold_booting", 128, DefaultLocalNodeName, id, newUUIDString(), time.Now().Add(time.Minute), DefaultLocalNodeName); err != nil {
+			"cold_booting", 128, state.DefaultLocalNodeName, id, state.NewUUIDString(), time.Now().Add(time.Minute), state.DefaultLocalNodeName); err != nil {
 			t.Fatalf("claim override task %d: %v", index, err)
 		}
 	}
@@ -77,7 +78,7 @@ func TestMemStoreJobsRunParallelismOverrideCanExceedTemplateDefault(t *testing.T
 
 func TestMemStoreJobsDeferQueuedPreservesConcurrentClaimAndRetry(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
+	store := state.NewMemStore()
 	job, run, _ := newJobAndRun(t, store, "acct-defer", "defer")
 	deferredUntil := time.Now().Add(2 * time.Minute).UTC()
 	if err := store.JobTaskDeferQueued(ctx, run.ID, 0, 1, deferredUntil); err != nil {
@@ -87,16 +88,16 @@ func TestMemStoreJobsDeferQueuedPreservesConcurrentClaimAndRetry(t *testing.T) {
 	if err != nil || deferred.Status != "queued" || deferred.Attempt != 1 || deferred.NextAttemptAt == nil || !deferred.NextAttemptAt.Equal(deferredUntil) {
 		t.Fatalf("deferred task = %+v, %v", deferred, err)
 	}
-	if err := store.JobTaskDeferQueued(ctx, run.ID, 0, 1, time.Now().Add(time.Second)); !errors.Is(err, ErrNotFound) {
+	if err := store.JobTaskDeferQueued(ctx, run.ID, 0, 1, time.Now().Add(time.Second)); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("shorten existing backoff = %v, want ErrNotFound", err)
 	}
 
-	instanceID, lease := newUUIDString(), newUUIDString()
+	instanceID, lease := state.NewUUIDString(), state.NewUUIDString()
 	if _, err := store.CreateAndClaimJobInstance(ctx, instanceID, job.ID, run.ID, 1,
-		"cold_booting", 128, DefaultLocalNodeName, instanceID, lease, time.Now().Add(time.Minute), DefaultLocalNodeName); err != nil {
+		"cold_booting", 128, state.DefaultLocalNodeName, instanceID, lease, time.Now().Add(time.Minute), state.DefaultLocalNodeName); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.JobTaskDeferQueued(ctx, run.ID, 1, 1, time.Now().Add(time.Second)); !errors.Is(err, ErrNotFound) {
+	if err := store.JobTaskDeferQueued(ctx, run.ID, 1, 1, time.Now().Add(time.Second)); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("defer claimed task = %v, want ErrNotFound", err)
 	}
 	claimed, err := store.JobTaskGet(ctx, run.ID, 1)
@@ -110,7 +111,7 @@ func TestMemStoreJobsDeferQueuedPreservesConcurrentClaimAndRetry(t *testing.T) {
 	if err := store.JobTaskRetry(ctx, run.ID, 1, retryAt); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.JobTaskDeferQueued(ctx, run.ID, 1, 1, time.Now().Add(time.Second)); !errors.Is(err, ErrNotFound) {
+	if err := store.JobTaskDeferQueued(ctx, run.ID, 1, 1, time.Now().Add(time.Second)); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("defer stale attempt = %v, want ErrNotFound", err)
 	}
 	retried, err := store.JobTaskGet(ctx, run.ID, 1)

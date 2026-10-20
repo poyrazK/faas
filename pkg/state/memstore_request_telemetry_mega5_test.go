@@ -9,67 +9,68 @@
 // Whitebox `package state`. No Postgres dependency — runs on the
 // unit-tests-pure-* CI lanes.
 
-package state
+package state_test
 
 import (
 	"errors"
 	"testing"
 
+	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 func TestMemStore_InsertRequestTelemetry_Mega5(t *testing.T) {
 	t.Parallel()
-	m := NewMemStore()
-	if err := m.InsertRequestTelemetry(t.Context(), sqlc.InsertRequestTelemetryParams{}); !errors.Is(err, errMemStoreRequestTelemetry) {
+	m := state.NewMemStore()
+	if err := m.InsertRequestTelemetry(t.Context(), sqlc.InsertRequestTelemetryParams{}); !errors.Is(err, (*state.ErrMemStoreRequestTelemetry)) {
 		t.Errorf("err = %v, want errMemStoreRequestTelemetry", err)
 	}
 }
 
 func TestMemStore_ListRequestTelemetryByApp_Mega5(t *testing.T) {
 	t.Parallel()
-	m := NewMemStore()
+	m := state.NewMemStore()
 	rows, err := m.ListRequestTelemetryByApp(t.Context(), sqlc.ListRequestTelemetryByAppParams{})
 	if rows != nil {
 		t.Errorf("rows = %+v, want nil", rows)
 	}
-	if !errors.Is(err, errMemStoreRequestTelemetry) {
+	if !errors.Is(err, (*state.ErrMemStoreRequestTelemetry)) {
 		t.Errorf("err = %v, want errMemStoreRequestTelemetry", err)
 	}
 }
 
 func TestMemStore_RequestTelemetryCoverage_Mega5(t *testing.T) {
 	t.Parallel()
-	m := NewMemStore()
+	m := state.NewMemStore()
 	row, err := m.RequestTelemetryCoverage(t.Context(), sqlc.RequestTelemetryCoverageParams{})
 	if row != (sqlc.RequestTelemetryCoverageRow{}) {
 		t.Errorf("row = %+v, want zero row", row)
 	}
-	if !errors.Is(err, errMemStoreRequestTelemetry) {
+	if !errors.Is(err, (*state.ErrMemStoreRequestTelemetry)) {
 		t.Errorf("err = %v, want errMemStoreRequestTelemetry", err)
 	}
 }
 
 func TestMemStore_RequestTelemetryByDeployment_Mega5(t *testing.T) {
 	t.Parallel()
-	m := NewMemStore()
+	m := state.NewMemStore()
 	rows, err := m.RequestTelemetryByDeployment(t.Context(), sqlc.RequestTelemetryByDeploymentParams{})
 	if rows != nil {
 		t.Errorf("rows = %+v, want nil", rows)
 	}
-	if !errors.Is(err, errMemStoreRequestTelemetry) {
+	if !errors.Is(err, (*state.ErrMemStoreRequestTelemetry)) {
 		t.Errorf("err = %v, want errMemStoreRequestTelemetry", err)
 	}
 }
 
 func TestMemStore_RequestTelemetryBaselineP95ByRoute_Mega5(t *testing.T) {
 	t.Parallel()
-	m := NewMemStore()
+	m := state.NewMemStore()
 	rows, err := m.RequestTelemetryBaselineP95ByRoute(t.Context(), sqlc.RequestTelemetryBaselineP95ByRouteParams{})
 	if rows != nil {
 		t.Errorf("rows = %+v, want nil", rows)
 	}
-	if !errors.Is(err, errMemStoreRequestTelemetry) {
+	if !errors.Is(err, (*state.ErrMemStoreRequestTelemetry)) {
 		t.Errorf("err = %v, want errMemStoreRequestTelemetry", err)
 	}
 }

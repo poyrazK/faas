@@ -2,6 +2,7 @@
 // Sign-up, sign-in, passkeys, sessions with single-flight refresh, the hosted
 // pages, and the /authz/v1 organization and authorization API. No
 // dependencies.
+import { aal, activeOrganization, claims, type ActiveOrganization } from './claims.js'
 import { baseURL } from './url.js'
 
 export type Session = Readonly<{
@@ -48,29 +49,7 @@ export type FactorChallenge = Readonly<{ id: string; type: string; expires_at?: 
 export type RecoveryCodes = Readonly<{ id: string; type: string; total: number; remaining?: number; codes?: readonly string[] }>
 export type AssuranceLevel = Readonly<{ current: 'aal1' | 'aal2' | null; next: 'aal1' | 'aal2' | null }>
 
-/** payload reads an access token's claims without verifying them. */
-function payload(token: string): Record<string, unknown> {
-  try {
-    const part = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')
-    const claims = JSON.parse(atob(part + '='.repeat((4 - part.length % 4) % 4)))
-    return claims && typeof claims === 'object' ? claims : {}
-  } catch { return {} }
-}
-
-/** aal reads the assurance level of an access token without verifying it. */
-function aal(token: string): 'aal1' | 'aal2' {
-  return payload(token).aal === 'aal2' ? 'aal2' : 'aal1'
-}
-
-/** The organization a session acts in, from its token's org_* claims. */
-export type ActiveOrganization = Readonly<{ id: string; slug: string; role: string; permissions: readonly string[] }>
-
-function activeOrganization(token: string): ActiveOrganization | null {
-  const c = payload(token)
-  if (typeof c.org_id !== 'string' || typeof c.org_slug !== 'string' || typeof c.org_role !== 'string') return null
-  const permissions = Array.isArray(c.org_permissions) ? c.org_permissions.filter((p): p is string => typeof p === 'string') : []
-  return { id: c.org_id, slug: c.org_slug, role: c.org_role, permissions }
-}
+export type { ActiveOrganization } from './claims.js'
 
 /** A third-party app (an OAuth client) the user allowed to use their account. */
 export type ConnectedApp = Readonly<{ client: { id: string; name: string; uri?: string; logo_uri?: string }; scopes: string[]; granted_at: string }>
@@ -78,12 +57,51 @@ export type ConnectedApp = Readonly<{ client: { id: string; name: string; uri?: 
 export type UserSession = Readonly<{ id: string; created_at: string; last_active_at: string; user_agent: string | null; ip: string | null; aal: string | null; current: boolean }>
 
 export type Organization = Readonly<{ id: string; slug: string; name: string; role?: string; created_at: string }>
+/**
+ * One entry of an organization's audit log. actor_id is null for changes the
+ * app's operator, an identity provider or SCIM made.
+ */
+export type AuditEntry = Readonly<{
+  id: string; occurred_at: string
+  action: 'organization.created' | 'member.added' | 'member.role_changed' | 'member.removed' | 'member.signed_in' | 'invitation.created' | 'invitation.revoked'
+    | 'invitation.accepted' | 'domain.added' | 'domain.verified' | 'domain.removed' | 'sso.connected' | 'sso.updated' | 'sso.disconnected'
+  actor_id: string | null; actor_email: string | null; target_user_id: string | null; target_email: string | null; data: Readonly<Record<string, unknown>>
+}>
 export type Member = Readonly<{ user_id: string; email: string; role: string; created_at: string }>
 export type Invitation = Readonly<{ id: string; email: string; role: string; expires_at: string; created_at?: string }>
 /** An email domain an organization proves it controls with a DNS TXT record. */
 export type OrgDomain = Readonly<{ domain: string; verified: boolean; verified_at: string | null; record: Readonly<{ type: 'TXT'; name: string; value: string }> }>
 export type OrgSSOProvider = Readonly<{ id: string; entity_id: string | null; metadata_url: string | null; domains: readonly string[]; role: string }>
 export type CreatedInvitation = Invitation & Readonly<{ delivered: boolean; token?: string }>
+
+/** The wallets GoTrue verifies sign-ins from (EIP-4361 and Sign-In With Solana). */
+export type Web3Chain = 'ethereum' | 'solana'
+/** An injected Ethereum wallet (EIP-1193), such as window.ethereum. */
+export type EthereumWallet = { request(args: { method: string; params?: unknown[] }): Promise<unknown> }
+/** An injected Solana wallet, such as window.solana or window.phantom.solana. */
+export type SolanaWallet = {
+  publicKey?: { toBase58(): string } | null
+  connect(): Promise<unknown>
+  signMessage(message: Uint8Array, encoding?: string): Promise<Uint8Array | { signature: Uint8Array }>
+}
+
+/**
+ * web3Message writes the message a wallet signs, in the grammar GoTrue's
+ * parsers accept (EIP-4361 for Ethereum; its Solana equivalent). GoTrue
+ * checks that uri is the app's site URL or an allowed redirect URL, that
+ * domain is uri's host, and that the message is at most ten minutes old.
+ */
+export function web3Message(chain: Web3Chain, input: { domain: string; address: string; uri: string; statement?: string; chainId?: number; nonce: string; issuedAt: string }): string {
+  const name = chain === 'ethereum' ? 'Ethereum' : 'Solana'
+  return [
+    `${input.domain} wants you to sign in with your ${name} account:`, input.address, '',
+    ...(input.statement ? [input.statement.replace(/[\r\n]+/g, ' '), ''] : []),
+    `URI: ${input.uri}`, 'Version: 1', ...(input.chainId !== undefined ? [`Chain ID: ${input.chainId}`] : []), `Nonce: ${input.nonce}`, `Issued At: ${input.issuedAt}`,
+  ].join('\n')
+}
+
+const hexOf = (bytes: Uint8Array) => Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('')
+const base64Of = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes))
 
 /** A failed request. `code` is the stable server code, or `http_<status>`. */
 export class AuthError extends Error {
@@ -186,7 +204,11 @@ export function createAuthClient(options: AuthClientOptions) {
     let data: any = null
     try { data = text ? JSON.parse(text) : null } catch { data = null }
     if (!response.ok) {
-      const code = data?.error_code ?? data?.code ?? data?.error
+      // GoTrue reports a hook's refusal (sign-up restrictions) as msg, with
+      // error_code "unknown".
+      const hookCode = typeof data?.msg === 'string' && /^[a-z0-9_]{1,64}$/.test(data.msg) ? data.msg : undefined
+      const errorCode = data?.error_code === 'unknown' ? undefined : data?.error_code
+      const code = errorCode ?? hookCode ?? data?.code ?? data?.error
       throw new AuthError(response.status, typeof code === 'string' && /^[a-z0-9_]{1,64}$/.test(code) ? code : `http_${response.status}`)
     }
     return data as T
@@ -261,6 +283,43 @@ export function createAuthClient(options: AuthClientOptions) {
      */
     async signInAnonymously(input: Captcha = {}): Promise<Session> {
       return save(toSession(await call<TokenResponse>('POST', '/auth/v1/signup', { body: captcha(input) })), 'SIGNED_IN')
+    },
+    /**
+     * Signs in with a crypto wallet when the Auth app has Web3 sign-in on
+     * for that chain. The wallet (window.ethereum or window.solana unless
+     * given) asks its owner to sign a message naming this page; the first
+     * sign-in creates the user. uri defaults to this page's origin, which must
+     * be the app's site URL or an allowed redirect URL.
+     */
+    async signInWithWeb3(input: { chain: Web3Chain; wallet?: EthereumWallet | SolanaWallet; statement?: string; uri?: string }): Promise<Session> {
+      const page = (globalThis as { location?: Location }).location
+      const uri = input.uri ?? page?.origin
+      if (!uri) throw new AuthError(400, 'web3_uri_required')
+      const domain = new URL(uri).host
+      const nonce = hexOf(crypto.getRandomValues(new Uint8Array(16)))
+      const issuedAt = new Date().toISOString()
+      const statement = input.statement ?? `Sign in to ${domain}`
+      let message: string, signature: string
+      if (input.chain === 'ethereum') {
+        const wallet = (input.wallet ?? (globalThis as { ethereum?: EthereumWallet }).ethereum) as EthereumWallet | undefined
+        if (!wallet?.request) throw new AuthError(400, 'web3_wallet_not_found')
+        const [address] = await wallet.request({ method: 'eth_requestAccounts' }) as string[]
+        const chainId = Number.parseInt(String(await wallet.request({ method: 'eth_chainId' })), 16)
+        message = web3Message('ethereum', { domain, address, uri, statement, chainId, nonce, issuedAt })
+        signature = String(await wallet.request({ method: 'personal_sign', params: [`0x${hexOf(new TextEncoder().encode(message))}`, address] }))
+      } else if (input.chain === 'solana') {
+        const wallet = (input.wallet ?? (globalThis as { solana?: SolanaWallet }).solana) as SolanaWallet | undefined
+        if (!wallet?.signMessage) throw new AuthError(400, 'web3_wallet_not_found')
+        if (!wallet.publicKey) await wallet.connect()
+        const address = wallet.publicKey?.toBase58()
+        if (!address) throw new AuthError(400, 'web3_wallet_not_connected')
+        message = web3Message('solana', { domain, address, uri, statement, nonce, issuedAt })
+        const signed = await wallet.signMessage(new TextEncoder().encode(message), 'utf8')
+        signature = base64Of(signed instanceof Uint8Array ? signed : signed.signature)
+      } else {
+        throw new AuthError(400, 'web3_unsupported_chain')
+      }
+      return save(toSession(await call<TokenResponse>('POST', '/auth/v1/token?grant_type=web3', { body: { chain: input.chain, message, signature } })), 'SIGNED_IN')
     },
     async signInWithPassword(input: { email: string; password: string } & Captcha): Promise<Session> {
       return save(toSession(await call<TokenResponse>('POST', '/auth/v1/token?grant_type=password', { body: { email: input.email, password: input.password, ...captcha(input) } })), 'SIGNED_IN')
@@ -460,9 +519,27 @@ export function createAuthClient(options: AuthClientOptions) {
       await clear()
       return { organizations_deleted: result.organizations_deleted }
     },
+    /**
+     * Who is using this session as the user, when the app's support staff
+     * opened it (impersonation), such as "admin:0A1B2C3D"; null otherwise.
+     * Show a banner, and leave actions the person must take to them.
+     */
+    async actor(): Promise<string | null> {
+      const session = await getSession()
+      const act = session ? claims(session.accessToken).act as { sub?: unknown } | undefined : undefined
+      return typeof act?.sub === 'string' ? act.sub : null
+    },
     organizations: {
       list: async () => (await authz<{ organizations: Organization[] }>('GET', '/orgs')).organizations,
       create: (input: { slug: string; name: string }) => authz<Organization>('POST', '/orgs', input),
+      /**
+       * The organization's audit log, newest first (needs audit:read; owners
+       * hold it). Pass the returned next as cursor for the following page.
+       */
+      auditLog: (org: string, input: { cursor?: string; limit?: number } = {}) => {
+        const query = new URLSearchParams({ ...(input.cursor ? { cursor: input.cursor } : {}), ...(input.limit ? { limit: String(input.limit) } : {}) }).toString()
+        return authz<{ entries: AuditEntry[]; next: string | null }>('GET', `/orgs/${id(org)}/audit-log${query ? `?${query}` : ''}`)
+      },
       /**
        * Makes org (one the user belongs to) the session's active
        * organization, or none with null, and refreshes the session so its

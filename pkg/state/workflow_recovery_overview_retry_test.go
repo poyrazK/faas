@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -7,12 +7,13 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 // adr: 1284
 func TestRecoveryOverviewManualRetry(t *testing.T) {
-	workflowScheduleStores(t, func(t *testing.T, s Store) {
+	state.WorkflowScheduleStores(t, func(t *testing.T, s state.Store) {
 		ctx := context.Background()
 		r, app, _, _ := seedRecoveryNotificationReview(t, s, true)
 		// The fixture evaluates a future worker clock; retain an already observed review here.
@@ -24,12 +25,12 @@ func TestRecoveryOverviewManualRetry(t *testing.T) {
 			if e != nil {
 				t.Fatal(e)
 			}
-			if m, ok := s.(*MemStore); ok {
-				m.mu.Lock()
-				m.recoveryPolicies[canonicalMemUUID(app.ID)].Reviews[r.ID] = raw
-				m.mu.Unlock()
+			if m, ok := s.(*state.MemStore); ok {
+				(*m.Mu()).Lock()
+				(*m.RecoveryPolicies())[state.CanonicalMemUUID(app.ID)].Reviews[r.ID] = raw
+				(*m.Mu()).Unlock()
 			} else {
-				_, e = s.(*PgStore).pool.Exec(ctx, "UPDATE workflow_recovery_policy_reviews SET review=$2::jsonb,observed_at=$3,review_decision=$4::jsonb WHERE id=$1::uuid", r.ID, raw, r.ObservedAt, nil)
+				_, e = (*s.(*state.PgStore).Pool()).Exec(ctx, "UPDATE workflow_recovery_policy_reviews SET review=$2::jsonb,observed_at=$3,review_decision=$4::jsonb WHERE id=$1::uuid", r.ID, raw, r.ObservedAt, nil)
 				if e != nil {
 					t.Fatal(e)
 				}
@@ -38,7 +39,7 @@ func TestRecoveryOverviewManualRetry(t *testing.T) {
 		save()
 		read := func() *api.WorkflowRecoveryOverview {
 			t.Helper()
-			h, e := s.(WorkflowRecoveryHealthOverviewStore).GetWorkflowRecoveryPolicyHealth(ctx, app.AccountID, app.ID, 300)
+			h, e := s.(state.WorkflowRecoveryHealthOverviewStore).GetWorkflowRecoveryPolicyHealth(ctx, app.AccountID, app.ID, 300)
 			if e != nil {
 				t.Fatal(e)
 			}
@@ -64,31 +65,31 @@ func TestRecoveryOverviewManualRetry(t *testing.T) {
 		// Explicitly suppressed stale reviews are not offered as awaiting inspection.
 		suppress := func(on bool) {
 			t.Helper()
-			if m, ok := s.(*MemStore); ok {
-				m.mu.Lock()
-				p := m.recoveryPolicies[canonicalMemUUID(app.ID)]
+			if m, ok := s.(*state.MemStore); ok {
+				(*m.Mu()).Lock()
+				p := (*m.RecoveryPolicies())[state.CanonicalMemUUID(app.ID)]
 				if p.Notifications == nil {
-					p.Notifications = map[string]*memRecoveryReviewNotification{}
+					p.Notifications = map[string]*state.MemRecoveryReviewNotification{}
 				}
 				if p.Notifications[r.ID] == nil {
-					p.Notifications[r.ID] = &memRecoveryReviewNotification{}
+					p.Notifications[r.ID] = &state.MemRecoveryReviewNotification{}
 				}
 				if on {
-					m.recoveryPolicies[canonicalMemUUID(app.ID)].Notifications[r.ID].Receipt = newRecoveryReviewNotification(r.ID, "stale", false, []string{}, time.Now().UTC())
+					(*m.RecoveryPolicies())[state.CanonicalMemUUID(app.ID)].Notifications[r.ID].Receipt = state.NewRecoveryReviewNotification(r.ID, "stale", false, []string{}, time.Now().UTC())
 				} else {
-					m.recoveryPolicies[canonicalMemUUID(app.ID)].Notifications[r.ID].Receipt = nil
+					(*m.RecoveryPolicies())[state.CanonicalMemUUID(app.ID)].Notifications[r.ID].Receipt = nil
 				}
-				m.mu.Unlock()
+				(*m.Mu()).Unlock()
 			} else {
 				var raw []byte
 				if on {
 					var e error
-					raw, e = json.Marshal(newRecoveryReviewNotification(r.ID, "stale", false, []string{}, time.Now().UTC()))
+					raw, e = json.Marshal(state.NewRecoveryReviewNotification(r.ID, "stale", false, []string{}, time.Now().UTC()))
 					if e != nil {
 						t.Fatal(e)
 					}
 				}
-				_, e := s.(*PgStore).pool.Exec(ctx, "UPDATE workflow_recovery_review_notifications SET receipt=$2::jsonb WHERE review_id=$1::uuid", r.ID, raw)
+				_, e := (*s.(*state.PgStore).Pool()).Exec(ctx, "UPDATE workflow_recovery_review_notifications SET receipt=$2::jsonb WHERE review_id=$1::uuid", r.ID, raw)
 				if e != nil {
 					t.Fatal(e)
 				}
@@ -99,36 +100,36 @@ func TestRecoveryOverviewManualRetry(t *testing.T) {
 			t.Fatalf("suppressed %+v", o)
 		}
 		suppress(false)
-		p, e := s.(WorkflowRecoveryPolicyStore).GetWorkflowRecoveryPolicy(ctx, app.AccountID, app.ID)
+		p, e := s.(state.WorkflowRecoveryPolicyStore).GetWorkflowRecoveryPolicy(ctx, app.AccountID, app.ID)
 		if e != nil {
 			t.Fatal(e)
 		}
 		policy := p.Policy
 		policy.Enabled = false
-		if _, e = s.(WorkflowRecoveryPolicyStore).SetWorkflowRecoveryPolicy(ctx, app.AccountID, app.ID, api.SetWorkflowRecoveryPolicyRequest{Policy: policy, ExpectedVersion: p.Version}); e != nil {
+		if _, e = s.(state.WorkflowRecoveryPolicyStore).SetWorkflowRecoveryPolicy(ctx, app.AccountID, app.ID, api.SetWorkflowRecoveryPolicyRequest{Policy: policy, ExpectedVersion: p.Version}); e != nil {
 			t.Fatal(e)
 		}
 		if o = read(); o.ManualRetryAwaitingReview != 0 {
 			t.Fatalf("policy changed %+v", o)
 		}
-		if _, e = s.(WorkflowRecoveryReviewInspector).DecideWorkflowRecoveryPolicyReview(ctx, app.AccountID, app.ID, r.ID, api.WorkflowRecoveryReviewDecisionRequest{Decision: "approved", Reason: "reviewed"}); e != nil {
+		if _, e = s.(state.WorkflowRecoveryReviewInspector).DecideWorkflowRecoveryPolicyReview(ctx, app.AccountID, app.ID, r.ID, api.WorkflowRecoveryReviewDecisionRequest{Decision: "approved", Reason: "reviewed"}); e != nil {
 			t.Fatal(e)
 		}
 		o = read()
 		if o.ManualRetryUnresolved != 1 || o.ManualRetryAwaitingReview != 0 || o.Status != "waiting" || o.Issues[0].Reason != "awaiting_completion_observation" {
 			t.Fatalf("approved after policy change %+v", o)
 		}
-		completion := newRecoveryReviewCompletion(r.ID, api.WorkflowRecoveryReviewStatus{ReviewID: r.ID, Complete: true, Outcome: "succeeded"}, nil, time.Now().UTC())
-		if m, ok := s.(*MemStore); ok {
-			m.mu.Lock()
-			m.recoveryPolicies[canonicalMemUUID(app.ID)].Notifications[r.ID].Completion = completion
-			m.mu.Unlock()
+		completion := state.NewRecoveryReviewCompletion(r.ID, api.WorkflowRecoveryReviewStatus{ReviewID: r.ID, Complete: true, Outcome: "succeeded"}, nil, time.Now().UTC())
+		if m, ok := s.(*state.MemStore); ok {
+			(*m.Mu()).Lock()
+			(*m.RecoveryPolicies())[state.CanonicalMemUUID(app.ID)].Notifications[r.ID].Completion = completion
+			(*m.Mu()).Unlock()
 		} else {
 			raw, e := json.Marshal(completion)
 			if e != nil {
 				t.Fatal(e)
 			}
-			e = sqlc.New().WorkflowRecoveryReviewCompletionCapture(ctx, s.(*PgStore).pool, sqlc.WorkflowRecoveryReviewCompletionCaptureParams{ReviewID: mustPgUUID(r.ID), Completion: raw})
+			e = sqlc.New().WorkflowRecoveryReviewCompletionCapture(ctx, (*s.(*state.PgStore).Pool()), sqlc.WorkflowRecoveryReviewCompletionCaptureParams{ReviewID: state.MustPgUUID(r.ID), Completion: raw})
 			if e != nil {
 				t.Fatal(e)
 			}
