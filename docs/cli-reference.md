@@ -1967,7 +1967,7 @@ Start a run for one ended UTC month
 | Flag | Meaning | |
 |---|---|---|
 | `--month <YYYY-MM>` | UTC calendar month to bill (default: last month) |  |
-| `--sources <LIST>` | comma-separated app_consumers,platform_tenants (default: both) |  |
+| `--sources <LIST>` | comma-separated app_consumers,platform_tenants,product_customers (default: app_consumers,platform_tenants) |  |
 | `--no-finalize` | only draft statements |  |
 | `--export <TARGET>` | none, stripe, paddle or lago (default none) |  |
 | `--no-hold-on-gaps` | finalize consumers even when request telemetry shows unbilled requests |  |
@@ -2013,7 +2013,7 @@ Start a run automatically after each month ends
 
 | Flag | Meaning | |
 |---|---|---|
-| `--sources <LIST>` | comma-separated app_consumers,platform_tenants for scheduled runs (default: both) |  |
+| `--sources <LIST>` | comma-separated app_consumers,platform_tenants,product_customers for scheduled runs (default: app_consumers,platform_tenants) |  |
 | `--no-finalize` | scheduled runs only draft statements |  |
 | `--export <TARGET>` | none, stripe, paddle or lago for scheduled runs (default none) |  |
 | `--no-hold-on-gaps` | scheduled runs finalize consumers with completeness gaps |  |
