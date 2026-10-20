@@ -69283,6 +69283,7 @@ SELECT jsonb_build_object(
  'workflow_automation_live_suites.deployment_id', (SELECT count(*) FROM workflow_automation_live_suites WHERE deployment_id=$1::uuid),
  'workflow_automation_live_verifications.deployment_id', (SELECT count(*) FROM workflow_automation_live_verifications WHERE deployment_id=$1::uuid),
  'workflow_schedule_occurrences.deployment_id', (SELECT count(*) FROM workflow_schedule_occurrences WHERE deployment_id::text=$1::uuid::text),
+ 'release_freezes.source_deployment_id', (SELECT count(*) FROM release_freezes WHERE source_deployment_id=$1::uuid),
  'app_issues.fixed_deployment_id', (SELECT count(*) FROM app_issues WHERE fixed_deployment_id=$1::uuid),
  'debug_regression_observations.deployment_id', (SELECT count(*) FROM debug_regression_observations WHERE deployment_id=$1::uuid),
  'deployment_audit.deployment_id', (SELECT count(*) FROM deployment_audit WHERE deployment_id=$1::uuid),
