@@ -50,9 +50,19 @@ func TestWorkerFrozenThawMetal(t *testing.T) {
 	// on its own within the test: delete the app, which retires every VM.
 	t.Cleanup(func() { retireWorkerApp(t, rig) })
 
-	// The deploy's first worker is surplus once the pool sees no demand; it
-	// freezes after the scale-in window instead of stopping.
-	frozenID := waitForFrozenWorker(t, rig, "", 4*time.Minute)
+	// The deployment's prime worker is not a reliable subject: a pool
+	// reconcile that runs before apid marks the deployment live sees it as a
+	// retired generation and stops it. Let it settle, then boot a worker
+	// with one message; once its scale-in window passes it is surplus and
+	// freezes instead of stopping.
+	if err := waitForIdleWorkerPool(t, rig.h, rig.appID, 4*time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	frozenID := frozenWorkerOf(t, rig)
+	if frozenID == "" {
+		booted := measureWorkerScaleFromZero(t, rig.h, rig.key, rig.slug, rig.appID, 1)
+		frozenID = waitForFrozenWorker(t, rig, booted[0].instanceID, 4*time.Minute)
+	}
 	var thaws []time.Duration
 	for cycle := 1; cycle <= cycles; cycle++ {
 		running, lease, vmmdThaw := measureWorkerThaw(t, rig, frozenID)
@@ -69,6 +79,21 @@ func TestWorkerFrozenThawMetal(t *testing.T) {
 		}
 	}
 	t.Logf("frozen worker summary over %d thaws: send→running %s", len(thaws), durationSpread(thaws))
+}
+
+// frozenWorkerOf returns one of the pool's FROZEN workers, or "".
+func frozenWorkerOf(t *testing.T, rig *workerPoolRig) string {
+	t.Helper()
+	rows, err := state.NewPgStore(rig.pool).ListInstancesForApp(context.Background(), rig.appID)
+	if err != nil {
+		t.Fatalf("list workers: %v", err)
+	}
+	for _, ins := range rows {
+		if ins.Mode == string(state.InstanceModeWorker) && state.State(ins.State) == state.StateFrozen {
+			return ins.ID
+		}
+	}
+	return ""
 }
 
 // waitForFrozenWorker waits for one of the pool's workers to be FROZEN (want
@@ -90,13 +115,44 @@ func waitForFrozenWorker(t *testing.T, rig *workerPoolRig, want string, timeout 
 				return ins.ID
 			}
 			if want != "" && ins.ID == want && state.State(ins.State) == state.StateStopped {
+				logWorkerTransitions(t, rig)
 				t.Fatalf("worker %s stopped instead of freezing", want)
 			}
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
+	logWorkerTransitions(t, rig)
 	t.Fatalf("no frozen worker within %s; frozen_tier_workers must freeze the pool's surplus worker", timeout)
 	return ""
+}
+
+// logWorkerTransitions logs each of the app's workers with the transitions
+// schedd recorded for it, which name the path that froze or stopped it.
+func logWorkerTransitions(t *testing.T, rig *workerPoolRig) {
+	t.Helper()
+	rows, err := rig.pool.Query(context.Background(), `select i.id::text, i.state, e.at, e.kind, coalesce(e.data, '{}'::jsonb)::text
+		from instances i left join events e on e.subject = i.id
+		where i.app_id = $1 and i.mode = 'worker' order by i.id, e.at, e.id`, rig.appID)
+	if err != nil {
+		t.Logf("worker transitions: %v", err)
+		return
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, st string
+		var at *time.Time
+		var kind *string
+		var data string
+		if err := rows.Scan(&id, &st, &at, &kind, &data); err != nil {
+			t.Logf("worker transitions: %v", err)
+			return
+		}
+		if at == nil || kind == nil {
+			t.Logf("worker %s (%s): no events", id, st)
+			continue
+		}
+		t.Logf("worker %s (%s): %s %s %s", id, st, at.UTC().Format("15:04:05.000"), *kind, data)
+	}
 }
 
 // measureWorkerThaw sends one message to a pool whose only worker is frozen

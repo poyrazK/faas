@@ -24,51 +24,55 @@ func (e *Engine) EnableFrozenTierWorkers() { e.frozenTierWorkers.Store(true) }
 
 // workerFreezeRefusal names why a surplus RUNNING worker must stop instead of
 // freezing, or returns "" when it may freeze. "disabled" is not observed.
-func (e *Engine) workerFreezeRefusal(ctx context.Context, app state.App, ins state.Instance, leases map[string]int) (string, error) {
+// detail narrows the reason for the log; the reason is the metric label.
+func (e *Engine) workerFreezeRefusal(ctx context.Context, app state.App, ins state.Instance, leases map[string]int) (reason, detail string, err error) {
 	if !e.frozenTierEnabled() || !e.frozenTierWorkers.Load() {
-		return "disabled", nil
+		return "disabled", "switch_off", nil
 	}
 	if _, ok := e.vmm.(FrozenVMM); !ok {
-		return "disabled", nil
+		return "disabled", "vmm_cannot_freeze", nil
 	}
 	// A frozen worker cannot settle a lease it holds; it would expire and be
 	// redelivered after its visibility timeout.
 	if leases[ins.ID] > 0 {
-		return "busy", nil
+		return "busy", "holds_leases", nil
 	}
-	if app.Status != state.AppActive || e.privateNetworkProjection(ctx, app).NetworkID != "" {
-		return "ineligible", nil
-	}
-	if ins.RAMMB != app.RAMMB || e.runtimeConfigStale(ctx, ins) {
-		return "ineligible", nil
-	}
-	if app.Manifest.Profiling != nil && app.Manifest.Profiling.Enabled {
-		return "ineligible", nil
+	switch {
+	case app.Status != state.AppActive:
+		return "ineligible", "app_inactive", nil
+	case e.privateNetworkProjection(ctx, app).NetworkID != "":
+		return "ineligible", "private_network", nil
+	case ins.RAMMB != app.RAMMB:
+		return "ineligible", "ram_changed", nil
+	case e.runtimeConfigStale(ctx, ins):
+		return "ineligible", "runtime_config_stale", nil
+	case app.Manifest.Profiling != nil && app.Manifest.Profiling.Enabled:
+		return "ineligible", "profiling", nil
 	}
 	if ephemeral, err := e.hasEphemeralSecretForInstance(ctx, ins, app); err != nil || ephemeral {
-		return "ineligible", err
+		return "ineligible", "ephemeral_secret", err
 	}
 	// A worker that takes push deliveries listens for them, and the push
 	// path does not thaw a frozen worker.
 	bindings, err := e.store.ListQueueBindingHistoryForApp(ctx, app.AccountID, app.ID)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	for _, binding := range bindings {
 		if binding.Enabled && binding.RetiredAt == nil && binding.Mode == "push" {
-			return "ineligible", nil
+			return "ineligible", "push_binding", nil
 		}
 	}
 	if e.ledger.FrozenCountForNode(ins.NodeID) >= api.FrozenMaxPerNode {
-		return "node_full", nil
+		return "node_full", "node_full", nil
 	}
-	return "", nil
+	return "", "", nil
 }
 
 // freezeSurplusWorker freezes a worker the pool no longer needs. It reports
 // false when the worker must stop instead.
 func (e *Engine) freezeSurplusWorker(ctx context.Context, app state.App, ins state.Instance, leases map[string]int) bool {
-	reason, err := e.workerFreezeRefusal(ctx, app, ins, leases)
+	reason, detail, err := e.workerFreezeRefusal(ctx, app, ins, leases)
 	if err != nil {
 		e.log.Warn("sched: worker freeze: eligibility", "instance", ins.ID, "err", err)
 		return false
@@ -76,16 +80,19 @@ func (e *Engine) freezeSurplusWorker(ctx context.Context, app state.App, ins sta
 	if reason != "" {
 		if reason != "disabled" {
 			e.observeFreeze(reason)
+			e.log.Info("sched: surplus worker stops instead of freezing", "app", app.ID, "instance", ins.ID, "reason", reason, "detail", detail)
 		}
 		return false
 	}
 	freezer := e.vmm.(FrozenVMM)
 	locked, err := e.lockedRunning(ctx, ins.ID)
 	if err != nil || locked == nil {
+		e.log.Info("sched: surplus worker stops instead of freezing", "app", app.ID, "instance", ins.ID, "reason", "not_running", "err", err)
 		return false
 	}
 	defer e.unlockApp(locked.AppID)
 	if err := updateInstanceStateCAS(ctx, e.store, locked.ID, string(state.StateRunning), string(state.StateFrozen)); err != nil {
+		e.log.Info("sched: surplus worker stops instead of freezing", "app", app.ID, "instance", ins.ID, "reason", "state_changed", "err", err)
 		return false
 	}
 	e.recordCommittedInstanceTransition(ctx, *locked, state.StateRunning, state.StateFrozen, locked.AppID, "worker_freeze", "")
