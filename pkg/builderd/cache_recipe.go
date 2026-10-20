@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -158,6 +159,34 @@ func (c *Cache) StoreBuild(recipe BuildCacheRecipe, layerPath string, bytes int6
 // artifact integrity sidecars remain the cache-hit gate.
 func (c *Cache) StoreBuildWithToolchain(recipe BuildCacheRecipe, layerPath string, bytes int64, toolchain CacheToolchain) error {
 	return c.storeBuild(recipe, layerPath, bytes, toolchain)
+}
+
+// UpdateBuildOrigins rewrites only the GitOps origin metadata of an entry whose
+// canonical bytes are still the leased inode. A concurrent replacement keeps
+// its own origin, and the reused bytes are never copied again.
+func (c *Cache) UpdateBuildOrigins(recipe BuildCacheRecipe, leasePath string, toolchain CacheToolchain) error {
+	key, err := recipe.key()
+	if err != nil {
+		return err
+	}
+	if c == nil || c.root == "" {
+		return errors.New("cache: not configured")
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	current, ok := c.lookupKey(key, recipe.Framework, recipe.Plan)
+	if !ok {
+		return nil
+	}
+	leased, err := os.Stat(leasePath)
+	if err != nil {
+		return err
+	}
+	canonical, err := os.Stat(current.Path)
+	if err != nil || !os.SameFile(leased, canonical) {
+		return err
+	}
+	return writeCacheMetadata(filepath.Join(filepath.Dir(current.Path), "toolchain.json"), toolchain)
 }
 
 func (c *Cache) storeBuild(recipe BuildCacheRecipe, layerPath string, bytes int64, toolchain CacheToolchain) error {

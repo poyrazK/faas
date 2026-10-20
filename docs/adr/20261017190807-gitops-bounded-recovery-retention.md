@@ -71,6 +71,7 @@ Expose the effective approved policy, all-page charged usage, per-release
 `protection_status`, `retained_bytes` and `artifacts_protected_until` through the
 existing recovery catalog, CLI, dashboard and generated SDKs. Distinguish the
 artifact age deadline from routing compatibility and current rollback eligibility.
+`artifacts_protected_until` is omitted for the one protected current release.
 
 ## Validation boundary
 

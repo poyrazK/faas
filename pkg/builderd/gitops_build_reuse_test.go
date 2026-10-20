@@ -124,6 +124,21 @@ func TestGitOpsUnchangedBuildReuseAndTrustFallback(t *testing.T) {
 				if err != nil || proof.Input.Claims.DeploymentID != uuid.MustParse(target.ID).String() {
 					t.Fatal("cache hit did not publish its own current target proof", err)
 				}
+				// The verified origin stays recorded; the not-yet-live target is
+				// only the fallback, so it cannot displace a still-valid origin.
+				if tc.kind == "source" {
+					effective, err := state.AppForDeploymentRuntime(app, origin)
+					if err != nil {
+						t.Fatal(err)
+					}
+					scope, _ := gitOpsReuseScope(effective, origin)
+					recipe := testBuildCacheRecipe(origin.SourceSHA256, FrameworkNode, api.PlanPro, "registry.example/node@sha256:"+strings.Repeat("1", 64))
+					recipe.SourceRoot, recipe.GitOpsReuseScope = "src", scope
+					entry, ok := cache.LookupBuild(recipe)
+					if !ok || entry.Toolchain.OriginDeploymentID != origin.ID || entry.Toolchain.NextOriginDeploymentID != target.ID || entry.Toolchain.NextOriginBuildID != target.BuildID {
+						t.Fatalf("reuse origins: %+v ok=%v", entry.Toolchain, ok)
+					}
+				}
 			}
 		})
 	}

@@ -38,8 +38,13 @@ type CacheToolchain struct {
 	// Unchanged GitOps reuse requires this origin to remain currently signed.
 	OriginDeploymentID string `json:"origin_deployment_id,omitempty"`
 	OriginBuildID      string `json:"origin_build_id,omitempty"`
-	BuildkitVer        string `json:"buildkit_version,omitempty"`
-	RailpackVer        string `json:"railpack_version,omitempty"`
+	// The latest target that reused the origin. It is tried only once the
+	// origin is no longer trusted, so a target that never goes live cannot
+	// displace a still-valid origin.
+	NextOriginDeploymentID string `json:"next_origin_deployment_id,omitempty"`
+	NextOriginBuildID      string `json:"next_origin_build_id,omitempty"`
+	BuildkitVer            string `json:"buildkit_version,omitempty"`
+	RailpackVer            string `json:"railpack_version,omitempty"`
 	// DevPatch keeps the producing build's ADR-740 source map so a cache hit
 	// reports the same map as the build it reuses.
 	DevPatch                   *api.DevPatchSourceMap             `json:"dev_patch,omitempty"`

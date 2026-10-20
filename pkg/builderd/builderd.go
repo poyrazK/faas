@@ -946,10 +946,15 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		cacheKeySHA256 = ""
 	}
 	cached, cacheOutcome, cacheHit := b.lookupCurrentCacheEntry(recipe, buildEnvironment, cacheAvailable, dep.ID)
-	if cacheHit && reuseOptedIn && (!b.trustedGitOpsCacheEntry(ctx, app, dep, recipe, buildEnvironment, cached) || !b.buildEnvironmentStillCurrent(buildEnvironment)) {
-		b.cache.ReleaseLease(cached.Path)
-		cached, cacheOutcome, cacheHit = CacheEntry{}, cacheOutcomeInvalidated, false
-		b.emitBuildLog(ctx, build.ID, "[gitops] unchanged build reuse unavailable: origin is not a current same-app signed retained producer with matching inputs; building afresh\n")
+	if cacheHit && reuseOptedIn {
+		trusted, ok := b.trustedGitOpsCacheEntry(ctx, app, dep, recipe, buildEnvironment, cached)
+		if !ok || !b.buildEnvironmentStillCurrent(buildEnvironment) {
+			b.cache.ReleaseLease(cached.Path)
+			cached, cacheOutcome, cacheHit = CacheEntry{}, cacheOutcomeInvalidated, false
+			b.emitBuildLog(ctx, build.ID, "[gitops] unchanged build reuse unavailable: origin is not a current same-app signed retained producer with matching inputs; building afresh\n")
+		} else {
+			cached.Toolchain = trusted
+		}
 	}
 	b.observeCacheOutcome(ctx, build.ID, cacheOutcome, cacheKeySHA256)
 	if cacheHit {
@@ -978,12 +983,15 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		if completeErr != nil || completed.BuildID == "" {
 			b.cache.ReleaseLease(cached.Path)
 		} else if reuseOptedIn && b.buildEnvironmentStillCurrent(buildEnvironment) {
-			// Roll the cache origin forward only after the target's own signed
-			// completion. Its conversion must exist before it can be reused.
+			// Keep the verified origin. After its own signed completion this
+			// target becomes the fallback origin, used only once the current
+			// one stops being a live signed producer; a target that never
+			// goes live therefore cannot stall reuse. Bytes are unchanged, so
+			// only the metadata is rewritten.
 			metadata := cached.Toolchain
-			metadata.OriginDeploymentID, metadata.OriginBuildID = dep.ID, build.ID
-			if err := b.cache.StoreBuildWithToolchain(recipe, cached.Path, cached.Bytes, metadata); err != nil {
-				b.log.Warn("builderd: refresh GitOps cache origin (continuing)", "err", err)
+			metadata.NextOriginDeploymentID, metadata.NextOriginBuildID = dep.ID, build.ID
+			if err := b.cache.UpdateBuildOrigins(recipe, cached.Path, metadata); err != nil {
+				b.log.Warn("builderd: record GitOps cache fallback origin (continuing)", "err", err)
 			}
 		}
 		return completed, completeErr

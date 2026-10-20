@@ -45,18 +45,55 @@ func gitOpsReuseScope(app state.App, dep state.Deployment) (scope string, optedI
 // recipe, and the origin's currently selected signed runtime/base producers.
 // All uncertainty is a miss. The target still publishes its own signed export,
 // converts its own rootfs and passes its own graph qualification and activation.
-func (b *Builderd) trustedGitOpsCacheEntry(ctx context.Context, app state.App, dep state.Deployment, recipe BuildCacheRecipe, environment BuildEnvironment, cached CacheEntry) bool {
+// The recorded origin is tried first, then the latest target that reused it.
+// It returns the toolchain naming the origin that was actually verified.
+func (b *Builderd) trustedGitOpsCacheEntry(ctx context.Context, app state.App, dep state.Deployment, recipe BuildCacheRecipe, environment BuildEnvironment, cached CacheEntry) (CacheToolchain, bool) {
 	limits, known := api.LimitsFor(recipe.Plan)
 	if !known || cached.Bytes <= 0 || (cached.Bytes+(1<<20)-1)>>20 > int64(limits.AppLayerMaxMB) {
-		return false
+		return CacheToolchain{}, false
 	}
-	publications, pubOK := b.store.(state.BuildExportPublicationStore)
-	producers, producerOK := b.store.(state.DeploymentRuntimeProducerInputStore)
-	if !pubOK || !producerOK || b.buildPublisher == nil || recipe.GitOpsReuseScope == "" || cached.Toolchain.OriginDeploymentID == dep.ID {
-		return false
+	if _, ok := b.store.(state.BuildExportPublicationStore); !ok || b.buildPublisher == nil || recipe.GitOpsReuseScope == "" {
+		return CacheToolchain{}, false
 	}
-	origin, err := b.store.DeploymentByID(ctx, cached.Toolchain.OriginDeploymentID)
-	if err != nil || origin.DeletedAt != nil || (origin.Status != state.DeployLive && origin.Status != state.DeploySnapshotting) || origin.AppID != app.ID || origin.BuildID != cached.Toolchain.OriginBuildID || origin.SourceSHA256 != dep.SourceSHA256 || len(origin.Sidecars) != 0 {
+	if _, ok := b.store.(state.DeploymentRuntimeProducerInputStore); !ok {
+		return CacheToolchain{}, false
+	}
+	// Measure the leased bytes at most once, and only for a plausible origin.
+	measured, digest, bytes := false, "", int64(0)
+	measure := func() (string, int64, bool) {
+		if !measured {
+			var err error
+			digest, bytes, err = buildpublisher.MeasureExport(ctx, cached.Path)
+			if err != nil || bytes != cached.Bytes {
+				digest = ""
+			}
+			measured = true
+		}
+		return digest, bytes, digest != ""
+	}
+	for _, candidate := range [][2]string{
+		{cached.Toolchain.OriginDeploymentID, cached.Toolchain.OriginBuildID},
+		{cached.Toolchain.NextOriginDeploymentID, cached.Toolchain.NextOriginBuildID},
+	} {
+		if candidate[0] == "" || candidate[0] == dep.ID || !b.trustedGitOpsCacheOrigin(ctx, app, dep, recipe, environment, cached, candidate[0], candidate[1], measure) {
+			continue
+		}
+		trusted := cached.Toolchain
+		trusted.OriginDeploymentID, trusted.OriginBuildID = candidate[0], candidate[1]
+		if trusted.NextOriginDeploymentID == candidate[0] {
+			trusted.NextOriginDeploymentID, trusted.NextOriginBuildID = "", ""
+		}
+		return trusted, true
+	}
+	return CacheToolchain{}, false
+}
+
+func (b *Builderd) trustedGitOpsCacheOrigin(ctx context.Context, app state.App, dep state.Deployment, recipe BuildCacheRecipe, environment BuildEnvironment, cached CacheEntry,
+	originID, originBuildID string, measure func() (string, int64, bool)) bool {
+	publications, _ := b.store.(state.BuildExportPublicationStore)
+	producers, _ := b.store.(state.DeploymentRuntimeProducerInputStore)
+	origin, err := b.store.DeploymentByID(ctx, originID)
+	if err != nil || origin.DeletedAt != nil || (origin.Status != state.DeployLive && origin.Status != state.DeploySnapshotting) || origin.AppID != app.ID || origin.BuildID != originBuildID || origin.SourceSHA256 != dep.SourceSHA256 || len(origin.Sidecars) != 0 {
 		return false
 	}
 	originApp, err := state.AppForDeploymentRuntime(app, origin)
@@ -72,8 +109,8 @@ func (b *Builderd) trustedGitOpsCacheEntry(ctx context.Context, app state.App, d
 		provenance.BuildkitVer != cached.Toolchain.BuildkitVer || provenance.RailpackVer != cached.Toolchain.RailpackVer || !reflect.DeepEqual(provenance.DevPatch, cached.Toolchain.DevPatch) {
 		return false
 	}
-	digest, bytes, err := buildpublisher.MeasureExport(ctx, cached.Path)
-	if err != nil || bytes != cached.Bytes {
+	digest, bytes, ok := measure()
+	if !ok {
 		return false
 	}
 	proof, err := publications.GetFreshBuildExportPublication(ctx, app.AccountID, app.ID, origin.ID, origin.BuildID)
