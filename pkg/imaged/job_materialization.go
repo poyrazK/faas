@@ -11,9 +11,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/rootfs"
-	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
+	"github.com/onebox-faas/faas/pkg/storagekey"
 )
 
 const (
@@ -171,7 +171,7 @@ func (h *Handler) materializeClaimedJobWork(ctx context.Context, images state.Jo
 	if err != nil {
 		return h.failJobMaterialization(ctx, images, job, owner, fmt.Sprintf("storage backend: %v", err))
 	}
-	key := sched.JobLayerAttemptKey(job.ID, uuid.NewString())
+	key := storagekey.JobLayerAttempt(job.ID, uuid.NewString())
 	if _, err := h.builder.BuildFullRootfs(ctx, rootfs.BuildFullRootfsInput{
 		Layers:        readers,
 		Manifest:      appManifest,
@@ -388,7 +388,7 @@ func (h *Handler) verifyLegacyJobArtifacts(ctx context.Context, verifier state.J
 			h.retryLegacyJobArtifact(ctx, verifier, job, fmt.Sprintf("read legacy artifact: %v", getErr))
 			continue
 		}
-		jobKey := sched.JobLayerKey(job.ID)
+		jobKey := storagekey.JobLayer(job.ID)
 		putErr := backend.Put(ctx, jobKey, body)
 		closeErr := body.Close()
 		if putErr != nil || closeErr != nil {

@@ -1,0 +1,9 @@
+{
+  "rules": [
+    {
+      "package": "pkg/sched",
+      "binaries": ["imaged", "builderd"],
+      "reason": "The scheduler engine changes with most fixes; a binary that links it ships with each of them. Name storage keys through pkg/storagekey."
+    }
+  ]
+}
