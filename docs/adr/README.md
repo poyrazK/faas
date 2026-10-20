@@ -1,5 +1,6 @@
 # Architecture Decision Records
 
+- [Object storage in budgets](20261020160000-object-storage-in-budgets.md)
 - [Budget alerts on notification channels, and projected overruns](20261019193500-budget-alert-channels.md)
 - [Finished invocations without a horizon get the plan default retention](20261019104819-invocation-default-retention.md)
 - [Compose build arguments and target stage for Dockerfile builds](20261019142544-compose-build-args-and-target.md)

@@ -269,6 +269,24 @@ least a day of usage this month. Otherwise `projection_reason` says why it is
 unavailable (for example `compute:insufficient_history`). Editing the budget
 starts a new revision, so a still-projected overrun can alert again.
 
+### Object storage in budgets
+
+A monitored account budget can include object storage by adding
+`object_storage` to `meters`, for example `["compute", "object_storage"]`.
+Object storage cannot be selected on app, job, project or environment budgets
+(buckets carry no such attribution), or on strict budgets
+([ADR 20261020160000](adr/20261020160000-object-storage-in-budgets.md)).
+
+The amount is the live object-storage estimate: this month's stored
+GiB-months, requests and egress, priced with the same rates and plan
+allowance as `gregale usage object-storage` and month close. Gross is before the
+allowance and net is after. apid refreshes it every five minutes, and an
+estimate more than 15 minutes old counts as stale. `GET /v1/billing/costs`
+shows it as the `object_storage` meter. Threshold and projected-overrun alerts
+count it like compute and egress. The invoice line still comes from month
+close, which also applies the overage cap; the budget counts the uncapped
+estimate.
+
 ## Active spending notifications
 
 For example, save this specification to `budget.json` and run

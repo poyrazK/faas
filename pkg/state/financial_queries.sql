@@ -123,3 +123,28 @@ SELECT coalesce(sum(mb_seconds), 0)::bigint AS mb_seconds
 FROM billing_usage_deliveries
 WHERE provider = sqlc.arg(provider)::text AND account_id = sqlc.arg(account_id)::uuid
   AND window_start >= sqlc.arg(start_at)::timestamptz AND window_start < sqlc.arg(end_at)::timestamptz;
+
+-- name: FinancialObjectStorageEstimatePut :exec
+-- ADR-20261020160000: apid's newest live object-storage estimate replaces
+-- the month's row; an older observation never overwrites a newer one.
+INSERT INTO financial_object_storage_estimates(account_id, period_start, observed_at, usage_through, fresh,
+  stored_byte_hours, request_count, egress_bytes, currency, storage_millicents_per_gib_month,
+  requests_millicents_per_million, egress_millicents_per_gib, included_byte_hours, included_requests, included_egress_bytes)
+VALUES(sqlc.arg(account_id)::uuid, sqlc.arg(period_start)::timestamptz, sqlc.arg(observed_at)::timestamptz,
+  sqlc.arg(usage_through)::timestamptz, sqlc.arg(fresh)::boolean, sqlc.arg(stored_byte_hours)::bigint,
+  sqlc.arg(request_count)::bigint, sqlc.arg(egress_bytes)::bigint, sqlc.arg(currency)::text,
+  sqlc.arg(storage_millicents_per_gib_month)::bigint, sqlc.arg(requests_millicents_per_million)::bigint,
+  sqlc.arg(egress_millicents_per_gib)::bigint, sqlc.arg(included_byte_hours)::bigint,
+  sqlc.arg(included_requests)::bigint, sqlc.arg(included_egress_bytes)::bigint)
+ON CONFLICT (account_id, period_start) DO UPDATE SET observed_at = EXCLUDED.observed_at,
+  usage_through = EXCLUDED.usage_through, fresh = EXCLUDED.fresh, stored_byte_hours = EXCLUDED.stored_byte_hours,
+  request_count = EXCLUDED.request_count, egress_bytes = EXCLUDED.egress_bytes, currency = EXCLUDED.currency,
+  storage_millicents_per_gib_month = EXCLUDED.storage_millicents_per_gib_month,
+  requests_millicents_per_million = EXCLUDED.requests_millicents_per_million,
+  egress_millicents_per_gib = EXCLUDED.egress_millicents_per_gib, included_byte_hours = EXCLUDED.included_byte_hours,
+  included_requests = EXCLUDED.included_requests, included_egress_bytes = EXCLUDED.included_egress_bytes
+WHERE financial_object_storage_estimates.observed_at <= EXCLUDED.observed_at;
+
+-- name: FinancialObjectStorageEstimateGet :one
+SELECT * FROM financial_object_storage_estimates
+WHERE account_id = sqlc.arg(account_id)::uuid AND period_start = sqlc.arg(period_start)::timestamptz;

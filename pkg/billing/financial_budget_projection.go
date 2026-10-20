@@ -29,6 +29,18 @@ func ProjectFinancialBudget(report api.FinancialCostsResponse, spec financial.Bu
 			}
 			return nil, name + ":" + reason, nil
 		}
+		if f.ProjectedGrossMillicents != nil {
+			// An account-level meter (object storage) has no per-scope usage;
+			// ValidateBudget allows it only on account budgets.
+			projected := *f.ProjectedNetMillicents
+			if spec.Basis == "gross_usage" {
+				projected = *f.ProjectedGrossMillicents
+			}
+			if spec.Scope.Kind == "account" {
+				total.Add(total, big.NewInt(projected))
+			}
+			continue
+		}
 		observed := meter.Accrued.Quantity
 		if observed <= 0 {
 			continue // nothing used yet, so the run rate projects nothing

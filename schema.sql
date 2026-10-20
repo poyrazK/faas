@@ -34471,7 +34471,7 @@ CREATE TABLE public.financial_budget_policies (
     CONSTRAINT financial_budget_policies_check CHECK ((updated_at >= created_at)),
     CONSTRAINT financial_budget_policies_check1 CHECK (((deleted_at IS NULL) OR (deleted_at >= created_at))),
     CONSTRAINT financial_budget_policies_revision_check CHECK (((revision >= 1) AND (revision <= '9007199254740991'::bigint))),
-    CONSTRAINT financial_budget_policies_spec_check CHECK (((jsonb_typeof(spec) = 'object'::text) AND (spec ?& ARRAY['name'::text, 'scope'::text, 'currency'::text, 'meters'::text, 'basis'::text, 'limit_millicents'::text, 'notify_millicents'::text, 'mode'::text, 'action'::text, 'drain_seconds'::text, 'resume_rule'::text, 'enabled'::text]) AND (jsonb_typeof((spec -> 'name'::text)) = 'string'::text) AND ((length((spec ->> 'name'::text)) >= 1) AND (length((spec ->> 'name'::text)) <= 128)) AND (jsonb_typeof((spec -> 'scope'::text)) = 'object'::text) AND (((spec -> 'scope'::text) ->> 'kind'::text) = ANY (ARRAY['account'::text, 'project'::text, 'environment'::text, 'app'::text, 'job'::text])) AND ((spec ->> 'currency'::text) = ANY (ARRAY['EUR'::text, 'USD'::text])) AND (jsonb_typeof((spec -> 'meters'::text)) = 'array'::text) AND ((jsonb_array_length((spec -> 'meters'::text)) >= 1) AND (jsonb_array_length((spec -> 'meters'::text)) <= 2)) AND ((spec -> 'meters'::text) <@ '["compute", "egress"]'::jsonb) AND ((spec ->> 'basis'::text) = ANY (ARRAY['net_usage'::text, 'gross_usage'::text])) AND (jsonb_typeof((spec -> 'limit_millicents'::text)) = 'number'::text) AND ((((spec ->> 'limit_millicents'::text))::bigint >= 0) AND (((spec ->> 'limit_millicents'::text))::bigint <= '9007199254740991'::bigint)) AND (jsonb_typeof((spec -> 'notify_millicents'::text)) = 'array'::text) AND (jsonb_array_length((spec -> 'notify_millicents'::text)) <= 8) AND ((spec ->> 'mode'::text) = ANY (ARRAY['monitored'::text, 'strict'::text])) AND ((spec ->> 'action'::text) = ANY (ARRAY['notify'::text, 'reject_traffic'::text, 'suspend_background'::text, 'stop_previews'::text, 'suspend_workloads'::text])) AND (jsonb_typeof((spec -> 'drain_seconds'::text)) = 'number'::text) AND ((((spec ->> 'drain_seconds'::text))::integer >= 0) AND (((spec ->> 'drain_seconds'::text))::integer <= 300)) AND ((spec ->> 'resume_rule'::text) = ANY (ARRAY['manual'::text, 'next_period'::text])) AND (jsonb_typeof((spec -> 'enabled'::text)) = 'boolean'::text)))
+    CONSTRAINT financial_budget_policies_spec_v2_check CHECK (((jsonb_typeof(spec) = 'object'::text) AND (spec ?& ARRAY['name'::text, 'scope'::text, 'currency'::text, 'meters'::text, 'basis'::text, 'limit_millicents'::text, 'notify_millicents'::text, 'mode'::text, 'action'::text, 'drain_seconds'::text, 'resume_rule'::text, 'enabled'::text]) AND (jsonb_typeof((spec -> 'name'::text)) = 'string'::text) AND ((length((spec ->> 'name'::text)) >= 1) AND (length((spec ->> 'name'::text)) <= 128)) AND (jsonb_typeof((spec -> 'scope'::text)) = 'object'::text) AND (((spec -> 'scope'::text) ->> 'kind'::text) = ANY (ARRAY['account'::text, 'project'::text, 'environment'::text, 'app'::text, 'job'::text])) AND ((spec ->> 'currency'::text) = ANY (ARRAY['EUR'::text, 'USD'::text])) AND (jsonb_typeof((spec -> 'meters'::text)) = 'array'::text) AND ((jsonb_array_length((spec -> 'meters'::text)) >= 1) AND (jsonb_array_length((spec -> 'meters'::text)) <= 3)) AND ((spec -> 'meters'::text) <@ '["compute", "egress", "object_storage"]'::jsonb) AND ((spec ->> 'basis'::text) = ANY (ARRAY['net_usage'::text, 'gross_usage'::text])) AND (jsonb_typeof((spec -> 'limit_millicents'::text)) = 'number'::text) AND ((((spec ->> 'limit_millicents'::text))::bigint >= 0) AND (((spec ->> 'limit_millicents'::text))::bigint <= '9007199254740991'::bigint)) AND (jsonb_typeof((spec -> 'notify_millicents'::text)) = 'array'::text) AND (jsonb_array_length((spec -> 'notify_millicents'::text)) <= 8) AND ((spec ->> 'mode'::text) = ANY (ARRAY['monitored'::text, 'strict'::text])) AND ((spec ->> 'action'::text) = ANY (ARRAY['notify'::text, 'reject_traffic'::text, 'suspend_background'::text, 'stop_previews'::text, 'suspend_workloads'::text])) AND (jsonb_typeof((spec -> 'drain_seconds'::text)) = 'number'::text) AND ((((spec ->> 'drain_seconds'::text))::integer >= 0) AND (((spec ->> 'drain_seconds'::text))::integer <= 300)) AND ((spec ->> 'resume_rule'::text) = ANY (ARRAY['manual'::text, 'next_period'::text])) AND (jsonb_typeof((spec -> 'enabled'::text)) = 'boolean'::text)))
 );
 
 
@@ -34720,6 +34720,42 @@ CREATE TABLE public.financial_funding_currency (
     currency text NOT NULL,
     CONSTRAINT financial_funding_currency_currency_check CHECK ((currency = 'USD'::text)),
     CONSTRAINT financial_funding_currency_singleton_check CHECK (singleton)
+);
+
+
+--
+-- Name: financial_object_storage_estimates; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.financial_object_storage_estimates (
+    account_id uuid NOT NULL,
+    period_start timestamp with time zone NOT NULL,
+    observed_at timestamp with time zone NOT NULL,
+    usage_through timestamp with time zone NOT NULL,
+    fresh boolean NOT NULL,
+    stored_byte_hours bigint NOT NULL,
+    request_count bigint NOT NULL,
+    egress_bytes bigint NOT NULL,
+    currency text NOT NULL,
+    storage_millicents_per_gib_month bigint NOT NULL,
+    requests_millicents_per_million bigint NOT NULL,
+    egress_millicents_per_gib bigint NOT NULL,
+    included_byte_hours bigint NOT NULL,
+    included_requests bigint NOT NULL,
+    included_egress_bytes bigint NOT NULL,
+    CONSTRAINT financial_object_storage_est_requests_millicents_per_mill_check CHECK ((requests_millicents_per_million >= 0)),
+    CONSTRAINT financial_object_storage_est_storage_millicents_per_gib_m_check CHECK ((storage_millicents_per_gib_month >= 0)),
+    CONSTRAINT financial_object_storage_estima_egress_millicents_per_gib_check CHECK ((egress_millicents_per_gib >= 0)),
+    CONSTRAINT financial_object_storage_estimates_check CHECK ((observed_at >= period_start)),
+    CONSTRAINT financial_object_storage_estimates_check1 CHECK (((usage_through >= period_start) AND (usage_through <= observed_at))),
+    CONSTRAINT financial_object_storage_estimates_currency_check CHECK ((currency = 'USD'::text)),
+    CONSTRAINT financial_object_storage_estimates_egress_bytes_check CHECK ((egress_bytes >= 0)),
+    CONSTRAINT financial_object_storage_estimates_included_byte_hours_check CHECK ((included_byte_hours >= 0)),
+    CONSTRAINT financial_object_storage_estimates_included_egress_bytes_check CHECK ((included_egress_bytes >= 0)),
+    CONSTRAINT financial_object_storage_estimates_included_requests_check CHECK ((included_requests >= 0)),
+    CONSTRAINT financial_object_storage_estimates_period_start_check CHECK ((period_start = (date_trunc('month'::text, (period_start AT TIME ZONE 'UTC'::text)) AT TIME ZONE 'UTC'::text))),
+    CONSTRAINT financial_object_storage_estimates_request_count_check CHECK ((request_count >= 0)),
+    CONSTRAINT financial_object_storage_estimates_stored_byte_hours_check CHECK ((stored_byte_hours >= 0))
 );
 
 
@@ -54864,6 +54900,14 @@ ALTER TABLE ONLY public.financial_evidence_coverage
 
 ALTER TABLE ONLY public.financial_funding_currency
     ADD CONSTRAINT financial_funding_currency_pkey PRIMARY KEY (singleton);
+
+
+--
+-- Name: financial_object_storage_estimates financial_object_storage_estimates_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_object_storage_estimates
+    ADD CONSTRAINT financial_object_storage_estimates_pkey PRIMARY KEY (account_id, period_start);
 
 
 --
@@ -82887,6 +82931,14 @@ ALTER TABLE ONLY public.financial_compute_leases
 
 ALTER TABLE ONLY public.financial_compute_owners
     ADD CONSTRAINT financial_compute_owners_node_id_fkey FOREIGN KEY (node_id) REFERENCES public.compute_nodes(id) ON DELETE CASCADE;
+
+
+--
+-- Name: financial_object_storage_estimates financial_object_storage_estimates_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_object_storage_estimates
+    ADD CONSTRAINT financial_object_storage_estimates_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
 
 
 --

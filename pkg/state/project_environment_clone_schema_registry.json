@@ -63,6 +63,27 @@
     "kind": "operational"
   },
   {
+    "table": "financial_object_storage_estimates",
+    "columns": [
+      "account_id",
+      "currency",
+      "egress_bytes",
+      "egress_millicents_per_gib",
+      "fresh",
+      "included_byte_hours",
+      "included_egress_bytes",
+      "included_requests",
+      "observed_at",
+      "period_start",
+      "request_count",
+      "requests_millicents_per_million",
+      "storage_millicents_per_gib_month",
+      "stored_byte_hours",
+      "usage_through"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "financial_budget_projection_alerts",
     "columns": [
       "account_id",

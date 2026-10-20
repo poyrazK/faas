@@ -1371,6 +1371,10 @@ type Querier interface {
 	// ADR-20261019193600. Compute MB-seconds the pusher delivered to one provider for one
 	// account in [start, end); the ledger dual run compares it with ledger evidence.
 	FinancialLedgerDeliveredComputeMBSeconds(ctx context.Context, db DBTX, arg FinancialLedgerDeliveredComputeMBSecondsParams) (int64, error)
+	FinancialObjectStorageEstimateGet(ctx context.Context, db DBTX, arg FinancialObjectStorageEstimateGetParams) (FinancialObjectStorageEstimate, error)
+	// ADR-20261020160000: apid's newest live object-storage estimate replaces
+	// the month's row; an older observation never overwrites a newer one.
+	FinancialObjectStorageEstimatePut(ctx context.Context, db DBTX, arg FinancialObjectStorageEstimatePutParams) error
 	FinancialPreviewCommandActivate(ctx context.Context, db DBTX, arg FinancialPreviewCommandActivateParams) (int64, error)
 	FinancialPreviewCommandHeld(ctx context.Context, db DBTX, arg FinancialPreviewCommandHeldParams) (bool, error)
 	FinancialPreviewCommandList(ctx context.Context, db DBTX, arg FinancialPreviewCommandListParams) ([]FinancialPreviewCommandRuntime, error)

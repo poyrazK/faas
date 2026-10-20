@@ -5235,6 +5235,24 @@ type FinancialFundingCurrency struct {
 	Currency  string
 }
 
+type FinancialObjectStorageEstimate struct {
+	AccountID                    pgtype.UUID
+	PeriodStart                  pgtype.Timestamptz
+	ObservedAt                   pgtype.Timestamptz
+	UsageThrough                 pgtype.Timestamptz
+	Fresh                        bool
+	StoredByteHours              int64
+	RequestCount                 int64
+	EgressBytes                  int64
+	Currency                     string
+	StorageMillicentsPerGibMonth int64
+	RequestsMillicentsPerMillion int64
+	EgressMillicentsPerGib       int64
+	IncludedByteHours            int64
+	IncludedRequests             int64
+	IncludedEgressBytes          int64
+}
+
 type FinancialPreviewCommandRuntime struct {
 	TaskID        pgtype.UUID
 	LeaseToken    pgtype.UUID

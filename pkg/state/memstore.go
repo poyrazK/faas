@@ -310,6 +310,7 @@ type MemStore struct {
 	financialBudgetChannels                    map[string][]string                            // policy id → channel ids (ADR-20261019193500)
 	financialBudgetChannelDeliveries           map[string]FinancialBudgetAlertChannelDelivery // alert id + "\n" + channel id
 	financialBudgetProjections                 map[string]FinancialBudgetAlertDelivery        // projection alert id (ADR-20261019193500)
+	financialObjectStorageEstimates            map[string]FinancialObjectStorageEstimate      // account + "\n" + period (ADR-20261020160000)
 	financialPreviewCommands                   map[string]FinancialPreviewCommandRuntime
 	financialComputeBooks                      map[string]financialComputeBook
 	financialComputeLeases                     map[string]financialComputeLease
@@ -23167,6 +23168,11 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 	for key, a := range m.financialBudgetProjections {
 		if a.AccountID == id {
 			delete(m.financialBudgetProjections, key)
+		}
+	}
+	for key, e := range m.financialObjectStorageEstimates {
+		if e.AccountID == id {
+			delete(m.financialObjectStorageEstimates, key)
 		}
 	}
 	for key := range m.financialBudgetChannels {
