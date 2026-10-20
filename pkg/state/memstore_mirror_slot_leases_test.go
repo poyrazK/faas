@@ -1,15 +1,16 @@
-package state
+package state_test
 
 import (
 	"context"
+	"github.com/onebox-faas/faas/pkg/state"
 	"testing"
 	"time"
 )
 
 func TestMemStoreMirrorSlotLeaseCapacityReleaseAndExpiry(t *testing.T) {
 	t.Parallel()
-	m := NewMemStore()
-	m.mirrorRules["rule-1"] = MirrorRule{ID: "rule-1"}
+	m := state.NewMemStore()
+	(*m.MirrorRules())["rule-1"] = state.MirrorRule{ID: "rule-1"}
 
 	first, acquired, err := m.TryAcquireMirrorSlotLease(context.Background(), "rule-1", 1, time.Minute)
 	if err != nil || !acquired || first == "" {
@@ -25,12 +26,11 @@ func TestMemStoreMirrorSlotLeaseCapacityReleaseAndExpiry(t *testing.T) {
 	if err != nil || !acquired {
 		t.Fatalf("acquire after release = (%q, %v, %v), want lease", second, acquired, err)
 	}
-
-	m.mu.Lock()
-	lease := m.mirrorSlotLeases[second]
+	(*m.Mu()).Lock()
+	lease := (*m.MirrorSlotLeases())[second]
 	lease.ExpiresAt = time.Now().UTC().Add(-time.Second)
-	m.mirrorSlotLeases[second] = lease
-	m.mu.Unlock()
+	(*m.MirrorSlotLeases())[second] = lease
+	(*m.Mu()).Unlock()
 	third, acquired, err := m.TryAcquireMirrorSlotLease(context.Background(), "rule-1", 1, time.Minute)
 	if err != nil || !acquired || third == "" {
 		t.Fatalf("acquire after expiry = (%q, %v, %v), want replacement lease", third, acquired, err)

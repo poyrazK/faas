@@ -1,4 +1,4 @@
-package state
+package state_test
 
 // These tests simulate native receipts. They do not prove KVM or fleet convergence.
 
@@ -11,36 +11,37 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
-type retainedNativeTestStore = contractTestStore
+type retainedNativeTestStore = state.ContractTestStore
 
-func uninstalledNativeScopeFixture(t *testing.T, s retainedNativeTestStore, move func(App, Project) error) {
+func uninstalledNativeScopeFixture(t *testing.T, s retainedNativeTestStore, move func(state.App, state.Project) error) {
 	t.Helper()
-	owner, err := s.CreateAccountWithPersonalOrg(t.Context(), CreateAccountWithPersonalOrgParams{Email: "uninstalled-" + uuid.NewString() + "@example.com", Plan: api.PlanPro})
+	owner, err := s.CreateAccountWithPersonalOrg(t.Context(), state.CreateAccountWithPersonalOrgParams{Email: "uninstalled-" + uuid.NewString() + "@example.com", Plan: api.PlanPro})
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, err := s.CreateProject(t.Context(), Project{AccountID: owner.Account.ID, Slug: "assigned-scope"})
+	first, err := s.CreateProject(t.Context(), state.Project{AccountID: owner.Account.ID, Slug: "assigned-scope"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := s.CreateProject(t.Context(), Project{AccountID: owner.Account.ID, Slug: "unassigned-scope"})
+	second, err := s.CreateProject(t.Context(), state.Project{AccountID: owner.Account.ID, Slug: "unassigned-scope"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	v, err := s.PublishApplicationStandardVersion(t.Context(), ApplicationStandardPublish{OrgID: owner.PersonalOrg.ID, ActorID: owner.Account.ID, Slug: "uninstalled-scope", CreateApplicationStandardVersionRequest: api.CreateApplicationStandardVersionRequest{Definition: json.RawMessage(`{"egress_cidrs":{"mode":"mandatory","value":["8.8.8.0/24"]}}`)}})
+	v, err := s.PublishApplicationStandardVersion(t.Context(), state.ApplicationStandardPublish{OrgID: owner.PersonalOrg.ID, ActorID: owner.Account.ID, Slug: "uninstalled-scope", CreateApplicationStandardVersionRequest: api.CreateApplicationStandardVersionRequest{Definition: json.RawMessage(`{"egress_cidrs":{"mode":"mandatory","value":["8.8.8.0/24"]}}`)}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	p, err := s.PreviewApplicationStandardAssignment(t.Context(), owner.PersonalOrg.ID, owner.Account.ID, ApplicationStandardReviewRequest{Scope: "project", ScopeID: first.ID, StandardID: v.StandardID, AdmissionVersion: 1, Active: true, BatchSize: 1})
+	p, err := s.PreviewApplicationStandardAssignment(t.Context(), owner.PersonalOrg.ID, owner.Account.ID, state.ApplicationStandardReviewRequest{Scope: "project", ScopeID: first.ID, StandardID: v.StandardID, AdmissionVersion: 1, Active: true, BatchSize: 1})
 	if err != nil || len(p.Blockers) != 0 || len(p.Applications) != 0 {
 		t.Fatalf("empty-scope preview: %+v %v", p, err)
 	}
 	if _, err := s.ApproveApplicationStandardReview(t.Context(), p.OrgID, owner.Account.ID, p.ID, p.ApprovalHash); err != nil {
 		t.Fatal(err)
 	}
-	app, err := s.CreateApp(t.Context(), App{AccountID: owner.Account.ID, OrgID: owner.PersonalOrg.ID, ProjectID: first.ID, Slug: "uninstalled-scope", RAMMB: 128})
+	app, err := s.CreateApp(t.Context(), state.App{AccountID: owner.Account.ID, OrgID: owner.PersonalOrg.ID, ProjectID: first.ID, Slug: "uninstalled-scope", RAMMB: 128})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,26 +54,26 @@ func uninstalledNativeScopeFixture(t *testing.T, s retainedNativeTestStore, move
 	}
 	app.ProjectID = second.ID
 	after, err := s.GetApplicationStandardEnrollment(t.Context(), app.OrgID, app.ID)
-	if err != nil || after.State != "unmanaged" || after.PersistedRevision != 0 || len(after.Adoptions) != 0 || !ApplicationStandardEnrollmentPermitsRuntime(app, after) {
+	if err != nil || after.State != "unmanaged" || after.PersistedRevision != 0 || len(after.Adoptions) != 0 || !state.ApplicationStandardEnrollmentPermitsRuntime(app, after) {
 		t.Fatalf("never-installed scope gained retained native history: %+v %v", after, err)
 	}
 }
 
 func TestMemApplicationStandardUninstalledNativeScope(t *testing.T) {
-	m := NewMemStore()
-	uninstalledNativeScopeFixture(t, m, func(app App, project Project) error {
-		m.mu.Lock()
-		defer m.mu.Unlock()
+	m := state.NewMemStore()
+	uninstalledNativeScopeFixture(t, m, func(app state.App, project state.Project) error {
+		(*m.Mu()).Lock()
+		defer (*m.Mu()).Unlock()
 		app.ProjectID = project.ID
-		if err := m.initializeApplicationStandardEnrollmentLocked(app); err != nil {
+		if err := m.InitializeApplicationStandardEnrollmentLocked(app); err != nil {
 			return err
 		}
-		m.apps[app.ID] = app
+		(*m.Apps())[app.ID] = app
 		return nil
 	})
 }
 
-func removeLastNativeStandard(t *testing.T, s retainedNativeTestStore, app App) ApplicationStandardEnrollment {
+func removeLastNativeStandard(t *testing.T, s retainedNativeTestStore, app state.App) state.ApplicationStandardEnrollment {
 	t.Helper()
 	c, err := s.ClaimApplicationStandardOperation(t.Context(), "retained-removal-prepare")
 	if err != nil {
@@ -82,7 +83,7 @@ func removeLastNativeStandard(t *testing.T, s retainedNativeTestStore, app App) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.ControlApplicationStandardOperation(t.Context(), app.OrgID, app.AccountID, o.ID, o.UpdatedAt, ApplicationStandardOperationAbort); err != nil {
+	if _, err := s.ControlApplicationStandardOperation(t.Context(), app.OrgID, app.AccountID, o.ID, o.UpdatedAt, state.ApplicationStandardOperationAbort); err != nil {
 		t.Fatal(err)
 	}
 	assignments, err := s.ListApplicationStandardAssignments(t.Context(), app.OrgID)
@@ -90,7 +91,7 @@ func removeLastNativeStandard(t *testing.T, s retainedNativeTestStore, app App) 
 		t.Fatalf("fixture assignment: %+v %v", assignments, err)
 	}
 	a := assignments[0]
-	p, err := s.PreviewApplicationStandardAssignment(t.Context(), app.OrgID, app.AccountID, ApplicationStandardReviewRequest{AssignmentID: a.ID, ExpectedRevision: 1, Scope: a.Scope, ScopeID: a.ScopeID, StandardID: a.StandardID, AdmissionVersion: a.AdmissionVersion, Active: false, BatchSize: 1})
+	p, err := s.PreviewApplicationStandardAssignment(t.Context(), app.OrgID, app.AccountID, state.ApplicationStandardReviewRequest{AssignmentID: a.ID, ExpectedRevision: 1, Scope: a.Scope, ScopeID: a.ScopeID, StandardID: a.StandardID, AdmissionVersion: a.AdmissionVersion, Active: false, BatchSize: 1})
 	if err != nil || len(p.Blockers) != 0 {
 		t.Fatalf("removal preview: %+v %v", p.Blockers, err)
 	}
@@ -111,9 +112,9 @@ func removeLastNativeStandard(t *testing.T, s retainedNativeTestStore, app App) 
 	return e
 }
 
-func retainedNativeFixture(t *testing.T, s retainedNativeTestStore) (App, Deployment, ApplicationStandardEnrollment) {
+func retainedNativeFixture(t *testing.T, s retainedNativeTestStore) (state.App, state.Deployment, state.ApplicationStandardEnrollment) {
 	t.Helper()
-	old, receipt := issueConsumedNativeFixture(t, s)
+	old, receipt := state.IssueConsumedNativeFixture(t, s)
 	history, err := s.GetInstanceApplicationStandardAdmission(t.Context(), old.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -123,12 +124,12 @@ func retainedNativeFixture(t *testing.T, s retainedNativeTestStore) (App, Deploy
 		t.Fatal(err)
 	}
 	e := removeLastNativeStandard(t, s, app)
-	assertStandardCaptureHistory(t, s, history)
-	if _, err := s.PublishInstanceApplicationStandardRuntime(t.Context(), old.State, StateRunning, receipt); !errors.Is(err, ErrApplicationStandardRuntimeStale) {
+	state.AssertStandardCaptureHistory(t, s, history)
+	if _, err := s.PublishInstanceApplicationStandardRuntime(t.Context(), old.State, state.StateRunning, receipt); !errors.Is(err, state.ErrApplicationStandardRuntimeStale) {
 		t.Fatalf("old controls published after removal: %v", err)
 	}
-	assertNativeBootUnpublished(t, s, old)
-	if err := s.UpdateInstanceStateToTerminal(t.Context(), old.ID, string(StateStopped), time.Now()); err != nil {
+	state.AssertNativeBootUnpublished(t, s, old)
+	if err := s.UpdateInstanceStateToTerminal(t.Context(), old.ID, string(state.StateStopped), time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	app, err = s.AppByID(t.Context(), old.AppID)
@@ -145,26 +146,26 @@ func retainedNativeFixture(t *testing.T, s retainedNativeTestStore) (App, Deploy
 func retainedNativeAdmissionLifecycle(t *testing.T, s retainedNativeTestStore) {
 	t.Helper()
 	app, dep, enrollment := retainedNativeFixture(t, s)
-	if !ApplicationStandardEnrollmentPermitsRuntime(app, enrollment) {
+	if !state.ApplicationStandardEnrollmentPermitsRuntime(app, enrollment) {
 		t.Fatal("reviewed removal could not boot to obtain its observations")
 	}
 	scan, err := s.GetCurrentDeploymentRuntimeScan(t.Context(), app.AccountID, app.ID, dep.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	publishNativeComposedScan(t, s, app, dep, &scan.Input.Reports[0].Report)
-	ins, capture := createRuntimeArtifactCapture(t, s, app, dep)
+	state.PublishNativeComposedScan(t, s, app, dep, &scan.Input.Reports[0].Report)
+	ins, capture := state.CreateRuntimeArtifactCapture(t, s, app, dep)
 	if !capture.Managed || capture.ArtifactInputHash == "" || capture.PersistedRevision != enrollment.PersistedRevision {
 		t.Fatalf("last removal erased native admission: %+v", capture)
 	}
-	if err := s.UpdateInstanceState(t.Context(), ins.ID, string(StateRunning)); !errors.Is(err, ErrApplicationStandardRuntimeStale) {
+	if err := s.UpdateInstanceState(t.Context(), ins.ID, string(state.StateRunning)); !errors.Is(err, state.ErrApplicationStandardRuntimeStale) {
 		t.Fatalf("legacy publication bypassed retained admission: %v", err)
 	}
 	grant := retainedConsumedGrant(t, s, ins, capture)
-	if _, err := s.PublishInstanceApplicationStandardRuntime(t.Context(), ins.State, StateRunning, nativeArtifactReceipt(grant, false)); err == nil {
+	if _, err := s.PublishInstanceApplicationStandardRuntime(t.Context(), ins.State, state.StateRunning, state.NativeArtifactReceipt(grant, false)); err == nil {
 		t.Fatal("unmeasured receipt published removed standard")
 	}
-	ins, err = s.PublishInstanceApplicationStandardRuntime(t.Context(), ins.State, StateRunning, consumedNativeReceipt(grant, capture))
+	ins, err = s.PublishInstanceApplicationStandardRuntime(t.Context(), ins.State, state.StateRunning, state.ConsumedNativeReceipt(grant, capture))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,24 +174,24 @@ func retainedNativeAdmissionLifecycle(t *testing.T, s retainedNativeTestStore) {
 		t.Fatal(err)
 	}
 	standardRuntimeQualificationRead(t, s, ins, "runtime_inputs_stale")
-	if err := s.UpdateInstanceState(t.Context(), ins.ID, string(StateWarm)); !errors.Is(err, ErrApplicationStandardRuntimeStale) {
+	if err := s.UpdateInstanceState(t.Context(), ins.ID, string(state.StateWarm)); !errors.Is(err, state.ErrApplicationStandardRuntimeStale) {
 		t.Fatalf("retained admission regained legacy plan compatibility: %v", err)
 	}
 }
 
-func retainedConsumedGrant(t *testing.T, s retainedNativeTestStore, ins Instance, capture InstanceApplicationStandardAdmission) runtimeadmission.Binding {
+func retainedConsumedGrant(t *testing.T, s retainedNativeTestStore, ins state.Instance, capture state.InstanceApplicationStandardAdmission) runtimeadmission.Binding {
 	t.Helper()
-	b := runtimeCaptureTestBinding(t, s, ins)
-	if _, err := s.IssueInstanceApplicationStandardBoot(t.Context(), ins.State, b); !errors.Is(err, ErrApplicationStandardRuntimeStale) {
+	b := state.RuntimeCaptureTestBinding(t, s, ins)
+	if _, err := s.IssueInstanceApplicationStandardBoot(t.Context(), ins.State, b); !errors.Is(err, state.ErrApplicationStandardRuntimeStale) {
 		t.Fatalf("legacy artifact protocol gained retained authority: %v", err)
 	}
 	b.ProtocolVersion, b.Incarnation = runtimeadmission.ArtifactProtocolVersion, uuid.NewString()
 	var err error
-	b.ArtifactSourcesHash, err = standardCapturedArtifactSourceHash(capture)
+	b.ArtifactSourcesHash, err = state.StandardCapturedArtifactSourceHash(capture)
 	if err != nil {
 		t.Fatal(err)
 	}
-	registerConsumedNativeIdentity(t, s, b, runtimeadmission.ArtifactProtocolVersion)
+	state.RegisterConsumedNativeIdentity(t, s, b, runtimeadmission.ArtifactProtocolVersion)
 	b, err = s.IssueInstanceApplicationStandardBoot(t.Context(), ins.State, b)
 	if err != nil {
 		t.Fatal(err)
@@ -199,28 +200,28 @@ func retainedConsumedGrant(t *testing.T, s retainedNativeTestStore, ins Instance
 }
 
 func TestMemApplicationStandardRetainedNativeAdmission(t *testing.T) {
-	retainedNativeAdmissionLifecycle(t, NewMemStore())
+	retainedNativeAdmissionLifecycle(t, state.NewMemStore())
 }
 
 func TestMemApplicationStandardRetainedNativeReenrollment(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	app, _, before := retainedNativeFixture(t, m)
-	project, err := m.CreateProject(t.Context(), Project{AccountID: app.AccountID, Slug: "retained-project"})
+	project, err := m.CreateProject(t.Context(), state.Project{AccountID: app.AccountID, Slug: "retained-project"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	m.mu.Lock()
+	(*m.Mu()).Lock()
 	app.ProjectID = project.ID
-	err = m.initializeApplicationStandardEnrollmentLocked(app)
+	err = m.InitializeApplicationStandardEnrollmentLocked(app)
 	if err == nil {
-		m.apps[app.ID] = app
+		(*m.Apps())[app.ID] = app
 	}
-	m.mu.Unlock()
+	(*m.Mu()).Unlock()
 	if err != nil {
 		t.Fatal(err)
 	}
 	after, err := m.GetApplicationStandardEnrollment(t.Context(), app.OrgID, app.ID)
-	if err != nil || after.State != "pending" || after.DesiredRevision != before.DesiredRevision+1 || after.PersistedRevision != before.PersistedRevision || after.EffectiveHash != before.EffectiveHash || !ApplicationStandardEnrollmentRequiresNative(after) || ApplicationStandardEnrollmentPermitsRuntime(app, after) {
+	if err != nil || after.State != "pending" || after.DesiredRevision != before.DesiredRevision+1 || after.PersistedRevision != before.PersistedRevision || after.EffectiveHash != before.EffectiveHash || !state.ApplicationStandardEnrollmentRequiresNative(after) || state.ApplicationStandardEnrollmentPermitsRuntime(app, after) {
 		t.Fatalf("scope change erased native history or permitted stale inputs: %+v %v", after, err)
 	}
 }

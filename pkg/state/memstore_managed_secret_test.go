@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -8,13 +8,14 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestMemStoreManagedSecretRejectsCustomerMutationsButAllowsReseal(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
-	address := secretKey{AppID: "app-a", Scope: "production", Key: "DATABASE_URL"}
-	managed := AppSecret{
+	store := state.NewMemStore()
+	address := state.SecretKey{AppID: "app-a", Scope: "production", Key: "DATABASE_URL"}
+	managed := state.AppSecret{
 		AccountID:                   "account-a",
 		AppID:                       address.AppID,
 		Scope:                       address.Scope,
@@ -34,7 +35,7 @@ func TestMemStoreManagedSecretRejectsCustomerMutationsButAllowsReseal(t *testing
 	}
 	conflicting := managed
 	conflicting.ManagedCredentialRef = "credential-b"
-	if err := store.PutManagedPostgresSecret(ctx, conflicting); !errors.Is(err, ErrConflict) {
+	if err := store.PutManagedPostgresSecret(ctx, conflicting); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("same-generation credential replacement = %v, want ErrConflict", err)
 	}
 
@@ -69,7 +70,7 @@ func TestMemStoreManagedSecretRejectsCustomerMutationsButAllowsReseal(t *testing
 	}
 	for _, mutation := range mutations {
 		t.Run(mutation.name, func(t *testing.T) {
-			if err := mutation.run(); !errors.Is(err, ErrConflict) {
+			if err := mutation.run(); !errors.Is(err, state.ErrConflict) {
 				t.Fatalf("managed secret mutation = %v, want ErrConflict", err)
 			}
 		})
@@ -78,7 +79,7 @@ func TestMemStoreManagedSecretRejectsCustomerMutationsButAllowsReseal(t *testing
 	if err := store.ResealAppSecretWithKidAndValueHashInScope(ctx, "account-a", address.AppID, address.Scope, address.Key, "age1new", "fedcba9876543210", []byte("resealed")); err != nil {
 		t.Fatalf("maintenance reseal: %v", err)
 	}
-	got := store.secrets[address]
+	got := (*store.Secrets())[address]
 	if got.ManagedPostgresBindingID != "binding-a" || got.ManagedCredentialRef != "credential-a" || got.ManagedCredentialGeneration != 1 {
 		t.Fatalf("reseal changed ownership: %+v", got)
 	}
@@ -95,33 +96,33 @@ func TestMemStoreManagedSecretRejectsCustomerMutationsButAllowsReseal(t *testing
 
 func TestMemStoreManagedPostgresSecretMutationsRefreshRuntimeConfig(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
+	store := state.NewMemStore()
 	account, err := store.CreateAccount(ctx, "managed-secret-freshness-"+uuid.NewString()+"@example.test", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, err := store.CreateApp(ctx, App{
+	app, err := store.CreateApp(ctx, state.App{
 		AccountID: account.ID,
 		Slug:      "managed-secret-" + uuid.NewString()[:8],
-		Type:      AppTypeApp,
+		Type:      state.AppTypeApp,
 		RAMMB:     256,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	deployment, err := store.CreateDeployment(ctx, Deployment{
+	deployment, err := store.CreateDeployment(ctx, state.Deployment{
 		AppID:       app.ID,
-		Kind:        DeploymentKindImage,
+		Kind:        state.DeploymentKindImage,
 		ImageDigest: "sha256:managed-postgres-freshness",
-		Status:      DeployLive,
+		Status:      state.DeployLive,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	createSnapshots := func(label string) {
 		t.Helper()
-		for _, tier := range []string{SnapshotTierInit, SnapshotTierWarm} {
-			if _, err := store.CreateSnapshot(ctx, Snapshot{
+		for _, tier := range []string{state.SnapshotTierInit, state.SnapshotTierWarm} {
+			if _, err := store.CreateSnapshot(ctx, state.Snapshot{
 				DeploymentID: deployment.ID,
 				FCVersion:    "fc-test",
 				MemBytes:     1024,
@@ -135,12 +136,12 @@ func TestMemStoreManagedPostgresSecretMutationsRefreshRuntimeConfig(t *testing.T
 	}
 	assertSnapshotsFresh := func(wantFresh bool) {
 		t.Helper()
-		for _, tier := range []string{SnapshotTierInit, SnapshotTierWarm} {
+		for _, tier := range []string{state.SnapshotTierInit, state.SnapshotTierWarm} {
 			_, err := store.LatestSnapshotForTier(ctx, deployment.ID, tier)
 			if wantFresh && err != nil {
 				t.Errorf("%s snapshot should be restorable: %v", tier, err)
 			}
-			if !wantFresh && !errors.Is(err, ErrNotFound) {
+			if !wantFresh && !errors.Is(err, state.ErrNotFound) {
 				t.Errorf("%s snapshot remains restorable after binding change: %v", tier, err)
 			}
 		}
@@ -149,7 +150,7 @@ func TestMemStoreManagedPostgresSecretMutationsRefreshRuntimeConfig(t *testing.T
 	if _, stamped, err := store.AppRuntimeConfigChangedAt(ctx, app.ID); err != nil || stamped {
 		t.Fatalf("initial runtime stamp: stamped=%v err=%v", stamped, err)
 	}
-	secret := AppSecret{
+	secret := state.AppSecret{
 		AccountID:                   account.ID,
 		AppID:                       app.ID,
 		Scope:                       "production",
@@ -178,7 +179,7 @@ func TestMemStoreManagedPostgresSecretMutationsRefreshRuntimeConfig(t *testing.T
 	}
 	conflict := secret
 	conflict.ManagedCredentialRef = "credential-other"
-	if err := store.PutManagedPostgresSecret(ctx, conflict); !errors.Is(err, ErrConflict) {
+	if err := store.PutManagedPostgresSecret(ctx, conflict); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("conflicting managed secret put = %v, want ErrConflict", err)
 	}
 	if afterConflict, _, err := store.AppRuntimeConfigChangedAt(ctx, app.ID); err != nil || !afterConflict.Equal(firstStamp) {

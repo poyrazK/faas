@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestRetryRuntimeAdmissionBusy(t *testing.T) {
@@ -20,15 +21,15 @@ func TestRetryRuntimeAdmissionBusy(t *testing.T) {
 		wantPg   bool
 		attempts int
 	}{
-		{name: "mapped busy then commit", failures: []error{ErrApplicationStandardRuntimeBusy, ErrApplicationStandardRuntimeBusy}, attempts: 3},
+		{name: "mapped busy then commit", failures: []error{state.ErrApplicationStandardRuntimeBusy, state.ErrApplicationStandardRuntimeBusy}, attempts: 3},
 		{name: "raw guard busy then commit", failures: []error{fmt.Errorf("insert: %w", rawBusy)}, attempts: 2},
-		{name: "definitive refusal", failures: []error{ErrApplicationStandardRuntimeStale}, want: ErrApplicationStandardRuntimeStale, attempts: 1},
+		{name: "definitive refusal", failures: []error{state.ErrApplicationStandardRuntimeStale}, want: state.ErrApplicationStandardRuntimeStale, attempts: 1},
 		{name: "other lock refusal", failures: []error{&pgconn.PgError{Code: "55P03"}}, wantPg: true, attempts: 1},
-		{name: "busy past budget", failures: busyAttempts(api.ApplicationStandardRuntimeLockAttempts + 1), want: ErrApplicationStandardRuntimeBusy, attempts: api.ApplicationStandardRuntimeLockAttempts},
+		{name: "busy past budget", failures: busyAttempts(api.ApplicationStandardRuntimeLockAttempts + 1), want: state.ErrApplicationStandardRuntimeBusy, attempts: api.ApplicationStandardRuntimeLockAttempts},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			attempts := 0
-			got, err := retryRuntimeAdmissionBusy(t.Context(), func() (int, error) {
+			got, err := state.RetryRuntimeAdmissionBusy(t.Context(), func() (int, error) {
 				attempts++
 				if attempts <= len(tc.failures) {
 					return 0, tc.failures[attempts-1]
@@ -60,12 +61,12 @@ func TestRetryRuntimeAdmissionBusy(t *testing.T) {
 func TestRetryRuntimeAdmissionBusyStopsWithCaller(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	attempts := 0
-	_, err := retryRuntimeAdmissionBusy(ctx, func() (int, error) {
+	_, err := state.RetryRuntimeAdmissionBusy(ctx, func() (int, error) {
 		attempts++
 		cancel()
-		return 0, ErrApplicationStandardRuntimeBusy
+		return 0, state.ErrApplicationStandardRuntimeBusy
 	})
-	if attempts != 1 || !errors.Is(err, context.Canceled) || !errors.Is(err, ErrApplicationStandardRuntimeBusy) {
+	if attempts != 1 || !errors.Is(err, context.Canceled) || !errors.Is(err, state.ErrApplicationStandardRuntimeBusy) {
 		t.Fatalf("canceled replay: attempts=%d err=%v", attempts, err)
 	}
 }
@@ -76,14 +77,14 @@ func TestRuntimePublicationOutcomeUnknown(t *testing.T) {
 		want bool
 	}{
 		{err: nil},
-		{err: fmt.Errorf("publish: %w", ErrConflict)},
-		{err: ErrApplicationStandardRuntimeStale},
-		{err: ErrApplicationStandardRuntimeBusy},
+		{err: fmt.Errorf("publish: %w", state.ErrConflict)},
+		{err: state.ErrApplicationStandardRuntimeStale},
+		{err: state.ErrApplicationStandardRuntimeBusy},
 		{err: &pgconn.PgError{Code: "23514"}},
 		{err: context.DeadlineExceeded, want: true},
 		{err: errors.New("conn closed"), want: true},
 	} {
-		if got := RuntimePublicationOutcomeUnknown(tc.err); got != tc.want {
+		if got := state.RuntimePublicationOutcomeUnknown(tc.err); got != tc.want {
 			t.Errorf("RuntimePublicationOutcomeUnknown(%v) = %v, want %v", tc.err, got, tc.want)
 		}
 	}
@@ -92,7 +93,7 @@ func TestRuntimePublicationOutcomeUnknown(t *testing.T) {
 func busyAttempts(n int) []error {
 	out := make([]error, n)
 	for i := range out {
-		out[i] = ErrApplicationStandardRuntimeBusy
+		out[i] = state.ErrApplicationStandardRuntimeBusy
 	}
 	return out
 }

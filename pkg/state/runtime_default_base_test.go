@@ -1,4 +1,4 @@
-package state
+package state_test
 
 // adr: 435. Stored byte/report/receipt fixtures are not native acceptance.
 
@@ -10,21 +10,22 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/imagechain"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
-func runtimeDefaultBaseFixture(t *testing.T, s nativeArtifactTestStore) (DeploymentRegistryRootfs, BaseImageProducer, App, Deployment) {
+func runtimeDefaultBaseFixture(t *testing.T, s state.NativeArtifactTestStore) (state.DeploymentRegistryRootfs, state.BaseImageProducer, state.App, state.Deployment) {
 	t.Helper()
-	image := baseProducerFixture(t, "base/unpublished-full.ext4", "independent application")
-	proof, app, dep := registryVerificationFixtureWithChain(t, s, false, image.ImageChain)
+	image := state.BaseProducerFixture(t, "base/unpublished-full.ext4", "independent application")
+	proof, app, dep := state.RegistryVerificationFixtureWithChain(t, s, false, image.ImageChain)
 	signed, err := s.RecordDeploymentRegistryVerification(t.Context(), proof)
 	if err != nil {
 		t.Fatal(err)
 	}
-	base, err := s.PublishBaseImageProducer(t.Context(), baseProducerFixture(t, RuntimeBaseKeyForArch(app.Runtime, "amd64"), "runtime default"))
+	base, err := s.PublishBaseImageProducer(t.Context(), state.BaseProducerFixture(t, state.RuntimeBaseKeyForArch(app.Runtime, "amd64"), "runtime default"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	root, err := s.PublishDeploymentRegistryRootfs(t.Context(), DeploymentRegistryRootfsInput{
+	root, err := s.PublishDeploymentRegistryRootfs(t.Context(), state.DeploymentRegistryRootfsInput{
 		ID: uuid.NewString(), RegistryVerificationID: signed.ID, RegistryInputHash: signed.InputHash,
 		AccountID: app.AccountID, OrgID: app.OrgID, AppID: app.ID, DeploymentID: dep.ID, Scope: dep.Scope,
 		Kind: "full-rootfs", StorageKey: "apps/" + dep.ID + ".ext4", RootfsPath: "/srv/" + dep.ID + ".ext4",
@@ -41,14 +42,14 @@ func runtimeDefaultBaseFixture(t *testing.T, s nativeArtifactTestStore) (Deploym
 	return root, base, app, dep
 }
 
-func runtimeDefaultBaseLifecycle(t *testing.T, s nativeArtifactTestStore) {
+func runtimeDefaultBaseLifecycle(t *testing.T, s state.NativeArtifactTestStore) {
 	t.Helper()
 	root, base, app, dep := runtimeDefaultBaseFixture(t, s)
 	inputs, err := s.GetFreshDeploymentRuntimeProducerInputs(t.Context(), app.AccountID, app.ID, dep.ID)
 	if err != nil || len(inputs.Artifacts) != 2 || inputs.Artifacts[0].ProducerID != base.ID || inputs.Artifacts[1].Kind != "full-rootfs" || inputs.Artifacts[1].BaseProducerID != base.ID {
 		t.Fatal("full-rootfs lost its separate default drive", err)
 	}
-	in := runtimeScanInputFixture(t, inputs)
+	in := state.RuntimeScanInputFixture(t, inputs)
 	first, err := s.PublishDeploymentRuntimeScan(t.Context(), in)
 	if err != nil {
 		t.Fatal(err)
@@ -61,14 +62,14 @@ func runtimeDefaultBaseLifecycle(t *testing.T, s nativeArtifactTestStore) {
 	if _, err := s.PublishBaseImageProducer(t.Context(), replacement); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.GetFreshDeploymentRuntimeProducerInputs(t.Context(), app.AccountID, app.ID, dep.ID); !errors.Is(err, ErrApplicationStandardRuntimeStale) {
+	if _, err := s.GetFreshDeploymentRuntimeProducerInputs(t.Context(), app.AccountID, app.ID, dep.ID); !errors.Is(err, state.ErrApplicationStandardRuntimeStale) {
 		t.Fatal("replaced default drive retained scan inputs", err)
 	}
-	if _, err := s.GetFreshDeploymentRuntimeScan(t.Context(), app.AccountID, app.ID, dep.ID); !errors.Is(err, ErrApplicationStandardRuntimeStale) {
+	if _, err := s.GetFreshDeploymentRuntimeScan(t.Context(), app.AccountID, app.ID, dep.ID); !errors.Is(err, state.ErrApplicationStandardRuntimeStale) {
 		t.Fatal("replaced default drive retained approval", err)
 	}
 	in.ID = uuid.NewString()
-	if _, err := s.PublishDeploymentRuntimeScan(t.Context(), in); !errors.Is(err, ErrApplicationStandardRuntimeStale) {
+	if _, err := s.PublishDeploymentRuntimeScan(t.Context(), in); !errors.Is(err, state.ErrApplicationStandardRuntimeStale) {
 		t.Fatal("old default drive renewed approval", err)
 	}
 	history, err := s.GetCurrentDeploymentRuntimeScan(t.Context(), app.AccountID, app.ID, dep.ID)
@@ -81,7 +82,7 @@ func runtimeDefaultBaseLifecycle(t *testing.T, s nativeArtifactTestStore) {
 	}
 }
 
-func runtimeDefaultBaseRefusals(t *testing.T, newStore func(*testing.T) nativeArtifactTestStore) {
+func runtimeDefaultBaseRefusals(t *testing.T, newStore func(*testing.T) state.NativeArtifactTestStore) {
 	t.Helper()
 	for _, mode := range []string{"wrong hash", "wrong runtime key", "missing guest init", "suffix masquerading as full", "sidecar binding"} {
 		t.Run(mode, func(t *testing.T) {
@@ -99,11 +100,11 @@ func runtimeDefaultBaseRefusals(t *testing.T, newStore func(*testing.T) nativeAr
 	}
 }
 
-func runtimeDefaultBaseRejectedInput(t *testing.T, s nativeArtifactTestStore, root DeploymentRegistryRootfs, base BaseImageProducer, mode string) (DeploymentRegistryRootfsInput, error) {
+func runtimeDefaultBaseRejectedInput(t *testing.T, s state.NativeArtifactTestStore, root state.DeploymentRegistryRootfs, base state.BaseImageProducer, mode string) (state.DeploymentRegistryRootfsInput, error) {
 	t.Helper()
 	in := root.Input
 	in.ID = uuid.NewString()
-	expected := ErrApplicationStandardRuntimeStale
+	expected := state.ErrApplicationStandardRuntimeStale
 	switch mode {
 	case "wrong hash":
 		in.BaseInputHash = strings.Repeat("0", 64)
@@ -124,23 +125,23 @@ func runtimeDefaultBaseRejectedInput(t *testing.T, s nativeArtifactTestStore, ro
 		in.LayerStart, in.Layers = 1, nil
 	case "sidecar binding":
 		in.Kind, in.WorkloadName, in.RootfsPath = "sidecar-layer", "metrics", ""
-		expected = ErrInvalidArgument
+		expected = state.ErrInvalidArgument
 	}
 	return in, expected
 }
 
-func runtimeDefaultBaseNativeAuthority(t *testing.T, s nativeArtifactTestStore) {
+func runtimeDefaultBaseNativeAuthority(t *testing.T, s state.NativeArtifactTestStore) {
 	t.Helper()
 	_, base, app, dep := runtimeDefaultBaseFixture(t, s)
-	app = manageNativeArtifactApp(t, s, app)
+	app = state.ManageNativeArtifactApp(t, s, app)
 	value := publishCleanRuntimeDefaultScan(t, s, app, dep)
 	var err error
 	policy := api.AppSecurityPolicyEnforce
-	app, err = s.UpdateApp(t.Context(), app.ID, UpdateAppParams{SetSecurityPolicy: true, SecurityPolicy: &policy})
+	app, err = s.UpdateApp(t.Context(), app.ID, state.UpdateAppParams{SetSecurityPolicy: true, SecurityPolicy: &policy})
 	if err != nil {
 		t.Fatal(err)
 	}
-	ins, candidate := nativeArtifactAttempt(t, s, app, dep)
+	ins, candidate := state.NativeArtifactAttempt(t, s, app, dep)
 	capture, err := s.GetInstanceApplicationStandardAdmission(t.Context(), ins.ID)
 	if err != nil || len(capture.RuntimeArtifacts) != 2 || capture.RuntimeArtifacts[0].ProducerID != base.ID || capture.RuntimeArtifacts[1].Kind != "full-rootfs" {
 		t.Fatal("native capture omitted a physical source", err)
@@ -149,7 +150,7 @@ func runtimeDefaultBaseNativeAuthority(t *testing.T, s nativeArtifactTestStore) 
 	if err != nil || grant.ExpiresAtUnixNano != value.ExpiresAt.UnixNano() {
 		t.Fatal("full-rootfs composed authority refused", err)
 	}
-	if _, err := s.PublishInstanceApplicationStandardRuntime(t.Context(), ins.State, StateRunning, nativeArtifactReceipt(grant, false)); err != nil {
+	if _, err := s.PublishInstanceApplicationStandardRuntime(t.Context(), ins.State, state.StateRunning, state.NativeArtifactReceipt(grant, false)); err != nil {
 		t.Fatal(err)
 	}
 	e, err := s.GetApplicationStandardEnrollment(t.Context(), app.OrgID, app.ID)
@@ -158,13 +159,13 @@ func runtimeDefaultBaseNativeAuthority(t *testing.T, s nativeArtifactTestStore) 
 	}
 }
 
-func publishCleanRuntimeDefaultScan(t *testing.T, s nativeArtifactTestStore, app App, dep Deployment) DeploymentRuntimeScan {
+func publishCleanRuntimeDefaultScan(t *testing.T, s state.NativeArtifactTestStore, app state.App, dep state.Deployment) state.DeploymentRuntimeScan {
 	t.Helper()
 	inputs, err := s.GetFreshDeploymentRuntimeProducerInputs(t.Context(), app.AccountID, app.ID, dep.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	in := runtimeScanInputFixture(t, inputs)
+	in := state.RuntimeScanInputFixture(t, inputs)
 	for i := range in.Reports {
 		in.Reports[i].Report.Vulnerabilities, in.Reports[i].Report.SeverityCounts = []api.Vulnerability{}, api.SeverityCounts{}
 	}
@@ -175,10 +176,12 @@ func publishCleanRuntimeDefaultScan(t *testing.T, s nativeArtifactTestStore, app
 	return value
 }
 
-func TestMemRuntimeDefaultBaseLifecycle(t *testing.T) { runtimeDefaultBaseLifecycle(t, NewMemStore()) }
+func TestMemRuntimeDefaultBaseLifecycle(t *testing.T) {
+	runtimeDefaultBaseLifecycle(t, state.NewMemStore())
+}
 func TestMemRuntimeDefaultBaseRefusals(t *testing.T) {
-	runtimeDefaultBaseRefusals(t, func(*testing.T) nativeArtifactTestStore { return NewMemStore() })
+	runtimeDefaultBaseRefusals(t, func(*testing.T) state.NativeArtifactTestStore { return state.NewMemStore() })
 }
 func TestMemRuntimeDefaultBaseNativeAuthority(t *testing.T) {
-	runtimeDefaultBaseNativeAuthority(t, NewMemStore())
+	runtimeDefaultBaseNativeAuthority(t, state.NewMemStore())
 }

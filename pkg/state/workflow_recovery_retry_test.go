@@ -1,10 +1,11 @@
-package state
+package state_test
 
 import (
 	"context"
 	"errors"
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 	"testing"
 	"time"
 )
@@ -12,11 +13,11 @@ import (
 func TestWorkflowRecoveryReviewedRetries(t *testing.T) {
 	for _, scenario := range []string{"queue", "changed", "parent_pruned", "success", "unknown", "wrong_position", "wrong_count"} {
 		t.Run(scenario, func(t *testing.T) {
-			workflowScheduleStores(t, func(t *testing.T, store Store) {
+			state.WorkflowScheduleStores(t, func(t *testing.T, store state.Store) {
 				ctx := context.Background()
-				run, app := seedResumeRun(t, store, simpleResumeSpec())
-				failResumeRun(t, store, run, "send")
-				recovery := store.(EventRecoveryStore)
+				run, app := state.SeedResumeRun(t, store, state.SimpleResumeSpec())
+				state.FailResumeRun(t, store, run, "send")
+				recovery := store.(state.EventRecoveryStore)
 				parent, err := recovery.CreateEventRecovery(ctx, app.AccountID, app.ID, api.EventRecoveryRequest{RequestID: uuid.NewString(), WorkflowRuns: &api.WorkflowRunRecoveryPlan{Name: run.WorkflowName, Runs: []api.WorkflowRunRecoveryTarget{{RunID: run.ID}}}})
 				if err != nil {
 					t.Fatal(err)
@@ -32,7 +33,7 @@ func TestWorkflowRecoveryReviewedRetries(t *testing.T) {
 					if _, err := store.ClaimNextDueWorkflowRun(ctx); err != nil {
 						t.Fatal(err)
 					}
-					failResumeRun(t, store, run, "send")
+					state.FailResumeRun(t, store, run, "send")
 				}
 				if scenario == "success" {
 					if err := store.MarkWorkflowRunStatus(ctx, run.ID, outcome, nil, nil); err != nil {
@@ -49,10 +50,10 @@ func TestWorkflowRecoveryReviewedRetries(t *testing.T) {
 				_, err = recovery.PreviewEventRecovery(ctx, app.AccountID, app.ID, req)
 				reject := scenario == "success" || scenario == "unknown" || scenario == "wrong_position" || scenario == "wrong_count"
 				if reject {
-					if !errors.Is(err, ErrEventRecoveryChanged) {
+					if !errors.Is(err, state.ErrEventRecoveryChanged) {
 						t.Fatalf("unsafe preview=%v", err)
 					}
-					if _, err = recovery.CreateEventRecovery(ctx, app.AccountID, app.ID, req); !errors.Is(err, ErrEventRecoveryChanged) {
+					if _, err = recovery.CreateEventRecovery(ctx, app.AccountID, app.ID, req); !errors.Is(err, state.ErrEventRecoveryChanged) {
 						t.Fatalf("unsafe create=%v", err)
 					}
 					return
@@ -65,17 +66,17 @@ func TestWorkflowRecoveryReviewedRetries(t *testing.T) {
 					t.Fatal(err)
 				}
 				if scenario == "changed" {
-					if _, _, _, err = store.(WorkflowResumeStore).ResumeWorkflowRun(ctx, resumeOptions(run, app, 1)); err != nil {
+					if _, _, _, err = store.(state.WorkflowResumeStore).ResumeWorkflowRun(ctx, state.ResumeOptions(run, app, 1)); err != nil {
 						t.Fatal(err)
 					}
 				}
 				if scenario == "parent_pruned" {
-					if mem, ok := store.(*MemStore); ok {
-						mem.mu.Lock()
-						delete(mem.eventRecoveryJobs, canonicalMemUUID(parent.ID))
-						mem.mu.Unlock()
+					if mem, ok := store.(*state.MemStore); ok {
+						(*mem.Mu()).Lock()
+						delete((*mem.EventRecoveryJobs()), state.CanonicalMemUUID(parent.ID))
+						(*mem.Mu()).Unlock()
 					} else {
-						if _, err = store.(*PgStore).pool.Exec(ctx, "DELETE FROM event_recovery_jobs WHERE id=$1::uuid", parent.ID); err != nil {
+						if _, err = (*store.(*state.PgStore).Pool()).Exec(ctx, "DELETE FROM event_recovery_jobs WHERE id=$1::uuid", parent.ID); err != nil {
 							t.Fatal(err)
 						}
 					}

@@ -1,5 +1,5 @@
 // Mirrors pkg/api/limits.go; TestAuthTemplateRuntimeBounds checks this contract.
-export const limits = Object.freeze({ accessTokenSeconds: 600, pool: 4, frontPool: 2, bodyBytes: 1048576, authzBodyBytes: 65536, authzConfigBytes: 65536, redirectURLs: 50, migrationStatementMs: 600000, invitationSeconds: 604800, emailTimeoutMs: 10000, hookBodyBytes: 262144, storageURLSeconds: 60, adminBodyBytes: 1048576, importBatch: 100, adminPageSize: 100, reauthenticationSeconds: 600, emailSubjectChars: 150, emailBodyBytes: 4000, signingKeys: 4, uiNameChars: 60, auditRetentionMaxDays: 3650, auditPruneBatch: 5000, auditPruneBatches: 20, auditPruneIntervalSeconds: 21600, eventBatch: 50, eventLeaseSeconds: 120, eventMaxBackoffSeconds: 3600, eventRetentionSeconds: 259200, smsCodeSeconds: 300, ssoMetadataBytes: 524288, ssoDomains: 50, smsCountries: 50, goTrueMemoryDivisor: 3, goTrueMemoryMinMiB: 32, scimPageSize: 100, scimBodyBytes: 65536, oauthClients: 1000, anonymousRetentionMaxDays: 3650, teamMembers: 500, teamInvitations: 500, teamEmailBytes: 320, teamContextBytes: 4096, teamInvitationMinSeconds: 300, teamInvitationMaxSeconds: 1209600, teamHistoryPageSize: 100, teamCursorBytes: 1024, emailGrantSeconds: 2592000 })
+export const limits = Object.freeze({ accessTokenSeconds: 600, pool: 4, frontPool: 2, bodyBytes: 1048576, authzBodyBytes: 65536, authzConfigBytes: 65536, redirectURLs: 50, migrationStatementMs: 600000, invitationSeconds: 604800, emailTimeoutMs: 10000, hookBodyBytes: 262144, storageURLSeconds: 60, adminBodyBytes: 1048576, importBatch: 100, adminPageSize: 100, customClaimsBytes: 1000, signupDomains: 100, waitlistPending: 10000, signupApproveBatch: 100, impersonationDefaultMinutes: 30, impersonationMaxMinutes: 60, reauthenticationSeconds: 600, emailSubjectChars: 150, emailBodyBytes: 4000, signingKeys: 4, uiNameChars: 60, auditRetentionMaxDays: 3650, auditPruneBatch: 5000, auditPruneBatches: 20, auditPruneIntervalSeconds: 21600, eventBatch: 50, eventLeaseSeconds: 120, eventMaxBackoffSeconds: 3600, eventRetentionSeconds: 259200, smsCodeSeconds: 300, ssoMetadataBytes: 524288, ssoDomains: 50, smsCountries: 50, goTrueMemoryDivisor: 3, goTrueMemoryMinMiB: 32, scimPageSize: 100, scimBodyBytes: 65536, oauthClients: 1000, anonymousRetentionMaxDays: 3650, teamMembers: 500, teamInvitations: 500, teamEmailBytes: 320, teamContextBytes: 4096, teamInvitationMinSeconds: 300, teamInvitationMaxSeconds: 1209600, teamHistoryPageSize: 100, teamCursorBytes: 1024, emailGrantSeconds: 2592000 })
 
 import { createECDH, createPrivateKey } from 'node:crypto'
 import { totalmem } from 'node:os'
@@ -195,6 +195,30 @@ export function pagePolicy(branding, captcha) {
     `img-src ${img.join(' ')}`, ...(extra.length ? [`frame-src ${extra.join(' ')}`] : []), "form-action 'self'", "frame-ancestors 'none'", "base-uri 'none'"].join('; ')
 }
 
+// Sign-up restrictions (signups.mjs): domains, throwaway addresses, access.
+const signupDomainPattern = /^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]([a-z0-9-]{0,61}[a-z0-9])?$/
+export const signupAccessModes = Object.freeze(['open', 'invite', 'waitlist'])
+
+function signupDomainList(value, name) {
+  if (value === undefined || value === '') return []
+  const list = [...new Set(value.split(',').map(domain => domain.trim().toLowerCase()))]
+  if (list.length > limits.signupDomains || list.some(domain => !signupDomainPattern.test(domain))) throw new Error(`Invalid ${name}`)
+  return list
+}
+
+// signupPolicy reads the restrictions from the app's settings, or null when
+// there are none, so GoTrue's hook stays off.
+export function signupPolicy(env) {
+  const allowed = signupDomainList(env.AUTH_SIGNUP_ALLOWED_DOMAINS, 'AUTH_SIGNUP_ALLOWED_DOMAINS')
+  const blocked = signupDomainList(env.AUTH_SIGNUP_BLOCKED_DOMAINS, 'AUTH_SIGNUP_BLOCKED_DOMAINS')
+  const disposable = env.AUTH_SIGNUP_BLOCK_DISPOSABLE ?? '0'
+  if (disposable !== '0' && disposable !== '1') throw new Error('Invalid AUTH_SIGNUP_BLOCK_DISPOSABLE')
+  const access = env.AUTH_SIGNUP_ACCESS ?? 'open'
+  if (!signupAccessModes.includes(access)) throw new Error('Invalid AUTH_SIGNUP_ACCESS')
+  if (!allowed.length && !blocked.length && disposable === '0' && access === 'open') return null
+  return { allowed: allowed.length ? new Set(allowed) : null, blocked: new Set(blocked), disposable: disposable === '1', access }
+}
+
 export function runtimeConfig(env) {
   const external = httpsOrigin(env.AUTH_EXTERNAL_URL, 'AUTH_EXTERNAL_URL')
   const site = redirectURL(env.AUTH_SITE_URL, 'AUTH_SITE_URL')
@@ -202,7 +226,7 @@ export function runtimeConfig(env) {
   if (redirects.length > limits.redirectURLs) throw new Error('Too many AUTH_REDIRECT_URLS')
   redirects.forEach(value => redirectURL(value, 'AUTH_REDIRECT_URLS'))
   if (typeof env.AUTH_JWT_SECRET !== 'string' || env.AUTH_JWT_SECRET.length < 32) throw new Error('AUTH_JWT_SECRET must hold at least 32 characters')
-  for (const flag of ['AUTH_AUTOCONFIRM', 'AUTH_DISABLE_SIGNUP', 'AUTH_LIFECYCLE_EVENTS', 'AUTH_SSO', 'AUTH_ORG_SSO', 'AUTH_OAUTH_SERVER', 'AUTH_OAUTH_REGISTRATION', 'AUTH_IDENTITY_LINKING', 'AUTH_SELF_DELETION', 'AUTH_ORG_CLAIMS']) {
+  for (const flag of ['AUTH_AUTOCONFIRM', 'AUTH_DISABLE_SIGNUP', 'AUTH_LIFECYCLE_EVENTS', 'AUTH_SSO', 'AUTH_ORG_SSO', 'AUTH_OAUTH_SERVER', 'AUTH_OAUTH_REGISTRATION', 'AUTH_IDENTITY_LINKING', 'AUTH_SELF_DELETION', 'AUTH_ORG_CLAIMS', 'AUTH_IMPERSONATION']) {
     if (env[flag] !== undefined && env[flag] !== '1' && env[flag] !== '0') throw new Error(`Invalid ${flag}`)
   }
   const passthrough = {}
@@ -229,7 +253,10 @@ export function runtimeConfig(env) {
     GOTRUE_SITE_URL: site,
     // The hosted pages are always a valid redirect target (password reset).
     // GoTrue checks the consent page's requests against this list by origin.
-    GOTRUE_URI_ALLOW_LIST: [...redirects, `${external}/ui/**`, ...(env.AUTH_OAUTH_SERVER === '1' ? [external] : [])].join(','),
+    // A wallet signs a message naming the page's host; GoTrue accepts the
+    // hosted pages' host only when it is an allowed redirect URL itself.
+    GOTRUE_URI_ALLOW_LIST: [...redirects, `${external}/ui/**`, ...(env.AUTH_OAUTH_SERVER === '1' ? [external] : []),
+      ...(passthrough.GOTRUE_EXTERNAL_WEB3_ETHEREUM_ENABLED === 'true' || passthrough.GOTRUE_EXTERNAL_WEB3_SOLANA_ENABLED === 'true' ? [`${external}/`] : [])].join(','),
     GOTRUE_DB_DRIVER: 'postgres',
     DATABASE_URL: databaseURL(env.DATABASE_URL),
     DB_NAMESPACE: 'auth',
@@ -269,6 +296,11 @@ export function runtimeConfig(env) {
   const config = { external, api, gotrueEnv, redirects, keys: { signing: keys.signing, verifying: keys.verifying }, authz: authzConfig(env.AUTH_AUTHZ), origins: browserOrigins(site, redirects), email, app: branding.name, branding, captcha, lifecycleEvents: env.AUTH_LIFECYCLE_EVENTS === '1', auditRetentionDays: retention === '' ? null : Number(retention), smsCountries: smsCountries(env),
     // Self-service organization SSO needs SSO itself.
     orgSSO: env.AUTH_ORG_SSO === '1' && gotrueEnv.GOTRUE_SAML_ENABLED === 'true',
+    signups: signupPolicy(env),
+    // The admin key may open time-limited sessions as users (impersonation.mjs).
+    impersonation: env.AUTH_IMPERSONATION === '1',
+    // Wallet sign-in (Sign-In With Ethereum / Solana), verified by GoTrue.
+    web3: { ethereum: gotrueEnv.GOTRUE_EXTERNAL_WEB3_ETHEREUM_ENABLED === 'true', solana: gotrueEnv.GOTRUE_EXTERNAL_WEB3_SOLANA_ENABLED === 'true' },
     oauth: env.AUTH_OAUTH_SERVER === '1', selfDeletion: env.AUTH_SELF_DELETION === '1', orgClaims: env.AUTH_ORG_CLAIMS === '1', anonymousRetentionDays: anonymousRetention === '' ? null : Number(anonymousRetention), productControlTeamEnabled: env.AUTH_PRODUCT_CONTROL_TEAM_ENABLED === '1', productControlEmailEnabled: env.AUTH_PRODUCT_CONTROL_EMAIL_ENABLED === '1' }
   return { ...config, settings: publicSettings(config) }
 }
@@ -277,7 +309,7 @@ export function runtimeConfig(env) {
 // anyway (published key IDs, enabled providers, rules a sign-up form shows)
 // or harmless. The CLI and dashboard read settings here because app secrets
 // are write-only.
-export function publicSettings({ gotrueEnv: g, redirects, keys, email, app, branding, captcha, lifecycleEvents, auditRetentionDays, smsCountries: countries, orgSSO, anonymousRetentionDays, selfDeletion, orgClaims }) {
+export function publicSettings({ gotrueEnv: g, redirects, keys, email, app, branding, captcha, lifecycleEvents, auditRetentionDays, smsCountries: countries, orgSSO, anonymousRetentionDays, selfDeletion, orgClaims, signups, impersonation, web3 }) {
   const passkeys = g.GOTRUE_PASSKEY_ENABLED === 'true'
   const flag = (value, fallback) => value === undefined ? fallback : value === 'true'
   const required = (g.GOTRUE_PASSWORD_REQUIRED_CHARACTERS ?? '').split(':').filter(Boolean)
@@ -286,7 +318,10 @@ export function publicSettings({ gotrueEnv: g, redirects, keys, email, app, bran
     app,
     site_url: g.GOTRUE_SITE_URL,
     redirect_urls: redirects,
-    signup: { enabled: g.GOTRUE_DISABLE_SIGNUP !== 'true', autoconfirm: g.GOTRUE_MAILER_AUTOCONFIRM === 'true' },
+    // Allowed domains and the access mode are what a sign-up form may show;
+    // of blocked domains only the number is reported.
+    signup: { enabled: g.GOTRUE_DISABLE_SIGNUP !== 'true', autoconfirm: g.GOTRUE_MAILER_AUTOCONFIRM === 'true', access: signups?.access ?? 'open',
+      allowed_domains: signups?.allowed ? [...signups.allowed] : null, block_disposable: signups?.disposable === true, blocked_domains: signups?.blocked.size ?? 0 },
     providers: providers.filter(provider => g[`GOTRUE_EXTERNAL_${provider.toUpperCase()}_ENABLED`] === 'true'),
     // GoTrue's defaults: six characters, no classes, TOTP enrolment on.
     // `--mfa off` stops enrolment only; enrolled users keep verifying.
@@ -303,6 +338,10 @@ export function publicSettings({ gotrueEnv: g, redirects, keys, email, app, bran
     self_deletion: selfDeletion === true,
     // Access tokens carry the session's active organization (org_* claims).
     organization_claims: orgClaims === true,
+    // Support staff with the admin key may open sessions as users.
+    impersonation: impersonation === true,
+    // Chains people may sign in with a wallet from.
+    web3: { ethereum: web3?.ethereum === true, solana: web3?.solana === true },
     passkeys: { enabled: passkeys, rp_id: g.GOTRUE_WEBAUTHN_RP_ID, origins: g.GOTRUE_WEBAUTHN_RP_ORIGINS.split(',').filter(Boolean) },
     branding: { name: branding.name, color: branding.color, logo_url: branding.logoURL },
     captcha: captcha ? { provider: captcha.provider, site_key: captcha.siteKey } : null,

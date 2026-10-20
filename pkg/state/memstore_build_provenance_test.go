@@ -7,7 +7,7 @@
 // semantics in a single map keyed by build_id).
 //
 // Build tag matches memstore_test.go:1 (no build tag — pure unit).
-package state
+package state_test
 
 import (
 	"context"
@@ -16,16 +16,17 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestMemStore_BuildProvenance_RoundTrip(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	ctx := context.Background()
 
 	acc, _ := m.CreateAccount(ctx, "prov-mem@example.com", api.PlanHobby)
-	app, _ := m.CreateApp(ctx, App{AccountID: acc.ID, Slug: "prov-mem-app"})
-	dep, _ := m.CreateDeployment(ctx, Deployment{AppID: app.ID, ImageDigest: "sha256:prov"})
-	build, _ := m.CreateBuild(ctx, dep.ID, DeploymentKindDockerfile, 1024, "")
+	app, _ := m.CreateApp(ctx, state.App{AccountID: acc.ID, Slug: "prov-mem-app"})
+	dep, _ := m.CreateDeployment(ctx, state.Deployment{AppID: app.ID, ImageDigest: "sha256:prov"})
+	build, _ := m.CreateBuild(ctx, dep.ID, state.DeploymentKindDockerfile, 1024, "")
 
 	// Pretend ClaimQueuedBuild + UpdateBuildStatus ran.
 	build.StartedAt = time.Now()
@@ -37,7 +38,7 @@ func TestMemStore_BuildProvenance_RoundTrip(t *testing.T) {
 	const wantPlan = string(api.PlanHobby)
 	const wantNode = "default-local"
 
-	prov := BuildProvenance{
+	prov := state.BuildProvenance{
 		BuildID:       build.ID,
 		BuildkitVer:   "",
 		RailpackVer:   "",
@@ -86,32 +87,32 @@ func TestMemStore_BuildProvenance_RoundTrip(t *testing.T) {
 }
 
 func TestMemStore_BuildProvenance_NotFound(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	ctx := context.Background()
 
 	acc, _ := m.CreateAccount(ctx, "prov-mem-404@example.com", api.PlanFree)
-	app, _ := m.CreateApp(ctx, App{AccountID: acc.ID, Slug: "no-prov"})
-	dep, _ := m.CreateDeployment(ctx, Deployment{AppID: app.ID, ImageDigest: "sha256:np"})
-	build, _ := m.CreateBuild(ctx, dep.ID, DeploymentKindDockerfile, 0, "")
+	app, _ := m.CreateApp(ctx, state.App{AccountID: acc.ID, Slug: "no-prov"})
+	dep, _ := m.CreateDeployment(ctx, state.Deployment{AppID: app.ID, ImageDigest: "sha256:np"})
+	build, _ := m.CreateBuild(ctx, dep.ID, state.DeploymentKindDockerfile, 0, "")
 
 	// No CreateBuildProvenance call — the apid handler turns this
 	// into 404 with code=build_provenance_not_found. Pin the
 	// exact sentinel.
 	_, err := m.BuildProvenanceByBuildID(ctx, build.ID)
-	if !errors.Is(err, ErrNotFound) {
+	if !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("BuildProvenanceByBuildID err = %v, want ErrNotFound", err)
 	}
 }
 
 func TestMemStore_BuildProvenance_RunnerDigestUpdate(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	ctx := context.Background()
 
 	acc, _ := m.CreateAccount(ctx, "prov-mem-runner@example.com", api.PlanHobby)
-	app, _ := m.CreateApp(ctx, App{AccountID: acc.ID, Slug: "runner-digest"})
-	dep, _ := m.CreateDeployment(ctx, Deployment{AppID: app.ID, ImageDigest: "sha256:runner"})
-	build, _ := m.CreateBuild(ctx, dep.ID, DeploymentKindTarball, 0, "")
-	if err := m.CreateBuildProvenance(ctx, BuildProvenance{BuildID: build.ID}); err != nil {
+	app, _ := m.CreateApp(ctx, state.App{AccountID: acc.ID, Slug: "runner-digest"})
+	dep, _ := m.CreateDeployment(ctx, state.Deployment{AppID: app.ID, ImageDigest: "sha256:runner"})
+	build, _ := m.CreateBuild(ctx, dep.ID, state.DeploymentKindTarball, 0, "")
+	if err := m.CreateBuildProvenance(ctx, state.BuildProvenance{BuildID: build.ID}); err != nil {
 		t.Fatalf("CreateBuildProvenance: %v", err)
 	}
 
@@ -126,22 +127,22 @@ func TestMemStore_BuildProvenance_RunnerDigestUpdate(t *testing.T) {
 	if got.RunnerDigest != want {
 		t.Fatalf("RunnerDigest = %q, want %q", got.RunnerDigest, want)
 	}
-	if err := m.UpdateBuildProvenanceRunnerDigest(ctx, "missing", want); !errors.Is(err, ErrNotFound) {
+	if err := m.UpdateBuildProvenanceRunnerDigest(ctx, "missing", want); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("missing update = %v, want ErrNotFound", err)
 	}
 }
 
 func TestMemStore_BuildProvenance_IdempotentReplace(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	ctx := context.Background()
 
 	acc, _ := m.CreateAccount(ctx, "prov-mem-idem@example.com", api.PlanPro)
-	app, _ := m.CreateApp(ctx, App{AccountID: acc.ID, Slug: "idem"})
-	dep, _ := m.CreateDeployment(ctx, Deployment{AppID: app.ID, ImageDigest: "sha256:idem"})
-	build, _ := m.CreateBuild(ctx, dep.ID, DeploymentKindDockerfile, 0, "")
+	app, _ := m.CreateApp(ctx, state.App{AccountID: acc.ID, Slug: "idem"})
+	dep, _ := m.CreateDeployment(ctx, state.Deployment{AppID: app.ID, ImageDigest: "sha256:idem"})
+	build, _ := m.CreateBuild(ctx, dep.ID, state.DeploymentKindDockerfile, 0, "")
 	now := time.Now()
 
-	first := BuildProvenance{
+	first := state.BuildProvenance{
 		BuildID:       build.ID,
 		SourceSHA256:  "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
 		Plan:          "pro",

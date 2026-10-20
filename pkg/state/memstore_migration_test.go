@@ -1,4 +1,4 @@
-package state
+package state_test
 
 // memstore-side coverage tests for the Tier A6 / ADR-067
 // migrating-instance watchdog surface. The pgstore parity tests
@@ -36,27 +36,28 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // seedReconcileMemStore seeds a MemStore with one app + one
 // instance in 'migrating' on the given node, with a fresh lease
 // token. Mirrors seedRunningInstance in pgstore_migration_test.go
 // but on the in-memory store. Returns the instance id + lease.
-func seedReconcileMemStore(t *testing.T, m *MemStore, nodeID string) (instanceID, leaseToken string) {
+func seedReconcileMemStore(t *testing.T, m *state.MemStore, nodeID string) (instanceID, leaseToken string) {
 	t.Helper()
 	ctx := context.Background()
 	acct, err := m.CreateAccount(ctx, "recon-mem-"+uuid.NewString()+"@example.com", api.PlanHobby)
 	if err != nil {
 		t.Fatalf("CreateAccount: %v", err)
 	}
-	app, err := m.CreateApp(ctx, App{
+	app, err := m.CreateApp(ctx, state.App{
 		AccountID: acct.ID, Slug: "recon-mem-" + uuid.NewString(),
-		NodeID: nodeID, Status: AppActive, RAMMB: 256,
+		NodeID: nodeID, Status: state.AppActive, RAMMB: 256,
 	})
 	if err != nil {
 		t.Fatalf("CreateApp: %v", err)
 	}
-	ins, err := m.CreateInstance(ctx, app.ID, "", string(StateRunning), 256, nodeID, "")
+	ins, err := m.CreateInstance(ctx, app.ID, "", string(state.StateRunning), 256, nodeID, "")
 	if err != nil {
 		t.Fatalf("CreateInstance: %v", err)
 	}
@@ -75,7 +76,7 @@ func seedReconcileMemStore(t *testing.T, m *MemStore, nodeID string) (instanceID
 //   - cap=50 of 60 returned (the rest stay for the next tick)
 func TestMemStore_ListExpiredMigrations(t *testing.T) {
 	ctx := context.Background()
-	m := NewMemStore()
+	m := state.NewMemStore()
 	nodeID := "recon-list-" + uuid.NewString()
 
 	// 60 seeded migrating rows on the same node.
@@ -92,15 +93,15 @@ func TestMemStore_ListExpiredMigrations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	leaseLessApp, err := m.CreateApp(ctx, App{
+	leaseLessApp, err := m.CreateApp(ctx, state.App{
 		AccountID: account.ID,
 		Slug:      "recon-leak-" + uuid.NewString(),
-		NodeID:    nodeID, Status: AppActive, RAMMB: 256,
+		NodeID:    nodeID, Status: state.AppActive, RAMMB: 256,
 	})
 	if err != nil {
 		t.Fatalf("CreateApp: %v", err)
 	}
-	leaseLessIns, err := m.CreateInstance(ctx, leaseLessApp.ID, "", string(StateMigrating), 256, nodeID, "")
+	leaseLessIns, err := m.CreateInstance(ctx, leaseLessApp.ID, "", string(state.StateMigrating), 256, nodeID, "")
 	if err != nil {
 		t.Fatalf("CreateInstance lease-less: %v", err)
 	}
@@ -140,7 +141,7 @@ func TestMemStore_ListExpiredMigrations(t *testing.T) {
 
 func TestMemStore_ListExpiredMigrationsHonorsLeaseAge(t *testing.T) {
 	ctx := context.Background()
-	m := NewMemStore()
+	m := state.NewMemStore()
 	nodeID := "recon-age-" + uuid.NewString()
 	oldID, _ := seedReconcileMemStore(t, m, nodeID)
 	freshID, _ := seedReconcileMemStore(t, m, nodeID)
@@ -172,7 +173,7 @@ func TestMemStore_ListExpiredMigrationsHonorsLeaseAge(t *testing.T) {
 // active-owner ack gate.
 func TestMemStore_ReinviteMigratingInstance(t *testing.T) {
 	ctx := context.Background()
-	m := NewMemStore()
+	m := state.NewMemStore()
 	nodeID := "reinvite-" + uuid.NewString()
 	insID, lease := seedReconcileMemStore(t, m, nodeID)
 
@@ -184,8 +185,8 @@ func TestMemStore_ReinviteMigratingInstance(t *testing.T) {
 	if err != nil {
 		t.Fatalf("InstanceByID: %v", err)
 	}
-	if got.State != string(StateRunning) {
-		t.Errorf("post-reinvite state=%q want %q", got.State, StateRunning)
+	if got.State != string(state.StateRunning) {
+		t.Errorf("post-reinvite state=%q want %q", got.State, state.StateRunning)
 	}
 	if got.LeaseToken != "" {
 		t.Errorf("post-reinvite lease_token=%q want empty", got.LeaseToken)
@@ -196,15 +197,15 @@ func TestMemStore_ReinviteMigratingInstance(t *testing.T) {
 	}
 
 	// Wrong lease → ErrConflict (cannot double-commit).
-	if err := m.ReinviteMigratingInstance(ctx, insID, "wrong-lease"); !errors.Is(err, ErrConflict) {
+	if err := m.ReinviteMigratingInstance(ctx, insID, "wrong-lease"); !errors.Is(err, state.ErrConflict) {
 		t.Errorf("Reinvite wrong-lease: %v; want ErrConflict", err)
 	}
 	// Missing row → ErrNotFound.
-	if err := m.ReinviteMigratingInstance(ctx, "00000000-0000-0000-0000-000000000099", "any"); !errors.Is(err, ErrNotFound) {
+	if err := m.ReinviteMigratingInstance(ctx, "00000000-0000-0000-0000-000000000099", "any"); !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("Reinvite missing: %v; want ErrNotFound", err)
 	}
 	// Already-running row → ErrConflict (state predicate fails).
-	if err := m.ReinviteMigratingInstance(ctx, insID, lease); !errors.Is(err, ErrConflict) {
+	if err := m.ReinviteMigratingInstance(ctx, insID, lease); !errors.Is(err, state.ErrConflict) {
 		t.Errorf("Reinvite already-running: %v; want ErrConflict", err)
 	}
 	// Empty args rejected.
@@ -227,7 +228,7 @@ func TestMemStore_ReinviteMigratingInstance(t *testing.T) {
 // dispatches via app.NodeID, the dead instance.NodeID is harmless).
 func TestMemStore_AbortMigratingInstance(t *testing.T) {
 	ctx := context.Background()
-	m := NewMemStore()
+	m := state.NewMemStore()
 	nodeID := "abort-" + uuid.NewString()
 	insID, lease := seedReconcileMemStore(t, m, nodeID)
 
@@ -239,8 +240,8 @@ func TestMemStore_AbortMigratingInstance(t *testing.T) {
 	if err != nil {
 		t.Fatalf("InstanceByID: %v", err)
 	}
-	if got.State != string(StateParked) {
-		t.Errorf("post-abort state=%q want %q", got.State, StateParked)
+	if got.State != string(state.StateParked) {
+		t.Errorf("post-abort state=%q want %q", got.State, state.StateParked)
 	}
 	if got.LeaseToken != "" {
 		t.Errorf("post-abort lease_token=%q want empty", got.LeaseToken)
@@ -251,15 +252,15 @@ func TestMemStore_AbortMigratingInstance(t *testing.T) {
 	}
 
 	// Wrong lease → ErrConflict.
-	if err := m.AbortMigratingInstance(ctx, insID, "wrong-lease"); !errors.Is(err, ErrConflict) {
+	if err := m.AbortMigratingInstance(ctx, insID, "wrong-lease"); !errors.Is(err, state.ErrConflict) {
 		t.Errorf("Abort wrong-lease: %v; want ErrConflict", err)
 	}
 	// Missing row → ErrNotFound.
-	if err := m.AbortMigratingInstance(ctx, "00000000-0000-0000-0000-000000000099", "any"); !errors.Is(err, ErrNotFound) {
+	if err := m.AbortMigratingInstance(ctx, "00000000-0000-0000-0000-000000000099", "any"); !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("Abort missing: %v; want ErrNotFound", err)
 	}
 	// Already-parked row → ErrConflict (state predicate fails).
-	if err := m.AbortMigratingInstance(ctx, insID, lease); !errors.Is(err, ErrConflict) {
+	if err := m.AbortMigratingInstance(ctx, insID, lease); !errors.Is(err, state.ErrConflict) {
 		t.Errorf("Abort already-parked: %v; want ErrConflict", err)
 	}
 	// Empty args rejected.
@@ -280,7 +281,7 @@ func TestMemStore_AbortMigratingInstance(t *testing.T) {
 // exercise the "no migrating rows at all" early-return.
 func TestMemStore_ListExpiredMigrations_NoRows(t *testing.T) {
 	ctx := context.Background()
-	m := NewMemStore()
+	m := state.NewMemStore()
 	rows, err := m.ListExpiredMigrations(ctx, 100)
 	if err != nil {
 		t.Fatalf("ListExpiredMigrations: %v", err)
