@@ -155,7 +155,7 @@ func (m *MemStore) ReconcileSafeProjectSubmission(ctx context.Context, accountID
 				}
 			}
 		}
-		release, err := m.publishSafeProjectReleaseLocked(accountID, attemptID, r.Apply.ProjectID, safe, members, false)
+		release, err := m.publishSafeProjectReleaseLocked(ctx, accountID, attemptID, r.Apply.ProjectID, safe, members, false)
 		if errors.Is(err, ErrConflict) || errors.Is(err, ErrNotFound) {
 			status, message = "conflicted", "The active release or project membership changed; production was not switched by this attempt."
 		} else if err != nil {

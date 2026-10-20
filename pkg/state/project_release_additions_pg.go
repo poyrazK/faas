@@ -189,7 +189,7 @@ func applyReleaseAdditionsDB(ctx context.Context, tx pgx.Tx) error {
 	return nil
 }
 
-func (m *MemStore) publishSafeProjectReleaseLocked(accountID, attemptID, projectID string, safe *api.ProjectSafeRelease, members []ProjectReleaseMember, rollback bool) (ProjectReleaseSet, error) {
+func (m *MemStore) publishSafeProjectReleaseLocked(ctx context.Context, accountID, attemptID, projectID string, safe *api.ProjectSafeRelease, members []ProjectReleaseMember, rollback bool) (ProjectReleaseSet, error) {
 	expected := safe.PreviousReleaseID
 	if rollback {
 		expected = safe.ReleaseID
@@ -198,5 +198,5 @@ func (m *MemStore) publishSafeProjectReleaseLocked(accountID, attemptID, project
 	if safe.AddServices {
 		change = &releaseAdditionChange{attemptID, safe, rollback}
 	}
-	return m.publishProjectReleaseWithIDLocked(context.Background(), accountID, projectID, "production", &expected, nil, safe.TTLSeconds, members, "", change)
+	return m.publishProjectReleaseWithIDLocked(ctx, accountID, projectID, "production", &expected, nil, safe.TTLSeconds, members, "", change)
 }

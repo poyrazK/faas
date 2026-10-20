@@ -138,7 +138,7 @@ func rollbackVerificationResult(safe *api.ProjectSafeRelease, restored ProjectRe
 	safe.Status, safe.RestoredReleaseID = "rolled_back", restored.ID
 	return nil
 }
-func (m *MemStore) AdvanceProjectReleaseVerification(_ context.Context, accountID, attemptID string, round *ProjectReleaseVerificationRound) (*api.ProjectSafeRelease, error) {
+func (m *MemStore) AdvanceProjectReleaseVerification(ctx context.Context, accountID, attemptID string, round *ProjectReleaseVerificationRound) (*api.ProjectSafeRelease, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	key := accountID + "\x00" + attemptID
@@ -158,7 +158,7 @@ func (m *MemStore) AdvanceProjectReleaseVerification(_ context.Context, accountI
 		if !validProgressiveRelease(safe) {
 			return nil, ErrConflict
 		}
-		return m.advanceProjectCanaryLocked(key, r, round)
+		return m.advanceProjectCanaryLocked(ctx, key, r, round)
 	}
 	var configuration projectReleaseConfigCapture
 	configurationConflict := false
@@ -186,7 +186,7 @@ func (m *MemStore) AdvanceProjectReleaseVerification(_ context.Context, accountI
 		if !found || baseline.ExpiresAt == nil || !baseline.ExpiresAt.After(time.Now()) {
 			safe.Status, safe.Message = "rollback_failed", "The retained baseline expired; operator action is required."
 		} else {
-			restored, err := m.publishSafeProjectReleaseLocked(accountID, attemptID, r.Apply.ProjectID, safe, baseline.Members, true)
+			restored, err := m.publishSafeProjectReleaseLocked(ctx, accountID, attemptID, r.Apply.ProjectID, safe, baseline.Members, true)
 			if err := rollbackVerificationResult(safe, restored, err); err != nil {
 				return nil, err
 			}
