@@ -6,7 +6,7 @@ import { objectResource, objectURL, presign } from './storage.mjs'
 import { WorkflowError } from './workflows.mjs'
 import { routeTeam, TeamError } from './team.mjs'
 import { emailPath, emailConsent, resolveEmailRecipient, ProductEmailError } from './product-email.mjs'
-import { orgSSORoute } from './orgsso.mjs'
+import { domainJoinRoute, orgSSORoute } from './orgsso.mjs'
 
 // /authz/v1: organizations, members, invitations and authorization checks
 // (ADR-1190). Every operation is a gregale_auth SQL function that enforces
@@ -20,7 +20,8 @@ const codes = new Map([
 // Messages raised by gregale_auth functions; anything else is never echoed.
 const stableMessages = new Set(['not_authenticated', 'forbidden', 'not_found', 'slug_taken', 'invalid_organization', 'organization_limit', 'anonymous_user',
   'unknown_role', 'invalid_invitation', 'invitation_limit', 'invitation_invalid', 'invitation_email_mismatch', 'already_member', 'last_owner',
-  'domain_taken', 'domain_limit', 'invalid_domain', 'domain_in_use', 'domain_not_verified', 'sso_provider_limit', 'team_limit', 'current_session'])
+  'domain_taken', 'domain_limit', 'invalid_domain', 'domain_in_use', 'domain_not_verified', 'sso_provider_limit', 'team_limit', 'current_session', 'mfa_required',
+  'invalid_join_mode'])
 
 export class HTTPError extends Error {
   constructor(status, code) { super(code); this.status = status; this.code = code }
@@ -63,15 +64,28 @@ export function goTrueAuthenticator(port = gotrue.port) {
 
 // organizationClaims are the claims the custom access token hook adds to a
 // first-party token with AUTH_ORG_CLAIMS on: the session's active
-// organization, read with the current membership (sql/0015), or none.
-export async function organizationClaims(pool, { sub, session_id: session }) {
+// organization, read with the current membership (sql/0015), or none. An
+// organization that requires a second factor (sql/0016) is left out below
+// aal2. The token's own aal claim decides: GoTrue calls the hook inside the
+// transaction that raises the session, before the row shows it.
+export async function organizationClaims(pool, { sub, session_id: session, aal }) {
   if (!uuid.test(sub ?? '') || !uuid.test(session ?? '')) return {}
-  const { rows: [org] } = await pool.query(`SELECT o.id, o.slug, m.role, r.permissions FROM gregale_auth.session_organizations s
+  const { rows: [org] } = await pool.query(`SELECT o.id, o.slug, o.mfa_required, m.role, r.permissions FROM gregale_auth.session_organizations s
       JOIN gregale_auth.organizations o ON o.id = s.org_id
       JOIN gregale_auth.memberships m ON m.org_id = s.org_id AND m.user_id = $2
       JOIN gregale_auth.roles r ON r.name = m.role
     WHERE s.session_id = $1`, [session, sub])
-  return org ? { org_id: org.id, org_slug: org.slug, org_role: org.role, org_permissions: org.permissions } : {}
+  if (!org || (org.mfa_required && aal !== 'aal2')) return {}
+  return { org_id: org.id, org_slug: org.slug, org_role: org.role, org_permissions: org.permissions }
+}
+
+// sessionLive leaves out sessions past the app's limits: GoTrue refuses to
+// refresh them but keeps their rows until they are signed out.
+export function sessionLive(session, policy, now = Date.now()) {
+  const minutes = value => value * 60 * 1000
+  if (policy?.maxAgeMinutes && new Date(session.created_at).getTime() + minutes(policy.maxAgeMinutes) < now) return false
+  if (policy?.idleMinutes && new Date(session.last_active_at).getTime() + minutes(policy.idleMinutes) < now) return false
+  return true
 }
 
 export async function inSession(pool, claims, work) {
@@ -136,6 +150,70 @@ export function auditReply(rows, limit) {
   return [200, { entries, next: rows.length === limit ? Buffer.from(JSON.stringify([last.position, last.id])).toString('base64url') : null }]
 }
 
+// routeOrganization serves /orgs/<id>/..., or returns null for a path it
+// does not know.
+async function routeOrganization({ run, rows, services, invitations }, org, method, parts, body) {
+  if (parts.length === 2 && method === 'PATCH') {
+    if (typeof body?.mfa_required !== 'boolean') throw new HTTPError(400, 'invalid_mfa_required')
+    const [updated] = await rows('SELECT id, slug, name, mfa_required FROM gregale_auth.set_organization_mfa($1, $2)', [org, body.mfa_required])
+    return [200, updated]
+  }
+  if (parts[2] === 'email-recipient') {
+    if (services.emailEnabled !== true) throw new HTTPError(404, 'not_found')
+    return emailConsent(run, method, parts, body)
+  }
+  if (parts[2] === 'team' || parts[2] === 'team-actions') {
+    if (services.teamEnabled !== true) throw new HTTPError(404, 'not_found')
+    return routeTeam({ run, method, parts, body, invitations, query: services.query })
+  }
+  if (parts[2] === 'domains' || parts[2] === 'sso') {
+    // Domains come with self-service SSO, or alone with AUTH_ORG_DOMAINS.
+    if (!services.orgSSO && !(parts[2] === 'domains' && services.orgDomains === true)) throw new HTTPError(403, 'org_sso_disabled')
+    return orgSSORoute({ rows, ...services.orgSSO, orgDomains: services.orgDomains === true }, org, method, parts.slice(2), body)
+  }
+  // The organization's audit log (sql/0020), newest first; next is the
+  // cursor for the following page.
+  if (parts[2] === 'audit-log' && parts.length === 3 && method === 'GET') {
+    const { at, id, limit } = auditPage(services.query)
+    return auditReply(await rows(`SELECT ${auditColumns} FROM gregale_auth.org_audit_entries($1, $2, $3, $4)`, [org, at, id, limit]), limit)
+  }
+  if (parts[2] === 'members' && parts.length === 3 && method === 'GET') {
+    return [200, { members: await rows('SELECT user_id, email, role, created_at, mfa_enabled FROM gregale_auth.list_members($1)', [org]) }]
+  }
+  if (parts[2] === 'members' && parts.length === 4) {
+    const member = requireUUID(parts[3])
+    if (method === 'PATCH') {
+      const [updated] = await rows('SELECT org_id, user_id, role FROM gregale_auth.set_member_role($1, $2, $3)', [org, member, requireString(body, 'role', 32)])
+      return [200, updated]
+    }
+    if (method === 'DELETE') { await rows('SELECT gregale_auth.remove_member($1, $2)', [org, member]); return [204, null] }
+  }
+  if (parts[2] === 'invitations' && parts.length === 3) {
+    if (method === 'GET') return [200, { invitations: await rows('SELECT id, email, role, expires_at, created_at FROM gregale_auth.list_invitations($1)', [org]) }]
+    if (method === 'POST') {
+      const ttl = body?.expires_in ?? limits.invitationSeconds
+      if (!Number.isInteger(ttl)) throw new HTTPError(400, 'invalid_expires_in')
+      const { token, hash } = newInvitationToken()
+      const args = [org, requireString(body, 'email', 320), requireString(body, 'role', 32), hash, ttl]
+      // The token is stored only as a hash. With an email provider it goes
+      // only to the invited address, sent before the invitation commits so
+      // a failed send leaves nothing behind; otherwise the inviter gets it once.
+      const created = await run(async c => {
+        const { rows: [invitation] } = await c.query('SELECT i.id, i.email, i.role, i.expires_at, o.name AS org_name FROM gregale_auth.invite($1, $2, $3, $4, $5) i JOIN gregale_auth.organizations o ON o.id = i.org_id', args)
+        const { org_name: orgName, ...fields } = invitation
+        if (invitations.mailer) await invitations.mailer.send(invitationMessage(fields.email, { external: invitations.external, app: invitations.app, orgName, token, templates: await loadEmailTemplates(c) }), `invitation-${fields.id}`)
+        return fields
+      })
+      return [201, invitations.mailer ? { ...created, delivered: true } : { ...created, delivered: false, token }]
+    }
+  }
+  if (parts[2] === 'invitations' && parts.length === 4 && method === 'DELETE') {
+    await rows('SELECT gregale_auth.revoke_invitation($1, $2)', [org, requireUUID(parts[3])])
+    return [204, null]
+  }
+  return null
+}
+
 // routes returns [status, body] for one authenticated request.
 export async function route(pool, claims, method, path, body, services = {}) {
   const invitations = services.invitations ?? {}
@@ -145,74 +223,37 @@ export async function route(pool, claims, method, path, body, services = {}) {
   const run = work => inSession(pool, claims, work)
   const rows = async (sql, args) => (await run(c => c.query(sql, args))).rows
   if (parts.length === 1 && parts[0] === 'orgs') {
-    if (method === 'GET') return [200, { organizations: await rows('SELECT id, slug, name, role, created_at FROM gregale_auth.list_organizations()') }]
+    if (method === 'GET') return [200, { organizations: await rows('SELECT id, slug, name, role, created_at, mfa_required FROM gregale_auth.list_organizations()') }]
     if (method === 'POST') {
       const [org] = await rows('SELECT id, slug, name, created_at FROM gregale_auth.create_organization($1, $2)', [requireString(body, 'slug', 63), requireString(body, 'name', 200)])
       return [201, org]
     }
   }
-  if (parts[0] === 'orgs' && parts.length >= 3) {
+  if (parts[0] === 'orgs' && parts.length >= 2) {
     const org = requireUUID(parts[1])
-    if (parts[2] === 'email-recipient') {
-      if (services.emailEnabled !== true) throw new HTTPError(404, 'not_found')
-      return emailConsent(run, method, parts, body)
+    try {
+      const routed = await routeOrganization({ run, rows, services, invitations }, org, method, parts, body)
+      if (routed) return routed
+    } catch (err) {
+      // A member refused because the organization requires a second factor
+      // this session has not verified (sql/0016) is told so.
+      if (sqlError(err).code === 'forbidden' && (await rows('SELECT gregale_auth.mfa_blocks($1) AS blocked', [org]))[0].blocked) throw new HTTPError(403, 'mfa_required')
+      throw err
     }
-    if (parts[2] === 'team' || parts[2] === 'team-actions') {
-      if (services.teamEnabled !== true) throw new HTTPError(404, 'not_found')
-      return routeTeam({ run, method, parts, body, invitations, query: services.query })
-    }
-    if (parts[2] === 'domains' || parts[2] === 'sso') {
-      if (!services.orgSSO) throw new HTTPError(403, 'org_sso_disabled')
-      return orgSSORoute({ rows, ...services.orgSSO }, org, method, parts.slice(2), body)
-    }
-    // The organization's audit log (sql/0020), newest first; next is the
-    // cursor for the following page.
-    if (parts[2] === 'audit-log' && parts.length === 3 && method === 'GET') {
-      const { at, id, limit } = auditPage(services.query)
-      return auditReply(await rows(`SELECT ${auditColumns} FROM gregale_auth.org_audit_entries($1, $2, $3, $4)`, [org, at, id, limit]), limit)
-    }
-    if (parts[2] === 'members' && parts.length === 3 && method === 'GET') {
-      return [200, { members: await rows('SELECT user_id, email, role, created_at FROM gregale_auth.list_members($1)', [org]) }]
-    }
-    if (parts[2] === 'members' && parts.length === 4) {
-      const member = requireUUID(parts[3])
-      if (method === 'PATCH') {
-        const [updated] = await rows('SELECT org_id, user_id, role FROM gregale_auth.set_member_role($1, $2, $3)', [org, member, requireString(body, 'role', 32)])
-        return [200, updated]
-      }
-      if (method === 'DELETE') { await rows('SELECT gregale_auth.remove_member($1, $2)', [org, member]); return [204, null] }
-    }
-    if (parts[2] === 'invitations' && parts.length === 3) {
-      if (method === 'GET') return [200, { invitations: await rows('SELECT id, email, role, expires_at, created_at FROM gregale_auth.list_invitations($1)', [org]) }]
-      if (method === 'POST') {
-        const ttl = body?.expires_in ?? limits.invitationSeconds
-        if (!Number.isInteger(ttl)) throw new HTTPError(400, 'invalid_expires_in')
-        const { token, hash } = newInvitationToken()
-        const args = [org, requireString(body, 'email', 320), requireString(body, 'role', 32), hash, ttl]
-        // The token is stored only as a hash. With an email provider it goes
-        // only to the invited address, sent before the invitation commits so
-        // a failed send leaves nothing behind; otherwise the inviter gets it once.
-        const created = await run(async c => {
-          const { rows: [invitation] } = await c.query('SELECT i.id, i.email, i.role, i.expires_at, o.name AS org_name FROM gregale_auth.invite($1, $2, $3, $4, $5) i JOIN gregale_auth.organizations o ON o.id = i.org_id', args)
-          const { org_name: orgName, ...fields } = invitation
-          if (invitations.mailer) await invitations.mailer.send(invitationMessage(fields.email, { external: invitations.external, app: invitations.app, orgName, token, templates: await loadEmailTemplates(c) }), `invitation-${fields.id}`)
-          return fields
-        })
-        return [201, invitations.mailer ? { ...created, delivered: true } : { ...created, delivered: false, token }]
-      }
-    }
-    if (parts[2] === 'invitations' && parts.length === 4 && method === 'DELETE') {
-      await rows('SELECT gregale_auth.revoke_invitation($1, $2)', [org, requireUUID(parts[3])])
-      return [204, null]
-    }
+  }
+  // Joining an organization by the caller's email domain (sql/0017).
+  if (services.orgDomains === true) {
+    const joined = await domainJoinRoute(rows, method, path)
+    if (joined) return joined
   }
   // The caller's own sessions (sql/0013); the current one ends through
   // GoTrue's logout, and all the others through logout?scope=others.
   if (path === '/sessions' && method === 'GET') {
     // A session support staff opened as the caller is marked (impersonation.mjs).
-    return [200, { sessions: await rows(`SELECT s.id, s.created_at, s.last_active_at, s.user_agent, s.ip, s.aal, s.current,
+    const listed = await rows(`SELECT s.id, s.created_at, s.last_active_at, s.user_agent, s.ip, s.aal, s.current,
         EXISTS (SELECT 1 FROM gregale_auth.impersonations i WHERE i.session_id = s.id AND i.ended_at IS NULL AND i.expires_at > now()) AS impersonated
-      FROM gregale_auth.list_sessions() s`) }]
+      FROM gregale_auth.list_sessions() s`)
+    return [200, { sessions: listed.filter(session => session.current || sessionLive(session, services.sessions)) }]
   }
   if (parts[0] === 'sessions' && parts.length === 2 && method === 'DELETE') {
     await rows('SELECT gregale_auth.end_session($1)', [requireUUID(parts[1])])
@@ -232,7 +273,7 @@ export async function route(pool, claims, method, path, body, services = {}) {
     return [200, { organization: active ?? null }]
   }
   if (path === '/invitations/accept' && method === 'POST') {
-    const [membership] = await rows('SELECT org_id, role FROM gregale_auth.accept_invitation($1)', [hashToken(body?.token)])
+    const [membership] = await rows('SELECT a.org_id, a.role, o.mfa_required FROM gregale_auth.accept_invitation($1) a JOIN gregale_auth.organizations o ON o.id = a.org_id', [hashToken(body?.token)])
     return [200, membership]
   }
   if (path === '/storage/sign' && method === 'POST') {
@@ -281,7 +322,7 @@ export function readJSON(req, maxBytes) {
   })
 }
 
-export function createAuthzHandler({ pool, authenticate, origins = [], invitations = {}, storage, workflows, orgSSO, teamEnabled = false, emailEnabled = false, deleteAccount = null, orgClaims = false }) {
+export function createAuthzHandler({ pool, authenticate, origins = [], invitations = {}, storage, workflows, orgSSO, orgDomains = false, teamEnabled = false, emailEnabled = false, deleteAccount = null, orgClaims = false, sessions = null }) {
   const allowed = new Set(origins)
   return async (req, res, path) => {
     const origin = req.headers.origin
@@ -307,7 +348,7 @@ export function createAuthzHandler({ pool, authenticate, origins = [], invitatio
       if (!token) throw new HTTPError(401, 'not_authenticated')
       const body = await readJSON(req, limits.authzBodyBytes)
       const claims = await authenticate(token)
-      const [status, payload] = await route(pool, claims, req.method, path, body, { invitations, storage, workflows, orgSSO, teamEnabled, emailEnabled, deleteAccount, orgClaims, query: new URL(req.url, 'http://auth.local').searchParams })
+      const [status, payload] = await route(pool, claims, req.method, path, body, { invitations, storage, workflows, orgSSO, orgDomains, teamEnabled, emailEnabled, deleteAccount, orgClaims, sessions, query: new URL(req.url, 'http://auth.local').searchParams })
       res.writeHead(status, headers)
       res.end(payload === null ? undefined : JSON.stringify(payload))
     } catch (err) {

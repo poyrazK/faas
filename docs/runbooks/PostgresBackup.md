@@ -132,7 +132,8 @@ label only when that record is a committed PASS from the last 30 days.
 |---|---|---|
 | `apid_pg_backup_last_pushed_seconds` | Unix timestamp within 26h | `curl -fsS http://127.0.0.1:9101/metrics \| grep '^apid_pg_backup_last_pushed_seconds'` |
 | `apid_pg_wal_prune_last_success_timestamp_seconds` | Unix timestamp within 2h | same metrics endpoint |
-| `apid_pg_wal_archive_bytes` | below 20 GiB | same metrics endpoint |
+| `apid_pg_wal_archive_oldest_age_seconds` | below 3 days (24–48 h with two retained basebackups) | same metrics endpoint |
+| `apid_pg_wal_archive_bytes` | about 20 GiB per retained day (one-minute `archive_timeout`) | same metrics endpoint |
 | Remote basebackup count | at least local count | `rclone lsd offhostbox:faas-pg-basebackup --config /etc/faas/secrets/storage-box/rclone.conf \| wc -l` vs `ls /var/lib/pgsql/basebackup \| wc -l` |
 | Remote `du` vs local `$PG_BB_ROOT` | ±10% | provider-side storage UI |
 | `archive_command` line | local copy followed by best-effort `rclone copyto` to `offhostbox:` | `grep ^archive_command /etc/postgresql/15/main/postgresql.conf` |
@@ -158,7 +159,7 @@ one `sed` rewrite.
 |---|---|---|
 | basebackup timestamp missing or older than 26h | warn (ADR-1236; review the warn route daily) | inspect `faas-pg-basebackup-push.service`; check the configured rclone identity and destination |
 | WAL prune timestamp missing or older than 2h | warn | run the dry-run below and inspect `faas-pg-wal-prune.service` |
-| local WAL exceeds 20 GiB | warn | verify off-host reachability and the retained basebackup boundary |
+| oldest local WAL segment older than 3 days (`PgWalArchiveLarge`) | warn | verify off-host reachability, the basebackup push and the retained basebackup boundary |
 | `archive_command` line shows old `cp` | warn | the operator has not converged the PostgreSQL role; re-run the control-plane bootstrap target |
 | T-7 row-count ratio < 0.95 | page | the restore is partial — check `rclone cat offhostbox:faas-pg-wal/` returns the right segment; check `recovery.signal` + `restore_command` are in the throwaway postgresql.conf |
 
