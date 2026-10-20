@@ -297,6 +297,27 @@ On-host times:
 These sit inside the budget's 2-minute per-host deploy. The first deploy on
 a node pays its one-time hashing.
 
+## First production run (production-us, 2026-10-20)
+
+`cd-controlplane` run 39473046675 deployed unit release 39471750816
+(rc.283 to 5bb86b8ecd: eight control-plane daemons, three expand migrations).
+Staging, migrations, activation and readiness passed. The SLO gate then
+rolled every unit back to rc.283, and rollback worked as designed. None of
+the three breaches came from the new code:
+
+- `apid`: `FaasTrafficSpikeAccount` fired on an end-to-end test's traffic.
+  Families that measure tenant behaviour (`traffic_anomaly`, `tenant_abuse`,
+  `security_anomaly`, `residency`) no longer gate a unit; platform
+  availability and latency SLOs still judge every unit.
+- `meterd`: `FaasResidentGbPerCustomerHigh` was true before the deploy. It
+  resolved while meterd restarted, because the gauge disappears, then fired
+  again with a new `activeAt`. An instance seen true before the deploy now
+  stays ignored for the rest of the gate.
+- `s3-gatewayd`: production-us runs it without a scrape target
+  (`faas_object_storage_gateway_managed` is off), so "no healthy scrape
+  target" could never clear. A job with no `up` series at all is now skipped,
+  and readiness checks cover it. A configured target at `up == 0` still fails.
+
 ## Still needed
 
 - **Migrations.** Done in ADR 20261018084150. Every new migration declares
