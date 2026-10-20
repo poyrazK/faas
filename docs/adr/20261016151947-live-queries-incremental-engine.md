@@ -1069,6 +1069,35 @@ Phase 0 did not cover:
     - The Ansible role takes `faas_livequeryd_databases`, with one credential
       per connection string. A deploy fails unless every database is served.
     - The flags for one database remain for development.
+  - **First-result latency** (2026-10-20). `TestBenchFirstResult` times each
+    step from a subscription to its first result. The cold start measured in
+    tests at 8–12 s came from two causes, and neither was the engine's
+    round:
+    - **The SQL parser.** `go-pgquery` is libpg_query compiled to
+      WebAssembly. The first parse in a process compiles it to native code:
+      6–8 s, against under 1 ms for each later parse. livequeryd now starts
+      that compile when it starts (`livequery.WarmParser`), so a subscriber
+      who arrives later does not wait. A checkpoint restore still waits,
+      because it compiles every query.
+
+      wazero's on-disk compilation cache would cut a restart's compile to
+      about 1.3 s. go-pgquery does not expose its runtime configuration, so
+      using the cache means carrying a patched copy of it. That is left as
+      a decision.
+    - **Slot creation.** Creating a slot waits for every transaction running
+      on the server to finish. It took 40 ms on an idle server, and as long
+      as the longest open transaction otherwise. It happens once per
+      database; reopening an existing slot took 90 ms.
+
+    The rest of the path:
+    - compiling a further query: 16–80 ms;
+    - the first round, which includes the initial read: 85–250 ms.
+
+    The round's marker was also slow on a database with `synchronous_commit
+    = off`: its commit did not flush, so every round waited for the WAL
+    writer (287 ms against 1.2 ms). The marker statement now sets
+    `synchronous_commit` on for its own transaction
+    (`TestRoundsDoNotWaitForTheWALWriter`).
   - **Fleet-PKI leaves** (2026-10-19). Hub and realtimed authenticate with
     leaves of the internal CA:
     - livequeryd's server leaf is `livequeryd.faas`;
