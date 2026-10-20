@@ -1537,6 +1537,33 @@ LEFT JOIN LATERAL (
 ) bc ON true
 ORDER BY p.started_at DESC, p.id DESC;
 
+-- The account trace view's per-request wakes: one canonical instance per wake
+-- (its first), scoped to the account's apps before reading wake metadata, with
+-- the same boot and completion reads as ListAppWakeHistoryPage.
+-- name: ListWakeHistoryByWakeIDs :many
+WITH page AS MATERIALIZED (
+ SELECT DISTINCT ON (wake_id) id, app_id, wake_id, state, started_at FROM instances
+ WHERE app_id = ANY(sqlc.arg(app_ids)::uuid[])
+   AND wake_id = ANY(sqlc.arg(wake_ids)::uuid[])
+   AND started_at IS NOT NULL
+ ORDER BY wake_id, started_at ASC, id ASC
+)
+SELECT p.id::text AS instance_id, p.app_id::text AS app_id, p.wake_id::text AS wake_id,
+       p.state, p.started_at, bs.data AS boot_data, bs.at AS boot_at,
+       (bs.id IS NOT NULL)::boolean AS has_meta, bc.at AS completed_at
+FROM page p
+LEFT JOIN LATERAL (
+ SELECT id, data, at FROM events
+ WHERE kind = 'wake.boot_started' AND data->>'app_id' = p.app_id::text AND data->>'wake_id' = p.wake_id::text
+ ORDER BY (actor = 'schedd') DESC, at ASC, id ASC LIMIT 1
+) bs ON true
+LEFT JOIN LATERAL (
+ SELECT at FROM events
+ WHERE kind = 'wake.boot_completed' AND data->>'app_id' = p.app_id::text AND data->>'wake_id' = p.wake_id::text
+ ORDER BY at ASC, id ASC LIMIT 1
+) bc ON true
+ORDER BY p.started_at ASC, p.wake_id;
+
 -- name: ListAllEventsPaged :many
 -- ADR-091 §3.7 / PR #3 — operator-obs backend audit-reading surface.
 -- Reads the live events table (NOT audit_log — distinct source of
@@ -11565,6 +11592,7 @@ WITH candidate AS (
  AND (task.kind<>'release' OR NOT EXISTS(SELECT 1 FROM project_environment_promotion_migrations m JOIN project_environment_promotions p ON p.id=m.promotion_id
   WHERE p.project_id=app.project_id AND m.task_id IS DISTINCT FROM task.id AND ((p.status='running' OR EXISTS(SELECT 1 FROM project_environment_promotion_migration_recoveries recovery WHERE recovery.promotion_id=p.id AND recovery.status IN ('quiescing','verifying'))) OR EXISTS(SELECT 1 FROM app_tasks previous WHERE previous.id=m.task_id AND previous.started_at IS NOT NULL AND previous.exit_code IS NULL AND NOT EXISTS(SELECT 1 FROM project_promotion_migration_resolved_tasks resolved WHERE resolved.task_id=previous.id)))))
  AND app.managed_postgres_admission_cutover_id IS NULL
+ AND NOT financial_app_command_held(task.app_id,task.deployment_id,sqlc.arg(claimed_at)::timestamptz)
  AND task.created_at<=sqlc.arg(claimed_at)::timestamptz
  AND (task.retry_at IS NULL OR task.retry_at<=sqlc.arg(claimed_at))
  AND (task.start_deadline_at IS NULL OR task.start_deadline_at>=sqlc.arg(claimed_at)
@@ -11589,6 +11617,7 @@ retry_at=NULL,stdout_tail='',stderr_tail='',output_truncated=false,exit_code=NUL
 WHERE id=sqlc.arg(id)::text::uuid AND status='restoring' AND lease_token=sqlc.arg(token)::text::uuid
 AND cancel_requested_at IS NULL AND lease_expires_at>sqlc.arg(started_at)
 AND EXISTS(SELECT 1 FROM project_migration_task_admission admission WHERE admission.id=app_tasks.id)
+AND NOT financial_app_command_held(app_id,deployment_id,sqlc.arg(started_at)::timestamptz)
 AND (start_deadline_at IS NULL OR start_deadline_at>=sqlc.arg(started_at) OR EXISTS (
  SELECT 1 FROM schedule_occurrences occurrence WHERE occurrence.id=app_tasks.occurrence_id AND occurrence.started_at IS NOT NULL))
 RETURNING *;

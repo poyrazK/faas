@@ -9,6 +9,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apptaskproto"
 	"github.com/onebox-faas/faas/pkg/rehearsalcommand"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // ResolvedAppTaskRuntime is the command-free result of resolving a task's
@@ -18,6 +19,7 @@ type ResolvedAppTaskRuntime struct {
 	RuntimeID string
 	Spec      AppTaskRestoreSpec
 	release   func()
+	ready     func(context.Context) error
 	publish   func(context.Context, *AppTaskRestoreOutcome) error
 }
 
@@ -42,6 +44,10 @@ func NewRoutedVmmdAppTaskBackend(router RoutedAppTaskVMM, resolve AppTaskRuntime
 }
 
 func (b *RoutedVmmdAppTaskBackend) Restore(ctx context.Context, request AppTaskRestoreRequest) (AppTaskSession, error) {
+	fields, _ := wire.FromContext(ctx)
+	fields.AppID = request.AppID
+	fields.WakeID = request.LeaseToken
+	ctx = wire.WithContext(ctx, fields)
 	if b == nil || b.router == nil || b.resolve == nil {
 		return nil, ErrAppTaskCoordinatorNotWired
 	}
@@ -80,6 +86,15 @@ func (b *RoutedVmmdAppTaskBackend) Restore(ctx context.Context, request AppTaskR
 			resolved.release()
 		}
 		return nil, identityErr
+	}
+	if resolved.ready != nil {
+		if err := resolved.ready(ctx); err != nil {
+			cleanupErr := destroyRestoredAppTask(ctx, b.router, resolved.NodeID, request.ID)
+			if cleanupErr == nil && resolved.release != nil {
+				resolved.release()
+			}
+			return nil, errors.Join(err, cleanupErr)
+		}
 	}
 	if resolved.Spec.App.RehearsalRunID != "" {
 		var publishErr error

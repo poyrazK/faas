@@ -1,8 +1,9 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"strings"
 	"testing"
 )
@@ -21,20 +22,20 @@ func databaseTimingFixture(t *testing.T, id int, duration int, state string, abo
 }
 
 func TestDataAPIDatabaseTimingCoverageAndCompletedEngineSamples(t *testing.T) {
-	c := newDataAPIDiagnosticsCollector("", "")
+	c := main.NewDataAPIDiagnosticsCollector("", "")
 	for i := 1; i <= 100; i++ {
 		line := databaseTimingFixture(t, i, i, "observed", i == 100)
-		c.observe(line)
-		c.observe(line)
+		c.Observe(line)
+		c.Observe(line)
 	}
-	c.observe(databaseTimingFixture(t, 101, 999, "no_response", true))
-	c.observe(databaseTimingFixture(t, 102, 999, "missing_header", false))
-	c.observe(databaseTimingFixture(t, 103, 999, "invalid_header", false))
-	c.observe(dataAPIDiagnosticFixture(t, 104, "rest", "completed", 200, 1000, nil))
-	c.finish()
-	s := c.report.DataRequests.DatabaseTimings
+	c.Observe(databaseTimingFixture(t, 101, 999, "no_response", true))
+	c.Observe(databaseTimingFixture(t, 102, 999, "missing_header", false))
+	c.Observe(databaseTimingFixture(t, 103, 999, "invalid_header", false))
+	c.Observe(dataAPIDiagnosticFixture(t, 104, "rest", "completed", 200, 1000, nil))
+	c.Finish()
+	s := (*c.Report()).DataRequests.DatabaseTimings
 	phase := s.ByPhase["transaction"]
-	if c.report.Partial || c.report.Duplicates != 100 || s.ObservedRequests != 100 || s.UnknownRequests != 3 || s.WithoutTimings != 1 || phase.Completed != 100 || phase.Interrupted != 0 {
+	if (*c.Report()).Partial || (*c.Report()).Duplicates != 100 || s.ObservedRequests != 100 || s.UnknownRequests != 3 || s.WithoutTimings != 1 || phase.Completed != 100 || phase.Interrupted != 0 {
 		t.Fatalf("wrong database timing coverage: %+v", s)
 	}
 	if *phase.LatencyMS.P50 != 50 || *phase.LatencyMS.P95 != 95 || *phase.LatencyMS.P99 != 99 || *s.ByPhase["jwt"].LatencyMS.P50 != 0 || s.SQLExecution != "unknown" || s.PoolWait != "unknown" {
@@ -45,22 +46,22 @@ func TestDataAPIDatabaseTimingCoverageAndCompletedEngineSamples(t *testing.T) {
 			t.Fatalf("missing unknown reason %s", reason)
 		}
 	}
-	if c.report.Summary.DatabaseTimings.ObservedRequests != 100 || c.report.ByRoute["rest"].DatabaseTimings.ObservedRequests != 100 {
+	if (*c.Report()).Summary.DatabaseTimings.ObservedRequests != 100 || (*c.Report()).ByRoute["rest"].DatabaseTimings.ObservedRequests != 100 {
 		t.Fatal("missing database timing aggregates")
 	}
-	lookup := newDataAPIDiagnosticsCollector("", "00000000-0000-4000-8000-000000000100")
-	lookup.observe(databaseTimingFixture(t, 100, 100, "observed", true))
-	lookup.finish()
-	if len(lookup.report.Matches) != 1 || lookup.report.Matches[0].DatabaseTimings.Phases["transaction"].Complete == nil || !*lookup.report.Matches[0].DatabaseTimings.Phases["transaction"].Complete {
+	lookup := main.NewDataAPIDiagnosticsCollector("", "00000000-0000-4000-8000-000000000100")
+	lookup.Observe(databaseTimingFixture(t, 100, 100, "observed", true))
+	lookup.Finish()
+	if len((*lookup.Report()).Matches) != 1 || (*lookup.Report()).Matches[0].DatabaseTimings.Phases["transaction"].Complete == nil || !*(*lookup.Report()).Matches[0].DatabaseTimings.Phases["transaction"].Complete {
 		t.Fatal("downstream abort must preserve a completed engine measurement in request lookup")
 	}
-	encoded, err := json.Marshal(lookup.report)
+	encoded, err := json.Marshal((*lookup.Report()))
 	if err != nil || strings.Contains(string(encoded), "private-sentinel") {
 		t.Fatal("untrusted fields escaped the database timing projection")
 	}
-	stdout, _, restore := swapIO(t)
+	stdout, _, restore := main.SwapIO(t)
 	defer restore()
-	if err := writeDataAPIDatabaseTimings(s); err != nil {
+	if err := main.WriteDataAPIDatabaseTimings(s); err != nil {
 		t.Fatal(err)
 	}
 	for _, want := range []string{"100 observed, 3 unknown, 1 without timings", "pool acquisition + SQL", "50.000 / 95.000 / 99.000 ms", "SQL execution: unknown; pool wait: unknown"} {
@@ -86,13 +87,13 @@ func TestDataAPIDatabaseTimingRejectsMalformedAndUntrustedAttribution(t *testing
 		databaseTimingFixture(t, 1, 1, "private-sentinel", false),
 		strings.TrimSuffix(dataAPIDiagnosticFixture(t, 1, "rest", "completed", 200, 1, nil), "}") + `,"database_timings":null}`,
 	} {
-		c := newDataAPIDiagnosticsCollector("", "")
-		c.observe(line)
-		c.finish()
-		if !c.report.Partial || c.report.Invalid != 1 || c.report.Summary.Requests != 0 {
+		c := main.NewDataAPIDiagnosticsCollector("", "")
+		c.Observe(line)
+		c.Finish()
+		if !(*c.Report()).Partial || (*c.Report()).Invalid != 1 || (*c.Report()).Summary.Requests != 0 {
 			t.Fatalf("accepted invalid database timing: %s", line)
 		}
-		body, err := json.Marshal(c.report)
+		body, err := json.Marshal((*c.Report()))
 		if err != nil || strings.Contains(string(body), "private-sentinel") {
 			t.Fatal("invalid metadata leaked into diagnostics")
 		}
@@ -100,16 +101,16 @@ func TestDataAPIDatabaseTimingRejectsMalformedAndUntrustedAttribution(t *testing
 }
 
 func TestDataAPIDatabaseTimingLegacyCoverageNeverClaimsZeroLatency(t *testing.T) {
-	c := newDataAPIDiagnosticsCollector("", "")
-	c.observe(dataAPIDiagnosticFixture(t, 1, "rest", "completed", 200, 1, nil))
-	c.finish()
-	s := c.report.DataRequests.DatabaseTimings
-	if c.report.Partial || s.WithoutTimings != 1 || s.ObservedRequests != 0 || s.UnknownRequests != 0 || len(s.ByPhase) != 0 {
+	c := main.NewDataAPIDiagnosticsCollector("", "")
+	c.Observe(dataAPIDiagnosticFixture(t, 1, "rest", "completed", 200, 1, nil))
+	c.Finish()
+	s := (*c.Report()).DataRequests.DatabaseTimings
+	if (*c.Report()).Partial || s.WithoutTimings != 1 || s.ObservedRequests != 0 || s.UnknownRequests != 0 || len(s.ByPhase) != 0 {
 		t.Fatalf("legacy database timing coverage: %+v", s)
 	}
-	stdout, _, restore := swapIO(t)
+	stdout, _, restore := main.SwapIO(t)
 	defer restore()
-	if err := writeDataAPIDatabaseTimings(s); err != nil {
+	if err := main.WriteDataAPIDatabaseTimings(s); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(stdout.String(), "completed p50/p95/p99: n/a") {

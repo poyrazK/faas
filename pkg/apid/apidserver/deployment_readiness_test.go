@@ -56,7 +56,7 @@ func TestProjectDeploymentReadinessReadScope(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &report); err != nil || report.Status != "ready" {
 		t.Fatal("unexpected read-scope report", report, err)
 	}
-	if _, err := store.ProjectBySlug(t.Context(), account.ID, "fresh"); err == nil {
+	if _, err := store.MemStore.ProjectBySlug(t.Context(), account.ID, "fresh"); err == nil {
 		t.Fatal("read-scoped check created a project")
 	}
 }

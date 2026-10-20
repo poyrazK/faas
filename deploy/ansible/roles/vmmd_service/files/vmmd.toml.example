@@ -6,6 +6,8 @@
 # Dedicated native acceptance is required before enabling broadly.
 # Default: false
 # native_process_recovery = true
+# Native-recovery public bridges require nftables 1.1.3+, Linux 6.13+ and
+# faas_public_forwarding: true in the matching nftables role inventory.
 
 # native_snapshot_publication_root: EXPERIMENTAL persistent, root-owned 0700
 # directory outside the jail and image-staging roots. It stores immutable

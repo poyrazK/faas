@@ -13,15 +13,16 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
-type submissionCacheFaultStore struct{ *state.MemStore }
+type submissionCacheFaultStore struct{ MemStore *state.MemStore }
 
 func (*submissionCacheFaultStore) PutIdempotent(context.Context, string, string, int, []byte) error {
 	return errors.New("HTTP replay cache unavailable")
 }
 
-type submissionAliasFaultStore struct{ *state.MemStore }
+type submissionAliasFaultStore struct{ MemStore *state.MemStore }
 
 func (*submissionAliasFaultStore) AttachDeploymentSubmission(context.Context, string, string, string) (api.DeploymentSubmissionReceipt, error) {
 	return api.DeploymentSubmissionReceipt{}, errors.New("receipt storage unavailable")
@@ -38,7 +39,7 @@ func TestDeploymentSubmissionLostReplyAllTransports(t *testing.T) {
 			e := newSourceRefTestServer(t, api.PlanPro, "receipt", 123)
 			e.gh.streamBody = io.NopCloser(bytes.NewReader(e.tarball))
 			e.gh.streamSHA = strings.Repeat("a", 40)
-			e.srv.store = &submissionCacheFaultStore{e.store}
+			e.srv.store = statetest.NewMem(&submissionCacheFaultStore{MemStore: e.store})
 			h := e.srv.handler()
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Method == http.MethodPost {
@@ -205,7 +206,7 @@ func TestDeploymentSubmissionCachedReceiptFailure(t *testing.T) {
 	}
 	var dep api.DeploymentResponse
 	_ = json.Unmarshal(first.Body.Bytes(), &dep)
-	e.s.store = &submissionAliasFaultStore{e.store}
+	e.s.store = statetest.NewMem(&submissionAliasFaultStore{MemStore: e.store})
 	e.h = e.s.handler()
 	id := strings.Repeat("f", 32)
 	response := e.do(t, "POST", path, request, map[string]string{"Idempotency-Key": "cached-intent", api.DeploymentAttemptHeader: id})

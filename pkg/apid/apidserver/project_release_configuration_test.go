@@ -74,7 +74,7 @@ func TestPairedProjectApplyPinsConfigurationBeforeBuild(t *testing.T) {
 			}
 			var members []state.ProjectReleaseMember
 			for _, build := range original.Builds {
-				app, err := store.AppByID(t.Context(), build.AppID)
+				app, err := store.MemStore.AppByID(t.Context(), build.AppID)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -83,26 +83,26 @@ func TestPairedProjectApplyPinsConfigurationBeforeBuild(t *testing.T) {
 					app.Manifest.ExecutionMode = api.ExecutionModeWorker
 					app.Manifest.StopGracePeriodS = 30
 				}
-				if _, err := store.UpdateApp(t.Context(), app.ID, state.UpdateAppParams{Manifest: &app.Manifest}); err != nil {
+				if _, err := store.MemStore.UpdateApp(t.Context(), app.ID, state.UpdateAppParams{Manifest: &app.Manifest}); err != nil {
 					t.Fatal(err)
 				}
-				if err := store.UpsertAppEnvInScope(t.Context(), account.ID, app.ID, "production", "MODE", "previous"); err != nil {
+				if err := store.MemStore.UpsertAppEnvInScope(t.Context(), account.ID, app.ID, "production", "MODE", "previous"); err != nil {
 					t.Fatal(err)
 				}
-				old, err := store.CreateDeployment(t.Context(), state.Deployment{AppID: app.ID, Scope: "production", Kind: state.DeploymentKindTarball})
+				old, err := store.MemStore.CreateDeployment(t.Context(), state.Deployment{AppID: app.ID, Scope: "production", Kind: state.DeploymentKindTarball})
 				if err != nil {
 					t.Fatal(err)
 				}
-				if err := store.MarkDeploymentLive(t.Context(), old.ID); err != nil {
+				if err := store.MemStore.MarkDeploymentLive(t.Context(), old.ID); err != nil {
 					t.Fatal(err)
 				}
 				members = append(members, state.ProjectReleaseMember{AppID: app.ID, DeploymentID: old.ID})
 			}
-			baseline, err := store.PublishProjectReleaseSet(t.Context(), account.ID, original.ProjectID, "production", 1800, members)
+			baseline, err := store.MemStore.PublishProjectReleaseSet(t.Context(), account.ID, original.ProjectID, "production", 1800, members)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := store.UpdateProjectEnvironmentProtection(t.Context(), account.ID, original.ProjectID, "production", false); err != nil {
+			if _, err := store.MemStore.UpdateProjectEnvironmentProtection(t.Context(), account.ID, original.ProjectID, "production", false); err != nil {
 				t.Fatal(err)
 			}
 			if workerRelease {
@@ -116,13 +116,13 @@ func TestPairedProjectApplyPinsConfigurationBeforeBuild(t *testing.T) {
 				if workerID == "" {
 					t.Fatal("missing worker fixture")
 				}
-				if _, err := store.CreateQueueBindingWithConsumer(t.Context(), state.QueueBinding{AccountID: account.ID, AppID: workerID, DeploymentScope: "production", Name: "orders", QueueName: "orders", Mode: "push", Enabled: true, WorkloadClass: state.WorkloadClassWorker, MaxConcurrency: 2}); err != nil {
+				if _, err := store.MemStore.CreateQueueBindingWithConsumer(t.Context(), state.QueueBinding{AccountID: account.ID, AppID: workerID, DeploymentScope: "production", Name: "orders", QueueName: "orders", Mode: "push", Enabled: true, WorkloadClass: state.WorkloadClassWorker, MaxConcurrency: 2}); err != nil {
 					t.Fatal(err)
 				}
 			}
 			s.routeProbes = projectCriticalProbeSender{}
 			zero := int64(0)
-			if _, err := store.SetRouteHealthGate(t.Context(), account.ID, members[0].AppID, api.SetRouteHealthGateRequest{Mode: "report", ExpectedRevision: &zero, Routes: []api.RouteHealthRoute{{Method: "GET", Path: "/health", Probe: &api.RouteHealthProbe{Path: "/health"}}}}); err != nil {
+			if _, err := store.MemStore.SetRouteHealthGate(t.Context(), account.ID, members[0].AppID, api.SetRouteHealthGateRequest{Mode: "report", ExpectedRevision: &zero, Routes: []api.RouteHealthRoute{{Method: "GET", Path: "/health", Probe: &api.RouteHealthProbe{Path: "/health"}}}}); err != nil {
 				t.Fatal(err)
 			}
 			raw := []byte(`{"env":{"back":{"MODE":"api-new"},"worker":{"MODE":"worker-new"}}}`)
@@ -143,11 +143,11 @@ func TestPairedProjectApplyPinsConfigurationBeforeBuild(t *testing.T) {
 			admitted := 0
 			store.onBuild = func(d state.Deployment) {
 				admitted++
-				runtime, err := store.RuntimeAppValuesForDeployment(t.Context(), account.ID, d.AppID, d.ID)
+				runtime, err := store.MemStore.RuntimeAppValuesForDeployment(t.Context(), account.ID, d.AppID, d.ID)
 				if err != nil {
 					t.Fatal(err)
 				}
-				app, err := store.AppByID(t.Context(), d.AppID)
+				app, err := store.MemStore.AppByID(t.Context(), d.AppID)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -158,11 +158,11 @@ func TestPairedProjectApplyPinsConfigurationBeforeBuild(t *testing.T) {
 				if len(runtime.Values) != 1 || runtime.Values[0].Value != expected || !d.TrafficPercentExplicit || d.TrafficPercent != 0 {
 					t.Fatalf("build admitted wrong config: %+v %+v", d, runtime.Values)
 				}
-				active, err := store.ActiveProjectReleaseSet(t.Context(), account.ID, original.ProjectID, "production")
+				active, err := store.MemStore.ActiveProjectReleaseSet(t.Context(), account.ID, original.ProjectID, "production")
 				if err != nil || active.ID != baseline.ID {
 					t.Fatal("early code/config cutover")
 				}
-				if _, err := store.ProjectEnvironmentConfigLatest(t.Context(), account.ID, original.ProjectID, "production"); !errors.Is(err, state.ErrNotFound) {
+				if _, err := store.MemStore.ProjectEnvironmentConfigLatest(t.Context(), account.ID, original.ProjectID, "production"); !errors.Is(err, state.ErrNotFound) {
 					t.Fatal("configuration changed before candidates were ready")
 				}
 			}
@@ -179,15 +179,15 @@ func TestPairedProjectApplyPinsConfigurationBeforeBuild(t *testing.T) {
 				t.Fatalf("admitted=%d response=%+v", admitted, apply)
 			}
 			for _, build := range apply.Builds {
-				d, err := store.DeploymentByID(t.Context(), build.DeploymentID)
+				d, err := store.MemStore.DeploymentByID(t.Context(), build.DeploymentID)
 				if err != nil {
 					t.Fatal(err)
 				}
 				if (migration && len(d.ReleaseCommand) > 0) || (workerRelease && d.AppID == plan.SafeRelease.Worker.AppID) {
-					if err := store.SetDeploymentRootfs(t.Context(), d.ID, "/migration.ext4", "layers/"+d.ID, 4096); err != nil {
+					if err := store.MemStore.SetDeploymentRootfs(t.Context(), d.ID, "/migration.ext4", "layers/"+d.ID, 4096); err != nil {
 						t.Fatal(err)
 					}
-					if err := store.PinDeploymentBuildDigest(t.Context(), d.ID, "/migration.ext4", "sha256:"+strings.Repeat("a", 64)); err != nil {
+					if err := store.MemStore.PinDeploymentBuildDigest(t.Context(), d.ID, "/migration.ext4", "sha256:"+strings.Repeat("a", 64)); err != nil {
 						t.Fatal(err)
 					}
 				}
@@ -195,18 +195,18 @@ func TestPairedProjectApplyPinsConfigurationBeforeBuild(t *testing.T) {
 				if err := json.Unmarshal(d.StageState, &stage); err != nil {
 					t.Fatal(err)
 				}
-				if _, err := store.AppendDeploymentStage(t.Context(), d.ID, stage.Current, state.StageReadiness, time.Now(), ""); err != nil {
+				if _, err := store.MemStore.AppendDeploymentStage(t.Context(), d.ID, stage.Current, state.StageReadiness, time.Now(), ""); err != nil {
 					t.Fatal(err)
 				}
-				if err := store.MarkDeploymentLive(t.Context(), d.ID); err != nil {
+				if err := store.MemStore.MarkDeploymentLive(t.Context(), d.ID); err != nil {
 					t.Fatal(err)
 				}
-				if _, err := store.CloseDeploymentStage(t.Context(), d.ID, state.StageReadiness, time.Now()); err != nil {
+				if _, err := store.MemStore.CloseDeploymentStage(t.Context(), d.ID, state.StageReadiness, time.Now()); err != nil {
 					t.Fatal(err)
 				}
 			}
 			if workerRelease {
-				pending, err := store.ReconcileSafeProjectSubmission(t.Context(), account.ID, attempt)
+				pending, err := store.MemStore.ReconcileSafeProjectSubmission(t.Context(), account.ID, attempt)
 				if err != nil || pending.Status != "building" {
 					t.Fatalf("worker without runtime proof activated: %+v %v", pending, err)
 				}
@@ -216,15 +216,15 @@ func TestPairedProjectApplyPinsConfigurationBeforeBuild(t *testing.T) {
 						deploymentID = row.DeploymentID
 					}
 				}
-				node, err := store.CreateComputeNode(t.Context(), state.ComputeNode{Name: "worker-api-test", TargetURL: "unix:///tmp/worker-api-test.sock", VPCPUs: 4, MemMB: 4096, MaxConcurrency: 20, AdmissionCeilingMB: 4096, VCPUBudget: 4, Lifecycle: state.NodeLifecycleActive})
+				node, err := store.MemStore.CreateComputeNode(t.Context(), state.ComputeNode{Name: "worker-api-test", TargetURL: "unix:///tmp/worker-api-test.sock", VPCPUs: 4, MemMB: 4096, MaxConcurrency: 20, AdmissionCeilingMB: 4096, VCPUBudget: 4, Lifecycle: state.NodeLifecycleActive})
 				if err != nil {
 					t.Fatal(err)
 				}
-				instance, err := store.CreateInstanceWithMode(t.Context(), plan.SafeRelease.Worker.AppID, deploymentID, string(state.StateColdBooting), 256, node.ID, uuid.NewString(), string(state.InstanceModeWorker))
+				instance, err := store.MemStore.CreateInstanceWithMode(t.Context(), plan.SafeRelease.Worker.AppID, deploymentID, string(state.StateColdBooting), 256, node.ID, uuid.NewString(), string(state.InstanceModeWorker))
 				if err != nil {
 					t.Fatal(err)
 				}
-				snapshot, err := store.RuntimeAppValuesForDeployment(t.Context(), account.ID, plan.SafeRelease.Worker.AppID, deploymentID)
+				snapshot, err := store.MemStore.RuntimeAppValuesForDeployment(t.Context(), account.ID, plan.SafeRelease.Worker.AppID, deploymentID)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -233,12 +233,12 @@ func TestPairedProjectApplyPinsConfigurationBeforeBuild(t *testing.T) {
 					t.Fatal(err)
 				}
 				inputs := state.RuntimeConfigInputs{Scope: "production", Boundary: time.Now(), Variables: map[string]string{"MODE": "worker-new"}, SecretVersions: map[string]int64{}, SecretRefs: map[string]string{}, AllSecrets: true}
-				if _, err := store.PublishOwnedInstanceRuntime(t.Context(), state.RuntimeInstancePublication{AccountID: account.ID, AppID: plan.SafeRelease.Worker.AppID, InstanceID: instance.ID, NodeID: node.ID, WakeID: instance.WakeID, ExpectedState: instance.State, Netns: "fc-" + instance.ID, HostIP: "10.100.0.8", GuestUID: 20008, Fence: fence.SecretFence, ConfigFence: fence, Inputs: &inputs}); err != nil {
+				if _, err := store.MemStore.PublishOwnedInstanceRuntime(t.Context(), state.RuntimeInstancePublication{AccountID: account.ID, AppID: plan.SafeRelease.Worker.AppID, InstanceID: instance.ID, NodeID: node.ID, WakeID: instance.WakeID, ExpectedState: instance.State, Netns: "fc-" + instance.ID, HostIP: "10.100.0.8", GuestUID: 20008, Fence: fence.SecretFence, ConfigFence: fence, Inputs: &inputs}); err != nil {
 					t.Fatal(err)
 				}
 			}
 			if migration {
-				progress, err := store.ReconcileSafeProjectSubmission(t.Context(), account.ID, attempt)
+				progress, err := store.MemStore.ReconcileSafeProjectSubmission(t.Context(), account.ID, attempt)
 				if err != nil || progress.Status != "building" {
 					t.Fatalf("missing task allowed cutover: %+v %v", progress, err)
 				}
@@ -248,30 +248,30 @@ func TestPairedProjectApplyPinsConfigurationBeforeBuild(t *testing.T) {
 						build = row
 					}
 				}
-				dep, err := store.DeploymentByID(t.Context(), build.DeploymentID)
+				dep, err := store.MemStore.DeploymentByID(t.Context(), build.DeploymentID)
 				if err != nil {
 					t.Fatal(err)
 				}
-				if err := store.SetDeploymentRootfs(t.Context(), dep.ID, "/migration.ext4", "layers/"+dep.ID, 4096); err != nil {
+				if err := store.MemStore.SetDeploymentRootfs(t.Context(), dep.ID, "/migration.ext4", "layers/"+dep.ID, 4096); err != nil {
 					t.Fatal(err)
 				}
-				task, err := store.CreateAppTask(t.Context(), state.CreateAppTaskParams{AccountID: account.ID, AppID: dep.AppID, DeploymentID: dep.ID, Kind: state.AppTaskKindRelease, Command: dep.ReleaseCommand, CommandShell: dep.ReleaseCommandShell, CreatedAt: time.Now().UTC().Add(-20 * time.Second)})
+				task, err := store.MemStore.CreateAppTask(t.Context(), state.CreateAppTaskParams{AccountID: account.ID, AppID: dep.AppID, DeploymentID: dep.ID, Kind: state.AppTaskKindRelease, Command: dep.ReleaseCommand, CommandShell: dep.ReleaseCommandShell, CreatedAt: time.Now().UTC().Add(-20 * time.Second)})
 				if err != nil {
 					t.Fatal(err)
 				}
 				now := time.Now().UTC().Add(-10 * time.Second)
-				claimed, err := store.ClaimNextAppTask(t.Context(), "migration", now, time.Minute)
+				claimed, err := store.MemStore.ClaimNextAppTask(t.Context(), "migration", now, time.Minute)
 				if err != nil || claimed.ID != task.ID {
 					t.Fatalf("claim=%+v %v", claimed, err)
 				}
-				if _, err := store.MarkAppTaskRunning(t.Context(), task.ID, *claimed.LeaseToken, now.Add(time.Second)); err != nil {
+				if _, err := store.MemStore.MarkAppTaskRunning(t.Context(), task.ID, *claimed.LeaseToken, now.Add(time.Second)); err != nil {
 					t.Fatal(err)
 				}
 				zero := 0
-				if _, err := store.CompleteAppTask(t.Context(), state.CompleteAppTaskParams{ID: task.ID, LeaseToken: *claimed.LeaseToken, Status: state.AppTaskSucceeded, ExitCode: &zero, FinishedAt: now.Add(2 * time.Second)}); err != nil {
+				if _, err := store.MemStore.CompleteAppTask(t.Context(), state.CompleteAppTaskParams{ID: task.ID, LeaseToken: *claimed.LeaseToken, Status: state.AppTaskSucceeded, ExitCode: &zero, FinishedAt: now.Add(2 * time.Second)}); err != nil {
 					t.Fatal(err)
 				}
-				progress, err = store.ReconcileSafeProjectSubmission(t.Context(), account.ID, attempt)
+				progress, err = store.MemStore.ReconcileSafeProjectSubmission(t.Context(), account.ID, attempt)
 				if err != nil || progress.Status != "building" || !progress.ReleaseCommand.VerifyBaseline {
 					t.Fatalf("migration success bypassed baseline probes: %+v %v", progress, err)
 				}
@@ -279,20 +279,20 @@ func TestPairedProjectApplyPinsConfigurationBeforeBuild(t *testing.T) {
 				for _, probe := range plan.SafeRelease.Verification.Probes {
 					evidence = append(evidence, api.ProjectReleaseProbeEvidence{Probe: probe, StableRequests: api.RouteHealthProbeRequestsPerMinute})
 				}
-				if _, err := store.RecordProjectMigrationBaseline(t.Context(), account.ID, attempt, state.ProjectMigrationBaselineRound{TaskID: task.ID, StartedAt: time.Now().UTC(), Evidence: evidence}); err != nil {
+				if _, err := store.MemStore.RecordProjectMigrationBaseline(t.Context(), account.ID, attempt, state.ProjectMigrationBaselineRound{TaskID: task.ID, StartedAt: time.Now().UTC(), Evidence: evidence}); err != nil {
 					t.Fatal(err)
 				}
 			}
-			progress, err := store.ReconcileSafeProjectSubmission(t.Context(), account.ID, attempt)
+			progress, err := store.MemStore.ReconcileSafeProjectSubmission(t.Context(), account.ID, attempt)
 			if err != nil || progress.Status != "verifying" || progress.Configuration.TargetVersion != 1 {
 				t.Fatalf("progress=%+v err=%v", progress, err)
 			}
-			current, err := store.ProjectEnvironmentConfigLatest(t.Context(), account.ID, original.ProjectID, "production")
+			current, err := store.MemStore.ProjectEnvironmentConfigLatest(t.Context(), account.ID, original.ProjectID, "production")
 			if err != nil || current.ConfigHash != progress.Configuration.TargetHash {
 				t.Fatalf("paired head=%+v %v", current, err)
 			}
 			for _, member := range members {
-				old, err := store.RuntimeAppEnvForDeployment(t.Context(), account.ID, member.AppID, member.DeploymentID)
+				old, err := store.MemStore.RuntimeAppEnvForDeployment(t.Context(), account.ID, member.AppID, member.DeploymentID)
 				if err != nil || old.Values[0].Value != "previous" {
 					t.Fatal("retained release lost old variables")
 				}

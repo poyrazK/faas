@@ -32,6 +32,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/devbridge"
 	"github.com/onebox-faas/faas/pkg/flags"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
+	"github.com/onebox-faas/faas/pkg/wire"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/propagation"
@@ -270,6 +271,8 @@ type ServiceProxyRequestAttemptObserver func(runID, callerAppID, generation stri
 // without a live gRPC server.
 type ServiceProxyConfig struct {
 	AuthorizeBound            ServiceProxyAuthorizer
+	// AdmitRuntime checks current budget holds after selecting the runtime.
+	AdmitRuntime              func(context.Context, string, string) error
 	AdmitManagedAsync         ServiceProxyAsyncAdmitter
 	Provider                  ServiceEndpointProvider
 	Resolve                   ServiceProxyResolver
@@ -351,6 +354,7 @@ type ServiceProxyConfig struct {
 // for safe idempotent requests.
 type ServiceProxy struct {
 	authorizeBound            ServiceProxyAuthorizer
+	admitRuntime              func(context.Context, string, string) error
 	apiMonetization           func() bool
 	admitManagedAsync         ServiceProxyAsyncAdmitter
 	mintAssertion             ServiceCallerMinter
@@ -459,6 +463,7 @@ func NewServiceProxy(cfg ServiceProxyConfig) *ServiceProxy {
 		retryBudget = NewRetryBudget(0, now)
 	}
 	return &ServiceProxy{
+		admitRuntime:              cfg.AdmitRuntime,
 		apiMonetization:           cfg.APIMonetization,
 		mintAssertion:             cfg.MintCallerAssertion,
 		localNodeID:               strings.TrimSpace(cfg.LocalNodeID),
@@ -512,6 +517,7 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// A service call uses the same bounded guest-evidence sink as public
 	// requests so target flag decisions can be attached to this dependency span.
 	r = withGuestExecutionEvidence(r, p.apiMonetization != nil && p.apiMonetization())
+	r = withServiceWakeRecorder(r)
 	// The guest-facing service-proxy listener is a standalone http.Server, not
 	// wrapped by otelhttp. Extract W3C context here so a caller that forwards
 	// its inbound traceparent joins the original request instead of always
@@ -897,6 +903,17 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !overridePresent && versionKey != "" {
 		if resolver, ok := p.provider.(versionAffinityResolver); ok {
 			versionDeploymentID, _ = resolver.AffinityDeployment(target.AppID, versionKey)
+		}
+	}
+	if p.admitRuntime != nil {
+		if err := p.admitRuntime(dependencyCtx, target.AppID, versionDeploymentID); err != nil {
+			var problem *api.Problem
+			if errors.As(err, &problem) {
+				api.WriteProblem(dispatchWriter, problem)
+			} else {
+				serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "budget admission is unavailable")
+			}
+			return
 		}
 	}
 	var responseFault *scenarioHTTPResponseFault
@@ -1532,6 +1549,7 @@ func (p *ServiceProxy) guestRequest(r *http.Request, targetPath string, target S
 	if p.attachCallerAssertion(request, target, caller, callerEnv) {
 		request = withTrustedServiceCallerAssertion(request)
 	}
+	request = request.WithContext(wire.WithPrivateForward(request.Context())) //nolint:contextcheck // request inherits r.Context and may carry the authorized assertion context.
 	return request
 }
 

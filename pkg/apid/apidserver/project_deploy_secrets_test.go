@@ -16,6 +16,7 @@ import (
 	"filippo.io/age"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
@@ -25,12 +26,12 @@ func (w projectSecretTestLog) Write(p []byte) (int, error) { w.t.Logf("%s", p); 
 
 // Inspect storage at actual build admission, rather than after the HTTP receipt.
 type projectSecretBuildStore struct {
-	*state.MemStore
-	onBuild func(state.Deployment)
+	MemStore *state.MemStore
+	onBuild  func(state.Deployment)
 }
 
 func (s *projectSecretBuildStore) CreateBuildWithID(ctx context.Context, buildID, id string, kind state.DeploymentKind, n int64, path string) (state.Build, error) {
-	dep, err := s.DeploymentByID(ctx, id)
+	dep, err := s.MemStore.DeploymentByID(ctx, id)
 	if err != nil {
 		return state.Build{}, err
 	}
@@ -76,7 +77,7 @@ func projectSecretsTestServer(t *testing.T, scopes []string) (*server, *projectS
 	t.Setenv("FAAS_SPOOL_ROOT", spool)
 	t.Setenv("FAAS_SCAN_SPOOL_ROOT", spool)
 	store := &projectSecretBuildStore{MemStore: state.NewMemStore()}
-	acct, err := store.CreateAccount(t.Context(), "secrets@example.com", api.PlanPro)
+	acct, err := store.MemStore.CreateAccount(t.Context(), "secrets@example.com", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +85,7 @@ func projectSecretsTestServer(t *testing.T, scopes []string) (*server, *projectS
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.CreateAPIKey(t.Context(), acct.ID, hash, "test", scopes); err != nil {
+	if _, err := store.MemStore.CreateAPIKey(t.Context(), acct.ID, hash, "test", scopes); err != nil {
 		t.Fatal(err)
 	}
 	ident, err := age.GenerateX25519Identity()
@@ -96,7 +97,7 @@ func projectSecretsTestServer(t *testing.T, scopes []string) (*server, *projectS
 	mfaIdentities = func() []*age.X25519Identity { return []*age.X25519Identity{ident} }
 	hostHMACKey = func() []byte { return bytes.Repeat([]byte{1}, 32) }
 	t.Cleanup(func() { setSecretRecipient, mfaIdentities, hostHMACKey = prevRecipient, prevIdent, prevHMAC })
-	s := newServer(store, slog.New(slog.NewTextHandler(projectSecretTestLog{t}, nil)), "gregale.dev", noopNotifier{}).WithOpsMetrics(t.Context(), wire.NewOpsMetrics("project_secret_test"))
+	s := newServer(statetest.NewMem(store), slog.New(slog.NewTextHandler(projectSecretTestLog{t}, nil)), "gregale.dev", noopNotifier{}).WithOpsMetrics(t.Context(), wire.NewOpsMetrics("project_secret_test"))
 	return s, store, acct, key
 }
 
@@ -149,11 +150,11 @@ func TestProjectDeploySecretsBeforeEveryBuildAndRetry(t *testing.T) {
 	builds := 0
 	store.onBuild = func(dep state.Deployment) {
 		builds++
-		app, err := store.AppByID(t.Context(), dep.AppID)
+		app, err := store.MemStore.AppByID(t.Context(), dep.AppID)
 		if err != nil {
 			t.Fatal(err)
 		}
-		apps, err := store.AppsForProject(t.Context(), acct.ID, app.ProjectID)
+		apps, err := store.MemStore.AppsForProject(t.Context(), acct.ID, app.ProjectID)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -161,7 +162,7 @@ func TestProjectDeploySecretsBeforeEveryBuildAndRetry(t *testing.T) {
 			t.Fatalf("project apps=%d", len(apps))
 		}
 		for _, selected := range apps {
-			rows, err := store.ListAppSecretsInScope(t.Context(), acct.ID, selected.ID, api.DefaultEnvScope)
+			rows, err := store.MemStore.ListAppSecretsInScope(t.Context(), acct.ID, selected.ID, api.DefaultEnvScope)
 			if err != nil || len(rows) != 1 || rows[0].Key != "TOKEN" || len(rows[0].Ciphertext) == 0 {
 				t.Fatalf("first build admitted before all workloads have sealed secrets: app=%s rows=%v err=%v", selected.Slug, rows, err)
 			}
@@ -238,11 +239,11 @@ func TestProjectDeploySecretsSelectedEnvironment(t *testing.T) {
 	if rec.Code != 200 {
 		t.Fatalf("initial apply: %d %s", rec.Code, rec.Body)
 	}
-	project, err := store.ProjectBySlug(t.Context(), acct.ID, "demo")
+	project, err := store.MemStore.ProjectBySlug(t.Context(), acct.ID, "demo")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.CreateProjectEnvironment(t.Context(), state.ProjectEnvironment{AccountID: acct.ID, ProjectID: project.ID, Slug: "staging"}); err != nil {
+	if _, err := store.MemStore.CreateProjectEnvironment(t.Context(), state.ProjectEnvironment{AccountID: acct.ID, ProjectID: project.ID, Slug: "staging"}); err != nil {
 		t.Fatal(err)
 	}
 	builds := 0
@@ -251,7 +252,7 @@ func TestProjectDeploySecretsSelectedEnvironment(t *testing.T) {
 		if dep.Scope != "staging" {
 			t.Errorf("scope=%q", dep.Scope)
 		}
-		rows, err := store.ListAppSecretsInScope(t.Context(), acct.ID, dep.AppID, "staging")
+		rows, err := store.MemStore.ListAppSecretsInScope(t.Context(), acct.ID, dep.AppID, "staging")
 		if err != nil || len(rows) != 1 {
 			t.Fatalf("build missing staging secret: %v %v", rows, err)
 		}
@@ -263,13 +264,13 @@ func TestProjectDeploySecretsSelectedEnvironment(t *testing.T) {
 	if builds != 1 {
 		t.Fatalf("selected builds=%d", builds)
 	}
-	apps, err := store.AppsForProject(t.Context(), acct.ID, project.ID)
+	apps, err := store.MemStore.AppsForProject(t.Context(), acct.ID, project.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, app := range apps {
 		for _, scope := range []string{"default", "staging"} {
-			rows, err := store.ListAppSecretsInScope(t.Context(), acct.ID, app.ID, scope)
+			rows, err := store.MemStore.ListAppSecretsInScope(t.Context(), acct.ID, app.ID, scope)
 			if err != nil {
 				t.Fatal(err)
 			}

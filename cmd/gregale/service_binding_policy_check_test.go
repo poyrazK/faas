@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -9,11 +9,12 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func TestServiceBindingPolicyExportCheck(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	current := api.AppResponse{Slug: "hello", ServiceBindings: []api.AppServiceBinding{{Binding: "billing", Service: "billing"}}}
 	calls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -21,17 +22,17 @@ func TestServiceBindingPolicyExportCheck(t *testing.T) {
 		if r.Method != http.MethodGet || r.URL.Path != "/v1/apps/hello" {
 			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
-		writeJSONTest(w, current)
+		main.WriteJSONTest(w, current)
 	}))
 	defer server.Close()
 	t.Setenv("FAAS_API", server.URL)
 	t.Setenv("FAAS_TOKEN", "fp_test_x")
 	var output bytes.Buffer
-	old := osStdout
-	osStdout = &output
-	t.Cleanup(func() { osStdout = old })
+	old := (*main.OsStdout)
+	(*main.OsStdout) = &output
+	t.Cleanup(func() { (*main.OsStdout) = old })
 	path := filepath.Join(t.TempDir(), "export.json")
-	if code := run([]string{"bindings", "service", "export", "hello", "--out", path, "--json"}); code != 0 {
+	if code := main.Run([]string{"bindings", "service", "export", "hello", "--out", path, "--json"}); code != 0 {
 		t.Fatalf("export=%d", code)
 	}
 	raw, err := os.ReadFile(path)
@@ -45,7 +46,7 @@ func TestServiceBindingPolicyExportCheck(t *testing.T) {
 	if len(fields) != 6 || string(fields["allowed_service_callers"]) != "null" || string(fields["allowed_service_call_scopes"]) != "null" || string(fields["service_reliability"]) != "{}" {
 		t.Fatalf("export=%s", raw)
 	}
-	if _, err := decodeServiceBindingConfiguration(raw, "hello"); err != nil {
+	if _, err := main.DecodeServiceBindingConfiguration(raw, "hello"); err != nil {
 		t.Fatal(err)
 	}
 	info, err := os.Stat(path)
@@ -55,7 +56,7 @@ func TestServiceBindingPolicyExportCheck(t *testing.T) {
 	if info.Mode().Perm() != 0600 {
 		t.Fatalf("mode=%v", info.Mode())
 	}
-	if code := run([]string{"bindings", "service", "export", "hello", "--out", path}); code != 2 {
+	if code := main.Run([]string{"bindings", "service", "export", "hello", "--out", path}); code != 2 {
 		t.Fatalf("overwrite=%d", code)
 	}
 	unchanged, err := os.ReadFile(path)
@@ -63,18 +64,18 @@ func TestServiceBindingPolicyExportCheck(t *testing.T) {
 		t.Fatal("export overwritten")
 	}
 	output.Reset()
-	if code := run([]string{"bindings", "service", "check", "hello", "--file", path, "--json"}); code != 0 {
+	if code := main.Run([]string{"bindings", "service", "check", "hello", "--file", path, "--json"}); code != 0 {
 		t.Fatalf("roundtrip=%d output=%s", code, output.String())
 	}
 	empty := []string{}
 	current.AllowedServiceCallers = &empty
 	output.Reset()
-	if code := run([]string{"bindings", "service", "check", "hello", "--file", path, "--json"}); code != 1 {
+	if code := main.Run([]string{"bindings", "service", "check", "hello", "--file", path, "--json"}); code != 1 {
 		t.Fatalf("drift=%d", code)
 	}
 	var receipt struct {
-		Match   bool                                         `json:"match"`
-		Changes map[string]serviceBindingConfigurationChange `json:"changes"`
+		Match   bool                                              `json:"match"`
+		Changes map[string]main.ServiceBindingConfigurationChange `json:"changes"`
 	}
 	if err := json.Unmarshal(output.Bytes(), &receipt); err != nil {
 		t.Fatal(err)
@@ -93,26 +94,26 @@ func TestServiceBindingPolicyExportCheck(t *testing.T) {
 	} {
 		policy := servicePolicyFile(t, body)
 		output.Reset()
-		if code := run([]string{"bindings", "service", "check", "hello", "--file", policy, "--json"}); code != 0 {
+		if code := main.Run([]string{"bindings", "service", "check", "hello", "--file", policy, "--json"}); code != 0 {
 			t.Fatalf("%s code=%d output=%s", body, code, output.String())
 		}
 	}
 	previous := calls
 	invalid := servicePolicyFile(t, `{"allowed_service_callers":[],"allowed_service_callers":null}`)
-	if code := run([]string{"bindings", "service", "check", "hello", "--file", invalid}); code != 2 || calls != previous {
+	if code := main.Run([]string{"bindings", "service", "check", "hello", "--file", invalid}); code != 2 || calls != previous {
 		t.Fatalf("invalid policy touched API: code=%d calls=%d", code, calls)
 	}
 	output.Reset()
-	if code := run([]string{"bindings", "service", "export", "hello", "--json"}); code != 0 {
+	if code := main.Run([]string{"bindings", "service", "export", "hello", "--json"}); code != 0 {
 		t.Fatalf("stdout=%d", code)
 	}
-	if _, err := decodeServiceBindingConfiguration(output.Bytes(), "hello"); err != nil {
+	if _, err := main.DecodeServiceBindingConfiguration(output.Bytes(), "hello"); err != nil {
 		t.Fatalf("stdout: %v", err)
 	}
 }
 
 func TestServiceBindingPolicyCheckAPIFailure(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			t.Errorf("unexpected mutation %s", r.Method)
@@ -125,11 +126,11 @@ func TestServiceBindingPolicyCheckAPIFailure(t *testing.T) {
 	t.Setenv("FAAS_API", server.URL)
 	t.Setenv("FAAS_TOKEN", "fp_test_x")
 	var stderr bytes.Buffer
-	old := osStderr
-	osStderr = &stderr
-	t.Cleanup(func() { osStderr = old })
+	old := (*main.OsStderr)
+	(*main.OsStderr) = &stderr
+	t.Cleanup(func() { (*main.OsStderr) = old })
 	policy := servicePolicyFile(t, `{"service_binding_policy":"declared"}`)
-	if code := run([]string{"bindings", "service", "check", "hello", "--file", policy, "--json"}); code != 2 {
+	if code := main.Run([]string{"bindings", "service", "check", "hello", "--file", policy, "--json"}); code != 2 {
 		t.Fatalf("API error exit=%d", code)
 	}
 	var diagnostic struct {
@@ -146,11 +147,11 @@ func TestServiceBindingPolicyCheckAPIFailure(t *testing.T) {
 func TestServiceBindingPolicyPresentEmptyCollections(t *testing.T) {
 	var callers []string
 	var scopes api.ServiceCallerScopes
-	config, err := liveServicePolicy(api.AppResponse{Slug: "hello", AllowedServiceCallers: &callers, AllowedServiceCallScopes: &scopes})
+	config, err := main.LiveServicePolicy(api.AppResponse{Slug: "hello", AllowedServiceCallers: &callers, AllowedServiceCallScopes: &scopes})
 	if err != nil {
 		t.Fatal(err)
 	}
-	fields, err := canonicalServicePolicy(config)
+	fields, err := main.CanonicalServicePolicy(config)
 	if err != nil {
 		t.Fatal(err)
 	}

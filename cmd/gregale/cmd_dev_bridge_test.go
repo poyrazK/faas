@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"io"
@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/devbridge"
 )
 
@@ -25,7 +26,7 @@ func TestDevBridgeLocalProxyUsesScopedEnvironmentRouting(t *testing.T) {
 	}))
 	defer upstream.Close()
 	target, _ := url.Parse(upstream.URL)
-	proxy := httptest.NewServer(bridgeLocalProxy(target, devbridge.Session{ID: "session", Scope: devbridge.Scope{AccountID: "account"}}, "routing-proof", ""))
+	proxy := httptest.NewServer(main.BridgeLocalProxy(target, devbridge.Session{ID: "session", Scope: devbridge.Scope{AccountID: "account"}}, "routing-proof", ""))
 	defer proxy.Close()
 	req, _ := http.NewRequestWithContext(t.Context(), "GET", proxy.URL+"/payments/a%2Fb?currency=EUR", nil)
 	req.Header.Set("Authorization", "Bearer app-auth")
@@ -51,7 +52,7 @@ func TestDevBridgeLocalProxyUsesScopedEnvironmentRouting(t *testing.T) {
 
 func TestDevBridgeInspectionRejectsForeignHostAndOrigin(t *testing.T) {
 	inspector := devbridge.NewInspector(100, 1024)
-	handler := bridgeLoopbackOnly(bridgeInspectionHandler(inspector))
+	handler := main.BridgeLoopbackOnly(main.BridgeInspectionHandler(inspector))
 	for _, test := range []struct {
 		host, origin string
 		want         int

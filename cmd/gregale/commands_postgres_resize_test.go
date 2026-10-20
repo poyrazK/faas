@@ -1,5 +1,5 @@
 // adr: 623 — stable resize UUID and safe CLI output.
-package main
+package main_test
 
 import (
 	"bytes"
@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -41,19 +42,19 @@ func TestCmdPostgresResizeAndProgress(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fixture")
-	priorOut, priorJSON := osStdout, jsonOutput
-	t.Cleanup(func() { osStdout, jsonOutput = priorOut, priorJSON })
+	priorOut, priorJSON := (*main.OsStdout), (*main.JsonOutput)
+	t.Cleanup(func() { (*main.OsStdout), (*main.JsonOutput) = priorOut, priorJSON })
 	for _, asJSON := range []bool{false, true} {
 		var out bytes.Buffer
-		osStdout, jsonOutput = &out, asJSON
-		if code := cmdPostgres([]string{"resize", "orders", "--class", "burstable", "--request-id", id}); code != 0 {
+		(*main.OsStdout), (*main.JsonOutput) = &out, asJSON
+		if code := main.CmdPostgres([]string{"resize", "orders", "--class", "burstable", "--request-id", id}); code != 0 {
 			t.Fatal("resize", code)
 		}
 		if strings.Contains(out.String(), "PRIVATE_") {
 			t.Fatal("private data leaked")
 		}
 		out.Reset()
-		if code := cmdPostgres([]string{"resize-status", "orders", id}); code != 0 {
+		if code := main.CmdPostgres([]string{"resize-status", "orders", id}); code != 0 {
 			t.Fatal("progress", code)
 		}
 		if !asJSON && !strings.Contains(out.String(), "disconnect") {
@@ -63,7 +64,7 @@ func TestCmdPostgresResizeAndProgress(t *testing.T) {
 	if posts != 2 {
 		t.Fatal("request count", posts)
 	}
-	if code := cmdPostgres([]string{"resize", "orders", "--class", "burstable"}); code == 0 || posts != 2 {
+	if code := main.CmdPostgres([]string{"resize", "orders", "--class", "burstable"}); code == 0 || posts != 2 {
 		t.Fatal("accepted missing durable UUID")
 	}
 }

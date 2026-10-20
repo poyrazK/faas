@@ -105,34 +105,34 @@ func TestAtomicServiceAdditionAPIPlansBeforeReserving(t *testing.T) {
 			}
 			var original []state.ProjectReleaseMember
 			for _, build := range applied.Builds {
-				app, err := store.AppByID(t.Context(), build.AppID)
+				app, err := store.MemStore.AppByID(t.Context(), build.AppID)
 				if err != nil {
 					t.Fatal(err)
 				}
 				app.Manifest.RevisionPinTTLSeconds = 1800
-				if _, err := store.UpdateApp(t.Context(), app.ID, state.UpdateAppParams{Manifest: &app.Manifest}); err != nil {
+				if _, err := store.MemStore.UpdateApp(t.Context(), app.ID, state.UpdateAppParams{Manifest: &app.Manifest}); err != nil {
 					t.Fatal(err)
 				}
-				dep, err := store.CreateDeployment(t.Context(), state.Deployment{AppID: app.ID, Scope: "production", Kind: state.DeploymentKindTarball})
+				dep, err := store.MemStore.CreateDeployment(t.Context(), state.Deployment{AppID: app.ID, Scope: "production", Kind: state.DeploymentKindTarball})
 				if err != nil {
 					t.Fatal(err)
 				}
-				if err := store.MarkDeploymentLive(t.Context(), dep.ID); err != nil {
+				if err := store.MemStore.MarkDeploymentLive(t.Context(), dep.ID); err != nil {
 					t.Fatal(err)
 				}
 				original = append(original, state.ProjectReleaseMember{AppID: app.ID, DeploymentID: dep.ID})
 			}
-			baseline, err := store.PublishProjectReleaseSet(t.Context(), account.ID, applied.ProjectID, "production", 1800, original)
+			baseline, err := store.MemStore.PublishProjectReleaseSet(t.Context(), account.ID, applied.ProjectID, "production", 1800, original)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := store.UpdateProjectEnvironmentProtection(t.Context(), account.ID, applied.ProjectID, "production", false); err != nil {
+			if _, err := store.MemStore.UpdateProjectEnvironmentProtection(t.Context(), account.ID, applied.ProjectID, "production", false); err != nil {
 				t.Fatal(err)
 			}
 			s.WithAtomicServiceAdditionsEnabled(scenario != "disabled")
 			source := additionArchive(t)
 			preview := additionRequest(t, s, key, "/v1/projects/scan", "", scenario != "missing_opt_in", source)
-			apps, err := store.AppsForProject(t.Context(), account.ID, applied.ProjectID)
+			apps, err := store.MemStore.AppsForProject(t.Context(), account.ID, applied.ProjectID)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -193,7 +193,7 @@ func TestAtomicServiceAdditionAPIPlansBeforeReserving(t *testing.T) {
 				if !dep.TrafficPercentExplicit || dep.TrafficPercent != 0 {
 					t.Fatal("new service build received traffic")
 				}
-				active, err := store.ActiveProjectReleaseSet(t.Context(), account.ID, applied.ProjectID, "production")
+				active, err := store.MemStore.ActiveProjectReleaseSet(t.Context(), account.ID, applied.ProjectID, "production")
 				if err != nil || active.ID != baseline.ID {
 					t.Fatal("build admission switched production")
 				}

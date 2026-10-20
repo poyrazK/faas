@@ -1,8 +1,9 @@
 // JSON parity inventories emitting command families and their tests.
 // Both CLI packages keep the same extraction rules and regression fixtures.
-package main
+package main_test
 
 import (
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -94,7 +95,7 @@ func topLevelDispatcher(leaf string) string {
 	name := strings.ToLower(strings.ReplaceAll(strings.TrimPrefix(leaf, "cmd"), "-", ""))
 	bestName, bestLength := "", 0
 	for _, singular := range []bool{false, true} {
-		for _, command := range cliCommands {
+		for _, command := range *main.CliCommands {
 			prefix := strings.ReplaceAll(command.Name, "-", "")
 			if singular {
 				prefix = strings.TrimSuffix(prefix, "s")
@@ -202,8 +203,7 @@ func hasJSONTestMode(body *ast.BlockStmt) bool {
 		switch node := node.(type) {
 		case *ast.AssignStmt:
 			for index, lhs := range node.Lhs {
-				id, ok := lhs.(*ast.Ident)
-				if ok && id.Name == "jsonOutput" && index < len(node.Rhs) {
+				if isJSONOutput(lhs) && index < len(node.Rhs) {
 					value, ok := node.Rhs[index].(*ast.Ident)
 					if ok && value.Name == "true" {
 						enabled = true
@@ -244,14 +244,14 @@ func jsonTestedFile(file *ast.File) map[string]bool {
 			if !ok {
 				return true
 			}
-			id, ok := call.Fun.(*ast.Ident)
-			if !ok {
+			name := calledName(call.Fun)
+			if name == "" {
 				return true
 			}
-			if top := topLevelDispatcher(id.Name); top != "" {
+			if top := topLevelDispatcher(name); top != "" {
 				tested[top] = true
 			}
-			if id.Name == "run" {
+			if name == "run" {
 				// Table-driven run tests keep command vectors in literal
 				// slices in this same function, sometimes passed via a variable.
 				ast.Inspect(fn.Body, func(candidate ast.Node) bool {
@@ -277,6 +277,33 @@ func jsonTestedFile(file *ast.File) map[string]bool {
 	return tested
 }
 
+// isJSONOutput reports whether expr is the jsonOutput flag: jsonOutput in
+// internal tests, (*main.JsonOutput) in external ones.
+func isJSONOutput(expr ast.Expr) bool {
+	if id, ok := expr.(*ast.Ident); ok {
+		return id.Name == "jsonOutput"
+	}
+	if paren, ok := expr.(*ast.ParenExpr); ok {
+		expr = paren.X
+	}
+	star, ok := expr.(*ast.StarExpr)
+	return ok && calledName(star.X) == "jsonOutput"
+}
+
+// calledName returns a function's name as package main spells it, so an
+// external test's main.CmdScan maps like an internal test's cmdScan.
+func calledName(fun ast.Expr) string {
+	switch fun := fun.(type) {
+	case *ast.Ident:
+		return fun.Name
+	case *ast.SelectorExpr:
+		if pkg, ok := fun.X.(*ast.Ident); ok && pkg.Name == "main" {
+			return strings.ToLower(fun.Sel.Name[:1]) + fun.Sel.Name[1:]
+		}
+	}
+	return ""
+}
+
 func isStringSlice(expr ast.Expr) bool {
 	slice, ok := expr.(*ast.ArrayType)
 	if !ok || slice.Len != nil {
@@ -296,7 +323,7 @@ func markJSONCommandVector(tested map[string]bool, args []ast.Expr) {
 		if value == "--json" || value == "-j" || value == "--json=true" {
 			continue
 		}
-		if _, known := lookupCliCommand(value); known {
+		if _, known := main.LookupCliCommand(value); known {
 			tested[topLevelDispatcher("cmd"+value)] = true
 		}
 		return
@@ -304,7 +331,7 @@ func markJSONCommandVector(tested map[string]bool, args []ast.Expr) {
 }
 
 func TestJSONAuditDispatcherMapping(t *testing.T) {
-	for _, command := range cliCommands {
+	for _, command := range *main.CliCommands {
 		want := "cmd"
 		for _, part := range strings.Split(command.Name, "-") {
 			want += strings.ToUpper(part[:1]) + part[1:]
@@ -327,12 +354,13 @@ func TestArbitraryName(t *testing.T) { jsonOutput = true; cmdApps(nil) }
 func TestHumanAfter(t *testing.T) { cmdBindings(nil) }
 func TestRunJSON(t *testing.T) { _ = "bindings"; for _, args := range [][]string{{"alerts", "--json"}} { run(args) } }
 func helper() { jsonOutput = true; cmdBindings(nil) }
+func TestExternalJSON(t *testing.T) { (*main.JsonOutput) = true; main.CmdCanary(nil) }
 `, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	tested := jsonTestedFile(file)
-	if !tested["cmdApps"] || !tested["cmdAlerts"] || tested["cmdBindings"] || len(tested) != 2 {
+	if !tested["cmdApps"] || !tested["cmdAlerts"] || !tested["cmdCanary"] || tested["cmdBindings"] || len(tested) != 3 {
 		t.Fatalf("JSON-tested command families = %v", tested)
 	}
 }

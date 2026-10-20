@@ -13,20 +13,24 @@ import (
 
 func TestProjectReleaseSecretsHTTPGuards(t *testing.T) {
 	for _, tc := range []struct {
-		name, body string
-		scopes     []string
-		enabled    bool
-		want       int
+		name, slug, body string
+		scopes           []string
+		enabled          bool
+		want             int
 	}{
-		{"disabled", `{"request_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","workloads":{"api":{"TOKEN":"private"}}}`, api.ScopesAdminOnly, false, 503},
-		{"read_only", `{}`, []string{api.ScopeAppsRead}, true, 403},
-		{"unknown_field", `{"request_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","workloads":{},"force":true}`, api.ScopesAdminOnly, true, 400},
-		{"foreign_project", `{"request_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","workloads":{"api":{"TOKEN":"private"}}}`, api.ScopesAdminOnly, true, 404},
+		{"disabled", "project", `{"request_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","workloads":{"api":{"TOKEN":"private"}}}`, api.ScopesAdminOnly, false, 503},
+		{"read_only", "project", `{}`, []string{api.ScopeAppsRead}, true, 403},
+		{"unknown_field", "project", `{"request_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","workloads":{},"force":true}`, api.ScopesAdminOnly, true, 400},
+		{"foreign_project", "missing", `{"request_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","workloads":{"api":{"TOKEN":"private"}}}`, api.ScopesAdminOnly, true, 404},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			s, _, _, key := projectSecretsTestServer(t, tc.scopes)
+			s, store, acct, key := projectSecretsTestServer(t, tc.scopes)
 			s.WithProjectReleaseSecretsEnabled(tc.enabled)
-			r := httptest.NewRequest(http.MethodPost, "/v1/projects/missing/release-secrets", strings.NewReader(tc.body))
+			// Project access resolves the project before route guards run.
+			if _, err := store.MemStore.CreateProject(t.Context(), state.Project{AccountID: acct.ID, Slug: "project"}); err != nil {
+				t.Fatal(err)
+			}
+			r := httptest.NewRequest(http.MethodPost, "/v1/projects/"+tc.slug+"/release-secrets", strings.NewReader(tc.body))
 			r.Header.Set("Authorization", "Bearer "+key)
 			r.Header.Set("Content-Type", "application/json")
 			w := httptest.NewRecorder()
@@ -43,11 +47,11 @@ func TestProjectReleaseSecretsHTTPGuards(t *testing.T) {
 func TestProjectReleaseSecretsHTTPStaging(t *testing.T) {
 	s, store, acct, key := projectSecretsTestServer(t, api.ScopesAdminOnly)
 	s.WithProjectReleaseSecretsEnabled(true)
-	project, err := store.CreateProject(t.Context(), state.Project{AccountID: acct.ID, Slug: "project"})
+	project, err := store.MemStore.CreateProject(t.Context(), state.Project{AccountID: acct.ID, Slug: "project"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = store.CreateApp(t.Context(), state.App{AccountID: acct.ID, ProjectID: project.ID, Slug: "project-api", WorkloadName: "api"})
+	_, err = store.MemStore.CreateApp(t.Context(), state.App{AccountID: acct.ID, ProjectID: project.ID, Slug: "project-api", WorkloadName: "api"})
 	if err != nil {
 		t.Fatal(err)
 	}

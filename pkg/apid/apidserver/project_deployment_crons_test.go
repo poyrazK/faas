@@ -37,12 +37,12 @@ func TestProjectApplyCronOnlyPartialFailureAndReuse(t *testing.T) {
 		}
 		projectCronReady(t, store.MemStore, build.DeploymentID)
 	}
-	if _, err := store.ReconcileDeploymentCrons(t.Context()); err != nil {
+	if _, err := store.MemStore.ReconcileDeploymentCrons(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	limits, _ := api.LimitsFor(acct.Plan)
 	for _, build := range first.Builds {
-		if _, err := store.CreateCronIfUnderQuota(t.Context(), build.AppID, "0 * * * *", "/", true, limits); err != nil {
+		if _, err := store.MemStore.CreateCronIfUnderQuota(t.Context(), build.AppID, "0 * * * *", "/", true, limits); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -56,7 +56,7 @@ func TestProjectApplyCronOnlyPartialFailureAndReuse(t *testing.T) {
 		t.Fatalf("cron-only builds=%+v", changed.Builds)
 	}
 	for _, build := range changed.Builds {
-		rows, err := store.ListCronsForApp(t.Context(), build.AppID)
+		rows, err := store.MemStore.ListCronsForApp(t.Context(), build.AppID)
 		if err != nil || len(rows) != 1 || build.Configuration == nil || build.Configuration.Crons.Status != "pending" {
 			t.Fatalf("early mutation/result: %+v %+v %v", build, rows, err)
 		}
@@ -83,20 +83,20 @@ func TestProjectApplyCronOnlyPartialFailureAndReuse(t *testing.T) {
 		}
 		if status == state.DeployLive {
 			projectCronReady(t, store.MemStore, build.DeploymentID)
-		} else if err := store.UpdateDeploymentStatus(t.Context(), build.DeploymentID, status, ""); err != nil {
+		} else if err := store.MemStore.UpdateDeploymentStatus(t.Context(), build.DeploymentID, status, ""); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if _, err := store.ReconcileDeploymentCrons(t.Context()); err != nil {
+	if _, err := store.MemStore.ReconcileDeploymentCrons(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	for i, build := range changed.Builds {
-		rows, err := store.ListCronsForApp(t.Context(), build.AppID)
+		rows, err := store.MemStore.ListCronsForApp(t.Context(), build.AppID)
 		want := i
 		if err != nil || len(rows) != want {
 			t.Fatalf("partial activation app=%s rows=%+v want=%d err=%v", build.AppID, rows, want, err)
 		}
-		config, err := store.DeploymentConfiguration(t.Context(), acct.ID, build.DeploymentID)
+		config, err := store.MemStore.DeploymentConfiguration(t.Context(), acct.ID, build.DeploymentID)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -126,16 +126,16 @@ func TestProjectApplyCronSelectionAndPreview(t *testing.T) {
 			for _, build := range first.Builds {
 				projectCronReady(t, store.MemStore, build.DeploymentID)
 			}
-			if _, err := store.ReconcileDeploymentCrons(t.Context()); err != nil {
+			if _, err := store.MemStore.ReconcileDeploymentCrons(t.Context()); err != nil {
 				t.Fatal(err)
 			}
 			for _, build := range first.Builds {
-				if _, err := store.CreateCronIfUnderQuota(t.Context(), build.AppID, "0 * * * *", "/", true, limits); err != nil {
+				if _, err := store.MemStore.CreateCronIfUnderQuota(t.Context(), build.AppID, "0 * * * *", "/", true, limits); err != nil {
 					t.Fatal(err)
 				}
 			}
 			if fields["environment"] == "staging" {
-				if _, err := store.CreateProjectEnvironment(t.Context(), state.ProjectEnvironment{AccountID: acct.ID, ProjectID: first.ProjectID, Slug: "staging"}); err != nil {
+				if _, err := store.MemStore.CreateProjectEnvironment(t.Context(), state.ProjectEnvironment{AccountID: acct.ID, ProjectID: first.ProjectID, Slug: "staging"}); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -150,13 +150,13 @@ func TestProjectApplyCronSelectionAndPreview(t *testing.T) {
 			for _, build := range next.Builds {
 				projectCronReady(t, store.MemStore, build.DeploymentID)
 			}
-			if _, err := store.ReconcileDeploymentCrons(t.Context()); err != nil {
+			if _, err := store.MemStore.ReconcileDeploymentCrons(t.Context()); err != nil {
 				t.Fatal(err)
 			}
 			for _, build := range first.Builds {
-				rows, err := store.ListCronsForApp(t.Context(), build.AppID)
+				rows, err := store.MemStore.ListCronsForApp(t.Context(), build.AppID)
 				want := 1
-				app, appErr := store.AppByID(t.Context(), build.AppID)
+				app, appErr := store.MemStore.AppByID(t.Context(), build.AppID)
 				if appErr != nil {
 					t.Fatal(appErr)
 				}
@@ -197,7 +197,7 @@ func TestProjectApplyProductionCronScope(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &first); err != nil {
 		t.Fatal(err)
 	}
-	apps, err := store.AppsForProject(t.Context(), acct.ID, first.ProjectID)
+	apps, err := store.MemStore.AppsForProject(t.Context(), acct.ID, first.ProjectID)
 	if err != nil || len(apps) == 0 {
 		t.Fatalf("apps=%+v %v", apps, err)
 	}
@@ -214,7 +214,7 @@ func TestProjectApplyProductionCronScope(t *testing.T) {
 	if len(result) != 1 || result[0].Error != "" {
 		t.Fatalf("enqueue=%+v", result)
 	}
-	dep, err := store.DeploymentByID(t.Context(), result[0].DeploymentID)
+	dep, err := store.MemStore.DeploymentByID(t.Context(), result[0].DeploymentID)
 	if err != nil || dep.Scope != state.DefaultEnvScope {
 		t.Fatalf("production alias=%+v %v", dep, err)
 	}

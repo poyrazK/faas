@@ -1,9 +1,10 @@
-package main
+package main_test
 
 import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,11 +12,11 @@ import (
 )
 
 func TestDataAPIReleaseAggregatesFreshEvidenceAndBlocksDependentStages(t *testing.T) {
-	contract, err := parseDataAPIContract(dataAPIContractFixture(t, dataAPIDiffFixture()))
+	contract, err := main.ParseDataAPIContract(main.DataAPIContractFixture(t, main.DataAPIDiffFixture()))
 	if err != nil {
 		t.Fatal(err)
 	}
-	config := dataAPIReleaseConfig{Directory: t.TempDir(), Baseline: "baseline", CurrentSchema: "current", Checks: "checks", Collection: "requests", PlanBaseline: "plans", Budget: "budget", CoveragePolicy: "policy"}
+	config := main.DataAPIReleaseConfig{Directory: t.TempDir(), Baseline: "baseline", CurrentSchema: "current", Checks: "checks", Collection: "requests", PlanBaseline: "plans", Budget: "budget", CoveragePolicy: "policy"}
 	commands := []string{"data-api migration preview", "data-api verify", "data-api explain", "data-api verify coverage"}
 	for _, failure := range []int{-1, 0, 1, 2, 3} {
 		t.Run("stage_"+string(rune('A'+failure+1)), func(t *testing.T) {
@@ -49,7 +50,7 @@ func TestDataAPIReleaseAggregatesFreshEvidenceAndBlocksDependentStages(t *testin
 				raw, _ := json.Marshal(report)
 				return raw, err
 			}
-			report, err := runDataAPIRelease(context.Background(), config, contract, runner)
+			report, err := main.RunDataAPIRelease(context.Background(), config, contract, runner)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -70,20 +71,20 @@ func TestDataAPIReleaseAggregatesFreshEvidenceAndBlocksDependentStages(t *testin
 		})
 	}
 	calls := 0
-	report, _ := runDataAPIRelease(context.Background(), config, contract, func(context.Context, []string) ([]byte, error) {
+	report, _ := main.RunDataAPIRelease(context.Background(), config, contract, func(context.Context, []string) ([]byte, error) {
 		calls++
 		return []byte(`{"version":1,"command":"data-api migration preview","status":"passed","cleanup":"passed","compatibility":{"current_fingerprint":"stale"}}`), nil
 	})
 	if report.Status != "failed" || calls != 1 || !strings.Contains(report.Steps[0].Error, "current_schema") {
 		t.Fatal("stale candidate schema accepted")
 	}
-	report, _ = runDataAPIRelease(context.Background(), config, contract, func(context.Context, []string) ([]byte, error) { return []byte("non-json"), errors.New("runtime") })
+	report, _ = main.RunDataAPIRelease(context.Background(), config, contract, func(context.Context, []string) ([]byte, error) { return []byte("non-json"), errors.New("runtime") })
 	if report.Cleanup != "unknown" {
 		t.Fatal("cleanup claimed after missing report")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	report, _ = runDataAPIRelease(ctx, config, contract, func(context.Context, []string) ([]byte, error) { t.Fatal("ran after cancellation"); return nil, nil })
+	report, _ = main.RunDataAPIRelease(ctx, config, contract, func(context.Context, []string) ([]byte, error) { t.Fatal("ran after cancellation"); return nil, nil })
 	if report.Status != "failed" {
 		t.Fatal("cancelled release passed")
 	}
@@ -93,19 +94,19 @@ func TestDataAPIReleaseConfigValidatesInputsBeforeStartingRuntime(t *testing.T) 
 	path := filepath.Join(dir, "release.json")
 	for _, raw := range []string{`{}`, `{"version":1,"unknown":true}`, `{"version":1,"from_version":1}`} {
 		_ = os.WriteFile(path, []byte(raw), 0600)
-		if _, _, err := readDataAPIReleaseConfig(path); err == nil {
+		if _, _, err := main.ReadDataAPIReleaseConfig(path); err == nil {
 			t.Fatal("incomplete config accepted")
 		}
 	}
-	config := dataAPIReleaseConfig{Version: 1, Baseline: "schema.json", CurrentSchema: "schema.json", Checks: "checks.json", Collection: "requests.json", PlanBaseline: "plans.json", Budget: "budget.json", CoveragePolicy: "policy.json"}
-	_ = os.WriteFile(filepath.Join(dir, "schema.json"), dataAPIContractFixture(t, dataAPIDiffFixture()), 0600)
+	config := main.DataAPIReleaseConfig{Version: 1, Baseline: "schema.json", CurrentSchema: "schema.json", Checks: "checks.json", Collection: "requests.json", PlanBaseline: "plans.json", Budget: "budget.json", CoveragePolicy: "policy.json"}
+	_ = os.WriteFile(filepath.Join(dir, "schema.json"), main.DataAPIContractFixture(t, main.DataAPIDiffFixture()), 0600)
 	for _, name := range []string{"checks.json", "requests.json", "plans.json", "budget.json"} {
 		_ = os.WriteFile(filepath.Join(dir, name), []byte(`{}`), 0600)
 	}
 	_ = os.WriteFile(filepath.Join(dir, "policy.json"), []byte(`{"version":1,"default_required":["integrity"],"relations":[]}`), 0600)
 	raw, _ := json.Marshal(config)
 	_ = os.WriteFile(path, raw, 0600)
-	got, _, err := readDataAPIReleaseConfig(path)
+	got, _, err := main.ReadDataAPIReleaseConfig(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,18 +117,18 @@ func TestDataAPIReleaseConfigValidatesInputsBeforeStartingRuntime(t *testing.T) 
 	_ = os.WriteFile(filepath.Join(dir, "fixture.sql"), []byte("SELECT 1;"), 0600)
 	raw, _ = json.Marshal(config)
 	_ = os.WriteFile(path, raw, 0600)
-	if _, _, err = readDataAPIReleaseConfig(path); err == nil {
+	if _, _, err = main.ReadDataAPIReleaseConfig(path); err == nil {
 		t.Fatal("clean rebuild accepted unrelated fixture")
 	}
 	_ = os.WriteFile(filepath.Join(dir, "data-api.dev.json"), []byte(`{"seed":"fixture.sql"}`), 0600)
-	if _, _, err = readDataAPIReleaseConfig(path); err != nil {
+	if _, _, err = main.ReadDataAPIReleaseConfig(path); err != nil {
 		t.Fatal(err)
 	}
 	config.Fixture = ""
 	config.FromVersion = 1
 	raw, _ = json.Marshal(config)
 	_ = os.WriteFile(path, raw, 0600)
-	if _, _, err = readDataAPIReleaseConfig(path); err == nil {
+	if _, _, err = main.ReadDataAPIReleaseConfig(path); err == nil {
 		t.Fatal("upgrade without distinct fixtures accepted")
 	}
 }

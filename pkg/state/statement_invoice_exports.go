@@ -40,11 +40,12 @@ const (
 const DefaultCollectionDaysUntilDue = 30
 
 // ProviderCollectionModes are the modes each provider supports: Paddle
-// needs a customer address to bill a transaction, and Lago sends invoices
-// by its own email settings, so it can only add charging.
+// issues an invoice with the customer's address but cannot charge a saved
+// payment method for one (ADR-20261019100333), and Lago sends invoices by its
+// own email settings, so it can only add charging.
 var ProviderCollectionModes = map[string][]string{
 	BillingProviderStripe: {CollectionNone, CollectionSend, CollectionCharge},
-	BillingProviderPaddle: {CollectionNone},
+	BillingProviderPaddle: {CollectionNone, CollectionSend},
 	BillingProviderLago:   {CollectionNone, CollectionCharge},
 }
 

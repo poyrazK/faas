@@ -15,10 +15,10 @@ import (
 )
 
 type controlStore struct {
-	state.Store
-	calls  int
-	result string
-	err    error
+	state.Store // teststorecheck:allow implements the optional promotion control store, which statetest.Store would hide
+	calls       int
+	result      string
+	err         error
 }
 
 func (s *controlStore) ProjectEnvironmentPromotionByID(_ context.Context, account, project, env, id string) (state.ProjectEnvironmentPromotion, []state.ProjectEnvironmentPromotionWorkload, error) {
@@ -91,7 +91,7 @@ func TestBaselineProbeInputsExcludeWorker(t *testing.T) {
 }
 
 type healthControlStore struct {
-	state.Store
+	state.Store // teststorecheck:allow implements the optional promotion health stores, which statetest.Store would hide
 	state.ProjectReleaseSetReader
 	p            state.ProjectEnvironmentPromotion
 	h            *api.ProjectPromotionHealth

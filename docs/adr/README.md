@@ -147,6 +147,9 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 2026101702 | [Linked replacement repair plans](2026101702-repair-replacement.md) | accepted for internal qualification | Narrow original candidates with parent fencing and fresh approval |
 | 2026101701 | [Reviewed retention of repair payloads](2026101701-repair-retention.md) | accepted for internal qualification | Digest-reviewed compaction retains identities, receipts and closure |
 | 2026101710 | [Daemon-bound repair producers](2026101710-repair-producer-retirement.md) | accepted; native execution pending | Physical producer retirement fences cleanup and capacity release |
+| 1580 | [Zero-downtime daemon restarts](1580-zero-downtime-daemon-restarts.md) | accepted | Opt-in durable listeners, bounded draining and restart-aware routing |
+| 2026101501 | [Internal mail service](2026101501-internal-mail-service.md) | accepted for internal experiment; customer delivery disabled | Independent activation and delivery gates |
+| 2026101601 | [Durable mail producer outbox](2026101601-mail-producer-outbox.md) | accepted for internal experiment; activation disabled | Durable account-deletion producer handoff |
 | 20261016 | [Selective data repair](20261016-selective-data-repair.md) | accepted for internal qualification | Explicit PostgreSQL field-update capture, isolated rehearsal and atomic approved repair; limits in `pkg/api/limits.go` |
 | 1576 | [Internal CI control plane with compute admission closed](1576-internal-ci-control-plane.md) | accepted for internal implementation; native acceptance pending | Default-off Gregale CI; account-scoped operator admission and separate compute/provider qualification |
 | 1571 | [Durable CI execution engine qualification without compute dispatch](1571-ci-execution-engine-qualification.md) | accepted for internal implementation; native acceptance pending | Default-off Gregale CI; account-scoped operator admission and separate compute/provider qualification |
@@ -327,6 +330,10 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 1324 | [Block platform tenants with overdue invoices](1324-block-tenants-with-overdue-invoices.md) | accepted | An account rule holds tenants whose exported invoice is unpaid past its due date; tenant admission answers 402 tenant_invoice_overdue |
 | 1325 | [Prorated monthly fees in the first month](1325-prorated-monthly-fees.md) | accepted | App and tenant cards can prorate the base fee and minimum of the month a consumer or tenant is created, by minutes left |
 | 20261018090210 | [API monetization behind a release flag](20261018090210-api-monetization-release-flag.md) | accepted | Runtime setting `api_monetization_enabled` (default off) hides its routes before auth, spec paths, CLI verbs, webhook events and starter billing, and pauses its workers and gateway enforcement |
+| 20261019100330 | [Zero- and three-decimal statement currencies](20261019100330-statement-currencies.md) | accepted | Statements stay in millicents; invoices, exports and payment syncs use each ISO 4217 currency's minor unit (0–3 decimals), converted to Stripe's own units at the edge |
+| 20261019100331 | [Prepaid credit and spend caps for platform tenants](20261019100331-platform-tenant-credit-and-spend-caps.md) | accepted | Tenant credit grants are drawn at finalize; monthly tenant spend caps after credit are checked each minute and enforced through tenant admission with a 402 |
+| 20261019100332 | [Prorated monthly fees across card changes and revocation](20261019100332-prorated-fees-across-card-changes.md) | accepted | Prorating cards charge fees and minimums for the share of the month they are in force, and until a revocation unless the month was already finalized |
+| 20261019100333 | [Paddle invoices sent by Paddle](20261019100333-paddle-send-collection.md) | accepted | Paddle connections can collect with `send`: exports bill the draft transaction with the customer's newest address so Paddle emails it |
 | 650 | [Schema-generated Data APIs](650-schema-generated-data-api.md) | accepted | Ordinary app lifecycle, schema-restricted bindings, private type export and typed application clients |
 | 712 | [Object-storage durable entities](712-object-storage-durable-entities.md) | internal prototype; qualification pending | SQL-free entity state and retry receipts, opt-in alarms and checkpointed cleanup |
 | 1446 | [Safe releases by default](1446-safe-releases-by-default.md) | accepted; n2 drills passed | Default balanced canary and 5xx rollback for production releases, bounded low-traffic hold, crash-loop gate, unfenced plain rollback, verified rollback outcomes |
@@ -408,7 +415,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 567 | [Runtime base convergence](567-runtime-base-convergence.md) | proposed | Keep each node's cached runtime base byte-identical to its shared publication so ADR-510 snapshots restore on any node |
 | 510 | [Snapshot backing image identity](510-snapshot-backing-image-identity.md) | proposed | Restore only onto the kernel and read-only base a capture was taken with; refuse and cold-boot otherwise |
 | 516 | [Replay recent managed PostgreSQL usage corrections](516-managed-postgres-usage-correction-replay.md) | accepted | Recover missing windows first, bound recent revision replay, and reject unsafe collection windows |
-| 566 | [Financial visibility and scoped spending controls](566-financial-visibility-and-scoped-budgets.md) | visibility preview; enforcement pending | Retained compute/egress costs, forecasts and disabled budget drafts; runtime enforcement has separate acceptance gates |
+| 566 | [Financial visibility and scoped spending controls](566-financial-visibility-and-scoped-budgets.md) | monitored notifications preview; stopping pending | Retained costs, forecasts, revisioned budgets and durable spending alerts; stopping and strict limits have separate acceptance gates |
 | 565 | [Managed PostgreSQL fleet usage recovery](565-managed-postgres-fleet-usage-recovery.md) | accepted | Recover one window per database per round across the fleet before correction replay, using durable observation order |
 | 569 | [Managed PostgreSQL terminal usage coverage](569-managed-postgres-terminal-usage-coverage.md) | accepted | Retain known resources through shutdown, recover finite final windows, and require every final correction before completing automatic accounting |
 - [ADR-581: Managed PostgreSQL uncertain accounting intent](581-managed-postgres-uncertain-accounting-intent.md) — durable provider-attempt ownership and identity recovery before deletion
@@ -1712,6 +1719,11 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR 202610171900: Release compatibility gates (N±1, deploy order, skew and migration checks, SLO gate)](202610171900-release-compatibility-gates.md)
 - [ADR-1700: Platform flags: per-account release gates managed at runtime](1700-platform-flags.md)
 
+- [Strict app compute reservations](1750-strict-app-compute-reservations.md)
+- [ADR-1746: Shared account compute funding](1746-account-strict-compute.md)
+- [ADR-1747: Independent job compute funding](1747-job-strict-compute.md)
+- [ADR-1748: Shared account compute and egress funding](1748-account-strict-egress.md)
+- [ADR-1749: Funded public forwarding](1749-public-forwarding-egress.md)
 - [ADR-1650: Per-unit control-plane releases](1650-per-unit-control-plane-releases.md)
 
 - [ADR-20261017210000: Reviewed regression triage through management MCP](20261017210000-management-mcp-regression-triage.md)

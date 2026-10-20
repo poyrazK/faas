@@ -5756,6 +5756,18 @@ type AccountTraceLookupResponse struct {
 type AccountTraceMatch struct {
 	App     string                    `json:"app"`
 	Request DebugTelemetryRequestItem `json:"request"`
+	// Wake is the wake this request started or joined, when its wake history
+	// is still retained.
+	Wake *AccountTraceWake `json:"wake,omitempty"`
+}
+
+// AccountTraceWake is how a matched request's app was woken: the wake method
+// (for example restore or cold_boot) and how long the instance took from boot
+// start to ready. ReadyInMS is omitted until the wake completed.
+type AccountTraceWake struct {
+	WakeID    string `json:"wake_id"`
+	Method    string `json:"method,omitempty"`
+	ReadyInMS int32  `json:"ready_in_ms,omitempty"`
 }
 
 // AccountTraceInvocation is a safe durable invocation lifecycle projection.

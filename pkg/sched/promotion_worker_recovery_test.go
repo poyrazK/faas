@@ -6,14 +6,15 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 // The state suites verify promotion hold admission. Here the underlying durable
 // job pin supplies admission while this adapter isolates the candidate pool path.
 type heldWorkerRecoveryStore struct {
-	*state.MemStore
-	held    string
-	readErr error
+	MemStore *state.MemStore
+	held     string
+	readErr  error
 }
 
 func (s *heldWorkerRecoveryStore) PinnedProjectReleaseWorkers(context.Context, string) ([]string, error) {
@@ -52,7 +53,7 @@ func TestHeldWorkerCandidateRecoversAfterSchedulerRestart(t *testing.T) {
 		return held
 	}
 	vmm := &recordingStopVMM{fakeVMM: &fakeVMM{}}
-	engine := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+	engine := newEngine(t, statetest.NewMem(store), vmm, &fakeNotifier{}, "1.10.0")
 	if err := engine.SeedLedger(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +64,7 @@ func TestHeldWorkerCandidateRecoversAfterSchedulerRestart(t *testing.T) {
 	if err := base.UpdateInstanceState(ctx, resident.ID, string(state.StateStopped)); err != nil {
 		t.Fatal(err)
 	}
-	engine = newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+	engine = newEngine(t, statetest.NewMem(store), vmm, &fakeNotifier{}, "1.10.0")
 	if err := engine.SeedLedger(ctx); err != nil {
 		t.Fatal(err)
 	}

@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -32,25 +33,25 @@ func TestBucketTagsCLI(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "token")
 	var out, stderr bytes.Buffer
-	oldOut, oldErr, oldJSON := osStdout, osStderr, jsonOutput
-	osStdout, osStderr, jsonOutput = &out, &stderr, true
-	t.Cleanup(func() { osStdout, osStderr, jsonOutput = oldOut, oldErr, oldJSON })
+	oldOut, oldErr, oldJSON := (*main.OsStdout), (*main.OsStderr), (*main.JsonOutput)
+	(*main.OsStdout), (*main.OsStderr), (*main.JsonOutput) = &out, &stderr, true
+	t.Cleanup(func() { (*main.OsStdout), (*main.OsStderr), (*main.JsonOutput) = oldOut, oldErr, oldJSON })
 	for _, action := range []string{"get", "set", "clear"} {
 		args := []string{"tags", action, "demo", bucket, key}
 		if action == "set" {
 			args = append(args, "team=core+%26+friends")
 		}
 		args = append(args, version)
-		if code := cmdBucket(args); code != 0 {
+		if code := main.CmdBucket(args); code != 0 {
 			t.Fatal(action, code, stderr.String())
 		}
 	}
 	for _, raw := range []string{"duplicate=1&duplicate=2", "missing", "a=b&missing", "=empty", "a=%xx"} {
-		if code := cmdBucket([]string{"tags", "set", "demo", bucket, key, raw, version}); code != 1 || calls != 3 {
+		if code := main.CmdBucket([]string{"tags", "set", "demo", bucket, key, raw, version}); code != 1 || calls != 3 {
 			t.Fatal("invalid tags dispatched", raw, code, calls)
 		}
 	}
-	if code := cmdBucket([]string{"tags", "get", "demo", bucket, key, "provider-private-id"}); code != 1 || calls != 3 {
+	if code := main.CmdBucket([]string{"tags", "get", "demo", bucket, key, "provider-private-id"}); code != 1 || calls != 3 {
 		t.Fatal("private selector dispatched", code, calls)
 	}
 }

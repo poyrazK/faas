@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -9,6 +9,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -110,11 +111,11 @@ func automationInspectorServer(t *testing.T, mode string) func() []string {
 func TestAutomationsRunHistoryScopeFiltersAndSummaries(t *testing.T) {
 	for _, mode := range []string{"success", "human", "empty", "wrong_app", "wrong_name", "missing_app_id", "wrong_lookup", "deleted", "list_error"} {
 		t.Run(mode, func(t *testing.T) {
-			resetJSONOut(t)
-			jsonOutput = mode != "human"
-			output := captureAutomationStdout(t)
+			main.ResetJSONOut(t)
+			(*main.JsonOutput) = mode != "human"
+			output := main.CaptureAutomationStdout(t)
 			calls := automationInspectorServer(t, mode)
-			code := cmdAutomations([]string{"runs", "--app", "billing", "--name", "approval-flow", "--status", "failed", "--limit", "25", "--offset", "50", "--created-after", "2026-10-01T03:00:00.123+03:00", "--created-before", "2026-10-05T00:00:00Z"})
+			code := main.CmdAutomations([]string{"runs", "--app", "billing", "--name", "approval-flow", "--status", "failed", "--limit", "25", "--offset", "50", "--created-after", "2026-10-01T03:00:00.123+03:00", "--created-before", "2026-10-05T00:00:00Z"})
 			want := 1
 			if mode == "success" || mode == "human" || mode == "empty" {
 				want = 0
@@ -133,11 +134,11 @@ func TestAutomationsRunHistoryScopeFiltersAndSummaries(t *testing.T) {
 					t.Fatalf("summary leaked %s", secret)
 				}
 			}
-			if want == 0 && jsonOutput {
+			if want == 0 && (*main.JsonOutput) {
 				var report struct {
 					App, Name            string
 					Total, Limit, Offset int
-					Runs                 []automationRunSummary
+					Runs                 []main.AutomationRunSummary
 				}
 				if err := json.Unmarshal(output.Bytes(), &report); err != nil || report.App != "billing" || report.Name != "approval-flow" || report.Total != 80 || report.Limit != 25 || report.Offset != 50 {
 					t.Fatalf("report=%s error=%v", output.String(), err)
@@ -168,15 +169,15 @@ func TestAutomationsRunHistoryScopeFiltersAndSummaries(t *testing.T) {
 func TestAutomationsRunDiagnosisScopeAndGuidance(t *testing.T) {
 	for _, mode := range []string{"success", "blocked", "json", "uppercase", "wrong_app", "wrong_name", "wrong_run", "run_error", "wrong_diagnostics", "wrong_diagnostics_run", "diagnostics_error"} {
 		t.Run(mode, func(t *testing.T) {
-			resetJSONOut(t)
-			jsonOutput = mode == "json"
-			output := captureAutomationStdout(t)
+			main.ResetJSONOut(t)
+			(*main.JsonOutput) = mode == "json"
+			output := main.CaptureAutomationStdout(t)
 			calls := automationInspectorServer(t, mode)
 			id := inspectorRunID
 			if mode == "uppercase" {
 				id = strings.ToUpper(id)
 			}
-			code := cmdAutomations([]string{"diagnose", "--app", "billing", "--name", "approval-flow", "--run", id})
+			code := main.CmdAutomations([]string{"diagnose", "--app", "billing", "--name", "approval-flow", "--run", id})
 			passed := mode == "success" || mode == "blocked" || mode == "json" || mode == "uppercase"
 			if (code == 0) != passed {
 				t.Fatalf("exit=%d output=%s", code, output.String())
@@ -216,8 +217,8 @@ func TestAutomationsRunDiagnosisScopeAndGuidance(t *testing.T) {
 }
 
 func TestAutomationsRunInspectorRejectsArgumentsBeforeRequests(t *testing.T) {
-	resetJSONOut(t)
-	fake := authedFakeAPI(t, `{}`, 200)
+	main.ResetJSONOut(t)
+	fake := main.AuthedFakeAPI(t, `{}`, 200)
 	for _, args := range [][]string{
 		{"runs"}, {"runs", "--app", "billing", "--name", "../other"},
 		{"runs", "--app", "billing", "--name", "approval-flow", "--status", "cancelled"},
@@ -229,8 +230,8 @@ func TestAutomationsRunInspectorRejectsArgumentsBeforeRequests(t *testing.T) {
 		{"diagnose", "--name", "approval-flow", "--run", inspectorRunID},
 		{"diagnose", "--app", "billing", "--name", "approval-flow", "--run", inspectorRunID, "extra"},
 	} {
-		if code := cmdAutomations(args); code != 1 || fake.sawMethod != "" {
-			t.Fatalf("args=%v exit=%d request=%s", args, code, fake.sawMethod)
+		if code := main.CmdAutomations(args); code != 1 || (*fake.SawMethod()) != "" {
+			t.Fatalf("args=%v exit=%d request=%s", args, code, (*fake.SawMethod()))
 		}
 	}
 }

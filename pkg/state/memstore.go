@@ -318,6 +318,15 @@ type MemStore struct {
 	standardRuntimeRefreshRequests             map[string]ApplicationStandardRuntimeRefreshRequest
 	applicationStandardControlBindings         map[string]standardControlBinding
 	applicationStandardControlBackups          map[string]standardControlBackup
+	financialBudgetEvaluations                 map[string]financialBudgetMemoryEvaluation
+	financialBudgetAlerts                      map[string]FinancialBudgetAlertDelivery
+	financialBudgetStops                       map[string]FinancialBudgetStop
+	financialPreviewCommands                   map[string]FinancialPreviewCommandRuntime
+	financialComputeBooks                      map[string]financialComputeBook
+	financialComputeLeases                     map[string]financialComputeLease
+	financialComputeHolds                      map[string][]financialComputeHold
+	financialComputeOwners                     map[string]financialComputeOwner
+	financialComputeJobAttempts                map[string]financialComputeJobAttempt
 
 	eventCircuitBreakers              map[string]*eventCircuitRecord
 	eventSubscriptionControls         map[string]*memEventSubscriptionControl
@@ -1086,6 +1095,12 @@ type MemStore struct {
 	apiConsumerCreditGrants       map[string]APIConsumerCreditGrant
 	apiConsumerCreditApplications []apiConsumerCreditApplication
 	apiConsumerSpendCaps          map[string]APIConsumerSpendCap
+	// platformTenantCreditGrants (by ID), platformTenantCreditApplications
+	// and platformTenantSpendCaps (by tenant ID) do the same for platform
+	// tenants (ADR-20261019100331).
+	platformTenantCreditGrants       map[string]PlatformTenantCreditGrant
+	platformTenantCreditApplications []platformTenantCreditApplication
+	platformTenantSpendCaps          map[string]PlatformTenantSpendCap
 	// billingConnections and statementInvoiceExports back statement invoice
 	// exports (ADR-1502); keyed by account/provider and export ID.
 	billingConnections      map[string]BillingConnection
@@ -13955,6 +13970,9 @@ func (m *MemStore) EnqueueInvocation(ctx context.Context, inv Invocation) (Invoc
 	if err := m.validateInvocationEnvironmentLocked(inv, info); err != nil {
 		return Invocation{}, err
 	}
+	if err := invocationAdmissionDepth(inv, m.pendingProductionInvocationsLocked(inv.AppID, inv.Source, nil)); err != nil {
+		return Invocation{}, err
+	}
 	return m.enqueueInvocationLocked(inv)
 }
 
@@ -14554,17 +14572,7 @@ func (m *MemStore) FailInvocation(_ context.Context, id string, lastError string
 func (m *MemStore) CountPendingInvocations(_ context.Context, appID string, source InvocationSource) (int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	n := 0
-	for _, inv := range m.invocations {
-		if inv.AppID != appID || inv.Source != source || !m.productionInvocationWorkLocked(inv) {
-			continue
-		}
-		if inv.State != InvocationPending && inv.State != InvocationDispatching {
-			continue
-		}
-		n++
-	}
-	return n, nil
+	return m.pendingProductionInvocationsLocked(appID, source, nil), nil
 }
 
 // CancelInvocation moves any non-terminal row to state=cancelled.
@@ -23318,6 +23326,38 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 		if p.AccountID == id && !retainBilling {
 			delete(m.financialBudgets, key)
 			delete(m.financialBudgetRevisions, key)
+			delete(m.financialBudgetEvaluations, key)
+		}
+	}
+	for key, alert := range m.financialBudgetAlerts {
+		if alert.AccountID == id {
+			delete(m.financialBudgetAlerts, key)
+		}
+	}
+	for key, stop := range m.financialBudgetStops {
+		if stop.AccountID == id {
+			delete(m.financialBudgetStops, key)
+		}
+	}
+	for key, command := range m.financialPreviewCommands {
+		if command.AccountID == id {
+			delete(m.financialPreviewCommands, key)
+		}
+	}
+	for key, b := range m.financialComputeBooks {
+		if b.AccountID == id {
+			delete(m.financialComputeBooks, key)
+		}
+	}
+	for key, l := range m.financialComputeLeases {
+		if l.AccountID == id {
+			delete(m.financialComputeLeases, key)
+		}
+	}
+	delete(m.financialComputeHolds, id)
+	for key, a := range m.financialComputeJobAttempts {
+		if a.AccountID == id {
+			delete(m.financialComputeJobAttempts, key)
 		}
 	}
 	for key := range m.memberships {

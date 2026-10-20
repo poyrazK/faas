@@ -1,7 +1,8 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -18,15 +19,15 @@ func TestAuthOAuthClientBodyChecksFlagsBeforeTheKeyPrompt(t *testing.T) {
 		}
 		return given
 	}
-	body, err := authOAuthClientBody("add", flags("name", "redirect-uri", "client-uri"), "Shop CLI", []string{"http://127.0.0.1:8976/callback", "shop://oauth"}, "public", "https://shop.example.com", "")
+	body, err := main.AuthOAuthClientBody("add", flags("name", "redirect-uri", "client-uri"), "Shop CLI", []string{"http://127.0.0.1:8976/callback", "shop://oauth"}, "public", "https://shop.example.com", "")
 	want := map[string]any{"client_name": "Shop CLI", "redirect_uris": []string{"http://127.0.0.1:8976/callback", "shop://oauth"}, "client_type": "public", "client_uri": "https://shop.example.com"}
 	if err != nil || !reflect.DeepEqual(body, want) {
 		t.Fatalf("add body = %v, %v", body, err)
 	}
-	if body, err := authOAuthClientBody("update", flags("name"), "Shop", nil, "public", "", ""); err != nil || !reflect.DeepEqual(body, map[string]any{"client_name": "Shop"}) {
+	if body, err := main.AuthOAuthClientBody("update", flags("name"), "Shop", nil, "public", "", ""); err != nil || !reflect.DeepEqual(body, map[string]any{"client_name": "Shop"}) {
 		t.Fatalf("update body = %v, %v", body, err)
 	}
-	if body, err := authOAuthClientBody("rotate-secret", flags("admin-key-stdin"), "", nil, "public", "", ""); err != nil || body != nil {
+	if body, err := main.AuthOAuthClientBody("rotate-secret", flags("admin-key-stdin"), "", nil, "public", "", ""); err != nil || body != nil {
 		t.Fatalf("rotate body = %v, %v", body, err)
 	}
 	for name, tc := range map[string]struct {
@@ -47,7 +48,7 @@ func TestAuthOAuthClientBodyChecksFlagsBeforeTheKeyPrompt(t *testing.T) {
 		"empty update":            {"update", nil, nil, "public", ""},
 		"eleven redirect targets": {"add", []string{"redirect-uri"}, strings.Split(strings.Repeat("https://a.example/cb,", 11), ",")[:11], "public", ""},
 	} {
-		if _, err := authOAuthClientBody(tc.command, flags(tc.given...), "Shop", tc.redirects, tc.kind, tc.uri, ""); err == nil {
+		if _, err := main.AuthOAuthClientBody(tc.command, flags(tc.given...), "Shop", tc.redirects, tc.kind, tc.uri, ""); err == nil {
 			t.Errorf("%s accepted", name)
 		}
 	}
@@ -59,11 +60,11 @@ func TestAuthOAuthClientsAddPrintsTheSecretAndTheServer(t *testing.T) {
 	key := "gaak_" + strings.Repeat("k", 43)
 	var seen []string
 	var sent map[string]any
-	old := authAdminHTTPClient
-	authAdminHTTPClient = &http.Client{Transport: authRoundTrip(func(r *http.Request) (*http.Response, error) {
+	old := (*main.AuthAdminHTTPClient)
+	(*main.AuthAdminHTTPClient) = &http.Client{Transport: authRoundTrip(func(r *http.Request) (*http.Response, error) {
 		recorder := httptest.NewRecorder()
 		if r.URL.Path == "/settings/v1" {
-			writeJSONTest(recorder, map[string]any{"keys": map[string]any{"signing": "0A1B2C3D"}, "oauth": map[string]any{"enabled": true, "dynamic_registration": false,
+			main.WriteJSONTest(recorder, map[string]any{"keys": map[string]any{"signing": "0A1B2C3D"}, "oauth": map[string]any{"enabled": true, "dynamic_registration": false,
 				"issuer": "https://shop-auth.gregale.app/auth/v1", "metadata_url": "https://shop-auth.gregale.app/.well-known/oauth-authorization-server/auth/v1"}})
 			return recorder.Result(), nil
 		}
@@ -76,23 +77,23 @@ func TestAuthOAuthClientsAddPrintsTheSecretAndTheServer(t *testing.T) {
 		sent = nil
 		_ = json.Unmarshal(raw, &sent)
 		recorder.WriteHeader(http.StatusCreated)
-		writeJSONTest(recorder, map[string]any{"client": map[string]any{"id": "6a1b2c3d-0000-4000-8000-000000000002", "name": "Shop server", "type": "confidential", "registration": "manual",
+		main.WriteJSONTest(recorder, map[string]any{"client": map[string]any{"id": "6a1b2c3d-0000-4000-8000-000000000002", "name": "Shop server", "type": "confidential", "registration": "manual",
 			"redirect_uris": []string{"https://shop.example.com/cb"}}, "client_secret": "s3cret"})
 		return recorder.Result(), nil
 	})}
-	t.Cleanup(func() { authAdminHTTPClient = old })
-	oldIn := osStdin
-	t.Cleanup(func() { osStdin = oldIn })
+	t.Cleanup(func() { (*main.AuthAdminHTTPClient) = old })
+	oldIn := (*main.OsStdin)
+	t.Cleanup(func() { (*main.OsStdin) = oldIn })
 	out := captureAuthStdout(t)
-	osStdin = strings.NewReader(key + "\n")
-	if code := cmdAuth([]string{"oauth-clients", "add", "shop-auth", "--name", "Shop server", "--type", "confidential", "--redirect-uri", "https://shop.example.com/cb", "--admin-key-stdin"}); code != 0 {
+	(*main.OsStdin) = strings.NewReader(key + "\n")
+	if code := main.CmdAuth([]string{"oauth-clients", "add", "shop-auth", "--name", "Shop server", "--type", "confidential", "--redirect-uri", "https://shop.example.com/cb", "--admin-key-stdin"}); code != 0 {
 		t.Fatalf("add = %d", code)
 	}
 	if sent["client_type"] != "confidential" || sent["client_name"] != "Shop server" {
 		t.Fatalf("sent %v", sent)
 	}
-	osStdin = strings.NewReader(key + "\n")
-	if code := cmdAuth([]string{"oauth-clients", "rotate-secret", "shop-auth", "6a1b2c3d-0000-4000-8000-000000000002", "--admin-key-stdin"}); code != 0 {
+	(*main.OsStdin) = strings.NewReader(key + "\n")
+	if code := main.CmdAuth([]string{"oauth-clients", "rotate-secret", "shop-auth", "6a1b2c3d-0000-4000-8000-000000000002", "--admin-key-stdin"}); code != 0 {
 		t.Fatalf("rotate = %d", code)
 	}
 	want := []string{"POST /admin/v1/oauth/clients", "POST /admin/v1/oauth/clients/6a1b2c3d-0000-4000-8000-000000000002/regenerate-secret"}
@@ -104,7 +105,7 @@ func TestAuthOAuthClientsAddPrintsTheSecretAndTheServer(t *testing.T) {
 			t.Fatalf("output lacks %q:\n%s", line, out)
 		}
 	}
-	if code := cmdAuth([]string{"oauth-clients", "remove", "shop-auth", "not-a-client-id"}); code == 0 {
+	if code := main.CmdAuth([]string{"oauth-clients", "remove", "shop-auth", "not-a-client-id"}); code == 0 {
 		t.Fatal("accepted a malformed client ID")
 	}
 }
@@ -113,13 +114,13 @@ func TestAuthConfigOAuthServer(t *testing.T) {
 	resetJSONEnv(t)
 	sealed, _, _ := authSettingsWorld(t, nil, nil)
 	captureAuthStdout(t)
-	if code := cmdAuth([]string{"config", "shop-auth", "--oauth-server", "on", "--oauth-registration", "on"}); code != 0 || sealed["AUTH_OAUTH_SERVER"] != "1" || sealed["AUTH_OAUTH_REGISTRATION"] != "1" {
-		t.Fatalf("config = %d, sealed %v", code, sortedKeys(sealed))
+	if code := main.CmdAuth([]string{"config", "shop-auth", "--oauth-server", "on", "--oauth-registration", "on"}); code != 0 || sealed["AUTH_OAUTH_SERVER"] != "1" || sealed["AUTH_OAUTH_REGISTRATION"] != "1" {
+		t.Fatalf("config = %d, sealed %v", code, main.SortedKeys(sealed))
 	}
-	if code := cmdAuth([]string{"config", "shop-auth", "--oauth-server", "off"}); code != 0 || sealed["AUTH_OAUTH_SERVER"] != "0" {
-		t.Fatalf("off = %d, sealed %v", code, sortedKeys(sealed))
+	if code := main.CmdAuth([]string{"config", "shop-auth", "--oauth-server", "off"}); code != 0 || sealed["AUTH_OAUTH_SERVER"] != "0" {
+		t.Fatalf("off = %d, sealed %v", code, main.SortedKeys(sealed))
 	}
-	if code := cmdAuth([]string{"config", "shop-auth", "--oauth-registration", "maybe"}); code == 0 {
+	if code := main.CmdAuth([]string{"config", "shop-auth", "--oauth-registration", "maybe"}); code == 0 {
 		t.Fatal("accepted an invalid switch")
 	}
 }

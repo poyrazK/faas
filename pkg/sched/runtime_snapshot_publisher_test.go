@@ -1,6 +1,6 @@
 // adr: 171 — trusted publication writes only verified, tenant-free runtime snapshots.
 
-package sched
+package sched_test
 
 import (
 	"bytes"
@@ -11,12 +11,13 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
 )
 
-func publisherTestIdentity() RuntimeSnapshotIdentity {
-	return RuntimeSnapshotIdentity{
+func publisherTestIdentity() sched.RuntimeSnapshotIdentity {
+	return sched.RuntimeSnapshotIdentity{
 		Runtime:             api.ExecutionRuntimeNode22,
 		Architecture:        "amd64",
 		KernelDigest:        strings.Repeat("a", 64),
@@ -24,7 +25,7 @@ func publisherTestIdentity() RuntimeSnapshotIdentity {
 		BaseImageDigest:     strings.Repeat("c", 64),
 		MemoryMB:            128,
 		EphemeralDiskMB:     64,
-		FormatVersion:       CurrentRuntimeSnapshotFormatVersion,
+		FormatVersion:       sched.CurrentRuntimeSnapshotFormatVersion,
 	}
 }
 
@@ -34,12 +35,12 @@ func TestRuntimeSnapshotPublisherPublishesVerifiedPair(t *testing.T) {
 		t.Fatal(err)
 	}
 	store := state.NewMemStore()
-	publisher := NewRuntimeSnapshotPublisher(store, backend)
+	publisher := sched.NewRuntimeSnapshotPublisher(store, backend)
 	memory := bytes.Repeat([]byte("m"), 128)
 	vmstate := bytes.Repeat([]byte("v"), 32)
 	created := time.Unix(10, 0).UTC()
 
-	entry, err := publisher.PublishRuntimeSnapshot(context.Background(), RuntimeSnapshotPublication{
+	entry, err := publisher.PublishRuntimeSnapshot(context.Background(), sched.RuntimeSnapshotPublication{
 		Identity: publisherTestIdentity(),
 		Memory:   bytes.NewReader(memory),
 		VMState:  bytes.NewReader(vmstate),
@@ -49,13 +50,13 @@ func TestRuntimeSnapshotPublisherPublishesVerifiedPair(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PublishRuntimeSnapshot: %v", err)
 	}
-	if entry.State != RuntimeSnapshotReady || entry.CreatedAt != created {
+	if entry.State != sched.RuntimeSnapshotReady || entry.CreatedAt != created {
 		t.Fatalf("entry = %#v", entry)
 	}
-	if entry.SnapshotDigest != RuntimeSnapshotDigest(memory, vmstate) {
-		t.Fatalf("snapshot digest = %s, want %s", entry.SnapshotDigest, RuntimeSnapshotDigest(memory, vmstate))
+	if entry.SnapshotDigest != sched.RuntimeSnapshotDigest(memory, vmstate) {
+		t.Fatalf("snapshot digest = %s, want %s", entry.SnapshotDigest, sched.RuntimeSnapshotDigest(memory, vmstate))
 	}
-	if !strings.HasPrefix(entry.StorageKey, "snap/"+runtimeSnapshotStorageNamespace+"/captures/") || !strings.HasSuffix(entry.StorageKey, "/mem") {
+	if !strings.HasPrefix(entry.StorageKey, "snap/"+sched.RuntimeSnapshotStorageNamespace+"/captures/") || !strings.HasSuffix(entry.StorageKey, "/mem") {
 		t.Fatalf("storage key = %q", entry.StorageKey)
 	}
 
@@ -64,21 +65,21 @@ func TestRuntimeSnapshotPublisherPublishesVerifiedPair(t *testing.T) {
 		t.Fatalf("Get memory: %v", err)
 	}
 	_ = readBack.Close()
-	vmstateKey := runtimeSnapshotVMStateStorageKey(entry.StorageKey)
+	vmstateKey := sched.RuntimeSnapshotVMStateStorageKey(entry.StorageKey)
 	readBack, err = backend.Get(context.Background(), vmstateKey)
 	if err != nil {
 		t.Fatalf("Get vmstate: %v", err)
 	}
 	_ = readBack.Close()
 
-	catalog := NewRuntimeSnapshotCatalog(NewStateRuntimeSnapshotIndex(store), NewStorageRuntimeSnapshotVerifier(backend))
-	plan, err := catalog.Resolve(context.Background(), RuntimeSnapshotRequest{
+	catalog := sched.NewRuntimeSnapshotCatalog(sched.NewStateRuntimeSnapshotIndex(store), sched.NewStorageRuntimeSnapshotVerifier(backend))
+	plan, err := catalog.Resolve(context.Background(), sched.RuntimeSnapshotRequest{
 		Shape:        api.ExecutionSnapshotShape{Runtime: api.ExecutionRuntimeNode22, MemoryMB: 128, EphemeralDiskMB: 64},
 		Architecture: "amd64",
 		KernelDigest: strings.Repeat("a", 64), GuestExecutorDigest: strings.Repeat("b", 64),
-		BaseImageDigest: strings.Repeat("c", 64), FormatVersion: CurrentRuntimeSnapshotFormatVersion,
+		BaseImageDigest: strings.Repeat("c", 64), FormatVersion: sched.CurrentRuntimeSnapshotFormatVersion,
 	})
-	if err != nil || plan.Mode != RuntimeSnapshotRestore || plan.Snapshot == nil {
+	if err != nil || plan.Mode != sched.RuntimeSnapshotRestore || plan.Snapshot == nil {
 		t.Fatalf("catalog plan = %#v, err=%v", plan, err)
 	}
 }
@@ -88,25 +89,25 @@ func TestRuntimeSnapshotPublisherRejectsUnsafeOrIncompleteCapture(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	publisher := NewRuntimeSnapshotPublisher(state.NewMemStore(), backend)
-	base := RuntimeSnapshotPublication{
+	publisher := sched.NewRuntimeSnapshotPublisher(state.NewMemStore(), backend)
+	base := sched.RuntimeSnapshotPublication{
 		Identity: publisherTestIdentity(), Memory: bytes.NewReader([]byte("mem")), VMState: bytes.NewReader([]byte("state")),
 		MemBytes: 3, VMStateBytes: 5, Sanitized: true, PayloadFree: true,
 	}
 	tests := []struct {
 		name   string
-		mutate func(*RuntimeSnapshotPublication)
+		mutate func(*sched.RuntimeSnapshotPublication)
 	}{
-		{name: "missing reader", mutate: func(p *RuntimeSnapshotPublication) { p.Memory = nil }},
-		{name: "payload-bearing", mutate: func(p *RuntimeSnapshotPublication) { p.PayloadFree = false }},
-		{name: "not sanitized", mutate: func(p *RuntimeSnapshotPublication) { p.Sanitized = false }},
-		{name: "invalid size", mutate: func(p *RuntimeSnapshotPublication) { p.MemBytes = 0 }},
+		{name: "missing reader", mutate: func(p *sched.RuntimeSnapshotPublication) { p.Memory = nil }},
+		{name: "payload-bearing", mutate: func(p *sched.RuntimeSnapshotPublication) { p.PayloadFree = false }},
+		{name: "not sanitized", mutate: func(p *sched.RuntimeSnapshotPublication) { p.Sanitized = false }},
+		{name: "invalid size", mutate: func(p *sched.RuntimeSnapshotPublication) { p.MemBytes = 0 }},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			publication := base
 			test.mutate(&publication)
-			if _, err := publisher.PublishRuntimeSnapshot(context.Background(), publication); !errors.Is(err, ErrRuntimeSnapshotInvalid) {
+			if _, err := publisher.PublishRuntimeSnapshot(context.Background(), publication); !errors.Is(err, sched.ErrRuntimeSnapshotInvalid) {
 				t.Fatalf("PublishRuntimeSnapshot = %v, want ErrRuntimeSnapshotInvalid", err)
 			}
 		})
@@ -119,9 +120,9 @@ func TestRuntimeSnapshotPublisherDoesNotOverwriteCatalogOrLeavePartialObjects(t 
 		t.Fatal(err)
 	}
 	store := state.NewMemStore()
-	publisher := NewRuntimeSnapshotPublisher(store, backend)
+	publisher := sched.NewRuntimeSnapshotPublisher(store, backend)
 	identity := publisherTestIdentity()
-	publication := RuntimeSnapshotPublication{
+	publication := sched.RuntimeSnapshotPublication{
 		Identity: identity, Memory: bytes.NewReader([]byte("mem")), VMState: bytes.NewReader([]byte("state")),
 		MemBytes: 3, VMStateBytes: 5, Sanitized: true, PayloadFree: true,
 	}
@@ -129,7 +130,7 @@ func TestRuntimeSnapshotPublisherDoesNotOverwriteCatalogOrLeavePartialObjects(t 
 	if err != nil {
 		t.Fatalf("first publication: %v", err)
 	}
-	if _, err := publisher.PublishRuntimeSnapshot(context.Background(), publication); !errors.Is(err, ErrRuntimeSnapshotConflict) {
+	if _, err := publisher.PublishRuntimeSnapshot(context.Background(), publication); !errors.Is(err, sched.ErrRuntimeSnapshotConflict) {
 		t.Fatalf("duplicate publication = %v, want ErrRuntimeSnapshotConflict", err)
 	}
 	stored, err := store.LookupRuntimeSnapshot(context.Background(), mustIdentityKey(identity))
@@ -141,7 +142,7 @@ func TestRuntimeSnapshotPublisherDoesNotOverwriteCatalogOrLeavePartialObjects(t 
 	if err != nil {
 		t.Fatal(err)
 	}
-	badPublisher := NewRuntimeSnapshotPublisher(state.NewMemStore(), badBackend)
+	badPublisher := sched.NewRuntimeSnapshotPublisher(state.NewMemStore(), badBackend)
 	bad := publication
 	bad.Memory = bytes.NewReader([]byte("mem"))
 	bad.VMState = bytes.NewReader([]byte("state"))
@@ -149,10 +150,10 @@ func TestRuntimeSnapshotPublisherDoesNotOverwriteCatalogOrLeavePartialObjects(t 
 	other := publisherTestIdentity()
 	other.BaseImageDigest = strings.Repeat("d", 64)
 	bad.Identity = other
-	if _, err := badPublisher.PublishRuntimeSnapshot(context.Background(), bad); !errors.Is(err, ErrRuntimeSnapshotInvalid) {
+	if _, err := badPublisher.PublishRuntimeSnapshot(context.Background(), bad); !errors.Is(err, sched.ErrRuntimeSnapshotInvalid) {
 		t.Fatalf("short capture = %v, want ErrRuntimeSnapshotInvalid", err)
 	}
-	keys, err := badBackend.List(context.Background(), "snap/"+runtimeSnapshotStorageNamespace+"/captures")
+	keys, err := badBackend.List(context.Background(), "snap/"+sched.RuntimeSnapshotStorageNamespace+"/captures")
 	if err != nil {
 		t.Fatalf("List failed publication objects: %v", err)
 	}
@@ -165,10 +166,10 @@ func TestRuntimeSnapshotPublisherDoesNotOverwriteCatalogOrLeavePartialObjects(t 
 	oversized.Identity.BaseImageDigest = strings.Repeat("e", 64)
 	oversized.Memory = bytes.NewReader([]byte("mem-extra"))
 	oversized.VMState = bytes.NewReader([]byte("state"))
-	if _, err := badPublisher.PublishRuntimeSnapshot(context.Background(), oversized); !errors.Is(err, ErrRuntimeSnapshotInvalid) {
+	if _, err := badPublisher.PublishRuntimeSnapshot(context.Background(), oversized); !errors.Is(err, sched.ErrRuntimeSnapshotInvalid) {
 		t.Fatalf("oversized capture = %v, want ErrRuntimeSnapshotInvalid", err)
 	}
-	keys, err = badBackend.List(context.Background(), "snap/"+runtimeSnapshotStorageNamespace+"/captures")
+	keys, err = badBackend.List(context.Background(), "snap/"+sched.RuntimeSnapshotStorageNamespace+"/captures")
 	if err != nil {
 		t.Fatalf("List oversized publication objects: %v", err)
 	}
@@ -182,16 +183,16 @@ func TestRuntimeSnapshotPublisherPreservesCancellation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	publisher := NewRuntimeSnapshotPublisher(state.NewMemStore(), backend)
+	publisher := sched.NewRuntimeSnapshotPublisher(state.NewMemStore(), backend)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err = publisher.PublishRuntimeSnapshot(ctx, RuntimeSnapshotPublication{Identity: publisherTestIdentity(), Memory: bytes.NewReader([]byte("m")), VMState: bytes.NewReader([]byte("v")), MemBytes: 1, VMStateBytes: 1, Sanitized: true, PayloadFree: true})
+	_, err = publisher.PublishRuntimeSnapshot(ctx, sched.RuntimeSnapshotPublication{Identity: publisherTestIdentity(), Memory: bytes.NewReader([]byte("m")), VMState: bytes.NewReader([]byte("v")), MemBytes: 1, VMStateBytes: 1, Sanitized: true, PayloadFree: true})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("PublishRuntimeSnapshot = %v, want context.Canceled", err)
 	}
 }
 
-func mustIdentityKey(identity RuntimeSnapshotIdentity) string {
+func mustIdentityKey(identity sched.RuntimeSnapshotIdentity) string {
 	key, err := identity.Key()
 	if err != nil {
 		panic(err)

@@ -1,7 +1,8 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -24,8 +25,8 @@ func TestAuthEmailTypesContract(t *testing.T) {
 	for _, match := range regexp.MustCompile(`(?m)^  ([a-z_]+): \{ placeholders:`).FindAllStringSubmatch(string(source), -1) {
 		types = append(types, match[1])
 	}
-	if !reflect.DeepEqual(types, authEmailTypes) {
-		t.Fatalf("template email types %v, CLI %v", types, authEmailTypes)
+	if !reflect.DeepEqual(types, (*main.AuthEmailTypes)) {
+		t.Fatalf("template email types %v, CLI %v", types, (*main.AuthEmailTypes))
 	}
 }
 
@@ -34,8 +35,8 @@ func TestAuthEmailsSetPreviewAndReset(t *testing.T) {
 	authIssuerServer(t, func(http.ResponseWriter, *http.Request) bool { return false })
 	key := "gaak_" + strings.Repeat("k", 43)
 	var seen []string
-	old := authAdminHTTPClient
-	authAdminHTTPClient = &http.Client{Transport: authRoundTrip(func(r *http.Request) (*http.Response, error) {
+	old := (*main.AuthAdminHTTPClient)
+	(*main.AuthAdminHTTPClient) = &http.Client{Transport: authRoundTrip(func(r *http.Request) (*http.Response, error) {
 		recorder := httptest.NewRecorder()
 		if r.URL.Host != "shop-auth.gregale.app" || r.Header.Get("Authorization") != "Bearer "+key {
 			recorder.WriteHeader(http.StatusUnauthorized)
@@ -52,20 +53,20 @@ func TestAuthEmailsSetPreviewAndReset(t *testing.T) {
 		template := map[string]any{"type": "signup", "subject": "Welcome to {{app}}", "body": "Hi {{email}}", "custom": true, "placeholders": []string{"app", "email", "link", "code"}}
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/preview"):
-			writeJSONTest(recorder, map[string]any{"subject": "Welcome to Shop", "text": "Hi person@example.com", "html": "<p>Hi person@example.com</p>", "sent": true})
+			main.WriteJSONTest(recorder, map[string]any{"subject": "Welcome to Shop", "text": "Hi person@example.com", "html": "<p>Hi person@example.com</p>", "sent": true})
 		case r.URL.Path == "/admin/v1/emails":
-			writeJSONTest(recorder, map[string]any{"emails": []any{template}})
+			main.WriteJSONTest(recorder, map[string]any{"emails": []any{template}})
 		default:
-			writeJSONTest(recorder, template)
+			main.WriteJSONTest(recorder, template)
 		}
 		return recorder.Result(), nil
 	})}
-	t.Cleanup(func() { authAdminHTTPClient = old })
+	t.Cleanup(func() { (*main.AuthAdminHTTPClient) = old })
 	run := func(args ...string) int {
-		oldIn := osStdin
-		osStdin = strings.NewReader(key + "\n")
-		t.Cleanup(func() { osStdin = oldIn })
-		return cmdAuth(append(args, "--admin-key-stdin"))
+		oldIn := (*main.OsStdin)
+		(*main.OsStdin) = strings.NewReader(key + "\n")
+		t.Cleanup(func() { (*main.OsStdin) = oldIn })
+		return main.CmdAuth(append(args, "--admin-key-stdin"))
 	}
 	out := captureAuthStdout(t)
 	dir := t.TempDir()

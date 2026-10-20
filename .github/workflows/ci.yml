@@ -1682,6 +1682,12 @@ jobs:
         run: |
           python3 scripts/ci/promotion-qualification_test.py
           bash scripts/ci/native-e2e-combined-verdict_test.sh
+      - name: financial native evidence and host restoration contracts
+        run: |
+          python3 scripts/ci/financial-system-verdict_test.py
+          python3 scripts/ci/financial-pair-evidence_test.py
+          python3 scripts/ci/financial-pair-runner_test.py
+          python3 scripts/ci/financial-system-ci-check_test.py
       - name: native binding discovery and evidence contracts
         run: |
           go test -race ./scripts/ci/nativetestinventory

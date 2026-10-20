@@ -1,4 +1,4 @@
-package sched
+package sched_test
 
 import (
 	"context"
@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/sched/scaleup"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -57,11 +58,11 @@ func TestLoopRunScaleUpDoesNotBlockOnScrape(t *testing.T) {
 		finished: make(chan struct{}),
 	}
 	trigger := scaleup.New(scaleupLoopTestStore{}, nil, scraper, nil, nil, scaleup.Options{})
-	loop := NewLoop(nil, nil, testLog()).WithScaleUp(trigger)
+	loop := sched.NewLoop(nil, nil, sched.TestLog()).WithScaleUp(trigger)
 
 	returned := make(chan struct{})
 	go func() {
-		loop.runScaleUp(context.Background())
+		loop.RunScaleUp(context.Background())
 		close(returned)
 	}()
 	select {
@@ -75,7 +76,7 @@ func TestLoopRunScaleUpDoesNotBlockOnScrape(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("scale-up tick did not start")
 	}
-	loop.runScaleUp(context.Background())
+	loop.RunScaleUp(context.Background())
 	if got := scraper.callCount(); got != 1 {
 		t.Fatalf("scrape calls while first tick blocked = %d, want 1", got)
 	}

@@ -1,5 +1,5 @@
 // adr: 179 — deadline failures must reach the configured failure destination.
-package sched
+package sched_test
 
 import (
 	"context"
@@ -9,13 +9,14 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestInvocationsRetentionDeadlineEmitsFailureDestination(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemStore()
-	account, app, _ := seedApp(t, store, api.PlanPro, 512, 5)
+	account, app, _ := sched.SeedApp(t, store, api.PlanPro, 512, 5)
 
 	hook, err := store.CreateAppWebhook(ctx, state.AppWebhook{
 		AccountID:    account.ID,
@@ -48,7 +49,7 @@ func TestInvocationsRetentionDeadlineEmitsFailureDestination(t *testing.T) {
 		t.Fatalf("EnqueueInvocation: %v", err)
 	}
 
-	retention := NewInvocationsRetention(store, slog.Default()).WithClock(func() time.Time { return now })
+	retention := sched.NewInvocationsRetention(store, slog.Default()).WithClock(func() time.Time { return now })
 	forced, err := retention.SweepDeadlineBreached(ctx, 10)
 	if err != nil {
 		t.Fatalf("SweepDeadlineBreached: %v", err)

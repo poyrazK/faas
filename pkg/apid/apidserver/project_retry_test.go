@@ -19,10 +19,10 @@ func TestProjectRetryUnchangedSourceAndStaleFence(t *testing.T) {
 		t.Fatal(err)
 	}
 	failed := initial.Builds[0]
-	if err := store.UpdateDeploymentStatus(t.Context(), failed.DeploymentID, state.DeployFailed, "fixture"); err != nil {
+	if err := store.MemStore.UpdateDeploymentStatus(t.Context(), failed.DeploymentID, state.DeployFailed, "fixture"); err != nil {
 		t.Fatal(err)
 	}
-	app, err := store.AppByID(t.Context(), failed.AppID)
+	app, err := store.MemStore.AppByID(t.Context(), failed.AppID)
 	if err != nil {
 		t.Fatal(err)
 	}

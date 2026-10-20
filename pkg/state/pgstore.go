@@ -15880,7 +15880,7 @@ func (s *PgStore) EnqueueInvocation(ctx context.Context, inv Invocation) (Invoca
 	if err != nil {
 		return Invocation{}, err
 	}
-	if info.environment.ID == "" {
+	if info.environment.ID == "" && inv.AdmissionMaxPending <= 0 {
 		return enqueueInvocationRow(ctx, s.pool, inv)
 	}
 	tx, err := s.pool.Begin(ctx)
@@ -15888,15 +15888,23 @@ func (s *PgStore) EnqueueInvocation(ctx context.Context, inv Invocation) (Invoca
 		return Invocation{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if err := lockInvocationAdmissionAppDB(ctx, tx, inv); err != nil {
+		return Invocation{}, err
+	}
 	if err := lockInvocationEnvironmentDB(ctx, tx, inv.AppID, inv.AccountID, info.environment.ID); err != nil {
+		return Invocation{}, err
+	}
+	if err := checkInvocationAdmissionDepthDB(ctx, tx, inv); err != nil {
 		return Invocation{}, err
 	}
 	out, err := enqueueInvocationRow(ctx, tx, inv)
 	if err != nil {
 		return Invocation{}, err
 	}
-	if err := bindInvocationEnvironmentDB(ctx, tx, info, out); err != nil {
-		return Invocation{}, err
+	if info.environment.ID != "" {
+		if err := bindInvocationEnvironmentDB(ctx, tx, info, out); err != nil {
+			return Invocation{}, err
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return Invocation{}, err

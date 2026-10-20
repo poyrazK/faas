@@ -31,7 +31,7 @@ func TestProjectVerificationAdmissionSnapshotsPolicy(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &original); err != nil {
 		t.Fatal(err)
 	}
-	app, err := store.AppByID(t.Context(), original.Builds[0].AppID)
+	app, err := store.MemStore.AppByID(t.Context(), original.Builds[0].AppID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,7 +44,7 @@ func TestProjectVerificationAdmissionSnapshotsPolicy(t *testing.T) {
 		t.Fatal("missing probe policy accepted")
 	}
 	zero := int64(0)
-	if _, err := store.SetRouteHealthGate(t.Context(), account.ID, app.ID, api.SetRouteHealthGateRequest{Mode: "report", ExpectedRevision: &zero, Routes: []api.RouteHealthRoute{{Method: "GET", Path: "/health", Probe: &api.RouteHealthProbe{Path: "/health"}}}}); err != nil {
+	if _, err := store.MemStore.SetRouteHealthGate(t.Context(), account.ID, app.ID, api.SetRouteHealthGateRequest{Mode: "report", ExpectedRevision: &zero, Routes: []api.RouteHealthRoute{{Method: "GET", Path: "/health", Probe: &api.RouteHealthProbe{Path: "/health"}}}}); err != nil {
 		t.Fatal(err)
 	}
 	v, problem := s.prepareProjectReleaseVerification(t.Context(), account.ID, release)

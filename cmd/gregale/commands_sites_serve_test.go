@@ -1,8 +1,9 @@
-package main
+package main_test
 
 import (
 	"context"
 	"errors"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"io"
 	"net"
 	"net/http"
@@ -23,12 +24,12 @@ func TestSitesServeFlagsAndValidationBeforeNetworking(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "")
 	t.Setenv("FAAS_FRONTEND_HOSTING_ENABLED", "1")
 	t.Setenv("FAAS_FRONTEND_HOSTING_LOCAL_PREVIEW_ENABLED", "")
-	if cmdSites([]string{"serve", "--path", t.TempDir()}) == 0 {
+	if main.CmdSites([]string{"serve", "--path", t.TempDir()}) == 0 {
 		t.Fatal("default off")
 	}
 	t.Setenv("FAAS_FRONTEND_HOSTING_LOCAL_PREVIEW_ENABLED", "1")
 	for _, args := range [][]string{{"serve", "--path", t.TempDir()}, {"serve", "--port", "-1"}, {"serve", "--port", "65536"}, {"serve", "--host", "0.0.0.0"}, {"serve", "extra"}} {
-		if cmdSites(args) == 0 {
+		if main.CmdSites(args) == 0 {
 			t.Fatal("invalid options accepted", args)
 		}
 	}
@@ -42,7 +43,7 @@ func TestSitesServeImmutableSnapshotAndLifecycle(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte("ORIGINAL"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	snapshot, err := hostingLocalSnapshot(dir, false)
+	snapshot, err := main.HostingLocalSnapshot(dir, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +55,7 @@ func TestSitesServeImmutableSnapshotAndLifecycle(t *testing.T) {
 	ready := make(chan string, 1)
 	done := make(chan error, 1)
 	go func() {
-		done <- serveHostingLocal(ctx, snapshot, 0, func(address string) error { ready <- address; return nil })
+		done <- main.ServeHostingLocal(ctx, snapshot, 0, func(address string) error { ready <- address; return nil })
 	}()
 	var address string
 	select {
@@ -105,7 +106,7 @@ func TestSitesServeImmutableSnapshotAndLifecycle(t *testing.T) {
 		t.Fatal("preview leaked listener")
 	}
 	// Output errors must close an already-bound listener as well.
-	if err = serveHostingLocal(t.Context(), snapshot, 0, func(string) error { return errors.New("writer failed") }); err == nil {
+	if err = main.ServeHostingLocal(t.Context(), snapshot, 0, func(string) error { return errors.New("writer failed") }); err == nil {
 		t.Fatal("output error swallowed")
 	}
 }
@@ -118,7 +119,7 @@ func TestSitesServeRejectsSymlinksConfigAndUnvalidatedMetadata(t *testing.T) {
 	if err := os.Symlink(filepath.Join(outside, "secret.html"), filepath.Join(dir, "index.html")); err != nil {
 		t.Skip(err)
 	}
-	if _, err := hostingLocalSnapshot(dir, false); err == nil {
+	if _, err := main.HostingLocalSnapshot(dir, false); err == nil {
 		t.Fatal("symlink admitted")
 	}
 	if err := os.Remove(filepath.Join(dir, "index.html")); err != nil {
@@ -130,7 +131,7 @@ func TestSitesServeRejectsSymlinksConfigAndUnvalidatedMetadata(t *testing.T) {
 	if err := os.Symlink(outside, filepath.Join(dir, "outside")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := hostingLocalSnapshot(dir, false); err == nil {
+	if _, err := main.HostingLocalSnapshot(dir, false); err == nil {
 		t.Fatal("directory symlink admitted")
 	}
 	if err := os.Remove(filepath.Join(dir, "outside")); err != nil {
@@ -140,11 +141,11 @@ func TestSitesServeRejectsSymlinksConfigAndUnvalidatedMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("FAAS_FRONTEND_HOSTING_CONFIG_ENABLED", "")
-	if _, err := hostingLocalSnapshot(dir, false); err == nil {
+	if _, err := main.HostingLocalSnapshot(dir, false); err == nil {
 		t.Fatal("config flag bypassed")
 	}
 	t.Setenv("FAAS_FRONTEND_HOSTING_CONFIG_ENABLED", "1")
-	snapshot, err := hostingLocalSnapshot(dir, false)
+	snapshot, err := main.HostingLocalSnapshot(dir, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,15 +193,15 @@ func TestSitesServeReadsRemainInTheBoundRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("FAAS_FRONTEND_HOSTING_CONFIG_ENABLED", "1")
-	config, err := hostingLocalConfig(root)
+	config, err := main.HostingLocalConfig(root)
 	if err != nil || len(config.Headers) != 1 || config.Headers[0].Values["x-frame-options"] != "DENY" {
 		t.Fatal(config, err)
 	}
-	data, err := hostingLocalRead(root, "index.html", 8)
+	data, err := main.HostingLocalRead(root, "index.html", 8)
 	if err != nil || string(data) != "ORIGINAL" {
 		t.Fatal(string(data), err)
 	}
-	if _, err = hostingLocalRead(root, "index.html", 1); err == nil {
+	if _, err = main.HostingLocalRead(root, "index.html", 1); err == nil {
 		t.Fatal("snapshot read bound ignored")
 	}
 }

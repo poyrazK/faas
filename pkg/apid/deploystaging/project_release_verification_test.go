@@ -8,10 +8,11 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type verificationFixture struct {
-	*state.MemStore
+	MemStore         *state.MemStore
 	receipt          api.ProjectSubmissionReceipt
 	advances, probes int
 	active           string
@@ -58,7 +59,7 @@ func TestProjectVerificationWorkerRecoveryAndArtifactGuard(t *testing.T) {
 			}
 			fixture := &verificationFixture{MemStore: state.NewMemStore(), active: tc.active, receipt: api.ProjectSubmissionReceipt{Apply: api.ApplyResponse{ProjectID: "project", PlanResponse: api.PlanResponse{SafeRelease: &api.ProjectSafeRelease{Status: tc.status, ReleaseID: "new", PreviousReleaseID: "old", Verification: &api.ProjectReleaseVerification{Deadline: &deadline, Probes: []api.ProjectReleaseProbe{{AppID: "app", Method: "GET", Path: "/health"}}}}}}}}
 			checks := 0
-			err := ReconcileSafeProjectReleases(t.Context(), fixture, func(_ context.Context, members []state.ProjectReleaseMember) error {
+			err := ReconcileSafeProjectReleases(t.Context(), statetest.NewMem(fixture), func(_ context.Context, members []state.ProjectReleaseMember) error {
 				checks++
 				if len(members) != 1 || members[0].DeploymentID != "baseline" {
 					t.Fatal("preflight did not check previous graph")

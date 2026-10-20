@@ -956,6 +956,16 @@ var cliCommands = []cliCommand{
 				Flags: []cliFlag{{Name: "root-dir", Short: "active PKI root"}},
 			},
 			{
+				Name:  subPKIIssueFeature,
+				Short: "Issue or renew an operator-enabled feature's leaves (live-queries) from the CA",
+				Flags: []cliFlag{
+					{Name: "feature", Short: "feature whose leaves to issue", Req: true, ClosedSet: []string{"live-queries"}},
+					{Name: "box-role", Short: "host role the leaves are for", Req: true, ClosedSet: []string{"control-plane", "compute-only", "single-box"}},
+					{Name: "ca-dir", Short: "PKI root holding the CA"},
+					{Name: "root-dir", Short: "PKI root the leaves are written under"},
+				},
+			},
+			{
 				Name:  subPKIMetrics,
 				Short: "Export active leaf expiry and renewal state for node_exporter",
 				Flags: []cliFlag{

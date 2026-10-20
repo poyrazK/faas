@@ -24,6 +24,9 @@ func (e *Engine) ReserveDataRepairRehearsal(ctx context.Context, t state.DataRep
 	if !account.Active() || !api.MustLimitsFor(account.Plan).Operations.Allowed {
 		return core.RehearsalFrame{}, state.ErrConflict
 	}
+	if err := state.CheckFinancialBudgetAdmissionForScope(ctx, e.store, app, t.Scope.Environment, "", e.financialBudgetNow()); err != nil {
+		return core.RehearsalFrame{}, err
+	}
 	node, err := e.store.ComputeNodeByID(ctx, nodeID)
 	if err != nil {
 		return core.RehearsalFrame{}, err

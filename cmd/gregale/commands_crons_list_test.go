@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -25,11 +26,11 @@ func TestCmdCronsListPrintsRuleID(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	var out bytes.Buffer
-	old := osStdout
-	osStdout = &out
-	defer func() { osStdout = old }()
+	old := (*main.OsStdout)
+	(*main.OsStdout) = &out
+	defer func() { (*main.OsStdout) = old }()
 
-	if code := cmdCrons([]string{"list", "--app", "my-app"}); code != 0 {
+	if code := main.CmdCrons([]string{"list", "--app", "my-app"}); code != 0 {
 		t.Fatalf("crons list = %d, want 0", code)
 	}
 	lines := strings.Split(strings.TrimSpace(out.String()), "\n")

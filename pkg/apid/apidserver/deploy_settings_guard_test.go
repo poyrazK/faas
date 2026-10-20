@@ -29,7 +29,7 @@ func seedGuardedDeploy(t *testing.T, e testEnv) (state.App, state.Deployment) {
 }
 
 type raceGuardedAppStore struct {
-	state.Store
+	state.Store // teststorecheck:allow implements OrgActivityAppConfigMutationStore, which statetest.Store would hide
 	state.OrgActivityAppConfigMutationStore
 	beforeUpdate func()
 }

@@ -1,9 +1,10 @@
-package main
+package main_test
 
 import (
 	"bytes"
 	"encoding/json"
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"net/http"
 	"net/http/httptest"
@@ -25,17 +26,17 @@ func TestBucketVersionDeleteCLI(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "token")
 	var out, stderr bytes.Buffer
-	oldOut, oldErr, oldJSON := osStdout, osStderr, jsonOutput
-	osStdout, osStderr, jsonOutput = &out, &stderr, true
-	t.Cleanup(func() { osStdout, osStderr, jsonOutput = oldOut, oldErr, oldJSON })
-	if code := cmdBucket([]string{"version-delete", "demo", bucket, key, version}); code != 0 {
+	oldOut, oldErr, oldJSON := (*main.OsStdout), (*main.OsStderr), (*main.JsonOutput)
+	(*main.OsStdout), (*main.OsStderr), (*main.JsonOutput) = &out, &stderr, true
+	t.Cleanup(func() { (*main.OsStdout), (*main.OsStderr), (*main.JsonOutput) = oldOut, oldErr, oldJSON })
+	if code := main.CmdBucket([]string{"version-delete", "demo", bucket, key, version}); code != 0 {
 		t.Fatal(code, stderr.String())
 	}
 	var result api.ObjectVersionDeleteResult
 	if err := json.Unmarshal(out.Bytes(), &result); err != nil || result.VersionID != version || !result.DeleteMarker {
 		t.Fatal(result, err)
 	}
-	if code := cmdBucket([]string{"version-delete", "demo", bucket, key, "null"}); code != 1 || calls != 1 {
+	if code := main.CmdBucket([]string{"version-delete", "demo", bucket, key, "null"}); code != 1 || calls != 1 {
 		t.Fatal("mutable null dispatched", code, calls)
 	}
 }

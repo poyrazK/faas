@@ -591,7 +591,7 @@ var cliCommands = []cliCommand{
 			{Name: "slo", Short: "Account-wide SLO panel"},
 			{Name: "billing-connection", Short: "Connect, show, or disconnect a Stripe, Paddle or Lago key for statement invoice exports; connect reads the key from stdin", Positionals: []string{"{connect|status|disconnect}", "{stripe|paddle|lago}"}, Flags: []cliFlag{
 				{Name: "api-url", Short: "Lago API URL for the EU region or a self-hosted Lago (connect; default https://api.getlago.com)", Value: "URL"},
-				{Name: "collection", Short: "what the provider does with exported invoices: none leaves drafts, send emails them (Stripe), charge charges the saved payment method (Stripe, Lago) (connect; default none)", Value: "MODE", ClosedSet: []string{"none", "send", "charge"}},
+				{Name: "collection", Short: "what the provider does with exported invoices: none leaves drafts, send emails them (Stripe, Paddle), charge charges the saved payment method (Stripe, Lago) (connect; default none)", Value: "MODE", ClosedSet: []string{"none", "send", "charge"}},
 				{Name: "days-until-due", Short: "days until a sent invoice is due (connect --collection send; default 30)", Value: "N"},
 				{Name: "automatic-tax", Short: "have Stripe Tax calculate tax on exported invoices; needs Stripe Tax and customer addresses (connect; Stripe only)"},
 			}, Examples: []string{"gregale account billing-connection connect paddle < paddle-key.txt", "gregale account billing-connection connect lago --api-url https://api.eu.getlago.com < lago-key.txt", "gregale account billing-connection connect stripe --collection charge < stripe-key.txt"}},
@@ -1761,11 +1761,11 @@ var cliCommands = []cliCommand{
 			{Name: "costs", Short: "Explain retained usage costs and source coverage", Flags: []cliFlag{{Name: "month", Short: "UTC usage month (defaults to current)", Value: "YYYY-MM"}, {Name: "json", Short: "Print the machine-readable cost report"}}, Examples: []string{"gregale billing costs --month 2026-10 --json"}},
 			{Name: "forecast", Short: "Show usage cost forecasts and their availability", Flags: []cliFlag{{Name: "month", Short: "UTC usage month (defaults to current)", Value: "YYYY-MM"}, {Name: "json", Short: "Print the machine-readable forecast"}}, Examples: []string{"gregale billing forecast --json"}},
 			{Name: "budget-preview", Short: "Preview a budget's cost and workload consequences without writes", Flags: []cliFlag{{Name: "file", Short: "Budget spec JSON file", Value: "PATH"}, {Name: "json", Short: "Print the machine-readable preview"}}, Examples: []string{"gregale billing budget-preview --file budget.json --json"}},
-			{Name: "budgets", Short: "Manage revisioned budget drafts; activation is gated", Subcommands: []cliSub{
-				{Name: "list", Short: "List account budget drafts", Flags: []cliFlag{{Name: "json", Short: "Print JSON"}}},
+			{Name: "budgets", Short: "Manage monitored alerts, preview stopping and budget drafts", Subcommands: []cliSub{
+				{Name: "list", Short: "List account budget policies and monitoring status", Flags: []cliFlag{{Name: "json", Short: "Print JSON"}}},
 				{Name: "get", Short: "Read a budget, including a deletion tombstone", Positionals: []string{"ID"}, Flags: []cliFlag{{Name: "json", Short: "Print JSON"}}},
-				{Name: "create", Short: "Save a budget draft", Flags: []cliFlag{{Name: "file", Short: "Budget spec JSON file (required)", Value: "PATH"}, {Name: "key", Short: "Stable operation key for retries", Value: "KEY"}, {Name: "json", Short: "Print JSON"}}, Examples: []string{"gregale billing budgets create --file budget.json --key previews-october --json"}},
-				{Name: "update", Short: "Replace a draft at its expected revision", Positionals: []string{"ID"}, Flags: []cliFlag{{Name: "file", Short: "Budget spec JSON file (required)", Value: "PATH"}, {Name: "expected-revision", Short: "Current revision (required)", Value: "N"}, {Name: "key", Short: "Stable operation key for retries", Value: "KEY"}, {Name: "json", Short: "Print JSON"}}},
+				{Name: "create", Short: "Save a draft or activate monitored alerts or preview stopping", Flags: []cliFlag{{Name: "file", Short: "Budget spec JSON file (required)", Value: "PATH"}, {Name: "key", Short: "Stable operation key for retries", Value: "KEY"}, {Name: "json", Short: "Print JSON"}}, Examples: []string{"gregale billing budgets create --file budget.json --key previews-october --json"}},
+				{Name: "update", Short: "Replace a budget policy at its expected revision", Positionals: []string{"ID"}, Flags: []cliFlag{{Name: "file", Short: "Budget spec JSON file (required)", Value: "PATH"}, {Name: "expected-revision", Short: "Current revision (required)", Value: "N"}, {Name: "key", Short: "Stable operation key for retries", Value: "KEY"}, {Name: "json", Short: "Print JSON"}}},
 				{Name: "delete", Short: "Tombstone a policy and retain its audit", Positionals: []string{"ID"}, Flags: []cliFlag{{Name: "expected-revision", Short: "Current revision (required)", Value: "N"}, {Name: "key", Short: "Stable operation key for retries", Value: "KEY"}, {Name: "json", Short: "Print JSON"}}},
 				{Name: "history", Short: "Page through immutable policy revisions", Positionals: []string{"ID"}, Flags: []cliFlag{{Name: "after-revision", Short: "Continue after this revision", Value: "N"}, {Name: "limit", Short: "Page size (1..100)", Value: "N"}, {Name: "json", Short: "Print JSON"}}},
 			}},
@@ -3367,6 +3367,25 @@ var cliCommands = []cliCommand{
 			}, Examples: []string{"gregale platform-tenants billing-policy-set --block-overdue-after-days 14"}},
 			{Name: "billing-policy-delete", Short: "Stop blocking tenants for overdue invoices; holds lift within minutes"},
 			{Name: "overdue-holds", Short: "List tenants the gateway refuses because of an overdue invoice"},
+			{Name: "credits", Short: "List a tenant's prepaid credit grants and usable balance", Flags: []cliFlag{platformTenantIDFlag}},
+			{Name: "credit-grant", Short: "Grant a tenant prepaid credit that its finalized statements draw down", Flags: []cliFlag{
+				platformTenantIDFlag,
+				{Name: "currency", Short: "ISO-4217 currency of the credit, e.g. EUR", Value: "CODE", Req: true},
+				{Name: "amount-millicents", Short: "credit in millicents; 100000 = 1.00", Value: "N", Req: true},
+				{Name: "expires", Short: "when unused credit expires, RFC3339", Value: "TIME"},
+				{Name: "note", Short: "note shown with the credit", Value: "TEXT"},
+			}, Examples: []string{"gregale platform-tenants credit-grant --id TENANT_ID --currency USD --amount-millicents 5000000"}},
+			{Name: "credit-void", Short: "Void what is left of a tenant credit grant", Flags: []cliFlag{
+				platformTenantIDFlag,
+				{Name: "credit-id", Short: "credit grant UUID", Value: "UUID", Req: true},
+			}},
+			{Name: "spend-cap", Short: "Show a tenant's monthly spend cap and whether it is reached", Flags: []cliFlag{platformTenantIDFlag}},
+			{Name: "spend-cap-set", Short: "Refuse a tenant's requests once the month's usage after credit passes a cap", Flags: []cliFlag{
+				platformTenantIDFlag,
+				{Name: "currency", Short: "ISO-4217 currency of the cap, e.g. EUR", Value: "CODE", Req: true},
+				{Name: "monthly-cap-millicents", Short: "cap in millicents; 0 allows prepaid usage only", Value: "N", Req: true},
+			}, Examples: []string{"gregale platform-tenants spend-cap-set --id TENANT_ID --currency USD --monthly-cap-millicents 20000000"}},
+			{Name: "spend-cap-delete", Short: "Remove a tenant's spend cap", Flags: []cliFlag{platformTenantIDFlag}},
 		},
 	},
 	{

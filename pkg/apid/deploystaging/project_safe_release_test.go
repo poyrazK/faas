@@ -6,12 +6,13 @@ import (
 	"errors"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 	"testing"
 	"time"
 )
 
 type safeReleaseFixture struct {
-	*state.MemStore
+	MemStore   *state.MemStore
 	receipt    api.ProjectSubmissionReceipt
 	deployment state.Deployment
 	reconciled int
@@ -52,7 +53,7 @@ func TestSafeProjectReleaseArtifactPreflight(t *testing.T) {
 				fixture.deployment.Status = state.DeployBuilding
 			}
 			checks := 0
-			err := ReconcileSafeProjectReleases(t.Context(), fixture, func(_ context.Context, members []state.ProjectReleaseMember) error {
+			err := ReconcileSafeProjectReleases(t.Context(), statetest.NewMem(fixture), func(_ context.Context, members []state.ProjectReleaseMember) error {
 				checks++
 				if len(members) != 1 || members[0].DeploymentID != "candidate" {
 					t.Fatal("wrong artifact preflight")

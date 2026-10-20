@@ -11,10 +11,11 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type snapshotPromotionTestStore struct {
-	*state.MemStore
+	MemStore  *state.MemStore
 	interrupt bool
 	corrupt   bool
 }
@@ -109,7 +110,7 @@ func TestSnapshotPromotionAPIApprovalResumeAndRollback(t *testing.T) {
 				mustSnapshotPromotionAPI(t, store.UpsertAppEnvInScope(ctx, account.ID, app.ID, "staging", "MODE", "operator-change"))
 			}
 			wrapped := &snapshotPromotionTestStore{MemStore: store, interrupt: scenario == "resume", corrupt: scenario == "verification_failure"}
-			srv.store = wrapped
+			srv.store = statetest.NewMem(wrapped)
 			body, _ := json.Marshal(api.PromoteProjectEnvironmentRequest{FromEnvironment: "production", PromotionToken: plan.Preview.PromotionToken})
 			execute := func() int {
 				req, rec := projectRequest(http.MethodPost, "/v1/projects/shop/environments/staging/promote", project.Slug, body)

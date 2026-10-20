@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -16,7 +17,7 @@ func retainedStageCLI(t *testing.T, state string) *plannedStageCLI {
 	t.Helper()
 	f := newPlannedStageCLI(t)
 	t.Setenv("FAAS_FRONTEND_HOSTING_STAGE_RECOVERY_ENABLED", "1")
-	manifest, err := staticHostingManifest(f.dir, false)
+	manifest, err := main.StaticHostingManifest(f.dir, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +53,7 @@ func TestSitesStageRecoveryReusesPendingReservationAtFullQuotas(t *testing.T) {
 		}
 	}
 	out := planCLIOutput(t)
-	if code := cmdSites(recoveryArgs(f)); code != 0 {
+	if code := main.CmdSites(recoveryArgs(f)); code != 0 {
 		t.Fatalf("recovery exit=%d", code)
 	}
 	var result struct {
@@ -77,7 +78,7 @@ func TestSitesStageRecoveryReadyReleaseIsReadOnly(t *testing.T) {
 	f.usage.PendingUploads = api.HostingAccountPendingUploadsMax
 	f.usage.Releases += api.HostingAccountPendingUploadsMax // Pending uploads belong to other sites.
 	out := planCLIOutput(t)
-	if code := cmdSites(recoveryArgs(f)); code != 0 {
+	if code := main.CmdSites(recoveryArgs(f)); code != 0 {
 		t.Fatal(code)
 	}
 	if f.creates != 0 || f.finalizes != 0 || len(f.uploads) != 0 || f.inventoryReads != 2 {
@@ -98,11 +99,11 @@ func TestSitesStageRecoveryRecognizesAcceptedFinalizationOnExplicitRetry(t *test
 	f := retainedStageCLI(t, "pending")
 	f.mode = "finalize_accepted_lost"
 	out := planCLIOutput(t)
-	if code := cmdSites(recoveryArgs(f)); code != 3 || f.finalizes != 1 || f.creates != 0 || out.Len() != 0 {
+	if code := main.CmdSites(recoveryArgs(f)); code != 3 || f.finalizes != 1 || f.creates != 0 || out.Len() != 0 {
 		t.Fatalf("exit=%d finalize=%d output=%s", code, f.finalizes, out)
 	}
 	f.mode, f.requests, f.inventoryReads = "", nil, 0
-	if code := cmdSites(recoveryArgs(f)); code != 0 || f.finalizes != 1 || f.creates != 0 {
+	if code := main.CmdSites(recoveryArgs(f)); code != 0 || f.finalizes != 1 || f.creates != 0 {
 		t.Fatalf("exit=%d finalize=%d creates=%d", code, f.finalizes, f.creates)
 	}
 	for _, request := range f.requests {
@@ -142,7 +143,7 @@ func TestSitesStageRecoveryRequiresFlagsPlanAndExactUUIDBeforeAPI(t *testing.T) 
 				t.Setenv("FAAS_API", "https://another.gregale.test")
 			}
 			out := planCLIOutput(t)
-			if code := cmdSites(args); code == 0 || len(f.requests) != 0 || out.Len() != 0 {
+			if code := main.CmdSites(args); code == 0 || len(f.requests) != 0 || out.Len() != 0 {
 				t.Fatalf("exit=%d requests=%v output=%s", code, f.requests, out)
 			}
 		})
@@ -186,7 +187,7 @@ func TestSitesStageRecoveryRefusesIneligibleOrChangedReleaseBeforeWrites(t *test
 				}
 			}
 			out := planCLIOutput(t)
-			if code := cmdSites(recoveryArgs(f)); code == 0 || f.creates != 0 || f.finalizes != 0 || len(f.uploads) != 0 || out.Len() != 0 {
+			if code := main.CmdSites(recoveryArgs(f)); code == 0 || f.creates != 0 || f.finalizes != 0 || len(f.uploads) != 0 || out.Len() != 0 {
 				t.Fatalf("exit=%d creates=%d finalize=%d output=%s", code, f.creates, f.finalizes, out)
 			}
 			for _, request := range f.requests {
@@ -204,7 +205,7 @@ func TestSitesStageRecoveryFailureNeverAllocatesOrAutomaticallyRetries(t *testin
 			f := retainedStageCLI(t, "pending")
 			f.mode = mode
 			out := planCLIOutput(t)
-			if code := cmdSites(recoveryArgs(f)); code == 0 || f.creates != 0 || f.finalizes > 1 || out.Len() != 0 {
+			if code := main.CmdSites(recoveryArgs(f)); code == 0 || f.creates != 0 || f.finalizes > 1 || out.Len() != 0 {
 				t.Fatalf("exit=%d creates=%d finalize=%d output=%s", code, f.creates, f.finalizes, out)
 			}
 		})
@@ -222,7 +223,7 @@ func TestSitesStageRecoveryPreservesImmutableSourceLabels(t *testing.T) {
 			if changed {
 				label = "org/changed"
 			}
-			code := cmdSites(append(recoveryArgs(f), "--source-repository", label))
+			code := main.CmdSites(append(recoveryArgs(f), "--source-repository", label))
 			if (code == 0) == changed || f.creates != 0 || f.finalizes != 0 {
 				t.Fatalf("exit=%d changed=%v", code, changed)
 			}
@@ -232,11 +233,11 @@ func TestSitesStageRecoveryPreservesImmutableSourceLabels(t *testing.T) {
 
 func TestSitesStageRecoveryDoesNotIgnoreConfigOrUnknownBlockers(t *testing.T) {
 	for _, blocker := range []string{"config_disabled", "future_admission_rule"} {
-		if err := checkRetainedHostingPlan(api.HostingDeploymentPlan{}, api.HostingDeploymentPlan{State: "blocked", Blockers: []string{blocker}}); err == nil {
+		if err := main.CheckRetainedHostingPlan(api.HostingDeploymentPlan{}, api.HostingDeploymentPlan{State: "blocked", Blockers: []string{blocker}}); err == nil {
 			t.Fatal("ignored blocker: " + blocker)
 		}
 	}
-	if err := checkRetainedHostingPlan(api.HostingDeploymentPlan{}, api.HostingDeploymentPlan{State: "unavailable"}); err == nil {
+	if err := main.CheckRetainedHostingPlan(api.HostingDeploymentPlan{}, api.HostingDeploymentPlan{State: "unavailable"}); err == nil {
 		t.Fatal("accepted unknown recovery evidence state")
 	}
 }
@@ -249,14 +250,14 @@ func TestSitesStageRecoveryRespectsServerConfigurationFlag(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.regeneratePlan(t)
-	manifest, err := staticHostingManifest(f.dir, false)
+	manifest, err := main.StaticHostingManifest(f.dir, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	f.release.Manifest = manifest
 	f.caps.ConfigEnabled = false
 	out := planCLIOutput(t)
-	if code := cmdSites(recoveryArgs(f)); code == 0 || f.creates != 0 || f.finalizes != 0 || out.Len() != 0 {
+	if code := main.CmdSites(recoveryArgs(f)); code == 0 || f.creates != 0 || f.finalizes != 0 || out.Len() != 0 {
 		t.Fatalf("exit=%d output=%s", code, out)
 	}
 	for _, request := range f.requests {

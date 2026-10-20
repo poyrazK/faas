@@ -19,7 +19,7 @@ func TestProjectSubmissionAcceptanceAndDuplicateFence(t *testing.T) {
 	builds := 0
 	store.onBuild = func(dep state.Deployment) {
 		builds++
-		receipt, err := store.ProjectSubmission(t.Context(), account.ID, attempt)
+		receipt, err := store.MemStore.ProjectSubmission(t.Context(), account.ID, attempt)
 		if err != nil || receipt.Status != "processing" || !receipt.SelectionComplete {
 			t.Fatalf("progress=%+v %v", receipt, err)
 		}
@@ -79,7 +79,7 @@ func TestProjectSubmissionLegacyFingerprintCompatible(t *testing.T) {
 		t.Fatal(err)
 	}
 	fingerprint := sha256.Sum256(payload)
-	if _, err := store.ReserveProjectSubmission(t.Context(), account.ID, attempt, hex.EncodeToString(fingerprint[:]), api.ProjectSubmissionReceipt{AttemptID: attempt, ProjectSlug: "demo", Status: "processing"}); err != nil {
+	if _, err := store.MemStore.ReserveProjectSubmission(t.Context(), account.ID, attempt, hex.EncodeToString(fingerprint[:]), api.ProjectSubmissionReceipt{AttemptID: attempt, ProjectSlug: "demo", Status: "processing"}); err != nil {
 		t.Fatal(err)
 	}
 	rec := projectSecretsRequest(t, s, key, "/v1/projects", "", map[string]string{"attempt_id": attempt})

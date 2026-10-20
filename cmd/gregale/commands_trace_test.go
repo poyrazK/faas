@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -23,6 +24,9 @@ func TestCmdTraceRendersAccountTraceEvidence(t *testing.T) {
 				Matches: []api.AccountTraceMatch{
 					{App: "alpha", Request: api.DebugTelemetryRequestItem{ID: "row-alpha", Route: "/checkout", Method: "GET", Status: 200, LatencyMS: 100}},
 					{App: "beta", Request: api.DebugTelemetryRequestItem{ID: "row-beta", Route: "/checkout", Method: "GET", Status: 200, LatencyMS: 40}},
+					{App: "billing", Request: api.DebugTelemetryRequestItem{ID: "row-billing", Route: "other", Method: "POST", Status: 200, LatencyMS: 900,
+						ColdBoot: true, WakeID: "wake-9", Guest: &api.DebugGuestExecutionEvidence{Runtime: "node22", DurationMS: 270}},
+						Wake: &api.AccountTraceWake{WakeID: "wake-9", Method: "restore", ReadyInMS: 610}},
 				},
 				Invocations: []api.AccountTraceInvocation{
 					{App: "alpha", ID: "inv-queue", Source: "queue", QueueName: "orders", State: "completed", Attempts: 1,
@@ -44,20 +48,21 @@ func TestCmdTraceRendersAccountTraceEvidence(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_test")
 
-	stdout, _, restore := swapIO(t)
+	stdout, _, restore := main.SwapIO(t)
 	defer restore()
-	oldJSON := jsonOutput
-	jsonOutput = false
-	defer func() { jsonOutput = oldJSON }()
+	oldJSON := (*main.JsonOutput)
+	(*main.JsonOutput) = false
+	defer func() { (*main.JsonOutput) = oldJSON }()
 
-	if code := cmdTrace([]string{traceID}); code != 0 {
+	if code := main.CmdTrace([]string{traceID}); code != 0 {
 		t.Fatalf("cmdTrace = %d", code)
 	}
 	got := stdout.String()
 	for _, want := range []string{
-		"TRACE " + traceID + " · 2 app match(es) · 1 invocation(s) · 1 HTTP log(s) · 2 span(s)",
+		"TRACE " + traceID + " · 3 app match(es) · 1 invocation(s) · 1 HTTP log(s) · 2 span(s)",
 		"alpha · GET /checkout · HTTP 200 · 100 ms",
 		"beta · GET /checkout · HTTP 200 · 40 ms",
+		"billing · POST other · HTTP 200 · 900 ms · telemetry row row-billing\n      woke by restore in 610 ms (wake wake-9) · app ≈270 ms · other ≈20 ms",
 		"INVOCATIONS",
 		"HTTP ACCESS LOGS",
 		"2026-09-22T10:00:00.010Z · alpha · GET /checkout · status=200 · latency=100ms · event log-alpha",
@@ -72,6 +77,42 @@ func TestCmdTraceRendersAccountTraceEvidence(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("trace output missing %q:\n%s", want, got)
 		}
+	}
+}
+
+func TestTraceMatchBreakdown(t *testing.T) {
+	guest := func(ms int) *api.DebugGuestExecutionEvidence { return &api.DebugGuestExecutionEvidence{DurationMS: ms} }
+	tests := []struct {
+		name  string
+		match api.AccountTraceMatch
+		want  string
+	}{
+		{"warm request without runtime evidence", api.AccountTraceMatch{Request: api.DebugTelemetryRequestItem{LatencyMS: 40}}, ""},
+		{"warm request with runtime evidence", api.AccountTraceMatch{Request: api.DebugTelemetryRequestItem{LatencyMS: 40, Guest: guest(30)}}, "app ≈30 ms"},
+		{"restored request", api.AccountTraceMatch{
+			Request: api.DebugTelemetryRequestItem{LatencyMS: 900, ColdBoot: true, WakeID: "w1", Guest: guest(270)},
+			Wake:    &api.AccountTraceWake{WakeID: "w1", Method: "restore", ReadyInMS: 610},
+		}, "woke by restore in 610 ms (wake w1) · app ≈270 ms · other ≈20 ms"},
+		{"wake without a method", api.AccountTraceMatch{
+			Request: api.DebugTelemetryRequestItem{LatencyMS: 700, ColdBoot: true, WakeID: "w2"},
+			Wake:    &api.AccountTraceWake{WakeID: "w2", ReadyInMS: 650},
+		}, "woke in 650 ms (wake w2)"},
+		{"wake history no longer retained", api.AccountTraceMatch{Request: api.DebugTelemetryRequestItem{LatencyMS: 700, ColdBoot: true, WakeID: "w3"}}, "found the app parked (wake w3)"},
+		{"unfinished wake", api.AccountTraceMatch{
+			Request: api.DebugTelemetryRequestItem{LatencyMS: 700, ColdBoot: true, WakeID: "w4"},
+			Wake:    &api.AccountTraceWake{WakeID: "w4", Method: "cold_boot"},
+		}, "found the app parked (wake w4)"},
+		{"bucketed parts exceed the latency", api.AccountTraceMatch{
+			Request: api.DebugTelemetryRequestItem{LatencyMS: 600, ColdBoot: true, WakeID: "w5", Guest: guest(20)},
+			Wake:    &api.AccountTraceWake{WakeID: "w5", Method: "restore", ReadyInMS: 590},
+		}, "woke by restore in 590 ms (wake w5) · app ≈20 ms"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := main.TraceMatchBreakdown(tt.match); got != tt.want {
+				t.Fatalf("breakdown = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 
@@ -99,13 +140,13 @@ func TestCmdTraceWatchPollsUntilTerminal(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_test")
 
-	stdout, stderr, restore := swapIO(t)
+	stdout, stderr, restore := main.SwapIO(t)
 	defer restore()
-	oldJSON := jsonOutput
-	jsonOutput = false
-	defer func() { jsonOutput = oldJSON }()
+	oldJSON := (*main.JsonOutput)
+	(*main.JsonOutput) = false
+	defer func() { (*main.JsonOutput) = oldJSON }()
 
-	if code := cmdTrace([]string{traceID, "--watch", "--interval", "1ms", "--timeout", "100ms"}); code != 0 {
+	if code := main.CmdTrace([]string{traceID, "--watch", "--interval", "1ms", "--timeout", "100ms"}); code != 0 {
 		t.Fatalf("cmdTrace --watch = %d; stderr=%s", code, stderr())
 	}
 	if calls != 2 {
@@ -146,13 +187,13 @@ func TestCmdTraceWatchRetriesTransientAPIError(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_test")
 
-	_, stderr, restore := swapIO(t)
+	_, stderr, restore := main.SwapIO(t)
 	defer restore()
-	oldJSON := jsonOutput
-	jsonOutput = false
-	defer func() { jsonOutput = oldJSON }()
+	oldJSON := (*main.JsonOutput)
+	(*main.JsonOutput) = false
+	defer func() { (*main.JsonOutput) = oldJSON }()
 
-	if code := cmdTrace([]string{traceID, "--watch", "--interval", "1ms", "--timeout", "1s"}); code != 0 {
+	if code := main.CmdTrace([]string{traceID, "--watch", "--interval", "1ms", "--timeout", "1s"}); code != 0 {
 		t.Fatalf("cmdTrace --watch = %d; stderr=%s", code, stderr())
 	}
 	if calls != 2 {
@@ -165,26 +206,26 @@ func TestCmdTraceWatchRetriesTransientAPIError(t *testing.T) {
 
 func TestTraceWatchRetryDelayIsBounded(t *testing.T) {
 	hint := int64(120)
-	if got := traceWatchRetryDelay(1, &hint); got != traceWatchRetryMax {
-		t.Fatalf("traceWatchRetryDelay with Retry-After = %s, want cap %s", got, traceWatchRetryMax)
+	if got := main.TraceWatchRetryDelay(1, &hint); got != main.TraceWatchRetryMax {
+		t.Fatalf("traceWatchRetryDelay with Retry-After = %s, want cap %s", got, main.TraceWatchRetryMax)
 	}
-	if got := traceWatchRetryDelay(4, nil); got != 2*time.Second {
+	if got := main.TraceWatchRetryDelay(4, nil); got != 2*time.Second {
 		t.Fatalf("traceWatchRetryDelay attempt 4 = %s, want 2s", got)
 	}
 }
 
 func TestTraceWatchRetryableError(t *testing.T) {
 	for _, status := range []int{http.StatusRequestTimeout, 425, http.StatusTooManyRequests, http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout} {
-		if !traceWatchRetryableError(&APIError{Problem: api.Problem{Status: status}}) {
+		if !main.TraceWatchRetryableError(&main.APIError{Problem: api.Problem{Status: status}}) {
 			t.Errorf("status %d should be retryable", status)
 		}
 	}
 	for _, status := range []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound} {
-		if traceWatchRetryableError(&APIError{Problem: api.Problem{Status: status}}) {
+		if main.TraceWatchRetryableError(&main.APIError{Problem: api.Problem{Status: status}}) {
 			t.Errorf("status %d should not be retryable", status)
 		}
 	}
-	if !traceWatchRetryableError(errors.New("connection reset by peer")) {
+	if !main.TraceWatchRetryableError(errors.New("connection reset by peer")) {
 		t.Fatal("transport errors should be retryable")
 	}
 }
@@ -202,7 +243,7 @@ func TestTraceWatchComplete(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := traceWatchComplete(tt.result); got != tt.want {
+			if got := main.TraceWatchComplete(tt.result); got != tt.want {
 				t.Fatalf("traceWatchComplete=%t want %t", got, tt.want)
 			}
 		})
@@ -224,13 +265,13 @@ func TestCmdTraceWatchTimesOut(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_test")
 
-	_, stderr, restore := swapIO(t)
+	_, stderr, restore := main.SwapIO(t)
 	defer restore()
-	oldJSON := jsonOutput
-	jsonOutput = false
-	defer func() { jsonOutput = oldJSON }()
+	oldJSON := (*main.JsonOutput)
+	(*main.JsonOutput) = false
+	defer func() { (*main.JsonOutput) = oldJSON }()
 
-	if code := cmdTrace([]string{traceID, "--watch", "--interval", "1ms", "--timeout", "10ms"}); code != 3 {
+	if code := main.CmdTrace([]string{traceID, "--watch", "--interval", "1ms", "--timeout", "10ms"}); code != 3 {
 		t.Fatalf("cmdTrace timeout = %d want 3; stderr=%s", code, stderr())
 	}
 	if !strings.Contains(stderr(), "watch timed out") {
@@ -248,7 +289,7 @@ func TestTraceLookupErrorLine(t *testing.T) {
 		{api.AccountTraceLookupError{App: "checkout", Detail: "request telemetry unavailable"}, "trace checkout: request telemetry unavailable"},
 		{api.AccountTraceLookupError{Detail: "HTTP log events unavailable"}, "trace: HTTP log events unavailable"},
 	} {
-		if got := traceLookupErrorLine(tc.item); got != tc.want {
+		if got := main.TraceLookupErrorLine(tc.item); got != tc.want {
 			t.Errorf("traceLookupErrorLine(%+v) = %q, want %q", tc.item, got, tc.want)
 		}
 	}

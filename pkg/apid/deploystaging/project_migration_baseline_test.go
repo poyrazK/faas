@@ -9,6 +9,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type migrationBaselineFixture struct {
@@ -84,7 +85,7 @@ func TestMigrationBaselineController(t *testing.T) {
 			if scenario == "no_probe" {
 				probe = nil
 			}
-			err := ReconcileSafeProjectReleases(ctx, f, check, probe)
+			err := ReconcileSafeProjectReleases(ctx, statetest.NewMem(f), check, probe)
 			skip := scenario == "running" || scenario == "missing_exit" || scenario == "new_owner" || scenario == "recent_unknown" || scenario == "failed_checkpoint"
 			if scenario == "cancelled" {
 				if !errors.Is(err, context.Canceled) || len(f.rounds) != 0 || f.reconciled != 0 {

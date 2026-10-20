@@ -21,28 +21,28 @@ func TestSafeProjectApplyDarkCandidatesAndFailurePreserveProduction(t *testing.T
 	}
 	var members []state.ProjectReleaseMember
 	for _, b := range original.Builds {
-		app, err := store.AppByID(t.Context(), b.AppID)
+		app, err := store.MemStore.AppByID(t.Context(), b.AppID)
 		if err != nil {
 			t.Fatal(err)
 		}
 		app.Manifest.RevisionPinTTLSeconds = 3600
-		if _, err := store.UpdateApp(t.Context(), app.ID, state.UpdateAppParams{Manifest: &app.Manifest}); err != nil {
+		if _, err := store.MemStore.UpdateApp(t.Context(), app.ID, state.UpdateAppParams{Manifest: &app.Manifest}); err != nil {
 			t.Fatal(err)
 		}
-		old, err := store.CreateDeployment(t.Context(), state.Deployment{AppID: b.AppID, Scope: "production", Kind: state.DeploymentKindTarball})
+		old, err := store.MemStore.CreateDeployment(t.Context(), state.Deployment{AppID: b.AppID, Scope: "production", Kind: state.DeploymentKindTarball})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := store.MarkDeploymentLive(t.Context(), old.ID); err != nil {
+		if err := store.MemStore.MarkDeploymentLive(t.Context(), old.ID); err != nil {
 			t.Fatal(err)
 		}
 		members = append(members, state.ProjectReleaseMember{AppID: b.AppID, DeploymentID: old.ID})
 	}
-	baseline, err := store.PublishProjectReleaseSet(t.Context(), account.ID, original.ProjectID, "production", 1800, members)
+	baseline, err := store.MemStore.PublishProjectReleaseSet(t.Context(), account.ID, original.ProjectID, "production", 1800, members)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.UpdateProjectEnvironmentProtection(t.Context(), account.ID, original.ProjectID, "production", false); err != nil {
+	if _, err := store.MemStore.UpdateProjectEnvironmentProtection(t.Context(), account.ID, original.ProjectID, "production", false); err != nil {
 		t.Fatal(err)
 	}
 	admitted := 0
@@ -51,7 +51,7 @@ func TestSafeProjectApplyDarkCandidatesAndFailurePreserveProduction(t *testing.T
 		if !d.TrafficPercentExplicit || d.TrafficPercent != 0 || d.Scope != "production" {
 			t.Fatalf("candidate is not dark: %+v", d)
 		}
-		active, err := store.ActiveProjectReleaseSet(t.Context(), account.ID, original.ProjectID, "production")
+		active, err := store.MemStore.ActiveProjectReleaseSet(t.Context(), account.ID, original.ProjectID, "production")
 		if err != nil || active.ID != baseline.ID {
 			t.Fatalf("early cutover=%+v %v", active, err)
 		}
@@ -67,19 +67,19 @@ func TestSafeProjectApplyDarkCandidatesAndFailurePreserveProduction(t *testing.T
 	if admitted != 2 || apply.SafeRelease == nil || apply.SafeRelease.PreviousReleaseID != baseline.ID {
 		t.Fatalf("apply=%+v admitted=%d", apply, admitted)
 	}
-	if err := store.UpdateDeploymentStatus(t.Context(), apply.Builds[1].DeploymentID, state.DeployFailed, ""); err != nil {
+	if err := store.MemStore.UpdateDeploymentStatus(t.Context(), apply.Builds[1].DeploymentID, state.DeployFailed, ""); err != nil {
 		t.Fatal(err)
 	}
-	progress, err := store.ReconcileSafeProjectSubmission(t.Context(), account.ID, strings.Repeat("b", 32))
+	progress, err := store.MemStore.ReconcileSafeProjectSubmission(t.Context(), account.ID, strings.Repeat("b", 32))
 	if err != nil || progress.Status != "failed" {
 		t.Fatalf("progress=%+v %v", progress, err)
 	}
-	active, err := store.ActiveProjectReleaseSet(t.Context(), account.ID, original.ProjectID, "production")
+	active, err := store.MemStore.ActiveProjectReleaseSet(t.Context(), account.ID, original.ProjectID, "production")
 	if err != nil || active.ID != baseline.ID {
 		t.Fatalf("failed candidate changed production: %+v %v", active, err)
 	}
 	for _, m := range members {
-		_, target, err := store.ResolveProjectRelease(t.Context(), m.AppID, "production", "")
+		_, target, err := store.MemStore.ResolveProjectRelease(t.Context(), m.AppID, "production", "")
 		if err != nil || target != m.DeploymentID {
 			t.Fatalf("mixed production graph target=%s err=%v", target, err)
 		}

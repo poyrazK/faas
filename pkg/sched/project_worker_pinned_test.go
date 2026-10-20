@@ -8,6 +8,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 func seedPinnedWorkerProject(t *testing.T) (*state.MemStore, state.App, state.Deployment, state.Deployment, state.Invocation) {
@@ -133,7 +134,7 @@ func TestProjectPinnedWorkerRestartAndDrain(t *testing.T) {
 	}
 }
 
-type failedPinnedWorkerRead struct{ *state.MemStore }
+type failedPinnedWorkerRead struct{ MemStore *state.MemStore }
 
 func (s failedPinnedWorkerRead) PinnedProjectReleaseWorkers(context.Context, string) ([]string, error) {
 	return nil, errors.New("pin read unavailable")
@@ -143,7 +144,7 @@ func TestProjectPinnedWorkerReadFailureDoesNotMutateFleet(t *testing.T) {
 	store, app, old, _, _ := seedPinnedWorkerProject(t)
 	resident := seedScopedWorker(t, store, app, old)
 	vmm := &recordingStopVMM{fakeVMM: &fakeVMM{}}
-	e := newEngine(t, failedPinnedWorkerRead{store}, vmm, &fakeNotifier{}, "1.10.0")
+	e := newEngine(t, statetest.NewMem(failedPinnedWorkerRead{MemStore: store}), vmm, &fakeNotifier{}, "1.10.0")
 	if err := e.SeedLedger(t.Context()); err != nil {
 		t.Fatal(err)
 	}

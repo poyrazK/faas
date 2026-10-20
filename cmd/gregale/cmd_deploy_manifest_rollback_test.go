@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -9,30 +9,31 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func TestCmdDeploy_RollsBackManifestTriggersWhenDeploymentRejected(t *testing.T) {
 	var events []string
-	srv := httptest.NewServer(withFixtureCronStaging(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(main.WithFixtureCronStaging(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/apps":
 			events = append(events, "create-app")
-			writeJSONTest(w, api.AppResponse{ID: "app-1", Slug: "rollback-app"})
+			main.WriteJSONTest(w, api.AppResponse{ID: "app-1", Slug: "rollback-app"})
 		case "/v1/crons":
 			switch r.Method {
 			case http.MethodGet:
 				events = append(events, "list-crons")
-				writeJSONTest(w, []api.CronResponse{})
+				main.WriteJSONTest(w, []api.CronResponse{})
 			case http.MethodPost:
 				events = append(events, "create-cron")
-				writeJSONTest(w, api.CronResponse{ID: "cron-new", AppID: "rollback-app", Schedule: "0 3 * * *", Path: "/run", Enabled: true})
+				main.WriteJSONTest(w, api.CronResponse{ID: "cron-new", AppID: "rollback-app", Schedule: "0 3 * * *", Path: "/run", Enabled: true})
 			default:
 				http.Error(w, "unexpected cron method", http.StatusMethodNotAllowed)
 			}
 		case "/v1/account":
 			events = append(events, "whoami")
-			writeJSONTest(w, api.AccountResponse{Plan: "pro"})
+			main.WriteJSONTest(w, api.AccountResponse{Plan: "pro"})
 		case "/v1/apps/rollback-app/deployments":
 			events = append(events, "deploy")
 			p := &api.Problem{Status: http.StatusUnprocessableEntity, Code: "synthetic_rejection", Title: "Invalid source", Detail: "synthetic deployment rejection"}
@@ -61,21 +62,21 @@ func TestCmdDeploy_RollsBackManifestTriggersWhenDeploymentRejected(t *testing.T)
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	tarball := writeDeploySourceArchive(t, map[string]string{
+	tarball := main.WriteDeploySourceArchive(t, map[string]string{
 		"archive-root/package.json": `{}`,
 		"archive-root/Dockerfile":   "FROM scratch\n",
 		"archive-root/gregale.yaml": "triggers:\n  - kind: cron\n    app: rollback-app\n    schedule: 0 3 * * *\n    path: /run\n",
 	})
 
-	oldJSON := jsonOutput
-	jsonOutput = false
-	defer func() { jsonOutput = oldJSON }()
-	oldOut, oldErr := osStdout, osStderr
+	oldJSON := (*main.JsonOutput)
+	(*main.JsonOutput) = false
+	defer func() { (*main.JsonOutput) = oldJSON }()
+	oldOut, oldErr := (*main.OsStdout), (*main.OsStderr)
 	var stdout, stderr bytes.Buffer
-	osStdout, osStderr = &stdout, &stderr
-	defer func() { osStdout, osStderr = oldOut, oldErr }()
+	(*main.OsStdout), (*main.OsStderr) = &stdout, &stderr
+	defer func() { (*main.OsStdout), (*main.OsStderr) = oldOut, oldErr }()
 
-	if code := cmdDeployTarball([]string{"--tarball", tarball, "--dockerfile", "--name", "rollback-app", "--no-wait"}); code == 0 {
+	if code := main.CmdDeployTarball([]string{"--tarball", tarball, "--dockerfile", "--name", "rollback-app", "--no-wait"}); code == 0 {
 		t.Fatal("deploy exit = 0, want rejected deployment failure")
 	}
 	if got, want := events, []string{"create-app", "list-crons", "whoami", "deploy"}; !reflect.DeepEqual(got, want) {
@@ -92,21 +93,21 @@ func TestCmdDeploySourceRef_RollsBackManifestTriggersWhenRejected(t *testing.T) 
 		switch r.URL.Path {
 		case "/v1/apps":
 			events = append(events, "create-app")
-			writeJSONTest(w, api.AppResponse{ID: "app-rollback", Slug: "rollback-app"})
+			main.WriteJSONTest(w, api.AppResponse{ID: "app-rollback", Slug: "rollback-app"})
 		case "/v1/crons":
 			switch r.Method {
 			case http.MethodGet:
 				events = append(events, "list-crons")
-				writeJSONTest(w, []api.CronResponse{})
+				main.WriteJSONTest(w, []api.CronResponse{})
 			case http.MethodPost:
 				events = append(events, "create-cron")
-				writeJSONTest(w, api.CronResponse{ID: "cron-source-ref", AppID: "rollback-app", Schedule: "0 3 * * *", Path: "/run", Enabled: true})
+				main.WriteJSONTest(w, api.CronResponse{ID: "cron-source-ref", AppID: "rollback-app", Schedule: "0 3 * * *", Path: "/run", Enabled: true})
 			default:
 				http.Error(w, "unexpected cron method", http.StatusMethodNotAllowed)
 			}
 		case "/v1/account":
 			events = append(events, "whoami")
-			writeJSONTest(w, api.AccountResponse{Plan: "pro"})
+			main.WriteJSONTest(w, api.AccountResponse{Plan: "pro"})
 		case "/v1/apps/rollback-app/deployments/source-ref":
 			events = append(events, "source-ref")
 			p := &api.Problem{Status: http.StatusUnprocessableEntity, Code: "synthetic_rejection", Title: "Invalid source", Detail: "synthetic source-ref rejection"}
@@ -136,15 +137,15 @@ func TestCmdDeploySourceRef_RollsBackManifestTriggersWhenRejected(t *testing.T) 
 		t.Fatal(err)
 	}
 
-	oldJSON := jsonOutput
-	jsonOutput = false
-	defer func() { jsonOutput = oldJSON }()
-	oldOut, oldErr := osStdout, osStderr
+	oldJSON := (*main.JsonOutput)
+	(*main.JsonOutput) = false
+	defer func() { (*main.JsonOutput) = oldJSON }()
+	oldOut, oldErr := (*main.OsStdout), (*main.OsStderr)
 	var stdout, stderr bytes.Buffer
-	osStdout, osStderr = &stdout, &stderr
-	defer func() { osStdout, osStderr = oldOut, oldErr }()
+	(*main.OsStdout), (*main.OsStderr) = &stdout, &stderr
+	defer func() { (*main.OsStdout), (*main.OsStderr) = oldOut, oldErr }()
 
-	if code := cmdDeployTarball([]string{"--repo", "onebox-faas/hello", "--ref", "main", "--name", "rollback-app", "--no-wait"}); code == 0 {
+	if code := main.CmdDeployTarball([]string{"--repo", "onebox-faas/hello", "--ref", "main", "--name", "rollback-app", "--no-wait"}); code == 0 {
 		t.Fatal("source-ref deploy exit = 0, want rejected deployment failure")
 	}
 	if got, want := events, []string{"create-app", "source-ref"}; !reflect.DeepEqual(got, want) {

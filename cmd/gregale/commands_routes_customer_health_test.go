@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/routehealth"
 )
@@ -33,8 +34,8 @@ func customerCLIReport() api.RouteHealthReport {
 func TestCustomerHealthCLIReportsPrivacyAndAdvisoryExit(t *testing.T) {
 	for _, scenario := range []string{"default", "details", "consumer", "human", "unrequested", "false_verdict", "wrong_group", "bad_counts", "bad_options", "bad_dimension", "missing"} {
 		t.Run(scenario, func(t *testing.T) {
-			resetJSONOut(t)
-			setPreviewTestAuth(t)
+			main.ResetJSONOut(t)
+			main.SetPreviewTestAuth(t)
 			report := customerCLIReport()
 			if scenario == "consumer" {
 				report.Customers.GroupBy = "consumer"
@@ -66,14 +67,14 @@ func TestCustomerHealthCLIReportsPrivacyAndAdvisoryExit(t *testing.T) {
 				if scenario == "unrequested" && r.URL.RawQuery != "" {
 					t.Error("default query changed")
 				}
-				writeJSONTest(w, report)
+				main.WriteJSONTest(w, report)
 			}))
 			defer server.Close()
 			t.Setenv("FAAS_API", server.URL)
 			var out bytes.Buffer
-			old := osStdout
-			osStdout = &out
-			t.Cleanup(func() { osStdout = old })
+			old := (*main.OsStdout)
+			(*main.OsStdout) = &out
+			t.Cleanup(func() { (*main.OsStdout) = old })
 			args := []string{"routes", "health", "report", "demo", "--deployment", healthCandidateID, "--fail-on-unhealthy"}
 			if scenario != "human" {
 				args = append(args, "--json")
@@ -94,7 +95,7 @@ func TestCustomerHealthCLIReportsPrivacyAndAdvisoryExit(t *testing.T) {
 			if scenario == "false_verdict" || scenario == "wrong_group" || scenario == "bad_counts" || scenario == "bad_options" || scenario == "bad_dimension" || scenario == "missing" {
 				want = 1
 			}
-			if code := run(args); code != want {
+			if code := main.Run(args); code != want {
 				t.Fatalf("exit %d want %d: %s", code, want, out.String())
 			}
 			if scenario == "bad_options" || scenario == "bad_dimension" {

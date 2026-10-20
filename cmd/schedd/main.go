@@ -503,7 +503,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithExecutionOutboundRelay(sched.NewLoopbackExecutionOutboundRelay()).
 		WithCloneWakeDispatchRecorder(store.RecordCloneCheckpointWakeDispatch).
 		WithCloneMigrationAdoptionRecorder(store.RecordCloneCheckpointMigrationAdoption).
-		WithCloneMigrationResumeRecorder(store.RecordCloneCheckpointMigrationResume)
+		WithCloneMigrationResumeRecorder(store.RecordCloneCheckpointMigrationResume).
+		WithFinancialComputeAuthority(store)
 	nodeRegistry := sched.NewNodeRegistry(nodes)
 
 	// Tier A3: subscribe to compute_node_changed and refresh the

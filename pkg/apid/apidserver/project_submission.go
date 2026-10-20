@@ -44,12 +44,21 @@ func (s *server) beginProjectSubmission(ctx context.Context, req *scanPlanReques
 	if err != nil {
 		return api.ErrCapacity("project secrets cannot be fingerprinted on this server")
 	}
-	semantics := []any{req.SourceSHA256, req.ProjectSlug, req.RepoFullName, req.ProdBranch, req.InstallID, req.Only, req.Exclude, req.PersistExclude, req.NoTriggers, req.Environment, req.PlatformTenantRequired, secretsMAC, req.AppSlugs, req.Migration}
+	// Optional intent is appended only when present, so an ordinary request
+	// keeps the fingerprint earlier releases recorded for it.
+	var secrets any
+	if secretsMAC != "" {
+		secrets = secretsMAC
+	}
+	semantics := []any{req.SourceSHA256, req.ProjectSlug, req.RepoFullName, req.ProdBranch, req.InstallID, req.Only, req.Exclude, req.PersistExclude, req.NoTriggers, req.Environment, req.PlatformTenantRequired, secrets}
 	if req.SafeRelease != nil {
 		semantics = append(semantics, safeProjectReleaseID(req.SafeRelease))
 	}
 	if len(req.RetryTargets) > 0 {
 		semantics = append(semantics, req.RetryTargets)
+	}
+	if len(req.AppSlugs) > 0 || req.Migration {
+		semantics = append(semantics, map[string]any{"app_slugs": req.AppSlugs, "migration": req.Migration})
 	}
 	payload, _ := json.Marshal(semantics)
 	sum := sha256.Sum256(payload)

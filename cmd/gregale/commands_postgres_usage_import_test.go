@@ -1,5 +1,5 @@
 // adr: 583 — preview is the default; applying requires reviewed revision evidence.
-package main
+package main_test
 
 import (
 	"bytes"
@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -55,8 +56,8 @@ func TestCmdPostgresUsageImport(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_test")
-	previousOut, previousJSON := osStdout, jsonOutput
-	t.Cleanup(func() { osStdout, jsonOutput = previousOut, previousJSON })
+	previousOut, previousJSON := (*main.OsStdout), (*main.JsonOutput)
+	t.Cleanup(func() { (*main.OsStdout), (*main.JsonOutput) = previousOut, previousJSON })
 	for _, apply := range []bool{false, true} {
 		for _, asJSON := range []bool{false, true} {
 			request.ExpectedRevision = ""
@@ -71,12 +72,12 @@ func TestCmdPostgresUsageImport(t *testing.T) {
 				t.Fatal(err)
 			}
 			var out bytes.Buffer
-			osStdout, jsonOutput = &out, asJSON
+			(*main.OsStdout), (*main.JsonOutput) = &out, asJSON
 			args := []string{"usage-import", account, "--file", file}
 			if apply {
 				args = append(args, "--apply", "--session-file", sessionFile)
 			}
-			if code := cmdPostgres(args); code != 0 {
+			if code := main.CmdPostgres(args); code != 0 {
 				t.Fatalf("exit=%d", code)
 			}
 			if asJSON {
@@ -93,7 +94,7 @@ func TestCmdPostgresUsageImport(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, args := range [][]string{{account, "--file", file}, {"bad", "--file", file}, {account}, {account, "--file", file, "--apply"}} {
-		if cmdPostgresUsageImport(args) == 0 {
+		if main.CmdPostgresUsageImport(args) == 0 {
 			t.Fatal("invalid file/arguments accepted")
 		}
 	}
