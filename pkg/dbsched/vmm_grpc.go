@@ -278,7 +278,7 @@ func (g *GRPCVMM) Control(ctx context.Context, node Node, id string, req dbguest
 	if err != nil {
 		return dbguest.Response{}, err
 	}
-	in := &vmmdpb.DatabaseControlRequest{DatabaseId: id, Op: string(req.Op), Sql: req.SQL}
+	in := &vmmdpb.DatabaseControlRequest{DatabaseId: id, Op: string(req.Op), Sql: req.SQL, Drill: req.Drill}
 	if !req.After.IsZero() {
 		in.After = timestamppb.New(req.After)
 	}
@@ -293,6 +293,9 @@ func (g *GRPCVMM) Control(ctx context.Context, node Node, id string, req dbguest
 		Stale: resp.GetStale()}
 	if resp.GetRecoveredTo() != nil {
 		out.RecoveredTo = resp.GetRecoveredTo().AsTime()
+	}
+	if resp.GetMarkedAt() != nil {
+		out.MarkedAt = resp.GetMarkedAt().AsTime()
 	}
 	if resp.GetImport() != nil {
 		status := importStatus(resp.GetImport())

@@ -1883,33 +1883,55 @@ ship-blocking. schedd's idle sweep runs them (`dbsched.RunDrills`, every
 sample, at most one per node per `DrillEvery`, 24 h):
 
 - **Pick.** On each active node with no drill running, one database that
-  was created and base-backed up before the drill's target. It is chosen
-  by a hash of the day, so replicas agree and every database takes its
-  turn. A drill's id derives from the source and the day, and a
+  was created and base-backed up before the drill. It is chosen by a hash
+  of the day, so replicas agree and every database takes its turn. A
+  drill's id derives from the source and the day, and a
   `database_restore_drills` row starts it once.
-- **Restore.** `Restore` to a minute ago, into a throwaway database on the
+- **Mark.** The source, woken if parked, commits the drill's id
+  (`mark_drill`) into `gregale.restore_drill_mark`, a one-row table in
+  the maintenance database `postgres`. The guest's superuser owns the
+  schema and table and grants nothing on them, so no customer role reads
+  or changes them. The commit waits for no standby. The guest answers
+  with its clock after the commit, and that instant is the drill's
+  target. If the guest clock runs ahead of schedd's, the drill waits for
+  the target to pass, because a restore refuses a point in the future.
+  It gives up beyond 2 s. Replicas racing on one drill write the same
+  id, so the replica that loses the `database_restore_drills` insert
+  leaves a correct mark behind.
+- **Restore.** `Restore` to the target, into a throwaway database on the
   source's node: 1 vCPU, at most 384 MiB, a one-hour restore window.
   This is the restore customers' point-in-time restores and node-loss
   recovery use, so the drill covers archive flush, base backup, WAL
   replay, promotion and the copy's own first backup.
-- **Settle.** Once the copy parks, the drill is `ok` with its
+- **Check.** Once the copy parks, the drill wakes it and asks for the
+  mark (`check_drill`). The copy holds the mark only if recovery replayed
+  the source's WAL up to the source's last commit before the target. A
+  copy that lacks it fails the drill with `drill_mark_missing`. A wake or
+  check that gets no answer is retried on the next sample.
+- **Settle.** A drill whose copy holds the mark is `ok` with its
   `recovered_to`. A failed restore fails the drill with its code, and so
   does a drill still running after `DrillTimeout` (3 h). Then the copy is
-  deleted and its archive dropped. `drill_no_capacity` is `skipped`, not
-  a failure.
+  deleted and its archive dropped. Two outcomes are `skipped`, not
+  failures: `drill_no_capacity`, and `drill_source_outdated`, a source
+  still running a guest from before drill marks, which its next boot
+  replaces. A source that cannot commit the mark fails the drill with
+  `drill_mark_failed`, and nothing is restored.
 - **Watch.** `schedd_database_restore_drills_total{result}` and
   `schedd_database_restore_drill_last_ok_timestamp_seconds{node}`.
   `FaasDatabaseRestoreDrillFailed` warns on a failed drill, and
   `FaasDatabaseRestoreDrillStale` when a node has had no pass for two
   days. Finished drills are kept 90 days.
 
-On metal, a drill restored a database with 5,000 rows to a minute before
-the drill in 10.8 s, recovering to its last commit 5.1 s before the
-target. The copy and its archive were gone afterwards, and the source was
-untouched.
+On metal (2026-10-20), a drill marked a database holding 5,000 rows,
+restored it, and found the mark in the copy, all in 12.7 s. Recovery
+stopped at the mark's commit, 11 ms before the target. The copy and its
+archive were gone afterwards, and the source kept its rows. A copy of
+the same source recovered to a second before the mark lacked it, so the
+check catches a restore that stops short of the source's last commit.
 
-Not yet done: drills prove the restore runs and reaches a commit near
-the target; they do not compare the copy's contents with the source.
+The check proves the copy reached the source's last commit before the
+target. It does not compare every row: the WAL replay that brought the
+mark brought everything committed before it.
 
 ### Storage guard
 

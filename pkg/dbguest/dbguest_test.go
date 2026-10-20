@@ -88,6 +88,13 @@ func TestRequestValidate(t *testing.T) {
 		{name: "import owned by the superuser", req: Request{Op: OpImport, Import: withImport(func(s *ImportSource) { s.Owner = "postgres" })}, wantErr: true},
 		{name: "import without an operation", req: Request{Op: OpImport, Import: withImport(func(s *ImportSource) { s.OperationID = "" })}, wantErr: true},
 		{name: "import uppercase operation", req: Request{Op: OpImport, Import: withImport(func(s *ImportSource) { s.OperationID = strings.ToUpper(s.OperationID) })}, wantErr: true},
+		{name: "mark drill", req: Request{Op: OpMarkDrill, Drill: "0b0b8c1e-5f0a-4d36-9a7e-1c2d3e4f5a6b"}},
+		{name: "check drill", req: Request{Op: OpCheckDrill, Drill: "0b0b8c1e-5f0a-4d36-9a7e-1c2d3e4f5a6b"}},
+		{name: "mark without a drill", req: Request{Op: OpMarkDrill}, wantErr: true},
+		{name: "mark a quoted drill", req: Request{Op: OpMarkDrill, Drill: "x'); drop table t; --"}, wantErr: true},
+		{name: "check an uppercase drill", req: Request{Op: OpCheckDrill, Drill: "0B0B8C1E-5F0A-4D36-9A7E-1C2D3E4F5A6B"}, wantErr: true},
+		{name: "mark with sql", req: Request{Op: OpMarkDrill, Drill: "0b0b8c1e-5f0a-4d36-9a7e-1c2d3e4f5a6b", SQL: "select 1"}, wantErr: true},
+		{name: "drill on another op", req: Request{Op: OpStatus, Drill: "0b0b8c1e-5f0a-4d36-9a7e-1c2d3e4f5a6b"}, wantErr: true},
 		{name: "import bad extension", req: Request{Op: OpImport, Import: withImport(func(s *ImportSource) { s.SkipExtensions = []string{"neon; x"} })}, wantErr: true},
 	}
 	for _, tc := range cases {

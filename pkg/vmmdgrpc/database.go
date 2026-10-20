@@ -370,7 +370,7 @@ func (s *Server) DatabaseControl(ctx context.Context, req *vmmdpb.DatabaseContro
 	if err != nil {
 		return nil, err
 	}
-	control := dbguest.Request{Op: dbguest.Op(req.GetOp()), SQL: req.GetSql(), Replication: dbguest.ReplicationMode(req.GetReplication())}
+	control := dbguest.Request{Op: dbguest.Op(req.GetOp()), SQL: req.GetSql(), Replication: dbguest.ReplicationMode(req.GetReplication()), Drill: req.GetDrill()}
 	if in := req.GetImport(); in != nil {
 		control.Import = &dbguest.ImportSource{Database: in.GetDatabase(), User: in.GetUser(), Password: in.GetPassword(),
 			TargetDatabase: in.GetTargetDatabase(), Owner: in.GetOwner(), SkipExtensions: in.GetSkipExtensions(), OperationID: in.GetOperationId()}
@@ -408,6 +408,9 @@ func (s *Server) DatabaseControl(ctx context.Context, req *vmmdpb.DatabaseContro
 	}
 	if !resp.RecoveredTo.IsZero() {
 		out.RecoveredTo = timestamppb.New(resp.RecoveredTo)
+	}
+	if !resp.MarkedAt.IsZero() {
+		out.MarkedAt = timestamppb.New(resp.MarkedAt)
 	}
 	if st := resp.Storage; st != nil {
 		out.Storage = &vmmdpb.DatabaseStorage{TotalBytes: st.TotalBytes, FreeBytes: st.FreeBytes, ReadOnly: st.ReadOnly, Low: st.Low}

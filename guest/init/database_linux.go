@@ -41,6 +41,8 @@ const (
 	databaseArchiveDrainWait = 15 * time.Second
 	// databaseArchiveFlushWait bounds a restore's archive flush.
 	databaseArchiveFlushWait = 60 * time.Second
+	// databaseDrillWait bounds a restore drill's mark or check.
+	databaseDrillWait = 30 * time.Second
 	// databaseBackupTimeout bounds one base backup stream.
 	databaseBackupTimeout   = time.Hour
 	databaseAdminSQLTimeout = 60 * time.Second
@@ -391,6 +393,10 @@ func (g *databaseGuest) handleControl(conn net.Conn) {
 		resp = g.startImport(req.Import)
 	case req.Op == dbguest.OpImportStatus:
 		resp = g.importResponse()
+	case req.Op == dbguest.OpMarkDrill:
+		resp = g.markDrill(req.Drill)
+	case req.Op == dbguest.OpCheckDrill:
+		resp = g.checkDrill(req.Drill)
 	}
 	_ = json.NewEncoder(conn).Encode(resp)
 }
@@ -793,6 +799,51 @@ func (g *databaseGuest) flushArchive(after time.Time) dbguest.Response {
 		return resp
 	}
 	return g.response()
+}
+
+// markDrill commits a restore drill's mark (database_drill.go) and
+// reports the guest clock after the commit.
+func (g *databaseGuest) markDrill(drill string) dbguest.Response {
+	resp := g.response()
+	if g.currentState() != dbguest.StateReady {
+		resp.Error = dbguest.ErrCodeNotReady
+		return resp
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), databaseDrillWait)
+	defer cancel()
+	out, err := g.query(ctx, drillMarkSQL(drill))
+	if err == nil {
+		resp.MarkedAt, err = parseDrillClock(out)
+	}
+	if err != nil {
+		g.log.Warn("database drill mark failed", "err", err)
+		resp.Error = dbguest.ErrCodeDrillMarkFailed
+	}
+	return resp
+}
+
+// checkDrill reports whether the database holds drill's mark.
+func (g *databaseGuest) checkDrill(drill string) dbguest.Response {
+	resp := g.response()
+	if g.currentState() != dbguest.StateReady {
+		resp.Error = dbguest.ErrCodeNotReady
+		return resp
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), databaseDrillWait)
+	defer cancel()
+	found := ""
+	exists, err := g.query(ctx, drillTableQuery)
+	if err == nil && exists == "t" {
+		found, err = g.query(ctx, drillMarkQuery)
+	}
+	switch {
+	case err != nil:
+		g.log.Warn("database drill check failed", "err", err)
+		resp.Error = dbguest.ErrCodeDrillMarkFailed
+	case found != drill:
+		resp.Error = dbguest.ErrCodeDrillMarkMissing
+	}
+	return resp
 }
 
 // query runs one read-only statement as the superuser and returns its

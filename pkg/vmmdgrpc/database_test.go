@@ -423,6 +423,26 @@ func TestDatabaseControlRelaysFlushInstant(t *testing.T) {
 	}
 }
 
+func TestDatabaseControlRelaysDrillMarks(t *testing.T) {
+	marked := time.Date(2026, 10, 20, 7, 43, 46, 965000, time.UTC)
+	rt := &fakeDatabaseRuntime{controlRs: dbguest.Response{State: dbguest.StateReady, MarkedAt: marked}}
+	s := New(vmmStubBase{}, nil, "test", nil).WithDatabases(rt)
+	const drill = "cb93772c-c88e-547c-b0dd-2a9ff90943b4"
+	if _, err := s.DatabaseControl(unixCaller(), &vmmdpb.DatabaseControlRequest{DatabaseId: testDatabaseID, Op: "mark_drill"}); status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("mark without a drill = %v", err)
+	}
+	if _, err := s.DatabaseControl(unixCaller(), &vmmdpb.DatabaseControlRequest{DatabaseId: testDatabaseID, Op: "status", Drill: drill}); status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("status with a drill = %v", err)
+	}
+	resp, err := s.DatabaseControl(unixCaller(), &vmmdpb.DatabaseControlRequest{DatabaseId: testDatabaseID, Op: "mark_drill", Drill: drill})
+	if err != nil || !resp.GetMarkedAt().AsTime().Equal(marked) {
+		t.Fatalf("mark = %v, %v", resp, err)
+	}
+	if len(rt.controls) != 1 || rt.controls[0].Op != dbguest.OpMarkDrill || rt.controls[0].Drill != drill {
+		t.Fatalf("mark not relayed: %+v", rt.controls)
+	}
+}
+
 func TestDatabaseControlValidatesAndRelays(t *testing.T) {
 	rt := &fakeDatabaseRuntime{controlRs: dbguest.Response{State: dbguest.StateReady, Major: 17, Error: dbguest.ErrCodeAdminSQLFailed, SQLState: "42710"}}
 	s := New(vmmStubBase{}, nil, "test", nil).WithDatabases(rt)

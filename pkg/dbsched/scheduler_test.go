@@ -40,6 +40,12 @@ type fakeVMM struct {
 	restoreFail  bool
 	restoreHold  chan struct{}
 	flushes      map[string]time.Time
+	// marks are each database's restore drill mark, which a restore copies
+	// when the target is past it; markAt is the guest clock a mark reports
+	// (zero: now), and markErr the error a mark answers.
+	marks   map[string]fakeMark
+	markAt  time.Time
+	markErr string
 	// storage is what a ready guest reports about its volume; stale marks
 	// "node/id" VMs on an outdated base.
 	storage map[string]*dbguest.StorageStatus
@@ -141,7 +147,12 @@ func newFakeVMM() *fakeVMM {
 	return &fakeVMM{volumes: map[string]bool{}, running: map[string]bool{}, restoring: map[string]bool{}, flushes: map[string]time.Time{}, volNode: map[string]string{}, storage: map[string]*dbguest.StorageStatus{}, stale: map[string]bool{},
 		primaryOn: map[string]string{}, standbyOn: map[string]string{}, standbyVol: map[string]string{}, replMode: map[string]dbguest.ReplicationMode{},
 		unsynced: map[string]bool{}, promoted: map[string]string{}, imports: map[string]dbguest.ImportStatus{}, down: map[string]bool{},
-		majors: map[string]int{}, runMajor: map[string]int{}, upgrading: map[string]int{}}
+		majors: map[string]int{}, runMajor: map[string]int{}, upgrading: map[string]int{}, marks: map[string]fakeMark{}}
+}
+
+type fakeMark struct {
+	drill string
+	at    time.Time
 }
 
 func (f *fakeVMM) record(call string) {
@@ -199,6 +210,9 @@ func (f *fakeVMM) Start(_ context.Context, node Node, vm VM) error {
 		f.restoreBoots = append(f.restoreBoots, vm.RestoreTarget)
 		f.untilEnd = append(f.untilEnd, vm.RestoreUntilEnd)
 		f.restoring[vm.DatabaseID] = true
+		if mark, ok := f.marks[vm.RestoreSource]; ok && !mark.at.After(vm.RestoreTarget) {
+			f.marks[vm.DatabaseID] = mark
+		}
 	}
 	return nil
 }
@@ -332,6 +346,23 @@ func (f *fakeVMM) Control(_ context.Context, node Node, id string, req dbguest.R
 		}
 		f.record("flush")
 		f.flushes[id] = req.After
+		return dbguest.Response{State: dbguest.StateReady}, nil
+	case dbguest.OpMarkDrill:
+		f.record("mark_drill")
+		if f.markErr != "" {
+			return dbguest.Response{State: dbguest.StateReady, Error: f.markErr}, nil
+		}
+		at := f.markAt
+		if at.IsZero() {
+			at = time.Now()
+		}
+		f.marks[id] = fakeMark{drill: req.Drill, at: at}
+		return dbguest.Response{State: dbguest.StateReady, MarkedAt: at}, nil
+	case dbguest.OpCheckDrill:
+		f.record("check_drill")
+		if f.marks[id].drill != req.Drill {
+			return dbguest.Response{State: dbguest.StateReady, Error: dbguest.ErrCodeDrillMarkMissing}, nil
+		}
 		return dbguest.Response{State: dbguest.StateReady}, nil
 	}
 	if f.restoring[id] {

@@ -2772,7 +2772,8 @@ message StopDatabaseResponse {}
 
 message DatabaseControlRequest {
   string database_id = 1;
-  // One of status, bootstrap, admin_sql, basebackup, flush_wal. Stop goes
+  // One of status, bootstrap, admin_sql, basebackup, flush_wal, replication,
+  // promote, import, import_status, mark_drill, check_drill. Stop goes
   // through StopDatabase.
   string op = 2;
   // admin_sql only: statements run as the superuser, stopping at the first
@@ -2789,6 +2790,9 @@ message DatabaseControlRequest {
   // import only: the database to copy into this one (ADR-1027 migration
   // off Neon).
   DatabaseImport import = 7;
+  // mark_drill and check_drill only: the restore drill's id, a lowercase
+  // UUID (ADR-1027 restore drills).
+  string drill = 8;
 }
 
 // DatabaseImport names an import's source. vmmd relays the guest's
@@ -2851,6 +2855,8 @@ message DatabaseControlResponse {
   // The VM runs an outdated base or launch, which a restart replaces;
   // vmmd sets it, never the guest.
   bool stale = 10;
+  // mark_drill only: the guest clock once the drill's mark committed.
+  google.protobuf.Timestamp marked_at = 11;
 }
 
 message DatabaseStorage {

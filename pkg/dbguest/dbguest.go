@@ -135,6 +135,16 @@ const (
 	OpImport Op = "import"
 	// OpImportStatus reports the import, if any.
 	OpImportStatus Op = "import_status"
+	// OpMarkDrill commits a restore drill's mark (Request.Drill) on a
+	// ready primary, in a table the superuser owns in the maintenance
+	// database, where no customer role reaches it. The mark replaces the
+	// previous one. Response.MarkedAt is the guest clock once it
+	// committed: a point-in-time restore to that instant holds the mark.
+	OpMarkDrill Op = "mark_drill"
+	// OpCheckDrill reports ErrCodeDrillMarkMissing unless the database
+	// holds Request.Drill's mark: a restored copy holds it only if
+	// recovery replayed the source's WAL up to the mark's commit.
+	OpCheckDrill Op = "check_drill"
 )
 
 // ImportSource names the database to copy and how to log in to it. The
@@ -302,6 +312,10 @@ const (
 	// pg_upgrade linked the cluster's files, so the old cluster cannot
 	// start again; the database needs a restore from its backups.
 	ErrCodeUpgradeFailed = "upgrade_failed"
+	// ErrCodeDrillMarkFailed: the drill's mark could not be committed.
+	ErrCodeDrillMarkFailed = "drill_mark_failed"
+	// ErrCodeDrillMarkMissing: the database lacks the drill's mark.
+	ErrCodeDrillMarkMissing = "drill_mark_missing"
 )
 
 // Request is one control request line.
@@ -316,6 +330,9 @@ type Request struct {
 	Replication ReplicationMode `json:"replication,omitempty"`
 	// Import is OpImport's source.
 	Import *ImportSource `json:"import,omitempty"`
+	// Drill is the restore drill OpMarkDrill marks and OpCheckDrill looks
+	// for: its id, a lowercase UUID.
+	Drill string `json:"drill,omitempty"`
 }
 
 // Response answers one control request.
@@ -337,6 +354,8 @@ type Response struct {
 	Import *ImportStatus `json:"import,omitempty"`
 	// Storage is the volume's use, on a ready database.
 	Storage *StorageStatus `json:"storage,omitempty"`
+	// MarkedAt answers OpMarkDrill.
+	MarkedAt time.Time `json:"marked_at,omitzero"`
 	// Stale is set by the host, never the guest: the VM runs an outdated
 	// base or launch, which a restart replaces.
 	Stale bool `json:"-"`
@@ -360,7 +379,15 @@ func (r Request) Validate() error {
 	if (r.Import != nil) != (r.Op == OpImport) {
 		return fmt.Errorf("%s: an import source goes with import only", r.Op)
 	}
+	if drill := r.Op == OpMarkDrill || r.Op == OpCheckDrill; drill != (r.Drill != "") {
+		return fmt.Errorf("%s: a drill goes with mark_drill and check_drill only", r.Op)
+	}
 	switch r.Op {
+	case OpMarkDrill, OpCheckDrill:
+		if r.SQL != "" || !r.After.IsZero() || !operationIDPattern.MatchString(r.Drill) {
+			return fmt.Errorf("%s: needs only a drill id", r.Op)
+		}
+		return nil
 	case OpImport:
 		if r.SQL != "" || !r.After.IsZero() {
 			return errors.New("import: unexpected arguments")

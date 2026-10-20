@@ -1,5 +1,7 @@
 // adr: 1027 — restore drills prove each node's backups restore: one a day
-// per node, settled into a record, and never left behind.
+// per node, recovered to just after a mark the source commits, passed
+// only if the copy holds that mark, settled into a record, and never left
+// behind.
 package dbsched
 
 import (
@@ -10,15 +12,20 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
+
+	"github.com/onebox-faas/faas/pkg/dbguest"
 )
 
 func TestRestoreDrillsRunDailyPerNodeAndCleanUp(t *testing.T) {
 	s, store, vmm, source := archivedSource(t)
 	s.cfg.Metrics = NewMetrics(prometheus.NewRegistry(), "schedd")
 	ctx := context.Background()
-	// A drill recovers to a minute ago: past the source's creation.
 	clock := time.Now().Add(2 * time.Minute)
 	s.now = func() time.Time { return clock }
+	markedAt := time.Now().UTC().Truncate(time.Microsecond)
+	vmm.mu.Lock()
+	vmm.markAt = markedAt
+	vmm.mu.Unlock()
 
 	got, err := s.RunDrills(ctx)
 	if err != nil || got.Started != 1 {
@@ -29,6 +36,14 @@ func TestRestoreDrillsRunDailyPerNodeAndCleanUp(t *testing.T) {
 		t.Fatalf("running drills = %+v", running)
 	}
 	drill := running[0]
+	// The source committed the drill's mark; the drill recovers to just
+	// after it.
+	vmm.mu.Lock()
+	mark := vmm.marks[source.DatabaseID]
+	vmm.mu.Unlock()
+	if mark.drill != drill.ID || !drill.TargetAt.Equal(markedAt) {
+		t.Fatalf("mark = %+v, target %v; want drill %s marked at the target %v", mark, drill.TargetAt, drill.ID, markedAt)
+	}
 	s.restoreWG.Wait()
 
 	// The restore parked the drill's database: the next pass records it
@@ -40,10 +55,10 @@ func TestRestoreDrillsRunDailyPerNodeAndCleanUp(t *testing.T) {
 		t.Fatalf("the drill's database survived: %v", err)
 	}
 	vmm.mu.Lock()
-	dropped := countCalls(vmm.calls, "drop_archive")
+	dropped, checked := countCalls(vmm.calls, "drop_archive"), countCalls(vmm.calls, "check_drill")
 	vmm.mu.Unlock()
-	if dropped != 1 {
-		t.Fatalf("drill archives dropped = %d, want 1", dropped)
+	if dropped != 1 || checked != 1 {
+		t.Fatalf("drill archives dropped = %d, copies checked = %d; want 1 each", dropped, checked)
 	}
 	sums, _ := store.DrillsByNode(ctx)
 	if sums[source.NodeID].LastOK.IsZero() {
@@ -61,6 +76,7 @@ func TestRestoreDrillsRunDailyPerNodeAndCleanUp(t *testing.T) {
 	clock = clock.Add(25 * time.Hour)
 	vmm.mu.Lock()
 	vmm.restoreFail = true
+	vmm.markAt = clock.Add(-time.Second)
 	vmm.mu.Unlock()
 	if got, err := s.RunDrills(ctx); err != nil || got.Started != 1 {
 		t.Fatalf("next day = %+v, %v", got, err)
@@ -138,4 +154,98 @@ func TestPickDrillSourceSkipsDrillsAndUnbackedDatabases(t *testing.T) {
 	if again.DatabaseID != got.DatabaseID {
 		t.Fatal("the pick is not deterministic")
 	}
+}
+
+func TestRestoreDrillFailsACopyWithoutTheSourcesMark(t *testing.T) {
+	s, store, vmm, source := archivedSource(t)
+	ctx := context.Background()
+	clock := time.Now().Add(2 * time.Minute)
+	s.now = func() time.Time { return clock }
+	if got, err := s.RunDrills(ctx); err != nil || got.Started != 1 {
+		t.Fatalf("start = %+v, %v", got, err)
+	}
+	running, _ := store.RunningDrills(ctx)
+	s.restoreWG.Wait()
+	// The copy came back without the source's last commit.
+	vmm.mu.Lock()
+	delete(vmm.marks, running[0].ID)
+	vmm.mu.Unlock()
+	if got, err := s.RunDrills(ctx); err != nil || got.Failed != 1 {
+		t.Fatalf("settle = %+v, %v; want the drill failed", got, err)
+	}
+	store.mu.Lock()
+	d := store.drills[running[0].ID]
+	store.mu.Unlock()
+	if d.Result != DrillFailed || d.ErrorCode != dbguest.ErrCodeDrillMarkMissing {
+		t.Fatalf("drill = %+v; want failed with %s", d, dbguest.ErrCodeDrillMarkMissing)
+	}
+	if vms, _ := store.List(ctx, allStates...); len(vms) != 1 || vms[0].DatabaseID != source.DatabaseID {
+		t.Fatalf("databases after the drill = %+v", vms)
+	}
+}
+
+func TestRestoreDrillWithoutAMarkDoesNotRestore(t *testing.T) {
+	cases := []struct {
+		name    string
+		markErr string
+		ahead   time.Duration
+		result  DrillResult
+		code    string
+	}{
+		{name: "outdated guest", markErr: dbguest.ErrCodeInvalidRequest, result: DrillSkipped, code: "drill_source_outdated"},
+		{name: "mark failed", markErr: dbguest.ErrCodeDrillMarkFailed, result: DrillFailed, code: dbguest.ErrCodeDrillMarkFailed},
+		{name: "source clock far ahead", ahead: time.Minute, result: DrillFailed, code: dbguest.ErrCodeDrillMarkFailed},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s, store, vmm, _ := archivedSource(t)
+			ctx := context.Background()
+			clock := time.Now().Add(2 * time.Minute)
+			s.now = func() time.Time { return clock }
+			vmm.mu.Lock()
+			vmm.markErr = tc.markErr
+			if tc.ahead > 0 {
+				vmm.markAt = clock.Add(tc.ahead)
+			}
+			vmm.mu.Unlock()
+			got, err := s.RunDrills(ctx)
+			if err != nil || got.Started != 0 || got.Failed+got.Skipped != 1 {
+				t.Fatalf("pass = %+v, %v; want one drill ended unstarted", got, err)
+			}
+			store.mu.Lock()
+			var drills []Drill
+			for _, d := range store.drills {
+				drills = append(drills, d)
+			}
+			store.mu.Unlock()
+			if len(drills) != 1 || drills[0].Result != tc.result || drills[0].ErrorCode != tc.code {
+				t.Fatalf("drills = %+v; want one %s %s", drills, tc.result, tc.code)
+			}
+			vmm.mu.Lock()
+			boots := len(vmm.restoreBoots)
+			vmm.mu.Unlock()
+			if boots != 0 {
+				t.Fatalf("restore boots = %d; a drill without a mark must not restore", boots)
+			}
+		})
+	}
+}
+
+func TestRestoreDrillWaitsForASourceClockAhead(t *testing.T) {
+	s, store, vmm, _ := archivedSource(t)
+	ctx := context.Background()
+	offset := 2 * time.Minute
+	s.now = func() time.Time { return time.Now().Add(offset) }
+	markedAt := s.now().Add(50 * time.Millisecond).UTC().Truncate(time.Microsecond)
+	vmm.mu.Lock()
+	vmm.markAt = markedAt
+	vmm.mu.Unlock()
+	if got, err := s.RunDrills(ctx); err != nil || got.Started != 1 {
+		t.Fatalf("start = %+v, %v; want the drill started once its target passed", got, err)
+	}
+	running, _ := store.RunningDrills(ctx)
+	if len(running) != 1 || !running[0].TargetAt.Equal(markedAt) {
+		t.Fatalf("running = %+v; want the target %v", running, markedAt)
+	}
+	s.restoreWG.Wait()
 }

@@ -1,7 +1,9 @@
 //go:build metal && linux
 
-// adr: 1027 — a restore drill restores a real database from its node's
-// archive into a throwaway database, records it, and leaves nothing.
+// adr: 1027 — a restore drill marks a real database, restores it from its
+// node's archive into a throwaway database to just after the mark, finds
+// the mark there, records it, and leaves nothing; a copy recovered to
+// before the mark lacks it.
 package dbsched
 
 import (
@@ -18,12 +20,16 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 
 	"github.com/onebox-faas/faas/pkg/dbarchive"
+	"github.com/onebox-faas/faas/pkg/dbguest"
 )
 
 func TestMetalRestoreDrill(t *testing.T) {
-	workdir, base := os.Getenv("FAAS_DBVM_WORKDIR"), os.Getenv("FAAS_DBVM_BASE")
-	if workdir == "" || base == "" {
-		t.Skip("set FAAS_DBVM_WORKDIR and FAAS_DBVM_BASE to run the scheduler metal test")
+	workdir, base, guestInit := os.Getenv("FAAS_DBVM_WORKDIR"), os.Getenv("FAAS_DBVM_BASE"), os.Getenv("FAAS_GUEST_INIT")
+	if workdir == "" || base == "" && guestInit == "" {
+		t.Skip("set FAAS_DBVM_WORKDIR and FAAS_DBVM_BASE or FAAS_GUEST_INIT to run the scheduler metal test")
+	}
+	if base == "" {
+		base = metalBase(context.Background(), t, workdir, guestInit, 17)
 	}
 	bucket := &dbarchive.FileRemote{Dir: filepath.Join(workdir, "drbucket")}
 	_ = os.RemoveAll(bucket.Dir)
@@ -51,9 +57,11 @@ func TestMetalRestoreDrill(t *testing.T) {
 		}
 	}
 	query(ctx, t, a.rt, source, password, "CREATE TABLE kept(v text); INSERT INTO kept SELECT 'row ' || g FROM generate_series(1, 5000) g")
-	// A drill recovers to a minute ago, which must follow the source's
-	// creation and its base backup.
-	time.Sleep(drillLag + 5*time.Second)
+	// The drill's mark must follow the source's creation and base backup,
+	// and so must beforeMark.
+	time.Sleep(2 * time.Second)
+	beforeMark := time.Now()
+	time.Sleep(time.Second)
 
 	started := time.Now()
 	if got, err := s.RunDrills(ctx); err != nil || got.Started != 1 {
@@ -85,12 +93,45 @@ func TestMetalRestoreDrill(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(a.archiveDir, drill.ID)); !os.IsNotExist(err) {
 		t.Fatalf("the drill's archive survived: %v", err)
 	}
-	// The source is untouched and still answers.
+	// The source keeps its rows and the mark, and answers only for it.
 	if _, err := s.Wake(ctx, source); err != nil {
 		t.Fatal(err)
 	}
 	if n := query(ctx, t, a.rt, source, password, "SELECT count(*)::text FROM kept"); n != "5000" {
 		t.Fatalf("source rows after the drill = %q", n)
+	}
+	check := func(id, drillID string) string {
+		t.Helper()
+		resp, err := vmm.Control(ctx, a.node, id, dbguest.Request{Op: dbguest.OpCheckDrill, Drill: drillID})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return resp.Error
+	}
+	if code := check(source, drill.ID); code != "" {
+		t.Fatalf("the source's own mark: %s", code)
+	}
+	if code := check(source, uuid.NewString()); code != dbguest.ErrCodeDrillMarkMissing {
+		t.Fatalf("another drill's mark: %q, want %s", code, dbguest.ErrCodeDrillMarkMissing)
+	}
+
+	// A copy recovered to before the mark lacks it: the check catches a
+	// restore that stops short of the source's last commits.
+	short := uuid.NewString()
+	t.Cleanup(func() { _ = s.Delete(context.Background(), short) })
+	if _, err := s.Restore(ctx, RestoreRequest{ProvisionRequest: ProvisionRequest{DatabaseID: short, Major: 17, VcpuCount: 1, MemMiB: 384,
+		VolumeBytes: 1 << 30, RestoreWindowSeconds: 3600}, Source: source, Target: beforeMark}); err != nil {
+		t.Fatal(err)
+	}
+	s.restoreWG.Wait()
+	if _, err := s.Wake(ctx, short); err != nil {
+		t.Fatal(err)
+	}
+	if n := query(ctx, t, a.rt, short, password, "SELECT count(*)::text FROM kept"); n != "5000" {
+		t.Fatalf("rows in the copy before the mark = %q", n)
+	}
+	if code := check(short, drill.ID); code != dbguest.ErrCodeDrillMarkMissing {
+		t.Fatalf("a copy from before the mark: %q, want %s", code, dbguest.ErrCodeDrillMarkMissing)
 	}
 }
 

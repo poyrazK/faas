@@ -29,20 +29,9 @@ func TestMetalMajorUpgradeThroughScheduler(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
-	initDigest, err := dbvm.FileDigest(guestInit)
-	if err != nil {
-		t.Fatal(err)
-	}
 	bases := map[int]string{}
 	for _, major := range []int{14, 17} {
-		image := dbvm.PostgresImages[major]
-		path := dbvm.BasePath(filepath.Join(workdir, "major-bases"), major, image, initDigest)
-		if _, err := os.Stat(path); err != nil {
-			if err := dbvm.BuildBase(ctx, image, guestInit, path); err != nil {
-				t.Fatalf("build the PostgreSQL %d base: %v", major, err)
-			}
-		}
-		bases[major] = path
+		bases[major] = metalBase(ctx, t, workdir, guestInit, major)
 	}
 	bucket := &dbarchive.FileRemote{Dir: filepath.Join(workdir, "upbucket")}
 	_ = os.RemoveAll(bucket.Dir)
@@ -130,4 +119,22 @@ func TestMetalMajorUpgradeThroughScheduler(t *testing.T) {
 	if got := query(ctx, t, node.rt, after, password, "SELECT string_agg(v, ',' ORDER BY v) FROM kept WHERE v NOT LIKE 'row %'"); got != "first on 17,last on 14" {
 		t.Fatalf("restore after the upgrade holds %q", got)
 	}
+}
+
+// metalBase is the PostgreSQL major's base with guestInit, built once per
+// guest-init digest under workdir/major-bases.
+func metalBase(ctx context.Context, t *testing.T, workdir, guestInit string, major int) string {
+	t.Helper()
+	initDigest, err := dbvm.FileDigest(guestInit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	image := dbvm.PostgresImages[major]
+	path := dbvm.BasePath(filepath.Join(workdir, "major-bases"), major, image, initDigest)
+	if _, err := os.Stat(path); err != nil {
+		if err := dbvm.BuildBase(ctx, image, guestInit, path); err != nil {
+			t.Fatalf("build the PostgreSQL %d base: %v", major, err)
+		}
+	}
+	return path
 }
