@@ -21,7 +21,9 @@ func TestCandidateBindingEvidenceDeadlineAndUnsupportedPolicies(t *testing.T) {
 	if err != nil || !end.Equal(smoke.RecordedAt.Add(30*time.Second)) {
 		t.Fatal("fresh evidence", end, err)
 	}
-	for _, change := range []string{"expired", "future", "lease", "policy", "application_ack", "object_storage", "queue_readiness", "job", "unreviewed_queue"} {
+	// Object storage requirements are qualified by credential receipts
+	// (candidateObjectStorageEvidenceDeadline, ADR-20261019121546).
+	for _, change := range []string{"expired", "future", "lease", "policy", "application_ack", "queue_readiness", "job", "unreviewed_queue"} {
 		t.Run(change, func(t *testing.T) {
 			r := cloneQualificationRequest(request)
 			s := smoke
@@ -37,8 +39,6 @@ func TestCandidateBindingEvidenceDeadlineAndUnsupportedPolicies(t *testing.T) {
 				r.BindingContext.Policy.Mode = "off"
 			case "application_ack":
 				r.BindingContext.Policy.RequireApplicationAck = true
-			case "object_storage":
-				r.BindingContext.Policy.ObjectStorageRequirements = map[string]string{"S3": "read"}
 			case "queue_readiness":
 				r.BindingContext.Policy.QueueRequirements = map[string]string{"orders": api.QueueEvidenceConsumerReadiness}
 			case "job":
