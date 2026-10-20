@@ -153,23 +153,23 @@ func TestProductOverduePolicyCLI(t *testing.T) {
 	defer srv.Close()
 	run := func(args ...string) any {
 		t.Helper()
-		c, err := parseProductCommand(append([]string{"billing", "overdue-policy"}, append(args, "--app", "exports")...))
+		c, err := main.ParseProductCommand(append([]string{"billing", "overdue-policy"}, append(args, "--app", "exports")...))
 		if err != nil {
 			t.Fatal(err)
 		}
-		value, err := runProductCommand(t.Context(), NewClient(srv.URL, "owner"), c)
+		value, err := main.RunProductCommand(t.Context(), main.NewClient(srv.URL, "owner"), c)
 		if err != nil {
 			t.Fatal(err)
 		}
 		return value
 	}
-	if view := run("inspect").(productOverdueView); view.Policy != nil || view.Holds == nil || len(view.Holds) != 0 {
+	if view := run("inspect").(main.ProductOverdueView); view.Policy != nil || view.Holds == nil || len(view.Holds) != 0 {
 		t.Fatalf("inspect without a policy = %+v", view)
 	}
 	if got := run("set", "--block-overdue-after-days", "0").(api.ProductOverduePolicy); got.BlockOverdueAfterDays != 0 || policy == nil {
 		t.Fatalf("set = %+v", got)
 	}
-	if view := run("inspect").(productOverdueView); view.Policy == nil || len(view.Holds) != 1 || view.Holds[0].TenantID != tenant {
+	if view := run("inspect").(main.ProductOverdueView); view.Policy == nil || len(view.Holds) != 1 || view.Holds[0].TenantID != tenant {
 		t.Fatalf("inspect = %+v", view)
 	}
 	run("clear")
@@ -184,7 +184,7 @@ func TestProductOverduePolicyCLI(t *testing.T) {
 		{"billing", "invoices", "list", "--app", "exports"},
 		{"billing", "overdue-policy"},
 	} {
-		if _, err := parseProductCommand(args); err == nil {
+		if _, err := main.ParseProductCommand(args); err == nil {
 			t.Errorf("accepted %q", args)
 		}
 	}
