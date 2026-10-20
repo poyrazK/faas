@@ -11,7 +11,7 @@
 // the review surfaced. This test fails at unit-test time well
 // before a fleet roll-out.
 
-package state
+package state_test
 
 import (
 	_ "embed"

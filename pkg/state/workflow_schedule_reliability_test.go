@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -11,16 +11,17 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestTenantWorkflowScheduleFairnessSurvivesPagingAndRunRetention(t *testing.T) {
-	workflowScheduleStores(t, func(t *testing.T, store Store) {
+	state.WorkflowScheduleStores(t, func(t *testing.T, store state.Store) {
 		ctx := context.Background()
 		account, err := store.CreateAccount(ctx, uuid.NewString()+"@example.com", api.PlanHobby)
 		if err != nil {
 			t.Fatal(err)
 		}
-		app, err := store.CreateApp(ctx, App{AccountID: account.ID, Slug: "fair-" + uuid.NewString(), Type: AppTypeApp, RAMMB: 256, PlatformTenantRequired: true})
+		app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "fair-" + uuid.NewString(), Type: state.AppTypeApp, RAMMB: 256, PlatformTenantRequired: true})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -32,14 +33,14 @@ func TestTenantWorkflowScheduleFairnessSurvivesPagingAndRunRetention(t *testing.
 		if err != nil {
 			t.Fatal(err)
 		}
-		deployment, err := store.CreateDeployment(ctx, Deployment{AppID: app.ID, Kind: DeploymentKindImage, ImageDigest: "sha256:fair", Status: DeployPending, Workflows: raw})
+		deployment, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:fair", Status: state.DeployPending, Workflows: raw})
 		if err != nil {
 			t.Fatal(err)
 		}
 		if err := store.MarkDeploymentLive(ctx, deployment.ID); err != nil {
 			t.Fatal(err)
 		}
-		tenants := store.(PlatformTenantStore)
+		tenants := store.(state.PlatformTenantStore)
 		var firstTenant string
 		for i := range 12 {
 			ref := fmt.Sprintf("fair-%d-%s", i, uuid.NewString())
@@ -56,9 +57,9 @@ func TestTenantWorkflowScheduleFairnessSurvivesPagingAndRunRetention(t *testing.
 			}
 			firstTenant = tenant.ID
 		}
-		fair := store.(FairTenantWorkflowScheduleStore)
-		schedules := store.(TenantWorkflowScheduleStore)
-		history := store.(WorkflowScheduleHistoryStore)
+		fair := store.(state.FairTenantWorkflowScheduleStore)
+		schedules := store.(state.TenantWorkflowScheduleStore)
+		history := store.(state.WorkflowScheduleHistoryStore)
 		at := time.Now().UTC().Truncate(time.Minute).Add(-10 * time.Minute)
 		admitted := map[string]int{}
 		for cycle := range 4 {
@@ -88,7 +89,7 @@ func TestTenantWorkflowScheduleFairnessSurvivesPagingAndRunRetention(t *testing.
 					if err != nil || !changed {
 						t.Fatalf("admission=%+v changed=%t err=%v", cursor, changed, err)
 					}
-					if cursor.Status == WorkflowScheduleStarted {
+					if cursor.Status == state.WorkflowScheduleStarted {
 						admitted[key]++
 						runs = append(runs, cursor.LastRunID)
 					}
@@ -106,12 +107,12 @@ func TestTenantWorkflowScheduleFairnessSurvivesPagingAndRunRetention(t *testing.
 			if len(runs) != account.Plan.WorkflowMaxConcurrentRuns() {
 				t.Fatalf("admitted=%d quota=%d", len(runs), account.Plan.WorkflowMaxConcurrentRuns())
 			}
-			snapshot, err := store.(WorkflowAlertStore).WorkflowAlertSnapshot(ctx, account.ID, app.ID, at.Add(-time.Hour), time.Now().UTC().Add(2*time.Minute))
+			snapshot, err := store.(state.WorkflowAlertStore).WorkflowAlertSnapshot(ctx, account.ID, app.ID, at.Add(-time.Hour), time.Now().UTC().Add(2*time.Minute))
 			if err != nil || snapshot.QuotaSkips != int64(cycle*14) || snapshot.PendingAgeSeconds < 119 {
 				t.Fatalf("signals=%+v err=%v", snapshot, err)
 			}
 			for _, runID := range runs {
-				if err := store.MarkWorkflowRunStatus(ctx, runID, WorkflowRunStatusSucceeded, nil, nil); err != nil {
+				if err := store.MarkWorkflowRunStatus(ctx, runID, state.WorkflowRunStatusSucceeded, nil, nil); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -140,7 +141,7 @@ func TestTenantWorkflowScheduleFairnessSurvivesPagingAndRunRetention(t *testing.
 					t.Fatal("duplicate occurrence across pages")
 				}
 				seen[row.ID] = true
-				if row.Status == WorkflowScheduleStarted {
+				if row.Status == state.WorkflowScheduleStarted {
 					started++
 					if row.RunID == "" {
 						t.Fatal("retention removed historical run identity")
@@ -171,31 +172,31 @@ func TestTenantWorkflowScheduleFairnessSurvivesPagingAndRunRetention(t *testing.
 }
 
 func TestWorkflowOccurrenceWriteFailureRollsBackRunAndCursor(t *testing.T) {
-	workflowScheduleStores(t, func(t *testing.T, backend Store) {
-		store, ok := backend.(*PgStore)
+	state.WorkflowScheduleStores(t, func(t *testing.T, backend state.Store) {
+		store, ok := backend.(*state.PgStore)
 		if !ok {
 			return
 		}
 		ctx := context.Background()
-		app, deployment := seedWorkflowSchedule(t, store, "allow")
+		app, deployment := state.SeedWorkflowSchedule(t, store, "allow")
 		at := time.Now().UTC().Truncate(time.Minute).Add(-time.Minute)
 		if _, _, err := store.AdmitScheduledWorkflow(ctx, app.ID, deployment.ID, "nightly", at); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := store.pool.Exec(ctx, "ALTER TABLE workflow_schedule_occurrences ADD CONSTRAINT reject_occurrence CHECK (status <> 'started') NOT VALID"); err != nil {
+		if _, err := (*store.Pool()).Exec(ctx, "ALTER TABLE workflow_schedule_occurrences ADD CONSTRAINT reject_occurrence CHECK (status <> 'started') NOT VALID"); err != nil {
 			t.Fatal(err)
 		}
 		if _, _, err := store.AdmitScheduledWorkflow(ctx, app.ID, deployment.ID, "nightly", at.Add(time.Minute)); err == nil {
 			t.Fatal("expected history write failure")
 		}
-		if _, total, err := store.ListWorkflowRuns(ctx, app.ID, ListWorkflowRunsOpts{Limit: 10}); err != nil || total != 0 {
+		if _, total, err := store.ListWorkflowRuns(ctx, app.ID, state.ListWorkflowRunsOpts{Limit: 10}); err != nil || total != 0 {
 			t.Fatalf("partial run persisted: %d %v", total, err)
 		}
 		cursors, err := store.ListWorkflowScheduleCursors(ctx, app.ID)
-		if err != nil || len(cursors) != 1 || cursors[0].Status != WorkflowScheduleArmed {
+		if err != nil || len(cursors) != 1 || cursors[0].Status != state.WorkflowScheduleArmed {
 			t.Fatalf("partial cursor persisted: %+v %v", cursors, err)
 		}
-		if _, err := store.pool.Exec(ctx, "ALTER TABLE workflow_schedule_occurrences DROP CONSTRAINT reject_occurrence"); err != nil {
+		if _, err := (*store.Pool()).Exec(ctx, "ALTER TABLE workflow_schedule_occurrences DROP CONSTRAINT reject_occurrence"); err != nil {
 			t.Fatal(err)
 		}
 		if _, changed, err := store.AdmitScheduledWorkflow(ctx, app.ID, deployment.ID, "nightly", at.Add(time.Minute)); err != nil || !changed {
@@ -205,12 +206,12 @@ func TestWorkflowOccurrenceWriteFailureRollsBackRunAndCursor(t *testing.T) {
 }
 
 func TestWorkflowAdmissionCoordinatesUUIDFormsAndLegacyLocks(t *testing.T) {
-	workflowScheduleStores(t, func(t *testing.T, backend Store) {
-		store, ok := backend.(*PgStore)
+	state.WorkflowScheduleStores(t, func(t *testing.T, backend state.Store) {
+		store, ok := backend.(*state.PgStore)
 		if !ok {
 			return
 		}
-		app, _ := seedWorkflowSchedule(t, store, "allow")
+		app, _ := state.SeedWorkflowSchedule(t, store, "allow")
 		parsed, err := uuid.Parse(app.ID)
 		if err != nil {
 			t.Fatal(err)
@@ -220,7 +221,7 @@ func TestWorkflowAdmissionCoordinatesUUIDFormsAndLegacyLocks(t *testing.T) {
 		for _, legacyKey := range []string{compact, canonical} {
 			t.Run(legacyKey, func(t *testing.T) {
 				ctx := context.Background()
-				tx, err := store.pool.Begin(ctx)
+				tx, err := (*store.Pool()).Begin(ctx)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -235,18 +236,18 @@ func TestWorkflowAdmissionCoordinatesUUIDFormsAndLegacyLocks(t *testing.T) {
 				}
 				blocked, cancel := context.WithTimeout(ctx, 150*time.Millisecond)
 				defer cancel()
-				run := &WorkflowRun{AppID: otherKey, WorkflowName: "nightly", DefinitionSnapshot: json.RawMessage(`{"name":"nightly","steps":[{"name":"main","run":"report"}]}`)}
+				run := &state.WorkflowRun{AppID: otherKey, WorkflowName: "nightly", DefinitionSnapshot: json.RawMessage(`{"name":"nightly","steps":[{"name":"main","run":"report"}]}`)}
 				if _, err := store.CreateWorkflowRunAdmitted(blocked, run, 10); !errors.Is(err, context.DeadlineExceeded) {
 					t.Fatalf("opposite UUID spelling bypassed legacy lock: %v", err)
 				}
 			})
 		}
-		run := &WorkflowRun{AppID: compact, WorkflowName: "nightly", DefinitionSnapshot: json.RawMessage(`{"name":"nightly","steps":[{"name":"main","run":"report"}]}`)}
+		run := &state.WorkflowRun{AppID: compact, WorkflowName: "nightly", DefinitionSnapshot: json.RawMessage(`{"name":"nightly","steps":[{"name":"main","run":"report"}]}`)}
 		if _, err := store.CreateWorkflowRunAdmitted(context.Background(), run, 1); err != nil {
 			t.Fatal(err)
 		}
-		run = &WorkflowRun{AppID: canonical, WorkflowName: "nightly", DefinitionSnapshot: json.RawMessage(`{"name":"nightly","steps":[{"name":"main","run":"report"}]}`)}
-		if _, err := store.CreateWorkflowRunAdmitted(context.Background(), run, 1); !errors.Is(err, ErrWorkflowRunQuotaExceeded) {
+		run = &state.WorkflowRun{AppID: canonical, WorkflowName: "nightly", DefinitionSnapshot: json.RawMessage(`{"name":"nightly","steps":[{"name":"main","run":"report"}]}`)}
+		if _, err := store.CreateWorkflowRunAdmitted(context.Background(), run, 1); !errors.Is(err, state.ErrWorkflowRunQuotaExceeded) {
 			t.Fatalf("shared quota=%v", err)
 		}
 	})

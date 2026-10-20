@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -11,15 +11,16 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestMemStoreOrgActivityOutboxEnvMutationAndDelivery(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	store := NewMemStore()
+	store := state.NewMemStore()
 	orgID, appID, actorID := uuid.New(), uuid.New(), uuid.New()
-	entry := OrgActivity{
-		OrgID: orgID, Kind: "env.set", ActorType: OrgActivityActorUser,
+	entry := state.OrgActivity{
+		OrgID: orgID, Kind: "env.set", ActorType: state.OrgActivityActorUser,
 		ActorAccountID: &actorID, ActorLabel: "person@example.com",
 		ResourceType: "environment_variable", ResourceID: "default:DATABASE_URL",
 		ResourceLabel: "DATABASE_URL", AppID: &appID,
@@ -60,7 +61,7 @@ func TestMemStoreOrgActivityOutboxEnvMutationAndDelivery(t *testing.T) {
 	if err != nil || delivered {
 		t.Fatalf("redeliver = (%v, %v), want (false, nil)", delivered, err)
 	}
-	activity, err := store.ListOrgActivity(ctx, OrgActivityFilter{OrgID: orgID, Limit: 10})
+	activity, err := store.ListOrgActivity(ctx, state.OrgActivityFilter{OrgID: orgID, Limit: 10})
 	if err != nil || len(activity) != 1 || activity[0].SourceID != entry.SourceID {
 		t.Fatalf("activity = %#v, err=%v; want one projected event", activity, err)
 	}
@@ -76,7 +77,7 @@ func TestMemStoreOrgActivityOutboxEnvMutationAndDelivery(t *testing.T) {
 	if rows, err := store.ListAppEnvInScope(ctx, "account-1", appID.String(), "default"); err != nil || len(rows) != 0 {
 		t.Fatalf("env rows after delete = %#v, err=%v; want no rows", rows, err)
 	}
-	if _, err := store.DeleteAppEnvInScopeWithActivity(ctx, "account-1", appID.String(), "default", "DATABASE_URL", deleteEntry); !errors.Is(err, ErrNotFound) {
+	if _, err := store.DeleteAppEnvInScopeWithActivity(ctx, "account-1", appID.String(), "default", "DATABASE_URL", deleteEntry); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("duplicate delete = %v, want ErrNotFound", err)
 	}
 
@@ -104,11 +105,11 @@ func TestMemStoreOrgActivityOutboxEnvMutationAndDelivery(t *testing.T) {
 func TestMemStoreOrgActivityDeploymentMutationAtomic(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	store := NewMemStore()
+	store := state.NewMemStore()
 	orgID, appID, actorID := uuid.New(), uuid.New(), uuid.New()
-	store.apps[appID.String()] = App{ID: appID.String(), AccountID: actorID.String(), Slug: "payments", Status: AppActive}
-	entry := OrgActivity{
-		OrgID: orgID, Kind: "deploy.requested", ActorType: OrgActivityActorUser,
+	(*store.Apps())[appID.String()] = state.App{ID: appID.String(), AccountID: actorID.String(), Slug: "payments", Status: state.AppActive}
+	entry := state.OrgActivity{
+		OrgID: orgID, Kind: "deploy.requested", ActorType: state.OrgActivityActorUser,
 		ActorAccountID: &actorID, ActorLabel: "person@example.com",
 		ResourceType: "app", ResourceID: appID.String(), ResourceLabel: "payments",
 		AppID: &appID, SourceType: "deployment.requested", Data: []byte(`{"source":"image","phase":"requested"}`),
@@ -117,14 +118,14 @@ func TestMemStoreOrgActivityDeploymentMutationAtomic(t *testing.T) {
 	bad := entry
 	bad.Data = []byte(`[]`)
 	badDeploymentID := uuid.NewString()
-	if _, _, err := store.CreateDeploymentWithActivity(ctx, Deployment{ID: badDeploymentID, AppID: appID.String()}, bad); err == nil {
+	if _, _, err := store.CreateDeploymentWithActivity(ctx, state.Deployment{ID: badDeploymentID, AppID: appID.String()}, bad); err == nil {
 		t.Fatal("deployment with invalid activity succeeded")
 	}
-	if _, err := store.DeploymentByID(ctx, badDeploymentID); !errors.Is(err, ErrNotFound) {
+	if _, err := store.DeploymentByID(ctx, badDeploymentID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("deployment after rejected transaction = %v, want ErrNotFound", err)
 	}
 
-	created, outboxID, err := store.CreateDeploymentWithActivity(ctx, Deployment{AppID: appID.String()}, entry)
+	created, outboxID, err := store.CreateDeploymentWithActivity(ctx, state.Deployment{AppID: appID.String()}, entry)
 	if err != nil || created.ID == "" || outboxID == 0 {
 		t.Fatalf("transactional deployment = (%+v, %d, %v)", created, outboxID, err)
 	}
@@ -137,18 +138,18 @@ func TestMemStoreOrgActivityDeploymentMutationAtomic(t *testing.T) {
 		t.Fatalf("deployment activity delivery = (%v, %v), want true", delivered, err)
 	}
 
-	queuedDeployment, err := store.CreateDeployment(ctx, Deployment{AppID: appID.String()})
+	queuedDeployment, err := store.CreateDeployment(ctx, state.Deployment{AppID: appID.String()})
 	if err != nil {
 		t.Fatalf("create source deployment: %v", err)
 	}
 	bad.SourceID = queuedDeployment.ID
 	badDeploymentUUID := uuid.MustParse(queuedDeployment.ID)
 	bad.DeploymentID = &badDeploymentUUID
-	if _, _, err := store.CreateBuildWithIDAndActivity(ctx, uuid.NewString(), queuedDeployment.ID, DeploymentKindTarball, 100, "build.log", bad); err == nil {
+	if _, _, err := store.CreateBuildWithIDAndActivity(ctx, uuid.NewString(), queuedDeployment.ID, state.DeploymentKindTarball, 100, "build.log", bad); err == nil {
 		t.Fatal("build with invalid activity succeeded")
 	}
 	unchanged, err := store.DeploymentByID(ctx, queuedDeployment.ID)
-	if err != nil || unchanged.Status != DeployPending || unchanged.BuildID != "" {
+	if err != nil || unchanged.Status != state.DeployPending || unchanged.BuildID != "" {
 		t.Fatalf("deployment after rejected build/activity transaction = (%+v, %v), want pending without build", unchanged, err)
 	}
 
@@ -157,7 +158,7 @@ func TestMemStoreOrgActivityDeploymentMutationAtomic(t *testing.T) {
 	activityDeploymentUUID := uuid.MustParse(queuedDeployment.ID)
 	activity.DeploymentID = &activityDeploymentUUID
 	buildID := uuid.NewString()
-	build, buildOutboxID, err := store.CreateBuildWithIDAndActivity(ctx, buildID, queuedDeployment.ID, DeploymentKindTarball, 100, "build.log", activity)
+	build, buildOutboxID, err := store.CreateBuildWithIDAndActivity(ctx, buildID, queuedDeployment.ID, state.DeploymentKindTarball, 100, "build.log", activity)
 	if err != nil || build.ID != buildID || buildOutboxID == 0 {
 		t.Fatalf("transactional build = (%+v, %d, %v)", build, buildOutboxID, err)
 	}
@@ -182,18 +183,18 @@ func TestMemStoreDeploymentOutcomeActivity(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			store := NewMemStore()
+			store := state.NewMemStore()
 			orgID, appID, actorID := uuid.New(), uuid.New(), uuid.New()
-			store.accounts[actorID.String()] = Account{ID: actorID.String(), Status: AccountActive, Plan: api.PlanPro}
-			store.apps[appID.String()] = App{ID: appID.String(), AccountID: actorID.String(), Slug: "payments", Status: AppActive}
-			entry := OrgActivity{
-				OrgID: orgID, Kind: "deploy.requested", ActorType: OrgActivityActorUser,
+			(*store.Accounts())[actorID.String()] = state.Account{ID: actorID.String(), Status: state.AccountActive, Plan: api.PlanPro}
+			(*store.Apps())[appID.String()] = state.App{ID: appID.String(), AccountID: actorID.String(), Slug: "payments", Status: state.AppActive}
+			entry := state.OrgActivity{
+				OrgID: orgID, Kind: "deploy.requested", ActorType: state.OrgActivityActorUser,
 				ActorAccountID: &actorID, ActorLabel: "Bahadir",
 				ResourceType: "app", ResourceID: appID.String(), ResourceLabel: "payments",
 				AppID: &appID, SourceType: "deployment.requested",
 				Data: []byte(`{"source":"image","phase":"requested"}`),
 			}
-			deployment, requestOutboxID, err := store.CreateDeploymentWithActivity(ctx, Deployment{AppID: appID.String()}, entry)
+			deployment, requestOutboxID, err := store.CreateDeploymentWithActivity(ctx, state.Deployment{AppID: appID.String()}, entry)
 			if err != nil {
 				t.Fatalf("create deployment with activity: %v", err)
 			}
@@ -204,11 +205,10 @@ func TestMemStoreDeploymentOutcomeActivity(t *testing.T) {
 			} else if _, err := store.SetDeploymentFailed(ctx, deployment.ID, "deployment_smoke_failed", "private stack detail"); err != nil {
 				t.Fatalf("set deployment failed: %v", err)
 			}
-
-			store.mu.Lock()
-			defer store.mu.Unlock()
-			var outcomeActivity OrgActivity
-			for id, row := range store.orgActivityOutbox {
+			(*store.Mu()).Lock()
+			defer (*store.Mu()).Unlock()
+			var outcomeActivity state.OrgActivity
+			for id, row := range *store.OrgActivityOutbox() {
 				if id != requestOutboxID && row.Activity.Kind == tc.wantKind {
 					outcomeActivity = row.Activity
 					break
@@ -237,16 +237,16 @@ func TestMemStoreDeploymentOutcomeActivity(t *testing.T) {
 func TestMemStoreCancelDeploymentWithActivityIsAtomic(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	store := NewMemStore()
+	store := state.NewMemStore()
 	orgID, appID, actorID := uuid.New(), uuid.New(), uuid.New()
-	store.apps[appID.String()] = App{ID: appID.String(), AccountID: actorID.String(), Slug: "cancel-me", Status: AppActive}
-	deployment, err := store.CreateDeployment(ctx, Deployment{AppID: appID.String(), Status: DeployBuilding})
+	(*store.Apps())[appID.String()] = state.App{ID: appID.String(), AccountID: actorID.String(), Slug: "cancel-me", Status: state.AppActive}
+	deployment, err := store.CreateDeployment(ctx, state.Deployment{AppID: appID.String(), Status: state.DeployBuilding})
 	if err != nil {
 		t.Fatalf("create deployment: %v", err)
 	}
 	deploymentID := uuid.MustParse(deployment.ID)
-	entry := OrgActivity{
-		OrgID: orgID, Kind: "deploy.cancelled", ActorType: OrgActivityActorUser,
+	entry := state.OrgActivity{
+		OrgID: orgID, Kind: "deploy.cancelled", ActorType: state.OrgActivityActorUser,
 		ActorAccountID: &actorID, ActorLabel: "Bahadir",
 		ResourceType: "app", ResourceID: appID.String(), ResourceLabel: "cancel-me",
 		AppID: &appID, DeploymentID: &deploymentID,
@@ -255,24 +255,24 @@ func TestMemStoreCancelDeploymentWithActivityIsAtomic(t *testing.T) {
 	}
 	bad := entry
 	bad.Data = []byte(`[]`)
-	if _, _, _, err := store.CancelDeploymentTxWithActivity(ctx, deployment.ID, actorID.String(), CancelReasonUser, bad); err == nil {
+	if _, _, _, err := store.CancelDeploymentTxWithActivity(ctx, deployment.ID, actorID.String(), state.CancelReasonUser, bad); err == nil {
 		t.Fatal("cancellation with invalid activity succeeded")
 	}
-	if current, err := store.DeploymentByID(ctx, deployment.ID); err != nil || current.Status != DeployBuilding {
+	if current, err := store.DeploymentByID(ctx, deployment.ID); err != nil || current.Status != state.DeployBuilding {
 		t.Fatalf("deployment after invalid activity = (%+v, %v); want building", current, err)
 	}
-	if len(store.orgActivityOutbox) != 0 {
-		t.Fatalf("outbox after invalid activity = %#v; want empty", store.orgActivityOutbox)
+	if len((*store.OrgActivityOutbox())) != 0 {
+		t.Fatalf("outbox after invalid activity = %#v; want empty", (*store.OrgActivityOutbox()))
 	}
 
-	cancelled, _, outboxID, err := store.CancelDeploymentTxWithActivity(ctx, deployment.ID, actorID.String(), CancelReasonUser, entry)
-	if err != nil || cancelled.Status != DeployCancelled || outboxID == 0 {
+	cancelled, _, outboxID, err := store.CancelDeploymentTxWithActivity(ctx, deployment.ID, actorID.String(), state.CancelReasonUser, entry)
+	if err != nil || cancelled.Status != state.DeployCancelled || outboxID == 0 {
 		t.Fatalf("cancel with activity = (%+v, %d, %v); want cancelled and queued event", cancelled, outboxID, err)
 	}
 	if delivered, err := store.DeliverOrgActivityOutbox(ctx, outboxID); err != nil || !delivered {
 		t.Fatalf("deliver cancellation activity = (%v, %v); want true", delivered, err)
 	}
-	rows, err := store.ListOrgActivity(ctx, OrgActivityFilter{OrgID: orgID, Limit: 10})
+	rows, err := store.ListOrgActivity(ctx, state.OrgActivityFilter{OrgID: orgID, Limit: 10})
 	if err != nil || len(rows) != 1 || rows[0].Kind != "deploy.cancelled" || rows[0].ActorLabel != entry.ActorLabel || rows[0].DeploymentID == nil || *rows[0].DeploymentID != deploymentID {
 		t.Fatalf("cancellation timeline = (%#v, %v); want one event attributed to the actor/deployment", rows, err)
 	}
@@ -285,12 +285,12 @@ func TestMemStoreCancelDeploymentWithActivityIsAtomic(t *testing.T) {
 func TestMemStoreOrgActivityDomainMutationAtomic(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	store := NewMemStore()
+	store := state.NewMemStore()
 	orgID, appUUID, actorID := uuid.New(), uuid.New(), uuid.New()
 	appID := appUUID.String()
-	store.apps[appID] = App{ID: appID, AccountID: actorID.String(), Slug: "domains", Status: AppActive}
-	entry := OrgActivity{
-		OrgID: orgID, Kind: "domain.added", ActorType: OrgActivityActorUser,
+	(*store.Apps())[appID] = state.App{ID: appID, AccountID: actorID.String(), Slug: "domains", Status: state.AppActive}
+	entry := state.OrgActivity{
+		OrgID: orgID, Kind: "domain.added", ActorType: state.OrgActivityActorUser,
 		ActorAccountID: &actorID, ActorLabel: "person@example.com",
 		ResourceType: "domain", ResourceID: "payments.example.com",
 		ResourceLabel: "payments.example.com", AppID: &appUUID,
@@ -302,7 +302,7 @@ func TestMemStoreOrgActivityDomainMutationAtomic(t *testing.T) {
 	if _, _, err := store.CreateCustomDomainIfUnderQuotaWithActivity(ctx, entry.ResourceID, appID, "token", 10, 10, bad); err == nil {
 		t.Fatal("domain create with invalid activity succeeded")
 	}
-	if _, err := store.DomainByName(ctx, entry.ResourceID); !errors.Is(err, ErrNotFound) {
+	if _, err := store.DomainByName(ctx, entry.ResourceID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("domain after rejected create/activity = %v, want ErrNotFound", err)
 	}
 
@@ -327,10 +327,10 @@ func TestMemStoreOrgActivityDomainMutationAtomic(t *testing.T) {
 	if err != nil || removeOutboxID == 0 {
 		t.Fatalf("transactional domain delete = (%d, %v)", removeOutboxID, err)
 	}
-	if _, err := store.DeleteCustomDomainWithActivity(ctx, created.Domain, remove); !errors.Is(err, ErrNotFound) {
+	if _, err := store.DeleteCustomDomainWithActivity(ctx, created.Domain, remove); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("duplicate domain delete = %v, want ErrNotFound", err)
 	}
-	if _, err := store.DomainByName(ctx, created.Domain); !errors.Is(err, ErrNotFound) {
+	if _, err := store.DomainByName(ctx, created.Domain); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("domain after delete = %v, want ErrNotFound", err)
 	}
 
@@ -339,7 +339,7 @@ func TestMemStoreOrgActivityDomainMutationAtomic(t *testing.T) {
 			t.Fatalf("deliver domain activity %d = (%v, %v), want true", id, delivered, err)
 		}
 	}
-	rows, err := store.ListOrgActivity(ctx, OrgActivityFilter{OrgID: orgID, Limit: 10})
+	rows, err := store.ListOrgActivity(ctx, state.OrgActivityFilter{OrgID: orgID, Limit: 10})
 	if err != nil || len(rows) != 2 {
 		t.Fatalf("domain activity = (%#v, %v), want create and delete", rows, err)
 	}
@@ -355,8 +355,8 @@ func TestMemStoreOrgActivityDomainMutationAtomic(t *testing.T) {
 func TestMemStoreAppLifecycleActivityAtomic(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	store := NewMemStore()
-	createdAccount, err := store.CreateAccountWithPersonalOrg(ctx, CreateAccountWithPersonalOrgParams{
+	store := state.NewMemStore()
+	createdAccount, err := store.CreateAccountWithPersonalOrg(ctx, state.CreateAccountWithPersonalOrgParams{
 		Email: "activity-app@example.com", Plan: api.PlanPro,
 	})
 	if err != nil {
@@ -364,21 +364,21 @@ func TestMemStoreAppLifecycleActivityAtomic(t *testing.T) {
 	}
 	account := createdAccount.Account
 	actorID := uuid.MustParse(account.ID)
-	createdEntry := OrgActivity{
-		Kind: "app.created", ActorType: OrgActivityActorUser, ActorAccountID: &actorID,
+	createdEntry := state.OrgActivity{
+		Kind: "app.created", ActorType: state.OrgActivityActorUser, ActorAccountID: &actorID,
 		ActorLabel: account.Email, ResourceType: "app", SourceType: "app.created",
 		SourceID: "create-app-1", Data: []byte(`{"phase":"created","app_type":"app"}`),
 	}
 	badCreate := createdEntry
 	badCreate.Data = []byte(`[]`)
-	if _, _, err := store.CreateAppIfUnderQuotaWithActivity(ctx, App{AccountID: account.ID, Slug: "atomic-create"}, api.MustLimitsFor(api.PlanPro), badCreate); err == nil {
+	if _, _, err := store.CreateAppIfUnderQuotaWithActivity(ctx, state.App{AccountID: account.ID, Slug: "atomic-create"}, api.MustLimitsFor(api.PlanPro), badCreate); err == nil {
 		t.Fatal("create app with invalid activity succeeded")
 	}
-	if _, err := store.AppBySlug(ctx, "atomic-create"); !errors.Is(err, ErrNotFound) {
+	if _, err := store.AppBySlug(ctx, "atomic-create"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("app after rejected create/activity = %v, want ErrNotFound", err)
 	}
 
-	app, createdID, err := store.CreateAppIfUnderQuotaWithActivity(ctx, App{AccountID: account.ID, Slug: "atomic-create"}, api.MustLimitsFor(api.PlanPro), createdEntry)
+	app, createdID, err := store.CreateAppIfUnderQuotaWithActivity(ctx, state.App{AccountID: account.ID, Slug: "atomic-create"}, api.MustLimitsFor(api.PlanPro), createdEntry)
 	if err != nil || createdID == 0 || app.OrgID == "" {
 		t.Fatalf("transactional app create = (%+v, %d, %v), want app, org, and event", app, createdID, err)
 	}
@@ -393,11 +393,11 @@ func TestMemStoreAppLifecycleActivityAtomic(t *testing.T) {
 	if _, _, err := store.ScheduleAppDeletionWithActivity(ctx, app.ID, time.Now().UTC().Add(time.Hour), badDelete); err == nil {
 		t.Fatal("delete app with invalid activity succeeded")
 	}
-	if current, err := store.AppBySlug(ctx, app.Slug); err != nil || current.Status == AppDeleted {
+	if current, err := store.AppBySlug(ctx, app.Slug); err != nil || current.Status == state.AppDeleted {
 		t.Fatalf("app after rejected delete/activity = (%+v, %v), want active", current, err)
 	}
 	deleted, deletedID, err := store.ScheduleAppDeletionWithActivity(ctx, app.ID, time.Now().UTC().Add(time.Hour), deletedEntry)
-	if err != nil || deleted.Status != AppDeleted || deletedID == 0 {
+	if err != nil || deleted.Status != state.AppDeleted || deletedID == 0 {
 		t.Fatalf("transactional app delete = (%+v, %d, %v), want deleted with event", deleted, deletedID, err)
 	}
 	duplicateDelete := deletedEntry
@@ -412,7 +412,7 @@ func TestMemStoreAppLifecycleActivityAtomic(t *testing.T) {
 	restoredEntry.SourceID = "restore-app-1"
 	restoredEntry.Data = []byte(`{"phase":"restored"}`)
 	restored, restoredID, err := store.RestoreAppWithActivity(ctx, app.ID, api.MustLimitsFor(api.PlanScale), restoredEntry)
-	if err != nil || restored.Status != AppActive || restoredID == 0 {
+	if err != nil || restored.Status != state.AppActive || restoredID == 0 {
 		t.Fatalf("transactional app restore = (%+v, %d, %v), want active with event", restored, restoredID, err)
 	}
 
@@ -421,7 +421,7 @@ func TestMemStoreAppLifecycleActivityAtomic(t *testing.T) {
 			t.Fatalf("deliver app lifecycle event %d = (%v, %v), want true", id, delivered, err)
 		}
 	}
-	rows, err := store.ListOrgActivity(ctx, OrgActivityFilter{OrgID: uuid.MustParse(app.OrgID), Limit: 10})
+	rows, err := store.ListOrgActivity(ctx, state.OrgActivityFilter{OrgID: uuid.MustParse(app.OrgID), Limit: 10})
 	if err != nil || len(rows) != 3 {
 		t.Fatalf("app lifecycle timeline = (%#v, %v), want three events", rows, err)
 	}
@@ -441,29 +441,29 @@ func TestMemStoreAppLifecycleActivityAtomic(t *testing.T) {
 func TestMemStoreAppConfigActivityAtomic(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	store := NewMemStore()
-	createdAccount, err := store.CreateAccountWithPersonalOrg(ctx, CreateAccountWithPersonalOrgParams{
+	store := state.NewMemStore()
+	createdAccount, err := store.CreateAccountWithPersonalOrg(ctx, state.CreateAccountWithPersonalOrgParams{
 		Email: "activity-config@example.com", Plan: api.PlanPro,
 	})
 	if err != nil {
 		t.Fatalf("CreateAccountWithPersonalOrg: %v", err)
 	}
-	app, err := store.CreateAppIfUnderQuota(ctx, App{AccountID: createdAccount.Account.ID, Slug: "atomic-config", RAMMB: 256}, api.MustLimitsFor(api.PlanPro))
+	app, err := store.CreateAppIfUnderQuota(ctx, state.App{AccountID: createdAccount.Account.ID, Slug: "atomic-config", RAMMB: 256}, api.MustLimitsFor(api.PlanPro))
 	if err != nil {
 		t.Fatalf("CreateAppIfUnderQuota: %v", err)
 	}
 	actorID := uuid.MustParse(createdAccount.Account.ID)
 	appID := uuid.MustParse(app.ID)
-	entry := OrgActivity{
-		OrgID: uuid.MustParse(app.OrgID), Kind: "app.config_updated", ActorType: OrgActivityActorUser,
+	entry := state.OrgActivity{
+		OrgID: uuid.MustParse(app.OrgID), Kind: "app.config_updated", ActorType: state.OrgActivityActorUser,
 		ActorAccountID: &actorID, ActorLabel: createdAccount.Account.Email,
 		ResourceType: "app", ResourceID: app.ID, ResourceLabel: app.Slug,
 		AppID: &appID, SourceType: "app.config_updated", SourceID: "config-1",
 		Data: []byte(`{"changes":[{"field":"ram_mb","old":256,"new":512}]}`),
 	}
 	ram := 512
-	updated, outboxID, err := store.UpdateAppWithActivity(ctx, app.ID, UpdateAppParams{RAMMB: &ram}, entry,
-		func(before, after App) (json.RawMessage, bool, error) {
+	updated, outboxID, err := store.UpdateAppWithActivity(ctx, app.ID, state.UpdateAppParams{RAMMB: &ram}, entry,
+		func(before, after state.App) (json.RawMessage, bool, error) {
 			if before.RAMMB != 256 || after.RAMMB != 512 {
 				t.Fatalf("builder rows = (%d, %d), want exact before/after values", before.RAMMB, after.RAMMB)
 			}
@@ -474,8 +474,8 @@ func TestMemStoreAppConfigActivityAtomic(t *testing.T) {
 	}
 
 	// A no-op callback can commit the config write without adding a timeline row.
-	updated, noOpID, err := store.UpdateAppWithActivity(ctx, app.ID, UpdateAppParams{RAMMB: &ram}, entry,
-		func(before, after App) (json.RawMessage, bool, error) {
+	updated, noOpID, err := store.UpdateAppWithActivity(ctx, app.ID, state.UpdateAppParams{RAMMB: &ram}, entry,
+		func(before, after state.App) (json.RawMessage, bool, error) {
 			if before.RAMMB != after.RAMMB {
 				t.Fatalf("no-op builder rows differ: %d != %d", before.RAMMB, after.RAMMB)
 			}
@@ -489,8 +489,8 @@ func TestMemStoreAppConfigActivityAtomic(t *testing.T) {
 	tooMuchRAM := 768
 	badEntry := entry
 	badEntry.SourceID = "config-2"
-	if _, _, err := store.UpdateAppWithActivity(ctx, app.ID, UpdateAppParams{RAMMB: &tooMuchRAM}, badEntry,
-		func(_, _ App) (json.RawMessage, bool, error) {
+	if _, _, err := store.UpdateAppWithActivity(ctx, app.ID, state.UpdateAppParams{RAMMB: &tooMuchRAM}, badEntry,
+		func(_, _ state.App) (json.RawMessage, bool, error) {
 			return nil, false, errors.New("reject event")
 		}); err == nil {
 		t.Fatal("app config update with a failing activity builder succeeded")
@@ -507,7 +507,7 @@ func TestMemStoreAppConfigActivityAtomic(t *testing.T) {
 	if delivered, err := store.DeliverOrgActivityOutbox(ctx, outboxID); err != nil || !delivered {
 		t.Fatalf("deliver config activity = (%v, %v), want true", delivered, err)
 	}
-	if _, err := store.ClaimOrgActivityOutbox(ctx, "app-config-test", time.Minute); !errors.Is(err, ErrNotFound) {
+	if _, err := store.ClaimOrgActivityOutbox(ctx, "app-config-test", time.Minute); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("second config activity claim = %v, want no additional event", err)
 	}
 }

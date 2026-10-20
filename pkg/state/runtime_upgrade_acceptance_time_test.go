@@ -1,4 +1,4 @@
-package state
+package state_test
 
 // adr: 688
 
@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestRuntimeUpgradeAcceptanceFreshnessStartsAtDispatch(t *testing.T) {
@@ -26,7 +27,7 @@ func TestRuntimeUpgradeAcceptanceFreshnessStartsAtDispatch(t *testing.T) {
 		{"missing acknowledgment", now, time.Time{}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := validRuntimeUpgradeAcceptanceTime(tc.startedAt, tc.readyAt, now); got != tc.want {
+			if got := state.ValidRuntimeUpgradeAcceptanceTime(tc.startedAt, tc.readyAt, now); got != tc.want {
 				t.Fatalf("validity=%v, want %v", got, tc.want)
 			}
 		})

@@ -13,7 +13,7 @@ T = TypeVar("T", bound="OperationLimits")
 @_attrs_define
 class OperationLimits:
     """ADR-1196 bounds fixed onto each accepted Operation. Every field is optional and bounded by the plan; workflow
-    definitions take only a deadline, and job definitions take none.
+    definitions take a deadline and an execution budget (ADR-20261016110803), and job definitions take none.
 
     """
 
@@ -22,7 +22,8 @@ class OperationLimits:
     max_attempts: int | Unset = UNSET
     """Automatic attempts of one HTTP execution."""
     max_execution_seconds: int | Unset = UNSET
-    """HTTP attempt runtime summed across generations."""
+    """Runtime of HTTP attempts, or of a workflow's HTTP step attempts, summed across generations; waits do not
+    count."""
 
     def to_dict(self) -> dict[str, Any]:
         deadline_seconds = self.deadline_seconds

@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -8,10 +8,11 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/publicstatus"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestMemStoreStatusUptimeBucketsUsePlatformObservations(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	ctx := context.Background()
 	since := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	dayOne := since.Add(2 * time.Hour)
@@ -21,10 +22,11 @@ func TestMemStoreStatusUptimeBucketsUsePlatformObservations(t *testing.T) {
 	recordCompleteStatusInterval(t, m, dayOne.Add(5*time.Minute), publicstatus.ComponentAPIConsole, publicstatus.StateDegraded)
 	recordCompleteStatusInterval(t, m, dayOne.Add(10*time.Minute), publicstatus.ComponentNetworking, publicstatus.StatePartialOutage)
 	recordCompleteStatusInterval(t, m, dayTwo, "", publicstatus.StateOperational)
+	(*
 	// This deliberate customer cancellation must not enter public uptime.
-	m.mu.Lock()
-	m.invocations["cancelled"] = Invocation{ID: "cancelled", CreatedAt: dayTwo, State: InvocationCancelled}
-	m.mu.Unlock()
+	m.Mu()).Lock()
+	(*m.Invocations())["cancelled"] = state.Invocation{ID: "cancelled", CreatedAt: dayTwo, State: state.InvocationCancelled}
+	(*m.Mu()).Unlock()
 
 	buckets, err := m.StatusUptimeBuckets(ctx, since)
 	if err != nil {
@@ -42,45 +44,45 @@ func TestMemStoreStatusUptimeBucketsUsePlatformObservations(t *testing.T) {
 }
 
 func TestMemStoreListStatusIncidentsSinceFiltersSortsAndCaps(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	ctx := context.Background()
 	base := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 
-	if _, err := m.InsertStatusIncident(ctx, "unknown", StatusIncidentSeverityDegraded, "bad"); !errors.Is(err, ErrNotFound) {
+	if _, err := m.InsertStatusIncident(ctx, "unknown", state.StatusIncidentSeverityDegraded, "bad"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("invalid component error = %v, want ErrNotFound", err)
 	}
-	if _, err := m.InsertStatusIncident(ctx, StatusIncidentComponentApid, "unknown", "bad"); !errors.Is(err, ErrNotFound) {
+	if _, err := m.InsertStatusIncident(ctx, state.StatusIncidentComponentApid, "unknown", "bad"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("invalid severity error = %v, want ErrNotFound", err)
 	}
-	if _, err := m.InsertStatusIncident(ctx, StatusIncidentComponentApid, StatusIncidentSeverityDegraded, strings.Repeat("x", 1025)); !errors.Is(err, ErrNotFound) {
+	if _, err := m.InsertStatusIncident(ctx, state.StatusIncidentComponentApid, state.StatusIncidentSeverityDegraded, strings.Repeat("x", 1025)); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("oversized message error = %v, want ErrNotFound", err)
 	}
 
-	oldResolved, err := m.InsertStatusIncident(ctx, StatusIncidentComponentApid, StatusIncidentSeverityDegraded, "resolved")
+	oldResolved, err := m.InsertStatusIncident(ctx, state.StatusIncidentComponentApid, state.StatusIncidentSeverityDegraded, "resolved")
 	if err != nil {
 		t.Fatalf("InsertStatusIncident resolved: %v", err)
 	}
-	oldOpen, err := m.InsertStatusIncident(ctx, StatusIncidentComponentSchedd, StatusIncidentSeverityPartialOutage, "still open")
+	oldOpen, err := m.InsertStatusIncident(ctx, state.StatusIncidentComponentSchedd, state.StatusIncidentSeverityPartialOutage, "still open")
 	if err != nil {
 		t.Fatalf("InsertStatusIncident open: %v", err)
 	}
-	recentOne, err := m.InsertStatusIncident(ctx, StatusIncidentComponentVmmd, StatusIncidentSeverityFullOutage, "recent one")
+	recentOne, err := m.InsertStatusIncident(ctx, state.StatusIncidentComponentVmmd, state.StatusIncidentSeverityFullOutage, "recent one")
 	if err != nil {
 		t.Fatalf("InsertStatusIncident recent one: %v", err)
 	}
-	recentTwo, err := m.InsertStatusIncident(ctx, StatusIncidentComponentGatewayd, StatusIncidentSeverityMaintenance, "recent two")
+	recentTwo, err := m.InsertStatusIncident(ctx, state.StatusIncidentComponentGatewayd, state.StatusIncidentSeverityMaintenance, "recent two")
 	if err != nil {
 		t.Fatalf("InsertStatusIncident recent two: %v", err)
 	}
 
 	resolvedAt := base.Add(3 * time.Hour)
-	m.mu.Lock()
-	m.statusIncidents[oldResolved.ID-1].PostedAt = base.Add(-24 * time.Hour)
-	m.statusIncidents[oldResolved.ID-1].ResolvedAt = &resolvedAt
-	m.statusIncidents[oldOpen.ID-1].PostedAt = base.Add(-24 * time.Hour)
-	m.statusIncidents[recentOne.ID-1].PostedAt = base.Add(time.Hour)
-	m.statusIncidents[recentTwo.ID-1].PostedAt = base.Add(time.Hour)
-	m.mu.Unlock()
+	(*m.Mu()).Lock()
+	(*m.StatusIncidents())[oldResolved.ID-1].PostedAt = base.Add(-24 * time.Hour)
+	(*m.StatusIncidents())[oldResolved.ID-1].ResolvedAt = &resolvedAt
+	(*m.StatusIncidents())[oldOpen.ID-1].PostedAt = base.Add(-24 * time.Hour)
+	(*m.StatusIncidents())[recentOne.ID-1].PostedAt = base.Add(time.Hour)
+	(*m.StatusIncidents())[recentTwo.ID-1].PostedAt = base.Add(time.Hour)
+	(*m.Mu()).Unlock()
 
 	got, err := m.ListStatusIncidentsSince(ctx, base, 2)
 	if err != nil {

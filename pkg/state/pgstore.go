@@ -32214,12 +32214,13 @@ func (s *PgStore) ClaimInvocationWithCap(ctx context.Context, id, instanceID str
 	if err != nil {
 		return Invocation{}, err
 	}
+	if owner.ResourceOwnershipEnabled && !owner.Active() {
+		return Invocation{}, ErrConflict
+	}
+	// The counter must be the subject stamp_invocation_async_subject records.
 	subject := accountID
-	if owner.ResourceOwnershipEnabled {
-		if !owner.Active() {
-			return Invocation{}, ErrConflict
-		}
-		subject = owner.ResourceOwnerID()
+	if owner.AsyncQuotaPooled {
+		subject = owner.AsyncQuotaSubjectID()
 		if err := ensureQueueAsyncQuotaDB(ctx, tx, owner); err != nil {
 			return Invocation{}, err
 		}

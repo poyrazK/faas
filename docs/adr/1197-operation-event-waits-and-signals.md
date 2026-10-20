@@ -80,4 +80,5 @@ its history and timeline, as ADR-1194 already does for approval callbacks.
 - **Signalling through the native run route.** It hides the run ID boundary
   Operations keep, and bypasses the Operation's history.
 - **Routing provider webhooks straight to waiting Operations now.** That needs
-  an endpoint binding mode on top of ADR-1193; it is a follow-up once both land.
+  an endpoint binding mode on top of ADR-1193;
+  [ADR-20261016100929](20261016100929-webhook-delivered-operation-signals.md) adds it.

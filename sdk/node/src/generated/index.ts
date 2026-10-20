@@ -495,6 +495,8 @@ export type { CreateProjectEnvironmentRequest } from './models/CreateProjectEnvi
 export type { CreateProjectMigrationRequest } from './models/CreateProjectMigrationRequest.js';
 export type { CreateQueueBindingCanaryRequest } from './models/CreateQueueBindingCanaryRequest.js';
 export type { CreateQueueBindingRequest } from './models/CreateQueueBindingRequest.js';
+export type { CreateReleaseFreezeRequest } from './models/CreateReleaseFreezeRequest.js';
+export type { CreateReleaseGateRequest } from './models/CreateReleaseGateRequest.js';
 export type { CreateScenarioObjectsRequest } from './models/CreateScenarioObjectsRequest.js';
 export type { CreateScenarioPostgresRequest } from './models/CreateScenarioPostgresRequest.js';
 export type { CreateSLORequest } from './models/CreateSLORequest.js';
@@ -1137,6 +1139,8 @@ export type { ListOrgAPIKeysResponse } from './models/ListOrgAPIKeysResponse.js'
 export type { ListProfileDeploymentChecksResponse } from './models/ListProfileDeploymentChecksResponse.js';
 export type { ListProfileInvestigationsResponse } from './models/ListProfileInvestigationsResponse.js';
 export type { ListProfilePeriodicMonitorsResponse } from './models/ListProfilePeriodicMonitorsResponse.js';
+export type { ListReleaseFreezesResponse } from './models/ListReleaseFreezesResponse.js';
+export type { ListReleaseGatesResponse } from './models/ListReleaseGatesResponse.js';
 export type { ListScheduleOccurrencesResponse } from './models/ListScheduleOccurrencesResponse.js';
 export type { ListSecretsForAccountResponse } from './models/ListSecretsForAccountResponse.js';
 export type { ListTenantSurfacesResponse } from './models/ListTenantSurfacesResponse.js';
@@ -1612,6 +1616,7 @@ export type { OperationTimelineResponse } from './models/OperationTimelineRespon
 export type { OperationUsage } from './models/OperationUsage.js';
 export type { OperationWaitingState } from './models/OperationWaitingState.js';
 export type { OperationWebhookBindingResponse } from './models/OperationWebhookBindingResponse.js';
+export type { OperationWebhookSignal } from './models/OperationWebhookSignal.js';
 export type { OperationWorkflowActionObligation } from './models/OperationWorkflowActionObligation.js';
 export type { OperationWorkflowActionPreviewRequest } from './models/OperationWorkflowActionPreviewRequest.js';
 export type { OperationWorkflowActionPreviewResponse } from './models/OperationWorkflowActionPreviewResponse.js';
@@ -2077,6 +2082,7 @@ export type { PlatformTenantStatementLineResponse } from './models/PlatformTenan
 export type { PlatformTenantStatementListResponse } from './models/PlatformTenantStatementListResponse.js';
 export type { PlatformTenantStatementResponse } from './models/PlatformTenantStatementResponse.js';
 export type { PlatformTenantStatementSummaryResponse } from './models/PlatformTenantStatementSummaryResponse.js';
+export type { PlatformTenantSubjectSignalRequest } from './models/PlatformTenantSubjectSignalRequest.js';
 export type { PlatformTenantSurfaceCertificateChangedWebhookPayload } from './models/PlatformTenantSurfaceCertificateChangedWebhookPayload.js';
 export type { PlatformTenantSurfaceDeploymentChangedWebhookPayload } from './models/PlatformTenantSurfaceDeploymentChangedWebhookPayload.js';
 export type { PlatformTenantSurfaceResponse } from './models/PlatformTenantSurfaceResponse.js';
@@ -2399,6 +2405,11 @@ export type { RegisterScenarioTestRequest } from './models/RegisterScenarioTestR
 export type { RegisterScenarioTestResponse } from './models/RegisterScenarioTestResponse.js';
 export type { RekeyProgress } from './models/RekeyProgress.js';
 export type { ReleaseDatabaseRef } from './models/ReleaseDatabaseRef.js';
+export type { ReleaseFreeze } from './models/ReleaseFreeze.js';
+export type { ReleaseFreezeStatus } from './models/ReleaseFreezeStatus.js';
+export type { ReleaseFreezeWeekly } from './models/ReleaseFreezeWeekly.js';
+export type { ReleaseGate } from './models/ReleaseGate.js';
+export type { ReleaseGateResult } from './models/ReleaseGateResult.js';
 export type { ReleaseRestorePoint } from './models/ReleaseRestorePoint.js';
 export type { RemoveEnvironmentGitOpsOverrideRequest } from './models/RemoveEnvironmentGitOpsOverrideRequest.js';
 export type { RenameAppRequest } from './models/RenameAppRequest.js';

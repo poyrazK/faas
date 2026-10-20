@@ -1,14 +1,15 @@
-package state
+package state_test
 
 import (
 	"context"
 	"errors"
+	"github.com/onebox-faas/faas/pkg/state"
 	"testing"
 	"time"
 )
 
 func TestMemStoreManagedRealtimeOwnerLeaseLifecycle(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	ctx := context.Background()
 	first, err := m.ClaimManagedRealtimeConnectionOwner(ctx, "conn-1", "endpoint-1", "node-a", time.Minute)
 	if err != nil {
@@ -17,7 +18,7 @@ func TestMemStoreManagedRealtimeOwnerLeaseLifecycle(t *testing.T) {
 	if first.LeaseToken == "" || first.NodeID != "node-a" {
 		t.Fatalf("claim returned %+v", first)
 	}
-	if _, err := m.ClaimManagedRealtimeConnectionOwner(ctx, "conn-1", "endpoint-1", "node-b", time.Minute); !errors.Is(err, ErrManagedRealtimeOwnerConflict) {
+	if _, err := m.ClaimManagedRealtimeConnectionOwner(ctx, "conn-1", "endpoint-1", "node-b", time.Minute); !errors.Is(err, state.ErrManagedRealtimeOwnerConflict) {
 		t.Fatalf("competing claim = %v, want conflict", err)
 	}
 	got, err := m.GetManagedRealtimeConnectionOwner(ctx, "conn-1", "endpoint-1")
@@ -28,19 +29,19 @@ func TestMemStoreManagedRealtimeOwnerLeaseLifecycle(t *testing.T) {
 	if err != nil || !renewed.LeaseExpiresAt.After(first.LeaseExpiresAt) {
 		t.Fatalf("renew = %+v, %v", renewed, err)
 	}
-	if _, err := m.RenewManagedRealtimeConnectionOwner(ctx, "conn-1", "endpoint-1", "wrong", time.Minute); !errors.Is(err, ErrManagedRealtimeOwnerConflict) {
+	if _, err := m.RenewManagedRealtimeConnectionOwner(ctx, "conn-1", "endpoint-1", "wrong", time.Minute); !errors.Is(err, state.ErrManagedRealtimeOwnerConflict) {
 		t.Fatalf("wrong-token renew = %v, want conflict", err)
 	}
 	if err := m.ReleaseManagedRealtimeConnectionOwner(ctx, "conn-1", first.LeaseToken); err != nil {
 		t.Fatalf("release: %v", err)
 	}
-	if _, err := m.GetManagedRealtimeConnectionOwner(ctx, "conn-1", "endpoint-1"); !errors.Is(err, ErrNotFound) {
+	if _, err := m.GetManagedRealtimeConnectionOwner(ctx, "conn-1", "endpoint-1"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("get after release = %v, want not found", err)
 	}
 }
 
 func TestMemStoreManagedRealtimeOwnerPruneExpired(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	ctx := context.Background()
 	if _, err := m.ClaimManagedRealtimeConnectionOwner(ctx, "expired-1", "endpoint-1", "node-a", time.Millisecond); err != nil {
 		t.Fatalf("claim expired-1: %v", err)

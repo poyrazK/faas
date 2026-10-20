@@ -347,6 +347,10 @@ type MemStore struct {
 	configRevisions    map[configScopeKey][]ConfigRevision
 	configGuards       map[string]ConfigGuard
 	configGuardSecrets map[string]map[string]ConfigGuardSecret
+	// releaseFreezes mirrors release_freezes (ADR-20261019071733).
+	releaseFreezes map[string]ReleaseFreeze
+	// releaseGates mirrors app_release_gates (ADR-20261019071734).
+	releaseGates map[string]ReleaseGate
 	// Snapshot restore reservations are separate from mu so the coordinator
 	// can serialize only its short lease/count critical section.
 	snapshotRestorePressureMu sync.Mutex
@@ -400,6 +404,7 @@ type MemStore struct {
 	objectAuthorizations        map[string]int64
 	objectUsageCutovers         map[string]time.Time
 	objectOrgOwnedFrom          map[string]time.Time
+	orgAsyncQuotaPooled         map[string]time.Time
 	objectProviderRequests      map[string]int64
 	objectAccessGrants          map[string]ObjectBucketAccessGrant
 	objectS3Credentials         map[string]ObjectS3Credential

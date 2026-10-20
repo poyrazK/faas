@@ -1,5 +1,5 @@
 // adr: 1637
-package state
+package state_test
 
 import (
 	"context"
@@ -9,19 +9,20 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 type wakePageTestStore interface {
-	WakeTimelinePageStore
+	state.WakeTimelinePageStore
 	AppendEventAt(context.Context, string, string, *string, []byte, time.Time) error
 }
 
 func TestWakeTimelinePageStores(t *testing.T) {
 	for _, backend := range []string{"mem", "postgres"} {
 		t.Run(backend, func(t *testing.T) {
-			var store wakePageTestStore = NewMemStore()
+			var store wakePageTestStore = state.NewMemStore()
 			if backend == "postgres" {
-				store = NewPgStore(pgtest.OpenMigrated(t))
+				store = state.NewPgStore(pgtest.OpenMigrated(t))
 			}
 			app, wake := uuid.NewString(), uuid.NewString()
 			at := time.Date(2026, 10, 16, 10, 0, 0, 123456789, time.UTC)
@@ -34,7 +35,7 @@ func TestWakeTimelinePageStores(t *testing.T) {
 				}
 			}
 			at = at.Truncate(time.Microsecond)
-			var pos WakeTimelinePosition
+			var pos state.WakeTimelinePosition
 			seen := map[int64]bool{}
 			kinds := []string{}
 			for page := 0; page < 4; page++ {
@@ -57,7 +58,7 @@ func TestWakeTimelinePageStores(t *testing.T) {
 					}
 					seen[e.ID] = true
 					kinds = append(kinds, e.Kind)
-					pos = WakeTimelinePosition{At: e.At, ID: e.ID}
+					pos = state.WakeTimelinePosition{At: e.At, ID: e.ID}
 				}
 			}
 			want := []string{"wake.queue_accepted", "wake.admitted", "wake.boot_started", "wake.boot_completed", "wake.proxy_first_byte", "wake.proxy_first_byte"}
@@ -69,12 +70,12 @@ func TestWakeTimelinePageStores(t *testing.T) {
 					t.Fatal("wrong total order/canonical selection")
 				}
 			}
-			rows, err := store.ListAppWakeTimelinePage(t.Context(), app, wake, at, WakeTimelinePosition{}, 2)
+			rows, err := store.ListAppWakeTimelinePage(t.Context(), app, wake, at, state.WakeTimelinePosition{}, 2)
 			if err != nil || len(rows) != 0 {
 				t.Fatal("since must remain exclusive")
 			}
 			for _, limit := range []int{0, -1, 1002} {
-				if _, err := store.ListAppWakeTimelinePage(t.Context(), app, wake, time.Time{}, WakeTimelinePosition{}, limit); err == nil {
+				if _, err := store.ListAppWakeTimelinePage(t.Context(), app, wake, time.Time{}, state.WakeTimelinePosition{}, limit); err == nil {
 					t.Fatal("unbounded page accepted")
 				}
 			}

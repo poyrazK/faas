@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -6,26 +6,27 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestMemStoreListCustomerEventsCapsLimit(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
+	store := state.NewMemStore()
 	accountID := uuid.NewString()
-	for range CustomerEventLimitMax + 1 {
+	for range state.CustomerEventLimitMax + 1 {
 		if err := store.AppendEvent(ctx, "test", "app.updated", &accountID, nil); err != nil {
 			t.Fatalf("AppendEvent: %v", err)
 		}
 	}
 
-	rows, err := store.ListCustomerEvents(ctx, CustomerEventFilter{
+	rows, err := store.ListCustomerEvents(ctx, state.CustomerEventFilter{
 		AccountID: accountID,
 		Limit:     math.MaxInt,
 	})
 	if err != nil {
 		t.Fatalf("ListCustomerEvents: %v", err)
 	}
-	if len(rows) != CustomerEventLimitMax {
-		t.Fatalf("rows = %d, want capped limit %d", len(rows), CustomerEventLimitMax)
+	if len(rows) != state.CustomerEventLimitMax {
+		t.Fatalf("rows = %d, want capped limit %d", len(rows), state.CustomerEventLimitMax)
 	}
 }

@@ -66,7 +66,46 @@ tests:
               public_status: internal
             exp_annotations:
               summary: "Local journal exceeds 400 MiB on compute-ssd"
-              description: "The persistent and runtime journals have remained above 400 MiB for ten minutes, approaching Gregale's 512 MiB persistent-journal bound. Check noisy units and off-host shipping before rotation removes incident evidence."
+              description: "The persistent and runtime journals have remained above 400 MiB for ten minutes while holding less than five days of history, so Gregale's 512 MiB persistent-journal bound is rotating entries out before the seven-day retention. Check noisy units and off-host shipping before rotation removes incident evidence."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHostJournalPressure.md"
+
+  # 2026-10-20 production: a full journal holding 6.6 days is the steady state
+  # of a long-lived node, not pressure.
+  - interval: 30s
+    name: "full journal holding most of its retention stays quiet"
+    input_series:
+      - series: 'vmmd_journal_disk_usage_bytes{job="vmmd",instance="10.0.0.2:9104",node="compute-ssd"}'
+        values: '494927872x31'
+      - series: 'vmmd_journal_oldest_entry_timestamp_seconds{job="vmmd",instance="10.0.0.2:9104",node="compute-ssd"}'
+        values: '-570240x31'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: FaasHostJournalNearLimit
+
+  # ADR-149: four days of history under the bound is the pressure the alert
+  # exists for.
+  - interval: 30s
+    name: "full journal holding four days alerts"
+    input_series:
+      - series: 'vmmd_journal_disk_usage_bytes{job="vmmd",instance="10.0.0.2:9104",node="compute-ssd"}'
+        values: '494927872x31'
+      - series: 'vmmd_journal_oldest_entry_timestamp_seconds{job="vmmd",instance="10.0.0.2:9104",node="compute-ssd"}'
+        values: '-345600x31'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: FaasHostJournalNearLimit
+        exp_alerts:
+          - exp_labels:
+              job: vmmd
+              instance: 10.0.0.2:9104
+              node: compute-ssd
+              severity: warn
+              component: vmmd
+              family: host_journal
+              public_status: internal
+            exp_annotations:
+              summary: "Local journal exceeds 400 MiB on compute-ssd"
+              description: "The persistent and runtime journals have remained above 400 MiB for ten minutes while holding less than five days of history, so Gregale's 512 MiB persistent-journal bound is rotating entries out before the seven-day retention. Check noisy units and off-host shipping before rotation removes incident evidence."
               runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHostJournalPressure.md"
 
   - interval: 30s

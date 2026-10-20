@@ -1,6 +1,6 @@
 //go:build !no_pg
 
-package state
+package state_test
 
 // adr: 595 Ledger repair preserves the actual measured serving history.
 
@@ -17,6 +17,7 @@ import (
 	"github.com/onebox-faas/faas/migrations"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestPgApplicationStandardLedgerRecoveryPreservesMeasuredPromotion(t *testing.T) {
@@ -35,15 +36,15 @@ func TestPgApplicationStandardLedgerRecoveryPreservesMeasuredPromotion(t *testin
 		t.Skip("ledger recovery requires PostgreSQL 16 pg_dump")
 	}
 	t.Setenv(pgtest.UseTemplateDatabase, "1")
-	s, pool := runtimeCapturePGStore(t)
-	f, parent := standardPausedRestoreFixture(t, s)
-	p, err := s.IssueInstanceApplicationStandardPromotion(t.Context(), promotionTestGrant(t, parent))
+	s, pool := state.RuntimeCapturePGStore(t)
+	f, parent := state.StandardPausedRestoreFixture(t, s)
+	p, err := s.IssueInstanceApplicationStandardPromotion(t.Context(), state.PromotionTestGrant(t, parent))
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := standardMeasuredPromotionReceipt(t, p)
+	r := state.StandardMeasuredPromotionReceipt(t, p)
 	actual, err := s.PublishInstanceApplicationStandardPromotion(t.Context(), r)
-	if err != nil || actual.State != string(StateRunning) {
+	if err != nil || actual.State != string(state.StateRunning) {
 		t.Fatal("publish measured serving receipt", err)
 	}
 	before := measuredPromotionRecoveryHistory(t, pool, actual.AppID)
@@ -83,13 +84,13 @@ func TestPgApplicationStandardLedgerRecoveryPreservesMeasuredPromotion(t *testin
 	if err != nil || !got.Equal(r) {
 		t.Fatal("recovery lost the actual promoted receipt", err)
 	}
-	if _, err := s.PublishInstanceApplicationStandardRuntime(t.Context(), actual.State, StateRunning, r); !errors.Is(err, ErrInvalidArgument) {
+	if _, err := s.PublishInstanceApplicationStandardRuntime(t.Context(), actual.State, state.StateRunning, r); !errors.Is(err, state.ErrInvalidArgument) {
 		t.Fatal("ledger repair granted fresh boot authority to a promotion", err)
 	}
 	if before != measuredPromotionRecoveryHistory(t, pool, actual.AppID) {
 		t.Fatal("refused boot changed the recovered serving history")
 	}
-	if !standardSnapshotGet(t, s, f.Grant).Acknowledgment.Capture.Equal(f.Evidence.Capture) {
+	if !state.StandardSnapshotGet(t, s, f.Grant).Acknowledgment.Capture.Equal(f.Evidence.Capture) {
 		t.Fatal("recovery changed the original catalog lineage")
 	}
 }

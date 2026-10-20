@@ -3,10 +3,10 @@
   "fingerprint_algorithm": "promql_ast_v1",
   "sets": [
     {
-      "revision": "5b4d8a0c708ca25598cb20a67090cff3c56fb19a40dbccbfd0c3f2e5d024ce8f",
+      "revision": "479a5c29630626009e95763c2203d55979995a7e3133bab9e05f84cef6b74d4e",
       "expected": {
         "id": "gregale-core-v1",
-        "revision": "6a586dc448791c7ba61d4256e7909499cb12a752a88fff026086e7026ebe442e",
+        "revision": "0e2ca91650c0ca554c845b85418c1bf13afcb11112c59f0976ff2220a4f82427",
         "files": [
           "faas.rules.yml"
         ],
@@ -563,11 +563,11 @@
             "group_name": "faas_billing",
             "rule_name": "builderd_build_worker_progress_allowance_seconds",
             "definition": {
-              "expression_hash": "751cceb0ffdbc4750bb913cb6f9663f60c6a674b4b4e3e2a339c9d2adeb20093",
+              "expression_hash": "d1345478db378e01aacfc987529f7e7de8d4fa90e86e3b67c1200fcc7f73949a",
               "labels_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
               "for_seconds": 0,
               "keep_firing_for_seconds": 0,
-              "fingerprint": "bdbfb48457a77db6f8dcfff3cad1355b5ae87c6e1a649139511b1ec70984e0ad"
+              "fingerprint": "df230e7247194757bf589131771d1a2f9d0f0ef67f67142f7379f98dd768256f"
             }
           },
           {
@@ -1092,8 +1092,8 @@
           }
         ]
       },
-      "alert_set_revision": "eea163c1d9fc01a5765de180a1f3c660d2eb762f1e0c805e7fbfb00a1caeccc7",
-      "alert_count": 362,
+      "alert_set_revision": "c6f516f59aec4283212b1aca65c74bc859960c11c2cea9d611ad608899afbb14",
+      "alert_count": 368,
       "dependents": [
         {
           "rule_id": "04e71a8f5cf3db701f2c7083e95693cd02058aa3b83e91279b44abcac2192ea5",
@@ -2538,10 +2538,10 @@
       ]
     },
     {
-      "revision": "ffc73edad3164536dcfaeeab318d901416f1905612b1fc6c5233a5a8015d4c09",
+      "revision": "f562aac1d4faf4d01cb25e3701fbf35dec4ba777de8ce12818f89999879fb0f4",
       "expected": {
         "id": "gregale-full-v1",
-        "revision": "17ef46f0a1105660d88f41ce20977e2566aabce34766fa2953b53fb4b687812b",
+        "revision": "4cf803fcf1ff15f933713c2583a4951afca9f38c7d04429e1b134e93379686f4",
         "files": [
           "bridge.rules.yml",
           "data_placement.yaml",
@@ -3102,11 +3102,11 @@
             "group_name": "faas_billing",
             "rule_name": "builderd_build_worker_progress_allowance_seconds",
             "definition": {
-              "expression_hash": "751cceb0ffdbc4750bb913cb6f9663f60c6a674b4b4e3e2a339c9d2adeb20093",
+              "expression_hash": "d1345478db378e01aacfc987529f7e7de8d4fa90e86e3b67c1200fcc7f73949a",
               "labels_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
               "for_seconds": 0,
               "keep_firing_for_seconds": 0,
-              "fingerprint": "bdbfb48457a77db6f8dcfff3cad1355b5ae87c6e1a649139511b1ec70984e0ad"
+              "fingerprint": "df230e7247194757bf589131771d1a2f9d0f0ef67f67142f7379f98dd768256f"
             }
           },
           {
@@ -3631,8 +3631,8 @@
           }
         ]
       },
-      "alert_set_revision": "f5700ff478824ebb83d4e1f503f74092a6e962f3c4eb9831212f7964d312cad6",
-      "alert_count": 382,
+      "alert_set_revision": "3c53c585ee0c636b5b5d0ca32e05b6ec24fdb9cbc445b0fee89466bd5476d329",
+      "alert_count": 388,
       "dependents": [
         {
           "rule_id": "04e71a8f5cf3db701f2c7083e95693cd02058aa3b83e91279b44abcac2192ea5",

@@ -52,6 +52,10 @@ class OutboundAIUsageItem:
     """Provider cost the response cache avoided, priced from the cached responses at the current price list."""
     prompt_cache_saved_millicents: int
     """What provider prompt caching saved against plain input prices; negative when cache writes outweighed reads."""
+    input_audio_tokens: int
+    """Audio part of input_tokens, priced at the audio input price (ADR 20261019072722)."""
+    output_audio_tokens: int
+    """Audio part of output_tokens, priced at the audio output price."""
     cost_millicents: int | Unset = UNSET
     """Priced from the list in effect at each call, else the built-in catalog, and rounded up per call; zero for an
     unpriced model."""
@@ -96,6 +100,10 @@ class OutboundAIUsageItem:
 
         prompt_cache_saved_millicents = self.prompt_cache_saved_millicents
 
+        input_audio_tokens = self.input_audio_tokens
+
+        output_audio_tokens = self.output_audio_tokens
+
         cost_millicents = self.cost_millicents
 
         field_dict: dict[str, Any] = {}
@@ -121,6 +129,8 @@ class OutboundAIUsageItem:
                 "cached_requests": cached_requests,
                 "cache_saved_millicents": cache_saved_millicents,
                 "prompt_cache_saved_millicents": prompt_cache_saved_millicents,
+                "input_audio_tokens": input_audio_tokens,
+                "output_audio_tokens": output_audio_tokens,
             }
         )
         if cost_millicents is not UNSET:
@@ -169,6 +179,10 @@ class OutboundAIUsageItem:
 
         prompt_cache_saved_millicents = d.pop("prompt_cache_saved_millicents")
 
+        input_audio_tokens = d.pop("input_audio_tokens")
+
+        output_audio_tokens = d.pop("output_audio_tokens")
+
         cost_millicents = d.pop("cost_millicents", UNSET)
 
         outbound_ai_usage_item = cls(
@@ -191,6 +205,8 @@ class OutboundAIUsageItem:
             cached_requests=cached_requests,
             cache_saved_millicents=cache_saved_millicents,
             prompt_cache_saved_millicents=prompt_cache_saved_millicents,
+            input_audio_tokens=input_audio_tokens,
+            output_audio_tokens=output_audio_tokens,
             cost_millicents=cost_millicents,
         )
 

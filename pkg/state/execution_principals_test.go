@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -6,11 +6,12 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestMemStoreExecutionPrincipalListFiltersBeforePagination(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
+	store := state.NewMemStore()
 	account := executionTestAccount(t, store, "principal-list")
 	if err := store.UpdateAccountPlan(ctx, account.ID, api.PlanScale); err != nil {
 		t.Fatalf("UpdateAccountPlan: %v", err)
@@ -21,7 +22,7 @@ func TestMemStoreExecutionPrincipalListFiltersBeforePagination(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateExecution(legacy): %v", err)
 	}
-	created := map[string]Execution{}
+	created := map[string]state.Execution{}
 	for i, item := range []struct {
 		name      string
 		principal *string
@@ -59,7 +60,7 @@ func TestMemStoreExecutionPrincipalListFiltersBeforePagination(t *testing.T) {
 
 func TestMemStoreAPIKeyRotationPreservesRunsPrincipal(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
+	store := state.NewMemStore()
 	account := executionTestAccount(t, store, "principal-rotation")
 	oldHash, newHash := []byte("agent-key-old"), []byte("agent-key-new")
 	key, err := store.CreateAPIKey(ctx, account.ID, oldHash, "agent", []string{api.ScopeRunsRead, api.ScopeRunsWrite})

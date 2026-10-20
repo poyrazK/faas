@@ -1,4 +1,4 @@
-package state
+package state_test
 
 // Tests that pin the MemStore ADR-127 request-telemetry stub surface.
 //
@@ -25,11 +25,12 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 func TestMemStore_RequestTelemetry_StubsReturnSentinel(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	ctx := context.Background()
 
 	// InsertRequestTelemetry — the per-request INSERT. The stub
@@ -45,7 +46,7 @@ func TestMemStore_RequestTelemetry_StubsReturnSentinel(t *testing.T) {
 		ColdBoot:   false,
 		TraceID:    pgtype.Text{},
 		ReceivedAt: pgtype.Timestamptz{},
-	}); !errors.Is(err, errMemStoreRequestTelemetry) {
+	}); !errors.Is(err, (*state.ErrMemStoreRequestTelemetry)) {
 		t.Errorf("InsertRequestTelemetry: got %v, want errMemStoreRequestTelemetry", err)
 	}
 
@@ -55,7 +56,7 @@ func TestMemStore_RequestTelemetry_StubsReturnSentinel(t *testing.T) {
 		ReceivedAt:   pgtype.Timestamptz{},
 		ReceivedAt_2: pgtype.Timestamptz{},
 		Limit:        50,
-	}); !errors.Is(err, errMemStoreRequestTelemetry) {
+	}); !errors.Is(err, (*state.ErrMemStoreRequestTelemetry)) {
 		t.Errorf("ListRequestTelemetryByApp: got %v, want errMemStoreRequestTelemetry", err)
 	}
 
@@ -66,7 +67,7 @@ func TestMemStore_RequestTelemetry_StubsReturnSentinel(t *testing.T) {
 		ReceivedAt:   pgtype.Timestamptz{},
 		ReceivedAt_2: pgtype.Timestamptz{},
 		Limit:        50,
-	}); !errors.Is(err, errMemStoreRequestTelemetry) {
+	}); !errors.Is(err, (*state.ErrMemStoreRequestTelemetry)) {
 		t.Errorf("RequestTelemetryByDeployment: got %v, want errMemStoreRequestTelemetry", err)
 	}
 
@@ -77,7 +78,7 @@ func TestMemStore_RequestTelemetry_StubsReturnSentinel(t *testing.T) {
 		DeploymentID: pgtype.UUID{},
 		ReceivedAt:   pgtype.Timestamptz{},
 		ReceivedAt_2: pgtype.Timestamptz{},
-	}); !errors.Is(err, errMemStoreRequestTelemetry) {
+	}); !errors.Is(err, (*state.ErrMemStoreRequestTelemetry)) {
 		t.Errorf("RequestTelemetryBaselineP95ByRoute: got %v, want errMemStoreRequestTelemetry", err)
 	}
 }
@@ -88,7 +89,7 @@ func TestMemStore_RequestTelemetry_StubsReturnSentinel(t *testing.T) {
 // re-run against pgtest (or //go:build metal) rather than chasing a
 // MemStore implementation that intentionally doesn't exist.
 func TestMemStore_RequestTelemetry_SentinelMessage(t *testing.T) {
-	msg := errMemStoreRequestTelemetry.Error()
+	msg := (*state.ErrMemStoreRequestTelemetry).Error()
 	if !strings.Contains(msg, "MemStore") {
 		t.Errorf("sentinel should mention MemStore; got %q", msg)
 	}

@@ -155,15 +155,19 @@ func TestAuthUsersRefusesBeforeAnyRequest(t *testing.T) {
 	seen := fakeAuthAdmin(t, key, func(w http.ResponseWriter, _ *http.Request, _ map[string]any) { w.WriteHeader(http.StatusTeapot) })
 	captureAuthStdout(t)
 	for name, args := range map[string][]string{
-		"delete with the key on stdin and no --yes": {"users", "delete", "shop-auth", "ada@example.com"},
-		"ban without --for":                         {"users", "ban", "shop-auth", "ada@example.com"},
-		"ban for a week":                            {"users", "ban", "shop-auth", "ada@example.com", "--for", "1w"},
-		"a flag of another subcommand":              {"users", "get", "shop-auth", "ada@example.com", "--for", "7d"},
-		"a name that is neither ID nor email":       {"users", "get", "shop-auth", "ada"},
-		"a list page size over the limit":           {"users", "list", "shop-auth", "--limit", "101"},
-		"an unknown subcommand":                     {"users", "promote", "shop-auth", "ada@example.com"},
-		"an organization that is not a slug":        {"orgs", "get", "shop-auth", "Acme Inc"},
-		"search on orgs get":                        {"orgs", "get", "shop-auth", "acme", "--search", "a"},
+		"delete with the key on stdin and no --yes":  {"users", "delete", "shop-auth", "ada@example.com"},
+		"ban without --for":                          {"users", "ban", "shop-auth", "ada@example.com"},
+		"ban for a week":                             {"users", "ban", "shop-auth", "ada@example.com", "--for", "1w"},
+		"a flag of another subcommand":               {"users", "get", "shop-auth", "ada@example.com", "--for", "7d"},
+		"a name that is neither ID nor email":        {"users", "get", "shop-auth", "ada"},
+		"a list page size over the limit":            {"users", "list", "shop-auth", "--limit", "101"},
+		"an unknown subcommand":                      {"users", "promote", "shop-auth", "ada@example.com"},
+		"an organization that is not a slug":         {"orgs", "get", "shop-auth", "Acme Inc"},
+		"search on orgs get":                         {"orgs", "get", "shop-auth", "acme", "--search", "a"},
+		"orgs set without --require-mfa":             {"orgs", "set", "shop-auth", "acme"},
+		"orgs set with a value other than on or off": {"orgs", "set", "shop-auth", "acme", "--require-mfa", "yes"},
+		"--require-mfa on orgs get":                  {"orgs", "get", "shop-auth", "acme", "--require-mfa", "on"},
+		"--require-mfa on orgs list":                 {"orgs", "list", "shop-auth", "--require-mfa", "on"},
 	} {
 		if code := runAuthAdmin(t, key, args...); code == 0 {
 			t.Errorf("%s accepted", name)
@@ -171,6 +175,45 @@ func TestAuthUsersRefusesBeforeAnyRequest(t *testing.T) {
 	}
 	if len(*seen) != 0 {
 		t.Fatalf("requests sent: %v", *seen)
+	}
+}
+
+func TestAuthUsersClaimsSetsTypedValuesAndShowsThem(t *testing.T) {
+	resetJSONEnv(t)
+	authIssuerServer(t, func(http.ResponseWriter, *http.Request) bool { return false })
+	key := "gaak_" + strings.Repeat("k", 43)
+	const ada = "6a1b2c3d-0000-4000-8000-000000000001"
+	seen := fakeAuthAdmin(t, key, func(w http.ResponseWriter, r *http.Request, body map[string]any) {
+		switch {
+		case r.Method == http.MethodPatch:
+			main.WriteJSONTest(w, map[string]any{"claims": body["set"]})
+		case r.URL.Path == "/admin/v1/users/"+ada:
+			main.WriteJSONTest(w, map[string]any{"user": map[string]any{"id": ada, "email": "ada@example.com", "claims": map[string]any{"plan": "free"}}})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+	out := captureAuthStdout(t)
+	if code := runAuthAdmin(t, key, "users", "claims", "shop-auth", ada); code != 0 || !strings.Contains(out.String(), `plan = "free"`) {
+		t.Fatalf("show = %d\n%s", code, out)
+	}
+	if code := runAuthAdmin(t, key, "users", "claims", "shop-auth", ada, "--set", "plan=pro", "--set", "seats=5", "--set", `flags={"beta":true}`, "--set", `code="007"`, "--unset", "trial"); code != 0 {
+		t.Fatalf("set = %d\n%s", code, out)
+	}
+	want := `PATCH /admin/v1/users/` + ada + `/claims {"set":{"code":"007","flags":{"beta":true},"plan":"pro","seats":5},"unset":["trial"]}`
+	if got := (*seen)[len(*seen)-1]; got != want {
+		t.Fatalf("sent %s\nwant %s", got, want)
+	}
+	for _, args := range [][]string{
+		{"users", "claims", "shop-auth", ada, "--set", "1st=x"},
+		{"users", "claims", "shop-auth", ada, "--set", "plan"},
+		{"users", "claims", "shop-auth", ada, "--set", "plan=a", "--unset", "plan"},
+		{"users", "get", "shop-auth", ada, "--set", "plan=a"},
+	} {
+		before := len(*seen)
+		if code := runAuthAdmin(t, key, args...); code == 0 || len(*seen) != before {
+			t.Errorf("%v accepted", args)
+		}
 	}
 }
 
@@ -194,9 +237,15 @@ func TestAuthUsersListAndOrgs(t *testing.T) {
 				{"id": acme, "slug": "acme", "name": "Acme", "members": 2},
 			}, "total": 2, "page": 1, "per_page": 100})
 		case "/admin/v1/orgs/" + acme:
-			main.WriteJSONTest(w, map[string]any{"organization": map[string]any{"id": acme, "slug": "acme", "name": "Acme", "created_at": "2026-10-01T00:00:00Z"},
-				"members":     []map[string]any{{"user_id": "6a1b2c3d-0000-4000-8000-000000000001", "email": "ada@example.com", "role": "owner"}},
-				"invitations": []map[string]any{{"id": "i1", "email": "eve@example.com", "role": "member", "expires_at": "2026-10-24T00:00:00Z"}}})
+			if r.Method == http.MethodPatch {
+				main.WriteJSONTest(w, map[string]any{"organization": map[string]any{"id": acme, "slug": "acme", "name": "Acme", "mfa_required": true}})
+				return
+			}
+			main.WriteJSONTest(w, map[string]any{"organization": map[string]any{"id": acme, "slug": "acme", "name": "Acme", "created_at": "2026-10-01T00:00:00Z", "mfa_required": true},
+				"members": []map[string]any{{"user_id": "6a1b2c3d-0000-4000-8000-000000000001", "email": "ada@example.com", "role": "owner", "mfa_enabled": true},
+					{"user_id": "6a1b2c3d-0000-4000-8000-000000000002", "email": "bob@example.com", "role": "member", "mfa_enabled": false}},
+				"invitations": []map[string]any{{"id": "i1", "email": "eve@example.com", "role": "member", "expires_at": "2026-10-24T00:00:00Z"}},
+				"domains":     []map[string]any{{"domain": "acme.com", "verified": true, "join": map[string]any{"mode": "automatic", "role": "member"}}, {"domain": "acme.io", "verified": false, "join": map[string]any{"mode": "off", "role": "member"}}}})
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -208,17 +257,51 @@ func TestAuthUsersListAndOrgs(t *testing.T) {
 	if code := runAuthAdmin(t, key, "orgs", "get", "shop-auth", "acme"); code != 0 {
 		t.Fatalf("orgs get = %d\n%s", code, out)
 	}
-	want := []string{"GET /admin/v1/users?page=1&per_page=50&search=example.com", "GET /admin/v1/orgs?page=1&per_page=100&search=acme", "GET /admin/v1/orgs/" + acme}
+	if code := runAuthAdmin(t, key, "orgs", "set", "shop-auth", acme, "--require-mfa", "on"); code != 0 {
+		t.Fatalf("orgs set = %d\n%s", code, out)
+	}
+	want := []string{"GET /admin/v1/users?page=1&per_page=50&search=example.com", "GET /admin/v1/orgs?page=1&per_page=100&search=acme", "GET /admin/v1/orgs/" + acme, "PATCH /admin/v1/orgs/" + acme + ` {"mfa_required":true}`}
 	if !reflect.DeepEqual(*seen, want) {
 		t.Fatalf("requests %v", *seen)
 	}
 	for _, line := range []string{"last sign-in 2026-10-17T09:00:00Z", "unconfirmed", "(anonymous)", "+15555550100", "banned until 2999-01-01", "Page 1 of 120 users; next: --page 2",
-		"Organization acme (Acme)", "Members (1):", "owner", "Pending invitations (1):", "eve@example.com"} {
+		"Organization acme (Acme)", "sign-in  second factor required", "Members (2):", "ada@example.com  second factor", "bob@example.com  no second factor: cannot use this organization",
+		"Pending invitations (1):", "eve@example.com", "Organization acme now requires a second factor", "Email domains (2):", "acme.com  verified; people at it join as member", "acme.io  not verified"} {
 		if !strings.Contains(out.String(), line) {
 			t.Fatalf("output lacks %q:\n%s", line, out)
 		}
 	}
 	if strings.Contains(out.String(), "acme-labs") {
 		t.Fatal("a slug lookup matched part of another slug")
+	}
+}
+
+func TestAuthOrgsAuditPrintsAPageWithItsCursor(t *testing.T) {
+	resetJSONEnv(t)
+	authIssuerServer(t, func(http.ResponseWriter, *http.Request) bool { return false })
+	key := "gaak_" + strings.Repeat("k", 43)
+	const acme = "7c1b2c3d-0000-4000-8000-000000000009"
+	seen := fakeAuthAdmin(t, key, func(w http.ResponseWriter, r *http.Request, _ map[string]any) {
+		main.WriteJSONTest(w, map[string]any{"entries": []map[string]any{
+			{"occurred_at": "2026-10-19T10:02:00Z", "action": "member.role_changed", "actor_email": "ada@example.com", "target_email": "bob@example.com", "data": map[string]any{"from": "member", "to": "admin"}},
+			{"occurred_at": "2026-10-19T10:01:00Z", "action": "member.added", "target_email": "bob@example.com", "data": map[string]any{"role": "member"}},
+		}, "next": "WyIyMDI2LTEwLTE5Il0"})
+	})
+	out := captureAuthStdout(t)
+	if code := runAuthAdmin(t, key, "orgs", "audit", "shop-auth", acme, "--limit", "2", "--cursor", "WyJ4Il0"); code != 0 {
+		t.Fatalf("audit = %d\n%s", code, out)
+	}
+	if want := []string{"GET /admin/v1/orgs/" + acme + "/audit-log?cursor=WyJ4Il0&limit=2"}; !reflect.DeepEqual(*seen, want) {
+		t.Fatalf("requests %v", *seen)
+	}
+	for _, line := range []string{"member.role_changed", "by ada@example.com", `{"from":"member","to":"admin"}`, "by (the application)", "More: --cursor WyIyMDI2LTEwLTE5Il0"} {
+		if !strings.Contains(out.String(), line) {
+			t.Fatalf("output lacks %q:\n%s", line, out)
+		}
+	}
+	for _, args := range [][]string{{"orgs", "audit", "shop-auth", acme, "--cursor", "a b"}, {"orgs", "get", "shop-auth", acme, "--cursor", "WyJ4Il0"}} {
+		if code := runAuthAdmin(t, key, args...); code == 0 {
+			t.Errorf("%v accepted", args)
+		}
 	}
 }

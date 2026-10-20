@@ -59,5 +59,9 @@ export type UploadDeployOptions = {
    * Skip reconciling trigger declarations from the uploaded gregale manifest at commit time.
    */
   no_triggers?: boolean;
+  /**
+   * Commit this upload to production while a deploy freeze is active; the reason is audited with the freezes it overrode (ADR-20261019071733).
+   */
+  override_freeze?: string;
 };
 

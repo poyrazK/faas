@@ -18,11 +18,12 @@
 //  5. Lookup returns rows for (account, project) sorted DESC; the
 //     apply path folds these slugs into the per-deploy exclude
 //     list.
-package state
+package state_test
 
 import (
 	"context"
 	"errors"
+	"github.com/onebox-faas/faas/pkg/state"
 	"testing"
 	"time"
 )
@@ -30,8 +31,8 @@ import (
 // memstoreExclusionSeed is the canonical fixture for the
 // DeploymentScopeExclusion CRUD tests. Keeping the shape in one
 // place lets each sub-test assert a single contract.
-func memstoreExclusionSeed(projectID string) DeploymentScopeExclusion {
-	return DeploymentScopeExclusion{
+func memstoreExclusionSeed(projectID string) state.DeploymentScopeExclusion {
+	return state.DeploymentScopeExclusion{
 		ID:        "mem-excl-1",
 		AccountID: "acct-1",
 		ProjectID: projectID,
@@ -46,7 +47,7 @@ func memstoreExclusionSeed(projectID string) DeploymentScopeExclusion {
 // insert contract: id + timestamps are stamped by the store.
 func TestMemStore_CreateDeploymentScopeExclusion(t *testing.T) {
 	ctx := context.Background()
-	m := NewMemStore()
+	m := state.NewMemStore()
 	in := memstoreExclusionSeed("proj-1")
 
 	out, err := m.CreateDeploymentScopeExclusion(ctx, in)
@@ -74,14 +75,14 @@ func TestMemStore_CreateDeploymentScopeExclusion(t *testing.T) {
 // funnel).
 func TestMemStore_CreateDeploymentScopeExclusion_DuplicateIsConflict(t *testing.T) {
 	ctx := context.Background()
-	m := NewMemStore()
+	m := state.NewMemStore()
 	in := memstoreExclusionSeed("proj-1")
 
 	if _, err := m.CreateDeploymentScopeExclusion(ctx, in); err != nil {
 		t.Fatalf("first create: %v", err)
 	}
 	_, err := m.CreateDeploymentScopeExclusion(ctx, in)
-	if !errors.Is(err, ErrConflict) {
+	if !errors.Is(err, state.ErrConflict) {
 		t.Errorf("duplicate create: got %v, want ErrConflict", err)
 	}
 }
@@ -91,29 +92,29 @@ func TestMemStore_CreateDeploymentScopeExclusion_DuplicateIsConflict(t *testing.
 // created_at DESC, and rows past the 90-day window are excluded.
 func TestMemStore_ListDeploymentScopeExclusions_SortedAndScoped(t *testing.T) {
 	ctx := context.Background()
-	m := NewMemStore()
+	m := state.NewMemStore()
 	now := time.Now()
 
 	// Insert three rows for proj-1 with descending created_at
 	// (newest first). Insert two rows for proj-2 to confirm
 	// scoping.
-	mustCreateExclusion(t, m, DeploymentScopeExclusion{
+	mustCreateExclusion(t, m, state.DeploymentScopeExclusion{
 		AccountID: "acct-1", ProjectID: "proj-1", AppID: "app-1",
 		Slug: "alpha", Reason: "", CreatedBy: "op", CreatedAt: now.Add(-3 * time.Hour),
 	})
-	mustCreateExclusion(t, m, DeploymentScopeExclusion{
+	mustCreateExclusion(t, m, state.DeploymentScopeExclusion{
 		AccountID: "acct-1", ProjectID: "proj-1", AppID: "app-2",
 		Slug: "beta", Reason: "", CreatedBy: "op", CreatedAt: now.Add(-2 * time.Hour),
 	})
-	mustCreateExclusion(t, m, DeploymentScopeExclusion{
+	mustCreateExclusion(t, m, state.DeploymentScopeExclusion{
 		AccountID: "acct-1", ProjectID: "proj-1", AppID: "app-3",
 		Slug: "gamma", Reason: "", CreatedBy: "op", CreatedAt: now.Add(-1 * time.Hour),
 	})
-	mustCreateExclusion(t, m, DeploymentScopeExclusion{
+	mustCreateExclusion(t, m, state.DeploymentScopeExclusion{
 		AccountID: "acct-1", ProjectID: "proj-2", AppID: "app-4",
 		Slug: "delta", Reason: "", CreatedBy: "op",
 	})
-	mustCreateExclusion(t, m, DeploymentScopeExclusion{
+	mustCreateExclusion(t, m, state.DeploymentScopeExclusion{
 		AccountID: "acct-1", ProjectID: "proj-2", AppID: "app-5",
 		Slug: "epsilon", Reason: "", CreatedBy: "op",
 	})
@@ -145,16 +146,16 @@ func TestMemStore_ListDeploymentScopeExclusions_SortedAndScoped(t *testing.T) {
 // `WHERE created_at > now() - interval '90 days'`.
 func TestMemStore_ListDeploymentScopeExclusions_FiltersOldRows(t *testing.T) {
 	ctx := context.Background()
-	m := NewMemStore()
+	m := state.NewMemStore()
 	now := time.Now()
 
 	// Fresh row (within window) — should appear.
-	mustCreateExclusion(t, m, DeploymentScopeExclusion{
+	mustCreateExclusion(t, m, state.DeploymentScopeExclusion{
 		AccountID: "acct-1", ProjectID: "proj-1", AppID: "app-1",
 		Slug: "fresh", Reason: "", CreatedBy: "op", CreatedAt: now.Add(-24 * time.Hour),
 	})
 	// Stale row (91 days old) — should be filtered.
-	mustCreateExclusion(t, m, DeploymentScopeExclusion{
+	mustCreateExclusion(t, m, state.DeploymentScopeExclusion{
 		AccountID: "acct-1", ProjectID: "proj-1", AppID: "app-2",
 		Slug: "stale", Reason: "", CreatedBy: "op",
 		CreatedAt: now.Add(-91 * 24 * time.Hour),
@@ -178,19 +179,19 @@ func TestMemStore_ListDeploymentScopeExclusions_FiltersOldRows(t *testing.T) {
 // delete another operator's exclusion — the test catches that.
 func TestMemStore_DeleteDeploymentScopeExclusion(t *testing.T) {
 	ctx := context.Background()
-	m := NewMemStore()
+	m := state.NewMemStore()
 	mustCreateExclusion(t, m, memstoreExclusionSeed("proj-1"))
 
 	if err := m.DeleteDeploymentScopeExclusion(ctx, "acct-1", "proj-1", "checkout-api"); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
 	// Idempotent: a second delete returns ErrNotFound.
-	if err := m.DeleteDeploymentScopeExclusion(ctx, "acct-1", "proj-1", "checkout-api"); !errors.Is(err, ErrNotFound) {
+	if err := m.DeleteDeploymentScopeExclusion(ctx, "acct-1", "proj-1", "checkout-api"); !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("second delete: got %v, want ErrNotFound", err)
 	}
 	// Wrong account: ErrNotFound (no row matches).
 	mustCreateExclusion(t, m, memstoreExclusionSeed("proj-1"))
-	if err := m.DeleteDeploymentScopeExclusion(ctx, "wrong-acct", "proj-1", "checkout-api"); !errors.Is(err, ErrNotFound) {
+	if err := m.DeleteDeploymentScopeExclusion(ctx, "wrong-acct", "proj-1", "checkout-api"); !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("wrong account: got %v, want ErrNotFound", err)
 	}
 }
@@ -201,19 +202,19 @@ func TestMemStore_DeleteDeploymentScopeExclusion(t *testing.T) {
 // per-deploy exclude list when req.Exclude is empty.
 func TestMemStore_LookupDeploymentScopeExclusions(t *testing.T) {
 	ctx := context.Background()
-	m := NewMemStore()
+	m := state.NewMemStore()
 	now := time.Now()
 
-	mustCreateExclusion(t, m, DeploymentScopeExclusion{
+	mustCreateExclusion(t, m, state.DeploymentScopeExclusion{
 		AccountID: "acct-1", ProjectID: "proj-1", AppID: "app-1",
 		Slug: "older", Reason: "", CreatedBy: "op", CreatedAt: now.Add(-2 * time.Hour),
 	})
-	mustCreateExclusion(t, m, DeploymentScopeExclusion{
+	mustCreateExclusion(t, m, state.DeploymentScopeExclusion{
 		AccountID: "acct-1", ProjectID: "proj-1", AppID: "app-2",
 		Slug: "newer", Reason: "", CreatedBy: "op", CreatedAt: now.Add(-1 * time.Hour),
 	})
 	// Different account: must NOT appear.
-	mustCreateExclusion(t, m, DeploymentScopeExclusion{
+	mustCreateExclusion(t, m, state.DeploymentScopeExclusion{
 		AccountID: "acct-2", ProjectID: "proj-1", AppID: "app-3",
 		Slug: "other-acct", Reason: "", CreatedBy: "op",
 	})
@@ -233,7 +234,7 @@ func TestMemStore_LookupDeploymentScopeExclusions(t *testing.T) {
 // mustCreateExclusion is the test-only helper that fails the
 // enclosing t on insert error so the sub-tests stay focused on
 // the contract under test.
-func mustCreateExclusion(t *testing.T, m *MemStore, in DeploymentScopeExclusion) {
+func mustCreateExclusion(t *testing.T, m *state.MemStore, in state.DeploymentScopeExclusion) {
 	t.Helper()
 	if _, err := m.CreateDeploymentScopeExclusion(context.Background(), in); err != nil {
 		t.Fatalf("mustCreateExclusion: %v", err)

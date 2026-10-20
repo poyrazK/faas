@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -8,17 +8,18 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestWorkflowInitialRecoveryLifecycle(t *testing.T) {
 	for _, scenario := range []string{"admitted", "changed", "evidence_removed", "evidence_expired", "wrong_evidence"} {
 		t.Run(scenario, func(t *testing.T) {
-			workflowScheduleStores(t, func(t *testing.T, s Store) {
+			state.WorkflowScheduleStores(t, func(t *testing.T, s state.Store) {
 				ctx := context.Background()
-				run, app := seedResumeRun(t, s, simpleResumeSpec())
-				failResumeRun(t, s, run, "send")
-				inbox := s.(WorkflowInitialRecoveryStore)
-				jobs := s.(EventRecoveryStore)
+				run, app := state.SeedResumeRun(t, s, state.SimpleResumeSpec())
+				state.FailResumeRun(t, s, run, "send")
+				inbox := s.(state.WorkflowInitialRecoveryStore)
+				jobs := s.(state.EventRecoveryStore)
 				page, err := inbox.ListWorkflowInitialFailures(ctx, app.AccountID, app.ID, api.WorkflowInitialFailureOptions{})
 				if err != nil || len(page.Items) != 1 || page.Items[0].RunID != run.ID || page.Coverage != "partial" {
 					t.Fatalf("inbox %+v %v", page, err)
@@ -36,7 +37,7 @@ func TestWorkflowInitialRecoveryLifecycle(t *testing.T) {
 				req := api.EventRecoveryRequest{RequestID: uuid.NewString(), WorkflowRuns: &api.WorkflowRunRecoveryPlan{Name: run.WorkflowName, Runs: []api.WorkflowRunRecoveryTarget{*preview.Target}}}
 				if scenario == "wrong_evidence" {
 					req.WorkflowRuns.Runs[0].FailureEvidenceID = uuid.NewString()
-					if _, err = jobs.CreateEventRecovery(ctx, app.AccountID, app.ID, req); !errors.Is(err, ErrEventRecoveryChanged) {
+					if _, err = jobs.CreateEventRecovery(ctx, app.AccountID, app.ID, req); !errors.Is(err, state.ErrEventRecoveryChanged) {
 						t.Fatalf("accepted unrelated evidence %v", err)
 					}
 					return
@@ -49,35 +50,35 @@ func TestWorkflowInitialRecoveryLifecycle(t *testing.T) {
 					t.Fatal("job lost evidence identity")
 				}
 				if scenario == "changed" {
-					if _, _, _, err = s.(WorkflowResumeStore).ResumeWorkflowRun(ctx, resumeOptions(run, app, 0)); err != nil {
+					if _, _, _, err = s.(state.WorkflowResumeStore).ResumeWorkflowRun(ctx, state.ResumeOptions(run, app, 0)); err != nil {
 						t.Fatal(err)
 					}
 				}
 				if scenario == "evidence_removed" {
-					if m, ok := s.(*MemStore); ok {
-						m.mu.Lock()
-						delete(m.workflowFailureEvidence, canonicalMemUUID(app.ID))
-						m.mu.Unlock()
+					if m, ok := s.(*state.MemStore); ok {
+						(*m.Mu()).Lock()
+						delete((*m.WorkflowFailureEvidence()), state.CanonicalMemUUID(app.ID))
+						(*m.Mu()).Unlock()
 					} else {
-						if _, err = s.(*PgStore).pool.Exec(ctx, "DELETE FROM workflow_recovery_failure_evidence WHERE id=$1::uuid", e.ID); err != nil {
+						if _, err = (*s.(*state.PgStore).Pool()).Exec(ctx, "DELETE FROM workflow_recovery_failure_evidence WHERE id=$1::uuid", e.ID); err != nil {
 							t.Fatal(err)
 						}
 					}
 				}
 				if scenario == "evidence_expired" {
 					aged := time.Now().UTC().Add(-api.WorkflowRecoveryFailureRetention - time.Hour)
-					if m, ok := s.(*MemStore); ok {
-						m.mu.Lock()
-						entries := m.workflowFailureEvidence[canonicalMemUUID(app.ID)]
+					if m, ok := s.(*state.MemStore); ok {
+						(*m.Mu()).Lock()
+						entries := (*m.WorkflowFailureEvidence())[state.CanonicalMemUUID(app.ID)]
 						entries[0].ObservedAt = aged
 						entries[0].CompletedAt = nil
-						m.mu.Unlock()
-					} else if _, err = s.(*PgStore).pool.Exec(ctx, "UPDATE workflow_recovery_failure_evidence SET observed_at=$2,completed_at=NULL WHERE id=$1::uuid", e.ID, aged); err != nil {
+						(*m.Mu()).Unlock()
+					} else if _, err = (*s.(*state.PgStore).Pool()).Exec(ctx, "UPDATE workflow_recovery_failure_evidence SET observed_at=$2,completed_at=NULL WHERE id=$1::uuid", e.ID, aged); err != nil {
 						t.Fatal(err)
 					}
 				}
 				if scenario == "evidence_removed" || scenario == "evidence_expired" {
-					preflight, err := s.(EventRecoveryPreflightStore).GetEventRecoveryPreflight(ctx, app.AccountID, job.ID, time.Now().UTC())
+					preflight, err := s.(state.EventRecoveryPreflightStore).GetEventRecoveryPreflight(ctx, app.AccountID, job.ID, time.Now().UTC())
 					if err != nil || preflight.LikelySkippedCount != 1 || preflight.Sample[0].Reason != "failure_evidence_unavailable" {
 						t.Fatalf("evidence preflight %+v %v", preflight, err)
 					}
@@ -111,7 +112,7 @@ func TestWorkflowInitialRecoveryLifecycle(t *testing.T) {
 						t.Fatalf("stale preview %+v %v", changed, err)
 					}
 				}
-				if _, err = inbox.PreviewWorkflowInitialRecovery(ctx, uuid.NewString(), app.ID, e.ID); !errors.Is(err, ErrNotFound) {
+				if _, err = inbox.PreviewWorkflowInitialRecovery(ctx, uuid.NewString(), app.ID, e.ID); !errors.Is(err, state.ErrNotFound) {
 					t.Fatalf("cross-account preview %v", err)
 				}
 			})
@@ -121,11 +122,11 @@ func TestWorkflowInitialRecoveryLifecycle(t *testing.T) {
 func TestWorkflowInitialRecoverySafety(t *testing.T) {
 	for _, scenario := range []string{"capacity", "unsafe", "missing"} {
 		t.Run(scenario, func(t *testing.T) {
-			workflowScheduleStores(t, func(t *testing.T, s Store) {
+			state.WorkflowScheduleStores(t, func(t *testing.T, s state.Store) {
 				ctx := context.Background()
-				run, app := seedResumeRun(t, s, simpleResumeSpec())
-				failResumeRun(t, s, run, "send")
-				inbox := s.(WorkflowInitialRecoveryStore)
+				run, app := state.SeedResumeRun(t, s, state.SimpleResumeSpec())
+				state.FailResumeRun(t, s, run, "send")
+				inbox := s.(state.WorkflowInitialRecoveryStore)
 				page, err := inbox.ListWorkflowInitialFailures(ctx, app.AccountID, app.ID, api.WorkflowInitialFailureOptions{})
 				if err != nil {
 					t.Fatal(err)
@@ -133,29 +134,29 @@ func TestWorkflowInitialRecoverySafety(t *testing.T) {
 				switch scenario {
 				case "capacity":
 					for n := 0; n < api.PlanHobby.WorkflowMaxConcurrentRuns(); n++ {
-						if err = s.CreateWorkflowRun(ctx, &WorkflowRun{AppID: app.ID, WorkflowName: run.WorkflowName, DefinitionSnapshot: run.DefinitionSnapshot, Input: run.Input}); err != nil {
+						if err = s.CreateWorkflowRun(ctx, &state.WorkflowRun{AppID: app.ID, WorkflowName: run.WorkflowName, DefinitionSnapshot: run.DefinitionSnapshot, Input: run.Input}); err != nil {
 							t.Fatal(err)
 						}
 					}
 				case "unsafe":
-					if m, ok := s.(*MemStore); ok {
-						m.mu.Lock()
-						a := m.apps[app.ID]
+					if m, ok := s.(*state.MemStore); ok {
+						(*m.Mu()).Lock()
+						a := (*m.Apps())[app.ID]
 						a.MaintenanceMode = true
-						m.apps[app.ID] = a
-						m.mu.Unlock()
+						(*m.Apps())[app.ID] = a
+						(*m.Mu()).Unlock()
 					} else {
-						if _, err = s.(*PgStore).pool.Exec(ctx, "UPDATE apps SET maintenance_mode=true WHERE id=$1::uuid", app.ID); err != nil {
+						if _, err = (*s.(*state.PgStore).Pool()).Exec(ctx, "UPDATE apps SET maintenance_mode=true WHERE id=$1::uuid", app.ID); err != nil {
 							t.Fatal(err)
 						}
 					}
 				case "missing":
-					if m, ok := s.(*MemStore); ok {
-						m.mu.Lock()
-						delete(m.workflowRuns, run.ID)
-						m.mu.Unlock()
+					if m, ok := s.(*state.MemStore); ok {
+						(*m.Mu()).Lock()
+						delete((*m.WorkflowRuns()), run.ID)
+						(*m.Mu()).Unlock()
 					} else {
-						if _, err = s.(*PgStore).pool.Exec(ctx, "DELETE FROM workflow_runs WHERE id=$1::uuid", run.ID); err != nil {
+						if _, err = (*s.(*state.PgStore).Pool()).Exec(ctx, "DELETE FROM workflow_runs WHERE id=$1::uuid", run.ID); err != nil {
 							t.Fatal(err)
 						}
 					}
@@ -170,23 +171,23 @@ func TestWorkflowInitialRecoverySafety(t *testing.T) {
 	}
 }
 func TestWorkflowInitialFailurePagination(t *testing.T) {
-	workflowScheduleStores(t, func(t *testing.T, s Store) {
+	state.WorkflowScheduleStores(t, func(t *testing.T, s state.Store) {
 		ctx := context.Background()
-		run, app := seedResumeRun(t, s, simpleResumeSpec())
-		failResumeRun(t, s, run, "send")
+		run, app := state.SeedResumeRun(t, s, state.SimpleResumeSpec())
+		state.FailResumeRun(t, s, run, "send")
 		for n := 0; n < 2; n++ {
-			other := &WorkflowRun{AppID: app.ID, WorkflowName: run.WorkflowName, DefinitionSnapshot: run.DefinitionSnapshot, Input: run.Input}
+			other := &state.WorkflowRun{AppID: app.ID, WorkflowName: run.WorkflowName, DefinitionSnapshot: run.DefinitionSnapshot, Input: run.Input}
 			if err := s.CreateWorkflowRun(ctx, other); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := s.ClaimNextDueWorkflowRun(ctx); err != nil {
 				t.Fatal(err)
 			}
-			if err := s.MarkWorkflowRunStatus(ctx, other.ID, WorkflowRunStatusDead, nil, nil); err != nil {
+			if err := s.MarkWorkflowRunStatus(ctx, other.ID, state.WorkflowRunStatusDead, nil, nil); err != nil {
 				t.Fatal(err)
 			}
 		}
-		inbox := s.(WorkflowInitialRecoveryStore)
+		inbox := s.(state.WorkflowInitialRecoveryStore)
 		o := api.WorkflowInitialFailureOptions{Limit: 1, Workflow: run.WorkflowName}
 		seen := map[string]bool{}
 		for n := 0; n < 3; n++ {
@@ -199,7 +200,7 @@ func TestWorkflowInitialFailurePagination(t *testing.T) {
 				wrong := o
 				wrong.Workflow = "other"
 				wrong.After = page.NextAfter
-				if _, err = inbox.ListWorkflowInitialFailures(ctx, app.AccountID, app.ID, wrong); !errors.Is(err, ErrEventRecoveryQuery) {
+				if _, err = inbox.ListWorkflowInitialFailures(ctx, app.AccountID, app.ID, wrong); !errors.Is(err, state.ErrEventRecoveryQuery) {
 					t.Fatalf("cross-filter cursor %v", err)
 				}
 			}
@@ -208,7 +209,7 @@ func TestWorkflowInitialFailurePagination(t *testing.T) {
 				t.Fatal("incorrect pagination")
 			}
 		}
-		if _, err := inbox.ListWorkflowInitialFailures(ctx, uuid.NewString(), app.ID, api.WorkflowInitialFailureOptions{}); !errors.Is(err, ErrNotFound) {
+		if _, err := inbox.ListWorkflowInitialFailures(ctx, uuid.NewString(), app.ID, api.WorkflowInitialFailureOptions{}); !errors.Is(err, state.ErrNotFound) {
 			t.Fatalf("cross-account inbox %v", err)
 		}
 	})

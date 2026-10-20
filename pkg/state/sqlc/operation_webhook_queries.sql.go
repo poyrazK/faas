@@ -53,7 +53,7 @@ func (q *Queries) DeleteOperationWebhookBinding(ctx context.Context, db DBTX, ar
 
 const getOperationWebhookBinding = `-- name: GetOperationWebhookBinding :one
 
-SELECT endpoint_id, account_id, app_id, scope, operation_name, platform_tenant_id, event_types, version, created_at, updated_at FROM customer_operation_webhook_bindings WHERE endpoint_id = $1
+SELECT endpoint_id, account_id, app_id, scope, operation_name, platform_tenant_id, event_types, version, created_at, updated_at, mode, subject_type, subject_id_from, signals FROM customer_operation_webhook_bindings WHERE endpoint_id = $1
 `
 
 // ADR-1193 webhook-submitted customer Operations.
@@ -71,6 +71,10 @@ func (q *Queries) GetOperationWebhookBinding(ctx context.Context, db DBTX, endpo
 		&i.Version,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Mode,
+		&i.SubjectType,
+		&i.SubjectIDFrom,
+		&i.Signals,
 	)
 	return i, err
 }
@@ -137,7 +141,7 @@ func (q *Queries) InsertOperationWebhookReceipt(ctx context.Context, db DBTX, ar
 }
 
 const lockOperationWebhookBinding = `-- name: LockOperationWebhookBinding :one
-SELECT endpoint_id, account_id, app_id, scope, operation_name, platform_tenant_id, event_types, version, created_at, updated_at FROM customer_operation_webhook_bindings WHERE endpoint_id = $1 FOR SHARE
+SELECT endpoint_id, account_id, app_id, scope, operation_name, platform_tenant_id, event_types, version, created_at, updated_at, mode, subject_type, subject_id_from, signals FROM customer_operation_webhook_bindings WHERE endpoint_id = $1 FOR SHARE
 `
 
 func (q *Queries) LockOperationWebhookBinding(ctx context.Context, db DBTX, endpointID pgtype.UUID) (CustomerOperationWebhookBinding, error) {
@@ -154,6 +158,10 @@ func (q *Queries) LockOperationWebhookBinding(ctx context.Context, db DBTX, endp
 		&i.Version,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Mode,
+		&i.SubjectType,
+		&i.SubjectIDFrom,
+		&i.Signals,
 	)
 	return i, err
 }
@@ -198,14 +206,18 @@ func (q *Queries) OperationWebhookTenantStatus(ctx context.Context, db DBTX, arg
 }
 
 const saveOperationWebhookBinding = `-- name: SaveOperationWebhookBinding :one
-INSERT INTO customer_operation_webhook_bindings(endpoint_id, account_id, app_id, scope, operation_name, platform_tenant_id, event_types, version)
-VALUES ($1, $2, $3, $4, $5, $6, $7, nextval('customer_operation_webhook_binding_revision_seq'))
+INSERT INTO customer_operation_webhook_bindings(endpoint_id, account_id, app_id, scope, operation_name, platform_tenant_id, event_types,
+    mode, subject_type, subject_id_from, signals, version)
+VALUES ($1, $2, $3, $4, $5, $6,
+    $7, $8::text, $9::text, $10::text, $11::jsonb,
+    nextval('customer_operation_webhook_binding_revision_seq'))
 ON CONFLICT (endpoint_id) DO UPDATE SET scope = EXCLUDED.scope, operation_name = EXCLUDED.operation_name,
     platform_tenant_id = EXCLUDED.platform_tenant_id, event_types = EXCLUDED.event_types,
+    mode = EXCLUDED.mode, subject_type = EXCLUDED.subject_type, subject_id_from = EXCLUDED.subject_id_from, signals = EXCLUDED.signals,
     version = EXCLUDED.version, updated_at = clock_timestamp()
 WHERE customer_operation_webhook_bindings.account_id = EXCLUDED.account_id
   AND customer_operation_webhook_bindings.app_id = EXCLUDED.app_id
-RETURNING endpoint_id, account_id, app_id, scope, operation_name, platform_tenant_id, event_types, version, created_at, updated_at
+RETURNING endpoint_id, account_id, app_id, scope, operation_name, platform_tenant_id, event_types, version, created_at, updated_at, mode, subject_type, subject_id_from, signals
 `
 
 type SaveOperationWebhookBindingParams struct {
@@ -216,6 +228,10 @@ type SaveOperationWebhookBindingParams struct {
 	OperationName    string
 	PlatformTenantID pgtype.UUID
 	EventTypes       []string
+	Mode             string
+	SubjectType      pgtype.Text
+	SubjectIDFrom    pgtype.Text
+	Signals          []byte
 }
 
 func (q *Queries) SaveOperationWebhookBinding(ctx context.Context, db DBTX, arg SaveOperationWebhookBindingParams) (CustomerOperationWebhookBinding, error) {
@@ -227,6 +243,10 @@ func (q *Queries) SaveOperationWebhookBinding(ctx context.Context, db DBTX, arg 
 		arg.OperationName,
 		arg.PlatformTenantID,
 		arg.EventTypes,
+		arg.Mode,
+		arg.SubjectType,
+		arg.SubjectIDFrom,
+		arg.Signals,
 	)
 	var i CustomerOperationWebhookBinding
 	err := row.Scan(
@@ -240,6 +260,10 @@ func (q *Queries) SaveOperationWebhookBinding(ctx context.Context, db DBTX, arg 
 		&i.Version,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Mode,
+		&i.SubjectType,
+		&i.SubjectIDFrom,
+		&i.Signals,
 	)
 	return i, err
 }

@@ -1,21 +1,22 @@
 // ADR-076: test only deployment lifecycle rows now that all-events hooks also
 // receive release outcome rows.
-package state
+package state_test
 
 import (
 	"encoding/json"
+	"github.com/onebox-faas/faas/pkg/state"
 	"testing"
 )
 
 func TestMemStoreDeploymentLifecycleWebhooks(t *testing.T) {
-	m, ctx, account, app := webhookFixture(t)
-	liveHook := memSampleWebhook(account.ID, app.ID)
-	liveHook.EventFilter = []string{string(AppWebhookEventDeploymentLive)}
+	m, ctx, account, app := state.WebhookFixture(t)
+	liveHook := state.MemSampleWebhook(account.ID, app.ID)
+	liveHook.EventFilter = []string{string(state.AppWebhookEventDeploymentLive)}
 	liveHook, err := m.CreateAppWebhook(ctx, liveHook)
 	if err != nil {
 		t.Fatal(err)
 	}
-	allHook := memSampleWebhook(account.ID, app.ID)
+	allHook := state.MemSampleWebhook(account.ID, app.ID)
 	allHook.EventFilter = nil
 	allHook, err = m.CreateAppWebhook(ctx, allHook)
 	if err != nil {
@@ -25,23 +26,23 @@ func TestMemStoreDeploymentLifecycleWebhooks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	foreignHook := memSampleWebhook(otherAccount.ID, app.ID)
+	foreignHook := state.MemSampleWebhook(otherAccount.ID, app.ID)
 	foreignHook.EventFilter = nil
 	foreignHook, err = m.CreateAppWebhook(ctx, foreignHook)
 	if err != nil {
 		t.Fatal(err)
 	}
-	accountHook := seedMemAccountReleaseHook(m, account.ID,
-		[]string{string(AppWebhookEventDeploymentLive), string(AppWebhookEventDeploymentFailed)}, true)
-	liveOnlyAccountHook := seedMemAccountReleaseHook(m, account.ID,
-		[]string{string(AppWebhookEventDeploymentLive)}, true)
-	disabledAccountHook := seedMemAccountReleaseHook(m, account.ID,
-		[]string{string(AppWebhookEventDeploymentLive)}, false)
-	foreignAccountHook := seedMemAccountReleaseHook(m, otherAccount.ID,
-		[]string{string(AppWebhookEventDeploymentLive)}, true)
-	emptyFilterAccountHook := seedMemAccountReleaseHook(m, account.ID, nil, true)
+	accountHook := state.SeedMemAccountReleaseHook(m, account.ID,
+		[]string{string(state.AppWebhookEventDeploymentLive), string(state.AppWebhookEventDeploymentFailed)}, true)
+	liveOnlyAccountHook := state.SeedMemAccountReleaseHook(m, account.ID,
+		[]string{string(state.AppWebhookEventDeploymentLive)}, true)
+	disabledAccountHook := state.SeedMemAccountReleaseHook(m, account.ID,
+		[]string{string(state.AppWebhookEventDeploymentLive)}, false)
+	foreignAccountHook := state.SeedMemAccountReleaseHook(m, otherAccount.ID,
+		[]string{string(state.AppWebhookEventDeploymentLive)}, true)
+	emptyFilterAccountHook := state.SeedMemAccountReleaseHook(m, account.ID, nil, true)
 
-	live, err := m.CreateDeployment(ctx, Deployment{AppID: app.ID, ImageDigest: "sha256:live"})
+	live, err := m.CreateDeployment(ctx, state.Deployment{AppID: app.ID, ImageDigest: "sha256:live"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,15 +52,15 @@ func TestMemStoreDeploymentLifecycleWebhooks(t *testing.T) {
 	if err := m.MarkDeploymentLive(ctx, live.ID); err != nil {
 		t.Fatal(err)
 	}
-	assertDeliveryCount := func(hook AppWebhook, want int) []AppWebhookDelivery {
+	assertDeliveryCount := func(hook state.AppWebhook, want int) []state.AppWebhookDelivery {
 		t.Helper()
 		got, _, err := m.ListAppWebhookDeliveries(ctx, app.ID, hook.ID, 20, "")
 		if err != nil {
 			t.Fatal(err)
 		}
-		var lifecycle []AppWebhookDelivery
+		var lifecycle []state.AppWebhookDelivery
 		for _, delivery := range got {
-			if delivery.Event == AppWebhookEventDeploymentLive || delivery.Event == AppWebhookEventDeploymentFailed {
+			if delivery.Event == state.AppWebhookEventDeploymentLive || delivery.Event == state.AppWebhookEventDeploymentFailed {
 				lifecycle = append(lifecycle, delivery)
 			}
 		}
@@ -80,7 +81,7 @@ func TestMemStoreDeploymentLifecycleWebhooks(t *testing.T) {
 	assertDeliveryCount(emptyFilterAccountHook, 0)
 	assertDeliveryCount(foreignHook, 0)
 
-	failed, err := m.CreateDeployment(ctx, Deployment{AppID: app.ID, ImageDigest: "sha256:failed"})
+	failed, err := m.CreateDeployment(ctx, state.Deployment{AppID: app.ID, ImageDigest: "sha256:failed"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +107,7 @@ func TestMemStoreDeploymentLifecycleWebhooks(t *testing.T) {
 		if payload["app_id"] != app.ID || payload["status"] != string(delivery.Event)[len("deployment."):] {
 			t.Fatalf("unexpected %s payload: %v", delivery.Event, payload)
 		}
-		if delivery.Event == AppWebhookEventDeploymentFailed &&
+		if delivery.Event == state.AppWebhookEventDeploymentFailed &&
 			(payload["error_code"] != "build_timeout" || payload["error_hint"] != "Try a smaller build") {
 			t.Fatalf("failed payload lacks explanation: %v", payload)
 		}
@@ -114,11 +115,11 @@ func TestMemStoreDeploymentLifecycleWebhooks(t *testing.T) {
 
 	// A receiver registered before an app exists still sees that app's
 	// release transitions without copying the subscription to the app.
-	newApp, err := m.CreateApp(ctx, App{AccountID: account.ID, Slug: "later-webhook-app", RAMMB: 512, Status: AppActive})
+	newApp, err := m.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "later-webhook-app", RAMMB: 512, Status: state.AppActive})
 	if err != nil {
 		t.Fatal(err)
 	}
-	newDeployment, err := m.CreateDeployment(ctx, Deployment{AppID: newApp.ID, ImageDigest: "sha256:later"})
+	newDeployment, err := m.CreateDeployment(ctx, state.Deployment{AppID: newApp.ID, ImageDigest: "sha256:later"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +127,7 @@ func TestMemStoreDeploymentLifecycleWebhooks(t *testing.T) {
 		t.Fatal(err)
 	}
 	fromNewApp, _, err := m.ListAppWebhookDeliveries(ctx, newApp.ID, accountHook.ID, 20, "")
-	if err != nil || len(fromNewApp) != 1 || fromNewApp[0].AppID != newApp.ID || fromNewApp[0].Event != AppWebhookEventDeploymentLive {
+	if err != nil || len(fromNewApp) != 1 || fromNewApp[0].AppID != newApp.ID || fromNewApp[0].Event != state.AppWebhookEventDeploymentLive {
 		t.Fatalf("new app release deliveries = %+v, %v", fromNewApp, err)
 	}
 	assertDeliveryCount(allHook, 2)

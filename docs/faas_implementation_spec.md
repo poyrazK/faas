@@ -1947,6 +1947,25 @@ request therefore does not create an instance transition or resident usage.
 |---|---|---|---|
 | `gateway_cors_preflight_edge_total` | `app` | `pkg/gateway/metrics.go::ObserveCORSPreflightEdge` | Counter of matching CORS preflights answered by the gateway without waking the resolved app. |
 
+### 12.9 Customer Operations (ADR-20261016123221)
+
+schedd reads fleet-wide Operation state from Postgres in its 60-second
+retention tick and serves one snapshot per scrape. Every schedd reports the
+same values, so rules and panels aggregate with `max`. Alerts are `warn`
+(ADR-1235); dashboard `deploy/grafana/customer-operations.json`, runbook
+`docs/runbooks/FaasCustomerOperations.md`.
+
+| Metric name | Labels | Producer | Semantics |
+|---|---|---|---|
+| `schedd_customer_operations` | `state` | `pkg/sched/operation_telemetry.go` | Operations `accepted`, `running`, `waiting` or `requires_reconciliation`. |
+| `schedd_customer_operations_waiting` | `kind` | same | Waiting Operations by `timer`, `approval`, `event`. |
+| `schedd_customer_operations_oldest_update_seconds` | `state` | same | Time since the least recently changed Operation in that state changed. |
+| `schedd_customer_operations_overdue` | — | same | Active Operations more than 180 s past their deadline. Alert `FaasCustomerOperationDeadlinesOverdue`: > 0 for 10m. |
+| `schedd_customer_operations_settled_recent` | `outcome`, `failure_code` | same | Outcomes in the last 900 s; `failure_code` is a closed set plus `none` and `other`. |
+| `schedd_customer_operations_outcome_unknown_accounts` | — | same | Accounts with an `execution_outcome_unknown` reconciliation in the last 900 s. Alert `FaasCustomerOperationOutcomesUnknown`: ≥ 3 for 5m. |
+| `schedd_customer_operations_telemetry_refreshed_timestamp_seconds` | — | same | When the snapshot was last read. |
+| `apid_customer_operation_webhook_events_total` | `mode`, `result` | `pkg/apid/operation/metrics.go` | Verified provider events on operation-bound endpoints; `result` is `accepted`, `duplicate`, `ignored`, `signaled`, `unmatched` or `refused` (non-2xx). |
+
 ---
 
 ## 13. RAM budget ledger (enforced as systemd slices)

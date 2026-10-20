@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -7,11 +7,12 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestMemStoreLegacyJobArtifactVerification(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
+	store := state.NewMemStore()
 	account, err := store.CreateAccount(ctx, "legacy-artifact@example.com", api.PlanHobby)
 	if err != nil {
 		t.Fatal(err)
@@ -20,11 +21,11 @@ func TestMemStoreLegacyJobArtifactVerification(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	store.mu.Lock()
+	(*store.Mu()).Lock()
 	job.ImageMaterializationStatus = "verifying_legacy"
 	job.ImageStorageKey = job.ImageRef
-	store.jobs[job.ID] = job
-	store.mu.Unlock()
+	(*store.Jobs())[job.ID] = job
+	(*store.Mu()).Unlock()
 
 	claimed, err := store.JobClaimLegacyArtifactVerification(ctx, 1, "node-a", time.Minute)
 	if err != nil || len(claimed) != 1 || claimed[0].ImageMaterializationAttempts != 1 {
@@ -37,10 +38,10 @@ func TestMemStoreLegacyJobArtifactVerification(t *testing.T) {
 	if _, err := store.JobFinishLegacyArtifactVerification(ctx, job.ID, job.ImageRef, "node-a", job.ImageRef, true, ""); err == nil {
 		t.Fatal("legacy app key accepted as promoted job key")
 	}
-	if _, err := store.JobFinishLegacyArtifactVerification(ctx, job.ID, job.ImageRef, "node-b", promotedKey, true, ""); !errors.Is(err, ErrConflict) {
+	if _, err := store.JobFinishLegacyArtifactVerification(ctx, job.ID, job.ImageRef, "node-b", promotedKey, true, ""); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("other owner finish error = %v, want conflict", err)
 	}
-	if _, err := store.JobFinishLegacyArtifactVerification(ctx, job.ID, "apps/other/artifact.ext4", "node-a", promotedKey, true, ""); !errors.Is(err, ErrConflict) {
+	if _, err := store.JobFinishLegacyArtifactVerification(ctx, job.ID, "apps/other/artifact.ext4", "node-a", promotedKey, true, ""); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("other ref finish error = %v, want conflict", err)
 	}
 	deferred, err := store.JobRetryLegacyArtifactVerification(ctx, job.ID, job.ImageRef, "node-a", "backend unavailable", time.Now().Add(time.Hour))
@@ -50,10 +51,10 @@ func TestMemStoreLegacyJobArtifactVerification(t *testing.T) {
 	if another, err := store.JobClaimLegacyArtifactVerification(ctx, 1, "node-b", time.Minute); err != nil || len(another) != 0 {
 		t.Fatalf("backoff claim = %+v, %v", another, err)
 	}
-	store.mu.Lock()
+	(*store.Mu()).Lock()
 	deferred.ImageMaterializationNextAttemptAt = nil
-	store.jobs[job.ID] = deferred
-	store.mu.Unlock()
+	(*store.Jobs())[job.ID] = deferred
+	(*store.Mu()).Unlock()
 	claimed, err = store.JobClaimLegacyArtifactVerification(ctx, 1, "node-b", time.Minute)
 	if err != nil || len(claimed) != 1 || claimed[0].ImageMaterializationAttempts != 2 {
 		t.Fatalf("reclaim = %+v, %v", claimed, err)
@@ -62,11 +63,11 @@ func TestMemStoreLegacyJobArtifactVerification(t *testing.T) {
 	if err != nil || ready.ImageMaterializationStatus != "ready" || ready.ImageStorageKey != promotedKey || ready.ImageResolvedDigest != "" {
 		t.Fatalf("found artifact = %+v, %v", ready, err)
 	}
-	store.mu.Lock()
+	(*store.Mu()).Lock()
 	ready.ImageMaterializationStatus = "verifying_legacy"
 	ready.ImageStorageKey = job.ImageRef
-	store.jobs[job.ID] = ready
-	store.mu.Unlock()
+	(*store.Jobs())[job.ID] = ready
+	(*store.Mu()).Unlock()
 	claimed, err = store.JobClaimLegacyArtifactVerification(ctx, 1, "node-c", time.Minute)
 	if err != nil || len(claimed) != 1 {
 		t.Fatalf("missing claim = %+v, %v", claimed, err)

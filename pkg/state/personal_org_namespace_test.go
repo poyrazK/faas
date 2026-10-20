@@ -18,21 +18,22 @@
 //     relevant namespaces (no flag-day surprises when the Go
 //     runtime rotates random state).
 
-package state
+package state_test
 
 import (
 	"regexp"
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestPersonalOrgNamespaceFrozen(t *testing.T) {
 	want := uuid.NewSHA1(uuid.NameSpaceURL,
 		[]byte("onebox-faas/iam-6/personal-org-namespace/v1"))
-	if PersonalOrgNamespace != want {
+	if state.PersonalOrgNamespace != want {
 		t.Errorf("PersonalOrgNamespace drifted: got %s, want %s",
-			PersonalOrgNamespace, want)
+			state.PersonalOrgNamespace, want)
 	}
 }
 
@@ -48,7 +49,7 @@ func TestPersonalOrgSlug_RegexShape(t *testing.T) {
 		"11111111-2222-3333-4444-555555555555",
 		"a1b2c3d4-e5f6-7890-1234-567890abcdef",
 	} {
-		s := PersonalOrgSlug(id)
+		s := state.PersonalOrgSlug(id)
 		if !slugRE.MatchString(s) {
 			t.Errorf("slug %q for id %s does not match /^u-[0-9a-f]{12}$/", s, id)
 		}
@@ -60,9 +61,9 @@ func TestPersonalOrgSlug_RegexShape(t *testing.T) {
 
 func TestPersonalOrgSlug_Deterministic(t *testing.T) {
 	acct := "00000000-0000-0000-0000-0000000000a1"
-	first := PersonalOrgSlug(acct)
+	first := state.PersonalOrgSlug(acct)
 	for i := 0; i < 8; i++ {
-		again := PersonalOrgSlug(acct)
+		again := state.PersonalOrgSlug(acct)
 		if again != first {
 			t.Errorf("PersonalOrgSlug(%s) non-deterministic: %s vs %s (iter %d)",
 				acct, first, again, i)

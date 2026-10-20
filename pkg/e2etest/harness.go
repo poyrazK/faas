@@ -51,8 +51,12 @@ package e2etest
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/x509"
 	"encoding/hex"
+	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -168,6 +172,15 @@ type Harness struct {
 	apidEnv              []string
 	apidListen           string
 	requestTelemetrySock string
+	// killed holds daemons stopped on purpose by KillAPID or KillSchedd.
+	killed map[*exec.Cmd]bool
+}
+
+func (h *Harness) markKilled(proc *exec.Cmd) {
+	if h.killed == nil {
+		h.killed = map[*exec.Cmd]bool{}
+	}
+	h.killed[proc] = true
 }
 
 // currentHarness points at the most recently booted Harness. Used by
@@ -206,6 +219,7 @@ func Start(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv ...string) *H
 	// imaged, schedd's signature verifier and vmmd must resolve the same
 	// app artifacts. Keep explicit caller overrides last, as for other env.
 	extraEnv = append([]string{"FAAS_APPS_ROOT=" + appsRoot}, extraEnv...)
+	extraEnv = append(internalSvcKeyEnv(t, tmp, extraEnv), extraEnv...)
 
 	// Socket dir lives outside t.TempDir() because macOS's t.TempDir() is
 	// under /var/folders/.../T/<random> and a test name + random suffix
@@ -216,6 +230,15 @@ func Start(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv ...string) *H
 
 	h := &Harness{T: t, Pool: pool, TmpDir: tmp, BinDir: bin, ImagedTmp: appsRoot, SockDir: sockDir, RecoveryHMACKeyHex: newRecoveryHMACKeyHex(t), HostHMACKeyPath: newHostHMACKeyFile(t, tmp)}
 	currentHarness = h
+	// Stop is registered with t.Cleanup only once every daemon is up. A
+	// t.Fatal part-way through (a daemon that never listens or subscribes)
+	// must not leave the daemons already started running on the host.
+	booted := false
+	defer func() {
+		if !booted {
+			h.stop()
+		}
+	}()
 	if which&Gatewayd != 0 {
 		reserveGatewayAddresses(t, h)
 		// APID starts first, but its probes must target this reserved control
@@ -316,7 +339,9 @@ failure_report_dir = %q
 		env := append(vmmdEnv(dbURL, cfgPath, h.ScheddSock), extraEnv...)
 		h.vmmdLaunchEnv = append([]string(nil), env...)
 		h.procs = append(h.procs, startProc(t, bin, "vmmd", env))
-		waitUnix(t, sockPath, 10*time.Second)
+		// vmmd reconciles netns, jails and its journal before it listens;
+		// on a loaded shared acceptance host that took longer than 10s.
+		waitUnix(t, sockPath, time.Minute)
 	}
 
 	// Start the gateway before imaged when the reference-node acceptance opts
@@ -422,6 +447,7 @@ failure_report_dir = %q
 	}
 
 	h.requireDaemonsAlive(t)
+	booted = true
 	t.Cleanup(h.stop)
 	return h
 }
@@ -748,11 +774,21 @@ func StartWithEnv(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv []stri
 	}
 	// Match Start: share imaged's app store with every harness daemon.
 	extraEnv = append([]string{"FAAS_APPS_ROOT=" + appsRoot}, extraEnv...)
+	extraEnv = append(internalSvcKeyEnv(t, tmp, extraEnv), extraEnv...)
 	// See Start for why sockDir lives outside t.TempDir() — macOS sun_path
 	// limit, and `/tmp/faas-e2e-sock-*` is short and stable everywhere.
 	sockDir := newHarnessSocketDir(t)
 	h := &Harness{T: t, Pool: pool, TmpDir: tmp, BinDir: bin, ImagedTmp: appsRoot, SockDir: sockDir, RecoveryHMACKeyHex: newRecoveryHMACKeyHex(t), HostHMACKeyPath: newHostHMACKeyFile(t, tmp)}
 	currentHarness = h
+	// Stop is registered with t.Cleanup only once every daemon is up. A
+	// t.Fatal part-way through (a daemon that never listens or subscribes)
+	// must not leave the daemons already started running on the host.
+	booted := false
+	defer func() {
+		if !booted {
+			h.stop()
+		}
+	}()
 	if which&Gatewayd != 0 {
 		reserveGatewayAddresses(t, h)
 		extraEnv = append([]string{"FAAS_GATEWAYD_CONTROL_URL=http://" + h.gatewayControlAddr}, extraEnv...)
@@ -880,6 +916,7 @@ func StartWithEnv(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv []stri
 		startGatewaydPublic(t, h, bin, dbURL, extraEnv)
 	}
 	h.requireDaemonsAlive(t)
+	booted = true
 	t.Cleanup(h.stop)
 	return h
 }
@@ -1509,6 +1546,42 @@ func newRecoveryHMACKeyHex(t *testing.T) string {
 // (crypto/rand) so two parallel tests don't share a key, and
 // so a leaked key from one test's debug output is useless for
 // the next test's value_hash discriminator.
+// internalSvcKeyEnv gives this harness its own internal-service signing key:
+// schedd mints workflow and exclusive-operation tokens with the private half
+// and gatewayd-internal verifies them with the public half. Without it
+// gatewayd-internal has no verifier and answers every workflow step with 500,
+// and schedd falls back to whatever key the host has at
+// /etc/faas/secrets/internal-svc. A caller that sets either variable keeps it.
+func internalSvcKeyEnv(t *testing.T, dir string, extraEnv []string) []string {
+	t.Helper()
+	for _, entry := range extraEnv {
+		if strings.HasPrefix(entry, "FAAS_INTERNAL_SVC_KEY_PATH=") || strings.HasPrefix(entry, "FAAS_INTERNAL_SVC_PUBKEYS=") {
+			return nil
+		}
+	}
+	public, private, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("e2etest: internal-svc key: %v", err)
+	}
+	privateDER, err := x509.MarshalPKCS8PrivateKey(private)
+	if err != nil {
+		t.Fatalf("e2etest: internal-svc key: %v", err)
+	}
+	publicDER, err := x509.MarshalPKIXPublicKey(public)
+	if err != nil {
+		t.Fatalf("e2etest: internal-svc key: %v", err)
+	}
+	keyPath := filepath.Join(dir, "internal-svc-schedd.ed25519")
+	if err := os.WriteFile(keyPath, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: privateDER}), 0o600); err != nil {
+		t.Fatalf("e2etest: write internal-svc key: %v", err)
+	}
+	pubkeys, err := json.Marshal(map[string]string{"schedd": string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: publicDER}))})
+	if err != nil {
+		t.Fatalf("e2etest: internal-svc pubkeys: %v", err)
+	}
+	return []string{"FAAS_INTERNAL_SVC_KEY_PATH=" + keyPath, "FAAS_INTERNAL_SVC_PUBKEYS=" + string(pubkeys)}
+}
+
 func newHostHMACKeyFile(t *testing.T, dir string) string {
 	t.Helper()
 	var b [32]byte
@@ -1764,6 +1837,7 @@ func (h *Harness) killChild(name string) error {
 					return fmt.Errorf("e2etest: reap %s: %w", name, err)
 				}
 			}
+			h.markKilled(proc)
 		}
 		return nil
 	}
@@ -1848,6 +1922,7 @@ func (h *Harness) KillAPID() error {
 					return fmt.Errorf("e2etest: reap apid: %w", err)
 				}
 			}
+			h.markKilled(proc)
 		}
 		return nil
 	}
@@ -2162,7 +2237,15 @@ func (h *Harness) requireDaemonsAlive(t *testing.T) {
 	// scheduled. One sleep for the whole set, not one per daemon.
 	time.Sleep(150 * time.Millisecond)
 
-	if name, out, dead := firstDeadDaemon(h.procs); dead {
+	// A daemon stopped on purpose by KillAPID or KillSchedd awaits its own
+	// Restart; restarting the other one must not report it as a crash.
+	live := make([]*exec.Cmd, 0, len(h.procs))
+	for _, p := range h.procs {
+		if !h.killed[p] {
+			live = append(live, p)
+		}
+	}
+	if name, out, dead := firstDeadDaemon(live); dead {
 		t.Fatalf("e2etest: %s exited during startup; nothing it owns will happen, "+
 			"and the failure would otherwise surface much later as an unrelated "+
 			"timeout.\n%s", name, out)
@@ -3051,9 +3134,11 @@ func startImaged(t *testing.T, h *Harness, bin, dbURL, tmp, appsRoot string, ext
 	// did not exist yet, and imaged's catch-up sweep only looks at
 	// deployments older than two hours: the image deploy sat in `pending`
 	// until the test gave up, in every image-deploy test. Wait for the
-	// subscription itself, not the process.
+	// subscription itself, not the process. Restaging a base whose guest init
+	// changed takes close to three minutes on a two-vCPU shared host, so the
+	// wait leaves headroom beyond that.
 	imagedStart := time.Now()
-	if err := h.waitImagedListens(3 * time.Minute); err != nil {
+	if err := h.waitImagedListens(10 * time.Minute); err != nil {
 		// Say why: an imaged that exited (metrics port taken, base
 		// staging failed) is otherwise reported only as "never
 		// subscribed", with its last words lost — smoke run

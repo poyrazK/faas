@@ -1,6 +1,6 @@
 //go:build !no_pg
 
-package state
+package state_test
 
 // adr: 435. Real database fences and raw native authority, simulated reports.
 
@@ -12,15 +12,16 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
-func runtimeDefaultPGStore(t *testing.T) nativeArtifactTestStore {
-	s, _ := runtimeCapturePGStore(t)
+func runtimeDefaultPGStore(t *testing.T) state.NativeArtifactTestStore {
+	s, _ := state.RuntimeCapturePGStore(t)
 	return s
 }
 
 func TestPgRuntimeDefaultBaseDoesNotWaitForBasePublication(t *testing.T) {
-	s, pool := runtimeCapturePGStore(t)
+	s, pool := state.RuntimeCapturePGStore(t)
 	root, base, app, dep := runtimeDefaultBaseFixture(t, s)
 	tx, err := pool.Begin(t.Context())
 	if err != nil {
@@ -32,7 +33,7 @@ func TestPgRuntimeDefaultBaseDoesNotWaitForBasePublication(t *testing.T) {
 	}
 	bounded, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
-	if _, err := s.GetFreshDeploymentRuntimeProducerInputs(bounded, app.AccountID, app.ID, dep.ID); !errors.Is(err, ErrApplicationStandardRuntimeBusy) {
+	if _, err := s.GetFreshDeploymentRuntimeProducerInputs(bounded, app.AccountID, app.ID, dep.ID); !errors.Is(err, state.ErrApplicationStandardRuntimeBusy) {
 		t.Fatal("full-rootfs waited for or bypassed base publication", err)
 	}
 	raw, err := json.Marshal(root.Input)
@@ -62,17 +63,17 @@ func TestPgRuntimeDefaultBaseNativeAuthority(t *testing.T) {
 }
 
 func TestPgRuntimeDefaultBaseRawAuthorityUsesPersistedRuntime(t *testing.T) {
-	s, pool := runtimeCapturePGStore(t)
+	s, pool := state.RuntimeCapturePGStore(t)
 	root, _, app, dep := runtimeDefaultBaseFixture(t, s)
-	app = manageNativeArtifactApp(t, s, app)
+	app = state.ManageNativeArtifactApp(t, s, app)
 	value := publishCleanRuntimeDefaultScan(t, s, app, dep)
-	ins, _ := nativeArtifactAttempt(t, s, app, dep)
+	ins, _ := state.NativeArtifactAttempt(t, s, app, dep)
 	capture, err := s.GetInstanceApplicationStandardAdmission(t.Context(), ins.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var deadline time.Time
-	if err := pool.QueryRow(t.Context(), `SELECT application_standard_native_artifact_deadline($1::jsonb,clock_timestamp())`, capture.inputs).Scan(&deadline); err != nil || !deadline.Equal(value.ExpiresAt) {
+	if err := pool.QueryRow(t.Context(), `SELECT application_standard_native_artifact_deadline($1::jsonb,clock_timestamp())`, (*capture.Inputs())).Scan(&deadline); err != nil || !deadline.Equal(value.ExpiresAt) {
 		t.Fatal("raw full-rootfs authority omitted composed lease", err)
 	}
 	raw, err := json.Marshal(root.Input)
@@ -91,7 +92,7 @@ func TestPgRuntimeDefaultBaseRawAuthorityUsesPersistedRuntime(t *testing.T) {
 	if _, err := tx.Exec(t.Context(), `UPDATE apps SET runtime='node22' WHERE id=$1::uuid`, app.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := tx.QueryRow(t.Context(), `SELECT application_standard_native_artifact_deadline($1::jsonb,clock_timestamp())`, capture.inputs).Scan(&deadline); err == nil {
+	if err := tx.QueryRow(t.Context(), `SELECT application_standard_native_artifact_deadline($1::jsonb,clock_timestamp())`, (*capture.Inputs())).Scan(&deadline); err == nil {
 		t.Fatal("raw native authority trusted stale caller runtime")
 	}
 }
