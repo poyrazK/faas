@@ -445,6 +445,15 @@ class HelperTest(unittest.TestCase):
         self.assertNotEqual(au.build_recipe(before), au.build_recipe(flags))
         renamed = before.replace("DAEMONS := a b", "DAEMONS := a b c")
         self.assertNotEqual(au.build_recipe(before), au.build_recipe(renamed))
+        tagged = before.replace("DAEMONS := a b", "DAEMONS := a b\nDAEMON_TAGS := metal,grpcnotrace")
+        self.assertNotEqual(au.build_recipe(before), au.build_recipe(tagged))
+
+    def test_daemon_tags(self):
+        self.assertEqual(au.daemon_tags("DAEMONS := a\n"), ["metal"])
+        self.assertEqual(au.daemon_tags("DAEMON_TAGS := metal,grpcnotrace\n"), ["metal", "grpcnotrace"])
+        makefile = (REPO / "Makefile").read_text(encoding="utf-8")
+        self.assertIn("grpcnotrace", au.daemon_tags(makefile))
+        self.assertNotIn("-tags metal", au.build_recipe(makefile))
 
     def test_matches_prefix_and_exact_paths(self):
         self.assertTrue(au.matches("deploy/x.yml", ["deploy/"]))

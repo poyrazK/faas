@@ -45,6 +45,14 @@ class ViolationsTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "not a release binary"):
             cdd.violations([RULE], {"vmmd": GRAPH}, M)
 
+    def test_import_path_packages_and_every_daemon(self):
+        g = graph({"cmd/vmmd": ["pkg/grpcish"], "cmd/imaged": []})
+        g[f"{M}/pkg/grpcish"]["imports"].add("golang.org/x/net/trace")
+        g["golang.org/x/net/trace"] = {"imports": set()}
+        rule = {"package": "golang.org/x/net/trace", "binaries": "DAEMONS", "reason": "r"}
+        got = cdd.violations([rule], {"vmmd": g, "imaged": g}, M, daemons=["vmmd", "imaged"])
+        self.assertEqual(got, [(rule, "vmmd", ["cmd/vmmd", "pkg/grpcish", "golang.org/x/net/trace"])])
+
     def test_chain_ignores_packages_outside_the_graph(self):
         g = graph({"cmd/x": ["pkg/a"]})
         g[f"{M}/pkg/a"]["imports"].add("golang.org/x/sync/errgroup")
@@ -63,8 +71,10 @@ class RulesTest(unittest.TestCase):
         makefile = (REPO / "Makefile").read_text(encoding="utf-8")
         binaries = set(au.makefile_list(makefile, "DAEMONS")) | set(au.makefile_list(makefile, "CLIS"))
         for rule in cdd.load_rules(cdd.DEFAULT_CONFIG):
-            self.assertTrue((REPO / rule["package"]).is_dir(), rule["package"])
-            self.assertLessEqual(set(rule["binaries"]), binaries, rule["package"])
+            if "." not in rule["package"].split("/")[0]:
+                self.assertTrue((REPO / rule["package"]).is_dir(), rule["package"])
+            if rule["binaries"] != "DAEMONS":
+                self.assertLessEqual(set(rule["binaries"]), binaries, rule["package"])
 
 
 if __name__ == "__main__":
