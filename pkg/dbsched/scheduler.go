@@ -194,10 +194,11 @@ type Config struct {
 	// StandbyRetry spaces one database's attach attempts (default 30 s).
 	StandbyRetry time.Duration
 	// StandbyResumeTimeout bounds resuming a production-class database's
-	// synchronized standby after a wake (default 30 s; negative turns
-	// resuming off, so every wake starts asynchronous). The primary is
-	// synchronous before its first client, so commits wait for the
-	// standby meanwhile; past it the primary turns asynchronous.
+	// synchronized standby after a wake or a standby restart (default
+	// 30 s; negative turns resuming off, so every wake starts
+	// asynchronous and a standby restart turns the primary asynchronous
+	// first). The primary is synchronous meanwhile, so commits wait for
+	// the standby; past it the primary turns asynchronous.
 	StandbyResumeTimeout time.Duration
 	// StandbyStaleClaim: a running standby that never became synchronous
 	// and is not being attached by this process is given up after this
@@ -348,7 +349,7 @@ func New(store Store, vmm VMM, cfg Config, log *slog.Logger) *Scheduler {
 		cfg.StandbyRetry = 30 * time.Second
 	}
 	if cfg.StandbyResumeTimeout == 0 {
-		cfg.StandbyResumeTimeout = 30 * time.Second
+		cfg.StandbyResumeTimeout = defaultStandbyResumeTimeout
 	}
 	if cfg.StandbyStaleClaim <= 0 {
 		cfg.StandbyStaleClaim = 15 * time.Minute

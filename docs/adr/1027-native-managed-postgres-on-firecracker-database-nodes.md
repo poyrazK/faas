@@ -218,8 +218,18 @@ A production-class database can also change nodes without a copy:
 `gregalectl database-nodes switchover --database <id>` posts
 `POST /v1/admin/ops/databases/{id}/switchover`, and schedd runs
 `dbsched.Switchover` (below) for the `database_switchover` intent. That
-patches a busy database only when its standby already runs the current
-base. Restarting a stale standby on its own is not done yet.
+patches a busy database once its standby runs the current base. The new
+standby copies the new primary on the current base.
+
+A stale standby under a current primary restarts alone
+(`dbsched.RestartStandby`). The sample restarts up to two per pass, busy
+or not, and counts them in `schedd_database_standby_restarts_total`. The
+standby stops cleanly and stays trusted, while the primary runs on and
+stays synchronous. A commit waits for the standby's boot, and none is
+acknowledged without it. The attach then resumes the standby as after a
+wake, within `standby_resume_timeout`, else gives it up record first.
+With resuming off, the record stops trusting the standby and the primary
+turns asynchronous before the standby stops, so commits never wait.
 
 ### schedd surface
 

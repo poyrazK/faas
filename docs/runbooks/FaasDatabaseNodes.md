@@ -196,6 +196,7 @@ take `sum`.
 | `schedd_database_node_lifecycle{node,lifecycle}` | 1 for the node's lifecycle. |
 | `schedd_database_failovers_total{trigger,result}` | Failovers by `lost_node`, `running` or `parked`. |
 | `schedd_database_standby_drops_total{reason}` | Standbys given up (`lagging`, `node_gone`, `stale_claim`). |
+| `schedd_database_standby_restarts_total{result}` | Stale standbys of current primaries restarted alone onto the current base, the primary running on. |
 | `schedd_database_standby_resumes_total{result}` | Wakes that resumed a synchronized standby, so commits waited for it from the first one: `ok`, or `failed` (the wake went on asynchronous). |
 | `schedd_database_moves_total{result}` | Moves between nodes. |
 | `schedd_database_stale_vms` | Running databases (or their standbys) on an outdated base or launch at the last sample. |
@@ -253,7 +254,12 @@ the cgroup limits. vmmd reports a VM as stale while it runs a base or
 launch older than the node's current one. Every 2 minutes schedd restarts
 up to two stale always-on databases that have been idle for 2 minutes:
 it parks them and wakes them on the current base, standby included. A
-scale-to-zero database picks the new base up at its next idle park.
+scale-to-zero database picks the new base up at its next idle park. A
+production-class database whose primary is current but whose standby is
+stale (its node got the release first) has only the standby restarted, up
+to two per sample, busy or not. The primary runs on. Commits wait about a
+second while the standby boots, as after a wake, and none is acknowledged
+without it (`schedd_database_standby_restarts_total`).
 
 The alert fires when some stayed stale for a day, because they never went
 idle. A security minor should not wait for that.
@@ -262,7 +268,10 @@ idle. A security minor should not wait for that.
    made. The databases still stale are the running ones that vmmd's
    status reports `stale` for.
 2. In a quiet window, restart each one in place (see "Restarting one
-   database").
+   database"). For a busy production-class database, a switchover is the
+   shorter stop. Once its standby is current (schedd restarts a stale
+   standby on its own), switch it over (see "Switching a database over").
+   The new standby copies the new primary on the current base.
 
 ### FaasDatabaseStorageReadOnly (warn)
 

@@ -21,10 +21,12 @@ type Metrics struct {
 	storage        *prometheus.GaugeVec
 	stale          prometheus.Gauge
 	staleRestart   *prometheus.CounterVec
-	drills         *prometheus.CounterVec
-	drillLastOK    *prometheus.GaugeVec
-	upgrades       *prometheus.CounterVec
-	catalog        *catalogCollector
+	// standbyRestarts counts stale standbys restarted alone.
+	standbyRestarts *prometheus.CounterVec
+	drills          *prometheus.CounterVec
+	drillLastOK     *prometheus.GaugeVec
+	upgrades        *prometheus.CounterVec
+	catalog         *catalogCollector
 }
 
 // Failover triggers: the operator marked the node lost, the standby
@@ -77,9 +79,13 @@ func NewMetrics(reg prometheus.Registerer, prefix string) *Metrics {
 			Name: prefix + "_database_stale_restarts_total",
 			Help: "Idle always-on databases restarted onto the current base, by result (ok, failed).",
 		}, []string{"result"}),
+		standbyRestarts: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: prefix + "_database_standby_restarts_total",
+			Help: "Stale standbys restarted onto the current base while their primary ran on, by result (ok, failed).",
+		}, []string{"result"}),
 		drills: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: prefix + "_database_restore_drills_total",
-			Help: "Restore drills by result: ok (a database restored to a minute before the drill from its node's backups), failed, or skipped (no capacity to start one).",
+			Help: "Restore drills by result: ok (a database restored from its node's backups to just after a mark it committed, and the copy holds the mark), failed, or skipped (no capacity to start one, or a source on an outdated guest).",
 		}, []string{"result"}),
 		drillLastOK: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: prefix + "_database_restore_drill_last_ok_timestamp_seconds",
@@ -91,7 +97,7 @@ func NewMetrics(reg prometheus.Registerer, prefix string) *Metrics {
 		}, []string{"result"}),
 		catalog: newCatalogCollector(prefix),
 	}
-	reg.MustRegister(m.failovers, m.standbyDrops, m.standbyResumes, m.moves, m.storage, m.stale, m.staleRestart, m.drills, m.drillLastOK, m.upgrades, m.catalog)
+	reg.MustRegister(m.failovers, m.standbyDrops, m.standbyResumes, m.moves, m.storage, m.stale, m.staleRestart, m.standbyRestarts, m.drills, m.drillLastOK, m.upgrades, m.catalog)
 	return m
 }
 
@@ -151,6 +157,17 @@ func (m *Metrics) observedDrills(summaries map[string]DrillSummary) {
 		}
 		m.drillLastOK.WithLabelValues(node).Set(at)
 	}
+}
+
+func (m *Metrics) restartedStandby(err error) {
+	if m == nil {
+		return
+	}
+	result := "ok"
+	if err != nil {
+		result = "failed"
+	}
+	m.standbyRestarts.WithLabelValues(result).Inc()
 }
 
 func (m *Metrics) restartedStale(err error) {

@@ -125,3 +125,10 @@ func TestWakeWithoutAResumableStandbyStartsAsynchronous(t *testing.T) {
 		})
 	}
 }
+
+// callsMark is how many node calls the fake has seen, for callsSince.
+func callsMark(vmm *fakeVMM) int {
+	vmm.mu.Lock()
+	defer vmm.mu.Unlock()
+	return len(vmm.onNode)
+}

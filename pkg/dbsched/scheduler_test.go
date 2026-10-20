@@ -672,6 +672,8 @@ func (f *fakeVMM) StartStandby(_ context.Context, node, primary Node, vm VM) err
 		return errors.New("standby already running")
 	}
 	f.standbyOn[vm.DatabaseID] = node.ID
+	// A standby boots its node's current base.
+	delete(f.stale, node.ID+"/"+vm.DatabaseID)
 	return nil
 }
 

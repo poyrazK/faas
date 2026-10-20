@@ -36,6 +36,9 @@ import (
 // StandbyResumeTimeout, or cannot be claimed, the record stops trusting
 // it first and the primary turns asynchronous.
 
+// defaultStandbyResumeTimeout bounds a standby's resume (Config).
+const defaultStandbyResumeTimeout = 30 * time.Second
+
 // errStandbyNotNeeded: the database no longer wants this standby (it
 // parked, or its standby moved) by the time a step ran.
 var errStandbyNotNeeded = errors.New("dbsched: the standby is no longer needed")
@@ -77,9 +80,14 @@ func (s *Scheduler) attachStandby(ctx context.Context, id string) error {
 		return err
 	}
 	if vm.StandbySynced {
-		// Resuming: commits wait until the standby is back.
+		// Resuming: commits wait until the standby is back. Turning wake
+		// resumes off leaves this bound at its default.
+		timeout := s.cfg.StandbyResumeTimeout
+		if timeout < 0 {
+			timeout = defaultStandbyResumeTimeout
+		}
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, s.cfg.StandbyResumeTimeout)
+		ctx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
 	}
 	if err = s.bootStandby(ctx, vm, primary, standby, fresh); err == nil {
@@ -245,6 +253,56 @@ func (s *Scheduler) abandonStandby(ctx context.Context, id string, primary, stan
 	if cur.StandbyNode == standby.ID && cur.StandbyRunning {
 		_ = s.store.ReleaseStandby(ctx, id, false)
 	}
+}
+
+// RestartStandby restarts a running production-class database's standby
+// onto its node's current base while the primary runs on. The standby
+// stops cleanly and stays trusted: the primary is synchronous, so a commit
+// waits until the standby is back and none is acknowledged without it.
+// The attach then resumes it, as after a wake (within
+// StandbyResumeTimeout, else it is given up record first). With resuming
+// turned off the record stops trusting the standby and the primary turns
+// asynchronous first, so commits never wait. A database whose standby is
+// not running and synchronized is ErrConflict.
+func (s *Scheduler) RestartStandby(ctx context.Context, id string) error {
+	if err := s.stopStandbyForRestart(ctx, id); err != nil {
+		return err
+	}
+	s.kickStandby(ctx, id)
+	return nil
+}
+
+func (s *Scheduler) stopStandbyForRestart(ctx context.Context, id string) error {
+	unlock := s.lock(id)
+	defer unlock()
+	vm, err := s.store.Get(ctx, id)
+	if err != nil {
+		return err
+	}
+	if _, busy := s.attaching.Load(id); busy || vm.State != StateRunning || !vm.Replicated || !vm.StandbyRunning || !vm.StandbySynced {
+		return fmt.Errorf("%w: %s has no running synchronized standby to restart", ErrConflict, id)
+	}
+	primary, err := s.node(ctx, vm.NodeID)
+	if err != nil {
+		return err
+	}
+	standby, err := s.node(ctx, vm.StandbyNode)
+	if err != nil {
+		return err
+	}
+	clean := s.cfg.StandbyResumeTimeout >= 0
+	if !clean {
+		if err := s.store.MarkStandbySynced(ctx, id, false); err != nil {
+			return err
+		}
+		if _, err := s.vmm.Replication(ctx, primary, id, dbguest.ReplicationAsync, vm.StandbyNode); err != nil {
+			return fmt.Errorf("dbsched: restart the standby of %s: make the primary asynchronous: %w", id, err)
+		}
+	}
+	if err := s.vmm.Stop(ctx, standby, id); err != nil {
+		return fmt.Errorf("dbsched: restart the standby of %s: stop it: %w", id, err)
+	}
+	return s.store.ReleaseStandby(ctx, id, clean)
 }
 
 // resumesStandby reports whether a wake resumes the database's standby: a

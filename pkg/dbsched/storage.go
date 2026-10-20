@@ -29,8 +29,10 @@ type StorageSample struct {
 	// so the primary drops to asynchronous and loses its failover.
 	StandbyLow int
 	// Stale is how many run, or have a standby that runs, an outdated
-	// base or launch; Restarted is how many of them this sample restarted.
-	Stale, Restarted int
+	// base or launch; Restarted is how many of them this sample restarted,
+	// and StandbyRestarted how many stale standbys of current primaries it
+	// restarted alone.
+	Stale, Restarted, StandbyRestarted int
 }
 
 // SampleStorage asks every running database's guest, and its standby's,
@@ -38,16 +40,17 @@ type StorageSample struct {
 // counts. It never wakes a database, and a guest that does not answer is
 // left out. Each read-only database, and each database whose standby is
 // low while it is not, is logged with its id; the metric carries counts
-// only. Stale
-// always-on databases idle for StaleIdle restart onto the current base,
-// a few per sample; scale-to-zero ones do on their next idle park.
+// only. Stale always-on databases idle for StaleIdle restart onto the
+// current base, a few per sample; scale-to-zero ones do on their next
+// idle park. A stale standby of a primary that is current restarts alone,
+// busy or not, a few per sample (RestartStandby): the primary runs on.
 func (s *Scheduler) SampleStorage(ctx context.Context) (StorageSample, error) {
 	running, err := s.store.List(ctx, StateRunning)
 	if err != nil {
 		return StorageSample{}, err
 	}
 	var sample StorageSample
-	var stale []VM
+	var stale, staleStandbys []VM
 	for _, vm := range running {
 		resp, ok := s.sampleStatus(ctx, vm.NodeID, vm.DatabaseID)
 		if !ok {
@@ -70,12 +73,17 @@ func (s *Scheduler) SampleStorage(ctx context.Context) (StorageSample, error) {
 					"free_bytes", resp.Storage.FreeBytes, "total_bytes", resp.Storage.TotalBytes)
 			}
 		}
-		if resp.Stale || standbyOK && standby.Stale {
+		switch {
+		case resp.Stale:
 			sample.Stale++
 			stale = append(stale, vm)
+		case standbyOK && standby.Stale:
+			sample.Stale++
+			staleStandbys = append(staleStandbys, vm)
 		}
 	}
 	sample.Restarted = s.restartStale(ctx, stale)
+	sample.StandbyRestarted = s.restartStaleStandbys(ctx, staleStandbys)
 	s.cfg.Metrics.sampledStorage(sample)
 	return sample, nil
 }
@@ -122,6 +130,26 @@ func (s *Scheduler) Restart(ctx context.Context, id string) (VM, error) {
 		return VM{}, err
 	}
 	return s.Wake(ctx, id)
+}
+
+// restartStaleStandbys restarts the stale standbys of current primaries,
+// at most StaleRestarts of them; it returns how many restarted.
+func (s *Scheduler) restartStaleStandbys(ctx context.Context, stale []VM) int {
+	restarted := 0
+	for _, vm := range stale {
+		if restarted >= s.cfg.StaleRestarts {
+			break
+		}
+		s.log.Info("dbsched: restarting a stale standby onto the current base", "database_id", vm.DatabaseID, "node_id", vm.StandbyNode)
+		err := s.RestartStandby(ctx, vm.DatabaseID)
+		s.cfg.Metrics.restartedStandby(err)
+		if err != nil {
+			s.log.Warn("dbsched: stale standby restart failed", "database_id", vm.DatabaseID, "err", err)
+			continue
+		}
+		restarted++
+	}
+	return restarted
 }
 
 // restartStale parks and wakes stale always-on databases that have been
