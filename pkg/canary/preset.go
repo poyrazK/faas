@@ -32,6 +32,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	canarycatalog "github.com/onebox-faas/faas/pkg/api/canary"
+	"github.com/onebox-faas/faas/pkg/releasegate"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
@@ -77,6 +78,13 @@ type SafeReleaseHealthStore interface {
 // the same bounded rollout window, plus the candidate's OOM counter. The
 // adapter lives in meterd so this package does not depend on pkg/state or a
 // concrete Prometheus client.
+// ReleaseGateChecker is an optional Store extension that judges the app's
+// release gates (ADR-20261019071734) for the candidate against its stable
+// predecessor since the rollout started.
+type ReleaseGateChecker interface {
+	ReleaseGateVerdict(ctx context.Context, row CanaryRow, stableDeploymentID string, now time.Time) (releasegate.Verdict, error)
+}
+
 type CircuitBreakerStore interface {
 	CircuitBreakerObservation(ctx context.Context, row CanaryRow, since, now time.Time) (CircuitBreakerObservation, error)
 }
@@ -472,6 +480,18 @@ func (p *Progression) circuitBreakerReady(ctx context.Context, row CanaryRow, st
 		return false, nil
 	}
 	decision := EvaluateCircuitBreaker(observation)
+	var gateResults []api.ReleaseGateResult
+	if decision.Action != CircuitBreakerAbort && observation.HasStable {
+		verdict := p.releaseGateVerdict(ctx, row, observation.StableDeploymentID, now)
+		if verdict.Failed != nil {
+			gateDecision := CircuitBreakerDecision{Action: CircuitBreakerAbort, Reason: verdict.Summary()}
+			record := rolloutDecisionRecord(row, api.RolloutRuleAbortReleaseGate, gateDecision.Reason, &observation, since, now)
+			record.Gates = verdict.Results
+			p.abortCircuitBreaker(ctx, row, gateDecision, observation, record, stats)
+			return false, nil
+		}
+		gateResults = verdict.Results
+	}
 	elapsed := now.Sub(row.CanaryStepStarted)
 	beforeTimer := elapsed < stage.Duration
 	switch decision.Action {
@@ -482,6 +502,7 @@ func (p *Progression) circuitBreakerReady(ctx context.Context, row CanaryRow, st
 			return true, nil
 		}
 		record := rolloutDecisionRecord(row, rule, decision.Reason, &observation, since, now)
+		record.Gates = gateResults
 		return true, &record
 	case CircuitBreakerAbort:
 		record := rolloutDecisionRecord(row, circuitBreakerRule(decision), decision.Reason, &observation, since, now)
@@ -580,6 +601,8 @@ func (p *Progression) abortCircuitBreaker(ctx context.Context, row CanaryRow, de
 		reason = "circuit breaker: managed dependency error regression; restoring predecessor " + observation.StableDeploymentID
 	case strings.HasPrefix(decision.Reason, "crash loop"):
 		reason = "circuit breaker: crash loop (repeated liveness restarts); restoring predecessor " + observation.StableDeploymentID
+	case strings.HasPrefix(decision.Reason, "release gate"):
+		reason = "circuit breaker: a release gate failed; restoring predecessor " + observation.StableDeploymentID
 	}
 	key := "canary-circuit-breaker-abort-" + row.ID + "-" + observation.StableDeploymentID
 	var err error
@@ -643,6 +666,8 @@ func circuitBreakerAbortEvent(reason string) string {
 		return "abort_oom"
 	case strings.HasPrefix(reason, "crash loop"):
 		return "abort_crash_loop"
+	case strings.HasPrefix(reason, "release gate"):
+		return "abort_release_gate"
 	default:
 		return "hold_recovery_failed"
 	}
@@ -665,6 +690,22 @@ func circuitBreakerHoldEvent(reason string) string {
 	default:
 		return "hold_observation_unavailable"
 	}
+}
+
+// releaseGateVerdict judges the app's release gates. A store without gates,
+// or one that cannot read them, yields an empty verdict: gates detect
+// failures and never hold a rollout on missing evidence.
+func (p *Progression) releaseGateVerdict(ctx context.Context, row CanaryRow, stableDeploymentID string, now time.Time) releasegate.Verdict {
+	checker, ok := p.Store.(ReleaseGateChecker)
+	if !ok {
+		return releasegate.Verdict{}
+	}
+	verdict, err := checker.ReleaseGateVerdict(ctx, row, stableDeploymentID, now)
+	if err != nil {
+		p.Log.Warn("canary: some release gates could not be read; judging the rest",
+			"deployment_id", row.ID, "err", err)
+	}
+	return verdict
 }
 
 func (p *Progression) recordCircuitBreakerEvent(event string) {

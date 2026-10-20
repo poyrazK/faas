@@ -44,6 +44,10 @@ const (
 	// Post-release watch (ADR-1445): regressions after the rollout completed.
 	RolloutRuleAbortPostRelease5xx = "abort_post_release_5xx"
 	RolloutRuleAbortPostReleaseP95 = "abort_post_release_p95_latency"
+	// Release gates (ADR-20261019071734): a customer signal failed during
+	// the canary or after the rollout completed.
+	RolloutRuleAbortReleaseGate     = "abort_release_gate"
+	RolloutRuleAbortPostReleaseGate = "abort_post_release_gate"
 )
 
 var rolloutDecisionRules = map[string]string{
@@ -67,6 +71,8 @@ var rolloutDecisionRules = map[string]string{
 	RolloutRuleAbortLeaseExpired:     RolloutDecisionAbort,
 	RolloutRuleAbortPostRelease5xx:   RolloutDecisionAbort,
 	RolloutRuleAbortPostReleaseP95:   RolloutDecisionAbort,
+	RolloutRuleAbortReleaseGate:      RolloutDecisionAbort,
+	RolloutRuleAbortPostReleaseGate:  RolloutDecisionAbort,
 }
 
 // RolloutDecision is the evidence behind one decision about a rollout
@@ -90,8 +96,11 @@ type RolloutDecision struct {
 	// probes of the app (ADR-1446).
 	ProbesIncluded bool `json:"probes_included,omitempty"`
 	// Signals is present when the OOM and liveness signals were readable.
-	Signals   *RolloutDecisionSignals `json:"signals,omitempty"`
-	DecidedAt string                  `json:"decided_at"`
+	Signals *RolloutDecisionSignals `json:"signals,omitempty"`
+	// Gates are the release gates judged with this decision
+	// (ADR-20261019071734).
+	Gates     []ReleaseGateResult `json:"gates,omitempty"`
+	DecidedAt string              `json:"decided_at"`
 }
 
 // RolloutDecisionSample is one side's aggregates over the window. Request
@@ -182,6 +191,9 @@ func (d RolloutDecision) Validate() error {
 	}
 	if s := d.Signals; s != nil && (!nonNegativeFinite(s.OOMKills) || !nonNegativeFinite(s.CandidateLivenessRestarts) || !nonNegativeFinite(s.StableLivenessRestarts)) {
 		return errors.New("rollout decision signals must be finite and non-negative")
+	}
+	if err := validReleaseGateResults(d.Gates); err != nil {
+		return err
 	}
 	encoded, err := json.Marshal(d)
 	if err != nil {
