@@ -2696,6 +2696,14 @@ type CustomerOperationAttemptInstance struct {
 	PlacedAt    pgtype.Timestamptz
 }
 
+type CustomerOperationChild struct {
+	ParentOperationID pgtype.UUID
+	ChildKey          string
+	ChildOperationID  pgtype.UUID
+	AccountID         pgtype.UUID
+	CreatedAt         pgtype.Timestamptz
+}
+
 type CustomerOperationCodePin struct {
 	DeploymentID pgtype.UUID
 	AppID        pgtype.UUID
@@ -12052,6 +12060,7 @@ type RequestTelemetry struct {
 	GuestResourceUsageAvailable bool
 	FlagEvidence                []byte
 	ContentOutcome              string
+	TraceInferred               bool
 }
 
 type RequestTelemetry202610 struct {
@@ -12090,6 +12099,7 @@ type RequestTelemetry202610 struct {
 	GuestResourceUsageAvailable bool
 	FlagEvidence                []byte
 	ContentOutcome              string
+	TraceInferred               bool
 }
 
 type RequestTelemetry202611 struct {
@@ -12128,6 +12138,7 @@ type RequestTelemetry202611 struct {
 	GuestResourceUsageAvailable bool
 	FlagEvidence                []byte
 	ContentOutcome              string
+	TraceInferred               bool
 }
 
 type RequestTelemetry202612 struct {
@@ -12166,6 +12177,7 @@ type RequestTelemetry202612 struct {
 	GuestResourceUsageAvailable bool
 	FlagEvidence                []byte
 	ContentOutcome              string
+	TraceInferred               bool
 }
 
 type RequestTelemetryAppGap struct {
@@ -12229,6 +12241,7 @@ type RequestTelemetryDefault struct {
 	GuestResourceUsageAvailable bool
 	FlagEvidence                []byte
 	ContentOutcome              string
+	TraceInferred               bool
 }
 
 type ReservedIpInventory struct {
@@ -13419,6 +13432,10 @@ type UsageStatementInvoiceExport struct {
 	Collection           string
 	DaysUntilDue         int32
 	AutomaticTax         bool
+	Attempt              int32
+	RejectedAt           pgtype.Timestamptz
+	ClaimToken           pgtype.UUID
+	ClaimedUntil         pgtype.Timestamptz
 }
 
 type WarmHint struct {

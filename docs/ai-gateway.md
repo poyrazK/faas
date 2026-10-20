@@ -65,12 +65,13 @@ account during the preview; contact support to have it turned on for yours.
   are metered and capped like chat.
 - **Tool fees.** Web search, file search, code-interpreter containers and
   Gemini search grounding are counted, priced and capped like tokens.
-- **Realtime voice.** OpenAI and Azure OpenAI Realtime sessions run through
-  the gateway over WebSocket. Each response is checked against your caps and
-  settled from its usage, with audio tokens at audio prices.
+- **Realtime voice.** OpenAI and Azure OpenAI Realtime sessions, and Gemini
+  and Vertex AI Live sessions, run through the gateway over WebSocket. Each
+  response or model turn is checked against your caps and settled from its
+  usage, with audio tokens at audio prices.
 - **No unmetered spend.** Calls the gateway cannot meter, such as realtime
-  client secrets, Gemini Live, vector stores or fine-tuning, are refused unless
-  you allow them for the integration.
+  client secrets, Live ephemeral tokens, vector stores or fine-tuning, are
+  refused unless you allow them for the integration.
 
 ## Set up
 

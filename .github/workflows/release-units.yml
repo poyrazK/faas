@@ -74,8 +74,14 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          # Unit versions walk first-parent history back to the base tag.
-          fetch-depth: 0
+          # Unit versions walk first-parent history back to the base tag:
+          # main's history and the release tags, not every branch. Files
+          # older commits need are fetched on demand
+          # (scripts/ci/fetch_release_history.sh).
+          filter: blob:none
+
+      - name: Fetch main's history and release tags
+        run: scripts/ci/fetch_release_history.sh
 
       - uses: actions/setup-go@v7
         with:
