@@ -49,7 +49,9 @@ ALTER TABLE environment_workload_qualification_requests ADD CONSTRAINT environme
 	if err != nil {
 		t.Fatal(err)
 	}
-	upgrade, _, ok := strings.Cut(string(raw), "CREATE OR REPLACE FUNCTION environment_workload_source_job_deployment_matches")
+	// The constraint upgrade ends where the replay-guarded function blocks begin;
+	// cutting inside a dollar-quoted DO body would leave unterminated SQL.
+	upgrade, _, ok := strings.Cut(string(raw), "-- +goose StatementBegin\nDO $preserve_signed_jobs$")
 	if !ok {
 		t.Fatal("missing constraint upgrade boundary")
 	}

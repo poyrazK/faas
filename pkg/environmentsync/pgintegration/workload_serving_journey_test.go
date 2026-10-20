@@ -433,8 +433,9 @@ func registerServingGateway(t *testing.T, store state.Store, name string) {
 	}
 }
 
+// The qualification receipt writers only; a Store-sized test interface would
+// regrow this package's compile (ADR-982). Both stores implement it.
 type requestQualificationReceiptStore interface {
-	state.Store
 	state.EnvironmentGitOpsQualificationStore
 	state.EnvironmentGitOpsQualificationInstanceStore
 	state.EnvironmentQualificationExecutionStore
@@ -448,17 +449,21 @@ type requestQualificationReceiptStore interface {
 	state.EnvironmentQualificationSmokeReceiptStore
 }
 
-func completeRequestQualificationReceipts(t *testing.T, store requestQualificationReceiptStore, request state.EnvironmentWorkloadQualificationRequest) {
+func completeRequestQualificationReceipts(t *testing.T, store state.Store, request state.EnvironmentWorkloadQualificationRequest) {
 	t.Helper()
-	claimed, err := store.ClaimEnvironmentWorkloadQualification(t.Context(), request.ID, "scheduler", time.Minute)
+	receipts, ok := store.(requestQualificationReceiptStore)
+	if !ok {
+		t.Fatalf("%T lacks qualification receipt writers", store)
+	}
+	claimed, err := receipts.ClaimEnvironmentWorkloadQualification(t.Context(), request.ID, "scheduler", time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
 	placement := qualificationPlacement(t, store, 4096)
-	completeClaimedQualificationReceipts(t, store, claimed, placement)
+	completeClaimedQualificationReceipts(t, receipts, claimed, placement)
 }
 
-func completeClaimedQualificationReceipts(t *testing.T, store *state.PgStore, claimed state.EnvironmentWorkloadQualificationRequest, placement state.EnvironmentWorkloadQualificationPlacement) {
+func completeClaimedQualificationReceipts(t *testing.T, store requestQualificationReceiptStore, claimed state.EnvironmentWorkloadQualificationRequest, placement state.EnvironmentWorkloadQualificationPlacement) {
 	t.Helper()
 	admitted, err := store.CreateEnvironmentWorkloadQualificationInstance(t.Context(), claimed, placement)
 	if err != nil {

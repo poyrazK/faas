@@ -163,7 +163,7 @@ func TestGitOpsRolloutNotificationsServingRequiresCurrentReportAndAllReceipts(t 
 			t.Fatalf("unqualified graph activated: %t %v", activated, err)
 		}
 		for _, request := range requests {
-			completeRequestQualificationReceipts(t, basic.(requestQualificationReceiptStore), request)
+			completeRequestQualificationReceipts(t, basic, request)
 		}
 		if _, activated, err := activation.ActivateEnvironmentGitOpsWorkloadGraph(t.Context(), lease, plan); err != nil || !activated {
 			t.Fatalf("graph activation: %t %v", activated, err)
