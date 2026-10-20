@@ -476,7 +476,11 @@ func TestSQLOrganizationMFARequirementHoldsPermissionsToAAL2Sessions(t *testing.
 	resource := "org/" + org.String() + "/doc/1"
 	allowed := func(u authUser) bool {
 		actAs(ctx, t, owner, u)
-		return queryBool(t, owner, `SELECT gregale_auth.authorize('read', $1)`, resource)
+		var ok bool
+		if err := owner.QueryRow(ctx, `SELECT gregale_auth.authorize('read', $1)`, resource).Scan(&ok); err != nil {
+			t.Fatal(err)
+		}
+		return ok
 	}
 	setMFA := `SELECT gregale_auth.set_organization_mfa($1, $2)`
 	if !allowed(bob) {
