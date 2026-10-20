@@ -2822,6 +2822,29 @@ type CustomerOperationRetainedReleaseRef struct {
 	ReleaseID pgtype.UUID
 }
 
+type CustomerOperationSchedule struct {
+	ID               pgtype.UUID
+	AccountID        pgtype.UUID
+	AppID            pgtype.UUID
+	PlatformTenantID pgtype.UUID
+	DefinitionID     pgtype.UUID
+	Input            []byte
+	Kind             string
+	At               pgtype.Timestamptz
+	Cron             string
+	Timezone         string
+	State            string
+	NextFireAt       pgtype.Timestamptz
+	Fires            int64
+	LastFiredAt      pgtype.Timestamptz
+	LastOperationID  pgtype.UUID
+	LastError        string
+	LeaseToken       pgtype.UUID
+	LeaseUntil       pgtype.Timestamptz
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+}
+
 type CustomerOperationStreamLease struct {
 	ID          pgtype.UUID
 	AccountID   pgtype.UUID
