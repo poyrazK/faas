@@ -854,8 +854,16 @@ guest PostgreSQL --archive_command--> guest-init archive-wal --vsock 5434-->
     pruning stops, which is the safe failure. If it is gone for good, the
     operator makes the mirror the bucket (runbook), and its holds come
     along.
-  - Not covered: archive files a node had not mirrored when it was lost.
-    The bucket keeps them, and nothing copies them across later.
+  - A node lost before it mirrored everything leaves those files only in
+    the bucket, and no node uploads them again. schedd's lost-node sweep
+    already has a live node prune that database's bucket archive. That
+    node's dbbackupd then journals a copy of every bucket object the
+    mirror lacks (`BackfillMirror`), which its mirror pass applies. It
+    only adds copies. A copy of an object deleted meanwhile finds it gone,
+    and deletions still come only from the journal. On metal, a node lost
+    before its first mirror pass had all 6 of a database's objects
+    backfilled through another node. A third node, whose bucket was gone,
+    then restored all 3,000 rows from the mirror.
   - The mirror is platform cost, the same bytes stored twice. Customers
     are billed for restore history once, from the bucket
     (`ArchiveBytes`).

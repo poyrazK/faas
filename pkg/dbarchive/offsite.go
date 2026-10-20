@@ -114,6 +114,46 @@ func (s *LocalStore) nextOffsiteSeq() int64 {
 	}
 }
 
+// BackfillMirror journals a copy of every object of the database's bucket
+// archive that the mirror lacks, and returns how many it queued. It is
+// for a database whose node is lost: whatever that node had not mirrored
+// yet is only in the bucket, and no node uploads it again. It only adds
+// copies: what the mirror deletes still comes from the journal alone, and
+// a copy of an object deleted meanwhile finds it gone and does nothing.
+// Without a mirror it does nothing.
+func (s *TieredStore) BackfillMirror(ctx context.Context, databaseID string) (int, error) {
+	if !ValidDatabaseID(databaseID) {
+		return 0, fmt.Errorf("dbarchive: invalid database id %q", databaseID)
+	}
+	if s.Remote == nil || s.Offsite == nil || !s.offsite.Load() {
+		return 0, nil
+	}
+	root := strings.TrimSuffix(s.Prefix, "/") + "/" + databaseID + "/"
+	keys, err := s.Remote.List(ctx, root)
+	if err != nil {
+		return 0, err
+	}
+	mirrorRoot := strings.TrimSuffix(s.OffsitePrefix, "/") + "/" + databaseID + "/"
+	mirrored, err := s.Offsite.Sizes(ctx, mirrorRoot)
+	if err != nil {
+		return 0, err
+	}
+	slices.Sort(keys)
+	queued := 0
+	for _, key := range keys {
+		rel := strings.TrimPrefix(key, root)
+		op := offsiteOp{Op: offsiteCopy, Database: databaseID, Path: rel}
+		if _, ok := mirrored[mirrorRoot+rel]; ok || !op.valid() {
+			continue
+		}
+		if err := s.journalOffsite(op); err != nil {
+			return queued, err
+		}
+		queued++
+	}
+	return queued, nil
+}
+
 // Offsite mirrors the store's archive to a second bucket. NewOffsite turns
 // the store's journal on; it must run before the store serves.
 type Offsite struct {

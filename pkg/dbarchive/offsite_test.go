@@ -257,3 +257,50 @@ func TestRestoreFromTheMirrorWhenTheBucketIsGone(t *testing.T) {
 		t.Fatalf("wal from the mirror = %q, %v", wal.String(), err)
 	}
 }
+
+// A lost node's archive files that never reached the mirror are copied
+// across from the bucket when another node prunes that archive, and only
+// once.
+func TestOffsiteBackfillsWhatALostNodeNeverMirrored(t *testing.T) {
+	ctx := context.Background()
+	bucket, mirror := &memRemote{objects: map[string][]byte{}}, &memRemote{objects: map[string][]byte{}}
+	lost := newStore(t)
+	NewOffsite(lost, bucket, "native", mirror, "dr") // its mirror pass never ran
+	putBackup(t, lost, dbA, 2, t0, true)
+	putFile(t, lost, dbA, segName(2), "wal-2")
+	if _, err := (&Uploader{Store: lost, Remote: bucket, Prefix: "native"}).RunOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	lostStore := &TieredStore{LocalStore: lost, Remote: bucket, Prefix: "native"}
+	if _, err := lostStore.PutHold(ctx, dbA, holdKeep, t0.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	want := len(bucket.objects)
+
+	other := newStore(t)
+	offsite := NewOffsite(other, bucket, "native", mirror, "dr")
+	store := &TieredStore{LocalStore: other, Remote: bucket, Prefix: "native", Offsite: mirror, OffsitePrefix: "dr", MinRetention: time.Hour}
+	sock := serveSocket(t, &Server{Store: store, Backups: store, Retention: store})
+	if _, err := PruneArchive(ctx, sock, dbA, 3600); err != nil {
+		t.Fatal(err)
+	}
+	if names, _ := offsite.journal(); len(names) != want {
+		t.Fatalf("journal after the bucket prune = %d entries; want a copy of each of the %d bucket objects", len(names), want)
+	}
+	if _, err := offsite.RunOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for key, body := range bucket.objects {
+		if got := mirror.objects["dr/"+strings.TrimPrefix(key, "native/")]; !bytes.Equal(got, body) {
+			t.Fatalf("mirror lacks %s", key)
+		}
+	}
+	if n, err := store.BackfillMirror(ctx, dbA); err != nil || n != 0 {
+		t.Fatalf("a second backfill queued %d, %v; want nothing", n, err)
+	}
+	// Without a mirror there is nothing to backfill.
+	plain := &TieredStore{LocalStore: newStore(t), Remote: bucket, Prefix: "native"}
+	if n, err := plain.BackfillMirror(ctx, dbA); err != nil || n != 0 {
+		t.Fatalf("backfill without a mirror = %d, %v", n, err)
+	}
+}

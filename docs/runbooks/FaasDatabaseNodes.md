@@ -142,7 +142,9 @@ becomes the bucket:
    bucket. Remove `uploaded-offsite/` and `.offsite-journal/` too, so a
    new mirror, if any, starts from scratch.
 3. Start dbbackupd. Restores, pruning and holds now read the former
-   mirror. Restore points are complete up to the mirror's recovery point
+   mirror. A lost node's databases were backfilled into the mirror by
+   schedd's lost-node sweep (`mirror backfill queued` in dbbackupd's log
+   on the node that pruned them), once their mirror pass applied it. Restore points are complete up to the mirror's recovery point
    when the bucket went (`dbarchive_offsite_pending_oldest_seconds`),
    plus whatever the nodes still hold locally.
 

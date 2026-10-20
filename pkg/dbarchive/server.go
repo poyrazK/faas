@@ -26,6 +26,9 @@ type RetentionStore interface {
 	NoteWindow(databaseID string, seconds int64) error
 	Drop(ctx context.Context, databaseID string) error
 	PruneBucket(ctx context.Context, databaseID string, windowSeconds int64) (PruneResult, error)
+	// BackfillMirror queues copies of the database's bucket objects the
+	// off-site mirror lacks; zero without a mirror.
+	BackfillMirror(ctx context.Context, databaseID string) (int, error)
 	LocalBytes(databaseID string) (int64, error)
 	ArchiveBytes(ctx context.Context, databaseID string) (int64, error)
 	PutHold(ctx context.Context, databaseID, name string, point time.Time) (Hold, error)
@@ -180,6 +183,11 @@ func (s *Server) handleAdmin(ctx context.Context, conn net.Conn, br *bufio.Reade
 		} else if res.Backups+res.WAL > 0 {
 			s.Log.Info("dbarchive: bucket pruned", "database_id", header.DatabaseID, "backups", res.Backups, "wal", res.WAL)
 		}
+		if err == nil {
+			// Only a lost node's databases are pruned in the bucket: no node
+			// uploads what that node had not mirrored yet.
+			s.backfillMirror(ctx, header.DatabaseID)
+		}
 		_ = WriteLine(conn, Response{Error: codeFor(err), Pruned: &res})
 		return
 	}
@@ -190,6 +198,19 @@ func (s *Server) handleAdmin(ctx context.Context, conn net.Conn, br *bufio.Reade
 		s.Log.Info("dbarchive: archive dropped", "database_id", header.DatabaseID)
 	}
 	_ = WriteLine(conn, Response{Error: codeFor(err)})
+}
+
+// backfillMirror queues the mirror's copies of the database's bucket
+// archive. A failure is logged: the bucket prune succeeded, and the next
+// sweep tries again.
+func (s *Server) backfillMirror(ctx context.Context, databaseID string) {
+	n, err := s.Retention.BackfillMirror(ctx, databaseID)
+	switch {
+	case err != nil:
+		s.Log.Warn("dbarchive: mirror backfill failed", "database_id", databaseID, "err", err)
+	case n > 0:
+		s.Log.Info("dbarchive: mirror backfill queued", "database_id", databaseID, "files", n)
+	}
 }
 
 // handleHold serves OpHold, OpGetHold and OpUnhold.
