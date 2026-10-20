@@ -277,3 +277,21 @@ func CustomDomainAddresses() ([]netip.Addr, error) {
 	}
 	return out, nil
 }
+
+// OperationSchedulesEnabled reports whether Operation schedules
+// (ADR-20261018161833) are available to accountID. Default off:
+// FAAS_OPERATION_SCHEDULES_ACCOUNTS, a comma-separated list of account
+// UUIDs, names the accounts that see the schedule routes and whose schedules
+// fire. Read at every call.
+func OperationSchedulesEnabled(accountID string) bool {
+	return accountListed(os.Getenv("FAAS_OPERATION_SCHEDULES_ACCOUNTS"), accountID)
+}
+
+func accountListed(list, accountID string) bool {
+	for _, id := range strings.Split(list, ",") {
+		if id = strings.TrimSpace(id); id != "" && id == accountID {
+			return true
+		}
+	}
+	return false
+}
