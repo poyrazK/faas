@@ -67,7 +67,14 @@ type Service struct {
 	// monetization is released by a runtime setting (ADR-20261018090210).
 	// Nil runs it.
 	Enabled func() bool
+	// Released reports whether API monetization is released to an account
+	// (ADR-20261020170649); the worker skips accounts it is not. Nil
+	// releases every account.
+	Released func(accountID string) bool
 }
+
+// released reports whether the worker serves an account's monetization.
+func (s *Service) released(accountID string) bool { return s.Released == nil || s.Released(accountID) }
 
 // tick runs one background tick unless Enabled pauses the worker; paused,
 // no provider reads and no overdue digests.

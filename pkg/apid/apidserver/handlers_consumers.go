@@ -85,7 +85,7 @@ func (s *server) createAPIConsumer(w http.ResponseWriter, r *http.Request, acct 
 			"Invalid consumer", "external_ref must be 1-256 characters and name must be 1-128 characters"))
 		return
 	}
-	if req.TrialDays != 0 && !s.apiMonetizationEnabled() {
+	if req.TrialDays != 0 && !s.apiMonetizationFor(acct.ID) {
 		// Trials are API monetization: until it is released the field is
 		// answered like any unknown one (ADR-20261018090210).
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", `json: unknown field "trial_days"`))
@@ -223,8 +223,8 @@ func (s *server) countAccountConsumerKeys(ctx context.Context, acctID string) (i
 // repeated ones. The billing scope only reaches API monetization's
 // self-service routes, so it is not offered until monetization is released
 // (ADR-20261018090210).
-func (s *server) consumerKeyScopesProblem(scopes []string) *api.Problem {
-	billing, allowed := s.apiMonetizationEnabled(), "scopes must contain only read, write, or admin"
+func (s *server) consumerKeyScopesProblem(accountID string, scopes []string) *api.Problem {
+	billing, allowed := s.apiMonetizationFor(accountID), "scopes must contain only read, write, or admin"
 	if billing {
 		allowed = "scopes must contain only read, write, admin, or billing"
 	}
@@ -271,7 +271,7 @@ func (s *server) createConsumerKey(w http.ResponseWriter, r *http.Request, acct 
 			"Invalid consumer key", "name must be 1-64 characters and scopes must not be empty"))
 		return
 	}
-	if problem := s.consumerKeyScopesProblem(req.Scopes); problem != nil {
+	if problem := s.consumerKeyScopesProblem(acct.ID, req.Scopes); problem != nil {
 		api.WriteProblem(w, problem)
 		return
 	}

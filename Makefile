@@ -305,6 +305,10 @@ test: grafana-mirror-check ## Unit tests — must pass on any machine, no KVM ne
 test-apid: ## apidserver tests with bounded compiler memory (ADR-982); RUN='^TestX' narrows, RACE=1 adds -race
 	$(GO_TEST) -count=1 $(if $(RACE),-race) $(if $(RUN),-run '$(RUN)') ./pkg/apid/apidserver/
 
+.PHONY: monetization-sandbox
+monetization-sandbox: ## API monetization end to end against real Stripe/Paddle/Lago sandboxes; keys in GREGALE_SANDBOX_* (docs/ops/api-monetization-release.md)
+	$(GO_TEST) -count=1 -tags monetization_sandbox -timeout=20m -v -run '^TestMonetizationSandbox' ./pkg/apid/apidserver/
+
 .PHONY: test-changed
 test-changed: ## Vet + test only what your change affects (ci-light's selection vs origin/main); RACE=1, BASE=<ref>, VET=importers|0, DRY_RUN=1
 	@LDFLAGS=$(GO_TEST_LDFLAGS) GOMEMLIMIT=$(GO_TEST_MEMLIMIT) GO=$(GO) bash scripts/test-changed.sh $(TEST_GCFLAGS)

@@ -190,6 +190,13 @@ func (s *Snapshot) GloballyEnabled(key string) bool {
 	return ok && flag.def.Enabled
 }
 
+// EveryAccount reports whether a flag is on for every account: its kill
+// switch and default are on and no rule can narrow it.
+func (s *Snapshot) EveryAccount(key string) bool {
+	def, _, ok := s.Definition(key)
+	return ok && def.Enabled && def.Default && len(def.Rules) == 0
+}
+
 // Definition returns the definition and version a flag was compiled from.
 func (s *Snapshot) Definition(key string) (Definition, int64, bool) {
 	if s == nil {

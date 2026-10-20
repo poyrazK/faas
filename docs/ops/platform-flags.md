@@ -55,6 +55,7 @@ flag still cannot use a capability its plan lacks; the inspector reports both.
 | `change_timeline` | App change timeline preview (ADR-751) | apid | `FAAS_CHANGE_TIMELINE_ENABLED` |
 | `anomaly_alerts` | Baseline alert comparisons (ADR-744) | apid | `FAAS_ANOMALY_ALERTS_ENABLED` |
 | `trigger_batch_delivery` | `delivery: batch` on triggers (ADR-1321) | apid | `FAAS_TRIGGER_BATCH_DELIVERY_PREVIEW_ENABLED` |
+| `api_monetization` | API monetization for selected accounts (ADR-20261020170649); the `api_monetization_enabled` switch releases it to everyone. See `docs/ops/api-monetization-release.md` | apid, gatewayd-internal | none |
 
 The environment and TOML values seed the flag at boot. Once an operator has
 written the flag, they are ignored, including after a restart.

@@ -27,6 +27,9 @@ type Host interface {
 	Store() state.Store
 	// QuoteConsumerUsage prices usage in [since, until) like a statement.
 	QuoteConsumerUsage(ctx context.Context, accountID, appID, consumerID string, since, until time.Time) (billing.APIConsumerUsageQuote, error)
+	// Released reports whether API monetization is released to an account
+	// (ADR-20261020170649).
+	Released(accountID string) bool
 }
 
 // Service serves the consumer billing endpoints. Now is the clock; nil uses
@@ -111,6 +114,11 @@ func (s *Service) authenticate(w http.ResponseWriter, r *http.Request) (caller, 
 	consumer, err := s.Host.Store().GetAPIConsumerByID(ctx, app.AccountID, key.ConsumerID)
 	if err != nil || consumer.AppID != app.ID || !consumer.Active() {
 		unauthorized(w)
+		return caller{}, false
+	}
+	if !s.Host.Released(app.AccountID) {
+		// The app owner does not have API monetization: no such route.
+		httpkit.NoSuchRoute(w)
 		return caller{}, false
 	}
 	return caller{app: app, consumer: consumer}, true

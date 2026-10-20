@@ -616,6 +616,10 @@ const (
 	// An invoice holding its consumer has its payment status read at least
 	// this often, so paying it lifts the hold within minutes.
 	ConsumerOverdueHeldSyncInterval = 15 * time.Minute
+	// APIMonetizationUnreleasedRetry is how long a monetization worker sets
+	// aside a billing run or invoice sync of an account monetization is not
+	// released to (ADR-20261020170649).
+	APIMonetizationUnreleasedRetry = 15 * time.Minute
 	// Only a payment status read within this long holds a consumer or
 	// tenant: when Gregale cannot read the invoice (a rotated or removed
 	// key), the hold lifts rather than outlasting a payment it cannot see

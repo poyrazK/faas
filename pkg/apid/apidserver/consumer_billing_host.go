@@ -17,6 +17,10 @@ var _ consumerbilling.Host = consumerBillingHost{}
 
 func (h consumerBillingHost) Store() state.Store { return h.s.store }
 
+func (h consumerBillingHost) Released(accountID string) bool {
+	return h.s.apiMonetizationFor(accountID)
+}
+
 func (h consumerBillingHost) QuoteConsumerUsage(ctx context.Context, accountID, appID, consumerID string, since, until time.Time) (billing.APIConsumerUsageQuote, error) {
 	return h.s.quoteConsumerUsage(ctx, accountID, appID, consumerID, since, until)
 }

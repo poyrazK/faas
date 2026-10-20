@@ -38,6 +38,7 @@ const (
 	ChangeTimeline       = "change_timeline"
 	AnomalyAlerts        = "anomaly_alerts"
 	TriggerBatchDelivery = "trigger_batch_delivery"
+	APIMonetization      = "api_monetization"
 )
 
 // Spec declares one platform flag. Adding a flag is a code change: the
@@ -123,6 +124,15 @@ var catalog = []Spec{
 		ADR:         "ADR-1321",
 		Consumers:   []string{"apid"},
 		LegacyEnv:   []string{"FAAS_TRIGGER_BATCH_DELIVERY_PREVIEW_ENABLED"},
+	},
+	{
+		Key:   APIMonetization,
+		Label: "API monetization",
+		Description: "Release API monetization (rate cards, plans, statements, credits, invoice exports, billing runs and their gateway enforcement) " +
+			"to accounts. The api_monetization_enabled runtime switch still releases it to every account. Unless every account is included, " +
+			"its routes answer an unregistered route to accounts outside the flag after authentication.",
+		ADR:       "ADR-20261020170649",
+		Consumers: []string{"apid", "gatewayd-internal"},
 	},
 }
 
