@@ -47,6 +47,9 @@ type UploadDeployOptions struct {
 	// retries keep the requested startup quota policy.
 	DisableStartupCPUBoost *bool `json:"disable_startup_cpu_boost,omitempty"`
 	NoTriggers             bool  `json:"no_triggers,omitempty"`
+	// OverrideFreeze is CreateDeploymentRequest.OverrideFreeze, checked when
+	// the upload commits.
+	OverrideFreeze string `json:"override_freeze,omitempty"`
 }
 
 // UploadStartRequest is the JSON body of POST /v1/uploads. total_size

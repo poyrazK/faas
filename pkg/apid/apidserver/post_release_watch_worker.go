@@ -11,6 +11,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/release"
 	"github.com/onebox-faas/faas/pkg/canary"
+	"github.com/onebox-faas/faas/pkg/releasegate"
+	"github.com/onebox-faas/faas/pkg/releasegate/gather"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -68,10 +70,25 @@ func (s *server) evaluatePostRelease(ctx context.Context, store state.PostReleas
 		return fmt.Errorf("read predecessor telemetry: %w", err)
 	}
 	rule, reason, regressed := release.JudgePostRelease(current, previous)
+	var gates releasegate.Verdict
 	if !regressed {
-		return nil
+		// ADR-20261019071734: the app's own signals, judged against the
+		// predecessor's traffic before the rollout.
+		var gateErr error
+		gates, gateErr = gather.Verdict(ctx, s.store, gather.Request{AppID: c.AppID, ReleaseID: c.DeploymentID, BaselineID: c.PredecessorID,
+			ReleaseWindow:  gather.Window{Since: since, Until: until},
+			BaselineWindow: gather.Window{Since: baselineEnd.Add(-api.PostReleaseWatchBaseline), Until: baselineEnd},
+			Evidence:       s.releaseGateEvidence})
+		if gateErr != nil {
+			s.log.Warn("post-release watch: some release gates could not be read; judging the rest", "app", c.AppID, "deployment", c.DeploymentID, "err", gateErr)
+		}
+		if gates.Failed == nil {
+			return nil
+		}
+		rule, reason = api.RolloutRuleAbortPostReleaseGate, "after the rollout completed: "+gates.Summary()
 	}
 	decision := release.PostReleaseDecision(rule, reason, c.PredecessorID, current, previous, since, until, now)
+	decision.Gates = gates.Results
 	return s.postReleaseRollback(ctx, store, c, decision)
 }
 

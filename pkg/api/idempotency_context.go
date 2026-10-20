@@ -23,6 +23,28 @@ func ContextWithIdempotencyKey(ctx context.Context, key string) context.Context 
 	return context.WithValue(ctx, idempotencyKeyContextKey{}, strings.TrimSpace(key))
 }
 
+type overrideFreezeContextKey struct{}
+
+// ContextWithOverrideFreeze attaches a deploy-freeze override reason
+// (ADR-20261019071733) for client calls whose request shape has no field
+// for it, such as project apply.
+func ContextWithOverrideFreeze(ctx context.Context, reason string) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, overrideFreezeContextKey{}, strings.TrimSpace(reason))
+}
+
+// OverrideFreezeFromContext returns the reason ContextWithOverrideFreeze
+// attached, or "".
+func OverrideFreezeFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	reason, _ := ctx.Value(overrideFreezeContextKey{}).(string)
+	return reason
+}
+
 // IdempotencyKeyFromContext returns the request key attached by
 // ContextWithIdempotencyKey, or an empty string when the context has no key.
 func IdempotencyKeyFromContext(ctx context.Context) string {
