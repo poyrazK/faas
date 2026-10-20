@@ -200,16 +200,28 @@ written (a full release ran) starts a new entry.
   expression, each host's from and to releases, the commit range rolled
   back, and links to the runs. The watch removes the record and fails the
   run.
-- **Inconclusive** (Prometheus blind for 4 rounds, as in the gate). The
-  watch neither promotes nor rolls back. The record stays open for the next
+- **Inconclusive.** Prometheus gave no evidence for 5 min (20 rounds; the
+  gate's 4 rounds would fail on any blip in a 30 min window). The watch
+  neither promotes nor rolls back. The record stays open for the next
   watch, and the run fails. The preflight's health check holds deploys
   while Prometheus does not answer.
+- **Someone else deploys.** A person's dispatch of a deploy workflow, or a
+  full release, makes the watch stand down. The record stays for the next
+  watch.
+- **Adoption.** A record no watch runs for (the watch was inconclusive or
+  cancelled) is inherited by the next deploy. When it already holds the
+  most unwatched releases a host may have, the preflight fails and asks a
+  person to dispatch `cd-unit-watch.yml` with `adopt=true`. That watch takes
+  the record over and watches a full window from then.
 
 **Every automatic rollback pauses autodeploy.** Unit releases accumulate
 over their base, so the next merge's release contains the rolled-back
-change again. The existing canary and follower gate rollbacks
-(cd-controlplane `deploy-units`, cd-edge-node) therefore also open the
-freeze issue. A person closes it after the cause is reverted or fixed.
+change again. The watch job therefore also opens the freeze issue when one
+of its run's lanes failed: a canary or follower gate rolled a host back, or
+the lane failed before changing anything. The deploy workflows keep their
+read-only tokens. cd-platform also calls cd-controlplane and grants no
+`issues` scope, so only the watch job may write issues. A person closes the
+issue after the cause is reverted or fixed.
 
 ### 4. Pre-traffic check inside the hand-off
 
