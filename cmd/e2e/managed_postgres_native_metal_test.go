@@ -215,7 +215,10 @@ func TestManagedPostgresNativeMetal(t *testing.T) {
 	// Pro apps default to public_auth_mode=bearer (ADR-080) as well as
 	// require_authn; the SQL probe requests are anonymous, so open both gates.
 	openAuth := &api.PublicAuthBlock{Mode: api.AppPublicAuthModeOpen}
-	if status := statusOnly(t, h, key, http.MethodPatch, "/v1/apps/"+slug, api.UpdateAppRequest{EgressPorts: &ports, EgressAllowlist: &destinations, PublicAuth: openAuth}); status != http.StatusOK {
+	// The starters' /healthz reads the database after a restore; while parked
+	// the gateway answers the health path itself unless it may wake (Pro+).
+	healthWakes := true
+	if status := statusOnly(t, h, key, http.MethodPatch, "/v1/apps/"+slug, api.UpdateAppRequest{EgressPorts: &ports, EgressAllowlist: &destinations, PublicAuth: openAuth, HealthPathWakes: &healthWakes}); status != http.StatusOK {
 		t.Fatalf("declare SQL destination and TCP port through app policy: status=%d", status)
 	}
 	app, err := store.AppByID(t.Context(), appID)
