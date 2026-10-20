@@ -1,5 +1,6 @@
 # Architecture Decision Records
 
+- [ADR-20261020090000: Rehearsal event capture](20261020090000-rehearsal-event-capture.md)
 - [ADR-20261019180000: Rehearsal side effects stay inside the run](20261019180000-rehearsal-side-effects-stay-inside-the-run.md)
 - [ADR-20261019120000: Rehearsal runtime hooks stay off ordinary hot paths](20261019120000-rehearsal-runtime-hot-path-isolation.md)
 - [Tenant egress denies the NAT64 prefixes](20261018194214-tenant-egress-deny-nat64.md)

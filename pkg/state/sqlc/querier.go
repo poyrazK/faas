@@ -2032,6 +2032,7 @@ type Querier interface {
 	// Private immutable reviewed participants and durable verification (ADR-694).
 	InsertRuntimeUpgradeVerification(ctx context.Context, db DBTX, arg InsertRuntimeUpgradeVerificationParams) (RuntimeUpgradeVerification, error)
 	InsertScenarioActionPolicy(ctx context.Context, db DBTX, arg InsertScenarioActionPolicyParams) error
+	InsertScenarioCapturedEvent(ctx context.Context, db DBTX, arg InsertScenarioCapturedEventParams) error
 	InsertScenarioColdPreparation(ctx context.Context, db DBTX, arg InsertScenarioColdPreparationParams) error
 	InsertScenarioRecorderRequest(ctx context.Context, db DBTX, arg InsertScenarioRecorderRequestParams) error
 	InsertScenarioSimulationAttempt(ctx context.Context, db DBTX, arg InsertScenarioSimulationAttemptParams) error
@@ -5070,9 +5071,14 @@ type Querier interface {
 	ScenarioActionSnapshotSummary(ctx context.Context, db DBTX, arg ScenarioActionSnapshotSummaryParams) (ScenarioActionSnapshotSummaryRow, error)
 	ScenarioCaptureReceiver(ctx context.Context, db DBTX, webhookID string) (ScenarioCaptureReceiverRow, error)
 	ScenarioCapturedActions(ctx context.Context, db DBTX, arg ScenarioCapturedActionsParams) ([]ScenarioCapturedActionsRow, error)
+	ScenarioCapturedEvents(ctx context.Context, db DBTX, arg ScenarioCapturedEventsParams) ([]ScenarioCapturedEventsRow, error)
 	ScenarioColdInventory(ctx context.Context, db DBTX, appID string) (ScenarioColdInventoryRow, error)
 	ScenarioColdPreparation(ctx context.Context, db DBTX, appID string) (ScenarioColdPreparationRow, error)
 	ScenarioCommandCallersByHostIP(ctx context.Context, db DBTX, arg ScenarioCommandCallersByHostIPParams) ([]ScenarioCommandCallersByHostIPRow, error)
+	// Any enrolled app, contained or capture-only, publishes into its run's
+	// evidence instead of the account's event bus (ADR-20261020090000).
+	ScenarioEventCapturePolicy(ctx context.Context, db DBTX, appID string) (ScenarioEventCapturePolicyRow, error)
+	ScenarioEventCaptureState(ctx context.Context, db DBTX, arg ScenarioEventCaptureStateParams) (ScenarioEventCaptureStateRow, error)
 	ScenarioManagedWorkBindings(ctx context.Context, db DBTX, arg ScenarioManagedWorkBindingsParams) ([]ScenarioManagedWorkBindingsRow, error)
 	ScenarioManagedWorkInventoryValid(ctx context.Context, db DBTX, arg ScenarioManagedWorkInventoryValidParams) (pgtype.Bool, error)
 	ScenarioManagedWorkJobs(ctx context.Context, db DBTX, arg ScenarioManagedWorkJobsParams) ([]ScenarioManagedWorkJobsRow, error)
@@ -5086,6 +5092,10 @@ type Querier interface {
 	ScenarioResumingCallersByHostIP(ctx context.Context, db DBTX, arg ScenarioResumingCallersByHostIPParams) ([]ScenarioResumingCallersByHostIPRow, error)
 	ScenarioSimulationPolicy(ctx context.Context, db DBTX, arg ScenarioSimulationPolicyParams) (ScenarioSimulationPolicyRow, error)
 	ScenarioSimulationRunAttempts(ctx context.Context, db DBTX, arg ScenarioSimulationRunAttemptsParams) ([]ScenarioSimulationRunAttemptsRow, error)
+	// Ordinary webhook deliveries the capture fence suppressed, attributed like
+	// the snapshot summary: the delivery's app first, then the receiver's app.
+	// Managed operation effects are accounted separately as captured intent.
+	ScenarioSuppressedWebhookEvents(ctx context.Context, db DBTX, arg ScenarioSuppressedWebhookEventsParams) ([]ScenarioSuppressedWebhookEventsRow, error)
 	ScenarioSuspendCheckpoint(ctx context.Context, db DBTX, arg ScenarioSuspendCheckpointParams) (ScenarioSuspendCheckpointRow, error)
 	ScenarioSuspendCommandsPending(ctx context.Context, db DBTX, arg ScenarioSuspendCommandsPendingParams) (bool, error)
 	ScenarioSuspendResume(ctx context.Context, db DBTX, id string) (ScenarioSuspendResumeRow, error)

@@ -14632,6 +14632,22 @@
     "kind": "configuration"
   },
   {
+    "table": "scenario_captured_events",
+    "columns": [
+      "account_id",
+      "app_id",
+      "created_at",
+      "data",
+      "id",
+      "oversized",
+      "run_id",
+      "schema_version",
+      "source",
+      "type"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "scenario_cold_preparations",
     "columns": [
       "account_id",

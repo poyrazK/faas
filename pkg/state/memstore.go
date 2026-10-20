@@ -437,6 +437,7 @@ type MemStore struct {
 	scenarioPostgres          map[string]rehearsalpg.Resource
 	scenarioObjects           map[string]rehearsalobj.Resource
 	scenarioActionPolicies    map[string]scenarioActionPolicy
+	scenarioCapturedEvents    []memScenarioCapturedEvent
 	scenarioTestChaosPlans    map[string]chaos.Lease
 	scenarioTestChaosMatches  map[string]map[string]int64
 	previewSets               map[string]PRPreviewSet

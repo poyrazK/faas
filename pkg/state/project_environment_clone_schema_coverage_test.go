@@ -54,6 +54,7 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 
 		// Rehearsal authority, admission policies and evidence belong to the
 		// original run; cloning must never enroll or resume its execution.
+		"scenario_captured_events":            CloneSchemaOperational,
 		"scenario_cold_preparations":          CloneSchemaOperational,
 		"scenario_command_networks":           CloneSchemaOperational,
 		"scenario_managed_work":               CloneSchemaOperational,

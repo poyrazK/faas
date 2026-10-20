@@ -43,6 +43,37 @@ func (q *Queries) InsertScenarioActionPolicy(ctx context.Context, db DBTX, arg I
 	return err
 }
 
+const insertScenarioCapturedEvent = `-- name: InsertScenarioCapturedEvent :exec
+INSERT INTO scenario_captured_events(account_id,run_id,app_id,source,type,schema_version,data,oversized)
+VALUES($1::text::uuid,$2::text,$3::text::uuid,$4::text,
+ $5::text,$6::text,$7::jsonb,$8::boolean)
+`
+
+type InsertScenarioCapturedEventParams struct {
+	AccountID     string
+	RunID         string
+	AppID         string
+	Source        string
+	Type          string
+	SchemaVersion string
+	Data          []byte
+	Oversized     bool
+}
+
+func (q *Queries) InsertScenarioCapturedEvent(ctx context.Context, db DBTX, arg InsertScenarioCapturedEventParams) error {
+	_, err := db.Exec(ctx, insertScenarioCapturedEvent,
+		arg.AccountID,
+		arg.RunID,
+		arg.AppID,
+		arg.Source,
+		arg.Type,
+		arg.SchemaVersion,
+		arg.Data,
+		arg.Oversized,
+	)
+	return err
+}
+
 const insertScenarioTestMember = `-- name: InsertScenarioTestMember :exec
 INSERT INTO scenario_test_members(account_id,run_id,workload_name,app_id)
 VALUES($1::text::uuid,$2::text,$3::text,$4::text::uuid)
@@ -374,6 +405,99 @@ func (q *Queries) ScenarioCapturedActions(ctx context.Context, db DBTX, arg Scen
 	return items, nil
 }
 
+const scenarioCapturedEvents = `-- name: ScenarioCapturedEvents :many
+SELECT e.id::text AS id,p.workload_name AS workload,e.source,e.type,e.schema_version,e.data,e.oversized
+FROM scenario_captured_events e JOIN scenario_test_action_policies p ON p.app_id=e.app_id AND p.account_id=e.account_id AND p.run_id=e.run_id
+WHERE e.account_id=$1::text::uuid AND e.run_id=$2::text
+ORDER BY e.created_at,e.id LIMIT 257
+`
+
+type ScenarioCapturedEventsParams struct {
+	AccountID string
+	RunID     string
+}
+
+type ScenarioCapturedEventsRow struct {
+	ID            string
+	Workload      string
+	Source        string
+	Type          string
+	SchemaVersion string
+	Data          []byte
+	Oversized     bool
+}
+
+func (q *Queries) ScenarioCapturedEvents(ctx context.Context, db DBTX, arg ScenarioCapturedEventsParams) ([]ScenarioCapturedEventsRow, error) {
+	rows, err := db.Query(ctx, scenarioCapturedEvents, arg.AccountID, arg.RunID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ScenarioCapturedEventsRow{}
+	for rows.Next() {
+		var i ScenarioCapturedEventsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Workload,
+			&i.Source,
+			&i.Type,
+			&i.SchemaVersion,
+			&i.Data,
+			&i.Oversized,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const scenarioEventCapturePolicy = `-- name: ScenarioEventCapturePolicy :one
+SELECT account_id::text AS account_id,run_id,workload_name FROM scenario_test_action_policies
+WHERE app_id=$1::text::uuid
+`
+
+type ScenarioEventCapturePolicyRow struct {
+	AccountID    string
+	RunID        string
+	WorkloadName string
+}
+
+// Any enrolled app, contained or capture-only, publishes into its run's
+// evidence instead of the account's event bus (ADR-20261020090000).
+func (q *Queries) ScenarioEventCapturePolicy(ctx context.Context, db DBTX, appID string) (ScenarioEventCapturePolicyRow, error) {
+	row := db.QueryRow(ctx, scenarioEventCapturePolicy, appID)
+	var i ScenarioEventCapturePolicyRow
+	err := row.Scan(&i.AccountID, &i.RunID, &i.WorkloadName)
+	return i, err
+}
+
+const scenarioEventCaptureState = `-- name: ScenarioEventCaptureState :one
+SELECT EXISTS(SELECT 1 FROM scenario_test_action_policies WHERE account_id=$1::text::uuid
+  AND run_id=$2::text AND sealed_at IS NOT NULL)::boolean AS sealed,
+ (SELECT count(*) FROM scenario_captured_events WHERE account_id=$1::text::uuid AND run_id=$2::text)::bigint AS captured
+`
+
+type ScenarioEventCaptureStateParams struct {
+	AccountID string
+	RunID     string
+}
+
+type ScenarioEventCaptureStateRow struct {
+	Sealed   bool
+	Captured int64
+}
+
+func (q *Queries) ScenarioEventCaptureState(ctx context.Context, db DBTX, arg ScenarioEventCaptureStateParams) (ScenarioEventCaptureStateRow, error) {
+	row := db.QueryRow(ctx, scenarioEventCaptureState, arg.AccountID, arg.RunID)
+	var i ScenarioEventCaptureStateRow
+	err := row.Scan(&i.Sealed, &i.Captured)
+	return i, err
+}
+
 const scenarioRehearsalNetworkRun = `-- name: ScenarioRehearsalNetworkRun :one
 SELECT run_id FROM scenario_test_action_policies
 WHERE app_id=$1::text::uuid AND network_mode='contained'
@@ -384,6 +508,51 @@ func (q *Queries) ScenarioRehearsalNetworkRun(ctx context.Context, db DBTX, appI
 	var run_id string
 	err := row.Scan(&run_id)
 	return run_id, err
+}
+
+const scenarioSuppressedWebhookEvents = `-- name: ScenarioSuppressedWebhookEvents :many
+SELECT p.workload_name AS workload,d.event,count(*)::bigint AS count
+FROM app_webhook_deliveries d LEFT JOIN app_webhooks h ON h.id=d.webhook_id
+JOIN scenario_test_action_policies p ON p.account_id=d.account_id AND p.run_id=$1::text
+ AND p.app_id=CASE WHEN EXISTS(SELECT 1 FROM scenario_test_action_policies x WHERE x.app_id=d.app_id
+  AND x.account_id=d.account_id AND x.run_id=$1::text) THEN d.app_id ELSE h.app_id END
+WHERE d.account_id=$2::text::uuid
+ AND d.last_error='rehearsal: unsupported webhook delivery suppressed' AND d.event<>'operation.effect'
+GROUP BY p.workload_name,d.event ORDER BY p.workload_name,d.event LIMIT 257
+`
+
+type ScenarioSuppressedWebhookEventsParams struct {
+	RunID     string
+	AccountID string
+}
+
+type ScenarioSuppressedWebhookEventsRow struct {
+	Workload string
+	Event    string
+	Count    int64
+}
+
+// Ordinary webhook deliveries the capture fence suppressed, attributed like
+// the snapshot summary: the delivery's app first, then the receiver's app.
+// Managed operation effects are accounted separately as captured intent.
+func (q *Queries) ScenarioSuppressedWebhookEvents(ctx context.Context, db DBTX, arg ScenarioSuppressedWebhookEventsParams) ([]ScenarioSuppressedWebhookEventsRow, error) {
+	rows, err := db.Query(ctx, scenarioSuppressedWebhookEvents, arg.RunID, arg.AccountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ScenarioSuppressedWebhookEventsRow{}
+	for rows.Next() {
+		var i ScenarioSuppressedWebhookEventsRow
+		if err := rows.Scan(&i.Workload, &i.Event, &i.Count); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const scenarioTestMemberWithPolicy = `-- name: ScenarioTestMemberWithPolicy :one

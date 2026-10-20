@@ -12496,6 +12496,19 @@ type SavedRouteRequirement struct {
 	UpdatedAt    pgtype.Timestamptz
 }
 
+type ScenarioCapturedEvent struct {
+	ID            pgtype.UUID
+	AccountID     pgtype.UUID
+	RunID         string
+	AppID         pgtype.UUID
+	Source        string
+	Type          string
+	SchemaVersion string
+	Data          []byte
+	Oversized     bool
+	CreatedAt     pgtype.Timestamptz
+}
+
 type ScenarioColdPreparation struct {
 	ID                    pgtype.UUID
 	AccountID             pgtype.UUID

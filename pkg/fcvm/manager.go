@@ -6120,6 +6120,19 @@ func (m *Manager) RegisterInstanceForTest(instanceID, deploymentID string, ident
 	return m
 }
 
+// RegisterContainedInstanceForTest registers a live instance whose rehearsal
+// containment is installed for runID. Test-only by naming convention.
+func (m *Manager) RegisterContainedInstanceForTest(instanceID, deploymentID, appID, accountID, runID string) *Manager {
+	m = m.RegisterInstanceForTest(instanceID, deploymentID, appID, accountID)
+	if m == nil {
+		return m
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.live[instanceID].Net.RehearsalRunID = runID
+	return m
+}
+
 // SetLastLivenessDestroyAtForDeployment is a test-only seam that
 // stamps Manager.cooldownByDeployment[deploymentID] = t. Mirrors
 // the production ReportLivenessFailed side effect without driving

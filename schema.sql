@@ -47620,6 +47620,30 @@ CREATE TABLE public.saved_route_requirements (
 
 
 --
+-- Name: scenario_captured_events; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.scenario_captured_events (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    run_id text NOT NULL,
+    app_id uuid NOT NULL,
+    source text NOT NULL,
+    type text NOT NULL,
+    schema_version text DEFAULT ''::text NOT NULL,
+    data jsonb,
+    oversized boolean DEFAULT false NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT scenario_captured_events_check CHECK ((oversized = (data IS NULL))),
+    CONSTRAINT scenario_captured_events_data_check CHECK (((data IS NULL) OR (octet_length((data)::text) <= 262144))),
+    CONSTRAINT scenario_captured_events_run_id_check CHECK ((run_id ~ '^[0-9a-f]{32}$'::text)),
+    CONSTRAINT scenario_captured_events_schema_version_check CHECK ((char_length(schema_version) <= 256)),
+    CONSTRAINT scenario_captured_events_source_check CHECK (((char_length(source) >= 1) AND (char_length(source) <= 256))),
+    CONSTRAINT scenario_captured_events_type_check CHECK (((char_length(type) >= 1) AND (char_length(type) <= 256)))
+);
+
+
+--
 -- Name: scenario_cold_preparations; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -59743,6 +59767,14 @@ ALTER TABLE ONLY public.saved_route_requirements
 
 
 --
+-- Name: scenario_captured_events scenario_captured_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scenario_captured_events
+    ADD CONSTRAINT scenario_captured_events_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: scenario_cold_preparations scenario_cold_preparations_app_id_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -68860,6 +68892,13 @@ CREATE INDEX runtime_upgrade_operations_due ON public.runtime_upgrade_operations
 --
 
 CREATE INDEX runtime_upgrade_verifications_due ON public.runtime_upgrade_verifications USING btree (next_attempt_at, created_at, operation_id) WHERE (phase = 'pending'::text);
+
+
+--
+-- Name: scenario_captured_events_run_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX scenario_captured_events_run_idx ON public.scenario_captured_events USING btree (account_id, run_id, created_at, id);
 
 
 --
@@ -88467,6 +88506,22 @@ ALTER TABLE ONLY public.saved_route_requirements
 
 ALTER TABLE ONLY public.saved_route_requirements
     ADD CONSTRAINT saved_route_requirements_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: scenario_captured_events scenario_captured_events_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scenario_captured_events
+    ADD CONSTRAINT scenario_captured_events_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: scenario_captured_events scenario_captured_events_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scenario_captured_events
+    ADD CONSTRAINT scenario_captured_events_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.scenario_test_action_policies(app_id) ON DELETE CASCADE;
 
 
 --

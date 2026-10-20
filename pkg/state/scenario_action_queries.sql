@@ -123,6 +123,41 @@ JOIN scenario_test_action_policies p ON p.app_id=e.app_id AND p.account_id=e.acc
 WHERE p.account_id=sqlc.arg(account_id)::text::uuid AND p.run_id=sqlc.arg(run_id)::text AND e.rehearsal_run_id=p.run_id
 ORDER BY workload,source,id LIMIT 257;
 
+-- name: ScenarioEventCapturePolicy :one
+-- Any enrolled app, contained or capture-only, publishes into its run's
+-- evidence instead of the account's event bus (ADR-20261020090000).
+SELECT account_id::text AS account_id,run_id,workload_name FROM scenario_test_action_policies
+WHERE app_id=sqlc.arg(app_id)::text::uuid;
+
+-- name: ScenarioEventCaptureState :one
+SELECT EXISTS(SELECT 1 FROM scenario_test_action_policies WHERE account_id=sqlc.arg(account_id)::text::uuid
+  AND run_id=sqlc.arg(run_id)::text AND sealed_at IS NOT NULL)::boolean AS sealed,
+ (SELECT count(*) FROM scenario_captured_events WHERE account_id=sqlc.arg(account_id)::text::uuid AND run_id=sqlc.arg(run_id)::text)::bigint AS captured;
+
+-- name: InsertScenarioCapturedEvent :exec
+INSERT INTO scenario_captured_events(account_id,run_id,app_id,source,type,schema_version,data,oversized)
+VALUES(sqlc.arg(account_id)::text::uuid,sqlc.arg(run_id)::text,sqlc.arg(app_id)::text::uuid,sqlc.arg(source)::text,
+ sqlc.arg(type)::text,sqlc.arg(schema_version)::text,sqlc.narg(data)::jsonb,sqlc.arg(oversized)::boolean);
+
+-- name: ScenarioCapturedEvents :many
+SELECT e.id::text AS id,p.workload_name AS workload,e.source,e.type,e.schema_version,e.data,e.oversized
+FROM scenario_captured_events e JOIN scenario_test_action_policies p ON p.app_id=e.app_id AND p.account_id=e.account_id AND p.run_id=e.run_id
+WHERE e.account_id=sqlc.arg(account_id)::text::uuid AND e.run_id=sqlc.arg(run_id)::text
+ORDER BY e.created_at,e.id LIMIT 257;
+
+-- name: ScenarioSuppressedWebhookEvents :many
+-- Ordinary webhook deliveries the capture fence suppressed, attributed like
+-- the snapshot summary: the delivery's app first, then the receiver's app.
+-- Managed operation effects are accounted separately as captured intent.
+SELECT p.workload_name AS workload,d.event,count(*)::bigint AS count
+FROM app_webhook_deliveries d LEFT JOIN app_webhooks h ON h.id=d.webhook_id
+JOIN scenario_test_action_policies p ON p.account_id=d.account_id AND p.run_id=sqlc.arg(run_id)::text
+ AND p.app_id=CASE WHEN EXISTS(SELECT 1 FROM scenario_test_action_policies x WHERE x.app_id=d.app_id
+  AND x.account_id=d.account_id AND x.run_id=sqlc.arg(run_id)::text) THEN d.app_id ELSE h.app_id END
+WHERE d.account_id=sqlc.arg(account_id)::text::uuid
+ AND d.last_error='rehearsal: unsupported webhook delivery suppressed' AND d.event<>'operation.effect'
+GROUP BY p.workload_name,d.event ORDER BY p.workload_name,d.event LIMIT 257;
+
 -- name: ScenarioRehearsalNetworkRun :one
 SELECT run_id FROM scenario_test_action_policies
 WHERE app_id=sqlc.arg(app_id)::text::uuid AND network_mode='contained';

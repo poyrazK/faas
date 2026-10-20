@@ -1256,6 +1256,24 @@ failure prevents a passing comparison. Upgraded completion workers must record
 receiver fingerprints. Ordinary suppressed lifecycle events are counted, without
 being treated as successful managed business actions.
 
+Servers with event capture (`event_capture_version: 1`) also seal two more kinds
+of evidence:
+- **Published events.** Every event an enrolled app publishes through the in-guest
+  event endpoint is captured into the run and never enters the account's event
+  bus, in both capture-only and contained rehearsals. It must pass the same
+  envelope and schema validation as a production publish. Events compare as a
+  multiset per workload, source and type, by schema version and canonical data.
+  A second publish of the same event fails the comparison; event IDs and times
+  never count.
+- **Suppressed ordinary webhook events.** These compare by count per workload and
+  event type. Their payloads contain platform-generated identifiers, so they do
+  not compare.
+
+Events published after sealing are refused. More than 256 events, or event data
+over 64 KiB, make the evidence incomplete. A comparison between servers with
+different event capture versions is inconclusive. See
+[ADR-20261020090000](adr/20261020090000-rehearsal-event-capture.md).
+
 This setting covers Gregale-managed webhooks. Direct application HTTP calls,
 email/payment SDKs and workload network containment are separate capabilities.
 A passing action comparison applies to the declared scope; existing `behavior`
