@@ -16,6 +16,7 @@ import (
 	"go.opentelemetry.io/otel/codes"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/trace"
 )
 
@@ -73,6 +74,10 @@ type Handler struct {
 	// during the staged preview rollout; nil admits every account
 	// (ADR-998).
 	AIGatewayRollout AIGatewayRollout
+	// AIGatewayFlags, when set, is the live ai_gateway platform flag
+	// (ADR-1700). It replaces AIGatewayEnabled and AIGatewayRollout, so an
+	// operator change applies to the next call without a restart.
+	AIGatewayFlags *platformflags.Set
 	// aiContainers charges each code-interpreter container once per
 	// session window (ADR-1433).
 	aiContainers aiContainerSessions
@@ -81,6 +86,14 @@ type Handler struct {
 	promptPrefixes promptPrefixes
 	// routeRandom replaces the routing draw in tests (ADR-1434).
 	routeRandom func(int) int
+}
+
+// aiGatewayOn reports the AI gateway kill switch.
+func (h *Handler) aiGatewayOn() bool {
+	if h.AIGatewayFlags != nil {
+		return h.AIGatewayFlags.Snapshot().GloballyEnabled(platformflags.AIGateway)
+	}
+	return h.AIGatewayEnabled
 }
 
 // ManagedCredentialResolver supplies a customer-sealed Authorization value
@@ -223,7 +236,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	metricIntegrationID := integration.MetricLabel()
-	if integration.AIProvider != "" && !h.AIGatewayEnabled {
+	if integration.AIProvider != "" && !h.aiGatewayOn() {
 		h.Metrics.ObserveRejection(metricIntegrationID, "ai_gateway_disabled")
 		writeProblem(w, http.StatusServiceUnavailable, "outbound_ai_gateway_disabled", "The AI gateway is not enabled on this platform", "")
 		return
@@ -482,7 +495,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			writeProblem(w, http.StatusServiceUnavailable, "outbound_provider_credential_unavailable", "Outbound provider credential is unavailable", "1")
 			return
 		}
-		if pool, ok := h.CredentialResolver.(ManagedKeyPoolResolver); ok && h.AIGatewayEnabled {
+		if pool, ok := h.CredentialResolver.(ManagedKeyPoolResolver); ok && h.aiGatewayOn() {
 			// ADR-991: a pool of keys rotates per call and on 429s.
 			keys, poolErr := pool.Authorizations(ctx, integration.ID)
 			if keys = validManagedKeys(keys); poolErr == nil && len(keys) > 0 {
@@ -995,5 +1008,13 @@ func (h *Handler) aiGatewayAdmitsAccount(integration Integration) bool {
 	if integration.OwnerKind != IntegrationOwnerCustomer {
 		return true
 	}
-	return h.AIGatewayRollout.Allows(integration.AccountID) && AIGatewayEntitled(integration.AccountPlan)
+	if !AIGatewayEntitled(integration.AccountPlan) {
+		return false
+	}
+	if h.AIGatewayFlags != nil {
+		return h.AIGatewayFlags.Enabled(platformflags.AIGateway, platformflags.Subject{
+			AccountID: integration.AccountID, Plan: string(integration.AccountPlan),
+		})
+	}
+	return h.AIGatewayRollout.Allows(integration.AccountID)
 }

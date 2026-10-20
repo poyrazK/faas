@@ -15,12 +15,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-type coldBootTestStore interface {
-	state.Store
-	state.SnapshotRecoveryStore
-	state.OperatorColdBootStore
-	state.AuditEventOutboxStore
-}
+type coldBootTestStore = contractTestStore
 
 type coldBootFixture struct {
 	store     coldBootTestStore
@@ -241,6 +236,47 @@ func runColdBootStoreTests(t *testing.T, create func(*testing.T) coldBootTestSto
 		}
 		if replay := f.execute(t); replay.Generation != 1 || !replay.Replayed {
 			t.Fatalf("old command changed the newer boundary: %+v", replay)
+		}
+	})
+	// ADR-1741: the admission insert binds the lineage in its own
+	// transaction, as BindInstanceSnapshotRecovery would after it, and a
+	// binding it cannot make leaves no instance behind.
+	t.Run("admission_binds_lineage_in_its_insert", func(t *testing.T) {
+		f := seedColdBoot(t, create(t))
+		admit := func(t *testing.T, snapshotID string) (state.Instance, *state.SnapshotRecoveryAdmission, error) {
+			t.Helper()
+			initial := string(state.StateColdBooting)
+			if snapshotID != "" {
+				initial = string(state.StateWaking)
+			}
+			r := &state.SnapshotRecoveryAdmission{SnapshotID: snapshotID}
+			ins, err := f.store.CreateInstance(state.WithSnapshotRecoveryAdmission(t.Context(), r), f.app.ID, f.dep.ID, initial, 512, f.nodeID, uuid.NewString())
+			return ins, r, err
+		}
+		for _, snapshotID := range []string{"", f.snapshots[0]} {
+			ins, r, err := admit(t, snapshotID)
+			if err != nil || !r.Bound() {
+				t.Fatalf("admission with snapshot %q = %v, bound %v", snapshotID, err, r.Bound())
+			}
+			// The binding is the one a separate bind would have made.
+			if err := f.store.BindInstanceSnapshotRecovery(t.Context(), ins.ID, ins.WakeID, snapshotID); err != nil {
+				t.Fatalf("binding made at admission differs from a separate bind: %v", err)
+			}
+			if fresh, err := f.store.InstanceSnapshotRecoveryFresh(t.Context(), ins.ID); err != nil || !fresh {
+				t.Fatalf("admitted instance fresh = %v, %v", fresh, err)
+			}
+		}
+		f.execute(t)
+		before, err := f.store.ListInstancesForApp(t.Context(), f.app.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// The operator cold boot invalidated the snapshot this restore chose.
+		if _, r, err := admit(t, f.snapshots[0]); !errors.Is(err, state.ErrConflict) || r.Bound() {
+			t.Fatalf("admission restoring an invalidated snapshot = %v, bound %v; want ErrConflict", err, r.Bound())
+		}
+		if after, err := f.store.ListInstancesForApp(t.Context(), f.app.ID); err != nil || len(after) != len(before) {
+			t.Fatalf("refused admission left %d instances, want %d (%v)", len(after), len(before), err)
 		}
 	})
 	t.Run("inflight_boot_cannot_rebind_after_boundary", func(t *testing.T) {

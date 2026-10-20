@@ -1,4 +1,4 @@
-package main
+package main_test
 
 // CLI tests for cmdRollback (SAFE-RELEASES-G, issue #976). Pins the
 // wire shape of POST /v1/apps/{slug}/rollback under the new --to flag:
@@ -19,6 +19,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -41,7 +42,7 @@ func TestCmdRollback_LegacyNoBodySendsNoBody(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 
-	if code := cmdRollback([]string{"my-app"}); code != 0 {
+	if code := main.CmdRollback([]string{"my-app"}); code != 0 {
 		t.Fatalf("cmdRollback legacy = %d, want 0", code)
 	}
 	if len(capturedBody) != 0 {
@@ -66,7 +67,7 @@ func TestCmdRollback_ToFlagSendsTargetID(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 
-	if code := cmdRollback([]string{"my-app", "--to", targetID}); code != 0 {
+	if code := main.CmdRollback([]string{"my-app", "--to", targetID}); code != 0 {
 		t.Fatalf("cmdRollback --to = %d, want 0", code)
 	}
 	got, ok := capturedBody["target_deployment_id"].(string)
@@ -94,7 +95,7 @@ func TestCmdRollback_ToFlagEqualsFormSendsTargetID(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 
 	// --to=<uuid> should be accepted (equals form).
-	if code := cmdRollback([]string{"my-app", "--to=" + targetID}); code != 0 {
+	if code := main.CmdRollback([]string{"my-app", "--to=" + targetID}); code != 0 {
 		t.Fatalf("cmdRollback --to=<id> = %d, want 0", code)
 	}
 	if got := capturedBody["target_deployment_id"].(string); got != targetID {
@@ -115,7 +116,7 @@ func TestCmdRollback_ToFlagMissingValueFails(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 
-	if code := cmdRollback([]string{"my-app", "--to"}); code != 1 {
+	if code := main.CmdRollback([]string{"my-app", "--to"}); code != 1 {
 		t.Errorf("cmdRollback --to (no value) = %d, want 1", code)
 	}
 }
@@ -124,7 +125,7 @@ func TestCmdRollback_NoArgsFails(t *testing.T) {
 	// Pre-existing "usage: gregale rollback <slug>" branch. Pins the
 	// back-compat invariant: callers without a slug still get the
 	// usage line, not a network call.
-	if code := cmdRollback([]string{}); code != 1 {
+	if code := main.CmdRollback([]string{}); code != 1 {
 		t.Errorf("cmdRollback() = %d, want 1", code)
 	}
 }
@@ -144,7 +145,7 @@ func TestCmdRollback_UnknownFlagFails(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 
-	if code := cmdRollback([]string{"my-app", "--bogus"}); code != 1 {
+	if code := main.CmdRollback([]string{"my-app", "--bogus"}); code != 1 {
 		t.Errorf("cmdRollback --bogus = %d, want 1", code)
 	}
 }
@@ -175,7 +176,7 @@ func TestCmdRollback_YesFlagAndPositionals(t *testing.T) {
 	}
 	for _, tc := range cases {
 		calls = 0
-		if code := cmdRollback(tc.args); code != tc.wantCode {
+		if code := main.CmdRollback(tc.args); code != tc.wantCode {
 			t.Errorf("cmdRollback(%q) = %d, want %d", tc.args, code, tc.wantCode)
 		}
 		if calls != tc.wantCalls {

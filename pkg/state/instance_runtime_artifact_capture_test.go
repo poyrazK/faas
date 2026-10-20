@@ -13,11 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/imagechain"
 )
 
-type runtimeArtifactCaptureTestStore interface {
-	runtimeArtifactInputTestStore
-	InstanceApplicationStandardAdmissionStore
-	ApplicationStandardEnrollmentStore
-}
+type runtimeArtifactCaptureTestStore = contractTestStore
 
 func createRuntimeArtifactCapture(t *testing.T, s runtimeArtifactCaptureTestStore, app App, dep Deployment) (Instance, InstanceApplicationStandardAdmission) {
 	t.Helper()

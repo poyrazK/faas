@@ -75,6 +75,11 @@ func serviceBindingRevisionSuite(t *testing.T, store state.Store) {
 		before = after
 	}
 	changed()
+	name := "mapped-repository-service"
+	if _, err := store.UpdateApp(ctx, target.ID, state.UpdateAppParams{WorkloadName: &name}); err != nil {
+		t.Fatal(err)
+	}
+	changed()
 	empty := []string{}
 	targetManifest := state.AppManifest{AllowedServiceCallers: &empty}
 	if _, err := store.UpdateApp(ctx, target.ID, state.UpdateAppParams{Manifest: &targetManifest}); err != nil {

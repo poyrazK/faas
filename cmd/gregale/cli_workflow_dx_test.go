@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/deploydiff"
 	"gopkg.in/yaml.v3"
@@ -22,8 +23,8 @@ func TestPreviewMetadataPreservesDiffContract(t *testing.T) {
 	if err := deploydiff.RenderJSON(&before, diff); err != nil {
 		t.Fatal(err)
 	}
-	summary := newCLIPreview("remote comparison", "sample-app", "", "commit abcdefg", "local changes excluded", "build not verified")
-	if err := renderDiffPreviewJSON(&after, diff, summary); err != nil {
+	summary := main.NewCLIPreview("remote comparison", "sample-app", "", "commit abcdefg", "local changes excluded", "build not verified")
+	if err := main.RenderDiffPreviewJSON(&after, diff, summary); err != nil {
 		t.Fatal(err)
 	}
 	var old, updated map[string]json.RawMessage
@@ -41,7 +42,7 @@ func TestPreviewMetadataPreservesDiffContract(t *testing.T) {
 			t.Fatalf("changed existing diff field %s", key)
 		}
 	}
-	var metadata cliPreviewSummary
+	var metadata main.CliPreviewSummary
 	if err := json.Unmarshal(updated["preview"], &metadata); err != nil || metadata.App != "sample-app" || metadata.LocalChanges != summary.LocalChanges {
 		t.Fatalf("missing preview metadata: %s %v", after.String(), err)
 	}
@@ -50,18 +51,18 @@ func TestPreviewMetadataPreservesDiffContract(t *testing.T) {
 func TestRecoveryNextActionResumesOrGathersEvidence(t *testing.T) {
 	for _, profile := range []string{"default", "staging"} {
 		t.Run(profile, func(t *testing.T) {
-			old := profileOverride
-			profileOverride = profile
-			t.Cleanup(func() { profileOverride = old })
-			waiting := newDeployRecovery("readiness", "sample-app", "accepted-id", "", time.Minute, false)
+			old := (*main.ProfileOverride)
+			(*main.ProfileOverride) = profile
+			t.Cleanup(func() { (*main.ProfileOverride) = old })
+			waiting := main.NewDeployRecovery("readiness", "sample-app", "accepted-id", "", time.Minute, false)
 			if waiting.NextCommand != waiting.ResumeCommand || !strings.Contains(waiting.NextCommand, "--profile "+profile+" deployment wait accepted-id") || strings.Contains(waiting.NextCommand, " deploy ") {
 				t.Fatalf("unsafe wait recovery: %+v", waiting)
 			}
-			failure := failedDeploymentRecovery("sample-app", api.DeploymentResponse{ID: "failed-id", Status: "failed"})
+			failure := main.FailedDeploymentRecovery("sample-app", api.DeploymentResponse{ID: "failed-id", Status: "failed"})
 			if failure.ResumeCommand != "" || !strings.Contains(failure.NextCommand, "logs sample-app --deployment failed-id --explain") {
 				t.Fatalf("wrong failed-build recovery: %+v", failure)
 			}
-			unknown := newDeployRecovery("submit", "sample-app", "", "retry-id", 0, false)
+			unknown := main.NewDeployRecovery("submit", "sample-app", "", "retry-id", 0, false)
 			if unknown.NextCommand != unknown.InspectCommand || unknown.ResumeCommand != "" {
 				t.Fatalf("unknown acceptance recommended resubmitting: %+v", unknown)
 			}
@@ -70,16 +71,16 @@ func TestRecoveryNextActionResumesOrGathersEvidence(t *testing.T) {
 }
 
 func TestGithubWorkflowCarriesResolvedChoices(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	source := t.TempDir()
 	t.Chdir(source)
-	startTestLink(t, source, "sample-project", "sample-app", "staging")
+	main.StartTestLink(t, source, "sample-project", "sample-app", "staging")
 	t.Setenv("FAAS_API", "https://staging.example.test")
 	t.Setenv("GITHUB_REPOSITORY", "")
 	t.Setenv("GITHUB_SHA", "")
-	out, restore := captureStdout(t)
+	out, restore := main.CaptureStdout(t)
 	defer restore()
-	if code := cmdDeployTarball([]string{"--github", "--repo", "example/backend", "--ref", "release/v1"}); code != 0 {
+	if code := main.CmdDeployTarball([]string{"--github", "--repo", "example/backend", "--ref", "release/v1"}); code != 0 {
 		t.Fatalf("workflow exit=%d output=%s", code, out)
 	}
 	var workflow struct {
@@ -108,11 +109,11 @@ func TestGithubWorkflowCarriesResolvedChoices(t *testing.T) {
 }
 
 func TestGithubWorkflowRefusesUnrepresentedSettings(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	t.Chdir(t.TempDir())
 	for _, args := range [][]string{{"--github", "--name", "sample-app", "--vcpu", "2"}, {"--github", "--name", "sample-app", "--ref", "${{ secrets.TOKEN }}"}} {
-		out, restore := captureStdout(t)
-		if code := cmdDeployTarball(args); code == 0 || len(out.String()) != 0 {
+		out, restore := main.CaptureStdout(t)
+		if code := main.CmdDeployTarball(args); code == 0 || len(out.String()) != 0 {
 			t.Errorf("unsafe workflow accepted: args=%v output=%s code=%d", args, out, code)
 		}
 		restore()
@@ -120,7 +121,7 @@ func TestGithubWorkflowRefusesUnrepresentedSettings(t *testing.T) {
 }
 
 func TestGithubWorkflowPreservesStringTargets(t *testing.T) {
-	workflow := renderGithubSnippet(githubSnippetEnv{Environment: "true"}, "123", "", false)
+	workflow := main.RenderGithubSnippet(main.GithubSnippetEnv{Environment: "true"}, "123", "", false)
 	var parsed map[string]any
 	if err := yaml.Unmarshal([]byte(workflow), &parsed); err != nil {
 		t.Fatal(err)
@@ -136,8 +137,8 @@ func TestGithubWorkflowPreservesStringTargets(t *testing.T) {
 }
 
 func TestSavedScalePlanRetainsVersionOneFields(t *testing.T) {
-	resetJSONOut(t)
-	jsonOutput = true
+	main.ResetJSONOut(t)
+	(*main.JsonOutput) = true
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			t.Errorf("preview made a remote mutation: %s %s", r.Method, r.URL.Path)
@@ -152,12 +153,12 @@ func TestSavedScalePlanRetainsVersionOneFields(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	client := NewClient(server.URL, "test")
+	client := main.NewClient(server.URL, "test")
 	path := filepath.Join(t.TempDir(), "scale-plan.json")
-	_, restore := captureStdout(t)
+	_, restore := main.CaptureStdout(t)
 	defer restore()
 	ram := 256
-	if code := cmdAppScalePlan(client, environmentAppClient{Client: client}, "sample-app", "", api.UpdateAppRequest{RAMMB: &ram}, path, nil); code != 0 {
+	if code := main.CmdAppScalePlan(client, main.EnvironmentAppClient{Client: client}, "sample-app", "", api.UpdateAppRequest{RAMMB: &ram}, path, nil); code != 0 {
 		t.Fatalf("save scale plan exit=%d", code)
 	}
 	body, err := os.ReadFile(path)

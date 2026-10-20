@@ -99,6 +99,13 @@ func TestPgStoreConsumerCredits(t *testing.T) {
 	checkConsumerCredits(t, ctx, store, accountID, appID)
 }
 
+// adr: 20261019100331
+func TestPgStoreTenantCredits(t *testing.T) {
+	store, _, ctx := pgStoreWithPool(t)
+	accountID, _ := seedConsumerKeyAccountApp(t, ctx, store)
+	checkTenantCredits(t, ctx, store, accountID)
+}
+
 // adr: 1307
 func TestPgStorePlatformTenantPlans(t *testing.T) {
 	store, _, ctx := pgStoreWithPool(t)

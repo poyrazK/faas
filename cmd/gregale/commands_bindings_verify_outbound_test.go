@@ -1,5 +1,5 @@
 // adr: 430 — CLI requires exact candidate receipts and sanitized supported probe results.
-package main
+package main_test
 
 import (
 	"bytes"
@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -74,10 +75,10 @@ func TestCmdBindingsOutboundProbePolicyAndCandidateVerification(t *testing.T) {
 				t.Setenv("FAAS_API", server.URL)
 				t.Setenv("FAAS_TOKEN", "fp_live_test")
 				var out, stderr bytes.Buffer
-				oldOut, oldErr, oldJSON := osStdout, osStderr, jsonOutput
-				osStdout, osStderr, jsonOutput = &out, &stderr, true
-				t.Cleanup(func() { osStdout, osStderr, jsonOutput = oldOut, oldErr, oldJSON })
-				if code := run([]string{"bindings", "probe-policy", id, "--path", "/health"}); code != 0 || !configured {
+				oldOut, oldErr, oldJSON := (*main.OsStdout), (*main.OsStderr), (*main.JsonOutput)
+				(*main.OsStdout), (*main.OsStderr), (*main.JsonOutput) = &out, &stderr, true
+				t.Cleanup(func() { (*main.OsStdout), (*main.OsStderr), (*main.JsonOutput) = oldOut, oldErr, oldJSON })
+				if code := main.Run([]string{"bindings", "probe-policy", id, "--path", "/health"}); code != 0 || !configured {
 					t.Fatalf("configure: %d %s", code, out.String())
 				}
 				out.Reset()
@@ -87,7 +88,7 @@ func TestCmdBindingsOutboundProbePolicyAndCandidateVerification(t *testing.T) {
 				} else {
 					args = append(args, "--outbound", id)
 				}
-				code := run(args)
+				code := main.Run(args)
 				if (code == 0) != (failure == "") || created != 1 || strings.Contains(out.String(), "PRIVATE_") {
 					t.Fatalf("exit=%d created=%d output=%s %s", code, created, out.String(), stderr.String())
 				}

@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -6,29 +6,30 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func TestCmdEvents_NoArgs(t *testing.T) {
-	resetJSONOut(t)
-	code, captured := runWithStderr(t, func() int { return cmdEvents(nil) })
+	main.ResetJSONOut(t)
+	code, captured := main.RunWithStderr(t, func() int { return main.CmdEvents(nil) })
 	if code != 1 || !strings.Contains(captured, "gregale events") {
 		t.Fatalf("exit=%d stderr=%q", code, captured)
 	}
 }
 
 func TestCmdEventsPreviewUsesReadOnlyPreviewAPI(t *testing.T) {
-	resetJSONOut(t)
-	f := authedFakeAPI(t, `{"event_id":"preview-1","source":"billing.stripe","type":"invoice.paid","candidate_count":2,"matched_count":1,"filter_mismatch_count":1,"other_mismatch_count":0,"matches":[{"app_slug":"invoice-worker","subscription_id":"sub-1","source":"billing.*","type":"invoice.paid","filter":{},"reason":"would_deliver"}],"non_matches":[{"app_slug":"audit-worker","subscription_id":"sub-2","source":"billing.*","type":"invoice.paid","filter":{"data":{"amount":{"$gt":200}}},"reason":"content_filter_mismatch"}],"truncated":false}`, http.StatusOK)
-	stdout, restore := swapStdout(t)
+	main.ResetJSONOut(t)
+	f := main.AuthedFakeAPI(t, `{"event_id":"preview-1","source":"billing.stripe","type":"invoice.paid","candidate_count":2,"matched_count":1,"filter_mismatch_count":1,"other_mismatch_count":0,"matches":[{"app_slug":"invoice-worker","subscription_id":"sub-1","source":"billing.*","type":"invoice.paid","filter":{},"reason":"would_deliver"}],"non_matches":[{"app_slug":"audit-worker","subscription_id":"sub-2","source":"billing.*","type":"invoice.paid","filter":{"data":{"amount":{"$gt":200}}},"reason":"content_filter_mismatch"}],"truncated":false}`, http.StatusOK)
+	stdout, restore := main.SwapStdout(t)
 	defer restore()
-	if code := cmdEventsPreview([]string{
+	if code := main.CmdEventsPreview([]string{
 		"billing.stripe", "invoice.paid", "--id", "preview-1", "--data", `{"amount":150}`,
 	}); code != 0 {
 		t.Fatalf("exit=%d", code)
 	}
-	if f.sawMethod != http.MethodPost || f.sawPath != "/v1/events:preview" {
-		t.Fatalf("route=%s %s", f.sawMethod, f.sawPath)
+	if (*f.SawMethod()) != http.MethodPost || (*f.SawPath()) != "/v1/events:preview" {
+		t.Fatalf("route=%s %s", (*f.SawMethod()), (*f.SawPath()))
 	}
 	var got struct {
 		ID     string          `json:"id"`
@@ -36,11 +37,11 @@ func TestCmdEventsPreviewUsesReadOnlyPreviewAPI(t *testing.T) {
 		Type   string          `json:"type"`
 		Data   json.RawMessage `json:"data"`
 	}
-	if err := json.Unmarshal(f.sawBody, &got); err != nil {
+	if err := json.Unmarshal((*f.SawBody()), &got); err != nil {
 		t.Fatalf("decode request: %v", err)
 	}
 	if got.ID != "preview-1" || got.Source != "billing.stripe" || got.Type != "invoice.paid" || string(got.Data) != `{"amount":150}` {
-		t.Fatalf("request body=%s", f.sawBody)
+		t.Fatalf("request body=%s", (*f.SawBody()))
 	}
 	for _, want := range []string{"Would deliver: 1", "Filtered: 1", "invoice-worker", "audit-worker", "content_filter_mismatch"} {
 		if !strings.Contains(stdout.String(), want) {
@@ -50,10 +51,10 @@ func TestCmdEventsPreviewUsesReadOnlyPreviewAPI(t *testing.T) {
 }
 
 func TestCmdEventsPreviewRejectsInvalidDataBeforeRequest(t *testing.T) {
-	resetJSONOut(t)
-	authedFakeAPI(t, `{}`, http.StatusOK)
-	code, captured := runWithStderr(t, func() int {
-		return cmdEventsPreview([]string{"billing", "invoice.paid", "--data", "{bad"})
+	main.ResetJSONOut(t)
+	main.AuthedFakeAPI(t, `{}`, http.StatusOK)
+	code, captured := main.RunWithStderr(t, func() int {
+		return main.CmdEventsPreview([]string{"billing", "invoice.paid", "--data", "{bad"})
 	})
 	if code != 1 || !strings.Contains(captured, "Invalid --data") {
 		t.Fatalf("exit=%d stderr=%q", code, captured)
@@ -61,10 +62,10 @@ func TestCmdEventsPreviewRejectsInvalidDataBeforeRequest(t *testing.T) {
 }
 
 func TestCmdEventsPublish_ValidatesDataBeforeRequest(t *testing.T) {
-	resetJSONOut(t)
-	authedFakeAPI(t, `{"id":"evt-1"}`, http.StatusAccepted)
-	code, captured := runWithStderr(t, func() int {
-		return cmdEventsPublish([]string{"--id", "evt-1", "--source", "billing", "--type", "invoice.paid", "--data", "{bad"})
+	main.ResetJSONOut(t)
+	main.AuthedFakeAPI(t, `{"id":"evt-1"}`, http.StatusAccepted)
+	code, captured := main.RunWithStderr(t, func() int {
+		return main.CmdEventsPublish([]string{"--id", "evt-1", "--source", "billing", "--type", "invoice.paid", "--data", "{bad"})
 	})
 	if code != 1 || !strings.Contains(captured, "Invalid --data") {
 		t.Fatalf("exit=%d stderr=%q", code, captured)
@@ -72,9 +73,9 @@ func TestCmdEventsPublish_ValidatesDataBeforeRequest(t *testing.T) {
 }
 
 func TestCmdEventsPublish_SendsEnvelope(t *testing.T) {
-	resetJSONOut(t)
-	f := authedFakeAPI(t, `{"id":"evt-1","accepted_at":"2026-09-19T12:00:00Z","account_id":"acct-1"}`, http.StatusAccepted)
-	if code := cmdEventsPublish([]string{
+	main.ResetJSONOut(t)
+	f := main.AuthedFakeAPI(t, `{"id":"evt-1","accepted_at":"2026-09-19T12:00:00Z","account_id":"acct-1"}`, http.StatusAccepted)
+	if code := main.CmdEventsPublish([]string{
 		"--id", "evt-1",
 		"--source", "billing.stripe",
 		"--type", "invoice.paid",
@@ -83,8 +84,8 @@ func TestCmdEventsPublish_SendsEnvelope(t *testing.T) {
 	}); code != 0 {
 		t.Fatalf("exit=%d", code)
 	}
-	if f.sawMethod != http.MethodPost || f.sawPath != "/v1/events:publish" {
-		t.Fatalf("route=%s %s", f.sawMethod, f.sawPath)
+	if (*f.SawMethod()) != http.MethodPost || (*f.SawPath()) != "/v1/events:publish" {
+		t.Fatalf("route=%s %s", (*f.SawMethod()), (*f.SawPath()))
 	}
 	var got struct {
 		ID     string          `json:"id"`
@@ -93,18 +94,18 @@ func TestCmdEventsPublish_SendsEnvelope(t *testing.T) {
 		Time   string          `json:"time"`
 		Data   json.RawMessage `json:"data"`
 	}
-	if err := json.Unmarshal(f.sawBody, &got); err != nil {
+	if err := json.Unmarshal((*f.SawBody()), &got); err != nil {
 		t.Fatal(err)
 	}
 	if got.ID != "evt-1" || got.Source != "billing.stripe" || got.Type != "invoice.paid" || got.Time != "2026-09-19T11:59:00Z" || string(got.Data) != `{"amount":150}` {
-		t.Fatalf("body=%s", f.sawBody)
+		t.Fatalf("body=%s", (*f.SawBody()))
 	}
 }
 
 func TestCmdEventsPublish_PositionalSourceTypeGeneratesID(t *testing.T) {
-	resetJSONOut(t)
-	f := authedFakeAPI(t, `{"id":"generated-id","accepted_at":"2026-09-19T12:00:00Z","account_id":"acct-1"}`, http.StatusAccepted)
-	if code := cmdEventsPublish([]string{
+	main.ResetJSONOut(t)
+	f := main.AuthedFakeAPI(t, `{"id":"generated-id","accepted_at":"2026-09-19T12:00:00Z","account_id":"acct-1"}`, http.StatusAccepted)
+	if code := main.CmdEventsPublish([]string{
 		"billing.stripe", "invoice.paid", "--data", `{"amount":150}`,
 	}); code != 0 {
 		t.Fatalf("exit=%d", code)
@@ -115,21 +116,21 @@ func TestCmdEventsPublish_PositionalSourceTypeGeneratesID(t *testing.T) {
 		Type   string          `json:"type"`
 		Data   json.RawMessage `json:"data"`
 	}
-	if err := json.Unmarshal(f.sawBody, &got); err != nil {
+	if err := json.Unmarshal((*f.SawBody()), &got); err != nil {
 		t.Fatal(err)
 	}
 	if got.ID == "" {
 		t.Fatal("generated event id is empty")
 	}
 	if got.Source != "billing.stripe" || got.Type != "invoice.paid" || string(got.Data) != `{"amount":150}` {
-		t.Fatalf("body=%s", f.sawBody)
+		t.Fatalf("body=%s", (*f.SawBody()))
 	}
 }
 
 func TestCmdEventsPublish_RejectsPositionalFlagConflict(t *testing.T) {
-	resetJSONOut(t)
-	if code, captured := runWithStderr(t, func() int {
-		return cmdEventsPublish([]string{
+	main.ResetJSONOut(t)
+	if code, captured := main.RunWithStderr(t, func() int {
+		return main.CmdEventsPublish([]string{
 			"billing.stripe", "invoice.paid", "--source", "other", "--data", `{}`,
 		})
 	}); code != 1 || !strings.Contains(captured, "source provided both positionally") {
@@ -138,27 +139,27 @@ func TestCmdEventsPublish_RejectsPositionalFlagConflict(t *testing.T) {
 }
 
 func TestCmdEventsPublish_JSONOutput(t *testing.T) {
-	resetJSONOut(t)
-	f := authedFakeAPI(t, `{"id":"evt-1","accepted_at":"2026-09-19T12:00:00Z","account_id":"acct-1"}`, http.StatusAccepted)
-	jsonOutput = true
-	if code := cmdEventsPublish([]string{"--id", "evt-1", "--source", "source", "--type", "type", "--data", `{"ok":true}`}); code != 0 {
+	main.ResetJSONOut(t)
+	f := main.AuthedFakeAPI(t, `{"id":"evt-1","accepted_at":"2026-09-19T12:00:00Z","account_id":"acct-1"}`, http.StatusAccepted)
+	(*main.JsonOutput) = true
+	if code := main.CmdEventsPublish([]string{"--id", "evt-1", "--source", "source", "--type", "type", "--data", `{"ok":true}`}); code != 0 {
 		t.Fatalf("exit=%d", code)
 	}
-	if !strings.Contains(string(f.sawBody), `"id":"evt-1"`) {
-		t.Fatalf("body=%s", f.sawBody)
+	if !strings.Contains(string((*f.SawBody())), `"id":"evt-1"`) {
+		t.Fatalf("body=%s", (*f.SawBody()))
 	}
 }
 
 func TestCmdEventsSubscriptions_RendersReconciledManifest(t *testing.T) {
-	resetJSONOut(t)
-	f := authedFakeAPI(t, `{"app_slug":"invoice-worker","subscriptions":[{"id":"sub-1","app_id":"app-1","source":"billing.*","type":"invoice.paid","filter":{"data":{"amount":{"$gt":100}}},"ordered":true,"enabled":true,"created_at":"2026-09-19T12:00:00Z","updated_at":"2026-09-19T12:01:00Z"}]}`, http.StatusOK)
-	stdout, restore := swapStdout(t)
+	main.ResetJSONOut(t)
+	f := main.AuthedFakeAPI(t, `{"app_slug":"invoice-worker","subscriptions":[{"id":"sub-1","app_id":"app-1","source":"billing.*","type":"invoice.paid","filter":{"data":{"amount":{"$gt":100}}},"ordered":true,"enabled":true,"created_at":"2026-09-19T12:00:00Z","updated_at":"2026-09-19T12:01:00Z"}]}`, http.StatusOK)
+	stdout, restore := main.SwapStdout(t)
 	defer restore()
-	if code := cmdEventsSubscriptions([]string{"invoice-worker"}); code != 0 {
+	if code := main.CmdEventsSubscriptions([]string{"invoice-worker"}); code != 0 {
 		t.Fatalf("exit=%d", code)
 	}
-	if f.sawMethod != http.MethodGet || f.sawPath != "/v1/apps/invoice-worker/event-subscriptions" {
-		t.Fatalf("route=%s %s, want GET /v1/apps/invoice-worker/event-subscriptions", f.sawMethod, f.sawPath)
+	if (*f.SawMethod()) != http.MethodGet || (*f.SawPath()) != "/v1/apps/invoice-worker/event-subscriptions" {
+		t.Fatalf("route=%s %s, want GET /v1/apps/invoice-worker/event-subscriptions", (*f.SawMethod()), (*f.SawPath()))
 	}
 	out := stdout.String()
 	for _, want := range []string{"ID\tSOURCE\tTYPE\tFILTER\tORDERED\tENABLED\tUPDATED", "sub-1\tbilling.*\tinvoice.paid", `"$gt":100`, "true\ttrue"} {
@@ -169,12 +170,12 @@ func TestCmdEventsSubscriptions_RendersReconciledManifest(t *testing.T) {
 }
 
 func TestCmdEventsSubscriptions_JSONOutput(t *testing.T) {
-	resetJSONOut(t)
-	authedFakeAPI(t, `{"app_slug":"invoice-worker","subscriptions":[]}`, http.StatusOK)
-	jsonOutput = true
-	stdout, restore := swapStdout(t)
+	main.ResetJSONOut(t)
+	main.AuthedFakeAPI(t, `{"app_slug":"invoice-worker","subscriptions":[]}`, http.StatusOK)
+	(*main.JsonOutput) = true
+	stdout, restore := main.SwapStdout(t)
 	defer restore()
-	if code := cmdEventsSubscriptions([]string{"invoice-worker"}); code != 0 {
+	if code := main.CmdEventsSubscriptions([]string{"invoice-worker"}); code != 0 {
 		t.Fatalf("exit=%d", code)
 	}
 	var got struct {
@@ -190,18 +191,18 @@ func TestCmdEventsSubscriptions_JSONOutput(t *testing.T) {
 }
 
 func TestCmdEventsDeliveries_RendersFilteredRows(t *testing.T) {
-	resetJSONOut(t)
-	f := authedFakeAPI(t, `{"app_slug":"invoice-worker","deliveries":[{"invocation_id":"inv-1","invocation_source":"replay","event_id":"evt-1","event_source":"billing","event_type":"invoice.paid","subscription_id":"sub-1","state":"failed","attempts":3,"last_error":"worker unavailable","created_at":"2026-09-19T12:00:00Z"}],"next_before":"delivery-cursor"}`, http.StatusOK)
-	stdout, restore := swapStdout(t)
+	main.ResetJSONOut(t)
+	f := main.AuthedFakeAPI(t, `{"app_slug":"invoice-worker","deliveries":[{"invocation_id":"inv-1","invocation_source":"replay","event_id":"evt-1","event_source":"billing","event_type":"invoice.paid","subscription_id":"sub-1","state":"failed","attempts":3,"last_error":"worker unavailable","created_at":"2026-09-19T12:00:00Z"}],"next_before":"delivery-cursor"}`, http.StatusOK)
+	stdout, restore := main.SwapStdout(t)
 	defer restore()
-	if code := cmdEventsDeliveries([]string{"invoice-worker", "--event-source", "billing", "--event-id", "evt-1", "--state", "failed", "--limit", "1"}); code != 0 {
+	if code := main.CmdEventsDeliveries([]string{"invoice-worker", "--event-source", "billing", "--event-id", "evt-1", "--state", "failed", "--limit", "1"}); code != 0 {
 		t.Fatalf("exit=%d", code)
 	}
-	if f.sawMethod != http.MethodGet || f.sawPath != "/v1/apps/invoice-worker/event-deliveries" {
-		t.Fatalf("route=%s %s", f.sawMethod, f.sawPath)
+	if (*f.SawMethod()) != http.MethodGet || (*f.SawPath()) != "/v1/apps/invoice-worker/event-deliveries" {
+		t.Fatalf("route=%s %s", (*f.SawMethod()), (*f.SawPath()))
 	}
-	if f.sawQuery != "event_id=evt-1&event_source=billing&limit=1&state=failed" {
-		t.Fatalf("query=%q", f.sawQuery)
+	if (*f.SawQuery()) != "event_id=evt-1&event_source=billing&limit=1&state=failed" {
+		t.Fatalf("query=%q", (*f.SawQuery()))
 	}
 	if got := stdout.String(); !strings.Contains(got, "INVOCATION\tINVOCATION_SOURCE\tEVENT\tSOURCE\tTYPE\tSTATE\tATTEMPTS\tCREATED\tERROR") || !strings.Contains(got, "inv-1\treplay\tevt-1\tbilling\tinvoice.paid\tfailed\t3") || !strings.Contains(got, "worker unavailable") {
 		t.Fatalf("stdout=%q", got)
@@ -209,9 +210,9 @@ func TestCmdEventsDeliveries_RendersFilteredRows(t *testing.T) {
 }
 
 func TestCmdEventsDeliveries_EventSourceRequiresEventID(t *testing.T) {
-	resetJSONOut(t)
-	code, captured := runWithStderr(t, func() int {
-		return cmdEventsDeliveries([]string{"invoice-worker", "--event-source", "billing"})
+	main.ResetJSONOut(t)
+	code, captured := main.RunWithStderr(t, func() int {
+		return main.CmdEventsDeliveries([]string{"invoice-worker", "--event-source", "billing"})
 	})
 	if code != 1 || !strings.Contains(captured, "--event-source SOURCE --event-id ID") {
 		t.Fatalf("exit=%d stderr=%q", code, captured)
@@ -219,11 +220,11 @@ func TestCmdEventsDeliveries_EventSourceRequiresEventID(t *testing.T) {
 }
 
 func TestCmdEventsDeliveries_RendersFanoutFailureClassification(t *testing.T) {
-	resetJSONOut(t)
-	authedFakeAPI(t, `{"app_slug":"invoice-worker","deliveries":[],"fanout_failures":[{"event_id":"evt-1","event_source":"billing","event_type":"invoice.paid","subscription_id":"sub-1","state":"failed","attempts":12,"failure_code":"invocation_enqueue_failed","retryable":true,"last_error":"temporary outage","created_at":"2026-09-19T12:00:00Z","failed_at":"2026-09-19T12:01:00Z"}]}`, http.StatusOK)
-	stdout, restore := swapStdout(t)
+	main.ResetJSONOut(t)
+	main.AuthedFakeAPI(t, `{"app_slug":"invoice-worker","deliveries":[],"fanout_failures":[{"event_id":"evt-1","event_source":"billing","event_type":"invoice.paid","subscription_id":"sub-1","state":"failed","attempts":12,"failure_code":"invocation_enqueue_failed","retryable":true,"last_error":"temporary outage","created_at":"2026-09-19T12:00:00Z","failed_at":"2026-09-19T12:01:00Z"}]}`, http.StatusOK)
+	stdout, restore := main.SwapStdout(t)
 	defer restore()
-	if code := cmdEventsDeliveries([]string{"invoice-worker", "--state", "failed"}); code != 0 {
+	if code := main.CmdEventsDeliveries([]string{"invoice-worker", "--state", "failed"}); code != 0 {
 		t.Fatalf("exit=%d", code)
 	}
 	out := stdout.String()
@@ -239,12 +240,12 @@ func TestCmdEventsDeliveries_RendersFanoutFailureClassification(t *testing.T) {
 }
 
 func TestCmdEventsDeliveries_JSONOutput(t *testing.T) {
-	resetJSONOut(t)
-	authedFakeAPI(t, `{"app_slug":"invoice-worker","deliveries":[]}`, http.StatusOK)
-	jsonOutput = true
-	stdout, restore := swapStdout(t)
+	main.ResetJSONOut(t)
+	main.AuthedFakeAPI(t, `{"app_slug":"invoice-worker","deliveries":[]}`, http.StatusOK)
+	(*main.JsonOutput) = true
+	stdout, restore := main.SwapStdout(t)
 	defer restore()
-	if code := cmdEventsDeliveries([]string{"invoice-worker"}); code != 0 {
+	if code := main.CmdEventsDeliveries([]string{"invoice-worker"}); code != 0 {
 		t.Fatalf("exit=%d", code)
 	}
 	var got struct {
@@ -260,18 +261,18 @@ func TestCmdEventsDeliveries_JSONOutput(t *testing.T) {
 }
 
 func TestCmdEventsReplayRetryable_UsesBoundedBatchAPI(t *testing.T) {
-	resetJSONOut(t)
-	f := authedFakeAPI(t, `{"app_slug":"invoice-worker","replayed_count":3,"has_more":true}`, http.StatusAccepted)
-	stdout, restore := swapStdout(t)
+	main.ResetJSONOut(t)
+	f := main.AuthedFakeAPI(t, `{"app_slug":"invoice-worker","replayed_count":3,"has_more":true}`, http.StatusAccepted)
+	stdout, restore := main.SwapStdout(t)
 	defer restore()
-	if code := cmdEventsReplayRetryableFanoutFailures([]string{"invoice-worker", "--event-source", "orders.us", "--event-id", "evt-1", "--limit", "3", "--yes"}); code != 0 {
+	if code := main.CmdEventsReplayRetryableFanoutFailures([]string{"invoice-worker", "--event-source", "orders.us", "--event-id", "evt-1", "--limit", "3", "--yes"}); code != 0 {
 		t.Fatalf("exit=%d", code)
 	}
-	if f.sawMethod != http.MethodPost || f.sawPath != "/v1/apps/invoice-worker/event-deliveries:replay-retryable-fanout-failures" {
-		t.Fatalf("route=%s %s", f.sawMethod, f.sawPath)
+	if (*f.SawMethod()) != http.MethodPost || (*f.SawPath()) != "/v1/apps/invoice-worker/event-deliveries:replay-retryable-fanout-failures" {
+		t.Fatalf("route=%s %s", (*f.SawMethod()), (*f.SawPath()))
 	}
 	var request api.ReplayRetryableEventFanoutFailuresRequest
-	if err := json.Unmarshal(f.sawBody, &request); err != nil {
+	if err := json.Unmarshal((*f.SawBody()), &request); err != nil {
 		t.Fatalf("decode request body: %v", err)
 	}
 	if request.EventSource != "orders.us" || request.EventID != "evt-1" || request.Limit != 3 {
@@ -285,9 +286,9 @@ func TestCmdEventsReplayRetryable_UsesBoundedBatchAPI(t *testing.T) {
 }
 
 func TestCmdEventsReplayRetryable_RequiresCompleteEventIdentity(t *testing.T) {
-	resetJSONOut(t)
-	code, captured := runWithStderr(t, func() int {
-		return cmdEventsReplayRetryableFanoutFailures([]string{"invoice-worker", "--event-id", "evt-1", "--yes"})
+	main.ResetJSONOut(t)
+	code, captured := main.RunWithStderr(t, func() int {
+		return main.CmdEventsReplayRetryableFanoutFailures([]string{"invoice-worker", "--event-id", "evt-1", "--yes"})
 	})
 	if code != 1 || !strings.Contains(captured, "--event-source SOURCE --event-id ID") {
 		t.Fatalf("exit=%d stderr=%q", code, captured)
@@ -295,9 +296,9 @@ func TestCmdEventsReplayRetryable_RequiresCompleteEventIdentity(t *testing.T) {
 }
 
 func TestCmdEventsReplayRetryable_RequiresConfirmation(t *testing.T) {
-	resetJSONOut(t)
-	code, captured := runWithStderr(t, func() int {
-		return cmdEventsReplayRetryableFanoutFailures([]string{"invoice-worker"})
+	main.ResetJSONOut(t)
+	code, captured := main.RunWithStderr(t, func() int {
+		return main.CmdEventsReplayRetryableFanoutFailures([]string{"invoice-worker"})
 	})
 	if code != 1 || !strings.Contains(captured, "--yes") {
 		t.Fatalf("exit=%d stderr=%q", code, captured)
@@ -305,15 +306,15 @@ func TestCmdEventsReplayRetryable_RequiresConfirmation(t *testing.T) {
 }
 
 func TestCmdEventsFanoutHistoryDisplaysRecipientTimeline(t *testing.T) {
-	resetJSONOut(t)
-	f := authedFakeAPI(t, `{"app_slug":"invoice-worker","event_source":"billing","event_id":"evt-42","history":[{"subscription_id":"sub-1","action":"operator_replay","state":"pending","attempt_number":3,"failure_code":"invocation_enqueue_failed","retryable":true,"last_error":"temporary outage","occurred_at":"2026-09-19T12:01:00Z"}]}`, http.StatusOK)
-	stdout, restore := swapStdout(t)
+	main.ResetJSONOut(t)
+	f := main.AuthedFakeAPI(t, `{"app_slug":"invoice-worker","event_source":"billing","event_id":"evt-42","history":[{"subscription_id":"sub-1","action":"operator_replay","state":"pending","attempt_number":3,"failure_code":"invocation_enqueue_failed","retryable":true,"last_error":"temporary outage","occurred_at":"2026-09-19T12:01:00Z"}]}`, http.StatusOK)
+	stdout, restore := main.SwapStdout(t)
 	defer restore()
-	if code := cmdEventsFanoutHistory([]string{"invoice-worker", "--event-source", "billing", "--event-id", "evt-42", "--subscription-id", "sub-1", "--limit", "1"}); code != 0 {
+	if code := main.CmdEventsFanoutHistory([]string{"invoice-worker", "--event-source", "billing", "--event-id", "evt-42", "--subscription-id", "sub-1", "--limit", "1"}); code != 0 {
 		t.Fatalf("exit=%d", code)
 	}
-	if f.sawMethod != http.MethodGet || f.sawPath != "/v1/apps/invoice-worker/event-deliveries/attempts" {
-		t.Fatalf("route=%s %s", f.sawMethod, f.sawPath)
+	if (*f.SawMethod()) != http.MethodGet || (*f.SawPath()) != "/v1/apps/invoice-worker/event-deliveries/attempts" {
+		t.Fatalf("route=%s %s", (*f.SawMethod()), (*f.SawPath()))
 	}
 	for _, want := range []string{"evt-42", "billing", "sub-1", "operator_replay", "pending", "invocation_enqueue_failed", "temporary outage"} {
 		if !strings.Contains(stdout.String(), want) {

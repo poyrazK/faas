@@ -167,7 +167,7 @@ func (q *Queries) RevokeScenarioCommandNetworksForNode(ctx context.Context, db D
 }
 
 const scenarioCommandCallersByHostIP = `-- name: ScenarioCommandCallersByHostIP :many
-SELECT t.app_id::text AS app_id,t.deployment_id::text AS deployment_id
+SELECT t.id::text AS instance_id,t.app_id::text AS app_id,t.deployment_id::text AS deployment_id
 FROM scenario_command_networks c JOIN app_tasks t ON t.id=c.task_id JOIN compute_nodes n ON n.id=c.node_id
 JOIN scenario_recorder_sessions r ON r.instance_id=t.id AND r.app_id=t.app_id
 JOIN scenario_test_action_policies p ON p.app_id=t.app_id JOIN apps a ON a.id=t.app_id
@@ -184,6 +184,7 @@ type ScenarioCommandCallersByHostIPParams struct {
 }
 
 type ScenarioCommandCallersByHostIPRow struct {
+	InstanceID   string
 	AppID        string
 	DeploymentID string
 }
@@ -197,7 +198,7 @@ func (q *Queries) ScenarioCommandCallersByHostIP(ctx context.Context, db DBTX, a
 	items := []ScenarioCommandCallersByHostIPRow{}
 	for rows.Next() {
 		var i ScenarioCommandCallersByHostIPRow
-		if err := rows.Scan(&i.AppID, &i.DeploymentID); err != nil {
+		if err := rows.Scan(&i.InstanceID, &i.AppID, &i.DeploymentID); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

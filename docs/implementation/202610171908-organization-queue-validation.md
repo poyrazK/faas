@@ -58,9 +58,10 @@ Completed checks:
 
 Production deployment and native KVM acceptance are pending; the HTTP fixture
 creates a live worker record without booting a VM.
-Async admission and dispatch must be paused during the schema change, with all
-quota writers restarted together before resuming. Mixed old/new quota writers
-are unsupported; rollback must precede creator erasure.
+Superseded 2026-10-19 (see "Online rollout" below): nothing is paused. Mixed
+old/new quota writers are supported because reservations stay on namespace
+counters until the following release pools them; rollback must still precede
+creator erasure.
 
 ## Release branch verification
 
@@ -586,3 +587,25 @@ with the shared dispatch harness. The merge retains all 352 dispatch methods,
 including enterprise project lookups, and its map/delegation tests pass
 (0.033s). Production code, schemas and SDK inputs are unchanged by this
 follow-up; the node-lease integration evidence above still applies.
+
+## Online rollout (2026-10-19)
+
+The rc.277 rollout deadlocked in `20261018003100003` against live writers, and
+ADR-202610171900 amendment 1 withdrew the maintenance exception these notes
+assumed. `20261018003100003` to `…007` are now ledger placeholders, and
+`20261019190114207` to `…676` apply the same schema online; ADR-202610171908
+"Rollout" describes the steps and why async pooling waits a release.
+Verification of the rewrite:
+
+- A fresh replay matches main's schema except the pooling switch
+  (`orgs.async_quota_pooled_at`, `invocation_async_subject`,
+  `stamp_invocation_async_subject`, `adopt_org_async_reservations`, and no
+  adoption trigger). Applying the new files to a database that ran the original
+  migrations yields the identical schema.
+- The full chain from production's ledger (through `20261018003100002`) ran
+  against a seeded database while rc.272-style writers ran; timings and
+  results are in the pull request.
+- `TestPostgresOrgQueueBackfill` runs the queue migration statement by
+  statement against legacy rows: open reservations keep their namespace
+  counter, and pooling moves them (or refuses an inconsistent counter).
+

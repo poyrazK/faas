@@ -28,6 +28,7 @@ type deployIdempotencyIntent struct {
 	Ref                      string                     `json:"ref,omitempty"`
 	SourceBranch             string                     `json:"source_branch,omitempty"`
 	SourceSHA256             string                     `json:"source_sha256,omitempty"`
+	IssueSourceMapsSHA256    string                     `json:"issue_source_maps_sha256,omitempty"`
 	SourceRoot               string                     `json:"source_root,omitempty"`
 	Profile                  string                     `json:"profile,omitempty"`
 	Dockerfile               bool                       `json:"dockerfile,omitempty"`

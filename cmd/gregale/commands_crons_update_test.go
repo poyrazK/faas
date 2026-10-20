@@ -1,7 +1,7 @@
 // Tests for the `gregale crons update <id>` subcommand. Mirrors the
 // `commands_deployments_test.go` shape: httptest.NewServer fake + t.Setenv
 // + osStdout swap. The dispatch placement lives in main_test.go.
-package main
+package main_test
 
 import (
 	"bytes"
@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -37,7 +38,7 @@ func TestCmdCronsUpdate_HappyPath_ScheduleOnly(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	if code := cmdCronsUpdate([]string{cronsUpdateID, "--schedule", "*/15 * * * *"}); code != 0 {
+	if code := main.CmdCronsUpdate([]string{cronsUpdateID, "--schedule", "*/15 * * * *"}); code != 0 {
 		t.Errorf("update schedule-only = %d, want 0", code)
 	}
 	if gotMethod != http.MethodPatch {
@@ -70,7 +71,7 @@ func TestCmdCronsUpdate_HappyPath_Enable(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	if code := cmdCronsUpdate([]string{cronsUpdateID, "--enable"}); code != 0 {
+	if code := main.CmdCronsUpdate([]string{cronsUpdateID, "--enable"}); code != 0 {
 		t.Errorf("update --enable = %d, want 0", code)
 	}
 	if gotBody.Enabled == nil || *gotBody.Enabled != true {
@@ -94,7 +95,7 @@ func TestCmdCronsUpdate_HappyPath_Disable(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	if code := cmdCronsUpdate([]string{cronsUpdateID, "--disable"}); code != 0 {
+	if code := main.CmdCronsUpdate([]string{cronsUpdateID, "--disable"}); code != 0 {
 		t.Errorf("update --disable = %d, want 0", code)
 	}
 	if gotBody.Enabled == nil || *gotBody.Enabled != false {
@@ -118,7 +119,7 @@ func TestCmdCronsUpdate_HappyPath_RetryPolicy(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	if code := cmdCronsUpdate([]string{cronsUpdateID, "--retry-max", "3", "--retry-backoff-seconds", "25"}); code != 0 {
+	if code := main.CmdCronsUpdate([]string{cronsUpdateID, "--retry-max", "3", "--retry-backoff-seconds", "25"}); code != 0 {
 		t.Fatalf("update retry policy = %d", code)
 	}
 	if gotBody.RetryMax == nil || *gotBody.RetryMax != 3 ||
@@ -143,7 +144,7 @@ func TestCmdCronsUpdate_HappyPath_PathEmpty(t *testing.T) {
 	// Pins the explicit-zero path: --path "" must set Path to *string("")
 	// in the wire body, not drop the flag (which would silently leave
 	// the path at "/"). fs.Visit is what makes this work.
-	if code := cmdCronsUpdate([]string{cronsUpdateID, "--path", ""}); code != 0 {
+	if code := main.CmdCronsUpdate([]string{cronsUpdateID, "--path", ""}); code != 0 {
 		t.Errorf("update --path '' = %d, want 0", code)
 	}
 	if gotBody.Path == nil {
@@ -156,22 +157,22 @@ func TestCmdCronsUpdate_HappyPath_PathEmpty(t *testing.T) {
 // --- client-side rejections (no server call) -------------------------------
 
 func TestCmdCronsUpdate_MissingID(t *testing.T) {
-	if code := cmdCronsUpdate(nil); code != 1 {
+	if code := main.CmdCronsUpdate(nil); code != 1 {
 		t.Errorf("update no args = %d, want 1", code)
 	}
 }
 
 func TestCmdCronsUpdate_ExtraPositional(t *testing.T) {
-	if code := cmdCronsUpdate([]string{cronsUpdateID, "extra"}); code != 1 {
+	if code := main.CmdCronsUpdate([]string{cronsUpdateID, "extra"}); code != 1 {
 		t.Errorf("update extra positional = %d, want 1", code)
 	}
 }
 
 func TestCmdCronsUpdate_BadID(t *testing.T) {
-	if code := cmdCronsUpdate([]string{"not-hex"}); code != 1 {
+	if code := main.CmdCronsUpdate([]string{"not-hex"}); code != 1 {
 		t.Errorf("update invalid id = %d, want 1", code)
 	}
-	if code := cmdCronsUpdate([]string{"0123456789abcdef"}); code != 1 { // 30 chars
+	if code := main.CmdCronsUpdate([]string{"0123456789abcdef"}); code != 1 { // 30 chars
 		t.Errorf("update short id = %d, want 1", code)
 	}
 }
@@ -188,7 +189,7 @@ func TestCmdCronsUpdate_InvalidSchedule(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	if code := cmdCronsUpdate([]string{cronsUpdateID, "--schedule", "garbage"}); code != 1 {
+	if code := main.CmdCronsUpdate([]string{cronsUpdateID, "--schedule", "garbage"}); code != 1 {
 		t.Errorf("update bad schedule = %d, want 1", code)
 	}
 	if calls != 0 {
@@ -197,7 +198,7 @@ func TestCmdCronsUpdate_InvalidSchedule(t *testing.T) {
 }
 
 func TestCmdCronsUpdate_EnableDisableConflict(t *testing.T) {
-	if code := cmdCronsUpdate([]string{cronsUpdateID, "--enable", "--disable"}); code != 1 {
+	if code := main.CmdCronsUpdate([]string{cronsUpdateID, "--enable", "--disable"}); code != 1 {
 		t.Errorf("update --enable --disable = %d, want 1", code)
 	}
 }
@@ -213,7 +214,7 @@ func TestCmdCronsUpdate_NoFields(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	if code := cmdCronsUpdate([]string{cronsUpdateID}); code != 1 {
+	if code := main.CmdCronsUpdate([]string{cronsUpdateID}); code != 1 {
 		t.Errorf("update no fields = %d, want 1", code)
 	}
 	if calls != 0 {
@@ -226,7 +227,7 @@ func TestCmdCronsUpdate_Unauthenticated(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 	t.Setenv("XDG_CONFIG_HOME", dir)
-	if code := cmdCronsUpdate([]string{cronsUpdateID, "--enable"}); code == 0 {
+	if code := main.CmdCronsUpdate([]string{cronsUpdateID, "--enable"}); code == 0 {
 		t.Error("update without token must fail")
 	}
 }
@@ -241,7 +242,7 @@ func TestCmdCronsUpdate_NotFound(t *testing.T) {
 
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
-	if code := cmdCronsUpdate([]string{cronsUpdateID, "--enable"}); code == 0 {
+	if code := main.CmdCronsUpdate([]string{cronsUpdateID, "--enable"}); code == 0 {
 		t.Error("update 404 must fail")
 	}
 }
@@ -261,7 +262,7 @@ func TestCmdCronsUpdate_InvalidCronServerSide(t *testing.T) {
 
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
-	if code := cmdCronsUpdate([]string{cronsUpdateID, "--schedule", "*/5 * * * *"}); code == 0 {
+	if code := main.CmdCronsUpdate([]string{cronsUpdateID, "--schedule", "*/5 * * * *"}); code == 0 {
 		t.Error("update 400 cron_invalid must fail")
 	}
 }
@@ -286,15 +287,15 @@ func TestCmdCronsUpdate_JSON_SingleRecord(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
 	var stdout bytes.Buffer
-	oldOut := osStdout
-	osStdout = &stdout
-	defer func() { osStdout = oldOut }()
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	defer func() { (*main.OsStdout) = oldOut }()
 
-	resetJSONOutput()
-	t.Cleanup(resetJSONOutput)
-	jsonOutput = true
+	main.ResetJSONOutput()
+	t.Cleanup(main.ResetJSONOutput)
+	(*main.JsonOutput) = true
 
-	if code := cmdCronsUpdate([]string{cronsUpdateID, "--schedule", "*/15 * * * *"}); code != 0 {
+	if code := main.CmdCronsUpdate([]string{cronsUpdateID, "--schedule", "*/15 * * * *"}); code != 0 {
 		t.Errorf("update json = %d, want 0", code)
 	}
 	var c api.CronResponse
@@ -337,7 +338,7 @@ func TestRun_DispatchCronsUpdate(t *testing.T) {
 	t.Setenv("HOME", dir)
 	t.Setenv("XDG_CONFIG_HOME", dir)
 
-	if code := run([]string{"crons", "update", cronsUpdateID, "--schedule", "*/15 * * * *"}); code != 0 {
+	if code := main.Run([]string{"crons", "update", cronsUpdateID, "--schedule", "*/15 * * * *"}); code != 0 {
 		t.Errorf("run crons update = %d, want 0", code)
 	}
 }
@@ -360,11 +361,11 @@ func TestCmdCronsUpdate_HappyPath_DetailRendered(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
 	var stdout bytes.Buffer
-	oldOut := osStdout
-	osStdout = &stdout
-	defer func() { osStdout = oldOut }()
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	defer func() { (*main.OsStdout) = oldOut }()
 
-	if code := cmdCronsUpdate([]string{cronsUpdateID, "--schedule", "*/15 * * * *"}); code != 0 {
+	if code := main.CmdCronsUpdate([]string{cronsUpdateID, "--schedule", "*/15 * * * *"}); code != 0 {
 		t.Errorf("update = %d, want 0", code)
 	}
 	out := stdout.String()
@@ -400,11 +401,11 @@ func TestCmdCronsUpdate_Disable_PrintsFalse(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
 	var stdout bytes.Buffer
-	oldOut := osStdout
-	osStdout = &stdout
-	defer func() { osStdout = oldOut }()
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	defer func() { (*main.OsStdout) = oldOut }()
 
-	if code := cmdCronsUpdate([]string{cronsUpdateID, "--disable"}); code != 0 {
+	if code := main.CmdCronsUpdate([]string{cronsUpdateID, "--disable"}); code != 0 {
 		t.Errorf("update --disable = %d, want 0", code)
 	}
 	if !strings.Contains(stdout.String(), "enabled:") || !strings.Contains(stdout.String(), "false") {
@@ -420,7 +421,7 @@ func TestCmdCronsUpdate_Disable_PrintsFalse(t *testing.T) {
 // that.
 func TestRenderCronState_PinsColumnLayout(t *testing.T) {
 	var buf bytes.Buffer
-	renderCronState(&buf, api.CronResponse{
+	main.RenderCronState(&buf, api.CronResponse{
 		ID:       cronsUpdateID,
 		AppID:    "a1",
 		Schedule: "*/15 * * * *",

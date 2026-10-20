@@ -36,6 +36,7 @@ func (l *Loop) runPrimeRecovery(ctx context.Context) {
 			Limit:         primeRecoveryPageSize,
 			Offset:        page * primeRecoveryPageSize,
 		})
+		l.primeMetrics.observeQuery(ctx, err)
 		if err != nil {
 			l.log.Warn("sched: list snapshot prime recovery candidates", "err", err)
 			return
@@ -54,11 +55,14 @@ func (l *Loop) runPrimeRecovery(ctx context.Context) {
 	}
 }
 
-func (l *Loop) recoverPrimeCandidate(ctx context.Context, deploymentID string, cutoff time.Time) error {
+func (l *Loop) recoverPrimeCandidate(ctx context.Context, deploymentID string, cutoff time.Time) (err error) {
+	outcome := "ineligible"
+	defer func() { l.primeMetrics.observeCandidate(ctx, outcome, err) }()
 	// The fleet listing is a candidate index, not the decision: re-read the
 	// full row because rollback cancellation or a normal prime may have won.
 	dep, err := l.engine.store.DeploymentByID(ctx, deploymentID)
 	if errors.Is(err, state.ErrNotFound) {
+		outcome = "not_found"
 		return nil
 	}
 	if err != nil {
@@ -68,6 +72,7 @@ func (l *Loop) recoverPrimeCandidate(ctx context.Context, deploymentID string, c
 		return nil
 	}
 	if allowed, err := l.engine.releaseAllowsPrime(ctx, dep); err != nil || !allowed {
+		outcome = "release_blocked"
 		return err
 	}
 	var stage state.StageState
@@ -75,6 +80,9 @@ func (l *Loop) recoverPrimeCandidate(ctx context.Context, deploymentID string, c
 		return err
 	}
 	if stage.Current != state.StageSnapshotPrepare || stage.CurrentStartedAt == nil || !stage.CurrentStartedAt.Before(cutoff) {
+		if stage.Current == state.StageSnapshotPrepare && stage.CurrentStartedAt != nil {
+			outcome = "grace"
+		}
 		return nil
 	}
 	app, err := l.engine.store.AppByID(ctx, dep.AppID)
@@ -85,6 +93,9 @@ func (l *Loop) recoverPrimeCandidate(ctx context.Context, deploymentID string, c
 		return err
 	}
 	if app.Status == state.AppDeleted || !l.engine.ownsAppDecision(app) {
+		if app.Status != state.AppDeleted {
+			outcome = "not_owned"
+		}
 		return nil
 	}
 	if snap, err := l.engine.store.LatestSnapshot(ctx, dep.ID); err == nil {
@@ -92,6 +103,7 @@ func (l *Loop) recoverPrimeCandidate(ctx context.Context, deploymentID string, c
 		// still exist, but only a capture after this snapshot_prepare
 		// attempt proves the new handoff completed.
 		if snap.CreatedAt.After(*stage.CurrentStartedAt) {
+			outcome = "snapshot_recorded"
 			return nil
 		}
 	} else if !errors.Is(err, state.ErrNotFound) {
@@ -117,10 +129,15 @@ func (l *Loop) recoverPrimeCandidate(ctx context.Context, deploymentID string, c
 		if ins.DeploymentID == dep.ID && ins.StartedAt.After(*stage.CurrentStartedAt) &&
 			(state.State(ins.State).CountsForRAM() ||
 				(state.State(ins.State) == state.StateParked && !l.engine.runtimeConfigReceiptStale(ctx, ins, changedAt, dep.Scope))) {
+			outcome = "active"
+			if state.State(ins.State) == state.StateParked {
+				outcome = "publication_pending"
+			}
 			return nil
 		}
 	}
 	l.log.Warn("sched: recovering lost snapshot prime handoff", "app", app.ID, "deployment", dep.ID)
+	outcome = "dispatch_requested"
 	l.dispatchPrime(ctx, app.ID, dep.ID)
 	return nil
 }

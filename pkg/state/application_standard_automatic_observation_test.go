@@ -14,12 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 )
 
-type standardAutomaticObservationTestStore interface {
-	standardObservationTestStore
-	ApplicationStandardAutomaticMaterializationStore
-	ApplicationStandardAutomaticObservationStore
-	ApplicationStandardLocalIntentStore
-}
+type standardAutomaticObservationTestStore = contractTestStore
 
 func automaticObservationAdmission(t *testing.T, s standardAutomaticObservationTestStore, owner CreateAccountWithPersonalOrgResult) {
 	t.Helper()
@@ -151,7 +146,9 @@ func memAutomaticObservationDue(m *MemStore, id string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	check := m.standardObservationChecks[canonicalStandardUUID(id)]
-	check.at = time.Now().Add(-api.ApplicationStandardObservationInterval)
+	// A second past due: the claim truncates now to microseconds, so a check due
+	// within the same microsecond as the claim (Linux clocks) still looks fresh.
+	check.at = time.Now().Add(-api.ApplicationStandardObservationInterval - time.Second)
 	m.standardObservationChecks[canonicalStandardUUID(id)] = check
 }
 

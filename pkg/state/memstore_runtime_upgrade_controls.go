@@ -50,6 +50,7 @@ func (m *MemStore) ReserveRuntimeUpgradeOperation(ctx context.Context, r Runtime
 	op, err := m.registerRuntimeUpgradeOperationLocked(r, RuntimeUpgradeReserved, sourcePath)
 	if err != nil {
 		delete(m.deployments, candidate.ID)
+		delete(m.publicBuildURLs, candidate.ID)
 	}
 	return op, err
 }

@@ -55,6 +55,15 @@ func ValidateFinancialBudgetSpec(p financial.BudgetSpec) error {
 	return nil
 }
 
+func NormalizeFinancialBudgetSpec(p financial.BudgetSpec) financial.BudgetSpec {
+	if p.Scope.ID != "" {
+		if id, err := uuid.Parse(p.Scope.ID); err == nil {
+			p.Scope.ID = id.String()
+		}
+	}
+	return p
+}
+
 func validFinancialBudgetMutation(account, id, actor string, expected int64) bool {
 	return uuid.Validate(account) == nil && uuid.Validate(id) == nil && strings.TrimSpace(actor) != "" && len(actor) <= api.FinancialBudgetActorBytes && expected >= 0 && expected < api.FinancialBudgetRevisionMax
 }

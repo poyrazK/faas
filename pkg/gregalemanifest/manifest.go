@@ -97,6 +97,10 @@ const (
 	TriggerKindAMQP TriggerKind = "amqp"
 	// TriggerKindRabbitMQ is an alias for TriggerKindAMQP.
 	TriggerKindRabbitMQ TriggerKind = "rabbitmq"
+	// TriggerKindRealtime — deliver a bound realtime consumer group's
+	// messages as invocations (ADR-1322). Config schema:
+	// api.RealtimeTriggerConfig{EndpointID, Channel, Group, MaxConcurrency}.
+	TriggerKindRealtime TriggerKind = "realtime"
 )
 
 // EventTrigger is a content-based internal event subscription declaration.
@@ -363,7 +367,7 @@ func (c ExclusiveOperationsConfig) Validate() error {
 
 func validExclusiveBrokerKind(kind string) bool {
 	switch kind {
-	case "kafka", "nats", "redis_streams", "sqs_compat", "queue", "amqp", "rabbitmq":
+	case "kafka", "nats", "redis_streams", "sqs_compat", "queue":
 		return true
 	default:
 		return false
@@ -772,6 +776,9 @@ type Trigger struct {
 	// so a YAML typo surfaces at load time rather than at
 	// poison-record dispatch time.
 	BrokerPoisonStrategy string `yaml:"broker_poison_strategy,omitempty"`
+	// Delivery is "record" (default: one invocation per record) or
+	// "batch" (one invocation per dispatch batch, ADR-1321).
+	Delivery string `yaml:"delivery,omitempty"`
 	// FilterCriteria (ADR-118 / issue #757 closure, migration
 	// 00300) is the per-source record filter tree. nil means
 	// "every record passes through". The shape is evaluated
@@ -1787,12 +1794,14 @@ func (w *WorkerSpec) Validate() error {
 	}
 	if w.Source != nil {
 		switch w.Source.Kind {
-		case TriggerKindKafka, TriggerKindNATS, TriggerKindRedisStreams, TriggerKindSQSCompat, TriggerKindQueue, TriggerKindAMQP, TriggerKindRabbitMQ:
+		case TriggerKindKafka, TriggerKindNATS, TriggerKindRedisStreams, TriggerKindSQSCompat, TriggerKindQueue:
 			// valid broker kinds
+		case TriggerKindAMQP, TriggerKindRabbitMQ:
+			return fmt.Errorf("worker.source: %w", errBrokerKindUnavailable(w.Source.Kind))
 		case "":
 			return errors.New("worker.source: kind is required")
 		default:
-			return fmt.Errorf("worker.source: unsupported kind %q; must be one of kafka, nats, redis_streams, sqs_compat, queue, amqp, rabbitmq", w.Source.Kind)
+			return fmt.Errorf("worker.source: unsupported kind %q; must be one of kafka, nats, redis_streams, sqs_compat, queue", w.Source.Kind)
 		}
 		if err := w.Source.validateKindConfig(0); err != nil {
 			return fmt.Errorf("worker.source: %w", err)
@@ -2270,9 +2279,10 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 			TriggerKindRedisStreams,
 			TriggerKindSQSCompat,
 			TriggerKindQueue,
-			TriggerKindAMQP,
-			TriggerKindRabbitMQ:
+			TriggerKindRealtime:
 			// fall through to per-kind validation below
+		case TriggerKindAMQP, TriggerKindRabbitMQ:
+			return fmt.Errorf("trigger[%d]: %w", i, errBrokerKindUnavailable(t.Kind))
 		case "":
 			return fmt.Errorf("trigger[%d]: missing kind (want one of %s)", i, supportedKindsList())
 		default:
@@ -2369,6 +2379,11 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 			// time.
 			if t.BrokerPoisonStrategy != "" && t.BrokerPoisonStrategy != "commit" && t.BrokerPoisonStrategy != "seek-to-offset" {
 				return fmt.Errorf("trigger[%d]: broker_poison_strategy=%q invalid; must be one of commit, seek-to-offset", i, t.BrokerPoisonStrategy)
+			}
+		}
+		if t.Delivery != "" {
+			if err := api.ValidateTriggerDelivery(api.TriggerKind(t.Kind), t.Delivery); err != nil {
+				return fmt.Errorf("trigger[%d]: %w", i, err)
 			}
 		}
 		k := triggerKey{app: t.App, kind: t.Kind, schedule: t.Schedule, path: t.Path, slug: t.Slug}
@@ -2551,7 +2566,18 @@ func validateAppRetryPolicy(policy *RetryPolicyConfig) error {
 // shape — then alphabetical) so a customer grep'ing for "kafka" in
 // the error message finds it consistently.
 func supportedKindsList() string {
-	return "cron, kafka, nats, redis_streams, sqs_compat, queue, amqp, rabbitmq"
+	return "cron, kafka, nats, redis_streams, sqs_compat, queue, realtime"
+}
+
+// errBrokerKindUnavailable rejects broker kinds the manifest can parse but
+// the platform cannot run yet. apid's trigger API, the plan allowlist and
+// the triggers.kind CHECK accept only the kinds in supportedKindsList, so
+// accepting amqp/rabbitmq here let a deploy pass validation and then fail
+// with "amqp triggers are not available on the <plan> plan" on every plan.
+// The AMQP poller exists in pkg/sched; enabling the kind follows the
+// extension checklist on api.TriggerKind.
+func errBrokerKindUnavailable(kind TriggerKind) error {
+	return fmt.Errorf("%s triggers are not available yet (supported kinds: %s)", kind, supportedKindsList())
 }
 
 // validateKindConfig runs the per-kind config check. The cron kind's
@@ -2689,6 +2715,8 @@ func (t Trigger) validateKindConfig(idx int) error {
 			return fmt.Errorf("trigger[%d]: %s config requires non-empty queue", idx, t.Kind)
 		}
 		return nil
+	case TriggerKindRealtime:
+		return t.validateRealtime(idx)
 	}
 	// Unreachable: the outer switch in Validate already rejected
 	// unknown kinds. Returning nil here keeps the linter quiet and

@@ -32,6 +32,7 @@ var ErrAppTaskCoordinatorNotWired = errors.New("sched: app task coordinator is n
 // exact opt-in so the coordinator can land before the vmmd adapter without
 // claiming durable work that no runtime can execute.
 type AppTaskCoordinatorConfig struct {
+	Metrics            *AppTaskMetrics
 	Enabled            bool
 	Owner              string
 	MaxConcurrent      int
@@ -49,6 +50,7 @@ type AppTaskCoordinatorConfig struct {
 // restore the pinned deployment and resolve its scoped runtime environment,
 // but customer code cannot be dispatched before MarkAppTaskRunning wins.
 type AppTaskRestoreRequest struct {
+	LeaseToken      string
 	ID              string
 	AccountID       string
 	AppID           string
@@ -182,6 +184,8 @@ func (c *AppTaskCoordinator) Run(ctx context.Context) error {
 	if c.store == nil || c.backend == nil {
 		return ErrAppTaskCoordinatorNotWired
 	}
+	stopMetrics := c.config.Metrics.runnerStart(ctx)
+	defer stopMetrics()
 	if _, err := c.SweepOnce(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		c.log.Warn("schedd: app task initial recovery sweep failed", "error_class", appTaskErrorClass(err))
 	}
@@ -209,12 +213,15 @@ func (c *AppTaskCoordinator) ProcessNext(ctx context.Context) (bool, error) {
 		return false, ErrAppTaskCoordinatorNotWired
 	}
 	task, err := c.store.ClaimNextAppTask(ctx, c.config.Owner, c.now().UTC(), c.config.LeaseDuration)
+	c.config.Metrics.operation(ctx, "claim", err)
 	if errors.Is(err, state.ErrNotFound) {
 		return false, nil
 	}
 	if err != nil {
 		return false, fmt.Errorf("sched: claim app task: %w", err)
 	}
+	releaseSlot := c.config.Metrics.slot()
+	defer releaseSlot()
 	if task.LeaseToken == nil || *task.LeaseToken == "" {
 		return true, fmt.Errorf("sched: claimed app task %s without lease token", task.ID)
 	}
@@ -227,9 +234,11 @@ func (c *AppTaskCoordinator) SweepOnce(ctx context.Context) (state.AppTaskSweepR
 		return state.AppTaskSweepResult{}, ErrAppTaskCoordinatorNotWired
 	}
 	result, err := c.store.SweepExpiredAppTasks(ctx, c.now().UTC())
+	c.config.Metrics.operation(ctx, "sweep", err)
 	if err != nil {
 		return state.AppTaskSweepResult{}, fmt.Errorf("sched: sweep app tasks: %w", err)
 	}
+	c.config.Metrics.swept(result)
 	return result, nil
 }
 
@@ -246,6 +255,7 @@ func (c *AppTaskCoordinator) processClaim(parent context.Context, task state.App
 	// lookup leaves the claim to expire and be replayed (restoring is safe
 	// to replay).
 	interactive, err := c.interactiveAttach(parent, task)
+	c.config.Metrics.operation(parent, "attach_read", err)
 	if err != nil {
 		return fmt.Errorf("sched: load app task %s attach record: %w", task.ID, err)
 	}
@@ -266,11 +276,19 @@ func (c *AppTaskCoordinator) processClaim(parent context.Context, task state.App
 
 	restoreCtx, cancelRestore := context.WithTimeout(workCtx, c.config.RestoreTimeout)
 	session, restoreErr := c.backend.Restore(restoreCtx, AppTaskRestoreRequest{
-		ID: task.ID, AccountID: task.AccountID, AppID: task.AppID,
+		LeaseToken: *task.LeaseToken,
+		ID:         task.ID, AccountID: task.AccountID, AppID: task.AppID,
 		DeploymentID: task.DeploymentID, Kind: task.Kind, DeploymentScope: task.DeploymentScope,
 		ArtifactKey: task.ArtifactKey, ImageDigest: task.ImageDigest,
 	})
 	restoreTimedOut := errors.Is(restoreCtx.Err(), context.DeadlineExceeded)
+	restoreObservationErr := restoreErr
+	if restoreObservationErr == nil && (session == nil || restoreTimedOut) {
+		restoreObservationErr = errors.New("app task restore returned no usable session")
+	}
+	// Observe the call context before our own cancel; gRPC statuses need not
+	// wrap context errors. The restore deadline remains a preparation error.
+	c.config.Metrics.operation(restoreCtx, "restore", restoreObservationErr)
 	cancelRestore()
 	if restoreErr != nil || session == nil || restoreTimedOut {
 		if restoreErr == nil && restoreTimedOut {
@@ -289,6 +307,11 @@ func (c *AppTaskCoordinator) processClaim(parent context.Context, task state.App
 			return err
 		}
 		code, message := "restore_failed", "app task environment could not be prepared"
+		if errors.Is(restoreErr, state.ErrFinancialBudgetHeld) {
+			// No command was dispatched. Leave the restoring lease to the
+			// normal safe replay sweep; the next claim remains budget-gated.
+			return restoreErr
+		}
 		if restoreTimedOut {
 			code, message = "restore_timeout", "app task environment preparation timed out"
 		} else if errors.Is(restoreErr, ErrAppTaskAccountInactive) {
@@ -302,7 +325,9 @@ func (c *AppTaskCoordinator) processClaim(parent context.Context, task state.App
 	}
 
 	startedAt := c.now().UTC()
-	if _, err := c.store.MarkAppTaskRunning(parent, task.ID, *task.LeaseToken, startedAt); err != nil {
+	_, runningErr := c.store.MarkAppTaskRunning(parent, task.ID, *task.LeaseToken, startedAt)
+	c.config.Metrics.operation(parent, "running_fence", runningErr)
+	if err := runningErr; err != nil {
 		destroyErr := c.destroy(parent, task.ID, session)
 		signal := stopLeaseMonitor()
 		if destroyErr != nil {
@@ -322,7 +347,9 @@ func (c *AppTaskCoordinator) processClaim(parent context.Context, task state.App
 
 	executeTimeout := time.Duration(task.TimeoutSeconds) * time.Second
 	if interactive != nil {
-		if err := c.recordAttachNode(parent, task, session); err != nil {
+		attachErr := c.recordAttachNode(parent, task, session)
+		c.config.Metrics.operation(parent, "attach_route", attachErr)
+		if err := attachErr; err != nil {
 			destroyErr := c.destroy(parent, task.ID, session)
 			signal := stopLeaseMonitor()
 			if destroyErr != nil {
@@ -339,11 +366,8 @@ func (c *AppTaskCoordinator) processClaim(parent context.Context, task state.App
 		executeTimeout += time.Duration(interactive.AttachTimeoutSeconds)*time.Second + appTaskInteractiveSlack
 	}
 	executeCtx, cancelExecute := context.WithTimeout(workCtx, executeTimeout)
-	outcome, executeErr := session.Execute(executeCtx, AppTaskExecuteRequest{
-		Command: append([]string(nil), task.Command...), CommandShell: task.CommandShell,
-		Timeout: time.Duration(task.TimeoutSeconds) * time.Second, MaxOutputBytes: task.MaxOutputBytes,
-		Interactive: interactive,
-	})
+	outcome, executeErr := c.executeTaskCommand(executeCtx, session, task, interactive)
+	c.config.Metrics.operation(executeCtx, "execute", executeErr)
 	executeTimedOut := errors.Is(executeCtx.Err(), context.DeadlineExceeded)
 	cancelExecute()
 	destroyErr := c.destroy(parent, task.ID, session)
@@ -401,6 +425,7 @@ func (c *AppTaskCoordinator) monitorLease(ctx context.Context, task state.AppTas
 			return
 		case <-ticker.C:
 			err := c.store.RenewAppTaskLease(ctx, task.ID, *task.LeaseToken, c.now().UTC(), c.config.LeaseDuration)
+			c.config.Metrics.operation(ctx, "renew", err)
 			if err == nil {
 				continue
 			}
@@ -452,7 +477,9 @@ func (c *AppTaskCoordinator) finishInterrupted(parent context.Context, task stat
 func (c *AppTaskCoordinator) destroy(parent context.Context, taskID string, session AppTaskSession) error {
 	destroyCtx, cancel := context.WithTimeout(context.WithoutCancel(parent), c.config.DestroyTimeout)
 	defer cancel()
-	if err := session.Destroy(destroyCtx); err != nil {
+	err := session.Destroy(destroyCtx)
+	c.config.Metrics.operation(destroyCtx, "destroy", err)
+	if err != nil {
 		c.log.Error("schedd: app task teardown failed; terminal acknowledgement withheld", "task_id", taskID, "error_class", appTaskErrorClass(err))
 		return fmt.Errorf("sched: destroy app task %s: %w", taskID, err)
 	}
@@ -463,15 +490,18 @@ func (c *AppTaskCoordinator) complete(parent context.Context, task state.AppTask
 	completeCtx, cancel := context.WithTimeout(context.WithoutCancel(parent), c.config.FinalizeTimeout)
 	defer cancel()
 	params := appTaskCompletionParams(task, outcome, finishedAt)
-	_, err := c.store.CompleteAppTask(completeCtx, params)
+	completed, err := c.store.CompleteAppTask(completeCtx, params)
+	c.config.Metrics.operation(completeCtx, "complete", err)
 	if errors.Is(err, state.ErrAppTaskCancellationPending) {
-		_, err = c.store.CompleteAppTask(completeCtx, appTaskCompletionParams(
+		completed, err = c.store.CompleteAppTask(completeCtx, appTaskCompletionParams(
 			task, AppTaskOutcome{Status: state.AppTaskCancelled}, c.now().UTC(),
 		))
+		c.config.Metrics.operation(completeCtx, "complete", err)
 	}
 	if err != nil {
 		return fmt.Errorf("sched: complete app task %s: %w", task.ID, err)
 	}
+	c.config.Metrics.completed(completed)
 	return nil
 }
 

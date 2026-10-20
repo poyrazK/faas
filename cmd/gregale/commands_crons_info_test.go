@@ -2,7 +2,7 @@
 // closure). Mirrors commands_crons_runs_test.go: httptest.NewServer
 // fake + t.Setenv + osStdout swap + jsonOutput swap. The dispatch
 // placement lives in this file (TestRun_DispatchCronsInfo).
-package main
+package main_test
 
 import (
 	"bytes"
@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -56,11 +57,11 @@ func TestCmdCronsInfo_HappyPath(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
 	var stdout bytes.Buffer
-	oldOut := osStdout
-	osStdout = &stdout
-	defer func() { osStdout = oldOut }()
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	defer func() { (*main.OsStdout) = oldOut }()
 
-	if code := cmdCronsInfo([]string{cronsInfoID}); code != 0 {
+	if code := main.CmdCronsInfo([]string{cronsInfoID}); code != 0 {
 		t.Errorf("crons info = %d, want 0", code)
 	}
 	if gotMethod != http.MethodGet {
@@ -107,11 +108,11 @@ func TestCmdCronsInfo_NeverFired(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
 	var stdout bytes.Buffer
-	oldOut := osStdout
-	osStdout = &stdout
-	defer func() { osStdout = oldOut }()
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	defer func() { (*main.OsStdout) = oldOut }()
 
-	if code := cmdCronsInfo([]string{cronsInfoID}); code != 0 {
+	if code := main.CmdCronsInfo([]string{cronsInfoID}); code != 0 {
 		t.Errorf("crons info (never fired) = %d, want 0", code)
 	}
 	if !strings.Contains(stdout.String(), "  last:     —") {
@@ -131,15 +132,15 @@ func TestCmdCronsInfo_JSON_Envelope(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
 	var stdout bytes.Buffer
-	oldOut := osStdout
-	osStdout = &stdout
-	defer func() { osStdout = oldOut }()
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	defer func() { (*main.OsStdout) = oldOut }()
 
-	resetJSONOutput()
-	t.Cleanup(resetJSONOutput)
-	jsonOutput = true
+	main.ResetJSONOutput()
+	t.Cleanup(main.ResetJSONOutput)
+	(*main.JsonOutput) = true
 
-	if code := cmdCronsInfo([]string{cronsInfoID}); code != 0 {
+	if code := main.CmdCronsInfo([]string{cronsInfoID}); code != 0 {
 		t.Errorf("crons info json = %d, want 0", code)
 	}
 	var resp api.CronResponse
@@ -170,7 +171,7 @@ func TestCmdCronsInfo_BadID_NoServerCall(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	if code := cmdCronsInfo([]string{"not-hex"}); code != 1 {
+	if code := main.CmdCronsInfo([]string{"not-hex"}); code != 1 {
 		t.Errorf("crons info bad id = %d, want 1", code)
 	}
 	if calls != 0 {
@@ -188,7 +189,7 @@ func TestCmdCronsInfo_MissingID_NoServerCall(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	if code := cmdCronsInfo([]string{}); code != 1 {
+	if code := main.CmdCronsInfo([]string{}); code != 1 {
 		t.Errorf("crons info no args = %d, want 1", code)
 	}
 	if calls != 0 {
@@ -206,7 +207,7 @@ func TestCmdCronsInfo_ExtraPositional(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	if code := cmdCronsInfo([]string{cronsInfoID, "extra"}); code != 1 {
+	if code := main.CmdCronsInfo([]string{cronsInfoID, "extra"}); code != 1 {
 		t.Errorf("crons info extra positional = %d, want 1", code)
 	}
 	if calls != 0 {
@@ -243,7 +244,7 @@ func TestCmdCronsInfo_ServerNotFound(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	if code := cmdCronsInfo([]string{cronsInfoID}); code == 0 {
+	if code := main.CmdCronsInfo([]string{cronsInfoID}); code == 0 {
 		t.Errorf("crons info 404 = 0, want nonzero")
 	}
 }
@@ -269,7 +270,7 @@ func TestRun_DispatchCronsInfo(t *testing.T) {
 	t.Setenv("HOME", dir)
 	t.Setenv("XDG_CONFIG_HOME", dir)
 
-	if code := run([]string{"crons", "info", cronsInfoID}); code != 0 {
+	if code := main.Run([]string{"crons", "info", cronsInfoID}); code != 0 {
 		t.Errorf("run crons info = %d, want 0", code)
 	}
 }

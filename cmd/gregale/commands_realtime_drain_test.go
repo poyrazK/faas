@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -9,27 +9,28 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func TestCmdRealtimeDrainSendsBoundedSelection(t *testing.T) {
-	resetJSONOut(t)
-	f := authedFakeAPI(t, `{"operation_id":"drain-1","status":"running","results":[{"id":"conn-a","status":"pending"}],"matched":1,"closed":0,"gone":0,"failed":0,"limit":25,"truncated":false,"dry_run":false,"partial":false,"nodes_queried":1,"nodes_unavailable":0}`, http.StatusAccepted)
-	oldOut, oldErr := osStdout, osStderr
+	main.ResetJSONOut(t)
+	f := main.AuthedFakeAPI(t, `{"operation_id":"drain-1","status":"running","results":[{"id":"conn-a","status":"pending"}],"matched":1,"closed":0,"gone":0,"failed":0,"limit":25,"truncated":false,"dry_run":false,"partial":false,"nodes_queried":1,"nodes_unavailable":0}`, http.StatusAccepted)
+	oldOut, oldErr := (*main.OsStdout), (*main.OsStderr)
 	var out, stderr bytes.Buffer
-	osStdout, osStderr = &out, &stderr
+	(*main.OsStdout), (*main.OsStderr) = &out, &stderr
 	t.Cleanup(func() {
-		osStdout, osStderr = oldOut, oldErr
+		(*main.OsStdout), (*main.OsStderr) = oldOut, oldErr
 	})
 
-	if code := cmdRealtimeDrain([]string{"demo", "endpoint-1", "--reason", "deploy", "--channel", "room-a", "--principal", "user-a", "--connection-id", "conn-a", "--connection-id", "conn-b", "--limit", "25"}); code != 0 {
+	if code := main.CmdRealtimeDrain([]string{"demo", "endpoint-1", "--reason", "deploy", "--channel", "room-a", "--principal", "user-a", "--connection-id", "conn-a", "--connection-id", "conn-b", "--limit", "25"}); code != 0 {
 		t.Fatalf("exit = %d, output = %s", code, out.String())
 	}
-	if f.sawMethod != http.MethodPost || f.sawPath != "/v1/apps/demo/realtime/endpoints/endpoint-1/connections/drain" {
-		t.Fatalf("route = %s %s", f.sawMethod, f.sawPath)
+	if (*f.SawMethod()) != http.MethodPost || (*f.SawPath()) != "/v1/apps/demo/realtime/endpoints/endpoint-1/connections/drain" {
+		t.Fatalf("route = %s %s", (*f.SawMethod()), (*f.SawPath()))
 	}
 	var request api.ManagedRealtimeDrainRequest
-	if err := json.Unmarshal(f.sawBody, &request); err != nil {
+	if err := json.Unmarshal((*f.SawBody()), &request); err != nil {
 		t.Fatal(err)
 	}
 	if request.Reason != "deploy" || request.Channel != "room-a" || request.Principal != "user-a" || request.Limit != 25 || len(request.ConnectionIDs) != 2 || request.ConnectionIDs[1] != "conn-b" {
@@ -41,20 +42,20 @@ func TestCmdRealtimeDrainSendsBoundedSelection(t *testing.T) {
 }
 
 func TestCmdRealtimeDrainSendsAllSelection(t *testing.T) {
-	resetJSONOut(t)
-	f := authedFakeAPI(t, `{"operation_id":"drain-all","status":"running","results":[],"matched":2,"closed":0,"gone":0,"failed":0,"limit":10000,"all":true,"truncated":false,"dry_run":false,"partial":false,"nodes_queried":1,"nodes_unavailable":0}`, http.StatusAccepted)
-	oldOut, oldErr := osStdout, osStderr
+	main.ResetJSONOut(t)
+	f := main.AuthedFakeAPI(t, `{"operation_id":"drain-all","status":"running","results":[],"matched":2,"closed":0,"gone":0,"failed":0,"limit":10000,"all":true,"truncated":false,"dry_run":false,"partial":false,"nodes_queried":1,"nodes_unavailable":0}`, http.StatusAccepted)
+	oldOut, oldErr := (*main.OsStdout), (*main.OsStderr)
 	var out, stderr bytes.Buffer
-	osStdout, osStderr = &out, &stderr
+	(*main.OsStdout), (*main.OsStderr) = &out, &stderr
 	t.Cleanup(func() {
-		osStdout, osStderr = oldOut, oldErr
+		(*main.OsStdout), (*main.OsStderr) = oldOut, oldErr
 	})
 
-	if code := cmdRealtimeDrain([]string{"demo", "endpoint-1", "--reason", "maintenance", "--principal", "user-a", "--all"}); code != 0 {
+	if code := main.CmdRealtimeDrain([]string{"demo", "endpoint-1", "--reason", "maintenance", "--principal", "user-a", "--all"}); code != 0 {
 		t.Fatalf("exit = %d, output = %s", code, out.String())
 	}
 	var request api.ManagedRealtimeDrainRequest
-	if err := json.Unmarshal(f.sawBody, &request); err != nil {
+	if err := json.Unmarshal((*f.SawBody()), &request); err != nil {
 		t.Fatal(err)
 	}
 	if !request.All || request.Limit != 0 || request.Reason != "maintenance" || request.Principal != "user-a" {
@@ -66,13 +67,13 @@ func TestCmdRealtimeDrainSendsAllSelection(t *testing.T) {
 }
 
 func TestCmdRealtimeDrainStatusWaitsForTerminalOperation(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("FAAS_TOKEN", "test-token")
-	oldPollInterval := realtimeDrainPollInterval
-	realtimeDrainPollInterval = time.Millisecond
-	t.Cleanup(func() { realtimeDrainPollInterval = oldPollInterval })
+	oldPollInterval := (*main.RealtimeDrainPollInterval)
+	(*main.RealtimeDrainPollInterval) = time.Millisecond
+	t.Cleanup(func() { (*main.RealtimeDrainPollInterval) = oldPollInterval })
 
 	var calls int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -91,14 +92,14 @@ func TestCmdRealtimeDrainStatusWaitsForTerminalOperation(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 
-	oldOut, oldErr := osStdout, osStderr
+	oldOut, oldErr := (*main.OsStdout), (*main.OsStderr)
 	var out, stderr bytes.Buffer
-	osStdout, osStderr = &out, &stderr
+	(*main.OsStdout), (*main.OsStderr) = &out, &stderr
 	t.Cleanup(func() {
-		osStdout, osStderr = oldOut, oldErr
+		(*main.OsStdout), (*main.OsStderr) = oldOut, oldErr
 	})
 
-	if code := cmdRealtimeDrainStatus([]string{"demo", "endpoint-1", "drain-1", "--wait", "--timeout", "1s"}); code != 0 {
+	if code := main.CmdRealtimeDrainStatus([]string{"demo", "endpoint-1", "drain-1", "--wait", "--timeout", "1s"}); code != 0 {
 		t.Fatalf("exit = %d, output = %s, stderr = %s", code, out.String(), stderr.String())
 	}
 	if calls != 2 {
@@ -116,7 +117,7 @@ func TestCmdRealtimeDrainStatusWaitsForTerminalOperation(t *testing.T) {
 // operation … is running" and never showed its preview. A dry run waits for
 // its result even without --wait.
 func TestCmdRealtimeDrainDryRunWaitsForPreview(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("FAAS_TOKEN", "fp_test_x")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -130,11 +131,11 @@ func TestCmdRealtimeDrainDryRunWaitsForPreview(t *testing.T) {
 	}))
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
-	oldOut := osStdout
+	oldOut := (*main.OsStdout)
 	var out bytes.Buffer
-	osStdout = &out
-	t.Cleanup(func() { osStdout = oldOut })
-	if code := cmdRealtimeDrain([]string{"demo", "endpoint-1", "--reason", "preview", "--dry-run"}); code != 0 {
+	(*main.OsStdout) = &out
+	t.Cleanup(func() { (*main.OsStdout) = oldOut })
+	if code := main.CmdRealtimeDrain([]string{"demo", "endpoint-1", "--reason", "preview", "--dry-run"}); code != 0 {
 		t.Fatalf("exit = %d, output = %s", code, out.String())
 	}
 	if !strings.Contains(out.String(), "Would close 3 realtime connection(s).") {

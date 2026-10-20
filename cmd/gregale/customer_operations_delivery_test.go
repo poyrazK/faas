@@ -1,5 +1,5 @@
 // adr: 521
-package main
+package main_test
 
 import (
 	"bytes"
@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -44,12 +45,12 @@ func (f *deliveryReceiptTestClient) GetOperationDeliveryAttempts(context.Context
 func (f *deliveryReceiptTestClient) RetryOperationDeliveryWithReceipt(_ context.Context, app, id string, req api.OperationDeliveryRetryRequest) (api.OperationDeliveryRetryResponse, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	raw, err := readCustomerOperationPrivateReceiptBound(f.receipt, api.OperationDeliveryReceiptMaxBytes)
+	raw, err := main.ReadCustomerOperationPrivateReceiptBound(f.receipt, api.OperationDeliveryReceiptMaxBytes)
 	if err != nil {
 		return api.OperationDeliveryRetryResponse{}, fmt.Errorf("POST without durable private request: %w", err)
 	}
-	var recorded customerOperationDeliveryReceipt
-	if err = decodeCustomerOperationReceipt(raw, &recorded); err != nil || recorded.Request.RetryID != req.RetryID || *recorded.Request.ExpectedReplayGeneration != *req.ExpectedReplayGeneration || id != deliveryTestOperation || app != "exports" {
+	var recorded main.CustomerOperationDeliveryReceipt
+	if err = main.DecodeCustomerOperationReceipt(raw, &recorded); err != nil || recorded.Request.RetryID != req.RetryID || *recorded.Request.ExpectedReplayGeneration != *req.ExpectedReplayGeneration || id != deliveryTestOperation || app != "exports" {
 		return api.OperationDeliveryRetryResponse{}, fmt.Errorf("request drift")
 	}
 	f.posts++
@@ -62,10 +63,10 @@ func (f *deliveryReceiptTestClient) RetryOperationDeliveryWithReceipt(_ context.
 	}
 	return f.decision, nil
 }
-func newDeliveryReceiptTest(t *testing.T) (*deliveryReceiptTestClient, customerOperationDeliveryCommand) {
+func newDeliveryReceiptTest(t *testing.T) (*deliveryReceiptTestClient, main.CustomerOperationDeliveryCommand) {
 	t.Helper()
 	f := &deliveryReceiptTestClient{origin: "https://api.example.com", account: deliveryTestAccount, now: time.Now().UTC(), receipt: filepath.Join(t.TempDir(), "retry.json")}
-	c, err := parseCustomerOperationDelivery([]string{"retry-delivery", deliveryTestOperation, "--app", "exports", "--delivery", deliveryTestID, "--retry-id", "one", "--expected-replay-generation", "0", "--receipt-file", f.receipt})
+	c, err := main.ParseCustomerOperationDelivery([]string{"retry-delivery", deliveryTestOperation, "--app", "exports", "--delivery", deliveryTestID, "--retry-id", "one", "--expected-replay-generation", "0", "--receipt-file", f.receipt})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,15 +76,15 @@ func newDeliveryReceiptTest(t *testing.T) (*deliveryReceiptTestClient, customerO
 func TestCustomerOperationDeliveryReceiptLostResponseAndIdentity(t *testing.T) {
 	f, c := newDeliveryReceiptTest(t)
 	f.lose = true
-	if _, err := retryCustomerOperationDelivery(t.Context(), f, c, f.now); err == nil {
+	if _, err := main.RetryCustomerOperationDelivery(t.Context(), f, c, f.now); err == nil {
 		t.Fatal("lost response not reported")
 	}
-	before, err := os.ReadFile(c.receipt)
+	before, err := os.ReadFile((*c.Receipt()))
 	if err != nil {
 		t.Fatal(err)
 	}
-	c.request = api.OperationDeliveryRetryRequest{}
-	decision, err := retryCustomerOperationDelivery(t.Context(), f, c, f.now.Add(time.Second))
+	(*c.Request()) = api.OperationDeliveryRetryRequest{}
+	decision, err := main.RetryCustomerOperationDelivery(t.Context(), f, c, f.now.Add(time.Second))
 	if err != nil || decision.ReplayGeneration != 1 {
 		t.Fatalf("resume %+v %v", decision, err)
 	}
@@ -91,7 +92,7 @@ func TestCustomerOperationDeliveryReceiptLostResponseAndIdentity(t *testing.T) {
 		t.Fatalf("lost reply was not resumed: %d", f.posts)
 	}
 	for range 2 {
-		cached, err := retryCustomerOperationDelivery(t.Context(), f, c, f.now.Add(2*time.Hour))
+		cached, err := main.RetryCustomerOperationDelivery(t.Context(), f, c, f.now.Add(2*time.Hour))
 		if err != nil || cached != decision {
 			t.Fatalf("immutable ack %+v %v", cached, err)
 		}
@@ -99,28 +100,28 @@ func TestCustomerOperationDeliveryReceiptLostResponseAndIdentity(t *testing.T) {
 	if f.posts != 2 {
 		t.Fatal("acknowledgement repeated POST")
 	}
-	after, _ := os.ReadFile(c.receipt)
+	after, _ := os.ReadFile((*c.Receipt()))
 	if !bytes.Equal(before, after) {
 		t.Fatal("request rewritten")
 	}
-	for _, path := range []string{c.receipt, c.receipt + ".queued.json"} {
+	for _, path := range []string{(*c.Receipt()), (*c.Receipt()) + ".queued.json"} {
 		info, e := os.Stat(path)
 		if e != nil || info.Mode().Perm() != 0600 {
 			t.Fatal("receipt was not private")
 		}
 	}
 	f.account = "44444444-4444-4444-4444-444444444444"
-	if _, err := retryCustomerOperationDelivery(t.Context(), f, c, f.now); err == nil {
+	if _, err := main.RetryCustomerOperationDelivery(t.Context(), f, c, f.now); err == nil {
 		t.Fatal("cached ack crossed account")
 	}
 	f.account = deliveryTestAccount
 	f.origin = "https://other.example.com"
-	if _, err := retryCustomerOperationDelivery(t.Context(), f, c, f.now); err == nil {
+	if _, err := main.RetryCustomerOperationDelivery(t.Context(), f, c, f.now); err == nil {
 		t.Fatal("cached ack crossed origin")
 	}
 	f.origin = "https://api.example.com"
-	c.request = api.OperationDeliveryRetryRequest{RetryID: "changed", DeliveryID: deliveryTestID, ExpectedReplayGeneration: new(int)}
-	if _, err := retryCustomerOperationDelivery(t.Context(), f, c, f.now); err == nil {
+	(*c.Request()) = api.OperationDeliveryRetryRequest{RetryID: "changed", DeliveryID: deliveryTestID, ExpectedReplayGeneration: new(int)}
+	if _, err := main.RetryCustomerOperationDelivery(t.Context(), f, c, f.now); err == nil {
 		t.Fatal("changed decision accepted")
 	}
 }
@@ -130,32 +131,32 @@ func TestCustomerOperationDeliveryReceiptRefusesUnsafeMutation(t *testing.T) {
 		t.Run(kind, func(t *testing.T) {
 			f, c := newDeliveryReceiptTest(t)
 			ctx := t.Context()
-			r := customerOperationDeliveryReceipt{Version: 1, API: f.origin, AccountID: f.account, App: c.app, OperationID: c.id, Request: c.request, CreatedAt: f.now.Add(-time.Minute), ReplayNotAfter: f.now.Add(time.Hour)}
+			r := main.CustomerOperationDeliveryReceipt{Version: 1, API: f.origin, AccountID: f.account, App: (*c.App()), OperationID: (*c.Id()), Request: (*c.Request()), CreatedAt: f.now.Add(-time.Minute), ReplayNotAfter: f.now.Add(time.Hour)}
 			if kind == "expired" {
 				r.ReplayNotAfter = f.now.Add(-time.Second)
 			}
-			raw, _ := encodeCustomerOperationReceipt(r)
+			raw, _ := main.EncodeCustomerOperationReceipt(r)
 			if kind == "oversized" {
 				raw = bytes.Repeat([]byte("x"), api.OperationDeliveryReceiptMaxBytes+1)
 			}
-			if err := os.WriteFile(c.receipt, raw, 0600); err != nil {
+			if err := os.WriteFile((*c.Receipt()), raw, 0600); err != nil {
 				t.Fatal(err)
 			}
 			switch kind {
 			case "public":
-				if err := os.Chmod(c.receipt, 0644); err != nil {
+				if err := os.Chmod((*c.Receipt()), 0644); err != nil {
 					t.Fatal(err)
 				}
 			case "symlink":
-				target := c.receipt + ".target"
-				if err := os.Rename(c.receipt, target); err != nil {
+				target := (*c.Receipt()) + ".target"
+				if err := os.Rename((*c.Receipt()), target); err != nil {
 					t.Fatal(err)
 				}
-				if err := os.Symlink(target, c.receipt); err != nil {
+				if err := os.Symlink(target, (*c.Receipt())); err != nil {
 					t.Fatal(err)
 				}
 			case "bad-ack":
-				if err := os.WriteFile(c.receipt+".queued.json", []byte(`{"version":1,"request_sha256":"wrong"}`), 0600); err != nil {
+				if err := os.WriteFile((*c.Receipt())+".queued.json", []byte(`{"version":1,"request_sha256":"wrong"}`), 0600); err != nil {
 					t.Fatal(err)
 				}
 			case "cancelled":
@@ -163,7 +164,7 @@ func TestCustomerOperationDeliveryReceiptRefusesUnsafeMutation(t *testing.T) {
 				ctx, cancel = context.WithCancel(ctx)
 				cancel()
 			}
-			if _, err := retryCustomerOperationDelivery(ctx, f, c, f.now); err == nil {
+			if _, err := main.RetryCustomerOperationDelivery(ctx, f, c, f.now); err == nil {
 				t.Fatalf("%s accepted", kind)
 			}
 			if f.posts != 0 {
@@ -181,7 +182,7 @@ func TestCustomerOperationDeliveryConcurrentReceiptAndHumanState(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, err := retryCustomerOperationDelivery(t.Context(), f, c, f.now)
+			_, err := main.RetryCustomerOperationDelivery(t.Context(), f, c, f.now)
 			errors <- err
 		}()
 	}
@@ -193,17 +194,17 @@ func TestCustomerOperationDeliveryConcurrentReceiptAndHumanState(t *testing.T) {
 		}
 	}
 	var out bytes.Buffer
-	c.verb = "delivery"
-	if err := runCustomerOperationDelivery(t.Context(), f, c, &out, false, f.now); err != nil {
+	(*c.Verb()) = "delivery"
+	if err := main.RunCustomerOperationDelivery(t.Context(), f, c, &out, false, f.now); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(out.String(), "Business: succeeded") || !strings.Contains(out.String(), "Delivery: dead") {
 		t.Fatalf("outcomes mixed: %s", &out)
 	}
 	out.Reset()
-	c.verb = "delivery-attempts"
-	c.limit = 1
-	if err := runCustomerOperationDelivery(t.Context(), f, c, &out, true, f.now); err != nil {
+	(*c.Verb()) = "delivery-attempts"
+	(*c.Limit()) = 1
+	if err := main.RunCustomerOperationDelivery(t.Context(), f, c, &out, true, f.now); err != nil {
 		t.Fatal(err)
 	}
 	var page api.OperationDeliveryAttemptsResponse
@@ -214,23 +215,23 @@ func TestCustomerOperationDeliveryConcurrentReceiptAndHumanState(t *testing.T) {
 
 func TestCustomerOperationDeliveryParserRequiresExplicitDecision(t *testing.T) {
 	for _, args := range [][]string{{"retry-delivery", deliveryTestOperation, "--app", "exports"}, {"retry-delivery", deliveryTestOperation, "--app", "exports", "--receipt-file", "r", "--retry-id", "one"}, {"retry-delivery", deliveryTestOperation, "--app", "exports", "--self"}, {"delivery", deliveryTestOperation, "--app", "exports", "extra"}, {"delivery-attempts", deliveryTestOperation, "--app", "exports", "--limit", "101"}} {
-		if _, err := parseCustomerOperationDelivery(args); err == nil {
+		if _, err := main.ParseCustomerOperationDelivery(args); err == nil {
 			t.Fatalf("accepted %v", args)
 		}
 	}
-	c, err := parseCustomerOperationDelivery([]string{"retry-delivery", deliveryTestOperation, "--app", "exports", "--receipt-file", "r"})
-	if err != nil || c.request.ExpectedReplayGeneration != nil {
+	c, err := main.ParseCustomerOperationDelivery([]string{"retry-delivery", deliveryTestOperation, "--app", "exports", "--receipt-file", "r"})
+	if err != nil || (*c.Request()).ExpectedReplayGeneration != nil {
 		t.Fatalf("resume parse %+v %v", c, err)
 	}
 }
 
 func TestCustomerOperationDeliveryReceiptBoundsBeforePublication(t *testing.T) {
 	f, c := newDeliveryReceiptTest(t)
-	c.app = strings.Repeat("x", api.OperationDeliveryReceiptMaxBytes)
-	if _, err := retryCustomerOperationDelivery(t.Context(), f, c, f.now); err == nil {
+	(*c.App()) = strings.Repeat("x", api.OperationDeliveryReceiptMaxBytes)
+	if _, err := main.RetryCustomerOperationDelivery(t.Context(), f, c, f.now); err == nil {
 		t.Fatal("oversized receipt accepted")
 	}
-	if _, err := os.Stat(c.receipt); !os.IsNotExist(err) {
+	if _, err := os.Stat((*c.Receipt())); !os.IsNotExist(err) {
 		t.Fatalf("oversized request was published: %v", err)
 	}
 	if f.posts != 0 {

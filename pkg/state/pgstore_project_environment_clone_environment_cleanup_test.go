@@ -265,6 +265,8 @@ func TestPgCloneEnvironmentCleanupScopeColumnInventory(t *testing.T) {
 	expected := []string{
 		"app_binding_release_policies.scope",
 		"app_binding_release_policy_history.scope",
+		"app_config_guards.scope",    // Closed and open config guard windows are change history; app_envs already blocks while configuration remains.
+		"app_config_revisions.scope", // Append-only configuration revision history.
 		"app_environment_route_budgets.environment_id",
 		"app_environment_route_budgets.scope",
 		"app_environment_secret_ref_suppressions.environment_id",
@@ -293,6 +295,7 @@ func TestPgCloneEnvironmentCleanupScopeColumnInventory(t *testing.T) {
 		"data_upstreams.scope",
 		"deployment_openapi_snapshots.scope",
 		"deployment_rollback_operations.scope",
+		"deployment_rollbacks.scope", // Rollback outcome history; deployment_rollback_operations blocks in-flight work.
 		"deployment_route_policy_snapshots.scope",
 		"deployment_runtime_environment_owners.environment_id",
 		"deployments.scope",
@@ -307,10 +310,14 @@ func TestPgCloneEnvironmentCleanupScopeColumnInventory(t *testing.T) {
 		"environment_workload_retirements.environment_id", // ADR-1331: immutable retained retirement evidence; journal/source deletion guards prevent cleanup cascades.
 		"exclusive_work_keys.environment_id",
 		"feature_flag_versions.environment_id",
+		"financial_budget_stop_targets.environment_id",      // In-flight (requested/draining) budget stops block scope cleanup; enforced and failed ones are retained history.
+		"financial_preview_command_runtimes.environment_id", // Preparing/active preview runtimes block scope cleanup; retired rows are retained history.
 		"github_deploy_branches.scope",
 		"hosting_oidc_trusts.environment", // GitHub Actions OIDC environment claim, not a Gregale environment; its site FK is classified.
 		"hosting_sites.environment",       // Sites reference the environment through a composite foreign key.
 		"instance_runtime_config_receipts.scope",
+		"internal_mail_reputation_events.scope", // Mail reputation scope (producer or domain), not an environment.
+		"internal_mail_reputation_holds.scope",  // Mail reputation scope (producer or domain), not an environment.
 		"invocation_environment_queue_admissions.environment_id",
 		"invocation_work_environment_admissions.environment_id",
 		"invocation_work_environment_domains.environment_id",
@@ -327,6 +334,7 @@ func TestPgCloneEnvironmentCleanupScopeColumnInventory(t *testing.T) {
 		"object_buckets.scope",
 		"object_storage_s3_credentials.managed_scope",
 		"pg_ratelimit_counters.scope",
+		"platform_mail_deployment_fences.scope",              // Monotonic mail outbox fence; a recreated environment continues its revisions.
 		"production_lifecycle_reviews.scope",                 // Retained historical deployment review evidence.
 		"project_binding_verification_runs.environment_slug", // Scope-only verification receipts block metadata cleanup.
 		"project_environment_approvals.environment_slug",
@@ -357,6 +365,7 @@ func TestPgCloneEnvironmentCleanupScopeColumnInventory(t *testing.T) {
 		"project_release_stages.environment_slug", // Retained stages reference the environment through a composite foreign key.
 		"queue_bindings.deployment_scope",
 		"queue_bindings.environment_id",
+		"runtime_config_apply_receipts.scope", // Platform runtime-config scope (global/control_plane/daemon/node), not an environment.
 		"runtime_config_entries.scope",
 		"runtime_config_operations.scope",
 		"runtime_config_revisions.scope",

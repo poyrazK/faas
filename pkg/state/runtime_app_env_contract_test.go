@@ -10,11 +10,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-type runtimeAppEnvTestStore interface {
-	state.Store
-	state.RuntimeAppEnvStore
-	state.ProjectEnvironmentWorkloadSpecStore
-}
+type runtimeAppEnvTestStore = contractTestStore
 
 type runtimeAppEnvFixture struct {
 	account     state.Account

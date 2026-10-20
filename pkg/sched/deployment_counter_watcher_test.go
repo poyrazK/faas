@@ -7,7 +7,7 @@
 // so assertions target the per-event logic in isolation. A single
 // end-to-end test starts the goroutine and verifies the reset
 // fires after a real ParkCompleted event lands on the broadcaster.
-package sched
+package sched_test
 
 import (
 	"bytes"
@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/events"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/wire/otelinit"
 )
 
@@ -90,14 +91,15 @@ func quietLogger() *slog.Logger {
 func TestWatcher_HandleParkCompleted_ResetsWhenCountReachesZero(t *testing.T) {
 	counter := otelinit.NewDeploymentCounter(100)
 	store := newStubStore()
-	w := NewDeploymentCounterWatcher(nil, counter, store, quietLogger())
+	w := sched.NewDeploymentCounterWatcher(nil, counter, store, quietLogger())
+	(*
 
 	// Pre-populate the cache to 1 (the canonical "one live
 	// instance for this deployment" state). Use resync with
 	// stub state so we can avoid coupling to the engine.
-	w.mu.Lock()
-	w.liveCount["dep-A"] = 1
-	w.mu.Unlock()
+	w.Mu()).Lock()
+	(*w.LiveCount())["dep-A"] = 1
+	(*w.Mu()).Unlock()
 
 	// Push the counter up to 5 (synthetic — the sampler would
 	// have done this in production). The reset is observable
@@ -110,7 +112,7 @@ func TestWatcher_HandleParkCompleted_ResetsWhenCountReachesZero(t *testing.T) {
 		t.Fatalf("setup: pre-reset counter = %d, want 6", n)
 	}
 
-	w.handle(parkCompletedPayload("dep-A"))
+	w.Handle(parkCompletedPayload("dep-A"))
 
 	// Counter must be reset — next Observe starts from 1.
 	n, ok := counter.Observe("dep-A")
@@ -129,17 +131,18 @@ func TestWatcher_HandleParkCompleted_ResetsWhenCountReachesZero(t *testing.T) {
 func TestWatcher_HandleParkCompleted_IgnoresMidFleetPark(t *testing.T) {
 	counter := otelinit.NewDeploymentCounter(100)
 	store := newStubStore()
-	w := NewDeploymentCounterWatcher(nil, counter, store, quietLogger())
+	w := sched.NewDeploymentCounterWatcher(nil, counter, store, quietLogger())
+	(*
 
 	// Two live instances for dep-A.
-	w.mu.Lock()
-	w.liveCount["dep-A"] = 2
-	w.mu.Unlock()
+	w.Mu()).Lock()
+	(*w.LiveCount())["dep-A"] = 2
+	(*w.Mu()).Unlock()
 	counter.Observe("dep-A")
 	counter.Observe("dep-A")
 	counter.Observe("dep-A")
 
-	w.handle(parkCompletedPayload("dep-A"))
+	w.Handle(parkCompletedPayload("dep-A"))
 
 	// Counter must NOT be reset; the post-handle Observe
 	// continues from where it was.
@@ -154,21 +157,21 @@ func TestWatcher_HandleParkCompleted_IgnoresMidFleetPark(t *testing.T) {
 func TestWatcher_HandleParkStarted_Ignored(t *testing.T) {
 	counter := otelinit.NewDeploymentCounter(100)
 	store := newStubStore()
-	w := NewDeploymentCounterWatcher(nil, counter, store, quietLogger())
-
-	w.mu.Lock()
-	w.liveCount["dep-A"] = 1
-	w.mu.Unlock()
+	w := sched.NewDeploymentCounterWatcher(nil, counter, store, quietLogger())
+	(*w.Mu()).Lock()
+	(*w.LiveCount())["dep-A"] = 1
+	(*w.Mu()).Unlock()
 	counter.Observe("dep-A")
 	counter.Observe("dep-A")
 
-	w.handle(parkStartedPayload("dep-A"))
+	w.Handle(parkStartedPayload("dep-A"))
+	(*
 
 	// Cache must still hold 1 (ParkStarted doesn't decrement),
 	// and counter must NOT be reset.
-	w.mu.Lock()
-	cache := w.liveCount["dep-A"]
-	w.mu.Unlock()
+	w.Mu()).Lock()
+	cache := (*w.LiveCount())["dep-A"]
+	(*w.Mu()).Unlock()
 	if cache != 1 {
 		t.Errorf("post-ParkStarted cache = %d, want 1 (no decrement)", cache)
 	}
@@ -185,11 +188,10 @@ func TestWatcher_HandleParkStarted_Ignored(t *testing.T) {
 func TestWatcher_HandleEmptyDeploymentID_Noop(t *testing.T) {
 	counter := otelinit.NewDeploymentCounter(100)
 	store := newStubStore()
-	w := NewDeploymentCounterWatcher(nil, counter, store, quietLogger())
-
-	w.mu.Lock()
-	w.liveCount["dep-A"] = 1
-	w.mu.Unlock()
+	w := sched.NewDeploymentCounterWatcher(nil, counter, store, quietLogger())
+	(*w.Mu()).Lock()
+	(*w.LiveCount())["dep-A"] = 1
+	(*w.Mu()).Unlock()
 	counter.Observe("dep-A")
 
 	// Hand-build a ParkCompleted payload WITHOUT deployment_id.
@@ -202,11 +204,10 @@ func TestWatcher_HandleEmptyDeploymentID_Noop(t *testing.T) {
 		},
 	}
 	b, _ := json.Marshal(env)
-	w.handle(b)
-
-	w.mu.Lock()
-	cache := w.liveCount["dep-A"]
-	w.mu.Unlock()
+	w.Handle(b)
+	(*w.Mu()).Lock()
+	cache := (*w.LiveCount())["dep-A"]
+	(*w.Mu()).Unlock()
 	if cache != 1 {
 		t.Errorf("post-legacy-park cache = %d, want 1 (no decrement on missing depID)", cache)
 	}
@@ -221,24 +222,24 @@ func TestWatcher_HandleEmptyDeploymentID_Noop(t *testing.T) {
 func TestWatcher_Resync_RemovesDrainedDeployment(t *testing.T) {
 	counter := otelinit.NewDeploymentCounter(100)
 	store := newStubStore()
-	w := NewDeploymentCounterWatcher(nil, counter, store, quietLogger())
-	w.resyncEvery = time.Hour // keep the ticker out of the test
+	w := sched.NewDeploymentCounterWatcher(nil, counter, store, quietLogger())
+	(*w.ResyncEvery()) = time.Hour
+	(* // keep the ticker out of the test
 
 	// Pre-populate the cache; store reports 0 for dep-A.
-	w.mu.Lock()
-	w.liveCount["dep-A"] = 5
-	w.mu.Unlock()
+	w.Mu()).Lock()
+	(*w.LiveCount())["dep-A"] = 5
+	(*w.Mu()).Unlock()
 	store.counts["dep-A"] = 0
 	counter.Observe("dep-A")
 	counter.Observe("dep-A")
 
-	if err := w.resync(context.Background()); err != nil {
+	if err := w.Resync(context.Background()); err != nil {
 		t.Fatalf("resync: %v", err)
 	}
-
-	w.mu.Lock()
-	_, has := w.liveCount["dep-A"]
-	w.mu.Unlock()
+	(*w.Mu()).Lock()
+	_, has := (*w.LiveCount())["dep-A"]
+	(*w.Mu()).Unlock()
 	if has {
 		t.Error("dep-A still in cache after resync reports 0; want removed")
 	}
@@ -258,20 +259,18 @@ func TestWatcher_Resync_RemovesDrainedDeployment(t *testing.T) {
 func TestWatcher_Resync_KeepsAliveDeployment(t *testing.T) {
 	counter := otelinit.NewDeploymentCounter(100)
 	store := newStubStore()
-	w := NewDeploymentCounterWatcher(nil, counter, store, quietLogger())
-
-	w.mu.Lock()
-	w.liveCount["dep-A"] = 5
-	w.mu.Unlock()
+	w := sched.NewDeploymentCounterWatcher(nil, counter, store, quietLogger())
+	(*w.Mu()).Lock()
+	(*w.LiveCount())["dep-A"] = 5
+	(*w.Mu()).Unlock()
 	store.counts["dep-A"] = 3
 
-	if err := w.resync(context.Background()); err != nil {
+	if err := w.Resync(context.Background()); err != nil {
 		t.Fatalf("resync: %v", err)
 	}
-
-	w.mu.Lock()
-	cache := w.liveCount["dep-A"]
-	w.mu.Unlock()
+	(*w.Mu()).Lock()
+	cache := (*w.LiveCount())["dep-A"]
+	(*w.Mu()).Unlock()
 	if cache != 3 {
 		t.Errorf("post-resync cache = %d, want 3 (re-anchored to store)", cache)
 	}
@@ -288,7 +287,7 @@ func TestWatcher_Resync_KeepsAliveDeployment(t *testing.T) {
 func TestWatcher_Run_NilBroadcasterIsNoop(t *testing.T) {
 	counter := otelinit.NewDeploymentCounter(100)
 	store := newStubStore()
-	w := NewDeploymentCounterWatcher(nil, counter, store, quietLogger())
+	w := sched.NewDeploymentCounterWatcher(nil, counter, store, quietLogger())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
@@ -307,13 +306,14 @@ func TestWatcher_Run_EndToEnd_ResetsOnLastPark(t *testing.T) {
 	bc := events.New()
 	counter := otelinit.NewDeploymentCounter(100)
 	store := newStubStore()
-	w := NewDeploymentCounterWatcher(bc, counter, store, quietLogger())
-	w.resyncEvery = time.Hour // keep the ticker out of the test
+	w := sched.NewDeploymentCounterWatcher(bc, counter, store, quietLogger())
+	(*w.ResyncEvery()) = time.Hour
+	(* // keep the ticker out of the test
 
 	// Pre-load the cache so the next ParkCompleted will drain it.
-	w.mu.Lock()
-	w.liveCount["dep-A"] = 1
-	w.mu.Unlock()
+	w.Mu()).Lock()
+	(*w.LiveCount())["dep-A"] = 1
+	(*w.Mu()).Unlock()
 	counter.Observe("dep-A")
 	counter.Observe("dep-A")
 

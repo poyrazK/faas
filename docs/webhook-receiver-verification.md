@@ -80,8 +80,15 @@ freshness window.
 Treat webhook delivery as at-least-once. Use a database unique constraint on
 the verified delivery ID and store that receipt in the same transaction as the
 business side effect. If the ID already exists, return a successful response
-without repeating the side effect. Return a non-2xx response when the event
-could not be durably accepted so Gregale can retry it.
+without repeating the side effect. Return a `5xx` (or `429`) response when the
+event could not be durably accepted so Gregale can retry it.
+
+Gregale treats a `2xx` status as delivered, however large the response body
+is; it keeps only the first 32 KiB for diagnostics. It retries `408`, `429`,
+`5xx`, network failures, and responses whose body is cut off mid-read. Any
+other `4xx` and any `3xx` is terminal: the delivery moves to the dead-letter
+queue, where you can inspect and replay it. Gregale never follows redirects,
+so register the receiver's final URL.
 
 Timestamp validation limits how long an intercepted request can be replayed;
 it does not replace delivery-ID deduplication. For CloudEvents deliveries, the

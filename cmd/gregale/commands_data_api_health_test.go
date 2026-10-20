@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"context"
@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -115,12 +116,12 @@ func TestDataAPIHealthReportSeparatesCurrentChecksAndRecentFailures(t *testing.T
 							value.Databases[0].State = "over_budget"
 							*value.Databases[0].Capacity.UsableConnections = 6
 						}
-						writeJSONTest(w, value)
+						main.WriteJSONTest(w, value)
 						return
 					}
-					writeJSONTest(w, api.DataAPIConnectionBudgets{Version: 1, App: "notes", State: "not_applicable", Databases: []api.ManagedPostgresConnectionBudget{}})
+					main.WriteJSONTest(w, api.DataAPIConnectionBudgets{Version: 1, App: "notes", State: "not_applicable", Databases: []api.ManagedPostgresConnectionBudget{}})
 				case "/v1/apps/notes":
-					writeJSONTest(w, api.AppResponse{Slug: "notes", CanonicalURL: serving.URL})
+					main.WriteJSONTest(w, api.AppResponse{Slug: "notes", CanonicalURL: serving.URL})
 				case "/v1/apps/notes/logs":
 					if scenario == "logs-unavailable" {
 						http.Error(w, "private-stream-secret", http.StatusForbidden)
@@ -179,14 +180,14 @@ func TestDataAPIHealthReportSeparatesCurrentChecksAndRecentFailures(t *testing.T
 			defer management.Close()
 			t.Setenv("FAAS_API", management.URL)
 			t.Setenv("FAAS_TOKEN", "owner-test-token")
-			stdout, stderr, restore := swapIO(t)
+			stdout, stderr, restore := main.SwapIO(t)
 			defer restore()
 			args := []string{"--json", "data-api", "health", "notes", "--since", "15m"}
 			if scenario == "deadline" {
 				args = append(args, "--timeout", "250ms")
 			}
-			code := run(args)
-			var report dataAPIHealthReport
+			code := main.Run(args)
+			var report main.DataAPIHealthReport
 			if err := json.Unmarshal([]byte(stdout.String()), &report); err != nil {
 				t.Fatalf("report: %v, stdout=%s stderr=%s", err, stdout.String(), stderr())
 			}
@@ -251,7 +252,7 @@ func TestDataAPIHealthRejectsUnsafeAndInconsistentResponses(t *testing.T) {
 		`private-upstream-error`,
 	} {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = fmt.Fprint(w, body) }))
-		probe := probeDataAPIHealth(context.Background(), server.Client(), server.URL, false)
+		probe := main.ProbeDataAPIHealth(context.Background(), server.Client(), server.URL, false)
 		server.Close()
 		if probe.State != "invalid" || probe.Checks != nil || probe.Admission != nil {
 			t.Fatalf("accepted unsafe response: %+v", probe)
@@ -264,7 +265,7 @@ func TestDataAPIHealthProbeDeadline(t *testing.T) {
 	defer server.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
 	defer cancel()
-	if probe := probeDataAPIHealth(ctx, server.Client(), server.URL, false); probe.State != "unreachable" {
+	if probe := main.ProbeDataAPIHealth(ctx, server.Client(), server.URL, false); probe.State != "unreachable" {
 		t.Fatalf("deadline: %+v", probe)
 	}
 }

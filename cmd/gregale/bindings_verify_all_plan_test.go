@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -30,7 +31,7 @@ type allProbePreviewFixture struct {
 
 func newAllProbePreviewFixture(t *testing.T) *allProbePreviewFixture {
 	t.Helper()
-	f := &allProbePreviewFixture{t: t, inventory: api.AppBindingInventory{App: "api", Complete: true, VerificationDeploymentID: pinnedBindingDeployment, RequestedDeploymentID: pinnedBindingDeployment, VerificationScope: "production", Bindings: []api.AppBindingInventoryItem{
+	f := &allProbePreviewFixture{t: t, inventory: api.AppBindingInventory{App: "api", Complete: true, VerificationDeploymentID: main.PinnedBindingDeployment, RequestedDeploymentID: main.PinnedBindingDeployment, VerificationScope: "production", Bindings: []api.AppBindingInventoryItem{
 		{Type: api.BindingTypeService, Name: "billing", Binding: "GREGALE_SERVICE_BILLING_URL", Scope: "app", HTTPURL: "http://PRIVATE_ORIGIN/"},
 		{Type: api.BindingTypePostgres, Name: "primary", Binding: "DATABASE_URL", Scope: "production"},
 		{Type: api.BindingTypeObjectStorage, Name: "read", Binding: "READ", Scope: "production", Access: "read"},
@@ -60,10 +61,10 @@ func (f *allProbePreviewFixture) serve(w http.ResponseWriter, r *http.Request) {
 	}
 	switch {
 	case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/api/bindings":
-		if r.URL.Query().Get("deployment_id") != pinnedBindingDeployment {
+		if r.URL.Query().Get("deployment_id") != main.PinnedBindingDeployment {
 			f.t.Errorf("unpinned inventory %s", r.URL)
 		}
-		writeJSONTest(w, inventory)
+		main.WriteJSONTest(w, inventory)
 	case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/api/outbound-bindings":
 		if lookupFailure {
 			w.Header().Set("Content-Type", "application/problem+json")
@@ -71,7 +72,7 @@ func (f *allProbePreviewFixture) serve(w http.ResponseWriter, r *http.Request) {
 			_, _ = w.Write([]byte(`{"title":"PRIVATE_LOOKUP_DETAIL","status":403}`))
 			return
 		}
-		writeJSONTest(w, api.OutboundAppBindingList{Items: items})
+		main.WriteJSONTest(w, api.OutboundAppBindingList{Items: items})
 	case allowed && r.Method == http.MethodPost && r.URL.Path == "/v1/apps/api/tasks":
 		var request api.CreateAppTaskRequest
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
@@ -79,7 +80,7 @@ func (f *allProbePreviewFixture) serve(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "bad task", 400)
 			return
 		}
-		if request.VerificationDeploymentID != pinnedBindingDeployment || len(request.Command) < 2 {
+		if request.VerificationDeploymentID != main.PinnedBindingDeployment || len(request.Command) < 2 {
 			f.t.Errorf("bad task %+v", request)
 			http.Error(w, "bad task", 400)
 			return
@@ -89,10 +90,10 @@ func (f *allProbePreviewFixture) serve(w http.ResponseWriter, r *http.Request) {
 		switch request.Command[0] {
 		case api.AppTaskServiceBindingProbeCommand:
 			kind, name, mode = api.BindingTypeService, "billing", "https_route"
-			report = json.RawMessage(pinnedBindingProbeOutput(request.Command[0], request.Command[1]))
+			report = json.RawMessage(main.PinnedBindingProbeOutput(request.Command[0], request.Command[1]))
 		case api.AppTaskPostgresBindingProbeCommand:
 			kind, name, mode = api.BindingTypePostgres, "primary", "query"
-			report = json.RawMessage(pinnedBindingProbeOutput(request.Command[0], request.Command[1]))
+			report = json.RawMessage(main.PinnedBindingProbeOutput(request.Command[0], request.Command[1]))
 		case api.AppTaskOutboundBindingProbeCommand:
 			if request.Command[1] != allPreviewOutboundID {
 				f.t.Errorf("wrong outbound identity: %v", request.Command)
@@ -102,7 +103,7 @@ func (f *allProbePreviewFixture) serve(w http.ResponseWriter, r *http.Request) {
 			report = api.OutboundBindingProbeReport{IntegrationID: allPreviewOutboundID, Configuration: check, Identity: check, Gateway: check, Response: check}
 		case api.AppTaskObjectStorageBindingProbeCommand, api.AppTaskObjectStorageWriteProbeCommand:
 			kind, name, mode = api.BindingTypeObjectStorage, map[string]string{"READ": "read", "WRITE": "write", "BOTH": "both"}[request.Command[1]], "read"
-			storage := passedObjectStorageCLIReport(request.Command[1])
+			storage := main.PassedObjectStorageCLIReport(request.Command[1])
 			if len(request.Command) == 3 {
 				mode = request.Command[2]
 				storage.Mode = mode
@@ -125,20 +126,20 @@ func (f *allProbePreviewFixture) serve(w http.ResponseWriter, r *http.Request) {
 		f.actions = append(f.actions, kind+"/"+name+"/"+mode)
 		f.mu.Unlock()
 		raw, _ := json.Marshal(report)
-		writeJSONTest(w, api.AppTaskResponse{ID: uuid.NewString(), DeploymentID: pinnedBindingDeployment, DeploymentScope: "production", Status: api.AppTaskStatusSucceeded, ExitCode: new(int), StdoutTail: string(raw)})
+		main.WriteJSONTest(w, api.AppTaskResponse{ID: uuid.NewString(), DeploymentID: main.PinnedBindingDeployment, DeploymentScope: "production", Status: api.AppTaskStatusSucceeded, ExitCode: new(int), StdoutTail: string(raw)})
 	case allowed && r.Method == http.MethodPost && r.URL.Path == "/v1/apps/api/bindings/queue-canaries":
 		var request api.CreateQueueBindingCanaryRequest
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			f.t.Error(err)
 		}
-		if !request.PublishConsent || request.Binding != "orders" || request.DeploymentID != pinnedBindingDeployment {
+		if !request.PublishConsent || request.Binding != "orders" || request.DeploymentID != main.PinnedBindingDeployment {
 			f.t.Errorf("wrong canary request %+v", request)
 		}
 		f.mu.Lock()
 		f.actions = append(f.actions, "queue/orders/handler_completion")
 		f.mu.Unlock()
 		now := time.Now().UTC().Add(-time.Second)
-		writeJSONTest(w, api.QueueBindingCanary{ID: uuid.NewString(), Binding: "orders", DeploymentID: pinnedBindingDeployment, Scope: "production", Status: "succeeded", PublishedAt: now, ExpiresAt: now.Add(time.Minute), DeliveredAt: &now, CompletedAt: &now})
+		main.WriteJSONTest(w, api.QueueBindingCanary{ID: uuid.NewString(), Binding: "orders", DeploymentID: main.PinnedBindingDeployment, Scope: "production", Status: "succeeded", PublishedAt: now, ExpiresAt: now.Add(time.Minute), DeliveredAt: &now, CompletedAt: &now})
 	default:
 		f.t.Errorf("unexpected request %s %s", r.Method, r.URL)
 		http.NotFound(w, r)
@@ -146,7 +147,7 @@ func (f *allProbePreviewFixture) serve(w http.ResponseWriter, r *http.Request) {
 }
 
 func allPreviewArgs(consent, strict, asJSON bool) []string {
-	args := []string{"bindings", "verify", "api", "--all", "--deployment", pinnedBindingDeployment, "--dry-run"}
+	args := []string{"bindings", "verify", "api", "--all", "--deployment", main.PinnedBindingDeployment, "--dry-run"}
 	if consent {
 		args = append(args, "--queue-publish", "--object-storage-write")
 	}
@@ -160,7 +161,7 @@ func allPreviewArgs(consent, strict, asJSON bool) []string {
 }
 
 func TestAllBindingPreviewReadOnlyAndReadiness(t *testing.T) {
-	for _, scenario := range []string{"complete", "missing consent", "partial default", "queue unsupported", "storage unknown", "duplicate queue", "duplicate storage", "incomplete inventory", "inventory error", "inventory warning", "unknown type", "missing outbound identity", "outbound read failure", "no eligible", "human"} {
+	for _, scenario := range []string{"complete", "missing consent", "partial default", "queue unsupported", "queue release unavailable", "storage unknown", "duplicate queue", "duplicate storage", "incomplete inventory", "inventory error", "inventory warning", "unknown type", "missing outbound identity", "outbound read failure", "no eligible", "human"} {
 		t.Run(scenario, func(t *testing.T) {
 			f := newAllProbePreviewFixture(t)
 			f.mu.Lock()
@@ -180,6 +181,11 @@ func TestAllBindingPreviewReadOnlyAndReadiness(t *testing.T) {
 				f.inventory.Bindings[5].QueueCanarySupported = false
 				ready, complete, coverage = false, false, "partial"
 				reason = "queue_handler_unsupported"
+			case "queue release unavailable":
+				f.inventory.Bindings[5].QueueCanarySupported = false
+				f.inventory.Bindings[5].QueueCanaryReason = "queue_canary_context_unavailable"
+				ready, complete, coverage = false, false, "partial"
+				reason = "queue_canary_context_unavailable"
 			case "storage unknown":
 				f.inventory.Bindings[4].Access = "future"
 				ready, complete, coverage = false, false, "partial"
@@ -221,7 +227,7 @@ func TestAllBindingPreviewReadOnlyAndReadiness(t *testing.T) {
 				reason = "no_eligible_bindings"
 			}
 			f.mu.Unlock()
-			code, out, errs := captureBindingCLI(t, f.server.URL, allPreviewArgs(consent, strict, scenario != "human")...)
+			code, out, errs := main.CaptureBindingCLI(t, f.server.URL, allPreviewArgs(consent, strict, scenario != "human")...)
 			wantCode := 0
 			if !ready {
 				wantCode = 1
@@ -255,7 +261,7 @@ func TestAllBindingPreviewReadOnlyAndReadiness(t *testing.T) {
 					t.Fatalf("private metadata leaked: %s", out)
 				}
 			}
-			var report allBindingProbePreview
+			var report main.AllBindingProbePreview
 			if err := json.Unmarshal([]byte(out), &report); err != nil {
 				t.Fatal(err)
 			}
@@ -325,11 +331,11 @@ func TestAllBindingPreviewMatchesExecution(t *testing.T) {
 		t.Run(map[bool]string{false: "partial", true: "complete"}[consent], func(t *testing.T) {
 			f := newAllProbePreviewFixture(t)
 			args := allPreviewArgs(consent, consent, true)
-			code, out, errs := captureBindingCLI(t, f.server.URL, args...)
+			code, out, errs := main.CaptureBindingCLI(t, f.server.URL, args...)
 			if code != 0 {
 				t.Fatalf("preview code=%d output=%s errors=%s", code, out, errs)
 			}
-			var preview allBindingProbePreview
+			var preview main.AllBindingProbePreview
 			if err := json.Unmarshal([]byte(out), &preview); err != nil {
 				t.Fatal(err)
 			}
@@ -351,7 +357,7 @@ func TestAllBindingPreviewMatchesExecution(t *testing.T) {
 					executeArgs = append(executeArgs, arg)
 				}
 			}
-			code, out, errs = captureBindingCLI(t, f.server.URL, executeArgs...)
+			code, out, errs = main.CaptureBindingCLI(t, f.server.URL, executeArgs...)
 			if code != 0 {
 				t.Fatalf("execution code=%d output=%s errors=%s", code, out, errs)
 			}
@@ -360,7 +366,7 @@ func TestAllBindingPreviewMatchesExecution(t *testing.T) {
 			if !reflect.DeepEqual(f.actions, expected) {
 				t.Fatalf("preview actions=%v execution=%v", expected, f.actions)
 			}
-			var batch serviceBindingProbeBatchReport
+			var batch main.ServiceBindingProbeBatchReport
 			if err := json.Unmarshal([]byte(out), &batch); err != nil {
 				t.Fatal(err)
 			}
@@ -375,12 +381,12 @@ func TestAllBindingPreviewRejectsInvalidModesBeforeRequests(t *testing.T) {
 	f := newAllProbePreviewFixture(t)
 	for _, args := range [][]string{
 		{"bindings", "verify", "api", "billing", "--dry-run"},
-		{"bindings", "verify", "api", "--queue", "orders", "--deployment", pinnedBindingDeployment, "--dry-run"},
+		{"bindings", "verify", "api", "--queue", "orders", "--deployment", main.PinnedBindingDeployment, "--dry-run"},
 		{"bindings", "verify", "api", "--all", "--durable", "--dry-run"},
 		{"bindings", "verify", "api", "--all", "--queue-publish", "--dry-run"},
 		{"bindings", "verify", "api", "--all", "--object-storage-write", "--dry-run"},
 	} {
-		if code, out, _ := captureBindingCLI(t, f.server.URL, args...); code == 0 {
+		if code, out, _ := main.CaptureBindingCLI(t, f.server.URL, args...); code == 0 {
 			t.Fatalf("invalid mode accepted: %v %s", args, out)
 		}
 	}
@@ -392,12 +398,12 @@ func TestAllBindingPreviewRejectsInvalidModesBeforeRequests(t *testing.T) {
 }
 
 func TestAllBindingPreviewCannotSatisfyExecutionGate(t *testing.T) {
-	batch := serviceBindingProbeBatchReport{Bindings: []serviceBindingProbeBatchItem{{Type: api.BindingTypeService, Name: "billing", Status: "planned"}}}
-	if gate := evaluateAllBindingCoverageGate(batch, true); gate.Passed {
+	batch := main.ServiceBindingProbeBatchReport{Bindings: []main.ServiceBindingProbeBatchItem{{Type: api.BindingTypeService, Name: "billing", Status: "planned"}}}
+	if gate := main.EvaluateAllBindingCoverageGate(batch, true); gate.Passed {
 		t.Fatal("planned probes satisfied the execution gate")
 	}
 	batch.Bindings[0].Status = "passed"
-	if potential := evaluateAllBindingCoverage(batch, true, "planned"); potential.Passed {
+	if potential := main.EvaluateAllBindingCoverage(batch, true, "planned"); potential.Passed {
 		t.Fatal("preview accepted execution statuses as planned work")
 	}
 }

@@ -17,8 +17,8 @@ import (
 )
 
 // The health collector and a project apply touch the same account and app
-// rows. ApplyProjectPlan locks the account row FOR UPDATE and then its apps
-// FOR UPDATE. The collector used to lock the app first and reach the account
+// rows. ApplyProjectPlan locks the account's resource namespace FOR UPDATE and
+// then its apps FOR UPDATE. The collector used to lock the app first and reach the account
 // through the app_health_* foreign keys afterwards, so `gregale apply` failed
 // with "reconcile: ERROR: deadlock detected (SQLSTATE 40P01)" (PR #4376 CI,
 // e2e TestApplyProject_Inputs_AuditWorkloadChanged).
@@ -32,8 +32,8 @@ func openHealthLockOrderStore(t *testing.T) (*pgxpool.Pool, *state.PgStore) {
 	return pool, state.NewPgStore(pool)
 }
 
-// lockAccountForApply opens a transaction that holds the account row the way
-// ApplyProjectPlan does before it locks the account's apps.
+// lockAccountForApply opens a transaction that holds the account's resource
+// namespace the way ApplyProjectPlan does before it locks the account's apps.
 func lockAccountForApply(t *testing.T, pool *pgxpool.Pool, accountID string) pgx.Tx {
 	t.Helper()
 	tx, err := pool.Begin(t.Context())
@@ -41,7 +41,7 @@ func lockAccountForApply(t *testing.T, pool *pgxpool.Pool, accountID string) pgx
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = tx.Rollback(context.Background()) })
-	if _, err := tx.Exec(t.Context(), `select 1 from accounts where id = $1 for update`, accountID); err != nil {
+	if _, err := tx.Exec(t.Context(), `select 1 from resource_namespaces where id = $1 for update`, accountID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := tx.Exec(t.Context(), `set local lock_timeout = '3s'`); err != nil {

@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/hosting"
 )
@@ -159,7 +160,7 @@ func newPlannedStageCLI(t *testing.T) *plannedStageCLI {
 func (f *plannedStageCLI) regeneratePlan(t *testing.T) {
 	t.Helper()
 	out := planCLIOutput(t)
-	if code := cmdSites([]string{"plan", "--site", reviewSiteID, "--path", f.dir}); code != 0 {
+	if code := main.CmdSites([]string{"plan", "--site", reviewSiteID, "--path", f.dir}); code != 0 {
 		t.Fatalf("plan generation failed: %d", code)
 	}
 	if err := os.WriteFile(f.planFile, out.Bytes(), 0600); err != nil {
@@ -182,7 +183,7 @@ func TestSitesPlannedStageUsesFrozenReviewedBytesAndNeverPromotes(t *testing.T) 
 		}
 	}
 	out := planCLIOutput(t)
-	if code := cmdSites(f.args()); code != 0 {
+	if code := main.CmdSites(f.args()); code != 0 {
 		t.Fatalf("stage exit %d", code)
 	}
 	var result struct {
@@ -241,7 +242,7 @@ func TestSitesPlannedStageFlagsTargetsAndChangedBuildsBeforeAPI(t *testing.T) {
 				}
 			}
 			out := planCLIOutput(t)
-			if code := cmdSites(args); code == 0 || len(f.requests) != 0 || out.Len() != 0 {
+			if code := main.CmdSites(args); code == 0 || len(f.requests) != 0 || out.Len() != 0 {
 				t.Fatalf("exit=%d requests=%v output=%s", code, f.requests, out)
 			}
 		})
@@ -268,7 +269,7 @@ func TestSitesPlannedStageFreshEvidenceBlocksBeforeCreation(t *testing.T) {
 				}
 			}
 			out := planCLIOutput(t)
-			if code := cmdSites(f.args()); code == 0 || f.creates != 0 || len(f.uploads) != 0 || out.Len() != 0 {
+			if code := main.CmdSites(f.args()); code == 0 || f.creates != 0 || len(f.uploads) != 0 || out.Len() != 0 {
 				t.Fatalf("exit=%d creates=%d uploads=%v output=%s", code, f.creates, f.uploads, out)
 			}
 		})
@@ -281,7 +282,7 @@ func TestSitesPlannedStageDoesNotRetryOrPromoteAfterUncertainMutations(t *testin
 			f := newPlannedStageCLI(t)
 			f.mode = mode
 			out := planCLIOutput(t)
-			if code := cmdSites(f.args()); code == 0 || f.creates != 1 || f.finalizes > 1 || out.Len() != 0 {
+			if code := main.CmdSites(f.args()); code == 0 || f.creates != 1 || f.finalizes > 1 || out.Len() != 0 {
 				t.Fatalf("exit=%d creates=%d finalizes=%d output=%s", code, f.creates, f.finalizes, out)
 			}
 			if mode == "after_create" || mode == "wrong_grants" || mode == "credential_header" || mode == "wrong_creation" {
@@ -303,7 +304,7 @@ func TestSitesPlannedStageConfigurationAndProvenanceOptIns(t *testing.T) {
 	}
 	f.regeneratePlan(t)
 	args := append(f.args(), "--source-repository", "org/site", "--source-commit", strings.Repeat("a", 40))
-	if code := cmdSites(args); code != 0 || f.release.Provenance == nil || f.release.Provenance.Repository != "org/site" {
+	if code := main.CmdSites(args); code != 0 || f.release.Provenance == nil || f.release.Provenance.Repository != "org/site" {
 		t.Fatalf("stage exit=%d provenance=%+v", code, f.release.Provenance)
 	}
 }
@@ -320,7 +321,7 @@ func TestReviewedSnapshotRejectsChangedConfiguration(t *testing.T) {
 	if err := os.WriteFile(config, []byte(`{"version":1,"redirects":[{"from":"/old","to":"/new","status":308}]}`), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if code := cmdSites(f.args()); code == 0 || len(f.requests) != 0 {
+	if code := main.CmdSites(f.args()); code == 0 || len(f.requests) != 0 {
 		t.Fatal("changed configuration reached the API")
 	}
 }
@@ -328,7 +329,7 @@ func TestReviewedSnapshotRejectsChangedConfiguration(t *testing.T) {
 func TestPlannedStageHelpDescribesSavedPlan(t *testing.T) {
 	t.Setenv("FAAS_FRONTEND_HOSTING_ENABLED", "1")
 	out := planCLIOutput(t)
-	if code := run([]string{"help", "sites", "deploy"}); code != 0 || !strings.Contains(out.String(), "--plan") || !strings.Contains(out.String(), "--no-promote") || !strings.Contains(out.String(), "--resume-release") {
+	if code := main.Run([]string{"help", "sites", "deploy"}); code != 0 || !strings.Contains(out.String(), "--plan") || !strings.Contains(out.String(), "--no-promote") || !strings.Contains(out.String(), "--resume-release") {
 		t.Fatal(fmt.Sprintf("help exit=%d: %s", code, out))
 	}
 }

@@ -101,7 +101,11 @@ func (e *Engine) FreezeIdle(ctx context.Context, instanceID string, residentMB i
 		e.log.Warn("sched: freeze failed; parking instead", "instance", ins.ID, "err", freezeErr)
 		return false, nil
 	}
-	e.ledger.Freeze(ins.ID, frozenChargeMB(ins.RAMMB, float64(residentMB)))
+	charge := frozenChargeMB(ins.RAMMB, float64(residentMB))
+	e.ledger.Freeze(ins.ID, charge)
 	e.observeFreeze("frozen")
+	if e.frozenFastPath.Load() {
+		e.issueThawTicket(ctx, *ins, charge)
+	}
 	return true, nil
 }

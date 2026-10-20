@@ -122,11 +122,13 @@ func TestFireCronNow_CommandCronIsAccepted(t *testing.T) {
 func TestFireCronNow_BadID(t *testing.T) {
 	e := apidserver.Setup(t, api.PlanPro)
 	rec := e.Do(t, "POST", "/v1/crons/not-a-uuid/run", nil, nil)
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400", rec.Code)
+	// App access resolves the cron before the handler (#4882): a malformed ID
+	// addresses no cron and gets the same 404 as GET /v1/crons/{id}.
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", rec.Code)
 	}
-	if !strings.Contains(rec.Body.String(), "cron_invalid") {
-		t.Errorf("body missing cron_invalid code: %s", rec.Body.String())
+	if !strings.Contains(rec.Body.String(), "no such cron") {
+		t.Errorf("body missing the cron 404 detail: %s", rec.Body.String())
 	}
 }
 

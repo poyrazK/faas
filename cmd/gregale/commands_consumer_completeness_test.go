@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -8,11 +8,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // adr: 954 — completeness is reported on demand and warned after a draft.
 func TestCmdConsumersCompleteness(t *testing.T) {
+	t.Setenv("FAAS_API_MONETIZATION_ENABLED", "1") // adr: 20261018090210 — exercises released monetization
 	start := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	end := start.AddDate(0, 1, 0)
 	var since, until string
@@ -31,11 +33,11 @@ func TestCmdConsumersCompleteness(t *testing.T) {
 		}
 	})
 	var stderr bytes.Buffer
-	oldErr := osStderr
-	osStderr = &stderr
-	t.Cleanup(func() { osStderr = oldErr })
+	oldErr := (*main.OsStderr)
+	(*main.OsStderr) = &stderr
+	t.Cleanup(func() { (*main.OsStderr) = oldErr })
 
-	if code := cmdConsumers([]string{"completeness", "my-api", "c1", "--month", "2026-09"}); code != 0 {
+	if code := main.CmdConsumers([]string{"completeness", "my-api", "c1", "--month", "2026-09"}); code != 0 {
 		t.Fatalf("completeness exit = %d", code)
 	}
 	if since != "2026-09-01T00:00:00Z" || until != "2026-10-01T00:00:00Z" {
@@ -44,13 +46,13 @@ func TestCmdConsumersCompleteness(t *testing.T) {
 	if out := stdout.String(); !strings.Contains(out, "gaps_detected") || !strings.Contains(strings.Join(strings.Fields(out), " "), "Missing (at least) 10") {
 		t.Fatalf("completeness output:\n%s", out)
 	}
-	if code := cmdConsumers([]string{"statement-draft", "my-api", "c1", "--month", "2026-09"}); code != 0 {
+	if code := main.CmdConsumers([]string{"statement-draft", "my-api", "c1", "--month", "2026-09"}); code != 0 {
 		t.Fatalf("statement-draft exit = %d", code)
 	}
 	if !strings.Contains(stderr.String(), "at least 10 successful requests this statement does not bill") {
 		t.Fatalf("draft warning missing; stderr:\n%s", stderr.String())
 	}
-	if code := cmdConsumers([]string{"completeness", "my-api", "c1"}); code == 0 {
+	if code := main.CmdConsumers([]string{"completeness", "my-api", "c1"}); code == 0 {
 		t.Fatal("completeness without a period succeeded")
 	}
 }

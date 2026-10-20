@@ -33,7 +33,7 @@ WHERE id=sqlc.arg(id)::text::uuid AND state=sqlc.arg(expected)::text;
 UPDATE scenario_suspend_resumes SET state='failed' WHERE id=sqlc.arg(id)::text::uuid AND state NOT IN ('complete','failed');
 
 -- name: ScenarioResumingCallersByHostIP :many
-SELECT i.app_id::text AS app_id,i.deployment_id::text AS deployment_id
+SELECT i.id::text AS instance_id,i.app_id::text AS app_id,i.deployment_id::text AS deployment_id
 FROM instances i JOIN compute_nodes n ON n.id=i.node_id
 JOIN apps a ON a.id=i.app_id AND a.status='active' AND a.preview_pr_state='open' AND a.preview_expires_at>clock_timestamp()
 JOIN scenario_suspend_resumes c ON c.instance_id=i.id AND c.app_id=i.app_id AND c.deployment_id=i.deployment_id

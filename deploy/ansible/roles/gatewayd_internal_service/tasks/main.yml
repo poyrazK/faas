@@ -27,7 +27,7 @@
     mode: "0644"
   register: realtimed_unit
 
-# Durable listeners (ADR-1580), off unless faas_compute_durable_listeners.
+# Durable listeners (ADR-1736), off unless faas_compute_durable_listeners.
 # The socket units are inert until a service drop-in Wants= them. Nothing
 # here starts a socket: a daemon that bound the address itself unlinks the
 # unix path when it exits, so the handler stops the service and its socket
@@ -137,6 +137,10 @@
     system: true
     create_home: false
     password: "*"
+
+- name: gatewayd_internal_service — live-query client leaf for realtimed
+  ansible.builtin.include_tasks: live_tls.yml
+  when: (faas_realtime_live_tls_managed | default(false) | string | lower) in ['true', 'yes', 'on', '1']
 
 # The callback spool contains customer payloads and callback bearer tokens.
 # Keep it on the host boot disk and private to the realtimed service user.

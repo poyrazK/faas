@@ -85,6 +85,10 @@ type Problem struct {
 	ExpectedSequence *int64              `json:"expected_sequence,omitempty"`
 	CurrentSequence  *int64              `json:"current_sequence,omitempty"`
 	BindingsCheck    *BindingCheckReport `json:"bindings_check,omitempty"`
+	// CrossedReleases and RestorePoints explain rollback_crosses_release
+	// (ADR-1448).
+	CrossedReleases []RollbackCrossedRelease `json:"crossed_releases,omitempty"`
+	RestorePoints   []ReleaseRestorePoint    `json:"restore_points,omitempty"`
 	// Type is a URI identifying the problem class (RFC 9457 "type").
 	Type string `json:"type"`
 	// Title is a short, stable, human-readable summary.
@@ -869,6 +873,16 @@ const (
 	// state, but its immutable cold-boot artifact or attestation cannot be
 	// verified. The current serving deployment is left untouched.
 	CodeRollbackTargetUnavailable = "rollback_target_unavailable"
+	// CodeRollbackCrossesRelease means release commands ran after the
+	// rollback target last served (ADR-1448). Rollback does not undo them,
+	// so the caller must acknowledge them; the problem lists them with
+	// restore points for managed PostgreSQL databases.
+	CodeRollbackCrossesRelease = "rollback_crosses_release"
+	// CodeConfigRevisionNotFound means the scope has no such config revision
+	// (ADR-1451), or it was pruned past ConfigRevisionsRetained.
+	CodeConfigRevisionNotFound = "config_revision_not_found"
+	// CodeConfigGuardNotFound means no config change in the scope was guarded.
+	CodeConfigGuardNotFound = "config_guard_not_found"
 	// CodeDeploySignatureInvalid is returned by apid when the
 	// customer's OCI image deploy is rejected at the accept-time
 	// signature-enforcement gate (issue #472 / ADR-054). Three
@@ -3534,7 +3548,29 @@ const (
 	// cannot reach the managed realtime service. It is deliberately distinct
 	// from invalid endpoint configuration: retrying is appropriate here.
 	CodeRealtimeUnavailable = "realtime_unavailable"
+	// CodeRealtimeConnectionLimit is the 429 a realtime client sees when its
+	// account is at its plan's concurrent-connection allowance, or holds the
+	// most one account may on a single realtime node (ADR-1323 fair use).
+	CodeRealtimeConnectionLimit = "realtime_connection_limit"
 )
+
+// Realtime connection limit scopes (ADR-1323).
+const (
+	RealtimeConnectionLimitAccount     = "account"
+	RealtimeConnectionLimitAccountNode = "account_node"
+)
+
+// ErrRealtimeConnectionLimit reports a refused realtime connection with the
+// limit that applied and the connections observed against it.
+func ErrRealtimeConnectionLimit(scope string, limit, observed int64) *Problem {
+	detail := fmt.Sprintf("Your plan allows %d concurrent realtime connections per account across all endpoints; %d are open. Close idle connections or upgrade the plan.", limit, observed)
+	if scope == RealtimeConnectionLimitAccountNode {
+		detail = fmt.Sprintf("One account may hold at most %d connections on a single realtime node; %d are open on this node. Retry with backoff.", limit, observed)
+	}
+	return NewProblem(http.StatusTooManyRequests, CodeRealtimeConnectionLimit, "Realtime connection limit reached", detail).
+		WithLimit(limit, observed).
+		WithDocs(docsBase + "/realtime#fair-use-limits")
+}
 
 // CodePlanLogDrainsNotAllowed is the 402 returned when the plan does not
 // include customer-configurable runtime log destinations.

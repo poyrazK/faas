@@ -71,4 +71,14 @@ func TestContainedCommandClientRequiresDistinctRuntimeMethodAndAcknowledgement(t
 			t.Fatal("old runtime accepted contained command preparation")
 		}
 	})
+	t.Run("managed-probe-cannot-select-contained-restore", func(t *testing.T) {
+		// ADR-1642 and ADR-20261017201008 require distinct admission paths.
+		node := &commandWireNode{}
+		client := rehearsalWireClient(t, node)
+		mixed := spec
+		mixed.RequireServiceCallerIdentity = true
+		if _, err := client.RestoreAppTask(t.Context(), mixed); err == nil || node.legacy != 0 || node.contained != 0 {
+			t.Fatal("managed probe reached contained command restore")
+		}
+	})
 }

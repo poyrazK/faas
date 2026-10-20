@@ -15,14 +15,13 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
-	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestManagedPostgresAccountingIntentMigrationUpgradeAndRollback(t *testing.T) {
 	ctx := t.Context()
 	pool := pgtest.Open(t)
 	migrateUpTo(t, ctx, pool, 20261004153454875)
-	account, err := state.NewPgStore(pool).CreateAccount(ctx, uuid.NewString()+"@accounting-intent.test", api.PlanPro)
+	account, err := legacyAccount(ctx, pool, uuid.NewString()+"@accounting-intent.test", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
 	}

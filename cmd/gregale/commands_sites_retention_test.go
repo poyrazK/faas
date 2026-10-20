@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -31,7 +32,7 @@ func TestSitesRetentionPlansAreReadOnlyAndUpdatesKeepReviewedRevision(t *testing
 	})
 	t.Setenv("FAAS_FRONTEND_HOSTING_RETENTION_ENABLED", "1")
 	for _, args := range [][]string{{"cleanup", "--site", reviewSiteID, "--pending-age", "1h", "--staged-age", "2h"}, {"retention", "show", "--site", reviewSiteID}, {"retention", "set", "--site", reviewSiteID, "--enabled=false", "--expected-revision", "7", "--pending-age", "24h", "--staged-age", "24h"}} {
-		if cmdSites(args) != 0 {
+		if main.CmdSites(args) != 0 {
 			t.Fatal("retention workflow failed", args)
 		}
 	}
@@ -44,7 +45,7 @@ func TestSitesRetentionRequiresExplicitIntentBeforeMutating(t *testing.T) {
 	reviewCLI(t, func(http.ResponseWriter, *http.Request) { calls++ })
 	t.Setenv("FAAS_FRONTEND_HOSTING_RETENTION_ENABLED", "1")
 	for _, args := range [][]string{{"retention", "set", "--site", reviewSiteID}, {"retention", "set", "--site", reviewSiteID, "--enabled=true"}, {"retention", "set", "--site", reviewSiteID, "--enabled=true", "--expected-revision", "0", "--pending-age", "1s"}, {"cleanup", "--site", reviewSiteID, "--enabled=true"}} {
-		if cmdSites(args) == 0 {
+		if main.CmdSites(args) == 0 {
 			t.Fatal("implicit intent accepted", args)
 		}
 	}

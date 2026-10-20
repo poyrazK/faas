@@ -1,9 +1,9 @@
 from typing import Literal
 
-FinancialCostsResponseCurrency = Literal["EUR"]
+FinancialCostsResponseCurrency = Literal["USD"]
 
 FINANCIAL_COSTS_RESPONSE_CURRENCY_VALUES: set[FinancialCostsResponseCurrency] = {
-    "EUR",
+    "USD",
 }
 
 

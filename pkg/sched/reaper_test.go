@@ -1,4 +1,4 @@
-package sched
+package sched_test
 
 import (
 	"bytes"
@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -31,7 +32,7 @@ func TestEffectiveIdleTimeout(t *testing.T) {
 		{api.PlanPro, "function", 9999, 600},  // same ceiling as apps
 	}
 	for _, tt := range tests {
-		if got := EffectiveIdleTimeoutS(tt.plan, tt.appType, tt.configured); got != tt.want {
+		if got := sched.EffectiveIdleTimeoutS(tt.plan, tt.appType, tt.configured); got != tt.want {
 			t.Errorf("EffectiveIdleTimeoutS(%s, %q, %d) = %d, want %d", tt.plan, tt.appType, tt.configured, got, tt.want)
 		}
 	}
@@ -39,7 +40,7 @@ func TestEffectiveIdleTimeout(t *testing.T) {
 
 func TestReapIdle(t *testing.T) {
 	now := time.Now()
-	instances := []InstanceInfo{
+	instances := []sched.InstanceInfo{
 		// Pro default 300s; idle 400s → reap.
 		{Instance: "idle", Plan: api.PlanPro, State: state.StateRunning, LastRequest: now.Add(-400 * time.Second)},
 		// Pro; idle 100s → keep.
@@ -53,7 +54,7 @@ func TestReapIdle(t *testing.T) {
 		// A function with an explicit 300s timeout; idle 45s → keep.
 		{Instance: "fn-configured", AppID: "fn2", AppType: "function", Plan: api.PlanPro, IdleTimeoutS: 300, State: state.StateRunning, LastRequest: now.Add(-45 * time.Second)},
 	}
-	got := ReapIdle(now, instances, nil, nil)
+	got := sched.ReapIdle(now, instances, nil, nil)
 	if !equalSet(got, []string{"idle", "fn-idle"}) {
 		t.Errorf("ReapIdle = %v, want [idle fn-idle]", got)
 	}
@@ -63,13 +64,13 @@ func TestReapIdle(t *testing.T) {
 // timeout independently of the app's serving min_instances floor.
 func TestReapIdleWarmPoolIgnoresServingFloor(t *testing.T) {
 	now := time.Now()
-	instances := []InstanceInfo{
+	instances := []sched.InstanceInfo{
 		{Instance: "serving", AppID: "app1", Plan: api.PlanPro, State: state.StateRunning,
 			MinInstances: 1, LastRequest: now.Add(-time.Hour)},
 		{Instance: "warm-stale", AppID: "app1", Plan: api.PlanPro, State: state.StateWarm,
 			MinInstances: 1, LastRequest: now.Add(-time.Hour)},
 	}
-	got := ReapIdle(now, instances, nil, nil)
+	got := sched.ReapIdle(now, instances, nil, nil)
 	if !equalSet(got, []string{"warm-stale"}) {
 		t.Fatalf("ReapIdle = %v, want only stale warm row", got)
 	}
@@ -77,7 +78,7 @@ func TestReapIdleWarmPoolIgnoresServingFloor(t *testing.T) {
 
 func TestReapIdleUsesStartedAtWhenLastRequestIsMissing(t *testing.T) {
 	now := time.Now()
-	instances := []InstanceInfo{
+	instances := []sched.InstanceInfo{
 		{
 			Instance: "newly-started",
 			Plan:     api.PlanPro,
@@ -96,7 +97,7 @@ func TestReapIdleUsesStartedAtWhenLastRequestIsMissing(t *testing.T) {
 			State:    state.StateRunning,
 		},
 	}
-	got := ReapIdle(now, instances, nil, nil)
+	got := sched.ReapIdle(now, instances, nil, nil)
 	if !equalSet(got, []string{"old-never-requested"}) {
 		t.Fatalf("ReapIdle = %v, want only old-never-requested", got)
 	}
@@ -115,7 +116,7 @@ func TestReapIdleUsesStartedAtWhenLastRequestIsMissing(t *testing.T) {
 //   - open=0 + recent LastRequest → not reaped (control)
 func TestReapIdleSkipsInstanceWithOpenConns(t *testing.T) {
 	now := time.Now()
-	instances := []InstanceInfo{
+	instances := []sched.InstanceInfo{
 		// G7 fix.
 		{Instance: "open-stale", Plan: api.PlanPro, State: state.StateRunning,
 			LastRequest: now.Add(-time.Hour), OpenConns: 3},
@@ -132,7 +133,7 @@ func TestReapIdleSkipsInstanceWithOpenConns(t *testing.T) {
 		{Instance: "fresh", Plan: api.PlanPro, State: state.StateRunning,
 			LastRequest: now.Add(-time.Second)},
 	}
-	got := ReapIdle(now, instances, nil, nil)
+	got := sched.ReapIdle(now, instances, nil, nil)
 	if !equalSet(got, []string{"idle"}) {
 		t.Errorf("ReapIdle = %v, want [idle] only", got)
 	}
@@ -140,13 +141,13 @@ func TestReapIdleSkipsInstanceWithOpenConns(t *testing.T) {
 
 func TestReapIdleSkipsInstanceWithInflightRequest(t *testing.T) {
 	now := time.Now()
-	instances := []InstanceInfo{
+	instances := []sched.InstanceInfo{
 		{Instance: "active", AppID: "app1", Plan: api.PlanPro, State: state.StateRunning,
 			LastRequest: now.Add(-time.Hour), InflightRequests: 1},
 		{Instance: "idle", AppID: "app1", Plan: api.PlanPro, State: state.StateRunning,
 			LastRequest: now.Add(-time.Hour)},
 	}
-	got := ReapIdle(now, instances, nil, nil)
+	got := sched.ReapIdle(now, instances, nil, nil)
 	if !equalSet(got, []string{"idle"}) {
 		t.Fatalf("ReapIdle = %v, want [idle] (inflight request must survive)", got)
 	}
@@ -161,7 +162,7 @@ func TestReapIdleSkipsInstanceWithInflightRequest(t *testing.T) {
 // fires. Mirrors TestReapIdleSkipsInstanceWithOpenConns.
 func TestReapIdleSkipsInstanceWithTailCount(t *testing.T) {
 	now := time.Now()
-	instances := []InstanceInfo{
+	instances := []sched.InstanceInfo{
 		// Issue #667 / ADR-078: stale AppID with active tail tasks
 		// is NOT idle — the runner is draining.
 		{Instance: "tail-stale", Plan: api.PlanPro, State: state.StateRunning,
@@ -180,7 +181,7 @@ func TestReapIdleSkipsInstanceWithTailCount(t *testing.T) {
 		{Instance: "fresh", Plan: api.PlanPro, State: state.StateRunning,
 			LastRequest: now.Add(-time.Second)},
 	}
-	got := ReapIdle(now, instances, nil, nil)
+	got := sched.ReapIdle(now, instances, nil, nil)
 	if !equalSet(got, []string{"idle"}) {
 		t.Errorf("ReapIdle = %v, want [idle] only", got)
 	}
@@ -194,9 +195,28 @@ func TestReapIdleSkipsInstanceWithTailCount(t *testing.T) {
 // Scale-app RPS burst could evict a wake whose runner is still
 // draining waitUntil tasks — the customer loses the side effects
 // of those tasks (email send, log flush, etc.) silently.
+// Scale-in keeps the freshest replica: one scaled out 45 s ago whose first
+// request has not been recorded is fresher than one idle for two minutes.
+func TestReapAggressiveTreatsUnrecordedRequestAsStartTime(t *testing.T) {
+	now := time.Now()
+	instances := []sched.InstanceInfo{
+		{Instance: "scaled-out", AppID: "app1", Plan: api.PlanPro, State: state.StateRunning,
+			Started: now.Add(-45 * time.Second)},
+		{Instance: "stale", AppID: "app1", Plan: api.PlanPro, State: state.StateRunning,
+			LastRequest: now.Add(-2 * time.Minute), Started: now.Add(-time.Hour)},
+		{Instance: "busy", AppID: "app1", Plan: api.PlanPro, State: state.StateRunning,
+			LastRequest: now.Add(-time.Second), Started: now.Add(-time.Hour)},
+	}
+	// desired=1 → limit 2 → park exactly one.
+	got := sched.ReapAggressive(now, instances, map[string]int{"app1": 1}, nil, nil)
+	if len(got) != 1 || got[0] != "stale" {
+		t.Fatalf("expected [stale], got %v", got)
+	}
+}
+
 func TestReapAggressiveSkipsInstanceWithTailCount(t *testing.T) {
 	now := time.Now()
-	instances := []InstanceInfo{
+	instances := []sched.InstanceInfo{
 		// Stale + has tails: must NOT enter the candidate set.
 		{Instance: "tail-stale", AppID: "app1", Plan: api.PlanPro, State: state.StateRunning,
 			LastRequest: now.Add(-time.Hour), TailCount: 3},
@@ -220,7 +240,7 @@ func TestReapAggressiveSkipsInstanceWithTailCount(t *testing.T) {
 	// the two tail-bearing instances.
 	const testAppID = "app1"
 	desiredByApp := map[string]int{testAppID: 0}
-	got := ReapAggressive(now, instances, desiredByApp, nil, nil)
+	got := sched.ReapAggressive(now, instances, desiredByApp, nil, nil)
 	if containsString(got, "tail-stale") {
 		t.Errorf("ReapAggressive picked tail-stale (TailCount=3, stale); the tail-count gate is not honored; got %v", got)
 	}
@@ -230,7 +250,7 @@ func TestReapAggressiveSkipsInstanceWithTailCount(t *testing.T) {
 }
 
 func TestSelectEvictionsBelowThresholdNoop(t *testing.T) {
-	got := SelectEvictions(EvictionThresholdMB, time.Now(), []InstanceInfo{
+	got := sched.SelectEvictions(sched.EvictionThresholdMB, time.Now(), []sched.InstanceInfo{
 		{Instance: "x", Plan: api.PlanPro, State: state.StateRunning},
 	})
 	if got != nil {
@@ -242,46 +262,61 @@ func TestSelectEvictionsLRUAndScaleLast(t *testing.T) {
 	now := time.Now()
 	old := now.Add(-time.Hour)
 	// Resident well over threshold; each Pro instance is 520 MB (512+8).
-	instances := []InstanceInfo{
+	instances := []sched.InstanceInfo{
 		{Instance: "scale-oldest", Plan: api.PlanScale, State: state.StateRunning, RAMMB: 1024, LastRequest: old.Add(-time.Hour), Started: old},
 		{Instance: "pro-newest", Plan: api.PlanPro, State: state.StateRunning, RAMMB: 512, LastRequest: now.Add(-time.Minute), Started: old},
 		{Instance: "pro-oldest", Plan: api.PlanPro, State: state.StateRunning, RAMMB: 512, LastRequest: old, Started: old},
 	}
 	// Just 1 MB over threshold → evict exactly one; must be the LRU non-Scale.
-	got := SelectEvictions(EvictionThresholdMB+1, now, instances)
+	got := sched.SelectEvictions(sched.EvictionThresholdMB+1, now, instances)
 	if len(got) != 1 || got[0] != "pro-oldest" {
 		t.Errorf("expected [pro-oldest] (LRU non-Scale), got %v", got)
 	}
 }
 
+// An instance whose last request has not been recorded yet is as recent as
+// its start, not infinitely old: RAM pressure must evict the instance idle
+// for an hour first.
+func TestSelectEvictionsTreatsUnrecordedRequestAsStartTime(t *testing.T) {
+	now := time.Now()
+	instances := []sched.InstanceInfo{
+		{Instance: "woken-a-minute-ago", Plan: api.PlanPro, State: state.StateRunning, RAMMB: 512, Started: now.Add(-time.Minute)},
+		{Instance: "idle-an-hour", Plan: api.PlanPro, State: state.StateRunning, RAMMB: 512, LastRequest: now.Add(-time.Hour), Started: now.Add(-2 * time.Hour)},
+	}
+	got := sched.SelectEvictions(sched.EvictionThresholdMB+1, now, instances)
+	if len(got) != 1 || got[0] != "idle-an-hour" {
+		t.Fatalf("expected [idle-an-hour], got %v", got)
+	}
+}
+
 func TestSelectEvictionsProtectsYoungInstances(t *testing.T) {
 	now := time.Now()
-	instances := []InstanceInfo{
+	instances := []sched.InstanceInfo{
 		// Over threshold but only a 5s-old instance exists → protected.
 		{Instance: "fresh", Plan: api.PlanPro, State: state.StateRunning, RAMMB: 512, LastRequest: now.Add(-time.Hour), Started: now.Add(-5 * time.Second)},
 	}
-	got := SelectEvictions(EvictionThresholdMB+1000, now, instances)
+	got := sched.SelectEvictions(sched.EvictionThresholdMB+1000, now, instances)
 	if len(got) != 0 {
-		t.Errorf("instance younger than %s must not be evicted, got %v", MinInstanceAge, got)
+		t.Errorf("instance younger than %s must not be evicted, got %v", sched.MinInstanceAge, got)
 	}
 }
 
 func TestSelectEvictionsSkipsServiceReplicas(t *testing.T) {
 	now := time.Now()
 	old := now.Add(-time.Hour)
-	instances := []InstanceInfo{
+	instances := []sched.InstanceInfo{
 		{Instance: "service-replica", AppID: "svc", Plan: api.PlanPro, State: state.StateRunning,
 			Mode: string(state.InstanceModeService), RAMMB: 512, LastRequest: old, Started: old},
 		{Instance: "request-instance", AppID: "fn", Plan: api.PlanPro, State: state.StateRunning,
 			Mode: string(state.InstanceModeNormal), RAMMB: 512, LastRequest: old, Started: old},
 	}
 
-	got := SelectEvictions(EvictionThresholdMB+1, now, instances)
+	got := sched.SelectEvictions(sched.EvictionThresholdMB+1, now, instances)
 	if len(got) != 1 || got[0] != "request-instance" {
 		t.Fatalf("service replica must be skipped while request instance remains evictable, got %v", got)
 	}
 
-	got = SelectEvictions(EvictionThresholdMB+1, now, instances[:1])
+	got = sched.SelectEvictions(sched.EvictionThresholdMB+1, now, instances[:1])
 	if len(got) != 0 {
 		t.Fatalf("service-only pressure must not park a replica, got %v", got)
 	}
@@ -290,15 +325,15 @@ func TestSelectEvictionsSkipsServiceReplicas(t *testing.T) {
 func TestSelectEvictionsEvictsEnough(t *testing.T) {
 	now := time.Now()
 	old := now.Add(-time.Hour)
-	var instances []InstanceInfo
+	var instances []sched.InstanceInfo
 	for i := 0; i < 10; i++ {
-		instances = append(instances, InstanceInfo{
+		instances = append(instances, sched.InstanceInfo{
 			Instance: string(rune('a' + i)), Plan: api.PlanPro, State: state.StateRunning,
 			RAMMB: 512, LastRequest: old.Add(time.Duration(i) * time.Minute), Started: old,
 		})
 	}
 	// 2080 MB over threshold; each frees 520 MB → need 4 evictions.
-	got := SelectEvictions(EvictionThresholdMB+2080, now, instances)
+	got := sched.SelectEvictions(sched.EvictionThresholdMB+2080, now, instances)
 	if len(got) != 4 {
 		t.Errorf("expected 4 evictions to clear 2080 MB at 520 MB each, got %d (%v)", len(got), got)
 	}
@@ -348,13 +383,13 @@ func containsString(s []string, x string) bool {
 // larger than running → 0 reaped (degenerate but bounded).
 func TestReapIdleRespectsMinInstancesFloor(t *testing.T) {
 	now := time.Now()
-	mkApp := func(id string, lastSeen time.Duration) InstanceInfo {
-		return InstanceInfo{
+	mkApp := func(id string, lastSeen time.Duration) sched.InstanceInfo {
+		return sched.InstanceInfo{
 			Instance: id, AppID: "app1", Plan: api.PlanPro,
 			State: state.StateRunning, LastRequest: now.Add(-lastSeen),
 		}
 	}
-	instances := []InstanceInfo{
+	instances := []sched.InstanceInfo{
 		mkApp("oldest", time.Hour), // most idle → reap first
 		mkApp("older", 45*time.Minute),
 		mkApp("newer", 30*time.Minute),
@@ -364,7 +399,7 @@ func TestReapIdleRespectsMinInstancesFloor(t *testing.T) {
 		in.MinInstances = 0 // start with no floor
 	}
 	// floor 0 → reap all 4.
-	got := ReapIdle(now, instances, nil, nil)
+	got := sched.ReapIdle(now, instances, nil, nil)
 	if !equalSet(got, []string{"oldest", "older", "newer", "newest"}) {
 		t.Fatalf("floor 0: got %v, want all 4", got)
 	}
@@ -372,7 +407,7 @@ func TestReapIdleRespectsMinInstancesFloor(t *testing.T) {
 	for i := range instances {
 		instances[i].MinInstances = 2
 	}
-	got = ReapIdle(now, instances, nil, nil)
+	got = sched.ReapIdle(now, instances, nil, nil)
 	if !equalSet(got, []string{"oldest", "older"}) {
 		t.Fatalf("floor 2: got %v, want [oldest older] (drop freshest)", got)
 	}
@@ -380,7 +415,7 @@ func TestReapIdleRespectsMinInstancesFloor(t *testing.T) {
 	for i := range instances {
 		instances[i].MinInstances = 4
 	}
-	got = ReapIdle(now, instances, nil, nil)
+	got = sched.ReapIdle(now, instances, nil, nil)
 	if len(got) != 0 {
 		t.Fatalf("floor 4 (== running): got %v, want empty", got)
 	}
@@ -388,7 +423,7 @@ func TestReapIdleRespectsMinInstancesFloor(t *testing.T) {
 	for i := range instances {
 		instances[i].MinInstances = 99
 	}
-	got = ReapIdle(now, instances, nil, nil)
+	got = sched.ReapIdle(now, instances, nil, nil)
 	if len(got) != 0 {
 		t.Fatalf("floor 99 (>running): got %v, want empty (allowed clamps to 0)", got)
 	}
@@ -401,13 +436,13 @@ func TestReapIdleRespectsMinInstancesFloor(t *testing.T) {
 // reaps 2 (keeps 1).
 func TestReapIdleFloorDoesNotCrossApps(t *testing.T) {
 	now := time.Now()
-	mkApp := func(app, id string, lastSeen time.Duration) InstanceInfo {
-		return InstanceInfo{
+	mkApp := func(app, id string, lastSeen time.Duration) sched.InstanceInfo {
+		return sched.InstanceInfo{
 			Instance: id, AppID: app, Plan: api.PlanPro,
 			State: state.StateRunning, LastRequest: now.Add(-lastSeen),
 		}
 	}
-	instances := []InstanceInfo{
+	instances := []sched.InstanceInfo{
 		mkApp("a1", "a1-old", time.Hour),
 		mkApp("a1", "a1-new", 30*time.Minute),
 		mkApp("a2", "a2-old", time.Hour),
@@ -417,7 +452,7 @@ func TestReapIdleFloorDoesNotCrossApps(t *testing.T) {
 	for i := range instances {
 		instances[i].MinInstances = 1
 	}
-	got := ReapIdle(now, instances, nil, nil)
+	got := sched.ReapIdle(now, instances, nil, nil)
 	if !equalSet(got, []string{"a1-old", "a2-old", "a2-mid"}) {
 		t.Fatalf("got %v, want [a1-old a2-old a2-mid] (1 fresh per app kept)", got)
 	}
@@ -432,12 +467,12 @@ func TestSelectEvictionsIgnoresMinInstances(t *testing.T) {
 	// 1 Pro instance, RAMMB 512, floor 1 → still evictable under
 	// RAM pressure because SelectEvictions is intentionally
 	// floor-blind (spec §6.2-2: ceiling wins).
-	instances := []InstanceInfo{
+	instances := []sched.InstanceInfo{
 		{Instance: "warm", AppID: "app1", Plan: api.PlanPro,
 			State: state.StateRunning, RAMMB: 512,
 			LastRequest: old, Started: old, MinInstances: 1},
 	}
-	got := SelectEvictions(EvictionThresholdMB+1, now, instances)
+	got := sched.SelectEvictions(sched.EvictionThresholdMB+1, now, instances)
 	if len(got) != 1 || got[0] != "warm" {
 		t.Fatalf("RAM-pressure eviction must override the floor; got %v, want [warm]", got)
 	}
@@ -456,9 +491,9 @@ func TestSelectEvictionsIgnoresMinInstances(t *testing.T) {
 // fields ReapAggressive reads. Started is set to now-1h so the
 // MinInstanceAge filter does not incidentally protect a row that
 // the test means to be a reap candidate.
-func mkAggressive(app, id string, lastSeen time.Duration, open int64, minInst int) InstanceInfo {
+func mkAggressive(app, id string, lastSeen time.Duration, open int64, minInst int) sched.InstanceInfo {
 	now := time.Now()
-	return InstanceInfo{
+	return sched.InstanceInfo{
 		Instance: id, AppID: app, Plan: api.PlanPro,
 		State:        state.StateRunning,
 		LastRequest:  now.Add(-lastSeen),
@@ -477,13 +512,13 @@ func mkAggressive(app, id string, lastSeen time.Duration, open int64, minInst in
 // sticks to 4 to keep the assertion small and explicit.)
 func TestReapAggressive_ParkToBuffer(t *testing.T) {
 	now := time.Now()
-	instances := []InstanceInfo{
+	instances := []sched.InstanceInfo{
 		mkAggressive("app1", "oldest", time.Hour, 0, 1),
 		mkAggressive("app1", "older", 45*time.Minute, 0, 1),
 		mkAggressive("app1", "newer", 30*time.Minute, 0, 1),
 		mkAggressive("app1", "newest", 15*time.Minute, 0, 1),
 	}
-	got := ReapAggressive(now, instances, map[string]int{"app1": 0}, nil, nil)
+	got := sched.ReapAggressive(now, instances, map[string]int{"app1": 0}, nil, nil)
 	// limit = max(1, 0+1) = 1; extra = 4-1 = 3. Wait — 4 candidates, 3
 	// extra → park 3, keep the freshest.
 	if !equalSet(got, []string{"oldest", "older", "newer"}) {
@@ -495,12 +530,12 @@ func TestReapAggressive_ParkToBuffer(t *testing.T) {
 // With +1 buffer, limit=3. running=3, extra=0 → no park.
 func TestReapAggressive_WithinBuffer(t *testing.T) {
 	now := time.Now()
-	instances := []InstanceInfo{
+	instances := []sched.InstanceInfo{
 		mkAggressive("app1", "a", time.Hour, 0, 0),
 		mkAggressive("app1", "b", 45*time.Minute, 0, 0),
 		mkAggressive("app1", "c", 30*time.Minute, 0, 0),
 	}
-	got := ReapAggressive(now, instances, map[string]int{"app1": 2}, nil, nil)
+	got := sched.ReapAggressive(now, instances, map[string]int{"app1": 2}, nil, nil)
 	if len(got) != 0 {
 		t.Fatalf("3-inst / desired=2 / within buffer: got %v, want empty", got)
 	}
@@ -510,12 +545,12 @@ func TestReapAggressive_WithinBuffer(t *testing.T) {
 // limit=max(0,1+1)=2, extra=1 → park 1 oldest.
 func TestReapAggressive_JustAboveBuffer(t *testing.T) {
 	now := time.Now()
-	instances := []InstanceInfo{
+	instances := []sched.InstanceInfo{
 		mkAggressive("app1", "oldest", time.Hour, 0, 0),
 		mkAggressive("app1", "mid", 45*time.Minute, 0, 0),
 		mkAggressive("app1", "newest", 30*time.Minute, 0, 0),
 	}
-	got := ReapAggressive(now, instances, map[string]int{"app1": 1}, nil, nil)
+	got := sched.ReapAggressive(now, instances, map[string]int{"app1": 1}, nil, nil)
 	if len(got) != 1 || got[0] != "oldest" {
 		t.Fatalf("got %v, want [oldest]", got)
 	}
@@ -531,12 +566,12 @@ func TestReapAggressive_JustAboveBuffer(t *testing.T) {
 // flow-holding instance and the park set MUST NOT.
 func TestReapAggressive_OpenConnsProtect(t *testing.T) {
 	now := time.Now()
-	instances := []InstanceInfo{
+	instances := []sched.InstanceInfo{
 		mkAggressive("app1", "oldest", time.Hour, 0, 0),
 		mkAggressive("app1", "open", 45*time.Minute, 3, 0),
 		mkAggressive("app1", "newest", 30*time.Minute, 0, 0),
 	}
-	got := ReapAggressive(now, instances, map[string]int{"app1": 0}, nil, nil)
+	got := sched.ReapAggressive(now, instances, map[string]int{"app1": 0}, nil, nil)
 	if !equalSet(got, []string{"oldest", "newest"}) {
 		t.Fatalf("got %v, want [oldest newest] (open-conns instance is the only survivor)", got)
 	}
@@ -544,13 +579,13 @@ func TestReapAggressive_OpenConnsProtect(t *testing.T) {
 
 func TestReapAggressive_InflightRequestProtects(t *testing.T) {
 	now := time.Now()
-	instances := []InstanceInfo{
+	instances := []sched.InstanceInfo{
 		mkAggressive("app1", "oldest", time.Hour, 0, 0),
 		mkAggressive("app1", "newest", 30*time.Minute, 0, 0),
 		mkAggressive("app1", "active", 45*time.Minute, 0, 0),
 	}
 	instances[2].InflightRequests = 2
-	got := ReapAggressive(now, instances, map[string]int{"app1": 0}, nil, nil)
+	got := sched.ReapAggressive(now, instances, map[string]int{"app1": 0}, nil, nil)
 	if !equalSet(got, []string{"oldest", "newest"}) {
 		t.Fatalf("got %v, want inactive instances only (inflight request must survive)", got)
 	}
@@ -562,18 +597,18 @@ func TestReapAggressive_InflightRequestProtects(t *testing.T) {
 // rule SelectEvictions enforces.
 func TestReapAggressive_MinInstanceAgeProtects(t *testing.T) {
 	now := time.Now()
-	fresh := InstanceInfo{
+	fresh := sched.InstanceInfo{
 		Instance: "fresh", AppID: "app1", Plan: api.PlanPro,
 		State:        state.StateRunning,
 		LastRequest:  now.Add(-time.Hour),
 		Started:      now.Add(-10 * time.Second), // younger than MinInstanceAge (30s)
 		MinInstances: 0,
 	}
-	instances := []InstanceInfo{
+	instances := []sched.InstanceInfo{
 		fresh,
 		mkAggressive("app1", "old", time.Hour, 0, 0),
 	}
-	got := ReapAggressive(now, instances, map[string]int{"app1": 0}, nil, nil)
+	got := sched.ReapAggressive(now, instances, map[string]int{"app1": 0}, nil, nil)
 	// fresh: not in candidates (too young). old: in candidates.
 	// limit=max(0, 0+1)=1; extra=2-1=1; park 1 = "old".
 	if !equalSet(got, []string{"old"}) {
@@ -585,8 +620,8 @@ func TestReapAggressive_MinInstanceAgeProtects(t *testing.T) {
 // floor=0 + (desired+1) ≥ 1, so extra is always ≤ 0 → no park.
 func TestReapAggressive_SingleInstanceApp(t *testing.T) {
 	now := time.Now()
-	instances := []InstanceInfo{mkAggressive("app1", "only", time.Hour, 0, 0)}
-	got := ReapAggressive(now, instances, map[string]int{"app1": 0}, nil, nil)
+	instances := []sched.InstanceInfo{mkAggressive("app1", "only", time.Hour, 0, 0)}
+	got := sched.ReapAggressive(now, instances, map[string]int{"app1": 0}, nil, nil)
 	if len(got) != 0 {
 		t.Fatalf("single instance must not be reaped, got %v", got)
 	}
@@ -597,12 +632,12 @@ func TestReapAggressive_SingleInstanceApp(t *testing.T) {
 // autoscale configured must not be touched by the aggressive path.
 func TestReapAggressive_NilDesired_DefersToReapIdle(t *testing.T) {
 	now := time.Now()
-	instances := []InstanceInfo{
+	instances := []sched.InstanceInfo{
 		mkAggressive("hobby-app", "a", time.Hour, 0, 0),
 		mkAggressive("hobby-app", "b", 45*time.Minute, 0, 0),
 	}
 	// desiredByApp has no entry for hobby-app.
-	got := ReapAggressive(now, instances, nil, nil, nil)
+	got := sched.ReapAggressive(now, instances, nil, nil, nil)
 	if len(got) != 0 {
 		t.Fatalf("apps absent from desiredByApp must not be reaped, got %v", got)
 	}
@@ -613,14 +648,14 @@ func TestReapAggressive_NilDesired_DefersToReapIdle(t *testing.T) {
 // oldest.
 func TestReapAggressive_ZeroTarget_ClampsToFloor(t *testing.T) {
 	now := time.Now()
-	instances := []InstanceInfo{
+	instances := []sched.InstanceInfo{
 		mkAggressive("app1", "oldest", time.Hour, 0, 2),
 		mkAggressive("app1", "older", 45*time.Minute, 0, 2),
 		mkAggressive("app1", "mid", 30*time.Minute, 0, 2),
 		mkAggressive("app1", "newer", 15*time.Minute, 0, 2),
 		mkAggressive("app1", "newest", 5*time.Minute, 0, 2),
 	}
-	got := ReapAggressive(now, instances, map[string]int{"app1": 0}, nil, nil)
+	got := sched.ReapAggressive(now, instances, map[string]int{"app1": 0}, nil, nil)
 	if !equalSet(got, []string{"oldest", "older", "mid"}) {
 		t.Fatalf("got %v, want [oldest older mid] (floor 2 + 3 extra)", got)
 	}
@@ -634,7 +669,7 @@ func TestReapAggressive_ZeroTarget_ClampsToFloor(t *testing.T) {
 // missing row).
 func TestReapAggressive_TwoApps(t *testing.T) {
 	now := time.Now()
-	instances := []InstanceInfo{
+	instances := []sched.InstanceInfo{
 		// appA: 3 instances, desired=0, floor=1 → limit=1, extra=2.
 		mkAggressive("appA", "appA_oldest", 2*time.Hour, 0, 1),
 		mkAggressive("appA", "appA_older", 90*time.Minute, 0, 1),
@@ -645,7 +680,7 @@ func TestReapAggressive_TwoApps(t *testing.T) {
 		mkAggressive("appB", "appB_newer", 90*time.Minute, 0, 0),
 		mkAggressive("appB", "appB_newest", 60*time.Minute, 0, 0),
 	}
-	got := ReapAggressive(now, instances, map[string]int{
+	got := sched.ReapAggressive(now, instances, map[string]int{
 		"appA": 0,
 		"appB": 1,
 	}, nil, nil)
@@ -661,12 +696,12 @@ func TestReapAggressive_TwoApps(t *testing.T) {
 // but the function must not panic on the negative extra.
 func TestReapAggressive_FloorExceedsRunning(t *testing.T) {
 	now := time.Now()
-	instances := []InstanceInfo{
+	instances := []sched.InstanceInfo{
 		mkAggressive("app1", "a", time.Hour, 0, 10),
 		mkAggressive("app1", "b", 45*time.Minute, 0, 10),
 		mkAggressive("app1", "c", 30*time.Minute, 0, 10),
 	}
-	got := ReapAggressive(now, instances, map[string]int{"app1": 0}, nil, nil)
+	got := sched.ReapAggressive(now, instances, map[string]int{"app1": 0}, nil, nil)
 	if len(got) != 0 {
 		t.Fatalf("floor (10) > running (3): got %v, want empty", got)
 	}
@@ -679,13 +714,13 @@ func TestReapAggressive_FloorExceedsRunning(t *testing.T) {
 // NOT panic on the empty sort slice and must NOT return phantom IDs.
 func TestReapAggressive_EmptyCandidates(t *testing.T) {
 	now := time.Now()
-	instances := []InstanceInfo{
+	instances := []sched.InstanceInfo{
 		mkAggressive("app1", "open", 45*time.Minute, 3, 0),
 		mkAggressive("app1", "fresh", time.Hour, 0, 0), // fresh is set by override below
 	}
 	// Override Started so the second instance is MinInstanceAge-young.
 	instances[1].Started = now.Add(-10 * time.Second)
-	got := ReapAggressive(now, instances, map[string]int{"app1": 0}, nil, nil)
+	got := sched.ReapAggressive(now, instances, map[string]int{"app1": 0}, nil, nil)
 	if len(got) != 0 {
 		t.Fatalf("all candidates protected: got %v, want empty", got)
 	}
@@ -702,7 +737,7 @@ func TestReapIdle_WorkerClassCarveOut(t *testing.T) {
 	now := time.Now()
 	// 1 worker + 1 http app, both stale LastRequest. Without the
 	// carve-out, both would park. With it, only the http app parks.
-	instances := []InstanceInfo{
+	instances := []sched.InstanceInfo{
 		{
 			Instance: "worker-1", AppID: "app1", Plan: api.PlanPro,
 			State:         state.StateRunning,
@@ -718,7 +753,7 @@ func TestReapIdle_WorkerClassCarveOut(t *testing.T) {
 			WorkloadClass: state.WorkloadClassHTTP,
 		},
 	}
-	got := ReapIdle(now, instances, nil, nil)
+	got := sched.ReapIdle(now, instances, nil, nil)
 	if len(got) != 1 || got[0] != "http-1" {
 		t.Fatalf("ReapIdle worker carve-out: got %v, want [http-1] (worker must be exempt)", got)
 	}
@@ -733,8 +768,8 @@ func TestReapIdle_WorkerClassCarveOut(t *testing.T) {
 // candidate set.
 func TestReapAggressive_WorkerClassCarveOut(t *testing.T) {
 	now := time.Now()
-	mk := func(id string, cls state.WorkloadClass) InstanceInfo {
-		return InstanceInfo{
+	mk := func(id string, cls state.WorkloadClass) sched.InstanceInfo {
+		return sched.InstanceInfo{
 			Instance: id, AppID: "app1", Plan: api.PlanPro,
 			State:         state.StateRunning,
 			LastRequest:   now.Add(-time.Hour),
@@ -742,7 +777,7 @@ func TestReapAggressive_WorkerClassCarveOut(t *testing.T) {
 			WorkloadClass: cls,
 		}
 	}
-	instances := []InstanceInfo{
+	instances := []sched.InstanceInfo{
 		mk("worker-1", state.WorkloadClassWorker),
 		mk("worker-2", state.WorkloadClassWorker),
 		mk("http-1", state.WorkloadClassHTTP),
@@ -752,7 +787,7 @@ func TestReapAggressive_WorkerClassCarveOut(t *testing.T) {
 	// http-1 as a candidate. workers must not run, not enter the
 	// candidate set, and not park.
 	desired := map[string]int{"app1": 0}
-	got := ReapAggressive(now, instances, desired, nil, nil)
+	got := sched.ReapAggressive(now, instances, desired, nil, nil)
 	// Running=1 (only http-1), limit=max(0, 0+1)=1, extra=0 → no park.
 	for _, id := range got {
 		if id == "worker-1" || id == "worker-2" {
@@ -761,7 +796,7 @@ func TestReapAggressive_WorkerClassCarveOut(t *testing.T) {
 	}
 	// also with desired=10 — must NOT park workers under "running is 3".
 	desired10 := map[string]int{"app1": 10}
-	got = ReapAggressive(now, instances, desired10, nil, nil)
+	got = sched.ReapAggressive(now, instances, desired10, nil, nil)
 	for _, id := range got {
 		if id == "worker-1" || id == "worker-2" {
 			t.Errorf("ReapAggressive carved-out worker under desired=10; got %v", id)
@@ -790,13 +825,13 @@ func TestReapAggressive_WorkerClassCarveOut(t *testing.T) {
 func TestReapIdleRespectsScaleInCooldownUnder(t *testing.T) {
 	now := time.Now()
 	last := now.Add(-1 * time.Second)
-	instances := []InstanceInfo{
+	instances := []sched.InstanceInfo{
 		{Instance: "idle-a", AppID: "app1", Plan: api.PlanPro, State: state.StateRunning,
 			LastRequest: now.Add(-time.Hour), LastScaleInAt: &last, ScaleInCooldownS: 60},
 		{Instance: "idle-b", AppID: "app1", Plan: api.PlanPro, State: state.StateRunning,
 			LastRequest: now.Add(-45 * time.Minute), LastScaleInAt: &last, ScaleInCooldownS: 60},
 	}
-	got := ReapIdle(now, instances, nil, nil)
+	got := sched.ReapIdle(now, instances, nil, nil)
 	if len(got) != 0 {
 		t.Errorf("ReapIdle (cooldown 59s remaining) = %v, want [] (cooldown_held)", got)
 	}
@@ -809,13 +844,13 @@ func TestReapIdleRespectsScaleInCooldownUnder(t *testing.T) {
 func TestReapIdleRespectsScaleInCooldownOver(t *testing.T) {
 	now := time.Now()
 	last := now.Add(-2 * time.Minute)
-	instances := []InstanceInfo{
+	instances := []sched.InstanceInfo{
 		{Instance: "idle-a", AppID: "app1", Plan: api.PlanPro, State: state.StateRunning,
 			LastRequest: now.Add(-time.Hour), LastScaleInAt: &last, ScaleInCooldownS: 60},
 		{Instance: "idle-b", AppID: "app1", Plan: api.PlanPro, State: state.StateRunning,
 			LastRequest: now.Add(-45 * time.Minute), LastScaleInAt: &last, ScaleInCooldownS: 60},
 	}
-	got := ReapIdle(now, instances, nil, nil)
+	got := sched.ReapIdle(now, instances, nil, nil)
 	if !equalSet(got, []string{"idle-a", "idle-b"}) {
 		t.Errorf("ReapIdle (cooldown elapsed) = %v, want [idle-a idle-b]", got)
 	}
@@ -825,16 +860,16 @@ func TestReapersStartScaleInCooldownAtLatestScaleOut(t *testing.T) {
 	now := time.Now()
 	lastScaleIn := now.Add(-2 * time.Minute)
 	lastScaleOut := now.Add(-time.Second)
-	instances := []InstanceInfo{
+	instances := []sched.InstanceInfo{
 		{Instance: "a", AppID: "app1", Plan: api.PlanPro, State: state.StateRunning,
 			LastRequest: now.Add(-time.Hour), Started: now.Add(-time.Hour), LastScaleInAt: &lastScaleIn, LastScaleOutAt: &lastScaleOut, ScaleInCooldownS: 60},
 		{Instance: "b", AppID: "app1", Plan: api.PlanPro, State: state.StateRunning,
 			LastRequest: now.Add(-time.Hour), Started: now.Add(-time.Hour), LastScaleInAt: &lastScaleIn, LastScaleOutAt: &lastScaleOut, ScaleInCooldownS: 60},
 	}
-	if got := ReapIdle(now, instances, nil, nil); len(got) != 0 {
+	if got := sched.ReapIdle(now, instances, nil, nil); len(got) != 0 {
 		t.Fatalf("ReapIdle after scale-out = %v, want []", got)
 	}
-	if got := ReapAggressive(now, instances, map[string]int{"app1": 0}, nil, nil); len(got) != 0 {
+	if got := sched.ReapAggressive(now, instances, map[string]int{"app1": 0}, nil, nil); len(got) != 0 {
 		t.Fatalf("ReapAggressive after scale-out = %v, want []", got)
 	}
 }
@@ -850,7 +885,7 @@ func TestReapersStartScaleInCooldownAtLatestScaleOut(t *testing.T) {
 func TestReapIdleEmitsCooldownHeld(t *testing.T) {
 	now := time.Now()
 	last := now.Add(-1 * time.Second)
-	instances := []InstanceInfo{
+	instances := []sched.InstanceInfo{
 		{Instance: "idle-a", AppID: "app1", Plan: api.PlanPro, State: state.StateRunning,
 			LastRequest: now.Add(-time.Hour), LastScaleInAt: &last, ScaleInCooldownS: 60},
 		{Instance: "idle-b", AppID: "app1", Plan: api.PlanPro, State: state.StateRunning,
@@ -859,7 +894,7 @@ func TestReapIdleEmitsCooldownHeld(t *testing.T) {
 			LastRequest: now.Add(-30 * time.Minute), LastScaleInAt: &last, ScaleInCooldownS: 60},
 	}
 	ops := wire.NewOpsMetrics("schedd")
-	got := ReapIdle(now, instances, ops, nil)
+	got := sched.ReapIdle(now, instances, ops, nil)
 	if len(got) != 0 {
 		t.Errorf("ReapIdle (cooldown held) = %v, want []", got)
 	}
@@ -867,7 +902,7 @@ func TestReapIdleEmitsCooldownHeld(t *testing.T) {
 	// instances — the cooldownEmitted flag is the load-bearing
 	// contract here). `park` must NOT fire because the app was
 	// skipped entirely.
-	body := wireRenderMetrics(t, ops)
+	body := sched.WireRenderMetrics(t, ops)
 	if !bytes.Contains(body, []byte(`schedd_scale_down_decisions_total{app="app1",outcome="cooldown_held"} 1`)) {
 		t.Errorf("missing cooldown_held=1 line in:\n%s", body)
 	}
@@ -884,17 +919,17 @@ func TestReapIdleEmitsCooldownHeld(t *testing.T) {
 // All 3 are parked; one observation fires.
 func TestReapIdleEmitsPark(t *testing.T) {
 	now := time.Now()
-	instances := []InstanceInfo{
+	instances := []sched.InstanceInfo{
 		mkAggressive("app1", "a", time.Hour, 0, 0),
 		mkAggressive("app1", "b", 45*time.Minute, 0, 0),
 		mkAggressive("app1", "c", 30*time.Minute, 0, 0),
 	}
 	ops := wire.NewOpsMetrics("schedd")
-	got := ReapIdle(now, instances, ops, nil)
+	got := sched.ReapIdle(now, instances, ops, nil)
 	if !equalSet(got, []string{"a", "b", "c"}) {
 		t.Errorf("ReapIdle = %v, want [a b c]", got)
 	}
-	body := wireRenderMetrics(t, ops)
+	body := sched.WireRenderMetrics(t, ops)
 	if !bytes.Contains(body, []byte(`schedd_scale_down_decisions_total{app="app1",outcome="park"} 1`)) {
 		t.Errorf("missing park=1 line in:\n%s", body)
 	}
@@ -914,16 +949,16 @@ func TestReapIdleEmitsPark(t *testing.T) {
 // because the floor says keep both alive. No `park` observation.
 func TestReapIdleEmitsMinFloorAlready(t *testing.T) {
 	now := time.Now()
-	instances := []InstanceInfo{
+	instances := []sched.InstanceInfo{
 		mkAggressive("app1", "a", time.Hour, 0, 2), // floor=2
 		mkAggressive("app1", "b", 45*time.Minute, 0, 2),
 	}
 	ops := wire.NewOpsMetrics("schedd")
-	got := ReapIdle(now, instances, ops, nil)
+	got := sched.ReapIdle(now, instances, ops, nil)
 	if len(got) != 0 {
 		t.Errorf("ReapIdle = %v, want [] (floor kept all candidates)", got)
 	}
-	body := wireRenderMetrics(t, ops)
+	body := sched.WireRenderMetrics(t, ops)
 	if !bytes.Contains(body, []byte(`schedd_scale_down_decisions_total{app="app1",outcome="min_floor_already"} 1`)) {
 		t.Errorf("missing min_floor_already=1 line in:\n%s", body)
 	}
@@ -950,12 +985,12 @@ func TestReapIdleEmitsMinFloorAlready(t *testing.T) {
 func TestReapIdle_NilMetrics_NoPanic(t *testing.T) {
 	now := time.Now()
 	last := now.Add(-1 * time.Second)
-	instances := []InstanceInfo{
+	instances := []sched.InstanceInfo{
 		{Instance: "idle-a", AppID: "app1", Plan: api.PlanPro, State: state.StateRunning,
 			LastRequest: now.Add(-time.Hour), LastScaleInAt: &last, ScaleInCooldownS: 60},
 		mkAggressive("app2", "b", time.Hour, 0, 0),
 	}
-	got := ReapIdle(now, instances, nil, nil)
+	got := sched.ReapIdle(now, instances, nil, nil)
 	if !equalSet(got, []string{"b"}) {
 		t.Errorf("ReapIdle = %v, want [b]", got)
 	}
@@ -969,12 +1004,12 @@ func TestReapIdle_NilMetrics_NoPanic(t *testing.T) {
 func TestReapAggressiveRespectsScaleInCooldownUnder(t *testing.T) {
 	now := time.Now()
 	last := now.Add(-1 * time.Second)
-	instances := []InstanceInfo{
+	instances := []sched.InstanceInfo{
 		mkAggressiveWithStamp("app1", "a", time.Hour, 0, 0, &last, 60),
 		mkAggressiveWithStamp("app1", "b", 45*time.Minute, 0, 0, &last, 60),
 		mkAggressiveWithStamp("app1", "c", 30*time.Minute, 0, 0, &last, 60),
 	}
-	got := ReapAggressive(now, instances, map[string]int{"app1": 0}, nil, nil)
+	got := sched.ReapAggressive(now, instances, map[string]int{"app1": 0}, nil, nil)
 	if len(got) != 0 {
 		t.Errorf("ReapAggressive (cooldown 59s remaining) = %v, want [] (cooldown_held)", got)
 	}
@@ -988,12 +1023,12 @@ func TestReapAggressiveRespectsScaleInCooldownUnder(t *testing.T) {
 func TestReapAggressiveRespectsScaleInCooldownOver(t *testing.T) {
 	now := time.Now()
 	last := now.Add(-2 * time.Minute)
-	instances := []InstanceInfo{
+	instances := []sched.InstanceInfo{
 		mkAggressiveWithStamp("app1", "a", time.Hour, 0, 0, &last, 60),
 		mkAggressiveWithStamp("app1", "b", 45*time.Minute, 0, 0, &last, 60),
 		mkAggressiveWithStamp("app1", "c", 30*time.Minute, 0, 0, &last, 60),
 	}
-	got := ReapAggressive(now, instances, map[string]int{"app1": 0}, nil, nil)
+	got := sched.ReapAggressive(now, instances, map[string]int{"app1": 0}, nil, nil)
 	if !equalSet(got, []string{"a", "b"}) {
 		t.Errorf("ReapAggressive (cooldown elapsed) = %v, want [a b] (park 2 oldest)", got)
 	}
@@ -1003,9 +1038,9 @@ func TestReapAggressiveRespectsScaleInCooldownOver(t *testing.T) {
 // It also stamps the LastScaleInAt + ScaleInCooldownS carrier fields
 // (PR-C, issue #462) so the per-app consult at reaper.go:160 / :271
 // has the inputs it needs.
-func mkAggressiveWithStamp(app, id string, lastSeen time.Duration, open int64, minInst int, lastScaleInAt *time.Time, cooldownS int) InstanceInfo {
+func mkAggressiveWithStamp(app, id string, lastSeen time.Duration, open int64, minInst int, lastScaleInAt *time.Time, cooldownS int) sched.InstanceInfo {
 	now := time.Now()
-	return InstanceInfo{
+	return sched.InstanceInfo{
 		Instance: id, AppID: app, Plan: api.PlanPro,
 		State:            state.StateRunning,
 		LastRequest:      now.Add(-lastSeen),
@@ -1026,11 +1061,11 @@ func mkAggressiveWithStamp(app, id string, lastSeen time.Duration, open int64, m
 func TestSelectEvictions_TierOrdering(t *testing.T) {
 	now := time.Now()
 	old := now.Add(-time.Hour)
-	instances := []InstanceInfo{
+	instances := []sched.InstanceInfo{
 		{Instance: "reserved", Plan: api.PlanPro, State: state.StateRunning, RAMMB: 512, LastRequest: old, Started: old, EvictionPriority: string(api.EvictionPriorityReserved)},
 		{Instance: "best", Plan: api.PlanPro, State: state.StateRunning, RAMMB: 512, LastRequest: old, Started: old, EvictionPriority: string(api.EvictionPriorityBestEffort)},
 	}
-	got := SelectEvictions(EvictionThresholdMB+1, now, instances)
+	got := sched.SelectEvictions(sched.EvictionThresholdMB+1, now, instances)
 	if len(got) != 1 || got[0] != "best" {
 		t.Errorf("tier comparator must pick best_effort first, got %v", got)
 	}
@@ -1045,14 +1080,14 @@ func TestSelectEvictions_TierOrdering(t *testing.T) {
 func TestSelectEvictions_ReservedIsLastResort(t *testing.T) {
 	now := time.Now()
 	old := now.Add(-time.Hour)
-	instances := []InstanceInfo{
+	instances := []sched.InstanceInfo{
 		{Instance: "best-e", Plan: api.PlanPro, State: state.StateRunning, RAMMB: 512, LastRequest: old, Started: old, EvictionPriority: string(api.EvictionPriorityBestEffort)},
 		{Instance: "best-w", Plan: api.PlanPro, State: state.StateRunning, RAMMB: 512, LastRequest: old, Started: old, EvictionPriority: string(api.EvictionPriorityBestEffort)},
 		{Instance: "reserved-only", Plan: api.PlanPro, State: state.StateRunning, RAMMB: 512, LastRequest: old, Started: old, EvictionPriority: string(api.EvictionPriorityReserved)},
 	}
 	// Just 1 MB over threshold → 1 park total. Must be a best_effort
 	// instance, NOT the reserved one.
-	got := SelectEvictions(EvictionThresholdMB+1, now, instances)
+	got := sched.SelectEvictions(sched.EvictionThresholdMB+1, now, instances)
 	if len(got) != 1 {
 		t.Fatalf("expected 1 park, got %v", got)
 	}
@@ -1071,12 +1106,12 @@ func TestSelectEvictions_ReservedIsLastResort(t *testing.T) {
 func TestSelectEvictions_AllReservedEvictable(t *testing.T) {
 	now := time.Now()
 	old := now.Add(-time.Hour)
-	instances := []InstanceInfo{
+	instances := []sched.InstanceInfo{
 		{Instance: "reserved-oldest", Plan: api.PlanPro, State: state.StateRunning, RAMMB: 512, LastRequest: old.Add(-time.Hour), Started: old, EvictionPriority: string(api.EvictionPriorityReserved)},
 		{Instance: "reserved-newest", Plan: api.PlanPro, State: state.StateRunning, RAMMB: 512, LastRequest: now.Add(-time.Minute), Started: old, EvictionPriority: string(api.EvictionPriorityReserved)},
 	}
 	// Big eviction target — both reserved instances must participate.
-	got := SelectEvictions(EvictionThresholdMB+2080, now, instances)
+	got := sched.SelectEvictions(sched.EvictionThresholdMB+2080, now, instances)
 	if len(got) != 2 {
 		t.Errorf("expected both reserved instances to park when best_effort is exhausted, got %v", got)
 	}
@@ -1094,13 +1129,13 @@ func TestSelectEvictions_AllReservedEvictable(t *testing.T) {
 func TestSelectEvictions_EmptyEvictionPriorityFallsThrough(t *testing.T) {
 	now := time.Now()
 	old := now.Add(-time.Hour)
-	instances := []InstanceInfo{
+	instances := []sched.InstanceInfo{
 		// No EvictionPriority set — pre-#475 shape.
 		{Instance: "legacy-oldest", Plan: api.PlanPro, State: state.StateRunning, RAMMB: 512, LastRequest: old, Started: old},
 		// New column explicitly 'reserved'.
 		{Instance: "reserved-new", Plan: api.PlanPro, State: state.StateRunning, RAMMB: 512, LastRequest: old, Started: old, EvictionPriority: string(api.EvictionPriorityReserved)},
 	}
-	got := SelectEvictions(EvictionThresholdMB+1, now, instances)
+	got := sched.SelectEvictions(sched.EvictionThresholdMB+1, now, instances)
 	if len(got) != 1 || got[0] != "legacy-oldest" {
 		t.Errorf("empty EvictionPriority must fall through to best_effort path; got %v", got)
 	}
@@ -1115,17 +1150,17 @@ func TestSelectEvictions_EmptyEvictionPriorityFallsThrough(t *testing.T) {
 func TestResolvePriority(t *testing.T) {
 	now := time.Now()
 	old := now.Add(-time.Hour)
-	snapshot := []InstanceInfo{
+	snapshot := []sched.InstanceInfo{
 		{Instance: "reserved-app", AppID: "a", Plan: api.PlanPro, State: state.StateRunning, RAMMB: 512, LastRequest: old, Started: old, EvictionPriority: string(api.EvictionPriorityReserved)},
 		{Instance: "legacy-app", AppID: "b", Plan: api.PlanPro, State: state.StateRunning, RAMMB: 512, LastRequest: old, Started: old},
 	}
-	if got, ok := resolvePriority(snapshot, "reserved-app"); !ok || got != "reserved" {
+	if got, ok := sched.ResolvePriority(snapshot, "reserved-app"); !ok || got != "reserved" {
 		t.Errorf("reserved lookup = (%q, %v), want (\"reserved\", true)", got, ok)
 	}
-	if got, ok := resolvePriority(snapshot, "legacy-app"); !ok || got != "best_effort" {
+	if got, ok := sched.ResolvePriority(snapshot, "legacy-app"); !ok || got != "best_effort" {
 		t.Errorf("empty-string fallback = (%q, %v), want (\"best_effort\", true)", got, ok)
 	}
-	if got, ok := resolvePriority(snapshot, "missing"); ok || got != "" {
+	if got, ok := sched.ResolvePriority(snapshot, "missing"); ok || got != "" {
 		t.Errorf("missing id = (%q, %v), want (\"\", false)", got, ok)
 	}
 }
@@ -1146,7 +1181,7 @@ func TestResolvePriority(t *testing.T) {
 func TestReapIdleNilMetrics_DoesNotPoisonSharedSet(t *testing.T) {
 	now := time.Now()
 	last := now.Add(-1 * time.Second)
-	instances := []InstanceInfo{
+	instances := []sched.InstanceInfo{
 		{Instance: "a", AppID: "app1", Plan: api.PlanPro, State: state.StateRunning,
 			LastRequest: now.Add(-time.Hour), LastScaleInAt: &last, ScaleInCooldownS: 60},
 		{Instance: "b", AppID: "app1", Plan: api.PlanPro, State: state.StateRunning,
@@ -1155,7 +1190,7 @@ func TestReapIdleNilMetrics_DoesNotPoisonSharedSet(t *testing.T) {
 	// Step 1: ReapIdle with nil metrics. No emission; set must
 	// remain empty (the load-bearing assertion).
 	shared := map[string]struct{}{}
-	if got := ReapIdle(now, instances, nil, shared); len(got) != 0 {
+	if got := sched.ReapIdle(now, instances, nil, shared); len(got) != 0 {
 		t.Fatalf("ReapIdle = %v, want [] (cooldown held)", got)
 	}
 	if len(shared) != 0 {
@@ -1166,10 +1201,10 @@ func TestReapIdleNilMetrics_DoesNotPoisonSharedSet(t *testing.T) {
 	// emit — must emit the observation itself.
 	ops := wire.NewOpsMetrics("schedd")
 	desiredByApp := map[string]int{"app1": 0}
-	if got := ReapAggressive(now, instances, desiredByApp, ops, shared); len(got) != 0 {
+	if got := sched.ReapAggressive(now, instances, desiredByApp, ops, shared); len(got) != 0 {
 		t.Errorf("ReapAggressive = %v, want [] (cooldown held)", got)
 	}
-	body := wireRenderMetrics(t, ops)
+	body := sched.WireRenderMetrics(t, ops)
 	want := `schedd_scale_down_decisions_total{app="app1",outcome="cooldown_held"} 1`
 	if !bytes.Contains(body, []byte(want)) {
 		t.Errorf("missing line %q in:\n%s", want, body)
@@ -1194,7 +1229,7 @@ func TestReapIdleNilMetrics_DoesNotPoisonSharedSet(t *testing.T) {
 // instances.
 func TestReapIdleSkipsMirrorInstances(t *testing.T) {
 	now := time.Now()
-	instances := []InstanceInfo{
+	instances := []sched.InstanceInfo{
 		// Mirror instance, stale LastRequest: must NOT be reaped
 		// because Mode=="mirror". The mirror goroutine handles its
 		// own lifecycle.
@@ -1204,7 +1239,7 @@ func TestReapIdleSkipsMirrorInstances(t *testing.T) {
 		{Instance: "idle", Plan: api.PlanPro, State: state.StateRunning,
 			LastRequest: now.Add(-time.Hour)},
 	}
-	got := ReapIdle(now, instances, nil, nil)
+	got := sched.ReapIdle(now, instances, nil, nil)
 	if !equalSet(got, []string{"idle"}) {
 		t.Errorf("ReapIdle = %v, want [idle] only (mirror instance must be skipped)", got)
 	}
@@ -1212,8 +1247,8 @@ func TestReapIdleSkipsMirrorInstances(t *testing.T) {
 
 func TestReapIdleReclaimsOnlyIdleMirrorOrphans(t *testing.T) {
 	now := time.Now()
-	inst := func(id string, age time.Duration) InstanceInfo {
-		return InstanceInfo{Instance: id, AppID: "app", Plan: api.PlanPro,
+	inst := func(id string, age time.Duration) sched.InstanceInfo {
+		return sched.InstanceInfo{Instance: id, AppID: "app", Plan: api.PlanPro,
 			State: state.StateRunning, Mode: string(state.InstanceModeMirror),
 			Started: now.Add(-age), MinInstances: 1, ScaleInCooldownS: 600}
 	}
@@ -1225,7 +1260,7 @@ func TestReapIdleReclaimsOnlyIdleMirrorOrphans(t *testing.T) {
 	connected.OpenConns = 1
 	withTail := inst("tail", 2*time.Minute)
 	withTail.TailCount = 1
-	got := ReapIdle(now, []InstanceInfo{
+	got := sched.ReapIdle(now, []sched.InstanceInfo{
 		inst("recent", 30*time.Second), old, busy, connected, withTail,
 	}, nil, nil)
 	if !equalSet(got, []string{"orphan"}) {

@@ -1,5 +1,5 @@
 // adr: 905
-package sched
+package sched_test
 
 import (
 	"encoding/json"
@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -36,10 +37,10 @@ func TestWorkflowTickEvaluatesFailurePoliciesBeforeScheduleAdmission(t *testing.
 	if err = store.MarkWorkflowRunStatus(ctx, run.ID, state.WorkflowRunStatusFailed, nil, nil); err != nil {
 		t.Fatal(err)
 	}
-	engine, _ := makeEngine(t, store, &fakeWakeVMM{})
+	engine, _ := sched.MakeEngine(t, store, &sched.FakeWakeVMM{})
 	now := time.Now().UTC()
-	loop := NewLoop(nil, engine, nil).WithClock(func() time.Time { return now }).WithWorkflowsDispatched(true)
-	if err = loop.runWorkflowSchedulesTick(ctx); err != nil {
+	loop := sched.NewLoop(nil, engine, nil).WithClock(func() time.Time { return now }).WithWorkflowsDispatched(true)
+	if err = loop.RunWorkflowSchedulesTick(ctx); err != nil {
 		t.Fatal(err)
 	}
 	out, err := store.GetAutomationFailurePolicy(ctx, app.ID, "report")

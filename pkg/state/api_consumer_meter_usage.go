@@ -49,15 +49,17 @@ var (
 	_ ConsumerMeterUsageStore = (*PgStore)(nil)
 )
 
-// validateMeterUnits checks an event's reported units: billable consumer
-// requests only, at most MaxAppMetersPerRequest meters per request, and
-// bounded non-negative units.
+// validateMeterUnits checks an event's reported units: billable consumer or
+// tenant surface and JWT-rule requests only (ADR-1319), at most
+// MaxAppMetersPerRequest meters per request, and bounded non-negative
+// units.
 func validateMeterUnits(event APIConsumerUsageEvent) error {
 	if len(event.MeterUnits) == 0 {
 		return nil
 	}
-	if event.ConsumerKey == AnonymousConsumerKey || event.BillableUnits == 0 {
-		return fmt.Errorf("consumer usage: app-reported units belong to billable consumer requests")
+	tenantSource := event.PlatformTenantSurfaceID != "" || event.PlatformTenantJWTAuthorizationRuleID != ""
+	if (event.ConsumerKey == AnonymousConsumerKey && !tenantSource) || event.BillableUnits == 0 {
+		return fmt.Errorf("consumer usage: app-reported units belong to billable consumer or tenant-source requests")
 	}
 	if int64(len(event.MeterUnits)) > event.RequestCount*MaxAppMetersPerRequest {
 		return fmt.Errorf("consumer usage: at most %d app meters per request", MaxAppMetersPerRequest)
@@ -74,9 +76,11 @@ func consumerMeterUsageKey(accountID, appID, consumerKey, meter string, minute t
 	return accountID + "\x00" + appID + "\x00" + consumerKey + "\x00" + meter + "\x00" + minute.UTC().Format(time.RFC3339)
 }
 
-// recordMeterUnitsLocked adds an event's reported units to the ledger.
+// recordMeterUnitsLocked adds an event's reported units to the consumer
+// ledger and its tenant's (ADR-1319).
 func (m *MemStore) recordMeterUnitsLocked(event APIConsumerUsageEvent) {
-	if len(event.MeterUnits) == 0 {
+	m.recordTenantMeterUnitsLocked(event)
+	if len(event.MeterUnits) == 0 || event.ConsumerKey == AnonymousConsumerKey {
 		return
 	}
 	if m.apiConsumerMeterUsage == nil {

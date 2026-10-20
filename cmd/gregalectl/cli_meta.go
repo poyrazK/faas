@@ -655,6 +655,44 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
+		Name:    dispatchFlags,
+		DocSlug: "flags",
+		Short:   "Release platform features to selected accounts (ADR-1700)",
+		Subcommands: []cliSub{
+			{Name: "list", Short: "List platform flags, groups and per-daemon convergence"},
+			{Name: "show", Short: "Show one flag's definition and apply receipts", Flags: []cliFlag{
+				{Name: "key", Short: "platform flag key", Req: true},
+			}},
+			{Name: "inspect", Short: "Explain one flag's decision for an account", Flags: []cliFlag{
+				{Name: "key", Short: "platform flag key", Req: true},
+				{Name: "account-id", Short: "account UUID", Req: true},
+			}},
+			{Name: "account", Short: "Show every flag decided for an account", Flags: []cliFlag{
+				{Name: "account-id", Short: "account UUID", Req: true},
+			}},
+			{Name: "enable", Short: "Turn a flag's kill switch on", Flags: flagsMutationCLIFlags(true)},
+			{Name: "disable", Short: "Turn a flag off for every account", Flags: flagsMutationCLIFlags(true)},
+			{Name: "allow", Short: "Enable a flag for one account", Flags: append(flagsMutationCLIFlags(true), cliFlag{Name: "account-id", Short: "account UUID", Req: true})},
+			{Name: "deny", Short: "Exclude one account from a flag", Flags: append(flagsMutationCLIFlags(true), cliFlag{Name: "account-id", Short: "account UUID", Req: true})},
+			{Name: "revoke", Short: "Remove an account's explicit allow or deny", Flags: append(flagsMutationCLIFlags(true), cliFlag{Name: "account-id", Short: "account UUID", Req: true})},
+			{Name: "rollout", Short: "Release a flag to a stable share of accounts", Flags: append(flagsMutationCLIFlags(true),
+				cliFlag{Name: "percent", Short: "share of eligible accounts, 0..100", Req: true},
+				cliFlag{Name: "plans", Short: "comma-separated plans the rollout is limited to"})},
+			{Name: "default", Short: "Set the value for accounts no rule matches", Flags: append(flagsMutationCLIFlags(true), cliFlag{Name: "value", Short: "true or false", Req: true})},
+			{Name: "set", Short: "Replace a flag's definition from a JSON file", Flags: append(flagsMutationCLIFlags(true), cliFlag{Name: "file", Short: "JSON definition file, or - for stdin", Req: true})},
+			{Name: "groups", Short: "List account groups and the flags that use them"},
+			{Name: "group-add", Short: "Add an account to a group", Flags: append(flagsMutationCLIFlags(false),
+				cliFlag{Name: "group", Short: "group name", Req: true}, cliFlag{Name: "account-id", Short: "account UUID", Req: true})},
+			{Name: "group-remove", Short: "Remove an account from a group", Flags: append(flagsMutationCLIFlags(false),
+				cliFlag{Name: "group", Short: "group name", Req: true}, cliFlag{Name: "account-id", Short: "account UUID", Req: true})},
+			{Name: "history", Short: "Show a flag's or the groups' revisions", Flags: []cliFlag{
+				{Name: "key", Short: "platform flag key, or groups", Req: true},
+				{Name: "limit", Short: "maximum revisions to return (1..200)"},
+			}},
+			{Name: "rollback", Short: "Restore an older flag or groups revision", Flags: append(flagsMutationCLIFlags(true), cliFlag{Name: "version", Short: "historical version to restore", Req: true})},
+		},
+	},
+	{
 		Name:    dispatchAudit,
 		DocSlug: "audit",
 		Short:   "Correlate durable operator intents and live events by trace ID",
@@ -910,6 +948,16 @@ var cliCommands = []cliCommand{
 				Flags: []cliFlag{{Name: "root-dir", Short: "active PKI root"}},
 			},
 			{
+				Name:  subPKIIssueFeature,
+				Short: "Issue or renew an operator-enabled feature's leaves (live-queries) from the CA",
+				Flags: []cliFlag{
+					{Name: "feature", Short: "feature whose leaves to issue", Req: true, ClosedSet: []string{"live-queries"}},
+					{Name: "box-role", Short: "host role the leaves are for", Req: true, ClosedSet: []string{"control-plane", "compute-only", "single-box"}},
+					{Name: "ca-dir", Short: "PKI root holding the CA"},
+					{Name: "root-dir", Short: "PKI root the leaves are written under"},
+				},
+			},
+			{
 				Name:  subPKIMetrics,
 				Short: "Export active leaf expiry and renewal state for node_exporter",
 				Flags: []cliFlag{
@@ -989,12 +1037,8 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
-		// Obs-Meta + Trace-IDs Mega-PR / C8 — operator-side
-		// operator observability surfaces. `obs health` reads the
-		// meta-health snapshot, `obs incidents` reads the bounded
-		// cross-resource triage projection, and `obs overview` /
-		// `obs capacity` expose the existing fleet snapshots; all
-		// are read-only and admin/MFA gated by apid.
+		// Operator reads and episode-scoped triage. Mutations use the strict
+		// operator session policy; other reads retain admin bearer support.
 		Name:    dispatchObs,
 		DocSlug: "obs",
 		Short:   "Operator incident inbox, health, fleet overview, and capacity",
@@ -1014,12 +1058,106 @@ var cliCommands = []cliCommand{
 				Flags: []cliFlag{
 					{Name: "type", Short: "filter by deployment|job_run|compute_node|platform_alert"},
 					{Name: "severity", Short: "filter by warning|error|critical"},
+					{Name: "alert-status", Short: "platform alerts: firing|resolved|unknown"},
+					{Name: "acknowledgment", Short: "platform alerts: acknowledged|unacknowledged"},
+					{Name: "ownership", Short: "platform alerts: owned|unowned|mine (mine uses operator session)"},
+					{Name: "snooze", Short: "platform alerts: active|inactive"},
 					{Name: "since", Short: "RFC 3339 lower bound (default last 24h; capped at 7d)"},
 					{Name: "cursor", Short: "opaque next_cursor from a prior page"},
 					{Name: "limit", Short: "maximum incidents (1..200; default 50)"},
 					{Name: "json", Short: "emit structured JSON"},
 					{Name: "admin-token", Short: "admin bearer (default: $FAAS_ADMIN_TOKEN)"},
 					{Name: "timeout", Short: "HTTP timeout for the apid round-trip (default 10s)"},
+				},
+			},
+
+			{
+				Name: subObsResponseTimes, Short: "Measure retained episode acknowledgment and observed resolution", Flags: []cliFlag{{Name: "since", Short: "activation-cohort lower bound (RFC3339; default 24h, maximum 30d)"}, {Name: "admin-token", Short: "admin bearer (default: $FAAS_ADMIN_TOKEN)"}, {Name: "timeout", Short: "HTTP timeout (default 10s)"}, {Name: "json", Short: "emit structured JSON"}},
+			},
+			{
+				Name: subObsRecurrence, Short: "Inspect retained alert repeats and observed recovery gaps", Flags: []cliFlag{{Name: "since", Short: "activation-cohort lower bound (RFC3339; default 24h, maximum 30d)"}, {Name: "admin-token", Short: "admin bearer (default: $FAAS_ADMIN_TOKEN)"}, {Name: "timeout", Short: "HTTP timeout (default 10s)"}, {Name: "json", Short: "emit structured JSON"}},
+			},
+			{
+				Name: subObsCollectionHistory, Short: "Inspect prospective collection outcomes and unknown intervals", Flags: []cliFlag{{Name: "since", Short: "collection-history lower bound (RFC3339; default 24h, maximum 30d)"}, {Name: "details", Short: "include retained diagnostics for recent failed attempts"}, {Name: "admin-token", Short: "admin bearer (default: $FAAS_ADMIN_TOKEN)"}, {Name: "timeout", Short: "HTTP timeout (default 10s)"}, {Name: "json", Short: "emit structured JSON"}},
+			},
+			{
+				Name: subObsNotificationHealth, Short: "Inspect alert notification pipeline evidence", Flags: []cliFlag{{Name: "admin-token", Short: "admin bearer (default: $FAAS_ADMIN_TOKEN)"}, {Name: "timeout", Short: "HTTP timeout (default 10s)"}, {Name: "json", Short: "emit structured JSON"}},
+			},
+			{
+				Name: subObsRuleHealth, Short: "Inspect current alert-rule evaluation diagnostics", Flags: []cliFlag{{Name: "admin-token", Short: "admin bearer (default: $FAAS_ADMIN_TOKEN)"}, {Name: "timeout", Short: "HTTP timeout (default 10s)"}, {Name: "json", Short: "emit structured JSON"}},
+			},
+			{
+				Name: subObsRuleCoverage, Short: "Compare explicitly selected expected alert definitions", Flags: []cliFlag{{Name: "expected-set", Short: "explicit expected set (unset means unknown)", ClosedSet: []string{"gregale-core-v1", "gregale-full-v1"}}, {Name: "admin-token", Short: "admin bearer (default: $FAAS_ADMIN_TOKEN)"}, {Name: "timeout", Short: "HTTP timeout (default 10s)"}, {Name: "json", Short: "emit structured JSON"}},
+			},
+			{
+				Name: subObsRecordingCoverage, Short: "Compare expected recording rules and catalog alert references", Flags: []cliFlag{{Name: "expected-set", Short: "explicit expected set (unset means unknown)", ClosedSet: []string{"gregale-core-v1", "gregale-full-v1"}}, {Name: "admin-token", Short: "admin bearer (default: $FAAS_ADMIN_TOKEN)"}, {Name: "timeout", Short: "HTTP timeout (default 10s)"}, {Name: "json", Short: "emit structured JSON"}},
+			}, {
+				Name: subObsInputHealth, Short: "Inspect critical scrape and telemetry input health", Flags: []cliFlag{{Name: "expected-role", Short: "explicit role expectation (unset means unknown)", ClosedSet: []string{"single-box-v1", "control-plane-v1"}}, {Name: "admin-token", Short: "admin bearer (default: $FAAS_ADMIN_TOKEN)"}, {Name: "timeout", Short: "HTTP timeout (default 10s)"}, {Name: "json", Short: "emit structured JSON"}},
+			},
+			{
+				Name:  subObsSummary,
+				Short: "Summarize all retained platform alert workload and freshness",
+				Flags: []cliFlag{{Name: "admin-token", Short: "admin bearer (default: $FAAS_ADMIN_TOKEN)"}, {Name: "timeout", Short: "HTTP timeout (default 10s)"}, {Name: "json", Short: "emit structured JSON"}},
+			},
+			{
+				Name:  subObsTriageHistory,
+				Short: "Read retained episode triage actions and receipt coverage",
+				Flags: []cliFlag{
+					{Name: "incident", Short: "platform_alert/episode-id (legacy series aliases resolve on the first page)"},
+					{Name: "limit", Short: "maximum receipts (1..100; default 25)"},
+					{Name: "cursor", Short: "opaque next_cursor from this episode; expires after 15 minutes"},
+					{Name: "admin-token", Short: "admin bearer (default: $FAAS_ADMIN_TOKEN)"},
+					{Name: "timeout", Short: "HTTP timeout (default 10s)"},
+					{Name: "json", Short: "emit structured JSON"},
+				},
+			},
+			{
+				Name:  subObsTriage,
+				Short: "Acknowledge, claim, or snooze a retained alert episode (operator session + fresh MFA)",
+				Flags: []cliFlag{
+					{Name: "incident", Short: "immutable platform_alert/episode-id"},
+					{Name: "action", Short: "acknowledge|unacknowledge|claim|release|snooze|unsnooze"},
+					{Name: "expected-revision", Short: "revision from evidence (required; 0 for untouched episodes)"},
+					{Name: "until", Short: "RFC 3339 snooze deadline within 24 hours"},
+					{Name: "json", Short: "emit structured JSON"},
+					{Name: "timeout", Short: "total request timeout (default 10s)"},
+				},
+			},
+			{
+				Name:  subObsBundle,
+				Short: "Export sanitized incident evidence, related context, and source health",
+				Flags: []cliFlag{
+					{Name: "incident", Short: "inbox incident ID: type/resource-id"},
+					{Name: "output", Short: "new owner-only JSON file (required; - for stdout)"},
+					{Name: "limit", Short: "maximum related resources (1..100; default 25)"},
+					{Name: "history-limit", Short: "maximum entries per evidence/timeline section (1..100; default 25)"},
+					{Name: "json", Short: "emit JSON file receipt; stdout exports always contain the bundle"},
+					{Name: "admin-token", Short: "admin bearer (default: $FAAS_ADMIN_TOKEN)"},
+					{Name: "timeout", Short: "total collection timeout (default 30s; maximum 1m)"},
+				},
+			},
+			{
+				Name:  subObsContext,
+				Short: "Inspect current incident exposure and related evidence",
+				Flags: []cliFlag{
+					{Name: "incident", Short: "inbox incident ID: type/resource-id"},
+					{Name: "limit", Short: "maximum related resources (1..100; default 25)"},
+					{Name: "history-limit", Short: "maximum related timeline entries (1..100; default 25)"},
+					{Name: "cursor", Short: "opaque next_cursor from this incident; expires after 15 minutes"},
+					{Name: "json", Short: "emit structured JSON"},
+					{Name: "admin-token", Short: "admin bearer (default: $FAAS_ADMIN_TOKEN)"},
+					{Name: "timeout", Short: "HTTP timeout (default 10s)"},
+				},
+			},
+			{
+				Name:  subObsEvidence,
+				Short: "Inspect current resource state and bounded incident history",
+				Flags: []cliFlag{
+					{Name: "incident", Short: "inbox incident ID: type/resource-id"},
+					{Name: "limit", Short: "maximum history entries (1..100; default 25)"},
+					{Name: "json", Short: "emit structured JSON"},
+					{Name: "admin-token", Short: "admin bearer (default: $FAAS_ADMIN_TOKEN)"},
+					{Name: "timeout", Short: "HTTP timeout (default 10s)"},
 				},
 			},
 			{
@@ -1100,6 +1238,20 @@ func accountMutationCLIFlags() []cliFlag {
 		{Name: "trace-id", Short: "OTel trace id (generated when omitted)"},
 		{Name: "yes", Short: "acknowledge the account mutation", Req: true},
 	}
+}
+
+// flagsMutationCLIFlags are the confirmation flags of every platform-flag
+// write; withKey adds --key for writes to one flag.
+func flagsMutationCLIFlags(withKey bool) []cliFlag {
+	flags := []cliFlag{
+		{Name: "reason", Short: "audit reason (3..500 characters)", Req: true},
+		{Name: "trace-id", Short: "OTel trace id (generated when omitted)"},
+		{Name: "yes", Short: "acknowledge the platform flag change", Req: true},
+	}
+	if withKey {
+		flags = append([]cliFlag{{Name: "key", Short: "platform flag key", Req: true}}, flags...)
+	}
+	return flags
 }
 
 func configMutationCLIFlags(set bool) []cliFlag {

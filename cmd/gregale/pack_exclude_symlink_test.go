@@ -1,9 +1,10 @@
-package main
+package main_test
 
 import (
 	"archive/tar"
 	"compress/gzip"
 	"errors"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"io"
 	"os"
 	"path/filepath"
@@ -55,7 +56,7 @@ func TestPackExcludesSecretFileAcrossSymlinkSpellings(t *testing.T) {
 			}
 			dirs := map[string]string{"real": real, "link": link}
 			archivePath := filepath.Join(t.TempDir(), "source.tar.gz")
-			if _, err := packDirToTarGz(dirs[tc.srcVia], archivePath, defaultZeroConfigSourceCapMB, nil, filepath.Join(dirs[tc.excludeVia], tc.excludeName)); err != nil {
+			if _, err := main.PackDirToTarGz(dirs[tc.srcVia], archivePath, main.DefaultZeroConfigSourceCapMB, nil, filepath.Join(dirs[tc.excludeVia], tc.excludeName)); err != nil {
 				t.Fatal(err)
 			}
 			entries := readPackedArchive(t, archivePath)
@@ -82,7 +83,7 @@ func packedArchiveHas(entries map[string]string, suffix string) bool {
 
 func readPackedArchive(t *testing.T, path string) map[string]string {
 	t.Helper()
-	f, err := openCustomerFile(path)
+	f, err := main.OpenCustomerFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,22 +122,22 @@ func TestStartSessionScopeIsSymlinkCanonical(t *testing.T) {
 	if err := os.Symlink(real, link); err != nil {
 		t.Fatal(err)
 	}
-	viaReal, err := startSessionPath(real)
+	viaReal, err := main.StartSessionPath(real)
 	if err != nil {
 		t.Fatal(err)
 	}
-	viaLink, err := startSessionPath(link)
+	viaLink, err := main.StartSessionPath(link)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if viaReal != viaLink {
 		t.Fatalf("session path differs by spelling: %s vs %s", viaReal, viaLink)
 	}
-	canonicalReal, err := canonicalStartScope(real)
+	canonicalReal, err := main.CanonicalStartScope(real)
 	if err != nil {
 		t.Fatal(err)
 	}
-	canonicalLink, err := canonicalStartScope(link)
+	canonicalLink, err := main.CanonicalStartScope(link)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -10,6 +10,10 @@ export type QueueBindingCanary = {
   binding: string;
   deployment_id: string;
   scope: string;
+  /**
+   * Exact active reviewed release for a managed worker canary.
+   */
+  release_id?: string;
   status: 'published' | 'dispatching' | 'succeeded' | 'failed' | 'blocked' | 'expired' | 'cancelled';
   reason?: string;
   published_at: string;

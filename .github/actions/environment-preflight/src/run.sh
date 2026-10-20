@@ -5,8 +5,9 @@ set -euo pipefail
 umask 077
 
 ACTION_PATH="${ACTION_PATH:-$(cd "$(dirname "$0")/.." && pwd)}"
-CLI="$ACTION_PATH/../deploy/bin/gregale"
 VERSION_FILE="$ACTION_PATH/../deploy/src/version.txt"
+# shellcheck source=../../deploy/src/cli.sh
+source "$ACTION_PATH/../deploy/src/cli.sh"
 API_BASE="${INPUT_API_BASE:-https://api.gregale.dev}"
 while [[ "$API_BASE" == */ ]]; do API_BASE="${API_BASE%/}"; done
 tmp_dir="$(mktemp -d)"
@@ -39,8 +40,9 @@ fi
 if [[ "$API_BASE" != https://* && ! "$API_BASE" =~ ^http://(localhost|127\.0\.0\.1|\[::1\])(:[0-9]+)?(/|$) ]]; then
 	fail "api-base must use HTTPS (HTTP is permitted only for localhost)"
 fi
-if [[ ! -x "$CLI" || ! -f "$VERSION_FILE" ]]; then
-	fail "bundled Gregale CLI is missing; use a tagged Action release"
+CLI=""
+if [[ ! -f "$VERSION_FILE" ]] || ! CLI="$(gregale_cli "$ACTION_PATH/../deploy")"; then
+	fail "bundled Gregale CLI is missing or does not match SHA256SUMS; use a tagged Action release"
 fi
 if ! command -v jq >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1; then
 	fail "jq and curl are required on the GitHub Actions runner"

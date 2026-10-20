@@ -8,7 +8,7 @@
 //   2. TTL eviction (lazy on read).
 //   3. Forget removes an entry; concurrent RecordWake is race-safe.
 
-package sched
+package sched_test
 
 import (
 	"sync"
@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched"
 )
 
 // fakeClock is a deterministic time source for the TTL test. Tests
@@ -47,7 +48,7 @@ func newFakeClock(t *time.Time) *fakeClock {
 }
 
 func TestWarmAffinity_RoundTrip(t *testing.T) {
-	w := NewWarmAffinity(time.Minute)
+	w := sched.NewWarmAffinity(time.Minute)
 	w.RecordWake("app-A", "node-X")
 	got, found := w.LastWarmNode("app-A")
 	if !found {
@@ -63,8 +64,8 @@ func TestWarmAffinity_RoundTrip(t *testing.T) {
 
 func TestWarmAffinity_TTLExpiry(t *testing.T) {
 	clk := newFakeClock(nil)
-	w := NewWarmAffinity(30 * time.Minute)
-	w.setClock(clk.nowFn)
+	w := sched.NewWarmAffinity(30 * time.Minute)
+	w.SetClock(clk.nowFn)
 
 	w.RecordWake("app-A", "node-X")
 	if _, found := w.LastWarmNode("app-A"); !found {
@@ -87,14 +88,14 @@ func TestWarmAffinity_DefaultTTL(t *testing.T) {
 	// Zero TTL falls back to api.WarmAffinityTTL (CLAUDE.md single
 	// source of truth). Verifying the resolver keeps placement_test.go
 	// honest if a future PR changes the default in pkg/api/limits.go.
-	w := NewWarmAffinity(0)
-	if w.ttl != api.WarmAffinityTTL {
-		t.Errorf("NewWarmAffinity(0).ttl = %v, want %v (api.WarmAffinityTTL)", w.ttl, api.WarmAffinityTTL)
+	w := sched.NewWarmAffinity(0)
+	if (*w.Ttl()) != api.WarmAffinityTTL {
+		t.Errorf("NewWarmAffinity(0).ttl = %v, want %v (api.WarmAffinityTTL)", (*w.Ttl()), api.WarmAffinityTTL)
 	}
 }
 
 func TestWarmAffinity_Forget(t *testing.T) {
-	w := NewWarmAffinity(time.Minute)
+	w := sched.NewWarmAffinity(time.Minute)
 	w.RecordWake("app-A", "node-X")
 	w.Forget("app-A")
 	if _, found := w.LastWarmNode("app-A"); found {
@@ -108,7 +109,7 @@ func TestWarmAffinity_NilSafety(t *testing.T) {
 	// All methods must tolerate a nil receiver so the engine's
 	// optional warm-affinity wiring never panics on a missed
 	// production wiring. A nil WarmAffinity is a no-op hint.
-	var w *WarmAffinity
+	var w *sched.WarmAffinity
 	w.RecordWake("app-A", "node-X")
 	if got, found := w.LastWarmNode("app-A"); found || got != "" {
 		t.Errorf("nil.LastWarmNode = (%q, %v), want (\"\", false)", got, found)
@@ -120,7 +121,7 @@ func TestWarmAffinity_NilSafety(t *testing.T) {
 }
 
 func TestWarmAffinity_RecordWakeRejectsEmpty(t *testing.T) {
-	w := NewWarmAffinity(time.Minute)
+	w := sched.NewWarmAffinity(time.Minute)
 	w.RecordWake("", "node-X")
 	w.RecordWake("app-A", "")
 	if w.Len() != 0 {
@@ -132,7 +133,7 @@ func TestWarmAffinity_ConcurrentRecord(t *testing.T) {
 	// Race detector probe (run with -race): N goroutines hammer
 	// RecordWake for distinct apps. LastWarmNode must see a
 	// consistent map (no nil-deref, no torn writes).
-	w := NewWarmAffinity(time.Minute)
+	w := sched.NewWarmAffinity(time.Minute)
 	const N = 64
 	var wg sync.WaitGroup
 	wg.Add(N)

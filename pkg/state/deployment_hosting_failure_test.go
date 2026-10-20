@@ -15,11 +15,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-type hostingFailureTestStore interface {
-	state.Store
-	state.DeploymentHostingReceiptStore
-	state.DeploymentHostingFailureStore
-}
+type hostingFailureTestStore = contractTestStore
 
 func forHostingFailureStores(t *testing.T, run func(*testing.T, hostingFailureTestStore)) {
 	t.Helper()

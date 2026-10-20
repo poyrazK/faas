@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/release"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/routehealth"
 	"github.com/onebox-faas/faas/pkg/routeprobe"
@@ -50,20 +51,25 @@ func (s *server) runRouteProbeWorker(ctx context.Context) {
 }
 
 // drainRouteProbes runs at most one probe round per app and minute across
-// apid replicas.
+// apid replicas. It runs every RouteHealthProbePollInterval, so a minute's
+// round starts soon after the minute does (ADR-1321).
 func (s *server) drainRouteProbes(ctx context.Context) error {
 	store, ok := s.store.(state.RouteProbeStore)
 	if !ok || s.routeProbes == nil {
 		return nil
 	}
 	now := time.Now().UTC()
-	if err := store.PruneRouteProbeData(ctx, now.Add(-api.RouteHealthProbeRetention)); err != nil {
-		s.log.Warn("route probe prune failed", "err", err)
+	if now.Sub(s.routeProbePrunedAt) >= api.RouteHealthProbePruneInterval {
+		s.routeProbePrunedAt = now
+		if err := store.PruneRouteProbeData(ctx, now.Add(-api.RouteHealthProbeRetention)); err != nil {
+			s.log.Warn("route probe prune failed", "err", err)
+		}
 	}
-	targets, err := store.ListRouteProbeTargets(ctx)
+	gated, err := store.ListRouteProbeTargets(ctx)
 	if err != nil {
 		return err
 	}
+	targets := release.MergeProbeTargets(gated, s.defaultRouteProbeTargets(ctx))
 	minute := now.Truncate(time.Minute)
 	for _, target := range targets {
 		if ctx.Err() != nil {
@@ -73,7 +79,7 @@ func (s *server) drainRouteProbes(ctx context.Context) error {
 		if err != nil || !claimed {
 			continue
 		}
-		roundCtx, cancel := context.WithTimeout(ctx, api.RouteHealthProbePollInterval-5*time.Second)
+		roundCtx, cancel := context.WithTimeout(ctx, api.RouteHealthProbeRoundTimeout)
 		if err := s.probeRouteHealthTarget(roundCtx, store, target, minute); err != nil {
 			s.log.Warn("route probe round skipped", "app_id", target.AppID, "err", err)
 		}
@@ -82,8 +88,26 @@ func (s *server) drainRouteProbes(ctx context.Context) error {
 	return nil
 }
 
+// defaultRouteProbeTargets lists safe-policy canaries for the ADR-1446
+// default probe. A failed read only skips default probes this minute.
+func (s *server) defaultRouteProbeTargets(ctx context.Context) []state.RouteProbeTarget {
+	store, ok := s.store.(state.DefaultRouteProbeStore)
+	if !ok || !release.DefaultProbesEnabled() {
+		return nil
+	}
+	targets, err := store.ListDefaultRouteProbeTargets(ctx)
+	if err != nil {
+		s.log.Warn("default route probe targets unavailable", "err", err)
+		return nil
+	}
+	return targets
+}
+
+// routeProbePlan is one probed selector and how many probes each
+// deployment gets this round.
 type routeProbePlan struct {
 	selector api.RouteHealthRoute
+	requests int
 }
 
 // routeProbePlans picks probed selectors whose organic evidence is sparse, or
@@ -95,30 +119,18 @@ func routeProbePlans(gate api.RouteHealthGate, report api.RouteHealthReport) []r
 			continue
 		}
 		if f.EvidenceWindow == "synthetic" || f.EvidenceWindow == "" && routehealth.NeedsPooledEvidence(f) {
-			plans = append(plans, routeProbePlan{selector: gate.Routes[i]})
+			plans = append(plans, routeProbePlan{selector: gate.Routes[i], requests: api.RouteHealthProbeRequestsPerMinute})
 		}
 	}
 	return plans
 }
 
-func (s *server) probeRouteHealthTarget(ctx context.Context, store state.RouteProbeStore, target state.RouteProbeTarget, minute time.Time) error {
-	health, ok := s.store.(state.RouteHealthStore)
-	if !ok {
-		return nil
-	}
-	gate, err := health.GetRouteHealthGate(ctx, target.AccountID, target.AppID)
-	if err != nil {
+func (s *server) probeRouteHealthTarget(ctx context.Context, store state.RouteProbeStore, target release.ProbeTarget, minute time.Time) error {
+	plans, stableID, err := s.routeProbeRound(ctx, target)
+	if err != nil || len(plans) == 0 || stableID == "" {
 		return err
 	}
-	report, err := health.GetRouteHealthReport(ctx, target.AccountID, target.AppID, target.CandidateID)
-	if err != nil {
-		return err
-	}
-	plans := routeProbePlans(gate, report)
-	if len(plans) == 0 || report.StableDeploymentID == "" {
-		return nil
-	}
-	deployments := []string{target.CandidateID, report.StableDeploymentID}
+	deployments := []string{target.CandidateID, stableID}
 	tokens := map[string]string{}
 	for _, deployment := range deployments {
 		token, err := routeprobe.NewToken()
@@ -148,8 +160,54 @@ func (s *server) probeRouteHealthTarget(ctx context.Context, store state.RoutePr
 	return store.RecordRouteProbeObservations(ctx, target.AccountID, target.AppID, observations)
 }
 
-// sendRouteProbes sends RouteHealthProbeRequestsPerMinute probes per route
-// and deployment with bounded concurrency and counts attributed responses.
+// routeProbeRound picks one round's probes: ADR-847 selectors whose organic
+// evidence is sparse, plus the ADR-1446 default probe for a safe-policy
+// canary, and the predecessor to probe beside the candidate.
+func (s *server) routeProbeRound(ctx context.Context, target release.ProbeTarget) ([]routeProbePlan, string, error) {
+	plans, stableID := []routeProbePlan{}, target.StableID
+	if health, ok := s.store.(state.RouteHealthStore); ok && target.Gated {
+		gate, err := health.GetRouteHealthGate(ctx, target.AccountID, target.AppID)
+		if err != nil {
+			return nil, "", err
+		}
+		report, err := health.GetRouteHealthReport(ctx, target.AccountID, target.AppID, target.CandidateID)
+		if err != nil {
+			return nil, "", err
+		}
+		plans = routeProbePlans(gate, report)
+		if stableID == "" {
+			stableID = report.StableDeploymentID
+		}
+	}
+	if target.Default {
+		plans = withDefaultProbePlans(plans, release.DefaultProbeRoutes(target.ProbePaths))
+	}
+	return plans, stableID, nil
+}
+
+// withDefaultProbePlans adds the default probe's routes: the app's
+// release_probe_paths or "/" (ADR-1449). Together they meet the circuit
+// breaker's request floor in one round (ADR-1321), also when a gated selector
+// already probes one of them.
+func withDefaultProbePlans(plans []routeProbePlan, routes []api.RouteHealthRoute) []routeProbePlan {
+	requests := release.DefaultProbeRequests(len(routes))
+next:
+	for _, route := range routes {
+		for i, p := range plans {
+			if p.selector.Method == route.Method && p.selector.Probe.Path == route.Probe.Path {
+				if p.requests < requests {
+					plans[i].requests = requests
+				}
+				continue next
+			}
+		}
+		plans = append(plans, routeProbePlan{selector: route, requests: requests})
+	}
+	return plans
+}
+
+// sendRouteProbes sends each plan's probes per deployment with bounded
+// concurrency and counts attributed responses.
 func (s *server) sendRouteProbes(ctx context.Context, slug string, plans []routeProbePlan, deployments []string, tokens map[string]string, minute time.Time) []state.RouteProbeObservation {
 	var mu sync.Mutex
 	// Each goroutine gets its observation directly; nothing it touches is
@@ -162,7 +220,7 @@ func (s *server) sendRouteProbes(ctx context.Context, slug string, plans []route
 			c := &state.RouteProbeObservation{DeploymentID: deployment, Method: plan.selector.Method, Path: plan.selector.Path, WindowStart: minute}
 			counts = append(counts, c)
 			token, probePath := tokens[deployment], plan.selector.Probe.Path
-			for range api.RouteHealthProbeRequestsPerMinute {
+			for range plan.requests {
 				wg.Add(1)
 				sem <- struct{}{}
 				go func() {

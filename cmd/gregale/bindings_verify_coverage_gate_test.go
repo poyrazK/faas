@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -61,9 +62,9 @@ func TestBindingVerificationCompleteGateCLI(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch {
 				case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/api/bindings":
-					writeJSONTest(w, inventory)
+					main.WriteJSONTest(w, inventory)
 				case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/api":
-					writeJSONTest(w, api.AppResponse{Slug: "api", ServiceBindings: []api.AppServiceBinding{{Service: "billing", Binding: "billing"}}})
+					main.WriteJSONTest(w, api.AppResponse{Slug: "api", ServiceBindings: []api.AppServiceBinding{{Service: "billing", Binding: "billing"}}})
 				case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/api/outbound-bindings":
 					w.Header().Set("Content-Type", "application/problem+json")
 					w.WriteHeader(http.StatusForbidden)
@@ -77,13 +78,13 @@ func TestBindingVerificationCompleteGateCLI(t *testing.T) {
 					if len(request.Command) != 2 || request.Command[0] != api.AppTaskServiceBindingProbeCommand {
 						t.Errorf("unexpected task %+v", request)
 					}
-					task := api.AppTaskResponse{ID: "service-task", Status: api.AppTaskStatusSucceeded, ExitCode: new(int), StdoutTail: pinnedBindingProbeOutput(api.AppTaskServiceBindingProbeCommand, "billing")}
+					task := api.AppTaskResponse{ID: "service-task", Status: api.AppTaskStatusSucceeded, ExitCode: new(int), StdoutTail: main.PinnedBindingProbeOutput(api.AppTaskServiceBindingProbeCommand, "billing")}
 					if scenario == "failed probe" {
 						task.Status = api.AppTaskStatusFailed
 						exit := 1
 						task.ExitCode = &exit
 					}
-					writeJSONTest(w, task)
+					main.WriteJSONTest(w, task)
 				case r.Method == http.MethodPost && r.URL.Path == "/v1/apps/api/bindings/queue-canaries":
 					publishes++
 					t.Error("strict gate must not grant publication consent")
@@ -105,7 +106,7 @@ func TestBindingVerificationCompleteGateCLI(t *testing.T) {
 			if scenario != "human" {
 				args = append(args, "--json")
 			}
-			code, out, errs := captureBindingCLI(t, server.URL, args...)
+			code, out, errs := main.CaptureBindingCLI(t, server.URL, args...)
 			if code != wantCode || publishes != 0 {
 				t.Fatalf("code=%d want=%d publishes=%d output=%s errors=%s", code, wantCode, publishes, out, errs)
 			}
@@ -118,7 +119,7 @@ func TestBindingVerificationCompleteGateCLI(t *testing.T) {
 			if strings.Contains(out, "PRIVATE_LOOKUP_DETAIL") {
 				t.Fatalf("raw lookup error leaked: %s", out)
 			}
-			var report serviceBindingProbeBatchReport
+			var report main.ServiceBindingProbeBatchReport
 			if err := json.Unmarshal([]byte(out), &report); err != nil {
 				t.Fatal(err)
 			}
@@ -161,17 +162,17 @@ func TestCompleteGateRejectsNonBatchModesBeforeRequests(t *testing.T) {
 		{"bindings", "verify", "api", "billing", "--require-complete"},
 		{"bindings", "verify", "api", "--release-policy", "--require-complete"},
 		{"bindings", "verify", "api", "--postgres", "DATABASE_URL", "--require-complete"},
-		{"bindings", "verify", "api", "--queue", "orders", "--deployment", pinnedBindingDeployment, "--require-complete"},
+		{"bindings", "verify", "api", "--queue", "orders", "--deployment", main.PinnedBindingDeployment, "--require-complete"},
 	} {
-		if code, _, _ := captureBindingCLI(t, server.URL, args...); code == 0 || requests != 0 {
+		if code, _, _ := main.CaptureBindingCLI(t, server.URL, args...); code == 0 || requests != 0 {
 			t.Fatalf("args=%v code=%d requests=%d", args, code, requests)
 		}
 	}
 }
 
 func TestCompleteGateUnknownExclusionBlocks(t *testing.T) {
-	report := serviceBindingProbeBatchReport{Bindings: []serviceBindingProbeBatchItem{{Type: api.BindingTypeService, Name: "billing", Status: "skipped", Reason: "future_exclusion"}}}
-	gate := evaluateAllBindingCoverageGate(report, true)
+	report := main.ServiceBindingProbeBatchReport{Bindings: []main.ServiceBindingProbeBatchItem{{Type: api.BindingTypeService, Name: "billing", Status: "skipped", Reason: "future_exclusion"}}}
+	gate := main.EvaluateAllBindingCoverageGate(report, true)
 	if gate.Passed || len(gate.Blockers) != 1 || gate.Blockers[0].Code != "unexpected_probe_exclusion" {
 		t.Fatalf("gate=%+v", gate)
 	}

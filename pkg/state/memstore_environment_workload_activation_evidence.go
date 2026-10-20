@@ -173,6 +173,11 @@ func (m *MemStore) environmentWorkloadActivationEvidenceLocked(memory *environme
 		}
 	}
 	evidence := graphActivationEvidenceWithReleaseTargets(graph, captures, restores, smokes, configs, frameworkReady, jobSmokes, activeTargets)
+	if evidence.Qualified && !evidence.Activated {
+		if err := m.checkEnvironmentBindingGraphLocked(memory, graph, candidateBindingGraphMembers(graph)); err != nil {
+			evidence.BlockingReasons = append(evidence.BlockingReasons, candidateBindingBlocker(err))
+		}
+	}
 	jobStatus := "paused"
 	if evidence.Activated {
 		jobStatus = "active"

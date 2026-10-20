@@ -1,0 +1,105 @@
+package api
+
+// Platform flags (ADR-1700) are operator-managed release gates. These are
+// the read shapes of /v1/admin/flags and /v1/admin/accounts/{id}/flags;
+// writes go through PATCH /v1/admin/config/{config_key}.
+
+// PlatformFlagRule targets accounts. Accounts, group, plans and rollout
+// combine with AND; the first matching rule decides.
+type PlatformFlagRule struct {
+	ID       string   `json:"id"`
+	Accounts []string `json:"accounts,omitempty"`
+	Group    string   `json:"group,omitempty"`
+	Plans    []string `json:"plans,omitempty"`
+	Rollout  *int     `json:"rollout,omitempty"`
+	Value    *bool    `json:"value"`
+}
+
+// PlatformFlagDefinition is the stored value of a platform flag. Enabled is
+// the kill switch; Default applies to accounts no rule matches.
+type PlatformFlagDefinition struct {
+	Enabled bool               `json:"enabled"`
+	Default bool               `json:"default"`
+	Rules   []PlatformFlagRule `json:"rules,omitempty"`
+}
+
+// OperatorRuntimeConfigApplyReceipt is what one daemon instance reported
+// applying for a runtime-configuration key.
+type OperatorRuntimeConfigApplyReceipt struct {
+	ConfigKey  string `json:"config_key"`
+	Daemon     string `json:"daemon"`
+	Instance   string `json:"instance"`
+	Version    int64  `json:"version"`
+	Status     string `json:"status"`
+	Error      string `json:"error,omitempty"`
+	ReportedAt string `json:"reported_at"`
+}
+
+// OperatorPlatformFlagConvergence compares the flag's current version with
+// the receipts of the daemons that consume it. A consumer is converged when
+// every instance it reported applied the current version.
+type OperatorPlatformFlagConvergence struct {
+	Converged []string `json:"converged"`
+	Pending   []string `json:"pending"`
+	Failed    []string `json:"failed"`
+}
+
+// OperatorPlatformFlag is one catalogued platform flag with its live value.
+type OperatorPlatformFlag struct {
+	Key         string                              `json:"key"`
+	ConfigKey   string                              `json:"config_key"`
+	Label       string                              `json:"label"`
+	Description string                              `json:"description"`
+	Capability  string                              `json:"capability,omitempty"`
+	ADR         string                              `json:"adr"`
+	Consumers   []string                            `json:"consumers"`
+	LegacyEnv   []string                            `json:"legacy_env"`
+	RetireBy    string                              `json:"retire_by,omitempty"`
+	Definition  PlatformFlagDefinition              `json:"definition"`
+	Source      string                              `json:"source"`
+	Version     int64                               `json:"version"`
+	Status      string                              `json:"status"`
+	LastError   string                              `json:"last_error,omitempty"`
+	UpdatedAt   string                              `json:"updated_at,omitempty"`
+	Receipts    []OperatorRuntimeConfigApplyReceipt `json:"receipts"`
+	Convergence OperatorPlatformFlagConvergence     `json:"convergence"`
+}
+
+// OperatorPlatformFlagGroups is the shared named account sets, with the
+// flags that reference each group.
+type OperatorPlatformFlagGroups struct {
+	ConfigKey  string              `json:"config_key"`
+	Groups     map[string][]string `json:"groups"`
+	References map[string][]string `json:"references"`
+	Version    int64               `json:"version"`
+}
+
+// OperatorPlatformFlagList is GET /v1/admin/flags.
+type OperatorPlatformFlagList struct {
+	Items       []OperatorPlatformFlag     `json:"items"`
+	Groups      OperatorPlatformFlagGroups `json:"groups"`
+	GeneratedAt string                     `json:"generated_at"`
+}
+
+// OperatorPlatformFlagDecision explains a flag for one account. Available
+// is the flag decision AND the plan entitlement of the capability it
+// releases; Entitled is omitted for a flag that releases no capability.
+type OperatorPlatformFlagDecision struct {
+	Flag      string `json:"flag"`
+	AccountID string `json:"account_id"`
+	Plan      string `json:"plan"`
+	Enabled   bool   `json:"enabled"`
+	Reason    string `json:"reason"`
+	RuleID    string `json:"rule_id,omitempty"`
+	Bucket    *int   `json:"bucket,omitempty"`
+	Version   int64  `json:"version"`
+	Entitled  *bool  `json:"entitled,omitempty"`
+	Available bool   `json:"available"`
+}
+
+// OperatorAccountPlatformFlags is GET /v1/admin/accounts/{id}/flags.
+type OperatorAccountPlatformFlags struct {
+	AccountID string                         `json:"account_id"`
+	Plan      string                         `json:"plan"`
+	Items     []OperatorPlatformFlagDecision `json:"items"`
+}

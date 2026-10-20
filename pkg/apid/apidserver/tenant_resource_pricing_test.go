@@ -14,9 +14,10 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 1309, 1310 — a tenant plan prices compute seconds with a volume
-// ladder across consumers and surfaces; a plan with another unit starts at
-// the next month; surface requests are weighted by their own routes.
+// adr: 1309, 1310, 1319 — a tenant plan prices compute seconds with a volume
+// ladder across consumers and surfaces; assigning a plan of another unit
+// stops the compute stream with a free card; surface requests are weighted
+// by their own routes.
 func TestPlatformTenantComputeVolumeAndSourceRoutes(t *testing.T) {
 	e := apidserver.Setup(t, api.PlanPro)
 	appID := apidserver.MustSeedApp(t, e, "tenant-compute")
@@ -78,8 +79,16 @@ func TestPlatformTenantComputeVolumeAndSourceRoutes(t *testing.T) {
 		api.PlatformTenantPlanRequest{Name: "requests", Currency: "EUR", PriceMillicentsPerUnit: 10}, http.StatusCreated)
 	moved := tenantJSON[api.PlatformTenantPlanAssignmentResponse](t, e, http.MethodPost, base+"/plan-assignments",
 		api.AssignPlatformTenantPlanRequest{PlanID: requests.ID}, http.StatusCreated)
-	if now := time.Now().UTC(); !moved.EffectiveFrom.Equal(billing.MonthStart(now).AddDate(0, 1, 0)) {
-		t.Fatalf("unit change starts %s, want the next month", moved.EffectiveFrom)
+	if !moved.EffectiveFrom.After(assignment.EffectiveFrom) || moved.EffectiveFrom.After(time.Now().UTC().Add(3*time.Minute)) {
+		t.Fatalf("request plan starts %s, want within minutes after the compute plan (%s)", moved.EffectiveFrom, assignment.EffectiveFrom)
+	}
+	stopped := false
+	for _, card := range tenantJSON[api.PlatformTenantRateCardListResponse](t, e, http.MethodGet, base+"/rate-cards", nil, http.StatusOK).RateCards {
+		stopped = stopped || (card.Unit == "compute_second" && card.EffectiveFrom.Equal(moved.EffectiveFrom) &&
+			card.PriceMillicentsPerUnit == 0 && len(card.Tiers) == 0)
+	}
+	if !stopped {
+		t.Fatal("assigning a request plan left the compute stream charging")
 	}
 
 	weighted := tenantJSON[api.PlatformTenantResponse](t, e, http.MethodPost, "/v1/account/platform-tenants",

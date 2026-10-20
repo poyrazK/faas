@@ -1,4 +1,4 @@
-package sched
+package sched_test
 
 // adr: 028 — scheduler ownership and per-app admission across nodes.
 
@@ -7,13 +7,14 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestWakeRepairsTerminalPeerLedgerEntry(t *testing.T) {
 	store := state.NewMemStore()
-	_, app, _ := seedApp(t, store, api.PlanPro, 128, 1)
-	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+	_, app, _ := sched.SeedApp(t, store, api.PlanPro, 128, 1)
+	e := sched.XNewEngine(t, store, &sched.FakeVMM{}, &sched.FakeNotifier{}, "1.10.0")
 
 	first, err := e.Wake(context.Background(), app.ID, "", "", "")
 	if err != nil {
@@ -43,7 +44,7 @@ func TestWakeRepairsTerminalPeerLedgerEntry(t *testing.T) {
 
 func TestParkAppOwnerlessSchedulerSkipsRemoteShard(t *testing.T) {
 	store := state.NewMemStore()
-	_, app, _ := seedApp(t, store, api.PlanPro, 128, 1)
+	_, app, _ := sched.SeedApp(t, store, api.PlanPro, 128, 1)
 	if err := store.SetAppNodeID(context.Background(), app.ID, "remote-compute-node"); err != nil {
 		t.Fatalf("SetAppNodeID: %v", err)
 	}
@@ -52,8 +53,8 @@ func TestParkAppOwnerlessSchedulerSkipsRemoteShard(t *testing.T) {
 		t.Fatalf("UpdateApp: %v", err)
 	}
 
-	vmm := &fakeVMM{}
-	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+	vmm := &sched.FakeVMM{}
+	e := sched.XNewEngine(t, store, vmm, &sched.FakeNotifier{}, "1.10.0")
 	acted, err := e.ParkApp(context.Background(), app.ID)
 	if err != nil {
 		t.Fatalf("ParkApp: %v", err)
@@ -61,7 +62,7 @@ func TestParkAppOwnerlessSchedulerSkipsRemoteShard(t *testing.T) {
 	if acted != 0 {
 		t.Fatalf("ParkApp acted = %d, want 0", acted)
 	}
-	if vmm.snapshots != 0 || vmm.destroys != 0 {
-		t.Fatalf("remote shard touched: snapshots=%d destroys=%d", vmm.snapshots, vmm.destroys)
+	if (*vmm.Snapshots()) != 0 || (*vmm.Destroys()) != 0 {
+		t.Fatalf("remote shard touched: snapshots=%d destroys=%d", (*vmm.Snapshots()), (*vmm.Destroys()))
 	}
 }

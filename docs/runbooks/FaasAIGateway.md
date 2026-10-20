@@ -8,37 +8,45 @@ Dashboard: **Gregale AI gateway** (`deploy/grafana/ai-gateway.json`).
 
 ## Preview rollout
 
-The gate (`ai_gateway_enabled` / `FAAS_AI_GATEWAY_ENABLED`) and the account
-list (`ai_gateway_accounts` / `FAAS_AI_GATEWAY_ACCOUNTS`) must be set the same
-way in **apid** and **outboundd**. apid refuses the API and outboundd refuses
-the calls, so a mismatch shows up as customers who can configure but not call,
-or the reverse.
+The gate and the account list are the `ai_gateway` platform flag
+([ADR-1700](../adr/1700-platform-flags.md),
+[platform flags](../ops/platform-flags.md)). One value in the database is read
+by both **apid** (which refuses the API) and **outboundd** (which refuses the
+calls), so they can no longer disagree. Every step applies within seconds and
+needs no restart. `gregalectl flags show --key ai_gateway` shows whether both
+daemons applied the current version.
 
-1. **Internal account.** Enable the gate with the account list set to one
-   internal account on Hobby or above. Restart apid and outboundd. Run a chat
-   completion, a streamed call, an embedding and a fallback route through the
-   app relay. On the dashboard, check that settlement writes are all
-   `recorded`, time to first byte is close to the provider's, and the
-   request log shows the calls.
-2. **Design partners.** Add a few customer accounts to the list. Watch the
-   two alerts below and the settlement panel for a week.
-3. **All entitled accounts.** Set the list to `*` (or remove it). Free
-   accounts stay closed by plan (`402` from apid, `403` from outboundd).
+1. **Internal account.** `gregalectl flags enable --key ai_gateway` and
+   `gregalectl flags allow --key ai_gateway --account-id <internal account>`
+   (an account on Hobby or above). Run a chat completion, a streamed call, an
+   embedding and a fallback route through the app relay. On the dashboard,
+   check that settlement writes are all `recorded`, time to first byte is
+   close to the provider's, and the request log shows the calls.
+2. **Design partners.** `allow` a few customer accounts, or add them to a
+   group the flag targets. Watch the two alerts below and the settlement panel
+   for a week.
+3. **All entitled accounts.** `gregalectl flags default --key ai_gateway
+   --value true` (or a `rollout` first). Free accounts stay closed by plan
+   (`402` from apid, `403` from outboundd).
 
-Each step is one configuration change and a restart of both daemons.
+Until an operator writes the flag, it falls back to `ai_gateway_enabled` /
+`FAAS_AI_GATEWAY_ENABLED` and `ai_gateway_accounts` /
+`FAAS_AI_GATEWAY_ACCOUNTS` as each daemon read them at boot.
 
 ## Rollback
 
-Set `FAAS_AI_GATEWAY_ENABLED=0` (or `ai_gateway_enabled = false`) on apid and
-outboundd and restart them. From then on:
+`gregalectl flags disable --key ai_gateway --reason <incident> --yes`. Within
+seconds:
 
 - AI API endpoints return `403 outbound_ai_gateway_unavailable`;
 - AI integrations and routes return `503 outbound_ai_gateway_disabled`;
 - integrations without an AI provider are unaffected.
 
-Stored settings, usage, captures and replays stay in place; re-enabling
-restores service. To withdraw one account instead, remove it from the account
-list on both daemons.
+Stored settings, usage, captures and replays stay in place;
+`gregalectl flags enable` restores service. To withdraw one account instead,
+`gregalectl flags deny --key ai_gateway --account-id <uuid>`. outboundd starts
+normally while the flag is off; it logs the operator AI integrations that
+will return `503`.
 
 ## FaasAIGatewaySettlementFailing
 

@@ -21,11 +21,11 @@ func TestUsageCommitRecordsComputeAndResponseSize(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := &Handler{usageOutbox: q, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	h := &Handler{usageOutbox: q, apiMonetization: monetizationOn, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	app := uuid.New()
 	r := withAppAndAccount(httptest.NewRequest(http.MethodGet, "/items", nil), uuid.New(), app)
 	r = r.WithContext(authmw.WithConsumer(r.Context(), authmw.ConsumerIdentity{ID: uuid.NewString(), AppID: app.String()}))
-	r = withGuestExecutionEvidence(r)
+	r = withGuestExecutionEvidence(r, true)
 	holder := &usageCommitHolder{}
 	r = r.WithContext(withUsageCommitHolder(r.Context(), holder))
 	h.armUsageCommit(r, Target{})
@@ -71,12 +71,12 @@ func TestUsageCommitRecordsTenantSurfaceResources(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := &Handler{usageOutbox: q, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	h := &Handler{usageOutbox: q, apiMonetization: monetizationOn, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	tenant, surface := uuid.NewString(), uuid.NewString()
 	r := withAppAndAccount(httptest.NewRequest(http.MethodPost, "/generate", nil), uuid.New(), uuid.New())
 	r = r.WithContext(withAuthenticated(r.Context(), Authenticated{PlatformTenantID: tenant, PlatformTenantSurfaceID: surface}))
 	r = withBillingRoute(r, "POST /generate")
-	r = withGuestExecutionEvidence(r)
+	r = withGuestExecutionEvidence(r, true)
 	holder := &usageCommitHolder{}
 	r = r.WithContext(withUsageCommitHolder(r.Context(), holder))
 	h.armUsageCommit(r, Target{})

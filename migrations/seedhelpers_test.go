@@ -26,6 +26,11 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/db/pgtest"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // slugFragment returns a 12-character lowercase hex fragment of a fresh
@@ -144,4 +149,59 @@ func seedComputeNode(t *testing.T, ctx context.Context, pool *pgxpool.Pool) stri
 		t.Fatalf("seed compute_nodes row: %v", err)
 	}
 	return id
+}
+
+// legacyAccount creates an account and its personal org the way an older
+// schema holds them. PgStore.CreateAccount reads organization columns that
+// later migrations add (#4882), so upgrade tests that stop at an earlier
+// version seed accounts here and keep using the store for everything else.
+func legacyAccount(ctx context.Context, pool *pgxpool.Pool, email string, plan api.Plan) (state.Account, error) {
+	account := state.Account{Email: email, Plan: plan}
+	if err := pool.QueryRow(ctx, `INSERT INTO accounts(email,plan) VALUES($1,$2) RETURNING id::text`, email, string(plan)).Scan(&account.ID); err != nil {
+		return state.Account{}, err
+	}
+	_, err := pool.Exec(ctx, personalOrgSQL, account.ID)
+	return account, err
+}
+
+// personalOrgSQL gives account $1 its personal org and owner membership,
+// unless it has one, as 00105_personal_org_backfill.sql does (the slug hashes
+// the whole id, since fixture ids often share their leading digits). Since #4882 a
+// project or other owned resource of the account requires it.
+const personalOrgSQL = `WITH personal AS (
+	INSERT INTO orgs(id,slug,name,personal_org,personal_owner_account_id,plan,status,created_at,updated_at)
+	SELECT gen_random_uuid(),'u-'||substring(md5(a.id::text) from 1 for 30),'Personal',true,a.id,a.plan,a.status,a.created_at,now()
+	FROM accounts a WHERE a.id=$1 AND NOT EXISTS (SELECT 1 FROM orgs o WHERE o.personal_org AND o.personal_owner_account_id=a.id)
+	RETURNING id)
+INSERT INTO org_memberships(org_id,account_id,role) SELECT id,$1,'owner' FROM personal`
+
+// legacyPersonalOrg is the personal org legacyAccount created. Older schemas
+// have no trigger that binds a new project to it, so callers pass it.
+func legacyPersonalOrg(t *testing.T, ctx context.Context, pool *pgxpool.Pool, accountID string) string {
+	t.Helper()
+	var id string
+	if err := pool.QueryRow(ctx, `SELECT id::text FROM orgs WHERE personal_org AND personal_owner_account_id=$1`, accountID).Scan(&id); err != nil {
+		t.Fatalf("personal org for %s: %v", accountID, err)
+	}
+	return id
+}
+
+// deleteAccountSQL erases account $1 and what it owns. Since #4882 owned rows
+// reference the account's resource namespace, which PgStore.DeleteAccount
+// removes after the account's resources; deleting only the accounts row now
+// leaves them (and the personal org they bind) in place.
+const deleteAccountSQL = `WITH namespace AS (DELETE FROM resource_namespaces WHERE id=$1)
+DELETE FROM accounts WHERE id=$1`
+
+// openMigrated returns a fully migrated pool. pgtest.OpenMigrated clones the
+// migrated template only with FAAS_PGTEST_TEMPLATE_DATABASE set; the nightly
+// migration history job runs without it and gets an empty schema, so migrate
+// here (a no-op on a template clone).
+func openMigrated(t *testing.T) *pgxpool.Pool {
+	t.Helper()
+	pool := pgtest.OpenMigrated(t)
+	if err := db.MigrateUp(t.Context(), pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	return pool
 }

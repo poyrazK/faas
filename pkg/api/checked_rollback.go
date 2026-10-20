@@ -23,6 +23,12 @@ type RollbackOperation struct {
 	UpdatedAt           time.Time             `json:"updated_at"`
 	CompletedAt         *time.Time            `json:"completed_at,omitempty"`
 	AuditID             string                `json:"audit_id,omitempty"`
+	// Plain rollbacks (ADR-1446) also report what started them
+	// (manual, auto_5xx, alert), the measured time from request to serving,
+	// and a failure detail. Checked rollbacks leave these empty.
+	Trigger    string `json:"trigger,omitempty"`
+	RecoveryMS *int64 `json:"recovery_ms,omitempty"`
+	Error      string `json:"error,omitempty"`
 }
 
 func (c *Client) CheckedRollback(ctx context.Context, slug string, request RollbackRequest) (DeploymentResponse, error) {

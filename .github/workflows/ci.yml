@@ -868,11 +868,16 @@ jobs:
   unit-tests-state:
     name: unit tests (state shard ${{ matrix.shard }})
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Six shards keep each near 10-15 min of tests: with four, shard 3 alone
+    # needed ~20 min and hit the 20m go test timeout (runs 39174391154 and
+    # 39181126528). The race+coverage compile of pkg/state adds 3-4 min, and a
+    # slow shared runner has taken 26 min for it alone, so leave room for one
+    # without hiding a hung test: the go test -timeout bounds the tests.
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5, 6]
     permissions:
       contents: read
       id-token: write
@@ -926,7 +931,7 @@ jobs:
         run: |
           mkdir -p coverage
           go test -race -coverpkg=./pkg/state -covermode=atomic -list . ./pkg/state > coverage/state-inventory.txt
-          go run ./scripts/ci/e2eshard -package=./pkg/state -all-tests -shards=4 -check -list-file=coverage/state-inventory.txt
+          go run ./scripts/ci/e2eshard -package=./pkg/state -all-tests -shards=6 -check -list-file=coverage/state-inventory.txt
       - name: install PostgreSQL 16 recovery runtime
         run: |
           scripts/ci/use-https-ubuntu-mirrors.sh
@@ -936,7 +941,7 @@ jobs:
         run: |
           # Recovery with an actual serving receipt requires local database authority.
           scripts/ci/with-pg16-unix.sh bash -euo pipefail <<'STATE_TESTS'
-          STATE_RUN=$(go run ./scripts/ci/e2eshard -package=./pkg/state -all-tests -shards=4 -shard=${{ matrix.shard }})
+          STATE_RUN=$(go run ./scripts/ci/e2eshard -package=./pkg/state -all-tests -shards=6 -shard=${{ matrix.shard }})
           go test -race -count=1 -v -p 4 -timeout=20m -run="$STATE_RUN" -coverpkg=./pkg/state -covermode=atomic -coverprofile=coverage/cover-shard-state-${{ matrix.shard }}.out ./pkg/state
           STATE_TESTS
       - name: upload state coverage
@@ -1082,8 +1087,11 @@ jobs:
           python3 scripts/ci/queue-bindings-native-verdict_test.py
           python3 scripts/ci/queue-bindings-native-runner_test.py
           sh -n scripts/test-queue-bindings-native.sh
-          go test -race -p 1 ./pkg/managedpostgres/guestqualification ./pkg/e2etest/postgresstarter ./pkg/e2etest/queuestarter
-          go test -race -p 1 ./pkg/e2etest -run '^Test(PostgresGuest|StorageGuest|QueueGuest)'
+          python3 scripts/ci/managed-service-native-verdict_test.py
+          python3 scripts/ci/managed-service-native-runner_test.py
+          sh -n scripts/test-managed-service-native.sh
+          go test -race -p 1 ./pkg/managedpostgres/guestqualification ./pkg/e2etest/postgresstarter ./pkg/e2etest/queuestarter ./pkg/e2etest/servicestarter ./pkg/e2etest/testdata/helloserver
+          go test -race -p 1 ./pkg/e2etest -run '^Test(PostgresGuest|StorageGuest|QueueGuest|ServiceGuest)'
       - name: scoped PostgreSQL rehearsal fault and recovery (no KVM)
         if: matrix.id == 'b'
         env:
@@ -1121,7 +1129,7 @@ jobs:
           GOMAXPROCS: 2
         run: |
           go test -race -p 1 -tags metal,managed_postgres_native ./pkg/apid/apidserver -run '^TestManagedPostgresFixturePublicRotation$' -count=1 -v -timeout=180s
-          go test -race -p 1 -tags metal,managed_postgres_native,object_storage_native,queue_binding_native -c -o "$RUNNER_TEMP/binding-native.test" ./cmd/e2e
+          go test -race -p 1 -tags metal,managed_postgres_native,object_storage_native,queue_binding_native,managed_service_native -c -o "$RUNNER_TEMP/binding-native.test" ./cmd/e2e
       - uses: actions/setup-python@v7
         if: matrix.id == 'b'
         with:
@@ -1249,7 +1257,7 @@ jobs:
           merge-multiple: true
       - name: exact pkg/state coverage gate
         run: |
-          python3 .claude/ci/coverage_floor.py --state-only coverage/cover-shard-state-1.out coverage/cover-shard-state-2.out coverage/cover-shard-state-3.out coverage/cover-shard-state-4.out coverage/cover-shard2a.out coverage/cover-shard1.out coverage/cover-shard1-pgclone-1.out coverage/cover-shard1-pgclone-2.out coverage/cover-shard1-pgclone-3.out coverage/cover-shard1-pgclone-4.out
+          python3 .claude/ci/coverage_floor.py --state-only coverage/cover-shard-state-1.out coverage/cover-shard-state-2.out coverage/cover-shard-state-3.out coverage/cover-shard-state-4.out coverage/cover-shard-state-5.out coverage/cover-shard-state-6.out coverage/cover-shard2a.out coverage/cover-shard1.out coverage/cover-shard1-pgclone-1.out coverage/cover-shard1-pgclone-2.out coverage/cover-shard1-pgclone-3.out coverage/cover-shard1-pgclone-4.out
       - name: coverage floor (ship-blocking packages)
         run: make coverage-floor COVERDIR=coverage
 
@@ -1670,6 +1678,19 @@ jobs:
         run: bash scripts/ci/run-native-e2e_test.sh
       - name: native e2e phase partition contract
         run: bash scripts/ci/native-e2e-phases_test.sh
+      - name: financial native evidence and host restoration contracts
+        run: |
+          python3 scripts/ci/financial-system-verdict_test.py
+          python3 scripts/ci/financial-pair-evidence_test.py
+          python3 scripts/ci/financial-pair-runner_test.py
+          python3 scripts/ci/financial-system-ci-check_test.py
+      - name: native binding discovery and evidence contracts
+        run: |
+          go test -race ./scripts/ci/nativetestinventory
+          go run ./scripts/ci/nativetestinventory --check
+          python3 scripts/ci/binding-native-lane_test.py
+          python3 scripts/ci/binding-native-host_test.py
+          bash -n scripts/ci/run-binding-native.sh scripts/ci/package-binding-native-source.sh
       - name: GCP OS Login preflight contract
         run: bash scripts/ci/gcp-oslogin-preflight_test.sh
       # ---- former job `capabilities-check`: product capability registry ----
@@ -1850,8 +1871,11 @@ jobs:
             -o "/tmp/${PROM_TARBALL}" \
             "https://github.com/prometheus/prometheus/releases/download/v${PROM_VERSION}/${PROM_TARBALL}"
           echo "${PROM_TARBALL_SHA256_LINUX_AMD64}  /tmp/${PROM_TARBALL}" | sha256sum --check --strict
-          tar -xzf "/tmp/${PROM_TARBALL}" -C /tmp "prometheus-${PROM_VERSION}.linux-amd64/promtool"
+          tar -xzf "/tmp/${PROM_TARBALL}" -C /tmp \
+            "prometheus-${PROM_VERSION}.linux-amd64/promtool" \
+            "prometheus-${PROM_VERSION}.linux-amd64/prometheus"
           sudo mv "/tmp/prometheus-${PROM_VERSION}.linux-amd64/promtool" /usr/local/bin/promtool
+          sudo mv "/tmp/prometheus-${PROM_VERSION}.linux-amd64/prometheus" /usr/local/bin/prometheus
           promtool check rules \
             deploy/ansible/roles/prometheus/files/faas.rules.yml \
             deploy/ansible/roles/prometheus/files/data_repair.rules.yml \
@@ -1869,10 +1893,13 @@ jobs:
           python3 -m json.tool examples/event-acknowledgment-monitoring/recovery-dashboard.json >/dev/null
           # Every rule fixture, not a hand-picked list: an unlisted
           # fixture (slo_low_traffic) broke unnoticed when an alert changed.
-          for fixture in deploy/ansible/roles/prometheus/files/*.test.yml pkg/promqlrules/testdata/*.test.yml; do
-            echo "promtool test rules ${fixture}"
-            promtool test rules "${fixture}"
-          done
+          # Fixtures are independent and several take minutes each; serially
+          # they ran past 40 minutes and the job hit its 70-minute budget (run
+          # 39181126528). Run them on every core and print each fixture's
+          # output as one block; xargs fails the step if any fixture fails.
+          printf '%s\n' deploy/ansible/roles/prometheus/files/*.test.yml pkg/promqlrules/testdata/*.test.yml |
+            xargs -P "$(nproc)" -I{} sh -c 'out=$(promtool test rules "$1" 2>&1); status=$?; printf "promtool test rules %s\n%s\n" "$1" "$out"; exit $status' _ {}
+          go test -count=1 -tags=integration ./pkg/promqlrules -run '^TestComputeMetricsDiscoveryScrapeLabels$'
 
       - name: Prometheus alert metadata check
         run: make prometheus-alert-metadata-check
@@ -2295,7 +2322,10 @@ jobs:
   flags-acceptance:
     name: flags (customer release + request evidence)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Measured 25 min on a green run (2026-10-19) and over 30 min under runner load
+    # (run 39345797073): the suite passes but cold compilation of the SDK,
+    # flags and apidserver packages dominates.
+    timeout-minutes: 45
     permissions:
       contents: read
     services:
@@ -2341,7 +2371,9 @@ jobs:
   sdk-python:
     name: sdk-python (gen-check + smoke + unit)
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # The storage starter acceptance suite alone runs several minutes; the job
+    # took 9.4 of 10 minutes on run 39169411988 and was cancelled on the next.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7

@@ -1,5 +1,5 @@
 // adr: 171
-package sched
+package sched_test
 
 import (
 	"context"
@@ -10,16 +10,17 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/executionproto"
+	"github.com/onebox-faas/faas/pkg/sched"
 )
 
 func TestVmmdExecutionBackendDecryptsOnlyAfterRestoreAndMapsResult(t *testing.T) {
-	var restored ExecutionRestoreRequest
+	var restored sched.ExecutionRestoreRequest
 	transport := &recordingExecutionTransport{result: executionproto.Result{
 		Status: api.ExecutionStatusSucceeded,
 		Result: json.RawMessage(`{"ok":true}`),
 		Stdout: []byte("hello\n"),
 	}}
-	backend := NewVmmdExecutionBackend(func(_ context.Context, request ExecutionRestoreRequest) (VmmdExecutionTransport, error) {
+	backend := sched.NewVmmdExecutionBackend(func(_ context.Context, request sched.ExecutionRestoreRequest) (sched.VmmdExecutionTransport, error) {
 		restored = request
 		return transport, nil
 	}, func(_ context.Context, sealed []byte, kid string) (string, json.RawMessage, error) {
@@ -30,14 +31,14 @@ func TestVmmdExecutionBackendDecryptsOnlyAfterRestoreAndMapsResult(t *testing.T)
 	})
 
 	limits := api.ResolvedExecutionLimits{TimeoutMS: 1000, MaxOutputBytes: 4096}
-	session, err := backend.Restore(context.Background(), ExecutionRestoreRequest{
+	session, err := backend.Restore(context.Background(), sched.ExecutionRestoreRequest{
 		ID: "exec-1", AccountID: "acct-1", Runtime: api.ExecutionRuntimeNode22,
 		NetworkMode: api.ExecutionNetworkNone, Limits: limits,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	payload := ExecutionPayload{Sealed: []byte("sealed"), KID: "kid-1"}
+	payload := sched.ExecutionPayload{Sealed: []byte("sealed"), KID: "kid-1"}
 	outcome, err := session.Execute(context.Background(), payload)
 	if err != nil {
 		t.Fatal(err)
@@ -67,12 +68,12 @@ func TestVmmdExecutionSessionClampsGuestTimeoutToRemainingDeadline(t *testing.T)
 		Status: api.ExecutionStatusSucceeded,
 		Result: json.RawMessage("null"),
 	}}
-	backend := NewVmmdExecutionBackend(func(context.Context, ExecutionRestoreRequest) (VmmdExecutionTransport, error) {
+	backend := sched.NewVmmdExecutionBackend(func(context.Context, sched.ExecutionRestoreRequest) (sched.VmmdExecutionTransport, error) {
 		return transport, nil
 	}, func(context.Context, []byte, string) (string, json.RawMessage, error) {
 		return "return true", json.RawMessage("null"), nil
 	})
-	session, err := backend.Restore(context.Background(), ExecutionRestoreRequest{
+	session, err := backend.Restore(context.Background(), sched.ExecutionRestoreRequest{
 		ID: "exec-2", Runtime: api.ExecutionRuntimeNode22,
 		NetworkMode: api.ExecutionNetworkNone,
 		Limits:      api.ResolvedExecutionLimits{TimeoutMS: 10_000, MaxOutputBytes: 1024},
@@ -82,7 +83,7 @@ func TestVmmdExecutionSessionClampsGuestTimeoutToRemainingDeadline(t *testing.T)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
 	defer cancel()
-	if _, err := session.Execute(ctx, ExecutionPayload{Sealed: []byte("s")}); err != nil {
+	if _, err := session.Execute(ctx, sched.ExecutionPayload{Sealed: []byte("s")}); err != nil {
 		t.Fatal(err)
 	}
 	if transport.request.TimeoutMS > 300 || transport.request.TimeoutMS < 100 {
@@ -95,12 +96,12 @@ func TestVmmdExecutionSessionFallsBackToUnaryWhenStreamingIsUnavailable(t *testi
 		Status: api.ExecutionStatusSucceeded,
 		Result: json.RawMessage("null"),
 	}}
-	backend := NewVmmdExecutionBackend(func(context.Context, ExecutionRestoreRequest) (VmmdExecutionTransport, error) {
+	backend := sched.NewVmmdExecutionBackend(func(context.Context, sched.ExecutionRestoreRequest) (sched.VmmdExecutionTransport, error) {
 		return transport, nil
 	}, func(context.Context, []byte, string) (string, json.RawMessage, error) {
 		return "return true", json.RawMessage("null"), nil
 	})
-	session, err := backend.Restore(context.Background(), ExecutionRestoreRequest{
+	session, err := backend.Restore(context.Background(), sched.ExecutionRestoreRequest{
 		ID: "exec-fallback", Runtime: api.ExecutionRuntimeNode22,
 		NetworkMode: api.ExecutionNetworkNone,
 		Limits:      api.ResolvedExecutionLimits{TimeoutMS: 1000, MaxOutputBytes: 1024},
@@ -110,8 +111,8 @@ func TestVmmdExecutionSessionFallsBackToUnaryWhenStreamingIsUnavailable(t *testi
 	}
 	var received int
 	outcome, err := session.(interface {
-		ExecuteWithOutput(context.Context, ExecutionPayload, executionproto.OutputReceiver) (ExecutionOutcome, error)
-	}).ExecuteWithOutput(context.Background(), ExecutionPayload{Sealed: []byte("sealed")}, func(context.Context, string, []byte) error {
+		ExecuteWithOutput(context.Context, sched.ExecutionPayload, executionproto.OutputReceiver) (sched.ExecutionOutcome, error)
+	}).ExecuteWithOutput(context.Background(), sched.ExecutionPayload{Sealed: []byte("sealed")}, func(context.Context, string, []byte) error {
 		received++
 		return nil
 	})
@@ -127,7 +128,7 @@ func TestVmmdExecutionSessionFallsBackToUnaryWhenStreamingIsUnavailable(t *testi
 }
 
 func TestOutcomeFromProtocolResultDoesNotExposeGuestFailureText(t *testing.T) {
-	outcome := outcomeFromProtocolResult(executionproto.Result{
+	outcome := sched.OutcomeFromProtocolResult(executionproto.Result{
 		Status:         api.ExecutionStatusFailed,
 		Result:         json.RawMessage("null"),
 		FailureCode:    "stack_trace",
@@ -142,7 +143,7 @@ func TestOutcomeFromProtocolResultDoesNotExposeGuestFailureText(t *testing.T) {
 }
 
 func TestVmmdExecutionBackendRequiresBothWiringFunctions(t *testing.T) {
-	if _, err := (&VmmdExecutionBackend{}).Restore(context.Background(), ExecutionRestoreRequest{}); !errors.Is(err, ErrExecutionCoordinatorNotWired) {
+	if _, err := (&sched.VmmdExecutionBackend{}).Restore(context.Background(), sched.ExecutionRestoreRequest{}); !errors.Is(err, sched.ErrExecutionCoordinatorNotWired) {
 		t.Fatalf("error = %v", err)
 	}
 }
@@ -151,10 +152,10 @@ func TestVmmdExecutionBackendRequiresBothWiringFunctions(t *testing.T) {
 // same node and rejects a VM identity that does not match the claimed intent.
 func TestNewRoutedVmmdExecutionBackendPinsNodeAndInstance(t *testing.T) {
 	router := &recordingRoutedExecutionVMM{}
-	backend := NewRoutedVmmdExecutionBackend(router, func(context.Context, []byte, string) (string, json.RawMessage, error) {
+	backend := sched.NewRoutedVmmdExecutionBackend(router, func(context.Context, []byte, string) (string, json.RawMessage, error) {
 		return "return true", json.RawMessage("null"), nil
 	})
-	req := ExecutionRestoreRequest{
+	req := sched.ExecutionRestoreRequest{
 		ID: "exec-routed", NodeID: "node-a", Plan: api.PlanPro,
 		Runtime: api.ExecutionRuntimeNode22, NetworkMode: api.ExecutionNetworkNone,
 		Limits: api.ResolvedExecutionLimits{TimeoutMS: 1000, MaxOutputBytes: 1024},
@@ -163,7 +164,7 @@ func TestNewRoutedVmmdExecutionBackendPinsNodeAndInstance(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Restore: %v", err)
 	}
-	if _, err := session.Execute(context.Background(), ExecutionPayload{Sealed: []byte("sealed")}); err != nil {
+	if _, err := session.Execute(context.Background(), sched.ExecutionPayload{Sealed: []byte("sealed")}); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
 	if err := session.Destroy(context.Background()); err != nil {
@@ -176,10 +177,10 @@ func TestNewRoutedVmmdExecutionBackendPinsNodeAndInstance(t *testing.T) {
 
 func TestRoutedVmmdExecutionBackendSelectsBrokerForGrantedIntegrations(t *testing.T) {
 	router := &recordingRoutedExecutionVMM{}
-	backend := NewRoutedVmmdExecutionBackend(router, func(context.Context, []byte, string) (string, json.RawMessage, error) {
+	backend := sched.NewRoutedVmmdExecutionBackend(router, func(context.Context, []byte, string) (string, json.RawMessage, error) {
 		return "return true", json.RawMessage("null"), nil
 	})
-	session, err := backend.Restore(context.Background(), ExecutionRestoreRequest{
+	session, err := backend.Restore(context.Background(), sched.ExecutionRestoreRequest{
 		ID: "exec-broker", NodeID: "node-a", Plan: api.PlanPro, Runtime: api.ExecutionRuntimeNode22,
 		NetworkMode: api.ExecutionNetworkNone, Limits: api.ResolvedExecutionLimits{TimeoutMS: 1000, MaxOutputBytes: 1024},
 		OutboundIntegrationIDs: []string{"11111111-1111-4111-8111-111111111111"},
@@ -188,12 +189,12 @@ func TestRoutedVmmdExecutionBackendSelectsBrokerForGrantedIntegrations(t *testin
 		t.Fatalf("Restore: %v", err)
 	}
 	streaming, ok := session.(interface {
-		ExecuteWithOutput(context.Context, ExecutionPayload, executionproto.OutputReceiver) (ExecutionOutcome, error)
+		ExecuteWithOutput(context.Context, sched.ExecutionPayload, executionproto.OutputReceiver) (sched.ExecutionOutcome, error)
 	})
 	if !ok {
 		t.Fatal("restored session does not expose live output")
 	}
-	if _, err := streaming.ExecuteWithOutput(context.Background(), ExecutionPayload{Sealed: []byte("sealed")}, func(context.Context, string, []byte) error { return nil }); err != nil {
+	if _, err := streaming.ExecuteWithOutput(context.Background(), sched.ExecutionPayload{Sealed: []byte("sealed")}, func(context.Context, string, []byte) error { return nil }); err != nil {
 		t.Fatalf("ExecuteWithOutput: %v", err)
 	}
 	if router.brokerCalls != 1 || !router.outboundEnabled {
@@ -231,9 +232,9 @@ type recordingRoutedExecutionVMM struct {
 	outboundEnabled                                 bool
 }
 
-func (r *recordingRoutedExecutionVMM) RestoreExecution(_ context.Context, nodeID string, req ExecutionRestoreRequest) (*ExecutionRestoreOutcome, error) {
+func (r *recordingRoutedExecutionVMM) RestoreExecution(_ context.Context, nodeID string, req sched.ExecutionRestoreRequest) (*sched.ExecutionRestoreOutcome, error) {
 	r.restoreNode, r.instance = nodeID, req.ID
-	return &ExecutionRestoreOutcome{Instance: req.ID}, nil
+	return &sched.ExecutionRestoreOutcome{Instance: req.ID}, nil
 }
 
 func (r *recordingRoutedExecutionVMM) ExecuteExecution(_ context.Context, nodeID, instance string, _ executionproto.Request) (executionproto.Result, error) {

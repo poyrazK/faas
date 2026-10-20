@@ -91,23 +91,11 @@ func sampleAddrInPrefix(p netip.Prefix) netip.Addr {
 		}
 		return netip.MustParseAddr("::1")
 	}
-	next := addr.As16()
-	if bits < 128 {
-		hostBytes := (128 - bits) / 8
-		hostBits := (128 - bits) % 8
-		if hostBits > 0 {
-			next[hostBytes] |= 1 << (8 - hostBits - 1)
-		} else if hostBytes+1 <= 15 {
-			next[hostBytes] |= 0x80
-		}
-	}
-	a, ok := netip.AddrFromSlice(next[:])
-	if !ok {
-		return addr
-	}
-	a = a.Unmap()
-	masked := netip.PrefixFrom(a, bits).Masked()
-	return masked.Addr()
+	// The prefix's own network address. The earlier version set a "host"
+	// bit by indexing from the front of the 16-byte form, which for any
+	// prefix longer than /64 set a network bit and sampled outside the
+	// prefix (64:ff9b::/96 gave 64:ff9b:8000::).
+	return p.Masked().Addr()
 }
 
 // rowHasCIDRDeny scans the flattened argv for a rule row that denies
