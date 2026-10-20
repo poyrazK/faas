@@ -84,8 +84,10 @@ owner sets `UNIT_RELEASE_AUTODEPLOY_ENVIRONMENT`.
 ### 2. Deploy admission: wait for a healthy, idle and unfrozen platform
 
 A new first job in `release-units.yml`, `preflight`, runs before the
-control-plane lane on the fleet runner. It checks `scripts/ci/deploy_preflight.py`
-every 30 s, for up to 40 min:
+control-plane lane on the fleet runner. `scripts/ci/deploy_preflight.py` runs
+these checks every 60 s, for up to 40 min. A round costs about six GitHub API
+requests, and the workflow token's budget is 1,000 requests an hour per
+repository:
 
 | check | passes when | otherwise |
 | --- | --- | --- |
@@ -268,8 +270,8 @@ can define checks later.
 ## Consequences
 
 - Merge to production stays about 20 min when no more than one release is
-  unwatched. The preflight adds a runner pickup and about 30 s of checks
-  when the platform is healthy and idle.
+  unwatched. When the platform is healthy and idle, the preflight adds a
+  runner pickup and one round of checks.
 - A watch holds one of the two fleet runners (both on gregale-cp) for
   30 min per run. A waiting preflight can hold the other. cd-platform and
   pki-renew queue behind them meanwhile. The watch adds one Prometheus rules
