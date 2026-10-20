@@ -213,6 +213,7 @@ var routeExclude = map[string]bool{
 	// ADR-1730: the generated runtime reports with a short-lived, dedicated
 	// workload assertion. Owner API keys cannot publish these observations.
 	"POST /v1/runtime/data-api/connection-observations": true,
+	"POST /v1/runtime/data-api/usage":                   true,
 
 	"GET /v1/account/dpa":                                                    true, // public markdown (no Bearer; SDK consumers don't render HTML)
 	"GET /v1/apps/{slug}/tasks/{id}/attach":                                  true, // ADR-1037 WebSocket attach; the CLI drives it directly
@@ -1309,6 +1310,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/postgres/cutovers/{id}/preflight":                                        "GetManagedPostgresCutoverPreflight",
 	"GET /v1/postgres/databases/{id}/connection-budget":                               "GetManagedPostgresConnectionBudget",
 	"GET /v1/apps/{slug}/data-api/connection-budget":                                  "GetAppDataAPIConnectionBudgets",
+	"GET /v1/apps/{slug}/data-api/usage":                                              "GetAppDataAPIUsage",
 	"POST /v1/postgres/cutovers/{id}/verify":                                          "VerifyManagedPostgresCutover",
 	"POST /v1/postgres/cutovers/{id}/cancel":                                          "CancelManagedPostgresCutover",
 	"GET /v1/apps/{slug}/logs":                                                        "StreamAppLogs",
@@ -1406,6 +1408,12 @@ var methodRouteMap = map[string]string{
 	"GET /v1/account/platform-tenants/{id}/trial":                                           "GetPlatformTenantTrial",
 	"PUT /v1/account/platform-tenants/{id}/trial":                                           "PutPlatformTenantTrial",
 	"DELETE /v1/account/platform-tenants/{id}/trial":                                        "EndPlatformTenantTrial",
+	"GET /v1/account/platform-tenants/{id}/credits":                                         "ListPlatformTenantCredits",
+	"POST /v1/account/platform-tenants/{id}/credits":                                        "CreatePlatformTenantCredit",
+	"DELETE /v1/account/platform-tenants/{id}/credits/{credit_id}":                          "VoidPlatformTenantCredit",
+	"GET /v1/account/platform-tenants/{id}/spend-cap":                                       "GetPlatformTenantSpendCap",
+	"PUT /v1/account/platform-tenants/{id}/spend-cap":                                       "PutPlatformTenantSpendCap",
+	"DELETE /v1/account/platform-tenants/{id}/spend-cap":                                    "DeletePlatformTenantSpendCap",
 	"GET /v1/account/platform-tenant-billing-policy":                                        "GetPlatformTenantBillingPolicy",
 	"PUT /v1/account/platform-tenant-billing-policy":                                        "PutPlatformTenantBillingPolicy",
 	"DELETE /v1/account/platform-tenant-billing-policy":                                     "DeletePlatformTenantBillingPolicy",

@@ -1,10 +1,11 @@
-package main
+package main_test
 
 import (
 	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/mcphosting"
 	"net/http"
@@ -88,17 +89,17 @@ func TestMCPCatalogMonitorReadsOnlyAndRecovers(t *testing.T) {
 		if len(reports) >= 3 {
 			id, state = "recovery-receipt", "healthy"
 		}
-		writeJSONTest(w, api.MCPCatalogReceipt{Role: req.Role, ID: id, State: state, Revision: "reviewed"})
+		main.WriteJSONTest(w, api.MCPCatalogReceipt{Role: req.Role, ID: id, State: state, Revision: "reviewed"})
 	}))
 	defer platform.Close()
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 	defer cancel()
 	output := &monitorOutput{cancel: cancel}
-	oldOut, oldJSON := osStdout, jsonOutput
-	osStdout = output
-	jsonOutput = true
-	defer func() { osStdout = oldOut; jsonOutput = oldJSON }()
-	err := runMCPCatalogMonitor(ctx, NewClient(platform.URL, "PLATFORM_PRIVATE_TOKEN"), "reports", source.URL+"/mcp", "MCP_PRIVATE_TOKEN", api.MCPCatalogMonitorConfig{Role: "reader", TokenEnv: "MCP_READER_TOKEN", Revision: "reviewed", Baseline: raw}, time.Millisecond, 200*time.Millisecond)
+	oldOut, oldJSON := (*main.OsStdout), (*main.JsonOutput)
+	(*main.OsStdout) = output
+	(*main.JsonOutput) = true
+	defer func() { (*main.OsStdout) = oldOut; (*main.JsonOutput) = oldJSON }()
+	err := main.RunMCPCatalogMonitor(ctx, main.NewClient(platform.URL, "PLATFORM_PRIVATE_TOKEN"), "reports", source.URL+"/mcp", "MCP_PRIVATE_TOKEN", api.MCPCatalogMonitorConfig{Role: "reader", TokenEnv: "MCP_READER_TOKEN", Revision: "reviewed", Baseline: raw}, time.Millisecond, 200*time.Millisecond)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("run: %v", err)
 	}
@@ -132,7 +133,7 @@ func TestMCPCatalogMonitorProbeFailureIsReported(t *testing.T) {
 	defer platform.Close()
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
-	err := runMCPCatalogMonitor(ctx, NewClient(platform.URL, "platform"), "reports", source.URL, "", api.MCPCatalogMonitorConfig{Revision: "reviewed", Baseline: raw}, time.Millisecond, 200*time.Millisecond)
+	err := main.RunMCPCatalogMonitor(ctx, main.NewClient(platform.URL, "platform"), "reports", source.URL, "", api.MCPCatalogMonitorConfig{Revision: "reviewed", Baseline: raw}, time.Millisecond, 200*time.Millisecond)
 	if err == nil || reports != 1 {
 		t.Fatal("report conflict did not stop stale observer")
 	}
@@ -151,7 +152,7 @@ func TestMCPCatalogMonitorTokenReference(t *testing.T) {
 		{"", "", "LEGACY_TOKEN", "LEGACY_TOKEN", false},
 	}
 	for _, tc := range cases {
-		got, err := monitorTokenEnv(api.MCPCatalogMonitorConfig{Role: tc.role, TokenEnv: tc.configured}, tc.override)
+		got, err := main.MonitorTokenEnv(api.MCPCatalogMonitorConfig{Role: tc.role, TokenEnv: tc.configured}, tc.override)
 		if got != tc.want || (err != nil) != tc.fail {
 			t.Fatalf("%+v: got %q %v", tc, got, err)
 		}
@@ -161,7 +162,7 @@ func TestMCPCatalogMonitorTokenReference(t *testing.T) {
 func TestMCPCatalogManagedLifecycle(t *testing.T) {
 	config := api.MCPCatalogMonitorConfig{Role: "reader", Enabled: true, Revision: "old", FreshnessSeconds: 90, Observer: &api.MCPCatalogObserverConfig{Enabled: true, IntervalSeconds: 30, TimeoutSeconds: 10, Endpoint: "/mcp", SecretRef: "secret:READER_TOKEN"}}
 	for _, action := range []string{"pause", "resume", "restart", "stop", "disable"} {
-		req, err := managedMonitorAction(config, action)
+		req, err := main.ManagedMonitorAction(config, action)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -186,7 +187,7 @@ func TestMCPCatalogManagedLifecycle(t *testing.T) {
 	if !config.Enabled || !config.Observer.Enabled || config.Observer.Paused {
 		t.Fatal("lifecycle helper mutated saved intent")
 	}
-	if _, err := managedMonitorAction(api.MCPCatalogMonitorConfig{}, "resume"); err == nil {
+	if _, err := main.ManagedMonitorAction(api.MCPCatalogMonitorConfig{}, "resume"); err == nil {
 		t.Fatal("manual role accepted managed resume")
 	}
 }
@@ -217,20 +218,20 @@ func TestMCPCatalogOAuthSetup(t *testing.T) {
 	defer server.Close()
 	t.Setenv("FAAS_API", server.URL)
 	t.Setenv("FAAS_TOKEN", "fp_test_oauth")
-	oldOut, oldJSON := osStdout, jsonOutput
+	oldOut, oldJSON := (*main.OsStdout), (*main.JsonOutput)
 	var output bytes.Buffer
-	osStdout = &output
-	jsonOutput = true
-	t.Cleanup(func() { osStdout = oldOut; jsonOutput = oldJSON })
+	(*main.OsStdout) = &output
+	(*main.JsonOutput) = true
+	t.Cleanup(func() { (*main.OsStdout) = oldOut; (*main.JsonOutput) = oldJSON })
 	args := []string{"setup", "--app", "oauth-app", "--role", "reader", "--managed", "--baseline", file, "--freshness-seconds", "90", "--oauth-token-endpoint", "https://provider.example/token", "--oauth-client-id", "reader", "--oauth-refresh-secret-ref", "secret:REFRESH", "--oauth-client-secret-ref", "secret:CLIENT_SECRET"}
-	if code := cmdMCPCatalogMonitor(args); code != 0 || calls != 1 {
+	if code := main.CmdMCPCatalogMonitor(args); code != 0 || calls != 1 {
 		t.Fatalf("OAuth setup failed: %d requests=%d", code, calls)
 	}
 	// Invalid combinations must fail locally without reaching the platform API.
-	if code := cmdMCPCatalogMonitor(append(args, "--secret-ref", "secret:ACCESS")); code == 0 || calls != 1 {
+	if code := main.CmdMCPCatalogMonitor(append(args, "--secret-ref", "secret:ACCESS")); code == 0 || calls != 1 {
 		t.Fatal("mixed credentials submitted")
 	}
-	if code := cmdMCPCatalogMonitor([]string{"status", "--app", "oauth-app", "--oauth-client-id", "reader"}); code == 0 || calls != 1 {
+	if code := main.CmdMCPCatalogMonitor([]string{"status", "--app", "oauth-app", "--oauth-client-id", "reader"}); code == 0 || calls != 1 {
 		t.Fatal("setup-only OAuth flags accepted")
 	}
 	expectedRefresh, expectedBrowser = "", "https://console.example/dashboard/mcp/oauth/callback"
@@ -243,20 +244,20 @@ func TestMCPCatalogOAuthSetup(t *testing.T) {
 		guided = append(guided, args[i])
 	}
 	guided = append(guided, "--oauth-guided", "--oauth-authorization-endpoint", "https://provider.example/authorize", "--oauth-browser-redirect-uri", expectedBrowser)
-	if code := cmdMCPCatalogMonitor(guided); code != 0 || calls != 2 {
+	if code := main.CmdMCPCatalogMonitor(guided); code != 0 || calls != 2 {
 		t.Fatal("browser redirect configuration not submitted", code, calls)
 	}
 
 }
 
 func TestMCPCatalogOAuthLifecycleOutput(t *testing.T) {
-	oldOut, oldJSON := osStdout, jsonOutput
+	oldOut, oldJSON := (*main.OsStdout), (*main.JsonOutput)
 	var output bytes.Buffer
-	osStdout = &output
-	jsonOutput = false
-	t.Cleanup(func() { osStdout = oldOut; jsonOutput = oldJSON })
+	(*main.OsStdout) = &output
+	(*main.JsonOutput) = false
+	t.Cleanup(func() { (*main.OsStdout) = oldOut; (*main.JsonOutput) = oldJSON })
 	snapshot := api.MCPCatalogMonitorSnapshot{Config: api.MCPCatalogMonitorConfig{Role: "reader"}, ObserverStatus: &api.MCPCatalogObserverStatus{OAuth: &api.MCPCatalogObserverOAuthStatus{State: "reauthorization_required", ReauthorizationNeeded: true}, Renewal: &api.MCPCatalogOAuthRenewal{State: "reauthorization_required", StartedAt: time.Now()}}, OAuthLifecycle: &api.MCPCatalogOAuthLifecycle{LocalState: "disconnected", CredentialState: "retirement_held", Revocation: &api.MCPCatalogOAuthRevocation{State: "pending", Attempts: 2}, History: []api.MCPCatalogOAuthEvent{{At: time.Now(), Kind: "disconnected"}}}}
-	if writeMCPCatalogMonitor(snapshot) != 0 {
+	if main.WriteMCPCatalogMonitor(snapshot) != 0 {
 		t.Fatal("status failed")
 	}
 	for _, want := range []string{"OAuth credential recovery: retirement_held", "OAuth renewal recovery: reauthorization_required", "reconnect this role", "Reauthorization needed", "Local OAuth state: disconnected", "Provider revocation: pending (2 attempts)", "OAuth event:"} {
@@ -265,7 +266,7 @@ func TestMCPCatalogOAuthLifecycleOutput(t *testing.T) {
 		}
 	}
 	output.Reset()
-	if writeMCPConnection(api.MCPCatalogOAuthResponse{State: "disconnected", ProviderRevocation: "pending"}) != 0 || !bytes.Contains(output.Bytes(), []byte("Provider revocation: pending")) {
+	if main.WriteMCPConnection(api.MCPCatalogOAuthResponse{State: "disconnected", ProviderRevocation: "pending"}) != 0 || !bytes.Contains(output.Bytes(), []byte("Provider revocation: pending")) {
 		t.Fatal("disconnect omitted provider state")
 	}
 }

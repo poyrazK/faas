@@ -1,5 +1,5 @@
 // adr: 590
-package sched
+package sched_test
 
 import (
 	"encoding/json"
@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
@@ -98,13 +99,13 @@ func testDrainStageInvocation(t *testing.T, keyed, productionTrigger bool) {
 			t.Fatal(err)
 		}
 	}
-	vmm, notifier, synth := &fakeVMM{}, &fakeNotifier{}, &drainSynth{}
-	engine := newEngine(t, store, vmm, notifier, "1.10.0")
-	drain := NewDrain(store, engine, WithDrainGatewaySynth(synth))
+	vmm, notifier, synth := &sched.FakeVMM{}, &sched.FakeNotifier{}, &sched.DrainSynth{}
+	engine := sched.XNewEngine(t, store, vmm, notifier, "1.10.0")
+	drain := sched.NewDrain(store, engine, sched.WithDrainGatewaySynth(synth))
 	drain.Tick(ctx)
 	completed, err := store.InvocationByID(ctx, inv.ID)
-	if err != nil || completed.State != state.InvocationCompleted || completed.InstanceID == "" || synth.calls.Load() != 1 {
-		t.Fatalf("stage dispatch = %+v, calls=%d, %v", completed, synth.calls.Load(), err)
+	if err != nil || completed.State != state.InvocationCompleted || completed.InstanceID == "" || (*synth.Calls()).Load() != 1 {
+		t.Fatalf("stage dispatch = %+v, calls=%d, %v", completed, (*synth.Calls()).Load(), err)
 	}
 	instance, err := store.InstanceByID(ctx, completed.InstanceID)
 	if err != nil || instance.DeploymentID != stage.ID {

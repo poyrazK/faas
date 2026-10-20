@@ -1,4 +1,4 @@
-package main
+package main_test
 
 // ADR-448: normalized save/export and deployment-bound CI checks.
 
@@ -12,13 +12,14 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/routerequirements"
 )
 
 func TestSavedRouteRequirementsCLIWorkflow(t *testing.T) {
-	resetJSONOut(t)
-	setPreviewTestAuth(t)
+	main.ResetJSONOut(t)
+	main.SetPreviewTestAuth(t)
 	dir := t.TempDir()
 	input := filepath.Join(dir, "requirements.yaml")
 	if err := os.WriteFile(input, []byte("version: 2\npublic:\n  - method: GET\n    path: /health\n    reason: private-local-rationale\n"), 0o600); err != nil {
@@ -45,9 +46,9 @@ func TestSavedRouteRequirementsCLIWorkflow(t *testing.T) {
 				return
 			}
 			saved = api.SavedRouteRequirements{AppID: "app-id", Revision: 1, SHA256: digest, Requirements: config}
-			writeJSONTest(w, saved)
+			main.WriteJSONTest(w, saved)
 		case r.Method == "GET" && r.URL.Path == "/v1/apps/my-api/route-requirements":
-			writeJSONTest(w, saved)
+			main.WriteJSONTest(w, saved)
 		case r.Method == "POST" && r.URL.Path == "/v1/apps/my-api/route-requirements/check":
 			var request api.CheckRouteRequirementsRequest
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
@@ -63,7 +64,7 @@ func TestSavedRouteRequirementsCLIWorkflow(t *testing.T) {
 				t.Error(err)
 				return
 			}
-			writeJSONTest(w, result)
+			main.WriteJSONTest(w, result)
 		default:
 			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
 			http.NotFound(w, r)
@@ -72,20 +73,20 @@ func TestSavedRouteRequirementsCLIWorkflow(t *testing.T) {
 	defer server.Close()
 	t.Setenv("FAAS_API", server.URL)
 	var out bytes.Buffer
-	oldOut := osStdout
-	osStdout = &out
-	t.Cleanup(func() { osStdout = oldOut })
-	if code := run([]string{"routes", "requirements", "set", "my-api", "--requirements", input}); code != 1 || calls != 0 {
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &out
+	t.Cleanup(func() { (*main.OsStdout) = oldOut })
+	if code := main.Run([]string{"routes", "requirements", "set", "my-api", "--requirements", input}); code != 1 || calls != 0 {
 		t.Fatal("missing expected revision reached API")
 	}
-	if code := run([]string{"routes", "requirements", "set", "my-api", "--requirements", input, "--expected-revision", "0", "--json"}); code != 0 || calls != 1 || strings.Contains(out.String(), "private-local-rationale") {
+	if code := main.Run([]string{"routes", "requirements", "set", "my-api", "--requirements", input, "--expected-revision", "0", "--json"}); code != 0 || calls != 1 || strings.Contains(out.String(), "private-local-rationale") {
 		t.Fatalf("save: %d %s", code, out.String())
 	}
 	export := filepath.Join(dir, "saved.json")
-	if code := run([]string{"routes", "requirements", "get", "my-api", "--out", export}); code != 0 {
+	if code := main.Run([]string{"routes", "requirements", "get", "my-api", "--out", export}); code != 0 {
 		t.Fatalf("export: %d", code)
 	}
-	config, _, err := readPreviewCoverageRequirements(export)
+	config, _, err := main.ReadPreviewCoverageRequirements(export)
 	var digest string
 	if err == nil {
 		config, digest, err = routerequirements.NormalizeCoverage(config)
@@ -99,7 +100,7 @@ func TestSavedRouteRequirementsCLIWorkflow(t *testing.T) {
 	}
 	artifact := filepath.Join(dir, "check.json")
 	out.Reset()
-	if code := run([]string{"routes", "check", "my-api", "--deployment", deployment, "--expected-revision", "1", "--out", artifact, "--fail-on-requirements", "--json"}); code != 1 {
+	if code := main.Run([]string{"routes", "check", "my-api", "--deployment", deployment, "--expected-revision", "1", "--out", artifact, "--fail-on-requirements", "--json"}); code != 1 {
 		t.Fatalf("uncovered operation passed CI: %d", code)
 	}
 	body, err := os.ReadFile(artifact)
@@ -107,7 +108,7 @@ func TestSavedRouteRequirementsCLIWorkflow(t *testing.T) {
 	if err != nil || json.Unmarshal(body, &result) != nil || result.Report.Status != "violated" || !strings.Contains(out.String(), `"requirements_revision": 1`) || strings.Contains(string(body), "private-local-rationale") {
 		t.Fatalf("report not exported before gate: %s %v; stdout %s", body, err, out.String())
 	}
-	if code := run([]string{"routes", "requirements", "get", "my-api", "--out", export}); code != 1 {
+	if code := main.Run([]string{"routes", "requirements", "get", "my-api", "--out", export}); code != 1 {
 		t.Fatal("existing export overwritten")
 	}
 }
@@ -115,8 +116,8 @@ func TestSavedRouteRequirementsCLIWorkflow(t *testing.T) {
 func TestSavedRouteCheckCLIGatesAndResponseBinding(t *testing.T) {
 	for _, scenario := range []string{"satisfied", "unknown", "foreign deployment", "stale revision", "foreign app", "missing fingerprint", "existing output", "symlink output"} {
 		t.Run(scenario, func(t *testing.T) {
-			resetJSONOut(t)
-			setPreviewTestAuth(t)
+			main.ResetJSONOut(t)
+			main.SetPreviewTestAuth(t)
 			deployment := "00000000-0000-4000-8000-000000000001"
 			result := api.RouteRequirementsCheck{Version: 1, App: "my-api", AppID: "app-id", DeploymentID: deployment, RequirementsRevision: 1, RequirementsSHA256: strings.Repeat("a", 64), ConfigurationSHA256: strings.Repeat("b", 64), Report: api.RouteRequirementsReport{Version: 2, Status: "satisfied", SHA256: strings.Repeat("a", 64), Coverage: &api.RouteCoverageInventory{Status: "available", Deployment: deployment, SHA256: strings.Repeat("c", 64), RouteCount: 1}}}
 			want := 1
@@ -135,13 +136,13 @@ func TestSavedRouteCheckCLIGatesAndResponseBinding(t *testing.T) {
 			case "missing fingerprint":
 				result.ConfigurationSHA256 = ""
 			}
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { writeJSONTest(w, result) }))
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { main.WriteJSONTest(w, result) }))
 			defer server.Close()
 			t.Setenv("FAAS_API", server.URL)
 			var out bytes.Buffer
-			oldOut := osStdout
-			osStdout = &out
-			t.Cleanup(func() { osStdout = oldOut })
+			oldOut := (*main.OsStdout)
+			(*main.OsStdout) = &out
+			t.Cleanup(func() { (*main.OsStdout) = oldOut })
 			artifact := filepath.Join(t.TempDir(), "check.json")
 			if scenario == "existing output" || scenario == "symlink output" {
 				target := artifact
@@ -157,7 +158,7 @@ func TestSavedRouteCheckCLIGatesAndResponseBinding(t *testing.T) {
 					}
 				}
 			}
-			if code := run([]string{"routes", "check", "my-api", "--deployment", deployment, "--expected-revision", "1", "--out", artifact, "--fail-on-requirements"}); code != want {
+			if code := main.Run([]string{"routes", "check", "my-api", "--deployment", deployment, "--expected-revision", "1", "--out", artifact, "--fail-on-requirements"}); code != want {
 				t.Fatalf("exit %d want %d; %s", code, want, out.String())
 			}
 			body, err := os.ReadFile(artifact)

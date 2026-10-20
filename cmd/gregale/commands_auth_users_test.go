@@ -1,7 +1,8 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -11,23 +12,23 @@ import (
 )
 
 func TestAuthBanForAndUserReferences(t *testing.T) {
-	for value, want := range map[string]string{"24h": "24h", "7d": "168h", "forever": authBanForever, "999999h": "999999h"} {
-		if got, err := authBanFor(value); err != nil || got != want {
+	for value, want := range map[string]string{"24h": "24h", "7d": "168h", "forever": main.AuthBanForever, "999999h": "999999h"} {
+		if got, err := main.AuthBanFor(value); err != nil || got != want {
 			t.Errorf("authBanFor(%q) = %q, %v; want %q", value, got, err, want)
 		}
 	}
 	for _, value := range []string{"", "0h", "1w", "-1d", "24", "1000000h", "41667d", "24h "} {
-		if got, err := authBanFor(value); err == nil {
+		if got, err := main.AuthBanFor(value); err == nil {
 			t.Errorf("authBanFor(%q) = %q, want an error", value, got)
 		}
 	}
 	for _, ref := range []string{"0b5f2f0e-7a51-4d8f-8a3a-5c1b9d2e6f70", "ada@example.com"} {
-		if err := authUserRefValid(ref); err != nil {
+		if err := main.AuthUserRefValid(ref); err != nil {
 			t.Errorf("%q refused: %v", ref, err)
 		}
 	}
 	for _, ref := range []string{"", "ada", "0b5f2f0e", "ada @example.com"} {
-		if authUserRefValid(ref) == nil {
+		if main.AuthUserRefValid(ref) == nil {
 			t.Errorf("%q accepted", ref)
 		}
 	}
@@ -38,8 +39,8 @@ func TestAuthBanForAndUserReferences(t *testing.T) {
 func fakeAuthAdmin(t *testing.T, key string, handle func(w http.ResponseWriter, r *http.Request, body map[string]any)) *[]string {
 	t.Helper()
 	var seen []string
-	old := authAdminHTTPClient
-	authAdminHTTPClient = &http.Client{Transport: authRoundTrip(func(r *http.Request) (*http.Response, error) {
+	old := (*main.AuthAdminHTTPClient)
+	(*main.AuthAdminHTTPClient) = &http.Client{Transport: authRoundTrip(func(r *http.Request) (*http.Response, error) {
 		recorder := httptest.NewRecorder()
 		if r.URL.Host != "shop-auth.gregale.app" || r.Header.Get("Authorization") != "Bearer "+key {
 			t.Errorf("request to %s with the wrong key", r.URL.Host)
@@ -63,17 +64,17 @@ func fakeAuthAdmin(t *testing.T, key string, handle func(w http.ResponseWriter, 
 		handle(recorder, r, body)
 		return recorder.Result(), nil
 	})}
-	t.Cleanup(func() { authAdminHTTPClient = old })
+	t.Cleanup(func() { (*main.AuthAdminHTTPClient) = old })
 	return &seen
 }
 
 // runAuthAdmin runs one `gregale auth` command with the key on stdin.
 func runAuthAdmin(t *testing.T, key string, args ...string) int {
 	t.Helper()
-	old := osStdin
-	osStdin = strings.NewReader(key + "\n")
-	t.Cleanup(func() { osStdin = old })
-	return cmdAuth(append(args, "--admin-key-stdin"))
+	old := (*main.OsStdin)
+	(*main.OsStdin) = strings.NewReader(key + "\n")
+	t.Cleanup(func() { (*main.OsStdin) = old })
+	return main.CmdAuth(append(args, "--admin-key-stdin"))
 }
 
 func TestAuthUsersFindsByEmailAndChangesTheUser(t *testing.T) {
@@ -86,27 +87,27 @@ func TestAuthUsersFindsByEmailAndChangesTheUser(t *testing.T) {
 		switch {
 		case r.Method == "GET" && r.URL.Path == "/admin/v1/users":
 			// GoTrue matches part of the address: nada@ comes back too.
-			writeJSONTest(w, map[string]any{"users": []map[string]any{
+			main.WriteJSONTest(w, map[string]any{"users": []map[string]any{
 				{"id": "6a1b2c3d-0000-4000-8000-000000000001", "email": "nada@example.com", "providers": []string{"email"}},
 				{"id": ada, "email": "ada@example.com", "providers": []string{"email"}},
 			}, "total": 2, "page": 1, "per_page": 100})
 		case r.Method == "GET" && r.URL.Path == "/admin/v1/users/"+ada:
-			writeJSONTest(w, map[string]any{"user": map[string]any{"id": ada, "email": "ada@example.com", "email_confirmed_at": "2026-10-01T00:00:00Z", "providers": []string{"email", "google"}},
+			main.WriteJSONTest(w, map[string]any{"user": map[string]any{"id": ada, "email": "ada@example.com", "email_confirmed_at": "2026-10-01T00:00:00Z", "providers": []string{"email", "google"}},
 				"organizations": []map[string]any{{"id": "o1", "slug": "acme", "name": "Acme", "role": "owner"}}, "active_sessions": 2})
 		case r.Method == "POST" && r.URL.Path == "/admin/v1/users/"+ada+"/sign-out":
-			writeJSONTest(w, map[string]any{"sessions_ended": 2})
+			main.WriteJSONTest(w, map[string]any{"sessions_ended": 2})
 		case r.Method == "POST" && r.URL.Path == "/admin/v1/users/"+ada+"/ban":
 			until := "2026-10-25T10:00:00Z"
 			if body["duration"] == "none" {
 				until = ""
 			}
-			writeJSONTest(w, map[string]any{"user": map[string]any{"id": ada, "email": "ada@example.com", "banned_until": until}})
+			main.WriteJSONTest(w, map[string]any{"user": map[string]any{"id": ada, "email": "ada@example.com", "banned_until": until}})
 		case r.Method == "DELETE" && r.URL.Path == "/admin/v1/users/"+ada:
 			if deletes++; deletes == 1 {
-				writeJSONTestStatus(w, http.StatusConflict, map[string]any{"status": 409, "code": "last_owner", "organizations": []string{"acme"}})
+				main.WriteJSONTestStatus(w, http.StatusConflict, map[string]any{"status": 409, "code": "last_owner", "organizations": []string{"acme"}})
 				return
 			}
-			writeJSONTest(w, map[string]any{"deleted": true, "organizations_deleted": 1})
+			main.WriteJSONTest(w, map[string]any{"deleted": true, "organizations_deleted": 1})
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -181,19 +182,19 @@ func TestAuthUsersListAndOrgs(t *testing.T) {
 	seen := fakeAuthAdmin(t, key, func(w http.ResponseWriter, r *http.Request, _ map[string]any) {
 		switch r.URL.Path {
 		case "/admin/v1/users":
-			writeJSONTest(w, map[string]any{"users": []map[string]any{
+			main.WriteJSONTest(w, map[string]any{"users": []map[string]any{
 				{"id": "6a1b2c3d-0000-4000-8000-000000000001", "email": "ada@example.com", "email_confirmed_at": "2026-10-01T00:00:00Z", "last_sign_in_at": "2026-10-17T09:00:00Z"},
 				{"id": "6a1b2c3d-0000-4000-8000-000000000002", "email": "bob@example.com"},
 				{"id": "6a1b2c3d-0000-4000-8000-000000000003", "anonymous": true},
 				{"id": "6a1b2c3d-0000-4000-8000-000000000004", "phone": "+15555550100", "banned_until": "2999-01-01T00:00:00Z"},
 			}, "total": 120, "page": 1, "per_page": 50})
 		case "/admin/v1/orgs":
-			writeJSONTest(w, map[string]any{"organizations": []map[string]any{
+			main.WriteJSONTest(w, map[string]any{"organizations": []map[string]any{
 				{"id": "7c1b2c3d-0000-4000-8000-000000000008", "slug": "acme-labs", "name": "Acme Labs", "members": 3},
 				{"id": acme, "slug": "acme", "name": "Acme", "members": 2},
 			}, "total": 2, "page": 1, "per_page": 100})
 		case "/admin/v1/orgs/" + acme:
-			writeJSONTest(w, map[string]any{"organization": map[string]any{"id": acme, "slug": "acme", "name": "Acme", "created_at": "2026-10-01T00:00:00Z"},
+			main.WriteJSONTest(w, map[string]any{"organization": map[string]any{"id": acme, "slug": "acme", "name": "Acme", "created_at": "2026-10-01T00:00:00Z"},
 				"members":     []map[string]any{{"user_id": "6a1b2c3d-0000-4000-8000-000000000001", "email": "ada@example.com", "role": "owner"}},
 				"invitations": []map[string]any{{"id": "i1", "email": "eve@example.com", "role": "member", "expires_at": "2026-10-24T00:00:00Z"}}})
 		default:

@@ -1234,6 +1234,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	loop := meter.NewLoop(store, cpu, parker, pusher, pn, mailer, dunning, residency, evaluator, deps.now, log, mc, ops).
 		WithQuotaWarnings(func() bool { return deps.getenv(internalmail.QuotaWarningOutboxEnableEnv) == "1" }, quotaWarningCommands).
 		WithBillingEnabled(billingMode.Enabled()).
+		WithFinancialBudgets().
 		WithEgress(egress).
 		WithProbe(probe).
 		WithPartitionCreate(gatedPartitionCreate).

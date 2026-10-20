@@ -1,6 +1,7 @@
-package main
+package main_test
 
 import (
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"strings"
 	"testing"
 )
@@ -21,7 +22,7 @@ func TestValidateDeploymentReasonCountsCharacters(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			err := validateDeploymentReason(test.reason)
+			err := main.ValidateDeploymentReason(test.reason)
 			if (err == nil) != test.valid {
 				t.Fatalf("error = %v, valid = %v", err, test.valid)
 			}

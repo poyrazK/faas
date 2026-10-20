@@ -18,6 +18,7 @@ func platformTenantStatementResponse(s state.PlatformTenantStatement) api.Platfo
 	out := api.PlatformTenantStatementResponse{ID: s.ID, TenantID: s.TenantID, PeriodStart: s.PeriodStart,
 		PeriodEnd: s.PeriodEnd, Revision: s.Revision, Status: string(s.Status), Currency: s.Currency,
 		BillableUnits: s.BillableUnits, UnpricedUnits: s.UnpricedUnits, AmountMillicents: s.AmountMillicents,
+		CreditAppliedMillicents: s.CreditAppliedMillicents, AmountDueMillicents: s.AmountDueMillicents(),
 		AsOf: s.AsOf, CreatedAt: s.CreatedAt, FinalizedAt: s.FinalizedAt,
 		Lines: make([]api.PlatformTenantStatementLineResponse, 0, len(s.Lines))}
 	for _, line := range s.Lines {

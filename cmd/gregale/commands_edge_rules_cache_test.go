@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -6,11 +6,12 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func TestBuildEdgeRuleCacheActionStaleWhileRevalidate(t *testing.T) {
-	raw, err := buildEdgeRuleAction("cache", edgeRuleActionInputs{
+	raw, err := main.BuildEdgeRuleAction("cache", main.EdgeRuleActionInputs{
 		CacheMaxAgeSeconds:               30,
 		CacheStaleWhileRevalidateSeconds: 45,
 		CacheStaleIfErrorSeconds:         120,
@@ -27,7 +28,7 @@ func TestBuildEdgeRuleCacheActionStaleWhileRevalidate(t *testing.T) {
 		t.Fatalf("stale_while_revalidate_seconds = %d, want 45", action.StaleWhileRevalidateSeconds)
 	}
 
-	_, err = buildEdgeRuleAction("cache", edgeRuleActionInputs{
+	_, err = main.BuildEdgeRuleAction("cache", main.EdgeRuleActionInputs{
 		CacheMaxAgeSeconds:               30,
 		CacheStaleWhileRevalidateSeconds: api.ResponseCacheStaleWhileRevalidateMaxSeconds + 1,
 	})
@@ -50,7 +51,7 @@ func TestCmdEdgeRulesCacheStaleIfErrorDefault(t *testing.T) {
 		{
 			name: "create without the flag keeps stale-on-error on",
 			run: func() int {
-				return cmdEdgeRulesCreate([]string{
+				return main.CmdEdgeRulesCreate([]string{
 					"--app", edgeRuleTestAppSlug, "--kind", "cache",
 					"--match-host", "x.example.com", "--cache-max-age-seconds", "30",
 				})
@@ -60,7 +61,7 @@ func TestCmdEdgeRulesCacheStaleIfErrorDefault(t *testing.T) {
 		{
 			name: "create with 0 disables it",
 			run: func() int {
-				return cmdEdgeRulesCreate([]string{
+				return main.CmdEdgeRulesCreate([]string{
 					"--app", edgeRuleTestAppSlug, "--kind", "cache",
 					"--match-host", "x.example.com", "--cache-stale-if-error-seconds", "0",
 				})
@@ -70,7 +71,7 @@ func TestCmdEdgeRulesCacheStaleIfErrorDefault(t *testing.T) {
 		{
 			name: "update of another cache field keeps stale-on-error on",
 			run: func() int {
-				return cmdEdgeRulesUpdate([]string{
+				return main.CmdEdgeRulesUpdate([]string{
 					"--kind", "cache", "--cache-max-age-seconds", "120", edgeRuleTestID,
 				})
 			},
@@ -79,7 +80,7 @@ func TestCmdEdgeRulesCacheStaleIfErrorDefault(t *testing.T) {
 		{
 			name: "update with an explicit window sends it",
 			run: func() int {
-				return cmdEdgeRulesUpdate([]string{
+				return main.CmdEdgeRulesUpdate([]string{
 					"--kind", "cache", "--cache-stale-if-error-seconds", "45", edgeRuleTestID,
 				})
 			},

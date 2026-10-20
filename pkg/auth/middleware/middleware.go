@@ -804,7 +804,7 @@ func platformTenantSelfPathAllowed(method, path string) bool {
 	if suffix == "customer-operation-milestones" {
 		return method == http.MethodGet
 	}
-	// ADR-1286: a customer signals its own Operations by subject.
+	// ADR-20261017100853: a customer signals its own Operations by subject.
 	if suffix == "customer-operation-signals" {
 		return method == http.MethodPost
 	}

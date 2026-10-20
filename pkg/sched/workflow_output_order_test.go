@@ -1,5 +1,5 @@
 // adr: 081
-package sched
+package sched_test
 
 import (
 	"encoding/json"
@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -57,7 +58,7 @@ func TestWorkflowFinalOutputIsIndependentOfStorageOrder(t *testing.T) {
 						ordered[i] = tc.steps[index]
 					}
 					want, _ := json.Marshal(tc.want)
-					if got := workflowFinalOutput(ordered, tc.specs); string(got) != string(want) {
+					if got := sched.WorkflowFinalOutput(ordered, tc.specs); string(got) != string(want) {
 						t.Fatalf("offset=%d reverse=%v: output=%s, want %s", offset, reverse, got, want)
 					}
 				}

@@ -16,7 +16,7 @@ func TestWorkflowOperationWindowUsesFixedCurrentAttemptBudget(t *testing.T) {
 		timeout, startedAgo, leaseAhead time.Duration
 		wantDeadline, wantLease         time.Duration
 		stale                           bool
-		budget                          *time.Duration // ADR-1199 remaining execution budget
+		budget                          *time.Duration // ADR-20261016110803 remaining execution budget
 	}{
 		{"default", 0, time.Second, time.Minute, 29 * time.Second, 29 * time.Second, false, nil},
 		{"captured timeout", time.Minute, time.Second, 10 * time.Second, 59 * time.Second, 10 * time.Second, false, nil},

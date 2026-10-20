@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
@@ -23,6 +24,7 @@ func queuePolicyAccountDB(ctx context.Context, db sqlc.DBTX, accountID, appID st
 	}
 	owner := Account{ID: accountID, Plan: api.Plan(row.Plan), Status: AccountStatus(row.Status), ResourceOrgID: pgUUIDString(row.OwnerOrgID)}
 	owner.ResourceOwnershipEnabled = owner.ResourceOrgID != ""
+	owner.AsyncQuotaPooled = owner.ResourceOwnershipEnabled && row.AsyncQuotaPooled
 	if row.AbuseHoldAt.Valid {
 		owner.AbuseHoldAt = &row.AbuseHoldAt.Time
 	}
@@ -49,13 +51,36 @@ func (m *MemStore) queueQuotaSubjectLocked(inv Invocation, fallbackMax int) (str
 	if !ok {
 		return "", 0, ErrNotFound
 	}
-	if owner.ResourceOwnershipEnabled {
-		if !owner.Active() {
-			return "", 0, ErrConflict
-		}
-		return owner.ResourceOwnerID(), api.MustLimitsFor(owner.Plan).MaxAsyncInvocationsPerAccount, nil
+	if owner.ResourceOwnershipEnabled && !owner.Active() {
+		return "", 0, ErrConflict
+	}
+	if owner.AsyncQuotaPooled {
+		return owner.AsyncQuotaSubjectID(), api.MustLimitsFor(owner.Plan).MaxAsyncInvocationsPerAccount, nil
 	}
 	return inv.AccountID, fallbackMax, nil
+}
+
+// poolOrgAsyncReservationsLocked mirrors adopt_org_async_reservations: the
+// organization's later reservations use its own counter, and its open ones
+// move there. No release calls it yet: the previous release decrements the
+// namespace counter, so pooling waits for the release after this one
+// (ADR-202610171908).
+func (m *MemStore) poolOrgAsyncReservationsLocked(orgID string) error {
+	org, ok := m.orgs[orgID]
+	if !ok || org.Personal || !org.ResourceOwnershipEnabled {
+		return nil
+	}
+	if err := m.validateQueueReservationsForAdoptionLocked(org); err != nil {
+		return err
+	}
+	if m.orgAsyncQuotaPooled == nil {
+		m.orgAsyncQuotaPooled = make(map[string]time.Time)
+	}
+	if _, pooled := m.orgAsyncQuotaPooled[org.ID]; !pooled {
+		m.orgAsyncQuotaPooled[org.ID] = m.clock().UTC()
+	}
+	m.adoptQueueReservationsLocked(org)
+	return nil
 }
 
 // Company adoption moves only invocation contributions; exclusive jobs and
@@ -125,7 +150,7 @@ func (m *MemStore) PersonalQueueReference(ctx context.Context, accountID, kind, 
 
 func ensureQueueAsyncQuotaDB(ctx context.Context, db sqlc.DBTX, owner Account) error {
 	_, err := sqlc.New().OrgQueueEnsureQuota(ctx, db, sqlc.OrgQueueEnsureQuotaParams{
-		AccountID: mustPgUUID(owner.ResourceOwnerID()), MaxInflight: int32(api.MustLimitsFor(owner.Plan).MaxAsyncInvocationsPerAccount)})
+		AccountID: mustPgUUID(owner.AsyncQuotaSubjectID()), MaxInflight: int32(api.MustLimitsFor(owner.Plan).MaxAsyncInvocationsPerAccount)})
 	return mapErr(err)
 }
 

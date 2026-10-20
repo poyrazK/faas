@@ -1,16 +1,17 @@
-package main
+package main_test
 
 import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"strings"
 	"testing"
 )
 
 func TestDataAPIDiagnosticsQueryShapesAggregateAndRejectUntrustedValues(t *testing.T) {
-	collector := newDataAPIDiagnosticsCollector("", "")
-	shape := dataAPIQueryShape{Projection: []string{"body", "id"}, Filters: []dataAPIShapeFilter{{Column: "body", Operator: "eq"}}, Order: []dataAPIShapeOrder{{Column: "id", Ascending: true}}, Count: "none"}
+	collector := main.NewDataAPIDiagnosticsCollector("", "")
+	shape := main.DataAPIQueryShape{Projection: []string{"body", "id"}, Filters: []main.DataAPIShapeFilter{{Column: "body", Operator: "eq"}}, Order: []main.DataAPIShapeOrder{{Column: "id", Ascending: true}}, Count: "none"}
 	raw, _ := json.Marshal([]any{"GET", "api.notes", "relation", shape})
 	id := fmt.Sprintf("%x", sha256.Sum256(raw))
 	for i := 1; i <= 3; i++ {
@@ -24,11 +25,11 @@ func TestDataAPIDiagnosticsQueryShapesAggregateAndRejectUntrustedValues(t *testi
 		record["raw_url"] = "private-filter-value"
 		record["timings"] = map[string]any{"upstream": map[string]any{"duration_ms": i, "complete": true}}
 		raw, _ := json.Marshal(record)
-		collector.observe(string(raw))
+		collector.Observe(string(raw))
 	}
-	collector.observe(dataAPIDiagnosticFixture(t, 4, "rest", "authentication_failed", 401, 2, "token_invalid"))
-	collector.finish()
-	report := collector.report
+	collector.Observe(dataAPIDiagnosticFixture(t, 4, "rest", "authentication_failed", 401, 2, "token_invalid"))
+	collector.Finish()
+	report := (*collector.Report())
 	if report.ShapedRequests != 3 || report.UnshapedDataRequests != 1 || len(report.QueryShapes) != 1 || report.QueryShapes[0].Stats.Requests != 3 || len(report.QueryShapes[0].RequestIDs) != 3 {
 		t.Fatalf("wrong shape stats: %+v", report)
 	}
@@ -55,13 +56,13 @@ func TestDataAPIDiagnosticsQueryShapesAggregateAndRejectUntrustedValues(t *testi
 	unsafe.Projection = []string{"body=eq.private-filter-value"}
 	record["query_shape"] = unsafe
 	raw, _ = json.Marshal(record)
-	if _, _, err := parseDataAPIRequestRecord(string(raw)); err == nil {
+	if _, _, err := main.ParseDataAPIRequestRecord(string(raw)); err == nil {
 		t.Fatal("untrusted shape values accepted")
 	}
 	record["query_shape"] = shape
 	record["query_shape_id"] = strings.Repeat("0", 64)
 	raw, _ = json.Marshal(record)
-	if _, _, err := parseDataAPIRequestRecord(string(raw)); err == nil {
+	if _, _, err := main.ParseDataAPIRequestRecord(string(raw)); err == nil {
 		t.Fatal("tampered shape digest accepted")
 	}
 }

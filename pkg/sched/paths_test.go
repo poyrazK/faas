@@ -1,6 +1,7 @@
-package sched
+package sched_test
 
 import (
+	"github.com/onebox-faas/faas/pkg/sched"
 	"runtime"
 	"strings"
 	"testing"
@@ -15,7 +16,7 @@ import (
 func TestBaseKey_PerArch(t *testing.T) {
 	// The thin wrapper pins arch to runtime.GOARCH; the result must
 	// embed the host arch so the key is stable across calls.
-	got := BaseKey("builder")
+	got := sched.BaseKey("builder")
 	if !strings.HasSuffix(got, "-"+runtime.GOARCH+".ext4") {
 		t.Fatalf("BaseKey(\"builder\") = %q; want suffix %q", got, "-"+runtime.GOARCH+".ext4")
 	}
@@ -32,15 +33,15 @@ func TestBaseKeyForArch_DistinctPerArch(t *testing.T) {
 		otherArch = "amd64"
 	}
 	// Sanity: the "other" arch must produce a known-good key.
-	got := BaseKeyForArch("builder", otherArch)
+	got := sched.BaseKeyForArch("builder", otherArch)
 	want := "base/runner-builder-" + otherArch + ".ext4"
 	if got != want {
 		t.Fatalf("BaseKeyForArch(%q) = %q; want %q", otherArch, got, want)
 	}
 	// Two distinct arches must produce two distinct keys —
 	// the load-bearing property of the per-arch partition.
-	host := BaseKeyForArch("builder", runtime.GOARCH)
-	other := BaseKeyForArch("builder", otherArch)
+	host := sched.BaseKeyForArch("builder", runtime.GOARCH)
+	other := sched.BaseKeyForArch("builder", otherArch)
 	if host == other {
 		t.Fatalf("BaseKeyForArch distinct arches produced identical key %q", host)
 	}
@@ -48,10 +49,10 @@ func TestBaseKeyForArch_DistinctPerArch(t *testing.T) {
 
 // ADR-987: the binary runtime has no base of its own; it boots on go124's.
 func TestBaseKeyForArch_BinarySharesGo124Base(t *testing.T) {
-	if got, want := BaseKeyForArch("binary", "amd64"), BaseKeyForArch("go124", "amd64"); got != want {
+	if got, want := sched.BaseKeyForArch("binary", "amd64"), sched.BaseKeyForArch("go124", "amd64"); got != want {
 		t.Fatalf("BaseKeyForArch(binary) = %q; want go124's %q", got, want)
 	}
-	if got, want := BaseDigestKeyForArch("binary", "amd64"), BaseDigestKeyForArch("go124", "amd64"); got != want {
+	if got, want := sched.BaseDigestKeyForArch("binary", "amd64"), sched.BaseDigestKeyForArch("go124", "amd64"); got != want {
 		t.Fatalf("BaseDigestKeyForArch(binary) = %q; want go124's %q", got, want)
 	}
 }
@@ -59,14 +60,14 @@ func TestBaseKeyForArch_BinarySharesGo124Base(t *testing.T) {
 func TestBaseKeyForArch_PlainApp(t *testing.T) {
 	// Empty runtime (plain app, not a function app) still gets the
 	// per-arch suffix.
-	got := BaseKeyForArch("", "amd64")
+	got := sched.BaseKeyForArch("", "amd64")
 	if got != "base/base-amd64.ext4" {
 		t.Fatalf("BaseKeyForArch(plain, amd64) = %q; want %q", got, "base/base-amd64.ext4")
 	}
 }
 
 func TestBaseDigestKey_PerArch(t *testing.T) {
-	got := BaseDigestKey("builder")
+	got := sched.BaseDigestKey("builder")
 	if !strings.HasSuffix(got, "-"+runtime.GOARCH+".ext4.digest") {
 		t.Fatalf("BaseDigestKey(\"builder\") = %q; want suffix %q", got, "-"+runtime.GOARCH+".ext4.digest")
 	}
@@ -77,8 +78,8 @@ func TestBaseDigestKeyForArch_DistinctPerArch(t *testing.T) {
 	if runtime.GOARCH == "arm64" {
 		otherArch = "amd64"
 	}
-	host := BaseDigestKeyForArch("builder", runtime.GOARCH)
-	other := BaseDigestKeyForArch("builder", otherArch)
+	host := sched.BaseDigestKeyForArch("builder", runtime.GOARCH)
+	other := sched.BaseDigestKeyForArch("builder", otherArch)
 	if host == other {
 		t.Fatalf("BaseDigestKeyForArch distinct arches produced identical key %q", host)
 	}
@@ -89,8 +90,8 @@ func TestBaseAndDigestKeyMatchPerArch(t *testing.T) {
 	// arch partition — a fresh arm64 install must not nuke an
 	// existing amd64 sidecar when both arches share the same root.
 	for _, arch := range []string{"amd64", "arm64"} {
-		base := BaseKeyForArch("builder", arch)
-		digest := BaseDigestKeyForArch("builder", arch)
+		base := sched.BaseKeyForArch("builder", arch)
+		digest := sched.BaseDigestKeyForArch("builder", arch)
 		if !strings.HasPrefix(digest, base[:len(base)-len(".ext4")]) {
 			t.Fatalf("digest key %q does not match base key %q", digest, base)
 		}
@@ -101,8 +102,8 @@ func TestBaseAndDigestKeyMatchPerArch(t *testing.T) {
 // Must accept the canonical parent key for this arch + the sibling
 // arch (heterogenous cluster case), and reject everything else.
 func TestIsParentBaseKey(t *testing.T) {
-	want := BaseKeyForArch(ParentBaseRuntime, runtime.GOARCH)
-	if !IsParentBaseKey(want) {
+	want := sched.BaseKeyForArch(sched.ParentBaseRuntime, runtime.GOARCH)
+	if !sched.IsParentBaseKey(want) {
 		t.Errorf("IsParentBaseKey(%q) = false, want true (host arch parent key)", want)
 	}
 	// Sibling arch.
@@ -110,8 +111,8 @@ func TestIsParentBaseKey(t *testing.T) {
 	if runtime.GOARCH == "arm64" {
 		otherArch = "amd64"
 	}
-	sibling := BaseKeyForArch(ParentBaseRuntime, otherArch)
-	if !IsParentBaseKey(sibling) {
+	sibling := sched.BaseKeyForArch(sched.ParentBaseRuntime, otherArch)
+	if !sched.IsParentBaseKey(sibling) {
 		t.Errorf("IsParentBaseKey(%q) = false, want true (sibling arch parent key)", sibling)
 	}
 	for _, bad := range []string{
@@ -126,7 +127,7 @@ func TestIsParentBaseKey(t *testing.T) {
 		"kernel/vmlinux-amd64",
 		"snapshots/app-foo/mem.bin",
 	} {
-		if IsParentBaseKey(bad) {
+		if sched.IsParentBaseKey(bad) {
 			t.Errorf("IsParentBaseKey(%q) = true, want false (non-parent key)", bad)
 		}
 	}
@@ -155,7 +156,7 @@ func TestAppSidecarLayerKey(t *testing.T) {
 		},
 	}
 	for _, c := range cases {
-		got := AppSidecarLayerKey(c.slug, c.depID, c.sidecarName)
+		got := sched.AppSidecarLayerKey(c.slug, c.depID, c.sidecarName)
 		if got != c.want {
 			t.Errorf("AppSidecarLayerKey(%q, %q, %q) = %q; want %q",
 				c.slug, c.depID, c.sidecarName, got, c.want)
@@ -164,8 +165,8 @@ func TestAppSidecarLayerKey(t *testing.T) {
 	// Two sidecars on the same deployment produce two distinct keys
 	// (the load-bearing property — imaged must not silently
 	// overwrite a prior sidecar's ext4).
-	if AppSidecarLayerKey("a", "d", "alpha") ==
-		AppSidecarLayerKey("a", "d", "beta") {
+	if sched.AppSidecarLayerKey("a", "d", "alpha") ==
+		sched.AppSidecarLayerKey("a", "d", "beta") {
 		t.Errorf("two sidecars collided on the same key")
 	}
 }

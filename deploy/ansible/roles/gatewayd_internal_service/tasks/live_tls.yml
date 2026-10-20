@@ -1,0 +1,79 @@
+---
+# Live queries (ADR-20261016151947): realtimed's client leaf for livequeryd
+# hubs is a fleet-PKI feature leaf (pkg/pki feature leaves), which no host
+# role requires. Only the CA's host issues it. A compute node has it written
+# into a per-node staging directory on the control plane and copies it in; a
+# single-box host issues it into its own PKI root. Either way a run keeps a
+# leaf that stays valid for 30 days or more, so this is also its renewal
+# (pki_renew.yml).
+- name: gatewayd_internal_service — require an issuer for realtimed's live client leaf
+  ansible.builtin.assert:
+    that:
+      - (faas_box_role | default('single-box')) == 'single-box' or faas_realtime_live_tls_issuer_host | length > 0
+      - (faas_box_role | default('single-box')) == 'single-box' or faas_node_name | default('') is match('^[A-Za-z0-9._-]+$')
+    fail_msg: >-
+      realtimed's live client leaf is issued on the control plane: the
+      inventory needs a control_plane host and this node's faas_node_name.
+
+- name: gatewayd_internal_service — issue realtimed's live client leaf on this single-box host
+  ansible.builtin.command:
+    argv: [/usr/local/bin/gregalectl, pki, issue-feature, --feature, live-queries, --box-role, compute-only,
+           --ca-dir, /etc/faas/tls, --root-dir, /etc/faas/tls]
+  register: faas_realtime_live_tls_local
+  changed_when: (faas_realtime_live_tls_local.stdout | from_json).issued | length > 0
+  when: (faas_box_role | default('single-box')) == 'single-box'
+  notify: restart faas-realtimed
+
+- name: gatewayd_internal_service — issue realtimed's live client leaf on the control plane
+  ansible.builtin.command:
+    argv: [/usr/local/bin/gregalectl, pki, issue-feature, --feature, live-queries, --box-role, compute-only,
+           --ca-dir, /etc/faas/tls, --root-dir, "/var/lib/faas/pki-features/{{ faas_node_name }}"]
+  delegate_to: "{{ faas_realtime_live_tls_issuer_host }}"
+  register: faas_realtime_live_tls_issued
+  changed_when: (faas_realtime_live_tls_issued.stdout | from_json).issued | length > 0
+  when: (faas_box_role | default('single-box')) != 'single-box'
+
+- name: gatewayd_internal_service — read the staged live client leaf
+  ansible.builtin.slurp:
+    src: "/var/lib/faas/pki-features/{{ faas_node_name }}/realtimed/{{ item }}"
+  delegate_to: "{{ faas_realtime_live_tls_issuer_host }}"
+  register: faas_realtime_live_tls_staged
+  loop: [livequeryd-client.crt, livequeryd-client.key]
+  no_log: true
+  when: (faas_box_role | default('single-box')) != 'single-box'
+
+- name: gatewayd_internal_service — create realtimed's live TLS directory
+  ansible.builtin.file:
+    path: /etc/faas/tls/realtimed
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+# realtimed runs as faas: like the other unprivileged compute leaves
+# (node_join.yml), the key is root:faas 0440.
+- name: gatewayd_internal_service — install realtimed's live client leaf
+  ansible.builtin.copy:
+    content: "{{ item.content | b64decode }}"
+    dest: "/etc/faas/tls/realtimed/{{ item.item }}"
+    owner: root
+    group: faas
+    mode: "{{ '0440' if item.item.endswith('.key') else '0444' }}"
+  loop: "{{ faas_realtime_live_tls_staged.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item }}"
+  no_log: true
+  when: (faas_box_role | default('single-box')) != 'single-box'
+  notify: restart faas-realtimed
+
+- name: gatewayd_internal_service — let realtimed read its live client leaf
+  ansible.builtin.file:
+    path: "/etc/faas/tls/realtimed/{{ item.name }}"
+    state: file
+    owner: root
+    group: faas
+    mode: "{{ item.mode }}"
+  loop:
+    - { name: livequeryd-client.key, mode: "0440" }
+    - { name: livequeryd-client.crt, mode: "0444" }
+  when: (faas_box_role | default('single-box')) == 'single-box'

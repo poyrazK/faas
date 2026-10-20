@@ -1,4 +1,4 @@
-// adr: 1198
+// adr: 20261016100929
 package apidserver_test
 
 // A signal-mode operation binding turns verified provider events into

@@ -534,6 +534,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// replaces a valid provider-specific boot policy (for example ens4 on
 	// GCP), cutting every guest off from DNS and the public internet.
 	hostPolicy := runtimeHostPolicy(cfg.ComputeNode, parsedBridge, len(serviceProxyCAPEM) > 0)
+	hostPolicy.PublicForwarding = cfg.NativeProcessRecovery
 	netns.SwapActiveHostPolicy(hostPolicy)
 	log.Info("vmmd: runtime host policy configured",
 		"public_iface", hostPolicy.PublicIface,
@@ -1061,6 +1062,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		defer func() { _ = failureReports.Close() }()
 	}
 	mgr.WithAppAdmissionGuard(managedPostgresAdmissionGuard(store))
+	if err := wireFinancialCompute(ctx, mgr, store, cfg.NativeProcessRecovery); err != nil {
+		return err
+	}
 	mgr.WithManagedPostgresDrainNodeID(nodeID)
 	// ADR-472: preserve restart-survivor identities before a prepared pool
 	// or any Wake RPC can consume the new allocator's initially free slots.

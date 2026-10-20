@@ -1,7 +1,8 @@
-package main
+package main_test
 
 import (
 	"context"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"testing"
 )
@@ -20,7 +21,7 @@ func TestBucketVersioningCLI(t *testing.T) {
 	for _, action := range []string{"status", "enable", "suspend"} {
 		t.Run(action, func(t *testing.T) {
 			c := &versioningCLIClient{}
-			j, err := runBucketVersioning(t.Context(), c, action, "demo", "bucket")
+			j, err := main.RunBucketVersioning(t.Context(), c, action, "demo", "bucket")
 			if err != nil || c.app != "demo" || c.bucket != "bucket" || action == "enable" && j.DesiredStatus != "Enabled" || action == "suspend" && j.DesiredStatus != "Suspended" {
 				t.Fatal(c, j, err)
 			}

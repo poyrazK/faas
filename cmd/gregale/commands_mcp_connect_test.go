@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"context"
@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -46,13 +47,13 @@ func TestMCPCatalogBrowserConnection(t *testing.T) {
 	defer platform.Close()
 	t.Setenv("FAAS_API", platform.URL)
 	t.Setenv("FAAS_TOKEN", "fp_test_guided")
-	client, err := authedClient()
+	client, err := main.AuthedClient()
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
-	out, err := runMCPBrowserConnection(ctx, client, "guided-app", api.MCPCatalogOAuthRequest{Role: "reader", Revision: "initial"}, func(target string) error {
+	out, err := main.RunMCPBrowserConnection(ctx, client, "guided-app", api.MCPCatalogOAuthRequest{Role: "reader", Revision: "initial"}, func(target string) error {
 		if !strings.HasPrefix(target, "https://provider.example/") {
 			t.Fatal("wrong browser target")
 		}
@@ -91,12 +92,12 @@ func TestMCPCatalogFixedCallbackPortConflict(t *testing.T) {
 	port := listener.Addr().(*net.TCPAddr).Port
 	t.Setenv("FAAS_API", "http://127.0.0.1:"+strconv.Itoa(port))
 	t.Setenv("FAAS_TOKEN", "fp_test_fixed")
-	client, e := authedClient()
+	client, e := main.AuthedClient()
 	if e != nil {
 		t.Fatal(e)
 	}
 	launched := false
-	if _, e = runMCPBrowserConnection(t.Context(), client, "fixed-app", api.MCPCatalogOAuthRequest{}, func(string) error { launched = true; return nil }, port); e == nil || launched {
+	if _, e = main.RunMCPBrowserConnection(t.Context(), client, "fixed-app", api.MCPCatalogOAuthRequest{}, func(string) error { launched = true; return nil }, port); e == nil || launched {
 		t.Fatal("occupied fixed callback port did not fail before browser launch")
 	}
 }
@@ -122,12 +123,12 @@ func TestMCPCatalogProviderCheckCLI(t *testing.T) {
 	defer platform.Close()
 	t.Setenv("FAAS_API", platform.URL)
 	t.Setenv("FAAS_TOKEN", "fp_test_provider")
-	oldOut, oldJSON := osStdout, jsonOutput
+	oldOut, oldJSON := (*main.OsStdout), (*main.JsonOutput)
 	var output strings.Builder
-	osStdout = &output
-	jsonOutput = false
-	t.Cleanup(func() { osStdout = oldOut; jsonOutput = oldJSON })
-	if code := cmdMCPCatalogMonitor([]string{"provider-check", "--app", "provider-app", "--role", "reader"}); code != 1 || calls != 2 || !strings.Contains(output.String(), "pkce: failed") {
+	(*main.OsStdout) = &output
+	(*main.JsonOutput) = false
+	t.Cleanup(func() { (*main.OsStdout) = oldOut; (*main.JsonOutput) = oldJSON })
+	if code := main.CmdMCPCatalogMonitor([]string{"provider-check", "--app", "provider-app", "--role", "reader"}); code != 1 || calls != 2 || !strings.Contains(output.String(), "pkce: failed") {
 		t.Fatalf("provider check result: %d requests=%d", code, calls)
 	}
 }
@@ -138,13 +139,13 @@ func TestMCPCatalogBrowserRejectsIncompatibleProvider(t *testing.T) {
 	defer platform.Close()
 	t.Setenv("FAAS_API", platform.URL)
 	t.Setenv("FAAS_TOKEN", "fp_test_unsupported")
-	client, e := authedClient()
+	client, e := main.AuthedClient()
 	if e != nil {
 		t.Fatal(e)
 	}
 	launched := false
-	_, e = runMCPBrowserConnection(t.Context(), client, "provider-app", api.MCPCatalogOAuthRequest{Role: "reader"}, func(string) error { launched = true; return nil })
-	if e == nil || launched || !strings.Contains(safeMCPConnectionError(e).Error(), "provider-check") {
+	_, e = main.RunMCPBrowserConnection(t.Context(), client, "provider-app", api.MCPCatalogOAuthRequest{Role: "reader"}, func(string) error { launched = true; return nil })
+	if e == nil || launched || !strings.Contains(main.SafeMCPConnectionError(e).Error(), "provider-check") {
 		t.Fatal("incompatible provider opened browser or lacked diagnosis")
 	}
 }

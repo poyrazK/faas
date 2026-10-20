@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"context"
@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -47,16 +48,16 @@ scenarios:
 	if err := os.WriteFile(path, []byte(data), 0600); err != nil {
 		t.Fatal(err)
 	}
-	manifest, _, err := readTestManifestDocument(path, func(string, testScenario) []string { return nil })
+	manifest, _, err := main.ReadTestManifestDocument(path, func(string, main.TestScenario) []string { return nil })
 	if err != nil {
 		t.Fatal(err)
 	}
 	scenario := manifest.Scenarios["cache-test"]
-	plan, err := scenario.Chaos.plan()
+	plan, err := scenario.Chaos.Plan()
 	if err != nil || plan.Rules[0].RateKiBPerSecond != 64 {
 		t.Fatalf("plan=%+v err=%v", plan, err)
 	}
-	value, err := expandTestSecretValue("${service.cache.host}:${service.cache.port}", nil, map[string]string{"cache": "dev-cache"}, nil, "run", "secret", map[string][]int{"cache": {6379}})
+	value, err := main.ExpandTestSecretValue("${service.cache.host}:${service.cache.port}", nil, map[string]string{"cache": "dev-cache"}, nil, "run", "secret", map[string][]int{"cache": {6379}})
 	if err != nil || value != "cache.svc.gregale:6379" {
 		t.Fatalf("address=%q err=%v", value, err)
 	}
@@ -64,18 +65,18 @@ scenarios:
 	if err := os.WriteFile(path, []byte(data), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := readTestManifestDocument(path, func(string, testScenario) []string { return nil }); err == nil {
+	if _, _, err := main.ReadTestManifestDocument(path, func(string, main.TestScenario) []string { return nil }); err == nil {
 		t.Fatal("undeclared fault port accepted")
 	}
 }
 
 func TestScenarioTCPRelayProvisioningKeepsPortsPrivateAndEgressBounded(t *testing.T) {
 	client := &scenarioTCPClient{}
-	spec := testService{Fixture: testTCPRelayFixture, TCPPorts: []int{15432}, Upstream: "db.example.com:5432"}
-	if err := validateScenarioTCPService(spec); err != nil {
+	spec := main.TestService{Fixture: main.TestTCPRelayFixture, TCPPorts: []int{15432}, Upstream: "db.example.com:5432"}
+	if err := main.ValidateScenarioTCPService(spec); err != nil {
 		t.Fatal(err)
 	}
-	if err := configureScenarioTCP(context.Background(), client, "relay", spec); err != nil {
+	if err := main.ConfigureScenarioTCP(context.Background(), client, "relay", spec); err != nil {
 		t.Fatal(err)
 	}
 	if client.request.Ports == nil || !(*client.request.Ports)[0].Internal {
@@ -84,18 +85,18 @@ func TestScenarioTCPRelayProvisioningKeepsPortsPrivateAndEgressBounded(t *testin
 	if client.request.EgressPorts == nil || len(*client.request.EgressPorts) != 1 || (*client.request.EgressPorts)[0] != 5432 {
 		t.Fatal("relay did not declare exactly its upstream port")
 	}
-	for _, bad := range []testService{
-		{Fixture: testTCPRelayFixture, TCPPorts: []int{443}, Upstream: "db.example.com:5432"},
-		{Fixture: testTCPRelayFixture, TCPPorts: []int{15432}, Upstream: "db.example.com:25"},
-		{Fixture: testTCPRelayFixture, TCPPorts: []int{15432}, Upstream: "user:pass@db.example.com:5432"},
-		{Fixture: testTCPRelayFixture, TCPPorts: []int{15432}, Upstream: "db.example.com:5432", Secrets: map[string]string{"GREGALE_TEST_TCP_UPSTREAM": "other:443"}},
+	for _, bad := range []main.TestService{
+		{Fixture: main.TestTCPRelayFixture, TCPPorts: []int{443}, Upstream: "db.example.com:5432"},
+		{Fixture: main.TestTCPRelayFixture, TCPPorts: []int{15432}, Upstream: "db.example.com:25"},
+		{Fixture: main.TestTCPRelayFixture, TCPPorts: []int{15432}, Upstream: "user:pass@db.example.com:5432"},
+		{Fixture: main.TestTCPRelayFixture, TCPPorts: []int{15432}, Upstream: "db.example.com:5432", Secrets: map[string]string{"GREGALE_TEST_TCP_UPSTREAM": "other:443"}},
 	} {
-		if err := validateScenarioTCPService(bad); err == nil {
+		if err := main.ValidateScenarioTCPService(bad); err == nil {
 			t.Fatalf("invalid relay accepted: %+v", bad)
 		}
 	}
-	for _, fixture := range []string{testTCPRelayFixture, testTCPEchoFixture} {
-		dir, cleanup, err := materializeScenarioFixture(fixture)
+	for _, fixture := range []string{main.TestTCPRelayFixture, main.TestTCPEchoFixture} {
+		dir, cleanup, err := main.MaterializeScenarioFixture(fixture)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -121,18 +122,18 @@ func TestScenarioTCPRelayByteTransport(t *testing.T) {
 func TestScenarioTCPWarmEvidenceDoesNotRequireHTTPRequest(t *testing.T) {
 	client := &testServiceHotFakeClient{wakes: []api.WakeTimelineJSONRow{{WakeID: "baseline"}}}
 	baseline := map[string]bool{"baseline": true}
-	evidence, err := verifyTestServiceTCPHot(context.Background(), client, "cache", baseline)
+	evidence, err := main.VerifyTestServiceTCPHot(context.Background(), client, "cache", baseline)
 	if err != nil || evidence.Transport != "tcp" || !evidence.NoNewWake || evidence.RequestID != "" {
 		t.Fatalf("TCP lifecycle evidence = %+v, %v", evidence, err)
 	}
 	client.wakes = append(client.wakes, api.WakeTimelineJSONRow{WakeID: "unexpected"})
-	if _, err := verifyTestServiceTCPHot(context.Background(), client, "cache", baseline); err == nil {
+	if _, err := main.VerifyTestServiceTCPHot(context.Background(), client, "cache", baseline); err == nil {
 		t.Fatal("new wake satisfied warm TCP profile")
 	}
 }
 
 func TestTCPResilienceExampleManifest(t *testing.T) {
-	manifest, _, err := readTestManifestDocument("../../examples/scenario-tcp/gregale-test.yaml", func(string, testScenario) []string { return nil })
+	manifest, _, err := main.ReadTestManifestDocument("../../examples/scenario-tcp/gregale-test.yaml", func(string, main.TestScenario) []string { return nil })
 	if err != nil {
 		t.Fatal(err)
 	}

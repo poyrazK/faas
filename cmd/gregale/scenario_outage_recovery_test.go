@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -12,23 +12,24 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"gopkg.in/yaml.v3"
 )
 
-func outageRecoveryFixture(t *testing.T, endpointOnly bool) (testScenario, *testLoadConfig, *testLoadEvidence) {
+func outageRecoveryFixture(t *testing.T, endpointOnly bool) (main.TestScenario, *main.TestLoadConfig, *main.TestLoadEvidence) {
 	t.Helper()
-	s := outageCyclesScenario()
+	s := main.OutageCyclesScenario()
 	limit := float64(25)
 	s.Steps[1].Load.OutageCycles.MaxRecoveryIncreasePercent = &limit
 	recovery := &s.Steps[1].Load.ChaosSchedule[2]
-	recovery.StepRecovery = map[string]*testLoadRecoverySpec{"load-probe": recovery.Recovery}
+	recovery.StepRecovery = map[string]*main.TestLoadRecoverySpec{"load-probe": recovery.Recovery}
 	if endpointOnly {
 		recovery.Recovery = nil
 	}
-	cfg := outageCyclesConfig(t, s)
-	report := outageCyclesReceipt(t, cfg)
+	cfg := main.OutageCyclesConfig(t, s)
+	report := main.OutageCyclesReceipt(t, cfg)
 	for i, p := range cfg.ChaosSchedule {
-		stamp := func(r *testLoadRecoveryEvidence, budget *testLoadRecoveryConfig) {
+		stamp := func(r *main.TestLoadRecoveryEvidence, budget *main.TestLoadRecoveryConfig) {
 			r.WithinMS = budget.Within.Milliseconds()
 			r.SustainMS = budget.Sustain.Milliseconds()
 			r.WindowMS = budget.Window.Milliseconds()
@@ -77,7 +78,7 @@ func TestOutageRecoveryDegradationThresholds(t *testing.T) {
 					value = 400
 				}
 				report.ChaosPhases[4].StepRecovery["load-probe"].RecoveryMS = &value
-				err := applyTestOutageCycles(report, cfg, nil)
+				err := main.ApplyTestOutageCycles(report, cfg, nil)
 				evidence := report.OutageCycles
 				if expected == 0 {
 					if err != nil || evidence.FirstRecoveryFailedCycle != 0 || evidence.Status != "passed" {
@@ -161,7 +162,7 @@ func TestOutageRecoveryDegradationRejectsUnconfirmedEvidence(t *testing.T) {
 			if kind == "interrupted" {
 				scheduleErr = context.Canceled
 			}
-			if err := applyTestOutageCycles(r, cfg, scheduleErr); err == nil || r.OutageCycles.FirstRecoveryFailedCycle != expected {
+			if err := main.ApplyTestOutageCycles(r, cfg, scheduleErr); err == nil || r.OutageCycles.FirstRecoveryFailedCycle != expected {
 				t.Fatal(r.OutageCycles, err)
 			}
 			check := r.OutageCycles.Cycles[expected-1].RecoveryChecks[1]
@@ -177,43 +178,43 @@ func TestOutageRecoveryDegradationRejectsUnconfirmedEvidence(t *testing.T) {
 
 func TestOutageRecoveryDegradationValidationReplayAndReports(t *testing.T) {
 	for _, value := range []float64{-1, 1001, math.NaN(), math.Inf(1)} {
-		s := outageCyclesScenario()
+		s := main.OutageCyclesScenario()
 		s.Steps[1].Load.OutageCycles.MaxRecoveryIncreasePercent = &value
-		if err := validateTestScenarioSteps(s, nil); err == nil {
+		if err := main.ValidateTestScenarioSteps(s, nil); err == nil {
 			t.Fatal("invalid tolerance accepted")
 		}
 	}
 	for _, value := range []float64{0, 1000} {
-		s := outageCyclesScenario()
+		s := main.OutageCyclesScenario()
 		s.Steps[1].Load.OutageCycles.MaxRecoveryIncreasePercent = &value
-		if err := validateTestScenarioSteps(s, nil); err != nil {
+		if err := main.ValidateTestScenarioSteps(s, nil); err != nil {
 			t.Fatal("valid tolerance rejected", err)
 		}
 	}
 	source, cfg, load := outageRecoveryFixture(t, false)
 	v := float64(126)
 	load.ChaosPhases[4].StepRecovery["load-probe"].RecoveryMS = &v
-	if err := applyTestOutageCycles(load, cfg, nil); err == nil {
+	if err := main.ApplyTestOutageCycles(load, cfg, nil); err == nil {
 		t.Fatal("regression accepted")
 	}
-	row := testRunReceipt{Scenario: "checkout", Engine: "real-vm", Profile: "cold", RunID: "recovery-regression", Status: "failed", Replay: newTestReplayManifest("checkout", "cold", "", source), Steps: []testScenarioStepEvidence{{Name: "load", Load: load}}}
-	replay, err := prepareTestReplay(&row, map[string]testScenario{"checkout": source}, ".")
+	row := main.TestRunReceipt{Scenario: "checkout", Engine: "real-vm", Profile: "cold", RunID: "recovery-regression", Status: "failed", Replay: main.NewTestReplayManifest("checkout", "cold", "", source), Steps: []main.TestScenarioStepEvidence{{Name: "load", Load: load}}}
+	replay, err := main.PrepareTestReplay(&row, map[string]main.TestScenario{"checkout": source}, ".")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if *replay.Scenario.Steps[1].Load.OutageCycles.MaxRecoveryIncreasePercent != 25 {
 		t.Fatal("replay lost tolerance")
 	}
-	changed := outageCyclesScenario()
+	changed := main.OutageCyclesScenario()
 	changed.Steps[1].Load.ChaosSchedule[2].StepRecovery = source.Steps[1].Load.ChaosSchedule[2].StepRecovery
 	other := float64(26)
 	changed.Steps[1].Load.OutageCycles.MaxRecoveryIncreasePercent = &other
-	if _, err := prepareTestReplay(&row, map[string]testScenario{"checkout": changed}, "."); err == nil {
+	if _, err := main.PrepareTestReplay(&row, map[string]main.TestScenario{"checkout": changed}, "."); err == nil {
 		t.Fatal("changed tolerance replay accepted")
 	}
 	dir := t.TempDir()
 	html := filepath.Join(dir, "recovery.html")
-	if err := writeTestHTMLReport(html, "", []testRunReceipt{row}); err != nil {
+	if err := main.WriteTestHTMLReport(html, "", []main.TestRunReceipt{row}); err != nil {
 		t.Fatal(err)
 	}
 	body, _ := os.ReadFile(html)
@@ -221,21 +222,21 @@ func TestOutageRecoveryDegradationValidationReplayAndReports(t *testing.T) {
 		t.Fatal("missing recovery comparison HTML")
 	}
 	var out bytes.Buffer
-	printTestLoadSummary(&out, load)
+	main.PrintTestLoadSummary(&out, load)
 	if !strings.Contains(out.String(), "load-probe recovery: 126.000ms; cycle 1 100.000ms, limit 125.000ms") {
 		t.Fatal("missing terminal recovery comparison")
 	}
 	path := filepath.Join(dir, "recovery.xml")
-	if err := writeTestJUnit(path, []testRunReceipt{row}); err != nil {
+	if err := main.WriteTestJUnit(path, []main.TestRunReceipt{row}); err != nil {
 		t.Fatal(err)
 	}
 	body, _ = os.ReadFile(path)
 	if !strings.Contains(string(body), "recovery_checks") || !strings.Contains(string(body), "first_recovery_failed_cycle") {
 		t.Fatal("missing JUnit comparison evidence")
 	}
-	old := outageCyclesScenario()
+	old := main.OutageCyclesScenario()
 	before, _ := json.Marshal(old)
-	expanded, err := expandTestOutageCycles(old)
+	expanded, err := main.ExpandTestOutageCycles(old)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -251,25 +252,25 @@ func TestOutageRecoveryDegradationValidationReplayAndReports(t *testing.T) {
 func TestOutageRecoveryDegradationStabilityAndFailureOrdering(t *testing.T) {
 	_, cfg, r := outageRecoveryFixture(t, false)
 	for i := 2; i < len(cfg.ChaosSchedule); i += 2 {
-		for name, budget := range map[string]*testLoadRecoveryConfig{"": cfg.ChaosSchedule[i].Recovery, "load-probe": cfg.ChaosSchedule[i].StepRecovery["load-probe"]} {
+		for name, budget := range map[string]*main.TestLoadRecoveryConfig{"": cfg.ChaosSchedule[i].Recovery, "load-probe": cfg.ChaosSchedule[i].StepRecovery["load-probe"]} {
 			budget.Stability = 100 * time.Millisecond
-			observed := testPhaseRecoveryEvidence(r.ChaosPhases[i])[name]
+			observed := main.TestPhaseRecoveryEvidence(r.ChaosPhases[i])[name]
 			start := *observed.RecoveryMS + float64(observed.SustainMS)
-			observed.Stability = &testLoadRecoveryStabilityEvidence{Passed: true, DurationMS: 100, ObservedMS: 100, WindowsChecked: 1, StartedMS: &start}
+			observed.Stability = &main.TestLoadRecoveryStabilityEvidence{Passed: true, DurationMS: 100, ObservedMS: 100, WindowsChecked: 1, StartedMS: &start}
 		}
 	}
-	if err := applyTestOutageCycles(r, cfg, nil); err != nil {
+	if err := main.ApplyTestOutageCycles(r, cfg, nil); err != nil {
 		t.Fatal("confirmed stable recovery rejected", err)
 	}
 	r.ChaosPhases[4].StepRecovery["load-probe"].Stability.StartedMS = nil
-	if err := applyTestOutageCycles(r, cfg, nil); err == nil || r.OutageCycles.FirstRecoveryFailedCycle != 2 {
+	if err := main.ApplyTestOutageCycles(r, cfg, nil); err == nil || r.OutageCycles.FirstRecoveryFailedCycle != 2 {
 		t.Fatal("incomplete stability accepted", err)
 	}
 	_, cfg, r = outageRecoveryFixture(t, false)
-	r.ChaosPhases[3].Thresholds = []testLoadThresholdEvidence{{Passed: false}}
+	r.ChaosPhases[3].Thresholds = []main.TestLoadThresholdEvidence{{Passed: false}}
 	v := float64(130)
 	r.ChaosPhases[6].StepRecovery["load-probe"].RecoveryMS = &v
-	if err := applyTestOutageCycles(r, cfg, nil); err == nil || r.OutageCycles.FirstFailedCycle != 2 || r.OutageCycles.FirstRecoveryFailedCycle != 3 {
+	if err := main.ApplyTestOutageCycles(r, cfg, nil); err == nil || r.OutageCycles.FirstFailedCycle != 2 || r.OutageCycles.FirstRecoveryFailedCycle != 3 {
 		t.Fatal("unrelated SLO hid recovery regression", err)
 	}
 }
@@ -282,7 +283,7 @@ func TestOutageRecoveryDegradationOfflineCLI(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	body, err := yaml.Marshal(testManifest{Version: 1, Scenarios: map[string]testScenario{"checkout": source}})
+	body, err := yaml.Marshal(main.TestManifest{Version: 1, Scenarios: map[string]main.TestScenario{"checkout": source}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -290,7 +291,7 @@ func TestOutageRecoveryDegradationOfflineCLI(t *testing.T) {
 	if err := os.WriteFile(manifest, body, 0600); err != nil {
 		t.Fatal(err)
 	}
-	scenarios, _, err := readTestManifestForScenario(manifest, "checkout", nil)
+	scenarios, _, err := main.ReadTestManifestForScenario(manifest, "checkout", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -298,16 +299,16 @@ func TestOutageRecoveryDegradationOfflineCLI(t *testing.T) {
 	if *normalized.Steps[1].Load.OutageCycles.MaxRecoveryIncreasePercent != 25 {
 		t.Fatal("YAML tolerance lost")
 	}
-	row := testRunReceipt{Scenario: "checkout", Engine: "real-vm", Profile: "cold", RunID: "cycle-recovery-cli", Status: "failed", Replay: newTestReplayManifest("checkout", "cold", "", normalized)}
+	row := main.TestRunReceipt{Scenario: "checkout", Engine: "real-vm", Profile: "cold", RunID: "cycle-recovery-cli", Status: "failed", Replay: main.NewTestReplayManifest("checkout", "cold", "", normalized)}
 	report := filepath.Join(dir, "failed.json")
-	if err := writeTestReport(report, []testRunReceipt{row}); err != nil {
+	if err := main.WriteTestReport(report, []main.TestRunReceipt{row}); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("FAAS_TOKEN", "")
-	if cmdTest([]string{"--manifest", manifest, "--scenario", "checkout", "--validate"}) != 0 {
+	if main.CmdTest([]string{"--manifest", manifest, "--scenario", "checkout", "--validate"}) != 0 {
 		t.Fatal("offline recovery tolerance validation failed")
 	}
-	if cmdTestReplay([]string{"--manifest", manifest, "--from", report, "--run-id", row.RunID, "--validate"}) != 0 {
+	if main.CmdTestReplay([]string{"--manifest", manifest, "--from", report, "--run-id", row.RunID, "--validate"}) != 0 {
 		t.Fatal("offline recovery tolerance replay failed")
 	}
 }

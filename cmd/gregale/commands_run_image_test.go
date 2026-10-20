@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -12,6 +12,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -27,7 +28,7 @@ func TestRunImageRequestedOnlyBeforeTerminator(t *testing.T) {
 		"after separator": {[]string{"--runtime", "node24", "--", "--image"}, false},
 	}
 	for name, tc := range cases {
-		if got := runImageRequested(tc.args); got != tc.want {
+		if got := main.RunImageRequested(tc.args); got != tc.want {
 			t.Errorf("%s: runImageRequested(%q) = %v, want %v", name, tc.args, got, tc.want)
 		}
 	}
@@ -49,19 +50,19 @@ func TestParseImageRunArgsFollowsDockerSemantics(t *testing.T) {
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			opts, ok := parseImageRunArgs(tc.args)
-			req := opts.request
+			opts, ok := main.ParseImageRunArgs(tc.args)
+			req := (*opts.Request())
 			if !ok || req.Image != "alpine" || !reflect.DeepEqual(req.Entrypoint, tc.entrypoint) ||
 				!reflect.DeepEqual(req.Args, tc.cmd) || !reflect.DeepEqual(req.Env, tc.env) || req.TimeoutSec != tc.timeoutSec {
 				t.Fatalf("parse(%q) = %+v, %v", tc.args, req, ok)
 			}
 		})
 	}
-	_, _, restore := swapIO(t)
+	_, _, restore := main.SwapIO(t)
 	defer restore()
 	// A bare image argument and `-e KEY` are valid since ADR-1790.
 	for _, bad := range [][]string{{}, {"--image", "alpine", "-e", "=x"}, {"--image", "alpine", "--timeout", "1500ms"}} {
-		if _, ok := parseImageRunArgs(bad); ok {
+		if _, ok := main.ParseImageRunArgs(bad); ok {
 			t.Errorf("parse(%q) accepted", bad)
 		}
 	}
@@ -152,9 +153,9 @@ func TestCmdRunImagePullsThenPrintsOutputAndExitCode(t *testing.T) {
 			defer srv.Close()
 			t.Setenv("FAAS_API", srv.URL)
 			t.Setenv("FAAS_TOKEN", "test-token")
-			out, readErr, restore := swapIO(t)
+			out, readErr, restore := main.SwapIO(t)
 			defer restore()
-			if got := cmdRunImage([]string{"--image", "alpine", "--pull", "always", "sh", "-c", "exit 3"}); got != 3 {
+			if got := main.CmdRunImage([]string{"--image", "alpine", "--pull", "always", "sh", "-c", "exit 3"}); got != 3 {
 				t.Fatalf("exit = %d, want the task's exit code 3", got)
 			}
 			stderr := readErr()
@@ -187,8 +188,8 @@ func TestParseImageRunArgsInteractiveFlags(t *testing.T) {
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			opts, ok := parseImageRunArgs(tc.args)
-			req := opts.request
+			opts, ok := main.ParseImageRunArgs(tc.args)
+			req := (*opts.Request())
 			var cmd []string
 			if req.Args != nil {
 				cmd = *req.Args
@@ -199,24 +200,24 @@ func TestParseImageRunArgsInteractiveFlags(t *testing.T) {
 		})
 	}
 
-	_, _, restore := swapIO(t)
+	_, _, restore := main.SwapIO(t)
 	defer restore()
 	for name, bad := range map[string][]string{
 		"tty without interactive": {"-t", "--image", "alpine"},
 		"interactive detached":    {"-i", "--detach", "--image", "alpine"},
 		"interactive -d":          {"-it", "-d", "--image", "alpine"},
 	} {
-		if _, ok := parseImageRunArgs(bad); ok {
+		if _, ok := main.ParseImageRunArgs(bad); ok {
 			t.Errorf("%s: parse(%q) accepted", name, bad)
 		}
 	}
-	previous := jsonOutput
-	jsonOutput = true
-	defer func() { jsonOutput = previous }()
-	if _, ok := parseImageRunArgs([]string{"-i", "--image", "alpine"}); ok {
+	previous := (*main.JsonOutput)
+	(*main.JsonOutput) = true
+	defer func() { (*main.JsonOutput) = previous }()
+	if _, ok := main.ParseImageRunArgs([]string{"-i", "--image", "alpine"}); ok {
 		t.Error("interactive with --json accepted")
 	}
-	if _, ok := parseImageRunArgs([]string{"--image", "alpine"}); !ok {
+	if _, ok := main.ParseImageRunArgs([]string{"--image", "alpine"}); !ok {
 		t.Error("--json without interactive rejected")
 	}
 }
@@ -310,13 +311,13 @@ func TestRunInteractiveImageRelaysSessionAndExitCode(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "test-token")
-	out, readErr, restore := swapIO(t)
+	out, readErr, restore := main.SwapIO(t)
 	defer restore()
-	oldIn := osStdin
-	osStdin = strings.NewReader("echo hi\n")
-	defer func() { osStdin = oldIn }()
+	oldIn := (*main.OsStdin)
+	(*main.OsStdin) = strings.NewReader("echo hi\n")
+	defer func() { (*main.OsStdin) = oldIn }()
 
-	if got := cmdRunImage([]string{"-it", "--image", "alpine", "sh"}); got != 7 {
+	if got := main.CmdRunImage([]string{"-it", "--image", "alpine", "sh"}); got != 7 {
 		t.Fatalf("exit = %d, want the command's exit code 7 (stderr %q)", got, readErr())
 	}
 	fake.mu.Lock()
@@ -355,13 +356,13 @@ func TestRunInteractiveImageCancelsWhenItCannotAttach(t *testing.T) {
 			defer srv.Close()
 			t.Setenv("FAAS_API", srv.URL)
 			t.Setenv("FAAS_TOKEN", "test-token")
-			_, readErr, restore := swapIO(t)
+			_, readErr, restore := main.SwapIO(t)
 			defer restore()
-			oldIn := osStdin
-			osStdin = strings.NewReader("")
-			defer func() { osStdin = oldIn }()
+			oldIn := (*main.OsStdin)
+			(*main.OsStdin) = strings.NewReader("")
+			defer func() { (*main.OsStdin) = oldIn }()
 
-			if got := cmdRunImage([]string{"-i", "--image", "alpine", "sh"}); got == 0 {
+			if got := main.CmdRunImage([]string{"-i", "--image", "alpine", "sh"}); got == 0 {
 				t.Fatal("exit = 0 for a run that never attached")
 			}
 			fake.mu.Lock()
@@ -378,11 +379,11 @@ func TestRunInteractiveImageCancelsWhenItCannotAttach(t *testing.T) {
 
 // adr: 1163
 func TestSplitJobLogFollow(t *testing.T) {
-	rest, follow := splitJobLogFollow([]string{"nightly", "latest", "0", "-f"})
+	rest, follow := main.SplitJobLogFollow([]string{"nightly", "latest", "0", "-f"})
 	if !follow || !reflect.DeepEqual(rest, []string{"nightly", "latest", "0"}) {
 		t.Fatalf("split = %q, %v", rest, follow)
 	}
-	if _, follow := splitJobLogFollow([]string{"nightly", "--max-bytes", "10"}); follow {
+	if _, follow := main.SplitJobLogFollow([]string{"nightly", "--max-bytes", "10"}); follow {
 		t.Fatal("follow set without the flag")
 	}
 }
@@ -400,7 +401,7 @@ func TestImageRunExitCodeMapsOutcomes(t *testing.T) {
 		"boot failure":    {api.JobTaskResponse{Status: "failed"}, 1},
 	}
 	for name, tc := range cases {
-		if got := imageRunExitCode(tc.task); got != tc.want {
+		if got := main.ImageRunExitCode(tc.task); got != tc.want {
 			t.Errorf("%s: exit = %d, want %d", name, got, tc.want)
 		}
 	}

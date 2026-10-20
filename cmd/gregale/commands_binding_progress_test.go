@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/bindingrun"
 )
@@ -133,7 +134,7 @@ func TestBindingProgressCLI(t *testing.T) {
 						args = []string{"projects", "environments", "release-sets", "verification-runs", "resume", f.Graph.Project, f.Graph.Environment, id}
 					}
 					args = append(args, "--json", "--progress", mode, "--status-read-retries", "1", "--poll-interval", "1ms")
-					code, out, stderr := captureBindingCLI(t, server.URL, args...)
+					code, out, stderr := main.CaptureBindingCLI(t, server.URL, args...)
 					want := 0
 					if stop {
 						want = 1
@@ -192,7 +193,7 @@ func TestBindingProgressCLI(t *testing.T) {
 						}
 					}
 					if stop {
-						var recovery bindingRecoverySummary
+						var recovery main.BindingRecoverySummary
 						if err := json.Unmarshal(result["recovery"], &recovery); err != nil {
 							t.Fatal(err)
 						}
@@ -209,18 +210,18 @@ func TestBindingProgressCLI(t *testing.T) {
 }
 
 func TestBindingProgressDeduplicatesAndRetainsObservations(t *testing.T) {
-	oldErr, oldJSON := osStderr, jsonOutput
-	defer func() { osStderr, jsonOutput = oldErr, oldJSON }()
+	oldErr, oldJSON := (*main.OsStderr), (*main.JsonOutput)
+	defer func() { (*main.OsStderr), (*main.JsonOutput) = oldErr, oldJSON }()
 	var output bytes.Buffer
-	osStderr = &output
-	jsonOutput = false
-	view := newBindingProgress(context.Background(), "receipt", "api", "", "")
+	(*main.OsStderr) = &output
+	(*main.JsonOutput) = false
+	view := main.NewBindingProgress(context.Background(), "receipt", "api", "", "")
 	q := &api.BindingVerificationQualification{CheckedAt: time.Now(), Conditions: []api.BindingVerificationQualificationCondition{{App: "api", Code: "runtime_updating", Name: "escape\n\x1b", Scope: "production"}}}
 	p := bindingrun.Progress{RunID: "receipt", Step: -1, Status: "waiting_for_qualification", Qualification: q}
-	_ = view.observe(p)
+	_ = view.Observe(p)
 	first := output.String()
 	q.CheckedAt = q.CheckedAt.Add(time.Second)
-	_ = view.observe(p)
+	_ = view.Observe(p)
 	if output.String() != first {
 		t.Fatal("observation clock alone repeated progress")
 	}
@@ -228,13 +229,13 @@ func TestBindingProgressDeduplicatesAndRetainsObservations(t *testing.T) {
 		t.Fatalf("unsafe selector: %q", first)
 	}
 	q.Conditions[0].Code = "runtime_stale"
-	_ = view.observe(p)
+	_ = view.Observe(p)
 	if output.String() == first {
 		t.Fatal("changed condition was suppressed")
 	}
-	_ = view.observe(bindingrun.Progress{RunID: "receipt", Step: -1, Status: "pending"})
+	_ = view.Observe(bindingrun.Progress{RunID: "receipt", Step: -1, Status: "pending"})
 	q.Conditions[0].Code = "mutated"
-	if view.recovery().LastQualification.Conditions[0].Code != "runtime_stale" {
+	if view.Recovery().LastQualification.Conditions[0].Code != "runtime_stale" {
 		t.Fatal("last waiting observation was not detached")
 	}
 }
@@ -248,7 +249,7 @@ func TestBindingProgressFlagsRequireExecution(t *testing.T) {
 		{"projects", "environments", "release-sets", "verify", "project", "production", "--file", "missing.json", "--progress", "ndjson"},
 		{"bindings", "verification-runs", "resume", "api", "11111111-1111-4111-8111-111111111111", "--progress", "invalid"},
 	} {
-		code, _, _ := captureBindingCLI(t, "http://127.0.0.1:1", args...)
+		code, _, _ := main.CaptureBindingCLI(t, "http://127.0.0.1:1", args...)
 		if code != 1 {
 			t.Fatalf("invalid progress flags accepted: %v (%d)", args, code)
 		}
@@ -259,36 +260,36 @@ type brokenBindingProgressWriter struct{}
 
 func (brokenBindingProgressWriter) Write([]byte) (int, error) { return 0, io.ErrClosedPipe }
 func TestBindingProgressOutputIsBestEffort(t *testing.T) {
-	oldErr, oldJSON := osStderr, jsonOutput
-	defer func() { osStderr, jsonOutput = oldErr, oldJSON }()
-	osStderr = brokenBindingProgressWriter{}
-	jsonOutput = false
+	oldErr, oldJSON := (*main.OsStderr), (*main.JsonOutput)
+	defer func() { (*main.OsStderr), (*main.JsonOutput) = oldErr, oldJSON }()
+	(*main.OsStderr) = brokenBindingProgressWriter{}
+	(*main.JsonOutput) = false
 	for _, mode := range []string{"plain", "ndjson", "off"} {
-		view := newBindingProgress(withBindingProgress(t.Context(), mode), "receipt", "api", "", "")
-		if err := view.observe(bindingrun.Progress{RunID: "receipt", Step: -1, Status: "reconciling", Operation: "completion"}); err != nil {
+		view := main.NewBindingProgress(main.WithBindingProgress(t.Context(), mode), "receipt", "api", "", "")
+		if err := view.Observe(bindingrun.Progress{RunID: "receipt", Step: -1, Status: "reconciling", Operation: "completion"}); err != nil {
 			t.Fatal(err)
 		}
-		_ = view.observe(bindingrun.Progress{RunID: "receipt", Step: -1, Status: "retrying", RetryAttempt: 1})
-		if view.recovery().LastOperation != "completion" {
+		_ = view.Observe(bindingrun.Progress{RunID: "receipt", Step: -1, Status: "retrying", RetryAttempt: 1})
+		if view.Recovery().LastOperation != "completion" {
 			t.Fatal("retry lost the operation being reconciled")
 		}
 	}
 }
 func TestBindingProgressHumanDefaultsAndStructuredStop(t *testing.T) {
-	oldErr, oldOut, oldJSON := osStderr, osStdout, jsonOutput
-	defer func() { osStderr, osStdout, jsonOutput = oldErr, oldOut, oldJSON }()
+	oldErr, oldOut, oldJSON := (*main.OsStderr), (*main.OsStdout), (*main.JsonOutput)
+	defer func() { (*main.OsStderr), (*main.OsStdout), (*main.JsonOutput) = oldErr, oldOut, oldJSON }()
 	var output, stderr bytes.Buffer
-	osStdout, osStderr = &output, &stderr
-	jsonOutput = false
-	auto := newBindingProgress(t.Context(), "receipt", "api", "", "")
-	_ = auto.observe(bindingrun.Progress{RunID: "receipt", Step: -1, Status: "pending"})
+	(*main.OsStdout), (*main.OsStderr) = &output, &stderr
+	(*main.JsonOutput) = false
+	auto := main.NewBindingProgress(t.Context(), "receipt", "api", "", "")
+	_ = auto.Observe(bindingrun.Progress{RunID: "receipt", Step: -1, Status: "pending"})
 	if !strings.Contains(stderr.String(), "Verification run receipt: pending") {
 		t.Fatal("human default was silent")
 	}
 	stderr.Reset()
-	view := newBindingProgress(withBindingProgress(t.Context(), "ndjson"), "receipt", "api", "", "")
-	report := bindingPolicyVerificationReport{RunID: "receipt", App: "api", Status: "blocked", Error: "hidden raw transport payload", ErrorCode: "verification_timeout", Recovery: view.recovery()}
-	view.renderReport(report)
+	view := main.NewBindingProgress(main.WithBindingProgress(t.Context(), "ndjson"), "receipt", "api", "", "")
+	report := main.BindingPolicyVerificationReport{RunID: "receipt", App: "api", Status: "blocked", Error: "hidden raw transport payload", ErrorCode: "verification_timeout", Recovery: view.Recovery()}
+	view.RenderReport(report)
 	if strings.Contains(stderr.String(), "hidden") {
 		t.Fatal("raw error entered progress stream")
 	}
@@ -378,12 +379,12 @@ func TestBindingProgressTimeoutRetainsWaitAndCleanup(t *testing.T) {
 				args = []string{"projects", "environments", "release-sets", "verification-runs", "resume", f.Graph.Project, f.Graph.Environment, id}
 			}
 			args = append(args, "--json", "--progress", "ndjson", "--poll-interval", "20ms", "--wait-timeout", "120ms")
-			code, out, stderr := captureBindingCLI(t, server.URL, args...)
+			code, out, stderr := main.CaptureBindingCLI(t, server.URL, args...)
 			if code != 1 || cancels != 1 || completes < 1 {
 				t.Fatalf("code=%d cancels=%d completes=%d %s %s", code, cancels, completes, out, stderr)
 			}
 			var result struct {
-				Recovery *bindingRecoverySummary `json:"recovery"`
+				Recovery *main.BindingRecoverySummary `json:"recovery"`
 			}
 			if err := json.Unmarshal([]byte(out), &result); err != nil {
 				t.Fatal(err)
@@ -416,13 +417,13 @@ func TestBindingProgressTimeoutRetainsWaitAndCleanup(t *testing.T) {
 }
 
 func TestBindingProgressCreationAlwaysAnnouncesRecoveryIdentity(t *testing.T) {
-	oldErr, oldJSON := osStderr, jsonOutput
-	defer func() { osStderr, jsonOutput = oldErr, oldJSON }()
-	jsonOutput = true
+	oldErr, oldJSON := (*main.OsStderr), (*main.JsonOutput)
+	defer func() { (*main.OsStderr), (*main.JsonOutput) = oldErr, oldJSON }()
+	(*main.JsonOutput) = true
 	for _, mode := range []string{"auto", "off", "ndjson"} {
 		var out bytes.Buffer
-		osStderr = &out
-		announceBindingRun(withBindingProgress(t.Context(), mode), "receipt", "api", "", "")
+		(*main.OsStderr) = &out
+		main.AnnounceBindingRun(main.WithBindingProgress(t.Context(), mode), "receipt", "api", "", "")
 		if !strings.Contains(out.String(), "receipt") {
 			t.Fatal("lost pre-create recovery identity")
 		}

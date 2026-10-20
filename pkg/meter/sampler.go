@@ -528,6 +528,15 @@ func (s *Sampler) rollApps(ctx context.Context, observedAt, minute time.Time, ex
 	}
 	var out []RolledRow
 	for _, app := range apps {
+		compute, hasCompute := s.store.(state.FinancialComputeStore)
+		computeCovered := false
+		if hasCompute {
+			var err error
+			computeCovered, err = compute.FinancialComputeAppManaged(ctx, app.AccountID, app.ID)
+			if err != nil {
+				return nil, err
+			}
+		}
 		if app.Status == state.AppDeleted && !exactResidency {
 			continue
 		}
@@ -592,8 +601,16 @@ func (s *Sampler) rollApps(ctx context.Context, observedAt, minute time.Time, ex
 			if exactResidency {
 				seconds = residentSeconds[ins.ID]
 			}
+			if computeCovered {
+				var err error
+				seconds, err = compute.FinancialComputeBillingSeconds(ctx, app.AccountID, app.ID, ins.ID, minute, seconds)
+				if err != nil {
+					return out, fmt.Errorf("meter: strict compute funding: %w", err)
+				}
+			}
 			// FROZEN is resident but unbilled (ADR-1151).
 			billableResident := state.State(ins.State).Billable()
+			billableResident = billableResident && seconds > 0
 			if exactResidency {
 				billableResident = seconds > 0
 			}
@@ -702,6 +719,18 @@ func (s *Sampler) rollApps(ctx context.Context, observedAt, minute time.Time, ex
 		// stay billable.
 		if !app.FloorServed() {
 			continue
+		}
+		// A strict app budget preempts the capacity floor. The retained book
+		// waives synthetic charges for its UTC month, including catch-up after
+		// policy deletion; only funded physical residency remains billable.
+		if computeCovered {
+			covered, err := compute.FinancialComputeFloorCovered(ctx, app.AccountID, app.ID, minute)
+			if err != nil {
+				return out, err
+			}
+			if covered {
+				continue
+			}
 		}
 		// PR-A (ADR-060, issue #515): per-app GB-h floor for
 		// ScalingPolicy.MinInstances. When the floor is set

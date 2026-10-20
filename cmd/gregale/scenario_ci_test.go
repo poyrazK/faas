@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"gopkg.in/yaml.v3"
 )
 
@@ -21,20 +22,20 @@ func TestCmdTestCIInitCreatesWorkflowAndStarterBudget(t *testing.T) {
 	if err := os.WriteFile("app/server.js", []byte("// local fixture\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	manifest := testManifest{
+	manifest := main.TestManifest{
 		Version: 1,
-		Suites: map[string]testSuite{
-			"smoke": {Scenarios: []testSuiteMember{{Scenario: "api", Engine: "local"}}},
+		Suites: map[string]main.TestSuite{
+			"smoke": {Scenarios: []main.TestSuiteMember{{Scenario: "api", Engine: "local"}}},
 		},
-		Scenarios: map[string]testScenario{
+		Scenarios: map[string]main.TestScenario{
 			"api": {
 				Project: "ci-api", Source: "./app",
-				Consumers: []testConsumer{{Name: "buyer"}},
-				Local: &testLocalAppSpec{
+				Consumers: []main.TestConsumer{{Name: "buyer"}},
+				Local: &main.TestLocalAppSpec{
 					Command:   []string{"node", "server.js"},
-					Readiness: testLocalReadinessSpec{Path: "/health", Status: 200},
+					Readiness: main.TestLocalReadinessSpec{Path: "/health", Status: 200},
 				},
-				Requests: []testHTTPRequest{{Name: "health", As: "buyer", Method: "GET", Path: "/health", Expect: testHTTPExpect{Status: 200}}},
+				Requests: []main.TestHTTPRequest{{Name: "health", As: "buyer", Method: "GET", Path: "/health", Expect: main.TestHTTPExpect{Status: 200}}},
 			},
 		},
 	}
@@ -46,11 +47,11 @@ func TestCmdTestCIInitCreatesWorkflowAndStarterBudget(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	oldOut, oldErr := osStdout, osStderr
+	oldOut, oldErr := (*main.OsStdout), (*main.OsStderr)
 	var stdout, stderr bytes.Buffer
-	osStdout, osStderr = &stdout, &stderr
-	t.Cleanup(func() { osStdout, osStderr = oldOut, oldErr })
-	if code := cmdTest([]string{"ci", "init", "--manifest", "gregale-test.yaml"}); code != 0 {
+	(*main.OsStdout), (*main.OsStderr) = &stdout, &stderr
+	t.Cleanup(func() { (*main.OsStdout), (*main.OsStderr) = oldOut, oldErr })
+	if code := main.CmdTest([]string{"ci", "init", "--manifest", "gregale-test.yaml"}); code != 0 {
 		t.Fatalf("test ci init exit = %d; stderr: %s", code, stderr.String())
 	}
 	workflowPath := filepath.Join(".github", "workflows", "gregale-test.yml")
@@ -73,16 +74,16 @@ func TestCmdTestCIInitCreatesWorkflowAndStarterBudget(t *testing.T) {
 			t.Errorf("generated workflow omitted %q:\n%s", expected, workflowBody)
 		}
 	}
-	if document["name"] != testCIWorkflowName {
-		t.Fatalf("workflow name = %v, want %q", document["name"], testCIWorkflowName)
+	if document["name"] != main.TestCIWorkflowName {
+		t.Fatalf("workflow name = %v, want %q", document["name"], main.TestCIWorkflowName)
 	}
 	for _, key := range []string{"on", "permissions", "jobs"} {
 		if _, ok := document[key]; !ok {
 			t.Errorf("generated workflow is missing %q", key)
 		}
 	}
-	budgetPath := filepath.Join(root, defaultTestCIBudget)
-	if _, err := readTestComparisonBudget(budgetPath); err != nil {
+	budgetPath := filepath.Join(root, main.DefaultTestCIBudget)
+	if _, err := main.ReadTestComparisonBudget(budgetPath); err != nil {
 		t.Fatalf("generated starter budget is invalid: %v", err)
 	}
 	if !strings.Contains(stdout.String(), "Created .github/workflows/gregale-test.yml") {
@@ -95,7 +96,7 @@ func TestCmdTestCIInitCreatesWorkflowAndStarterBudget(t *testing.T) {
 		t.Fatal(err)
 	}
 	stderr.Reset()
-	if code := cmdTest([]string{"ci", "init", "--manifest", "gregale-test.yaml"}); code == 0 {
+	if code := main.CmdTest([]string{"ci", "init", "--manifest", "gregale-test.yaml"}); code == 0 {
 		t.Fatal("test ci init overwrote an existing workflow")
 	}
 	workflowAfter, err := os.ReadFile(workflowPath)
@@ -116,7 +117,7 @@ func TestCmdTestCIInitCreatesWorkflowAndStarterBudget(t *testing.T) {
 	}
 	customWorkflow := filepath.Join(".github", "workflows", "custom-ci.yaml")
 	stderr.Reset()
-	if code := cmdTest([]string{"ci", "init", "--manifest", "gregale-test.yaml", "--workflow", customWorkflow, "--budget", "custom-budget.yaml", "--baseline-max-age-days", "10"}); code != 0 {
+	if code := main.CmdTest([]string{"ci", "init", "--manifest", "gregale-test.yaml", "--workflow", customWorkflow, "--budget", "custom-budget.yaml", "--baseline-max-age-days", "10"}); code != 0 {
 		t.Fatalf("test ci init with existing budget exit = %d; stderr: %s", code, stderr.String())
 	}
 	customBudgetAfter, err := os.ReadFile("custom-budget.yaml")
@@ -147,16 +148,16 @@ func TestCmdTestCIInitValidatesSelectionAndBranch(t *testing.T) {
 	if err := os.WriteFile("app/server.js", []byte("// fixture\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	manifest := testManifest{
+	manifest := main.TestManifest{
 		Version: 1,
-		Suites: map[string]testSuite{
-			"smoke": {Scenarios: []testSuiteMember{{Scenario: "api", Engine: "local"}}},
-			"other": {Scenarios: []testSuiteMember{{Scenario: "api", Engine: "local"}}},
+		Suites: map[string]main.TestSuite{
+			"smoke": {Scenarios: []main.TestSuiteMember{{Scenario: "api", Engine: "local"}}},
+			"other": {Scenarios: []main.TestSuiteMember{{Scenario: "api", Engine: "local"}}},
 		},
-		Scenarios: map[string]testScenario{
+		Scenarios: map[string]main.TestScenario{
 			"api": {
-				Project: "ci-api", Source: "./app", Local: &testLocalAppSpec{Command: []string{"node", "server.js"}},
-				Requests: []testHTTPRequest{{Name: "health", Method: "GET", Path: "/health", Expect: testHTTPExpect{Status: 200}}},
+				Project: "ci-api", Source: "./app", Local: &main.TestLocalAppSpec{Command: []string{"node", "server.js"}},
+				Requests: []main.TestHTTPRequest{{Name: "health", Method: "GET", Path: "/health", Expect: main.TestHTTPExpect{Status: 200}}},
 			},
 		},
 	}
@@ -167,23 +168,23 @@ func TestCmdTestCIInitValidatesSelectionAndBranch(t *testing.T) {
 	if err := os.WriteFile("gregale-test.yaml", body, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	oldErr := osStderr
+	oldErr := (*main.OsStderr)
 	var stderr bytes.Buffer
-	osStderr = &stderr
-	t.Cleanup(func() { osStderr = oldErr })
-	if code := cmdTest([]string{"ci", "init", "--manifest", "gregale-test.yaml"}); code == 0 || !strings.Contains(stderr.String(), "pass --suite NAME") {
+	(*main.OsStderr) = &stderr
+	t.Cleanup(func() { (*main.OsStderr) = oldErr })
+	if code := main.CmdTest([]string{"ci", "init", "--manifest", "gregale-test.yaml"}); code == 0 || !strings.Contains(stderr.String(), "pass --suite NAME") {
 		t.Fatalf("ambiguous suite selection exit = %d; stderr: %s", code, stderr.String())
 	}
-	if code := cmdTest([]string{"ci", "init", "--manifest", "gregale-test.yaml", "--suite", "smoke", "--branch", "main;touch-pwned"}); code == 0 || !strings.Contains(stderr.String(), "Invalid baseline branch") {
+	if code := main.CmdTest([]string{"ci", "init", "--manifest", "gregale-test.yaml", "--suite", "smoke", "--branch", "main;touch-pwned"}); code == 0 || !strings.Contains(stderr.String(), "Invalid baseline branch") {
 		t.Fatalf("invalid branch exit = %d; stderr: %s", code, stderr.String())
 	}
 	for _, value := range []string{"-1", "31"} {
 		stderr.Reset()
-		if code := cmdTest([]string{"ci", "init", "--manifest", "gregale-test.yaml", "--suite", "smoke", "--baseline-max-age-days=" + value}); code == 0 || !strings.Contains(stderr.String(), "Invalid baseline age") {
+		if code := main.CmdTest([]string{"ci", "init", "--manifest", "gregale-test.yaml", "--suite", "smoke", "--baseline-max-age-days=" + value}); code == 0 || !strings.Contains(stderr.String(), "Invalid baseline age") {
 			t.Errorf("invalid baseline age %q exit = %d; stderr: %s", value, code, stderr.String())
 		}
 	}
-	if _, err := os.Stat(filepath.Join(root, defaultTestCIWorkflow)); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(root, main.DefaultTestCIWorkflow)); !os.IsNotExist(err) {
 		t.Fatalf("invalid invocation generated a workflow: %v", err)
 	}
 }
@@ -197,12 +198,12 @@ func TestCmdTestCIInitCreatesManualRealVMProfileMatrix(t *testing.T) {
 	if err := os.WriteFile("app/handler.js", []byte("exports.handler = async () => ({statusCode: 200});\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	manifest := testManifest{
+	manifest := main.TestManifest{
 		Version: 1,
-		Suites: map[string]testSuite{
-			"acceptance": {Scenarios: []testSuiteMember{{Scenario: "api", Engine: "real-vm"}}},
+		Suites: map[string]main.TestSuite{
+			"acceptance": {Scenarios: []main.TestSuiteMember{{Scenario: "api", Engine: "real-vm"}}},
 		},
-		Scenarios: map[string]testScenario{
+		Scenarios: map[string]main.TestScenario{
 			"api": {
 				Project: "ci-vm", Source: "./app", Timeout: "2m",
 				Command: []string{"node", "test/assert.mjs"},
@@ -217,25 +218,25 @@ func TestCmdTestCIInitCreatesManualRealVMProfileMatrix(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	oldOut, oldErr := osStdout, osStderr
+	oldOut, oldErr := (*main.OsStdout), (*main.OsStderr)
 	var stdout, stderr bytes.Buffer
-	osStdout, osStderr = &stdout, &stderr
-	t.Cleanup(func() { osStdout, osStderr = oldOut, oldErr })
-	if code := cmdTest([]string{"ci", "init", "--manifest", "gregale-test.yaml", "--suite", "acceptance", "--engine", "real-vm", "--profiles", "cold,restored"}); code == 0 || !strings.Contains(stderr.String(), "requires --max-workload-minutes") {
+	(*main.OsStdout), (*main.OsStderr) = &stdout, &stderr
+	t.Cleanup(func() { (*main.OsStdout), (*main.OsStderr) = oldOut, oldErr })
+	if code := main.CmdTest([]string{"ci", "init", "--manifest", "gregale-test.yaml", "--suite", "acceptance", "--engine", "real-vm", "--profiles", "cold,restored"}); code == 0 || !strings.Contains(stderr.String(), "requires --max-workload-minutes") {
 		t.Fatalf("real-vm generator without a workload guard exit = %d; stderr: %s", code, stderr.String())
 	}
 	stderr.Reset()
-	if code := cmdTest([]string{"ci", "init", "--manifest", "gregale-test.yaml", "--suite", "acceptance", "--engine", "real-vm", "--profiles", "cold,restored", "--max-workload-minutes", "1"}); code == 0 || !strings.Contains(stderr.String(), "up to 2 workload-minutes") {
+	if code := main.CmdTest([]string{"ci", "init", "--manifest", "gregale-test.yaml", "--suite", "acceptance", "--engine", "real-vm", "--profiles", "cold,restored", "--max-workload-minutes", "1"}); code == 0 || !strings.Contains(stderr.String(), "up to 2 workload-minutes") {
 		t.Fatalf("real-vm generator below the estimated workload exit = %d; stderr: %s", code, stderr.String())
 	}
 	stderr.Reset()
 	vmArgs := []string{"ci", "init", "--manifest", "gregale-test.yaml", "--suite", "acceptance", "--engine", "real-vm", "--profiles", "cold,restored", "--max-workload-minutes", "10", "--baseline-max-age-days", "10"}
-	if code := cmdTest(vmArgs); code == 0 || !strings.Contains(stderr.String(), "--baseline-max-age-days") {
+	if code := main.CmdTest(vmArgs); code == 0 || !strings.Contains(stderr.String(), "--baseline-max-age-days") {
 		t.Fatalf("real-vm workflow accepted a baseline age option, exit = %d; stderr: %s", code, stderr.String())
 	}
 	stderr.Reset()
 	args := []string{"ci", "init", "--manifest", "gregale-test.yaml", "--suite", "acceptance", "--engine", "real-vm", "--profiles", "cold,restored", "--max-workload-minutes", "10", "--environment", "gregale-acceptance"}
-	if code := cmdTest(args); code != 0 {
+	if code := main.CmdTest(args); code != 0 {
 		t.Fatalf("real-vm test ci init exit = %d; stderr: %s", code, stderr.String())
 	}
 	workflowPath := filepath.Join(".github", "workflows", "gregale-test.yml")
@@ -264,8 +265,8 @@ func TestCmdTestCIInitCreatesManualRealVMProfileMatrix(t *testing.T) {
 	if _, ok := events["pull_request"]; ok {
 		t.Fatal("real-vm workflow should not expose its credentialed job to pull requests")
 	}
-	if document["name"] != testCIVMWorkflowName {
-		t.Fatalf("workflow name = %v, want %q", document["name"], testCIVMWorkflowName)
+	if document["name"] != main.TestCIVMWorkflowName {
+		t.Fatalf("workflow name = %v, want %q", document["name"], main.TestCIVMWorkflowName)
 	}
 	jobs, ok := document["jobs"].(map[string]any)
 	if !ok {
@@ -308,7 +309,7 @@ func TestCmdTestCIInitCreatesManualRealVMProfileMatrix(t *testing.T) {
 	if !ok || !strings.Contains(matrix["profile"].(string), "fromJSON") {
 		t.Fatalf("scenario profile matrix = %#v", strategy["matrix"])
 	}
-	if _, err := os.Stat(defaultTestCIBudget); !os.IsNotExist(err) {
+	if _, err := os.Stat(main.DefaultTestCIBudget); !os.IsNotExist(err) {
 		t.Fatalf("real-vm workflow unexpectedly created a comparison budget: %v", err)
 	}
 	if !strings.Contains(stdout.String(), "manually dispatched") || !strings.Contains(stdout.String(), "10 minutes per profile job") {
@@ -317,25 +318,25 @@ func TestCmdTestCIInitCreatesManualRealVMProfileMatrix(t *testing.T) {
 }
 
 func TestParseTestCIProfilesAndEnvironment(t *testing.T) {
-	profiles, err := parseTestCIProfiles("warm,restored")
+	profiles, err := main.ParseTestCIProfiles("warm,restored")
 	if err != nil || strings.Join(profiles, ",") != "warm,restored" {
 		t.Fatalf("parsed profiles = %v (%v)", profiles, err)
 	}
-	if profiles, err := parseTestCIProfiles("all"); err != nil || strings.Join(profiles, ",") != "warm,cold,restored" {
+	if profiles, err := main.ParseTestCIProfiles("all"); err != nil || strings.Join(profiles, ",") != "warm,cold,restored" {
 		t.Fatalf("all profiles = %v (%v)", profiles, err)
 	}
 	for _, invalid := range []string{"", "warm, warm", "warm,warm", "hot", "all,warm"} {
-		if _, err := parseTestCIProfiles(invalid); err == nil {
+		if _, err := main.ParseTestCIProfiles(invalid); err == nil {
 			t.Errorf("parseTestCIProfiles(%q) succeeded", invalid)
 		}
 	}
-	if !validTestCIEnvironment("gregale-acceptance.v1") || validTestCIEnvironment("../unsafe") || validTestCIEnvironment("") {
+	if !main.ValidTestCIEnvironment("gregale-acceptance.v1") || main.ValidTestCIEnvironment("../unsafe") || main.ValidTestCIEnvironment("") {
 		t.Fatal("GitHub environment name validation is incorrect")
 	}
 }
 
 func TestGeneratedTestCIRunCommandAddsLoadFlagAsAContinuation(t *testing.T) {
-	command := generatedTestCIRunCommand(true)
+	command := main.GeneratedTestCIRunCommand(true)
 	if !strings.HasSuffix(command, `--html "$RUNNER_TEMP/gregale-test-results.html" \
   --load`) {
 		t.Fatalf("load command does not end with a valid continued flag:\n%s", command)
@@ -344,12 +345,12 @@ func TestGeneratedTestCIRunCommandAddsLoadFlagAsAContinuation(t *testing.T) {
 
 func TestGeneratedTestCICommandsAreValidBash(t *testing.T) {
 	for name, command := range map[string]string{
-		"run":           generatedTestCIRunCommand(false),
-		"run with load": generatedTestCIRunCommand(true),
-		"compare":       generatedTestCICompareCommand(),
-		"VM config":     generatedTestCIVMConfigCommand(),
-		"VM preflight":  generatedTestCIVMRunCommand(true),
-		"VM run":        generatedTestCIVMRunCommand(false),
+		"run":           main.GeneratedTestCIRunCommand(false),
+		"run with load": main.GeneratedTestCIRunCommand(true),
+		"compare":       main.GeneratedTestCICompareCommand(),
+		"VM config":     main.GeneratedTestCIVMConfigCommand(),
+		"VM preflight":  main.GeneratedTestCIVMRunCommand(true),
+		"VM run":        main.GeneratedTestCIVMRunCommand(false),
 	} {
 		t.Run(name, func(t *testing.T) {
 			cmd := exec.Command("bash", "-n")
@@ -500,7 +501,7 @@ esac
 	for key, value := range envValues {
 		env = append(env, key+"="+value)
 	}
-	cmd := exec.Command("bash", "-c", generatedTestCICompareCommand())
+	cmd := exec.Command("bash", "-c", main.GeneratedTestCICompareCommand())
 	cmd.Env = env
 	outputBytes, err := cmd.CombinedOutput()
 	code := 0

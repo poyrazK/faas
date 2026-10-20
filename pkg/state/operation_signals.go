@@ -35,7 +35,7 @@ type OperationSignalInput struct {
 	SignalID    string
 	Event       string
 	Payload     json.RawMessage
-	// Source records who delivered the signal (ADR-1286); empty means the
+	// Source records who delivered the signal (ADR-20261017100853); empty means the
 	// account. It is history, not identity: a repeat from another source is
 	// still the same signal.
 	Source string

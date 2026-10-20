@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/cmd/gregale/templates"
 )
 
@@ -22,11 +23,11 @@ func TestDurableEntityScaffoldAndDoctorRequirePreparation(t *testing.T) {
 			t.Fatalf("missing scaffold file %s: %v", name, err)
 		}
 	}
-	check, present := doctorCheckDurableEntities(root)
+	check, present := main.DoctorCheckDurableEntities(root)
 	if !present || check.Status != "error" || check.Code != "durable_entity_project_invalid" {
 		t.Fatalf("unprepared scaffold should fail source checks: %+v", check)
 	}
-	if check, present := doctorCheckDurableEntities(t.TempDir()); present {
+	if check, present := main.DoctorCheckDurableEntities(t.TempDir()); present {
 		t.Fatalf("ordinary source received entity checks: %+v", check)
 	}
 }
@@ -34,7 +35,7 @@ func TestDurableEntityScaffoldAndDoctorRequirePreparation(t *testing.T) {
 func TestDurableEntityInitDoesNotDeployAnUnpreparedSDK(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	destination := filepath.Join(t.TempDir(), "feature")
-	if code := runCmdInit("durable-entity-node", destination, true, "example", &stdout, &stderr); code != 1 {
+	if code := main.RunCmdInit("durable-entity-node", destination, true, "example", &stdout, &stderr); code != 1 {
 		t.Fatalf("unprepared --deploy accepted: %d", code)
 	}
 	if _, err := os.Stat(destination); !os.IsNotExist(err) {
@@ -55,7 +56,7 @@ func TestDurableEntityDeploymentCannotBypassPreparation(t *testing.T) {
 	defer server.Close()
 	t.Setenv("FAAS_API", server.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_entity_source_guard")
-	if code := run([]string{"deploy", "--name", "entities", "--path", root, "--source", "worktree", "--no-doctor"}); code == 0 {
+	if code := main.Run([]string{"deploy", "--name", "entities", "--path", root, "--source", "worktree", "--no-doctor"}); code == 0 {
 		t.Fatal("unprepared project deployed")
 	}
 	if requests.Load() != 0 {

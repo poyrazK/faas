@@ -1,23 +1,24 @@
-package main
+package main_test
 
 import (
 	"context"
 	"encoding/json"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func TestPreviewExecutionWorkflowIsReadOnlyAndShowsAdmissionState(t *testing.T) {
-	plan := executionWorkflowPlan{
+	plan := main.ExecutionWorkflowPlan{
 		WorkflowID: "preview-read-only", Version: "v1", MaxParallelSteps: 4,
-		Steps: []executionWorkflowStep{
+		Steps: []main.ExecutionWorkflowStep{
 			{Label: "root", Request: api.CreateExecutionRequest{Runtime: api.ExecutionRuntimeNode22, Source: "return null"}},
 			{Label: "dependent", DependsOn: []string{"root"}, Request: api.CreateExecutionRequest{Runtime: api.ExecutionRuntimeNode22, Source: "return null"}},
 			{Label: "independent", Request: api.CreateExecutionRequest{Runtime: api.ExecutionRuntimeNode22, Source: "return null"}},
 		},
 	}
-	_, labels, err := executionWorkflowPlanID(plan)
+	_, labels, err := main.ExecutionWorkflowPlanID(plan)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -27,7 +28,7 @@ func TestPreviewExecutionWorkflowIsReadOnlyAndShowsAdmissionState(t *testing.T) 
 		ID: "run-existing", WorkflowID: plan.WorkflowID, StepLabel: labels["root"], Status: api.ExecutionStatusRunning,
 	}
 
-	preview, err := previewExecutionWorkflow(context.Background(), client, plan)
+	preview, err := main.PreviewExecutionWorkflow(context.Background(), client, plan)
 	if err != nil {
 		t.Fatalf("previewExecutionWorkflow: %v", err)
 	}
@@ -49,14 +50,14 @@ func TestPreviewExecutionWorkflowIsReadOnlyAndShowsAdmissionState(t *testing.T) 
 }
 
 func TestPreviewExecutionWorkflowReportsContractFailureAndFailFastState(t *testing.T) {
-	plan := executionWorkflowPlan{
+	plan := main.ExecutionWorkflowPlan{
 		WorkflowID: "preview-contract", Version: "v1",
-		Steps: []executionWorkflowStep{
+		Steps: []main.ExecutionWorkflowStep{
 			{Label: "producer", ResultSchema: json.RawMessage(`{"type":"string"}`), Request: api.CreateExecutionRequest{Runtime: api.ExecutionRuntimeNode22, Source: "return null"}},
 			{Label: "consumer", DependsOn: []string{"producer"}, Request: api.CreateExecutionRequest{Runtime: api.ExecutionRuntimeNode22, Source: "return null"}},
 		},
 	}
-	_, labels, err := executionWorkflowPlanID(plan)
+	_, labels, err := main.ExecutionWorkflowPlanID(plan)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +67,7 @@ func TestPreviewExecutionWorkflowReportsContractFailureAndFailFastState(t *testi
 		Status: api.ExecutionStatusSucceeded, Result: json.RawMessage(`{"ok":true}`),
 	}
 
-	preview, err := previewExecutionWorkflow(context.Background(), client, plan)
+	preview, err := main.PreviewExecutionWorkflow(context.Background(), client, plan)
 	if err != nil {
 		t.Fatalf("previewExecutionWorkflow: %v", err)
 	}
@@ -80,16 +81,16 @@ func TestPreviewExecutionWorkflowReportsContractFailureAndFailFastState(t *testi
 }
 
 func TestPreviewExecutionWorkflowShowsBlockedAndPartialResultSteps(t *testing.T) {
-	plan := executionWorkflowPlan{
-		WorkflowID: "preview-partial", Version: "v1", FailurePolicy: executionWorkflowFailurePolicyContinueIndependent,
-		Steps: []executionWorkflowStep{
+	plan := main.ExecutionWorkflowPlan{
+		WorkflowID: "preview-partial", Version: "v1", FailurePolicy: main.ExecutionWorkflowFailurePolicyContinueIndependent,
+		Steps: []main.ExecutionWorkflowStep{
 			{Label: "failed", Request: api.CreateExecutionRequest{Runtime: api.ExecutionRuntimeNode22, Source: "return null"}},
 			{Label: "succeeded", Request: api.CreateExecutionRequest{Runtime: api.ExecutionRuntimeNode22, Source: "return null"}},
 			{Label: "blocked", DependsOn: []string{"failed"}, Request: api.CreateExecutionRequest{Runtime: api.ExecutionRuntimeNode22, Source: "return null"}},
 			{Label: "aggregate", DependsOn: []string{"failed", "succeeded"}, IncludeDependencyResults: true, Request: api.CreateExecutionRequest{Runtime: api.ExecutionRuntimeNode22, Source: "return null"}},
 		},
 	}
-	_, labels, err := executionWorkflowPlanID(plan)
+	_, labels, err := main.ExecutionWorkflowPlanID(plan)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +102,7 @@ func TestPreviewExecutionWorkflowShowsBlockedAndPartialResultSteps(t *testing.T)
 		ID: "run-succeeded", WorkflowID: plan.WorkflowID, StepLabel: labels["succeeded"], Status: api.ExecutionStatusSucceeded,
 	}
 
-	preview, err := previewExecutionWorkflow(context.Background(), client, plan)
+	preview, err := main.PreviewExecutionWorkflow(context.Background(), client, plan)
 	if err != nil {
 		t.Fatalf("previewExecutionWorkflow: %v", err)
 	}
@@ -115,11 +116,11 @@ func TestPreviewExecutionWorkflowShowsBlockedAndPartialResultSteps(t *testing.T)
 }
 
 func TestPreviewExecutionWorkflowRunsTheSamePendingStepPreflight(t *testing.T) {
-	plan := executionWorkflowPlan{WorkflowID: "preview-preflight", Version: "v1", Steps: []executionWorkflowStep{
+	plan := main.ExecutionWorkflowPlan{WorkflowID: "preview-preflight", Version: "v1", Steps: []main.ExecutionWorkflowStep{
 		{Label: "invalid", Request: api.CreateExecutionRequest{Runtime: "unsupported", Source: "return null"}},
 	}}
 	client := newExecutionWorkflowFakeClient()
-	if _, err := previewExecutionWorkflow(context.Background(), client, plan); err == nil {
+	if _, err := main.PreviewExecutionWorkflow(context.Background(), client, plan); err == nil {
 		t.Fatal("preview accepted a step with an unsupported runtime")
 	}
 	if len(client.requests) != 0 || client.getCalls != 0 {

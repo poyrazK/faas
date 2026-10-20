@@ -96,3 +96,25 @@ printf '200\t0.010\t0.001\t0.005'
 		})
 	}
 }
+
+// A rollout without a healthy baseline cannot tell an outage it caused from
+// one it walked into, so the observer refuses to run one (ADR-202610171900).
+func TestRolloutAvailabilityRefusesAnEmptyBaseline(t *testing.T) {
+	for _, count := range []string{"0", "-1", "three"} {
+		t.Run(count, func(t *testing.T) {
+			temp := t.TempDir()
+			marker := filepath.Join(temp, "mutating-command-started")
+			script := filepath.Join("..", "..", "scripts", "ci", "observe_rollout_availability.sh")
+			command := exec.Command("bash", script, "https://api.example/readyz", "--", "touch", marker)
+			command.Env = append(os.Environ(), "RUNNER_TEMP="+temp, "ROLLOUT_BASELINE_SAMPLE_COUNT="+count)
+			output, err := command.CombinedOutput()
+			var exitErr *exec.ExitError
+			if !errors.As(err, &exitErr) || exitErr.ExitCode() != 2 {
+				t.Fatalf("observer with baseline %q: err=%v, want exit 2\n%s", count, err, output)
+			}
+			if _, err := os.Stat(marker); !os.IsNotExist(err) {
+				t.Fatalf("observer ran the rollout command without a baseline: %v", err)
+			}
+		})
+	}
+}

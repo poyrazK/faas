@@ -1,10 +1,11 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/simpleapp"
 )
@@ -22,7 +23,7 @@ func TestNewDeployReceiptIncludesSimpleAppPlan(t *testing.T) {
 		DurableState:    simpleapp.DurableStateExternal,
 	}
 
-	receipt := newDeployReceipt(api.DeploymentResponse{ID: "dep-1"}, nil, "https://demo.apps.gregale.dev", "", plan)
+	receipt := main.NewDeployReceipt(api.DeploymentResponse{ID: "dep-1"}, nil, "https://demo.apps.gregale.dev", "", plan)
 	if receipt.SimpleAppPlan == nil {
 		t.Fatal("simple_app_plan is nil")
 	}
@@ -46,7 +47,7 @@ func TestNewDeployReceiptIncludesSimpleAppPlan(t *testing.T) {
 }
 
 func TestNewDeployReceiptOmitsSimpleAppPlanByDefault(t *testing.T) {
-	body, err := json.Marshal(newDeployReceipt(api.DeploymentResponse{ID: "dep-1"}, nil, "", ""))
+	body, err := json.Marshal(main.NewDeployReceipt(api.DeploymentResponse{ID: "dep-1"}, nil, "", ""))
 	if err != nil {
 		t.Fatalf("marshal receipt: %v", err)
 	}

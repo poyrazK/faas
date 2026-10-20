@@ -1,5 +1,5 @@
 -- migration-compat: expand
--- ADR-1285: schedd reports Operation outcomes of the last fifteen minutes
+-- ADR-20261016123221: schedd reports Operation outcomes of the last fifteen minutes
 -- from their events. Outcome events are a small share of the table, so a
 -- partial index on their time keeps that read off a full scan. Built
 -- concurrently so customer_operation_events keeps taking writes; replacing an

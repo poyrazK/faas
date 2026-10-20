@@ -3,7 +3,6 @@ from datetime import UTC, datetime
 from urllib.error import URLError
 
 import pytest
-
 from faas_sdk.issues import IssueReporter
 
 

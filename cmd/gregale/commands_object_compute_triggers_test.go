@@ -1,10 +1,11 @@
-package main
+package main_test
 
 import (
 	"context"
 	"errors"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -28,9 +29,9 @@ func (f *fakeManifestComputeTriggers) ReconcileObjectStorageComputeTriggers(_ co
 
 // adr: 1036
 func TestManifestComputeTriggers(t *testing.T) {
-	previous := jsonOutput
-	jsonOutput = true
-	t.Cleanup(func() { jsonOutput = previous })
+	previous := (*main.JsonOutput)
+	(*main.JsonOutput) = true
+	t.Cleanup(func() { (*main.JsonOutput) = previous })
 	for _, tc := range []struct {
 		name, decl string
 		specified  bool
@@ -40,9 +41,9 @@ func TestManifestComputeTriggers(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
-			writeManifest(t, dir, "buckets:\n  - bucket: assets\n    app: worker\n    scope: production\n"+tc.decl)
+			main.WriteManifest(t, dir, "buckets:\n  - bucket: assets\n    app: worker\n    scope: production\n"+tc.decl)
 			f := &fakeManifestComputeTriggers{fakeManifestObjectStorageClient: &fakeManifestObjectStorageClient{buckets: api.ObjectBucketList{Items: []api.ObjectBucket{{ID: "bucket", Name: "assets", Scope: "production", State: "ready"}}}, bindings: map[string]api.ObjectStorageComputeBindingList{"bucket": {Items: []api.ObjectStorageComputeBinding{{Prefix: "GREGALE_S3_ASSETS", Scope: "production"}}}}}}
-			if err := deployManifestObjectStorageBindings(t.Context(), f, "worker", dir); err != nil {
+			if err := main.DeployManifestObjectStorageBindings(t.Context(), f, "worker", dir); err != nil {
 				t.Fatal(err)
 			}
 			if (f.reads > 0) != tc.specified || len(f.fakeManifestObjectStorageClient.requests) != 0 {
@@ -53,7 +54,7 @@ func TestManifestComputeTriggers(t *testing.T) {
 			}
 			if tc.specified {
 				f.err = errors.New("revision conflict")
-				if deployManifestObjectStorageBindings(t.Context(), f, "worker", dir) == nil {
+				if main.DeployManifestObjectStorageBindings(t.Context(), f, "worker", dir) == nil {
 					t.Fatal("conflict ignored")
 				}
 			}
@@ -67,13 +68,13 @@ func TestManifestComputeTriggersPreflight(t *testing.T) {
 		if duplicate {
 			manifest += "  - bucket: bucket\n    prefix: SECOND\n    triggers: []\n"
 		}
-		writeManifest(t, dir, manifest)
+		main.WriteManifest(t, dir, manifest)
 		base := &fakeManifestObjectStorageClient{buckets: api.ObjectBucketList{Items: []api.ObjectBucket{{ID: "bucket", Name: "assets", Scope: "default", State: "ready"}}}}
-		var f manifestObjectStorageClient = base
+		var f main.ManifestObjectStorageClient = base
 		if duplicate {
 			f = &fakeManifestComputeTriggers{fakeManifestObjectStorageClient: base}
 		}
-		if deployManifestObjectStorageBindings(context.Background(), f, "worker", dir) == nil || len(base.requests) != 0 {
+		if main.DeployManifestObjectStorageBindings(context.Background(), f, "worker", dir) == nil || len(base.requests) != 0 {
 			t.Fatal("unsafe preflight", duplicate)
 		}
 	}

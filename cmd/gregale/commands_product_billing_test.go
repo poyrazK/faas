@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -53,12 +54,12 @@ func TestProductBillingCommandContract(t *testing.T) {
 			}))
 			defer srv.Close()
 			args := append([]string{"statements", tc.verb, "--app", "exports", "--tenant", tenant, "--period", "2026-09"}, tc.flags...)
-			c, err := parseProductCommand(args)
+			c, err := main.ParseProductCommand(args)
 			if err != nil {
 				t.Fatal(err)
 			}
 			for range 2 {
-				if _, err := runProductCommand(t.Context(), NewClient(srv.URL, "owner"), c); err != nil {
+				if _, err := main.RunProductCommand(t.Context(), main.NewClient(srv.URL, "owner"), c); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -69,7 +70,7 @@ func TestProductBillingCommandContract(t *testing.T) {
 	}
 	for _, flags := range [][]string{{"finalize"}, {"credit", "--id", credit, "--operation", operation, "--amount-millicents", "-1", "--reason", "credit"}, {"credit", "--operation", operation, "--amount-millicents", "5000", "--reason", "credit"}, {"waive", "--operation", operation}, {"handoff", "--document", document}} {
 		args := append([]string{"statements", flags[0], "--app", "exports", "--tenant", tenant}, flags[1:]...)
-		if _, err := parseProductCommand(args); err == nil {
+		if _, err := main.ParseProductCommand(args); err == nil {
 			t.Errorf("accepted unsafe billing command: %q", args)
 		}
 	}
@@ -84,11 +85,11 @@ func TestProductBillingCustomerCLI(t *testing.T) {
 	}))
 	defer srv.Close()
 	for _, verb := range []string{"review", "list"} {
-		c, err := parseProductCommand([]string{"statements", verb, "--app", "exports", "--self", "--period", "2026-09"})
+		c, err := main.ParseProductCommand([]string{"statements", verb, "--app", "exports", "--self", "--period", "2026-09"})
 		if err != nil {
 			t.Fatal(err)
 		}
-		value, err := runProductCommand(t.Context(), NewClient(srv.URL, "customer"), c)
+		value, err := main.RunProductCommand(t.Context(), main.NewClient(srv.URL, "customer"), c)
 		if err != nil {
 			t.Fatal(err)
 		}

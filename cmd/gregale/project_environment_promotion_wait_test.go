@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -11,31 +11,32 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func TestProjectsEnvironmentPromoteWaitReturnsSingleJSONReceipt(t *testing.T) {
-	resetJSONOut(t)
-	oldOut, oldErr := osStdout, osStderr
+	main.ResetJSONOut(t)
+	oldOut, oldErr := (*main.OsStdout), (*main.OsStderr)
 	var out, errOut bytes.Buffer
-	osStdout, osStderr = &out, &errOut
-	jsonOutput = true
-	t.Cleanup(func() { osStdout, osStderr, jsonOutput = oldOut, oldErr, false })
+	(*main.OsStdout), (*main.OsStderr) = &out, &errOut
+	(*main.JsonOutput) = true
+	t.Cleanup(func() { (*main.OsStdout), (*main.OsStderr), (*main.JsonOutput) = oldOut, oldErr, false })
 
-	oldInterval := projectEnvironmentPromotionPollInterval
-	projectEnvironmentPromotionPollInterval = time.Millisecond
-	t.Cleanup(func() { projectEnvironmentPromotionPollInterval = oldInterval })
+	oldInterval := (*main.ProjectEnvironmentPromotionPollInterval)
+	(*main.ProjectEnvironmentPromotionPollInterval) = time.Millisecond
+	t.Cleanup(func() { (*main.ProjectEnvironmentPromotionPollInterval) = oldInterval })
 
 	statusCalls := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/promotion-preview"):
-			writeJSONTest(w, api.ProjectEnvironmentPromotionPreviewResponse{
+			main.WriteJSONTest(w, api.ProjectEnvironmentPromotionPreviewResponse{
 				ProjectSlug: "shop", FromEnvironment: "staging", ToEnvironment: "production",
 				CanPromote: true, PromotionHash: "hash", PromotionToken: "token",
 			})
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/promote"):
-			writeJSONTest(w, api.ProjectEnvironmentPromotionResponse{
+			main.WriteJSONTest(w, api.ProjectEnvironmentPromotionResponse{
 				PromotionID: "prom-1", ProjectSlug: "shop", FromEnvironment: "staging",
 				ToEnvironment: "production", PromotionHash: "hash",
 				Workloads: []api.ProjectEnvironmentPromotionWorkloadResponse{{WorkloadSlug: "api", Status: "promoted"}},
@@ -48,7 +49,7 @@ func TestProjectsEnvironmentPromoteWaitReturnsSingleJSONReceipt(t *testing.T) {
 				status = "succeeded"
 				verification = "verified"
 			}
-			writeJSONTest(w, api.ProjectEnvironmentPromotionStatusResponse{
+			main.WriteJSONTest(w, api.ProjectEnvironmentPromotionStatusResponse{
 				PromotionID: "prom-1", ProjectSlug: "shop", FromEnvironment: "staging",
 				ToEnvironment: "production", PromotionHash: "hash", Status: status,
 				VerificationStatus: verification,
@@ -64,13 +65,13 @@ func TestProjectsEnvironmentPromoteWaitReturnsSingleJSONReceipt(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
-	if code := cmdProjectsEnvironmentPromote([]string{"shop", "--from", "staging", "--to", "production", "--yes", "--wait", "--progress", "--timeout", "1"}); code != 0 {
+	if code := main.CmdProjectsEnvironmentPromote([]string{"shop", "--from", "staging", "--to", "production", "--yes", "--wait", "--progress", "--timeout", "1"}); code != 0 {
 		t.Fatalf("exit = %d, want 0; stderr=%q", code, errOut.String())
 	}
 	if statusCalls != 2 {
 		t.Fatalf("status calls = %d, want 2", statusCalls)
 	}
-	var receipt projectEnvironmentPromotionWaitReceipt
+	var receipt main.ProjectEnvironmentPromotionWaitReceipt
 	decoder := json.NewDecoder(&out)
 	if err := decoder.Decode(&receipt); err != nil {
 		t.Fatalf("decode receipt: %v; output=%q", err, out.String())
@@ -88,19 +89,19 @@ func TestProjectsEnvironmentPromoteWaitReturnsSingleJSONReceipt(t *testing.T) {
 }
 
 func TestWaitForProjectEnvironmentPromotionTimesOutWithLastStatus(t *testing.T) {
-	oldInterval := projectEnvironmentPromotionPollInterval
-	projectEnvironmentPromotionPollInterval = time.Millisecond
-	t.Cleanup(func() { projectEnvironmentPromotionPollInterval = oldInterval })
+	oldInterval := (*main.ProjectEnvironmentPromotionPollInterval)
+	(*main.ProjectEnvironmentPromotionPollInterval) = time.Millisecond
+	t.Cleanup(func() { (*main.ProjectEnvironmentPromotionPollInterval) = oldInterval })
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		writeJSONTest(w, api.ProjectEnvironmentPromotionStatusResponse{
+		main.WriteJSONTest(w, api.ProjectEnvironmentPromotionStatusResponse{
 			PromotionID: "prom-1", ProjectSlug: "shop", ToEnvironment: "production", Status: "running",
 		})
 	}))
 	defer srv.Close()
 
-	status, timedOut, err := waitForProjectEnvironmentPromotion(
-		context.Background(), NewClient(srv.URL, "test-token"), "shop", "production", "prom-1",
+	status, timedOut, err := main.WaitForProjectEnvironmentPromotion(
+		context.Background(), main.NewClient(srv.URL, "test-token"), "shop", "production", "prom-1",
 		10*time.Millisecond, api.ProjectEnvironmentPromotionStatusResponse{PromotionID: "prom-1", ProjectSlug: "shop", ToEnvironment: "production", Status: "running"}, nil,
 	)
 	if err != nil {

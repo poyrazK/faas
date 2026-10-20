@@ -1,4 +1,4 @@
-package sched
+package sched_test
 
 import (
 	"context"
@@ -37,7 +37,7 @@ func TestManagedPostgresDrainPlanQueuesIntentWithoutPhysicalEffects(t *testing.T
 			OwnerNodeID: f.OwnerNodeID, OwnerRevision: f.OwnerRevision, FencedAt: f.FencedAt},
 		State: state.ManagedPostgresDrainPlanDraining, InventoryCount: 1, Pending: 1,
 	}}
-	e.store = s
+	(*e.XStore()) = s
 	plan, err := e.PlanManagedPostgresCutoverDrain(t.Context(), f.CutoverID)
 	if err != nil || plan.Frame.ID != f.ID || s.reservations != 1 || v.calls != 0 || v.destroys != 0 || base.drain.Proof != nil {
 		t.Fatal("plan reservation performed a physical stop", plan, err)
@@ -48,12 +48,12 @@ func TestManagedPostgresDrainPlanQueuesIntentWithoutPhysicalEffects(t *testing.T
 	// A lost native reply remains ordinary pending receipt recovery. Recovery
 	// never re-reserves the plan or replaces its immutable membership.
 	v.err = errors.New("native reply lost")
-	if _, err := e.RecoverManagedPostgresDrains(t.Context(), f.OwnerNodeID, "", 1); err == nil || base.drain.Proof != nil || e.ledger.ResidentRAM() == 0 {
+	if _, err := e.RecoverManagedPostgresDrains(t.Context(), f.OwnerNodeID, "", 1); err == nil || base.drain.Proof != nil || (*e.XLedger()).ResidentRAM() == 0 {
 		t.Fatal("lost reply completed the plan", err)
 	}
 	v.err = nil
 	page, err := e.RecoverManagedPostgresDrains(t.Context(), f.OwnerNodeID, "", 1)
-	if err != nil || page.Retired != 1 || base.drain.Proof == nil || s.reservations != 1 || e.ledger.ResidentRAM() != 0 {
+	if err != nil || page.Retired != 1 || base.drain.Proof == nil || s.reservations != 1 || (*e.XLedger()).ResidentRAM() != 0 {
 		t.Fatal("existing receipt recovery did not converge", page, err)
 	}
 }
@@ -64,7 +64,7 @@ func TestManagedPostgresDrainPlanRequiresStoreAndNativeCapability(t *testing.T) 
 		t.Fatal("store without plan support accepted", err)
 	}
 	s := &drainPlanTestStore{drainTestStore: base}
-	e.store, e.vmm = s, v.drainLegacyVMM
+	(*e.XStore()), (*e.Vmm()) = s, v.drainLegacyVMM
 	if _, err := e.PlanManagedPostgresCutoverDrain(t.Context(), base.drain.Frame.CutoverID); !errors.Is(err, state.ErrConflict) || s.reservations != 0 || v.destroys != 0 {
 		t.Fatal("legacy host accepted a drain plan", err)
 	}

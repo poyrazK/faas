@@ -94,6 +94,17 @@ func (s *PgStore) AdmitPlatformTenantRequest(ctx context.Context, accountID, ten
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return PlatformTenantBudgetDecision{}, fmt.Errorf("read platform tenant overdue hold: %w", err)
 	}
+	// So is a tenant capped this month by its spend cap (ADR-20261019100331).
+	month, _ := creditMonth(time.Now())
+	spendCap, err := scanPlatformTenantSpendCap(tx.QueryRow(ctx, `select `+platformTenantSpendCapCols+`
+		from platform_tenant_spend_caps
+		where account_id = $1::uuid and platform_tenant_id = $2::uuid and capped and month_start = $3`, accountID, tenantID, month))
+	if err == nil {
+		return spendCapTenantDecision(spendCap), nil
+	}
+	if !errors.Is(err, ErrNotFound) {
+		return PlatformTenantBudgetDecision{}, fmt.Errorf("read platform tenant spend cap: %w", err)
+	}
 	// This single tenant row is the cross-replica serialization point. Policy
 	// changes lock the same row; we never fall back to a process-local bucket.
 	row, err := scanPlatformTenantBudget(tx.QueryRow(ctx, `select `+platformTenantBudgetCols+`

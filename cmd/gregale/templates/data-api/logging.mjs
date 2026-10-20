@@ -5,7 +5,8 @@ const trace = Symbol('requestTrace')
 const codes = new Set(['origin_not_allowed', 'not_found', 'invalid_path', 'method_not_allowed',
   'token_required', 'token_invalid', 'read_only_identity', 'serving_contract_unavailable', 'data_api_unavailable',
   'data_api_refresh_paused', 'data_api_refresh_unavailable', 'data_api_overloaded', 'data_api_rate_limited', 'data_api_concurrency_limited',
-  'request_too_large', 'response_too_large', 'query_timeout', 'request_deadline_exceeded', 'schema_document_too_large', 'schema_contract_mismatch', 'upstream_error'])
+  'request_too_large', 'response_too_large', 'query_timeout', 'request_deadline_exceeded', 'schema_document_too_large', 'schema_contract_mismatch', 'upstream_error',
+  'public_read_not_allowed', 'public_rpc_requires_get', 'server_key_browser_forbidden', 'server_key_permission_denied', 'data_api_monthly_cap_reached'])
 
 function route(url) {
   if (url === '/healthz' || url === '/livez') return 'health'
@@ -46,7 +47,7 @@ export function traceRequest(req, res, emit = writeLog) {
     const result = completed ? outcome(state.code, status) : 'aborted'
     const record = { time: new Date().toISOString(), level: completed && status < 400 ? 'info' : 'warn',
       event: 'data_api_request', request_id: state.id, method, route: category, status,
-      duration_ms: Math.round((finishedAt - started) * 1000) / 1000, outcome: result, code: state.code, ...(state.admission ? { admission: state.admission } : {}), ...(state.deadline ? { deadline: state.deadline } : {}), ...(state.responseLimit ? { response_limit: state.responseLimit } : {}), ...(state.rateLimit ? { rate_limit: state.rateLimit } : {}), ...(state.concurrencyLimit ? { concurrency_limit: state.concurrencyLimit } : {}), ...(timings ? { timings } : {}), ...(state.databaseTimings ? { database_timings: state.databaseTimings } : {}), ...(state.query ?? {}) }
+      duration_ms: Math.round((finishedAt - started) * 1000) / 1000, outcome: result, code: state.code, ...(state.access ? { access: state.access } : {}), ...(state.admission ? { admission: state.admission } : {}), ...(state.deadline ? { deadline: state.deadline } : {}), ...(state.responseLimit ? { response_limit: state.responseLimit } : {}), ...(state.rateLimit ? { rate_limit: state.rateLimit } : {}), ...(state.concurrencyLimit ? { concurrency_limit: state.concurrencyLimit } : {}), ...(timings ? { timings } : {}), ...(state.databaseTimings ? { database_timings: state.databaseTimings } : {}), ...(state.query ?? {}) }
     try { emit(record) } catch { /* Logging failure must not change the response. */ }
   }
   res.once('finish', () => finish(true))
@@ -55,6 +56,11 @@ export function traceRequest(req, res, emit = writeLog) {
 
 export function markRequest(res, code) {
   if (res[trace] && codes.has(code)) res[trace].code = code
+}
+
+// Access kind and server-key slot only: never subjects, client addresses or keys.
+export function markAccess(res, access) {
+  if (res[trace] && ['user', 'anonymous', 'server'].includes(access?.kind)) res[trace].access = { kind: access.kind, ...(['a', 'b'].includes(access.server_key_slot) ? { server_key_slot: access.server_key_slot, ...(access.server_key_restricted === true ? { server_key_restricted: true } : {}) } : {}) }
 }
 
 export function markAdmission(res, admission) {
@@ -91,7 +97,7 @@ export function markDatabaseTimings(res, timings) {
 export function requestID(res) { return res[trace]?.id }
 
 export function runtimeFailure(event) {
-  const allowed = ['data_api_configuration_invalid', 'data_api_postgrest_start_failed']
+  const allowed = ['data_api_configuration_invalid', 'data_api_postgrest_start_failed', 'data_api_public_read_unsafe', 'data_api_public_rpc_unsafe']
   try { writeLog({ time: new Date().toISOString(), level: 'error', event: allowed.includes(event) ? event : 'data_api_runtime_failed' }) } catch {}
 }
 

@@ -1,5 +1,5 @@
 // adr: 374
-package sched
+package sched_test
 
 import (
 	"context"
@@ -14,25 +14,26 @@ import (
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/exclusivework"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
 type workIdentityTestPoller struct {
-	deliveries []SourceRecord
+	deliveries []sched.SourceRecord
 	acks       []string
 	nacks      []string
 }
 
 func (p *workIdentityTestPoller) Kind() string { return "kafka" }
-func (p *workIdentityTestPoller) Poll(context.Context, sqlc.Trigger) PollResult {
+func (p *workIdentityTestPoller) Poll(context.Context, sqlc.Trigger) sched.PollResult {
 	if len(p.deliveries) == 0 {
-		return PollResult{Records: []SourceRecord{}}
+		return sched.PollResult{Records: []sched.SourceRecord{}}
 	}
 	record := p.deliveries[0]
 	p.deliveries = p.deliveries[1:]
-	return PollResult{Records: []SourceRecord{record}}
+	return sched.PollResult{Records: []sched.SourceRecord{record}}
 }
 func (p *workIdentityTestPoller) Ack(_ context.Context, _ sqlc.Trigger, ids []string) error {
 	p.acks = append(p.acks, ids...)
@@ -76,15 +77,15 @@ func TestBrokerWorkBindingDispatchAndRedelivery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	poller := &workIdentityTestPoller{deliveries: []SourceRecord{
+	poller := &workIdentityTestPoller{deliveries: []sched.SourceRecord{
 		{ItemIdentifier: "0-8-10", StableIdentifier: "orders/0/8", Payload: []byte(`{"order_id":"one"}`), ReceivedAt: time.Now()},
 		{ItemIdentifier: "0-8-15", StableIdentifier: "orders/0/8", Payload: []byte(`{"order_id":"one"}`), ReceivedAt: time.Now()},
 	}}
-	installPollerFactory(t, "kafka", func(sqlc.Trigger) (triggerSource, error) { return poller, nil })
+	sched.InstallPollerFactory(t, "kafka", func(sqlc.Trigger) (sched.TriggerSource, error) { return poller, nil })
 	posted := 0
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		posted++
-		var request triggerDispatchRequest
+		var request sched.TriggerDispatchRequest
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Errorf("gateway decode: %v", err)
 			w.WriteHeader(http.StatusBadRequest)
@@ -96,11 +97,11 @@ func TestBrokerWorkBindingDispatchAndRedelivery(t *testing.T) {
 		_, _ = fmt.Fprint(w, `{"results":[{"item_identifier":"orders/0/8","status":"succeeded"}]}`)
 	}))
 	defer gateway.Close()
-	loop := makeLoopForDLQ()
-	loop.gatewayHTTPClient = gateway.Client()
-	loop.gatewayBaseURL = gateway.URL
+	loop := sched.MakeLoopForDLQ()
+	(*loop.GatewayHTTPClient()) = gateway.Client()
+	(*loop.GatewayBaseURL()) = gateway.URL
 	for i := 0; i < 2; i++ {
-		if err := loop.dispatchOneTrigger(ctx, trigger, store, nil); err != nil {
+		if err := loop.DispatchOneTrigger(ctx, trigger, store, nil); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -152,14 +153,14 @@ func TestExclusiveBrokerTriggerAdmissionAndReplay(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	poller := &workIdentityTestPoller{deliveries: []SourceRecord{
+	poller := &workIdentityTestPoller{deliveries: []sched.SourceRecord{
 		{ItemIdentifier: "orders/0/101", StableIdentifier: "orders/0/42", Payload: []byte(`{"customer":"acme"}`)},
 		{ItemIdentifier: "orders/0/102", StableIdentifier: "orders/0/42", Payload: []byte(`{"customer":"acme"}`)},
 	}}
-	installPollerFactory(t, "kafka", func(sqlc.Trigger) (triggerSource, error) { return poller, nil })
-	loop := makeLoopForDLQ()
+	sched.InstallPollerFactory(t, "kafka", func(sqlc.Trigger) (sched.TriggerSource, error) { return poller, nil })
+	loop := sched.MakeLoopForDLQ()
 	for range 2 {
-		if err := loop.dispatchOneTrigger(ctx, trigger, store, nil); err != nil {
+		if err := loop.DispatchOneTrigger(ctx, trigger, store, nil); err != nil {
 			t.Fatal(err)
 		}
 	}
