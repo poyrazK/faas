@@ -825,8 +825,16 @@ groups:
           description: "networkd-dispatcher has emitted warning-or-higher journal entries for at least two minutes. Expected disappearing Gregale vh<slot> interfaces are filtered before journald, so remaining entries indicate a persistent interface, hook, or networkctl failure."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHostJournalPressure.md"
 
+      # A long-lived node's journal sits just under its 512 MiB bound by
+      # design, so usage alone fired forever once the journal filled (rc.282:
+      # 472 MiB holding 6.6 days). The alert now needs the bound to be cutting
+      # history short of five days (ADR-149 found four). A vmmd without the
+      # oldest-entry gauge falls back to the usage-only rule.
       - alert: FaasHostJournalNearLimit
-        expr: vmmd_journal_disk_usage_bytes > 419430400
+        expr: |
+          vmmd_journal_disk_usage_bytes > 419430400
+          unless on (job, instance)
+            (time() - vmmd_journal_oldest_entry_timestamp_seconds >= 432000)
         for: 10m
         labels:
           severity: warn
@@ -835,7 +843,7 @@ groups:
           public_status: internal
         annotations:
           summary: "Local journal exceeds 400 MiB on {{ $labels.node }}"
-          description: "The persistent and runtime journals have remained above 400 MiB for ten minutes, approaching Gregale's 512 MiB persistent-journal bound. Check noisy units and off-host shipping before rotation removes incident evidence."
+          description: "The persistent and runtime journals have remained above 400 MiB for ten minutes while holding less than five days of history, so Gregale's 512 MiB persistent-journal bound is rotating entries out before the seven-day retention. Check noisy units and off-host shipping before rotation removes incident evidence."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHostJournalPressure.md"
 
       - alert: FaasHostJournalGrowingFast
