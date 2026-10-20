@@ -105,8 +105,13 @@ jobs:
 
       - uses: actions/checkout@v7
         with:
+          # Main's history and the release tags, not every branch
+          # (scripts/ci/fetch_release_history.sh).
           ref: ${{ steps.verify.outputs.git_sha }}
-          fetch-depth: 0
+          filter: blob:none
+
+      - name: Fetch main's history and release tags
+        run: scripts/ci/fetch_release_history.sh
 
       - name: Set up SSH
         env:

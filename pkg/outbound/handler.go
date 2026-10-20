@@ -575,7 +575,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// each response is admitted with its own (ADR 20261019072722).
 		h.serveRealtime(w, r, &realtimeSession{h: h, integration: integration, appID: appID, metricID: metricIntegrationID,
 			metered: realtime == realtimeMetered, spec: spec, endUser: aiEndUser, tags: aiTags,
-			model: realtimeURLModel(r.URL.Query())}, upstreamReq)
+			model: realtimeURLModel(r.URL.Query()), live: livePath(integration.AIProvider, path)}, upstreamReq)
 		return
 	}
 	var resp *http.Response
