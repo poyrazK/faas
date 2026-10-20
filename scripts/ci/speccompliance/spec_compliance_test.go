@@ -107,8 +107,11 @@ const (
 // dashboard auth surface is now real auth, not a backstop fallback.
 var routeExclude = map[string]bool{
 	"GET /v1/apps/{slug}/operation-schedules":                        true, // ADR-20261018161833 Operation schedules; gated by FAAS_OPERATION_SCHEDULES_ACCOUNTS until prod-tested
+	"GET /v1/apps/{slug}/operations/{id}/children":                   true, // ADR-20261018183000 child Operations; gated by FAAS_OPERATION_CHILDREN_ACCOUNTS until prod-tested
 	"GET /v1/platform-tenant-self/customer-operation-schedules":      true, // ADR-20261018161833 Operation schedules; gated by FAAS_OPERATION_SCHEDULES_ACCOUNTS until prod-tested
 	"GET /v1/platform-tenant-self/customer-operation-schedules/{id}": true, // ADR-20261018161833 Operation schedules; gated by FAAS_OPERATION_SCHEDULES_ACCOUNTS until prod-tested
+	"GET /v1/platform-tenant-self/customer-operations/{id}/children": true, // ADR-20261018183000 child Operations; gated by FAAS_OPERATION_CHILDREN_ACCOUNTS until prod-tested
+	"GET /v1/runtime/operations/{id}/children":                       true, // ADR-20261018183000 child Operations; gated by FAAS_OPERATION_CHILDREN_ACCOUNTS until prod-tested
 	// Fixed-executor repair preview routes are documented in docs/data-repair.md;
 	// they are not part of the public SDK contract until native qualification.
 	"GET /v1/apps/{slug}/data-repair/review":                            true,
@@ -354,6 +357,7 @@ var routeExclude = map[string]bool{
 	"POST /v1/platform-tenant-self/customer-operation-schedules/{id}/cancel": true, // ADR-20261018161833 Operation schedules; gated by FAAS_OPERATION_SCHEDULES_ACCOUNTS until prod-tested
 	"POST /v1/platform-tenant-self/customer-operation-schedules/{id}/pause":  true, // ADR-20261018161833 Operation schedules; gated by FAAS_OPERATION_SCHEDULES_ACCOUNTS until prod-tested
 	"POST /v1/platform-tenant-self/customer-operation-schedules/{id}/resume": true, // ADR-20261018161833 Operation schedules; gated by FAAS_OPERATION_SCHEDULES_ACCOUNTS until prod-tested
+	"POST /v1/runtime/operations/{id}/children":                              true, // ADR-20261018183000 child Operations; gated by FAAS_OPERATION_CHILDREN_ACCOUNTS until prod-tested
 	// Issue #777 / ADR-091: operator observability backend.
 	// Mirror the operator-only exclusion across both this list
 	// AND cmd/sdk-coverage/main.go::routeExclude. The two lists

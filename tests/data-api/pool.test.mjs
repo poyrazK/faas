@@ -8,12 +8,25 @@ import { createRequire } from 'node:module'
 import { pathToFileURL } from 'node:url'
 
 const enabled = Boolean(process.env.DATA_API_TEST_DATABASE_URL && process.env.DATA_API_POSTGREST_BIN && process.env.DATA_API_RUNTIME_DIR)
-async function port() {
+async function probePort() {
   const server = net.createServer()
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
   const value = server.address().port
   await new Promise(resolve => server.close(resolve))
   return value
+}
+// A probe port is closed before it is used, so the OS can hand the same port
+// to the next probe; PostgREST then refuses an admin port equal to its server
+// port. Never return a port twice in one test file.
+const issuedPorts = new Set()
+async function port() {
+  for (;;) {
+    const value = await probePort()
+    if (!issuedPorts.has(value)) {
+      issuedPorts.add(value)
+      return value
+    }
+  }
 }
 async function until(check, timeout = 10000) {
   const deadline = performance.now() + timeout
