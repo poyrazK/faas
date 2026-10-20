@@ -498,6 +498,7 @@ type Querier interface {
 	// refuses with 429 upload_session_too_many when count >= 5.
 	// Hits the partial index upload_sessions_account_open_idx.
 	CountOpenUploadSessionsByAccountApp(ctx context.Context, db DBTX, arg CountOpenUploadSessionsByAccountAppParams) (int64, error)
+	CountOperationChildren(ctx context.Context, db DBTX, parentOperationID pgtype.UUID) (int64, error)
 	CountOwnedActiveOperationJobTasksForPurge(ctx context.Context, db DBTX, arg CountOwnedActiveOperationJobTasksForPurgeParams) (int64, error)
 	CountPendingCustomerOperations(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
 	CountProductionPendingInvocations(ctx context.Context, db DBTX, arg CountProductionPendingInvocationsParams) (int64, error)
@@ -1634,6 +1635,8 @@ type Querier interface {
 	// first-use auto-create path (PR-A) and the dashboard's Refine
 	// form (PR-C).
 	GetOIDCTrustPolicy(ctx context.Context, db DBTX, arg GetOIDCTrustPolicyParams) (GetOIDCTrustPolicyRow, error)
+	// ADR-20261018183000 Child Operations.
+	GetOperationChildByKey(ctx context.Context, db DBTX, arg GetOperationChildByKeyParams) (pgtype.UUID, error)
 	GetOperationSchedule(ctx context.Context, db DBTX, arg GetOperationScheduleParams) (CustomerOperationSchedule, error)
 	// ADR-1193 webhook-submitted customer Operations.
 	GetOperationWebhookBinding(ctx context.Context, db DBTX, endpointID pgtype.UUID) (CustomerOperationWebhookBinding, error)
@@ -2047,6 +2050,7 @@ type Querier interface {
 	// Fresh-token insert. The id is server-minted by sqlc (gen_random_uuid).
 	// Returns the full row (with created_at server-stamped).
 	InsertOIDCExchangedToken(ctx context.Context, db DBTX, arg InsertOIDCExchangedTokenParams) (InsertOIDCExchangedTokenRow, error)
+	InsertOperationChild(ctx context.Context, db DBTX, arg InsertOperationChildParams) error
 	// ADR-20261018161833 Operation schedules.
 	InsertOperationSchedule(ctx context.Context, db DBTX, arg InsertOperationScheduleParams) (CustomerOperationSchedule, error)
 	InsertOperationWebhookReceipt(ctx context.Context, db DBTX, arg InsertOperationWebhookReceiptParams) (int64, error)
@@ -2242,6 +2246,7 @@ type Querier interface {
 	//
 	// $1 = email
 	IsMailSuppressed(ctx context.Context, db DBTX, lower string) (bool, error)
+	IsOperationChild(ctx context.Context, db DBTX, operationID pgtype.UUID) (bool, error)
 	IssueAddActivity(ctx context.Context, db DBTX, arg IssueAddActivityParams) (IssueActivity, error)
 	IssueAddResolution(ctx context.Context, db DBTX, arg IssueAddResolutionParams) error
 	IssueAddTeamMember(ctx context.Context, db DBTX, arg IssueAddTeamMemberParams) error
@@ -2973,6 +2978,7 @@ type Querier interface {
 	ListNotificationChannels(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]NotificationChannel, error)
 	// Per-account dashboard list (PR-C). Empty slice on miss.
 	ListOIDCTrustPoliciesForAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]ListOIDCTrustPoliciesForAccountRow, error)
+	ListOperationChildren(ctx context.Context, db DBTX, arg ListOperationChildrenParams) ([]ListOperationChildrenRow, error)
 	ListOperationSchedules(ctx context.Context, db DBTX, arg ListOperationSchedulesParams) ([]CustomerOperationSchedule, error)
 	ListOperatorIntentAttemptsByTrace(ctx context.Context, db DBTX, arg ListOperatorIntentAttemptsByTraceParams) ([]OperatorIntent, error)
 	ListOrgInvitationsForOrg(ctx context.Context, db DBTX, orgID pgtype.UUID) ([]ListOrgInvitationsForOrgRow, error)

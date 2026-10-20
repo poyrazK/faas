@@ -14315,16 +14315,19 @@ paths:
         Exports one finalized platform tenant statement revision to the
         provider in the body (default stripe; connect it with
         PUT /v1/account/billing-connections/{provider}), ADR-1502 and ADR-1507.
-        Stripe gets a draft invoice and Paddle a draft manually collected
-        transaction; neither is finalized or sent. Lago issues a one-off
-        invoice at once, without charging it. Items are one per rate card and
-        unit price plus a rounding item, so the invoice equals the statement
-        total rounded to the cent; Paddle and Lago receive one summary item
-        when a line is negative. On success the statement's handoff records
-        the provider invoice ID. Retrying after a failure resumes the same
-        invoice; repeating a completed export returns it. A statement exports
-        to one provider only. Two-decimal currencies only; Paddle allows USD,
-        EUR and GBP.
+        The connection's collection mode (ADR-1311) decides whether the
+        provider keeps a draft, sends it or charges it. Items are one per rate
+        card and unit price plus a rounding item, so the invoice equals the
+        statement total rounded to the currency's minor unit; Paddle and Lago
+        receive one summary item when a line is negative. On success the
+        statement's handoff records the provider invoice ID. Retrying after a
+        failure resumes the same invoice; repeating a completed export returns
+        it. A statement exports to one provider only. Another attempt still
+        exporting it answers 409 `statement_invoice_export_in_progress`, and an
+        export the provider refused before creating an invoice can be retried
+        with another customer or provider (ADR-20261019180000). Currencies with
+        up to three decimal places (ADR-20261019100330); Paddle allows USD, EUR
+        and GBP.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
@@ -18251,15 +18254,19 @@ paths:
         Exports one finalized app consumer statement revision to the
         provider in the body (default stripe; connect it with
         PUT /v1/account/billing-connections/{provider}), ADR-1502 and ADR-1507.
-        Stripe and Paddle receive drafts that Gregale never finalizes or
-        sends; Lago issues its one-off invoice immediately but never charges
-        it. One item per rate card and unit price, plus a rounding item, makes
-        the invoice equal the statement total rounded to the cent; with a
-        negative line, Paddle and Lago get a single summary item instead. The
+        The connection's collection mode (ADR-1311) decides whether the
+        provider keeps a draft, sends it or charges it. One item per rate card
+        and unit price, plus a rounding item, makes the invoice equal the
+        statement total rounded to the currency's minor unit; with a negative
+        line, Paddle and Lago get a single summary item instead. The
         statement's handoff records the provider invoice ID on success. A retry
         resumes the same invoice, a completed export is returned as is, and a
-        statement exports to one provider only. Two-decimal currencies only;
-        Paddle takes USD, EUR and GBP.
+        statement exports to one provider only. While another attempt is
+        exporting the statement the answer is 409
+        `statement_invoice_export_in_progress`; an export the provider refused
+        before creating an invoice can be retried with another customer or
+        provider (ADR-20261019180000). Currencies with up to three decimal
+        places (ADR-20261019100330); Paddle takes USD, EUR and GBP.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:

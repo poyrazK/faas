@@ -59,6 +59,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/snapshothipd"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
+	"github.com/onebox-faas/faas/pkg/storagekey"
 	"github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/vmmdgrpc"
 	"github.com/onebox-faas/faas/pkg/vmmdmount"
@@ -93,7 +94,7 @@ func configuredRuntimeBaseGenerations(envLookup func(string) string) (map[string
 		if err != nil {
 			return nil, fmt.Errorf("vmmd: resolve runtime base generation %q: %w", row.runtime, err)
 		}
-		out[sched.BaseKeyForArch(row.runtime, runtime.GOARCH)] = ref
+		out[storagekey.BaseForArch(row.runtime, runtime.GOARCH)] = ref
 	}
 	return out, nil
 }
@@ -652,7 +653,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// StorageBackend key for the kernel artifact from the detected
 	// FC version. Operators may pin a specific key via vmmd.toml
 	// (cfg.KernelKey); when unset we fall back to the version-keyed
-	// form sched.KernelKey(fcVersion). The deprecated cfg.KernelPath
+	// form storagekey.Kernel(fcVersion). The deprecated cfg.KernelPath
 	// still flows into the log line so an operator can spot drift
 	// between the two during the migration window.
 	//
@@ -662,7 +663,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// be marked stale and every wake will cold-boot, which is the
 	// correct cold-boot-always-works behaviour (ADR-005).
 	if cfg.KernelKey == "" && fcVersion != "" {
-		cfg.KernelKey = sched.KernelKey(fcVersion)
+		cfg.KernelKey = storagekey.Kernel(fcVersion)
 	}
 
 	// Host-key lifecycle (ADR-020 / spec §11 G2). Without this, the

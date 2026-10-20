@@ -38,7 +38,7 @@ import (
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/sched"
+	"github.com/onebox-faas/faas/pkg/storagekey"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
@@ -308,8 +308,8 @@ func (d *VMMDriver) Spawn(ctx context.Context, req VMRequest) (BuildHandle, erro
 			// imaged's staged base and vmmd's scan gate. The legacy
 			// builder-base.ext4 spelling bypassed the published scan
 			// sidecar and made every metal build fail closed.
-			BaseKey:    sched.BaseKey("builder"), // ADR-025: storage key → vmmd resolves via StorageBackend
-			LayerKey:   drive1Path,               // absolute host path; vmmd treats as direct path (abs path bypass)
+			BaseKey:    storagekey.Base("builder"), // ADR-025: storage key → vmmd resolves via StorageBackend
+			LayerKey:   drive1Path,                 // absolute host path; vmmd treats as direct path (abs path bypass)
 			VcpuCount:  api.BuildVMVCPU,
 			MemSizeMib: int32(api.BuildVMRAMMB),
 		},
@@ -393,7 +393,7 @@ func (d *VMMDriver) RestoreWarmBuilder(ctx context.Context, req VMRequest, snaps
 	resp, err := d.cli.CreateFromSnapshot(ctx, &vmmdpb.CreateFromSnapshotRequest{
 		Instance: instance,
 		App: &vmmdpb.AppSpec{
-			BaseKey:    sched.BaseKey("builder"),
+			BaseKey:    storagekey.Base("builder"),
 			LayerKey:   snapshot.LayerPath,
 			VcpuCount:  api.BuildVMVCPU,
 			MemSizeMib: int32(api.BuildVMRAMMB),

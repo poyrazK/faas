@@ -226,3 +226,14 @@ test('first-party tokens carry the session organization with AUTH_ORG_CLAIMS on'
   const forClient = await accessTokenClaims(fakePool(), { claims: { ...base, client_id: client } }, { orgClaims: true })
   assert.equal(forClient.claims.org_id, undefined, 'a client token never carries them')
 })
+
+test('an organization that requires a second factor stays out of tokens below aal2', async () => {
+  const base = { sub: user, session_id: session, aud: 'authenticated', role: 'authenticated' }
+  const row = { id: '6f1c1a52-34c0-4a8e-9c55-2f5d7c0e4a11', slug: 'acme', mfa_required: true, role: 'member', permissions: ['org:read'] }
+  const pool = { query: async () => ({ rows: [row] }) }
+  for (const aal of [undefined, 'aal1']) {
+    assert.deepEqual((await accessTokenClaims(pool, { claims: { ...base, aal } }, { orgClaims: true })).claims, { ...base, aal }, String(aal))
+  }
+  const { claims } = await accessTokenClaims(pool, { claims: { ...base, aal: 'aal2' } }, { orgClaims: true })
+  assert.equal(claims.org_slug, 'acme', 'the token GoTrue issues on verifying carries it')
+})

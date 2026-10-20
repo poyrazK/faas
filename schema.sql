@@ -17906,6 +17906,8 @@ CREATE FUNCTION public.lock_clone_deployment_cleanup_borrower_writers() RETURNS 
  LOCK TABLE deployment_runtime_upgrade_acceptances,deployment_runtime_upgrade_baselines,deployment_runtime_upgrade_cutovers,environment_workload_serving_queue_acks,environment_workload_serving_routes,project_environment_clone_migration_adoptions,project_environment_clone_migration_resumes,project_environment_clone_wake_dispatches,route_probe_observations,runtime_upgrade_gateway_drains,runtime_upgrade_gateway_receipts,workflow_schedule_occurrences,app_issues,debug_regression_observations,deployment_audit,issue_events,issue_releases,issue_resolutions,log_events,mirror_invocation_results,org_activity,project_environment_clone_workloads,project_environment_promotion_workloads,request_audit_events,request_telemetry,upload_commit_outcomes,upload_sessions IN SHARE MODE;
  -- Retained PostgreSQL receipts and blocked plan members also borrow deployments.
  LOCK TABLE managed_postgres_cutover_drains,managed_postgres_cutover_drain_plan_members IN SHARE MODE;
+ -- Automatic-rollback freezes name the rolled-back deployment.
+ LOCK TABLE release_freezes IN SHARE MODE;
 END $$;
 
 
@@ -29987,6 +29989,21 @@ CREATE TABLE public.customer_operation_attempt_instances (
     placed_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
     CONSTRAINT customer_operation_attempt_instances_attempt_check CHECK ((attempt > 0)),
     CONSTRAINT customer_operation_attempt_instances_generation_check CHECK ((generation > 0))
+);
+
+
+--
+-- Name: customer_operation_children; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.customer_operation_children (
+    parent_operation_id uuid NOT NULL,
+    child_key text NOT NULL,
+    child_operation_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    CONSTRAINT customer_operation_children_check CHECK ((parent_operation_id <> child_operation_id)),
+    CONSTRAINT customer_operation_children_child_key_check CHECK (((octet_length(child_key) >= 1) AND (octet_length(child_key) <= 64)))
 );
 
 
@@ -49588,7 +49605,13 @@ CREATE TABLE public.usage_statement_invoice_exports (
     collection text DEFAULT 'none'::text NOT NULL,
     days_until_due integer DEFAULT 30 NOT NULL,
     automatic_tax boolean DEFAULT false NOT NULL,
+    attempt integer DEFAULT 0 NOT NULL,
+    rejected_at timestamp with time zone,
+    claim_token uuid,
+    claimed_until timestamp with time zone,
+    CONSTRAINT usage_statement_invoice_exports_attempt_chk CHECK ((attempt >= 0)),
     CONSTRAINT usage_statement_invoice_exports_automatic_tax_chk CHECK (((NOT automatic_tax) OR (provider = 'stripe'::text))),
+    CONSTRAINT usage_statement_invoice_exports_claim_chk CHECK (((claim_token IS NULL) = (claimed_until IS NULL))),
     CONSTRAINT usage_statement_invoice_exports_collection_chk CHECK (((collection = ANY (ARRAY['none'::text, 'send'::text, 'charge'::text])) AND ((days_until_due >= 1) AND (days_until_due <= 365)))),
     CONSTRAINT usage_statement_invoice_exports_completed_chk CHECK (((status = 'completed'::text) = ((completed_at IS NOT NULL) AND (provider_invoice_id IS NOT NULL)))),
     CONSTRAINT usage_statement_invoice_exports_currency_chk CHECK ((currency ~ '^[A-Z]{3}$'::text)),
@@ -49596,6 +49619,7 @@ CREATE TABLE public.usage_statement_invoice_exports (
     CONSTRAINT usage_statement_invoice_exports_payment_amounts_chk CHECK ((((amount_paid_minor IS NULL) OR (amount_paid_minor >= 0)) AND ((amount_remaining_minor IS NULL) OR (amount_remaining_minor >= 0)))),
     CONSTRAINT usage_statement_invoice_exports_payment_status_chk CHECK (((payment_status IS NULL) OR (payment_status = ANY (ARRAY['draft'::text, 'open'::text, 'paid'::text, 'void'::text, 'uncollectible'::text, 'deleted'::text])))),
     CONSTRAINT usage_statement_invoice_exports_provider_chk CHECK ((provider = ANY (ARRAY['stripe'::text, 'paddle'::text, 'lago'::text]))),
+    CONSTRAINT usage_statement_invoice_exports_rejected_chk CHECK (((rejected_at IS NULL) OR (provider_invoice_id IS NULL))),
     CONSTRAINT usage_statement_invoice_exports_source_chk CHECK ((source_kind = ANY (ARRAY['app_consumer'::text, 'platform_tenant'::text]))),
     CONSTRAINT usage_statement_invoice_exports_status_chk CHECK ((status = ANY (ARRAY['creating'::text, 'completed'::text])))
 );
@@ -52820,6 +52844,22 @@ ALTER TABLE ONLY public.custom_domains
 
 ALTER TABLE ONLY public.customer_operation_attempt_instances
     ADD CONSTRAINT customer_operation_attempt_instances_pkey PRIMARY KEY (operation_id, generation, attempt);
+
+
+--
+-- Name: customer_operation_children customer_operation_children_child_operation_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_children
+    ADD CONSTRAINT customer_operation_children_child_operation_id_key UNIQUE (child_operation_id);
+
+
+--
+-- Name: customer_operation_children customer_operation_children_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_children
+    ADD CONSTRAINT customer_operation_children_pkey PRIMARY KEY (parent_operation_id, child_key);
 
 
 --
@@ -80227,6 +80267,30 @@ ALTER TABLE ONLY public.custom_domains
 
 ALTER TABLE ONLY public.customer_operation_attempt_instances
     ADD CONSTRAINT customer_operation_attempt_instanc_operation_id_generation_fkey FOREIGN KEY (operation_id, generation) REFERENCES public.customer_operation_executions(operation_id, generation) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_operation_children customer_operation_children_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_children
+    ADD CONSTRAINT customer_operation_children_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_operation_children customer_operation_children_child_operation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_children
+    ADD CONSTRAINT customer_operation_children_child_operation_id_fkey FOREIGN KEY (child_operation_id) REFERENCES public.customer_operations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_operation_children customer_operation_children_parent_operation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_children
+    ADD CONSTRAINT customer_operation_children_parent_operation_id_fkey FOREIGN KEY (parent_operation_id) REFERENCES public.customer_operations(id) ON DELETE CASCADE;
 
 
 --
