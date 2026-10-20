@@ -2322,7 +2322,10 @@ jobs:
   flags-acceptance:
     name: flags (customer release + request evidence)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Measured 25 min on a green run (2026-10-19) and over 30 min under runner load
+    # (run 39345797073): the suite passes but cold compilation of the SDK,
+    # flags and apidserver packages dominates.
+    timeout-minutes: 45
     permissions:
       contents: read
     services:

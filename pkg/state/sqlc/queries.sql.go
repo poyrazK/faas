@@ -1555,7 +1555,9 @@ SELECT max(boundary.changed_at)::timestamptz AS changed_at FROM (
     SELECT changed_at FROM app_runtime_config_changes WHERE app_id = $1::uuid
     UNION ALL
     SELECT changed_at FROM app_runtime_config_scope_changes WHERE app_id = $1::uuid
-        AND scope IN ('default', $2::text)
+        AND (scope IN ('default', $2::text)
+            -- ADR-1136: default-scope deployments read production's project configuration.
+            OR ($2::text = 'default' AND scope = 'default:project-config'))
 ) AS boundary
 `
 

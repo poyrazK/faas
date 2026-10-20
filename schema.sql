@@ -8758,7 +8758,10 @@ CREATE FUNCTION public.environment_runtime_base_inputs_fresh(target_app uuid, ta
 SELECT
     NOT EXISTS (SELECT 1 FROM app_runtime_config_changes c WHERE c.app_id = target_app AND c.changed_at > boundary)
     AND NOT EXISTS (SELECT 1 FROM app_runtime_config_scope_changes c WHERE c.app_id = target_app
-        AND c.scope IN ('default', target_scope) AND c.changed_at > boundary)
+        AND (c.scope IN ('default', target_scope)
+            -- ADR-1136: default-scope deployments read production's project configuration.
+            OR (target_scope = 'default' AND c.scope = 'default:project-config'))
+        AND c.changed_at > boundary)
     AND observed_variables = coalesce((SELECT jsonb_object_agg(v.key, v.value) FROM app_envs v
         WHERE v.app_id = target_app AND v.scope = target_scope), '{}'::jsonb)
     AND NOT EXISTS (SELECT 1 FROM jsonb_each_text(observed_secrets) r WHERE NOT EXISTS (
@@ -20520,9 +20523,15 @@ BEGIN
      WHERE snapshots.deployment_id = d.id AND d.app_id = stamped.app_id
        AND coalesce(nullif(d.scope, ''), 'default') = stamped.scope
        AND NOT snapshots.stale AND snapshots.created_at <= stamped.changed_at;
-    -- The default scope reads production (workloadEnvironmentSlug): its
-    -- snapshots go stale without advancing the shared 'default' boundary.
+    -- The default scope reads production (workloadEnvironmentSlug). It gets
+    -- its own boundary, never the shared 'default' one every environment
+    -- consults, and its snapshots go stale.
     IF NEW.environment_slug = 'production' THEN
+        INSERT INTO app_runtime_config_scope_changes (app_id, scope, changed_at)
+        SELECT a.id, 'default:project-config', changed FROM apps a
+         WHERE a.project_id = NEW.project_id AND a.account_id = NEW.account_id AND a.status <> 'deleted'
+        ON CONFLICT (app_id, scope) DO UPDATE
+            SET changed_at = greatest(app_runtime_config_scope_changes.changed_at, excluded.changed_at);
         UPDATE snapshots SET stale = true
           FROM deployments d, apps a
          WHERE snapshots.deployment_id = d.id AND d.app_id = a.id
