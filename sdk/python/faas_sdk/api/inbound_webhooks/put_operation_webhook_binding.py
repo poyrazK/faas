@@ -113,7 +113,7 @@ def sync_detailed(
     body: PutOperationWebhookBindingRequest,
     idempotency_key: str | Unset = UNSET,
 ) -> Response[OperationWebhookBindingResponse | Problem]:
-    """Route a verified endpoint to a customer operation (ADR-1193).
+    """Route a verified endpoint to a customer operation (ADR-1193, ADR-20261016100929).
 
      One binding per endpoint, owned by the same app. The platform tenant is
     the operation owner; it must be active and linked to the app through an
@@ -124,6 +124,14 @@ def sync_detailed(
     take_over_delivery must be true. Automation and managed exclusive
     operation bindings must be removed first. An empty event_types list
     admits every verified event; other types are acknowledged as ignored.
+
+    mode signal (ADR-20261016100929) starts nothing. Each event whose type a signals
+    entry maps is delivered as that operation event to the platform
+    tenant's active operations of the named definition whose subject
+    matches subject.id_from in the provider payload, at most 16 per event.
+    The subject type must equal the definition's subject type, the
+    definition must be a workflow, and its live workflow must wait for
+    every mapped event. event_types must be empty in this mode.
 
     Args:
         slug (str):
@@ -162,7 +170,7 @@ def sync(
     body: PutOperationWebhookBindingRequest,
     idempotency_key: str | Unset = UNSET,
 ) -> OperationWebhookBindingResponse | Problem | None:
-    """Route a verified endpoint to a customer operation (ADR-1193).
+    """Route a verified endpoint to a customer operation (ADR-1193, ADR-20261016100929).
 
      One binding per endpoint, owned by the same app. The platform tenant is
     the operation owner; it must be active and linked to the app through an
@@ -173,6 +181,14 @@ def sync(
     take_over_delivery must be true. Automation and managed exclusive
     operation bindings must be removed first. An empty event_types list
     admits every verified event; other types are acknowledged as ignored.
+
+    mode signal (ADR-20261016100929) starts nothing. Each event whose type a signals
+    entry maps is delivered as that operation event to the platform
+    tenant's active operations of the named definition whose subject
+    matches subject.id_from in the provider payload, at most 16 per event.
+    The subject type must equal the definition's subject type, the
+    definition must be a workflow, and its live workflow must wait for
+    every mapped event. event_types must be empty in this mode.
 
     Args:
         slug (str):
@@ -206,7 +222,7 @@ async def asyncio_detailed(
     body: PutOperationWebhookBindingRequest,
     idempotency_key: str | Unset = UNSET,
 ) -> Response[OperationWebhookBindingResponse | Problem]:
-    """Route a verified endpoint to a customer operation (ADR-1193).
+    """Route a verified endpoint to a customer operation (ADR-1193, ADR-20261016100929).
 
      One binding per endpoint, owned by the same app. The platform tenant is
     the operation owner; it must be active and linked to the app through an
@@ -217,6 +233,14 @@ async def asyncio_detailed(
     take_over_delivery must be true. Automation and managed exclusive
     operation bindings must be removed first. An empty event_types list
     admits every verified event; other types are acknowledged as ignored.
+
+    mode signal (ADR-20261016100929) starts nothing. Each event whose type a signals
+    entry maps is delivered as that operation event to the platform
+    tenant's active operations of the named definition whose subject
+    matches subject.id_from in the provider payload, at most 16 per event.
+    The subject type must equal the definition's subject type, the
+    definition must be a workflow, and its live workflow must wait for
+    every mapped event. event_types must be empty in this mode.
 
     Args:
         slug (str):
@@ -253,7 +277,7 @@ async def asyncio(
     body: PutOperationWebhookBindingRequest,
     idempotency_key: str | Unset = UNSET,
 ) -> OperationWebhookBindingResponse | Problem | None:
-    """Route a verified endpoint to a customer operation (ADR-1193).
+    """Route a verified endpoint to a customer operation (ADR-1193, ADR-20261016100929).
 
      One binding per endpoint, owned by the same app. The platform tenant is
     the operation owner; it must be active and linked to the app through an
@@ -264,6 +288,14 @@ async def asyncio(
     take_over_delivery must be true. Automation and managed exclusive
     operation bindings must be removed first. An empty event_types list
     admits every verified event; other types are acknowledged as ignored.
+
+    mode signal (ADR-20261016100929) starts nothing. Each event whose type a signals
+    entry maps is delivered as that operation event to the platform
+    tenant's active operations of the named definition whose subject
+    matches subject.id_from in the provider payload, at most 16 per event.
+    The subject type must equal the definition's subject type, the
+    definition must be a workflow, and its live workflow must wait for
+    every mapped event. event_types must be empty in this mode.
 
     Args:
         slug (str):

@@ -3240,6 +3240,8 @@ from .operation_waiting_state import OperationWaitingState
 from .operation_waiting_state_approver import OperationWaitingStateApprover
 from .operation_waiting_state_kind import OperationWaitingStateKind
 from .operation_webhook_binding_response import OperationWebhookBindingResponse
+from .operation_webhook_binding_response_mode import OperationWebhookBindingResponseMode
+from .operation_webhook_signal import OperationWebhookSignal
 from .operation_workflow_action_obligation import OperationWorkflowActionObligation
 from .operation_workflow_action_preview_request import OperationWorkflowActionPreviewRequest
 from .operation_workflow_action_preview_response import OperationWorkflowActionPreviewResponse
@@ -4056,6 +4058,7 @@ from .platform_tenant_statement_response import PlatformTenantStatementResponse
 from .platform_tenant_statement_response_status import PlatformTenantStatementResponseStatus
 from .platform_tenant_statement_summary_response import PlatformTenantStatementSummaryResponse
 from .platform_tenant_statement_summary_response_status import PlatformTenantStatementSummaryResponseStatus
+from .platform_tenant_subject_signal_request import PlatformTenantSubjectSignalRequest
 from .platform_tenant_surface_certificate_changed_webhook_payload import (
     PlatformTenantSurfaceCertificateChangedWebhookPayload,
 )
@@ -4454,6 +4457,7 @@ from .put_issue_team_request import PutIssueTeamRequest
 from .put_issue_tracker_link_request import PutIssueTrackerLinkRequest
 from .put_job_registry_credential_request import PutJobRegistryCredentialRequest
 from .put_operation_webhook_binding_request import PutOperationWebhookBindingRequest
+from .put_operation_webhook_binding_request_mode import PutOperationWebhookBindingRequestMode
 from .put_outbound_ai_policy_request import PutOutboundAIPolicyRequest
 from .put_outbound_ai_policy_request_ai_provider import PutOutboundAIPolicyRequestAiProvider
 from .put_outbound_ai_prices_request import PutOutboundAIPricesRequest
@@ -8941,6 +8945,8 @@ __all__ = (
     "OperationWaitingStateApprover",
     "OperationWaitingStateKind",
     "OperationWebhookBindingResponse",
+    "OperationWebhookBindingResponseMode",
+    "OperationWebhookSignal",
     "OperationWorkflowActionObligation",
     "OperationWorkflowActionPreviewRequest",
     "OperationWorkflowActionPreviewResponse",
@@ -9639,6 +9645,7 @@ __all__ = (
     "PlatformTenantStatementResponseStatus",
     "PlatformTenantStatementSummaryResponse",
     "PlatformTenantStatementSummaryResponseStatus",
+    "PlatformTenantSubjectSignalRequest",
     "PlatformTenantSurfaceCertificateChangedWebhookPayload",
     "PlatformTenantSurfaceCertificateChangedWebhookPayloadCertState",
     "PlatformTenantSurfaceDeploymentChangedWebhookPayload",
@@ -9999,6 +10006,7 @@ __all__ = (
     "PutIssueTrackerLinkRequest",
     "PutJobRegistryCredentialRequest",
     "PutOperationWebhookBindingRequest",
+    "PutOperationWebhookBindingRequestMode",
     "PutOutboundAIPolicyRequest",
     "PutOutboundAIPolicyRequestAiProvider",
     "PutOutboundAIPricesRequest",

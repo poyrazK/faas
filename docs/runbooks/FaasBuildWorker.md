@@ -74,7 +74,10 @@ source handling, cache completion and VM work. A fifteen-minute build can occupy
 one iteration. Notification workers are independent and cannot renew the durable
 poller's progress timestamps.
 
-Idle allowance is twice `builderd_build_worker_interval_seconds`. Before any
+Idle allowance is twice `builderd_build_worker_interval_seconds` plus 60 s, and
+the in-flight allowance carries the same 60 s. The margin covers scrape and
+evaluation staleness: Prometheus sees a completion only at its next scrape, so
+with a 2 s poll the observed age reaches ~17 s even on a healthy worker. Before any
 completion, age starts at initialization; after completion, age starts at the
 latest completed iteration. While in-flight, age starts at its attempt and the
 allowance additionally includes `builderd_build_worker_busy_allowance_seconds`:

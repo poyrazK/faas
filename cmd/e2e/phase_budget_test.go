@@ -177,6 +177,7 @@ func TestJobTimeoutCoversEveryPhaseCap(t *testing.T) {
 		"managed-operation-only":            true,
 		"customer-job-operations-only":      true,
 		"customer-workflow-operations-only": true,
+		"customer-http-operations-only":     true,
 		"financial-system":                  true, // separate sequential job on the same host
 	}
 	var sum, laneMax time.Duration

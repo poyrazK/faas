@@ -961,6 +961,8 @@ var methodRouteMap = map[string]string{
 	"GET /v1/platform-tenant-self/customer-operations/{id}/events":                     "GetPlatformTenantSelfOperationEvents",
 	"POST /v1/platform-tenant-self/customer-operations/{id}/cancel":                    "CancelPlatformTenantSelfOperation",
 	"POST /v1/platform-tenant-self/customer-operations/{id}/approvals/{step}":          "DecidePlatformTenantSelfOperationApproval",
+	"POST /v1/platform-tenant-self/customer-operations/{id}/signals":                   "SignalPlatformTenantSelfOperation",
+	"POST /v1/platform-tenant-self/customer-operation-signals":                         "SignalPlatformTenantSelfOperationsBySubject",
 	"POST /v1/apps/{slug}/operations":                                                  "SubmitExclusiveOperation",
 	"POST /v1/account/platform-tenants/{tenant_id}/apps/{slug}/operations":             "SubmitExclusiveOperation",
 	"POST /v1/platform-tenant-self/apps/{slug}/operations":                             "SubmitPlatformTenantExclusiveOperation",

@@ -493,7 +493,10 @@ Live queries are invisible to customers until launch.
    server leaf from the fleet CA; `faas_realtime_live_tls_managed: true` on
    compute hosts gives realtimed its client leaf, and `pki_renew.yml` renews
    both. Which accounts see live queries is the `live_queries` platform flag
-   (ADR-1700).
+   (ADR-1700). One livequeryd serves every database the role lists in
+   `faas_livequeryd_databases` (`-databases-file`), each at
+   `/<database_id>/live`. A database must be listed there before its live
+   queries work. The flags below serve a single database, for development.
    - `-database-url-file`: a file holding the database connection string
      (`-database-url` puts its password in the process list);
    - `-keys-dsn-file`: a file holding a read-only control-plane connection

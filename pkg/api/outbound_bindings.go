@@ -188,6 +188,9 @@ type OutboundAIUsageItem struct {
 	CachedRequests             int64 `json:"cached_requests"`
 	CacheSavedMillicents       int64 `json:"cache_saved_millicents"`
 	PromptCacheSavedMillicents int64 `json:"prompt_cache_saved_millicents"`
+	// Audio tokens, part of the input and output totals (ADR 20261019072722).
+	InputAudioTokens  int64 `json:"input_audio_tokens"`
+	OutputAudioTokens int64 `json:"output_audio_tokens"`
 }
 
 // OutboundAIUsageResponse reports one UTC day of AI usage for an integration.
