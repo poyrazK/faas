@@ -21,6 +21,13 @@ LDFLAGS := -X github.com/onebox-faas/faas/pkg/wire.Version=$(VERSION)
 # these flags make the bytes independent of the runner checkout path and
 # whether the checkout has a .git directory.
 GO_BUILD_FLAGS := -trimpath -buildvcs=false
+# Build tags of every daemon build. grpcnotrace drops gRPC's
+# golang.org/x/net/trace, whose html/template pages make the linker keep every
+# exported method of every type a daemon converts to an interface (all ~6,000
+# store methods), so a query change rewrote every daemon's code. No daemon
+# serves the pages or sets grpc.EnableTracing
+# (docs/adr/20261020160744-daemon-blast-radius.md). Comma-separated.
+DAEMON_TAGS := metal,grpcnotrace
 # Keep the build target's cgo setting separate from the test environment.
 # `make test` needs the host default for race-enabled tests, while release
 # binaries are always static.
@@ -136,7 +143,7 @@ build: guest-runners ## Build every daemon + CLIs + guest init + function runner
 	@mkdir -p $(BINDIR)
 	@for d in $(DAEMONS); do \
 	  echo "building $$d"; \
-	  CGO_ENABLED=$(BUILD_CGO_ENABLED) $(GO) build $(GO_BUILD_FLAGS) -tags metal -ldflags '$(LDFLAGS) -s -w' -o $(BINDIR)/$$d ./cmd/$$d || exit 1; \
+	  CGO_ENABLED=$(BUILD_CGO_ENABLED) $(GO) build $(GO_BUILD_FLAGS) -tags $(DAEMON_TAGS) -ldflags '$(LDFLAGS) -s -w' -o $(BINDIR)/$$d ./cmd/$$d || exit 1; \
 	done
 	@for c in $(CLIS); do \
 	  echo "building $$c (CLI)"; \
@@ -175,7 +182,7 @@ guest-runners: ## Build function-runner shims into ./bin/runners/<runtime>/faas-
 build-release-batch: ## Build the complete static release binary set in batched Go invocations
 	@mkdir -p $(BINDIR) $(BINDIR)/runners
 	@echo "building release daemons (batched)"
-	@CGO_ENABLED=$(BUILD_CGO_ENABLED) $(GO) build $(GO_BUILD_FLAGS) -tags metal \
+	@CGO_ENABLED=$(BUILD_CGO_ENABLED) $(GO) build $(GO_BUILD_FLAGS) -tags $(DAEMON_TAGS) \
 	  -ldflags '$(LDFLAGS) -s -w' -o $(BINDIR)/ $(addprefix ./cmd/,$(DAEMONS))
 	@echo "building release CLIs (batched)"
 	@CGO_ENABLED=$(BUILD_CGO_ENABLED) $(GO) build $(GO_BUILD_FLAGS) \
@@ -207,7 +214,7 @@ build-release-unit: ## Build one release binary: UNIT=<cmd> VERSION=unit-<commit
 	@case " $(DAEMONS) $(CLIS) " in *" $(UNIT) "*) ;; *) echo "UNIT=$(UNIT) is not a release binary"; exit 2;; esac
 	@case "$(VERSION)" in unit-*) ;; *) echo "VERSION=$(VERSION) must be unit-<commit>"; exit 2;; esac
 	@mkdir -p $(BINDIR)
-	@CGO_ENABLED=$(BUILD_CGO_ENABLED) $(GO) build $(GO_BUILD_FLAGS) $(if $(filter $(UNIT),$(DAEMONS)),-tags metal) \
+	@CGO_ENABLED=$(BUILD_CGO_ENABLED) $(GO) build $(GO_BUILD_FLAGS) $(if $(filter $(UNIT),$(DAEMONS)),-tags $(DAEMON_TAGS)) \
 	  -ldflags '$(LDFLAGS) -s -w' -o $(BINDIR)/$(UNIT) ./cmd/$(UNIT)
 
 # M1 gRPC codegen (ADR-013). Generated *.pb.go is COMMITTED — do not run
@@ -328,6 +335,10 @@ check-state-coverage: ## Assert exact pkg/state package coverage ≥ STATE_EXACT
 .PHONY: coverage-checker-test
 coverage-checker-test: ## Exercise coverage block union and exact-package gates without Go or Postgres
 	python3 -m unittest discover -s .claude/ci -p test_coverage_floor.py
+
+.PHONY: daemon-deps-check
+daemon-deps-check: ## Fail when a release binary links a package scripts/ci/daemon_deps.json forbids (ADR-1650 unit blast radius)
+	python3 scripts/ci/check_daemon_deps.py
 
 .PHONY: memstore-stubs-check
 memstore-stubs-check: ## Fail pure nil-return MemStore methods that can make tests vacuous (issue #1529 / PR-2b)

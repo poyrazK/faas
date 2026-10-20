@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { dnsHasToken, orgSSORoute, txtName, txtValue } from '../orgsso.mjs'
+import { dnsHasToken, domainJoinRoute, orgSSORoute, setDomainJoin, txtName, txtValue } from '../orgsso.mjs'
 import { route } from '../authz.mjs'
 
 const org = '7b1b2c3d-0000-4000-8000-000000000002'
@@ -17,11 +17,17 @@ test('the TXT record proves control of the domain', async () => {
 
 // fakes record the SQL the route runs (the functions enforce permissions)
 // and answer GoTrue's admin API.
-function fakes({ linkFails = false } = {}) {
+function fakes({ linkFails = false, orgDomains = false } = {}) {
   const calls = [], domains = new Map(), links = new Map(), deleted = []
   const rows = async (sql, args) => {
     calls.push(sql.match(/gregale_auth\.(\w+)|INSERT INTO gregale_auth\.(\w+)/).slice(1).find(Boolean))
-    if (sql.includes('add_org_domain')) { const row = { domain: args[1].toLowerCase(), token: args[2], verified_at: null }; domains.set(row.domain, row); return [row] }
+    if (sql.includes('add_org_domain')) { const row = { domain: args[1].toLowerCase(), token: args[2], verified_at: null, join_mode: 'off', join_role: 'member' }; domains.set(row.domain, row); return [row] }
+    if (sql.includes('set_domain_join')) {
+      const row = domains.get(args[1])
+      if (!row?.verified_at && args[2] !== 'off') throw Object.assign(new Error('domain_not_verified'), { status: 403 })
+      Object.assign(row, { join_mode: args[2], join_role: args[3] })
+      return [{ domain: row.domain, join_mode: args[2], join_role: args[3], joined: args[2] === 'automatic' ? 3 : 0 }]
+    }
     if (sql.includes('list_org_domains')) return [...domains.values()]
     if (sql.includes('verify_org_domain')) { const row = domains.get(args[1]); row.verified_at = 'now'; return [row] }
     if (sql.includes('remove_org_domain')) { domains.delete(args[1]); return [] }
@@ -44,7 +50,7 @@ function fakes({ linkFails = false } = {}) {
   }
   const goTrueError = () => new Error('gotrue')
   const lookup = async () => [[txtValue([...domains.values()][0]?.token)]]
-  const call = (method, path, body) => orgSSORoute({ rows, admin, goTrueError, external: 'https://shop-auth.gregale.app', lookup }, org, method, path.split('/').filter(Boolean), body)
+  const call = (method, path, body) => orgSSORoute({ rows, admin, goTrueError, external: 'https://shop-auth.gregale.app', lookup, orgDomains }, org, method, path.split('/').filter(Boolean), body)
   return { call, calls, domains, links, deleted }
 }
 
@@ -85,4 +91,46 @@ test('organization SSO stays off until the app owner turns it on', async () => {
   const pool = { connect: async () => { throw new Error('no database needed') } }
   await assert.rejects(route(pool, { sub: 'u1' }, 'POST', `/orgs/${org}/domains`, { domain: 'acme.com' }, {}), { status: 403, code: 'org_sso_disabled' })
   await assert.rejects(route(pool, { sub: 'u1' }, 'GET', `/orgs/${org}/sso`, undefined, {}), { status: 403, code: 'org_sso_disabled' })
+})
+
+test('a verified domain lets people at it join, offered or at once', async () => {
+  const off = fakes()
+  await off.call('POST', '/domains', { domain: 'acme.com' })
+  await assert.rejects(off.call('PATCH', '/domains/acme.com', { join: 'automatic' }), { status: 403, code: 'org_domains_disabled' })
+  const { call, calls } = fakes({ orgDomains: true })
+  const [, added] = await call('POST', '/domains', { domain: 'acme.com' })
+  assert.deepEqual(added.join, { mode: 'off', role: 'member' })
+  await assert.rejects(call('PATCH', '/domains/acme.com', { join: 'suggest' }), { message: 'domain_not_verified' })
+  await call('POST', '/domains/acme.com/verify')
+  for (const body of [{}, { join: 'always' }, { join: 'suggest', role: '' }, { join: 'suggest', role: 7 }]) {
+    await assert.rejects(call('PATCH', '/domains/acme.com', body), { status: 400 }, JSON.stringify(body))
+  }
+  assert.deepEqual(await call('PATCH', '/domains/acme.com', { join: 'suggest' }), [200, { domain: 'acme.com', join: { mode: 'suggest', role: 'member' }, joined: 0 }])
+  assert.deepEqual(await call('PATCH', '/domains/acme.com', { join: 'automatic', role: 'viewer' }), [200, { domain: 'acme.com', join: { mode: 'automatic', role: 'viewer' }, joined: 3 }])
+  assert.deepEqual((await call('GET', '/domains'))[1].domains[0].join, { mode: 'automatic', role: 'viewer' })
+  assert.ok(calls.includes('set_domain_join'))
+})
+
+test('domains work without SSO when the app turns on organization domains', async () => {
+  const pool = { connect: async () => { throw new Error('no database needed') } }
+  await assert.rejects(route(pool, { sub: 'u1' }, 'GET', `/orgs/${org}/sso`, undefined, { orgDomains: true }), { status: 403, code: 'org_sso_disabled' })
+  await assert.rejects(route(pool, { sub: 'u1' }, 'POST', `/orgs/${org}/domains`, { domain: 'acme.com' }, { orgDomains: true }), { message: 'no database needed' }, 'reaches SQL')
+  await assert.rejects(route(pool, { sub: 'u1' }, 'GET', '/suggested-organizations', undefined, {}), { status: 404 })
+  await assert.rejects(route(pool, { sub: 'u1' }, 'POST', `/orgs/${org}/join`, {}, {}), { status: 404 })
+})
+
+test('people see the organization they may join and join it', async () => {
+  const seen = []
+  const rows = async (sql, args) => {
+    seen.push([sql.match(/gregale_auth\.(\w+)/)[1], args])
+    return sql.includes('suggested_organizations') ? [{ id: org, slug: 'acme', name: 'Acme', domain: 'acme.com', role: 'member' }] : [{ org_id: args[0], role: 'member' }]
+  }
+  assert.deepEqual(await domainJoinRoute(rows, 'GET', '/suggested-organizations'), [200, { organizations: [{ id: org, slug: 'acme', name: 'Acme', domain: 'acme.com', role: 'member' }] }])
+  assert.deepEqual(await domainJoinRoute(rows, 'POST', `/orgs/${org}/join`), [200, { org_id: org, role: 'member' }])
+  assert.equal(await domainJoinRoute(rows, 'POST', '/orgs/acme/join'), null)
+  assert.equal(await domainJoinRoute(rows, 'GET', `/orgs/${org}/join`), null)
+  assert.deepEqual(seen, [['suggested_organizations', undefined], ['join_organization', [org]]])
+  const updates = []
+  await setDomainJoin({ query: async (sql, args) => updates.push([sql, args]) }, false)
+  assert.deepEqual(updates, [['UPDATE gregale_auth.domain_join_settings SET enabled = $1', [false]]])
 })

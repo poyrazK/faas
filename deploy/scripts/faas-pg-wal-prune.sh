@@ -127,6 +127,10 @@ if [[ "$apply" == true ]]; then
     name="${wal##*/}"
     [[ "$name" =~ ^[0-9A-F]{24}(\.[0-9A-F]{8}\.backup)?$ ]] || continue
     bytes=$((bytes + size))
+    # PostgreSQL 16's pg_archivecleanup never removes .backup history files,
+    # so one per daily basebackup stays (331 bytes each). The ages cover WAL
+    # segments only: they say how far back the retained WAL reaches.
+    [[ "$name" =~ ^[0-9A-F]{24}$ ]] || continue
     if ((oldest == 0 || mtime < oldest)); then oldest=$mtime; fi
     if ((mtime > newest)); then newest=$mtime; fi
   done < <(find "$archive_root" -maxdepth 1 -type f -exec stat -c '%s %Y %n' {} +)

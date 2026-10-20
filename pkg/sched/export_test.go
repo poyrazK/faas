@@ -23,9 +23,11 @@ import (
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/nodereport"
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
+	"github.com/onebox-faas/faas/pkg/storagekey"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
@@ -64,7 +66,7 @@ type WorkPool = workPool
 
 // Package-level consts
 const ArchAMD64 = archAMD64
-const CapacityPayloadDomain = capacityPayloadDomain
+const CapacityPayloadDomain = nodereport.CapacityPayloadDomain
 const GatewayDispatchResponseMaxBytes = gatewayDispatchResponseMaxBytes
 const PressureParkFreshness = pressureParkFreshness
 const RuntimeConfigDrainReasonQuietPeriod = runtimeConfigDrainReasonQuietPeriod
@@ -152,7 +154,7 @@ var NewWarmHintBroadcaster = newWarmHintBroadcaster
 var Node = node
 var ObservationTask = observationTask
 var OutcomeFromProtocolResult = outcomeFromProtocolResult
-var ParentBaseKeyAliases = parentBaseKeyAliases
+var ParentBaseKeyAliases = storagekey.ParentBaseAliases
 var ParseJSONHeaders = parseJSONHeaders
 var ParseJSONMetadata = parseJSONMetadata
 var ParseSnapKey = parseSnapKey
@@ -470,17 +472,18 @@ func (r *fakeNotifier) Mu() *sync.Mutex        { return &r.mu }
 func (r *fakeNotifier) Count(p0 string) int    { return r.count(p0) }
 
 // Members of fakeVMM
-func (r *fakeVMM) ColdBootHook() *func()      { return &r.coldBootHook }
-func (r *fakeVMM) ColdBoots() *int            { return &r.coldBoots }
-func (r *fakeVMM) DestroyErr() *error         { return &r.destroyErr }
-func (r *fakeVMM) Destroys() *int             { return &r.destroys }
-func (r *fakeVMM) LastColdBootSpec() *AppSpec { return &r.lastColdBootSpec }
-func (r *fakeVMM) LastSnapRef() *SnapshotRef  { return &r.lastSnapRef }
-func (r *fakeVMM) Mu() *sync.Mutex            { return &r.mu }
-func (r *fakeVMM) Restores() *int             { return &r.restores }
-func (r *fakeVMM) SleepFor() *time.Duration   { return &r.sleepFor }
-func (r *fakeVMM) SnapErr() *error            { return &r.snapErr }
-func (r *fakeVMM) Snapshots() *int            { return &r.snapshots }
+func (r *fakeVMM) ColdBootHook() *func()            { return &r.coldBootHook }
+func (r *fakeVMM) ColdBoots() *int                  { return &r.coldBoots }
+func (r *fakeVMM) DestroyErr() *error               { return &r.destroyErr }
+func (r *fakeVMM) Destroys() *int                   { return &r.destroys }
+func (r *fakeVMM) LastColdBootSpec() *AppSpec       { return &r.lastColdBootSpec }
+func (r *fakeVMM) LastColdBootCtx() context.Context { return r.lastColdBootCtx }
+func (r *fakeVMM) LastSnapRef() *SnapshotRef        { return &r.lastSnapRef }
+func (r *fakeVMM) Mu() *sync.Mutex                  { return &r.mu }
+func (r *fakeVMM) Restores() *int                   { return &r.restores }
+func (r *fakeVMM) SleepFor() *time.Duration         { return &r.sleepFor }
+func (r *fakeVMM) SnapErr() *error                  { return &r.snapErr }
+func (r *fakeVMM) Snapshots() *int                  { return &r.snapshots }
 func (r *fakeVMM) StatsHook() *func(context.Context, string) (*StatsSnapshot, error) {
 	return &r.statsHook
 }

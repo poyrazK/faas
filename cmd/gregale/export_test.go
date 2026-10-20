@@ -1422,10 +1422,17 @@ var ParseCustomerOperationBindings = parseCustomerOperationBindings
 var ParseCustomerOperationCommand = parseCustomerOperationCommand
 var ParseCustomerOperationDelivery = parseCustomerOperationDelivery
 var ParseCustomerOperationSignal = parseCustomerOperationSignal
+
+// NewTenantCustomerOperationSignalClient builds the --self signal client
+// (ADR-20261017100853), whose fields are unexported.
+func NewTenantCustomerOperationSignalClient(client *api.Client, definition string) tenantCustomerOperationSignalClient {
+	return tenantCustomerOperationSignalClient{client: client, definition: definition}
+}
+
 var ParseDataAPIContract = parseDataAPIContract
 var ParseDataAPIHealthPool = parseDataAPIHealthPool
 var ParseDataAPIRequestRecord = parseDataAPIRequestRecord
-var ParseEuroMillicents = parseEuroMillicents
+var ParseUSDMillicents = parseUSDMillicents
 var ParseGithubSetupDeployBranches = parseGithubSetupDeployBranches
 var ParseImageRunArgs = parseImageRunArgs
 var ParseInterspersed = parseInterspersed

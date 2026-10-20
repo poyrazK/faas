@@ -947,6 +947,10 @@ func (a *synthAdapter) forwardInvocationWithStatusAndBody(ctx context.Context, t
 			}
 		}
 	}
+	// A step of an Operation-linked workflow run carries the identity the
+	// guest presents back to apid. ApplyGuestHeaders cleared every reserved
+	// Operation header above; render it again from the ledger-resolved step.
+	applyWorkflowOperationHeaders(req.Header, inv.WorkflowOperation)
 	if inv.ExclusiveClaim != nil {
 		req.Header.Set(api.ExclusiveOperationIDHeader, inv.ExclusiveClaim.OperationID)
 		req.Header.Set(api.ExclusiveOperationGenerationHeader, strconv.FormatInt(inv.ExclusiveClaim.Generation, 10))
@@ -4845,4 +4849,19 @@ func rpsKind(fn func(plan string) (float64, bool)) string {
 		return "noop"
 	}
 	return "api.LimitsFor"
+}
+
+// applyWorkflowOperationHeaders renders a ledger-resolved workflow step's
+// Operation identity for the guest. A nil step adds nothing.
+func applyWorkflowOperationHeaders(h http.Header, step *state.WorkflowOperationStep) {
+	if step == nil {
+		return
+	}
+	h.Set(api.OperationIDHeader, step.OperationID)
+	h.Set(api.OperationExecutionKindHeader, "workflow")
+	h.Set(api.OperationWorkflowRunHeader, step.RunID)
+	h.Set(api.OperationWorkflowStepHeader, step.StepName)
+	h.Set(api.OperationGenerationHeader, strconv.Itoa(step.Generation))
+	h.Set(api.OperationAttemptHeader, strconv.Itoa(step.Attempt))
+	h.Set(api.OperationWorkflowCapabilityHeader, step.Capability)
 }

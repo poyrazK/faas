@@ -4,12 +4,14 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+
+	"github.com/onebox-faas/faas/pkg/storagekey"
 )
 
 // StorageBackend key shape for snapshot mem blobs (issue #96, ADR-025
-// axis 2). Lives in pkg/state because state owns the snapshots table's
-// storage_key column; sched/paths.go's SnapshotMemKey wraps this for
-// callers that already import sched, so neither definition can drift.
+// axis 2). pkg/state owns the snapshots table's storage_key column; the
+// layout itself is pkg/storagekey's, which these helpers and
+// sched/paths.go both wrap, so no definition can drift.
 
 // DefaultLocalNodeName is the stable identifier of the synthetic
 // single-host vmmd node seeded by migrations/00024_compute_nodes.sql.
@@ -59,14 +61,14 @@ const DefaultLocalityLabel = "local"
 // the snapshot_written payload); empty values are rejected at the
 // CreateSnapshot boundary on both backends.
 func SnapMemKey(deploymentID string) string {
-	return "snap/" + deploymentID + "/mem"
+	return storagekey.SnapshotMem(deploymentID)
 }
 
 // SnapVMStateKey returns the canonical StorageBackend key for a
 // deployment's snapshot vmstate blob. Mirrors
 // <snapDir>/<deploymentID>/vmstate.
 func SnapVMStateKey(deploymentID string) string {
-	return "snap/" + deploymentID + "/vmstate"
+	return storagekey.SnapshotVMState(deploymentID)
 }
 
 // WarmSnapMemKey (issue #470 / PR #470-FU-A) returns the canonical
@@ -79,7 +81,7 @@ func SnapVMStateKey(deploymentID string) string {
 // /mem blob so PR-C's per-tier GC floor (2 warm + 2 init) can address
 // them with a single prefix match.
 func WarmSnapMemKey(deploymentID string) string {
-	return "snap/" + deploymentID + "/warm/mem"
+	return storagekey.SnapshotWarmMem(deploymentID)
 }
 
 // WarmSnapVMStateKey (issue #470 / PR #470-FU-A) is the warm-tier
@@ -87,7 +89,7 @@ func WarmSnapMemKey(deploymentID string) string {
 // and lands under the same /warm/ namespace as WarmSnapMemKey so a
 // single wildcard GC predicate covers both blobs.
 func WarmSnapVMStateKey(deploymentID string) string {
-	return "snap/" + deploymentID + "/warm/vmstate"
+	return storagekey.SnapshotWarmVMState(deploymentID)
 }
 
 // SnapshotCaptureMemKey gives a capture its own immutable object namespace.

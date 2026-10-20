@@ -2696,6 +2696,14 @@ type CustomerOperationAttemptInstance struct {
 	PlacedAt    pgtype.Timestamptz
 }
 
+type CustomerOperationChild struct {
+	ParentOperationID pgtype.UUID
+	ChildKey          string
+	ChildOperationID  pgtype.UUID
+	AccountID         pgtype.UUID
+	CreatedAt         pgtype.Timestamptz
+}
+
 type CustomerOperationCodePin struct {
 	DeploymentID pgtype.UUID
 	AppID        pgtype.UUID
@@ -2822,6 +2830,29 @@ type CustomerOperationRetainedReleaseRef struct {
 	ReleaseID pgtype.UUID
 }
 
+type CustomerOperationSchedule struct {
+	ID               pgtype.UUID
+	AccountID        pgtype.UUID
+	AppID            pgtype.UUID
+	PlatformTenantID pgtype.UUID
+	DefinitionID     pgtype.UUID
+	Input            []byte
+	Kind             string
+	At               pgtype.Timestamptz
+	Cron             string
+	Timezone         string
+	State            string
+	NextFireAt       pgtype.Timestamptz
+	Fires            int64
+	LastFiredAt      pgtype.Timestamptz
+	LastOperationID  pgtype.UUID
+	LastError        string
+	LeaseToken       pgtype.UUID
+	LeaseUntil       pgtype.Timestamptz
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+}
+
 type CustomerOperationStreamLease struct {
 	ID          pgtype.UUID
 	AccountID   pgtype.UUID
@@ -2840,6 +2871,10 @@ type CustomerOperationWebhookBinding struct {
 	Version          int64
 	CreatedAt        pgtype.Timestamptz
 	UpdatedAt        pgtype.Timestamptz
+	Mode             string
+	SubjectType      pgtype.Text
+	SubjectIDFrom    pgtype.Text
+	Signals          []byte
 }
 
 type CustomerOperationWebhookReceipt struct {
@@ -9483,21 +9518,24 @@ type OutboundAiLogExport struct {
 }
 
 type OutboundAiPriceEntry struct {
-	PriceListID                    pgtype.UUID
-	ModelPrefix                    string
-	InputMillicentsPerMtok         int64
-	CachedInputMillicentsPerMtok   pgtype.Int8
-	CacheWriteMillicentsPerMtok    pgtype.Int8
-	OutputMillicentsPerMtok        int64
-	InputImageMillicentsPerMtok    pgtype.Int8
-	OutputImageMillicentsPerMtok   pgtype.Int8
-	MillicentsPerImage             pgtype.Int8
-	MillicentsPerAudioMinute       pgtype.Int8
-	MillicentsPerMillionCharacters pgtype.Int8
-	MillicentsPerVideoSecond       pgtype.Int8
-	MillicentsPerWebSearch         pgtype.Int8
-	MillicentsPerFileSearch        pgtype.Int8
-	MillicentsPerCodeSessionGb     pgtype.Int8
+	PriceListID                       pgtype.UUID
+	ModelPrefix                       string
+	InputMillicentsPerMtok            int64
+	CachedInputMillicentsPerMtok      pgtype.Int8
+	CacheWriteMillicentsPerMtok       pgtype.Int8
+	OutputMillicentsPerMtok           int64
+	InputImageMillicentsPerMtok       pgtype.Int8
+	OutputImageMillicentsPerMtok      pgtype.Int8
+	MillicentsPerImage                pgtype.Int8
+	MillicentsPerAudioMinute          pgtype.Int8
+	MillicentsPerMillionCharacters    pgtype.Int8
+	MillicentsPerVideoSecond          pgtype.Int8
+	MillicentsPerWebSearch            pgtype.Int8
+	MillicentsPerFileSearch           pgtype.Int8
+	MillicentsPerCodeSessionGb        pgtype.Int8
+	InputAudioMillicentsPerMtok       pgtype.Int8
+	CachedInputAudioMillicentsPerMtok pgtype.Int8
+	OutputAudioMillicentsPerMtok      pgtype.Int8
 }
 
 type OutboundAiPriceList struct {
@@ -9505,6 +9543,13 @@ type OutboundAiPriceList struct {
 	IntegrationID pgtype.UUID
 	EffectiveFrom pgtype.Timestamptz
 	CreatedAt     pgtype.Timestamptz
+}
+
+type OutboundAiPromptPrefix struct {
+	IntegrationID  pgtype.UUID
+	PrefixHash     []byte
+	SeenAt         pgtype.Timestamptz
+	PreviousSeenAt pgtype.Timestamptz
 }
 
 type OutboundAiReplay struct {
@@ -9667,6 +9712,8 @@ type OutboundAiUsageDaily struct {
 	CachedRequests             int64
 	CacheSavedMillicents       int64
 	PromptCacheSavedMillicents int64
+	InputAudioTokens           int64
+	OutputAudioTokens          int64
 }
 
 type OutboundAiUserUsageDaily struct {
@@ -13378,6 +13425,10 @@ type UsageStatementInvoiceExport struct {
 	Collection           string
 	DaysUntilDue         int32
 	AutomaticTax         bool
+	Attempt              int32
+	RejectedAt           pgtype.Timestamptz
+	ClaimToken           pgtype.UUID
+	ClaimedUntil         pgtype.Timestamptz
 }
 
 type WarmHint struct {

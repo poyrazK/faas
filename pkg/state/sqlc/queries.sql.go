@@ -461,8 +461,9 @@ SELECT id::text FROM customer_operations
 WHERE account_id=$1::uuid AND app_id=$2::uuid AND record ? 'subject'
   AND record #>> '{subject,type}' = $3::text AND record #>> '{subject,id}' = $4::text
   AND record->>'scope' = $5::text AND record->>'name' = $6::text
+  AND ($7::uuid IS NULL OR platform_tenant_id = $7::uuid)
   AND state IN ('accepted','running','waiting')
-ORDER BY created_at,id LIMIT $7::integer
+ORDER BY created_at,id LIMIT $8::integer
 `
 
 type ActiveCustomerOperationsForSubjectParams struct {
@@ -472,6 +473,7 @@ type ActiveCustomerOperationsForSubjectParams struct {
 	SubjectID   string
 	Scope       string
 	Name        string
+	TenantID    pgtype.UUID
 	PageLimit   int32
 }
 
@@ -485,6 +487,7 @@ func (q *Queries) ActiveCustomerOperationsForSubject(ctx context.Context, db DBT
 		arg.SubjectID,
 		arg.Scope,
 		arg.Name,
+		arg.TenantID,
 		arg.PageLimit,
 	)
 	if err != nil {
@@ -11308,6 +11311,51 @@ func (q *Queries) CustomerOperationAccountPlan(ctx context.Context, db DBTX, acc
 	return plan, err
 }
 
+const customerOperationActiveTelemetry = `-- name: CustomerOperationActiveTelemetry :many
+SELECT state, coalesce(record #>> '{waiting,kind}', '')::text AS wait_kind, count(*)::bigint AS operations,
+       min((record ->> 'updated_at')::timestamptz)::timestamptz AS oldest_update,
+       (count(*) FILTER (WHERE state IN ('accepted', 'running', 'waiting') AND deadline_at < $1::timestamptz))::bigint AS overdue
+FROM customer_operations
+WHERE state IN ('accepted', 'running', 'waiting', 'requires_reconciliation')
+GROUP BY state, wait_kind
+`
+
+type CustomerOperationActiveTelemetryRow struct {
+	State        string
+	WaitKind     string
+	Operations   int64
+	OldestUpdate pgtype.Timestamptz
+	Overdue      int64
+}
+
+// ADR-20261016123221: fleet-wide pending Operations by state and wait kind, read
+// through the partial index of pending Operations.
+func (q *Queries) CustomerOperationActiveTelemetry(ctx context.Context, db DBTX, overdueBefore pgtype.Timestamptz) ([]CustomerOperationActiveTelemetryRow, error) {
+	rows, err := db.Query(ctx, customerOperationActiveTelemetry, overdueBefore)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []CustomerOperationActiveTelemetryRow{}
+	for rows.Next() {
+		var i CustomerOperationActiveTelemetryRow
+		if err := rows.Scan(
+			&i.State,
+			&i.WaitKind,
+			&i.Operations,
+			&i.OldestUpdate,
+			&i.Overdue,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const customerOperationBlobByKey = `-- name: CustomerOperationBlobByKey :one
 SELECT id, operation_id, account_id, generation, execution_id, attempt, report_id, fingerprint, storage_key, size_bytes, state, expires_at, next_attempt_at, lease_token, lease_until, workflow_run_id, workflow_step, job_run_id FROM customer_operation_result_blobs WHERE storage_key = $1::text
 `
@@ -11609,6 +11657,56 @@ func (q *Queries) CustomerOperationJobSnapshotRetained(ctx context.Context, db D
 	return exists, err
 }
 
+const customerOperationOutcomeTelemetry = `-- name: CustomerOperationOutcomeTelemetry :many
+SELECT event_type, coalesce(data ->> 'failure_code', '')::text AS failure_code, count(*)::bigint AS operations
+FROM customer_operation_events
+WHERE event_type IN ('succeeded', 'failed', 'cancelled', 'reconciliation_required') AND created_at >= $1::timestamptz
+GROUP BY event_type, failure_code
+`
+
+type CustomerOperationOutcomeTelemetryRow struct {
+	EventType   string
+	FailureCode string
+	Operations  int64
+}
+
+// ADR-20261016123221: Operation outcomes since a point, by failure code.
+func (q *Queries) CustomerOperationOutcomeTelemetry(ctx context.Context, db DBTX, since pgtype.Timestamptz) ([]CustomerOperationOutcomeTelemetryRow, error) {
+	rows, err := db.Query(ctx, customerOperationOutcomeTelemetry, since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []CustomerOperationOutcomeTelemetryRow{}
+	for rows.Next() {
+		var i CustomerOperationOutcomeTelemetryRow
+		if err := rows.Scan(&i.EventType, &i.FailureCode, &i.Operations); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const customerOperationOutcomeUnknownAccounts = `-- name: CustomerOperationOutcomeUnknownAccounts :one
+SELECT count(DISTINCT o.account_id)::bigint
+FROM customer_operation_events e
+JOIN customer_operations o ON o.id = e.operation_id
+WHERE e.event_type IN ('succeeded', 'failed', 'cancelled', 'reconciliation_required') AND e.event_type = 'reconciliation_required'
+  AND e.data ->> 'failure_code' = 'execution_outcome_unknown' AND e.created_at >= $1::timestamptz
+`
+
+// ADR-20261016123221: accounts whose attempts ended with an unknown outcome since a point.
+func (q *Queries) CustomerOperationOutcomeUnknownAccounts(ctx context.Context, db DBTX, since pgtype.Timestamptz) (int64, error) {
+	row := db.QueryRow(ctx, customerOperationOutcomeUnknownAccounts, since)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const customerOperationRecoveryTenantStatus = `-- name: CustomerOperationRecoveryTenantStatus :one
 SELECT status FROM platform_tenants WHERE id=$1::uuid AND account_id=$2::uuid
 `
@@ -11704,10 +11802,12 @@ func (q *Queries) CustomerOperationStreamMetric(ctx context.Context, db DBTX, no
 
 const customerOperationWorkflowAttemptWindow = `-- name: CustomerOperationWorkflowAttemptWindow :one
 SELECT r.definition_snapshot, r.resume_count, r.lease_until,
-       a.started_at, clock_timestamp()::timestamptz AS observed_at
+       a.started_at, clock_timestamp()::timestamptz AS observed_at,
+       coalesce((o.record #>> '{limits,max_execution_seconds}')::integer, 0)::integer AS max_execution_seconds
 FROM workflow_runs r
 JOIN workflow_steps s ON s.run_id=r.id
 JOIN workflow_step_attempts a ON a.run_id=r.id AND a.step_name=s.step_name AND a.attempt=s.attempt
+LEFT JOIN customer_operations o ON o.workflow_run_id=r.id
 WHERE r.id=$1::uuid AND s.step_name=$2::text
 AND s.attempt=$3::integer AND s.status='running' AND a.status='running'
 AND r.status='running' AND r.lease_until>clock_timestamp()
@@ -11720,13 +11820,15 @@ type CustomerOperationWorkflowAttemptWindowParams struct {
 }
 
 type CustomerOperationWorkflowAttemptWindowRow struct {
-	DefinitionSnapshot []byte
-	ResumeCount        int32
-	LeaseUntil         pgtype.Timestamptz
-	StartedAt          pgtype.Timestamptz
-	ObservedAt         pgtype.Timestamptz
+	DefinitionSnapshot  []byte
+	ResumeCount         int32
+	LeaseUntil          pgtype.Timestamptz
+	StartedAt           pgtype.Timestamptz
+	ObservedAt          pgtype.Timestamptz
+	MaxExecutionSeconds int32
 }
 
+// ADR-20261016110803: the Operation's execution budget also caps the attempt window.
 func (q *Queries) CustomerOperationWorkflowAttemptWindow(ctx context.Context, db DBTX, arg CustomerOperationWorkflowAttemptWindowParams) (CustomerOperationWorkflowAttemptWindowRow, error) {
 	row := db.QueryRow(ctx, customerOperationWorkflowAttemptWindow, arg.RunID, arg.StepName, arg.Attempt)
 	var i CustomerOperationWorkflowAttemptWindowRow
@@ -11736,6 +11838,7 @@ func (q *Queries) CustomerOperationWorkflowAttemptWindow(ctx context.Context, db
 		&i.LeaseUntil,
 		&i.StartedAt,
 		&i.ObservedAt,
+		&i.MaxExecutionSeconds,
 	)
 	return i, err
 }
@@ -43138,6 +43241,45 @@ func (q *Queries) ListFeatureFlagVersions(ctx context.Context, db DBTX, arg List
 	return items, nil
 }
 
+const listFinishedWorkflowRunAttempts = `-- name: ListFinishedWorkflowRunAttempts :many
+SELECT step_name, attempt, started_at, finished_at FROM workflow_step_attempts
+WHERE run_id=$1::uuid AND finished_at IS NOT NULL
+ORDER BY started_at, step_name, attempt
+`
+
+type ListFinishedWorkflowRunAttemptsRow struct {
+	StepName   string
+	Attempt    int32
+	StartedAt  pgtype.Timestamptz
+	FinishedAt pgtype.Timestamptz
+}
+
+// ADR-20261016110803: the finished step attempts an Operation's execution budget counts.
+func (q *Queries) ListFinishedWorkflowRunAttempts(ctx context.Context, db DBTX, runID pgtype.UUID) ([]ListFinishedWorkflowRunAttemptsRow, error) {
+	rows, err := db.Query(ctx, listFinishedWorkflowRunAttempts, runID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListFinishedWorkflowRunAttemptsRow{}
+	for rows.Next() {
+		var i ListFinishedWorkflowRunAttemptsRow
+		if err := rows.Scan(
+			&i.StepName,
+			&i.Attempt,
+			&i.StartedAt,
+			&i.FinishedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listFirstSuccessfulRequestsForAccountsCreatedSince = `-- name: ListFirstSuccessfulRequestsForAccountsCreatedSince :many
 select a.account_id, min(i.last_request_at)::timestamptz as first_success_at
 from instances i
@@ -60694,6 +60836,18 @@ func (q *Queries) ObjectS3CredentialLockBucket(ctx context.Context, db DBTX, arg
 	return id, err
 }
 
+const objectS3CredentialLockNamespace = `-- name: ObjectS3CredentialLockNamespace :exec
+SELECT id FROM resource_namespaces WHERE id=$1 FOR KEY SHARE
+`
+
+// The credential's account_id foreign key takes this KEY SHARE lock anyway;
+// taking it before the bucket keeps object storage's account-before-bucket
+// lock order (ADR-533).
+func (q *Queries) ObjectS3CredentialLockNamespace(ctx context.Context, db DBTX, id pgtype.UUID) error {
+	_, err := db.Exec(ctx, objectS3CredentialLockNamespace, id)
+	return err
+}
+
 const objectS3CredentialReseal = `-- name: ObjectS3CredentialReseal :execrows
 UPDATE object_storage_s3_credentials SET secret_sealed=$4,kid=$3
 WHERE id=$1 AND kid=$2 AND status='active'
@@ -69283,6 +69437,7 @@ SELECT jsonb_build_object(
  'workflow_automation_live_suites.deployment_id', (SELECT count(*) FROM workflow_automation_live_suites WHERE deployment_id=$1::uuid),
  'workflow_automation_live_verifications.deployment_id', (SELECT count(*) FROM workflow_automation_live_verifications WHERE deployment_id=$1::uuid),
  'workflow_schedule_occurrences.deployment_id', (SELECT count(*) FROM workflow_schedule_occurrences WHERE deployment_id::text=$1::uuid::text),
+ 'release_freezes.source_deployment_id', (SELECT count(*) FROM release_freezes WHERE source_deployment_id=$1::uuid),
  'app_issues.fixed_deployment_id', (SELECT count(*) FROM app_issues WHERE fixed_deployment_id=$1::uuid),
  'debug_regression_observations.deployment_id', (SELECT count(*) FROM debug_regression_observations WHERE deployment_id=$1::uuid),
  'deployment_audit.deployment_id', (SELECT count(*) FROM deployment_audit WHERE deployment_id=$1::uuid),
