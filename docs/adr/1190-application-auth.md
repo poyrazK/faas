@@ -826,5 +826,20 @@ returned 404. Native acceptance must show sign-up, Data
 API RLS and session revocation through a builder-built deployment, with wake
 latency, resident memory and snapshot size within plan limits.
 `make auth-staging-canary` (tests/auth/staging) implements that run against an
-isolated staging account; it has not yet run. This ADR alone changes no
-production gate.
+isolated staging account; it has not yet run, and no staging target exists
+yet. This ADR alone changes no production gate.
+
+On 2026-10-20 the image built from `main` (edefb05a19), with every feature in
+this ADR merged, was requalified natively on x86_64 (gregale-internal-test-1,
+since fsn-4 was unavailable). The 2026-10-17 run passed again (47 checks: SMS,
+second factors, SAML through Keycloak, SCIM, organization SSO), as did the
+OAuth server (37) and anonymous users with retention (12). Under the Free
+plan's 136 MiB container cgroup the 47 checks ran with a 68 MiB peak and no
+`memory.max` or OOM events. The checks written for the later features ran
+against the same image with stand-ins for Resend, Twilio and DNS: custom
+claims (11), sign-up restrictions (17), impersonation (21), organization
+claims, the organization audit log (6), organization-required MFA (24), domain
+join with real TXT resolution (25, plus 5 under autoconfirm), Web3 (10),
+self-deletion, email templates and session limits (6). That run found the
+account page listing sessions GoTrue had revoked under one session per user;
+the list now keeps only the live one.
