@@ -248,7 +248,7 @@ while [[ $# -gt 0 ]]; do
 done
 [[ "$url" == http://127.0.0.1:9095/api/v1/alerts ]] || { echo "unexpected url $url" >&2; exit 2; }
 [[ -z "${STUB_CURL_FAIL:-}" ]] || { echo "curl: (7) Failed to connect" >&2; exit 7; }
-printf '%s' "$STUB_ALERTS" > "$out"
+if [[ -n "${STUB_ALERTS_FILE:-}" ]]; then cp "$STUB_ALERTS_FILE" "$out"; else printf '%s' "$STUB_ALERTS" > "$out"; fi
 EOF
 chmod +x "$stub/flock" "$stub/curl"
 export STUB_ALERTS='{"status":"success","data":{"alerts":[{"labels":{"alertname":"FaasDaemonDown","severity":"page"},"state":"firing","activeAt":"2026-10-20T10:00:00Z"}]}}'
@@ -264,9 +264,11 @@ jq -e '.lock == "free" and (.prometheus.ok | not) and (.prometheus.error | test(
   || fail "an unreachable Prometheus was not reported: $state"
 state="$(STUB_ALERTS='{"status":"error","error":"bad"}' bash "$helper" preflight-state)"
 jq -e '(.prometheus.ok | not)' <<<"$state" >/dev/null || fail "a failed Prometheus answer counted as ok: $state"
-# More than one command-line argument can hold (MAX_ARG_STRLEN is 128 KiB).
-big="$(jq -cn '{status: "success", data: {alerts: [range(3000) | {labels: {alertname: "FaasX", severity: "warn", instance: ("i-" + tostring)}, state: "firing"}]}}')"
-state="$(STUB_ALERTS="$big" bash "$helper" preflight-state)"
+# More than one command-line argument can hold (MAX_ARG_STRLEN is 128 KiB,
+# which on Linux also bounds an environment string: the fixture is a file).
+jq -cn '{status: "success", data: {alerts: [range(3000) | {labels: {alertname: "FaasX", severity: "warn", instance: ("i-" + tostring)}, state: "firing"}]}}' > "$test_root/big-alerts.json"
+(( $(wc -c < "$test_root/big-alerts.json") > 131072 )) || fail "the large alert fixture is not larger than one argument"
+state="$(STUB_ALERTS_FILE="$test_root/big-alerts.json" bash "$helper" preflight-state)"
 jq -e '(.prometheus.alerts | length) == 3000' <<<"$state" >/dev/null || fail "a large alert list was not passed through"
 if PROMETHEUS_URL=http://10.0.0.1:9095 bash "$helper" preflight-state >/dev/null 2>&1; then
   fail "a non-loopback Prometheus URL was accepted"
