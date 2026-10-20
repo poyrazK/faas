@@ -107,7 +107,7 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 			"Unsupported format", "format must be '"+fieldNameTarball+"' (PR-A)"))
 		return
 	}
-	rolloutReq := &api.CreateDeploymentRequest{Environment: req.Environment, TrafficPercent: req.TrafficPercent, Canary: req.Canary, RollbackOn5xx: req.RollbackOn5xx, DisableStartupCPUBoost: req.DisableStartupCPUBoost, MCPTaskMigrationOverride: req.MCPTaskMigrationOverride}
+	rolloutReq := &api.CreateDeploymentRequest{Environment: req.Environment, TrafficPercent: req.TrafficPercent, Canary: req.Canary, RollbackOn5xx: req.RollbackOn5xx, DisableStartupCPUBoost: req.DisableStartupCPUBoost, MCPTaskMigrationOverride: req.MCPTaskMigrationOverride, OverrideFreeze: req.OverrideFreeze}
 	if problem := reviewedSourceStage(req, rolloutReq); problem != nil {
 		api.WriteProblem(w, problem)
 		return
@@ -119,6 +119,10 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 		return
 	}
 	if p := s.applyDeploymentEnvironment(r.Context(), acct, app, rolloutReq); p != nil {
+		api.WriteProblem(w, p)
+		return
+	}
+	if p := s.releaseFreezeProblem(r, acct, app, rolloutReq.Scope, rolloutReq.OverrideFreeze); p != nil {
 		api.WriteProblem(w, p)
 		return
 	}

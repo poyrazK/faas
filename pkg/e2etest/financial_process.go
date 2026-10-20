@@ -39,6 +39,10 @@ func (h *Harness) RestartVMMD() error {
 	if h == nil || h.T == nil || len(h.vmmdLaunchEnv) == 0 || h.VMMDSock == "" {
 		return fmt.Errorf("e2etest: vmmd launch recipe unavailable")
 	}
+	// Validate before killing: an externally supplied socket is not ours to replace.
+	if h.SockDir == "" || filepath.Dir(h.VMMDSock) != h.SockDir {
+		return fmt.Errorf("e2etest: vmmd socket is not harness-owned")
+	}
 	if err := h.KillVMMD(); err != nil {
 		return err
 	}

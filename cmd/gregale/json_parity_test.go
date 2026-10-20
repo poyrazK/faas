@@ -203,7 +203,7 @@ func hasJSONTestMode(body *ast.BlockStmt) bool {
 		switch node := node.(type) {
 		case *ast.AssignStmt:
 			for index, lhs := range node.Lhs {
-				if isJSONOutput(lhs) && index < len(node.Rhs) {
+				if isJSONOutputTarget(lhs) && index < len(node.Rhs) {
 					value, ok := node.Rhs[index].(*ast.Ident)
 					if ok && value.Name == "true" {
 						enabled = true
@@ -244,7 +244,7 @@ func jsonTestedFile(file *ast.File) map[string]bool {
 			if !ok {
 				return true
 			}
-			name := calledName(call.Fun)
+			name := testCallee(call.Fun)
 			if name == "" {
 				return true
 			}
@@ -277,22 +277,32 @@ func jsonTestedFile(file *ast.File) map[string]bool {
 	return tested
 }
 
-// isJSONOutput reports whether expr is the jsonOutput flag: jsonOutput in
-// internal tests, (*main.JsonOutput) in external ones.
-func isJSONOutput(expr ast.Expr) bool {
-	if id, ok := expr.(*ast.Ident); ok {
+// isJSONOutputTarget matches the JSON switch in either test unit: internal
+// tests assign jsonOutput, main_test assigns (*main.JsonOutput) through the
+// export_test.go pointer (ADR-982).
+func isJSONOutputTarget(lhs ast.Expr) bool {
+	if id, ok := lhs.(*ast.Ident); ok {
 		return id.Name == "jsonOutput"
 	}
-	if paren, ok := expr.(*ast.ParenExpr); ok {
-		expr = paren.X
+	if paren, ok := lhs.(*ast.ParenExpr); ok {
+		lhs = paren.X
 	}
-	star, ok := expr.(*ast.StarExpr)
-	return ok && calledName(star.X) == "jsonOutput"
+	star, ok := lhs.(*ast.StarExpr)
+	if !ok {
+		return false
+	}
+	selector, ok := star.X.(*ast.SelectorExpr)
+	if !ok {
+		return false
+	}
+	pkg, ok := selector.X.(*ast.Ident)
+	return ok && pkg.Name == "main" && selector.Sel.Name == "JsonOutput"
 }
 
-// calledName returns a function's name as package main spells it, so an
-// external test's main.CmdScan maps like an internal test's cmdScan.
-func calledName(fun ast.Expr) string {
+// testCallee returns the internal name a test calls. main_test reaches
+// cmdXxx and run through export_test.go aliases (main.CmdXxx, main.Run)
+// that only capitalise the first letter.
+func testCallee(fun ast.Expr) string {
 	switch fun := fun.(type) {
 	case *ast.Ident:
 		return fun.Name
@@ -354,13 +364,31 @@ func TestArbitraryName(t *testing.T) { jsonOutput = true; cmdApps(nil) }
 func TestHumanAfter(t *testing.T) { cmdBindings(nil) }
 func TestRunJSON(t *testing.T) { _ = "bindings"; for _, args := range [][]string{{"alerts", "--json"}} { run(args) } }
 func helper() { jsonOutput = true; cmdBindings(nil) }
-func TestExternalJSON(t *testing.T) { (*main.JsonOutput) = true; main.CmdCanary(nil) }
 `, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	tested := jsonTestedFile(file)
-	if !tested["cmdApps"] || !tested["cmdAlerts"] || !tested["cmdCanary"] || tested["cmdBindings"] || len(tested) != 3 {
+	if !tested["cmdApps"] || !tested["cmdAlerts"] || tested["cmdBindings"] || len(tested) != 2 {
+		t.Fatalf("JSON-tested command families = %v", tested)
+	}
+}
+
+// ADR-982 moved most CLI tests to main_test, which switches JSON on through
+// (*main.JsonOutput) and calls main.CmdXxx / main.Run. The audit must count
+// those the same as the internal forms.
+func TestJSONAuditCountsExternalTestPackage(t *testing.T) {
+	file, err := parser.ParseFile(token.NewFileSet(), "fixture_test.go", `package main_test
+func TestHumanExternal(t *testing.T) { main.CmdBindings(nil) }
+func TestExternalJSON(t *testing.T) { (*main.JsonOutput) = true; main.CmdApps(nil) }
+func TestExternalRunJSON(t *testing.T) { for _, args := range [][]string{{"alerts", "--json"}} { main.Run(args) } }
+func TestOtherPackage(t *testing.T) { (*main.JsonOutput) = true; other.CmdDomains(nil) }
+`, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tested := jsonTestedFile(file)
+	if !tested["cmdApps"] || !tested["cmdAlerts"] || tested["cmdBindings"] || tested["cmdDomains"] || len(tested) != 2 {
 		t.Fatalf("JSON-tested command families = %v", tested)
 	}
 }

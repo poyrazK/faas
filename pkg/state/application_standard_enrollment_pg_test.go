@@ -1,6 +1,6 @@
 //go:build !no_pg
 
-package state
+package state_test
 
 import (
 	"context"
@@ -14,6 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/appstandards"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestPgApplicationStandardEnrollment(t *testing.T) {
@@ -22,7 +23,7 @@ func TestPgApplicationStandardEnrollment(t *testing.T) {
 	if err := db.MigrateUp(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
-	standardEnrollmentLifecycle(t, NewPgStore(pool), func(a appstandards.Assignment, actor string) {
+	state.StandardEnrollmentLifecycle(t, state.NewPgStore(pool), func(a appstandards.Assignment, actor string) {
 		_, err := pool.Exec(ctx, `INSERT INTO application_standard_assignments
             (id, org_id, scope, scope_id, standard_id, admission_version, active, created_by)
             VALUES ($1, $2, $3, $4, $5, $6, true, $7)
@@ -53,20 +54,20 @@ func TestPgApplicationStandardProjectScopeFence(t *testing.T) {
 	if err := db.MigrateUp(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
-	s := NewPgStore(pool)
-	owner, err := s.CreateAccountWithPersonalOrg(ctx, CreateAccountWithPersonalOrgParams{Email: "scope-owner@example.com", Plan: api.PlanPro})
+	s := state.NewPgStore(pool)
+	owner, err := s.CreateAccountWithPersonalOrg(ctx, state.CreateAccountWithPersonalOrgParams{Email: "scope-owner@example.com", Plan: api.PlanPro})
 	if err != nil {
 		t.Fatal(err)
 	}
-	foreign, err := s.CreateAccountWithPersonalOrg(ctx, CreateAccountWithPersonalOrgParams{Email: "scope-foreign@example.com", Plan: api.PlanPro})
+	foreign, err := s.CreateAccountWithPersonalOrg(ctx, state.CreateAccountWithPersonalOrgParams{Email: "scope-foreign@example.com", Plan: api.PlanPro})
 	if err != nil {
 		t.Fatal(err)
 	}
-	project, err := s.CreateProject(ctx, Project{AccountID: owner.Account.ID, Slug: "scope-project"})
+	project, err := s.CreateProject(ctx, state.Project{AccountID: owner.Account.ID, Slug: "scope-project"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	version, err := s.PublishApplicationStandardVersion(ctx, ApplicationStandardPublish{OrgID: owner.PersonalOrg.ID, ActorID: owner.Account.ID, Slug: "project-baseline", CreateApplicationStandardVersionRequest: api.CreateApplicationStandardVersionRequest{Definition: json.RawMessage(`{"require_signed":{"mode":"mandatory","value":true}}`)}})
+	version, err := s.PublishApplicationStandardVersion(ctx, state.ApplicationStandardPublish{OrgID: owner.PersonalOrg.ID, ActorID: owner.Account.ID, Slug: "project-baseline", CreateApplicationStandardVersionRequest: api.CreateApplicationStandardVersionRequest{Definition: json.RawMessage(`{"require_signed":{"mode":"mandatory","value":true}}`)}})
 	if err != nil {
 		t.Fatal(err)
 	}

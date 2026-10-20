@@ -191,8 +191,12 @@ type EnqueueParams struct {
 	// DockerfilePath is the explicit Dockerfile selected inside SourceRoot.
 	// It is captured in the deployment's immutable inferred profile.
 	DockerfilePath string
-	SourceURL      string
-	CommitSHA      string
+	// DockerfileBuild is the app's Compose build.args and build.target
+	// (ADR-20261019142544), captured in the inferred profile beside the
+	// Dockerfile path.
+	DockerfileBuild *api.DockerfileBuildOptions
+	SourceURL       string
+	CommitSHA       string
 	// GitHubSourceRef is populated when a GitHub deployment was resolved from
 	// a mutable branch (source-ref request or webhook push). Imaged rechecks
 	// it immediately before promotion.
@@ -545,6 +549,9 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 				if runtimeProfile, ok := frameworkprofile.ProfileForFunctionRuntime(p.FunctionRuntime); ok {
 					profile = runtimeProfile
 				}
+			}
+			if !p.DockerfileBuild.IsZero() {
+				profile.DockerfileBuild = p.DockerfileBuild.Clone()
 			}
 			if inferredProfile, err = json.Marshal(profile); err != nil {
 				if p.Log != nil {

@@ -1563,7 +1563,7 @@ func (c *Client) DeployFromSourceTarball(ctx context.Context, slug string, tarba
 	// sidecar: optional JSON. Empty repo+ref → omit the part entirely
 	// (the server treats missing sidecar as zero provenance).
 	if sidecar.Repo != "" || sidecar.Ref != "" || sidecar.Environment != "" || sidecar.Reason != "" || sidecar.Tag != "" ||
-		sidecar.DeployedBy != "" || sidecar.PRNumber != 0 || sidecar.TrafficPercent != nil || sidecar.Canary != nil || sidecar.RollbackOn5xx != nil || sidecar.DisableStartupCPUBoost != nil || sidecar.MCPTaskMigrationOverride || sidecar.Healthcheck != nil || sidecar.NoTriggers {
+		sidecar.DeployedBy != "" || sidecar.PRNumber != 0 || sidecar.TrafficPercent != nil || sidecar.Canary != nil || sidecar.RollbackOn5xx != nil || sidecar.DisableStartupCPUBoost != nil || sidecar.MCPTaskMigrationOverride || sidecar.Healthcheck != nil || sidecar.NoTriggers || sidecar.OverrideFreeze != "" {
 		sidecarJSON, err := json.Marshal(sidecar)
 		if err != nil {
 			return DeploymentResponse{}, fmt.Errorf("marshal sidecar: %w", err)
@@ -1927,7 +1927,7 @@ func (c *Client) applyProjectPlan(
 	}
 	var b bytes.Buffer
 	w := multipart.NewWriter(&b)
-	if err := writeProjectMultipartFields(w, source, sourceName, projectSlug, repoFullName, productionBranch, installID, only, exclude, persistExclude, noTriggers, environment, approvalToken); err != nil {
+	if err := writeProjectMultipartFields(w, source, sourceName, projectSlug, repoFullName, productionBranch, installID, only, exclude, persistExclude, noTriggers, environment, approvalToken, OverrideFreezeFromContext(ctx)); err != nil {
 		return ApplyResponse{}, fmt.Errorf("build multipart: %w", err)
 	}
 	if raw := projectReleaseConfigFromContext(ctx); len(raw) > 0 {
@@ -2447,6 +2447,13 @@ func writeProjectMultipartFields(
 	}
 	if len(environmentAndApproval) > 1 && strings.TrimSpace(environmentAndApproval[1]) != "" {
 		if err := w.WriteField("approval_token", strings.TrimSpace(environmentAndApproval[1])); err != nil {
+			return err
+		}
+	}
+	// ADR-20261019071733: an apply into production during a freeze
+	// carries the audited override reason.
+	if len(environmentAndApproval) > 2 && strings.TrimSpace(environmentAndApproval[2]) != "" {
+		if err := w.WriteField("override_freeze", strings.TrimSpace(environmentAndApproval[2])); err != nil {
 			return err
 		}
 	}

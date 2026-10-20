@@ -1,5 +1,8 @@
 # Architecture Decision Records
 
+- [Finished invocations without a horizon get the plan default retention](20261019104819-invocation-default-retention.md)
+- [Compose build arguments and target stage for Dockerfile builds](20261019142544-compose-build-args-and-target.md)
+
 - [Data API usage reporting and owner monthly caps](20261019102108-data-api-usage-and-owner-caps.md)
 
 - [Data API public reads, server keys, aggregates, single-app projects and Python/Go clients](20261018170742-data-api-access-modes-and-clients.md)

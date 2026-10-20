@@ -1,4 +1,4 @@
-package state
+package state_test
 
 // adr: 435
 
@@ -12,22 +12,23 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/imagechain"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 type baseScanTestStore interface {
-	BaseImageProducerStore
-	BaseImageScanStore
+	state.BaseImageProducerStore
+	state.BaseImageScanStore
 }
 
 // Real layer consumption and private store facts, not native scan/boot proof.
-func baseScanFixture(t *testing.T, s baseScanTestStore) (BaseImageScanInput, BaseImageProducer) {
+func baseScanFixture(t *testing.T, s baseScanTestStore) (state.BaseImageScanInput, state.BaseImageProducer) {
 	t.Helper()
-	base, err := s.PublishBaseImageProducer(t.Context(), baseProducerFixture(t, "base/scan-fixture.ext4", "base layer"))
+	base, err := s.PublishBaseImageProducer(t.Context(), state.BaseProducerFixture(t, "base/scan-fixture.ext4", "base layer"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	report := &api.ScanResult{ImageDigest: base.Input.SourceReference, ArtifactDigest: base.Input.Artifact.Digest, ScannerVersion: "0.116.0", ScannerDBStatus: "valid", ScannerDBVersion: "v6.0.2", ScannerDBBuiltAt: time.Now().Add(-time.Hour).UTC().Format(time.RFC3339Nano), SeverityCounts: api.SeverityCounts{Low: 1}, Vulnerabilities: []api.Vulnerability{{ID: "CVE-fixture", Severity: "LOW", Package: "base", Paths: []string{"/base/file"}}}}
-	return BaseImageScanInput{ID: uuid.NewString(), BaseProducerID: base.ID, BaseInputHash: base.InputHash, Artifact: base.Input.Artifact, SourceReference: base.Input.SourceReference, Status: "complete", ScannerName: "grype", Report: report}, base
+	return state.BaseImageScanInput{ID: uuid.NewString(), BaseProducerID: base.ID, BaseInputHash: base.InputHash, Artifact: base.Input.Artifact, SourceReference: base.Input.SourceReference, Status: "complete", ScannerName: "grype", Report: report}, base
 }
 
 func baseScanLifecycle(t *testing.T, s baseScanTestStore) {
@@ -56,14 +57,14 @@ func baseScanLifecycle(t *testing.T, s baseScanTestStore) {
 	if _, err := s.PublishBaseImageScan(t.Context(), failed); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.GetFreshBaseImageScan(t.Context(), base.ID, base.InputHash); !errors.Is(err, ErrApplicationStandardRuntimeStale) {
+	if _, err := s.GetFreshBaseImageScan(t.Context(), base.ID, base.InputHash); !errors.Is(err, state.ErrApplicationStandardRuntimeStale) {
 		t.Fatalf("failed base scan remained fresh: %v", err)
 	}
 	history, err := s.GetCurrentBaseImageScan(t.Context(), base.Input.Artifact.StorageKey)
 	if err != nil || history.ID != failed.ID || history.Result.Status != "failed" {
 		t.Fatalf("failed scan history missing: %v", err)
 	}
-	if _, err := s.PublishBaseImageScan(t.Context(), got.Input); !errors.Is(err, ErrConflict) {
+	if _, err := s.PublishBaseImageScan(t.Context(), got.Input); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("historical success reactivated: %v", err)
 	}
 	newBase := base.Input
@@ -71,10 +72,10 @@ func baseScanLifecycle(t *testing.T, s baseScanTestStore) {
 	if _, err := s.PublishBaseImageProducer(t.Context(), newBase); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.GetCurrentBaseImageScan(t.Context(), base.Input.Artifact.StorageKey); !errors.Is(err, ErrNotFound) {
+	if _, err := s.GetCurrentBaseImageScan(t.Context(), base.Input.Artifact.StorageKey); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("replaced producer scan exposed: %v", err)
 	}
-	if _, err := s.PublishBaseImageScan(t.Context(), failed); !errors.Is(err, ErrApplicationStandardRuntimeStale) {
+	if _, err := s.PublishBaseImageScan(t.Context(), failed); !errors.Is(err, state.ErrApplicationStandardRuntimeStale) {
 		t.Fatalf("replaced producer renewed scan: %v", err)
 	}
 }
@@ -83,7 +84,7 @@ func baseScanRefusals(t *testing.T, s baseScanTestStore) {
 	in, base := baseScanFixture(t, s)
 	for _, field := range []string{"hash", "digest", "bytes", "source", "scanner", "clock", "counts", "null matches", "old database", "future database"} {
 		t.Run(field, func(t *testing.T) {
-			bad := cloneBaseImageScan(BaseImageScan{Input: in}).Input
+			bad := state.CloneBaseImageScan(state.BaseImageScan{Input: in}).Input
 			bad.ID = uuid.NewString()
 			switch field {
 			case "hash":
@@ -112,7 +113,7 @@ func baseScanRefusals(t *testing.T, s baseScanTestStore) {
 			if _, err := s.PublishBaseImageScan(t.Context(), bad); err == nil {
 				t.Fatal("unbound base scan accepted")
 			}
-			if _, err := s.GetCurrentBaseImageScan(t.Context(), in.Artifact.StorageKey); !errors.Is(err, ErrNotFound) {
+			if _, err := s.GetCurrentBaseImageScan(t.Context(), in.Artifact.StorageKey); !errors.Is(err, state.ErrNotFound) {
 				t.Fatalf("refusal changed current scan: %v", err)
 			}
 		})
@@ -127,10 +128,10 @@ func baseScanRefusals(t *testing.T, s baseScanTestStore) {
 	}
 }
 
-func TestMemBaseScanLifecycle(t *testing.T) { baseScanLifecycle(t, NewMemStore()) }
-func TestMemBaseScanRefusals(t *testing.T)  { baseScanRefusals(t, NewMemStore()) }
+func TestMemBaseScanLifecycle(t *testing.T) { baseScanLifecycle(t, state.NewMemStore()) }
+func TestMemBaseScanRefusals(t *testing.T)  { baseScanRefusals(t, state.NewMemStore()) }
 func TestMemBaseScanExpiredLease(t *testing.T) {
-	s := NewMemStore()
+	s := state.NewMemStore()
 	in, base := baseScanFixture(t, s)
 	value, err := s.PublishBaseImageScan(t.Context(), in)
 	if err != nil {
@@ -139,11 +140,11 @@ func TestMemBaseScanExpiredLease(t *testing.T) {
 	// Model a formerly valid row; the private fresh read must refuse it.
 	value.ScannedAt = time.Now().Add(-2 * api.ApplicationStandardArtifactScanTTL).UTC()
 	value.ExpiresAt = value.ScannedAt.Add(api.ApplicationStandardArtifactScanTTL)
-	value.Result = baseScanResult(value.Input, value.ScannedAt)
-	s.mu.Lock()
-	s.baseImageScans[in.ID] = value
-	s.mu.Unlock()
-	if _, err := s.GetFreshBaseImageScan(t.Context(), base.ID, base.InputHash); !errors.Is(err, ErrApplicationStandardRuntimeStale) {
+	value.Result = state.BaseScanResult(value.Input, value.ScannedAt)
+	(*s.Mu()).Lock()
+	(*s.BaseImageScans())[in.ID] = value
+	(*s.Mu()).Unlock()
+	if _, err := s.GetFreshBaseImageScan(t.Context(), base.ID, base.InputHash); !errors.Is(err, state.ErrApplicationStandardRuntimeStale) {
 		t.Fatalf("expired scan remained fresh: %v", err)
 	}
 	retry, err := s.PublishBaseImageScan(t.Context(), in)

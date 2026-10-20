@@ -168,8 +168,40 @@ func (m *MemStore) projectConfigRuntimeChangeLocked(projectID, environment strin
 			continue
 		}
 		for _, scope := range projectConfigScopes(environment) {
+			if scope == "default" {
+				// The default scope reads production's configuration: stamp
+				// its own boundary (not the shared "default" one every
+				// environment consults) and mark its snapshots stale.
+				m.stampProjectConfigDefaultBoundaryLocked(id, at)
+				m.markDefaultScopeSnapshotsStaleLocked(id, at)
+				continue
+			}
 			m.markEnvironmentRuntimeChangedAndSnapshotsLocked(id, scope, at)
 		}
+	}
+}
+
+func (m *MemStore) stampProjectConfigDefaultBoundaryLocked(appID string, at time.Time) {
+	if m.environmentRuntimeConfigChangedAt == nil {
+		m.environmentRuntimeConfigChangedAt = map[environmentRuntimeKey]time.Time{}
+	}
+	key := environmentRuntimeKey{AppID: appID, Scope: projectConfigDefaultBoundary}
+	if prior := m.environmentRuntimeConfigChangedAt[key]; prior.After(at) {
+		at = prior
+	}
+	m.environmentRuntimeConfigChangedAt[key] = at
+}
+
+// markDefaultScopeSnapshotsStaleLocked marks an app's default-scope snapshots
+// taken at or before at stale, without advancing any runtime boundary.
+func (m *MemStore) markDefaultScopeSnapshotsStaleLocked(appID string, at time.Time) {
+	for id, snapshot := range m.snapshots {
+		deployment := m.deployments[snapshot.DeploymentID]
+		if deployment.AppID != appID || normalizedDeploymentScope(deployment.Scope) != "default" || snapshot.Stale || snapshot.CreatedAt.After(at) {
+			continue
+		}
+		snapshot.Stale = true
+		m.snapshots[id] = snapshot
 	}
 }
 

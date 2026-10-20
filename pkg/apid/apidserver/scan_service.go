@@ -130,6 +130,9 @@ type scanPlanRequest struct {
 	ApprovalToken          string            // exact-plan approval credential for protected applies
 	Secrets                map[string]string // apply-only; sealed before any build admission
 	InitialSecrets         api.ProjectInitialSecrets
+	// OverrideFreeze releases frozen apps anyway, audited
+	// (ADR-20261019071733).
+	OverrideFreeze string
 }
 
 func validProjectRepoFullName(repo string) bool {
@@ -855,7 +858,7 @@ type appliedBuild = api.AppliedBuild
 func (s *server) applyBuildsForAddedChangedOrdered(
 	ctx context.Context, r *http.Request, acct state.Account, project state.Project,
 	scanDir string, workloads []reposcan.Workload, managed []reposcan.Managed, added, changed []state.App,
-	environment string,
+	environment, overrideFreeze string,
 	cronPlans map[string]projectDeploymentCronPlan,
 	references ...[]reposcan.Workload,
 ) []appliedBuild {
@@ -901,6 +904,11 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 		// later cannot deploy).
 		if !acct.MayDeploy() {
 			res.Error = acct.DeployBlockedProblem().Detail
+			out = append(out, res)
+			continue
+		}
+		if prob := s.releaseFreezeProblem(r, acct, app, environment, overrideFreeze); prob != nil {
+			res.Error = prob.Detail
 			out = append(out, res)
 			continue
 		}
@@ -1066,6 +1074,7 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 			SourceRoot:                sourceApp.RootDir,
 			Scope:                     environment,
 			DockerfilePath:            app.Manifest.BuildDockerfile,
+			DockerfileBuild:           app.Manifest.DockerfileBuild,
 			FunctionRuntime:           functionRuntimeForApp(app),
 			LogSpool:                  spoolRoot(),
 			Log:                       s.log,
@@ -2130,7 +2139,7 @@ func (s *server) scanService(
 		if prob != nil {
 			return resp, state.Project{}, nil, nil, nil, nil, prob
 		}
-		builds := s.applyBuildsForAddedChangedOrdered(r.Context(), r, acct, project, req.ScanDir, filteredW, filteredMc, nil, apps, req.Environment, nil)
+		builds := s.applyBuildsForAddedChangedOrdered(r.Context(), r, acct, project, req.ScanDir, filteredW, filteredMc, nil, apps, req.Environment, req.OverrideFreeze, nil)
 		added, serving := serviceadditions.Partition(apps, req.SafeRelease)
 		return resp, project, added, serving, nil, builds, nil
 	}
@@ -2522,7 +2531,7 @@ func (s *server) scanService(
 	if !req.NoTriggers && reconcileProductionEnvironment(req.Environment) {
 		buildChanged, cronPlans = s.planProjectDeploymentCrons(r.Context(), acct, selectedProjectManifestApps(filteredW, currentProjectApps), buildAdded, buildChanged, desiredCrons)
 	}
-	builds := s.applyBuildsForAddedChangedOrdered(r.Context(), r, acct, project, req.ScanDir, filteredW, filteredMc, buildAdded, buildChanged, req.Environment, cronPlans, dependencyReferences)
+	builds := s.applyBuildsForAddedChangedOrdered(r.Context(), r, acct, project, req.ScanDir, filteredW, filteredMc, buildAdded, buildChanged, req.Environment, req.OverrideFreeze, cronPlans, dependencyReferences)
 	// ADR-124: surface the destructive subset on the response so the
 	// apply handler can render Removed in the same blast-radius
 	// envelope the preview offered. SoftDeleteAppCascade runs
@@ -2571,6 +2580,7 @@ func parseScanMultipart(r *http.Request, acct state.Account, limits api.Limits) 
 		platformTenantRequired *bool
 		environment            string
 		approvalToken          string
+		overrideFreeze         string
 		projectSlugSet         bool
 		secrets                map[string]string
 		secretsSet             bool
@@ -2742,6 +2752,12 @@ func parseScanMultipart(r *http.Request, acct state.Account, limits api.Limits) 
 			if secretProblem != nil {
 				return nil, secretProblem
 			}
+		case "override_freeze":
+			b, readErr := io.ReadAll(io.LimitReader(part, 4*api.ReleaseFreezeReasonMax+1))
+			if readErr != nil || len(b) > 4*api.ReleaseFreezeReasonMax {
+				return nil, api.ErrValidation("override_freeze must be a reason of at most 200 characters")
+			}
+			overrideFreeze = strings.TrimSpace(string(b))
 		case "approval_token":
 			b, readErr := io.ReadAll(io.LimitReader(part, 512))
 			if readErr != nil {
@@ -2817,6 +2833,7 @@ func parseScanMultipart(r *http.Request, acct state.Account, limits api.Limits) 
 		ApprovalToken:          approvalToken,
 		Secrets:                secrets,
 		ReleaseConfig:          releaseConfig,
+		OverrideFreeze:         overrideFreeze,
 	}, nil
 }
 

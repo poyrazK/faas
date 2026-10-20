@@ -783,6 +783,31 @@ const ConfigGuardBaseline = time.Hour
 const ConfigGuardCheckIntervalSeconds = 15
 const ConfigGuardBatchSize = 50
 
+// Deploy freezes (ADR-20261019071733). An account holds at most
+// ReleaseFreezesMax unlifted freezes that have not ended; reasons are at most
+// ReleaseFreezeReasonMax characters. A weekly window lasts at most a week, and
+// an after-rollback policy freezes for at most ReleaseFreezeAfterRollbackMax.
+// Plan-independent: a freeze only ever withholds releases.
+const ReleaseFreezesMax = 50
+const ReleaseFreezeReasonMax = 200
+const ReleaseFreezeWeeklyMaxMinutes = 7 * 24 * 60
+const ReleaseFreezeAfterRollbackMax = 24 * time.Hour
+
+// Release gates (ADR-20261019071734). An app holds at most
+// ReleaseGatesPerAppMax gates. Defaults: an SLO gate fails at a burn rate of
+// ReleaseGateDefaultMaxBurnRate, a new_errors gate at more than
+// ReleaseGateDefaultMaxNewGroups groups of at least
+// ReleaseGateDefaultMinEvents events, and a gate needs
+// ReleaseGateDefaultMinSamples requests or metric values before it is
+// judged. A decision lists at most ReleaseGateErrorClassesMax error classes
+// per gate. Plan-independent.
+const ReleaseGatesPerAppMax = 10
+const ReleaseGateDefaultMaxBurnRate = 10
+const ReleaseGateDefaultMaxNewGroups = 0
+const ReleaseGateDefaultMinEvents = 3
+const ReleaseGateDefaultMinSamples = 20
+const ReleaseGateErrorClassesMax = 5
+
 // Verified rollback outcomes (ADR-1446). apid resolves each plain rollback
 // every RollbackOutcomeCheckInterval: complete once the target serves,
 // failed when it leaves activation without serving or when
@@ -12007,6 +12032,20 @@ const (
 	AuthAdminBodyBytes = 1 << 20
 	AuthImportBatch    = 100
 	AuthAdminPageSize  = 100
+	// AuthCustomClaimsMaxBytes bounds a user's custom claims (app_metadata
+	// other than GoTrue's provider keys) as JSON; they ride in every token.
+	AuthCustomClaimsMaxBytes = 1000
+	// AuthSignupDomainsMax bounds each list of sign-up domains (allowed,
+	// blocked); AuthWaitlistMaxPending is the most waiting sign-up requests,
+	// after which new ones are refused as waitlist_full; AuthSignupApproveBatch
+	// is the most addresses one approval takes.
+	AuthSignupDomainsMax   = 100
+	AuthWaitlistMaxPending = 10000
+	AuthSignupApproveBatch = 100
+	// AuthImpersonationDefaultMinutes and AuthImpersonationMaxMinutes bound
+	// a session support staff open as a user (gregale auth users impersonate).
+	AuthImpersonationDefaultMinutes = 30
+	AuthImpersonationMaxMinutes     = 60
 	// AuthReauthenticationSeconds is how recent a sign-in must be for a
 	// user to delete their own account.
 	AuthReauthenticationSeconds = 600
@@ -13703,6 +13742,16 @@ const ServiceMapMaxEdges = 500
 // needs enough traffic to show quiet edges, so it is longer than the 5m
 // default of the per-app metrics endpoints.
 const ServiceMapDefaultRange = "1h"
+
+// Compose build arguments and target stage for Dockerfile builds
+// (ADR-20261019142544). They are stored on the app and every deployment, so
+// they are bounded like other stored build configuration.
+const (
+	DockerfileBuildArgsMax             = 64
+	DockerfileBuildArgValueMaxBytes    = 4096
+	DockerfileBuildArgsEncodedMaxBytes = 32 << 10
+	DockerfileBuildTargetMaxBytes      = 128
+)
 
 // Public build configuration is intentionally limited to reviewed URL values.
 const (

@@ -1,14 +1,15 @@
-package state
+package state_test
 
 import (
 	"context"
+	"github.com/onebox-faas/faas/pkg/state"
 	"testing"
 	"time"
 )
 
 func TestMemStoreSnapshotRestorePressureLeaseReleaseAndExpiry(t *testing.T) {
 	t.Parallel()
-	store := NewMemStore()
+	store := state.NewMemStore()
 	ctx := context.Background()
 
 	first, err := store.AcquireSnapshotRestorePressure(ctx)

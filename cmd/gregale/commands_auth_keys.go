@@ -351,8 +351,12 @@ type authPublicSettings struct {
 	SiteURL      string   `json:"site_url"`
 	RedirectURLs []string `json:"redirect_urls"`
 	Signup       struct {
-		Enabled     bool `json:"enabled"`
-		Autoconfirm bool `json:"autoconfirm"`
+		Enabled         bool     `json:"enabled"`
+		Autoconfirm     bool     `json:"autoconfirm"`
+		Access          string   `json:"access"`
+		AllowedDomains  []string `json:"allowed_domains"`
+		BlockDisposable bool     `json:"block_disposable"`
+		BlockedDomains  int      `json:"blocked_domains"`
 	} `json:"signup"`
 	Providers []string `json:"providers"`
 	Password  struct {
@@ -415,7 +419,12 @@ type authPublicSettings struct {
 	IdentityLinking    bool `json:"identity_linking"`
 	SelfDeletion       bool `json:"self_deletion"`
 	OrganizationClaims bool `json:"organization_claims"`
-	Keys               struct {
+	Impersonation      bool `json:"impersonation"`
+	Web3               struct {
+		Ethereum bool `json:"ethereum"`
+		Solana   bool `json:"solana"`
+	} `json:"web3"`
+	Keys struct {
 		Signing   string   `json:"signing"`
 		Verifying []string `json:"verifying"`
 	} `json:"keys"`

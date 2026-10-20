@@ -1,35 +1,36 @@
 //go:build !no_pg
 
-package state
+package state_test
 
 import (
 	"context"
 	"errors"
+	"github.com/onebox-faas/faas/pkg/state"
 	"testing"
 	"time"
 )
 
 func TestPgApplicationStandardMaterialization(t *testing.T) {
-	s, pool := standardOperationPGStore(t)
-	standardMaterializationLifecycle(t, s, func(id string) {
+	s, pool := state.StandardOperationPGStore(t)
+	state.StandardMaterializationLifecycle(t, s, func(id string) {
 		if _, err := pool.Exec(context.Background(), `UPDATE application_standard_operations SET state='completed' WHERE id=$1`, id); err != nil {
 			t.Fatal(err)
 		}
 	})
 }
 func TestPgApplicationStandardMaterializationWaveGate(t *testing.T) {
-	s, _ := standardOperationPGStore(t)
-	standardMaterializationWaveGate(t, s)
+	s, _ := state.StandardOperationPGStore(t)
+	state.StandardMaterializationWaveGate(t, s)
 }
 func TestPgApplicationStandardMaterializationStale(t *testing.T) {
-	s, _ := standardOperationPGStore(t)
-	standardMaterializationStale(t, s)
+	s, _ := state.StandardOperationPGStore(t)
+	state.StandardMaterializationStale(t, s)
 }
 func TestPgApplicationStandardMaterializationLeaseFencing(t *testing.T) {
-	s, pool := standardOperationPGStore(t)
-	f := newStandardApprovalFixture(t, s)
+	s, pool := state.StandardOperationPGStore(t)
+	f := state.NewStandardApprovalFixture(t, s)
 	ctx := context.Background()
-	if _, err := s.ApproveApplicationStandardReview(ctx, f.plan.OrgID, f.owner.Account.ID, f.plan.ID, f.plan.ApprovalHash); err != nil {
+	if _, err := s.ApproveApplicationStandardReview(ctx, (*f.Plan()).OrgID, (*f.Owner()).Account.ID, (*f.Plan()).ID, (*f.Plan()).ApprovalHash); err != nil {
 		t.Fatal(err)
 	}
 	old, err := s.ClaimApplicationStandardOperation(ctx, "dead-worker")
@@ -46,7 +47,7 @@ func TestPgApplicationStandardMaterializationLeaseFencing(t *testing.T) {
 	if current.Generation != old.Generation+1 {
 		t.Fatal("restart did not advance fencing generation")
 	}
-	if _, err := s.MaterializeNextApplicationStandardTarget(ctx, old); !errors.Is(err, ErrApplicationStandardLeaseLost) {
+	if _, err := s.MaterializeNextApplicationStandardTarget(ctx, old); !errors.Is(err, state.ErrApplicationStandardLeaseLost) {
 		t.Fatalf("old generation wrote: %v", err)
 	}
 	if _, err := s.MaterializeNextApplicationStandardTarget(ctx, current); err != nil {
@@ -55,10 +56,10 @@ func TestPgApplicationStandardMaterializationLeaseFencing(t *testing.T) {
 }
 
 func TestPgApplicationStandardMaterializationAtomicFailure(t *testing.T) {
-	s, pool := standardOperationPGStore(t)
-	f := newStandardApprovalFixture(t, s)
+	s, pool := state.StandardOperationPGStore(t)
+	f := state.NewStandardApprovalFixture(t, s)
 	ctx := context.Background()
-	o, err := s.ApproveApplicationStandardReview(ctx, f.plan.OrgID, f.owner.Account.ID, f.plan.ID, f.plan.ApprovalHash)
+	o, err := s.ApproveApplicationStandardReview(ctx, (*f.Plan()).OrgID, (*f.Owner()).Account.ID, (*f.Plan()).ID, (*f.Plan()).ApprovalHash)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,11 +80,11 @@ func TestPgApplicationStandardMaterializationAtomicFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e, err := s.GetApplicationStandardEnrollment(ctx, f.plan.OrgID, o.Targets[0].AppID)
+	e, err := s.GetApplicationStandardEnrollment(ctx, (*f.Plan()).OrgID, o.Targets[0].AppID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	after, err := s.GetApplicationStandardOperation(ctx, f.plan.OrgID, o.ID)
+	after, err := s.GetApplicationStandardOperation(ctx, (*f.Plan()).OrgID, o.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,10 +100,10 @@ func TestPgApplicationStandardMaterializationAtomicFailure(t *testing.T) {
 }
 
 func TestPgApplicationStandardMaterializationRawControlGuards(t *testing.T) {
-	s, pool := standardOperationPGStore(t)
-	f := newStandardApprovalFixture(t, s)
+	s, pool := state.StandardOperationPGStore(t)
+	f := state.NewStandardApprovalFixture(t, s)
 	ctx := context.Background()
-	if _, err := s.ApproveApplicationStandardReview(ctx, f.plan.OrgID, f.owner.Account.ID, f.plan.ID, f.plan.ApprovalHash); err != nil {
+	if _, err := s.ApproveApplicationStandardReview(ctx, (*f.Plan()).OrgID, (*f.Owner()).Account.ID, (*f.Plan()).ID, (*f.Plan()).ApprovalHash); err != nil {
 		t.Fatal(err)
 	}
 	c, err := s.ClaimApplicationStandardOperation(ctx, "guard-worker")
@@ -113,24 +114,24 @@ func TestPgApplicationStandardMaterializationRawControlGuards(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `UPDATE apps SET security_policy='off' WHERE id=$1`, o.Targets[0].AppID); !errors.Is(mapErr(err), ErrApplicationStandardManagedControl) {
+	if _, err := pool.Exec(ctx, `UPDATE apps SET security_policy='off' WHERE id=$1`, o.Targets[0].AppID); !errors.Is(state.MapErr(err), state.ErrApplicationStandardManagedControl) {
 		t.Fatalf("raw SQL bypassed standard: %v", err)
 	}
 }
 
 func TestPgApplicationStandardMaterializationChildRowContention(t *testing.T) {
-	s, pool := standardOperationPGStore(t)
-	f := newStandardApprovalFixture(t, s)
+	s, pool := state.StandardOperationPGStore(t)
+	f := state.NewStandardApprovalFixture(t, s)
 	ctx := context.Background()
-	d, err := s.CreateAppLogDrain(ctx, AppLogDrain{AppID: f.plan.Applications[0].AppID, AccountID: f.owner.Account.ID, Kind: AppLogDrainKindHTTPJSON, TargetURL: "https://contention.example.com/logs", Enabled: true})
+	d, err := s.CreateAppLogDrain(ctx, state.AppLogDrain{AppID: (*f.Plan()).Applications[0].AppID, AccountID: (*f.Owner()).Account.ID, Kind: state.AppLogDrainKindHTTPJSON, TargetURL: "https://contention.example.com/logs", Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	p, err := s.PreviewApplicationStandardAssignment(ctx, f.plan.OrgID, f.owner.Account.ID, f.plan.Request)
+	p, err := s.PreviewApplicationStandardAssignment(ctx, (*f.Plan()).OrgID, (*f.Owner()).Account.ID, (*f.Plan()).Request)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.ApproveApplicationStandardReview(ctx, p.OrgID, f.owner.Account.ID, p.ID, p.ApprovalHash); err != nil {
+	if _, err := s.ApproveApplicationStandardReview(ctx, p.OrgID, (*f.Owner()).Account.ID, p.ID, p.ApprovalHash); err != nil {
 		t.Fatal(err)
 	}
 	c, err := s.ClaimApplicationStandardOperation(ctx, "contended-worker")
@@ -147,7 +148,7 @@ func TestPgApplicationStandardMaterializationChildRowContention(t *testing.T) {
 	}
 	attempt, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	if _, err := s.MaterializeNextApplicationStandardTarget(attempt, c); !errors.Is(err, ErrApplicationStandardReviewBusy) {
+	if _, err := s.MaterializeNextApplicationStandardTarget(attempt, c); !errors.Is(err, state.ErrApplicationStandardReviewBusy) {
 		t.Fatalf("materializer waited on the child row while holding its fence: %v", err)
 	}
 	if err := child.Commit(ctx); err != nil {

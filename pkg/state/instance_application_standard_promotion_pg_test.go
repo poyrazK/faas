@@ -1,41 +1,42 @@
 //go:build !no_pg
 
-package state
+package state_test
 
 import (
 	"encoding/json"
 	"errors"
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
+	"github.com/onebox-faas/faas/pkg/state"
 	"strings"
 	"testing"
 	"time"
 )
 
 func TestPgInstanceApplicationStandardPromotion(t *testing.T) {
-	s, _ := runtimeCapturePGStore(t)
-	standardPromotionLifecycle(t, s)
+	s, _ := state.RuntimeCapturePGStore(t)
+	state.StandardPromotionLifecycle(t, s)
 }
 func TestPgInstanceApplicationStandardPromotionRestart(t *testing.T) {
-	s, _ := runtimeCapturePGStore(t)
-	standardPromotionRestart(t, s)
+	s, _ := state.RuntimeCapturePGStore(t)
+	state.StandardPromotionRestart(t, s)
 }
 
 func TestPgInstanceApplicationStandardPromotionAfterInitialGrantExpiry(t *testing.T) {
-	s, pool := runtimeCapturePGStore(t)
-	f := newRuntimeCaptureFixture(t, s, true)
-	ins, err := s.CreateInstance(t.Context(), f.app.ID, f.dep.ID, string(StateWaking), 128, f.nodeID, uuid.NewString())
+	s, pool := state.RuntimeCapturePGStore(t)
+	f := state.NewRuntimeCaptureFixture(t, s, true)
+	ins, err := s.CreateInstance(t.Context(), (*f.App()).ID, (*f.Dep()).ID, string(state.StateWaking), 128, (*f.NodeID()), uuid.NewString())
 	if err != nil {
 		t.Fatal(err)
 	}
-	b := runtimeCaptureTestBinding(t, s, ins)
+	b := state.RuntimeCaptureTestBinding(t, s, ins)
 	b.ExpiresAtUnixNano = time.Now().Add(300 * time.Millisecond).UnixNano()
 	raw, _ := json.Marshal(b)
 	if _, err := pool.Exec(t.Context(), `INSERT INTO instance_application_standard_boots(token,instance_id,expected_state,binding) VALUES($1,$2,$3,$4::jsonb)`, b.Token, ins.ID, ins.State, raw); err != nil {
 		t.Fatal(err)
 	}
 	parent := runtimeadmission.Receipt{Binding: b, NativeInputHash: strings.Repeat("b", 64), Netns: "historical-paused", HostIP: "10.100.0.8", LeaseUID: 20008, Paused: true, CompletedAtUnixNano: time.Now().UnixNano()}
-	if _, err := s.PublishInstanceApplicationStandardRuntime(t.Context(), ins.State, StateWarm, parent); err != nil {
+	if _, err := s.PublishInstanceApplicationStandardRuntime(t.Context(), ins.State, state.StateWarm, parent); err != nil {
 		t.Fatal(err)
 	}
 	time.Sleep(time.Until(time.Unix(0, b.ExpiresAtUnixNano)) + time.Millisecond)
@@ -43,26 +44,26 @@ func TestPgInstanceApplicationStandardPromotionAfterInitialGrantExpiry(t *testin
 	if err != nil || !loaded.Equal(parent) {
 		t.Fatalf("healthy paused identity expired with boot authority: %+v %v", loaded, err)
 	}
-	p, err := s.IssueInstanceApplicationStandardPromotion(t.Context(), promotionTestGrant(t, parent))
+	p, err := s.IssueInstanceApplicationStandardPromotion(t.Context(), state.PromotionTestGrant(t, parent))
 	if err != nil {
 		t.Fatal(err)
 	}
 	r := parent
 	r.Binding, r.Paused, r.CompletedAtUnixNano = p.Binding, false, time.Now().UnixNano()
 	actual, err := s.PublishInstanceApplicationStandardPromotion(t.Context(), r)
-	if err != nil || actual.State != string(StateRunning) || actual.Netns != parent.Netns {
+	if err != nil || actual.State != string(state.StateRunning) || actual.Netns != parent.Netns {
 		t.Fatalf("fresh promotion after historical grant expiry: %+v %v", actual, err)
 	}
 }
 
 func TestPgInstanceApplicationStandardPausedHistoryCannotRecreateResidency(t *testing.T) {
-	s, _ := runtimeCapturePGStore(t)
-	standardPausedHistoryCannotRecreateResidency(t, s)
+	s, _ := state.RuntimeCapturePGStore(t)
+	state.StandardPausedHistoryCannotRecreateResidency(t, s)
 }
 
 func TestPgInstanceApplicationStandardPromotionInputChanged(t *testing.T) {
-	s, pool := runtimeCapturePGStore(t)
-	standardPromotionInputChanged(t, s)
+	s, pool := state.RuntimeCapturePGStore(t)
+	state.StandardPromotionInputChanged(t, s)
 	var count int
 	if err := pool.QueryRow(t.Context(), `SELECT count(*) FROM instance_application_standard_promotions WHERE receipt IS NOT NULL`).Scan(&count); err != nil || count != 0 {
 		t.Fatalf("stale inputs persisted promotion receipt: %d %v", count, err)
@@ -70,9 +71,9 @@ func TestPgInstanceApplicationStandardPromotionInputChanged(t *testing.T) {
 }
 
 func TestPgInstanceApplicationStandardCommittedPromotionRetryAfterExpiry(t *testing.T) {
-	s, pool := runtimeCapturePGStore(t)
-	_, warm, parent := promotionTestParent(t, s)
-	p := promotionTestGrant(t, parent)
+	s, pool := state.RuntimeCapturePGStore(t)
+	_, warm, parent := state.PromotionTestParent(t, s)
+	p := state.PromotionTestGrant(t, parent)
 	p.Binding.ExpiresAtUnixNano = time.Now().Add(300 * time.Millisecond).UnixNano()
 	raw, _ := json.Marshal(p.Binding)
 	if _, err := pool.Exec(t.Context(), `INSERT INTO instance_application_standard_promotions(token,instance_id,parent_token,binding) VALUES($1,$2,$3,$4::jsonb)`, p.Binding.Token, warm.ID, parent.Binding.Token, raw); err != nil {
@@ -86,15 +87,15 @@ func TestPgInstanceApplicationStandardCommittedPromotionRetryAfterExpiry(t *test
 	}
 	time.Sleep(time.Until(time.Unix(0, p.Binding.ExpiresAtUnixNano)) + time.Millisecond)
 	again, err := s.PublishInstanceApplicationStandardPromotion(t.Context(), r)
-	if err != nil || !again.StartedAt.Equal(first.StartedAt) || again.State != string(StateRunning) {
+	if err != nil || !again.StartedAt.Equal(first.StartedAt) || again.State != string(state.StateRunning) {
 		t.Fatalf("committed authority could not recover lost acknowledgment: %+v %v", again, err)
 	}
 }
 
 func TestPgInstanceApplicationStandardPromotionRollbackAndRawGuards(t *testing.T) {
-	s, pool := runtimeCapturePGStore(t)
-	_, warm, parent := promotionTestParent(t, s)
-	p, err := s.IssueInstanceApplicationStandardPromotion(t.Context(), promotionTestGrant(t, parent))
+	s, pool := state.RuntimeCapturePGStore(t)
+	_, warm, parent := state.PromotionTestParent(t, s)
+	p, err := s.IssueInstanceApplicationStandardPromotion(t.Context(), state.PromotionTestGrant(t, parent))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,9 +135,9 @@ func TestPgInstanceApplicationStandardPromotionRollbackAndRawGuards(t *testing.T
 }
 
 func TestPgInstanceApplicationStandardPromotionExclusiveExpiry(t *testing.T) {
-	s, pool := runtimeCapturePGStore(t)
-	_, warm, parent := promotionTestParent(t, s)
-	p := promotionTestGrant(t, parent)
+	s, pool := state.RuntimeCapturePGStore(t)
+	_, warm, parent := state.PromotionTestParent(t, s)
+	p := state.PromotionTestGrant(t, parent)
 	p.Binding.ExpiresAtUnixNano = time.Now().Add(300 * time.Millisecond).UnixNano()
 	raw, _ := json.Marshal(p.Binding)
 	if _, err := pool.Exec(t.Context(), `INSERT INTO instance_application_standard_promotions(token,instance_id,parent_token,binding) VALUES($1,$2,$3,$4::jsonb)`, p.Binding.Token, warm.ID, parent.Binding.Token, raw); err != nil {
@@ -145,16 +146,16 @@ func TestPgInstanceApplicationStandardPromotionExclusiveExpiry(t *testing.T) {
 	r := parent
 	r.Binding, r.Paused, r.CompletedAtUnixNano = p.Binding, false, time.Now().UnixNano()
 	time.Sleep(time.Until(time.Unix(0, p.Binding.ExpiresAtUnixNano)) + time.Millisecond)
-	if _, err := s.PublishInstanceApplicationStandardPromotion(t.Context(), r); !errors.Is(err, ErrApplicationStandardRuntimeStale) {
+	if _, err := s.PublishInstanceApplicationStandardPromotion(t.Context(), r); !errors.Is(err, state.ErrApplicationStandardRuntimeStale) {
 		t.Fatalf("expired promotion published: %v", err)
 	}
 	raw, _ = json.Marshal(r)
 	_, err := pool.Exec(t.Context(), `UPDATE instance_application_standard_promotions SET receipt=$2::jsonb,received_at=clock_timestamp() WHERE instance_id=$1`, warm.ID, raw)
-	if !errors.Is(mapErr(err), ErrApplicationStandardRuntimeStale) {
+	if !errors.Is(state.MapErr(err), state.ErrApplicationStandardRuntimeStale) {
 		t.Fatalf("raw writer bypassed expiry: %v", err)
 	}
 	actual, _ := s.InstanceByID(t.Context(), warm.ID)
-	if actual.State != string(StateWarm) {
+	if actual.State != string(state.StateWarm) {
 		t.Fatal("expired resume changed serving state")
 	}
 }

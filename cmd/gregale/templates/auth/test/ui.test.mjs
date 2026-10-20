@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { once } from 'node:events'
-import { allowedRedirect, consentView, deviceName, errorMessage, fragmentParams, handoffURL, qrImage, secondFactors, tokenAAL } from '../ui/app.js'
+import { allowedRedirect, consentView, deviceName, errorMessage, fragmentParams, handoffURL, qrImage, secondFactors, tokenAAL, web3Message } from '../ui/app.js'
 import { createServer } from '../server.mjs'
 
 const site = 'https://shop.example.com'
@@ -27,6 +27,9 @@ test('puts the session in the fragment and reads GoTrue fragments', () => {
 test('explains known errors without echoing server text', () => {
   assert.equal(errorMessage({ error_code: 'invalid_credentials' }, 400), 'Wrong email or password.')
   assert.equal(errorMessage({ code: 'invitation_email_mismatch' }, 403), 'This invitation was sent to a different email address.')
+  // A sign-up hook's refusal arrives as GoTrue's msg; sentences there are not codes.
+  assert.equal(errorMessage({ code: 403, error_code: 'unknown', msg: 'waitlisted' }, 403), 'You are on the waitlist. We will email you when you can sign up.')
+  assert.equal(errorMessage({ code: 500, msg: 'Database error saving new user' }, 500), 'Something went wrong. Try again.')
   assert.equal(errorMessage({ msg: '<img src=x onerror=alert(1)>' }, 500), 'Something went wrong. Try again.')
   assert.equal(errorMessage(null, 429), 'Too many attempts. Wait a minute and try again.')
   assert.equal(errorMessage({ error_code: 'otp_expired' }, 403), 'That code is wrong or has expired. Request a new one.')
@@ -51,7 +54,7 @@ test('serves the hosted pages with a strict policy', async t => {
   const script = await fetch(`${base}/ui/app.js`)
   assert.match(script.headers.get('content-type'), /^text\/javascript/)
   const config = await (await fetch(`${base}/ui/config.json`)).json()
-  assert.deepEqual(config, { site_url: site, redirect_urls: redirects, app: 'shop.example.com', logo_url: null, captcha: null })
+  assert.deepEqual(config, { site_url: site, redirect_urls: redirects, app: 'shop.example.com', logo_url: null, captcha: null, web3: { ethereum: false, solana: false } })
   const brand = await fetch(`${base}/ui/brand.css`)
   assert.match(brand.headers.get('content-type'), /^text\/css/)
   assert.equal(await brand.text(), '')
@@ -99,7 +102,7 @@ test('branding and CAPTCHA widen the page policy by exact origins only', async t
   const page = await fetch(`${base}/ui/sign-in`)
   assert.equal(page.headers.get('content-security-policy'), "default-src 'none'; script-src 'self' https://challenges.cloudflare.com; style-src 'self' https://challenges.cloudflare.com; connect-src 'self' https://challenges.cloudflare.com; img-src 'self' data: https://cdn.example.com; frame-src https://challenges.cloudflare.com; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
   assert.deepEqual(await (await fetch(`${base}/ui/config.json`)).json(), { site_url: site, redirect_urls: redirects, app: 'Shop', logo_url: 'https://cdn.example.com/logo.svg',
-    captcha: { provider: 'turnstile', site_key: '1x00000000000000000000AA', script: 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit' } })
+    captcha: { provider: 'turnstile', site_key: '1x00000000000000000000AA', script: 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit' }, web3: { ethereum: false, solana: false } })
   assert.equal(await (await fetch(`${base}/ui/brand.css`)).text(), ':root { --accent: #4f46e5; }\n')
 })
 
@@ -108,6 +111,14 @@ test('a CAPTCHA token is required when the check is shown, and sent once', async
   assert.deepEqual(captchaBody({ email: 'a@example.test' }, undefined), { email: 'a@example.test' })
   assert.deepEqual(captchaBody({ email: 'a@example.test' }, 'tok'), { email: 'a@example.test', gotrue_meta_security: { captcha_token: 'tok' } })
   assert.throws(() => captchaBody({}, ''), /security check/)
+})
+
+test('the hosted pages write wallet messages the way GoTrue parses them', () => {
+  const fields = { domain: 'shop-auth.example', uri: 'https://shop-auth.example/ui/sign-in', statement: 'Sign in to Shop', nonce: 'n1', issuedAt: '2026-10-19T10:00:00.000Z' }
+  assert.equal(web3Message('ethereum', { ...fields, address: '0xabc', chainId: 1 }),
+    'shop-auth.example wants you to sign in with your Ethereum account:\n0xabc\n\nSign in to Shop\n\nURI: https://shop-auth.example/ui/sign-in\nVersion: 1\nChain ID: 1\nNonce: n1\nIssued At: 2026-10-19T10:00:00.000Z')
+  assert.equal(web3Message('solana', { ...fields, address: 'So1', statement: undefined }),
+    'shop-auth.example wants you to sign in with your Solana account:\nSo1\n\nURI: https://shop-auth.example/ui/sign-in\nVersion: 1\nNonce: n1\nIssued At: 2026-10-19T10:00:00.000Z')
 })
 
 test('a sign-in asks for a verified second factor until the session is aal2', () => {

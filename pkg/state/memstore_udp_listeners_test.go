@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -11,17 +11,18 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
-func udpListenerFixture(t *testing.T) (*MemStore, context.Context, Account, App) {
+func udpListenerFixture(t *testing.T) (*state.MemStore, context.Context, state.Account, state.App) {
 	t.Helper()
 	ctx := context.Background()
-	m := NewMemStore()
+	m := state.NewMemStore()
 	account, err := m.CreateAccount(ctx, "udp-listener-"+uuid.NewString()+"@example.com", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, err := m.CreateApp(ctx, App{AccountID: account.ID, Slug: "udp-" + uuid.NewString(), Status: AppActive, RAMMB: 256})
+	app, err := m.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "udp-" + uuid.NewString(), Status: state.AppActive, RAMMB: 256})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,7 +31,7 @@ func udpListenerFixture(t *testing.T) (*MemStore, context.Context, Account, App)
 
 func TestMemStoreUDPListenerLifecycleAndRouteLookup(t *testing.T) {
 	m, ctx, account, app := udpListenerFixture(t)
-	created, err := m.CreateUDPListener(ctx, UDPListener{
+	created, err := m.CreateUDPListener(ctx, state.UDPListener{
 		AccountID: account.ID, AppID: app.ID, ListenerName: "Postgres",
 		GuestPort: 5432, PublicPort: 40123, Enabled: true,
 	})
@@ -52,7 +53,7 @@ func TestMemStoreUDPListenerLifecycleAndRouteLookup(t *testing.T) {
 	if err != nil || disabled.Enabled {
 		t.Fatalf("disable = %+v, %v", disabled, err)
 	}
-	if _, err := m.UDPListenerByPublicPort(ctx, created.PublicPort); !errors.Is(err, ErrNotFound) {
+	if _, err := m.UDPListenerByPublicPort(ctx, created.PublicPort); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("disabled public lookup = %v, want ErrNotFound", err)
 	}
 	rows, err := m.ListUDPListenersForApp(ctx, app.ID)
@@ -62,33 +63,33 @@ func TestMemStoreUDPListenerLifecycleAndRouteLookup(t *testing.T) {
 	if err := m.DeleteUDPListener(ctx, created.ID); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
-	if _, err := m.UDPListenerByID(ctx, created.ID); !errors.Is(err, ErrNotFound) {
+	if _, err := m.UDPListenerByID(ctx, created.ID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("read after delete = %v, want ErrNotFound", err)
 	}
 }
 
 func TestMemStoreUDPListenerRejectsCollisionsAndInvalidPorts(t *testing.T) {
 	m, ctx, account, app := udpListenerFixture(t)
-	first, err := m.CreateUDPListener(ctx, UDPListener{AccountID: account.ID, AppID: app.ID, ListenerName: "one", GuestPort: 1001, PublicPort: 40124})
+	first, err := m.CreateUDPListener(ctx, state.UDPListener{AccountID: account.ID, AppID: app.ID, ListenerName: "one", GuestPort: 1001, PublicPort: 40124})
 	if err != nil {
 		t.Fatalf("first create: %v", err)
 	}
-	_, err = m.CreateUDPListener(ctx, UDPListener{AccountID: account.ID, AppID: app.ID, ListenerName: "two", GuestPort: 1002, PublicPort: first.PublicPort})
-	if !errors.Is(err, ErrConflict) {
+	_, err = m.CreateUDPListener(ctx, state.UDPListener{AccountID: account.ID, AppID: app.ID, ListenerName: "two", GuestPort: 1002, PublicPort: first.PublicPort})
+	if !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("public collision = %v, want ErrConflict", err)
 	}
-	_, err = m.CreateUDPListener(ctx, UDPListener{AccountID: account.ID, AppID: app.ID, ListenerName: "udp", GuestPort: 53, PublicPort: 40125, Protocol: "tcp"})
-	if !errors.Is(err, ErrInvalidUDPListener) {
+	_, err = m.CreateUDPListener(ctx, state.UDPListener{AccountID: account.ID, AppID: app.ID, ListenerName: "udp", GuestPort: 53, PublicPort: 40125, Protocol: "tcp"})
+	if !errors.Is(err, state.ErrInvalidUDPListener) {
 		t.Fatalf("protocol error = %v, want ErrInvalidUDPListener", err)
 	}
 }
 
 func TestMemStoreUDPListenerSeparateNamespaceAndAppDeletion(t *testing.T) {
 	m, ctx, account, app := udpListenerFixture(t)
-	if _, err := m.CreateTCPListener(ctx, TCPListener{AccountID: account.ID, AppID: app.ID, ListenerName: "echo", GuestPort: 5353, PublicPort: 40126, Enabled: true}); err != nil {
+	if _, err := m.CreateTCPListener(ctx, state.TCPListener{AccountID: account.ID, AppID: app.ID, ListenerName: "echo", GuestPort: 5353, PublicPort: 40126, Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
-	listener, err := m.CreateUDPListener(ctx, UDPListener{AccountID: account.ID, AppID: app.ID, ListenerName: "echo", GuestPort: 5353, PublicPort: 40126})
+	listener, err := m.CreateUDPListener(ctx, state.UDPListener{AccountID: account.ID, AppID: app.ID, ListenerName: "echo", GuestPort: 5353, PublicPort: 40126})
 	if err != nil {
 		t.Fatalf("TCP port blocked independent UDP namespace: %v", err)
 	}
@@ -101,13 +102,13 @@ func TestMemStoreUDPListenerSeparateNamespaceAndAppDeletion(t *testing.T) {
 	if _, err := m.UDPListenerByPublicPort(ctx, listener.PublicPort); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.CreateUDPListener(ctx, UDPListener{AccountID: "different-account", AppID: app.ID, ListenerName: "other", GuestPort: 5353, PublicPort: 40127}); !errors.Is(err, ErrNotFound) {
+	if _, err := m.CreateUDPListener(ctx, state.UDPListener{AccountID: "different-account", AppID: app.ID, ListenerName: "other", GuestPort: 5353, PublicPort: 40127}); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("cross-account create: %v", err)
 	}
 	if err := m.DeleteApp(ctx, app.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.UDPListenerByPublicPort(ctx, listener.PublicPort); !errors.Is(err, ErrNotFound) {
+	if _, err := m.UDPListenerByPublicPort(ctx, listener.PublicPort); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("deleted app remained public: %v", err)
 	}
 	enabled, err := m.ListEnabledUDPListeners(ctx)
@@ -121,12 +122,12 @@ func TestMemStoreUDPListenerReservationConcurrency(t *testing.T) {
 	accountID, appID := account.ID, app.ID
 
 	for i := 0; i < api.UDPListenerReservationsPerAppMax-1; i++ {
-		if _, err := store.CreateUDPListener(ctx, UDPListener{AccountID: accountID, AppID: appID, ListenerName: fmt.Sprintf("slot-%d", i), GuestPort: 1000 + i, PublicPort: 40000 + i}); err != nil {
+		if _, err := store.CreateUDPListener(ctx, state.UDPListener{AccountID: accountID, AppID: appID, ListenerName: fmt.Sprintf("slot-%d", i), GuestPort: 1000 + i, PublicPort: 40000 + i}); err != nil {
 			t.Fatal(err)
 		}
 	}
 	type result struct {
-		listener UDPListener
+		listener state.UDPListener
 		err      error
 	}
 	results := make(chan result, 8)
@@ -135,13 +136,13 @@ func TestMemStoreUDPListenerReservationConcurrency(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			listener, err := store.CreateUDPListener(ctx, UDPListener{AccountID: accountID, AppID: appID, ListenerName: fmt.Sprintf("racing-%d", i), GuestPort: 2000 + i, PublicPort: 41000 + i})
+			listener, err := store.CreateUDPListener(ctx, state.UDPListener{AccountID: accountID, AppID: appID, ListenerName: fmt.Sprintf("racing-%d", i), GuestPort: 2000 + i, PublicPort: 41000 + i})
 			results <- result{listener, err}
 		}(i)
 	}
 	wg.Wait()
 	close(results)
-	var winner UDPListener
+	var winner state.UDPListener
 	successes := 0
 	for r := range results {
 		if r.err == nil {
@@ -149,8 +150,8 @@ func TestMemStoreUDPListenerReservationConcurrency(t *testing.T) {
 			winner = r.listener
 			continue
 		}
-		var quota *UDPListenerLimitError
-		if !errors.Is(r.err, ErrUDPListenerLimit) || !errors.As(r.err, &quota) || quota.Limit != api.UDPListenerReservationsPerAppMax || quota.Observed != api.UDPListenerReservationsPerAppMax+1 {
+		var quota *state.UDPListenerLimitError
+		if !errors.Is(r.err, state.ErrUDPListenerLimit) || !errors.As(r.err, &quota) || quota.Limit != api.UDPListenerReservationsPerAppMax || quota.Observed != api.UDPListenerReservationsPerAppMax+1 {
 			t.Fatalf("unexpected creation result: %v", r.err)
 		}
 	}
@@ -161,14 +162,14 @@ func TestMemStoreUDPListenerReservationConcurrency(t *testing.T) {
 	if err != nil || len(rows) != api.UDPListenerReservationsPerAppMax {
 		t.Fatalf("reservation count=%d error=%v", len(rows), err)
 	}
-	if _, err := store.CreateUDPListener(ctx, UDPListener{AccountID: accountID, AppID: appID, ListenerName: "slot-0", GuestPort: 3000, PublicPort: 42000}); !errors.Is(err, ErrConflict) {
+	if _, err := store.CreateUDPListener(ctx, state.UDPListener{AccountID: accountID, AppID: appID, ListenerName: "slot-0", GuestPort: 3000, PublicPort: 42000}); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("duplicate name at quota=%v", err)
 	}
 	if _, err := store.SetUDPListenerEnabled(ctx, winner.ID, false); err != nil {
 		t.Fatal(err)
 	}
-	candidate := UDPListener{AccountID: accountID, AppID: appID, ListenerName: "replacement", GuestPort: 3001, PublicPort: 42001}
-	if _, err := store.CreateUDPListener(ctx, candidate); !errors.Is(err, ErrUDPListenerLimit) {
+	candidate := state.UDPListener{AccountID: accountID, AppID: appID, ListenerName: "replacement", GuestPort: 3001, PublicPort: 42001}
+	if _, err := store.CreateUDPListener(ctx, candidate); !errors.Is(err, state.ErrUDPListenerLimit) {
 		t.Fatalf("disable freed a reservation: %v", err)
 	}
 	if err := store.DeleteUDPListener(ctx, winner.ID); err != nil {
@@ -177,7 +178,7 @@ func TestMemStoreUDPListenerReservationConcurrency(t *testing.T) {
 	if _, err := store.CreateUDPListener(ctx, candidate); err != nil {
 		t.Fatalf("delete did not free a reservation: %v", err)
 	}
-	other, err := store.CreateApp(ctx, App{AccountID: accountID, Slug: "udp-quota-other", Status: AppActive, RAMMB: 256})
+	other, err := store.CreateApp(ctx, state.App{AccountID: accountID, Slug: "udp-quota-other", Status: state.AppActive, RAMMB: 256})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,7 +191,7 @@ func TestMemStoreUDPListenerReservationConcurrency(t *testing.T) {
 
 func TestMemStoreUDPListenerCanceledMutationsPreserveIntent(t *testing.T) {
 	store, ctx, account, app := udpListenerFixture(t)
-	listener, err := store.CreateUDPListener(ctx, UDPListener{AppID: app.ID, AccountID: account.ID, ListenerName: "dns", GuestPort: 5353, PublicPort: 40100, Enabled: true})
+	listener, err := store.CreateUDPListener(ctx, state.UDPListener{AppID: app.ID, AccountID: account.ID, ListenerName: "dns", GuestPort: 5353, PublicPort: 40100, Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -233,14 +234,14 @@ func TestMemStoreUDPListenerCancellationWhileWaitingForLock(t *testing.T) {
 	for _, action := range []string{"create", "update", "delete"} {
 		t.Run(action, func(t *testing.T) {
 			store, base, account, app := udpListenerFixture(t)
-			listener, err := store.CreateUDPListener(base, UDPListener{AppID: app.ID, AccountID: account.ID, ListenerName: "dns", GuestPort: 5353, PublicPort: 40100, Enabled: true})
+			listener, err := store.CreateUDPListener(base, state.UDPListener{AppID: app.ID, AccountID: account.ID, ListenerName: "dns", GuestPort: 5353, PublicPort: 40100, Enabled: true})
 			if err != nil {
 				t.Fatal(err)
 			}
 			parent, cancel := context.WithCancel(base)
 			defer cancel()
 			ctx := &udpMutationContext{Context: parent, checked: make(chan struct{})}
-			store.mu.Lock()
+			(*store.Mu()).Lock()
 			done := make(chan error, 1)
 			go func() {
 				switch action {
@@ -261,11 +262,11 @@ func TestMemStoreUDPListenerCancellationWhileWaitingForLock(t *testing.T) {
 			select {
 			case <-ctx.checked:
 			case <-time.After(time.Second):
-				store.mu.Unlock()
+				(*store.Mu()).Unlock()
 				t.Fatal("mutation never checked context")
 			}
 			cancel()
-			store.mu.Unlock()
+			(*store.Mu()).Unlock()
 			select {
 			case err := <-done:
 				if !errors.Is(err, context.Canceled) {

@@ -12,6 +12,8 @@ import type { CanaryAdvanceResponse } from '../models/CanaryAdvanceResponse.js';
 import type { CancelDeploymentRequest } from '../models/CancelDeploymentRequest.js';
 import type { ClearObsoleteReport } from '../models/ClearObsoleteReport.js';
 import type { CreateDeploymentRequest } from '../models/CreateDeploymentRequest.js';
+import type { CreateReleaseFreezeRequest } from '../models/CreateReleaseFreezeRequest.js';
+import type { CreateReleaseGateRequest } from '../models/CreateReleaseGateRequest.js';
 import type { DeploymentAliasListResponse } from '../models/DeploymentAliasListResponse.js';
 import type { DeploymentAliasResponse } from '../models/DeploymentAliasResponse.js';
 import type { DeploymentCronStagingRequest } from '../models/DeploymentCronStagingRequest.js';
@@ -31,9 +33,14 @@ import type { DeploymentSubmissionReceipt } from '../models/DeploymentSubmission
 import type { DeploymentSummaryResponse } from '../models/DeploymentSummaryResponse.js';
 import type { LatestDeploymentsByAppResponse } from '../models/LatestDeploymentsByAppResponse.js';
 import type { ListDeploymentAuditResponse } from '../models/ListDeploymentAuditResponse.js';
+import type { ListReleaseFreezesResponse } from '../models/ListReleaseFreezesResponse.js';
+import type { ListReleaseGatesResponse } from '../models/ListReleaseGatesResponse.js';
 import type { Problem } from '../models/Problem.js';
 import type { ProfileCanaryGateDecision } from '../models/ProfileCanaryGateDecision.js';
 import type { RecoverRolloutRequest } from '../models/RecoverRolloutRequest.js';
+import type { ReleaseFreeze } from '../models/ReleaseFreeze.js';
+import type { ReleaseFreezeStatus } from '../models/ReleaseFreezeStatus.js';
+import type { ReleaseGate } from '../models/ReleaseGate.js';
 import type { RetryDeploymentRequest } from '../models/RetryDeploymentRequest.js';
 import type { RollbackOperation } from '../models/RollbackOperation.js';
 import type { RollbackRequest } from '../models/RollbackRequest.js';
@@ -1181,6 +1188,233 @@ export class DeploymentsService {
         404: `code: not_found`,
         409: `one of: rollout_not_stuck | rollout_state_invalid`,
         422: `action ∉ {advance, promote, abort} (closed-set check).`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * List deploy freezes (ADR-20261019071733).
+   * Unlifted freezes that have not ended: active and upcoming windows, weekly windows and after-rollback policies. `app` narrows the list to the freezes covering one app.
+   * @returns ListReleaseFreezesResponse The account's freezes.
+   * @throws ApiError
+   */
+  public static listReleaseFreezes({
+    app,
+  }: {
+    /**
+     * Only freezes covering this app's slug.
+     */
+    app?: string,
+  }): CancelablePromise<ListReleaseFreezesResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/freezes',
+      query: {
+        'app': app,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Freeze production releases (ADR-20261019071733).
+   * Creates a window, weekly or after-rollback freeze for one app or, without `app`, for every app of the account. While a freeze is active, new production deployments are refused with `release_frozen` unless the request carries `override_freeze`.
+   * @returns ReleaseFreeze The freeze.
+   * @throws ApiError
+   */
+  public static createReleaseFreeze({
+    requestBody,
+  }: {
+    requestBody: CreateReleaseFreezeRequest,
+  }): CancelablePromise<ReleaseFreeze> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/freezes',
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | env_var_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Lift a deploy freeze (ADR-20261019071733).
+   * Stops the freeze from withholding releases. The freeze is kept, with who lifted it and when, for the audit trail. 404 `release_freeze_not_found` when no unlifted freeze has this ID.
+   * @returns ReleaseFreeze The lifted freeze.
+   * @throws ApiError
+   */
+  public static liftReleaseFreeze({
+    id,
+  }: {
+    /**
+     * The freeze's ID.
+     */
+    id: string,
+  }): CancelablePromise<ReleaseFreeze> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/freezes/{id}',
+      path: {
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Whether production releases of an app are frozen now (ADR-20261019071733).
+   * Lists the freezes that would refuse a production release of the app now, and the freeze that starts next within a week.
+   * @returns ReleaseFreezeStatus The app's freeze status.
+   * @throws ApiError
+   */
+  public static getReleaseFreezeStatus({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<ReleaseFreezeStatus> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/freeze-status',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * List an app's release gates (ADR-20261019071734).
+   * Gates on the app's SLOs, new error groups and custom metrics. The canary circuit breaker and the post-release watch abort or roll back a release that fails one.
+   * @returns ListReleaseGatesResponse The app's release gates.
+   * @throws ApiError
+   */
+  public static listReleaseGates({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<ListReleaseGatesResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/release-gates',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Add a release gate (ADR-20261019071734).
+   * An slo gate names one of the app's SLOs; a new_errors gate counts error groups the release produced first; a custom_metric gate bounds a custom metric's average. Omitted numbers take Gregale's defaults.
+   * @returns ReleaseGate The release gate.
+   * @throws ApiError
+   */
+  public static createReleaseGate({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: CreateReleaseGateRequest,
+  }): CancelablePromise<ReleaseGate> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/release-gates',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | env_var_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Remove a release gate (ADR-20261019071734).
+   * 404 `release_gate_not_found` when the app has no gate with this name.
+   * @returns ReleaseGate The removed release gate.
+   * @throws ApiError
+   */
+  public static deleteReleaseGate({
+    slug,
+    name,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * The release gate's name.
+     */
+    name: string,
+  }): CancelablePromise<ReleaseGate> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/release-gates/{name}',
+      path: {
+        'slug': slug,
+        'name': name,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and

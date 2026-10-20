@@ -1,20 +1,23 @@
-package state
+package state_test
 
-import "testing"
+import (
+	"github.com/onebox-faas/faas/pkg/state"
+	"testing"
+)
 
 func TestPgApplicationStandardExceptionLifecycle(t *testing.T) {
-	s, _ := standardOperationPGStore(t)
-	standardExceptionLifecycle(t, s)
+	s, _ := state.StandardOperationPGStore(t)
+	state.StandardExceptionLifecycle(t, s)
 }
 func TestPgApplicationStandardExceptionRefusals(t *testing.T) {
-	s, _ := standardOperationPGStore(t)
-	standardExceptionRefusals(t, s)
+	s, _ := state.StandardOperationPGStore(t)
+	state.StandardExceptionRefusals(t, s)
 }
 func TestPgApplicationStandardExceptionConcurrent(t *testing.T) {
-	s, _ := standardOperationPGStore(t)
-	standardExceptionConcurrent(t, s)
+	s, _ := state.StandardOperationPGStore(t)
+	state.StandardExceptionConcurrent(t, s)
 }
 func TestPgApplicationStandardExceptionExpiry(t *testing.T) {
-	s, _ := standardOperationPGStore(t)
-	standardExceptionExpiry(t, s)
+	s, _ := state.StandardOperationPGStore(t)
+	state.StandardExceptionExpiry(t, s)
 }

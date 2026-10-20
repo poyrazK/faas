@@ -563,6 +563,9 @@ type PromoteProjectEnvironmentRequest struct {
 	FromEnvironment string `json:"from_environment"`
 	PromotionToken  string `json:"promotion_token"`
 	ApprovalToken   string `json:"approval_token,omitempty"`
+	// OverrideFreeze promotes into production while a freeze covers one of
+	// the project's apps (ADR-20261019071733); it is the audited reason.
+	OverrideFreeze string `json:"override_freeze,omitempty"`
 }
 
 // ProjectEnvironmentPromotionWorkloadResponse reports one workload's

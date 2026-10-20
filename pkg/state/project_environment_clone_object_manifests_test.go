@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -9,39 +9,40 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestMemProjectEnvironmentCloneObjectManifestIsImmutableAndResumable(t *testing.T) {
 	ctx := context.Background()
-	s := NewMemStore()
+	s := state.NewMemStore()
 	acct, err := s.CreateAccount(ctx, "clone-manifest@example.com", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
 	}
-	project, err := s.CreateProject(ctx, Project{AccountID: acct.ID, Slug: "shop"})
+	project, err := s.CreateProject(ctx, state.Project{AccountID: acct.ID, Slug: "shop"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	op, err := s.CreateProjectEnvironmentCloneOperation(ctx, ProjectEnvironmentCloneOperation{
+	op, err := s.CreateProjectEnvironmentCloneOperation(ctx, state.ProjectEnvironmentCloneOperation{
 		AccountID: acct.ID, ProjectID: project.ID, SourceEnvironment: "production", TargetEnvironment: "staging",
 		IdempotencyKey: "clone-one", SourceRevisionHash: strings.Repeat("a", 64),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if op, err = s.AdvanceProjectEnvironmentCloneOperation(ctx, acct.ID, project.ID, op.ID, CloneOperationPending, CloneOperationCapturing, 1, nil, ""); err != nil {
+	if op, err = s.AdvanceProjectEnvironmentCloneOperation(ctx, acct.ID, project.ID, op.ID, state.CloneOperationPending, state.CloneOperationCapturing, 1, nil, ""); err != nil {
 		t.Fatal(err)
 	}
 	capturedAt := time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)
-	object := ProjectEnvironmentCloneObjectVersion{Key: "data.json", VersionID: "v1", Size: 4, LastModified: capturedAt.Add(-time.Second)}
-	hash, err := ProjectEnvironmentCloneObjectManifestHash([]ProjectEnvironmentCloneObjectVersion{object})
+	object := state.ProjectEnvironmentCloneObjectVersion{Key: "data.json", VersionID: "v1", Size: 4, LastModified: capturedAt.Add(-time.Second)}
+	hash, err := state.ProjectEnvironmentCloneObjectManifestHash([]state.ProjectEnvironmentCloneObjectVersion{object})
 	if err != nil {
 		t.Fatal(err)
 	}
-	manifest := ProjectEnvironmentCloneObjectManifest{
+	manifest := state.ProjectEnvironmentCloneObjectManifest{
 		OperationID: op.ID, SourceBucketID: uuid.NewString(), TargetBucketID: uuid.NewString(),
 		CapturedAt: capturedAt, Hash: hash,
-		Objects: []ProjectEnvironmentCloneObjectCheckpoint{{Source: object}},
+		Objects: []state.ProjectEnvironmentCloneObjectCheckpoint{{Source: object}},
 	}
 	created, err := s.PutProjectEnvironmentCloneObjectManifest(ctx, acct.ID, project.ID, manifest)
 	if err != nil || created.Hash != hash {
@@ -53,13 +54,13 @@ func TestMemProjectEnvironmentCloneObjectManifestIsImmutableAndResumable(t *test
 	}
 	changed := manifest
 	changed.TargetBucketID = uuid.NewString()
-	if _, err := s.PutProjectEnvironmentCloneObjectManifest(ctx, acct.ID, project.ID, changed); !errors.Is(err, ErrConflict) {
+	if _, err := s.PutProjectEnvironmentCloneObjectManifest(ctx, acct.ID, project.ID, changed); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("changed target = %v, want conflict", err)
 	}
-	if _, err := s.ProjectEnvironmentCloneObjectManifest(ctx, "other", project.ID, op.ID, manifest.SourceBucketID); !errors.Is(err, ErrNotFound) {
+	if _, err := s.ProjectEnvironmentCloneObjectManifest(ctx, "other", project.ID, op.ID, manifest.SourceBucketID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("cross-account manifest = %v", err)
 	}
-	if _, err := s.AdvanceProjectEnvironmentCloneOperation(ctx, acct.ID, project.ID, op.ID, CloneOperationCapturing, CloneOperationCopying, op.Revision, nil, ""); err != nil {
+	if _, err := s.AdvanceProjectEnvironmentCloneOperation(ctx, acct.ID, project.ID, op.ID, state.CloneOperationCapturing, state.CloneOperationCopying, op.Revision, nil, ""); err != nil {
 		t.Fatal(err)
 	}
 	verified := strings.Repeat("b", 64)
@@ -69,7 +70,7 @@ func TestMemProjectEnvironmentCloneObjectManifestIsImmutableAndResumable(t *test
 	if err := s.MarkProjectEnvironmentCloneObjectCopied(ctx, acct.ID, project.ID, op.ID, manifest.SourceBucketID, object.Key, object.VersionID, "target-etag", verified); err != nil {
 		t.Fatalf("copy checkpoint replay: %v", err)
 	}
-	if err := s.MarkProjectEnvironmentCloneObjectCopied(ctx, acct.ID, project.ID, op.ID, manifest.SourceBucketID, object.Key, object.VersionID, "different", verified); !errors.Is(err, ErrConflict) {
+	if err := s.MarkProjectEnvironmentCloneObjectCopied(ctx, acct.ID, project.ID, op.ID, manifest.SourceBucketID, object.Key, object.VersionID, "different", verified); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("changed copy receipt = %v", err)
 	}
 	loaded, err := s.ProjectEnvironmentCloneObjectManifest(ctx, acct.ID, project.ID, op.ID, manifest.SourceBucketID)

@@ -210,7 +210,7 @@ func TestProjectApplyProductionCronScope(t *testing.T) {
 		t.Fatal(err)
 	}
 	changed, plans := s.planProjectDeploymentCrons(t.Context(), acct, []state.App{app}, nil, []state.App{app}, nil)
-	result := s.applyBuildsForAddedChangedOrdered(t.Context(), httptest.NewRequest("POST", "/v1/projects", nil), acct, state.Project{ID: first.ProjectID}, root, []reposcan.Workload{{Name: app.WorkloadName}}, nil, nil, changed, "production", plans)
+	result := s.applyBuildsForAddedChangedOrdered(t.Context(), httptest.NewRequest("POST", "/v1/projects", nil), acct, state.Project{ID: first.ProjectID}, root, []reposcan.Workload{{Name: app.WorkloadName}}, nil, nil, changed, "production", "", plans)
 	if len(result) != 1 || result[0].Error != "" {
 		t.Fatalf("enqueue=%+v", result)
 	}

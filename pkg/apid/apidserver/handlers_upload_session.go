@@ -649,7 +649,7 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		}
 	}(r.Context())
 	limits := api.MustLimitsFor(acct.Plan)
-	rolloutReq := &api.CreateDeploymentRequest{Scope: opts.Scope, Environment: opts.Environment, RollbackOn5xx: opts.RollbackOn5xx, DisableStartupCPUBoost: opts.DisableStartupCPUBoost, Companions: opts.Companions, Sidecars: opts.Sidecars}
+	rolloutReq := &api.CreateDeploymentRequest{Scope: opts.Scope, Environment: opts.Environment, RollbackOn5xx: opts.RollbackOn5xx, DisableStartupCPUBoost: opts.DisableStartupCPUBoost, Companions: opts.Companions, Sidecars: opts.Sidecars, OverrideFreeze: opts.OverrideFreeze}
 	rolloutReq.Overrides = sourceHealthcheckOverrides(opts.Healthcheck)
 	healthOverrides, healthProblem := validateOverrides(rolloutReq, limits, acct.Plan)
 	if healthProblem != nil {
@@ -691,6 +691,10 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 			}
 			return
 		}
+	}
+	if prob := s.releaseFreezeProblem(r, acct, app, rolloutReq.Scope, rolloutReq.OverrideFreeze); prob != nil {
+		api.WriteProblem(w, prob)
+		return
 	}
 	release.ApplyDefault(r.Context(), s.store, s.log, app, acct.Plan, rolloutReq)
 	if prob := validateDeploymentRollbackOptions(rolloutReq, acct.Plan); prob != nil {

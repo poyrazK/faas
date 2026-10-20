@@ -247,11 +247,44 @@ source (for example a git-ignored `.env`) is a warning, or silent with
 single-quoted ones, are read to their closing quote; a malformed line is
 reported with its file and line number and skipped.
 
+Source-built services pass `build.args` and `build.target` to their Dockerfile
+build, as `docker compose build` does
+([ADR-20261019142544](adr/20261019142544-compose-build-args-and-target.md)):
+
+```yaml
+services:
+  api:
+    build:
+      context: ./api
+      target: production
+      args:
+        NODE_VERSION: 22
+        APP_VERSION: ${APP_VERSION:-dev}
+        SENTRY_RELEASE:
+```
+
+`args` takes the map or the list form. `${VAR}` reads the source's `.env`, like
+the rest of the file; `$VAR` without braces is passed literally and warns. A name
+without a value (`SENTRY_RELEASE:`, or `- SENTRY_RELEASE` in the list form) also
+reads `.env`; when `.env` does not set
+it, the argument is left out and the Dockerfile's `ARG` default applies, with a
+warning. `target` must name a stage the Dockerfile declares with `FROM … AS`;
+an unknown stage fails the scan. A service whose build context has no Dockerfile
+builds with Railpack, so its `args` and `target` are warned and ignored. Up to
+64 arguments of at most 4 KiB each are accepted (`DockerfileBuildArgsMax`,
+`DockerfileBuildArgValueMaxBytes`).
+
+Each deployment keeps the arguments and target it was planned with, and changing
+either rebuilds instead of reusing a cached image. A public build URL with the
+same name as an argument wins. Build arguments end up in the image history, so
+keep secrets out of them and set those with `gregale secrets set`. Plans show the
+target and the argument names, not their values.
+
 The scan reports every other Compose key instead of dropping it silently:
 
 | Keys | Result |
 |---|---|
-| `build` (`context`, `dockerfile`), `command`, `depends_on`, `entrypoint`, `env_file`, `environment`, `expose`, `healthcheck`, `image`, `ports`, `profiles`, `stop_grace_period`, `stop_signal`, `user`, `working_dir`, `x-gregale-*` | Applied (process keys and `healthcheck` only on prebuilt images). |
+| `build` (`context`, `dockerfile`, `args`, `target`), `command`, `depends_on`, `entrypoint`, `env_file`, `environment`, `expose`, `healthcheck`, `image`, `ports`, `profiles`, `stop_grace_period`, `stop_signal`, `user`, `working_dir`, `x-gregale-*` | Applied (process keys and `healthcheck` only on prebuilt images). |
 | `container_name`, `init`, `stdin_open`, `tty`, `platform: linux/amd64`, `x-*` extensions | Ignored without a warning; they have no effect on a microVM service. |
 | `volumes`, `tmpfs` | Warning: no persistent volumes or bind mounts; each start gets a fresh filesystem. |
 | `deploy`, `scale`, `cpus`, `mem_limit` and other resource keys | Warning: CPU, memory and replicas come from the plan and app scaling. |
@@ -261,7 +294,7 @@ The scan reports every other Compose key instead of dropping it silently:
 | `cap_add`, `privileged`, `devices`, `security_opt`, `ulimits` and other kernel controls | Warning: each service runs in its own microVM. |
 | `dns`, `extra_hosts`, `hostname` and other guest networking keys | Warning: guest networking is managed by the platform. |
 | `labels`, `logging`, `pull_policy`, any other `platform` | Warning. |
-| `build.args`, `build.target`, `build.secrets`, `build.ssh`, `build.dockerfile_inline`, other `build.*` keys | Warning: the builder uses only `build.context` and `build.dockerfile` and builds the final stage. |
+| `build.secrets`, `build.ssh`, `build.dockerfile_inline`, other `build.*` keys | Warning: the builder uses only `build.context`, `build.dockerfile`, `build.args` and `build.target`. |
 | Any other service key | Warning: not supported. |
 | `extends`, top-level `include` | Warning: not resolved. The warning names the inherited keys (or the extended file and service) and the included files whose services were not loaded; inline them. |
 

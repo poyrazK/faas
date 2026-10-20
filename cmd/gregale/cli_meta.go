@@ -151,7 +151,7 @@ func cliHelpGroup(command cliCommand) string {
 		return "API"
 	case "add", "ai", "automations", "bindings", "bucket", "crons", "delayed-task", "events", "send", "deliver", "invocations", "entities", "jobs", "operations", "customer-operations", "run", "runs", "triggers", "webhooks", "workflows", "cache", "postgres":
 		return "Data"
-	case "canary", "mirror", "park", "ps", "queue", "dlq", "traffic", "wake", "wake-ahead", "wake-timeline", "workers":
+	case "canary", "freeze", "mirror", "park", "release-gates", "ps", "queue", "dlq", "traffic", "wake", "wake-ahead", "wake-timeline", "workers":
 		return "Delivery"
 	case "alerts", "analytics", "channels", "audit-events", "debug", "inspect", "log-drains", "logs", "metrics", "realtime", "slo", "slos", "status", "synthetics", "tail", "throttle-suggestions", "trace":
 		return "Observe"
@@ -1780,6 +1780,70 @@ var cliCommands = []cliCommand{
 		Examples: []string{"gregale billing export --month 2026-09 --out invoices.zip", "gregale billing export --month 2026-09 --format csv --out invoices.csv"},
 	},
 	{
+		Name:    "freeze",
+		DocSlug: "freeze",
+		Short:   "Freeze production releases for a window, every week, or after automatic rollbacks",
+		Examples: []string{
+			"gregale freeze create --app my-api --for 2h --reason \"incident 4711\"",
+			"gregale freeze create --all-apps --weekly fri --at 16:00 --for 64h --tz Europe/Istanbul --reason \"no weekend releases\"",
+			"gregale freeze create --app my-api --after-rollback 1h --reason \"settle after automatic rollbacks\"",
+			"gregale freeze status --app my-api",
+		},
+		Subcommands: []cliSub{
+			{Name: "create", Short: "Create a freeze (ADR-20261019071733)", Flags: []cliFlag{
+				{Name: "app", Short: "app slug (defaults to linked project app)", Value: "slug"},
+				{Name: "all-apps", Short: "freeze every app of the account", Bool: true},
+				{Name: "reason", Short: "why releases are frozen (required, at most 200 characters)", Value: "TEXT", Req: true},
+				{Name: "for", Short: "window length from --from (default now), or weekly length", Value: "DURATION"},
+				{Name: "from", Short: "window start (RFC 3339)", Value: "TIME"},
+				{Name: "until", Short: "window end (RFC 3339); omit --for and --until to freeze until lifted", Value: "TIME"},
+				{Name: "weekly", Short: "weekly days, comma-separated", Value: "DAYS"},
+				{Name: "at", Short: "weekly start time", Value: "HH:MM"},
+				{Name: "tz", Short: "weekly time zone (IANA; default UTC)", Value: "ZONE"},
+				{Name: "after-rollback", Short: "freeze an app for this long after Gregale rolls it back automatically", Value: "DURATION"},
+			}},
+			{Name: "list", Short: "List freezes that have not ended", Aliases: []string{"ls"}, Flags: []cliFlag{
+				{Name: "app", Short: "only freezes covering this app", Value: "slug"},
+			}},
+			{Name: "lift", Short: "Lift a freeze", Positionals: []string{"<id>"}},
+			{Name: "status", Short: "Show whether production releases of an app are frozen now", Flags: []cliFlag{
+				{Name: "app", Short: "app slug (defaults to linked project app)", Value: "slug"},
+			}},
+		},
+	},
+	{
+		Name:    "release-gates",
+		DocSlug: "release-gates",
+		Short:   "Abort rollouts and roll back releases on your SLOs, new error groups, or custom metrics",
+		Examples: []string{
+			"gregale release-gates add --app my-api --name checkout-slo --slo checkout --max-burn-rate 10",
+			"gregale release-gates add --app my-api --name no-new-errors --new-errors --min-events 3",
+			"gregale release-gates add --app my-api --name orders --metric orders_per_minute --below 5",
+			"gregale release-gates list --app my-api",
+		},
+		Subcommands: []cliSub{
+			{Name: "list", Short: "List an app's release gates (ADR-20261019071734)", Aliases: []string{"ls"}, Flags: []cliFlag{
+				{Name: "app", Short: "app slug (defaults to linked project app)", Value: "slug"},
+			}},
+			{Name: "add", Short: "Add a release gate", Flags: []cliFlag{
+				{Name: "app", Short: "app slug (defaults to linked project app)", Value: "slug"},
+				{Name: "name", Short: "gate name", Value: "NAME", Req: true},
+				{Name: "slo", Short: "fail when this SLO burns too fast", Value: "NAME"},
+				{Name: "max-burn-rate", Short: "SLO burn rate that fails the gate (default 10)", Value: "N"},
+				{Name: "new-errors", Short: "fail when the release introduces new error groups", Bool: true},
+				{Name: "max-new-groups", Short: "new error groups allowed (default 0)", Value: "N"},
+				{Name: "min-events", Short: "events before a new error group counts (default 3)", Value: "N"},
+				{Name: "metric", Short: "fail when this custom metric crosses a bound", Value: "NAME"},
+				{Name: "below", Short: "fail when the metric averages below this", Value: "VALUE"},
+				{Name: "above", Short: "fail when the metric averages above this", Value: "VALUE"},
+				{Name: "min-samples", Short: "requests or metric values before the gate is judged (default 20)", Value: "N"},
+			}},
+			{Name: "rm", Short: "Remove a release gate", Aliases: []string{"delete"}, Positionals: []string{"<name>"}, Flags: []cliFlag{
+				{Name: "app", Short: "app slug (defaults to linked project app)", Value: "slug"},
+			}},
+		},
+	},
+	{
 		Name:    "canary",
 		DocSlug: "canary",
 		Short:   "Inspect profiling gates, advance canary stages, or simulate a preset",
@@ -2652,6 +2716,7 @@ var cliCommands = []cliCommand{
 			{Name: "persist-exclude", Group: "Projects", Short: "save --exclude slugs for future project deploys"},
 			{Name: "project-slug", Group: "Projects", Short: "kebab slug for the project (one-key provision)", Value: "SLUG"},
 			{Name: "rollout", Group: "Rollout and health", Short: "how this release reaches traffic: safe (adaptive canary with rollback; waits for 100%), fast (5% -> 50% -> 100%) or immediate; default: the app release policy (ADR-1450)", Value: "MODE", ClosedSet: []string{"safe", "fast", "immediate"}},
+			{Name: "override-freeze", Group: "Rollout and health", Short: "release to production during a deploy freeze; the reason is audited", Value: "REASON"},
 			{Name: "canary-preset", Group: "Rollout and health", Short: "deprecated: use --rollout. Canary ladder preset", Value: "PRESET", ClosedSet: []string{"none", "slow", "balanced", "aggressive", "1-10-50-100", "adaptive", "custom"}},
 			{Name: "canary-stages", Group: "Rollout and health", Short: "deprecated: use --rollout; custom percent@duration canary stages (requires --canary-preset custom)", Value: "STAGES"},
 			{Name: "safe", Group: "Rollout and health", Short: "deprecated: use --rollout safe"},
@@ -4740,6 +4805,12 @@ var cliCommands = []cliCommand{
 				{Name: "identity-linking", Value: "on|off", Short: "let signed-in users link and unlink sign-in methods", ClosedSet: []string{"on", "off"}},
 				{Name: "self-deletion", Value: "on|off", Short: "let signed-in users delete their own accounts after a recent sign-in", ClosedSet: []string{"on", "off"}},
 				{Name: "org-claims", Value: "on|off", Short: "put each session's active organization, role and permissions in its access tokens", ClosedSet: []string{"on", "off"}},
+				{Name: "signup-domains", Value: "DOMAINS|any", Short: "only addresses at these domains may sign up (acme.com,acme.io)"},
+				{Name: "blocked-domains", Value: "DOMAINS|none", Short: "refuse sign-ups from these domains and their subdomains"},
+				{Name: "block-disposable", Value: "on|off", Short: "refuse sign-ups with throwaway email addresses", ClosedSet: []string{"on", "off"}},
+				{Name: "signup-access", Value: "open|invite|waitlist", Short: "who may sign up: anyone, invited or approved addresses, or those plus a waitlist", ClosedSet: []string{"open", "invite", "waitlist"}},
+				{Name: "impersonation", Value: "on|off", Short: "let the admin key open time-limited sessions as users, for support", ClosedSet: []string{"on", "off"}},
+				{Name: "web3", Value: "ethereum,solana|off", Short: "wallets people may sign in with (Sign-In With Ethereum / Solana)"},
 				{Name: "scope", Value: "SCOPE", Short: "environment scope"},
 			}, Examples: []string{"gregale auth config shop-auth", "gregale auth config shop-auth --events on", "gregale auth config shop-auth --password-min-length 12 --password-require lower,upper,digit --mfa on"}},
 			{Name: "providers", Short: "Manage OAuth sign-in providers such as Google or GitHub", Subcommands: []cliSub{
@@ -4767,6 +4838,16 @@ var cliCommands = []cliCommand{
 			{Name: "users", Short: "Find, sign out, ban and delete the application's users", Subcommands: []cliSub{
 				{Name: "list", Short: "List users, newest first", Positionals: []string{"<name>"}, Flags: []cliFlag{{Name: "search", Value: "TEXT", Short: "part of an email address or name"}, {Name: "page", Value: "N", Short: "page to show"}, {Name: "limit", Value: "N", Short: "entries per page (1-100)"}, {Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"}}},
 				{Name: "get", Short: "Show a user with their organizations and active sessions", Positionals: []string{"<name>", "<user>"}, Flags: []cliFlag{{Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"}}},
+				{Name: "claims", Short: "Show, set or remove a user's custom claims, which tokens carry as app_metadata", Positionals: []string{"<name>", "<user>"}, Flags: []cliFlag{
+					{Name: "set", Value: "NAME=VALUE", Short: "set a claim (repeatable); JSON values such as 5, true or {\"a\":1} keep their type"},
+					{Name: "unset", Value: "NAME", Short: "remove a claim (repeatable)"},
+					{Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"},
+				}},
+				{Name: "impersonate", Short: "Open a time-limited session as the user, for support (needs --impersonation on)", Positionals: []string{"<name>", "<user>"}, Flags: []cliFlag{
+					{Name: "reason", Value: "TEXT", Req: true, Short: "why, such as a support ticket; recorded with the admin key that opened it"},
+					{Name: "minutes", Value: "N", Short: "how long the session lasts, 5 to 60 (default 30)"},
+					{Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"},
+				}},
 				{Name: "sign-out", Short: "End every session of a user", Positionals: []string{"<name>", "<user>"}, Flags: []cliFlag{{Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"}}},
 				{Name: "ban", Short: "Ban a user for a time and end their sessions", Positionals: []string{"<name>", "<user>"}, Flags: []cliFlag{
 					{Name: "for", Value: "DURATION", Req: true, Short: "hours (24h), days (7d) or forever"},
@@ -4777,10 +4858,20 @@ var cliCommands = []cliCommand{
 					{Name: "yes", Short: "delete without the typed confirmation (needed with --admin-key-stdin)"},
 					{Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"},
 				}},
-			}, Examples: []string{"gregale auth users list shop-auth --search example.com", "gregale auth users ban shop-auth ada@example.com --for 7d", "printf '%s' \"$ADMIN_KEY\" | gregale auth users delete shop-auth 0b5f2f0e-7a51-4d8f-8a3a-5c1b9d2e6f70 --yes --admin-key-stdin"}},
+			}, Examples: []string{"gregale auth users list shop-auth --search example.com", "gregale auth users ban shop-auth ada@example.com --for 7d", "gregale auth users claims shop-auth ada@example.com --set plan=pro --set seats=5", "printf '%s' \"$ADMIN_KEY\" | gregale auth users delete shop-auth 0b5f2f0e-7a51-4d8f-8a3a-5c1b9d2e6f70 --yes --admin-key-stdin"}},
+			{Name: "signups", Short: "Approve who may sign up while sign-up is by invitation or waitlist", Subcommands: []cliSub{
+				{Name: "list", Short: "List waiting and approved addresses, newest first", Positionals: []string{"<name>"}, Flags: []cliFlag{{Name: "status", Value: "pending|approved|all", Short: "which addresses to list"}, {Name: "search", Value: "TEXT", Short: "part of an address"}, {Name: "page", Value: "N", Short: "page to show"}, {Name: "limit", Value: "N", Short: "entries per page (1-100)"}, {Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"}}},
+				{Name: "approve", Short: "Let addresses sign up, and email them that they may", Positionals: []string{"<name>", "<email>..."}, Flags: []cliFlag{{Name: "no-email", Short: "approve without emailing them"}, {Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"}}},
+				{Name: "remove", Short: "Remove an address from the waitlist or the approved addresses", Positionals: []string{"<name>", "<email>"}, Flags: []cliFlag{{Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"}}},
+			}, Examples: []string{"gregale auth signups list shop-auth --status pending", "gregale auth signups approve shop-auth ada@example.com bob@example.com"}},
+			{Name: "impersonations", Short: "List the sessions support staff opened as users, or end one", Subcommands: []cliSub{
+				{Name: "list", Short: "List them newest first, with the key and reason", Positionals: []string{"<name>"}, Flags: []cliFlag{{Name: "user", Value: "USER", Short: "only this user's (ID or email)"}, {Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"}}},
+				{Name: "end", Short: "End one before its time", Positionals: []string{"<name>", "<id>"}, Flags: []cliFlag{{Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"}}},
+			}, Examples: []string{"gregale auth users impersonate shop-auth ada@example.com --reason 'Ticket 4821'", "gregale auth impersonations list shop-auth --user ada@example.com"}},
 			{Name: "orgs", Short: "List the application's organizations with their members and invitations", Subcommands: []cliSub{
 				{Name: "list", Short: "List organizations, newest first", Positionals: []string{"<name>"}, Flags: []cliFlag{{Name: "search", Value: "TEXT", Short: "part of a slug or name"}, {Name: "page", Value: "N", Short: "page to show"}, {Name: "limit", Value: "N", Short: "entries per page (1-100)"}, {Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"}}},
 				{Name: "get", Short: "Show an organization's members and pending invitations", Positionals: []string{"<name>", "<org>"}, Flags: []cliFlag{{Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"}}},
+				{Name: "audit", Short: "Show an organization's audit log: membership, invitation, domain and SSO changes and members' sign-ins", Positionals: []string{"<name>", "<org>"}, Flags: []cliFlag{{Name: "cursor", Value: "NEXT", Short: "where the next page starts, from the previous page's More line"}, {Name: "limit", Value: "N", Short: "entries per page (1-100)"}, {Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"}}},
 			}},
 			{Name: "emails", Short: "Change the wording of the emails the Auth app sends", Subcommands: []cliSub{
 				{Name: "list", Short: "List the email types and whether each uses your wording", Positionals: []string{"<name>"}, Flags: []cliFlag{{Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"}}},
@@ -5548,6 +5639,7 @@ var cliCommands = []cliCommand{
 					{Name: "workers", Short: "promote production push workers together"},
 					{Name: "release-secrets-file", Short: "complete production secret snapshots by workload (requires --sync-config --verify --yes)", Value: "PATH"},
 					{Name: "release-secrets-request-id", Short: "replay the printed encrypted staging request", Value: "ID"},
+					{Name: "override-freeze", Short: "promote into production during a deploy freeze; the reason is audited", Value: "REASON"},
 					{Name: "yes", Short: "confirm the promotion"},
 					{Name: "idempotency-key", Short: "stable key for retrying this promotion", Value: "KEY"},
 					{Name: "wait", Short: "wait for the promotion to reach a terminal status"},

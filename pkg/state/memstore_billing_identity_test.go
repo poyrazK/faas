@@ -1,14 +1,15 @@
-package state
+package state_test
 
 import (
 	"context"
 	"errors"
+	"github.com/onebox-faas/faas/pkg/state"
 	"testing"
 )
 
 func TestMemStoreUpdateAccountBillingInfo(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
+	store := state.NewMemStore()
 	acct, err := store.CreateAccount(ctx, "billing-identity@example.com", "hobby")
 	if err != nil {
 		t.Fatalf("CreateAccount: %v", err)
@@ -27,7 +28,7 @@ func TestMemStoreUpdateAccountBillingInfo(t *testing.T) {
 	if read.BusinessName != updated.BusinessName || read.BillingAddress != updated.BillingAddress || read.TaxID != updated.TaxID {
 		t.Fatalf("persisted billing identity = %+v, want %+v", read, updated)
 	}
-	if _, err := store.UpdateAccountBillingInfo(ctx, "missing", "x", "y", "z"); !errors.Is(err, ErrNotFound) {
+	if _, err := store.UpdateAccountBillingInfo(ctx, "missing", "x", "y", "z"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("missing account error = %v, want ErrNotFound", err)
 	}
 	cleared, err := store.UpdateAccountBillingInfo(ctx, acct.ID, "", "", "")

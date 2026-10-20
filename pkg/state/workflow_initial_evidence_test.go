@@ -1,10 +1,11 @@
-package state
+package state_test
 
 import (
 	"context"
 	"errors"
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 	"reflect"
 	"sync"
 	"testing"
@@ -20,37 +21,37 @@ func TestWorkflowInitialManualEvidenceRepair(t *testing.T) { testInitialEvidence
 func testInitialEvidenceRepair(t *testing.T, manual bool) {
 	for _, scenario := range []string{"success", "failed", "cancelled", "running", "superseded", "no_finished", "missing_job", "conflicting_result", "concurrent"} {
 		t.Run(scenario, func(t *testing.T) {
-			workflowScheduleStores(t, func(t *testing.T, s Store) {
-				ctx := WithEventRecoveryActor(context.Background(), "api_key", "evidence-operator")
-				var run *WorkflowRun
-				var app App
+			state.WorkflowScheduleStores(t, func(t *testing.T, s state.Store) {
+				ctx := state.WithEventRecoveryActor(context.Background(), "api_key", "evidence-operator")
+				var run *state.WorkflowRun
+				var app state.App
 				var review api.WorkflowInitialRecoveryReview
 				var policy api.WorkflowRecoveryPolicyResponse
 				if manual {
 					var failure string
-					run, app, failure, policy = seedInitialReview(t, s)
+					run, app, failure, policy = state.SeedInitialReview(t, s)
 					var err error
-					review, err = s.(WorkflowInitialRecoveryReviewStore).PrepareWorkflowInitialRecoveryReview(ctx, app.AccountID, app.ID, failure, api.WorkflowInitialRecoveryReviewRequest{ExpectedPolicyVersion: policy.Version})
+					review, err = s.(state.WorkflowInitialRecoveryReviewStore).PrepareWorkflowInitialRecoveryReview(ctx, app.AccountID, app.ID, failure, api.WorkflowInitialRecoveryReviewRequest{ExpectedPolicyVersion: policy.Version})
 					if err != nil {
 						t.Fatal(err)
 					}
-					prepared, diagErr := s.(WorkflowInitialEvidenceStore).DiagnoseWorkflowInitialEvidence(ctx, app.AccountID, app.ID, review.ID)
+					prepared, diagErr := s.(state.WorkflowInitialEvidenceStore).DiagnoseWorkflowInitialEvidence(ctx, app.AccountID, app.ID, review.ID)
 					if diagErr != nil || prepared.Repairable || prepared.Reason != "not_submitted_manual_initial" {
 						t.Fatalf("prepared diagnosis %+v %v", prepared, diagErr)
 					}
-					if _, diagErr = s.(WorkflowInitialEvidenceStore).RepairWorkflowInitialEvidence(ctx, app.AccountID, app.ID, review.ID, api.WorkflowInitialEvidenceRepairRequest{RequestID: uuid.NewString(), Reason: "cannot repair before approval"}); !errors.Is(diagErr, ErrWorkflowInitialReviewBlocked) {
+					if _, diagErr = s.(state.WorkflowInitialEvidenceStore).RepairWorkflowInitialEvidence(ctx, app.AccountID, app.ID, review.ID, api.WorkflowInitialEvidenceRepairRequest{RequestID: uuid.NewString(), Reason: "cannot repair before approval"}); !errors.Is(diagErr, state.ErrWorkflowInitialReviewBlocked) {
 						t.Fatalf("prepared repair authorized %v", diagErr)
 					}
-					review, err = s.(WorkflowInitialRecoveryReviewStore).DecideWorkflowInitialRecoveryReview(ctx, app.AccountID, app.ID, review.ID, api.WorkflowInitialRecoveryReviewDecisionRequest{Decision: "submit", Reason: "approve initial recovery"})
+					review, err = s.(state.WorkflowInitialRecoveryReviewStore).DecideWorkflowInitialRecoveryReview(ctx, app.AccountID, app.ID, review.ID, api.WorkflowInitialRecoveryReviewDecisionRequest{Decision: "submit", Reason: "approve initial recovery"})
 					if err != nil {
 						t.Fatal(err)
 					}
 				} else {
-					run, app, review, policy = seedInitialAutomatic(t, s)
-					pollInitialAutomatic(t, s, time.Now().UTC())
+					run, app, review, policy = state.SeedInitialAutomatic(t, s)
+					state.PollInitialAutomatic(t, s, time.Now().UTC())
 				}
-				r := initialAutomaticReview(t, s, app, review.ID)
-				jobs := s.(EventRecoveryStore)
+				r := state.InitialAutomaticReview(t, s, app, review.ID)
+				jobs := s.(state.EventRecoveryStore)
 				if _, err := jobs.ProcessNextEventRecovery(ctx, time.Now().UTC()); err != nil {
 					t.Fatal(err)
 				}
@@ -64,34 +65,34 @@ func testInitialEvidenceRepair(t *testing.T, manual bool) {
 						policy.Policy.Enabled = scenario == "failed"
 					}
 					var err error
-					policy, err = s.(WorkflowRecoveryPolicyStore).SetWorkflowRecoveryPolicy(ctx, app.AccountID, app.ID, api.SetWorkflowRecoveryPolicyRequest{ExpectedVersion: policy.Version, Policy: policy.Policy})
+					policy, err = s.(state.WorkflowRecoveryPolicyStore).SetWorkflowRecoveryPolicy(ctx, app.AccountID, app.ID, api.SetWorkflowRecoveryPolicyRequest{ExpectedVersion: policy.Version, Policy: policy.Policy})
 					if err != nil {
 						t.Fatal(err)
 					}
 					if scenario == "failed" {
-						policy, err = s.(WorkflowRecoveryPolicyOperatorStore).ControlWorkflowRecoveryPolicy(ctx, app.AccountID, app.ID, api.ControlWorkflowRecoveryPolicyRequest{Operation: "pause", ExpectedVersion: policy.Version, ExpectedUpdatedAt: policy.UpdatedAt, Reason: "paused during manual investigation"})
+						policy, err = s.(state.WorkflowRecoveryPolicyOperatorStore).ControlWorkflowRecoveryPolicy(ctx, app.AccountID, app.ID, api.ControlWorkflowRecoveryPolicyRequest{Operation: "pause", ExpectedVersion: policy.Version, ExpectedUpdatedAt: policy.UpdatedAt, Reason: "paused during manual investigation"})
 						if err != nil {
 							t.Fatal(err)
 						}
 					}
 					future := time.Now().UTC().Truncate(time.Microsecond).Add(time.Hour)
-					if m, ok := s.(*MemStore); ok {
-						m.mu.Lock()
-						if m.initialCompletionNext == nil {
-							m.initialCompletionNext = map[string]time.Time{}
+					if m, ok := s.(*state.MemStore); ok {
+						(*m.Mu()).Lock()
+						if (*m.InitialCompletionNext()) == nil {
+							(*m.InitialCompletionNext()) = map[string]time.Time{}
 						}
-						m.initialCompletionNext[r.ID] = future
-						m.mu.Unlock()
+						(*m.InitialCompletionNext())[r.ID] = future
+						(*m.Mu()).Unlock()
 					} else {
-						if _, err = s.(*PgStore).pool.Exec(ctx, "UPDATE workflow_initial_recovery_reviews SET completion_next_observe_at=$2 WHERE id=$1::uuid", r.ID, future); err != nil {
+						if _, err = (*s.(*state.PgStore).Pool()).Exec(ctx, "UPDATE workflow_initial_recovery_reviews SET completion_next_observe_at=$2 WHERE id=$1::uuid", r.ID, future); err != nil {
 							t.Fatal(err)
 						}
 					}
 				}
 				if scenario != "running" {
-					status := WorkflowRunStatusSucceeded
+					status := state.WorkflowRunStatusSucceeded
 					if scenario == "failed" || scenario == "cancelled" {
-						status = WorkflowRunStatusFailed
+						status = state.WorkflowRunStatusFailed
 					}
 					var last *string
 					if scenario == "cancelled" {
@@ -102,32 +103,32 @@ func testInitialEvidenceRepair(t *testing.T, manual bool) {
 						t.Fatal(err)
 					}
 				}
-				if m, ok := s.(*MemStore); ok {
-					m.mu.Lock()
-					delete(m.eventRecoveryJobs[r.JobID].WorkflowResults, 1)
+				if m, ok := s.(*state.MemStore); ok {
+					(*m.Mu()).Lock()
+					delete((*m.EventRecoveryJobs())[r.JobID].WorkflowResults, 1)
 					switch scenario {
 					case "superseded":
-						changed := m.workflowRuns[run.ID]
+						changed := (*m.WorkflowRuns())[run.ID]
 						changed.ResumeCount = 2
-						m.workflowRuns[run.ID] = changed
+						(*m.WorkflowRuns())[run.ID] = changed
 					case "no_finished":
-						changed := m.workflowRuns[run.ID]
+						changed := (*m.WorkflowRuns())[run.ID]
 						changed.FinishedAt = nil
-						m.workflowRuns[run.ID] = changed
+						(*m.WorkflowRuns())[run.ID] = changed
 					case "missing_job":
-						delete(m.eventRecoveryJobs, r.JobID)
+						delete((*m.EventRecoveryJobs()), r.JobID)
 					case "conflicting_result":
-						m.eventRecoveryJobs[r.JobID].WorkflowResults[1] = memWorkflowRecoveryResult{RunID: run.ID, ResumeNumber: 2, Execution: api.EventRecoveryExecution{State: "superseded"}}
+						(*m.EventRecoveryJobs())[r.JobID].WorkflowResults[1] = state.MemWorkflowRecoveryResult{RunID: run.ID, ResumeNumber: 2, Execution: api.EventRecoveryExecution{State: "superseded"}}
 					}
-					m.mu.Unlock()
+					(*m.Mu()).Unlock()
 				} else {
-					pg := s.(*PgStore)
-					if _, err := pg.pool.Exec(ctx, "DELETE FROM event_recovery_workflow_results WHERE job_id=$1::uuid", r.JobID); err != nil {
+					pg := s.(*state.PgStore)
+					if _, err := (*pg.Pool()).Exec(ctx, "DELETE FROM event_recovery_workflow_results WHERE job_id=$1::uuid", r.JobID); err != nil {
 						t.Fatal(err)
 					}
 					// Run changes must not trigger repair through the normal recorder.
 					if scenario == "superseded" || scenario == "no_finished" {
-						tx, err := pg.pool.Begin(ctx)
+						tx, err := (*pg.Pool()).Begin(ctx)
 						if err != nil {
 							t.Fatal(err)
 						}
@@ -150,24 +151,24 @@ func testInitialEvidenceRepair(t *testing.T, manual bool) {
 						}
 					}
 					if scenario == "missing_job" {
-						if _, err := pg.pool.Exec(ctx, "DELETE FROM event_recovery_jobs WHERE id=$1::uuid", r.JobID); err != nil {
+						if _, err := (*pg.Pool()).Exec(ctx, "DELETE FROM event_recovery_jobs WHERE id=$1::uuid", r.JobID); err != nil {
 							t.Fatal(err)
 						}
 					}
 					if scenario == "conflicting_result" {
-						if _, err := pg.pool.Exec(ctx, "INSERT INTO event_recovery_workflow_results(job_id,position,run_id,resume_number,admitted_at,state,recorded_at) SELECT $1::uuid,1,run_id,2,created_at,'superseded',clock_timestamp() FROM workflow_run_resumes WHERE run_id=$2::uuid AND resume_number=1", r.JobID, run.ID); err != nil {
+						if _, err := (*pg.Pool()).Exec(ctx, "INSERT INTO event_recovery_workflow_results(job_id,position,run_id,resume_number,admitted_at,state,recorded_at) SELECT $1::uuid,1,run_id,2,created_at,'superseded',clock_timestamp() FROM workflow_run_resumes WHERE run_id=$2::uuid AND resume_number=1", r.JobID, run.ID); err != nil {
 							t.Fatal(err)
 						}
 					}
 				}
-				evidence := s.(WorkflowInitialEvidenceStore)
-				before := initialAutomaticReview(t, s, app, r.ID)
+				evidence := s.(state.WorkflowInitialEvidenceStore)
+				before := state.InitialAutomaticReview(t, s, app, r.ID)
 				d, err := evidence.DiagnoseWorkflowInitialEvidence(ctx, app.AccountID, app.ID, r.ID)
 				if err != nil {
 					t.Fatal(err)
 				}
 				if !manual {
-					queueSnapshot, queueErr := s.(WorkflowRecoveryPolicyOperatorStore).GetWorkflowRecoveryAutomaticQueue(ctx, app.AccountID, app.ID)
+					queueSnapshot, queueErr := s.(state.WorkflowRecoveryPolicyOperatorStore).GetWorkflowRecoveryAutomaticQueue(ctx, app.AccountID, app.ID)
 					if queueErr != nil || len(queueSnapshot.Entries) != 1 || queueSnapshot.Entries[0].InitialEvidence == nil {
 						t.Fatalf("initial queue %+v %v", queueSnapshot, queueErr)
 					}
@@ -179,12 +180,12 @@ func testInitialEvidenceRepair(t *testing.T, manual bool) {
 
 				if manual {
 					var scheduled time.Time
-					if m, ok := s.(*MemStore); ok {
-						m.mu.Lock()
-						scheduled = m.initialCompletionNext[r.ID]
-						m.mu.Unlock()
+					if m, ok := s.(*state.MemStore); ok {
+						(*m.Mu()).Lock()
+						scheduled = (*m.InitialCompletionNext())[r.ID]
+						(*m.Mu()).Unlock()
 					} else {
-						if err = s.(*PgStore).pool.QueryRow(ctx, "SELECT completion_next_observe_at FROM workflow_initial_recovery_reviews WHERE id=$1::uuid", r.ID).Scan(&scheduled); err != nil {
+						if err = (*s.(*state.PgStore).Pool()).QueryRow(ctx, "SELECT completion_next_observe_at FROM workflow_initial_recovery_reviews WHERE id=$1::uuid", r.ID).Scan(&scheduled); err != nil {
 							t.Fatal(err)
 						}
 					}
@@ -192,14 +193,14 @@ func testInitialEvidenceRepair(t *testing.T, manual bool) {
 						t.Fatal("diagnosis woke completion observer")
 					}
 				}
-				if after := initialAutomaticReview(t, s, app, r.ID); !reflect.DeepEqual(before, after) {
+				if after := state.InitialAutomaticReview(t, s, app, r.ID); !reflect.DeepEqual(before, after) {
 					t.Fatal("diagnosis wrote review")
 				}
 				repairable := scenario == "success" || scenario == "failed" || scenario == "cancelled" || scenario == "concurrent"
 				if d.Repairable != repairable {
 					t.Fatalf("diagnosis %+v", d)
 				}
-				if _, err = evidence.DiagnoseWorkflowInitialEvidence(ctx, uuid.NewString(), app.ID, r.ID); !errors.Is(err, ErrNotFound) {
+				if _, err = evidence.DiagnoseWorkflowInitialEvidence(ctx, uuid.NewString(), app.ID, r.ID); !errors.Is(err, state.ErrNotFound) {
 					t.Fatalf("account fence %v", err)
 				}
 				req := api.WorkflowInitialEvidenceRepairRequest{RequestID: uuid.NewString(), Reason: "reconcile verified terminal outcome"}
@@ -224,7 +225,7 @@ func testInitialEvidenceRepair(t *testing.T, manual bool) {
 				}
 				repaired, err := evidence.RepairWorkflowInitialEvidence(ctx, app.AccountID, app.ID, r.ID, req)
 				if !repairable {
-					if !errors.Is(err, ErrWorkflowInitialReviewBlocked) {
+					if !errors.Is(err, state.ErrWorkflowInitialReviewBlocked) {
 						t.Fatalf("unsafe repair %+v %v", repaired, err)
 					}
 					return
@@ -232,7 +233,7 @@ func testInitialEvidenceRepair(t *testing.T, manual bool) {
 				if err != nil || repaired.Repair == nil || repaired.Execution == nil || repaired.Execution.Source != "recovery_result" || repaired.Repair.ActorID != "evidence-operator" {
 					t.Fatalf("repair %+v %v", repaired, err)
 				}
-				waiting := initialAutomaticReview(t, s, app, r.ID)
+				waiting := state.InitialAutomaticReview(t, s, app, r.ID)
 				if waiting.Result != nil || waiting.AutomaticResult != nil {
 					t.Fatal("repair confirmed completion directly")
 				}
@@ -241,10 +242,10 @@ func testInitialEvidenceRepair(t *testing.T, manual bool) {
 					t.Fatalf("repair replay %+v %v", again, err)
 				}
 				req.Reason = "different reason"
-				if _, err = evidence.RepairWorkflowInitialEvidence(ctx, app.AccountID, app.ID, r.ID, req); !errors.Is(err, ErrEventRecoveryChanged) {
+				if _, err = evidence.RepairWorkflowInitialEvidence(ctx, app.AccountID, app.ID, r.ID, req); !errors.Is(err, state.ErrEventRecoveryChanged) {
 					t.Fatalf("changed replay %v", err)
 				}
-				queue, err := s.(WorkflowRecoveryPolicyOperatorStore).GetWorkflowRecoveryAutomaticQueue(ctx, app.AccountID, app.ID)
+				queue, err := s.(state.WorkflowRecoveryPolicyOperatorStore).GetWorkflowRecoveryAutomaticQueue(ctx, app.AccountID, app.ID)
 				expected := 1
 				if manual {
 					expected = 0
@@ -253,17 +254,17 @@ func testInitialEvidenceRepair(t *testing.T, manual bool) {
 					t.Fatalf("repair released or refunded %+v %v", queue, err)
 				}
 				if manual {
-					if pg, ok := s.(*PgStore); ok {
-						s = NewPgStore(pg.pool.Pool)
-						evidence = s.(WorkflowInitialEvidenceStore)
+					if pg, ok := s.(*state.PgStore); ok {
+						s = state.NewPgStore((*pg.Pool()).Pool)
+						evidence = s.(state.WorkflowInitialEvidenceStore)
 					}
-					if _, err = s.(WorkflowInitialManualCompletionStore).ProcessNextWorkflowInitialManualCompletion(ctx, time.Now().UTC()); err != nil {
+					if _, err = s.(state.WorkflowInitialManualCompletionStore).ProcessNextWorkflowInitialManualCompletion(ctx, time.Now().UTC()); err != nil {
 						t.Fatal(err)
 					}
 				} else {
-					pollInitialAutomatic(t, s, time.Now().UTC().Add(time.Minute))
+					state.PollInitialAutomatic(t, s, time.Now().UTC().Add(time.Minute))
 				}
-				final := initialAutomaticReview(t, s, app, r.ID)
+				final := state.InitialAutomaticReview(t, s, app, r.ID)
 				diagnosed, err := evidence.DiagnoseWorkflowInitialEvidence(ctx, app.AccountID, app.ID, r.ID)
 				if err != nil || diagnosed.Repairable || diagnosed.Reason != "already_confirmed" {
 					t.Fatalf("confirmed diagnosis %+v %v", diagnosed, err)
@@ -282,7 +283,7 @@ func testInitialEvidenceRepair(t *testing.T, manual bool) {
 					if final.AutomaticEvaluation != nil {
 						t.Fatal("manual repair changed automatic evaluation")
 					}
-					current, err := s.(WorkflowRecoveryPolicyStore).GetWorkflowRecoveryPolicy(ctx, app.AccountID, app.ID)
+					current, err := s.(state.WorkflowRecoveryPolicyStore).GetWorkflowRecoveryPolicy(ctx, app.AccountID, app.ID)
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -294,7 +295,7 @@ func testInitialEvidenceRepair(t *testing.T, manual bool) {
 					if err != nil || replayed.Reason != "already_confirmed" || !reflect.DeepEqual(replayed.Repair, repaired.Repair) {
 						t.Fatalf("confirmed repair replay %+v %v", replayed, err)
 					}
-					history, err := s.(WorkflowRecoveryHistoryStore).GetWorkflowRecoveryHistory(ctx, app.AccountID, app.ID, api.WorkflowRecoveryHistoryOptions{RunID: run.ID, Limit: 100})
+					history, err := s.(state.WorkflowRecoveryHistoryStore).GetWorkflowRecoveryHistory(ctx, app.AccountID, app.ID, api.WorkflowRecoveryHistoryOptions{RunID: run.ID, Limit: 100})
 					if err != nil {
 						t.Fatal(err)
 					}

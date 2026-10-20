@@ -45,7 +45,7 @@ type environmentRuntimeKey struct{ AppID, Scope string }
 
 func (m *MemStore) environmentRuntimeChangedAtLocked(appID, scope string) (time.Time, bool) {
 	boundary, exists := m.runtimeConfigChangedAt[appID]
-	for _, candidate := range []string{"default", normalizedDeploymentScope(scope)} {
+	for _, candidate := range runtimeBoundaryScopes(scope) {
 		if at, present := m.environmentRuntimeConfigChangedAt[environmentRuntimeKey{AppID: appID, Scope: candidate}]; present {
 			exists = true
 			if at.After(boundary) {
