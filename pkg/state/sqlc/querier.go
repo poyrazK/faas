@@ -5810,6 +5810,12 @@ type Querier interface {
 	WorkflowRetryParentEvidenceReceipt(ctx context.Context, db DBTX, arg WorkflowRetryParentEvidenceReceiptParams) (int64, error)
 	WorkflowRetryParentEvidenceRepair(ctx context.Context, db DBTX, arg WorkflowRetryParentEvidenceRepairParams) (int64, error)
 	WorkflowRetryParentEvidenceResultExists(ctx context.Context, db DBTX, arg WorkflowRetryParentEvidenceResultExistsParams) (bool, error)
+	// Cheap superset of NextFairDueWorkflowRun's due predicate, read before the
+	// dispatch transaction. Every scheduler polls several times a second and the
+	// fairness lock serialized them even when nothing was due (production-us:
+	// 11.5 lock acquisitions a second averaging 12.8 ms of waiting). A run the
+	// fair selection could claim always matches this, so "false" is safe to skip.
+	WorkflowRunDueExists(ctx context.Context, db DBTX, staleMs int64) (bool, error)
 	WorkflowRunRecoveryCandidate(ctx context.Context, db DBTX, arg WorkflowRunRecoveryCandidateParams) (WorkflowRunRecoveryCandidateRow, error)
 	WorkflowRunRecoveryRetryCandidate(ctx context.Context, db DBTX, arg WorkflowRunRecoveryRetryCandidateParams) (WorkflowRunRecoveryRetryCandidateRow, error)
 	WriteBindingReleasePolicy(ctx context.Context, db DBTX, arg WriteBindingReleasePolicyParams) ([]byte, error)
