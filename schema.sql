@@ -42456,6 +42456,10 @@ CREATE TABLE public.outbound_ai_price_entries (
     millicents_per_web_search bigint,
     millicents_per_file_search bigint,
     millicents_per_code_session_gb bigint,
+    input_audio_millicents_per_mtok bigint,
+    cached_input_audio_millicents_per_mtok bigint,
+    output_audio_millicents_per_mtok bigint,
+    CONSTRAINT outbound_ai_price_entries_audio_chk CHECK ((((input_audio_millicents_per_mtok IS NULL) OR ((input_audio_millicents_per_mtok >= 0) AND (input_audio_millicents_per_mtok <= 1000000000))) AND ((cached_input_audio_millicents_per_mtok IS NULL) OR ((cached_input_audio_millicents_per_mtok >= 0) AND (cached_input_audio_millicents_per_mtok <= 1000000000))) AND ((output_audio_millicents_per_mtok IS NULL) OR ((output_audio_millicents_per_mtok >= 0) AND (output_audio_millicents_per_mtok <= 1000000000))))),
     CONSTRAINT outbound_ai_price_entries_media_chk CHECK ((((input_image_millicents_per_mtok IS NULL) OR ((input_image_millicents_per_mtok >= 0) AND (input_image_millicents_per_mtok <= 1000000000))) AND ((output_image_millicents_per_mtok IS NULL) OR ((output_image_millicents_per_mtok >= 0) AND (output_image_millicents_per_mtok <= 1000000000))) AND ((millicents_per_image IS NULL) OR ((millicents_per_image >= 0) AND (millicents_per_image <= 10000000))) AND ((millicents_per_audio_minute IS NULL) OR ((millicents_per_audio_minute >= 0) AND (millicents_per_audio_minute <= 10000000))) AND ((millicents_per_million_characters IS NULL) OR ((millicents_per_million_characters >= 0) AND (millicents_per_million_characters <= 1000000000))))),
     CONSTRAINT outbound_ai_price_entries_prefix_chk CHECK ((((length(model_prefix) >= 1) AND (length(model_prefix) <= 128)) AND (model_prefix ~ '^[ -~]+$'::text))),
     CONSTRAINT outbound_ai_price_entries_prices_chk CHECK ((((input_millicents_per_mtok >= 0) AND (input_millicents_per_mtok <= 1000000000)) AND ((output_millicents_per_mtok >= 0) AND (output_millicents_per_mtok <= 1000000000)) AND ((cached_input_millicents_per_mtok IS NULL) OR ((cached_input_millicents_per_mtok >= 0) AND (cached_input_millicents_per_mtok <= 1000000000))) AND ((cache_write_millicents_per_mtok IS NULL) OR ((cache_write_millicents_per_mtok >= 0) AND (cache_write_millicents_per_mtok <= 1000000000))))),
@@ -42473,6 +42477,20 @@ CREATE TABLE public.outbound_ai_price_lists (
     integration_id uuid NOT NULL,
     effective_from timestamp with time zone DEFAULT now() NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: outbound_ai_prompt_prefixes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.outbound_ai_prompt_prefixes (
+    integration_id uuid NOT NULL,
+    prefix_hash bytea NOT NULL,
+    seen_at timestamp with time zone DEFAULT now() NOT NULL,
+    previous_seen_at timestamp with time zone,
+    CONSTRAINT outbound_ai_prompt_prefixes_hash_chk CHECK ((octet_length(prefix_hash) = 32)),
+    CONSTRAINT outbound_ai_prompt_prefixes_seen_chk CHECK (((previous_seen_at IS NULL) OR (previous_seen_at <= seen_at)))
 );
 
 
@@ -42729,6 +42747,9 @@ CREATE TABLE public.outbound_ai_usage_daily (
     cached_requests bigint DEFAULT 0 NOT NULL,
     cache_saved_millicents bigint DEFAULT 0 NOT NULL,
     prompt_cache_saved_millicents bigint DEFAULT 0 NOT NULL,
+    input_audio_tokens bigint DEFAULT 0 NOT NULL,
+    output_audio_tokens bigint DEFAULT 0 NOT NULL,
+    CONSTRAINT outbound_ai_usage_daily_audio_chk CHECK ((((input_audio_tokens >= 0) AND (input_audio_tokens <= input_tokens)) AND ((output_audio_tokens >= 0) AND (output_audio_tokens <= output_tokens)))),
     CONSTRAINT outbound_ai_usage_daily_cache_chk CHECK ((((cached_requests >= 0) AND (cached_requests <= requests)) AND (cache_saved_millicents >= 0))),
     CONSTRAINT outbound_ai_usage_daily_caller_chk CHECK (((caller = ANY (ARRAY['runs'::text, 'replay'::text, 'moderation'::text, 'evaluation'::text])) OR (caller ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'::text))),
     CONSTRAINT outbound_ai_usage_daily_cost_chk CHECK ((cost_millicents >= 0)),
@@ -57945,6 +57966,14 @@ ALTER TABLE ONLY public.outbound_ai_price_lists
 
 
 --
+-- Name: outbound_ai_prompt_prefixes outbound_ai_prompt_prefixes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_prompt_prefixes
+    ADD CONSTRAINT outbound_ai_prompt_prefixes_pkey PRIMARY KEY (integration_id, prefix_hash);
+
+
+--
 -- Name: outbound_ai_replay_results outbound_ai_replay_results_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -68210,6 +68239,13 @@ CREATE INDEX outbound_ai_log_exports_prune_idx ON public.outbound_ai_log_exports
 --
 
 CREATE INDEX outbound_ai_price_lists_current_idx ON public.outbound_ai_price_lists USING btree (integration_id, effective_from DESC);
+
+
+--
+-- Name: outbound_ai_prompt_prefixes_seen_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX outbound_ai_prompt_prefixes_seen_at_idx ON public.outbound_ai_prompt_prefixes USING btree (seen_at);
 
 
 --
@@ -86235,6 +86271,14 @@ ALTER TABLE ONLY public.outbound_ai_price_entries
 
 ALTER TABLE ONLY public.outbound_ai_price_lists
     ADD CONSTRAINT outbound_ai_price_lists_integration_id_fkey FOREIGN KEY (integration_id) REFERENCES public.outbound_integrations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: outbound_ai_prompt_prefixes outbound_ai_prompt_prefixes_integration_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_prompt_prefixes
+    ADD CONSTRAINT outbound_ai_prompt_prefixes_integration_id_fkey FOREIGN KEY (integration_id) REFERENCES public.outbound_integrations(id) ON DELETE CASCADE;
 
 
 --

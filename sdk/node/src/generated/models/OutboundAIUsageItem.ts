@@ -68,5 +68,13 @@ export type OutboundAIUsageItem = {
    * What provider prompt caching saved against plain input prices; negative when cache writes outweighed reads.
    */
   prompt_cache_saved_millicents: number;
+  /**
+   * Audio part of input_tokens, priced at the audio input price (ADR 20261019072722).
+   */
+  input_audio_tokens: number;
+  /**
+   * Audio part of output_tokens, priced at the audio output price.
+   */
+  output_audio_tokens: number;
 };
 

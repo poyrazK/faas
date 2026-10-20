@@ -91,7 +91,7 @@ def sync_detailed(
     """Read the built-in AI price catalog of one provider.
 
      Requires MFA and read scope (ADR-994). The catalog prices the models an integration's own price list
-    does not name. Prices are list prices converted to EUR at usd_per_eur and rounded up.
+    does not name. Prices are the providers' list prices in US dollars, rounded up (ADR 20261019123822).
 
     Args:
         provider (GetOutboundAIPriceCatalogProvider):
@@ -126,7 +126,7 @@ def sync(
     """Read the built-in AI price catalog of one provider.
 
      Requires MFA and read scope (ADR-994). The catalog prices the models an integration's own price list
-    does not name. Prices are list prices converted to EUR at usd_per_eur and rounded up.
+    does not name. Prices are the providers' list prices in US dollars, rounded up (ADR 20261019123822).
 
     Args:
         provider (GetOutboundAIPriceCatalogProvider):
@@ -156,7 +156,7 @@ async def asyncio_detailed(
     """Read the built-in AI price catalog of one provider.
 
      Requires MFA and read scope (ADR-994). The catalog prices the models an integration's own price list
-    does not name. Prices are list prices converted to EUR at usd_per_eur and rounded up.
+    does not name. Prices are the providers' list prices in US dollars, rounded up (ADR 20261019123822).
 
     Args:
         provider (GetOutboundAIPriceCatalogProvider):
@@ -189,7 +189,7 @@ async def asyncio(
     """Read the built-in AI price catalog of one provider.
 
      Requires MFA and read scope (ADR-994). The catalog prices the models an integration's own price list
-    does not name. Prices are list prices converted to EUR at usd_per_eur and rounded up.
+    does not name. Prices are the providers' list prices in US dollars, rounded up (ADR 20261019123822).
 
     Args:
         provider (GetOutboundAIPriceCatalogProvider):

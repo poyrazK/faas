@@ -393,7 +393,7 @@ func queueAIUsageRollup(batch *pgx.Batch, integrationID uuid.UUID, record AIUsag
 		    (integration_id, usage_date, caller, model, requests, error_requests, usage_unknown_requests,
 		     input_tokens, cached_input_tokens, cache_write_tokens, output_tokens, cost_millicents,
 		     images, audio_seconds, characters, video_seconds, web_searches, file_searches, code_session_gb,
-		     cached_requests, cache_saved_millicents, prompt_cache_saved_millicents)
+		     cached_requests, cache_saved_millicents, prompt_cache_saved_millicents, input_audio_tokens, output_audio_tokens)
 		SELECT $1, day.today, $2,
 		       CASE WHEN EXISTS (SELECT 1 FROM outbound_ai_usage_daily existing
 		                          WHERE existing.integration_id = $1 AND existing.usage_date = day.today
@@ -401,7 +401,7 @@ func queueAIUsageRollup(batch *pgx.Batch, integrationID uuid.UUID, record AIUsag
 		              OR (SELECT count(DISTINCT existing.model) FROM outbound_ai_usage_daily existing
 		                   WHERE existing.integration_id = $1 AND existing.usage_date = day.today) < $4
 		            THEN $3 ELSE $5 END,
-		       1, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22
+		       1, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24
 		  FROM (SELECT (now() AT TIME ZONE 'UTC')::date AS today) day
 		ON CONFLICT (integration_id, usage_date, caller, model) DO UPDATE SET
 		    requests = usage.requests + 1,
@@ -422,12 +422,14 @@ func queueAIUsageRollup(batch *pgx.Batch, integrationID uuid.UUID, record AIUsag
 		    cached_requests = usage.cached_requests + EXCLUDED.cached_requests,
 		    cache_saved_millicents = usage.cache_saved_millicents + EXCLUDED.cache_saved_millicents,
 		    prompt_cache_saved_millicents = usage.prompt_cache_saved_millicents + EXCLUDED.prompt_cache_saved_millicents,
+		    input_audio_tokens = usage.input_audio_tokens + EXCLUDED.input_audio_tokens,
+		    output_audio_tokens = usage.output_audio_tokens + EXCLUDED.output_audio_tokens,
 		    updated_at = now()`,
 		integrationID, record.Caller, usage.Model, api.OutboundAIUsageModelsPerDay, aiUsageOverflowModel,
 		errorRequests, unknownRequests, usage.InputTokens, usage.CachedInputTokens, usage.CacheWriteTokens,
 		usage.OutputTokens, record.CostMillicents, usage.Images, usage.AudioSeconds, usage.Characters, usage.VideoSeconds,
 		usage.WebSearches, usage.FileSearches, usage.CodeSessionGB, cachedRequests(record), record.CacheSavedMillicents,
-		record.PromptCacheSavedMillicents)
+		record.PromptCacheSavedMillicents, usage.InputAudioTokens, usage.OutputAudioTokens)
 }
 
 // recordAIBudgetAlerts stores first-time alerts and enqueues one
@@ -599,6 +601,9 @@ func (b *PostgresBackend) PruneAIUsage(ctx context.Context) (int64, error) {
 		// ADR-995: end users' alerts follow the per-user rollup retention, and
 		// tags' alerts the tag rollup's (ADR-1438).
 		{`DELETE FROM outbound_ai_budget_alerts WHERE (end_user IS NOT NULL OR tag IS NOT NULL) AND period_start < (now() AT TIME ZONE 'UTC')::date - $1::int`, api.OutboundAIUserUsageRetentionDays},
+		// ADR 20261019132139: shared prompt prefixes outlive two cache lifetimes.
+		{`DELETE FROM outbound_ai_prompt_prefixes WHERE seen_at < now() - make_interval(secs => $1::int)`,
+			2 * api.OutboundAIPromptCacheLifetimeSeconds},
 		// ADR-1120: a settled call's key only has to outlive its retries.
 		{`DELETE FROM outbound_ai_settlements WHERE settled_at < now() - make_interval(mins => $1::int)`, api.OutboundAISettlementKeyRetentionMinutes},
 		// ADR-1340: canary rows and export lines.
