@@ -1,0 +1,608 @@
+from __future__ import annotations
+
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, Any, TypeVar, cast
+
+from attrs import define as _attrs_define
+from attrs import field as _attrs_field
+
+from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.binding_check_report import BindingCheckReport
+    from ..models.field_error import FieldError
+    from ..models.log_excerpt import LogExcerpt
+    from ..models.release_approval_status import ReleaseApprovalStatus
+    from ..models.release_freeze import ReleaseFreeze
+    from ..models.release_restore_point import ReleaseRestorePoint
+    from ..models.rollback_crossed_release import RollbackCrossedRelease
+    from ..models.secret_finding import SecretFinding
+
+
+T = TypeVar("T", bound="Problem")
+
+
+@_attrs_define
+class Problem:
+    """RFC 9457 problem+json envelope. The `code` field is the stable
+    machine-readable identifier; clients branch on it. `limit` and
+    `observed` are populated on quota errors. `docs_url` points the
+    user at the next action. Common customer-facing codes and recovery
+    guidance are listed in `docs/errors.md`. `billing_portal_url` is
+    populated on `code: payment_required` when the customer already has a
+    provider subscription and must update it in the provider
+    portal. `checkout_url` is populated when a new hosted checkout
+    is required. `paddle_checkout_url` is retained as a legacy
+    alias for Paddle clients, and `tx_id` carries the provider
+    checkout handle when one exists.
+
+    `errors` carries per-field detail (Cloudflare / Stripe shape)
+    for 422 sites that emit a list of field-level failures — used
+    today by the kind=validate edge rule so a JSON Schema
+    rejection renders as a form-field list the dashboard can
+    iterate without parsing prose. Optional + omitempty so every
+    other problem+json site keeps its existing flat shape unchanged.
+
+        Example:
+            {'type': 'https://gregale.dev/docs/errors/validation_failed', 'title': 'Validation failed', 'status': 422,
+                'code': 'validation_failed', 'detail': 'ram_mb must be one of [128, 256, 512, 1024, 2048]', 'limit': None,
+                'observed': None, 'docs_url': 'https://gregale.dev/docs/errors/validation_failed'}
+
+    """
+
+    title: str
+    status: int
+    code: str
+    """Stable machine-readable error code. See StatusForCode in pkg/api/errors.go."""
+    current_sequence: int | Unset = UNSET
+    """Observed channel head on realtime_sequence_conflict."""
+    condition_field: str | Unset = UNSET
+    condition_index: int | Unset = UNSET
+    field_exists: bool | Unset = UNSET
+    entity_key: str | Unset = UNSET
+    expected_version: int | Unset = UNSET
+    current_version: int | Unset = UNSET
+    entity_exists: bool | Unset = UNSET
+    message_index: int | Unset = UNSET
+    expected_sequence: int | Unset = UNSET
+    """Requested channel head precondition."""
+    bindings_check: BindingCheckReport | Unset = UNSET
+    """Safe preflight findings for the declared policy at checked_at. Coverage may be complete, partial or none; a
+    passed report does not independently establish application readiness or credential use. Optional application
+    acknowledgements are version-bound self-attestations."""
+    crossed_releases: list[RollbackCrossedRelease] | Unset = UNSET
+    """rollback_crosses_release: release commands the rollback would not undo (ADR-1448)."""
+    restore_points: list[ReleaseRestorePoint] | Unset = UNSET
+    """rollback_crosses_release: how to restore each managed PostgreSQL database to before those releases
+    (ADR-1448)."""
+    freezes: list[ReleaseFreeze] | Unset = UNSET
+    """release_frozen: the freezes refusing the release (ADR-20261019071733)."""
+    release_approval: ReleaseApprovalStatus | Unset = UNSET
+    """A release's approval state (ADR-20261020085706)."""
+    type_: str | Unset = UNSET
+    instance: str | Unset = UNSET
+    """URI reference identifying this problem occurrence when supplied by the caller."""
+    detail: str | Unset = UNSET
+    limit: int | None | Unset = UNSET
+    observed: int | None | Unset = UNSET
+    limit_bytes: int | None | Unset = UNSET
+    """Explicit byte limit for request-body and other byte-oriented errors."""
+    observed_bytes: int | None | Unset = UNSET
+    """Observed byte count for request-body and other byte-oriented errors."""
+    docs_url: str | Unset = UNSET
+    retry_after_seconds: int | Unset = UNSET
+    """Retry delay promoted from the HTTP Retry-After header by SDK clients when the header uses delta-seconds."""
+    checkout_url: str | Unset = UNSET
+    """Provider-neutral hosted checkout URL on a `payment_required`
+    402 when a paid plan upgrade requires a new subscription.
+    """
+    billing_portal_url: str | Unset = UNSET
+    paddle_checkout_url: str | Unset = UNSET
+    """Legacy Paddle-hosted checkout URL on a `payment_required`
+    402. Prefer the provider-neutral `checkout_url` field.
+    """
+    tx_id: str | Unset = UNSET
+    """Paddle transaction handle (`txn_…`) on a `payment_required`
+    402. Empty on the Stripe path. The dashboard renders this as
+    a confirmation id after the customer completes checkout.
+    """
+    errors: list[FieldError] | Unset = UNSET
+    """Per-field validation detail. Populated by 422 sites that
+    emit a list of field-level failures. Each entry is a
+    `FieldError` (Cloudflare / Stripe shape: field + expected
+    + got) so an SDK can drive form-field UI without parsing
+    prose.
+    """
+    secret_findings: list[SecretFinding] | Unset = UNSET
+    """Per-line secret-scan detail. Populated by 422 sites with
+    `code: secret_scan_strict` (cmd/apid/secretscan.go
+    server-side scan rejection; cmd/gregale printErr
+    --secret-scan=strict client-side rejection). The shape
+    is shared with the on-disk `SecretScanResult` so a
+    programmatic consumer can render the same UI for both
+    rejection paths. Optional + omitempty.
+    """
+    secret_hint: str | Unset = UNSET
+    """Customer-facing remediation nudge attached to a
+    `code: secret_scan_strict` 422 envelope (e.g. "move
+    detected secrets to `gregale secrets set`"). Mirrors
+    the `FieldError` shape's prose pattern so the dashboard
+    / SDK can render the hint as a one-line footer without
+    parsing prose. Optional + omitempty.
+    """
+    hint: str | Unset = UNSET
+    """Single short next-action line lifted from the
+    `pkg/whycopy` catalog (error-explanations cluster,
+    spec §6.4 amendment 1). Populated by the 9 cluster-
+    owned RFC 7807 codes (app_not_listening,
+    app_loopback_bound, app_arch_mismatch,
+    env_var_missing, app_healthz_unauthorized,
+    app_runtime_oom, dep_install_failed,
+    app_startup_timeout, stateless_only_violation). The
+    CLI renders this as the first line of the 5-line
+    error shape (`hint: <hint>`). Optional + omitempty
+    so every other problem+json site keeps its existing
+    3-line shape unchanged.
+    """
+    why: str | Unset = UNSET
+    """Human-readable cause with the observed value templated
+    in (error-explanations cluster, spec §6.4 amendment 1).
+    Distinct from `detail`: `detail` is the platform's
+    machine-stable message; `why` is the customer-facing
+    explanation. Multi-line (≤512 bytes per `pkg/whycopy`
+    catalog row). Optional + omitempty.
+    """
+    fix: str | Unset = UNSET
+    """Prescriptive remediation (1-3 lines, error-explanations
+    cluster, spec §6.4 amendment 1). Distinct from `hint`:
+    `hint` is a single line, `fix` is the bulleted
+    remediation list. The CLI renders this as
+    `→ fix: <fix>` with literal newlines preserved so the
+    multi-line shape survives. Optional + omitempty.
+    """
+    relevant_logs: list[LogExcerpt] | Unset = UNSET
+    """Per-line log excerpts that explain the failure (error-
+    explanations cluster, spec §6.4 amendment 1). The
+    detection site attaches the last N log lines that
+    caused the failure (capped at 20 entries × 512 bytes
+    each per CLI tripwire). The CLI renders the first 5
+    inline as a fenced block. Optional + omitempty.
+    """
+    additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        title = self.title
+
+        status = self.status
+
+        code = self.code
+
+        current_sequence = self.current_sequence
+
+        condition_field = self.condition_field
+
+        condition_index = self.condition_index
+
+        field_exists = self.field_exists
+
+        entity_key = self.entity_key
+
+        expected_version = self.expected_version
+
+        current_version = self.current_version
+
+        entity_exists = self.entity_exists
+
+        message_index = self.message_index
+
+        expected_sequence = self.expected_sequence
+
+        bindings_check: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.bindings_check, Unset):
+            bindings_check = self.bindings_check.to_dict()
+
+        crossed_releases: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.crossed_releases, Unset):
+            crossed_releases = []
+            for crossed_releases_item_data in self.crossed_releases:
+                crossed_releases_item = crossed_releases_item_data.to_dict()
+                crossed_releases.append(crossed_releases_item)
+
+        restore_points: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.restore_points, Unset):
+            restore_points = []
+            for restore_points_item_data in self.restore_points:
+                restore_points_item = restore_points_item_data.to_dict()
+                restore_points.append(restore_points_item)
+
+        freezes: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.freezes, Unset):
+            freezes = []
+            for freezes_item_data in self.freezes:
+                freezes_item = freezes_item_data.to_dict()
+                freezes.append(freezes_item)
+
+        release_approval: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.release_approval, Unset):
+            release_approval = self.release_approval.to_dict()
+
+        type_ = self.type_
+
+        instance = self.instance
+
+        detail = self.detail
+
+        limit: int | None | Unset
+        if isinstance(self.limit, Unset):
+            limit = UNSET
+        else:
+            limit = self.limit
+
+        observed: int | None | Unset
+        if isinstance(self.observed, Unset):
+            observed = UNSET
+        else:
+            observed = self.observed
+
+        limit_bytes: int | None | Unset
+        if isinstance(self.limit_bytes, Unset):
+            limit_bytes = UNSET
+        else:
+            limit_bytes = self.limit_bytes
+
+        observed_bytes: int | None | Unset
+        if isinstance(self.observed_bytes, Unset):
+            observed_bytes = UNSET
+        else:
+            observed_bytes = self.observed_bytes
+
+        docs_url = self.docs_url
+
+        retry_after_seconds = self.retry_after_seconds
+
+        checkout_url = self.checkout_url
+
+        billing_portal_url = self.billing_portal_url
+
+        paddle_checkout_url = self.paddle_checkout_url
+
+        tx_id = self.tx_id
+
+        errors: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.errors, Unset):
+            errors = []
+            for errors_item_data in self.errors:
+                errors_item = errors_item_data.to_dict()
+                errors.append(errors_item)
+
+        secret_findings: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.secret_findings, Unset):
+            secret_findings = []
+            for secret_findings_item_data in self.secret_findings:
+                secret_findings_item = secret_findings_item_data.to_dict()
+                secret_findings.append(secret_findings_item)
+
+        secret_hint = self.secret_hint
+
+        hint = self.hint
+
+        why = self.why
+
+        fix = self.fix
+
+        relevant_logs: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.relevant_logs, Unset):
+            relevant_logs = []
+            for relevant_logs_item_data in self.relevant_logs:
+                relevant_logs_item = relevant_logs_item_data.to_dict()
+                relevant_logs.append(relevant_logs_item)
+
+        field_dict: dict[str, Any] = {}
+        field_dict.update(self.additional_properties)
+        field_dict.update(
+            {
+                "title": title,
+                "status": status,
+                "code": code,
+            }
+        )
+        if current_sequence is not UNSET:
+            field_dict["current_sequence"] = current_sequence
+        if condition_field is not UNSET:
+            field_dict["condition_field"] = condition_field
+        if condition_index is not UNSET:
+            field_dict["condition_index"] = condition_index
+        if field_exists is not UNSET:
+            field_dict["field_exists"] = field_exists
+        if entity_key is not UNSET:
+            field_dict["entity_key"] = entity_key
+        if expected_version is not UNSET:
+            field_dict["expected_version"] = expected_version
+        if current_version is not UNSET:
+            field_dict["current_version"] = current_version
+        if entity_exists is not UNSET:
+            field_dict["entity_exists"] = entity_exists
+        if message_index is not UNSET:
+            field_dict["message_index"] = message_index
+        if expected_sequence is not UNSET:
+            field_dict["expected_sequence"] = expected_sequence
+        if bindings_check is not UNSET:
+            field_dict["bindings_check"] = bindings_check
+        if crossed_releases is not UNSET:
+            field_dict["crossed_releases"] = crossed_releases
+        if restore_points is not UNSET:
+            field_dict["restore_points"] = restore_points
+        if freezes is not UNSET:
+            field_dict["freezes"] = freezes
+        if release_approval is not UNSET:
+            field_dict["release_approval"] = release_approval
+        if type_ is not UNSET:
+            field_dict["type"] = type_
+        if instance is not UNSET:
+            field_dict["instance"] = instance
+        if detail is not UNSET:
+            field_dict["detail"] = detail
+        if limit is not UNSET:
+            field_dict["limit"] = limit
+        if observed is not UNSET:
+            field_dict["observed"] = observed
+        if limit_bytes is not UNSET:
+            field_dict["limit_bytes"] = limit_bytes
+        if observed_bytes is not UNSET:
+            field_dict["observed_bytes"] = observed_bytes
+        if docs_url is not UNSET:
+            field_dict["docs_url"] = docs_url
+        if retry_after_seconds is not UNSET:
+            field_dict["retry_after_seconds"] = retry_after_seconds
+        if checkout_url is not UNSET:
+            field_dict["checkout_url"] = checkout_url
+        if billing_portal_url is not UNSET:
+            field_dict["billing_portal_url"] = billing_portal_url
+        if paddle_checkout_url is not UNSET:
+            field_dict["paddle_checkout_url"] = paddle_checkout_url
+        if tx_id is not UNSET:
+            field_dict["tx_id"] = tx_id
+        if errors is not UNSET:
+            field_dict["errors"] = errors
+        if secret_findings is not UNSET:
+            field_dict["secret_findings"] = secret_findings
+        if secret_hint is not UNSET:
+            field_dict["secret_hint"] = secret_hint
+        if hint is not UNSET:
+            field_dict["hint"] = hint
+        if why is not UNSET:
+            field_dict["why"] = why
+        if fix is not UNSET:
+            field_dict["fix"] = fix
+        if relevant_logs is not UNSET:
+            field_dict["relevant_logs"] = relevant_logs
+
+        return field_dict
+
+    @classmethod
+    def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.binding_check_report import BindingCheckReport
+        from ..models.field_error import FieldError
+        from ..models.log_excerpt import LogExcerpt
+        from ..models.release_approval_status import ReleaseApprovalStatus
+        from ..models.release_freeze import ReleaseFreeze
+        from ..models.release_restore_point import ReleaseRestorePoint
+        from ..models.rollback_crossed_release import RollbackCrossedRelease
+        from ..models.secret_finding import SecretFinding
+
+        d = dict(src_dict)
+        title = d.pop("title")
+
+        status = d.pop("status")
+
+        code = d.pop("code")
+
+        current_sequence = d.pop("current_sequence", UNSET)
+
+        condition_field = d.pop("condition_field", UNSET)
+
+        condition_index = d.pop("condition_index", UNSET)
+
+        field_exists = d.pop("field_exists", UNSET)
+
+        entity_key = d.pop("entity_key", UNSET)
+
+        expected_version = d.pop("expected_version", UNSET)
+
+        current_version = d.pop("current_version", UNSET)
+
+        entity_exists = d.pop("entity_exists", UNSET)
+
+        message_index = d.pop("message_index", UNSET)
+
+        expected_sequence = d.pop("expected_sequence", UNSET)
+
+        _bindings_check = d.pop("bindings_check", UNSET)
+        bindings_check: BindingCheckReport | Unset
+        if isinstance(_bindings_check, Unset):
+            bindings_check = UNSET
+        else:
+            bindings_check = BindingCheckReport.from_dict(_bindings_check)
+
+        _crossed_releases = d.pop("crossed_releases", UNSET)
+        crossed_releases: list[RollbackCrossedRelease] | Unset = UNSET
+        if _crossed_releases is not UNSET:
+            crossed_releases = []
+            for crossed_releases_item_data in _crossed_releases:
+                crossed_releases_item = RollbackCrossedRelease.from_dict(crossed_releases_item_data)
+
+                crossed_releases.append(crossed_releases_item)
+
+        _restore_points = d.pop("restore_points", UNSET)
+        restore_points: list[ReleaseRestorePoint] | Unset = UNSET
+        if _restore_points is not UNSET:
+            restore_points = []
+            for restore_points_item_data in _restore_points:
+                restore_points_item = ReleaseRestorePoint.from_dict(restore_points_item_data)
+
+                restore_points.append(restore_points_item)
+
+        _freezes = d.pop("freezes", UNSET)
+        freezes: list[ReleaseFreeze] | Unset = UNSET
+        if _freezes is not UNSET:
+            freezes = []
+            for freezes_item_data in _freezes:
+                freezes_item = ReleaseFreeze.from_dict(freezes_item_data)
+
+                freezes.append(freezes_item)
+
+        _release_approval = d.pop("release_approval", UNSET)
+        release_approval: ReleaseApprovalStatus | Unset
+        if isinstance(_release_approval, Unset):
+            release_approval = UNSET
+        else:
+            release_approval = ReleaseApprovalStatus.from_dict(_release_approval)
+
+        type_ = d.pop("type", UNSET)
+
+        instance = d.pop("instance", UNSET)
+
+        detail = d.pop("detail", UNSET)
+
+        def _parse_limit(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        limit = _parse_limit(d.pop("limit", UNSET))
+
+        def _parse_observed(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        observed = _parse_observed(d.pop("observed", UNSET))
+
+        def _parse_limit_bytes(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        limit_bytes = _parse_limit_bytes(d.pop("limit_bytes", UNSET))
+
+        def _parse_observed_bytes(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        observed_bytes = _parse_observed_bytes(d.pop("observed_bytes", UNSET))
+
+        docs_url = d.pop("docs_url", UNSET)
+
+        retry_after_seconds = d.pop("retry_after_seconds", UNSET)
+
+        checkout_url = d.pop("checkout_url", UNSET)
+
+        billing_portal_url = d.pop("billing_portal_url", UNSET)
+
+        paddle_checkout_url = d.pop("paddle_checkout_url", UNSET)
+
+        tx_id = d.pop("tx_id", UNSET)
+
+        _errors = d.pop("errors", UNSET)
+        errors: list[FieldError] | Unset = UNSET
+        if _errors is not UNSET:
+            errors = []
+            for errors_item_data in _errors:
+                errors_item = FieldError.from_dict(errors_item_data)
+
+                errors.append(errors_item)
+
+        _secret_findings = d.pop("secret_findings", UNSET)
+        secret_findings: list[SecretFinding] | Unset = UNSET
+        if _secret_findings is not UNSET:
+            secret_findings = []
+            for secret_findings_item_data in _secret_findings:
+                secret_findings_item = SecretFinding.from_dict(secret_findings_item_data)
+
+                secret_findings.append(secret_findings_item)
+
+        secret_hint = d.pop("secret_hint", UNSET)
+
+        hint = d.pop("hint", UNSET)
+
+        why = d.pop("why", UNSET)
+
+        fix = d.pop("fix", UNSET)
+
+        _relevant_logs = d.pop("relevant_logs", UNSET)
+        relevant_logs: list[LogExcerpt] | Unset = UNSET
+        if _relevant_logs is not UNSET:
+            relevant_logs = []
+            for relevant_logs_item_data in _relevant_logs:
+                relevant_logs_item = LogExcerpt.from_dict(relevant_logs_item_data)
+
+                relevant_logs.append(relevant_logs_item)
+
+        problem = cls(
+            title=title,
+            status=status,
+            code=code,
+            current_sequence=current_sequence,
+            condition_field=condition_field,
+            condition_index=condition_index,
+            field_exists=field_exists,
+            entity_key=entity_key,
+            expected_version=expected_version,
+            current_version=current_version,
+            entity_exists=entity_exists,
+            message_index=message_index,
+            expected_sequence=expected_sequence,
+            bindings_check=bindings_check,
+            crossed_releases=crossed_releases,
+            restore_points=restore_points,
+            freezes=freezes,
+            release_approval=release_approval,
+            type_=type_,
+            instance=instance,
+            detail=detail,
+            limit=limit,
+            observed=observed,
+            limit_bytes=limit_bytes,
+            observed_bytes=observed_bytes,
+            docs_url=docs_url,
+            retry_after_seconds=retry_after_seconds,
+            checkout_url=checkout_url,
+            billing_portal_url=billing_portal_url,
+            paddle_checkout_url=paddle_checkout_url,
+            tx_id=tx_id,
+            errors=errors,
+            secret_findings=secret_findings,
+            secret_hint=secret_hint,
+            hint=hint,
+            why=why,
+            fix=fix,
+            relevant_logs=relevant_logs,
+        )
+
+        problem.additional_properties = d
+        return problem
+
+    @property
+    def additional_keys(self) -> list[str]:
+        return list(self.additional_properties.keys())
+
+    def __getitem__(self, key: str) -> Any:
+        return self.additional_properties[key]
+
+    def __setitem__(self, key: str, value: Any) -> None:
+        self.additional_properties[key] = value
+
+    def __delitem__(self, key: str) -> None:
+        del self.additional_properties[key]
+
+    def __contains__(self, key: str) -> bool:
+        return key in self.additional_properties

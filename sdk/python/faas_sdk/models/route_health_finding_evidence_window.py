@@ -1,0 +1,14 @@
+from typing import Literal
+
+RouteHealthFindingEvidenceWindow = Literal["pooled", "synthetic"]
+
+ROUTE_HEALTH_FINDING_EVIDENCE_WINDOW_VALUES: set[RouteHealthFindingEvidenceWindow] = {
+    "pooled",
+    "synthetic",
+}
+
+
+def check_route_health_finding_evidence_window(value: str) -> RouteHealthFindingEvidenceWindow:
+    if value in ROUTE_HEALTH_FINDING_EVIDENCE_WINDOW_VALUES:
+        return value
+    raise TypeError(f"Unexpected value {value!r}. Expected one of {ROUTE_HEALTH_FINDING_EVIDENCE_WINDOW_VALUES!r}")

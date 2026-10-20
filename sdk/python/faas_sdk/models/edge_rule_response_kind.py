@@ -1,0 +1,51 @@
+from typing import Literal
+
+EdgeRuleResponseKind = Literal[
+    "async",
+    "budget",
+    "cache",
+    "circuit_breaker",
+    "cors",
+    "geo",
+    "headers",
+    "ip",
+    "jwt",
+    "limit",
+    "maintenance",
+    "redirect",
+    "respond",
+    "retry",
+    "rewrite",
+    "route",
+    "throttle",
+    "validate",
+    "waf",
+]
+
+EDGE_RULE_RESPONSE_KIND_VALUES: set[EdgeRuleResponseKind] = {
+    "async",
+    "budget",
+    "cache",
+    "circuit_breaker",
+    "cors",
+    "geo",
+    "headers",
+    "ip",
+    "jwt",
+    "limit",
+    "maintenance",
+    "redirect",
+    "respond",
+    "retry",
+    "rewrite",
+    "route",
+    "throttle",
+    "validate",
+    "waf",
+}
+
+
+def check_edge_rule_response_kind(value: str) -> EdgeRuleResponseKind:
+    if value in EDGE_RULE_RESPONSE_KIND_VALUES:
+        return value
+    raise TypeError(f"Unexpected value {value!r}. Expected one of {EDGE_RULE_RESPONSE_KIND_VALUES!r}")
