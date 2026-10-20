@@ -1,12 +1,13 @@
-package state
+package state_test
 
 import (
+	"github.com/onebox-faas/faas/pkg/state"
 	"testing"
 	"time"
 )
 
 func TestMemStoreUsageDailyForAccountAggregatesAndBounds(t *testing.T) {
-	store := NewMemStore()
+	store := state.NewMemStore()
 	now := time.Now().UTC()
 	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
 	previous := today.AddDate(0, 0, -1)

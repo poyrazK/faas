@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"errors"
@@ -8,30 +8,31 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestProductionLifecycleDatabaseFence(t *testing.T) {
 	for _, scenario := range []string{"unfenced", "current", "configuration_changed", "capture_replaced", "capture_content_changed", "gate_changed", "scope_changed", "report_audit"} {
 		t.Run(scenario, func(t *testing.T) {
 			pool := pgtest.OpenMigrated(t)
-			store := NewPgStore(pool)
+			store := state.NewPgStore(pool)
 			ctx := t.Context()
 			acct, err := store.CreateAccount(ctx, "fence@example.test", api.PlanPro)
 			if err != nil {
 				t.Fatal(err)
 			}
-			app, err := store.CreateApp(ctx, App{AccountID: acct.ID, Slug: "fence", Type: AppTypeApp, RAMMB: 512, MaxConcurrency: 1})
+			app, err := store.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "fence", Type: state.AppTypeApp, RAMMB: 512, MaxConcurrency: 1})
 			if err != nil {
 				t.Fatal(err)
 			}
-			baseline, err := store.CreateDeployment(ctx, Deployment{ID: uuid.NewString(), AppID: app.ID, Kind: DeploymentKindImage, ImageDigest: "sha256:baseline"})
+			baseline, err := store.CreateDeployment(ctx, state.Deployment{ID: uuid.NewString(), AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:baseline"})
 			if err != nil {
 				t.Fatal(err)
 			}
 			if err = store.MarkDeploymentLive(ctx, baseline.ID); err != nil {
 				t.Fatal(err)
 			}
-			candidate, err := store.CreateDeployment(ctx, Deployment{ID: uuid.NewString(), AppID: app.ID, Kind: DeploymentKindImage, ImageDigest: "sha256:candidate", TrafficPercentExplicit: true, TrafficPercent: 0})
+			candidate, err := store.CreateDeployment(ctx, state.Deployment{ID: uuid.NewString(), AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:candidate", TrafficPercentExplicit: true, TrafficPercent: 0})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -59,7 +60,7 @@ func TestProductionLifecycleDatabaseFence(t *testing.T) {
 			}
 			defer tx.Rollback(ctx)
 			if scenario != "unfenced" {
-				if err = pgAuthorizeProductionLifecycle(ctx, tx, candidate.ID, false); err != nil {
+				if err = state.PgAuthorizeProductionLifecycle(ctx, tx, candidate.ID, false); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -103,10 +104,10 @@ func TestProductionLifecycleDatabaseFence(t *testing.T) {
 }
 
 func TestProductionLifecycleRuleOrdering(t *testing.T) {
-	a := RoutePolicySnapshot{Rules: []api.EdgeRuleResponse{{ID: "b", MatchPath: "/second"}, {ID: "a", MatchPath: "/first"}}}
+	a := state.RoutePolicySnapshot{Rules: []api.EdgeRuleResponse{{ID: "b", MatchPath: "/second"}, {ID: "a", MatchPath: "/first"}}}
 	b := a
 	b.Rules = []api.EdgeRuleResponse{a.Rules[1], a.Rules[0]}
-	if lifecycleMemoryConfiguration(a) != lifecycleMemoryConfiguration(b) {
+	if state.LifecycleMemoryConfiguration(a) != state.LifecycleMemoryConfiguration(b) {
 		t.Fatal("rule iteration order invalidates the receipt binding")
 	}
 	if a.Rules[0].ID != "b" {

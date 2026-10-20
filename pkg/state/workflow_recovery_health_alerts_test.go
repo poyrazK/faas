@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -10,18 +10,19 @@ import (
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestWorkflowRecoveryHealthAlertLifecycle(t *testing.T) {
 	for _, scenario := range []string{"receivers", "no_receivers", "opt_out", "alert_only", "concurrent"} {
 		t.Run(scenario, func(t *testing.T) {
-			workflowScheduleStores(t, func(t *testing.T, s Store) {
+			state.WorkflowScheduleStores(t, func(t *testing.T, s state.Store) {
 				ctx := context.Background()
-				review, app, _, now := seedAutomaticRecoveryReview(t, s, func(p *api.WorkflowRecoveryPolicy) {
+				review, app, _, now := state.SeedAutomaticRecoveryReview(t, s, func(p *api.WorkflowRecoveryPolicy) {
 					p.HealthAlerts = &api.WorkflowRecoveryHealthAlertPolicy{Enabled: true, StallAfterSeconds: 300, AlertAfterSeconds: 60}
 				})
-				policyStore := s.(WorkflowRecoveryPolicyStore)
-				operator := s.(WorkflowRecoveryPolicyOperatorStore)
+				policyStore := s.(state.WorkflowRecoveryPolicyStore)
+				operator := s.(state.WorkflowRecoveryPolicyOperatorStore)
 				p, err := policyStore.GetWorkflowRecoveryPolicy(ctx, app.AccountID, app.ID)
 				if err != nil {
 					t.Fatal(err)
@@ -30,18 +31,18 @@ func TestWorkflowRecoveryHealthAlertLifecycle(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				filters := []string{string(AppWebhookEventRecoveryHealthAlert), string(AppWebhookEventRecoveryHealthRecovered)}
+				filters := []string{string(state.AppWebhookEventRecoveryHealthAlert), string(state.AppWebhookEventRecoveryHealthRecovered)}
 				if scenario == "alert_only" {
 					filters = filters[:1]
 				}
-				var hook AppWebhook
+				var hook state.AppWebhook
 				if scenario != "no_receivers" {
-					hook, err = s.CreateAppWebhook(ctx, AppWebhook{AccountID: app.AccountID, AppID: app.ID, TargetURL: "https://health.example.test/hook", SecretSealed: []byte("sealed"), Enabled: true, EventFilter: filters})
+					hook, err = s.CreateAppWebhook(ctx, state.AppWebhook{AccountID: app.AccountID, AppID: app.ID, TargetURL: "https://health.example.test/hook", SecretSealed: []byte("sealed"), Enabled: true, EventFilter: filters})
 					if err != nil {
 						t.Fatal(err)
 					}
 				}
-				worker := s.(WorkflowRecoveryHealthAlertStore)
+				worker := s.(state.WorkflowRecoveryHealthAlertStore)
 				if worked, err := worker.ProcessNextWorkflowRecoveryHealthAlert(ctx, now); err != nil || !worked {
 					t.Fatalf("open %t %v", worked, err)
 				}
@@ -102,7 +103,7 @@ func TestWorkflowRecoveryHealthAlertLifecycle(t *testing.T) {
 					t.Fatal("health worker changed retry intent")
 				}
 				// Adding a receiver after capture must not expand recovery recipients.
-				if _, err = s.CreateAppWebhook(ctx, AppWebhook{AccountID: app.AccountID, AppID: app.ID, TargetURL: "https://health.example.test/late", SecretSealed: []byte("sealed"), Enabled: true, EventFilter: []string{string(AppWebhookEventRecoveryHealthAlert), string(AppWebhookEventRecoveryHealthRecovered)}}); err != nil {
+				if _, err = s.CreateAppWebhook(ctx, state.AppWebhook{AccountID: app.AccountID, AppID: app.ID, TargetURL: "https://health.example.test/late", SecretSealed: []byte("sealed"), Enabled: true, EventFilter: []string{string(state.AppWebhookEventRecoveryHealthAlert), string(state.AppWebhookEventRecoveryHealthRecovered)}}); err != nil {
 					t.Fatal(err)
 				}
 				if _, err = worker.ProcessNextWorkflowRecoveryHealthAlert(ctx, now.Add(2*time.Minute)); err != nil {
@@ -137,7 +138,7 @@ func TestWorkflowRecoveryHealthAlertLifecycle(t *testing.T) {
 				if _, err = worker.ProcessNextWorkflowRecoveryHealthAlert(ctx, now.Add(4*time.Minute)); err != nil {
 					t.Fatal(err)
 				}
-				if _, err = s.(AppWebhookEventOutboxStore).DrainAppWebhookEventOutbox(ctx, api.EventRecoveryHistoryPageMax); err != nil {
+				if _, err = s.(state.AppWebhookEventOutboxStore).DrainAppWebhookEventOutbox(ctx, api.EventRecoveryHistoryPageMax); err != nil {
 					t.Fatal(err)
 				}
 				rows, err := s.ClaimDueAppWebhookDeliveries(ctx, api.EventRecoveryHistoryPageMax, now.Add(time.Hour))
@@ -146,14 +147,14 @@ func TestWorkflowRecoveryHealthAlertLifecycle(t *testing.T) {
 				}
 				alerts, recovered := 0, 0
 				for _, row := range rows {
-					if row.Event != AppWebhookEventRecoveryHealthAlert && row.Event != AppWebhookEventRecoveryHealthRecovered {
+					if row.Event != state.AppWebhookEventRecoveryHealthAlert && row.Event != state.AppWebhookEventRecoveryHealthRecovered {
 						continue
 					}
 					var payload api.WorkflowRecoveryHealthWebhookPayload
-					if json.Unmarshal(row.Payload, &payload) != nil || payload.EpisodeID != episode || !sameMemUUID(payload.AppID, app.ID) || !sameMemUUID(row.WebhookID, hook.ID) {
+					if json.Unmarshal(row.Payload, &payload) != nil || payload.EpisodeID != episode || !state.SameMemUUID(payload.AppID, app.ID) || !state.SameMemUUID(row.WebhookID, hook.ID) {
 						t.Fatalf("payload %s receiver %s", row.Payload, row.WebhookID)
 					}
-					if row.Event == AppWebhookEventRecoveryHealthAlert {
+					if row.Event == state.AppWebhookEventRecoveryHealthAlert {
 						alerts++
 						if payload.EventID != incident.AlertNotification.EventID || payload.PolicyVersion != review.PolicyVersion || payload.Status != "paused" {
 							t.Fatalf("historical alert %s", row.Payload)
@@ -177,11 +178,11 @@ func TestWorkflowRecoveryHealthAlertLifecycle(t *testing.T) {
 				}
 				cancelled, cancel := context.WithCancel(ctx)
 				cancel()
-				beforeEvidence := policyChangeEvidence(t, s, app.ID)
+				beforeEvidence := state.PolicyChangeEvidence(t, s, app.ID)
 				if _, err = worker.ProcessNextWorkflowRecoveryHealthAlert(cancelled, now.Add(time.Hour)); err == nil {
 					t.Fatal("cancelled monitor succeeded")
 				}
-				if string(beforeEvidence) != string(policyChangeEvidence(t, s, app.ID)) {
+				if string(beforeEvidence) != string(state.PolicyChangeEvidence(t, s, app.ID)) {
 					t.Fatal("cancelled monitor changed state")
 				}
 			})
@@ -193,53 +194,53 @@ func TestWorkflowRecoveryHealthIncidentTransitions(t *testing.T) {
 	now := time.Now().UTC()
 	cfg := &api.WorkflowRecoveryHealthAlertPolicy{Enabled: true, StallAfterSeconds: 300, AlertAfterSeconds: 60}
 	h := api.WorkflowRecoveryPolicyHealth{Status: "blocked", Reason: "execution_quota", Queue: api.WorkflowRecoveryAutomaticQueue{ObservedAt: now, Policy: api.WorkflowRecoveryPolicyResponse{Policy: api.WorkflowRecoveryPolicy{HealthAlerts: cfg}}}}
-	i, event := recoveryHealthTransition(nil, h, true)
+	i, event := state.RecoveryHealthTransition(nil, h, true)
 	if event != "" || i == nil {
 		t.Fatal("early event")
 	}
 	h.Status = "unknown"
 	h.Queue.ObservedAt = now.Add(time.Minute)
-	i, event = recoveryHealthTransition(i, h, true)
+	i, event = state.RecoveryHealthTransition(i, h, true)
 	if event != "" || i.ClosedAt != nil {
 		t.Fatal("unknown recovered")
 	}
 	h.Status = "stalled"
 	h.Reason = "evaluation_overdue"
 	h.Queue.ObservedAt = now.Add(90 * time.Second)
-	i, event = recoveryHealthTransition(i, h, true)
+	i, event = state.RecoveryHealthTransition(i, h, true)
 	if event != "" {
 		t.Fatal("unknown gap counted as sustained health failure")
 	}
 	h.Queue.ObservedAt = now.Add(2 * time.Minute)
-	i, event = recoveryHealthTransition(i, h, true)
-	if event != AppWebhookEventRecoveryHealthAlert {
+	i, event = state.RecoveryHealthTransition(i, h, true)
+	if event != state.AppWebhookEventRecoveryHealthAlert {
 		t.Fatal("missing due alert")
 	}
-	payload := recoveryHealthPayload(i, h, "app", event)
-	recoveryHealthCapture(i, payload, event, []string{})
+	payload := state.RecoveryHealthPayload(i, h, "app", event)
+	state.RecoveryHealthCapture(i, payload, event, []string{})
 	id := i.EpisodeID
 	h.Status = "paused"
 	h.Queue.ObservedAt = now.Add(3 * time.Minute)
-	i, event = recoveryHealthTransition(i, h, true)
+	i, event = state.RecoveryHealthTransition(i, h, true)
 	if event != "" || i.EpisodeID != id {
 		t.Fatal("reason change duplicated incident")
 	}
 	h.Status = "unknown"
-	i, event = recoveryHealthTransition(i, h, true)
+	i, event = state.RecoveryHealthTransition(i, h, true)
 	if event != "" || i.ClosedAt != nil {
 		t.Fatal("unknown resolved alert")
 	}
 	h.Status = "healthy"
-	i, event = recoveryHealthTransition(i, h, true)
-	if event != AppWebhookEventRecoveryHealthRecovered {
+	i, event = state.RecoveryHealthTransition(i, h, true)
+	if event != state.AppWebhookEventRecoveryHealthRecovered {
 		t.Fatal("missing resolution")
 	}
-	i, event = recoveryHealthTransition(i, h, true)
+	i, event = state.RecoveryHealthTransition(i, h, true)
 	if event != "" {
 		t.Fatal("duplicate resolution")
 	}
 	h.Status = "blocked"
-	i, event = recoveryHealthTransition(i, h, true)
+	i, event = state.RecoveryHealthTransition(i, h, true)
 	if event != "" || i.EpisodeID == id {
 		t.Fatal("new incident reused old identity")
 	}

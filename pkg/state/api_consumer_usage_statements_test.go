@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -8,25 +8,26 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestAPIConsumerUsageStatementHandoffValidation(t *testing.T) {
-	valid := APIConsumerUsageStatementHandoffInput{
+	valid := state.APIConsumerUsageStatementHandoffInput{
 		AccountID: uuid.NewString(), AppID: uuid.NewString(), ConsumerID: uuid.NewString(),
 		StatementID: uuid.NewString(), ExternalInvoiceID: "invoice-1001",
 	}
 	tests := []struct {
 		name  string
-		input APIConsumerUsageStatementHandoffInput
+		input state.APIConsumerUsageStatementHandoffInput
 	}{
-		{name: "missing account", input: func() APIConsumerUsageStatementHandoffInput { in := valid; in.AccountID = ""; return in }()},
-		{name: "missing external invoice", input: func() APIConsumerUsageStatementHandoffInput { in := valid; in.ExternalInvoiceID = ""; return in }()},
-		{name: "oversized external invoice", input: func() APIConsumerUsageStatementHandoffInput {
+		{name: "missing account", input: func() state.APIConsumerUsageStatementHandoffInput { in := valid; in.AccountID = ""; return in }()},
+		{name: "missing external invoice", input: func() state.APIConsumerUsageStatementHandoffInput { in := valid; in.ExternalInvoiceID = ""; return in }()},
+		{name: "oversized external invoice", input: func() state.APIConsumerUsageStatementHandoffInput {
 			in := valid
-			in.ExternalInvoiceID = strings.Repeat("x", maxAPIConsumerUsageStatementExternalInvoiceIDBytes+1)
+			in.ExternalInvoiceID = strings.Repeat("x", state.MaxAPIConsumerUsageStatementExternalInvoiceIDBytes+1)
 			return in
 		}()},
-		{name: "external invoice whitespace", input: func() APIConsumerUsageStatementHandoffInput {
+		{name: "external invoice whitespace", input: func() state.APIConsumerUsageStatementHandoffInput {
 			in := valid
 			in.ExternalInvoiceID = " invoice-1001"
 			return in
@@ -34,7 +35,7 @@ func TestAPIConsumerUsageStatementHandoffValidation(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if err := validateAPIConsumerUsageStatementHandoffInput(tt.input); err == nil {
+			if err := state.ValidateAPIConsumerUsageStatementHandoffInput(tt.input); err == nil {
 				t.Fatal("validation unexpectedly succeeded")
 			}
 		})
@@ -62,7 +63,7 @@ func (r apiConsumerUsageStatementHandoffScanRowStub) Scan(dest ...any) error {
 }
 
 func TestScanAPIConsumerUsageStatementHandoffRow(t *testing.T) {
-	got, err := scanAPIConsumerUsageStatementHandoffRow(apiConsumerUsageStatementHandoffScanRowStub{})
+	got, err := state.ScanAPIConsumerUsageStatementHandoffRow(apiConsumerUsageStatementHandoffScanRowStub{})
 	if err != nil {
 		t.Fatalf("scan handoff: %v", err)
 	}
@@ -74,22 +75,22 @@ func TestScanAPIConsumerUsageStatementHandoffRow(t *testing.T) {
 	}
 
 	scanErr := errors.New("scan failed")
-	if _, err := scanAPIConsumerUsageStatementHandoffRow(apiConsumerUsageStatementHandoffScanRowStub{err: scanErr}); !errors.Is(err, scanErr) {
+	if _, err := state.ScanAPIConsumerUsageStatementHandoffRow(apiConsumerUsageStatementHandoffScanRowStub{err: scanErr}); !errors.Is(err, scanErr) {
 		t.Fatalf("scan handoff error = %v, want %v", err, scanErr)
 	}
 }
 
 func TestMemAPIConsumerUsageStatementsAreImmutableAndIdempotent(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	accountID, appID, consumerID := uuid.NewString(), uuid.NewString(), uuid.NewString()
 	start := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	end := start.Add(time.Hour)
 	rateCardID := uuid.NewString()
-	input := APIConsumerUsageStatementInput{
+	input := state.APIConsumerUsageStatementInput{
 		AccountID: accountID, AppID: appID, ConsumerID: consumerID,
 		PeriodStart: start, PeriodEnd: end, Revision: 1, Currency: "eur",
 		BillableUnits: 2, AmountMillicents: 20, Priced: true, AsOf: time.Now().UTC(),
-		Buckets: []APIConsumerUsageStatementBucket{{WindowStart: start, BillableUnits: 2, RateCardID: rateCardID, Currency: "EUR", PriceMillicentsPerUnit: 10, AmountMillicents: 20}},
+		Buckets: []state.APIConsumerUsageStatementBucket{{WindowStart: start, BillableUnits: 2, RateCardID: rateCardID, Currency: "EUR", PriceMillicentsPerUnit: 10, AmountMillicents: 20}},
 	}
 	first, created, err := m.CreateAPIConsumerUsageStatement(context.Background(), input)
 	if err != nil || !created {
@@ -105,7 +106,7 @@ func TestMemAPIConsumerUsageStatementsAreImmutableAndIdempotent(t *testing.T) {
 		t.Fatalf("snapshot mutated through returned slice: %+v err=%v", got, err)
 	}
 	finalized, changed, err := m.FinalizeAPIConsumerUsageStatement(context.Background(), accountID, appID, consumerID, first.ID)
-	if err != nil || !changed || finalized.Status != APIConsumerUsageStatementFinalized || finalized.FinalizedAt == nil {
+	if err != nil || !changed || finalized.Status != state.APIConsumerUsageStatementFinalized || finalized.FinalizedAt == nil {
 		t.Fatalf("finalize: %+v changed=%v err=%v", finalized, changed, err)
 	}
 	replayed, changed, err := m.FinalizeAPIConsumerUsageStatement(context.Background(), accountID, appID, consumerID, first.ID)
@@ -116,54 +117,54 @@ func TestMemAPIConsumerUsageStatementsAreImmutableAndIdempotent(t *testing.T) {
 
 // adr: 949
 func TestMemAPIConsumerUsageStatementRevisions(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	ctx := context.Background()
 	accountID, appID, consumerID := uuid.NewString(), uuid.NewString(), uuid.NewString()
 	start := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
-	quote := func(revision int, prior APIConsumerUsageStatementStatus, units int64) APIConsumerUsageStatementInput {
-		return APIConsumerUsageStatementInput{
+	quote := func(revision int, prior state.APIConsumerUsageStatementStatus, units int64) state.APIConsumerUsageStatementInput {
+		return state.APIConsumerUsageStatementInput{
 			AccountID: accountID, AppID: appID, ConsumerID: consumerID, PeriodStart: start, PeriodEnd: start.Add(time.Hour),
 			Revision: revision, PriorStatus: prior, BillableUnits: units, UnpricedUnits: units, AsOf: time.Now().UTC(),
-			Buckets: []APIConsumerUsageStatementBucket{{WindowStart: start, BillableUnits: units}},
+			Buckets: []state.APIConsumerUsageStatementBucket{{WindowStart: start, BillableUnits: units}},
 		}
 	}
 	first, created, err := m.CreateAPIConsumerUsageStatement(ctx, quote(1, "", 1))
 	if err != nil || !created || first.Revision != 1 {
 		t.Fatalf("first = %+v created=%v err=%v", first, created, err)
 	}
-	if same, created, err := m.CreateAPIConsumerUsageStatement(ctx, quote(2, APIConsumerUsageStatementDraft, 1)); err != nil || created || same.ID != first.ID {
+	if same, created, err := m.CreateAPIConsumerUsageStatement(ctx, quote(2, state.APIConsumerUsageStatementDraft, 1)); err != nil || created || same.ID != first.ID {
 		t.Fatalf("unchanged draft = %+v created=%v err=%v, want replay of revision 1", same, created, err)
 	}
-	if _, _, err := m.CreateAPIConsumerUsageStatement(ctx, quote(2, APIConsumerUsageStatementFinalized, 2)); !errors.Is(err, ErrConflict) {
+	if _, _, err := m.CreateAPIConsumerUsageStatement(ctx, quote(2, state.APIConsumerUsageStatementFinalized, 2)); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("stale prior status err=%v, want ErrConflict", err)
 	}
-	if _, _, err := m.CreateAPIConsumerUsageStatement(ctx, quote(3, APIConsumerUsageStatementDraft, 2)); !errors.Is(err, ErrConflict) {
+	if _, _, err := m.CreateAPIConsumerUsageStatement(ctx, quote(3, state.APIConsumerUsageStatementDraft, 2)); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("skipped revision err=%v, want ErrConflict", err)
 	}
-	second, created, err := m.CreateAPIConsumerUsageStatement(ctx, quote(2, APIConsumerUsageStatementDraft, 2))
+	second, created, err := m.CreateAPIConsumerUsageStatement(ctx, quote(2, state.APIConsumerUsageStatementDraft, 2))
 	if err != nil || !created || second.Revision != 2 {
 		t.Fatalf("second = %+v created=%v err=%v", second, created, err)
 	}
 	revisions, err := m.ListAPIConsumerUsageStatementRevisions(ctx, accountID, appID, consumerID, start, start.Add(time.Hour))
-	if err != nil || len(revisions) != 2 || revisions[0].Status != APIConsumerUsageStatementSuperseded || revisions[1].ID != second.ID {
+	if err != nil || len(revisions) != 2 || revisions[0].Status != state.APIConsumerUsageStatementSuperseded || revisions[1].ID != second.ID {
 		t.Fatalf("revisions = %+v err=%v", revisions, err)
 	}
-	if _, _, err := m.FinalizeAPIConsumerUsageStatement(ctx, accountID, appID, consumerID, first.ID); !errors.Is(err, ErrConflict) {
+	if _, _, err := m.FinalizeAPIConsumerUsageStatement(ctx, accountID, appID, consumerID, first.ID); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("finalize superseded err=%v, want ErrConflict", err)
 	}
 }
 
 func TestMemUsageStatementWebhookOutboxSnapshotsRecipients(t *testing.T) {
-	m, ctx, acct, app := webhookFixture(t)
+	m, ctx, acct, app := state.WebhookFixture(t)
 	consumerID := uuid.NewString()
-	hook := memSampleWebhook(acct.ID, app.ID)
-	hook.EventFilter = []string{string(AppWebhookEventUsageStatementFinalized)}
+	hook := state.MemSampleWebhook(acct.ID, app.ID)
+	hook.EventFilter = []string{string(state.AppWebhookEventUsageStatementFinalized)}
 	hook, err := m.CreateAppWebhook(ctx, hook)
 	if err != nil {
 		t.Fatal(err)
 	}
 	start := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
-	statement, _, err := m.CreateAPIConsumerUsageStatement(ctx, APIConsumerUsageStatementInput{
+	statement, _, err := m.CreateAPIConsumerUsageStatement(ctx, state.APIConsumerUsageStatementInput{
 		AccountID: acct.ID, AppID: app.ID, ConsumerID: consumerID,
 		PeriodStart: start, PeriodEnd: start.Add(time.Hour), Revision: 1, AsOf: time.Now().UTC(),
 	})
@@ -173,12 +174,12 @@ func TestMemUsageStatementWebhookOutboxSnapshotsRecipients(t *testing.T) {
 	if _, changed, err := m.FinalizeAPIConsumerUsageStatement(ctx, acct.ID, app.ID, consumerID, statement.ID); err != nil || !changed {
 		t.Fatalf("finalize changed=%v err=%v", changed, err)
 	}
-	if len(m.appWebhookEventOutbox) != 1 {
-		t.Fatalf("committed outbox events = %d, want one", len(m.appWebhookEventOutbox))
+	if len((*m.AppWebhookEventOutbox())) != 1 {
+		t.Fatalf("committed outbox events = %d, want one", len((*m.AppWebhookEventOutbox())))
 	}
-	late := memSampleWebhook(acct.ID, app.ID)
+	late := state.MemSampleWebhook(acct.ID, app.ID)
 	late.TargetURL += "/late"
-	late.EventFilter = []string{string(AppWebhookEventUsageStatementFinalized)}
+	late.EventFilter = []string{string(state.AppWebhookEventUsageStatementFinalized)}
 	late, err = m.CreateAppWebhook(ctx, late)
 	if err != nil {
 		t.Fatal(err)
@@ -200,43 +201,43 @@ func TestMemUsageStatementWebhookOutboxSnapshotsRecipients(t *testing.T) {
 }
 
 func TestMemAPIConsumerUsageStatementRejectsUnpricedFinalize(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	accountID, appID, consumerID := uuid.NewString(), uuid.NewString(), uuid.NewString()
 	start := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
-	statement, _, err := m.CreateAPIConsumerUsageStatement(context.Background(), APIConsumerUsageStatementInput{
+	statement, _, err := m.CreateAPIConsumerUsageStatement(context.Background(), state.APIConsumerUsageStatementInput{
 		AccountID: accountID, AppID: appID, ConsumerID: consumerID, Revision: 1, PeriodStart: start, PeriodEnd: start.Add(time.Hour),
 		BillableUnits: 1, UnpricedUnits: 1, AsOf: time.Now().UTC(),
-		Buckets: []APIConsumerUsageStatementBucket{{WindowStart: start, BillableUnits: 1}},
+		Buckets: []state.APIConsumerUsageStatementBucket{{WindowStart: start, BillableUnits: 1}},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, changed, err := m.FinalizeAPIConsumerUsageStatement(context.Background(), accountID, appID, consumerID, statement.ID); !errors.Is(err, ErrConflict) || changed {
+	if _, changed, err := m.FinalizeAPIConsumerUsageStatement(context.Background(), accountID, appID, consumerID, statement.ID); !errors.Is(err, state.ErrConflict) || changed {
 		t.Fatalf("expected unpriced conflict, changed=%v err=%v", changed, err)
 	}
 }
 
 func TestMemAPIConsumerUsageStatementHandoffIsIdempotentAndImmutable(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	accountID, appID, consumerID := uuid.NewString(), uuid.NewString(), uuid.NewString()
 	start := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
-	statement, _, err := m.CreateAPIConsumerUsageStatement(context.Background(), APIConsumerUsageStatementInput{
+	statement, _, err := m.CreateAPIConsumerUsageStatement(context.Background(), state.APIConsumerUsageStatementInput{
 		AccountID: accountID, AppID: appID, ConsumerID: consumerID, Revision: 1, PeriodStart: start, PeriodEnd: start.Add(time.Hour),
 		Currency: "EUR", BillableUnits: 4, AmountMillicents: 100, Priced: true, AsOf: time.Now().UTC(),
-		Buckets: []APIConsumerUsageStatementBucket{{WindowStart: start, BillableUnits: 4, RateCardID: uuid.NewString(), Currency: "EUR", PriceMillicentsPerUnit: 25, AmountMillicents: 100}},
+		Buckets: []state.APIConsumerUsageStatementBucket{{WindowStart: start, BillableUnits: 4, RateCardID: uuid.NewString(), Currency: "EUR", PriceMillicentsPerUnit: 25, AmountMillicents: 100}},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := m.CreateAPIConsumerUsageStatementHandoff(context.Background(), APIConsumerUsageStatementHandoffInput{
+	if _, _, err := m.CreateAPIConsumerUsageStatementHandoff(context.Background(), state.APIConsumerUsageStatementHandoffInput{
 		AccountID: accountID, AppID: appID, ConsumerID: consumerID, StatementID: statement.ID, ExternalInvoiceID: "inv-before-finalize",
-	}); !errors.Is(err, ErrConflict) {
+	}); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("draft handoff err=%v, want ErrConflict", err)
 	}
 	if _, _, err := m.FinalizeAPIConsumerUsageStatement(context.Background(), accountID, appID, consumerID, statement.ID); err != nil {
 		t.Fatal(err)
 	}
-	input := APIConsumerUsageStatementHandoffInput{
+	input := state.APIConsumerUsageStatementHandoffInput{
 		AccountID: accountID, AppID: appID, ConsumerID: consumerID, StatementID: statement.ID, ExternalInvoiceID: "inv-1001",
 	}
 	first, created, err := m.CreateAPIConsumerUsageStatementHandoff(context.Background(), input)
@@ -247,15 +248,15 @@ func TestMemAPIConsumerUsageStatementHandoffIsIdempotentAndImmutable(t *testing.
 	if err != nil || created || replay.ID != first.ID {
 		t.Fatalf("claim replay: handoff=%+v created=%v err=%v", replay, created, err)
 	}
-	if _, _, err := m.CreateAPIConsumerUsageStatementHandoff(context.Background(), APIConsumerUsageStatementHandoffInput{
+	if _, _, err := m.CreateAPIConsumerUsageStatementHandoff(context.Background(), state.APIConsumerUsageStatementHandoffInput{
 		AccountID: accountID, AppID: appID, ConsumerID: consumerID, StatementID: statement.ID, ExternalInvoiceID: "inv-1002",
-	}); !errors.Is(err, ErrConflict) {
+	}); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("statement reuse err=%v, want ErrConflict", err)
 	}
-	other, _, err := m.CreateAPIConsumerUsageStatement(context.Background(), APIConsumerUsageStatementInput{
+	other, _, err := m.CreateAPIConsumerUsageStatement(context.Background(), state.APIConsumerUsageStatementInput{
 		AccountID: accountID, AppID: appID, ConsumerID: consumerID, Revision: 1, PeriodStart: start.Add(2 * time.Hour), PeriodEnd: start.Add(3 * time.Hour),
 		Currency: "EUR", BillableUnits: 1, AmountMillicents: 25, Priced: true, AsOf: time.Now().UTC(),
-		Buckets: []APIConsumerUsageStatementBucket{{WindowStart: start.Add(2 * time.Hour), BillableUnits: 1, RateCardID: uuid.NewString(), Currency: "EUR", PriceMillicentsPerUnit: 25, AmountMillicents: 25}},
+		Buckets: []state.APIConsumerUsageStatementBucket{{WindowStart: start.Add(2 * time.Hour), BillableUnits: 1, RateCardID: uuid.NewString(), Currency: "EUR", PriceMillicentsPerUnit: 25, AmountMillicents: 25}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -263,9 +264,9 @@ func TestMemAPIConsumerUsageStatementHandoffIsIdempotentAndImmutable(t *testing.
 	if _, _, err := m.FinalizeAPIConsumerUsageStatement(context.Background(), accountID, appID, consumerID, other.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := m.CreateAPIConsumerUsageStatementHandoff(context.Background(), APIConsumerUsageStatementHandoffInput{
+	if _, _, err := m.CreateAPIConsumerUsageStatementHandoff(context.Background(), state.APIConsumerUsageStatementHandoffInput{
 		AccountID: accountID, AppID: appID, ConsumerID: consumerID, StatementID: other.ID, ExternalInvoiceID: input.ExternalInvoiceID,
-	}); !errors.Is(err, ErrConflict) {
+	}); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("external invoice reuse err=%v, want ErrConflict", err)
 	}
 	got, err := m.GetAPIConsumerUsageStatementHandoff(context.Background(), accountID, appID, consumerID, statement.ID)

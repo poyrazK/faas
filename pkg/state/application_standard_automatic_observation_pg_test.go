@@ -1,14 +1,15 @@
-package state
+package state_test
 
 import (
 	"errors"
+	"github.com/onebox-faas/faas/pkg/state"
 	"testing"
 	"time"
 )
 
 func TestPgApplicationStandardAutomaticObservationLifecycle(t *testing.T) {
-	s, pool := runtimeCapturePGStore(t)
-	automaticObservationLifecycle(t, s, func(id string) {
+	s, pool := state.RuntimeCapturePGStore(t)
+	state.AutomaticObservationLifecycle(t, s, func(id string) {
 		if _, err := pool.Exec(t.Context(), `UPDATE app_application_standards SET observation_checked_at=clock_timestamp()-interval '1 minute' WHERE app_id=$1`, id); err != nil {
 			t.Fatal(err)
 		}
@@ -16,28 +17,28 @@ func TestPgApplicationStandardAutomaticObservationLifecycle(t *testing.T) {
 }
 
 func TestPgApplicationStandardAutomaticObservationReviewPrecedence(t *testing.T) {
-	s, _ := runtimeCapturePGStore(t)
-	automaticObservationReviewPrecedence(t, s)
+	s, _ := state.RuntimeCapturePGStore(t)
+	state.AutomaticObservationReviewPrecedence(t, s)
 }
 
 func TestPgApplicationStandardAutomaticObservationFairness(t *testing.T) {
-	s, _ := runtimeCapturePGStore(t)
-	automaticObservationFairness(t, s)
+	s, _ := state.RuntimeCapturePGStore(t)
+	state.AutomaticObservationFairness(t, s)
 }
 
 func TestPgApplicationStandardAutomaticObservationNewRevision(t *testing.T) {
-	s, _ := runtimeCapturePGStore(t)
-	automaticObservationNewRevision(t, s)
+	s, _ := state.RuntimeCapturePGStore(t)
+	state.AutomaticObservationNewRevision(t, s)
 }
 
 func TestPgApplicationStandardAutomaticObservationLateReview(t *testing.T) {
-	s, _ := runtimeCapturePGStore(t)
-	automaticObservationLateReview(t, s)
+	s, _ := state.RuntimeCapturePGStore(t)
+	state.AutomaticObservationLateReview(t, s)
 }
 
 func TestPgApplicationStandardAutomaticObservationLeaseFence(t *testing.T) {
-	s, pool := runtimeCapturePGStore(t)
-	automaticObservationLeaseFence(t, s, func(c ApplicationStandardEnrollmentClaim) {
+	s, pool := state.RuntimeCapturePGStore(t)
+	state.AutomaticObservationLeaseFence(t, s, func(c state.ApplicationStandardEnrollmentClaim) {
 		if _, err := pool.Exec(t.Context(), `UPDATE app_application_standards SET lease_until=clock_timestamp()-interval '1 second' WHERE app_id=$1`, c.AppID); err != nil {
 			t.Fatal(err)
 		}
@@ -49,13 +50,13 @@ func TestPgApplicationStandardAutomaticObservationLeaseFence(t *testing.T) {
 }
 
 func TestPgApplicationStandardAutomaticObservationLateCheckpoint(t *testing.T) {
-	s, pool := runtimeCapturePGStore(t)
-	app, _ := automaticObservationFixture(t, s)
+	s, pool := state.RuntimeCapturePGStore(t)
+	app, _ := state.AutomaticObservationFixture(t, s)
 	// Make the checkpoint positive, then delay the actual row write. Its final
 	// check must roll it back even though the SQL WHERE predicate saw a live lease.
-	standardObservationLoadLogging(t, s, app)
-	target := standardEgressPending(t, s, app.ID)
-	if _, err := s.RecordApplicationStandardEgress(t.Context(), target, standardEgressReceipt(target)); err != nil {
+	state.StandardObservationLoadLogging(t, s, app)
+	target := state.StandardEgressPending(t, s, app.ID)
+	if _, err := s.RecordApplicationStandardEgress(t.Context(), target, state.StandardEgressReceipt(target)); err != nil {
 		t.Fatal(err)
 	}
 	c, err := s.ClaimApplicationStandardObservation(t.Context(), "slow-observer")
@@ -71,7 +72,7 @@ func TestPgApplicationStandardAutomaticObservationLateCheckpoint(t *testing.T) {
 	}
 	c.Until = time.Now().Add(time.Hour)
 	started := time.Now()
-	if _, err := s.ObserveApplicationStandardEnrollment(t.Context(), c); !errors.Is(err, ErrApplicationStandardLeaseLost) {
+	if _, err := s.ObserveApplicationStandardEnrollment(t.Context(), c); !errors.Is(err, state.ErrApplicationStandardLeaseLost) {
 		t.Fatal("slow checkpoint outlived storage authority", err)
 	}
 	if time.Since(started) < 700*time.Millisecond {

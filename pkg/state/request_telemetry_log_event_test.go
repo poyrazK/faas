@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"strings"
@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -25,11 +26,11 @@ func TestRequestTelemetryLogEventRedactsAndNormalizes(t *testing.T) {
 		Count:      3, InstanceID: pgtype.Text{String: "inst-1", Valid: true},
 		UaFamily: "browser", ReferrerHost: "private.example", Country: "TR",
 	}
-	event, err := requestTelemetryLogEvent(arg, eventID.String())
+	event, err := state.RequestTelemetryLogEvent(arg, eventID.String())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if event.Source != LogEventSourceHTTP || event.SourceEventID != eventID.String() || !event.OccurredAt.Equal(receivedAt) {
+	if event.Source != state.LogEventSourceHTTP || event.SourceEventID != eventID.String() || !event.OccurredAt.Equal(receivedAt) {
 		t.Fatalf("source identity = %+v", event)
 	}
 	if event.AccountID != accountID.String() || event.AppID != appID.String() || event.DeploymentID != deploymentID.String() {
@@ -57,11 +58,11 @@ func TestRequestTelemetryLogEventRequiresStableIdentity(t *testing.T) {
 		Route:        "GET /health", Method: "GET", Status: 200, Count: 1,
 		ReceivedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
 	}
-	if _, err := requestTelemetryLogEvent(arg, "not-a-uuid"); err == nil {
+	if _, err := state.RequestTelemetryLogEvent(arg, "not-a-uuid"); err == nil {
 		t.Fatal("expected malformed event id to fail")
 	}
 	arg.ReceivedAt.Valid = false
-	if _, err := requestTelemetryLogEvent(arg, uuid.NewString()); err == nil {
+	if _, err := state.RequestTelemetryLogEvent(arg, uuid.NewString()); err == nil {
 		t.Fatal("expected missing timestamp to fail")
 	}
 }

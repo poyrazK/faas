@@ -12,7 +12,7 @@
 //
 // Whitebox `package state`. No Postgres dependency.
 
-package state
+package state_test
 
 import (
 	"errors"
@@ -20,15 +20,16 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // --- AuthenticateOIDCBearer --------------------------------------
 
 func TestAuthenticateOIDCBearer_Happy_Mega5(t *testing.T) {
 	t.Parallel()
-	m := NewMemStore()
-	seedAccount(m, "acc-1", api.PlanPro)
-	tok := &OIDCExchangedToken{
+	m := state.NewMemStore()
+	state.SeedAccount(m, "acc-1", api.PlanPro)
+	tok := &state.OIDCExchangedToken{
 		ID:        "row-1",
 		AccountID: "acc-1",
 		TokenHash: []byte("hash-1"),
@@ -50,27 +51,27 @@ func TestAuthenticateOIDCBearer_Happy_Mega5(t *testing.T) {
 	if key.AccountID != "acc-1" {
 		t.Errorf("key.AccountID = %q, want acc-1", key.AccountID)
 	}
-	if key.Status != string(APIKeyStatusActive) {
+	if key.Status != string(state.APIKeyStatusActive) {
 		t.Errorf("key.Status = %q, want active", key.Status)
 	}
 }
 
 func TestAuthenticateOIDCBearer_NotFoundHash_Mega5(t *testing.T) {
 	t.Parallel()
-	m := NewMemStore()
-	seedAccount(m, "acc-1", api.PlanPro)
-	if _, _, err := m.AuthenticateOIDCBearer(t.Context(), []byte("missing")); !errors.Is(err, ErrNotFound) {
+	m := state.NewMemStore()
+	state.SeedAccount(m, "acc-1", api.PlanPro)
+	if _, _, err := m.AuthenticateOIDCBearer(t.Context(), []byte("missing")); !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("err = %v, want ErrNotFound", err)
 	}
 }
 
 func TestAuthenticateOIDCBearer_AccountDeleted_Mega5(t *testing.T) {
 	t.Parallel()
-	m := NewMemStore()
+	m := state.NewMemStore()
 	// Seed the exchanged token WITHOUT a backing account. InsertOIDCExchangedToken
 	// doesn't check that the account exists; AuthenticateOIDCBearer must return
 	// ErrNotFound when the lookup hits the gap.
-	tok := &OIDCExchangedToken{
+	tok := &state.OIDCExchangedToken{
 		ID:        "row-1",
 		AccountID: "ghost",
 		TokenHash: []byte("hash-ghost"),
@@ -79,16 +80,16 @@ func TestAuthenticateOIDCBearer_AccountDeleted_Mega5(t *testing.T) {
 	if _, err := m.InsertOIDCExchangedToken(t.Context(), tok); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	if _, _, err := m.AuthenticateOIDCBearer(t.Context(), []byte("hash-ghost")); !errors.Is(err, ErrNotFound) {
+	if _, _, err := m.AuthenticateOIDCBearer(t.Context(), []byte("hash-ghost")); !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("err = %v, want ErrNotFound (account missing)", err)
 	}
 }
 
 func TestAuthenticateOIDCBearer_ExpiredLazyDelete_Mega5(t *testing.T) {
 	t.Parallel()
-	m := NewMemStore()
-	seedAccount(m, "acc-1", api.PlanPro)
-	tok := &OIDCExchangedToken{
+	m := state.NewMemStore()
+	state.SeedAccount(m, "acc-1", api.PlanPro)
+	tok := &state.OIDCExchangedToken{
 		ID:        "row-2",
 		AccountID: "acc-1",
 		TokenHash: []byte("hash-expired"),
@@ -98,19 +99,19 @@ func TestAuthenticateOIDCBearer_ExpiredLazyDelete_Mega5(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 	// First call: lazy-deletes the row, returns ErrNotFound.
-	if _, _, err := m.AuthenticateOIDCBearer(t.Context(), []byte("hash-expired")); !errors.Is(err, ErrNotFound) {
+	if _, _, err := m.AuthenticateOIDCBearer(t.Context(), []byte("hash-expired")); !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("first call: err = %v, want ErrNotFound", err)
 	}
 	// Second call: row is gone — confirms lazy-delete happened.
-	if _, _, err := m.AuthenticateOIDCBearer(t.Context(), []byte("hash-expired")); !errors.Is(err, ErrNotFound) {
+	if _, _, err := m.AuthenticateOIDCBearer(t.Context(), []byte("hash-expired")); !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("second call: err = %v, want ErrNotFound (row should be deleted)", err)
 	}
 }
 
 // --- AccountByOIDCSubject ----------------------------------------
 
-func seedOIDCTrustPolicy_Mega5(m *MemStore, accountID, issuer, pattern string) {
-	m.oidcTrustPolicies[accountID+"\x00"+issuer] = OIDCTrustPolicy{
+func seedOIDCTrustPolicy_Mega5(m *state.MemStore, accountID, issuer, pattern string) {
+	(*m.OidcTrustPolicies())[accountID+"\x00"+issuer] = state.OIDCTrustPolicy{
 		AccountID:      accountID,
 		IssuerURL:      issuer,
 		SubjectPattern: pattern,
@@ -119,29 +120,29 @@ func seedOIDCTrustPolicy_Mega5(m *MemStore, accountID, issuer, pattern string) {
 
 func TestAccountByOIDCSubject_NotFound_Mega5(t *testing.T) {
 	t.Parallel()
-	m := NewMemStore()
-	if _, err := m.AccountByOIDCSubject(t.Context(), "https://noissuer", "any"); !errors.Is(err, ErrNotFound) {
+	m := state.NewMemStore()
+	if _, err := m.AccountByOIDCSubject(t.Context(), "https://noissuer", "any"); !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("err = %v, want ErrNotFound", err)
 	}
 }
 
 func TestAccountByOIDCSubject_EmptyPattern_Mega5(t *testing.T) {
 	t.Parallel()
-	m := NewMemStore()
-	seedAccount(m, "acc-1", api.PlanPro)
+	m := state.NewMemStore()
+	state.SeedAccount(m, "acc-1", api.PlanPro)
 	seedOIDCTrustPolicy_Mega5(m, "acc-1", "https://issuer-1", "")
 
 	// An empty pattern binds nothing (legacy permissive policies let any
 	// workflow resolve to the account).
-	if acct, err := m.AccountByOIDCSubject(t.Context(), "https://issuer-1", "anything"); !errors.Is(err, ErrNotFound) {
+	if acct, err := m.AccountByOIDCSubject(t.Context(), "https://issuer-1", "anything"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("AccountByOIDCSubject(empty pattern) = %q, %v; want ErrNotFound", acct.ID, err)
 	}
 }
 
 func TestAccountByOIDCSubject_RegexMatch_Mega5(t *testing.T) {
 	t.Parallel()
-	m := NewMemStore()
-	seedAccount(m, "acc-1", api.PlanPro)
+	m := state.NewMemStore()
+	state.SeedAccount(m, "acc-1", api.PlanPro)
 	seedOIDCTrustPolicy_Mega5(m, "acc-1", "https://issuer-1", `^user-[0-9]+$`)
 
 	acct, err := m.AccountByOIDCSubject(t.Context(), "https://issuer-1", "user-42")
@@ -155,35 +156,35 @@ func TestAccountByOIDCSubject_RegexMatch_Mega5(t *testing.T) {
 
 func TestAccountByOIDCSubject_RegexNoMatch_Mega5(t *testing.T) {
 	t.Parallel()
-	m := NewMemStore()
-	seedAccount(m, "acc-1", api.PlanPro)
+	m := state.NewMemStore()
+	state.SeedAccount(m, "acc-1", api.PlanPro)
 	seedOIDCTrustPolicy_Mega5(m, "acc-1", "https://issuer-1", `^user-[0-9]+$`)
 
-	if _, err := m.AccountByOIDCSubject(t.Context(), "https://issuer-1", "admin-1"); !errors.Is(err, ErrNotFound) {
+	if _, err := m.AccountByOIDCSubject(t.Context(), "https://issuer-1", "admin-1"); !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("err = %v, want ErrNotFound (regex no match)", err)
 	}
 }
 
 func TestAccountByOIDCSubject_WrongIssuer_Mega5(t *testing.T) {
 	t.Parallel()
-	m := NewMemStore()
-	seedAccount(m, "acc-1", api.PlanPro)
+	m := state.NewMemStore()
+	state.SeedAccount(m, "acc-1", api.PlanPro)
 	// Policy is bound to issuer-1; query for issuer-2 must miss.
 	seedOIDCTrustPolicy_Mega5(m, "acc-1", "https://issuer-1", "")
 
-	if _, err := m.AccountByOIDCSubject(t.Context(), "https://issuer-2", "anything"); !errors.Is(err, ErrNotFound) {
+	if _, err := m.AccountByOIDCSubject(t.Context(), "https://issuer-2", "anything"); !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("err = %v, want ErrNotFound (wrong issuer)", err)
 	}
 }
 
 func TestAccountByOIDCSubject_AccountMissingForPolicy_Mega5(t *testing.T) {
 	t.Parallel()
-	m := NewMemStore()
+	m := state.NewMemStore()
 	// Trust policy points at a non-existent account; the scan should
 	// skip the policy and return ErrNotFound (rather than panicking).
 	seedOIDCTrustPolicy_Mega5(m, "ghost", "https://issuer-1", "")
 
-	if _, err := m.AccountByOIDCSubject(t.Context(), "https://issuer-1", "anything"); !errors.Is(err, ErrNotFound) {
+	if _, err := m.AccountByOIDCSubject(t.Context(), "https://issuer-1", "anything"); !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("err = %v, want ErrNotFound (account for policy is missing)", err)
 	}
 }
@@ -192,8 +193,8 @@ func TestAccountByOIDCSubject_AccountMissingForPolicy_Mega5(t *testing.T) {
 
 func TestInsertOIDCExchangedToken_AutoMintsID_Mega5(t *testing.T) {
 	t.Parallel()
-	m := NewMemStore()
-	tok := &OIDCExchangedToken{
+	m := state.NewMemStore()
+	tok := &state.OIDCExchangedToken{
 		AccountID: "acc-1",
 		TokenHash: []byte("hash-a"),
 		ExpiresAt: time.Now().Add(time.Hour),
@@ -212,8 +213,8 @@ func TestInsertOIDCExchangedToken_AutoMintsID_Mega5(t *testing.T) {
 
 func TestInsertOIDCExchangedToken_PreservesExplicitID_Mega5(t *testing.T) {
 	t.Parallel()
-	m := NewMemStore()
-	tok := &OIDCExchangedToken{
+	m := state.NewMemStore()
+	tok := &state.OIDCExchangedToken{
 		ID:        "row-explicit",
 		AccountID: "acc-1",
 		TokenHash: []byte("hash-b"),
@@ -230,8 +231,8 @@ func TestInsertOIDCExchangedToken_PreservesExplicitID_Mega5(t *testing.T) {
 
 func TestInsertOIDCExchangedToken_FillsCreatedAt_Mega5(t *testing.T) {
 	t.Parallel()
-	m := NewMemStore()
-	tok := &OIDCExchangedToken{
+	m := state.NewMemStore()
+	tok := &state.OIDCExchangedToken{
 		ID:        "row-c",
 		AccountID: "acc-1",
 		TokenHash: []byte("hash-c"),
@@ -251,8 +252,8 @@ func TestInsertOIDCExchangedToken_FillsCreatedAt_Mega5(t *testing.T) {
 
 func TestGetOIDCExchangedTokenByHash_ExpiredLazyDelete_Mega5(t *testing.T) {
 	t.Parallel()
-	m := NewMemStore()
-	expired := &OIDCExchangedToken{
+	m := state.NewMemStore()
+	expired := &state.OIDCExchangedToken{
 		ID:        "row-exp",
 		AccountID: "acc-1",
 		TokenHash: []byte("hash-exp"),
@@ -262,19 +263,19 @@ func TestGetOIDCExchangedTokenByHash_ExpiredLazyDelete_Mega5(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 	// First call: lazy-deletes, returns ErrNotFound.
-	if _, err := m.GetOIDCExchangedTokenByHash(t.Context(), []byte("hash-exp")); !errors.Is(err, ErrNotFound) {
+	if _, err := m.GetOIDCExchangedTokenByHash(t.Context(), []byte("hash-exp")); !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("first call: err = %v, want ErrNotFound", err)
 	}
 	// Second call: row gone — confirms the lazy-delete branch ran.
-	if _, err := m.GetOIDCExchangedTokenByHash(t.Context(), []byte("hash-exp")); !errors.Is(err, ErrNotFound) {
+	if _, err := m.GetOIDCExchangedTokenByHash(t.Context(), []byte("hash-exp")); !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("second call: err = %v, want ErrNotFound (row should be deleted)", err)
 	}
 }
 
 func TestGetOIDCExchangedTokenByHash_NotFound_Mega5(t *testing.T) {
 	t.Parallel()
-	m := NewMemStore()
-	if _, err := m.GetOIDCExchangedTokenByHash(t.Context(), []byte("never-inserted")); !errors.Is(err, ErrNotFound) {
+	m := state.NewMemStore()
+	if _, err := m.GetOIDCExchangedTokenByHash(t.Context(), []byte("never-inserted")); !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("err = %v, want ErrNotFound", err)
 	}
 }

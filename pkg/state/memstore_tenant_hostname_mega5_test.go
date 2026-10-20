@@ -6,39 +6,40 @@
 //
 // Whitebox `package state`. No Postgres dependency.
 
-package state
+package state_test
 
 import (
 	"errors"
+	"github.com/onebox-faas/faas/pkg/state"
 	"testing"
 	"time"
 )
 
-func seedTenantHostname_Mega5(m *MemStore, hostname, surfaceID string) TenantHostname {
-	h := TenantHostname{
+func seedTenantHostname_Mega5(m *state.MemStore, hostname, surfaceID string) state.TenantHostname {
+	h := state.TenantHostname{
 		ID:        "th-" + hostname,
 		SurfaceID: surfaceID,
 		Hostname:  hostname,
 		CreatedAt: time.Now(),
 	}
-	m.tenantHostnames[hostname] = h
+	(*m.TenantHostnames())[hostname] = h
 	return h
 }
 
-func seedTenantSurface_Mega5(m *MemStore, id string, status SurfaceStatus) TenantSurface {
-	s := TenantSurface{
+func seedTenantSurface_Mega5(m *state.MemStore, id string, status state.SurfaceStatus) state.TenantSurface {
+	s := state.TenantSurface{
 		ID:     id,
 		Name:   "s-" + id,
 		Status: status,
 	}
-	m.tenantSurfaces[id] = s
+	(*m.TenantSurfaces())[id] = s
 	return s
 }
 
 func TestGetTenantHostnameByName_ExactMatch_Mega5(t *testing.T) {
 	t.Parallel()
-	m := NewMemStore()
-	seedTenantSurface_Mega5(m, "sf-1", SurfaceStatusActive)
+	m := state.NewMemStore()
+	seedTenantSurface_Mega5(m, "sf-1", state.SurfaceStatusActive)
 	seedTenantHostname_Mega5(m, "example.com", "sf-1")
 
 	got, err := m.GetTenantHostnameByName(t.Context(), "example.com")
@@ -55,8 +56,8 @@ func TestGetTenantHostnameByName_ExactMatch_Mega5(t *testing.T) {
 
 func TestGetTenantHostnameByName_LowercaseFallback_Mega5(t *testing.T) {
 	t.Parallel()
-	m := NewMemStore()
-	seedTenantSurface_Mega5(m, "sf-1", SurfaceStatusActive)
+	m := state.NewMemStore()
+	seedTenantSurface_Mega5(m, "sf-1", state.SurfaceStatusActive)
 	// Seed canonical lowercase; the method's 2nd-pass lookup must
 	// normalize the query and find it.
 	seedTenantHostname_Mega5(m, "example.com", "sf-1")
@@ -72,32 +73,32 @@ func TestGetTenantHostnameByName_LowercaseFallback_Mega5(t *testing.T) {
 
 func TestGetTenantHostnameByName_NotFound_Mega5(t *testing.T) {
 	t.Parallel()
-	m := NewMemStore()
-	if _, err := m.GetTenantHostnameByName(t.Context(), "missing.example"); !errors.Is(err, ErrNotFound) {
+	m := state.NewMemStore()
+	if _, err := m.GetTenantHostnameByName(t.Context(), "missing.example"); !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("err = %v, want ErrNotFound", err)
 	}
 }
 
 func TestGetTenantHostnameByName_SurfaceDeleted_Mega5(t *testing.T) {
 	t.Parallel()
-	m := NewMemStore()
-	seedTenantSurface_Mega5(m, "sf-gone", SurfaceStatusDeleted)
+	m := state.NewMemStore()
+	seedTenantSurface_Mega5(m, "sf-gone", state.SurfaceStatusDeleted)
 	seedTenantHostname_Mega5(m, "gone.example", "sf-gone")
 
-	if _, err := m.GetTenantHostnameByName(t.Context(), "gone.example"); !errors.Is(err, ErrNotFound) {
+	if _, err := m.GetTenantHostnameByName(t.Context(), "gone.example"); !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("err = %v, want ErrNotFound (parent surface soft-deleted)", err)
 	}
 }
 
 func TestGetTenantHostnameByName_SurfaceMissing_Mega5(t *testing.T) {
 	t.Parallel()
-	m := NewMemStore()
+	m := state.NewMemStore()
 	// Hostname points at a surface ID that doesn't exist in
 	// m.tenantSurfaces. Treat as not-found (matches the SQL JOIN's
 	// behavior when the parent row is gone).
 	seedTenantHostname_Mega5(m, "orphan.example", "sf-ghost")
 
-	if _, err := m.GetTenantHostnameByName(t.Context(), "orphan.example"); !errors.Is(err, ErrNotFound) {
+	if _, err := m.GetTenantHostnameByName(t.Context(), "orphan.example"); !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("err = %v, want ErrNotFound (parent surface missing)", err)
 	}
 }
@@ -106,12 +107,12 @@ func TestGetTenantHostnameByName_AllNonDeletedStatuses_Mega5(t *testing.T) {
 	t.Parallel()
 	// Pin the contract: any non-Deleted status (pending/active/
 	// suspended) returns the hostname.
-	for _, status := range []SurfaceStatus{
-		SurfaceStatusPending,
-		SurfaceStatusActive,
-		SurfaceStatusSuspended,
+	for _, status := range []state.SurfaceStatus{
+		state.SurfaceStatusPending,
+		state.SurfaceStatusActive,
+		state.SurfaceStatusSuspended,
 	} {
-		m := NewMemStore()
+		m := state.NewMemStore()
 		seedTenantSurface_Mega5(m, "sf-1", status)
 		seedTenantHostname_Mega5(m, "example.com", "sf-1")
 

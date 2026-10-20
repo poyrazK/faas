@@ -1,16 +1,17 @@
 // adr: 157 — policy-controlled object upload routes and durable completions.
-package state
+package state_test
 
 import (
 	"context"
 	"errors"
+	"github.com/onebox-faas/faas/pkg/state"
 	"testing"
 )
 
 func TestMemObjectUploadRoutesLifecycle(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
-	route := ObjectUploadRoute{
+	store := state.NewMemStore()
+	route := state.ObjectUploadRoute{
 		ID:                  "route-1",
 		AccountID:           "account-1",
 		AppID:               "app-1",
@@ -48,7 +49,7 @@ func TestMemObjectUploadRoutesLifecycle(t *testing.T) {
 
 	duplicate := route
 	duplicate.ID = "route-2"
-	if _, err := store.UpsertObjectUploadRoute(ctx, duplicate); !errors.Is(err, ErrConflict) {
+	if _, err := store.UpsertObjectUploadRoute(ctx, duplicate); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("duplicate route error = %v, want ErrConflict", err)
 	}
 
@@ -63,17 +64,17 @@ func TestMemObjectUploadRoutesLifecycle(t *testing.T) {
 		t.Fatalf("updated route = %+v", updated)
 	}
 
-	if _, err := store.GetObjectUploadRoute(ctx, "other-account", route.AppID, route.Name); !errors.Is(err, ErrNotFound) {
+	if _, err := store.GetObjectUploadRoute(ctx, "other-account", route.AppID, route.Name); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("cross-account get error = %v, want ErrNotFound", err)
 	}
-	if err := store.DeleteObjectUploadRoute(ctx, "other-account", route.AppID, route.Name); !errors.Is(err, ErrNotFound) {
+	if err := store.DeleteObjectUploadRoute(ctx, "other-account", route.AppID, route.Name); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("cross-account delete error = %v, want ErrNotFound", err)
 	}
 
-	if _, err := store.RecordObjectUploadCompletion(ctx, ObjectUploadCompletion{}); !errors.Is(err, ErrConflict) {
+	if _, err := store.RecordObjectUploadCompletion(ctx, state.ObjectUploadCompletion{}); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("invalid completion error = %v, want ErrConflict", err)
 	}
-	completion, err := store.RecordObjectUploadCompletion(ctx, ObjectUploadCompletion{
+	completion, err := store.RecordObjectUploadCompletion(ctx, state.ObjectUploadCompletion{
 		ID: "completion-1", RouteID: route.ID, AccountID: route.AccountID, AppID: route.AppID,
 		BucketID: route.BucketID, Key: "uploads/avatar.png", Bytes: 0, Status: "committed",
 	})
@@ -83,7 +84,7 @@ func TestMemObjectUploadRoutesLifecycle(t *testing.T) {
 	if completion.CreatedAt.IsZero() || completion.Bytes != 0 {
 		t.Fatalf("completion = %+v, want timestamped zero-byte receipt", completion)
 	}
-	intent, err := store.CreateObjectUploadIntent(ctx, ObjectUploadCompletion{
+	intent, err := store.CreateObjectUploadIntent(ctx, state.ObjectUploadCompletion{
 		ID: "intent-1", RouteID: route.ID, AccountID: route.AccountID, AppID: route.AppID,
 		BucketID: route.BucketID, SubjectID: "key-1", Key: "uploads/idempotent", Bytes: 3,
 		ContentType: "image/png", Status: "pending", IdempotencyKey: "request-1", RequestFingerprint: "fingerprint-1",
@@ -91,11 +92,11 @@ func TestMemObjectUploadRoutesLifecycle(t *testing.T) {
 	if err != nil || intent.Status != "pending" {
 		t.Fatalf("create upload intent = %+v, err=%v", intent, err)
 	}
-	if _, err := store.CreateObjectUploadIntent(ctx, ObjectUploadCompletion{
+	if _, err := store.CreateObjectUploadIntent(ctx, state.ObjectUploadCompletion{
 		ID: "intent-2", RouteID: route.ID, AccountID: route.AccountID, AppID: route.AppID,
 		BucketID: route.BucketID, SubjectID: "key-1", Key: "uploads/other", Bytes: 3,
 		Status: "pending", IdempotencyKey: "request-1", RequestFingerprint: "fingerprint-1",
-	}); !errors.Is(err, ErrConflict) {
+	}); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("duplicate upload intent error = %v, want ErrConflict", err)
 	}
 	fetchedIntent, err := store.GetObjectUploadIntent(ctx, route.ID, "key-1", "request-1")
@@ -111,7 +112,7 @@ func TestMemObjectUploadRoutesLifecycle(t *testing.T) {
 	if err := store.DeleteObjectUploadRoute(ctx, route.AccountID, route.AppID, route.Name); err != nil {
 		t.Fatalf("delete route: %v", err)
 	}
-	if _, err := store.GetObjectUploadRoute(ctx, route.AccountID, route.AppID, route.Name); !errors.Is(err, ErrNotFound) {
+	if _, err := store.GetObjectUploadRoute(ctx, route.AccountID, route.AppID, route.Name); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("deleted route error = %v, want ErrNotFound", err)
 	}
 	routes, err = store.ListObjectUploadRoutes(ctx, route.AccountID, route.AppID)

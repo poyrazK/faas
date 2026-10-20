@@ -1,18 +1,19 @@
-package state
+package state_test
 
 import (
 	"context"
 	"errors"
+	"github.com/onebox-faas/faas/pkg/state"
 	"testing"
 	"time"
 )
 
 func TestMemStorePrewarmClaimIsSingleFlight(t *testing.T) {
-	m := NewMemStore()
-	app := App{ID: "app-1", AccountID: "acct-1", Status: AppActive}
-	m.apps[app.ID] = app
+	m := state.NewMemStore()
+	app := state.App{ID: "app-1", AccountID: "acct-1", Status: state.AppActive}
+	(*m.Apps())[app.ID] = app
 	now := time.Now().UTC()
-	intent, err := m.CreatePrewarmIntent(context.Background(), app.ID, app.AccountID, 2, now.Add(time.Minute), now.Add(5*time.Minute), PrewarmTriggerCalendar)
+	intent, err := m.CreatePrewarmIntent(context.Background(), app.ID, app.AccountID, 2, now.Add(time.Minute), now.Add(5*time.Minute), state.PrewarmTriggerCalendar)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,14 +31,14 @@ func TestMemStorePrewarmClaimIsSingleFlight(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, err := m.PrewarmIntentByID(context.Background(), intent.ID)
-	if err != nil || got.Status != PrewarmStatusSucceeded || got.Outcome != "admitted:2" {
+	if err != nil || got.Status != state.PrewarmStatusSucceeded || got.Outcome != "admitted:2" {
 		t.Fatalf("intent = %#v, err = %v", got, err)
 	}
 }
 
 func TestValidatePrewarmIntentRejectsExpiredWindow(t *testing.T) {
 	now := time.Now().UTC()
-	if err := ValidatePrewarmIntent(1, now.Add(time.Minute), now, now, PrewarmTriggerCalendar); err == nil {
+	if err := state.ValidatePrewarmIntent(1, now.Add(time.Minute), now, now, state.PrewarmTriggerCalendar); err == nil {
 		t.Fatal("expected expires_at validation error")
 	}
 	for name, tc := range map[string]struct {
@@ -45,12 +46,12 @@ func TestValidatePrewarmIntentRejectsExpiredWindow(t *testing.T) {
 		wakeAt, expiresAt time.Time
 		trigger           string
 	}{
-		"count":   {0, now.Add(time.Minute), now.Add(2 * time.Minute), PrewarmTriggerCalendar},
-		"wake":    {1, now, now.Add(time.Minute), PrewarmTriggerCalendar},
+		"count":   {0, now.Add(time.Minute), now.Add(2 * time.Minute), state.PrewarmTriggerCalendar},
+		"wake":    {1, now, now.Add(time.Minute), state.PrewarmTriggerCalendar},
 		"trigger": {1, now.Add(time.Minute), now.Add(2 * time.Minute), " "},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if err := ValidatePrewarmIntent(tc.count, tc.wakeAt, tc.expiresAt, now, tc.trigger); err == nil {
+			if err := state.ValidatePrewarmIntent(tc.count, tc.wakeAt, tc.expiresAt, now, tc.trigger); err == nil {
 				t.Fatal("expected validation error")
 			}
 		})
@@ -58,11 +59,11 @@ func TestValidatePrewarmIntentRejectsExpiredWindow(t *testing.T) {
 }
 
 func TestMemStoreActivePrewarmFloorExpires(t *testing.T) {
-	m := NewMemStore()
-	app := App{ID: "app-1", AccountID: "acct-1", Status: AppActive}
-	m.apps[app.ID] = app
+	m := state.NewMemStore()
+	app := state.App{ID: "app-1", AccountID: "acct-1", Status: state.AppActive}
+	(*m.Apps())[app.ID] = app
 	now := time.Now().UTC()
-	intent, err := m.CreatePrewarmIntent(context.Background(), app.ID, app.AccountID, 3, now.Add(time.Minute), now.Add(5*time.Minute), PrewarmTriggerCalendar)
+	intent, err := m.CreatePrewarmIntent(context.Background(), app.ID, app.AccountID, 3, now.Add(time.Minute), now.Add(5*time.Minute), state.PrewarmTriggerCalendar)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,42 +79,42 @@ func TestMemStoreActivePrewarmFloorExpires(t *testing.T) {
 }
 
 func TestMemStorePrewarmRunningIntentCannotBeCancelled(t *testing.T) {
-	m := NewMemStore()
-	app := App{ID: "app-1", AccountID: "acct-1", Status: AppActive}
-	m.apps[app.ID] = app
+	m := state.NewMemStore()
+	app := state.App{ID: "app-1", AccountID: "acct-1", Status: state.AppActive}
+	(*m.Apps())[app.ID] = app
 	now := time.Now().UTC()
-	intent, err := m.CreatePrewarmIntent(context.Background(), app.ID, app.AccountID, 1, now.Add(time.Minute), now.Add(5*time.Minute), PrewarmTriggerCalendar)
+	intent, err := m.CreatePrewarmIntent(context.Background(), app.ID, app.AccountID, 1, now.Add(time.Minute), now.Add(5*time.Minute), state.PrewarmTriggerCalendar)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, claimed, err := m.ClaimPrewarmIntent(context.Background(), intent.ID, now); err != nil || !claimed {
 		t.Fatalf("claim = %v, err = %v", claimed, err)
 	}
-	if err := m.CancelPrewarmIntent(context.Background(), intent.ID, app.AccountID); !errors.Is(err, ErrNotFound) {
+	if err := m.CancelPrewarmIntent(context.Background(), intent.ID, app.AccountID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("cancel running = %v, want ErrNotFound", err)
 	}
 	got, err := m.PrewarmIntentByID(context.Background(), intent.ID)
-	if err != nil || got.Status != PrewarmStatusRunning {
+	if err != nil || got.Status != state.PrewarmStatusRunning {
 		t.Fatalf("intent = %#v, err = %v", got, err)
 	}
 }
 
 func TestMemStorePrewarmListAndFail(t *testing.T) {
-	m := NewMemStore()
-	app := App{ID: "app-1", AccountID: "acct-1", Status: AppActive}
-	other := App{ID: "app-2", AccountID: "acct-1", Status: AppActive}
-	m.apps[app.ID] = app
-	m.apps[other.ID] = other
+	m := state.NewMemStore()
+	app := state.App{ID: "app-1", AccountID: "acct-1", Status: state.AppActive}
+	other := state.App{ID: "app-2", AccountID: "acct-1", Status: state.AppActive}
+	(*m.Apps())[app.ID] = app
+	(*m.Apps())[other.ID] = other
 	now := time.Now().UTC()
-	first, err := m.CreatePrewarmIntent(context.Background(), app.ID, app.AccountID, 1, now.Add(2*time.Minute), now.Add(5*time.Minute), PrewarmTriggerCalendar)
+	first, err := m.CreatePrewarmIntent(context.Background(), app.ID, app.AccountID, 1, now.Add(2*time.Minute), now.Add(5*time.Minute), state.PrewarmTriggerCalendar)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := m.CreatePrewarmIntent(context.Background(), app.ID, app.AccountID, 2, now.Add(time.Minute), now.Add(6*time.Minute), PrewarmTriggerCalendar)
+	second, err := m.CreatePrewarmIntent(context.Background(), app.ID, app.AccountID, 2, now.Add(time.Minute), now.Add(6*time.Minute), state.PrewarmTriggerCalendar)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.CreatePrewarmIntent(context.Background(), other.ID, other.AccountID, 1, now.Add(3*time.Minute), now.Add(7*time.Minute), PrewarmTriggerCalendar); err != nil {
+	if _, err := m.CreatePrewarmIntent(context.Background(), other.ID, other.AccountID, 1, now.Add(3*time.Minute), now.Add(7*time.Minute), state.PrewarmTriggerCalendar); err != nil {
 		t.Fatal(err)
 	}
 	rows, err := m.ListPrewarmIntentsForApp(context.Background(), app.ID, 1)
@@ -131,35 +132,35 @@ func TestMemStorePrewarmListAndFail(t *testing.T) {
 		t.Fatal(err)
 	}
 	failed, err := m.PrewarmIntentByID(context.Background(), first.ID)
-	if err != nil || failed.Status != PrewarmStatusFailed || failed.LastError != "capacity unavailable" || failed.FiredAt == nil {
+	if err != nil || failed.Status != state.PrewarmStatusFailed || failed.LastError != "capacity unavailable" || failed.FiredAt == nil {
 		t.Fatalf("failed intent = %#v, err = %v", failed, err)
 	}
 	if err := m.FailPrewarmIntent(context.Background(), second.ID, now, "ignored"); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.FailPrewarmIntent(context.Background(), "missing", now, "ignored"); !errors.Is(err, ErrNotFound) {
+	if err := m.FailPrewarmIntent(context.Background(), "missing", now, "ignored"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("missing fail = %v, want ErrNotFound", err)
 	}
-	if _, err := m.CreatePrewarmIntent(context.Background(), "missing-app", app.AccountID, 1, now.Add(time.Minute), now.Add(2*time.Minute), PrewarmTriggerCalendar); !errors.Is(err, ErrNotFound) {
+	if _, err := m.CreatePrewarmIntent(context.Background(), "missing-app", app.AccountID, 1, now.Add(time.Minute), now.Add(2*time.Minute), state.PrewarmTriggerCalendar); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("missing app create = %v, want ErrNotFound", err)
 	}
-	if err := m.CancelPrewarmIntent(context.Background(), second.ID, "wrong-account"); !errors.Is(err, ErrNotFound) {
+	if err := m.CancelPrewarmIntent(context.Background(), second.ID, "wrong-account"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("wrong-account cancel = %v, want ErrNotFound", err)
 	}
 }
 
 func TestMemStorePrewarmDueFiltersExpiredAndUsesDefaultLimit(t *testing.T) {
-	m := NewMemStore()
-	app := App{ID: "app-1", AccountID: "acct-1", Status: AppActive}
-	m.apps[app.ID] = app
+	m := state.NewMemStore()
+	app := state.App{ID: "app-1", AccountID: "acct-1", Status: state.AppActive}
+	(*m.Apps())[app.ID] = app
 	now := time.Now().UTC()
-	if _, err := m.CreatePrewarmIntent(context.Background(), app.ID, app.AccountID, 1, now.Add(time.Minute), now.Add(2*time.Minute), PrewarmTriggerCalendar); err != nil {
+	if _, err := m.CreatePrewarmIntent(context.Background(), app.ID, app.AccountID, 1, now.Add(time.Minute), now.Add(2*time.Minute), state.PrewarmTriggerCalendar); err != nil {
 		t.Fatal(err)
 	}
-	m.prewarmIntents["expired"] = PrewarmIntent{
+	(*m.PrewarmIntents())["expired"] = state.PrewarmIntent{
 		ID: "expired", AppID: app.ID, AccountID: app.AccountID, Count: 1,
-		WakeAt: now.Add(-time.Minute), ExpiresAt: now, Trigger: PrewarmTriggerCalendar,
-		Status: PrewarmStatusPending, CreatedAt: now.Add(-2 * time.Minute),
+		WakeAt: now.Add(-time.Minute), ExpiresAt: now, Trigger: state.PrewarmTriggerCalendar,
+		Status: state.PrewarmStatusPending, CreatedAt: now.Add(-2 * time.Minute),
 	}
 	rows, err := m.ListDuePrewarmIntents(context.Background(), now.Add(3*time.Minute), now, 0)
 	if err != nil || len(rows) != 1 {
@@ -168,11 +169,11 @@ func TestMemStorePrewarmDueFiltersExpiredAndUsesDefaultLimit(t *testing.T) {
 }
 
 func TestMemStoreActivePrewarmFloorUsesAdmittedCount(t *testing.T) {
-	m := NewMemStore()
-	app := App{ID: "app-1", AccountID: "acct-1", Status: AppActive}
-	m.apps[app.ID] = app
+	m := state.NewMemStore()
+	app := state.App{ID: "app-1", AccountID: "acct-1", Status: state.AppActive}
+	(*m.Apps())[app.ID] = app
 	now := time.Now().UTC()
-	intent, err := m.CreatePrewarmIntent(context.Background(), app.ID, app.AccountID, 4, now.Add(time.Minute), now.Add(5*time.Minute), PrewarmTriggerCalendar)
+	intent, err := m.CreatePrewarmIntent(context.Background(), app.ID, app.AccountID, 4, now.Add(time.Minute), now.Add(5*time.Minute), state.PrewarmTriggerCalendar)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,25 +189,26 @@ func TestMemStoreActivePrewarmFloorUsesAdmittedCount(t *testing.T) {
 }
 
 func TestMemStorePrewarmExpiryTerminalizesOnlyExpiredPending(t *testing.T) {
-	m := NewMemStore()
-	app := App{ID: "app-1", AccountID: "acct-1", Status: AppActive}
-	m.apps[app.ID] = app
+	m := state.NewMemStore()
+	app := state.App{ID: "app-1", AccountID: "acct-1", Status: state.AppActive}
+	(*m.Apps())[app.ID] = app
 	now := time.Now().UTC()
 	if _, err := m.CreatePrewarmIntent(context.Background(), app.ID, app.AccountID, 0,
-		now.Add(time.Minute), now.Add(2*time.Minute), PrewarmTriggerCalendar); err == nil {
+		now.Add(time.Minute), now.Add(2*time.Minute), state.PrewarmTriggerCalendar); err == nil {
 		t.Fatal("invalid prewarm creation succeeded")
 	}
 
-	expiredID := newID()
+	expiredID := state.NewID()
+	(*
 	// CreatePrewarmIntent correctly rejects a past wake window, so seed the
 	// expired row directly to exercise the reaper's storage behavior.
-	m.prewarmIntents[expiredID] = PrewarmIntent{
+	m.PrewarmIntents())[expiredID] = state.PrewarmIntent{
 		ID: expiredID, AppID: app.ID, AccountID: app.AccountID, Count: 1,
 		WakeAt: now.Add(-2 * time.Minute), ExpiresAt: now.Add(-time.Minute),
-		Trigger: PrewarmTriggerCalendar, Status: PrewarmStatusPending, CreatedAt: now,
+		Trigger: state.PrewarmTriggerCalendar, Status: state.PrewarmStatusPending, CreatedAt: now,
 	}
 	active, err := m.CreatePrewarmIntent(context.Background(), app.ID, app.AccountID, 1,
-		now.Add(time.Minute), now.Add(2*time.Minute), PrewarmTriggerCalendar)
+		now.Add(time.Minute), now.Add(2*time.Minute), state.PrewarmTriggerCalendar)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -222,7 +224,7 @@ func TestMemStorePrewarmExpiryTerminalizesOnlyExpiredPending(t *testing.T) {
 		t.Fatalf("duplicate ExpirePrewarmIntent = changed=%v, err=%v", changed, err)
 	}
 	got, err := m.PrewarmIntentByID(context.Background(), expiredID)
-	if err != nil || got.Status != PrewarmStatusFailed || got.Outcome != "expired" || got.LastError != "expired" || got.FiredAt == nil {
+	if err != nil || got.Status != state.PrewarmStatusFailed || got.Outcome != "expired" || got.LastError != "expired" || got.FiredAt == nil {
 		t.Fatalf("expired intent = %#v, err = %v", got, err)
 	}
 	rows, err = m.ListExpiredPrewarmIntents(context.Background(), now, 0)
@@ -232,7 +234,7 @@ func TestMemStorePrewarmExpiryTerminalizesOnlyExpiredPending(t *testing.T) {
 	if changed, err := m.ExpirePrewarmIntent(context.Background(), active.ID, now); err != nil || changed {
 		t.Fatalf("active ExpirePrewarmIntent = changed=%v, err=%v", changed, err)
 	}
-	if changed, err := m.ExpirePrewarmIntent(context.Background(), "missing", now); !errors.Is(err, ErrNotFound) || changed {
+	if changed, err := m.ExpirePrewarmIntent(context.Background(), "missing", now); !errors.Is(err, state.ErrNotFound) || changed {
 		t.Fatalf("missing ExpirePrewarmIntent = changed=%v, err=%v", changed, err)
 	}
 }

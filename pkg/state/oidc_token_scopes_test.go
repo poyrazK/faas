@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"reflect"
@@ -6,12 +6,13 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 func TestOIDCExchangedTokenToAPIKeyPreservesScopeProfile(t *testing.T) {
 	want := []string{"project_environments:read", "project_environments:qualify"}
-	token := OIDCExchangedToken{Scopes: append([]string(nil), want...)}
+	token := state.OIDCExchangedToken{Scopes: append([]string(nil), want...)}
 	key := token.ToAPIKey()
 	if !reflect.DeepEqual(key.Scopes, want) {
 		t.Fatalf("API key scopes = %v, want %v", key.Scopes, want)
@@ -23,7 +24,7 @@ func TestOIDCExchangedTokenToAPIKeyPreservesScopeProfile(t *testing.T) {
 }
 
 func TestOIDCExchangedTokenLegacyRowsRemainDeployOnly(t *testing.T) {
-	key := (OIDCExchangedToken{}).ToAPIKey()
+	key := (state.OIDCExchangedToken{}).ToAPIKey()
 	want := []string{api.ScopeDeployWrite}
 	if !reflect.DeepEqual(key.Scopes, want) {
 		t.Fatalf("legacy API key scopes = %v, want %v", key.Scopes, want)
@@ -31,8 +32,8 @@ func TestOIDCExchangedTokenLegacyRowsRemainDeployOnly(t *testing.T) {
 }
 
 func TestMemStoreOIDCExchangedTokenDefaultsScopesToDeployOnly(t *testing.T) {
-	store := NewMemStore()
-	token := &OIDCExchangedToken{TokenHash: []byte("legacy"), ExpiresAt: time.Now().Add(time.Minute)}
+	store := state.NewMemStore()
+	token := &state.OIDCExchangedToken{TokenHash: []byte("legacy"), ExpiresAt: time.Now().Add(time.Minute)}
 	if _, err := store.InsertOIDCExchangedToken(t.Context(), token); err != nil {
 		t.Fatalf("insert OIDC token: %v", err)
 	}
@@ -48,7 +49,7 @@ func TestMemStoreOIDCExchangedTokenDefaultsScopesToDeployOnly(t *testing.T) {
 
 func TestOIDCExchangedTokenRowMappingPreservesScopeProfile(t *testing.T) {
 	want := []string{"project_environments:read", "project_environments:qualify"}
-	token := oidcExchangedTokenFromRow(sqlc.GetOIDCExchangedTokenByHashRow{Scopes: want})
+	token := state.OidcExchangedTokenFromRow(sqlc.GetOIDCExchangedTokenByHashRow{Scopes: want})
 	if !reflect.DeepEqual(token.Scopes, want) {
 		t.Fatalf("mapped OIDC token scopes = %v, want %v", token.Scopes, want)
 	}

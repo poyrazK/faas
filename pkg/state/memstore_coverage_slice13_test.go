@@ -1,6 +1,7 @@
-package state
+package state_test
 
 import (
+	"github.com/onebox-faas/faas/pkg/state"
 	"testing"
 	"time"
 )
@@ -11,17 +12,17 @@ import (
 // accidental rename doesn't silently break the GC wildcard predicate.
 func TestCoverageSlice13KeysWarmSnapMemoryKey(t *testing.T) {
 	depID := "abc-123"
-	if got, want := WarmSnapMemKey(depID), "snap/"+depID+"/warm/mem"; got != want {
+	if got, want := state.WarmSnapMemKey(depID), "snap/"+depID+"/warm/mem"; got != want {
 		t.Errorf("WarmSnapMemKey = %q, want %q", got, want)
 	}
-	if got, want := WarmSnapVMStateKey(depID), "snap/"+depID+"/warm/vmstate"; got != want {
+	if got, want := state.WarmSnapVMStateKey(depID), "snap/"+depID+"/warm/vmstate"; got != want {
 		t.Errorf("WarmSnapVMStateKey = %q, want %q", got, want)
 	}
 	// Pin the cold-tier sibling for the documented contrast.
-	if got, want := SnapMemKey(depID), "snap/"+depID+"/mem"; got != want {
+	if got, want := state.SnapMemKey(depID), "snap/"+depID+"/mem"; got != want {
 		t.Errorf("SnapMemKey = %q, want %q", got, want)
 	}
-	if got, want := SnapVMStateKey(depID), "snap/"+depID+"/vmstate"; got != want {
+	if got, want := state.SnapVMStateKey(depID), "snap/"+depID+"/vmstate"; got != want {
 		t.Errorf("SnapVMStateKey = %q, want %q", got, want)
 	}
 }
@@ -31,7 +32,7 @@ func TestCoverageSlice13KeysWarmSnapMemoryKey(t *testing.T) {
 // The positive path is exercised by every sweeper that adds a sidecar;
 // the MemStore fixture here pins the empty-list output.
 func TestCoverageSlice13DeploymentSidecarRAMs(t *testing.T) {
-	m, ctx, _, _, dep := memCoverageFixture(t)
+	m, ctx, _, _, dep := state.MemCoverageFixture(t)
 	if got, err := m.DeploymentSidecarRAMs(ctx, dep.ID); err != nil || len(got) != 0 {
 		t.Fatalf("DeploymentSidecarRAMs empty = %v, %v", got, err)
 	}
@@ -45,22 +46,22 @@ func TestCoverageSlice13DeploymentSidecarRAMs(t *testing.T) {
 func TestCoverageSlice13MemStoreHeartbeatGapClassification(t *testing.T) {
 	now := time.Now()
 	interval := time.Second
-	staleness := DefaultHeartbeatStaleness
+	staleness := state.DefaultHeartbeatStaleness
 
 	// Zero prev → no baseline → empty summary.
-	if got := ClassifyHeartbeatGap(time.Time{}, now, interval, staleness); got.Missed || got.Stale {
+	if got := state.ClassifyHeartbeatGap(time.Time{}, now, interval, staleness); got.Missed || got.Stale {
 		t.Errorf("zero prev: got %+v, want empty", got)
 	}
 	// Healthy tick → empty summary.
-	if got := ClassifyHeartbeatGap(now, now.Add(interval/2), interval, staleness); got.Missed || got.Stale {
+	if got := state.ClassifyHeartbeatGap(now, now.Add(interval/2), interval, staleness); got.Missed || got.Stale {
 		t.Errorf("healthy tick: got %+v, want empty", got)
 	}
 	// Missed inside staleness window → Missed=true, Stale=false.
-	if got := ClassifyHeartbeatGap(now, now.Add(staleness/2), interval, staleness); !got.Missed || got.Stale {
+	if got := state.ClassifyHeartbeatGap(now, now.Add(staleness/2), interval, staleness); !got.Missed || got.Stale {
 		t.Errorf("missed inside staleness: got %+v, want Missed=true", got)
 	}
 	// Stale past window → Missed=true, Stale=true.
-	if got := ClassifyHeartbeatGap(now, now.Add(2*staleness), interval, staleness); !got.Missed || !got.Stale {
+	if got := state.ClassifyHeartbeatGap(now, now.Add(2*staleness), interval, staleness); !got.Missed || !got.Stale {
 		t.Errorf("stale past window: got %+v, want Missed=true Stale=true", got)
 	}
 }
@@ -70,50 +71,50 @@ func TestCoverageSlice13MemStoreHeartbeatGapClassification(t *testing.T) {
 // functions over the State enum.
 func TestCoverageSlice13MemStoreInstanceStateMachine(t *testing.T) {
 	// All documented states must be valid.
-	for _, s := range []State{
-		StateParked, StateWaking, StateColdBooting, StateRunning,
-		StateSnapshotting, StateStopped, StateFailed,
-		StateEvictingAccountDeleting, StateMigrating,
-		StateWarm, StateDraining,
+	for _, s := range []state.State{
+		state.StateParked, state.StateWaking, state.StateColdBooting, state.StateRunning,
+		state.StateSnapshotting, state.StateStopped, state.StateFailed,
+		state.StateEvictingAccountDeleting, state.StateMigrating,
+		state.StateWarm, state.StateDraining,
 	} {
 		if !s.Valid() {
 			t.Errorf("State(%q).Valid() = false", s)
 		}
 	}
 	// An empty string is not a valid state.
-	if State("").Valid() {
+	if state.State("").Valid() {
 		t.Error("empty state valid = true, want false")
 	}
 
 	// CountsForConcurrency: live states only.
-	for _, s := range []State{StateWaking, StateColdBooting, StateRunning, StateDraining} {
+	for _, s := range []state.State{state.StateWaking, state.StateColdBooting, state.StateRunning, state.StateDraining} {
 		if !s.CountsForConcurrency() {
 			t.Errorf("State(%q).CountsForConcurrency() = false, want true", s)
 		}
 	}
-	if State("").CountsForConcurrency() {
+	if state.State("").CountsForConcurrency() {
 		t.Error("empty state counts for concurrency = true, want false")
 	}
 
 	// CountsForRAM is broader (includes snapshotting + stopped).
-	for _, s := range []State{
-		StateWaking, StateColdBooting, StateRunning, StateSnapshotting,
-		StateMigrating, StateDraining,
-		StateWarm,
+	for _, s := range []state.State{
+		state.StateWaking, state.StateColdBooting, state.StateRunning, state.StateSnapshotting,
+		state.StateMigrating, state.StateDraining,
+		state.StateWarm,
 	} {
 		if !s.CountsForRAM() {
 			t.Errorf("State(%q).CountsForRAM() = false, want true", s)
 		}
 	}
-	if StateParked.CountsForRAM() {
+	if state.StateParked.CountsForRAM() {
 		t.Error("StateParked.CountsForRAM() = true, want false")
 	}
 
 	// CanTransition: the canonical happy path.
-	if !CanTransition(StateParked, StateWaking) {
+	if !state.CanTransition(state.StateParked, state.StateWaking) {
 		t.Error("Parked → Waking disallowed")
 	}
-	if !CanTransition(StateRunning, StateStopped) {
+	if !state.CanTransition(state.StateRunning, state.StateStopped) {
 		t.Error("Running → Stopped disallowed")
 	}
 }

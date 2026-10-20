@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -8,9 +8,10 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
-func executionTestParams(t *testing.T, accountID string, admittedAt time.Time, timeoutMS int, payload string) CreateExecutionParams {
+func executionTestParams(t *testing.T, accountID string, admittedAt time.Time, timeoutMS int, payload string) state.CreateExecutionParams {
 	t.Helper()
 	request := api.CreateExecutionRequest{
 		Runtime: api.ExecutionRuntimeNode22,
@@ -24,7 +25,7 @@ func executionTestParams(t *testing.T, accountID string, admittedAt time.Time, t
 	if problem != nil {
 		t.Fatalf("resolve request: %v", problem)
 	}
-	return CreateExecutionParams{
+	return state.CreateExecutionParams{
 		AccountID: accountID, Request: resolved,
 		SourceBytes: len(request.Source), InputBytes: len(request.Input),
 		AdmittedAt: admittedAt, DeadlineAt: admittedAt.Add(time.Duration(resolved.Limits.TimeoutMS) * time.Millisecond),
@@ -32,7 +33,7 @@ func executionTestParams(t *testing.T, accountID string, admittedAt time.Time, t
 	}
 }
 
-func executionTestAccount(t *testing.T, store *MemStore, suffix string) Account {
+func executionTestAccount(t *testing.T, store *state.MemStore, suffix string) state.Account {
 	t.Helper()
 	account, err := store.CreateAccount(context.Background(), "execution-"+suffix+"@example.com", api.PlanPro)
 	if err != nil {
@@ -42,7 +43,7 @@ func executionTestAccount(t *testing.T, store *MemStore, suffix string) Account 
 }
 
 func TestMemStoreExecutionAdmissionIsAtomic(t *testing.T) {
-	store := NewMemStore()
+	store := state.NewMemStore()
 	account := executionTestAccount(t, store, "atomic")
 	if err := store.UpdateAccountPlan(context.Background(), account.ID, api.PlanHobby); err != nil {
 		t.Fatalf("UpdateAccountPlan: %v", err)
@@ -71,8 +72,8 @@ func TestMemStoreExecutionAdmissionIsAtomic(t *testing.T) {
 		switch {
 		case err == nil:
 			created++
-		case errors.Is(err, ErrExecutionQuotaExceeded):
-			var quota *ExecutionQuotaError
+		case errors.Is(err, state.ErrExecutionQuotaExceeded):
+			var quota *state.ExecutionQuotaError
 			if !errors.As(err, &quota) || quota.Limit != 1 || quota.Observed != 2 {
 				t.Fatalf("quota error = %#v", err)
 			}
@@ -87,7 +88,7 @@ func TestMemStoreExecutionAdmissionIsAtomic(t *testing.T) {
 }
 
 func TestMemStoreAgentWorkflowStepAdmissionRejectsDuplicateReceipt(t *testing.T) {
-	store := NewMemStore()
+	store := state.NewMemStore()
 	account := executionTestAccount(t, store, "workflow-step-idempotency")
 	principalA := "00000000-0000-4000-8000-000000000001"
 	principalB := "00000000-0000-4000-8000-000000000002"
@@ -103,7 +104,7 @@ func TestMemStoreAgentWorkflowStepAdmissionRejectsDuplicateReceipt(t *testing.T)
 	duplicate.WorkflowID = params.WorkflowID
 	duplicate.StepLabel = params.StepLabel
 	duplicate.RunsPrincipalID = &principalA
-	if _, err := store.CreateExecution(context.Background(), duplicate); !errors.Is(err, ErrExecutionWorkflowStepExists) {
+	if _, err := store.CreateExecution(context.Background(), duplicate); !errors.Is(err, state.ErrExecutionWorkflowStepExists) {
 		t.Fatalf("CreateExecution(duplicate step) = %v, want workflow step conflict", err)
 	}
 	otherPrincipal := executionTestParams(t, account.ID, base.Add(2*time.Millisecond), 0, "other-agent-payload")
@@ -116,8 +117,8 @@ func TestMemStoreAgentWorkflowStepAdmissionRejectsDuplicateReceipt(t *testing.T)
 }
 
 func TestMemStoreExecutionOutboundIntegrationsAreGrantedAndClaimed(t *testing.T) {
-	store, ctx, account, _ := memOutboundFixture(t)
-	offer := memCustomerOutboundOffer(account.ID, "agent-api")
+	store, ctx, account, _ := state.MemOutboundFixture(t)
+	offer := state.MemCustomerOutboundOffer(account.ID, "agent-api")
 	createdOffer, err := store.CreateOutboundIntegration(ctx, offer)
 	if err != nil {
 		t.Fatalf("CreateOutboundIntegration: %v", err)
@@ -128,7 +129,7 @@ func TestMemStoreExecutionOutboundIntegrationsAreGrantedAndClaimed(t *testing.T)
 	base := time.Now().UTC().Add(time.Second)
 	params := executionTestParams(t, account.ID, base, 0, "sealed-run")
 	params.OutboundIntegrationIDs = []string{createdOffer.ID}
-	if _, err := store.CreateExecution(ctx, params); !errors.Is(err, ErrExecutionOutboundIntegrationUnavailable) {
+	if _, err := store.CreateExecution(ctx, params); !errors.Is(err, state.ErrExecutionOutboundIntegrationUnavailable) {
 		t.Fatalf("CreateExecution without Runs grant = %v, want unavailable", err)
 	}
 	if err := store.SetOutboundIntegrationRunsEnabled(ctx, account.ID, createdOffer.ID, true); err != nil {
@@ -150,13 +151,13 @@ func TestMemStoreExecutionOutboundIntegrationsAreGrantedAndClaimed(t *testing.T)
 	}
 	params = executionTestParams(t, account.ID, base.Add(2*time.Millisecond), 0, "sealed-run-2")
 	params.OutboundIntegrationIDs = []string{createdOffer.ID}
-	if _, err := store.CreateExecution(ctx, params); !errors.Is(err, ErrExecutionOutboundIntegrationUnavailable) {
+	if _, err := store.CreateExecution(ctx, params); !errors.Is(err, state.ErrExecutionOutboundIntegrationUnavailable) {
 		t.Fatalf("CreateExecution after grant revocation = %v, want unavailable", err)
 	}
 }
 
 func TestMemStoreExecutionClaimCompletionAndPayloadErasure(t *testing.T) {
-	store := NewMemStore()
+	store := state.NewMemStore()
 	account := executionTestAccount(t, store, "lifecycle")
 	base := time.Now().UTC().Add(time.Second)
 	created, err := store.CreateExecution(context.Background(), executionTestParams(t, account.ID, base, 0, "sealed-source-and-input"))
@@ -170,7 +171,7 @@ func TestMemStoreExecutionClaimCompletionAndPayloadErasure(t *testing.T) {
 	if read.Result != nil || read.Status != api.ExecutionStatusQueued {
 		t.Fatalf("customer projection leaked or changed payload: %#v", read)
 	}
-	if _, err := store.ExecutionByID(context.Background(), "another-account", created.ID); !errors.Is(err, ErrNotFound) {
+	if _, err := store.ExecutionByID(context.Background(), "another-account", created.ID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("cross-account read error = %v, want ErrNotFound", err)
 	}
 
@@ -182,7 +183,7 @@ func TestMemStoreExecutionClaimCompletionAndPayloadErasure(t *testing.T) {
 		t.Fatalf("claim payload = %q kid=%q", claim.SealedPayload, claim.PayloadKID)
 	}
 	claim.SealedPayload[0] = 'X'
-	if _, err := store.ClaimExecution(context.Background(), "schedd-b", base.Add(2*time.Millisecond), time.Second); !errors.Is(err, ErrNotFound) {
+	if _, err := store.ClaimExecution(context.Background(), "schedd-b", base.Add(2*time.Millisecond), time.Second); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("second claim error = %v, want ErrNotFound", err)
 	}
 	running, err := store.MarkExecutionRunning(context.Background(), created.ID, *claim.LeaseToken, base.Add(3*time.Millisecond))
@@ -194,7 +195,7 @@ func TestMemStoreExecutionClaimCompletionAndPayloadErasure(t *testing.T) {
 	}
 
 	exitCode := 0
-	completed, err := store.CompleteExecution(context.Background(), CompleteExecutionParams{
+	completed, err := store.CompleteExecution(context.Background(), state.CompleteExecutionParams{
 		ID: created.ID, LeaseToken: *claim.LeaseToken, Status: api.ExecutionStatusSucceeded,
 		Result: []byte(`{"hello":"world"}`), Stdout: "ok\n", ExitCode: &exitCode,
 		Usage:      api.ExecutionUsage{WallTimeMS: 3, CPUTimeMS: 2, PeakMemoryMB: 12},
@@ -206,13 +207,13 @@ func TestMemStoreExecutionClaimCompletionAndPayloadErasure(t *testing.T) {
 	if !completed.Status.Terminal() || completed.LeaseToken != nil || completed.FinishedAt == nil {
 		t.Fatalf("completed row = %#v", completed)
 	}
-	if _, ok := store.executionPayloads[created.ID]; ok {
+	if _, ok := (*store.ExecutionPayloads())[created.ID]; ok {
 		t.Fatal("terminal completion retained encrypted payload")
 	}
-	if _, err := store.CompleteExecution(context.Background(), CompleteExecutionParams{
+	if _, err := store.CompleteExecution(context.Background(), state.CompleteExecutionParams{
 		ID: created.ID, LeaseToken: *claim.LeaseToken, Status: api.ExecutionStatusFailed,
 		FinishedAt: base.Add(5 * time.Millisecond),
-	}); !errors.Is(err, ErrExecutionLeaseLost) {
+	}); !errors.Is(err, state.ErrExecutionLeaseLost) {
 		t.Fatalf("stale terminal rewrite error = %v, want ErrExecutionLeaseLost", err)
 	}
 	usage, err := store.ExecutionUsageByAccount(context.Background(), account.ID, base)
@@ -226,7 +227,7 @@ func TestMemStoreExecutionClaimCompletionAndPayloadErasure(t *testing.T) {
 }
 
 func TestMemStoreExecutionQueueViewsAndFairClaim(t *testing.T) {
-	store := NewMemStore()
+	store := state.NewMemStore()
 	accountA := executionTestAccount(t, store, "queue-a")
 	accountB := executionTestAccount(t, store, "queue-b")
 	base := time.Now().UTC().Add(time.Second)
@@ -269,7 +270,7 @@ func TestMemStoreExecutionQueueViewsAndFairClaim(t *testing.T) {
 }
 
 func TestMemStoreExecutionCancellationWaitsForTeardownAfterClaim(t *testing.T) {
-	store := NewMemStore()
+	store := state.NewMemStore()
 	account := executionTestAccount(t, store, "cancel")
 	base := time.Now().UTC().Add(time.Second)
 
@@ -284,7 +285,7 @@ func TestMemStoreExecutionCancellationWaitsForTeardownAfterClaim(t *testing.T) {
 	if cancelled.Status != api.ExecutionStatusCancelled || cancelled.FinishedAt == nil {
 		t.Fatalf("queued cancellation = %#v", cancelled)
 	}
-	if _, ok := store.executionPayloads[queued.ID]; ok {
+	if _, ok := (*store.ExecutionPayloads())[queued.ID]; ok {
 		t.Fatal("queued cancellation retained payload")
 	}
 
@@ -306,16 +307,16 @@ func TestMemStoreExecutionCancellationWaitsForTeardownAfterClaim(t *testing.T) {
 	if requested.Status != api.ExecutionStatusRunning || requested.CancelRequested == nil || requested.FinishedAt != nil {
 		t.Fatalf("running cancellation request = %#v", requested)
 	}
-	if _, ok := store.executionPayloads[active.ID]; !ok {
+	if _, ok := (*store.ExecutionPayloads())[active.ID]; !ok {
 		t.Fatal("running cancellation erased payload before teardown acknowledgement")
 	}
-	if _, err := store.CompleteExecution(context.Background(), CompleteExecutionParams{
+	if _, err := store.CompleteExecution(context.Background(), state.CompleteExecutionParams{
 		ID: active.ID, LeaseToken: *claim.LeaseToken, Status: api.ExecutionStatusSucceeded,
 		Result: []byte(`{"ignored":true}`), FinishedAt: base.Add(5500 * time.Microsecond),
-	}); !errors.Is(err, ErrExecutionInvalidTerminal) {
+	}); !errors.Is(err, state.ErrExecutionInvalidTerminal) {
 		t.Fatalf("success after cancellation request error = %v, want ErrExecutionInvalidTerminal", err)
 	}
-	completed, err := store.CompleteExecution(context.Background(), CompleteExecutionParams{
+	completed, err := store.CompleteExecution(context.Background(), state.CompleteExecutionParams{
 		ID: active.ID, LeaseToken: *claim.LeaseToken, Status: api.ExecutionStatusCancelled,
 		FinishedAt: base.Add(6 * time.Millisecond),
 	})
@@ -325,20 +326,20 @@ func TestMemStoreExecutionCancellationWaitsForTeardownAfterClaim(t *testing.T) {
 	if completed.Status != api.ExecutionStatusCancelled {
 		t.Fatalf("completed status = %q", completed.Status)
 	}
-	if _, ok := store.executionPayloads[active.ID]; ok {
+	if _, ok := (*store.ExecutionPayloads())[active.ID]; ok {
 		t.Fatal("acknowledged cancellation retained payload")
 	}
 }
 
 func TestMemStoreExecutionAdmissionUsesStoredPlanAndCapsLeaseAtDeadline(t *testing.T) {
-	store := NewMemStore()
+	store := state.NewMemStore()
 	ctx := context.Background()
 	free, err := store.CreateAccount(ctx, "execution-free@example.com", api.PlanFree)
 	if err != nil {
 		t.Fatalf("create free account: %v", err)
 	}
 	base := time.Now().UTC().Add(time.Second)
-	if _, err := store.CreateExecution(ctx, executionTestParams(t, free.ID, base, 0, "free")); !errors.Is(err, ErrExecutionsNotAllowed) {
+	if _, err := store.CreateExecution(ctx, executionTestParams(t, free.ID, base, 0, "free")); !errors.Is(err, state.ErrExecutionsNotAllowed) {
 		t.Fatalf("free admission error = %v, want ErrExecutionsNotAllowed", err)
 	}
 
@@ -348,7 +349,7 @@ func TestMemStoreExecutionAdmissionUsesStoredPlanAndCapsLeaseAtDeadline(t *testi
 	}
 	oversized := executionTestParams(t, hobby.ID, base, 0, "oversized")
 	oversized.Request.Limits.MaxOutputBytes = 4 << 20
-	if _, err := store.CreateExecution(ctx, oversized); !errors.Is(err, ErrExecutionInvalid) {
+	if _, err := store.CreateExecution(ctx, oversized); !errors.Is(err, state.ErrExecutionInvalid) {
 		t.Fatalf("cross-plan envelope error = %v, want ErrExecutionInvalid", err)
 	}
 
@@ -363,7 +364,7 @@ func TestMemStoreExecutionAdmissionUsesStoredPlanAndCapsLeaseAtDeadline(t *testi
 	if claim.LeaseExpiresAt == nil || !claim.LeaseExpiresAt.Equal(created.DeadlineAt) {
 		t.Fatalf("lease expiry = %v, want deadline %v", claim.LeaseExpiresAt, created.DeadlineAt)
 	}
-	if _, err := store.MarkExecutionRunning(ctx, created.ID, *claim.LeaseToken, created.DeadlineAt); !errors.Is(err, ErrExecutionLeaseLost) {
+	if _, err := store.MarkExecutionRunning(ctx, created.ID, *claim.LeaseToken, created.DeadlineAt); !errors.Is(err, state.ErrExecutionLeaseLost) {
 		t.Fatalf("mark running at deadline error = %v, want ErrExecutionLeaseLost", err)
 	}
 	sweep, err := store.SweepExecutions(ctx, created.DeadlineAt, 10)
@@ -376,7 +377,7 @@ func TestMemStoreExecutionAdmissionUsesStoredPlanAndCapsLeaseAtDeadline(t *testi
 }
 
 func TestMemStoreExecutionSweepRecoveryNeverReplaysRunningCode(t *testing.T) {
-	store := NewMemStore()
+	store := state.NewMemStore()
 	account := executionTestAccount(t, store, "sweep")
 	base := time.Now().UTC().Add(time.Second)
 
@@ -419,13 +420,13 @@ func TestMemStoreExecutionSweepRecoveryNeverReplaysRunningCode(t *testing.T) {
 		runningRow.Status != api.ExecutionStatusFailed || runningRow.FailureCode == nil || *runningRow.FailureCode != "lease_expired" {
 		t.Fatalf("unexpected recovery states: expired=%q restore=%q running=%#v", expiredRow.Status, restoreRow.Status, runningRow)
 	}
-	if _, ok := store.executionPayloads[restore.ID]; !ok {
+	if _, ok := (*store.ExecutionPayloads())[restore.ID]; !ok {
 		t.Fatal("safe restore requeue lost its payload")
 	}
-	if _, err := store.CompleteExecution(context.Background(), CompleteExecutionParams{
+	if _, err := store.CompleteExecution(context.Background(), state.CompleteExecutionParams{
 		ID: running.ID, LeaseToken: *runningClaim.LeaseToken, Status: api.ExecutionStatusSucceeded,
 		FinishedAt: base.Add(301 * time.Millisecond),
-	}); !errors.Is(err, ErrExecutionLeaseLost) {
+	}); !errors.Is(err, state.ErrExecutionLeaseLost) {
 		t.Fatalf("expired running lease completion error = %v", err)
 	}
 	usage, err := store.ExecutionUsageByAccount(context.Background(), account.ID, base)
