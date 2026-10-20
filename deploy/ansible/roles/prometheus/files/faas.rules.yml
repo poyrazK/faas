@@ -3810,12 +3810,15 @@ groups:
                and on (job, instance) (builderd_build_worker_inflight{job="builderd"} == 0)
                and on (job, instance) (builderd_build_worker_last_completed_timestamp_seconds{job="builderd"} == 0)))
           and on (job, instance) (builderd_build_queue_observation_healthy == 1)
+      # The 60 s term covers scrape and evaluation staleness: Prometheus sees a
+      # completion only at its next scrape (15 s) and rule evaluation (30 s), so
+      # an allowance of two 2 s poll intervals fired on healthy pollers (rc.282).
       - record: builderd_build_worker_progress_allowance_seconds
         expr: |
           (((builderd_build_worker_busy_allowance_seconds{job="builderd"}
-              + on (job, instance) 2 * builderd_build_worker_interval_seconds{job="builderd"})
+              + on (job, instance) 2 * builderd_build_worker_interval_seconds{job="builderd"} + 60)
              and on (job, instance) (builderd_build_worker_inflight{job="builderd"} == 1))
-           or ((2 * builderd_build_worker_interval_seconds{job="builderd"})
+           or ((2 * builderd_build_worker_interval_seconds{job="builderd"} + 60)
                and on (job, instance) (builderd_build_worker_inflight{job="builderd"} == 0)))
           and on (job, instance) (builderd_build_queue_observation_healthy == 1)
       - alert: FaasBuilderQueueTelemetryUnavailable
@@ -3847,9 +3850,9 @@ groups:
           public_status: internal
         annotations:
           summary: Durable build polling has stopped progressing
-          description: The expected poller has exceeded its progress allowance for 5m. Idle allowance is two poll intervals;
-            an in-flight iteration also receives the effective running-build recovery threshold. Notification work cannot
-            renew poller progress. Capture logs and goroutines before intervening.
+          description: The expected poller has exceeded its progress allowance for 5m. Idle allowance is two poll intervals
+            plus a 60 s scrape margin; an in-flight iteration also receives the effective running-build recovery threshold.
+            Notification work cannot renew poller progress. Capture logs and goroutines before intervening.
           runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildWorker.md
       - alert: FaasBuilderClaimsFailing
         expr: |
