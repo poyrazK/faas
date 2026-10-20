@@ -21,7 +21,7 @@ func ValidateCatalog(out api.ListEnvironmentGitReleasesResponse) error {
 		return fmt.Errorf("invalid recovery retention accounting")
 	}
 	var pageBytes int64
-	seen := map[string]bool{}
+	seen, current := map[string]bool{}, false
 	for _, release := range out.Releases {
 		id, err := uuid.Parse(release.ReleaseSetID)
 		if err != nil || id.String() != release.ReleaseSetID || seen[release.ReleaseSetID] || release.CreatedAt.IsZero() || !slices.Contains([]string{"active", "unknown", "compatibility_window", "compatibility_window_elapsed"}, release.RetentionStatus) || (release.Eligibility != "eligible" && release.Eligibility != "blocked") || (release.Eligibility == "eligible") != (len(release.BlockingReasons) == 0) {
@@ -31,10 +31,19 @@ func ValidateCatalog(out api.ListEnvironmentGitReleasesResponse) error {
 		if release.ProtectionStatus != "" && !slices.Contains([]string{"disabled", "expired", "outside_policy", "budget_exceeded", "protected"}, release.ProtectionStatus) {
 			return fmt.Errorf("invalid artifact protection status")
 		}
-		if release.RetainedBytes < 0 || (release.ProtectionStatus == "protected") != (release.ArtifactsProtectedUntil != nil) || release.ProtectionStatus != "protected" && release.RetainedBytes != 0 {
+		protected := release.ProtectionStatus == "protected"
+		if release.RetainedBytes < 0 || !protected && (release.ArtifactsProtectedUntil != nil || release.RetainedBytes != 0) {
 			return fmt.Errorf("invalid artifact protection proof")
 		}
-		if release.ArtifactsProtectedUntil != nil && (out.RecoveryRetention == nil || !release.ArtifactsProtectedUntil.After(out.ObservedAt) || release.RetainedBytes <= 0 || release.RetainedBytes > out.RetentionBytes) {
+		// Only the newest serving release is protected without a deadline;
+		// its window starts when a newer release first completes serving.
+		if protected && release.ArtifactsProtectedUntil == nil {
+			if current {
+				return fmt.Errorf("invalid artifact protection window")
+			}
+			current = true
+		}
+		if protected && (out.RecoveryRetention == nil || release.ArtifactsProtectedUntil != nil && !release.ArtifactsProtectedUntil.After(out.ObservedAt) || release.RetainedBytes <= 0 || release.RetainedBytes > out.RetentionBytes) {
 			return fmt.Errorf("invalid artifact protection window")
 		}
 		pageBytes += release.RetainedBytes

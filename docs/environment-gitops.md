@@ -516,10 +516,12 @@ skip ahead. Protected storage remains part of ordinary storage accounting.
 
 The catalog reports the effective approved policy and total charged bytes across
 all pages. Each row shows artifact protection separately from rollback eligibility
-and routing compatibility. The protection deadline is measured from original
-serving completion; listing or retrying never renews it. A newer served release,
-policy reduction/removal, or explicit source detachment can release protection
-earlier. Suspension preserves it. Existing trust checks and fresh target
+and routing compatibility. The newest served release has no deadline while it
+is current. Once a newer release first completes serving, the replaced release
+stays protected for `seconds` from that moment, so a long-running release is
+still recoverable right after a bad deploy. Listing, retrying or gateway handoffs
+never renew a deadline. Count and byte bounds, policy reduction/removal, or
+explicit source detachment can release protection earlier. Suspension preserves it. Existing trust checks and fresh target
 qualification remain mandatory. Approval cannot resurrect an artifact claimed
 by garbage collection, and protected provenance cannot be erased by cleanup.
 See [ADR-20261017190807](adr/20261017190807-gitops-bounded-recovery-retention.md).

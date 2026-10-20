@@ -15,22 +15,29 @@ func TestRecoveryRetentionSelectionUsesCountAgeAndConservativeBytes(t *testing.T
 	now := time.Now().UTC()
 	policy := &api.EnvironmentRecoveryRetention{Releases: 2, Seconds: 60, MaxBytes: 150}
 	rows := []recoveryProtection{
-		{releaseID: "old", served: now.Add(-61 * time.Second), bytes: 100},
+		// Replaced 100 s ago: its age window has elapsed.
+		{releaseID: "ancient", served: now.Add(-200 * time.Second), bytes: 10},
+		// Served long before the age window but replaced 3 s ago.
+		{releaseID: "old", served: now.Add(-100 * time.Second), bytes: 10},
 		{releaseID: "third", served: now.Add(-3 * time.Second), bytes: 10},
 		{releaseID: "second", served: now.Add(-2 * time.Second), bytes: 100},
 		{releaseID: "first", served: now.Add(-time.Second), bytes: 100},
 	}
 	got := selectRecoveryProtection(rows, policy, now)
 	for _, row := range got {
-		want := map[string]string{"first": "protected", "second": "budget_exceeded", "third": "outside_policy", "old": "expired"}[row.releaseID]
+		want := map[string]string{"first": "protected", "second": "budget_exceeded", "third": "outside_policy", "old": "outside_policy", "ancient": "expired"}[row.releaseID]
 		if row.status != want {
 			t.Fatalf("%s: %s != %s", row.releaseID, row.status, want)
 		}
+		if row.releaseID == "first" && !row.until.IsZero() || row.releaseID == "second" && !row.until.Equal(now.Add(59*time.Second)) {
+			t.Fatalf("%s deadline %s is not anchored to its replacement", row.releaseID, row.until)
+		}
 	}
-	// Advancing observation does not renew the age deadline.
+	// Advancing observation does not renew a replaced release's deadline; the
+	// current release stays protected until a newer one completes serving.
 	got = selectRecoveryProtection(rows, policy, now.Add(time.Minute))
 	for _, row := range got {
-		if row.status != "expired" {
+		if want := map[bool]string{true: "protected", false: "expired"}[row.releaseID == "first"]; row.status != want {
 			t.Fatal("read renewed retention", row)
 		}
 	}
@@ -96,15 +103,18 @@ func TestRecoveryRetentionFencesGCAndMetadataThenExpires(t *testing.T) {
 	if err := m.validateRecoveryRetentionApprovalLocked(memory.source, definition); !errors.Is(err, ErrLayerArtifactRetired) {
 		t.Fatal("GC claim revived", err)
 	}
+	// Age each release so its successor completed serving two hours ago. The
+	// replaced release expires; the current one stays protected while current.
 	for id, receipt := range m.environmentWorkloadServingReceipts {
-		old := time.Now().Add(-2 * time.Hour)
+		old := receipt.ServedAt.Add(-2 * time.Hour)
 		receipt.ServedAt = &old
 		m.environmentWorkloadServingReceipts[id] = receipt
 	}
-	for _, id := range ids[1:] {
-		if _, eligible, err := m.ClaimLayerArtifactDeletion(t.Context(), m.deployments[id].RootfsKey); err != nil || !eligible {
-			t.Fatal("expiry leaked a pin", eligible, err)
-		}
+	if _, eligible, err := m.ClaimLayerArtifactDeletion(t.Context(), m.deployments[ids[1]].RootfsKey); err != nil || !eligible {
+		t.Fatal("expiry leaked a pin", eligible, err)
+	}
+	if _, eligible, err := m.ClaimLayerArtifactDeletion(t.Context(), m.deployments[ids[2]].RootfsKey); err != nil || eligible {
+		t.Fatal("current release lost protection", eligible, err)
 	}
 }
 
@@ -142,6 +152,7 @@ func TestRecoveryRetentionKeepsFirstCompletionAcrossGatewayHandoffs(t *testing.T
 		break
 	}
 	first := *original.ServedAt
+	before := m.recoveryProtectionLocked(memory, recoveryPolicy(memory), time.Now())
 	pending := original
 	pending.ServedAt = nil
 	pending.Serving = false
@@ -158,9 +169,13 @@ func TestRecoveryRetentionKeepsFirstCompletionAcrossGatewayHandoffs(t *testing.T
 	if err := m.publishRecoveryServingReceiptLocked(stored); err != nil {
 		t.Fatal(err)
 	}
-	for _, row := range m.recoveryProtectionLocked(memory, recoveryPolicy(memory), time.Now()) {
-		if row.graphID == stored.GraphID && !row.until.Equal(first.Add(time.Hour)) {
-			t.Fatal("handoff renewed retention", row)
+	after := m.recoveryProtectionLocked(memory, recoveryPolicy(memory), time.Now())
+	if len(after) != len(before) {
+		t.Fatal("handoff changed retained history", before, after)
+	}
+	for i := range after {
+		if after[i].releaseID != before[i].releaseID || !after[i].served.Equal(before[i].served) || !after[i].until.Equal(before[i].until) {
+			t.Fatal("handoff renewed retention", before[i], after[i])
 		}
 	}
 }

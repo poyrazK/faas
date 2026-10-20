@@ -80,7 +80,9 @@ WITH policies AS (
  WHERE r.served_at IS NOT NULL AND EXISTS(SELECT 1 FROM project_release_members rm WHERE rm.release_id=r.release_set_id)
  GROUP BY p.source_id,p.account_id,p.project_id,p.environment_id,p.environment_slug,p.max_releases,p.seconds,p.max_bytes,r.release_set_id
 ), inventory AS (
- SELECT h.*,h.served_at+make_interval(secs=>h.seconds) protected_until,
+ -- A release stays protected while it is the newest completed serving release
+ -- and for the policy age after the next release first completed serving.
+ SELECT h.*,lag(h.served_at) OVER(PARTITION BY h.account_id,h.source_id ORDER BY h.served_at DESC,h.release_set_id DESC) superseded_at,
   coalesce((SELECT sum(k.bytes)::bigint FROM (
    SELECT key,max(bytes) bytes FROM (
     SELECT d.rootfs_key key,d.rootfs_bytes bytes FROM project_release_members rm JOIN deployments d ON d.id=rm.deployment_id WHERE rm.release_id=h.release_set_id
@@ -91,10 +93,13 @@ WITH policies AS (
    WHERE rm.release_id=h.release_set_id AND (a.account_id<>h.account_id OR a.project_id<>h.project_id OR d.app_id<>rm.app_id OR d.scope<>h.environment_slug OR coalesce(d.rootfs_key,'')='' OR coalesce(d.rootfs_bytes,0)<=0 OR d.deleted_at IS NOT NULL OR a.status='deleted'))
   AND NOT EXISTS(SELECT 1 FROM project_release_members rm JOIN deployment_sidecar_layers l ON l.deployment_id=rm.deployment_id WHERE rm.release_id=h.release_set_id AND (l.storage_key='' OR l.bytes<=0)) available
  FROM history h
+), aged AS (
+ SELECT i.*,i.superseded_at+make_interval(secs=>i.seconds) protected_until FROM inventory i
 ), ranked AS (
- SELECT i.*,row_number() OVER(PARTITION BY source_id ORDER BY served_at DESC,release_set_id DESC) position,
- sum(bytes) OVER(PARTITION BY source_id ORDER BY served_at DESC,release_set_id DESC ROWS UNBOUNDED PRECEDING)::bigint charged_bytes
- FROM inventory i WHERE protected_until>clock_timestamp()
+ -- account_id leads every partition so account-scoped guards push down.
+ SELECT a.*,row_number() OVER(PARTITION BY account_id,source_id ORDER BY served_at DESC,release_set_id DESC) position,
+ sum(bytes) OVER(PARTITION BY account_id,source_id ORDER BY served_at DESC,release_set_id DESC ROWS UNBOUNDED PRECEDING)::bigint charged_bytes
+ FROM aged a WHERE a.protected_until IS NULL OR a.protected_until>clock_timestamp()
 )
 SELECT * FROM ranked;
 CREATE VIEW environment_recovery_retained_releases AS
@@ -109,6 +114,27 @@ CREATE VIEW environment_recovery_retained_keys AS
  SELECT p.account_id,p.release_set_id,d.rootfs_key storage_key FROM environment_recovery_retained_releases p JOIN project_release_members rm ON rm.release_id=p.release_set_id JOIN deployments d ON d.id=rm.deployment_id
  UNION SELECT p.account_id,p.release_set_id,l.storage_key FROM environment_recovery_retained_releases p JOIN project_release_members rm ON rm.release_id=p.release_set_id JOIN deployment_sidecar_layers l ON l.deployment_id=rm.deployment_id;
 
+-- Protection exists only under an approved policy of an attached source.
+CREATE FUNCTION environment_recovery_account_has_policy(target uuid) RETURNS boolean LANGUAGE sql STABLE AS $$
+ SELECT EXISTS(SELECT 1 FROM environment_git_sources s JOIN environment_desired_revisions v ON v.id=s.approved_revision_id AND v.source_id=s.id
+  WHERE s.account_id=target AND NOT s.detached AND v.definition ? 'recovery_retention')
+$$;
+-- Accounts with a policy serialize approval, serving publication and metadata
+-- writers exclusively on the account row. Every other account takes FOR KEY
+-- SHARE: it never blocks foreign-key checks, ordinary account updates or other
+-- writers, yet still orders against a first approval's exclusive lock, whose
+-- policy the re-check below sees once granted. Returns whether to evaluate.
+CREATE FUNCTION environment_recovery_lock_account(target uuid) RETURNS boolean LANGUAGE plpgsql AS $$
+BEGIN
+ IF target IS NULL THEN RETURN true; END IF;
+ IF environment_recovery_account_has_policy(target) THEN
+  PERFORM id FROM accounts WHERE id=target FOR UPDATE;
+  RETURN true;
+ END IF;
+ PERFORM id FROM accounts WHERE id=target FOR KEY SHARE;
+ RETURN environment_recovery_account_has_policy(target);
+END $$;
+
 -- Publication serializes reservations and metadata writers on the account. GC
 -- serializes on each existing storage-key row and re-reads references after lock.
 CREATE FUNCTION environment_recovery_fence() RETURNS trigger LANGUAGE plpgsql AS $$
@@ -116,7 +142,7 @@ DECLARE account uuid; k text; state text; reserved numeric;
 BEGIN
  IF TG_TABLE_NAME='environment_git_sources' THEN account:=NEW.account_id;
  ELSE SELECT account_id INTO account FROM environment_git_sources WHERE id=NEW.source_id; END IF;
- PERFORM id FROM accounts WHERE id=account FOR UPDATE;
+ IF NOT environment_recovery_lock_account(account) THEN RETURN NEW; END IF;
  SELECT coalesce(sum((v.definition->'recovery_retention'->>'max_bytes')::numeric),0) INTO reserved
  FROM environment_git_sources s JOIN environment_desired_revisions v ON v.id=s.approved_revision_id
  WHERE s.account_id=account AND NOT s.detached AND v.definition ? 'recovery_retention';
@@ -144,12 +170,12 @@ BEGIN
  IF TG_OP='INSERT' THEN
   IF TG_TABLE_NAME='project_release_members' THEN
    SELECT account_id INTO account FROM project_release_sets WHERE id=NEW.release_id;
-   PERFORM id FROM accounts WHERE id=account FOR UPDATE;
-   SELECT EXISTS(SELECT 1 FROM environment_recovery_retained_releases WHERE release_set_id=NEW.release_id) INTO blocked;
+   IF NOT environment_recovery_lock_account(account) THEN RETURN NEW; END IF;
+   SELECT EXISTS(SELECT 1 FROM environment_recovery_retained_releases WHERE release_set_id=NEW.release_id AND (account IS NULL OR account_id=account)) INTO blocked;
   ELSE
    SELECT a.account_id INTO account FROM deployments d JOIN apps a ON a.id=d.app_id WHERE d.id=NEW.deployment_id;
-   PERFORM id FROM accounts WHERE id=account FOR UPDATE;
-   SELECT EXISTS(SELECT 1 FROM environment_recovery_retained_deployments WHERE deployment_id=NEW.deployment_id) INTO blocked;
+   IF NOT environment_recovery_lock_account(account) THEN RETURN NEW; END IF;
+   SELECT EXISTS(SELECT 1 FROM environment_recovery_retained_deployments WHERE deployment_id=NEW.deployment_id AND (account IS NULL OR account_id=account)) INTO blocked;
    IF blocked AND EXISTS(SELECT 1 FROM deployment_sidecar_layers l WHERE l.deployment_id=NEW.deployment_id AND l.sidecar_name=NEW.sidecar_name
     AND (l.storage_key,l.bytes,l.content_digest) IS NOT DISTINCT FROM (NEW.storage_key,NEW.bytes,NEW.content_digest)) THEN RETURN NEW; END IF;
   END IF;
@@ -186,33 +212,39 @@ BEGIN
   IF TG_TABLE_NAME='deployments' THEN identity:=OLD.id; ELSE identity:=OLD.deployment_id; END IF;
   SELECT a.account_id INTO account FROM deployments d JOIN apps a ON a.id=d.app_id WHERE d.id=identity;
  END IF;
- PERFORM id FROM accounts WHERE id=account FOR UPDATE;
+ IF TG_TABLE_NAME='environment_desired_revisions' THEN
+  -- An approved revision gaining a policy in place must still be fenced.
+  PERFORM id FROM accounts WHERE id=account FOR UPDATE;
+ ELSIF NOT environment_recovery_lock_account(account) THEN
+  IF TG_OP='UPDATE' THEN RETURN NEW; END IF;
+  RETURN OLD;
+ END IF;
  IF TG_TABLE_NAME='accounts' THEN
   SELECT EXISTS(SELECT 1 FROM environment_recovery_retained_releases WHERE account_id=OLD.id) INTO blocked;
  ELSIF TG_TABLE_NAME='projects' THEN
-  SELECT EXISTS(SELECT 1 FROM environment_recovery_retained_releases WHERE project_id=OLD.id) INTO blocked;
+  SELECT EXISTS(SELECT 1 FROM environment_recovery_retained_releases WHERE project_id=OLD.id AND (account IS NULL OR account_id=account)) INTO blocked;
  ELSIF TG_TABLE_NAME='project_environments' THEN
-  SELECT EXISTS(SELECT 1 FROM environment_recovery_retained_releases WHERE environment_id=OLD.id) INTO blocked;
+  SELECT EXISTS(SELECT 1 FROM environment_recovery_retained_releases WHERE environment_id=OLD.id AND (account IS NULL OR account_id=account)) INTO blocked;
  ELSIF TG_TABLE_NAME='apps' THEN
-  SELECT EXISTS(SELECT 1 FROM environment_recovery_retained_deployments p JOIN deployments d ON d.id=p.deployment_id WHERE d.app_id=OLD.id) INTO blocked;
+  SELECT EXISTS(SELECT 1 FROM environment_recovery_retained_deployments p JOIN deployments d ON d.id=p.deployment_id WHERE d.app_id=OLD.id AND (account IS NULL OR p.account_id=account)) INTO blocked;
  ELSIF TG_TABLE_NAME='environment_git_sources' THEN
-  SELECT EXISTS(SELECT 1 FROM environment_recovery_retained_releases WHERE source_id=OLD.id) INTO blocked;
+  SELECT EXISTS(SELECT 1 FROM environment_recovery_retained_releases WHERE source_id=OLD.id AND (account IS NULL OR account_id=account)) INTO blocked;
  ELSIF TG_TABLE_NAME='project_release_sets' THEN
-  SELECT EXISTS(SELECT 1 FROM environment_recovery_retained_releases WHERE release_set_id=OLD.id) INTO blocked;
+  SELECT EXISTS(SELECT 1 FROM environment_recovery_retained_releases WHERE release_set_id=OLD.id AND (account IS NULL OR account_id=account)) INTO blocked;
  ELSIF TG_TABLE_NAME='environment_desired_revisions' THEN
   IF TG_OP='UPDATE' THEN
    SELECT EXISTS(SELECT 1 FROM environment_git_sources s WHERE s.approved_revision_id=OLD.id AND NOT s.detached AND (OLD.definition ? 'recovery_retention' OR NEW.definition ? 'recovery_retention')) INTO blocked;
   ELSE
    SELECT EXISTS(SELECT 1 FROM environment_git_sources s WHERE s.approved_revision_id=OLD.id AND NOT s.detached AND OLD.definition ? 'recovery_retention') INTO blocked;
   END IF;
-  blocked:=blocked OR EXISTS(SELECT 1 FROM environment_recovery_retained_releases p JOIN environment_workload_graphs g ON g.id=p.graph_id WHERE g.revision_id=OLD.id);
+  blocked:=blocked OR EXISTS(SELECT 1 FROM environment_recovery_retained_releases p JOIN environment_workload_graphs g ON g.id=p.graph_id WHERE g.revision_id=OLD.id AND (account IS NULL OR p.account_id=account));
  ELSIF TG_TABLE_NAME='project_release_members' THEN
-  SELECT EXISTS(SELECT 1 FROM environment_recovery_retained_releases WHERE release_set_id=OLD.release_id) INTO blocked;
+  SELECT EXISTS(SELECT 1 FROM environment_recovery_retained_releases WHERE release_set_id=OLD.release_id AND (account IS NULL OR account_id=account)) INTO blocked;
  ELSIF TG_TABLE_NAME='environment_workload_graphs' THEN
-  SELECT EXISTS(SELECT 1 FROM environment_recovery_retained_releases WHERE graph_id=OLD.id) INTO blocked;
+  SELECT EXISTS(SELECT 1 FROM environment_recovery_retained_releases WHERE graph_id=OLD.id AND (account IS NULL OR account_id=account)) INTO blocked;
  ELSIF TG_TABLE_NAME IN ('environment_workload_serving_receipts','environment_recovery_serving_history') THEN
-  SELECT EXISTS(SELECT 1 FROM environment_recovery_retained_releases WHERE graph_id=OLD.graph_id) INTO blocked;
- ELSE SELECT EXISTS(SELECT 1 FROM environment_recovery_retained_deployments WHERE deployment_id=identity) INTO blocked;
+  SELECT EXISTS(SELECT 1 FROM environment_recovery_retained_releases WHERE graph_id=OLD.graph_id AND (account IS NULL OR account_id=account)) INTO blocked;
+ ELSE SELECT EXISTS(SELECT 1 FROM environment_recovery_retained_deployments WHERE deployment_id=identity AND (account IS NULL OR account_id=account)) INTO blocked;
  END IF;
  IF blocked THEN RAISE EXCEPTION 'release protected by recovery retention' USING ERRCODE='23514',CONSTRAINT='environment_recovery_retained'; END IF;
  IF TG_OP='UPDATE' THEN RETURN NEW; END IF;

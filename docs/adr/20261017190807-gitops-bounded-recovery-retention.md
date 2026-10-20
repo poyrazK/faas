@@ -37,18 +37,28 @@ still deduplicates physical keys. Shared runtime bases retain their existing
 producer/GC rules; snapshots receive no new pins.
 
 Use a database-derived reference inventory and the existing storage-key retention
-lock. Approval and serving publication serialize on the account, then lock keys
-in sorted order. GC rechecks references after acquiring the same key lock. A
-claimed/deleted key cannot be revived. Memory storage uses its existing mutex.
+lock. In an account with an approved policy, approval, serving publication and
+metadata writers serialize exclusively on the account row, then lock keys in
+sorted order. Every other account's writers take only a key-share lock on the
+account row and skip inventory evaluation: deployment artifact writes, release
+membership and app/project cleanup never block foreign-key checks, ordinary
+account updates or each other, while a first approval's exclusive lock still
+orders against them and its policy is re-read once granted. Guards scope the
+inventory to the writer's account. GC rechecks references after acquiring the
+same key lock. A claimed/deleted key cannot be revived. Memory storage uses its
+existing mutex.
 A small immutable first-serving journal is captured from completed serving receipts,
 backfilled from the first known surviving completion at upgrade and cascaded
 with its graph/source/release.
 It preserves original completion independently of gateway acknowledgement rounds.
 Current serving receipts retain their existing pending/served checks and lease
 authority; resetting them neither erases history nor renews artifact protection.
-Selection expires from the original serving timestamp without a renewal worker:
-reads do not write, and repeated receipts do not extend the deadline. Count,
-budget and reviewed policy changes may displace a release before its age deadline.
+The newest completed serving release has no age deadline while it is current.
+A replaced release is selectable for the policy age after the next release first
+completed serving, so a long-running release remains recoverable right after it
+is replaced. Deadlines derive from the journal without a renewal worker: reads
+do not write, and repeated receipts do not extend them. Count, budget and
+reviewed policy changes may displace a release before its age deadline.
 
 Protect release membership, completed serving evidence, graph identity, selected
 deployment bytes, source/registry producer metadata and borrowed producer owners

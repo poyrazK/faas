@@ -73,7 +73,9 @@ func TestGitOpsRecoveryRetentionProtectsServedIdentityAndCatalog(t *testing.T) {
 						t.Fatal("handoff did not require fresh acknowledgements", pending, err)
 					}
 					during, err := store.ListEnvironmentGitReleases(t.Context(), source, api.ListEnvironmentGitReleasesRequest{TargetCommitSHA: lease.Revision.CommitSHA}, desired)
-					if err != nil || len(during.Releases) != 1 || during.Releases[0].ArtifactsProtectedUntil == nil || !during.Releases[0].ArtifactsProtectedUntil.Equal(firstServing.Add(time.Hour)) {
+					// The only served release is current: protected, with no deadline yet.
+					if err != nil || len(during.Releases) != 1 || during.Releases[0].ProtectionStatus != "protected" || during.Releases[0].ArtifactsProtectedUntil != nil ||
+						during.Releases[0].ServedAt == nil || !during.Releases[0].ServedAt.Equal(firstServing) {
 						t.Fatal("handoff lost first-serving protection", during, err)
 					}
 					for _, route := range pending.Routes {
@@ -99,18 +101,16 @@ func TestGitOpsRecoveryRetentionProtectsServedIdentityAndCatalog(t *testing.T) {
 					t.Fatal("catalog", catalog, err)
 				}
 				row := catalog.Releases[0]
-				if row.ReleaseSetID != release.ID || row.ProtectionStatus != "protected" || row.ArtifactsProtectedUntil == nil || row.RetainedBytes != 8192 || catalog.RetentionBytes != 8192 || catalog.RecoveryRetention == nil {
+				// The current release has no age deadline until a newer one serves.
+				if row.ReleaseSetID != release.ID || row.ProtectionStatus != "protected" || row.ArtifactsProtectedUntil != nil || row.RetainedBytes != 8192 || catalog.RetentionBytes != 8192 || catalog.RecoveryRetention == nil {
 					t.Fatalf("retention projection: %+v %+v", row, catalog)
 				}
-				if !row.ArtifactsProtectedUntil.Equal(firstServing.Add(time.Hour)) || row.ServedAt == nil || !row.ServedAt.Equal(firstServing) {
+				if row.ServedAt == nil || !row.ServedAt.Equal(firstServing) {
 					t.Fatal("handoff renewed history", row)
 				}
 				again, err := store.ListEnvironmentGitReleases(t.Context(), source, request, desired)
-				if err != nil || !again.Releases[0].ArtifactsProtectedUntil.Equal(*row.ArtifactsProtectedUntil) {
-					t.Fatal("observation renewed deadline", err)
-				}
-				if row.ArtifactsProtectedUntil.After(time.Now().Add(3601 * time.Second)) {
-					t.Fatal("deadline not anchored to serving")
+				if err != nil || again.Releases[0].ArtifactsProtectedUntil != nil || again.Releases[0].ProtectionStatus != "protected" {
+					t.Fatal("observation changed protection", err)
 				}
 				for _, member := range release.Members {
 					if err := store.SetDeploymentRootfs(t.Context(), member.DeploymentID, "/changed.ext4", "changed", 8192); err == nil {

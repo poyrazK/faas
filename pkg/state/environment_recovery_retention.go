@@ -38,6 +38,10 @@ func recoveryPolicy(memory *environmentGitOpsMemory) *api.EnvironmentRecoveryRet
 	return definition.RecoveryRetention
 }
 
+// Rows are ordered newest first by original serving completion. The newest
+// release has no deadline while it is current; each older one is protected
+// for the policy age after the next release first completed serving, so a
+// long-running release is still recoverable right after it is replaced.
 func selectRecoveryProtection(rows []recoveryProtection, policy *api.EnvironmentRecoveryRetention, now time.Time) []recoveryProtection {
 	slices.SortFunc(rows, func(a, b recoveryProtection) int {
 		if c := b.served.Compare(a.served); c != 0 {
@@ -49,14 +53,16 @@ func selectRecoveryProtection(rows []recoveryProtection, policy *api.Environment
 	var charged int64
 	for i := range rows {
 		row := &rows[i]
-		row.status = "disabled"
+		row.status, row.until = "disabled", time.Time{}
 		if policy == nil {
 			continue
 		}
-		row.until = row.served.Add(time.Duration(policy.Seconds) * time.Second)
-		if !row.until.After(now) {
-			row.status = "expired"
-			continue
+		if i > 0 {
+			row.until = rows[i-1].served.Add(time.Duration(policy.Seconds) * time.Second)
+			if !row.until.After(now) {
+				row.status = "expired"
+				continue
+			}
 		}
 		position++
 		charged = min(policy.MaxBytes+1, charged+min(row.bytes, policy.MaxBytes+1))
@@ -189,8 +195,11 @@ func applyRecoveryProtection(entry *api.EnvironmentGitRecoveryRelease, rows []re
 		if row.releaseID == entry.ReleaseSetID {
 			entry.ProtectionStatus = row.status
 			if row.status == "protected" {
-				until := row.until
-				entry.ArtifactsProtectedUntil = &until
+				// The current release has no deadline until it is replaced.
+				if !row.until.IsZero() {
+					until := row.until
+					entry.ArtifactsProtectedUntil = &until
+				}
 				entry.RetainedBytes = row.bytes
 			}
 			return

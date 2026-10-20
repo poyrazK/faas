@@ -48,11 +48,27 @@ func TestRecoveryCatalogRejectsUnbackedRetentionClaims(t *testing.T) {
 	if err := ValidateCatalog(out); err != nil {
 		t.Fatal(err)
 	}
+	current := out
+	current.Releases = append([]api.EnvironmentGitRecoveryRelease(nil), out.Releases...)
+	current.Releases[0].ArtifactsProtectedUntil = nil
+	if err := ValidateCatalog(current); err != nil {
+		t.Fatal("current release protected until replaced", err)
+	}
 	for _, mutate := range []func(*api.ListEnvironmentGitReleasesResponse){
 		func(o *api.ListEnvironmentGitReleasesResponse) { o.RecoveryRetention = nil },
 		func(o *api.ListEnvironmentGitReleasesResponse) { o.RetentionBytes = 1 },
 		func(o *api.ListEnvironmentGitReleasesResponse) { o.Releases[0].ArtifactsProtectedUntil = &now },
 		func(o *api.ListEnvironmentGitReleasesResponse) { o.Releases[0].ProtectionStatus = "expired" },
+		func(o *api.ListEnvironmentGitReleasesResponse) {
+			o.Releases[0].ArtifactsProtectedUntil, o.Releases[0].RetainedBytes = nil, 0
+		},
+		// Only one newest serving release can be protected without a deadline.
+		func(o *api.ListEnvironmentGitReleasesResponse) {
+			second := o.Releases[0]
+			second.ReleaseSetID, second.ArtifactsProtectedUntil = "3cb1bb51-3473-4d1f-bfc2-7492777cc625", nil
+			o.Releases[0].ArtifactsProtectedUntil = nil
+			o.Releases, o.RetentionBytes = append(o.Releases, second), 200
+		},
 	} {
 		copied := out
 		copied.Releases = append([]api.EnvironmentGitRecoveryRelease(nil), out.Releases...)

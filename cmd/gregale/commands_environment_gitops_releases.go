@@ -81,6 +81,8 @@ func writeGitOpsRecoveryCatalog(w io.Writer, out api.ListEnvironmentGitReleasesR
 		fmt.Fprintf(&text, "  Artifact protection: %s (%d charged bytes)", clean(release.ProtectionStatus), release.RetainedBytes)
 		if release.ArtifactsProtectedUntil != nil {
 			fmt.Fprintf(&text, "; deadline %s", release.ArtifactsProtectedUntil.UTC().Format(time.RFC3339))
+		} else if release.ProtectionStatus == "protected" {
+			text.WriteString("; no deadline until a newer release serves")
 		}
 		text.WriteString("\n")
 		for _, artifact := range release.Artifacts {

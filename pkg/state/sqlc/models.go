@@ -4246,9 +4246,10 @@ type EnvironmentRecoveryCandidate struct {
 	ServedAt        interface{}
 	GraphID         pgtype.UUID
 	GraphCount      int64
-	ProtectedUntil  int32
+	SupersededAt    interface{}
 	Bytes           interface{}
 	Available       pgtype.Bool
+	ProtectedUntil  int32
 	Position        int64
 	ChargedBytes    int64
 }
@@ -4279,9 +4280,10 @@ type EnvironmentRecoveryRetainedRelease struct {
 	ServedAt        interface{}
 	GraphID         pgtype.UUID
 	GraphCount      int64
-	ProtectedUntil  int32
+	SupersededAt    interface{}
 	Bytes           interface{}
 	Available       pgtype.Bool
+	ProtectedUntil  int32
 	Position        int64
 	ChargedBytes    int64
 }
