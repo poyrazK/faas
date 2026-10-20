@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -17,15 +18,70 @@ import (
 	"github.com/onebox-faas/faas/pkg/billing/paddleinvoice"
 )
 
-// fakePaddle keeps transactions like Paddle Billing would.
+// fakePaddle keeps transactions, and customers' addresses and businesses,
+// like Paddle Billing would.
 type fakePaddle struct {
 	mu      sync.Mutex
 	created []map[string]any
 	status  map[string]string // transaction ID -> GET response
 	// addresses are customers' active addresses; billed records the
-	// address each transaction was billed with (ADR-20261019100333).
-	addresses map[string]string
-	billed    map[string]string
+	// address each transaction was billed with (ADR-20261019100333), and
+	// billedBusiness its business (ADR-20261020120000).
+	addresses      map[string]string
+	billed         map[string]string
+	billedBusiness map[string]string
+	// entities holds addresses and businesses written through the API by
+	// "customer/kind"; writes counts POSTs and PATCHes.
+	entities map[string][]map[string]any
+	writes   int
+}
+
+// customerEntity serves /customers/{id}/addresses and /businesses, newest
+// first, except a customer's address preset in addresses.
+func (f *fakePaddle) customerEntity(w http.ResponseWriter, r *http.Request) bool {
+	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/customers/"), "/")
+	if !strings.HasPrefix(r.URL.Path, "/customers/") || len(parts) < 2 || (parts[1] != "addresses" && parts[1] != "businesses") {
+		return false
+	}
+	if _, preset := f.addresses[parts[0]]; preset && parts[1] == "addresses" && r.Method == http.MethodGet {
+		return false
+	}
+	if f.entities == nil {
+		f.entities = map[string][]map[string]any{}
+	}
+	key, prefix := parts[0]+"/"+parts[1], map[string]string{"addresses": "add_", "businesses": "biz_"}[parts[1]]
+	var body map[string]any
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	f.writes += map[string]int{http.MethodPost: 1, http.MethodPatch: 1}[r.Method]
+	stamp := time.Date(2026, 10, 1, 0, 0, f.writes, 0, time.UTC).Format(time.RFC3339)
+	switch {
+	case r.Method == http.MethodGet && len(parts) == 2:
+		items := append([]map[string]any(nil), f.entities[key]...)
+		sort.Slice(items, func(i, j int) bool { return fmt.Sprint(items[i]["updated_at"]) > fmt.Sprint(items[j]["updated_at"]) })
+		raw, _ := json.Marshal(items)
+		_, _ = fmt.Fprintf(w, `{"data":%s}`, raw)
+	case r.Method == http.MethodPost && len(parts) == 2:
+		body["id"], body["status"], body["updated_at"] = fmt.Sprintf("%s%d", prefix, f.writes), "active", stamp
+		f.entities[key] = append(f.entities[key], body)
+		raw, _ := json.Marshal(body)
+		_, _ = fmt.Fprintf(w, `{"data":%s}`, raw)
+	case r.Method == http.MethodPatch && len(parts) == 3:
+		for _, entity := range f.entities[key] {
+			if entity["id"] == parts[2] {
+				for field, value := range body {
+					entity[field] = value
+				}
+				entity["updated_at"] = stamp
+				raw, _ := json.Marshal(entity)
+				_, _ = fmt.Fprintf(w, `{"data":%s}`, raw)
+				return true
+			}
+		}
+		w.WriteHeader(http.StatusNotFound)
+	default:
+		w.WriteHeader(http.StatusNotFound)
+	}
+	return true
 }
 
 func (f *fakePaddle) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -34,6 +90,9 @@ func (f *fakePaddle) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer pdl_sdbx_apikey_") || r.Header.Get("Paddle-Version") != "1" {
 		w.WriteHeader(http.StatusForbidden)
 		_, _ = fmt.Fprint(w, `{"error":{"code":"forbidden","detail":"bad key"}}`)
+		return
+	}
+	if f.customerEntity(w, r) {
 		return
 	}
 	switch {
@@ -71,8 +130,9 @@ func (f *fakePaddle) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/transactions/"):
 		id := strings.TrimPrefix(r.URL.Path, "/transactions/")
 		var body struct {
-			AddressID string `json:"address_id"`
-			Status    string `json:"status"`
+			AddressID  string `json:"address_id"`
+			BusinessID string `json:"business_id"`
+			Status     string `json:"status"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		if body.Status != "billed" || body.AddressID == "" {
@@ -83,6 +143,10 @@ func (f *fakePaddle) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			f.billed = map[string]string{}
 		}
 		f.billed[id] = body.AddressID
+		if f.billedBusiness == nil {
+			f.billedBusiness = map[string]string{}
+		}
+		f.billedBusiness[id] = body.BusinessID
 		_, _ = fmt.Fprintf(w, `{"data":{"id":%q,"status":"billed"}}`, id)
 	default:
 		w.WriteHeader(http.StatusNotFound)

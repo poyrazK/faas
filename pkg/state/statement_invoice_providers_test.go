@@ -41,6 +41,17 @@ func checkBillingProviders(t *testing.T, ctx context.Context, store state.Statem
 	if _, _, err := store.BeginStatementInvoiceExport(ctx, export); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("begin lago export of a paddle statement = %v, want ErrConflict", err)
 	}
+	// ADR-20261018212918: Product Control statements export like other sources.
+	product := export
+	product.SourceKind, product.StatementID, product.Provider, product.Customer =
+		state.StatementSourceProductControl, uuid.NewString(), state.BillingProviderStripe, "cus_product"
+	if _, existing, err := store.BeginStatementInvoiceExport(ctx, product); err != nil || existing {
+		t.Fatalf("begin product control export: existing=%v, %v", existing, err)
+	}
+	product.SourceKind, product.StatementID = "invoice", uuid.NewString()
+	if _, _, err := store.BeginStatementInvoiceExport(ctx, product); !errors.Is(err, state.ErrInvalidArgument) {
+		t.Fatalf("begin export of an unknown statement source = %v, want ErrInvalidArgument", err)
+	}
 }
 
 // adr: 1507

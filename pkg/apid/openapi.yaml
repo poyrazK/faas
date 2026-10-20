@@ -111368,7 +111368,7 @@ components:
         automatic_tax: { type: boolean, description: "Whether Stripe Tax calculated this invoice's tax (ADR-1313)." }
         created_at: { type: string, format: date-time }
         completed_at: { type: string, format: date-time }
-        source_kind: { type: string, enum: [app_consumer, platform_tenant] }
+        source_kind: { type: string, enum: [app_consumer, platform_tenant, product_control] }
         payment_status:
           type: string
           enum: [draft, open, paid, void, uncollectible, deleted]
@@ -111500,12 +111500,12 @@ components:
         hold_on_gaps: { type: boolean, description: "Hold an app consumer whose usage ledger misses requests telemetry saw (default true)." }
 
     BillingRunSources:
-      description: "Which customers a run bills. With platform_tenants, a consumer's tenant-attributed usage is billed on the tenant statement and its app item is skipped."
+      description: "Which customers a run bills. With platform_tenants, a consumer's tenant-attributed usage is billed on the tenant statement and its app item is skipped. product_customers bills each Product Control customer's statement for the month and needs Product Control to be enabled (ADR-20261018212918)."
       type: array
       minItems: 1
-      maxItems: 2
+      maxItems: 3
       uniqueItems: true
-      items: { type: string, enum: [app_consumers, platform_tenants] }
+      items: { type: string, enum: [app_consumers, platform_tenants, product_customers] }
 
     BillingRunExport:
       description: "Where finalized statements go: none, or invoices in the account's Stripe, Paddle or Lago (ADR-1507; requires finalize and a connected key)."
@@ -111556,11 +111556,11 @@ components:
           items: { $ref: '#/components/schemas/BillingRunResponse' }
 
     BillingRunItemResponse:
-      description: "What a billing run did for one app consumer or platform tenant."
+      description: "What a billing run did for one app consumer, platform tenant or Product Control customer. A product_control item names its app in app_id and its customer in platform_tenant_id; its statement_id is the Product Control statement document."
       type: object
       required: [source_kind, external_ref, outcome, exported_invoices, attempts, updated_at]
       properties:
-        source_kind: { type: string, enum: [app_consumer, platform_tenant] }
+        source_kind: { type: string, enum: [app_consumer, platform_tenant, product_control] }
         app_id: { type: string, format: uuid }
         consumer_id: { type: string, format: uuid }
         platform_tenant_id: { type: string, format: uuid }
@@ -111568,7 +111568,7 @@ components:
         outcome:
           type: string
           enum: [pending, drafted, finalized, exported, up_to_date, held, skipped, failed]
-          description: "up_to_date: nothing new to bill or export. held: needs attention, such as unpriced usage or a completeness gap. skipped: billed through a platform tenant, or already invoiced through the other path."
+          description: "up_to_date: nothing new to bill or export. held: needs attention, such as unpriced usage, a completeness gap, or Product Control runs with no recorded outcome. skipped: billed through a platform tenant, or already invoiced through the other path or by hand."
         statement_id: { type: string, format: uuid }
         revision: { type: integer, minimum: 1 }
         currency: { type: string, pattern: '^[A-Z]{3}$' }

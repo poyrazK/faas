@@ -62,6 +62,11 @@ var memDispatched = map[string]bool{
 	"AdmitScheduledWorkflow":                                  true,
 	"AppByID":                                                 true,
 	"AppBySlug":                                               true,
+	"GetProductBillingDocument":                               true,
+	"ListProductBillingDocuments":                             true,
+	"GetProductBillingHandoff":                                true,
+	"HandoffProductBilling":                                   true,
+	"StatementHandoffBlocked":                                 true,
 	"AppRuntimeConfigChangedAt":                               true,
 	"AppRuntimeConfigChangedAtInScope":                        true,
 	"ClaimPreviewTeardown":                                    true,
@@ -3958,4 +3963,49 @@ func (s *Store) ListProjectsForOrg(ctx context.Context, orgID string) ([]state.P
 		return override.ListProjectsForOrg(ctx, orgID)
 	}
 	return s.Store.ListProjectsForOrg(ctx, orgID)
+}
+
+func (s *Mem) GetProductBillingDocument(p0 context.Context, p1 state.ProductBillingScope, p2 string) (api.ProductBillingDocument, error) {
+	if o, ok := s.over.(interface {
+		GetProductBillingDocument(context.Context, state.ProductBillingScope, string) (api.ProductBillingDocument, error)
+	}); ok {
+		return o.GetProductBillingDocument(p0, p1, p2)
+	}
+	return s.MemStore.GetProductBillingDocument(p0, p1, p2)
+}
+
+func (s *Mem) ListProductBillingDocuments(p0 context.Context, p1 state.ProductBillingScope, p2 string) (api.ProductBillingDocuments, error) {
+	if o, ok := s.over.(interface {
+		ListProductBillingDocuments(context.Context, state.ProductBillingScope, string) (api.ProductBillingDocuments, error)
+	}); ok {
+		return o.ListProductBillingDocuments(p0, p1, p2)
+	}
+	return s.MemStore.ListProductBillingDocuments(p0, p1, p2)
+}
+
+func (s *Mem) GetProductBillingHandoff(p0 context.Context, p1 state.ProductBillingScope, p2 string) (api.ProductInvoiceHandoff, error) {
+	if o, ok := s.over.(interface {
+		GetProductBillingHandoff(context.Context, state.ProductBillingScope, string) (api.ProductInvoiceHandoff, error)
+	}); ok {
+		return o.GetProductBillingHandoff(p0, p1, p2)
+	}
+	return s.MemStore.GetProductBillingHandoff(p0, p1, p2)
+}
+
+func (s *Mem) HandoffProductBilling(p0 context.Context, p1 state.ProductBillingScope, p2, p3 string) (api.ProductInvoiceHandoff, error) {
+	if o, ok := s.over.(interface {
+		HandoffProductBilling(context.Context, state.ProductBillingScope, string, string) (api.ProductInvoiceHandoff, error)
+	}); ok {
+		return o.HandoffProductBilling(p0, p1, p2, p3)
+	}
+	return s.MemStore.HandoffProductBilling(p0, p1, p2, p3)
+}
+
+func (s *Mem) StatementHandoffBlocked(p0 context.Context, p1, p2, p3 string) (bool, error) {
+	if o, ok := s.over.(interface {
+		StatementHandoffBlocked(context.Context, string, string, string) (bool, error)
+	}); ok {
+		return o.StatementHandoffBlocked(p0, p1, p2, p3)
+	}
+	return s.MemStore.StatementHandoffBlocked(p0, p1, p2, p3)
 }

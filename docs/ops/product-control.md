@@ -65,9 +65,10 @@ whose plan prices are pinned to an older revision.
 | `billing:read` — View billing | Usage totals, statements and credit notes |
 | `plans:manage` — Manage plan | Compare and confirm offered workspace plan changes; read their receipts/history |
 | `team:manage` — Manage team | Read the workspace team and reviewed team history; invite, revoke, change or remove explicitly delegated roles |
+| `billing:manage` — Manage billing details | Read and change the billing address and business the workspace is invoiced at, kept in your Paddle |
 
-With no explicit policy, owners and admins have work and billing permissions and members can
-only view work. **This narrows the earlier internal behavior where all members
+With no explicit policy, owners and admins have work and billing permissions, owners can
+also manage billing details, and members can only view work. **This narrows the earlier internal behavior where all members
 could run paid features and read billing.** Review role access before enabling
 an existing internal deployment. Custom roles are denied until granted. An
 explicit policy replaces the complete map, including owner/admin grants;
@@ -1319,6 +1320,190 @@ provider's idempotency. External rounding remains the invoicer's responsibility.
 Do not export existing request rate-card statements as a second charge for the
 same product work; these ledgers are independent and are never automatically added.
 
+### Export a statement to your own billing provider
+
+Instead of a manual handoff, a finalized statement can be invoiced in the
+account's own Stripe, Paddle or Lago
+([ADR-20261018212918](../adr/20261018212918-product-control-payment-collection.md)).
+Connect the provider once with `PUT /v1/account/billing-connections/{provider}`;
+its collection mode and Stripe automatic tax apply as for other statement exports
+([ADR-1311](../adr/1311-statement-invoice-collection.md),
+[ADR-1313](../adr/1313-stripe-automatic-tax-on-exports.md)).
+
+```sh
+gregale product statements export --app exports --tenant TENANT_UUID --period 2026-09 \
+  --document STATEMENT_UUID --provider paddle [--customer ctm_01...]
+gregale product statements export-status --app exports --tenant TENANT_UUID --period 2026-09 \
+  --document STATEMENT_UUID --json
+```
+
+The owner API is `POST /v1/apps/{slug}/product/billing/documents/{document}/invoice?period=YYYY-MM`
+with `{"tenant_id","provider","customer"}` and the matching `GET` with `tenant_id`.
+
+- The customer defaults to the tenant's external reference when it is one of
+  the provider's customer IDs (`cus_…`, `ctm_…` or a Lago external customer ID);
+  otherwise pass `--customer`.
+- Each invoice line is one feature and plan at one admitted price: charged
+  successes times that price, rounded to the cent with a rounding item where
+  needed. Failed, cancelled, waived and unresolved runs are never invoiced.
+- The provider invoice ID becomes the statement's handoff. A statement is
+  either handed off by hand or exported, never both: a manual handoff blocks
+  export, and once an export starts a manual handoff returns 409
+  `product_billing_exported`, through the API and the console.
+- A retry with the same provider resumes the same invoice; another provider
+  conflicts. The export row exists before any provider call, so a lost
+  response never creates a second invoice.
+- Credit notes are not exported. Record them with `statements handoff` after
+  issuing the credit in the provider. Paddle and Lago reject negative documents.
+- `export-status` and `GET /v1/account/statement-invoices` show the provider's
+  payment status, amount remaining, due date and hosted invoice link, synced by
+  the existing payment-status worker
+  ([ADR-1504](../adr/1504-statement-invoice-payment-status.md)).
+
+Gregale still does not collect money, calculate tax or act as merchant of record;
+the owner's provider does. Stripe and Lago can collect when the connection's
+collection mode asks them to. Paddle exports stay drafts unless the Paddle
+connection uses collection `send`
+([ADR-20261019100333](../adr/20261019100333-paddle-send-collection.md)), which
+bills them once the customer has a billing address.
+
+#### Customer billing details
+
+A Paddle customer can be billed only with an address; without one, a `send`
+export fails with 422 "Paddle customer has no address" and keeps the draft
+([ADR-20261020120000](../adr/20261020120000-product-control-customer-billing-details.md)).
+Connect Paddle with `gregale account billing-connection connect paddle --collection send`
+and let customers enter their own details: the portal's **Billing details**
+section, for roles with `billing:manage` (the workspace owner by default), reads
+and saves the workspace's address (country, postal code, region, city, two lines)
+and, optionally, its business name and tax identifier. The routes are
+`GET`/`PUT /v1/product-control/customer/{slug}/billing-details`.
+
+- **Kept in Paddle only.** The details are written to the Paddle customer named by
+  the customer's platform tenant external reference (`ctm_…`). Gregale stores none
+  of them; the audit event `product.customer.billing_details_updated` names the
+  changed parts (`address`, `business`) and never their values.
+- **Unavailable** (409 `product_billing_details_unavailable`) when the account has
+  no Paddle connection, the tenant's external reference is not a Paddle customer ID,
+  or the Paddle key cannot manage customer addresses.
+- **Billing.** With collection `send`, the next export, or a retry of one that
+  failed for lack of an address, bills the transaction with the customer's active
+  address and business, so Paddle issues the invoice with the connection's payment
+  terms. A billed invoice cannot be changed in Paddle, so finalize statements only
+  after review.
+- Leaving the business name empty keeps the current business.
+
+#### Payment status on statements
+
+Each statement in `GET /v1/apps/{slug}/product/billing/documents` (and so
+`statements list --json`) carries an `invoice` object once its export starts:
+`provider`, `invoice_id`, `dashboard_url`, `export_status`, `payment_status`,
+`overdue`, `currency`, `amount_minor`, `amount_remaining_minor`, `due_at`,
+`paid_at` and `hosted_invoice_url`. Amounts are in the currency's minor unit
+(cents). `overdue` has the ADR-1504 meaning: open, past `due_at`, with an amount
+remaining. Credit notes and statements handed off by hand have no `invoice`.
+
+The owner console shows each exported statement's invoice in place of the
+handoff form, for example
+`Invoiced in Stripe as in_… · overdue · due 2026-11-01 · EUR 12.50 remaining`,
+with links to the provider dashboard and the customer's hosted invoice. An
+export that has not finished says so; rerun `statements export` with the same
+provider to resume the same invoice.
+
+Customers see a reduced `invoice` on completed exports only, through
+`statements list --self`, `GET /v1/platform-tenant-self/product/billing` and the
+portal's **Statements and credits** section: payment status, overdue, amounts,
+dates and the hosted invoice link. They never see the provider, invoice ID,
+provider customer ID, dashboard link or an unfinished export. The hosted link is
+kept only when the provider returned a plain `https` URL without credentials;
+the portal labels it **View and pay invoice** while the invoice is open. Gregale
+never renders a payment form.
+
+#### Overdue holds
+
+An app can refuse new starts from customers who have not paid an exported
+statement, mirroring API monetization's consumer holds
+([ADR-1315](../adr/1315-block-consumers-with-overdue-invoices.md)). The policy is
+off until the owner sets it, and it lives outside the immutable catalog.
+
+```sh
+gregale product billing overdue-policy set --app exports --block-overdue-after-days 14
+gregale product billing overdue-policy inspect --app exports --json
+gregale product billing overdue-policy clear --app exports
+```
+
+The owner API is `GET/PUT/DELETE /v1/apps/{slug}/product/billing/overdue-policy`
+with `{"block_overdue_after_days": 0..365}` (`0` holds as soon as an invoice is
+past due) and `GET /v1/apps/{slug}/product/billing/overdue-holds`.
+
+- **What counts.** A Product Control statement exported to Stripe, Paddle or Lago
+  whose payment status is `open` or `uncollectible`, with an amount remaining and
+  a due date at least the policy's days ago. Drafts have no due date and never
+  count; neither do paid, void or deleted invoices. Credit notes are not exported.
+- **Holds.** Every 5 minutes each apid replica tries to recompute one hold per
+  customer, naming its oldest qualifying statement; an advisory lock lets one
+  replica do it at a time. Placing and lifting are audited as
+  `product.customer.overdue_blocked` and `product.customer.overdue_unblocked`;
+  policy changes as `product.billing.overdue_policy_updated` and
+  `product.billing.overdue_policy_deleted`. A held invoice's payment status is
+  read at least every 15 minutes (ADR-1504).
+- **Enforcement.** Operations admission refuses a held customer's new start with
+  402 `product_invoice_overdue`, naming the invoice's due date and the provider's
+  hosted page. No start is consumed. A retry of work that was never admitted is
+  checked again; work already admitted keeps running and settling, and usage,
+  results and billing stay readable.
+- **Release.** A hold stops applying as soon as its invoice syncs as paid, void or
+  deleted, and the next recomputation removes it. Clearing the policy lifts every
+  hold at once. A customer with another overdue statement stays held by that one.
+- **Separate from suspension.** A hold is not the owner's `suspended` flag. Both
+  are shown separately, and lifting one never lifts the other.
+- **Where it shows.** The owner console lists the policy and held customers, and a
+  held customer's page shows a **Payment hold** row. Change the policy with the
+  CLI or API; the console does not edit it. The customer portal explains the
+  hold with the due date and a **View and pay invoice** link, disables new runs,
+  and its usage guidance marks features `invoice_overdue`.
+- **Rollback.** With `FAAS_PRODUCT_CONTROL_ENABLED` off, holds are not
+  recomputed or enforced, because no new Product Control starts are admitted.
+
+### Bill every customer in a billing run
+
+Instead of reviewing, finalizing and exporting each customer by hand, an
+account's month-end billing run
+([ADR-1503](../adr/1503-month-end-billing-runs.md)) can do it for every Product
+Control customer with the `product_customers` source:
+
+```sh
+gregale account billing-run start --month 2026-09 --sources product_customers --export stripe --wait
+gregale account billing-run show RUN_ID --outcome held
+gregale account billing-run schedule-set --sources app_consumers,platform_tenants,product_customers --export stripe
+```
+
+The source is accepted only while Product Control is enabled. It is never added
+by default, so existing runs and schedules keep billing what they did.
+
+- **Customers.** One item per app and assigned customer with receipts in the
+  month, for apps with a published catalog. A tenant that is a customer of two
+  apps gets two items. Items report `source_kind: product_control`, the app in
+  `app_id`, the customer in `platform_tenant_id` and the statement document in
+  `statement_id`.
+- **Steps.** The run reviews the month. It holds the customer when the month is
+  open (`product_billing_period_open`) or has runs with no recorded outcome
+  (`product_billing_unresolved`); waive or reconcile them, then start another run
+  for the month. Otherwise it finalizes with the review's hash (`--no-finalize`
+  only reviews, reported as `drafted`) and, with `--export`, exports the
+  statement like `statements export`. If the receipts change between the review
+  and finalizing, the item is retried.
+- **Already billed.** A statement that was already exported, or whose run is
+  re-done after the month was finalized, is `up_to_date`. A statement handed off
+  by hand is `skipped`. A zero total is never exported.
+- **Audit.** Finalizing and exporting emit the same `product.billing.finalized`
+  and `product.billing.invoice_exported` events as the endpoints.
+- **Rollback.** With Product Control disabled, pending Product Control items are
+  `held`; start another run for the month after enabling it. A previous apid
+  release ignores Product Control items. If one completes a run during a rolling
+  deploy before its Product Control items are billed, start another run for the
+  month.
+
 The customer portal's **Statements and credits** section reads a selected month
 and explicitly pages through finalized documents. It shows provisional charges
 when the month has not closed or been finalized, and separates finalized charges
@@ -1343,12 +1528,14 @@ MFA and verified-email policy. Tenant identity always comes from the credential.
 | --- | --- |
 | `GET /v1/apps/{slug}/product/billing/review` | Live or frozen review; tenant_id and period selectors |
 | `GET /v1/apps/{slug}/product/billing/receipts` | Retained commercial evidence with cursor |
-| `GET /v1/apps/{slug}/product/billing/documents` | Finalized statements and credit notes with cursor |
+| `GET /v1/apps/{slug}/product/billing/documents` | Finalized statements and credit notes with cursor, each exported statement with its invoice and payment status |
 | `POST /v1/apps/{slug}/product/billing/statements/finalize` | Confirm a reviewed, resolved, closed month |
 | `POST /v1/apps/{slug}/product/billing/receipts/{operation}/waive` | Permanently waive an unresolved charge |
 | `POST /v1/apps/{slug}/product/billing/credits` | Idempotent credit note for a finalized receipt |
 | `GET/POST /v1/apps/{slug}/product/billing/documents/{document}/handoff` | Recover or record the immutable invoice reference |
-| `GET /v1/platform-tenant-self/product/billing` | Authenticated tenant's selected month and documents |
+| `GET/PUT/DELETE /v1/apps/{slug}/product/billing/overdue-policy` | Read, set `{block_overdue_after_days}` or clear the overdue policy; clearing lifts every hold |
+| `GET /v1/apps/{slug}/product/billing/overdue-holds` | Customers whose new starts are refused for an overdue invoice |
+| `GET /v1/platform-tenant-self/product/billing` | Authenticated tenant's selected month and documents, with completed invoices' payment status and hosted link |
 | `GET /v1/product-control/customer/{slug}/billing` | Cookie-authenticated workspace billing |
 | `GET /v1/apps/{slug}/product` | Current catalog; optional `revision` |
 | `PUT /v1/apps/{slug}/product` | Publish catalog spec |
