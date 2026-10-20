@@ -6799,6 +6799,39 @@ groups:
       - record: app_class_le:gateway_request_duration_seconds_bucket:increase1h
         expr: sum by (app, class, le) (increase(gateway_request_duration_seconds_bucket[1h]))
 
+  # ADR-20261016123221 Customer Operations. schedd reports fleet-wide gauges from
+  # Postgres; every replica reports the same values, so rules read max().
+  # The dashboard is deploy/grafana/customer-operations.json and
+  # docs/runbooks/FaasCustomerOperations.md covers every alert.
+  - name: faas_customer_operations
+    interval: 30s
+    rules:
+      - alert: FaasCustomerOperationDeadlinesOverdue
+        expr: max(schedd_customer_operations_overdue) > 0
+        for: 10m
+        labels:
+          severity: warn
+          component: schedd
+          family: customer_operations
+          public_status: internal
+        annotations:
+          summary: "Customer Operations are staying past their deadlines"
+          description: "{{ $value }} active Customer Operations have been more than three minutes past their deadline for 10m. Workflow Operations are settled by the schedd deadline sweep and HTTP Operations by the invocation deadline reaper; one of them has stopped."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCustomerOperations.md"
+
+      - alert: FaasCustomerOperationOutcomesUnknown
+        expr: max(schedd_customer_operations_outcome_unknown_accounts) >= 3
+        for: 5m
+        labels:
+          severity: warn
+          component: schedd
+          family: customer_operations
+          public_status: internal
+        annotations:
+          summary: "Customer Operation attempts are ending with unknown outcomes across accounts"
+          description: "{{ $value }} accounts had an Operation attempt end with an unknown outcome in the last 15m. One app timing out is its owner's problem; several accounts at once point at the platform losing attempts (instance crashes, lost leases, node loss)."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCustomerOperations.md"
+
   # Starter-reported protocol signals, not host-verified authorization outcomes.
   # No alert is inferred from event silence: idle apps emit no protocol events.
   - name: faas_mcp_protocol

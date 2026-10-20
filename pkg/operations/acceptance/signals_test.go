@@ -147,17 +147,24 @@ func TestOperationSubjectSignalTargetsActiveOperations(t *testing.T) {
 		f.admission.IdempotencyKey, f.admission.Input = "order-2", []byte(`{"order_id":"ord_2"}`)
 		other := f.start(t)
 		signals := store.(state.OperationSignalStore)
-		ids, err := signals.OperationsForSubject(ctx, f.account.ID, f.app.ID, first.Scope, "fulfil", api.OperationSubject{Type: "order", ID: "ord_1"}, 10)
+		ids, err := signals.OperationsForSubject(ctx, f.account.ID, f.app.ID, "", first.Scope, "fulfil", api.OperationSubject{Type: "order", ID: "ord_1"}, 10)
 		if err != nil || len(ids) != 2 || !slices.Contains(ids, first.ID) || !slices.Contains(ids, second.ID) || slices.Contains(ids, other.ID) {
 			t.Fatalf("subject targets %v %v", ids, err)
 		}
-		if ids, err := signals.OperationsForSubject(ctx, f.account.ID, f.app.ID, first.Scope, "fulfil", api.OperationSubject{Type: "order", ID: "ord_1"}, 1); err != nil || len(ids) != 1 {
+		if ids, err := signals.OperationsForSubject(ctx, f.account.ID, f.app.ID, "", first.Scope, "fulfil", api.OperationSubject{Type: "order", ID: "ord_1"}, 1); err != nil || len(ids) != 1 {
 			t.Fatalf("subject target limit %v %v", ids, err)
+		}
+		// ADR-20261016100929: a webhook binding keeps the match inside its tenant.
+		if ids, err := signals.OperationsForSubject(ctx, f.account.ID, f.app.ID, f.other.ID, first.Scope, "fulfil", api.OperationSubject{Type: "order", ID: "ord_1"}, 10); err != nil || len(ids) != 0 {
+			t.Fatalf("another tenant's operations matched: %v %v", ids, err)
+		}
+		if ids, err := signals.OperationsForSubject(ctx, f.account.ID, f.app.ID, f.tenant.ID, first.Scope, "fulfil", api.OperationSubject{Type: "order", ID: "ord_1"}, 10); err != nil || len(ids) != 2 {
+			t.Fatalf("own tenant's operations missed: %v %v", ids, err)
 		}
 		if _, err := f.ops.CancelOperation(ctx, f.account.ID, f.tenant.ID, second.ID, 1); err != nil {
 			t.Fatal(err)
 		}
-		ids, err = signals.OperationsForSubject(ctx, f.account.ID, f.app.ID, first.Scope, "fulfil", api.OperationSubject{Type: "order", ID: "ord_1"}, 10)
+		ids, err = signals.OperationsForSubject(ctx, f.account.ID, f.app.ID, "", first.Scope, "fulfil", api.OperationSubject{Type: "order", ID: "ord_1"}, 10)
 		if err != nil || len(ids) != 1 || ids[0] != first.ID {
 			t.Fatalf("settled operation still targeted: %v %v", ids, err)
 		}
@@ -172,4 +179,45 @@ func countOf(items []string, want string) int {
 		}
 	}
 	return n
+}
+
+// ADR-20261017100853: the history records who delivered a signal; the source is not
+// part of its identity, so a repeat from another source is a duplicate.
+func TestOperationSignalRecordsItsSource(t *testing.T) {
+	operationWorkflowStores(t, func(t *testing.T, store state.Store) {
+		ctx := context.Background()
+		f := signalOperationSetup(t, store, time.Hour)
+		op := f.start(t)
+		f.drive(t, op.ID, "event wait", waitingFor(api.OperationWaitEvent, "payment"))
+		signals := f.store.(state.OperationSignalStore)
+		in := state.OperationSignalInput{AccountID: f.account.ID, OperationID: op.ID, SignalID: "evt_1", Event: "payment.succeeded", Payload: json.RawMessage(`{}`), Source: "operator"}
+		if _, err := signals.SignalOperation(ctx, in); !errors.Is(err, state.ErrInvalidArgument) {
+			t.Fatalf("unknown source accepted: %v", err)
+		}
+		in.Source = api.OperationSignalSourceCustomer
+		if receipt, err := signals.SignalOperation(ctx, in); err != nil || receipt.Duplicate {
+			t.Fatalf("customer signal %+v %v", receipt, err)
+		}
+		in.Source = api.OperationSignalSourceWebhook
+		if receipt, err := signals.SignalOperation(ctx, in); err != nil || !receipt.Duplicate {
+			t.Fatalf("repeat from another source %+v %v", receipt, err)
+		}
+		page, err := f.ops.OperationEvents(ctx, f.account.ID, f.tenant.ID, op.ID, 0, api.OperationEventsPageMax)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sources := []string{}
+		for _, event := range page.Events {
+			if event.Type == "signal_received" {
+				var data struct {
+					Source string `json:"source"`
+				}
+				_ = json.Unmarshal(event.Data, &data)
+				sources = append(sources, data.Source)
+			}
+		}
+		if len(sources) != 1 || sources[0] != api.OperationSignalSourceCustomer {
+			t.Fatalf("recorded sources %v", sources)
+		}
+	})
 }

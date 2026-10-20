@@ -1428,6 +1428,11 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 
 - [ADR-1118 · Issue split-rule management](1118-issue-split-rule-management.md)
 
+- [ADR-20261016110803 · Workflow Operation execution budget](20261016110803-workflow-operation-execution-budget.md)
+- [ADR-20261016123221 · Customer Operations telemetry](20261016123221-customer-operations-telemetry.md)
+- [ADR-20261017100853 · Customer self-service Operation signals](20261017100853-customer-self-service-operation-signals.md)
+- [ADR-20261017102231 · Leaving the Customer Operations preview](20261017102231-operations-preview-exit.md)
+- [ADR-20261016100929 · Webhook-delivered Operation signals](20261016100929-webhook-delivered-operation-signals.md)
 - [ADR-1197 · Operation event waits and signals](1197-operation-event-waits-and-signals.md)
 - [ADR-1196 · Operation deadlines and budgets](1196-operation-deadlines-and-budgets.md)
 - [ADR-1194 · Operation waits and approvals](1194-operation-waits-and-approvals.md)

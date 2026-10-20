@@ -1045,6 +1045,30 @@ Phase 0 did not cover:
 
     A backend's `live_hub_url` still names one hub, so each backend can
     serve one live database until livequeryd hosts several.
+  - **Several databases per process** (2026-10-20). `-databases-file` lists
+    the databases one livequeryd serves:
+    - Each database has its own hub, slot, checkpoint
+      (`<checkpoint-dir>/<id>.checkpoint`), live keys and `/<id>/live` route,
+      which lifts the limit of one live database per backend.
+    - Replication slot names are unique per PostgreSQL server, not per
+      database, so a database's slot defaults to `gregale_live_<id>`, and two
+      entries that name one slot on one server are refused at start.
+    - The process, listener, SQL parser and control-plane connection are
+      shared.
+    - A database that cannot be opened, or whose hub stops on an error, is
+      retried with backoff (one second, doubling, at most a minute). It
+      answers 503 meanwhile, which realtimed retries, and the others keep
+      serving.
+    - The process is ready once it listens. `GET /databases`,
+      `livequery_hub_up` and `livequery_hub_restarts_total` show each
+      database's state.
+    - Metrics carry a `database` label; `livequery_engine_memory_bytes`
+      stays one process-wide series.
+    - A session that reaches a hub as it stops now closes, so realtimed
+      reconnects to the next hub instead of waiting.
+    - The Ansible role takes `faas_livequeryd_databases`, with one credential
+      per connection string. A deploy fails unless every database is served.
+    - The flags for one database remain for development.
   - **Fleet-PKI leaves** (2026-10-19). Hub and realtimed authenticate with
     leaves of the internal CA:
     - livequeryd's server leaf is `livequeryd.faas`;
