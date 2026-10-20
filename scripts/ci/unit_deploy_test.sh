@@ -233,4 +233,43 @@ if bash "$helper" host-restart-script "/tmp/elsewhere" "$test_root/x.sh" 2>/dev/
 bash "$helper" cleanup "$remote_stage"
 unset HOST_CONFIG_DIR
 
+# 8. preflight-state: the deploy lock and Prometheus's active alerts, as one
+#    JSON object, whatever the remote could not read.
+cat > "$stub/flock" <<'EOF'
+#!/usr/bin/env bash
+[[ "$1 $2 $3" == "-n -E 75" ]] || exit 2
+exit "${STUB_FLOCK:-0}"
+EOF
+cat > "$stub/curl" <<'EOF'
+#!/usr/bin/env bash
+out=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in -o) out="$2"; shift 2 ;; -*) shift ;; *) url="$1"; shift ;; esac
+done
+[[ "$url" == http://127.0.0.1:9095/api/v1/alerts ]] || { echo "unexpected url $url" >&2; exit 2; }
+[[ -z "${STUB_CURL_FAIL:-}" ]] || { echo "curl: (7) Failed to connect" >&2; exit 7; }
+printf '%s' "$STUB_ALERTS" > "$out"
+EOF
+chmod +x "$stub/flock" "$stub/curl"
+export STUB_ALERTS='{"status":"success","data":{"alerts":[{"labels":{"alertname":"FaasDaemonDown","severity":"page"},"state":"firing","activeAt":"2026-10-20T10:00:00Z"}]}}'
+state="$(bash "$helper" preflight-state)"
+jq -e '.lock == "free" and .prometheus.ok and (.prometheus.alerts | length) == 1 and .prometheus.alerts[0].labels.alertname == "FaasDaemonDown"' <<<"$state" >/dev/null \
+  || fail "preflight-state did not report a free lock and the alert: $state"
+state="$(STUB_FLOCK=75 bash "$helper" preflight-state)"
+jq -e '.lock == "held"' <<<"$state" >/dev/null || fail "a held deploy lock was not reported: $state"
+state="$(STUB_FLOCK=1 bash "$helper" preflight-state)"
+jq -e '.lock == "unknown"' <<<"$state" >/dev/null || fail "an unreadable lock was not unknown: $state"
+state="$(STUB_CURL_FAIL=1 bash "$helper" preflight-state)"
+jq -e '.lock == "free" and (.prometheus.ok | not) and (.prometheus.error | test("Failed to connect"))' <<<"$state" >/dev/null \
+  || fail "an unreachable Prometheus was not reported: $state"
+state="$(STUB_ALERTS='{"status":"error","error":"bad"}' bash "$helper" preflight-state)"
+jq -e '(.prometheus.ok | not)' <<<"$state" >/dev/null || fail "a failed Prometheus answer counted as ok: $state"
+# More than one command-line argument can hold (MAX_ARG_STRLEN is 128 KiB).
+big="$(jq -cn '{status: "success", data: {alerts: [range(3000) | {labels: {alertname: "FaasX", severity: "warn", instance: ("i-" + tostring)}, state: "firing"}]}}')"
+state="$(STUB_ALERTS="$big" bash "$helper" preflight-state)"
+jq -e '(.prometheus.alerts | length) == 3000' <<<"$state" >/dev/null || fail "a large alert list was not passed through"
+if PROMETHEUS_URL=http://10.0.0.1:9095 bash "$helper" preflight-state >/dev/null 2>&1; then
+  fail "a non-loopback Prometheus URL was accepted"
+fi
+
 echo "unit_deploy tests passed"

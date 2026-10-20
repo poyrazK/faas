@@ -197,6 +197,78 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  # Deploy admission (docs/adr/20261020214632-automatic-unit-deploy-safety-
+  # rails.md): before anything changes, wait until production is unfrozen
+  # (no open `deploy-freeze` issue), idle (no other deploy run, the control
+  # plane's deploy lock free) and healthy (no page alert firing), and this is
+  # the newest deployable unit release. A freeze or a newer release ends the
+  # run green without deploying; main's light tier having failed on this
+  # commit, or 40 minutes of waiting, fails it. The step summary says what it
+  # waited for. Dispatching cd-controlplane or cd-edge-units directly is the
+  # repair path and skips this.
+  preflight:
+    name: Check production can take a deploy
+    needs: [build]
+    if: >-
+      needs.build.outputs.eligible == 'true' &&
+      (inputs.deploy_environment != '' || (github.event_name == 'push' && vars.UNIT_RELEASE_AUTODEPLOY_ENVIRONMENT != ''))
+    environment: ${{ inputs.deploy_environment || vars.UNIT_RELEASE_AUTODEPLOY_ENVIRONMENT }}
+    runs-on: ${{ fromJSON((inputs.deploy_environment || vars.UNIT_RELEASE_AUTODEPLOY_ENVIRONMENT) == 'production-us' && '["self-hosted","linux","faas-fleet-us"]' || '["self-hosted","linux","faas-fleet"]') }}
+    timeout-minutes: 50
+    permissions:
+      contents: read
+      actions: read
+      issues: read
+    outputs:
+      go: ${{ steps.preflight.outputs.go }}
+    env:
+      CP_HOST: ${{ secrets.CP_HOST || secrets.DO_HOST }}
+      CP_SSH_KEY: ${{ secrets.CP_SSH_KEY || secrets.DO_SSH_KEY }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: scripts/ci
+          sparse-checkout-cone-mode: false
+
+      - name: Set up SSH
+        env:
+          COMPUTE_KNOWN_HOSTS: ${{ secrets.COMPUTE_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          echo "${{ env.CP_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          [[ -n "${COMPUTE_KNOWN_HOSTS:-}" ]] || {
+            echo "::error::COMPUTE_KNOWN_HOSTS is required to verify the control-plane host key" >&2
+            exit 1
+          }
+          scanned="$(ssh-keyscan -T 10 -t ed25519,ecdsa,rsa "$CP_HOST" 2>/dev/null || true)"
+          pinned=0
+          while read -r _ key_type key; do
+            [[ -n "${key:-}" ]] || continue
+            if awk -v t="$key_type" -v k="$key" '!/^#/ { for (i = 1; i < NF; i++) if ($i == t && $(i + 1) == k) found = 1 } END { exit !found }' <<<"$COMPUTE_KNOWN_HOSTS"; then
+              printf '%s %s %s\n' "$CP_HOST" "$key_type" "$key" >> ~/.ssh/known_hosts
+              pinned=1
+            fi
+          done <<<"$scanned"
+          [[ $pinned == 1 ]] || {
+            echo "::error::$CP_HOST presented no host key listed in COMPUTE_KNOWN_HOSTS" >&2
+            exit 1
+          }
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Wait until production can take the deploy
+        id: preflight
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # unit_deploy.sh preflight-state reads the control plane's deploy
+          # lock and Prometheus's active alerts over this SSH connection.
+          export UNIT_SSH_TARGET="root@${CP_HOST}" UNIT_SSH_KEY="$HOME/.ssh/deploy_key" \
+            UNIT_SSH_KNOWN_HOSTS="$HOME/.ssh/known_hosts"
+          python3 scripts/ci/deploy_preflight.py --wait 40m --interval 60s
+
   # Deploy order (docs/release-compatibility.md): the control-plane lane,
   # held on its SLO gate, then the edge lane host by host. Automatic deploys
   # are opt-in: set the repository variable UNIT_RELEASE_AUTODEPLOY_ENVIRONMENT
@@ -204,10 +276,8 @@ jobs:
   # environment's protection rules still apply.
   deploy:
     name: Deploy the control-plane lane
-    needs: [build]
-    if: >-
-      needs.build.outputs.eligible == 'true' &&
-      (inputs.deploy_environment != '' || (github.event_name == 'push' && vars.UNIT_RELEASE_AUTODEPLOY_ENVIRONMENT != ''))
+    needs: [build, preflight]
+    if: needs.build.outputs.eligible == 'true' && needs.preflight.outputs.go == 'true'
     uses: ./.github/workflows/cd-controlplane.yml
     with:
       deploy_environment: ${{ inputs.deploy_environment || vars.UNIT_RELEASE_AUTODEPLOY_ENVIRONMENT }}

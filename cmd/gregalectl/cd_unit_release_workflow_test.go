@@ -366,3 +366,38 @@ func TestUnitLanesFetchOnlyMainAndReleaseTags(t *testing.T) {
 		"scripts/ci/fetch_release_history.sh",
 		"git describe --tags")
 }
+
+// TestUnitDeployWaitsForAdmission: an automatic unit deploy starts only after
+// the preflight found production unfrozen, idle and healthy, and this the
+// newest deployable unit release
+// (docs/adr/20261020214632-automatic-unit-deploy-safety-rails.md). The
+// preflight reads issues (the deploy-freeze switch) and runs, and nothing
+// else; the deploy lanes run only on its go.
+func TestUnitDeployWaitsForAdmission(t *testing.T) {
+	release := readWorkflow(t, "release-units.yml")
+	preflight := jobBlock(t, release, "preflight")
+	for _, required := range []string{
+		"needs: [build]",
+		"needs.build.outputs.eligible == 'true'",
+		"(inputs.deploy_environment != '' || (github.event_name == 'push' && vars.UNIT_RELEASE_AUTODEPLOY_ENVIRONMENT != ''))",
+		"issues: read",
+		"go: ${{ steps.preflight.outputs.go }}",
+		"python3 scripts/ci/deploy_preflight.py --wait 40m --interval 60s",
+	} {
+		if !strings.Contains(preflight, required) {
+			t.Errorf("release-units preflight is missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"issues: write", "contents: write", "actions: write", "id-token: write", "StrictHostKeyChecking=no"} {
+		if strings.Contains(preflight, forbidden) {
+			t.Errorf("release-units preflight must not have %q", forbidden)
+		}
+	}
+	orderedIn(t, "release-units preflight", preflight, "Set up SSH", "COMPUTE_KNOWN_HOSTS", "deploy_preflight.py")
+	deploy := jobBlock(t, release, "deploy")
+	for _, required := range []string{"needs: [build, preflight]", "needs.preflight.outputs.go == 'true'"} {
+		if !strings.Contains(deploy, required) {
+			t.Errorf("release-units deploy is missing %q", required)
+		}
+	}
+}
