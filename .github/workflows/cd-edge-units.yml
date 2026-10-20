@@ -286,7 +286,9 @@ jobs:
   # The other nodes, one at a time with the follower gate; a failed node is
   # rolled back and stops the rest.
   nodes:
-    name: Edge followers
+    # Name the job after its node: without a matrix value in the name, GitHub
+    # appends the whole target object, host-key fingerprint included.
+    name: Edge follower ${{ matrix.target.node }}
     needs: [plan, canary-node, control-plane]
     if: >-
       always() && needs.plan.result == 'success' && needs.plan.outputs.edge == 'true' &&

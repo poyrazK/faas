@@ -13,6 +13,9 @@
 #   unit_deploy.sh rollback PLAN STAGE           put the plan's services back on the release that was
 #                                                active before the plan's
 #   unit_deploy.sh cleanup STAGE                 remove the stage dir
+#   unit_deploy.sh preflight-state               print the control plane's deploy-lock state and the
+#                                                alerts its Prometheus has active, as JSON, for
+#                                                scripts/ci/deploy_preflight.py
 #
 # The control plane's host-configuration step
 # (docs/adr/20261018133100-host-configuration-lane.md):
@@ -288,6 +291,41 @@ cmd_cleanup() {
   remote UNIT "$target" "$(as_root "$target") -c 'rm -rf -- $stage'" || true
 }
 
+# The deploy admission's view of the control plane
+# (docs/adr/20261020214632-automatic-unit-deploy-safety-rails.md): whether
+# deployctl's lock is free, and the alerts Prometheus has active. One SSH
+# round-trip; the remote side never fails, it reports what it could not read.
+cmd_preflight_state() {
+  local target prometheus="${PROMETHEUS_URL:-http://127.0.0.1:9095}"
+  local lock="${DEPLOY_LOCK_PATH:-/run/lock/faas-deploy.lock}"
+  target="$(gate_target)"
+  [[ "$prometheus" =~ ^http://127\.0\.0\.1:[0-9]+$ ]] || die "PROMETHEUS_URL must be a loopback http URL: $prometheus"
+  [[ "$lock" =~ ^/[A-Za-z0-9._/-]+$ ]] || die "bad deploy lock path: $lock"
+  remote UNIT_GATE "$target" "$(as_root "$target") -s -- '$prometheus' '$lock'" <<'REMOTE'
+set -uo pipefail
+prometheus="$1" lock="$2"
+# flock -n exits 75 (-E) when deployctl holds the lock.
+lock_state=free
+flock -n -E 75 "$lock" true
+case "$?" in
+  0) ;;
+  75) lock_state=held ;;
+  *) lock_state=unknown ;;
+esac
+err="$(mktemp)" body="$(mktemp)"
+# The alert list can outgrow one command-line argument: jq reads it from a file.
+if curl -fsS --max-time 10 -o "$body" "$prometheus/api/v1/alerts" 2>"$err" \
+    && jq -ce --arg lock "$lock_state" 'select(.status == "success" and (.data.alerts | type) == "array")
+        | {lock: $lock, prometheus: {ok: true, alerts: .data.alerts}}' "$body" 2>>"$err"; then
+  :
+else
+  jq -cn --arg lock "$lock_state" --arg error "$(tr '\n' ' ' < "$err" | cut -c1-300)" \
+    '{lock: $lock, prometheus: {ok: false, error: (if $error == "" then "no alert list in the answer" else $error end)}}'
+fi
+rm -f -- "$err" "$body"
+REMOTE
+}
+
 # The host-config record and the ADR-580 contract live here; tests point
 # HOST_CONFIG_DIR elsewhere.
 host_config_dir() {
@@ -393,5 +431,6 @@ case "$command" in
   host-restart-script) cmd_host_restart_script "$@" ;;
   host-restarted) cmd_host_restarted "$@" ;;
   host-record) cmd_host_record "$@" ;;
-  *) echo "usage: $0 state|stage|script|run|now|gate|rollback|cleanup|host-state|host-manifest|host-stage|host-restart-script|host-restarted|host-record ..." >&2; exit 2 ;;
+  preflight-state) cmd_preflight_state "$@" ;;
+  *) echo "usage: $0 state|stage|script|run|now|gate|rollback|cleanup|host-state|host-manifest|host-stage|host-restart-script|host-restarted|host-record|preflight-state ..." >&2; exit 2 ;;
 esac

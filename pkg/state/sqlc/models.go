@@ -13737,6 +13737,25 @@ type UsageMinute struct {
 	JobExecutionClass pgtype.Text
 }
 
+type UsageMonthTotal struct {
+	AccountID     pgtype.UUID
+	Month         pgtype.Timestamptz
+	SubjectID     pgtype.UUID
+	MinuteRows    int64
+	MbSeconds     int64
+	CpuUsec       int64
+	Requests      int64
+	TxBytes       int64
+	NetTxBytes    int64
+	NetRxBytes    int64
+	ColdBootCount int64
+}
+
+type UsageMonthTotalsTracking struct {
+	Singleton   bool
+	TrackedFrom pgtype.Timestamptz
+}
+
 type UsageMonthly struct {
 	AccountID      pgtype.UUID
 	AppID          pgtype.UUID

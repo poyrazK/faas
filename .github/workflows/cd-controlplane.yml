@@ -1735,6 +1735,8 @@ jobs:
             echo
             echo "Plan: **${action}** over \`$(jq -r .current "$RUNNER_TEMP/host-state.json")\` (previous release \`${previous_tag}\`)."
             echo "Restart: $(jq -r '.only | join(", ") | if . == "" then "none" else . end' "$plan")."
+            kept="$(jq -r '.kept // [] | join(", ")' "$plan")"
+            [[ -z "$kept" ]] || echo "Already running this release's code, not restarted: ${kept}."
             migrations="$(jq -r '.migrations // [] | length' "$plan")"
             [[ "$migrations" == 0 ]] || echo "Migrations applied first: ${migrations} ($(jq -r '.data.version' "$UNITS_DIR/units-manifest.json")), lane-eligible expand only."
             pending="$(jq -r '[.pending[][]] | join(", ")' "$UNITS_DIR/units-manifest.json")"

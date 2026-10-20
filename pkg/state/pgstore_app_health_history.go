@@ -75,7 +75,7 @@ func (s *PgStore) FinishAppHealth(ctx context.Context, claim AppHealthClaim, a a
 			return err
 		}
 	}
-	if err := q.FinishAppHealthCollection(ctx, tx, sqlc.FinishAppHealthCollectionParams{AppID: claim.AppID, Assessment: body, AssessmentKey: key, NotificationState: notification.StateJSON, CheckedAt: NewPgtypeTime(at), NextCheckAt: NewPgtypeTime(now.Add(api.AppHealthCollectorInterval))}); err != nil {
+	if err := q.FinishAppHealthCollection(ctx, tx, sqlc.FinishAppHealthCollectionParams{AppID: claim.AppID, Assessment: body, AssessmentKey: key, NotificationState: notification.StateJSON, CheckedAt: NewPgtypeTime(at), NextCheckAt: NewPgtypeTime(now.Add(appHealthNextCheck(entries, a)))}); err != nil {
 		return fmt.Errorf("finish app health observation: %w", err)
 	}
 	if err := pgEnqueueAppHealthNotification(ctx, tx, claim, notification); err != nil {

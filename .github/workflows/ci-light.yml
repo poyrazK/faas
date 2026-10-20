@@ -37,12 +37,18 @@ on:
   pull_request:
   push:
     branches: [main]
+  # A merge queue tests each entry on top of main and the entries ahead of
+  # it, under the same required check names. Prepared for the ruleset's
+  # merge_queue rule (docs/adr/20261020214632-automatic-unit-deploy-safety-
+  # rails.md, docs/runbooks/MainMergeQueue.md).
+  merge_group:
   workflow_dispatch:
 
 concurrency:
   group: ci-light-${{ github.ref }}
-  # Supersede stale pull-request pushes. Main runs queue instead, so every
-  # merge gets its own light verdict.
+  # Supersede stale pull-request pushes. Main runs queue instead. A merge
+  # group is never cancelled: a cancelled check takes the entry out of the
+  # queue (each group has its own gh-readonly-queue ref anyway).
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
@@ -158,17 +164,12 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           BEFORE: ${{ github.event.before }}
+          MERGE_GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
         run: |
           set -euo pipefail
-          # A pull_request checkout is the merge commit: its first parent is
-          # the base branch tip, so HEAD^1..HEAD is exactly the PR's change.
-          if [[ "$EVENT_NAME" == "pull_request" ]]; then
-            base="$(git rev-parse HEAD^1)"
-          elif [[ -n "$BEFORE" && ! "$BEFORE" =~ ^0+$ ]] && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
-            base="$BEFORE"
-          else
-            base="$(git rev-parse HEAD~1)"
-          fi
+          # The commit this change sits on: a PR's merge-commit parent, a
+          # merge group's parent, or the push's previous tip.
+          base="$(scripts/ci/light_diff_base.sh)"
           git diff --name-only "$base" HEAD > "$RUNNER_TEMP/changed-paths.txt"
           python3 scripts/ci/affected_packages.py summary < "$RUNNER_TEMP/changed-paths.txt"
           echo "LINT_SELECTED_AT=$(date +%s)" >> "$GITHUB_ENV"
@@ -354,18 +355,10 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           BEFORE: ${{ github.event.before }}
+          MERGE_GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
         run: |
           set -euo pipefail
-          # A pull_request checkout is the merge commit: its first parent is
-          # the base branch tip, so HEAD^1..HEAD is exactly the PR's change.
-          if [[ "$EVENT_NAME" == "pull_request" ]]; then
-            base="$(git rev-parse HEAD^1)"
-          elif [[ -n "$BEFORE" && ! "$BEFORE" =~ ^0+$ ]] && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
-            base="$BEFORE"
-          else
-            base="$(git rev-parse HEAD~1)"
-          fi
-          echo "LIGHT_DIFF_BASE=$base" >> "$GITHUB_ENV"
+          echo "LIGHT_DIFF_BASE=$(scripts/ci/light_diff_base.sh)" >> "$GITHUB_ENV"
 
       # ---- policy gates (static, seconds each) ----
       - name: light-tier package selector tests
@@ -374,22 +367,25 @@ jobs:
           python3 scripts/ci/select_package_tests_test.py
           python3 scripts/ci/select_importers_test.py
           python3 scripts/ci/cancel_conflicted_pr_runs_test.py
+          bash scripts/ci/light_diff_base_test.sh
       - name: deploy Action scripts (vendored CLI, push-head guard, environment preflight)
         run: |
           make deploy-action-cli-check
           make verify-action-ref-contents-check
           make deploy-action-head-check
           make environment-preflight-action-check
-      - name: release-safety tool tests (migration lint, SLO gate)
+      - name: release-safety tool tests (migration lint, SLO gate, deploy preflight)
         run: |
           python3 scripts/ci/check_migration_expand_contract_test.py
           python3 scripts/ci/slo_gate_test.py
+          python3 scripts/ci/deploy_preflight_test.py
       - name: per-unit release selection and planning tests
         run: |
           python3 scripts/ci/host_roles_test.py
           python3 scripts/ci/affected_units_test.py
           python3 scripts/ci/check_daemon_deps_test.py
           python3 scripts/ci/blast_radius_test.py
+          python3 scripts/ci/binary_code_test.py
           python3 scripts/ci/plan_unit_deploy_test.py
           python3 scripts/ci/plan_host_config_test.py
           python3 scripts/ci/plan_edge_rollout_test.py
@@ -597,16 +593,11 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           BEFORE: ${{ github.event.before }}
+          MERGE_GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
         run: |
           set -euo pipefail
-          # A pull_request checkout is the merge commit: its first parent is
-          # the base branch tip, so HEAD^1..HEAD is exactly the PR's change.
-          base="$(git rev-parse HEAD^1)"
-          if [[ "$EVENT_NAME" != "pull_request" && -n "$BEFORE" && ! "$BEFORE" =~ ^0+$ ]]; then
-            if git fetch -q --depth=1 origin "$BEFORE" && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
-              base="$BEFORE"
-            fi
-          fi
+          # Fetches a base this depth-2 checkout lacks (a push's BEFORE).
+          base="$(scripts/ci/light_diff_base.sh)"
           git diff --name-only "$base" HEAD > "$RUNNER_TEMP/changed-paths.txt"
           echo "LIGHT_DIFF_BASE=$base" >> "$GITHUB_ENV"
       # pkg/managedpostgres durable credential qualification delivers
