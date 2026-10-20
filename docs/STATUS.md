@@ -7,6 +7,29 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## HTTP service edges as binding evidence — 2026-10-19
+
+Service-binding verification no longer requires the private HTTPS listener,
+which no deployment manifest enables. Plain HTTP is the default caller
+transport (ADR-276).
+
+For a caller on HTTP:
+- `gregale bindings probe` and the managed probe send the marked probe over
+  the URL the caller's binding actually holds,
+  `http://<service>.svc.gregale:10081`. The gateway still requires the declared
+  binding.
+- Enforced GitOps qualification accepts the caller's completed plaintext
+  exchange.
+
+Receipts must match the caller's own transport, and HTTPS callers keep the TLS
+contract. Older guests reject an HTTP managed probe spec, so version skew fails
+closed.
+
+Portable gateway, API, bindingcheck, apid and memory/PostgreSQL tests cover
+this. Guest probe tests are Linux-only and run in CI. Native KVM acceptance
+and qualification dispatch remain pending.
+See [ADR-20261019200059](adr/20261019200059-http-service-binding-evidence.md).
+
 ## Outbound bindings in candidate qualification — 2026-10-19
 
 Enforced managed GitOps graphs also admit customer outbound integration

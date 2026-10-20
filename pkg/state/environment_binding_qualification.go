@@ -95,11 +95,10 @@ func candidateBindingPolicySupported(request EnvironmentWorkloadQualificationReq
 	if f.WorkloadClass != WorkloadClassHTTP && f.WorkloadClass != WorkloadClassWorker || request.ExecutionMode == api.ExecutionModeJob {
 		return false
 	}
-	if len(f.ServiceBindings) != 0 {
-		manifest, err := EffectiveEnvironmentWorkloadManifest(f)
-		if err != nil || manifest.EffectiveServiceBindingTransport() != api.ServiceBindingTransportHTTPS {
-			return false
-		}
+	// ADR-20261019200059: either caller transport qualifies; receipts must
+	// match it (qualificationCallerRequiresHTTPS).
+	if _, err := qualificationCallerRequiresHTTPS(request); len(f.ServiceBindings) != 0 && err != nil {
+		return false
 	}
 	if len(f.QueueBindings) != len(c.Policy.QueueRequirements) || len(f.QueueBindings) != len(f.QueueSmoke) {
 		return false
@@ -117,8 +116,18 @@ func qualificationServiceReceiptKey(requestID string, attempt int64, binding str
 	return qualificationSmokeReceiptKey(requestID, attempt) + "/" + binding
 }
 
+// qualificationCallerRequiresHTTPS is the caller's effective frozen service
+// transport, which every service receipt of the candidate must carry.
+func qualificationCallerRequiresHTTPS(request EnvironmentWorkloadQualificationRequest) (bool, error) {
+	manifest, err := EffectiveEnvironmentWorkloadManifest(request.FrozenInputs)
+	if err != nil {
+		return false, err
+	}
+	return manifest.EffectiveServiceBindingTransport() == api.ServiceBindingTransportHTTPS, nil
+}
+
 func qualificationServiceExchangeMatches(current, original EnvironmentQualificationServiceRoute) bool {
-	return original.RequireHTTPS && original.Caller.CaptureInstanceID != "" && original.Target.CaptureInstanceID != "" &&
+	return original.Caller.CaptureInstanceID != "" && original.Target.CaptureInstanceID != "" &&
 		current.Caller == original.Caller && current.Target == original.Target && current.Port == original.Port && current.RequireHTTPS == original.RequireHTTPS &&
 		reflect.DeepEqual(current.CallScope, original.CallScope) && !original.Deadline.After(current.Deadline) && time.Now().Before(original.Deadline)
 }
@@ -135,11 +144,15 @@ func candidateBindingEvidenceDeadline(request EnvironmentWorkloadQualificationRe
 	if request.LeaseUntil.Before(until) {
 		until = *request.LeaseUntil
 	}
+	requireHTTPS, err := qualificationCallerRequiresHTTPS(request)
+	if err != nil && len(request.FrozenInputs.ServiceBindings) != 0 {
+		return time.Time{}, ErrBindingReleaseRequired
+	}
 	for name, binding := range request.FrozenInputs.ServiceBindings {
 		receipt, ok := receipts[qualificationServiceReceiptKey(request.ID, request.Attempt, name)]
 		target, exists := targets[binding.TargetAppID]
 		r := receipt.Route
-		if !ok || !exists || receipt.Binding != name || r.Caller.RequestID != request.ID || r.Caller.Attempt != request.Attempt || r.Caller.GraphID != request.GraphID || r.Caller.DeploymentID != request.DeploymentID || r.Caller.InstanceID != smoke.InstanceID || r.Caller.CaptureInstanceID != request.ReservedInstanceID || r.Target.RequestID != target.ID || r.Target.Attempt != target.Attempt || r.Target.DeploymentID != target.DeploymentID || r.Target.CaptureInstanceID != target.ReservedInstanceID || r.Target.GraphID != request.GraphID || !r.RequireHTTPS || receipt.RecordedAt.IsZero() || receipt.RecordedAt.After(smoke.RecordedAt) || receipt.RecordedAt.After(now) {
+		if !ok || !exists || receipt.Binding != name || r.Caller.RequestID != request.ID || r.Caller.Attempt != request.Attempt || r.Caller.GraphID != request.GraphID || r.Caller.DeploymentID != request.DeploymentID || r.Caller.InstanceID != smoke.InstanceID || r.Caller.CaptureInstanceID != request.ReservedInstanceID || r.Target.RequestID != target.ID || r.Target.Attempt != target.Attempt || r.Target.DeploymentID != target.DeploymentID || r.Target.CaptureInstanceID != target.ReservedInstanceID || r.Target.GraphID != request.GraphID || r.RequireHTTPS != requireHTTPS || receipt.RecordedAt.IsZero() || receipt.RecordedAt.After(smoke.RecordedAt) || receipt.RecordedAt.After(now) {
 			return time.Time{}, ErrBindingReleaseRequired
 		}
 		if r.Deadline.Before(until) {

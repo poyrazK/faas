@@ -23,3 +23,7 @@ Managed object storage followed in
 and customer outbound integration bindings in
 [ADR-20261019152416](20261019152416-candidate-outbound-binding-qualification.md)
 through probes outboundd sends itself; operator app attachments remain blocked.
+
+Plain HTTP service edges were admitted by
+[ADR-20261019200059](20261019200059-http-service-binding-evidence.md): service
+receipts now carry the caller's own transport.

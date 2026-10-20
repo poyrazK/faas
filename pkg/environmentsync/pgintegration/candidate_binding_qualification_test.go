@@ -52,7 +52,13 @@ func candidateBindingFixture(t *testing.T, basic gitOpsTestStore, kind, age stri
 // create bindings and returns that policy's object storage requirements.
 func candidateBindingFixtureWith(t *testing.T, basic gitOpsTestStore, kind, age string, storage func(accountID, appID, resource string) map[string]string) (state.EnvironmentGitOpsLease, environmentsync.Plan, []state.EnvironmentWorkloadQualificationRequest, state.EnvironmentWorkloadQualificationPlacement) {
 	t.Helper()
-	lease, plan, _ := workloadGraphFixtureWithWorkerSources(t, basic, true, api.ServiceBindingTransportHTTPS, nil, kind)
+	return candidateBindingFixtureFor(t, basic, api.ServiceBindingTransportHTTPS, kind, age, storage)
+}
+
+// candidateBindingFixtureFor selects the callers' service transport.
+func candidateBindingFixtureFor(t *testing.T, basic gitOpsTestStore, transport api.ServiceBindingTransport, kind, age string, storage func(accountID, appID, resource string) map[string]string) (state.EnvironmentGitOpsLease, environmentsync.Plan, []state.EnvironmentWorkloadQualificationRequest, state.EnvironmentWorkloadQualificationPlacement) {
+	t.Helper()
+	lease, plan, _ := workloadGraphFixtureWithWorkerSources(t, basic, true, transport, nil, kind)
 	store := basic.(candidateBindingTestStore)
 	preparer := basic.(state.EnvironmentGitOpsPreparationStore)
 	artifacts := map[string]state.EnvironmentWorkloadSourceArtifact{}
@@ -194,6 +200,12 @@ func completeCandidateBindingCohortWithSecrets(t *testing.T, store candidateBind
 				if err := store.RecordEnvironmentQualificationServiceExchange(t.Context(), selector, forged); err == nil {
 					t.Fatal("forged deadline extended candidate authority")
 				}
+				// ADR-20261019200059: a receipt carries the caller's own transport.
+				forged = route
+				forged.RequireHTTPS = !route.RequireHTTPS
+				if err := store.RecordEnvironmentQualificationServiceExchange(t.Context(), selector, forged); err == nil {
+					t.Fatal("receipt with the other transport produced evidence")
+				}
 
 				proxy := gateway.NewEnvironmentQualificationServiceProxy(gateway.EnvironmentQualificationServiceProxyConfig{Store: store, ResolveNode: func(_ context.Context, _ string) (string, error) { return selector.NodeID, nil }, Forward: func(target gateway.Target) http.Handler {
 					return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -205,11 +217,13 @@ func completeCandidateBindingCohortWithSecrets(t *testing.T, store candidateBind
 				}})
 				request := httptest.NewRequest(http.MethodGet, api.EnvironmentQualificationServicePrefix+m.request.GraphID+"/"+name+"/readyz", nil)
 				request.RemoteAddr = m.instance.HostIP + ":12345"
-				request.TLS = &tls.ConnectionState{Version: tls.VersionTLS13}
+				if route.RequireHTTPS {
+					request.TLS = &tls.ConnectionState{Version: tls.VersionTLS13}
+				}
 				response := httptest.NewRecorder()
 				proxy.ServeHTTP(response, request)
 				if response.Code != http.StatusNoContent {
-					t.Fatalf("private HTTPS exchange: %d %s", response.Code, response.Body.String())
+					t.Fatalf("private service exchange (https=%t): %d %s", route.RequireHTTPS, response.Code, response.Body.String())
 				}
 			}
 		}
