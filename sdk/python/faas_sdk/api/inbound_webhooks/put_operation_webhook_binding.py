@@ -113,7 +113,7 @@ def sync_detailed(
     body: PutOperationWebhookBindingRequest,
     idempotency_key: str | Unset = UNSET,
 ) -> Response[OperationWebhookBindingResponse | Problem]:
-    """Route a verified endpoint to a customer operation (ADR-1193, ADR-1198).
+    """Route a verified endpoint to a customer operation (ADR-1193, ADR-20261016100929).
 
      One binding per endpoint, owned by the same app. The platform tenant is
     the operation owner; it must be active and linked to the app through an
@@ -125,7 +125,7 @@ def sync_detailed(
     operation bindings must be removed first. An empty event_types list
     admits every verified event; other types are acknowledged as ignored.
 
-    mode signal (ADR-1198) starts nothing. Each event whose type a signals
+    mode signal (ADR-20261016100929) starts nothing. Each event whose type a signals
     entry maps is delivered as that operation event to the platform
     tenant's active operations of the named definition whose subject
     matches subject.id_from in the provider payload, at most 16 per event.
@@ -170,7 +170,7 @@ def sync(
     body: PutOperationWebhookBindingRequest,
     idempotency_key: str | Unset = UNSET,
 ) -> OperationWebhookBindingResponse | Problem | None:
-    """Route a verified endpoint to a customer operation (ADR-1193, ADR-1198).
+    """Route a verified endpoint to a customer operation (ADR-1193, ADR-20261016100929).
 
      One binding per endpoint, owned by the same app. The platform tenant is
     the operation owner; it must be active and linked to the app through an
@@ -182,7 +182,7 @@ def sync(
     operation bindings must be removed first. An empty event_types list
     admits every verified event; other types are acknowledged as ignored.
 
-    mode signal (ADR-1198) starts nothing. Each event whose type a signals
+    mode signal (ADR-20261016100929) starts nothing. Each event whose type a signals
     entry maps is delivered as that operation event to the platform
     tenant's active operations of the named definition whose subject
     matches subject.id_from in the provider payload, at most 16 per event.
@@ -222,7 +222,7 @@ async def asyncio_detailed(
     body: PutOperationWebhookBindingRequest,
     idempotency_key: str | Unset = UNSET,
 ) -> Response[OperationWebhookBindingResponse | Problem]:
-    """Route a verified endpoint to a customer operation (ADR-1193, ADR-1198).
+    """Route a verified endpoint to a customer operation (ADR-1193, ADR-20261016100929).
 
      One binding per endpoint, owned by the same app. The platform tenant is
     the operation owner; it must be active and linked to the app through an
@@ -234,7 +234,7 @@ async def asyncio_detailed(
     operation bindings must be removed first. An empty event_types list
     admits every verified event; other types are acknowledged as ignored.
 
-    mode signal (ADR-1198) starts nothing. Each event whose type a signals
+    mode signal (ADR-20261016100929) starts nothing. Each event whose type a signals
     entry maps is delivered as that operation event to the platform
     tenant's active operations of the named definition whose subject
     matches subject.id_from in the provider payload, at most 16 per event.
@@ -277,7 +277,7 @@ async def asyncio(
     body: PutOperationWebhookBindingRequest,
     idempotency_key: str | Unset = UNSET,
 ) -> OperationWebhookBindingResponse | Problem | None:
-    """Route a verified endpoint to a customer operation (ADR-1193, ADR-1198).
+    """Route a verified endpoint to a customer operation (ADR-1193, ADR-20261016100929).
 
      One binding per endpoint, owned by the same app. The platform tenant is
     the operation owner; it must be active and linked to the app through an
@@ -289,7 +289,7 @@ async def asyncio(
     operation bindings must be removed first. An empty event_types list
     admits every verified event; other types are acknowledged as ignored.
 
-    mode signal (ADR-1198) starts nothing. Each event whose type a signals
+    mode signal (ADR-20261016100929) starts nothing. Each event whose type a signals
     entry maps is delivered as that operation event to the platform
     tenant's active operations of the named definition whose subject
     matches subject.id_from in the provider payload, at most 16 per event.

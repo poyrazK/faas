@@ -1947,7 +1947,7 @@ request therefore does not create an instance transition or resident usage.
 |---|---|---|---|
 | `gateway_cors_preflight_edge_total` | `app` | `pkg/gateway/metrics.go::ObserveCORSPreflightEdge` | Counter of matching CORS preflights answered by the gateway without waking the resolved app. |
 
-### 12.9 Customer Operations (ADR-1285)
+### 12.9 Customer Operations (ADR-20261016123221)
 
 schedd reads fleet-wide Operation state from Postgres in its 60-second
 retention tick and serves one snapshot per scrape. Every schedd reports the

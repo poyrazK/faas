@@ -179,7 +179,7 @@ mkdir -p "${customer_http_probe}/cmd/e2e"
 cp "${repo_root}/cmd/e2e/customer_http_operations_metal_test.go" "${customer_http_probe}/cmd/e2e/"
 printf '\nfunc TestCustomerHTTPAddedProbe(t *testing.T) {}\n' >> "${customer_http_probe}/cmd/e2e/customer_http_operations_metal_test.go"
 native_e2e_lane_tests customer-http-operations-only "${customer_http_probe}" | grep -qx TestCustomerHTTPAddedProbe || fail "new customer HTTP scenario was omitted"
-# ADR-1287: a scenario in a sibling customer_http_operations*_metal_test.go file joins the lane.
+# ADR-20261017102231: a scenario in a sibling customer_http_operations*_metal_test.go file joins the lane.
 printf '//go:build metal\n\npackage e2e\n\nfunc TestCustomerHTTPSiblingProbe(t *testing.T) {}\n' > "${customer_http_probe}/cmd/e2e/customer_http_operations_probe_metal_test.go"
 native_e2e_lane_tests customer-http-operations-only "${customer_http_probe}" | grep -qx TestCustomerHTTPSiblingProbe || fail "a sibling customer HTTP scenario file was omitted"
 

@@ -11328,7 +11328,7 @@ type CustomerOperationActiveTelemetryRow struct {
 	Overdue      int64
 }
 
-// ADR-1285: fleet-wide pending Operations by state and wait kind, read
+// ADR-20261016123221: fleet-wide pending Operations by state and wait kind, read
 // through the partial index of pending Operations.
 func (q *Queries) CustomerOperationActiveTelemetry(ctx context.Context, db DBTX, overdueBefore pgtype.Timestamptz) ([]CustomerOperationActiveTelemetryRow, error) {
 	rows, err := db.Query(ctx, customerOperationActiveTelemetry, overdueBefore)
@@ -11670,7 +11670,7 @@ type CustomerOperationOutcomeTelemetryRow struct {
 	Operations  int64
 }
 
-// ADR-1285: Operation outcomes since a point, by failure code.
+// ADR-20261016123221: Operation outcomes since a point, by failure code.
 func (q *Queries) CustomerOperationOutcomeTelemetry(ctx context.Context, db DBTX, since pgtype.Timestamptz) ([]CustomerOperationOutcomeTelemetryRow, error) {
 	rows, err := db.Query(ctx, customerOperationOutcomeTelemetry, since)
 	if err != nil {
@@ -11699,7 +11699,7 @@ WHERE e.event_type IN ('succeeded', 'failed', 'cancelled', 'reconciliation_requi
   AND e.data ->> 'failure_code' = 'execution_outcome_unknown' AND e.created_at >= $1::timestamptz
 `
 
-// ADR-1285: accounts whose attempts ended with an unknown outcome since a point.
+// ADR-20261016123221: accounts whose attempts ended with an unknown outcome since a point.
 func (q *Queries) CustomerOperationOutcomeUnknownAccounts(ctx context.Context, db DBTX, since pgtype.Timestamptz) (int64, error) {
 	row := db.QueryRow(ctx, customerOperationOutcomeUnknownAccounts, since)
 	var column_1 int64
@@ -11828,7 +11828,7 @@ type CustomerOperationWorkflowAttemptWindowRow struct {
 	MaxExecutionSeconds int32
 }
 
-// ADR-1199: the Operation's execution budget also caps the attempt window.
+// ADR-20261016110803: the Operation's execution budget also caps the attempt window.
 func (q *Queries) CustomerOperationWorkflowAttemptWindow(ctx context.Context, db DBTX, arg CustomerOperationWorkflowAttemptWindowParams) (CustomerOperationWorkflowAttemptWindowRow, error) {
 	row := db.QueryRow(ctx, customerOperationWorkflowAttemptWindow, arg.RunID, arg.StepName, arg.Attempt)
 	var i CustomerOperationWorkflowAttemptWindowRow
@@ -43254,7 +43254,7 @@ type ListFinishedWorkflowRunAttemptsRow struct {
 	FinishedAt pgtype.Timestamptz
 }
 
-// ADR-1199: the finished step attempts an Operation's execution budget counts.
+// ADR-20261016110803: the finished step attempts an Operation's execution budget counts.
 func (q *Queries) ListFinishedWorkflowRunAttempts(ctx context.Context, db DBTX, runID pgtype.UUID) ([]ListFinishedWorkflowRunAttemptsRow, error) {
 	rows, err := db.Query(ctx, listFinishedWorkflowRunAttempts, runID)
 	if err != nil {

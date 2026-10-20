@@ -1,11 +1,11 @@
-# ADR-1287 · Leaving the Customer Operations preview
+# ADR-20261017102231 · Leaving the Customer Operations preview
 
 - **Status:** proposed
 - **Date:** 2026-10-17
 - **Owner:** Operations maintainers
 - **Related:** [ADR-521](521-customer-operations.md),
   [ADR-666](666-operation-execution-preview-admission.md),
-  [ADR-1285](1285-customer-operations-telemetry.md)
+  [ADR-20261016123221](20261016123221-customer-operations-telemetry.md)
 
 ## Context
 
@@ -19,7 +19,7 @@ has no wildcard.
 
 The v1 feature set is now complete: webhook submission, waits and approvals,
 signals from accounts, customers and providers, deadlines and budgets, one
-timeline, and fleet telemetry with alerts (ADR-1285).
+timeline, and fleet telemetry with alerts (ADR-20261016123221).
 
 ## Decision
 
@@ -34,7 +34,7 @@ not met keeps the earlier stage; nothing advances by default.
   one Operation end to end. The scenario is webhook admission, the attempt on a
   Firecracker worker, a lost response with a reconciliation decision, a deadline
   cut, cancellation, the completion callback, and a scheduler restart mid-attempt.
-- The ADR-1285 alerts are routed to on-call, and the dashboard reads live
+- The ADR-20261016123221 alerts are routed to on-call, and the dashboard reads live
   series from the production fleet.
 - An admission rollback drill: close the policy, verify closure on every serving
   node, and confirm accepted work continues.

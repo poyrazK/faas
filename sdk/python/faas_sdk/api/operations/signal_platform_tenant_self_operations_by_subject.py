@@ -111,7 +111,7 @@ def sync_detailed(
     body: PlatformTenantSubjectSignalRequest,
 ) -> Response[OperationSubjectSignalResponse | Problem]:
     """Deliver a named event to this customer's own active operations about one business subject
-    (ADR-1286).
+    (ADR-20261017100853).
 
      Requires platform_tenant:operations:manage. The definition fixes the app, environment and operation
     name. Reaches at most 16 of the customer's own active operations whose subject matches; other
@@ -120,7 +120,7 @@ def sync_detailed(
 
     Args:
         body (PlatformTenantSubjectSignalRequest): One named event for the authenticated
-            customer's own active operations of a definition about one business subject (ADR-1286).
+            customer's own active operations of a definition about one business subject (ADR-20261017100853).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -147,7 +147,7 @@ def sync(
     body: PlatformTenantSubjectSignalRequest,
 ) -> OperationSubjectSignalResponse | Problem | None:
     """Deliver a named event to this customer's own active operations about one business subject
-    (ADR-1286).
+    (ADR-20261017100853).
 
      Requires platform_tenant:operations:manage. The definition fixes the app, environment and operation
     name. Reaches at most 16 of the customer's own active operations whose subject matches; other
@@ -156,7 +156,7 @@ def sync(
 
     Args:
         body (PlatformTenantSubjectSignalRequest): One named event for the authenticated
-            customer's own active operations of a definition about one business subject (ADR-1286).
+            customer's own active operations of a definition about one business subject (ADR-20261017100853).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -178,7 +178,7 @@ async def asyncio_detailed(
     body: PlatformTenantSubjectSignalRequest,
 ) -> Response[OperationSubjectSignalResponse | Problem]:
     """Deliver a named event to this customer's own active operations about one business subject
-    (ADR-1286).
+    (ADR-20261017100853).
 
      Requires platform_tenant:operations:manage. The definition fixes the app, environment and operation
     name. Reaches at most 16 of the customer's own active operations whose subject matches; other
@@ -187,7 +187,7 @@ async def asyncio_detailed(
 
     Args:
         body (PlatformTenantSubjectSignalRequest): One named event for the authenticated
-            customer's own active operations of a definition about one business subject (ADR-1286).
+            customer's own active operations of a definition about one business subject (ADR-20261017100853).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -212,7 +212,7 @@ async def asyncio(
     body: PlatformTenantSubjectSignalRequest,
 ) -> OperationSubjectSignalResponse | Problem | None:
     """Deliver a named event to this customer's own active operations about one business subject
-    (ADR-1286).
+    (ADR-20261017100853).
 
      Requires platform_tenant:operations:manage. The definition fixes the app, environment and operation
     name. Reaches at most 16 of the customer's own active operations whose subject matches; other
@@ -221,7 +221,7 @@ async def asyncio(
 
     Args:
         body (PlatformTenantSubjectSignalRequest): One named event for the authenticated
-            customer's own active operations of a definition about one business subject (ADR-1286).
+            customer's own active operations of a definition about one business subject (ADR-20261017100853).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

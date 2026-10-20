@@ -26,7 +26,7 @@ type WorkflowOperationDeadlineStore interface {
 type workflowOperationWindow struct{ deadline, lease, observed time.Time }
 
 // operationWorkflowWindow is an attempt's fixed deadline: its step timeout,
-// shortened to the Operation's remaining execution budget (ADR-1199).
+// shortened to the Operation's remaining execution budget (ADR-20261016110803).
 func operationWorkflowWindow(snapshot json.RawMessage, step string, started, lease, now time.Time, remaining *time.Duration) (workflowOperationWindow, error) {
 	var spec api.WorkflowSpec
 	if err := json.Unmarshal(snapshot, &spec); err != nil {

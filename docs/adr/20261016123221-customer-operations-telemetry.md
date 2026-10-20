@@ -1,11 +1,11 @@
-# ADR-1285 · Customer Operations telemetry
+# ADR-20261016123221 · Customer Operations telemetry
 
 - **Status:** accepted for implementation
 - **Date:** 2026-10-16
 - **Owner:** Operations maintainers
 - **Related:** [ADR-521](521-customer-operations.md),
   [ADR-1196](1196-operation-deadlines-and-budgets.md),
-  [ADR-1198](1198-webhook-delivered-operation-signals.md),
+  [ADR-20261016100929](20261016100929-webhook-delivered-operation-signals.md),
   [ADR-1235](1235-spec12-operator-alerts-at-warn.md), [ADR-1236](1236-paging-set.md)
 
 ## Context

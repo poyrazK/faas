@@ -1,4 +1,4 @@
-# ADR-1199 · Workflow Operation execution budget
+# ADR-20261016110803 · Workflow Operation execution budget
 
 - **Status:** accepted for implementation
 - **Date:** 2026-10-16

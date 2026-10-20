@@ -12436,7 +12436,7 @@ Deliver a named event to a waiting operation, by ID or by business subject
 | `--scope <SCOPE>` | environment, for a subject signal |  |
 | `--operation <NAME>` | operation name, for a subject signal |  |
 | `--subject <TYPE:ID>` | business subject, instead of an operation ID |  |
-| `--self` | signal the authenticated tenant&#39;s own operations (ADR-1286) |  |
+| `--self` | signal the authenticated tenant&#39;s own operations (ADR-20261017100853) |  |
 | `--definition <UUID>` | operation definition, for a --self subject signal |  |
 
 ### customer-operations approve

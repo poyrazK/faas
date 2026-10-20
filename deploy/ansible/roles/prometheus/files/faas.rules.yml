@@ -6799,7 +6799,7 @@ groups:
       - record: app_class_le:gateway_request_duration_seconds_bucket:increase1h
         expr: sum by (app, class, le) (increase(gateway_request_duration_seconds_bucket[1h]))
 
-  # ADR-1285 Customer Operations. schedd reports fleet-wide gauges from
+  # ADR-20261016123221 Customer Operations. schedd reports fleet-wide gauges from
   # Postgres; every replica reports the same values, so rules read max().
   # The dashboard is deploy/grafana/customer-operations.json and
   # docs/runbooks/FaasCustomerOperations.md covers every alert.

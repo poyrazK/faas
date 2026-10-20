@@ -1,4 +1,4 @@
-# ADR-1198 · Webhook-delivered Operation signals
+# ADR-20261016100929 · Webhook-delivered Operation signals
 
 - **Status:** accepted for implementation
 - **Date:** 2026-10-15

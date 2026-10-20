@@ -269,7 +269,7 @@ native_e2e_lane_tests() {
       ;;
     customer-workflow-operations-only)
       # Every customer_workflow_operations*_metal_test.go file, so the
-      # ADR-1287 Stage 2 scenarios join the lane without a selector edit.
+      # ADR-20261017102231 Stage 2 scenarios join the lane without a selector edit.
       native_e2e_inventory "$root" --files "$(native_e2e_sibling_files "$root" 'customer_workflow_operations*_metal_test.go')"
       ;;
     customer-http-operations-only)

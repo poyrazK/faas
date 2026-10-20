@@ -1172,7 +1172,7 @@ const (
 	OperationApprovalBodyMaxBytes                            = 2048
 	OperationWebhookEventTypesMax                            = 32    // ADR-1193 event types one binding may admit
 	OperationWebhookReceiptCleanupBatch                      = 16    // expired receipts removed per admission
-	OperationWebhookBindingMaxBytes                          = 16384 // ADR-1198 fits 32 signal mappings and a full subject pointer
+	OperationWebhookBindingMaxBytes                          = 16384 // ADR-20261016100929 fits 32 signal mappings and a full subject pointer
 	OperationReportIDMaxBytes                                = 128
 	OperationRecoveryEvidenceMaxBytes                        = 4096
 	OperationEventsPageMax                                   = 100
@@ -1184,8 +1184,8 @@ const (
 	OperationHistoryCursorMaxBytes                           = 512
 	OperationTimelineLogDatesMax                             = 7   // archive days per attempt log window (ADR-1195)
 	OperationDeadlineSweepBatch                              = 100 // workflow Operations settled per deadline sweep (ADR-1196)
-	OperationTelemetryWindowSeconds                          = 900 // outcome window of the Operations gauges (ADR-1285)
-	OperationDeadlineOverdueSeconds                          = 180 // three sweeps past a deadline counts as overdue (ADR-1285)
+	OperationTelemetryWindowSeconds                          = 900 // outcome window of the Operations gauges (ADR-20261016123221)
+	OperationDeadlineOverdueSeconds                          = 180 // three sweeps past a deadline counts as overdue (ADR-20261016123221)
 	OperationRetentionPageMax                                = 500
 	OperationDefinitionBodyMaxBytes                          = 160000
 	OperationReportBodyMaxBytes                              = 16384

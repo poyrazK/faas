@@ -4,7 +4,7 @@
 /* eslint-disable */
 import type { OperationSubject } from './OperationSubject.js';
 /**
- * One named event for the authenticated customer's own active operations of a definition about one business subject (ADR-1286).
+ * One named event for the authenticated customer's own active operations of a definition about one business subject (ADR-20261017100853).
  */
 export type PlatformTenantSubjectSignalRequest = {
   /**

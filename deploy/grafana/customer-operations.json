@@ -1,6 +1,6 @@
 {
   "uid": "faas-customer-operations-adr-1285",
-  "title": "faas Customer Operations (ADR-1285)",
+  "title": "faas Customer Operations (ADR-20261016123221)",
   "schemaVersion": 39,
   "tags": [
     "faas",
@@ -703,7 +703,7 @@
           "sort": "desc"
         }
       },
-      "description": "deadline_exceeded and budget_exhausted come from definition limits (ADR-1196, ADR-1199)."
+      "description": "deadline_exceeded and budget_exhausted come from definition limits (ADR-1196, ADR-20261016110803)."
     },
     {
       "type": "timeseries",

@@ -269,7 +269,7 @@ func TestPgOperationWebhookRoutingGuard(t *testing.T) {
 	}
 }
 
-// ADR-1198: a signal binding persists its subject pointer and event map, and
+// ADR-20261016100929: a signal binding persists its subject pointer and event map, and
 // the two modes never mix.
 func testWebhookSignalBinding(t *testing.T, s webhookOperationFixtureStore) {
 	f := newWebhookOperationFixture(t, s)

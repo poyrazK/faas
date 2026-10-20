@@ -154,7 +154,7 @@ func TestOperationSubjectSignalTargetsActiveOperations(t *testing.T) {
 		if ids, err := signals.OperationsForSubject(ctx, f.account.ID, f.app.ID, "", first.Scope, "fulfil", api.OperationSubject{Type: "order", ID: "ord_1"}, 1); err != nil || len(ids) != 1 {
 			t.Fatalf("subject target limit %v %v", ids, err)
 		}
-		// ADR-1198: a webhook binding keeps the match inside its tenant.
+		// ADR-20261016100929: a webhook binding keeps the match inside its tenant.
 		if ids, err := signals.OperationsForSubject(ctx, f.account.ID, f.app.ID, f.other.ID, first.Scope, "fulfil", api.OperationSubject{Type: "order", ID: "ord_1"}, 10); err != nil || len(ids) != 0 {
 			t.Fatalf("another tenant's operations matched: %v %v", ids, err)
 		}
@@ -181,7 +181,7 @@ func countOf(items []string, want string) int {
 	return n
 }
 
-// ADR-1286: the history records who delivered a signal; the source is not
+// ADR-20261017100853: the history records who delivered a signal; the source is not
 // part of its identity, so a repeat from another source is a duplicate.
 func TestOperationSignalRecordsItsSource(t *testing.T) {
 	operationWorkflowStores(t, func(t *testing.T, store state.Store) {

@@ -40,7 +40,7 @@ type InvocationsRetention struct {
 	now   func() time.Time
 	log   *slog.Logger
 
-	operationTelemetry *OperationTelemetry // ADR-1285; nil reads nothing
+	operationTelemetry *OperationTelemetry // ADR-20261016123221; nil reads nothing
 }
 
 // deadlineBreachDetailsStore is implemented by the production stores. The
@@ -69,7 +69,7 @@ func NewInvocationsRetention(store state.Store, log *slog.Logger) *InvocationsRe
 }
 
 // WithOperationTelemetry refreshes the Customer Operations gauges after each
-// sweep, so they read the state the sweep left (ADR-1285).
+// sweep, so they read the state the sweep left (ADR-20261016123221).
 func (r *InvocationsRetention) WithOperationTelemetry(t *OperationTelemetry) *InvocationsRetention {
 	r.operationTelemetry = t
 	return r

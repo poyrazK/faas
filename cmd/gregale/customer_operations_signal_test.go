@@ -81,7 +81,7 @@ func TestParseCustomerOperationSignalRejectsAmbiguousTargets(t *testing.T) {
 	}
 }
 
-// ADR-1286: --self reaches only the tenant-self routes, and a subject signal
+// ADR-20261017100853: --self reaches only the tenant-self routes, and a subject signal
 // sends the definition instead of an app, scope and operation name.
 func TestCustomerOperationSignalSelfUsesTenantRoutes(t *testing.T) {
 	const definition = "22222222-2222-2222-2222-222222222222"
