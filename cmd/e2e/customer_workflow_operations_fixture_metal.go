@@ -18,6 +18,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -26,7 +27,9 @@ import (
 	"time"
 
 	"filippo.io/age"
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/e2etest"
 	"github.com/onebox-faas/faas/pkg/fcvm/leakcheck"
@@ -54,6 +57,7 @@ type customerWorkflowFixture struct {
 	app                            state.App
 	tenantID, policyPath, imageRef string
 	definition                     api.OperationDefinitionResponse
+	deployment                     api.DeploymentResponse
 	workflow                       api.WorkflowSpec
 	verifier                       *workloadidentity.Verifier
 	relay                          *customerWorkflowRelay
@@ -81,6 +85,13 @@ func newCustomerWorkflowFixture(t *testing.T, finalTimeout time.Duration) *custo
 	mustCustomerWorkflow(t, err)
 	agePath := filepath.Join(t.TempDir(), "host.age")
 	mustCustomerWorkflow(t, secretbox.WriteHostKeyAtPath(agePath, ageKey))
+	// imaged and apid load fleet.age beside host.age; the same key serves both.
+	mustCustomerWorkflow(t, secretbox.WriteHostKeyAtPath(filepath.Join(filepath.Dir(agePath), "fleet.age"), ageKey))
+	// apid seals inbound webhook secrets to this recipient. vmmd rewrites it
+	// from FAAS_HOST_KEY_PATH on boot, so it must hold the same key; left at
+	// its default it is the host's own /etc/faas/secrets/host.age.
+	recipientPath := filepath.Join(filepath.Dir(agePath), "host.age.pub")
+	mustCustomerWorkflow(t, os.WriteFile(recipientPath, []byte(ageKey.Recipient().String()), 0o444))
 	receiver := f.webhookReceiver(t)
 	registry := e2etest.NewFakeRegistry()
 	t.Cleanup(registry.Close)
@@ -90,11 +101,14 @@ func newCustomerWorkflowFixture(t *testing.T, finalTimeout time.Duration) *custo
 	f.imageRef = registry.AddImage("native-workflow-app", image)
 	t.Setenv("FAAS_E2E_API_HOSTING_SMOKE", "1")
 	pool := pgtest.OpenMigrated(t)
+	// Without the template clone (FAAS_PGTEST_TEMPLATE_DATABASE) the pool is an
+	// empty schema; the harness waits for migrations it does not run.
+	mustCustomerWorkflow(t, db.MigrateUp(t.Context(), pool))
 	f.h = e2etest.Start(t, pool, e2etest.DeployWake|e2etest.GatewaydPublic|e2etest.Meterd,
-		"FAAS_WORKFLOWS_ENABLED=1", "FAAS_APID_CONFIG="+configPath,
+		"FAAS_WORKFLOWS_ENABLED=1", "FAAS_E2E_APID_CONFIG="+configPath,
 		"FAAS_WORKLOAD_IDENTITY_KEY_PATH="+keyPath, "FAAS_OBJECT_STORAGE_CONFIG="+objectPath,
 		"FAAS_WORKFLOW_S3_ACCESS=fixture-access", "FAAS_WORKFLOW_S3_SECRET=fixture-secret",
-		"FAAS_HOST_AGE_IDENTITY_PATH="+agePath, "FAAS_EGRESS_ALLOW_LOOPBACK=1")
+		"FAAS_HOST_AGE_IDENTITY_PATH="+agePath, "FAAS_HOST_AGE_RECIPIENT_PATH="+recipientPath, "FAAS_HOST_KEY_PATH="+agePath, "FAAS_EGRESS_ALLOW_LOOPBACK=1")
 	t.Cleanup(func() { f.cleanup(t) })
 	f.store = state.NewPgStore(pool)
 	f.owner = api.NewClient(f.h.APIDURL, f.h.SeedAccount(t.Context(), api.PlanPro, "customer-workflow"))
@@ -115,7 +129,7 @@ func newCustomerWorkflowFixture(t *testing.T, finalTimeout time.Duration) *custo
 	_, err = f.store.LinkPlatformTenantSurface(t.Context(), f.account.ID, tenant.ID, surface.ID)
 	mustCustomerWorkflow(t, err)
 	mustCustomerWorkflow(t, f.store.UpdateTenantSurfaceStatus(t.Context(), surface.ID, state.SurfaceStatusActive))
-	mustCustomerWorkflow(t, f.store.RecordObjectUsageReport(t.Context(), api.ObjectStorageUsageReport{AccountID: f.account.ID, BackendID: backend.ID, BackendFingerprint: backend.Fingerprint, Source: "native-workflow-fixture", PeriodStart: state.ObjectStoragePeriod(time.Now()), ObservedAt: time.Now().Add(-time.Second)}))
+	mustCustomerWorkflow(t, seedOperationObjectAccounting(t, f.store, f.account.ID, f.app.ID, backend))
 	runtime, err := f.store.UpsertRuntimeConfig(t.Context(), state.RuntimeConfigUpdate{Key: "s3_enabled", Scope: state.RuntimeConfigScopeGlobal, DesiredValue: json.RawMessage(`true`), ApplyMode: state.RuntimeConfigApplyHot, ActorID: f.account.ID, Reason: "isolated native workflow file fixture"})
 	mustCustomerWorkflow(t, err)
 	mustCustomerWorkflow(t, f.store.MarkRuntimeConfigApplied(t.Context(), runtime.Key, runtime.Scope, "", runtime.Version, json.RawMessage(`true`), ""))
@@ -129,6 +143,7 @@ func newCustomerWorkflowFixture(t *testing.T, finalTimeout time.Duration) *custo
 		{Name: "finish", Path: "/finish", DependsOn: []string{"transform"}, Input: json.RawMessage(`{"mode":"{{steps.transform.output.mode}}","rows":"{{steps.transform.output.rows}}"}`), Timeout: finalTimeout},
 	}}
 	dep := f.deploy(t, "original")
+	f.deployment = dep
 	sealed, err := secretbox.SealBytes(ageKey.Recipient(), "APP_WEBHOOK", []byte(customerWorkflowWebhookSecret), api.AppWebhookSecretMaxBytes)
 	mustCustomerWorkflow(t, err)
 	hook, err := f.store.CreateAppWebhook(t.Context(), state.AppWebhook{Scope: state.AppWebhookScopeApp, AccountID: f.account.ID, AppID: f.app.ID, TargetURL: receiver.URL, SecretSealed: sealed, EventFilter: []string{string(state.AppWebhookEventOperationFinished)}, DeliveryFormat: state.AppWebhookDeliveryFormatCloudEvents, Enabled: true})
@@ -228,9 +243,11 @@ func customerWorkflowAccounting(t *testing.T) (string, objectstorage.Backend) {
 
 func (f *customerWorkflowFixture) deploy(t *testing.T, version string) api.DeploymentResponse {
 	t.Helper()
-	dep, err := f.owner.Deploy(t.Context(), f.app.Slug, api.CreateDeploymentRequest{Image: f.imageRef, Workflows: []api.WorkflowSpec{f.workflow}, Overrides: &api.CreateDeploymentOverrides{Env: map[string]string{"FIXTURE_VERSION": version}, Healthcheck: &api.DeploymentHealthcheck{Path: "/healthz"}}})
+	dep, err := f.owner.Deploy(t.Context(), f.app.Slug, api.CreateDeploymentRequest{Image: f.imageRef, Workflows: append([]api.WorkflowSpec{f.workflow}, customerWorkflowWaitChains()...), Overrides: &api.CreateDeploymentOverrides{Env: map[string]string{"FIXTURE_VERSION": version}, Healthcheck: &api.DeploymentHealthcheck{Path: "/healthz"}}})
 	mustCustomerWorkflow(t, err)
-	_, err = e2etest.WaitForDeploymentLive(t.Context(), t, f.h.Pool, dep.ID, 3*time.Minute)
+	// The per-deploy image scan alone takes over two minutes on a two-vCPU
+	// acceptance host; three minutes was not enough headroom.
+	_, err = e2etest.WaitForDeploymentLive(t.Context(), t, f.h.Pool, dep.ID, 12*time.Minute)
 	mustCustomerWorkflow(t, err)
 	return dep
 }
@@ -317,10 +334,13 @@ func (f *customerWorkflowFixture) cleanResultFiles(t *testing.T) {
 	}
 }
 
+// mustCustomerWorkflow names its caller's line: fixture setup runs inside helpers, so
+// t.Helper alone would attribute every setup failure to the test function.
 func mustCustomerWorkflow(t *testing.T, err error) {
 	t.Helper()
 	if err != nil {
-		t.Fatal(err)
+		_, file, line, _ := runtime.Caller(1)
+		t.Fatalf("%s:%d: %v", filepath.Base(file), line, err)
 	}
 }
 func customerWorkflowEventually(t *testing.T, budget time.Duration, label string, ready func() bool) {
@@ -352,4 +372,62 @@ func assertCustomerWorkflowFence(t *testing.T, err error) {
 	if !errors.As(err, &problem) || (problem.Problem.Status != http.StatusConflict && problem.Problem.Status != http.StatusNotFound) {
 		t.Fatal("old native file proof was not fenced")
 	}
+}
+
+// customerWorkflowWaitChains are the ADR-20261017102231 Stage 2 workflows deployed beside
+// export-chain. Step names equal the guest's routes; waits have no route.
+// Operation workflows are one linear chain, so finish depends only on the wait
+// and declares no input: it receives the Operation's own input (mode,
+// order_id), which the guest accepts.
+func customerWorkflowWaitChains() []api.WorkflowSpec {
+	return []api.WorkflowSpec{
+		{Name: "wait-chain", Steps: []api.WorkflowStepSpec{
+			{Name: "collect", Path: "/collect", Timeout: 2 * time.Minute},
+			{Name: "review", WaitForCallback: true, Timeout: 30 * time.Minute, DependsOn: []string{"collect"}},
+			{Name: "payment", WaitForEvent: "payment.succeeded", Timeout: 30 * time.Minute, DependsOn: []string{"review"}},
+			{Name: "finish", Path: "/finish", DependsOn: []string{"payment"}, Timeout: 2 * time.Minute},
+		}},
+		{Name: "timeout-chain", Steps: []api.WorkflowStepSpec{
+			{Name: "collect", Path: "/collect", Timeout: 2 * time.Minute},
+			{Name: "payment", WaitForEvent: "payment.succeeded", Timeout: 15 * time.Second, DependsOn: []string{"collect"}},
+			{Name: "finish", Path: "/finish", DependsOn: []string{"payment"}, Timeout: 2 * time.Minute},
+		}},
+	}
+}
+
+// seedOperationObjectAccounting gives the account healthy object-storage
+// accounting: a usage report is accepted only for a backend that holds one of
+// the account's buckets, so reserve a ready, inventoried bucket first, as the
+// Job fixture does. The bucket is retired again before the fixture deletes
+// its app, which refuses to delete an app that still has buckets.
+func seedOperationObjectAccounting(t *testing.T, store *state.PgStore, accountID, appID string, backend objectstorage.Backend) error {
+	ctx := t.Context()
+	bucket, err := store.ReserveObjectBucket(ctx, state.ObjectBucket{ID: uuid.NewString(), AccountID: accountID, AppID: appID, Scope: state.DefaultEnvScope, Name: "operation-files", Region: backend.Region, BackendID: backend.ID, BackendFingerprint: backend.Fingerprint, PhysicalName: "operation-files"}, api.DefaultObjectBucketsPerApp)
+	if err != nil {
+		return fmt.Errorf("reserve accounting bucket: %w", err)
+	}
+	if _, err := store.ClaimObjectBucket(ctx, accountID, appID, bucket.ID, "native-fixture", "provisioning"); err != nil {
+		return fmt.Errorf("claim accounting bucket: %w", err)
+	}
+	if err := store.FinishObjectBucket(ctx, bucket.ID, "native-fixture", "ready"); err != nil {
+		return fmt.Errorf("finish accounting bucket: %w", err)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if _, err := store.ClaimObjectBucket(ctx, accountID, appID, bucket.ID, "native-fixture-cleanup", "deleting"); err != nil {
+			t.Errorf("retire accounting bucket: %v", err)
+			return
+		}
+		if err := store.FinishObjectBucket(ctx, bucket.ID, "native-fixture-cleanup", "deleted"); err != nil {
+			t.Errorf("retire accounting bucket: %v", err)
+		}
+	})
+	if err := store.ClaimObjectInventory(ctx, bucket.ID, "native-fixture"); err != nil {
+		return fmt.Errorf("claim accounting inventory: %w", err)
+	}
+	if err := store.FinishObjectInventory(ctx, bucket.ID, "native-fixture", 0, 0); err != nil {
+		return fmt.Errorf("finish accounting inventory: %w", err)
+	}
+	return store.RecordObjectUsageReport(ctx, api.ObjectStorageUsageReport{AccountID: accountID, BackendID: backend.ID, BackendFingerprint: backend.Fingerprint, Source: "native-fixture", PeriodStart: state.ObjectStoragePeriod(time.Now()), ObservedAt: time.Now().Add(-time.Second)})
 }
