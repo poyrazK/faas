@@ -46,6 +46,9 @@ type Metrics struct {
 	aiModeration           *prometheus.CounterVec
 	aiLogExports           *prometheus.CounterVec
 	aiResponseChecks       *prometheus.CounterVec
+	aiRealtimeSessions     *prometheus.CounterVec
+	aiPromptPrefixShared   *prometheus.CounterVec
+	aiRealtimeActive       prometheus.Gauge
 	aiResponseFindings     *prometheus.CounterVec
 	aiPromptCacheMarks     *prometheus.CounterVec
 	aiResponseCacheSaved   *prometheus.CounterVec
@@ -201,6 +204,29 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 			Name: "outbound_ai_log_exports_total",
 			Help: "Settled AI calls written to the log-drain export outbox, by integration (ADR-1340).",
 		}, []string{"integration_id"}),
+		aiRealtimeSessions: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "outbound_ai_realtime_sessions_total",
+			Help: "AI realtime sessions by event: opened, unmetered, and closed by the client, the provider, a cap, the duration bound, unreadable usage or an error (ADR 20261019072722).",
+		}, []string{"event"}),
+		aiPromptPrefixShared: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "outbound_ai_prompt_cache_shared_total",
+			Help: "Shared prompt-prefix lookups by integration and result: repeated, first, refreshed or error (ADR 20261019132139).",
+		}, []string{"integration_id", "result"}),
+		aiRealtimeActive: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "outbound_ai_realtime_sessions_active",
+			Help: "AI realtime sessions open on this outboundd (ADR 20261019072722).",
+		}),
+	}
+	// The alert rules read these by reason or outcome alone. A series that
+	// starts at zero lets increase() see a process's first event.
+	for _, reason := range []string{api.OutboundAIRouteCanaryReasonErrorRate, api.OutboundAIRouteCanaryReasonLatency} {
+		m.aiCanaryRollbacks.WithLabelValues(reason)
+	}
+	for _, outcome := range []AIUsageOutcome{AIUsageOutcomeKnown, AIUsageOutcomeUnknown, AIUsageOutcomeError} {
+		m.aiBatches.WithLabelValues(string(outcome))
+	}
+	for _, event := range aiRealtimeSessionEvents {
+		m.aiRealtimeSessions.WithLabelValues(event)
 	}
 	collectors := []prometheus.Collector{
 		m.admissions,
@@ -238,6 +264,9 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 		m.aiResponseFindings,
 		m.aiPromptCacheMarks,
 		m.aiResponseCacheSaved,
+		m.aiRealtimeSessions,
+		m.aiRealtimeActive,
+		m.aiPromptPrefixShared,
 	}
 	for _, collector := range collectors {
 		if err := reg.Register(collector); err != nil {
@@ -437,6 +466,32 @@ func (m *Metrics) ObserveAIRouteCanaryCall(canary bool) {
 		target = "canary"
 	}
 	m.aiCanaryCalls.WithLabelValues(target).Inc()
+}
+
+// ObserveAIRealtimeSession counts one realtime session event
+// (ADR 20261019072722).
+func (m *Metrics) ObserveAIRealtimeSession(event string) {
+	if m == nil || m.aiRealtimeSessions == nil {
+		return
+	}
+	m.aiRealtimeSessions.WithLabelValues(event).Inc()
+}
+
+// ObserveAIPromptPrefixShared counts one shared prompt-prefix lookup
+// (ADR 20261019132139).
+func (m *Metrics) ObserveAIPromptPrefixShared(integrationID, result string) {
+	if m == nil || m.aiPromptPrefixShared == nil {
+		return
+	}
+	m.aiPromptPrefixShared.WithLabelValues(integrationID, result).Inc()
+}
+
+// AddAIRealtimeActive moves the open realtime session gauge.
+func (m *Metrics) AddAIRealtimeActive(delta float64) {
+	if m == nil || m.aiRealtimeActive == nil {
+		return
+	}
+	m.aiRealtimeActive.Add(delta)
 }
 
 func (m *Metrics) ObserveAIRouteCanaryRollback(reason string) {
