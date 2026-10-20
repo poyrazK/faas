@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"encoding/json"
@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestWorkflowOperationWindowUsesFixedCurrentAttemptBudget(t *testing.T) {
@@ -25,20 +26,20 @@ func TestWorkflowOperationWindowUsesFixedCurrentAttemptBudget(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			snapshot, _ := json.Marshal(api.WorkflowSpec{Steps: []api.WorkflowStepSpec{{Name: "collect", Timeout: tc.timeout}, {Name: "finish"}}})
-			window, err := operationWorkflowWindow(snapshot, "collect", now.Add(-tc.startedAgo), now.Add(tc.leaseAhead), now)
+			window, err := state.OperationWorkflowWindow(snapshot, "collect", now.Add(-tc.startedAgo), now.Add(tc.leaseAhead), now)
 			if tc.stale {
-				if !errors.Is(err, ErrOperationStaleAttempt) {
+				if !errors.Is(err, state.ErrOperationStaleAttempt) {
 					t.Fatal("expired time budget accepted", err)
 				}
 				return
 			}
-			if err != nil || !window.deadline.Equal(now.Add(tc.wantDeadline)) || !window.lease.Equal(now.Add(tc.wantLease)) {
+			if err != nil || !(*window.Deadline()).Equal(now.Add(tc.wantDeadline)) || !(*window.Lease()).Equal(now.Add(tc.wantLease)) {
 				t.Fatalf("window=%+v %v", window, err)
 			}
-			if _, err := operationWorkflowWindow(snapshot, "unknown", now, now.Add(time.Hour), now); !errors.Is(err, ErrOperationStaleAttempt) {
+			if _, err := state.OperationWorkflowWindow(snapshot, "unknown", now, now.Add(time.Hour), now); !errors.Is(err, state.ErrOperationStaleAttempt) {
 				t.Fatal("uncaptured action received authority", err)
 			}
-			if _, err := operationWorkflowWindow(snapshot, "collect", time.Time{}, now.Add(time.Hour), now); !errors.Is(err, ErrOperationStaleAttempt) {
+			if _, err := state.OperationWorkflowWindow(snapshot, "collect", time.Time{}, now.Add(time.Hour), now); !errors.Is(err, state.ErrOperationStaleAttempt) {
 				t.Fatal("missing current attempt start received authority", err)
 			}
 		})

@@ -12,7 +12,7 @@
 //  3. SetPreviewPrState refuses production apps and the closed-set
 //     validator, returning ErrNotFound and ErrInvalidPreviewPrState
 //     respectively.
-package state
+package state_test
 
 import (
 	"context"
@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // previewTestLimits matches the dispatcher's preview-app shape
@@ -35,7 +36,7 @@ var previewTestLimits = api.Limits{DeployedApps: 10000}
 // (CreateAppIfUnderQuota → ErrNotFound when the account is missing)
 // is honoured. Returns the freshly-minted account ID so callers
 // can stamp it on App.AccountID. ADR-095 PR-C.
-func seedPreviewAccount(t *testing.T, m *MemStore, email string) string {
+func seedPreviewAccount(t *testing.T, m *state.MemStore, email string) string {
 	t.Helper()
 	acct, err := m.CreateAccount(context.Background(), email, api.PlanHobby)
 	if err != nil {
@@ -45,22 +46,22 @@ func seedPreviewAccount(t *testing.T, m *MemStore, email string) string {
 }
 
 func TestMemStore_ListPreviewsForTeardown_PicksClosedAndExpired(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	ctx := context.Background()
 	acct := seedPreviewAccount(t, m, "test1@example.com")
 	parent := "demo-app"
 	now := time.Date(2026, 8, 13, 12, 0, 0, 0, time.UTC)
 
 	// open / future expires: not eligible (PR still live).
-	openApp := mustCreatePreview(t, m, acct, parent, "pr-1-demo", 1, PreviewPrStateOpen, now.Add(24*time.Hour))
+	openApp := mustCreatePreview(t, m, acct, parent, "pr-1-demo", 1, state.PreviewPrStateOpen, now.Add(24*time.Hour))
 	// closed / future expires: eligible (closed is in the terminal set).
-	closedApp := mustCreatePreview(t, m, acct, parent, "pr-2-demo", 2, PreviewPrStateClosed, now.Add(24*time.Hour))
+	closedApp := mustCreatePreview(t, m, acct, parent, "pr-2-demo", 2, state.PreviewPrStateClosed, now.Add(24*time.Hour))
 	// stale / future expires: eligible (stale is in the terminal set).
-	staleApp := mustCreatePreview(t, m, acct, parent, "pr-3-demo", 3, PreviewPrStateStale, now.Add(24*time.Hour))
+	staleApp := mustCreatePreview(t, m, acct, parent, "pr-3-demo", 3, state.PreviewPrStateStale, now.Add(24*time.Hour))
 	// open / past expires: eligible (TTL elapsed).
-	expiredOpenApp := mustCreatePreview(t, m, acct, parent, "pr-4-demo", 4, PreviewPrStateOpen, now.Add(-time.Hour))
+	expiredOpenApp := mustCreatePreview(t, m, acct, parent, "pr-4-demo", 4, state.PreviewPrStateOpen, now.Add(-time.Hour))
 	// torn_down: never eligible (terminal state; sweeper skips).
-	tornApp := mustCreatePreview(t, m, acct, parent, "pr-5-demo", 5, PreviewPrStateTornDown, now.Add(-time.Hour))
+	tornApp := mustCreatePreview(t, m, acct, parent, "pr-5-demo", 5, state.PreviewPrStateTornDown, now.Add(-time.Hour))
 
 	rows, err := m.ListPreviewsForTeardown(ctx, now, 100)
 	if err != nil {
@@ -90,7 +91,7 @@ func TestMemStore_ListPreviewsForTeardown_PicksClosedAndExpired(t *testing.T) {
 }
 
 func TestMemStore_ListPreviewsForTeardown_OrdersByExpiryASC(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	ctx := context.Background()
 	acct := seedPreviewAccount(t, m, "test2@example.com")
 	parent := "demo-app"
@@ -99,9 +100,9 @@ func TestMemStore_ListPreviewsForTeardown_OrdersByExpiryASC(t *testing.T) {
 	// Three expired rows in arbitrary order. The sweeper should
 	// return the oldest expiry first so a stuck janitor drains
 	// the oldest backlog before newer rows.
-	later := mustCreatePreview(t, m, acct, parent, "pr-later", 1, PreviewPrStateOpen, now.Add(-1*time.Hour))
-	middle := mustCreatePreview(t, m, acct, parent, "pr-middle", 2, PreviewPrStateOpen, now.Add(-3*time.Hour))
-	earliest := mustCreatePreview(t, m, acct, parent, "pr-earliest", 3, PreviewPrStateOpen, now.Add(-5*time.Hour))
+	later := mustCreatePreview(t, m, acct, parent, "pr-later", 1, state.PreviewPrStateOpen, now.Add(-1*time.Hour))
+	middle := mustCreatePreview(t, m, acct, parent, "pr-middle", 2, state.PreviewPrStateOpen, now.Add(-3*time.Hour))
+	earliest := mustCreatePreview(t, m, acct, parent, "pr-earliest", 3, state.PreviewPrStateOpen, now.Add(-5*time.Hour))
 
 	rows, err := m.ListPreviewsForTeardown(ctx, now, 100)
 	if err != nil {
@@ -119,14 +120,14 @@ func TestMemStore_ListPreviewsForTeardown_OrdersByExpiryASC(t *testing.T) {
 }
 
 func TestMemStore_ListPreviewsForTeardown_HonoursMaxPerTick(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	ctx := context.Background()
 	acct := seedPreviewAccount(t, m, "test3@example.com")
 	parent := "demo-app"
 	now := time.Now()
 	for i := 1; i <= 5; i++ {
 		mustCreatePreview(t, m, acct, parent, "pr-cap-"+string(rune('0'+i)), i,
-			PreviewPrStateClosed, now.Add(time.Hour))
+			state.PreviewPrStateClosed, now.Add(time.Hour))
 	}
 	rows, err := m.ListPreviewsForTeardown(ctx, now, 2)
 	if err != nil {
@@ -138,12 +139,12 @@ func TestMemStore_ListPreviewsForTeardown_HonoursMaxPerTick(t *testing.T) {
 }
 
 func TestMemStore_ListPreviewsForTeardown_ZeroMaxIsNoop(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	ctx := context.Background()
 	acct := seedPreviewAccount(t, m, "test4@example.com")
 	parent := "demo-app"
 	now := time.Now()
-	mustCreatePreview(t, m, acct, parent, "pr-zero", 1, PreviewPrStateClosed, now.Add(-time.Hour))
+	mustCreatePreview(t, m, acct, parent, "pr-zero", 1, state.PreviewPrStateClosed, now.Add(-time.Hour))
 	rows, err := m.ListPreviewsForTeardown(ctx, now, 0)
 	if err != nil {
 		t.Fatalf("ListPreviewsForTeardown: %v", err)
@@ -154,12 +155,12 @@ func TestMemStore_ListPreviewsForTeardown_ZeroMaxIsNoop(t *testing.T) {
 }
 
 func TestMemStore_ListPreviewsForTeardown_IncludesTombstonedRows(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	ctx := context.Background()
 	acct := seedPreviewAccount(t, m, "test5@example.com")
 	parent := "demo-app"
 	now := time.Now()
-	a := mustCreatePreview(t, m, acct, parent, "pr-tomb", 1, PreviewPrStateClosed, now.Add(-time.Hour))
+	a := mustCreatePreview(t, m, acct, parent, "pr-tomb", 1, state.PreviewPrStateClosed, now.Add(-time.Hour))
 	// The janitor itself flips status='deleted' on torn_down. The
 	// sweep MUST still observe tombstoned rows so a crash between
 	// the tombstone write and the preview_pr_state write recovers
@@ -183,12 +184,12 @@ func TestMemStore_ListPreviewsForTeardown_IncludesTombstonedRows(t *testing.T) {
 }
 
 func TestMemStore_PreviewAppsByParent_HidesTombstoned(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	ctx := context.Background()
 	acct := seedPreviewAccount(t, m, "test6@example.com")
 	parent := "demo-app"
-	live := mustCreatePreview(t, m, acct, parent, "pr-live", 1, PreviewPrStateOpen, time.Now().Add(time.Hour))
-	gone := mustCreatePreview(t, m, acct, parent, "pr-gone", 2, PreviewPrStateClosed, time.Now().Add(time.Hour))
+	live := mustCreatePreview(t, m, acct, parent, "pr-live", 1, state.PreviewPrStateOpen, time.Now().Add(time.Hour))
+	gone := mustCreatePreview(t, m, acct, parent, "pr-gone", 2, state.PreviewPrStateClosed, time.Now().Add(time.Hour))
 	if _, err := m.SoftDeleteAppCascade(ctx, gone.ID); err != nil {
 		t.Fatalf("SoftDeleteAppCascade: %v", err)
 	}
@@ -205,34 +206,34 @@ func TestMemStore_PreviewAppsByParent_HidesTombstoned(t *testing.T) {
 }
 
 func TestMemStore_SetPreviewPrState_PreviewOnly(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	ctx := context.Background()
 	acct := seedPreviewAccount(t, m, "test7@example.com")
-	prev := mustCreatePreview(t, m, acct, "demo", "pr-7-demo", 7, PreviewPrStateOpen, time.Now().Add(time.Hour))
+	prev := mustCreatePreview(t, m, acct, "demo", "pr-7-demo", 7, state.PreviewPrStateOpen, time.Now().Add(time.Hour))
 
-	got, err := m.SetPreviewPrState(ctx, prev.ID, PreviewPrStateClosed)
+	got, err := m.SetPreviewPrState(ctx, prev.ID, state.PreviewPrStateClosed)
 	if err != nil {
 		t.Fatalf("SetPreviewPrState: %v", err)
 	}
-	if got.PreviewPrState != PreviewPrStateClosed {
+	if got.PreviewPrState != state.PreviewPrStateClosed {
 		t.Errorf("PreviewPrState = %q, want closed", got.PreviewPrState)
 	}
 }
 
 func TestMemStore_ClosePRPreviewStartsFixedGraceIdempotently(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	ctx := context.Background()
 	acct := seedPreviewAccount(t, m, "test-close-preview@example.com")
 	now := time.Now().UTC()
 	prev := mustCreatePreview(t, m, acct, "demo", "pr-close-demo", 17,
-		PreviewPrStateOpen, now.Add(7*24*time.Hour))
-	deadline := now.Add(PRPreviewClosedGrace)
+		state.PreviewPrStateOpen, now.Add(7*24*time.Hour))
+	deadline := now.Add(state.PRPreviewClosedGrace)
 
 	closed, err := m.ClosePRPreview(ctx, prev.ID, deadline)
 	if err != nil {
 		t.Fatalf("ClosePRPreview: %v", err)
 	}
-	if closed.PreviewPrState != PreviewPrStateClosed || closed.PreviewExpiresAt == nil || !closed.PreviewExpiresAt.Equal(deadline) {
+	if closed.PreviewPrState != state.PreviewPrStateClosed || closed.PreviewExpiresAt == nil || !closed.PreviewExpiresAt.Equal(deadline) {
 		t.Fatalf("closed preview = state %q expiry %v, want closed at %v", closed.PreviewPrState, closed.PreviewExpiresAt, deadline)
 	}
 
@@ -249,67 +250,67 @@ func TestMemStore_ClosePRPreviewStartsFixedGraceIdempotently(t *testing.T) {
 }
 
 func TestMemStore_ClosePRPreviewCannotReviveStaleOrDeveloperPreview(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	ctx := context.Background()
 	acct := seedPreviewAccount(t, m, "test-close-preview-guard@example.com")
 	now := time.Now().UTC()
-	stale := mustCreatePreview(t, m, acct, "demo", "pr-stale-close", 18, PreviewPrStateStale, now.Add(time.Hour))
-	if _, err := m.ClosePRPreview(ctx, stale.ID, now.Add(PRPreviewClosedGrace)); !errors.Is(err, ErrNotFound) {
+	stale := mustCreatePreview(t, m, acct, "demo", "pr-stale-close", 18, state.PreviewPrStateStale, now.Add(time.Hour))
+	if _, err := m.ClosePRPreview(ctx, stale.ID, now.Add(state.PRPreviewClosedGrace)); !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("ClosePRPreview(stale) = %v, want ErrNotFound", err)
 	}
-	torn := mustCreatePreview(t, m, acct, "demo", "pr-torn-close", 19, PreviewPrStateTornDown, now.Add(time.Hour))
-	if _, err := m.ClosePRPreview(ctx, torn.ID, now.Add(PRPreviewClosedGrace)); !errors.Is(err, ErrNotFound) {
+	torn := mustCreatePreview(t, m, acct, "demo", "pr-torn-close", 19, state.PreviewPrStateTornDown, now.Add(time.Hour))
+	if _, err := m.ClosePRPreview(ctx, torn.ID, now.Add(state.PRPreviewClosedGrace)); !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("ClosePRPreview(torn_down) = %v, want ErrNotFound", err)
 	}
-	dev := mustCreatePreview(t, m, acct, "demo", "dev-close", 0, PreviewPrStateOpen, now.Add(time.Hour))
-	if _, err := m.ClosePRPreview(ctx, dev.ID, now.Add(PRPreviewClosedGrace)); !errors.Is(err, ErrNotFound) {
+	dev := mustCreatePreview(t, m, acct, "demo", "dev-close", 0, state.PreviewPrStateOpen, now.Add(time.Hour))
+	if _, err := m.ClosePRPreview(ctx, dev.ID, now.Add(state.PRPreviewClosedGrace)); !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("ClosePRPreview(developer preview) = %v, want ErrNotFound", err)
 	}
 }
 
 func TestMemStore_SetPreviewPrState_RejectsProductionApp(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	ctx := context.Background()
 	// A non-preview app row: empty PreviewOfSlug is the production
 	// shape. The sweep must never relabel a production app, so
 	// SetPreviewPrState returns ErrNotFound for these rows.
 	acct := seedPreviewAccount(t, m, "test9@example.com")
-	prod := App{
+	prod := state.App{
 		AccountID: acct,
 		Slug:      "demo-app",
-		Status:    AppActive,
+		Status:    state.AppActive,
 	}
 	created, err := m.CreateAppIfUnderQuota(ctx, prod, previewTestLimits)
 	if err != nil {
 		t.Fatalf("CreateAppIfUnderQuota: %v", err)
 	}
-	if _, err := m.SetPreviewPrState(ctx, created.ID, PreviewPrStateClosed); !errors.Is(err, ErrNotFound) {
+	if _, err := m.SetPreviewPrState(ctx, created.ID, state.PreviewPrStateClosed); !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("err = %v, want ErrNotFound (production apps are not eligible)", err)
 	}
 }
 
 func TestMemStore_SetPreviewPrState_RejectsInvalidState(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	ctx := context.Background()
 	acct := seedPreviewAccount(t, m, "test8@example.com")
-	prev := mustCreatePreview(t, m, acct, "demo", "pr-8-demo", 8, PreviewPrStateOpen, time.Now().Add(time.Hour))
+	prev := mustCreatePreview(t, m, acct, "demo", "pr-8-demo", 8, state.PreviewPrStateOpen, time.Now().Add(time.Hour))
 	_, err := m.SetPreviewPrState(ctx, prev.ID, "abandoned")
-	if !errors.Is(err, ErrInvalidPreviewPrState) {
+	if !errors.Is(err, state.ErrInvalidPreviewPrState) {
 		t.Errorf("err = %v, want ErrInvalidPreviewPrState", err)
 	}
 }
 
 // --- helpers ---
 
-func mustCreatePreview(t *testing.T, m *MemStore, accountID, parentSlug, slug string, prNumber int, prState string, expiresAt time.Time) App {
+func mustCreatePreview(t *testing.T, m *state.MemStore, accountID, parentSlug, slug string, prNumber int, prState string, expiresAt time.Time) state.App {
 	t.Helper()
 	expires := expiresAt
-	a := App{
+	a := state.App{
 		AccountID:        accountID,
 		Slug:             slug,
 		Type:             "app",
 		RAMMB:            256,
-		Status:           AppActive,
+		Status:           state.AppActive,
 		PreviewOfSlug:    parentSlug,
 		PreviewPrNumber:  prNumber,
 		PreviewPrState:   prState,

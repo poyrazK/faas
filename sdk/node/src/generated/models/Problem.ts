@@ -5,6 +5,7 @@
 import type { BindingCheckReport } from './BindingCheckReport.js';
 import type { FieldError } from './FieldError.js';
 import type { LogExcerpt } from './LogExcerpt.js';
+import type { ReleaseFreeze } from './ReleaseFreeze.js';
 import type { ReleaseRestorePoint } from './ReleaseRestorePoint.js';
 import type { RollbackCrossedRelease } from './RollbackCrossedRelease.js';
 import type { SecretFinding } from './SecretFinding.js';
@@ -55,6 +56,10 @@ export type Problem = {
    * rollback_crosses_release: how to restore each managed PostgreSQL database to before those releases (ADR-1448).
    */
   restore_points?: Array<ReleaseRestorePoint>;
+  /**
+   * release_frozen: the freezes refusing the release (ADR-20261019071733).
+   */
+  freezes?: Array<ReleaseFreeze>;
   type?: string;
   title: string;
   status: number;

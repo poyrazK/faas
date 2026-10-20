@@ -1,14 +1,15 @@
-package state
+package state_test
 
 import (
+	"github.com/onebox-faas/faas/pkg/state"
 	"reflect"
 	"testing"
 )
 
 func TestCheckpointObjectPublicationPlanCompleteAndOwned(t *testing.T) {
-	r, values := checkpointObjectValueFixture(t)
-	plan, err := checkpointObjectPublicationPlan(r, values)
-	if err != nil || len(plan.Buckets) != 2 || plan.SHA256 != cloneCheckpointSHA(plan) || plan.ValuesSHA256 != values.SHA256 || plan.InputsSHA256 != r.Inputs.SHA256 || plan.ReservationSHA256 != r.SHA256 {
+	r, values := state.CheckpointObjectValueFixture(t)
+	plan, err := state.CheckpointObjectPublicationPlan(r, values)
+	if err != nil || len(plan.Buckets) != 2 || plan.SHA256 != state.CloneCheckpointSHA(plan) || plan.ValuesSHA256 != values.SHA256 || plan.InputsSHA256 != r.Inputs.SHA256 || plan.ReservationSHA256 != r.SHA256 {
 		t.Fatal("complete authenticated plan", err)
 	}
 	n := 0
@@ -33,10 +34,10 @@ func TestCheckpointObjectPublicationPlanCompleteAndOwned(t *testing.T) {
 		}
 		b.AccessGrants[0].Permission = "write"
 	}
-	if err = validateCheckpointObjectCredentialValues(values, r); err != nil {
+	if err = state.ValidateCheckpointObjectCredentialValues(values, r); err != nil {
 		t.Fatal("returned plan aliases sealed values", err)
 	}
-	again, err := checkpointObjectPublicationPlan(r, values)
+	again, err := state.CheckpointObjectPublicationPlan(r, values)
 	if err != nil || again.SHA256 != plan.SHA256 {
 		t.Fatal("plan mutation changed original inputs", err)
 	}
@@ -44,7 +45,7 @@ func TestCheckpointObjectPublicationPlanCompleteAndOwned(t *testing.T) {
 
 func TestCheckpointObjectPublicationPlanEmptyAndGrantOnly(t *testing.T) {
 	for _, empty := range []bool{false, true} {
-		r, _ := checkpointObjectValueFixture(t)
+		r, _ := state.CheckpointObjectValueFixture(t)
 		if empty {
 			r.Inputs.Buckets = nil
 		} else {
@@ -52,12 +53,12 @@ func TestCheckpointObjectPublicationPlanEmptyAndGrantOnly(t *testing.T) {
 				r.Inputs.Buckets[i].Credentials = nil
 			}
 		}
-		r.Inputs.SHA256 = cloneCheckpointSHA(r.Inputs)
+		r.Inputs.SHA256 = state.CloneCheckpointSHA(r.Inputs)
 		r.Members = nil
-		r.SHA256 = cloneCheckpointSHA(r)
-		values := ProjectEnvironmentCloneCheckpointObjectCredentialValues{OperationID: r.Inputs.OperationID, ReservationSHA256: r.SHA256}
-		values.SHA256 = cloneCheckpointSHA(values)
-		plan, err := checkpointObjectPublicationPlan(r, values)
+		r.SHA256 = state.CloneCheckpointSHA(r)
+		values := state.ProjectEnvironmentCloneCheckpointObjectCredentialValues{OperationID: r.Inputs.OperationID, ReservationSHA256: r.SHA256}
+		values.SHA256 = state.CloneCheckpointSHA(values)
+		plan, err := state.CheckpointObjectPublicationPlan(r, values)
 		if err != nil || len(plan.Buckets) != len(r.Inputs.Buckets) {
 			t.Fatal("empty/grant-only plan", err)
 		}
@@ -67,8 +68,8 @@ func TestCheckpointObjectPublicationPlanEmptyAndGrantOnly(t *testing.T) {
 			}
 		}
 		values.ReservationSHA256 = "changed"
-		values.SHA256 = cloneCheckpointSHA(values)
-		if out, err := checkpointObjectPublicationPlan(r, values); err == nil || out.SHA256 != "" {
+		values.SHA256 = state.CloneCheckpointSHA(values)
+		if out, err := state.CheckpointObjectPublicationPlan(r, values); err == nil || out.SHA256 != "" {
 			t.Fatal("unbound sealed matrix returned publication intent")
 		}
 	}

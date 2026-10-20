@@ -13,7 +13,7 @@
 // here at unit-test time, well before a misconfigured session
 // silently buckets rows to the wrong hour.
 
-package state
+package state_test
 
 import (
 	_ "embed"

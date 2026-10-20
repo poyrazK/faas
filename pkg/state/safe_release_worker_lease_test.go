@@ -1,12 +1,13 @@
-package state
+package state_test
 
 import (
+	"github.com/onebox-faas/faas/pkg/state"
 	"testing"
 	"time"
 )
 
 func TestMemStoreSafeReleaseWorkerLease(t *testing.T) {
-	store := NewMemStore()
+	store := state.NewMemStore()
 	health, err := store.SafeReleaseWorkerLeaseHealth(t.Context())
 	if err != nil || health.Exists || health.Ready() {
 		t.Fatalf("missing lease health = %+v, err=%v", health, err)
@@ -29,9 +30,9 @@ func TestMemStoreSafeReleaseWorkerLease(t *testing.T) {
 	if err != nil || !health.Ready() || health.SecondsUntilExpiry() <= 0 {
 		t.Fatalf("fresh lease health = %+v, err=%v", health, err)
 	}
-	store.mu.Lock()
-	store.safeReleaseWorkerLeaseUntil = time.Now().Add(-time.Second)
-	store.mu.Unlock()
+	(*store.Mu()).Lock()
+	(*store.SafeReleaseWorkerLeaseUntil()) = time.Now().Add(-time.Second)
+	(*store.Mu()).Unlock()
 	ready, err = store.SafeReleaseWorkerLeaseReady(t.Context())
 	if err != nil || ready {
 		t.Fatalf("expired lease: ready=%v err=%v", ready, err)

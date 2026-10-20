@@ -1,13 +1,14 @@
-package state
+package state_test
 
 import (
 	"context"
+	"github.com/onebox-faas/faas/pkg/state"
 	"testing"
 )
 
 func TestMemStoreListsActiveNodesNeedingRouteSnapshots(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
+	store := state.NewMemStore()
 
 	activeNodes, err := store.ActiveComputeNodes(ctx)
 	if err != nil {

@@ -12,7 +12,7 @@
   - **Retry after 409.** A caller that sees `statement_invoice_export_in_progress` retries; a run retries on its own.
   - **Overdue blocking pauses** while invoice sync is broken. Reconnecting the key resumes it within a sync.
   - **Late usage** still lowers a finalized minimum top-up, as ADR-1316 says; only a shrinking share no longer does.
-  - **Migration.** `usage_statement_invoice_exports` gains `attempt`, `rejected_at`, `claim_token` and `claimed_until` (expand).
+  - **Migration.** `usage_statement_invoice_exports` gains `attempt`, `rejected_at`, `claim_token` and `claimed_until` (expand); their checks are added `NOT VALID` and validated by a second migration.
 - **Rejected alternatives:**
   - An advisory lock held across the provider calls would pin a database connection for up to minutes per export.
   - Deleting a failed export row would lose the evidence that a provider may hold an invoice for it.

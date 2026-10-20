@@ -1,4 +1,4 @@
-package state
+package state_test
 
 // FrameworkReadyAt MemStore tests (issue #470 / PR #470-FU-B).
 // White-box package (`package state`) so the tests can call the
@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // seedFrameworkReadyInstanceRow inserts a single instance row in the
@@ -23,23 +24,23 @@ import (
 // them. Mirrors seedTierAppAndDeployment's structure with its own
 // app+deployment pair to avoid colliding with the warm-snapshot test
 // fixtures.
-func seedFrameworkReadyInstanceRow(t *testing.T, m *MemStore) Instance {
+func seedFrameworkReadyInstanceRow(t *testing.T, m *state.MemStore) state.Instance {
 	t.Helper()
 	ctx := context.Background()
 	account, err := m.CreateAccount(ctx, "framework-ready@example.com", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.CreateApp(ctx, App{
+	if _, err := m.CreateApp(ctx, state.App{
 		ID: "00000000-0000-0000-0000-0000000000d0", AccountID: account.ID,
-		Slug: "framework-ready-app", Type: AppTypeApp, RAMMB: 256, MaxConcurrency: 1,
-		Status: AppActive, CreatedAt: time.Now(),
+		Slug: "framework-ready-app", Type: state.AppTypeApp, RAMMB: 256, MaxConcurrency: 1,
+		Status: state.AppActive, CreatedAt: time.Now(),
 	}); err != nil {
 		t.Fatalf("seed app: %v", err)
 	}
-	if _, err := m.CreateDeployment(ctx, Deployment{
+	if _, err := m.CreateDeployment(ctx, state.Deployment{
 		ID: "00000000-0000-0000-0000-0000000000e0", AppID: "00000000-0000-0000-0000-0000000000d0",
-		ImageDigest: "sha256:frameworkready", Status: DeployLive, CreatedAt: time.Now(),
+		ImageDigest: "sha256:frameworkready", Status: state.DeployLive, CreatedAt: time.Now(),
 	}); err != nil {
 		t.Fatalf("seed deployment: %v", err)
 	}
@@ -57,7 +58,7 @@ func seedFrameworkReadyInstanceRow(t *testing.T, m *MemStore) Instance {
 // clear resets to nil. The MemStore mirror of pgstore behaviour.
 func TestMemStore_SetInstanceFrameworkReadyAt_StampsAndClears(t *testing.T) {
 	ctx := context.Background()
-	m := newMemStoreForTest()
+	m := state.NewMemStoreForTest()
 	ins := seedFrameworkReadyInstanceRow(t, m)
 
 	// Fresh row has no framework-ready stamp.
@@ -106,13 +107,13 @@ func TestMemStore_SetInstanceFrameworkReadyAt_StampsAndClears(t *testing.T) {
 // from transient DB errors.
 func TestMemStore_SetInstanceFrameworkReadyAt_MissingRowReturnsErrNotFound(t *testing.T) {
 	ctx := context.Background()
-	m := newMemStoreForTest()
+	m := state.NewMemStoreForTest()
 	err := m.SetInstanceFrameworkReadyAt(ctx, "00000000-0000-0000-0000-deadbeefdead", time.Now())
-	if !errors.Is(err, ErrNotFound) {
+	if !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("SetInstanceFrameworkReadyAt on missing row = %v, want ErrNotFound", err)
 	}
 	err = m.ClearInstanceFrameworkReadyAt(ctx, "00000000-0000-0000-0000-deadbeefdead")
-	if !errors.Is(err, ErrNotFound) {
+	if !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("ClearInstanceFrameworkReadyAt on missing row = %v, want ErrNotFound", err)
 	}
 }
@@ -124,7 +125,7 @@ func TestMemStore_SetInstanceFrameworkReadyAt_MissingRowReturnsErrNotFound(t *te
 // overwritten by the UPDATE call).
 func TestMemStore_SetInstanceFrameworkReadyAt_ReStampsAfterClear(t *testing.T) {
 	ctx := context.Background()
-	m := newMemStoreForTest()
+	m := state.NewMemStoreForTest()
 	ins := seedFrameworkReadyInstanceRow(t, m)
 
 	first := time.Now().UTC().Add(-time.Minute).Truncate(time.Microsecond)

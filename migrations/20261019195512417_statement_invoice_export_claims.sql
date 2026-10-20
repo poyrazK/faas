@@ -3,7 +3,8 @@
 -- ADR-20261019180000: one attempt at a time exports a statement. An attempt
 -- claims the export row until claimed_until; an export the provider refused
 -- before creating anything records rejected_at, and the next attempt may
--- retarget it as a new attempt.
+-- retarget it as a new attempt. The checks are added NOT VALID and validated
+-- by the next migration.
 
 -- migration-compat: expand
 
@@ -19,17 +20,17 @@ DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'usage_statement_invoice_exports_attempt_chk'
                    AND conrelid = 'usage_statement_invoice_exports'::regclass) THEN
     ALTER TABLE usage_statement_invoice_exports ADD CONSTRAINT usage_statement_invoice_exports_attempt_chk
-      CHECK (attempt >= 0);
+      CHECK (attempt >= 0) NOT VALID;
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'usage_statement_invoice_exports_claim_chk'
                    AND conrelid = 'usage_statement_invoice_exports'::regclass) THEN
     ALTER TABLE usage_statement_invoice_exports ADD CONSTRAINT usage_statement_invoice_exports_claim_chk
-      CHECK ((claim_token IS NULL) = (claimed_until IS NULL));
+      CHECK ((claim_token IS NULL) = (claimed_until IS NULL)) NOT VALID;
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'usage_statement_invoice_exports_rejected_chk'
                    AND conrelid = 'usage_statement_invoice_exports'::regclass) THEN
     ALTER TABLE usage_statement_invoice_exports ADD CONSTRAINT usage_statement_invoice_exports_rejected_chk
-      CHECK (rejected_at IS NULL OR provider_invoice_id IS NULL);
+      CHECK (rejected_at IS NULL OR provider_invoice_id IS NULL) NOT VALID;
   END IF;
 END $$;
 -- +goose StatementEnd

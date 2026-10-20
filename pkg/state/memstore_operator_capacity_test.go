@@ -25,10 +25,11 @@
 // White-box `package state` so the seeder can touch the private
 // `apps` / `instances` / `computeNodes` maps directly — no
 // public seeding API exists for this shape.
-package state
+package state_test
 
 import (
 	"context"
+	"github.com/onebox-faas/faas/pkg/state"
 	"testing"
 )
 
@@ -36,18 +37,19 @@ func TestMemStore_OperatorCapacity_CoversPgStore(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("empty store", func(t *testing.T) {
-		store := NewMemStore()
+		store := state.NewMemStore()
+		(*
 		// NewMemStore auto-seeds a synthetic 'default-local'
 		// node (ADR-025 axis 3, key = newID() UUID with
 		// Name="default-local"). Drop it so the baseline test
 		// exercises the zero-node branch.
-		store.mu.Lock()
-		for k, n := range store.computeNodes {
-			if n.Name == DefaultLocalNodeName {
-				delete(store.computeNodes, k)
+		store.Mu()).Lock()
+		for k, n := range *store.ComputeNodes() {
+			if n.Name == state.DefaultLocalNodeName {
+				delete((*store.ComputeNodes()), k)
 			}
 		}
-		store.mu.Unlock()
+		(*store.Mu()).Unlock()
 
 		got, err := store.OperatorCapacity(ctx)
 		if err != nil {
@@ -68,7 +70,7 @@ func TestMemStore_OperatorCapacity_CoversPgStore(t *testing.T) {
 	})
 
 	t.Run("placement + tenants + instance buckets", func(t *testing.T) {
-		store := NewMemStore()
+		store := state.NewMemStore()
 		seedOperatorCapacityFixtures(store)
 
 		got, err := store.OperatorCapacity(ctx)
@@ -99,8 +101,8 @@ func TestMemStore_OperatorCapacity_CoversPgStore(t *testing.T) {
 		if !got.Nodes[0].Active {
 			t.Errorf("Nodes[0].Active = false, want true (active-first sort)")
 		}
-		if got.Nodes[0].Name != DefaultLocalNodeName {
-			t.Errorf("Nodes[0].Name = %q, want %q", got.Nodes[0].Name, DefaultLocalNodeName)
+		if got.Nodes[0].Name != state.DefaultLocalNodeName {
+			t.Errorf("Nodes[0].Name = %q, want %q", got.Nodes[0].Name, state.DefaultLocalNodeName)
 		}
 		if !got.Nodes[1].Active {
 			t.Errorf("Nodes[1].Active = false, want true")
@@ -175,8 +177,8 @@ func TestMemStore_OperatorCapacity_CoversPgStore(t *testing.T) {
 //   - 3 instances on node-1 (RUNNING + WAKING + COLD_BOOTING)
 //   - 1 instance on node-1 in a non-live state (PARKED — filtered)
 //   - 1 instance on node-2 in PARKED (filtered by isInstanceStateLive)
-func seedOperatorCapacityFixtures(store *MemStore) {
-	store.computeNodes["node-1"] = ComputeNode{
+func seedOperatorCapacityFixtures(store *state.MemStore) {
+	(*store.ComputeNodes())["node-1"] = state.ComputeNode{
 		ID:                 "node-1",
 		Name:               "node-1",
 		Active:             true,
@@ -185,7 +187,7 @@ func seedOperatorCapacityFixtures(store *MemStore) {
 		MemMB:              32768,
 		AdmissionCeilingMB: 27300,
 	}
-	store.computeNodes["node-2"] = ComputeNode{
+	(*store.ComputeNodes())["node-2"] = state.ComputeNode{
 		ID:                 "node-2",
 		Name:               "node-2",
 		Active:             false,
@@ -194,85 +196,92 @@ func seedOperatorCapacityFixtures(store *MemStore) {
 		MemMB:              16384,
 		AdmissionCeilingMB: 13650,
 	}
+	(*
 
 	// App on node-1, tenant-A, with a live RUNNING instance.
-	store.apps["app-1"] = App{
+	store.Apps())["app-1"] = state.App{
 		ID:        "app-1",
 		AccountID: "tenant-A",
 		NodeID:    "node-1",
-		Status:    AppActive,
+		Status:    state.AppActive,
 	}
+	(*
 	// Second app on node-1, tenant-C, with a WAKING instance.
-	store.apps["app-2"] = App{
+	store.Apps())["app-2"] = state.App{
 		ID:        "app-2",
 		AccountID: "tenant-C",
 		NodeID:    "node-1",
-		Status:    AppActive,
+		Status:    state.AppActive,
 	}
+	(*
 	// Third app on node-1, tenant-C again (TenantsCount
 	// collapses via DISTINCT).
-	store.apps["app-3"] = App{
+	store.Apps())["app-3"] = state.App{
 		ID:        "app-3",
 		AccountID: "tenant-C",
 		NodeID:    "node-1",
-		Status:    AppActive,
+		Status:    state.AppActive,
 	}
+	(*
 	// Unplaced app (no NodeID) — counts toward AppsTotal +
 	// UnplacedApps but NOT toward any node's AppsCount.
-	store.apps["app-4"] = App{
+	store.Apps())["app-4"] = state.App{
 		ID:        "app-4",
 		AccountID: "tenant-B",
 		NodeID:    "",
-		Status:    AppActive,
+		Status:    state.AppActive,
 	}
+	(*
 	// Deleted app — must be excluded from all counts.
-	store.apps["app-deleted"] = App{
+	store.Apps())["app-deleted"] = state.App{
 		ID:        "app-deleted",
 		AccountID: "tenant-X",
 		NodeID:    "node-1",
-		Status:    AppDeleted,
+		Status:    state.AppDeleted,
 	}
+	(*
 	// App on node-2 hosting only a PARKED instance (filtered).
-	store.apps["app-5"] = App{
+	store.Apps())["app-5"] = state.App{
 		ID:        "app-5",
 		AccountID: "tenant-A",
 		NodeID:    "node-2",
-		Status:    AppActive,
+		Status:    state.AppActive,
 	}
-
-	store.instances["inst-1"] = Instance{
+	(*store.Instances())["inst-1"] = state.Instance{
 		ID:     "inst-1",
 		AppID:  "app-1",
 		NodeID: "node-1",
-		State:  instanceStateRunning,
+		State:  state.InstanceStateRunning,
 		RAMMB:  256,
 	}
-	store.instances["inst-2"] = Instance{
+	(*store.Instances())["inst-2"] = state.Instance{
 		ID:     "inst-2",
 		AppID:  "app-2",
 		NodeID: "node-1",
-		State:  instanceStateWaking,
+		State:  state.InstanceStateWaking,
 		RAMMB:  128,
 	}
-	store.instances["inst-3"] = Instance{
+	(*store.Instances())["inst-3"] = state.Instance{
 		ID:     "inst-3",
 		AppID:  "app-3",
 		NodeID: "node-1",
-		State:  instanceStateColdBooting,
+		State:  state.InstanceStateColdBooting,
 		RAMMB:  512,
 	}
+	(*
 	// PARKED instance on node-1 — filtered out by
 	// isInstanceStateLive.
-	store.instances["inst-4"] = Instance{
+	store.Instances())["inst-4"] = state.Instance{
 		ID:     "inst-4",
 		AppID:  "app-3",
 		NodeID: "node-1",
 		State:  "PARKED",
 		RAMMB:  999,
 	}
+	(*
 	// PARKED instance on node-2 — filtered out by both
 	// isInstanceStateLive and the NodeID lookup loop.
-	store.instances["inst-5"] = Instance{
+	store.Instances())["inst-5"] = state.Instance{
 		ID:     "inst-5",
 		AppID:  "app-5",
 		NodeID: "node-2",

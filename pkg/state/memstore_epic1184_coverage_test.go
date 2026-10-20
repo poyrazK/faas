@@ -1,9 +1,10 @@
-package state
+package state_test
 
 import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/onebox-faas/faas/pkg/state"
 	"testing"
 	"time"
 )
@@ -11,9 +12,9 @@ import (
 func TestMemStoreMigrationLeaseLifecycle(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	store := NewMemStore()
+	store := state.NewMemStore()
 	now := time.Now().UTC()
-	lease := MigrationLease{
+	lease := state.MigrationLease{
 		InstanceID:     "instance-lease-1",
 		LeaseToken:     "lease-token-1",
 		SourceNodeID:   "node-a",
@@ -43,19 +44,19 @@ func TestMemStoreMigrationLeaseLifecycle(t *testing.T) {
 		t.Fatalf("completed lease = %+v, want completed handles", got)
 	}
 
-	if err := store.RenewMigrationLease(ctx, lease.LeaseToken, "wrong-node", now.Add(2*time.Hour)); !errors.Is(err, ErrConflict) {
+	if err := store.RenewMigrationLease(ctx, lease.LeaseToken, "wrong-node", now.Add(2*time.Hour)); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("RenewMigrationLease(wrong node) = %v, want ErrConflict", err)
 	}
 	if err := store.RenewMigrationLease(ctx, lease.LeaseToken, lease.SourceNodeID, now.Add(2*time.Hour)); err != nil {
 		t.Fatalf("RenewMigrationLease: %v", err)
 	}
-	if err := store.ReserveMigrationLease(ctx, MigrationLease{
+	if err := store.ReserveMigrationLease(ctx, state.MigrationLease{
 		InstanceID:     lease.InstanceID,
 		LeaseToken:     "lease-token-live-retry",
 		SourceNodeID:   lease.SourceNodeID,
 		CreatedAt:      now,
 		LeaseExpiresAt: now.Add(time.Hour),
-	}); !errors.Is(err, ErrConflict) {
+	}); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("ReserveMigrationLease(live duplicate) = %v, want ErrConflict", err)
 	}
 
@@ -64,7 +65,7 @@ func TestMemStoreMigrationLeaseLifecycle(t *testing.T) {
 	if err := store.RenewMigrationLease(ctx, lease.LeaseToken, lease.SourceNodeID, now.Add(-time.Minute)); err != nil {
 		t.Fatalf("RenewMigrationLease(expire): %v", err)
 	}
-	if err := store.RenewMigrationLease(ctx, lease.LeaseToken, lease.SourceNodeID, now.Add(time.Hour)); !errors.Is(err, ErrMigrationLeaseExpired) {
+	if err := store.RenewMigrationLease(ctx, lease.LeaseToken, lease.SourceNodeID, now.Add(time.Hour)); !errors.Is(err, state.ErrMigrationLeaseExpired) {
 		t.Fatalf("RenewMigrationLease(expired) = %v, want ErrMigrationLeaseExpired", err)
 	}
 	replacement := lease
@@ -73,20 +74,20 @@ func TestMemStoreMigrationLeaseLifecycle(t *testing.T) {
 	if err := store.ReserveMigrationLease(ctx, replacement); err != nil {
 		t.Fatalf("ReserveMigrationLease(expired replacement): %v", err)
 	}
-	if _, err := store.GetMigrationLease(ctx, lease.InstanceID, lease.LeaseToken); !errors.Is(err, ErrNotFound) {
+	if _, err := store.GetMigrationLease(ctx, lease.InstanceID, lease.LeaseToken); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("GetMigrationLease(replaced) = %v, want ErrNotFound", err)
 	}
 
-	if _, err := store.GetMigrationLease(ctx, "wrong-instance", replacement.LeaseToken); !errors.Is(err, ErrNotFound) {
+	if _, err := store.GetMigrationLease(ctx, "wrong-instance", replacement.LeaseToken); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("GetMigrationLease(wrong instance) = %v, want ErrNotFound", err)
 	}
-	if _, err := store.GetMigrationLeaseByToken(ctx, "missing-token"); !errors.Is(err, ErrNotFound) {
+	if _, err := store.GetMigrationLeaseByToken(ctx, "missing-token"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("GetMigrationLeaseByToken(missing) = %v, want ErrNotFound", err)
 	}
-	if err := store.CompleteMigrationLease(ctx, "missing-token", "", ""); !errors.Is(err, ErrNotFound) {
+	if err := store.CompleteMigrationLease(ctx, "missing-token", "", ""); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("CompleteMigrationLease(missing) = %v, want ErrNotFound", err)
 	}
-	if err := store.RenewMigrationLease(ctx, "missing-token", "node-a", now); !errors.Is(err, ErrNotFound) {
+	if err := store.RenewMigrationLease(ctx, "missing-token", "node-a", now); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("RenewMigrationLease(missing) = %v, want ErrNotFound", err)
 	}
 
@@ -108,7 +109,7 @@ func TestMemStoreMigrationLeaseLifecycle(t *testing.T) {
 	if err := store.DeleteMigrationLease(ctx, expired.LeaseToken); err != nil {
 		t.Fatalf("DeleteMigrationLease: %v", err)
 	}
-	if err := store.DeleteMigrationLease(ctx, expired.LeaseToken); !errors.Is(err, ErrNotFound) {
+	if err := store.DeleteMigrationLease(ctx, expired.LeaseToken); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("DeleteMigrationLease(missing) = %v, want ErrNotFound", err)
 	}
 }
@@ -116,7 +117,7 @@ func TestMemStoreMigrationLeaseLifecycle(t *testing.T) {
 func TestMemStoreJobQuotaAdmissionAndUsage(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	store := NewMemStore()
+	store := state.NewMemStore()
 
 	job, err := store.JobCreateIfUnderQuota(ctx, "account-job", "job-one", "app", "image", []string{"run"}, 128, 30, 1, 1, nil, 1)
 	if err != nil {
@@ -126,11 +127,11 @@ func TestMemStoreJobQuotaAdmissionAndUsage(t *testing.T) {
 		t.Fatalf("empty env overrides = %s, want {}", job.EnvOverrides)
 	}
 	_, err = store.JobCreateIfUnderQuota(ctx, "account-job", "job-two", "app", "image", nil, 128, 30, 1, 1, json.RawMessage(`{}`), 1)
-	if !errors.Is(err, ErrJobQuotaExceeded) {
+	if !errors.Is(err, state.ErrJobQuotaExceeded) {
 		t.Fatalf("JobCreateIfUnderQuota(at quota) = %v, want ErrJobQuotaExceeded", err)
 	}
-	var quotaErr *JobQuotaError
-	if !errors.As(err, &quotaErr) || quotaErr.Scope != JobQuotaScopePerAccount || quotaErr.Limit != 1 || quotaErr.Observed != 1 {
+	var quotaErr *state.JobQuotaError
+	if !errors.As(err, &quotaErr) || quotaErr.Scope != state.JobQuotaScopePerAccount || quotaErr.Limit != 1 || quotaErr.Observed != 1 {
 		t.Fatalf("quota error = %v, want per-account limit=1 observed=1", err)
 	}
 
@@ -152,10 +153,10 @@ func TestMemStoreJobQuotaAdmissionAndUsage(t *testing.T) {
 	if err := store.AppendJobUsage(ctx, "account-job", "job-one", "instance-job", minute.Add(30*time.Second), 999, 999, 10, 11, 12, 13, 2, 8); err != nil {
 		t.Fatalf("AppendJobUsage(redelivery): %v", err)
 	}
-	if len(store.usage) != 1 {
-		t.Fatalf("usage rows = %d, want 1", len(store.usage))
+	if len((*store.Usage())) != 1 {
+		t.Fatalf("usage rows = %d, want 1", len((*store.Usage())))
 	}
-	row := store.usage[0]
+	row := (*store.Usage())[0]
 	if row.MeterKind != "job" || row.JobID != "job-one" || row.AppID != "job-one" || row.MBSeconds != 100 || row.Requests != 2 {
 		t.Fatalf("job usage identity/billing = %+v", row)
 	}

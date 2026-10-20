@@ -647,9 +647,9 @@ func TestValidate_HappyPath(t *testing.T) {
 }
 
 func TestValidate_UnknownKind(t *testing.T) {
-	// "rabbitmq" is a kind we genuinely don't support — neither in
-	// ADR-0NN and subsequent widening added rabbitmq/amqp as valid kinds,
-	// so "pulsar" is used here to exercise the unknown-kind rejection branch.
+	// amqp/rabbitmq are recognised but not available yet (see
+	// TestValidate_AMQP_NotAvailable), so "pulsar" exercises the
+	// unknown-kind rejection branch.
 	m := &Manifest{Triggers: []Trigger{
 		{Kind: "pulsar", App: "x", Schedule: "0 3 * * *", Path: "/y"},
 	}}
@@ -876,23 +876,25 @@ func TestValidate_Queue_RejectsReservedBindingIdentity(t *testing.T) {
 	}
 }
 
-func TestValidate_AMQP_Happy(t *testing.T) {
-	m := &Manifest{Triggers: []Trigger{{
-		Kind: TriggerKindRabbitMQ, App: "my-api", Slug: "rabbit-orders",
-		Config: map[string]any{"url": "amqp://guest:guest@localhost:5672/", "queue": "orders"},
-	}}}
-	if err := m.Validate(); err != nil {
-		t.Errorf("err = %v, want nil", err)
-	}
-}
-
-func TestValidate_AMQP_BadScheme(t *testing.T) {
-	m := &Manifest{Triggers: []Trigger{{
-		Kind: TriggerKindAMQP, App: "my-api", Slug: "rabbit-bad",
-		Config: map[string]any{"url": "http://localhost:5672/", "queue": "orders"},
-	}}}
-	if err := m.Validate(); err == nil || !strings.Contains(err.Error(), "url must be amqp:// or amqps://") {
-		t.Errorf("err = %v, want bad scheme error", err)
+// apid's trigger API, plan allowlist and the triggers.kind CHECK accept no
+// AMQP kind, so the manifest must reject it up front instead of letting the
+// deploy fail later with "not available on the <plan> plan".
+func TestValidate_AMQP_NotAvailable(t *testing.T) {
+	for _, kind := range []TriggerKind{TriggerKindAMQP, TriggerKindRabbitMQ} {
+		m := &Manifest{Triggers: []Trigger{{
+			Kind: kind, App: "my-api", Slug: "rabbit-orders",
+			Config: map[string]any{"url": "amqp://guest:guest@localhost:5672/", "queue": "orders"},
+		}}}
+		err := m.Validate()
+		if err == nil || !strings.Contains(err.Error(), string(kind)+" triggers are not available yet") {
+			t.Errorf("%s: err = %v, want not-available error", kind, err)
+		}
+		if err != nil && strings.Contains(err.Error(), "amqp, rabbitmq") {
+			t.Errorf("%s: err = %v, must not list amqp/rabbitmq as supported", kind, err)
+		}
+		if validExclusiveBrokerKind(string(kind)) {
+			t.Errorf("%s: exclusive broker bindings must not accept a kind no trigger can have", kind)
+		}
 	}
 }
 
@@ -1521,6 +1523,14 @@ func TestWorkerManifest_ValidationErrors(t *testing.T) {
 				Source: &Trigger{Kind: "unsupported"},
 			},
 			want: "unsupported kind",
+		},
+		{
+			name: "amqp source kind not available yet",
+			spec: WorkerSpec{
+				Scale:  WorkerScaleSpec{Min: 0, Max: 10, Metric: "queue_lag", Target: 100},
+				Source: &Trigger{Kind: TriggerKindAMQP, Config: map[string]any{"url": "amqp://broker.example/", "queue": "orders"}},
+			},
+			want: "amqp triggers are not available yet",
 		},
 		{
 			name: "negative drain_timeout_s",

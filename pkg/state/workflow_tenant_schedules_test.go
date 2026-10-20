@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -9,17 +9,18 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestTenantWorkflowSchedulesAreIsolatedAndPaged(t *testing.T) {
-	workflowScheduleStores(t, func(t *testing.T, store Store) {
+	state.WorkflowScheduleStores(t, func(t *testing.T, store state.Store) {
 		ctx := context.Background()
 		account, err := store.CreateAccount(ctx, uuid.NewString()+"@example.com", api.PlanHobby)
 		if err != nil {
 			t.Fatal(err)
 		}
-		app, err := store.CreateApp(ctx, App{AccountID: account.ID, Slug: "tenant-schedule-" + uuid.NewString(),
-			Type: AppTypeApp, RAMMB: 256, PlatformTenantRequired: true, MaxConcurrency: 2})
+		app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "tenant-schedule-" + uuid.NewString(),
+			Type: state.AppTypeApp, RAMMB: 256, PlatformTenantRequired: true, MaxConcurrency: 2})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -30,15 +31,15 @@ func TestTenantWorkflowSchedulesAreIsolatedAndPaged(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		deployment, err := store.CreateDeployment(ctx, Deployment{AppID: app.ID, Kind: DeploymentKindImage,
-			ImageDigest: "sha256:tenant-schedule", Status: DeployPending, Workflows: definitions})
+		deployment, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage,
+			ImageDigest: "sha256:tenant-schedule", Status: state.DeployPending, Workflows: definitions})
 		if err != nil {
 			t.Fatal(err)
 		}
 		if err := store.MarkDeploymentLive(ctx, deployment.ID); err != nil {
 			t.Fatal(err)
 		}
-		tenants := store.(PlatformTenantStore)
+		tenants := store.(state.PlatformTenantStore)
 		var tenantIDs []string
 		for range 2 {
 			externalRef := "schedule-customer-" + uuid.NewString()
@@ -56,7 +57,7 @@ func TestTenantWorkflowSchedulesAreIsolatedAndPaged(t *testing.T) {
 			tenantIDs = append(tenantIDs, tenant.ID)
 		}
 
-		schedules := store.(TenantWorkflowScheduleStore)
+		schedules := store.(state.TenantWorkflowScheduleStore)
 		firstPage, err := schedules.ListTenantWorkflowScheduleCandidates(ctx, "", "", "", 1)
 		if err != nil || len(firstPage) != 1 {
 			t.Fatalf("first page=%+v err=%v", firstPage, err)
@@ -85,7 +86,7 @@ func TestTenantWorkflowSchedulesAreIsolatedAndPaged(t *testing.T) {
 			t.Fatalf("pause tenant schedule=%+v err=%v", paused, err)
 		}
 		if _, err := schedules.UpdateTenantWorkflowSchedule(ctx, account.ID, tenantIDs[0], app.ID, "nightly",
-			0, "* * * * *", "UTC", "skip", true); !errors.Is(err, ErrConflict) {
+			0, "* * * * *", "UTC", "skip", true); !errors.Is(err, state.ErrConflict) {
 			t.Fatalf("stale schedule update=%v, want ErrConflict", err)
 		}
 		updatedList, err := schedules.ListTenantWorkflowSchedules(ctx, account.ID, tenantIDs[0], app.ID)
@@ -102,7 +103,7 @@ func TestTenantWorkflowSchedulesAreIsolatedAndPaged(t *testing.T) {
 				}
 				continue
 			}
-			if err != nil || !changed || cursor.Status != WorkflowScheduleArmed {
+			if err != nil || !changed || cursor.Status != state.WorkflowScheduleArmed {
 				t.Fatalf("arm tenant schedule=%+v changed=%t err=%v", cursor, changed, err)
 			}
 		}
@@ -115,11 +116,11 @@ func TestTenantWorkflowSchedulesAreIsolatedAndPaged(t *testing.T) {
 				}
 				continue
 			}
-			if err != nil || !changed || cursor.Status != WorkflowScheduleStarted || cursor.PlatformTenantID != candidate.PlatformTenantID {
+			if err != nil || !changed || cursor.Status != state.WorkflowScheduleStarted || cursor.PlatformTenantID != candidate.PlatformTenantID {
 				t.Fatalf("start tenant schedule=%+v changed=%t err=%v", cursor, changed, err)
 			}
 		}
-		runs, _, err := store.ListWorkflowRuns(ctx, app.ID, ListWorkflowRunsOpts{Limit: 100})
+		runs, _, err := store.ListWorkflowRuns(ctx, app.ID, state.ListWorkflowRunsOpts{Limit: 100})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -141,7 +142,7 @@ func TestTenantWorkflowSchedulesAreIsolatedAndPaged(t *testing.T) {
 		if err != nil || resumed.Version != 2 || !resumed.Enabled || resumed.Schedule != "*/2 * * * *" {
 			t.Fatalf("resume tenant schedule=%+v err=%v", resumed, err)
 		}
-		var pausedCandidate WorkflowScheduleCandidate
+		var pausedCandidate state.WorkflowScheduleCandidate
 		for _, candidate := range candidates {
 			if candidate.PlatformTenantID == tenantIDs[0] {
 				pausedCandidate = candidate
@@ -157,10 +158,10 @@ func TestTenantWorkflowSchedulesAreIsolatedAndPaged(t *testing.T) {
 		}
 		resumeAt := nonmatchingAt.Add(time.Minute)
 		if cursor, changed, err := schedules.AdmitTenantScheduledWorkflow(ctx, pausedCandidate.AppID, pausedCandidate.PlatformTenantID,
-			pausedCandidate.DeploymentID, "nightly", resumeAt); err != nil || !changed || cursor.Status != WorkflowScheduleStarted {
+			pausedCandidate.DeploymentID, "nightly", resumeAt); err != nil || !changed || cursor.Status != state.WorkflowScheduleStarted {
 			t.Fatalf("resumed tenant schedule=%+v changed=%t err=%v", cursor, changed, err)
 		}
-		runs, total, err := store.ListWorkflowRuns(ctx, app.ID, ListWorkflowRunsOpts{Limit: 10})
+		runs, total, err := store.ListWorkflowRuns(ctx, app.ID, state.ListWorkflowRunsOpts{Limit: 10})
 		if err != nil || total != 2 || len(runs) != 2 {
 			t.Fatalf("tenant runs=%+v total=%d err=%v", runs, total, err)
 		}
@@ -177,12 +178,12 @@ func TestTenantWorkflowSchedulesAreIsolatedAndPaged(t *testing.T) {
 			}
 			var snapshot api.WorkflowSpec
 			if err := json.Unmarshal(run.DefinitionSnapshot, &snapshot); err != nil || snapshot.Trigger == nil ||
-				snapshot.Trigger.Schedule != "*/2 * * * *" || !equalWorkflowJSON(snapshot.Trigger.Input, json.RawMessage(`{"report":"owner-default"}`)) {
+				snapshot.Trigger.Schedule != "*/2 * * * *" || !state.EqualWorkflowJSON(snapshot.Trigger.Input, json.RawMessage(`{"report":"owner-default"}`)) {
 				t.Fatalf("tenant run snapshot did not apply the tenant cadence while preserving app input: definition=%s run_input=%s err=%v", run.DefinitionSnapshot, run.Input, err)
 			}
 		}
 
-		if _, err := tenants.SetPlatformTenantStatus(ctx, account.ID, candidates[0].PlatformTenantID, PlatformTenantSuspended); err != nil {
+		if _, err := tenants.SetPlatformTenantStatus(ctx, account.ID, candidates[0].PlatformTenantID, state.PlatformTenantSuspended); err != nil {
 			t.Fatal(err)
 		}
 		if _, changed, err := schedules.AdmitTenantScheduledWorkflow(ctx, app.ID, candidates[0].PlatformTenantID,

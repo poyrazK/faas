@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -8,15 +8,16 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestAutomationEnforcedPublication(t *testing.T) {
-	workflowScheduleStores(t, func(t *testing.T, store Store) {
-		app, _ := seedWorkflowSchedule(t, store, "allow")
-		author := store.(AutomationStore)
-		checks := store.(AutomationPublishCheckStore)
+	state.WorkflowScheduleStores(t, func(t *testing.T, store state.Store) {
+		app, _ := state.SeedWorkflowSchedule(t, store, "allow")
+		author := store.(state.AutomationStore)
+		checks := store.(state.AutomationPublishCheckStore)
 		ctx := context.Background()
-		draft := mutateForTest(t, author, app.ID, "checked", "save", 0, automationDraft("checked", "/v1", ""), false)
+		draft := state.MutateForTest(t, author, app.ID, "checked", "save", 0, state.AutomationDraft("checked", "/v1", ""), false)
 		var definition api.WorkflowSpec
 		_ = json.Unmarshal(draft.Draft, &definition)
 		step := definition.Steps[0].Name
@@ -25,17 +26,17 @@ func TestAutomationEnforcedPublication(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		publish := AutomationMutation{Action: "publish", ExpectedVersion: draft.Version, ActorAccountID: app.AccountID}
-		if _, err := author.MutateAutomation(ctx, app.ID, "checked", publish); !errors.Is(err, ErrAutomationPublishCheckRequired) {
+		publish := state.AutomationMutation{Action: "publish", ExpectedVersion: draft.Version, ActorAccountID: app.AccountID}
+		if _, err := author.MutateAutomation(ctx, app.ID, "checked", publish); !errors.Is(err, state.ErrAutomationPublishCheckRequired) {
 			t.Fatalf("plain bypass: %v", err)
 		}
 		bad := req
 		bad.Scenarios = append([]api.AutomationPublishCheckScenario(nil), req.Scenarios...)
 		bad.Scenarios[0].Expectations = []api.AutomationCheckExpectation{{Step: step, State: "skipped"}}
-		if _, err := checks.CheckAutomationPublication(ctx, app.ID, "checked", app.AccountID, "", bad, api.PlanHobby); !errors.Is(err, ErrAutomationInvalid) {
+		if _, err := checks.CheckAutomationPublication(ctx, app.ID, "checked", app.AccountID, "", bad, api.PlanHobby); !errors.Is(err, state.ErrAutomationInvalid) {
 			t.Fatalf("false assertion: %v", err)
 		}
-		if _, err := checks.SetAutomationPublishPolicy(ctx, app.ID, api.SetAutomationPublishPolicyRequest{Mode: "optional"}); !errors.Is(err, ErrAutomationVersionConflict) {
+		if _, err := checks.SetAutomationPublishPolicy(ctx, app.ID, api.SetAutomationPublishPolicyRequest{Mode: "optional"}); !errors.Is(err, state.ErrAutomationVersionConflict) {
 			t.Fatalf("policy CAS: %v", err)
 		}
 		receipt, err := checks.CheckAutomationPublication(ctx, app.ID, "checked", app.AccountID, "", req, api.PlanHobby)
@@ -48,7 +49,7 @@ func TestAutomationEnforcedPublication(t *testing.T) {
 		publish.CheckReceipt = receipt.Receipt
 		wrong := publish
 		wrong.ActorAPIKeyID = "different-key"
-		if _, err := author.MutateAutomation(ctx, app.ID, "checked", wrong); !errors.Is(err, ErrAutomationPublishCheckRequired) {
+		if _, err := author.MutateAutomation(ctx, app.ID, "checked", wrong); !errors.Is(err, state.ErrAutomationPublishCheckRequired) {
 			t.Fatalf("identity bypass: %v", err)
 		}
 		// Policy changes invalidate all earlier receipts, including a change away and back.
@@ -56,7 +57,7 @@ func TestAutomationEnforcedPublication(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := author.MutateAutomation(ctx, app.ID, "checked", publish); !errors.Is(err, ErrAutomationPublishCheckRequired) {
+		if _, err := author.MutateAutomation(ctx, app.ID, "checked", publish); !errors.Is(err, state.ErrAutomationPublishCheckRequired) {
 			t.Fatalf("policy stale receipt: %v", err)
 		}
 		receipt, err = checks.CheckAutomationPublication(ctx, app.ID, "checked", app.AccountID, "", req, api.PlanHobby)
@@ -65,9 +66,9 @@ func TestAutomationEnforcedPublication(t *testing.T) {
 		}
 		publish.CheckReceipt = receipt.Receipt
 		// Another draft save invalidates a still-unexpired receipt.
-		draft = mutateForTest(t, author, app.ID, "checked", "save", draft.Version, draft.Draft, false)
+		draft = state.MutateForTest(t, author, app.ID, "checked", "save", draft.Version, draft.Draft, false)
 		publish.ExpectedVersion = draft.Version
-		if _, err := author.MutateAutomation(ctx, app.ID, "checked", publish); !errors.Is(err, ErrAutomationPublishCheckRequired) {
+		if _, err := author.MutateAutomation(ctx, app.ID, "checked", publish); !errors.Is(err, state.ErrAutomationPublishCheckRequired) {
 			t.Fatalf("draft stale receipt: %v", err)
 		}
 		req.ExpectedVersion = draft.Version
@@ -90,10 +91,10 @@ func TestAutomationEnforcedPublication(t *testing.T) {
 			t.Fatalf("trusted evidence absent: %s", revision.CheckEvidence)
 		}
 		publish.ExpectedVersion = published.Version
-		if _, err := author.MutateAutomation(ctx, app.ID, "checked", publish); !errors.Is(err, ErrAutomationPublishCheckRequired) {
+		if _, err := author.MutateAutomation(ctx, app.ID, "checked", publish); !errors.Is(err, state.ErrAutomationPublishCheckRequired) {
 			t.Fatalf("receipt replay: %v", err)
 		}
-		_, total, err := author.ListAutomationRevisions(ctx, app.ID, "checked", AutomationRevisionListOptions{Limit: 10})
+		_, total, err := author.ListAutomationRevisions(ctx, app.ID, "checked", state.AutomationRevisionListOptions{Limit: 10})
 		if err != nil || total != 1 {
 			t.Fatalf("failed checks wrote history: %d %v", total, err)
 		}
@@ -103,9 +104,9 @@ func TestAutomationEnforcedPublication(t *testing.T) {
 		guarded.Steps = append([]api.WorkflowStepSpec(nil), definition.Steps...)
 		guarded.Steps[0].When = &api.WorkflowGuardSpec{Ref: "input.ok", Op: "exists", Value: json.RawMessage(`true`)}
 		guardedRaw, _ := json.Marshal(guarded)
-		guardedDraft := mutateForTest(t, author, app.ID, "guarded", "save", 0, guardedRaw, false)
+		guardedDraft := state.MutateForTest(t, author, app.ID, "guarded", "save", 0, guardedRaw, false)
 		guardedReq := api.CheckAutomationPublicationRequest{ExpectedVersion: guardedDraft.Version, Scenarios: []api.AutomationPublishCheckScenario{{Name: "matched", Simulation: api.SimulateAutomationRequest{Definition: guarded, Input: json.RawMessage(`{"ok":true}`), MockOutputs: map[string]json.RawMessage{step: json.RawMessage(`null`)}}, Expectations: []api.AutomationCheckExpectation{{Step: step, State: "mocked"}}}}}
-		if _, err := checks.CheckAutomationPublication(ctx, app.ID, "guarded", app.AccountID, "", guardedReq, api.PlanHobby); !errors.Is(err, ErrAutomationInvalid) {
+		if _, err := checks.CheckAutomationPublication(ctx, app.ID, "guarded", app.AccountID, "", guardedReq, api.PlanHobby); !errors.Is(err, state.ErrAutomationInvalid) {
 			t.Fatalf("coverage bypass: %v", err)
 		}
 		guardedReq.Exclusions = []api.AutomationCheckExclusion{{Step: step, Code: "guard_skip_missing", Reason: "External contract guarantees ok"}}
@@ -119,10 +120,10 @@ func TestAutomationEnforcedPublication(t *testing.T) {
 func TestAutomationReceiptExpiry(t *testing.T) {
 	def := api.WorkflowSpec{Name: "check", Steps: []api.WorkflowStepSpec{}}
 	raw, _ := json.Marshal(def)
-	evidence := api.AutomationCheckEvidence{DefinitionHash: automationReceiptHash(string(raw)), CheckedVersion: 1, CheckedAt: time.Now(), Scenarios: []api.AutomationCheckScenario{{Name: "ok", Passed: true, DefinitionValid: true, Complete: true}}, Exclusions: []api.AutomationCheckExclusion{}, CoveragePassed: true}
-	receipt := automationPublishReceipt{AppID: "app", Name: "check", AccountID: "actor", TokenHash: automationReceiptHash("token"), ExpiresAt: time.Now().Add(-time.Second), Evidence: evidence}
-	mutation := AutomationMutation{Action: "publish", ActorAccountID: "actor", CheckReceipt: "token"}
-	if err := validatePublicationReceipt(api.AutomationPublishPolicy{Mode: "scenarios"}, receipt, "app", "check", &mutation, &Automation{Version: 1, Draft: raw}); !errors.Is(err, ErrAutomationPublishCheckRequired) {
+	evidence := api.AutomationCheckEvidence{DefinitionHash: state.AutomationReceiptHash(string(raw)), CheckedVersion: 1, CheckedAt: time.Now(), Scenarios: []api.AutomationCheckScenario{{Name: "ok", Passed: true, DefinitionValid: true, Complete: true}}, Exclusions: []api.AutomationCheckExclusion{}, CoveragePassed: true}
+	receipt := state.AutomationPublishReceipt{AppID: "app", Name: "check", AccountID: "actor", TokenHash: state.AutomationReceiptHash("token"), ExpiresAt: time.Now().Add(-time.Second), Evidence: evidence}
+	mutation := state.AutomationMutation{Action: "publish", ActorAccountID: "actor", CheckReceipt: "token"}
+	if err := state.ValidatePublicationReceipt(api.AutomationPublishPolicy{Mode: "scenarios"}, receipt, "app", "check", &mutation, &state.Automation{Version: 1, Draft: raw}); !errors.Is(err, state.ErrAutomationPublishCheckRequired) {
 		t.Fatalf("expired receipt: %v", err)
 	}
 }

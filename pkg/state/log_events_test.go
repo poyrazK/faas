@@ -1,8 +1,9 @@
-package state
+package state_test
 
 import (
 	"context"
 	"encoding/json"
+	"github.com/onebox-faas/faas/pkg/state"
 	"strings"
 	"testing"
 	"time"
@@ -17,36 +18,36 @@ const (
 )
 
 func TestMemStoreLogEvents_IdempotentTenantQueryAndCursor(t *testing.T) {
-	store := NewMemStore()
+	store := state.NewMemStore()
 	ctx := context.Background()
 	base := time.Date(2026, time.September, 22, 12, 0, 0, 0, time.UTC)
 	latency := 41
-	events := []LogEvent{
+	events := []state.LogEvent{
 		{
 			OccurredAt: base.Add(-time.Minute), AccountID: logTestAccountID, AppID: logTestAppID,
-			DeploymentID: logTestDeploymentID, Source: LogEventSourceHTTP, SourceEventID: "req:one",
+			DeploymentID: logTestDeploymentID, Source: state.LogEventSourceHTTP, SourceEventID: "req:one",
 			RequestID: "req_1", Route: "/checkout", Method: "POST", Status: 500,
 			Message: "POST /checkout returned 500", LatencyMS: &latency, Fields: json.RawMessage(`{"region":"eu"}`),
 		},
 		{
 			OccurredAt: base.Add(-2 * time.Minute), AccountID: logTestAccountID, AppID: logTestAppID,
-			DeploymentID: logTestDeploymentID, Source: LogEventSourceRuntime, SourceEventID: "inst:7",
+			DeploymentID: logTestDeploymentID, Source: state.LogEventSourceRuntime, SourceEventID: "inst:7",
 			InstanceID: "inst-1", Level: "ERROR", Stream: "STDERR", Message: "database unavailable",
 		},
 		{
 			OccurredAt: base.Add(-3 * time.Minute), AccountID: logTestAccountID, AppID: logTestAppID,
-			Source: LogEventSourceDNS, SourceEventID: "dns:1", Message: "record propagated",
+			Source: state.LogEventSourceDNS, SourceEventID: "dns:1", Message: "record propagated",
 		},
 		{
 			OccurredAt: base.Add(-30 * time.Second), AccountID: logTestAccountID, AppID: logTestOtherAppID,
-			Source: LogEventSourceHTTP, SourceEventID: "other:1", Status: 500, Message: "must remain tenant scoped",
+			Source: state.LogEventSourceHTTP, SourceEventID: "other:1", Status: 500, Message: "must remain tenant scoped",
 		},
 		{
 			OccurredAt: base.Add(-20 * time.Second), AccountID: logTestOtherAccountID, AppID: logTestAppID,
-			Source: LogEventSourceHTTP, SourceEventID: "other-account:1", Status: 500, Message: "must remain account scoped",
+			Source: state.LogEventSourceHTTP, SourceEventID: "other-account:1", Status: 500, Message: "must remain account scoped",
 		},
 	}
-	inserted := make([]LogEvent, 0, len(events))
+	inserted := make([]state.LogEvent, 0, len(events))
 	for _, event := range events {
 		got, err := store.InsertLogEvent(ctx, event)
 		if err != nil {
@@ -66,7 +67,7 @@ func TestMemStoreLogEvents_IdempotentTenantQueryAndCursor(t *testing.T) {
 		t.Fatalf("replay id = %q, want %q", replayed.ID, inserted[0].ID)
 	}
 
-	filter := LogEventFilter{
+	filter := state.LogEventFilter{
 		AccountID: logTestAccountID, AppID: logTestAppID,
 		Since: base.Add(-time.Hour), Until: base, Limit: 2,
 	}
@@ -93,40 +94,40 @@ func TestMemStoreLogEvents_IdempotentTenantQueryAndCursor(t *testing.T) {
 }
 
 func TestMemStoreLogEvents_Filters(t *testing.T) {
-	store := NewMemStore()
+	store := state.NewMemStore()
 	ctx := context.Background()
 	now := time.Date(2026, time.September, 22, 12, 0, 0, 0, time.UTC)
-	_, err := store.InsertLogEvent(ctx, LogEvent{
+	_, err := store.InsertLogEvent(ctx, state.LogEvent{
 		OccurredAt: now.Add(-time.Minute), AccountID: logTestAccountID, AppID: logTestAppID,
-		DeploymentID: logTestDeploymentID, Source: LogEventSourceHTTP,
+		DeploymentID: logTestDeploymentID, Source: state.LogEventSourceHTTP,
 		SourceEventID: "http:1", RequestID: "req_1", TraceID: "trace_1",
 		Route: "/checkout", Status: 503, Message: "unavailable",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = store.InsertLogEvent(ctx, LogEvent{
+	_, err = store.InsertLogEvent(ctx, state.LogEvent{
 		OccurredAt: now.Add(-30 * time.Second), AccountID: logTestAccountID, AppID: logTestAppID,
-		Source: LogEventSourceRuntime, SourceEventID: "runtime:request-id-is-not-trace", RequestID: "trace_1", TraceID: "other_trace",
+		Source: state.LogEventSourceRuntime, SourceEventID: "runtime:request-id-is-not-trace", RequestID: "trace_1", TraceID: "other_trace",
 		Stream: "system", Message: "must not match the exact trace filter",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = store.InsertLogEvent(ctx, LogEvent{
+	_, err = store.InsertLogEvent(ctx, state.LogEvent{
 		OccurredAt: now.Add(-2 * time.Minute), AccountID: logTestAccountID, AppID: logTestAppID,
-		Source: LogEventSourceRuntime, SourceEventID: "runtime:1", Message: "ready",
+		Source: state.LogEventSourceRuntime, SourceEventID: "runtime:1", Message: "ready",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	base := LogEventFilter{
+	base := state.LogEventFilter{
 		AccountID: logTestAccountID, AppID: logTestAppID,
 		Since: now.Add(-time.Hour), Until: now, Limit: 20,
 	}
-	filters := []LogEventFilter{
-		withLogSource(base, LogEventSourceHTTP),
+	filters := []state.LogEventFilter{
+		withLogSource(base, state.LogEventSourceHTTP),
 		withLogDeployment(base, logTestDeploymentID),
 		withLogRequest(base, "req_1"),
 		withLogTrace(base, "trace_1"),
@@ -138,7 +139,7 @@ func TestMemStoreLogEvents_Filters(t *testing.T) {
 		if listErr != nil {
 			t.Fatalf("ListLogEvents(%+v): %v", filter, listErr)
 		}
-		if more || len(rows) != 1 || rows[0].Source != LogEventSourceHTTP {
+		if more || len(rows) != 1 || rows[0].Source != state.LogEventSourceHTTP {
 			t.Fatalf("ListLogEvents(%+v) = %+v, more=%v", filter, rows, more)
 		}
 	}
@@ -155,67 +156,67 @@ func TestMemStoreLogEvents_Filters(t *testing.T) {
 
 func TestLogEventValidation(t *testing.T) {
 	now := time.Date(2026, time.September, 22, 12, 0, 0, 0, time.UTC)
-	valid := LogEvent{
+	valid := state.LogEvent{
 		AccountID: logTestAccountID, AppID: logTestAppID,
-		Source: LogEventSourceRuntime, Message: "ready", OccurredAt: now,
+		Source: state.LogEventSourceRuntime, Message: "ready", OccurredAt: now,
 	}
 	negativeLatency := -1
 	tests := []struct {
 		name string
-		edit func(*LogEvent)
+		edit func(*state.LogEvent)
 	}{
-		{name: "account", edit: func(e *LogEvent) { e.AccountID = "bad" }},
-		{name: "app", edit: func(e *LogEvent) { e.AppID = "bad" }},
-		{name: "deployment", edit: func(e *LogEvent) { e.DeploymentID = "bad" }},
-		{name: "source", edit: func(e *LogEvent) { e.Source = "unknown" }},
-		{name: "status", edit: func(e *LogEvent) { e.Status = 99 }},
-		{name: "level", edit: func(e *LogEvent) { e.Level = "panic" }},
-		{name: "stream", edit: func(e *LogEvent) { e.Stream = "fd3" }},
-		{name: "message empty", edit: func(e *LogEvent) { e.Message = "" }},
-		{name: "message large", edit: func(e *LogEvent) { e.Message = strings.Repeat("x", maxLogEventMessageRunes+1) }},
-		{name: "latency", edit: func(e *LogEvent) { e.LatencyMS = &negativeLatency }},
-		{name: "fields array", edit: func(e *LogEvent) { e.Fields = json.RawMessage(`[]`) }},
-		{name: "fields large", edit: func(e *LogEvent) {
-			e.Fields = json.RawMessage(`{"x":"` + strings.Repeat("x", maxLogEventFieldsBytes) + `"}`)
+		{name: "account", edit: func(e *state.LogEvent) { e.AccountID = "bad" }},
+		{name: "app", edit: func(e *state.LogEvent) { e.AppID = "bad" }},
+		{name: "deployment", edit: func(e *state.LogEvent) { e.DeploymentID = "bad" }},
+		{name: "source", edit: func(e *state.LogEvent) { e.Source = "unknown" }},
+		{name: "status", edit: func(e *state.LogEvent) { e.Status = 99 }},
+		{name: "level", edit: func(e *state.LogEvent) { e.Level = "panic" }},
+		{name: "stream", edit: func(e *state.LogEvent) { e.Stream = "fd3" }},
+		{name: "message empty", edit: func(e *state.LogEvent) { e.Message = "" }},
+		{name: "message large", edit: func(e *state.LogEvent) { e.Message = strings.Repeat("x", state.MaxLogEventMessageRunes+1) }},
+		{name: "latency", edit: func(e *state.LogEvent) { e.LatencyMS = &negativeLatency }},
+		{name: "fields array", edit: func(e *state.LogEvent) { e.Fields = json.RawMessage(`[]`) }},
+		{name: "fields large", edit: func(e *state.LogEvent) {
+			e.Fields = json.RawMessage(`{"x":"` + strings.Repeat("x", state.MaxLogEventFieldsBytes) + `"}`)
 		}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			event := valid
 			tt.edit(&event)
-			if _, err := normalizeLogEventForInsert(event, now); err == nil {
+			if _, err := state.NormalizeLogEventForInsert(event, now); err == nil {
 				t.Fatal("expected validation error")
 			}
 		})
 	}
 }
 
-func withLogSource(filter LogEventFilter, source LogEventSource) LogEventFilter {
+func withLogSource(filter state.LogEventFilter, source state.LogEventSource) state.LogEventFilter {
 	filter.Source = source
 	return filter
 }
 
-func withLogDeployment(filter LogEventFilter, deploymentID string) LogEventFilter {
+func withLogDeployment(filter state.LogEventFilter, deploymentID string) state.LogEventFilter {
 	filter.DeploymentID = deploymentID
 	return filter
 }
 
-func withLogRequest(filter LogEventFilter, requestID string) LogEventFilter {
+func withLogRequest(filter state.LogEventFilter, requestID string) state.LogEventFilter {
 	filter.RequestID = requestID
 	return filter
 }
 
-func withLogRoute(filter LogEventFilter, route string) LogEventFilter {
+func withLogRoute(filter state.LogEventFilter, route string) state.LogEventFilter {
 	filter.Route = route
 	return filter
 }
 
-func withLogStatus(filter LogEventFilter, status int) LogEventFilter {
+func withLogStatus(filter state.LogEventFilter, status int) state.LogEventFilter {
 	filter.Status = status
 	return filter
 }
 
-func withLogTrace(filter LogEventFilter, traceID string) LogEventFilter {
+func withLogTrace(filter state.LogEventFilter, traceID string) state.LogEventFilter {
 	filter.TraceID = traceID
 	return filter
 }

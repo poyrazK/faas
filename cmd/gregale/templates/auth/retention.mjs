@@ -1,5 +1,5 @@
 // Activity and anonymous-user retention (ADR-1190). GoTrue prunes neither
-// its audit log nor anonymous users, so with AUTH_AUDIT_RETENTION_DAYS and
+// its audit log (nor the organization audit log) nor anonymous users, so with AUTH_AUDIT_RETENTION_DAYS and
 // AUTH_ANONYMOUS_RETENTION_DAYS (validated in config.mjs) the front deletes
 // older entries and idle anonymous users in batches. Like
 // lifecycle events it runs after requests and at startup, at most once per
@@ -20,6 +20,14 @@ const anonymousStatement = `DELETE FROM auth.users WHERE id IN (
       AND NOT EXISTS (SELECT 1 FROM auth.sessions s WHERE s.user_id = u.id
         AND greatest(s.created_at, s.updated_at, s.refreshed_at AT TIME ZONE 'UTC') > now() - make_interval(days => $1))
     LIMIT $2)`
+
+// The organization audit log (sql/0020) follows the same retention.
+const orgAuditStatement = `DELETE FROM gregale_auth.org_audit_log WHERE id IN (
+    SELECT id FROM gregale_auth.org_audit_log WHERE occurred_at < now() - make_interval(days => $1) LIMIT $2)`
+
+export function createOrgAuditPruner(options) {
+  return createPruner({ ...options, statement: orgAuditStatement, event: 'org_audit_log' })
+}
 
 export function createAuditPruner(options) {
   return createPruner({ ...options, statement: auditStatement, event: 'audit_log' })

@@ -71,9 +71,9 @@ func (m *MemStore) ClaimNextProjectEnvironmentQueueDelivery(ctx context.Context,
 	if err := m.queueClaimCapacityLocked(next); err != nil {
 		return ProjectEnvironmentQueueDelivery{}, err
 	}
-	subject := account.ResourceOwnerID()
+	subject := account.AsyncQuotaSubjectID()
 	quota, exists := m.accountAsyncQuota[subject]
-	if account.ResourceOwnershipEnabled {
+	if account.AsyncQuotaPooled {
 		quota.MaxInflight = limits.MaxAsyncInvocationsPerAccount
 	}
 	if !exists {

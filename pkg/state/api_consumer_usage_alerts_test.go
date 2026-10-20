@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // adr: 849
@@ -27,7 +28,7 @@ func TestCrossedUsageAlertThresholds(t *testing.T) {
 		{"no units consumed", 100, 50, 50, nil},
 	}
 	for _, tc := range cases {
-		if got := crossedUsageAlertThresholds([]int32{80, 100}, tc.limit, tc.before, tc.after); !slices.Equal(got, tc.want) {
+		if got := state.CrossedUsageAlertThresholds([]int32{80, 100}, tc.limit, tc.before, tc.after); !slices.Equal(got, tc.want) {
 			t.Errorf("%s: crossed = %v, want %v", tc.name, got, tc.want)
 		}
 	}
@@ -50,7 +51,7 @@ func TestValidateAPIConsumerPlanAlerts(t *testing.T) {
 		{"too many", []int32{10, 20, 30, 40, 50, 60}, 1000, false},
 	}
 	for _, tc := range cases {
-		if err := validateAPIConsumerPlanAlerts(tc.thresholds, tc.limit); (err == nil) != tc.ok {
+		if err := state.ValidateAPIConsumerPlanAlerts(tc.thresholds, tc.limit); (err == nil) != tc.ok {
 			t.Errorf("%s: err = %v, want ok=%v", tc.name, err, tc.ok)
 		}
 	}
@@ -58,23 +59,23 @@ func TestValidateAPIConsumerPlanAlerts(t *testing.T) {
 
 // adr: 849
 func TestMemConsumerUsageAlertsFireOncePerMonthAndOnDenial(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	ctx := context.Background()
 	accountID, appID := uuid.NewString(), uuid.NewString()
 	consumer, err := m.CreateAPIConsumer(ctx, accountID, appID, "cust-1", "Customer One")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.CreateAppWebhook(ctx, AppWebhook{AccountID: accountID, AppID: appID, TargetURL: "https://hooks.example.com/a", Enabled: true}); err != nil {
+	if _, err := m.CreateAppWebhook(ctx, state.AppWebhook{AccountID: accountID, AppID: appID, TargetURL: "https://hooks.example.com/a", Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
-	plan, err := m.CreateAPIConsumerPlan(ctx, APIConsumerPlan{AccountID: accountID, AppID: appID, Name: "starter",
+	plan, err := m.CreateAPIConsumerPlan(ctx, state.APIConsumerPlan{AccountID: accountID, AppID: appID, Name: "starter",
 		MaxUnitsPerMonth: 10, AlertThresholdsPercent: []int32{100, 50}})
 	if err != nil || !slices.Equal(plan.AlertThresholdsPercent, []int32{50, 100}) {
 		t.Fatalf("plan = %+v err=%v, want sorted thresholds", plan, err)
 	}
-	policy := APIConsumerPlanPolicy{PlanID: plan.ID, AppID: appID, MaxUnitsPerMonth: 10, AlertThresholdsPercent: plan.AlertThresholdsPercent}
-	admit := func(units int64) APIConsumerPlanDecision {
+	policy := state.APIConsumerPlanPolicy{PlanID: plan.ID, AppID: appID, MaxUnitsPerMonth: 10, AlertThresholdsPercent: plan.AlertThresholdsPercent}
+	admit := func(units int64) state.APIConsumerPlanDecision {
 		t.Helper()
 		decision, err := m.AdmitAPIConsumerPlanRequest(ctx, accountID, consumer.ID, policy, units)
 		if err != nil {
@@ -101,8 +102,8 @@ func TestMemConsumerUsageAlertsFireOncePerMonthAndOnDenial(t *testing.T) {
 		t.Fatalf("alerts after denial = %+v, want 100%% alert recorded once", alerts)
 	}
 	events := 0
-	for _, event := range m.appWebhookEventOutbox {
-		if event.Event != AppWebhookEventConsumerUsageThreshold {
+	for _, event := range *m.AppWebhookEventOutbox() {
+		if event.Event != state.AppWebhookEventConsumerUsageThreshold {
 			continue
 		}
 		var payload api.APIConsumerUsageThresholdWebhookPayload
@@ -118,10 +119,10 @@ func TestMemConsumerUsageAlertsFireOncePerMonthAndOnDenial(t *testing.T) {
 
 // adr: 849
 func TestMemUpdateConsumerPlanAlerts(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	ctx := context.Background()
 	accountID, appID := uuid.NewString(), uuid.NewString()
-	plan, err := m.CreateAPIConsumerPlan(ctx, APIConsumerPlan{AccountID: accountID, AppID: appID, Name: "pro",
+	plan, err := m.CreateAPIConsumerPlan(ctx, state.APIConsumerPlan{AccountID: accountID, AppID: appID, Name: "pro",
 		MaxUnitsPerMonth: 100, AlertThresholdsPercent: []int32{80}})
 	if err != nil {
 		t.Fatal(err)
@@ -130,7 +131,7 @@ func TestMemUpdateConsumerPlanAlerts(t *testing.T) {
 	if err != nil || !slices.Equal(kept.AlertThresholdsPercent, []int32{80}) {
 		t.Fatalf("nil thresholds = %+v err=%v, want kept", kept, err)
 	}
-	if _, err := m.UpdateAPIConsumerPlanLimits(ctx, accountID, appID, plan.ID, 0, 0, nil); !errors.Is(err, ErrInvalidArgument) {
+	if _, err := m.UpdateAPIConsumerPlanLimits(ctx, accountID, appID, plan.ID, 0, 0, nil); !errors.Is(err, state.ErrInvalidArgument) {
 		t.Fatalf("removing the monthly limit under alerts err=%v, want ErrInvalidArgument", err)
 	}
 	cleared, err := m.UpdateAPIConsumerPlanLimits(ctx, accountID, appID, plan.ID, 0, 0, []int32{})

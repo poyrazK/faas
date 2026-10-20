@@ -1,6 +1,6 @@
 //go:build !no_pg
 
-package state
+package state_test
 
 import (
 	"context"
@@ -13,13 +13,14 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
-func contextMoveApp(t *testing.T, f overviewFixture, a App, node string) {
+func contextMoveApp(t *testing.T, f overviewFixture, a state.App, node string) {
 	t.Helper()
 	if f.mem != nil {
 		a.NodeID = node
-		f.mem.apps[a.ID] = a
+		(*f.mem.Apps())[a.ID] = a
 	} else if _, err := f.pool.Exec(f.ctx, "UPDATE apps SET node_id=$2 WHERE id=$1", a.ID, node); err != nil {
 		t.Fatal(err)
 	}
@@ -28,10 +29,10 @@ func contextMoveApp(t *testing.T, f overviewFixture, a App, node string) {
 func contextEventTime(t *testing.T, f overviewFixture, kind string, at time.Time) {
 	t.Helper()
 	if f.mem != nil {
-		for i, e := range f.mem.events {
+		for i, e := range *f.mem.Events() {
 			if e.Kind == kind {
 				e.At = at
-				f.mem.events[i] = e
+				(*f.mem.Events())[i] = e
 			}
 		}
 	} else if _, err := f.pool.Exec(f.ctx, "UPDATE events SET at=$2 WHERE kind=$1", kind, at); err != nil {
@@ -44,13 +45,13 @@ func TestOperatorContextNodeRelationshipsAndTimeline(t *testing.T) {
 		t.Run(backend, func(t *testing.T) {
 			f := newOverviewFixture(t, backend)
 			now := time.Now().UTC().Truncate(time.Microsecond).Add(time.Second)
-			a := f.account(t, "context-a", now.Add(-time.Hour), nil, AccountActive)
-			b := f.account(t, "context-b", now.Add(-time.Hour), nil, AccountActive)
-			local, err := f.store.ComputeNodeByName(f.ctx, DefaultLocalNodeName)
+			a := f.account(t, "context-a", now.Add(-time.Hour), nil, state.AccountActive)
+			b := f.account(t, "context-b", now.Add(-time.Hour), nil, state.AccountActive)
+			local, err := f.store.ComputeNodeByName(f.ctx, state.DefaultLocalNodeName)
 			if err != nil {
 				t.Fatal(err)
 			}
-			remote, err := f.store.CreateComputeNode(f.ctx, ComputeNode{Name: "context-remote", TargetURL: "tcp://127.0.0.1:50051", Active: true, VPCPUs: 4, VCPUBudget: 4, MemMB: 4096, MaxConcurrency: 10, AdmissionCeilingMB: 2048})
+			remote, err := f.store.CreateComputeNode(f.ctx, state.ComputeNode{Name: "context-remote", TargetURL: "tcp://127.0.0.1:50051", Active: true, VPCPUs: 4, VCPUBudget: 4, MemMB: 4096, MaxConcurrency: 10, AdmissionCeilingMB: 2048})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -61,12 +62,12 @@ func TestOperatorContextNodeRelationshipsAndTimeline(t *testing.T) {
 			terminal, depTerminal := f.workload(t, "context-terminal", b, true)
 			other, depOther := f.workload(t, "context-other", a, true)
 			deleted, depDeleted := f.workload(t, "context-deleted", b, true)
-			for _, app := range []App{appB, warm, terminal, other, deleted} {
+			for _, app := range []state.App{appB, warm, terminal, other, deleted} {
 				contextMoveApp(t, f, app, remote.ID)
 			}
 			for _, v := range []struct {
-				app   App
-				dep   Deployment
+				app   state.App
+				dep   state.Deployment
 				state string
 			}{{appB, depB, "running"}, {warm, depWarm, "warm"}, {terminal, depTerminal, "failed"}, {deleted, depDeleted, "running"}} {
 				if _, err := f.store.CreateInstance(f.ctx, v.app.ID, v.dep.ID, v.state, 128, local.ID, ""); err != nil {
@@ -76,7 +77,7 @@ func TestOperatorContextNodeRelationshipsAndTimeline(t *testing.T) {
 			// Model an existing instance surviving app deletion. Runtime admission
 			// correctly refuses new instances after the app has been deleted.
 			f.deleteApp(t, deleted)
-			if err := f.store.UpdateDeploymentStatus(f.ctx, depB.ID, DeployFailed, "private-error"); err != nil {
+			if err := f.store.UpdateDeploymentStatus(f.ctx, depB.ID, state.DeployFailed, "private-error"); err != nil {
 				t.Fatal(err)
 			}
 			trace := "11111111111111111111111111111111"
@@ -95,13 +96,13 @@ func TestOperatorContextNodeRelationshipsAndTimeline(t *testing.T) {
 			contextEventTime(t, f, "event.future", now.Add(time.Microsecond))
 			contextEventTime(t, f, "event.floor", now.Add(-api.ObsIncidentContextWindow))
 			contextEventTime(t, f, "event.ceiling", now)
-			if _, err := f.store.AppendDeploymentAudit(f.ctx, DeploymentAudit{DeploymentID: uuid.MustParse(depA.ID), Kind: DeployHealthProbeFailed, Actor: "private-actor", At: now}); err != nil {
+			if _, err := f.store.AppendDeploymentAudit(f.ctx, state.DeploymentAudit{DeploymentID: uuid.MustParse(depA.ID), Kind: state.DeployHealthProbeFailed, Actor: "private-actor", At: now}); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := f.store.InsertOperatorIntent(f.ctx, OperatorIntentKindForceColdBoot, appA.ID, &a.ID, a.ID, "private-reason", []byte(`{"private":"payload"}`), &trace); err != nil {
+			if _, err := f.store.InsertOperatorIntent(f.ctx, state.OperatorIntentKindForceColdBoot, appA.ID, &a.ID, a.ID, "private-reason", []byte(`{"private":"payload"}`), &trace); err != nil {
 				t.Fatal(err)
 			}
-			filter := OperatorIncidentContextFilter{Kind: "compute_node", ID: contextCanonicalID(local.ID), Now: now, Until: now, Limit: 100, HistoryLimit: 100}
+			filter := state.OperatorIncidentContextFilter{Kind: "compute_node", ID: state.ContextCanonicalID(local.ID), Now: now, Until: now, Limit: 100, HistoryLimit: 100}
 			out, err := f.store.OperatorIncidentContext(f.ctx, filter)
 			if err != nil {
 				t.Fatal(err)
@@ -116,11 +117,11 @@ func TestOperatorContextNodeRelationshipsAndTimeline(t *testing.T) {
 				}
 				seen[e.Entry.Source+e.Entry.ID] = true
 				seen[e.Entry.Kind] = true
-				if e.Entry.Kind == "operator.action.context" && (e.ResourceID != contextCanonicalID(appA.ID) || e.Match != "subject") {
+				if e.Entry.Kind == "operator.action.context" && (e.ResourceID != state.ContextCanonicalID(appA.ID) || e.Match != "subject") {
 					t.Fatalf("direct subject not preferred: %+v", e)
 				}
 			}
-			for _, kind := range []string{"app.context", "operator.action.context", "event.floor", "event.ceiling", "force_cold_boot", string(DeployHealthProbeFailed)} {
+			for _, kind := range []string{"app.context", "operator.action.context", "event.floor", "event.ceiling", "force_cold_boot", string(state.DeployHealthProbeFailed)} {
 				if !seen[kind] {
 					t.Fatalf("missing %s: %+v", kind, out.Timeline)
 				}
@@ -173,24 +174,24 @@ func TestOperatorContextNodeRelationshipsAndTimeline(t *testing.T) {
 				t.Fatalf("empty tail=%+v err=%v", empty, err)
 			}
 			// App scope cannot expand through its shared owner node.
-			filter = OperatorIncidentContextFilter{Kind: "deployment", ID: contextCanonicalID(depA.ID), Now: now, Until: now, Limit: 100, HistoryLimit: 1}
+			filter = state.OperatorIncidentContextFilter{Kind: "deployment", ID: state.ContextCanonicalID(depA.ID), Now: now, Until: now, Limit: 100, HistoryLimit: 1}
 			one, err := f.store.OperatorIncidentContext(f.ctx, filter)
 			if err != nil || one.Counts.Apps != 1 || one.Counts.Tenants != 1 || !one.TimelineTruncated {
 				t.Fatalf("app scope=%+v err=%v", one, err)
 			}
-			if _, err := f.store.OperatorIncidentContext(f.ctx, OperatorIncidentContextFilter{Kind: "deployment", ID: contextCanonicalID(depDeleted.ID), Now: now, Until: now, Limit: 1, HistoryLimit: 1}); !errors.Is(err, ErrNotFound) {
+			if _, err := f.store.OperatorIncidentContext(f.ctx, state.OperatorIncidentContextFilter{Kind: "deployment", ID: state.ContextCanonicalID(depDeleted.ID), Now: now, Until: now, Limit: 1, HistoryLimit: 1}); !errors.Is(err, state.ErrNotFound) {
 				t.Fatalf("deleted incident=%v", err)
 			}
 		})
 	}
 }
 
-func seedContextAlert(t *testing.T, f overviewFixture, at time.Time, index int, app, account, node string) OperatorAlertEpisode {
+func seedContextAlert(t *testing.T, f overviewFixture, at time.Time, index int, app, account, node string) state.OperatorAlertEpisode {
 	t.Helper()
 	rule, series := fmt.Sprintf("%064x", index+1), fmt.Sprintf("%064x", index+100)
-	e := OperatorAlertEpisode{RuleKey: rule, SeriesID: series, Name: "FaasContextAlert", Severity: "critical", AppID: contextCanonicalID(app), AccountID: contextCanonicalID(account), NodeID: contextCanonicalID(node), StartedAt: at.Add(-time.Minute)}
-	e.ID = OperatorAlertEpisodeID(rule, series, e.StartedAt)
-	err := f.store.RecordOperatorAlertSnapshot(f.ctx, OperatorAlertSnapshot{ObservedAt: at, Rules: []OperatorAlertRuleObservation{{Key: rule, EvaluatedAt: at, EpisodeIDs: []string{e.ID}}}, Episodes: []OperatorAlertEpisode{e}})
+	e := state.OperatorAlertEpisode{RuleKey: rule, SeriesID: series, Name: "FaasContextAlert", Severity: "critical", AppID: state.ContextCanonicalID(app), AccountID: state.ContextCanonicalID(account), NodeID: state.ContextCanonicalID(node), StartedAt: at.Add(-time.Minute)}
+	e.ID = state.OperatorAlertEpisodeID(rule, series, e.StartedAt)
+	err := f.store.RecordOperatorAlertSnapshot(f.ctx, state.OperatorAlertSnapshot{ObservedAt: at, Rules: []state.OperatorAlertRuleObservation{{Key: rule, EvaluatedAt: at, EpisodeIDs: []string{e.ID}}}, Episodes: []state.OperatorAlertEpisode{e}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -202,11 +203,11 @@ func TestOperatorContextAlertAttributionAndValidation(t *testing.T) {
 		t.Run(backend, func(t *testing.T) {
 			f := newOverviewFixture(t, backend)
 			now := time.Now().UTC().Truncate(time.Microsecond)
-			a := f.account(t, "context-alert-a", now.Add(-time.Hour), nil, AccountActive)
-			b := f.account(t, "context-alert-b", now.Add(-time.Hour), nil, AccountActive)
+			a := f.account(t, "context-alert-a", now.Add(-time.Hour), nil, state.AccountActive)
+			b := f.account(t, "context-alert-b", now.Add(-time.Hour), nil, state.AccountActive)
 			app, _ := f.workload(t, "context-alert-app", a, true)
 			_, _ = f.workload(t, "context-alert-other", b, true)
-			node, err := f.store.ComputeNodeByName(f.ctx, DefaultLocalNodeName)
+			node, err := f.store.ComputeNodeByName(f.ctx, state.DefaultLocalNodeName)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -221,7 +222,7 @@ func TestOperatorContextAlertAttributionAndValidation(t *testing.T) {
 				{"", a.ID, node.ID, "", 1},
 			} {
 				e := seedContextAlert(t, f, now.Add(time.Duration(i)*time.Microsecond), i, v.app, v.account, v.node)
-				filter := OperatorIncidentContextFilter{Kind: "platform_alert", ID: e.SeriesID, Now: now.Add(time.Second), Until: now.Add(time.Second), Limit: 100, HistoryLimit: 10}
+				filter := state.OperatorIncidentContextFilter{Kind: "platform_alert", ID: e.SeriesID, Now: now.Add(time.Second), Until: now.Add(time.Second), Limit: 100, HistoryLimit: 10}
 				out, err := f.store.OperatorIncidentContext(f.ctx, filter)
 				if err != nil {
 					t.Fatal(err)
@@ -237,11 +238,11 @@ func TestOperatorContextAlertAttributionAndValidation(t *testing.T) {
 					t.Fatalf("scope expanded: %+v", out)
 				}
 				filter.ExpectedIncidentID = "platform_alert/" + strings.Repeat("f", 64)
-				if _, err := f.store.OperatorIncidentContext(f.ctx, filter); !errors.Is(err, ErrInvalidArgument) {
+				if _, err := f.store.OperatorIncidentContext(f.ctx, filter); !errors.Is(err, state.ErrInvalidArgument) {
 					t.Fatalf("cross-episode cursor=%v", err)
 				}
 			}
-			base := OperatorIncidentContextFilter{Kind: "compute_node", ID: contextCanonicalID(node.ID), Now: now, Until: now, Limit: 1, HistoryLimit: 1}
+			base := state.OperatorIncidentContextFilter{Kind: "compute_node", ID: state.ContextCanonicalID(node.ID), Now: now, Until: now, Limit: 1, HistoryLimit: 1}
 			for _, field := range []string{"kind", "id", "limit", "history", "expired", "future", "cursor"} {
 				bad := base
 				switch field {
@@ -260,7 +261,7 @@ func TestOperatorContextAlertAttributionAndValidation(t *testing.T) {
 				case "cursor":
 					bad.Before = "app/no-uuid"
 				}
-				if _, err := f.store.OperatorIncidentContext(f.ctx, bad); !errors.Is(err, ErrInvalidArgument) {
+				if _, err := f.store.OperatorIncidentContext(f.ctx, bad); !errors.Is(err, state.ErrInvalidArgument) {
 					t.Fatalf("%s accepted: %v", field, err)
 				}
 			}
@@ -278,9 +279,9 @@ func TestOperatorContextJobIdentity(t *testing.T) {
 		t.Run(backend, func(t *testing.T) {
 			f := newOverviewFixture(t, backend)
 			now := time.Now().UTC()
-			a := f.account(t, "context-jobs", now.Add(-time.Hour), nil, AccountActive)
+			a := f.account(t, "context-jobs", now.Add(-time.Hour), nil, state.AccountActive)
 			_, _ = f.workload(t, "unrelated-account-app", a, true)
-			var roots []JobRun
+			var roots []state.JobRun
 			for _, name := range []string{"context-job", "unrelated-job"} {
 				j, err := f.store.JobCreate(f.ctx, a.ID, name, "batch", "example.invalid/private:latest", []string{"/bin/true"}, 128, 60, 1, 0, nil)
 				if err != nil {
@@ -295,23 +296,23 @@ func TestOperatorContextJobIdentity(t *testing.T) {
 				}
 			}
 			now = time.Now().UTC().Add(time.Second)
-			node, err := f.store.ComputeNodeByName(f.ctx, DefaultLocalNodeName)
+			node, err := f.store.ComputeNodeByName(f.ctx, state.DefaultLocalNodeName)
 			if err != nil {
 				t.Fatal(err)
 			}
 			for _, v := range []struct {
-				run    JobRun
+				run    state.JobRun
 				status string
 			}{{roots[0], "running"}, {roots[2], "failed"}} {
 				if _, err := f.store.CreateJobInstance(f.ctx, uuid.NewString(), v.run.JobID, v.run.ID, 0, v.status, 128, node.ID, ""); err != nil {
 					t.Fatal(err)
 				}
 			}
-			out, err := f.store.OperatorIncidentContext(f.ctx, OperatorIncidentContextFilter{Kind: "job_run", ID: contextCanonicalID(roots[0].ID), Now: now, Until: now, Limit: 100, HistoryLimit: 100})
-			if err != nil || out.Counts == nil || out.Counts.Apps != 0 || out.Counts.Jobs != 1 || out.Counts.JobRuns != 2 || out.Counts.Nodes != 1 || out.Counts.Tenants != 1 || out.Scope.JobID != contextCanonicalID(roots[0].JobID) {
+			out, err := f.store.OperatorIncidentContext(f.ctx, state.OperatorIncidentContextFilter{Kind: "job_run", ID: state.ContextCanonicalID(roots[0].ID), Now: now, Until: now, Limit: 100, HistoryLimit: 100})
+			if err != nil || out.Counts == nil || out.Counts.Apps != 0 || out.Counts.Jobs != 1 || out.Counts.JobRuns != 2 || out.Counts.Nodes != 1 || out.Counts.Tenants != 1 || out.Scope.JobID != state.ContextCanonicalID(roots[0].JobID) {
 				t.Fatalf("job attribution=%+v err=%v", out, err)
 			}
-			nodeContext, err := f.store.OperatorIncidentContext(f.ctx, OperatorIncidentContextFilter{Kind: "compute_node", ID: contextCanonicalID(node.ID), Now: now, Until: now, Limit: 100, HistoryLimit: 100})
+			nodeContext, err := f.store.OperatorIncidentContext(f.ctx, state.OperatorIncidentContextFilter{Kind: "compute_node", ID: state.ContextCanonicalID(node.ID), Now: now, Until: now, Limit: 100, HistoryLimit: 100})
 			if err != nil || nodeContext.Counts == nil || nodeContext.Counts.Apps != 0 || nodeContext.Counts.Jobs != 1 || nodeContext.Counts.JobRuns != 2 || nodeContext.Counts.Tenants != 1 {
 				t.Fatalf("job node exposure=%+v err=%v", nodeContext, err)
 			}

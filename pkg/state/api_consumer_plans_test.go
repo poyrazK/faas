@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -7,61 +7,62 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // adr: 953
 func TestDecidePlanAdmissionWindows(t *testing.T) {
 	now := time.Date(2026, 9, 30, 23, 59, 30, 0, time.UTC)
-	policy := APIConsumerPlanPolicy{MaxRequestsPerMinute: 2, MaxUnitsPerMonth: 30}
-	var counter planAdmissionCounter
-	var decision APIConsumerPlanDecision
+	policy := state.APIConsumerPlanPolicy{MaxRequestsPerMinute: 2, MaxUnitsPerMonth: 30}
+	var counter state.PlanAdmissionCounter
+	var decision state.APIConsumerPlanDecision
 	for i := range 2 {
-		if counter, decision, _ = decidePlanAdmission(counter, policy, 10, now); !decision.Allowed {
+		if counter, decision, _ = state.DecidePlanAdmission(counter, policy, 10, now); !decision.Allowed {
 			t.Fatalf("request %d denied: %+v", i, decision)
 		}
 	}
-	if _, decision, _ = decidePlanAdmission(counter, policy, 1, now); decision.Allowed || decision.Scope != "minute" || decision.RetryAfterSeconds != 30 {
+	if _, decision, _ = state.DecidePlanAdmission(counter, policy, 1, now); decision.Allowed || decision.Scope != "minute" || decision.RetryAfterSeconds != 30 {
 		t.Fatalf("third request in the minute = %+v, want minute denial retrying in 30s", decision)
 	}
 	next := now.Add(31 * time.Second) // a new minute and a new month
-	if counter, decision, _ = decidePlanAdmission(counter, policy, 10, next); !decision.Allowed || counter.MonthUsed != 10 || counter.MinuteUsed != 1 {
+	if counter, decision, _ = state.DecidePlanAdmission(counter, policy, 10, next); !decision.Allowed || counter.MonthUsed != 10 || counter.MinuteUsed != 1 {
 		t.Fatalf("new month = %+v %+v, want both windows reset", counter, decision)
 	}
 	counter.MinuteUsed = 0
 	counter.MonthUsed = 25
-	if _, decision, _ = decidePlanAdmission(counter, policy, 10, next); decision.Allowed || decision.Scope != "month" || decision.Observed != 25 {
+	if _, decision, _ = state.DecidePlanAdmission(counter, policy, 10, next); decision.Allowed || decision.Scope != "month" || decision.Observed != 25 {
 		t.Fatalf("over monthly cap = %+v, want month denial", decision)
 	}
-	if _, decision, _ = decidePlanAdmission(planAdmissionCounter{}, APIConsumerPlanPolicy{}, 1000, next); !decision.Allowed {
+	if _, decision, _ = state.DecidePlanAdmission(state.PlanAdmissionCounter{}, state.APIConsumerPlanPolicy{}, 1000, next); !decision.Allowed {
 		t.Fatal("zero limits must be unlimited")
 	}
 }
 
 func TestMemConsumerPlansAssignmentsAndPolicy(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	ctx := context.Background()
 	accountID, appID, consumerID := uuid.NewString(), uuid.NewString(), uuid.NewString()
-	plan, err := m.CreateAPIConsumerPlan(ctx, APIConsumerPlan{AccountID: accountID, AppID: appID, Name: "pro", MaxUnitsPerMonth: 100})
+	plan, err := m.CreateAPIConsumerPlan(ctx, state.APIConsumerPlan{AccountID: accountID, AppID: appID, Name: "pro", MaxUnitsPerMonth: 100})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.CreateAPIConsumerPlan(ctx, APIConsumerPlan{AccountID: accountID, AppID: appID, Name: "pro"}); !errors.Is(err, ErrConflict) {
+	if _, err := m.CreateAPIConsumerPlan(ctx, state.APIConsumerPlan{AccountID: accountID, AppID: appID, Name: "pro"}); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("duplicate name err=%v, want ErrConflict", err)
 	}
-	if _, err := m.CreateAPIConsumerPlan(ctx, APIConsumerPlan{AccountID: accountID, AppID: appID, Name: "Bad Name"}); err == nil {
+	if _, err := m.CreateAPIConsumerPlan(ctx, state.APIConsumerPlan{AccountID: accountID, AppID: appID, Name: "Bad Name"}); err == nil {
 		t.Fatal("invalid name accepted")
 	}
 	start := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
-	if _, err := m.CreateAPIConsumerRateCardVersion(ctx, APIConsumerRateCardInput{AccountID: accountID, AppID: appID, Currency: "EUR",
+	if _, err := m.CreateAPIConsumerRateCardVersion(ctx, state.APIConsumerRateCardInput{AccountID: accountID, AppID: appID, Currency: "EUR",
 		PriceMillicentsPerUnit: 5, PlanID: plan.ID, RouteWeights: map[string]int64{"POST /generate": 20}, EffectiveFrom: start}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.AssignAPIConsumerPlan(ctx, APIConsumerPlanAssignment{AccountID: accountID, AppID: appID, ConsumerID: consumerID,
+	if _, err := m.AssignAPIConsumerPlan(ctx, state.APIConsumerPlanAssignment{AccountID: accountID, AppID: appID, ConsumerID: consumerID,
 		PlanID: plan.ID, EffectiveFrom: start.Add(time.Hour)}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.AssignAPIConsumerPlan(ctx, APIConsumerPlanAssignment{AccountID: accountID, AppID: appID, ConsumerID: consumerID,
-		PlanID: uuid.NewString(), EffectiveFrom: start.Add(2 * time.Hour)}); !errors.Is(err, ErrNotFound) {
+	if _, err := m.AssignAPIConsumerPlan(ctx, state.APIConsumerPlanAssignment{AccountID: accountID, AppID: appID, ConsumerID: consumerID,
+		PlanID: uuid.NewString(), EffectiveFrom: start.Add(2 * time.Hour)}); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("unknown plan err=%v, want ErrNotFound", err)
 	}
 	before, err := m.GetAPIConsumerPlanPolicy(ctx, accountID, appID, consumerID, start)

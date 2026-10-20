@@ -1,25 +1,26 @@
 //go:build !no_pg
 
-package state
+package state_test
 
 import (
 	"encoding/json"
+	"github.com/onebox-faas/faas/pkg/state"
 	"testing"
 )
 
 func TestProductControlWorkHistoryPostgres(t *testing.T) {
-	s := newPgStore(t)
-	write := func(op Operation, resolved bool) {
+	s := state.XNewPgStore(t)
+	write := func(op state.Operation, resolved bool) {
 		t.Helper()
-		tx, err := s.pool.Begin(t.Context())
+		tx, err := (*s.Pool()).Begin(t.Context())
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer func() { _ = tx.Rollback(t.Context()) }()
 		if resolved {
-			err = settleProductOperationTx(t.Context(), tx, op)
+			err = state.SettleProductOperationTx(t.Context(), tx, op)
 		} else {
-			err = insertProductOperationTx(t.Context(), tx, op)
+			err = state.InsertProductOperationTx(t.Context(), tx, op)
 		}
 		if err != nil {
 			t.Fatal(err)
@@ -28,18 +29,18 @@ func TestProductControlWorkHistoryPostgres(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	productWorkHistoryContract(t, s, productBillingPGFixture(t, s), func(op Operation) { write(op, false) }, func(op Operation) { write(op, true) })
+	productWorkHistoryContract(t, s, state.ProductBillingPGFixture(t, s), func(op state.Operation) { write(op, false) }, func(op state.Operation) { write(op, true) })
 }
 
 func TestProductControlWorkHistoryLivePostgres(t *testing.T) {
-	s := newPgStore(t)
-	persist := func(op Operation, settled bool) {
+	s := state.XNewPgStore(t)
+	persist := func(op state.Operation, settled bool) {
 		t.Helper()
 		record, err := json.Marshal(op)
 		if err != nil {
 			t.Fatal(err)
 		}
-		tx, err := s.pool.Begin(t.Context())
+		tx, err := (*s.Pool()).Begin(t.Context())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -48,7 +49,7 @@ func TestProductControlWorkHistoryLivePostgres(t *testing.T) {
 			t.Fatal(err)
 		}
 		if settled {
-			if err = settleProductOperationTx(t.Context(), tx, op); err != nil {
+			if err = state.SettleProductOperationTx(t.Context(), tx, op); err != nil {
 				t.Fatal(err)
 			}
 		}

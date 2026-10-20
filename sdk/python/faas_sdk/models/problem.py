@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from ..models.binding_check_report import BindingCheckReport
     from ..models.field_error import FieldError
     from ..models.log_excerpt import LogExcerpt
+    from ..models.release_freeze import ReleaseFreeze
     from ..models.release_restore_point import ReleaseRestorePoint
     from ..models.rollback_crossed_release import RollbackCrossedRelease
     from ..models.secret_finding import SecretFinding
@@ -73,6 +74,8 @@ class Problem:
     restore_points: list[ReleaseRestorePoint] | Unset = UNSET
     """rollback_crosses_release: how to restore each managed PostgreSQL database to before those releases
     (ADR-1448)."""
+    freezes: list[ReleaseFreeze] | Unset = UNSET
+    """release_frozen: the freezes refusing the release (ADR-20261019071733)."""
     type_: str | Unset = UNSET
     instance: str | Unset = UNSET
     """URI reference identifying this problem occurrence when supplied by the caller."""
@@ -209,6 +212,13 @@ class Problem:
                 restore_points_item = restore_points_item_data.to_dict()
                 restore_points.append(restore_points_item)
 
+        freezes: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.freezes, Unset):
+            freezes = []
+            for freezes_item_data in self.freezes:
+                freezes_item = freezes_item_data.to_dict()
+                freezes.append(freezes_item)
+
         type_ = self.type_
 
         instance = self.instance
@@ -315,6 +325,8 @@ class Problem:
             field_dict["crossed_releases"] = crossed_releases
         if restore_points is not UNSET:
             field_dict["restore_points"] = restore_points
+        if freezes is not UNSET:
+            field_dict["freezes"] = freezes
         if type_ is not UNSET:
             field_dict["type"] = type_
         if instance is not UNSET:
@@ -363,6 +375,7 @@ class Problem:
         from ..models.binding_check_report import BindingCheckReport
         from ..models.field_error import FieldError
         from ..models.log_excerpt import LogExcerpt
+        from ..models.release_freeze import ReleaseFreeze
         from ..models.release_restore_point import ReleaseRestorePoint
         from ..models.rollback_crossed_release import RollbackCrossedRelease
         from ..models.secret_finding import SecretFinding
@@ -418,6 +431,15 @@ class Problem:
                 restore_points_item = ReleaseRestorePoint.from_dict(restore_points_item_data)
 
                 restore_points.append(restore_points_item)
+
+        _freezes = d.pop("freezes", UNSET)
+        freezes: list[ReleaseFreeze] | Unset = UNSET
+        if _freezes is not UNSET:
+            freezes = []
+            for freezes_item_data in _freezes:
+                freezes_item = ReleaseFreeze.from_dict(freezes_item_data)
+
+                freezes.append(freezes_item)
 
         type_ = d.pop("type", UNSET)
 
@@ -525,6 +547,7 @@ class Problem:
             bindings_check=bindings_check,
             crossed_releases=crossed_releases,
             restore_points=restore_points,
+            freezes=freezes,
             type_=type_,
             instance=instance,
             detail=detail,
