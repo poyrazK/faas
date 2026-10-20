@@ -5590,8 +5590,8 @@ paths:
       summary: Read the built-in AI price catalog of one provider.
       description: >-
         Requires MFA and read scope (ADR-994). The catalog prices the models an
-        integration's own price list does not name. Prices are list prices
-        converted to EUR at usd_per_eur and rounded up.
+        integration's own price list does not name. Prices are the providers' list
+        prices in US dollars, rounded up (ADR 20261019123822).
       parameters:
         - name: provider
           in: query
@@ -39037,11 +39037,11 @@ paths:
         in: path
         required: true
         schema: { type: string, format: uuid }
-        description: Endpoint whose future verified events start a customer operation.
+        description: Endpoint whose future verified events start or signal customer operations.
     put:
       tags: [inbound_webhooks]
       operationId: putOperationWebhookBinding
-      summary: Route a verified endpoint to a customer operation (ADR-1193).
+      summary: Route a verified endpoint to a customer operation (ADR-1193, ADR-20261016100929).
       description: |
         One binding per endpoint, owned by the same app. The platform tenant is
         the operation owner; it must be active and linked to the app through an
@@ -39052,10 +39052,18 @@ paths:
         take_over_delivery must be true. Automation and managed exclusive
         operation bindings must be removed first. An empty event_types list
         admits every verified event; other types are acknowledged as ignored.
+
+        mode signal (ADR-20261016100929) starts nothing. Each event whose type a signals
+        entry maps is delivered as that operation event to the platform
+        tenant's active operations of the named definition whose subject
+        matches subject.id_from in the provider payload, at most 16 per event.
+        The subject type must equal the definition's subject type, the
+        definition must be a workflow, and its live workflow must wait for
+        every mapped event. event_types must be empty in this mode.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
-        description: Explicit delivery takeover, operation, owner and event selection.
+        description: Explicit delivery takeover, operation, owner, mode and event selection.
         required: true
         content:
           application/json:
@@ -39075,14 +39083,14 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
-        '413': { description: 'Request body exceeds 4 KiB.', content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+        '413': { description: 'Request body exceeds 16 KiB.', content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } } }
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/CapacityUnavailable' }
     get:
       tags: [inbound_webhooks]
       operationId: getOperationWebhookBinding
       summary: Inspect an endpoint's customer operation binding.
-      description: Returns the bound operation, owner, event selection and revision.
+      description: Returns the bound operation, owner, mode, event selection and revision.
       responses:
         '200':
           description: Current operation binding for this endpoint.
@@ -55449,6 +55457,88 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+  /v1/platform-tenant-self/customer-operations/{id}/signals:
+    post:
+      tags:
+      - operations
+      operationId: signalPlatformTenantSelfOperation
+      summary: Deliver a named event to this customer's own waiting operation (ADR-20261017100853).
+      description: Requires platform_tenant:operations:manage. Works like the account signal route on the customer's own operation only; another customer's operation is not found. The operation's history records the signal with source customer. signal_id is shared with the account route, so a repeat from either is the same signal.
+      parameters:
+      - $ref: '#/components/parameters/OperationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OperationSignalRequest'
+      responses:
+        '200':
+          description: The customer's delivery receipt; duplicate marks a repeat of an earlier signal.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationSignalReceipt'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/OperationConflict'
+        '410':
+          $ref: '#/components/responses/OperationGone'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/platform-tenant-self/customer-operation-signals:
+    post:
+      tags:
+      - operations
+      operationId: signalPlatformTenantSelfOperationsBySubject
+      summary: Deliver a named event to this customer's own active operations about one business subject (ADR-20261017100853).
+      description: Requires platform_tenant:operations:manage. The definition fixes the app, environment and operation name. Reaches at most 16 of the customer's own active operations whose subject matches; other customers' operations about the same subject are never reached. Each delivery is idempotent per operation by signal_id and recorded with source customer.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlatformTenantSubjectSignalRequest'
+      responses:
+        '200':
+          description: One receipt per customer operation reached; empty when none is active.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationSubjectSignalResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/OperationConflict'
+        '410':
+          $ref: '#/components/responses/OperationGone'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
   /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/retained-messages/{message_id}:
     parameters:
     - $ref: '#/components/parameters/ManagedRealtimeSlugPath'
@@ -71667,6 +71757,17 @@ components:
         signal_id: { type: string, minLength: 1, maxLength: 128 }
         event: { type: string, maxLength: 63, pattern: '^[a-z][a-z0-9_.-]*$' }
         payload: { description: 'JSON each reached operation''s wait step receives as its output; at most 64 KiB.' }
+    PlatformTenantSubjectSignalRequest:
+      description: One named event for the authenticated customer's own active operations of a definition about one business subject (ADR-20261017100853).
+      type: object
+      additionalProperties: false
+      required: [definition_id, subject, signal_id, event]
+      properties:
+        definition_id: { type: string, format: uuid, description: Operation definition whose app, environment and name select the operations. }
+        subject: { $ref: '#/components/schemas/OperationSubject' }
+        signal_id: { type: string, minLength: 1, maxLength: 128 }
+        event: { type: string, maxLength: 63, pattern: '^[a-z][a-z0-9_.-]*$' }
+        payload: { description: 'JSON each of the customer''s reached operations receives as its wait step output; at most 64 KiB.' }
     OperationSignalReceipt:
       description: One signal delivery. waiting reports whether the operation was waiting for this event; otherwise the run holds it for a later wait.
       type: object
@@ -71698,7 +71799,7 @@ components:
         decision: { type: string, enum: [approved, rejected] }
         comment: { type: string, maxLength: 1024, description: Recorded with the decision in the operation history. }
     OperationLimits:
-      description: ADR-1196 bounds fixed onto each accepted Operation. Every field is optional and bounded by the plan; workflow definitions take only a deadline, and job definitions take none.
+      description: ADR-1196 bounds fixed onto each accepted Operation. Every field is optional and bounded by the plan; workflow definitions take a deadline and an execution budget (ADR-20261016110803), and job definitions take none.
       type: object
       additionalProperties: false
       properties:
@@ -71713,7 +71814,7 @@ components:
           minimum: 1
           maximum: 25
         max_execution_seconds:
-          description: HTTP attempt runtime summed across generations.
+          description: Runtime of HTTP attempts, or of a workflow's HTTP step attempts, summed across generations; waits do not count.
           type: integer
           minimum: 1
           maximum: 604800
@@ -76743,7 +76844,7 @@ components:
     OutboundAIUsageItem:
       type: object
       description: One UTC-day rollup for a caller and model. input_tokens includes cached reads and cache writes, which are also reported separately.
-      required: [caller, model, requests, error_requests, usage_unknown_requests, input_tokens, cached_input_tokens, cache_write_tokens, output_tokens, images, audio_seconds, characters, video_seconds, web_searches, file_searches, code_session_gb, cached_requests, cache_saved_millicents, prompt_cache_saved_millicents]
+      required: [caller, model, requests, error_requests, usage_unknown_requests, input_tokens, cached_input_tokens, cache_write_tokens, output_tokens, images, audio_seconds, characters, video_seconds, web_searches, file_searches, code_session_gb, cached_requests, cache_saved_millicents, prompt_cache_saved_millicents, input_audio_tokens, output_audio_tokens]
       properties:
         caller: { type: string, description: 'App UUID, "runs" for stateless Runs, or "replay" for replayed calls (ADR-997).' }
         model: { type: string, maxLength: 128, description: 'Provider-reported model; "other" collects models beyond the daily distinct-model cap and "unknown" covers responses without one.' }
@@ -76765,6 +76866,8 @@ components:
         cached_requests: { type: integer, format: int64, minimum: 0, description: 'Requests the response cache served, with no tokens or cost (ADR-1440).' }
         cache_saved_millicents: { type: integer, format: int64, minimum: 0, description: 'Provider cost the response cache avoided, priced from the cached responses at the current price list.' }
         prompt_cache_saved_millicents: { type: integer, format: int64, description: 'What provider prompt caching saved against plain input prices; negative when cache writes outweighed reads.' }
+        input_audio_tokens: { type: integer, format: int64, minimum: 0, description: 'Audio part of input_tokens, priced at the audio input price (ADR 20261019072722).' }
+        output_audio_tokens: { type: integer, format: int64, minimum: 0, description: 'Audio part of output_tokens, priced at the audio output price.' }
     OutboundAIUsageResponse:
       type: object
       description: One UTC day of AI gateway usage for an integration.
@@ -76985,6 +77088,24 @@ components:
           minimum: 0
           maximum: 10000000
           description: Charged per GB of code-interpreter container memory per session (ADR-1433).
+        input_audio_millicents_per_mtok:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 1000000000
+          description: Charged per million uncached audio input tokens (ADR 20261019072722); the input price when absent.
+        cached_input_audio_millicents_per_mtok:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 1000000000
+          description: Charged per million cached audio input tokens; the cached input price when absent.
+        output_audio_millicents_per_mtok:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 1000000000
+          description: Charged per million audio output tokens; the output price when absent.
     PutOutboundAIPricesRequest:
       type: object
       description: Replace an integration's price list. It takes effect immediately; earlier lists stay for costs already settled.
@@ -77008,13 +77129,14 @@ components:
       description: >-
         One provider's built-in AI price catalog (ADR-994), generated from LiteLLM's
         MIT-licensed price data. model_prefix holds the catalog model name.
-      required: [ai_provider, source, generated, usd_per_eur, fx_source, entries]
+      required: [ai_provider, source, generated, entries]
       properties:
         ai_provider: { type: string }
         source: { type: string, description: URL of the price data the catalog was generated from. }
         generated: { type: string, format: date }
-        usd_per_eur: { type: string, description: 'USD per EUR used for the conversion, as a decimal string.' }
-        fx_source: { type: string, description: Source and date of the exchange rate. }
+        currency: { type: string, description: 'ISO 4217 currency of every catalog price: the billing currency, USD. Absent from responses of releases before ADR 20261019123822.' }
+        usd_per_eur: { type: string, deprecated: true, description: 'Deprecated: always 1, since the catalog is in US dollars.' }
+        fx_source: { type: string, deprecated: true, description: 'Deprecated: names no exchange rate.' }
         entries:
           type: array
           items: { $ref: '#/components/schemas/OutboundAIPriceEntry' }
@@ -113067,13 +113189,31 @@ components:
           type: array
           maxItems: 32
           uniqueItems: true
-          description: Exact event types to admit; empty admits every verified event.
+          description: Exact event types to admit; empty admits every verified event. Must be empty in signal mode.
           items: { type: string, pattern: '^[a-z][a-z0-9_.]{0,255}$' }
         take_over_delivery: { type: boolean, enum: [true] }
-    OperationWebhookBindingResponse:
-      description: Bound operation, owner, event selection and current endpoint binding revision.
+        mode: { type: string, enum: [start, signal], default: start, description: start admits a new operation per event; signal resumes waiting operations (ADR-20261016100929). }
+        subject:
+          $ref: '#/components/schemas/OperationSubjectSpec'
+          description: Signal mode only. The subject type the operation declares and a JSON Pointer into the provider event payload.
+        signals:
+          type: array
+          minItems: 1
+          maxItems: 32
+          description: Signal mode only. Provider event types to deliver and the operation event each becomes; other types are acknowledged as ignored.
+          items: { $ref: '#/components/schemas/OperationWebhookSignal' }
+    OperationWebhookSignal:
+      description: One provider event type and the operation event a waiting workflow step receives for it (ADR-20261016100929).
       type: object
-      required: [endpoint_id, app_id, scope, operation, platform_tenant_id, event_types, version, created_at, updated_at]
+      additionalProperties: false
+      required: [provider_event, event]
+      properties:
+        provider_event: { type: string, pattern: '^[a-z][a-z0-9_.]{0,255}$' }
+        event: { type: string, maxLength: 63, pattern: '^[a-z][a-z0-9_.-]*$' }
+    OperationWebhookBindingResponse:
+      description: Bound operation, owner, mode, event selection and current endpoint binding revision.
+      type: object
+      required: [endpoint_id, app_id, scope, operation, platform_tenant_id, event_types, mode, version, created_at, updated_at]
       properties:
         endpoint_id: { type: string, format: uuid }
         app_id: { type: string, format: uuid }
@@ -113081,6 +113221,9 @@ components:
         operation: { type: string }
         platform_tenant_id: { type: string, format: uuid }
         event_types: { type: array, items: { type: string } }
+        mode: { type: string, enum: [start, signal] }
+        subject: { $ref: '#/components/schemas/OperationSubjectSpec' }
+        signals: { type: array, items: { $ref: '#/components/schemas/OperationWebhookSignal' } }
         version: { type: integer, format: int64, minimum: 1 }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
@@ -113108,10 +113251,14 @@ components:
         row or, for an operation-bound endpoint, a committed operation and event
         receipt; receipt_id is then the operation ID. ignored means a verified
         event outside the operation binding's event_types created no work.
+        For a signal-mode binding (ADR-20261016100929) receipt_id identifies the provider
+        event's signal: signaled means at least one active operation received
+        it, unmatched means none did, and ignored means the type is unmapped
+        or the payload lacks the subject.
       required: [receipt_id, status, duplicate, accepted_at]
       properties:
         receipt_id: { type: string, format: uuid }
-        status: { type: string, enum: [accepted, ignored] }
+        status: { type: string, enum: [accepted, ignored, signaled, unmatched] }
         duplicate: { type: boolean, description: True when this endpoint already accepted the same provider event ID. }
         accepted_at: { type: string, format: date-time }
 

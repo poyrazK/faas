@@ -62,6 +62,12 @@ func CustomerWorkflowImage(repo string) (fakeImage, string) {
 	return nativeFixtureImage(repo, []string{"/job-fixture", "customer-workflow"})
 }
 
+// CustomerHTTPImage serves an ordinary HTTP Operation handler (ADR-521) that
+// reports progress and uploads a private file under its invocation claim.
+func CustomerHTTPImage(repo string) (fakeImage, string) {
+	return nativeFixtureImage(repo, []string{"/job-fixture", "customer-http"})
+}
+
 // ProcessJobImage (ADR-1790) is the job fixture with a Docker process config:
 // USER 1234 with a passwd entry and home, a WORKDIR that does not exist in
 // the image, ENV including a PATH that holds the fixture, and CMD

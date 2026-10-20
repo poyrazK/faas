@@ -21,9 +21,13 @@ budget inside a 40-minute systemd budget.
 | `TestCustomerWorkflowOperationCancellationMetal` | Cancellation while schedd is stopped dispatches no queued business work. Cancellation while finish holds a private file stops the native action, leaves its uncertainty requiring reconciliation, and publishes no result. The retained file remains private and closed proof rejects file work. |
 | `TestCustomerWorkflowOperationDeadlineMetal` | A holding final action observes its fixed native deadline and stops without a release or cancellation injection. The interrupted outcome requires reconciliation, no result is published, and closed proof rejects file work. |
 | `TestCustomerWorkflowOperationOwnerRevocationMetal` | Suspending the customer while finish holds a private file interrupts native work. Account inspection retains the uncertain outcome, customer access is denied, and no artifact is published. Old native proof cannot look up or upload files. |
+| `TestCustomerWorkflowOperationWaitsAndSignalsMetal` | ADR-20261017102231 Stage 2 on the `wait-chain` workflow (collect, customer approval, `payment.succeeded` event wait, finish). The account cannot decide the customer's approval; the customer can. One Operation is resumed by a Stripe-signed provider event through a signal-mode binding (ADR-20261016100929): the retry is a duplicate and an unknown subject is unmatched. Another is resumed by the customer's own subject signal (ADR-20261017100853). Both succeed on the real guest, and each history records the signal's source. |
+| `TestCustomerWorkflowOperationEventTimeoutMetal` | An unsignalled event wait on `timeout-chain` (15 s) settles `failed` with `event_timeout`; the step after it never runs. |
+| `TestCustomerWorkflowOperationBudgetCutMetal` | A definition with `max_execution_seconds: 10` (ADR-20261016110803) gives the final step a deadline within the budget, not its two-minute step timeout. The cut attempt needs reconciliation, usage counts all three step attempts and at least the budget, no artifact is published, old proof is fenced, and `safe_to_retry` recovery is refused. |
 
 The full native suite also selects these scenarios in its blocking wake phase.
-Every top-level test in the scenario file is required by the dedicated lane;
+Every top-level test in the `customer_workflow_operations*_metal_test.go` files
+is required by the dedicated lane;
 a skip, failure or absent PASS receipt fails its runner and final CI verdict.
 Portable script tests verify selection grows automatically when another scenario
 is added and reject each selected scenario's missing/skipped/failed receipt.

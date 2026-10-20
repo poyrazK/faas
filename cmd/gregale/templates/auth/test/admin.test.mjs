@@ -189,21 +189,31 @@ test('imports in bounded batches and reports skipped rows by index', async t => 
 
 test('lists organizations and shows members and pending invitations', async t => {
   const { key, hash } = newAdminKey()
-  const pool = fakePool(sql => {
-    if (sql.includes('count(*) OVER ()')) return { rows: [{ id: org, slug: 'acme', name: 'Acme', created_at: 'c', members: 2, total: 7 }] }
-    if (sql.startsWith('SELECT id, slug, name, created_at FROM gregale_auth.organizations')) return { rows: [{ id: org, slug: 'acme', name: 'Acme', created_at: 'c' }] }
-    if (sql.includes('FROM gregale_auth.memberships m JOIN auth.users')) return { rows: [{ user_id: user, email: 'a@example.test', role: 'owner', created_at: 'c' }] }
+  const pool = fakePool((sql, args) => {
+    if (sql.includes('count(*) OVER ()')) return { rows: [{ id: org, slug: 'acme', name: 'Acme', created_at: 'c', mfa_required: false, members: 2, total: 7 }] }
+    if (sql.startsWith('SELECT id, slug, name, created_at, mfa_required FROM gregale_auth.organizations')) return { rows: [{ id: org, slug: 'acme', name: 'Acme', created_at: 'c', mfa_required: true }] }
+    if (sql.includes('FROM gregale_auth.memberships m JOIN auth.users')) return { rows: [{ user_id: user, email: 'a@example.test', role: 'owner', created_at: 'c', mfa_enabled: false }] }
+    if (sql.startsWith('UPDATE gregale_auth.organizations SET mfa_required')) return { rows: args[0] === org ? [{ id: org, slug: 'acme', name: 'Acme', created_at: 'c', mfa_required: args[1] }] : [] }
+    if (sql.includes('FROM gregale_auth.org_domains')) return { rows: [{ domain: 'acme.com', verified_at: 'v', join_mode: 'suggest', join_role: 'member' }, { domain: 'acme.io', verified_at: null, join_mode: 'off', join_role: 'member' }] }
     return { rows: [{ id: user, email: 'b@example.test', role: 'member', expires_at: 'e', created_at: 'c' }] }
   })
   const { admin } = fakeAdmin([])
   const call = await serve(t, { admin, pool, keys: adminKeyHashes({ AUTH_ADMIN_KEY_0A1B2C3D: hash }) })
   const listed = await call('GET', '/admin/v1/orgs?search=a_c', { key })
-  assert.deepEqual(listed.body, { organizations: [{ id: org, slug: 'acme', name: 'Acme', created_at: 'c', members: 2 }], total: 7, page: 1, per_page: 50 })
+  assert.deepEqual(listed.body, { organizations: [{ id: org, slug: 'acme', name: 'Acme', created_at: 'c', mfa_required: false, members: 2 }], total: 7, page: 1, per_page: 50 })
   assert.deepEqual(pool.log[0].args, ['a_c', '%a\\_c%', 50, 0])
   const detail = await call('GET', `/admin/v1/orgs/${org}`, { key })
+  assert.equal(detail.body.organization.mfa_required, true)
   assert.equal(detail.body.members[0].role, 'owner')
+  assert.equal(detail.body.members[0].mfa_enabled, false)
+  assert.match(pool.log.find(q => q.sql.includes('JOIN auth.users')).sql, /EXISTS \(SELECT 1 FROM auth\.mfa_factors f WHERE f\.user_id = m\.user_id AND f\.status = 'verified' AND f\.factor_type::text <> 'recovery_code'\) AS mfa_enabled/)
   assert.equal(detail.body.invitations[0].email, 'b@example.test')
+  assert.deepEqual(detail.body.domains, [{ domain: 'acme.com', verified: true, join: { mode: 'suggest', role: 'member' } }, { domain: 'acme.io', verified: false, join: { mode: 'off', role: 'member' } }])
   assert.equal((await call('GET', '/admin/v1/orgs/nope', { key })).status, 400)
+  // The operator can change the second-factor requirement without being a member.
+  assert.deepEqual((await call('PATCH', `/admin/v1/orgs/${org}`, { key, body: { mfa_required: false } })).body.organization.mfa_required, false)
+  assert.equal((await call('PATCH', `/admin/v1/orgs/${org}`, { key, body: { mfa_required: 'off' } })).body.code, 'invalid_mfa_required')
+  assert.equal((await call('PATCH', `/admin/v1/orgs/${user}`, { key, body: { mfa_required: true } })).status, 404)
 })
 
 test('lists sign-in activity newest first, for everyone or one user', async t => {

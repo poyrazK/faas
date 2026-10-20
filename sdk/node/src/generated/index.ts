@@ -1627,6 +1627,7 @@ export type { OperationTimelineResponse } from './models/OperationTimelineRespon
 export type { OperationUsage } from './models/OperationUsage.js';
 export type { OperationWaitingState } from './models/OperationWaitingState.js';
 export type { OperationWebhookBindingResponse } from './models/OperationWebhookBindingResponse.js';
+export type { OperationWebhookSignal } from './models/OperationWebhookSignal.js';
 export type { OperationWorkflowActionObligation } from './models/OperationWorkflowActionObligation.js';
 export type { OperationWorkflowActionPreviewRequest } from './models/OperationWorkflowActionPreviewRequest.js';
 export type { OperationWorkflowActionPreviewResponse } from './models/OperationWorkflowActionPreviewResponse.js';
@@ -2092,6 +2093,7 @@ export type { PlatformTenantStatementLineResponse } from './models/PlatformTenan
 export type { PlatformTenantStatementListResponse } from './models/PlatformTenantStatementListResponse.js';
 export type { PlatformTenantStatementResponse } from './models/PlatformTenantStatementResponse.js';
 export type { PlatformTenantStatementSummaryResponse } from './models/PlatformTenantStatementSummaryResponse.js';
+export type { PlatformTenantSubjectSignalRequest } from './models/PlatformTenantSubjectSignalRequest.js';
 export type { PlatformTenantSurfaceCertificateChangedWebhookPayload } from './models/PlatformTenantSurfaceCertificateChangedWebhookPayload.js';
 export type { PlatformTenantSurfaceDeploymentChangedWebhookPayload } from './models/PlatformTenantSurfaceDeploymentChangedWebhookPayload.js';
 export type { PlatformTenantSurfaceResponse } from './models/PlatformTenantSurfaceResponse.js';

@@ -182,6 +182,7 @@ func TestJobTimeoutCoversEveryPhaseCap(t *testing.T) {
 		"project-progressive-release-only":  true,
 		"project-migration-contract-only":   true,
 		"project-migration-sql-only":        true,
+		"customer-http-operations-only":     true,
 		"financial-system":                  true, // separate sequential job on the same host
 	}
 

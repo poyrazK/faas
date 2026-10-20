@@ -1,6 +1,6 @@
 package main_test
 
-// adr: 990 — euro amounts become integer millicents without floating point.
+// adr: 990 — dollar amounts become integer millicents without floating point.
 
 import (
 	"bytes"
@@ -15,17 +15,17 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-func TestParseEuroMillicents(t *testing.T) {
+func TestParseUSDMillicents(t *testing.T) {
 	for in, want := range map[string]int64{
 		"0": 0, "12": 1_200_000, "12.5": 1_250_000, "0.15": 15_000, ".075": 7_500, "0.00001": 1,
 	} {
-		if got, err := main.ParseEuroMillicents(in); err != nil || got != want {
-			t.Errorf("parseEuroMillicents(%q) = %d, %v; want %d", in, got, err, want)
+		if got, err := main.ParseUSDMillicents(in); err != nil || got != want {
+			t.Errorf("parseUSDMillicents(%q) = %d, %v; want %d", in, got, err, want)
 		}
 	}
 	for _, bad := range []string{"", "-1", "+1", "1.000001", "1,5", "abc", "1e3", "99999999"} {
-		if _, err := main.ParseEuroMillicents(bad); err == nil {
-			t.Errorf("parseEuroMillicents(%q) accepted", bad)
+		if _, err := main.ParseUSDMillicents(bad); err == nil {
+			t.Errorf("parseUSDMillicents(%q) accepted", bad)
 		}
 	}
 }
@@ -85,7 +85,7 @@ func TestCmdAIJSONOutput(t *testing.T) {
 		case "/v1/outbound/integrations/int-1/ai-alerts":
 			_ = json.NewEncoder(w).Encode(api.OutboundAIBudgetAlertList{Items: []api.OutboundAIBudgetAlert{{ID: "a1", Budget: "daily_cost", ThresholdPercent: 80}}})
 		case "/v1/outbound/ai-price-catalog":
-			_ = json.NewEncoder(w).Encode(api.OutboundAIPriceCatalogResponse{AIProvider: "openai", USDPerEUR: "1.1206",
+			_ = json.NewEncoder(w).Encode(api.OutboundAIPriceCatalogResponse{AIProvider: "openai", Currency: "USD",
 				Entries: []api.OutboundAIPriceEntry{{ModelPrefix: "gpt-4o", InputMillicentsPerMTok: 223_096, OutputMillicentsPerMTok: 892_380}}})
 		case "/v1/outbound/integrations/int-1/ai-usage/users":
 			_ = json.NewEncoder(w).Encode(api.OutboundAIUserUsageResponse{UsageDate: "2026-10-12", TrackedUsers: 1,

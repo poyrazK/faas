@@ -24,7 +24,9 @@ func (h *Harness) markDaemonStopped(child *exec.Cmd) {
 func (h *Harness) watchedDaemons() []*exec.Cmd {
 	var watched []*exec.Cmd
 	for _, child := range h.procs {
-		if !h.expectedStops[child] {
+		// A daemon stopped on purpose by KillAPID or KillSchedd awaits its own
+		// Restart; restarting another one must not report it as a crash.
+		if !h.expectedStops[child] && !h.killed[child] {
 			watched = append(watched, child)
 		}
 	}

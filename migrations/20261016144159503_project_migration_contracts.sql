@@ -1,6 +1,9 @@
 -- migration-compat: expand
+-- Applied online (ADR-202610171900): every goose statement is its own short
+-- transaction locking at most three existing tables. Every step is idempotent.
+-- +goose NO TRANSACTION
 -- +goose Up
-SET LOCAL lock_timeout = '5s';
+SET lock_timeout = '5s';
 CREATE TABLE IF NOT EXISTS project_migration_contracts (
  account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
  project_id uuid NOT NULL REFERENCES projects(id) ON DELETE CASCADE,

@@ -32,6 +32,25 @@ type AIPrice struct {
 	WebSearch     int64
 	FileSearch    int64
 	CodeSessionGB int64
+	// Audio token prices per million (ADR 20261019072722); resolution
+	// replaces an absent one with the text price of the same kind.
+	InputAudio       int64
+	CachedInputAudio int64
+	OutputAudio      int64
+}
+
+// resolveAudioPrices fills the audio token prices of a resolved price.
+func resolveAudioPrices(price *AIPrice, input, cachedInput, output *int64) {
+	price.InputAudio, price.CachedInputAudio, price.OutputAudio = price.Input, price.CachedInput, price.Output
+	if input != nil {
+		price.InputAudio = *input
+	}
+	if cachedInput != nil {
+		price.CachedInputAudio = *cachedInput
+	}
+	if output != nil {
+		price.OutputAudio = *output
+	}
 }
 
 // resolveToolPrices fills the built-in tool prices of a resolved price.
@@ -83,6 +102,7 @@ func ResolveAIPrices(entries []api.OutboundAIPriceEntry) []AIPrice {
 		resolveMediaPrices(&price, entry.InputImageMillicentsPerMTok, entry.OutputImageMillicentsPerMTok,
 			entry.MillicentsPerImage, entry.MillicentsPerAudioMinute, entry.MillicentsPerMillionCharacters, entry.MillicentsPerVideoSecond)
 		resolveToolPrices(&price, entry.MillicentsPerWebSearch, entry.MillicentsPerFileSearch, entry.MillicentsPerCodeSessionGB)
+		resolveAudioPrices(&price, entry.InputAudioMillicentsPerMTok, entry.CachedInputAudioMillicentsPerMTok, entry.OutputAudioMillicentsPerMTok)
 		prices = append(prices, price)
 	}
 	return prices
@@ -122,6 +142,7 @@ func aiPriceFor(integration Integration, model string) (AIPrice, bool) {
 	resolveMediaPrices(&price, entry.Price.InputImage, entry.Price.OutputImage, entry.Price.Image,
 		entry.Price.AudioMinute, entry.Price.Characters, entry.Price.VideoSecond)
 	resolveToolPrices(&price, entry.Price.WebSearch, entry.Price.FileSearch, entry.Price.CodeSessionGB)
+	resolveAudioPrices(&price, entry.Price.InputAudio, entry.Price.CachedInputAudio, entry.Price.OutputAudio)
 	return price, true
 }
 
@@ -145,8 +166,9 @@ func aiCostMillicents(prices []AIPrice, usage AIUsage) int64 {
 
 // priceCostMillicents prices one call, rounding up to a whole millicent so
 // a budget never under-counts. Uncached input excludes cached reads, cache
-// writes and input image tokens, and text output excludes output image
-// tokens, which have their own prices. A call is priced per image only when
+// writes, input image tokens and uncached audio, cached text excludes cached
+// audio, and text output excludes output image and audio tokens, which have
+// their own prices (ADR 20261019072722). A call is priced per image only when
 // it reports no output image tokens, so a model priced both ways is not
 // charged twice (ADR-997). Big integers keep amounts times prices from
 // overflowing.
@@ -154,14 +176,18 @@ func priceCostMillicents(price AIPrice, usage AIUsage) int64 {
 	if !usage.Known {
 		return 0
 	}
-	uncached := max(usage.InputTokens-usage.CachedInputTokens-usage.CacheWriteTokens-usage.InputImageTokens, 0)
-	textOutput := max(usage.OutputTokens-usage.OutputImageTokens, 0)
+	uncachedAudio := max(usage.InputAudioTokens-usage.CachedInputAudioTokens, 0)
+	uncached := max(usage.InputTokens-usage.CachedInputTokens-usage.CacheWriteTokens-usage.InputImageTokens-uncachedAudio, 0)
+	cachedText := max(usage.CachedInputTokens-usage.CachedInputAudioTokens, 0)
+	textOutput := max(usage.OutputTokens-usage.OutputImageTokens-usage.OutputAudioTokens, 0)
 	// Every term is scaled to sixty million: per-million prices by 60,
 	// per-image, per-second and per-use prices by 60,000,000 and per-minute
 	// prices by 1,000,000.
 	total := new(big.Int)
 	for _, term := range [][3]int64{
-		{uncached, price.Input, 60}, {usage.CachedInputTokens, price.CachedInput, 60},
+		{uncached, price.Input, 60}, {cachedText, price.CachedInput, 60},
+		{uncachedAudio, price.InputAudio, 60}, {usage.CachedInputAudioTokens, price.CachedInputAudio, 60},
+		{usage.OutputAudioTokens, price.OutputAudio, 60},
 		{usage.CacheWriteTokens, price.CacheWrite, 60}, {usage.InputImageTokens, price.InputImage, 60},
 		{textOutput, price.Output, 60}, {usage.OutputImageTokens, price.OutputImage, 60},
 		{usage.Characters, price.Characters, 60}, {usage.AudioSeconds, price.AudioMinute, 1_000_000},

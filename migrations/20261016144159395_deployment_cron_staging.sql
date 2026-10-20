@@ -1,19 +1,40 @@
 -- migration-compat: expand
+-- Applied online (ADR-202610171900): the columns are added bare, their checks
+-- NOT VALID and validated afterwards, each step its own short transaction.
+-- Every step is idempotent.
+-- +goose NO TRANSACTION
 -- +goose Up
-SET LOCAL lock_timeout = '5s';
+SET lock_timeout = '5s';
 ALTER TABLE apps
- ADD COLUMN IF NOT EXISTS deployment_cron_revision bigint NOT NULL DEFAULT 0 CHECK (deployment_cron_revision >= 0),
- ADD COLUMN IF NOT EXISTS deployment_cron_owner text NOT NULL DEFAULT '' CHECK (deployment_cron_owner = '' OR deployment_cron_owner ~ '^[0-9a-f]{32}$'),
- ADD COLUMN IF NOT EXISTS deployment_cron_fingerprint text NOT NULL DEFAULT '' CHECK (deployment_cron_fingerprint = '' OR deployment_cron_fingerprint ~ '^[0-9a-f]{64}$'),
- ADD COLUMN IF NOT EXISTS deployment_cron_before jsonb CHECK (deployment_cron_before IS NULL OR jsonb_typeof(deployment_cron_before) = 'array');
+ ADD COLUMN IF NOT EXISTS deployment_cron_revision bigint NOT NULL DEFAULT 0,
+ ADD COLUMN IF NOT EXISTS deployment_cron_owner text NOT NULL DEFAULT '',
+ ADD COLUMN IF NOT EXISTS deployment_cron_fingerprint text NOT NULL DEFAULT '',
+ ADD COLUMN IF NOT EXISTS deployment_cron_before jsonb;
 
 -- +goose StatementBegin
 DO $$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='apps'::regclass AND conname='apps_deployment_cron_revision_check') THEN
+  ALTER TABLE apps ADD CONSTRAINT apps_deployment_cron_revision_check CHECK (deployment_cron_revision >= 0) NOT VALID;
+ END IF;
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='apps'::regclass AND conname='apps_deployment_cron_owner_check') THEN
+  ALTER TABLE apps ADD CONSTRAINT apps_deployment_cron_owner_check CHECK (deployment_cron_owner = '' OR deployment_cron_owner ~ '^[0-9a-f]{32}$') NOT VALID;
+ END IF;
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='apps'::regclass AND conname='apps_deployment_cron_fingerprint_check') THEN
+  ALTER TABLE apps ADD CONSTRAINT apps_deployment_cron_fingerprint_check CHECK (deployment_cron_fingerprint = '' OR deployment_cron_fingerprint ~ '^[0-9a-f]{64}$') NOT VALID;
+ END IF;
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='apps'::regclass AND conname='apps_deployment_cron_before_check') THEN
+  ALTER TABLE apps ADD CONSTRAINT apps_deployment_cron_before_check CHECK (deployment_cron_before IS NULL OR jsonb_typeof(deployment_cron_before) = 'array') NOT VALID;
+ END IF;
  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='apps'::regclass AND conname='apps_deployment_cron_ownership') THEN
-  ALTER TABLE apps ADD CONSTRAINT apps_deployment_cron_ownership CHECK ((deployment_cron_owner = '') = (deployment_cron_fingerprint = '') AND (deployment_cron_owner = '') = (deployment_cron_before IS NULL));
+  ALTER TABLE apps ADD CONSTRAINT apps_deployment_cron_ownership CHECK ((deployment_cron_owner = '') = (deployment_cron_fingerprint = '') AND (deployment_cron_owner = '') = (deployment_cron_before IS NULL)) NOT VALID;
  END IF;
 END $$;
 -- +goose StatementEnd
+ALTER TABLE apps VALIDATE CONSTRAINT apps_deployment_cron_revision_check;
+ALTER TABLE apps VALIDATE CONSTRAINT apps_deployment_cron_owner_check;
+ALTER TABLE apps VALIDATE CONSTRAINT apps_deployment_cron_fingerprint_check;
+ALTER TABLE apps VALIDATE CONSTRAINT apps_deployment_cron_before_check;
+ALTER TABLE apps VALIDATE CONSTRAINT apps_deployment_cron_ownership;
 
 -- +goose StatementBegin
 CREATE OR REPLACE FUNCTION fence_deployment_cron_intent() RETURNS trigger LANGUAGE plpgsql AS $$

@@ -1,18 +1,35 @@
 -- migration-compat: expand
+-- Applied online (ADR-202610171900): the columns are added bare, their checks
+-- NOT VALID and validated afterwards, each step its own short transaction.
+-- Every step is idempotent.
+-- +goose NO TRANSACTION
 -- +goose Up
-SET LOCAL lock_timeout = '5s';
+SET lock_timeout = '5s';
 ALTER TABLE apps
-    ADD COLUMN IF NOT EXISTS deployment_policy_revision bigint NOT NULL DEFAULT 0 CHECK (deployment_policy_revision >= 0),
-    ADD COLUMN IF NOT EXISTS deployment_policy_owner text NOT NULL DEFAULT '' CHECK (deployment_policy_owner = '' OR deployment_policy_owner ~ '^[0-9a-f]{32}$'),
-    ADD COLUMN IF NOT EXISTS deployment_policy_fingerprint text NOT NULL DEFAULT '' CHECK (deployment_policy_fingerprint = '' OR deployment_policy_fingerprint ~ '^[0-9a-f]{64}$');
+    ADD COLUMN IF NOT EXISTS deployment_policy_revision bigint NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS deployment_policy_owner text NOT NULL DEFAULT '',
+    ADD COLUMN IF NOT EXISTS deployment_policy_fingerprint text NOT NULL DEFAULT '';
 
 -- +goose StatementBegin
 DO $$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='apps'::regclass AND conname='apps_deployment_policy_revision_check') THEN
+  ALTER TABLE apps ADD CONSTRAINT apps_deployment_policy_revision_check CHECK (deployment_policy_revision >= 0) NOT VALID;
+ END IF;
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='apps'::regclass AND conname='apps_deployment_policy_owner_check') THEN
+  ALTER TABLE apps ADD CONSTRAINT apps_deployment_policy_owner_check CHECK (deployment_policy_owner = '' OR deployment_policy_owner ~ '^[0-9a-f]{32}$') NOT VALID;
+ END IF;
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='apps'::regclass AND conname='apps_deployment_policy_fingerprint_check') THEN
+  ALTER TABLE apps ADD CONSTRAINT apps_deployment_policy_fingerprint_check CHECK (deployment_policy_fingerprint = '' OR deployment_policy_fingerprint ~ '^[0-9a-f]{64}$') NOT VALID;
+ END IF;
  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='apps'::regclass AND conname='apps_deployment_policy_ownership_check') THEN
-  ALTER TABLE apps ADD CONSTRAINT apps_deployment_policy_ownership_check CHECK ((deployment_policy_owner = '') = (deployment_policy_fingerprint = ''));
+  ALTER TABLE apps ADD CONSTRAINT apps_deployment_policy_ownership_check CHECK ((deployment_policy_owner = '') = (deployment_policy_fingerprint = '')) NOT VALID;
  END IF;
 END $$;
 -- +goose StatementEnd
+ALTER TABLE apps VALIDATE CONSTRAINT apps_deployment_policy_revision_check;
+ALTER TABLE apps VALIDATE CONSTRAINT apps_deployment_policy_owner_check;
+ALTER TABLE apps VALIDATE CONSTRAINT apps_deployment_policy_fingerprint_check;
+ALTER TABLE apps VALIDATE CONSTRAINT apps_deployment_policy_ownership_check;
 
 -- +goose StatementBegin
 CREATE OR REPLACE FUNCTION fence_deployment_policy_changes() RETURNS trigger LANGUAGE plpgsql AS $$

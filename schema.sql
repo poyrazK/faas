@@ -18147,6 +18147,8 @@ CREATE FUNCTION public.lock_clone_deployment_cleanup_borrower_writers() RETURNS 
  LOCK TABLE deployment_runtime_upgrade_acceptances,deployment_runtime_upgrade_baselines,deployment_runtime_upgrade_cutovers,environment_workload_serving_queue_acks,environment_workload_serving_routes,project_environment_clone_migration_adoptions,project_environment_clone_migration_resumes,project_environment_clone_wake_dispatches,route_probe_observations,runtime_upgrade_gateway_drains,runtime_upgrade_gateway_receipts,workflow_schedule_occurrences,app_issues,debug_regression_observations,deployment_audit,issue_events,issue_releases,issue_resolutions,log_events,mirror_invocation_results,org_activity,project_environment_clone_workloads,project_environment_promotion_workloads,request_audit_events,request_telemetry,upload_commit_outcomes,upload_sessions IN SHARE MODE;
  -- Retained PostgreSQL receipts and blocked plan members also borrow deployments.
  LOCK TABLE managed_postgres_cutover_drains,managed_postgres_cutover_drain_plan_members IN SHARE MODE;
+ -- Automatic-rollback freezes name the rolled-back deployment.
+ LOCK TABLE release_freezes IN SHARE MODE;
 END $$;
 
 
@@ -30574,6 +30576,21 @@ CREATE TABLE public.customer_operation_attempt_instances (
 
 
 --
+-- Name: customer_operation_children; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.customer_operation_children (
+    parent_operation_id uuid NOT NULL,
+    child_key text NOT NULL,
+    child_operation_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    CONSTRAINT customer_operation_children_check CHECK ((parent_operation_id <> child_operation_id)),
+    CONSTRAINT customer_operation_children_child_key_check CHECK (((octet_length(child_key) >= 1) AND (octet_length(child_key) <= 64)))
+);
+
+
+--
 -- Name: customer_operation_code_pins; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -30907,6 +30924,40 @@ UNION
 
 
 --
+-- Name: customer_operation_schedules; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.customer_operation_schedules (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    platform_tenant_id uuid NOT NULL,
+    definition_id uuid NOT NULL,
+    input jsonb NOT NULL,
+    kind text NOT NULL,
+    at timestamp with time zone,
+    cron text DEFAULT ''::text NOT NULL,
+    timezone text DEFAULT ''::text NOT NULL,
+    state text NOT NULL,
+    next_fire_at timestamp with time zone,
+    fires bigint DEFAULT 0 NOT NULL,
+    last_fired_at timestamp with time zone,
+    last_operation_id uuid,
+    last_error text DEFAULT ''::text NOT NULL,
+    lease_token uuid,
+    lease_until timestamp with time zone,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    CONSTRAINT customer_operation_schedules_check CHECK ((((kind = 'once'::text) AND (at IS NOT NULL) AND (cron = ''::text)) OR ((kind = 'cron'::text) AND (at IS NULL) AND (cron <> ''::text) AND (timezone <> ''::text)))),
+    CONSTRAINT customer_operation_schedules_check1 CHECK ((((state = 'active'::text) = (next_fire_at IS NOT NULL)) OR (state = 'paused'::text))),
+    CONSTRAINT customer_operation_schedules_fires_check CHECK ((fires >= 0)),
+    CONSTRAINT customer_operation_schedules_kind_check CHECK ((kind = ANY (ARRAY['once'::text, 'cron'::text]))),
+    CONSTRAINT customer_operation_schedules_last_error_check CHECK ((octet_length(last_error) <= 512)),
+    CONSTRAINT customer_operation_schedules_state_check CHECK ((state = ANY (ARRAY['active'::text, 'paused'::text, 'completed'::text, 'failed'::text, 'cancelled'::text])))
+);
+
+
+--
 -- Name: customer_operation_stream_leases; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -30945,7 +30996,12 @@ CREATE TABLE public.customer_operation_webhook_bindings (
     version bigint NOT NULL,
     created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
     updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    mode text DEFAULT 'start'::text NOT NULL,
+    subject_type text,
+    subject_id_from text,
+    signals jsonb DEFAULT '[]'::jsonb NOT NULL,
     CONSTRAINT customer_operation_webhook_bindings_event_types_check CHECK (((cardinality(event_types) <= 32) AND (array_position(event_types, NULL::text) IS NULL))),
+    CONSTRAINT customer_operation_webhook_bindings_mode_check CHECK (((jsonb_typeof(signals) = 'array'::text) AND (jsonb_array_length(signals) <= 32) AND (((mode = 'start'::text) AND (subject_type IS NULL) AND (subject_id_from IS NULL) AND (jsonb_array_length(signals) = 0)) OR ((mode = 'signal'::text) AND (subject_type IS NOT NULL) AND (subject_id_from IS NOT NULL) AND (jsonb_array_length(signals) > 0) AND (cardinality(event_types) = 0))))),
     CONSTRAINT customer_operation_webhook_bindings_operation_name_check CHECK ((operation_name ~ '^[a-z][a-z0-9-]{0,63}$'::text)),
     CONSTRAINT customer_operation_webhook_bindings_scope_check CHECK (((length(scope) >= 1) AND (length(scope) <= 64))),
     CONSTRAINT customer_operation_webhook_bindings_version_check CHECK ((version > 0))
@@ -43124,6 +43180,10 @@ CREATE TABLE public.outbound_ai_price_entries (
     millicents_per_web_search bigint,
     millicents_per_file_search bigint,
     millicents_per_code_session_gb bigint,
+    input_audio_millicents_per_mtok bigint,
+    cached_input_audio_millicents_per_mtok bigint,
+    output_audio_millicents_per_mtok bigint,
+    CONSTRAINT outbound_ai_price_entries_audio_chk CHECK ((((input_audio_millicents_per_mtok IS NULL) OR ((input_audio_millicents_per_mtok >= 0) AND (input_audio_millicents_per_mtok <= 1000000000))) AND ((cached_input_audio_millicents_per_mtok IS NULL) OR ((cached_input_audio_millicents_per_mtok >= 0) AND (cached_input_audio_millicents_per_mtok <= 1000000000))) AND ((output_audio_millicents_per_mtok IS NULL) OR ((output_audio_millicents_per_mtok >= 0) AND (output_audio_millicents_per_mtok <= 1000000000))))),
     CONSTRAINT outbound_ai_price_entries_media_chk CHECK ((((input_image_millicents_per_mtok IS NULL) OR ((input_image_millicents_per_mtok >= 0) AND (input_image_millicents_per_mtok <= 1000000000))) AND ((output_image_millicents_per_mtok IS NULL) OR ((output_image_millicents_per_mtok >= 0) AND (output_image_millicents_per_mtok <= 1000000000))) AND ((millicents_per_image IS NULL) OR ((millicents_per_image >= 0) AND (millicents_per_image <= 10000000))) AND ((millicents_per_audio_minute IS NULL) OR ((millicents_per_audio_minute >= 0) AND (millicents_per_audio_minute <= 10000000))) AND ((millicents_per_million_characters IS NULL) OR ((millicents_per_million_characters >= 0) AND (millicents_per_million_characters <= 1000000000))))),
     CONSTRAINT outbound_ai_price_entries_prefix_chk CHECK ((((length(model_prefix) >= 1) AND (length(model_prefix) <= 128)) AND (model_prefix ~ '^[ -~]+$'::text))),
     CONSTRAINT outbound_ai_price_entries_prices_chk CHECK ((((input_millicents_per_mtok >= 0) AND (input_millicents_per_mtok <= 1000000000)) AND ((output_millicents_per_mtok >= 0) AND (output_millicents_per_mtok <= 1000000000)) AND ((cached_input_millicents_per_mtok IS NULL) OR ((cached_input_millicents_per_mtok >= 0) AND (cached_input_millicents_per_mtok <= 1000000000))) AND ((cache_write_millicents_per_mtok IS NULL) OR ((cache_write_millicents_per_mtok >= 0) AND (cache_write_millicents_per_mtok <= 1000000000))))),
@@ -43141,6 +43201,20 @@ CREATE TABLE public.outbound_ai_price_lists (
     integration_id uuid NOT NULL,
     effective_from timestamp with time zone DEFAULT now() NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: outbound_ai_prompt_prefixes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.outbound_ai_prompt_prefixes (
+    integration_id uuid NOT NULL,
+    prefix_hash bytea NOT NULL,
+    seen_at timestamp with time zone DEFAULT now() NOT NULL,
+    previous_seen_at timestamp with time zone,
+    CONSTRAINT outbound_ai_prompt_prefixes_hash_chk CHECK ((octet_length(prefix_hash) = 32)),
+    CONSTRAINT outbound_ai_prompt_prefixes_seen_chk CHECK (((previous_seen_at IS NULL) OR (previous_seen_at <= seen_at)))
 );
 
 
@@ -43397,6 +43471,9 @@ CREATE TABLE public.outbound_ai_usage_daily (
     cached_requests bigint DEFAULT 0 NOT NULL,
     cache_saved_millicents bigint DEFAULT 0 NOT NULL,
     prompt_cache_saved_millicents bigint DEFAULT 0 NOT NULL,
+    input_audio_tokens bigint DEFAULT 0 NOT NULL,
+    output_audio_tokens bigint DEFAULT 0 NOT NULL,
+    CONSTRAINT outbound_ai_usage_daily_audio_chk CHECK ((((input_audio_tokens >= 0) AND (input_audio_tokens <= input_tokens)) AND ((output_audio_tokens >= 0) AND (output_audio_tokens <= output_tokens)))),
     CONSTRAINT outbound_ai_usage_daily_cache_chk CHECK ((((cached_requests >= 0) AND (cached_requests <= requests)) AND (cache_saved_millicents >= 0))),
     CONSTRAINT outbound_ai_usage_daily_caller_chk CHECK (((caller = ANY (ARRAY['runs'::text, 'replay'::text, 'moderation'::text, 'evaluation'::text])) OR (caller ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'::text))),
     CONSTRAINT outbound_ai_usage_daily_cost_chk CHECK ((cost_millicents >= 0)),
@@ -53862,6 +53939,22 @@ ALTER TABLE ONLY public.customer_operation_attempt_instances
 
 
 --
+-- Name: customer_operation_children customer_operation_children_child_operation_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_children
+    ADD CONSTRAINT customer_operation_children_child_operation_id_key UNIQUE (child_operation_id);
+
+
+--
+-- Name: customer_operation_children customer_operation_children_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_children
+    ADD CONSTRAINT customer_operation_children_pkey PRIMARY KEY (parent_operation_id, child_key);
+
+
+--
 -- Name: customer_operation_code_pins customer_operation_code_pins_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -53987,6 +54080,14 @@ ALTER TABLE ONLY public.customer_operation_result_blobs
 
 ALTER TABLE ONLY public.customer_operation_result_blobs
     ADD CONSTRAINT customer_operation_result_blobs_storage_key_key UNIQUE (storage_key);
+
+
+--
+-- Name: customer_operation_schedules customer_operation_schedules_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_schedules
+    ADD CONSTRAINT customer_operation_schedules_pkey PRIMARY KEY (id);
 
 
 --
@@ -59187,6 +59288,14 @@ ALTER TABLE ONLY public.outbound_ai_price_entries
 
 ALTER TABLE ONLY public.outbound_ai_price_lists
     ADD CONSTRAINT outbound_ai_price_lists_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: outbound_ai_prompt_prefixes outbound_ai_prompt_prefixes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_prompt_prefixes
+    ADD CONSTRAINT outbound_ai_prompt_prefixes_pkey PRIMARY KEY (integration_id, prefix_hash);
 
 
 --
@@ -64997,6 +65106,13 @@ CREATE UNIQUE INDEX customer_operation_definitions_route_idx ON public.customer_
 
 
 --
+-- Name: customer_operation_events_outcome_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX customer_operation_events_outcome_idx ON public.customer_operation_events USING btree (created_at) WHERE (event_type = ANY (ARRAY['succeeded'::text, 'failed'::text, 'cancelled'::text, 'reconciliation_required'::text]));
+
+
+--
 -- Name: customer_operation_executions_current_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -65057,6 +65173,20 @@ CREATE INDEX customer_operation_result_blobs_cleanup_idx ON public.customer_oper
 --
 
 CREATE INDEX customer_operation_result_blobs_operation_idx ON public.customer_operation_result_blobs USING btree (operation_id);
+
+
+--
+-- Name: customer_operation_schedules_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX customer_operation_schedules_due_idx ON public.customer_operation_schedules USING btree (next_fire_at) WHERE (state = 'active'::text);
+
+
+--
+-- Name: customer_operation_schedules_owner_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX customer_operation_schedules_owner_idx ON public.customer_operation_schedules USING btree (account_id, platform_tenant_id, created_at DESC);
 
 
 --
@@ -69614,6 +69744,13 @@ CREATE INDEX outbound_ai_log_exports_prune_idx ON public.outbound_ai_log_exports
 --
 
 CREATE INDEX outbound_ai_price_lists_current_idx ON public.outbound_ai_price_lists USING btree (integration_id, effective_from DESC);
+
+
+--
+-- Name: outbound_ai_prompt_prefixes_seen_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX outbound_ai_prompt_prefixes_seen_at_idx ON public.outbound_ai_prompt_prefixes USING btree (seen_at);
 
 
 --
@@ -81749,6 +81886,30 @@ ALTER TABLE ONLY public.customer_operation_attempt_instances
 
 
 --
+-- Name: customer_operation_children customer_operation_children_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_children
+    ADD CONSTRAINT customer_operation_children_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_operation_children customer_operation_children_child_operation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_children
+    ADD CONSTRAINT customer_operation_children_child_operation_id_fkey FOREIGN KEY (child_operation_id) REFERENCES public.customer_operations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_operation_children customer_operation_children_parent_operation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_children
+    ADD CONSTRAINT customer_operation_children_parent_operation_id_fkey FOREIGN KEY (parent_operation_id) REFERENCES public.customer_operations(id) ON DELETE CASCADE;
+
+
+--
 -- Name: customer_operation_code_pins customer_operation_code_pins_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -81906,6 +82067,38 @@ ALTER TABLE ONLY public.customer_operation_reports
 
 ALTER TABLE ONLY public.customer_operation_reports
     ADD CONSTRAINT customer_operation_reports_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES public.customer_operations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_operation_schedules customer_operation_schedules_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_schedules
+    ADD CONSTRAINT customer_operation_schedules_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_operation_schedules customer_operation_schedules_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_schedules
+    ADD CONSTRAINT customer_operation_schedules_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_operation_schedules customer_operation_schedules_definition_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_schedules
+    ADD CONSTRAINT customer_operation_schedules_definition_id_fkey FOREIGN KEY (definition_id) REFERENCES public.customer_operation_definitions(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_operation_schedules customer_operation_schedules_platform_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_schedules
+    ADD CONSTRAINT customer_operation_schedules_platform_tenant_id_fkey FOREIGN KEY (platform_tenant_id) REFERENCES public.platform_tenants(id) ON DELETE CASCADE;
 
 
 --
@@ -88098,6 +88291,14 @@ ALTER TABLE ONLY public.outbound_ai_price_entries
 
 ALTER TABLE ONLY public.outbound_ai_price_lists
     ADD CONSTRAINT outbound_ai_price_lists_integration_id_fkey FOREIGN KEY (integration_id) REFERENCES public.outbound_integrations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: outbound_ai_prompt_prefixes outbound_ai_prompt_prefixes_integration_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_prompt_prefixes
+    ADD CONSTRAINT outbound_ai_prompt_prefixes_integration_id_fkey FOREIGN KEY (integration_id) REFERENCES public.outbound_integrations(id) ON DELETE CASCADE;
 
 
 --

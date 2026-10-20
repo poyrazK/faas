@@ -673,6 +673,11 @@ func (s *server) WithOpsMetrics(ctx context.Context, ops *wire.OpsMetrics) *serv
 	if ops != nil && (s.durable.Metrics == nil || s.durable.Metrics.Registry() != ops.Registry()) {
 		s.durable.Metrics = durable.NewMetrics(ops.Registry(), ops.MetricPrefix())
 	}
+	if ops == nil {
+		s.operation.Metrics = nil
+	} else if s.operation.Metrics.Registry() != ops.Registry() {
+		s.operation.Metrics = operation.NewMetrics(ops.Registry(), ops.MetricPrefix())
+	}
 	if ops != nil && (s.realtime.HistoryMetrics == nil || s.realtime.HistoryMetrics.Registry() != ops.Registry()) {
 		s.realtime.HistoryMetrics = managedrealtime.NewManagedRealtimeHistoryMetrics(ops.Registry(), ops.MetricPrefix())
 	}
@@ -2087,6 +2092,23 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/platform-tenant-self/customer-operations/{id}/events", s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsRead)(s.operation.GetPlatformTenantSelfOperationEvents)))
 	mux.HandleFunc("POST /v1/platform-tenant-self/customer-operations/{id}/cancel", s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsManage)(s.operation.CancelPlatformTenantSelfOperation)))
 	mux.HandleFunc("POST /v1/platform-tenant-self/customer-operations/{id}/approvals/{step}", s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsManage)(s.operation.DecidePlatformTenantSelfOperationApproval)))
+	// ADR-20261017100853: a customer resumes its own waiting Operations.
+	mux.HandleFunc("POST /v1/platform-tenant-self/customer-operations/{id}/signals", s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsManage)(s.operation.SignalPlatformTenantSelfOperation)))
+	mux.HandleFunc("POST /v1/platform-tenant-self/customer-operation-signals", s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsManage)(s.operation.SignalPlatformTenantSelfOperationsBySubject)))
+	// ADR-20261018183000: child Operations, gated by FAAS_OPERATION_CHILDREN_ACCOUNTS.
+	mux.Handle("POST /v1/runtime/operations/{id}/children", middleware.AuthLimitWithLimiter(middleware.AuthLimitConfig{Log: s.log}, s.apiAuthLimiter)(http.HandlerFunc(s.operation.StartRuntimeChildOperation)))
+	mux.Handle("GET /v1/runtime/operations/{id}/children", middleware.AuthLimitWithLimiter(middleware.AuthLimitConfig{Log: s.log}, s.apiAuthLimiter)(http.HandlerFunc(s.operation.ListRuntimeOperationChildren)))
+	mux.HandleFunc("GET /v1/platform-tenant-self/customer-operations/{id}/children", s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsRead)(s.operation.ListPlatformTenantSelfOperationChildren)))
+	mux.HandleFunc("GET /v1/apps/{slug}/operations/{id}/children", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.operation.ListOwnedOperationChildren))))
+	// ADR-20261018161833: Operation schedules, gated by FAAS_OPERATION_SCHEDULES_ACCOUNTS.
+	mux.HandleFunc("POST /v1/platform-tenant-self/customer-operation-schedules", s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsManage)(s.operation.CreatePlatformTenantSelfOperationSchedule)))
+	mux.HandleFunc("GET /v1/platform-tenant-self/customer-operation-schedules", s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsRead)(s.operation.ListPlatformTenantSelfOperationSchedules)))
+	mux.HandleFunc("GET /v1/platform-tenant-self/customer-operation-schedules/{id}", s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsRead)(s.operation.GetPlatformTenantSelfOperationSchedule)))
+	mux.HandleFunc("POST /v1/platform-tenant-self/customer-operation-schedules/{id}/pause", s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsManage)(s.operation.ChangePlatformTenantSelfOperationSchedule(state.OperationSchedulePause))))
+	mux.HandleFunc("POST /v1/platform-tenant-self/customer-operation-schedules/{id}/resume", s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsManage)(s.operation.ChangePlatformTenantSelfOperationSchedule(state.OperationScheduleResume))))
+	mux.HandleFunc("POST /v1/platform-tenant-self/customer-operation-schedules/{id}/cancel", s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsManage)(s.operation.ChangePlatformTenantSelfOperationSchedule(state.OperationScheduleCancel))))
+	mux.HandleFunc("GET /v1/apps/{slug}/operation-schedules", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.operation.ListAppOperationSchedules))))
+	mux.HandleFunc("POST /v1/apps/{slug}/operation-schedules/{id}/cancel", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.operation.CancelAppOperationSchedule))))
 	mux.HandleFunc("POST /v1/apps/{slug}/operations/{id}/recover-receipt", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.operation.RecoverOperationWithReceipt))))
 	mux.HandleFunc("POST /v1/apps/{slug}/operations/{id}/recover", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.operation.RecoverOperation))))
 	mux.Handle("POST /v1/runtime/operations/{id}/progress", middleware.AuthLimitWithLimiter(middleware.AuthLimitConfig{Log: s.log}, s.apiAuthLimiter)(http.HandlerFunc(s.operation.ReportOperationProgress)))

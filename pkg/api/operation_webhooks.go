@@ -13,25 +13,50 @@ import (
 // to a customer operation. The platform tenant is the operation's owner; it is
 // fixed here and never derived from provider payload. TakeOverDelivery must be
 // true: bound events no longer reach the endpoint's plain delivery path.
+//
+// Mode "signal" (ADR-20261016100929) delivers mapped provider events to the tenant's
+// waiting Operations whose subject the payload names, instead of starting
+// Operations; EventTypes is then empty and Signals is the filter.
 type PutOperationWebhookBindingRequest struct {
-	ExpectedVersion  *int64   `json:"expected_version"`
-	Scope            string   `json:"scope,omitempty"`
-	Operation        string   `json:"operation"`
-	PlatformTenantID string   `json:"platform_tenant_id"`
-	EventTypes       []string `json:"event_types,omitempty"`
-	TakeOverDelivery bool     `json:"take_over_delivery"`
+	ExpectedVersion  *int64                   `json:"expected_version"`
+	Scope            string                   `json:"scope,omitempty"`
+	Operation        string                   `json:"operation"`
+	PlatformTenantID string                   `json:"platform_tenant_id"`
+	EventTypes       []string                 `json:"event_types,omitempty"`
+	TakeOverDelivery bool                     `json:"take_over_delivery"`
+	Mode             string                   `json:"mode,omitempty"`
+	Subject          *OperationSubjectSpec    `json:"subject,omitempty"`
+	Signals          []OperationWebhookSignal `json:"signals,omitempty"`
 }
 
+// OperationWebhookSignal maps one provider event type to the Operation event
+// a waiting workflow step expects.
+type OperationWebhookSignal struct {
+	ProviderEvent string `json:"provider_event"`
+	Event         string `json:"event"`
+}
+
+const (
+	OperationWebhookModeStart  = "start"
+	OperationWebhookModeSignal = "signal"
+	// Receipt statuses of a signal-mode delivery.
+	InboundWebhookSignaled  = "signaled"
+	InboundWebhookUnmatched = "unmatched"
+)
+
 type OperationWebhookBindingResponse struct {
-	EndpointID       string   `json:"endpoint_id"`
-	AppID            string   `json:"app_id"`
-	Scope            string   `json:"scope"`
-	Operation        string   `json:"operation"`
-	PlatformTenantID string   `json:"platform_tenant_id"`
-	EventTypes       []string `json:"event_types"`
-	Version          int64    `json:"version"`
-	CreatedAt        string   `json:"created_at"`
-	UpdatedAt        string   `json:"updated_at"`
+	EndpointID       string                   `json:"endpoint_id"`
+	AppID            string                   `json:"app_id"`
+	Scope            string                   `json:"scope"`
+	Operation        string                   `json:"operation"`
+	PlatformTenantID string                   `json:"platform_tenant_id"`
+	EventTypes       []string                 `json:"event_types"`
+	Mode             string                   `json:"mode"`
+	Subject          *OperationSubjectSpec    `json:"subject,omitempty"`
+	Signals          []OperationWebhookSignal `json:"signals,omitempty"`
+	Version          int64                    `json:"version"`
+	CreatedAt        string                   `json:"created_at"`
+	UpdatedAt        string                   `json:"updated_at"`
 }
 
 // OperationWebhookInput is the deterministic operation input built from one

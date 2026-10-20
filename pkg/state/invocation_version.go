@@ -60,6 +60,8 @@ func ResolveInvocationVersionForEnvironment(ctx context.Context, store invocatio
 }
 
 func resolveInvocationVersion(ctx context.Context, store invocationAppReader, inv Invocation, environment string, ingress bool) (Invocation, InvocationVersion, error) {
+	// Only the workflow resolver below may assert a step's Operation identity.
+	inv.WorkflowOperation = nil
 	app, err := store.AppByID(ctx, inv.AppID)
 	if err != nil {
 		return inv, InvocationVersion{}, err

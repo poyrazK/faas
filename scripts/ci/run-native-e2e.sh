@@ -504,8 +504,9 @@ if [[ -n "${phase}" ]]; then
     # Three native cleanup outcomes, including real 30-minute retention expiry.
     project-migration-contract-only) phase_timeout=210m ;;
     project-migration-sql-only) phase_timeout=150m ;;
+    customer-http-operations-only) phase_timeout=35m ;;
     financial|financial-system) phase_timeout=35m ;;
-    # Includes native workflow Operations image/guest/recovery scenarios.
+    # Includes native workflow and HTTP Operations image/guest/recovery scenarios.
     wake) phase_timeout=30m ;;
     twonode) phase_timeout=25m ;;
     *) phase_timeout=15m ;;
