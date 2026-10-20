@@ -151,7 +151,7 @@ func cliHelpGroup(command cliCommand) string {
 		return "API"
 	case "add", "ai", "automations", "bindings", "bucket", "crons", "delayed-task", "events", "send", "deliver", "invocations", "entities", "jobs", "operations", "customer-operations", "run", "runs", "triggers", "webhooks", "workflows", "cache", "postgres":
 		return "Data"
-	case "canary", "mirror", "park", "ps", "queue", "dlq", "traffic", "wake", "wake-ahead", "wake-timeline", "workers":
+	case "canary", "freeze", "mirror", "park", "release-gates", "ps", "queue", "dlq", "traffic", "wake", "wake-ahead", "wake-timeline", "workers":
 		return "Delivery"
 	case "alerts", "analytics", "channels", "audit-events", "debug", "inspect", "log-drains", "logs", "metrics", "realtime", "slo", "slos", "status", "synthetics", "tail", "throttle-suggestions", "trace":
 		return "Observe"
@@ -1780,6 +1780,70 @@ var cliCommands = []cliCommand{
 		Examples: []string{"gregale billing export --month 2026-09 --out invoices.zip", "gregale billing export --month 2026-09 --format csv --out invoices.csv"},
 	},
 	{
+		Name:    "freeze",
+		DocSlug: "freeze",
+		Short:   "Freeze production releases for a window, every week, or after automatic rollbacks",
+		Examples: []string{
+			"gregale freeze create --app my-api --for 2h --reason \"incident 4711\"",
+			"gregale freeze create --all-apps --weekly fri --at 16:00 --for 64h --tz Europe/Istanbul --reason \"no weekend releases\"",
+			"gregale freeze create --app my-api --after-rollback 1h --reason \"settle after automatic rollbacks\"",
+			"gregale freeze status --app my-api",
+		},
+		Subcommands: []cliSub{
+			{Name: "create", Short: "Create a freeze (ADR-20261019071733)", Flags: []cliFlag{
+				{Name: "app", Short: "app slug (defaults to linked project app)", Value: "slug"},
+				{Name: "all-apps", Short: "freeze every app of the account", Bool: true},
+				{Name: "reason", Short: "why releases are frozen (required, at most 200 characters)", Value: "TEXT", Req: true},
+				{Name: "for", Short: "window length from --from (default now), or weekly length", Value: "DURATION"},
+				{Name: "from", Short: "window start (RFC 3339)", Value: "TIME"},
+				{Name: "until", Short: "window end (RFC 3339); omit --for and --until to freeze until lifted", Value: "TIME"},
+				{Name: "weekly", Short: "weekly days, comma-separated", Value: "DAYS"},
+				{Name: "at", Short: "weekly start time", Value: "HH:MM"},
+				{Name: "tz", Short: "weekly time zone (IANA; default UTC)", Value: "ZONE"},
+				{Name: "after-rollback", Short: "freeze an app for this long after Gregale rolls it back automatically", Value: "DURATION"},
+			}},
+			{Name: "list", Short: "List freezes that have not ended", Aliases: []string{"ls"}, Flags: []cliFlag{
+				{Name: "app", Short: "only freezes covering this app", Value: "slug"},
+			}},
+			{Name: "lift", Short: "Lift a freeze", Positionals: []string{"<id>"}},
+			{Name: "status", Short: "Show whether production releases of an app are frozen now", Flags: []cliFlag{
+				{Name: "app", Short: "app slug (defaults to linked project app)", Value: "slug"},
+			}},
+		},
+	},
+	{
+		Name:    "release-gates",
+		DocSlug: "release-gates",
+		Short:   "Abort rollouts and roll back releases on your SLOs, new error groups, or custom metrics",
+		Examples: []string{
+			"gregale release-gates add --app my-api --name checkout-slo --slo checkout --max-burn-rate 10",
+			"gregale release-gates add --app my-api --name no-new-errors --new-errors --min-events 3",
+			"gregale release-gates add --app my-api --name orders --metric orders_per_minute --below 5",
+			"gregale release-gates list --app my-api",
+		},
+		Subcommands: []cliSub{
+			{Name: "list", Short: "List an app's release gates (ADR-20261019071734)", Aliases: []string{"ls"}, Flags: []cliFlag{
+				{Name: "app", Short: "app slug (defaults to linked project app)", Value: "slug"},
+			}},
+			{Name: "add", Short: "Add a release gate", Flags: []cliFlag{
+				{Name: "app", Short: "app slug (defaults to linked project app)", Value: "slug"},
+				{Name: "name", Short: "gate name", Value: "NAME", Req: true},
+				{Name: "slo", Short: "fail when this SLO burns too fast", Value: "NAME"},
+				{Name: "max-burn-rate", Short: "SLO burn rate that fails the gate (default 10)", Value: "N"},
+				{Name: "new-errors", Short: "fail when the release introduces new error groups", Bool: true},
+				{Name: "max-new-groups", Short: "new error groups allowed (default 0)", Value: "N"},
+				{Name: "min-events", Short: "events before a new error group counts (default 3)", Value: "N"},
+				{Name: "metric", Short: "fail when this custom metric crosses a bound", Value: "NAME"},
+				{Name: "below", Short: "fail when the metric averages below this", Value: "VALUE"},
+				{Name: "above", Short: "fail when the metric averages above this", Value: "VALUE"},
+				{Name: "min-samples", Short: "requests or metric values before the gate is judged (default 20)", Value: "N"},
+			}},
+			{Name: "rm", Short: "Remove a release gate", Aliases: []string{"delete"}, Positionals: []string{"<name>"}, Flags: []cliFlag{
+				{Name: "app", Short: "app slug (defaults to linked project app)", Value: "slug"},
+			}},
+		},
+	},
+	{
 		Name:    "canary",
 		DocSlug: "canary",
 		Short:   "Inspect profiling gates, advance canary stages, or simulate a preset",
@@ -2627,6 +2691,7 @@ var cliCommands = []cliCommand{
 			{Name: "persist-exclude", Group: "Projects", Short: "save --exclude slugs for future project deploys"},
 			{Name: "project-slug", Group: "Projects", Short: "kebab slug for the project (one-key provision)", Value: "SLUG"},
 			{Name: "rollout", Group: "Rollout and health", Short: "how this release reaches traffic: safe (adaptive canary with rollback; waits for 100%), fast (5% -> 50% -> 100%) or immediate; default: the app release policy (ADR-1450)", Value: "MODE", ClosedSet: []string{"safe", "fast", "immediate"}},
+			{Name: "override-freeze", Group: "Rollout and health", Short: "release to production during a deploy freeze; the reason is audited", Value: "REASON"},
 			{Name: "canary-preset", Group: "Rollout and health", Short: "deprecated: use --rollout. Canary ladder preset", Value: "PRESET", ClosedSet: []string{"none", "slow", "balanced", "aggressive", "1-10-50-100", "adaptive", "custom"}},
 			{Name: "canary-stages", Group: "Rollout and health", Short: "deprecated: use --rollout; custom percent@duration canary stages (requires --canary-preset custom)", Value: "STAGES"},
 			{Name: "safe", Group: "Rollout and health", Short: "deprecated: use --rollout safe"},
@@ -5544,6 +5609,7 @@ var cliCommands = []cliCommand{
 					{Name: "from", Short: "source environment (required unless interactive)", Value: "ENV"},
 					{Name: "to", Short: "target environment (required unless interactive)", Value: "ENV"},
 					{Name: "sync-config", Short: "copy source non-secret environment configuration to the target"},
+					{Name: "override-freeze", Short: "promote into production during a deploy freeze; the reason is audited", Value: "REASON"},
 					{Name: "yes", Short: "confirm the promotion"},
 					{Name: "idempotency-key", Short: "stable key for retrying this promotion", Value: "KEY"},
 					{Name: "wait", Short: "wait for the promotion to reach a terminal status"},
