@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { ReleaseGateResult } from './ReleaseGateResult.js';
 import type { RolloutDecisionSample } from './RolloutDecisionSample.js';
 import type { RolloutDecisionSignals } from './RolloutDecisionSignals.js';
 /**
@@ -12,7 +13,7 @@ export type RolloutDecision = {
   /**
    * Closed set; the breaker rules reuse the canary_progression_circuit_breaker_total event names.
    */
-  rule: 'advance_healthy' | 'advance_probe_evidence' | 'advance_low_traffic' | 'advance_no_predecessor' | 'advance_manual' | 'hold_insufficient_samples' | 'hold_signal_unavailable' | 'hold_observation_unavailable' | 'hold_health_alert' | 'abort_5xx' | 'abort_p95_latency' | 'abort_cold_boot_p95' | 'abort_cpu_per_request' | 'abort_dependency_errors' | 'abort_oom' | 'abort_crash_loop' | 'abort_manual' | 'abort_worker_lease_expired' | 'abort_post_release_5xx' | 'abort_post_release_p95_latency';
+  rule: 'advance_healthy' | 'advance_probe_evidence' | 'advance_low_traffic' | 'advance_no_predecessor' | 'advance_manual' | 'hold_insufficient_samples' | 'hold_signal_unavailable' | 'hold_observation_unavailable' | 'hold_health_alert' | 'abort_5xx' | 'abort_p95_latency' | 'abort_cold_boot_p95' | 'abort_cpu_per_request' | 'abort_dependency_errors' | 'abort_oom' | 'abort_crash_loop' | 'abort_manual' | 'abort_worker_lease_expired' | 'abort_post_release_5xx' | 'abort_post_release_p95_latency' | 'abort_release_gate' | 'abort_post_release_gate';
   /**
    * The circuit breaker's aggregate-only reason.
    */
@@ -35,6 +36,10 @@ export type RolloutDecision = {
    */
   probes_included?: boolean;
   signals?: RolloutDecisionSignals;
+  /**
+   * The release gates judged with this decision (ADR-20261019071734).
+   */
+  gates?: Array<ReleaseGateResult>;
   decided_at: string;
 };
 

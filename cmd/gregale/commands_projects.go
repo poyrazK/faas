@@ -572,6 +572,7 @@ func cmdProjectsEnvironmentPromote(args []string) int {
 	wait := fs.Bool("wait", false, "wait for the promotion to reach a terminal status")
 	progress := fs.Bool("progress", false, "print promotion transitions while waiting (human output only)")
 	syncConfig := fs.Bool("sync-config", false, "copy source non-secret environment configuration to the target")
+	overrideFreeze := fs.String("override-freeze", "", "promote into production during a deploy freeze; the reason is audited (ADR-20261019071733)")
 	timeoutSeconds := secondsOrDurationFlag(fs, "timeout", defaultDeployWaitTimeoutSeconds, "maximum wait (seconds or a duration such as 10m) for promotion completion")
 	if err := fs.Parse(flags); err != nil {
 		return 1
@@ -649,7 +650,7 @@ func cmdProjectsEnvironmentPromote(args []string) int {
 			return printErr("Confirmation required", errors.New("project environment promotion requires --yes when stdin or stdout is not a TTY"))
 		}
 	}
-	return executeProjectPromotion(context.Background(), client, positional[0], preview, *idempotencyKey, *wait, *progress, *timeoutSeconds)
+	return executeProjectPromotion(api.ContextWithOverrideFreeze(context.Background(), *overrideFreeze), client, positional[0], preview, *idempotencyKey, *wait, *progress, *timeoutSeconds)
 }
 
 func executeProjectPromotion(ctx context.Context, client *Client, project string, preview api.ProjectEnvironmentPromotionPreviewResponse, idempotencyKey string, wait, progress bool, timeoutSeconds int) int {
@@ -671,6 +672,7 @@ func executeProjectPromotion(ctx context.Context, client *Client, project string
 	executeCtx := api.ContextWithIdempotencyKey(ctx, key)
 	promoted, err := client.PromoteProjectEnvironment(executeCtx, project, preview.ToEnvironment, api.PromoteProjectEnvironmentRequest{
 		FromEnvironment: preview.FromEnvironment, PromotionToken: preview.PromotionToken, ApprovalToken: approvalToken,
+		OverrideFreeze: api.OverrideFreezeFromContext(ctx),
 	})
 	if err != nil {
 		return printErr("Promotion failed", err)

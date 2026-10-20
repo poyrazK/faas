@@ -61,6 +61,10 @@ export type SourceTarballDeployRequest = {
    */
   mcp_task_migration_override?: boolean;
   /**
+   * Release this source tarball to production while a deploy freeze is active; the reason is audited (ADR-20261019071733).
+   */
+  override_freeze?: string;
+  /**
    * Opt this source-tarball deployment out of temporary startup CPU headroom. Omitted or null preserves the default boost.
    */
   disable_startup_cpu_boost?: boolean | null;
