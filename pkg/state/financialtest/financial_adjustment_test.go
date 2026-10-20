@@ -162,8 +162,13 @@ func TestFinancialPostgresImmutableHistory(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(read, policy) {
 		t.Fatalf("audit failure did not roll back intent: %+v,%v", read, err)
 	}
+	// Evidence is owned by the stable resource namespace (ADR-202610171900);
+	// erasure removes the unused personal namespace after the account.
 	if _, err := pool.Exec(ctx, `delete from accounts where id=$1`, a.ID); err != nil {
 		t.Fatalf("privacy deletion blocked: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `delete from resource_namespaces where id=$1`, a.ID); err != nil {
+		t.Fatalf("personal namespace deletion blocked: %v", err)
 	}
 	head, err := store.FinancialEvidenceHead(ctx, a.ID, start, end)
 	if err != nil || head != 0 {

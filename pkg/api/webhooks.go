@@ -261,21 +261,26 @@ type APIConsumerUsageStatementFinalizedWebhookPayload struct {
 // PlatformTenantStatementFinalizedWebhookPayload is the cross-app billing
 // snapshot emitted once a platform tenant statement becomes payable.
 type PlatformTenantStatementFinalizedWebhookPayload struct {
-	PlatformTenantID string                                `json:"platform_tenant_id"`
-	ExternalRef      string                                `json:"external_ref"`
-	StatementID      string                                `json:"statement_id"`
-	Revision         int                                   `json:"revision"`
-	Status           string                                `json:"status"`
-	PeriodStart      time.Time                             `json:"period_start"`
-	PeriodEnd        time.Time                             `json:"period_end"`
-	Currency         string                                `json:"currency"`
-	BillableUnits    int64                                 `json:"billable_units"`
-	UnpricedUnits    int64                                 `json:"unpriced_units"`
-	AmountMillicents int64                                 `json:"amount_millicents"`
-	Priced           bool                                  `json:"priced"`
-	Lines            []PlatformTenantStatementLineResponse `json:"lines"`
-	AsOf             time.Time                             `json:"as_of"`
-	FinalizedAt      time.Time                             `json:"finalized_at"`
+	PlatformTenantID string    `json:"platform_tenant_id"`
+	ExternalRef      string    `json:"external_ref"`
+	StatementID      string    `json:"statement_id"`
+	Revision         int       `json:"revision"`
+	Status           string    `json:"status"`
+	PeriodStart      time.Time `json:"period_start"`
+	PeriodEnd        time.Time `json:"period_end"`
+	Currency         string    `json:"currency"`
+	BillableUnits    int64     `json:"billable_units"`
+	UnpricedUnits    int64     `json:"unpriced_units"`
+	AmountMillicents int64     `json:"amount_millicents"`
+	// CreditAppliedMillicents and AmountDueMillicents split the amount into
+	// prepaid credit and what is left to invoice (ADR-20261019100331).
+	CreditAppliedMillicents int64                                 `json:"credit_applied_millicents"`
+	AmountDueMillicents     int64                                 `json:"amount_due_millicents"`
+	Priced                  bool                                  `json:"priced"`
+	Lines                   []PlatformTenantStatementLineResponse `json:"lines"`
+	Fees                    []APIConsumerStatementFeeResponse     `json:"fees"`
+	AsOf                    time.Time                             `json:"as_of"`
+	FinalizedAt             time.Time                             `json:"finalized_at"`
 }
 
 // PlatformTenantHostnameVerifiedWebhookPayload records the ownership check

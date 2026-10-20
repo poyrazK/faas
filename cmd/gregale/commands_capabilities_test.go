@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -6,12 +6,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/productcap"
 )
 
 func TestCmdCapabilitiesHumanOutput(t *testing.T) {
-	resetJSONOutput()
+	main.ResetJSONOutput()
 	capabilities, err := api.CapabilitiesForPlan(api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
@@ -20,16 +21,16 @@ func TestCmdCapabilitiesHumanOutput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := authedFakeAPI(t, string(body), 200)
+	f := main.AuthedFakeAPI(t, string(body), 200)
 	var out bytes.Buffer
-	previous := osStdout
-	osStdout = &out
-	t.Cleanup(func() { osStdout = previous })
-	if code := cmdCapabilities(nil); code != 0 {
+	previous := (*main.OsStdout)
+	(*main.OsStdout) = &out
+	t.Cleanup(func() { (*main.OsStdout) = previous })
+	if code := main.CmdCapabilities(nil); code != 0 {
 		t.Fatalf("exit = %d", code)
 	}
-	if f.sawPath != "/v1/capabilities" {
-		t.Fatalf("path = %q, want /v1/capabilities", f.sawPath)
+	if (*f.SawPath()) != "/v1/capabilities" {
+		t.Fatalf("path = %q, want /v1/capabilities", (*f.SawPath()))
 	}
 	if !strings.Contains(out.String(), "custom-domains") || !strings.Contains(out.String(), "available") {
 		t.Fatalf("human output missing capability rows:\n%s", out.String())
@@ -37,7 +38,7 @@ func TestCmdCapabilitiesHumanOutput(t *testing.T) {
 }
 
 func TestCmdCapabilitiesJSONOutput(t *testing.T) {
-	resetJSONOutput()
+	main.ResetJSONOutput()
 	capabilities, err := api.CapabilitiesForPlan(api.PlanFree)
 	if err != nil {
 		t.Fatal(err)
@@ -46,15 +47,15 @@ func TestCmdCapabilitiesJSONOutput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	authedFakeAPI(t, string(body), 200)
+	main.AuthedFakeAPI(t, string(body), 200)
 	var out bytes.Buffer
-	previousOut := osStdout
-	osStdout = &out
-	t.Cleanup(func() { osStdout = previousOut })
-	previousJSON := jsonOutput
-	jsonOutput = true
-	t.Cleanup(func() { jsonOutput = previousJSON })
-	if code := cmdCapabilities(nil); code != 0 {
+	previousOut := (*main.OsStdout)
+	(*main.OsStdout) = &out
+	t.Cleanup(func() { (*main.OsStdout) = previousOut })
+	previousJSON := (*main.JsonOutput)
+	(*main.JsonOutput) = true
+	t.Cleanup(func() { (*main.JsonOutput) = previousJSON })
+	if code := main.CmdCapabilities(nil); code != 0 {
 		t.Fatalf("exit = %d", code)
 	}
 	var got api.CapabilitiesResponse
@@ -76,7 +77,7 @@ func TestCmdCapabilitiesJSONOutput(t *testing.T) {
 }
 
 func TestCmdCapabilitiesExplainsUnavailableFeaturesAndSupportsOlderServers(t *testing.T) {
-	resetJSONOutput()
+	main.ResetJSONOutput()
 	response := api.CapabilitiesResponse{
 		RegistryVersion: 1,
 		Plan:            "free",
@@ -90,12 +91,12 @@ func TestCmdCapabilitiesExplainsUnavailableFeaturesAndSupportsOlderServers(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	authedFakeAPI(t, string(body), 200)
+	main.AuthedFakeAPI(t, string(body), 200)
 	var out bytes.Buffer
-	previous := osStdout
-	osStdout = &out
-	t.Cleanup(func() { osStdout = previous })
-	if code := cmdCapabilities(nil); code != 0 {
+	previous := (*main.OsStdout)
+	(*main.OsStdout) = &out
+	t.Cleanup(func() { (*main.OsStdout) = previous })
+	if code := main.CmdCapabilities(nil); code != 0 {
 		t.Fatalf("exit = %d", code)
 	}
 	for _, text := range []string{"Not included in your current plan.", "Contact support for availability.", "legacy-feature"} {
@@ -111,8 +112,8 @@ func TestCmdCapabilitiesExplainsUnavailableFeaturesAndSupportsOlderServers(t *te
 }
 
 func TestCmdCapabilitiesRejectsPositionals(t *testing.T) {
-	resetJSONOutput()
-	if code := cmdCapabilities([]string{"extra"}); code != 1 {
+	main.ResetJSONOutput()
+	if code := main.CmdCapabilities([]string{"extra"}); code != 1 {
 		t.Fatalf("exit = %d, want 1", code)
 	}
 }

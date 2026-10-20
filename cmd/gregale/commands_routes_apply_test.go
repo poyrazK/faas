@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -9,13 +9,14 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/routerequirements"
 )
 
 func TestRoutesApplyReviewAndRetryKey(t *testing.T) {
-	resetJSONOut(t)
-	setPreviewTestAuth(t)
+	main.ResetJSONOut(t)
+	main.SetPreviewTestAuth(t)
 	config, err := routerequirements.Parse([]byte(routePlanConfig))
 	if err != nil {
 		t.Fatal(err)
@@ -43,26 +44,26 @@ func TestRoutesApplyReviewAndRetryKey(t *testing.T) {
 		if request.ExpectedPlanSHA256 != plan.SHA256 || !request.Confirm || request.ThrottleBurst != 20 {
 			t.Errorf("request=%+v", request)
 		}
-		writeJSONTest(w, api.RoutePolicyApplyResponse{Receipt: api.RoutePolicyReceipt{ID: "receipt", PlanSHA256: plan.SHA256}, GatewayState: "converging"})
+		main.WriteJSONTest(w, api.RoutePolicyApplyResponse{Receipt: api.RoutePolicyReceipt{ID: "receipt", PlanSHA256: plan.SHA256}, GatewayState: "converging"})
 	}))
 	defer server.Close()
 	t.Setenv("FAAS_API", server.URL)
 	var out bytes.Buffer
-	oldOut := osStdout
-	osStdout = &out
-	t.Cleanup(func() { osStdout = oldOut })
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &out
+	t.Cleanup(func() { (*main.OsStdout) = oldOut })
 	for _, args := range [][]string{
 		{"routes", "apply", "my-api", "--plan", path},
 		{"routes", "apply", "other-api", "--plan", path, "--confirm"},
 	} {
-		if code := run(args); code != 1 {
+		if code := main.Run(args); code != 1 {
 			t.Fatal("unconfirmed or foreign plan applied")
 		}
 	}
 	if calls != 0 {
 		t.Fatal("invalid apply reached network")
 	}
-	if code := run([]string{"routes", "apply", "my-api", "--plan", path, "--confirm", "--json"}); code != 0 {
+	if code := main.Run([]string{"routes", "apply", "my-api", "--plan", path, "--confirm", "--json"}); code != 0 {
 		t.Fatalf("apply failed: %s", out.String())
 	}
 	if calls != 1 {
@@ -73,7 +74,7 @@ func TestRoutesApplyReviewAndRetryKey(t *testing.T) {
 	if err := os.WriteFile(path, body, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if code := run([]string{"routes", "apply", "my-api", "--plan", path, "--confirm"}); code != 1 || calls != 1 {
+	if code := main.Run([]string{"routes", "apply", "my-api", "--plan", path, "--confirm"}); code != 1 || calls != 1 {
 		t.Fatal("edited artifact reached apply")
 	}
 }

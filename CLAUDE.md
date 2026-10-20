@@ -175,12 +175,15 @@ Cron limits: Free 0 · Hobby 5/app 10/acct · Pro 20/app 50/acct · Scale 100/ap
   bare `go test`: it adds CI's `-c=1 -dwarf=false` for apidserver and `GOMEMLIMIT=6GiB`,
   which holds a `-race` build near 3 GB RSS (a bare `go test -race` peaks near 4 GB).
   Write new apid tests in `package apidserver_test` and reach internals through
-  `export_test.go`, because internal tests grow the larger of the two compiles. Run these builds
+  `export_test.go`, because internal tests grow the larger of the two compiles (`pkg/sched` is
+  split the same way: new sched tests go in `package sched_test`). Run these builds
   one at a time, type-check with `go vet ./pkg/apid/apidserver` while iterating, and keep
   the default shared GOCACHE: per-job private caches grow to ~11 GB each and have filled
   developer disks. Never run `go clean -cache` on it: other sessions' builds fail mid-run and
   everyone rebuilds cold. When the disk fills, run `make clean-tmp` (it removes go-build work
-  dirs that killed builds left in $TMPDIR) and ask before clearing the cache.
+  dirs that killed builds left in $TMPDIR) and ask before clearing the cache. `cmd/gregale`'s
+  tests are split the same way: new CLI tests go in `package main_test` (they call `main.Run`
+  and reach internals through `cmd/gregale/export_test.go`).
 - Test fakes must not embed `state.Store`, `*state.MemStore` or `*state.PgStore`: Go generates
   a wrapper per promoted method for every such type (~3,000 for the concrete stores, ~80 MB of
   compiler memory each; this was most of apidserver's test-compile memory). Keep the store in a

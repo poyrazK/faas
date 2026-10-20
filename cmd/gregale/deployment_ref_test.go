@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"net/http"
@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -59,7 +60,7 @@ var revisionRefCases = []struct {
 func TestParseRevisionRef(t *testing.T) {
 	for _, c := range revisionRefCases {
 		t.Run(c.name, func(t *testing.T) {
-			got, ok := parseRevisionRef(c.in)
+			got, ok := main.ParseRevisionRef(c.in)
 			if ok != c.wantOK {
 				t.Fatalf("parseRevisionRef(%q) ok = %v, want %v", c.in, ok, c.wantOK)
 			}
@@ -81,7 +82,7 @@ func TestRenderRevisionCLI(t *testing.T) {
 		{0, ""},
 		{-1, ""},
 	} {
-		if got := renderRevision(c.in); got != c.want {
+		if got := main.RenderRevision(c.in); got != c.want {
 			t.Errorf("renderRevision(%d) = %q, want %q", c.in, got, c.want)
 		}
 	}
@@ -93,11 +94,11 @@ func TestRenderRevisionCLI(t *testing.T) {
 // adr: 198
 func TestDeploymentLabel(t *testing.T) {
 	withRevision := api.DeploymentResponse{ID: "8f14e45fceea467a9c8e9b0e21c6d5a1", Revision: 42}
-	if got := deploymentLabel(withRevision); got != "v42" {
+	if got := main.DeploymentLabel(withRevision); got != "v42" {
 		t.Errorf("deploymentLabel(revision 42) = %q, want %q", got, "v42")
 	}
 	legacy := api.DeploymentResponse{ID: "8f14e45fceea467a9c8e9b0e21c6d5a1"}
-	if got := deploymentLabel(legacy); got != legacy.ID {
+	if got := main.DeploymentLabel(legacy); got != legacy.ID {
 		t.Errorf("deploymentLabel(no revision) = %q, want the id %q", got, legacy.ID)
 	}
 }
@@ -109,7 +110,7 @@ func TestDeploymentLabel(t *testing.T) {
 // adr: 198
 func TestResolveDeploymentRef_UUIDPassesThroughWithoutAPICall(t *testing.T) {
 	const id = "8f14e45f-ceea-467a-9c8e-9b0e21c6d5a1"
-	got, err := resolveDeploymentRef(t.Context(), nil, "", id)
+	got, err := main.ResolveDeploymentRef(t.Context(), nil, "", id)
 	if err != nil {
 		t.Fatalf("resolveDeploymentRef(uuid) error = %v, want nil", err)
 	}
@@ -125,7 +126,7 @@ func TestResolveDeploymentRef_UUIDPassesThroughWithoutAPICall(t *testing.T) {
 //
 // adr: 198
 func TestResolveDeploymentRef_RevisionRequiresApp(t *testing.T) {
-	_, err := resolveDeploymentRef(t.Context(), nil, "", "v42")
+	_, err := main.ResolveDeploymentRef(t.Context(), nil, "", "v42")
 	if err == nil {
 		t.Fatal("resolveDeploymentRef(v42) with no app slug returned nil error")
 	}
@@ -169,7 +170,7 @@ func TestValidDeploymentRef(t *testing.T) {
 		{"garbage", "not-a-deployment", false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			if got := validDeploymentRef(c.in); got != c.want {
+			if got := main.ValidDeploymentRef(c.in); got != c.want {
 				t.Errorf("validDeploymentRef(%q) = %v, want %v", c.in, got, c.want)
 			}
 		})
@@ -188,7 +189,7 @@ func TestValidDeploymentRef(t *testing.T) {
 // adr: 198
 func TestResolveDeploymentArg_UUIDNeedsNoAppOrClient(t *testing.T) {
 	const id = "8f14e45fceea467a9c8e9b0e21c6d5a1"
-	got, err := resolveDeploymentArg(t.Context(), nil, "", id)
+	got, err := main.ResolveDeploymentArg(t.Context(), nil, "", id)
 	if err != nil {
 		t.Fatalf("resolveDeploymentArg(uuid) error = %v, want nil", err)
 	}
@@ -208,7 +209,7 @@ func TestResolveDeploymentArg_RevisionWithoutAppNamesTheFix(t *testing.T) {
 	// t.Chdir to a directory with no .gregale/ link so the context lookup
 	// genuinely fails rather than picking up the repo's own state.
 	t.Chdir(t.TempDir())
-	_, err := resolveDeploymentArg(t.Context(), nil, "", "v42")
+	_, err := main.ResolveDeploymentArg(t.Context(), nil, "", "v42")
 	if err == nil {
 		t.Fatal("resolveDeploymentArg(v42) with no app and no link returned nil error")
 	}
@@ -237,13 +238,13 @@ func TestCmdDeployment_ResolvesRevisionEndToEnd(t *testing.T) {
 		switch {
 		case r.URL.Path == "/v1/apps/my-api/deployments":
 			listed = r.URL.Path
-			writeJSONTest(w, api.DeploymentListResponse{Items: []api.DeploymentResponse{
-				{ID: "1b6453892473a467d07372d45eb05abc", Revision: 41, Status: statusLive},
-				{ID: wantID, Revision: 42, Status: statusLive},
+			main.WriteJSONTest(w, api.DeploymentListResponse{Items: []api.DeploymentResponse{
+				{ID: "1b6453892473a467d07372d45eb05abc", Revision: 41, Status: main.StatusLive},
+				{ID: wantID, Revision: 42, Status: main.StatusLive},
 			}})
 		case strings.HasPrefix(r.URL.Path, "/v1/deployments/"):
 			fetched = strings.TrimPrefix(r.URL.Path, "/v1/deployments/")
-			writeJSONTest(w, api.DeploymentResponse{ID: wantID, Revision: 42, Status: statusLive})
+			main.WriteJSONTest(w, api.DeploymentResponse{ID: wantID, Revision: 42, Status: main.StatusLive})
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -252,9 +253,9 @@ func TestCmdDeployment_ResolvesRevisionEndToEnd(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_test_x")
 
-	_, restore := captureStdout(t)
+	_, restore := main.CaptureStdout(t)
 	defer restore()
-	if code := cmdDeployment([]string{"v42", "--app", "my-api"}); code != 0 {
+	if code := main.CmdDeployment([]string{"v42", "--app", "my-api"}); code != 0 {
 		t.Fatalf("gregale deployment v42 --app my-api exit = %d, want 0", code)
 	}
 	if listed == "" {
@@ -278,15 +279,15 @@ func TestCmdDeployment_UUIDSkipsResolution(t *testing.T) {
 		if r.URL.Path == "/v1/apps/my-api/deployments" {
 			listCalls++
 		}
-		writeJSONTest(w, api.DeploymentResponse{ID: id, Revision: 42, Status: statusLive})
+		main.WriteJSONTest(w, api.DeploymentResponse{ID: id, Revision: 42, Status: main.StatusLive})
 	}))
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_test_x")
 
-	_, restore := captureStdout(t)
+	_, restore := main.CaptureStdout(t)
 	defer restore()
-	if code := cmdDeployment([]string{id, "--app", "my-api"}); code != 0 {
+	if code := main.CmdDeployment([]string{id, "--app", "my-api"}); code != 0 {
 		t.Fatalf("gregale deployment <uuid> exit = %d, want 0", code)
 	}
 	if listCalls != 0 {

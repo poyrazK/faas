@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -8,14 +8,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func TestBindingsReleasePolicyCLI(t *testing.T) {
 	for _, scenario := range []string{"get", "set", "disable", "missing revision", "missing reason", "wrong scope", "wrong ack", "wrong revision", "wrong age", "invalid timestamp"} {
 		t.Run(scenario, func(t *testing.T) {
-			resetJSONOut(t)
-			setPreviewTestAuth(t)
+			main.ResetJSONOut(t)
+			main.SetPreviewTestAuth(t)
 			calls := 0
 			now := time.Now().UTC()
 			p := api.BindingReleasePolicy{AppID: "11111111-1111-4111-8111-111111111111", Scope: "production", Mode: "enforce", Revision: 1, MaxVerificationAge: "1m0s", RequireApplicationAck: true, UpdatedAt: &now}
@@ -56,14 +57,14 @@ func TestBindingsReleasePolicyCLI(t *testing.T) {
 				case "invalid timestamp":
 					p.UpdatedAt = nil
 				}
-				writeJSONTest(w, p)
+				main.WriteJSONTest(w, p)
 			}))
 			defer server.Close()
 			t.Setenv("FAAS_API", server.URL)
 			var out bytes.Buffer
-			old := osStdout
-			osStdout = &out
-			t.Cleanup(func() { osStdout = old })
+			old := (*main.OsStdout)
+			(*main.OsStdout) = &out
+			t.Cleanup(func() { (*main.OsStdout) = old })
 			args := []string{"bindings", "release-policy", "set", "demo", "--scope", "production", "--require-verification", "--max-age", "1m", "--require-application-ack", "--expected-revision", "0", "--json"}
 			if scenario == "get" {
 				args = []string{"bindings", "release-policy", "get", "demo", "--scope", "production", "--json"}
@@ -81,7 +82,7 @@ func TestBindingsReleasePolicyCLI(t *testing.T) {
 			if scenario == "get" || scenario == "set" || scenario == "disable" {
 				want = 0
 			}
-			if code := run(args); code != want {
+			if code := main.Run(args); code != want {
 				t.Fatalf("exit %d want %d: %s", code, want, out.String())
 			}
 			if (scenario == "missing revision" || scenario == "missing reason") && calls != 0 {

@@ -1,4 +1,4 @@
-package main
+package main_test
 
 // Test file for issue #740 / DEPLOY-PROV-5 — pins the
 // `gregale build provenance <id>` rendering of the new
@@ -25,6 +25,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -33,7 +34,7 @@ import (
 // base_digest (mirrors the build_provenance column order).
 func TestPrintProvenance_IncludesFrameworkVersion(t *testing.T) {
 	var buf bytes.Buffer
-	printProvenance(&buf, api.BuildProvenanceResponse{
+	main.PrintProvenance(&buf, api.BuildProvenanceResponse{
 		ID:           "id-1",
 		BuildID:      "build-1",
 		BuildkitVer:  "",
@@ -76,7 +77,7 @@ func TestPrintProvenance_IncludesFrameworkVersion(t *testing.T) {
 // line consistency, not skipped rows).
 func TestPrintProvenance_EmptyFrameworkVersionRendersEmptyRow(t *testing.T) {
 	var buf bytes.Buffer
-	printProvenance(&buf, api.BuildProvenanceResponse{
+	main.PrintProvenance(&buf, api.BuildProvenanceResponse{
 		BuildID:      "build-2",
 		FrameworkVer: "",
 	})
@@ -107,10 +108,10 @@ func cmdBuildListText(t *testing.T, page api.BuildListResponse, args []string) s
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 	var stdout bytes.Buffer
-	oldOut := osStdout
-	osStdout = &stdout
-	defer func() { osStdout = oldOut }()
-	if code := cmdBuildList(args); code != 0 {
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	defer func() { (*main.OsStdout) = oldOut }()
+	if code := main.CmdBuildList(args); code != 0 {
 		t.Fatalf("cmdBuildList(%v) = %d, want 0", args, code)
 	}
 	return stdout.String()
@@ -259,7 +260,7 @@ func TestCmdBuildList_QueuedRow_RendersEmDash(t *testing.T) {
 // tooling (awk, column -t).
 func TestRenderBuildListRow_QueuedStartedAtEmDash(t *testing.T) {
 	var buf bytes.Buffer
-	renderBuildListRow(&buf, api.BuildResponse{
+	main.RenderBuildListRow(&buf, api.BuildResponse{
 		ID:           "b1",
 		DeploymentID: "d1",
 		Status:       "queued",
@@ -285,7 +286,7 @@ func TestCmdBuildList_Unauthenticated(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 	t.Setenv("XDG_CONFIG_HOME", dir)
-	if code := cmdBuildList(nil); code == 0 {
+	if code := main.CmdBuildList(nil); code == 0 {
 		t.Error("cmdBuildList without token must fail")
 	}
 }
@@ -293,17 +294,17 @@ func TestCmdBuildList_Unauthenticated(t *testing.T) {
 // TestCmdBuildList_InvalidLimit pins the --limit validation:
 // 0 < N <= 200. Out-of-range values → exit 1, no API round-trip.
 func TestCmdBuildList_InvalidLimit(t *testing.T) {
-	if code := cmdBuildList([]string{"--limit", "999"}); code != 1 {
+	if code := main.CmdBuildList([]string{"--limit", "999"}); code != 1 {
 		t.Errorf("cmdBuildList --limit 999 = %d, want 1", code)
 	}
-	if code := cmdBuildList([]string{"--limit", "-1"}); code != 1 {
+	if code := main.CmdBuildList([]string{"--limit", "-1"}); code != 1 {
 		t.Errorf("cmdBuildList --limit -1 = %d, want 1", code)
 	}
 	// Post-review fix: --limit 0 used to silently fall back to
 	// the default 50. The help text says "1-200" — accepting 0
 	// was a UX papercut (callers who meant the default should
 	// omit --limit). Now rejected to match the help contract.
-	if code := cmdBuildList([]string{"--limit", "0"}); code != 1 {
+	if code := main.CmdBuildList([]string{"--limit", "0"}); code != 1 {
 		t.Errorf("cmdBuildList --limit 0 = %d, want 1", code)
 	}
 }
@@ -311,7 +312,7 @@ func TestCmdBuildList_InvalidLimit(t *testing.T) {
 // TestCmdBuildList_InvalidStatus pins the --status enum guard:
 // anything outside queued|running|succeeded|failed → exit 1.
 func TestCmdBuildList_InvalidStatus(t *testing.T) {
-	if code := cmdBuildList([]string{"--status", "bogus"}); code != 1 {
+	if code := main.CmdBuildList([]string{"--status", "bogus"}); code != 1 {
 		t.Errorf("cmdBuildList --status bogus = %d, want 1", code)
 	}
 }
@@ -319,7 +320,7 @@ func TestCmdBuildList_InvalidStatus(t *testing.T) {
 // TestCmdBuildList_ExtraPositional: positional args are rejected
 // (mirrors cmdDeployments' behavior — all flags, no positionals).
 func TestCmdBuildList_ExtraPositional(t *testing.T) {
-	if code := cmdBuildList([]string{"foo"}); code != 1 {
+	if code := main.CmdBuildList([]string{"foo"}); code != 1 {
 		t.Errorf("cmdBuildList extra positional = %d, want 1", code)
 	}
 }
@@ -342,15 +343,15 @@ func TestCmdBuildList_JSON_EnvelopeShape(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
 	var stdout bytes.Buffer
-	oldOut := osStdout
-	osStdout = &stdout
-	defer func() { osStdout = oldOut }()
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	defer func() { (*main.OsStdout) = oldOut }()
 
-	resetJSONOutput()
-	t.Cleanup(resetJSONOutput)
-	jsonOutput = true
+	main.ResetJSONOutput()
+	t.Cleanup(main.ResetJSONOutput)
+	(*main.JsonOutput) = true
 
-	if code := cmdBuildList(nil); code != 0 {
+	if code := main.CmdBuildList(nil); code != 0 {
 		t.Errorf("cmdBuildList -j = %d, want 0", code)
 	}
 	var env api.BuildListResponse
@@ -389,11 +390,11 @@ func TestCmdBuildList_All(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
 	var stdout bytes.Buffer
-	oldOut := osStdout
-	osStdout = &stdout
-	defer func() { osStdout = oldOut }()
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	defer func() { (*main.OsStdout) = oldOut }()
 
-	if code := cmdBuildList([]string{"--all"}); code != 0 {
+	if code := main.CmdBuildList([]string{"--all"}); code != 0 {
 		t.Errorf("cmdBuildList --all = %d, want 0", code)
 	}
 	if calls < 2 {
@@ -427,15 +428,15 @@ func TestCmdBuildList_All_JSON(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
 	var stdout bytes.Buffer
-	oldOut := osStdout
-	osStdout = &stdout
-	defer func() { osStdout = oldOut }()
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	defer func() { (*main.OsStdout) = oldOut }()
 
-	resetJSONOutput()
-	t.Cleanup(resetJSONOutput)
-	jsonOutput = true
+	main.ResetJSONOutput()
+	t.Cleanup(main.ResetJSONOutput)
+	(*main.JsonOutput) = true
 
-	if code := cmdBuildList([]string{"--all"}); code != 0 {
+	if code := main.CmdBuildList([]string{"--all"}); code != 0 {
 		t.Errorf("cmdBuildList --all -j = %d, want 0", code)
 	}
 	var items []api.BuildResponse

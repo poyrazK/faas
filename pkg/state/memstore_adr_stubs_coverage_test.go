@@ -16,7 +16,7 @@
 //
 // Pattern mirrors PR #1064 (UpsertAppOpenAPIDocIfUnderQuota
 // coverage pin) and PR #1088 (this exact failure).
-package state
+package state_test
 
 import (
 	"context"
@@ -26,6 +26,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -34,51 +35,51 @@ import (
 // coverage gate stays above 70%. All nine methods must return
 // errMemStoreAppErrors.
 func TestMemStore_AppErrorsStubsCovered(t *testing.T) {
-	m := &MemStore{}
+	m := &state.MemStore{}
 	ctx := context.Background()
 
 	// IncrementAppError.
-	if _, err := m.IncrementAppError(ctx, sqlc.IncrementAppErrorParams{}); !errors.Is(err, errMemStoreAppErrors) {
+	if _, err := m.IncrementAppError(ctx, sqlc.IncrementAppErrorParams{}); !errors.Is(err, (*state.ErrMemStoreAppErrors)) {
 		t.Errorf("IncrementAppError: errors.Is(err, errMemStoreAppErrors) = false; err = %v", err)
 	}
 
 	// InsertAppErrorRequest.
-	if err := m.InsertAppErrorRequest(ctx, sqlc.InsertAppErrorRequestParams{}); !errors.Is(err, errMemStoreAppErrors) {
+	if err := m.InsertAppErrorRequest(ctx, sqlc.InsertAppErrorRequestParams{}); !errors.Is(err, (*state.ErrMemStoreAppErrors)) {
 		t.Errorf("InsertAppErrorRequest: errors.Is(err, errMemStoreAppErrors) = false; err = %v", err)
 	}
 
 	// ListAppErrorGroups.
-	if _, err := m.ListAppErrorGroups(ctx, sqlc.ListAppErrorGroupsParams{}); !errors.Is(err, errMemStoreAppErrors) {
+	if _, err := m.ListAppErrorGroups(ctx, sqlc.ListAppErrorGroupsParams{}); !errors.Is(err, (*state.ErrMemStoreAppErrors)) {
 		t.Errorf("ListAppErrorGroups: errors.Is(err, errMemStoreAppErrors) = false; err = %v", err)
 	}
 
 	// ListAppErrorRequests.
-	if _, err := m.ListAppErrorRequests(ctx, sqlc.ListAppErrorRequestsParams{}); !errors.Is(err, errMemStoreAppErrors) {
+	if _, err := m.ListAppErrorRequests(ctx, sqlc.ListAppErrorRequestsParams{}); !errors.Is(err, (*state.ErrMemStoreAppErrors)) {
 		t.Errorf("ListAppErrorRequests: errors.Is(err, errMemStoreAppErrors) = false; err = %v", err)
 	}
 
 	// GetAppErrorSample.
-	if _, err := m.GetAppErrorSample(ctx, sqlc.GetAppErrorSampleParams{}); !errors.Is(err, errMemStoreAppErrors) {
+	if _, err := m.GetAppErrorSample(ctx, sqlc.GetAppErrorSampleParams{}); !errors.Is(err, (*state.ErrMemStoreAppErrors)) {
 		t.Errorf("GetAppErrorSample: errors.Is(err, errMemStoreAppErrors) = false; err = %v", err)
 	}
 
 	// ListAppErrorFingerprintsForPurge.
-	if _, err := m.ListAppErrorFingerprintsForPurge(ctx, sqlc.ListAppErrorFingerprintsForPurgeParams{}); !errors.Is(err, errMemStoreAppErrors) {
+	if _, err := m.ListAppErrorFingerprintsForPurge(ctx, sqlc.ListAppErrorFingerprintsForPurgeParams{}); !errors.Is(err, (*state.ErrMemStoreAppErrors)) {
 		t.Errorf("ListAppErrorFingerprintsForPurge: errors.Is(err, errMemStoreAppErrors) = false; err = %v", err)
 	}
 
 	// DeleteAppErrorsByIDs.
-	if err := m.DeleteAppErrorsByIDs(ctx, nil); !errors.Is(err, errMemStoreAppErrors) {
+	if err := m.DeleteAppErrorsByIDs(ctx, nil); !errors.Is(err, (*state.ErrMemStoreAppErrors)) {
 		t.Errorf("DeleteAppErrorsByIDs: errors.Is(err, errMemStoreAppErrors) = false; err = %v", err)
 	}
 
 	// DeleteAppErrorRequestsByIDs.
-	if err := m.DeleteAppErrorRequestsByIDs(ctx, nil); !errors.Is(err, errMemStoreAppErrors) {
+	if err := m.DeleteAppErrorRequestsByIDs(ctx, nil); !errors.Is(err, (*state.ErrMemStoreAppErrors)) {
 		t.Errorf("DeleteAppErrorRequestsByIDs: errors.Is(err, errMemStoreAppErrors) = false; err = %v", err)
 	}
 
 	// DeleteAppErrorRequestsOlderThan.
-	if err := m.DeleteAppErrorRequestsOlderThan(ctx, uuid.Nil, time.Time{}); !errors.Is(err, errMemStoreAppErrors) {
+	if err := m.DeleteAppErrorRequestsOlderThan(ctx, uuid.Nil, time.Time{}); !errors.Is(err, (*state.ErrMemStoreAppErrors)) {
 		t.Errorf("DeleteAppErrorRequestsOlderThan: errors.Is(err, errMemStoreAppErrors) = false; err = %v", err)
 	}
 }
@@ -87,56 +88,56 @@ func TestMemStore_AppErrorsStubsCovered(t *testing.T) {
 // every MemStore stub on memstore_data_upstreams.go. All ten
 // methods must return errMemStoreDataUpstreams.
 func TestMemStore_DataUpstreamsStubsCovered(t *testing.T) {
-	m := &MemStore{}
+	m := &state.MemStore{}
 	ctx := context.Background()
 
 	// InsertDataUpstream.
-	if _, err := m.InsertDataUpstream(ctx, sqlc.InsertDataUpstreamParams{}); !errors.Is(err, errMemStoreDataUpstreams) {
+	if _, err := m.InsertDataUpstream(ctx, sqlc.InsertDataUpstreamParams{}); !errors.Is(err, (*state.ErrMemStoreDataUpstreams)) {
 		t.Errorf("InsertDataUpstream: errors.Is(err, errMemStoreDataUpstreams) = false; err = %v", err)
 	}
 
 	// ListDataUpstreamsByApp.
-	if _, err := m.ListDataUpstreamsByApp(ctx, sqlc.ListDataUpstreamsByAppParams{}); !errors.Is(err, errMemStoreDataUpstreams) {
+	if _, err := m.ListDataUpstreamsByApp(ctx, sqlc.ListDataUpstreamsByAppParams{}); !errors.Is(err, (*state.ErrMemStoreDataUpstreams)) {
 		t.Errorf("ListDataUpstreamsByApp: errors.Is(err, errMemStoreDataUpstreams) = false; err = %v", err)
 	}
 
 	// GetDataUpstreamByID.
-	if _, err := m.GetDataUpstreamByID(ctx, uuid.Nil); !errors.Is(err, errMemStoreDataUpstreams) {
+	if _, err := m.GetDataUpstreamByID(ctx, uuid.Nil); !errors.Is(err, (*state.ErrMemStoreDataUpstreams)) {
 		t.Errorf("GetDataUpstreamByID: errors.Is(err, errMemStoreDataUpstreams) = false; err = %v", err)
 	}
 
 	// DeleteDataUpstreamByID.
-	if err := m.DeleteDataUpstreamByID(ctx, uuid.Nil); !errors.Is(err, errMemStoreDataUpstreams) {
+	if err := m.DeleteDataUpstreamByID(ctx, uuid.Nil); !errors.Is(err, (*state.ErrMemStoreDataUpstreams)) {
 		t.Errorf("DeleteDataUpstreamByID: errors.Is(err, errMemStoreDataUpstreams) = false; err = %v", err)
 	}
 
 	// InsertDataUpstreamProbe.
-	if err := m.InsertDataUpstreamProbe(ctx, sqlc.InsertDataUpstreamProbeParams{}); !errors.Is(err, errMemStoreDataUpstreams) {
+	if err := m.InsertDataUpstreamProbe(ctx, sqlc.InsertDataUpstreamProbeParams{}); !errors.Is(err, (*state.ErrMemStoreDataUpstreams)) {
 		t.Errorf("InsertDataUpstreamProbe: errors.Is(err, errMemStoreDataUpstreams) = false; err = %v", err)
 	}
 
 	// ListDataUpstreamProbesByHostRegion.
-	if _, err := m.ListDataUpstreamProbesByHostRegion(ctx, sqlc.ListDataUpstreamProbesByHostRegionParams{}); !errors.Is(err, errMemStoreDataUpstreams) {
+	if _, err := m.ListDataUpstreamProbesByHostRegion(ctx, sqlc.ListDataUpstreamProbesByHostRegionParams{}); !errors.Is(err, (*state.ErrMemStoreDataUpstreams)) {
 		t.Errorf("ListDataUpstreamProbesByHostRegion: errors.Is(err, errMemStoreDataUpstreams) = false; err = %v", err)
 	}
 
 	// PruneDataUpstreamProbesOlderThan.
-	if err := m.PruneDataUpstreamProbesOlderThan(ctx, time.Time{}); !errors.Is(err, errMemStoreDataUpstreams) {
+	if err := m.PruneDataUpstreamProbesOlderThan(ctx, time.Time{}); !errors.Is(err, (*state.ErrMemStoreDataUpstreams)) {
 		t.Errorf("PruneDataUpstreamProbesOlderThan: errors.Is(err, errMemStoreDataUpstreams) = false; err = %v", err)
 	}
 
 	// ListAllAppDataUpstreams.
-	if _, err := m.ListAllAppDataUpstreams(ctx, "", ""); !errors.Is(err, errMemStoreDataUpstreams) {
+	if _, err := m.ListAllAppDataUpstreams(ctx, "", ""); !errors.Is(err, (*state.ErrMemStoreDataUpstreams)) {
 		t.Errorf("ListAllAppDataUpstreams: errors.Is(err, errMemStoreDataUpstreams) = false; err = %v", err)
 	}
 
 	// CountDataUpstreamsByApp.
-	if _, err := m.CountDataUpstreamsByApp(ctx, "", ""); !errors.Is(err, errMemStoreDataUpstreams) {
+	if _, err := m.CountDataUpstreamsByApp(ctx, "", ""); !errors.Is(err, (*state.ErrMemStoreDataUpstreams)) {
 		t.Errorf("CountDataUpstreamsByApp: errors.Is(err, errMemStoreDataUpstreams) = false; err = %v", err)
 	}
 
 	// ListDistinctUpstreamHostHashes.
-	if _, err := m.ListDistinctUpstreamHostHashes(ctx); !errors.Is(err, errMemStoreDataUpstreams) {
+	if _, err := m.ListDistinctUpstreamHostHashes(ctx); !errors.Is(err, (*state.ErrMemStoreDataUpstreams)) {
 		t.Errorf("ListDistinctUpstreamHostHashes: errors.Is(err, errMemStoreDataUpstreams) = false; err = %v", err)
 	}
 }
@@ -145,31 +146,31 @@ func TestMemStore_DataUpstreamsStubsCovered(t *testing.T) {
 // every MemStore stub on memstore_request_telemetry.go. Each method
 // must return errMemStoreRequestTelemetry.
 func TestMemStore_RequestTelemetryStubsCovered(t *testing.T) {
-	m := &MemStore{}
+	m := &state.MemStore{}
 	ctx := context.Background()
 
 	// InsertRequestTelemetry.
-	if err := m.InsertRequestTelemetry(ctx, sqlc.InsertRequestTelemetryParams{}); !errors.Is(err, errMemStoreRequestTelemetry) {
+	if err := m.InsertRequestTelemetry(ctx, sqlc.InsertRequestTelemetryParams{}); !errors.Is(err, (*state.ErrMemStoreRequestTelemetry)) {
 		t.Errorf("InsertRequestTelemetry: errors.Is(err, errMemStoreRequestTelemetry) = false; err = %v", err)
 	}
 
 	// ListRequestTelemetryByApp.
-	if _, err := m.ListRequestTelemetryByApp(ctx, sqlc.ListRequestTelemetryByAppParams{}); !errors.Is(err, errMemStoreRequestTelemetry) {
+	if _, err := m.ListRequestTelemetryByApp(ctx, sqlc.ListRequestTelemetryByAppParams{}); !errors.Is(err, (*state.ErrMemStoreRequestTelemetry)) {
 		t.Errorf("ListRequestTelemetryByApp: errors.Is(err, errMemStoreRequestTelemetry) = false; err = %v", err)
 	}
 
 	// RequestTelemetryCoverage.
-	if _, err := m.RequestTelemetryCoverage(ctx, sqlc.RequestTelemetryCoverageParams{}); !errors.Is(err, errMemStoreRequestTelemetry) {
+	if _, err := m.RequestTelemetryCoverage(ctx, sqlc.RequestTelemetryCoverageParams{}); !errors.Is(err, (*state.ErrMemStoreRequestTelemetry)) {
 		t.Errorf("RequestTelemetryCoverage: errors.Is(err, errMemStoreRequestTelemetry) = false; err = %v", err)
 	}
 
 	// RequestTelemetryByDeployment.
-	if _, err := m.RequestTelemetryByDeployment(ctx, sqlc.RequestTelemetryByDeploymentParams{}); !errors.Is(err, errMemStoreRequestTelemetry) {
+	if _, err := m.RequestTelemetryByDeployment(ctx, sqlc.RequestTelemetryByDeploymentParams{}); !errors.Is(err, (*state.ErrMemStoreRequestTelemetry)) {
 		t.Errorf("RequestTelemetryByDeployment: errors.Is(err, errMemStoreRequestTelemetry) = false; err = %v", err)
 	}
 
 	// RequestTelemetryBaselineP95ByRoute.
-	if _, err := m.RequestTelemetryBaselineP95ByRoute(ctx, sqlc.RequestTelemetryBaselineP95ByRouteParams{}); !errors.Is(err, errMemStoreRequestTelemetry) {
+	if _, err := m.RequestTelemetryBaselineP95ByRoute(ctx, sqlc.RequestTelemetryBaselineP95ByRouteParams{}); !errors.Is(err, (*state.ErrMemStoreRequestTelemetry)) {
 		t.Errorf("RequestTelemetryBaselineP95ByRoute: errors.Is(err, errMemStoreRequestTelemetry) = false; err = %v", err)
 	}
 }

@@ -13,8 +13,11 @@ SELECT o.id FROM invocations i JOIN apps a ON a.id=i.app_id JOIN orgs o ON o.id=
 WHERE i.id=$1 AND NOT o.personal_org FOR UPDATE OF o;
 
 -- name: OrgQueueReadPolicy :one
+-- async_quota_pooled: the organization's async reservations use its own
+-- counter. Until then they stay on the namespace counter (ADR-202610171908).
 SELECT c.plan,c.status,c.abuse_hold_at,
- CASE WHEN NOT o.personal_org AND o.resource_ownership_enabled THEN o.id ELSE NULL::uuid END::uuid AS owner_org_id
+ CASE WHEN NOT o.personal_org AND o.resource_ownership_enabled THEN o.id ELSE NULL::uuid END::uuid AS owner_org_id,
+ (NOT o.personal_org AND o.resource_ownership_enabled AND o.async_quota_pooled_at IS NOT NULL)::boolean AS async_quota_pooled
 FROM apps a JOIN app_resource_accounts c ON c.app_id=a.id JOIN orgs o ON o.id=a.org_id
 WHERE a.id=sqlc.arg(app_id)::uuid AND a.account_id=sqlc.arg(account_id)::uuid;
 

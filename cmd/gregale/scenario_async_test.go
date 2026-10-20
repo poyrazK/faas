@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"context"
@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -23,7 +24,7 @@ func (f *testAsyncRouteFake) CreateEdgeRule(_ context.Context, slug string, req 
 
 func TestCreateTestAsyncRoutesUsesIsolatedAppHost(t *testing.T) {
 	fake := &testAsyncRouteFake{}
-	ids, err := createTestAsyncRoutes(t.Context(), fake, "isolated-worker", "https://isolated-worker.apps.example/", []testAsyncRoute{{Path: "/process", Methods: []string{"POST"}, RetryPolicy: &testRetryPolicy{MaxAttempts: 3, BaseSeconds: 1}}})
+	ids, err := main.CreateTestAsyncRoutes(t.Context(), fake, "isolated-worker", "https://isolated-worker.apps.example/", []main.TestAsyncRoute{{Path: "/process", Methods: []string{"POST"}, RetryPolicy: &main.TestRetryPolicy{MaxAttempts: 3, BaseSeconds: 1}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,17 +56,17 @@ func TestWaitForTestInvocationRequiresTargetWorkloadCompletion(t *testing.T) {
 		{ID: id, AppID: "worker-app", State: "pending"},
 		{ID: id, AppID: "worker-app", State: "completed", Attempts: 2},
 	}}
-	condition := testInvocationOutput{Service: "worker", MinAttempts: 2}
-	evidence, err := waitForTestInvocation(ctx, fake, condition, "worker-app", id)
+	condition := main.TestInvocationOutput{Service: "worker", MinAttempts: 2}
+	evidence, err := main.WaitForTestInvocation(ctx, fake, condition, "worker-app", id)
 	if err != nil || evidence.State != "completed" || evidence.Attempts != 2 {
 		t.Fatalf("wait = (%+v, %v)", evidence, err)
 	}
 	fake = &testInvocationFake{rows: []api.Invocation{{ID: id, AppID: "other-app", State: "completed"}}}
-	if _, err := waitForTestInvocation(t.Context(), fake, condition, "worker-app", id); err == nil {
+	if _, err := main.WaitForTestInvocation(t.Context(), fake, condition, "worker-app", id); err == nil {
 		t.Fatal("cross-workload invocation accepted")
 	}
 	fake = &testInvocationFake{rows: []api.Invocation{{ID: id, AppID: "worker-app", State: "dead_letter", Attempts: 3}}}
-	if _, err := waitForTestInvocation(t.Context(), fake, condition, "worker-app", id); err == nil {
+	if _, err := main.WaitForTestInvocation(t.Context(), fake, condition, "worker-app", id); err == nil {
 		t.Fatal("dead-letter invocation accepted")
 	}
 }
@@ -75,20 +76,20 @@ func TestReadTestTriggerOutputRequiresBoundedJSON(t *testing.T) {
 	if err := os.WriteFile(path, []byte(`{"worker_invocation_id":"11111111-1111-4111-8111-111111111111"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	values, err := readTestTriggerOutput(path)
+	values, err := main.ReadTestTriggerOutput(path)
 	if err != nil || values["worker_invocation_id"] == "" {
 		t.Fatalf("read trigger output = (%v, %v)", values, err)
 	}
 	if err := os.WriteFile(path, []byte(`[]`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := readTestTriggerOutput(path); err == nil {
+	if _, err := main.ReadTestTriggerOutput(path); err == nil {
 		t.Fatal("non-object trigger output accepted")
 	}
 }
 
 func TestCustomerExportManifestDeclaresAsyncCompletion(t *testing.T) {
-	scenarios, _, err := readTestManifest("../../tests/scenario-acceptance/gregale-test.yaml")
+	scenarios, _, err := main.ReadTestManifest("../../tests/scenario-acceptance/gregale-test.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}

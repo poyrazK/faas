@@ -672,6 +672,10 @@ func (s *server) promoteProjectEnvironment(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, problem)
 		return
 	}
+	if problem := s.promotionFreezeProblem(r, acct, plan, toEnvironment, req.OverrideFreeze); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	if plan.Preview.ApprovalRequired {
 		approvalToken := strings.TrimSpace(req.ApprovalToken)
 		if approvalToken == "" {

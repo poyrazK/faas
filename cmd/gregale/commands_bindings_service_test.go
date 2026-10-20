@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -30,7 +31,7 @@ func TestServiceBindingConfigurationDecode(t *testing.T) {
 		`{"service_binding_targets":[],"allowed_service_callers":[],"allowed_service_call_scopes":{}}`,
 		`{"allowed_service_call_scopes":{"Frontend":{"methods":["get"],"path_prefixes":["/notes"]}}}`,
 	} {
-		config, err := decodeServiceBindingConfiguration([]byte(body), "hello")
+		config, err := main.DecodeServiceBindingConfiguration([]byte(body), "hello")
 		if err != nil {
 			t.Fatalf("%s: %v", body, err)
 		}
@@ -48,7 +49,7 @@ func TestServiceBindingConfigurationDecode(t *testing.T) {
 		`{"allowed_service_call_scopes":{"frontend":{"methods":[],"path_prefixes":["/"]}}}`,
 		`{"allowed_service_call_scopes":{"frontend":{"methods":["GET"],"methods":["POST"],"path_prefixes":["/"]}}}`,
 	} {
-		if _, err := decodeServiceBindingConfiguration([]byte(body), "hello"); err == nil {
+		if _, err := main.DecodeServiceBindingConfiguration([]byte(body), "hello"); err == nil {
 			t.Errorf("accepted %s", body)
 		}
 	}
@@ -62,7 +63,7 @@ func TestServiceBindingConfigurationCLI(t *testing.T) {
 		`{"allowed_service_callers":["frontend"],"allowed_service_call_scopes":{"frontend":{"methods":["GET"],"path_prefixes":["/notes"]}}}`,
 	} {
 		t.Run(body, func(t *testing.T) {
-			resetJSONOut(t)
+			main.ResetJSONOut(t)
 			policyFile := servicePolicyFile(t, body)
 			current := api.AppResponse{Slug: "hello", ServiceBindingPolicy: api.ServiceBindingPolicyAccount, ServiceBindings: []api.AppServiceBinding{{Binding: "billing", Service: "billing"}}}
 			calls, patches := 0, 0
@@ -101,20 +102,20 @@ func TestServiceBindingConfigurationCLI(t *testing.T) {
 				} else if r.Method != http.MethodGet {
 					t.Errorf("unexpected method %s", r.Method)
 				}
-				writeJSONTest(w, current)
+				main.WriteJSONTest(w, current)
 			}))
 			defer server.Close()
 			t.Setenv("FAAS_API", server.URL)
 			t.Setenv("FAAS_TOKEN", "fp_test_x")
 			var output bytes.Buffer
-			old := osStdout
-			osStdout = &output
-			t.Cleanup(func() { osStdout = old })
+			old := (*main.OsStdout)
+			(*main.OsStdout) = &output
+			t.Cleanup(func() { (*main.OsStdout) = old })
 			args := []string{"bindings", "service", "configure", "hello", "--file", policyFile, "--json"}
-			if code := run(append(append([]string{}, args...), "--dry-run")); code != 0 || patches != 0 || calls != 1 {
+			if code := main.Run(append(append([]string{}, args...), "--dry-run")); code != 0 || patches != 0 || calls != 1 {
 				t.Fatalf("preview code=%d calls=%d patches=%d", code, calls, patches)
 			}
-			var preview serviceBindingConfigurationReceipt
+			var preview main.ServiceBindingConfigurationReceipt
 			if err := json.Unmarshal(output.Bytes(), &preview); err != nil {
 				t.Fatal(err)
 			}
@@ -122,7 +123,7 @@ func TestServiceBindingConfigurationCLI(t *testing.T) {
 				t.Fatalf("preview=%+v", preview)
 			}
 			output.Reset()
-			if code := run(args); code != 0 || patches != 1 || calls != 3 {
+			if code := main.Run(args); code != 0 || patches != 1 || calls != 3 {
 				t.Fatalf("apply code=%d calls=%d patches=%d", code, calls, patches)
 			}
 			var requested map[string]json.RawMessage
@@ -148,7 +149,7 @@ func TestServiceBindingConfigurationCLI(t *testing.T) {
 					}
 				}
 			}
-			var saved serviceBindingConfigurationReceipt
+			var saved main.ServiceBindingConfigurationReceipt
 			if err := json.Unmarshal(output.Bytes(), &saved); err != nil {
 				t.Fatal(err)
 			}
@@ -166,7 +167,7 @@ func TestServiceBindingConfigurationInvalidBeforeNetwork(t *testing.T) {
 	t.Setenv("FAAS_API", server.URL)
 	t.Setenv("FAAS_TOKEN", "fp_test_x")
 	for _, body := range []string{`{}`, `{"allowed_service_callers":[],"typo":true}`, `{"service_binding_targets":["hello"]}`, strings.Repeat(" ", api.SourceManifestMaxBytes+1)} {
-		if code := run([]string{"bindings", "service", "configure", "hello", "--file", servicePolicyFile(t, body)}); code == 0 {
+		if code := main.Run([]string{"bindings", "service", "configure", "hello", "--file", servicePolicyFile(t, body)}); code == 0 {
 			t.Errorf("accepted invalid policy")
 		}
 	}
@@ -176,12 +177,12 @@ func TestServiceBindingConfigurationInvalidBeforeNetwork(t *testing.T) {
 }
 
 func TestServiceBindingConfigurationHelp(t *testing.T) {
-	command, ok := lookupCliCommand("bindings")
+	command, ok := main.LookupCliCommand("bindings")
 	if !ok {
 		t.Fatal("missing bindings")
 	}
 	var reference bytes.Buffer
-	renderMarkdownReference(&reference, []cliCommand{command})
+	main.RenderMarkdownReference(&reference, []main.CliCommand{command})
 	for _, text := range []string{"bindings service configure", "--file", "--dry-run"} {
 		if !strings.Contains(reference.String(), text) {
 			t.Errorf("reference missing %s", text)
@@ -210,14 +211,14 @@ func TestServiceBindingReliabilityConfiguration(t *testing.T) {
 		{name: "removed target override", body: `{"service_binding_targets":["billing"],"service_reliability":{"identity":{"timeout_ms":100}}}`, invalid: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			resetJSONOut(t)
+			main.ResetJSONOut(t)
 			before := api.AppResponse{Slug: "hello", ServiceBindings: api.ServiceBindingsForTargets([]string{"billing", "identity"}), ServiceReliability: map[string]api.ServiceReliabilityPolicy{"billing": {TimeoutMS: 100}, "identity": {TimeoutMS: 200}}}
 			calls, patches := 0, 0
 			var got api.UpdateAppRequest
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				calls++
 				if r.Method == http.MethodGet {
-					writeJSONTest(w, before)
+					main.WriteJSONTest(w, before)
 					return
 				}
 				if r.Method != http.MethodPatch {
@@ -257,17 +258,17 @@ func TestServiceBindingReliabilityConfiguration(t *testing.T) {
 				if !reflect.DeepEqual(after.ServiceReliability, tc.wantReliability) {
 					t.Errorf("server reliability=%v want=%v", after.ServiceReliability, tc.wantReliability)
 				}
-				writeJSONTest(w, after)
+				main.WriteJSONTest(w, after)
 			}))
 			defer server.Close()
 			t.Setenv("FAAS_API", server.URL)
 			t.Setenv("FAAS_TOKEN", "fp_test_x")
 			var output bytes.Buffer
-			old := osStdout
-			osStdout = &output
-			t.Cleanup(func() { osStdout = old })
+			old := (*main.OsStdout)
+			(*main.OsStdout) = &output
+			t.Cleanup(func() { (*main.OsStdout) = old })
 			args := []string{"bindings", "service", "configure", "hello", "--file", servicePolicyFile(t, tc.body), "--json"}
-			previewCode := run(append(append([]string{}, args...), "--dry-run"))
+			previewCode := main.Run(append(append([]string{}, args...), "--dry-run"))
 			if patches != 0 || calls != 1 {
 				t.Fatalf("preview calls=%d patches=%d", calls, patches)
 			}
@@ -275,7 +276,7 @@ func TestServiceBindingReliabilityConfiguration(t *testing.T) {
 				if previewCode == 0 {
 					t.Fatal("invalid preview accepted")
 				}
-				if run(args) == 0 || patches != 0 || calls != 2 {
+				if main.Run(args) == 0 || patches != 0 || calls != 2 {
 					t.Fatal("invalid update mutated state")
 				}
 				return
@@ -283,7 +284,7 @@ func TestServiceBindingReliabilityConfiguration(t *testing.T) {
 			if previewCode != 0 {
 				t.Fatalf("preview code=%d", previewCode)
 			}
-			var preview serviceBindingConfigurationReceipt
+			var preview main.ServiceBindingConfigurationReceipt
 			if err := json.Unmarshal(output.Bytes(), &preview); err != nil {
 				t.Fatal(err)
 			}
@@ -302,7 +303,7 @@ func TestServiceBindingReliabilityConfiguration(t *testing.T) {
 				}
 			}
 			output.Reset()
-			if code := run(args); code != 0 || patches != 1 || calls != 3 {
+			if code := main.Run(args); code != 0 || patches != 1 || calls != 3 {
 				t.Fatalf("apply code=%d calls=%d patches=%d", code, calls, patches)
 			}
 			if tc.implicit && len(got.ServiceReliability) != 0 {
@@ -314,7 +315,7 @@ func TestServiceBindingReliabilityConfiguration(t *testing.T) {
 			if tc.wantTransport != "" && len(got.ServiceReliability) != 0 {
 				t.Fatal("transport update overwrote reliability")
 			}
-			var saved serviceBindingConfigurationReceipt
+			var saved main.ServiceBindingConfigurationReceipt
 			if err := json.Unmarshal(output.Bytes(), &saved); err != nil {
 				t.Fatal(err)
 			}
@@ -345,7 +346,7 @@ func TestServiceBindingReliabilityInvalidBeforeNetwork(t *testing.T) {
 		`{"service_reliability":{"billing":{"unknown":1}}}`, `{"service_reliability":{"billing":{}," Billing ":{}}}`,
 		`{"service_reliability":{"billing":{"max_attempts":1,"max_attempts":2}}}`,
 	} {
-		if code := run([]string{"bindings", "service", "configure", "hello", "--file", servicePolicyFile(t, body)}); code == 0 {
+		if code := main.Run([]string{"bindings", "service", "configure", "hello", "--file", servicePolicyFile(t, body)}); code == 0 {
 			t.Errorf("accepted %s", body)
 		}
 	}

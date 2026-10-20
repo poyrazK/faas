@@ -1,9 +1,10 @@
-package main
+package main_test
 
 import (
 	"context"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -23,34 +24,34 @@ func (c *profileManifestClient) UpdateApp(_ context.Context, _ string, req api.U
 
 func TestManifestProfilingStagesBeforeBuildAndCompensatesFailure(t *testing.T) {
 	dir := t.TempDir()
-	writeManifest(t, dir, "profiling:\n  enabled: true\n  window_seconds: 10\n")
+	main.WriteManifest(t, dir, "profiling:\n  enabled: true\n  window_seconds: 10\n")
 	client := &profileManifestClient{}
-	txn, err := stageManifestProfiling(t.Context(), client, "app", dir)
+	txn, err := main.StageManifestProfiling(t.Context(), client, "app", dir)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if client.app.Manifest.Profiling == nil || !client.app.Manifest.Profiling.Enabled {
 		t.Fatal("profiling not applied before build")
 	}
-	if err := txn.rollback(t.Context()); err != nil {
+	if err := txn.Rollback(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if client.app.Manifest.Profiling.Enabled {
 		t.Fatal("failed build left profiling enabled")
 	}
-	txn, err = stageManifestProfiling(t.Context(), client, "app", dir)
+	txn, err = main.StageManifestProfiling(t.Context(), client, "app", dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	txn.committed = true
-	if err := txn.rollback(t.Context()); err != nil {
+	(*txn.Committed()) = true
+	if err := txn.Rollback(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if !client.app.Manifest.Profiling.Enabled {
 		t.Fatal("accepted deployment lost policy")
 	}
 	previous := client.updates
-	if _, err := stageManifestProfiling(t.Context(), client, "app", dir); err != nil {
+	if _, err := main.StageManifestProfiling(t.Context(), client, "app", dir); err != nil {
 		t.Fatal(err)
 	}
 	if client.updates != previous {
@@ -60,14 +61,14 @@ func TestManifestProfilingStagesBeforeBuildAndCompensatesFailure(t *testing.T) {
 
 func TestManifestProfilingRollbackPreservesConcurrentEdit(t *testing.T) {
 	dir := t.TempDir()
-	writeManifest(t, dir, "profiling:\n  enabled: true\n")
+	main.WriteManifest(t, dir, "profiling:\n  enabled: true\n")
 	client := &profileManifestClient{}
-	txn, err := stageManifestProfiling(t.Context(), client, "app", dir)
+	txn, err := main.StageManifestProfiling(t.Context(), client, "app", dir)
 	if err != nil {
 		t.Fatal(err)
 	}
 	client.app.Manifest.Profiling = &api.ProfilingConfig{Enabled: true, WindowSeconds: 30}
-	if err := txn.rollback(t.Context()); err != nil {
+	if err := txn.Rollback(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if client.app.Manifest.Profiling.WindowSeconds != 30 {

@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -6,16 +6,17 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestMemStoreProjectDeployBranchesReplaceAndScope(t *testing.T) {
 	ctx := context.Background()
-	m := NewMemStore()
+	m := state.NewMemStore()
 	account, err := m.CreateAccount(ctx, "branches@example.com", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
 	}
-	project, err := m.CreateProject(ctx, Project{AccountID: account.ID, Slug: "repo"})
+	project, err := m.CreateProject(ctx, state.Project{AccountID: account.ID, Slug: "repo"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,30 +44,30 @@ func TestMemStoreProjectDeployBranchesReplaceAndScope(t *testing.T) {
 	if len(got) != 0 {
 		t.Fatalf("cleared rules = %#v", got)
 	}
-	if _, err := m.ListProjectDeployBranches(ctx, "missing"); !errors.Is(err, ErrNotFound) {
+	if _, err := m.ListProjectDeployBranches(ctx, "missing"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("missing project error = %v", err)
 	}
 }
 
 func TestValidateDeployBranchMappingRejectsInvalidScope(t *testing.T) {
-	if err := validateDeployBranchMapping(map[string]string{"staging": "not valid"}); err == nil {
+	if err := state.ValidateDeployBranchMapping(map[string]string{"staging": "not valid"}); err == nil {
 		t.Fatal("invalid scope accepted")
 	}
 }
 
 func TestMemStoreDeploymentsDoNotSupersedeAcrossScopes(t *testing.T) {
-	m, ctx, _, app, _ := memCoverageFixture(t)
-	staging, err := m.CreateDeployment(ctx, Deployment{AppID: app.ID, Scope: "staging"})
+	m, ctx, _, app, _ := state.MemCoverageFixture(t)
+	staging, err := m.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Scope: "staging"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	production, err := m.CreateDeployment(ctx, Deployment{AppID: app.ID, Scope: "production"})
+	production, err := m.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Scope: "production"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	gotStaging, _ := m.DeploymentByID(ctx, staging.ID)
 	gotProduction, _ := m.DeploymentByID(ctx, production.ID)
-	if gotStaging.Status == DeploySuperseded || gotProduction.Status == DeploySuperseded {
+	if gotStaging.Status == state.DeploySuperseded || gotProduction.Status == state.DeploySuperseded {
 		t.Fatalf("cross-scope supersede: staging=%q production=%q", gotStaging.Status, gotProduction.Status)
 	}
 }

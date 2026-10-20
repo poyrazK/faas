@@ -1,7 +1,8 @@
-package main
+package main_test
 
 import (
 	"flag"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"io"
 	"reflect"
 	"strings"
@@ -31,7 +32,7 @@ func TestParseInterspersed(t *testing.T) {
 			fs.SetOutput(io.Discard)
 			app := fs.String("app", "", "")
 			quiet := fs.Bool("quiet", false, "")
-			if err := parseInterspersed(fs, tc.args); err != nil {
+			if err := main.ParseInterspersed(fs, tc.args); err != nil {
 				t.Fatalf("parseInterspersed(%q) = %v", tc.args, err)
 			}
 			if *app != tc.wantApp || *quiet != tc.wantQuit || !reflect.DeepEqual(fs.Args(), tc.wantPos) {
@@ -45,7 +46,7 @@ func TestParseInterspersed(t *testing.T) {
 func TestParseInterspersedRejectsUnknownFlag(t *testing.T) {
 	fs := flag.NewFlagSet("t", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	if err := parseInterspersed(fs, []string{"id-1", "--nope"}); err == nil {
+	if err := main.ParseInterspersed(fs, []string{"id-1", "--nope"}); err == nil {
 		t.Fatal("unknown flag after a positional was accepted")
 	}
 }
@@ -84,12 +85,12 @@ func TestLeavesAcceptFlagsOnEitherSideOfPositionals(t *testing.T) {
 		}
 		for order, argv := range orders {
 			t.Run(tc.name+"/"+order, func(t *testing.T) {
-				resetJSONOut(t)
+				main.ResetJSONOut(t)
 				t.Setenv("FAAS_API", "http://127.0.0.1:9")
 				t.Setenv("FAAS_TOKEN", "fp_live_test")
 				t.Setenv("HOME", t.TempDir())
-				_, readStderr, restore := swapIO(t)
-				run(argv)
+				_, readStderr, restore := main.SwapIO(t)
+				main.Run(argv)
 				stderr := readStderr()
 				restore()
 				if strings.Contains(stderr, "usage: gregale") || strings.Contains(stderr, "flag provided but not defined") {

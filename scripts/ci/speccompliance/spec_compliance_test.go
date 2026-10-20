@@ -89,6 +89,8 @@ const (
 	rolloutDecisionFile              = "rollout_decision.go"     // ADR-1447 explained rollout decisions
 	releaseRollbackFile              = "release_rollback.go"     // ADR-1448 releases that change the database
 	configRevisionsFile              = "config_revisions.go"     // ADR-1451 guarded, reversible config changes
+	releaseFreezesFile               = "release_freezes.go"      // ADR-20261019071733 deploy freezes
+	releaseGatesFile                 = "release_gates.go"        // ADR-20261019071734 release gates
 	changeTimelineFile               = "change_timeline.go"      // ADR-751 app change timeline DTOs
 	customMetricSeriesFile           = "custom_metric_series.go" // ADR-745 custom metric history DTOs
 	operatorPlatformFlagsFile        = "operator_platform_flags.go"
@@ -1714,6 +1716,8 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", rolloutDecisionFile),
 		filepath.Join(root, "pkg", "api", releaseRollbackFile),
 		filepath.Join(root, "pkg", "api", configRevisionsFile),
+		filepath.Join(root, "pkg", "api", releaseFreezesFile),
+		filepath.Join(root, "pkg", "api", releaseGatesFile),
 		filepath.Join(root, "pkg", "api", platformTenantsFile),
 		filepath.Join(root, "pkg", "api", platformTenantCredentialsFile),
 		filepath.Join(root, "pkg", "api", runtimePolicyFile),
@@ -1808,11 +1812,21 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "financial", "contracts.go"),
 		filepath.Join(root, "pkg", "financial", "forecast.go"),
 		filepath.Join(root, "pkg", "financial", "budget.go"),
+		filepath.Join(root, "pkg", "financial", "monitor.go"),
+		filepath.Join(root, "pkg", "financial", "stop.go"),
+		filepath.Join(root, "pkg", "financial", "compute.go"),
+		filepath.Join(root, "pkg", "financial", "egress.go"),
 	})
 	if err != nil {
 		t.Fatalf("scan financial DTOs: %v", err)
 	}
-	for name, schema := range map[string]string{"Price": "FinancialPrice", "Attribution": "FinancialAttribution", "Allocation": "FinancialAllocation", "MeterCost": "FinancialMeterCost", "ContractCosts": "FinancialContractCosts", "Forecast": "FinancialForecast", "BudgetSpec": "FinancialBudgetSpec", "BudgetScope": "FinancialBudgetScope"} {
+	for name, schema := range map[string]string{
+		"Price": "FinancialPrice", "Attribution": "FinancialAttribution", "Allocation": "FinancialAllocation",
+		"MeterCost": "FinancialMeterCost", "ContractCosts": "FinancialContractCosts", "Forecast": "FinancialForecast",
+		"BudgetSpec": "FinancialBudgetSpec", "BudgetScope": "FinancialBudgetScope",
+		"BudgetEvaluation": "FinancialBudgetEvaluation", "BudgetAlert": "FinancialBudgetAlert", "BudgetRuntime": "FinancialBudgetRuntime",
+		"BudgetStop": "FinancialBudgetStop", "BudgetStopTarget": "FinancialBudgetStopTarget", "ComputeBalance": "FinancialComputeBalance", "EgressBalance": "FinancialEgressBalance",
+	} {
 		dtos[schema] = financialDTOs[name]
 	}
 	objectDTOs, err := scanDTOs([]string{filepath.Join(root, "pkg", "rehearsalobj", "protocol.go")})

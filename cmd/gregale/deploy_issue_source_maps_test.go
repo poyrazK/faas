@@ -1,4 +1,4 @@
-package main
+package main_test
 
 // ADR-1742: archive-bound publication and recovery before production promotion.
 
@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/issues"
 )
@@ -57,7 +58,7 @@ func TestDeployIssueSourceMapsArchiveBinding(t *testing.T) {
 	}
 	archiveFiles["repository/package.json"] = `{"workspaces":["packages/*"]}`
 	archive := writeDeploySourceArchive(t, archiveFiles)
-	set, snapshot, cleanup, err := prepareDeployIssueSourceMaps(archive, "packages/exports", "dist/.gregale-issue-maps.json", "/app/dist")
+	set, snapshot, cleanup, err := main.PrepareDeployIssueSourceMaps(archive, "packages/exports", "dist/.gregale-issue-maps.json", "/app/dist")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,14 +67,14 @@ func TestDeployIssueSourceMapsArchiveBinding(t *testing.T) {
 		t.Fatalf("prepared the wrong or unsanitized manifest: %+v", set.Request)
 	}
 	// Later changes to the customer's archive cannot change the verified upload.
-	before, err := tarballSHA256(snapshot)
+	before, err := main.TarballSHA256(snapshot)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(archive, []byte("replaced after verification"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	after, err := tarballSHA256(snapshot)
+	after, err := main.TarballSHA256(snapshot)
 	if err != nil || before != after {
 		t.Fatalf("snapshot changed: before=%s after=%s err=%v", before, after, err)
 	}
@@ -110,7 +111,7 @@ func TestDeployIssueSourceMapsRejectInvalidArchiveEvidence(t *testing.T) {
 			case "oversized manifest":
 				files["dist/.gregale-issue-maps.json"] = strings.Repeat(" ", api.IssueSourceMapsUploadMaxBytes+1)
 			}
-			_, _, cleanup, err := prepareDeployIssueSourceMaps(writeDeploySourceArchive(t, files), "", "dist/.gregale-issue-maps.json", "/app/dist")
+			_, _, cleanup, err := main.PrepareDeployIssueSourceMaps(writeDeploySourceArchive(t, files), "", "dist/.gregale-issue-maps.json", "/app/dist")
 			if cleanup != nil {
 				cleanup()
 			}
@@ -133,36 +134,36 @@ func TestDeployIssueSourceMapsBundleBounds(t *testing.T) {
 	}
 	defer func() { _ = root.Close() }()
 	digest := sha256.Sum256(data)
-	if _, err := verifyDeployIssueBundle(root, "bundle.js", hex.EncodeToString(digest[:]), 3); err == nil {
+	if _, err := main.VerifyDeployIssueBundle(root, "bundle.js", hex.EncodeToString(digest[:]), 3); err == nil {
 		t.Fatal("ignored remaining aggregate byte bound")
 	}
 	if err := os.WriteFile(filepath.Join(directory, "large.js"), bytes.Repeat([]byte("x"), api.IssueSourceMapBundleMaxBytes+1), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := verifyDeployIssueBundle(root, "large.js", "", api.IssueSourceMapBundlesMaxBytes); err == nil || !strings.Contains(err.Error(), "byte bound") {
+	if _, err := main.VerifyDeployIssueBundle(root, "large.js", "", api.IssueSourceMapBundlesMaxBytes); err == nil || !strings.Contains(err.Error(), "byte bound") {
 		t.Fatalf("ignored per-bundle byte bound: %v", err)
 	}
 }
 
 func TestDeployIssueSourceMapsSourceSelection(t *testing.T) {
-	repo := initZeroConfigRepo(t)
+	repo := main.InitZeroConfigRepo(t)
 	files, expected := deploySourceMapsFixture(t)
 	for name, body := range files {
-		writeFile(t, repo, strings.Replace(name, "dist/", "assets/", 1), body)
+		main.WriteFile(t, repo, strings.Replace(name, "dist/", "assets/", 1), body)
 	}
 	runGitCmdOrSkip(t, repo, "add", ".")
 	runGitCmdOrSkip(t, repo, "commit", "-q", "-m", "prebuilt bundle and manifest")
-	writeFile(t, repo, "assets/bundle.js", "working tree changed after the build")
+	main.WriteFile(t, repo, "assets/bundle.js", "working tree changed after the build")
 	headArchive := filepath.Join(t.TempDir(), "head.tar.gz")
-	if err := gitArchiveHEAD(repo, headArchive); err != nil {
+	if err := main.GitArchiveHEAD(repo, headArchive); err != nil {
 		t.Fatal(err)
 	}
-	packed, _, _, err := packGitArchive(headArchive, defaultZeroConfigSourceCapMB, modeSourceTree, nil)
+	packed, _, _, err := main.PackGitArchive(headArchive, main.DefaultZeroConfigSourceCapMB, main.ModeSourceTree, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = os.Remove(packed) }()
-	set, _, cleanup, err := prepareDeployIssueSourceMaps(packed, "", "assets/.gregale-issue-maps.json", "/app/dist")
+	set, _, cleanup, err := main.PrepareDeployIssueSourceMaps(packed, "", "assets/.gregale-issue-maps.json", "/app/dist")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,12 +171,12 @@ func TestDeployIssueSourceMapsSourceSelection(t *testing.T) {
 	if set.Digest != expected.Digest {
 		t.Fatal("HEAD source maps came from the working tree")
 	}
-	worktree, _, _, err := autoPackSource(repo, repo, false, defaultZeroConfigSourceCapMB, nil)
+	worktree, _, _, err := main.AutoPackSource(repo, repo, false, main.DefaultZeroConfigSourceCapMB, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = os.Remove(worktree) }()
-	_, _, cleanup, err = prepareDeployIssueSourceMaps(worktree, "", "assets/.gregale-issue-maps.json", "/app/dist")
+	_, _, cleanup, err = main.PrepareDeployIssueSourceMaps(worktree, "", "assets/.gregale-issue-maps.json", "/app/dist")
 	if cleanup != nil {
 		cleanup()
 	}
@@ -188,14 +189,14 @@ func TestDeployIssueSourceMapsPackingExclusions(t *testing.T) {
 	directory := t.TempDir()
 	files, _ := deploySourceMapsFixture(t)
 	for name, body := range files {
-		writeFile(t, directory, name, body)
+		main.WriteFile(t, directory, name, body)
 	}
-	archive, _, _, err := autoPackSource(directory, directory, false, defaultZeroConfigSourceCapMB, nil)
+	archive, _, _, err := main.AutoPackSource(directory, directory, false, main.DefaultZeroConfigSourceCapMB, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = os.Remove(archive) }()
-	_, _, cleanup, err := prepareDeployIssueSourceMaps(archive, "", "dist/.gregale-issue-maps.json", "/app/dist")
+	_, _, cleanup, err := main.PrepareDeployIssueSourceMaps(archive, "", "dist/.gregale-issue-maps.json", "/app/dist")
 	if cleanup != nil {
 		cleanup()
 	}
@@ -220,7 +221,7 @@ func TestDeployIssueSourceMapsFlagsRejectBeforeRequest(t *testing.T) {
 			defer server.Close()
 			t.Setenv("FAAS_API", server.URL)
 			t.Setenv("FAAS_TOKEN", "fp_live_source_maps_guard")
-			if code := cmdDeployTarball(append(append([]string{}, base...), flags...)); code == 0 || requests != 0 {
+			if code := main.CmdDeployTarball(append(append([]string{}, base...), flags...)); code == 0 || requests != 0 {
 				t.Fatalf("code=%d requests=%d; expected a local refusal", code, requests)
 			}
 		})
@@ -232,7 +233,7 @@ func TestDeployIssueSourceMapsFlagsRejectBeforeRequest(t *testing.T) {
 		{"--issue-source-maps", "dist/maps.json", "--issue-source-map-directory", "relative"},
 		{"--issue-source-maps", "dist/maps.json", "--issue-source-map-directory", "/app/../dist"},
 	} {
-		if code := cmdDeployTarball(append(flags, "--no-traffic")); code == 0 {
+		if code := main.CmdDeployTarball(append(flags, "--no-traffic")); code == 0 {
 			t.Fatalf("accepted incomplete or unsafe flags: %v", flags)
 		}
 	}
@@ -310,7 +311,7 @@ func TestPublishDeployIssueSourceMapsReconciliation(t *testing.T) {
 			}))
 			defer server.Close()
 			sourceSHA256 := strings.Repeat("b", 64)
-			metadata, err := publishDeployIssueSourceMaps(context.Background(), NewClient(server.URL, "token"), "exports", api.DeploymentResponse{ID: sourceMapsDeploymentID, SourceSHA256: sourceSHA256}, sourceSHA256, "", set)
+			metadata, err := main.PublishDeployIssueSourceMaps(context.Background(), main.NewClient(server.URL, "token"), "exports", api.DeploymentResponse{ID: sourceMapsDeploymentID, SourceSHA256: sourceSHA256}, sourceSHA256, "", set)
 			wantSuccess := scenario == "ready" || scenario == "lost response" || scenario == "server failure committed"
 			wantPuts := 1
 			if strings.HasPrefix(scenario, "current ") {
@@ -335,7 +336,7 @@ func TestDeployIssueSourceMapsCLI(t *testing.T) {
 				files["dist/bundle.js"] += "another build"
 			}
 			archive := writeDeploySourceArchive(t, files)
-			sourceSHA256, err := tarballSHA256(archive)
+			sourceSHA256, err := main.TarballSHA256(archive)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -386,7 +387,7 @@ func TestDeployIssueSourceMapsCLI(t *testing.T) {
 					}
 					_ = json.NewEncoder(w).Encode(api.IssueSourceMapsMetadata{DeploymentID: sourceMapsDeploymentID, ManifestSHA256: set.Digest, MapCount: 1, Ready: true})
 				case r.URL.Path == "/v1/deployments/"+sourceMapsDeploymentID:
-					status := statusLive
+					status := main.StatusLive
 					if scenario == "timeout" {
 						status = "pending"
 					}
@@ -402,10 +403,10 @@ func TestDeployIssueSourceMapsCLI(t *testing.T) {
 			t.Setenv("FAAS_API", server.URL)
 			t.Setenv("FAAS_TOKEN", "fp_live_maps_cli")
 			var stdout bytes.Buffer
-			oldOut, oldJSON := osStdout, jsonOutput
-			osStdout, jsonOutput = &stdout, scenario != "human no wait"
-			defer func() { osStdout, jsonOutput = oldOut, oldJSON }()
-			stderr, restore := captureStderr(t)
+			oldOut, oldJSON := (*main.OsStdout), (*main.JsonOutput)
+			(*main.OsStdout), (*main.JsonOutput) = &stdout, scenario != "human no wait"
+			defer func() { (*main.OsStdout), (*main.JsonOutput) = oldOut, oldJSON }()
+			stderr, restore := main.CaptureStderr(t)
 			defer restore()
 			args := []string{"--tarball", archive, "--name", "exports", "--no-traffic", "--no-doctor", "--no-triggers", "--issue-source-maps", "dist/.gregale-issue-maps.json", "--issue-source-map-directory", "/app/dist"}
 			if scenario == "no wait" || scenario == "human no wait" {
@@ -420,7 +421,7 @@ func TestDeployIssueSourceMapsCLI(t *testing.T) {
 			if scenario == "explicit zero" {
 				args[4] = "--traffic-percent=0"
 			}
-			code := cmdDeployTarball(args)
+			code := main.CmdDeployTarball(args)
 			if scenario == "bundle changed" {
 				if code == 0 || len(calls) != 0 || !strings.Contains(stderr.String(), "digest mismatch") {
 					t.Fatalf("code=%d calls=%v stderr=%s", code, calls, stderr.String())
@@ -429,7 +430,7 @@ func TestDeployIssueSourceMapsCLI(t *testing.T) {
 			}
 			if strings.HasPrefix(scenario, "replayed ") {
 				var problem struct {
-					Recovery *deployRecovery `json:"recovery"`
+					Recovery *main.DeployRecovery `json:"recovery"`
 				}
 				if err := json.Unmarshal([]byte(stderr.String()), &problem); err != nil || code == 0 || stdout.Len() != 0 || problem.Recovery == nil || problem.Recovery.Stage != "source_maps_binding" || problem.Recovery.ResumeCommand != "" {
 					t.Fatalf("unsafe replay recovery: code=%d stderr=%s err=%v", code, stderr.String(), err)
@@ -444,7 +445,7 @@ func TestDeployIssueSourceMapsCLI(t *testing.T) {
 					t.Fatalf("unconfirmed publication succeeded: code=%d stdout=%s", code, stdout.String())
 				}
 				var problem struct {
-					Recovery *deployRecovery `json:"recovery"`
+					Recovery *main.DeployRecovery `json:"recovery"`
 				}
 				if err := json.Unmarshal([]byte(stderr.String()), &problem); err != nil || problem.Recovery == nil || problem.Recovery.DeploymentID != sourceMapsDeploymentID || problem.Recovery.Stage != "source_maps" || !strings.Contains(problem.Recovery.ResumeCommand, "issues source-maps publish") {
 					t.Fatalf("missing bound publication recovery: %s (%v)", stderr.String(), err)
@@ -454,7 +455,7 @@ func TestDeployIssueSourceMapsCLI(t *testing.T) {
 					t.Fatalf("missing exact-build recovery snapshot: %v (%v)", snapshots, err)
 				}
 				publicationRecovered = true
-				if code := cmdIssues([]string{"source-maps", "publish", "--app", "exports", "--deployment", sourceMapsDeploymentID, "--directory", "/app/dist", "--manifest-file", snapshots[0]}); code != 0 {
+				if code := main.CmdIssues([]string{"source-maps", "publish", "--app", "exports", "--deployment", sourceMapsDeploymentID, "--directory", "/app/dist", "--manifest-file", snapshots[0]}); code != 0 {
 					t.Fatalf("publication recovery failed: %d", code)
 				}
 				deployments := 0
@@ -474,7 +475,7 @@ func TestDeployIssueSourceMapsCLI(t *testing.T) {
 				}
 				return
 			}
-			var receipt DeployReceipt
+			var receipt main.DeployReceipt
 			wantCode := 0
 			if scenario == "timeout" {
 				wantCode = 3
@@ -494,7 +495,7 @@ func TestDeployIssueSourceMapsCLI(t *testing.T) {
 
 func TestDeployIssueSourceMapsRecoverySnapshot(t *testing.T) {
 	_, set := deploySourceMapsFixture(t)
-	file, err := saveDeployIssueSourceMapsRecovery(set)
+	file, err := main.SaveDeployIssueSourceMapsRecovery(set)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -520,17 +521,17 @@ func TestDeployIssueSourceMapsRecoverySnapshot(t *testing.T) {
 }
 
 func TestDeployIssueSourceMapsIntentIdentity(t *testing.T) {
-	intent := deployIdempotencyIntent{Slug: "exports", SourceSHA256: "same-archive"}
-	first, err := deployIdempotencyKey("", intent)
+	intent := main.DeployIdempotencyIntent{Slug: "exports", SourceSHA256: "same-archive"}
+	first, err := main.DeployIdempotencyKey("", intent)
 	if err != nil {
 		t.Fatal(err)
 	}
 	intent.IssueSourceMapsSHA256 = "different-manifest-or-runtime-directory"
-	second, err := deployIdempotencyKey("", intent)
+	second, err := main.DeployIdempotencyKey("", intent)
 	if err != nil || second == first {
 		t.Fatalf("publication intent reused deploy identity: %v", err)
 	}
-	if _, err := publishDeployIssueSourceMaps(context.Background(), nil, "", api.DeploymentResponse{}, "", "", nil); err != nil {
+	if _, err := main.PublishDeployIssueSourceMaps(context.Background(), nil, "", api.DeploymentResponse{}, "", "", nil); err != nil {
 		t.Fatal(err)
 	}
 	_, set := deploySourceMapsFixture(t)
@@ -540,8 +541,8 @@ func TestDeployIssueSourceMapsIntentIdentity(t *testing.T) {
 		{ID: sourceMapsDeploymentID, SourceSHA256: "expected", SourceRoot: "different"},
 		{ID: sourceMapsDeploymentID}, {ID: "invalid", SourceSHA256: "expected"},
 	} {
-		_, err := publishDeployIssueSourceMaps(context.Background(), nil, "exports", deployment, "expected", "", set)
-		var binding *deployIssueSourceMapsBindingError
+		_, err := main.PublishDeployIssueSourceMaps(context.Background(), nil, "exports", deployment, "expected", "", set)
+		var binding *main.DeployIssueSourceMapsBindingError
 		if !errors.As(err, &binding) {
 			t.Fatalf("accepted unsafe deployment binding: %+v (%v)", deployment, err)
 		}

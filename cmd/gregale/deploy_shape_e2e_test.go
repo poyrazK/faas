@@ -1,4 +1,4 @@
-package main
+package main_test
 
 // Test file for issue #737 / ADR-083 — the customer-visible
 // "Detected: …" CLI print line is the load-bearing acceptance gate
@@ -17,6 +17,7 @@ package main
 import (
 	"bytes"
 	"errors"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"strings"
 	"testing"
 )
@@ -29,19 +30,19 @@ import (
 // line after the multipart POST fails this gate.
 func TestResolveDeployShape_Function(t *testing.T) {
 	dir := t.TempDir()
-	writeFile(t, dir, "handler.js", "exports.handler = async () => ({statusCode:200, body:'ok'});")
+	main.WriteFile(t, dir, "handler.js", "exports.handler = async () => ({statusCode:200, body:'ok'});")
 
 	var buf bytes.Buffer
-	oldOut := osStdout
-	osStdout = &buf
-	defer func() { osStdout = oldOut }()
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &buf
+	defer func() { (*main.OsStdout) = oldOut }()
 
-	sh, rt, hnd, err := resolveDeployShape(dir, false, false, false)
+	sh, rt, hnd, err := main.ResolveDeployShape(dir, false, false, false)
 	if err != nil {
 		t.Fatalf("resolveDeployShape: %v", err)
 	}
-	if sh != shapeFunction {
-		t.Errorf("shape = %d, want %d (shapeFunction)", sh, shapeFunction)
+	if sh != main.ShapeFunction {
+		t.Errorf("shape = %d, want %d (shapeFunction)", sh, main.ShapeFunction)
 	}
 	if rt != "node22" {
 		t.Errorf("runtime = %q, want %q", rt, "node22")
@@ -58,18 +59,18 @@ func TestResolveDeployShape_Function(t *testing.T) {
 
 func TestResolveDeployShape_FunctionBannerUsesExplicitRuntime(t *testing.T) {
 	dir := t.TempDir()
-	writeFile(t, dir, "handler.go", "package main")
+	main.WriteFile(t, dir, "handler.go", "package main")
 
 	var buf bytes.Buffer
-	oldOut := osStdout
-	osStdout = &buf
-	defer func() { osStdout = oldOut }()
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &buf
+	defer func() { (*main.OsStdout) = oldOut }()
 
-	sh, rt, hnd, err := resolveDeployShape(dir, false, false, false, "go124-alpine", "custom.handler")
+	sh, rt, hnd, err := main.ResolveDeployShape(dir, false, false, false, "go124-alpine", "custom.handler")
 	if err != nil {
 		t.Fatalf("resolveDeployShape: %v", err)
 	}
-	if sh != shapeFunction || rt != runtimeGo124 || hnd != defaultTemplateHandler {
+	if sh != main.ShapeFunction || rt != main.RuntimeGo124 || hnd != main.DefaultTemplateHandler {
 		t.Fatalf("inferred shape = (%v, %q, %q), want function defaults", sh, rt, hnd)
 	}
 	want := "Detected: function, runtime=go124-alpine, handler=custom.handler, class=function"
@@ -90,24 +91,24 @@ func TestResolveDeployShape_JSONSuppressesPrint(t *testing.T) {
 	cases := []struct {
 		name  string
 		files []string
-		sh    shape
+		sh    main.Shape
 	}{
-		{"function", []string{"handler.js"}, shapeFunction},
-		{"app", []string{"package.json"}, shapeApp},
+		{"function", []string{"handler.js"}, main.ShapeFunction},
+		{"app", []string{"package.json"}, main.ShapeApp},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
 			for _, f := range tc.files {
-				writeFile(t, dir, f, "")
+				main.WriteFile(t, dir, f, "")
 			}
 			var buf bytes.Buffer
-			oldOut := osStdout
-			osStdout = &buf
-			defer func() { osStdout = oldOut }()
+			oldOut := (*main.OsStdout)
+			(*main.OsStdout) = &buf
+			defer func() { (*main.OsStdout) = oldOut }()
 
 			// jsonOutput=true is the load-bearing flag for this test.
-			sh, _, _, err := resolveDeployShape(dir, false, false, true)
+			sh, _, _, err := main.ResolveDeployShape(dir, false, false, true)
 			if err != nil {
 				t.Fatalf("resolveDeployShape: %v", err)
 			}
@@ -131,19 +132,19 @@ func TestResolveDeployShape_JSONSuppressesPrint(t *testing.T) {
 // customers without a .nvmrc / package.json::engines).
 func TestResolveDeployShape_App(t *testing.T) {
 	dir := t.TempDir()
-	writeFile(t, dir, "package.json", "{}")
+	main.WriteFile(t, dir, "package.json", "{}")
 
 	var buf bytes.Buffer
-	oldOut := osStdout
-	osStdout = &buf
-	defer func() { osStdout = oldOut }()
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &buf
+	defer func() { (*main.OsStdout) = oldOut }()
 
-	sh, _, _, err := resolveDeployShape(dir, false, false, false)
+	sh, _, _, err := main.ResolveDeployShape(dir, false, false, false)
 	if err != nil {
 		t.Fatalf("resolveDeployShape: %v", err)
 	}
-	if sh != shapeApp {
-		t.Errorf("shape = %d, want %d (shapeApp)", sh, shapeApp)
+	if sh != main.ShapeApp {
+		t.Errorf("shape = %d, want %d (shapeApp)", sh, main.ShapeApp)
 	}
 	got := buf.String()
 	wantLine := "Detected: app, framework=node, class=app"
@@ -163,19 +164,19 @@ func TestResolveDeployShape_App(t *testing.T) {
 // build_provenance.framework_version.
 func TestResolveDeployShape_AppWithVersion(t *testing.T) {
 	dir := t.TempDir()
-	writeFile(t, dir, "package.json", "{}")
-	writeFile(t, dir, ".nvmrc", "22.11.0")
+	main.WriteFile(t, dir, "package.json", "{}")
+	main.WriteFile(t, dir, ".nvmrc", "22.11.0")
 
 	var buf bytes.Buffer
-	oldOut := osStdout
-	osStdout = &buf
-	defer func() { osStdout = oldOut }()
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &buf
+	defer func() { (*main.OsStdout) = oldOut }()
 
-	sh, _, _, err := resolveDeployShape(dir, false, false, false)
+	sh, _, _, err := main.ResolveDeployShape(dir, false, false, false)
 	if err != nil {
 		t.Fatalf("resolveDeployShape: %v", err)
 	}
-	if sh != shapeApp {
+	if sh != main.ShapeApp {
 		t.Errorf("shape = %d, want shapeApp", sh)
 	}
 	got := buf.String()
@@ -193,14 +194,14 @@ func TestResolveDeployShape_AppWithVersion(t *testing.T) {
 // actionable hint.
 func TestResolveDeployShape_FunctionErrorWithMarkerSuggestion(t *testing.T) {
 	dir := t.TempDir()
-	writeFile(t, dir, "package.json", "{}")
-	writeFile(t, dir, ".nvmrc", "22.11.0")
+	main.WriteFile(t, dir, "package.json", "{}")
+	main.WriteFile(t, dir, ".nvmrc", "22.11.0")
 
-	sh, _, _, err := resolveDeployShape(dir, true, false, false)
+	sh, _, _, err := main.ResolveDeployShape(dir, true, false, false)
 	if err == nil {
 		t.Fatalf("expected error for --function with no handler file")
 	}
-	if sh != shapeUnknown {
+	if sh != main.ShapeUnknown {
 		t.Errorf("shape = %d, want shapeUnknown", sh)
 	}
 	want := "Detected node project"
@@ -219,9 +220,9 @@ func TestResolveDeployShape_FunctionErrorWithMarkerSuggestion(t *testing.T) {
 // surfacing a wrong runtime).
 func TestResolveDeployShape_FunctionErrorFallsBackWhenNoVersion(t *testing.T) {
 	dir := t.TempDir()
-	writeFile(t, dir, "package.json", "{}")
+	main.WriteFile(t, dir, "package.json", "{}")
 
-	_, _, _, err := resolveDeployShape(dir, true, false, false)
+	_, _, _, err := main.ResolveDeployShape(dir, true, false, false)
 	if err == nil {
 		t.Fatalf("expected error for --function with no handler file")
 	}
@@ -235,19 +236,19 @@ func TestResolveDeployShape_FunctionErrorFallsBackWhenNoVersion(t *testing.T) {
 // mentions BOTH app and function paths, NOT silently pick app.
 func TestResolveDeployShape_Unknown(t *testing.T) {
 	dir := t.TempDir()
-	writeFile(t, dir, "README.md", "hi")
+	main.WriteFile(t, dir, "README.md", "hi")
 
 	var buf bytes.Buffer
-	oldOut := osStdout
-	osStdout = &buf
-	defer func() { osStdout = oldOut }()
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &buf
+	defer func() { (*main.OsStdout) = oldOut }()
 
-	sh, _, _, err := resolveDeployShape(dir, false, false, false)
+	sh, _, _, err := main.ResolveDeployShape(dir, false, false, false)
 	if err == nil {
 		t.Fatalf("resolveDeployShape on empty dir should error; got shape=%d", sh)
 	}
-	if sh != shapeUnknown {
-		t.Errorf("shape = %d, want %d (shapeUnknown)", sh, shapeUnknown)
+	if sh != main.ShapeUnknown {
+		t.Errorf("shape = %d, want %d (shapeUnknown)", sh, main.ShapeUnknown)
 	}
 	if !strings.Contains(err.Error(), "package.json") {
 		t.Errorf("error should mention the app-marker path; got %v", err)
@@ -272,33 +273,33 @@ func TestResolveDeployShape_Unknown(t *testing.T) {
 // has no handler.* file to infer.
 func TestResolveDeployShape_BinaryRuntimeNeedsDockerfile(t *testing.T) {
 	dir := t.TempDir()
-	writeFile(t, dir, "Cargo.toml", "[package]\nname = \"handler\"\n")
-	if _, _, _, err := resolveDeployShape(dir, true, false, true, runtimeBinary, ""); err == nil || !strings.Contains(err.Error(), "Dockerfile") {
+	main.WriteFile(t, dir, "Cargo.toml", "[package]\nname = \"handler\"\n")
+	if _, _, _, err := main.ResolveDeployShape(dir, true, false, true, main.RuntimeBinary, ""); err == nil || !strings.Contains(err.Error(), "Dockerfile") {
 		t.Fatalf("binary without a Dockerfile: err = %v", err)
 	}
-	writeFile(t, dir, "Dockerfile", "FROM scratch\n")
-	sh, rt, hnd, err := resolveDeployShape(dir, true, false, true, runtimeBinary, "")
-	if err != nil || sh != shapeFunction || rt != runtimeBinary || hnd != defaultTemplateHandler {
+	main.WriteFile(t, dir, "Dockerfile", "FROM scratch\n")
+	sh, rt, hnd, err := main.ResolveDeployShape(dir, true, false, true, main.RuntimeBinary, "")
+	if err != nil || sh != main.ShapeFunction || rt != main.RuntimeBinary || hnd != main.DefaultTemplateHandler {
 		t.Fatalf("binary with a Dockerfile = (%d, %q, %q, %v)", sh, rt, hnd, err)
 	}
 }
 
 func TestResolveDeployShape_ExplicitFunctionForcesFunction(t *testing.T) {
 	dir := t.TempDir()
-	writeFile(t, dir, "package.json", "{}")
-	writeFile(t, dir, "handler.js", "")
+	main.WriteFile(t, dir, "package.json", "{}")
+	main.WriteFile(t, dir, "handler.js", "")
 
 	var buf bytes.Buffer
-	oldOut := osStdout
-	osStdout = &buf
-	defer func() { osStdout = oldOut }()
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &buf
+	defer func() { (*main.OsStdout) = oldOut }()
 
-	sh, rt, hnd, err := resolveDeployShape(dir, true, false, false)
+	sh, rt, hnd, err := main.ResolveDeployShape(dir, true, false, false)
 	if err != nil {
 		t.Fatalf("resolveDeployShape(--function): %v", err)
 	}
-	if sh != shapeFunction {
-		t.Errorf("shape = %d, want %d (shapeFunction via --function)", sh, shapeFunction)
+	if sh != main.ShapeFunction {
+		t.Errorf("shape = %d, want %d (shapeFunction via --function)", sh, main.ShapeFunction)
 	}
 	if rt != "node22" {
 		t.Errorf("runtime = %q, want %q", rt, "node22")
@@ -317,19 +318,19 @@ func TestResolveDeployShape_ExplicitFunctionForcesFunction(t *testing.T) {
 // Symmetric to the function test above.
 func TestResolveDeployShape_ExplicitAppForcesApp(t *testing.T) {
 	dir := t.TempDir()
-	writeFile(t, dir, "handler.js", "")
+	main.WriteFile(t, dir, "handler.js", "")
 
 	var buf bytes.Buffer
-	oldOut := osStdout
-	osStdout = &buf
-	defer func() { osStdout = oldOut }()
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &buf
+	defer func() { (*main.OsStdout) = oldOut }()
 
-	sh, _, _, err := resolveDeployShape(dir, false, true, false)
+	sh, _, _, err := main.ResolveDeployShape(dir, false, true, false)
 	if err != nil {
 		t.Fatalf("resolveDeployShape(--app): %v", err)
 	}
-	if sh != shapeApp {
-		t.Errorf("shape = %d, want %d (shapeApp via --app)", sh, shapeApp)
+	if sh != main.ShapeApp {
+		t.Errorf("shape = %d, want %d (shapeApp via --app)", sh, main.ShapeApp)
 	}
 	if !strings.Contains(buf.String(), "Detected: app") {
 		t.Errorf("stdout missing app print line; got %q", buf.String())
@@ -355,19 +356,19 @@ func TestResolveDeployShape_FunctionRuntimes(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
-			writeFile(t, dir, tc.handler, "")
+			main.WriteFile(t, dir, tc.handler, "")
 
 			var buf bytes.Buffer
-			oldOut := osStdout
-			osStdout = &buf
-			defer func() { osStdout = oldOut }()
+			oldOut := (*main.OsStdout)
+			(*main.OsStdout) = &buf
+			defer func() { (*main.OsStdout) = oldOut }()
 
-			sh, rt, hnd, err := resolveDeployShape(dir, false, false, false)
+			sh, rt, hnd, err := main.ResolveDeployShape(dir, false, false, false)
 			if err != nil {
 				t.Fatalf("resolveDeployShape: %v", err)
 			}
-			if sh != shapeFunction {
-				t.Errorf("shape = %d, want %d (shapeFunction)", sh, shapeFunction)
+			if sh != main.ShapeFunction {
+				t.Errorf("shape = %d, want %d (shapeFunction)", sh, main.ShapeFunction)
 			}
 			if rt != tc.wantRt {
 				t.Errorf("runtime = %q, want %q", rt, tc.wantRt)
@@ -396,7 +397,7 @@ func TestBuildCreateRequest(t *testing.T) {
 	falsy := false
 	cases := []struct {
 		name      string
-		sh        shape
+		sh        main.Shape
 		runtime   string
 		authnPtr  *bool
 		wantType  string
@@ -408,14 +409,14 @@ func TestBuildCreateRequest(t *testing.T) {
 		// header regression the test pins.
 		{
 			name:     "function_with_runtime",
-			sh:       shapeFunction,
+			sh:       main.ShapeFunction,
 			runtime:  "node22",
 			wantType: "function",
 			wantRt:   "node22",
 		},
 		{
 			name:     "function_python_runtime",
-			sh:       shapeFunction,
+			sh:       main.ShapeFunction,
 			runtime:  "python312",
 			wantType: "function",
 			wantRt:   "python312",
@@ -426,7 +427,7 @@ func TestBuildCreateRequest(t *testing.T) {
 		// server-side type guess).
 		{
 			name:     "function_empty_runtime",
-			sh:       shapeFunction,
+			sh:       main.ShapeFunction,
 			runtime:  "",
 			wantType: "function",
 			wantRt:   "",
@@ -435,7 +436,7 @@ func TestBuildCreateRequest(t *testing.T) {
 		// function fields leak onto the wire.
 		{
 			name:     "app_no_function_fields",
-			sh:       shapeApp,
+			sh:       main.ShapeApp,
 			runtime:  "",
 			wantType: "",
 			wantRt:   "",
@@ -446,7 +447,7 @@ func TestBuildCreateRequest(t *testing.T) {
 		// catches a regression where the clear stops working.
 		{
 			name:     "app_with_runtime_still_app",
-			sh:       shapeApp,
+			sh:       main.ShapeApp,
 			runtime:  "node22",
 			wantType: "",
 			wantRt:   "",
@@ -455,7 +456,7 @@ func TestBuildCreateRequest(t *testing.T) {
 		// helper extraction — explicit true / false / unset.
 		{
 			name:      "function_with_authn_true",
-			sh:        shapeFunction,
+			sh:        main.ShapeFunction,
 			runtime:   "node22",
 			authnPtr:  &tru,
 			wantType:  "function",
@@ -464,7 +465,7 @@ func TestBuildCreateRequest(t *testing.T) {
 		},
 		{
 			name:      "app_with_authn_false",
-			sh:        shapeApp,
+			sh:        main.ShapeApp,
 			runtime:   "",
 			authnPtr:  &falsy,
 			wantType:  "",
@@ -473,7 +474,7 @@ func TestBuildCreateRequest(t *testing.T) {
 		},
 		{
 			name:      "function_with_authn_unset",
-			sh:        shapeFunction,
+			sh:        main.ShapeFunction,
 			runtime:   "node22",
 			authnPtr:  nil,
 			wantType:  "function",
@@ -483,7 +484,7 @@ func TestBuildCreateRequest(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := buildCreateRequest("slug", tc.sh, tc.runtime, tc.authnPtr, nil)
+			got := main.BuildCreateRequest("slug", tc.sh, tc.runtime, tc.authnPtr, nil)
 			if got.Slug != "slug" {
 				t.Errorf("Slug = %q, want %q", got.Slug, "slug")
 			}
@@ -509,7 +510,7 @@ func TestBuildCreateRequest(t *testing.T) {
 }
 
 func TestBuildCreateRequestResourceProfile(t *testing.T) {
-	got := buildCreateRequest("slug", shapeApp, "", nil, nil, "small")
+	got := main.BuildCreateRequest("slug", main.ShapeApp, "", nil, nil, "small")
 	if got.ResourceProfile != "small" {
 		t.Fatalf("ResourceProfile = %q, want small", got.ResourceProfile)
 	}
@@ -526,17 +527,17 @@ func TestBuildCreateRequestResourceProfile(t *testing.T) {
 // parseable JSON envelope).
 func TestResolveDeployShape_NestedMarkerHint(t *testing.T) {
 	dir := t.TempDir()
-	writeFile(t, dir, "apps/web/package.json", "{}")
-	writeFile(t, dir, "README.md", "monorepo root")
+	main.WriteFile(t, dir, "apps/web/package.json", "{}")
+	main.WriteFile(t, dir, "README.md", "monorepo root")
 
-	_, _, _, err := resolveDeployShape(dir, false, false, false)
+	_, _, _, err := main.ResolveDeployShape(dir, false, false, false)
 	if err == nil {
 		t.Fatalf("resolveDeployShape on nested-marker cwd should error; got nil")
 	}
 
 	// The error must wrap a *NestedMarkerHintError so programmatic
 	// consumers (dashboards, CI scripts) can errors.As it.
-	var hintErr *NestedMarkerHintError
+	var hintErr *main.NestedMarkerHintError
 	if !errors.As(err, &hintErr) {
 		t.Fatalf("error chain missing *NestedMarkerHintError; got %T: %v", err, err)
 	}
@@ -546,15 +547,15 @@ func TestResolveDeployShape_NestedMarkerHint(t *testing.T) {
 
 	// Drive printErr (text mode) and assert the hint lands on stderr.
 	var stdout, stderr bytes.Buffer
-	oldOut, oldErr := osStdout, osStderr
-	osStdout, osStderr = &stdout, &stderr
-	defer func() { osStdout, osStderr = oldOut, oldErr }()
+	oldOut, oldErr := (*main.OsStdout), (*main.OsStderr)
+	(*main.OsStdout), (*main.OsStderr) = &stdout, &stderr
+	defer func() { (*main.OsStdout), (*main.OsStderr) = oldOut, oldErr }()
 
-	prevJSON := jsonOutput
-	jsonOutput = false
-	defer func() { jsonOutput = prevJSON }()
+	prevJSON := (*main.JsonOutput)
+	(*main.JsonOutput) = false
+	defer func() { (*main.JsonOutput) = prevJSON }()
 
-	code := printErr("Could not resolve deploy shape", err)
+	code := main.PrintErr("Could not resolve deploy shape", err)
 	if code == 0 {
 		t.Errorf("printErr returned 0; expected non-zero exit code on shape error")
 	}
@@ -580,19 +581,19 @@ func TestResolveDeployShape_NestedMarkerHint(t *testing.T) {
 // with the workspace recovery hint, so JSON consumers can decode the stream.
 func TestResolveDeployShape_NestedMarkerHint_JSON(t *testing.T) {
 	dir := t.TempDir()
-	writeFile(t, dir, "apps/web/package.json", "{}")
+	main.WriteFile(t, dir, "apps/web/package.json", "{}")
 
-	sh, _, _, err := resolveDeployShape(dir, false, false, true)
+	sh, _, _, err := main.ResolveDeployShape(dir, false, false, true)
 	if err == nil {
 		t.Fatalf("resolveDeployShape(--json) on nested-marker cwd should error; got nil")
 	}
-	if sh != shapeUnknown {
-		t.Errorf("shape = %d, want %d (shapeUnknown)", sh, shapeUnknown)
+	if sh != main.ShapeUnknown {
+		t.Errorf("shape = %d, want %d (shapeUnknown)", sh, main.ShapeUnknown)
 	}
 
 	// The error chain must carry the hint for downstream consumers
 	// (dashboards, CI scripts) that errors.As it.
-	var hintErr *NestedMarkerHintError
+	var hintErr *main.NestedMarkerHintError
 	if !errors.As(err, &hintErr) {
 		t.Fatalf("error chain missing *NestedMarkerHintError; got %T: %v", err, err)
 	}
@@ -600,18 +601,18 @@ func TestResolveDeployShape_NestedMarkerHint_JSON(t *testing.T) {
 		t.Errorf("hint missing 'gregale scan --path .'; got %q", hintErr.Hint)
 	}
 
-	stderr, restoreErr := captureStderr(t)
+	stderr, restoreErr := main.CaptureStderr(t)
 	defer restoreErr()
 
-	prevJSON := jsonOutput
-	jsonOutput = true
-	defer func() { jsonOutput = prevJSON }()
+	prevJSON := (*main.JsonOutput)
+	(*main.JsonOutput) = true
+	defer func() { (*main.JsonOutput) = prevJSON }()
 
-	code := printErr("Could not resolve deploy shape", err)
+	code := main.PrintErr("Could not resolve deploy shape", err)
 	if code == 0 {
 		t.Errorf("printErr returned 0; expected non-zero exit code on shape error")
 	}
-	problem := assertOneProblem(t, stderr.String())
+	problem := main.AssertOneProblem(t, stderr.String())
 	if !strings.Contains(problem.Hint, "gregale scan --path .") {
 		t.Errorf("Problem missing workspace hint: %+v", problem)
 	}
@@ -623,12 +624,12 @@ func TestResolveDeployShape_NestedMarkerHint_JSON(t *testing.T) {
 func TestResolveDeployShape_NoNestedHintOnEmptyDir(t *testing.T) {
 	dir := t.TempDir()
 
-	_, _, _, err := resolveDeployShape(dir, false, false, false)
+	_, _, _, err := main.ResolveDeployShape(dir, false, false, false)
 	if err == nil {
 		t.Fatalf("resolveDeployShape on empty dir should error; got nil")
 	}
 
-	var hintErr *NestedMarkerHintError
+	var hintErr *main.NestedMarkerHintError
 	if errors.As(err, &hintErr) {
 		t.Errorf("empty dir must NOT carry NestedMarkerHintError; got hint %q", hintErr.Hint)
 	}
@@ -641,15 +642,15 @@ func TestResolveDeployShape_NoNestedHintOnExcludedDirs(t *testing.T) {
 	dir := t.TempDir()
 	// node_modules/<pkg>/package.json — a real-world monorepo WILL have
 	// these, and we don't want every Node project to fire the hint.
-	writeFile(t, dir, "node_modules/some-pkg/package.json", "{}")
-	writeFile(t, dir, ".git/HEAD", "ref: refs/heads/main")
+	main.WriteFile(t, dir, "node_modules/some-pkg/package.json", "{}")
+	main.WriteFile(t, dir, ".git/HEAD", "ref: refs/heads/main")
 
-	_, _, _, err := resolveDeployShape(dir, false, false, false)
+	_, _, _, err := main.ResolveDeployShape(dir, false, false, false)
 	if err == nil {
 		t.Fatalf("resolveDeployShape should error (no top-level markers); got nil")
 	}
 
-	var hintErr *NestedMarkerHintError
+	var hintErr *main.NestedMarkerHintError
 	if errors.As(err, &hintErr) {
 		t.Errorf("excluded-dir markers must NOT fire NestedMarkerHintError; got hint %q", hintErr.Hint)
 	}
@@ -660,10 +661,10 @@ func TestResolveDeployShape_NoNestedHintOnExcludedDirs(t *testing.T) {
 // found" without saying that Compose projects deploy with --project.
 func TestResolveDeployShape_ComposeHint(t *testing.T) {
 	dir := t.TempDir()
-	writeFile(t, dir, "compose.yaml", "name: shop\nservices:\n  web:\n    image: nginx\n")
+	main.WriteFile(t, dir, "compose.yaml", "name: shop\nservices:\n  web:\n    image: nginx\n")
 
-	_, _, _, err := resolveDeployShape(dir, false, false, false)
-	var hintErr *NestedMarkerHintError
+	_, _, _, err := main.ResolveDeployShape(dir, false, false, false)
+	var hintErr *main.NestedMarkerHintError
 	if !errors.As(err, &hintErr) {
 		t.Fatalf("error chain missing *NestedMarkerHintError; got %T: %v", err, err)
 	}

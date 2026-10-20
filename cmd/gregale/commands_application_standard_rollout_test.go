@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -46,13 +47,13 @@ func TestOrgStandardRolloutCLI(t *testing.T) {
 				if !reflect.DeepEqual(got, want) {
 					t.Errorf("lost exact approval/control token: %+v", got)
 				}
-				writeJSONTestStatus(w, http.StatusOK, api.ApplicationStandardOperation{ID: id, State: "waiting"})
+				main.WriteJSONTestStatus(w, http.StatusOK, api.ApplicationStandardOperation{ID: id, State: "waiting"})
 			}))
 			defer ts.Close()
 			t.Setenv("FAAS_API", ts.URL)
-			stdout, restore := captureStdout(t)
+			stdout, restore := main.CaptureStdout(t)
 			defer restore()
-			if code := cmdOrgs([]string{"standards", kind, action, "--org", "acme", "--id", id, "--file", file}); code != 0 || called != 1 || !json.Valid([]byte(stdout.String())) {
+			if code := main.CmdOrgs([]string{"standards", kind, action, "--org", "acme", "--id", id, "--file", file}); code != 0 || called != 1 || !json.Valid([]byte(stdout.String())) {
 				t.Fatalf("CLI exit=%d calls=%d output=%s", code, called, stdout.String())
 			}
 		})
@@ -62,11 +63,11 @@ func TestOrgStandardRolloutCLI(t *testing.T) {
 func TestOrgStandardRolloutCLIRefusalsBeforeNetwork(t *testing.T) {
 	id := uuid.NewString()
 	for _, args := range [][]string{nil, {"--org", "acme", "--id", id}, {"--org", "acme", "--id", "bad", "--file", "body.json"}, {"--org", "acme", "--id", uuid.Nil.String(), "--file", "body.json"}, {"--org", "acme", "--id", id, "--file", "body.json", "extra"}} {
-		if _, err := parseStandardRolloutCLI("pause", args); err == nil {
+		if _, err := main.ParseStandardRolloutCLI("pause", args); err == nil {
 			t.Fatalf("accepted invalid rollout arguments %v", args)
 		}
 	}
-	if _, err := parseStandardRolloutCLI("unknown", nil); err == nil {
+	if _, err := main.ParseStandardRolloutCLI("unknown", nil); err == nil {
 		t.Fatal("unknown action accepted")
 	}
 	t.Setenv("FAAS_TOKEN", "fixture")
@@ -79,7 +80,7 @@ func TestOrgStandardRolloutCLIRefusalsBeforeNetwork(t *testing.T) {
 		if err := os.WriteFile(file, []byte(body), 0600); err != nil {
 			t.Fatal(err)
 		}
-		if code := cmdOrgs([]string{"standards", "operation", "pause", "--org", "acme", "--id", id, "--file", file}); code == 0 || called != 0 {
+		if code := main.CmdOrgs([]string{"standards", "operation", "pause", "--org", "acme", "--id", id, "--file", file}); code == 0 || called != 0 {
 			t.Fatalf("invalid body reached network: exit=%d calls=%d", code, called)
 		}
 	}

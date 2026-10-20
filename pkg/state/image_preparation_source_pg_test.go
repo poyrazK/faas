@@ -1,14 +1,17 @@
 //go:build !no_pg
 
-package state
+package state_test
 
-import "testing"
+import (
+	"github.com/onebox-faas/faas/pkg/state"
+	"testing"
+)
 
 func TestPgSourceImagePreparationAtomicCheckpoint(t *testing.T) {
 	for _, runtime := range []string{"", "node22"} {
 		for _, outcome := range []string{"complete", "stale claim", "revoked publisher", "cancelled"} {
 			t.Run(runtime+"/"+outcome, func(t *testing.T) {
-				s, _ := registryVerificationPGStore(t)
+				s, _ := state.RegistryVerificationPGStore(t)
 				sourceImagePreparationContract(t, s, runtime, outcome)
 			})
 		}

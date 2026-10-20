@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"context"
@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -63,22 +64,22 @@ func TestDeployDeveloperSourceRetriesFullOnMissingBase(t *testing.T) {
 		t.Fatal(err)
 	}
 	first := filepath.Join(archiveDir, "first.tar.gz")
-	if _, err := packDirToTarGz(source, first, defaultZeroConfigSourceCapMB, nil); err != nil {
+	if _, err := main.PackDirToTarGz(source, first, main.DefaultZeroConfigSourceCapMB, nil); err != nil {
 		t.Fatal(err)
 	}
-	state := &devSourceSyncState{}
-	client := NewClientWithDeployTimeout(srv.URL, "token", 0)
-	if _, err := deployDeveloperSource(client, context.Background(), "dev-app", first, "", "", false, "", api.DeployAnnotations{}, state); err != nil {
+	state := &main.DevSourceSyncState{}
+	client := main.NewClientWithDeployTimeout(srv.URL, "token", 0)
+	if _, err := main.DeployDeveloperSource(client, context.Background(), "dev-app", first, "", "", false, "", api.DeployAnnotations{}, state); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(source, "index.js"), []byte("new\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	second := filepath.Join(archiveDir, "second.tar.gz")
-	if _, err := packDirToTarGz(source, second, defaultZeroConfigSourceCapMB, nil); err != nil {
+	if _, err := main.PackDirToTarGz(source, second, main.DefaultZeroConfigSourceCapMB, nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := deployDeveloperSource(client, context.Background(), "dev-app", second, "", "", false, "", api.DeployAnnotations{}, state); err != nil {
+	if _, err := main.DeployDeveloperSource(client, context.Background(), "dev-app", second, "", "", false, "", api.DeployAnnotations{}, state); err != nil {
 		t.Fatal(err)
 	}
 	if len(bases) != 3 || bases[0] != "" || bases[1] == "" || bases[2] != "" {

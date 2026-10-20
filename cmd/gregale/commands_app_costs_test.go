@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/financial"
 )
@@ -44,12 +45,12 @@ func TestAppCostsCLIUsesStableAppIdentityAndFiltersAccountReport(t *testing.T) {
 	defer server.Close()
 	t.Setenv("FAAS_API", server.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_costs")
-	stdout, restore := captureStdout(t)
+	stdout, restore := main.CaptureStdout(t)
 	defer restore()
-	stderr, restoreErr := captureStderr(t)
+	stderr, restoreErr := main.CaptureStderr(t)
 	defer restoreErr()
 
-	if code := run([]string{"app", "my-api", "costs", "--month", month, "--json"}); code != 0 {
+	if code := main.Run([]string{"app", "my-api", "costs", "--month", month, "--json"}); code != 0 {
 		t.Fatalf("exit=%d stderr=%s", code, stderr)
 	}
 	var response api.FinancialAppCostsResponse

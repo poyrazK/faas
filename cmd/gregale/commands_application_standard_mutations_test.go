@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -49,15 +50,15 @@ func TestOrgStandardMutationCLI(t *testing.T) {
 				if !reflect.DeepEqual(got, want) {
 					t.Errorf("mutation body changed: %+v", got)
 				}
-				writeJSONTestStatus(w, http.StatusOK, tc.response)
+				main.WriteJSONTestStatus(w, http.StatusOK, tc.response)
 			}))
 			defer server.Close()
 			t.Setenv("FAAS_API", server.URL)
-			stdout, restore := captureStdout(t)
+			stdout, restore := main.CaptureStdout(t)
 			defer restore()
 			args := append([]string{"standards"}, tc.args...)
 			args = append(args, "--org", "acme", "--app", app, "--file", file)
-			if code := cmdOrgs(args); code != 0 {
+			if code := main.CmdOrgs(args); code != 0 {
 				t.Fatalf("mutation CLI exit: %d", code)
 			}
 			if called != 1 || !json.Valid([]byte(stdout.String())) {
@@ -75,7 +76,7 @@ func TestOrgStandardMutationCLIRefusalsBeforeNetwork(t *testing.T) {
 	}{
 		{"local-intent", nil}, {"local-intent", []string{"--org", "acme", "--app", id}}, {"approve", []string{"--org", "acme", "--app", "bad", "--file", "body.json"}}, {"revoke", []string{"--org", "acme", "--app", id, "--file", "body.json"}}, {"revoke", []string{"--org", "acme", "--app", id, "--id", uuid.Nil.String(), "--file", "body.json"}}, {"invalid", nil},
 	} {
-		if _, err := parseStandardMutationCLI(tc.action, tc.args); err == nil {
+		if _, err := main.ParseStandardMutationCLI(tc.action, tc.args); err == nil {
 			t.Fatalf("accepted invalid mutation arguments: %+v", tc)
 		}
 	}
@@ -88,7 +89,7 @@ func TestOrgStandardMutationCLIRefusalsBeforeNetwork(t *testing.T) {
 	if err := os.WriteFile(file, []byte(`{"expected_revision":1,"settings":{},"additional_log_destinations":null}`), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if code := cmdOrgs([]string{"standards", "local-intent", "--org", "acme", "--app", id, "--file", file}); code == 0 || called != 0 {
+	if code := main.CmdOrgs([]string{"standards", "local-intent", "--org", "acme", "--app", id, "--file", file}); code == 0 || called != 0 {
 		t.Fatalf("invalid JSON reached API: exit=%d calls=%d", code, called)
 	}
 }

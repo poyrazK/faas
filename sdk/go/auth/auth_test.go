@@ -433,6 +433,22 @@ func TestVerifyWithAudienceAcceptsAnOAuthClientsToken(t *testing.T) {
 	}
 }
 
+func TestVerifyReadsTheImpersonatingActor(t *testing.T) {
+	key := newKey(t, "0A1B2C3D")
+	app := newAuthApp(t, key)
+	c, clk := newClient(t, app)
+	payload := userClaims(c, clk)
+	payload["act"] = map[string]any{"sub": "admin:0A1B2C3D"}
+	claims, err := c.Verify(context.Background(), key.sign(t, header(key.kid), payload))
+	if err != nil || claims.Actor != "admin:0A1B2C3D" {
+		t.Fatalf("actor = %q, %v", claims.Actor, err)
+	}
+	plain, err := c.Verify(context.Background(), key.sign(t, header(key.kid), userClaims(c, clk)))
+	if err != nil || plain.Actor != "" {
+		t.Fatalf("without act: %q, %v", plain.Actor, err)
+	}
+}
+
 func TestVerifyReadsTheActiveOrganization(t *testing.T) {
 	key := newKey(t, "0A1B2C3D")
 	app := newAuthApp(t, key)

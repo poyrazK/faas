@@ -1,10 +1,11 @@
-package main
+package main_test
 
 import (
 	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/bindingrun"
 	"net/url"
@@ -15,17 +16,17 @@ func TestBindingCreationFailureReports(t *testing.T) {
 	for _, graph := range []bool{false, true} {
 		for _, attempted := range []bool{false, true} {
 			for _, plain := range []bool{false, true} {
-				oldOut, oldErr, oldJSON := osStdout, osStderr, jsonOutput
+				oldOut, oldErr, oldJSON := (*main.OsStdout), (*main.OsStderr), (*main.JsonOutput)
 				var out, stderr bytes.Buffer
-				osStdout, osStderr, jsonOutput = &out, &stderr, !plain
+				(*main.OsStdout), (*main.OsStderr), (*main.JsonOutput) = &out, &stderr, !plain
 				id := "11111111-1111-4111-8111-111111111111"
 				app, p, env := "api", "", ""
 				if graph {
 					app, p, env = "", "project", "production"
 				}
 				err := &bindingrun.CreationError{RunID: id, Attempted: attempted, Err: errors.New("original creation failure")}
-				code := renderBindingCreationFailure(id, app, p, env, err)
-				osStdout, osStderr, jsonOutput = oldOut, oldErr, oldJSON
+				code := main.RenderBindingCreationFailure(id, app, p, env, err)
+				(*main.OsStdout), (*main.OsStderr), (*main.JsonOutput) = oldOut, oldErr, oldJSON
 				if code != 1 {
 					t.Fatalf("code=%d", code)
 				}
@@ -35,7 +36,7 @@ func TestBindingCreationFailureReports(t *testing.T) {
 					}
 					continue
 				}
-				var report bindingCreationFailureReport
+				var report main.BindingCreationFailureReport
 				if e := json.Unmarshal(out.Bytes(), &report); e != nil {
 					t.Fatal(e)
 				}
@@ -53,14 +54,14 @@ func TestBindingCreationFailureClassificationAndRedaction(t *testing.T) {
 		code  int
 	}{
 		{context.Canceled, 130},
-		{&APIError{Problem: api.Problem{Status: 404, Detail: "fp_live_private_token"}}, 4},
+		{&main.APIError{Problem: api.Problem{Status: 404, Detail: "fp_live_private_token"}}, 4},
 		{&url.Error{Op: "POST", URL: "https://api.invalid", Err: errors.New("connection refused fp_live_private_token")}, 3},
 	} {
-		oldOut, oldErr, oldJSON := osStdout, osStderr, jsonOutput
+		oldOut, oldErr, oldJSON := (*main.OsStdout), (*main.OsStderr), (*main.JsonOutput)
 		var out, stderr bytes.Buffer
-		osStdout, osStderr, jsonOutput = &out, &stderr, true
-		code := renderBindingCreationFailure("11111111-1111-4111-8111-111111111111", "api", "", "", &bindingrun.CreationError{RunID: "11111111-1111-4111-8111-111111111111", Attempted: true, Err: scenario.cause})
-		osStdout, osStderr, jsonOutput = oldOut, oldErr, oldJSON
+		(*main.OsStdout), (*main.OsStderr), (*main.JsonOutput) = &out, &stderr, true
+		code := main.RenderBindingCreationFailure("11111111-1111-4111-8111-111111111111", "api", "", "", &bindingrun.CreationError{RunID: "11111111-1111-4111-8111-111111111111", Attempted: true, Err: scenario.cause})
+		(*main.OsStdout), (*main.OsStderr), (*main.JsonOutput) = oldOut, oldErr, oldJSON
 		if code != scenario.code || bytes.Contains(out.Bytes(), []byte("fp_live_private_token")) {
 			t.Fatalf("classification/redaction: code=%d output=%s", code, out.String())
 		}

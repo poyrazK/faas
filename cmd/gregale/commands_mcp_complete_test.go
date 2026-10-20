@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -11,14 +11,15 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/mcphosting"
 )
 
 func TestMCPCompleteCLIRequestsPromptAndResourceSuggestions(t *testing.T) {
-	oldOut, oldJSON := osStdout, jsonOutput
+	oldOut, oldJSON := (*main.OsStdout), (*main.JsonOutput)
 	var output bytes.Buffer
-	osStdout, jsonOutput = &output, true
-	t.Cleanup(func() { osStdout, jsonOutput = oldOut, oldJSON })
+	(*main.OsStdout), (*main.JsonOutput) = &output, true
+	t.Cleanup(func() { (*main.OsStdout), (*main.JsonOutput) = oldOut, oldJSON })
 	var seen int
 	server := newMCPCompleteTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer mcp-complete-token" {
@@ -95,7 +96,7 @@ func TestMCPCompleteCLIRequestsPromptAndResourceSuggestions(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			output.Reset()
-			if code := cmdMCP(test.args); code != 0 {
+			if code := main.CmdMCP(test.args); code != 0 {
 				t.Fatalf("exit=%d output=%s", code, output.String())
 			}
 			var receipt struct {
@@ -115,27 +116,27 @@ func TestMCPCompleteCLIRequestsPromptAndResourceSuggestions(t *testing.T) {
 }
 
 func TestMCPCompleteCLIRequiresOneReferenceAndValue(t *testing.T) {
-	oldErr := osStderr
+	oldErr := (*main.OsStderr)
 	var stderr bytes.Buffer
-	osStderr = &stderr
-	t.Cleanup(func() { osStderr = oldErr })
+	(*main.OsStderr) = &stderr
+	t.Cleanup(func() { (*main.OsStderr) = oldErr })
 	for _, args := range [][]string{
 		{"complete", "--url", "https://mcp.example/mcp", "--argument", "style", "--value", ""},
 		{"complete", "--url", "https://mcp.example/mcp", "--prompt", "summarize", "--resource-template", "repo://{repo}", "--argument", "style", "--value", ""},
 		{"complete", "--url", "https://mcp.example/mcp", "--prompt", "summarize", "--argument", "style"},
 	} {
 		stderr.Reset()
-		if code := cmdMCP(args); code == 0 {
+		if code := main.CmdMCP(args); code == 0 {
 			t.Fatalf("invalid flags accepted: %v", args)
 		}
 	}
 }
 
 func TestMCPCompleteCLIRejectsNonStringContext(t *testing.T) {
-	oldErr := osStderr
+	oldErr := (*main.OsStderr)
 	var stderr bytes.Buffer
-	osStderr = &stderr
-	t.Cleanup(func() { osStderr = oldErr })
+	(*main.OsStderr) = &stderr
+	t.Cleanup(func() { (*main.OsStderr) = oldErr })
 	requests := 0
 	server := newMCPCompleteTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
@@ -143,7 +144,7 @@ func TestMCPCompleteCLIRejectsNonStringContext(t *testing.T) {
 		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"completion":{"values":[]}}}`))
 	}))
 	args := []string{"complete", "--url", server.URL + "/mcp", "--prompt", "summarize", "--argument", "style", "--value", "", "--context", `{"period":1}`}
-	if code := cmdMCP(args); code == 0 {
+	if code := main.CmdMCP(args); code == 0 {
 		t.Fatal("non-string completion context was accepted")
 	}
 	if requests != 0 {

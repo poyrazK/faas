@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -38,8 +39,8 @@ func TestAutomationRecoveryPolicyAutomaticMode(t *testing.T) {
 		}
 		_ = json.NewEncoder(w).Encode(api.WorkflowRecoveryPolicyResponse{Version: 2, Policy: p, Status: "paused", AutomaticExecution: &api.WorkflowRecoveryPolicyAutomaticExecution{ConsecutiveFailures: 2, PausedAt: &now, PauseReason: "consecutive_failures"}})
 	})
-	out := captureAutomationStdout(t)
-	if code := cmdAutomationsRecoveryPolicy([]string{"--app", "consumer", "--file", path}); code != 0 {
+	out := main.CaptureAutomationStdout(t)
+	if code := main.CmdAutomationsRecoveryPolicy([]string{"--app", "consumer", "--file", path}); code != 0 {
 		t.Fatalf("code=%d", code)
 	}
 	for _, want := range []string{"automatic_retry", "Automatic execution budget: 2/hour", "pause after 2 consecutive failures", "failures 2", "Paused:", "consecutive_failures"} {
@@ -74,8 +75,8 @@ func TestAutomationRecoveryPolicyControls(t *testing.T) {
 		p.AutomaticExecution.PausedAt = nil
 		_ = json.NewEncoder(w).Encode(p)
 	})
-	captureAutomationStdout(t)
-	if code := cmdAutomationsRecoveryPolicy([]string{"--app", "consumer", "--control", "resume", "--reason", "provider recovered"}); code != 0 || calls != 2 {
+	main.CaptureAutomationStdout(t)
+	if code := main.CmdAutomationsRecoveryPolicy([]string{"--app", "consumer", "--control", "resume", "--reason", "provider recovered"}); code != 0 || calls != 2 {
 		t.Fatalf("code %d calls %d", code, calls)
 	}
 }
@@ -88,8 +89,8 @@ func TestAutomationRecoveryPolicyQueue(t *testing.T) {
 		}
 		_ = json.NewEncoder(w).Encode(api.WorkflowRecoveryAutomaticQueue{Pending: 2, Outstanding: 1, RemainingBudget: 3, Policy: api.WorkflowRecoveryPolicyResponse{Version: 4, Status: "paused", Policy: api.WorkflowRecoveryPolicy{HourlyExecutionBudget: 5}}, Entries: []api.WorkflowRecoveryAutomaticQueueEntry{{QueuedAt: now, QueuedAgeSeconds: 120, WaitingAgeSeconds: &age, ReviewID: "review", PolicyVersion: 4, Action: api.WorkflowRecoveryAutomaticAction{ActionID: "action", Status: "pending", Reason: "evidence_unknown", LastEvaluation: &api.WorkflowRecoveryAutomaticEvaluation{EvaluatedAt: now, Reason: "evidence_unknown", WaitingSince: &now}}}}, Truncated: true})
 	})
-	out := captureAutomationStdout(t)
-	if code := cmdAutomationsRecoveryPolicy([]string{"--app", "consumer", "--queue"}); code != 0 {
+	out := main.CaptureAutomationStdout(t)
+	if code := main.CmdAutomationsRecoveryPolicy([]string{"--app", "consumer", "--queue"}); code != 0 {
 		t.Fatalf("code %d", code)
 	}
 	for _, want := range []string{"pending 2", "outstanding 1", "budget remaining 3/5", "evidence_unknown", "truncated", "age 120s", "Current observed wait: 60s", "Last evaluation: 2026-10-11T12:00:00Z", "Waiting since:"} {

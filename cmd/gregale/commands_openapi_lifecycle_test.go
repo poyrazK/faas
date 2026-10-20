@@ -1,7 +1,8 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"os"
 	"path/filepath"
 	"testing"
@@ -14,7 +15,7 @@ func TestReadOpenapiDocumentAcceptsYAML(t *testing.T) {
 	if err := os.WriteFile(path, []byte("openapi: 3.0.3\ninfo: {title: demo, version: \"1\"}\npaths:\n  /healthz:\n    get:\n      responses:\n        200: {description: ok}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	doc, err := readOpenapiDocument(path)
+	doc, err := main.ReadOpenapiDocument(path)
 	if err != nil {
 		t.Fatalf("readOpenapiDocument(yaml): %v", err)
 	}

@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -22,7 +23,7 @@ func TestSendCommandWorkPolicy(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "test-token")
-	if code := cmdSend([]string{"billing", "--type", "document.edited", "--data", `{}`, "--work-policy", "documents", "--work-key", `"d1"`}); code != 0 {
+	if code := main.CmdSend([]string{"billing", "--type", "document.edited", "--data", `{}`, "--work-policy", "documents", "--work-key", `"d1"`}); code != 0 {
 		t.Fatalf("exit = %d", code)
 	}
 }
@@ -65,9 +66,9 @@ func TestMessagingCommandsForwardExplicitIdempotencyKey(t *testing.T) {
 			t.Setenv("FAAS_TOKEN", "test-token")
 			var code int
 			if tt.name == "send" {
-				code = cmdSend(tt.args)
+				code = main.CmdSend(tt.args)
 			} else {
-				code = cmdDeliver(tt.args)
+				code = main.CmdDeliver(tt.args)
 			}
 			if code != 0 {
 				t.Fatalf("%s exit = %d", tt.name, code)

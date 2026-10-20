@@ -1,11 +1,12 @@
 // adr: 137
 
-package sched
+package sched_test
 
 import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -24,7 +25,7 @@ func TestStartupDeadlineForApp(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			app := state.App{Manifest: tt.manifest}
-			if got := startupDeadlineForApp(app, tt.plan); got != tt.want {
+			if got := sched.StartupDeadlineForApp(app, tt.plan); got != tt.want {
 				t.Fatalf("startup deadline = %d, want %d", got, tt.want)
 			}
 		})
@@ -48,7 +49,7 @@ func TestExecutionModeForApp(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			app := state.App{Manifest: state.AppManifest{ExecutionMode: tt.mode}}
-			if got := executionModeForApp(app); got != tt.want {
+			if got := sched.ExecutionModeForApp(app); got != tt.want {
 				t.Fatalf("execution mode = %q, want %q", got, tt.want)
 			}
 		})
@@ -56,14 +57,14 @@ func TestExecutionModeForApp(t *testing.T) {
 }
 
 func TestAppSpecToProtoCarriesExecutionMode(t *testing.T) {
-	got := (AppSpec{ExecutionMode: api.ExecutionModeWorker}).toProto().GetExecutionMode()
+	got := (sched.AppSpec{ExecutionMode: api.ExecutionModeWorker}).ToProto().GetExecutionMode()
 	if got != api.ExecutionModeWorker {
 		t.Fatalf("execution mode = %q, want %q", got, api.ExecutionModeWorker)
 	}
 }
 
 func TestAppSpecToProtoCarriesStartupCPUBoostOptOut(t *testing.T) {
-	got := (AppSpec{DisableStartupCPUBoost: true}).toProto().GetDisableStartupCpuBoost()
+	got := (sched.AppSpec{DisableStartupCPUBoost: true}).ToProto().GetDisableStartupCpuBoost()
 	if !got {
 		t.Fatal("disable_startup_cpu_boost was not forwarded to vmmd")
 	}

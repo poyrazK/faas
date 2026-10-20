@@ -46,14 +46,24 @@ func (r *recordingRoutedAppTaskVMM) Destroy(_ context.Context, nodeID, _ string)
 }
 
 func TestContainedCommandBackendRequiresNetworkPublicationBeforeDispatch(t *testing.T) {
-	for _, mode := range []string{"complete", "missing-publisher", "failed-publication"} {
+	for _, mode := range []string{"complete", "held-budget", "missing-publisher", "failed-publication"} {
 		t.Run(mode, func(t *testing.T) {
 			router := &recordingRoutedAppTaskVMM{}
-			released, published := false, false
+			released, published, activated := false, false, false
 			backend := NewRoutedVmmdAppTaskBackend(router, func(context.Context, AppTaskRestoreRequest) (ResolvedAppTaskRuntime, error) {
 				out := ResolvedAppTaskRuntime{NodeID: "node-a", Spec: AppTaskRestoreSpec{Instance: "task", DeploymentID: "deployment", App: AppSpec{RehearsalRunID: "run"}}, release: func() { released = true }}
+				out.ready = func(context.Context) error {
+					if mode == "held-budget" {
+						return state.ErrFinancialBudgetHeld
+					}
+					activated = true
+					return nil
+				}
 				if mode != "missing-publisher" {
 					out.publish = func(context.Context, *AppTaskRestoreOutcome) error {
+						if !activated {
+							t.Fatal("command network published before budget activation")
+						}
 						published = true
 						if mode == "failed-publication" {
 							return errors.New("network publication unavailable")
@@ -64,6 +74,9 @@ func TestContainedCommandBackendRequiresNetworkPublicationBeforeDispatch(t *test
 				return out, nil
 			})
 			session, err := backend.Restore(t.Context(), AppTaskRestoreRequest{ID: "task", DeploymentID: "deployment"})
+			if mode == "held-budget" && (!errors.Is(err, state.ErrFinancialBudgetHeld) || activated || published) {
+				t.Fatalf("held command reached publication: activated=%v published=%v err=%v", activated, published, err)
+			}
 			if mode == "complete" {
 				if err != nil || !published {
 					t.Fatalf("publication missing: %v", err)

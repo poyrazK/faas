@@ -95,6 +95,7 @@ type Querier interface {
 	// ADR-1741: the app's runtime generation, which triggers bump in the
 	// writer's transaction for every change a wake depends on.
 	AppRuntimeGeneration(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error)
+	AppSLOForReleaseGate(ctx context.Context, db DBTX, arg AppSLOForReleaseGateParams) (AppSLOForReleaseGateRow, error)
 	AppendAccountCreditLedgerEntry(ctx context.Context, db DBTX, arg AppendAccountCreditLedgerEntryParams) error
 	AppendEvent(ctx context.Context, db DBTX, arg AppendEventParams) error
 	AppendMCPAdmissionEvidence(ctx context.Context, db DBTX, arg AppendMCPAdmissionEvidenceParams) (int64, error)
@@ -520,6 +521,9 @@ type Querier interface {
 	CreateAPIKey(ctx context.Context, db DBTX, arg CreateAPIKeyParams) (CreateAPIKeyRow, error)
 	CreateAccount(ctx context.Context, db DBTX, arg CreateAccountParams) (CreateAccountRow, error)
 	CreateApp(ctx context.Context, db DBTX, arg CreateAppParams) (CreateAppRow, error)
+	// ADR-20261019071734: release gates on customer signals.
+	// Inserts a gate only while the app holds fewer than max_gates gates.
+	CreateAppReleaseGateWithinLimit(ctx context.Context, db DBTX, arg CreateAppReleaseGateWithinLimitParams) (AppReleaseGate, error)
 	CreateAppSecretRevocation(ctx context.Context, db DBTX, arg CreateAppSecretRevocationParams) (CreateAppSecretRevocationRow, error)
 	CreateAppSecretRevocationTarget(ctx context.Context, db DBTX, arg CreateAppSecretRevocationTargetParams) error
 	CreateApplicationStandard(ctx context.Context, db DBTX, arg CreateApplicationStandardParams) (pgtype.UUID, error)
@@ -560,6 +564,12 @@ type Querier interface {
 	// ConsumeRecoveryCode, ApplyProjectPlan) renders those inline.
 	CreateOrg(ctx context.Context, db DBTX, arg CreateOrgParams) (CreateOrgRow, error)
 	CreateProjectMigration(ctx context.Context, db DBTX, arg CreateProjectMigrationParams) error
+	// ADR-20261019071733: deploy freezes and release windows.
+	// Inserts a freeze only while the account holds fewer than max_unlifted
+	// unlifted freezes that have not ended.
+	CreateReleaseFreezeWithinLimit(ctx context.Context, db DBTX, arg CreateReleaseFreezeWithinLimitParams) (ReleaseFreeze, error)
+	// One automatic freeze per rolled-back deployment; a retried rollback reuses it.
+	CreateRollbackReleaseFreeze(ctx context.Context, db DBTX, arg CreateRollbackReleaseFreezeParams) (int64, error)
 	CreateRoutePolicyRule(ctx context.Context, db DBTX, arg CreateRoutePolicyRuleParams) error
 	CreateServiceBindingSmokeTask(ctx context.Context, db DBTX, arg CreateServiceBindingSmokeTaskParams) (AppTask, error)
 	// IAM-3 (ADR-039, issue #187 + #244 merged). One row per dashboard login.
@@ -661,6 +671,7 @@ type Querier interface {
 	// 100 rows/fingerprint cap evicts oldest request rows first).
 	DeleteAppErrorRequestsOlderThan(ctx context.Context, db DBTX, arg DeleteAppErrorRequestsOlderThanParams) error
 	DeleteAppErrorsByIDs(ctx context.Context, db DBTX, dollar_1 []pgtype.UUID) error
+	DeleteAppReleaseGate(ctx context.Context, db DBTX, arg DeleteAppReleaseGateParams) (AppReleaseGate, error)
 	DeleteAppSLO(ctx context.Context, db DBTX, arg DeleteAppSLOParams) (int64, error)
 	DeleteAutomation(ctx context.Context, db DBTX, arg DeleteAutomationParams) error
 	DeleteAutomationLiveSuites(ctx context.Context, db DBTX, arg DeleteAutomationLiveSuitesParams) error
@@ -1249,21 +1260,88 @@ type Querier interface {
 	FinancialAdjustmentInsert(ctx context.Context, db DBTX, arg FinancialAdjustmentInsertParams) error
 	// ADR-566. Policy mutations serialize per account and publish an atomic audit.
 	FinancialBudgetAccountLock(ctx context.Context, db DBTX, accountID pgtype.UUID) (pgtype.UUID, error)
+	FinancialBudgetAlertClaim(ctx context.Context, db DBTX, arg FinancialBudgetAlertClaimParams) (FinancialBudgetAlert, error)
+	FinancialBudgetAlertDeliveryGet(ctx context.Context, db DBTX, arg FinancialBudgetAlertDeliveryGetParams) (FinancialBudgetAlert, error)
+	FinancialBudgetAlertInsert(ctx context.Context, db DBTX, arg FinancialBudgetAlertInsertParams) error
+	FinancialBudgetAlertList(ctx context.Context, db DBTX, arg FinancialBudgetAlertListParams) ([]FinancialBudgetAlert, error)
+	FinancialBudgetAlertSettle(ctx context.Context, db DBTX, arg FinancialBudgetAlertSettleParams) (pgtype.UUID, error)
 	FinancialBudgetAppActionEligible(ctx context.Context, db DBTX, arg FinancialBudgetAppActionEligibleParams) (bool, error)
 	FinancialBudgetCount(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
 	FinancialBudgetDelete(ctx context.Context, db DBTX, arg FinancialBudgetDeleteParams) (FinancialBudgetPolicy, error)
+	FinancialBudgetEvaluationGet(ctx context.Context, db DBTX, arg FinancialBudgetEvaluationGetParams) ([]byte, error)
+	FinancialBudgetEvaluationPut(ctx context.Context, db DBTX, arg FinancialBudgetEvaluationPutParams) (pgtype.UUID, error)
 	FinancialBudgetGet(ctx context.Context, db DBTX, arg FinancialBudgetGetParams) (FinancialBudgetPolicy, error)
 	FinancialBudgetInsert(ctx context.Context, db DBTX, arg FinancialBudgetInsertParams) (FinancialBudgetPolicy, error)
 	FinancialBudgetList(ctx context.Context, db DBTX, arg FinancialBudgetListParams) ([]FinancialBudgetPolicy, error)
 	FinancialBudgetRevisionInsert(ctx context.Context, db DBTX, arg FinancialBudgetRevisionInsertParams) error
 	FinancialBudgetRevisionList(ctx context.Context, db DBTX, arg FinancialBudgetRevisionListParams) ([]FinancialBudgetRevision, error)
 	FinancialBudgetScopeOwned(ctx context.Context, db DBTX, arg FinancialBudgetScopeOwnedParams) (bool, error)
+	FinancialBudgetStopActive(ctx context.Context, db DBTX, arg FinancialBudgetStopActiveParams) ([]FinancialBudgetStopActiveRow, error)
+	FinancialBudgetStopInsert(ctx context.Context, db DBTX, arg FinancialBudgetStopInsertParams) error
+	FinancialBudgetStopTargetList(ctx context.Context, db DBTX, arg FinancialBudgetStopTargetListParams) ([]FinancialBudgetStopTarget, error)
+	FinancialBudgetStopTargetPut(ctx context.Context, db DBTX, arg FinancialBudgetStopTargetPutParams) (int64, error)
 	FinancialBudgetUpdate(ctx context.Context, db DBTX, arg FinancialBudgetUpdateParams) (FinancialBudgetPolicy, error)
 	FinancialCompletedComputeMinutes(ctx context.Context, db DBTX, arg FinancialCompletedComputeMinutesParams) ([]pgtype.Timestamptz, error)
+	FinancialComputeAccountActivationSafe(ctx context.Context, db DBTX, accountID pgtype.UUID) (pgtype.Bool, error)
+	// All account compute, including deleted apps and former jobs, consumes the
+	// same quantity allowance. Missing or above-ceiling contracts fail closed.
+	FinancialComputeAccountBaseline(ctx context.Context, db DBTX, arg FinancialComputeAccountBaselineParams) (FinancialComputeAccountBaselineRow, error)
+	FinancialComputeAccountBookGet(ctx context.Context, db DBTX, arg FinancialComputeAccountBookGetParams) ([]byte, error)
+	FinancialComputeAccountBookPut(ctx context.Context, db DBTX, arg FinancialComputeAccountBookPutParams) error
+	FinancialComputeAccountLeases(ctx context.Context, db DBTX, accountID pgtype.UUID) ([][]byte, error)
+	FinancialComputeAccountSamplingReady(ctx context.Context, db DBTX, arg FinancialComputeAccountSamplingReadyParams) (pgtype.Bool, error)
+	FinancialComputeAccountStrictEnabled(ctx context.Context, db DBTX, accountID pgtype.UUID) (bool, error)
+	FinancialComputeActivationSafe(ctx context.Context, db DBTX, arg FinancialComputeActivationSafeParams) (bool, error)
+	FinancialComputeAppLeases(ctx context.Context, db DBTX, arg FinancialComputeAppLeasesParams) ([][]byte, error)
+	FinancialComputeAppManaged(ctx context.Context, db DBTX, arg FinancialComputeAppManagedParams) (pgtype.Bool, error)
+	FinancialComputeAppOwned(ctx context.Context, db DBTX, arg FinancialComputeAppOwnedParams) (bool, error)
+	// Positive retained charges seed admission conservatively. Corrections cannot
+	// grant execution authority, and missing contracts must fail activation.
+	FinancialComputeBaseline(ctx context.Context, db DBTX, arg FinancialComputeBaselineParams) (FinancialComputeBaselineRow, error)
+	// Only overlapping physical attempts plus the last prior attempt are needed
+	// to bound stale residency. Historical wake count must not grow this read.
+	FinancialComputeBillingLeases(ctx context.Context, db DBTX, arg FinancialComputeBillingLeasesParams) ([][]byte, error)
+	FinancialComputeBookGet(ctx context.Context, db DBTX, arg FinancialComputeBookGetParams) ([]byte, error)
+	FinancialComputeBookPut(ctx context.Context, db DBTX, arg FinancialComputeBookPutParams) error
+	FinancialComputeClock(ctx context.Context, db DBTX) (pgtype.Timestamptz, error)
+	FinancialComputeHoldPut(ctx context.Context, db DBTX, arg FinancialComputeHoldPutParams) error
+	FinancialComputeHolds(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]FinancialComputeHoldsRow, error)
+	FinancialComputeJobActivationSafe(ctx context.Context, db DBTX, arg FinancialComputeJobActivationSafeParams) (pgtype.Bool, error)
+	// Current task projection must still name the immutable physical claim. A
+	// cancelled run, retry, soft deletion or instance retirement revokes new work.
+	FinancialComputeJobAttemptCurrent(ctx context.Context, db DBTX, arg FinancialComputeJobAttemptCurrentParams) (bool, error)
+	FinancialComputeJobAttemptGet(ctx context.Context, db DBTX, instanceID pgtype.UUID) (FinancialComputeJobAttempt, error)
+	FinancialComputeJobBaseline(ctx context.Context, db DBTX, arg FinancialComputeJobBaselineParams) (FinancialComputeJobBaselineRow, error)
+	FinancialComputeJobBookGet(ctx context.Context, db DBTX, arg FinancialComputeJobBookGetParams) ([]byte, error)
+	FinancialComputeJobBookPut(ctx context.Context, db DBTX, arg FinancialComputeJobBookPutParams) error
+	// A denied boot consumed no task execution. The scheduler calls this only
+	// after the native owner joins cancellation/absence for this exact instance.
+	FinancialComputeJobClaimDefer(ctx context.Context, db DBTX, arg FinancialComputeJobClaimDeferParams) (int64, error)
+	FinancialComputeJobLeases(ctx context.Context, db DBTX, arg FinancialComputeJobLeasesParams) ([][]byte, error)
+	FinancialComputeJobSamplingReady(ctx context.Context, db DBTX, arg FinancialComputeJobSamplingReadyParams) (pgtype.Bool, error)
+	FinancialComputeLatestLease(ctx context.Context, db DBTX, arg FinancialComputeLatestLeaseParams) ([]byte, error)
+	FinancialComputeLeaseGet(ctx context.Context, db DBTX, arg FinancialComputeLeaseGetParams) ([]byte, error)
+	FinancialComputeLeasePut(ctx context.Context, db DBTX, arg FinancialComputeLeasePutParams) (int64, error)
+	FinancialComputeNodeLeases(ctx context.Context, db DBTX, nodeID pgtype.UUID) ([][]byte, error)
+	FinancialComputeOwnerPut(ctx context.Context, db DBTX, arg FinancialComputeOwnerPutParams) error
+	FinancialComputeOwnerValid(ctx context.Context, db DBTX, arg FinancialComputeOwnerValidParams) (bool, error)
+	FinancialComputeOwnersReady(ctx context.Context, db DBTX, maxAgeSeconds float64) (pgtype.Bool, error)
+	FinancialComputeRetired(ctx context.Context, db DBTX, arg FinancialComputeRetiredParams) (bool, error)
+	FinancialComputeSamplingReady(ctx context.Context, db DBTX, arg FinancialComputeSamplingReadyParams) (pgtype.Bool, error)
+	FinancialEgressBaseline(ctx context.Context, db DBTX, arg FinancialEgressBaselineParams) (FinancialEgressBaselineRow, error)
+	FinancialEgressOwnerValid(ctx context.Context, db DBTX, arg FinancialEgressOwnerValidParams) (bool, error)
+	FinancialEgressOwnersReady(ctx context.Context, db DBTX, maxAgeSeconds float64) (bool, error)
+	FinancialEgressSamplingReady(ctx context.Context, db DBTX, arg FinancialEgressSamplingReadyParams) (pgtype.Bool, error)
 	FinancialEvidenceAccountLock(ctx context.Context, db DBTX, accountID pgtype.UUID) error
 	FinancialEvidenceBySource(ctx context.Context, db DBTX, arg FinancialEvidenceBySourceParams) (FinancialUsageEvidence, error)
 	FinancialEvidenceCoverage(ctx context.Context, db DBTX) (pgtype.Timestamptz, error)
 	FinancialEvidenceHead(ctx context.Context, db DBTX, arg FinancialEvidenceHeadParams) (int64, error)
+	FinancialPreviewCommandActivate(ctx context.Context, db DBTX, arg FinancialPreviewCommandActivateParams) (int64, error)
+	FinancialPreviewCommandHeld(ctx context.Context, db DBTX, arg FinancialPreviewCommandHeldParams) (bool, error)
+	FinancialPreviewCommandList(ctx context.Context, db DBTX, arg FinancialPreviewCommandListParams) ([]FinancialPreviewCommandRuntime, error)
+	FinancialPreviewCommandRegister(ctx context.Context, db DBTX, arg FinancialPreviewCommandRegisterParams) (int64, error)
+	FinancialPreviewCommandRetire(ctx context.Context, db DBTX, arg FinancialPreviewCommandRetireParams) (int64, error)
+	FinancialPreviewCommandUnowned(ctx context.Context, db DBTX, arg FinancialPreviewCommandUnownedParams) ([]FinancialPreviewCommandUnownedRow, error)
 	FinancialPriceSnapshotPut(ctx context.Context, db DBTX, arg FinancialPriceSnapshotPutParams) (pgtype.Timestamptz, error)
 	FinancialPriceSnapshotsList(ctx context.Context, db DBTX, arg FinancialPriceSnapshotsListParams) ([]FinancialPriceSnapshotsListRow, error)
 	FinancialSamplingCoverage(ctx context.Context, db DBTX, arg FinancialSamplingCoverageParams) (FinancialSamplingCoverageRow, error)
@@ -2458,6 +2536,7 @@ type Querier interface {
 	LayerArtifactHasReferences(ctx context.Context, db DBTX, storageKey string) (pgtype.Bool, error)
 	LifecycleApprovalClock(ctx context.Context, db DBTX) (pgtype.Timestamptz, error)
 	LifecycleHistoryCursorExists(ctx context.Context, db DBTX, arg LifecycleHistoryCursorExistsParams) (bool, error)
+	LiftReleaseFreeze(ctx context.Context, db DBTX, arg LiftReleaseFreezeParams) (ReleaseFreeze, error)
 	LinearOAuthFlowClaim(ctx context.Context, db DBTX, arg LinearOAuthFlowClaimParams) (IssueTrackerLinearOauthFlow, error)
 	LinearOAuthFlowCleanup(ctx context.Context, db DBTX, limit int32) error
 	LinearOAuthFlowDelete(ctx context.Context, db DBTX, arg LinearOAuthFlowDeleteParams) error
@@ -2568,6 +2647,7 @@ type Querier interface {
 	ListAppHealthHistory(ctx context.Context, db DBTX, arg ListAppHealthHistoryParams) ([][]byte, error)
 	ListAppPendingRestarts(ctx context.Context, db DBTX, arg ListAppPendingRestartsParams) ([]ListAppPendingRestartsRow, error)
 	ListAppPendingRollbacks(ctx context.Context, db DBTX, arg ListAppPendingRollbacksParams) ([][]byte, error)
+	ListAppReleaseGates(ctx context.Context, db DBTX, appID pgtype.UUID) ([]AppReleaseGate, error)
 	ListAppSLOs(ctx context.Context, db DBTX, appID pgtype.UUID) ([]AppSlo, error)
 	ListAppSecretRevocationTargets(ctx context.Context, db DBTX, revocationID pgtype.UUID) ([]ListAppSecretRevocationTargetsRow, error)
 	ListAppSecretRuntimeProcessObservations(ctx context.Context, db DBTX, arg ListAppSecretRuntimeProcessObservationsParams) ([]ListAppSecretRuntimeProcessObservationsRow, error)
@@ -2995,6 +3075,13 @@ type Querier interface {
 	// type. (commit 6 of the issue #757 mega-PR.)
 	ListTriggersForApp(ctx context.Context, db DBTX, appID pgtype.UUID) ([]ListTriggersForAppRow, error)
 	ListUDPListenersForApp(ctx context.Context, db DBTX, appID string) ([]AppUdpListener, error)
+	// Unlifted freezes that have not ended: active and upcoming windows, weekly
+	// windows and after-rollback policies.
+	ListUnliftedReleaseFreezes(ctx context.Context, db DBTX, arg ListUnliftedReleaseFreezesParams) ([]ReleaseFreeze, error)
+	// The account trace view's per-request wakes: one canonical instance per wake
+	// (its first), scoped to the account's apps before reading wake metadata, with
+	// the same boot and completion reads as ListAppWakeHistoryPage.
+	ListWakeHistoryByWakeIDs(ctx context.Context, db DBTX, arg ListWakeHistoryByWakeIDsParams) ([]ListWakeHistoryByWakeIDsRow, error)
 	ListWarmPoolReconciliationAppIDs(ctx context.Context, db DBTX, nodeID string) ([]string, error)
 	ListWatchingAppConfigGuards(ctx context.Context, db DBTX, rowLimit int32) ([]AppConfigGuard, error)
 	ListWorkerRecoveryApps(ctx context.Context, db DBTX, arg ListWorkerRecoveryAppsParams) ([]pgtype.UUID, error)
@@ -3877,6 +3964,8 @@ type Querier interface {
 	OrgQueueLockProjectPolicy(ctx context.Context, db DBTX, arg OrgQueueLockProjectPolicyParams) error
 	OrgQueuePersonalBindingReference(ctx context.Context, db DBTX, arg OrgQueuePersonalBindingReferenceParams) (bool, error)
 	OrgQueuePersonalInvocationReference(ctx context.Context, db DBTX, arg OrgQueuePersonalInvocationReferenceParams) (bool, error)
+	// async_quota_pooled: the organization's async reservations use its own
+	// counter. Until then they stay on the namespace counter (ADR-202610171908).
 	OrgQueueReadPolicy(ctx context.Context, db DBTX, arg OrgQueueReadPolicyParams) (OrgQueueReadPolicyRow, error)
 	OrgQueueUsage(ctx context.Context, db DBTX, orgID pgtype.UUID) (OrgQueueUsageRow, error)
 	OwnEnvironmentGitOpsField(ctx context.Context, db DBTX, arg OwnEnvironmentGitOpsFieldParams) (int64, error)
@@ -4713,6 +4802,14 @@ type Querier interface {
 	ReleaseEnvironmentGitSourceOverrides(ctx context.Context, db DBTX, sourceID pgtype.UUID) error
 	ReleaseEnvironmentGitSourceOwners(ctx context.Context, db DBTX, sourceID pgtype.UUID) error
 	ReleaseEnvironmentQueueDeliveryQuota(ctx context.Context, db DBTX, accountID pgtype.UUID) error
+	ReleaseGateCustomMetricWindow(ctx context.Context, db DBTX, arg ReleaseGateCustomMetricWindowParams) (ReleaseGateCustomMetricWindowRow, error)
+	// A deployment's organic requests in [since, until): all, 5xx, and those
+	// slower than latency_threshold_ms (0 counts none as slow).
+	ReleaseGateDeploymentSLI(ctx context.Context, db DBTX, arg ReleaseGateDeploymentSLIParams) (ReleaseGateDeploymentSLIRow, error)
+	// Error groups the deployment produced first, with at least min_events
+	// events, largest first. Error classes are a closed set; routes and
+	// messages are not returned.
+	ReleaseGateNewErrorGroups(ctx context.Context, db DBTX, arg ReleaseGateNewErrorGroupsParams) ([]ReleaseGateNewErrorGroupsRow, error)
 	ReleaseManagedPostgresCutover(ctx context.Context, db DBTX, arg ReleaseManagedPostgresCutoverParams) (int64, error)
 	ReleaseManagedPostgresDrainHostPorts(ctx context.Context, db DBTX, arg ReleaseManagedPostgresDrainHostPortsParams) error
 	ReleaseManagedPostgresLifecycleLease(ctx context.Context, db DBTX, arg ReleaseManagedPostgresLifecycleLeaseParams) (int64, error)
@@ -5208,6 +5305,11 @@ type Querier interface {
 	// The placement shares the fenced stamp (ADR-1195); an attempt keeps its first.
 	StampCustomerOperationExecutionAttempt(ctx context.Context, db DBTX, arg StampCustomerOperationExecutionAttemptParams) (int64, error)
 	StampDeadLetterEventReplay(ctx context.Context, db DBTX, arg StampDeadLetterEventReplayParams) error
+	// ADR 20261019104819: finished rows whose producer set no horizon get the
+	// plan default from pkg/api/limits.go. Failed and dead-lettered rows keep at
+	// least the failure floor so DLQ replay and execution recovery still find
+	// them. The reaper prunes stamped rows once they are due.
+	StampDefaultInvocationRetention(ctx context.Context, db DBTX, arg StampDefaultInvocationRetentionParams) (int64, error)
 	StampDeploymentRuntimeBase(ctx context.Context, db DBTX, arg StampDeploymentRuntimeBaseParams) error
 	StampLegacyProductionScaleIn(ctx context.Context, db DBTX, id pgtype.UUID) (pgtype.UUID, error)
 	StampLegacyProductionScaleOut(ctx context.Context, db DBTX, id pgtype.UUID) (pgtype.UUID, error)

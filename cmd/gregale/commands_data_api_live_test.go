@@ -1,5 +1,5 @@
 // adr: 20261016151947 — data-api live sets up what Data API live reads need.
-package main
+package main_test
 
 import (
 	"context"
@@ -7,13 +7,18 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"os"
 	"regexp"
 	"strings"
 	"sync"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
+
+const liveUsageURLKey = "DATA_API_USAGE_URL"
 
 // liveAPI fakes the routes data-api live reads and writes.
 type liveAPI struct {
@@ -58,10 +63,10 @@ func newLiveAPI(t *testing.T, l *liveAPI) {
 		case r.URL.Path == "/v1/apps/shop-data/secrets":
 			list := api.AppSecretListResponse{}
 			if l.reporting {
-				list.Secrets = []api.AppSecretResponse{{Key: dataAPIUsageURLKey, Scope: "default"}}
+				list.Secrets = []api.AppSecretResponse{{Key: liveUsageURLKey, Scope: "default"}}
 			}
 			_ = json.NewEncoder(w).Encode(list)
-		case r.URL.Path == "/v1/apps/shop-data/secrets/"+dataAPIUsageURLKey:
+		case r.URL.Path == "/v1/apps/shop-data/secrets/"+liveUsageURLKey:
 			l.reporting = true
 			w.WriteHeader(http.StatusNoContent)
 		case r.URL.Path == "/v1/apps/shop-data/realtime/endpoints" && r.Method == http.MethodPost:
@@ -85,19 +90,39 @@ func newLiveAPI(t *testing.T, l *liveAPI) {
 	t.Setenv("FAAS_API", server.URL)
 }
 
+// liveHTTPSClient talks to the fake while reporting an HTTPS base URL, which
+// usage reporting requires.
+func liveHTTPSClient(t *testing.T) *api.Client {
+	t.Helper()
+	target, err := url.Parse(os.Getenv("FAAS_API"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := api.NewClient("https://api.gregale.example", "test-token")
+	client.HTTPClient().Transport = liveRoundTripper(func(r *http.Request) (*http.Response, error) {
+		r.URL.Scheme, r.URL.Host = target.Scheme, target.Host
+		return http.DefaultTransport.RoundTrip(r)
+	})
+	return client
+}
+
+type liveRoundTripper func(*http.Request) (*http.Response, error)
+
+func (f liveRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
 func TestDataAPILiveEnableSetsUpOnlyWhatIsMissing(t *testing.T) {
 	fake := &liveAPI{}
 	newLiveAPI(t, fake)
-	client, ctx := httpsClient(t), context.Background()
+	client, ctx := liveHTTPSClient(t), context.Background()
 	app, err := client.GetApp(ctx, "shop-data")
 	if err != nil {
 		t.Fatal(err)
 	}
-	receipt, err := readDataAPILive(ctx, client, app, "default")
+	receipt, err := main.ReadDataAPILive(ctx, client, app, "default")
 	if err != nil || receipt.Database != "shop" || receipt.DatabaseID != "db-1" || receipt.Ready {
 		t.Fatalf("before: %+v (%v)", receipt, err)
 	}
-	if err := enableDataAPILive(ctx, client, app, &receipt); err != nil {
+	if err := main.EnableDataAPILive(ctx, client, app, &receipt); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Join(receipt.Changed, ",") != "live_queries,usage_reporting,realtime_endpoint" || !receipt.Ready ||
@@ -120,21 +145,21 @@ func TestDataAPILiveEnableSetsUpOnlyWhatIsMissing(t *testing.T) {
 	}
 
 	fake.writes = nil
-	again, err := readDataAPILive(ctx, client, app, "default")
+	again, err := main.ReadDataAPILive(ctx, client, app, "default")
 	if err != nil || !again.Ready {
 		t.Fatalf("second read: %+v (%v)", again, err)
 	}
-	if err := enableDataAPILive(ctx, client, app, &again); err != nil || len(again.Changed) != 0 || len(fake.writes) != 0 {
+	if err := main.EnableDataAPILive(ctx, client, app, &again); err != nil || len(again.Changed) != 0 || len(fake.writes) != 0 {
 		t.Fatalf("a second enable changed %v, wrote %v (%v)", again.Changed, fake.writes, err)
 	}
 }
 
 func TestDataAPILiveStatusExplainsWhatIsMissing(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	fake := &liveAPI{live: true, reporting: true, endpoints: []api.ManagedRealtimeEndpointResponse{{ID: "rt-oidc", AuthMode: api.RealtimeAuthModeOIDCJWT}}}
 	newLiveAPI(t, fake)
-	stdout, stderr, restore := swapIO(t)
-	code := cmdDataAPILive([]string{"status", "shop-data"})
+	stdout, stderr, restore := main.SwapIO(t)
+	code := main.CmdDataAPILive([]string{"status", "shop-data"})
 	warnings := stderr()
 	restore()
 	if code != 0 {
@@ -153,14 +178,14 @@ func TestDataAPILiveStatusExplainsWhatIsMissing(t *testing.T) {
 	}
 
 	fake.hidden = true
-	_, stderr, restore = swapIO(t)
-	code = cmdDataAPILive([]string{"status", "shop-data"})
+	_, stderr, restore = main.SwapIO(t)
+	code = main.CmdDataAPILive([]string{"status", "shop-data"})
 	refusal := stderr()
 	restore()
 	if code == 0 || !strings.Contains(refusal, "not available to this account yet") {
 		t.Fatalf("outside the rollout: exit %d, %s", code, refusal)
 	}
-	if code := cmdDataAPILive([]string{"status", "shop-data", "--no-restart"}); code != 1 {
+	if code := main.CmdDataAPILive([]string{"status", "shop-data", "--no-restart"}); code != 1 {
 		t.Fatal("status accepted --no-restart")
 	}
 }

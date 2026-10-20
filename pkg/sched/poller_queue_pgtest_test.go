@@ -1,4 +1,4 @@
-package sched
+package sched_test
 
 // adr: 100
 
@@ -15,6 +15,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/exclusivework"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
@@ -68,11 +69,11 @@ func TestQueuePollerLinksTriggerAndInvocationOutcomes(t *testing.T) {
 			if err != nil {
 				t.Fatalf("CreateTriggerIfUnderQuota: %v", err)
 			}
-			pollerSource, err := newQueuePoller(pool, trigger, nil)
+			pollerSource, err := sched.NewQueuePoller(pool, trigger, nil)
 			if err != nil {
 				t.Fatalf("newQueuePoller: %v", err)
 			}
-			poller := pollerSource.(*queuePoller)
+			poller := pollerSource.(*sched.QueuePoller)
 
 			invocation, err := store.EnqueueInvocation(ctx, state.Invocation{
 				AccountID: account.ID,
@@ -152,7 +153,7 @@ func TestQueuePollerLinksTriggerAndInvocationOutcomes(t *testing.T) {
 			if err != nil {
 				t.Fatalf("InsertTriggerRecord failure: %v", err)
 			}
-			if err := poller.Nack(ctx, trigger, []string{failed.ID}, triggerReasonPoisonRecord); err != nil {
+			if err := poller.Nack(ctx, trigger, []string{failed.ID}, sched.TriggerReasonPoisonRecord); err != nil {
 				t.Fatalf("Nack: %v", err)
 			}
 			assertQueueLinkedStates(t, ctx, pool, failed.ID, failedRecordID, "dead_letter", "dead_letter", "dead_letter")
@@ -305,9 +306,9 @@ func TestExclusiveQueueTriggerAdmitsBeforeCompletingInvocation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	loop := makeLoopForDLQ()
-	loop.pool = pool
-	if err := loop.dispatchOneTrigger(ctx, trigger, store, nil); err != nil {
+	loop := sched.MakeLoopForDLQ()
+	(*loop.Pool()) = pool
+	if err := loop.DispatchOneTrigger(ctx, trigger, store, nil); err != nil {
 		t.Fatal(err)
 	}
 	completed, err := store.InvocationByID(ctx, invocation.ID)
@@ -344,9 +345,9 @@ func TestExclusiveQueueTriggerRejectsWithExplicitDeadLetterReason(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	loop := makeLoopForDLQ()
-	loop.pool = pool
-	if err := loop.dispatchOneTrigger(ctx, trigger, store, nil); err != nil {
+	loop := sched.MakeLoopForDLQ()
+	(*loop.Pool()) = pool
+	if err := loop.DispatchOneTrigger(ctx, trigger, store, nil); err != nil {
 		t.Fatal(err)
 	}
 	dead, err := store.InvocationByID(ctx, invocation.ID)
@@ -359,8 +360,8 @@ func TestExclusiveQueueTriggerRejectsWithExplicitDeadLetterReason(t *testing.T) 
 		WHERE tr.trigger_id=$1 AND tr.item_identifier=$2`, trigger.ID, invocation.ID).Scan(&reason); err != nil {
 		t.Fatal(err)
 	}
-	if reason != triggerReasonExclusiveOperationRejected {
-		t.Fatalf("dead-letter reason=%q, want %q", reason, triggerReasonExclusiveOperationRejected)
+	if reason != sched.TriggerReasonExclusiveOperationRejected {
+		t.Fatalf("dead-letter reason=%q, want %q", reason, sched.TriggerReasonExclusiveOperationRejected)
 	}
 }
 
@@ -406,13 +407,13 @@ func TestNamedQueuePollerSharesWorkReservationsAndFencesAcknowledgement(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	newPoller := func() *queuePoller {
+	newPoller := func() *sched.QueuePoller {
 		t.Helper()
-		source, err := newQueuePoller(pool, trigger, nil)
+		source, err := sched.NewQueuePoller(pool, trigger, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
-		return source.(*queuePoller)
+		return source.(*sched.QueuePoller)
 	}
 	policy := workpolicy.Policy{Name: "documents", MaxRunningPerKey: 1, MaxRunningPerFairnessKey: 1}
 	add := func(key, fairness string) state.Invocation {
@@ -509,7 +510,7 @@ func TestNamedQueuePollerSharesWorkReservationsAndFencesAcknowledgement(t *testi
 	if result := retryPoller.Poll(ctx, trigger); result.Error != nil || len(result.Records) != 1 || result.Records[0].ItemIdentifier != retry.ID {
 		t.Fatalf("first keyed retry claim = %+v", result)
 	}
-	if err := retryPoller.Nack(ctx, trigger, []string{retry.ID}, triggerReasonBrokerError); err != nil {
+	if err := retryPoller.Nack(ctx, trigger, []string{retry.ID}, sched.TriggerReasonBrokerError); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `update invocations set due_at=now()-interval '1 second' where id=$1`, retry.ID); err != nil {
@@ -569,11 +570,11 @@ func TestNamedQueueReceiptFollowsPendingWorkPolicyTerminalState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	source, err := newQueuePoller(pool, trigger, nil)
+	source, err := sched.NewQueuePoller(pool, trigger, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	poller := source.(*queuePoller)
+	poller := source.(*sched.QueuePoller)
 
 	for _, terminal := range []string{"superseded", "cancelled", "expired"} {
 		t.Run(terminal, func(t *testing.T) {
@@ -615,7 +616,7 @@ func TestNamedQueueReceiptFollowsPendingWorkPolicyTerminalState(t *testing.T) {
 					"retry", time.Now().Add(time.Hour)); err != nil {
 					t.Fatal(err)
 				}
-				if err := poller.Nack(ctx, trigger, []string{old.ID}, triggerReasonBrokerError); err != nil {
+				if err := poller.Nack(ctx, trigger, []string{old.ID}, sched.TriggerReasonBrokerError); err != nil {
 					t.Fatal(err)
 				}
 				assertQueueLinkedStates(t, ctx, pool, old.ID, recordID, "pending", "retry", "")

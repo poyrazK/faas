@@ -275,6 +275,9 @@ func diffFieldsChanged(a state.App, w reposcan.Workload, startCmd string, availa
 	if a.Manifest.BuildDockerfile != w.Dockerfile {
 		changed = append(changed, "dockerfile")
 	}
+	if a.Manifest.DockerfileBuild.SHA256() != w.DockerfileBuild.SHA256() {
+		changed = append(changed, "dockerfile_build")
+	}
 	imageManifest := state.AppManifest{}
 	applyProjectImage(&imageManifest, w)
 	if a.Manifest.ProjectImage != imageManifest.ProjectImage {

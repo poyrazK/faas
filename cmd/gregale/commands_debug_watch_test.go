@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -30,13 +31,13 @@ func TestCmdDebugRequestsWatchOnceEmitsRows(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_test")
 
-	stdout, _, restore := swapIO(t)
+	stdout, _, restore := main.SwapIO(t)
 	defer restore()
-	oldJSON := jsonOutput
-	jsonOutput = false
-	defer func() { jsonOutput = oldJSON }()
+	oldJSON := (*main.JsonOutput)
+	(*main.JsonOutput) = false
+	defer func() { (*main.JsonOutput) = oldJSON }()
 
-	if code := cmdDebugRequestsWatch([]string{"my-app", "--once", "--interval", "250ms"}); code != 0 {
+	if code := main.CmdDebugRequestsWatch([]string{"my-app", "--once", "--interval", "250ms"}); code != 0 {
 		t.Fatalf("cmdDebugRequestsWatch() = %d, want 0", code)
 	}
 	got := stdout.String()
@@ -56,16 +57,16 @@ func TestCmdDebugRequestsWatchOnceJSONHeartbeat(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_test")
 
-	stdout, _, restore := swapIO(t)
+	stdout, _, restore := main.SwapIO(t)
 	defer restore()
-	oldJSON := jsonOutput
-	jsonOutput = true
-	defer func() { jsonOutput = oldJSON }()
+	oldJSON := (*main.JsonOutput)
+	(*main.JsonOutput) = true
+	defer func() { (*main.JsonOutput) = oldJSON }()
 
-	if code := cmdDebugRequestsWatch([]string{"--once", "my-app", "--interval=250ms"}); code != 0 {
+	if code := main.CmdDebugRequestsWatch([]string{"--once", "my-app", "--interval=250ms"}); code != 0 {
 		t.Fatalf("cmdDebugRequestsWatch() = %d, want 0", code)
 	}
-	var event debugWatchEvent
+	var event main.DebugWatchEvent
 	if err := json.Unmarshal(stdout.Bytes(), &event); err != nil {
 		t.Fatalf("watch JSON = %q: %v", stdout.String(), err)
 	}
@@ -92,16 +93,16 @@ func TestCmdDebugRegressionsWatchOnceJSON(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_test")
 
-	stdout, _, restore := swapIO(t)
+	stdout, _, restore := main.SwapIO(t)
 	defer restore()
-	oldJSON := jsonOutput
-	jsonOutput = true
-	defer func() { jsonOutput = oldJSON }()
+	oldJSON := (*main.JsonOutput)
+	(*main.JsonOutput) = true
+	defer func() { (*main.JsonOutput) = oldJSON }()
 
-	if code := cmdDebugRegressionsWatch([]string{"my-app", "--once", "--interval", "250ms"}); code != 0 {
+	if code := main.CmdDebugRegressionsWatch([]string{"my-app", "--once", "--interval", "250ms"}); code != 0 {
 		t.Fatalf("cmdDebugRegressionsWatch() = %d, want 0", code)
 	}
-	var event debugWatchEvent
+	var event main.DebugWatchEvent
 	if err := json.Unmarshal(stdout.Bytes(), &event); err != nil {
 		t.Fatalf("watch JSON = %q: %v", stdout.String(), err)
 	}
@@ -139,14 +140,14 @@ func TestCmdDebugBundleWritesRedactedInvestigation(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_test")
 
-	stdout, _, restore := swapIO(t)
+	stdout, _, restore := main.SwapIO(t)
 	defer restore()
-	oldJSON := jsonOutput
-	jsonOutput = false
-	defer func() { jsonOutput = oldJSON }()
+	oldJSON := (*main.JsonOutput)
+	(*main.JsonOutput) = false
+	defer func() { (*main.JsonOutput) = oldJSON }()
 
 	outPath := filepath.Join(t.TempDir(), "incident.json")
-	if code := cmdDebugBundle([]string{
+	if code := main.CmdDebugBundle([]string{
 		"my-app", "request-1", "--since", "1h", "--source", "source", "--mirror", "mirror", "--output", outPath,
 	}); code != 0 {
 		t.Fatalf("cmdDebugBundle() = %d, want 0", code)
@@ -155,11 +156,11 @@ func TestCmdDebugBundleWritesRedactedInvestigation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var bundle debugIncidentBundle
+	var bundle main.DebugIncidentBundle
 	if err := json.Unmarshal(b, &bundle); err != nil {
 		t.Fatalf("bundle JSON: %v", err)
 	}
-	if bundle.SchemaVersion != debugIncidentBundleSchema || bundle.Compare == nil || bundle.Request.ID != "request-1" || bundle.Coverage.TelemetryRows != 10 {
+	if bundle.SchemaVersion != main.DebugIncidentBundleSchema || bundle.Compare == nil || bundle.Request.ID != "request-1" || bundle.Coverage.TelemetryRows != 10 {
 		t.Fatalf("bundle = %#v", bundle)
 	}
 	if bundle.Redaction.Profile != "debugger-safe" || len(bundle.Redaction.Excluded) == 0 {

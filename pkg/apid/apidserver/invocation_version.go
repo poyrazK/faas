@@ -84,6 +84,13 @@ func (s *server) enqueuePreparedInvocation(ctx context.Context, inv state.Invoca
 	} else {
 		created, err = s.store.EnqueueInvocation(ctx, inv)
 	}
+	var depth *state.InvocationDepthError
+	if errors.As(err, &depth) {
+		if inv.Source == state.InvocationDelayedTask {
+			return state.Invocation{}, api.ErrPlanDelayedTasksCap(depth.Limit, depth.Observed)
+		}
+		return state.Invocation{}, api.ErrPlanQueueDepth(depth.Limit, depth.Observed)
+	}
 	if errors.Is(err, state.ErrQueueBindingRetired) {
 		return state.Invocation{}, api.NewProblem(http.StatusConflict, "queue_binding_retired", "Queue binding retired", "this queue is held for explicit recovery")
 	}

@@ -1,4 +1,4 @@
-package state
+package state_test
 
 // memstore_app_registry_credentials_test pins the in-memory
 // implementation of the per-app private-registry Basic Auth store
@@ -20,11 +20,12 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
-func registryCredFixture(t *testing.T) (*MemStore, context.Context, Account, App, App) {
+func registryCredFixture(t *testing.T) (*state.MemStore, context.Context, state.Account, state.App, state.App) {
 	t.Helper()
-	m := NewMemStore()
+	m := state.NewMemStore()
 	ctx := context.Background()
 	acctA, err := m.CreateAccount(ctx, "registry-auth-a@example.com", api.PlanHobby)
 	if err != nil {
@@ -34,14 +35,14 @@ func registryCredFixture(t *testing.T) (*MemStore, context.Context, Account, App
 	if err != nil {
 		t.Fatalf("CreateAccount B: %v", err)
 	}
-	appA, err := m.CreateApp(ctx, App{
-		AccountID: acctA.ID, Slug: "reg-auth-a", RAMMB: 256, Type: AppTypeApp,
+	appA, err := m.CreateApp(ctx, state.App{
+		AccountID: acctA.ID, Slug: "reg-auth-a", RAMMB: 256, Type: state.AppTypeApp,
 	})
 	if err != nil {
 		t.Fatalf("CreateApp A: %v", err)
 	}
-	appB, err := m.CreateApp(ctx, App{
-		AccountID: acctB.ID, Slug: "reg-auth-b", RAMMB: 256, Type: AppTypeApp,
+	appB, err := m.CreateApp(ctx, state.App{
+		AccountID: acctB.ID, Slug: "reg-auth-b", RAMMB: 256, Type: state.AppTypeApp,
 	})
 	if err != nil {
 		t.Fatalf("CreateApp B: %v", err)
@@ -53,7 +54,7 @@ func registryCredFixture(t *testing.T) (*MemStore, context.Context, Account, App
 // store; tests that need to drive the GDPR pre-delete handshake use
 // this because the minimal registryCredFixture intentionally avoids
 // leaking the Account through every test signature.
-func fixtureAcctID(t *testing.T, m *MemStore, app App) string {
+func fixtureAcctID(t *testing.T, m *state.MemStore, app state.App) string {
 	t.Helper()
 	all, err := m.ListAllAccounts(context.Background())
 	if err != nil {
@@ -116,7 +117,7 @@ func TestMemStore_AppRegistryCredentials_RoundTrip(t *testing.T) {
 	if err := m.DeleteAppRegistryCredential(ctx, app.AccountID, app.ID, "ghcr.io"); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
-	if _, err := m.GetAppRegistryCredential(ctx, app.AccountID, app.ID, "ghcr.io"); !errors.Is(err, ErrNotFound) {
+	if _, err := m.GetAppRegistryCredential(ctx, app.AccountID, app.ID, "ghcr.io"); !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("Get after Delete = %v, want ErrNotFound", err)
 	}
 }
@@ -167,11 +168,11 @@ func TestMemStore_AppRegistryCredentials_AccountIsolation(t *testing.T) {
 		t.Fatalf("Upsert under A: %v", err)
 	}
 	// Get under the wrong (accountID, appID) returns ErrNotFound.
-	if _, err := m.GetAppRegistryCredential(ctx, appB.AccountID, appA.ID, "ghcr.io"); !errors.Is(err, ErrNotFound) {
+	if _, err := m.GetAppRegistryCredential(ctx, appB.AccountID, appA.ID, "ghcr.io"); !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("Get cross-account = %v, want ErrNotFound", err)
 	}
 	// Get under the right account but a different app returns ErrNotFound.
-	if _, err := m.GetAppRegistryCredential(ctx, appA.AccountID, appB.ID, "ghcr.io"); !errors.Is(err, ErrNotFound) {
+	if _, err := m.GetAppRegistryCredential(ctx, appA.AccountID, appB.ID, "ghcr.io"); !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("Get cross-app = %v, want ErrNotFound", err)
 	}
 	// List under the wrong account returns nothing.
@@ -183,7 +184,7 @@ func TestMemStore_AppRegistryCredentials_AccountIsolation(t *testing.T) {
 		t.Errorf("List cross-account len = %d, want 0", len(list))
 	}
 	// Delete under the wrong account returns ErrNotFound.
-	if err := m.DeleteAppRegistryCredential(ctx, appB.AccountID, appA.ID, "ghcr.io"); !errors.Is(err, ErrNotFound) {
+	if err := m.DeleteAppRegistryCredential(ctx, appB.AccountID, appA.ID, "ghcr.io"); !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("Delete cross-account = %v, want ErrNotFound", err)
 	}
 	// The original row survives.
@@ -198,7 +199,7 @@ func TestMemStore_AppRegistryCredentials_AccountIsolation(t *testing.T) {
 // land).
 func TestMemStore_AppRegistryCredentials_DeleteNotFound(t *testing.T) {
 	m, ctx, _, app, _ := registryCredFixture(t)
-	if err := m.DeleteAppRegistryCredential(ctx, app.AccountID, app.ID, "never-existed.example.com"); !errors.Is(err, ErrNotFound) {
+	if err := m.DeleteAppRegistryCredential(ctx, app.AccountID, app.ID, "never-existed.example.com"); !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("Delete absent = %v, want ErrNotFound", err)
 	}
 }
@@ -303,7 +304,7 @@ func TestMemStore_AppRegistryCredentials_MarkUsed_UpdatesLastUsed(t *testing.T) 
 // non-fatal — the deployment already succeeded).
 func TestMemStore_AppRegistryCredentials_MarkUsed_NotFound(t *testing.T) {
 	m, ctx, _, app, _ := registryCredFixture(t)
-	if err := m.MarkAppRegistryCredentialUsed(ctx, app.AccountID, app.ID, "never-existed.example.com"); !errors.Is(err, ErrNotFound) {
+	if err := m.MarkAppRegistryCredentialUsed(ctx, app.AccountID, app.ID, "never-existed.example.com"); !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("MarkUsed absent = %v, want ErrNotFound", err)
 	}
 }

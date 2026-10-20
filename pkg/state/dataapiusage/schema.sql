@@ -1,6 +1,6 @@
 -- Compile-time projection of the tables the Data API usage queries read.
 -- Runtime schema is owned by migrations 20261019131100664 and
--- 20261019172254731 (and, for apps, earlier migrations). This file never
+-- 20261020085255268 (and, for apps, earlier migrations). This file never
 -- executes against a database.
 CREATE TABLE apps (
  id uuid NOT NULL,

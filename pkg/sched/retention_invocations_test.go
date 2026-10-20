@@ -1,5 +1,5 @@
 // adr: 179 — deadline failures must reach the configured failure destination.
-package sched
+package sched_test
 
 import (
 	"context"
@@ -9,13 +9,14 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestInvocationsRetentionDeadlineEmitsFailureDestination(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemStore()
-	account, app, _ := seedApp(t, store, api.PlanPro, 512, 5)
+	account, app, _ := sched.SeedApp(t, store, api.PlanPro, 512, 5)
 
 	hook, err := store.CreateAppWebhook(ctx, state.AppWebhook{
 		AccountID:    account.ID,
@@ -48,7 +49,7 @@ func TestInvocationsRetentionDeadlineEmitsFailureDestination(t *testing.T) {
 		t.Fatalf("EnqueueInvocation: %v", err)
 	}
 
-	retention := NewInvocationsRetention(store, slog.Default()).WithClock(func() time.Time { return now })
+	retention := sched.NewInvocationsRetention(store, slog.Default()).WithClock(func() time.Time { return now })
 	forced, err := retention.SweepDeadlineBreached(ctx, 10)
 	if err != nil {
 		t.Fatalf("SweepDeadlineBreached: %v", err)
@@ -95,5 +96,38 @@ func TestInvocationsRetentionDeadlineEmitsFailureDestination(t *testing.T) {
 	}
 	if len(deliveries) != 1 {
 		t.Fatalf("deliveries after second sweep = %d, want 1", len(deliveries))
+	}
+}
+
+// adr: 20261019104819 — finished rows without a producer horizon get the
+// plan default and are reaped once it passes, instead of living forever.
+func TestInvocationsRetentionStampsAndReapsRowsWithoutHorizon(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	account, app, _ := sched.SeedApp(t, store, api.PlanHobby, 512, 2)
+	inv, err := store.EnqueueInvocation(ctx, state.Invocation{AccountID: account.ID, AppID: app.ID,
+		Source: state.InvocationQueue, Method: "POST", Path: "/tick", DueAt: time.Now().UTC()})
+	if err != nil {
+		t.Fatalf("EnqueueInvocation: %v", err)
+	}
+	if _, err := store.ClaimInvocation(ctx, inv.ID, "", 30); err != nil {
+		t.Fatalf("ClaimInvocation: %v", err)
+	}
+	if err := store.CompleteInvocation(ctx, inv.ID, json.RawMessage(`{}`)); err != nil {
+		t.Fatalf("CompleteInvocation: %v", err)
+	}
+
+	now := time.Now().UTC()
+	if deleted, _, err := sched.NewInvocationsRetention(store, slog.Default()).WithClock(func() time.Time { return now }).SweepOnce(ctx); err != nil || deleted != 0 {
+		t.Fatalf("first sweep deleted %d, %v; want 0 (stamp only)", deleted, err)
+	}
+	stamped, err := store.InvocationByID(ctx, inv.ID)
+	if err != nil || stamped.ResultRetentionUntil == nil {
+		t.Fatalf("row after first sweep = %+v, %v; want a retention horizon", stamped.ResultRetentionUntil, err)
+	}
+
+	later := stamped.ResultRetentionUntil.Add(time.Minute)
+	if deleted, _, err := sched.NewInvocationsRetention(store, slog.Default()).WithClock(func() time.Time { return later }).SweepOnce(ctx); err != nil || deleted != 1 {
+		t.Fatalf("sweep after the horizon deleted %d, %v; want 1", deleted, err)
 	}
 }

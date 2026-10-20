@@ -1,7 +1,8 @@
-package main
+package main_test
 
 import (
 	"bytes"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -33,8 +34,8 @@ func TestCmdDeploysRetry_LocalValidation(t *testing.T) {
 		name string
 		run  func([]string) int
 	}{
-		{"handler", cmdDeploysRetry},
-		{"process dispatch", func(args []string) int { return run(append([]string{"deploys", "retry"}, args...)) }},
+		{"handler", main.CmdDeploysRetry},
+		{"process dispatch", func(args []string) int { return main.Run(append([]string{"deploys", "retry"}, args...)) }},
 	} {
 		t.Run(entry.name, func(t *testing.T) {
 			for _, tt := range tests {
@@ -48,9 +49,9 @@ func TestCmdDeploysRetry_LocalValidation(t *testing.T) {
 					t.Setenv("FAAS_API", srv.URL)
 					t.Setenv("FAAS_TOKEN", "fp_live_test")
 					var out bytes.Buffer
-					previous := osStdout
-					osStdout = &out
-					t.Cleanup(func() { osStdout = previous })
+					previous := (*main.OsStdout)
+					(*main.OsStdout) = &out
+					t.Cleanup(func() { (*main.OsStdout) = previous })
 					if got := entry.run(tt.args); got != tt.want {
 						t.Errorf("exit = %d, want %d", got, tt.want)
 					}
@@ -82,7 +83,7 @@ func TestCmdDeploysRetry_UUIDFormats(t *testing.T) {
 			defer srv.Close()
 			t.Setenv("FAAS_API", srv.URL)
 			t.Setenv("FAAS_TOKEN", "fp_live_test")
-			if got := cmdDeploysRetry([]string{id, "--from=image_build"}); got != 0 {
+			if got := main.CmdDeploysRetry([]string{id, "--from=image_build"}); got != 0 {
 				t.Errorf("exit = %d, want zero", got)
 			}
 			if got := calls.Load(); got != 1 {

@@ -11,7 +11,7 @@
 //   - cmdAccount restore: hits POST /v1/account/restore
 //   - cmdAccount status: renders plan + status
 
-package main
+package main_test
 
 import (
 	"bytes"
@@ -23,6 +23,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -61,7 +62,7 @@ func (s *accountSink) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			status = http.StatusOK
 		}
 		if payload != nil {
-			writeJSONTest(w, payload)
+			main.WriteJSONTest(w, payload)
 		} else {
 			w.WriteHeader(status)
 		}
@@ -77,20 +78,20 @@ func (s *accountSink) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// The status returned from onPost is advisory only; writeJSONTest
 		// just sets headers + writes the body, so we don't gate on it.
 		_, payload := s.onPost()
-		writeJSONTest(w, payload)
+		main.WriteJSONTest(w, payload)
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
 }
 
 func TestCmdAccount_DispatchUnknown(t *testing.T) {
-	if code := cmdAccount([]string{"frobnicate"}); code != 1 {
+	if code := main.CmdAccount([]string{"frobnicate"}); code != 1 {
 		t.Errorf("unknown subcommand = %d, want 1", code)
 	}
 }
 
 func TestCmdAccount_DispatchNoArgs(t *testing.T) {
-	if code := cmdAccount(nil); code != 1 {
+	if code := main.CmdAccount(nil); code != 1 {
 		t.Errorf("no args = %d, want 1", code)
 	}
 }
@@ -116,7 +117,7 @@ func TestCmdAccountExport_WritesFile(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
 	out := filepath_Join(t.TempDir(), "bundle.json")
-	if code := cmdAccountExport([]string{"-o", out}); code != 0 {
+	if code := main.CmdAccountExport([]string{"-o", out}); code != 0 {
 		t.Fatalf("cmdAccountExport = %d, want 0", code)
 	}
 	body, err := os.ReadFile(out)
@@ -143,7 +144,7 @@ func TestCmdAccountExport_NoSecretsFlag(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
 	out := filepath_Join(t.TempDir(), "bundle.json")
-	if code := cmdAccountExport([]string{"--no-secrets", "-o", out}); code != 0 {
+	if code := main.CmdAccountExport([]string{"--no-secrets", "-o", out}); code != 0 {
 		t.Fatalf("cmdAccountExport --no-secrets = %d, want 0", code)
 	}
 	if capturedPath != "/v1/account/export?include_secrets=false" {
@@ -166,12 +167,12 @@ func TestCmdAccountExport_RateLimitSurfacesRetryAfter(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
 	t.Run("human", func(t *testing.T) {
-		oldJSON := jsonOutput
-		jsonOutput = false
-		t.Cleanup(func() { jsonOutput = oldJSON })
-		stderr, restore := captureStderr(t)
+		oldJSON := (*main.JsonOutput)
+		(*main.JsonOutput) = false
+		t.Cleanup(func() { (*main.JsonOutput) = oldJSON })
+		stderr, restore := main.CaptureStderr(t)
 		out := filepath_Join(t.TempDir(), "bundle.json")
-		if code := cmdAccountExport([]string{"-o", out}); code == 0 {
+		if code := main.CmdAccountExport([]string{"-o", out}); code == 0 {
 			t.Fatal("rate-limited export exited successfully")
 		}
 		restore()
@@ -184,12 +185,12 @@ func TestCmdAccountExport_RateLimitSurfacesRetryAfter(t *testing.T) {
 	})
 
 	t.Run("json", func(t *testing.T) {
-		oldJSON := jsonOutput
-		jsonOutput = true
-		t.Cleanup(func() { jsonOutput = oldJSON })
-		stderr, restore := captureStderr(t)
+		oldJSON := (*main.JsonOutput)
+		(*main.JsonOutput) = true
+		t.Cleanup(func() { (*main.JsonOutput) = oldJSON })
+		stderr, restore := main.CaptureStderr(t)
 		out := filepath_Join(t.TempDir(), "bundle.json")
-		if code := cmdAccountExport([]string{"-o", out}); code == 0 {
+		if code := main.CmdAccountExport([]string{"-o", out}); code == 0 {
 			t.Fatal("rate-limited export exited successfully")
 		}
 		restore()
@@ -219,7 +220,7 @@ func TestCmdAccountDelete_ForwardsIdempotencyKey(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	if code := cmdAccountDelete([]string{"-q"}); code != 0 {
+	if code := main.CmdAccountDelete([]string{"-q"}); code != 0 {
 		t.Fatalf("cmdAccountDelete -q = %d, want 0", code)
 	}
 	if sink.lastMethod != "DELETE" {
@@ -248,9 +249,9 @@ func TestCmdAccountDelete_TypedConfirmation_Success(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	pipeStdin(t, "delete my account\n")
+	main.PipeStdin(t, "delete my account\n")
 
-	if code := cmdAccountDelete(nil); code != 0 {
+	if code := main.CmdAccountDelete(nil); code != 0 {
 		t.Fatalf("cmdAccountDelete (typed) = %d, want 0", code)
 	}
 	if sink.lastMethod != "DELETE" {
@@ -278,9 +279,9 @@ func TestCmdAccountDelete_TypedConfirmation_Mismatch(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	pipeStdin(t, "no\n")
+	main.PipeStdin(t, "no\n")
 
-	if code := cmdAccountDelete(nil); code != 1 {
+	if code := main.CmdAccountDelete(nil); code != 1 {
 		t.Errorf("cmdAccountDelete (typed-wrong) = %d, want 1", code)
 	}
 	if sink.lastMethod != "" {
@@ -301,7 +302,7 @@ func TestCmdAccountDelete_NonZeroOnServerError(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
-	if code := cmdAccountDelete([]string{"-q"}); code == 0 {
+	if code := main.CmdAccountDelete([]string{"-q"}); code == 0 {
 		t.Errorf("expected non-zero exit on 500")
 	}
 }
@@ -322,7 +323,7 @@ func TestCmdAccountRestore_RoundTrip(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	if code := cmdAccountRestore(nil); code != 0 {
+	if code := main.CmdAccountRestore(nil); code != 0 {
 		t.Fatalf("cmdAccountRestore = %d, want 0", code)
 	}
 	if sink.lastMethod != "POST" || sink.lastPath != "/v1/account/restore" {
@@ -350,7 +351,7 @@ func TestCmdAccountStatus_HitsWhoami(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	if code := cmdAccountStatus(nil); code != 0 {
+	if code := main.CmdAccountStatus(nil); code != 0 {
 		t.Fatalf("cmdAccountStatus = %d, want 0", code)
 	}
 	if sink.lastMethod != "GET" || sink.lastPath != "/v1/account" {

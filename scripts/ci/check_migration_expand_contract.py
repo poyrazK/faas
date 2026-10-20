@@ -37,14 +37,55 @@ Every migration a change adds must therefore be online-safe for both:
       CONCURRENTLY cannot run inside a transaction; goose wraps every file in
       one unless it says `-- +goose NO TRANSACTION`.
 
+No migration may need writers stopped or a maintenance window
+(ADR-202610171900, amendment 1). Four rules hold that line; none can be
+waived, because the online pattern always exists:
+
+  constraint-validation
+      ADD CONSTRAINT ... FOREIGN KEY or CHECK on an existing table checks
+      every row while holding a lock that blocks writes. Add it NOT VALID
+      (new writes are checked at once) and VALIDATE CONSTRAINT it in a later
+      transaction; validation does not block writes. A VALIDATE in the
+      transaction that adds the constraint, an ADD COLUMN with a CHECK, and
+      an ADD COLUMN ... REFERENCES with a DEFAULT validate under the lock too.
+  constraint-churn
+      One migration both drops and adds constraints of one existing table.
+      Replace a constraint in three transactions: add the new one NOT VALID
+      under a new name, validate it, then drop the old one (separate
+      migrations, or goose statements of a NO TRANSACTION migration in that
+      order). Attaching a concurrently built index (ADD CONSTRAINT ... USING
+      INDEX) is exempt.
+  unbatched-write
+      An UPDATE or DELETE of an existing table must take its rows from a
+      `SELECT ... FROM <that table> ... LIMIT n` (n at most MAX_BATCH_ROWS,
+      or a PL/pgSQL variable) in its FROM, USING or WHERE clause or in a
+      WITH query of the same statement, or set every column of one of the
+      table's unique keys to constants in its WHERE. A loop of batches must
+      run in a `-- +goose NO TRANSACTION` migration and COMMIT after each
+      batch; inside one transaction every batch keeps its row locks until
+      commit.
+  lock-fanout
+      One transaction takes write-blocking locks on more than
+      MAX_LOCKED_TABLES existing tables. Each lock is held until commit
+      while the next one is awaited: that is how a migration deadlocks
+      against live writers. A foreign key locks the table it references.
+      In a NO TRANSACTION migration every goose statement is its own
+      transaction.
+
+In a `-- +goose NO TRANSACTION` migration goose runs every statement as its
+own transaction, on one pinned connection: a session-level lock_timeout
+(SET without LOCAL) holds for the rest of the file, but a SET LOCAL or a
+set_config(..., true) covers only the goose statement (a DO block, or a
+StatementBegin/StatementEnd block) that sets it.
+
 Tables, views and indexes that do not exist on the base (schema.sql there)
 are exempt: nothing old reads them and nothing queues on them.
 
 Only the `-- +goose Up` section is checked, and only migrations this change
 adds: issued migrations are append-only history.
 
-A finding is waived by a comment anywhere in the migration naming the rule,
-optionally the object, and a reason:
+A finding of the other rules is waived by a comment anywhere in the
+migration naming the rule, optionally the object, and a reason:
 
     -- migration-lint: allow index-build events: ~1 s write pause on 394k rows
 
@@ -76,10 +117,21 @@ import hashlib
 import os
 import re
 import subprocess
+from math import prod
 import sys
 from dataclasses import dataclass, field
 
 MAX_LOCK_TIMEOUT_MS = 10_000
+# Existing tables one transaction may lock against writes: a table and the
+# table its foreign key references, plus one more for a second parent or a
+# trigger. Lock-order deadlocks need two tables; every table added beyond
+# this keeps the earlier locks held while it waits.
+MAX_LOCKED_TABLES = 3
+# Rows one batch of a backfill may lock until it commits.
+MAX_BATCH_ROWS = 10_000
+# Changes that only stopping writers would make safe (ADR-202610171900,
+# amendment 1). No waiver applies to them.
+ONLINE_RULES = frozenset({"constraint-validation", "constraint-churn", "unbatched-write", "lock-fanout"})
 
 # Paths whose mention of a table or column is not a read by a running
 # release: history, generated schema projections, tests and docs.
@@ -122,7 +174,7 @@ ROUTINE_KINDS = ("function", "procedure", "routine", "aggregate")
 DROPPED_OBJECT_KINDS = ("type", "domain", "sequence", "schema", "extension", "policy", "rule")
 STATEMENT_STARTERS = {
     "alter", "create", "drop", "lock", "reindex", "cluster", "vacuum", "set",
-    "perform", "update", "insert", "delete", "truncate", "select", "comment", "grant",
+    "perform", "update", "insert", "delete", "truncate", "select", "comment", "grant", "with", "commit",
 }
 PLPGSQL_OPENERS = {"begin", "then", "else", "loop", "declare"}
 
@@ -152,6 +204,10 @@ class Catalogue:
     relations: set[str] = field(default_factory=set)
     indexes: set[str] = field(default_factory=set)
     unique: set[str] = field(default_factory=set)
+    index_tables: dict[str, str] = field(default_factory=dict)
+    # table -> column sets of its primary key, unique constraints and
+    # non-partial unique indexes over plain columns.
+    unique_keys: dict[str, list[frozenset[str]]] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------- tokenizer
@@ -238,6 +294,11 @@ def tokenize(sql: str, line: int = 1) -> list[Token]:
 def split_statements(tokens: list[Token]) -> list[list[Token]]:
     """Split on top-level semicolons; DO blocks contribute their inner
     statements too, since they run at migration time."""
+    return [stmt for top in top_statements(tokens) for stmt in expand(top)]
+
+
+def top_statements(tokens: list[Token]) -> list[list[Token]]:
+    """Split on top-level semicolons, leaving DO blocks whole."""
     statements: list[list[Token]] = []
     current: list[Token] = []
     depth = 0
@@ -248,24 +309,32 @@ def split_statements(tokens: list[Token]) -> list[list[Token]]:
             depth = max(0, depth - 1)
         if tok.kind == "punct" and tok.value == ";" and depth == 0:
             if current:
-                statements.extend(expand(current))
+                statements.append(current)
             current = []
             continue
         current.append(tok)
     if current:
-        statements.extend(expand(current))
+        statements.append(current)
     return statements
 
 
-def expand(stmt: list[Token]) -> list[list[Token]]:
+def do_body(stmt: list[Token]) -> list[Token] | None:
+    """The tokens of a DO block's body, or None for any other statement."""
     if stmt and is_word(stmt[0], "do"):
         bodies = [t for t in stmt if t.kind == "dollar"]
         if bodies:
-            inner: list[list[Token]] = []
-            for chunk in split_statements(tokenize(bodies[0].value, bodies[0].line)):
-                inner.extend(plpgsql_statements(chunk))
-            return inner
-    return [stmt]
+            return tokenize(bodies[0].value, bodies[0].line)
+    return None
+
+
+def expand(stmt: list[Token]) -> list[list[Token]]:
+    body = do_body(stmt)
+    if body is None:
+        return [stmt]
+    inner: list[list[Token]] = []
+    for chunk in split_statements(body):
+        inner.extend(plpgsql_statements(chunk))
+    return inner
 
 
 def plpgsql_statements(chunk: list[Token]) -> list[list[Token]]:
@@ -366,17 +435,64 @@ def parse_duration_ms(value: str) -> int | None:
 
 
 @dataclass
+class DoBlock:
+    """What a DO block's body does around the statements in it."""
+
+    loops: bool
+    commits: bool
+    # (variable, table) -> batch size, for `SELECT ... INTO variable` from a
+    # query that reads table with a LIMIT: the keys of one batch.
+    batches: dict[tuple[str, str], int] = field(default_factory=dict)
+
+
+def do_block(body: list[Token]) -> DoBlock:
+    block = DoBlock(loops=any(is_word(t, "loop") for t in body), commits=any(is_word(t, "commit") for t in body))
+    for chunk in split_statements(body):
+        for stmt in plpgsql_statements(chunk):
+            if not is_word(stmt[0], "select", "with"):
+                continue
+            into = next((i for i in range(len(stmt) - 1)
+                         if is_word(stmt[i], "into") and depth_at(stmt, 0, i) == 0 and stmt[i + 1].kind in ("word", "ident")), None)
+            if into is None:
+                continue
+            var = stmt[into + 2] if is_word(stmt[into + 1], "strict") and into + 2 < len(stmt) else stmt[into + 1]
+            for i in range(len(stmt)):
+                size = limit_size(stmt, i)
+                if size is None:
+                    continue
+                for table in limit_sources(stmt, i):
+                    key = (var.value, table)
+                    block.batches[key] = min(size, block.batches.get(key, size))
+    return block
+
+
+@dataclass
 class Context:
     path: str
     catalogue: Catalogue
     no_transaction: bool
     referenced: object  # callable(name, table|None) -> (where, files)
     findings: list[Finding] = field(default_factory=list)
-    lock_timeout_line: int | None = None
+    lock_timeout_group: int | None = None
+    # A session-level lock_timeout (SET without LOCAL, or set_config(...,
+    # false)) holds for every later statement: goose runs a migration on one
+    # pinned connection.
+    session_lock_timeout: bool = False
     created: set[str] = field(default_factory=set)
     created_indexes: set[str] = field(default_factory=set)
     defaults_set: set[tuple[str, str]] = field(default_factory=set)
     recreated: set[str] = field(default_factory=set)
+    # The transaction the current statement runs in: one per migration, or
+    # one per goose statement (and per COMMIT) under NO TRANSACTION.
+    group: int = 0
+    do_block: DoBlock | None = None
+    # group -> existing table -> line of the first write-blocking lock.
+    locks: dict[int, dict[str, int]] = field(default_factory=dict)
+    # existing table -> (group, "add" | "validate" | "drop", line) of each
+    # constraint change, in order.
+    constraint_changes: dict[str, list[tuple[int, str, int]]] = field(default_factory=dict)
+    # (group, table, name) of every constraint added.
+    added_constraints: set[tuple[int, str, str]] = field(default_factory=set)
 
     def exists(self, relation: str) -> bool:
         return relation in self.catalogue.relations and relation not in self.created
@@ -384,16 +500,22 @@ class Context:
     def add(self, line: int, rule: str, target: str, message: str) -> None:
         self.findings.append(Finding(self.path, line, rule, target, message))
 
-    def need_lock_timeout(self, line: int, what: str, relation: str) -> None:
+    def need_lock_timeout(self, line: int, what: str, relation: str, table: str | None = None) -> None:
+        """Record a write-blocking lock on table (default: relation) and
+        require a lock_timeout in force for the transaction taking it."""
+        if (table or relation) != "*":
+            self.locks.setdefault(self.group, {}).setdefault(table or relation, line)
         # One finding per relation: the fix is a single SET at the top.
-        if self.lock_timeout_line is None and not any(f.rule == "lock-timeout" and f.target == relation for f in self.findings):
-            self.add(
-                line,
-                "lock-timeout",
-                relation,
-                f"{what} takes a strong lock on existing {relation} with no lock_timeout set before it; "
-                f"add `SET LOCAL lock_timeout = '5s';` at the top of the Up section (at most {MAX_LOCK_TIMEOUT_MS // 1000}s).",
-            )
+        if (self.lock_timeout_group != self.group and not self.session_lock_timeout
+                and not any(f.rule == "lock-timeout" and f.target == relation for f in self.findings)):
+            fix = (f"add `SET LOCAL lock_timeout = '5s';` at the top of the Up section (at most {MAX_LOCK_TIMEOUT_MS // 1000}s)."
+                   if not self.no_transaction else
+                   "in a `-- +goose NO TRANSACTION` migration every goose statement is its own transaction, so a SET LOCAL "
+                   "on its own line ends with it. Start the Up section with a session-level `SET lock_timeout = '5s';`, or "
+                   "set it inside the same statement: `DO $$ BEGIN PERFORM set_config('lock_timeout', '5s', true); "
+                   "ALTER TABLE ...; END $$;`.")
+            self.add(line, "lock-timeout", relation,
+                     f"{what} takes a strong lock on existing {relation} with no lock_timeout set before it; {fix}")
 
 
 def up_section(text: str) -> tuple[str, int]:
@@ -419,7 +541,8 @@ def lint_context(path: str, text: str, catalogue: Catalogue, referenced) -> Cont
         no_transaction=bool(re.search(r"^--\s*\+goose\s+NO\s+TRANSACTION\b", text, re.MULTILINE | re.IGNORECASE)),
         referenced=referenced,
     )
-    statements = split_statements(tokenize(up, first_line))
+    tops = top_statements(tokenize(up, first_line))
+    statements = [stmt for top in tops for stmt in expand(top)]
     # Views dropped and created again in the same migration are redefined,
     # not removed.
     for stmt in statements:
@@ -428,9 +551,79 @@ def lint_context(path: str, text: str, catalogue: Catalogue, referenced) -> Cont
             i = w.index("view") + 1
             i = skip(stmt, i, "if", "not", "exists")
             ctx.recreated.add(name_at(stmt, i)[0])
-    for stmt in statements:
-        lint_statement(ctx, stmt)
+    blocks = statement_blocks(up, first_line)
+    block = None
+    for top in tops:
+        if ctx.no_transaction:
+            # goose sends a StatementBegin/StatementEnd block as one query
+            # (one implicit transaction); every other statement on its own.
+            mine = next((b for b in blocks if b[0] <= top[0].line <= b[1]), None)
+            if mine is None or mine != block:
+                ctx.group += 1
+            block = mine
+        body = do_body(top)
+        ctx.do_block = None if body is None else do_block(body)
+        for stmt in expand(top):
+            lint_statement(ctx, stmt)
+    lint_migration_locks(ctx)
     return ctx
+
+
+def churn_line(changes: list[tuple[int, str, int]]) -> int | None:
+    """Where a table's constraint changes break add -> validate -> drop, or
+    None. No transaction (group) both adds and drops; every drop follows a
+    validation of the latest constraint added before it; and no constraint
+    is added after a drop that no earlier add replaced."""
+    adds = [g for g, kind, _ in changes if kind == "add"]
+    validates = [g for g, kind, _ in changes if kind == "validate"]
+    if not adds:
+        return None
+    for group, kind, line in changes:
+        if kind != "drop":
+            continue
+        prior = [g for g in adds if g < group]
+        if group in adds:
+            return line
+        if prior and not any(max(prior) < g < group for g in validates):
+            return line
+        if not prior and any(g > group for g in adds):
+            return line
+    return None
+
+
+def statement_blocks(up: str, first_line: int) -> list[tuple[int, int]]:
+    """Line ranges of the StatementBegin/StatementEnd blocks in an Up section."""
+    marks = [(first_line + up.count("\n", 0, m.start()), m.group(1).lower())
+             for m in re.finditer(r"^--\s*\+goose\s+Statement(Begin|End)\b", up, re.MULTILINE | re.IGNORECASE)]
+    blocks, start = [], None
+    for line, kind in marks:
+        if kind == "begin":
+            start = line
+        elif start is not None:
+            blocks.append((start, line))
+            start = None
+    return blocks
+
+
+def lint_migration_locks(ctx: Context) -> None:
+    """constraint-churn and lock-fanout, which judge the whole migration."""
+    for table, changes in ctx.constraint_changes.items():
+        line = churn_line(changes)
+        if line is not None:
+            ctx.add(line, "constraint-churn", table,
+                    f"this migration drops and adds constraints of existing {table}. Replace a constraint in three steps, "
+                    "each its own transaction: add the new one NOT VALID under a new name, VALIDATE it, then drop the old "
+                    "one. Use separate migrations, or separate goose statements of one `-- +goose NO TRANSACTION` "
+                    "migration in that order. No waiver applies.")
+    for tables in ctx.locks.values():
+        if len(tables) > MAX_LOCKED_TABLES:
+            over, line = list(tables.items())[MAX_LOCKED_TABLES]
+            ctx.add(line, "lock-fanout", over,
+                    f"one transaction takes write-blocking locks on {len(tables)} existing tables ({', '.join(tables)}); "
+                    f"at most {MAX_LOCKED_TABLES}. Each lock is held until commit while the next is awaited, which is how a "
+                    f"migration deadlocks against live writers. Split it into migrations of at most {MAX_LOCKED_TABLES} "
+                    "existing tables each, or use a `-- +goose NO TRANSACTION` migration, where every statement commits on "
+                    "its own. No waiver applies.")
 
 
 def lint_statement(ctx: Context, stmt: list[Token]) -> None:
@@ -445,7 +638,16 @@ def lint_statement(ctx: Context, stmt: list[Token]) -> None:
         if ms is None or ms == 0 or ms > MAX_LOCK_TIMEOUT_MS:
             ctx.add(line, "lock-timeout", "*", f"lock_timeout {value!r} must be between 1ms and {MAX_LOCK_TIMEOUT_MS // 1000}s.")
         else:
-            ctx.lock_timeout_line = line
+            ctx.lock_timeout_group = ctx.group
+            local = w[:2] == ["set", "local"] if w[:1] == ["set"] else set_config_is_local(stmt)
+            ctx.session_lock_timeout = ctx.session_lock_timeout or not local
+        return
+
+    if w[0] == "commit":
+        # A COMMIT in a DO block of a NO TRANSACTION migration starts a new
+        # transaction, without the locks or the local settings of the last.
+        if ctx.no_transaction:
+            ctx.group += 1
         return
 
     if w[0] == "create":
@@ -462,10 +664,13 @@ def lint_statement(ctx: Context, stmt: list[Token]) -> None:
                 lint_rename(ctx, action, relation, line)
     elif w[0] == "drop":
         lint_drop(ctx, stmt, w, line)
-    elif w[0] == "lock":
-        relation, _ = name_at(stmt, skip(stmt, 1, "table"))
-        if ctx.exists(relation):
-            ctx.need_lock_timeout(line, "LOCK", relation)
+    elif w[0] in ("lock", "truncate"):
+        i = skip(stmt, 1, "table")
+        for relation in name_list(stmt, skip(stmt, i, "only")):
+            if ctx.exists(relation):
+                ctx.need_lock_timeout(line, w[0].upper(), relation)
+    elif w[0] in ("update", "delete", "with"):
+        lint_write(ctx, stmt, line)
     elif w[0] in ("reindex", "cluster") or w[:2] == ["vacuum", "full"]:
         if "concurrently" not in w:
             ctx.need_lock_timeout(line, w[0].upper(), w[-1] if len(w) > 1 else "*")
@@ -480,6 +685,15 @@ def lock_timeout_value(stmt: list[Token]) -> str | None:
             value = "".join(t.value for t in rest)
             return value.strip("'")
     return None
+
+
+def set_config_is_local(stmt: list[Token]) -> bool:
+    """Whether a set_config('lock_timeout', ...) call is transaction-local
+    (its third argument is not false)."""
+    for idx in range(len(stmt) - 6):
+        if is_word(stmt[idx], "set_config") and stmt[idx + 5].value == ",":
+            return not is_word(stmt[idx + 6], "false")
+    return True
 
 
 def set_config_lock_timeout(stmt: list[Token]) -> str | None:
@@ -499,6 +713,9 @@ def lint_create(ctx: Context, stmt: list[Token], w: list[str], line: int) -> Non
         relation, _ = name_at(stmt, i)
         if relation not in ctx.catalogue.relations:
             ctx.created.add(relation)
+        for parent in referenced_tables(stmt):
+            if parent != relation and ctx.exists(parent):
+                ctx.need_lock_timeout(line, f"a FOREIGN KEY of {relation}", parent)
         return
     if "index" in w[:3]:
         i = w.index("index") + 1
@@ -560,7 +777,7 @@ def lint_drop(ctx: Context, stmt: list[Token], w: list[str], line: int) -> None:
         i = skip(stmt, i, "if", "exists")
         for index in name_list(stmt, i):
             if index in ctx.catalogue.indexes and index not in ctx.created_indexes and not concurrently:
-                ctx.need_lock_timeout(line, "DROP INDEX", index)
+                ctx.need_lock_timeout(line, "DROP INDEX", index, table=ctx.catalogue.index_tables.get(index, index))
     elif w[1] == "trigger":
         on = w.index("on") if "on" in w else -1
         if on > 0:
@@ -591,6 +808,10 @@ def lint_alter_table(ctx: Context, stmt: list[Token], line: int) -> None:
     if i < len(stmt) and stmt[i].kind == "op" and stmt[i].value == "*":
         i += 1
     if not ctx.exists(relation):
+        # A new table's foreign key still locks the existing table it references.
+        for parent in referenced_tables(stmt):
+            if parent != relation and ctx.exists(parent):
+                ctx.need_lock_timeout(line, f"a FOREIGN KEY of {relation}", parent)
         return
     actions = split_actions(stmt, i)
     blocking = any(top_level_words(a)[:2] != ["validate", "constraint"] for a in actions)
@@ -602,6 +823,16 @@ def lint_alter_table(ctx: Context, stmt: list[Token], line: int) -> None:
             continue
         if aw[0] == "rename":
             lint_rename(ctx, action, relation, line)
+        elif aw[:2] == ["drop", "constraint"]:
+            ctx.constraint_changes.setdefault(relation, []).append((ctx.group, "drop", line))
+        elif aw[:2] == ["validate", "constraint"]:
+            ctx.constraint_changes.setdefault(relation, []).append((ctx.group, "validate", line))
+            name = constraint_parts(action, "validate")[0]
+            if (ctx.group, relation, name) in ctx.added_constraints:
+                ctx.add(line, "constraint-validation", f"{relation}.{name}",
+                        f"VALIDATE CONSTRAINT {name} in the transaction that adds it scans {relation} while the ADD's lock "
+                        "blocks writes. Validate it in a later migration, or in a later goose statement of a "
+                        "`-- +goose NO TRANSACTION` migration. No waiver applies.")
         elif aw[0] == "drop" and len(aw) > 1 and aw[1] != "constraint":
             j = 2 if aw[1] == "column" else 1
             rest = aw[j:]
@@ -628,11 +859,25 @@ def lint_alter_table(ctx: Context, stmt: list[Token], line: int) -> None:
 
 
 def lint_add(ctx: Context, action: list[Token], aw: list[str], relation: str, line: int) -> None:
+    for parent in referenced_tables(action):
+        if parent != relation and ctx.exists(parent):
+            ctx.need_lock_timeout(line, f"a FOREIGN KEY of {relation}", parent)
     if len(aw) > 1 and aw[1] in ("constraint", "primary", "unique", "foreign", "check", "exclude"):
         if ("primary" in aw or "unique" in aw) and not has_sequence(aw, "using", "index"):
             ctx.add(line, "index-build", relation,
                     f"ADD PRIMARY KEY/UNIQUE on existing {relation} builds an index under an ACCESS EXCLUSIVE lock. Build it "
                     "with CREATE UNIQUE INDEX CONCURRENTLY, then ADD CONSTRAINT ... USING INDEX.")
+        name, kind = constraint_parts(action, "add")
+        if not has_sequence(aw, "using", "index"):
+            ctx.constraint_changes.setdefault(relation, []).append((ctx.group, "add", line))
+        if name:
+            ctx.added_constraints.add((ctx.group, relation, name))
+        if kind in ("foreign", "check") and not has_sequence(aw, "not", "valid"):
+            what = "FOREIGN KEY" if kind == "foreign" else "CHECK"
+            ctx.add(line, "constraint-validation", f"{relation}.{name}" if name else relation,
+                    f"ADD {what} {name} on existing {relation} checks every row while holding a lock that blocks writes. Add "
+                    "it NOT VALID (new writes are checked at once), then VALIDATE CONSTRAINT in a later migration, which does "
+                    "not block writes. No waiver applies.")
         return
     j = 2 if len(aw) > 1 and aw[1] == "column" else 1
     rest = aw[j:]
@@ -650,6 +895,238 @@ def lint_add(ctx: Context, action: list[Token], aw: list[str], relation: str, li
                 "Add the column without a default, backfill in batches, then set the default.")
     if has_sequence(aw, "generated", "always") and "stored" in aw:
         ctx.add(line, "table-rewrite", target, f"a STORED generated column rewrites {relation} under an exclusive lock.")
+    if "check" in rest[1:] or ("references" in rest[1:] and "default" in rest[1:]):
+        ctx.add(line, "constraint-validation", target,
+                f"ADD COLUMN {target} with a {'CHECK' if 'check' in rest[1:] else 'REFERENCES and a DEFAULT'} checks every row "
+                f"of {relation} under an ACCESS EXCLUSIVE lock. Add the column bare, then ADD CONSTRAINT ... NOT VALID, and "
+                "VALIDATE it in a later migration. No waiver applies.")
+
+
+def constraint_parts(action: list[Token], verb: str) -> tuple[str, str]:
+    """(name, kind) of `ADD [CONSTRAINT name] kind ...`, or (name, "") of
+    `VALIDATE CONSTRAINT name`. Quoted names count."""
+    top, depth = [], 0
+    for tok in action:
+        if tok.kind == "punct" and tok.value == "(":
+            depth += 1
+        elif tok.kind == "punct" and tok.value == ")":
+            depth -= 1
+        elif depth == 0 and tok.kind in ("word", "ident"):
+            top.append(tok)
+    i = 1 if top and is_word(top[0], verb) else 0
+    name = ""
+    if i < len(top) and is_word(top[i], "constraint"):
+        name = top[i + 1].value if i + 1 < len(top) else ""
+        i += 2
+    kind = top[i].value if i < len(top) and top[i].kind == "word" else ""
+    return name, kind
+
+
+def referenced_tables(tokens: list[Token]) -> list[str]:
+    """The tables named by REFERENCES clauses: a foreign key takes a SHARE
+    ROW EXCLUSIVE lock, which blocks writes, on the table it references."""
+    return [name_at(tokens, i + 1)[0] for i, tok in enumerate(tokens) if is_word(tok, "references")]
+
+
+# ------------------------------------------------------------ batched writes
+
+
+def lint_write(ctx: Context, stmt: list[Token], line: int) -> None:
+    """unbatched-write: every UPDATE or DELETE of an existing table takes
+    its rows from a LIMITed SELECT of that table, and a loop of batches
+    commits after each one."""
+    for verb, start, end in write_spans(stmt):
+        table = write_target(stmt, verb, start)
+        if not ctx.exists(table):
+            continue
+        what = f"{verb.upper()} of existing {table}"
+        bound = batch_bound(stmt, start, end, table)
+        if bound is None:
+            bound = keyed_rows(stmt, start, end, ctx.catalogue.unique_keys.get(table, []), table,
+                               ctx.do_block.batches if ctx.do_block else {})
+        if bound is None:
+            ctx.add(line, "unbatched-write", table,
+                    f"{what} is not batched: one statement locks every row it changes until the migration commits, and live "
+                    f"writers queue behind it. Take the rows from `SELECT ... FROM {table} ... LIMIT n` (n <= {MAX_BATCH_ROWS}) "
+                    "and loop in a `-- +goose NO TRANSACTION` migration that COMMITs after each batch "
+                    "(docs/release-compatibility.md), or backfill from a job. No waiver applies.")
+        elif bound > MAX_BATCH_ROWS:
+            ctx.add(line, "unbatched-write", table,
+                    f"{what} takes batches of {bound} rows; at most {MAX_BATCH_ROWS}. No waiver applies.")
+        elif ctx.do_block and ctx.do_block.loops and not (ctx.no_transaction and ctx.do_block.commits):
+            ctx.add(line, "unbatched-write", table,
+                    f"{what} runs in a loop inside one transaction, so every batch keeps its row locks until the migration "
+                    "commits. Put the DO block alone in a `-- +goose NO TRANSACTION` migration and COMMIT after each batch. "
+                    "No waiver applies.")
+
+
+def write_spans(stmt: list[Token]) -> list[tuple[str, int, int]]:
+    """(verb, start, end) of every UPDATE and DELETE in a statement: the
+    statement itself, a WITH query's main statement, or a data-modifying
+    WITH query."""
+    if not stmt:
+        return []
+    if is_word(stmt[0], "update", "delete"):
+        return [(stmt[0].value, 0, len(stmt))]
+    if not is_word(stmt[0], "with"):
+        return []
+    spans, opens, depth, main = [], [], 0, False
+    for i, tok in enumerate(stmt):
+        if tok.kind == "punct" and tok.value == "(":
+            depth += 1
+            opens.append(i)
+        elif tok.kind == "punct" and tok.value == ")":
+            depth -= 1
+            start = opens.pop() if opens else -1
+            if start >= 0 and start + 1 < len(stmt) and is_word(stmt[start + 1], "update", "delete"):
+                spans.append((stmt[start + 1].value, start + 1, i))
+        elif depth == 0 and not main and i > 0 and is_word(tok, "select", "insert", "update", "delete", "merge", "values"):
+            main = True
+            if tok.value in ("update", "delete"):
+                spans.append((tok.value, i, len(stmt)))
+    return spans
+
+
+def write_target(stmt: list[Token], verb: str, start: int) -> str:
+    i = skip(stmt, start + 1, "from") if verb == "delete" else start + 1
+    return name_at(stmt, skip(stmt, i, "only"))[0]
+
+
+def batch_bound(stmt: list[Token], start: int, end: int, table: str) -> int | None:
+    """The batch size bounding an UPDATE or DELETE spanning [start, end):
+    the LIMIT of a SELECT that reads the target table, in the statement's
+    FROM, USING or WHERE clause or in a WITH query outside the span. 0 for
+    a LIMIT given by a variable or WHERE CURRENT OF; None when unbounded."""
+    region, depth, clause = [], 0, False
+    for i in range(start, end):
+        tok = stmt[i]
+        if tok.kind == "punct" and tok.value == "(":
+            depth += 1
+        elif tok.kind == "punct" and tok.value == ")":
+            depth -= 1
+        elif depth == 0 and is_word(tok, "returning"):
+            break
+        elif depth == 0 and is_word(tok, "from", "using", "where") and i > start + 1:
+            clause = True
+        if clause:
+            region.append(i)
+    if any(is_word(stmt[i], "current") and i + 1 < len(stmt) and is_word(stmt[i + 1], "of") for i in region):
+        return 0
+    region += [i for i in range(len(stmt)) if i < start or i >= end]
+    bounds = [limit_size(stmt, i) for i in region if table in limit_sources(stmt, i)]
+    bounds = [b for b in bounds if b is not None]
+    return min(bounds) if bounds else None
+
+
+def limit_size(stmt: list[Token], i: int) -> int | None:
+    """The row count of a LIMIT at index i: its number, 0 for a variable,
+    None for LIMIT ALL or a token that is not a LIMIT."""
+    if not is_word(stmt[i], "limit") or i + 1 >= len(stmt):
+        return None
+    size = stmt[i + 1]
+    if size.kind == "number":
+        return int(float(size.value))
+    if size.kind in ("word", "ident") and not is_word(size, "all"):
+        return 0
+    return None
+
+
+def keyed_rows(stmt: list[Token], start: int, end: int, keys: list[frozenset[str]], table: str = "",
+               batches: dict[tuple[str, str], int] | None = None) -> int | None:
+    """At most how many rows a WHERE clause selects when it ANDs `column =
+    constant` or `column IN (constants)` over every column of one unique
+    key of the target, or ANDs `column = ANY (variable)` with a variable the
+    DO block fills from a LIMITed query of the target (batches); None
+    otherwise."""
+    where = next((i for i in range(start, end) if is_word(stmt[i], "where") and depth_at(stmt, start, i) == 0), None)
+    if where is None:
+        return None
+    conjuncts, current, depth = [], [], 0
+    for tok in stmt[where + 1 : end]:
+        if tok.kind == "punct" and tok.value == "(":
+            depth += 1
+        elif tok.kind == "punct" and tok.value == ")":
+            depth -= 1
+        if depth == 0 and is_word(tok, "returning"):
+            break
+        if depth == 0 and is_word(tok, "or"):
+            return None
+        if depth == 0 and is_word(tok, "and"):
+            conjuncts.append(current)
+            current = []
+            continue
+        current.append(tok)
+    conjuncts.append(current)
+    pinned: dict[str, int] = {}
+    for c in conjuncts:
+        if len(c) > 2 and c[0].kind in ("word", "ident"):
+            column, rest = c[0].value, c[1:]
+            if len(c) > 4 and c[1].value == "." and c[2].kind in ("word", "ident"):
+                column, rest = c[2].value, c[3:]
+            if (len(rest) == 5 and rest[0].value == "=" and is_word(rest[1], "any") and rest[2].value == "("
+                    and rest[3].kind in ("word", "ident") and rest[4].value == ")" and (rest[3].value, table) in (batches or {})):
+                return (batches or {})[(rest[3].value, table)]
+            if rest[0].kind == "op" and rest[0].value == "=" and constants(rest[1:]) == 1:
+                pinned[column] = 1
+            elif is_word(rest[0], "in") and rest[1].value == "(" and rest[-1].value == ")" and constants(rest[2:-1]):
+                pinned[column] = constants(rest[2:-1])
+    sizes = [prod(pinned[c] for c in key) for key in keys if key <= pinned.keys()]
+    return min(sizes) if sizes else None
+
+
+def constants(tokens: list[Token]) -> int:
+    """How many constants a comma-separated list of literals holds (a
+    string or number, optionally cast); 0 when anything else is in it."""
+    n, expect, i = 0, True, 0
+    while i < len(tokens):
+        tok = tokens[i]
+        if expect and tok.kind in ("string", "number"):
+            n, expect = n + 1, False
+            if i + 2 < len(tokens) and tokens[i + 1].kind == "op" and tokens[i + 1].value == "::":
+                i += 2
+        elif not expect and tok.kind == "punct" and tok.value == ",":
+            expect = True
+        else:
+            return 0
+        i += 1
+    return 0 if expect else n
+
+
+def depth_at(stmt: list[Token], start: int, index: int) -> int:
+    depth = 0
+    for tok in stmt[start:index]:
+        if tok.kind == "punct" and tok.value == "(":
+            depth += 1
+        elif tok.kind == "punct" and tok.value == ")":
+            depth -= 1
+    return depth
+
+
+def limit_sources(stmt: list[Token], limit: int) -> list[str]:
+    """The tables the query that a LIMIT at index limit ends reads FROM:
+    the innermost parenthesized query around it, or the statement."""
+    if not is_word(stmt[limit], "limit"):
+        return []
+    depth, start = 0, 0
+    for i in range(limit - 1, -1, -1):
+        tok = stmt[i]
+        if tok.kind == "punct" and tok.value == ")":
+            depth += 1
+        elif tok.kind == "punct" and tok.value == "(":
+            if depth == 0:
+                start = i + 1
+                break
+            depth -= 1
+    depth, tables = 0, []
+    for i in range(start, limit):
+        tok = stmt[i]
+        if tok.kind == "punct" and tok.value == "(":
+            depth += 1
+        elif tok.kind == "punct" and tok.value == ")":
+            depth -= 1
+        elif depth == 0 and is_word(tok, "from"):
+            tables.append(name_at(stmt, skip(stmt, i + 1, "only"))[0])
+    return tables
 
 
 def lint_rename(ctx: Context, action: list[Token], relation: str, line: int) -> None:
@@ -680,7 +1157,7 @@ def apply_waivers(findings: list[Finding], text: str) -> list[Finding]:
     waivers = [(m.group("rule"), m.group("target")) for m in WAIVER.finditer(text)]
     kept = []
     for f in findings:
-        if any(rule == f.rule and (target in (None, "*") or target == f.target or f.target.startswith(target + ".")) for rule, target in waivers):
+        if f.rule not in ONLINE_RULES and any(rule == f.rule and (target in (None, "*") or target == f.target or f.target.startswith(target + ".")) for rule, target in waivers):
             continue
         kept.append(f)
     return kept
@@ -923,7 +1400,8 @@ def range_catalogues(base: Catalogue, texts: dict[str, str]) -> dict[str, Catalo
         relations = set().union(*(ctx.created for other, ctx in made.items() if other != path))
         indexes = set().union(*(ctx.created_indexes for other, ctx in made.items() if other != path))
         out[path] = Catalogue(relations=_union(base.relations, relations), indexes=_union(base.indexes, indexes),
-                              unique=_union(base.unique, indexes))
+                              unique=_union(base.unique, indexes), index_tables=base.index_tables,
+                              unique_keys=base.unique_keys)
     return out
 
 
@@ -963,12 +1441,22 @@ def load_catalogue(schema_sql: str) -> Catalogue:
     cat = Catalogue()
     for m in re.finditer(r"^CREATE (?:UNLOGGED )?(?:TABLE|VIEW|MATERIALIZED VIEW) (?:\w+\.)?\"?(\w+)\"?", schema_sql, re.MULTILINE):
         cat.relations.add(m.group(1))
-    for m in re.finditer(r"^CREATE (UNIQUE )?INDEX (\w+) ON ", schema_sql, re.MULTILINE):
+    for m in re.finditer(r"^CREATE (UNIQUE )?INDEX (\w+) ON (?:ONLY )?(?:\w+\.)?\"?(\w+)", schema_sql, re.MULTILINE):
         cat.indexes.add(m.group(2))
+        cat.index_tables[m.group(2)] = m.group(3)
         if m.group(1):
             cat.unique.add(m.group(2))
     for m in re.finditer(r"^\s+ADD CONSTRAINT (\w+) (?:PRIMARY KEY|UNIQUE|EXCLUDE)\b", schema_sql, re.MULTILINE):
         cat.unique.add(m.group(1))
+    keys = [(m.group(1), m.group(2)) for m in re.finditer(
+        r"^ALTER TABLE ONLY (?:\w+\.)?\"?(\w+)\"?\n\s+ADD CONSTRAINT \w+ (?:PRIMARY KEY|UNIQUE(?: NULLS NOT DISTINCT)?) \(([^)]*)\);$",
+        schema_sql, re.MULTILINE)]
+    keys += [(m.group(1), m.group(2)) for m in re.finditer(
+        r"^CREATE UNIQUE INDEX \w+ ON (?:ONLY )?(?:\w+\.)?\"?(\w+)\"? USING \w+ \(([^()]*)\);$", schema_sql, re.MULTILINE)]
+    for table, columns in keys:
+        names = [c.strip().strip('"') for c in columns.split(",")]
+        if all(re.fullmatch(r"\w+", n) for n in names):
+            cat.unique_keys.setdefault(table, []).append(frozenset(names))
     return cat
 
 
@@ -1051,7 +1539,8 @@ def main(argv: list[str]) -> int:
     if findings:
         print(f"migration-lint: {len(findings)} finding(s) in {len(files)} new migration(s). "
               "See docs/release-compatibility.md (expand/contract); waive with `-- migration-lint: allow <rule> <object>: <reason>` "
-              "(compat-marker cannot be waived).")
+              "(compat-marker and the no-downtime rules constraint-validation, constraint-churn, unbatched-write and lock-fanout "
+              "cannot be waived).")
         return 1
     print(f"migration-lint: OK - {len(files)} new migration(s) are expand/contract safe against {release}")
     return 0

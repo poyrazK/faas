@@ -148,8 +148,11 @@ type server struct {
 	configGuardTelemetry state.ConfigGuardTelemetryStore
 	// postReleaseTelemetry overrides the store's request telemetry for the
 	// post-release watch (ADR-1445); nil reads it from the store.
-	postReleaseTelemetry  rollbackOn5xxTelemetry
-	outboundAI            outboundai.Service // ADR-977; Host wired in newServer
+	postReleaseTelemetry rollbackOn5xxTelemetry
+	outboundAI           outboundai.Service // ADR-977; Host wired in newServer
+	// releaseGateEvidence overrides the store's release gate evidence
+	// reader for the post-release watch (ADR-20261019071734; tests).
+	releaseGateEvidence   state.ReleaseGateEvidenceStore
 	flagsWorkloadVerifier *workloadidentity.Verifier
 	statementInvoices     statementinvoices.Service // ADR-1502; Host wired in newServer
 	billingRuns           billingruns.Service       // ADR-1503; Host wired in newServer
@@ -1991,6 +1994,13 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("PUT /v1/account/platform-tenant-billing-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.consumerControls.PutTenantBillingPolicy))))
 	mux.HandleFunc("DELETE /v1/account/platform-tenant-billing-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.consumerControls.DeleteTenantBillingPolicy))))
 	mux.HandleFunc("GET /v1/account/platform-tenant-overdue-holds", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.consumerControls.ListTenantOverdueHolds))))
+	// ADR-20261019100331: tenant prepaid credit and monthly spend caps.
+	mux.HandleFunc("GET /v1/account/platform-tenants/{id}/credits", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.consumerCredits.ListTenantCredits))))
+	mux.HandleFunc("POST /v1/account/platform-tenants/{id}/credits", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.consumerCredits.CreateTenantCredit)))))
+	mux.HandleFunc("DELETE /v1/account/platform-tenants/{id}/credits/{credit_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.consumerCredits.VoidTenantCredit))))
+	mux.HandleFunc("GET /v1/account/platform-tenants/{id}/spend-cap", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.consumerCredits.GetTenantSpendCap))))
+	mux.HandleFunc("PUT /v1/account/platform-tenants/{id}/spend-cap", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.consumerCredits.PutTenantSpendCap))))
+	mux.HandleFunc("DELETE /v1/account/platform-tenants/{id}/spend-cap", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.consumerCredits.DeleteTenantSpendCap))))
 	mux.HandleFunc("GET /v1/account/platform-tenants/{id}/usage-statements", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listPlatformTenantStatements))))
 	mux.HandleFunc("POST /v1/account/platform-tenants/{id}/usage-statements", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createPlatformTenantStatement)))))
 	mux.HandleFunc("GET /v1/account/platform-tenants/{id}/usage-statements/{statement_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getPlatformTenantStatement))))
@@ -4203,6 +4213,15 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/config/revisions/{revision}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getConfigRevision)))
 	mux.HandleFunc("GET /v1/apps/{slug}/config/guard", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getConfigGuard)))
 	mux.HandleFunc("POST /v1/apps/{slug}/config/rollback", s.authLimited(s.requireScope(api.ScopesEnvWriteSurface...)(s.rollbackConfig)))
+	// ADR-20261019071733: deploy freezes and release windows.
+	mux.HandleFunc("GET /v1/freezes", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.listReleaseFreezes)))
+	mux.HandleFunc("POST /v1/freezes", s.authLimited(s.requireScope(api.ScopesDeployWriteSurface...)(s.createReleaseFreeze)))
+	mux.HandleFunc("DELETE /v1/freezes/{id}", s.authLimited(s.requireScope(api.ScopesDeployWriteSurface...)(s.liftReleaseFreeze)))
+	mux.HandleFunc("GET /v1/apps/{slug}/freeze-status", s.authLimited(s.requireScope(api.ScopesDeploymentReadSurface...)(s.getReleaseFreezeStatus)))
+	// ADR-20261019071734: release gates on customer signals.
+	mux.HandleFunc("GET /v1/apps/{slug}/release-gates", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.listReleaseGates)))
+	mux.HandleFunc("POST /v1/apps/{slug}/release-gates", s.authLimited(s.requireScope(api.ScopesDeployWriteSurface...)(s.createReleaseGate)))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/release-gates/{name}", s.authLimited(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteReleaseGate)))
 
 	// Data upstreams (ADR-098 §D4 / PR-B). The full handler family is
 	// gated on s.dataPlacementEnabled (FAAS_DATA_PLACEMENT=1); when

@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -48,10 +49,10 @@ func TestCmdAccountBillingRun(t *testing.T) {
 			http.NotFound(w, r)
 		}
 	})
-	billingRunPollInterval = time.Millisecond
-	t.Cleanup(func() { billingRunPollInterval = 5 * time.Second })
+	(*main.BillingRunPollInterval) = time.Millisecond
+	t.Cleanup(func() { (*main.BillingRunPollInterval) = 5 * time.Second })
 
-	if code := cmdAccount([]string{"billing-run", "start", "--month", "2026-09", "--export", "stripe", "--no-hold-on-gaps", "--wait"}); code != 0 {
+	if code := main.CmdAccount([]string{"billing-run", "start", "--month", "2026-09", "--export", "stripe", "--no-hold-on-gaps", "--wait"}); code != 0 {
 		t.Fatalf("start exit = %d", code)
 	}
 	if created.Month != "2026-09" || created.Export != "stripe" || created.HoldOnGaps == nil || *created.HoldOnGaps || created.Finalize != nil {
@@ -62,16 +63,16 @@ func TestCmdAccountBillingRun(t *testing.T) {
 		!strings.Contains(out, "EUR 0.0375") {
 		t.Fatalf("polls = %d, output = %q", polls, out)
 	}
-	if code := cmdAccount([]string{"billing-run", "schedule-set", "--export", "stripe", "--delay-hours", "6"}); code != 0 {
+	if code := main.CmdAccount([]string{"billing-run", "schedule-set", "--export", "stripe", "--delay-hours", "6"}); code != 0 {
 		t.Fatalf("schedule-set exit = %d", code)
 	}
 	if sched.DelayHours == nil || *sched.DelayHours != 6 || sched.Export != "stripe" || !strings.Contains(stdout.String(), "2026-10") {
 		t.Fatalf("schedule body = %+v, output = %q", sched, stdout.String())
 	}
-	if code := cmdAccount([]string{"billing-run", "schedule-delete"}); code != 0 {
+	if code := main.CmdAccount([]string{"billing-run", "schedule-delete"}); code != 0 {
 		t.Fatalf("schedule-delete exit = %d", code)
 	}
-	if code := cmdAccount([]string{"billing-run", "show"}); code != 1 {
+	if code := main.CmdAccount([]string{"billing-run", "show"}); code != 1 {
 		t.Fatalf("show without RUN_ID exit = %d, want 1", code)
 	}
 }

@@ -19,7 +19,7 @@
 // test for PR-A's whole point: a runner with only FAAS_TOKEN set
 // can drive a deploy end-to-end, no GREGALE_INSTALL_TOKEN_* needed.
 
-package main
+package main_test
 
 import (
 	"bytes"
@@ -32,6 +32,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -71,7 +72,7 @@ func (s *sourceRefSink) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodPost && r.URL.Path == "/v1/projects/scan/source-ref":
 		s.scanCalls++
 		_ = json.NewDecoder(r.Body).Decode(&s.scanRequest)
-		writeJSONTestStatus(w, s.scanStatus, s.scanBody)
+		main.WriteJSONTestStatus(w, s.scanStatus, s.scanBody)
 	case r.Method == http.MethodPost && r.URL.Path == "/v1/apps":
 		s.createCalls++
 		_ = json.NewDecoder(r.Body).Decode(&s.createRequest)
@@ -79,14 +80,14 @@ func (s *sourceRefSink) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "App exists", "slug already exists"))
 			return
 		}
-		writeJSONTestStatus(w, http.StatusCreated, api.AppResponse{ID: "app_hello", Slug: "hello"})
+		main.WriteJSONTestStatus(w, http.StatusCreated, api.AppResponse{ID: "app_hello", Slug: "hello"})
 	case r.Method == http.MethodPatch && r.URL.Path == "/v1/apps/hello":
 		_ = json.NewDecoder(r.Body).Decode(&s.patchRequest)
-		writeJSONTestStatus(w, http.StatusOK, api.AppResponse{ID: "app_hello", Slug: "hello"})
+		main.WriteJSONTestStatus(w, http.StatusOK, api.AppResponse{ID: "app_hello", Slug: "hello"})
 	case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/hello":
 		s.getAppCalls++
 		if s.existingApp {
-			writeJSONTestStatus(w, http.StatusOK, api.AppResponse{ID: "app_hello", Slug: "hello"})
+			main.WriteJSONTestStatus(w, http.StatusOK, api.AppResponse{ID: "app_hello", Slug: "hello"})
 			return
 		}
 		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "no such app"))
@@ -99,10 +100,10 @@ func (s *sourceRefSink) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if s.retryAfter != "" {
 				w.Header().Set("Retry-After", s.retryAfter)
 			}
-			writeJSONTestStatus(w, s.status, s.problem)
+			main.WriteJSONTestStatus(w, s.status, s.problem)
 			return
 		}
-		writeJSONTestStatus(w, s.status, s.body)
+		main.WriteJSONTestStatus(w, s.status, s.body)
 	default:
 		http.Error(w, "sourceRefSink: not found: "+r.URL.Path, http.StatusNotFound)
 	}
@@ -113,9 +114,9 @@ func (s *sourceRefSink) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // commands_decompose_test.go for --json-mode tests.
 func withResetJSONOutput(t *testing.T, v bool) {
 	t.Helper()
-	prev := jsonOutput
-	jsonOutput = v
-	t.Cleanup(func() { jsonOutput = prev })
+	prev := (*main.JsonOutput)
+	(*main.JsonOutput) = v
+	t.Cleanup(func() { (*main.JsonOutput) = prev })
 }
 
 func TestEnsureSourceRefAppTenantPolicy(t *testing.T) {
@@ -147,9 +148,9 @@ func TestEnsureSourceRefAppTenantPolicy(t *testing.T) {
 			}))
 			defer srv.Close()
 			required, noAuth := true, false
-			policy := sourceRefAppPolicy{PlatformTenantRequired: &required, RequireAuthn: &noAuth,
+			policy := main.SourceRefAppPolicy{PlatformTenantRequired: &required, RequireAuthn: &noAuth,
 				PublicAuth: &api.PublicAuthBlock{Mode: api.AppPublicAuthModeOpen}}
-			if _, err := ensureSourceRefApp(context.Background(), NewClient(srv.URL, "fp_live_x"), "hello", policy); err != nil {
+			if _, err := main.EnsureSourceRefApp(context.Background(), main.NewClient(srv.URL, "fp_live_x"), "hello", policy); err != nil {
 				t.Fatal(err)
 			}
 			if existing {
@@ -176,13 +177,13 @@ func TestCmdDeployRepoTenantPolicy(t *testing.T) {
 				t.Setenv("FAAS_API", srv.URL)
 				t.Setenv("FAAS_TOKEN", "fp_live_x")
 				withResetJSONOutput(t, false)
-				_, restore := captureStdout(t)
+				_, restore := main.CaptureStdout(t)
 				defer restore()
 				flag := "--no-platform-tenant-required"
 				if required {
 					flag = "--platform-tenant-required"
 				}
-				if code := cmdDeployTarball([]string{"--name", "hello", "--repo", "owner/repo", "--ref", "main", "--no-wait", "--no-require-authn", flag}); code != 0 {
+				if code := main.CmdDeployTarball([]string{"--name", "hello", "--repo", "owner/repo", "--ref", "main", "--no-wait", "--no-require-authn", flag}); code != 0 {
 					t.Fatalf("exit=%d", code)
 				}
 				got := sink.createRequest.PlatformTenantRequired
@@ -268,7 +269,7 @@ func TestCmdDeployRepoSourceRef(t *testing.T) {
 				ann.TrafficPercent = &zero
 				ann.RollbackOn5xx = &rollback
 				ann.SourceBranch = "release/canary"
-				return cmdDeployRepoSourceRef(slug, repo, ref, ann)
+				return main.CmdDeployRepoSourceRef(slug, repo, ref, ann)
 			},
 			expect: expect{
 				exitCode:       0,
@@ -322,7 +323,7 @@ func TestCmdDeployRepoSourceRef(t *testing.T) {
 					Kind: "github", Status: "queued",
 				}
 			},
-			invoke: cmdDeployRepoSourceRef,
+			invoke: main.CmdDeployRepoSourceRef,
 			expect: expect{
 				exitCode:     0,
 				stdoutJSONID: "dep_existing",
@@ -345,7 +346,7 @@ func TestCmdDeployRepoSourceRef(t *testing.T) {
 					Detail: "githubd stream timed out; retry after the indicated backoff.",
 				}
 			},
-			invoke: cmdDeployRepoSourceRef,
+			invoke: main.CmdDeployRepoSourceRef,
 			expect: expect{
 				exitCode: 5, // non-zero
 				stderrContains: []string{
@@ -365,7 +366,7 @@ func TestCmdDeployRepoSourceRef(t *testing.T) {
 					Detail: "no github_installations row for this account; run `gregale connect`",
 				}
 			},
-			invoke: cmdDeployRepoSourceRef,
+			invoke: main.CmdDeployRepoSourceRef,
 			expect: expect{
 				exitCode: 4,
 				stderrContains: []string{
@@ -378,7 +379,7 @@ func TestCmdDeployRepoSourceRef(t *testing.T) {
 			name:  "no_install_token_env_regression",
 			setup: func(sink *sourceRefSink) {}, // already stripped at parent
 			invoke: func(slug, repo, ref string, ann api.DeployAnnotations) int {
-				return cmdDeployRepoSourceRef(slug, repo, ref, ann)
+				return main.CmdDeployRepoSourceRef(slug, repo, ref, ann)
 			},
 			expect: expect{
 				exitCode: 0,
@@ -412,9 +413,9 @@ func TestCmdDeployRepoSourceRef(t *testing.T) {
 			// regression case wants a 202 + stdout JSON path.
 			withResetJSONOutput(t, true)
 
-			stdout, restore := captureStdout(t)
+			stdout, restore := main.CaptureStdout(t)
 			defer restore()
-			stderr, restoreErr := captureStderr(t)
+			stderr, restoreErr := main.CaptureStderr(t)
 			defer restoreErr()
 
 			code := tc.invoke(slug, repo, ref, api.DeployAnnotations{})
@@ -422,7 +423,7 @@ func TestCmdDeployRepoSourceRef(t *testing.T) {
 				t.Errorf("exit = %d, want %d (stderr=%q)", code, tc.expect.exitCode, stderr.String())
 			}
 			if tc.name == "retry_after_409" {
-				problem := assertOneProblem(t, stderr.String())
+				problem := main.AssertOneProblem(t, stderr.String())
 				if problem.Status != 409 || problem.Code != "source_ref_unavailable" || problem.RetryAfterSeconds == nil || *problem.RetryAfterSeconds != 30 {
 					t.Fatalf("lost server error or backoff: %+v", problem)
 				}
@@ -541,12 +542,12 @@ func TestCmdDeployTarball_RefGuards(t *testing.T) {
 			t.Setenv("FAAS_API", srv.URL)
 			t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-			_, restore := captureStdout(t)
+			_, restore := main.CaptureStdout(t)
 			defer restore()
-			stderr, restoreErr := captureStderr(t)
+			stderr, restoreErr := main.CaptureStderr(t)
 			defer restoreErr()
 
-			code := cmdDeployTarball(tc.args)
+			code := main.CmdDeployTarball(tc.args)
 			if code != tc.wantExit {
 				t.Errorf("exit = %d, want %d", code, tc.wantExit)
 			}
@@ -589,12 +590,12 @@ func TestCmdDeployRepoSourceRef_NoWait(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 	withResetJSONOutput(t, false)
 
-	stdout, restoreOut := captureStdout(t)
+	stdout, restoreOut := main.CaptureStdout(t)
 	defer restoreOut()
-	_, restoreErr := captureStderr(t)
+	_, restoreErr := main.CaptureStderr(t)
 	defer restoreErr()
 
-	code := cmdDeployTarball([]string{
+	code := main.CmdDeployTarball([]string{
 		"--name", "hello",
 		"--repo", "onebox-faas/hello",
 		"--ref", "main",
@@ -640,12 +641,12 @@ func TestCmdDeployRepoSourceRef_JSONOmitsPreflight(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 	withResetJSONOutput(t, true)
 
-	stdout, restoreOut := captureStdout(t)
+	stdout, restoreOut := main.CaptureStdout(t)
 	defer restoreOut()
-	_, restoreErr := captureStderr(t)
+	_, restoreErr := main.CaptureStderr(t)
 	defer restoreErr()
 
-	code := cmdDeployTarball([]string{
+	code := main.CmdDeployTarball([]string{
 		"--name", "hello",
 		"--repo", "onebox-faas/hello",
 		"--ref", "main",
@@ -657,7 +658,7 @@ func TestCmdDeployRepoSourceRef_JSONOmitsPreflight(t *testing.T) {
 	if strings.Contains(stdout.String(), "Deployment plan:") {
 		t.Fatalf("JSON stdout contains human preflight:\n%s", stdout.String())
 	}
-	var receipt DeployReceipt
+	var receipt main.DeployReceipt
 	if err := json.Unmarshal(bytes.TrimSpace(stdout.Bytes()), &receipt); err != nil {
 		t.Fatalf("decode JSON receipt: %v\n%s", err, stdout.String())
 	}

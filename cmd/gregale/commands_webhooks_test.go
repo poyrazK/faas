@@ -1,7 +1,7 @@
 // Tests for the `gregale webhooks <list|add|update|rm|deliveries|retry>`
 // subcommands. Mirrors commands_crons_update_test.go's httptest + t.Setenv
 // shape — the dispatch placement lives in main_test.go.
-package main
+package main_test
 
 import (
 	"bytes"
@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -22,11 +23,11 @@ const webhookTestID = "0123456789abcdef0123456789abcdef"
 // ADR-076: only producer-backed webhook events may be selected locally.
 func TestWebhookEventVocab_RolloutOutcomes(t *testing.T) {
 	for _, event := range []string{"rollout.completed", "rollout.aborted", "job.finished", "app.health.changed"} {
-		if !validAppWebhookEvent(event) {
+		if !main.ValidAppWebhookEvent(event) {
 			t.Errorf("producer-backed event %q rejected by CLI", event)
 		}
 	}
-	if validAppWebhookEvent("rollout.started") {
+	if main.ValidAppWebhookEvent("rollout.started") {
 		t.Fatal("event without a producer accepted by CLI")
 	}
 }
@@ -53,12 +54,12 @@ func TestCmdWebhooks_Add_HappyPath(t *testing.T) {
 
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
-	oldOut, oldJSON := osStdout, jsonOutput
+	oldOut, oldJSON := (*main.OsStdout), (*main.JsonOutput)
 	var stdout bytes.Buffer
-	osStdout, jsonOutput = &stdout, false
-	t.Cleanup(func() { osStdout, jsonOutput = oldOut, oldJSON })
+	(*main.OsStdout), (*main.JsonOutput) = &stdout, false
+	t.Cleanup(func() { (*main.OsStdout), (*main.JsonOutput) = oldOut, oldJSON })
 
-	if code := cmdWebhooksAdd([]string{
+	if code := main.CmdWebhooksAdd([]string{
 		"--app", "demo",
 		"--target-url", "https://example.com/hook",
 		"--secret", "shh",
@@ -92,12 +93,12 @@ func TestCmdWebhooks_Add_AutoMintsAndRevealsSecretOnce(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
-	oldOut, oldJSON := osStdout, jsonOutput
+	oldOut, oldJSON := (*main.OsStdout), (*main.JsonOutput)
 	var stdout bytes.Buffer
-	osStdout, jsonOutput = &stdout, false
-	t.Cleanup(func() { osStdout, jsonOutput = oldOut, oldJSON })
+	(*main.OsStdout), (*main.JsonOutput) = &stdout, false
+	t.Cleanup(func() { (*main.OsStdout), (*main.JsonOutput) = oldOut, oldJSON })
 
-	if code := cmdWebhooksAdd([]string{"--app", "demo", "--target-url", "https://example.com/hook"}); code != 0 {
+	if code := main.CmdWebhooksAdd([]string{"--app", "demo", "--target-url", "https://example.com/hook"}); code != 0 {
 		t.Fatalf("add = %d", code)
 	}
 	if gotBody.WebhookSecret == "" {
@@ -114,7 +115,7 @@ func TestCmdWebhooks_Add_BadRetryPolicyRejected(t *testing.T) {
 	t.Setenv("FAAS_API", "http://localhost")
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	if code := cmdWebhooksAdd([]string{
+	if code := main.CmdWebhooksAdd([]string{
 		"--app", "demo",
 		"--target-url", "https://example.com/hook",
 		"--retry-policy", "defaultt",
@@ -135,7 +136,7 @@ func TestCmdWebhooks_Rm_HappyPath(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	if code := cmdWebhooksRm([]string{"--app", "demo", webhookTestID}); code != 0 {
+	if code := main.CmdWebhooksRm([]string{"--app", "demo", webhookTestID}); code != 0 {
 		t.Errorf("rm = %d, want 0", code)
 	}
 	if gotMethod != http.MethodDelete {
@@ -167,7 +168,7 @@ func TestCmdWebhooks_Retry_HappyPath(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	if code := cmdWebhookRetry([]string{
+	if code := main.CmdWebhookRetry([]string{
 		"--app", "demo",
 		webhookTestID, "deadbeef00000000deadbeef00000000",
 	}); code != 0 {
@@ -191,12 +192,12 @@ func TestCmdWebhookDeliveries_JSONPreservesCursor(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
-	oldOut, oldJSON := osStdout, jsonOutput
+	oldOut, oldJSON := (*main.OsStdout), (*main.JsonOutput)
 	var stdout bytes.Buffer
-	osStdout, jsonOutput = &stdout, true
-	t.Cleanup(func() { osStdout, jsonOutput = oldOut, oldJSON })
+	(*main.OsStdout), (*main.JsonOutput) = &stdout, true
+	t.Cleanup(func() { (*main.OsStdout), (*main.JsonOutput) = oldOut, oldJSON })
 
-	if code := cmdWebhookDeliveries([]string{"--app", "demo", webhookTestID}); code != 0 {
+	if code := main.CmdWebhookDeliveries([]string{"--app", "demo", webhookTestID}); code != 0 {
 		t.Fatalf("deliveries = %d, want 0", code)
 	}
 	var got api.AppWebhookDeliveryListResponse
@@ -226,20 +227,20 @@ func TestCmdWebhookMutations_HonorJSON(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
-	oldOut, oldJSON := osStdout, jsonOutput
+	oldOut, oldJSON := (*main.OsStdout), (*main.JsonOutput)
 	var stdout bytes.Buffer
-	osStdout, jsonOutput = &stdout, true
-	t.Cleanup(func() { osStdout, jsonOutput = oldOut, oldJSON })
+	(*main.OsStdout), (*main.JsonOutput) = &stdout, true
+	t.Cleanup(func() { (*main.OsStdout), (*main.JsonOutput) = oldOut, oldJSON })
 
 	calls := []struct {
 		name string
 		call func() int
 	}{
-		{"update", func() int { return cmdWebhooksUpdate([]string{"--app", "demo", "--enable", webhookTestID}) }},
-		{"remove", func() int { return cmdWebhooksRm([]string{"--app", "demo", webhookTestID}) }},
-		{"retry", func() int { return cmdWebhookRetry([]string{"--app", "demo", webhookTestID, "delivery-1"}) }},
+		{"update", func() int { return main.CmdWebhooksUpdate([]string{"--app", "demo", "--enable", webhookTestID}) }},
+		{"remove", func() int { return main.CmdWebhooksRm([]string{"--app", "demo", webhookTestID}) }},
+		{"retry", func() int { return main.CmdWebhookRetry([]string{"--app", "demo", webhookTestID, "delivery-1"}) }},
 		{"rotate", func() int {
-			return cmdWebhookRotateSecret([]string{"--app", "demo", "--secret", "replacement", webhookTestID})
+			return main.CmdWebhookRotateSecret([]string{"--app", "demo", "--secret", "replacement", webhookTestID})
 		}},
 	}
 	for _, tc := range calls {
@@ -278,10 +279,10 @@ func TestCmdWebhooks_IDBeforeFlags(t *testing.T) {
 		want string
 	}{
 		{"update", func() int {
-			return cmdWebhooksUpdate([]string{webhookTestID, "--app", "demo", "--target-url", "https://example.com/hook"})
+			return main.CmdWebhooksUpdate([]string{webhookTestID, "--app", "demo", "--target-url", "https://example.com/hook"})
 		}, "PATCH /v1/apps/demo/webhooks/" + webhookTestID},
-		{"info", func() int { return cmdWebhookInfo([]string{webhookTestID, "--app", "demo"}) }, "GET /v1/apps/demo/webhooks/" + webhookTestID},
-		{"rm", func() int { return cmdWebhooksRm([]string{webhookTestID, "--app", "demo"}) }, "DELETE /v1/apps/demo/webhooks/" + webhookTestID},
+		{"info", func() int { return main.CmdWebhookInfo([]string{webhookTestID, "--app", "demo"}) }, "GET /v1/apps/demo/webhooks/" + webhookTestID},
+		{"rm", func() int { return main.CmdWebhooksRm([]string{webhookTestID, "--app", "demo"}) }, "DELETE /v1/apps/demo/webhooks/" + webhookTestID},
 	} {
 		got = nil
 		if code := tc.run(); code != 0 {

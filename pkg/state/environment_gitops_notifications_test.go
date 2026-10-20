@@ -1,5 +1,5 @@
 // adr: 1155 — candidate assessment and customer status feedback contracts.
-package state
+package state_test
 
 import (
 	"encoding/json"
@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestGitOpsNotificationBoundsAndRedactsDetailsWithoutChangingReport(t *testing.T) {
@@ -18,8 +19,8 @@ func TestGitOpsNotificationBoundsAndRedactsDetailsWithoutChangingReport(t *testi
 			Before: json.RawMessage(`"PRIVATE_CURRENT_VALUE"`), After: json.RawMessage(`"PRIVATE_DESIRED_VALUE"`)})
 		plan.BlockingReasons = append(plan.BlockingReasons, fmt.Sprintf("field-%d: ownership conflict", i))
 	}
-	source := EnvironmentGitSource{ID: "source", EnvironmentSlug: "staging", Generation: 1}
-	next, body, id, err := prepareEnvironmentGitNotification(nil, source, "shop", "drift", "blocked", "run", "", plan, time.Now())
+	source := state.EnvironmentGitSource{ID: "source", EnvironmentSlug: "staging", Generation: 1}
+	next, body, id, err := state.PrepareEnvironmentGitNotification(nil, source, "shop", "drift", "blocked", "run", "", plan, time.Now())
 	var payload api.EnvironmentGitOpsChangedWebhookPayload
 	if err != nil || id == "" || json.Unmarshal(body, &payload) != nil || !payload.DetailsTruncated ||
 		len(payload.Changes) != api.EnvironmentGitOpsNotificationDetailsMax || len(payload.BlockingReasons) != api.EnvironmentGitOpsNotificationDetailsMax || strings.Contains(string(body), "PRIVATE_") {
@@ -28,11 +29,11 @@ func TestGitOpsNotificationBoundsAndRedactsDetailsWithoutChangingReport(t *testi
 	if len(plan.Changes[0].Before) == 0 || len(plan.Changes[0].After) == 0 {
 		t.Fatal("alert redaction changed the stored report")
 	}
-	if _, _, repeat, err := prepareEnvironmentGitNotification(next, source, "shop", "drift", "blocked", "run", "", plan, time.Now()); err != nil || repeat != "" {
+	if _, _, repeat, err := state.PrepareEnvironmentGitNotification(next, source, "shop", "drift", "blocked", "run", "", plan, time.Now()); err != nil || repeat != "" {
 		t.Fatalf("unchanged status repeated: %s %v", repeat, err)
 	}
 	source.Generation++
-	if _, _, renewed, err := prepareEnvironmentGitNotification(next, source, "shop", "drift", "blocked", "run", "", plan, time.Now()); err != nil || renewed == "" {
+	if _, _, renewed, err := state.PrepareEnvironmentGitNotification(next, source, "shop", "drift", "blocked", "run", "", plan, time.Now()); err != nil || renewed == "" {
 		t.Fatalf("new generation's unresolved blockers were silent: %s %v", renewed, err)
 	}
 }

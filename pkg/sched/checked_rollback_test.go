@@ -1,10 +1,11 @@
 // adr: 601 — keep checked historical recovery pinned to its serving predecessor.
-package sched
+package sched_test
 
 import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -15,7 +16,7 @@ func TestCheckedRollbackServiceKeepsExactNewerPredecessor(t *testing.T) {
 	unrelated := current
 	unrelated.ID = "other"
 	unrelated.CreatedAt = now.Add(time.Minute)
-	got := previousServiceDeployment(rollout, []state.Deployment{rollout, current, unrelated})
+	got := sched.PreviousServiceDeployment(rollout, []state.Deployment{rollout, current, unrelated})
 	if got.ID != current.ID {
 		t.Fatalf("historical rollback lost its exact serving predecessor: %+v", got)
 	}
@@ -32,7 +33,7 @@ func TestCheckedRollbackServiceKeepsExactNewerPredecessor(t *testing.T) {
 			case "active rollout":
 				candidate.RolloutState = "rolling_out"
 			}
-			if got := previousServiceDeployment(rollout, []state.Deployment{candidate, unrelated}); got.ID != "" {
+			if got := sched.PreviousServiceDeployment(rollout, []state.Deployment{candidate, unrelated}); got.ID != "" {
 				t.Fatalf("replaced a missing/ineligible pinned predecessor: %+v", got)
 			}
 		})

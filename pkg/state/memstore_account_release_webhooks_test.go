@@ -1,16 +1,17 @@
-package state
+package state_test
 
 import (
 	"testing"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestMemStoreAccountReleaseWebhook_PaginationAndScope(t *testing.T) {
-	m, ctx, account, app := webhookFixture(t)
-	hook, err := m.CreateAccountReleaseWebhookIfUnderQuota(ctx, AppWebhook{
-		AccountID: account.ID, Scope: AppWebhookScopeAccount,
+	m, ctx, account, app := state.WebhookFixture(t)
+	hook, err := m.CreateAccountReleaseWebhookIfUnderQuota(ctx, state.AppWebhook{
+		AccountID: account.ID, Scope: state.AppWebhookScopeAccount,
 		TargetURL: "https://example.com/releases", SecretSealed: []byte("sealed"),
 		EventFilter: []string{"deployment.live"}, Enabled: true,
 	}, api.MustLimitsFor(api.PlanPro))
@@ -18,9 +19,9 @@ func TestMemStoreAccountReleaseWebhook_PaginationAndScope(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i := range 2 {
-		_, err := m.RecordAppWebhookDelivery(ctx, AppWebhookDelivery{
+		_, err := m.RecordAppWebhookDelivery(ctx, state.AppWebhookDelivery{
 			WebhookID: hook.ID, AppID: app.ID, AccountID: account.ID,
-			Event: AppWebhookEventDeploymentLive, Payload: []byte(`{}`),
+			Event: state.AppWebhookEventDeploymentLive, Payload: []byte(`{}`),
 			CreatedAt: time.Now().Add(time.Duration(i) * time.Second),
 		})
 		if err != nil {

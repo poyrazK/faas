@@ -1,6 +1,6 @@
 //go:build unix
 
-package main
+package main_test
 
 import (
 	"bytes"
@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"io"
 	"net"
 	"net/http"
@@ -72,14 +73,14 @@ func managedLocalHelperBinary(t *testing.T) string {
 	return managedLocalHelperBuild.binary
 }
 
-func managedLocalTestSpec(t *testing.T, mode string) *testLocalAppSpec {
+func managedLocalTestSpec(t *testing.T, mode string) *main.TestLocalAppSpec {
 	t.Helper()
 	t.Setenv("GREGALE_LOCAL_APP_HELPER", mode)
 	t.Setenv("GORACE", "atexit_sleep_ms=0")
 	exe := managedLocalHelperBinary(t)
-	return &testLocalAppSpec{
+	return &main.TestLocalAppSpec{
 		Command:         []string{exe, "app", "endpoint=${local.host}:${local.port}"},
-		Readiness:       testLocalReadinessSpec{Path: "/health", Status: 204, Timeout: "3s"},
+		Readiness:       main.TestLocalReadinessSpec{Path: "/health", Status: 204, Timeout: "3s"},
 		ShutdownTimeout: "1s",
 	}
 }
@@ -91,10 +92,10 @@ func managedLocalFixtureCommand(t *testing.T, phase string) []string {
 
 func captureManagedLocalOutput(t *testing.T) (*bytes.Buffer, *bytes.Buffer) {
 	t.Helper()
-	oldJSON, oldOut, oldErr := jsonOutput, osStdout, osStderr
+	oldJSON, oldOut, oldErr := (*main.JsonOutput), (*main.OsStdout), (*main.OsStderr)
 	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
-	jsonOutput, osStdout, osStderr = true, stdout, stderr
-	t.Cleanup(func() { jsonOutput, osStdout, osStderr = oldJSON, oldOut, oldErr })
+	(*main.JsonOutput), (*main.OsStdout), (*main.OsStderr) = true, stdout, stderr
+	t.Cleanup(func() { (*main.JsonOutput), (*main.OsStdout), (*main.OsStderr) = oldJSON, oldOut, oldErr })
 	return stdout, stderr
 }
 
@@ -139,7 +140,7 @@ scenarios:
 	if err := os.WriteFile(data, []byte(`[{"customer":"private-first"},{"customer":"private-second"}]`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if code := cmdTest([]string{"--engine", "local", "--validate", "--manifest", manifest, "--data", data}); code != 0 {
+	if code := main.CmdTest([]string{"--engine", "local", "--validate", "--manifest", manifest, "--data", data}); code != 0 {
 		t.Fatalf("validate exit %d: %s", code, stderr)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "starts.jsonl")); !os.IsNotExist(err) {
@@ -147,10 +148,10 @@ scenarios:
 	}
 	stdout.Reset()
 	report, junit := filepath.Join(dir, "report.json"), filepath.Join(dir, "report.xml")
-	if code := cmdTest([]string{"--engine", "local", "--scenario", "api-smoke", "--manifest", manifest, "--data", data, "--repeat", "2", "--report", report, "--junit", junit}); code != 0 {
+	if code := main.CmdTest([]string{"--engine", "local", "--scenario", "api-smoke", "--manifest", manifest, "--data", data, "--repeat", "2", "--report", report, "--junit", junit}); code != 0 {
 		t.Fatalf("managed run exit %d: %s / %s", code, stdout, stderr)
 	}
-	var receipts []testRunReceipt
+	var receipts []main.TestRunReceipt
 	if err := json.Unmarshal(stdout.Bytes(), &receipts); err != nil || len(receipts) != 4 {
 		t.Fatalf("receipts = %s (%v)", stdout, err)
 	}
@@ -212,7 +213,7 @@ scenarios:
 			t.Errorf("%s omitted managed app evidence", path)
 		}
 		if path == junit {
-			var suite testJUnitSuite
+			var suite main.TestJUnitSuite
 			if err := xml.Unmarshal(body, &suite); err != nil || suite.Tests != 4 || suite.Failures != 0 {
 				t.Fatalf("JUnit = %+v (%v)", suite, err)
 			}
@@ -253,7 +254,7 @@ func TestManagedLocalFailuresStillCleanUpAndStop(t *testing.T) {
 			}
 			spec := managedLocalTestSpec(t, mode)
 			_, stderr := captureManagedLocalOutput(t)
-			scenario := testScenario{Local: spec, Checks: []testHTTPRequest{{Name: "check", Method: "GET", Path: "/check", Expect: testHTTPExpect{Status: 200}}}, Cleanup: [][]string{{"sh", "-c", "printf cleaned > cleanup.txt"}}}
+			scenario := main.TestScenario{Local: spec, Checks: []main.TestHTTPRequest{{Name: "check", Method: "GET", Path: "/check", Expect: main.TestHTTPExpect{Status: 200}}}, Cleanup: [][]string{{"sh", "-c", "printf cleaned > cleanup.txt"}}}
 			ctx := context.Background()
 			switch failure {
 			case "readiness":
@@ -277,7 +278,7 @@ func TestManagedLocalFailuresStillCleanUpAndStop(t *testing.T) {
 				scenario.Cleanup = append(scenario.Cleanup, []string{"sh", "-c", "exit 1"}, managedLocalFixtureCommand(t, "cleanup"))
 			}
 			started := time.Now()
-			receipt := runLocalTest(ctx, "failure", scenario, dir, "", testDataCase{})
+			receipt := main.RunLocalTest(ctx, "failure", scenario, dir, "", main.TestDataCase{})
 			if receipt.Status != "failed" || (receipt.Error == "" && receipt.CleanupError == "") || receipt.LocalApp == nil || receipt.LocalApp.Shutdown == "not_started" || receipt.LocalApp.Shutdown == "failed" {
 				t.Fatalf("failed run = %+v, app = %+v", receipt, receipt.LocalApp)
 			}
@@ -340,8 +341,8 @@ func TestManagedLocalForcesShutdownOfAppAndDescendants(t *testing.T) {
 			dir := t.TempDir()
 			spec := managedLocalTestSpec(t, mode)
 			captureManagedLocalOutput(t)
-			scenario := testScenario{Local: spec, Cleanup: [][]string{managedLocalFixtureCommand(t, "cleanup")}}
-			receipt := runLocalTest(context.Background(), "forced", scenario, dir, "", testDataCase{})
+			scenario := main.TestScenario{Local: spec, Cleanup: [][]string{managedLocalFixtureCommand(t, "cleanup")}}
+			receipt := main.RunLocalTest(context.Background(), "forced", scenario, dir, "", main.TestDataCase{})
 			if receipt.Status != "passed" || receipt.LocalApp == nil || !receipt.LocalApp.Ready || receipt.LocalApp.Shutdown != "forced" {
 				t.Fatalf("forced run = %+v, app = %+v", receipt, receipt.LocalApp)
 			}
@@ -368,7 +369,7 @@ func TestManagedLocalOccupiedPortNeverStartsAppOrStopsExistingServer(t *testing.
 	spec := managedLocalTestSpec(t, "serve")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(204) }))
 	defer server.Close()
-	receipt := runLocalTest(context.Background(), "occupied", testScenario{Local: spec}, dir, server.URL, testDataCase{})
+	receipt := main.RunLocalTest(context.Background(), "occupied", main.TestScenario{Local: spec}, dir, server.URL, main.TestDataCase{})
 	if receipt.Status != "failed" || !strings.Contains(receipt.Error, "reserve local app port") || receipt.LocalApp.Shutdown != "not_started" {
 		t.Fatalf("occupied receipt = %+v", receipt)
 	}
@@ -386,13 +387,13 @@ func TestManagedLocalNativeLoadAndProgress(t *testing.T) {
 	dir := t.TempDir()
 	spec := managedLocalTestSpec(t, "serve")
 	_, stderr := captureManagedLocalOutput(t)
-	scenario := testScenario{Local: spec, Checks: []testHTTPRequest{{Name: "health", Method: "GET", Path: "/health", Expect: testHTTPExpect{Status: 204}}}, Cleanup: [][]string{managedLocalFixtureCommand(t, "cleanup")}}
-	cfg, err := resolveTestLoadConfig(scenario, testLoadOverrides{VUs: 2, VUsSet: true, Iterations: 4, IterationsSet: true})
+	scenario := main.TestScenario{Local: spec, Checks: []main.TestHTTPRequest{{Name: "health", Method: "GET", Path: "/health", Expect: main.TestHTTPExpect{Status: 204}}}, Cleanup: [][]string{managedLocalFixtureCommand(t, "cleanup")}}
+	cfg, err := main.ResolveTestLoadConfig(scenario, main.TestLoadOverrides{VUs: 2, VUsSet: true, Iterations: 4, IterationsSet: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg.Progress = func(update testLoadProgress) { printTestLoadProgress(osStderr, update) }
-	receipt := runLocalTestWithLoad(context.Background(), "load", scenario, dir, "", testDataCase{}, cfg)
+	cfg.Progress = func(update main.TestLoadProgress) { main.PrintTestLoadProgress((*main.OsStderr), update) }
+	receipt := main.RunLocalTestWithLoad(context.Background(), "load", scenario, dir, "", main.TestDataCase{}, cfg)
 	if receipt.Status != "passed" || receipt.Load == nil || receipt.Load.IterationsCompleted != 4 || receipt.LocalApp == nil || !receipt.LocalApp.Ready || receipt.LocalApp.Shutdown != "graceful" {
 		t.Fatalf("managed load = %+v, app = %+v, load = %+v; stderr %s", receipt, receipt.LocalApp, receipt.Load, stderr)
 	}
@@ -403,8 +404,8 @@ func TestManagedLocalCLIInterruptHelper(t *testing.T) {
 	if manifest == "" {
 		return
 	}
-	jsonOutput = true
-	os.Exit(cmdTest([]string{"--engine", "local", "--scenario", "api-smoke", "--manifest", manifest, "--report", filepath.Join(filepath.Dir(manifest), "report.json")}))
+	(*main.JsonOutput) = true
+	os.Exit(main.CmdTest([]string{"--engine", "local", "--scenario", "api-smoke", "--manifest", manifest, "--report", filepath.Join(filepath.Dir(manifest), "report.json")}))
 }
 
 func TestManagedLocalCLITerminationCleansUpBeforeShutdown(t *testing.T) {
@@ -465,7 +466,7 @@ scenarios:
 			if err := command.Wait(); err == nil || ctx.Err() != nil {
 				t.Fatalf("CLI did not report cancellation promptly: %v / %s", err, &output)
 			}
-			var receipts []testRunReceipt
+			var receipts []main.TestRunReceipt
 			body, err := os.ReadFile(filepath.Join(dir, "report.json"))
 			if err != nil {
 				t.Fatalf("CLI omitted cancellation report: %v / %s", err, &output)
@@ -491,8 +492,8 @@ scenarios:
 
 func TestManagedLocalStartFailureRunsCleanup(t *testing.T) {
 	dir := t.TempDir()
-	spec := &testLocalAppSpec{Command: []string{filepath.Join(dir, "missing-executable")}}
-	receipt := runLocalTest(context.Background(), "missing", testScenario{Local: spec, Cleanup: [][]string{{"sh", "-c", "printf cleaned > cleanup.txt"}}}, dir, "", testDataCase{})
+	spec := &main.TestLocalAppSpec{Command: []string{filepath.Join(dir, "missing-executable")}}
+	receipt := main.RunLocalTest(context.Background(), "missing", main.TestScenario{Local: spec, Cleanup: [][]string{{"sh", "-c", "printf cleaned > cleanup.txt"}}}, dir, "", main.TestDataCase{})
 	if receipt.Status != "failed" || !strings.Contains(receipt.Error, "start local app") || receipt.LocalApp == nil || receipt.LocalApp.Shutdown != "not_started" {
 		t.Fatalf("startup failure = %+v", receipt)
 	}
@@ -521,7 +522,7 @@ func TestManagedLocalManifestRejectsInvalidSpec(t *testing.T) {
 			if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			if _, _, err := readTestManifest(path); err == nil {
+			if _, _, err := main.ReadTestManifest(path); err == nil {
 				t.Fatal("invalid managed manifest accepted")
 			}
 		})
@@ -529,19 +530,19 @@ func TestManagedLocalManifestRejectsInvalidSpec(t *testing.T) {
 }
 
 func TestManagedLocalLogIsBoundedAndConcurrent(t *testing.T) {
-	var log localAppLog
+	var log main.LocalAppLog
 	var group sync.WaitGroup
 	for i := 0; i < 3; i++ {
 		group.Add(1)
 		go func() {
 			defer group.Done()
-			_, _ = io.WriteString(&log, strings.Repeat("x", localAppLogLimit*2))
+			_, _ = io.WriteString(&log, strings.Repeat("x", main.LocalAppLogLimit*2))
 			_ = log.String()
 		}()
 	}
 	group.Wait()
 	_, _ = io.WriteString(&log, "last-line")
-	if output := log.String(); len(output) != localAppLogLimit || !strings.HasSuffix(output, "last-line") {
+	if output := log.String(); len(output) != main.LocalAppLogLimit || !strings.HasSuffix(output, "last-line") {
 		t.Fatalf("bounded tail length = %s", strconv.Itoa(len(output)))
 	}
 }

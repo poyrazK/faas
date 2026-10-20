@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func TestScan_MalformedComposeVariantsCannotFallBackToRoot(t *testing.T) {
@@ -361,6 +363,21 @@ func TestHashWorkloadSourceScopesContentAndBuildMetadata(t *testing.T) {
 	metadata, err := hashWorkloadSource(fsys, workload)
 	if err != nil || metadata == inside {
 		t.Fatalf("Dockerfile selection did not change digest: %q -> %q, %v", inside, metadata, err)
+	}
+	workload.DockerfileBuild = &api.DockerfileBuildOptions{}
+	empty, err := hashWorkloadSource(fsys, workload)
+	if err != nil || empty != metadata {
+		t.Fatalf("empty build options changed digest: %q -> %q, %v", metadata, empty, err)
+	}
+	workload.DockerfileBuild = &api.DockerfileBuildOptions{Args: map[string]string{"NODE_ENV": "production"}}
+	args, err := hashWorkloadSource(fsys, workload)
+	if err != nil || args == metadata {
+		t.Fatalf("build args did not change digest: %q -> %q, %v", metadata, args, err)
+	}
+	workload.DockerfileBuild.Target = "runtime"
+	target, err := hashWorkloadSource(fsys, workload)
+	if err != nil || target == args {
+		t.Fatalf("build target did not change digest: %q -> %q, %v", args, target, err)
 	}
 
 	root := Workload{Name: "app"}

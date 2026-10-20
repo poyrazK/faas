@@ -2,7 +2,7 @@
 //
 // spend_cap_test.go pins ADR-1162: the account spend cap stops always-on
 // capacity, not only request wakes.
-package sched
+package sched_test
 
 import (
 	"context"
@@ -10,42 +10,43 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-func switchableSpendCap(reached *atomic.Bool) OverageChecker {
-	return newMockChecker(func(context.Context, string) (OverageStatus, int64, int64, error) {
+func switchableSpendCap(reached *atomic.Bool) sched.OverageChecker {
+	return sched.NewMockChecker(func(context.Context, string) (sched.OverageStatus, int64, int64, error) {
 		if reached.Load() {
-			return OverageReached, 1_500, 1_000, nil
+			return sched.OverageReached, 1_500, 1_000, nil
 		}
-		return OverageOK, 0, 0, nil
+		return sched.OverageOK, 0, 0, nil
 	})
 }
 
 func TestAdmitInstanceForDeployment_SpendCapRefusesFloor(t *testing.T) {
 	store := state.NewMemStore()
-	_, app, dep := seedApp(t, store, api.PlanPro, 128, 5)
-	vmm := &fakeVMM{}
+	_, app, dep := sched.SeedApp(t, store, api.PlanPro, 128, 5)
+	vmm := &sched.FakeVMM{}
 	var reached atomic.Bool
 	reached.Store(true)
-	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0").WithOverageChecker(switchableSpendCap(&reached))
+	e := sched.XNewEngine(t, store, vmm, &sched.FakeNotifier{}, "1.10.0").WithOverageChecker(switchableSpendCap(&reached))
 
-	res, err := e.AdmitInstanceForDeployment(context.Background(), app.ID, dep.ID, "", TriggerFloorDep)
+	res, err := e.AdmitInstanceForDeployment(context.Background(), app.ID, dep.ID, "", sched.TriggerFloorDep)
 	if err != nil {
 		t.Fatalf("AdmitInstanceForDeployment: %v", err)
 	}
 	if !res.AtCapacity || res.InstanceID != "" {
 		t.Fatalf("floor admission at the spend cap = %+v, want a typed AtCapacity refusal", res)
 	}
-	vmm.mu.Lock()
-	boots := vmm.coldBoots + vmm.restores
-	vmm.mu.Unlock()
+	(*vmm.Mu()).Lock()
+	boots := (*vmm.ColdBoots()) + (*vmm.Restores())
+	(*vmm.Mu()).Unlock()
 	if boots != 0 || e.Ledger().Concurrency(app.ID) != 0 {
 		t.Fatalf("boots=%d concurrency=%d, want no capacity started past the cap", boots, e.Ledger().Concurrency(app.ID))
 	}
 
 	reached.Store(false)
-	res, err = e.AdmitInstanceForDeployment(context.Background(), app.ID, dep.ID, "", TriggerFloorDep)
+	res, err = e.AdmitInstanceForDeployment(context.Background(), app.ID, dep.ID, "", sched.TriggerFloorDep)
 	if err != nil || res.InstanceID == "" {
 		t.Fatalf("floor admission after the cap lifts = (%+v, %v), want a started instance", res, err)
 	}
@@ -53,7 +54,7 @@ func TestAdmitInstanceForDeployment_SpendCapRefusesFloor(t *testing.T) {
 
 func TestAdmitInstanceForDeployment_SpendCapExemptsDeploymentSmoke(t *testing.T) {
 	store := state.NewMemStore()
-	_, app, _ := seedApp(t, store, api.PlanPro, 128, 5)
+	_, app, _ := sched.SeedApp(t, store, api.PlanPro, 128, 5)
 	candidate, err := store.CreateDeployment(context.Background(), state.Deployment{
 		AppID: app.ID, Kind: state.DeploymentKindImage,
 		ImageDigest: "sha256:candidate", Status: state.DeploySnapshotting,
@@ -63,9 +64,9 @@ func TestAdmitInstanceForDeployment_SpendCapExemptsDeploymentSmoke(t *testing.T)
 	}
 	var reached atomic.Bool
 	reached.Store(true)
-	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0").WithOverageChecker(switchableSpendCap(&reached))
+	e := sched.XNewEngine(t, store, &sched.FakeVMM{}, &sched.FakeNotifier{}, "1.10.0").WithOverageChecker(switchableSpendCap(&reached))
 
-	res, err := e.AdmitInstanceForDeployment(context.Background(), app.ID, candidate.ID, "", TriggerDeploymentSmoke)
+	res, err := e.AdmitInstanceForDeployment(context.Background(), app.ID, candidate.ID, "", sched.TriggerDeploymentSmoke)
 	if err != nil || res.AtCapacity || res.InstanceID == "" {
 		t.Fatalf("deployment smoke at the spend cap = (%+v, %v), want the release verified", res, err)
 	}
@@ -73,29 +74,29 @@ func TestAdmitInstanceForDeployment_SpendCapExemptsDeploymentSmoke(t *testing.T)
 
 func TestAppMustPark_SpendCap(t *testing.T) {
 	store := state.NewMemStore()
-	acct, app, _ := seedApp(t, store, api.PlanPro, 128, 5)
+	acct, app, _ := sched.SeedApp(t, store, api.PlanPro, 128, 5)
 	ctx := context.Background()
-	if newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0").appMustPark(ctx, app, acct) {
+	if sched.XNewEngine(t, store, &sched.FakeVMM{}, &sched.FakeNotifier{}, "1.10.0").AppMustPark(ctx, app, acct) {
 		t.Fatal("appMustPark without an overage checker = true, want false")
 	}
 	var reached atomic.Bool
-	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0").WithOverageChecker(switchableSpendCap(&reached))
-	if e.appMustPark(ctx, app, acct) {
+	e := sched.XNewEngine(t, store, &sched.FakeVMM{}, &sched.FakeNotifier{}, "1.10.0").WithOverageChecker(switchableSpendCap(&reached))
+	if e.AppMustPark(ctx, app, acct) {
 		t.Fatal("appMustPark under the cap = true, want false")
 	}
 	reached.Store(true)
-	if !e.appMustPark(ctx, app, acct) {
+	if !e.AppMustPark(ctx, app, acct) {
 		t.Fatal("appMustPark at the cap = false, want true")
 	}
 }
 
 func TestParkApp_ParksRunningInstanceAtSpendCap(t *testing.T) {
 	store := state.NewMemStore()
-	_, app, _ := seedApp(t, store, api.PlanPro, 128, 5)
+	_, app, _ := sched.SeedApp(t, store, api.PlanPro, 128, 5)
 	ctx := context.Background()
 	var reached atomic.Bool
-	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0").WithOverageChecker(switchableSpendCap(&reached))
-	woke, err := e.Wake(ctx, app.ID, "", "", TriggerGateway)
+	e := sched.XNewEngine(t, store, &sched.FakeVMM{}, &sched.FakeNotifier{}, "1.10.0").WithOverageChecker(switchableSpendCap(&reached))
+	woke, err := e.Wake(ctx, app.ID, "", "", sched.TriggerGateway)
 	if err != nil || woke.InstanceID == "" {
 		t.Fatalf("Wake = (%+v, %v), want a running instance", woke, err)
 	}

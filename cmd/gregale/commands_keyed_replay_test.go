@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -28,14 +29,14 @@ func TestCmdInvocationsGetKeyedReplay(t *testing.T) {
 				}
 			}))
 			defer server.Close()
-			stdout, _, restore := swapIO(t)
+			stdout, _, restore := main.SwapIO(t)
 			defer restore()
 			t.Setenv("FAAS_API", server.URL)
 			t.Setenv("FAAS_TOKEN", "fp_live_x")
-			previous := jsonOutput
-			jsonOutput = outputJSON
-			defer func() { jsonOutput = previous }()
-			if code := cmdInvocationsGet([]string{"--replay-keyed", inv.ID}); code != 0 || posts != 1 {
+			previous := (*main.JsonOutput)
+			(*main.JsonOutput) = outputJSON
+			defer func() { (*main.JsonOutput) = previous }()
+			if code := main.CmdInvocationsGet([]string{"--replay-keyed", inv.ID}); code != 0 || posts != 1 {
 				t.Fatalf("exit=%d posts=%d", code, posts)
 			}
 			if outputJSON {
@@ -54,9 +55,9 @@ func TestCmdInvocationsGetKeyedReplay(t *testing.T) {
 }
 
 func TestCmdInvocationsGetRejectsAmbiguousReplay(t *testing.T) {
-	_, _, restore := swapIO(t)
+	_, _, restore := main.SwapIO(t)
 	defer restore()
-	if code := cmdInvocationsGet([]string{"--replay", "--replay-keyed", "parent"}); code != 1 {
+	if code := main.CmdInvocationsGet([]string{"--replay", "--replay-keyed", "parent"}); code != 1 {
 		t.Fatalf("ambiguous replay exit=%d", code)
 	}
 }

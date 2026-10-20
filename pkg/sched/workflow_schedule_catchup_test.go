@@ -1,5 +1,5 @@
 // adr: 639
-package sched
+package sched_test
 
 import (
 	"context"
@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -28,16 +29,16 @@ func TestWorkflowScheduleCatchUpExecutesOnceAfterSchedulerRestart(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	engine, _ := makeEngine(t, store, &fakeWakeVMM{})
+	engine, _ := sched.MakeEngine(t, store, &sched.FakeWakeVMM{})
 	now := time.Now().UTC().Truncate(time.Hour).Add(-2*time.Hour + 30*time.Second)
-	loop := NewLoop(nil, engine, slog.Default()).WithWorkflowsDispatched(true).WithClock(func() time.Time { return now })
-	if err := loop.runWorkflowSchedulesTick(ctx); err != nil {
+	loop := sched.NewLoop(nil, engine, slog.Default()).WithWorkflowsDispatched(true).WithClock(func() time.Time { return now })
+	if err := loop.RunWorkflowSchedulesTick(ctx); err != nil {
 		t.Fatal(err)
 	}
 	now = now.Add(17 * time.Minute)
 	for range 3 {
-		restarted := NewLoop(nil, engine, slog.Default()).WithWorkflowsDispatched(true).WithClock(func() time.Time { return now })
-		if err := restarted.runWorkflowSchedulesTick(ctx); err != nil {
+		restarted := sched.NewLoop(nil, engine, slog.Default()).WithWorkflowsDispatched(true).WithClock(func() time.Time { return now })
+		if err := restarted.RunWorkflowSchedulesTick(ctx); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -45,8 +46,8 @@ func TestWorkflowScheduleCatchUpExecutesOnceAfterSchedulerRestart(t *testing.T) 
 	if err != nil || total != 1 || len(runs) != 1 || !runs[0].ScheduledFor.Equal(now.Truncate(time.Hour).Add(15*time.Minute)) {
 		t.Fatalf("runs=%+v total=%d err=%v", runs, total, err)
 	}
-	executor := &scheduleStepExecutor{}
-	orchestrator := NewWorkflowOrchestrator(store, executor, nil, nil, slog.Default())
+	executor := &sched.ScheduleStepExecutor{}
+	orchestrator := sched.NewWorkflowOrchestrator(store, executor, nil, nil, slog.Default())
 	if err := orchestrator.DispatchTick(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -54,8 +55,8 @@ func TestWorkflowScheduleCatchUpExecutesOnceAfterSchedulerRestart(t *testing.T) 
 		t.Fatal(err)
 	}
 	completed, err := store.GetWorkflowRun(ctx, runs[0].ID)
-	if err != nil || completed.Status != state.WorkflowRunStatusSucceeded || executor.calls != 1 || string(executor.input) != `{"report":"daily"}` {
-		t.Fatalf("completed=%+v calls=%d input=%s err=%v", completed, executor.calls, executor.input, err)
+	if err != nil || completed.Status != state.WorkflowRunStatusSucceeded || (*executor.Calls()) != 1 || string((*executor.Input())) != `{"report":"daily"}` {
+		t.Fatalf("completed=%+v calls=%d input=%s err=%v", completed, (*executor.Calls()), (*executor.Input()), err)
 	}
 	history, err := store.ListWorkflowScheduleOccurrences(ctx, app.ID, "", "", 100)
 	if err != nil || len(history) != 1 || !history[0].EvaluatedAt.Equal(now) {

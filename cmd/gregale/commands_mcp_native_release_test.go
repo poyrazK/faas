@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"context"
@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/mcphosting"
 )
@@ -28,23 +29,23 @@ func TestMCPNativeReleasePlanAndJournal(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	p := mcpNativeReleasePlan{WebApp: "web", WorkerApp: "candidate", ObserverApp: "observer", ObserverMetricApp: "candidate", WebPath: "web", WorkerPath: "worker", PreviousWorkerApps: []string{"previous"}}
+	p := main.McpNativeReleasePlan{WebApp: "web", WorkerApp: "candidate", ObserverApp: "observer", ObserverMetricApp: "candidate", WebPath: "web", WorkerPath: "worker", PreviousWorkerApps: []string{"previous"}}
 	body, _ := json.Marshal(p)
 	plan := filepath.Join(root, "plan.json")
 	os.WriteFile(plan, body, 0600)
-	loaded, err := readMCPNativePlan(plan)
+	loaded, err := main.ReadMCPNativePlan(plan)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if loaded.WorkerPath != worker || loaded.TimeoutSeconds != 300 {
 		t.Fatalf("plan=%+v", loaded)
 	}
-	fingerprint, err := mcpNativeFingerprint(loaded)
+	fingerprint, err := main.McpNativeFingerprint(loaded)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("FAAS_API", "https://another-control-plane.example")
-	changedAPI, err := mcpNativeFingerprint(loaded)
+	changedAPI, err := main.McpNativeFingerprint(loaded)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,21 +54,21 @@ func TestMCPNativeReleasePlanAndJournal(t *testing.T) {
 	}
 	t.Setenv("FAAS_API", "https://third-control-plane.example")
 	// Continue with a consistent API context for journal/source checks.
-	fingerprint, err = mcpNativeFingerprint(loaded)
+	fingerprint, err = main.McpNativeFingerprint(loaded)
 	if err != nil {
 		t.Fatal(err)
 	}
 	statePath := filepath.Join(root, "release.json")
-	s, err := loadMCPNativeState(statePath, fingerprint)
+	s, err := main.LoadMCPNativeState(statePath, fingerprint)
 	if err != nil {
 		t.Fatal(err)
 	}
 	s.WorkerDeployment = "pinned"
 	s.PendingSubmission = "web"
-	if err := saveMCPNativeState(statePath, &s); err != nil {
+	if err := main.SaveMCPNativeState(statePath, &s); err != nil {
 		t.Fatal(err)
 	}
-	restored, err := loadMCPNativeState(statePath, fingerprint)
+	restored, err := main.LoadMCPNativeState(statePath, fingerprint)
 	if err != nil || restored.WorkerDeployment != "pinned" || restored.PendingSubmission != "web" {
 		t.Fatalf("restored=%+v err=%v", restored, err)
 	}
@@ -76,14 +77,14 @@ func TestMCPNativeReleasePlanAndJournal(t *testing.T) {
 		t.Fatal("journal permissions")
 	}
 	os.WriteFile(filepath.Join(worker, "server.js"), []byte("changed"), 0600)
-	changed, _ := mcpNativeFingerprint(loaded)
-	if _, err = loadMCPNativeState(statePath, changed); err == nil {
+	changed, _ := main.McpNativeFingerprint(loaded)
+	if _, err = main.LoadMCPNativeState(statePath, changed); err == nil {
 		t.Fatal("changed source resumed old release")
 	}
 	p.PreviousWorkerApps = []string{"candidate"}
 	body, _ = json.Marshal(p)
 	os.WriteFile(plan, body, 0600)
-	if _, err = readMCPNativePlan(plan); err == nil {
+	if _, err = main.ReadMCPNativePlan(plan); err == nil {
 		t.Fatal("in-place worker replacement accepted")
 	}
 }
@@ -95,15 +96,15 @@ func TestMCPNativeWorkerLogsRequireCurrentDeploymentInstances(t *testing.T) {
 		return "event: log\ndata: " + string(envelope) + "\n\n"
 	}
 	instances := []api.InstanceResponse{{ID: "current", DeploymentID: "candidate", State: "running"}, {ID: "old", DeploymentID: "previous", State: "running"}}
-	ids, err := mcpNativeWorkerLogs(strings.NewReader(event("old", id)+event("current", id)), instances, "candidate")
+	ids, err := main.McpNativeWorkerLogs(strings.NewReader(event("old", id)+event("current", id)), instances, "candidate")
 	if err != nil || len(ids) != 1 || ids[0] != id {
 		t.Fatalf("ids=%v err=%v", ids, err)
 	}
-	if _, err = mcpNativeWorkerLogs(strings.NewReader(event("old", id)), instances, "candidate"); err == nil {
+	if _, err = main.McpNativeWorkerLogs(strings.NewReader(event("old", id)), instances, "candidate"); err == nil {
 		t.Fatal("old startup satisfied candidate")
 	}
 	instances = append(instances, api.InstanceResponse{ID: "missing", DeploymentID: "candidate", State: "running"})
-	if _, err = mcpNativeWorkerLogs(strings.NewReader(event("current", id)), instances, "candidate"); err == nil {
+	if _, err = main.McpNativeWorkerLogs(strings.NewReader(event("current", id)), instances, "candidate"); err == nil {
 		t.Fatal("missing replica startup accepted")
 	}
 }
@@ -117,7 +118,7 @@ func TestMCPNativeReleaseResumesPinnedDeploymentWithoutSubmitting(t *testing.T) 
 		case "/v1/capabilities":
 			json.NewEncoder(w).Encode(api.CapabilitiesResponse{ConditionalParking: true})
 		case "/v1/deployments/pinned":
-			json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "pinned", AppID: "app", Status: statusLive})
+			json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "pinned", AppID: "app", Status: main.StatusLive})
 		case "/v1/apps/worker":
 			json.NewEncoder(w).Encode(api.AppResponse{ID: "app", Slug: "worker"})
 		default:
@@ -126,8 +127,8 @@ func TestMCPNativeReleaseResumesPinnedDeploymentWithoutSubmitting(t *testing.T) 
 		}
 	}))
 	defer server.Close()
-	s := mcpNativeReleaseState{WorkerDeployment: "pinned"}
-	if err := mcpNativeDeploy(context.Background(), NewClient(server.URL, "operator"), "unused", "worker", false, &s, "unused"); err != nil {
+	s := main.McpNativeReleaseState{WorkerDeployment: "pinned"}
+	if err := main.McpNativeDeploy(context.Background(), main.NewClient(server.URL, "operator"), "unused", "worker", false, &s, "unused"); err != nil {
 		t.Fatal(err)
 	}
 	if submissions != 0 {
@@ -136,9 +137,11 @@ func TestMCPNativeReleaseResumesPinnedDeploymentWithoutSubmitting(t *testing.T) 
 }
 
 func TestMCPNativeReleaseHealthAndDrainRecovery(t *testing.T) {
-	oldCheck := mcpNativeCheckWorkers
-	mcpNativeCheckWorkers = func(context.Context, *Client, mcpNativeReleasePlan, *mcpNativeReleaseState) error { return nil }
-	defer func() { mcpNativeCheckWorkers = oldCheck }()
+	oldCheck := (*main.McpNativeCheckWorkers)
+	(*main.McpNativeCheckWorkers) = func(context.Context, *main.Client, main.McpNativeReleasePlan, *main.McpNativeReleaseState) error {
+		return nil
+	}
+	defer func() { (*main.McpNativeCheckWorkers) = oldCheck }()
 
 	for _, tc := range []struct {
 		name                                                                   string
@@ -146,7 +149,7 @@ func TestMCPNativeReleaseHealthAndDrainRecovery(t *testing.T) {
 		wantError                                                              bool
 	}{{name: "healthy"}, {name: "resume start", start: true}, {name: "stale observer", stale: true, wantError: true}, {name: "old generation changed", changed: true, wantError: true}, {name: "bad MCP endpoint", badEndpoint: true, wantError: true}, {name: "lost promotion response", committed: true}, {name: "replacement lost", workerLost: true, wantError: true}, {name: "canonical fails after promotion", postFailure: true, wantError: true}} {
 		t.Run(tc.name, func(t *testing.T) {
-			mcpNativeCheckWorkers = func(context.Context, *Client, mcpNativeReleasePlan, *mcpNativeReleaseState) error {
+			(*main.McpNativeCheckWorkers) = func(context.Context, *main.Client, main.McpNativeReleasePlan, *main.McpNativeReleaseState) error {
 				if tc.workerLost {
 					return fmt.Errorf("replacement lost")
 				}
@@ -196,8 +199,8 @@ func TestMCPNativeReleaseHealthAndDrainRecovery(t *testing.T) {
 				if r.Header.Get("Authorization") != "Bearer operator" {
 					t.Error("missing control credential")
 				}
-				dep := api.DeploymentResponse{ID: "candidate", AppID: "web-id", Status: statusLive}
-				stable := api.DeploymentResponse{ID: "stable", AppID: "web-id", Status: statusLive}
+				dep := api.DeploymentResponse{ID: "candidate", AppID: "web-id", Status: main.StatusLive}
+				stable := api.DeploymentResponse{ID: "stable", AppID: "web-id", Status: main.StatusLive}
 				if promoted {
 					dep.TrafficPercent = 100
 				} else {
@@ -211,7 +214,7 @@ func TestMCPNativeReleaseHealthAndDrainRecovery(t *testing.T) {
 				case "/v1/apps/worker":
 					json.NewEncoder(w).Encode(api.AppResponse{ID: "worker-id", Slug: "worker", WorkloadClass: "worker", Manifest: api.AppManifest{WorkerReplicas: &api.WorkerScaling{Min: 1}}})
 				case "/v1/deployments/worker-candidate":
-					json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "worker-candidate", AppID: "worker-id", Status: statusLive})
+					json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "worker-candidate", AppID: "worker-id", Status: main.StatusLive})
 				case "/v1/apps/worker/instances":
 					json.NewEncoder(w).Encode([]api.InstanceResponse{{ID: "worker-instance", DeploymentID: "worker-candidate", State: "running"}})
 				case "/v1/apps/worker/logs":
@@ -235,7 +238,7 @@ func TestMCPNativeReleaseHealthAndDrainRecovery(t *testing.T) {
 					if tc.changed {
 						id = "unrelated"
 					}
-					json.NewEncoder(w).Encode(api.DeploymentResponse{ID: id, AppID: "previous-id", Status: statusLive})
+					json.NewEncoder(w).Encode(api.DeploymentResponse{ID: id, AppID: "previous-id", Status: main.StatusLive})
 				case "/v1/deployments/candidate/traffic":
 					var body api.UpdateDeploymentTrafficRequest
 					json.NewDecoder(r.Body).Decode(&body)
@@ -258,17 +261,17 @@ func TestMCPNativeReleaseHealthAndDrainRecovery(t *testing.T) {
 				}
 			}))
 			defer control.Close()
-			p := mcpNativeReleasePlan{WebApp: "web", WebPath: cfgDir, WorkerPath: cfgDir, WorkerApp: "worker", ObserverApp: "observer", ObserverMetricApp: "metrics", PreviousWorkerApps: []string{"previous"}}
-			s := mcpNativeReleaseState{Version: 1, WebDeployment: "candidate", WorkerDeployment: "worker-candidate", ServingDeployment: "stable", ServingCaptured: true, PreviousDeployments: map[string]string{"previous": "old"}, WorkerIDs: []string{"id"}, Parked: map[string]bool{}}
+			p := main.McpNativeReleasePlan{WebApp: "web", WebPath: cfgDir, WorkerPath: cfgDir, WorkerApp: "worker", ObserverApp: "observer", ObserverMetricApp: "metrics", PreviousWorkerApps: []string{"previous"}}
+			s := main.McpNativeReleaseState{Version: 1, WebDeployment: "candidate", WorkerDeployment: "worker-candidate", ServingDeployment: "stable", ServingCaptured: true, PreviousDeployments: map[string]string{"previous": "old"}, WorkerIDs: []string{"id"}, Parked: map[string]bool{}}
 			t.Setenv("MCP_TASK_RELEASE_INPUT", `{"replacementWorkerIDs":["id"]}`)
 			if tc.start {
-				err = startMCPNativeRelease(context.Background(), NewClient(control.URL, "operator"), p, &s, filepath.Join(t.TempDir(), "state.json"))
+				err = main.StartMCPNativeRelease(context.Background(), main.NewClient(control.URL, "operator"), p, &s, filepath.Join(t.TempDir(), "state.json"))
 				if err != nil || s.Stage != "replacements_started" || len(s.WorkerIDs) != 1 || parks != 0 || promotions != 0 {
 					t.Fatalf("resumed start state=%+v err=%v", s, err)
 				}
 				return
 			}
-			err = drainMCPNativeRelease(context.Background(), NewClient(control.URL, "operator"), p, &s, filepath.Join(t.TempDir(), "state.json"))
+			err = main.DrainMCPNativeRelease(context.Background(), main.NewClient(control.URL, "operator"), p, &s, filepath.Join(t.TempDir(), "state.json"))
 			if (err != nil) != tc.wantError {
 				t.Fatalf("err=%v", err)
 			}
@@ -330,7 +333,7 @@ func TestMCPNativeSubmissionReconciliation(t *testing.T) {
 				}
 			}))
 			defer server.Close()
-			s := mcpNativeReleaseState{Version: 1, Fingerprint: "source", ReleaseID: release, PendingSubmission: tc.kind}
+			s := main.McpNativeReleaseState{Version: 1, Fingerprint: "source", ReleaseID: release, PendingSubmission: tc.kind}
 			if tc.conflict {
 				s.WorkerDeployment = "another-candidate"
 			}
@@ -338,7 +341,7 @@ func TestMCPNativeSubmissionReconciliation(t *testing.T) {
 				s.ReleaseID = ""
 			}
 			path := filepath.Join(t.TempDir(), "state.json")
-			err := reconcileMCPNativeSubmission(context.Background(), NewClient(server.URL, "token"), mcpNativeReleasePlan{WorkerApp: "worker", WebApp: "web"}, &s, path)
+			err := main.ReconcileMCPNativeSubmission(context.Background(), main.NewClient(server.URL, "token"), main.McpNativeReleasePlan{WorkerApp: "worker", WebApp: "web"}, &s, path)
 			if tc.duplicate || tc.missing || tc.wrongApp || tc.legacy || tc.conflict {
 				if err == nil || s.PendingSubmission != tc.kind {
 					t.Fatalf("unsafe reconciliation: %+v err=%v", s, err)
@@ -351,7 +354,7 @@ func TestMCPNativeSubmissionReconciliation(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			saved, err := loadMCPNativeState(path, "source")
+			saved, err := main.LoadMCPNativeState(path, "source")
 			if err != nil || saved.PendingSubmission != "" || saved.ReleaseID != release {
 				t.Fatalf("journal %+v err=%v", saved, err)
 			}
@@ -369,14 +372,14 @@ func TestMCPNativeQuarantineRequiresFenceAwareWorkers(t *testing.T) {
 		envelope, _ := json.Marshal(map[string]string{"instance": "instance", "line": string(payload)})
 		return "event: log\ndata: " + string(envelope) + "\n\n"
 	}
-	if _, err := mcpNativeWorkerLogs(strings.NewReader(event(false)), instances, "candidate", true); err == nil {
+	if _, err := main.McpNativeWorkerLogs(strings.NewReader(event(false)), instances, "candidate", true); err == nil {
 		t.Fatal("legacy worker accepted quarantine it cannot honor")
 	}
 	other := strings.ReplaceAll(event(true), "123456789abc", "123456789abd")
-	if _, err := mcpNativeWorkerLogs(strings.NewReader(event(true)+other), instances, "candidate", true); err == nil {
+	if _, err := main.McpNativeWorkerLogs(strings.NewReader(event(true)+other), instances, "candidate", true); err == nil {
 		t.Fatal("restarted worker with ambiguous startup IDs accepted quarantine")
 	}
-	ids, err := mcpNativeWorkerLogs(strings.NewReader(event(true)), instances, "candidate", true)
+	ids, err := main.McpNativeWorkerLogs(strings.NewReader(event(true)), instances, "candidate", true)
 	if err != nil || len(ids) != 1 {
 		t.Fatalf("fence-aware worker rejected: %v %v", ids, err)
 	}

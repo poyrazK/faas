@@ -1,4 +1,4 @@
-package sched
+package sched_test
 
 // adr: 210
 
@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
@@ -18,18 +19,18 @@ import (
 func TestRuntimeConfigDrainReadsPhysicalNodeAndRequiresQuietPeriod(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemStore()
-	_, app, deployment := seedApp(t, store, api.PlanPro, 256, 5)
+	_, app, deployment := sched.SeedApp(t, store, api.PlanPro, 256, 5)
 	const physicalNodeID = "compute-old-owner"
 	instance, err := store.CreateInstance(ctx, app.ID, deployment.ID, string(state.StateDraining), app.RAMMB, physicalNodeID, "wake-old")
 	if err != nil {
 		t.Fatalf("CreateInstance: %v", err)
 	}
 
-	vmm := &fakeVMM{}
+	vmm := &sched.FakeVMM{}
 	var mu sync.Mutex
 	var calls int
 	var lastNodeID string
-	vmm.statsHook = func(_ context.Context, nodeID string) (*StatsSnapshot, error) {
+	(*vmm.StatsHook()) = func(_ context.Context, nodeID string) (*sched.StatsSnapshot, error) {
 		mu.Lock()
 		calls++
 		call := calls
@@ -39,12 +40,12 @@ func TestRuntimeConfigDrainReadsPhysicalNodeAndRequiresQuietPeriod(t *testing.T)
 		if call == 1 {
 			inflight = 1
 		}
-		return &StatsSnapshot{Instances: []VMInstanceStat{{InstanceID: instance.ID, InflightRequests: inflight}}}, nil
+		return &sched.StatsSnapshot{Instances: []sched.VMInstanceStat{{InstanceID: instance.ID, InflightRequests: inflight}}}, nil
 	}
-	engine := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+	engine := sched.XNewEngine(t, store, vmm, &sched.FakeNotifier{}, "1.10.0")
 
 	started := time.Now()
-	if err := engine.waitForRuntimeConfigInstanceDrain(ctx, app.ID, instance.ID, started.Add(-time.Second)); err != nil {
+	if err := engine.WaitForRuntimeConfigInstanceDrain(ctx, app.ID, instance.ID, started.Add(-time.Second)); err != nil {
 		t.Fatalf("waitForRuntimeConfigInstanceDrain: %v", err)
 	}
 	if elapsed := time.Since(started); elapsed < time.Duration(api.ServiceReplicaDrainQuietSeconds)*time.Second {
@@ -64,34 +65,36 @@ func TestRuntimeConfigDrainReadsPhysicalNodeAndRequiresQuietPeriod(t *testing.T)
 func TestRuntimeConfigDrainDoesNotTreatMissingTelemetryAsZero(t *testing.T) {
 	tests := []struct {
 		name       string
-		stats      func(context.Context, string, string) (*StatsSnapshot, error)
-		wantReason runtimeConfigDrainReason
+		stats      func(context.Context, string, string) (*sched.StatsSnapshot, error)
+		wantReason sched.RuntimeConfigDrainReason
 	}{
 		{
-			name:       "instance omitted",
-			stats:      func(context.Context, string, string) (*StatsSnapshot, error) { return &StatsSnapshot{}, nil },
-			wantReason: runtimeConfigDrainReasonTelemetryMissing,
+			name: "instance omitted",
+			stats: func(context.Context, string, string) (*sched.StatsSnapshot, error) {
+				return &sched.StatsSnapshot{}, nil
+			},
+			wantReason: sched.RuntimeConfigDrainReasonTelemetryMissing,
 		},
 		{
 			name: "stats unavailable",
-			stats: func(context.Context, string, string) (*StatsSnapshot, error) {
+			stats: func(context.Context, string, string) (*sched.StatsSnapshot, error) {
 				return nil, errors.New("peer unavailable")
 			},
-			wantReason: runtimeConfigDrainReasonTelemetryMissing,
+			wantReason: sched.RuntimeConfigDrainReasonTelemetryMissing,
 		},
 		{
 			name: "quiet period not elapsed",
-			stats: func(_ context.Context, _, instanceID string) (*StatsSnapshot, error) {
-				return &StatsSnapshot{Instances: []VMInstanceStat{{InstanceID: instanceID}}}, nil
+			stats: func(_ context.Context, _, instanceID string) (*sched.StatsSnapshot, error) {
+				return &sched.StatsSnapshot{Instances: []sched.VMInstanceStat{{InstanceID: instanceID}}}, nil
 			},
-			wantReason: runtimeConfigDrainReasonQuietPeriod,
+			wantReason: sched.RuntimeConfigDrainReasonQuietPeriod,
 		},
 		{
 			name: "requests active",
-			stats: func(_ context.Context, _, instanceID string) (*StatsSnapshot, error) {
-				return &StatsSnapshot{Instances: []VMInstanceStat{{InstanceID: instanceID, InflightRequests: 1}}}, nil
+			stats: func(_ context.Context, _, instanceID string) (*sched.StatsSnapshot, error) {
+				return &sched.StatsSnapshot{Instances: []sched.VMInstanceStat{{InstanceID: instanceID, InflightRequests: 1}}}, nil
 			},
-			wantReason: runtimeConfigDrainReasonRequestsActive,
+			wantReason: sched.RuntimeConfigDrainReasonRequestsActive,
 		},
 	}
 
@@ -99,19 +102,19 @@ func TestRuntimeConfigDrainDoesNotTreatMissingTelemetryAsZero(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
 			store := state.NewMemStore()
-			_, app, deployment := seedApp(t, store, api.PlanPro, 256, 5)
+			_, app, deployment := sched.SeedApp(t, store, api.PlanPro, 256, 5)
 			instance, err := store.CreateInstance(ctx, app.ID, deployment.ID, string(state.StateDraining), app.RAMMB, "compute-old-owner", "wake-old")
 			if err != nil {
 				t.Fatalf("CreateInstance: %v", err)
 			}
-			vmm := &fakeVMM{}
-			vmm.statsHook = func(callCtx context.Context, nodeID string) (*StatsSnapshot, error) {
+			vmm := &sched.FakeVMM{}
+			(*vmm.StatsHook()) = func(callCtx context.Context, nodeID string) (*sched.StatsSnapshot, error) {
 				return tt.stats(callCtx, nodeID, instance.ID)
 			}
-			engine := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+			engine := sched.XNewEngine(t, store, vmm, &sched.FakeNotifier{}, "1.10.0")
 			waitCtx, cancel := context.WithTimeout(ctx, 350*time.Millisecond)
 			defer cancel()
-			err = engine.waitForRuntimeConfigInstanceDrain(waitCtx, app.ID, instance.ID, time.Now().Add(-time.Second))
+			err = engine.WaitForRuntimeConfigInstanceDrain(waitCtx, app.ID, instance.ID, time.Now().Add(-time.Second))
 			if err == nil {
 				t.Fatal("waitForRuntimeConfigInstanceDrain succeeded without a sustained, authoritative zero sample")
 			}
@@ -138,9 +141,9 @@ func (r *deploymentLookupRecorder) DeploymentByID(ctx context.Context, id string
 // Postgres rejected "" as a uuid.
 func TestRuntimeConfigRestartHandoffSkipsEmptyRolloutID(t *testing.T) {
 	store := &deploymentLookupRecorder{MemStore: state.NewMemStore()}
-	e := newEngine(t, statetest.NewMem(store), &fakeVMM{}, &fakeNotifier{}, "1.10.0")
-	e.updateServiceRolloutHandoff(t.Context(), "", func(h *state.ServiceRolloutHandoff) { h.LastError = "x" })
-	e.failServiceRolloutHandoff(t.Context(), "", state.ServiceRolloutPhaseRouting, "route_publish_failed", nil)
+	e := sched.XNewEngine(t, statetest.NewMem(store), &sched.FakeVMM{}, &sched.FakeNotifier{}, "1.10.0")
+	e.UpdateServiceRolloutHandoff(t.Context(), "", func(h *state.ServiceRolloutHandoff) { h.LastError = "x" })
+	e.FailServiceRolloutHandoff(t.Context(), "", state.ServiceRolloutPhaseRouting, "route_publish_failed", nil)
 	if len(store.ids) != 0 {
 		t.Fatalf("DeploymentByID called with %q for a rollout-less restart", store.ids)
 	}

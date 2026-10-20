@@ -1,9 +1,10 @@
-package state
+package state_test
 
 import (
 	"context"
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 	"testing"
 	"time"
 )
@@ -11,11 +12,11 @@ import (
 func TestWorkflowRecoveryCancellation(t *testing.T) {
 	for _, scenario := range []string{"cancel", "changed_request", "new_generation", "terminal", "unknown", "not_admitted", "missing_account"} {
 		t.Run(scenario, func(t *testing.T) {
-			workflowScheduleStores(t, func(t *testing.T, store Store) {
-				ctx := WithEventRecoveryActor(context.Background(), "api_key", "review-key")
-				run, app := seedResumeRun(t, store, simpleResumeSpec())
-				failResumeRun(t, store, run, "send")
-				recovery := store.(EventRecoveryStore)
+			state.WorkflowScheduleStores(t, func(t *testing.T, store state.Store) {
+				ctx := state.WithEventRecoveryActor(context.Background(), "api_key", "review-key")
+				run, app := state.SeedResumeRun(t, store, state.SimpleResumeSpec())
+				state.FailResumeRun(t, store, run, "send")
+				recovery := store.(state.EventRecoveryStore)
 				job, err := recovery.CreateEventRecovery(ctx, app.AccountID, app.ID, api.EventRecoveryRequest{RequestID: uuid.NewString(), WorkflowRuns: &api.WorkflowRunRecoveryPlan{Name: run.WorkflowName, Runs: []api.WorkflowRunRecoveryTarget{{RunID: run.ID}}}})
 				if err != nil {
 					t.Fatal(err)
@@ -27,7 +28,7 @@ func TestWorkflowRecoveryCancellation(t *testing.T) {
 				}
 				count := 1
 				req := api.WorkflowRecoveryCancellationRequest{Position: 1, ExpectedResumeCount: &count, Reason: "provider incident"}
-				controls := store.(WorkflowRecoveryCancellationStore)
+				controls := store.(state.WorkflowRecoveryCancellationStore)
 				preview, err := controls.WorkflowRecoveryCancellation(ctx, app.AccountID, job.ID, req, true)
 				if err != nil || preview.Preview != true || scenario != "not_admitted" && preview.Outcome != "eligible" {
 					t.Fatalf("preview=%+v %v", preview, err)
@@ -47,23 +48,23 @@ func TestWorkflowRecoveryCancellation(t *testing.T) {
 					if _, err := store.ClaimNextDueWorkflowRun(ctx); err != nil {
 						t.Fatal(err)
 					}
-					failResumeRun(t, store, run, "send")
-					if _, _, _, err := store.(WorkflowResumeStore).ResumeWorkflowRun(ctx, resumeOptions(run, app, 1)); err != nil {
+					state.FailResumeRun(t, store, run, "send")
+					if _, _, _, err := store.(state.WorkflowResumeStore).ResumeWorkflowRun(ctx, state.ResumeOptions(run, app, 1)); err != nil {
 						t.Fatal(err)
 					}
 					want = "changed"
 				case "terminal":
-					if err := store.MarkWorkflowRunStatus(ctx, run.ID, WorkflowRunStatusSucceeded, nil, nil); err != nil {
+					if err := store.MarkWorkflowRunStatus(ctx, run.ID, state.WorkflowRunStatusSucceeded, nil, nil); err != nil {
 						t.Fatal(err)
 					}
 					want = "already_terminal"
 				case "unknown":
-					if mem, ok := store.(*MemStore); ok {
-						mem.mu.Lock()
-						delete(mem.workflowResumes, run.ID)
-						mem.mu.Unlock()
+					if mem, ok := store.(*state.MemStore); ok {
+						(*mem.Mu()).Lock()
+						delete((*mem.WorkflowResumes()), run.ID)
+						(*mem.Mu()).Unlock()
 					} else {
-						if _, err := store.(*PgStore).pool.Exec(ctx, "DELETE FROM workflow_run_resumes WHERE run_id=$1::uuid", run.ID); err != nil {
+						if _, err := (*store.(*state.PgStore).Pool()).Exec(ctx, "DELETE FROM workflow_run_resumes WHERE run_id=$1::uuid", run.ID); err != nil {
 							t.Fatal(err)
 						}
 					}

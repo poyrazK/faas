@@ -138,6 +138,10 @@
     create_home: false
     password: "*"
 
+- name: gatewayd_internal_service — live-query client leaf for realtimed
+  ansible.builtin.include_tasks: live_tls.yml
+  when: (faas_realtime_live_tls_managed | default(false) | string | lower) in ['true', 'yes', 'on', '1']
+
 # The callback spool contains customer payloads and callback bearer tokens.
 # Keep it on the host boot disk and private to the realtimed service user.
 - name: gatewayd_internal_service — create persistent realtime callback spool

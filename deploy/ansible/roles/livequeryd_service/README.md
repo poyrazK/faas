@@ -65,10 +65,6 @@ faas_livequeryd_keys_dsn_src: secrets/live/keys-dsn              # read-only con
 faas_livequeryd_keys_identity_src: secrets/live/keys.age         # age-keygen output
 faas_livequeryd_keys_recipient_src: secrets/live/keys.recipient  # age-keygen -y keys.age
 
-# TLS for realtimed on compute nodes. The certificate's SANs must cover the
-# host in live_hub_url; the client CA verifies realtimed's client certificates.
-faas_livequeryd_tls_cert_src: secrets/live/server.crt
-faas_livequeryd_tls_key_src: secrets/live/server.key
 
 # Neon: let the database scale to zero.
 faas_livequeryd_release_after: 5m
@@ -78,17 +74,37 @@ faas_livequeryd_neon_project: <project id>
 faas_livequeryd_neon_endpoint: <endpoint id>
 ```
 
-On compute nodes, give realtimed the CA and its client certificate. The
-gatewayd_internal_service role's realtimed drop-in reads these variables:
+## Certificates
 
-```yaml
-faas_realtime_live_tls_ca_file: /etc/faas/tls/ca/ca.crt
-faas_realtime_live_tls_cert_file: /etc/faas/tls/realtimed/live-client.crt
-faas_realtime_live_tls_key_file: /etc/faas/tls/realtimed/live-client.key   # readable by faas
-```
+realtimed and the hub authenticate each other with fleet-PKI **feature
+leaves**. These are leaves of the internal CA that a host carries only when
+this feature is on. No host role requires them, so rollouts and the daily
+renewal of the required leaves never depend on them.
 
-`gregalectl pki` does not issue these certificates yet; provision them by
-hand.
+- **The hub's server leaf** (`livequeryd.faas`,
+  `/etc/faas/tls/livequeryd/server.{crt,key}`) is issued by this role on the
+  control plane with `gregalectl pki issue-feature`.
+- **realtimed's client leaf** (`realtimed.faas`,
+  `/etc/faas/tls/realtimed/livequeryd-client.{crt,key}`) is issued on the
+  control plane for each compute node, and copied there as root:faas 0440.
+  Set this on the compute hosts that run realtimed:
+
+  ```yaml
+  faas_realtime_live_tls_managed: true
+  ```
+
+  realtimed then verifies every hub as `livequeryd.faas`, whatever host
+  `live_hub_url` names.
+- **The hub accepts only realtimed.** With `-client-name realtimed.faas`, any
+  other leaf of the fleet CA is refused (`faas_livequeryd_client_name`).
+- **Renewal.** Leaves last 90 days. `pki_renew.yml` reissues each within 30
+  days of expiry, and the roles restart only the daemon whose leaf changed.
+  `gregalectl pki metrics` exports their expiry with the other leaves.
+
+To use certificates from elsewhere instead, set
+`faas_livequeryd_tls_cert_src` and `faas_livequeryd_tls_key_src` on the
+control plane. On compute hosts, leave `faas_realtime_live_tls_managed` off
+and set `faas_realtime_live_tls_ca_file`, `_cert_file` and `_key_file`.
 
 The nftables role opens the hub's port to `faas_compute_allowed_cidrs` when
 `faas_livequeryd_managed` is set.
@@ -97,6 +113,5 @@ The nftables role opens the hub's port to `faas_compute_allowed_cidrs` when
 
 - Several databases per host, and native databases (ADR-1027), where the
   engine runs inside the database VM.
-- Issuing the hub's and realtimed's certificates through `gregalectl pki`.
 - Paging alerts. Prometheus scrapes the hub; `livequery_*` and
   `livequeryd_daemon_ready` are on the metrics endpoint.

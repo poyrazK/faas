@@ -1,6 +1,7 @@
-package main
+package main_test
 
 import (
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"os"
 	"strings"
 	"testing"
@@ -12,7 +13,7 @@ import (
 // completions and the published CLI reference.
 func TestLiveQueriesHiddenFromCustomerDiscovery(t *testing.T) {
 	dataAPILive := false
-	for _, command := range customerCliCommands() {
+	for _, command := range main.CustomerCliCommands() {
 		for _, sub := range command.Subcommands {
 			switch {
 			case command.Name == "postgres" && sub.Name == "live":
