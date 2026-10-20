@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -11,33 +11,34 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // adr: 1271
 func TestWorkflowRecoveryQueueEvidence(t *testing.T) {
 	for _, scenario := range []string{"parent", "paused", "budget", "cooldown", "missing_run", "superseded", "child_running", "child_terminal"} {
 		t.Run(scenario, func(t *testing.T) {
-			workflowScheduleStores(t, func(t *testing.T, s Store) {
+			state.WorkflowScheduleStores(t, func(t *testing.T, s state.Store) {
 				ctx := context.Background()
-				review, app, run, now := seedAutomaticRecoveryReview(t, s, nil)
+				review, app, run, now := state.SeedAutomaticRecoveryReview(t, s, nil)
 				action := review.AutomaticExecution.Actions[0].ActionID
 				job, kind := review.JobID, "parent"
 				if strings.HasPrefix(scenario, "child_") {
 					kind = "child"
-					runAutomaticPolicy(t, s, now)
-					child, err := automaticChild(t, s, app, review)
+					state.RunAutomaticPolicy(t, s, now)
+					child, err := state.AutomaticChild(t, s, app, review)
 					if err != nil {
 						t.Fatal(err)
 					}
 					job = child.ID
-					if _, err = s.(EventRecoveryStore).ProcessNextEventRecovery(ctx, time.Now().UTC()); err != nil {
+					if _, err = s.(state.EventRecoveryStore).ProcessNextEventRecovery(ctx, time.Now().UTC()); err != nil {
 						t.Fatal(err)
 					}
 					if _, err = s.ClaimNextDueWorkflowRun(ctx); err != nil {
 						t.Fatal(err)
 					}
 					if scenario == "child_terminal" {
-						if err = s.MarkWorkflowRunStatus(ctx, run.ID, WorkflowRunStatusFailed, nil, nil); err != nil {
+						if err = s.MarkWorkflowRunStatus(ctx, run.ID, state.WorkflowRunStatusFailed, nil, nil); err != nil {
 							t.Fatal(err)
 						}
 					}
@@ -49,25 +50,25 @@ func TestWorkflowRecoveryQueueEvidence(t *testing.T) {
 				if scenario == "cooldown" {
 					reason = "cooldown"
 				}
-				if m, ok := s.(*MemStore); ok {
-					m.mu.Lock()
-					delete(m.eventRecoveryJobs[job].WorkflowResults, 1)
+				if m, ok := s.(*state.MemStore); ok {
+					(*m.Mu()).Lock()
+					delete((*m.EventRecoveryJobs())[job].WorkflowResults, 1)
 					if scenario == "superseded" {
-						v := m.workflowRuns[run.ID]
+						v := (*m.WorkflowRuns())[run.ID]
 						v.ResumeCount = 2
-						m.workflowRuns[run.ID] = v
+						(*m.WorkflowRuns())[run.ID] = v
 					}
 					if reason != "" {
-						m.recoveryPolicies[canonicalMemUUID(app.ID)].Executions[action].LastEvaluation = recoveryAutomaticEvaluation(nil, reason, time.Now().UTC())
+						(*m.RecoveryPolicies())[state.CanonicalMemUUID(app.ID)].Executions[action].LastEvaluation = state.RecoveryAutomaticEvaluation(nil, reason, time.Now().UTC())
 					}
-					m.mu.Unlock()
+					(*m.Mu()).Unlock()
 				} else {
-					pg := s.(*PgStore)
-					if _, err := pg.pool.Exec(ctx, "DELETE FROM event_recovery_workflow_results WHERE job_id=$1::uuid", job); err != nil {
+					pg := s.(*state.PgStore)
+					if _, err := (*pg.Pool()).Exec(ctx, "DELETE FROM event_recovery_workflow_results WHERE job_id=$1::uuid", job); err != nil {
 						t.Fatal(err)
 					}
 					if scenario == "superseded" {
-						tx, err := pg.pool.Begin(ctx)
+						tx, err := (*pg.Pool()).Begin(ctx)
 						if err != nil {
 							t.Fatal(err)
 						}
@@ -86,22 +87,22 @@ func TestWorkflowRecoveryQueueEvidence(t *testing.T) {
 						}
 					}
 					if reason != "" {
-						raw, _ := json.Marshal(recoveryAutomaticEvaluation(nil, reason, time.Now().UTC()))
-						if _, err := pg.pool.Exec(ctx, "UPDATE workflow_recovery_policy_executions SET last_evaluation=$2::jsonb WHERE action_id=$1::uuid", action, raw); err != nil {
+						raw, _ := json.Marshal(state.RecoveryAutomaticEvaluation(nil, reason, time.Now().UTC()))
+						if _, err := (*pg.Pool()).Exec(ctx, "UPDATE workflow_recovery_policy_executions SET last_evaluation=$2::jsonb WHERE action_id=$1::uuid", action, raw); err != nil {
 							t.Fatal(err)
 						}
 					}
 				}
 				if scenario == "missing_run" {
-					removeAutomaticLiveRun(t, s, run)
+					state.RemoveAutomaticLiveRun(t, s, run)
 				}
-				policy := s.(WorkflowRecoveryPolicyStore)
+				policy := s.(state.WorkflowRecoveryPolicyStore)
 				if scenario == "paused" {
 					p, err := policy.GetWorkflowRecoveryPolicy(ctx, app.AccountID, app.ID)
 					if err != nil {
 						t.Fatal(err)
 					}
-					if _, err = s.(WorkflowRecoveryPolicyOperatorStore).ControlWorkflowRecoveryPolicy(ctx, app.AccountID, app.ID, controlRequest(p, "pause")); err != nil {
+					if _, err = s.(state.WorkflowRecoveryPolicyOperatorStore).ControlWorkflowRecoveryPolicy(ctx, app.AccountID, app.ID, state.ControlRequest(p, "pause")); err != nil {
 						t.Fatal(err)
 					}
 				}
@@ -113,7 +114,7 @@ func TestWorkflowRecoveryQueueEvidence(t *testing.T) {
 					return r
 				}
 				before := get()
-				operator := s.(WorkflowRecoveryPolicyOperatorStore)
+				operator := s.(state.WorkflowRecoveryPolicyOperatorStore)
 				out, err := operator.GetWorkflowRecoveryAutomaticQueue(ctx, app.AccountID, app.ID)
 				if err != nil {
 					t.Fatal(err)
@@ -152,7 +153,7 @@ func TestWorkflowRecoveryQueueEvidence(t *testing.T) {
 				if !reflect.DeepEqual(before, get()) {
 					t.Fatal("queue read mutated review/receipt/evaluation")
 				}
-				if _, err = operator.GetWorkflowRecoveryAutomaticQueue(ctx, uuid.NewString(), app.ID); !errors.Is(err, ErrNotFound) {
+				if _, err = operator.GetWorkflowRecoveryAutomaticQueue(ctx, uuid.NewString(), app.ID); !errors.Is(err, state.ErrNotFound) {
 					t.Fatalf("foreign scope %v", err)
 				}
 				second, err := operator.GetWorkflowRecoveryAutomaticQueue(ctx, app.AccountID, app.ID)

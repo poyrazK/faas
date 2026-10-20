@@ -2,10 +2,11 @@
 // in-memory twin of the production read-side wake-timeline
 // query. Pins the contract so the customer-facing endpoint's
 // unit tests can drive a real store without standing up Postgres.
-package state
+package state_test
 
 import (
 	"context"
+	"github.com/onebox-faas/faas/pkg/state"
 	"testing"
 	"time"
 )
@@ -17,7 +18,7 @@ import (
 // since lower bound + limit cap. Mirrors the sqlc query body
 // in pkg/state/queries.sql::ListEventsByWakeID.
 func TestMemStore_ListEventsByWakeID(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	ctx := context.Background()
 	// Three wakes, each with three phases; one orphan row whose
 	// data lacks wake_id. The query must return the three
@@ -80,7 +81,7 @@ func TestMemStore_ListEventsByWakeID(t *testing.T) {
 }
 
 func TestMemStore_ListEventsByWakeID_DeduplicatesCanonicalWake(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	ctx := context.Background()
 	wakeID := "w-mirror"
 	canonical := []byte(`{"wake_id":"w-mirror","app_id":"a-1","trigger":"gateway","at_capacity":true}`)

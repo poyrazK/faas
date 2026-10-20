@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -7,32 +7,33 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestMemStoreAppSoftDeleteRestoreLifecycle(t *testing.T) {
 	ctx := context.Background()
-	m := NewMemStore()
+	m := state.NewMemStore()
 	acct, err := m.CreateAccount(ctx, "app-tombstone@example.com", "pro")
 	if err != nil {
 		t.Fatalf("CreateAccount: %v", err)
 	}
-	app, err := m.CreateApp(ctx, App{
+	app, err := m.CreateApp(ctx, state.App{
 		AccountID: acct.ID, Slug: "tombstone", RAMMB: 256,
-		IdleTimeoutS: 30, MaxConcurrency: 1, Status: AppActive,
+		IdleTimeoutS: 30, MaxConcurrency: 1, Status: state.AppActive,
 	})
 	if err != nil {
 		t.Fatalf("CreateApp: %v", err)
 	}
-	dep, err := m.CreateDeployment(ctx, Deployment{
+	dep, err := m.CreateDeployment(ctx, state.Deployment{
 		ID: "tombstone-deployment", AppID: app.ID,
-		Kind: DeploymentKindImage, Status: DeployLive,
+		Kind: state.DeploymentKindImage, Status: state.DeployLive,
 	})
 	if err != nil {
 		t.Fatalf("CreateDeployment: %v", err)
 	}
-	if _, err := m.CreateSnapshot(ctx, Snapshot{
+	if _, err := m.CreateSnapshot(ctx, state.Snapshot{
 		ID: "tombstone-snapshot", DeploymentID: dep.ID,
-		FCVersion: "fc-1", StorageKey: SnapMemKey(dep.ID),
+		FCVersion: "fc-1", StorageKey: state.SnapMemKey(dep.ID),
 	}); err != nil {
 		t.Fatalf("CreateSnapshot: %v", err)
 	}
@@ -46,7 +47,7 @@ func TestMemStoreAppSoftDeleteRestoreLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ScheduleAppDeletion: %v", err)
 	}
-	if deleted.Status != AppDeleted || deleted.DeletedAt == nil || deleted.DeleteGraceUntil == nil {
+	if deleted.Status != state.AppDeleted || deleted.DeletedAt == nil || deleted.DeleteGraceUntil == nil {
 		t.Fatalf("tombstone = %+v, want deleted timestamps", deleted)
 	}
 	if !deleted.DeleteGraceUntil.Equal(graceUntil) {
@@ -54,19 +55,19 @@ func TestMemStoreAppSoftDeleteRestoreLifecycle(t *testing.T) {
 	}
 	// A deleted app leaves no runnable cron: the schedule is hidden from
 	// lookup and dispatch while the app sits in its restore window.
-	if _, err := m.CronByID(ctx, cron.ID); !errors.Is(err, ErrNotFound) {
+	if _, err := m.CronByID(ctx, cron.ID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("CronByID while the app is deleted = %v, want ErrNotFound", err)
 	}
 	if enabled, err := m.ListEnabledCrons(ctx); err != nil || len(enabled) != 0 {
 		t.Fatalf("ListEnabledCrons while the app is deleted = %+v, %v; want none runnable", enabled, err)
 	}
-	if _, err := m.AppBySlug(ctx, app.Slug); !errors.Is(err, ErrNotFound) {
+	if _, err := m.AppBySlug(ctx, app.Slug); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("AppBySlug deleted app = %v, want ErrNotFound", err)
 	}
 	if got, err := m.AppBySlugIncludingDeleted(ctx, app.Slug); err != nil || got.ID != app.ID {
 		t.Fatalf("AppBySlugIncludingDeleted = %+v, %v", got, err)
 	}
-	if _, err := m.LatestSnapshot(ctx, dep.ID); !errors.Is(err, ErrNotFound) {
+	if _, err := m.LatestSnapshot(ctx, dep.ID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("LatestSnapshot deleted app = %v, want ErrNotFound", err)
 	}
 	deletedApps, err := m.ListDeletedApps(ctx)
@@ -88,10 +89,10 @@ func TestMemStoreAppSoftDeleteRestoreLifecycle(t *testing.T) {
 	if back, err := m.CronByID(ctx, cron.ID); err != nil || back.SuspendedReason != "" {
 		t.Fatalf("CronByID after app restore = %+v, %v; want the schedule back and runnable", back, err)
 	}
-	if restored, err := m.AppBySlug(ctx, app.Slug); err != nil || restored.Status != AppActive || restored.DeletedAt != nil || restored.DeleteGraceUntil != nil {
+	if restored, err := m.AppBySlug(ctx, app.Slug); err != nil || restored.Status != state.AppActive || restored.DeletedAt != nil || restored.DeleteGraceUntil != nil {
 		t.Fatalf("restored app = %+v, %v", restored, err)
 	}
-	if _, err := m.RestoreApp(ctx, app.ID, api.MustLimitsFor(api.PlanScale)); !errors.Is(err, ErrConflict) {
+	if _, err := m.RestoreApp(ctx, app.ID, api.MustLimitsFor(api.PlanScale)); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("RestoreApp on active app = %v, want ErrConflict", err)
 	}
 
@@ -102,34 +103,34 @@ func TestMemStoreAppSoftDeleteRestoreLifecycle(t *testing.T) {
 	if err := m.ClaimAppDeletion(ctx, app.ID); err != nil {
 		t.Fatalf("ClaimAppDeletion: %v", err)
 	}
-	if _, err := m.RestoreApp(ctx, app.ID, api.MustLimitsFor(api.PlanScale)); !errors.Is(err, ErrConflict) {
+	if _, err := m.RestoreApp(ctx, app.ID, api.MustLimitsFor(api.PlanScale)); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("RestoreApp after purge claim = %v, want ErrConflict", err)
 	}
 	if err := m.DeleteAppPermanently(ctx, app.ID); err != nil {
 		t.Fatalf("DeleteAppPermanently: %v", err)
 	}
-	if _, err := m.AppByID(ctx, app.ID); !errors.Is(err, ErrNotFound) {
+	if _, err := m.AppByID(ctx, app.ID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("AppByID after purge = %v, want ErrNotFound", err)
 	}
-	if err := m.DeleteAppPermanently(ctx, app.ID); !errors.Is(err, ErrNotFound) {
+	if err := m.DeleteAppPermanently(ctx, app.ID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("repeated DeleteAppPermanently = %v, want ErrNotFound", err)
 	}
-	if _, err := m.ScheduleAppDeletion(ctx, "missing-app", graceUntil); !errors.Is(err, ErrNotFound) {
+	if _, err := m.ScheduleAppDeletion(ctx, "missing-app", graceUntil); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("ScheduleAppDeletion missing app = %v, want ErrNotFound", err)
 	}
 }
 
 func TestMemStoreSoftDeleteCascadeAlwaysStampsDeadlineAndDeduplicatesSharedArtifacts(t *testing.T) {
 	ctx := context.Background()
-	m := NewMemStore()
+	m := state.NewMemStore()
 	acct, err := m.CreateAccount(ctx, "shared-artifact@example.com", "pro")
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, _ := m.CreateApp(ctx, App{AccountID: acct.ID, Slug: "first", Status: AppActive})
-	second, _ := m.CreateApp(ctx, App{AccountID: acct.ID, Slug: "second", Status: AppActive})
-	firstDep, _ := m.CreateDeployment(ctx, Deployment{ID: "first-dep", AppID: first.ID, Status: DeployLive})
-	secondDep, _ := m.CreateDeployment(ctx, Deployment{ID: "second-dep", AppID: second.ID, Status: DeployLive})
+	first, _ := m.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "first", Status: state.AppActive})
+	second, _ := m.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "second", Status: state.AppActive})
+	firstDep, _ := m.CreateDeployment(ctx, state.Deployment{ID: "first-dep", AppID: first.ID, Status: state.DeployLive})
+	secondDep, _ := m.CreateDeployment(ctx, state.Deployment{ID: "second-dep", AppID: second.ID, Status: state.DeployLive})
 	const shared = "apps/shared/rootfs.ext4"
 	if err := m.SetDeploymentRootfs(ctx, firstDep.ID, "/first", shared, 1024); err != nil {
 		t.Fatal(err)

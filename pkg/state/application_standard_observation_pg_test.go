@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"errors"
@@ -6,32 +6,33 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 func TestPgApplicationStandardObservationLifecycle(t *testing.T) {
-	store, _ := runtimeCapturePGStore(t)
-	standardObservationLifecycle(t, store)
+	store, _ := state.RuntimeCapturePGStore(t)
+	state.StandardObservationLifecycle(t, store)
 }
 
 func TestPgApplicationStandardObservationProviderLifecycle(t *testing.T) {
-	store, _ := runtimeCapturePGStore(t)
-	standardObservationProviderLifecycle(t, store)
+	store, _ := state.RuntimeCapturePGStore(t)
+	state.StandardObservationProviderLifecycle(t, store)
 }
 
 func TestPgApplicationStandardObservationIdleSnapshots(t *testing.T) {
-	store, _ := runtimeCapturePGStore(t)
-	standardObservationIdleSnapshots(t, store)
+	store, _ := state.RuntimeCapturePGStore(t)
+	state.StandardObservationIdleSnapshots(t, store)
 }
 
 func TestPgApplicationStandardObservationPauseFence(t *testing.T) {
-	store, _ := runtimeCapturePGStore(t)
-	standardObservationPauseFence(t, store)
+	store, _ := state.RuntimeCapturePGStore(t)
+	state.StandardObservationPauseFence(t, store)
 }
 
 func TestPgApplicationStandardObservationStoredWaveBit(t *testing.T) {
-	store, pool := runtimeCapturePGStore(t)
-	standardObservationStoredWaveBit(t, store, func(o ApplicationStandardOperation) {
+	store, pool := state.RuntimeCapturePGStore(t)
+	state.StandardObservationStoredWaveBit(t, store, func(o state.ApplicationStandardOperation) {
 		if _, err := pool.Exec(t.Context(), "UPDATE application_standard_operation_targets SET state='observed' WHERE operation_id=$1 AND position=0", o.ID); err != nil {
 			t.Fatal(err)
 		}
@@ -39,27 +40,27 @@ func TestPgApplicationStandardObservationStoredWaveBit(t *testing.T) {
 }
 
 func TestPgApplicationStandardObservationMembershipFence(t *testing.T) {
-	s, pool := runtimeCapturePGStore(t)
-	ins, _ := issueConsumedNativeFixture(t, s)
+	s, pool := state.RuntimeCapturePGStore(t)
+	ins, _ := state.IssueConsumedNativeFixture(t, s)
 	app, err := s.AppByID(t.Context(), ins.AppID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	standardObservationLoadLogging(t, s, app)
+	state.StandardObservationLoadLogging(t, s, app)
 	tx, err := pool.Begin(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = tx.Rollback(t.Context()) }()
-	if _, err := sqlc.New().LockApplicationStandardObservation(t.Context(), tx, sqlc.LockApplicationStandardObservationParams{AppID: mustPgUUID(app.ID), OrgID: mustPgUUID(app.OrgID)}); err != nil {
+	if _, err := sqlc.New().LockApplicationStandardObservation(t.Context(), tx, sqlc.LockApplicationStandardObservationParams{AppID: state.MustPgUUID(app.ID), OrgID: state.MustPgUUID(app.OrgID)}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := sqlc.New().LockApplicationStandardObservationEvidence(t.Context(), tx, mustPgUUID(app.ID)); err != nil {
+	if _, err := sqlc.New().LockApplicationStandardObservationEvidence(t.Context(), tx, state.MustPgUUID(app.ID)); err != nil {
 		t.Fatal(err)
 	}
 	// Existing row locks cannot fence a newly enrolled node. The membership
 	// advisory fence must reject this phantom while observation is in progress.
-	_, nodeErr := s.CreateComputeNode(t.Context(), ComputeNode{Name: "observer-phantom-" + uuid.NewString(), TargetURL: "unix:///tmp/observer-phantom", VPCPUs: 2, MemMB: 1024, MaxConcurrency: 5, AdmissionCeilingMB: 1024, VCPUBudget: 2, Active: true})
+	_, nodeErr := s.CreateComputeNode(t.Context(), state.ComputeNode{Name: "observer-phantom-" + uuid.NewString(), TargetURL: "unix:///tmp/observer-phantom", VPCPUs: 2, MemMB: 1024, MaxConcurrency: 5, AdmissionCeilingMB: 1024, VCPUBudget: 2, Active: true})
 	standardObservationAssertPGLock(t, nodeErr)
 	conn, err := pool.Acquire(t.Context())
 	if err != nil {

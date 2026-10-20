@@ -1,6 +1,6 @@
 //go:build !no_pg
 
-package state
+package state_test
 
 // adr: 435. Real PostgreSQL fences and signature clocks for scanner bootstrap.
 
@@ -12,27 +12,28 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 func TestPgRuntimeProducerInputsLifecycle(t *testing.T) {
-	s, _ := registryVerificationPGStore(t)
+	s, _ := state.RegistryVerificationPGStore(t)
 	runtimeProducerInputsLifecycle(t, s)
 }
 
 func TestPgRuntimeProducerInputsRejectIncomplete(t *testing.T) {
-	s, _ := registryVerificationPGStore(t)
+	s, _ := state.RegistryVerificationPGStore(t)
 	runtimeProducerInputsRejectIncomplete(t, s)
 }
 
 func TestPgRuntimeProducerInputsReplacement(t *testing.T) {
-	s, _ := registryVerificationPGStore(t)
+	s, _ := state.RegistryVerificationPGStore(t)
 	runtimeProducerInputsReplacement(t, s)
 }
 
 func TestPgRuntimeProducerInputsDoNotWaitForCurrentInputs(t *testing.T) {
-	s, pool := registryVerificationPGStore(t)
-	_, base, app, dep := artifactScanBaseFixture(t, s)
+	s, pool := state.RegistryVerificationPGStore(t)
+	_, base, app, dep := state.ArtifactScanBaseFixture(t, s)
 	for _, kind := range []string{"app", "deployment", "publisher", "artifact", "base"} {
 		t.Run(kind, func(t *testing.T) {
 			tx, err := pool.Begin(t.Context())
@@ -56,7 +57,7 @@ func TestPgRuntimeProducerInputsDoNotWaitForCurrentInputs(t *testing.T) {
 			}
 			bounded, cancel := context.WithTimeout(t.Context(), time.Second)
 			defer cancel()
-			if _, err := s.GetFreshDeploymentRuntimeProducerInputs(bounded, app.AccountID, app.ID, dep.ID); !errors.Is(err, ErrApplicationStandardRuntimeBusy) {
+			if _, err := s.GetFreshDeploymentRuntimeProducerInputs(bounded, app.AccountID, app.ID, dep.ID); !errors.Is(err, state.ErrApplicationStandardRuntimeBusy) {
 				t.Fatalf("bootstrap waited or bypassed %s fence: %v", kind, err)
 			}
 			if err := tx.Rollback(t.Context()); err != nil {
@@ -70,8 +71,8 @@ func TestPgRuntimeProducerInputsDoNotWaitForCurrentInputs(t *testing.T) {
 }
 
 func TestPgRuntimeProducerInputsRequireCurrentSignatureAndPreserveExpiredOrigin(t *testing.T) {
-	s, pool := registryVerificationPGStore(t)
-	_, _, app, dep := artifactScanBaseFixture(t, s)
+	s, pool := state.RegistryVerificationPGStore(t)
+	_, _, app, dep := state.ArtifactScanBaseFixture(t, s)
 	root, err := s.GetCurrentDeploymentRegistryRootfs(t.Context(), app.AccountID, app.ID, dep.ID, "")
 	if err != nil {
 		t.Fatal(err)
@@ -82,7 +83,7 @@ func TestPgRuntimeProducerInputsRequireCurrentSignatureAndPreserveExpiredOrigin(
 	}
 	short := origin.Input
 	short.ID = uuid.NewString()
-	short, hash, err := prepareRegistryVerification(short)
+	short, hash, err := state.PrepareRegistryVerification(short)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,13 +97,13 @@ func TestPgRuntimeProducerInputsRequireCurrentSignatureAndPreserveExpiredOrigin(
 	}
 	defer tx.Rollback(t.Context())
 	q := sqlc.New()
-	if err := q.AuthorizeDeploymentRegistryVerificationInsert(t.Context(), tx, mustPgUUID(short.ID)); err != nil {
+	if err := q.AuthorizeDeploymentRegistryVerificationInsert(t.Context(), tx, state.MustPgUUID(short.ID)); err != nil {
 		t.Fatal(err)
 	}
 	// A test-only private insertion uses a short real storage-clock lifetime.
 	// No immutable proof, producer or prior clock is updated to create expiry.
 	row, err := q.InsertDeploymentRegistryVerification(t.Context(), tx, sqlc.InsertDeploymentRegistryVerificationParams{
-		ID: mustPgUUID(short.ID), AccountID: mustPgUUID(app.AccountID), AppID: mustPgUUID(app.ID), DeploymentID: mustPgUUID(dep.ID),
+		ID: state.MustPgUUID(short.ID), AccountID: state.MustPgUUID(app.AccountID), AppID: state.MustPgUUID(app.ID), DeploymentID: state.MustPgUUID(dep.ID),
 		InputSnapshot: raw, InputHash: hash, Payload: short.Proof.Evidence.Payload, Signature: short.Proof.Evidence.Signature, TtlSeconds: 1,
 	})
 	if err != nil {
@@ -122,7 +123,7 @@ func TestPgRuntimeProducerInputsRequireCurrentSignatureAndPreserveExpiredOrigin(
 		t.Fatalf("bootstrap did not cap at current signature clock: %v", err)
 	}
 	time.Sleep(time.Until(row.ExpiresAt.Time) + 30*time.Millisecond)
-	if _, err := s.GetFreshDeploymentRuntimeProducerInputs(t.Context(), app.AccountID, app.ID, dep.ID); !errors.Is(err, ErrApplicationStandardRuntimeStale) {
+	if _, err := s.GetFreshDeploymentRuntimeProducerInputs(t.Context(), app.AccountID, app.ID, dep.ID); !errors.Is(err, state.ErrApplicationStandardRuntimeStale) {
 		t.Fatalf("expired latest signature fell back to an older proof: %v", err)
 	}
 	fresh := short

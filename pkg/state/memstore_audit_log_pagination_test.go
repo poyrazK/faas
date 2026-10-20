@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -6,10 +6,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestMemStoreListAuditLogBeforeCursorUsesTimestampAndIDTieBreak(t *testing.T) {
-	store := NewMemStore()
+	store := state.NewMemStore()
 	ctx := context.Background()
 	accountID := uuid.New()
 	at := time.Date(2026, 9, 11, 12, 34, 56, 0, time.UTC)
@@ -20,7 +21,7 @@ func TestMemStoreListAuditLogBeforeCursorUsesTimestampAndIDTieBreak(t *testing.T
 	}
 	for _, id := range ids {
 		idCopy := accountID
-		if err := store.InsertAuditLog(ctx, AuditLog{
+		if err := store.InsertAuditLog(ctx, state.AuditLog{
 			ID:         id,
 			Kind:       "account.deleted",
 			AccountID:  &idCopy,
@@ -30,7 +31,7 @@ func TestMemStoreListAuditLogBeforeCursorUsesTimestampAndIDTieBreak(t *testing.T
 		}
 	}
 
-	first, err := store.ListAuditLog(ctx, AuditLogFilter{
+	first, err := store.ListAuditLog(ctx, state.AuditLogFilter{
 		AccountID: &accountID,
 		Limit:     2,
 	})
@@ -41,9 +42,9 @@ func TestMemStoreListAuditLogBeforeCursorUsesTimestampAndIDTieBreak(t *testing.T
 		t.Fatalf("first page IDs = %v, want %v", got, []uuid.UUID{ids[1], ids[2]})
 	}
 
-	older, err := store.ListAuditLog(ctx, AuditLogFilter{
+	older, err := store.ListAuditLog(ctx, state.AuditLogFilter{
 		AccountID: &accountID,
-		Before:    &AuditLogCursor{ReceivedAt: first[1].ReceivedAt, ID: first[1].ID},
+		Before:    &state.AuditLogCursor{ReceivedAt: first[1].ReceivedAt, ID: first[1].ID},
 		Limit:     2,
 	})
 	if err != nil {

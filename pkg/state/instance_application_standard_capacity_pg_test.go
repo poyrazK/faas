@@ -1,18 +1,21 @@
 //go:build !no_pg
 
-package state
+package state_test
 
 // adr: 435/422 — standards compose with ordinary lifecycle and capacity checks.
 
-import "testing"
+import (
+	"github.com/onebox-faas/faas/pkg/state"
+	"testing"
+)
 
 func TestPgInstanceApplicationStandardRefusalPreservesExclusiveOwner(t *testing.T) {
-	s, _ := runtimeCapturePGStore(t)
+	s, _ := state.RuntimeCapturePGStore(t)
 	standardRefusalPreservesExclusiveOwner(t, s)
 }
 
 func TestPgInstanceApplicationStandardBootCapacity(t *testing.T) {
-	s, pool := runtimeCapturePGStore(t)
+	s, pool := state.RuntimeCapturePGStore(t)
 	standardNativeBootCapacity(t, s, func(id string) {
 		var received bool
 		if err := pool.QueryRow(t.Context(), `SELECT receipt IS NOT NULL FROM instance_application_standard_boots WHERE token=$1`, id).Scan(&received); err != nil || received {
@@ -22,7 +25,7 @@ func TestPgInstanceApplicationStandardBootCapacity(t *testing.T) {
 }
 
 func TestPgInstanceApplicationStandardPromotionCapacity(t *testing.T) {
-	s, pool := runtimeCapturePGStore(t)
+	s, pool := state.RuntimeCapturePGStore(t)
 	standardNativePromotionCapacity(t, s, func(id string) {
 		var received bool
 		if err := pool.QueryRow(t.Context(), `SELECT receipt IS NOT NULL FROM instance_application_standard_promotions WHERE token=$1`, id).Scan(&received); err != nil || received {

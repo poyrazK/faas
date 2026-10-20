@@ -1,7 +1,8 @@
-package state
+package state_test
 
 import (
 	"encoding/json"
+	"github.com/onebox-faas/faas/pkg/state"
 	"testing"
 	"time"
 )
@@ -9,10 +10,10 @@ import (
 func TestRetryDeploymentInput_RestartsServiceReadinessRollout(t *testing.T) {
 	oldStarted := time.Now().UTC().Add(-time.Hour)
 	now := time.Now().UTC()
-	src := Deployment{
+	src := state.Deployment{
 		ID:                     "failed-service",
 		AppID:                  "app-service",
-		Status:                 DeployFailed,
+		Status:                 state.DeployFailed,
 		CanaryPreset:           "none",
 		CanaryTotalSteps:       0,
 		TrafficPercent:         0,
@@ -25,11 +26,11 @@ func TestRetryDeploymentInput_RestartsServiceReadinessRollout(t *testing.T) {
 		GitHubInstallationID:   77,
 	}
 
-	got, err := retryDeploymentInput(src, now)
+	got, err := state.RetryDeploymentInput(src, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Status != DeployPending || got.TrafficPercent != 0 || got.RolloutState != "rolling_out" {
+	if got.Status != state.DeployPending || got.TrafficPercent != 0 || got.RolloutState != "rolling_out" {
 		t.Fatalf("service rollout was not restarted: %+v", got)
 	}
 	if got.RolloutStartedAt == nil || !got.RolloutStartedAt.Equal(now) {

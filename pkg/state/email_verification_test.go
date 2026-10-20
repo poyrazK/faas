@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -7,12 +7,13 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestEmailVerificationTokenLifecycle(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
-	res, err := store.CreateAccountWithPersonalOrg(ctx, CreateAccountWithPersonalOrgParams{
+	store := state.NewMemStore()
+	res, err := store.CreateAccountWithPersonalOrg(ctx, state.CreateAccountWithPersonalOrgParams{
 		Email:                    "verify@example.com",
 		Plan:                     api.PlanFree,
 		RequireEmailVerification: true,
@@ -42,15 +43,15 @@ func TestEmailVerificationTokenLifecycle(t *testing.T) {
 	if !verified.EmailVerified() {
 		t.Fatal("token consume did not verify account")
 	}
-	if _, err := store.ConsumeEmailVerificationToken(ctx, hash); !errors.Is(err, ErrNotFound) {
+	if _, err := store.ConsumeEmailVerificationToken(ctx, hash); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("replay error = %v, want ErrNotFound", err)
 	}
 }
 
 func TestEmailVerificationTokenExpiryDoesNotVerify(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
-	res, err := store.CreateAccountWithPersonalOrg(ctx, CreateAccountWithPersonalOrgParams{
+	store := state.NewMemStore()
+	res, err := store.CreateAccountWithPersonalOrg(ctx, state.CreateAccountWithPersonalOrgParams{
 		Email:                    "expired@example.com",
 		Plan:                     api.PlanFree,
 		RequireEmailVerification: true,
@@ -62,7 +63,7 @@ func TestEmailVerificationTokenExpiryDoesNotVerify(t *testing.T) {
 	if err := store.IssueEmailVerificationToken(ctx, hash, res.Account.ID, time.Now().Add(-time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.ConsumeEmailVerificationToken(ctx, hash); !errors.Is(err, ErrNotFound) {
+	if _, err := store.ConsumeEmailVerificationToken(ctx, hash); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("expired consume error = %v, want ErrNotFound", err)
 	}
 	acct, err := store.AccountByID(ctx, res.Account.ID)
@@ -75,7 +76,7 @@ func TestEmailVerificationTokenExpiryDoesNotVerify(t *testing.T) {
 }
 
 func TestTrustedAccountCreationDefaultsVerified(t *testing.T) {
-	store := NewMemStore()
+	store := state.NewMemStore()
 	acct, err := store.CreateAccount(context.Background(), "oauth@example.com", api.PlanFree)
 	if err != nil {
 		t.Fatal(err)

@@ -22,7 +22,7 @@ const authEmailsUsage = "usage: gregale auth emails <list|show|set|reset|preview
 
 // authEmailTypes mirrors emailTypes in templates/auth/email.mjs
 // (TestAuthEmailTypesContract).
-var authEmailTypes = []string{"signup", "invite", "magiclink", "recovery", "email_change", "code", "security_notice", "organization_invitation"}
+var authEmailTypes = []string{"signup", "invite", "magiclink", "recovery", "email_change", "code", "security_notice", "organization_invitation", "signup_approved"}
 
 type authEmailTemplate struct {
 	Type         string   `json:"type"`

@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"encoding/json"
@@ -8,11 +8,12 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 func TestRouteMonitorHealthyBaselineSanitizesAndRoundTrips(t *testing.T) {
-	baseline := routeMonitorDeploymentBaseline(sqlc.RouteMonitorServingDeploymentsRow{
+	baseline := state.RouteMonitorDeploymentBaseline(sqlc.RouteMonitorServingDeploymentsRow{
 		ID:         "66666666-6666-4666-8666-666666666666",
 		CommitSha:  pgtype.Text{String: strings.Repeat("A", 40), Valid: true},
 		SourceUrl:  pgtype.Text{String: "https://credential:secret@github.com/team/service.git", Valid: true},
@@ -21,18 +22,18 @@ func TestRouteMonitorHealthyBaselineSanitizesAndRoundTrips(t *testing.T) {
 	if baseline.DeploymentID == "" || baseline.CommitSHA != strings.Repeat("a", 40) || baseline.Repository != "github.com/team/service" || baseline.SourceRoot != "internal/api" {
 		t.Fatalf("baseline did not retain normalized identity: %+v", baseline)
 	}
-	body, err := encodeRouteMonitorDeploymentBaseline(baseline)
+	body, err := state.EncodeRouteMonitorDeploymentBaseline(baseline)
 	if err != nil || strings.Contains(string(body), "credential") || strings.Contains(string(body), "secret") {
 		t.Fatalf("baseline retained raw source credentials: %s (%v)", body, err)
 	}
-	decoded, err := decodeRouteMonitorDeploymentBaseline(string(body))
+	decoded, err := state.DecodeRouteMonitorDeploymentBaseline(string(body))
 	if err != nil || decoded == nil || *decoded != *baseline {
 		t.Fatalf("baseline did not round trip: %+v %v", decoded, err)
 	}
-	if empty, err := decodeRouteMonitorDeploymentBaseline(`{}`); err != nil || empty != nil {
+	if empty, err := state.DecodeRouteMonitorDeploymentBaseline(`{}`); err != nil || empty != nil {
 		t.Fatalf("empty baseline should remain absent: %+v %v", empty, err)
 	}
-	conflicting := routeMonitorDeploymentBaseline(sqlc.RouteMonitorServingDeploymentsRow{
+	conflicting := state.RouteMonitorDeploymentBaseline(sqlc.RouteMonitorServingDeploymentsRow{
 		ID:         baseline.DeploymentID,
 		CommitSha:  pgtype.Text{String: strings.Repeat("a", 40), Valid: true},
 		SourceUrl:  pgtype.Text{String: "github://team/service@" + strings.Repeat("b", 40), Valid: true},
@@ -41,7 +42,7 @@ func TestRouteMonitorHealthyBaselineSanitizesAndRoundTrips(t *testing.T) {
 	if conflicting.Repository != "" {
 		t.Fatalf("baseline retained a repository with a conflicting pinned reference: %+v", conflicting)
 	}
-	invalidRoot := routeMonitorDeploymentBaseline(sqlc.RouteMonitorServingDeploymentsRow{
+	invalidRoot := state.RouteMonitorDeploymentBaseline(sqlc.RouteMonitorServingDeploymentsRow{
 		ID:         baseline.DeploymentID,
 		CommitSha:  pgtype.Text{String: strings.Repeat("a", 40), Valid: true},
 		SourceUrl:  pgtype.Text{String: "https://github.com/team/service", Valid: true},
@@ -64,7 +65,7 @@ func TestEncodeRouteMonitorIncidentTrimsTimelineToFitEvidenceLimit(t *testing.T)
 			Routes:    []api.RouteMonitorIncidentTimelineRoute{},
 		}
 	}
-	body, err := encodeRouteMonitorIncident(&incident)
+	body, err := state.EncodeRouteMonitorIncident(&incident)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +96,7 @@ func TestEncodeRouteMonitorIncidentPreservesNewestEscalationWithinByteLimit(t *t
 			Evidence:     evidence,
 		}
 	}
-	body, err := encodeRouteMonitorIncident(&incident)
+	body, err := state.EncodeRouteMonitorIncident(&incident)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,15 +121,15 @@ func TestRouteMonitorEscalationNotificationIsStableAndRedacted(t *testing.T) {
 		Customers: &api.RouteMonitorCustomerReport{GroupBy: "tenant", Coverage: "observed_only", ObservedCustomers: 4, ViolatedCustomers: 2, UnknownCustomers: 1},
 	}
 	escalation := &api.RouteMonitorWebhookEscalation{PreviousCheckedAt: previous, NewlyViolatedRoutes: 1, NewlyViolatedSignals: 2}
-	event, transitionID, body, err := routeMonitorEscalationNotification(incident, "demo", report, escalation)
+	event, transitionID, body, err := state.RouteMonitorEscalationNotification(incident, "demo", report, escalation)
 	if err != nil {
 		t.Fatal(err)
 	}
-	duplicateEvent, duplicateID, duplicateBody, err := routeMonitorEscalationNotification(incident, "demo", report, escalation)
+	duplicateEvent, duplicateID, duplicateBody, err := state.RouteMonitorEscalationNotification(incident, "demo", report, escalation)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if event != AppWebhookEventRouteMonitorEscalated || duplicateEvent != event || transitionID == "" || transitionID != duplicateID || string(body) != string(duplicateBody) {
+	if event != state.AppWebhookEventRouteMonitorEscalated || duplicateEvent != event || transitionID == "" || transitionID != duplicateID || string(body) != string(duplicateBody) {
 		t.Fatalf("transition identity is not stable: event=%q duplicate=%q id=%q duplicate_id=%q", event, duplicateEvent, transitionID, duplicateID)
 	}
 	var payload api.RouteMonitorWebhookPayload

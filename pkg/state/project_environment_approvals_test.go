@@ -1,16 +1,17 @@
-package state
+package state_test
 
 import (
 	"context"
 	"errors"
+	"github.com/onebox-faas/faas/pkg/state"
 	"testing"
 	"time"
 )
 
 func TestMemStoreProjectEnvironmentApprovalExactBindingAndExpiry(t *testing.T) {
-	store := NewMemStore()
+	store := state.NewMemStore()
 	now := time.Now().UTC()
-	approval, err := store.CreateProjectEnvironmentApproval(context.Background(), ProjectEnvironmentApproval{
+	approval, err := store.CreateProjectEnvironmentApproval(context.Background(), state.ProjectEnvironmentApproval{
 		AccountID:         "acct-1",
 		ProjectSlug:       "checkout",
 		EnvironmentSlug:   "production",
@@ -35,7 +36,7 @@ func TestMemStoreProjectEnvironmentApprovalExactBindingAndExpiry(t *testing.T) {
 	if consumed.ConsumedAt == nil || !consumed.ConsumedAt.Equal(consumedAt) {
 		t.Fatalf("consumed approval timestamp = %v, want %v", consumed.ConsumedAt, consumedAt)
 	}
-	if _, err := store.ProjectEnvironmentApprovalByToken(context.Background(), "acct-1", "checkout", "production", "plan-hash", "approval-hash"); !errors.Is(err, ErrNotFound) {
+	if _, err := store.ProjectEnvironmentApprovalByToken(context.Background(), "acct-1", "checkout", "production", "plan-hash", "approval-hash"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("reused approval lookup = %v, want ErrNotFound", err)
 	}
 	loaded, err := store.ProjectEnvironmentApprovalByID(context.Background(), "acct-1", "checkout", "production", approval.ID)
@@ -45,11 +46,11 @@ func TestMemStoreProjectEnvironmentApprovalExactBindingAndExpiry(t *testing.T) {
 	if loaded.ConsumedAt == nil || !loaded.ConsumedAt.Equal(consumedAt) {
 		t.Fatalf("loaded consumed approval = %#v", loaded)
 	}
-	if _, err := store.ProjectEnvironmentApprovalByToken(context.Background(), "acct-1", "checkout", "staging", "plan-hash", "approval-hash"); !errors.Is(err, ErrNotFound) {
+	if _, err := store.ProjectEnvironmentApprovalByToken(context.Background(), "acct-1", "checkout", "staging", "plan-hash", "approval-hash"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("wrong environment lookup error = %v, want ErrNotFound", err)
 	}
 
-	expired, err := store.CreateProjectEnvironmentApproval(context.Background(), ProjectEnvironmentApproval{
+	expired, err := store.CreateProjectEnvironmentApproval(context.Background(), state.ProjectEnvironmentApproval{
 		AccountID:         "acct-1",
 		ProjectSlug:       "checkout",
 		EnvironmentSlug:   "production",
@@ -60,10 +61,10 @@ func TestMemStoreProjectEnvironmentApprovalExactBindingAndExpiry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create expired approval: %v", err)
 	}
-	if _, err := store.ProjectEnvironmentApprovalByToken(context.Background(), "acct-1", "checkout", "production", "expired-plan", "expired-approval"); !errors.Is(err, ErrNotFound) {
+	if _, err := store.ProjectEnvironmentApprovalByToken(context.Background(), "acct-1", "checkout", "production", "expired-plan", "expired-approval"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("expired approval lookup = %v, want ErrNotFound (id %s)", err, expired.ID)
 	}
-	if _, err := store.ConsumeProjectEnvironmentApproval(context.Background(), "acct-1", "checkout", "production", "expired-plan", "expired-approval", now); !errors.Is(err, ErrNotFound) {
+	if _, err := store.ConsumeProjectEnvironmentApproval(context.Background(), "acct-1", "checkout", "production", "expired-plan", "expired-approval", now); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("expired approval consume = %v, want ErrNotFound", err)
 	}
 }

@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -11,6 +11,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func insertWakeTimelineEvent(t *testing.T, ctx context.Context, pool *pgxpool.Pool, actor, kind string, data map[string]any, at time.Time) {
@@ -32,7 +33,7 @@ func TestPgStore_ListEventsByWakeID_DeduplicatesMirrorBeforePaging(t *testing.T)
 	if err := db.MigrateUp(ctx, pool); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	s := NewPgStore(pool)
+	s := state.NewPgStore(pool)
 	wakeID := "wake-sql-dedup-" + uuid.NewString()
 	base := time.Now().UTC().Add(-time.Minute)
 	canonical := map[string]any{
@@ -79,7 +80,7 @@ func TestPgStore_CountWakeBootStarted24h_DistinctWakeIDs(t *testing.T) {
 	if err := db.MigrateUp(ctx, pool); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	s := NewPgStore(pool)
+	s := state.NewPgStore(pool)
 	appID := uuid.NewString()
 	wakeOne := "wake-count-one-" + uuid.NewString()
 	wakeTwo := "wake-count-two-" + uuid.NewString()
@@ -110,7 +111,7 @@ func TestPgStore_CountWakeBootStarted24h_EmptyAppIDIsZero(t *testing.T) {
 	// protects the production metrics handler from the `''::uuid`
 	// failure reported in issue #2306 and keeps the degraded response
 	// contract intact even when a legacy app row is partially populated.
-	s := NewPgStore(nil)
+	s := state.NewPgStore(nil)
 	for _, appID := range []string{"", "   "} {
 		got, err := s.CountWakeBootStarted24h(context.Background(), appID)
 		if err != nil {
@@ -123,7 +124,7 @@ func TestPgStore_CountWakeBootStarted24h_EmptyAppIDIsZero(t *testing.T) {
 }
 
 func TestPgStore_CountWakeBootStarted24h_RejectsMalformedAppID(t *testing.T) {
-	s := NewPgStore(nil)
+	s := state.NewPgStore(nil)
 	if _, err := s.CountWakeBootStarted24h(context.Background(), "not-a-uuid"); err == nil {
 		t.Fatal("CountWakeBootStarted24h malformed app ID returned nil error")
 	}

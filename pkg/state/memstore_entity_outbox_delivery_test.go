@@ -1,5 +1,5 @@
 // adr: 933
-package state
+package state_test
 
 import (
 	"context"
@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestMemEntityOutboxAcceptanceConcurrentRetryAndHistoryRetention(t *testing.T) {
@@ -19,7 +20,7 @@ func TestMemEntityOutboxAcceptanceConcurrentRetryAndHistoryRetention(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	in := AppWebhookDelivery{ID: uuid.NewString(), WebhookID: hook.ID, AppID: app.ID, AccountID: account.ID, Event: "reservation.confirmed", Payload: []byte(`{"reservation":"123"}`)}
+	in := state.AppWebhookDelivery{ID: uuid.NewString(), WebhookID: hook.ID, AppID: app.ID, AccountID: account.ID, Event: "reservation.confirmed", Payload: []byte(`{"reservation":"123"}`)}
 	var group sync.WaitGroup
 	for range 12 {
 		group.Go(func() {
@@ -33,7 +34,7 @@ func TestMemEntityOutboxAcceptanceConcurrentRetryAndHistoryRetention(t *testing.
 	if err != nil || len(rows) != 1 || rows[0].ID != in.ID {
 		t.Fatal(rows, err)
 	}
-	claimed := claimMemWebhookDelivery(t, m, ctx, in.ID)
+	claimed := state.ClaimMemWebhookDelivery(t, m, ctx, in.ID)
 	if err := m.MarkAppWebhookDeliverySucceeded(ctx, in.ID, 200, claimed.Attempt, claimed.NextAttemptAt, time.Now()); err != nil {
 		t.Fatal(err)
 	}
@@ -41,7 +42,7 @@ func TestMemEntityOutboxAcceptanceConcurrentRetryAndHistoryRetention(t *testing.
 		t.Fatal(err)
 	}
 	row, err := m.AppWebhookDeliveryByID(ctx, in.ID)
-	if err != nil || row.Status != AppWebhookDeliverySucceeded || row.Attempt != claimed.Attempt+1 {
+	if err != nil || row.Status != state.AppWebhookDeliverySucceeded || row.Attempt != claimed.Attempt+1 {
 		t.Fatal("retry reset terminal delivery", row, err)
 	}
 	if n, err := m.PruneAppWebhookDeliveries(ctx, time.Now().Add(time.Hour), 100); err != nil || n != 1 {
@@ -53,7 +54,7 @@ func TestMemEntityOutboxAcceptanceConcurrentRetryAndHistoryRetention(t *testing.
 	if id, err := m.AcceptEntityOutboxDelivery(ctx, in); err != nil || id != in.ID {
 		t.Fatal("receipt did not outlive history/destination", id, err)
 	}
-	if _, err := m.AppWebhookDeliveryByID(ctx, in.ID); !errors.Is(err, ErrNotFound) {
+	if _, err := m.AppWebhookDeliveryByID(ctx, in.ID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatal("retained receipt recreated delivery", err)
 	}
 	for _, kind := range []string{"payload", "event", "account", "app", "webhook"} {
@@ -70,7 +71,7 @@ func TestMemEntityOutboxAcceptanceConcurrentRetryAndHistoryRetention(t *testing.
 		case "webhook":
 			changed.WebhookID = uuid.NewString()
 		}
-		if _, err := m.AcceptEntityOutboxDelivery(ctx, changed); !errors.Is(err, ErrConflict) {
+		if _, err := m.AcceptEntityOutboxDelivery(ctx, changed); !errors.Is(err, state.ErrConflict) {
 			t.Fatal(kind, err)
 		}
 	}
@@ -82,10 +83,10 @@ func TestMemEntityOutboxRejectedDestinationLeavesNoAcceptanceReceipt(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	in := AppWebhookDelivery{ID: uuid.NewString(), WebhookID: hook.ID, AppID: app.ID, AccountID: account.ID, Event: "reservation.confirmed", Payload: []byte(`null`)}
+	in := state.AppWebhookDelivery{ID: uuid.NewString(), WebhookID: hook.ID, AppID: app.ID, AccountID: account.ID, Event: "reservation.confirmed", Payload: []byte(`null`)}
 	for _, kind := range []string{"disabled", "account", "app", "scope", "missing"} {
 		t.Run(kind, func(t *testing.T) {
-			m.mu.Lock()
+			(*m.Mu()).Lock()
 			changed := hook
 			switch kind {
 			case "disabled":
@@ -95,20 +96,20 @@ func TestMemEntityOutboxRejectedDestinationLeavesNoAcceptanceReceipt(t *testing.
 			case "app":
 				changed.AppID = uuid.NewString()
 			case "scope":
-				changed.Scope = AppWebhookScopePlatformTenant
+				changed.Scope = state.AppWebhookScopePlatformTenant
 			}
-			m.appWebhooks[hook.ID] = changed
+			(*m.AppWebhooks())[hook.ID] = changed
 			if kind == "missing" {
-				delete(m.appWebhooks, hook.ID)
+				delete((*m.AppWebhooks()), hook.ID)
 			}
-			m.mu.Unlock()
-			if _, err := m.AcceptEntityOutboxDelivery(ctx, in); !errors.Is(err, ErrNotFound) {
+			(*m.Mu()).Unlock()
+			if _, err := m.AcceptEntityOutboxDelivery(ctx, in); !errors.Is(err, state.ErrNotFound) {
 				t.Fatal(err)
 			}
-			m.mu.Lock()
-			receipts := len(m.entityOutboxAcceptances)
-			m.appWebhooks[hook.ID] = hook
-			m.mu.Unlock()
+			(*m.Mu()).Lock()
+			receipts := len((*m.EntityOutboxAcceptances()))
+			(*m.AppWebhooks())[hook.ID] = hook
+			(*m.Mu()).Unlock()
 			if receipts != 0 {
 				t.Fatal("rejected destination left acceptance evidence")
 			}
@@ -119,7 +120,7 @@ func TestMemEntityOutboxRejectedDestinationLeavesNoAcceptanceReceipt(t *testing.
 	}
 	invalid := in
 	invalid.ID = "invalid"
-	if _, err := m.AcceptEntityOutboxDelivery(ctx, invalid); !errors.Is(err, ErrEntityOutboxInvalid) {
+	if _, err := m.AcceptEntityOutboxDelivery(ctx, invalid); !errors.Is(err, state.ErrEntityOutboxInvalid) {
 		t.Fatal(err)
 	}
 }
@@ -132,31 +133,31 @@ func TestMemEntityOutboxAcceptanceRechecksAdmissionAtInsert(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			in := AppWebhookDelivery{ID: uuid.NewString(), WebhookID: hook.ID, AppID: app.ID, AccountID: account.ID, Event: "reservation.confirmed", Payload: []byte(`null`)}
-			m.mu.Lock()
+			in := state.AppWebhookDelivery{ID: uuid.NewString(), WebhookID: hook.ID, AppID: app.ID, AccountID: account.ID, Event: "reservation.confirmed", Payload: []byte(`null`)}
+			(*m.Mu()).Lock()
 			changedAccount, changedApp := account, app
 			switch kind {
 			case "account":
-				changedAccount.Status = AccountSuspended
+				changedAccount.Status = state.AccountSuspended
 			case "abuse":
 				at := time.Now()
 				changedAccount.AbuseHoldAt = &at
 			case "plan":
 				changedAccount.Plan = api.PlanFree
 			case "app":
-				changedApp.Status = AppDeleted
+				changedApp.Status = state.AppDeleted
 			case "workload":
-				changedApp.WorkloadClass = WorkloadClassWorker
+				changedApp.WorkloadClass = state.WorkloadClassWorker
 			}
-			m.accounts[account.ID], m.apps[app.ID] = changedAccount, changedApp
-			m.mu.Unlock()
-			if _, err := m.AcceptEntityOutboxDelivery(ctx, in); !errors.Is(err, ErrNotFound) {
+			(*m.Accounts())[account.ID], (*m.Apps())[app.ID] = changedAccount, changedApp
+			(*m.Mu()).Unlock()
+			if _, err := m.AcceptEntityOutboxDelivery(ctx, in); !errors.Is(err, state.ErrNotFound) {
 				t.Fatal(err)
 			}
-			m.mu.Lock()
-			receipts := len(m.entityOutboxAcceptances)
-			m.accounts[account.ID], m.apps[app.ID] = account, app
-			m.mu.Unlock()
+			(*m.Mu()).Lock()
+			receipts := len((*m.EntityOutboxAcceptances()))
+			(*m.Accounts())[account.ID], (*m.Apps())[app.ID] = account, app
+			(*m.Mu()).Unlock()
 			if receipts != 0 {
 				t.Fatal("admission refusal retained acceptance evidence")
 			}
@@ -169,46 +170,46 @@ func TestMemEntityOutboxAcceptanceRechecksAdmissionAtInsert(t *testing.T) {
 
 // Use PostgreSQL-shaped canonical UUID fixtures for transport acceptance.
 // Legacy compact account/application records are covered separately below.
-func entityOutboxFixture(t *testing.T) (*MemStore, context.Context, Account, App) {
+func entityOutboxFixture(t *testing.T) (*state.MemStore, context.Context, state.Account, state.App) {
 	t.Helper()
-	m, ctx, account, app := webhookFixture(t)
-	m.mu.Lock()
-	delete(m.accounts, account.ID)
-	delete(m.apps, app.ID)
+	m, ctx, account, app := state.WebhookFixture(t)
+	(*m.Mu()).Lock()
+	delete((*m.Accounts()), account.ID)
+	delete((*m.Apps()), app.ID)
 	account.ID = uuid.MustParse(account.ID).String()
 	app.ID = uuid.MustParse(app.ID).String()
 	app.AccountID = account.ID
-	m.accounts[account.ID], m.apps[app.ID] = account, app
-	m.mu.Unlock()
+	(*m.Accounts())[account.ID], (*m.Apps())[app.ID] = account, app
+	(*m.Mu()).Unlock()
 	return m, ctx, account, app
 }
 
-func entityOutboxWebhook(accountID, appID string) AppWebhook {
-	hook := memSampleWebhook(accountID, appID)
+func entityOutboxWebhook(accountID, appID string) state.AppWebhook {
+	hook := state.MemSampleWebhook(accountID, appID)
 	hook.ID = uuid.NewString()
 	return hook
 }
 
 func TestEntityOutboxFingerprintCanonicalizesLegacyRecordIDs(t *testing.T) {
-	in := AppWebhookDelivery{ID: uuid.NewString(), WebhookID: uuid.NewString(), AccountID: uuid.NewString(), AppID: uuid.NewString(), Event: "reservation.confirmed", Payload: []byte(`null`)}
-	canonical, err := entityOutboxFingerprint(in)
+	in := state.AppWebhookDelivery{ID: uuid.NewString(), WebhookID: uuid.NewString(), AccountID: uuid.NewString(), AppID: uuid.NewString(), Event: "reservation.confirmed", Payload: []byte(`null`)}
+	canonical, err := state.EntityOutboxFingerprint(in)
 	if err != nil {
 		t.Fatal(err)
 	}
 	compact := in
 	compact.AccountID = strings.ReplaceAll(in.AccountID, "-", "")
 	compact.AppID = strings.ReplaceAll(in.AppID, "-", "")
-	legacy, err := entityOutboxFingerprint(compact)
+	legacy, err := state.EntityOutboxFingerprint(compact)
 	if err != nil || legacy != canonical {
 		t.Fatal("legacy record encoding changed transport identity", err)
 	}
 	compact.ID = strings.ReplaceAll(in.ID, "-", "")
-	if _, err := entityOutboxFingerprint(compact); !errors.Is(err, ErrEntityOutboxInvalid) {
+	if _, err := state.EntityOutboxFingerprint(compact); !errors.Is(err, state.ErrEntityOutboxInvalid) {
 		t.Fatal("noncanonical message identity accepted", err)
 	}
 	compact = in
 	compact.WebhookID = strings.ReplaceAll(in.WebhookID, "-", "")
-	if _, err := entityOutboxFingerprint(compact); !errors.Is(err, ErrEntityOutboxInvalid) {
+	if _, err := state.EntityOutboxFingerprint(compact); !errors.Is(err, state.ErrEntityOutboxInvalid) {
 		t.Fatal("noncanonical destination identity accepted", err)
 	}
 }

@@ -6,16 +6,17 @@
 // Whitebox `package state`. No Postgres dependency — runs on the
 // unit-tests-pure-* CI lanes.
 
-package state
+package state_test
 
 import (
+	"github.com/onebox-faas/faas/pkg/state"
 	"testing"
 	"time"
 )
 
 func TestNewPgtypeTime_Zero_Mega5(t *testing.T) {
 	t.Parallel()
-	got := NewPgtypeTime(time.Time{})
+	got := state.NewPgtypeTime(time.Time{})
 	if got.Valid {
 		t.Errorf("zero time: Valid = true, want false (NULL)")
 	}
@@ -32,7 +33,7 @@ func TestNewPgtypeTime_NonZeroUTC_Mega5(t *testing.T) {
 		t.Skipf("Asia/Tokyo unavailable: %v", err)
 	}
 	inUTC := time.Date(2026, 8, 24, 12, 0, 0, 0, loc)
-	got := NewPgtypeTime(inUTC)
+	got := state.NewPgtypeTime(inUTC)
 	if !got.Valid {
 		t.Fatal("non-zero time: Valid = false, want true")
 	}

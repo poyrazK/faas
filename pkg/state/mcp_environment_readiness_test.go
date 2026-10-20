@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"errors"
@@ -7,24 +7,25 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestMCPEnvironmentReadinessPolicies(t *testing.T) {
-	check := func(t *testing.T, s Store) {
+	check := func(t *testing.T, s state.Store) {
 		ctx := t.Context()
 		a, e := s.CreateAccount(ctx, "scoped-readiness@example.com", api.PlanPro)
 		if e != nil {
 			t.Fatal(e)
 		}
-		app, e := s.CreateApp(ctx, App{AccountID: a.ID, Slug: "scoped-readiness", Type: AppTypeApp, Status: AppActive})
+		app, e := s.CreateApp(ctx, state.App{AccountID: a.ID, Slug: "scoped-readiness", Type: state.AppTypeApp, Status: state.AppActive})
 		if e != nil {
 			t.Fatal(e)
 		}
-		source := s.(MCPReadinessStore)
-		monitors := s.(MCPReadinessMonitorStore)
-		deps := map[string]Deployment{}
+		source := s.(state.MCPReadinessStore)
+		monitors := s.(state.MCPReadinessMonitorStore)
+		deps := map[string]state.Deployment{}
 		for _, scope := range []string{"default", "staging", "preview"} {
-			d, e := s.CreateDeployment(ctx, Deployment{AppID: app.ID, Scope: scope, Kind: DeploymentKindImage, ImageDigest: "sha256:" + scope, TrafficPercentExplicit: true, TrafficPercent: 0})
+			d, e := s.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Scope: scope, Kind: state.DeploymentKindImage, ImageDigest: "sha256:" + scope, TrafficPercentExplicit: true, TrafficPercent: 0})
 			if e != nil {
 				t.Fatal(e)
 			}
@@ -48,7 +49,7 @@ func TestMCPEnvironmentReadinessPolicies(t *testing.T) {
 		if prod.Revision == stage.Revision || prod.Scope != "default" || stage.Scope != "staging" {
 			t.Fatal("policy identities not isolated")
 		}
-		subjects := map[string]MCPReadinessSubject{}
+		subjects := map[string]state.MCPReadinessSubject{}
 		for scope, d := range deps {
 			sub, e := source.MCPReadinessSubject(ctx, a.ID, d.ID)
 			if e != nil {
@@ -74,11 +75,11 @@ func TestMCPEnvironmentReadinessPolicies(t *testing.T) {
 		if e != nil {
 			t.Fatal(e)
 		}
-		if _, e = source.CreateMCPReadinessOverride(ctx, a.ID, deps["staging"].ID, api.MCPReadinessOverrideRequest{ExpectedRevision: prod.Revision, Reason: "wrong scope revision"}); !errors.Is(e, ErrConflict) {
+		if _, e = source.CreateMCPReadinessOverride(ctx, a.ID, deps["staging"].ID, api.MCPReadinessOverrideRequest{ExpectedRevision: prod.Revision, Reason: "wrong scope revision"}); !errors.Is(e, state.ErrConflict) {
 			t.Fatal("cross-scope override", e)
 		}
 		request.ExpectedRevision = prod.Revision
-		if _, e = source.SetMCPReadinessPolicy(ctx, a.ID, app.ID, request); !errors.Is(e, ErrConflict) {
+		if _, e = source.SetMCPReadinessPolicy(ctx, a.ID, app.ID, request); !errors.Is(e, state.ErrConflict) {
 			t.Fatal("cross-scope CAS accepted", e)
 		}
 		request.ExpectedRevision = stage.Revision
@@ -95,7 +96,7 @@ func TestMCPEnvironmentReadinessPolicies(t *testing.T) {
 			t.Fatal("staging edit invalidated production")
 		}
 		evidence := api.MCPReadinessEvidence{Role: "reader", Passed: true, ProtocolVersion: api.MCPProtocolVersion, CatalogFormat: 1, CatalogSHA256: strings.Repeat("b", 64)}
-		if _, e = source.RecordMCPReadiness(ctx, subjects["staging"], evidence); !errors.Is(e, ErrConflict) {
+		if _, e = source.RecordMCPReadiness(ctx, subjects["staging"], evidence); !errors.Is(e, state.ErrConflict) {
 			t.Fatal("stale staging attempt accepted", e)
 		}
 		for scope, d := range deps {
@@ -112,32 +113,32 @@ func TestMCPEnvironmentReadinessPolicies(t *testing.T) {
 				}
 			}
 		}
-		if _, e = source.ListMCPReadiness(ctx, a.ID, app.ID, deps["staging"].ID, "default"); !errors.Is(e, ErrNotFound) {
+		if _, e = source.ListMCPReadiness(ctx, a.ID, app.ID, deps["staging"].ID, "default"); !errors.Is(e, state.ErrNotFound) {
 			t.Fatal("mismatched list scope", e)
 		}
 		// Raw SQL checks avoid the legacy allocator redistributing sibling traffic.
-		setTraffic := func(d Deployment, n int) error {
-			if pg, ok := s.(*PgStore); ok {
-				_, e := pg.pool.Exec(ctx, `UPDATE deployments SET traffic_percent=$2 WHERE id=$1`, d.ID, n)
+		setTraffic := func(d state.Deployment, n int) error {
+			if pg, ok := s.(*state.PgStore); ok {
+				_, e := (*pg.Pool()).Exec(ctx, `UPDATE deployments SET traffic_percent=$2 WHERE id=$1`, d.ID, n)
 				return e
 			}
-			m := s.(*MemStore)
-			m.mu.Lock()
-			defer m.mu.Unlock()
-			previous := m.deployments[d.ID]
-			if e := m.checkMCPReadinessLocked(previous, n); e != nil {
+			m := s.(*state.MemStore)
+			(*m.Mu()).Lock()
+			defer (*m.Mu()).Unlock()
+			previous := (*m.Deployments())[d.ID]
+			if e := m.CheckMCPReadinessLocked(previous, n); e != nil {
 				return e
 			}
 			next := previous
 			next.TrafficPercent = n
-			m.consumeMCPReadinessOverrideLocked(previous, next)
-			m.deployments[d.ID] = next
+			m.ConsumeMCPReadinessOverrideLocked(previous, next)
+			(*m.Deployments())[d.ID] = next
 			return nil
 		}
-		if e = setTraffic(deps["staging"], 10); !IsMCPReadinessRequired(e) {
+		if e = setTraffic(deps["staging"], 10); !state.IsMCPReadinessRequired(e) {
 			t.Fatal("stale staging proof admitted traffic", e)
 		}
-		if e = setTraffic(deps["preview"], 10); !IsMCPReadinessRequired(e) {
+		if e = setTraffic(deps["preview"], 10); !state.IsMCPReadinessRequired(e) {
 			t.Fatal("missing environment policy admitted traffic", e)
 		}
 		if e = setTraffic(deps["default"], 10); e != nil {
@@ -190,13 +191,13 @@ func TestMCPEnvironmentReadinessPolicies(t *testing.T) {
 		if e != nil || len(statuses) != 1 || statuses[0].Scope != "staging" {
 			t.Fatal("monitor filter", statuses, e)
 		}
-		if _, e = source.GetMCPReadinessPolicy(ctx, a.ID, app.ID, "__all__"); !errors.Is(e, ErrInvalidArgument) {
+		if _, e = source.GetMCPReadinessPolicy(ctx, a.ID, app.ID, "__all__"); !errors.Is(e, state.ErrInvalidArgument) {
 			t.Fatal("invalid scope accepted", e)
 		}
-		if _, e = source.GetMCPReadinessPolicy(ctx, "foreign", app.ID, "staging"); !errors.Is(e, ErrNotFound) {
+		if _, e = source.GetMCPReadinessPolicy(ctx, "foreign", app.ID, "staging"); !errors.Is(e, state.ErrNotFound) {
 			t.Fatal("ownership bypass", e)
 		}
 	}
-	t.Run("memory", func(t *testing.T) { check(t, NewMemStore()) })
-	t.Run("postgres", func(t *testing.T) { check(t, NewPgStore(pgtest.OpenMigrated(t))) })
+	t.Run("memory", func(t *testing.T) { check(t, state.NewMemStore()) })
+	t.Run("postgres", func(t *testing.T) { check(t, state.NewPgStore(pgtest.OpenMigrated(t))) })
 }

@@ -1,6 +1,6 @@
 //go:build !no_pg
 
-package state
+package state_test
 
 // adr: 435
 
@@ -13,31 +13,32 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 func TestPgArtifactEvidenceLifecycle(t *testing.T) {
-	s, _ := registryVerificationPGStore(t)
+	s, _ := state.RegistryVerificationPGStore(t)
 	artifactEvidenceLifecycle(t, s)
 }
 func TestPgArtifactEvidenceCannotBecomeLegacy(t *testing.T) {
-	s, _ := registryVerificationPGStore(t)
+	s, _ := state.RegistryVerificationPGStore(t)
 	artifactEvidenceCannotBecomeLegacy(t, s)
 }
 
 func TestPgArtifactEvidenceRequiresBase(t *testing.T) {
-	s, _ := registryVerificationPGStore(t)
+	s, _ := state.RegistryVerificationPGStore(t)
 	artifactEvidenceRequiresBase(t, s)
 }
 
 func TestPgArtifactEvidenceDatabaseAgesOut(t *testing.T) {
-	s, _ := registryVerificationPGStore(t)
+	s, _ := state.RegistryVerificationPGStore(t)
 	artifactEvidenceDatabaseAgesOut(t, s)
 }
 
 func TestPgArtifactEvidenceDoesNotWaitForBase(t *testing.T) {
-	s, pool := registryVerificationPGStore(t)
-	in, base, app, dep := artifactScanBaseFixture(t, s)
+	s, pool := state.RegistryVerificationPGStore(t)
+	in, base, app, dep := state.ArtifactScanBaseFixture(t, s)
 	if _, err := s.PublishDeploymentArtifactScan(t.Context(), in); err != nil {
 		t.Fatal(err)
 	}
@@ -51,10 +52,10 @@ func TestPgArtifactEvidenceDoesNotWaitForBase(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
-	if _, err := s.GetFreshDeploymentArtifactScan(ctx, app.AccountID, app.ID, dep.ID, ""); !errors.Is(err, ErrApplicationStandardRuntimeBusy) {
+	if _, err := s.GetFreshDeploymentArtifactScan(ctx, app.AccountID, app.ID, dep.ID, ""); !errors.Is(err, state.ErrApplicationStandardRuntimeBusy) {
 		t.Fatalf("fresh component waited/bypassed current base fence: %v", err)
 	}
-	if _, err := s.GetFreshDeploymentArtifactScanEvidence(ctx, app.AccountID, app.ID, dep.ID); !errors.Is(err, ErrApplicationStandardRuntimeBusy) {
+	if _, err := s.GetFreshDeploymentArtifactScanEvidence(ctx, app.AccountID, app.ID, dep.ID); !errors.Is(err, state.ErrApplicationStandardRuntimeBusy) {
 		t.Fatalf("fresh complete set waited/bypassed current base fence: %v", err)
 	}
 	if err := tx.Rollback(t.Context()); err != nil {
@@ -66,13 +67,13 @@ func TestPgArtifactEvidenceDoesNotWaitForBase(t *testing.T) {
 }
 
 func TestPgArtifactEvidenceExpiredLease(t *testing.T) {
-	s, pool := registryVerificationPGStore(t)
-	in, _, app, dep := artifactScanFixture(t, s, false)
+	s, pool := state.RegistryVerificationPGStore(t)
+	in, _, app, dep := state.ArtifactScanFixture(t, s, false)
 	if _, err := s.PublishDeploymentArtifactScan(t.Context(), in); err != nil {
 		t.Fatal(err)
 	}
 	in.ID = uuid.NewString()
-	in, hash, err := prepareDeploymentArtifactScan(in)
+	in, hash, err := state.PrepareDeploymentArtifactScan(in)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,12 +87,12 @@ func TestPgArtifactEvidenceExpiredLease(t *testing.T) {
 	}
 	defer tx.Rollback(t.Context())
 	q := sqlc.New()
-	if err := q.AuthorizeDeploymentArtifactScanInsert(t.Context(), tx, mustPgUUID(in.ID)); err != nil {
+	if err := q.AuthorizeDeploymentArtifactScanInsert(t.Context(), tx, state.MustPgUUID(in.ID)); err != nil {
 		t.Fatal(err)
 	}
 	// Private test-only publication sets a shorter valid lease. No immutable
 	// row is updated, and the earlier clean legacy report remains unchanged.
-	row, err := q.InsertDeploymentArtifactScan(t.Context(), tx, sqlc.InsertDeploymentArtifactScanParams{ID: mustPgUUID(in.ID), ProducerID: mustPgUUID(in.RootfsProducerID), InputSnapshot: raw, InputHash: hash, TtlSeconds: 1, DbMaxAgeSeconds: api.ApplicationStandardScannerDBMaxAge.Seconds()})
+	row, err := q.InsertDeploymentArtifactScan(t.Context(), tx, sqlc.InsertDeploymentArtifactScanParams{ID: state.MustPgUUID(in.ID), ProducerID: state.MustPgUUID(in.RootfsProducerID), InputSnapshot: raw, InputHash: hash, TtlSeconds: 1, DbMaxAgeSeconds: api.ApplicationStandardScannerDBMaxAge.Seconds()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,10 +106,10 @@ func TestPgArtifactEvidenceExpiredLease(t *testing.T) {
 		t.Fatal(err)
 	}
 	time.Sleep(time.Until(row.ExpiresAt.Time) + 20*time.Millisecond)
-	if _, err := s.GetFreshDeploymentArtifactScan(t.Context(), app.AccountID, app.ID, dep.ID, ""); !errors.Is(err, ErrApplicationStandardRuntimeStale) {
+	if _, err := s.GetFreshDeploymentArtifactScan(t.Context(), app.AccountID, app.ID, dep.ID, ""); !errors.Is(err, state.ErrApplicationStandardRuntimeStale) {
 		t.Fatalf("expired private scan remained fresh: %v", err)
 	}
-	if _, err := s.GetFreshDeploymentArtifactScanEvidence(t.Context(), app.AccountID, app.ID, dep.ID); !errors.Is(err, ErrApplicationStandardRuntimeStale) {
+	if _, err := s.GetFreshDeploymentArtifactScanEvidence(t.Context(), app.AccountID, app.ID, dep.ID); !errors.Is(err, state.ErrApplicationStandardRuntimeStale) {
 		t.Fatalf("expired private evidence remained fresh: %v", err)
 	}
 	history, err := s.GetCurrentDeploymentArtifactScan(t.Context(), app.AccountID, app.ID, dep.ID, "")
@@ -118,8 +119,8 @@ func TestPgArtifactEvidenceExpiredLease(t *testing.T) {
 }
 
 func TestPgArtifactEvidenceDoesNotWaitForInputs(t *testing.T) {
-	s, pool := registryVerificationPGStore(t)
-	in, _, app, dep := artifactScanFixture(t, s, false)
+	s, pool := state.RegistryVerificationPGStore(t)
+	in, _, app, dep := state.ArtifactScanFixture(t, s, false)
 	if _, err := s.PublishDeploymentArtifactScan(t.Context(), in); err != nil {
 		t.Fatal(err)
 	}
@@ -144,10 +145,10 @@ func TestPgArtifactEvidenceDoesNotWaitForInputs(t *testing.T) {
 			}
 			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 			defer cancel()
-			if _, err := s.GetFreshDeploymentArtifactScan(ctx, app.AccountID, app.ID, dep.ID, ""); !errors.Is(err, ErrApplicationStandardRuntimeBusy) {
+			if _, err := s.GetFreshDeploymentArtifactScan(ctx, app.AccountID, app.ID, dep.ID, ""); !errors.Is(err, state.ErrApplicationStandardRuntimeBusy) {
 				t.Fatalf("fresh scan waited/bypassed %s: %v", kind, err)
 			}
-			if _, err := s.GetFreshDeploymentArtifactScanEvidence(ctx, app.AccountID, app.ID, dep.ID); !errors.Is(err, ErrApplicationStandardRuntimeBusy) {
+			if _, err := s.GetFreshDeploymentArtifactScanEvidence(ctx, app.AccountID, app.ID, dep.ID); !errors.Is(err, state.ErrApplicationStandardRuntimeBusy) {
 				t.Fatalf("fresh component set waited/bypassed %s: %v", kind, err)
 			}
 		})
