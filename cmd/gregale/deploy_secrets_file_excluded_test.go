@@ -46,7 +46,7 @@ func TestDeploySecretsFileStaysOutOfSourceArchive(t *testing.T) {
 			w.WriteHeader(http.StatusNoContent)
 		case r.URL.Path == "/v1/apps/demo-secrets/deployments" && r.Method == http.MethodPost:
 			archived = uploadedArchiveNames(t, r)
-			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "demo-secrets"})
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "a1"})
 		default:
 			http.Error(w, "no", http.StatusNotFound)
 		}

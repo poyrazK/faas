@@ -211,6 +211,8 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		// Capacity and runtime observations are source-bound, expiring evidence.
 		"managed_postgres_connection_capacity":     state.CloneSchemaOperational,
 		"data_api_runtime_connection_observations": state.CloneSchemaOperational,
+		"project_environment_promotion_controls":   state.CloneSchemaOperational,
+		"project_release_additions":                state.CloneSchemaOperational,
 
 		"object_bucket_encryption":                           state.CloneSchemaConfiguration,
 		"object_bucket_lifecycle":                            state.CloneSchemaConfiguration,

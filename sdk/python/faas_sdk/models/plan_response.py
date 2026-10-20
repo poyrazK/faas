@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from ..models.plan_detection_warning import PlanDetectionWarning
     from ..models.plan_managed import PlanManaged
     from ..models.plan_workload import PlanWorkload
+    from ..models.project_safe_release import ProjectSafeRelease
 
 
 T = TypeVar("T", bound="PlanResponse")
@@ -38,6 +39,9 @@ class PlanResponse:
     can_apply: bool
     plan_token: str
     """base64-JSON plan token; pass back as ?plan_token= on /v1/projects to skip the second extract."""
+    safe_release: ProjectSafeRelease | Unset = UNSET
+    """Server-owned safe project release checkpoint. Activation occurs only after all zero-traffic candidates
+    complete readiness."""
     repo_full_name: str | Unset = UNSET
     environment: str | Unset = UNSET
     """Registered project environment targeted by this plan"""
@@ -96,6 +100,10 @@ class PlanResponse:
         can_apply = self.can_apply
 
         plan_token = self.plan_token
+
+        safe_release: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.safe_release, Unset):
+            safe_release = self.safe_release.to_dict()
 
         repo_full_name = self.repo_full_name
 
@@ -184,6 +192,8 @@ class PlanResponse:
                 "plan_token": plan_token,
             }
         )
+        if safe_release is not UNSET:
+            field_dict["safe_release"] = safe_release
         if repo_full_name is not UNSET:
             field_dict["repo_full_name"] = repo_full_name
         if environment is not UNSET:
@@ -229,6 +239,7 @@ class PlanResponse:
         from ..models.plan_detection_warning import PlanDetectionWarning
         from ..models.plan_managed import PlanManaged
         from ..models.plan_workload import PlanWorkload
+        from ..models.project_safe_release import ProjectSafeRelease
 
         d = dict(src_dict)
         project_slug = d.pop("project_slug")
@@ -269,6 +280,13 @@ class PlanResponse:
         can_apply = d.pop("can_apply")
 
         plan_token = d.pop("plan_token")
+
+        _safe_release = d.pop("safe_release", UNSET)
+        safe_release: ProjectSafeRelease | Unset
+        if isinstance(_safe_release, Unset):
+            safe_release = UNSET
+        else:
+            safe_release = ProjectSafeRelease.from_dict(_safe_release)
 
         repo_full_name = d.pop("repo_full_name", UNSET)
 
@@ -352,6 +370,7 @@ class PlanResponse:
             limit_crons=limit_crons,
             can_apply=can_apply,
             plan_token=plan_token,
+            safe_release=safe_release,
             repo_full_name=repo_full_name,
             environment=environment,
             environment_protected=environment_protected,

@@ -46,7 +46,7 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 | [`doctor`](#doctor) | Preflight local source or OCI image metadata; runtime checks are skipped |
 | [`delayed-task`](#delayed-task) | Schedule and inspect deferred invocations |
 | [`deployments`](#deployments) | List deployments or manage stable named URLs for immutable revisions |
-| [`deployment`](#deployment) | Inspect a deployment, wait for its rollout, advance a canary, or set its minimum instances |
+| [`deployment`](#deployment) | Inspect release and cron configuration status, wait for rollout, or manage a canary |
 | [`deploys`](#deploys) | Deployment drill-downs (deploys show\|status\|logs\|cancel\|reorder\|clear\|clear-obsolete\|retry) |
 | [`deploy`](#deploy) | Deploy an app, function, or project |
 | [`domains`](#domains) | Manage custom domains |
@@ -8588,7 +8588,7 @@ Remove an alias without deleting its deployment
 
 ## deployment
 
-Inspect a deployment, wait for its rollout, advance a canary, or set its minimum instances
+Inspect release and cron configuration status, wait for rollout, or manage a canary
 
 `gregale deployment [<subcommand>] <id|vN|latest> [--app <SLUG>] [--show-scan] [--show-secret-scan] [--min <N>]`
 
@@ -8602,6 +8602,8 @@ Inspect a deployment, wait for its rollout, advance a canary, or set its minimum
 Examples:
 
 ```sh
+gregale deployment v42 --app my-api
+gregale deployment v42 --app my-api --json
 gregale deployment summary v42 --app my-api
 gregale deployment wait v42 --app my-api
 gregale deployment latest --app my-api
@@ -8837,7 +8839,7 @@ Retry a failed deployment from a specific stage (--from=&lt;stage&gt;)
 
 Deploy an app, function, or project
 
-`gregale deploy [--image <REF>] [--tarball <PATH>] [--path <DIR>] [--source <auto|head|worktree>] [--worktree] [--repo <OWNER/NAME>] [--repository <OWNER/NAME>] [--install-id <N>] [--production-branch <BRANCH>] [--ref <REF>] [--source-branch <BRANCH>] [--github] [--pinned-sha <SHA>] [--pin-action] [--template <NAME>] [--dockerfile] [--issue-source-maps <PATH>] [--issue-source-map-directory <PATH>] [--runtime <RUNTIME>] [--handler <HANDLER>] [--name <SLUG>] [--profile <SIZE>] [--vcpu <N>] [--execution-mode <MODE>] [--restart-policy <POLICY>] [--startup-deadline-s <SECONDS>] [--max-retries <N>] [--function] [--app] [--only <SLUGS>] [--project] [--environment <SLUG>] [--reason <text>] [--tag <TAG>] [--deployed-by <NAME>] [--pr-number <N>] [--exclude <SLUGS>] [--show-affected] [--persist-exclude] [--project-slug <SLUG>] [--rollout <MODE>] [--override-freeze <REASON>] [--canary-preset <PRESET>] [--canary-stages <STAGES>] [--safe] [--require-authn] [--no-require-authn] [--platform-tenant-required] [--no-platform-tenant-required] [--app-protocol <PROTOCOL>] [--traffic-percent <PERCENT>] [--no-traffic] [--rollback-on-5xx] [--queue-canary-binding <NAME>]... [--healthcheck-path <PATH>] [--healthcheck-grpc] [--healthcheck-grpc-service <SERVICE>] [--disable-startup-cpu-boost] [--mcp-task-migration-override] [--no-triggers] [--wait] [--no-wait] [--create-only] [--timeout <DURATION>] [--idempotency-key <KEY>] [--secrets-file <PATH>] [--secret-scan <on|off>] [--diff] [--plan] [--dry-run] [--yes] [--strict] [--lenient] [--server-diff] [--doctor-strict] [--no-doctor]`
+`gregale deploy [<subcommand>] [--atomic] [--add-services] [--verify] [--workers] [--stabilize] [--progressive] [--worker-health] [--migrate] [--release-secrets-file <PATH>] [--release-secrets-request-id <ID>] [--config-file <PATH>] [--image <REF>] [--tarball <PATH>] [--path <DIR>] [--source <auto|head|worktree>] [--worktree] [--repo <OWNER/NAME>] [--repository <OWNER/NAME>] [--install-id <N>] [--production-branch <BRANCH>] [--ref <REF>] [--source-branch <BRANCH>] [--github] [--pinned-sha <SHA>] [--pin-action] [--template <NAME>] [--dockerfile] [--issue-source-maps <PATH>] [--issue-source-map-directory <PATH>] [--runtime <RUNTIME>] [--handler <HANDLER>] [--name <SLUG>] [--profile <SIZE>] [--vcpu <N>] [--execution-mode <MODE>] [--restart-policy <POLICY>] [--startup-deadline-s <SECONDS>] [--max-retries <N>] [--function] [--app] [--only <SLUGS>] [--project] [--environment <SLUG>] [--reason <text>] [--tag <TAG>] [--deployed-by <NAME>] [--pr-number <N>] [--exclude <SLUGS>] [--show-affected] [--persist-exclude] [--project-slug <SLUG>] [--rollout <MODE>] [--override-freeze <REASON>] [--canary-preset <PRESET>] [--canary-stages <STAGES>] [--safe] [--require-authn] [--no-require-authn] [--platform-tenant-required] [--no-platform-tenant-required] [--app-protocol <PROTOCOL>] [--traffic-percent <PERCENT>] [--no-traffic] [--rollback-on-5xx] [--queue-canary-binding <NAME>]... [--healthcheck-path <PATH>] [--healthcheck-grpc] [--healthcheck-grpc-service <SERVICE>] [--disable-startup-cpu-boost] [--mcp-task-migration-override] [--no-triggers] [--wait] [--no-wait] [--create-only] [--timeout <DURATION>] [--idempotency-key <KEY>] [--secrets-file <PATH>] [--secret-scan <on|off>] [--diff] [--plan] [--dry-run] [--yes] [--strict] [--lenient] [--server-diff] [--doctor-strict] [--no-doctor]`
 
 Source defaults to committed HEAD when origin exists; otherwise local files. Use --source=worktree to include local changes.
 
@@ -8845,6 +8847,17 @@ Connection: use --profile NAME before the command; RAM/CPU: use --profile SIZE a
 
 | Flag | Meaning | |
 |---|---|---|
+| `--atomic` | publish an existing HTTP project only after all zero-traffic candidates are ready; requires --project |  |
+| `--add-services` | reserve new HTTP services and publish them with the atomic project release |  |
+| `--verify` | verify critical probe routes after atomic cutover and automatically restore the previous project on regression; requires --atomic |  |
+| `--workers` | include one push-queue worker in a verified atomic project release |  |
+| `--stabilize` | monitor health for ten minutes after progressive rollout succeeds |  |
+| `--progressive` | route project traffic at 5%, 25%, then 100%; requires paired configuration and verification |  |
+| `--worker-health` | require real worker job health; requires --workers |  |
+| `--migrate` | run one backward-compatible migration before verified atomic cutover |  |
+| `--release-secrets-file <PATH>` | rotate complete production secret snapshots with atomic verified HTTP source |  |
+| `--release-secrets-request-id <ID>` | replay the printed encrypted staging request |  |
+| `--config-file <PATH>` | activate non-secret workload variables with an atomic verified release |  |
 | `--image <REF>` | deploy a digest-pinned container image |  |
 | `--tarball <PATH>` | deploy from a source tarball |  |
 | `--path <DIR>` | source directory (default: current directory) |  |
@@ -8905,7 +8918,7 @@ Connection: use --profile NAME before the command; RAM/CPU: use --profile SIZE a
 | `--disable-startup-cpu-boost` | disable temporary CPU boost during VM startup |  |
 | `--mcp-task-migration-override` | allow this deployment to replace incompatible MCP task workers once |  |
 | `--no-triggers` | skip gregale.yaml trigger and async-route changes |  |
-| `--wait` | wait for deployment to become live (default) |  |
+| `--wait` | wait for readiness; projects also wait for rollout and configuration (default) |  |
 | `--no-wait` | return after deployment is queued |  |
 | `--create-only` | create or reserve the app without uploading a deployment |  |
 | `--timeout <DURATION>` | readiness wait limit; seconds or duration, e.g. 10m (default: 1200s; maximum: 24h) |  |
@@ -8928,6 +8941,138 @@ Examples:
 gregale deploy --plan
 gregale deploy --source=head --name my-api
 gregale deploy --path packages/api --source=worktree
+```
+
+### deploy check
+
+Check project prerequisites without uploading source or submitting work
+
+`gregale deploy check --project [--project-slug <SLUG>] [--path <DIR>] [--source <MODE>] [--worktree] [--environment <ENV>] [--from <ENV>] [--expected-state <SHA256>] [--atomic] [--add-services] [--verify] [--workers] [--worker-health] [--migrate] [--progressive] [--stabilize] [--sync-config] [--config-file <PATH>] [--secrets-file <PATH>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--project` | check the complete project | required |
+| `--project-slug <SLUG>` | project slug (defaults to linked context or selected directory) |  |
+| `--path <DIR>` | selected source directory |  |
+| `--source <MODE>` | local source policy (default auto) | one of `auto` · `head` · `worktree` |
+| `--worktree` | check local working tree changes |  |
+| `--environment <ENV>` | destination environment (default production) |  |
+| `--from <ENV>` | source environment for a promotion check |  |
+| `--expected-state <SHA256>` | compare a previous check&#39;s state hash |  |
+| `--atomic` | check atomic source release prerequisites |  |
+| `--add-services` | check HTTP service addition prerequisites |  |
+| `--verify` | check critical health verification prerequisites |  |
+| `--workers` | check push worker release prerequisites |  |
+| `--worker-health` | require worker delivery health during deployment |  |
+| `--migrate` | check one backward-compatible migration |  |
+| `--progressive` | check progressive rollout prerequisites |  |
+| `--stabilize` | check post-success monitoring prerequisites |  |
+| `--sync-config` | check synchronized promotion configuration |  |
+| `--config-file <PATH>` | proposed non-secret paired configuration |  |
+| `--secrets-file <PATH>` | proposed secret input; only key names leave this machine |  |
+
+Examples:
+
+```sh
+gregale deploy check --project --json
+gregale deploy check --project --atomic --verify
+gregale deploy check --project --project-slug shop --from staging --environment production --sync-config --verify
+```
+
+### deploy resolve-contract
+
+Record operator checks and a verified roll-forward release after failed cleanup
+
+`gregale deploy resolve-contract [--replacement-attempt <ID>] [--task-id <ID>] [--generation <N>] [--request-id <ID>] [--evidence-hash <SHA256>] [--database-state-checked] [--execution-quiescent] ATTEMPT_ID`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--replacement-attempt <ID>` | verified corrected deployment attempt |  |
+| `--task-id <ID>` | inspected original cleanup task |  |
+| `--generation <N>` | inspected cleanup generation |  |
+| `--request-id <ID>` | reuse after a lost recovery response |  |
+| `--evidence-hash <SHA256>` | SHA256 of private SQL/execution evidence |  |
+| `--database-state-checked` | attest database inspection/repair |  |
+| `--execution-quiescent` | attest original cleanup execution has stopped |  |
+
+### deploy contract
+
+Run planned schema cleanup after retained versions and work drain
+
+`gregale deploy contract [--request-id <ID>] [--generation <N>] ATTEMPT_ID`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--request-id <ID>` | reuse this contract identity after an ambiguous response |  |
+| `--generation <N>` | require this inspected checkpoint generation |  |
+
+### deploy status
+
+Inspect an atomic project attempt and available recovery actions
+
+`gregale deploy status ATTEMPT_ID`
+
+### deploy abort
+
+Stop a progressive rollout and request guarded baseline restoration
+
+`gregale deploy abort [--request-id <ID>] [--generation <N>] ATTEMPT_ID`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--request-id <ID>` | reuse this control identity after an ambiguous response |  |
+| `--generation <N>` | require this inspected checkpoint generation |  |
+
+### deploy recover
+
+Retry baseline health verification for a blocked progressive deploy
+
+`gregale deploy recover [--request-id <ID>] [--generation <N>] ATTEMPT_ID`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--request-id <ID>` | reuse this control identity after an ambiguous response |  |
+| `--generation <N>` | require this inspected checkpoint generation |  |
+
+### deploy retry
+
+Rebuild confirmed failed workloads from a saved project deploy
+
+`gregale deploy retry [--tarball <PATH>] [--path <DIR>] [--source <auto|head|worktree>] [--worktree] [--yes] [--no-wait] [--timeout <SECONDS>] SESSION_ID`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--tarball <PATH>` | source archive to rebuild |  |
+| `--path <DIR>` | source directory to rebuild (default: current directory) |  |
+| `--source <auto|head|worktree>` | local source policy (default: auto) | one of `auto` · `head` · `worktree` |
+| `--worktree` | include working tree changes (alias for --source=worktree) |  |
+| `--yes` | confirm the retry plan |  |
+| `--no-wait` | return after acceptance |  |
+| `--timeout <SECONDS>` | maximum wait seconds (default 1200) |  |
+
+Examples:
+
+```sh
+gregale deploy retry SESSION_ID --path . --source=worktree --yes
+gregale deploy retry SESSION_ID --tarball source.tar.gz --yes
+```
+
+### deploy resume
+
+Reconnect to a saved app or project deploy and finish pending checks
+
+`gregale deploy resume [--app <SLUG>] [--timeout <SECONDS>] [SESSION_ID]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | select the most recent saved deploy for this app |  |
+| `--timeout <SECONDS>` | maximum wait seconds (default 1200) |  |
+
+Examples:
+
+```sh
+gregale deploy resume --app my-api
+gregale deploy resume SESSION_ID --json
 ```
 
 
@@ -15668,7 +15813,7 @@ Show a project and its workloads
 
 ### projects environments
 
-Manage project environments (list|create|protect|unprotect|inspect|release-sets|releases|qualify|preflight|history|config [set]|routes set|queues get|queues set|diff|preview|promote|status|rollback); qualify binds probes to release, config, and secret revisions
+Manage project environments (list|create|protect|unprotect|inspect|release-sets|releases|qualify|preflight|history|config [set]|routes set|queues get|queues set|diff|preview|promote|status|rollback|abort|recover); qualify binds probes to release, config, and secret revisions
 
 #### projects environments list
 
@@ -16176,7 +16321,7 @@ Plan a promotion
 
 Promote workloads or choose environments interactively
 
-`gregale projects environments promote [--interactive] [--from <ENV>] [--to <ENV>] [--sync-config] [--override-freeze <REASON>] [--yes] [--idempotency-key <KEY>] [--wait] [--progress] [--timeout <SECONDS|DURATION>]`
+`gregale projects environments promote [--interactive] [--from <ENV>] [--to <ENV>] [--sync-config] [--verify] [--migrate] [--workers] [--release-secrets-file <PATH>] [--release-secrets-request-id <ID>] [--override-freeze <REASON>] [--yes] [--idempotency-key <KEY>] [--wait] [--progress] [--timeout <SECONDS|DURATION>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -16184,6 +16329,11 @@ Promote workloads or choose environments interactively
 | `--from <ENV>` | source environment (required unless interactive) |  |
 | `--to <ENV>` | target environment (required unless interactive) |  |
 | `--sync-config` | copy source non-secret environment configuration to the target |  |
+| `--verify` | require destination HTTP health (requires --sync-config) |  |
+| `--migrate` | run one backward-compatible destination release command |  |
+| `--workers` | promote production push workers together |  |
+| `--release-secrets-file <PATH>` | complete production secret snapshots by workload (requires --sync-config --verify --yes) |  |
+| `--release-secrets-request-id <ID>` | replay the printed encrypted staging request |  |
 | `--override-freeze <REASON>` | promote into production during a deploy freeze; the reason is audited |  |
 | `--yes` | confirm the promotion |  |
 | `--idempotency-key <KEY>` | stable key for retrying this promotion |  |
@@ -16208,6 +16358,34 @@ Inspect a promotion
 Roll back a promotion
 
 `gregale projects environments rollback`
+
+#### projects environments abort
+
+Abort a running promotion; after cutover qualify the baseline before restoration
+
+`gregale projects environments abort [--to <ENV>] [--generation <N>] [--request-id <ID>] [--wait] [--timeout <SECONDS|DURATION>] <project-slug> <promotion-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--to <ENV>` | destination environment |  |
+| `--generation <N>` | inspected promotion health generation |  |
+| `--request-id <ID>` | stable 32-character lowercase hexadecimal request ID |  |
+| `--wait` | wait for this decision to finish |  |
+| `--timeout <SECONDS|DURATION>` | maximum local wait; server work continues |  |
+
+#### projects environments recover
+
+Retry a blocked restoration without rebuilding or extending retention
+
+`gregale projects environments recover [--to <ENV>] [--generation <N>] [--request-id <ID>] [--wait] [--timeout <SECONDS|DURATION>] <project-slug> <promotion-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--to <ENV>` | destination environment |  |
+| `--generation <N>` | inspected promotion health generation |  |
+| `--request-id <ID>` | stable 32-character lowercase hexadecimal request ID |  |
+| `--wait` | wait for this decision to finish |  |
+| `--timeout <SECONDS|DURATION>` | maximum local wait; server work continues |  |
 
 ### projects update
 

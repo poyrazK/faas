@@ -73,6 +73,9 @@
 - [Durable Node acknowledgment intents](20261017105545-node-durable-acknowledgment-intents.md)
 
 - [Node deferred event acknowledgment worker](20261017-node-event-acknowledgment-worker.md)
+- [ADR-20261019120046: Preserve configuration when deployment acceptance is uncertain](20261019120046-deploy-submission-outcomes.md) — explicit submission outcomes and commit uncertainty across processes
+
+- [ADR-20261019120045: Deploy upload recovery across CLI processes](20261019120045-deploy-upload-recovery.md) — content and intent checkpoints, interruption recovery, and expired-session replacement keys
 
 ADR-001 through ADR-010 are **accepted and locked for v1**; they live inline in
 [`../faas_implementation_spec.md`](../faas_implementation_spec.md) §3, not as
@@ -1360,6 +1363,33 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-869: Reconnectable durable entity sessions](869-reconnectable-durable-entity-sessions.md)
 - [ADR-870: Durable session recovery and lifecycle](870-durable-session-recovery-and-lifecycle.md)
 
+- [ADR-977: Decompose cmd/apid into pkg/apid domain packages](977-apid-package-decomposition.md)
+
+- [ADR-20261019120044: Deploy acceptance and secret ordering](20261019120044-deploy-acceptance-and-secret-ordering.md)
+
+- [ADR-20261019120048: Saved deploy sessions](20261019120048-saved-deploy-sessions.md)
+
+- [ADR-20261019120047: Atomic deploy settings recovery](20261019120047-atomic-deploy-settings-recovery.md)
+
+- [ADR-20261019120049: Durable deployment submission receipts](20261019120049-deployment-submission-receipts.md)
+
+- [ADR-20261019120050: Durable pre-submission profiling and tracing recovery](20261019120050-durable-deploy-policy-staging.md)
+
+- [ADR-20261019120051: Durable manifest cron staging and recovery](20261019120051-durable-deploy-cron-staging.md)
+
+- [ADR-20261019120010: Progressive project canary policy](20261019120010-project-progressive-canary-policy.md)
+
+- [ADR-20261019120011: Durable project worker release pins](20261019120011-durable-project-worker-release-pins.md)
+
+- [ADR-20261019120012: Retained project worker pools for pinned jobs](20261019120012-retained-project-worker-pools.md)
+
+- [ADR-20261019120013: Staged project canary publication and transactional promotion](20261019120013-staged-project-canary-publication.md)
+
+- [ADR-20261019120022: Snapshot-aware HTTP environment promotion](20261019120022-snapshot-aware-environment-promotion.md)
+
+- [ADR-20261019120023: Health-gated HTTP environment promotion](20261019120023-health-gated-environment-promotion.md)
+
+- [ADR-20261019120024: Destination-aware HTTP service graph promotion](20261019120024-destination-aware-service-graph-promotion.md)
 
 - [ADR-1237: Local management MCP server](1237-local-management-mcp.md)
 - [ADR-1238: Reviewed management MCP releases and delegated OAuth](1238-management-mcp-releases-and-oauth.md)

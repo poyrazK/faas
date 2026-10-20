@@ -14,6 +14,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -676,5 +677,52 @@ func TestHandleInvocationDispatch_UsesPrewokenTarget(t *testing.T) {
 	}
 	if len(d.invs) != 0 {
 		t.Fatalf("legacy dispatches = %d, want 0", len(d.invs))
+	}
+}
+
+type workerOutcomeSynthDispatcher struct {
+	fakeSynthDispatcher
+	status  int
+	body    json.RawMessage
+	failure error
+}
+
+func (d *workerOutcomeSynthDispatcher) InvokeWithStatus(_ context.Context, _ string, inv state.Invocation) (state.Invocation, int, error) {
+	inv.ResolvedDeploymentID = "worker-deployment"
+	inv.WorkerJobEvidence = true
+	inv.Result = d.body
+	return inv, d.status, d.failure
+}
+func TestWorkerJobEvidenceClassifiesAllGuestOutcomes(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		status  int
+		body    string
+		failure error
+		want    string
+	}{
+		{"success", 200, `{"ok":true}`, nil, "succeeded"},
+		{"http_failure", 503, `{}`, nil, "retry"},
+		{"partial_failure", 200, `{"batchItemFailures":[{"itemIdentifier":"33333333-3333-4333-8333-333333333333"}]}`, nil, "retry"},
+		{"bad_response", 200, `broken`, nil, "retry"},
+		{"transport_failure", 0, ``, fmt.Errorf("transport failure"), "retry"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dispatcher := &workerOutcomeSynthDispatcher{status: tc.status, body: json.RawMessage(tc.body), failure: tc.failure}
+			server := NewSynthServer("/tmp/worker-outcome.sock", dispatcher, nil)
+			calls := 0
+			server.WithWorkerJobEvidence(func(ctx context.Context, inv state.Invocation, outcome string) error {
+				calls++
+				if outcome != tc.want || inv.ResolvedDeploymentID != "worker-deployment" || ctx.Err() != nil {
+					t.Fatalf("evidence lost attribution: %s %+v", outcome, inv)
+				}
+				return nil
+			})
+			id := "33333333-3333-4333-8333-333333333333"
+			result := server.dispatchBatchRecord(t.Context(), batchDispatchRequest{InvocationID: "batch", AppID: "app", Source: "esm", TriggerID: "consumer"}, batchDispatchRecord{ItemIdentifier: id, InvocationID: id, InvocationAttempt: 1, PayloadB64: "e30="})
+			if result.Status != tc.want || result.DeploymentID != "worker-deployment" || calls != 1 {
+				t.Fatalf("result=%+v calls=%d", result, calls)
+			}
+		})
 	}
 }

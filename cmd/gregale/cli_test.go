@@ -423,7 +423,7 @@ func TestCmdDeploy_HappyPath(t *testing.T) {
 		case r.URL.Path == "/v1/apps":
 			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "a1", Slug: "my-app"})
 		case r.URL.Path == "/v1/apps/my-app/deployments":
-			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "my-app"})
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "a1"})
 		case strings.HasPrefix(r.URL.Path, "/v1/deployments/d1/logs"):
 			// Fake-apid "live" terminal frame so the CLI exits 0.
 			w.Header().Set("Content-Type", "text/event-stream")
@@ -461,7 +461,7 @@ func TestCmdDeploy_HappyPath_PrintsColdWakeSentence(t *testing.T) {
 		case r.URL.Path == "/v1/apps":
 			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "a1", Slug: "my-app"})
 		case r.URL.Path == "/v1/apps/my-app/deployments":
-			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "my-app"})
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "a1"})
 		case strings.HasPrefix(r.URL.Path, "/v1/deployments/d1/logs"):
 			w.Header().Set("Content-Type", "text/event-stream")
 			flusher, _ := w.(http.Flusher)
@@ -509,7 +509,7 @@ func TestCmdDeploy_HappyPath_PrintsHostingReceipt(t *testing.T) {
 		case r.URL.Path == "/v1/apps":
 			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "a1", Slug: "my-app"})
 		case r.URL.Path == "/v1/apps/my-app/deployments":
-			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "my-app"})
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "a1"})
 		case strings.HasPrefix(r.URL.Path, "/v1/deployments/d1/logs"):
 			w.Header().Set("Content-Type", "text/event-stream")
 			_, _ = fmt.Fprint(w, "event: status\ndata: {\"status\":\"live\"}\n\n")
@@ -610,7 +610,7 @@ func TestCmdDeploy_AppAlreadyExists(t *testing.T) {
 		case r.URL.Path == "/v1/apps/existing":
 			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "a-existing", Slug: "existing"})
 		case r.URL.Path == "/v1/apps/existing/deployments":
-			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "existing"})
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "a-existing"})
 		case strings.HasPrefix(r.URL.Path, "/v1/deployments/d1/logs"):
 			w.Header().Set("Content-Type", "text/event-stream")
 			flusher, _ := w.(http.Flusher)
@@ -701,7 +701,7 @@ func TestCmdDeploy_StreamBrokenRecoversViaGetDeployment(t *testing.T) {
 			case r.URL.Path == "/v1/apps":
 				_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "a1", Slug: "my-app"})
 			case r.URL.Path == "/v1/apps/my-app/deployments":
-				_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "my-app"})
+				_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "a1"})
 			case strings.HasPrefix(r.URL.Path, "/v1/deployments/d1/logs"):
 				w.Header().Set("Content-Type", "text/event-stream")
 				flusher, _ := w.(http.Flusher)
@@ -713,7 +713,7 @@ func TestCmdDeploy_StreamBrokenRecoversViaGetDeployment(t *testing.T) {
 				}
 				<-r.Context().Done()
 			case r.URL.Path == "/v1/deployments/d1":
-				_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "live", AppID: "my-app"})
+				_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "live", AppID: "a1"})
 			default:
 				http.Error(w, "no", 404)
 			}
@@ -733,7 +733,7 @@ func TestCmdDeploy_StreamBrokenRecoversViaGetDeployment(t *testing.T) {
 			case r.URL.Path == "/v1/apps":
 				_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "a1", Slug: "my-app"})
 			case r.URL.Path == "/v1/apps/my-app/deployments":
-				_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "my-app"})
+				_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "a1"})
 			case strings.HasPrefix(r.URL.Path, "/v1/deployments/d1/logs"):
 				w.Header().Set("Content-Type", "text/event-stream")
 				flusher, _ := w.(http.Flusher)
@@ -744,7 +744,7 @@ func TestCmdDeploy_StreamBrokenRecoversViaGetDeployment(t *testing.T) {
 				<-r.Context().Done()
 			case r.URL.Path == "/v1/deployments/d1":
 				_ = json.NewEncoder(w).Encode(api.DeploymentResponse{
-					ID: "d1", Status: "failed", AppID: "my-app", Error: "oom",
+					ID: "d1", Status: "failed", AppID: "a1", Error: "oom",
 				})
 			default:
 				http.Error(w, "no", 404)
@@ -766,7 +766,7 @@ func TestCmdDeploy_FailedStatusFrameRefreshesFailureReason(t *testing.T) {
 		case r.URL.Path == "/v1/apps":
 			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "a1", Slug: "my-app"})
 		case r.URL.Path == "/v1/apps/my-app/deployments":
-			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "my-app"})
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "a1"})
 		case strings.HasPrefix(r.URL.Path, "/v1/deployments/d1/logs"):
 			w.Header().Set("Content-Type", "text/event-stream")
 			_, _ = fmt.Fprint(w, "event: status\ndata: {\"status\":\"failed\"}\n\n")
@@ -776,7 +776,7 @@ func TestCmdDeploy_FailedStatusFrameRefreshesFailureReason(t *testing.T) {
 			<-r.Context().Done()
 		case r.URL.Path == "/v1/deployments/d1":
 			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{
-				ID: "d1", Status: "failed", AppID: "my-app", Error: "build exited 1",
+				ID: "d1", Status: "failed", AppID: "a1", Error: "build exited 1",
 			})
 		default:
 			http.Error(w, "no", http.StatusNotFound)
@@ -832,7 +832,7 @@ func TestCmdDeploy_StreamOpenFailsRecoversViaGetDeployment(t *testing.T) {
 		case r.URL.Path == "/v1/apps":
 			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "a1", Slug: "my-app"})
 		case r.URL.Path == "/v1/apps/my-app/deployments":
-			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "my-app"})
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "a1"})
 		case strings.HasPrefix(r.URL.Path, "/v1/deployments/d1/logs"):
 			// Hijack the connection and close it without writing a
 			// single byte — the CLI sees a network-level EOF on Do().
@@ -848,7 +848,7 @@ func TestCmdDeploy_StreamOpenFailsRecoversViaGetDeployment(t *testing.T) {
 			}
 			_ = conn.Close()
 		case r.URL.Path == "/v1/deployments/d1":
-			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "live", AppID: "my-app"})
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "live", AppID: "a1"})
 		default:
 			http.Error(w, "no", 404)
 		}
@@ -975,7 +975,7 @@ func TestCmdDeploy_JSON_NoWaitReturnsQueuedReceipt(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "a1", Slug: "my-app"})
 		case "/v1/apps/my-app/deployments":
 			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{
-				ID: "d1", Status: "pending", AppID: "my-app",
+				ID: "d1", Status: "pending", AppID: "a1",
 			})
 		default:
 			http.Error(w, "no", 404)
@@ -1587,7 +1587,7 @@ func TestCmdDeploy_Recovery_PrintsColdWakeSentence(t *testing.T) {
 		case r.URL.Path == "/v1/apps":
 			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "a1", Slug: "my-app"})
 		case r.URL.Path == "/v1/apps/my-app/deployments":
-			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "my-app"})
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "a1"})
 		case strings.HasPrefix(r.URL.Path, "/v1/deployments/d1/logs"):
 			w.Header().Set("Content-Type", "text/event-stream")
 			flusher, _ := w.(http.Flusher)
@@ -1599,7 +1599,7 @@ func TestCmdDeploy_Recovery_PrintsColdWakeSentence(t *testing.T) {
 			}
 			<-r.Context().Done()
 		case r.URL.Path == "/v1/deployments/d1":
-			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "live", AppID: "my-app"})
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "live", AppID: "a1"})
 		default:
 			http.Error(w, "no", 404)
 		}
@@ -1656,7 +1656,7 @@ func TestCmdDeploy_RequireAuthn_CarryThrough(t *testing.T) {
 			}
 			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "a1", Slug: "authn-app", RequireAuthn: true})
 		case r.URL.Path == "/v1/apps/authn-app/deployments":
-			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "authn-app"})
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "a1"})
 		case strings.HasPrefix(r.URL.Path, "/v1/deployments/d1/logs"):
 			w.Header().Set("Content-Type", "text/event-stream")
 			flusher, _ := w.(http.Flusher)
@@ -1810,7 +1810,7 @@ func TestCmdDeploy_RequireAuthn_ExistingAppPATCH(t *testing.T) {
 			}
 			<-r.Context().Done()
 		case r.URL.Path == "/v1/apps/existing-app/deployments":
-			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "existing-app"})
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "a-existing"})
 		default:
 			http.Error(w, "no", 404)
 		}

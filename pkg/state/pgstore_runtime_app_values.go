@@ -51,6 +51,15 @@ func runtimeAppValuesDB(ctx context.Context, db sqlc.DBTX, accountID, appID, dep
 			ManagedCredentialGeneration: value.ManagedCredentialGeneration, ManagedObjectStorageCredentialID: value.ManagedObjectStorageCredentialID,
 		})
 	}
+	if len(row.ReleaseSecrets) > 0 {
+		var secrets []releaseSecretVersion
+		if json.Unmarshal(row.ReleaseSecrets, &secrets) != nil {
+			return RuntimeAppValuesSnapshot{}, ErrConflict
+		}
+		if err := applyReleaseSecretSnapshot(&result, secrets); err != nil {
+			return RuntimeAppValuesSnapshot{}, err
+		}
+	}
 	var settings ProjectEnvironmentWorkloadSettings
 	var artifact projectCloneArtifact
 	result.SidecarLayers = []DeploymentSidecarLayer{}
