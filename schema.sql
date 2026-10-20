@@ -241,6 +241,7 @@ DECLARE moved record; total bigint:=0; changed integer;
 BEGIN
  PERFORM id FROM orgs WHERE id=company AND NOT personal_org AND resource_ownership_enabled FOR UPDATE;
  IF NOT FOUND THEN RETURN; END IF;
+ UPDATE orgs SET async_quota_pooled_at=now() WHERE id=company AND async_quota_pooled_at IS NULL;
  -- Lock accepted work before counters; completion has the same row-before-counter order.
  PERFORM i.id FROM invocations i JOIN apps a ON a.id=i.app_id WHERE a.org_id=company
    AND i.quota_reserved AND i.async_quota_subject_id<>company ORDER BY i.id FOR UPDATE OF i;
@@ -260,19 +261,6 @@ BEGIN
   UPDATE invocations i SET async_quota_subject_id=company FROM apps a
    WHERE a.id=i.app_id AND a.org_id=company AND i.quota_reserved AND i.async_quota_subject_id<>company;
  END IF;
-END $$;
-
-
---
--- Name: adopt_queue_reservations_on_org_adoption(); Type: FUNCTION; Schema: public; Owner: -
---
-
-CREATE FUNCTION public.adopt_queue_reservations_on_org_adoption() RETURNS trigger
-    LANGUAGE plpgsql
-    AS $$
-BEGIN
- IF NEW.resource_ownership_enabled AND NOT OLD.resource_ownership_enabled THEN PERFORM adopt_org_async_reservations(NEW.id); END IF;
- RETURN NEW;
 END $$;
 
 
@@ -7853,6 +7841,8 @@ BEGIN
     'billable_units', NEW.billable_units,
     'unpriced_units', NEW.unpriced_units,
     'amount_millicents', NEW.amount_millicents,
+    'credit_applied_millicents', NEW.credit_applied_millicents,
+    'amount_due_millicents', NEW.amount_millicents - NEW.credit_applied_millicents,
     'priced', NEW.unpriced_units = 0 AND NEW.currency <> '',
     'lines', NEW.lines,
     'fees', NEW.fees,
@@ -8768,7 +8758,10 @@ CREATE FUNCTION public.environment_runtime_base_inputs_fresh(target_app uuid, ta
 SELECT
     NOT EXISTS (SELECT 1 FROM app_runtime_config_changes c WHERE c.app_id = target_app AND c.changed_at > boundary)
     AND NOT EXISTS (SELECT 1 FROM app_runtime_config_scope_changes c WHERE c.app_id = target_app
-        AND c.scope IN ('default', target_scope) AND c.changed_at > boundary)
+        AND (c.scope IN ('default', target_scope)
+            -- ADR-1136: default-scope deployments read production's project configuration.
+            OR (target_scope = 'default' AND c.scope = 'default:project-config'))
+        AND c.changed_at > boundary)
     AND observed_variables = coalesce((SELECT jsonb_object_agg(v.key, v.value) FROM app_envs v
         WHERE v.app_id = target_app AND v.scope = target_scope), '{}'::jsonb)
     AND NOT EXISTS (SELECT 1 FROM jsonb_each_text(observed_secrets) r WHERE NOT EXISTS (
@@ -11778,6 +11771,221 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
+
+
+--
+-- Name: financial_app_command_held(uuid, uuid, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.financial_app_command_held(target_app uuid, target_deployment uuid, observed_at timestamp with time zone) RETURNS boolean
+    LANGUAGE sql STABLE
+    AS $$
+ SELECT financial_preview_command_held(target_app,target_deployment,observed_at) OR EXISTS(
+ SELECT 1 FROM apps a JOIN financial_budget_policies p ON p.account_id=a.account_id
+ JOIN financial_compute_holds h ON h.account_id=p.account_id AND h.policy_id=p.id AND h.revision=p.revision
+ WHERE a.id=target_app AND p.deleted_at IS NULL AND p.spec->>'enabled'='true'
+  AND p.spec->>'mode'='strict' AND (p.spec->'scope'->>'kind'='account'
+    OR p.spec->'scope'->>'kind'='app' AND p.spec->'scope'->>'id'=a.id::text)
+  AND (p.spec->>'resume_rule'='manual' OR h.period_start=date_trunc('month',observed_at AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'))
+$$;
+
+
+--
+-- Name: financial_compute_guard_job_definition(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.financial_compute_guard_job_definition() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF NEW.status='deleted' THEN RETURN NEW; END IF;
+ PERFORM financial_compute_require_job_support(NEW.account_id);
+ RETURN NEW;
+END
+$$;
+
+
+--
+-- Name: financial_compute_guard_job_task(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.financial_compute_guard_job_task() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE target_account uuid; target_job uuid; target_node uuid; target_incarnation uuid; target_ram integer;
+BEGIN
+ IF NEW.status NOT IN ('queued','claimed') THEN RETURN NEW; END IF;
+ SELECT account_id,job_id INTO target_account,target_job FROM job_runs WHERE id=NEW.run_id;
+ IF target_account IS NULL THEN RETURN NEW; END IF;
+ -- KEY SHARE conflicts with the FOR UPDATE that every policy and compute
+ -- transaction takes, but not with other task writers: a fan-out run's
+ -- claims serialize with activation, not with each other.
+ PERFORM 1 FROM accounts WHERE id=target_account FOR KEY SHARE;
+ IF NEW.status!='claimed' THEN RETURN NEW; END IF;
+ SELECT i.node_id,n.vmmd_incarnation,i.ram_mb INTO target_node,target_incarnation,target_ram FROM instances i
+ JOIN jobs j ON j.id=i.job_id AND j.account_id=target_account
+ LEFT JOIN compute_nodes n ON n.id=i.node_id
+ WHERE i.id=NEW.instance_id AND i.job_id=target_job AND i.kind='job_task';
+ IF EXISTS(SELECT 1 FROM financial_budget_policies p WHERE p.account_id=target_account
+  AND p.deleted_at IS NULL AND p.spec->>'enabled'='true' AND p.spec->>'mode'='strict'
+  AND (p.spec->'scope'->>'kind'='account' OR
+   (p.spec->'scope'->>'kind'='job' AND p.spec->'scope'->>'id'=target_job::text))) THEN
+  IF NOT EXISTS(SELECT 1 FROM financial_compute_owners o JOIN compute_nodes n ON n.id=o.node_id
+    WHERE n.id=target_node AND n.active AND o.incarnation=n.vmmd_incarnation
+    AND o.job_compute_incarnation=o.incarnation AND o.account_compute_incarnation=o.incarnation) THEN
+   RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='financial_compute_job_owner_capable',
+    MESSAGE='strict job compute requires a current capable native owner';
+  END IF;
+ END IF;
+ IF target_node IS NULL OR target_ram IS NULL OR NEW.lease_token IS NULL THEN
+  RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='financial_compute_job_claim_identity',
+   MESSAGE='job claim requires a bound physical instance and lease';
+ END IF;
+ INSERT INTO financial_compute_job_attempts(instance_id,account_id,job_id,run_id,task_index,lease_token,node_id,incarnation,ram_mb)
+ VALUES(NEW.instance_id,target_account,target_job,NEW.run_id,NEW.task_index,NEW.lease_token,target_node,target_incarnation,target_ram)
+ ON CONFLICT(instance_id) DO NOTHING;
+ IF NOT EXISTS(SELECT 1 FROM financial_compute_job_attempts a WHERE a.instance_id=NEW.instance_id
+  AND a.account_id=target_account AND a.job_id=target_job AND a.run_id=NEW.run_id
+  AND a.task_index=NEW.task_index AND a.lease_token=NEW.lease_token
+  AND a.node_id=target_node AND a.incarnation IS NOT DISTINCT FROM target_incarnation AND a.ram_mb=target_ram) THEN
+  RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='financial_compute_job_claim_identity',
+   MESSAGE='job physical attempt identity cannot be reused';
+ END IF;
+ RETURN NEW;
+END
+$$;
+
+
+--
+-- Name: financial_compute_require_job_support(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.financial_compute_require_job_support(target_account uuid) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ PERFORM 1 FROM accounts WHERE id=target_account FOR UPDATE;
+END
+$$;
+
+
+--
+-- Name: financial_egress_preserve_book(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.financial_egress_preserve_book() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE old_egress jsonb := OLD.payload->'egress'; new_egress jsonb := NEW.payload->'egress';
+BEGIN
+ IF COALESCE((old_egress->>'initialized')::boolean,false) AND NOT COALESCE(
+  (new_egress->>'initialized')::boolean
+  AND (new_egress->>'quantity_committed')::numeric>=(old_egress->>'quantity_committed')::numeric
+  AND (new_egress->>'quantity_committed')::numeric+(new_egress->>'quantity_reserved')::numeric
+   >=(old_egress->>'quantity_committed')::numeric+(old_egress->>'quantity_reserved')::numeric
+  AND new_egress->'allowance_granted'=old_egress->'allowance_granted'
+  AND (new_egress->>'committed')::numeric>=(old_egress->>'committed')::numeric
+  AND new_egress->'rate_millicents'=old_egress->'rate_millicents'
+  AND new_egress->'rate_quantity'=old_egress->'rate_quantity',false) THEN
+  RAISE EXCEPTION 'egress book authority cannot be discarded or reduced' USING ERRCODE='23514',CONSTRAINT='financial_egress_book_monotonic';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: financial_egress_preserve_lease(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.financial_egress_preserve_lease() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF COALESCE((OLD.payload->>'egress_funded')::boolean,false) AND NOT COALESCE(
+  (NEW.payload->>'egress_funded')::boolean
+  AND (NEW.payload->>'egress_granted_bytes')::numeric>=(OLD.payload->>'egress_granted_bytes')::numeric
+  AND (NEW.payload->>'egress_sequence')::numeric>=(OLD.payload->>'egress_sequence')::numeric,false) THEN
+  RAISE EXCEPTION 'egress attempt receipt cannot discard funded bytes' USING ERRCODE='23514',CONSTRAINT='financial_egress_lease_monotonic';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: financial_egress_price_ceiling(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.financial_egress_price_ceiling() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE b jsonb;
+BEGIN
+ IF NEW.meter!='egress' THEN RETURN NEW; END IF;
+ PERFORM 1 FROM accounts WHERE id=NEW.account_id FOR UPDATE;
+ SELECT payload->'egress' INTO b FROM financial_compute_account_books
+ WHERE account_id=NEW.account_id AND period_start=NEW.period_start;
+ IF COALESCE((b->>'initialized')::boolean,false) AND
+  (NEW.price->>'currency' IS DISTINCT FROM 'USD' OR NEW.price->>'unit' IS DISTINCT FROM 'interface_bytes'
+   OR NOT COALESCE((NEW.price->>'included_quantity')::numeric>=(b->>'allowance_granted')::numeric,false)
+   OR NOT COALESCE((NEW.price->>'unit_quantity')::numeric>0 AND (NEW.price->>'millicents_per_unit')::numeric>=0
+    AND (NEW.price->>'millicents_per_unit')::numeric*(b->>'rate_quantity')::numeric
+     <=(b->>'rate_millicents')::numeric*(NEW.price->>'unit_quantity')::numeric,false)) THEN
+  RAISE EXCEPTION 'egress price or allowance exceeds funded period terms' USING ERRCODE='23514',CONSTRAINT='financial_egress_price_ceiling';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: financial_egress_require_funding(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.financial_egress_require_funding() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ PERFORM 1 FROM accounts WHERE id=NEW.account_id FOR UPDATE;
+ IF NEW.settled_at IS NULL AND EXISTS(SELECT 1 FROM financial_budget_policies p
+  WHERE p.account_id=NEW.account_id AND p.deleted_at IS NULL AND p.spec->>'enabled'='true'
+  AND p.spec->>'mode'='strict' AND p.spec->'scope'->>'kind'='account' AND p.spec->'meters' ? 'egress') THEN
+  IF NOT COALESCE((NEW.payload->>'egress_funded')::boolean,false)
+   OR NOT EXISTS(SELECT 1 FROM financial_compute_owners o JOIN compute_nodes n ON n.id=o.node_id
+    WHERE o.node_id=NEW.node_id AND o.incarnation=NEW.incarnation
+    AND o.egress_budget_incarnation=NEW.incarnation AND n.vmmd_incarnation=NEW.incarnation AND n.active) THEN
+   RAISE EXCEPTION 'strict egress requires funded byte-capable owner' USING ERRCODE='23514',CONSTRAINT='financial_egress_owner_funded';
+  END IF;
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: financial_preview_command_held(uuid, uuid, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.financial_preview_command_held(target_app uuid, target_deployment uuid, observed_at timestamp with time zone) RETURNS boolean
+    LANGUAGE sql STABLE
+    AS $$
+ SELECT EXISTS (
+  SELECT 1 FROM apps a
+  JOIN financial_budget_stops s ON s.account_id = a.account_id
+  JOIN financial_budget_policies p ON p.account_id=s.account_id AND p.id=s.policy_id AND p.revision=s.revision
+  LEFT JOIN deployments d ON d.id=target_deployment AND d.app_id=a.id
+  LEFT JOIN deployment_runtime_environment_owners owner ON owner.deployment_id=d.id
+  LEFT JOIN project_environments environment ON environment.id=nullif(p.spec->'scope'->>'id','')::uuid
+  WHERE a.id=target_app AND a.preview_of_slug IS NOT NULL AND a.preview_of_slug!=''
+   AND p.deleted_at IS NULL AND p.spec->>'enabled'='true'
+   AND s.requested_at<=observed_at AND (s.resume_rule='manual' OR s.period_end>observed_at)
+   AND CASE p.spec->'scope'->>'kind'
+    WHEN 'account' THEN true
+    WHEN 'app' THEN (p.spec->'scope'->>'id')::uuid=a.id
+    WHEN 'project' THEN (p.spec->'scope'->>'id')::uuid=a.project_id
+    WHEN 'environment' THEN environment.account_id=a.account_id AND environment.project_id=a.project_id
+      AND (owner.environment_id=environment.id OR owner.deployment_id IS NULL AND
+        (environment.slug=CASE WHEN coalesce(nullif(d.scope,''),'default')='default' THEN 'production' ELSE d.scope END))
+    ELSE false END
+ )
+$$;
 
 
 --
@@ -17070,8 +17278,9 @@ END $$;
 CREATE FUNCTION public.invocation_async_subject(app uuid, namespace uuid) RETURNS uuid
     LANGUAGE sql STABLE
     AS $$
- SELECT CASE WHEN NOT o.personal_org AND o.resource_ownership_enabled THEN o.id ELSE a.account_id END
- FROM apps a JOIN orgs o ON o.id=a.org_id WHERE a.id=app AND a.account_id=namespace;
+ SELECT CASE WHEN o.id IS NOT NULL AND NOT o.personal_org AND o.resource_ownership_enabled
+             AND o.async_quota_pooled_at IS NOT NULL THEN o.id ELSE a.account_id END
+ FROM apps a LEFT JOIN orgs o ON o.id=a.org_id WHERE a.id=app AND a.account_id=namespace;
 $$;
 
 
@@ -17496,6 +17705,7 @@ CREATE TABLE public.orgs (
     billing_address text DEFAULT ''::text NOT NULL,
     tax_id text DEFAULT ''::text NOT NULL,
     object_storage_owned_from timestamp with time zone,
+    async_quota_pooled_at timestamp with time zone,
     CONSTRAINT org_object_storage_owned_from_finite CHECK (((object_storage_owned_from IS NULL) OR isfinite(object_storage_owned_from))),
     CONSTRAINT orgs_personal_owner_link CHECK ((((personal_org = true) AND (personal_owner_account_id IS NOT NULL)) OR ((personal_org = false) AND (personal_owner_account_id IS NULL)))),
     CONSTRAINT orgs_plan_chk CHECK ((plan = ANY (ARRAY['free'::text, 'hobby'::text, 'pro'::text, 'scale'::text]))),
@@ -20287,6 +20497,7 @@ CREATE FUNCTION public.project_environment_config_runtime_change() RETURNS trigg
     AS $$
 DECLARE
     previous jsonb;
+    changed timestamptz := clock_timestamp();
 BEGIN
     SELECT c.config_json INTO previous
       FROM project_environment_config_versions c
@@ -20297,16 +20508,12 @@ BEGIN
     IF project_environment_config_env(previous) = project_environment_config_env(NEW.config_json) THEN
         RETURN NULL;
     END IF;
-    -- The default scope reads production (workloadEnvironmentSlug).
     WITH member AS (
         SELECT a.id FROM apps a
          WHERE a.project_id = NEW.project_id AND a.account_id = NEW.account_id AND a.status <> 'deleted'
-    ), scopes AS (
-        SELECT unnest(CASE WHEN NEW.environment_slug = 'production'
-            THEN ARRAY['production', 'default'] ELSE ARRAY[NEW.environment_slug] END) AS scope
     ), stamped AS (
         INSERT INTO app_runtime_config_scope_changes (app_id, scope, changed_at)
-        SELECT member.id, scopes.scope, clock_timestamp() FROM member, scopes
+        SELECT member.id, NEW.environment_slug, changed FROM member
         ON CONFLICT (app_id, scope) DO UPDATE
             SET changed_at = greatest(app_runtime_config_scope_changes.changed_at, excluded.changed_at)
         RETURNING app_id, scope, changed_at
@@ -20316,6 +20523,22 @@ BEGIN
      WHERE snapshots.deployment_id = d.id AND d.app_id = stamped.app_id
        AND coalesce(nullif(d.scope, ''), 'default') = stamped.scope
        AND NOT snapshots.stale AND snapshots.created_at <= stamped.changed_at;
+    -- The default scope reads production (workloadEnvironmentSlug). It gets
+    -- its own boundary, never the shared 'default' one every environment
+    -- consults, and its snapshots go stale.
+    IF NEW.environment_slug = 'production' THEN
+        INSERT INTO app_runtime_config_scope_changes (app_id, scope, changed_at)
+        SELECT a.id, 'default:project-config', changed FROM apps a
+         WHERE a.project_id = NEW.project_id AND a.account_id = NEW.account_id AND a.status <> 'deleted'
+        ON CONFLICT (app_id, scope) DO UPDATE
+            SET changed_at = greatest(app_runtime_config_scope_changes.changed_at, excluded.changed_at);
+        UPDATE snapshots SET stale = true
+          FROM deployments d, apps a
+         WHERE snapshots.deployment_id = d.id AND d.app_id = a.id
+           AND a.project_id = NEW.project_id AND a.account_id = NEW.account_id AND a.status <> 'deleted'
+           AND coalesce(nullif(d.scope, ''), 'default') = 'default'
+           AND NOT snapshots.stale AND snapshots.created_at <= changed;
+    END IF;
     RETURN NULL;
 END;
 $$;
@@ -24385,8 +24608,7 @@ CREATE FUNCTION public.stamp_invocation_async_subject() RETURNS trigger
 DECLARE expected uuid;
 BEGIN
  IF NEW.quota_reserved THEN
-  expected:=invocation_async_subject(NEW.app_id,NEW.account_id);
-  IF expected IS NULL THEN RAISE EXCEPTION 'invalid invocation quota ownership' USING ERRCODE='23514'; END IF;
+  expected:=coalesce(invocation_async_subject(NEW.app_id,NEW.account_id),NEW.account_id);
   IF TG_OP='INSERT' OR NOT OLD.quota_reserved THEN
    NEW.async_quota_subject_id:=expected;
   ELSIF NEW.async_quota_subject_id IS DISTINCT FROM OLD.async_quota_subject_id AND NEW.async_quota_subject_id IS DISTINCT FROM expected THEN
@@ -25173,7 +25395,7 @@ CREATE TABLE public.account_billing_connections (
     automatic_tax boolean DEFAULT false NOT NULL,
     CONSTRAINT account_billing_connections_api_url_chk CHECK (((api_url IS NULL) OR ((char_length(api_url) <= 512) AND (api_url ~~ 'https://%'::text)))),
     CONSTRAINT account_billing_connections_automatic_tax_chk CHECK (((NOT automatic_tax) OR (provider = 'stripe'::text))),
-    CONSTRAINT account_billing_connections_collection_chk CHECK ((((provider = 'stripe'::text) AND (collection = ANY (ARRAY['none'::text, 'send'::text, 'charge'::text]))) OR ((provider = 'paddle'::text) AND (collection = 'none'::text)) OR ((provider = 'lago'::text) AND (collection = ANY (ARRAY['none'::text, 'charge'::text]))))),
+    CONSTRAINT account_billing_connections_collection_chk CHECK ((((provider = 'stripe'::text) AND (collection = ANY (ARRAY['none'::text, 'send'::text, 'charge'::text]))) OR ((provider = 'paddle'::text) AND (collection = ANY (ARRAY['none'::text, 'send'::text]))) OR ((provider = 'lago'::text) AND (collection = ANY (ARRAY['none'::text, 'charge'::text]))))),
     CONSTRAINT account_billing_connections_days_until_due_chk CHECK (((days_until_due >= 1) AND (days_until_due <= 365))),
     CONSTRAINT account_billing_connections_last4_chk CHECK ((char_length(key_last4) = 4)),
     CONSTRAINT account_billing_connections_provider_chk CHECK ((provider = ANY (ARRAY['stripe'::text, 'paddle'::text, 'lago'::text])))
@@ -30471,6 +30693,60 @@ CREATE TABLE public.data_api_runtime_connection_observations (
 
 
 --
+-- Name: data_api_usage_hourly; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.data_api_usage_hourly (
+    app_id uuid NOT NULL,
+    hour timestamp with time zone NOT NULL,
+    user_requests bigint DEFAULT 0 NOT NULL,
+    anonymous_requests bigint DEFAULT 0 NOT NULL,
+    server_requests bigint DEFAULT 0 NOT NULL,
+    rejected_requests bigint DEFAULT 0 NOT NULL,
+    error_requests bigint DEFAULT 0 NOT NULL,
+    capped_requests bigint DEFAULT 0 NOT NULL,
+    rows_returned bigint DEFAULT 0 NOT NULL,
+    response_bytes bigint DEFAULT 0 NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT data_api_usage_hourly_anonymous_requests_check CHECK ((anonymous_requests >= 0)),
+    CONSTRAINT data_api_usage_hourly_capped_requests_check CHECK ((capped_requests >= 0)),
+    CONSTRAINT data_api_usage_hourly_error_requests_check CHECK ((error_requests >= 0)),
+    CONSTRAINT data_api_usage_hourly_hour_check CHECK ((date_bin('01:00:00'::interval, hour, '2000-01-01 00:00:00+00'::timestamp with time zone) = hour)),
+    CONSTRAINT data_api_usage_hourly_rejected_requests_check CHECK ((rejected_requests >= 0)),
+    CONSTRAINT data_api_usage_hourly_response_bytes_check CHECK ((response_bytes >= 0)),
+    CONSTRAINT data_api_usage_hourly_rows_returned_check CHECK ((rows_returned >= 0)),
+    CONSTRAINT data_api_usage_hourly_server_requests_check CHECK ((server_requests >= 0)),
+    CONSTRAINT data_api_usage_hourly_user_requests_check CHECK ((user_requests >= 0))
+);
+
+
+--
+-- Name: TABLE data_api_usage_hourly; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.data_api_usage_hourly IS 'ADR-20261019102108 Data API usage per app and UTC hour, from runtime deltas; owner telemetry, not billing.';
+
+
+--
+-- Name: data_api_usage_reports; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.data_api_usage_reports (
+    app_id uuid NOT NULL,
+    report_id text NOT NULL,
+    received_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT data_api_usage_reports_report_id_check CHECK ((report_id ~ '^[A-Za-z0-9._:-]{1,128}$'::text))
+);
+
+
+--
+-- Name: TABLE data_api_usage_reports; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.data_api_usage_reports IS 'ADR-20261019102108 applied Data API usage report ids, kept for the dedup window.';
+
+
+--
 -- Name: data_connection_checks; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -34130,6 +34406,57 @@ CREATE TABLE public.feature_flag_versions (
 
 
 --
+-- Name: financial_budget_alerts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.financial_budget_alerts (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    policy_id uuid NOT NULL,
+    revision bigint NOT NULL,
+    period_start timestamp with time zone NOT NULL,
+    threshold_millicents bigint NOT NULL,
+    payload jsonb NOT NULL,
+    state text DEFAULT 'pending'::text NOT NULL,
+    attempts integer DEFAULT 0 NOT NULL,
+    next_attempt_at timestamp with time zone NOT NULL,
+    lease_token uuid,
+    delivered_at timestamp with time zone,
+    last_error text DEFAULT ''::text NOT NULL,
+    CONSTRAINT financial_budget_alerts_attempts_check CHECK ((attempts >= 0)),
+    CONSTRAINT financial_budget_alerts_check CHECK ((next_attempt_at >= period_start)),
+    CONSTRAINT financial_budget_alerts_check1 CHECK (((state = 'sending'::text) = (lease_token IS NOT NULL))),
+    CONSTRAINT financial_budget_alerts_check2 CHECK (((state = 'delivered'::text) = (delivered_at IS NOT NULL))),
+    CONSTRAINT financial_budget_alerts_last_error_check CHECK ((last_error = ANY (ARRAY[''::text, 'mail_delivery_failed'::text]))),
+    CONSTRAINT financial_budget_alerts_payload_check CHECK ((jsonb_typeof(payload) = 'object'::text)),
+    CONSTRAINT financial_budget_alerts_period_start_check CHECK ((period_start = (date_trunc('month'::text, (period_start AT TIME ZONE 'UTC'::text)) AT TIME ZONE 'UTC'::text))),
+    CONSTRAINT financial_budget_alerts_revision_check CHECK (((revision >= 1) AND (revision <= '9007199254740991'::bigint))),
+    CONSTRAINT financial_budget_alerts_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'sending'::text, 'retrying'::text, 'delivered'::text]))),
+    CONSTRAINT financial_budget_alerts_threshold_millicents_check CHECK (((threshold_millicents >= 0) AND (threshold_millicents <= '9007199254740991'::bigint)))
+);
+
+
+--
+-- Name: financial_budget_evaluations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.financial_budget_evaluations (
+    account_id uuid NOT NULL,
+    policy_id uuid NOT NULL,
+    revision bigint NOT NULL,
+    period_start timestamp with time zone NOT NULL,
+    evaluated_at timestamp with time zone NOT NULL,
+    evidence_through_id bigint NOT NULL,
+    observation jsonb NOT NULL,
+    CONSTRAINT financial_budget_evaluations_check CHECK ((evaluated_at >= period_start)),
+    CONSTRAINT financial_budget_evaluations_evidence_through_id_check CHECK ((evidence_through_id >= 0)),
+    CONSTRAINT financial_budget_evaluations_observation_check CHECK ((jsonb_typeof(observation) = 'object'::text)),
+    CONSTRAINT financial_budget_evaluations_period_start_check CHECK ((period_start = (date_trunc('month'::text, (period_start AT TIME ZONE 'UTC'::text)) AT TIME ZONE 'UTC'::text))),
+    CONSTRAINT financial_budget_evaluations_revision_check CHECK (((revision >= 1) AND (revision <= '9007199254740991'::bigint)))
+);
+
+
+--
 -- Name: financial_budget_policies; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -34168,6 +34495,181 @@ CREATE TABLE public.financial_budget_revisions (
 
 
 --
+-- Name: financial_budget_stop_targets; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.financial_budget_stop_targets (
+    stop_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    environment_id text DEFAULT ''::text NOT NULL,
+    state text NOT NULL,
+    observed_at timestamp with time zone NOT NULL,
+    resident_count integer NOT NULL,
+    last_error text DEFAULT ''::text NOT NULL,
+    CONSTRAINT financial_budget_stop_targets_check CHECK (((resident_count >= 0) AND ((state <> 'enforced'::text) OR (resident_count = 0)))),
+    CONSTRAINT financial_budget_stop_targets_environment_id_check CHECK (((environment_id = ''::text) OR (environment_id ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'::text))),
+    CONSTRAINT financial_budget_stop_targets_last_error_check CHECK ((last_error = ANY (ARRAY[''::text, 'runtime_identity_unavailable'::text, 'vm_teardown_failed'::text, 'instance_settlement_failed'::text]))),
+    CONSTRAINT financial_budget_stop_targets_state_check CHECK ((state = ANY (ARRAY['requested'::text, 'draining'::text, 'enforced'::text, 'failed'::text])))
+);
+
+
+--
+-- Name: financial_budget_stops; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.financial_budget_stops (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    policy_id uuid NOT NULL,
+    revision bigint NOT NULL,
+    period_start timestamp with time zone NOT NULL,
+    period_end timestamp with time zone NOT NULL,
+    requested_at timestamp with time zone NOT NULL,
+    drain_deadline timestamp with time zone NOT NULL,
+    resume_rule text NOT NULL,
+    payload jsonb NOT NULL,
+    CONSTRAINT financial_budget_stops_check CHECK ((period_end = (((period_start AT TIME ZONE 'UTC'::text) + '1 mon'::interval) AT TIME ZONE 'UTC'::text))),
+    CONSTRAINT financial_budget_stops_check1 CHECK (((requested_at >= period_start) AND (requested_at < period_end))),
+    CONSTRAINT financial_budget_stops_check2 CHECK (((drain_deadline >= requested_at) AND (drain_deadline <= (requested_at + '00:05:00'::interval)))),
+    CONSTRAINT financial_budget_stops_payload_check CHECK ((jsonb_typeof(payload) = 'object'::text)),
+    CONSTRAINT financial_budget_stops_period_start_check CHECK ((period_start = (date_trunc('month'::text, (period_start AT TIME ZONE 'UTC'::text)) AT TIME ZONE 'UTC'::text))),
+    CONSTRAINT financial_budget_stops_resume_rule_check CHECK ((resume_rule = ANY (ARRAY['manual'::text, 'next_period'::text]))),
+    CONSTRAINT financial_budget_stops_revision_check CHECK (((revision >= 1) AND (revision <= '9007199254740991'::bigint)))
+);
+
+
+--
+-- Name: financial_compute_account_books; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.financial_compute_account_books (
+    account_id uuid NOT NULL,
+    period_start timestamp with time zone NOT NULL,
+    period_end timestamp with time zone NOT NULL,
+    payload jsonb NOT NULL,
+    CONSTRAINT financial_compute_account_books_check CHECK ((period_end > period_start)),
+    CONSTRAINT financial_compute_account_books_payload_check CHECK ((jsonb_typeof(payload) = 'object'::text)),
+    CONSTRAINT financial_compute_account_books_payload_check1 CHECK (COALESCE(((((payload ->> 'committed'::text))::numeric >= (0)::numeric) AND (((payload ->> 'reserved'::text))::numeric >= (0)::numeric) AND ((((payload ->> 'committed'::text))::numeric + ((payload ->> 'reserved'::text))::numeric) <= ('9007199254740991'::bigint)::numeric)), false)),
+    CONSTRAINT financial_compute_account_books_payload_check2 CHECK (COALESCE(((((payload ->> 'quantity_committed'::text))::numeric >= (0)::numeric) AND (((payload ->> 'quantity_reserved'::text))::numeric >= (0)::numeric) AND ((((payload ->> 'quantity_committed'::text))::numeric + ((payload ->> 'quantity_reserved'::text))::numeric) <= ('9007199254740991'::bigint)::numeric) AND ((((payload ->> 'allowance_granted'::text))::numeric >= (0)::numeric) AND (((payload ->> 'allowance_granted'::text))::numeric <= ('9007199254740991'::bigint)::numeric))), false)),
+    CONSTRAINT financial_egress_book_bounds CHECK (((NOT COALESCE((((payload -> 'egress'::text) ->> 'initialized'::text))::boolean, false)) OR COALESCE((((((payload -> 'egress'::text) ->> 'quantity_committed'::text))::numeric >= (0)::numeric) AND ((((payload -> 'egress'::text) ->> 'quantity_reserved'::text))::numeric >= (0)::numeric) AND (((((payload -> 'egress'::text) ->> 'quantity_committed'::text))::numeric + (((payload -> 'egress'::text) ->> 'quantity_reserved'::text))::numeric) <= ('9007199254740991'::bigint)::numeric) AND (((((payload -> 'egress'::text) ->> 'allowance_granted'::text))::numeric >= (0)::numeric) AND ((((payload -> 'egress'::text) ->> 'allowance_granted'::text))::numeric <= ('9007199254740991'::bigint)::numeric)) AND ((((payload -> 'egress'::text) ->> 'committed'::text))::numeric >= (0)::numeric) AND ((((payload -> 'egress'::text) ->> 'reserved'::text))::numeric >= (0)::numeric) AND (((((payload -> 'egress'::text) ->> 'committed'::text))::numeric + (((payload -> 'egress'::text) ->> 'reserved'::text))::numeric) <= ('9007199254740991'::bigint)::numeric) AND ((((payload -> 'egress'::text) ->> 'rate_millicents'::text))::numeric >= (0)::numeric) AND ((((payload -> 'egress'::text) ->> 'rate_quantity'::text))::numeric > (0)::numeric)), false)))
+);
+
+
+--
+-- Name: financial_compute_books; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.financial_compute_books (
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    period_start timestamp with time zone NOT NULL,
+    period_end timestamp with time zone NOT NULL,
+    payload jsonb NOT NULL,
+    CONSTRAINT financial_compute_books_check CHECK ((period_end > period_start)),
+    CONSTRAINT financial_compute_books_payload_check CHECK ((jsonb_typeof(payload) = 'object'::text)),
+    CONSTRAINT financial_compute_books_payload_check1 CHECK (COALESCE(((((payload ->> 'committed'::text))::bigint >= 0) AND (((payload ->> 'reserved'::text))::bigint >= 0) AND ((((payload ->> 'committed'::text))::bigint + ((payload ->> 'reserved'::text))::bigint) <= '9007199254740991'::bigint)), false))
+);
+
+
+--
+-- Name: financial_compute_holds; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.financial_compute_holds (
+    account_id uuid NOT NULL,
+    policy_id uuid NOT NULL,
+    revision bigint NOT NULL,
+    period_start timestamp with time zone NOT NULL,
+    CONSTRAINT financial_compute_holds_revision_check CHECK ((revision > 0))
+);
+
+
+--
+-- Name: financial_compute_job_attempts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.financial_compute_job_attempts (
+    instance_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    job_id uuid NOT NULL,
+    run_id uuid NOT NULL,
+    task_index integer NOT NULL,
+    lease_token uuid NOT NULL,
+    node_id uuid NOT NULL,
+    incarnation uuid,
+    ram_mb integer NOT NULL,
+    claimed_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT financial_compute_job_attempts_ram_mb_check CHECK ((ram_mb > 0)),
+    CONSTRAINT financial_compute_job_attempts_task_index_check CHECK ((task_index >= 0))
+);
+
+
+--
+-- Name: financial_compute_job_books; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.financial_compute_job_books (
+    account_id uuid NOT NULL,
+    job_id uuid NOT NULL,
+    period_start timestamp with time zone NOT NULL,
+    period_end timestamp with time zone NOT NULL,
+    payload jsonb NOT NULL,
+    CONSTRAINT financial_compute_job_books_check CHECK ((period_end > period_start)),
+    CONSTRAINT financial_compute_job_books_payload_check CHECK ((jsonb_typeof(payload) = 'object'::text)),
+    CONSTRAINT financial_compute_job_books_payload_check1 CHECK (COALESCE(((((payload ->> 'committed'::text))::bigint >= 0) AND (((payload ->> 'reserved'::text))::bigint >= 0) AND ((((payload ->> 'committed'::text))::bigint + ((payload ->> 'reserved'::text))::bigint) <= '9007199254740991'::bigint)), false))
+);
+
+
+--
+-- Name: financial_compute_leases; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.financial_compute_leases (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid,
+    instance_id text NOT NULL,
+    node_id uuid NOT NULL,
+    incarnation uuid NOT NULL,
+    period_start timestamp with time zone NOT NULL,
+    strict boolean NOT NULL,
+    started_at timestamp with time zone NOT NULL,
+    funded_until timestamp with time zone NOT NULL,
+    settled_at timestamp with time zone,
+    payload jsonb NOT NULL,
+    job_id uuid,
+    job_run_id uuid,
+    job_task_index integer,
+    CONSTRAINT financial_compute_account_quantity_check CHECK (((COALESCE(((payload ->> 'account_funded'::text))::boolean, false) = false) OR (strict AND COALESCE(((((payload ->> 'quantity_committed'::text))::numeric >= (0)::numeric) AND (((payload ->> 'quantity_reserved'::text))::numeric >= (0)::numeric) AND ((((payload ->> 'quantity_committed'::text))::numeric + ((payload ->> 'quantity_reserved'::text))::numeric) <= ('9007199254740991'::bigint)::numeric)), false)))),
+    CONSTRAINT financial_compute_leases_check CHECK ((funded_until >= started_at)),
+    CONSTRAINT financial_compute_leases_check1 CHECK ((settled_at >= started_at)),
+    CONSTRAINT financial_compute_leases_instance_id_check CHECK (((length(instance_id) >= 1) AND (length(instance_id) <= 128))),
+    CONSTRAINT financial_compute_leases_payload_check CHECK ((jsonb_typeof(payload) = 'object'::text)),
+    CONSTRAINT financial_compute_workload_identity CHECK ((((app_id IS NOT NULL) AND (job_id IS NULL) AND (job_run_id IS NULL) AND (job_task_index IS NULL)) OR ((app_id IS NULL) AND (job_id IS NOT NULL) AND (job_run_id IS NOT NULL) AND (job_task_index IS NOT NULL) AND (job_task_index >= 0)))),
+    CONSTRAINT financial_egress_lease_bounds CHECK (((NOT COALESCE(((payload ->> 'egress_funded'::text))::boolean, false)) OR COALESCE((strict AND ((payload ->> 'account_funded'::text))::boolean AND ((((payload ->> 'egress_granted_bytes'::text))::numeric >= (0)::numeric) AND (((payload ->> 'egress_granted_bytes'::text))::numeric <= ('9007199254740991'::bigint)::numeric)) AND ((((payload ->> 'egress_grant_bytes'::text))::numeric >= (0)::numeric) AND (((payload ->> 'egress_grant_bytes'::text))::numeric <= ((payload ->> 'egress_granted_bytes'::text))::numeric)) AND ((((payload ->> 'egress_sequence'::text))::numeric >= (0)::numeric) AND (((payload ->> 'egress_sequence'::text))::numeric <= ('9007199254740991'::bigint)::numeric))), false)))
+);
+
+
+--
+-- Name: financial_compute_owners; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.financial_compute_owners (
+    node_id uuid NOT NULL,
+    incarnation uuid NOT NULL,
+    protocol smallint NOT NULL,
+    observed_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    account_compute_incarnation uuid,
+    job_compute_incarnation uuid,
+    egress_budget_incarnation uuid,
+    CONSTRAINT financial_compute_job_owner_incarnation CHECK (((job_compute_incarnation IS NULL) OR (job_compute_incarnation = incarnation))),
+    CONSTRAINT financial_compute_owner_account_incarnation_check CHECK (((account_compute_incarnation IS NULL) OR (account_compute_incarnation = incarnation))),
+    CONSTRAINT financial_compute_owners_protocol_check CHECK ((protocol = 1)),
+    CONSTRAINT financial_egress_owner_incarnation CHECK (((egress_budget_incarnation IS NULL) OR (egress_budget_incarnation = incarnation)))
+);
+
+
+--
 -- Name: financial_evidence_coverage; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -34175,6 +34677,44 @@ CREATE TABLE public.financial_evidence_coverage (
     singleton boolean DEFAULT true NOT NULL,
     retained_from timestamp with time zone NOT NULL,
     CONSTRAINT financial_evidence_coverage_singleton_check CHECK (singleton)
+);
+
+
+--
+-- Name: financial_funding_currency; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.financial_funding_currency (
+    singleton boolean DEFAULT true NOT NULL,
+    currency text NOT NULL,
+    CONSTRAINT financial_funding_currency_currency_check CHECK ((currency = 'USD'::text)),
+    CONSTRAINT financial_funding_currency_singleton_check CHECK (singleton)
+);
+
+
+--
+-- Name: financial_preview_command_runtimes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.financial_preview_command_runtimes (
+    task_id uuid NOT NULL,
+    lease_token uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    node_id uuid NOT NULL,
+    environment_id uuid,
+    phase text NOT NULL,
+    ram_mb integer NOT NULL,
+    cpu_millicores integer NOT NULL,
+    recorded_at timestamp with time zone NOT NULL,
+    retired_at timestamp with time zone,
+    prepare_until timestamp with time zone NOT NULL,
+    CONSTRAINT financial_preview_command_prepare_deadline_check CHECK ((prepare_until >= recorded_at)),
+    CONSTRAINT financial_preview_command_runtimes_check CHECK (((phase = 'retired'::text) = (retired_at IS NOT NULL))),
+    CONSTRAINT financial_preview_command_runtimes_cpu_millicores_check CHECK ((cpu_millicores > 0)),
+    CONSTRAINT financial_preview_command_runtimes_phase_check CHECK ((phase = ANY (ARRAY['preparing'::text, 'active'::text, 'retired'::text]))),
+    CONSTRAINT financial_preview_command_runtimes_ram_mb_check CHECK ((ram_mb > 0))
 );
 
 
@@ -42792,6 +43332,50 @@ CREATE TABLE public.platform_tenant_credential_policies (
 
 
 --
+-- Name: platform_tenant_credit_applications; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.platform_tenant_credit_applications (
+    grant_id uuid NOT NULL,
+    statement_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    amount_millicents bigint NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT platform_tenant_credit_applications_amount_chk CHECK ((amount_millicents > 0))
+);
+
+
+--
+-- Name: platform_tenant_credit_grants; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.platform_tenant_credit_grants (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    platform_tenant_id uuid NOT NULL,
+    currency text NOT NULL,
+    amount_millicents bigint NOT NULL,
+    remaining_millicents bigint NOT NULL,
+    note text DEFAULT ''::text NOT NULL,
+    expires_at timestamp with time zone,
+    voided_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT platform_tenant_credit_grants_amount_chk CHECK (((amount_millicents > 0) AND (remaining_millicents >= 0) AND (remaining_millicents <= amount_millicents))),
+    CONSTRAINT platform_tenant_credit_grants_currency_chk CHECK ((currency ~ '^[A-Z]{3}$'::text)),
+    CONSTRAINT platform_tenant_credit_grants_expiry_chk CHECK (((expires_at IS NULL) OR (expires_at > created_at))),
+    CONSTRAINT platform_tenant_credit_grants_note_chk CHECK ((char_length(note) <= 200)),
+    CONSTRAINT platform_tenant_credit_grants_voided_chk CHECK (((voided_at IS NULL) OR (remaining_millicents = 0)))
+);
+
+
+--
+-- Name: TABLE platform_tenant_credit_grants; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.platform_tenant_credit_grants IS 'Prepaid credit granted to a platform tenant; finalized tenant statements draw it down oldest-expiring first (ADR-20261019100331).';
+
+
+--
 -- Name: platform_tenant_hostname_policies; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -43052,6 +43636,36 @@ COMMENT ON TABLE public.platform_tenant_source_route_usage_minutes IS 'Billable 
 
 
 --
+-- Name: platform_tenant_spend_caps; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.platform_tenant_spend_caps (
+    platform_tenant_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    currency text NOT NULL,
+    monthly_cap_millicents bigint NOT NULL,
+    capped boolean DEFAULT false NOT NULL,
+    month_start timestamp with time zone,
+    amount_due_millicents bigint,
+    checked_at timestamp with time zone,
+    next_check_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT platform_tenant_spend_caps_cap_chk CHECK ((monthly_cap_millicents >= 0)),
+    CONSTRAINT platform_tenant_spend_caps_capped_chk CHECK (((NOT capped) OR ((month_start IS NOT NULL) AND (checked_at IS NOT NULL)))),
+    CONSTRAINT platform_tenant_spend_caps_currency_chk CHECK ((currency ~ '^[A-Z]{3}$'::text)),
+    CONSTRAINT platform_tenant_spend_caps_due_chk CHECK (((amount_due_millicents IS NULL) OR (amount_due_millicents >= 0)))
+);
+
+
+--
+-- Name: TABLE platform_tenant_spend_caps; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.platform_tenant_spend_caps IS 'Monthly spend cap per platform tenant; apid checks the month to date and tenant admission denies capped tenants (ADR-20261019100331).';
+
+
+--
 -- Name: platform_tenant_statement_consumers; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -43125,11 +43739,13 @@ CREATE TABLE public.platform_tenant_statements (
     finalized_at timestamp with time zone,
     coverage jsonb NOT NULL,
     fees jsonb DEFAULT '[]'::jsonb NOT NULL,
+    credit_applied_millicents bigint DEFAULT 0 NOT NULL,
     CONSTRAINT platform_tenant_statements_amount_millicents_check CHECK ((amount_millicents >= 0)),
     CONSTRAINT platform_tenant_statements_billable_units_check CHECK ((billable_units >= 0)),
     CONSTRAINT platform_tenant_statements_check CHECK (((period_start = date_trunc('minute'::text, period_start)) AND (period_end = date_trunc('minute'::text, period_end)) AND (period_end > period_start))),
     CONSTRAINT platform_tenant_statements_check1 CHECK ((((status = ANY (ARRAY['draft'::text, 'superseded'::text])) AND (finalized_at IS NULL)) OR ((status = 'finalized'::text) AND (finalized_at IS NOT NULL)))),
     CONSTRAINT platform_tenant_statements_coverage_array CHECK ((jsonb_typeof(coverage) = 'array'::text)),
+    CONSTRAINT platform_tenant_statements_credit_chk CHECK (((credit_applied_millicents >= 0) AND (credit_applied_millicents <= GREATEST(amount_millicents, (0)::bigint)))),
     CONSTRAINT platform_tenant_statements_currency_check CHECK (((currency = ''::text) OR (currency ~ '^[A-Z]{3}$'::text))),
     CONSTRAINT platform_tenant_statements_fees_chk CHECK (((jsonb_typeof(fees) = 'array'::text) AND (jsonb_array_length(fees) <= 64))),
     CONSTRAINT platform_tenant_statements_lines_check CHECK ((jsonb_typeof(lines) = 'array'::text)),
@@ -52374,6 +52990,22 @@ ALTER TABLE ONLY public.data_api_runtime_connection_observations
 
 
 --
+-- Name: data_api_usage_hourly data_api_usage_hourly_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_api_usage_hourly
+    ADD CONSTRAINT data_api_usage_hourly_pkey PRIMARY KEY (app_id, hour);
+
+
+--
+-- Name: data_api_usage_reports data_api_usage_reports_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_api_usage_reports
+    ADD CONSTRAINT data_api_usage_reports_pkey PRIMARY KEY (app_id, report_id);
+
+
+--
 -- Name: data_connection_checks data_connection_checks_id_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -53990,6 +54622,30 @@ ALTER TABLE ONLY public.feature_flag_versions
 
 
 --
+-- Name: financial_budget_alerts financial_budget_alerts_account_id_policy_id_revision_perio_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_budget_alerts
+    ADD CONSTRAINT financial_budget_alerts_account_id_policy_id_revision_perio_key UNIQUE (account_id, policy_id, revision, period_start, threshold_millicents);
+
+
+--
+-- Name: financial_budget_alerts financial_budget_alerts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_budget_alerts
+    ADD CONSTRAINT financial_budget_alerts_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: financial_budget_evaluations financial_budget_evaluations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_budget_evaluations
+    ADD CONSTRAINT financial_budget_evaluations_pkey PRIMARY KEY (account_id, policy_id);
+
+
+--
 -- Name: financial_budget_policies financial_budget_policies_account_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -54014,11 +54670,115 @@ ALTER TABLE ONLY public.financial_budget_revisions
 
 
 --
+-- Name: financial_budget_stop_targets financial_budget_stop_targets_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_budget_stop_targets
+    ADD CONSTRAINT financial_budget_stop_targets_pkey PRIMARY KEY (stop_id, app_id, environment_id);
+
+
+--
+-- Name: financial_budget_stops financial_budget_stops_account_id_policy_id_revision_period_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_budget_stops
+    ADD CONSTRAINT financial_budget_stops_account_id_policy_id_revision_period_key UNIQUE (account_id, policy_id, revision, period_start);
+
+
+--
+-- Name: financial_budget_stops financial_budget_stops_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_budget_stops
+    ADD CONSTRAINT financial_budget_stops_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: financial_compute_account_books financial_compute_account_books_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_compute_account_books
+    ADD CONSTRAINT financial_compute_account_books_pkey PRIMARY KEY (account_id, period_start);
+
+
+--
+-- Name: financial_compute_books financial_compute_books_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_compute_books
+    ADD CONSTRAINT financial_compute_books_pkey PRIMARY KEY (account_id, app_id, period_start);
+
+
+--
+-- Name: financial_compute_holds financial_compute_holds_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_compute_holds
+    ADD CONSTRAINT financial_compute_holds_pkey PRIMARY KEY (account_id, policy_id, revision, period_start);
+
+
+--
+-- Name: financial_compute_job_attempts financial_compute_job_attempt_run_id_task_index_lease_token_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_compute_job_attempts
+    ADD CONSTRAINT financial_compute_job_attempt_run_id_task_index_lease_token_key UNIQUE (run_id, task_index, lease_token);
+
+
+--
+-- Name: financial_compute_job_attempts financial_compute_job_attempts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_compute_job_attempts
+    ADD CONSTRAINT financial_compute_job_attempts_pkey PRIMARY KEY (instance_id);
+
+
+--
+-- Name: financial_compute_job_books financial_compute_job_books_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_compute_job_books
+    ADD CONSTRAINT financial_compute_job_books_pkey PRIMARY KEY (account_id, job_id, period_start);
+
+
+--
+-- Name: financial_compute_leases financial_compute_leases_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_compute_leases
+    ADD CONSTRAINT financial_compute_leases_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: financial_compute_owners financial_compute_owners_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_compute_owners
+    ADD CONSTRAINT financial_compute_owners_pkey PRIMARY KEY (node_id);
+
+
+--
 -- Name: financial_evidence_coverage financial_evidence_coverage_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.financial_evidence_coverage
     ADD CONSTRAINT financial_evidence_coverage_pkey PRIMARY KEY (singleton);
+
+
+--
+-- Name: financial_funding_currency financial_funding_currency_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_funding_currency
+    ADD CONSTRAINT financial_funding_currency_pkey PRIMARY KEY (singleton);
+
+
+--
+-- Name: financial_preview_command_runtimes financial_preview_command_runtimes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_preview_command_runtimes
+    ADD CONSTRAINT financial_preview_command_runtimes_pkey PRIMARY KEY (task_id, lease_token);
 
 
 --
@@ -57574,6 +58334,22 @@ ALTER TABLE ONLY public.platform_tenant_credential_policies
 
 
 --
+-- Name: platform_tenant_credit_applications platform_tenant_credit_applications_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_tenant_credit_applications
+    ADD CONSTRAINT platform_tenant_credit_applications_pkey PRIMARY KEY (grant_id, statement_id);
+
+
+--
+-- Name: platform_tenant_credit_grants platform_tenant_credit_grants_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_tenant_credit_grants
+    ADD CONSTRAINT platform_tenant_credit_grants_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: platform_tenant_hostname_policies platform_tenant_hostname_policies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -57667,6 +58443,14 @@ ALTER TABLE ONLY public.platform_tenant_request_budgets
 
 ALTER TABLE ONLY public.platform_tenant_source_route_usage_minutes
     ADD CONSTRAINT platform_tenant_source_route_usage_minutes_pkey PRIMARY KEY (account_id, platform_tenant_id, app_id, source_kind, source_id, window_start, route);
+
+
+--
+-- Name: platform_tenant_spend_caps platform_tenant_spend_caps_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_tenant_spend_caps
+    ADD CONSTRAINT platform_tenant_spend_caps_pkey PRIMARY KEY (platform_tenant_id);
 
 
 --
@@ -63136,6 +63920,20 @@ CREATE INDEX customer_workflow_readiness_subscription_owner ON public.customer_w
 
 
 --
+-- Name: data_api_usage_hourly_hour_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX data_api_usage_hourly_hour_idx ON public.data_api_usage_hourly USING btree (hour);
+
+
+--
+-- Name: data_api_usage_reports_received_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX data_api_usage_reports_received_idx ON public.data_api_usage_reports USING btree (received_at);
+
+
+--
 -- Name: data_connection_checks_due; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -64669,10 +65467,80 @@ CREATE INDEX feature_flag_versions_scope ON public.feature_flag_versions USING b
 
 
 --
+-- Name: financial_budget_alert_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX financial_budget_alert_due_idx ON public.financial_budget_alerts USING btree (next_attempt_at, id) WHERE (state <> 'delivered'::text);
+
+
+--
 -- Name: financial_budget_policies_account_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX financial_budget_policies_account_idx ON public.financial_budget_policies USING btree (account_id, id) WHERE (deleted_at IS NULL);
+
+
+--
+-- Name: financial_budget_stops_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX financial_budget_stops_account_idx ON public.financial_budget_stops USING btree (account_id, policy_id, revision);
+
+
+--
+-- Name: financial_compute_account_active; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX financial_compute_account_active ON public.financial_compute_leases USING btree (account_id) WHERE (settled_at IS NULL);
+
+
+--
+-- Name: financial_compute_app; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX financial_compute_app ON public.financial_compute_leases USING btree (account_id, app_id, period_start);
+
+
+--
+-- Name: financial_compute_instance_history; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX financial_compute_instance_history ON public.financial_compute_leases USING btree (instance_id, node_id, started_at DESC);
+
+
+--
+-- Name: financial_compute_job; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX financial_compute_job ON public.financial_compute_leases USING btree (account_id, job_id, period_start);
+
+
+--
+-- Name: financial_compute_one_live_instance; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX financial_compute_one_live_instance ON public.financial_compute_leases USING btree (instance_id, node_id) WHERE (settled_at IS NULL);
+
+
+--
+-- Name: financial_compute_recovery; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX financial_compute_recovery ON public.financial_compute_leases USING btree (node_id, incarnation) WHERE (settled_at IS NULL);
+
+
+--
+-- Name: financial_preview_command_active_task_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX financial_preview_command_active_task_idx ON public.financial_preview_command_runtimes USING btree (task_id) WHERE (phase <> 'retired'::text);
+
+
+--
+-- Name: financial_preview_command_app_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX financial_preview_command_app_idx ON public.financial_preview_command_runtimes USING btree (account_id, app_id) WHERE (phase <> 'retired'::text);
 
 
 --
@@ -65352,6 +66220,20 @@ CREATE INDEX invocations_replay_root_idx ON public.invocations USING btree (acco
 --
 
 CREATE INDEX invocations_replayed_from_idx ON public.invocations USING btree (account_id, last_replayed_at) WHERE (last_replayed_at IS NOT NULL);
+
+
+--
+-- Name: invocations_retention_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX invocations_retention_due_idx ON public.invocations USING btree (result_retention_until) WHERE ((result_retention_until IS NOT NULL) AND (state = ANY (ARRAY['completed'::text, 'failed'::text, 'dead_letter'::text, 'cancelled'::text, 'superseded'::text, 'expired'::text])));
+
+
+--
+-- Name: invocations_retention_unstamped_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX invocations_retention_unstamped_idx ON public.invocations USING btree (created_at) WHERE ((result_retention_until IS NULL) AND (state = ANY (ARRAY['completed'::text, 'failed'::text, 'dead_letter'::text, 'cancelled'::text, 'superseded'::text, 'expired'::text])));
 
 
 --
@@ -67763,6 +68645,20 @@ CREATE INDEX platform_tenant_access_tokens_tenant_idx ON public.platform_tenant_
 
 
 --
+-- Name: platform_tenant_credit_applications_statement_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX platform_tenant_credit_applications_statement_idx ON public.platform_tenant_credit_applications USING btree (statement_id);
+
+
+--
+-- Name: platform_tenant_credit_grants_tenant_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX platform_tenant_credit_grants_tenant_idx ON public.platform_tenant_credit_grants USING btree (platform_tenant_id, currency, created_at);
+
+
+--
 -- Name: platform_tenant_meter_usage_minutes_read_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -67802,6 +68698,13 @@ CREATE INDEX platform_tenant_reconciliation_receipts_history_idx ON public.platf
 --
 
 CREATE INDEX platform_tenant_source_route_usage_minutes_read_idx ON public.platform_tenant_source_route_usage_minutes USING btree (account_id, platform_tenant_id, window_start);
+
+
+--
+-- Name: platform_tenant_spend_caps_next_check_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX platform_tenant_spend_caps_next_check_idx ON public.platform_tenant_spend_caps USING btree (next_check_at);
 
 
 --
@@ -73048,6 +73951,48 @@ CREATE TRIGGER financial_budget_revision_notify AFTER INSERT ON public.financial
 
 
 --
+-- Name: jobs financial_compute_job_definition_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER financial_compute_job_definition_guard BEFORE INSERT OR UPDATE OF status, account_id ON public.jobs FOR EACH ROW EXECUTE FUNCTION public.financial_compute_guard_job_definition();
+
+
+--
+-- Name: job_tasks financial_compute_job_task_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER financial_compute_job_task_guard BEFORE INSERT OR UPDATE OF status, run_id, instance_id, lease_token ON public.job_tasks FOR EACH ROW EXECUTE FUNCTION public.financial_compute_guard_job_task();
+
+
+--
+-- Name: financial_compute_account_books financial_egress_preserve_book; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER financial_egress_preserve_book BEFORE UPDATE ON public.financial_compute_account_books FOR EACH ROW EXECUTE FUNCTION public.financial_egress_preserve_book();
+
+
+--
+-- Name: financial_compute_leases financial_egress_preserve_lease; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER financial_egress_preserve_lease BEFORE UPDATE ON public.financial_compute_leases FOR EACH ROW EXECUTE FUNCTION public.financial_egress_preserve_lease();
+
+
+--
+-- Name: financial_price_snapshots financial_egress_price_ceiling; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER financial_egress_price_ceiling BEFORE INSERT OR UPDATE ON public.financial_price_snapshots FOR EACH ROW EXECUTE FUNCTION public.financial_egress_price_ceiling();
+
+
+--
+-- Name: financial_compute_leases financial_egress_require_funding; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER financial_egress_require_funding BEFORE INSERT OR UPDATE ON public.financial_compute_leases FOR EACH ROW EXECUTE FUNCTION public.financial_egress_require_funding();
+
+
+--
 -- Name: financial_usage_evidence financial_evidence_immutable; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -74802,13 +75747,6 @@ CREATE TRIGGER org_owner_identity BEFORE INSERT OR UPDATE OF role, removed_at, a
 --
 
 CREATE TRIGGER org_queue_bindings_guard BEFORE UPDATE OF status, deleted_pending ON public.orgs FOR EACH ROW EXECUTE FUNCTION public.guard_org_queue_bindings();
-
-
---
--- Name: orgs org_queue_reservation_adoption; Type: TRIGGER; Schema: public; Owner: -
---
-
-CREATE TRIGGER org_queue_reservation_adoption AFTER UPDATE OF resource_ownership_enabled ON public.orgs FOR EACH ROW EXECUTE FUNCTION public.adopt_queue_reservations_on_org_adoption();
 
 
 --
@@ -79701,6 +80639,22 @@ ALTER TABLE ONLY public.data_api_runtime_connection_observations
 
 
 --
+-- Name: data_api_usage_hourly data_api_usage_hourly_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_api_usage_hourly
+    ADD CONSTRAINT data_api_usage_hourly_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: data_api_usage_reports data_api_usage_reports_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_api_usage_reports
+    ADD CONSTRAINT data_api_usage_reports_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
 -- Name: data_connection_checks data_connection_checks_account_id_connection_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -81725,6 +82679,22 @@ ALTER TABLE ONLY public.feature_flag_versions
 
 
 --
+-- Name: financial_budget_alerts financial_budget_alerts_account_id_policy_id_revision_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_budget_alerts
+    ADD CONSTRAINT financial_budget_alerts_account_id_policy_id_revision_fkey FOREIGN KEY (account_id, policy_id, revision) REFERENCES public.financial_budget_revisions(account_id, policy_id, revision) ON DELETE CASCADE;
+
+
+--
+-- Name: financial_budget_evaluations financial_budget_evaluations_account_id_policy_id_revision_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_budget_evaluations
+    ADD CONSTRAINT financial_budget_evaluations_account_id_policy_id_revision_fkey FOREIGN KEY (account_id, policy_id, revision) REFERENCES public.financial_budget_revisions(account_id, policy_id, revision) ON DELETE CASCADE;
+
+
+--
 -- Name: financial_budget_policies financial_budget_policies_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -81738,6 +82708,134 @@ ALTER TABLE ONLY public.financial_budget_policies
 
 ALTER TABLE ONLY public.financial_budget_revisions
     ADD CONSTRAINT financial_budget_revisions_account_id_policy_id_fkey FOREIGN KEY (account_id, policy_id) REFERENCES public.financial_budget_policies(account_id, id) ON DELETE CASCADE;
+
+
+--
+-- Name: financial_budget_stop_targets financial_budget_stop_targets_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_budget_stop_targets
+    ADD CONSTRAINT financial_budget_stop_targets_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: financial_budget_stop_targets financial_budget_stop_targets_stop_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_budget_stop_targets
+    ADD CONSTRAINT financial_budget_stop_targets_stop_id_fkey FOREIGN KEY (stop_id) REFERENCES public.financial_budget_stops(id) ON DELETE CASCADE;
+
+
+--
+-- Name: financial_budget_stops financial_budget_stops_account_id_policy_id_revision_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_budget_stops
+    ADD CONSTRAINT financial_budget_stops_account_id_policy_id_revision_fkey FOREIGN KEY (account_id, policy_id, revision) REFERENCES public.financial_budget_revisions(account_id, policy_id, revision) ON DELETE CASCADE;
+
+
+--
+-- Name: financial_compute_account_books financial_compute_account_books_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_compute_account_books
+    ADD CONSTRAINT financial_compute_account_books_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: financial_compute_books financial_compute_books_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_compute_books
+    ADD CONSTRAINT financial_compute_books_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: financial_compute_holds financial_compute_holds_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_compute_holds
+    ADD CONSTRAINT financial_compute_holds_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: financial_compute_holds financial_compute_holds_account_id_policy_id_revision_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_compute_holds
+    ADD CONSTRAINT financial_compute_holds_account_id_policy_id_revision_fkey FOREIGN KEY (account_id, policy_id, revision) REFERENCES public.financial_budget_revisions(account_id, policy_id, revision);
+
+
+--
+-- Name: financial_compute_job_attempts financial_compute_job_attempts_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_compute_job_attempts
+    ADD CONSTRAINT financial_compute_job_attempts_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: financial_compute_job_books financial_compute_job_books_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_compute_job_books
+    ADD CONSTRAINT financial_compute_job_books_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: financial_compute_leases financial_compute_leases_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_compute_leases
+    ADD CONSTRAINT financial_compute_leases_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: financial_compute_owners financial_compute_owners_node_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_compute_owners
+    ADD CONSTRAINT financial_compute_owners_node_id_fkey FOREIGN KEY (node_id) REFERENCES public.compute_nodes(id) ON DELETE CASCADE;
+
+
+--
+-- Name: financial_preview_command_runtimes financial_preview_command_runtimes_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_preview_command_runtimes
+    ADD CONSTRAINT financial_preview_command_runtimes_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: financial_preview_command_runtimes financial_preview_command_runtimes_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_preview_command_runtimes
+    ADD CONSTRAINT financial_preview_command_runtimes_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: financial_preview_command_runtimes financial_preview_command_runtimes_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_preview_command_runtimes
+    ADD CONSTRAINT financial_preview_command_runtimes_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: financial_preview_command_runtimes financial_preview_command_runtimes_node_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_preview_command_runtimes
+    ADD CONSTRAINT financial_preview_command_runtimes_node_id_fkey FOREIGN KEY (node_id) REFERENCES public.compute_nodes(id);
+
+
+--
+-- Name: financial_preview_command_runtimes financial_preview_command_runtimes_task_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_preview_command_runtimes
+    ADD CONSTRAINT financial_preview_command_runtimes_task_id_fkey FOREIGN KEY (task_id) REFERENCES public.app_tasks(id) ON DELETE CASCADE;
 
 
 --
@@ -85661,6 +86759,46 @@ ALTER TABLE ONLY public.platform_tenant_credential_policies
 
 
 --
+-- Name: platform_tenant_credit_applications platform_tenant_credit_applications_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_tenant_credit_applications
+    ADD CONSTRAINT platform_tenant_credit_applications_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: platform_tenant_credit_applications platform_tenant_credit_applications_grant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_tenant_credit_applications
+    ADD CONSTRAINT platform_tenant_credit_applications_grant_id_fkey FOREIGN KEY (grant_id) REFERENCES public.platform_tenant_credit_grants(id) ON DELETE CASCADE;
+
+
+--
+-- Name: platform_tenant_credit_applications platform_tenant_credit_applications_statement_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_tenant_credit_applications
+    ADD CONSTRAINT platform_tenant_credit_applications_statement_id_fkey FOREIGN KEY (statement_id) REFERENCES public.platform_tenant_statements(id) ON DELETE CASCADE;
+
+
+--
+-- Name: platform_tenant_credit_grants platform_tenant_credit_grants_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_tenant_credit_grants
+    ADD CONSTRAINT platform_tenant_credit_grants_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: platform_tenant_credit_grants platform_tenant_credit_grants_platform_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_tenant_credit_grants
+    ADD CONSTRAINT platform_tenant_credit_grants_platform_tenant_id_fkey FOREIGN KEY (platform_tenant_id) REFERENCES public.platform_tenants(id) ON DELETE CASCADE;
+
+
+--
 -- Name: platform_tenant_hostname_policies platform_tenant_hostname_policies_account_id_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -85778,6 +86916,22 @@ ALTER TABLE ONLY public.platform_tenant_request_budgets
 
 ALTER TABLE ONLY public.platform_tenant_source_route_usage_minutes
     ADD CONSTRAINT platform_tenant_source_route_usage_minutes_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: platform_tenant_spend_caps platform_tenant_spend_caps_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_tenant_spend_caps
+    ADD CONSTRAINT platform_tenant_spend_caps_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: platform_tenant_spend_caps platform_tenant_spend_caps_platform_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_tenant_spend_caps
+    ADD CONSTRAINT platform_tenant_spend_caps_platform_tenant_id_fkey FOREIGN KEY (platform_tenant_id) REFERENCES public.platform_tenants(id) ON DELETE CASCADE;
 
 
 --

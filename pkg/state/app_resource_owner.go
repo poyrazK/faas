@@ -68,6 +68,15 @@ func (a Account) ResourceOwnerID() string {
 	return a.ID
 }
 
+// AsyncQuotaSubjectID is the account_async_quota row a new reservation uses:
+// the organization once its reservations are pooled, else the namespace.
+func (a Account) AsyncQuotaSubjectID() string {
+	if a.AsyncQuotaPooled && a.ResourceOrgID != "" {
+		return a.ResourceOrgID
+	}
+	return a.ID
+}
+
 func organizationAccount(org Org) Account {
 	status := AccountStatus(org.Status)
 	if org.DeletedPending {

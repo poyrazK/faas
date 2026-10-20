@@ -30,7 +30,7 @@ type httpFixtureInput struct {
 }
 
 // httpFixturePaths are the definitions' routes: the base export, one with
-// ADR-1196 limits and one bound to an inbound webhook (ADR-1287 Stage 1).
+// ADR-1196 limits and one bound to an inbound webhook (ADR-20261017102231 Stage 1).
 var httpFixturePaths = map[string]bool{"/exports": true, "/exports/bounded": true, "/exports/webhook": true}
 
 type httpFixtureServer struct {

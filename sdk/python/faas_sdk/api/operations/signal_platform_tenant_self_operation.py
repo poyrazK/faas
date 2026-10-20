@@ -116,7 +116,7 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: OperationSignalRequest,
 ) -> Response[OperationSignalReceipt | Problem]:
-    """Deliver a named event to this customer's own waiting operation (ADR-1286).
+    """Deliver a named event to this customer's own waiting operation (ADR-20261017100853).
 
      Requires platform_tenant:operations:manage. Works like the account signal route on the customer's
     own operation only; another customer's operation is not found. The operation's history records the
@@ -153,7 +153,7 @@ def sync(
     client: AuthenticatedClient | Client,
     body: OperationSignalRequest,
 ) -> OperationSignalReceipt | Problem | None:
-    """Deliver a named event to this customer's own waiting operation (ADR-1286).
+    """Deliver a named event to this customer's own waiting operation (ADR-20261017100853).
 
      Requires platform_tenant:operations:manage. Works like the account signal route on the customer's
     own operation only; another customer's operation is not found. The operation's history records the
@@ -185,7 +185,7 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: OperationSignalRequest,
 ) -> Response[OperationSignalReceipt | Problem]:
-    """Deliver a named event to this customer's own waiting operation (ADR-1286).
+    """Deliver a named event to this customer's own waiting operation (ADR-20261017100853).
 
      Requires platform_tenant:operations:manage. Works like the account signal route on the customer's
     own operation only; another customer's operation is not found. The operation's history records the
@@ -220,7 +220,7 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: OperationSignalRequest,
 ) -> OperationSignalReceipt | Problem | None:
-    """Deliver a named event to this customer's own waiting operation (ADR-1286).
+    """Deliver a named event to this customer's own waiting operation (ADR-20261017100853).
 
      Requires platform_tenant:operations:manage. Works like the account signal route on the customer's
     own operation only; another customer's operation is not found. The operation's history records the

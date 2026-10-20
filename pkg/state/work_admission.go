@@ -87,6 +87,12 @@ func enqueueKeyedInvocationTx(ctx context.Context, tx pgx.Tx, inv Invocation, po
 			return Invocation{}, false, err
 		}
 	}
+	// A capped caller holds the app lock (EnqueueKeyedInvocation). Counting
+	// after supersede lets keep_latest replace work at the cap; a refusal
+	// rolls the supersede back with the transaction.
+	if err := checkInvocationAdmissionDepthDB(ctx, tx, inv); err != nil {
+		return Invocation{}, false, err
+	}
 	if err := q.KeyedReplayAdvanceLane(ctx, tx, sqlc.KeyedReplayAdvanceLaneParams{AppID: mustPgUUID(inv.AppID), PolicyName: policy.Name, KeyDigest: inv.WorkKeyDigest}); err != nil {
 		return Invocation{}, false, err
 	}

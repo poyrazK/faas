@@ -448,7 +448,7 @@
   failed_when: false  # chroot/CI may not have the conf file
   notify: reload postgresql
   when:
-    - faas_postgres_standby_address | default('')
+    - (faas_postgres_standby_address | default('')) | length > 0
     - not (faas_postgres_standby_mode | default(false) | bool)
 
 # Only an active setting is removed; the stock commented default stays.
@@ -474,7 +474,7 @@
       characters) for the replicator role.
     quiet: true
   when:
-    - faas_postgres_standby_address | default('')
+    - (faas_postgres_standby_address | default('')) | length > 0
     - not (faas_postgres_standby_mode | default(false) | bool)
 
 - name: postgres — create replication role `replicator` — ADR-1344
@@ -487,7 +487,7 @@
   become_user: postgres
   no_log: true
   when:
-    - faas_postgres_standby_address | default('')
+    - (faas_postgres_standby_address | default('')) | length > 0
     - not (faas_postgres_standby_mode | default(false) | bool)
 
 - name: postgres — create the standby's physical replication slot — ADR-1344
@@ -498,7 +498,7 @@
   become: true
   become_user: postgres
   when:
-    - faas_postgres_standby_address | default('')
+    - (faas_postgres_standby_address | default('')) | length > 0
     - not (faas_postgres_standby_mode | default(false) | bool)
 
 # Replication TLS. The standby connects with sslmode=verify-full against this
@@ -520,7 +520,7 @@
     postgres_replication_tls_san: >-
       {%- for name in (faas_postgres_replication_tls_names | default([faas_private_dns_address | default(''), inventory_hostname])) | select | unique -%}{{ 'IP:' if (name is match('^[0-9.]+$') or ':' in name) else 'DNS:' }}{{ name }}{{ '' if loop.last else ',' }}{%- endfor -%}
   when:
-    - faas_postgres_standby_address | default('')
+    - (faas_postgres_standby_address | default('')) | length > 0
     - not (faas_postgres_standby_mode | default(false) | bool)
 
 - name: postgres — replication TLS directory — ADR-1344
@@ -531,7 +531,7 @@
     group: postgres
     mode: "0700"
   when:
-    - faas_postgres_standby_address | default('')
+    - (faas_postgres_standby_address | default('')) | length > 0
     - not (faas_postgres_standby_mode | default(false) | bool)
 
 - name: postgres — read the names on the replication certificate — ADR-1344
@@ -540,7 +540,7 @@
   register: postgres_replication_tls_current_san
   failed_when: false
   when:
-    - faas_postgres_standby_address | default('')
+    - (faas_postgres_standby_address | default('')) | length > 0
     - not (faas_postgres_standby_mode | default(false) | bool)
 
 - name: postgres — check the replication certificate is valid for 30 more days — ADR-1344
@@ -550,7 +550,7 @@
   changed_when: false
   failed_when: false
   when:
-    - faas_postgres_standby_address | default('')
+    - (faas_postgres_standby_address | default('')) | length > 0
     - not (faas_postgres_standby_mode | default(false) | bool)
 
 # Written beside the live pair and renamed over it, so a failed run never
@@ -577,7 +577,7 @@
   changed_when: true
   notify: reload postgresql
   when:
-    - faas_postgres_standby_address | default('')
+    - (faas_postgres_standby_address | default('')) | length > 0
     - not (faas_postgres_standby_mode | default(false) | bool)
     - >-
       postgres_replication_tls_checkend.rc != 0
@@ -591,7 +591,7 @@
     group: postgres
     mode: "0600"
   when:
-    - faas_postgres_standby_address | default('')
+    - (faas_postgres_standby_address | default('')) | length > 0
     - not (faas_postgres_standby_mode | default(false) | bool)
 
 # PostgreSQL refuses a key that its group or others can read.
@@ -602,7 +602,7 @@
     group: postgres
     mode: "0600"
   when:
-    - faas_postgres_standby_address | default('')
+    - (faas_postgres_standby_address | default('')) | length > 0
     - not (faas_postgres_standby_mode | default(false) | bool)
 
 # Ubuntu's postgresql.conf already ends with this include; the standby role
@@ -616,7 +616,7 @@
   failed_when: false  # chroot/CI may not have the conf file
   notify: reload postgresql
   when:
-    - faas_postgres_standby_address | default('')
+    - (faas_postgres_standby_address | default('')) | length > 0
     - not (faas_postgres_standby_mode | default(false) | bool)
 
 # ssl and the certificate paths are reload-only (PGC_SIGHUP). A reload that
@@ -636,7 +636,7 @@
   failed_when: false  # chroot/CI may not have the conf directory
   notify: reload postgresql
   when:
-    - faas_postgres_standby_address | default('')
+    - (faas_postgres_standby_address | default('')) | length > 0
     - not (faas_postgres_standby_mode | default(false) | bool)
 
 - name: postgres — stop serving the replication certificate without a standby (reload-only) — ADR-1344

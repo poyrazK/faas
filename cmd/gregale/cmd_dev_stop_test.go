@@ -1,6 +1,7 @@
-package main
+package main_test
 
 import (
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -39,11 +40,11 @@ func TestCmdDevStopIgnoresManifestSyncFiles(t *testing.T) {
 			}))
 			defer srv.Close()
 			t.Setenv("FAAS_API", srv.URL)
-			t.Setenv("FAAS_TOKEN", testAPIKey('s'))
+			t.Setenv("FAAS_TOKEN", main.TestAPIKey('s'))
 			t.Setenv("FAAS_DEVELOPER_ID", strings.Repeat("ab", 16))
 			t.Chdir(dir)
 
-			if code := cmdDev([]string{"--name", "stop-demo", "--stop"}); code != 0 {
+			if code := main.CmdDev([]string{"--name", "stop-demo", "--stop"}); code != 0 {
 				t.Fatalf("cmdDev --stop = %d, want 0 with manifest sync-file defaults", code)
 			}
 			if !destroyed.Load() {

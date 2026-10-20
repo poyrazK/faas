@@ -1,9 +1,10 @@
 from typing import Literal
 
-FinancialBudgetSpecCurrency = Literal["EUR"]
+FinancialBudgetSpecCurrency = Literal["EUR", "USD"]
 
 FINANCIAL_BUDGET_SPEC_CURRENCY_VALUES: set[FinancialBudgetSpecCurrency] = {
     "EUR",
+    "USD",
 }
 
 

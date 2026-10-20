@@ -160,3 +160,35 @@ print(Template(pathlib.Path(sys.argv[1]).read_text()).render(public_iface="eth0"
 		}
 	}
 }
+
+// adr: 20261016151947 — with faas_realtime_live_tls_managed, realtimed's
+// drop-in points at the fleet PKI's live client leaf and verifies hubs as
+// livequeryd.faas; every variable it sets is one cmd/realtimed reads.
+func TestRealtimedLiveTLSDropIn(t *testing.T) {
+	tmpl, err := os.ReadFile(filepath.Join(repoRoot(t), "deploy", "ansible", "roles", "gatewayd_internal_service", "templates", "99-faas-realtimed-role.conf.j2"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	src, err := os.ReadFile(filepath.Join(repoRoot(t), "cmd", "realtimed", "live.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	managed := renderPublicEdgeBlock(t, string(tmpl), map[string]any{"faas_box_role": "compute-only", "faas_realtime_live_tls_managed": true})
+	for _, want := range []string{
+		"Environment=FAAS_REALTIME_LIVE_TLS_CA_FILE=/etc/faas/tls/ca/ca.crt",
+		"Environment=FAAS_REALTIME_LIVE_TLS_CERT_FILE=/etc/faas/tls/realtimed/livequeryd-client.crt",
+		"Environment=FAAS_REALTIME_LIVE_TLS_KEY_FILE=/etc/faas/tls/realtimed/livequeryd-client.key",
+		"Environment=FAAS_REALTIME_LIVE_TLS_SERVER_NAME=livequeryd.faas",
+	} {
+		if !strings.Contains(managed, want+"\n") {
+			t.Errorf("managed drop-in lacks %q:\n%s", want, managed)
+		}
+		name, _, _ := strings.Cut(strings.TrimPrefix(want, "Environment="), "=")
+		if !strings.Contains(string(src), `"`+name+`"`) {
+			t.Errorf("realtimed does not read %s", name)
+		}
+	}
+	if off := renderPublicEdgeBlock(t, string(tmpl), map[string]any{"faas_box_role": "compute-only"}); strings.Contains(off, "FAAS_REALTIME_LIVE_TLS") {
+		t.Errorf("unmanaged drop-in without paths sets live TLS:\n%s", off)
+	}
+}

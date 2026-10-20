@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -33,11 +34,11 @@ func TestOrgStandardsPublicationCLI(t *testing.T) {
 		if request.ExpectedVersion != 0 || request.Description != "Production baseline" || string(request.Definition) != string(definition) {
 			t.Errorf("body %+v", request)
 		}
-		writeJSONTestStatus(w, http.StatusCreated, api.ApplicationStandardVersion{Slug: "production-baseline", Version: 1})
+		main.WriteJSONTestStatus(w, http.StatusCreated, api.ApplicationStandardVersion{Slug: "production-baseline", Version: 1})
 	}))
 	defer server.Close()
 	t.Setenv("FAAS_API", server.URL)
-	if code := cmdOrgs([]string{"standards", "publish", "--org", "acme", "--standard", "production-baseline", "--file", path, "--expected-version", "0", "--description", "Production baseline"}); code != 0 {
+	if code := main.CmdOrgs([]string{"standards", "publish", "--org", "acme", "--standard", "production-baseline", "--file", path, "--expected-version", "0", "--description", "Production baseline"}); code != 0 {
 		t.Fatalf("CLI exit %d", code)
 	}
 	if called != 1 {
@@ -52,7 +53,7 @@ func TestOrgStandardsCLIRejectsUnsafePublication(t *testing.T) {
 		{"show", "--org", "acme", "--standard", "baseline", "--version", "-1"},
 		{"list", "--org", "acme", "--limit", "101"},
 	} {
-		if _, err := parseStandardCLI(args[0], args[1:]); err == nil {
+		if _, err := main.ParseStandardCLI(args[0], args[1:]); err == nil {
 			t.Fatalf("accepted %v", args)
 		}
 	}
@@ -84,11 +85,11 @@ func TestOrgStandardsResourceCLI(t *testing.T) {
 				if body["name"] == "" {
 					t.Error("missing name")
 				}
-				writeJSONTestStatus(w, http.StatusCreated, map[string]any{"id": "00000000-0000-4000-8000-000000000001"})
+				main.WriteJSONTestStatus(w, http.StatusCreated, map[string]any{"id": "00000000-0000-4000-8000-000000000001"})
 			}))
 			defer server.Close()
 			t.Setenv("FAAS_API", server.URL)
-			if code := cmdOrgs([]string{"standards", test.kind, "create", "--org", "acme", "--file", path}); code != 0 {
+			if code := main.CmdOrgs([]string{"standards", test.kind, "create", "--org", "acme", "--file", path}); code != 0 {
 				t.Fatalf("exit %d", code)
 			}
 			if called != 1 {

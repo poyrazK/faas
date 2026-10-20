@@ -1449,6 +1449,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 	files := []string{
 		filepath.Join(root, "pkg", "api", "data_api_runtime_connections.go"), // ADR-1730 private runtime reporting.
 		filepath.Join(root, "pkg", "api", "data_api_connection_budget.go"),   // ADR-650 read-only shared database planning DTOs.
+		filepath.Join(root, "pkg", "api", "data_api_usage.go"),               // ADR-20261019102108 runtime usage reports and owner views.
 		filepath.Join(root, "pkg", "api", "compose_healthcheck.go"),
 		filepath.Join(root, "pkg", "api", "compose_process.go"), // ADR-1337 Compose process overrides for prebuilt images.
 		filepath.Join(root, "pkg", "api", "environment_gitops.go"),
@@ -1794,7 +1795,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "operation_timeline.go"),       // ADR-1195 timeline DTOs
 		filepath.Join(root, "pkg", "api", "operation_limits.go"),         // ADR-1196 operation limit DTOs
 		filepath.Join(root, "pkg", "api", "operation_signals.go"),        // ADR-1197 operation signal DTOs
-		filepath.Join(root, "pkg", "api", "operation_tenant_signals.go"), // ADR-1286 customer signal DTOs
+		filepath.Join(root, "pkg", "api", "operation_tenant_signals.go"), // ADR-20261017100853 customer signal DTOs
 		filepath.Join(root, "pkg", "api", "operation_waits.go"),          // ADR-1194 operation wait and approval DTOs
 		filepath.Join(root, "pkg", "api", "operation_webhooks.go"),       // ADR-1193 operation webhook binding DTOs
 		filepath.Join(root, "pkg", "api", "route_policy.go"),
@@ -1828,11 +1829,21 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "financial", "contracts.go"),
 		filepath.Join(root, "pkg", "financial", "forecast.go"),
 		filepath.Join(root, "pkg", "financial", "budget.go"),
+		filepath.Join(root, "pkg", "financial", "monitor.go"),
+		filepath.Join(root, "pkg", "financial", "stop.go"),
+		filepath.Join(root, "pkg", "financial", "compute.go"),
+		filepath.Join(root, "pkg", "financial", "egress.go"),
 	})
 	if err != nil {
 		t.Fatalf("scan financial DTOs: %v", err)
 	}
-	for name, schema := range map[string]string{"Price": "FinancialPrice", "Attribution": "FinancialAttribution", "Allocation": "FinancialAllocation", "MeterCost": "FinancialMeterCost", "ContractCosts": "FinancialContractCosts", "Forecast": "FinancialForecast", "BudgetSpec": "FinancialBudgetSpec", "BudgetScope": "FinancialBudgetScope"} {
+	for name, schema := range map[string]string{
+		"Price": "FinancialPrice", "Attribution": "FinancialAttribution", "Allocation": "FinancialAllocation",
+		"MeterCost": "FinancialMeterCost", "ContractCosts": "FinancialContractCosts", "Forecast": "FinancialForecast",
+		"BudgetSpec": "FinancialBudgetSpec", "BudgetScope": "FinancialBudgetScope",
+		"BudgetEvaluation": "FinancialBudgetEvaluation", "BudgetAlert": "FinancialBudgetAlert", "BudgetRuntime": "FinancialBudgetRuntime",
+		"BudgetStop": "FinancialBudgetStop", "BudgetStopTarget": "FinancialBudgetStopTarget", "ComputeBalance": "FinancialComputeBalance", "EgressBalance": "FinancialEgressBalance",
+	} {
 		dtos[schema] = financialDTOs[name]
 	}
 	objectDTOs, err := scanDTOs([]string{filepath.Join(root, "pkg", "rehearsalobj", "protocol.go")})

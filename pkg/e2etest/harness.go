@@ -166,6 +166,7 @@ type Harness struct {
 	// private process list.
 	scheddEnv        []string
 	scheddConfigPath string
+	vmmdLaunchEnv    []string
 	// apidEnv/listen/socket retain the launch recipe for restart durability
 	// tests that exercise persistent control-plane state across apid lifetimes.
 	apidEnv              []string
@@ -320,7 +321,7 @@ failure_report_dir = %q
 `,
 			sockPath, "root", kernelPath, filepath.Join(tmp, "vmmd-resources"), filepath.Join(tmp, "vmmd-failures"),
 		)
-		if os.Getenv("GREGALE_GITOPS_NATIVE_ACCEPTANCE") == "1" {
+		if os.Getenv("GREGALE_GITOPS_NATIVE_ACCEPTANCE") == "1" || os.Getenv("FAAS_FINANCIAL_SYSTEM_ACCEPTANCE") == "1" {
 			images, publications := filepath.Join(tmp, "native-images"), filepath.Join(tmp, "native-publications")
 			for _, path := range []string{images, publications} {
 				if err := os.Mkdir(path, 0o700); err != nil {
@@ -336,6 +337,7 @@ failure_report_dir = %q
 			t.Fatalf("e2etest: write vmmd.toml: %v", err)
 		}
 		env := append(vmmdEnv(dbURL, cfgPath, h.ScheddSock), extraEnv...)
+		h.vmmdLaunchEnv = append([]string(nil), env...)
 		h.procs = append(h.procs, startProc(t, bin, "vmmd", env))
 		// vmmd reconciles netns, jails and its journal before it listens;
 		// on a loaded shared acceptance host that took longer than 10s.
@@ -2366,13 +2368,7 @@ func (h *Harness) VmmdLogs() string {
 //     clone. This is what lets the e2e shards skip replaying every
 //     migration inside apid on each test.
 func daemonDSN(base string, pool *pgxpool.Pool) string {
-	if schema := pgtest.SchemaOf(pool); schema != "" {
-		return injectSearchPath(base, schema)
-	}
-	if db := pool.Config().ConnConfig.Database; db != "" {
-		return injectDatabase(base, db)
-	}
-	return base
+	return isolatedDatabaseURL(base, pool)
 }
 
 // injectDatabase rewrites the database name in a DSN. URL-form DSNs

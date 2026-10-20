@@ -93,7 +93,7 @@ func TestPlatformTenantInvocationPathsAllowed(t *testing.T) {
 		{"POST", "/v1/platform-tenant-self/customer-operations/id/approvals/review", true},
 		{"GET", "/v1/platform-tenant-self/customer-operations/id/approvals/review", false},
 		{"POST", "/v1/platform-tenant-self/customer-operations/id/approvals/", false},
-		// ADR-1286: customers signal their own operations.
+		// ADR-20261017100853: customers signal their own operations.
 		{"POST", "/v1/platform-tenant-self/customer-operations/id/signals", true},
 		{"GET", "/v1/platform-tenant-self/customer-operations/id/signals", false},
 		{"POST", "/v1/platform-tenant-self/customer-operations//signals", false},

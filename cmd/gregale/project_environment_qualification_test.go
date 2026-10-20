@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"context"
@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -19,23 +20,23 @@ func TestReadProjectEnvironmentQualificationProfile(t *testing.T) {
 	if err := os.WriteFile(path, []byte("version: 1\nworkloads:\n  api:\n    health_path: /healthz\n    smoke_path: /ready\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	profile, err := readProjectEnvironmentQualificationProfile(path)
+	profile, err := main.ReadProjectEnvironmentQualificationProfile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if profile.TimeoutSeconds != defaultQualificationProbeTimeout || profile.Workloads["api"].HealthPath != "/healthz" {
+	if profile.TimeoutSeconds != main.DefaultQualificationProbeTimeout || profile.Workloads["api"].HealthPath != "/healthz" {
 		t.Fatalf("profile = %+v", profile)
 	}
 	if err := os.WriteFile(path, []byte("version: 1\nworkloads:\n  api:\n    health_path: https://elsewhere.test/\n    smoke_path: /ready\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := readProjectEnvironmentQualificationProfile(path); err == nil {
+	if _, err := main.ReadProjectEnvironmentQualificationProfile(path); err == nil {
 		t.Fatal("absolute health path was accepted")
 	}
 	if err := os.WriteFile(path, []byte("version: 1\nunknown: value\nworkloads: {}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := readProjectEnvironmentQualificationProfile(path); err == nil {
+	if _, err := main.ReadProjectEnvironmentQualificationProfile(path); err == nil {
 		t.Fatal("unknown profile field was accepted")
 	}
 }
@@ -57,19 +58,19 @@ func TestRunProjectEnvironmentQualificationProbe(t *testing.T) {
 	client := server.Client()
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 
-	passed := runProjectEnvironmentQualificationProbe(context.Background(), client, server.URL, "/healthz")
+	passed := main.RunProjectEnvironmentQualificationProbe(context.Background(), client, server.URL, "/healthz")
 	if passed.Status != "passed" || passed.HTTPStatus == nil || *passed.HTTPStatus != http.StatusNoContent || passed.ErrorCode != "" {
 		t.Fatalf("passed probe = %+v", passed)
 	}
-	failed := runProjectEnvironmentQualificationProbe(context.Background(), client, server.URL, "/ready")
+	failed := main.RunProjectEnvironmentQualificationProbe(context.Background(), client, server.URL, "/ready")
 	if failed.Status != "failed" || failed.HTTPStatus == nil || *failed.HTTPStatus != http.StatusServiceUnavailable || failed.ErrorCode != "unexpected_status" {
 		t.Fatalf("failed probe = %+v", failed)
 	}
-	redirected := runProjectEnvironmentQualificationProbe(context.Background(), client, server.URL, "/redirect")
+	redirected := main.RunProjectEnvironmentQualificationProbe(context.Background(), client, server.URL, "/redirect")
 	if redirected.Status != "failed" || redirected.HTTPStatus == nil || *redirected.HTTPStatus != http.StatusTemporaryRedirect {
 		t.Fatalf("redirect probe = %+v", redirected)
 	}
-	if got := runProjectEnvironmentQualificationProbe(context.Background(), client, "http://127.0.0.1", "/healthz"); got.ErrorCode != "preview_unavailable" {
+	if got := main.RunProjectEnvironmentQualificationProbe(context.Background(), client, "http://127.0.0.1", "/healthz"); got.ErrorCode != "preview_unavailable" {
 		t.Fatalf("non-TLS preview probe = %+v", got)
 	}
 }
@@ -151,13 +152,13 @@ func TestQualifyProjectEnvironmentRunsAgainstExactReleaseMembers(t *testing.T) {
 		},
 		previews: map[string]api.DeploymentPreviewURL{deploymentID: {DeploymentID: deploymentID, URL: server.URL, Alive: true}},
 	}
-	profile, err := readProjectEnvironmentQualificationProfile(profilePath)
+	profile, err := main.ReadProjectEnvironmentQualificationProfile(profilePath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	client.snapshot.Workloads[0].WorkloadConfigHash = api.EmptyProjectEnvironmentConfigHash()
 	client.snapshot.Workloads[0].Release.WorkloadConfigHash = api.EmptyProjectEnvironmentConfigHash()
-	got, err := qualifyProjectEnvironmentWithProfileAndHTTPClient(context.Background(), client, "shop", "staging", profile, server.Client())
+	got, err := main.QualifyProjectEnvironmentWithProfileAndHTTPClient(context.Background(), client, "shop", "staging", profile, server.Client())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -189,17 +190,17 @@ func TestQualifyProjectEnvironmentRunsAgainstExactReleaseMembers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := qualifyProjectEnvironmentWithProfileAndHTTPClient(context.Background(), client, "shop", "staging", profile, server.Client()); err != nil || client.request.WorkloadConfigHashes["api"] != qualifiedHash {
+	if _, err := main.QualifyProjectEnvironmentWithProfileAndHTTPClient(context.Background(), client, "shop", "staging", profile, server.Client()); err != nil || client.request.WorkloadConfigHashes["api"] != qualifiedHash {
 		t.Fatalf("observed flags omitted from qualification: %v", err)
 	}
 	client.created = false
 	client.snapshot.FeatureFlagsHash = "invalid"
-	if _, err := qualifyProjectEnvironmentWithProfileAndHTTPClient(context.Background(), client, "shop", "staging", profile, server.Client()); err == nil || client.created {
+	if _, err := main.QualifyProjectEnvironmentWithProfileAndHTTPClient(context.Background(), client, "shop", "staging", profile, server.Client()); err == nil || client.created {
 		t.Fatal("invalid observed flag identity accepted")
 	}
 	client.snapshot.FeatureFlagsHash = ""
 	client.snapshot.Workloads[0].WorkloadConfigHash = strings.Repeat("1", 64)
-	if _, err := qualifyProjectEnvironmentWithProfileAndHTTPClient(context.Background(), client, "shop", "staging", profile, server.Client()); err == nil || !strings.Contains(err.Error(), "untested desired settings") || client.created {
+	if _, err := main.QualifyProjectEnvironmentWithProfileAndHTTPClient(context.Background(), client, "shop", "staging", profile, server.Client()); err == nil || !strings.Contains(err.Error(), "untested desired settings") || client.created {
 		t.Fatalf("untested desired settings accepted: created=%v err=%v", client.created, err)
 	}
 }
@@ -238,7 +239,7 @@ func TestRunProjectEnvironmentPreflightQualifiesSourceAndChecksPromotion(t *test
 		Qualification: &api.ProjectEnvironmentQualificationResponse{ID: "44444444-4444-4444-8444-444444444444", Status: "passed"},
 	}
 
-	got, err := runProjectEnvironmentPreflight(context.Background(), client, "shop", "staging", "production", profilePath, true, server.Client())
+	got, err := main.RunProjectEnvironmentPreflight(context.Background(), client, "shop", "staging", "production", profilePath, true, server.Client())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -258,14 +259,14 @@ func TestRunProjectEnvironmentPreflightQualifiesSourceAndChecksPromotion(t *test
 	}
 
 	client.promotionPreview.Qualification.ID = "55555555-5555-4555-8555-555555555555"
-	got, err = runProjectEnvironmentPreflight(context.Background(), client, "shop", "staging", "production", profilePath, false, server.Client())
+	got, err = main.RunProjectEnvironmentPreflight(context.Background(), client, "shop", "staging", "production", profilePath, false, server.Client())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got.Status != "blocked" || !strings.Contains(strings.Join(got.BlockingReasons, " "), "did not resolve this passing qualification") {
 		t.Fatalf("stale qualification was not blocked: %+v", got)
 	}
-	if code := projectEnvironmentPreflightExitCode(got); code != 1 {
+	if code := main.ProjectEnvironmentPreflightExitCode(got); code != 1 {
 		t.Fatalf("blocked preflight exit code = %d, want 1", code)
 	}
 }
@@ -286,7 +287,7 @@ func TestQualifyProjectEnvironmentRejectsReleaseStateDrift(t *testing.T) {
 		Workloads: []api.ProjectEnvironmentStateWorkloadResponse{{AppID: "11111111-1111-4111-8111-111111111111", WorkloadSlug: "api",
 			Release: api.ProjectEnvironmentReleaseWorkloadResponse{WorkloadSlug: "api", DeploymentID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", Status: "live"}}},
 	}}
-	if _, err := qualifyProjectEnvironmentWithProfile(context.Background(), client, "shop", "staging", profilePath); err == nil {
+	if _, err := main.QualifyProjectEnvironmentWithProfile(context.Background(), client, "shop", "staging", profilePath); err == nil {
 		t.Fatal("state whose workload deployment differs from active set was accepted")
 	}
 	if client.created {

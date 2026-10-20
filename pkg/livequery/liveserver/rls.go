@@ -24,6 +24,30 @@ import (
 // the user is; leaving them out lets a refreshed token keep its plan group.
 var volatileClaims = []string{"exp", "iat", "nbf", "jti"}
 
+// gatewayClaims are owned by the Data API gateway (ADR-20261018170742), which
+// overwrites them on every REST request. A live read must present the same
+// claims, or a policy on gregale_access would show different rows live than
+// over REST; an identity provider's token cannot set them either.
+var gatewayClaims = []string{"gregale_access", "gregale_server_key", "gregale_sql_deadline", "gregale_refresh_hash", "gregale_serving_fingerprint"}
+
+// rlsClaims canonicalizes verified token claims for an RLS-mode session: the
+// claims a signed-in Data API request carries, without the volatile ones.
+func rlsClaims(raw json.RawMessage) (string, bool) {
+	var claims map[string]any
+	if err := json.Unmarshal(raw, &claims); err != nil || claims == nil {
+		return "", false
+	}
+	for _, k := range volatileClaims {
+		delete(claims, k)
+	}
+	for _, k := range gatewayClaims {
+		delete(claims, k)
+	}
+	claims["gregale_access"] = "user"
+	canonical, err := json.Marshal(claims) // map keys sort: one text per claim set
+	return string(canonical), err == nil
+}
+
 // defaultDataAPISchema is the schema a read names none of: the Data API's
 // first exposed schema by default (ADR-650), the only one its login may
 // read unless DATA_API_SCHEMAS adds others.
@@ -59,8 +83,8 @@ func (h *Hub) session(sess *Session, f liveproto.ClientFrame) (*livequery.Sessio
 	if f.Role == "" {
 		return nil, time.Time{}, &rlsRefusal{liveproto.CodeForbidden, "the read names no Data API login to read as"}
 	}
-	var claims map[string]any
-	if err := json.Unmarshal(f.Claims, &claims); err != nil || claims == nil {
+	canonical, ok := rlsClaims(f.Claims)
+	if !ok {
 		return nil, time.Time{}, &rlsRefusal{liveproto.CodeProtocol, "the claims are not a JSON object"}
 	}
 	expires := time.Unix(f.ClaimsExpires, 0)
@@ -69,15 +93,7 @@ func (h *Hub) session(sess *Session, f liveproto.ClientFrame) (*livequery.Sessio
 	}
 	// The SQL role is the app's Data API login whatever the token's role
 	// claim says, as the Data API gateway overwrites it (ADR-650).
-	role := f.Role
-	for _, k := range volatileClaims {
-		delete(claims, k)
-	}
-	canonical, err := json.Marshal(claims) // map keys sort: one text per claim set
-	if err != nil {
-		return nil, time.Time{}, &rlsRefusal{liveproto.CodeInternal, "encode the claims"}
-	}
-	return &livequery.Session{Role: role, Claims: string(canonical)}, expires, nil
+	return &livequery.Session{Role: f.Role, Claims: canonical}, expires, nil
 }
 
 // compileREST compiles a Data API read against the database's catalog.

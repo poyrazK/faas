@@ -3,7 +3,6 @@ package billing
 import (
 	"context"
 	"fmt"
-	"slices"
 	"sort"
 	"time"
 
@@ -32,34 +31,62 @@ func PreviewFinancialBudget(ctx context.Context, store state.Store, account stri
 		return api.FinancialBudgetPreviewResponse{}, err
 	}
 	out := api.FinancialBudgetPreviewResponse{Spec: spec, PeriodStart: start, PeriodEnd: report.PeriodEnd, AsOf: report.AsOf, CoverageComplete: true, Fresh: true, Reasons: []string{}, Targets: []api.FinancialBudgetTarget{}, ContinuingTargets: []api.FinancialBudgetTarget{}}
-	costs := []financial.ContractCosts{}
-	for _, meter := range report.Meters {
-		if !slices.Contains(spec.Meters, meter.Meter) {
-			continue
-		}
-		costs = append(costs, meter.Accrued)
-		out.CoverageComplete = out.CoverageComplete && meter.Coverage.Complete
-		out.Fresh = out.Fresh && meter.Coverage.Fresh
-		for _, reason := range meter.Coverage.Reasons {
-			out.Reasons = append(out.Reasons, meter.Meter+":"+reason)
-		}
-		if !financialBudgetAttributionComplete(spec.Scope, meter.Accrued) {
-			out.CoverageComplete = false
-			out.Reasons = append(out.Reasons, meter.Meter+":missing_scope_attribution")
-		}
-	}
-	out.KnownMillicents, err = financial.BudgetAmount(spec, costs)
+	observation, err := EvaluateFinancialBudget(report, spec, now)
 	if err != nil {
 		return out, err
 	}
+	out.KnownMillicents = *observation.KnownMillicents
+	out.CoverageComplete, out.Fresh, out.Reasons = observation.CoverageComplete, observation.Fresh, observation.Reasons
 	out.KnownLimitReached = out.KnownMillicents >= spec.LimitMillicents
 	// Promotion is pending the durable decisions, owner integrations and
 	// native lifecycle acceptance in ADR-566. A preview never activates intent.
 	out.EnforcementReady = false
-	out.Reasons = append(out.Reasons, "enforcement_integration_pending")
+	_, stopping := store.(state.FinancialBudgetStopStore)
+	_, commands := store.(state.FinancialPreviewCommandStore)
+	if stopping && commands && financial.PreviewStopping(spec) {
+		out.EnforcementReady = true
+	}
+	if financial.NotificationOnly(spec) {
+		out.Reasons = append(out.Reasons, "notification_only_workloads_continue")
+	} else if financial.PreviewStopping(spec) && out.EnforcementReady {
+		out.Reasons = append(out.Reasons, "monitored_preview_stopping", "production_can_continue", "overshoot_possible")
+	} else {
+		out.Reasons = append(out.Reasons, "enforcement_integration_pending")
+	}
 	out.Guarantee = "monitored_after_retained_evidence; delayed_sources_and_drain_can_exceed_limit"
+	if financial.NotificationOnly(spec) {
+		out.Guarantee = "notification_only_after_retained_evidence;workloads_continue"
+	}
 	if spec.Mode == "strict" {
 		out.Guarantee = "strict_compute_pending_reservations_and_local_deadline_acceptance"
+		if financial.StrictCompute(spec) {
+			if compute, ok := store.(state.FinancialComputeStore); ok {
+				out.EnforcementReady, err = compute.FinancialComputeReady(ctx, account, financial.ComputeScopeKey(spec.Scope))
+				if err != nil {
+					return out, err
+				}
+				out.Guarantee = "strict_app_gross_compute_funded_windows;conservative_commitments;other_meters_excluded"
+				if financial.StrictJobCompute(spec) {
+					out.Guarantee = "strict_job_gross_compute_funded_windows;conservative_commitments;other_meters_excluded"
+				}
+				if financial.StrictAccountEgress(spec) {
+					ready, ok := store.(state.FinancialEgressReadinessStore)
+					out.EnforcementReady = false
+					if ok {
+						out.EnforcementReady, err = ready.FinancialEgressReady(ctx, account)
+						if err != nil {
+							return out, err
+						}
+					}
+					out.Guarantee = "strict_shared_account_compute_egress;separate_quantity_allowances;kernel_byte_credits;unused_credits_commit_conservatively;other_meters_excluded"
+				} else if financial.StrictAccountCompute(spec) {
+					out.Guarantee = "strict_account_net_compute_funded_windows;shared_quantity_allowance;funded_job_attempts;other_meters_excluded"
+				}
+				if !out.EnforcementReady {
+					out.Reasons = append(out.Reasons, "requires_quiet_app_complete_accounting_native_owners")
+				}
+			}
+		}
 	}
 	members, err := financialBudgetMembers(ctx, store, account, spec.Scope)
 	if err != nil {
@@ -140,7 +167,11 @@ func financialBudgetMembers(ctx context.Context, store state.Store, account stri
 				return nil, err
 			}
 			for _, deployment := range deployments {
-				if deployment.Scope == environment.Slug {
+				matches, err := state.MatchFinancialBudgetEnvironment(ctx, store, app, environment.ID, deployment.ID)
+				if err != nil {
+					return nil, fmt.Errorf("%w: runtime scope ownership unavailable", ErrFinancialUnavailable)
+				}
+				if matches {
 					member.target.EnvironmentID, member.target.DeploymentID = environment.ID, deployment.ID
 					out = append(out, member)
 				}
@@ -192,6 +223,9 @@ func financialBudgetEffect(action string, background bool) string {
 	default:
 		if background {
 			return "block_dispatch_then_terminate_at_drain_deadline"
+		}
+		if action == "stop_previews" {
+			return "block_traffic_and_wakes_then_stop_at_drain_deadline"
 		}
 		return "block_traffic_and_wakes_then_park_at_drain_deadline"
 	}

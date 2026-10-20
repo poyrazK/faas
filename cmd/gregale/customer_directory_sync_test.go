@@ -1,6 +1,7 @@
-package main
+package main_test
 
 import (
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"os"
 	"path/filepath"
 	"testing"
@@ -8,7 +9,7 @@ import (
 
 func TestRecoveryDirectoryOpenPreservesGuardedBoundary(t *testing.T) {
 	root := t.TempDir()
-	directory, err := openCustomerDirectoryForSync(root)
+	directory, err := main.OpenCustomerDirectoryForSync(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -21,7 +22,7 @@ func TestRecoveryDirectoryOpenPreservesGuardedBoundary(t *testing.T) {
 	if err = os.WriteFile(regular, []byte("{}"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if f, err := openCustomerDirectoryForSync(regular); err == nil {
+	if f, err := main.OpenCustomerDirectoryForSync(regular); err == nil {
 		_ = f.Close()
 		t.Fatal("accepted regular file as directory")
 	}
@@ -29,11 +30,11 @@ func TestRecoveryDirectoryOpenPreservesGuardedBoundary(t *testing.T) {
 	if err = os.Symlink(root, link); err != nil {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
-	if f, err := openCustomerDirectoryForSync(link); err == nil {
+	if f, err := main.OpenCustomerDirectoryForSync(link); err == nil {
 		_ = f.Close()
 		t.Fatal("followed directory symlink")
 	}
-	if f, err := openCustomerFile(link); err == nil {
+	if f, err := main.OpenCustomerFile(link); err == nil {
 		_ = f.Close()
 		t.Fatal("followed customer file symlink")
 	}

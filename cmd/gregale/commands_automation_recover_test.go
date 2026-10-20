@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -9,6 +9,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -190,11 +191,11 @@ func TestAutomationRecoverScopedFencesAndMixedOutcomes(t *testing.T) {
 		{"mixed", "resumed", "resume_accepted", 1},
 	} {
 		t.Run(tc.mode, func(t *testing.T) {
-			resetJSONOut(t)
-			jsonOutput = true
-			out := captureAutomationStdout(t)
+			main.ResetJSONOut(t)
+			(*main.JsonOutput) = true
+			out := main.CaptureAutomationStdout(t)
 			fake := automationRecoverServer(t, tc.mode)
-			code := cmdAutomations(automationRecoverArgs())
+			code := main.CmdAutomations(automationRecoverArgs())
 			want := 1
 			if tc.mode == "success" {
 				want = 0
@@ -202,7 +203,7 @@ func TestAutomationRecoverScopedFencesAndMixedOutcomes(t *testing.T) {
 			if code != want {
 				t.Fatalf("exit %d want %d: %s", code, want, out.String())
 			}
-			var report automationRecoveryReport
+			var report main.AutomationRecoveryReport
 			if err := json.Unmarshal(out.Bytes(), &report); err != nil {
 				t.Fatal(err)
 			}
@@ -231,7 +232,7 @@ func TestAutomationRecoverScopedFencesAndMixedOutcomes(t *testing.T) {
 						expected = 5
 						id = recoverySecondRunID
 					}
-					if call.Expected != expected || call.Key != automationRecoveryRunKey("outage-batch-1", inspectorAppID, "approval-flow", automationRecoverySelection{ID: id, ExpectedResumeCount: expected}) {
+					if call.Expected != expected || call.Key != main.AutomationRecoveryRunKey("outage-batch-1", inspectorAppID, "approval-flow", main.AutomationRecoverySelection{ID: id, ExpectedResumeCount: expected}) {
 						t.Fatalf("lost original generation/key: %+v", call)
 					}
 				}
@@ -244,10 +245,10 @@ func TestAutomationRecoverScopedFencesAndMixedOutcomes(t *testing.T) {
 }
 
 func TestAutomationRecoverValidatesAllScopeBeforeWrites(t *testing.T) {
-	resetJSONOut(t)
-	out := captureAutomationStdout(t)
+	main.ResetJSONOut(t)
+	out := main.CaptureAutomationStdout(t)
 	fake := automationRecoverServer(t, "foreign")
-	if cmdAutomations(automationRecoverArgs()) == 0 {
+	if main.CmdAutomations(automationRecoverArgs()) == 0 {
 		t.Fatal("accepted foreign run")
 	}
 	calls, accepted := fake.snapshot()
@@ -265,14 +266,14 @@ func TestAutomationRecoverValidatesAllScopeBeforeWrites(t *testing.T) {
 }
 
 func TestAutomationRecoverLostReplyCannotResumeTwice(t *testing.T) {
-	resetJSONOut(t)
-	jsonOutput = true
-	out := captureAutomationStdout(t)
+	main.ResetJSONOut(t)
+	(*main.JsonOutput) = true
+	out := main.CaptureAutomationStdout(t)
 	fake := automationRecoverServer(t, "lost_reply")
-	if cmdAutomations(automationRecoverArgs()) != 1 {
+	if main.CmdAutomations(automationRecoverArgs()) != 1 {
 		t.Fatal("lost reply should have an unconfirmed outcome")
 	}
-	var first automationRecoveryReport
+	var first main.AutomationRecoveryReport
 	if err := json.Unmarshal(out.Bytes(), &first); err != nil {
 		t.Fatal(err)
 	}
@@ -283,10 +284,10 @@ func TestAutomationRecoverLostReplyCannotResumeTwice(t *testing.T) {
 	fake.mode = "failed_again"
 	fake.mu.Unlock()
 	out.Reset()
-	if cmdAutomations(automationRecoverArgs()) != 1 {
+	if main.CmdAutomations(automationRecoverArgs()) != 1 {
 		t.Fatal("retry should report changed runs")
 	}
-	var second automationRecoveryReport
+	var second main.AutomationRecoveryReport
 	if err := json.Unmarshal(out.Bytes(), &second); err != nil {
 		t.Fatal(err)
 	}
@@ -302,11 +303,11 @@ func TestAutomationRecoverLostReplyCannotResumeTwice(t *testing.T) {
 }
 
 func TestAutomationRecoverUncommittedRetryUsesSameKey(t *testing.T) {
-	resetJSONOut(t)
-	jsonOutput = true
-	out := captureAutomationStdout(t)
+	main.ResetJSONOut(t)
+	(*main.JsonOutput) = true
+	out := main.CaptureAutomationStdout(t)
 	fake := automationRecoverServer(t, "post_error")
-	if cmdAutomations(automationRecoverArgs()) != 1 {
+	if main.CmdAutomations(automationRecoverArgs()) != 1 {
 		t.Fatal("first should fail")
 	}
 	fake.mu.Lock()
@@ -314,7 +315,7 @@ func TestAutomationRecoverUncommittedRetryUsesSameKey(t *testing.T) {
 	fake.mu.Unlock()
 	// Keep the first selection's original count; the second already advanced.
 	out.Reset()
-	if cmdAutomations(automationRecoverArgs()) != 1 {
+	if main.CmdAutomations(automationRecoverArgs()) != 1 {
 		t.Fatal("mixed resumed/changed retry should be nonzero")
 	}
 	calls, accepted := fake.snapshot()
@@ -340,7 +341,7 @@ func TestAutomationRecoverSelectionValidation(t *testing.T) {
 	} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			fake := automationRecoverServer(t, "success")
-			if cmdAutomationsRecover(args) == 0 {
+			if main.CmdAutomationsRecover(args) == 0 {
 				t.Fatal("accepted invalid options")
 			}
 			calls, _ := fake.snapshot()
@@ -354,7 +355,7 @@ func TestAutomationRecoverSelectionValidation(t *testing.T) {
 		args = append(args, "--run", fmt.Sprintf("aaaaaaaa-0000-4000-8000-%012d:0", i))
 	}
 	fake := automationRecoverServer(t, "success")
-	if cmdAutomationsRecover(args) == 0 {
+	if main.CmdAutomationsRecover(args) == 0 {
 		t.Fatal("accepted oversized batch")
 	}
 	calls, _ := fake.snapshot()
@@ -364,22 +365,22 @@ func TestAutomationRecoverSelectionValidation(t *testing.T) {
 }
 
 func TestAutomationRecoverKeyIndependentOfSelectionOrder(t *testing.T) {
-	item := automationRecoverySelection{ID: inspectorRunID, ExpectedResumeCount: 2}
-	key := automationRecoveryRunKey("batch", inspectorAppID, "flow", item)
-	if err := validateDeployIdempotencyKey(key); err != nil {
+	item := main.AutomationRecoverySelection{ID: inspectorRunID, ExpectedResumeCount: 2}
+	key := main.AutomationRecoveryRunKey("batch", inspectorAppID, "flow", item)
+	if err := main.ValidateDeployIdempotencyKey(key); err != nil {
 		t.Fatal(err)
 	}
 	item.ExpectedResumeCount++
-	if automationRecoveryRunKey("batch", inspectorAppID, "flow", item) == key {
+	if main.AutomationRecoveryRunKey("batch", inspectorAppID, "flow", item) == key {
 		t.Fatal("later continuation reused logical request key")
 	}
 }
 
 func TestAutomationRecoverHumanReport(t *testing.T) {
-	resetJSONOut(t)
-	out := captureAutomationStdout(t)
+	main.ResetJSONOut(t)
+	out := main.CaptureAutomationStdout(t)
 	automationRecoverServer(t, "mixed")
-	if cmdAutomations(automationRecoverArgs()) != 1 {
+	if main.CmdAutomations(automationRecoverArgs()) != 1 {
 		t.Fatal("partial batch should be nonzero")
 	}
 	for _, want := range []string{"resumed", "blocked", "unsafe_mutation", "independently", "original counts", "resume history"} {

@@ -1,7 +1,8 @@
-package main
+package main_test
 
 import (
 	"bytes"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -32,11 +33,11 @@ func TestPostgresCommandsResolveDatabaseNames(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_test")
-	previous := osStdout
-	osStdout = &bytes.Buffer{}
-	t.Cleanup(func() { osStdout = previous })
+	previous := (*main.OsStdout)
+	(*main.OsStdout) = &bytes.Buffer{}
+	t.Cleanup(func() { (*main.OsStdout) = previous })
 
-	for name, run := range map[string]func([]string) int{"get": cmdPostgresGet, "delete": cmdPostgresDelete} {
+	for name, run := range map[string]func([]string) int{"get": main.CmdPostgresGet, "delete": main.CmdPostgresDelete} {
 		paths = nil
 		if code := run([]string{"orders"}); code != 0 {
 			t.Fatalf("postgres %s orders = %d; requests %v", name, code, paths)
@@ -47,7 +48,7 @@ func TestPostgresCommandsResolveDatabaseNames(t *testing.T) {
 		}
 	}
 	paths = nil
-	if code := cmdPostgresGet([]string{id}); code != 0 || len(paths) != 1 {
+	if code := main.CmdPostgresGet([]string{id}); code != 0 || len(paths) != 1 {
 		t.Fatalf("get by ID = %d, requests %v; an ID must skip the catalog lookup", code, paths)
 	}
 }

@@ -1,7 +1,8 @@
-package main
+package main_test
 
 import (
 	"bytes"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"strings"
 	"testing"
 )
@@ -10,17 +11,17 @@ import (
 // verbs and flags are absent from help, man pages and suggestions, and
 // invoking them is a usage error that does not name them.
 func TestMonetizationDiscoveryRequiresOptIn(t *testing.T) {
-	oldOut := osStdout
-	t.Cleanup(func() { osStdout = oldOut })
+	oldOut := (*main.OsStdout)
+	t.Cleanup(func() { (*main.OsStdout) = oldOut })
 	for _, value := range []string{"", "0", "1"} {
 		t.Run(value, func(t *testing.T) {
 			t.Setenv("FAAS_API_MONETIZATION_ENABLED", value)
 			released := value == "1"
 			for _, args := range [][]string{{"help", "consumers"}, {"man", "consumers"}, {"help", "platform-tenants"}, {"help", "account"}} {
 				var out bytes.Buffer
-				osStdout = &out
-				_, restore := captureStderr(t)
-				code := run(args)
+				(*main.OsStdout) = &out
+				_, restore := main.CaptureStderr(t)
+				code := main.Run(args)
 				restore()
 				text := out.String()
 				if code != 0 {
@@ -44,8 +45,8 @@ func TestMonetizationDiscoveryRequiresOptIn(t *testing.T) {
 				if released {
 					continue
 				}
-				stderr, restore := captureStderr(t)
-				code := run(args)
+				stderr, restore := main.CaptureStderr(t)
+				code := main.Run(args)
 				message := stderr.String()
 				restore()
 				if code == 0 {
@@ -58,7 +59,7 @@ func TestMonetizationDiscoveryRequiresOptIn(t *testing.T) {
 					}
 				}
 			}
-			if suggestion, ok := suggestSubcommand("rate-card", mustCommand(t, "consumers")); !released && ok && strings.HasPrefix(suggestion, "rate-card") {
+			if suggestion, ok := main.SuggestSubcommand("rate-card", mustCommand(t, "consumers")); !released && ok && strings.HasPrefix(suggestion, "rate-card") {
 				t.Fatal("hidden verb suggested")
 			}
 		})
@@ -67,21 +68,21 @@ func TestMonetizationDiscoveryRequiresOptIn(t *testing.T) {
 
 func TestReleasedUsage(t *testing.T) {
 	t.Setenv("FAAS_API_MONETIZATION_ENABLED", "")
-	if got := releasedUsage("account", "usage: gregale account {export|billing-run|invoices|slo}"); got != "usage: gregale account {export|slo}" {
+	if got := main.ReleasedUsage("account", "usage: gregale account {export|billing-run|invoices|slo}"); got != "usage: gregale account {export|slo}" {
 		t.Errorf("account usage = %q", got)
 	}
-	if got := releasedUsage("consumers", "usage: gregale consumers <list|quote|rate-cards|usage> <slug>"); got != "usage: gregale consumers <list|usage> <slug>" {
+	if got := main.ReleasedUsage("consumers", "usage: gregale consumers <list|quote|rate-cards|usage> <slug>"); got != "usage: gregale consumers <list|usage> <slug>" {
 		t.Errorf("consumers usage = %q", got)
 	}
 	t.Setenv("FAAS_API_MONETIZATION_ENABLED", "1")
-	if got := releasedUsage("account", "usage: gregale account {export|billing-run}"); got != "usage: gregale account {export|billing-run}" {
+	if got := main.ReleasedUsage("account", "usage: gregale account {export|billing-run}"); got != "usage: gregale account {export|billing-run}" {
 		t.Errorf("released usage = %q", got)
 	}
 }
 
-func mustCommand(t *testing.T, name string) cliCommand {
+func mustCommand(t *testing.T, name string) main.CliCommand {
 	t.Helper()
-	command, ok := lookupCliCommand(name)
+	command, ok := main.LookupCliCommand(name)
 	if !ok {
 		t.Fatalf("no %s command", name)
 	}

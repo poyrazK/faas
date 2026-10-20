@@ -4996,7 +4996,7 @@ export class OperationsService {
     });
   }
   /**
-   * Deliver a named event to this customer's own waiting operation (ADR-1286).
+   * Deliver a named event to this customer's own waiting operation (ADR-20261017100853).
    * Requires platform_tenant:operations:manage. Works like the account signal route on the customer's own operation only; another customer's operation is not found. The operation's history records the signal with source customer. signal_id is shared with the account route, so a repeat from either is the same signal.
    * @returns OperationSignalReceipt The customer's delivery receipt; duplicate marks a repeat of an earlier signal.
    * @throws ApiError
@@ -5041,7 +5041,7 @@ export class OperationsService {
     });
   }
   /**
-   * Deliver a named event to this customer's own active operations about one business subject (ADR-1286).
+   * Deliver a named event to this customer's own active operations about one business subject (ADR-20261017100853).
    * Requires platform_tenant:operations:manage. The definition fixes the app, environment and operation name. Reaches at most 16 of the customer's own active operations whose subject matches; other customers' operations about the same subject are never reached. Each delivery is idempotent per operation by signal_id and recorded with source customer.
    * @returns OperationSubjectSignalResponse One receipt per customer operation reached; empty when none is active.
    * @throws ApiError

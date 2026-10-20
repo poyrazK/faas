@@ -1,7 +1,8 @@
-package main
+package main_test
 
 import (
 	"bytes"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -35,10 +36,10 @@ func TestPostgresRotateAdoptsACommittedRotation(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_test")
 	var out bytes.Buffer
-	previous := osStdout
-	osStdout = &out
-	t.Cleanup(func() { osStdout = previous })
-	if code := cmdPostgresBindingsRotate([]string{"binding-1"}); code != 0 {
+	previous := (*main.OsStdout)
+	(*main.OsStdout) = &out
+	t.Cleanup(func() { (*main.OsStdout) = previous })
+	if code := main.CmdPostgresBindingsRotate([]string{"binding-1"}); code != 0 {
 		t.Fatalf("exit = %d, output %s", code, out.String())
 	}
 	if !strings.Contains(out.String(), "credential_generation: 2") {
@@ -57,10 +58,10 @@ func TestPostgresRotateSaysWhenItJoinedARotation(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_test")
 	var stderr bytes.Buffer
-	previousOut, previousErr := osStdout, osStderr
-	osStdout, osStderr = &bytes.Buffer{}, &stderr
-	t.Cleanup(func() { osStdout, osStderr = previousOut, previousErr })
-	if code := cmdPostgresBindingsRotate([]string{"binding-1"}); code != 0 {
+	previousOut, previousErr := (*main.OsStdout), (*main.OsStderr)
+	(*main.OsStdout), (*main.OsStderr) = &bytes.Buffer{}, &stderr
+	t.Cleanup(func() { (*main.OsStdout), (*main.OsStderr) = previousOut, previousErr })
+	if code := main.CmdPostgresBindingsRotate([]string{"binding-1"}); code != 0 {
 		t.Fatalf("exit = %d", code)
 	}
 	if !strings.Contains(stderr.String(), "already in progress (generation 2)") {
@@ -90,10 +91,10 @@ func TestDataAPICreateChecksTheBackendFirst(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_test")
 	var stderr bytes.Buffer
-	previous := osStderr
-	osStderr = &stderr
-	t.Cleanup(func() { osStderr = previous })
-	if code := cmdDataAPICreate([]string{"notes", "--database", "orders", "--issuer", "https://issuer.example", "--jwks-url", "https://issuer.example/jwks.json", "--audience", "notes"}); code == 0 {
+	previous := (*main.OsStderr)
+	(*main.OsStderr) = &stderr
+	t.Cleanup(func() { (*main.OsStderr) = previous })
+	if code := main.CmdDataAPICreate([]string{"notes", "--database", "orders", "--issuer", "https://issuer.example", "--jwks-url", "https://issuer.example/jwks.json", "--audience", "notes"}); code == 0 {
 		t.Fatal("data-api create succeeded without data_api access")
 	}
 	if appCreates.Load() != 0 {

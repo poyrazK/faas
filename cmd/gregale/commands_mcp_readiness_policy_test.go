@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -32,15 +33,15 @@ func TestMCPReadinessPolicyEnvironmentSelection(t *testing.T) {
 				t.Error("PUT lost policy selection or CAS")
 			}
 		}
-		writeJSONTest(w, api.MCPReadinessPolicy{Scope: "staging"})
+		main.WriteJSONTest(w, api.MCPReadinessPolicy{Scope: "staging"})
 	}))
 	defer server.Close()
 	t.Setenv("FAAS_API", server.URL)
 	t.Setenv("FAAS_TOKEN", "PLATFORM_ONLY")
 	var output bytes.Buffer
-	oldOut, oldErr, oldJSON := osStdout, osStderr, jsonOutput
-	osStdout, osStderr, jsonOutput = &output, &output, true
-	defer func() { osStdout, osStderr, jsonOutput = oldOut, oldErr, oldJSON }()
+	oldOut, oldErr, oldJSON := (*main.OsStdout), (*main.OsStderr), (*main.JsonOutput)
+	(*main.OsStdout), (*main.OsStderr), (*main.JsonOutput) = &output, &output, true
+	defer func() { (*main.OsStdout), (*main.OsStderr), (*main.JsonOutput) = oldOut, oldErr, oldJSON }()
 	file := filepath.Join(t.TempDir(), "policy.json")
 	if e := os.WriteFile(file, []byte(`{"enabled":false,"endpoint":"/mcp","max_age_seconds":300,"reason":"reviewed staging opt out"}`), 0600); e != nil {
 		t.Fatal(e)
@@ -49,7 +50,7 @@ func TestMCPReadinessPolicyEnvironmentSelection(t *testing.T) {
 		{"readiness", "policy", "get", "--app", "test-mcp", "--scope", "staging"},
 		{"readiness", "policy", "set", "--app", "test-mcp", "--scope", "staging", "--file", file},
 	} {
-		if code := cmdMCP(args); code != 0 {
+		if code := main.CmdMCP(args); code != 0 {
 			t.Fatalf("exit=%d output=%s", code, output.String())
 		}
 	}
@@ -69,18 +70,18 @@ func TestMCPReadinessPolicyHistoryCLI(t *testing.T) {
 			if r.URL.Query().Get("scope") != "staging" || r.URL.Query().Get("before_revision") != revision || r.URL.Query().Get("limit") != "1" {
 				t.Error("history lost cursor/scope")
 			}
-			writeJSONTest(w, api.MCPReadinessPolicyHistory{Policies: []api.MCPReadinessPolicy{}})
+			main.WriteJSONTest(w, api.MCPReadinessPolicyHistory{Policies: []api.MCPReadinessPolicy{}})
 		case "/v1/apps/test-mcp/mcp-readiness-policy/diff":
 			if r.URL.Query().Get("scope") != "staging" || r.URL.Query().Get("from_revision") != revision || r.URL.Query().Get("to_revision") != current {
 				t.Error("diff lost revision/scope")
 			}
-			writeJSONTest(w, api.MCPReadinessPolicyDiff{Scope: "staging", Changes: []api.MCPReadinessPolicyChange{}})
+			main.WriteJSONTest(w, api.MCPReadinessPolicyDiff{Scope: "staging", Changes: []api.MCPReadinessPolicyChange{}})
 		case "/v1/apps/test-mcp/mcp-readiness-policy/history/" + revision + "/restore":
 			var request api.RestoreMCPReadinessPolicyRequest
 			if r.Method != "POST" || json.NewDecoder(r.Body).Decode(&request) != nil || request.Scope != "staging" || request.ExpectedRevision != current || request.Reason != "reviewed restore" {
 				t.Error("restore lost audit or CAS")
 			}
-			writeJSONTest(w, api.MCPReadinessPolicy{Scope: "staging", RestoredFrom: revision})
+			main.WriteJSONTest(w, api.MCPReadinessPolicy{Scope: "staging", RestoredFrom: revision})
 		default:
 			t.Errorf("unexpected path %s", r.URL.Path)
 		}
@@ -89,15 +90,15 @@ func TestMCPReadinessPolicyHistoryCLI(t *testing.T) {
 	t.Setenv("FAAS_API", server.URL)
 	t.Setenv("FAAS_TOKEN", "PLATFORM_ONLY")
 	var output bytes.Buffer
-	oldOut, oldErr, oldJSON := osStdout, osStderr, jsonOutput
-	osStdout, osStderr, jsonOutput = &output, &output, true
-	defer func() { osStdout, osStderr, jsonOutput = oldOut, oldErr, oldJSON }()
+	oldOut, oldErr, oldJSON := (*main.OsStdout), (*main.OsStderr), (*main.JsonOutput)
+	(*main.OsStdout), (*main.OsStderr), (*main.JsonOutput) = &output, &output, true
+	defer func() { (*main.OsStdout), (*main.OsStderr), (*main.JsonOutput) = oldOut, oldErr, oldJSON }()
 	for _, args := range [][]string{
 		{"readiness", "policy", "history", "--app", "test-mcp", "--scope", "staging", "--before-revision", revision, "--limit", "1"},
 		{"readiness", "policy", "diff", "--app", "test-mcp", "--scope", "staging", "--from-revision", revision, "--to-revision", current},
 		{"readiness", "policy", "restore", "--app", "test-mcp", "--scope", "staging", "--revision", revision, "--expected-revision", current, "--reason", "reviewed restore"},
 	} {
-		if code := cmdMCP(args); code != 0 {
+		if code := main.CmdMCP(args); code != 0 {
 			t.Fatal(code, output.String())
 		}
 	}

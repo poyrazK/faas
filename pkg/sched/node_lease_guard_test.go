@@ -1,11 +1,12 @@
 // adr: 1344 — node lease takeover guard (§4, P3 phase 2).
-package sched
+package sched_test
 
 import (
 	"context"
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -42,12 +43,12 @@ func TestHeartbeat_StalePeerObserverRespectsTheTakeoverGuard(t *testing.T) {
 			t.Fatal(err)
 		}
 		guard := &fakeTakeoverGuard{allow: allow}
-		h := NewHeartbeat(store, &heartbeatFakeDialer{}, nil, nil).
+		h := sched.NewHeartbeat(store, &sched.HeartbeatFakeDialer{}, nil, nil).
 			WithOwnerNodeID(owner.ID).
 			WithStalePeerObserver(true).
 			WithTakeoverGuard(guard)
 		h.Staleness = time.Minute
-		h.now = func() time.Time { return now }
+		(*h.Now()) = func() time.Time { return now }
 		if err := h.Tick(ctx); err != nil {
 			t.Fatalf("Tick: %v", err)
 		}
@@ -69,7 +70,7 @@ func TestHeartbeat_StalePeerObserverRespectsTheTakeoverGuard(t *testing.T) {
 // lease is live, and reads the lease once per node per tick.
 func TestReconcileDeadNodeInstances_RespectsTheTakeoverGuard(t *testing.T) {
 	store := state.NewMemStore()
-	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+	e := sched.XNewEngine(t, store, &sched.FakeVMM{}, &sched.FakeNotifier{}, "1.10.0")
 	guard := &fakeTakeoverGuard{allow: false}
 	e.WithTakeoverGuard(guard)
 	nodeID := seedStaleComputeNodeForReconcile(t, store)

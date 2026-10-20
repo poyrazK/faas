@@ -5591,11 +5591,11 @@ gregale billing budget-preview --file budget.json --json
 
 ### billing budgets
 
-Manage revisioned budget drafts; activation is gated
+Manage monitored alerts, preview stopping and budget drafts
 
 #### billing budgets list
 
-List account budget drafts
+List account budget policies and monitoring status
 
 `gregale billing budgets list [--json]`
 
@@ -5615,7 +5615,7 @@ Read a budget, including a deletion tombstone
 
 #### billing budgets create
 
-Save a budget draft
+Save a draft or activate monitored alerts or preview stopping
 
 `gregale billing budgets create [--file <PATH>] [--key <KEY>] [--json]`
 
@@ -5633,7 +5633,7 @@ gregale billing budgets create --file budget.json --key previews-october --json
 
 #### billing budgets update
 
-Replace a draft at its expected revision
+Replace a budget policy at its expected revision
 
 `gregale billing budgets update [--file <PATH>] [--expected-revision <N>] [--key <KEY>] [--json] ID`
 
@@ -12436,7 +12436,7 @@ Deliver a named event to a waiting operation, by ID or by business subject
 | `--scope <SCOPE>` | environment, for a subject signal |  |
 | `--operation <NAME>` | operation name, for a subject signal |  |
 | `--subject <TYPE:ID>` | business subject, instead of an operation ID |  |
-| `--self` | signal the authenticated tenant&#39;s own operations (ADR-1286) |  |
+| `--self` | signal the authenticated tenant&#39;s own operations (ADR-20261017100853) |  |
 | `--definition <UUID>` | operation definition, for a --self subject signal |  |
 
 ### customer-operations approve
@@ -14674,7 +14674,7 @@ gregale data-api dev --port 0 --check --once
 
 Deploy a managed PostgREST Data API
 
-`gregale data-api create --database <DATABASE> [--schema <SCHEMA>] [--read-only] [--scope <SCOPE>] [--issuer <HTTPS_URL>] [--jwks-url <HTTPS_URL>] [--audience <AUDIENCE>] [--origins <ORIGINS>] [--resume] <name>`
+`gregale data-api create --database <DATABASE> [--schema <SCHEMA>] [--read-only] [--scope <SCOPE>] [--issuer <HTTPS_URL>] [--jwks-url <HTTPS_URL>] [--audience <AUDIENCE>] [--origins <ORIGINS>] [--resume] [--public-read <SCHEMA.RELATION[,...]>] [--public-rpc <SCHEMA.FUNCTION[,...]>] [--aggregates] [--migrations <DIR>] [--release-command <COMMAND>] <name>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -14687,20 +14687,132 @@ Deploy a managed PostgREST Data API
 | `--audience <AUDIENCE>` | application JWT audience |  |
 | `--origins <ORIGINS>` | comma-separated browser origins |  |
 | `--resume` | resume configuration and deployment of an existing app |  |
+| `--public-read <SCHEMA.RELATION[,...]>` | relations readable without a token (RLS tables or security-invoker views) |  |
+| `--public-rpc <SCHEMA.FUNCTION[,...]>` | approved STABLE or IMMUTABLE functions callable without a token by GET |  |
+| `--aggregates` | enable aggregate queries; requires installed SQL deadline functions |  |
+| `--migrations <DIR>` | single-app project: run this migration directory as the app&#39;s release task |  |
+| `--release-command <COMMAND>` | single-app release command (default node migrations/release.mjs) |  |
 
-### data-api types
+Examples:
 
-Generate types in an owner-authenticated app task
+```sh
+gregale data-api create shop-data --database shop-db --issuer https://id.example.com/ --jwks-url https://id.example.com/jwks.json --audience shop --migrations migrations
+```
 
-`gregale data-api types [--output <FILE>] [--check] [--snapshot] [--validators] [--timeout <DURATION>] <name>`
+### data-api deploy
+
+Deploy a single-app Data API with its migrations as the release task
+
+`gregale data-api deploy --migrations <DIR> [--release-command <COMMAND>] [--scope <SCOPE>] [--timeout <DURATION>] <name>`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--output <FILE>` | generated TypeScript or snapshot output |  |
+| `--migrations <DIR>` | migration directory run with MIGRATION_DATABASE_URL | required |
+| `--release-command <COMMAND>` | release command (default node migrations/release.mjs) |  |
+| `--scope <SCOPE>` | environment scope |  |
+| `--timeout <DURATION>` | deployment and release wait (default 15m) |  |
+
+### data-api configure
+
+Change public access, aggregates, usage reporting or caps and fresh-restart the runtime
+
+`gregale data-api configure [--public-read <SCHEMA.RELATION[,...]>] [--no-public-read] [--public-rpc <SCHEMA.FUNCTION[,...]>] [--no-public-rpc] [--public-read-cache <DURATION|off>] [--usage-reporting <on|off>] [--monthly-caps <requests=N[,anonymous=N]|off>] [--aggregates <on|off>] [--scope <SCOPE>] [--no-restart] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--public-read <SCHEMA.RELATION[,...]>` | relations readable without a token |  |
+| `--no-public-read` | disable anonymous reads |  |
+| `--public-rpc <SCHEMA.FUNCTION[,...]>` | approved STABLE or IMMUTABLE functions callable without a token by GET |  |
+| `--no-public-rpc` | disable anonymous RPC calls |  |
+| `--public-read-cache <DURATION|off>` | cache canonical public reads and RPC calls at the edge (max 1h) |  |
+| `--usage-reporting <on|off>` | report usage to the platform (on for new Data APIs) | one of `on` · `off` |
+| `--monthly-caps <requests=N[,anonymous=N]|off>` | monthly owner caps; reached caps answer 429 until the next UTC month |  |
+| `--aggregates <on|off>` | aggregate queries; on also enables the SQL deadline | one of `on` · `off` |
+| `--scope <SCOPE>` | environment scope |  |
+| `--no-restart` | store settings without a fresh restart |  |
+
+### data-api usage
+
+Show reported requests, rows and bytes per hour or day, and month-to-date totals
+
+`gregale data-api usage [--since <DURATION>] [--granularity <hour|day>] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--since <DURATION>` | lookback such as 24h, 7d or 30d (default 7d, max 90d) |  |
+| `--granularity <hour|day>` | bucket size (hour covers at most 48h) | one of `hour` · `day` |
+
+Examples:
+
+```sh
+gregale data-api usage shop-data --since 30d
+```
+
+### data-api server-key
+
+Manage server keys for trusted backends (RLS still applies)
+
+#### data-api server-key create
+
+Generate a key, store its hash in a free slot and show the key once
+
+`gregale data-api server-key create [--read-only] [--relations <SCHEMA.RELATION[,...]>] [--rpcs <SCHEMA.FUNCTION[,...]>] [--no-subjects] [--replace-oldest] [--scope <SCOPE>] [--no-restart] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--read-only` | allow only GET and HEAD; RPCs need --rpcs |  |
+| `--relations <SCHEMA.RELATION[,...]>` | relations the key may use, including embeddings |  |
+| `--rpcs <SCHEMA.FUNCTION[,...]>` | approved RPCs the key may call |  |
+| `--no-subjects` | refuse X-Gregale-Subject |  |
+| `--replace-oldest` | replace the older slot when both are in use |  |
+| `--scope <SCOPE>` | environment scope |  |
+| `--no-restart` | store the hash without a fresh restart |  |
+
+#### data-api server-key list
+
+Show which key slots are in use
+
+`gregale data-api server-key list [--scope <SCOPE>] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--scope <SCOPE>` | environment scope |  |
+
+#### data-api server-key revoke
+
+Remove a key slot
+
+`gregale data-api server-key revoke --slot <a|b|all> [--scope <SCOPE>] [--no-restart] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--slot <a|b|all>` | slot to revoke | required; one of `a` · `b` · `all` |
+| `--scope <SCOPE>` | environment scope |  |
+| `--no-restart` | remove the hash without a fresh restart |  |
+
+### data-api types
+
+Generate TypeScript types or Python/Go clients from the database contract
+
+`gregale data-api types [--output <FILE>] [--check] [--snapshot] [--validators] [--language <LANGUAGE>] [--package <NAME>] [--snapshot-file <FILE>] [--timeout <DURATION>] [<name>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--output <FILE>` | generated TypeScript, Python, Go or snapshot output |  |
 | `--check` | fail if the output file is stale |  |
 | `--snapshot` | export a JSON baseline for data-api diff |  |
 | `--validators` | include typed runtime table and RPC argument validators |  |
+| `--language <LANGUAGE>` | client language (default typescript) | one of `typescript` · `python` · `go` |
+| `--package <NAME>` | Go package name (default gregaledata) |  |
+| `--snapshot-file <FILE>` | render Python or Go from a saved snapshot without contacting the API |  |
 | `--timeout <DURATION>` | task wait deadline (default 2m) |  |
+
+Examples:
+
+```sh
+gregale data-api types shop-data --language python --output shop_data.py
+gregale data-api types --snapshot-file contract.json --language go --package shopdata --output shopdata/client.go
+```
 
 ### data-api check
 

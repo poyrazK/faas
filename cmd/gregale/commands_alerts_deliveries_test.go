@@ -1,6 +1,7 @@
-package main
+package main_test
 
 import (
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -13,7 +14,7 @@ import (
 // info now prints the last delivery and `alerts deliveries` lists the
 // ledger. Both accept flags after the alert id.
 func TestAlertsInfoAndDeliveriesShowFailedWebhooks(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	const id = "0bb97f08c9dd4c338a5e3262d04d8b9d"
 	delivery := `[{"id":"d1","rule_id":"` + id + `","status":"failed","attempt_count":1,"last_error":"namespace mismatch: alert_rule_secret","observed_value":12.5,"fired_at":"2026-10-04T23:02:03Z"}]`
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -32,16 +33,16 @@ func TestAlertsInfoAndDeliveriesShowFailedWebhooks(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "test-token")
-	out, restore := captureStdout(t)
+	out, restore := main.CaptureStdout(t)
 	defer restore()
 
-	if code := cmdAlerts([]string{"info", id, "--app", "h3-wf"}); code != 0 {
+	if code := main.CmdAlerts([]string{"info", id, "--app", "h3-wf"}); code != 0 {
 		t.Fatalf("alerts info exit = %d", code)
 	}
 	if !strings.Contains(out.String(), "last_delivery: failed at 2026-10-04T23:02:03Z (attempts 1): namespace mismatch: alert_rule_secret") {
 		t.Fatalf("alerts info hides the failed delivery:\n%s", out.String())
 	}
-	if code := cmdAlerts([]string{"deliveries", id, "--app", "h3-wf"}); code != 0 {
+	if code := main.CmdAlerts([]string{"deliveries", id, "--app", "h3-wf"}); code != 0 {
 		t.Fatalf("alerts deliveries exit = %d", code)
 	}
 	if !strings.Contains(out.String(), "FIRED_AT") || strings.Count(out.String(), "namespace mismatch: alert_rule_secret") != 2 {

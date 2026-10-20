@@ -27,6 +27,9 @@ ExecStart=/opt/faas/current/bin/livequeryd \
   -tls-cert={{ faas_livequeryd_tls_cert }} \
   -tls-key=%d/tls_key \
   -client-ca={{ faas_livequeryd_client_ca }} \
+{% if faas_livequeryd_client_name %}
+  -client-name={{ faas_livequeryd_client_name }} \
+{% endif %}
 {% endif %}
 {% if faas_livequeryd_release_after %}
   -release-after={{ faas_livequeryd_release_after }} \

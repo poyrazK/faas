@@ -1,11 +1,12 @@
 // adr: 127
 
-package sched
+package sched_test
 
 import (
 	"context"
 	"testing"
 
+	"github.com/onebox-faas/faas/pkg/sched"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
@@ -28,10 +29,10 @@ func TestTriggerDispatchParentExtractsBrokerContextAndLinksBatch(t *testing.T) {
 
 	rootCtx, root := provider.Tracer("test").Start(context.Background(), "source")
 	header := make(map[string]string)
-	otel.GetTextMapPropagator().Inject(rootCtx, triggerHeaderCarrier(header))
+	otel.GetTextMapPropagator().Inject(rootCtx, sched.TriggerHeaderCarrier(header))
 	root.End()
 
-	parent, links := triggerDispatchParent(context.Background(), []SourceRecord{
+	parent, links := sched.TriggerDispatchParent(context.Background(), []sched.SourceRecord{
 		{Headers: map[string]string{"TraceParent": header["traceparent"]}},
 	})
 	if got := oteltrace.SpanContextFromContext(parent); !got.IsValid() {

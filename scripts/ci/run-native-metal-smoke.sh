@@ -24,6 +24,17 @@ die() {
 [[ -f /etc/faas/builder-acceptance-host ]] ||
   die "/etc/faas/builder-acceptance-host is missing; this node is not designated for disruptive acceptance tests"
 
+# This opt-in adds real database funding and process-crash qualification to
+# the full lifecycle suite. Never let a caller's skip flag qualify it green.
+case "${FAAS_FINANCIAL_COMPUTE_ACCEPTANCE:-0}" in
+  0) ;;
+  1)
+    : "${DATABASE_URL:?financial compute acceptance requires disposable PostgreSQL}"
+    [[ -z "${FAAS_SKIP_PG_TESTS:-}" ]] || die "financial compute acceptance cannot set FAAS_SKIP_PG_TESTS"
+    ;;
+  *) die "FAAS_FINANCIAL_COMPUTE_ACCEPTANCE must be 0 or 1" ;;
+esac
+
 for tool in busybox e2fsck file firecracker flock gcc install ip iptables jailer \
   make mkfs.ext4 nft readlink systemctl systemd-run tc truncate unshare; do
   command -v "${tool}" >/dev/null || die "required host tool is missing: ${tool}"
@@ -79,10 +90,12 @@ done
 cleanup() {
   local rc=$?
   local restore_failed=0
+  local leakcheck_rc=0
   trap - EXIT HUP INT TERM
   set +e
 
   if ! bash "${repo_root}/deploy/scripts/leakcheck.sh"; then
+    leakcheck_rc=1
     echo "native metal smoke: final leak check failed" >&2
     [[ "${rc}" -ne 0 ]] || rc=1
   fi
@@ -98,7 +111,18 @@ cleanup() {
     [[ "${rc}" -ne 0 ]] || rc=1
   fi
 
-  rm -rf "${stage_root}"
+  if [[ -n "${financial_evidence:-}" && -f "${financial_evidence}" ]]; then
+    printf 'final_leakcheck_exit=%s\nservice_restore_failed=%s\noverall_exit=%s\n' \
+      "${leakcheck_rc}" "${restore_failed}" "${rc}" >> "${financial_evidence}"
+  fi
+
+  if [[ "${FAAS_FINANCIAL_COMPUTE_ACCEPTANCE:-0}" == 1 && "${rc}" -ne 0 ]]; then
+    # A failed recovery may still own mounts or disk names below this tree.
+    # Keep the exact journals for repair; recursive removal would lose proof.
+    echo "native metal smoke: retained financial recovery evidence: ${stage_root}" >&2
+  else
+    rm -rf "${stage_root}"
+  fi
   if [[ -n "${transfer_root}" ]]; then
     systemd-run --quiet --collect --unit="faas-metal-smoke-clean-${run_id}" \
       --on-active=5m /usr/bin/find "${transfer_root}" -depth -delete >/dev/null 2>&1
@@ -107,7 +131,7 @@ cleanup() {
   if [[ "${rc}" -eq 0 ]]; then
     echo "native metal smoke: PASS; services restored and staging removed"
   else
-    echo "native metal smoke: FAIL (${rc}); services restored and staging removed" >&2
+    echo "native metal smoke: FAIL (${rc}); see cleanup and service restoration results above" >&2
   fi
   exit "${rc}"
 }
@@ -184,6 +208,31 @@ export FAAS_TEST_FC_VERSION="${fc_version}"
 # the reference-SSD p95 cohort.
 export FAAS_TEST_REFERENCE_SSD=0
 
+if [[ "${FAAS_FINANCIAL_COMPUTE_ACCEPTANCE:-0}" == 1 ]]; then
+  export FAAS_FINANCIAL_ACCEPTANCE_ROOT="${stage_root}/financial"
+  mkdir -p "${FAAS_FINANCIAL_ACCEPTANCE_ROOT}"
+  source "${repo_root}/scripts/ci/native-e2e-verdict.sh"
+  source "${repo_root}/scripts/ci/financial-compute-acceptance.sh"
+  financial_pg_log="${FAAS_METAL_TRANSFER_ROOT:-/var/tmp}/financial-compute-postgres.log"
+  financial_evidence="${FAAS_METAL_TRANSFER_ROOT:-/var/tmp}/financial-compute-evidence.txt"
+  {
+    printf 'source_sha=%s\nstarted_utc=%s\nhost=%s\n' "${FAAS_METAL_SOURCE_SHA}" "$(date -u +%FT%TZ)" "$(uname -n)"
+    printf 'kernel=%s\ngo=%s\nfirecracker=%s\n' "$(uname -srmo)" "$("${FAAS_METAL_GO}" version)" "$(firecracker --version)"
+    printf 'scope=two logical native owners on one dedicated host; private PostgreSQL\n'
+    printf 'persistent_root=%s\n' "${FAAS_FINANCIAL_ACCEPTANCE_ROOT}"
+    printf 'postgres_command=go test -race -count=1 -timeout=10m -v -run ^TestFinancial(Compute|Egress) ./pkg/state/financialtest\n'
+    printf 'native_command=make test-metal PKGS=./pkg/fcvm RUN_ARGS=-timeout=30m,-v; namespace batch; final leakcheck\n'
+  } > "${financial_evidence}"
+  set +e
+  "${FAAS_METAL_GO}" test -race -count=1 -timeout=10m -v \
+    -run '^TestFinancial(Compute|Egress)' ./pkg/state/financialtest 2>&1 | tee "${financial_pg_log}"
+  financial_pg_rc="${PIPESTATUS[0]}"
+  set -e
+  financial_compute_verdict "${repo_root}" postgres "${financial_pg_log}" || financial_pg_rc=1
+  printf 'postgres_exit=%s\n' "${financial_pg_rc}" >> "${financial_evidence}"
+  [[ "${financial_pg_rc}" -eq 0 ]] || exit "${financial_pg_rc}"
+fi
+
 # test-metal honours RUN_REGEX as a -run filter. This gate must always run the
 # whole package, so refuse to inherit one from the environment.
 unset RUN_REGEX
@@ -232,6 +281,10 @@ recovery_names="$(native_recovery_tests "${repo_root}")"
 recovery_tests=()
 while IFS= read -r test_name; do recovery_tests+=("${test_name}"); done <<<"${recovery_names}"
 native_e2e_lane_verdict "${metal_log}" native-owner-recovery "${recovery_tests[@]}" || metal_rc=1
+if [[ "${FAAS_FINANCIAL_COMPUTE_ACCEPTANCE:-0}" == 1 ]]; then
+  financial_compute_verdict "${repo_root}" native "${metal_log}" || metal_rc=1
+  printf 'native_suite_exit=%s\n' "${metal_rc}" >> "${financial_evidence}"
+fi
 
 # Second pass: the tests that need private mount + network namespaces.
 #
@@ -287,6 +340,9 @@ fi
 # Every selected network test is required. A skip or omitted mixed-policy
 # test must fail even when other tests passed and the binary exited zero.
 native_e2e_lane_verdict "${batch_log}" namespace-batch "${batch_tests[@]}" || batch_rc=1
+if [[ "${FAAS_FINANCIAL_COMPUTE_ACCEPTANCE:-0}" == 1 ]]; then
+  printf 'namespace_batch_exit=%s\n' "${batch_rc}" >> "${financial_evidence}"
+fi
 
 echo "native metal smoke: total — $((passed + batch_passed)) passed, $((skipped + batch_skipped)) skipped, $((failed + batch_failed)) failed"
 [[ "${metal_rc}" -eq 0 ]] || exit "${metal_rc}"

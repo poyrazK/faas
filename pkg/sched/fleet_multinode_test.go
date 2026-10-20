@@ -42,7 +42,7 @@
 // MemStore mirrors the same reservation under its own mutex. Keeping these in
 // the pure-Go shard means the fleet properties run on every PR rather than
 // only where a database is reachable.
-package sched
+package sched_test
 
 import (
 	"context"
@@ -55,6 +55,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -66,7 +67,7 @@ type fleet struct {
 	store   *state.MemStore
 	ctx     context.Context
 	nodes   []state.ComputeNode
-	engines []*Engine
+	engines []*sched.Engine
 }
 
 // newFleet builds a fleet of nodeCount active nodes, each with the same
@@ -115,7 +116,7 @@ func newFleet(t *testing.T, nodeCount, ceilingMB int) *fleet {
 	}
 	for i := range f.nodes {
 		f.engines = append(f.engines,
-			newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0").
+			sched.XNewEngine(t, store, &sched.FakeVMM{}, &sched.FakeNotifier{}, "1.10.0").
 				WithOwnerNodeID(f.nodes[i].ID))
 	}
 	return f
@@ -232,7 +233,7 @@ func TestFleet_NodeCeilingHoldsAcrossSchedds(t *testing.T) {
 	var start sync.WaitGroup
 	var done sync.WaitGroup
 	start.Add(1)
-	admit := func(e *Engine, appID string) {
+	admit := func(e *sched.Engine, appID string) {
 		defer done.Done()
 		start.Wait()
 		// Errors are expected once the fleet fills — capacity refusal is the
@@ -293,12 +294,12 @@ func TestFleet_OwnershipChecksCountDiscardedBroadcasts(t *testing.T) {
 		ops[i] = wire.NewOpsMetrics("schedd")
 		f.engines[i] = f.engines[i].WithOpsMetrics(ops[i])
 		// Every schedd sees the notification, so every schedd runs the check.
-		f.engines[i].ownsApp(owned)
+		f.engines[i].XOwnsApp(owned)
 	}
 
 	wantOwned := []int{1, 0, 0}
 	for i := range f.engines {
-		body := getMetricsBody(t, ops[i])
+		body := sched.GetMetricsBody(t, ops[i])
 		gotOwned := readCounter(t, body, `schedd_app_ownership_checks_total{outcome="owned"}`)
 		gotNot := readCounter(t, body, `schedd_app_ownership_checks_total{outcome="not_owned"}`)
 		if gotOwned != wantOwned[i] {

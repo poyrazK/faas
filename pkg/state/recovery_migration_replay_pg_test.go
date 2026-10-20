@@ -49,7 +49,7 @@ FROM pg_proc WHERE pronamespace=current_schema()::regnamespace AND prokind='f' A
 		return value
 	}
 	wantFunctions := fingerprint("")
-	// 20261018003100003_org_resource_lifecycle later rewrote the capacity
+	// 20261019190114207_org_resource_lifecycle_online later rewrote the capacity
 	// projection to read app_resource_accounts. Issued migrations are
 	// append-only, so replaying 004 itself restores its own projection: check
 	// everything else, then put the current projection back so the older 003

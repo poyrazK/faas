@@ -1,4 +1,4 @@
-package sched
+package sched_test
 
 import (
 	"context"
@@ -9,12 +9,13 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/events"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // adr: 611
 func TestDrainEventAttemptHistoryAndRetention(t *testing.T) {
-	d, harnessStore, _, _, gateway := newDrainHarness(t, api.PlanHobby, true)
+	d, harnessStore, _, _, gateway := sched.NewDrainHarness(t, api.PlanHobby, true)
 	store := harnessStore.(*state.MemStore)
 	ctx := context.Background()
 	apps, err := store.ListAllApps(ctx)
@@ -43,10 +44,10 @@ func TestDrainEventAttemptHistoryAndRetention(t *testing.T) {
 	}
 	d.Tick(ctx)
 	h, err := store.EventReceiptAttempts(ctx, app.AccountID, envelope.Source, envelope.ID, sub.ID, state.EventReceiptAttemptCursor{}, 100)
-	if err != nil || len(h.Attempts) != 1 || h.Attempts[0].Outcome != "succeeded" || gateway.calls.Load() != 1 {
+	if err != nil || len(h.Attempts) != 1 || h.Attempts[0].Outcome != "succeeded" || (*gateway.Calls()).Load() != 1 {
 		t.Fatalf("drain attempt: %+v %v", h, err)
 	}
-	retention := NewInvocationsRetention(store, nil).WithClock(func() time.Time { return time.Now().Add(31 * 24 * time.Hour) })
+	retention := sched.NewInvocationsRetention(store, nil).WithClock(func() time.Time { return time.Now().Add(31 * 24 * time.Hour) })
 	if _, _, err := retention.SweepOnce(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -60,10 +61,10 @@ func TestDrainEventAttemptHistoryAndRetention(t *testing.T) {
 }
 
 func TestDrainEventAttemptSettlementRejectsLostClaim(t *testing.T) {
-	_, harnessStore, _, _, _ := newDrainHarness(t, api.PlanHobby, true)
+	_, harnessStore, _, _, _ := sched.NewDrainHarness(t, api.PlanHobby, true)
 	store := harnessStore.(*state.MemStore)
 	ctx := context.Background()
-	inv := seedDrainInvocation(t, store, state.InvocationAsyncInvoke)
+	inv := sched.SeedDrainInvocation(t, store, state.InvocationAsyncInvoke)
 	old, err := store.ClaimInvocationWithCap(ctx, inv.ID, "", 60, 10)
 	if err != nil {
 		t.Fatal(err)
@@ -75,10 +76,10 @@ func TestDrainEventAttemptSettlementRejectsLostClaim(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := completeClaimedInvocation(ctx, store, old, nil); !errors.Is(err, state.ErrNotFound) {
+	if err := sched.CompleteClaimedInvocation(ctx, store, old, nil); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("old scheduler completed new claim: %v", err)
 	}
-	if err := completeClaimedInvocation(ctx, store, current, nil); err != nil {
+	if err := sched.CompleteClaimedInvocation(ctx, store, current, nil); err != nil {
 		t.Fatal(err)
 	}
 }

@@ -8,6 +8,13 @@
 # created by this role (see below) — it is required for the vmmd
 # socket at /run/faas/vmmd.sock to chown correctly.
 
+- name: vmmd_service — install strict egress packet tools
+  ansible.builtin.apt:
+    name:
+      - iproute2
+      - ethtool
+    state: present
+
 - name: vmmd_service — install /etc/faas (create dir, mode 0750)
   ansible.builtin.file:
     path: /etc/faas

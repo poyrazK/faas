@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/cmd/gregale"
 )
 
 // adr: 628
@@ -33,10 +34,10 @@ func TestBucketUploadsCLIUsesOwnedSessionEndpoints(t *testing.T) {
 			t.Setenv("FAAS_API", server.URL)
 			t.Setenv("FAAS_TOKEN", "fixture-token")
 			var out bytes.Buffer
-			previous := osStdout
-			osStdout = &out
-			t.Cleanup(func() { osStdout = previous })
-			if code := cmdBucketUploads(tc.args); code != 0 || out.Len() == 0 {
+			previous := (*main.OsStdout)
+			(*main.OsStdout) = &out
+			t.Cleanup(func() { (*main.OsStdout) = previous })
+			if code := main.CmdBucketUploads(tc.args); code != 0 || out.Len() == 0 {
 				t.Fatal(code, out.String())
 			}
 		})

@@ -52,6 +52,7 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 		tier                Tier   // highest tier seen (=first arrival under the sort)
 		source              string // highest-tier seed's source
 		dockerfile          string // highest-tier seed's dockerfile
+		dockerfileBuild     *api.DockerfileBuildOptions
 		image               string // highest-tier seed's prebuilt image
 		healthcheck         *api.ComposeHealthcheck
 		imageProcess        *api.ComposeProcess
@@ -140,6 +141,9 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 		if !b.dfSet && s.dockerfile != "" {
 			b.dockerfile = s.dockerfile
 			b.dfSet = true
+		}
+		if b.dockerfileBuild == nil && s.dockerfileBuild != nil {
+			b.dockerfileBuild = s.dockerfileBuild.Clone()
 		}
 		if !b.imageSet && (s.imageSet || s.image != "") {
 			b.image = s.image
@@ -244,6 +248,7 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 			Name:                b.name,
 			RootDir:             b.rootDir,
 			Dockerfile:          b.dockerfile,
+			DockerfileBuild:     b.dockerfileBuild.Clone(),
 			Image:               b.image,
 			Command:             b.command,
 			CommandShell:        b.commandShell,
