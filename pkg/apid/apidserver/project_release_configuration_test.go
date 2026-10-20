@@ -332,7 +332,7 @@ func pairedProjectArchive(t *testing.T, migration bool) []byte {
 		}
 	}
 	body := []byte("release: /app/migrate --expand\n")
-	if err := writer.WriteHeader(&tar.Header{Name: "Procfile", Mode: 0644, Size: int64(len(body))}); err != nil {
+	if err := writer.WriteHeader(&tar.Header{Name: "repo/Procfile", Mode: 0644, Size: int64(len(body))}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := writer.Write(body); err != nil {
