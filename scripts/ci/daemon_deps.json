@@ -8,6 +8,11 @@
         "builderd"
       ],
       "reason": "The scheduler engine changes with most fixes; a binary that links it ships with each of them. Use the leaves instead: pkg/storagekey (storage keys), pkg/nodereport (signed capacity reports and inventories), pkg/leaser (the lease contract)."
+    },
+    {
+      "package": "golang.org/x/net/trace",
+      "binaries": "DAEMONS",
+      "reason": "gRPC links it unless the grpcnotrace tag is set (Makefile DAEMON_TAGS); its html/template pages reach reflect.Value.MethodByName, which makes the linker keep every exported method of every type converted to an interface, so every store query change rewrites the daemon (docs/adr/20261020160744-daemon-blast-radius.md)."
     }
   ]
 }
