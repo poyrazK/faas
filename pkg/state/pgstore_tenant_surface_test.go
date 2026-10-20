@@ -557,3 +557,20 @@ func TestPgStore_TenantHostname_ListPending(t *testing.T) {
 		t.Fatalf("pending (limit=1) = %+v, %v", pending, err)
 	}
 }
+
+// A TOTP step is accepted once per account, and only moving forward.
+func TestPgStore_AcceptTOTPStep(t *testing.T) {
+	s, ctx := pgStore(t)
+	acct, err := s.CreateAccount(ctx, "pg-totp-step@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		step int64
+		want bool
+	}{{100, true}, {100, false}, {99, false}, {101, true}} {
+		if got, err := s.AcceptTOTPStep(ctx, acct.ID, tc.step); err != nil || got != tc.want {
+			t.Errorf("AcceptTOTPStep(%d) = %v, %v; want %v", tc.step, got, err, tc.want)
+		}
+	}
+}

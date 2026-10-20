@@ -147,6 +147,9 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
+	// totpLastSteps is each account's last accepted TOTP step
+	// (AcceptTOTPStep), created on first use.
+	totpLastSteps                              map[string]int64
 	migrationVerifications                     map[string]MigrationVerificationRecord
 	migrationCutovers                          map[string]MigrationCutoverRecord
 	projectMigrations                          map[string]ProjectMigrationRecord

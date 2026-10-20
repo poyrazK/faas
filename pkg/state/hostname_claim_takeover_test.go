@@ -155,3 +155,27 @@ func TestMemStoreTenantHostnameOnDeletedSurfaceIsReleasedOnProof(t *testing.T) {
 		t.Fatalf("takeover from a deleted surface = %+v, %v; want the row released", got, err)
 	}
 }
+
+// A TOTP step is accepted once per account, and only moving forward.
+func TestMemStoreAcceptTOTPStep(t *testing.T) {
+	ctx := context.Background()
+	m := NewMemStore()
+	acct, _ := m.CreateAccount(ctx, "totp-step@example.test", api.PlanPro)
+	other, _ := m.CreateAccount(ctx, "totp-step-other@example.test", api.PlanPro)
+	for _, tc := range []struct {
+		account string
+		step    int64
+		want    bool
+	}{
+		{acct.ID, 100, true},
+		{acct.ID, 100, false},
+		{acct.ID, 99, false},
+		{other.ID, 100, true},
+		{acct.ID, 101, true},
+		{"missing", 200, false},
+	} {
+		if got, err := m.AcceptTOTPStep(ctx, tc.account, tc.step); err != nil || got != tc.want {
+			t.Errorf("AcceptTOTPStep(%s, %d) = %v, %v; want %v", tc.account, tc.step, got, err, tc.want)
+		}
+	}
+}
