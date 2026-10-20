@@ -1047,7 +1047,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           ref: ${{ github.sha }}
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v8
         with:
           pattern: native-e2e-${{ github.sha }}-*
           path: ${{ runner.temp }}/native-evidence
