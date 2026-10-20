@@ -13338,6 +13338,10 @@ type UsageStatementInvoiceExport struct {
 	Collection           string
 	DaysUntilDue         int32
 	AutomaticTax         bool
+	Attempt              int32
+	RejectedAt           pgtype.Timestamptz
+	ClaimToken           pgtype.UUID
+	ClaimedUntil         pgtype.Timestamptz
 }
 
 type WarmHint struct {

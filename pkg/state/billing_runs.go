@@ -139,6 +139,10 @@ type BillingRunStore interface {
 	// tenantReason.
 	DiscoverBillingRunItems(ctx context.Context, runID, owner, tenantReason string, now time.Time) error
 	ListDueBillingRunItems(ctx context.Context, runID, owner string, now time.Time, limit int) ([]BillingRunItem, error)
+	// RenewBillingRunLease extends owner's lease to until before the next
+	// item, so a long batch keeps its run (ADR-20261019180000);
+	// ErrBillingRunLeaseLost once another worker holds it.
+	RenewBillingRunLease(ctx context.Context, runID, owner string, until time.Time) error
 	UpdateBillingRunItem(ctx context.Context, owner string, item BillingRunItem) error
 	// ReleaseBillingRun completes the run when no item is pending, and
 	// otherwise frees the lease for the next tick.
@@ -453,6 +457,22 @@ func (m *MemStore) ListDueBillingRunItems(_ context.Context, runID, owner string
 		out = out[:limit]
 	}
 	return out, nil
+}
+
+func (m *MemStore) RenewBillingRunLease(_ context.Context, runID, owner string, until time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.billingRunMapsLocked()
+	run, err := m.leasedBillingRunLocked(runID, owner)
+	if err != nil {
+		return err
+	}
+	until = until.UTC()
+	if run.LeaseUntil == nil || until.After(*run.LeaseUntil) {
+		run.LeaseUntil = &until
+		m.billingRuns[runID] = run
+	}
+	return nil
 }
 
 func (m *MemStore) UpdateBillingRunItem(_ context.Context, owner string, item BillingRunItem) error {

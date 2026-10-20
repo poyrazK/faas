@@ -185,6 +185,11 @@ func (s *Service) processBatch(ctx context.Context, store state.BillingRunStore,
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+		// Each customer can take several provider calls; keep the lease so
+		// no other worker bills the same customers meanwhile.
+		if err := store.RenewBillingRunLease(ctx, run.ID, owner, s.now().Add(api.BillingRunLeaseTTL)); err != nil {
+			return fmt.Errorf("renew billing run lease: %w", err)
+		}
 		if err := store.UpdateBillingRunItem(ctx, owner, s.processItem(ctx, acct, run, item)); err != nil {
 			return fmt.Errorf("record billing run item: %w", err)
 		}
@@ -223,9 +228,10 @@ func problemDetail(p *api.Problem) string {
 }
 
 // settle records a deterministic problem as the item's outcome and passes
-// a transient one (status 500 or above) back for a retry.
+// a transient one (status 500 or above, or an export another attempt is
+// still running) back for a retry.
 func settle(item *state.BillingRunItem, outcome string, p *api.Problem) *api.Problem {
-	if p.Status >= 500 {
+	if p.Status >= 500 || p.Code == api.CodeStatementInvoiceExportInProgress {
 		return p
 	}
 	item.Outcome, item.Reason = outcome, problemDetail(p)
