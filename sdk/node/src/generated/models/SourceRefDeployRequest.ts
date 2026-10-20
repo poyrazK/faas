@@ -95,6 +95,10 @@ export type SourceRefDeployRequest = {
    */
   mcp_task_migration_override?: boolean;
   /**
+   * Release this source ref to production while a deploy freeze is active; the reason is audited (ADR-20261019071733).
+   */
+  override_freeze?: string;
+  /**
    * Opt this source-ref deployment out of temporary startup CPU headroom. Omitted or null preserves the default boost.
    */
   disable_startup_cpu_boost?: boolean | null;
