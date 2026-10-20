@@ -96,7 +96,7 @@ func (m *MemStore) FinishAppHealth(_ context.Context, claim AppHealthClaim, a ap
 	}
 	row.Notification = notification.State
 	row.Entries = append(row.Entries, entries...)
-	row.Latest, row.Key, row.NextCheckAt = cloneAppHealth(&a), key, now.Add(api.AppHealthCollectorInterval)
+	row.Latest, row.Key, row.NextCheckAt = cloneAppHealth(&a), key, now.Add(appHealthNextCheck(entries, a))
 	row.Claim = AppHealthClaim{}
 	bytes := 0
 	start := len(row.Entries)

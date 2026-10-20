@@ -71,6 +71,24 @@ func appHealthKey(a api.AppHealthResponse) (string, error) {
 	return hex.EncodeToString(digest[:]), nil
 }
 
+// appHealthNextCheck spaces the next observation of an app. A quiet app keeps
+// its fresh assessment (no history entry), has no instances and no required
+// capacity, and served no requests in the metrics window, so only a deploy or
+// a wake can change it; it is observed every AppHealthCollectorQuietInterval
+// instead of AppHealthCollectorInterval (ADR-734 amendment 1). Unknown status,
+// capacity or request evidence keeps the short interval so a failed read is
+// retried soon. Production-us had 103 apps, one with a live instance.
+func appHealthNextCheck(entries []api.AppHealthHistoryEntry, a api.AppHealthResponse) time.Duration {
+	c := a.Capacity
+	quiet := len(entries) == 0 && a.Status != "unknown" &&
+		c.Known && c.Required == 0 && c.Ready+c.Starting+c.Unready+c.Unknown == 0 &&
+		(a.Requests == nil || (a.Requests.Known && a.Requests.RequestCount == 0))
+	if quiet {
+		return api.AppHealthCollectorQuietInterval
+	}
+	return api.AppHealthCollectorInterval
+}
+
 func prepareAppHealth(claim AppHealthClaim, a api.AppHealthResponse, now time.Time) (string, []byte, error) {
 	at, err := time.Parse(time.RFC3339Nano, a.EvaluatedAt)
 	if err != nil || a.AppID != claim.AppID || a.Scope != "default" || at.Before(claim.StartedAt) || at.After(now) || a.ValidForSeconds < 1 || a.ValidForSeconds > int(api.AppHealthEvidenceMaxAge/time.Second) {
