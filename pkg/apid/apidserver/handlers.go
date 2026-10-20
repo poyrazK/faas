@@ -724,6 +724,10 @@ func (s *server) createImageDeployment(w http.ResponseWriter, r *http.Request, a
 		return
 	}
 	release.ApplyDefault(r.Context(), s.store, s.log, app, acct.Plan, &req)
+	if ap := s.releaseApprovalCanaryProblem(r.Context(), app, &req); ap != nil {
+		api.WriteProblem(w, ap)
+		return
+	}
 	if p := validateDeploymentTrafficOptions(&req, acct.Plan); p != nil {
 		api.WriteProblem(w, p)
 		return

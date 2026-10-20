@@ -2162,6 +2162,13 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 		api.WriteProblem(w, api.ErrInvalidTrafficPercent(req.TrafficPercent))
 		return
 	}
+	// ADR-20261020085706: a release waiting for approval cannot gain traffic.
+	if req.TrafficPercent > d.TrafficPercent {
+		if p := s.releaseApprovalTrafficProblem(r, app, d); p != nil {
+			api.WriteProblem(w, p)
+			return
+		}
+	}
 	guardCtx, problem := trafficguard.Prepare(r.Context(), acct.ID, app.ID, &req)
 	if problem != nil {
 		api.WriteProblem(w, problem)

@@ -1121,6 +1121,19 @@ type AppRegistryCredential struct {
 	LastUsedAt        pgtype.Timestamptz
 }
 
+type AppReleaseApprovalPolicy struct {
+	AppID             pgtype.UUID
+	AccountID         pgtype.UUID
+	RequiredApprovals int16
+	AfterStage        int16
+	TimeoutMinutes    int32
+	Approvers         string
+	AllowSelfApproval bool
+	UpdatedBy         string
+	CreatedAt         pgtype.Timestamptz
+	UpdatedAt         pgtype.Timestamptz
+}
+
 type AppReleaseGate struct {
 	ID           pgtype.UUID
 	AccountID    pgtype.UUID
@@ -3547,6 +3560,19 @@ type DeploymentRegistryVerification struct {
 	Signature     []byte
 	VerifiedAt    pgtype.Timestamptz
 	ExpiresAt     pgtype.Timestamptz
+}
+
+type DeploymentReleaseApproval struct {
+	ID                pgtype.UUID
+	AccountID         pgtype.UUID
+	AppID             pgtype.UUID
+	DeploymentID      pgtype.UUID
+	ApproverAccountID pgtype.UUID
+	Approver          string
+	ApproverRole      string
+	Decision          string
+	Comment           string
+	CreatedAt         pgtype.Timestamptz
 }
 
 type DeploymentRevisionPin struct {

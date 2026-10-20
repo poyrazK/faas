@@ -1719,6 +1719,16 @@ func (a *safedeployStoreAdapter) AppendDeploymentAudit(ctx context.Context, entr
 	return a.store.AppendDeploymentAudit(ctx, entry)
 }
 
+// LatestRolloutHold lets the orchestrator tell a release waiting for
+// approval from a stuck one (ADR-20261020085706).
+func (a *safedeployStoreAdapter) LatestRolloutHold(ctx context.Context, deploymentID string) (json.RawMessage, error) {
+	holds, ok := a.store.(state.RolloutDecisionStore)
+	if !ok {
+		return nil, nil
+	}
+	return holds.LatestRolloutHold(ctx, deploymentID)
+}
+
 // func(ctx context.Context) signature so Loop.WithPartitionCreate
 // stays thin (it doesn't need the execer / interval / log
 // parameters on its own surface). Called from main only when

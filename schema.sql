@@ -27135,6 +27135,29 @@ CREATE TABLE public.app_registry_credentials (
 
 
 --
+-- Name: app_release_approval_policies; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_release_approval_policies (
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    required_approvals smallint NOT NULL,
+    after_stage smallint NOT NULL,
+    timeout_minutes integer NOT NULL,
+    approvers text NOT NULL,
+    allow_self_approval boolean NOT NULL,
+    updated_by text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT app_release_approval_policies_after_stage_check CHECK (((after_stage >= 1) AND (after_stage <= 10))),
+    CONSTRAINT app_release_approval_policies_approvers_check CHECK ((approvers = ANY (ARRAY['admin'::text, 'developer'::text]))),
+    CONSTRAINT app_release_approval_policies_required_approvals_check CHECK (((required_approvals >= 1) AND (required_approvals <= 5))),
+    CONSTRAINT app_release_approval_policies_timeout_minutes_check CHECK (((timeout_minutes >= 10) AND (timeout_minutes <= 10080))),
+    CONSTRAINT app_release_approval_policies_updated_by_check CHECK (((length(updated_by) >= 1) AND (length(updated_by) <= 320)))
+);
+
+
+--
 -- Name: app_release_gates; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -31507,6 +31530,28 @@ CREATE TABLE public.deployment_registry_verifications (
     CONSTRAINT deployment_registry_verifications_payload_check CHECK (((octet_length(payload) >= 1) AND (octet_length(payload) <= 65536))),
     CONSTRAINT deployment_registry_verifications_signature_check CHECK (((octet_length(signature) >= 1) AND (octet_length(signature) <= 80))),
     CONSTRAINT deployment_registry_verifications_workload_name_check CHECK (((workload_name = ''::text) OR ((workload_name <> 'main'::text) AND (workload_name ~ '^[a-z0-9][a-z0-9-]{0,62}$'::text))))
+);
+
+
+--
+-- Name: deployment_release_approvals; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deployment_release_approvals (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    approver_account_id uuid,
+    approver text NOT NULL,
+    approver_role text NOT NULL,
+    decision text NOT NULL,
+    comment text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT deployment_release_approvals_approver_check CHECK (((length(approver) >= 1) AND (length(approver) <= 320))),
+    CONSTRAINT deployment_release_approvals_approver_role_check CHECK ((approver_role = ANY (ARRAY['owner'::text, 'admin'::text, 'developer'::text, 'personal'::text]))),
+    CONSTRAINT deployment_release_approvals_comment_check CHECK ((length(comment) <= 200)),
+    CONSTRAINT deployment_release_approvals_decision_check CHECK ((decision = ANY (ARRAY['approve'::text, 'reject'::text])))
 );
 
 
@@ -51156,6 +51201,14 @@ ALTER TABLE ONLY public.app_registry_credentials
 
 
 --
+-- Name: app_release_approval_policies app_release_approval_policies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_release_approval_policies
+    ADD CONSTRAINT app_release_approval_policies_pkey PRIMARY KEY (app_id);
+
+
+--
 -- Name: app_release_gates app_release_gates_app_id_name_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -53297,6 +53350,22 @@ ALTER TABLE ONLY public.deployment_registry_rootfs
 
 ALTER TABLE ONLY public.deployment_registry_verifications
     ADD CONSTRAINT deployment_registry_verifications_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: deployment_release_approvals deployment_release_approvals_deployment_id_approver_account_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_release_approvals
+    ADD CONSTRAINT deployment_release_approvals_deployment_id_approver_account_key UNIQUE (deployment_id, approver_account_id);
+
+
+--
+-- Name: deployment_release_approvals deployment_release_approvals_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_release_approvals
+    ADD CONSTRAINT deployment_release_approvals_pkey PRIMARY KEY (id);
 
 
 --
@@ -64110,6 +64179,13 @@ CREATE INDEX deployment_registry_rootfs_deployment_idx ON public.deployment_regi
 --
 
 CREATE INDEX deployment_registry_verifications_latest ON public.deployment_registry_verifications USING btree (deployment_id, workload_name, verified_at DESC, id DESC);
+
+
+--
+-- Name: deployment_release_approvals_app; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX deployment_release_approvals_app ON public.deployment_release_approvals USING btree (app_id, created_at);
 
 
 --
@@ -78306,6 +78382,22 @@ ALTER TABLE ONLY public.app_registry_credentials
 
 
 --
+-- Name: app_release_approval_policies app_release_approval_policies_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_release_approval_policies
+    ADD CONSTRAINT app_release_approval_policies_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_release_approval_policies app_release_approval_policies_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_release_approval_policies
+    ADD CONSTRAINT app_release_approval_policies_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
 -- Name: app_release_gates app_release_gates_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -80855,6 +80947,38 @@ ALTER TABLE ONLY public.deployment_registry_rootfs
 
 ALTER TABLE ONLY public.deployment_registry_verifications
     ADD CONSTRAINT deployment_registry_verifications_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_release_approvals deployment_release_approvals_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_release_approvals
+    ADD CONSTRAINT deployment_release_approvals_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_release_approvals deployment_release_approvals_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_release_approvals
+    ADD CONSTRAINT deployment_release_approvals_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_release_approvals deployment_release_approvals_approver_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_release_approvals
+    ADD CONSTRAINT deployment_release_approvals_approver_account_id_fkey FOREIGN KEY (approver_account_id) REFERENCES public.accounts(id) ON DELETE SET NULL;
+
+
+--
+-- Name: deployment_release_approvals deployment_release_approvals_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_release_approvals
+    ADD CONSTRAINT deployment_release_approvals_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
 
 
 --

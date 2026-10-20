@@ -67,6 +67,7 @@ func Run(t *testing.T, open Open) {
 		{"post_release_watch_candidates_follow_the_newest_release", testPostReleaseWatchCandidates},
 		{"release_freezes_limit_list_and_lift", testReleaseFreezes},
 		{"release_gates_round_trip_and_follow_their_slo", testReleaseGates},
+		{"release_approvals_policy_and_one_decision_per_person", testReleaseApprovals},
 		{"app_secret_revocation_ack_survives_secret_deletion", testAppSecretRevocationAckSurvivesDeletion},
 		{"custom_metrics_cap_applies_to_new_names_only", testCustomMetricsContract},
 		{"scaling_policy_survives_a_store_round_trip", testScalingPolicyRoundTrip},

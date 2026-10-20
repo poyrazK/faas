@@ -286,6 +286,7 @@ sql:
       - "pkg/state/queue_binding_canary_queries.sql"
       - "pkg/state/queue_lease_queries.sql"
       - "pkg/state/regression_action_receipt_queries.sql"
+      - "pkg/state/release_approval_queries.sql"
       - "pkg/state/release_freeze_queries.sql"
       - "pkg/state/release_gate_queries.sql"
       - "pkg/state/release_review_queries.sql"
