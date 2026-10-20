@@ -3,6 +3,7 @@
 -- submits with a decision, for one approval step of an Operation name in an
 -- app environment.
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 CREATE TABLE IF NOT EXISTS customer_operation_approval_forms (
     id           uuid        PRIMARY KEY,
     account_id   uuid        NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
