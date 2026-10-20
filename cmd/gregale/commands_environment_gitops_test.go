@@ -1,7 +1,8 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -12,8 +13,8 @@ import (
 func TestEnvironmentGitOpsCLIReviewedActions(t *testing.T) {
 	for _, action := range []string{"approve", "adopt"} {
 		t.Run(action, func(t *testing.T) {
-			resetJSONOut(t)
-			f := authedFakeAPI(t, `{}`, http.StatusAccepted)
+			main.ResetJSONOut(t)
+			f := main.AuthedFakeAPI(t, `{}`, http.StatusAccepted)
 			file := filepath.Join(t.TempDir(), "review.json")
 			body := `{"commit_sha":"` + strings.Repeat("a", 40) + `","definition_digest":"` + strings.Repeat("b", 64) + `","generation":7}`
 			if action == "adopt" {
@@ -23,21 +24,21 @@ func TestEnvironmentGitOpsCLIReviewedActions(t *testing.T) {
 				t.Fatal(err)
 			}
 			args := []string{action, "shop", "production", "--file", file}
-			if cmdProjectsEnvironmentGitOps(args) == 0 || f.sawMethod != "" {
+			if main.CmdProjectsEnvironmentGitOps(args) == 0 || (*f.SawMethod()) != "" {
 				t.Fatal("reviewed action executed without explicit confirmation")
 			}
-			if cmdProjectsEnvironmentGitOps(append(args, "--yes")) != 0 {
+			if main.CmdProjectsEnvironmentGitOps(append(args, "--yes")) != 0 {
 				t.Fatal("confirmed reviewed action failed")
 			}
 			path := "/v1/projects/shop/environments/production/gitops/adopt"
 			if action == "approve" {
 				path = "/v1/projects/shop/environments/production/gitops/revisions/approve"
 			}
-			if f.sawMethod != http.MethodPost || f.sawPath != path {
-				t.Fatalf("request: %s %s", f.sawMethod, f.sawPath)
+			if (*f.SawMethod()) != http.MethodPost || (*f.SawPath()) != path {
+				t.Fatalf("request: %s %s", (*f.SawMethod()), (*f.SawPath()))
 			}
 			var request map[string]any
-			if err := json.Unmarshal(f.sawBody, &request); err != nil {
+			if err := json.Unmarshal((*f.SawBody()), &request); err != nil {
 				t.Fatal(err)
 			}
 			if action == "approve" && (request["expected_generation"] != float64(7) || request["definition_digest"] != strings.Repeat("b", 64)) {
@@ -51,40 +52,40 @@ func TestEnvironmentGitOpsCLIReviewedActions(t *testing.T) {
 }
 
 func TestEnvironmentGitOpsCLIControlsPreserveExplicitFalse(t *testing.T) {
-	resetJSONOut(t)
-	f := authedFakeAPI(t, `{}`, http.StatusOK)
-	if code := cmdProjectsEnvironmentGitOps([]string{"controls", "shop", "staging", "--generation", "3", "--prune=false", "--suspended=false"}); code != 0 {
+	main.ResetJSONOut(t)
+	f := main.AuthedFakeAPI(t, `{}`, http.StatusOK)
+	if code := main.CmdProjectsEnvironmentGitOps([]string{"controls", "shop", "staging", "--generation", "3", "--prune=false", "--suspended=false"}); code != 0 {
 		t.Fatalf("exit %d", code)
 	}
 	var request map[string]any
-	if err := json.Unmarshal(f.sawBody, &request); err != nil {
+	if err := json.Unmarshal((*f.SawBody()), &request); err != nil {
 		t.Fatal(err)
 	}
-	if f.sawMethod != http.MethodPatch || request["prune"] != false || request["suspended"] != false || request["expected_generation"] != float64(3) {
-		t.Fatalf("controls: %s %+v", f.sawMethod, request)
+	if (*f.SawMethod()) != http.MethodPatch || request["prune"] != false || request["suspended"] != false || request["expected_generation"] != float64(3) {
+		t.Fatalf("controls: %s %+v", (*f.SawMethod()), request)
 	}
 }
 
 func TestEnvironmentGitOpsCLIRejectsBlockedAdoption(t *testing.T) {
-	resetJSONOut(t)
-	f := authedFakeAPI(t, `{}`, http.StatusAccepted)
+	main.ResetJSONOut(t)
+	f := main.AuthedFakeAPI(t, `{}`, http.StatusAccepted)
 	file := filepath.Join(t.TempDir(), "blocked.json")
 	if err := os.WriteFile(file, []byte(`{"plan_hash":"`+strings.Repeat("a", 64)+`","blocking_reasons":["owned by Terraform"]}`), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if cmdProjectsEnvironmentGitOps([]string{"adopt", "shop", "production", "--file", file, "--yes"}) == 0 || f.sawMethod != "" {
+	if main.CmdProjectsEnvironmentGitOps([]string{"adopt", "shop", "production", "--file", file, "--yes"}) == 0 || (*f.SawMethod()) != "" {
 		t.Fatal("blocked ownership plan sent to adoption API")
 	}
 }
 
 func TestEnvironmentGitOpsCLIProtectedBinding(t *testing.T) {
-	resetJSONOut(t)
-	f := authedFakeAPI(t, `{}`, http.StatusCreated)
-	if code := cmdProjectsEnvironmentGitOps([]string{"bind", "shop", "production", "--manifest-path", "environments/production.yaml", "--approval-policy", "protected_branch"}); code != 0 {
+	main.ResetJSONOut(t)
+	f := main.AuthedFakeAPI(t, `{}`, http.StatusCreated)
+	if code := main.CmdProjectsEnvironmentGitOps([]string{"bind", "shop", "production", "--manifest-path", "environments/production.yaml", "--approval-policy", "protected_branch"}); code != 0 {
 		t.Fatalf("exit %d", code)
 	}
 	var req map[string]any
-	if err := json.Unmarshal(f.sawBody, &req); err != nil {
+	if err := json.Unmarshal((*f.SawBody()), &req); err != nil {
 		t.Fatal(err)
 	}
 	if req["approval_policy"] != "protected_branch" || req["mode"] != "report" {
@@ -95,34 +96,34 @@ func TestEnvironmentGitOpsCLIProtectedBinding(t *testing.T) {
 func TestEnvironmentGitOpsCLIBindingLifecycleRequiresReviewedGeneration(t *testing.T) {
 	for _, action := range []string{"rebind", "unbind"} {
 		t.Run(action, func(t *testing.T) {
-			resetJSONOut(t)
+			main.ResetJSONOut(t)
 			status := http.StatusCreated
 			method := http.MethodPost
 			if action == "unbind" {
 				status = http.StatusNoContent
 				method = http.MethodDelete
 			}
-			f := authedFakeAPI(t, `{}`, status)
+			f := main.AuthedFakeAPI(t, `{}`, status)
 			args := []string{action, "shop", "production", "--expected-generation", "7"}
 			if action == "rebind" {
 				args = append(args, "--manifest-path", "env/new.yaml", "--ref", "refs/heads/reviewed")
 			}
-			if cmdProjectsEnvironmentGitOps(args) == 0 || f.sawMethod != "" {
+			if main.CmdProjectsEnvironmentGitOps(args) == 0 || (*f.SawMethod()) != "" {
 				t.Fatal("lifecycle changed ownership without confirmation")
 			}
-			if cmdProjectsEnvironmentGitOps(append(args, "--yes")) != 0 {
+			if main.CmdProjectsEnvironmentGitOps(append(args, "--yes")) != 0 {
 				t.Fatal("reviewed lifecycle request failed")
 			}
 			want := "/v1/projects/shop/environments/production/gitops/source"
 			if action == "rebind" {
 				want += "/rebind"
 			}
-			if f.sawMethod != method || f.sawPath != want {
-				t.Fatalf("request: %s %s", f.sawMethod, f.sawPath)
+			if (*f.SawMethod()) != method || (*f.SawPath()) != want {
+				t.Fatalf("request: %s %s", (*f.SawMethod()), (*f.SawPath()))
 			}
 			var body map[string]any
-			if err := json.Unmarshal(f.sawBody, &body); err != nil || body["expected_generation"] != float64(7) {
-				t.Fatalf("generation: %s %v", f.sawBody, err)
+			if err := json.Unmarshal((*f.SawBody()), &body); err != nil || body["expected_generation"] != float64(7) {
+				t.Fatalf("generation: %s %v", (*f.SawBody()), err)
 			}
 		})
 	}

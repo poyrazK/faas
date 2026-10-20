@@ -24,7 +24,7 @@ type customerOperationSignalClient interface {
 
 type customerOperationSignalCommand struct {
 	app, id, scope, operation, subject string
-	// ADR-1286: --self signals the tenant's own Operations; a subject signal
+	// ADR-20261017100853: --self signals the tenant's own Operations; a subject signal
 	// then names the definition instead of scope and operation.
 	self       bool
 	definition string
@@ -158,7 +158,7 @@ func runCustomerOperationSignal(ctx context.Context, client customerOperationSig
 }
 
 // tenantCustomerOperationSignalClient selects only the tenant-self signal
-// routes (ADR-1286); a subject signal is scoped by its definition.
+// routes (ADR-20261017100853); a subject signal is scoped by its definition.
 type tenantCustomerOperationSignalClient struct {
 	client     *api.Client
 	definition string

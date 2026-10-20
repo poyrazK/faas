@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -46,7 +47,7 @@ func TestHistoricalAlertWaitPinsOperationAndCompletion(t *testing.T) {
 					complete.AuditID = ""
 				}
 				client := &alertWaitFixtureClient{rows: []api.AlertRollback{pending, complete}}
-				got, err := waitAlertRollback(t.Context(), client, "app", pin, time.Millisecond)
+				got, err := main.WaitAlertRollback(t.Context(), client, "app", pin, time.Millisecond)
 				if scenario == "complete" {
 					if err != nil || got.Status != "complete" || client.read != 2 {
 						t.Fatalf("wait %+v %v", got, err)
@@ -60,12 +61,12 @@ func TestHistoricalAlertWaitPinsOperationAndCompletion(t *testing.T) {
 }
 func TestAlertPostDeployWindowDuration(t *testing.T) {
 	for _, d := range []time.Duration{-time.Second, time.Millisecond, time.Hour + time.Second} {
-		if _, err := alertRollbackWindowSeconds(d); err == nil {
+		if _, err := main.AlertRollbackWindowSeconds(d); err == nil {
 			t.Errorf("invalid %s", d)
 		}
 	}
 	for _, d := range []time.Duration{0, time.Second, 10 * time.Minute, time.Hour} {
-		if seconds, err := alertRollbackWindowSeconds(d); err != nil || seconds != int(d/time.Second) {
+		if seconds, err := main.AlertRollbackWindowSeconds(d); err != nil || seconds != int(d/time.Second) {
 			t.Errorf("duration %s %d %v", d, seconds, err)
 		}
 	}
@@ -106,7 +107,7 @@ func TestAlertWindowCLIRequestPreservesOmittedAndExplicitZero(t *testing.T) {
 	for _, flags := range [][]string{{"--post-deploy-rollback-window", "10m"}, {"--name", "renamed"}, {"--post-deploy-rollback-window", "0"}} {
 		args := append([]string{"--app", "demo"}, flags...)
 		args = append(args, id)
-		if code := cmdAlertUpdate(args); code != 0 {
+		if code := main.CmdAlertUpdate(args); code != 0 {
 			t.Fatalf("exit %d", code)
 		}
 	}

@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	repairapi "github.com/onebox-faas/faas/pkg/apid/datarepair"
 	"github.com/onebox-faas/faas/pkg/datarepair"
 )
@@ -38,10 +39,10 @@ func TestDataRepairHistoryCLIReadOnlyAndScoped(t *testing.T) {
 	t.Setenv("FAAS_API", server.URL)
 	t.Setenv("FAAS_TOKEN", "hosted-reader")
 	var out bytes.Buffer
-	old := osStdout
-	osStdout = &out
-	defer func() { osStdout = old }()
-	if cmdDataRepair([]string{"history", source, "--url", server.URL, "--limit", "1"}) != 0 || gotPath != "/v1/data-repair/sources/"+source+"/history" || gotToken != "Bearer executor-reader" {
+	old := (*main.OsStdout)
+	(*main.OsStdout) = &out
+	defer func() { (*main.OsStdout) = old }()
+	if main.CmdDataRepair([]string{"history", source, "--url", server.URL, "--limit", "1"}) != 0 || gotPath != "/v1/data-repair/sources/"+source+"/history" || gotToken != "Bearer executor-reader" {
 		t.Fatal("standalone history lost its fixed origin or authority")
 	}
 	var got datarepair.HistoryPage
@@ -49,7 +50,7 @@ func TestDataRepairHistoryCLIReadOnlyAndScoped(t *testing.T) {
 		t.Fatal("history lost plan identity/digest")
 	}
 	out.Reset()
-	if cmdDataRepair([]string{"history", source, "--app", "products", "--environment", scope.Environment, "--customer", scope.PlatformTenantID, "--limit", "1", "--cursor", "opaque+/?&"}) != 0 ||
+	if main.CmdDataRepair([]string{"history", source, "--app", "products", "--environment", scope.Environment, "--customer", scope.PlatformTenantID, "--limit", "1", "--cursor", "opaque+/?&"}) != 0 ||
 		gotPath != "/v1/apps/products/data-repair/sources/"+source+"/history" || gotToken != "Bearer hosted-reader" || gotCustomer != scope.PlatformTenantID || gotCursor != "opaque+/?&" {
 		t.Fatal("hosted history changed filters, cursor or authority")
 	}
@@ -60,7 +61,7 @@ func TestDataRepairHistoryCLIReadOnlyAndScoped(t *testing.T) {
 		{"apply", id, "--app", "products", "--source", source, "--digest", digest, "--yes"},
 		{"get", id, "--app", "products", "--environment", scope.Environment},
 	} {
-		if cmdDataRepair(args) == 0 {
+		if main.CmdDataRepair(args) == 0 {
 			t.Fatal("invalid history query or write shortcut accepted", args)
 		}
 	}
@@ -69,7 +70,7 @@ func TestDataRepairHistoryCLIReadOnlyAndScoped(t *testing.T) {
 	}
 	malformed = true
 	out.Reset()
-	if cmdDataRepair([]string{"history", source, "--url", server.URL}) == 0 || out.Len() != 0 {
+	if main.CmdDataRepair([]string{"history", source, "--url", server.URL}) == 0 || out.Len() != 0 {
 		t.Fatal("history accepted a different source identity")
 	}
 }
@@ -101,16 +102,16 @@ func TestDataRepairHistoryRetainedCLIGetAndVerify(t *testing.T) {
 	t.Setenv("FAAS_API", server.URL)
 	t.Setenv("FAAS_TOKEN", "history-reader")
 	var out bytes.Buffer
-	old := osStdout
-	osStdout = &out
-	defer func() { osStdout = old }()
+	old := (*main.OsStdout)
+	(*main.OsStdout) = &out
+	defer func() { (*main.OsStdout) = old }()
 	for _, verb := range []string{"get", "verify"} {
 		args := []string{verb, id, "--app", "products", "--source", source, "--environment", scope.Environment, "--customer", ""}
 		if verb == "verify" {
 			args = append(args, "--digest", digest)
 		}
 		out.Reset()
-		if cmdDataRepair(args) != 0 {
+		if main.CmdDataRepair(args) != 0 {
 			t.Fatal("cannot recover retained plan/receipt", verb)
 		}
 	}
@@ -120,12 +121,12 @@ func TestDataRepairHistoryRetainedCLIGetAndVerify(t *testing.T) {
 	report.Available, report.Checked, report.Unchanged, report.Issues = false, 0, 0, []string{"journal_purged"}
 	out.Reset()
 	args := []string{"verify", id, "--app", "products", "--source", source, "--customer", "", "--digest", digest}
-	if cmdDataRepair(args) == 0 || !strings.Contains(out.String(), "journal_purged") {
+	if main.CmdDataRepair(args) == 0 || !strings.Contains(out.String(), "journal_purged") {
 		t.Fatal("retained verification hid unavailable journal evidence")
 	}
 	report.SourceOperationID = uuid.NewString()
 	out.Reset()
-	if cmdDataRepair(args) == 0 || out.Len() != 0 {
+	if main.CmdDataRepair(args) == 0 || out.Len() != 0 {
 		t.Fatal("verification crossed discovered source")
 	}
 }

@@ -1,9 +1,10 @@
-package main
+package main_test
 
 import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -30,12 +31,12 @@ func TestDiagnosticProblemFallbackHints(t *testing.T) {
 		{status: 503, code: api.CodeTenantSurfacesNotEnabled, want: "not enabled on this Gregale installation"},
 		{status: 503, code: "object_storage_unavailable", want: "service status"},
 	} {
-		got := diagnosticProblem(api.Problem{Status: tc.status, Code: tc.code, Title: "x"})
+		got := main.DiagnosticProblem(api.Problem{Status: tc.status, Code: tc.code, Title: "x"})
 		if !strings.Contains(got.Hint, tc.want) {
 			t.Errorf("status %d code %q hint = %q, want it to mention %q", tc.status, tc.code, got.Hint, tc.want)
 		}
 	}
-	server := diagnosticProblem(api.Problem{Status: 501, Hint: "server hint"})
+	server := main.DiagnosticProblem(api.Problem{Status: 501, Hint: "server hint"})
 	if server.Hint != "server hint" {
 		t.Errorf("a server-supplied hint was replaced: %q", server.Hint)
 	}
@@ -44,12 +45,12 @@ func TestDiagnosticProblemFallbackHints(t *testing.T) {
 // A policy 403 (here an alert webhook resolving to a private address) must
 // not be told to check credentials; an authorization 403 still is (H10-73).
 func TestDiagnosticProblemCredentialHintOnlyForAuthorization(t *testing.T) {
-	policy := diagnosticProblem(api.Problem{Status: 403, Code: api.CodeImageEgressDenied, Detail: "webhook_url resolves to 10.0.0.5"})
+	policy := main.DiagnosticProblem(api.Problem{Status: 403, Code: api.CodeImageEgressDenied, Detail: "webhook_url resolves to 10.0.0.5"})
 	if strings.Contains(policy.Hint, "profile check") {
 		t.Fatalf("policy 403 hint = %q, want no credential hint", policy.Hint)
 	}
 	for _, code := range []string{"", api.CodeForbidden, api.CodeOrgRoleForbidden} {
-		if got := diagnosticProblem(api.Problem{Status: 403, Code: code}); !strings.Contains(got.Hint, "profile check") {
+		if got := main.DiagnosticProblem(api.Problem{Status: 403, Code: code}); !strings.Contains(got.Hint, "profile check") {
 			t.Fatalf("authorization 403 %q hint = %q, want the credential hint", code, got.Hint)
 		}
 	}

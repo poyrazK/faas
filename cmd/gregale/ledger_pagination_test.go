@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -24,7 +25,7 @@ func TestLedgerPaginationContract(t *testing.T) {
 		for _, machine := range []bool{false, true} {
 			for _, mode := range []string{"page", "all", "empty-page", "empty", "api-error", "repeat", "cycle"} {
 				t.Run(fmt.Sprintf("%s/json=%t/%s", kind, machine, mode), func(t *testing.T) {
-					setupCLIRegression(t)
+					main.SetupCLIRegression(t)
 					start, next := "start| + opaque", "next| + opaque"
 					cursorKey, limitKey, path := "before", "limit", "/v1/apps/demo/queues/"+kind
 					if kind == "dead-letter" {
@@ -92,7 +93,7 @@ func TestLedgerPaginationContract(t *testing.T) {
 					}))
 					defer server.Close()
 					t.Setenv("FAAS_API", server.URL)
-					t.Setenv("FAAS_TOKEN", testAPIKey('a'))
+					t.Setenv("FAAS_TOKEN", main.TestAPIKey('a'))
 					command := ledgerPaginationCommand(kind)
 					legacy := "--before"
 					if kind == "webhooks" {
@@ -107,7 +108,7 @@ func TestLedgerPaginationContract(t *testing.T) {
 					if machine {
 						command = append(command, "--json")
 					}
-					code, out, errOut := capturePreviewRun(t, command)
+					code, out, errOut := main.CapturePreviewRun(t, command)
 					wantCursors := []string{start}
 					if mode == "all" || mode == "api-error" {
 						wantCursors = append(wantCursors, next)
@@ -127,7 +128,7 @@ func TestLedgerPaginationContract(t *testing.T) {
 							t.Fatalf("exit=%d stdout=%s stderr=%s", code, out, errOut)
 						}
 						if machine {
-							assertOneProblem(t, errOut)
+							main.AssertOneProblem(t, errOut)
 						}
 						return
 					}
@@ -209,7 +210,7 @@ func TestLedgerPaginationLimitsAndLegacyAliases(t *testing.T) {
 	for _, kind := range []string{"webhooks", "peek", "dead-letter"} {
 		for _, limit := range []int{0, 1, 100, 101} {
 			t.Run(fmt.Sprintf("%s/%d", kind, limit), func(t *testing.T) {
-				setupCLIRegression(t)
+				main.SetupCLIRegression(t)
 				calls := 0
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					calls++
@@ -230,7 +231,7 @@ func TestLedgerPaginationLimitsAndLegacyAliases(t *testing.T) {
 				}))
 				defer server.Close()
 				t.Setenv("FAAS_API", server.URL)
-				t.Setenv("FAAS_TOKEN", testAPIKey('a'))
+				t.Setenv("FAAS_TOKEN", main.TestAPIKey('a'))
 				command := ledgerPaginationCommand(kind)
 				legacy := "--before"
 				if kind == "webhooks" {
@@ -241,12 +242,12 @@ func TestLedgerPaginationLimitsAndLegacyAliases(t *testing.T) {
 					command = append(command, "--limit", "2", "--page-size", fmt.Sprint(limit))
 				}
 				command = append(command, "--all", "--json")
-				code, out, errOut := capturePreviewRun(t, command)
+				code, out, errOut := main.CapturePreviewRun(t, command)
 				if limit < 1 || limit > 100 {
 					if code != 1 || calls != 0 || out != "" {
 						t.Fatalf("exit=%d calls=%d output=%s", code, calls, out)
 					}
-					assertOneProblem(t, errOut)
+					main.AssertOneProblem(t, errOut)
 				} else if code != 0 || calls != 1 || errOut != "" {
 					t.Fatalf("exit=%d calls=%d output=%s stderr=%s", code, calls, out, errOut)
 				}
@@ -258,14 +259,14 @@ func TestLedgerPaginationLimitsAndLegacyAliases(t *testing.T) {
 func TestLedgerPaginationHelp(t *testing.T) {
 	for _, kind := range []string{"webhooks", "peek", "dead-letter"} {
 		t.Run(kind, func(t *testing.T) {
-			setupCLIRegression(t)
+			main.SetupCLIRegression(t)
 			command := []string{"queue", kind, "--help"}
 			legacy := []string{"--before"}
 			if kind == "webhooks" {
 				command = []string{"webhooks", "deliveries", "--help"}
 				legacy = []string{"--page-token", "--page-size"}
 			}
-			code, out, errOut := capturePreviewRun(t, command)
+			code, out, errOut := main.CapturePreviewRun(t, command)
 			if code != 0 || errOut != "" {
 				t.Fatalf("exit=%d stderr=%s", code, errOut)
 			}

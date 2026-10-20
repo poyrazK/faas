@@ -57,7 +57,7 @@ class OperationResponse:
     """Repair plan metadata in Operation history; captured row values remain in the application executor."""
     limits: OperationLimits | Unset = UNSET
     """ADR-1196 bounds fixed onto each accepted Operation. Every field is optional and bounded by the plan;
-    workflow definitions take a deadline and an execution budget (ADR-1199), and job definitions take none."""
+    workflow definitions take a deadline and an execution budget (ADR-20261016110803), and job definitions take none."""
     deadline_at: datetime.datetime | Unset = UNSET
     """Absolute deadline fixed at acceptance; waits, retries and recovery count against it."""
     usage: OperationUsage | Unset = UNSET

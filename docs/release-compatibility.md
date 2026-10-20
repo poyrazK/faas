@@ -35,6 +35,30 @@ Three consequences:
   no live snapshot carries a guest-init that reads it. Record that check in
   the allowlist entry (below).
 
+## No downtime, no exceptions
+
+**No migration and no release may require stopping writers or a
+maintenance window.** There is no exception process. The no-downtime lint
+rules (Gate 2) have no waiver, the deploy workflows have no maintenance
+input, and an ADR cannot grant an exception
+([ADR 202610171900, amendment 1](adr/202610171900-release-compatibility-gates.md#amendment-1-2026-10-19-no-downtime-no-exceptions)).
+The rc.277 rollout showed why: the #4882 ownership cutover ran under a
+"planned-maintenance exception" and deadlocked against live writers.
+
+A change that seems to need a window ships as a sequence across releases
+instead. Examples are moving rows to a new owner, re-pointing foreign keys,
+and backfilling a column:
+
+1. **Expand.** Add the new column, table or constraint (`NOT VALID`). The
+   release writes both the old and the new shape.
+2. **Backfill.** Move existing rows in batches that each commit
+   ([the pattern](#batched-backfill)), or move them from a job.
+3. **Validate.** `VALIDATE CONSTRAINT` in a later migration. It does not
+   block writes.
+4. **Switch.** A release reads only the new shape.
+5. **Contract.** A later release drops the old shape. That release's data
+   step is a contract migration.
+
 ## Deploy order
 
 Roll a release out in this order, and roll back in the reverse order:
@@ -105,10 +129,128 @@ section. A table, view or index that does not exist in the base's
 | `column-type` | `ALTER COLUMN … TYPE` | add a new column, backfill, move readers |
 | `not-null` | `ADD COLUMN … NOT NULL` without a `DEFAULT`; `SET NOT NULL` without a `SET DEFAULT` in the same migration | add the column with a constant default, or nullable and backfilled; constrain it in a later release |
 | `table-rewrite` | `ADD COLUMN` with a volatile default (`gen_random_uuid()`, `clock_timestamp()`, …) or a `STORED` generated column | add it without a default, backfill in batches, then set the default |
-| `lock-timeout` | an `ALTER TABLE`, a non-concurrent `CREATE`/`DROP INDEX`, `CREATE`/`DROP TRIGGER`, `CREATE OR REPLACE VIEW`, `LOCK`, `REINDEX` or similar on an existing table, with no `lock_timeout` set before it; a `lock_timeout` of 0 or more than 10 s | start the Up section with `SET LOCAL lock_timeout = '5s';` |
+| `lock-timeout` | an `ALTER TABLE`, a non-concurrent `CREATE`/`DROP INDEX`, `CREATE`/`DROP TRIGGER`, `CREATE OR REPLACE VIEW`, `LOCK`, `TRUNCATE`, `REINDEX` or similar on an existing table, or a foreign key (also in a `CREATE TABLE`) that references one, with no `lock_timeout` in force; a `lock_timeout` of 0 or more than 10 s | start the Up section with `SET LOCAL lock_timeout = '5s';` (under `NO TRANSACTION`, see below) |
 | `index-build` | `CREATE INDEX`, `ADD PRIMARY KEY` or `ADD UNIQUE` on an existing table | `CREATE INDEX CONCURRENTLY` in a `-- +goose NO TRANSACTION` migration, then `ADD CONSTRAINT … USING INDEX` |
 | `concurrently-in-transaction` | `CONCURRENTLY` without `-- +goose NO TRANSACTION` | add the directive |
 | `compat-marker` | no `-- migration-compat:` class, or more than one; a migration marked `expand` that makes a contract change or waives `lock-timeout` or `concurrently-in-transaction` (cannot be waived) | declare the class; mark a contract change `contract` |
+
+**No-downtime rules.** These four rules have no waiver. Each one rejects a
+change that only stopping writers would make safe, and the online pattern
+always exists:
+
+| Rule | Fails on | Do instead |
+|---|---|---|
+| `constraint-validation` | `ADD CONSTRAINT … FOREIGN KEY` or `CHECK` on an existing table without `NOT VALID`; `VALIDATE CONSTRAINT` in the transaction that adds the constraint; `ADD COLUMN` with a `CHECK`, or with `REFERENCES` and a `DEFAULT` | add it `NOT VALID`, then `VALIDATE CONSTRAINT` in a later migration (or a later goose statement under `NO TRANSACTION`) |
+| `constraint-churn` | one migration that both drops and adds constraints of one existing table, unless it is a `NO TRANSACTION` migration in which no goose statement both adds and drops, and every drop follows a `VALIDATE` of the constraint added before it (`ADD CONSTRAINT … USING INDEX` is exempt) | add the replacement `NOT VALID` under a new name; validate it and drop the old one in a later migration |
+| `unbatched-write` | an `UPDATE` or `DELETE` of an existing table that is not batched (definition below); a loop of batches inside one transaction | the [batched backfill](#batched-backfill), or a job |
+| `lock-fanout` | one transaction that takes write-blocking locks on more than 3 existing tables. A foreign key also locks the table it references | split the migration, or use `-- +goose NO TRANSACTION` |
+
+The rules count only tables that exist in the base's `schema.sql`.
+
+A statement takes a **write-blocking lock** when it holds a lock that stops
+`INSERT`, `UPDATE` and `DELETE` until its transaction commits. These are
+the statements that need `lock_timeout`, plus the table a foreign key
+references. `VALIDATE CONSTRAINT` takes a weaker lock that writes pass, so
+it does not count. Every lock is held until commit while the transaction
+waits for the next one. A writer that holds one of those tables and waits
+for another closes a deadlock, which is what rolled rc.277 back. The limit
+of 3 covers a table plus two foreign-key parents, or a table and a trigger
+on another table. A replay of the 1,374 migrations added since 2026-09-12,
+each checked against its own base, found that 94% lock at most 3 tables
+and 86% lock at most 2. The #4882 cutover locked 42 tables in one
+transaction.
+
+An `UPDATE` or `DELETE` of an existing table is **batched** when any of
+these holds:
+
+- its rows come from a `SELECT … FROM <that table> … LIMIT n`, with n at
+  most 10,000 or a PL/pgSQL variable. The `SELECT` can sit in its `FROM`,
+  `USING` or `WHERE` clause or in a `WITH` query of the same statement;
+- its `WHERE` sets every column of one primary key or unique constraint
+  (from the base `schema.sql`) to a constant with `=` or `IN (…)`, with
+  `AND` only between the conditions. Such a statement changes a known
+  handful of rows, such as one seeded preset;
+- inside a `DO` block, its `WHERE` ANDs `<column> = ANY (<variable>)`, and
+  the same block fills that variable with `SELECT … INTO <variable>` from a
+  `SELECT … FROM <that table> … LIMIT n`: the keys of one batch.
+
+A whole-table `UPDATE` after `LOCK TABLE` is not batched: the lock blocks
+writes for the whole scan. To cover rows written during a backfill, install
+the trigger that maintains the new column first, then backfill in batches.
+
+A loop of batches inside one transaction keeps every batch's row locks
+until the migration commits. It must run in a `-- +goose NO TRANSACTION`
+migration and `COMMIT` after each batch.
+
+**`NO TRANSACTION` and `lock_timeout`.** Under `-- +goose NO TRANSACTION`,
+goose runs every statement as its own transaction. It runs them all on one
+pinned connection: `pkg/db` applies migrations through goose's `Provider`.
+The consequences for `lock_timeout`:
+
+- A session-level `SET lock_timeout = '500ms';` at the top holds for the
+  rest of the file.
+- `SET LOCAL lock_timeout` on its own line ends with its own one-statement
+  transaction, so it does nothing.
+- `set_config('lock_timeout', '5s', true)` in a `DO` block holds until that
+  block's transaction ends, and a `COMMIT` inside the block resets it.
+
+The linter follows these rules.
+
+### Batched backfill
+
+Use keyset batches: each batch starts after the last key of the one before.
+A batch selected by `WHERE new_column IS NULL … LIMIT n` re-reads every row
+already done, so the whole backfill takes quadratic time. Put the block
+alone in a `-- +goose NO TRANSACTION` migration:
+
+```sql
+-- migration-compat: expand
+-- +goose NO TRANSACTION
+-- +goose Up
+-- +goose StatementBegin
+DO $backfill$
+DECLARE
+  last_id uuid := '00000000-0000-0000-0000-000000000000';
+BEGIN
+  LOOP
+    PERFORM set_config('lock_timeout', '5s', true);
+    WITH batch AS (
+      SELECT id FROM apps WHERE id > last_id ORDER BY id LIMIT 1000
+    ), moved AS (
+      UPDATE apps SET org_id = apps.account_id
+        FROM batch WHERE apps.id = batch.id AND apps.org_id IS NULL
+    )
+    SELECT max(id) INTO last_id FROM batch;
+    EXIT WHEN last_id IS NULL;
+    COMMIT;
+  END LOOP;
+END
+$backfill$;
+-- +goose StatementEnd
+-- +goose Down
+SELECT 1;
+```
+
+Postgres runs the data-modifying `moved` query even though nothing reads
+it. The block is idempotent: if it fails or is interrupted, the next deploy
+reruns it and skips the rows it already moved. On a scratch Postgres 16 it
+backfilled 3,000,000 rows correctly. The release that ships the backfill
+must already write the new column, so rows written during the backfill are
+covered. To add a constraint that the backfill makes true, add it
+`NOT VALID` before the backfill and validate it in a migration after.
+
+**Widening a CHECK** follows the same shape, in two migrations:
+
+```sql
+-- Migration 1: the wider check, NOT VALID under a new name. The old one still holds.
+SET LOCAL lock_timeout = '5s';
+ALTER TABLE apps ADD CONSTRAINT apps_tier_check_v2 CHECK (tier IN ('free', 'hobby', 'pro', 'team')) NOT VALID;
+
+-- Migration 2: prove it, then drop the narrow one. Writers may use the new value after this.
+SET LOCAL lock_timeout = '5s';
+ALTER TABLE apps VALIDATE CONSTRAINT apps_tier_check_v2;
+ALTER TABLE apps DROP CONSTRAINT apps_tier_check;
+```
 
 **Compatibility class.** Every new migration says, once, which kind it is
 ([ADR 20261018084150](adr/20261018084150-unit-lane-expand-migrations.md)):
@@ -132,8 +274,9 @@ The linter rejects an `expand` migration that does any of these:
 - drops a column default.
 
 What no linter sees is the author's claim to make: a trigger function's
-`pg_notify` payload, a new CHECK or foreign key, a backfill that changes a
-value's meaning.
+`pg_notify` payload, whether the previous release's writes satisfy a new
+CHECK or foreign key, a backfill that changes a value's meaning, and DDL
+that a `DO` block builds as a string and runs with `EXECUTE`.
 
 Why `lock_timeout` matters: without it, an `ALTER` queues behind one
 long-running transaction, and every later query on that table queues behind
@@ -143,7 +286,7 @@ and the old version keeps serving.
 
 **Waivers** are a comment anywhere in the migration. Name the rule,
 optionally the object, and give a reason; a waiver without a reason does not
-count:
+count. `compat-marker` and the four no-downtime rules cannot be waived:
 
 ```sql
 -- migration-lint: allow index-build events: 1 s write pause measured on 394k rows

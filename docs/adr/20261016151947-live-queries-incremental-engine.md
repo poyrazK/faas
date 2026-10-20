@@ -1045,9 +1045,51 @@ Phase 0 did not cover:
 
     A backend's `live_hub_url` still names one hub, so each backend can
     serve one live database until livequeryd hosts several.
+  - **Fleet-PKI leaves** (2026-10-19). Hub and realtimed authenticate with
+    leaves of the internal CA:
+    - livequeryd's server leaf is `livequeryd.faas`;
+    - realtimed's client leaf is `realtimed.faas`.
+
+    They are *feature leaves* (`pkg/pki/feature.go`): a host carries them
+    only when the feature is on. No host role requires them, which avoids
+    the rc.255 failure, where leaves added to the required set broke
+    rollouts of hosts that lacked them.
+
+    How they are issued, used and renewed:
+    - `gregalectl pki issue-feature` issues them on the CA's host. The
+      compute node's leaf is staged there and copied over.
+    - `pki metrics` reports their expiry, and `pki_renew.yml` renews them.
+    - livequeryd's `-client-name` admits only realtimed's leaf, so no other
+      fleet identity can carry RLS claims.
+    - realtimed verifies hubs as `livequeryd.faas`
+      (`FAAS_REALTIME_LIVE_TLS_SERVER_NAME`).
   - **Unverified on Neon:** logical replication on the project, event
     triggers for the schema-change log, and slot persistence across a
     suspend.
+
+- **Data API parity** (2026-10-18, with ADR-20261018170742).
+  - **Claims.** The Data API gateway now owns `gregale_access` and the other
+    `gregale_*` claims, overwriting whatever an identity provider's token
+    carries. RLS-mode sessions do the same: the hub removes the gateway-owned
+    claims from the verified claims and sets `gregale_access` to `user`, so a
+    policy on `gregale_access` returns the same rows live and over REST. The
+    canonical claim text still sorts keys and drops volatile claims, so plan
+    groups are unchanged for tokens that never carried `gregale_*` claims.
+  - **Typed reads.** `liveRead` takes its row type from a generated-contract
+    query (`LiveReadRow`). It returns `parseDataAPIRow`, which decodes
+    PostgreSQL text the way PostgREST encodes JSON: integer, `numeric` and
+    float types become numbers (non-finite values stay strings),
+    `timestamp`/`timestamptz` become ISO 8601 strings, arrays are parsed
+    element by element, and JSON is parsed. Embedded resources already arrive
+    as JSON. Composite top-level columns stay text, because the frame carries
+    no field names; their generated object type does not hold live. Sealed
+    queries keep `parseLiveRow`.
+  - **Not yet:** anonymous live reads of public relations and server-key
+    subscriptions. Both need a realtime endpoint that admits them without an
+    `oidc_jwt` connection, and the Data API's public-read allowlist and key
+    hashes, which live only in the app's sealed secrets today, delivered to
+    realtimed.
+  - The SDK's live module stays unexported and unpacked until launch.
 
 ## Consequences
 

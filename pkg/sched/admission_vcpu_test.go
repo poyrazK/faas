@@ -13,13 +13,14 @@
 //     a node at RAM cap but with vCPU headroom rejects on RAM
 //     only, and vice versa.
 
-package sched
+package sched_test
 
 import (
 	"strconv"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched"
 )
 
 // TestAdmit_PerNodeVCPUEnforced pins the load-bearing invariant:
@@ -29,12 +30,12 @@ import (
 // 161st vCPU; with Tier A2 each node enforces its own 160.
 func TestAdmit_PerNodeVCPUEnforced(t *testing.T) {
 	t.Parallel()
-	l := NewNodeLedger()
+	l := sched.NewNodeLedger()
 
 	// Fill node A to its 160 vCPU budget with single-vCPU admits.
 	// Distinct appIDs avoid the per-app concurrency gate.
 	for i := 0; i < 160; i++ {
-		err := l.Admit(Request{
+		err := l.Admit(sched.Request{
 			Instance: "a-" + strconv.Itoa(i),
 			AppID:    "a-app-" + strconv.Itoa(i),
 			Plan:     api.PlanHobby,
@@ -46,7 +47,7 @@ func TestAdmit_PerNodeVCPUEnforced(t *testing.T) {
 		}
 	}
 	// Node B is empty; an admit with VCPU=1 fits.
-	if err := l.Admit(Request{
+	if err := l.Admit(sched.Request{
 		Instance: "b-1", AppID: "b-app-1",
 		Plan: api.PlanHobby, RAMMB: 256, VCPU: 1, MaxConcurrency: 1,
 		NodeID: "node-b", NodeCeilingMB: 100000, VCPUBudget: 160,
@@ -54,7 +55,7 @@ func TestAdmit_PerNodeVCPUEnforced(t *testing.T) {
 		t.Fatalf("node b admit after node a saturated: %v", err)
 	}
 	// A second admit on node B fills it. A third is rejected.
-	if err := l.Admit(Request{
+	if err := l.Admit(sched.Request{
 		Instance: "b-160", AppID: "b-app-160",
 		Plan: api.PlanHobby, RAMMB: 256, VCPU: 159, MaxConcurrency: 1,
 		NodeID: "node-b", NodeCeilingMB: 100000, VCPUBudget: 160,
@@ -62,7 +63,7 @@ func TestAdmit_PerNodeVCPUEnforced(t *testing.T) {
 		t.Fatalf("node b second admit: %v", err)
 	}
 	// Third admit pushes B over 160 vCPU.
-	err := l.Admit(Request{
+	err := l.Admit(sched.Request{
 		Instance: "b-over", AppID: "b-app-over",
 		Plan: api.PlanHobby, RAMMB: 256, VCPU: 1, MaxConcurrency: 1,
 		NodeID: "node-b", NodeCeilingMB: 100000, VCPUBudget: 160,
@@ -79,10 +80,10 @@ func TestAdmit_PerNodeVCPUEnforced(t *testing.T) {
 // per node (the legacy posture).
 func TestAdmit_VCPUBudgetZeroFallback(t *testing.T) {
 	t.Parallel()
-	l := NewNodeLedger()
+	l := sched.NewNodeLedger()
 	// Fill to 160 with VCPUBudget=0 (legacy / un-registered node).
 	for i := 0; i < 160; i++ {
-		err := l.Admit(Request{
+		err := l.Admit(sched.Request{
 			Instance: "f-" + strconv.Itoa(i),
 			AppID:    "f-app-" + strconv.Itoa(i),
 			Plan:     api.PlanHobby,
@@ -95,7 +96,7 @@ func TestAdmit_VCPUBudgetZeroFallback(t *testing.T) {
 		}
 	}
 	// 161st admit on the same node must be rejected.
-	err := l.Admit(Request{
+	err := l.Admit(sched.Request{
 		Instance: "over", AppID: "over-app",
 		Plan: api.PlanHobby, RAMMB: 128, VCPU: 1, MaxConcurrency: 1,
 		NodeID: "legacy-node", NodeCeilingMB: 100000,
@@ -112,10 +113,10 @@ func TestAdmit_VCPUBudgetZeroFallback(t *testing.T) {
 // vCPU at budget → rejected on vCPU.
 func TestAdmit_RAMAndVCPUIndependent(t *testing.T) {
 	t.Parallel()
-	l := NewNodeLedger()
+	l := sched.NewNodeLedger()
 
 	// Saturate RAM only: 128 MB request × 2 = 256 + 8 + 8 = 272 MB → 264 > 256 ceiling
-	if err := l.Admit(Request{
+	if err := l.Admit(sched.Request{
 		Instance: "r1", AppID: "ram-app-1",
 		Plan: api.PlanHobby, RAMMB: 128, VCPU: 1, MaxConcurrency: 1,
 		NodeID: "mixed", NodeCeilingMB: 256, VCPUBudget: 160,
@@ -123,7 +124,7 @@ func TestAdmit_RAMAndVCPUIndependent(t *testing.T) {
 		t.Fatalf("first ram admit: %v", err)
 	}
 	// Second 128 MB on this node should be rejected on RAM (264 > 256).
-	err := l.Admit(Request{
+	err := l.Admit(sched.Request{
 		Instance: "r2", AppID: "ram-app-2",
 		Plan: api.PlanHobby, RAMMB: 128, VCPU: 1, MaxConcurrency: 1,
 		NodeID: "mixed", NodeCeilingMB: 256, VCPUBudget: 160,
@@ -134,15 +135,15 @@ func TestAdmit_RAMAndVCPUIndependent(t *testing.T) {
 
 	// Fresh ledger; saturate vCPU only: budget=4, VCPU=3 → 1 admit
 	// (used=3, fits), 2nd admit (used=3+3=6 > 4) rejected on vCPU.
-	l2 := NewNodeLedger()
-	if err := l2.Admit(Request{
+	l2 := sched.NewNodeLedger()
+	if err := l2.Admit(sched.Request{
 		Instance: "v1", AppID: "vcpu-app-1",
 		Plan: api.PlanHobby, RAMMB: 128, VCPU: 3, MaxConcurrency: 1,
 		NodeID: "vnode", NodeCeilingMB: 100000, VCPUBudget: 4,
 	}); err != nil {
 		t.Fatalf("first vcpu admit: %v", err)
 	}
-	err = l2.Admit(Request{
+	err = l2.Admit(sched.Request{
 		Instance: "v2", AppID: "vcpu-app-2",
 		Plan: api.PlanHobby, RAMMB: 128, VCPU: 3, MaxConcurrency: 1,
 		NodeID: "vnode", NodeCeilingMB: 100000, VCPUBudget: 4,

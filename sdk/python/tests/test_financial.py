@@ -10,13 +10,78 @@ from faas_sdk.models.financial_forecast_response import FinancialForecastRespons
 from faas_sdk.models.problem import Problem
 
 
+def test_active_budget_runtime_preserves_unknown_cost_and_retry_state() -> None:
+    from faas_sdk.models.financial_budget_response import FinancialBudgetResponse
+    from faas_sdk.types import UNSET
+
+    evaluation = {
+        "period_start": "2026-10-01T00:00:00Z",
+        "period_end": "2026-11-01T00:00:00Z",
+        "as_of": "2026-10-16T10:00:00Z",
+        "evaluated_at": "2026-10-16T10:01:00Z",
+        "evidence_through_id": 0,
+        "coverage_complete": False,
+        "fresh": False,
+        "reasons": ["cost_evaluation_unavailable"],
+    }
+    policy = FinancialBudgetResponse.from_dict(
+        {
+            "id": "6dc4f678-5766-4a06-a061-845c2b133fdd",
+            "account_id": "6dc4f678-5766-4a06-a061-845c2b133fdd",
+            "revision": 1,
+            "created_at": evaluation["period_start"],
+            "updated_at": evaluation["period_start"],
+            "status": "active",
+            "enforcement_ready": False,
+            "notification_ready": True,
+            "reasons": ["notification_only_workloads_continue"],
+            "spec": {
+                "name": "Compute",
+                "scope": {"kind": "account"},
+                "currency": "USD",
+                "meters": ["compute"],
+                "basis": "net_usage",
+                "limit_millicents": 1000000,
+                "notify_millicents": [800000],
+                "mode": "monitored",
+                "action": "notify",
+                "drain_seconds": 0,
+                "resume_rule": "next_period",
+                "enabled": True,
+            },
+            "runtime": {
+                "evaluation": evaluation,
+                "alerts": [
+                    {
+                        "id": "6dc4f678-5766-4a06-a061-845c2b133fdd",
+                        "policy_revision": 1,
+                        "threshold_millicents": 800000,
+                        "evaluation": {**evaluation, "known_millicents": 800000},
+                        "state": "retrying",
+                        "attempts": 2,
+                        "next_attempt_at": evaluation["evaluated_at"],
+                        "last_error": "mail_delivery_failed",
+                    }
+                ],
+            },
+        }
+    )
+    assert policy.status == "active"
+    assert policy.notification_ready is True
+    assert policy.enforcement_ready is False
+    assert policy.runtime.evaluation.known_millicents is UNSET
+    assert policy.runtime.alerts[0].state == "retrying"
+    assert policy.runtime.alerts[0].evaluation.known_millicents == 800000
+    assert "known_millicents" not in policy.to_dict()["runtime"]["evaluation"]
+
+
 @pytest.mark.parametrize("endpoint", [get_financial_costs, get_financial_forecast])
 def test_financial_auth_month_money_and_gaps(endpoint) -> None:
     period = {
         "period_start": "2026-10-01T00:00:00Z",
         "period_end": "2026-11-01T00:00:00Z",
         "as_of": "2026-10-02T00:00:00Z",
-        "currency": "EUR",
+        "currency": "USD",
         "meters": [],
         "missing_bill_components": ["tax"],
     }
@@ -85,7 +150,7 @@ def test_budget_preview_preserves_intent_and_unavailable_enforcement() -> None:
     spec = {
         "name": "Preview guard",
         "scope": {"kind": "account"},
-        "currency": "EUR",
+        "currency": "USD",
         "meters": ["compute"],
         "basis": "net_usage",
         "limit_millicents": 10001,
@@ -166,7 +231,7 @@ def test_budget_policy_clients_keep_revision_keys_history_and_activation_errors(
     spec = {
         "name": "Draft",
         "scope": {"kind": "account"},
-        "currency": "EUR",
+        "currency": "USD",
         "meters": ["compute"],
         "basis": "net_usage",
         "limit_millicents": 1000001,
@@ -251,3 +316,49 @@ def test_budget_policy_clients_keep_revision_keys_history_and_activation_errors(
         )
         assert isinstance(problem, Problem)
         assert problem.code == "financial_budget_activation_unavailable"
+
+
+def test_preview_stop_runtime_preserves_prior_period_and_failed_teardown():
+    from faas_sdk.models.financial_budget_runtime import FinancialBudgetRuntime
+
+    evaluation = {
+        "period_start": "2026-09-01T00:00:00Z",
+        "period_end": "2026-10-01T00:00:00Z",
+        "as_of": "2026-09-20T10:00:00Z",
+        "evaluated_at": "2026-09-20T10:00:00Z",
+        "evidence_through_id": 1,
+        "known_millicents": 1000000,
+        "coverage_complete": True,
+        "fresh": True,
+        "reasons": [],
+    }
+    runtime = FinancialBudgetRuntime.from_dict(
+        {
+            "alerts": [],
+            "stops": [
+                {
+                    "id": "6dc4f678-5766-4a06-a061-845c2b133fdd",
+                    "policy_id": "6dc4f678-5766-4a06-a061-845c2b133fdd",
+                    "revision": 1,
+                    "period_start": evaluation["period_start"],
+                    "period_end": evaluation["period_end"],
+                    "requested_at": evaluation["evaluated_at"],
+                    "drain_deadline": evaluation["evaluated_at"],
+                    "resume_rule": "manual",
+                    "evaluation": evaluation,
+                    "targets": [
+                        {
+                            "app_id": "6dc4f678-5766-4a06-a061-845c2b133fdd",
+                            "state": "failed",
+                            "observed_at": "2026-10-16T10:00:00Z",
+                            "resident_count": 1,
+                            "last_error": "vm_teardown_failed",
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+    assert runtime.stops[0].targets[0].state == "failed"
+    assert runtime.to_dict()["stops"][0]["targets"][0]["resident_count"] == 1
+    assert "evaluation" not in runtime.to_dict()

@@ -1,5 +1,5 @@
 // adr: 1527
-package sched
+package sched_test
 
 import (
 	"context"
@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
@@ -60,7 +61,7 @@ func (s *lifecyclePersistenceStore) DeliverAuditEvent(ctx context.Context, id in
 	return s.MemStore.DeliverAuditEvent(ctx, id)
 }
 
-func lifecycleRunnerFixture(t *testing.T, lifecycle state.NodeLifecycle) (*RecoveryRunner, *lifecyclePersistenceStore, state.ComputeNode) {
+func lifecycleRunnerFixture(t *testing.T, lifecycle state.NodeLifecycle) (*sched.RecoveryRunner, *lifecyclePersistenceStore, state.ComputeNode) {
 	t.Helper()
 	fake := &lifecyclePersistenceStore{MemStore: state.NewMemStore()}
 	store := statetest.NewMem(fake)
@@ -68,7 +69,7 @@ func lifecycleRunnerFixture(t *testing.T, lifecycle state.NodeLifecycle) (*Recov
 	if err != nil {
 		t.Fatal(err)
 	}
-	return NewRecoveryRunner(store, NewArbiter(nil, nil), nil, testLog()), fake, node
+	return sched.NewRecoveryRunner(store, sched.NewArbiter(nil, nil), nil, sched.TestLog()), fake, node
 }
 
 func TestNodeLifecycleCompletionRunnerRejectsPausedOldSweep(t *testing.T) {
@@ -135,7 +136,7 @@ func TestNodeLifecycleCompletionRunnerRetriesOnlyPersistence(t *testing.T) {
 		t.Fatalf("partial failed completion: %+v calls=%d %v", got, fake.calls, err)
 	}
 	// A fresh process/sweep resumes the same database-only completion.
-	if err := NewRecoveryRunner(runner.store, NewArbiter(nil, nil), nil, testLog()).Tick(t.Context()); err != nil {
+	if err := sched.NewRecoveryRunner((*runner.Store()), sched.NewArbiter(nil, nil), nil, sched.TestLog()).Tick(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	got, err = fake.MemStore.NodeGet(t.Context(), node.ID)

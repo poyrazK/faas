@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -27,15 +28,15 @@ func (f *queueHistoryClient) ListQueueBindingHistory(_ context.Context, slug str
 }
 
 func TestQueueBindingListReviewedRecoveryHistory(t *testing.T) {
-	oldOut, oldJSON := osStdout, jsonOutput
-	t.Cleanup(func() { osStdout, jsonOutput = oldOut, oldJSON })
+	oldOut, oldJSON := (*main.OsStdout), (*main.JsonOutput)
+	t.Cleanup(func() { (*main.OsStdout), (*main.JsonOutput) = oldOut, oldJSON })
 	retired := time.Date(2026, 10, 1, 22, 50, 12, 0, time.UTC)
 	for _, jsonMode := range []bool{false, true} {
-		jsonOutput = jsonMode
+		(*main.JsonOutput) = jsonMode
 		var out bytes.Buffer
-		osStdout = &out
+		(*main.OsStdout) = &out
 		f := &queueHistoryClient{row: api.QueueBindingResponse{ID: "11111111222243338444555555555555", Name: "orders", Environment: "production", RetiredAt: &retired}}
-		if code := cmdQueueBindingList(f, []string{"worker", "--include-retired"}); code != 0 || !f.history || f.slug != "worker" {
+		if code := main.CmdQueueBindingList(f, []string{"worker", "--include-retired"}); code != 0 || !f.history || f.slug != "worker" {
 			t.Fatalf("history request: %+v %d", f, code)
 		}
 		if jsonMode {
@@ -47,9 +48,9 @@ func TestQueueBindingListReviewedRecoveryHistory(t *testing.T) {
 			t.Fatalf("recovery identity missing: %s", out.String())
 		}
 	}
-	jsonOutput = false
+	(*main.JsonOutput) = false
 	f := &queueHistoryClient{}
-	if code := cmdQueueBindingList(f, []string{"worker"}); code != 0 || f.history {
+	if code := main.CmdQueueBindingList(f, []string{"worker"}); code != 0 || f.history {
 		t.Fatalf("default list included retired bindings: %+v %d", f, code)
 	}
 }

@@ -11,6 +11,25 @@ import (
 // projectConfigScopes are the deployment scopes that read environment's
 // configuration (ADR-1136). Production is also read by the default scope, the
 // mapping workloadEnvironmentSlug applies to a project's implicit environment.
+// projectConfigDefaultBoundary is the runtime boundary a production project
+// configuration change stamps for default-scope deployments, which read
+// production's configuration (ADR-1136). It is separate from the "default"
+// boundary because every environment consults that one (default-scope app
+// variables are inherited by all scopes), and a production change must not
+// mark its neighbours stale. The colon keeps it apart from any environment
+// slug.
+const projectConfigDefaultBoundary = "default:project-config"
+
+// runtimeBoundaryScopes are the scope-change keys a deployment in scope
+// consults.
+func runtimeBoundaryScopes(scope string) []string {
+	scope = normalizedDeploymentScope(scope)
+	if scope == "default" {
+		return []string{"default", projectConfigDefaultBoundary}
+	}
+	return []string{"default", scope}
+}
+
 func projectConfigScopes(environment string) []string {
 	if environment == "production" {
 		return []string{"production", "default"}

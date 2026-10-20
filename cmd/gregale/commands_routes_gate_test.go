@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -9,14 +9,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func TestCanaryRouteGateCLI(t *testing.T) {
 	for _, scenario := range []string{"get", "set", "mismatched mode", "invalid revision", "invalid mode", "missing timestamp", "missing expected revision"} {
 		t.Run(scenario, func(t *testing.T) {
-			resetJSONOut(t)
-			setPreviewTestAuth(t)
+			main.ResetJSONOut(t)
+			main.SetPreviewTestAuth(t)
 			now := time.Now().UTC()
 			gate := api.CanaryRouteGate{AppID: "11111111-1111-4111-8111-111111111111", Mode: "enforce", Revision: 1, UpdatedAt: &now}
 			calls := 0
@@ -46,14 +47,14 @@ func TestCanaryRouteGateCLI(t *testing.T) {
 				case "missing timestamp":
 					gate.UpdatedAt = nil
 				}
-				writeJSONTest(w, gate)
+				main.WriteJSONTest(w, gate)
 			}))
 			defer server.Close()
 			t.Setenv("FAAS_API", server.URL)
 			var out bytes.Buffer
-			oldOut := osStdout
-			osStdout = &out
-			t.Cleanup(func() { osStdout = oldOut })
+			oldOut := (*main.OsStdout)
+			(*main.OsStdout) = &out
+			t.Cleanup(func() { (*main.OsStdout) = oldOut })
 			args := []string{"routes", "gate", "set", "demo", "--mode", "enforce", "--expected-revision", "0", "--json"}
 			if scenario == "get" {
 				args = []string{"routes", "gate", "get", "demo", "--json"}
@@ -65,7 +66,7 @@ func TestCanaryRouteGateCLI(t *testing.T) {
 			if scenario == "get" || scenario == "set" {
 				want = 0
 			}
-			if code := run(args); code != want {
+			if code := main.Run(args); code != want {
 				t.Fatalf("exit %d want %d: %s", code, want, out.String())
 			}
 			if want == 0 && !strings.Contains(out.String(), `"mode"`) {

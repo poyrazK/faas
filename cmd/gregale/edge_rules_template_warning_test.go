@@ -1,16 +1,17 @@
-package main
+package main_test
 
 import (
 	"bytes"
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func TestWarnTemplatedEdgeRulePaths(t *testing.T) {
 	var buf bytes.Buffer
-	warnTemplatedEdgeRulePaths(&buf, []api.EdgeRuleResponse{
+	main.WarnTemplatedEdgeRulePaths(&buf, []api.EdgeRuleResponse{
 		{ID: "rule-dead", MatchPath: "/users/{id}"},
 		{ID: "rule-ok", MatchPath: "/users/*"},
 	})

@@ -1,8 +1,9 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -40,7 +41,7 @@ func TestCmdLogsDocumentedArgumentOrder(t *testing.T) {
 			defer srv.Close()
 			t.Setenv("FAAS_API", srv.URL)
 			t.Setenv("FAAS_TOKEN", "test-token")
-			if code := cmdLogs(args); code != 0 {
+			if code := main.CmdLogs(args); code != 0 {
 				t.Fatalf("exit=%d", code)
 			}
 			if !called {
@@ -78,7 +79,7 @@ func TestCmdLogsArchiveRequest(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "test-token")
 
-	if code := cmdLogs([]string{"myapp", "--archive", "--instance", "inst-abc", "--date", "2026-09-14"}); code != 0 {
+	if code := main.CmdLogs([]string{"myapp", "--archive", "--instance", "inst-abc", "--date", "2026-09-14"}); code != 0 {
 		t.Fatalf("exit=%d", code)
 	}
 	if !called {
@@ -101,9 +102,9 @@ func TestCmdLogsArchiveTerminalGapsFail(t *testing.T) {
 			defer srv.Close()
 			t.Setenv("FAAS_API", srv.URL)
 			t.Setenv("FAAS_TOKEN", "test-token")
-			stderr, restore := captureStderr(t)
+			stderr, restore := main.CaptureStderr(t)
 			defer restore()
-			if code := cmdLogs([]string{"myapp", "--archive", "--instance", "inst-abc", "--date", "2026-09-14"}); code != 3 {
+			if code := main.CmdLogs([]string{"myapp", "--archive", "--instance", "inst-abc", "--date", "2026-09-14"}); code != 3 {
 				t.Fatalf("exit=%d, want 3", code)
 			}
 			if !strings.Contains(stderr.String(), tc.want) {
@@ -114,8 +115,8 @@ func TestCmdLogsArchiveTerminalGapsFail(t *testing.T) {
 }
 
 func TestCmdLogsArchiveMissingJSONIsRFC7807(t *testing.T) {
-	resetJSONOut(t)
-	jsonOutput = true
+	main.ResetJSONOut(t)
+	(*main.JsonOutput) = true
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = fmt.Fprint(w, "event: end\ndata: {\"reason\":\"archive_missing\"}\n\n")
@@ -123,8 +124,8 @@ func TestCmdLogsArchiveMissingJSONIsRFC7807(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "test-token")
-	stderr, restore := captureStderr(t)
-	if code := cmdLogs([]string{"myapp", "--archive", "--instance", "inst-abc", "--date", "2026-09-14"}); code != 3 {
+	stderr, restore := main.CaptureStderr(t)
+	if code := main.CmdLogs([]string{"myapp", "--archive", "--instance", "inst-abc", "--date", "2026-09-14"}); code != 3 {
 		t.Fatalf("exit=%d, want 3", code)
 	}
 	restore()
@@ -149,9 +150,9 @@ func TestCmdLogsArchiveValidation(t *testing.T) {
 		{"live option conflict", []string{"myapp", "--archive", "--instance", "inst-abc", "--date", "2026-09-14", "--follow"}, "cannot be combined"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			stderr, restore := captureStderr(t)
+			stderr, restore := main.CaptureStderr(t)
 			defer restore()
-			if code := cmdLogs(tc.args); code != 2 {
+			if code := main.CmdLogs(tc.args); code != 2 {
 				t.Fatalf("exit=%d, want 2", code)
 			}
 			if !strings.Contains(stderr.String(), tc.want) {
@@ -175,9 +176,9 @@ func TestCmdLogsDegradedReason(t *testing.T) {
 			defer srv.Close()
 			t.Setenv("FAAS_API", srv.URL)
 			t.Setenv("FAAS_TOKEN", "test-token")
-			stderr, restore := captureStderr(t)
+			stderr, restore := main.CaptureStderr(t)
 			defer restore()
-			if code := cmdLogs([]string{"myapp"}); code != 3 {
+			if code := main.CmdLogs([]string{"myapp"}); code != 3 {
 				t.Fatalf("exit=%d, want3", code)
 			}
 			if !strings.Contains(stderr.String(), tc.want) {
@@ -188,8 +189,8 @@ func TestCmdLogsDegradedReason(t *testing.T) {
 }
 
 func TestCmdLogsDegradedJSONIsRFC7807(t *testing.T) {
-	resetJSONOut(t)
-	jsonOutput = true
+	main.ResetJSONOut(t)
+	(*main.JsonOutput) = true
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = fmt.Fprint(w, "event: degraded\ndata: {\"code\":\"not_found\"}\n\n")
@@ -197,8 +198,8 @@ func TestCmdLogsDegradedJSONIsRFC7807(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "test-token")
-	stderr, restore := captureStderr(t)
-	if code := cmdLogs([]string{"myapp"}); code != 3 {
+	stderr, restore := main.CaptureStderr(t)
+	if code := main.CmdLogs([]string{"myapp"}); code != 3 {
 		t.Fatalf("exit=%d, want 3", code)
 	}
 	restore()
@@ -214,7 +215,7 @@ func TestCmdLogsDegradedJSONIsRFC7807(t *testing.T) {
 // Human `gregale logs` printed each event's JSON envelope verbatim, identical
 // to --json and with the guest's trailing carriage return.
 func TestFormatRuntimeLogLineRendersEnvelopeForHumans(t *testing.T) {
-	got := formatRuntimeLogLine(`{"deployment_id":"d","instance":"c3b6eba8-ef86-4c6d-99a4-45b786e807e9","line":"GET /healthz 200\r","seq":1,"stream":"stdout","written_at":"2026-09-30T20:02:14.841676819Z"}`)
+	got := main.FormatRuntimeLogLine(`{"deployment_id":"d","instance":"c3b6eba8-ef86-4c6d-99a4-45b786e807e9","line":"GET /healthz 200\r","seq":1,"stream":"stdout","written_at":"2026-09-30T20:02:14.841676819Z"}`)
 	want := "2026-09-30T20:02:14.841Z c3b6eba8 stdout GET /healthz 200"
 	if got != want {
 		t.Fatalf("formatRuntimeLogLine() = %q, want %q", got, want)
@@ -223,7 +224,7 @@ func TestFormatRuntimeLogLineRendersEnvelopeForHumans(t *testing.T) {
 		t.Fatalf("formatted line kept a carriage return: %q", got)
 	}
 	for _, raw := range []string{"plain text line", `{"unexpected":true}`} {
-		if got := formatRuntimeLogLine(raw); got != raw {
+		if got := main.FormatRuntimeLogLine(raw); got != raw {
 			t.Fatalf("formatRuntimeLogLine(%q) = %q, want it unchanged", raw, got)
 		}
 	}

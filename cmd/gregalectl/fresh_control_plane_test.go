@@ -53,7 +53,9 @@ func TestWriteHostAgeRecipientPublishesTheRecipient(t *testing.T) {
 // those drop-ins reference it.
 func TestCDControlPlaneInstallsTheFleetVerifyKey(t *testing.T) {
 	workflow := readWorkflow(t, "cd-controlplane.yml")
-	install := strings.Index(workflow, `install -o root -g root -m 0444 "$stage/sign-pub.pem" /etc/faas/secrets/sign-pub.pem`)
+	// Installed only when its bytes change, so an unchanged key keeps its
+	// modification time and deployctl can still hand apid off.
+	install := strings.Index(workflow, `install_if_changed 0444 "$stage/sign-pub.pem" /etc/faas/secrets/sign-pub.pem`)
 	credential := strings.Index(workflow, "LoadCredential=cd_sign_pub:/etc/faas/secrets/sign-pub.pem")
 	if install < 0 {
 		t.Fatal("cd-controlplane never installs /etc/faas/secrets/sign-pub.pem")

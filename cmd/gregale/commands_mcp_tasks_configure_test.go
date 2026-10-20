@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -23,7 +24,7 @@ func TestMCPTasksConfigurePreviewApplyAndResume(t *testing.T) {
 			writes := []string{}
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Method == http.MethodGet && r.URL.Path == "/v1/apps/reports-worker" {
-					writeJSONTest(w, app)
+					main.WriteJSONTest(w, app)
 					return
 				}
 				prefix := "/v1/apps/reports-worker/env/"
@@ -48,16 +49,16 @@ func TestMCPTasksConfigurePreviewApplyAndResume(t *testing.T) {
 			defer srv.Close()
 			t.Setenv("FAAS_API", srv.URL)
 			t.Setenv("FAAS_TOKEN", "operator")
-			stdout, stderr, restore := swapIO(t)
+			stdout, stderr, restore := main.SwapIO(t)
 			defer restore()
-			oldJSON := jsonOutput
-			jsonOutput = true
-			defer func() { jsonOutput = oldJSON }()
+			oldJSON := (*main.JsonOutput)
+			(*main.JsonOutput) = true
+			defer func() { (*main.JsonOutput) = oldJSON }()
 			args := []string{"tasks", "configure", "--app", "reports-worker", "--role", "worker", "--namespace", "reports", "--worker-app", "reports-worker"}
 			if scenario != "preview" {
 				args = append(args, "--apply")
 			}
-			code := cmdMCP(args)
+			code := main.CmdMCP(args)
 			if scenario == "partial failure" {
 				if code == 0 {
 					t.Fatal("partial failure reported success")
@@ -98,7 +99,7 @@ func TestMCPTasksConfigureRejectsUnsafeChangesBeforeWrites(t *testing.T) {
 			writes := 0
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Method == http.MethodGet {
-					writeJSONTest(w, app)
+					main.WriteJSONTest(w, app)
 					return
 				}
 				writes++
@@ -107,9 +108,9 @@ func TestMCPTasksConfigureRejectsUnsafeChangesBeforeWrites(t *testing.T) {
 			defer srv.Close()
 			t.Setenv("FAAS_API", srv.URL)
 			t.Setenv("FAAS_TOKEN", "operator")
-			_, _, restore := swapIO(t)
+			_, _, restore := main.SwapIO(t)
 			defer restore()
-			if cmdMCP([]string{"tasks", "configure", "--app", "reports-worker", "--role", "worker", "--namespace", "reports", "--worker-app", "reports-worker", "--apply"}) == 0 || writes != 0 {
+			if main.CmdMCP([]string{"tasks", "configure", "--app", "reports-worker", "--role", "worker", "--namespace", "reports", "--worker-app", "reports-worker", "--apply"}) == 0 || writes != 0 {
 				t.Fatalf("unsafe config accepted; writes=%d", writes)
 			}
 		})
@@ -122,7 +123,7 @@ func TestMCPTasksConfigureRejectsInvalidSelectorsWithoutNetwork(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "operator")
-	_, _, restore := swapIO(t)
+	_, _, restore := main.SwapIO(t)
 	defer restore()
 	for _, args := range [][]string{
 		{"--app", "reports-worker", "--role", "worker", "--namespace", "reports", "--worker-app", "other-worker"},
@@ -130,7 +131,7 @@ func TestMCPTasksConfigureRejectsInvalidSelectorsWithoutNetwork(t *testing.T) {
 		{"--app", "reports-web", "--role", "web", "--namespace", "reports", "--worker-app", "reports-worker"},
 		{"--app", "reports-worker", "--role", "worker", "--namespace", "invalid\nnamespace", "--worker-app", "reports-worker"},
 	} {
-		if cmdMCPTasksConfigure(args) == 0 {
+		if main.CmdMCPTasksConfigure(args) == 0 {
 			t.Fatalf("invalid selectors accepted: %v", args)
 		}
 	}

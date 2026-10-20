@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -35,7 +36,7 @@ func TestCmdAlertActionsUsesGETOnly(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "test-token")
 	for _, args := range [][]string{{"actions", "--app", "demo"}, {"actions", "--app", "demo", "--fire", fire}} {
-		if code := cmdAlerts(args); code != 0 {
+		if code := main.CmdAlerts(args); code != 0 {
 			t.Fatalf("exit %d", code)
 		}
 	}
@@ -45,7 +46,7 @@ func TestCmdAlertActionsUsesGETOnly(t *testing.T) {
 }
 func TestCmdAlertActionsInvalidFlagsDoNotRead(t *testing.T) {
 	for _, args := range [][]string{{}, {"--app", "demo", "--fire", "latest"}, {"--app", "demo", "--fire", uuid.NewString(), "extra"}, {"--app", "demo", "--wait"}, {"--app", "demo", "--fire", uuid.NewString(), "--wait", "--timeout", "0s"}, {"--app", "demo", "--poll-interval", "-1s"}} {
-		if code := cmdAlertActions(args); code != 1 {
+		if code := main.CmdAlertActions(args); code != 1 {
 			t.Fatalf("accepted %s: %d", strings.Join(args, " "), code)
 		}
 	}

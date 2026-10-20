@@ -1,5 +1,5 @@
 // adr: 568 — environment intent and runtime ownership contracts.
-package sched
+package sched_test
 
 import (
 	"testing"
@@ -8,6 +8,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -34,11 +35,11 @@ func TestQueuePollerBindingIdentitySurvivesRename(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	source, err := newQueuePoller(pool, oldTrigger, nil)
+	source, err := sched.NewQueuePoller(pool, oldTrigger, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	poller := source.(*queuePoller)
+	poller := source.(*sched.QueuePoller)
 	enqueue := func(name string) state.Invocation {
 		t.Helper()
 		inv, err := store.EnqueueInvocation(ctx, state.Invocation{AppID: app.ID, AccountID: account.ID, Source: state.InvocationQueue, QueueName: name, DueAt: time.Now().Add(-time.Second), Payload: []byte(`{}`)})
@@ -76,7 +77,7 @@ func TestQueuePollerBindingIdentitySurvivesRename(t *testing.T) {
 	}
 	// A partial batch rollback made with a cached name must release its own UID
 	// claim after a rename, without releasing another dispatch attempt.
-	if err := poller.releaseNamedClaims(ctx, map[string]queueDeliveryClaim{old.ID: {Attempt: 1}}, oldTrigger); err != nil {
+	if err := poller.ReleaseNamedClaims(ctx, map[string]sched.QueueDeliveryClaim{old.ID: {Attempt: 1}}, oldTrigger); err != nil {
 		t.Fatal(err)
 	}
 	row, err := store.InvocationByID(ctx, old.ID)
@@ -87,7 +88,7 @@ func TestQueuePollerBindingIdentitySurvivesRename(t *testing.T) {
 	if retried.Error != nil || len(retried.Records) != 1 || retried.Records[0].InvocationAttempt != 2 {
 		t.Fatalf("released work lost attempt fence=%+v", retried)
 	}
-	if err := poller.releaseNamedClaims(ctx, map[string]queueDeliveryClaim{old.ID: {Attempt: 1}}, oldTrigger); err != nil {
+	if err := poller.ReleaseNamedClaims(ctx, map[string]sched.QueueDeliveryClaim{old.ID: {Attempt: 1}}, oldTrigger); err != nil {
 		t.Fatal(err)
 	}
 	if row, err := store.InvocationByID(ctx, old.ID); err != nil || row.State != state.InvocationDispatching || row.Attempts != 2 {
@@ -122,7 +123,7 @@ func TestQueuePollerBindingIdentitySurvivesRename(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	replacementSource, err := newQueuePoller(pool, replacementTrigger, nil)
+	replacementSource, err := sched.NewQueuePoller(pool, replacementTrigger, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

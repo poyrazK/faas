@@ -53,7 +53,7 @@ func TestOperationLimitsCompile(t *testing.T) {
 			}
 		})
 	}
-	// ADR-1199: workflows take a deadline and an execution budget.
+	// ADR-20261016110803: workflows take a deadline and an execution budget.
 	workflow.Limits = &api.OperationLimits{DeadlineSeconds: 600, MaxExecutionSeconds: 60}
 	workflow.ProgressStages = []string{"collecting"}
 	if _, err := Compile(workflow, plan); err != nil && (strings.Contains(err.Error(), "limits") || strings.Contains(err.Error(), "max_")) {

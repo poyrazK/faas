@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -8,14 +8,15 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func TestRouteChangesCLI(t *testing.T) {
 	for _, scenario := range []string{"regression", "intent changed", "unknown", "unavailable", "foreign changes", "missing evidence"} {
 		t.Run(scenario, func(t *testing.T) {
-			resetJSONOut(t)
-			setPreviewTestAuth(t)
+			main.ResetJSONOut(t)
+			main.SetPreviewTestAuth(t)
 			result := automaticResultFixture()
 			result.CheckID = uuid.NewString()
 			result.Changes = &api.RouteCheckChanges{Version: 1, CheckID: result.CheckID, Status: "comparable", Summary: api.RouteCheckChangeSummary{NewlyViolated: 1}, Truncated: true, Findings: []api.RouteFindingChange{{Method: "POST", Path: "/billing/{id}", Requirement: "budget", Kind: "newly_violated", Before: &api.RouteRequirementsFinding{Actual: "budget_ms=500"}, After: &api.RouteRequirementsFinding{Actual: "budget_ms=2000\x1b[31m"}}}}
@@ -33,14 +34,14 @@ func TestRouteChangesCLI(t *testing.T) {
 				result.State, result.Freshness, result.Check, result.CheckedAt = "pending", "unavailable", nil, nil
 				want, contains = 1, "not bound"
 			}
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { writeJSONTest(w, result) }))
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { main.WriteJSONTest(w, result) }))
 			defer server.Close()
 			t.Setenv("FAAS_API", server.URL)
 			var out bytes.Buffer
-			old, oldErr := osStdout, osStderr
-			osStdout, osStderr = &out, &out
-			t.Cleanup(func() { osStdout, osStderr = old, oldErr })
-			code := run([]string{"routes", "results", "my-api", "--deployment", result.DeploymentID, "--changes"})
+			old, oldErr := (*main.OsStdout), (*main.OsStderr)
+			(*main.OsStdout), (*main.OsStderr) = &out, &out
+			t.Cleanup(func() { (*main.OsStdout), (*main.OsStderr) = old, oldErr })
+			code := main.Run([]string{"routes", "results", "my-api", "--deployment", result.DeploymentID, "--changes"})
 			if code != want || !strings.Contains(out.String(), contains) || strings.Contains(out.String(), "\x1b") {
 				t.Fatalf("changes output: exit=%d want=%d; %q", code, want, out.String())
 			}

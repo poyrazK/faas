@@ -1,10 +1,11 @@
-package sched
+package sched_test
 
 import (
 	"context"
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/sched/flowcount"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/statetest"
@@ -12,7 +13,7 @@ import (
 
 func TestNodeRegistryRefreshAndRemove(t *testing.T) {
 	node := state.ComputeNode{ID: "node-a", Name: "a", Active: true}
-	reg := NewNodeRegistry([]state.ComputeNode{node})
+	reg := sched.NewNodeRegistry([]state.ComputeNode{node})
 	if got := len(reg.Snapshot()); got != 1 {
 		t.Fatalf("initial snapshot length = %d, want 1", got)
 	}
@@ -36,34 +37,34 @@ func TestNodeRegistryRefreshAndRemove(t *testing.T) {
 // adr: 208 — request draining uses fresh scheduler-receipt timestamps and the
 // freshest per-instance in-flight sample, independent of source clock skew.
 func TestNodeTelemetryCacheReplacesAsOneBatchAndExpires(t *testing.T) {
-	cache := NewNodeTelemetryCache()
+	cache := sched.NewNodeTelemetryCache()
 	base := time.Unix(100, 0)
 	sourceSample := base.Add(-time.Hour)
 	resident := int64(128 << 20)
-	cache.Replace("node-a", sourceSample, base, []NodeTelemetry{{InstanceID: "vm-1", ResidentBytes: &resident, InflightRequests: 3}})
+	cache.Replace("node-a", sourceSample, base, []sched.NodeTelemetry{{InstanceID: "vm-1", ResidentBytes: &resident, InflightRequests: 3}})
 
 	rows := cache.Snapshot(base.Add(time.Second))
 	if len(rows) != 1 || rows[0].NodeID != "node-a" || rows[0].Telemetry.InstanceID != "vm-1" {
 		t.Fatalf("snapshot = %+v, want one node-a/vm-1 row", rows)
 	}
-	rows = cache.Snapshot(base.Add(TelemetryFreshness + time.Nanosecond))
+	rows = cache.Snapshot(base.Add(sched.TelemetryFreshness + time.Nanosecond))
 	if len(rows) != 0 {
 		t.Fatalf("expired snapshot length = %d, want 0", len(rows))
 	}
 	if got, ok := cache.LookupOpenConns("vm-1", base.Add(time.Second)); !ok || got != 0 {
 		t.Fatalf("fresh open-conns lookup = (%d, %v), want (0, true)", got, ok)
 	}
-	if _, ok := cache.LookupOpenConns("vm-1", base.Add(TelemetryFreshness+time.Nanosecond)); ok {
+	if _, ok := cache.LookupOpenConns("vm-1", base.Add(sched.TelemetryFreshness+time.Nanosecond)); ok {
 		t.Fatal("stale open-conns lookup unexpectedly hit")
 	}
 	if inflight, receivedAt, ok := cache.LookupInflightRequests("vm-1", base.Add(time.Second)); !ok || inflight != 3 || !receivedAt.Equal(base) {
 		t.Fatalf("fresh in-flight lookup = (%d, %v, %v), want (3, %v, true)", inflight, receivedAt, ok, base)
 	}
-	if _, _, ok := cache.LookupInflightRequests("vm-1", base.Add(TelemetryFreshness+time.Nanosecond)); ok {
+	if _, _, ok := cache.LookupInflightRequests("vm-1", base.Add(sched.TelemetryFreshness+time.Nanosecond)); ok {
 		t.Fatal("stale in-flight lookup unexpectedly hit")
 	}
 	newerReceipt := base.Add(500 * time.Millisecond)
-	cache.Replace("node-b", sourceSample, newerReceipt, []NodeTelemetry{{InstanceID: "vm-1", InflightRequests: 1}})
+	cache.Replace("node-b", sourceSample, newerReceipt, []sched.NodeTelemetry{{InstanceID: "vm-1", InflightRequests: 1}})
 	if inflight, receivedAt, ok := cache.LookupInflightRequests("vm-1", base.Add(time.Second)); !ok || inflight != 1 || !receivedAt.Equal(newerReceipt) {
 		t.Fatalf("duplicate in-flight lookup = (%d, %v, %v), want freshest (1, %v, true)", inflight, receivedAt, ok, newerReceipt)
 	}
@@ -75,9 +76,9 @@ func TestNodeTelemetryCacheReplacesAsOneBatchAndExpires(t *testing.T) {
 // adr: 127 — persistent node telemetry must retain flow details without
 // exposing the cache's backing slice to callers.
 func TestNodeTelemetryCacheCopiesFlowSummaries(t *testing.T) {
-	cache := NewNodeTelemetryCache()
+	cache := sched.NewNodeTelemetryCache()
 	now := time.Unix(150, 0)
-	rows := []NodeTelemetry{{
+	rows := []sched.NodeTelemetry{{
 		InstanceID: "vm-1",
 		FlowSummaries: []flowcount.FlowSummary{{
 			InstanceID: "vm-1", Protocol: "tcp", RemoteIP: "203.0.113.10", RemotePort: 443, Count: 1,
@@ -108,7 +109,7 @@ func TestNodeTelemetryCacheCopiesFlowSummaries(t *testing.T) {
 }
 
 func TestNodeUsageCacheRequiresCompleteSnapshot(t *testing.T) {
-	cache := NewNodeUsageCache()
+	cache := sched.NewNodeUsageCache()
 	now := time.Unix(200, 0)
 	cache.Replace([]string{"a", "b"}, map[string]int64{"a": 10}, now)
 	if _, ok := cache.Lookup([]string{"a", "c"}, now); ok {
@@ -118,7 +119,7 @@ func TestNodeUsageCacheRequiresCompleteSnapshot(t *testing.T) {
 	if !ok || got["a"] != 10 || got["b"] != 0 {
 		t.Fatalf("complete cache = (%v, %v), want a=10,b=0", got, ok)
 	}
-	if _, ok := cache.Lookup([]string{"a", "b"}, now.Add(NodeUsageFreshness+time.Nanosecond)); ok {
+	if _, ok := cache.Lookup([]string{"a", "b"}, now.Add(sched.NodeUsageFreshness+time.Nanosecond)); ok {
 		t.Fatal("expired usage cache unexpectedly returned a hit")
 	}
 }
@@ -164,12 +165,12 @@ func TestPlacementUsesRegistryAndOneBulkUsageRead(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ActiveComputeNodes: %v", err)
 	}
-	engine, err := NewEngine(context.Background(), statetest.NewMem(store), NewNodeLedger(), nil, nil, "", nil)
+	engine, err := sched.NewEngine(context.Background(), statetest.NewMem(store), sched.NewNodeLedger(), nil, nil, "", nil)
 	if err != nil {
 		t.Fatalf("NewEngine: %v", err)
 	}
-	engine.WithNodeRegistry(NewNodeRegistry(nodes))
-	if _, err := engine.choosePlacementLocked(context.Background(), Request{RAMMB: 1}); err != nil {
+	engine.WithNodeRegistry(sched.NewNodeRegistry(nodes))
+	if _, err := engine.ChoosePlacementLocked(context.Background(), sched.Request{RAMMB: 1}); err != nil {
 		t.Fatalf("choosePlacementLocked: %v", err)
 	}
 	if store.activeCalls != 0 {

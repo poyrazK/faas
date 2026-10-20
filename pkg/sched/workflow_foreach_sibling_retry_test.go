@@ -1,5 +1,5 @@
 // adr: 500
-package sched
+package sched_test
 
 import (
 	"context"
@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -100,12 +101,12 @@ func TestWorkflowForEachSiblingRetryKeepsBatchRunning(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			guardOrchestrationStores(t, func(t *testing.T, store state.Store) {
+			sched.GuardOrchestrationStores(t, func(t *testing.T, store state.Store) {
 				ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 				defer cancel()
 				spec := foreachOrchestrationSpec()
 				spec.Steps[1].ForEach.MaxParallel = 3
-				run := createGuardedRun(t, store, spec, `{"items":[0,1,2]}`)
+				run := sched.CreateGuardedRun(t, store, spec, `{"items":[0,1,2]}`)
 				failing := api.WorkflowForEachItemName("batch", 2)
 				executor := &siblingRetryExecutor{store: store, runID: run.ID, failing: failing, holdSiblings: tc.holdSiblings, calls: map[string]int{}}
 				dispatchStore := store
@@ -116,7 +117,7 @@ func TestWorkflowForEachSiblingRetryKeepsBatchRunning(t *testing.T) {
 					}
 					dispatchStore = &lateSiblingStore{orchestrationStore: full, runID: run.ID, failing: failing}
 				}
-				if err := NewWorkflowOrchestrator(dispatchStore, executor, nil, nil, nil).DispatchTick(ctx); err != nil {
+				if err := sched.NewWorkflowOrchestrator(dispatchStore, executor, nil, nil, nil).DispatchTick(ctx); err != nil {
 					t.Fatalf("DispatchTick: %v", err)
 				}
 

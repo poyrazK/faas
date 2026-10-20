@@ -1,5 +1,5 @@
 -- migration-compat: expand
--- ADR-1198: an operation webhook binding either starts Operations (the
+-- ADR-20261016100929: an operation webhook binding either starts Operations (the
 -- ADR-1193 default) or delivers signals to waiting ones, matched by a
 -- business subject read from the verified provider payload. The previous
 -- release writes start-mode bindings only, which the defaults keep valid.

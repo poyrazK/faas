@@ -29,7 +29,7 @@
 //
 // Whitebox `package sched`.
 
-package sched
+package sched_test
 
 import (
 	"encoding/json"
@@ -37,6 +37,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
@@ -78,7 +79,7 @@ func TestDecodeKafkaConfig_Missing_Mega4(t *testing.T) {
 		c := c
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
-			_, err := decodeKafkaConfig(triggerWithConfig_Mega4(c.cfg))
+			_, err := sched.DecodeKafkaConfig(triggerWithConfig_Mega4(c.cfg))
 			if err == nil {
 				t.Fatal("want err")
 			}
@@ -97,7 +98,7 @@ func TestDecodeKafkaConfig_Happy_Mega4(t *testing.T) {
 		`{"brokers":["b"],"topic":"t","group":"g","sasl":{"mechanism":"SCRAM-SHA-256","username":"u","password":"p"}}`,
 		`{"brokers":["b"],"topic":"t","group":"g","sasl":{"mechanism":"SCRAM-SHA-512","username":"u","password":"p"}}`,
 	} {
-		if _, err := decodeKafkaConfig(triggerWithConfig_Mega4(c)); err != nil {
+		if _, err := sched.DecodeKafkaConfig(triggerWithConfig_Mega4(c)); err != nil {
 			t.Errorf("happy path %q: %v", c, err)
 		}
 	}
@@ -107,7 +108,7 @@ func TestDecodeKafkaConfig_Happy_Mega4(t *testing.T) {
 
 func TestBuildKafkaDialer_PlainTCP_Mega4(t *testing.T) {
 	t.Parallel()
-	d, err := buildKafkaDialer(kafkaConfig{Brokers: []string{"b"}, Topic: "t", Group: "g"})
+	d, err := sched.BuildKafkaDialer(sched.KafkaConfig{Brokers: []string{"b"}, Topic: "t", Group: "g"})
 	if err != nil {
 		t.Fatalf("buildKafkaDialer: %v", err)
 	}
@@ -124,9 +125,9 @@ func TestBuildKafkaDialer_PlainTCP_Mega4(t *testing.T) {
 
 func TestBuildKafkaDialer_WithTLS_Mega4(t *testing.T) {
 	t.Parallel()
-	d, err := buildKafkaDialer(kafkaConfig{
+	d, err := sched.BuildKafkaDialer(sched.KafkaConfig{
 		Brokers: []string{"b"}, Topic: "t", Group: "g",
-		TLS: &kafkaTLSConfig{CACert: ""},
+		TLS: &sched.KafkaTLSConfig{CACert: ""},
 	})
 	if err != nil {
 		t.Fatalf("buildKafkaDialer: %v", err)
@@ -138,9 +139,9 @@ func TestBuildKafkaDialer_WithTLS_Mega4(t *testing.T) {
 
 func TestBuildKafkaDialer_WithSASL_Mega4(t *testing.T) {
 	t.Parallel()
-	d, err := buildKafkaDialer(kafkaConfig{
+	d, err := sched.BuildKafkaDialer(sched.KafkaConfig{
 		Brokers: []string{"b"}, Topic: "t", Group: "g",
-		SASL: &kafkaSASLConfig{Mechanism: "PLAIN", Username: "u", Password: "p"},
+		SASL: &sched.KafkaSASLConfig{Mechanism: "PLAIN", Username: "u", Password: "p"},
 	})
 	if err != nil {
 		t.Fatalf("buildKafkaDialer: %v", err)
@@ -153,9 +154,9 @@ func TestBuildKafkaDialer_WithSASL_Mega4(t *testing.T) {
 func TestBuildKafkaDialer_TLSError_Mega4(t *testing.T) {
 	t.Parallel()
 	// Invalid CA → buildKafkaTLSConfig returns an error.
-	_, err := buildKafkaDialer(kafkaConfig{
+	_, err := sched.BuildKafkaDialer(sched.KafkaConfig{
 		Brokers: []string{"b"}, Topic: "t", Group: "g",
-		TLS: &kafkaTLSConfig{CACert: "not-pem"},
+		TLS: &sched.KafkaTLSConfig{CACert: "not-pem"},
 	})
 	if err == nil {
 		t.Fatal("want err for invalid CA")
@@ -166,7 +167,7 @@ func TestBuildKafkaDialer_TLSError_Mega4(t *testing.T) {
 
 func TestBuildKafkaTLSConfig_InvalidCA_Mega4(t *testing.T) {
 	t.Parallel()
-	_, err := buildKafkaTLSConfig(&kafkaTLSConfig{CACert: "not-pem"})
+	_, err := sched.BuildKafkaTLSConfig(&sched.KafkaTLSConfig{CACert: "not-pem"})
 	if err == nil {
 		t.Fatal("want err for invalid CA")
 	}
@@ -174,7 +175,7 @@ func TestBuildKafkaTLSConfig_InvalidCA_Mega4(t *testing.T) {
 
 func TestBuildKafkaTLSConfig_MissingClientKey_Mega4(t *testing.T) {
 	t.Parallel()
-	_, err := buildKafkaTLSConfig(&kafkaTLSConfig{ClientCert: "c"})
+	_, err := sched.BuildKafkaTLSConfig(&sched.KafkaTLSConfig{ClientCert: "c"})
 	if err == nil {
 		t.Fatal("want err for missing client_key")
 	}
@@ -184,7 +185,7 @@ func TestBuildKafkaTLSConfig_MissingClientKey_Mega4(t *testing.T) {
 
 func TestKafkaSASLMechanism_Unknown_Mega4(t *testing.T) {
 	t.Parallel()
-	_, err := kafkaSASLMechanism(&kafkaSASLConfig{Mechanism: "NTLM", Username: "u", Password: "p"})
+	_, err := sched.KafkaSASLMechanism(&sched.KafkaSASLConfig{Mechanism: "NTLM", Username: "u", Password: "p"})
 	if err == nil {
 		t.Fatal("want err for unknown mechanism")
 	}
@@ -208,7 +209,7 @@ func TestDecodeNATSConfig_Mega4(t *testing.T) {
 		c := c
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
-			_, err := decodeNATSConfig(triggerWithConfig_Mega4(c.cfg))
+			_, err := sched.DecodeNATSConfig(triggerWithConfig_Mega4(c.cfg))
 			if err == nil {
 				t.Fatal("want err")
 			}
@@ -221,7 +222,7 @@ func TestDecodeNATSConfig_Mega4(t *testing.T) {
 
 func TestDecodeNATSConfig_Happy_Mega4(t *testing.T) {
 	t.Parallel()
-	_, err := decodeNATSConfig(triggerWithConfig_Mega4(
+	_, err := sched.DecodeNATSConfig(triggerWithConfig_Mega4(
 		`{"url":"nats://x","stream":"s","subject":"sub"}`))
 	if err != nil {
 		t.Errorf("happy: %v", err)
@@ -246,7 +247,7 @@ func TestDecodeRedisConfig_Mega4(t *testing.T) {
 		c := c
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
-			_, err := decodeRedisConfig(triggerWithConfig_Mega4(c.cfg))
+			_, err := sched.DecodeRedisConfig(triggerWithConfig_Mega4(c.cfg))
 			if err == nil {
 				t.Fatal("want err")
 			}
@@ -259,7 +260,7 @@ func TestDecodeRedisConfig_Mega4(t *testing.T) {
 
 func TestDecodeRedisConfig_Happy_Mega4(t *testing.T) {
 	t.Parallel()
-	_, err := decodeRedisConfig(triggerWithConfig_Mega4(
+	_, err := sched.DecodeRedisConfig(triggerWithConfig_Mega4(
 		`{"addr":"a","stream":"s","group":"g"}`))
 	if err != nil {
 		t.Errorf("happy: %v", err)
@@ -284,7 +285,7 @@ func TestDecodeSQSConfig_Mega4(t *testing.T) {
 		c := c
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
-			_, err := decodeSQSConfig(triggerWithConfig_Mega4(c.cfg))
+			_, err := sched.DecodeSQSConfig(triggerWithConfig_Mega4(c.cfg))
 			if err == nil {
 				t.Fatal("want err")
 			}
@@ -298,7 +299,7 @@ func TestDecodeSQSConfig_Mega4(t *testing.T) {
 func TestDecodeSQSConfig_LongPollClamp_Mega4(t *testing.T) {
 	t.Parallel()
 	// long_poll_secs > 20 → clamped to 20.
-	cfg, err := decodeSQSConfig(triggerWithConfig_Mega4(
+	cfg, err := sched.DecodeSQSConfig(triggerWithConfig_Mega4(
 		`{"queue_url":"http://x/q","long_poll_secs":99}`))
 	if err != nil {
 		t.Fatalf("decodeSQSConfig: %v", err)
@@ -307,13 +308,13 @@ func TestDecodeSQSConfig_LongPollClamp_Mega4(t *testing.T) {
 		t.Errorf("clamp high: got %d, want 20", cfg.LongPollSec)
 	}
 	// long_poll_secs == 0 → defaulted to 5.
-	cfg, _ = decodeSQSConfig(triggerWithConfig_Mega4(
+	cfg, _ = sched.DecodeSQSConfig(triggerWithConfig_Mega4(
 		`{"queue_url":"http://x/q","long_poll_secs":0}`))
 	if cfg.LongPollSec != 5 {
 		t.Errorf("default: got %d, want 5", cfg.LongPollSec)
 	}
 	// Negative → clamped to 20.
-	cfg, _ = decodeSQSConfig(triggerWithConfig_Mega4(
+	cfg, _ = sched.DecodeSQSConfig(triggerWithConfig_Mega4(
 		`{"queue_url":"http://x/q","long_poll_secs":-3}`))
 	if cfg.LongPollSec != 20 {
 		t.Errorf("negative clamp: got %d, want 20", cfg.LongPollSec)
@@ -326,7 +327,7 @@ func TestDecodeSQSConfig_Happy_Mega4(t *testing.T) {
 		`{"queue_url":"http://x/q"}`,
 		`{"queue_url":"https://x/q","long_poll_secs":10}`,
 	} {
-		if _, err := decodeSQSConfig(triggerWithConfig_Mega4(cfg)); err != nil {
+		if _, err := sched.DecodeSQSConfig(triggerWithConfig_Mega4(cfg)); err != nil {
 			t.Errorf("happy %q: %v", cfg, err)
 		}
 	}
@@ -336,13 +337,13 @@ func TestDecodeSQSConfig_Happy_Mega4(t *testing.T) {
 
 func TestParseJSONHeaders_Mega4(t *testing.T) {
 	t.Parallel()
-	if got := parseJSONHeaders(""); got != nil {
+	if got := sched.ParseJSONHeaders(""); got != nil {
 		t.Errorf("empty: %v", got)
 	}
-	if got := parseJSONHeaders("not-json"); got != nil {
+	if got := sched.ParseJSONHeaders("not-json"); got != nil {
 		t.Errorf("malformed: %v, want nil", got)
 	}
-	got := parseJSONHeaders(`{"x":"y","z":"w"}`)
+	got := sched.ParseJSONHeaders(`{"x":"y","z":"w"}`)
 	if got["x"] != "y" || got["z"] != "w" {
 		t.Errorf("got %v", got)
 	}
@@ -350,13 +351,13 @@ func TestParseJSONHeaders_Mega4(t *testing.T) {
 
 func TestParseJSONMetadata_Mega4(t *testing.T) {
 	t.Parallel()
-	if got := parseJSONMetadata(""); got != nil {
+	if got := sched.ParseJSONMetadata(""); got != nil {
 		t.Errorf("empty: %v", got)
 	}
-	if got := parseJSONMetadata("not-json"); got != nil {
+	if got := sched.ParseJSONMetadata("not-json"); got != nil {
 		t.Errorf("malformed: %v", got)
 	}
-	got := parseJSONMetadata(`{"x":1,"y":"z"}`)
+	got := sched.ParseJSONMetadata(`{"x":1,"y":"z"}`)
 	if got["x"].(float64) != 1 || got["y"].(string) != "z" {
 		t.Errorf("got %v", got)
 	}
@@ -369,51 +370,51 @@ func TestParseJSONMetadata_Mega4(t *testing.T) {
 func TestHealthcheckPathFromDep_Mega4(t *testing.T) {
 	t.Parallel()
 	// Empty: "".
-	if got := healthcheckPathFromDep(state.Deployment{}); got != "" {
+	if got := sched.HealthcheckPathFromDep(state.Deployment{}); got != "" {
 		t.Errorf("empty: %q", got)
 	}
 	// Malformed: "" (defensive).
-	got := healthcheckPathFromDep(state.Deployment{OverrideHealthcheck: []byte("{bad")})
+	got := sched.HealthcheckPathFromDep(state.Deployment{OverrideHealthcheck: []byte("{bad")})
 	if got != "" {
 		t.Errorf("malformed: %q", got)
 	}
 	// Valid empty Path: "".
-	got = healthcheckPathFromDep(state.Deployment{OverrideHealthcheck: []byte(`{}`)})
+	got = sched.HealthcheckPathFromDep(state.Deployment{OverrideHealthcheck: []byte(`{}`)})
 	if got != "" {
 		t.Errorf("empty path: %q", got)
 	}
 	// Valid.
-	got = healthcheckPathFromDep(state.Deployment{OverrideHealthcheck: []byte(`{"path":"/healthz"}`)})
+	got = sched.HealthcheckPathFromDep(state.Deployment{OverrideHealthcheck: []byte(`{"path":"/healthz"}`)})
 	if got != "/healthz" {
 		t.Errorf("got %q", got)
 	}
 	profile := json.RawMessage(`{"version":"v1","framework":"node","port":3000,"health_path":"/readyz","inferred":true}`)
-	if got := healthcheckPathFromDep(state.Deployment{InferredProfile: profile}); got != "/readyz" {
+	if got := sched.HealthcheckPathFromDep(state.Deployment{InferredProfile: profile}); got != "/readyz" {
 		t.Errorf("inferred profile path = %q, want /readyz", got)
 	}
 	receipt := json.RawMessage(`{"profile":{"version":"v1","framework":"node","port":3000,"health_path":"/receiptz","inferred":true}}`)
-	if got := healthcheckPathFromDep(state.Deployment{APIHostingReceipt: receipt, InferredProfile: profile}); got != "/receiptz" {
+	if got := sched.HealthcheckPathFromDep(state.Deployment{APIHostingReceipt: receipt, InferredProfile: profile}); got != "/receiptz" {
 		t.Errorf("hosting receipt path = %q, want /receiptz", got)
 	}
 	tcpReceipt := json.RawMessage(`{"source":{"kind":"image"},"profile":{"version":"v1","port":8080,"health_path":""}}`)
-	if got := healthcheckPathFromDep(state.Deployment{APIHostingReceipt: tcpReceipt, InferredProfile: profile}); got != "" {
+	if got := sched.HealthcheckPathFromDep(state.Deployment{APIHostingReceipt: tcpReceipt, InferredProfile: profile}); got != "" {
 		t.Errorf("direct OCI receipt path = %q, want empty TCP-readiness path", got)
 	}
-	if got := healthcheckPathFromDep(state.Deployment{
+	if got := sched.HealthcheckPathFromDep(state.Deployment{
 		OverrideHealthcheck: json.RawMessage(`{"path":"/overridez"}`),
 		APIHostingReceipt:   receipt,
 		InferredProfile:     profile,
 	}); got != "/overridez" {
 		t.Errorf("override path = %q, want /overridez", got)
 	}
-	if got := healthcheckPathFromDep(state.Deployment{
+	if got := sched.HealthcheckPathFromDep(state.Deployment{
 		OverrideHealthcheck: json.RawMessage(`{"grpc":{"service":"catalog.v1.Catalog"}}`),
 		APIHostingReceipt:   receipt,
 		InferredProfile:     profile,
 	}); got != "" {
 		t.Errorf("gRPC override HTTP path = %q, want empty", got)
 	}
-	if got := healthcheckPathFromDep(state.Deployment{InferredProfile: json.RawMessage(`{"version":"v1","health_path":"/ok\nheader"}`)}); got != "" {
+	if got := sched.HealthcheckPathFromDep(state.Deployment{InferredProfile: json.RawMessage(`{"version":"v1","health_path":"/ok\nheader"}`)}); got != "" {
 		t.Errorf("unsafe health path = %q, want empty", got)
 	}
 }
@@ -434,7 +435,7 @@ func TestHealthcheckGRPCFromDep_Mega4(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotEnabled, gotService := healthcheckGRPCFromDep(tt.dep)
+			gotEnabled, gotService := sched.HealthcheckGRPCFromDep(tt.dep)
 			if gotEnabled != tt.want || gotService != tt.service {
 				t.Fatalf("healthcheckGRPCFromDep() = (%t, %q), want (%t, %q)", gotEnabled, gotService, tt.want, tt.service)
 			}
@@ -446,27 +447,27 @@ func TestHealthcheckGRPCFromDep_Mega4(t *testing.T) {
 
 func TestIsOnScaleOutCooldown_Mega4(t *testing.T) {
 	t.Parallel()
-	e := &Engine{}
+	e := &sched.Engine{}
 	// concurrency == 0 → false (the "no live" path is not a cooldown).
 	stamp := time.Now().Add(-1 * time.Second)
-	if e.isOnScaleOutCooldown(&state.App{
+	if e.IsOnScaleOutCooldown(&state.App{
 		LastScaleOutAt: &stamp,
 		ScalingPolicy:  &state.ScalingPolicy{ScaleOutCooldownS: 60},
 	}, 0) {
 		t.Error("concurrency 0: want false")
 	}
 	// Nil stamp → false.
-	if e.isOnScaleOutCooldown(&state.App{
+	if e.IsOnScaleOutCooldown(&state.App{
 		ScalingPolicy: &state.ScalingPolicy{ScaleOutCooldownS: 60},
 	}, 1) {
 		t.Error("nil stamp: want false")
 	}
 	// Nil policy → false.
-	if e.isOnScaleOutCooldown(&state.App{LastScaleOutAt: &stamp}, 1) {
+	if e.IsOnScaleOutCooldown(&state.App{LastScaleOutAt: &stamp}, 1) {
 		t.Error("nil policy: want false")
 	}
 	// Zero cooldown → false.
-	if e.isOnScaleOutCooldown(&state.App{
+	if e.IsOnScaleOutCooldown(&state.App{
 		LastScaleOutAt: &stamp,
 		ScalingPolicy:  &state.ScalingPolicy{ScaleOutCooldownS: 0},
 	}, 1) {
@@ -474,14 +475,14 @@ func TestIsOnScaleOutCooldown_Mega4(t *testing.T) {
 	}
 	// Expired stamp → false.
 	old := time.Now().Add(-1 * time.Hour)
-	if e.isOnScaleOutCooldown(&state.App{
+	if e.IsOnScaleOutCooldown(&state.App{
 		LastScaleOutAt: &old,
 		ScalingPolicy:  &state.ScalingPolicy{ScaleOutCooldownS: 60},
 	}, 1) {
 		t.Error("expired: want false")
 	}
 	// Active → true.
-	if !e.isOnScaleOutCooldown(&state.App{
+	if !e.IsOnScaleOutCooldown(&state.App{
 		LastScaleOutAt: &stamp,
 		ScalingPolicy:  &state.ScalingPolicy{ScaleOutCooldownS: 60},
 	}, 1) {
@@ -493,31 +494,31 @@ func TestIsOnScaleOutCooldown_Mega4(t *testing.T) {
 
 func TestAtMinFloorWithNoSignal_Mega4(t *testing.T) {
 	t.Parallel()
-	e := &Engine{}
+	e := &sched.Engine{}
 	// Nil policy → false.
-	if e.atMinFloorWithNoSignal(&state.App{}, 1) {
+	if e.AtMinFloorWithNoSignal(&state.App{}, 1) {
 		t.Error("nil policy: want false")
 	}
 	// Zero MinInstances → false.
-	if e.atMinFloorWithNoSignal(&state.App{
+	if e.AtMinFloorWithNoSignal(&state.App{
 		ScalingPolicy: &state.ScalingPolicy{MinInstances: 0},
 	}, 1) {
 		t.Error("zero min: want false")
 	}
 	// Below floor → false.
-	if e.atMinFloorWithNoSignal(&state.App{
+	if e.AtMinFloorWithNoSignal(&state.App{
 		ScalingPolicy: &state.ScalingPolicy{MinInstances: 3},
 	}, 2) {
 		t.Error("below floor: want false")
 	}
 	// At floor → true.
-	if !e.atMinFloorWithNoSignal(&state.App{
+	if !e.AtMinFloorWithNoSignal(&state.App{
 		ScalingPolicy: &state.ScalingPolicy{MinInstances: 3},
 	}, 3) {
 		t.Error("at floor: want true")
 	}
 	// Above floor → true (>=).
-	if !e.atMinFloorWithNoSignal(&state.App{
+	if !e.AtMinFloorWithNoSignal(&state.App{
 		ScalingPolicy: &state.ScalingPolicy{MinInstances: 3},
 	}, 5) {
 		t.Error("above floor: want true")
@@ -530,16 +531,16 @@ func TestMarshalJSON_Mega4(t *testing.T) {
 	t.Parallel()
 	// nil input → "{}" (per the dispatch_triggers contract: empty
 	// object, NOT empty bytes).
-	if got := marshalJSON(nil); string(got) != "{}" {
+	if got := sched.MarshalJSON(nil); string(got) != "{}" {
 		t.Errorf("nil: got %q, want %q", got, "{}")
 	}
 	// RawMessage round-trip.
-	got := marshalJSON(json.RawMessage(`{"x":1}`))
+	got := sched.MarshalJSON(json.RawMessage(`{"x":1}`))
 	if string(got) != `{"x":1}` {
 		t.Errorf("RawMessage: got %q", got)
 	}
 	// Map round-trip.
-	got = marshalJSON(map[string]string{"k": "v"})
+	got = sched.MarshalJSON(map[string]string{"k": "v"})
 	if string(got) != `{"k":"v"}` {
 		t.Errorf("map: got %q", got)
 	}

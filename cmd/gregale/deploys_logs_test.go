@@ -1,8 +1,9 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -12,7 +13,7 @@ import (
 // deploys logs prints a deployment's build log whatever its status; a live
 // deployment's build log had no CLI command (H10-5).
 func TestCmdDeploysLogsPrintsBuildLog(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	const id = "0123456789abcdef0123456789abcdef"
 	var limit string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -31,8 +32,8 @@ func TestCmdDeploysLogsPrintsBuildLog(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "test-token")
-	stdout, restore := captureStdout(t)
-	code := cmdDeploys([]string{"logs", id, "--limit", "20"})
+	stdout, restore := main.CaptureStdout(t)
+	code := main.CmdDeploys([]string{"logs", id, "--limit", "20"})
 	restore()
 	if code != 0 {
 		t.Fatalf("exit = %d", code)

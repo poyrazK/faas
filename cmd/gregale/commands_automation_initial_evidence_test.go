@@ -1,7 +1,8 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"net/http"
 	"testing"
@@ -32,12 +33,12 @@ func TestAutomationInitialEvidenceCLI(t *testing.T) {
 					t.Error(err)
 				}
 			})
-			captureAutomationStdout(t)
+			main.CaptureAutomationStdout(t)
 			args := []string{"failure-recovery-evidence", "--app", "consumer", "--review", inspectorRunID}
 			if repair {
 				args = append(args, "--repair", "--request-id", recoveryInvocationID, "--reason", "verified")
 			}
-			if code := cmdAutomations(args); code != 0 || calls != 1 {
+			if code := main.CmdAutomations(args); code != 0 || calls != 1 {
 				t.Fatalf("exit %d calls %d", code, calls)
 			}
 		})
@@ -50,7 +51,7 @@ func TestAutomationInitialEvidenceValidation(t *testing.T) {
 		{"failure-recovery-evidence", "--app", "consumer", "--review", inspectorRunID, "--repair", "--reason", "missing id"},
 		{"failure-recovery-evidence", "--app", "consumer", "--review", inspectorRunID, "--repair", "--request-id", recoveryInvocationID},
 	} {
-		if code := cmdAutomations(args); code != 1 {
+		if code := main.CmdAutomations(args); code != 1 {
 			t.Fatalf("invalid accepted %v", args)
 		}
 	}

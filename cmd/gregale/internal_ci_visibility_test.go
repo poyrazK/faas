@@ -1,9 +1,12 @@
-package main
+package main_test
 
-import "testing"
+import (
+	"github.com/onebox-faas/faas/cmd/gregale"
+	"testing"
+)
 
 func TestInternalCIServiceIsAbsentFromCustomerCLI(t *testing.T) {
-	if _, ok := lookupCliCommand("ci"); ok {
+	if _, ok := main.LookupCliCommand("ci"); ok {
 		t.Fatal("internal CI service must remain in gregalectl until a customer rollout is authorized")
 	}
 }

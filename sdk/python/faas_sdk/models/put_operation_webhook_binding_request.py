@@ -35,7 +35,7 @@ class PutOperationWebhookBindingRequest:
     event_types: list[str] | Unset = UNSET
     """Exact event types to admit; empty admits every verified event. Must be empty in signal mode."""
     mode: PutOperationWebhookBindingRequestMode | Unset = "start"
-    """start admits a new operation per event; signal resumes waiting operations (ADR-1198)."""
+    """start admits a new operation per event; signal resumes waiting operations (ADR-20261016100929)."""
     subject: OperationSubjectSpec | Unset = UNSET
     """Optional public business reference extracted once from validated input on new admission. This metadata does
     not authorize access to the business entity."""

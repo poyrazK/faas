@@ -1,6 +1,7 @@
-package main
+package main_test
 
 import (
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"os"
 	"path/filepath"
 	"strings"
@@ -33,7 +34,7 @@ func TestDataAPIDevRejectsInvalidInputsBeforeStartingServices(t *testing.T) {
 		{"--directory", project, "--baseline", "schema.json", "--approval", "approval.json"},
 		{"--directory", project, "--output", ".gregale/data-api-contract.json"},
 	} {
-		if code := cmdDataAPIDev(args); code == 0 {
+		if code := main.CmdDataAPIDev(args); code == 0 {
 			t.Fatalf("invalid args accepted: %v", args)
 		}
 	}
@@ -46,11 +47,11 @@ func TestDataAPIDevCannotReplaceApprovalThroughOutputAlias(t *testing.T) {
 	}
 	baseline := filepath.Join(project, "schema.json")
 	approval := filepath.Join(project, "approval.json")
-	content := dataAPIContractFixture(t, dataAPIDiffFixture())
+	content := main.DataAPIContractFixture(t, main.DataAPIDiffFixture())
 	if err := os.WriteFile(baseline, content, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	writeDataAPIApprovalFixture(t, approval, content, content, []dataAPIApprovedChange{{"api.notes", "relation removed; update queries and generated types", "Retired."}})
+	main.WriteDataAPIApprovalFixture(t, approval, content, content, []main.DataAPIApprovedChange{{"api.notes", "relation removed; update queries and generated types", "Retired."}})
 	original, err := os.ReadFile(approval)
 	if err != nil {
 		t.Fatal(err)
@@ -60,7 +61,7 @@ func TestDataAPIDevCannotReplaceApprovalThroughOutputAlias(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, output := range []string{approval, alias} {
-		if code := cmdDataAPIDev([]string{"--directory", project, "--baseline", "schema.json", "--check-breaking", "--approval", "approval.json", "--output", output}); code == 0 {
+		if code := main.CmdDataAPIDev([]string{"--directory", project, "--baseline", "schema.json", "--check-breaking", "--approval", "approval.json", "--output", output}); code == 0 {
 			t.Fatal("accepted approval as types output")
 		}
 	}
@@ -76,7 +77,7 @@ func TestDataAPIDevCannotReplaceTheBaselineThroughAnOutputAlias(t *testing.T) {
 		t.Fatal(err)
 	}
 	baseline := filepath.Join(project, "schema.json")
-	content := dataAPIContractFixture(t, dataAPIDiffFixture())
+	content := main.DataAPIContractFixture(t, main.DataAPIDiffFixture())
 	if err := os.WriteFile(baseline, content, 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +85,7 @@ func TestDataAPIDevCannotReplaceTheBaselineThroughAnOutputAlias(t *testing.T) {
 	if err := os.Link(baseline, alias); err != nil {
 		t.Fatal(err)
 	}
-	if code := cmdDataAPIDev([]string{"--directory", project, "--baseline", baseline, "--output", alias}); code == 0 {
+	if code := main.CmdDataAPIDev([]string{"--directory", project, "--baseline", baseline, "--output", alias}); code == 0 {
 		t.Fatal("accepted baseline as types output")
 	}
 	actual, err := os.ReadFile(baseline)
@@ -108,7 +109,7 @@ func TestDataAPIDevCannotReplaceReplayCollectionThroughOutputAlias(t *testing.T)
 		t.Fatal(err)
 	}
 	for _, output := range []string{collection, alias} {
-		if code := cmdDataAPIDev([]string{"--directory", project, "--once", "--replay", "data-api.requests.json", "--output", output}); code == 0 {
+		if code := main.CmdDataAPIDev([]string{"--directory", project, "--once", "--replay", "data-api.requests.json", "--output", output}); code == 0 {
 			t.Fatal("accepted replay collection as types output")
 		}
 	}
@@ -128,7 +129,7 @@ func TestDataAPIDevAcceptedContractsPreflight(t *testing.T) {
 		if err := os.WriteFile(policy, []byte(content), 0600); err != nil {
 			t.Fatal(err)
 		}
-		if cmdDataAPIDev([]string{"--directory", project, "--accepted-contracts", "accepted.json"}) == 0 {
+		if main.CmdDataAPIDev([]string{"--directory", project, "--accepted-contracts", "accepted.json"}) == 0 {
 			t.Fatal("invalid policy accepted")
 		}
 	}
@@ -141,7 +142,7 @@ func TestDataAPIDevAcceptedContractsPreflight(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, output := range []string{"accepted.json", "alias.json"} {
-		if cmdDataAPIDev([]string{"--directory", project, "--accepted-contracts", "accepted.json", "--output", output}) == 0 {
+		if main.CmdDataAPIDev([]string{"--directory", project, "--accepted-contracts", "accepted.json", "--output", output}) == 0 {
 			t.Fatal("policy output alias accepted")
 		}
 	}

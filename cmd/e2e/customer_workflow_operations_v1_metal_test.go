@@ -1,11 +1,11 @@
 //go:build metal
 
-// adr: 1287
+// adr: 20261017102231
 package e2e
 
-// ADR-1287 Stage 2 for workflow Operations: waits, approvals and signals
-// (ADR-1194, ADR-1197, ADR-1198, ADR-1286), an event-wait timeout and the
-// workflow execution budget (ADR-1199), through the real daemons and guest.
+// ADR-20261017102231 Stage 2 for workflow Operations: waits, approvals and signals
+// (ADR-1194, ADR-1197, ADR-20261016100929, ADR-20261017100853), an event-wait timeout and the
+// workflow execution budget (ADR-20261016110803), through the real daemons and guest.
 // The base lane already covers results, recovery, cancellation, the step
 // deadline and revocation.
 
@@ -166,7 +166,7 @@ func TestCustomerWorkflowOperationEventTimeoutMetal(t *testing.T) {
 	}
 }
 
-// ADR-1199: the execution budget cuts the final step well before its two-minute
+// ADR-20261016110803: the execution budget cuts the final step well before its two-minute
 // step timeout. The cut attempt may have had an effect, so the Operation needs
 // reconciliation and a safe_to_retry recovery is refused.
 func TestCustomerWorkflowOperationBudgetCutMetal(t *testing.T) {

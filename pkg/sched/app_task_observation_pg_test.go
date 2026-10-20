@@ -1,4 +1,4 @@
-package sched
+package sched_test
 
 import (
 	"errors"
@@ -8,6 +8,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -18,7 +19,7 @@ func TestAppTaskObservationPostgresAdmissionAndInvalidTiming(t *testing.T) {
 			pool := pgtest.OpenMigrated(t)
 			s := state.NewPgStore(pool)
 			base := time.Now().UTC().Add(-time.Hour).Truncate(time.Microsecond)
-			task := observationTask(t, s, "task-corruption", state.AppTaskKindManual, base, nil)
+			task := sched.ObservationTask(t, s, "task-corruption", state.AppTaskKindManual, base, nil)
 			at := base.Add(time.Minute)
 			class := state.AppTaskObservationUnknown
 			var boundary time.Time
@@ -80,7 +81,7 @@ func TestAppTaskObservationPostgresAdmissionAndInvalidTiming(t *testing.T) {
 					boundary = start
 				}
 			}
-			expectTaskCohort(t, s, at, 1, class, boundary)
+			sched.ExpectTaskCohort(t, s, at, 1, class, boundary)
 		})
 	}
 }
@@ -88,13 +89,13 @@ func TestAppTaskObservationPostgresAdmissionAndInvalidTiming(t *testing.T) {
 func TestAppTaskObservationCronRetryContract(t *testing.T) {
 	for _, backend := range []string{"memory", "postgres"} {
 		t.Run(backend, func(t *testing.T) {
-			s := taskObservationStore(t, backend)
+			s := sched.TaskObservationStore(t, backend)
 			ctx := t.Context()
 			account, err := s.CreateAccount(ctx, "task-cron@example.com", api.PlanScale)
 			if err != nil {
 				t.Fatal(err)
 			}
-			app, d := primeObservationCandidate(t, s, account.ID, "task-cron", nil)
+			app, d := sched.PrimeObservationCandidate(t, s, account.ID, "task-cron", nil)
 			cron, err := s.CreateCronWithOptions(ctx, app.ID, "0 0 * * *", "", true, state.CronOptions{Command: []string{"/app/task"}, RetryMax: 1, RetryBackoffSeconds: 60})
 			if err != nil {
 				t.Fatal(err)
@@ -125,8 +126,8 @@ func TestAppTaskObservationCronRetryContract(t *testing.T) {
 			if retry.Status != state.AppTaskQueued || retry.RetryAt == nil {
 				t.Fatal("missing retry", retry)
 			}
-			expectTaskCohort(t, s, finished, 2, state.AppTaskObservationRetryWait, time.Time{})
-			expectTaskCohort(t, s, *retry.RetryAt, 2, state.AppTaskObservationQueued, *retry.RetryAt)
+			sched.ExpectTaskCohort(t, s, finished, 2, state.AppTaskObservationRetryWait, time.Time{})
+			sched.ExpectTaskCohort(t, s, *retry.RetryAt, 2, state.AppTaskObservationQueued, *retry.RetryAt)
 		})
 	}
 }

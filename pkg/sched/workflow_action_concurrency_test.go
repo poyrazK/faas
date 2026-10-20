@@ -1,5 +1,5 @@
 // adr: 487 — workflow admission respects concurrency caps; this test pins durable action-slot queueing and resume.
-package sched
+package sched_test
 
 import (
 	"context"
@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -35,7 +36,7 @@ func (e *actionCapacityExecutor) ExecuteStep(ctx context.Context, _, _, _ string
 }
 
 func TestWorkflowActionConcurrencyQueuesAndResumesAnotherRun(t *testing.T) {
-	guardOrchestrationStores(t, func(t *testing.T, store state.Store) {
+	sched.GuardOrchestrationStores(t, func(t *testing.T, store state.Store) {
 		ctx := context.Background()
 		account, err := store.CreateAccount(ctx, uuid.NewString()+"@example.com", api.PlanHobby)
 		if err != nil {
@@ -66,7 +67,7 @@ func TestWorkflowActionConcurrencyQueuesAndResumesAnotherRun(t *testing.T) {
 		var releaseOnce sync.Once
 		releaseFirst := func() { releaseOnce.Do(func() { close(executor.releaseFirst) }) }
 		defer releaseFirst()
-		orchestrator := NewWorkflowOrchestrator(store, executor, nil, nil, nil)
+		orchestrator := sched.NewWorkflowOrchestrator(store, executor, nil, nil, nil)
 		firstDone := make(chan error, 1)
 		go func() { firstDone <- orchestrator.DispatchTick(ctx) }()
 		select {

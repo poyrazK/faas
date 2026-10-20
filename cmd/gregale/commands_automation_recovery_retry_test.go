@@ -1,7 +1,8 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"net/http"
 	"os"
@@ -12,28 +13,28 @@ import (
 )
 
 func TestAutomationRecoveryRetryReviewedSelection(t *testing.T) {
-	preview := automationRecoveryRetryPreview{App: "consumer", AppID: inspectorAppID, Name: "paid", ParentJobID: recoveryInvocationID, Rows: []automationRecoveryRetryRow{{Position: 1, RunID: inspectorRunID, ExpectedResumeCount: 1, Eligible: true}, {Position: 2, RunID: recoverySecondRunID, ExpectedResumeCount: 2, Reason: "run_changed"}}}
+	preview := main.AutomationRecoveryRetryPreview{App: "consumer", AppID: inspectorAppID, Name: "paid", ParentJobID: recoveryInvocationID, Rows: []main.AutomationRecoveryRetryRow{{Position: 1, RunID: inspectorRunID, ExpectedResumeCount: 1, Eligible: true}, {Position: 2, RunID: recoverySecondRunID, ExpectedResumeCount: 2, Reason: "run_changed"}}}
 	for _, positions := range [][]string{nil, {"2"}, {"3"}, {"1", "1"}} {
-		if _, err := automationRecoveryRetryPlan(preview, positions, "retry-1"); err == nil {
+		if _, err := main.AutomationRecoveryRetryPlan(preview, positions, "retry-1"); err == nil {
 			t.Fatalf("accepted %v", positions)
 		}
 	}
-	p, err := automationRecoveryRetryPlan(preview, []string{"1"}, "retry-1")
+	p, err := main.AutomationRecoveryRetryPlan(preview, []string{"1"}, "retry-1")
 	if err != nil {
 		t.Fatal(err)
 	}
 	path := filepath.Join(t.TempDir(), "retry.json")
-	if err := writeAutomationRecoveryPlanFile(path, p); err != nil {
+	if err := main.WriteAutomationRecoveryPlanFile(path, p); err != nil {
 		t.Fatal(err)
 	}
-	saved, err := readAutomationRecoveryPlan(path)
+	saved, err := main.ReadAutomationRecoveryPlan(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if saved.ParentJobID != preview.ParentJobID || len(saved.Runs) != 1 || saved.Runs[0].ExpectedResumeCount != 1 || saved.Runs[0].ParentPosition != 1 {
 		t.Fatalf("plan=%+v", saved)
 	}
-	req := automationRunJobRequest(saved, 2, "")
+	req := main.AutomationRunJobRequest(saved, 2, "")
 	if req.ParentJobID != preview.ParentJobID || req.WorkflowRuns.Runs[0].ParentPosition != 1 || req.WorkflowRuns.Runs[0].ExpectedResumeCount != 1 {
 		t.Fatalf("request=%+v", req)
 	}
@@ -44,13 +45,13 @@ func TestAutomationRecoveryRetryReviewedSelection(t *testing.T) {
 	if err != nil || info.Mode().Perm() != 0600 {
 		t.Fatalf("permissions=%v %v", info, err)
 	}
-	if err := writeAutomationRecoveryPlanFile(path, p); err == nil {
+	if err := main.WriteAutomationRecoveryPlanFile(path, p); err == nil {
 		t.Fatal("overwrote reviewed plan")
 	}
 	p.CreatedAt = time.Now().UTC()
-	captureAutomationStdout(t)
+	main.CaptureAutomationStdout(t)
 	journal := filepath.Join(t.TempDir(), "journal.jsonl")
-	if code := cmdAutomations([]string{"recovery-plan", "--plan", path, "--journal", journal}); code == 0 {
+	if code := main.CmdAutomations([]string{"recovery-plan", "--plan", path, "--journal", journal}); code == 0 {
 		t.Fatal("retry plan executed without server proof")
 	}
 	if _, err := os.Stat(journal); !os.IsNotExist(err) {
@@ -109,8 +110,8 @@ func TestAutomationRecoveryRetryPreviewReadOnly(t *testing.T) {
 				}
 			})
 			path := filepath.Join(t.TempDir(), "retry.json")
-			out := captureAutomationStdout(t)
-			code := cmdAutomations([]string{"recovery-retry-plan", "--app", "consumer", "--job", recoveryInvocationID, "--position", "1", "--key", "retry-1", "--plan-out", path})
+			out := main.CaptureAutomationStdout(t)
+			code := main.CmdAutomations([]string{"recovery-retry-plan", "--app", "consumer", "--job", recoveryInvocationID, "--position", "1", "--key", "retry-1", "--plan-out", path})
 			if (code == 0) != (scenario == "eligible" || scenario == "waiting") {
 				t.Fatalf("exit=%d", code)
 			}

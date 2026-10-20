@@ -449,10 +449,15 @@ type Account struct {
 	// value is never returned by AccountByID or used as a human principal.
 	ResourceOrgID            string
 	ResourceOwnershipEnabled bool
-	ID                       string
-	Email                    string
-	Plan                     api.Plan
-	Status                   AccountStatus
+	// AsyncQuotaPooled is set on a resource projection once the organization's
+	// async reservations moved to its own counter. Until then a company app's
+	// reservations stay on its storage namespace's counter, which the
+	// previous release also decrements (ADR-202610171908).
+	AsyncQuotaPooled bool
+	ID               string
+	Email            string
+	Plan             api.Plan
+	Status           AccountStatus
 	// ProviderCustomerID is the per-account `cus_…` returned by Stripe when
 	// the customer signs up (spec §4.7). The unique index makes it a
 	// stable webhook lookup key.
@@ -1960,6 +1965,10 @@ type AppManifest struct {
 	// edits and retries select the same build strategy.
 	ProjectSourceSHA256 string `json:"project_source_sha256,omitempty"`
 	BuildDockerfile     string `json:"build_dockerfile,omitempty"`
+	// DockerfileBuild is the Compose build.args and build.target for the
+	// Dockerfile build (ADR-20261019142544); project-managed like
+	// BuildDockerfile and captured per deployment at enqueue.
+	DockerfileBuild *api.DockerfileBuildOptions `json:"dockerfile_build,omitempty"`
 	// ProjectImage preserves declared image intent (including a mutable tag).
 	// Each deployment resolves and pins its own immutable source. Command
 	// replaces the image CMD, retaining its ENTRYPOINT; nil inherits CMD.
@@ -2075,7 +2084,7 @@ func (m AppManifest) EffectivePreviewServiceCallsPolicy() api.PreviewServiceCall
 // app rows to persist a non-empty contract.
 func (m AppManifest) IsZero() bool {
 	return len(m.PublicBuildURLs) == 0 && m.Entrypoint == nil && m.Env == nil && m.ProjectSourceSHA256 == "" &&
-		m.BuildDockerfile == "" && m.ProjectImage == "" && m.ProjectImageCommand == nil && m.ProjectImagePort == 0 && m.ProjectImageHealthcheck == nil && m.ProjectImageProcess == nil && len(m.ProjectDependencyConditions) == 0 && len(m.ServiceBindings) == 0 && len(m.ServiceReliability) == 0 && m.ServiceBindingPolicy == "" && m.ServiceBindingTransport == "" && m.PreviewServiceCallsPolicy == "" && m.AllowedServiceCallers == nil && m.AllowedServiceCallScopes == nil && m.WorkingDir == "" &&
+		m.BuildDockerfile == "" && m.DockerfileBuild == nil && m.ProjectImage == "" && m.ProjectImageCommand == nil && m.ProjectImagePort == 0 && m.ProjectImageHealthcheck == nil && m.ProjectImageProcess == nil && len(m.ProjectDependencyConditions) == 0 && len(m.ServiceBindings) == 0 && len(m.ServiceReliability) == 0 && m.ServiceBindingPolicy == "" && m.ServiceBindingTransport == "" && m.PreviewServiceCallsPolicy == "" && m.AllowedServiceCallers == nil && m.AllowedServiceCallScopes == nil && m.WorkingDir == "" &&
 		m.Port == 0 && len(m.Ports) == 0 && m.Healthz == "" && m.User == "" &&
 		m.ExecutionMode == "" && m.RestartPolicy == "" && m.AfterRestore == nil && m.BeforeCheckpoint == nil && m.Pause == "" && m.Profiling == nil && m.Tracing == nil &&
 		m.StartupDeadlineS == 0 && m.MaxRetries == 0 && m.RequestTimeoutS == 0 && m.FunctionConcurrency == 0 &&
@@ -2092,6 +2101,7 @@ func mergeProjectManagedManifest(existing, desired AppManifest) AppManifest {
 	}
 	existing.ProjectSourceSHA256 = desired.ProjectSourceSHA256
 	existing.BuildDockerfile = desired.BuildDockerfile
+	existing.DockerfileBuild = desired.DockerfileBuild.Clone()
 	existing.ProjectImage = desired.ProjectImage
 	existing.ProjectImageCommand = desired.ProjectImageCommand
 	existing.ProjectImagePort = desired.ProjectImagePort
@@ -4546,6 +4556,10 @@ type Invocation struct {
 	// renders the guest's Operation headers from it; persisted envelopes and
 	// unlinked workflow steps can never assert them.
 	WorkflowOperation *WorkflowOperationStep `json:"-"`
+	// AdmissionMaxPending is the producer's per-app cap on pending work of
+	// this Source, enforced inside the enqueue transaction (0 = uncapped).
+	// It is admission input only, never persisted or customer-authored.
+	AdmissionMaxPending int `json:"-"`
 	// Host-to-host operation metadata is trusted protocol state, never persisted or guest-authored.
 	OperationResultVersion     int    `json:"-"`
 	ManagedOperationID         string `json:"-"`

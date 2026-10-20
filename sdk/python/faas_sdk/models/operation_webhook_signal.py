@@ -10,7 +10,7 @@ T = TypeVar("T", bound="OperationWebhookSignal")
 
 @_attrs_define
 class OperationWebhookSignal:
-    """One provider event type and the operation event a waiting workflow step receives for it (ADR-1198)."""
+    """One provider event type and the operation event a waiting workflow step receives for it (ADR-20261016100929)."""
 
     provider_event: str
     event: str

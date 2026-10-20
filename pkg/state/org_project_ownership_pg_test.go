@@ -30,15 +30,14 @@ func TestPostgresOrgProjectOwnershipBackfill(t *testing.T) {
 			pool := pgtest.OpenMigrated(t)
 			store := state.NewPgStore(pool)
 			ctx := t.Context()
-			raw, err := migrations.FS.ReadFile("20261018003100004_org_project_ownership.sql")
+			raw, err := migrations.FS.ReadFile("20261019190114312_org_project_ownership_online.sql")
 			if err != nil {
 				t.Fatal(err)
 			}
-			up, down, ok := strings.Cut(string(raw), "-- +goose Down")
-			if !ok {
+			if !strings.Contains(string(raw), "-- +goose Down") {
 				t.Fatal("migration has no rollback")
 			}
-			if _, err := pool.Exec(ctx, down); err != nil {
+			if err := pgtest.ExecMigration(ctx, t, pool, string(raw), false); err != nil {
 				t.Fatalf("expand legacy schema: %v", err)
 			}
 			identity, err := store.CreateAccountWithPersonalOrg(ctx, state.CreateAccountWithPersonalOrgParams{Email: "legacy-project@example.com", Plan: api.PlanPro})
@@ -73,7 +72,7 @@ func TestPostgresOrgProjectOwnershipBackfill(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			_, err = pool.Exec(ctx, up)
+			err = pgtest.ExecMigration(ctx, t, pool, string(raw), true)
 			if mixed || conflictingOwner {
 				if err == nil || !strings.Contains(err.Error(), "remediate mixed project ownership") {
 					t.Fatalf("mixed ownership migrated: %v", err)

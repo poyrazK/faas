@@ -119,6 +119,13 @@
   when: faas_livequeryd_enabled | bool
   notify: restart faas-apid for live queries
 
+- name: livequeryd_service — fleet-PKI server leaf
+  ansible.builtin.include_tasks: pki.yml
+  when:
+    - faas_livequeryd_enabled | bool
+    - faas_livequeryd_tls_cert | length > 0
+    - faas_livequeryd_tls_cert_src | length == 0
+
 - name: livequeryd_service — create TLS directory
   ansible.builtin.file:
     path: "{{ faas_livequeryd_tls_cert | dirname }}"

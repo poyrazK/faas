@@ -21,7 +21,7 @@
 //
 // Build tag: no Postgres required; uses MemStore.
 
-package sched
+package sched_test
 
 import (
 	"context"

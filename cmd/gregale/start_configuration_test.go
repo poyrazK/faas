@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -10,30 +10,31 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func TestStartDotenvRequiresReviewedSealing(t *testing.T) {
-	stdout, stderr := startTestEnvironment(t)
-	source := startTestSource(t)
-	writeFile(t, source, "needs-env.js", "console.log(process.env.STRIPE_SECRET_KEY);\n")
-	writeFile(t, source, ".env", "STRIPE_SECRET_KEY="+fakeStripeLiveKey+"\n")
-	runner := startTestRunner(t, source, "3\n")
-	report, ready, err := runner.sourcePreflight()
-	if err != nil || ready || !report.HasErrors() || runner.secretsFile != "" {
+	stdout, stderr := main.StartTestEnvironment(t)
+	source := main.StartTestSource(t)
+	main.WriteFile(t, source, "needs-env.js", "console.log(process.env.STRIPE_SECRET_KEY);\n")
+	main.WriteFile(t, source, ".env", "STRIPE_SECRET_KEY="+(*main.FakeStripeLiveKey)+"\n")
+	runner := main.StartTestRunner(t, source, "3\n")
+	report, ready, err := runner.SourcePreflight()
+	if err != nil || ready || !report.HasErrors() || (*runner.SecretsFile()) != "" {
 		t.Fatalf("local dotenv was treated as delivered configuration: ready=%t err=%v", ready, err)
 	}
-	if !strings.Contains(stdout.String(), "STRIPE_SECRET_KEY") || strings.Contains(stdout.String()+stderr(), fakeStripeLiveKey) {
+	if !strings.Contains(stdout.String(), "STRIPE_SECRET_KEY") || strings.Contains(stdout.String()+stderr(), (*main.FakeStripeLiveKey)) {
 		t.Fatal("missing-key guidance was absent or exposed its value")
 	}
-	runner.prompt.reader.Reset(strings.NewReader("4\n" + filepath.Join(source, ".env") + "\nn\n"))
-	if code, submitted := runner.reviewAndDeploy(); code != 0 || submitted || runner.secretsFile == "" {
+	(*(*runner.Prompt()).Reader()).Reset(strings.NewReader("4\n" + filepath.Join(source, ".env") + "\nn\n"))
+	if code, submitted := runner.ReviewAndDeploy(); code != 0 || submitted || (*runner.SecretsFile()) == "" {
 		t.Fatalf("reviewing then declining dotenv should not deploy: code=%d submitted=%t stderr=%s stdout=%s", code, submitted, stderr(), stdout)
 	}
 	if !strings.Contains(stdout.String(), "Seal these keys before deployment: STRIPE_SECRET_KEY") {
 		t.Fatal("the confirmation omitted the selected secret key")
 	}
-	if _, err := os.Stat(runner.statePath); !os.IsNotExist(err) {
+	if _, err := os.Stat((*runner.StatePath())); !os.IsNotExist(err) {
 		t.Fatal("declined configuration created a session")
 	}
 }
@@ -54,15 +55,15 @@ func TestStartConfigurationReconcilesRuntimeKeyNames(t *testing.T) {
 		{name: "selected local file", localValue: "selected-private-value", ready: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			stdout, stderr := startTestEnvironment(t)
-			source := startTestSource(t)
-			writeFile(t, source, "needs-env.js", "console.log(process.env.FAAS_TEST_ALPHA);\n")
-			writeFile(t, source, ".env", "FAAS_TEST_ALPHA=local-only-value\n")
+			stdout, stderr := main.StartTestEnvironment(t)
+			source := main.StartTestSource(t)
+			main.WriteFile(t, source, "needs-env.js", "console.log(process.env.FAAS_TEST_ALPHA);\n")
+			main.WriteFile(t, source, ".env", "FAAS_TEST_ALPHA=local-only-value\n")
 			if tc.declared {
-				writeFile(t, source, ".gregale/required-secrets.json", `["FAAS_TEST_ALPHA"]`)
+				main.WriteFile(t, source, ".gregale/required-secrets.json", `["FAAS_TEST_ALPHA"]`)
 			}
 			mutations := 0
-			startTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
+			main.StartTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
 				if r.Method != http.MethodGet {
 					mutations++
 				}
@@ -92,17 +93,17 @@ func TestStartConfigurationReconcilesRuntimeKeyNames(t *testing.T) {
 					http.NotFound(w, r)
 				}
 			})
-			runner := startTestRunner(t, source, "3\n")
-			runner.session.AppID = "app-1"
+			runner := main.StartTestRunner(t, source, "3\n")
+			(*runner.Session()).AppID = "app-1"
 			if tc.localValue != "" {
 				value := tc.localValue
 				if value == "empty" {
 					value = ""
 				}
-				runner.secretsFile = filepath.Join(t.TempDir(), "selected.env")
-				writeFile(t, filepath.Dir(runner.secretsFile), "selected.env", "FAAS_TEST_ALPHA="+value+"\n")
+				(*runner.SecretsFile()) = filepath.Join(t.TempDir(), "selected.env")
+				main.WriteFile(t, filepath.Dir((*runner.SecretsFile())), "selected.env", "FAAS_TEST_ALPHA="+value+"\n")
 			}
-			report, ready, err := runner.sourcePreflight()
+			report, ready, err := runner.SourcePreflight()
 			if ready != tc.ready || err != nil || mutations != 0 {
 				t.Fatalf("ready=%t want=%t mutations=%d err=%v stdout=%s", ready, tc.ready, mutations, err, stdout)
 			}
@@ -123,13 +124,13 @@ func TestStartConfigurationReconcilesRuntimeKeyNames(t *testing.T) {
 }
 
 func TestStartSelectedDotenvIsSealedBeforeUpload(t *testing.T) {
-	stdout, stderr := startTestEnvironment(t)
-	source := startTestSource(t)
-	withCwd(t, source)
-	writeFile(t, source, "needs-env.js", "console.log(process.env.STRIPE_SECRET_KEY);\n")
-	writeFile(t, source, ".env", "STRIPE_SECRET_KEY="+fakeStripeLiveKey+"\n")
+	stdout, stderr := main.StartTestEnvironment(t)
+	source := main.StartTestSource(t)
+	main.WithCwd(t, source)
+	main.WriteFile(t, source, "needs-env.js", "console.log(process.env.STRIPE_SECRET_KEY);\n")
+	main.WriteFile(t, source, ".env", "STRIPE_SECRET_KEY="+(*main.FakeStripeLiveKey)+"\n")
 	sealed, uploaded := false, false
-	startTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
+	main.StartTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/apps":
 			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "app-1", Slug: "first-app"})
@@ -155,9 +156,9 @@ func TestStartSelectedDotenvIsSealedBeforeUpload(t *testing.T) {
 						t.Error(readErr)
 						return
 					}
-					archive := readCapturedDeployArchive(t, data)
+					archive := main.ReadCapturedDeployArchive(t, data)
 					for name, body := range archive {
-						if filepath.Base(name) == ".env" || bytes.Contains(body, []byte(fakeStripeLiveKey)) {
+						if filepath.Base(name) == ".env" || bytes.Contains(body, []byte((*main.FakeStripeLiveKey))) {
 							t.Error("selected dotenv reached the source archive")
 						}
 					}
@@ -174,26 +175,26 @@ func TestStartSelectedDotenvIsSealedBeforeUpload(t *testing.T) {
 			api.WriteProblem(w, api.NewProblem(404, "not_found", "Not found", "No resource"))
 		}
 	})
-	pipeStdin(t, "4\n"+filepath.Join(source, ".env")+"\ny\n3\n")
-	_ = cmdStart(nil)
-	if !sealed || !uploaded || strings.Contains(stdout.String()+stderr(), fakeStripeLiveKey) {
+	main.PipeStdin(t, "4\n"+filepath.Join(source, ".env")+"\ny\n3\n")
+	_ = main.CmdStart(nil)
+	if !sealed || !uploaded || strings.Contains(stdout.String()+stderr(), (*main.FakeStripeLiveKey)) {
 		t.Fatal("selected dotenv was not sealed and uploaded with values kept out of output")
 	}
-	statePath, _ := startSessionPath(source)
+	statePath, _ := main.StartSessionPath(source)
 	state, err := os.ReadFile(statePath)
-	if err != nil || bytes.Contains(state, []byte(fakeStripeLiveKey)) || bytes.Contains(state, []byte(`"secrets_file"`)) {
+	if err != nil || bytes.Contains(state, []byte((*main.FakeStripeLiveKey))) || bytes.Contains(state, []byte(`"secrets_file"`)) {
 		t.Fatal("secret configuration leaked into recovery state")
 	}
 }
 
 func TestStartUnverifiedConfigurationCanUseReviewedFile(t *testing.T) {
-	stdout, stderr := startTestEnvironment(t)
-	source := startTestSource(t)
-	writeFile(t, source, "needs-env.js", "console.log(process.env.FAAS_TEST_ALPHA);\n")
+	stdout, stderr := main.StartTestEnvironment(t)
+	source := main.StartTestSource(t)
+	main.WriteFile(t, source, "needs-env.js", "console.log(process.env.FAAS_TEST_ALPHA);\n")
 	file := filepath.Join(t.TempDir(), "selected.env")
-	writeFile(t, filepath.Dir(file), "selected.env", "FAAS_TEST_ALPHA=private-replacement-value\n")
+	main.WriteFile(t, filepath.Dir(file), "selected.env", "FAAS_TEST_ALPHA=private-replacement-value\n")
 	metadataReads, writes := 0, 0
-	startTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
+	main.StartTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			writes++
 		}
@@ -204,10 +205,10 @@ func TestStartUnverifiedConfigurationCanUseReviewedFile(t *testing.T) {
 			api.WriteProblem(w, api.NewProblem(403, "forbidden", "Forbidden", "Metadata unavailable"))
 		}
 	})
-	runner := startTestRunner(t, source, "4\n"+file+"\nn\n")
-	runner.session.AppID = "app-1"
-	code, submitted := runner.reviewAndDeploy()
-	if code != 0 || submitted || metadataReads != 1 || writes != 0 || runner.secretsFile != file {
+	runner := main.StartTestRunner(t, source, "4\n"+file+"\nn\n")
+	(*runner.Session()).AppID = "app-1"
+	code, submitted := runner.ReviewAndDeploy()
+	if code != 0 || submitted || metadataReads != 1 || writes != 0 || (*runner.SecretsFile()) != file {
 		t.Fatalf("unverified metadata blocked file recovery: code=%d submitted=%t reads=%d writes=%d stderr=%s stdout=%s", code, submitted, metadataReads, writes, stderr(), stdout)
 	}
 	if !strings.Contains(stdout.String(), "configuration_unverified") || !strings.Contains(stdout.String(), "Seal these keys") || strings.Contains(stdout.String()+stderr(), "private-replacement-value") {

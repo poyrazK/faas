@@ -1,7 +1,7 @@
 //go:build !no_pg
 
 // adr: 20261017221000
-package sched
+package sched_test
 
 import (
 	"context"
@@ -9,6 +9,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -17,5 +18,5 @@ func TestWorkerRecoveryPostgresRestartWithoutEvents(t *testing.T) {
 	if err := db.MigrateUp(context.Background(), pool); err != nil {
 		t.Fatal(err)
 	}
-	exerciseWorkerRecoveryRestart(t, state.NewPgStore(pool), func() state.Store { return state.NewPgStore(pool) })
+	sched.ExerciseWorkerRecoveryRestart(t, state.NewPgStore(pool), func() state.Store { return state.NewPgStore(pool) })
 }

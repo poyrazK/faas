@@ -1,7 +1,8 @@
-package main
+package main_test
 
 import (
 	"bytes"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,7 +12,7 @@ import (
 
 // `gregale keys list` showed revoked keys exactly like live ones.
 func TestKeysListMarksRevokedKeys(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`[{"id":"a","label":"live-key","prefix":"fp_live_aaaaaaaa","status":"active"},` +
 			`{"id":"b","label":"old-key","prefix":"fp_live_bbbbbbbb","status":"revoked"}]`))
@@ -26,7 +27,7 @@ func TestKeysListMarksRevokedKeys(t *testing.T) {
 	}
 	oldStdout := os.Stdout
 	os.Stdout = writer
-	code := cmdKeys([]string{"list"})
+	code := main.CmdKeys([]string{"list"})
 	os.Stdout = oldStdout
 	_ = writer.Close()
 	var out bytes.Buffer
@@ -55,7 +56,7 @@ func TestKeysListHelpNeverRequestsAPI(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			resetJSONOut(t)
+			main.ResetJSONOut(t)
 			calls := 0
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				calls++
@@ -66,15 +67,15 @@ func TestKeysListHelpNeverRequestsAPI(t *testing.T) {
 			t.Setenv("FAAS_TOKEN", "test-token")
 
 			var stdout bytes.Buffer
-			oldOut := osStdout
-			osStdout = &stdout
-			t.Cleanup(func() { osStdout = oldOut })
+			oldOut := (*main.OsStdout)
+			(*main.OsStdout) = &stdout
+			t.Cleanup(func() { (*main.OsStdout) = oldOut })
 
 			var code int
 			if tc.direct {
-				code = cmdKeys(tc.args)
+				code = main.CmdKeys(tc.args)
 			} else {
-				code = run(tc.args)
+				code = main.Run(tc.args)
 			}
 			if code != 0 {
 				t.Fatalf("command returned %d, want 0; output: %q", code, stdout.String())

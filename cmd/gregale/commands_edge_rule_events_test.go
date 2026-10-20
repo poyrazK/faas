@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -35,11 +36,11 @@ func TestCmdEdgeRulesEvents(t *testing.T) {
 	var query string
 	edgeRuleEventsServer(t, &query)
 	var stdout bytes.Buffer
-	oldOut := osStdout
-	osStdout = &stdout
-	defer func() { osStdout = oldOut }()
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	defer func() { (*main.OsStdout) = oldOut }()
 
-	if code := cmdEdgeRules([]string{"events", "--app", "my-api", "--outcome", "logged", "--since", "7d"}); code != 0 {
+	if code := main.CmdEdgeRules([]string{"events", "--app", "my-api", "--outcome", "logged", "--since", "7d"}); code != 0 {
 		t.Fatalf("events = %d", code)
 	}
 	for _, want := range []string{"outcome=logged", "since=7d", "limit=50"} {
@@ -52,23 +53,23 @@ func TestCmdEdgeRulesEvents(t *testing.T) {
 			t.Errorf("output missing %q:\n%s", want, stdout.String())
 		}
 	}
-	if code := cmdEdgeRules([]string{"events"}); code != 1 {
+	if code := main.CmdEdgeRules([]string{"events"}); code != 1 {
 		t.Fatalf("events without --app = %d, want 1", code)
 	}
 }
 
 func TestCmdEdgeRulesEvents_JSON(t *testing.T) {
 	resetJSONEnv(t)
-	jsonOutput = true
-	defer func() { jsonOutput = false }()
+	(*main.JsonOutput) = true
+	defer func() { (*main.JsonOutput) = false }()
 	var query string
 	edgeRuleEventsServer(t, &query)
 	var stdout bytes.Buffer
-	oldOut := osStdout
-	osStdout = &stdout
-	defer func() { osStdout = oldOut }()
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	defer func() { (*main.OsStdout) = oldOut }()
 
-	if code := cmdEdgeRules([]string{"events", "--app", "my-api"}); code != 0 {
+	if code := main.CmdEdgeRules([]string{"events", "--app", "my-api"}); code != 0 {
 		t.Fatalf("events --json = %d", code)
 	}
 	if !strings.Contains(stdout.String(), `"next_cursor"`) {
