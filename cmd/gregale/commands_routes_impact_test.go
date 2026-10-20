@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/routeimpact"
 )
 
@@ -42,11 +43,11 @@ func routeImpactRepo(t *testing.T) string {
 
 func captureImpactOutput(t *testing.T) *bytes.Buffer {
 	t.Helper()
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	var output bytes.Buffer
-	oldOut, oldErr := osStdout, osStderr
-	osStdout, osStderr = &output, &output
-	t.Cleanup(func() { osStdout, osStderr = oldOut, oldErr })
+	oldOut, oldErr := (*main.OsStdout), (*main.OsStderr)
+	(*main.OsStdout), (*main.OsStderr) = &output, &output
+	t.Cleanup(func() { (*main.OsStdout), (*main.OsStderr) = oldOut, oldErr })
 	return &output
 }
 
@@ -63,7 +64,7 @@ func TestRoutesImpactLocalJSONExportAndCIGates(t *testing.T) {
 	t.Setenv("FAAS_API_KEY", "")
 	dir := routeImpactRepo(t)
 	destination := filepath.Join(t.TempDir(), "impact.json")
-	if code := run([]string{"routes", "impact", "my-api", "--base", "HEAD", "--head", "HEAD", "--path", dir, "--out", destination, "--fail-on-impact", "--fail-on-incomplete", "--json"}); code != 0 {
+	if code := main.Run([]string{"routes", "impact", "my-api", "--base", "HEAD", "--head", "HEAD", "--path", dir, "--out", destination, "--fail-on-impact", "--fail-on-incomplete", "--json"}); code != 0 {
 		t.Fatalf("unchanged commit exit=%d %s", code, out.String())
 	}
 	var report routeimpact.Report
@@ -82,14 +83,14 @@ func TestRoutesImpactLocalJSONExportAndCIGates(t *testing.T) {
 		t.Fatal(err)
 	}
 	out.Reset()
-	if code := run([]string{"routes", "impact", "--base", "HEAD", "--path", dir, "--fail-on-impact", "--json"}); code != 1 {
+	if code := main.Run([]string{"routes", "impact", "--base", "HEAD", "--path", dir, "--fail-on-impact", "--json"}); code != 1 {
 		t.Fatalf("impact gate exit=%d %s", code, out.String())
 	}
 	if err := json.Unmarshal(out.Bytes(), &report); err != nil || report.Summary.SourceChanged != 1 {
 		t.Fatalf("impact output lost on gate failure: %v %+v", err, report)
 	}
 	out.Reset()
-	if code := run([]string{"routes", "impact", "--base", "HEAD", "--path", dir, "--out", destination, "--json"}); code != 1 {
+	if code := main.Run([]string{"routes", "impact", "--base", "HEAD", "--path", dir, "--out", destination, "--json"}); code != 1 {
 		t.Fatalf("existing artifact overwritten: %d", code)
 	}
 	saved, _ := os.ReadFile(destination)
@@ -104,34 +105,34 @@ func TestRoutesImpactUnknownGateAndMarkdown(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "main.py"), []byte("from fastapi import FastAPI\napp=FastAPI()\napp.include_router(build_router())\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if code := run([]string{"routes", "impact", "--base", "HEAD", "--path", dir, "--fail-on-incomplete", "--format", "markdown"}); code != 1 {
+	if code := main.Run([]string{"routes", "impact", "--base", "HEAD", "--path", dir, "--fail-on-incomplete", "--format", "markdown"}); code != 1 {
 		t.Fatalf("unknown gate exit=%d %s", code, out.String())
 	}
 	if !strings.Contains(out.String(), "## Route impact") || !strings.Contains(out.String(), "dynamic\\_router") || !strings.Contains(out.String(), "unknown") {
 		t.Fatal(out.String())
 	}
 	out.Reset()
-	if code := run([]string{"routes", "impact", "--base", "HEAD", "--path", dir, "--fail-on-impact"}); code != 0 {
+	if code := main.Run([]string{"routes", "impact", "--base", "HEAD", "--path", dir, "--fail-on-impact"}); code != 0 {
 		t.Fatalf("unknown treated as a confirmed removal: %d %s", code, out.String())
 	}
 }
 
 func TestRoutesImpactHelpValidationAndSafeRendering(t *testing.T) {
 	out := captureImpactOutput(t)
-	if code := run([]string{"routes", "impact", "--help"}); code != 0 || !strings.Contains(out.String(), "--base") || !strings.Contains(out.String(), "--entrypoint") {
+	if code := main.Run([]string{"routes", "impact", "--help"}); code != 0 || !strings.Contains(out.String(), "--base") || !strings.Contains(out.String(), "--entrypoint") {
 		t.Fatalf("local help: %d %s", code, out.String())
 	}
 	for _, args := range [][]string{
 		{}, {"my-api", "--base", "HEAD", "--format", "html"}, {"one", "two", "--base", "HEAD"}, {"--base", "HEAD", "--entrypoint", "broken:value:again"},
 	} {
-		if code := cmdRoutesImpact(args); code != 1 {
+		if code := main.CmdRoutesImpact(args); code != 1 {
 			t.Fatalf("invalid args %v accepted: %d", args, code)
 		}
 	}
 	out.Reset()
 	report := routeimpact.Report{App: "my-api", Routes: []routeimpact.Result{{Method: "GET", Path: "/[link](https://invalid)\x1b[31m", Change: "unknown"}},
 		Issues: []routeimpact.Issue{{Code: "unknown", File: "bad\x1b.py", Message: "<script>\nmessage"}}}
-	renderRouteImpact(out, report, "markdown")
+	main.RenderRouteImpact(out, report, "markdown")
 	if strings.ContainsRune(out.String(), '\x1b') || strings.Contains(out.String(), "<script>") || strings.Contains(out.String(), "[link](") {
 		t.Fatal("terminal or Markdown control content was not escaped")
 	}
@@ -140,18 +141,18 @@ func TestRoutesImpactHelpValidationAndSafeRendering(t *testing.T) {
 func TestRoutesImpactFunctionPrecisionAndReviewOutput(t *testing.T) {
 	out := captureImpactOutput(t)
 	dir := routeImpactRepo(t)
-	main := "from fastapi import FastAPI\nfrom helpers import price\napp=FastAPI()\n@app.get('/checkout')\ndef checkout(): return price()\n@app.get('/health')\ndef health(): return True\n"
-	for file, body := range map[string]string{"main.py": main, "helpers.py": "def price(): return 1\n"} {
+	mainPy := "from fastapi import FastAPI\nfrom helpers import price\napp=FastAPI()\n@app.get('/checkout')\ndef checkout(): return price()\n@app.get('/health')\ndef health(): return True\n"
+	for file, body := range map[string]string{"main.py": mainPy, "helpers.py": "def price(): return 1\n"} {
 		if err := os.WriteFile(filepath.Join(dir, file), []byte(body), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
 	routeImpactGit(t, dir, "add", ".")
 	routeImpactGit(t, dir, "commit", "-qm", "function baseline")
-	if err := os.WriteFile(filepath.Join(dir, "main.py"), []byte("# comment\n\n"+main), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "main.py"), []byte("# comment\n\n"+mainPy), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if code := run([]string{"routes", "impact", "--base", "HEAD", "--path", dir, "--fail-on-impact", "--fail-on-incomplete", "--json"}); code != 0 {
+	if code := main.Run([]string{"routes", "impact", "--base", "HEAD", "--path", dir, "--fail-on-impact", "--fail-on-incomplete", "--json"}); code != 0 {
 		t.Fatalf("formatting failed CI: %d %s", code, out.String())
 	}
 	var report routeimpact.Report
@@ -162,7 +163,7 @@ func TestRoutesImpactFunctionPrecisionAndReviewOutput(t *testing.T) {
 		t.Fatal(err)
 	}
 	out.Reset()
-	if code := run([]string{"routes", "impact", "--base", "HEAD", "--path", dir, "--fail-on-impact", "--format", "markdown"}); code != 1 {
+	if code := main.Run([]string{"routes", "impact", "--base", "HEAD", "--path", dir, "--fail-on-impact", "--format", "markdown"}); code != 1 {
 		t.Fatalf("helper change did not fail CI: %d %s", code, out.String())
 	}
 	if !strings.Contains(out.String(), "main.checkout (main.py:7) -> helpers.price (helpers.py:1)") || !strings.Contains(out.String(), "function\\_reference") || !strings.Contains(out.String(), "Precision: function") || !strings.Contains(out.String(), "/health — no\\_linked\\_changes") {
@@ -178,7 +179,7 @@ func TestRoutesImpactUnresolvedFunctionCallGate(t *testing.T) {
 	}
 	routeImpactGit(t, dir, "add", ".")
 	routeImpactGit(t, dir, "commit", "-qm", "callback baseline")
-	if code := run([]string{"routes", "impact", "--base", "HEAD", "--path", dir, "--fail-on-incomplete", "--json"}); code != 1 {
+	if code := main.Run([]string{"routes", "impact", "--base", "HEAD", "--path", dir, "--fail-on-incomplete", "--json"}); code != 1 {
 		t.Fatalf("unresolved call passed incomplete gate: %d %s", code, out.String())
 	}
 	var report routeimpact.Report

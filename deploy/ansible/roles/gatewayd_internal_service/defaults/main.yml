@@ -88,3 +88,11 @@ gatewayd_app_errors_tls_cert_path: /etc/faas/tls/gatewayd/apid-client.crt
 gatewayd_app_errors_tls_key_path: /etc/faas/tls/gatewayd/apid-client.key
 gatewayd_app_errors_tls_ca_path: /etc/faas/tls/ca/ca.crt
 faas_dev_bridge_enabled: false
+
+# Live queries (ADR-20261016151947): with faas_realtime_live_tls_managed,
+# realtimed dials livequeryd hubs with the fleet PKI's live client leaf
+# (tasks/live_tls.yml), issued on the control plane, and verifies every hub as
+# livequeryd.faas. Off, the faas_realtime_live_tls_* paths, when set, are used
+# as given.
+faas_realtime_live_tls_managed: false
+faas_realtime_live_tls_issuer_host: "{{ groups['control_plane'] | default([]) | first | default('') }}"

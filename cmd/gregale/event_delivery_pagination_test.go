@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"context"
@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -18,7 +19,7 @@ func TestEventDeliveryPaginationUnevenStreams(t *testing.T) {
 	for _, short := range []string{"deliveries", "fanout"} {
 		for _, machine := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/json=%t", short, machine), func(t *testing.T) {
-				setupCLIRegression(t)
+				main.SetupCLIRegression(t)
 				startD, startF := "delivery|start + token", "fanout|start + token"
 				var cursors [][2]string
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -50,12 +51,12 @@ func TestEventDeliveryPaginationUnevenStreams(t *testing.T) {
 				}))
 				defer server.Close()
 				t.Setenv("FAAS_API", server.URL)
-				t.Setenv("FAAS_TOKEN", testAPIKey('a'))
+				t.Setenv("FAAS_TOKEN", main.TestAPIKey('a'))
 				args := []string{"events", "deliveries", "--all", "demo", "--event-source", "orders", "--event-id", "event-1", "--state", "failed", "--limit", "2", "--before", startD, "--fanout-before", startF}
 				if machine {
 					args = append(args, "--json")
 				}
-				code, out, errOut := capturePreviewRun(t, args)
+				code, out, errOut := main.CapturePreviewRun(t, args)
 				want := [][2]string{{startD, startF}, {startD, "f1"}, {startD, "f2"}}
 				if short == "fanout" {
 					want = [][2]string{{startD, startF}, {"d1", startF}, {"d2", startF}}
@@ -104,7 +105,7 @@ func TestEventDeliveryPaginationGuards(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			calls := 0
-			out, err := collectEventDeliveryPages(ctx, "d0", "f0", true, func(_ context.Context, d, f string) (api.EventDeliveryListResponse, error) {
+			out, err := main.CollectEventDeliveryPages(ctx, "d0", "f0", true, func(_ context.Context, d, f string) (api.EventDeliveryListResponse, error) {
 				calls++
 				if mode == "failure" && calls == 2 {
 					return api.EventDeliveryListResponse{}, errors.New("failed fetch")
@@ -127,14 +128,14 @@ func TestEventDeliveryPaginationGuards(t *testing.T) {
 						page.NextFanoutBefore = "f1"
 					}
 				case "last-page":
-					if calls == maxCLIListPages {
+					if calls == main.MaxCLIListPages {
 						page.NextBefore, page.NextFanoutBefore = "", ""
 					}
 				}
 				return page, nil
 			})
 			if mode == "last-page" {
-				if err != nil || len(out.Deliveries) != maxCLIListPages || len(out.FanoutFailures) != maxCLIListPages {
+				if err != nil || len(out.Deliveries) != main.MaxCLIListPages || len(out.FanoutFailures) != main.MaxCLIListPages {
 					t.Fatalf("counts=%d/%d err=%v", len(out.Deliveries), len(out.FanoutFailures), err)
 				}
 				return
@@ -145,7 +146,7 @@ func TestEventDeliveryPaginationGuards(t *testing.T) {
 			if mode == "cancel" && !errors.Is(err, context.Canceled) {
 				t.Fatalf("err=%v", err)
 			}
-			if mode == "bound" && calls != maxCLIListPages {
+			if mode == "bound" && calls != main.MaxCLIListPages {
 				t.Fatalf("calls=%d", calls)
 			}
 		})
@@ -156,7 +157,7 @@ func TestEventDeliveryPaginationCommandFailuresAndEmptyPages(t *testing.T) {
 	for _, mode := range []string{"failure", "delivery-repeat", "fanout-repeat", "empty-page", "empty-all"} {
 		for _, machine := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/json=%t", mode, machine), func(t *testing.T) {
-				setupCLIRegression(t)
+				main.SetupCLIRegression(t)
 				calls := 0
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					calls++
@@ -185,7 +186,7 @@ func TestEventDeliveryPaginationCommandFailuresAndEmptyPages(t *testing.T) {
 				}))
 				defer server.Close()
 				t.Setenv("FAAS_API", server.URL)
-				t.Setenv("FAAS_TOKEN", testAPIKey('a'))
+				t.Setenv("FAAS_TOKEN", main.TestAPIKey('a'))
 				args := []string{"events", "deliveries", "demo", "--before", "d0", "--fanout-before", "f0"}
 				if mode != "empty-page" {
 					args = append(args, "--all")
@@ -193,7 +194,7 @@ func TestEventDeliveryPaginationCommandFailuresAndEmptyPages(t *testing.T) {
 				if machine {
 					args = append(args, "--json")
 				}
-				code, out, errOut := capturePreviewRun(t, args)
+				code, out, errOut := main.CapturePreviewRun(t, args)
 				if mode == "failure" || strings.HasSuffix(mode, "repeat") {
 					want := 1
 					if mode == "failure" {
@@ -203,7 +204,7 @@ func TestEventDeliveryPaginationCommandFailuresAndEmptyPages(t *testing.T) {
 						t.Fatalf("exit=%d stdout=%s stderr=%s", code, out, errOut)
 					}
 					if machine {
-						assertOneProblem(t, errOut)
+						main.AssertOneProblem(t, errOut)
 					}
 					return
 				}

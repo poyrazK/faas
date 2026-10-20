@@ -1,5 +1,5 @@
 // adr: 590
-package sched
+package sched_test
 
 import (
 	"encoding/json"
@@ -12,6 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -95,11 +96,11 @@ func TestQueuePollerCannotClaimOrAcknowledgeStageWork(t *testing.T) {
 			if mode == "legacy_queue" {
 				trigger.Slug = "" // exercise the retained unnamed queue adapter
 			}
-			pollerSource, err := newQueuePoller(pool, trigger, nil)
+			pollerSource, err := sched.NewQueuePoller(pool, trigger, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
-			poller := pollerSource.(*queuePoller)
+			poller := pollerSource.(*sched.QueuePoller)
 			production, err := store.EnqueueInvocation(ctx, state.Invocation{AppID: app.ID, AccountID: app.AccountID,
 				Source: state.InvocationSource(source), QueueName: queueName, DueAt: time.Now().Add(-time.Second)})
 			if err != nil {
@@ -117,16 +118,16 @@ func TestQueuePollerCannotClaimOrAcknowledgeStageWork(t *testing.T) {
 				t.Fatal(err)
 			}
 			for _, action := range []string{"ack", "retry", "dead_letter", "partial_release"} {
-				poller.itemsInFlight[running.ID] = queueDeliveryClaim{Attempt: before.Attempts, ReplayGeneration: before.ReplayGeneration}
+				(*poller.ItemsInFlight())[running.ID] = sched.QueueDeliveryClaim{Attempt: before.Attempts, ReplayGeneration: before.ReplayGeneration}
 				switch action {
 				case "ack":
 					err = poller.Ack(ctx, trigger, []string{running.ID})
 				case "retry":
 					err = poller.Nack(ctx, trigger, []string{running.ID}, "temporary")
 				case "dead_letter":
-					err = poller.Nack(ctx, trigger, []string{running.ID}, triggerReasonPoisonRecord)
+					err = poller.Nack(ctx, trigger, []string{running.ID}, sched.TriggerReasonPoisonRecord)
 				case "partial_release":
-					err = poller.releaseNamedClaims(ctx, map[string]queueDeliveryClaim{running.ID: {Attempt: before.Attempts, ReplayGeneration: before.ReplayGeneration}}, trigger)
+					err = poller.ReleaseNamedClaims(ctx, map[string]sched.QueueDeliveryClaim{running.ID: {Attempt: before.Attempts, ReplayGeneration: before.ReplayGeneration}}, trigger)
 				}
 				if err != nil && !errors.Is(err, state.ErrConflict) {
 					t.Fatalf("%s: %v", action, err)
@@ -166,7 +167,7 @@ func TestNamedQueuePollerSkipsStageBacklogBeforeCandidateLimit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	poller, err := newQueuePoller(pool, trigger, nil)
+	poller, err := sched.NewQueuePoller(pool, trigger, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

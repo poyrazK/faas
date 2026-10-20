@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"context"
@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -38,7 +39,7 @@ var npmFailureBuildLog = []string{
 }
 
 func TestBuildErrorExcerptShowsTheFailingCommand(t *testing.T) {
-	got := buildErrorExcerpt(npmFailureBuildLog)
+	got := main.BuildErrorExcerpt(npmFailureBuildLog)
 	want := []string{
 		"npm error code E404",
 		"npm error 404 Not Found - GET https://registry.npmjs.org/missing-pkg - Not found",
@@ -50,7 +51,7 @@ func TestBuildErrorExcerptShowsTheFailingCommand(t *testing.T) {
 	if !slices.Equal(got, want) {
 		t.Fatalf("excerpt =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
-	if buildErrorExcerpt([]string{"#1 DONE 0.1s", "all good"}) != nil {
+	if main.BuildErrorExcerpt([]string{"#1 DONE 0.1s", "all good"}) != nil {
 		t.Fatal("a log without an error line produced an excerpt")
 	}
 }
@@ -62,7 +63,7 @@ func TestDeployBuildFailureShowsCauseAndBuildLog(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/v1/deployments/dep-1":
-			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "dep-1", Status: deploymentStatusFailed,
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "dep-1", Status: main.DeploymentStatusFailed,
 				Error: "build exited 1", ErrorCode: api.CodeDepInstallFailed})
 		case r.URL.Path == "/v1/deployments/dep-1/logs":
 			w.Header().Set("Content-Type", "text/event-stream")
@@ -78,13 +79,13 @@ func TestDeployBuildFailureShowsCauseAndBuildLog(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "test-token")
-	client, err := authedClient()
+	client, err := main.AuthedClient()
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, readStderr, restore := swapIO(t)
-	code := terminalExitForDeploymentWithFailureContext(context.Background(), client,
-		api.DeploymentResponse{ID: "dep-1", Status: deploymentStatusFailed, Error: "build exited 1"}, "my-app", nil)
+	_, readStderr, restore := main.SwapIO(t)
+	code := main.TerminalExitForDeploymentWithFailureContext(context.Background(), client,
+		api.DeploymentResponse{ID: "dep-1", Status: main.DeploymentStatusFailed, Error: "build exited 1"}, "my-app", nil)
 	stderr := readStderr()
 	restore()
 	if code == 0 {

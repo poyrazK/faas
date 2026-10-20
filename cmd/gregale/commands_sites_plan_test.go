@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -32,9 +33,9 @@ func planCLIFixture(t *testing.T) (string, api.HostingSite, api.HostingCapabilit
 func planCLIOutput(t *testing.T) *bytes.Buffer {
 	t.Helper()
 	var out bytes.Buffer
-	previous := osStdout
-	osStdout = &out
-	t.Cleanup(func() { osStdout = previous })
+	previous := (*main.OsStdout)
+	(*main.OsStdout) = &out
+	t.Cleanup(func() { (*main.OsStdout) = previous })
 	return &out
 }
 
@@ -79,7 +80,7 @@ func TestSitesPlanReadOnlyJSONAndQuotaExit(t *testing.T) {
 				planCLIResponse(t, w, r, site, caps, usage)
 			})
 			out := planCLIOutput(t)
-			code := cmdSites([]string{"plan", "--site", reviewSiteID, "--path", dir, "--spa"})
+			code := main.CmdSites([]string{"plan", "--site", reviewSiteID, "--path", dir, "--spa"})
 			wantCode := 0
 			if blocked {
 				wantCode = 2
@@ -89,7 +90,7 @@ func TestSitesPlanReadOnlyJSONAndQuotaExit(t *testing.T) {
 				t.Fatalf("exit=%d requests=%v", code, calls)
 			}
 			var plan api.HostingDeploymentPlan
-			if err := json.Unmarshal(out.Bytes(), &plan); err != nil || plan.Version != api.HostingDeploymentPlanVersion || plan.APIOrigin != apiBase() || !plan.Advisory || plan.ExpectedRevision != 7 || plan.Changes.Added != 1 || !plan.Changes.AfterSettings.SPAFallback || plan.FileCount != 1 || plan.PayloadBytes != 5 || plan.AdditionalReservedBytes != 10+api.HostingManifestMaxBytes || len(plan.ManifestFingerprint) != 64 || plan.StartedAt.IsZero() || plan.ObservedAt.Before(plan.StartedAt) || !plan.UsageObservedAt.Equal(usage.ObservedAt) {
+			if err := json.Unmarshal(out.Bytes(), &plan); err != nil || plan.Version != api.HostingDeploymentPlanVersion || plan.APIOrigin != main.ApiBase() || !plan.Advisory || plan.ExpectedRevision != 7 || plan.Changes.Added != 1 || !plan.Changes.AfterSettings.SPAFallback || plan.FileCount != 1 || plan.PayloadBytes != 5 || plan.AdditionalReservedBytes != 10+api.HostingManifestMaxBytes || len(plan.ManifestFingerprint) != 64 || plan.StartedAt.IsZero() || plan.ObservedAt.Before(plan.StartedAt) || !plan.UsageObservedAt.Equal(usage.ObservedAt) {
 				t.Fatalf("plan %+v: %v", plan, err)
 			}
 			for _, secret := range []string{"operator-token", site.AccountID, "upload_url", "release_id\":\"" + reviewReleaseID} {
@@ -108,13 +109,13 @@ func TestSitesPlanGatesAndLocalValidationBeforeRequests(t *testing.T) {
 	args := []string{"plan", "--site", reviewSiteID, "--path", dir}
 	for _, value := range []string{"", "false", "TRUE"} {
 		t.Setenv("FAAS_FRONTEND_HOSTING_DEPLOYMENT_PLAN_ENABLED", value)
-		if cmdSites(args) == 0 {
+		if main.CmdSites(args) == 0 {
 			t.Fatalf("accepted disabled plan flag %q", value)
 		}
 	}
 	t.Setenv("FAAS_FRONTEND_HOSTING_DEPLOYMENT_PLAN_ENABLED", "true")
 	t.Setenv("FAAS_FRONTEND_HOSTING_ENABLED", "")
-	if cmdSites(args) == 0 {
+	if main.CmdSites(args) == 0 {
 		t.Fatal("main hosting gate bypassed")
 	}
 	t.Setenv("FAAS_FRONTEND_HOSTING_ENABLED", "1")
@@ -124,14 +125,14 @@ func TestSitesPlanGatesAndLocalValidationBeforeRequests(t *testing.T) {
 		{"plan", "--site", reviewSiteID, "--path", dir, "--promote"},
 		{"plan", "--site", reviewSiteID, "--path", t.TempDir()},
 	} {
-		if cmdSites(invalid) == 0 {
+		if main.CmdSites(invalid) == 0 {
 			t.Fatalf("accepted %v", invalid)
 		}
 	}
 	if err := os.Symlink("index.html", filepath.Join(dir, "link.html")); err != nil {
 		t.Fatal(err)
 	}
-	if cmdSites(args) == 0 {
+	if main.CmdSites(args) == 0 {
 		t.Fatal("planned symlinked build")
 	}
 	if calls != 0 {
@@ -160,7 +161,7 @@ func TestSitesPlanDoesNotEmitPartialReportsOnReadFailureOrChangedSite(t *testing
 			if failAt == 6 {
 				wantCode = 1
 			}
-			if code := cmdSites([]string{"plan", "--site", reviewSiteID, "--path", dir}); code != wantCode || out.Len() != 0 || calls > 5 {
+			if code := main.CmdSites([]string{"plan", "--site", reviewSiteID, "--path", dir}); code != wantCode || out.Len() != 0 || calls > 5 {
 				t.Fatalf("exit=%d calls=%d output=%s", code, calls, out)
 			}
 		})
@@ -182,7 +183,7 @@ func TestSitesPlanPreservesAPIErrorExitsWithoutReport(t *testing.T) {
 				planCLIResponse(t, w, r, site, caps, usage)
 			})
 			out := planCLIOutput(t)
-			if code := cmdSites([]string{"plan", "--site", reviewSiteID, "--path", dir}); code != tc.exit || calls != 4 || out.Len() != 0 {
+			if code := main.CmdSites([]string{"plan", "--site", reviewSiteID, "--path", dir}); code != tc.exit || calls != 4 || out.Len() != 0 {
 				t.Fatalf("exit=%d calls=%d output=%s", code, calls, out)
 			}
 		})
@@ -203,7 +204,7 @@ func TestSitesPlanMissingInventoryIsNotAnEmptySite(t *testing.T) {
 				planCLIResponse(t, w, r, site, caps, usage)
 			})
 			out := planCLIOutput(t)
-			if code := cmdSites([]string{"plan", "--site", reviewSiteID, "--path", dir}); code != 1 || calls != 3 || out.Len() != 0 {
+			if code := main.CmdSites([]string{"plan", "--site", reviewSiteID, "--path", dir}); code != 1 || calls != 3 || out.Len() != 0 {
 				t.Fatalf("exit=%d calls=%d output=%s", code, calls, out)
 			}
 		})
@@ -222,7 +223,7 @@ func TestSitesPlanRejectsScopedCredentialsBeforeAccountRead(t *testing.T) {
 		planCLIResponse(t, w, r, site, caps, usage)
 	})
 	out := planCLIOutput(t)
-	if code := cmdSites([]string{"plan", "--site", reviewSiteID, "--path", dir}); code != 1 || calls != 1 || out.Len() != 0 {
+	if code := main.CmdSites([]string{"plan", "--site", reviewSiteID, "--path", dir}); code != 1 || calls != 1 || out.Len() != 0 {
 		t.Fatalf("exit=%d calls=%d output=%s", code, calls, out)
 	}
 }
@@ -237,11 +238,11 @@ func TestSitesPlanConfigFlagsRemainIndependent(t *testing.T) {
 	out := planCLIOutput(t)
 	args := []string{"plan", "--site", reviewSiteID, "--path", dir}
 	t.Setenv("FAAS_FRONTEND_HOSTING_CONFIG_ENABLED", "")
-	if cmdSites(args) != 1 || calls != 0 {
+	if main.CmdSites(args) != 1 || calls != 0 {
 		t.Fatal("local config flag bypassed")
 	}
 	t.Setenv("FAAS_FRONTEND_HOSTING_CONFIG_ENABLED", "1")
-	if cmdSites(args) != 2 || calls != 5 {
+	if main.CmdSites(args) != 2 || calls != 5 {
 		t.Fatal("API config flag bypassed")
 	}
 	var plan api.HostingDeploymentPlan
@@ -264,7 +265,7 @@ func TestSitesPlanRejectsOversizedSerializedManifestBeforeRequests(t *testing.T)
 	}
 	calls := 0
 	reviewCLI(t, func(http.ResponseWriter, *http.Request) { calls++ })
-	if cmdSites([]string{"plan", "--site", reviewSiteID, "--path", dir}) != 1 || calls != 0 {
+	if main.CmdSites([]string{"plan", "--site", reviewSiteID, "--path", dir}) != 1 || calls != 0 {
 		t.Fatal("oversized manifest reached API")
 	}
 }

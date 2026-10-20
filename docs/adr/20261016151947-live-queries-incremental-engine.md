@@ -1045,6 +1045,24 @@ Phase 0 did not cover:
 
     A backend's `live_hub_url` still names one hub, so each backend can
     serve one live database until livequeryd hosts several.
+  - **Fleet-PKI leaves** (2026-10-19). Hub and realtimed authenticate with
+    leaves of the internal CA:
+    - livequeryd's server leaf is `livequeryd.faas`;
+    - realtimed's client leaf is `realtimed.faas`.
+
+    They are *feature leaves* (`pkg/pki/feature.go`): a host carries them
+    only when the feature is on. No host role requires them, which avoids
+    the rc.255 failure, where leaves added to the required set broke
+    rollouts of hosts that lacked them.
+
+    How they are issued, used and renewed:
+    - `gregalectl pki issue-feature` issues them on the CA's host. The
+      compute node's leaf is staged there and copied over.
+    - `pki metrics` reports their expiry, and `pki_renew.yml` renews them.
+    - livequeryd's `-client-name` admits only realtimed's leaf, so no other
+      fleet identity can carry RLS claims.
+    - realtimed verifies hubs as `livequeryd.faas`
+      (`FAAS_REALTIME_LIVE_TLS_SERVER_NAME`).
   - **Unverified on Neon:** logical replication on the project, event
     triggers for the schema-change log, and slot persistence across a
     suspend.

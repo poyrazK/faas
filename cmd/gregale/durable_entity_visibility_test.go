@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -6,18 +6,19 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/cmd/gregale/templates"
 )
 
 // The durable entity preview (ADR-712) is operator-only: its command and
 // starter stay callable but are left out of customer discovery.
 func TestDurableEntityPreviewIsHiddenFromCustomerDiscovery(t *testing.T) {
-	for _, command := range customerCliCommands() {
+	for _, command := range main.CustomerCliCommands() {
 		if command.Name == "entities" {
 			t.Error("customer help and completions list `entities`")
 		}
 	}
-	if !slices.ContainsFunc(cliCommands, func(c cliCommand) bool { return c.Name == "entities" }) {
+	if !slices.ContainsFunc((*main.CliCommands), func(c main.CliCommand) bool { return c.Name == "entities" }) {
 		t.Error("`entities` left the manifest; operator scripts would lose dispatch and man coverage")
 	}
 
@@ -29,7 +30,7 @@ func TestDurableEntityPreviewIsHiddenFromCustomerDiscovery(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	if code := runCmdInitList(&buf); code != 0 {
+	if code := main.RunCmdInitList(&buf); code != 0 {
 		t.Fatalf("runCmdInitList = %d, want 0", code)
 	}
 	if out := buf.String(); strings.Contains(out, "durable-entit") {

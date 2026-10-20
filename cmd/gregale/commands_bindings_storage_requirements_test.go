@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -8,13 +8,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func TestBindingsStorageRequirementsCLIReadOnlyCheck(t *testing.T) {
 	for _, mode := range []string{"", "write", "read_write"} {
 		t.Run(mode, func(t *testing.T) {
-			inventory := bindingCheckCLIInventory()
+			inventory := main.BindingCheckCLIInventory()
 			item := &inventory.Bindings[0]
 			item.Access = "read_write"
 			item.Verification.ObjectStorageMode = mode
@@ -24,8 +25,8 @@ func TestBindingsStorageRequirementsCLIReadOnlyCheck(t *testing.T) {
 			if mode == "read_write" {
 				item.Verification.Checks = append(item.Verification.Checks, api.BindingVerificationCheck{Name: "download", Status: "passed"})
 			}
-			code, out, _ := runBindingCheckCLI(t, inventory, "", "bindings", "check", "api", "--object-storage-require", "ASSETS=read_write", "--json")
-			report := decodeBindingCheckCLI(t, out)
+			code, out, _ := main.RunBindingCheckCLI(t, inventory, "", "bindings", "check", "api", "--object-storage-require", "ASSETS=read_write", "--json")
+			report := main.DecodeBindingCheckCLI(t, out)
 			if (code == 0) != (mode == "read_write") || report.ObjectStorageRequirements["ASSETS"] != "read_write" {
 				t.Fatalf("wrong operations qualified: code=%d %s", code, out)
 			}
@@ -36,8 +37,8 @@ func TestBindingsStorageRequirementsCLIReadOnlyCheck(t *testing.T) {
 func TestBindingsStorageRequirementsCLIPolicyConfirmation(t *testing.T) {
 	for _, scenario := range []string{"set", "clear", "ignored requirement", "old server", "duplicate", "invalid mode", "conflicting clear"} {
 		t.Run(scenario, func(t *testing.T) {
-			resetJSONOut(t)
-			setPreviewTestAuth(t)
+			main.ResetJSONOut(t)
+			main.SetPreviewTestAuth(t)
 			calls := 0
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				calls++
@@ -57,14 +58,14 @@ func TestBindingsStorageRequirementsCLIPolicyConfirmation(t *testing.T) {
 				if scenario == "ignored requirement" {
 					p.ObjectStorageRequirements = nil
 				}
-				writeJSONTest(w, p)
+				main.WriteJSONTest(w, p)
 			}))
 			defer server.Close()
 			t.Setenv("FAAS_API", server.URL)
 			var out bytes.Buffer
-			old := osStdout
-			osStdout = &out
-			t.Cleanup(func() { osStdout = old })
+			old := (*main.OsStdout)
+			(*main.OsStdout) = &out
+			t.Cleanup(func() { (*main.OsStdout) = old })
 			args := []string{"bindings", "release-policy", "set", "demo", "--mode", "enforce", "--expected-revision", "0", "--json"}
 			if scenario == "clear" {
 				args = append(args, "--clear-object-storage-requirements")
@@ -79,7 +80,7 @@ func TestBindingsStorageRequirementsCLIPolicyConfirmation(t *testing.T) {
 			case "conflicting clear":
 				args = append(args, "--clear-object-storage-requirements")
 			}
-			code := run(args)
+			code := main.Run(args)
 			wantSuccess := scenario == "set" || scenario == "clear"
 			if (code == 0) != wantSuccess {
 				t.Fatalf("wrong confirmation: %d %s", code, out.String())

@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -85,7 +86,7 @@ func TestSensitiveMutationJSONContract(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			resetJSONOut(t)
+			main.ResetJSONOut(t)
 			t.Setenv("HOME", t.TempDir())
 			t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 			t.Setenv("FAAS_TOKEN", "test-token")
@@ -99,7 +100,7 @@ func TestSensitiveMutationJSONContract(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				calls++
 				if tc.restart && r.Method == http.MethodPost && r.URL.Path == "/v1/apps/demo/restart" && r.URL.RawQuery == "fresh=true" {
-					writeJSONTest(w, api.AppRestartResponse{WakeID: "wake-json-1"})
+					main.WriteJSONTest(w, api.AppRestartResponse{WakeID: "wake-json-1"})
 					return
 				}
 				if r.Method != tc.method || r.URL.Path != tc.path || r.URL.RawQuery != tc.query {
@@ -125,11 +126,11 @@ func TestSensitiveMutationJSONContract(t *testing.T) {
 
 				switch tc.path {
 				case "/v1/apps/demo/secrets/TOKEN/rotate":
-					writeJSONTest(w, api.RotateAppSecretResponse{Key: "TOKEN", RotatedAt: "2026-09-28T12:00:00Z", Kid: "age-test-kid"})
+					main.WriteJSONTest(w, api.RotateAppSecretResponse{Key: "TOKEN", RotatedAt: "2026-09-28T12:00:00Z", Kid: "age-test-kid"})
 				case "/v1/keys":
-					writeJSONTest(w, api.APIKeyResponse{ID: "key-new", OrgID: "org-1", Prefix: "fp_live_test", Scopes: []string{"admin"}, CreatedAt: "2026-09-28T12:00:00Z", Plaintext: "fp_live_one_time"})
+					main.WriteJSONTest(w, api.APIKeyResponse{ID: "key-new", OrgID: "org-1", Prefix: "fp_live_test", Scopes: []string{"admin"}, CreatedAt: "2026-09-28T12:00:00Z", Plaintext: "fp_live_one_time"})
 				case "/v1/keys/key-old/rotate":
-					writeJSONTest(w, api.RotateKeyResponse{Key: api.APIKeyResponse{ID: "key-new", Prefix: "fp_live_new", Scopes: []string{"admin"}}, KeyPlaintext: "fp_live_rotated_once", OldKeyID: "key-old", OldKeyExpiresAt: "2026-10-05T12:00:00Z"})
+					main.WriteJSONTest(w, api.RotateKeyResponse{Key: api.APIKeyResponse{ID: "key-new", Prefix: "fp_live_new", Scopes: []string{"admin"}}, KeyPlaintext: "fp_live_rotated_once", OldKeyID: "key-old", OldKeyExpiresAt: "2026-10-05T12:00:00Z"})
 				default:
 					w.WriteHeader(http.StatusNoContent)
 				}
@@ -138,11 +139,11 @@ func TestSensitiveMutationJSONContract(t *testing.T) {
 			t.Setenv("FAAS_API", srv.URL)
 
 			var stdout bytes.Buffer
-			oldOut, oldIn := osStdout, osStdin
-			osStdout, osStdin = &stdout, strings.NewReader(tc.stdin)
-			t.Cleanup(func() { osStdout, osStdin = oldOut, oldIn })
+			oldOut, oldIn := (*main.OsStdout), (*main.OsStdin)
+			(*main.OsStdout), (*main.OsStdin) = &stdout, strings.NewReader(tc.stdin)
+			t.Cleanup(func() { (*main.OsStdout), (*main.OsStdin) = oldOut, oldIn })
 
-			if code := run(tc.args); code != 0 {
+			if code := main.Run(tc.args); code != 0 {
 				t.Fatalf("run(%v) = %d; stdout=%q", tc.args, code, stdout.String())
 			}
 			wantCalls := 1

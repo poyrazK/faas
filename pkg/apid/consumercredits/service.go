@@ -30,6 +30,12 @@ type Host interface {
 	ConsumerRoute(w http.ResponseWriter, r *http.Request, acct state.Account) (state.App, state.APIConsumer, bool)
 	// QuoteConsumerUsage prices usage in [since, until) like a statement.
 	QuoteConsumerUsage(ctx context.Context, accountID, appID, consumerID string, since, until time.Time) (billing.APIConsumerUsageQuote, error)
+	// TenantRoute resolves the platform tenant of a tenant route; on false
+	// it has written the problem.
+	TenantRoute(w http.ResponseWriter, r *http.Request, acct state.Account) (state.PlatformTenant, bool)
+	// QuoteTenantMonthUsage prices a tenant's usage for the month to date,
+	// fees excluded (ADR-20261019100331).
+	QuoteTenantMonthUsage(ctx context.Context, accountID, tenantID string, now time.Time) (currency string, usageMillicents int64, err error)
 	Audit(ctx context.Context, event, accountID string, fields map[string]any)
 }
 
@@ -228,6 +234,16 @@ func spendCapResponse(c state.APIConsumerSpendCap) api.APIConsumerSpendCapRespon
 	return out
 }
 
+func validateSpendCapRequest(req api.PutAPIConsumerSpendCapRequest) *api.Problem {
+	if !currencyRE.MatchString(req.Currency) {
+		return validation("Invalid currency", "currency must be an ISO-4217 code such as EUR")
+	}
+	if req.MonthlyCapMillicents == nil || *req.MonthlyCapMillicents < 0 || *req.MonthlyCapMillicents > api.ConsumerSpendCapMaxMillicents {
+		return validation("Invalid cap", fmt.Sprintf("monthly_cap_millicents must be 0 to %d", api.ConsumerSpendCapMaxMillicents))
+	}
+	return nil
+}
+
 // PutSpendCap sets a consumer's monthly spend cap and checks it at once.
 func (s *Service) PutSpendCap(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	_, caps, ok := s.stores(w)
@@ -243,12 +259,8 @@ func (s *Service) PutSpendCap(w http.ResponseWriter, r *http.Request, acct state
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
 		return
 	}
-	if !currencyRE.MatchString(req.Currency) {
-		api.WriteProblem(w, validation("Invalid currency", "currency must be an ISO-4217 code such as EUR"))
-		return
-	}
-	if req.MonthlyCapMillicents == nil || *req.MonthlyCapMillicents < 0 || *req.MonthlyCapMillicents > api.ConsumerSpendCapMaxMillicents {
-		api.WriteProblem(w, validation("Invalid cap", fmt.Sprintf("monthly_cap_millicents must be 0 to %d", api.ConsumerSpendCapMaxMillicents)))
+	if problem := validateSpendCapRequest(req); problem != nil {
+		api.WriteProblem(w, problem)
 		return
 	}
 	stored, err := caps.PutAPIConsumerSpendCap(r.Context(), state.APIConsumerSpendCap{ConsumerID: consumer.ID, AccountID: acct.ID,
@@ -358,6 +370,9 @@ func (s *Service) CheckOnce(ctx context.Context) error {
 		if _, err := s.check(ctx, c); err != nil && firstErr == nil {
 			firstErr = err
 		}
+	}
+	if err := s.checkTenantsOnce(ctx); err != nil && firstErr == nil {
+		firstErr = err
 	}
 	return firstErr
 }

@@ -1,7 +1,8 @@
-package main
+package main_test
 
 import (
 	"bytes"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"gopkg.in/yaml.v3"
 	"os"
 	"path/filepath"
@@ -23,15 +24,15 @@ func TestCampaignCoverageTrendRawHistoryAndFindings(t *testing.T) {
 		}
 	}
 	next := filepath.Join(t.TempDir(), "next.json")
-	if err := writeTestReport(next, []testRunReceipt{current}); err != nil {
+	if err := main.WriteTestReport(next, []main.TestRunReceipt{current}); err != nil {
 		t.Fatal(err)
 	}
-	cfg := testCampaignTrendConfig{Reports: []testCampaignTrendInput{{FromReport: path, RunID: baseline.RunID, Label: "<script>bad</script>"}, {FromReport: next, RunID: current.RunID, Label: "v2"}}, MaxDropPercentagePoints: map[int]float64{0: 0}, MinPlannedEvents: 2}
-	s, err := expandTestFaultSweep(s)
+	cfg := main.TestCampaignTrendConfig{Reports: []main.TestCampaignTrendInput{{FromReport: path, RunID: baseline.RunID, Label: "<script>bad</script>"}, {FromReport: next, RunID: current.RunID, Label: "v2"}}, MaxDropPercentagePoints: map[int]float64{0: 0}, MinPlannedEvents: 2}
+	s, err := main.ExpandTestFaultSweep(s)
 	if err != nil {
 		t.Fatal(err)
 	}
-	trend, err := buildTestCampaignTrend(s, "checkout", "", cfg, "")
+	trend, err := main.BuildTestCampaignTrend(s, "checkout", "", cfg, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,17 +40,17 @@ func TestCampaignCoverageTrendRawHistoryAndFindings(t *testing.T) {
 		t.Fatal("missing loss/tolerance/provenance", trend)
 	}
 	var html bytes.Buffer
-	if err = campaignTrendTemplate.Execute(&html, trend); err != nil {
+	if err = (*main.CampaignTrendTemplate).Execute(&html, trend); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(html.String(), "<script>") || !strings.Contains(html.String(), "href=\"#point-2\"") || !strings.Contains(html.String(), "<line") {
 		t.Fatal("unsafe or missing chart")
 	}
-	if _, err = buildTestCampaignTrend(s, "checkout", "", cfg, path); err == nil {
+	if _, err = main.BuildTestCampaignTrend(s, "checkout", "", cfg, path); err == nil {
 		t.Fatal("input overwrite allowed")
 	}
 	cfg.Reports[1] = cfg.Reports[0]
-	if _, err = buildTestCampaignTrend(s, "checkout", "", cfg, ""); err == nil {
+	if _, err = main.BuildTestCampaignTrend(s, "checkout", "", cfg, ""); err == nil {
 		t.Fatal("duplicate execution allowed")
 	}
 }
@@ -57,8 +58,8 @@ func TestCampaignCoverageTrendRawHistoryAndFindings(t *testing.T) {
 func TestCampaignCoverageTrendRejectsInvalidInputs(t *testing.T) {
 	s, baseline, path := campaignRegressionFixture(t)
 	s.Resilience.CampaignCoverage.Regression = nil
-	for _, cfg := range []testCampaignTrendConfig{{}, {Reports: []testCampaignTrendInput{{FromReport: path, RunID: baseline.RunID}}}, {MinExercisedRate: 2, Reports: make([]testCampaignTrendInput, 2)}} {
-		if _, err := buildTestCampaignTrend(s, "checkout", "", cfg, ""); err == nil {
+	for _, cfg := range []main.TestCampaignTrendConfig{{}, {Reports: []main.TestCampaignTrendInput{{FromReport: path, RunID: baseline.RunID}}}, {MinExercisedRate: 2, Reports: make([]main.TestCampaignTrendInput, 2)}} {
+		if _, err := main.BuildTestCampaignTrend(s, "checkout", "", cfg, ""); err == nil {
 			t.Fatal("invalid config accepted")
 		}
 	}
@@ -66,7 +67,7 @@ func TestCampaignCoverageTrendRejectsInvalidInputs(t *testing.T) {
 	if err := os.WriteFile(config, []byte("reports: []\nunknown: true\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if cmdTest([]string{"coverage-trend", "--scenario", "checkout", "--config", config, "--html", filepath.Join(t.TempDir(), "out.html")}) == 0 {
+	if main.CmdTest([]string{"coverage-trend", "--scenario", "checkout", "--config", config, "--html", filepath.Join(t.TempDir(), "out.html")}) == 0 {
 		t.Fatal("unknown configuration field accepted")
 	}
 }
@@ -80,16 +81,16 @@ func TestCampaignCoverageTrendOfflineCLI(t *testing.T) {
 		}
 	}
 	manifest := filepath.Join(dir, "gregale-test.yaml")
-	source := campaignCoverageScenario()
+	source := main.CampaignCoverageScenario()
 	source.Resilience.CampaignCoverage.MinExercised = map[int]int{0: 1, 1: 1}
-	body, err := yaml.Marshal(testManifest{Version: 1, Scenarios: map[string]testScenario{"checkout": source}})
+	body, err := yaml.Marshal(main.TestManifest{Version: 1, Scenarios: map[string]main.TestScenario{"checkout": source}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err = os.WriteFile(manifest, body, 0600); err != nil {
 		t.Fatal(err)
 	}
-	scenarios, _, err := readTestManifestForScenario(manifest, "checkout", nil)
+	scenarios, _, err := main.ReadTestManifestForScenario(manifest, "checkout", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,10 +104,10 @@ func TestCampaignCoverageTrendOfflineCLI(t *testing.T) {
 		}
 	}
 	report := filepath.Join(dir, "runs.json")
-	if err = writeTestReport(report, []testRunReceipt{a, b}); err != nil {
+	if err = main.WriteTestReport(report, []main.TestRunReceipt{a, b}); err != nil {
 		t.Fatal(err)
 	}
-	cfg := testCampaignTrendConfig{Reports: []testCampaignTrendInput{{FromReport: "runs.json", RunID: a.RunID, Label: "v1"}, {FromReport: "runs.json", RunID: b.RunID, Label: "v2"}}}
+	cfg := main.TestCampaignTrendConfig{Reports: []main.TestCampaignTrendInput{{FromReport: "runs.json", RunID: a.RunID, Label: "v1"}, {FromReport: "runs.json", RunID: b.RunID, Label: "v2"}}}
 	config := filepath.Join(dir, "trend.yaml")
 	body, err = yaml.Marshal(cfg)
 	if err != nil {
@@ -117,7 +118,7 @@ func TestCampaignCoverageTrendOfflineCLI(t *testing.T) {
 	}
 	output := filepath.Join(dir, "trend.html")
 	args := []string{"coverage-trend", "--manifest", manifest, "--scenario", "checkout", "--config", config, "--html", output}
-	if cmdTest(args) != 0 {
+	if main.CmdTest(args) != 0 {
 		t.Fatal("offline trend failed")
 	}
 	rendered, err := os.ReadFile(output)
@@ -129,16 +130,16 @@ func TestCampaignCoverageTrendOfflineCLI(t *testing.T) {
 		t.Fatal(err)
 	}
 	args[len(args)-1] = alias
-	if cmdTest(args) == 0 {
+	if main.CmdTest(args) == 0 {
 		t.Fatal("hardlink overwrite permitted")
 	}
 	// Raw summaries cannot override the validated leaf history.
 	b.FaultMatrix.CampaignCoverage.Choices[0].Exercised++
-	if err = writeTestReport(report, []testRunReceipt{a, b}); err != nil {
+	if err = main.WriteTestReport(report, []main.TestRunReceipt{a, b}); err != nil {
 		t.Fatal(err)
 	}
 	args[len(args)-1] = output
-	if cmdTest(args) == 0 {
+	if main.CmdTest(args) == 0 {
 		t.Fatal("corrupted coverage summary accepted")
 	}
 }

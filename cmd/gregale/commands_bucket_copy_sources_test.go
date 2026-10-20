@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"context"
@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -46,13 +47,13 @@ func TestBucketCopySourcesCLI(t *testing.T) {
 		if tc.prefix != "" {
 			args = append(args, tc.prefix)
 		}
-		if _, err := runBucketCopySources(t.Context(), c, args); err != nil || c.method != tc.method || !reflect.DeepEqual(c.args, want) || c.prefix != tc.prefix {
+		if _, err := main.RunBucketCopySources(t.Context(), c, args); err != nil || c.method != tc.method || !reflect.DeepEqual(c.args, want) || c.prefix != tc.prefix {
 			t.Fatal(c, err)
 		}
 	}
 	for _, args := range [][]string{nil, {"unknown", "demo", bucket, credential}, {"list", "demo", bucket, credential, source}, {"grant", "demo", bucket, credential}, {"revoke", "bad/slug", bucket, credential, source}, {"grant", "demo", "bad", credential, source}} {
 		c := &copySourcesCLIClient{}
-		if _, err := runBucketCopySources(t.Context(), c, args); err == nil || c.method != "" {
+		if _, err := main.RunBucketCopySources(t.Context(), c, args); err == nil || c.method != "" {
 			t.Fatal("invalid dispatch", args, c, err)
 		}
 	}

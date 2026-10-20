@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"net/http"
@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
@@ -17,7 +18,7 @@ func TestProbeWakeState_Cold(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	cold, err := probeWakeState(srv.URL, 2*time.Second)
+	cold, err := main.ProbeWakeState(srv.URL, 2*time.Second)
 	if err != nil {
 		t.Fatalf("cold probe err = %v, want nil", err)
 	}
@@ -33,7 +34,7 @@ func TestProbeWakeState_Warm(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	cold, err := probeWakeState(srv.URL, 2*time.Second)
+	cold, err := main.ProbeWakeState(srv.URL, 2*time.Second)
 	if err != nil {
 		t.Fatalf("warm probe err = %v, want nil", err)
 	}
@@ -54,7 +55,7 @@ func TestProbeWakeState_Timeout(t *testing.T) {
 	defer srv.Close()
 
 	// Tight deadline — server sleeps longer than 500 ms.
-	cold, err := probeWakeState(srv.URL, 500*time.Millisecond)
+	cold, err := main.ProbeWakeState(srv.URL, 500*time.Millisecond)
 	if err == nil {
 		t.Fatal("timeout probe err = nil, want non-nil")
 	}
@@ -69,7 +70,7 @@ func TestProbeWakeState_5xx(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	cold, err := probeWakeState(srv.URL, 2*time.Second)
+	cold, err := main.ProbeWakeState(srv.URL, 2*time.Second)
 	if err != nil {
 		t.Fatalf("5xx probe err = %v, want nil (header absent)", err)
 	}
@@ -87,7 +88,7 @@ func TestProbeWakeState_HeaderValueExactMatch(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	cold, err := probeWakeState(srv.URL, 2*time.Second)
+	cold, err := main.ProbeWakeState(srv.URL, 2*time.Second)
 	if err != nil {
 		t.Fatalf("probe err = %v, want nil", err)
 	}
@@ -97,7 +98,7 @@ func TestProbeWakeState_HeaderValueExactMatch(t *testing.T) {
 }
 
 func TestProbeWakeState_InvalidURL(t *testing.T) {
-	cold, err := probeWakeState("http://[::1]:bad", 100*time.Millisecond)
+	cold, err := main.ProbeWakeState("http://[::1]:bad", 100*time.Millisecond)
 	if err == nil {
 		t.Fatal("invalid URL err = nil, want non-nil")
 	}

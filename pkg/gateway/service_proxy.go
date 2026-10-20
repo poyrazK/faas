@@ -510,6 +510,7 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// A service call uses the same bounded guest-evidence sink as public
 	// requests so target flag decisions can be attached to this dependency span.
 	r = withGuestExecutionEvidence(r, p.apiMonetization != nil && p.apiMonetization())
+	r = withServiceWakeRecorder(r)
 	// The guest-facing service-proxy listener is a standalone http.Server, not
 	// wrapped by otelhttp. Extract W3C context here so a caller that forwards
 	// its inbound traceparent joins the original request instead of always

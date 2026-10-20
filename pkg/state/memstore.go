@@ -404,6 +404,7 @@ type MemStore struct {
 	objectAuthorizations        map[string]int64
 	objectUsageCutovers         map[string]time.Time
 	objectOrgOwnedFrom          map[string]time.Time
+	orgAsyncQuotaPooled         map[string]time.Time
 	objectProviderRequests      map[string]int64
 	objectAccessGrants          map[string]ObjectBucketAccessGrant
 	objectS3Credentials         map[string]ObjectS3Credential
@@ -1072,6 +1073,12 @@ type MemStore struct {
 	apiConsumerCreditGrants       map[string]APIConsumerCreditGrant
 	apiConsumerCreditApplications []apiConsumerCreditApplication
 	apiConsumerSpendCaps          map[string]APIConsumerSpendCap
+	// platformTenantCreditGrants (by ID), platformTenantCreditApplications
+	// and platformTenantSpendCaps (by tenant ID) do the same for platform
+	// tenants (ADR-20261019100331).
+	platformTenantCreditGrants       map[string]PlatformTenantCreditGrant
+	platformTenantCreditApplications []platformTenantCreditApplication
+	platformTenantSpendCaps          map[string]PlatformTenantSpendCap
 	// billingConnections and statementInvoiceExports back statement invoice
 	// exports (ADR-1502); keyed by account/provider and export ID.
 	billingConnections      map[string]BillingConnection
@@ -13823,6 +13830,9 @@ func (m *MemStore) EnqueueInvocation(ctx context.Context, inv Invocation) (Invoc
 	if err := m.validateInvocationEnvironmentLocked(inv, info); err != nil {
 		return Invocation{}, err
 	}
+	if err := invocationAdmissionDepth(inv, m.pendingProductionInvocationsLocked(inv.AppID, inv.Source, nil)); err != nil {
+		return Invocation{}, err
+	}
 	return m.enqueueInvocationLocked(inv)
 }
 
@@ -14422,17 +14432,7 @@ func (m *MemStore) FailInvocation(_ context.Context, id string, lastError string
 func (m *MemStore) CountPendingInvocations(_ context.Context, appID string, source InvocationSource) (int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	n := 0
-	for _, inv := range m.invocations {
-		if inv.AppID != appID || inv.Source != source || !m.productionInvocationWorkLocked(inv) {
-			continue
-		}
-		if inv.State != InvocationPending && inv.State != InvocationDispatching {
-			continue
-		}
-		n++
-	}
-	return n, nil
+	return m.pendingProductionInvocationsLocked(appID, source, nil), nil
 }
 
 // CancelInvocation moves any non-terminal row to state=cancelled.
@@ -27377,7 +27377,9 @@ func (m *MemStore) ListExpiredInvocationsForReaper(_ context.Context, now time.T
 		if _, _, linked := m.operationForInvocationLocked(id); linked {
 			continue
 		}
-		if inv.ResultRetentionUntil == nil {
+		// Terminal rows only, matching PgStore: a past horizon on a live
+		// row must never delete pending or dispatching work.
+		if inv.ResultRetentionUntil == nil || !invocationTerminalStates[inv.State] {
 			continue
 		}
 		if inv.ResultRetentionUntil.After(now) {

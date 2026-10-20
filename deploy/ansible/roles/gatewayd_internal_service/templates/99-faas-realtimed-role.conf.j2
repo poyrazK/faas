@@ -8,6 +8,15 @@ Environment=FAAS_REALTIME_ROLE={{ faas_box_role }}
 # configured control-plane CIDRs; do not expose it through the public rule.
 Environment=FAAS_REALTIME_HEALTH_LISTEN=0.0.0.0:9107
 {% endif %}
+{% if (faas_realtime_live_tls_managed | default(false) | string | lower) in ['true', 'yes', 'on', '1'] %}
+# Live queries (ADR-20261016151947): realtimed dials livequeryd hubs over
+# wss:// with the fleet PKI's live client leaf, and verifies every hub as
+# livequeryd.faas, whatever host the backend's live_hub_url names.
+Environment=FAAS_REALTIME_LIVE_TLS_CA_FILE=/etc/faas/tls/ca/ca.crt
+Environment=FAAS_REALTIME_LIVE_TLS_CERT_FILE=/etc/faas/tls/realtimed/livequeryd-client.crt
+Environment=FAAS_REALTIME_LIVE_TLS_KEY_FILE=/etc/faas/tls/realtimed/livequeryd-client.key
+Environment=FAAS_REALTIME_LIVE_TLS_SERVER_NAME=livequeryd.faas
+{% else %}
 {% if faas_realtime_live_tls_ca_file | default('') %}
 # Live queries (ADR-20261016151947): realtimed dials livequeryd hubs over
 # wss://, verifying them with this CA and presenting its client certificate
@@ -17,4 +26,5 @@ Environment=FAAS_REALTIME_LIVE_TLS_CA_FILE={{ faas_realtime_live_tls_ca_file }}
 {% if faas_realtime_live_tls_cert_file | default('') %}
 Environment=FAAS_REALTIME_LIVE_TLS_CERT_FILE={{ faas_realtime_live_tls_cert_file }}
 Environment=FAAS_REALTIME_LIVE_TLS_KEY_FILE={{ faas_realtime_live_tls_key_file }}
+{% endif %}
 {% endif %}

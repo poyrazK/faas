@@ -8890,7 +8890,8 @@ func (h *Handler) ensureServiceCapacity(ctx context.Context, app App, trigger st
 	}
 	h.noteColdWake(ctx, app.ID)
 	maxInstances := effectiveAppConcurrencyLimit(app, limits.MaxConcurrency)
-	_, _, _, err := h.ensureCapacity(ctx, app.ID, app.AccountID, app.Scope, maxInstances, app.Plan, app.AutoscaleTargetRPS, trigger, concurrencyConfigForApp(app))
+	_, wakeID, _, err := h.ensureCapacity(ctx, app.ID, app.AccountID, app.Scope, maxInstances, app.Plan, app.AutoscaleTargetRPS, trigger, concurrencyConfigForApp(app))
+	recordServiceWakeID(ctx, wakeID)
 	return err
 }
 
@@ -8913,7 +8914,8 @@ func (h *Handler) EnsureServiceDeploymentCapacity(ctx context.Context, app App, 
 	// Match the public cold-bucket fan-out allowance: rollout capacity is
 	// governed by the plan ceiling here, while schedd remains authoritative
 	// for the temporary rollout-instance exception.
-	_, _, _, err := h.backend.Admit(ctx, app.ID, deploymentID, app.Scope, sched.TriggerServiceMesh, limits.MaxConcurrency)
+	wakeID, _, _, err := h.backend.Admit(ctx, app.ID, deploymentID, app.Scope, sched.TriggerServiceMesh, limits.MaxConcurrency)
+	recordServiceWakeID(ctx, wakeID)
 	return err
 }
 

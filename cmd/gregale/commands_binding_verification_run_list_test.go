@@ -1,7 +1,8 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"net/http"
 	"net/http/httptest"
@@ -41,7 +42,7 @@ func TestBindingVerificationRunListCLIReadOnly(t *testing.T) {
 				if !plain {
 					args = append(args, "--json")
 				}
-				code, out, stderr := captureBindingCLI(t, server.URL, args...)
+				code, out, stderr := main.CaptureBindingCLI(t, server.URL, args...)
 				if code != 0 || calls != 1 || !strings.Contains(out, "next-page") || !strings.Contains(out, "11111111-1111-4111-8111-111111111111") {
 					t.Fatalf("listing failed %d %d %s %s", code, calls, out, stderr)
 				}

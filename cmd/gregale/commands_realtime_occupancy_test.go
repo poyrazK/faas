@@ -1,19 +1,20 @@
-package main
+package main_test
 
 import (
 	"bytes"
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func TestPrintRealtimeOccupancy(t *testing.T) {
 	var out bytes.Buffer
-	prev := osStdout
-	osStdout = &out
-	t.Cleanup(func() { osStdout = prev })
-	printRealtimeOccupancy(api.ManagedRealtimeOccupancyResponse{Channels: []api.ManagedRealtimeChannelOccupancy{
+	prev := (*main.OsStdout)
+	(*main.OsStdout) = &out
+	t.Cleanup(func() { (*main.OsStdout) = prev })
+	main.PrintRealtimeOccupancy(api.ManagedRealtimeOccupancyResponse{Channels: []api.ManagedRealtimeChannelOccupancy{
 		{Channel: "lobby", Subscribers: 12401, PresenceMembers: 980},
 		{Channel: "a-much-longer-channel-name", Subscribers: 0},
 	}})
@@ -31,16 +32,16 @@ func TestPrintRealtimeOccupancy(t *testing.T) {
 
 func TestRealtimeOccupancyRejectsBadArguments(t *testing.T) {
 	var errOut bytes.Buffer
-	prev := osStderr
-	osStderr = &errOut
-	t.Cleanup(func() { osStderr = prev })
+	prev := (*main.OsStderr)
+	(*main.OsStderr) = &errOut
+	t.Cleanup(func() { (*main.OsStderr) = prev })
 	tooMany := append([]string{"app", "ep"}, strings.Fields(strings.Repeat("c ", api.RealtimeOccupancyChannelsMax+1))...)
 	for name, args := range map[string][]string{
 		"no channel":      {"app", "ep"},
 		"too many":        tooMany,
 		"invalid channel": {"app", "ep", "a/b"},
 	} {
-		if code := cmdRealtimeOccupancy(args); code == 0 {
+		if code := main.CmdRealtimeOccupancy(args); code == 0 {
 			t.Fatalf("%s: exit 0, want an error", name)
 		}
 	}

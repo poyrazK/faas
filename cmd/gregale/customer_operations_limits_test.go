@@ -1,5 +1,5 @@
 // adr: 1196
-package main
+package main_test
 
 import (
 	"bytes"
@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -28,7 +29,7 @@ func TestRenderCustomerOperationLimits(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			var out bytes.Buffer
-			if err := renderCustomerOperation(&out, tc.op, false); err != nil {
+			if err := main.RenderCustomerOperation(&out, tc.op, false); err != nil {
 				t.Fatal(err)
 			}
 			for _, want := range tc.want {

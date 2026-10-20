@@ -1,7 +1,8 @@
-package main
+package main_test
 
 import (
 	"fmt"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"net/http"
 	"net/http/httptest"
@@ -10,12 +11,12 @@ import (
 )
 
 func TestBucketNotificationsCLI(t *testing.T) {
-	in, err := decodeBucketNotificationsFile(strings.NewReader(`{"rules":[]}`))
+	in, err := main.DecodeBucketNotificationsFile(strings.NewReader(`{"rules":[]}`))
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, body := range []string{`{}`, `{"rules":null}`, `{"rules":[],"unknown":true}`, `{"rules":[]} {}`, `{"rules":[]}` + strings.Repeat(" ", int(api.MaxObjectNotificationBodyBytes))} {
-		if _, e := decodeBucketNotificationsFile(strings.NewReader(body)); e == nil {
+		if _, e := main.DecodeBucketNotificationsFile(strings.NewReader(body)); e == nil {
 			t.Fatal("invalid configuration accepted")
 		}
 	}
@@ -29,7 +30,7 @@ func TestBucketNotificationsCLI(t *testing.T) {
 				_, _ = fmt.Fprint(w, `{"bucket_id":"bucket","revision":2,"rules":[]}`)
 			}))
 			defer srv.Close()
-			if p, e := runBucketNotifications(t.Context(), api.NewClient(srv.URL, "token"), []string{action, "demo", "bucket"}, in); e != nil || p.Revision != 2 {
+			if p, e := main.RunBucketNotifications(t.Context(), api.NewClient(srv.URL, "token"), []string{action, "demo", "bucket"}, in); e != nil || p.Revision != 2 {
 				t.Fatal(p, e)
 			}
 		})

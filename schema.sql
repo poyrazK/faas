@@ -241,6 +241,7 @@ DECLARE moved record; total bigint:=0; changed integer;
 BEGIN
  PERFORM id FROM orgs WHERE id=company AND NOT personal_org AND resource_ownership_enabled FOR UPDATE;
  IF NOT FOUND THEN RETURN; END IF;
+ UPDATE orgs SET async_quota_pooled_at=now() WHERE id=company AND async_quota_pooled_at IS NULL;
  -- Lock accepted work before counters; completion has the same row-before-counter order.
  PERFORM i.id FROM invocations i JOIN apps a ON a.id=i.app_id WHERE a.org_id=company
    AND i.quota_reserved AND i.async_quota_subject_id<>company ORDER BY i.id FOR UPDATE OF i;
@@ -260,19 +261,6 @@ BEGIN
   UPDATE invocations i SET async_quota_subject_id=company FROM apps a
    WHERE a.id=i.app_id AND a.org_id=company AND i.quota_reserved AND i.async_quota_subject_id<>company;
  END IF;
-END $$;
-
-
---
--- Name: adopt_queue_reservations_on_org_adoption(); Type: FUNCTION; Schema: public; Owner: -
---
-
-CREATE FUNCTION public.adopt_queue_reservations_on_org_adoption() RETURNS trigger
-    LANGUAGE plpgsql
-    AS $$
-BEGIN
- IF NEW.resource_ownership_enabled AND NOT OLD.resource_ownership_enabled THEN PERFORM adopt_org_async_reservations(NEW.id); END IF;
- RETURN NEW;
 END $$;
 
 
@@ -7853,6 +7841,8 @@ BEGIN
     'billable_units', NEW.billable_units,
     'unpriced_units', NEW.unpriced_units,
     'amount_millicents', NEW.amount_millicents,
+    'credit_applied_millicents', NEW.credit_applied_millicents,
+    'amount_due_millicents', NEW.amount_millicents - NEW.credit_applied_millicents,
     'priced', NEW.unpriced_units = 0 AND NEW.currency <> '',
     'lines', NEW.lines,
     'fees', NEW.fees,
@@ -8768,7 +8758,10 @@ CREATE FUNCTION public.environment_runtime_base_inputs_fresh(target_app uuid, ta
 SELECT
     NOT EXISTS (SELECT 1 FROM app_runtime_config_changes c WHERE c.app_id = target_app AND c.changed_at > boundary)
     AND NOT EXISTS (SELECT 1 FROM app_runtime_config_scope_changes c WHERE c.app_id = target_app
-        AND c.scope IN ('default', target_scope) AND c.changed_at > boundary)
+        AND (c.scope IN ('default', target_scope)
+            -- ADR-1136: default-scope deployments read production's project configuration.
+            OR (target_scope = 'default' AND c.scope = 'default:project-config'))
+        AND c.changed_at > boundary)
     AND observed_variables = coalesce((SELECT jsonb_object_agg(v.key, v.value) FROM app_envs v
         WHERE v.app_id = target_app AND v.scope = target_scope), '{}'::jsonb)
     AND NOT EXISTS (SELECT 1 FROM jsonb_each_text(observed_secrets) r WHERE NOT EXISTS (
@@ -17285,8 +17278,9 @@ END $$;
 CREATE FUNCTION public.invocation_async_subject(app uuid, namespace uuid) RETURNS uuid
     LANGUAGE sql STABLE
     AS $$
- SELECT CASE WHEN NOT o.personal_org AND o.resource_ownership_enabled THEN o.id ELSE a.account_id END
- FROM apps a JOIN orgs o ON o.id=a.org_id WHERE a.id=app AND a.account_id=namespace;
+ SELECT CASE WHEN o.id IS NOT NULL AND NOT o.personal_org AND o.resource_ownership_enabled
+             AND o.async_quota_pooled_at IS NOT NULL THEN o.id ELSE a.account_id END
+ FROM apps a LEFT JOIN orgs o ON o.id=a.org_id WHERE a.id=app AND a.account_id=namespace;
 $$;
 
 
@@ -17711,6 +17705,7 @@ CREATE TABLE public.orgs (
     billing_address text DEFAULT ''::text NOT NULL,
     tax_id text DEFAULT ''::text NOT NULL,
     object_storage_owned_from timestamp with time zone,
+    async_quota_pooled_at timestamp with time zone,
     CONSTRAINT org_object_storage_owned_from_finite CHECK (((object_storage_owned_from IS NULL) OR isfinite(object_storage_owned_from))),
     CONSTRAINT orgs_personal_owner_link CHECK ((((personal_org = true) AND (personal_owner_account_id IS NOT NULL)) OR ((personal_org = false) AND (personal_owner_account_id IS NULL)))),
     CONSTRAINT orgs_plan_chk CHECK ((plan = ANY (ARRAY['free'::text, 'hobby'::text, 'pro'::text, 'scale'::text]))),
@@ -20502,6 +20497,7 @@ CREATE FUNCTION public.project_environment_config_runtime_change() RETURNS trigg
     AS $$
 DECLARE
     previous jsonb;
+    changed timestamptz := clock_timestamp();
 BEGIN
     SELECT c.config_json INTO previous
       FROM project_environment_config_versions c
@@ -20512,16 +20508,12 @@ BEGIN
     IF project_environment_config_env(previous) = project_environment_config_env(NEW.config_json) THEN
         RETURN NULL;
     END IF;
-    -- The default scope reads production (workloadEnvironmentSlug).
     WITH member AS (
         SELECT a.id FROM apps a
          WHERE a.project_id = NEW.project_id AND a.account_id = NEW.account_id AND a.status <> 'deleted'
-    ), scopes AS (
-        SELECT unnest(CASE WHEN NEW.environment_slug = 'production'
-            THEN ARRAY['production', 'default'] ELSE ARRAY[NEW.environment_slug] END) AS scope
     ), stamped AS (
         INSERT INTO app_runtime_config_scope_changes (app_id, scope, changed_at)
-        SELECT member.id, scopes.scope, clock_timestamp() FROM member, scopes
+        SELECT member.id, NEW.environment_slug, changed FROM member
         ON CONFLICT (app_id, scope) DO UPDATE
             SET changed_at = greatest(app_runtime_config_scope_changes.changed_at, excluded.changed_at)
         RETURNING app_id, scope, changed_at
@@ -20531,6 +20523,22 @@ BEGIN
      WHERE snapshots.deployment_id = d.id AND d.app_id = stamped.app_id
        AND coalesce(nullif(d.scope, ''), 'default') = stamped.scope
        AND NOT snapshots.stale AND snapshots.created_at <= stamped.changed_at;
+    -- The default scope reads production (workloadEnvironmentSlug). It gets
+    -- its own boundary, never the shared 'default' one every environment
+    -- consults, and its snapshots go stale.
+    IF NEW.environment_slug = 'production' THEN
+        INSERT INTO app_runtime_config_scope_changes (app_id, scope, changed_at)
+        SELECT a.id, 'default:project-config', changed FROM apps a
+         WHERE a.project_id = NEW.project_id AND a.account_id = NEW.account_id AND a.status <> 'deleted'
+        ON CONFLICT (app_id, scope) DO UPDATE
+            SET changed_at = greatest(app_runtime_config_scope_changes.changed_at, excluded.changed_at);
+        UPDATE snapshots SET stale = true
+          FROM deployments d, apps a
+         WHERE snapshots.deployment_id = d.id AND d.app_id = a.id
+           AND a.project_id = NEW.project_id AND a.account_id = NEW.account_id AND a.status <> 'deleted'
+           AND coalesce(nullif(d.scope, ''), 'default') = 'default'
+           AND NOT snapshots.stale AND snapshots.created_at <= changed;
+    END IF;
     RETURN NULL;
 END;
 $$;
@@ -24600,8 +24608,7 @@ CREATE FUNCTION public.stamp_invocation_async_subject() RETURNS trigger
 DECLARE expected uuid;
 BEGIN
  IF NEW.quota_reserved THEN
-  expected:=invocation_async_subject(NEW.app_id,NEW.account_id);
-  IF expected IS NULL THEN RAISE EXCEPTION 'invalid invocation quota ownership' USING ERRCODE='23514'; END IF;
+  expected:=coalesce(invocation_async_subject(NEW.app_id,NEW.account_id),NEW.account_id);
   IF TG_OP='INSERT' OR NOT OLD.quota_reserved THEN
    NEW.async_quota_subject_id:=expected;
   ELSIF NEW.async_quota_subject_id IS DISTINCT FROM OLD.async_quota_subject_id AND NEW.async_quota_subject_id IS DISTINCT FROM expected THEN
@@ -25388,7 +25395,7 @@ CREATE TABLE public.account_billing_connections (
     automatic_tax boolean DEFAULT false NOT NULL,
     CONSTRAINT account_billing_connections_api_url_chk CHECK (((api_url IS NULL) OR ((char_length(api_url) <= 512) AND (api_url ~~ 'https://%'::text)))),
     CONSTRAINT account_billing_connections_automatic_tax_chk CHECK (((NOT automatic_tax) OR (provider = 'stripe'::text))),
-    CONSTRAINT account_billing_connections_collection_chk CHECK ((((provider = 'stripe'::text) AND (collection = ANY (ARRAY['none'::text, 'send'::text, 'charge'::text]))) OR ((provider = 'paddle'::text) AND (collection = 'none'::text)) OR ((provider = 'lago'::text) AND (collection = ANY (ARRAY['none'::text, 'charge'::text]))))),
+    CONSTRAINT account_billing_connections_collection_chk CHECK ((((provider = 'stripe'::text) AND (collection = ANY (ARRAY['none'::text, 'send'::text, 'charge'::text]))) OR ((provider = 'paddle'::text) AND (collection = ANY (ARRAY['none'::text, 'send'::text]))) OR ((provider = 'lago'::text) AND (collection = ANY (ARRAY['none'::text, 'charge'::text]))))),
     CONSTRAINT account_billing_connections_days_until_due_chk CHECK (((days_until_due >= 1) AND (days_until_due <= 365))),
     CONSTRAINT account_billing_connections_last4_chk CHECK ((char_length(key_last4) = 4)),
     CONSTRAINT account_billing_connections_provider_chk CHECK ((provider = ANY (ARRAY['stripe'::text, 'paddle'::text, 'lago'::text])))
@@ -43250,6 +43257,50 @@ CREATE TABLE public.platform_tenant_credential_policies (
 
 
 --
+-- Name: platform_tenant_credit_applications; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.platform_tenant_credit_applications (
+    grant_id uuid NOT NULL,
+    statement_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    amount_millicents bigint NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT platform_tenant_credit_applications_amount_chk CHECK ((amount_millicents > 0))
+);
+
+
+--
+-- Name: platform_tenant_credit_grants; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.platform_tenant_credit_grants (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    platform_tenant_id uuid NOT NULL,
+    currency text NOT NULL,
+    amount_millicents bigint NOT NULL,
+    remaining_millicents bigint NOT NULL,
+    note text DEFAULT ''::text NOT NULL,
+    expires_at timestamp with time zone,
+    voided_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT platform_tenant_credit_grants_amount_chk CHECK (((amount_millicents > 0) AND (remaining_millicents >= 0) AND (remaining_millicents <= amount_millicents))),
+    CONSTRAINT platform_tenant_credit_grants_currency_chk CHECK ((currency ~ '^[A-Z]{3}$'::text)),
+    CONSTRAINT platform_tenant_credit_grants_expiry_chk CHECK (((expires_at IS NULL) OR (expires_at > created_at))),
+    CONSTRAINT platform_tenant_credit_grants_note_chk CHECK ((char_length(note) <= 200)),
+    CONSTRAINT platform_tenant_credit_grants_voided_chk CHECK (((voided_at IS NULL) OR (remaining_millicents = 0)))
+);
+
+
+--
+-- Name: TABLE platform_tenant_credit_grants; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.platform_tenant_credit_grants IS 'Prepaid credit granted to a platform tenant; finalized tenant statements draw it down oldest-expiring first (ADR-20261019100331).';
+
+
+--
 -- Name: platform_tenant_hostname_policies; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -43510,6 +43561,36 @@ COMMENT ON TABLE public.platform_tenant_source_route_usage_minutes IS 'Billable 
 
 
 --
+-- Name: platform_tenant_spend_caps; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.platform_tenant_spend_caps (
+    platform_tenant_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    currency text NOT NULL,
+    monthly_cap_millicents bigint NOT NULL,
+    capped boolean DEFAULT false NOT NULL,
+    month_start timestamp with time zone,
+    amount_due_millicents bigint,
+    checked_at timestamp with time zone,
+    next_check_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT platform_tenant_spend_caps_cap_chk CHECK ((monthly_cap_millicents >= 0)),
+    CONSTRAINT platform_tenant_spend_caps_capped_chk CHECK (((NOT capped) OR ((month_start IS NOT NULL) AND (checked_at IS NOT NULL)))),
+    CONSTRAINT platform_tenant_spend_caps_currency_chk CHECK ((currency ~ '^[A-Z]{3}$'::text)),
+    CONSTRAINT platform_tenant_spend_caps_due_chk CHECK (((amount_due_millicents IS NULL) OR (amount_due_millicents >= 0)))
+);
+
+
+--
+-- Name: TABLE platform_tenant_spend_caps; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.platform_tenant_spend_caps IS 'Monthly spend cap per platform tenant; apid checks the month to date and tenant admission denies capped tenants (ADR-20261019100331).';
+
+
+--
 -- Name: platform_tenant_statement_consumers; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -43583,11 +43664,13 @@ CREATE TABLE public.platform_tenant_statements (
     finalized_at timestamp with time zone,
     coverage jsonb NOT NULL,
     fees jsonb DEFAULT '[]'::jsonb NOT NULL,
+    credit_applied_millicents bigint DEFAULT 0 NOT NULL,
     CONSTRAINT platform_tenant_statements_amount_millicents_check CHECK ((amount_millicents >= 0)),
     CONSTRAINT platform_tenant_statements_billable_units_check CHECK ((billable_units >= 0)),
     CONSTRAINT platform_tenant_statements_check CHECK (((period_start = date_trunc('minute'::text, period_start)) AND (period_end = date_trunc('minute'::text, period_end)) AND (period_end > period_start))),
     CONSTRAINT platform_tenant_statements_check1 CHECK ((((status = ANY (ARRAY['draft'::text, 'superseded'::text])) AND (finalized_at IS NULL)) OR ((status = 'finalized'::text) AND (finalized_at IS NOT NULL)))),
     CONSTRAINT platform_tenant_statements_coverage_array CHECK ((jsonb_typeof(coverage) = 'array'::text)),
+    CONSTRAINT platform_tenant_statements_credit_chk CHECK (((credit_applied_millicents >= 0) AND (credit_applied_millicents <= GREATEST(amount_millicents, (0)::bigint)))),
     CONSTRAINT platform_tenant_statements_currency_check CHECK (((currency = ''::text) OR (currency ~ '^[A-Z]{3}$'::text))),
     CONSTRAINT platform_tenant_statements_fees_chk CHECK (((jsonb_typeof(fees) = 'array'::text) AND (jsonb_array_length(fees) <= 64))),
     CONSTRAINT platform_tenant_statements_lines_check CHECK ((jsonb_typeof(lines) = 'array'::text)),
@@ -58177,6 +58260,22 @@ ALTER TABLE ONLY public.platform_tenant_credential_policies
 
 
 --
+-- Name: platform_tenant_credit_applications platform_tenant_credit_applications_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_tenant_credit_applications
+    ADD CONSTRAINT platform_tenant_credit_applications_pkey PRIMARY KEY (grant_id, statement_id);
+
+
+--
+-- Name: platform_tenant_credit_grants platform_tenant_credit_grants_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_tenant_credit_grants
+    ADD CONSTRAINT platform_tenant_credit_grants_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: platform_tenant_hostname_policies platform_tenant_hostname_policies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -58270,6 +58369,14 @@ ALTER TABLE ONLY public.platform_tenant_request_budgets
 
 ALTER TABLE ONLY public.platform_tenant_source_route_usage_minutes
     ADD CONSTRAINT platform_tenant_source_route_usage_minutes_pkey PRIMARY KEY (account_id, platform_tenant_id, app_id, source_kind, source_id, window_start, route);
+
+
+--
+-- Name: platform_tenant_spend_caps platform_tenant_spend_caps_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_tenant_spend_caps
+    ADD CONSTRAINT platform_tenant_spend_caps_pkey PRIMARY KEY (platform_tenant_id);
 
 
 --
@@ -66001,6 +66108,20 @@ CREATE INDEX invocations_replayed_from_idx ON public.invocations USING btree (ac
 
 
 --
+-- Name: invocations_retention_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX invocations_retention_due_idx ON public.invocations USING btree (result_retention_until) WHERE ((result_retention_until IS NOT NULL) AND (state = ANY (ARRAY['completed'::text, 'failed'::text, 'dead_letter'::text, 'cancelled'::text, 'superseded'::text, 'expired'::text])));
+
+
+--
+-- Name: invocations_retention_unstamped_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX invocations_retention_unstamped_idx ON public.invocations USING btree (created_at) WHERE ((result_retention_until IS NULL) AND (state = ANY (ARRAY['completed'::text, 'failed'::text, 'dead_letter'::text, 'cancelled'::text, 'superseded'::text, 'expired'::text])));
+
+
+--
 -- Name: invocations_scoped_queue_demand_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -68409,6 +68530,20 @@ CREATE INDEX platform_tenant_access_tokens_tenant_idx ON public.platform_tenant_
 
 
 --
+-- Name: platform_tenant_credit_applications_statement_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX platform_tenant_credit_applications_statement_idx ON public.platform_tenant_credit_applications USING btree (statement_id);
+
+
+--
+-- Name: platform_tenant_credit_grants_tenant_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX platform_tenant_credit_grants_tenant_idx ON public.platform_tenant_credit_grants USING btree (platform_tenant_id, currency, created_at);
+
+
+--
 -- Name: platform_tenant_meter_usage_minutes_read_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -68448,6 +68583,13 @@ CREATE INDEX platform_tenant_reconciliation_receipts_history_idx ON public.platf
 --
 
 CREATE INDEX platform_tenant_source_route_usage_minutes_read_idx ON public.platform_tenant_source_route_usage_minutes USING btree (account_id, platform_tenant_id, window_start);
+
+
+--
+-- Name: platform_tenant_spend_caps_next_check_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX platform_tenant_spend_caps_next_check_idx ON public.platform_tenant_spend_caps USING btree (next_check_at);
 
 
 --
@@ -75504,13 +75646,6 @@ CREATE TRIGGER org_owner_identity BEFORE INSERT OR UPDATE OF role, removed_at, a
 --
 
 CREATE TRIGGER org_queue_bindings_guard BEFORE UPDATE OF status, deleted_pending ON public.orgs FOR EACH ROW EXECUTE FUNCTION public.guard_org_queue_bindings();
-
-
---
--- Name: orgs org_queue_reservation_adoption; Type: TRIGGER; Schema: public; Owner: -
---
-
-CREATE TRIGGER org_queue_reservation_adoption AFTER UPDATE OF resource_ownership_enabled ON public.orgs FOR EACH ROW EXECUTE FUNCTION public.adopt_queue_reservations_on_org_adoption();
 
 
 --
@@ -86419,6 +86554,46 @@ ALTER TABLE ONLY public.platform_tenant_credential_policies
 
 
 --
+-- Name: platform_tenant_credit_applications platform_tenant_credit_applications_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_tenant_credit_applications
+    ADD CONSTRAINT platform_tenant_credit_applications_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: platform_tenant_credit_applications platform_tenant_credit_applications_grant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_tenant_credit_applications
+    ADD CONSTRAINT platform_tenant_credit_applications_grant_id_fkey FOREIGN KEY (grant_id) REFERENCES public.platform_tenant_credit_grants(id) ON DELETE CASCADE;
+
+
+--
+-- Name: platform_tenant_credit_applications platform_tenant_credit_applications_statement_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_tenant_credit_applications
+    ADD CONSTRAINT platform_tenant_credit_applications_statement_id_fkey FOREIGN KEY (statement_id) REFERENCES public.platform_tenant_statements(id) ON DELETE CASCADE;
+
+
+--
+-- Name: platform_tenant_credit_grants platform_tenant_credit_grants_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_tenant_credit_grants
+    ADD CONSTRAINT platform_tenant_credit_grants_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: platform_tenant_credit_grants platform_tenant_credit_grants_platform_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_tenant_credit_grants
+    ADD CONSTRAINT platform_tenant_credit_grants_platform_tenant_id_fkey FOREIGN KEY (platform_tenant_id) REFERENCES public.platform_tenants(id) ON DELETE CASCADE;
+
+
+--
 -- Name: platform_tenant_hostname_policies platform_tenant_hostname_policies_account_id_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -86536,6 +86711,22 @@ ALTER TABLE ONLY public.platform_tenant_request_budgets
 
 ALTER TABLE ONLY public.platform_tenant_source_route_usage_minutes
     ADD CONSTRAINT platform_tenant_source_route_usage_minutes_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: platform_tenant_spend_caps platform_tenant_spend_caps_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_tenant_spend_caps
+    ADD CONSTRAINT platform_tenant_spend_caps_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: platform_tenant_spend_caps platform_tenant_spend_caps_platform_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_tenant_spend_caps
+    ADD CONSTRAINT platform_tenant_spend_caps_platform_tenant_id_fkey FOREIGN KEY (platform_tenant_id) REFERENCES public.platform_tenants(id) ON DELETE CASCADE;
 
 
 --

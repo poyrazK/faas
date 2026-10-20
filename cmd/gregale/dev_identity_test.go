@@ -1,6 +1,7 @@
-package main
+package main_test
 
 import (
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"os"
 	"path/filepath"
 	"sync"
@@ -12,24 +13,24 @@ func useTemporaryDeveloperConfig(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
-	t.Setenv(developerIDEnvironment, "")
-	_ = os.Unsetenv(developerIDEnvironment)
+	t.Setenv(main.DeveloperIDEnvironment, "")
+	_ = os.Unsetenv(main.DeveloperIDEnvironment)
 }
 
 func TestLoadOrCreateDeveloperIDIsStableAndPrivate(t *testing.T) {
 	useTemporaryDeveloperConfig(t)
-	first, err := loadOrCreateDeveloperID()
+	first, err := main.LoadOrCreateDeveloperID()
 	if err != nil {
 		t.Fatalf("create developer ID: %v", err)
 	}
-	second, err := loadOrCreateDeveloperID()
+	second, err := main.LoadOrCreateDeveloperID()
 	if err != nil {
 		t.Fatalf("reload developer ID: %v", err)
 	}
-	if first != second || !validDeveloperID(first) {
+	if first != second || !main.ValidDeveloperID(first) {
 		t.Fatalf("developer IDs = %q and %q, want same valid ID", first, second)
 	}
-	path, err := developerIDPath()
+	path, err := main.DeveloperIDPath()
 	if err != nil {
 		t.Fatalf("developer ID path: %v", err)
 	}
@@ -52,7 +53,7 @@ func TestLoadOrCreateDeveloperIDConvergesAcrossConcurrentCalls(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			id, err := loadOrCreateDeveloperID()
+			id, err := main.LoadOrCreateDeveloperID()
 			ids <- id
 			errs <- err
 		}()
@@ -78,13 +79,13 @@ func TestLoadOrCreateDeveloperIDConvergesAcrossConcurrentCalls(t *testing.T) {
 
 func TestLoadOrCreateDeveloperIDEnvironmentOverride(t *testing.T) {
 	const id = "0123456789abcdef0123456789abcdef"
-	t.Setenv(developerIDEnvironment, id)
-	got, err := loadOrCreateDeveloperID()
+	t.Setenv(main.DeveloperIDEnvironment, id)
+	got, err := main.LoadOrCreateDeveloperID()
 	if err != nil || got != id {
 		t.Fatalf("environment developer ID = %q, %v; want %q", got, err, id)
 	}
-	t.Setenv(developerIDEnvironment, "ABCDEF0123456789ABCDEF0123456789")
-	if _, err := loadOrCreateDeveloperID(); err == nil {
+	t.Setenv(main.DeveloperIDEnvironment, "ABCDEF0123456789ABCDEF0123456789")
+	if _, err := main.LoadOrCreateDeveloperID(); err == nil {
 		t.Fatal("uppercase environment developer ID was accepted")
 	}
 }
@@ -96,23 +97,23 @@ func TestDeriveDevWorkspaceIDScopesDeveloperAndSource(t *testing.T) {
 	)
 	sourceA := t.TempDir()
 	sourceB := t.TempDir()
-	first, err := deriveDevWorkspaceID(developerA, sourceA)
+	first, err := main.DeriveDevWorkspaceID(developerA, sourceA)
 	if err != nil {
 		t.Fatalf("derive first workspace: %v", err)
 	}
-	repeated, err := deriveDevWorkspaceID(developerA, sourceA)
+	repeated, err := main.DeriveDevWorkspaceID(developerA, sourceA)
 	if err != nil {
 		t.Fatalf("derive repeated workspace: %v", err)
 	}
-	otherDeveloper, err := deriveDevWorkspaceID(developerB, sourceA)
+	otherDeveloper, err := main.DeriveDevWorkspaceID(developerB, sourceA)
 	if err != nil {
 		t.Fatalf("derive other developer workspace: %v", err)
 	}
-	otherSource, err := deriveDevWorkspaceID(developerA, sourceB)
+	otherSource, err := main.DeriveDevWorkspaceID(developerA, sourceB)
 	if err != nil {
 		t.Fatalf("derive other source workspace: %v", err)
 	}
-	if first != repeated || !validDeveloperID(first) {
+	if first != repeated || !main.ValidDeveloperID(first) {
 		t.Fatalf("workspace identity is not stable: first=%q repeated=%q", first, repeated)
 	}
 	if first == otherDeveloper || first == otherSource {

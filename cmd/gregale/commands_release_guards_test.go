@@ -1,8 +1,10 @@
-package main
+package main_test
 
 import (
 	"testing"
 	"time"
+
+	"github.com/onebox-faas/faas/cmd/gregale"
 )
 
 // adr: 20261019071733, 20261019071734 — CLI flag shapes for freezes and gates.
@@ -27,7 +29,7 @@ func TestFreezeRequestFromFlags(t *testing.T) {
 		{name: "bad duration", forDur: "soon", wantErr: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			req, err := freezeRequestFromFlags(tc.forDur, tc.from, tc.until, tc.weekly, tc.at, tc.tz, tc.afterRollback, now)
+			req, err := main.FreezeRequestFromFlags(tc.forDur, tc.from, tc.until, tc.weekly, tc.at, tc.tz, tc.afterRollback, now)
 			if tc.wantErr != (err != nil) {
 				t.Fatalf("err = %v, wantErr %v", err, tc.wantErr)
 			}
@@ -75,7 +77,7 @@ func TestReleaseGateRequest(t *testing.T) {
 		{name: "min events on slo", slo: "checkout", minEvents: 3, maxGroups: -1, wantErr: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			req, err := releaseGateRequest("g", tc.slo, tc.maxBurn, tc.newErrors, tc.maxGroups, tc.minEvents, tc.metric, tc.below, tc.above, 0)
+			req, err := main.ReleaseGateRequest("g", tc.slo, tc.maxBurn, tc.newErrors, tc.maxGroups, tc.minEvents, tc.metric, tc.below, tc.above, 0)
 			if tc.wantErr != (err != nil) {
 				t.Fatalf("err = %v, wantErr %v", err, tc.wantErr)
 			}

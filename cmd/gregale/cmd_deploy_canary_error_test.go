@@ -1,7 +1,8 @@
-package main
+package main_test
 
 import (
 	"bytes"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"strings"
 	"testing"
 )
@@ -11,15 +12,15 @@ import (
 // the closed-set catalog`: the flag validation message was passed where a
 // preset name belongs. The message is now the problem detail.
 func TestDeployCanaryFlagErrorIsReadable(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	t.Setenv("FAAS_API", "http://127.0.0.1:1")
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 	var stdout, stderr bytes.Buffer
-	oldOut, oldErr := osStdout, osStderr
-	osStdout, osStderr = &stdout, &stderr
-	defer func() { osStdout, osStderr = oldOut, oldErr }()
+	oldOut, oldErr := (*main.OsStdout), (*main.OsStderr)
+	(*main.OsStdout), (*main.OsStderr) = &stdout, &stderr
+	defer func() { (*main.OsStdout), (*main.OsStderr) = oldOut, oldErr }()
 
-	if code := cmdDeployTarball([]string{"--image", "registry.x/app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "--name", "my-app", "--canary-stages", "1@30s,100@0s"}); code == 0 {
+	if code := main.CmdDeployTarball([]string{"--image", "registry.x/app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "--name", "my-app", "--canary-stages", "1@30s,100@0s"}); code == 0 {
 		t.Fatal("deploy with --canary-stages and no preset succeeded")
 	}
 	got := stderr.String() + stdout.String()

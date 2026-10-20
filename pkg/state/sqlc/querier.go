@@ -3078,6 +3078,10 @@ type Querier interface {
 	// Unlifted freezes that have not ended: active and upcoming windows, weekly
 	// windows and after-rollback policies.
 	ListUnliftedReleaseFreezes(ctx context.Context, db DBTX, arg ListUnliftedReleaseFreezesParams) ([]ReleaseFreeze, error)
+	// The account trace view's per-request wakes: one canonical instance per wake
+	// (its first), scoped to the account's apps before reading wake metadata, with
+	// the same boot and completion reads as ListAppWakeHistoryPage.
+	ListWakeHistoryByWakeIDs(ctx context.Context, db DBTX, arg ListWakeHistoryByWakeIDsParams) ([]ListWakeHistoryByWakeIDsRow, error)
 	ListWarmPoolReconciliationAppIDs(ctx context.Context, db DBTX, nodeID string) ([]string, error)
 	ListWatchingAppConfigGuards(ctx context.Context, db DBTX, rowLimit int32) ([]AppConfigGuard, error)
 	ListWorkerRecoveryApps(ctx context.Context, db DBTX, arg ListWorkerRecoveryAppsParams) ([]pgtype.UUID, error)
@@ -3960,6 +3964,8 @@ type Querier interface {
 	OrgQueueLockProjectPolicy(ctx context.Context, db DBTX, arg OrgQueueLockProjectPolicyParams) error
 	OrgQueuePersonalBindingReference(ctx context.Context, db DBTX, arg OrgQueuePersonalBindingReferenceParams) (bool, error)
 	OrgQueuePersonalInvocationReference(ctx context.Context, db DBTX, arg OrgQueuePersonalInvocationReferenceParams) (bool, error)
+	// async_quota_pooled: the organization's async reservations use its own
+	// counter. Until then they stay on the namespace counter (ADR-202610171908).
 	OrgQueueReadPolicy(ctx context.Context, db DBTX, arg OrgQueueReadPolicyParams) (OrgQueueReadPolicyRow, error)
 	OrgQueueUsage(ctx context.Context, db DBTX, orgID pgtype.UUID) (OrgQueueUsageRow, error)
 	OwnEnvironmentGitOpsField(ctx context.Context, db DBTX, arg OwnEnvironmentGitOpsFieldParams) (int64, error)
@@ -5299,6 +5305,11 @@ type Querier interface {
 	// The placement shares the fenced stamp (ADR-1195); an attempt keeps its first.
 	StampCustomerOperationExecutionAttempt(ctx context.Context, db DBTX, arg StampCustomerOperationExecutionAttemptParams) (int64, error)
 	StampDeadLetterEventReplay(ctx context.Context, db DBTX, arg StampDeadLetterEventReplayParams) error
+	// ADR 20261019104819: finished rows whose producer set no horizon get the
+	// plan default from pkg/api/limits.go. Failed and dead-lettered rows keep at
+	// least the failure floor so DLQ replay and execution recovery still find
+	// them. The reaper prunes stamped rows once they are due.
+	StampDefaultInvocationRetention(ctx context.Context, db DBTX, arg StampDefaultInvocationRetentionParams) (int64, error)
 	StampDeploymentRuntimeBase(ctx context.Context, db DBTX, arg StampDeploymentRuntimeBaseParams) error
 	StampLegacyProductionScaleIn(ctx context.Context, db DBTX, id pgtype.UUID) (pgtype.UUID, error)
 	StampLegacyProductionScaleOut(ctx context.Context, db DBTX, id pgtype.UUID) (pgtype.UUID, error)

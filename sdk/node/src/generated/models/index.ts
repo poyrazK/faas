@@ -56,6 +56,7 @@ export type { AccountTraceInvocation } from './AccountTraceInvocation.js';
 export type { AccountTraceLookupError } from './AccountTraceLookupError.js';
 export type { AccountTraceLookupResponse } from './AccountTraceLookupResponse.js';
 export type { AccountTraceMatch } from './AccountTraceMatch.js';
+export type { AccountTraceWake } from './AccountTraceWake.js';
 export type { AccountUsageResponse } from './AccountUsageResponse.js';
 export type { ActivityActorResponse } from './ActivityActorResponse.js';
 export type { ActivityResourceResponse } from './ActivityResourceResponse.js';
@@ -2023,6 +2024,8 @@ export type { PlatformTenantCredentialMetadata } from './PlatformTenantCredentia
 export type { PlatformTenantCredentialPolicyResponse } from './PlatformTenantCredentialPolicyResponse.js';
 export type { PlatformTenantCredentialResult } from './PlatformTenantCredentialResult.js';
 export type { PlatformTenantCredentialsResponse } from './PlatformTenantCredentialsResponse.js';
+export type { PlatformTenantCreditListResponse } from './PlatformTenantCreditListResponse.js';
+export type { PlatformTenantCreditResponse } from './PlatformTenantCreditResponse.js';
 export type { PlatformTenantCustomerLifecycleWebhookPayload } from './PlatformTenantCustomerLifecycleWebhookPayload.js';
 export type { PlatformTenantDetailResponse } from './PlatformTenantDetailResponse.js';
 export type { PlatformTenantHostnamePolicyResponse } from './PlatformTenantHostnamePolicyResponse.js';
@@ -2065,6 +2068,7 @@ export type { PlatformTenantSelfConsumersResponse } from './PlatformTenantSelfCo
 export type { PlatformTenantSelfDeploymentResponse } from './PlatformTenantSelfDeploymentResponse.js';
 export type { PlatformTenantSelfHostnameResponse } from './PlatformTenantSelfHostnameResponse.js';
 export type { PlatformTenantSelfStatementListResponse } from './PlatformTenantSelfStatementListResponse.js';
+export type { PlatformTenantSpendCapResponse } from './PlatformTenantSpendCapResponse.js';
 export type { PlatformTenantStatementFinalizedWebhookPayload } from './PlatformTenantStatementFinalizedWebhookPayload.js';
 export type { PlatformTenantStatementHandoffResponse } from './PlatformTenantStatementHandoffResponse.js';
 export type { PlatformTenantStatementLineResponse } from './PlatformTenantStatementLineResponse.js';

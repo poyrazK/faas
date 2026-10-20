@@ -1,6 +1,7 @@
-package main
+package main_test
 
 import (
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"testing"
 	"time"
 )
@@ -16,7 +17,7 @@ func TestPostgresUsageObservedLabel(t *testing.T) {
 		{nil, false, "never"},
 		{&at, true, "2026-10-14T21:00:00Z"},
 	} {
-		if got := postgresUsageObservedLabel(tc.observed, tc.fresh); got != tc.want {
+		if got := main.PostgresUsageObservedLabel(tc.observed, tc.fresh); got != tc.want {
 			t.Errorf("label(%v, %t) = %q, want %q", tc.observed, tc.fresh, got, tc.want)
 		}
 	}

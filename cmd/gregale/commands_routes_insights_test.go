@@ -1,4 +1,4 @@
-package main
+package main_test
 
 // adr: 1198
 
@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -21,20 +22,20 @@ func routeInsightsServer(t *testing.T, insights []api.RouteInsight) *httptest.Se
 			http.NotFound(w, r)
 			return
 		}
-		writeJSONTest(w, api.RouteInsightsResponse{Slug: "demo", Insights: insights})
+		main.WriteJSONTest(w, api.RouteInsightsResponse{Slug: "demo", Insights: insights})
 	}))
 }
 
 func runRouteInsightsCLI(t *testing.T, server *httptest.Server, args ...string) (int, string) {
 	t.Helper()
-	resetJSONOut(t)
-	setPreviewTestAuth(t)
+	main.ResetJSONOut(t)
+	main.SetPreviewTestAuth(t)
 	t.Setenv("FAAS_API", server.URL)
 	var output bytes.Buffer
-	old := osStdout
-	osStdout = &output
-	t.Cleanup(func() { osStdout = old })
-	return run(args), output.String()
+	old := (*main.OsStdout)
+	(*main.OsStdout) = &output
+	t.Cleanup(func() { (*main.OsStdout) = old })
+	return main.Run(args), output.String()
 }
 
 func TestRoutesInsightsCLI(t *testing.T) {

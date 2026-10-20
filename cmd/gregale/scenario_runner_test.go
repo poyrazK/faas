@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"context"
@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -29,77 +30,77 @@ func TestReadTestManifestValidatesAndResolvesSource(t *testing.T) {
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	scenarios, sourceDir, err := readTestManifest(path)
+	scenarios, sourceDir, err := main.ReadTestManifest(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sourceDir != dir || !scenarios["customer-export"].Postgres || len(scenarios["customer-export"].Command) != 3 || len(scenarios["customer-export"].Simulation) != 3 || scenarios["customer-export"].Services["worker"].Source != "./worker" || scenarios["customer-export"].Services["notifications"].Fixture != testDeliverySinkFixture || len(scenarios["customer-export"].Consumers) != 2 || scenarios["customer-export"].ConsumerAuthMode != api.ConsumerAuthModeRequired || len(scenarios["customer-export"].WaitFor.Deliveries) != 1 {
+	if sourceDir != dir || !scenarios["customer-export"].Postgres || len(scenarios["customer-export"].Command) != 3 || len(scenarios["customer-export"].Simulation) != 3 || scenarios["customer-export"].Services["worker"].Source != "./worker" || scenarios["customer-export"].Services["notifications"].Fixture != main.TestDeliverySinkFixture || len(scenarios["customer-export"].Consumers) != 2 || scenarios["customer-export"].ConsumerAuthMode != api.ConsumerAuthModeRequired || len(scenarios["customer-export"].WaitFor.Deliveries) != 1 {
 		t.Fatalf("manifest = %+v, source = %q", scenarios, sourceDir)
 	}
 	if err := os.WriteFile(path, []byte(strings.Replace(content, "command:", "unknown_field: x\n    command:", 1)), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := readTestManifest(path); err == nil {
+	if _, _, err := main.ReadTestManifest(path); err == nil {
 		t.Fatal("unknown scenario field was accepted")
 	}
 	if err := os.WriteFile(path, []byte(strings.Replace(content, "EXPORT_STORAGE", "bad-prefix", 1)), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := readTestManifest(path); err == nil {
+	if _, _, err := main.ReadTestManifest(path); err == nil {
 		t.Fatal("invalid bucket binding prefix was accepted")
 	}
 	if err := os.WriteFile(path, []byte(strings.Replace(content, "service: worker", "service: missing", 1)), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := readTestManifest(path); err == nil {
+	if _, _, err := main.ReadTestManifest(path); err == nil {
 		t.Fatal("unknown bucket owner was accepted")
 	}
 	if err := os.WriteFile(path, []byte(strings.Replace(content, "service.notifications.url", "service.missing.url", 1)), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := readTestManifest(path); err == nil {
+	if _, _, err := main.ReadTestManifest(path); err == nil {
 		t.Fatal("unknown secret service reference was accepted")
 	}
 	if err := os.WriteFile(path, []byte(strings.Replace(content, "fail_first: 1", "fail_first: 21", 1)), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := readTestManifest(path); err == nil {
+	if _, _, err := main.ReadTestManifest(path); err == nil {
 		t.Fatal("excessive fixture failures were accepted")
 	}
 	if err := os.WriteFile(path, []byte(strings.Replace(content, "fixture: delivery-sink", "source: ./notifications, fixture: delivery-sink", 1)), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := readTestManifest(path); err == nil {
+	if _, _, err := main.ReadTestManifest(path); err == nil {
 		t.Fatal("ambiguous service source and fixture was accepted")
 	}
 	if err := os.WriteFile(path, []byte(strings.Replace(content, "fail_first: 1", "fail_first: 1, secrets: {GREGALE_TEST_SINK_TOKEN: override}", 1)), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := readTestManifest(path); err == nil {
+	if _, _, err := main.ReadTestManifest(path); err == nil {
 		t.Fatal("fixture token override was accepted")
 	}
 	if err := os.WriteFile(path, []byte(strings.Replace(content, "min_attempts: 2", "min_attempts: 0", 1)), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := readTestManifest(path); err == nil {
+	if _, _, err := main.ReadTestManifest(path); err == nil {
 		t.Fatal("zero delivery attempts were accepted")
 	}
 	if err := os.WriteFile(path, []byte(strings.Replace(content, "customer-b, scopes: [read]", "customer-a, scopes: [read]", 1)), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := readTestManifest(path); err == nil {
+	if _, _, err := main.ReadTestManifest(path); err == nil {
 		t.Fatal("duplicate consumer was accepted")
 	}
 	if err := os.WriteFile(path, []byte(strings.Replace(content, "consumer_auth_mode: required", "consumer_auth_mode: unsupported", 1)), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := readTestManifest(path); err == nil {
+	if _, _, err := main.ReadTestManifest(path); err == nil {
 		t.Fatal("invalid consumer auth mode was accepted")
 	}
 	if err := os.WriteFile(path, []byte(strings.Replace(content, "    postgres: true", "    timeout: 1ns", 1)), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := readTestManifest(path); err == nil {
+	if _, _, err := main.ReadTestManifest(path); err == nil {
 		t.Fatal("subsecond timeout was accepted")
 	}
 }
@@ -122,7 +123,7 @@ func (f *testAccessFakeClient) UpdateApp(_ context.Context, slug string, req api
 
 func TestConfigureTestWorkloadAccessClearsDefaultGatesAndKeepsConsumerPolicy(t *testing.T) {
 	client := &testAccessFakeClient{}
-	if err := configureTestWorkloadAccess(context.Background(), client, "isolated-api", api.ConsumerAuthModeRequired); err != nil {
+	if err := main.ConfigureTestWorkloadAccess(context.Background(), client, "isolated-api", api.ConsumerAuthModeRequired); err != nil {
 		t.Fatal(err)
 	}
 	if client.slug != "isolated-api" || client.req.RequireAuthn == nil || *client.req.RequireAuthn ||
@@ -130,7 +131,7 @@ func TestConfigureTestWorkloadAccessClearsDefaultGatesAndKeepsConsumerPolicy(t *
 		client.req.ConsumerAuthMode == nil || *client.req.ConsumerAuthMode != api.ConsumerAuthModeRequired {
 		t.Fatalf("test access update = (%q, %+v)", client.slug, client.req)
 	}
-	if err := configureTestWorkloadAccess(context.Background(), client, "isolated-worker", ""); err != nil {
+	if err := main.ConfigureTestWorkloadAccess(context.Background(), client, "isolated-worker", ""); err != nil {
 		t.Fatal(err)
 	}
 	if client.req.ConsumerAuthMode != nil {
@@ -153,7 +154,7 @@ func (f *testConsumerFakeClient) CreateConsumerKey(_ context.Context, _, _ strin
 
 func TestProvisionTestConsumersReturnsShortLivedCredentialsAndPartialCleanupIDs(t *testing.T) {
 	client := &testConsumerFakeClient{}
-	env, ids, err := provisionTestConsumers(context.Background(), client, "api-app", []testConsumer{{Name: "customer-a"}, {Name: "customer-b", Scopes: []string{"read"}}}, "run-123", 15*time.Minute)
+	env, ids, err := main.ProvisionTestConsumers(context.Background(), client, "api-app", []main.TestConsumer{{Name: "customer-a"}, {Name: "customer-b", Scopes: []string{"read"}}}, "run-123", 15*time.Minute)
 	if err != nil || len(ids) != 2 || len(env) != 4 {
 		t.Fatalf("provision = (%v, %v, %v)", env, ids, err)
 	}
@@ -167,29 +168,29 @@ func TestProvisionTestConsumersReturnsShortLivedCredentialsAndPartialCleanupIDs(
 		t.Fatalf("key requests = %+v", client.keys)
 	}
 	client.failKey = true
-	_, partialIDs, err := provisionTestConsumers(context.Background(), client, "api-app", []testConsumer{{Name: "failed-key"}}, "run-123", time.Minute)
+	_, partialIDs, err := main.ProvisionTestConsumers(context.Background(), client, "api-app", []main.TestConsumer{{Name: "failed-key"}}, "run-123", time.Minute)
 	if err == nil || len(partialIDs) != 1 {
 		t.Fatalf("failed key cleanup ids = (%v, %v)", partialIDs, err)
 	}
 }
 
 func TestExpandTestSecretValue(t *testing.T) {
-	got, err := expandTestSecretValue("${service.notifications.url}/deliver?run=${run.id}&bucket=${bucket.exports.name}&secret=${run.secret}",
+	got, err := main.ExpandTestSecretValue("${service.notifications.url}/deliver?run=${run.id}&bucket=${bucket.exports.name}&secret=${run.secret}",
 		map[string]string{"notifications": "https://sink.example"}, map[string]string{"notifications": "sink-app"},
-		map[string]testBucketRef{"exports": {Name: "exports-123"}}, "run-123", "secret-456")
+		map[string]main.TestBucketRef{"exports": {Name: "exports-123"}}, "run-123", "secret-456")
 	if err != nil || got != "https://sink.example/deliver?run=run-123&bucket=exports-123&secret=secret-456" {
 		t.Fatalf("expanded = (%q, %v)", got, err)
 	}
 	for _, value := range []string{"${service.unknown.url}", "${bucket.unknown.name}", "${run.id", "${service.notifications.secret}"} {
-		if _, err := expandTestSecretValue(value, map[string]string{"notifications": "https://sink.example"}, nil, nil, "run-123", "secret-456"); err == nil {
+		if _, err := main.ExpandTestSecretValue(value, map[string]string{"notifications": "https://sink.example"}, nil, nil, "run-123", "secret-456"); err == nil {
 			t.Errorf("reference %q was accepted", value)
 		}
 	}
 }
 
 func TestScenarioWorkloadSecretsUseInternalServiceURLs(t *testing.T) {
-	urls := scenarioInternalServiceURLs(map[string]string{"back": "dev-h9c-back-1", "export-api": "dev-export-api-1"})
-	got, err := expandTestSecretValue("${service.back.url}/x", urls, nil, nil, "run-123", "secret-456")
+	urls := main.ScenarioInternalServiceURLs(map[string]string{"back": "dev-h9c-back-1", "export-api": "dev-export-api-1"})
+	got, err := main.ExpandTestSecretValue("${service.back.url}/x", urls, nil, nil, "run-123", "secret-456")
 	if err != nil || got != "http://back.svc.gregale:10081/x" {
 		t.Fatalf("expanded = (%q, %v), want the in-platform service URL", got, err)
 	}
@@ -199,13 +200,13 @@ func TestScenarioWorkloadSecretsUseInternalServiceURLs(t *testing.T) {
 }
 
 func TestMaterializeScenarioDeliverySinkIsDeployableSource(t *testing.T) {
-	dir, cleanup, err := materializeScenarioFixture(testDeliverySinkFixture)
+	dir, cleanup, err := main.MaterializeScenarioFixture(main.TestDeliverySinkFixture)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer cleanup()
-	config, err := resolveDevSourceConfig(dir)
-	if err != nil || config.shape != shapeApp {
+	config, err := main.ResolveDevSourceConfig(dir)
+	if err != nil || (*config.Shape()) != main.ShapeApp {
 		t.Fatalf("delivery sink source shape = (%+v, %v)", config, err)
 	}
 	for _, file := range []string{"package.json", "server.js"} {
@@ -214,7 +215,7 @@ func TestMaterializeScenarioDeliverySinkIsDeployableSource(t *testing.T) {
 		}
 	}
 	archive := filepath.Join(t.TempDir(), "delivery-sink.tar.gz")
-	count, err := packDirToTarGz(dir, archive, defaultZeroConfigSourceCapMB, nil)
+	count, err := main.PackDirToTarGz(dir, archive, main.DefaultZeroConfigSourceCapMB, nil)
 	if err != nil || count != 2 {
 		t.Fatalf("fixture archive = (%d files, %v)", count, err)
 	}
@@ -222,20 +223,20 @@ func TestMaterializeScenarioDeliverySinkIsDeployableSource(t *testing.T) {
 
 func TestScenarioAcceptanceFixtureManifestAndSource(t *testing.T) {
 	manifest := filepath.Join("..", "..", "tests", "scenario-acceptance", "gregale-test.yaml")
-	scenarios, dir, err := readTestManifest(manifest)
+	scenarios, dir, err := main.ReadTestManifest(manifest)
 	if err != nil {
 		t.Fatal(err)
 	}
 	scenario, ok := scenarios["delivery-smoke"]
-	if !ok || scenario.Services["sink"].Fixture != testDeliverySinkFixture || len(scenario.WaitFor.Deliveries) != 1 {
+	if !ok || scenario.Services["sink"].Fixture != main.TestDeliverySinkFixture || len(scenario.WaitFor.Deliveries) != 1 {
 		t.Fatalf("acceptance scenario = %+v", scenario)
 	}
-	source, err := resolveDeploySourceDir(dir, scenario.Source)
+	source, err := main.ResolveDeploySourceDir(dir, scenario.Source)
 	if err != nil {
 		t.Fatal(err)
 	}
-	config, err := resolveDevSourceConfig(source)
-	if err != nil || config.shape != shapeApp {
+	config, err := main.ResolveDevSourceConfig(source)
+	if err != nil || (*config.Shape()) != main.ShapeApp {
 		t.Fatalf("acceptance app shape = (%+v, %v)", config, err)
 	}
 }
@@ -260,7 +261,7 @@ func TestVerifyTestServiceWakeChecksFirstNewCompletedBoot(t *testing.T) {
 		rows:   []api.WakeTimelineJSONRow{{WakeID: "later"}, {WakeID: "first"}, {WakeID: "baseline"}},
 		method: "cold_boot",
 	}
-	evidence, err := verifyTestServiceWake(context.Background(), client, "worker-app", "cold", map[string]bool{"baseline": true})
+	evidence, err := main.VerifyTestServiceWake(context.Background(), client, "worker-app", "cold", map[string]bool{"baseline": true})
 	if err != nil || evidence.WakeID != "first" || evidence.Method != "cold_boot" || client.selected != "first" {
 		t.Fatalf("service evidence = (%+v, %v), selected %q", evidence, err, client.selected)
 	}
@@ -291,17 +292,17 @@ func TestVerifyTestServiceHotRequiresHandledRequestWithoutNewWake(t *testing.T) 
 	}
 	wakes := map[string]bool{"baseline": true}
 	requests := map[string]bool{"baseline-request": true}
-	evidence, err := verifyTestServiceHot(context.Background(), client, "worker-app", wakes, requests, cutoff)
+	evidence, err := main.VerifyTestServiceHot(context.Background(), client, "worker-app", wakes, requests, cutoff)
 	if err != nil || evidence.RequestID != "public-request" || evidence.InstanceID != "vm-1" || evidence.Status != 202 {
 		t.Fatalf("hot service evidence = (%+v, %v)", evidence, err)
 	}
 	client.wakes = []api.WakeTimelineJSONRow{{WakeID: "unexpected-wake"}, {WakeID: "baseline"}}
-	if _, err := verifyTestServiceHot(context.Background(), client, "worker-app", wakes, requests, cutoff); err == nil {
+	if _, err := main.VerifyTestServiceHot(context.Background(), client, "worker-app", wakes, requests, cutoff); err == nil {
 		t.Fatal("new service wake satisfied warm profile")
 	}
 	client.wakes = []api.WakeTimelineJSONRow{{WakeID: "baseline"}}
 	client.requests[0].ColdBoot = true
-	if _, err := verifyTestServiceHot(context.Background(), client, "worker-app", wakes, requests, cutoff); err == nil {
+	if _, err := main.VerifyTestServiceHot(context.Background(), client, "worker-app", wakes, requests, cutoff); err == nil {
 		t.Fatal("waking service request satisfied warm profile")
 	}
 }
@@ -321,11 +322,11 @@ func TestWaitForTestDeliveryRequiresWorkloadWakeBeforeInspection(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	condition := testDeliveryOutput{Service: "notifications", MinAttempts: 2, LastStatus: 200}
+	condition := main.TestDeliveryOutput{Service: "notifications", MinAttempts: 2, LastStatus: 200}
 	client := &testServiceWakeFakeClient{rows: []api.WakeTimelineJSONRow{{WakeID: "baseline"}}}
 	ctx, cancel := context.WithTimeout(context.Background(), 650*time.Millisecond)
 	defer cancel()
-	if _, err := waitForTestDelivery(ctx, client, "sink-app", server.URL, "sink-token", "cold", map[string]bool{"baseline": true}, condition); err == nil {
+	if _, err := main.WaitForTestDelivery(ctx, client, "sink-app", server.URL, "sink-token", "cold", map[string]bool{"baseline": true}, condition); err == nil {
 		t.Fatal("delivery inspection proceeded without a post-trigger sink wake")
 	}
 	if reads != 0 {
@@ -334,7 +335,7 @@ func TestWaitForTestDeliveryRequiresWorkloadWakeBeforeInspection(t *testing.T) {
 	client.rows = []api.WakeTimelineJSONRow{{WakeID: "delivery-wake"}, {WakeID: "baseline"}}
 	ctx, cancel = context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	evidence, err := waitForTestDelivery(ctx, client, "sink-app", server.URL, "sink-token", "cold", map[string]bool{"baseline": true}, condition)
+	evidence, err := main.WaitForTestDelivery(ctx, client, "sink-app", server.URL, "sink-token", "cold", map[string]bool{"baseline": true}, condition)
 	if err != nil || evidence.Attempts != 2 || len(evidence.Statuses) != 2 || evidence.Statuses[0] != 503 || evidence.Statuses[1] != 200 || reads != 2 {
 		t.Fatalf("delivery evidence = (%+v, %v), reads=%d", evidence, err, reads)
 	}
@@ -358,7 +359,7 @@ func TestWaitForTestOutputsChecksEveryWorkloadQueue(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	client := &testOutputFakeClient{}
-	if _, err := waitForTestOutputs(ctx, client, []string{"gateway", "worker"}, testWaitFor{QueueIdle: true}, nil, "run-123"); err != nil {
+	if _, err := main.WaitForTestOutputs(ctx, client, []string{"gateway", "worker"}, main.TestWaitFor{QueueIdle: true}, nil, "run-123"); err != nil {
 		t.Fatal(err)
 	}
 	if client.polls != 6 {
@@ -389,10 +390,10 @@ func TestWaitForTestOutputsPollsQueueAndObjects(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	client := &testOutputFakeClient{}
-	outputs, err := waitForTestOutputs(ctx, client, []string{"test-app"}, testWaitFor{
+	outputs, err := main.WaitForTestOutputs(ctx, client, []string{"test-app"}, main.TestWaitFor{
 		QueueIdle: true,
-		Objects:   []testObjectOutput{{Bucket: "exports", Prefix: "reports/${GREGALE_TEST_RUN_ID}/", MinCount: 1, MinTotalBytes: 1}},
-	}, map[string]testBucketRef{"exports": {Name: "exports-123", AppSlug: "test-app"}}, "run-123")
+		Objects:   []main.TestObjectOutput{{Bucket: "exports", Prefix: "reports/${GREGALE_TEST_RUN_ID}/", MinCount: 1, MinTotalBytes: 1}},
+	}, map[string]main.TestBucketRef{"exports": {Name: "exports-123", AppSlug: "test-app"}}, "run-123")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -415,7 +416,7 @@ func TestTestProxyPreservesRequestAndCapturesWakeEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	proxy, recorder := newTestProxy(target)
+	proxy, recorder := main.NewTestProxy(target)
 	defer proxy.Close()
 	request, err := http.NewRequest(http.MethodPost, proxy.URL+"/exports", nil)
 	if err != nil {
@@ -427,21 +428,21 @@ func TestTestProxyPreservesRequestAndCapturesWakeEvidence(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = response.Body.Close()
-	got := recorder.snapshot()
+	got := recorder.Snapshot()
 	if got.Requests != 1 || got.Header != "restored" || got.WakeID != "wake-123" || got.Status != http.StatusAccepted {
 		t.Fatalf("evidence = %+v", got)
 	}
-	if err := verifyTestProfile(context.Background(), api.NewClient(upstream.URL, "token"), "api", "warm", &got); err == nil {
+	if err := main.VerifyTestProfile(context.Background(), api.NewClient(upstream.URL, "token"), "api", "warm", &got); err == nil {
 		t.Fatal("a restored request satisfied the warm profile")
 	}
 }
 
 func TestSelectedTestProfiles(t *testing.T) {
-	profiles, err := selectedTestProfiles("all")
+	profiles, err := main.SelectedTestProfiles("all")
 	if err != nil || strings.Join(profiles, ",") != "warm,cold,restored" {
 		t.Fatalf("all profiles = %v, %v", profiles, err)
 	}
-	if _, err := selectedTestProfiles("coldish"); err == nil {
+	if _, err := main.SelectedTestProfiles("coldish"); err == nil {
 		t.Fatal("invalid profile accepted")
 	}
 }
@@ -456,7 +457,7 @@ func TestSimulatedScenarioRunsWithoutPlatformAndOmitsWakeEvidence(t *testing.T) 
 	if err := os.WriteFile(manifest, []byte(contents), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if code := cmdTest([]string{"--scenario", "local-test", "--engine", "simulated", "--repeat", "2", "--manifest", manifest, "--report", report}); code != 0 {
+	if code := main.CmdTest([]string{"--scenario", "local-test", "--engine", "simulated", "--repeat", "2", "--manifest", manifest, "--report", report}); code != 0 {
 		t.Fatalf("simulated test exit = %d, want 0", code)
 	}
 	body, err := os.ReadFile(report)
@@ -466,14 +467,14 @@ func TestSimulatedScenarioRunsWithoutPlatformAndOmitsWakeEvidence(t *testing.T) 
 	if !strings.Contains(string(body), `"engine": "simulated"`) || strings.Contains(string(body), `"evidence"`) || strings.Contains(string(body), `"app_slug"`) {
 		t.Fatalf("simulated report mislabels platform evidence: %s", body)
 	}
-	var attempts []testRunReceipt
+	var attempts []main.TestRunReceipt
 	if err := json.Unmarshal(body, &attempts); err != nil || len(attempts) != 2 || attempts[0].Attempt != 1 || attempts[1].Attempt != 2 {
 		t.Fatalf("repeat report = (%+v, %v)", attempts, err)
 	}
-	if code := cmdTest([]string{"--scenario", "local-test", "--engine", "simulated", "--profile", "cold", "--manifest", manifest}); code == 0 {
+	if code := main.CmdTest([]string{"--scenario", "local-test", "--engine", "simulated", "--profile", "cold", "--manifest", manifest}); code == 0 {
 		t.Fatal("simulated run accepted a VM lifecycle profile")
 	}
-	if code := cmdTest([]string{"--scenario", "local-test", "--profile", "restored", "--max-workload-minutes", "1", "--manifest", manifest}); code == 0 {
+	if code := main.CmdTest([]string{"--scenario", "local-test", "--profile", "restored", "--max-workload-minutes", "1", "--manifest", manifest}); code == 0 {
 		t.Fatal("real VM run exceeded the workload-minute guard without stopping")
 	}
 }
@@ -494,7 +495,7 @@ func TestTestProxyRecordsFirstRequestEvenWhenItFinishesSecond(t *testing.T) {
 	}))
 	defer upstream.Close()
 	target, _ := url.Parse(upstream.URL)
-	proxy, recorder := newTestProxy(target)
+	proxy, recorder := main.NewTestProxy(target)
 	defer proxy.Close()
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -519,7 +520,7 @@ func TestTestProxyRecordsFirstRequestEvenWhenItFinishesSecond(t *testing.T) {
 	_ = response.Body.Close()
 	close(releaseFirst)
 	wg.Wait()
-	got := recorder.snapshot()
+	got := recorder.Snapshot()
 	if got.Requests != 2 || got.Header != "cold" || got.WakeID != "wake-first" {
 		t.Fatalf("evidence = %+v", got)
 	}
@@ -541,8 +542,8 @@ func TestVerifyTestProfileUsesCompletedWakeMethod(t *testing.T) {
 				_, _ = w.Write([]byte(`{"wake_id":"wake-123","app_id":"api","events":[{"at":"2026-09-28T00:00:00Z","kind":"wake.boot_completed","actor":"schedd","data":{"method":"` + tc.method + `"}}]}`))
 			}))
 			defer server.Close()
-			evidence := testWakeEvidence{Requests: 1, Header: tc.header, WakeID: "wake-123"}
-			if err := verifyTestProfile(context.Background(), api.NewClient(server.URL, "token"), "api", tc.profile, &evidence); err != nil {
+			evidence := main.TestWakeEvidence{Requests: 1, Header: tc.header, WakeID: "wake-123"}
+			if err := main.VerifyTestProfile(context.Background(), api.NewClient(server.URL, "token"), "api", tc.profile, &evidence); err != nil {
 				t.Fatal(err)
 			}
 			if evidence.Method != tc.method {
@@ -571,7 +572,7 @@ func TestTestProxySkipsEdgeHealthAnswersForWakeEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	proxy, recorder := newTestProxy(target)
+	proxy, recorder := main.NewTestProxy(target)
 	defer proxy.Close()
 	for _, path := range []string{"/healthz", "/time"} {
 		response, err := http.Get(proxy.URL + path)
@@ -580,19 +581,19 @@ func TestTestProxySkipsEdgeHealthAnswersForWakeEvidence(t *testing.T) {
 		}
 		_ = response.Body.Close()
 	}
-	got := recorder.snapshot()
+	got := recorder.Snapshot()
 	if got.Requests != 2 || got.EdgeAnswered != 1 || got.Header != "restored" || got.WakeID != "wake-456" {
 		t.Fatalf("evidence = %+v; want the /time wake", got)
 	}
 
-	recorder.reset()
+	recorder.Reset()
 	response, err := http.Get(proxy.URL + "/healthz")
 	if err != nil {
 		t.Fatal(err)
 	}
 	_ = response.Body.Close()
-	only := recorder.snapshot()
-	err = verifyTestProfile(context.Background(), api.NewClient(upstream.URL, "token"), "api", "restored", &only)
+	only := recorder.Snapshot()
+	err = main.VerifyTestProfile(context.Background(), api.NewClient(upstream.URL, "token"), "api", "restored", &only)
 	if err == nil || !strings.Contains(err.Error(), "answered at the edge") {
 		t.Fatalf("edge-only run error = %v", err)
 	}

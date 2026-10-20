@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"context"
@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -43,12 +44,12 @@ func TestAutomationCoverageExclusionValidation(t *testing.T) {
 		"  - {step: send, code: guard_skip_missing, reason: one}\n  - {step: send, code: guard_skip_missing, reason: two}\n",
 	} {
 		suite := coverageGateFixture(t, "coverage_exclusions:\n"+body)
-		if _, err := loadAutomationScenarios(suite); err == nil {
+		if _, err := main.LoadAutomationScenarios(suite); err == nil {
 			t.Fatalf("accepted exclusion %s", body)
 		}
 	}
 	suite := coverageGateFixture(t, "coverage_exclusions:\n  - {step: send, code: guard_skip_missing, reason: 'handled by an external integration test'}\n")
-	if scenarios, err := loadAutomationScenarios(suite); err != nil || len(scenarios[0].coverageExclusions) != 1 {
+	if scenarios, err := main.LoadAutomationScenarios(suite); err != nil || len((*scenarios[0].CoverageExclusions())) != 1 {
 		t.Fatalf("scenarios=%+v err=%v", scenarios, err)
 	}
 }
@@ -56,9 +57,9 @@ func TestAutomationCoverageExclusionValidation(t *testing.T) {
 func TestAutomationCoverageGateCheck(t *testing.T) {
 	for _, mode := range []string{"advisory", "blocked", "excluded", "assertion_failure", "suggest"} {
 		t.Run(mode, func(t *testing.T) {
-			resetJSONOut(t)
-			jsonOutput = true
-			output := captureAutomationStdout(t)
+			main.ResetJSONOut(t)
+			(*main.JsonOutput) = true
+			output := main.CaptureAutomationStdout(t)
 			exclusions := ""
 			if mode == "excluded" || mode == "assertion_failure" {
 				exclusions = "coverage_exclusions:\n  - {step: send, code: guard_skip_missing, reason: external integration test}\n"
@@ -69,7 +70,7 @@ func TestAutomationCoverageGateCheck(t *testing.T) {
 				state = "skipped"
 			}
 			body := `{"definition_valid":true,"complete":true,"issues":[],"trace":[{"step_name":"send","state":"` + state + `","when_matched":true}]}`
-			authedFakeAPI(t, body, 200)
+			main.AuthedFakeAPI(t, body, 200)
 			args := []string{"--app", "billing", "--scenarios", suite}
 			if mode != "advisory" {
 				args = append(args, "--require-coverage")
@@ -77,12 +78,12 @@ func TestAutomationCoverageGateCheck(t *testing.T) {
 			if mode == "suggest" {
 				args = append(args, "--suggest")
 			}
-			code := cmdAutomationsCheck(args)
+			code := main.CmdAutomationsCheck(args)
 			passed := mode == "advisory" || mode == "excluded"
 			if (code == 0) != passed {
 				t.Fatalf("exit=%d output=%s", code, output)
 			}
-			var report automationCheckReport
+			var report main.AutomationCheckReport
 			if err := json.Unmarshal(output.Bytes(), &report); err != nil || report.Passed != passed {
 				t.Fatalf("report=%+v err=%v", report, err)
 			}
@@ -108,9 +109,9 @@ func TestAutomationCoverageGateCheck(t *testing.T) {
 func TestAutomationCoverageGatePublishing(t *testing.T) {
 	for _, mode := range []string{"advisory", "blocked", "excluded", "no_scenarios", "invalid_exclusion"} {
 		t.Run(mode, func(t *testing.T) {
-			resetJSONOut(t)
-			jsonOutput = true
-			output := captureAutomationStdout(t)
+			main.ResetJSONOut(t)
+			(*main.JsonOutput) = true
+			output := main.CaptureAutomationStdout(t)
 			exclusions := ""
 			if mode == "excluded" {
 				exclusions = "coverage_exclusions:\n  - {step: send, code: guard_skip_missing, reason: external integration test}\n"
@@ -119,7 +120,7 @@ func TestAutomationCoverageGatePublishing(t *testing.T) {
 				exclusions = "coverage_exclusions:\n  - {step: send, code: typo, reason: external test}\n"
 			}
 			suite := coverageGateFixture(t, exclusions)
-			definition, ok := readAutomationDefinition(filepath.Join(filepath.Dir(suite), "definition.yaml"))
+			definition, ok := main.ReadAutomationDefinition(filepath.Join(filepath.Dir(suite), "definition.yaml"))
 			if !ok {
 				t.Fatal("definition")
 			}
@@ -160,7 +161,7 @@ func TestAutomationCoverageGatePublishing(t *testing.T) {
 			if mode != "advisory" {
 				args = append(args, "--require-coverage")
 			}
-			code := cmdAutomationsPublish(args)
+			code := main.CmdAutomationsPublish(args)
 			passed := mode == "advisory" || mode == "excluded"
 			if (code == 0) != passed {
 				t.Fatalf("exit=%d calls=%v output=%s", code, calls, output)
@@ -178,7 +179,7 @@ func TestAutomationCoverageGatePublishing(t *testing.T) {
 			if len(calls) != wantCalls {
 				t.Fatalf("calls=%v", calls)
 			}
-			var report automationCheckedPublishReport
+			var report main.AutomationCheckedPublishReport
 			if err := json.Unmarshal(output.Bytes(), &report); err != nil || report.PublicationAttempted != passed || report.Published != passed {
 				t.Fatalf("report=%+v err=%v", report, err)
 			}
@@ -191,36 +192,36 @@ func TestAutomationCoverageGatePublishing(t *testing.T) {
 
 func TestAutomationCoverageGateLoopIdentityAndSuggestions(t *testing.T) {
 	definition := api.WorkflowSpec{Steps: []api.WorkflowStepSpec{{Name: "loop", ForEach: &api.WorkflowForEachSpec{Action: api.WorkflowForEachActionSpec{When: &api.WorkflowGuardSpec{}}}}, {Name: "loop/action", When: &api.WorkflowGuardSpec{}}}}
-	exclusion := automationCoverageExclusion{Step: "loop/action", Loop: "loop", Code: "guard_skip_missing", Reason: "external item test"}
-	if err := validateAutomationCoverageExclusions(definition, []automationCoverageExclusion{exclusion}); err != nil {
+	exclusion := main.AutomationCoverageExclusion{Step: "loop/action", Loop: "loop", Code: "guard_skip_missing", Reason: "external item test"}
+	if err := main.ValidateAutomationCoverageExclusions(definition, []main.AutomationCoverageExclusion{exclusion}); err != nil {
 		t.Fatal(err)
 	}
-	report := automationCheckReport{Passed: true, CoverageHints: []automationCoverageHint{{Step: "loop/action", Loop: "loop", Code: "guard_skip_missing"}, {Step: "loop/action", Code: "guard_skip_missing"}}}
-	applyAutomationCoverageGate(&report, true, []automationCoverageExclusion{exclusion})
-	if report.Passed || report.Coverage.Remaining != 1 || len(unexcludedAutomationCoverageHints(report)) != 1 || unexcludedAutomationCoverageHints(report)[0].Loop != "" {
+	report := main.AutomationCheckReport{Passed: true, CoverageHints: []main.AutomationCoverageHint{{Step: "loop/action", Loop: "loop", Code: "guard_skip_missing"}, {Step: "loop/action", Code: "guard_skip_missing"}}}
+	main.ApplyAutomationCoverageGate(&report, true, []main.AutomationCoverageExclusion{exclusion})
+	if report.Passed || report.Coverage.Remaining != 1 || len(main.UnexcludedAutomationCoverageHints(report)) != 1 || main.UnexcludedAutomationCoverageHints(report)[0].Loop != "" {
 		t.Fatalf("exclusion crossed scope: %+v", report)
 	}
-	resetJSONOut(t)
-	output := captureAutomationStdout(t)
-	if code := printAutomationCheckReport(report); code != 1 || !strings.Contains(output.String(), "FAIL coverage gate") || !strings.Contains(output.String(), "external item test") {
+	main.ResetJSONOut(t)
+	output := main.CaptureAutomationStdout(t)
+	if code := main.PrintAutomationCheckReport(report); code != 1 || !strings.Contains(output.String(), "FAIL coverage gate") || !strings.Contains(output.String(), "external item test") {
 		t.Fatalf("exit=%d output=%s", code, output)
 	}
-	report = automationCheckReport{Passed: false, CoverageHints: []automationCoverageHint{{Step: "loop/action", Loop: "loop", Code: "guard_skip_missing"}}}
-	applyAutomationCoverageGate(&report, true, []automationCoverageExclusion{exclusion})
-	if report.Passed || !report.Coverage.Passed || len(unexcludedAutomationCoverageHints(report)) != 0 {
+	report = main.AutomationCheckReport{Passed: false, CoverageHints: []main.AutomationCoverageHint{{Step: "loop/action", Loop: "loop", Code: "guard_skip_missing"}}}
+	main.ApplyAutomationCoverageGate(&report, true, []main.AutomationCoverageExclusion{exclusion})
+	if report.Passed || !report.Coverage.Passed || len(main.UnexcludedAutomationCoverageHints(report)) != 0 {
 		t.Fatal("exclusion masked an assertion failure")
 	}
 }
 
 func TestAutomationCoverageGateFullyCovered(t *testing.T) {
 	suite := coverageGateFixture(t, "")
-	scenarios, err := loadAutomationScenarios(suite)
+	scenarios, err := main.LoadAutomationScenarios(suite)
 	if err != nil {
 		t.Fatal(err)
 	}
 	second := scenarios[0]
-	second.scenario = automationScenario{Name: "skipped", Expect: map[string]automationStepExpectation{"send": {State: "skipped"}}}
-	second.request.Input = json.RawMessage(`{"active":false}`)
+	(*second.Scenario()) = main.AutomationScenario{Name: "skipped", Expect: map[string]main.AutomationStepExpectation{"send": {State: "skipped"}}}
+	(*second.Request()).Input = json.RawMessage(`{"active":false}`)
 	scenarios = append(scenarios, second)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var request api.SimulateAutomationRequest
@@ -236,7 +237,7 @@ func TestAutomationCoverageGateFullyCovered(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(api.SimulateAutomationResponse{DefinitionValid: true, Complete: true, Trace: []api.AutomationSimulationStep{{StepName: "send", State: status, WhenMatched: &matched}}})
 	}))
 	defer server.Close()
-	report := runAutomationScenarios(context.Background(), api.NewClient(server.URL, "token"), "billing", scenarios, true)
+	report := main.RunAutomationScenarios(context.Background(), api.NewClient(server.URL, "token"), "billing", scenarios, true)
 	if !report.Passed || report.Coverage == nil || !report.Coverage.Passed || report.Coverage.Remaining != 0 || len(report.Coverage.Exclusions) != 0 {
 		t.Fatalf("report=%+v", report)
 	}

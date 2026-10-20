@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/productcontrol"
 )
@@ -31,16 +32,16 @@ func TestProductCustomerActivityCLI(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(page)
 	}))
 	defer srv.Close()
-	c, err := parseProductCommand([]string{"customers", "activity", "--app", "exports", "--tenant", page.TenantID})
+	c, err := main.ParseProductCommand([]string{"customers", "activity", "--app", "exports", "--tenant", page.TenantID})
 	if err != nil {
 		t.Fatal(err)
 	}
-	value, err := runProductCommand(t.Context(), NewClient(srv.URL, "owner"), c)
+	value, err := main.RunProductCommand(t.Context(), main.NewClient(srv.URL, "owner"), c)
 	if err != nil || calls != 1 {
 		t.Fatalf("activity CLI: %+v %v, calls %d", value, err, calls)
 	}
 	var out bytes.Buffer
-	if err = writeProductOutput(&out, value, false); err != nil {
+	if err = main.WriteProductOutput(&out, value, false); err != nil {
 		t.Fatal(err)
 	}
 	for _, want := range []string{page.TenantID, "First verified workspace visit", "Source:", "Review:", "not a complete audit log"} {
@@ -49,7 +50,7 @@ func TestProductCustomerActivityCLI(t *testing.T) {
 		}
 	}
 	out.Reset()
-	if err = writeProductOutput(&out, value, true); err != nil {
+	if err = main.WriteProductOutput(&out, value, true); err != nil {
 		t.Fatal(err)
 	}
 	var decoded api.ProductCustomerActivityPage
@@ -57,7 +58,7 @@ func TestProductCustomerActivityCLI(t *testing.T) {
 		t.Fatalf("activity JSON: %s %v", out.String(), err)
 	}
 	for _, args := range [][]string{{"customers", "activity", "--app", "exports"}, {"customers", "activity", "--app", "exports", "--tenant", "bad"}, {"customers", "activity", "--app", "exports", "--tenant", page.TenantID, "--self"}} {
-		if _, err := parseProductCommand(args); err == nil {
+		if _, err := main.ParseProductCommand(args); err == nil {
 			t.Fatalf("invalid activity flags: %v", args)
 		}
 	}
@@ -76,7 +77,7 @@ func TestProductCustomerActivityCLI(t *testing.T) {
 			copy := page
 			copy.Events = append([]api.ProductCustomerActivityEvent(nil), page.Events...)
 			tc.change(&copy)
-			if err := validateProductCustomerActivity(copy, c); err == nil {
+			if err := main.ValidateProductCustomerActivity(copy, c); err == nil {
 				t.Fatal("unscoped activity accepted")
 			}
 		})

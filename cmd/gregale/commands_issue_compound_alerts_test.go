@@ -1,5 +1,5 @@
 // adr: 1662
-package main
+package main_test
 
 import (
 	"bytes"
@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -36,22 +37,22 @@ func TestIssueCompoundAlertsCLI(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_test")
-	previous := osStdout
+	previous := (*main.OsStdout)
 	var output bytes.Buffer
-	osStdout = &output
-	t.Cleanup(func() { osStdout = previous })
+	(*main.OsStdout) = &output
+	t.Cleanup(func() { (*main.OsStdout) = previous })
 	base := []string{"--app", "payments", "--key", "payments", "--minimum-events", "20", "--minimum-customers", "3", "--window-seconds", "600", "--cooldown-seconds", "1800"}
-	if cmdIssueCompoundAlerts(append([]string{"save", "--expected-revision", "2"}, base...)) != 0 {
+	if main.CmdIssueCompoundAlerts(append([]string{"save", "--expected-revision", "2"}, base...)) != 0 {
 		t.Fatal("save")
 	}
-	if cmdIssueCompoundAlerts(append([]string{"preview", "--issue", "28ad5060-28e6-4ba5-ac6a-9990691c11c3"}, base...)) != 0 {
+	if main.CmdIssueCompoundAlerts(append([]string{"preview", "--issue", "28ad5060-28e6-4ba5-ac6a-9990691c11c3"}, base...)) != 0 {
 		t.Fatal("preview")
 	}
 	if requests != 3 {
 		t.Fatal(requests)
 	}
 	for _, args := range [][]string{{"save", "--app", "payments"}, {"get", "--app", "payments", "--key", "unexpected"}, {"remove", "--app", "payments", "--expected-revision", "2"}, {"preview", "--app", "payments", "--issue", "bad"}} {
-		if cmdIssueCompoundAlerts(args) == 0 {
+		if main.CmdIssueCompoundAlerts(args) == 0 {
 			t.Fatal("invalid arguments accepted", args)
 		}
 	}

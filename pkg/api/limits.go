@@ -581,7 +581,8 @@ const (
 	ConsumerBillingStatementsMax = 24
 )
 
-// Consumer prepaid credits and spend caps (ADR-1306).
+// Consumer prepaid credits and spend caps (ADR-1306). Platform tenants'
+// credits and caps use the same limits (ADR-20261019100331).
 const (
 	// One grant and one monthly cap are at most 10,000,000.00 in their
 	// currency.
@@ -11442,6 +11443,7 @@ const (
 	MCPWakeHistoryTimeMaxBytes                    = 64
 	WakeHistoryPageDefault                        = 20
 	WakeHistoryPageMax                            = 100
+	AccountTraceWakesMax                          = 32 // wakes one account trace lookup reads to show each request's restore
 	WakeHistoryCursorMaxBytes                     = 2048
 	MCPWakeHistoryCursorMaxBytes                  = 8192
 	MCPProfileFunctionsDefault                    = 10
@@ -13597,6 +13599,16 @@ const ServiceMapMaxEdges = 500
 // needs enough traffic to show quiet edges, so it is longer than the 5m
 // default of the per-app metrics endpoints.
 const ServiceMapDefaultRange = "1h"
+
+// Compose build arguments and target stage for Dockerfile builds
+// (ADR-20261019142544). They are stored on the app and every deployment, so
+// they are bounded like other stored build configuration.
+const (
+	DockerfileBuildArgsMax             = 64
+	DockerfileBuildArgValueMaxBytes    = 4096
+	DockerfileBuildArgsEncodedMaxBytes = 32 << 10
+	DockerfileBuildTargetMaxBytes      = 128
+)
 
 // Public build configuration is intentionally limited to reviewed URL values.
 const (

@@ -62,6 +62,32 @@ error rate at least 5 percentage points and twice above baseline:
 
 > http "api.stripe.com" fails 12.5% of calls since the previous deployment (v80), up from 0.0%.
 
+## Following a request across services
+
+`gregale trace <trace-id>` shows every retained request of one trace across
+your apps, with the logs, queued invocations and spans linked to it. The trace
+id is on each request in `gregale debug requests get`.
+
+```text
+MATCHES
+  public-api · GET /checkout · HTTP 200 · 920 ms · telemetry row …
+  billing · POST other · HTTP 200 · 900 ms · telemetry row …
+      woke by restore in 610 ms (wake …) · app ≈270 ms · other ≈20 ms
+```
+
+A call to another service joins the trace only when the calling code forwards
+the `traceparent` header of the request it is handling. With tracing on, the
+Node.js and Python instrumentation does this for the HTTP clients it supports;
+elsewhere, copy the header onto the outgoing request yourself. Without it, each
+service call starts a trace of its own.
+
+For a request that found its app parked, the line under it says how the app
+was woken (restored from a snapshot or cold booted) and how long the instance
+took to become ready. When the app's runtime reports its own execution time,
+as the managed function runtimes do, that is shown as app time, and the rest
+(routing, queueing and the network) as other. Latencies are kept rounded up to
+10 ms below 1 s and more coarsely above, so the split is approximate.
+
 ## What is traced
 
 On the managed Node.js (22, 24) and Python (3.12, 3.13) runtimes, Gregale

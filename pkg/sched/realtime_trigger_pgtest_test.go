@@ -1,5 +1,5 @@
 // adr: 1237 — realtime channels as function triggers.
-package sched
+package sched_test
 
 import (
 	"context"
@@ -17,6 +17,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
@@ -113,16 +114,16 @@ func TestRealtimeTriggerDispatchSettlesConsumerGroup(t *testing.T) {
 		t.Fatalf("bind: %v", err)
 	}
 	// One gateway outcome per tick: success, handler failure, platform failure.
-	outcomes := []triggerDispatchResult{{Status: "succeeded"}, {Status: "retry", Code: "function_failed"}, {Status: "retry", Code: "invoke_error"}}
-	var bodies []realtimeTriggerRecord
+	outcomes := []sched.TriggerDispatchResult{{Status: "succeeded"}, {Status: "retry", Code: "function_failed"}, {Status: "retry", Code: "invoke_error"}}
+	var bodies []sched.RealtimeTriggerRecord
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var envelope triggerDispatchRequest
+		var envelope sched.TriggerDispatchRequest
 		if err := json.NewDecoder(r.Body).Decode(&envelope); err != nil || len(envelope.Records) != 1 || len(outcomes) == 0 {
 			t.Errorf("envelope: %+v %v", envelope, err)
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		var body realtimeTriggerRecord
+		var body sched.RealtimeTriggerRecord
 		payload, _ := base64.StdEncoding.DecodeString(envelope.Records[0].PayloadB64)
 		if err := json.Unmarshal(payload, &body); err != nil {
 			t.Errorf("record body: %v", err)
@@ -131,19 +132,19 @@ func TestRealtimeTriggerDispatchSettlesConsumerGroup(t *testing.T) {
 		result := outcomes[0]
 		outcomes = outcomes[1:]
 		result.ItemIdentifier = envelope.Records[0].ItemIdentifier
-		_ = json.NewEncoder(w).Encode(triggerDispatchResponse{Results: []triggerDispatchResult{result}})
+		_ = json.NewEncoder(w).Encode(sched.TriggerDispatchResponse{Results: []sched.TriggerDispatchResult{result}})
 	}))
 	defer gateway.Close()
-	loop := makeLoopForDLQ()
-	loop.gatewayHTTPClient, loop.gatewayBaseURL = gateway.Client(), gateway.URL
-	poller, err := newRealtimePoller(f.store, f.trigger)
+	loop := sched.MakeLoopForDLQ()
+	(*loop.GatewayHTTPClient()), (*loop.GatewayBaseURL()) = gateway.Client(), gateway.URL
+	poller, err := sched.NewRealtimePoller(f.store, f.trigger)
 	if err != nil {
 		t.Fatal(err)
 	}
-	loop.triggerPollers = map[string]triggerSource{f.trigger.ID.String(): poller}
+	(*loop.TriggerPollers()) = map[string]sched.TriggerSource{f.trigger.ID.String(): poller}
 	tick := func() {
 		t.Helper()
-		_ = loop.dispatchOneTrigger(ctx, f.trigger, f.store, func(string) api.Plan { return api.PlanPro })
+		_ = loop.DispatchOneTrigger(ctx, f.trigger, f.store, func(string) api.Plan { return api.PlanPro })
 	}
 	// Tick 1: success completes the group message (its row is removed).
 	tick()
@@ -266,7 +267,7 @@ func TestRealtimeTriggerPublishWakesDispatcherAndReportsBacklog(t *testing.T) {
 	if !ok || !strings.Contains(payload, f.trigger.ID.String()) || !strings.Contains(payload, `"source" : "realtime"`) {
 		t.Fatalf("publish notification = %q (received %v)", payload, ok)
 	}
-	poller, err := newRealtimePoller(f.store, f.trigger)
+	poller, err := sched.NewRealtimePoller(f.store, f.trigger)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -22,14 +23,14 @@ func TestSitesHistoryUsesExplicitCursorAndOptIn(t *testing.T) {
 	})
 	args := []string{"history", "--site", reviewSiteID, "--before-revision", "51"}
 	t.Setenv("FAAS_FRONTEND_HOSTING_HISTORY_ENABLED", "")
-	if cmdSites(args) == 0 || calls != 0 {
+	if main.CmdSites(args) == 0 || calls != 0 {
 		t.Fatal("history bypassed workstation opt-in")
 	}
 	t.Setenv("FAAS_FRONTEND_HOSTING_HISTORY_ENABLED", "1")
-	if cmdSites(args) != 0 || calls != 1 {
+	if main.CmdSites(args) != 0 || calls != 1 {
 		t.Fatal(calls)
 	}
-	if cmdSites([]string{"history", "--site", reviewSiteID, "--before-revision", "-1"}) == 0 || calls != 1 {
+	if main.CmdSites([]string{"history", "--site", reviewSiteID, "--before-revision", "-1"}) == 0 || calls != 1 {
 		t.Fatal("invalid cursor reached API")
 	}
 }
@@ -70,15 +71,15 @@ func TestSitesDeployProvenanceIsExplicitAndNotPublishedInManifest(t *testing.T) 
 	})
 	args := []string{"deploy", "--site", reviewSiteID, "--path", dir, "--no-promote", "--source-repository", "org/site", "--source-commit", strings.Repeat("a", 40)}
 	t.Setenv("FAAS_FRONTEND_HOSTING_HISTORY_ENABLED", "")
-	if cmdSites(args) == 0 || created {
+	if main.CmdSites(args) == 0 || created {
 		t.Fatal("missing workstation opt-in")
 	}
 	t.Setenv("FAAS_FRONTEND_HOSTING_HISTORY_ENABLED", "1")
-	if cmdSites(args) == 0 || created {
+	if main.CmdSites(args) == 0 || created {
 		t.Fatal("API capability not checked before create")
 	}
 	capsEnabled = true
-	if cmdSites(args) == 0 || !created {
+	if main.CmdSites(args) == 0 || !created {
 		t.Fatal("source intent missing")
 	}
 }
