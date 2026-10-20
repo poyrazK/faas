@@ -47,9 +47,22 @@ export type VerifiedClaims = Readonly<{
    * changed membership shows at the next token, within its lifetime.
    */
   organization?: Readonly<{ id: string; slug: string; role: string; permissions: readonly string[] }>
+  /**
+   * Set while the app's support staff use this session as the user
+   * (impersonation): who opened it, such as "admin:0A1B2C3D". Refuse
+   * actions the person must take themselves, such as payments.
+   */
+  actor?: string
   /** Every claim, including ones this type does not name. */
   raw: Readonly<Record<string, unknown>>
 }>
+
+// actorOf reads RFC 8693's act claim, which the Auth app sets on sessions
+// its operator opened as a user.
+function actorOf(act: unknown): { actor?: string } {
+  const sub = act !== null && typeof act === 'object' ? (act as { sub?: unknown }).sub : undefined
+  return typeof sub === 'string' && sub !== '' ? { actor: sub } : {}
+}
 
 export type VerifierOptions = {
   /** The Auth app's origin, such as https://shop-auth.gregale.app. */
@@ -174,6 +187,7 @@ export function createVerifier(options: VerifierOptions) {
       sub: payload.sub, sessionId: str(payload.session_id), role: str(payload.role), email: str(payload.email), phone: str(payload.phone),
       aal: str(payload.aal), isAnonymous: payload.is_anonymous === true, expiresAt: exp, issuedAt: num(payload.iat),
       appMetadata: obj(payload.app_metadata), userMetadata: obj(payload.user_metadata), raw: payload,
+      ...actorOf(payload.act),
       ...(typeof payload.org_id === 'string' && typeof payload.org_slug === 'string' && typeof payload.org_role === 'string'
         ? { organization: { id: payload.org_id, slug: payload.org_slug, role: payload.org_role, permissions: Array.isArray(payload.org_permissions) ? payload.org_permissions.filter((p): p is string => typeof p === 'string') : [] } }
         : {}),

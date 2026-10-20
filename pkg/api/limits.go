@@ -12004,6 +12004,20 @@ const (
 	AuthAdminBodyBytes = 1 << 20
 	AuthImportBatch    = 100
 	AuthAdminPageSize  = 100
+	// AuthCustomClaimsMaxBytes bounds a user's custom claims (app_metadata
+	// other than GoTrue's provider keys) as JSON; they ride in every token.
+	AuthCustomClaimsMaxBytes = 1000
+	// AuthSignupDomainsMax bounds each list of sign-up domains (allowed,
+	// blocked); AuthWaitlistMaxPending is the most waiting sign-up requests,
+	// after which new ones are refused as waitlist_full; AuthSignupApproveBatch
+	// is the most addresses one approval takes.
+	AuthSignupDomainsMax   = 100
+	AuthWaitlistMaxPending = 10000
+	AuthSignupApproveBatch = 100
+	// AuthImpersonationDefaultMinutes and AuthImpersonationMaxMinutes bound
+	// a session support staff open as a user (gregale auth users impersonate).
+	AuthImpersonationDefaultMinutes = 30
+	AuthImpersonationMaxMinutes     = 60
 	// AuthReauthenticationSeconds is how recent a sign-in must be for a
 	// user to delete their own account.
 	AuthReauthenticationSeconds = 600

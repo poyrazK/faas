@@ -4715,6 +4715,12 @@ var cliCommands = []cliCommand{
 				{Name: "identity-linking", Value: "on|off", Short: "let signed-in users link and unlink sign-in methods", ClosedSet: []string{"on", "off"}},
 				{Name: "self-deletion", Value: "on|off", Short: "let signed-in users delete their own accounts after a recent sign-in", ClosedSet: []string{"on", "off"}},
 				{Name: "org-claims", Value: "on|off", Short: "put each session's active organization, role and permissions in its access tokens", ClosedSet: []string{"on", "off"}},
+				{Name: "signup-domains", Value: "DOMAINS|any", Short: "only addresses at these domains may sign up (acme.com,acme.io)"},
+				{Name: "blocked-domains", Value: "DOMAINS|none", Short: "refuse sign-ups from these domains and their subdomains"},
+				{Name: "block-disposable", Value: "on|off", Short: "refuse sign-ups with throwaway email addresses", ClosedSet: []string{"on", "off"}},
+				{Name: "signup-access", Value: "open|invite|waitlist", Short: "who may sign up: anyone, invited or approved addresses, or those plus a waitlist", ClosedSet: []string{"open", "invite", "waitlist"}},
+				{Name: "impersonation", Value: "on|off", Short: "let the admin key open time-limited sessions as users, for support", ClosedSet: []string{"on", "off"}},
+				{Name: "web3", Value: "ethereum,solana|off", Short: "wallets people may sign in with (Sign-In With Ethereum / Solana)"},
 				{Name: "scope", Value: "SCOPE", Short: "environment scope"},
 			}, Examples: []string{"gregale auth config shop-auth", "gregale auth config shop-auth --events on", "gregale auth config shop-auth --password-min-length 12 --password-require lower,upper,digit --mfa on"}},
 			{Name: "providers", Short: "Manage OAuth sign-in providers such as Google or GitHub", Subcommands: []cliSub{
@@ -4742,6 +4748,16 @@ var cliCommands = []cliCommand{
 			{Name: "users", Short: "Find, sign out, ban and delete the application's users", Subcommands: []cliSub{
 				{Name: "list", Short: "List users, newest first", Positionals: []string{"<name>"}, Flags: []cliFlag{{Name: "search", Value: "TEXT", Short: "part of an email address or name"}, {Name: "page", Value: "N", Short: "page to show"}, {Name: "limit", Value: "N", Short: "entries per page (1-100)"}, {Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"}}},
 				{Name: "get", Short: "Show a user with their organizations and active sessions", Positionals: []string{"<name>", "<user>"}, Flags: []cliFlag{{Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"}}},
+				{Name: "claims", Short: "Show, set or remove a user's custom claims, which tokens carry as app_metadata", Positionals: []string{"<name>", "<user>"}, Flags: []cliFlag{
+					{Name: "set", Value: "NAME=VALUE", Short: "set a claim (repeatable); JSON values such as 5, true or {\"a\":1} keep their type"},
+					{Name: "unset", Value: "NAME", Short: "remove a claim (repeatable)"},
+					{Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"},
+				}},
+				{Name: "impersonate", Short: "Open a time-limited session as the user, for support (needs --impersonation on)", Positionals: []string{"<name>", "<user>"}, Flags: []cliFlag{
+					{Name: "reason", Value: "TEXT", Req: true, Short: "why, such as a support ticket; recorded with the admin key that opened it"},
+					{Name: "minutes", Value: "N", Short: "how long the session lasts, 5 to 60 (default 30)"},
+					{Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"},
+				}},
 				{Name: "sign-out", Short: "End every session of a user", Positionals: []string{"<name>", "<user>"}, Flags: []cliFlag{{Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"}}},
 				{Name: "ban", Short: "Ban a user for a time and end their sessions", Positionals: []string{"<name>", "<user>"}, Flags: []cliFlag{
 					{Name: "for", Value: "DURATION", Req: true, Short: "hours (24h), days (7d) or forever"},
@@ -4752,10 +4768,20 @@ var cliCommands = []cliCommand{
 					{Name: "yes", Short: "delete without the typed confirmation (needed with --admin-key-stdin)"},
 					{Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"},
 				}},
-			}, Examples: []string{"gregale auth users list shop-auth --search example.com", "gregale auth users ban shop-auth ada@example.com --for 7d", "printf '%s' \"$ADMIN_KEY\" | gregale auth users delete shop-auth 0b5f2f0e-7a51-4d8f-8a3a-5c1b9d2e6f70 --yes --admin-key-stdin"}},
+			}, Examples: []string{"gregale auth users list shop-auth --search example.com", "gregale auth users ban shop-auth ada@example.com --for 7d", "gregale auth users claims shop-auth ada@example.com --set plan=pro --set seats=5", "printf '%s' \"$ADMIN_KEY\" | gregale auth users delete shop-auth 0b5f2f0e-7a51-4d8f-8a3a-5c1b9d2e6f70 --yes --admin-key-stdin"}},
+			{Name: "signups", Short: "Approve who may sign up while sign-up is by invitation or waitlist", Subcommands: []cliSub{
+				{Name: "list", Short: "List waiting and approved addresses, newest first", Positionals: []string{"<name>"}, Flags: []cliFlag{{Name: "status", Value: "pending|approved|all", Short: "which addresses to list"}, {Name: "search", Value: "TEXT", Short: "part of an address"}, {Name: "page", Value: "N", Short: "page to show"}, {Name: "limit", Value: "N", Short: "entries per page (1-100)"}, {Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"}}},
+				{Name: "approve", Short: "Let addresses sign up, and email them that they may", Positionals: []string{"<name>", "<email>..."}, Flags: []cliFlag{{Name: "no-email", Short: "approve without emailing them"}, {Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"}}},
+				{Name: "remove", Short: "Remove an address from the waitlist or the approved addresses", Positionals: []string{"<name>", "<email>"}, Flags: []cliFlag{{Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"}}},
+			}, Examples: []string{"gregale auth signups list shop-auth --status pending", "gregale auth signups approve shop-auth ada@example.com bob@example.com"}},
+			{Name: "impersonations", Short: "List the sessions support staff opened as users, or end one", Subcommands: []cliSub{
+				{Name: "list", Short: "List them newest first, with the key and reason", Positionals: []string{"<name>"}, Flags: []cliFlag{{Name: "user", Value: "USER", Short: "only this user's (ID or email)"}, {Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"}}},
+				{Name: "end", Short: "End one before its time", Positionals: []string{"<name>", "<id>"}, Flags: []cliFlag{{Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"}}},
+			}, Examples: []string{"gregale auth users impersonate shop-auth ada@example.com --reason 'Ticket 4821'", "gregale auth impersonations list shop-auth --user ada@example.com"}},
 			{Name: "orgs", Short: "List the application's organizations with their members and invitations", Subcommands: []cliSub{
 				{Name: "list", Short: "List organizations, newest first", Positionals: []string{"<name>"}, Flags: []cliFlag{{Name: "search", Value: "TEXT", Short: "part of a slug or name"}, {Name: "page", Value: "N", Short: "page to show"}, {Name: "limit", Value: "N", Short: "entries per page (1-100)"}, {Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"}}},
 				{Name: "get", Short: "Show an organization's members and pending invitations", Positionals: []string{"<name>", "<org>"}, Flags: []cliFlag{{Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"}}},
+				{Name: "audit", Short: "Show an organization's audit log: membership, invitation, domain and SSO changes and members' sign-ins", Positionals: []string{"<name>", "<org>"}, Flags: []cliFlag{{Name: "cursor", Value: "NEXT", Short: "where the next page starts, from the previous page's More line"}, {Name: "limit", Value: "N", Short: "entries per page (1-100)"}, {Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"}}},
 			}},
 			{Name: "emails", Short: "Change the wording of the emails the Auth app sends", Subcommands: []cliSub{
 				{Name: "list", Short: "List the email types and whether each uses your wording", Positionals: []string{"<name>"}, Flags: []cliFlag{{Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"}}},
