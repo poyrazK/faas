@@ -479,14 +479,25 @@ func contextError(ctx context.Context, err error) error {
 	return err
 }
 
+// closeOnCancel closes conn when ctx is cancelled before the returned stop
+// runs. stop waits for the watcher to exit: if it only signalled, a watcher
+// not yet scheduled would find both its cases ready once the caller then
+// cancelled ctx, and select's random choice closed the connection after a
+// normal return about half the time (TestInteractiveLeavesConnectionOpenAfterResult
+// caught it in CI).
 func closeOnCancel(ctx context.Context, conn net.Conn) func() {
 	done := make(chan struct{})
+	exited := make(chan struct{})
 	go func() {
+		defer close(exited)
 		select {
 		case <-ctx.Done():
 			_ = conn.Close()
 		case <-done:
 		}
 	}()
-	return func() { close(done) }
+	return func() {
+		close(done)
+		<-exited
+	}
 }

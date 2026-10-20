@@ -2598,6 +2598,64 @@ groups:
           description: "More than half of AI calls returned provider errors for 15m. Check provider status, key pool cooldowns and circuit breaker events before suspecting the gateway."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAIGateway.md"
 
+      # ADR-1340: one canary rolling back is a customer's new model doing
+      # worse. Several within half an hour across the platform point at a
+      # provider or the gateway's own judgement.
+      - alert: FaasAIGatewayCanaryRollbackWave
+        expr: sum(increase(outbound_ai_route_canary_rollbacks_total[30m])) >= 3
+        labels:
+          severity: warn
+          component: outboundd
+          family: ai_gateway
+        annotations:
+          summary: "AI gateway model canaries are rolling back across the platform"
+          description: "Three or more model canaries rolled back within 30m. Check the providers of the rolled-back models and whether the latest outboundd release changed routing or error accounting."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAIGateway.md"
+
+      # ADR-1340: a moderation check fails on the customer's check
+      # integration (a cap, an outage). Most checks failing at once is the
+      # gateway's in-process path. Customer integrations share one metric
+      # label, so this is a platform-wide share with a traffic floor.
+      - alert: FaasAIGatewayModerationFailing
+        expr: (sum(rate(outbound_ai_moderation_total{result="error"}[15m])) / sum(rate(outbound_ai_moderation_total[15m])) > 0.5) and sum(rate(outbound_ai_moderation_total[15m])) > 0.01
+        for: 15m
+        labels:
+          severity: warn
+          component: outboundd
+          family: ai_gateway
+        annotations:
+          summary: "Most AI gateway moderation checks are failing"
+          description: "More than half of request moderation checks failed for 15m. Calls under on_error block get 503 outbound_ai_moderation_unavailable. Check whether one account's check integration carries the traffic before suspecting outboundd."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAIGateway.md"
+
+      # ADR-1435: a response that cannot be checked is never released. A
+      # rising share means callers get 502s from the gateway's own limit
+      # (4 MiB) or failing response moderation.
+      - alert: FaasAIGatewayResponseChecksFailing
+        expr: (sum(rate(outbound_ai_response_checks_total{result=~"error|unchecked"}[15m])) / sum(rate(outbound_ai_response_checks_total[15m])) > 0.1) and sum(rate(outbound_ai_response_checks_total[15m])) > 0.01
+        for: 15m
+        labels:
+          severity: warn
+          component: outboundd
+          family: ai_gateway
+        annotations:
+          summary: "AI gateway response checks are failing"
+          description: "More than 10% of checked AI responses ended unchecked or with a failed moderation check for 15m. Callers got 502 outbound_ai_response_unchecked or 503 outbound_ai_moderation_unavailable instead of the provider's answer."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAIGateway.md"
+
+      # ADR-1431: a batch settled as unknown is charged at its reservation
+      # because the gateway never read its real usage.
+      - alert: FaasAIGatewayBatchesSettledUnknown
+        expr: sum(increase(outbound_ai_batches_settled_total{outcome="unknown"}[6h])) > 0
+        labels:
+          severity: warn
+          component: outboundd
+          family: ai_gateway
+        annotations:
+          summary: "AI gateway batches were settled without their usage"
+          description: "At least one provider batch settled as unknown in the last 6h: it never ended within 72h or outboundd could not read its status, so it was charged at its reservation. Check the batch worker's logs and the provider's batch status."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAIGateway.md"
+
       # A rollout should converge to one daemon release. This catches a
       # partial deploy where systemd is healthy and readiness is green, but
       # different hosts (or different daemons on one host) are serving
@@ -3810,12 +3868,15 @@ groups:
                and on (job, instance) (builderd_build_worker_inflight{job="builderd"} == 0)
                and on (job, instance) (builderd_build_worker_last_completed_timestamp_seconds{job="builderd"} == 0)))
           and on (job, instance) (builderd_build_queue_observation_healthy == 1)
+      # The 60 s term covers scrape and evaluation staleness: Prometheus sees a
+      # completion only at its next scrape (15 s) and rule evaluation (30 s), so
+      # an allowance of two 2 s poll intervals fired on healthy pollers (rc.282).
       - record: builderd_build_worker_progress_allowance_seconds
         expr: |
           (((builderd_build_worker_busy_allowance_seconds{job="builderd"}
-              + on (job, instance) 2 * builderd_build_worker_interval_seconds{job="builderd"})
+              + on (job, instance) 2 * builderd_build_worker_interval_seconds{job="builderd"} + 60)
              and on (job, instance) (builderd_build_worker_inflight{job="builderd"} == 1))
-           or ((2 * builderd_build_worker_interval_seconds{job="builderd"})
+           or ((2 * builderd_build_worker_interval_seconds{job="builderd"} + 60)
                and on (job, instance) (builderd_build_worker_inflight{job="builderd"} == 0)))
           and on (job, instance) (builderd_build_queue_observation_healthy == 1)
       - alert: FaasBuilderQueueTelemetryUnavailable
@@ -3847,9 +3908,9 @@ groups:
           public_status: internal
         annotations:
           summary: Durable build polling has stopped progressing
-          description: The expected poller has exceeded its progress allowance for 5m. Idle allowance is two poll intervals;
-            an in-flight iteration also receives the effective running-build recovery threshold. Notification work cannot
-            renew poller progress. Capture logs and goroutines before intervening.
+          description: The expected poller has exceeded its progress allowance for 5m. Idle allowance is two poll intervals
+            plus a 60 s scrape margin; an in-flight iteration also receives the effective running-build recovery threshold.
+            Notification work cannot renew poller progress. Capture logs and goroutines before intervening.
           runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildWorker.md
       - alert: FaasBuilderClaimsFailing
         expr: |
