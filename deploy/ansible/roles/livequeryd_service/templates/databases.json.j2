@@ -1,0 +1,34 @@
+{# Managed by the livequeryd_service role (ADR-20261016151947): the databases
+   livequeryd serves (-databases-file). No secret is written here: each
+   connection string and Neon key is a systemd credential the drop-in loads,
+   named by path under ${CREDENTIALS_DIRECTORY}. #}
+{
+  "databases": [
+{% for db in faas_livequeryd_databases %}
+{% set release_after = db.release_after | default(faas_livequeryd_release_after) %}
+{% set awake = db.awake | default(faas_livequeryd_awake) %}
+    {
+      "database_url_file": {{ ('${CREDENTIALS_DIRECTORY}/database_url.' ~ db.id) | to_json }},
+{% if db.slot is defined %}
+      "slot": {{ db.slot | to_json }},
+{% endif %}
+      "publication": {{ db.publication | default(faas_livequeryd_publication) | to_json }},
+      "install": {{ db.install | default(faas_livequeryd_install) | bool | to_json }},
+      "create_publication": {{ db.create_publication | default(faas_livequeryd_create_publication) | bool | to_json }},
+{% if release_after %}
+      "release_after": {{ release_after | to_json }},
+      "awake": {{ awake | to_json }},
+      "awake_every": {{ db.awake_every | default(faas_livequeryd_awake_every) | to_json }},
+{% if awake == 'neon' %}
+      "neon_project": {{ db.neon_project | to_json }},
+      "neon_endpoint": {{ db.neon_endpoint | to_json }},
+{% if db.neon_api_key_src | default('') %}
+      "neon_api_key_file": {{ ('${CREDENTIALS_DIRECTORY}/neon_api_key.' ~ db.id) | to_json }},
+{% endif %}
+{% endif %}
+{% endif %}
+      "id": {{ db.id | to_json }}
+    }{{ ',' if not loop.last else '' }}
+{% endfor %}
+  ]
+}
