@@ -83,7 +83,7 @@ func newApprovalInputFixture(t *testing.T, kind string) *approvalInputFixture {
 	spec := api.OperationDefinitionSpec{Name: "refund", Workflow: workflow.Name, Method: "POST", Path: "/refunds", Owner: api.OperationOwnerPlatformTenant,
 		InputSchema: json.RawMessage(`{"type":"object"}`), OutputSchema: json.RawMessage(`{"type":"object"}`),
 		ProgressStages: []string{"validate", "review", "finance", "refund"},
-		Approvals: []api.OperationApprovalSpec{{Step: "review", Approver: api.OperationApproverCustomer}, {Step: "finance", Approver: api.OperationApproverAccount}}}
+		Approvals:      []api.OperationApprovalSpec{{Step: "review", Approver: api.OperationApproverCustomer}, {Step: "finance", Approver: api.OperationApproverAccount}}}
 	var def api.OperationDefinitionResponse
 	f.decode(f.do("PUT", "/v1/apps/refunds/deployments/"+dep.ID+"/operation-definitions/refund", f.key, spec), http.StatusOK, &def)
 	tenant, _, err := store.(state.PlatformTenantStore).CreatePlatformTenant(ctx, f.account.ID, "alice", "Alice", 100)
