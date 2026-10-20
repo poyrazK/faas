@@ -25421,6 +25421,98 @@ END $$;
 
 
 --
+-- Name: usage_month_totals_apply(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.usage_month_totals_apply() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    v_from timestamptz;
+BEGIN
+    SELECT tracked_from INTO v_from FROM usage_month_totals_tracking;
+    IF v_from IS NULL THEN
+        RETURN NULL;
+    END IF;
+    IF TG_OP = 'INSERT' THEN
+        INSERT INTO usage_month_totals AS t (account_id, month, subject_id, minute_rows, mb_seconds, cpu_usec,
+                                             requests, tx_bytes, net_tx_bytes, net_rx_bytes, cold_boot_count)
+        SELECT r.account_id, date_trunc('month', r.minute AT TIME ZONE 'UTC') AT TIME ZONE 'UTC', coalesce(r.app_id, r.job_id),
+               count(*), sum(r.mb_seconds), sum(r.cpu_usec), sum(r.requests), sum(r.tx_bytes),
+               sum(r.net_tx_bytes), sum(r.net_rx_bytes), sum(r.cold_boot_count)
+          FROM usage_month_totals_new r
+         WHERE r.minute >= v_from
+         GROUP BY 1, 2, 3
+         ORDER BY 1, 2, 3
+        ON CONFLICT (account_id, month, subject_id) DO UPDATE SET
+            minute_rows     = t.minute_rows     + EXCLUDED.minute_rows,
+            mb_seconds      = t.mb_seconds      + EXCLUDED.mb_seconds,
+            cpu_usec        = t.cpu_usec        + EXCLUDED.cpu_usec,
+            requests        = t.requests        + EXCLUDED.requests,
+            tx_bytes        = t.tx_bytes        + EXCLUDED.tx_bytes,
+            net_tx_bytes    = t.net_tx_bytes    + EXCLUDED.net_tx_bytes,
+            net_rx_bytes    = t.net_rx_bytes    + EXCLUDED.net_rx_bytes,
+            cold_boot_count = t.cold_boot_count + EXCLUDED.cold_boot_count;
+    ELSIF TG_OP = 'UPDATE' THEN
+        INSERT INTO usage_month_totals AS t (account_id, month, subject_id, minute_rows, mb_seconds, cpu_usec,
+                                             requests, tx_bytes, net_tx_bytes, net_rx_bytes, cold_boot_count)
+        SELECT d.account_id, d.month, d.subject_id,
+               sum(d.n), sum(d.mb_seconds), sum(d.cpu_usec), sum(d.requests), sum(d.tx_bytes),
+               sum(d.net_tx_bytes), sum(d.net_rx_bytes), sum(d.cold_boot_count)
+          FROM (
+                SELECT r.account_id, date_trunc('month', r.minute AT TIME ZONE 'UTC') AT TIME ZONE 'UTC' AS month,
+                       coalesce(r.app_id, r.job_id) AS subject_id, 1 AS n, r.mb_seconds, r.cpu_usec,
+                       r.requests::bigint AS requests, r.tx_bytes, r.net_tx_bytes, r.net_rx_bytes,
+                       r.cold_boot_count::bigint AS cold_boot_count
+                  FROM usage_month_totals_new r
+                 WHERE r.minute >= v_from
+                UNION ALL
+                SELECT r.account_id, date_trunc('month', r.minute AT TIME ZONE 'UTC') AT TIME ZONE 'UTC',
+                       coalesce(r.app_id, r.job_id), -1, -r.mb_seconds, -r.cpu_usec,
+                       -r.requests::bigint, -r.tx_bytes, -r.net_tx_bytes, -r.net_rx_bytes,
+                       -r.cold_boot_count::bigint
+                  FROM usage_month_totals_old r
+                 WHERE r.minute >= v_from
+               ) d
+         GROUP BY 1, 2, 3
+        HAVING sum(d.n) <> 0 OR sum(d.mb_seconds) <> 0 OR sum(d.cpu_usec) <> 0 OR sum(d.requests) <> 0
+            OR sum(d.tx_bytes) <> 0 OR sum(d.net_tx_bytes) <> 0 OR sum(d.net_rx_bytes) <> 0 OR sum(d.cold_boot_count) <> 0
+         ORDER BY 1, 2, 3
+        ON CONFLICT (account_id, month, subject_id) DO UPDATE SET
+            minute_rows     = t.minute_rows     + EXCLUDED.minute_rows,
+            mb_seconds      = t.mb_seconds      + EXCLUDED.mb_seconds,
+            cpu_usec        = t.cpu_usec        + EXCLUDED.cpu_usec,
+            requests        = t.requests        + EXCLUDED.requests,
+            tx_bytes        = t.tx_bytes        + EXCLUDED.tx_bytes,
+            net_tx_bytes    = t.net_tx_bytes    + EXCLUDED.net_tx_bytes,
+            net_rx_bytes    = t.net_rx_bytes    + EXCLUDED.net_rx_bytes,
+            cold_boot_count = t.cold_boot_count + EXCLUDED.cold_boot_count;
+    ELSE
+        INSERT INTO usage_month_totals AS t (account_id, month, subject_id, minute_rows, mb_seconds, cpu_usec,
+                                             requests, tx_bytes, net_tx_bytes, net_rx_bytes, cold_boot_count)
+        SELECT r.account_id, date_trunc('month', r.minute AT TIME ZONE 'UTC') AT TIME ZONE 'UTC', coalesce(r.app_id, r.job_id),
+               -count(*), -sum(r.mb_seconds), -sum(r.cpu_usec), -sum(r.requests), -sum(r.tx_bytes),
+               -sum(r.net_tx_bytes), -sum(r.net_rx_bytes), -sum(r.cold_boot_count)
+          FROM usage_month_totals_old r
+         WHERE r.minute >= v_from
+         GROUP BY 1, 2, 3
+         ORDER BY 1, 2, 3
+        ON CONFLICT (account_id, month, subject_id) DO UPDATE SET
+            minute_rows     = t.minute_rows     + EXCLUDED.minute_rows,
+            mb_seconds      = t.mb_seconds      + EXCLUDED.mb_seconds,
+            cpu_usec        = t.cpu_usec        + EXCLUDED.cpu_usec,
+            requests        = t.requests        + EXCLUDED.requests,
+            tx_bytes        = t.tx_bytes        + EXCLUDED.tx_bytes,
+            net_tx_bytes    = t.net_tx_bytes    + EXCLUDED.net_tx_bytes,
+            net_rx_bytes    = t.net_rx_bytes    + EXCLUDED.net_rx_bytes,
+            cold_boot_count = t.cold_boot_count + EXCLUDED.cold_boot_count;
+    END IF;
+    RETURN NULL;
+END;
+$$;
+
+
+--
 -- Name: valid_event_circuit_policy(jsonb); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -50656,6 +50748,36 @@ COMMENT ON COLUMN public.usage_minutes.job_id IS 'jobs.id for meter_kind=job row
 
 
 --
+-- Name: usage_month_totals; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.usage_month_totals (
+    account_id uuid NOT NULL,
+    month timestamp with time zone NOT NULL,
+    subject_id uuid NOT NULL,
+    minute_rows bigint DEFAULT 0 NOT NULL,
+    mb_seconds bigint DEFAULT 0 NOT NULL,
+    cpu_usec bigint DEFAULT 0 NOT NULL,
+    requests bigint DEFAULT 0 NOT NULL,
+    tx_bytes bigint DEFAULT 0 NOT NULL,
+    net_tx_bytes bigint DEFAULT 0 NOT NULL,
+    net_rx_bytes bigint DEFAULT 0 NOT NULL,
+    cold_boot_count bigint DEFAULT 0 NOT NULL
+);
+
+
+--
+-- Name: usage_month_totals_tracking; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.usage_month_totals_tracking (
+    singleton boolean DEFAULT true NOT NULL,
+    tracked_from timestamp with time zone NOT NULL,
+    CONSTRAINT usage_month_totals_tracking_singleton_check CHECK (singleton)
+);
+
+
+--
 -- Name: usage_monthly; Type: VIEW; Schema: public; Owner: -
 --
 
@@ -62700,6 +62822,22 @@ ALTER TABLE ONLY public.usage_daily
 
 ALTER TABLE ONLY public.usage_minutes
     ADD CONSTRAINT usage_minutes_pkey PRIMARY KEY (instance_id, minute);
+
+
+--
+-- Name: usage_month_totals usage_month_totals_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.usage_month_totals
+    ADD CONSTRAINT usage_month_totals_pkey PRIMARY KEY (account_id, month, subject_id);
+
+
+--
+-- Name: usage_month_totals_tracking usage_month_totals_tracking_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.usage_month_totals_tracking
+    ADD CONSTRAINT usage_month_totals_tracking_pkey PRIMARY KEY (singleton);
 
 
 --
@@ -78828,6 +78966,27 @@ CREATE TRIGGER trigger_record_held_queue_guard BEFORE UPDATE OF state, claim_gen
 --
 
 CREATE TRIGGER triggers_delete_exclusive_broker_binding AFTER DELETE ON public.triggers FOR EACH ROW EXECUTE FUNCTION public.delete_exclusive_broker_binding();
+
+
+--
+-- Name: usage_minutes usage_month_totals_delete; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER usage_month_totals_delete AFTER DELETE ON public.usage_minutes REFERENCING OLD TABLE AS usage_month_totals_old FOR EACH STATEMENT EXECUTE FUNCTION public.usage_month_totals_apply();
+
+
+--
+-- Name: usage_minutes usage_month_totals_insert; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER usage_month_totals_insert AFTER INSERT ON public.usage_minutes REFERENCING NEW TABLE AS usage_month_totals_new FOR EACH STATEMENT EXECUTE FUNCTION public.usage_month_totals_apply();
+
+
+--
+-- Name: usage_minutes usage_month_totals_update; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER usage_month_totals_update AFTER UPDATE ON public.usage_minutes REFERENCING OLD TABLE AS usage_month_totals_old NEW TABLE AS usage_month_totals_new FOR EACH STATEMENT EXECUTE FUNCTION public.usage_month_totals_apply();
 
 
 --

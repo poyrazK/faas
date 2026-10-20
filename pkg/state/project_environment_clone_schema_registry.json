@@ -15987,6 +15987,31 @@
     "kind": "operational"
   },
   {
+    "table": "usage_month_totals",
+    "columns": [
+      "account_id",
+      "cold_boot_count",
+      "cpu_usec",
+      "mb_seconds",
+      "minute_rows",
+      "month",
+      "net_rx_bytes",
+      "net_tx_bytes",
+      "requests",
+      "subject_id",
+      "tx_bytes"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "usage_month_totals_tracking",
+    "columns": [
+      "singleton",
+      "tracked_from"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "usage_statement_invoice_exports",
     "columns": [
       "account_id",
