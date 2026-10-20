@@ -44,7 +44,7 @@ func newApprovalFixture(ctx context.Context, t *testing.T, slug string, stepStar
 		t.Fatalf("set policy = %d %s", rec.Code, rec.Body)
 	}
 	canary, err := store.CreateDeployment(ctx, state.Deployment{
-		AppID: app.ID, ImageDigest: "sha256:canary", CanaryPreset: "balanced", CanaryStep: 0, CanaryTotalSteps: 4,
+		AppID: app.ID, ImageDigest: "sha256:canary", RootfsKey: "rootfs/canary", CanaryPreset: "balanced", CanaryStep: 0, CanaryTotalSteps: 4,
 		RolloutState: "pending", TrafficPercent: 1, CreatedAt: time.Now().UTC().Add(time.Second),
 		DeployedByUserID: (*e.Acct()).ID,
 	})
@@ -119,7 +119,7 @@ func TestReleaseApprovalPolicyRoundTripAndValidation(t *testing.T) {
 		{RequiredApprovals: 0}, {RequiredApprovals: 6}, {RequiredApprovals: 1, AfterStage: 11},
 		{RequiredApprovals: 1, TimeoutMinutes: 5}, {RequiredApprovals: 1, Approvers: "viewer"},
 	} {
-		apidserver.AssertProblem(t, e.Do(t, http.MethodPut, path, bad, nil), http.StatusUnprocessableEntity, api.CodeValidation)
+		apidserver.AssertProblem(t, e.Do(t, http.MethodPut, path, bad, nil), http.StatusBadRequest, api.CodeValidation)
 	}
 	var policy api.ReleaseApprovalPolicy
 	if rec := guardDo(t, e, http.MethodPut, path, api.SetReleaseApprovalPolicyRequest{RequiredApprovals: 2}, &policy); rec.Code != http.StatusOK {
@@ -201,7 +201,7 @@ func TestReleaseApprovalRejectionAbortsTheRollout(t *testing.T) {
 	f := newApprovalFixture(ctx, t, "approval-reject", time.Now().Add(-time.Hour), api.SetReleaseApprovalPolicyRequest{RequiredApprovals: 2})
 	path := "/v1/deployments/" + f.canary.ID + "/approvals"
 	apidserver.AssertProblem(t, f.e.Do(t, http.MethodPost, path, api.DecideReleaseApprovalRequest{Decision: api.ReleaseApprovalDecisionReject}, nil),
-		http.StatusUnprocessableEntity, api.CodeValidation)
+		http.StatusBadRequest, api.CodeValidation)
 	var status api.ReleaseApprovalStatus
 	rec := guardDo(t, f.e, http.MethodPost, path, api.DecideReleaseApprovalRequest{Decision: api.ReleaseApprovalDecisionReject, Comment: "checkout latency is up"}, &status)
 	if rec.Code != http.StatusOK || status.State != api.ReleaseApprovalStateRejected {
