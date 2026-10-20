@@ -60,6 +60,10 @@
 <label>Access tokens carry the active organization, role and permissions<select name="org_claims"><option value="off">Off</option><option value="on">On</option></select></label>
 <label>Support may open sessions as users<select name="impersonation"><option value="off">Off</option><option value="on">On: time-limited, recorded, cannot change the account</option></select></label>
 <label>Wallet sign-in<select name="web3"><option value="off">Off</option><option value="ethereum">Ethereum wallets</option><option value="solana">Solana wallets</option><option value="ethereum,solana">Ethereum and Solana wallets</option></select></label>
+<label>End sessions this long after sign-in (45m, 12h or 30d; empty for never)<input name="session_max_age" maxlength="8" pattern="[1-9][0-9]{0,5}[mhd]"></label>
+<label>End sessions not used for this long (45m, 12h or 30d; empty for never)<input name="session_idle" maxlength="8" pattern="[1-9][0-9]{0,5}[mhd]"></label>
+<label>Keep only each user's most recently used session<select name="single_session"><option value="off">Off</option><option value="on">On</option></select></label>
+<label>Organization email domains<select name="org_domains"><option value="off">Off</option><option value="on">Organizations may verify domains and let people at them join (needs autoconfirm off)</option></select></label>
 <button type="submit">Save and restart</button>
 </form>
 <h3>Sign-in providers</h3>
@@ -300,9 +304,9 @@
         showAddProvider()
       } else {
         const data = await fetchView('/admin/v1/orgs?' + qs)
-        setTable(['Slug', 'Name', 'Members', 'Created', ''], data.organizations.map(org => {
+        setTable(['Slug', 'Name', 'Members', 'Second factor', 'Created', ''], data.organizations.map(org => {
           const row = el('tr')
-          row.append(el('td', org.slug), el('td', org.name), el('td', org.members), el('td', when(org.created_at)))
+          row.append(el('td', org.slug), el('td', org.name), el('td', org.members), el('td', org.mfa_required ? 'Required' : 'Optional'), el('td', when(org.created_at)))
           const cell = el('td'); cell.append(button('Open', () => showOrg(org.id))); row.append(cell)
           return row
         }))
@@ -449,14 +453,15 @@
   async function showOrg(id) {
     const panel = $('detail')
     try {
-      const { organization: org, members, invitations } = await call('GET', '/admin/v1/orgs/' + encodeURIComponent(id))
+      const { organization: org, members, invitations, domains = [] } = await call('GET', '/admin/v1/orgs/' + encodeURIComponent(id))
       const memberTable = el('table')
       memberTable.append(el('tr'))
-      for (const heading of ['Member', 'Role', 'Joined']) memberTable.rows[0].append(el('th', heading, { scope: 'col' }))
+      for (const heading of ['Member', 'Role', 'Second factor', 'Joined']) memberTable.rows[0].append(el('th', heading, { scope: 'col' }))
       for (const member of members) {
         const row = memberTable.insertRow()
         const cell = el('td'); cell.append(button(member.email || member.user_id, () => showUser(member.user_id)))
-        row.append(cell, el('td', member.role), el('td', when(member.created_at)))
+        const factor = member.mfa_enabled ? 'Yes' : org.mfa_required ? 'No: cannot use this organization' : 'No'
+        row.append(cell, el('td', member.role), el('td', factor), el('td', when(member.created_at)))
       }
       // The organization's audit log, newest first (sql/0020).
       const audit = await call('GET', '/admin/v1/orgs/' + encodeURIComponent(id) + '/audit-log?limit=20')
@@ -468,15 +473,39 @@
         auditTable.insertRow().append(el('td', when(entry.occurred_at)), el('td', entry.action + (details ? ' (' + details + ')' : '')),
           el('td', entry.actor_email || (entry.action === 'member.signed_in' ? '—' : 'The application')), el('td', entry.target_email || '—'))
       }
+      // The organization's owners normally set this; the admin key acts as
+      // the application's operator, for example when every owner lost their factor.
+      const result = el('p', '', { role: 'status' })
+      const without = members.filter(member => !member.mfa_enabled).length
+      const toggle = button(org.mfa_required ? 'Stop requiring a second factor' : 'Require a second factor', async () => {
+        result.textContent = 'Saving…'
+        try {
+          await call('PATCH', '/admin/v1/orgs/' + encodeURIComponent(id), { mfa_required: !org.mfa_required })
+          await showOrg(id)
+          $('detail').querySelector('[role=status]').textContent = org.mfa_required ? 'A second factor is no longer required.' : 'A second factor is now required.'
+        } catch (error) { result.textContent = error.message }
+      })
+      const warning = !org.mfa_required && without ? el('p', without + ' member(s) without a second factor would lose access until they add one.', { class: 'muted' }) : null
       const inviteTable = el('table')
       inviteTable.append(el('tr'))
       for (const heading of ['Invited email', 'Role', 'Expires']) inviteTable.rows[0].append(el('th', heading, { scope: 'col' }))
       for (const invitation of invitations) inviteTable.insertRow().append(el('td', invitation.email), el('td', invitation.role), el('td', when(invitation.expires_at)))
+      // The organization's email domains and who joins by them; its owners
+      // manage these through the app.
+      const joins = { off: 'No', suggest: 'Offered', automatic: 'Automatically' }
+      const domainTable = el('table')
+      domainTable.append(el('tr'))
+      for (const heading of ['Domain', 'Verified', 'People at it join']) domainTable.rows[0].append(el('th', heading, { scope: 'col' }))
+      for (const domain of domains) domainTable.insertRow().append(el('td', domain.domain), el('td', domain.verified ? 'Yes' : 'No'),
+        el('td', domain.join.mode === 'off' ? 'No' : joins[domain.join.mode] + ' as ' + domain.join.role))
       panel.replaceChildren(
-        el('h2', org.name), facts([['Slug', org.slug], ['Organization ID', org.id], ['Created', when(org.created_at)]]),
+        el('h2', org.name), facts([['Slug', org.slug], ['Organization ID', org.id], ['Created', when(org.created_at)],
+          ['Second factor', org.mfa_required ? 'Required: permissions hold only in sessions verified with one' : 'Optional']]),
+        toggle, ...(warning ? [warning] : []), result,
         el('h3', 'Members (' + members.length + ')'), memberTable,
         el('h3', 'Pending invitations'), invitations.length ? inviteTable : el('p', 'None.', { class: 'muted' }),
         el('h3', 'Audit log'), audit.entries.length ? auditTable : el('p', 'Nothing recorded yet.', { class: 'muted' }),
+        ...(domains.length ? [el('h3', 'Email domains'), domainTable] : []),
         button('Close', () => { panel.hidden = true }),
       )
       panel.hidden = false
@@ -657,6 +686,8 @@
   // app secrets are write-only. Saving sends only the fields that changed.
   const form = $('settings-form')
   const control = name => form.elements.namedItem(name)
+  // Minutes back to the 45m / 12h / 30d form the setting takes.
+  const sessionLimit = minutes => !minutes ? '' : minutes % 1440 === 0 ? (minutes / 1440) + 'd' : minutes % 60 === 0 ? (minutes / 60) + 'h' : minutes + 'm'
   const classes = [...document.querySelectorAll('#password-classes input')]
   const requireValue = () => classes.filter(box => box.checked).map(box => box.value).join(',') || 'none'
   async function loadSettings() {
@@ -684,8 +715,9 @@
       sso: settings.sso?.enabled ? 'on' : 'off', sms_countries: (settings.phone?.countries ?? []).join(','), org_sso: settings.sso?.self_service ? 'on' : 'off',
       oauth_server: settings.oauth?.enabled ? 'on' : 'off', oauth_registration: settings.oauth?.dynamic_registration ? 'on' : 'off',
       anonymous: settings.anonymous?.enabled ? 'on' : 'off', anonymous_retention_days: settings.anonymous?.retention_days ? String(settings.anonymous.retention_days) : '',
-      identity_linking: settings.identity_linking ? 'on' : 'off', self_deletion: settings.self_deletion ? 'on' : 'off', org_claims: settings.organization_claims ? 'on' : 'off', impersonation: settings.impersonation ? 'on' : 'off',
+      identity_linking: settings.identity_linking ? 'on' : 'off', self_deletion: settings.self_deletion ? 'on' : 'off', org_claims: settings.organization_claims ? 'on' : 'off', impersonation: settings.impersonation ? 'on' : 'off', org_domains: settings.organization_domains?.enabled ? 'on' : 'off',
       web3: [settings.web3?.ethereum && 'ethereum', settings.web3?.solana && 'solana'].filter(Boolean).join(',') || 'off',
+      session_max_age: sessionLimit(settings.sessions?.max_age_minutes), session_idle: sessionLimit(settings.sessions?.idle_minutes), single_session: settings.sessions?.single_per_user ? 'on' : 'off',
     }
     for (const box of classes) box.checked = settings.password.required.includes(box.value)
     values.password_require = requireValue()
