@@ -1069,8 +1069,25 @@ an access token, without a provider key.
 - **Fail closed.** A provider message the gateway cannot read ends the session.
   A response without usage, and any response still open when a session ends,
   settles at its reservation. Sessions last at most an hour.
-- **Not metered:** Gemini and Vertex Live, every other WebSocket path, realtime
-  calls (WebRTC) and client secrets. They are refused with
+- **Gemini and Vertex Live** (ADR 20261020161811). A `gemini` integration
+  takes `/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent`
+  (or `v1alpha`), a `vertex` integration
+  `/ws/google.cloud.aiplatform.v1.LlmBidiService/BidiGenerateContent` (or
+  `v1beta1`); the integration's allowed path prefixes must include `/ws`.
+  - The model is `setup.model` from the caller's first message, which the
+    gateway reads, within 10 seconds and up to 4 MiB, before forwarding it.
+    A first message without a model ends the session with 1008.
+  - Each model turn is admitted at its first output (`modelTurn`,
+    `outputTranscription` or `toolCall`) with the same reservation as an
+    OpenAI response, and settled from the turn's `usageMetadata`: its prompt
+    tokens (the context the turn read) and its output, split into text, audio
+    and image. Video frames price as image tokens; search grounding is a tool
+    fee of the turn.
+  - Provider messages are read from binary frames as well as text. A refusal
+    closes the session with 1008 and the refusal code as the reason.
+- **Not metered:** Live ephemeral tokens (`…BidiGenerateContentConstrained`),
+  every other WebSocket path, realtime calls (WebRTC) and client secrets.
+  They are refused with
   `403 outbound_ai_endpoint_unmetered` unless the integration allows unmetered
   calls. Routes refuse upgrades with `400 outbound_ai_route_realtime_unsupported`.
 - **Content policies** that check requests, responses or moderation refuse

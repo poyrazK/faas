@@ -88,6 +88,18 @@ export function sessionLive(session, policy, now = Date.now()) {
   return true
 }
 
+// liveSessions is the caller's session list without the sessions GoTrue
+// would refuse to refresh. With one session per user only the most recently
+// active one lives (GoTrue revokes the others at their next refresh); the
+// caller's own session always shows, since its access token still works.
+export function liveSessions(sessions, policy, now = Date.now()) {
+  const live = sessions.filter(session => session.current || sessionLive(session, policy, now))
+  if (!policy?.singlePerUser) return live
+  const active = session => new Date(session.last_active_at).getTime()
+  const newest = live.filter(session => sessionLive(session, policy, now)).reduce((best, session) => !best || active(session) > active(best) ? session : best, null)
+  return live.filter(session => session.current || session === newest)
+}
+
 export async function inSession(pool, claims, work) {
   const client = await pool.connect()
   try {
@@ -253,7 +265,7 @@ export async function route(pool, claims, method, path, body, services = {}) {
     const listed = await rows(`SELECT s.id, s.created_at, s.last_active_at, s.user_agent, s.ip, s.aal, s.current,
         EXISTS (SELECT 1 FROM gregale_auth.impersonations i WHERE i.session_id = s.id AND i.ended_at IS NULL AND i.expires_at > now()) AS impersonated
       FROM gregale_auth.list_sessions() s`)
-    return [200, { sessions: listed.filter(session => session.current || sessionLive(session, services.sessions)) }]
+    return [200, { sessions: liveSessions(listed, services.sessions) }]
   }
   if (parts[0] === 'sessions' && parts.length === 2 && method === 'DELETE') {
     await rows('SELECT gregale_auth.end_session($1)', [requireUUID(parts[1])])

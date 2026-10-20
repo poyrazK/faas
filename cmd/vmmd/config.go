@@ -140,7 +140,7 @@ type Config struct {
 	// #116). The local backend's Get resolves it to the same file the
 	// legacy KernelPath config used (so single-box behaviour is
 	// preserved); the OCI backend fetches over HTTP. Derived from
-	// sched.KernelKey(fcVersion) at startup once the running FC version
+	// storagekey.Kernel(fcVersion) at startup once the running FC version
 	// is detected (cmd/vmmd/main.go). Overridable via toml for tests
 	// that pin a specific kernel key.
 	KernelKey string `toml:"kernel_key"`
@@ -515,7 +515,7 @@ func LoadConfig(path string) (*Config, error) {
 		// reflink and native recovery all keep virtio-blk.
 		PmemBaseDir: fcvm.PmemBaseDirAuto,
 		// KernelPath is the deprecated host-path default; main.go
-		// resolves KernelKey from sched.KernelKey(fcVersion) after FC
+		// resolves KernelKey from storagekey.Kernel(fcVersion) after FC
 		// detection. The default here keeps pre-#116 vmmd.toml
 		// fixtures working until operators migrate.
 		KernelPath: "/srv/fc/base/vmlinux-6.1",

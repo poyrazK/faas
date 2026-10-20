@@ -314,6 +314,19 @@ func TestServiceRequestObservationCarriesWakeAndGuestEvidence(t *testing.T) {
 	}
 }
 
+// ADR-1138: an inferred trace id must never merge with a propagated one, or
+// the row would carry the wrong mark.
+func TestCollapseKeepsInferredTracesApart(t *testing.T) {
+	base := RequestTelemetryRow{AccountID: uuid.New(), AppID: uuid.New(), Route: otherRouteLabel, Method: "GET", Status: http.StatusOK,
+		TraceID: "4bf92f3577b34da6a3ce929d0e0e4736", ReceivedAt: time.Unix(1_800_000_000, 0), Count: 1}
+	inferred := base
+	inferred.TraceInferred = true
+	out := collapseRequestTelemetry([]RequestTelemetryRow{base, inferred, inferred})
+	if len(out) != 2 || out[0].TraceInferred || out[0].Count != 1 || !out[1].TraceInferred || out[1].Count != 2 {
+		t.Fatalf("collapsed = %+v", out)
+	}
+}
+
 func TestServiceWakeRecorderNeedsAServiceCall(t *testing.T) {
 	recordServiceWakeID(context.Background(), "wake-1") // no recorder: a no-op
 	if got := serviceWakeIDFrom(context.Background()); got != "" {
