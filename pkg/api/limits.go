@@ -10976,6 +10976,10 @@ const (
 	// Content-Length up to this size is read up front; larger, chunked and
 	// streaming bodies are forwarded unbuffered and are not replayed.
 	ServiceProxyReplayBodyMaxBytes = 1 << 20
+	// ServiceTraceInferenceTimeout bounds how long the node proxy waits for
+	// the local vmmd to name the trace of the one request a calling instance
+	// is serving (ADR-1138); past it the call starts its own trace.
+	ServiceTraceInferenceTimeout = 25 * time.Millisecond
 	// Scenario TCP impairment bounds are node-wide, independent of plan quotas.
 	ScenarioTCPChaosMaxRoutesPerNode    = 256
 	ScenarioTCPChaosMaxRateKiBPerSecond = 1_000_000
