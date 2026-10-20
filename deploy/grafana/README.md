@@ -68,6 +68,23 @@ signal behind quiet pause's soft CPU guarantee. UID
 fixtures in `pkg/promqlrules/testdata/frozen_tier.test.yml`. Runbook:
 `docs/runbooks/FaasFrozenTier.md`.
 
+## `customer-operations.json` (ADR-20261016123221)
+
+Customer Operations. The **Pending Operations** row shows accepted, running,
+waiting and reconciliation counts (`schedd_customer_operations`), waits by
+kind, the longest unchanged Operation per state, Operations past their
+deadline, accounts with unknown outcomes and the age of the snapshot. schedd
+reads these from Postgres every retention tick and every replica reports the
+same fleet values, so panels read `max`. The **Outcomes and inputs** row shows
+outcomes and failure codes of the last 15 minutes
+(`schedd_customer_operations_settled_recent`) and provider events on
+operation-bound endpoints (`apid_customer_operation_webhook_events_total`). UID
+`faas-customer-operations-adr-1285`. Companion alerts are
+`family: customer_operations` in
+`deploy/ansible/roles/prometheus/files/faas.rules.yml`, with promtool fixtures
+in `pkg/promqlrules/testdata/customer_operations.test.yml`. Runbook:
+`docs/runbooks/FaasCustomerOperations.md`.
+
 ## `warm-snapshot.json` (issue #470 / PR C / ADR-074)
 
 Four-panel dashboard for the warm-snapshot tier ops surface: warm-capture

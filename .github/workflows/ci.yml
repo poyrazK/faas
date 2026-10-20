@@ -2311,7 +2311,7 @@ jobs:
           GOGC: 10
           GOMAXPROCS: 2
         run: make test-commit-sdk test-customer-operation-sdk
-      - name: Customer Job and Workflow Operations guest fixture contracts (portable)
+      - name: Customer Job, Workflow and HTTP Operations guest fixture contracts (portable)
         # testdata is intentionally excluded by go test ./.... Run its
         # reporting, workload identity, cancellation and lost-ack contracts explicitly.
         run: go test -race -count=1 -timeout=2m ./pkg/e2etest/testdata/jobfixture

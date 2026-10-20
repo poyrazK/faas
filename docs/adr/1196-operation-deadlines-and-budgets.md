@@ -48,7 +48,7 @@ recovery cannot extend it.
 - The Operation settles `failed` with `failure_code: deadline_exceeded`, emits its
   `failed` event and sends its completion callback.
 - An attempt cut while running keeps the existing uncertainty rule. Unless the
-  definition declares `recovery: safe_to_retry`, it settles `requires_reconciliation`.
+  definition declares `recovery: safe_retry`, it settles `requires_reconciliation`.
   A deadline never claims to have undone an external effect.
 
 **Attempts.** `max_attempts` becomes the HTTP execution's retry policy, which the
@@ -65,7 +65,8 @@ spent, or with its retry due after the deadline, the retry is cancelled. The
 Operation then settles `failed` with `budget_exhausted` or `deadline_exceeded`.
 Workflow steps are already bounded by their own step timeouts, so workflow
 definitions take a deadline but reject `max_attempts` and
-`max_execution_seconds`.
+`max_execution_seconds`. ([ADR-20261016110803](20261016110803-workflow-operation-execution-budget.md)
+later added `max_execution_seconds` for workflow definitions.)
 
 **Recovery.** Recovery is refused once the deadline has passed or the budget is
 spent; the operator sees `operation_limit_exceeded`. Generations share one
