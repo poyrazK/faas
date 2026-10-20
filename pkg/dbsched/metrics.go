@@ -27,12 +27,14 @@ type Metrics struct {
 	catalog        *catalogCollector
 }
 
-// Failover triggers: the operator marked the node lost, or the standby
-// monitor found a running or a parked database's node silent.
+// Failover triggers: the operator marked the node lost, the standby
+// monitor found a running or a parked database's node silent, or a
+// planned switchover (switchover.go) handed the database over.
 const (
-	failoverLostNode = "lost_node"
-	failoverRunning  = "running"
-	failoverParked   = "parked"
+	failoverLostNode   = "lost_node"
+	failoverRunning    = "running"
+	failoverParked     = "parked"
+	failoverSwitchover = "switchover"
 )
 
 // Standby drop reasons: it stopped keeping up, its node is going away, or
@@ -49,7 +51,7 @@ func NewMetrics(reg prometheus.Registerer, prefix string) *Metrics {
 	m := &Metrics{
 		failovers: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: prefix + "_database_failovers_total",
-			Help: "Failovers of replicated databases to their standbys, by trigger (lost_node, running, parked) and result (ok, failed).",
+			Help: "Failovers of replicated databases to their standbys, by trigger (lost_node, running, parked, switchover: planned, losing nothing) and result (ok, failed).",
 		}, []string{"trigger", "result"}),
 		standbyDrops: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: prefix + "_database_standby_drops_total",

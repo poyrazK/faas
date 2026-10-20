@@ -159,7 +159,8 @@ groups:
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDatabaseNodes.md"
 
       - alert: FaasDatabaseFailedOver
-        expr: sum(increase(schedd_database_failovers_total{result="ok"}[15m])) > 0
+        # A planned switchover (a draining node's evacuation) is no incident.
+        expr: sum(increase(schedd_database_failovers_total{result="ok",trigger!="switchover"}[15m])) > 0
         labels:
           severity: warn
           component: schedd
@@ -170,7 +171,7 @@ groups:
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDatabaseNodes.md"
 
       - alert: FaasDatabaseFailoverFailed
-        expr: sum(increase(schedd_database_failovers_total{result="failed"}[15m])) > 0
+        expr: sum(increase(schedd_database_failovers_total{result="failed",trigger!="switchover"}[15m])) > 0
         labels:
           severity: warn
           component: schedd

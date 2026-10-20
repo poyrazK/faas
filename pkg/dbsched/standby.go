@@ -625,9 +625,14 @@ func (s *Scheduler) RunStandbyLoop(ctx context.Context) {
 // volume is promoted on its next boot. The old primary is stopped first
 // if its node still answers, so it cannot take writes the standby will
 // never see.
-func (s *Scheduler) failover(ctx context.Context, id string, lost Node, trigger string) (err error) {
+func (s *Scheduler) failover(ctx context.Context, id string, lost Node, trigger string) error {
 	unlock := s.lock(id)
 	defer unlock()
+	return s.failoverLocked(ctx, id, lost, trigger)
+}
+
+// failoverLocked is failover with the database's lock held.
+func (s *Scheduler) failoverLocked(ctx context.Context, id string, lost Node, trigger string) (err error) {
 	vm, err := s.store.Get(ctx, id)
 	if err != nil {
 		return err

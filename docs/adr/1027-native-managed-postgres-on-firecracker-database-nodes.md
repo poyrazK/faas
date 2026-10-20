@@ -1632,6 +1632,30 @@ node's vmmd stopped answering while its VM ran on. The database failed
 over 3.5 s later (threshold 3 s) with all 5,000 acknowledged rows. The
 stale primary stopped and its volume went once the node answered again.
 
+**Planned switchover.** A production-class database with a synchronized
+standby changes nodes by handing itself to that standby, not by copying
+its volume (`dbsched.Switchover`). The evacuation of a draining node does
+this first, for running databases too, and falls back to a move only if
+it fails.
+
+- It is the failover path with a clean stop first, under the database's
+  lock. A running primary stops cleanly while its standby is still
+  synchronous. The standby then holds every commit, and the old primary
+  takes no more. The standby is promoted at once.
+- A parked database's record moves to the standby's node with
+  `promote_pending`.
+- The monitor then places a new standby, which copies the new primary.
+- A promotion that fails after the clean stop parks the database where it
+  was, standby stopped cleanly and still trusted, so its next wake resumes
+  both.
+- It needs an active node for the standby, and counts as
+  `schedd_database_failovers_total{trigger="switchover"}`, which the
+  failover alerts leave out.
+
+On metal, a running database holding 20,001 rows switched nodes in
+1.7 s (primary stop, promotion, first query on the new node), with every
+row. The new primary wrote on timeline 2 and the old one was stopped.
+
 **Parked databases fail over automatically too.** Nothing runs on a parked
 primary's node, so the monitor probes the node itself: once per check, a
 `ListVolumes` call (3 s timeout) to every node holding parked primaries

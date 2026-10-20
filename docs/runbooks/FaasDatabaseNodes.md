@@ -60,7 +60,11 @@ resolves.
 
 To retire a node that still works, set `lifecycle: draining` with
 `managed_postgres.evacuate_draining`. schedd moves its databases off one at
-a time.
+a time. A production-class database with a synchronized standby on an
+active node switches over to it instead, running or not. That takes
+seconds and copies nothing (`schedd_database_failovers_total{trigger="switchover"}`;
+the failover alerts ignore it). The database then runs without a standby
+until the monitor attaches a new one, which copies it.
 
 ## FaasDatabaseProxyCertExpiring (warn) and FaasDatabaseProxyCertExpiryImminent (page)
 

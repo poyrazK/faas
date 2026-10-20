@@ -308,7 +308,9 @@ func (s *Scheduler) SettleMoves(ctx context.Context) (int, error) {
 // EvacuateDraining moves databases off draining nodes, one at a time, until
 // none is left to move or ctx ends. Parked databases move; running ones
 // move when they park, except always-on ones, which never park and so move
-// with a stop and boot. It reports how many it moved.
+// with a stop and boot. A production-class database with a synchronized
+// standby switches over to it instead (switchover.go), running or not,
+// and moves only if that fails. It reports how many it moved.
 func (s *Scheduler) EvacuateDraining(ctx context.Context) (int, error) {
 	if !s.cfg.EvacuateDraining || !s.cfg.SharedArchive {
 		return 0, nil
@@ -319,6 +321,14 @@ func (s *Scheduler) EvacuateDraining(ctx context.Context) (int, error) {
 		vm, ok, err := s.nextEvacuation(ctx, failed)
 		if err != nil || !ok {
 			return moved, err
+		}
+		if switchable(vm) {
+			err := s.Switchover(ctx, vm.DatabaseID)
+			if err == nil {
+				moved++
+				continue
+			}
+			s.log.Warn("dbsched: evacuation switchover failed; moving instead", "database_id", vm.DatabaseID, "node_id", vm.NodeID, "err", err)
 		}
 		after, err := s.Move(ctx, vm.DatabaseID, "")
 		if err != nil || after.NodeID == vm.NodeID {
@@ -355,7 +365,7 @@ func (s *Scheduler) nextEvacuation(ctx context.Context, skip map[string]bool) (V
 		return VM{}, false, err
 	}
 	for _, vm := range vms {
-		if draining[vm.NodeID] && !skip[vm.DatabaseID] && !vm.ResizePending && (vm.State == StateParked || vm.AlwaysOn) {
+		if draining[vm.NodeID] && !skip[vm.DatabaseID] && !vm.ResizePending && (vm.State == StateParked || vm.AlwaysOn || switchable(vm)) {
 			return vm, true, nil
 		}
 	}

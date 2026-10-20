@@ -46,6 +46,8 @@ type fakeVMM struct {
 	marks   map[string]fakeMark
 	markAt  time.Time
 	markErr string
+	// promoteErr is the error a standby answers a promotion with.
+	promoteErr string
 	// storage is what a ready guest reports about its volume, and
 	// standbyStorage what a standby reports; stale marks "node/id" VMs on
 	// an outdated base.
@@ -701,6 +703,9 @@ func (f *fakeVMM) Replication(_ context.Context, node Node, id string, mode dbgu
 func (f *fakeVMM) standbyControl(node Node, id string, req dbguest.Request) dbguest.Response {
 	switch req.Op {
 	case dbguest.OpPromote:
+		if f.promoteErr != "" {
+			return dbguest.Response{State: dbguest.StateStandby, Error: f.promoteErr}
+		}
 		// The standby becomes the database's VM on its node.
 		f.record("promote")
 		f.promoted[id] = node.ID

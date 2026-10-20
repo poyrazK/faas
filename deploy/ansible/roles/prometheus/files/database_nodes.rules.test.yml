@@ -222,6 +222,20 @@ tests:
               description: "For 30 minutes at least one running replicated database has had no promotable standby: its standby keeps failing to attach, or no other node has room for one. Until one attaches, losing its node means a restore from the archive instead of a failover."
               runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDatabaseNodes.md
 
+  - name: planned switchovers are no failover incident
+    interval: 1m
+    input_series:
+      - series: schedd_database_failovers_total{job="schedd",instance="a",trigger="switchover",result="ok"}
+        values: 0 1 2 3 4 5 6 7 8 9
+      - series: schedd_database_failovers_total{job="schedd",instance="a",trigger="switchover",result="failed"}
+        values: 0 1 2 3 4 5 6 7 8 9
+    alert_rule_test:
+      - eval_time: 8m
+        alertname: FaasDatabaseFailedOver
+        exp_alerts: []
+      - eval_time: 8m
+        alertname: FaasDatabaseFailoverFailed
+        exp_alerts: []
   - name: failovers and failed moves warn while recent
     interval: 1m
     input_series:
