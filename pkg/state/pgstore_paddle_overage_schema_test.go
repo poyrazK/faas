@@ -27,7 +27,7 @@
 // Build tag mirrors the rest of pkg/state pgtests: !no_pg so the
 // FAAS_SKIP_PG_TESTS=1 escape hatch still works.
 
-package state
+package state_test
 
 import (
 	"context"
@@ -41,6 +41,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // TestPgStorePaddleOverageDedupeSchema_PostApply is the happy
@@ -56,7 +57,7 @@ func TestPgStorePaddleOverageDedupeSchema_PostApply(t *testing.T) {
 		t.Fatalf("db.MigrateUp: %v", err)
 	}
 
-	s := NewPgStore(pool)
+	s := state.NewPgStore(pool)
 
 	// Seed two distinct (acct, window) pairs, then complete one.
 	// Email must be unique (accounts.email is the natural key).
@@ -126,7 +127,7 @@ func TestPgStorePaddleOverageDedupeSchema_PreApply_ReturnsTableMissing(t *testin
 		t.Fatalf("drop paddle_overage_dedupe: %v", err)
 	}
 
-	s := NewPgStore(pool)
+	s := state.NewPgStore(pool)
 	res, err := s.PaddleOverageDedupeSchema(ctx)
 	if err != nil {
 		t.Fatalf("PaddleOverageDedupeSchema on missing table: %v (probe must surface TableExists=false, not a raw error)", err)

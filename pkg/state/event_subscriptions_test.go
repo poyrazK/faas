@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -8,17 +8,18 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestMemStoreMatchingEventSubscriptionsPagesCandidates(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
+	store := state.NewMemStore()
 	account, err := store.CreateAccount(ctx, "event-candidates@example.com", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
 	}
-	accountID := canonicalMemUUID(account.ID)
-	app, err := store.CreateApp(ctx, App{ID: uuid.NewString(), AccountID: accountID, Slug: "event-candidates"})
+	accountID := state.CanonicalMemUUID(account.ID)
+	app, err := store.CreateApp(ctx, state.App{ID: uuid.NewString(), AccountID: accountID, Slug: "event-candidates"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,8 +35,8 @@ func TestMemStoreMatchingEventSubscriptionsPagesCandidates(t *testing.T) {
 		}
 	}
 
-	var got []EventSubscription
-	cursor := EventSubscriptionCursor{}
+	var got []state.EventSubscription
+	cursor := state.EventSubscriptionCursor{}
 	for {
 		page, err := store.ListMatchingEventSubscriptionsForAccount(ctx, accountID, "billing.stripe", "invoice.paid", cursor, 2)
 		if err != nil {
@@ -46,7 +47,7 @@ func TestMemStoreMatchingEventSubscriptionsPagesCandidates(t *testing.T) {
 			break
 		}
 		last := page[len(page)-1]
-		cursor = EventSubscriptionCursor{CreatedAt: last.CreatedAt, ID: last.ID}
+		cursor = state.EventSubscriptionCursor{CreatedAt: last.CreatedAt, ID: last.ID}
 	}
 	if len(got) != 3 {
 		t.Fatalf("candidate count = %d, want 3", len(got))
@@ -60,23 +61,23 @@ func TestMemStoreMatchingEventSubscriptionsPagesCandidates(t *testing.T) {
 
 func TestMemStoreEventSubscriptionDeadLetterOrigin(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
+	store := state.NewMemStore()
 	account, err := store.CreateAccount(ctx, "event-dlq@example.com", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
 	}
-	accountID := canonicalMemUUID(account.ID)
-	app, err := store.CreateApp(ctx, App{ID: uuid.NewString(), AccountID: accountID, Slug: "event-dlq"})
+	accountID := state.CanonicalMemUUID(account.ID)
+	app, err := store.CreateApp(ctx, state.App{ID: uuid.NewString(), AccountID: accountID, Slug: "event-dlq"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	now := time.Now().UTC()
-	inv, err := store.EnqueueInvocation(ctx, Invocation{
+	inv, err := store.EnqueueInvocation(ctx, state.Invocation{
 		ID:          uuid.NewString(),
 		AppID:       app.ID,
 		AccountID:   accountID,
-		Source:      InvocationAsyncInvoke,
-		State:       InvocationDeadLetter,
+		Source:      state.InvocationAsyncInvoke,
+		State:       state.InvocationDeadLetter,
 		Payload:     json.RawMessage(`{"id":"evt-1"}`),
 		Headers:     json.RawMessage(`{"x-gregale-event-id":"evt-1"}`),
 		CreatedAt:   now,

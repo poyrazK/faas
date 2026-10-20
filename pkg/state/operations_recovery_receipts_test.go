@@ -1,5 +1,5 @@
 // adr: 662
-package state
+package state_test
 
 import (
 	"errors"
@@ -7,39 +7,40 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestRecoveryReceiptLegacyExpiryAndCleanup(t *testing.T) {
 	for _, kind := range []string{"legacy", "expired", "retained"} {
 		t.Run(kind, func(t *testing.T) {
-			m := NewMemStore()
+			m := state.NewMemStore()
 			now := time.Now().UTC()
 			limits := api.MustLimitsFor(api.PlanPro)
-			m.accounts["account"] = Account{ID: "account", Plan: api.PlanPro}
-			op := Operation{AccountID: "account", ValueMaxBytes: limits.MaxSourceBytesPerInvocation, OperationResponse: api.OperationResponse{ID: "operation", State: api.OperationSucceeded, Generation: 2, ExpiresAt: now.Add(time.Hour)}}
+			(*m.Accounts())["account"] = state.Account{ID: "account", Plan: api.PlanPro}
+			op := state.Operation{AccountID: "account", ValueMaxBytes: limits.MaxSourceBytesPerInvocation, OperationResponse: api.OperationResponse{ID: "operation", State: api.OperationSucceeded, Generation: 2, ExpiresAt: now.Add(time.Hour)}}
 			req := api.OperationRecoveryRequest{RecoveryID: "decision", ExpectedGeneration: 1, Resolution: "safe_to_retry", Evidence: "verified no provider effect"}
-			fp, err := operationRecoveryFingerprint(req, limits)
+			fp, err := state.OperationRecoveryFingerprint(req, limits)
 			if err != nil {
 				t.Fatal(err)
 			}
-			data := m.operationMemoryLocked()
-			data.operations[op.ID] = op
-			data.recoveries[op.ID+"/"+req.RecoveryID] = fp
+			data := m.OperationMemoryLocked()
+			(*data.Operations())[op.ID] = op
+			(*data.Recoveries())[op.ID+"/"+req.RecoveryID] = fp
 			if kind != "legacy" {
 				expiry := now.Add(time.Minute)
 				if kind == "expired" {
 					expiry = now.Add(-time.Second)
 				}
-				m.saveOperationRecoveryDecisionLocked(op, req, fp, now.Add(-time.Hour), expiry)
+				m.SaveOperationRecoveryDecisionLocked(op, req, fp, now.Add(-time.Hour), expiry)
 			}
 			decision, err := m.RecoverOperationWithReceipt(t.Context(), "account", op.ID, req)
 			switch kind {
 			case "legacy":
-				if !errors.Is(err, ErrOperationRecoveryReceiptUnavailable) {
+				if !errors.Is(err, state.ErrOperationRecoveryReceiptUnavailable) {
 					t.Fatal("fabricated legacy receipt", decision, err)
 				}
 			case "expired":
-				if !errors.Is(err, ErrOperationExpired) {
+				if !errors.Is(err, state.ErrOperationExpired) {
 					t.Fatal("later work extended receipt", decision, err)
 				}
 			case "retained":
@@ -50,13 +51,13 @@ func TestRecoveryReceiptLegacyExpiryAndCleanup(t *testing.T) {
 			if _, err = m.RecoverOperation(t.Context(), "account", "", op.ID, req); err != nil {
 				t.Fatal("legacy deduplication changed", err)
 			}
-			if data.operations[op.ID].Generation != 2 || len(data.events) != 0 || len(m.invocations) != 0 {
+			if (*data.Operations())[op.ID].Generation != 2 || len((*data.Events())) != 0 || len((*m.Invocations())) != 0 {
 				t.Fatal("historical replay repeated work")
 			}
-			m.mu.Lock()
-			m.forgetOperationLocked(op.ID)
-			m.mu.Unlock()
-			if len(data.recoveries) != 0 || len(data.recoveryDecisions) != 0 {
+			(*m.Mu()).Lock()
+			m.ForgetOperationLocked(op.ID)
+			(*m.Mu()).Unlock()
+			if len((*data.Recoveries())) != 0 || len((*data.RecoveryDecisions())) != 0 {
 				t.Fatal("owner cleanup leaked receipts")
 			}
 		})

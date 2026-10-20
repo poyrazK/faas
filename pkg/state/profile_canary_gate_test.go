@@ -1,38 +1,39 @@
-package state
+package state_test
 
 import (
 	"encoding/json"
 	"errors"
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 	"testing"
 	"time"
 )
 
-func profileGateFixture(t *testing.T) (*MemStore, Deployment, string, time.Time) {
+func profileGateFixture(t *testing.T) (*state.MemStore, state.Deployment, string, time.Time) {
 	t.Helper()
-	m := NewMemStore()
+	m := state.NewMemStore()
 	appID, accountID, stableID, candidateID := uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString()
 	anchor := time.Now().UTC().Add(-10 * time.Minute)
-	m.accounts[accountID] = Account{ID: accountID, Plan: api.PlanPro, Status: AccountActive}
-	m.apps[appID] = App{ID: appID, AccountID: accountID, Slug: "gated", Runtime: "node24", Status: AppActive, Manifest: AppManifest{Profiling: &api.ProfilingConfig{Enabled: true}}}
-	stable := Deployment{ID: stableID, AppID: appID, Scope: "prod", Status: DeployLive, TrafficPercent: 90, RolloutState: "complete", CreatedAt: anchor.Add(-time.Hour)}
-	d := Deployment{ID: candidateID, AppID: appID, Scope: "prod", Status: DeployLive, TrafficPercent: 10, RolloutState: "rolling_out", CanaryPreset: "balanced", CanaryStep: 0, CanaryTotalSteps: 4, CanaryStepStartedAt: &anchor, CreatedAt: anchor}
-	m.deployments[stableID] = stable
-	m.deployments[candidateID] = d
+	(*m.Accounts())[accountID] = state.Account{ID: accountID, Plan: api.PlanPro, Status: state.AccountActive}
+	(*m.Apps())[appID] = state.App{ID: appID, AccountID: accountID, Slug: "gated", Runtime: "node24", Status: state.AppActive, Manifest: state.AppManifest{Profiling: &api.ProfilingConfig{Enabled: true}}}
+	stable := state.Deployment{ID: stableID, AppID: appID, Scope: "prod", Status: state.DeployLive, TrafficPercent: 90, RolloutState: "complete", CreatedAt: anchor.Add(-time.Hour)}
+	d := state.Deployment{ID: candidateID, AppID: appID, Scope: "prod", Status: state.DeployLive, TrafficPercent: 10, RolloutState: "rolling_out", CanaryPreset: "balanced", CanaryStep: 0, CanaryTotalSteps: 4, CanaryStepStartedAt: &anchor, CreatedAt: anchor}
+	(*m.Deployments())[stableID] = stable
+	(*m.Deployments())[candidateID] = d
 	options := api.DefaultProfileRegressionOptions()
 	options.Routes = []string{"POST /checkout"}
-	m.profileDeploymentPolicies = map[string]api.ProfileDeploymentPolicy{appID: {AppID: appID, Revision: 1, Config: api.ProfileDeploymentPolicyConfig{Enabled: true, Runtime: "node24", WindowSeconds: 60, Options: options, CanaryGate: &api.ProfileCanaryGatePolicy{Confirmations: 2, TimeoutSeconds: 3600, OnTimeout: "hold"}}}}
+	(*m.ProfileDeploymentPolicies()) = map[string]api.ProfileDeploymentPolicy{appID: {AppID: appID, Revision: 1, Config: api.ProfileDeploymentPolicyConfig{Enabled: true, Runtime: "node24", WindowSeconds: 60, Options: options, CanaryGate: &api.ProfileCanaryGatePolicy{Confirmations: 2, TimeoutSeconds: 3600, OnTimeout: "hold"}}}}
 	if count, err := m.DiscoverProfileCanaryChecks(t.Context(), anchor); err != nil || count != 1 {
 		t.Fatal(count, err)
 	}
 	return m, d, accountID, anchor.Add(90 * time.Second)
 }
 
-func gateAssessment(work ProfileCanaryCheckWork, at time.Time, status string) api.ProfileRegressionAssessment {
+func gateAssessment(work state.ProfileCanaryCheckWork, at time.Time, status string) api.ProfileRegressionAssessment {
 	config := api.ProfileDeploymentPolicyConfig{Enabled: true, Runtime: work.Check.Candidate.Runtime, WindowSeconds: work.Check.WindowSeconds, Options: work.Check.Options}
 	monitor := api.ProfilePeriodicMonitor{Route: work.Check.Options.Routes[0], Config: config, Baseline: work.Check.Baseline, Candidate: *work.Check.Candidate}
-	a := periodicAssessment(ProfilePeriodicWork{Monitor: monitor}, at, status).Assessment
+	a := periodicAssessment(state.ProfilePeriodicWork{Monitor: monitor}, at, status).Assessment
 	if a.BaselineCoverage != nil {
 		a.BaselineCoverage.ContributingCollectors = 1
 		a.CandidateCoverage.ContributingCollectors = 1
@@ -40,7 +41,7 @@ func gateAssessment(work ProfileCanaryCheckWork, at time.Time, status string) ap
 	return a
 }
 
-func applyGateWindow(t *testing.T, m *MemStore, at *time.Time, status string) (api.CanaryProfileSignal, ProfileCanaryCheckWork) {
+func applyGateWindow(t *testing.T, m *state.MemStore, at *time.Time, status string) (api.CanaryProfileSignal, state.ProfileCanaryCheckWork) {
 	t.Helper()
 	work, err := m.ClaimProfileCanaryCheck(t.Context(), *at)
 	if err != nil {
@@ -66,7 +67,7 @@ func TestProfileCanaryGateDistinctWindowsAndUnknownReset(t *testing.T) {
 	if !out.Candidate.End.Equal(out.Gate.LastWindowEnd.UTC()) || !out.Gate.NextCandidate.Start.Equal(out.Candidate.End) {
 		t.Fatal("retained evidence queries shifted")
 	}
-	if _, err := m.FinishProfileCanaryCheck(t.Context(), first, gateAssessment(first, at, "regressed"), false, at); !errors.Is(err, ErrProfileCheckLease) {
+	if _, err := m.FinishProfileCanaryCheck(t.Context(), first, gateAssessment(first, at, "regressed"), false, at); !errors.Is(err, state.ErrProfileCheckLease) {
 		t.Fatal("replay accepted", err)
 	}
 	out, _ = applyGateWindow(t, m, &at, "inconclusive")
@@ -85,9 +86,9 @@ func TestProfileCanaryGateDistinctWindowsAndUnknownReset(t *testing.T) {
 	if err != nil || decision.Status != "regressed" || decision.Signal == nil {
 		t.Fatal(decision, err)
 	}
-	p := m.profileDeploymentPolicies[d.AppID]
+	p := (*m.ProfileDeploymentPolicies())[d.AppID]
 	p.Revision++
-	m.profileDeploymentPolicies[d.AppID] = p
+	(*m.ProfileDeploymentPolicies())[d.AppID] = p
 	decision, err = m.ReadProfileCanaryGate(t.Context(), acct, d.AppID, d.ID)
 	if err != nil || decision.Status != "collecting" || decision.Signal != nil {
 		t.Fatal("old revision qualified", decision, err)
@@ -103,31 +104,31 @@ func TestProfileCanaryGateAdvanceOverrideAndRollback(t *testing.T) {
 				status = "no_regression_detected"
 			}
 			if mode == "rollback" || mode == "service" {
-				p := m.profileDeploymentPolicies[d.AppID]
+				p := (*m.ProfileDeploymentPolicies())[d.AppID]
 				p.Config.CanaryGate.AutoRollback = true
-				m.profileDeploymentPolicies[d.AppID] = p
+				(*m.ProfileDeploymentPolicies())[d.AppID] = p
 			}
 			if mode == "service" {
-				app := m.apps[d.AppID]
+				app := (*m.Apps())[d.AppID]
 				app.Manifest.ExecutionMode = api.ExecutionModeService
-				m.apps[d.AppID] = app
+				(*m.Apps())[d.AppID] = app
 			}
 			applyGateWindow(t, m, &at, status)
 			applyGateWindow(t, m, &at, status)
 			decision := api.ProfileCanaryGateDecision{}
-			params := CanaryAdvanceParams{ExpectedStep: 0, TrafficPercent: 50, ProfileGateDecision: &decision, Audit: DeploymentAudit{Kind: DeployTrafficChanged, Actor: "account:" + acct}}
+			params := state.CanaryAdvanceParams{ExpectedStep: 0, TrafficPercent: 50, ProfileGateDecision: &decision, Audit: state.DeploymentAudit{Kind: state.DeployTrafficChanged, Actor: "account:" + acct}}
 			if mode == "override" {
 				params.ProfileGateOverride = &api.ProfileGateOverride{ExpectedPolicyRevision: 1, Reason: "Investigated workload change and accepted the CPU cost."}
 			}
 			if mode == "rollback" {
 				params.ProfileGateRollback = true
 				params.RequireSafeReleaseLease = true
-				m.safeReleaseWorkerLeaseUntil = time.Now().Add(time.Minute)
+				(*m.SafeReleaseWorkerLeaseUntil()) = time.Now().Add(time.Minute)
 			}
 			got, auditID, err := m.AdvanceCanary(t.Context(), d.ID, params)
 			if mode == "held" || mode == "service" {
-				var blocked *ProfileGateBlockedError
-				if !errors.As(err, &blocked) || m.deployments[d.ID].TrafficPercent != 10 {
+				var blocked *state.ProfileGateBlockedError
+				if !errors.As(err, &blocked) || (*m.Deployments())[d.ID].TrafficPercent != 10 {
 					t.Fatal("gate bypass", got, err)
 				}
 				return
@@ -136,11 +137,11 @@ func TestProfileCanaryGateAdvanceOverrideAndRollback(t *testing.T) {
 				t.Fatal(got, err)
 			}
 			if mode == "rollback" {
-				if got.RolloutState != "aborted" || got.TrafficPercent != 0 || decision.Status != "rolled_back" || m.deployments[decision.StableDeploymentID].TrafficPercent != 100 {
+				if got.RolloutState != "aborted" || got.TrafficPercent != 0 || decision.Status != "rolled_back" || (*m.Deployments())[decision.StableDeploymentID].TrafficPercent != 100 {
 					t.Fatal("rollback not atomic", got, decision)
 				}
 				history, historyErr := m.ListRouteLifecycleHistory(t.Context(), acct, d.AppID, 1, "")
-				if historyErr != nil || len(history.Entries) != 1 || history.Entries[0].DeploymentID != decision.StableDeploymentID || !history.Entries[0].Recovery || history.Entries[0].Outcome != "applied" || m.lifecycleRecovery {
+				if historyErr != nil || len(history.Entries) != 1 || history.Entries[0].DeploymentID != decision.StableDeploymentID || !history.Entries[0].Recovery || history.Entries[0].Outcome != "applied" || (*m.LifecycleRecovery()) {
 					t.Fatalf("profiling rollback lifecycle history: %+v %v", history, historyErr)
 				}
 			} else if got.CanaryStep != 1 || got.TrafficPercent != 50 {
@@ -160,33 +161,33 @@ func TestProfileCanaryGateAdvanceOverrideAndRollback(t *testing.T) {
 
 func TestProfileCanaryGateTimeoutAndFences(t *testing.T) {
 	m, d, acct, at := profileGateFixture(t)
-	p := m.profileDeploymentPolicies[d.AppID]
-	decision := decideProfileCanaryGate(d, p, nil, "stable", 1, at.Add(2*time.Hour))
+	p := (*m.ProfileDeploymentPolicies())[d.AppID]
+	decision := state.DecideProfileCanaryGate(d, p, nil, "stable", 1, at.Add(2*time.Hour))
 	if decision.Status != "timed_out" {
 		t.Fatal(decision)
 	}
-	params := CanaryAdvanceParams{}
-	if authorizeProfileGate(decision, &params) == nil {
+	params := state.CanaryAdvanceParams{}
+	if state.AuthorizeProfileGate(decision, &params) == nil {
 		t.Fatal("timeout held policy continued")
 	}
 	decision.OnTimeout = "continue"
-	if err := authorizeProfileGate(decision, &params); err != nil {
+	if err := state.AuthorizeProfileGate(decision, &params); err != nil {
 		t.Fatal(err)
 	}
 	decision.Status = "regressed"
-	if authorizeProfileGate(decision, &params) == nil {
+	if state.AuthorizeProfileGate(decision, &params) == nil {
 		t.Fatal("timeout bypassed regression")
 	}
 	params.ProfileGateOverride = &api.ProfileGateOverride{ExpectedPolicyRevision: 2, Reason: "reviewed"}
-	if authorizeProfileGate(decision, &params) == nil {
+	if state.AuthorizeProfileGate(decision, &params) == nil {
 		t.Fatal("stale override accepted")
 	}
 	params.ProfileGateOverride.ExpectedPolicyRevision = 1
 	params.RequireSafeReleaseLease = true
-	if authorizeProfileGate(decision, &params) == nil {
+	if state.AuthorizeProfileGate(decision, &params) == nil {
 		t.Fatal("worker override accepted")
 	}
-	if _, err := m.ReadProfileCanaryGate(t.Context(), uuid.NewString(), d.AppID, d.ID); !errors.Is(err, ErrNotFound) {
+	if _, err := m.ReadProfileCanaryGate(t.Context(), uuid.NewString(), d.AppID, d.ID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatal("foreign evidence", err)
 	}
 	if _, _, err := m.RecoverRollout(t.Context(), d.AppID, "promote", "bypass"); err == nil {
@@ -205,10 +206,10 @@ func TestProfileCanaryGateTimeoutAndFences(t *testing.T) {
 		t.Fatal("foreign window accepted")
 	}
 	a = gateAssessment(work, at, "regressed")
-	changed := m.deployments[d.ID]
+	changed := (*m.Deployments())[d.ID]
 	changed.CanaryStep = 1
-	m.deployments[d.ID] = changed
-	if _, err = m.FinishProfileCanaryCheck(t.Context(), work, a, false, at); !errors.Is(err, ErrProfileCheckLease) {
+	(*m.Deployments())[d.ID] = changed
+	if _, err = m.FinishProfileCanaryCheck(t.Context(), work, a, false, at); !errors.Is(err, state.ErrProfileCheckLease) {
 		t.Fatal("stale stage committed", err)
 	}
 	_ = acct
@@ -218,16 +219,16 @@ func TestProfileCanaryGatePolicyBounds(t *testing.T) {
 	options := api.DefaultProfileRegressionOptions()
 	options.Routes = []string{"POST /checkout"}
 	c := api.ProfileDeploymentPolicyConfig{Enabled: true, WindowSeconds: 60, Options: options, CanaryGate: &api.ProfileCanaryGatePolicy{Confirmations: 2, TimeoutSeconds: 150, OnTimeout: "hold"}}
-	if err := validateProfileCanaryGatePolicy(c); err != nil {
+	if err := state.ValidateProfileCanaryGatePolicy(c); err != nil {
 		t.Fatal(err)
 	}
 	c.CanaryGate.TimeoutSeconds = 149
-	if validateProfileCanaryGatePolicy(c) == nil {
+	if state.ValidateProfileCanaryGatePolicy(c) == nil {
 		t.Fatal("capture timeout accepted")
 	}
 	c.CanaryGate.TimeoutSeconds = 1800
 	c.CanaryGate.Confirmations = 6
-	if validateProfileCanaryGatePolicy(c) == nil {
+	if state.ValidateProfileCanaryGatePolicy(c) == nil {
 		t.Fatal("unbounded confirmations")
 	}
 }

@@ -1,6 +1,6 @@
 //go:build !no_pg
 
-package state
+package state_test
 
 import (
 	"errors"
@@ -8,10 +8,11 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestPgRuntimeIncarnationHistory(t *testing.T) {
-	s, pool := runtimeCapturePGStore(t)
+	s, pool := state.RuntimeCapturePGStore(t)
 	runtimeIncarnationLifecycle(t, s, func(n string) runtimeadmission.Identity {
 		r := runtimeadmission.Identity{NodeID: n}
 		err := pool.QueryRow(t.Context(), `SELECT vmmd_incarnation::text,vmmd_admission_protocol FROM compute_nodes WHERE id=$1`, n).Scan(&r.Incarnation, &r.ProtocolVersion)
@@ -27,12 +28,12 @@ func TestPgRuntimeIncarnationHistory(t *testing.T) {
 }
 
 func TestPgRuntimeIncarnationRestartCannotReanimateGrant(t *testing.T) {
-	s, _ := runtimeCapturePGStore(t)
+	s, _ := state.RuntimeCapturePGStore(t)
 	runtimeIncarnationGrantReplay(t, s)
 }
 
 func TestPgRuntimeIncarnationRawHistoryProtection(t *testing.T) {
-	s, pool := runtimeCapturePGStore(t)
+	s, pool := state.RuntimeCapturePGStore(t)
 	ctx := t.Context()
 	node := runtimeIncarnationNode(t, s)
 	a := runtimeadmission.Identity{NodeID: node.ID, Incarnation: uuid.NewString(), ProtocolVersion: runtimeadmission.ProtocolVersion}
@@ -50,7 +51,7 @@ func TestPgRuntimeIncarnationRawHistoryProtection(t *testing.T) {
 		{`INSERT INTO application_standard_native_incarnations(node_id,incarnation,protocol_version) VALUES($1,$2,1)`, uuid.NewString()},
 	} {
 		_, err := pool.Exec(ctx, tc.query, node.ID, tc.id)
-		if !errors.Is(mapErr(err), ErrApplicationStandardRuntimeStale) {
+		if !errors.Is(state.MapErr(err), state.ErrApplicationStandardRuntimeStale) {
 			t.Fatalf("raw identity escape accepted: %v", err)
 		}
 	}
@@ -67,6 +68,6 @@ func TestPgRuntimeIncarnationRawHistoryProtection(t *testing.T) {
 }
 
 func TestPgRuntimeIncarnationPublishedReceiptRemainsFenced(t *testing.T) {
-	s, _ := runtimeCapturePGStore(t)
+	s, _ := state.RuntimeCapturePGStore(t)
 	runtimeIncarnationPublishedReceipt(t, s)
 }

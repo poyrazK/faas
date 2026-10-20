@@ -1,44 +1,45 @@
 //go:build !no_pg
 
-package state
+package state_test
 
 import (
 	"encoding/json"
+	"github.com/onebox-faas/faas/pkg/state"
 	"testing"
 )
 
 func TestProductControlWorkspaceActivityPostgres(t *testing.T) {
-	s := newPgStore(t)
-	insert := func(op Operation) {
+	s := state.XNewPgStore(t)
+	insert := func(op state.Operation) {
 		t.Helper()
-		tx, err := s.pool.Begin(t.Context())
+		tx, err := (*s.Pool()).Begin(t.Context())
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer func() { _ = tx.Rollback(t.Context()) }()
-		if err = insertProductOperationTx(t.Context(), tx, op); err != nil {
+		if err = state.InsertProductOperationTx(t.Context(), tx, op); err != nil {
 			t.Fatal(err)
 		}
 		if err = tx.Commit(t.Context()); err != nil {
 			t.Fatal(err)
 		}
 	}
-	productWorkspaceActivityContract(t, s, productBillingPGFixture(t, s), insert)
+	state.ProductWorkspaceActivityContract(t, s, state.ProductBillingPGFixture(t, s), insert)
 }
 
 func TestProductControlWorkspaceActivityRemappingPostgres(t *testing.T) {
-	productWorkspaceActivityRemapping(t, newPgStore(t))
+	state.ProductWorkspaceActivityRemapping(t, state.XNewPgStore(t))
 }
 
 func TestProductControlWorkspaceActivityAttentionPostgres(t *testing.T) {
-	s := newPgStore(t)
-	persist := func(op Operation, settled bool) {
+	s := state.XNewPgStore(t)
+	persist := func(op state.Operation, settled bool) {
 		t.Helper()
 		record, err := json.Marshal(op)
 		if err != nil {
 			t.Fatal(err)
 		}
-		tx, err := s.pool.Begin(t.Context())
+		tx, err := (*s.Pool()).Begin(t.Context())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -47,7 +48,7 @@ func TestProductControlWorkspaceActivityAttentionPostgres(t *testing.T) {
 			t.Fatal(err)
 		}
 		if settled {
-			if err = settleProductOperationTx(t.Context(), tx, op); err != nil {
+			if err = state.SettleProductOperationTx(t.Context(), tx, op); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -55,5 +56,5 @@ func TestProductControlWorkspaceActivityAttentionPostgres(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	productWorkspaceActivityAttention(t, s, persist)
+	state.ProductWorkspaceActivityAttention(t, s, persist)
 }

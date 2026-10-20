@@ -1,6 +1,6 @@
 //go:build !no_pg
 
-package state
+package state_test
 
 import (
 	"context"
@@ -18,13 +18,14 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // Fixtures need explicit timestamps and soft-deletion states which the public
 // mutation methods intentionally do not accept.
 type overviewFixture struct {
-	store Store
-	mem   *MemStore
+	store state.Store
+	mem   *state.MemStore
 	pool  *pgxpool.Pool
 	ctx   context.Context
 }
@@ -33,55 +34,55 @@ func newOverviewFixture(t *testing.T, backend string) overviewFixture {
 	t.Helper()
 	f := overviewFixture{ctx: context.Background()}
 	if backend == "memory" {
-		f.mem = NewMemStore()
+		f.mem = state.NewMemStore()
 		f.store = f.mem
 	} else {
 		f.pool = pgtest.OpenMigrated(t)
 		if err := db.MigrateUp(f.ctx, f.pool); err != nil {
 			t.Fatal(err)
 		}
-		f.store = NewPgStore(f.pool)
+		f.store = state.NewPgStore(f.pool)
 	}
 	return f
 }
 
-func (f overviewFixture) account(t *testing.T, name string, created time.Time, verified *time.Time, status AccountStatus) Account {
+func (f overviewFixture) account(t *testing.T, name string, created time.Time, verified *time.Time, status state.AccountStatus) state.Account {
 	t.Helper()
-	createdAccount, err := f.store.CreateAccountWithPersonalOrg(f.ctx, CreateAccountWithPersonalOrgParams{Email: name + "@overview.example", Plan: api.PlanPro})
+	createdAccount, err := f.store.CreateAccountWithPersonalOrg(f.ctx, state.CreateAccountWithPersonalOrgParams{Email: name + "@overview.example", Plan: api.PlanPro})
 	if err != nil {
 		t.Fatal(err)
 	}
 	a := createdAccount.Account
 	a.CreatedAt, a.EmailVerifiedAt, a.Status = created, verified, status
 	if f.mem != nil {
-		f.mem.accounts[a.ID] = a
+		(*f.mem.Accounts())[a.ID] = a
 	} else if _, err := f.pool.Exec(f.ctx, "UPDATE accounts SET created_at=$2, email_verified_at=$3, status=$4 WHERE id=$1", a.ID, created, verified, string(status)); err != nil {
 		t.Fatal(err)
 	}
 	return a
 }
 
-func (f overviewFixture) workload(t *testing.T, name string, account Account, live bool) (App, Deployment) {
+func (f overviewFixture) workload(t *testing.T, name string, account state.Account, live bool) (state.App, state.Deployment) {
 	t.Helper()
-	a, err := f.store.CreateApp(f.ctx, App{AccountID: account.ID, Slug: name, Type: AppTypeApp, RAMMB: 128, CPUMillicores: 250, MaxConcurrency: 20})
+	a, err := f.store.CreateApp(f.ctx, state.App{AccountID: account.ID, Slug: name, Type: state.AppTypeApp, RAMMB: 128, CPUMillicores: 250, MaxConcurrency: 20})
 	if err != nil {
 		t.Fatal(err)
 	}
-	d, err := f.store.CreateDeployment(f.ctx, Deployment{AppID: a.ID, Kind: DeploymentKindImage, ImageDigest: "sha256:overview", Status: DeployPending})
+	d, err := f.store.CreateDeployment(f.ctx, state.Deployment{AppID: a.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:overview", Status: state.DeployPending})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if live {
-		if err := f.store.UpdateDeploymentStatus(f.ctx, d.ID, DeployLive, ""); err != nil {
+		if err := f.store.UpdateDeploymentStatus(f.ctx, d.ID, state.DeployLive, ""); err != nil {
 			t.Fatal(err)
 		}
 	}
 	return a, d
 }
 
-func (f overviewFixture) request(t *testing.T, app App, deployment Deployment, at time.Time, status State) {
+func (f overviewFixture) request(t *testing.T, app state.App, deployment state.Deployment, at time.Time, status state.State) {
 	t.Helper()
-	node, err := f.store.ComputeNodeByName(f.ctx, DefaultLocalNodeName)
+	node, err := f.store.ComputeNodeByName(f.ctx, state.DefaultLocalNodeName)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,17 +91,17 @@ func (f overviewFixture) request(t *testing.T, app App, deployment Deployment, a
 		t.Fatal(err)
 	}
 	if !at.IsZero() {
-		if _, err := f.store.TouchInstancesLastSeen(f.ctx, []InstanceTouch{{InstanceID: i.ID, LastRequest: at}}); err != nil {
+		if _, err := f.store.TouchInstancesLastSeen(f.ctx, []state.InstanceTouch{{InstanceID: i.ID, LastRequest: at}}); err != nil {
 			t.Fatal(err)
 		}
 	}
 }
 
-func (f overviewFixture) deleteApp(t *testing.T, app App) {
+func (f overviewFixture) deleteApp(t *testing.T, app state.App) {
 	t.Helper()
 	if f.mem != nil {
-		app.Status = AppDeleted
-		f.mem.apps[app.ID] = app
+		app.Status = state.AppDeleted
+		(*f.mem.Apps())[app.ID] = app
 	} else if _, err := f.pool.Exec(f.ctx, "UPDATE apps SET status='deleted' WHERE id=$1", app.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -122,72 +123,72 @@ func TestOperatorOverviewStores(t *testing.T) {
 			}
 
 			recent, verified, future := now.Add(-72*time.Hour), now.Add(-48*time.Hour), now.Add(time.Microsecond)
-			unverified := f.account(t, "unverified", recent, nil, AccountActive)
-			appOnly := f.account(t, "app", recent, &verified, AccountActive)
-			live := f.account(t, "live", recent, &verified, AccountActive)
-			fast := f.account(t, "fast", recent, &verified, AccountActive)
-			slow := f.account(t, "slow", recent, &verified, AccountActive)
-			old := f.account(t, "old", now.Add(-api.ObsOverviewCohortWindow-time.Microsecond), &verified, AccountPastDue)
-			upcoming := f.account(t, "future", future, &verified, AccountSuspended)
-			start := f.account(t, "start", now.Add(-api.ObsOverviewCohortWindow), &verified, AccountActive)
-			end := f.account(t, "end", now, &now, AccountActive)
-			invalid := f.account(t, "invalid", recent, &verified, AccountActive)
-			deleted := f.account(t, "deleted-app", recent, &verified, AccountActive)
-			deletedDeploy := f.account(t, "deleted-deployment", recent, &verified, AccountActive)
-			futureVerified := f.account(t, "future-verified", recent, &future, AccountActive)
-			historical := f.account(t, "historical", recent, &verified, AccountActive)
-			for _, a := range []Account{unverified, live, old, upcoming, futureVerified} {
+			unverified := f.account(t, "unverified", recent, nil, state.AccountActive)
+			appOnly := f.account(t, "app", recent, &verified, state.AccountActive)
+			live := f.account(t, "live", recent, &verified, state.AccountActive)
+			fast := f.account(t, "fast", recent, &verified, state.AccountActive)
+			slow := f.account(t, "slow", recent, &verified, state.AccountActive)
+			old := f.account(t, "old", now.Add(-api.ObsOverviewCohortWindow-time.Microsecond), &verified, state.AccountPastDue)
+			upcoming := f.account(t, "future", future, &verified, state.AccountSuspended)
+			start := f.account(t, "start", now.Add(-api.ObsOverviewCohortWindow), &verified, state.AccountActive)
+			end := f.account(t, "end", now, &now, state.AccountActive)
+			invalid := f.account(t, "invalid", recent, &verified, state.AccountActive)
+			deleted := f.account(t, "deleted-app", recent, &verified, state.AccountActive)
+			deletedDeploy := f.account(t, "deleted-deployment", recent, &verified, state.AccountActive)
+			futureVerified := f.account(t, "future-verified", recent, &future, state.AccountActive)
+			historical := f.account(t, "historical", recent, &verified, state.AccountActive)
+			for _, a := range []state.Account{unverified, live, old, upcoming, futureVerified} {
 				app, dep := f.workload(t, "app-"+strings.Split(a.Email, "@")[0], a, true)
 				at := a.CreatedAt.Add(time.Second)
 				if a.ID == live.ID {
 					at = time.Time{}
 				}
-				f.request(t, app, dep, at, StateParked)
+				f.request(t, app, dep, at, state.StateParked)
 				if a.ID == live.ID {
-					f.request(t, app, dep, time.Time{}, StateWaking)
-					f.request(t, app, dep, time.Time{}, StateColdBooting)
-					f.request(t, app, dep, time.Time{}, StateDraining)
+					f.request(t, app, dep, time.Time{}, state.StateWaking)
+					f.request(t, app, dep, time.Time{}, state.StateColdBooting)
+					f.request(t, app, dep, time.Time{}, state.StateDraining)
 				}
 			}
 			a, d := f.workload(t, "app-no-live", appOnly, false)
-			f.request(t, a, d, recent.Add(5*time.Second), StateParked)
+			f.request(t, a, d, recent.Add(5*time.Second), state.StateParked)
 			for _, sample := range []struct {
-				account Account
+				account state.Account
 				latency time.Duration
-				status  State
+				status  state.State
 			}{
-				{fast, 10*time.Second + 900*time.Millisecond, StateRunning}, {slow, 100*time.Second + 900*time.Millisecond, StateParked},
-				{start, 1900 * time.Millisecond, StateParked}, {end, 0, StateParked},
+				{fast, 10*time.Second + 900*time.Millisecond, state.StateRunning}, {slow, 100*time.Second + 900*time.Millisecond, state.StateParked},
+				{start, 1900 * time.Millisecond, state.StateParked}, {end, 0, state.StateParked},
 			} {
 				a, d := f.workload(t, "sample-"+strings.Split(sample.account.Email, "@")[0], sample.account, true)
 				f.request(t, a, d, sample.account.CreatedAt.Add(sample.latency), sample.status)
 				if sample.account.ID == fast.ID {
-					f.request(t, a, d, recent.Add(20*time.Second), StateParked)
+					f.request(t, a, d, recent.Add(20*time.Second), state.StateParked)
 					// An invalid earlier observation must not mask a valid sample.
-					f.request(t, a, d, recent.Add(-time.Microsecond), StateParked)
+					f.request(t, a, d, recent.Add(-time.Microsecond), state.StateParked)
 				}
 			}
 			f.workload(t, "duplicate-fast", fast, true)
 			a, d = f.workload(t, "invalid-times", invalid, true)
-			f.request(t, a, d, recent.Add(-time.Microsecond), StateParked)
-			f.request(t, a, d, future, StateParked)
+			f.request(t, a, d, recent.Add(-time.Microsecond), state.StateParked)
+			f.request(t, a, d, future, state.StateParked)
 			a, d = f.workload(t, "deleted-only", deleted, true)
-			f.request(t, a, d, recent.Add(time.Second), StateRunning)
+			f.request(t, a, d, recent.Add(time.Second), state.StateRunning)
 			f.deleteApp(t, a)
 			_, d = f.workload(t, "deleted-live-deployment", deletedDeploy, true)
 			if f.mem != nil {
-				d = f.mem.deployments[d.ID]
+				d = (*f.mem.Deployments())[d.ID]
 				d.DeletedAt = &verified
-				f.mem.deployments[d.ID] = d
+				(*f.mem.Deployments())[d.ID] = d
 			} else if _, err := f.pool.Exec(f.ctx, "UPDATE deployments SET deleted_at=$2 WHERE id=$1", d.ID, verified); err != nil {
 				t.Fatal(err)
 			}
 			f.workload(t, "current-historical", historical, true)
 			a, d = f.workload(t, "retained-historical", historical, false)
-			f.request(t, a, d, recent.Add(5*time.Second), StateParked)
+			f.request(t, a, d, recent.Add(5*time.Second), state.StateParked)
 			f.deleteApp(t, a)
 
-			if _, err := f.store.CreateOrg(f.ctx, Org{Name: "Overview", Slug: "overview"}); err != nil {
+			if _, err := f.store.CreateOrg(f.ctx, state.Org{Name: "Overview", Slug: "overview"}); err != nil {
 				t.Fatal(err)
 			}
 			seedOverviewNodes(t, f, now)
@@ -208,7 +209,7 @@ func TestOperatorOverviewStores(t *testing.T) {
 				t.Fatalf("generated_at=%s", got.GeneratedAt)
 			}
 			wantNodes := []api.ObsOverviewNodeHealth{
-				{Name: DefaultLocalNodeName, Active: true, LastHeartbeatAt: now.Add(-api.ObsOverviewNodeStaleAfter)},
+				{Name: state.DefaultLocalNodeName, Active: true, LastHeartbeatAt: now.Add(-api.ObsOverviewNodeStaleAfter)},
 				{Name: "future", Active: true, LastHeartbeatAt: future},
 				{Name: "stale", Active: false, LastHeartbeatAt: now.Add(-api.ObsOverviewNodeStaleAfter - time.Microsecond), Stale: true},
 				{Name: "zero", Active: true},
@@ -233,7 +234,7 @@ func TestOperatorOverviewStores(t *testing.T) {
 
 func seedOverviewNodes(t *testing.T, f overviewFixture, now time.Time) {
 	t.Helper()
-	node, err := f.store.ComputeNodeByName(f.ctx, DefaultLocalNodeName)
+	node, err := f.store.ComputeNodeByName(f.ctx, state.DefaultLocalNodeName)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -242,17 +243,17 @@ func seedOverviewNodes(t *testing.T, f overviewFixture, now time.Time) {
 		at     time.Time
 		active bool
 	}{
-		{DefaultLocalNodeName, now.Add(-api.ObsOverviewNodeStaleAfter), true}, {"stale", now.Add(-api.ObsOverviewNodeStaleAfter - time.Microsecond), false}, {"future", now.Add(time.Microsecond), true}, {"zero", time.Time{}, true},
+		{state.DefaultLocalNodeName, now.Add(-api.ObsOverviewNodeStaleAfter), true}, {"stale", now.Add(-api.ObsOverviewNodeStaleAfter - time.Microsecond), false}, {"future", now.Add(time.Microsecond), true}, {"zero", time.Time{}, true},
 	} {
 		n := node
 		n.ID = uuid.NewString()
 		n.Name = row.name
-		if row.name == DefaultLocalNodeName {
+		if row.name == state.DefaultLocalNodeName {
 			n.ID = node.ID
 		}
-		n.Lifecycle = NodeLifecycleActive
+		n.Lifecycle = state.NodeLifecycleActive
 		if !row.active {
-			n.Lifecycle = NodeLifecycleUnavailable
+			n.Lifecycle = state.NodeLifecycleUnavailable
 		}
 		n.LastHeartbeatAt = row.at
 		saved, err := f.store.UpsertComputeNodeFromOperator(f.ctx, n)
@@ -262,7 +263,7 @@ func seedOverviewNodes(t *testing.T, f overviewFixture, now time.Time) {
 		// Operator upsert does not own heartbeat writes in PostgreSQL.
 		if f.mem != nil {
 			saved.LastHeartbeatAt = row.at
-			f.mem.computeNodes[saved.ID] = saved
+			(*f.mem.ComputeNodes())[saved.ID] = saved
 		} else if _, err := f.pool.Exec(f.ctx, "UPDATE compute_nodes SET last_heartbeat_at=$2 WHERE id=$1", saved.ID, row.at); err != nil {
 			t.Fatal(err)
 		}
@@ -298,7 +299,7 @@ func seedOverviewEvents(t *testing.T, f overviewFixture, now time.Time) {
 	appendEvent("auth.rate_limited", nil, now.Add(-api.ObsOverviewAuditWindow-time.Microsecond))
 	appendEvent("auth.rate_limited", nil, now.Add(time.Microsecond))
 	for _, at := range []time.Time{now.Add(-api.ObsOverviewAuditWindow), now, now.Add(-api.ObsOverviewAuditWindow - time.Microsecond), now.Add(time.Microsecond)} {
-		if err := f.store.InsertAuditLog(f.ctx, AuditLog{ID: uuid.New(), Kind: "operator.overview", ReceivedAt: at}); err != nil {
+		if err := f.store.InsertAuditLog(f.ctx, state.AuditLog{ID: uuid.New(), Kind: "operator.overview", ReceivedAt: at}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -325,7 +326,7 @@ func TestOperatorOverviewPostgresSnapshot(t *testing.T) {
 	f := newOverviewFixture(t, "postgres")
 	now := time.Now().UTC().Truncate(time.Microsecond).Add(time.Hour)
 	verified := now.Add(-time.Hour)
-	account := f.account(t, "snapshot", verified, &verified, AccountActive)
+	account := f.account(t, "snapshot", verified, &verified, state.AccountActive)
 	reached, release := make(chan struct{}), make(chan struct{})
 	defer close(release)
 	tr := &overviewSnapshotTracer{afterTotals: func(ctx context.Context) {
@@ -349,7 +350,10 @@ func TestOperatorOverviewPostgresSnapshot(t *testing.T) {
 		err      error
 	}
 	done := make(chan result, 1)
-	go func() { response, err := NewPgStore(reader).OperatorOverview(ctx, now); done <- result{response, err} }()
+	go func() {
+		response, err := state.NewPgStore(reader).OperatorOverview(ctx, now)
+		done <- result{response, err}
+	}()
 	select {
 	case <-reached:
 	case <-ctx.Done():
@@ -389,7 +393,7 @@ func TestOperatorOverviewPostgresFailures(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer reader.Close()
-	got, err := NewPgStore(reader).OperatorOverview(ctx, time.Now().UTC())
+	got, err := state.NewPgStore(reader).OperatorOverview(ctx, time.Now().UTC())
 	if err == nil || !reflect.DeepEqual(got, api.ObsOverviewResponse{}) {
 		t.Fatalf("partial snapshot escaped after cancellation: %+v err=%v", got, err)
 	}
