@@ -81,7 +81,7 @@ for want in \
   "bin/apid=$stage/bin/apid" \
   "/opt/faas/releases/0123456789abcdef0123456789abcdef01234567/bin/deployctl deploy --only 'apid,meterd' --expect-current 00000000000000000000000000000000000000b0 0123456789abcdef0123456789abcdef01234567" \
   "unit-release-verify.sh /opt/faas/releases/0123456789abcdef0123456789abcdef01234567 apid=http://127.0.0.1:9101/readyz \\?apid-clone-worker" \
-  "$stage/bin/deployctl rollback --only 'apid,meterd'"; do
+  "$stage/bin/deployctl rollback --only 'apid,meterd' --expect-current 0123456789abcdef0123456789abcdef01234567 --to 00000000000000000000000000000000000000b0"; do
   grep -Fq -- "$want" "$test_root/activate.sh" || fail "activation script lacks: $want"
 done
 
@@ -104,6 +104,11 @@ jq '.action = "converge" | .replace = {} | .release_id = .expect_current' "$plan
 bash "$helper" script "$test_root/converge.json" "$stage" "$test_root/converge.sh"
 if grep -q unit-overlay "$test_root/converge.sh"; then fail "converge assembles an overlay"; fi
 grep -Fq "deploy --only 'apid,meterd'" "$test_root/converge.sh" || fail "converge does not re-run deploy"
+# Its plan names no release before the active one: deployctl takes the one
+# its activation history records, and never the active release itself.
+grep -Fq "rollback --only 'apid,meterd' --expect-current 00000000000000000000000000000000000000b0" "$test_root/converge.sh" \
+  || fail "converge rollback does not expect the active release"
+if grep -q -- "--to" "$test_root/converge.sh"; then fail "converge rolls back to the release it reruns"; fi
 
 # 3. Unsafe plan values are refused.
 jq '.release_id = "../../etc"' "$plan" > "$test_root/bad.json"
@@ -159,7 +164,16 @@ chmod +x "$stub/bash-capture"
 sed 's#"$(as_root "$target") -s"#"CAPTURE=$CAPTURE bash-capture"#' "$helper" > "$test_root/helper-capture.sh"
 CAPTURE="$test_root/rollback.sh" UNIT_SSH_TARGET=deploy@node.example \
   bash "$test_root/helper-capture.sh" rollback "$plan" "$stage"
-grep -Fq "$stage/bin/deployctl rollback --only 'apid,meterd'" "$test_root/rollback.sh" || fail "rollback does not restore the plan's services with the staged deployctl"
+# The rollback restores the plan's base, not the newest other directory:
+# after deploy A, roll back, deploy B, that is A (cd-controlplane run
+# 39480533579). It refuses if another release replaced the plan's since.
+grep -Fq "$stage/bin/deployctl rollback --only 'apid,meterd' --expect-current 0123456789abcdef0123456789abcdef01234567 --to 00000000000000000000000000000000000000b0" "$test_root/rollback.sh" \
+  || fail "rollback does not restore the plan's base for the plan's services with the staged deployctl"
+CAPTURE="$test_root/rollback-converge.sh" UNIT_SSH_TARGET=deploy@node.example \
+  bash "$test_root/helper-capture.sh" rollback "$test_root/converge.json" "$stage"
+grep -Fq "$stage/bin/deployctl rollback --only 'apid,meterd' --expect-current 00000000000000000000000000000000000000b0" "$test_root/rollback-converge.sh" \
+  || fail "converge rollback does not expect the active release"
+if grep -q -- "--to" "$test_root/rollback-converge.sh"; then fail "converge rollback names the release it reruns as the target"; fi
 grep -Fq "unit-release-verify.sh \"\$(readlink -f /opt/faas/current)\" apid=http://127.0.0.1:9101/readyz" "$test_root/rollback.sh" \
   || fail "rollback does not verify the restored release"
 grep -q "sudo -n bash" "$helper" || fail "non-root hosts must run through sudo"
