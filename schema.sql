@@ -28548,6 +28548,40 @@ COMMENT ON TABLE public.billing_run_items IS 'One customer of a billing run: the
 
 
 --
+-- Name: billing_run_product_items; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.billing_run_product_items (
+    run_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    tenant_id uuid NOT NULL,
+    external_ref text DEFAULT ''::text NOT NULL,
+    outcome text DEFAULT 'pending'::text NOT NULL,
+    document_id uuid,
+    currency text,
+    amount_millicents bigint,
+    invoice_id text,
+    exported_count integer DEFAULT 0 NOT NULL,
+    reason text,
+    attempts integer DEFAULT 0 NOT NULL,
+    next_attempt_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT billing_run_product_items_counts_chk CHECK (((attempts >= 0) AND (exported_count >= 0))),
+    CONSTRAINT billing_run_product_items_currency_chk CHECK (((currency IS NULL) OR (currency ~ '^[A-Z]{3}$'::text))),
+    CONSTRAINT billing_run_product_items_external_ref_chk CHECK ((char_length(external_ref) <= 256)),
+    CONSTRAINT billing_run_product_items_outcome_chk CHECK ((outcome = ANY (ARRAY['pending'::text, 'drafted'::text, 'finalized'::text, 'exported'::text, 'up_to_date'::text, 'held'::text, 'skipped'::text, 'failed'::text]))),
+    CONSTRAINT billing_run_product_items_reason_chk CHECK (((reason IS NULL) OR (char_length(reason) <= 1000)))
+);
+
+
+--
+-- Name: TABLE billing_run_product_items; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.billing_run_product_items IS 'One Product Control customer (app and platform tenant) of a billing run (ADR-20261018212918).';
+
+
+--
 -- Name: billing_run_schedules; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -28568,7 +28602,7 @@ CREATE TABLE public.billing_run_schedules (
     CONSTRAINT billing_run_schedules_export_finalize_chk CHECK (((export_provider = 'none'::text) OR finalize)),
     CONSTRAINT billing_run_schedules_last_month_chk CHECK (((last_period_start IS NULL) OR (last_period_start = (date_trunc('month'::text, (last_period_start AT TIME ZONE 'UTC'::text)) AT TIME ZONE 'UTC'::text)))),
     CONSTRAINT billing_run_schedules_next_month_chk CHECK (((next_period_start = (date_trunc('month'::text, (next_period_start AT TIME ZONE 'UTC'::text)) AT TIME ZONE 'UTC'::text)) AND (next_run_at > next_period_start))),
-    CONSTRAINT billing_run_schedules_sources_chk CHECK ((((cardinality(sources) >= 1) AND (cardinality(sources) <= 2)) AND (sources <@ ARRAY['app_consumers'::text, 'platform_tenants'::text])))
+    CONSTRAINT billing_run_schedules_sources_chk CHECK ((((cardinality(sources) >= 1) AND (cardinality(sources) <= 3)) AND (sources <@ ARRAY['app_consumers'::text, 'platform_tenants'::text, 'product_customers'::text])))
 );
 
 
@@ -28601,12 +28635,13 @@ CREATE TABLE public.billing_runs (
     started_at timestamp with time zone,
     completed_at timestamp with time zone,
     notified_at timestamp with time zone,
+    product_discovered_at timestamp with time zone,
     CONSTRAINT billing_runs_completed_chk CHECK (((status = 'completed'::text) = (completed_at IS NOT NULL))),
     CONSTRAINT billing_runs_export_chk CHECK ((export_provider = ANY (ARRAY['none'::text, 'stripe'::text, 'paddle'::text, 'lago'::text]))),
     CONSTRAINT billing_runs_export_finalize_chk CHECK (((export_provider = 'none'::text) OR finalize)),
     CONSTRAINT billing_runs_lease_chk CHECK (((lease_owner IS NULL) = (lease_until IS NULL))),
     CONSTRAINT billing_runs_month_chk CHECK (((period_start = (date_trunc('month'::text, (period_start AT TIME ZONE 'UTC'::text)) AT TIME ZONE 'UTC'::text)) AND (period_end = ((date_trunc('month'::text, (period_start AT TIME ZONE 'UTC'::text)) + '1 mon'::interval) AT TIME ZONE 'UTC'::text)))),
-    CONSTRAINT billing_runs_sources_chk CHECK ((((cardinality(sources) >= 1) AND (cardinality(sources) <= 2)) AND (sources <@ ARRAY['app_consumers'::text, 'platform_tenants'::text]))),
+    CONSTRAINT billing_runs_sources_chk CHECK ((((cardinality(sources) >= 1) AND (cardinality(sources) <= 3)) AND (sources <@ ARRAY['app_consumers'::text, 'platform_tenants'::text, 'product_customers'::text]))),
     CONSTRAINT billing_runs_status_chk CHECK ((status = ANY (ARRAY['queued'::text, 'running'::text, 'completed'::text]))),
     CONSTRAINT billing_runs_trigger_chk CHECK ((trigger = ANY (ARRAY['api'::text, 'schedule'::text])))
 );
@@ -44404,6 +44439,49 @@ CREATE TABLE public.product_control_onboardings (
 
 
 --
+-- Name: product_control_overdue_holds; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.product_control_overdue_holds (
+    app_id uuid NOT NULL,
+    tenant_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    document_id uuid NOT NULL,
+    export_id uuid NOT NULL,
+    due_at timestamp with time zone NOT NULL,
+    since timestamp with time zone NOT NULL
+);
+
+
+--
+-- Name: TABLE product_control_overdue_holds; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.product_control_overdue_holds IS 'Product Control customers whose new starts are refused because of an overdue invoice; recomputed by apid (ADR-20261018212918).';
+
+
+--
+-- Name: product_control_overdue_policies; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.product_control_overdue_policies (
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    block_overdue_after_days integer NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT product_control_overdue_policies_days_chk CHECK (((block_overdue_after_days >= 0) AND (block_overdue_after_days <= 365)))
+);
+
+
+--
+-- Name: TABLE product_control_overdue_policies; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.product_control_overdue_policies IS 'Per-app rule refusing new Product Control starts from customers whose exported statement is unpaid that many days after its due date (ADR-20261018212918).';
+
+
+--
 -- Name: product_control_plan_changes; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -49517,7 +49595,7 @@ CREATE TABLE public.usage_statement_invoice_exports (
     CONSTRAINT usage_statement_invoice_exports_payment_status_chk CHECK (((payment_status IS NULL) OR (payment_status = ANY (ARRAY['draft'::text, 'open'::text, 'paid'::text, 'void'::text, 'uncollectible'::text, 'deleted'::text])))),
     CONSTRAINT usage_statement_invoice_exports_provider_chk CHECK ((provider = ANY (ARRAY['stripe'::text, 'paddle'::text, 'lago'::text]))),
     CONSTRAINT usage_statement_invoice_exports_rejected_chk CHECK (((rejected_at IS NULL) OR (provider_invoice_id IS NULL))),
-    CONSTRAINT usage_statement_invoice_exports_source_chk CHECK ((source_kind = ANY (ARRAY['app_consumer'::text, 'platform_tenant'::text]))),
+    CONSTRAINT usage_statement_invoice_exports_source_chk CHECK ((source_kind = ANY (ARRAY['app_consumer'::text, 'platform_tenant'::text, 'product_control'::text]))),
     CONSTRAINT usage_statement_invoice_exports_status_chk CHECK ((status = ANY (ARRAY['creating'::text, 'completed'::text])))
 );
 
@@ -51957,6 +52035,14 @@ ALTER TABLE ONLY public.billing_quota_warnings
 
 ALTER TABLE ONLY public.billing_run_items
     ADD CONSTRAINT billing_run_items_pkey PRIMARY KEY (run_id, source_kind, source_id);
+
+
+--
+-- Name: billing_run_product_items billing_run_product_items_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.billing_run_product_items
+    ADD CONSTRAINT billing_run_product_items_pkey PRIMARY KEY (run_id, app_id, tenant_id);
 
 
 --
@@ -58936,6 +59022,22 @@ ALTER TABLE ONLY public.product_control_onboardings
 
 
 --
+-- Name: product_control_overdue_holds product_control_overdue_holds_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_overdue_holds
+    ADD CONSTRAINT product_control_overdue_holds_pkey PRIMARY KEY (app_id, tenant_id);
+
+
+--
+-- Name: product_control_overdue_policies product_control_overdue_policies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_overdue_policies
+    ADD CONSTRAINT product_control_overdue_policies_pkey PRIMARY KEY (app_id);
+
+
+--
 -- Name: product_control_plan_changes product_control_plan_changes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -63057,6 +63159,13 @@ CREATE INDEX billing_payment_recovery_receipts_account_idx ON public.billing_pay
 --
 
 CREATE INDEX billing_run_items_pending_idx ON public.billing_run_items USING btree (run_id, next_attempt_at) WHERE (outcome = 'pending'::text);
+
+
+--
+-- Name: billing_run_product_items_pending_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX billing_run_product_items_pending_idx ON public.billing_run_product_items USING btree (run_id, next_attempt_at) WHERE (outcome = 'pending'::text);
 
 
 --
@@ -68979,6 +69088,13 @@ CREATE INDEX product_control_onboarding_customer ON public.product_control_onboa
 --
 
 CREATE INDEX product_control_onboarding_success ON public.product_control_receipts USING btree (account_id, app_id, tenant_id, resolved_at, operation_id) WHERE (resolved_state = 'succeeded'::text);
+
+
+--
+-- Name: product_control_overdue_holds_app_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX product_control_overdue_holds_app_idx ON public.product_control_overdue_holds USING btree (account_id, app_id, due_at);
 
 
 --
@@ -79362,6 +79478,14 @@ ALTER TABLE ONLY public.billing_run_items
 
 
 --
+-- Name: billing_run_product_items billing_run_product_items_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.billing_run_product_items
+    ADD CONSTRAINT billing_run_product_items_run_id_fkey FOREIGN KEY (run_id) REFERENCES public.billing_runs(id) ON DELETE CASCADE;
+
+
+--
 -- Name: billing_run_schedules billing_run_schedules_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -87479,6 +87603,62 @@ ALTER TABLE ONLY public.product_control_onboardings
 
 ALTER TABLE ONLY public.product_control_onboardings
     ADD CONSTRAINT product_control_onboardings_tenant_id_fkey FOREIGN KEY (tenant_id) REFERENCES public.platform_tenants(id) ON DELETE CASCADE;
+
+
+--
+-- Name: product_control_overdue_holds product_control_overdue_holds_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_overdue_holds
+    ADD CONSTRAINT product_control_overdue_holds_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: product_control_overdue_holds product_control_overdue_holds_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_overdue_holds
+    ADD CONSTRAINT product_control_overdue_holds_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: product_control_overdue_holds product_control_overdue_holds_document_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_overdue_holds
+    ADD CONSTRAINT product_control_overdue_holds_document_id_fkey FOREIGN KEY (document_id) REFERENCES public.product_control_billing_documents(id) ON DELETE CASCADE;
+
+
+--
+-- Name: product_control_overdue_holds product_control_overdue_holds_export_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_overdue_holds
+    ADD CONSTRAINT product_control_overdue_holds_export_id_fkey FOREIGN KEY (export_id) REFERENCES public.usage_statement_invoice_exports(id) ON DELETE CASCADE;
+
+
+--
+-- Name: product_control_overdue_holds product_control_overdue_holds_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_overdue_holds
+    ADD CONSTRAINT product_control_overdue_holds_tenant_id_fkey FOREIGN KEY (tenant_id) REFERENCES public.platform_tenants(id) ON DELETE CASCADE;
+
+
+--
+-- Name: product_control_overdue_policies product_control_overdue_policies_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_overdue_policies
+    ADD CONSTRAINT product_control_overdue_policies_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: product_control_overdue_policies product_control_overdue_policies_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_overdue_policies
+    ADD CONSTRAINT product_control_overdue_policies_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --

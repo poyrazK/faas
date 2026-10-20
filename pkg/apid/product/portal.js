@@ -4,13 +4,13 @@
   const node = (tag, text = '') => { const el = document.createElement(tag); el.textContent = text; return el; };
   const message = text => { $('message').textContent = text; };
   const amount = (value, currency) => { if (!Number.isSafeInteger(value)) return 'Amount exceeds browser precision; ask your product team.'; const n = BigInt(value), abs = n < 0n ? -n : n; return `${currency} ${n < 0n ? '-' : ''}${(abs / 100000n).toString()}.${(abs % 100000n).toString().padStart(5, '0').replace(/0+$/, '').padEnd(2, '0')}`; };
-  const minor = (value, currency) => { if (!Number.isSafeInteger(value)) return 'Amount exceeds browser precision; ask your product team.'; const abs = Math.abs(value); return `${currency} ${value < 0 ? '-' : ''}${Math.floor(abs / 100)}.${String(abs % 100).padStart(2, '0')}`; };
   const paymentText = { draft: 'Invoice being prepared', open: 'Invoice open', paid: 'Invoice paid', void: 'Invoice voided', uncollectible: 'Invoice marked uncollectible', deleted: 'Invoice withdrawn' };
   // An exported statement's provider invoice (ADR-20261018212918). The link is only ever the provider's own https page.
   function invoiceNodes(invoice) {
     const parts = [invoice.overdue ? 'Invoice overdue' : paymentText[invoice.payment_status] || 'Invoice issued; payment status not available yet'];
     if (typeof invoice.due_at === 'string') parts.push(`due ${invoice.due_at.slice(0, 10)}`);
-    if (invoice.amount_remaining_minor !== undefined && invoice.payment_status !== 'paid') parts.push(`${minor(invoice.amount_remaining_minor, invoice.currency)} remaining`);
+    // Millicents need no knowledge of the currency's decimal places (ADR-20261019100330).
+    if (invoice.amount_remaining_millicents !== undefined && invoice.payment_status !== 'paid') parts.push(`${amount(invoice.amount_remaining_millicents, invoice.currency)} remaining`);
     const nodes = [node('p', parts.join(' · '))];
     let link = null;
     try { link = new URL(invoice.hosted_invoice_url); } catch { link = null; }

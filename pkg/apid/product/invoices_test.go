@@ -59,6 +59,9 @@ func TestProductDocumentInvoiceProjection(t *testing.T) {
 			if got.HostedInvoiceURL != tc.wantHosted || got.PaymentStatus != export.PaymentStatus || got.Overdue != export.Overdue || got.AmountMinor != 50 {
 				t.Fatalf("invoice = %+v", got)
 			}
+			if export.AmountRemainingMinor != nil && (got.AmountRemainingMillicents == nil || *got.AmountRemainingMillicents != 50000) {
+				t.Fatalf("remaining millicents = %v", got.AmountRemainingMillicents)
+			}
 			ownerOnly := got.Provider != "" || got.InvoiceID != "" || got.DashboardURL != "" || got.ExportStatus != ""
 			if !tc.owner && ownerOnly {
 				t.Fatalf("customer invoice leaks owner-only fields: %+v", got)
@@ -67,6 +70,25 @@ func TestProductDocumentInvoiceProjection(t *testing.T) {
 				t.Fatalf("owner invoice = %+v", got)
 			}
 		})
+	}
+}
+
+// adr: 20261019100330 — the console shows invoice amounts in each currency's
+// own decimal places.
+func TestOwnerMinorFormatsCurrencyDecimals(t *testing.T) {
+	for _, tc := range []struct {
+		currency string
+		minor    int64
+		want     string
+	}{
+		{"EUR", 1250, "EUR 12.50"},
+		{"EUR", -5, "EUR -0.05"},
+		{"JPY", 1250, "JPY 1250"},
+		{"KWD", 1250, "KWD 1.250"},
+	} {
+		if got := ownerMinor(tc.currency, tc.minor); got != tc.want {
+			t.Errorf("ownerMinor(%s, %d) = %q, want %q", tc.currency, tc.minor, got, tc.want)
+		}
 	}
 }
 

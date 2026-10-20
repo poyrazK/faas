@@ -353,14 +353,23 @@ func ownerInvoice(e api.ProductDocumentInvoice) string {
 	return strings.Join(parts, " · ")
 }
 
-// ownerMinor formats an amount in the currency's minor unit (cents).
+// ownerMinor formats an amount in the currency's minor unit, which has zero
+// to three decimal places (ADR-20261019100330).
 func ownerMinor(currency string, n int64) string {
 	sign := ""
 	if n < 0 {
 		sign = "-"
 		n = -n
 	}
-	return fmt.Sprintf("%s %s%d.%02d", currency, sign, n/100, n%100)
+	exp, _ := api.CurrencyMinorExponent(currency)
+	if exp == 0 {
+		return fmt.Sprintf("%s %s%d", currency, sign, n)
+	}
+	unit := int64(1)
+	for range exp {
+		unit *= 10
+	}
+	return fmt.Sprintf("%s %s%d.%0*d", currency, sign, n/unit, exp, n%unit)
 }
 
 func ownerMoney(currency string, n int64) string {

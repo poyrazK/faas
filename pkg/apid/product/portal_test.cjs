@@ -351,8 +351,8 @@ test('billing shows exported statement invoices and links only to the provider h
     return { ok: true, status: 200, json: async () => ({
       review: { period: '2026-09', currency: 'EUR', finalized: { amount_millicents: 50000 } },
       documents: { documents: [
-        statement(randomUUID(), { payment_status: 'open', overdue: true, currency: 'EUR', amount_minor: 1250, amount_remaining_minor: 1250, due_at: '2026-10-15T00:00:00Z', hosted_invoice_url: 'https://invoice.stripe.com/i/acct_1/in_2' }),
-        statement(randomUUID(), { payment_status: 'paid', overdue: false, currency: 'EUR', amount_minor: 50, amount_remaining_minor: 0, hosted_invoice_url: 'javascript:alert(1)' }),
+        statement(randomUUID(), { payment_status: 'open', overdue: true, currency: 'EUR', amount_minor: 1250, amount_remaining_minor: 1250, amount_remaining_millicents: 1250000, due_at: '2026-10-15T00:00:00Z', hosted_invoice_url: 'https://invoice.stripe.com/i/acct_1/in_2' }),
+        statement(randomUUID(), { payment_status: 'paid', overdue: false, currency: 'EUR', amount_minor: 50, amount_remaining_minor: 0, amount_remaining_millicents: 0, hosted_invoice_url: 'javascript:alert(1)' }),
         statement(randomUUID(), { overdue: false, currency: 'EUR', amount_minor: 50 }),
       ], next_cursor: '' },
     }) };

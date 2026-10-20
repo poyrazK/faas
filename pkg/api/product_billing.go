@@ -61,18 +61,21 @@ type ProductBillingDocument struct {
 // ExportStatus are owner-only; customers see completed exports only, and
 // HostedInvoiceURL is always the provider's own https page.
 type ProductDocumentInvoice struct {
-	Provider             string     `json:"provider,omitempty"`
-	InvoiceID            string     `json:"invoice_id,omitempty"`
-	DashboardURL         string     `json:"dashboard_url,omitempty"`
-	ExportStatus         string     `json:"export_status,omitempty"`
-	PaymentStatus        string     `json:"payment_status,omitempty"`
-	Overdue              bool       `json:"overdue"`
-	Currency             string     `json:"currency"`
-	AmountMinor          int64      `json:"amount_minor"`
-	AmountRemainingMinor *int64     `json:"amount_remaining_minor,omitempty"`
-	DueAt                *time.Time `json:"due_at,omitempty"`
-	PaidAt               *time.Time `json:"paid_at,omitempty"`
-	HostedInvoiceURL     string     `json:"hosted_invoice_url,omitempty"`
+	Provider             string `json:"provider,omitempty"`
+	InvoiceID            string `json:"invoice_id,omitempty"`
+	DashboardURL         string `json:"dashboard_url,omitempty"`
+	ExportStatus         string `json:"export_status,omitempty"`
+	PaymentStatus        string `json:"payment_status,omitempty"`
+	Overdue              bool   `json:"overdue"`
+	Currency             string `json:"currency"`
+	AmountMinor          int64  `json:"amount_minor"`
+	AmountRemainingMinor *int64 `json:"amount_remaining_minor,omitempty"`
+	// AmountRemainingMillicents is AmountRemainingMinor in millicents, so
+	// clients need not know the currency's decimal places.
+	AmountRemainingMillicents *int64     `json:"amount_remaining_millicents,omitempty"`
+	DueAt                     *time.Time `json:"due_at,omitempty"`
+	PaidAt                    *time.Time `json:"paid_at,omitempty"`
+	HostedInvoiceURL          string     `json:"hosted_invoice_url,omitempty"`
 }
 
 type ProductBillingDocuments struct {
