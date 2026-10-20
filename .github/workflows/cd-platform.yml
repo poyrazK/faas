@@ -30,12 +30,6 @@ on:
           cd-platform has passed once.
         type: boolean
         default: false
-      maintenance_mode:
-        description: >-
-          Planned incompatible-migration window: old writers are stopped before
-          activation, so skip the healthy customer-path baseline gate.
-        type: boolean
-        default: false
       hosted_runners:
         description: >-
           Run the coordination jobs (plan, control-plane deploy, compute
@@ -252,7 +246,6 @@ jobs:
       deploy_environment: ${{ inputs.deploy_environment }}
       hosted_runner: ${{ inputs.hosted_runners }}
       release_tag: ${{ inputs.release_tag }}
-      maintenance_mode: ${{ inputs.maintenance_mode }}
     secrets: inherit
 
   compute-prepare:

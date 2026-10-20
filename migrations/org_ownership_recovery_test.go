@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/migrations"
+	"github.com/onebox-faas/faas/pkg/db/pgtest"
 )
 
 // Ownership rollback must preserve the newer migration-capacity admission
@@ -29,26 +30,26 @@ func TestOrganizationOwnershipDownUpPreservesCapacityAccounting(t *testing.T) {
 	names := []string{
 		"20261018003100001_org_access_revocation.sql",
 		"20261018003100002_org_app_quota_ownership.sql",
-		"20261018003100003_org_resource_lifecycle.sql",
-		"20261018003100004_org_project_ownership.sql",
-		"20261018003100005_org_managed_postgres_ownership.sql",
-		"20261018003100006_org_object_storage_ownership.sql",
-		"20261018003100007_org_queue_ownership.sql",
+		"20261019190114207_org_resource_lifecycle_online.sql",
+		"20261019190114312_org_project_ownership_online.sql",
+		"20261019190114433_org_managed_postgres_ownership_online.sql",
+		"20261019190114551_org_object_storage_ownership_online.sql",
+		"20261019190114676_org_queue_ownership_online.sql",
 	}
-	ups, downs := make([]string, len(names)), make([]string, len(names))
+	raws := make([]string, len(names))
 	for i, name := range names {
 		raw, err := fs.ReadFile(sources, name)
 		if err != nil {
 			t.Fatal(err)
 		}
-		var ok bool
-		ups[i], downs[i], ok = strings.Cut(string(raw), "-- +goose Down")
-		if !ok {
+		if !strings.Contains(string(raw), "-- +goose Down") {
 			t.Fatalf("%s has no rollback", name)
 		}
+		raws[i] = string(raw)
 	}
+	// The online steps commit inside DO blocks, so each runs on its own as goose runs it.
 	for i := len(names) - 1; i >= 0; i-- {
-		if _, err := pool.Exec(ctx, downs[i]); err != nil {
+		if err := pgtest.ExecMigration(ctx, t, pool, raws[i], false); err != nil {
 			t.Fatalf("rollback %s: %v", names[i], err)
 		}
 	}
@@ -60,8 +61,8 @@ func TestOrganizationOwnershipDownUpPreservesCapacityAccounting(t *testing.T) {
 	if rolledBack != want {
 		t.Fatal("rollback changed capacity accounting beyond restoring personal policy")
 	}
-	for i, up := range ups {
-		if _, err := pool.Exec(ctx, up); err != nil {
+	for i, raw := range raws {
+		if err := pgtest.ExecMigration(ctx, t, pool, raw, true); err != nil {
 			t.Fatalf("reapply %s: %v", names[i], err)
 		}
 	}

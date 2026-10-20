@@ -24,10 +24,11 @@
 //  7. InsertOperatorIntent rejects a non-OTel-hex trace_id with
 //     a clear error (mirrors 00486's CHECK violation contract).
 
-package state
+package state_test
 
 import (
 	"context"
+	"github.com/onebox-faas/faas/pkg/state"
 	"strings"
 	"testing"
 )
@@ -35,25 +36,26 @@ import (
 // TestMemStore_AppendEventWithTrace_StoresTraceID is the in-memory
 // twin of the production AppendEventWithTrace contract.
 func TestMemStore_AppendEventWithTrace_StoresTraceID(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	ctx := context.Background()
 	traceID := "4bf92f3577b34da6a3ce929d0e0e4736"
 
 	if err := m.AppendEventWithTrace(ctx, "test", "kind", nil, []byte(`{"k":"v"}`), &traceID); err != nil {
 		t.Fatalf("AppendEventWithTrace: %v", err)
 	}
+	(*
 
 	// Read-back via ListEvents; the existing ListEvents SELECT
 	// doesn't include trace_id, so the field is the zero value
 	// (nil) for this read. We need a direct introspection path:
 	// the package-private m.events slice.
-	m.mu.Lock()
-	if len(m.events) != 1 {
-		m.mu.Unlock()
-		t.Fatalf("events length = %d, want 1", len(m.events))
+	m.Mu()).Lock()
+	if len((*m.Events())) != 1 {
+		(*m.Mu()).Unlock()
+		t.Fatalf("events length = %d, want 1", len((*m.Events())))
 	}
-	got := m.events[0].TraceID
-	m.mu.Unlock()
+	got := (*m.Events())[0].TraceID
+	(*m.Mu()).Unlock()
 
 	if got == nil {
 		t.Fatalf("Event.TraceID is nil; want %q", traceID)
@@ -66,18 +68,18 @@ func TestMemStore_AppendEventWithTrace_StoresTraceID(t *testing.T) {
 // TestMemStore_AppendEvent_ShimLeavesTraceIDNil confirms the
 // four-arg shim still works without trace_id propagation.
 func TestMemStore_AppendEvent_ShimLeavesTraceIDNil(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	ctx := context.Background()
 	if err := m.AppendEvent(ctx, "test", "kind", nil, []byte(`{}`)); err != nil {
 		t.Fatalf("AppendEvent shim: %v", err)
 	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if len(m.events) != 1 {
-		t.Fatalf("events length = %d, want 1", len(m.events))
+	(*m.Mu()).Lock()
+	defer (*m.Mu()).Unlock()
+	if len((*m.Events())) != 1 {
+		t.Fatalf("events length = %d, want 1", len((*m.Events())))
 	}
-	if m.events[0].TraceID != nil {
-		t.Errorf("Event.TraceID = %v, want nil for AppendEvent shim", *m.events[0].TraceID)
+	if (*m.Events())[0].TraceID != nil {
+		t.Errorf("Event.TraceID = %v, want nil for AppendEvent shim", *(*m.Events())[0].TraceID)
 	}
 }
 
@@ -85,7 +87,7 @@ func TestMemStore_AppendEvent_ShimLeavesTraceIDNil(t *testing.T) {
 // defensive validation in MemStore that mirrors the migration
 // CHECK constraint at 00486.
 func TestMemStore_AppendEventWithTrace_RejectsNonOTelHex(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	ctx := context.Background()
 	for _, bad := range []string{
 		"",                                  // empty
@@ -107,11 +109,11 @@ func TestMemStore_AppendEventWithTrace_RejectsNonOTelHex(t *testing.T) {
 // TestMemStore_InsertOperatorIntent_StoresTraceID pins the new
 // traceID argument on the operator_intents insert path.
 func TestMemStore_InsertOperatorIntent_StoresTraceID(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	ctx := context.Background()
 	traceID := "4bf92f3577b34da6a3ce929d0e0e4736"
 
-	id, err := m.InsertOperatorIntent(ctx, OperatorIntentKindForcePark, "target-id", nil, "actor", "test", nil, &traceID)
+	id, err := m.InsertOperatorIntent(ctx, state.OperatorIntentKindForcePark, "target-id", nil, "actor", "test", nil, &traceID)
 	if err != nil {
 		t.Fatalf("InsertOperatorIntent: %v", err)
 	}
@@ -131,16 +133,16 @@ func TestMemStore_InsertOperatorIntent_StoresTraceID(t *testing.T) {
 // contract: unrelated traces never leak and the newest matching rows survive
 // the caller-provided bound.
 func TestMemStore_TraceLookupExactAndBounded(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	ctx := context.Background()
 	traceID := "4bf92f3577b34da6a3ce929d0e0e4736"
 	otherTraceID := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
-	if _, err := m.InsertOperatorIntent(ctx, OperatorIntentKindForcePark, "target-a", nil,
+	if _, err := m.InsertOperatorIntent(ctx, state.OperatorIntentKindForcePark, "target-a", nil,
 		"actor", "first", nil, &traceID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.InsertOperatorIntent(ctx, OperatorIntentKindForcePark, "target-b", nil,
+	if _, err := m.InsertOperatorIntent(ctx, state.OperatorIntentKindForcePark, "target-b", nil,
 		"actor", "unrelated", nil, &otherTraceID); err != nil {
 		t.Fatal(err)
 	}
@@ -170,9 +172,9 @@ func TestMemStore_TraceLookupExactAndBounded(t *testing.T) {
 // TestMemStore_InsertOperatorIntent_NilTraceIDAllowsNil confirms
 // the pre-PR contract (no trace_id) still works.
 func TestMemStore_InsertOperatorIntent_NilTraceIDAllowsNil(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	ctx := context.Background()
-	id, err := m.InsertOperatorIntent(ctx, OperatorIntentKindForcePark, "target-id", nil, "actor", "test", nil, nil)
+	id, err := m.InsertOperatorIntent(ctx, state.OperatorIntentKindForcePark, "target-id", nil, "actor", "test", nil, nil)
 	if err != nil {
 		t.Fatalf("InsertOperatorIntent: %v", err)
 	}
@@ -188,11 +190,11 @@ func TestMemStore_InsertOperatorIntent_NilTraceIDAllowsNil(t *testing.T) {
 // TestMemStore_ClaimPendingOperatorIntent_RoundTripsTraceID pins
 // the FOR UPDATE SKIP LOCKED claim path preserves the trace_id.
 func TestMemStore_ClaimPendingOperatorIntent_RoundTripsTraceID(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	ctx := context.Background()
 	traceID := "4bf92f3577b34da6a3ce929d0e0e4736"
 
-	id, err := m.InsertOperatorIntent(ctx, OperatorIntentKindForceRestart, "instance-id", nil, "actor", "test", nil, &traceID)
+	id, err := m.InsertOperatorIntent(ctx, state.OperatorIntentKindForceRestart, "instance-id", nil, "actor", "test", nil, &traceID)
 	if err != nil {
 		t.Fatalf("InsertOperatorIntent: %v", err)
 	}
@@ -215,10 +217,10 @@ func TestMemStore_ClaimPendingOperatorIntent_RoundTripsTraceID(t *testing.T) {
 // defensive validation on the operator_intents path. Mirrors
 // the migration CHECK at 00486 for events.operator_intents.
 func TestMemStore_InsertOperatorIntent_RejectsNonOTelHex(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	ctx := context.Background()
 	bad := "not-hex"
-	_, err := m.InsertOperatorIntent(ctx, OperatorIntentKindForcePark, "target-id", nil, "actor", "test", nil, &bad)
+	_, err := m.InsertOperatorIntent(ctx, state.OperatorIntentKindForcePark, "target-id", nil, "actor", "test", nil, &bad)
 	if err == nil {
 		t.Fatalf("InsertOperatorIntent(trace_id=%q) accepted; want error", bad)
 	}
@@ -247,7 +249,7 @@ func TestIsOTelHex32(t *testing.T) {
 		{"4bf92f3577b34da6a3ce929d0e0e473g", false},  // non-hex char
 	}
 	for _, c := range cases {
-		if got := isOTelHex32(c.in); got != c.want {
+		if got := state.IsOTelHex32(c.in); got != c.want {
 			t.Errorf("isOTelHex32(%q) = %v, want %v", c.in, got, c.want)
 		}
 	}

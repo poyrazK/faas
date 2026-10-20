@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/onebox-faas/faas/pkg/livequery/liveserver"
 )
 
 // adr: 20261016151947 — the connection string comes from a file in
@@ -40,23 +42,42 @@ func TestDatabaseDSN(t *testing.T) {
 	}
 }
 
-// adr: 20261016151947 — a backend's live_hub_url may carry {database_id} in
-// its path; the hub answers its own database there and at /live, and nothing
-// else.
+// adr: 20261016151947 — a backend's live_hub_url carries {database_id} in its
+// path. Each database the process serves answers there, 503 while its hub is
+// starting; a database it does not serve is not found. /live answers only a
+// process that serves one database.
 func TestRealtimedMux(t *testing.T) {
-	mux := realtimedMux("db_1", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusTeapot) }))
-	for path, want := range map[string]int{
-		"/live":           http.StatusTeapot,
-		"/db_1/live":      http.StatusTeapot,
-		"/db_2/live":      http.StatusNotFound,
-		"/db_1/live/x":    http.StatusNotFound,
-		"/":               http.StatusNotFound,
-		"/db_1/db_1/live": http.StatusNotFound,
+	teapot := func(*liveserver.Hub) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusTeapot) })
+	}
+	hub := liveserver.New(liveserver.Config{Database: "db_1"})
+	one := newRoutes([]string{"db_1"})
+	one.set("db_1", hub)
+	two := newRoutes([]string{"db_1", "db_2"})
+	two.set("db_1", hub)
+	for _, tc := range []struct {
+		routes *routes
+		paths  map[string]int
+	}{
+		{one, map[string]int{
+			"/live": http.StatusTeapot, "/db_1/live": http.StatusTeapot, "/db_2/live": http.StatusNotFound,
+			"/db_1/live/x": http.StatusNotFound, "/": http.StatusNotFound, "/db_1/db_1/live": http.StatusNotFound,
+		}},
+		{two, map[string]int{
+			"/live": http.StatusNotFound, "/db_1/live": http.StatusTeapot, "/db_2/live": http.StatusServiceUnavailable,
+			"/db_3/live": http.StatusNotFound,
+		}},
 	} {
-		rec := httptest.NewRecorder()
-		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
-		if rec.Code != want {
-			t.Errorf("GET %s = %d, want %d", path, rec.Code, want)
+		mux := realtimedMux(tc.routes, teapot)
+		for path, want := range tc.paths {
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+			if rec.Code != want {
+				t.Errorf("serving %d databases: GET %s = %d, want %d", len(tc.routes.dbs), path, rec.Code, want)
+			}
+			if want == http.StatusServiceUnavailable && rec.Header().Get("Retry-After") == "" {
+				t.Errorf("GET %s: 503 without Retry-After", path)
+			}
 		}
 	}
 }

@@ -500,7 +500,7 @@ export class OutboundService {
   }
   /**
    * Read the built-in AI price catalog of one provider.
-   * Requires MFA and read scope (ADR-994). The catalog prices the models an integration's own price list does not name. Prices are list prices converted to EUR at usd_per_eur and rounded up.
+   * Requires MFA and read scope (ADR-994). The catalog prices the models an integration's own price list does not name. Prices are the providers' list prices in US dollars, rounded up (ADR 20261019123822).
    * @returns OutboundAIPriceCatalogResponse The provider's catalog, or the one entry that prices the model.
    * @throws ApiError
    */

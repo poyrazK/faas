@@ -1,5 +1,5 @@
 // adr: 1289
-package state
+package state_test
 
 import (
 	"context"
@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func automationSuiteFixture() api.AutomationTestSuite {
@@ -21,31 +22,31 @@ func automationSuiteFixture() api.AutomationTestSuite {
 		{Name: "last case still runs", Simulation: inputs, Expectations: []api.AutomationCheckExpectation{{Step: "main", State: "mocked"}}},
 	}}
 }
-func saveSuiteForTest(t *testing.T, store AutomationStore, appID string, draft Automation, suite *api.AutomationTestSuite) Automation {
+func saveSuiteForTest(t *testing.T, store state.AutomationStore, appID string, draft state.Automation, suite *api.AutomationTestSuite) state.Automation {
 	t.Helper()
 	var raw json.RawMessage
 	if suite != nil {
 		raw, _ = json.Marshal(suite)
 	}
-	result, err := store.MutateAutomation(t.Context(), appID, draft.Name, AutomationMutation{Action: "tests", ExpectedVersion: draft.Version, TestSuite: raw})
+	result, err := store.MutateAutomation(t.Context(), appID, draft.Name, state.AutomationMutation{Action: "tests", ExpectedVersion: draft.Version, TestSuite: raw})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return result
 }
 func TestAutomationSavedTestsPersistenceAndFreshness(t *testing.T) {
-	workflowScheduleStores(t, func(t *testing.T, store Store) {
-		app, _ := seedWorkflowSchedule(t, store, "allow")
-		author := store.(AutomationStore)
-		runner := store.(AutomationTestStore)
-		raw := automationDraft("saved-cases", "/handler", "")
-		draft := mutateForTest(t, author, app.ID, "saved-cases", "save", 0, raw, false)
+	state.WorkflowScheduleStores(t, func(t *testing.T, store state.Store) {
+		app, _ := state.SeedWorkflowSchedule(t, store, "allow")
+		author := store.(state.AutomationStore)
+		runner := store.(state.AutomationTestStore)
+		raw := state.AutomationDraft("saved-cases", "/handler", "")
+		draft := state.MutateForTest(t, author, app.ID, "saved-cases", "save", 0, raw, false)
 		suite := automationSuiteFixture()
 		saved := saveSuiteForTest(t, author, app.ID, draft, &suite)
 		if saved.Version <= draft.Version || len(saved.Published) > 0 {
 			t.Fatal("suite save did not version draft intent")
 		}
-		if _, err := runner.RunAutomationTests(t.Context(), app.ID, draft.Name, draft.Version, api.PlanHobby); !errors.Is(err, ErrAutomationVersionConflict) {
+		if _, err := runner.RunAutomationTests(t.Context(), app.ID, draft.Name, draft.Version, api.PlanHobby); !errors.Is(err, state.ErrAutomationVersionConflict) {
 			t.Fatalf("stale run: %v", err)
 		}
 		report, err := runner.RunAutomationTests(t.Context(), app.ID, draft.Name, saved.Version, api.PlanHobby)
@@ -78,7 +79,7 @@ func TestAutomationSavedTestsPersistenceAndFreshness(t *testing.T) {
 		if hash != report.InputsHash {
 			t.Fatal("JSON storage changed result freshness")
 		}
-		published := mutateForTest(t, author, app.ID, draft.Name, "publish", current.Version, nil, false)
+		published := state.MutateForTest(t, author, app.ID, draft.Name, "publish", current.Version, nil, false)
 		if string(published.TestReport) != string(current.TestReport) || string(published.TestSuite) != string(current.TestSuite) {
 			t.Fatal("publication dropped tests")
 		}
@@ -100,39 +101,39 @@ func TestAutomationSavedTestsPersistenceAndFreshness(t *testing.T) {
 		if err := store.UpdateAccountPlan(t.Context(), app.AccountID, api.PlanFree); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := author.MutateAutomation(t.Context(), app.ID, draft.Name, AutomationMutation{Action: "tests", ExpectedVersion: edited.Version, TestSuite: edited.TestSuite}); err == nil {
+		if _, err := author.MutateAutomation(t.Context(), app.ID, draft.Name, state.AutomationMutation{Action: "tests", ExpectedVersion: edited.Version, TestSuite: edited.TestSuite}); err == nil {
 			t.Fatal("suite write ignored plan downgrade")
 		}
 		cleared := saveSuiteForTest(t, author, app.ID, edited, nil)
 		if len(cleared.TestSuite) != 0 || len(cleared.TestReport) != 0 {
 			t.Fatal("clear retained test data")
 		}
-		if _, err := runner.RunAutomationTests(t.Context(), app.ID, draft.Name, cleared.Version, api.PlanHobby); !errors.Is(err, ErrAutomationInvalid) {
+		if _, err := runner.RunAutomationTests(t.Context(), app.ID, draft.Name, cleared.Version, api.PlanHobby); !errors.Is(err, state.ErrAutomationInvalid) {
 			t.Fatalf("empty suite run: %v", err)
 		}
-		runs, _, _ := store.ListWorkflowRuns(t.Context(), app.ID, ListWorkflowRunsOpts{})
+		runs, _, _ := store.ListWorkflowRuns(t.Context(), app.ID, state.ListWorkflowRunsOpts{})
 		if len(runs) != 0 {
 			t.Fatal("saved simulations admitted real runs")
 		}
 	})
 }
 func TestAutomationSavedTestsInvalidatePublicationReceipts(t *testing.T) {
-	workflowScheduleStores(t, func(t *testing.T, store Store) {
-		app, _ := seedWorkflowSchedule(t, store, "allow")
-		author := store.(AutomationStore)
-		draft := mutateForTest(t, author, app.ID, "checks", "save", 0, automationDraft("checks", "/handler", ""), false)
+	state.WorkflowScheduleStores(t, func(t *testing.T, store state.Store) {
+		app, _ := state.SeedWorkflowSchedule(t, store, "allow")
+		author := store.(state.AutomationStore)
+		draft := state.MutateForTest(t, author, app.ID, "checks", "save", 0, state.AutomationDraft("checks", "/handler", ""), false)
 		suite := automationSuiteFixture()
 		suite.Cases = suite.Cases[:1]
 		draft = saveSuiteForTest(t, author, app.ID, draft, &suite)
 		var def api.WorkflowSpec
 		_ = json.Unmarshal(draft.Draft, &def)
-		checker := store.(AutomationPublishCheckStore)
+		checker := store.(state.AutomationPublishCheckStore)
 		receipt, err := checker.CheckAutomationPublication(t.Context(), app.ID, draft.Name, app.AccountID, "", api.CheckAutomationPublicationRequest{ExpectedVersion: draft.Version, Scenarios: []api.AutomationPublishCheckScenario{{Name: suite.Cases[0].Name, Simulation: suite.Cases[0].Simulation.Simulation(def), Expectations: suite.Cases[0].Expectations}}}, api.PlanHobby)
 		if err != nil {
 			t.Fatal(err)
 		}
 		draft = saveSuiteForTest(t, author, app.ID, draft, &suite)
-		if _, err := author.MutateAutomation(t.Context(), app.ID, draft.Name, AutomationMutation{Action: "publish", ExpectedVersion: draft.Version, CheckReceipt: receipt.Receipt, ActorAccountID: app.AccountID}); !errors.Is(err, ErrAutomationPublishCheckRequired) {
+		if _, err := author.MutateAutomation(t.Context(), app.ID, draft.Name, state.AutomationMutation{Action: "publish", ExpectedVersion: draft.Version, CheckReceipt: receipt.Receipt, ActorAccountID: app.AccountID}); !errors.Is(err, state.ErrAutomationPublishCheckRequired) {
 			t.Fatalf("stale receipt accepted: %v", err)
 		}
 	})
@@ -140,26 +141,26 @@ func TestAutomationSavedTestsInvalidatePublicationReceipts(t *testing.T) {
 func TestAutomationSavedTestsValidationAndInvalidAssertions(t *testing.T) {
 	suite := automationSuiteFixture()
 	for _, raw := range []string{`null`, `{} {}`, `{"cases":[{"name":"a","simulation":{"definition":{}}}]}`, `{"cases":[{"name":"a"},{"name":"a"}]}`, `{"cases":[{"name":" "}]}`} {
-		if validateAutomationTestSuite(json.RawMessage(raw)) == nil {
+		if state.ValidateAutomationTestSuite(json.RawMessage(raw)) == nil {
 			t.Fatalf("accepted invalid suite: %s", raw)
 		}
 	}
 	var def api.WorkflowSpec
-	_ = json.Unmarshal(automationDraft("tests", "/handler", ""), &def)
+	_ = json.Unmarshal(state.AutomationDraft("tests", "/handler", ""), &def)
 	suite.Cases[0].Expectations[0].Step = "removed"
-	report, err := simulateAutomationTestSuite(t.Context(), def, suite, 1, api.PlanHobby)
+	report, err := state.SimulateAutomationTestSuite(t.Context(), def, suite, 1, api.PlanHobby)
 	if err != nil || report.Cases[0].Issue != "invalid_expectations" || !report.Cases[2].Passed {
 		t.Fatalf("invalid assertion stopped suite: %+v %v", report, err)
 	}
 }
 
 func TestAutomationSavedTestsPreserveScheduleCursor(t *testing.T) {
-	workflowScheduleStores(t, func(t *testing.T, store Store) {
-		app, dep := seedWorkflowSchedule(t, store, "allow")
-		author := store.(AutomationStore)
-		draft := mutateForTest(t, author, app.ID, "nightly", "save", 0, automationDraft("nightly", "/report", `{"type":"schedule","schedule":"* * * * *"}`), false)
-		draft = mutateForTest(t, author, app.ID, "nightly", "publish", draft.Version, nil, true)
-		schedules := store.(WorkflowScheduleStore)
+	state.WorkflowScheduleStores(t, func(t *testing.T, store state.Store) {
+		app, dep := state.SeedWorkflowSchedule(t, store, "allow")
+		author := store.(state.AutomationStore)
+		draft := state.MutateForTest(t, author, app.ID, "nightly", "save", 0, state.AutomationDraft("nightly", "/report", `{"type":"schedule","schedule":"* * * * *"}`), false)
+		draft = state.MutateForTest(t, author, app.ID, "nightly", "publish", draft.Version, nil, true)
+		schedules := store.(state.WorkflowScheduleStore)
 		at := time.Date(2026, 10, 15, 8, 0, 30, 0, time.UTC)
 		if _, _, err := schedules.AdmitScheduledWorkflow(t.Context(), app.ID, dep.ID, draft.Name, at); err != nil {
 			t.Fatal(err)
@@ -171,7 +172,7 @@ func TestAutomationSavedTestsPreserveScheduleCursor(t *testing.T) {
 		suite := automationSuiteFixture()
 		suite.Cases = suite.Cases[:1]
 		draft = saveSuiteForTest(t, author, app.ID, draft, &suite)
-		if _, err := store.(AutomationTestStore).RunAutomationTests(t.Context(), app.ID, draft.Name, draft.Version, api.PlanHobby); err != nil {
+		if _, err := store.(state.AutomationTestStore).RunAutomationTests(t.Context(), app.ID, draft.Name, draft.Version, api.PlanHobby); err != nil {
 			t.Fatal(err)
 		}
 		after, err := schedules.ListWorkflowScheduleCursors(t.Context(), app.ID)
@@ -185,7 +186,7 @@ func TestAutomationSavedTestsLoopItemSummary(t *testing.T) {
 	def := api.WorkflowSpec{Name: "loop-tests", Steps: []api.WorkflowStepSpec{{Name: "batch", ForEach: &api.WorkflowForEachSpec{Items: "input.items", Action: api.WorkflowForEachActionSpec{Run: "send"}}}}}
 	index := 0
 	c := api.AutomationTestCase{Name: "item succeeds", Simulation: api.AutomationTestInputs{Input: json.RawMessage(`{"items":[1]}`), MockItemOutputs: map[string][]json.RawMessage{"batch": {json.RawMessage(`{"ok":true}`)}}}, Expectations: []api.AutomationCheckExpectation{{Step: "batch/action", Loop: "batch", ItemIndex: &index, State: "mocked"}}}
-	result := evaluateAutomationTestCase(t.Context(), def, c, api.PlanPro)
+	result := state.EvaluateAutomationTestCase(t.Context(), def, c, api.PlanPro)
 	if !result.Passed || len(result.Steps) != 1 || result.Steps[0].State != "mocked" || !result.Steps[0].Passed {
 		t.Fatalf("loop item summary: %+v", result)
 	}

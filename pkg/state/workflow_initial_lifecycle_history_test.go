@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -7,24 +7,25 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // adr: 1274
 func TestWorkflowInitialLifecycleHistory(t *testing.T) {
 	for _, scenario := range []string{"success", "failed", "cancelled", "expired", "stale"} {
 		t.Run(scenario, func(t *testing.T) {
-			workflowScheduleStores(t, func(t *testing.T, s Store) {
-				ctx := WithEventRecoveryActor(context.Background(), "api_key", "lifecycle-operator")
-				run, app, failure, p := seedInitialReview(t, s)
+			state.WorkflowScheduleStores(t, func(t *testing.T, s state.Store) {
+				ctx := state.WithEventRecoveryActor(context.Background(), "api_key", "lifecycle-operator")
+				run, app, failure, p := state.SeedInitialReview(t, s)
 				if scenario == "success" || scenario == "failed" {
 					p.Policy.Mode, p.Policy.HourlyExecutionBudget, p.Policy.PauseAfterFailures = "automatic_initial", 1, 1
 					var err error
-					p, err = s.(WorkflowRecoveryPolicyStore).SetWorkflowRecoveryPolicy(ctx, app.AccountID, app.ID, api.SetWorkflowRecoveryPolicyRequest{ExpectedVersion: p.Version, Policy: p.Policy})
+					p, err = s.(state.WorkflowRecoveryPolicyStore).SetWorkflowRecoveryPolicy(ctx, app.AccountID, app.ID, api.SetWorkflowRecoveryPolicyRequest{ExpectedVersion: p.Version, Policy: p.Policy})
 					if err != nil {
 						t.Fatal(err)
 					}
 				}
-				reviews := s.(WorkflowInitialRecoveryReviewStore)
+				reviews := s.(state.WorkflowInitialRecoveryReviewStore)
 				request := api.WorkflowInitialRecoveryReviewRequest{ExpectedPolicyVersion: p.Version}
 				r, err := reviews.PrepareWorkflowInitialRecoveryReview(ctx, app.AccountID, app.ID, failure, request)
 				if err != nil {
@@ -33,7 +34,7 @@ func TestWorkflowInitialLifecycleHistory(t *testing.T) {
 				if _, err = reviews.PrepareWorkflowInitialRecoveryReview(ctx, app.AccountID, app.ID, failure, request); err != nil {
 					t.Fatal(err)
 				}
-				history := s.(WorkflowRecoveryHistoryStore)
+				history := s.(state.WorkflowRecoveryHistoryStore)
 				options := api.WorkflowRecoveryHistoryOptions{RunID: run.ID, Workflow: run.WorkflowName, PolicyVersion: p.Version, Limit: 100}
 				read := func() api.WorkflowRecoveryHistory {
 					t.Helper()
@@ -61,7 +62,7 @@ func TestWorkflowInitialLifecycleHistory(t *testing.T) {
 						}
 					}
 				case "expired":
-					mutateInitialReview(t, s, r.ID, func(saved *api.WorkflowInitialRecoveryReview) {
+					state.MutateInitialReview(t, s, r.ID, func(saved *api.WorkflowInitialRecoveryReview) {
 						saved.PreparedAt = time.Now().UTC().Add(-2 * api.WorkflowInitialRecoveryReviewLifetime).Truncate(time.Microsecond)
 						saved.ExpiresAt = saved.PreparedAt.Add(api.WorkflowInitialRecoveryReviewLifetime)
 					})
@@ -71,7 +72,7 @@ func TestWorkflowInitialLifecycleHistory(t *testing.T) {
 					expected = "initial_recovery_expired"
 				case "stale":
 					p.Policy.Reason = "revised policy"
-					if _, err = s.(WorkflowRecoveryPolicyStore).SetWorkflowRecoveryPolicy(ctx, app.AccountID, app.ID, api.SetWorkflowRecoveryPolicyRequest{ExpectedVersion: p.Version, Policy: p.Policy}); err != nil {
+					if _, err = s.(state.WorkflowRecoveryPolicyStore).SetWorkflowRecoveryPolicy(ctx, app.AccountID, app.ID, api.SetWorkflowRecoveryPolicyRequest{ExpectedVersion: p.Version, Policy: p.Policy}); err != nil {
 						t.Fatal(err)
 					}
 					if _, err = reviews.DecideWorkflowInitialRecoveryReview(ctx, app.AccountID, app.ID, r.ID, api.WorkflowInitialRecoveryReviewDecisionRequest{Decision: "submit", Reason: "submit observed review"}); err != nil {
@@ -85,21 +86,21 @@ func TestWorkflowInitialLifecycleHistory(t *testing.T) {
 							t.Fatal(err)
 						}
 					}
-					if _, err = s.(EventRecoveryStore).ProcessNextEventRecovery(ctx, time.Now().UTC()); err != nil {
+					if _, err = s.(state.EventRecoveryStore).ProcessNextEventRecovery(ctx, time.Now().UTC()); err != nil {
 						t.Fatal(err)
 					}
 					if _, err = s.ClaimNextDueWorkflowRun(ctx); err != nil {
 						t.Fatal(err)
 					}
-					status := WorkflowRunStatusSucceeded
+					status := state.WorkflowRunStatusSucceeded
 					if scenario == "failed" {
-						status = WorkflowRunStatusFailed
+						status = state.WorkflowRunStatusFailed
 					}
 					if err = s.MarkWorkflowRunStatus(ctx, run.ID, status, nil, nil); err != nil {
 						t.Fatal(err)
 					}
-					pollInitialAutomatic(t, s, time.Now().UTC())
-					pollInitialAutomatic(t, s, time.Now().Add(time.Minute))
+					state.PollInitialAutomatic(t, s, time.Now().UTC())
+					state.PollInitialAutomatic(t, s, time.Now().Add(time.Minute))
 					expected = "initial_recovery_result"
 				}
 				out := read()
@@ -130,17 +131,17 @@ func TestWorkflowInitialLifecycleHistory(t *testing.T) {
 						t.Fatal("submission replay duplicated")
 					}
 				}
-				if pg, ok := s.(*PgStore); ok {
-					s = NewPgStore(pg.pool.Pool)
-					history = s.(WorkflowRecoveryHistoryStore)
+				if pg, ok := s.(*state.PgStore); ok {
+					s = state.NewPgStore((*pg.Pool()).Pool)
+					history = s.(state.WorkflowRecoveryHistoryStore)
 				}
 				// Source review pruning must not erase durable lifecycle evidence.
-				if m, ok := s.(*MemStore); ok {
-					m.mu.Lock()
-					delete(m.initialRecoveryReviews, r.ID)
-					m.mu.Unlock()
+				if m, ok := s.(*state.MemStore); ok {
+					(*m.Mu()).Lock()
+					delete((*m.InitialRecoveryReviews()), r.ID)
+					(*m.Mu()).Unlock()
 				} else {
-					if _, err = s.(*PgStore).pool.Exec(ctx, "DELETE FROM workflow_initial_recovery_reviews WHERE id=$1::uuid", r.ID); err != nil {
+					if _, err = (*s.(*state.PgStore).Pool()).Exec(ctx, "DELETE FROM workflow_initial_recovery_reviews WHERE id=$1::uuid", r.ID); err != nil {
 						t.Fatal(err)
 					}
 				}

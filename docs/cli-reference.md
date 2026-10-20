@@ -29,6 +29,8 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 | [`apps`](#apps) | List your apps |
 | [`app`](#app) | Inspect an app, change settings, or manage its runtime |
 | [`billing`](#billing) | Manage billing (portal, invoices, subscription, card on file) |
+| [`freeze`](#freeze) | Freeze production releases for a window, every week, or after automatic rollbacks |
+| [`release-gates`](#release-gates) | Abort rollouts and roll back releases on your SLOs, new error groups, or custom metrics |
 | [`canary`](#canary) | Inspect profiling gates, advance canary stages, or simulate a preset |
 | [`build`](#build) | Inspect builds (build status\|list\|provenance\|sbom) |
 | [`connect`](#connect) | Connect a third-party service (github \| repo OWNER/NAME) |
@@ -2798,18 +2800,18 @@ gregale ai tokens create --app my-api --name laptop --expires-in-hours 24
 
 Set the AI provider and token or cost limits (unchanged flags keep their values)
 
-`gregale ai policy [--provider <PROVIDER>] [--daily-tokens <N>] [--daily-cost <EUR>] [--monthly-cost <EUR>] [--request-log <on|off>] [--request-log-content <on|off>] [--user-daily-tokens <N>] [--user-daily-cost <EUR>] [--log-export <on|off>] [--allow-unmetered <on|off>] [--prompt-cache <on|off>] <integration-id>`
+`gregale ai policy [--provider <PROVIDER>] [--daily-tokens <N>] [--daily-cost <USD>] [--monthly-cost <USD>] [--request-log <on|off>] [--request-log-content <on|off>] [--user-daily-tokens <N>] [--user-daily-cost <USD>] [--log-export <on|off>] [--allow-unmetered <on|off>] [--prompt-cache <on|off>] <integration-id>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--provider <PROVIDER>` | AI provider | one of `openai` · `anthropic` · `gemini` · `azure_openai` · `bedrock` · `vertex` · `off` |
 | `--daily-tokens <N>` | UTC-day input+output token limit, or none |  |
-| `--daily-cost <EUR>` | UTC-day cost limit in EUR, or none |  |
-| `--monthly-cost <EUR>` | calendar-month cost limit in EUR, or none |  |
+| `--daily-cost <USD>` | UTC-day cost limit in USD, or none |  |
+| `--monthly-cost <USD>` | calendar-month cost limit in USD, or none |  |
 | `--request-log <on|off>` | log per-call metadata for 7 days | one of `on` · `off` |
 | `--request-log-content <on|off>` | also keep the first 32 KiB of each logged call&#39;s bodies for 3 days | one of `on` · `off` |
 | `--user-daily-tokens <N>` | each end user&#39;s UTC-day token limit (X-Gregale-AI-User), or none |  |
-| `--user-daily-cost <EUR>` | each end user&#39;s UTC-day cost limit in EUR, or none |  |
+| `--user-daily-cost <USD>` | each end user&#39;s UTC-day cost limit in USD, or none |  |
 | `--log-export <on|off>` | send each app call&#39;s metadata to the app&#39;s log drains | one of `on` · `off` |
 | `--allow-unmetered <on|off>` | let through calls the gateway cannot meter (realtime client secrets, vector stores, fine-tuning), outside the caps | one of `on` · `off` |
 | `--prompt-cache <on|off>` | add prompt-cache breakpoints to Claude requests that carry none: after a repeated system prompt or tools, and after a continuing conversation | one of `on` · `off` |
@@ -2864,7 +2866,7 @@ Show or change per-tag daily cost limits (unchanged limits are kept)
 
 | Flag | Meaning | |
 |---|---|---|
-| `--set <SPEC>` | cap a tag&#39;s UTC-day cost: key=value:EUR (repeat) |  |
+| `--set <SPEC>` | cap a tag&#39;s UTC-day cost: key=value:USD (repeat) |  |
 | `--remove <TAG>` | remove a tag&#39;s limit (repeat) |  |
 | `--clear` | remove every limit before applying --set |  |
 
@@ -2901,7 +2903,7 @@ Show the price list, or replace it with: prices set &lt;integration-id&gt; --pri
 
 | Flag | Meaning | |
 |---|---|---|
-| `--price <SPEC>` | model=PREFIX,input=EUR,output=EUR[,cached=EUR][,cache-write=EUR][,input-image=EUR][,output-image=EUR] per million tokens, [,image=EUR] per image, [,audio-minute=EUR] per minute, [,characters=EUR] per million characters, [,video-second=EUR] per second of video, with model=&lt;model&gt;@&lt;resolution&gt; for one resolution, [,web-search=EUR] [,file-search=EUR] per use, [,code-session-gb=EUR] per GB container session (repeat; none clears) |  |
+| `--price <SPEC>` | model=PREFIX,input=USD,output=USD[,cached=USD][,cache-write=USD][,input-image=USD][,output-image=USD] per million tokens, [,image=USD] per image, [,audio-minute=USD] per minute, [,characters=USD] per million characters, [,video-second=USD] per second of video, with model=&lt;model&gt;@&lt;resolution&gt; for one resolution, [,web-search=USD] [,file-search=USD] per use, [,code-session-gb=USD] per GB container session, [,input-audio=USD][,cached-audio=USD][,output-audio=USD] per million audio tokens (repeat; none clears) |  |
 
 ### ai catalog
 
@@ -5702,6 +5704,123 @@ Export a partial FOCUS 1.4 invoice projection
 | `--month <YYYY-MM>` | invoice period-end month (required) |  |
 | `--format <FORMAT>` | export encoding (default zip with CSV and metadata) | one of `zip` · `csv` · `metadata` |
 | `--out <PATH>` | new output file (required for zip); - writes stdout |  |
+
+
+## freeze
+
+Freeze production releases for a window, every week, or after automatic rollbacks
+
+`gregale freeze [<subcommand>]`
+
+Examples:
+
+```sh
+gregale freeze create --app my-api --for 2h --reason "incident 4711"
+gregale freeze create --all-apps --weekly fri --at 16:00 --for 64h --tz Europe/Istanbul --reason "no weekend releases"
+gregale freeze create --app my-api --after-rollback 1h --reason "settle after automatic rollbacks"
+gregale freeze status --app my-api
+```
+
+### freeze create
+
+Create a freeze (ADR-20261019071733)
+
+`gregale freeze create [--app <slug>] [--all-apps] --reason <TEXT> [--for <DURATION>] [--from <TIME>] [--until <TIME>] [--weekly <DAYS>] [--at <HH:MM>] [--tz <ZONE>] [--after-rollback <DURATION>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug (defaults to linked project app) |  |
+| `--all-apps` | freeze every app of the account |  |
+| `--reason <TEXT>` | why releases are frozen (required, at most 200 characters) | required |
+| `--for <DURATION>` | window length from --from (default now), or weekly length |  |
+| `--from <TIME>` | window start (RFC 3339) |  |
+| `--until <TIME>` | window end (RFC 3339); omit --for and --until to freeze until lifted |  |
+| `--weekly <DAYS>` | weekly days, comma-separated |  |
+| `--at <HH:MM>` | weekly start time |  |
+| `--tz <ZONE>` | weekly time zone (IANA; default UTC) |  |
+| `--after-rollback <DURATION>` | freeze an app for this long after Gregale rolls it back automatically |  |
+
+### freeze list
+
+List freezes that have not ended
+
+`gregale freeze list [--app <slug>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | only freezes covering this app |  |
+
+### freeze lift
+
+Lift a freeze
+
+`gregale freeze lift <id>`
+
+### freeze status
+
+Show whether production releases of an app are frozen now
+
+`gregale freeze status [--app <slug>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug (defaults to linked project app) |  |
+
+
+## release-gates
+
+Abort rollouts and roll back releases on your SLOs, new error groups, or custom metrics
+
+`gregale release-gates [<subcommand>]`
+
+Examples:
+
+```sh
+gregale release-gates add --app my-api --name checkout-slo --slo checkout --max-burn-rate 10
+gregale release-gates add --app my-api --name no-new-errors --new-errors --min-events 3
+gregale release-gates add --app my-api --name orders --metric orders_per_minute --below 5
+gregale release-gates list --app my-api
+```
+
+### release-gates list
+
+List an app&#39;s release gates (ADR-20261019071734)
+
+`gregale release-gates list [--app <slug>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug (defaults to linked project app) |  |
+
+### release-gates add
+
+Add a release gate
+
+`gregale release-gates add [--app <slug>] --name <NAME> [--slo <NAME>] [--max-burn-rate <N>] [--new-errors] [--max-new-groups <N>] [--min-events <N>] [--metric <NAME>] [--below <VALUE>] [--above <VALUE>] [--min-samples <N>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug (defaults to linked project app) |  |
+| `--name <NAME>` | gate name | required |
+| `--slo <NAME>` | fail when this SLO burns too fast |  |
+| `--max-burn-rate <N>` | SLO burn rate that fails the gate (default 10) |  |
+| `--new-errors` | fail when the release introduces new error groups |  |
+| `--max-new-groups <N>` | new error groups allowed (default 0) |  |
+| `--min-events <N>` | events before a new error group counts (default 3) |  |
+| `--metric <NAME>` | fail when this custom metric crosses a bound |  |
+| `--below <VALUE>` | fail when the metric averages below this |  |
+| `--above <VALUE>` | fail when the metric averages above this |  |
+| `--min-samples <N>` | requests or metric values before the gate is judged (default 20) |  |
+
+### release-gates rm
+
+Remove a release gate
+
+`gregale release-gates rm [--app <slug>] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug (defaults to linked project app) |  |
 
 
 ## canary
@@ -8718,7 +8837,7 @@ Retry a failed deployment from a specific stage (--from=&lt;stage&gt;)
 
 Deploy an app, function, or project
 
-`gregale deploy [--image <REF>] [--tarball <PATH>] [--path <DIR>] [--source <auto|head|worktree>] [--worktree] [--repo <OWNER/NAME>] [--repository <OWNER/NAME>] [--install-id <N>] [--production-branch <BRANCH>] [--ref <REF>] [--source-branch <BRANCH>] [--github] [--pinned-sha <SHA>] [--pin-action] [--template <NAME>] [--dockerfile] [--issue-source-maps <PATH>] [--issue-source-map-directory <PATH>] [--runtime <RUNTIME>] [--handler <HANDLER>] [--name <SLUG>] [--profile <SIZE>] [--vcpu <N>] [--execution-mode <MODE>] [--restart-policy <POLICY>] [--startup-deadline-s <SECONDS>] [--max-retries <N>] [--function] [--app] [--only <SLUGS>] [--project] [--environment <SLUG>] [--reason <text>] [--tag <TAG>] [--deployed-by <NAME>] [--pr-number <N>] [--exclude <SLUGS>] [--show-affected] [--persist-exclude] [--project-slug <SLUG>] [--rollout <MODE>] [--canary-preset <PRESET>] [--canary-stages <STAGES>] [--safe] [--require-authn] [--no-require-authn] [--platform-tenant-required] [--no-platform-tenant-required] [--app-protocol <PROTOCOL>] [--traffic-percent <PERCENT>] [--no-traffic] [--rollback-on-5xx] [--queue-canary-binding <NAME>]... [--healthcheck-path <PATH>] [--healthcheck-grpc] [--healthcheck-grpc-service <SERVICE>] [--disable-startup-cpu-boost] [--mcp-task-migration-override] [--no-triggers] [--wait] [--no-wait] [--create-only] [--timeout <DURATION>] [--idempotency-key <KEY>] [--secrets-file <PATH>] [--secret-scan <on|off>] [--diff] [--plan] [--dry-run] [--yes] [--strict] [--lenient] [--server-diff] [--doctor-strict] [--no-doctor]`
+`gregale deploy [--image <REF>] [--tarball <PATH>] [--path <DIR>] [--source <auto|head|worktree>] [--worktree] [--repo <OWNER/NAME>] [--repository <OWNER/NAME>] [--install-id <N>] [--production-branch <BRANCH>] [--ref <REF>] [--source-branch <BRANCH>] [--github] [--pinned-sha <SHA>] [--pin-action] [--template <NAME>] [--dockerfile] [--issue-source-maps <PATH>] [--issue-source-map-directory <PATH>] [--runtime <RUNTIME>] [--handler <HANDLER>] [--name <SLUG>] [--profile <SIZE>] [--vcpu <N>] [--execution-mode <MODE>] [--restart-policy <POLICY>] [--startup-deadline-s <SECONDS>] [--max-retries <N>] [--function] [--app] [--only <SLUGS>] [--project] [--environment <SLUG>] [--reason <text>] [--tag <TAG>] [--deployed-by <NAME>] [--pr-number <N>] [--exclude <SLUGS>] [--show-affected] [--persist-exclude] [--project-slug <SLUG>] [--rollout <MODE>] [--override-freeze <REASON>] [--canary-preset <PRESET>] [--canary-stages <STAGES>] [--safe] [--require-authn] [--no-require-authn] [--platform-tenant-required] [--no-platform-tenant-required] [--app-protocol <PROTOCOL>] [--traffic-percent <PERCENT>] [--no-traffic] [--rollback-on-5xx] [--queue-canary-binding <NAME>]... [--healthcheck-path <PATH>] [--healthcheck-grpc] [--healthcheck-grpc-service <SERVICE>] [--disable-startup-cpu-boost] [--mcp-task-migration-override] [--no-triggers] [--wait] [--no-wait] [--create-only] [--timeout <DURATION>] [--idempotency-key <KEY>] [--secrets-file <PATH>] [--secret-scan <on|off>] [--diff] [--plan] [--dry-run] [--yes] [--strict] [--lenient] [--server-diff] [--doctor-strict] [--no-doctor]`
 
 Source defaults to committed HEAD when origin exists; otherwise local files. Use --source=worktree to include local changes.
 
@@ -8767,6 +8886,7 @@ Connection: use --profile NAME before the command; RAM/CPU: use --profile SIZE a
 | `--persist-exclude` | save --exclude slugs for future project deploys |  |
 | `--project-slug <SLUG>` | kebab slug for the project (one-key provision) |  |
 | `--rollout <MODE>` | how this release reaches traffic: safe (adaptive canary with rollback; waits for 100%), fast (5% -&gt; 50% -&gt; 100%) or immediate; default: the app release policy (ADR-1450) | one of `safe` · `fast` · `immediate` |
+| `--override-freeze <REASON>` | release to production during a deploy freeze; the reason is audited |  |
 | `--canary-preset <PRESET>` | deprecated: use --rollout. Canary ladder preset | one of `none` · `slow` · `balanced` · `aggressive` · `1-10-50-100` · `adaptive` · `custom` |
 | `--canary-stages <STAGES>` | deprecated: use --rollout; custom percent@duration canary stages (requires --canary-preset custom) |  |
 | `--safe` | deprecated: use --rollout safe |  |
@@ -12423,11 +12543,11 @@ Request cancellation at an observed generation
 
 Deliver a named event to a waiting operation, by ID or by business subject
 
-`gregale customer-operations signal --app <SLUG> [--timeout <D>] --event <NAME> --signal-id <ID> [--payload <JSON>] [--payload-file <PATH>] [--scope <SCOPE>] [--operation <NAME>] [--subject <TYPE:ID>] [<id>]`
+`gregale customer-operations signal [--app <SLUG>] [--timeout <D>] --event <NAME> --signal-id <ID> [--payload <JSON>] [--payload-file <PATH>] [--scope <SCOPE>] [--operation <NAME>] [--subject <TYPE:ID>] [--self] [--definition <UUID>] [<id>]`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--app <SLUG>` | owned application | required |
+| `--app <SLUG>` | owned application; omit with --self |  |
 | `--timeout <D>` | local request/wait deadline; work continues |  |
 | `--event <NAME>` | event the operation waits for | required |
 | `--signal-id <ID>` | stable idempotency key; repeat it to retry safely | required |
@@ -12436,6 +12556,8 @@ Deliver a named event to a waiting operation, by ID or by business subject
 | `--scope <SCOPE>` | environment, for a subject signal |  |
 | `--operation <NAME>` | operation name, for a subject signal |  |
 | `--subject <TYPE:ID>` | business subject, instead of an operation ID |  |
+| `--self` | signal the authenticated tenant&#39;s own operations (ADR-20261017100853) |  |
+| `--definition <UUID>` | operation definition, for a --self subject signal |  |
 
 ### customer-operations approve
 
@@ -16018,7 +16140,7 @@ Plan a promotion
 
 Promote workloads or choose environments interactively
 
-`gregale projects environments promote [--interactive] [--from <ENV>] [--to <ENV>] [--sync-config] [--yes] [--idempotency-key <KEY>] [--wait] [--progress] [--timeout <SECONDS|DURATION>]`
+`gregale projects environments promote [--interactive] [--from <ENV>] [--to <ENV>] [--sync-config] [--override-freeze <REASON>] [--yes] [--idempotency-key <KEY>] [--wait] [--progress] [--timeout <SECONDS|DURATION>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -16026,6 +16148,7 @@ Promote workloads or choose environments interactively
 | `--from <ENV>` | source environment (required unless interactive) |  |
 | `--to <ENV>` | target environment (required unless interactive) |  |
 | `--sync-config` | copy source non-secret environment configuration to the target |  |
+| `--override-freeze <REASON>` | promote into production during a deploy freeze; the reason is audited |  |
 | `--yes` | confirm the promotion |  |
 | `--idempotency-key <KEY>` | stable key for retrying this promotion |  |
 | `--wait` | wait for the promotion to reach a terminal status |  |

@@ -49,6 +49,8 @@ class ProjectScanRequest:
     """Override the customer identity policy for selected workloads in this scan/apply pair (Hobby and above).
     Omitted uses Compose declarations and preserves existing app policy. Apply must repeat the same override as
     scan."""
+    override_freeze: str | Unset = UNSET
+    """Apply only: release frozen apps to production anyway; the reason is audited (ADR-20261019071733)."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -75,6 +77,8 @@ class ProjectScanRequest:
         no_triggers = self.no_triggers
 
         platform_tenant_required = self.platform_tenant_required
+
+        override_freeze = self.override_freeze
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -103,6 +107,8 @@ class ProjectScanRequest:
             field_dict["no_triggers"] = no_triggers
         if platform_tenant_required is not UNSET:
             field_dict["platform_tenant_required"] = platform_tenant_required
+        if override_freeze is not UNSET:
+            field_dict["override_freeze"] = override_freeze
 
         return field_dict
 
@@ -143,6 +149,9 @@ class ProjectScanRequest:
                 ("platform_tenant_required", (None, str(self.platform_tenant_required).encode(), "text/plain"))
             )
 
+        if not isinstance(self.override_freeze, Unset):
+            files.append(("override_freeze", (None, str(self.override_freeze).encode(), "text/plain")))
+
         for prop_name, prop in self.additional_properties.items():
             files.append((prop_name, (None, str(prop).encode(), "text/plain")))
 
@@ -180,6 +189,8 @@ class ProjectScanRequest:
 
         platform_tenant_required = d.pop("platform_tenant_required", UNSET)
 
+        override_freeze = d.pop("override_freeze", UNSET)
+
         project_scan_request = cls(
             source=source,
             migration=migration,
@@ -192,6 +203,7 @@ class ProjectScanRequest:
             environment=environment,
             no_triggers=no_triggers,
             platform_tenant_required=platform_tenant_required,
+            override_freeze=override_freeze,
         )
 
         project_scan_request.additional_properties = d

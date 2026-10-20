@@ -177,6 +177,7 @@ func TestJobTimeoutCoversEveryPhaseCap(t *testing.T) {
 		"managed-operation-only":            true,
 		"customer-job-operations-only":      true,
 		"customer-workflow-operations-only": true,
+		"customer-http-operations-only":     true,
 		"financial-system":                  true, // separate sequential job on the same host
 	}
 	var sum, laneMax time.Duration
@@ -206,7 +207,24 @@ func TestJobTimeoutCoversEveryPhaseCap(t *testing.T) {
 }
 
 func TestFinancialJobBudgetIncludesProviderAndNativeCleanup(t *testing.T) {
-	outer := phaseOuterBudgets(t)["financial-system"]
+	workflow, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "e2e-native.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, financialJob, found := strings.Cut(string(workflow), "\n  financial-system:\n")
+	if !found || !strings.Contains(financialJob, "needs: e2e-native") {
+		t.Fatal("financial job must serialize behind the platform job on the shared host")
+	}
+	// The financial phase runs in its own job, so its systemd unit budget is
+	// that job's RuntimeMaxSec, not one of the platform job's phases.
+	unitMatch := regexp.MustCompile(`RuntimeMaxSec=(\w+)`).FindStringSubmatch(financialJob)
+	if unitMatch == nil {
+		t.Fatal("financial job's systemd unit has no RuntimeMaxSec")
+	}
+	outer, err := time.ParseDuration(unitMatch[1])
+	if err != nil {
+		t.Fatal(err)
+	}
 	native := phaseInnerBudgets(t)["financial-system"]
 	body, err := os.ReadFile(filepath.Join("..", "..", "scripts", "ci", "run-native-e2e.sh"))
 	if err != nil {
@@ -222,14 +240,6 @@ func TestFinancialJobBudgetIncludesProviderAndNativeCleanup(t *testing.T) {
 	}
 	if native == 0 || outer <= native+provider {
 		t.Fatalf("financial system unit %s must outlast native %s + provider %s, compilation and cleanup", outer, native, provider)
-	}
-	workflow, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "e2e-native.yml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, financialJob, found := strings.Cut(string(workflow), "\n  financial-system:\n")
-	if !found || !strings.Contains(financialJob, "needs: e2e-native") {
-		t.Fatal("financial job must serialize behind the platform job on the shared host")
 	}
 	match := regexp.MustCompile(`timeout-minutes:\s*(\d+)`).FindStringSubmatch(financialJob)
 	if match == nil {

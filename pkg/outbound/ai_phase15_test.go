@@ -6,6 +6,7 @@ package outbound
 // short prompts and caller-marked requests alone.
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -41,10 +42,10 @@ func TestAnthropicPrefixIsMarkedOnceItRepeats(t *testing.T) {
 	body := anthropicBody(t, map[string]any{"model": "claude-sonnet-5-5", "system": longText,
 		"tools":    []any{map[string]any{"name": "lookup", "input_schema": map[string]any{"type": "object"}}},
 		"messages": []any{map[string]any{"role": "user", "content": "What is my balance?"}}})
-	if out, marks := marker.anthropic(body, false); len(marks) != 0 || string(out) != string(body) {
+	if out, marks := marker.anthropic(context.Background(), body, false); len(marks) != 0 || string(out) != string(body) {
 		t.Fatalf("a first-seen prefix was marked: %v", marks)
 	}
-	out, marks := marker.anthropic(body, false)
+	out, marks := marker.anthropic(context.Background(), body, false)
 	if strings.Join(marks, ",") != promptCacheMarkPrefix {
 		t.Fatalf("marks = %v", marks)
 	}
@@ -57,12 +58,12 @@ func TestAnthropicPrefixIsMarkedOnceItRepeats(t *testing.T) {
 		t.Fatalf("marked body = %s", out)
 	}
 	// A caller's own breakpoint wins; a short prompt is not worth one.
-	if _, marks := marker.anthropic(out, false); len(marks) != 0 {
+	if _, marks := marker.anthropic(context.Background(), out, false); len(marks) != 0 {
 		t.Fatalf("a marked body was marked again: %v", marks)
 	}
 	short := anthropicBody(t, map[string]any{"system": "Be brief.", "messages": []any{map[string]any{"role": "user", "content": "hi"}}})
 	for range 2 {
-		if _, marks := testMarker(true).anthropic(short, false); len(marks) != 0 {
+		if _, marks := testMarker(true).anthropic(context.Background(), short, false); len(marks) != 0 {
 			t.Fatalf("a short prompt was marked: %v", marks)
 		}
 	}
@@ -70,7 +71,7 @@ func TestAnthropicPrefixIsMarkedOnceItRepeats(t *testing.T) {
 	// also marks its conversation.
 	toolsOnly := anthropicBody(t, map[string]any{"tools": []any{map[string]any{"name": "a", "description": longText},
 		map[string]any{"name": "b"}}, "messages": []any{map[string]any{"role": "user", "content": "go"}}})
-	out, marks = testMarker(true).anthropic(toolsOnly, false)
+	out, marks = testMarker(true).anthropic(context.Background(), toolsOnly, false)
 	if strings.Join(marks, ",") != "prefix,conversation" || !strings.Contains(string(out), `{"cache_control":{"type":"ephemeral"},"name":"b"}`) {
 		t.Fatalf("tools-only prefix = %v %s", marks, out)
 	}
@@ -84,33 +85,33 @@ func TestAnthropicConversationIsMarkedAtItsLastBlock(t *testing.T) {
 			map[string]any{"role": "user", "content": last},
 		}})
 	}
-	out, marks := testMarker(false).anthropic(conversation([]any{
+	out, marks := testMarker(false).anthropic(context.Background(), conversation([]any{
 		map[string]any{"type": "tool_result", "tool_use_id": "t1", "content": "42"},
 	}), false)
 	if strings.Join(marks, ",") != promptCacheMarkConversation || !strings.Contains(string(out), `"cache_control":{"type":"ephemeral"},"content":"42","tool_use_id":"t1","type":"tool_result"`) {
 		t.Fatalf("tool result conversation = %v %s", marks, out)
 	}
-	out, _ = testMarker(false).anthropic(conversation([]any{
+	out, _ = testMarker(false).anthropic(context.Background(), conversation([]any{
 		map[string]any{"type": "text", "text": "and now?"}, map[string]any{"type": "thinking", "thinking": "x", "signature": "s"},
 	}), false)
 	if !strings.Contains(string(out), `{"cache_control":{"type":"ephemeral"},"text":"and now?","type":"text"}`) ||
 		strings.Contains(string(out), `"signature":"s","thinking":"x","type":"thinking","cache_control"`) {
 		t.Fatalf("thinking block was marked or text skipped: %s", out)
 	}
-	out, _ = testMarker(false).anthropic(conversation("plain question"), false)
+	out, _ = testMarker(false).anthropic(context.Background(), conversation("plain question"), false)
 	if !strings.Contains(string(out), `"content":[{"cache_control":{"type":"ephemeral"},"text":"plain question","type":"text"}]`) {
 		t.Fatalf("string content = %s", out)
 	}
 	// A first turn without a session is not marked; with one it is.
 	first := anthropicBody(t, map[string]any{"messages": []any{map[string]any{"role": "user", "content": longText}}})
-	if _, marks := testMarker(false).anthropic(first, false); len(marks) != 0 {
+	if _, marks := testMarker(false).anthropic(context.Background(), first, false); len(marks) != 0 {
 		t.Fatalf("a lone first turn was marked: %v", marks)
 	}
-	if _, marks := testMarker(true).anthropic(first, false); strings.Join(marks, ",") != promptCacheMarkConversation {
+	if _, marks := testMarker(true).anthropic(context.Background(), first, false); strings.Join(marks, ",") != promptCacheMarkConversation {
 		t.Fatalf("a session's first turn = %v", marks)
 	}
 	// A Bedrock invoke body must be an Anthropic one.
-	if _, marks := testMarker(true).anthropic(first, true); len(marks) != 0 {
+	if _, marks := testMarker(true).anthropic(context.Background(), first, true); len(marks) != 0 {
 		t.Fatalf("an invoke body without anthropic_version was marked: %v", marks)
 	}
 }
@@ -123,7 +124,7 @@ func TestConverseIsMarkedWithCachePoints(t *testing.T) {
 			map[string]any{"role": "assistant", "content": []any{map[string]any{"text": "hello"}}},
 			map[string]any{"role": "user", "content": []any{map[string]any{"text": "next"}}},
 		}})
-	out, marks := testMarker(true).converse(body)
+	out, marks := testMarker(true).converse(context.Background(), body)
 	if strings.Join(marks, ",") != "prefix,conversation" ||
 		!strings.Contains(string(out), `"system":[{"text":"`+longText+`"},{"cachePoint":{"type":"default"}}]`) ||
 		!strings.Contains(string(out), `{"text":"next"},{"cachePoint":{"type":"default"}}]`) {
@@ -131,7 +132,7 @@ func TestConverseIsMarkedWithCachePoints(t *testing.T) {
 	}
 	tools := anthropicBody(t, map[string]any{"toolConfig": map[string]any{"tools": []any{map[string]any{"toolSpec": map[string]any{"description": longText}}}},
 		"messages": []any{map[string]any{"role": "user", "content": []any{map[string]any{"text": "x"}}}}})
-	if out, marks := testMarker(true).converse(tools); len(marks) == 0 || !strings.Contains(string(out), `{"cachePoint":{"type":"default"}}]},"messages"`) &&
+	if out, marks := testMarker(true).converse(context.Background(), tools); len(marks) == 0 || !strings.Contains(string(out), `{"cachePoint":{"type":"default"}}]},"messages"`) &&
 		!strings.Contains(string(out), `"tools":[{"toolSpec"`) {
 		t.Fatalf("converse tools = %v %s", marks, out)
 	}

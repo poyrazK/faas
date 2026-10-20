@@ -1,4 +1,4 @@
-package state
+package state_test
 
 // memstore_orgs_slo_test.go: covers zero-coverage MemStore methods
 // on the orgs, invitations, overage-cap, SLO-stub, and scale-history
@@ -20,16 +20,17 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // memOrgFixture creates an account + its personal org (the account
 // is the sole owner) via CreateAccountWithPersonalOrg. Returns the
 // store, ctx, account, and personal org.
-func memOrgFixture(t *testing.T) (*MemStore, context.Context, Account, Org) {
+func memOrgFixture(t *testing.T) (*state.MemStore, context.Context, state.Account, state.Org) {
 	t.Helper()
 	ctx := context.Background()
-	m := NewMemStore()
-	res, err := m.CreateAccountWithPersonalOrg(ctx, CreateAccountWithPersonalOrgParams{
+	m := state.NewMemStore()
+	res, err := m.CreateAccountWithPersonalOrg(ctx, state.CreateAccountWithPersonalOrgParams{
 		Email: "org-" + uuid.NewString() + "@example.com",
 		Plan:  api.PlanPro,
 	})
@@ -63,7 +64,7 @@ func TestMemStore_UpdateOrgName_Happy(t *testing.T) {
 // ErrNotFound, not panic or silently succeed.
 func TestMemStore_UpdateOrgName_NotFound(t *testing.T) {
 	t.Parallel()
-	m := NewMemStore()
+	m := state.NewMemStore()
 	err := m.UpdateOrgName(context.Background(), uuid.NewString(), "x")
 	if err == nil {
 		t.Error("UpdateOrgName(unknown) = nil; want ErrNotFound")
@@ -77,27 +78,28 @@ func TestMemStore_TransferOrgOwnership_Happy(t *testing.T) {
 	t.Parallel()
 	m, ctx, owner, org := memOrgFixture(t)
 	// Add a second member to the org (the destination of the transfer).
-	target := Account{ID: uuid.NewString(), Email: "target-" + uuid.NewString() + "@example.com", Plan: api.PlanPro, Status: AccountActive, CreatedAt: time.Now().UTC()}
-	m.mu.Lock()
-	m.accounts[target.ID] = target
-	m.memberships[orgAccountKey{OrgID: org.ID, AccountID: target.ID}] = OrgMembership{
-		OrgID: org.ID, AccountID: target.ID, Role: OrgRoleViewer, JoinedAt: time.Now().UTC(),
+	target := state.Account{ID: uuid.NewString(), Email: "target-" + uuid.NewString() + "@example.com", Plan: api.PlanPro, Status: state.AccountActive, CreatedAt: time.Now().UTC()}
+	(*m.Mu()).Lock()
+	(*m.Accounts())[target.ID] = target
+	(*m.Memberships())[state.OrgAccountKey{OrgID: org.ID, AccountID: target.ID}] = state.OrgMembership{
+		OrgID: org.ID, AccountID: target.ID, Role: state.OrgRoleViewer, JoinedAt: time.Now().UTC(),
 	}
-	m.mu.Unlock()
+	(*m.Mu()).Unlock()
 
 	if err := m.TransferOrgOwnership(ctx, org.ID, owner.ID, target.ID); err != nil {
 		t.Fatalf("TransferOrgOwnership: %v", err)
 	}
+	(*
 	// Re-read memberships under the lock.
-	m.mu.Lock()
-	fromMem := m.memberships[orgAccountKey{OrgID: org.ID, AccountID: owner.ID}]
-	toMem := m.memberships[orgAccountKey{OrgID: org.ID, AccountID: target.ID}]
-	m.mu.Unlock()
-	if fromMem.Role != OrgRoleAdmin {
-		t.Errorf("from-role = %q, want %q (demoted)", fromMem.Role, OrgRoleAdmin)
+	m.Mu()).Lock()
+	fromMem := (*m.Memberships())[state.OrgAccountKey{OrgID: org.ID, AccountID: owner.ID}]
+	toMem := (*m.Memberships())[state.OrgAccountKey{OrgID: org.ID, AccountID: target.ID}]
+	(*m.Mu()).Unlock()
+	if fromMem.Role != state.OrgRoleAdmin {
+		t.Errorf("from-role = %q, want %q (demoted)", fromMem.Role, state.OrgRoleAdmin)
 	}
-	if toMem.Role != OrgRoleOwner {
-		t.Errorf("to-role = %q, want %q (promoted)", toMem.Role, OrgRoleOwner)
+	if toMem.Role != state.OrgRoleOwner {
+		t.Errorf("to-role = %q, want %q (promoted)", toMem.Role, state.OrgRoleOwner)
 	}
 }
 
@@ -107,7 +109,7 @@ func TestMemStore_TransferOrgOwnership_SameAccount(t *testing.T) {
 	t.Parallel()
 	m, ctx, owner, org := memOrgFixture(t)
 	err := m.TransferOrgOwnership(ctx, org.ID, owner.ID, owner.ID)
-	if !errors.Is(err, ErrOrgLastOwner) {
+	if !errors.Is(err, state.ErrOrgLastOwner) {
 		t.Errorf("err = %v, want ErrOrgLastOwner", err)
 	}
 }
@@ -117,15 +119,15 @@ func TestMemStore_TransferOrgOwnership_SameAccount(t *testing.T) {
 func TestMemStore_TransferOrgOwnership_ToAlreadyOwner(t *testing.T) {
 	t.Parallel()
 	m, ctx, owner, org := memOrgFixture(t)
-	other := Account{ID: uuid.NewString(), Email: "other-" + uuid.NewString() + "@example.com", Plan: api.PlanPro, Status: AccountActive, CreatedAt: time.Now().UTC()}
-	m.mu.Lock()
-	m.accounts[other.ID] = other
-	m.memberships[orgAccountKey{OrgID: org.ID, AccountID: other.ID}] = OrgMembership{
-		OrgID: org.ID, AccountID: other.ID, Role: OrgRoleOwner, JoinedAt: time.Now().UTC(),
+	other := state.Account{ID: uuid.NewString(), Email: "other-" + uuid.NewString() + "@example.com", Plan: api.PlanPro, Status: state.AccountActive, CreatedAt: time.Now().UTC()}
+	(*m.Mu()).Lock()
+	(*m.Accounts())[other.ID] = other
+	(*m.Memberships())[state.OrgAccountKey{OrgID: org.ID, AccountID: other.ID}] = state.OrgMembership{
+		OrgID: org.ID, AccountID: other.ID, Role: state.OrgRoleOwner, JoinedAt: time.Now().UTC(),
 	}
-	m.mu.Unlock()
+	(*m.Mu()).Unlock()
 	err := m.TransferOrgOwnership(ctx, org.ID, owner.ID, other.ID)
-	if !errors.Is(err, ErrOrgLastOwner) {
+	if !errors.Is(err, state.ErrOrgLastOwner) {
 		t.Errorf("err = %v, want ErrOrgLastOwner (target already owner)", err)
 	}
 }
@@ -135,7 +137,7 @@ func TestMemStore_TransferOrgOwnership_ToAlreadyOwner(t *testing.T) {
 // orgID yields ErrNotFound at the membership probe.
 func TestMemStore_TransferOrgOwnership_UnknownOrg(t *testing.T) {
 	t.Parallel()
-	m := NewMemStore()
+	m := state.NewMemStore()
 	err := m.TransferOrgOwnership(context.Background(), uuid.NewString(), uuid.NewString(), uuid.NewString())
 	if err == nil {
 		t.Error("TransferOrgOwnership(unknown org) = nil; want error")
@@ -183,21 +185,22 @@ func TestMemStore_ListOrgInvitationsForOrgPage_Happy(t *testing.T) {
 	t.Parallel()
 	m, ctx, owner, org := memOrgFixture(t)
 	now := time.Now().UTC()
+	(*
 	// Create three invitations directly via m.invitations map under
 	// the lock — we want deterministic CreatedAt + ID ordering.
-	m.mu.Lock()
+	m.Mu()).Lock()
 	for i := 0; i < 3; i++ {
-		inv := OrgInvitation{
+		inv := state.OrgInvitation{
 			ID:        uuid.NewString(),
 			OrgID:     org.ID,
 			Email:     "invitee-" + uuid.NewString() + "@example.com",
-			Role:      OrgRoleViewer,
+			Role:      state.OrgRoleViewer,
 			TokenHash: []byte("tok-" + uuid.NewString()),
 			CreatedAt: now.Add(time.Duration(i) * time.Second),
 		}
-		m.invitations[string(inv.TokenHash)] = inv
+		(*m.Invitations())[string(inv.TokenHash)] = inv
 	}
-	m.mu.Unlock()
+	(*m.Mu()).Unlock()
 	got, err := m.ListOrgInvitationsForOrgPage(ctx, org.ID, 2, "")
 	if err != nil {
 		t.Fatalf("ListOrgInvitationsForOrgPage: %v", err)
@@ -253,7 +256,7 @@ func TestMemStore_UpdateAccountOverageCapCents_SetAndClear(t *testing.T) {
 // returning real values that diverge from PgStore's contract.
 func TestMemStore_UsageSLOForApp_Stub(t *testing.T) {
 	t.Parallel()
-	m := NewMemStore()
+	m := state.NewMemStore()
 	p50, p99, err := m.UsageSLOForApp(context.Background(), "app", "dep", time.Now(), time.Now())
 	if err != nil {
 		t.Fatalf("UsageSLOForApp: %v", err)
@@ -267,7 +270,7 @@ func TestMemStore_UsageSLOForApp_Stub(t *testing.T) {
 // account-level SLO accessor.
 func TestMemStore_UsageSLOForAccount_Stub(t *testing.T) {
 	t.Parallel()
-	m := NewMemStore()
+	m := state.NewMemStore()
 	p50, p99, err := m.UsageSLOForAccount(context.Background(), "acct", time.Now(), time.Now())
 	if err != nil {
 		t.Fatalf("UsageSLOForAccount: %v", err)
@@ -281,7 +284,7 @@ func TestMemStore_UsageSLOForAccount_Stub(t *testing.T) {
 // returns (0, ErrNotFound).
 func TestMemStore_GetInstanceTailCount_NotFound(t *testing.T) {
 	t.Parallel()
-	_, err := NewMemStore().GetInstanceTailCount(context.Background(), uuid.NewString())
+	_, err := state.NewMemStore().GetInstanceTailCount(context.Background(), uuid.NewString())
 	if err == nil {
 		t.Error("GetInstanceTailCount(unknown) = nil; want ErrNotFound")
 	}
@@ -292,8 +295,8 @@ func TestMemStore_GetInstanceTailCount_NotFound(t *testing.T) {
 // Prometheus query would mistake for "missing metric".
 func TestMemStore_GetInstanceTailCount_Zero(t *testing.T) {
 	t.Parallel()
-	m, ctx, _, app, dep := memDeploymentFixture(t)
-	inst := memLiveInstance(t, m, ctx, app.ID, dep.ID, "node-a")
+	m, ctx, _, app, dep := state.MemDeploymentFixture(t)
+	inst := state.MemLiveInstance(t, m, ctx, app.ID, dep.ID, "node-a")
 	got, err := m.GetInstanceTailCount(ctx, inst.ID)
 	if err != nil {
 		t.Fatalf("GetInstanceTailCount: %v", err)
@@ -307,7 +310,7 @@ func TestMemStore_GetInstanceTailCount_Zero(t *testing.T) {
 // deployment id returns ErrNotFound.
 func TestMemStore_UpsertDeploymentScanResult_NotFound(t *testing.T) {
 	t.Parallel()
-	m := NewMemStore()
+	m := state.NewMemStore()
 	err := m.UpsertDeploymentScanResult(context.Background(), uuid.NewString(), []byte("scan"), "ok")
 	if err == nil {
 		t.Error("UpsertDeploymentScanResult(unknown) = nil; want ErrNotFound")
@@ -318,14 +321,14 @@ func TestMemStore_UpsertDeploymentScanResult_NotFound(t *testing.T) {
 // result + status + timestamp onto the deployment row.
 func TestMemStore_UpsertDeploymentScanResult_Happy(t *testing.T) {
 	t.Parallel()
-	m, ctx, _, _, dep := memDeploymentFixture(t)
+	m, ctx, _, _, dep := state.MemDeploymentFixture(t)
 	payload := []byte(`{"vulns":[]}`)
 	if err := m.UpsertDeploymentScanResult(ctx, dep.ID, payload, "ok"); err != nil {
 		t.Fatalf("UpsertDeploymentScanResult: %v", err)
 	}
-	m.mu.Lock()
-	got := m.deployments[dep.ID]
-	m.mu.Unlock()
+	(*m.Mu()).Lock()
+	got := (*m.Deployments())[dep.ID]
+	(*m.Mu()).Unlock()
 	if got.ScanStatus != "ok" {
 		t.Errorf("ScanStatus = %q, want %q", got.ScanStatus, "ok")
 	}
@@ -341,14 +344,14 @@ func TestMemStore_UpsertDeploymentScanResult_Happy(t *testing.T) {
 // the matching app row.
 func TestMemStore_SetLastScaleOutAt_Happy(t *testing.T) {
 	t.Parallel()
-	m, _, _, app, _ := memDeploymentFixture(t)
+	m, _, _, app, _ := state.MemDeploymentFixture(t)
 	ts := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 	if err := m.SetLastScaleOutAt(app.ID, ts); err != nil {
 		t.Fatalf("SetLastScaleOutAt: %v", err)
 	}
-	m.mu.Lock()
-	got := m.apps[app.ID]
-	m.mu.Unlock()
+	(*m.Mu()).Lock()
+	got := (*m.Apps())[app.ID]
+	(*m.Mu()).Unlock()
 	if got.LastScaleOutAt == nil {
 		t.Fatal("LastScaleOutAt is nil; want non-nil")
 	}
@@ -361,7 +364,7 @@ func TestMemStore_SetLastScaleOutAt_Happy(t *testing.T) {
 // ErrNotFound.
 func TestMemStore_SetLastScaleOutAt_NotFound(t *testing.T) {
 	t.Parallel()
-	m := NewMemStore()
+	m := state.NewMemStore()
 	err := m.SetLastScaleOutAt(uuid.NewString(), time.Now())
 	if err == nil {
 		t.Error("SetLastScaleOutAt(unknown) = nil; want ErrNotFound")
@@ -372,14 +375,14 @@ func TestMemStore_SetLastScaleOutAt_NotFound(t *testing.T) {
 // SetLastScaleOutAt; pins the same pointer-field contract.
 func TestMemStore_SetLastScaleInAt_Happy(t *testing.T) {
 	t.Parallel()
-	m, _, _, app, _ := memDeploymentFixture(t)
+	m, _, _, app, _ := state.MemDeploymentFixture(t)
 	ts := time.Date(2026, 6, 7, 8, 9, 10, 0, time.UTC)
 	if err := m.SetLastScaleInAt(app.ID, ts); err != nil {
 		t.Fatalf("SetLastScaleInAt: %v", err)
 	}
-	m.mu.Lock()
-	got := m.apps[app.ID]
-	m.mu.Unlock()
+	(*m.Mu()).Lock()
+	got := (*m.Apps())[app.ID]
+	(*m.Mu()).Unlock()
 	if got.LastScaleInAt == nil {
 		t.Fatal("LastScaleInAt is nil; want non-nil")
 	}
@@ -391,7 +394,7 @@ func TestMemStore_SetLastScaleInAt_Happy(t *testing.T) {
 // TestMemStore_SetLastScaleInAt_NotFound — symmetric error path.
 func TestMemStore_SetLastScaleInAt_NotFound(t *testing.T) {
 	t.Parallel()
-	m := NewMemStore()
+	m := state.NewMemStore()
 	err := m.SetLastScaleInAt(uuid.NewString(), time.Now())
 	if err == nil {
 		t.Error("SetLastScaleInAt(unknown) = nil; want ErrNotFound")
@@ -404,7 +407,7 @@ func TestMemStore_SetLastScaleInAt_NotFound(t *testing.T) {
 // cohort wide enough to roll out?".
 func TestMemStore_AuthDefaultFlippedAt_Empty(t *testing.T) {
 	t.Parallel()
-	m := NewMemStore()
+	m := state.NewMemStore()
 	got, err := m.AuthDefaultFlippedAt(context.Background())
 	if err != nil {
 		t.Fatalf("AuthDefaultFlippedAt: %v", err)
@@ -420,22 +423,23 @@ func TestMemStore_AuthDefaultFlippedAt_Empty(t *testing.T) {
 // uses to decide the "earliest flipped app in the fleet" anchor.
 func TestMemStore_AuthDefaultFlippedAt_FindsEarliest(t *testing.T) {
 	t.Parallel()
-	m := NewMemStore()
+	m := state.NewMemStore()
 	now := time.Now().UTC()
+	(*
 	// Three apps with monotonically-increasing flipped timestamps.
-	m.mu.Lock()
+	m.Mu()).Lock()
 	for i := 0; i < 3; i++ {
 		appID := uuid.NewString()
 		ts := now.Add(time.Duration(i) * time.Hour)
-		m.apps[appID] = App{
+		(*m.Apps())[appID] = state.App{
 			ID:                   appID,
 			Slug:                 "flipped-" + uuid.NewString(),
 			AuthDefaultFlippedAt: &ts,
-			Status:               AppActive,
+			Status:               state.AppActive,
 			CreatedAt:            now,
 		}
 	}
-	m.mu.Unlock()
+	(*m.Mu()).Unlock()
 	got, err := m.AuthDefaultFlippedAt(context.Background())
 	if err != nil {
 		t.Fatalf("AuthDefaultFlippedAt: %v", err)

@@ -27,7 +27,7 @@
 // could "fix" the test by relaxing the SQL query and the
 // regression would re-emerge on the next NULL insert.
 // Pinning the source closes that gap.
-package state
+package state_test
 
 import (
 	"os"

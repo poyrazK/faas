@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -8,16 +8,17 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestWorkflowInitialReviewWorker(t *testing.T) {
 	for _, scenario := range []string{"prepare", "disabled", "excluded", "pending", "cancelled", "cursor"} {
 		t.Run(scenario, func(t *testing.T) {
-			workflowScheduleStores(t, func(t *testing.T, s Store) {
+			state.WorkflowScheduleStores(t, func(t *testing.T, s state.Store) {
 				ctx := context.Background()
-				run, app, failure, p := seedInitialReview(t, s)
-				policies := s.(WorkflowRecoveryPolicyStore)
-				reviews := s.(WorkflowInitialRecoveryReviewStore)
+				run, app, failure, p := state.SeedInitialReview(t, s)
+				policies := s.(state.WorkflowRecoveryPolicyStore)
+				reviews := s.(state.WorkflowInitialRecoveryReviewStore)
 				switch scenario {
 				case "disabled", "excluded":
 					if scenario == "disabled" {
@@ -31,22 +32,22 @@ func TestWorkflowInitialReviewWorker(t *testing.T) {
 						t.Fatal(err)
 					}
 				case "pending":
-					request := initialReviewJobRequest(api.WorkflowInitialRecoveryReview{ID: failure, Policy: p.Policy, Failure: api.WorkflowInitialFailure{Workflow: run.WorkflowName}, Target: api.WorkflowRunRecoveryTarget{RunID: run.ID, ExpectedResumeCount: 0, FailureEvidenceID: failure}}, "manual pending")
-					if _, err := s.(EventRecoveryStore).CreateEventRecovery(ctx, app.AccountID, app.ID, request); err != nil {
+					request := state.InitialReviewJobRequest(api.WorkflowInitialRecoveryReview{ID: failure, Policy: p.Policy, Failure: api.WorkflowInitialFailure{Workflow: run.WorkflowName}, Target: api.WorkflowRunRecoveryTarget{RunID: run.ID, ExpectedResumeCount: 0, FailureEvidenceID: failure}}, "manual pending")
+					if _, err := s.(state.EventRecoveryStore).CreateEventRecovery(ctx, app.AccountID, app.ID, request); err != nil {
 						t.Fatal(err)
 					}
 				case "cursor":
 					for i := range api.WorkflowRecoveryPolicyJobsPerPoll + 1 {
 						id := fmt.Sprintf("00000000-0000-0000-0000-%012d", i+1)
-						if m, ok := s.(*MemStore); ok {
-							m.mu.Lock()
-							e := m.workflowFailureEvidence[canonicalMemUUID(app.ID)][0]
+						if m, ok := s.(*state.MemStore); ok {
+							(*m.Mu()).Lock()
+							e := (*m.WorkflowFailureEvidence())[state.CanonicalMemUUID(app.ID)][0]
 							e.ID, e.RunID = id, uuid.NewString()
-							m.workflowFailureEvidence[canonicalMemUUID(app.ID)] = append(m.workflowFailureEvidence[canonicalMemUUID(app.ID)], e)
-							m.mu.Unlock()
+							(*m.WorkflowFailureEvidence())[state.CanonicalMemUUID(app.ID)] = append((*m.WorkflowFailureEvidence())[state.CanonicalMemUUID(app.ID)], e)
+							(*m.Mu()).Unlock()
 						} else {
-							pg := s.(*PgStore)
-							_, err := pg.pool.Exec(ctx, "INSERT INTO workflow_recovery_failure_evidence(id,app_id,run_id,workflow,resume_count,failure_status,observed_at,completed_at) SELECT $1::uuid,app_id,$2::uuid,workflow,resume_count,failure_status,observed_at,completed_at FROM workflow_recovery_failure_evidence WHERE id=$3::uuid", id, uuid.NewString(), failure)
+							pg := s.(*state.PgStore)
+							_, err := (*pg.Pool()).Exec(ctx, "INSERT INTO workflow_recovery_failure_evidence(id,app_id,run_id,workflow,resume_count,failure_status,observed_at,completed_at) SELECT $1::uuid,app_id,$2::uuid,workflow,resume_count,failure_status,observed_at,completed_at FROM workflow_recovery_failure_evidence WHERE id=$3::uuid", id, uuid.NewString(), failure)
 							if err != nil {
 								t.Fatal(err)
 							}
@@ -110,10 +111,10 @@ func TestWorkflowInitialReviewWorkerCursor(t *testing.T) {
 	for i := range ids {
 		ids[i] = "candidate"
 	}
-	if initialPolicyNextCursor(ids) != "candidate" {
+	if state.InitialPolicyNextCursor(ids) != "candidate" {
 		t.Fatal("full page must advance")
 	}
-	if initialPolicyNextCursor(ids[:len(ids)-1]) != "" {
+	if state.InitialPolicyNextCursor(ids[:len(ids)-1]) != "" {
 		t.Fatal("short page must wrap to revisit blockers")
 	}
 }

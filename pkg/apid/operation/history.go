@@ -40,7 +40,7 @@ func (s *Service) ListPlatformTenantSelfOperations(w http.ResponseWriter, r *htt
 	if !ok {
 		return
 	}
-	tenant, ok := httpkit.PlatformTenantSelfID(w, r)
+	tenant, ok := s.activePlatformTenantSelfID(w, r, acct)
 	if !ok {
 		return
 	}

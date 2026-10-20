@@ -21,7 +21,7 @@
 // Test design mirrors pkg/state/memstore_alert_presets_test.go
 // (seed → exercise → assert). No live Postgres needed — the
 // MemStore is the test fixture by design.
-package state
+package state_test
 
 import (
 	"context"
@@ -31,6 +31,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -50,7 +51,7 @@ func accountUUIDFromString(t *testing.T, s string) pgtype.UUID {
 // and returns the row + a clean MemStore for re-use. Avoids the
 // public CreateUploadSession signature (which doesn't let us set
 // expires_at to "already past" for the reaper test).
-func seedUploadSession(t *testing.T, m *MemStore, opts struct {
+func seedUploadSession(t *testing.T, m *state.MemStore, opts struct {
 	id          string
 	account     string
 	slug        string
@@ -77,9 +78,9 @@ func seedUploadSession(t *testing.T, m *MemStore, opts struct {
 		ExpiresAt:     pgtype.Timestamptz{Time: now.Add(opts.expiresIn), Valid: true},
 		DeploymentID:  pgtype.Text{String: "", Valid: false},
 	}
-	m.mu.Lock()
-	m.uploadSessions[row.ID] = row
-	m.mu.Unlock()
+	(*m.Mu()).Lock()
+	(*m.UploadSessions())[row.ID] = row
+	(*m.Mu()).Unlock()
 	return row
 }
 
@@ -89,7 +90,7 @@ func seedUploadSession(t *testing.T, m *MemStore, opts struct {
 // and the cap queries. Reaper + dedupe tests live below so a
 // per-method failure points at one method.
 func TestMemStoreUploadSession_Lifecycle(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	ctx := context.Background()
 	acct := accountUUIDFromString(t, "11111111-1111-1111-1111-111111111111")
 
@@ -121,7 +122,7 @@ func TestMemStoreUploadSession_Lifecycle(t *testing.T) {
 	if got.ID != "sess-create" {
 		t.Errorf("GetUploadSession.ID = %q; want sess-create", got.ID)
 	}
-	if _, err := m.GetUploadSession(ctx, "missing"); !errors.Is(err, ErrNotFound) {
+	if _, err := m.GetUploadSession(ctx, "missing"); !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("GetUploadSession(missing) err = %v; want ErrNotFound", err)
 	}
 
@@ -143,7 +144,7 @@ func TestMemStoreUploadSession_Lifecycle(t *testing.T) {
 		ID:                    "sess-create",
 		NewReceivedBytes:      1024,
 		ExpectedReceivedBytes: 0,
-	}); !errors.Is(err, ErrConflict) {
+	}); !errors.Is(err, state.ErrConflict) {
 		t.Errorf("AppendUploadBytes mismatch err = %v; want ErrConflict", err)
 	}
 
@@ -152,7 +153,7 @@ func TestMemStoreUploadSession_Lifecycle(t *testing.T) {
 		ID:                    "missing",
 		NewReceivedBytes:      0,
 		ExpectedReceivedBytes: 0,
-	}); !errors.Is(err, ErrNotFound) {
+	}); !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("AppendUploadBytes(missing) err = %v; want ErrNotFound", err)
 	}
 
@@ -192,7 +193,7 @@ func TestMemStoreUploadSession_Lifecycle(t *testing.T) {
 	if _, err := m.MarkUploadSessionCommitted(ctx, sqlc.MarkUploadSessionCommittedParams{
 		ID:           "sess-create",
 		DeploymentID: pgtype.Text{String: "dep-2", Valid: true},
-	}); !errors.Is(err, ErrConflict) {
+	}); !errors.Is(err, state.ErrConflict) {
 		t.Errorf("MarkUploadSessionCommitted on committed err = %v; want ErrConflict", err)
 	}
 
@@ -200,7 +201,7 @@ func TestMemStoreUploadSession_Lifecycle(t *testing.T) {
 	if _, err := m.MarkUploadSessionCommitted(ctx, sqlc.MarkUploadSessionCommittedParams{
 		ID:           "missing",
 		DeploymentID: pgtype.Text{String: "dep-x", Valid: true},
-	}); !errors.Is(err, ErrNotFound) {
+	}); !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("MarkUploadSessionCommitted on missing err = %v; want ErrNotFound", err)
 	}
 
@@ -229,7 +230,7 @@ func TestMemStoreUploadSession_Lifecycle(t *testing.T) {
 	if err := m.CancelUploadSession(ctx, sqlc.CancelUploadSessionParams{
 		ID:      "sess-cancel",
 		Column2: acct,
-	}); !errors.Is(err, ErrConflict) {
+	}); !errors.Is(err, state.ErrConflict) {
 		t.Errorf("CancelUploadSession on terminal err = %v; want ErrConflict", err)
 	}
 
@@ -237,7 +238,7 @@ func TestMemStoreUploadSession_Lifecycle(t *testing.T) {
 	if err := m.CancelUploadSession(ctx, sqlc.CancelUploadSessionParams{
 		ID:      "missing",
 		Column2: acct,
-	}); !errors.Is(err, ErrNotFound) {
+	}); !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("CancelUploadSession on missing err = %v; want ErrNotFound", err)
 	}
 
@@ -253,7 +254,7 @@ func TestMemStoreUploadSession_Lifecycle(t *testing.T) {
 	if err := m.CancelUploadSession(ctx, sqlc.CancelUploadSessionParams{
 		ID:      "sess-other-acct",
 		Column2: acct,
-	}); !errors.Is(err, ErrConflict) {
+	}); !errors.Is(err, state.ErrConflict) {
 		t.Errorf("CancelUploadSession wrong account err = %v; want ErrConflict", err)
 	}
 	_ = otherAcct
@@ -264,7 +265,7 @@ func TestMemStoreUploadSession_Lifecycle(t *testing.T) {
 // idempotent "already terminal" path that production reapers hit
 // when a sibling reaper flips status first).
 func TestMemStoreUploadSession_Reaper(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	ctx := context.Background()
 	acct := accountUUIDFromString(t, "11111111-1111-1111-1111-111111111111")
 
@@ -375,7 +376,7 @@ func TestMemStoreUploadSession_Reaper(t *testing.T) {
 	}
 
 	// ExpireUploadSession on missing row → ErrNotFound.
-	if err := m.ExpireUploadSession(ctx, "missing"); !errors.Is(err, ErrNotFound) {
+	if err := m.ExpireUploadSession(ctx, "missing"); !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("ExpireUploadSession(missing) err = %v; want ErrNotFound", err)
 	}
 	_ = acct
@@ -385,7 +386,7 @@ func TestMemStoreUploadSession_Reaper(t *testing.T) {
 // RecordUploadCommitOutcome + GetUploadCommitOutcome — the companion
 // table that gives POST /v1/uploads/{id}/commit its retry idempotency.
 func TestMemStoreUploadSession_CommitDedupe(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	ctx := context.Background()
 
 	// First commit → row recorded.
@@ -409,12 +410,12 @@ func TestMemStoreUploadSession_CommitDedupe(t *testing.T) {
 		UploadID:     "u1",
 		DeploymentID: "dep-1-retry",
 		BuildID:      "build-1",
-	}); !errors.Is(err, ErrConflict) {
+	}); !errors.Is(err, state.ErrConflict) {
 		t.Errorf("RecordUploadCommitOutcome retry err = %v; want ErrConflict", err)
 	}
 
 	// Missing dedupe → ErrNotFound.
-	if _, err := m.GetUploadCommitOutcome(ctx, "u-missing"); !errors.Is(err, ErrNotFound) {
+	if _, err := m.GetUploadCommitOutcome(ctx, "u-missing"); !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("GetUploadCommitOutcome(missing) err = %v; want ErrNotFound", err)
 	}
 }

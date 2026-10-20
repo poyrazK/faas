@@ -4,6 +4,9 @@ package main_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -71,6 +74,64 @@ func TestParseCustomerOperationSignalRejectsAmbiguousTargets(t *testing.T) {
 		"subject sans type": append([]string{"--scope", "production", "--operation", "fulfil", "--subject", "ord_1"}, base...),
 		"no signal id":      {signalTestOperation, "--app", "orders", "--event", "payment.succeeded"},
 		"invalid payload":   append([]string{signalTestOperation, "--payload", "{"}, base...),
+	} {
+		if _, err := main.ParseCustomerOperationSignal(args); err == nil {
+			t.Fatalf("%s: accepted %v", name, args)
+		}
+	}
+}
+
+// ADR-20261017100853: --self reaches only the tenant-self routes, and a subject signal
+// sends the definition instead of an app, scope and operation name.
+func TestCustomerOperationSignalSelfUsesTenantRoutes(t *testing.T) {
+	const definition = "22222222-2222-2222-2222-222222222222"
+	var paths []string
+	var bodies []map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.Method+" "+r.URL.Path)
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		bodies = append(bodies, body)
+		if strings.HasSuffix(r.URL.Path, "/customer-operation-signals") {
+			_, _ = w.Write([]byte(`{"delivered":[{"operation_id":"` + signalTestOperation + `","signal_id":"evt_1","event":"payment.succeeded","duplicate":false,"waiting":true}]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"operation_id":"` + signalTestOperation + `","signal_id":"evt_1","event":"payment.succeeded","duplicate":false,"waiting":true}`))
+	}))
+	defer server.Close()
+	client := main.NewTenantCustomerOperationSignalClient(api.NewClient(server.URL, "tenant-token").SetCompletionCache(nil), definition)
+	for _, args := range [][]string{
+		{signalTestOperation, "--self", "--event", "payment.succeeded", "--signal-id", "evt_1"},
+		{"--self", "--definition", definition, "--subject", "order:ord_1", "--event", "payment.succeeded", "--signal-id", "evt_1"},
+	} {
+		c, err := main.ParseCustomerOperationSignal(args)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out bytes.Buffer
+		if err := main.RunCustomerOperationSignal(context.Background(), client, c, &out, false); err != nil || !strings.Contains(out.String(), "resumed its wait") {
+			t.Fatalf("%v: %q %v", args, out.String(), err)
+		}
+	}
+	want := []string{"POST /v1/platform-tenant-self/customer-operations/" + signalTestOperation + "/signals", "POST /v1/platform-tenant-self/customer-operation-signals"}
+	if strings.Join(paths, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("paths %v", paths)
+	}
+	if bodies[1]["definition_id"] != definition || bodies[1]["scope"] != nil || bodies[1]["operation"] != nil {
+		t.Fatalf("subject body %v", bodies[1])
+	}
+}
+
+func TestParseCustomerOperationSignalSelfRules(t *testing.T) {
+	const definition = "22222222-2222-2222-2222-222222222222"
+	base := []string{"--event", "payment.succeeded", "--signal-id", "evt_1"}
+	for name, args := range map[string][]string{
+		"self with app":           append([]string{signalTestOperation, "--self", "--app", "orders"}, base...),
+		"self with scope":         append([]string{"--self", "--scope", "production", "--definition", definition, "--subject", "order:1"}, base...),
+		"self subject sans def":   append([]string{"--self", "--subject", "order:1"}, base...),
+		"self bad definition":     append([]string{"--self", "--definition", "fulfil", "--subject", "order:1"}, base...),
+		"definition without self": append([]string{"--app", "orders", "--definition", definition, "--subject", "order:1"}, base...),
+		"account without app":     append([]string{signalTestOperation}, base...),
 	} {
 		if _, err := main.ParseCustomerOperationSignal(args); err == nil {
 			t.Fatalf("%s: accepted %v", name, args)

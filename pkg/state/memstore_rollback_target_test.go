@@ -1,4 +1,4 @@
-package state
+package state_test
 
 // Unit tests for MemStore.GetDeploymentByIDScopedToSuperseded
 // (SAFE-RELEASES-G, issue #976, PR-G). Mirrors the pgstore-side tests
@@ -17,10 +17,11 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestMemStore_GetDeploymentByIDScopedToSuperseded(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	ctx := context.Background()
 
 	t.Run("EmptyArgsRejected", func(t *testing.T) {
@@ -35,7 +36,7 @@ func TestMemStore_GetDeploymentByIDScopedToSuperseded(t *testing.T) {
 	t.Run("MissingRowReturnsErrNoRollbackTarget", func(t *testing.T) {
 		_, app := seedMemAccountAndApp(t, m, ctx)
 		_, err := m.GetDeploymentByIDScopedToSuperseded(ctx, app.ID, uuid.NewString())
-		if !errors.Is(err, ErrNoRollbackTarget) {
+		if !errors.Is(err, state.ErrNoRollbackTarget) {
 			t.Fatalf("missing row: got %v, want ErrNoRollbackTarget", err)
 		}
 	})
@@ -43,7 +44,7 @@ func TestMemStore_GetDeploymentByIDScopedToSuperseded(t *testing.T) {
 	t.Run("WrongAppReturnsErrNoRollbackTarget", func(t *testing.T) {
 		_, app1 := seedMemAccountAndApp(t, m, ctx)
 		_, app2 := seedMemAccountAndApp(t, m, ctx)
-		d, err := m.CreateDeployment(ctx, Deployment{AppID: app1.ID, ImageDigest: "sha256:wrong-app-mem"})
+		d, err := m.CreateDeployment(ctx, state.Deployment{AppID: app1.ID, ImageDigest: "sha256:wrong-app-mem"})
 		if err != nil {
 			t.Fatalf("CreateDeployment: %v", err)
 		}
@@ -51,26 +52,26 @@ func TestMemStore_GetDeploymentByIDScopedToSuperseded(t *testing.T) {
 			t.Fatalf("MarkDeploymentSuperseded: %v", err)
 		}
 		_, err = m.GetDeploymentByIDScopedToSuperseded(ctx, app2.ID, d.ID)
-		if !errors.Is(err, ErrNoRollbackTarget) {
+		if !errors.Is(err, state.ErrNoRollbackTarget) {
 			t.Fatalf("wrong app: got %v, want ErrNoRollbackTarget", err)
 		}
 	})
 
 	t.Run("LiveTargetReturnsErrRollbackTargetAlreadyLive", func(t *testing.T) {
 		_, app := seedMemAccountAndApp(t, m, ctx)
-		d, err := m.CreateDeployment(ctx, Deployment{AppID: app.ID, ImageDigest: "sha256:live-mem"})
+		d, err := m.CreateDeployment(ctx, state.Deployment{AppID: app.ID, ImageDigest: "sha256:live-mem"})
 		if err != nil {
 			t.Fatalf("CreateDeployment: %v", err)
 		}
 		_, err = m.GetDeploymentByIDScopedToSuperseded(ctx, app.ID, d.ID)
-		if !errors.Is(err, ErrRollbackTargetAlreadyLive) {
+		if !errors.Is(err, state.ErrRollbackTargetAlreadyLive) {
 			t.Fatalf("live target: got %v, want ErrRollbackTargetAlreadyLive", err)
 		}
 	})
 
 	t.Run("SupersededTargetReturns", func(t *testing.T) {
 		_, app := seedMemAccountAndApp(t, m, ctx)
-		d, err := m.CreateDeployment(ctx, Deployment{AppID: app.ID, ImageDigest: "sha256:superseded-mem"})
+		d, err := m.CreateDeployment(ctx, state.Deployment{AppID: app.ID, ImageDigest: "sha256:superseded-mem"})
 		if err != nil {
 			t.Fatalf("CreateDeployment: %v", err)
 		}
@@ -84,16 +85,16 @@ func TestMemStore_GetDeploymentByIDScopedToSuperseded(t *testing.T) {
 		if got.ID != d.ID {
 			t.Errorf("superseded target: got.ID=%q, want %q", got.ID, d.ID)
 		}
-		if got.Status != DeploySuperseded {
-			t.Errorf("superseded target: got.Status=%q, want %q", got.Status, DeploySuperseded)
+		if got.Status != state.DeploySuperseded {
+			t.Errorf("superseded target: got.Status=%q, want %q", got.Status, state.DeploySuperseded)
 		}
 	})
 
 	t.Run("SkipsIntermediateSuperseded", func(t *testing.T) {
 		_, app := seedMemAccountAndApp(t, m, ctx)
-		d1, _ := m.CreateDeployment(ctx, Deployment{AppID: app.ID, ImageDigest: "sha256:1"})
-		d2, _ := m.CreateDeployment(ctx, Deployment{AppID: app.ID, ImageDigest: "sha256:2"})
-		d3, _ := m.CreateDeployment(ctx, Deployment{AppID: app.ID, ImageDigest: "sha256:3"})
+		d1, _ := m.CreateDeployment(ctx, state.Deployment{AppID: app.ID, ImageDigest: "sha256:1"})
+		d2, _ := m.CreateDeployment(ctx, state.Deployment{AppID: app.ID, ImageDigest: "sha256:2"})
+		d3, _ := m.CreateDeployment(ctx, state.Deployment{AppID: app.ID, ImageDigest: "sha256:3"})
 		for _, id := range []string{d1.ID, d2.ID, d3.ID} {
 			if err := m.MarkDeploymentSuperseded(ctx, id); err != nil {
 				t.Fatalf("MarkDeploymentSuperseded(%s): %v", id, err)
@@ -114,14 +115,14 @@ func TestMemStore_GetDeploymentByIDScopedToSuperseded(t *testing.T) {
 // UUIDs so sub-tests don't collide. Mirrors seedPgAccountAndApp at
 // pgstore_coverage_sweep_test.go:59 but lives in package state (not
 // state_test) so it can drive both backends symmetrically.
-func seedMemAccountAndApp(t *testing.T, m *MemStore, ctx context.Context) (Account, App) {
+func seedMemAccountAndApp(t *testing.T, m *state.MemStore, ctx context.Context) (state.Account, state.App) {
 	t.Helper()
 	email := "mem-rollback-" + uuid.NewString()[:8] + "@example.com"
 	acct, err := m.CreateAccount(ctx, email, api.PlanHobby)
 	if err != nil {
 		t.Fatalf("CreateAccount: %v", err)
 	}
-	app, err := m.CreateApp(ctx, App{
+	app, err := m.CreateApp(ctx, state.App{
 		ID:        uuid.NewString(),
 		AccountID: acct.ID,
 		Slug:      "mem-rollback-" + uuid.NewString()[:8],

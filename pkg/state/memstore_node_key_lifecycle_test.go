@@ -1,13 +1,14 @@
-package state
+package state_test
 
 import (
 	"context"
+	"github.com/onebox-faas/faas/pkg/state"
 	"testing"
 )
 
 func TestMemStoreNodeKeyRotationKeepsOnlyCurrentAndOneOverlap(t *testing.T) {
 	t.Parallel()
-	store := NewMemStore()
+	store := state.NewMemStore()
 	ctx := context.Background()
 	const nodeID = "node-1"
 
@@ -29,7 +30,7 @@ func TestMemStoreNodeKeyRotationKeepsOnlyCurrentAndOneOverlap(t *testing.T) {
 
 func TestMemStoreNodeKeyRotationIsScopedPerNode(t *testing.T) {
 	t.Parallel()
-	store := NewMemStore()
+	store := state.NewMemStore()
 	ctx := context.Background()
 	if err := store.UpsertNodeKey(ctx, "node-1", "key-1", "pem-1"); err != nil {
 		t.Fatal(err)
