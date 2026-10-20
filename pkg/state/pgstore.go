@@ -14868,13 +14868,17 @@ func (s *PgStore) CountFailedDeploymentsSince(ctx context.Context, accountID, ap
 		appArg = appID
 	}
 	var n int
+	// Account-wide aggregates skip rehearsal-enrolled apps: a candidate
+	// revision's injected faults must not page the account or mask an
+	// outage (ADR-20261019180000). App-scoped rules are unchanged.
 	row := s.pool.QueryRow(ctx, `
 		select count(*) from deployments d
 		 join apps a on a.id = d.app_id
 		 where a.account_id = $1
 		   and d.status = 'failed'
 		   and d.created_at >= $2
-		   and ($3::uuid is null or d.app_id = $3::uuid)`,
+		   and ($3::uuid is null or d.app_id = $3::uuid)
+		   and ($3::uuid is not null or not exists(select 1 from scenario_test_action_policies p where p.app_id = d.app_id))`,
 		accountID, since.UTC(), appArg)
 	if err := row.Scan(&n); err != nil {
 		return 0, err
@@ -14904,18 +14908,20 @@ func (s *PgStore) WasInvokedSuccessfullySince(ctx context.Context, accountID, ap
 	var exists bool
 	row := s.pool.QueryRow(ctx, `
 		select exists(
-			select 1 from invocations
+			select 1 from invocations v
 			 where account_id = $1
 			   and state = 'completed'
 			   and created_at >= $2
 			   and ($3::uuid is null or app_id is not distinct from $3::uuid)
+			   and ($3::uuid is not null or not exists(select 1 from scenario_test_action_policies p where p.app_id = v.app_id))
 			 limit 1)
 		    or exists(
-			select 1 from request_telemetry
+			select 1 from request_telemetry t
 			 where account_id = $1
 			   and received_at >= $2
 			   and status < 500
 			   and ($3::uuid is null or app_id = $3::uuid)
+			   and ($3::uuid is not null or not exists(select 1 from scenario_test_action_policies p where p.app_id = t.app_id))
 			 limit 1)`,
 		accountID, since.UTC(), appArg)
 	if err := row.Scan(&exists); err != nil {
@@ -14950,10 +14956,11 @@ func (s *PgStore) CountNewErrorFingerprintsSince(ctx context.Context, accountID,
 	var total int
 	err := s.pool.QueryRow(ctx, `
 		select count(*)::int
-		  from app_errors
+		  from app_errors e
 		 where account_id = $1
 		   and first_seen_at >= $2
-		   and ($3::uuid is null or app_id = $3::uuid)`,
+		   and ($3::uuid is null or app_id = $3::uuid)
+		   and ($3::uuid is not null or not exists(select 1 from scenario_test_action_policies p where p.app_id = e.app_id))`,
 		accountID, since.UTC(), appArg).Scan(&total)
 	if err != nil {
 		return 0, err
@@ -14976,10 +14983,11 @@ func (s *PgStore) ColdWakeRatePctSince(ctx context.Context, accountID, appID str
 			100.0 * sum(case when cold_boot then count else 0 end)::float8
 			/ nullif(sum(count), 0), 0
 		)::float8
-		  from request_telemetry
+		  from request_telemetry t
 		 where account_id = $1
 		   and received_at >= $2
-		   and ($3::uuid is null or app_id = $3::uuid)`,
+		   and ($3::uuid is null or app_id = $3::uuid)
+		   and ($3::uuid is not null or not exists(select 1 from scenario_test_action_policies p where p.app_id = t.app_id))`,
 		accountID, since.UTC(), appArg).Scan(&rate)
 	if err != nil {
 		return 0, err
@@ -15701,11 +15709,12 @@ func (s *PgStore) CountFailedInvocationsSince(ctx context.Context, accountID, ap
 	// alert most needs to see — and was not counted at all.
 	var n int
 	row := s.pool.QueryRow(ctx, `
-		select count(*) from invocations
+		select count(*) from invocations v
 		 where account_id = $1
 		   and state in ('failed', 'dead_letter')
 		   and coalesce(completed_at, created_at) >= $2
 		   and ($3::uuid is null or app_id is not distinct from $3::uuid)
+		   and ($3::uuid is not null or not exists(select 1 from scenario_test_action_policies p where p.app_id = v.app_id))
 		   and ($4::text is null or source = $4::text)`,
 		accountID, since.UTC(), appArg, sourceArg)
 	if err := row.Scan(&n); err != nil {

@@ -19,6 +19,7 @@ CREATE TABLE internal_mail_messages (id uuid PRIMARY KEY,namespace text NOT NULL
 CREATE TABLE internal_mail_recipients (id uuid PRIMARY KEY,namespace text NOT NULL,message_id uuid NOT NULL);
 
 CREATE TABLE usage_minutes(account_id uuid NOT NULL,minute timestamptz NOT NULL,mb_seconds bigint NOT NULL);
+CREATE TABLE scenario_test_action_policies(app_id uuid PRIMARY KEY REFERENCES apps(id) ON DELETE CASCADE);
 
 -- apid owns this durable notification intent and handoff state. maild has
 -- metadata-only read access through its existing private operator routes.

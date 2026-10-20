@@ -1263,6 +1263,19 @@ observations remain application-reported. Hosted/native qualification requires
 the supported acceptance hosts. See the
 [sealed comparison decision](adr/20261017201004-sealed-rehearsal-action-comparison.md).
 
+Platform work done on behalf of an enrolled app stays inside the run as well,
+in both capture-only and contained rehearsals:
+- Account-wide alert rules do not count the app; app-scoped rules still do.
+- Its route-discovery events do not fan out to other apps.
+- Workflow outbound steps are refused, so they never use live provider credentials.
+- Log drains, deployment-failure mail and Kafka/NATS/Redis Streams/SQS triggers do not run for it.
+
+Contained enrollment refuses an app that already holds real managed PostgreSQL
+or object-storage bindings; declare the isolated fixtures below instead. Builds
+of the candidate revision keep ordinary builder egress, so a receipt makes no
+claim about build-script side effects. See
+[ADR-20261019180000](adr/20261019180000-rehearsal-side-effects-stay-inside-the-run.md).
+
 ### Contain serving-VM outbound traffic
 
 Rehearsal containment version 1 is an operator-gated extension:

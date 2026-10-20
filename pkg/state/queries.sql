@@ -2790,7 +2790,12 @@ select id, account_id, app_id, kind, slug, enabled, config, queue_binding_id, qu
        cron_id, source, payload_max_bytes, broker_poison_strategy,
        filter_criteria, delivery,
        created_at, updated_at
-from triggers where enabled = true AND NOT environment_workload_admission_retired(app_id,queue_binding_scope);
+from triggers where enabled = true AND NOT environment_workload_admission_retired(app_id,queue_binding_scope)
+-- A rehearsal-enrolled app never polls or commits offsets on a real external
+-- broker; its queue, cron and realtime inputs stay inside the app
+-- (ADR-20261019180000).
+AND NOT (kind IN ('kafka','nats','redis_streams','sqs_compat')
+  AND EXISTS (SELECT 1 FROM scenario_test_action_policies p WHERE p.app_id=triggers.app_id));
 
 -- name: CountTriggersByApp :one
 select count(*) from triggers t where t.app_id = $1
@@ -14582,8 +14587,12 @@ WITH expired AS (
 ) SELECT count(*)::bigint FROM audited;
 
 -- name: ListEnabledAppLogDrainsWithStandardBinding :many
+-- A rehearsal-enrolled app's candidate output never leaves for a customer
+-- log destination (ADR-20261019180000).
 SELECT d.*,coalesce(application_standard_log_binding(d.app_id,d.id),'null'::jsonb)::jsonb AS standard_binding
-FROM app_log_drains d WHERE d.enabled ORDER BY d.created_at,d.id;
+FROM app_log_drains d WHERE d.enabled
+ AND NOT EXISTS (SELECT 1 FROM scenario_test_action_policies p WHERE p.app_id=d.app_id)
+ORDER BY d.created_at,d.id;
 
 -- name: RecordApplicationStandardLogDelivery :one
 WITH guarded AS MATERIALIZED (
@@ -15983,6 +15992,9 @@ SELECT EXISTS(
  AND r.lease_until>clock_timestamp() AND s.status='running' AND a.status<>'deleted'
  AND NOT a.maintenance_mode AND (NOT a.platform_tenant_required OR r.platform_tenant_id IS NOT NULL)
  AND ac.status IN ('active','past_due') AND ac.abuse_hold_at IS NULL AND ac.plan IN ('hobby','pro','scale')
+ -- A rehearsal-enrolled app never reaches a real provider with live
+ -- credentials from a workflow step (ADR-20261019180000).
+ AND NOT EXISTS (SELECT 1 FROM scenario_test_action_policies p WHERE p.app_id=a.id)
  AND COALESCE(r.platform_tenant_id::text, '')=COALESCE(sqlc.arg(tenant_id)::text, '')
  AND (r.platform_tenant_id IS NULL OR EXISTS (
   SELECT 1 FROM platform_tenants t WHERE t.id=r.platform_tenant_id AND t.account_id=a.account_id AND t.status='active'
@@ -19048,6 +19060,8 @@ DELETE FROM workflow_schedule_occurrences WHERE id IN
 WITH owned_apps AS (
  SELECT id FROM apps WHERE account_id = sqlc.arg(account_id)::uuid
  AND (sqlc.narg(app_id)::uuid IS NULL OR id = sqlc.narg(app_id)::uuid)
+ -- Account-wide rules skip rehearsal-enrolled apps (ADR-20261019180000).
+ AND (sqlc.narg(app_id)::uuid IS NOT NULL OR NOT EXISTS (SELECT 1 FROM scenario_test_action_policies p WHERE p.app_id = apps.id))
 ), due_runs AS (
  -- Same wake/lease eligibility as automation queue health (ADR-730/643).
  SELECT r.created_at,CASE WHEN r.status='running'

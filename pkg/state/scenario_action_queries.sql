@@ -20,6 +20,12 @@ SELECT NOT EXISTS (
  HAVING m.app_id IS NULL OR p.app_id IS NULL OR m.account_id<>p.account_id OR m.run_id<>p.run_id OR m.workload_name<>p.workload_name
 ) AS matches;
 
+-- name: ScenarioActionAppHasManagedBindings :one
+-- A contained member cannot reach real managed PostgreSQL or object storage;
+-- refuse it at enrollment instead of failing later (ADR-20261019180000).
+SELECT EXISTS(SELECT 1 FROM app_secrets WHERE app_id=sqlc.arg(app_id)::text::uuid
+ AND (managed_postgres_binding_id IS NOT NULL OR managed_object_storage_credential_id IS NOT NULL)) AS bound;
+
 -- name: ScenarioActionAppUnstarted :one
 SELECT NOT EXISTS(SELECT 1 FROM deployments WHERE app_id=sqlc.arg(app_id)::text::uuid)
  AND NOT EXISTS(SELECT 1 FROM instances WHERE app_id=sqlc.arg(app_id)::text::uuid)

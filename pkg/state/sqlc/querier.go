@@ -2749,6 +2749,8 @@ type Querier interface {
 	// the customer-facing API — those carry host_redacted_hash only
 	// (ADR-098 §11).
 	ListEgressCircuitCandidates(ctx context.Context, db DBTX, sampledAt pgtype.Timestamptz) ([]ListEgressCircuitCandidatesRow, error)
+	// A rehearsal-enrolled app's candidate output never leaves for a customer
+	// log destination (ADR-20261019180000).
 	ListEnabledAppLogDrainsWithStandardBinding(ctx context.Context, db DBTX) ([]ListEnabledAppLogDrainsWithStandardBindingRow, error)
 	ListEnabledCrons(ctx context.Context, db DBTX) ([]ListEnabledCronsRow, error)
 	ListEnabledCustomerAlertRules(ctx context.Context, db DBTX) ([]AlertRule, error)
@@ -2761,6 +2763,9 @@ type Querier interface {
 	// ADR-118 / issue #757: filter_criteria is included so the dispatch
 	// tick can evaluate per-record predicates without a second round-trip
 	// (the column is JSONB; empty/null means "no filter").
+	// A rehearsal-enrolled app never polls or commits offsets on a real external
+	// broker; its queue, cron and realtime inputs stay inside the app
+	// (ADR-20261019180000).
 	ListEnabledTriggers(ctx context.Context, db DBTX) ([]ListEnabledTriggersRow, error)
 	ListEnabledUDPListeners(ctx context.Context, db DBTX) ([]AppUdpListener, error)
 	ListEnvironmentGitOpsOverrideExpirations(ctx context.Context, db DBTX, sourceID pgtype.UUID) ([]ListEnvironmentGitOpsOverrideExpirationsRow, error)
@@ -5055,6 +5060,9 @@ type Querier interface {
 	SaveRuntimeInstanceConfigProof(ctx context.Context, db DBTX, arg SaveRuntimeInstanceConfigProofParams) (SaveRuntimeInstanceConfigProofRow, error)
 	SaveServiceRolloutHandoff(ctx context.Context, db DBTX, arg SaveServiceRolloutHandoffParams) error
 	SaveWebhookAutomationBinding(ctx context.Context, db DBTX, arg SaveWebhookAutomationBindingParams) (WorkflowWebhookBinding, error)
+	// A contained member cannot reach real managed PostgreSQL or object storage;
+	// refuse it at enrollment instead of failing later (ADR-20261019180000).
+	ScenarioActionAppHasManagedBindings(ctx context.Context, db DBTX, appID string) (bool, error)
 	ScenarioActionAppUnstarted(ctx context.Context, db DBTX, appID string) (pgtype.Bool, error)
 	ScenarioActionPoliciesForRun(ctx context.Context, db DBTX, arg ScenarioActionPoliciesForRunParams) ([]ScenarioActionPoliciesForRunRow, error)
 	ScenarioActionRunCanEnroll(ctx context.Context, db DBTX, arg ScenarioActionRunCanEnrollParams) (pgtype.Bool, error)

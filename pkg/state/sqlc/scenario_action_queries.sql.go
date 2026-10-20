@@ -98,6 +98,20 @@ func (q *Queries) LockScenarioActionRun(ctx context.Context, db DBTX, arg LockSc
 	return err
 }
 
+const scenarioActionAppHasManagedBindings = `-- name: ScenarioActionAppHasManagedBindings :one
+SELECT EXISTS(SELECT 1 FROM app_secrets WHERE app_id=$1::text::uuid
+ AND (managed_postgres_binding_id IS NOT NULL OR managed_object_storage_credential_id IS NOT NULL)) AS bound
+`
+
+// A contained member cannot reach real managed PostgreSQL or object storage;
+// refuse it at enrollment instead of failing later (ADR-20261019180000).
+func (q *Queries) ScenarioActionAppHasManagedBindings(ctx context.Context, db DBTX, appID string) (bool, error) {
+	row := db.QueryRow(ctx, scenarioActionAppHasManagedBindings, appID)
+	var bound bool
+	err := row.Scan(&bound)
+	return bound, err
+}
+
 const scenarioActionAppUnstarted = `-- name: ScenarioActionAppUnstarted :one
 SELECT NOT EXISTS(SELECT 1 FROM deployments WHERE app_id=$1::text::uuid)
  AND NOT EXISTS(SELECT 1 FROM instances WHERE app_id=$1::text::uuid)

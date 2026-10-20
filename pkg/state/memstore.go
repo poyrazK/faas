@@ -13556,7 +13556,7 @@ func (m *MemStore) ListEnabledTriggers(_ context.Context) ([]sqlc.Trigger, error
 	defer m.mu.Unlock()
 	var out []sqlc.Trigger
 	for _, t := range m.triggers {
-		if t.Enabled && !m.workloadAdmissionRetiredLocked(t.AppID.String(), t.QueueBindingScope) {
+		if t.Enabled && !m.workloadAdmissionRetiredLocked(t.AppID.String(), t.QueueBindingScope) && !m.rehearsalBrokerTriggerLocked(t) {
 			out = append(out, t)
 		}
 	}
@@ -24150,6 +24150,9 @@ func (m *MemStore) CountFailedDeploymentsSince(_ context.Context, accountID, app
 		if appID != "" && d.AppID != appID {
 			continue
 		}
+		if m.rehearsalAlertExcludedLocked(appID, d.AppID) {
+			continue
+		}
 		if d.Status != DeployFailed {
 			continue
 		}
@@ -24172,6 +24175,9 @@ func (m *MemStore) WasInvokedSuccessfullySince(_ context.Context, accountID, app
 			continue
 		}
 		if appID != "" && inv.AppID != appID {
+			continue
+		}
+		if m.rehearsalAlertExcludedLocked(appID, inv.AppID) {
 			continue
 		}
 		// MemStore keeps no request telemetry; mirror PgStore's
@@ -24716,6 +24722,9 @@ func (m *MemStore) CountFailedInvocationsSince(_ context.Context, accountID, app
 			continue
 		}
 		if appID != "" && inv.AppID != appID {
+			continue
+		}
+		if m.rehearsalAlertExcludedLocked(appID, inv.AppID) {
 			continue
 		}
 		if source != "" && inv.Source != source {
