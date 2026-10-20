@@ -1323,6 +1323,27 @@
     "kind": "configuration"
   },
   {
+    "table": "app_release_gates",
+    "columns": [
+      "account_id",
+      "app_id",
+      "comparison",
+      "created_at",
+      "created_by",
+      "id",
+      "kind",
+      "max_burn_rate",
+      "max_new_groups",
+      "metric_name",
+      "min_events",
+      "min_samples",
+      "name",
+      "slo_id",
+      "threshold"
+    ],
+    "kind": "configuration"
+  },
+  {
     "table": "app_route_priorities",
     "columns": [
       "account_id",
@@ -14176,6 +14197,30 @@
       "manifest_hash"
     ],
     "kind": "platform_configuration"
+  },
+  {
+    "table": "release_freezes",
+    "columns": [
+      "account_id",
+      "after_rollback_minutes",
+      "app_id",
+      "created_at",
+      "created_by",
+      "ends_at",
+      "id",
+      "kind",
+      "lifted_at",
+      "lifted_by",
+      "reason",
+      "source",
+      "source_deployment_id",
+      "starts_at",
+      "time_zone",
+      "weekly_days",
+      "weekly_duration_minutes",
+      "weekly_start_minute"
+    ],
+    "kind": "operational"
   },
   {
     "table": "request_audit_events",
