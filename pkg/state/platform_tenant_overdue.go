@@ -232,6 +232,7 @@ func (s *PgStore) SyncPlatformTenantOverdueHolds(ctx context.Context, now time.T
 			   and e.payment_status in ('open', 'uncollectible') and e.due_at is not null
 			   and coalesce(e.amount_remaining_minor, 1) > 0
 			   and e.due_at + make_interval(days => p.block_overdue_after_days) <= $1
+			   and e.status_synced_at >= $2
 			 order by s.platform_tenant_id, e.due_at
 		), placed as (
 			insert into platform_tenant_overdue_holds (platform_tenant_id, account_id, export_id, due_at, since)
@@ -245,7 +246,8 @@ func (s *PgStore) SyncPlatformTenantOverdueHolds(ctx context.Context, now time.T
 		)
 		select true, platform_tenant_id::text, account_id::text, export_id::text, due_at, since from placed where inserted
 		union all
-		select false, platform_tenant_id::text, account_id::text, export_id::text, due_at, since from lifted`, now.UTC())
+		select false, platform_tenant_id::text, account_id::text, export_id::text, due_at, since from lifted`,
+		now.UTC(), now.Add(-api.ConsumerOverdueStatusMaxAge).UTC())
 	if err != nil {
 		return nil, nil, fmt.Errorf("sync platform tenant overdue holds: %w", err)
 	}

@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -137,6 +138,18 @@ func checkTenantControls(t *testing.T, ctx context.Context, st state.Store, acco
 	}
 	if holds, err := overdue.ListPlatformTenantOverdueHolds(ctx, accountID); err != nil || len(holds) != 1 {
 		t.Fatalf("holds = %+v, %v", holds, err)
+	}
+	// A status not read within the max age holds no longer (ADR-20261019180000).
+	stale := now.Add(api.ConsumerOverdueStatusMaxAge + time.Hour)
+	if _, lifted, err := overdue.SyncPlatformTenantOverdueHolds(ctx, stale); err != nil || len(lifted) != 1 {
+		t.Fatalf("stale status lift = %+v, %v", lifted, err)
+	}
+	if _, err := st.(state.StatementInvoicePaymentStore).RecordStatementInvoicePayment(ctx, export.ID, state.StatementInvoicePayment{
+		Status: state.InvoicePaymentOpen, AmountRemainingMinor: 5, DueAt: &due}, stale, &next); err != nil {
+		t.Fatal(err)
+	}
+	if placed, _, err := overdue.SyncPlatformTenantOverdueHolds(ctx, stale); err != nil || len(placed) != 1 {
+		t.Fatalf("fresh status hold = %+v, %v", placed, err)
 	}
 	if err := overdue.DeletePlatformTenantBillingPolicy(ctx, accountID); err != nil {
 		t.Fatal(err)

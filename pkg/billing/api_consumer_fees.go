@@ -146,16 +146,22 @@ func feeSegments(ordered []feeCard, at, stop time.Time) []feeCard {
 // charges both in full against its stream's usage; a prorating card scales
 // both to its share of the month (ADR-1325, ADR-20261019100332) and counts
 // only the usage it priced.
-func monthlyStatementFees(cards []feeCard, usage feeUsage, billed map[state.APIConsumerStatementFee]int64) []state.APIConsumerStatementFee {
+//
+// finalized is the usage finalized revisions billed. A top-up falls only by
+// the usage billed since, so a share that later shrinks (a card taking over
+// or a revocation after the minimum was finalized) never reduces it and a
+// revision never goes negative (ADR-20261019180000).
+func monthlyStatementFees(cards []feeCard, usage, finalized feeUsage, billed map[state.APIConsumerStatementFee]int64) []state.APIConsumerStatementFee {
 	var fees []state.APIConsumerStatementFee
 	for _, card := range cards {
 		if !card.hasMonthlyCharge {
 			continue
 		}
-		base, minimum, covered := card.base, card.minimum, usage.byStream[card.stream]
+		base, minimum := card.base, card.minimum
+		covered, coveredBefore := usage.byStream[card.stream], finalized.byStream[card.stream]
 		if card.prorate {
 			base, minimum = ProrateMonthlyFeeBetween(base, card.from, card.until), ProrateMonthlyFeeBetween(minimum, card.from, card.until)
-			covered = usage.byCard[card.id]
+			covered, coveredBefore = usage.byCard[card.id], finalized.byCard[card.id]
 		}
 		baseKey := state.APIConsumerStatementFee{Kind: state.StatementFeeBase, RateCardID: card.id}
 		if amount := base - billed[baseKey]; amount > 0 {
@@ -164,7 +170,7 @@ func monthlyStatementFees(cards []feeCard, usage feeUsage, billed map[state.APIC
 		}
 		minimumKey := state.APIConsumerStatementFee{Kind: state.StatementFeeMinimum, RateCardID: card.id}
 		owed := max(0, minimum-covered)
-		if topUp := owed - billed[minimumKey]; topUp != 0 {
+		if topUp := max(owed-billed[minimumKey], -max(0, covered-coveredBefore)); topUp != 0 {
 			minimumKey.AmountMillicents = topUp
 			fees = append(fees, minimumKey)
 		}
@@ -192,7 +198,7 @@ func billedFees(fees ...[]state.APIConsumerStatementFee) map[state.APIConsumerSt
 // delta is what this revision bills for usage, so late usage lowers the
 // top-up it adds. A trial running at the fee instant waives every fee
 // (ADR-1314). opts.EndedAt, a revocation, ends prorating cards' share
-// unless a revision of the month was finalized before it.
+// unless a finalized revision of the month was priced before it.
 func APIConsumerStatementFees(cards []state.APIConsumerRateCard, start, end, consumerCreated time.Time, opts QuoteOptions,
 	revisions []state.APIConsumerUsageStatement, delta []APIConsumerUsageChargeBucket) []state.APIConsumerStatementFee {
 	if !IsCalendarMonth(start, end) {
@@ -203,7 +209,7 @@ func APIConsumerStatementFees(cards []state.APIConsumerRateCard, start, end, con
 	if !ok || opts.inTrial(at) || opts.inTrial(at.Add(time.Minute)) {
 		return nil
 	}
-	usage := newFeeUsage()
+	usage, finalized := newFeeUsage(), newFeeUsage()
 	var finalizedFees [][]state.APIConsumerStatementFee
 	closeAt := opts.EndedAt
 	for _, statement := range revisions {
@@ -212,11 +218,12 @@ func APIConsumerStatementFees(cards []state.APIConsumerRateCard, start, end, con
 		}
 		for _, bucket := range statement.Buckets {
 			usage.add(bucket.Unit, bucket.RateCardID, bucket.AmountMillicents)
+			finalized.add(bucket.Unit, bucket.RateCardID, bucket.AmountMillicents)
 		}
 		finalizedFees = append(finalizedFees, statement.Fees)
-		// Finalized fees are never reduced: a revocation after a month was
-		// first finalized does not shorten it.
-		if statement.FinalizedAt != nil && !closeAt.IsZero() && statement.FinalizedAt.Before(closeAt) {
+		// Fees priced before the revocation and then finalized cover the
+		// whole month (ADR-20261019180000).
+		if !closeAt.IsZero() && statement.AsOf.Before(closeAt) {
 			closeAt = time.Time{}
 		}
 	}
@@ -236,5 +243,5 @@ func APIConsumerStatementFees(cards []state.APIConsumerRateCard, start, end, con
 		charging = append(charging, feeSegments(ordered, at, closeAt)...)
 	}
 	sort.SliceStable(charging, func(i, j int) bool { return charging[i].stream < charging[j].stream })
-	return monthlyStatementFees(charging, usage, billedFees(finalizedFees...))
+	return monthlyStatementFees(charging, usage, finalized, billedFees(finalizedFees...))
 }
