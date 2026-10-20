@@ -1152,6 +1152,8 @@ from .debug_telemetry_span import DebugTelemetrySpan
 from .debug_telemetry_span_dependency_type import DebugTelemetrySpanDependencyType
 from .debug_timeline_event import DebugTimelineEvent
 from .debug_timeline_event_phase import DebugTimelineEventPhase
+from .decide_release_approval_request import DecideReleaseApprovalRequest
+from .decide_release_approval_request_decision import DecideReleaseApprovalRequestDecision
 from .declared_route import DeclaredRoute
 from .declared_route_methods_item import DeclaredRouteMethodsItem
 from .delayed_task_after_request import DelayedTaskAfterRequest
@@ -2387,6 +2389,7 @@ from .list_profile_investigations_response import ListProfileInvestigationsRespo
 from .list_profile_periodic_monitors_response import ListProfilePeriodicMonitorsResponse
 from .list_project_binding_verification_runs_status import ListProjectBindingVerificationRunsStatus
 from .list_project_environment_promotions_status import ListProjectEnvironmentPromotionsStatus
+from .list_release_approvals_response import ListReleaseApprovalsResponse
 from .list_release_freezes_response import ListReleaseFreezesResponse
 from .list_release_gates_response import ListReleaseGatesResponse
 from .list_schedule_occurrences_response import ListScheduleOccurrencesResponse
@@ -4641,6 +4644,13 @@ from .register_scenario_test_response_policy_version import RegisterScenarioTest
 from .register_scenario_test_response_recorder_version import RegisterScenarioTestResponseRecorderVersion
 from .register_scenario_test_response_webhook_mode import RegisterScenarioTestResponseWebhookMode
 from .rekey_progress import RekeyProgress
+from .release_approval_decision import ReleaseApprovalDecision
+from .release_approval_decision_decision import ReleaseApprovalDecisionDecision
+from .release_approval_decision_role import ReleaseApprovalDecisionRole
+from .release_approval_policy import ReleaseApprovalPolicy
+from .release_approval_policy_approvers import ReleaseApprovalPolicyApprovers
+from .release_approval_status import ReleaseApprovalStatus
+from .release_approval_status_state import ReleaseApprovalStatusState
 from .release_database_ref import ReleaseDatabaseRef
 from .release_freeze import ReleaseFreeze
 from .release_freeze_kind import ReleaseFreezeKind
@@ -5257,6 +5267,8 @@ from .set_platform_tenant_request_budget_request import SetPlatformTenantRequest
 from .set_platform_tenant_status_request import SetPlatformTenantStatusRequest
 from .set_platform_tenant_status_request_status import SetPlatformTenantStatusRequestStatus
 from .set_queue_binding_release_policy_request import SetQueueBindingReleasePolicyRequest
+from .set_release_approval_policy_request import SetReleaseApprovalPolicyRequest
+from .set_release_approval_policy_request_approvers import SetReleaseApprovalPolicyRequestApprovers
 from .set_route_health_gate_request import SetRouteHealthGateRequest
 from .set_route_health_gate_request_mode import SetRouteHealthGateRequestMode
 from .set_route_health_gate_request_on_regression import SetRouteHealthGateRequestOnRegression
@@ -6949,6 +6961,8 @@ __all__ = (
     "DebugTelemetrySpanDependencyType",
     "DebugTimelineEvent",
     "DebugTimelineEventPhase",
+    "DecideReleaseApprovalRequest",
+    "DecideReleaseApprovalRequestDecision",
     "DeclaredRoute",
     "DeclaredRouteMethodsItem",
     "DelayedTaskAfterRequest",
@@ -8102,6 +8116,7 @@ __all__ = (
     "ListProfilePeriodicMonitorsResponse",
     "ListProjectBindingVerificationRunsStatus",
     "ListProjectEnvironmentPromotionsStatus",
+    "ListReleaseApprovalsResponse",
     "ListReleaseFreezesResponse",
     "ListReleaseGatesResponse",
     "ListScheduleOccurrencesResponse",
@@ -10168,6 +10183,13 @@ __all__ = (
     "RegisterScenarioTestResponseRecorderVersion",
     "RegisterScenarioTestResponseWebhookMode",
     "RekeyProgress",
+    "ReleaseApprovalDecision",
+    "ReleaseApprovalDecisionDecision",
+    "ReleaseApprovalDecisionRole",
+    "ReleaseApprovalPolicy",
+    "ReleaseApprovalPolicyApprovers",
+    "ReleaseApprovalStatus",
+    "ReleaseApprovalStatusState",
     "ReleaseDatabaseRef",
     "ReleaseFreeze",
     "ReleaseFreezeKind",
@@ -10770,6 +10792,8 @@ __all__ = (
     "SetPlatformTenantStatusRequest",
     "SetPlatformTenantStatusRequestStatus",
     "SetQueueBindingReleasePolicyRequest",
+    "SetReleaseApprovalPolicyRequest",
+    "SetReleaseApprovalPolicyRequestApprovers",
     "SetRouteHealthGateRequest",
     "SetRouteHealthGateRequestMode",
     "SetRouteHealthGateRequestOnRegression",

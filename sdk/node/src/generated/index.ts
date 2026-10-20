@@ -599,6 +599,7 @@ export type { DebugTelemetryListResponse } from './models/DebugTelemetryListResp
 export type { DebugTelemetryRequestItem } from './models/DebugTelemetryRequestItem.js';
 export type { DebugTelemetrySpan } from './models/DebugTelemetrySpan.js';
 export type { DebugTimelineEvent } from './models/DebugTimelineEvent.js';
+export type { DecideReleaseApprovalRequest } from './models/DecideReleaseApprovalRequest.js';
 export type { DeclaredRoute } from './models/DeclaredRoute.js';
 export type { DelayedTaskAfterRequest } from './models/DelayedTaskAfterRequest.js';
 export type { DelayedTaskAtRequest } from './models/DelayedTaskAtRequest.js';
@@ -1139,6 +1140,7 @@ export type { ListOrgAPIKeysResponse } from './models/ListOrgAPIKeysResponse.js'
 export type { ListProfileDeploymentChecksResponse } from './models/ListProfileDeploymentChecksResponse.js';
 export type { ListProfileInvestigationsResponse } from './models/ListProfileInvestigationsResponse.js';
 export type { ListProfilePeriodicMonitorsResponse } from './models/ListProfilePeriodicMonitorsResponse.js';
+export type { ListReleaseApprovalsResponse } from './models/ListReleaseApprovalsResponse.js';
 export type { ListReleaseFreezesResponse } from './models/ListReleaseFreezesResponse.js';
 export type { ListReleaseGatesResponse } from './models/ListReleaseGatesResponse.js';
 export type { ListScheduleOccurrencesResponse } from './models/ListScheduleOccurrencesResponse.js';
@@ -2402,6 +2404,9 @@ export type { RegisterEventSchemaResponse } from './models/RegisterEventSchemaRe
 export type { RegisterScenarioTestRequest } from './models/RegisterScenarioTestRequest.js';
 export type { RegisterScenarioTestResponse } from './models/RegisterScenarioTestResponse.js';
 export type { RekeyProgress } from './models/RekeyProgress.js';
+export type { ReleaseApprovalDecision } from './models/ReleaseApprovalDecision.js';
+export type { ReleaseApprovalPolicy } from './models/ReleaseApprovalPolicy.js';
+export type { ReleaseApprovalStatus } from './models/ReleaseApprovalStatus.js';
 export type { ReleaseDatabaseRef } from './models/ReleaseDatabaseRef.js';
 export type { ReleaseFreeze } from './models/ReleaseFreeze.js';
 export type { ReleaseFreezeStatus } from './models/ReleaseFreezeStatus.js';
@@ -2723,6 +2728,7 @@ export type { SetPlatformTenantHostnamePolicyRequest } from './models/SetPlatfor
 export type { SetPlatformTenantRequestBudgetRequest } from './models/SetPlatformTenantRequestBudgetRequest.js';
 export type { SetPlatformTenantStatusRequest } from './models/SetPlatformTenantStatusRequest.js';
 export type { SetQueueBindingReleasePolicyRequest } from './models/SetQueueBindingReleasePolicyRequest.js';
+export type { SetReleaseApprovalPolicyRequest } from './models/SetReleaseApprovalPolicyRequest.js';
 export type { SetRouteHealthGateRequest } from './models/SetRouteHealthGateRequest.js';
 export type { SetRouteMonitorRequest } from './models/SetRouteMonitorRequest.js';
 export type { SetRoutePrioritiesRequest } from './models/SetRoutePrioritiesRequest.js';

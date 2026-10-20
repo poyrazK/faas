@@ -234,11 +234,7 @@ func TestReleaseApprovalTimeoutAbortsOnTheWorkersNextTick(t *testing.T) {
 func TestReleaseApprovalRefusesTheDeployersOwnApproval(t *testing.T) {
 	ctx := context.Background()
 	f := newApprovalFixture(ctx, t, "approval-self", time.Now().Add(-time.Hour), api.SetReleaseApprovalPolicyRequest{RequiredApprovals: 1})
-	store := *f.e.Store()
-	approvals, ok := store.(state.ReleaseApprovalStore)
-	if !ok {
-		t.Fatal("store has no release approvals")
-	}
+	approvals := *f.e.Store()
 	policy, err := approvals.ReleaseApprovalPolicy(ctx, f.app.ID)
 	if err != nil {
 		t.Fatal(err)

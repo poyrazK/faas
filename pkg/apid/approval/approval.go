@@ -27,7 +27,7 @@ func Gated(policy *state.ReleaseApprovalPolicy, app state.App, d state.Deploymen
 	if d.CreatedAt.Before(policy.CreatedAt) || d.RolloutCompletedAt != nil {
 		return false
 	}
-	return !(d.Status == state.DeployLive && d.TrafficPercent == 100)
+	return d.Status != state.DeployLive || d.TrafficPercent != 100
 }
 
 // RequestMode reports whether the app serves request traffic through a

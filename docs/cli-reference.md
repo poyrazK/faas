@@ -29,6 +29,7 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 | [`apps`](#apps) | List your apps |
 | [`app`](#app) | Inspect an app, change settings, or manage its runtime |
 | [`billing`](#billing) | Manage billing (portal, invoices, subscription, card on file) |
+| [`approvals`](#approvals) | Require people to approve production releases before they leave their first canary stage |
 | [`freeze`](#freeze) | Freeze production releases for a window, every week, or after automatic rollbacks |
 | [`release-gates`](#release-gates) | Abort rollouts and roll back releases on your SLOs, new error groups, or custom metrics |
 | [`canary`](#canary) | Inspect profiling gates, advance canary stages, or simulate a preset |
@@ -5704,6 +5705,100 @@ Export a partial FOCUS 1.4 invoice projection
 | `--month <YYYY-MM>` | invoice period-end month (required) |  |
 | `--format <FORMAT>` | export encoding (default zip with CSV and metadata) | one of `zip` · `csv` · `metadata` |
 | `--out <PATH>` | new output file (required for zip); - writes stdout |  |
+
+
+## approvals
+
+Require people to approve production releases before they leave their first canary stage
+
+`gregale approvals [<subcommand>]`
+
+Examples:
+
+```sh
+gregale approvals require --app my-api --approvals 2
+gregale approvals require --app my-api --approvals 1 --approvers developer --timeout 4h
+gregale approvals pending --app my-api
+gregale approvals approve 3f9c1e2a-0b7d-4c55-9e1a-2d6f8b4c7e10 --comment "canary looks clean"
+gregale approvals reject v42 --app my-api --reason "checkout latency is up"
+```
+
+### approvals require
+
+Require approvals for an app&#39;s production releases (ADR-20261020085706)
+
+`gregale approvals require [--app <slug>] --approvals <N> [--after-stage <N>] [--timeout <DURATION>] [--approvers <ROLE>] [--allow-self-approval]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug (defaults to linked project app) |  |
+| `--approvals <N>` | approvals each production release needs (1-5) | required |
+| `--after-stage <N>` | canary stage the release waits in (default 1) |  |
+| `--timeout <DURATION>` | abort a release that waits longer (default 24h) |  |
+| `--approvers <ROLE>` | who may approve (default admin: owners and admins) | one of `admin` · `developer` |
+| `--allow-self-approval` | count the deployer&#39;s own approval |  |
+
+### approvals policy
+
+Show an app&#39;s approval policy
+
+`gregale approvals policy [--app <slug>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug (defaults to linked project app) |  |
+
+### approvals off
+
+Stop requiring approvals for an app
+
+`gregale approvals off [--app <slug>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug (defaults to linked project app) |  |
+
+### approvals pending
+
+List an app&#39;s releases waiting for approval
+
+`gregale approvals pending [--app <slug>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug (defaults to linked project app) |  |
+
+### approvals status
+
+Show a release&#39;s approvals
+
+`gregale approvals status [--app <slug>] <deployment>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug, to resolve a vN revision |  |
+
+### approvals approve
+
+Approve a release
+
+`gregale approvals approve [--app <slug>] [--comment <TEXT>] <deployment>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug, to resolve a vN revision |  |
+| `--comment <TEXT>` | note recorded with the approval |  |
+
+### approvals reject
+
+Reject a release and abort its rollout
+
+`gregale approvals reject [--app <slug>] --reason <TEXT> <deployment>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug, to resolve a vN revision |  |
+| `--reason <TEXT>` | why the release is rejected | required |
 
 
 ## freeze

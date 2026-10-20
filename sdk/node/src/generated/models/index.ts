@@ -594,6 +594,7 @@ export type { DebugTelemetryListResponse } from './DebugTelemetryListResponse.js
 export type { DebugTelemetryRequestItem } from './DebugTelemetryRequestItem.js';
 export type { DebugTelemetrySpan } from './DebugTelemetrySpan.js';
 export type { DebugTimelineEvent } from './DebugTimelineEvent.js';
+export type { DecideReleaseApprovalRequest } from './DecideReleaseApprovalRequest.js';
 export type { DeclaredRoute } from './DeclaredRoute.js';
 export type { DelayedTaskAfterRequest } from './DelayedTaskAfterRequest.js';
 export type { DelayedTaskAtRequest } from './DelayedTaskAtRequest.js';
@@ -1133,6 +1134,7 @@ export type { ListOrgActivityResponse } from './ListOrgActivityResponse.js';
 export type { ListProfileDeploymentChecksResponse } from './ListProfileDeploymentChecksResponse.js';
 export type { ListProfileInvestigationsResponse } from './ListProfileInvestigationsResponse.js';
 export type { ListProfilePeriodicMonitorsResponse } from './ListProfilePeriodicMonitorsResponse.js';
+export type { ListReleaseApprovalsResponse } from './ListReleaseApprovalsResponse.js';
 export type { ListReleaseFreezesResponse } from './ListReleaseFreezesResponse.js';
 export type { ListReleaseGatesResponse } from './ListReleaseGatesResponse.js';
 export type { ListScheduleOccurrencesResponse } from './ListScheduleOccurrencesResponse.js';
@@ -2396,6 +2398,9 @@ export type { RegisterEventSchemaResponse } from './RegisterEventSchemaResponse.
 export type { RegisterScenarioTestRequest } from './RegisterScenarioTestRequest.js';
 export type { RegisterScenarioTestResponse } from './RegisterScenarioTestResponse.js';
 export type { RekeyProgress } from './RekeyProgress.js';
+export type { ReleaseApprovalDecision } from './ReleaseApprovalDecision.js';
+export type { ReleaseApprovalPolicy } from './ReleaseApprovalPolicy.js';
+export type { ReleaseApprovalStatus } from './ReleaseApprovalStatus.js';
 export type { ReleaseDatabaseRef } from './ReleaseDatabaseRef.js';
 export type { ReleaseFreeze } from './ReleaseFreeze.js';
 export type { ReleaseFreezeStatus } from './ReleaseFreezeStatus.js';
@@ -2720,6 +2725,7 @@ export type { SetPlatformTenantHostnamePolicyRequest } from './SetPlatformTenant
 export type { SetPlatformTenantRequestBudgetRequest } from './SetPlatformTenantRequestBudgetRequest.js';
 export type { SetPlatformTenantStatusRequest } from './SetPlatformTenantStatusRequest.js';
 export type { SetQueueBindingReleasePolicyRequest } from './SetQueueBindingReleasePolicyRequest.js';
+export type { SetReleaseApprovalPolicyRequest } from './SetReleaseApprovalPolicyRequest.js';
 export type { SetRouteHealthGateRequest } from './SetRouteHealthGateRequest.js';
 export type { SetRouteMonitorRequest } from './SetRouteMonitorRequest.js';
 export type { SetRoutePrioritiesRequest } from './SetRoutePrioritiesRequest.js';
