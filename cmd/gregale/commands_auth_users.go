@@ -618,7 +618,7 @@ func cmdAuthOrgs(args []string) int {
 		}
 	}
 	if len(*cursor) > 200 || strings.ContainsAny(*cursor, " \t\n") {
-		return printErr("Invalid flags", errors.New("--cursor takes the value printed after More:"))
+		return printErr("Invalid flags", errors.New(`--cursor takes the value a page prints after "More:"`))
 	}
 	query, err := list.query()
 	if err != nil {
