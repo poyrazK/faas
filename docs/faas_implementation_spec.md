@@ -1500,7 +1500,7 @@ Off-box: object storage bucket (build caches evictable, cold-evicted free-tier i
 
 Phases, all rows on `builds`/`deployments`:
 
-1. **Accept** (apid): tarball ≤ cap; reject > 10k files or symlink escapes; store to spool.
+1. **Accept** (apid): tarball ≤ cap; reject > 10k files, entries that expand past 2 GiB in total (ADR-20261020160000), or symlink escapes; store to spool.
 2. **Queue** (builderd): FIFO + fairness; position surfaced in API (`queued_ahead`).
 3. **Plan**: if `Dockerfile` present and plan ≥ Hobby → dockerfile kind; else Railpack detect (node/python first-class at launch; its other providers best-effort). Detection failure → actionable error ("no lockfile found — supported: …").
 4. **Build** (inside builder microVM): scratch disk gets source + per-app cache volume mounted; Railpack or `buildctl` runs with `--frontend dockerfile` for kind=dockerfile; output = OCI layout on cache volume. VM killed on 10-min timeout. Host copies OCI out after exit.

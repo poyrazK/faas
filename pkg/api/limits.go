@@ -1995,6 +1995,11 @@ const (
 	// developer delta reconstruction so the optimization cannot accept an
 	// archive the canonical deployment path would reject.
 	SourceArchiveMaxEntries = 10_000
+	// SourceArchiveMaxExpandedBytes caps the summed declared size of a source
+	// archive's entries. The compressed upload cap alone admits a highly
+	// compressed archive that apid would inflate, at full CPU, on every pass
+	// over it (ADR-20261020160000).
+	SourceArchiveMaxExpandedBytes int64 = 2 << 30
 	// DevSourceMetadataMaxBytes bounds base/target revision and deletion-list
 	// fields around the plan-capped source payload.
 	DevSourceMetadataMaxBytes int64 = 4 << 20
