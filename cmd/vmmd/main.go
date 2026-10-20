@@ -52,8 +52,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/imaged"
 	"github.com/onebox-faas/faas/pkg/mcpprotocol"
 	"github.com/onebox-faas/faas/pkg/netns"
+	"github.com/onebox-faas/faas/pkg/nodereport"
 	"github.com/onebox-faas/faas/pkg/role"
-	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/sched/flowcount"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/snapshothipd"
@@ -269,7 +269,7 @@ func loadNodeSigningKey(pathOverride string) (*ecdsa.PrivateKey, string, error) 
 		return nil, "", fmt.Errorf("vmmd: node key %q curve %s, want P-256",
 			path, priv.Curve.Params().Name)
 	}
-	keyID, err := sched.KeyIDForPublicKey(&priv.PublicKey)
+	keyID, err := nodereport.KeyID(&priv.PublicKey)
 	if err != nil {
 		return nil, "", fmt.Errorf("vmmd: compute key_id for %q: %w", path, err)
 	}

@@ -13,13 +13,19 @@ An alert instance that became true after --deployed-at breaches the gate
 once it has stayed true for the rule's `for:`, capped at --max-hold so a
 10-minute alert can still stop a 10-minute gate. Instances already true
 before the deploy are reported and ignored: rolling back would not fix them.
+That includes an instance that resolves and fires again during the gate: a
+restarted daemon's own gauges disappear for a scrape or two, which resets
+the alert's activeAt without any new condition.
 
 Selected rules:
   * the platform SLOs, for every unit: 5xx availability, wake latency,
     restore failures (cold-boot fallback), daemon liveness, readiness,
     restart loops and database pool starvation;
-  * every page or warn rule whose `component` label is the unit's;
-  * and the unit must still be scraped (up == 1 for one of its jobs).
+  * every page or warn rule whose `component` label is the unit's, except
+    the families that measure tenant behaviour rather than the unit's health
+    (TENANT_SIGNAL_FAMILIES);
+  * and the unit must still be scraped (up == 1 for one of its jobs) where
+    this Prometheus scrapes it at all.
 
 Exit codes, for the deploy workflow:
   0  pass: promote
@@ -83,6 +89,18 @@ UNITS = {
 }
 
 SEVERITIES = ("page", "warn")
+
+# Alert families driven by what tenants do, not by the unit's code: a deploy
+# cannot cause them and a rollback cannot fix them. The first production
+# unit release (2026-10-20, cd-controlplane run 39473046675) rolled back on
+# FaasTrafficSpikeAccount raised by an end-to-end test's traffic. Platform
+# availability and latency SLOs still judge every unit.
+TENANT_SIGNAL_FAMILIES = (
+    "traffic_anomaly",   # per-account traffic and error-rate anomaly scores
+    "tenant_abuse",      # abuse holds and blocks
+    "security_anomaly",  # failed-login spikes
+    "residency",         # resident GB per paying customer (economic density)
+)
 SCRAPE_HOLD_SECONDS = 60
 MAX_ERROR_ROUNDS = 4
 
@@ -153,7 +171,8 @@ def select_rules(loaded: list[dict], components: list[str], max_hold: float) -> 
     for r in loaded:
         labels = r.get("labels") or {}
         name = r.get("name", "")
-        own = labels.get("component") in components and labels.get("severity") in SEVERITIES
+        own = (labels.get("component") in components and labels.get("severity") in SEVERITIES
+               and labels.get("family") not in TENANT_SIGNAL_FAMILIES)
         if (name not in PLATFORM_ALERTS and not own) or (name, r.get("query")) in seen:
             continue
         seen.add((name, r.get("query")))
@@ -177,6 +196,7 @@ class Gate:
     sleep: object = time.sleep
     preexisting: set = field(default_factory=set)
     unscraped_since: float | None = None
+    unconfigured_logged: bool = False
     blind_rounds: int = 0
 
     def run(self) -> int:
@@ -221,11 +241,15 @@ class Gate:
         if alert.get("state") not in ("pending", "firing") or active is None:
             return None
         labels = alert.get("labels") or {}
+        key = (rule["name"], json.dumps(sorted(labels.items())))
         if active < self.deployed_at:
-            key = (rule["name"], json.dumps(sorted(labels.items())))
             if key not in self.preexisting:
                 self.preexisting.add(key)
                 self.log(f"slo-gate: true before the deploy, ignored: {rule['name']} {labels}")
+            return None
+        if key in self.preexisting:
+            # Seen true before the deploy; it resolved while the daemon
+            # restarted and fired again. The condition predates the deploy.
             return None
         hold = min(float(rule.get("duration") or 0), self.max_hold)
         if evaluated - active < hold:
@@ -238,9 +262,19 @@ class Gate:
 
     def judge_scrape(self) -> int | None:
         try:
-            up = self.prom.query(f'up{{job=~"{"|".join(self.jobs)}"}} == 1')
+            targets = self.prom.query(f'up{{job=~"{"|".join(self.jobs)}"}}')
         except (OSError, RuntimeError, ValueError) as err:
             return self.blind(f"scrape check failed: {err}")
+        if not targets:
+            # No up series at all: this Prometheus does not scrape the job
+            # (production-us runs s3-gatewayd without its scrape target).
+            # Liveness is left to the deploy's readiness checks; up == 0 on
+            # a configured target still fails below.
+            if not self.unconfigured_logged:
+                self.unconfigured_logged = True
+                self.log(f"slo-gate: {', '.join(self.jobs)} not scraped by this Prometheus; scrape check skipped")
+            return None
+        up = [t for t in targets if str((t.get("value") or [None, ""])[1]) == "1"]
         if up:
             self.unscraped_since = None
         elif self.unscraped_since is None:

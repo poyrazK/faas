@@ -92,6 +92,24 @@ func TestDashboardEdgeRuleRecipes(t *testing.T) {
 		t.Error("page missing host coverage for app-wide rules")
 	}
 
+	// adr: 986 — "alert me" adds an edge_rule_activity alert scoped to the
+	// new rule; bad alert input is refused before any rule is created.
+	t.Cleanup(apidserver.WithTestRecipient(t))
+	if rec := post("rate-limit-path", map[string]string{"alert": "1", "alert_threshold": "250", "webhook_url": "https://example.com/hook", "webhook_secret": "s3cret"}); rec.Code != http.StatusSeeOther || !strings.Contains(rec.Header().Get("Location"), "action=recipe_log_alert") {
+		t.Fatalf("recipe with alert: %d %s %s", rec.Code, rec.Header().Get("Location"), rec.Body.String())
+	}
+	alerts, err := store.ListAlertRulesForAccount(t.Context(), acct.ID)
+	if err != nil || len(alerts) != 1 || alerts[0].Metric != state.AlertMetricEdgeRuleActivity || alerts[0].EdgeRuleID == "" || alerts[0].Threshold != 250 {
+		t.Fatalf("alerts = %+v, err %v", alerts, err)
+	}
+	before, _ := store.ListEdgeRulesForApp(t.Context(), app.ID)
+	if rec := post("rate-limit-path", map[string]string{"alert": "1", "webhook_url": "https://example.com/hook"}); rec.Code != http.StatusBadRequest {
+		t.Fatalf("alert without secret: %d, want 400", rec.Code)
+	}
+	if after, _ := store.ListEdgeRulesForApp(t.Context(), app.ID); len(after) != len(before) {
+		t.Fatal("a refused alert still created the rule")
+	}
+
 	for name, tc := range map[string]struct {
 		recipe string
 		form   map[string]string

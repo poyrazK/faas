@@ -24875,7 +24875,7 @@ SELECT id, deployment_id, route, method, status, latency_ms, count,
        cold_boot, trace_id, received_at, spans_summary, wake_id, instance_id,
        guest_duration_ms, guest_runtime, guest_outcome, guest_error_class,
        consumer_id, node_id, region, commit_sha, deployment_tag,
-       deployment_created_at, image_digest
+       deployment_created_at, image_digest, trace_inferred
 FROM request_telemetry
 WHERE app_id = $1
   AND (id::text = $2::text OR trace_id = $2::text)
@@ -24917,6 +24917,7 @@ type GetRequestTelemetryByAppAndIdentifierRow struct {
 	DeploymentTag       string
 	DeploymentCreatedAt string
 	ImageDigest         string
+	TraceInferred       bool
 }
 
 // Direct request drill-down for the customer debugger. Customers normally
@@ -24957,6 +24958,7 @@ func (q *Queries) GetRequestTelemetryByAppAndIdentifier(ctx context.Context, db 
 		&i.DeploymentTag,
 		&i.DeploymentCreatedAt,
 		&i.ImageDigest,
+		&i.TraceInferred,
 	)
 	return i, err
 }
@@ -32794,7 +32796,7 @@ INSERT INTO request_telemetry (
     node_id, region, commit_sha, deployment_tag, deployment_created_at, image_digest,
     platform_tenant_id,
     guest_cpu_time_ms, guest_peak_rss_mb, guest_resource_usage_available, flag_evidence,
-    content_outcome
+    content_outcome, trace_inferred
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8, $9, $10, $11,
@@ -32814,7 +32816,8 @@ INSERT INTO request_telemetry (
     $30::int,
     $31::bool,
     COALESCE(NULLIF($32::text, '')::jsonb, '[]'::jsonb),
-    $33::text
+    $33::text,
+    $34::bool
 )
 `
 
@@ -32852,6 +32855,7 @@ type InsertRequestTelemetryParams struct {
 	GuestResourceUsageAvailable bool
 	FlagEvidenceJson            string
 	ContentOutcome              string
+	TraceInferred               bool
 }
 
 // ---------------------------------------------------------------------------
@@ -32923,6 +32927,7 @@ func (q *Queries) InsertRequestTelemetry(ctx context.Context, db DBTX, arg Inser
 		arg.GuestResourceUsageAvailable,
 		arg.FlagEvidenceJson,
 		arg.ContentOutcome,
+		arg.TraceInferred,
 	)
 	return err
 }
@@ -47046,7 +47051,7 @@ SELECT DISTINCT ON (app_id)
        cold_boot, trace_id, received_at, spans_summary, wake_id, instance_id,
        guest_duration_ms, guest_runtime, guest_outcome, guest_error_class,
        consumer_id, node_id, region, commit_sha, deployment_tag,
-       deployment_created_at, image_digest
+       deployment_created_at, image_digest, trace_inferred
 FROM request_telemetry
 WHERE account_id = $1
   AND trace_id = $2::text
@@ -47088,6 +47093,7 @@ type ListRequestTelemetryByAccountTraceRow struct {
 	DeploymentTag       string
 	DeploymentCreatedAt string
 	ImageDigest         string
+	TraceInferred       bool
 }
 
 // Account-wide `gregale trace` lookup: the newest retained row per app for
@@ -47134,6 +47140,7 @@ func (q *Queries) ListRequestTelemetryByAccountTrace(ctx context.Context, db DBT
 			&i.DeploymentTag,
 			&i.DeploymentCreatedAt,
 			&i.ImageDigest,
+			&i.TraceInferred,
 		); err != nil {
 			return nil, err
 		}
@@ -62139,6 +62146,18 @@ func (q *Queries) ObjectS3CredentialLockBucket(ctx context.Context, db DBTX, arg
 	var id pgtype.UUID
 	err := row.Scan(&id)
 	return id, err
+}
+
+const objectS3CredentialLockNamespace = `-- name: ObjectS3CredentialLockNamespace :exec
+SELECT id FROM resource_namespaces WHERE id=$1 FOR KEY SHARE
+`
+
+// The credential's account_id foreign key takes this KEY SHARE lock anyway;
+// taking it before the bucket keeps object storage's account-before-bucket
+// lock order (ADR-533).
+func (q *Queries) ObjectS3CredentialLockNamespace(ctx context.Context, db DBTX, id pgtype.UUID) error {
+	_, err := db.Exec(ctx, objectS3CredentialLockNamespace, id)
+	return err
 }
 
 const objectS3CredentialReseal = `-- name: ObjectS3CredentialReseal :execrows

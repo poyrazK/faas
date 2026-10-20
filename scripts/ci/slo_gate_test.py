@@ -28,10 +28,12 @@ def rfc3339(ts):
     return datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.") + f"{ts % 1:.9f}"[2:] + "Z"
 
 
-def rule(name, duration=0, component="platform", severity="page"):
+def rule(name, duration=0, component="platform", severity="page", family=None):
+    labels = {"component": component, "severity": severity}
+    if family:
+        labels["family"] = family
     return {"type": "alerting", "name": name, "query": f"{name.lower()}_expr", "duration": duration,
-            "labels": {"component": component, "severity": severity}, "annotations": {"summary": name},
-            "health": "ok", "alerts": []}
+            "labels": labels, "annotations": {"summary": name}, "health": "ok", "alerts": []}
 
 
 def platform_rules():
@@ -40,7 +42,8 @@ def platform_rules():
 
 class FakePrometheus:
     """/api/v1/rules returns rules_at(now) with lastEvaluation = now;
-    /api/v1/query answers the scrape check with up_at(now)."""
+    /api/v1/query answers the scrape check with up_at(now): one up series per
+    target, value "1" unless the target carries "__value"."""
 
     def __init__(self, clock, rules_at, up_at=lambda now: [{"job": "schedd"}]):
         self.clock, self.rules_at, self.up_at, self.requests = clock, rules_at, up_at, []
@@ -58,7 +61,9 @@ class FakePrometheus:
                             r.setdefault("lastEvaluation", rfc3339(now))
                         data = {"groups": [{"name": "g", "rules": rules}]}
                     elif url.path == "/api/v1/query":
-                        data = {"resultType": "vector", "result": [{"metric": m, "value": [now, "1"]} for m in fake.up_at(now)]}
+                        data = {"resultType": "vector", "result": [
+                            {"metric": {k: v for k, v in m.items() if k != "__value"}, "value": [now, m.get("__value", "1")]}
+                            for m in fake.up_at(now)]}
                     else:
                         raise KeyError(url.path)
                     body, code = {"status": "success", "data": data}, 200
@@ -173,9 +178,35 @@ class GateTest(unittest.TestCase):
         self.assertEqual(self.elapsed(), 60)
 
     def test_unit_not_scraped_fails(self):
-        code, _ = self.gate(lambda now: platform_rules(), "--unit", "schedd", up_at=lambda now: [])
+        code, _ = self.gate(lambda now: platform_rules(), "--unit", "schedd",
+                            up_at=lambda now: [{"job": "schedd", "__value": "0"}])
         self.assertEqual(code, sg.FAIL, self.lines)
         self.assertTrue(any("no healthy scrape target" in line for line in self.lines))
+
+    def test_job_this_prometheus_does_not_scrape_is_skipped(self):
+        # production-us runs s3-gatewayd without a scrape target; the first
+        # production unit release rolled back on "no healthy scrape target".
+        code, _ = self.gate(lambda now: platform_rules(), "--unit", "s3-gatewayd", up_at=lambda now: [])
+        self.assertEqual(code, sg.PASS, self.lines)
+        self.assertEqual(sum("not scraped by this Prometheus" in line for line in self.lines), 1)
+
+    def test_preexisting_alert_that_fires_again_after_a_restart_is_ignored(self):
+        # meterd's own gauge disappears while meterd restarts, so an alert
+        # that was true before the deploy resolves and fires again with a
+        # new activeAt (cd-controlplane run 39473046675).
+        labels = {"alertname": "FaasDaemonDown", "job": "meterd"}
+
+        def rules_at(now):
+            rules = platform_rules()
+            if now < T0 + 30:
+                return with_alert(rules, "FaasDaemonDown", DEPLOYED - 600, labels, state="firing")
+            if now < T0 + 45:
+                return rules
+            return with_alert(rules, "FaasDaemonDown", T0 + 45, labels)
+
+        code, _ = self.gate(rules_at, "--unit", "schedd")
+        self.assertEqual(code, sg.PASS, self.lines)
+        self.assertEqual(sum("ignored" in line for line in self.lines), 1)
 
     def test_runtime_unit_needs_no_scrape_target(self):
         code, prom = self.gate(lambda now: platform_rules(), "--unit", "runtime", up_at=lambda now: [])
@@ -248,6 +279,14 @@ class HelpersTest(unittest.TestCase):
         self.assertEqual(missing, [])
         self.assertEqual(sorted(r.name for r in rules), sorted([*sg.PLATFORM_ALERTS, "ScheddPage", "ScheddWarn"]))
 
+    def test_tenant_signal_families_do_not_gate_a_unit(self):
+        loaded = platform_rules() + [
+            rule("ApidDown", component="apid", severity="page", family="daemon_liveness"),
+            *[rule(f"Apid{f}", component="apid", severity="warn", family=f) for f in sg.TENANT_SIGNAL_FAMILIES],
+        ]
+        rules, _ = sg.select_rules(loaded, ["apid"], max_hold=120)
+        self.assertEqual(sorted(r.name for r in rules), sorted([*sg.PLATFORM_ALERTS, "ApidDown"]))
+
     def test_parse_time(self):
         self.assertAlmostEqual(sg.parse_time("2026-10-17T15:09:13.123456789Z"),
                                datetime(2026, 10, 17, 15, 9, 13, tzinfo=timezone.utc).timestamp() + 0.123456789, places=6)
@@ -264,6 +303,7 @@ class RepositoryContractTest(unittest.TestCase):
         text = "\n".join(p.read_text(encoding="utf-8") for p in files if not p.name.endswith(".test.yml"))
         self.alerts = set(re.findall(r"^\s*- alert:\s*(\S+)", text, re.MULTILINE))
         self.components = set(re.findall(r"^\s*component:\s*(\S+)", text, re.MULTILINE))
+        self.families = set(re.findall(r"^\s*family:\s*(\S+)", text, re.MULTILINE))
         prom = REPO / "deploy/ansible/roles/prometheus"
         jobs = (prom / "defaults/main.yml").read_text(encoding="utf-8") + (prom / "templates/prometheus.yml.j2").read_text(encoding="utf-8")
         self.jobs = set(re.findall(r"(?:- job|job_name):\s*\"?([\w-]+)\"?", jobs))
@@ -275,6 +315,9 @@ class RepositoryContractTest(unittest.TestCase):
         for unit, cfg in sg.UNITS.items():
             for c in cfg["components"]:
                 self.assertIn(c, self.components, f"{unit}: no alert has component {c}")
+
+    def test_tenant_signal_families_exist(self):
+        self.assertEqual([f for f in sg.TENANT_SIGNAL_FAMILIES if f not in self.families], [])
 
     def test_unit_jobs_exist(self):
         for unit, cfg in sg.UNITS.items():

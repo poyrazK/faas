@@ -94,6 +94,22 @@ func readWSFrame(r *bufio.Reader, maxPayload int64) (wsFrame, error) {
 	return frame, nil
 }
 
+// unmasked returns the frame with its payload as the sender wrote it: a
+// caller's frames are masked with the key that ends their header. The
+// frame itself, which is forwarded, keeps its bytes.
+func (f wsFrame) unmasked() wsFrame {
+	if len(f.header) < 6 || f.header[1]&0x80 == 0 {
+		return f
+	}
+	key := f.header[len(f.header)-4:]
+	payload := make([]byte, len(f.payload))
+	for i, b := range f.payload {
+		payload[i] = b ^ key[i%4]
+	}
+	f.payload = payload
+	return f
+}
+
 // wsServerFrame builds an unmasked frame, as a server sends it.
 func wsServerFrame(opcode byte, payload []byte) []byte {
 	frame := []byte{0x80 | opcode}
@@ -117,11 +133,14 @@ func wsCloseFrame(code int, reason string) []byte {
 	return wsServerFrame(wsOpClose, append(payload, safetext.Truncate(reason, 123)...))
 }
 
-// wsMessage reassembles the text messages of one direction. Binary and
-// control frames pass through it unread.
+// wsMessage reassembles the text messages of one direction, and its binary
+// ones too when binary is set: Live sessions carry JSON in either
+// (ADR 20261020161811). Other binary and control frames pass through it
+// unread.
 type wsMessage struct {
 	open    bool
-	text    bool
+	read    bool
+	binary  bool
 	buf     []byte
 	maxSize int64
 }
@@ -134,7 +153,7 @@ func (m *wsMessage) add(frame wsFrame) ([]byte, error) {
 		if m.open {
 			return nil, errWSProtocol
 		}
-		m.open, m.text, m.buf = !frame.fin, frame.opcode == wsOpText, m.buf[:0]
+		m.open, m.read, m.buf = !frame.fin, frame.opcode == wsOpText || m.binary, m.buf[:0]
 	case wsOpContinuation:
 		if !m.open {
 			return nil, errWSProtocol
@@ -143,7 +162,7 @@ func (m *wsMessage) add(frame wsFrame) ([]byte, error) {
 	default:
 		return nil, nil
 	}
-	if !m.text {
+	if !m.read {
 		return nil, nil
 	}
 	if int64(len(m.buf)+len(frame.payload)) > m.maxSize {

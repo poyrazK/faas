@@ -24,6 +24,13 @@ LDFLAGS := -X github.com/onebox-faas/faas/pkg/wire.Version=$(VERSION) -X github.
 # these flags make the bytes independent of the runner checkout path and
 # whether the checkout has a .git directory.
 GO_BUILD_FLAGS := -trimpath -buildvcs=false
+# Build tags of every daemon build. grpcnotrace drops gRPC's
+# golang.org/x/net/trace, whose html/template pages make the linker keep every
+# exported method of every type a daemon converts to an interface (all ~6,000
+# store methods), so a query change rewrote every daemon's code. No daemon
+# serves the pages or sets grpc.EnableTracing
+# (docs/adr/20261020160744-daemon-blast-radius.md). Comma-separated.
+DAEMON_TAGS := metal,grpcnotrace
 # Keep the build target's cgo setting separate from the test environment.
 # `make test` needs the host default for race-enabled tests, while release
 # binaries are always static.
@@ -106,6 +113,11 @@ bench-platform-tenant-coverage: ## Measure 90-day, two-app statement coverage re
 	@test -n "$$DATABASE_URL" || (echo "DATABASE_URL not set — set it to a disposable PostgreSQL database"; exit 1)
 	@GO="$(GO)" sh scripts/bench-platform-tenant-coverage.sh
 
+.PHONY: bench-event-substrate
+bench-event-substrate: ## Measure event publish, fanout, drain and webhook delivery on disposable PostgreSQL (V12); FAAS_EVENT_SUBSTRATE_BENCH_DIR writes JSON
+	@test -n "$$DATABASE_URL" || (echo "DATABASE_URL not set — set it to a disposable PostgreSQL database"; exit 1)
+	@GO="$(GO)" sh scripts/bench-event-substrate.sh
+
 .PHONY: help
 help: ## List targets
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | \
@@ -139,7 +151,7 @@ build: guest-runners ## Build every daemon + CLIs + guest init + function runner
 	@mkdir -p $(BINDIR)
 	@for d in $(DAEMONS); do \
 	  echo "building $$d"; \
-	  CGO_ENABLED=$(BUILD_CGO_ENABLED) $(GO) build $(GO_BUILD_FLAGS) -tags metal -ldflags '$(LDFLAGS) -s -w' -o $(BINDIR)/$$d ./cmd/$$d || exit 1; \
+	  CGO_ENABLED=$(BUILD_CGO_ENABLED) $(GO) build $(GO_BUILD_FLAGS) -tags $(DAEMON_TAGS) -ldflags '$(LDFLAGS) -s -w' -o $(BINDIR)/$$d ./cmd/$$d || exit 1; \
 	done
 	@for c in $(CLIS); do \
 	  echo "building $$c (CLI)"; \
@@ -178,7 +190,7 @@ guest-runners: ## Build function-runner shims into ./bin/runners/<runtime>/faas-
 build-release-batch: ## Build the complete static release binary set in batched Go invocations
 	@mkdir -p $(BINDIR) $(BINDIR)/runners
 	@echo "building release daemons (batched)"
-	@CGO_ENABLED=$(BUILD_CGO_ENABLED) $(GO) build $(GO_BUILD_FLAGS) -tags metal \
+	@CGO_ENABLED=$(BUILD_CGO_ENABLED) $(GO) build $(GO_BUILD_FLAGS) -tags $(DAEMON_TAGS) \
 	  -ldflags '$(LDFLAGS) -s -w' -o $(BINDIR)/ $(addprefix ./cmd/,$(DAEMONS))
 	@echo "building release CLIs (batched)"
 	@CGO_ENABLED=$(BUILD_CGO_ENABLED) $(GO) build $(GO_BUILD_FLAGS) \
@@ -210,7 +222,7 @@ build-release-unit: ## Build one release binary: UNIT=<cmd> VERSION=unit-<commit
 	@case " $(DAEMONS) $(CLIS) " in *" $(UNIT) "*) ;; *) echo "UNIT=$(UNIT) is not a release binary"; exit 2;; esac
 	@case "$(VERSION)" in unit-*) ;; *) echo "VERSION=$(VERSION) must be unit-<commit>"; exit 2;; esac
 	@mkdir -p $(BINDIR)
-	@CGO_ENABLED=$(BUILD_CGO_ENABLED) $(GO) build $(GO_BUILD_FLAGS) $(if $(filter $(UNIT),$(DAEMONS)),-tags metal) \
+	@CGO_ENABLED=$(BUILD_CGO_ENABLED) $(GO) build $(GO_BUILD_FLAGS) $(if $(filter $(UNIT),$(DAEMONS)),-tags $(DAEMON_TAGS)) \
 	  -ldflags '$(LDFLAGS) -s -w' -o $(BINDIR)/$(UNIT) ./cmd/$(UNIT)
 
 # M1 gRPC codegen (ADR-013). Generated *.pb.go is COMMITTED — do not run

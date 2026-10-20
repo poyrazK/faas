@@ -35,8 +35,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/fcvm/netstats"
 	"github.com/onebox-faas/faas/pkg/financial"
 	"github.com/onebox-faas/faas/pkg/grpcerr"
+	"github.com/onebox-faas/faas/pkg/leaser"
 	"github.com/onebox-faas/faas/pkg/privatenetwork"
-	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/sched/flowcount"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storagekey"
@@ -478,7 +478,7 @@ func (s *Server) WithExecutionIdentitySigner(signer *workloadidentity.Signer) *S
 // common lease interface. Durable storage is preferred when configured so
 // callers retain lease state across vmmd restarts; the hot tracker remains the
 // compatibility fallback for in-memory/unit-test fixtures.
-func (s *Server) MigrationLeaser() sched.Leaser[any] {
+func (s *Server) MigrationLeaser() leaser.Leaser[any] {
 	if s == nil {
 		return nil
 	}

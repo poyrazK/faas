@@ -10477,10 +10477,13 @@ func ValidateEdgeRuleMode(mode string) *Problem {
 }
 
 // EdgeRuleHitStatsResponse is one rule's match counts over a window (ADR-960).
+// Series (ADR-20261020105001, with ?series=true) is matched plus logged per hour, the
+// first value for the hour starting at the response's Since.
 type EdgeRuleHitStatsResponse struct {
-	RuleID  string `json:"rule_id"`
-	Matched int64  `json:"matched"`
-	Logged  int64  `json:"logged"`
+	RuleID  string  `json:"rule_id"`
+	Matched int64   `json:"matched"`
+	Logged  int64   `json:"logged"`
+	Series  []int64 `json:"series,omitempty"`
 }
 
 // EdgeRuleStatsResponse is GET /v1/apps/{slug}/edge-rules/stats.
@@ -11274,6 +11277,10 @@ type DebugTelemetryRequestItem struct {
 	DeploymentCreatedAt string                       `json:"deployment_created_at,omitempty"`
 	ImageDigest         string                       `json:"image_digest,omitempty"`
 	Guest               *DebugGuestExecutionEvidence `json:"guest,omitempty"`
+	// TraceInferred is true when Gregale linked this service call to its
+	// caller's trace because the caller sent no traceparent and was serving
+	// exactly one request (ADR-1138): the trace id is inferred, not propagated.
+	TraceInferred bool `json:"trace_inferred,omitempty"`
 }
 
 // DebugGuestExecutionEvidence is the bounded execution signal emitted by a

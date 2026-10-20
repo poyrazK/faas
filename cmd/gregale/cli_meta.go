@@ -3743,10 +3743,24 @@ var cliCommands = []cliCommand{
 				{Name: "host", Short: "restrict the rule to one hostname (default: every host the app serves)", Value: "HOST"},
 				{Name: "set", Short: "recipe parameter name=value (repeat)", Value: "NAME=VALUE"},
 				{Name: "enforce", Short: "enforce immediately instead of starting in log mode", Bool: true},
+				{Name: "alert-webhook-url", Short: "also alert this webhook when the rule spikes", Value: "URL"},
+				{Name: "alert-webhook-secret-stdin", Short: "read the spike alert's webhook signing secret from stdin", Bool: true},
+				{Name: "alert-webhook-secret", Short: "spike alert webhook signing secret (prefer --alert-webhook-secret-stdin)", Value: "VALUE"},
+				{Name: "alert-threshold", Short: "spike alert threshold in matches per hour (default 100)", Value: "N"},
+			}},
+			{Name: "suggest", Short: "Protection recipes suggested from the app's recent traffic, with the command to add each", Examples: []string{
+				"gregale edge-rules suggest --app my-api",
+			}, Flags: []cliFlag{
+				{Name: "app", Short: "app slug (defaults to linked project context)", Value: "slug"},
 			}},
 			{Name: "stats", Short: "Per-rule match counts (matched for enforced rules, logged for log-mode rules)", Flags: []cliFlag{
 				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
 				{Name: "window", Short: "window", Value: "WINDOW", ClosedSet: []string{"1h", "24h", "7d"}},
+			}},
+			{Name: "review", Short: "Log-mode rules ready to enforce, still collecting, or quiet for 7 days, with the command for each", Examples: []string{
+				"gregale edge-rules review --app my-api",
+			}, Flags: []cliFlag{
+				{Name: "app", Short: "app slug (defaults to linked project context)", Value: "slug"},
 			}},
 			{Name: "events", Short: "Sampled requests rules matched and kind=waf detections, newest first (up to 10 of each per rule per minute; kept 7 days)", Examples: []string{
 				"gregale edge-rules events --app my-api --outcome logged --since 7d",
