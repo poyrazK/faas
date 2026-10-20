@@ -14,13 +14,19 @@ export type OutboundAIPriceCatalogResponse = {
   source: string;
   generated: string;
   /**
-   * USD per EUR used for the conversion, as a decimal string.
+   * ISO 4217 currency of every catalog price: the billing currency, USD. Absent from responses of releases before ADR 20261019123822.
    */
-  usd_per_eur: string;
+  currency?: string;
   /**
-   * Source and date of the exchange rate.
+   * Deprecated: always 1, since the catalog is in US dollars.
+   * @deprecated
    */
-  fx_source: string;
+  usd_per_eur?: string;
+  /**
+   * Deprecated: names no exchange rate.
+   * @deprecated
+   */
+  fx_source?: string;
   entries: Array<OutboundAIPriceEntry>;
 };
 

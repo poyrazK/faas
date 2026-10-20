@@ -1,6 +1,6 @@
 # ADR-1430: USD pricing and plan entitlements from the October 2026 COGS report
 
-Status: accepted.
+Status: accepted. Amended by [ADR 20261019123822](20261019123822-ai-gateway-usd.md): the AI gateway moved to US dollars too.
 
 Amends spec §4.7 (prices, included quotas and the overage meter), the
 CLAUDE.md hard limits (financial model §1), ADR-1320 (object-storage plan

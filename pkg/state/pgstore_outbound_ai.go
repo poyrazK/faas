@@ -108,7 +108,7 @@ func (s *PgStore) GetOutboundAIUsage(ctx context.Context, accountID, integration
 		SELECT caller, model, requests, error_requests, usage_unknown_requests,
 		       input_tokens, cached_input_tokens, cache_write_tokens, output_tokens, cost_millicents,
 		       images, audio_seconds, characters, video_seconds, web_searches, file_searches, code_session_gb,
-		       cached_requests, cache_saved_millicents, prompt_cache_saved_millicents
+		       cached_requests, cache_saved_millicents, prompt_cache_saved_millicents, input_audio_tokens, output_audio_tokens
 		  FROM outbound_ai_usage_daily
 		 WHERE integration_id = $1 AND usage_date = $2::date
 		 ORDER BY caller, model
@@ -123,7 +123,8 @@ func (s *PgStore) GetOutboundAIUsage(ctx context.Context, accountID, integration
 		if err := rows.Scan(&item.Caller, &item.Model, &item.Requests, &item.ErrorRequests, &item.UsageUnknownRequests,
 			&item.InputTokens, &item.CachedInputTokens, &item.CacheWriteTokens, &item.OutputTokens, &item.CostMillicents,
 			&item.Images, &item.AudioSeconds, &item.Characters, &item.VideoSeconds, &item.WebSearches, &item.FileSearches,
-			&item.CodeSessionGB, &item.CachedRequests, &item.CacheSavedMillicents, &item.PromptCacheSavedMillicents); err != nil {
+			&item.CodeSessionGB, &item.CachedRequests, &item.CacheSavedMillicents, &item.PromptCacheSavedMillicents,
+			&item.InputAudioTokens, &item.OutputAudioTokens); err != nil {
 			return OutboundAIUsage{}, mapErr(err)
 		}
 		rollupTokens += item.InputTokens + item.OutputTokens
@@ -194,7 +195,8 @@ func (s *PgStore) GetOutboundAIPrices(ctx context.Context, accountID, integratio
 		       cache_write_millicents_per_mtok, output_millicents_per_mtok,
 		       input_image_millicents_per_mtok, output_image_millicents_per_mtok, millicents_per_image,
 		       millicents_per_audio_minute, millicents_per_million_characters, millicents_per_video_second,
-		       millicents_per_web_search, millicents_per_file_search, millicents_per_code_session_gb
+		       millicents_per_web_search, millicents_per_file_search, millicents_per_code_session_gb,
+		       input_audio_millicents_per_mtok, cached_input_audio_millicents_per_mtok, output_audio_millicents_per_mtok
 		  FROM outbound_ai_price_entries WHERE price_list_id = $1
 		 ORDER BY model_prefix`, listID)
 	if err != nil {
@@ -207,7 +209,8 @@ func (s *PgStore) GetOutboundAIPrices(ctx context.Context, accountID, integratio
 			&entry.CacheWriteMillicentsPerMTok, &entry.OutputMillicentsPerMTok, &entry.InputImageMillicentsPerMTok,
 			&entry.OutputImageMillicentsPerMTok, &entry.MillicentsPerImage, &entry.MillicentsPerAudioMinute,
 			&entry.MillicentsPerMillionCharacters, &entry.MillicentsPerVideoSecond, &entry.MillicentsPerWebSearch,
-			&entry.MillicentsPerFileSearch, &entry.MillicentsPerCodeSessionGB); err != nil {
+			&entry.MillicentsPerFileSearch, &entry.MillicentsPerCodeSessionGB, &entry.InputAudioMillicentsPerMTok,
+			&entry.CachedInputAudioMillicentsPerMTok, &entry.OutputAudioMillicentsPerMTok); err != nil {
 			return OutboundAIPriceList{}, mapErr(err)
 		}
 		list.Entries = append(list.Entries, entry)
@@ -247,12 +250,14 @@ func (s *PgStore) SetOutboundAIPrices(ctx context.Context, accountID, integratio
 			     cache_write_millicents_per_mtok, output_millicents_per_mtok, input_image_millicents_per_mtok,
 			     output_image_millicents_per_mtok, millicents_per_image, millicents_per_audio_minute,
 			     millicents_per_million_characters, millicents_per_video_second, millicents_per_web_search,
-			     millicents_per_file_search, millicents_per_code_session_gb)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`, listID, entry.ModelPrefix, entry.InputMillicentsPerMTok,
+			     millicents_per_file_search, millicents_per_code_session_gb, input_audio_millicents_per_mtok,
+			     cached_input_audio_millicents_per_mtok, output_audio_millicents_per_mtok)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`, listID, entry.ModelPrefix, entry.InputMillicentsPerMTok,
 			entry.CachedInputMillicentsPerMTok, entry.CacheWriteMillicentsPerMTok, entry.OutputMillicentsPerMTok,
 			entry.InputImageMillicentsPerMTok, entry.OutputImageMillicentsPerMTok, entry.MillicentsPerImage,
 			entry.MillicentsPerAudioMinute, entry.MillicentsPerMillionCharacters, entry.MillicentsPerVideoSecond,
-			entry.MillicentsPerWebSearch, entry.MillicentsPerFileSearch, entry.MillicentsPerCodeSessionGB); err != nil {
+			entry.MillicentsPerWebSearch, entry.MillicentsPerFileSearch, entry.MillicentsPerCodeSessionGB,
+			entry.InputAudioMillicentsPerMTok, entry.CachedInputAudioMillicentsPerMTok, entry.OutputAudioMillicentsPerMTok); err != nil {
 			return mapErr(err)
 		}
 	}
