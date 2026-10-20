@@ -27,7 +27,7 @@ export type PutOperationWebhookBindingRequest = {
   event_types?: Array<string>;
   take_over_delivery: boolean;
   /**
-   * start admits a new operation per event; signal resumes waiting operations (ADR-1198).
+   * start admits a new operation per event; signal resumes waiting operations (ADR-20261016100929).
    */
   mode?: 'start' | 'signal';
   /**

@@ -1,9 +1,10 @@
-package main
+package main_test
 
 import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -23,9 +24,9 @@ func TestAppSettingsReceiptWarnsThatMemoryNeedsARestart(t *testing.T) {
 		{name: "environment ram", request: api.UpdateAppRequest{RAMMB: ptrTo(512)}, env: "staging"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			out, restore := captureStdout(t)
+			out, restore := main.CaptureStdout(t)
 			defer restore()
-			printAppSettingsReceipt("shop", tc.env, tc.request)
+			main.PrintAppSettingsReceipt("shop", tc.env, tc.request)
 			got := strings.Contains(out.String(), "app shop restart")
 			if got != tc.want {
 				t.Fatalf("restart advice present = %v, want %v:\n%s", got, tc.want, out.String())

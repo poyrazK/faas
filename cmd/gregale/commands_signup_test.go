@@ -10,12 +10,13 @@
 //                                   gap (issue #311 R2).
 // Plus the FAAS_API override so the tests don't actually hit production.
 
-package main
+package main_test
 
 import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -25,7 +26,7 @@ import (
 	"testing"
 )
 
-var signupPlaintext = testAPIKey('f')
+var signupPlaintext = main.TestAPIKey('f')
 
 // fakeSignupServer returns the canonical ProgrammaticAuthResponse
 // body for the /v1/auth/{signup,login,signup/magic-link} routes. The
@@ -85,20 +86,20 @@ func TestCmdSignup_InteractiveHappyPath(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("FAAS_TOKEN", "")
-	setFakeKeyring(t)
+	main.SetFakeKeyring(t)
 
 	srv, counter := fakeSignupServer(t, http.StatusOK, http.StatusOK)
 	t.Setenv("FAAS_API", srv.URL)
 
-	pipeStdin(t, "alice@example.com\ncorrect-horse-battery-staple\ncorrect-horse-battery-staple\n")
+	main.PipeStdin(t, "alice@example.com\ncorrect-horse-battery-staple\ncorrect-horse-battery-staple\n")
 
-	if got := cmdSignup(nil); got != 0 {
+	if got := main.CmdSignup(nil); got != 0 {
 		t.Fatalf("cmdSignup exit = %d, want 0", got)
 	}
 	if c := atomic.LoadInt32(&counter.signup); c != 1 {
 		t.Errorf("/v1/auth/signup hit %d times, want 1", c)
 	}
-	if got := readSavedToken(t); got != signupPlaintext {
+	if got := main.ReadSavedToken(t); got != signupPlaintext {
 		t.Errorf("saved token = %q, want %q", got, signupPlaintext)
 	}
 }
@@ -110,14 +111,14 @@ func TestCmdSignup_InteractiveWeakPassword(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("FAAS_TOKEN", "")
-	setFakeKeyring(t)
+	main.SetFakeKeyring(t)
 
 	srv, counter := fakeSignupServer(t, http.StatusOK, http.StatusOK)
 	t.Setenv("FAAS_API", srv.URL)
 
-	rd, restore := captureStderr(t)
-	pipeStdin(t, "alice@example.com\nshort\nshort\n")
-	if got := cmdSignup(nil); got == 0 {
+	rd, restore := main.CaptureStderr(t)
+	main.PipeStdin(t, "alice@example.com\nshort\nshort\n")
+	if got := main.CmdSignup(nil); got == 0 {
 		t.Errorf("cmdSignup exit = 0, want non-zero (weak password)")
 	}
 	restore()
@@ -135,14 +136,14 @@ func TestCmdSignup_InteractiveMismatch(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("FAAS_TOKEN", "")
-	setFakeKeyring(t)
+	main.SetFakeKeyring(t)
 
 	srv, counter := fakeSignupServer(t, http.StatusOK, http.StatusOK)
 	t.Setenv("FAAS_API", srv.URL)
 
-	rd, restore := captureStderr(t)
-	pipeStdin(t, "alice@example.com\ncorrect-horse-battery-staple\ndifferent-password-1234567890\n")
-	if got := cmdSignup(nil); got == 0 {
+	rd, restore := main.CaptureStderr(t)
+	main.PipeStdin(t, "alice@example.com\ncorrect-horse-battery-staple\ndifferent-password-1234567890\n")
+	if got := main.CmdSignup(nil); got == 0 {
 		t.Errorf("cmdSignup exit = 0, want non-zero (mismatch)")
 	}
 	restore()
@@ -160,14 +161,14 @@ func TestCmdSignup_InteractiveInvalidEmail(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("FAAS_TOKEN", "")
-	setFakeKeyring(t)
+	main.SetFakeKeyring(t)
 
 	srv, counter := fakeSignupServer(t, http.StatusOK, http.StatusOK)
 	t.Setenv("FAAS_API", srv.URL)
 
-	rd, restore := captureStderr(t)
-	pipeStdin(t, "not-an-email\ncorrect-horse-battery-staple\ncorrect-horse-battery-staple\n")
-	if got := cmdSignup(nil); got == 0 {
+	rd, restore := main.CaptureStderr(t)
+	main.PipeStdin(t, "not-an-email\ncorrect-horse-battery-staple\ncorrect-horse-battery-staple\n")
+	if got := main.CmdSignup(nil); got == 0 {
 		t.Errorf("cmdSignup exit = 0, want non-zero (invalid email)")
 	}
 	restore()
@@ -186,13 +187,13 @@ func TestCmdSignup_InteractiveLoginFailsWith401(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("FAAS_TOKEN", "")
-	setFakeKeyring(t)
+	main.SetFakeKeyring(t)
 
 	srv, _ := fakeSignupServer(t, http.StatusUnauthorized, http.StatusOK)
 	t.Setenv("FAAS_API", srv.URL)
 
-	pipeStdin(t, "alice@example.com\ncorrect-horse-battery-staple\ncorrect-horse-battery-staple\n")
-	if got := cmdSignup(nil); got == 0 {
+	main.PipeStdin(t, "alice@example.com\ncorrect-horse-battery-staple\ncorrect-horse-battery-staple\n")
+	if got := main.CmdSignup(nil); got == 0 {
 		t.Errorf("cmdSignup exit = 0, want non-zero (server rejected)")
 	}
 	// Token file must NOT be present.
@@ -208,13 +209,13 @@ func TestCmdSignup_EmailOnlyHappyPath(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("FAAS_TOKEN", "")
-	setFakeKeyring(t)
+	main.SetFakeKeyring(t)
 
 	srv, counter := fakeSignupServer(t, http.StatusOK, http.StatusOK)
 	t.Setenv("FAAS_API", srv.URL)
 
-	rd, restore := captureStderr(t)
-	if got := cmdSignup([]string{"--email-only", "alice@example.com"}); got != 0 {
+	rd, restore := main.CaptureStderr(t)
+	if got := main.CmdSignup([]string{"--email-only", "alice@example.com"}); got != 0 {
 		t.Fatalf("cmdSignup --email-only exit = %d, want 0", got)
 	}
 	restore()
@@ -237,11 +238,11 @@ func TestCmdSignup_EmailOnlyServerUnreachable(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("FAAS_TOKEN", "")
-	setFakeKeyring(t)
+	main.SetFakeKeyring(t)
 
 	t.Setenv("FAAS_API", "http://127.0.0.1:1") // closed port
 
-	if got := cmdSignup([]string{"--email-only", "alice@example.com"}); got == 0 {
+	if got := main.CmdSignup([]string{"--email-only", "alice@example.com"}); got == 0 {
 		t.Errorf("cmdSignup --email-only exit = 0, want non-zero (server unreachable)")
 	}
 	if _, err := readSavedTokenOrSkip(t); err == nil {
@@ -257,8 +258,8 @@ func TestCmdSignup_DispatchesFromMain(t *testing.T) {
 	// the dispatch constant exists and main.go's switch case is
 	// keyed off it. The runtime behaviour is exercised by the
 	// integration path on the cli_login_test.go family.
-	if dispatchSignup != "signup" {
-		t.Errorf("dispatchSignup = %q, want %q", dispatchSignup, "signup")
+	if main.DispatchSignup != "signup" {
+		t.Errorf("dispatchSignup = %q, want %q", main.DispatchSignup, "signup")
 	}
 }
 
@@ -275,7 +276,7 @@ func TestCmdSignup_Interactive_PipeReadsPlain(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("FAAS_TOKEN", "")
-	setFakeKeyring(t)
+	main.SetFakeKeyring(t)
 
 	srv, counter := fakeSignupServer(t, http.StatusOK, http.StatusOK)
 	t.Setenv("FAAS_API", srv.URL)
@@ -283,15 +284,15 @@ func TestCmdSignup_Interactive_PipeReadsPlain(t *testing.T) {
 	// No withTTYForTest — pipeStdin sets osStdin to a non-*os.File
 	// reader, so readInteractivePassword lands in the line-read
 	// branch by virtue of the type assertion failing.
-	pipeStdin(t, "alice@example.com\ncorrect-horse-battery-staple\ncorrect-horse-battery-staple\n")
+	main.PipeStdin(t, "alice@example.com\ncorrect-horse-battery-staple\ncorrect-horse-battery-staple\n")
 
-	if got := cmdSignup(nil); got != 0 {
+	if got := main.CmdSignup(nil); got != 0 {
 		t.Fatalf("cmdSignup exit = %d, want 0 (pipe path regression)", got)
 	}
 	if c := atomic.LoadInt32(&counter.signup); c != 1 {
 		t.Errorf("/v1/auth/signup hit %d times, want 1", c)
 	}
-	if got := readSavedToken(t); got != signupPlaintext {
+	if got := main.ReadSavedToken(t); got != signupPlaintext {
 		t.Errorf("saved token = %q, want %q", got, signupPlaintext)
 	}
 }
@@ -303,14 +304,14 @@ func TestCmdSignup_PasswordStdin_HappyPath(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("FAAS_TOKEN", "")
-	setFakeKeyring(t)
+	main.SetFakeKeyring(t)
 
 	srv, counter := fakeSignupServer(t, http.StatusOK, http.StatusOK)
 	t.Setenv("FAAS_API", srv.URL)
 
-	pipeStdin(t, "alice@example.com\ncorrect-horse-battery-staple\n")
+	main.PipeStdin(t, "alice@example.com\ncorrect-horse-battery-staple\n")
 
-	if got := cmdSignup([]string{"--password-stdin"}); got != 0 {
+	if got := main.CmdSignup([]string{"--password-stdin"}); got != 0 {
 		t.Fatalf("cmdSignup --password-stdin exit = %d, want 0", got)
 	}
 	if c := atomic.LoadInt32(&counter.signup); c != 1 {
@@ -319,7 +320,7 @@ func TestCmdSignup_PasswordStdin_HappyPath(t *testing.T) {
 	if c := atomic.LoadInt32(&counter.magicLink); c != 0 {
 		t.Errorf("/v1/auth/signup/magic-link hit %d times, want 0", c)
 	}
-	if got := readSavedToken(t); got != signupPlaintext {
+	if got := main.ReadSavedToken(t); got != signupPlaintext {
 		t.Errorf("saved token = %q, want %q", got, signupPlaintext)
 	}
 }
@@ -332,14 +333,14 @@ func TestCmdSignup_PasswordStdin_RejectsShortPassword(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("FAAS_TOKEN", "")
-	setFakeKeyring(t)
+	main.SetFakeKeyring(t)
 
 	srv, counter := fakeSignupServer(t, http.StatusOK, http.StatusOK)
 	t.Setenv("FAAS_API", srv.URL)
 
-	rd, restore := captureStderr(t)
-	pipeStdin(t, "alice@example.com\nshort\n")
-	if got := cmdSignup([]string{"--password-stdin"}); got == 0 {
+	rd, restore := main.CaptureStderr(t)
+	main.PipeStdin(t, "alice@example.com\nshort\n")
+	if got := main.CmdSignup([]string{"--password-stdin"}); got == 0 {
 		t.Errorf("cmdSignup --password-stdin exit = 0, want non-zero (weak password)")
 	}
 	restore()
@@ -358,14 +359,14 @@ func TestCmdSignup_PasswordStdin_MutuallyExclusiveWithEmailOnly(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("FAAS_TOKEN", "")
-	setFakeKeyring(t)
+	main.SetFakeKeyring(t)
 
 	srv, counter := fakeSignupServer(t, http.StatusOK, http.StatusOK)
 	t.Setenv("FAAS_API", srv.URL)
 
-	rd, restore := captureStderr(t)
+	rd, restore := main.CaptureStderr(t)
 	// No stdin write — neither branch should reach a reader.
-	if got := cmdSignup([]string{"--email-only", "alice@example.com", "--password-stdin"}); got == 0 {
+	if got := main.CmdSignup([]string{"--email-only", "alice@example.com", "--password-stdin"}); got == 0 {
 		t.Errorf("cmdSignup --email-only --password-stdin exit = 0, want non-zero (mutex violation)")
 	}
 	restore()
@@ -387,14 +388,14 @@ func TestCmdSignup_PasswordStdin_EmptyStdin(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("FAAS_TOKEN", "")
-	setFakeKeyring(t)
+	main.SetFakeKeyring(t)
 
 	srv, counter := fakeSignupServer(t, http.StatusOK, http.StatusOK)
 	t.Setenv("FAAS_API", srv.URL)
 
-	rd, restore := captureStderr(t)
-	pipeStdin(t, "alice@example.com\n")
-	if got := cmdSignup([]string{"--password-stdin"}); got == 0 {
+	rd, restore := main.CaptureStderr(t)
+	main.PipeStdin(t, "alice@example.com\n")
+	if got := main.CmdSignup([]string{"--password-stdin"}); got == 0 {
 		t.Errorf("cmdSignup --password-stdin exit = 0, want non-zero (empty password)")
 	}
 	restore()
@@ -418,28 +419,28 @@ func TestReadInteractivePassword_FallsBackOnNonFile(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("FAAS_TOKEN", "")
-	setFakeKeyring(t)
+	main.SetFakeKeyring(t)
 
-	prev := osStdin
-	t.Cleanup(func() { osStdin = prev })
+	prev := (*main.OsStdin)
+	t.Cleanup(func() { (*main.OsStdin) = prev })
 
 	r, w, err := os.Pipe()
 	if err != nil {
 		t.Fatalf("os.Pipe: %v", err)
 	}
 	t.Cleanup(func() { r.Close() })
-	osStdin = r
+	(*main.OsStdin) = r
 
 	go func() {
 		defer w.Close()
 		_, _ = w.WriteString("correct-horse-battery-staple\n")
 	}()
 
-	rd, restore := captureStderr(t)
+	rd, restore := main.CaptureStderr(t)
 	defer restore()
 
-	br := bufio.NewReader(osStdin)
-	got, err := readInteractivePassword(br, "Password: ")
+	br := bufio.NewReader((*main.OsStdin))
+	got, err := main.ReadInteractivePassword(br, "Password: ")
 	if err != nil {
 		t.Fatalf("readInteractivePassword: %v", err)
 	}
@@ -467,12 +468,12 @@ func readSavedTokenOrSkip(t *testing.T) (string, error) {
 	t.Helper()
 	// Mirror the lookup helper in cli_login_test.go so the keyring
 	// stub is honoured.
-	if kr := effectiveKeyring(); kr != nil {
-		if v, err := kr.Get(keyringService, keyringAccount); err == nil {
+	if kr := main.EffectiveKeyring(); kr != nil {
+		if v, err := kr.Get(main.KeyringService, main.KeyringAccount); err == nil {
 			return strings.TrimRight(v, "\r\n"), nil
 		}
 	}
-	p, err := tokenPath()
+	p, err := main.TokenPath()
 	if err != nil {
 		return "", fmt.Errorf("tokenPath: %w", err)
 	}

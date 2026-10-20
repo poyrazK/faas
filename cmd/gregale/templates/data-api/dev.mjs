@@ -13,6 +13,7 @@ import pg from 'pg'
 import { generateKeyPair, exportJWK, createLocalJWKSet, SignJWT } from 'jose'
 import { runtimeConfig, acceptedContracts, servingContracts, limits } from './config.mjs'
 import { createServer, tokenVerifier } from './server.mjs'
+import { checkPublicRelations, checkPublicFunctions } from './access.mjs'
 import { inspect, inspectBundle, generate, fingerprint } from './types.mjs'
 import { generateValidators, inputModel } from './type-render.mjs'
 
@@ -370,10 +371,17 @@ export async function run(options) {
     const connection = new URL(ownerURL); connection.username = 'gregale_data_api'
     const config = runtimeConfig({ DATABASE_URL: connection.toString(), DATA_API_ISSUER: 'https://gregale-dev.invalid',
       DATA_API_JWKS_URL: 'https://gregale-dev.invalid/jwks', DATA_API_AUDIENCE: 'gregale-local-dev',
-      DATA_API_ALLOWED_ORIGINS: 'http://localhost:5173,http://127.0.0.1:5173,http://localhost:3030,http://127.0.0.1:3030' })
+      DATA_API_ALLOWED_ORIGINS: 'http://localhost:5173,http://127.0.0.1:5173,http://localhost:3030,http://127.0.0.1:3030',
+      ...(project.publicRead ? { DATA_API_PUBLIC_READ: project.publicRead } : {}), ...(project.publicRpc ? { DATA_API_PUBLIC_RPC: project.publicRpc } : {}) })
+    if (config.publicRead) {
+      try { await checkPublicRelations(connection.toString(), config.publicRead) } catch (error) { throw new DevFailure(error.message) }
+    }
     const bundle = await inspectBundle(connection.toString(), ['api'], { validators: true })
     config.snapshot = bundle.snapshot
     config.functions = config.snapshot.functions
+    if (config.publicRpc) {
+      try { await checkPublicFunctions(connection.toString(), config.publicRpc, config.functions) } catch (error) { throw new DevFailure(error.message) }
+    }
     config.fingerprint = fingerprint(config.snapshot)
     config.acceptedContracts = await readPolicy()
     try { servingContracts(config) } catch { throw new DevFailure('Accepted contracts are stale; review a policy for the current schema before starting.') }

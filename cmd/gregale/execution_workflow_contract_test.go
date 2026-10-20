@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"context"
@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -13,10 +14,10 @@ func TestRunExecutionWorkflowValidatesResultContractsBeforeHandoff(t *testing.T)
 	client := newParallelWorkflowTestClient(1)
 	client.results["fetch"] = json.RawMessage(`{"items":"not-an-array"}`)
 	client.results["backup"] = json.RawMessage(`{"ok":true}`)
-	plan := executionWorkflowPlan{
+	plan := main.ExecutionWorkflowPlan{
 		WorkflowID: "result-contracts", Version: "v1", MaxParallelSteps: 1,
-		FailurePolicy: executionWorkflowFailurePolicyContinueIndependent,
-		Steps: []executionWorkflowStep{
+		FailurePolicy: main.ExecutionWorkflowFailurePolicyContinueIndependent,
+		Steps: []main.ExecutionWorkflowStep{
 			{
 				Label:        "fetch",
 				ResultSchema: json.RawMessage(`{"type":"object","required":["items"],"properties":{"items":{"type":"array"}}}`),
@@ -29,7 +30,7 @@ func TestRunExecutionWorkflowValidatesResultContractsBeforeHandoff(t *testing.T)
 		},
 	}
 
-	result, err := runExecutionWorkflow(context.Background(), client, plan, time.Millisecond)
+	result, err := main.RunExecutionWorkflow(context.Background(), client, plan, time.Millisecond)
 	if err == nil {
 		t.Fatal("workflow with a contract violation returned success")
 	}
@@ -64,7 +65,7 @@ func TestRunExecutionWorkflowValidatesResultContractsBeforeHandoff(t *testing.T)
 	if summaryRequest == nil {
 		t.Fatal("summary step was not submitted")
 	}
-	var inputs map[string]executionWorkflowDependencyInput
+	var inputs map[string]main.ExecutionWorkflowDependencyInput
 	if err := json.Unmarshal(summaryRequest.Input, &inputs); err != nil {
 		t.Fatalf("decode summary input %s: %v", summaryRequest.Input, err)
 	}
@@ -80,7 +81,7 @@ func TestRunExecutionWorkflowValidatesResultContractsBeforeHandoff(t *testing.T)
 }
 
 func TestCompileExecutionWorkflowResultSchemasAllowsLocalRefsAndRejectsExternalRefs(t *testing.T) {
-	plan := executionWorkflowPlan{Steps: []executionWorkflowStep{{
+	plan := main.ExecutionWorkflowPlan{Steps: []main.ExecutionWorkflowStep{{
 		Label: "validate",
 		ResultSchema: json.RawMessage(`{
 			"$schema":"https://json-schema.org/draft/2020-12/schema",
@@ -89,26 +90,26 @@ func TestCompileExecutionWorkflowResultSchemasAllowsLocalRefsAndRejectsExternalR
 			"$defs":{"result":{"type":"string"}}
 		}`),
 	}}}
-	schemas, err := compileExecutionWorkflowResultSchemas(plan)
+	schemas, err := main.CompileExecutionWorkflowResultSchemas(plan)
 	if err != nil {
 		t.Fatalf("compile schema with a local reference: %v", err)
 	}
-	if err := validateExecutionWorkflowResult("validate", json.RawMessage(`{"result":"ok"}`), schemas["validate"]); err != nil {
+	if err := main.ValidateExecutionWorkflowResult("validate", json.RawMessage(`{"result":"ok"}`), schemas["validate"]); err != nil {
 		t.Fatalf("valid result rejected: %v", err)
 	}
-	if err := validateExecutionWorkflowResult("validate", json.RawMessage(`{"result":42}`), schemas["validate"]); err == nil {
+	if err := main.ValidateExecutionWorkflowResult("validate", json.RawMessage(`{"result":42}`), schemas["validate"]); err == nil {
 		t.Fatal("invalid result was accepted")
 	}
 
 	plan.Steps[0].ResultSchema = json.RawMessage(`{"$ref":"https://example.com/schema.json"}`)
-	if _, err := compileExecutionWorkflowResultSchemas(plan); err == nil {
+	if _, err := main.CompileExecutionWorkflowResultSchemas(plan); err == nil {
 		t.Fatal("external schema reference was accepted")
 	}
 }
 
 func TestRunExecutionWorkflowRevalidatesResumedReceipts(t *testing.T) {
 	client := newParallelWorkflowTestClient(1)
-	plan := executionWorkflowPlan{WorkflowID: "resumed-result-contract", Version: "v1", Steps: []executionWorkflowStep{
+	plan := main.ExecutionWorkflowPlan{WorkflowID: "resumed-result-contract", Version: "v1", Steps: []main.ExecutionWorkflowStep{
 		{
 			Label:        "fetch",
 			ResultSchema: json.RawMessage(`{"type":"object","required":["items"],"properties":{"items":{"type":"array"}}}`),
@@ -116,7 +117,7 @@ func TestRunExecutionWorkflowRevalidatesResumedReceipts(t *testing.T) {
 		},
 		{Label: "analyze", DependsOn: []string{"fetch"}, Request: api.CreateExecutionRequest{Runtime: api.ExecutionRuntimeNode22, Source: "return input"}},
 	}}
-	_, labels, err := executionWorkflowPlanID(plan)
+	_, labels, err := main.ExecutionWorkflowPlanID(plan)
 	if err != nil {
 		t.Fatalf("executionWorkflowPlanID: %v", err)
 	}
@@ -125,7 +126,7 @@ func TestRunExecutionWorkflowRevalidatesResumedReceipts(t *testing.T) {
 		Status: api.ExecutionStatusSucceeded, Result: json.RawMessage(`{"items":"invalid"}`),
 	}
 
-	result, err := runExecutionWorkflow(context.Background(), client, plan, time.Millisecond)
+	result, err := main.RunExecutionWorkflow(context.Background(), client, plan, time.Millisecond)
 	if err == nil {
 		t.Fatal("resumed workflow with an invalid result contract returned success")
 	}

@@ -1,5 +1,5 @@
 // spec: §6.2 — scale-out and scale-in must not undo each other.
-package sched
+package sched_test
 
 import (
 	"context"
@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/sched/targets"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -116,13 +117,13 @@ func TestScaleOutThenReapIdle_ParksWhatTheSignalJustAsked(t *testing.T) {
 	// 2. Those instances receive no requests, because nothing about a
 	//    pushed backlog implies inbound traffic. Idle past the Pro
 	//    timeout (300 s).
-	idle := []InstanceInfo{
+	idle := []sched.InstanceInfo{
 		{Instance: "ins-1", AppID: "app1", Plan: api.PlanPro, State: state.StateRunning,
 			LastRequest: now.Add(-400 * time.Second)},
 		{Instance: "ins-2", AppID: "app1", Plan: api.PlanPro, State: state.StateRunning,
 			LastRequest: now.Add(-400 * time.Second)},
 	}
-	parked := ReapIdle(now, idle, nil, nil)
+	parked := sched.ReapIdle(now, idle, nil, nil)
 
 	if len(parked) == 0 {
 		t.Fatal("ReapIdle kept instances that took no requests for 400s — if a " +
@@ -162,13 +163,13 @@ func TestNewSignalApps_AreNotOfferedToAggressiveReaper(t *testing.T) {
 	now := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
 	// desiredByApp empty == "no app was considered", which is exactly what
 	// loop.go produces for an app with no legacy RPS column.
-	snapshot := []InstanceInfo{
+	snapshot := []sched.InstanceInfo{
 		{Instance: "ins-1", AppID: "app1", Plan: api.PlanPro, State: state.StateRunning,
 			LastRequest: now.Add(-10 * time.Second)},
 		{Instance: "ins-2", AppID: "app1", Plan: api.PlanPro, State: state.StateRunning,
 			LastRequest: now.Add(-10 * time.Second)},
 	}
-	if got := ReapAggressive(now, snapshot, map[string]int{}, nil, nil); len(got) != 0 {
+	if got := sched.ReapAggressive(now, snapshot, map[string]int{}, nil, nil); len(got) != 0 {
 		t.Errorf("ReapAggressive parked %v for an app absent from desiredByApp; apps with no "+
 			"legacy RPS target must defer to ReapIdle", got)
 	}
@@ -186,7 +187,7 @@ func TestScheduledFloor_SurvivesTheReaper(t *testing.T) {
 	now := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
 	// Three long-idle instances under a floor of 2: only the surplus may
 	// be parked, however idle the rest are.
-	snapshot := []InstanceInfo{
+	snapshot := []sched.InstanceInfo{
 		{Instance: "a", AppID: "app1", Plan: api.PlanPro, State: state.StateRunning,
 			MinInstances: 2, LastRequest: now.Add(-9999 * time.Second)},
 		{Instance: "b", AppID: "app1", Plan: api.PlanPro, State: state.StateRunning,
@@ -194,7 +195,7 @@ func TestScheduledFloor_SurvivesTheReaper(t *testing.T) {
 		{Instance: "c", AppID: "app1", Plan: api.PlanPro, State: state.StateRunning,
 			MinInstances: 2, LastRequest: now.Add(-9999 * time.Second)},
 	}
-	parked := ReapIdle(now, snapshot, nil, nil)
+	parked := sched.ReapIdle(now, snapshot, nil, nil)
 	if len(parked) != 1 {
 		t.Fatalf("parked %d instances under a floor of 2 with 3 running, want exactly 1 "+
 			"(the surplus): a scheduled floor is billed warm capacity and must survive "+
@@ -210,11 +211,11 @@ func TestScheduledFloor_SurvivesTheReaper(t *testing.T) {
 func TestScaleOutStampAnchorsScaleInCooldown(t *testing.T) {
 	now := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
 	justScaledOut := now.Add(-1 * time.Second)
-	in := InstanceInfo{
+	in := sched.InstanceInfo{
 		AppID:          "app1",
 		LastScaleOutAt: &justScaledOut,
 	}
-	anchor := scaleInCooldownAnchor(in)
+	anchor := sched.ScaleInCooldownAnchor(in)
 	if anchor == nil || !anchor.Equal(justScaledOut) {
 		t.Fatalf("scaleInCooldownAnchor = %v, want the scale-out stamp %v: without it the "+
 			"reaper can undo an admit on the next tick", anchor, justScaledOut)
@@ -223,7 +224,7 @@ func TestScaleOutStampAnchorsScaleInCooldown(t *testing.T) {
 	// recent capacity change in either direction.
 	laterScaleIn := now
 	in.LastScaleInAt = &laterScaleIn
-	if anchor := scaleInCooldownAnchor(in); anchor == nil || !anchor.Equal(laterScaleIn) {
+	if anchor := sched.ScaleInCooldownAnchor(in); anchor == nil || !anchor.Equal(laterScaleIn) {
 		t.Errorf("scaleInCooldownAnchor = %v, want the later scale-in stamp %v", anchor, laterScaleIn)
 	}
 }

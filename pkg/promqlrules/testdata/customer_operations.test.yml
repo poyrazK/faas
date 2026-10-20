@@ -1,4 +1,4 @@
-# Synthetic coverage for the ADR-1285 Customer Operations alerts: each fires
+# Synthetic coverage for the ADR-20261016123221 Customer Operations alerts: each fires
 # on its failure shape and stays quiet on a healthy one. Two schedd replicas
 # report the same fleet value, and the rules read max().
 

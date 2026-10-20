@@ -26,7 +26,7 @@
 // than going through the operator_intent subscriber (that's
 // pinned by operator_intent_subscriber_test.go). The Engine
 // surface is the load-bearing contract.
-package sched
+package sched_test
 
 import (
 	"context"
@@ -35,6 +35,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -44,9 +45,9 @@ import (
 // IDs include both tiers (in warm-then-init order).
 func TestForceRestart_HappyPath(t *testing.T) {
 	store := state.NewMemStore()
-	_, app, dep := seedApp(t, store, api.PlanPro, 512, 5)
-	vmm := &fakeVMM{}
-	engine := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+	_, app, dep := sched.SeedApp(t, store, api.PlanPro, 512, 5)
+	vmm := &sched.FakeVMM{}
+	engine := sched.XNewEngine(t, store, vmm, &sched.FakeNotifier{}, "1.10.0")
 
 	// Seed warm + init snapshots so the snap-stale loop has
 	// something to flip.
@@ -67,7 +68,7 @@ func TestForceRestart_HappyPath(t *testing.T) {
 		t.Fatalf("CreateSnapshot init: %v", err)
 	}
 
-	inst := runningInstance(t, store, app, dep, vmm, engine)
+	inst := sched.RunningInstance(t, store, app, dep, vmm, engine)
 
 	snapIDs, err := engine.ForceRestart(context.Background(), inst.ID, "operator_smoke")
 	if err != nil {
@@ -84,8 +85,8 @@ func TestForceRestart_HappyPath(t *testing.T) {
 	}
 
 	// Destroy was called exactly once on vmm.
-	if vmm.destroys != 1 {
-		t.Errorf("vmm.destroys = %d, want 1 (ForceRestart must call Destroy exactly once)", vmm.destroys)
+	if (*vmm.Destroys()) != 1 {
+		t.Errorf("vmm.destroys = %d, want 1 (ForceRestart must call Destroy exactly once)", (*vmm.Destroys()))
 	}
 
 	// Instance row must be STOPPED.
@@ -119,9 +120,9 @@ func TestForceRestart_HappyPath(t *testing.T) {
 // fan-out for this branch.
 func TestForceRestart_RaceLoser(t *testing.T) {
 	store := state.NewMemStore()
-	_, _, dep := seedApp(t, store, api.PlanPro, 512, 5)
-	vmm := &fakeVMM{}
-	engine := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+	_, _, dep := sched.SeedApp(t, store, api.PlanPro, 512, 5)
+	vmm := &sched.FakeVMM{}
+	engine := sched.XNewEngine(t, store, vmm, &sched.FakeNotifier{}, "1.10.0")
 
 	// Create a WAKING instance directly — no runningInstance
 	// helper because that creates a RUNNING row. The state-gate
@@ -140,8 +141,8 @@ func TestForceRestart_RaceLoser(t *testing.T) {
 	}
 
 	// No destroy was attempted.
-	if vmm.destroys != 0 {
-		t.Errorf("vmm.destroys = %d, want 0 (race-loser must NOT destroy)", vmm.destroys)
+	if (*vmm.Destroys()) != 0 {
+		t.Errorf("vmm.destroys = %d, want 0 (race-loser must NOT destroy)", (*vmm.Destroys()))
 	}
 
 	// State is unchanged (still WAKING) — no transition was written.
@@ -159,8 +160,8 @@ func TestForceRestart_RaceLoser(t *testing.T) {
 // state.ErrNotFound. No lock is acquired, no error leak.
 func TestForceRestart_NonExistent(t *testing.T) {
 	store := state.NewMemStore()
-	vmm := &fakeVMM{}
-	engine := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+	vmm := &sched.FakeVMM{}
+	engine := sched.XNewEngine(t, store, vmm, &sched.FakeNotifier{}, "1.10.0")
 
 	_, err := engine.ForceRestart(context.Background(), "ghost-instance-id", "operator_smoke")
 	if err == nil {
@@ -174,8 +175,8 @@ func TestForceRestart_NonExistent(t *testing.T) {
 	}
 
 	// No destroy attempted.
-	if vmm.destroys != 0 {
-		t.Errorf("vmm.destroys = %d, want 0 (non-existent must not destroy)", vmm.destroys)
+	if (*vmm.Destroys()) != 0 {
+		t.Errorf("vmm.destroys = %d, want 0 (non-existent must not destroy)", (*vmm.Destroys()))
 	}
 }
 
@@ -188,15 +189,16 @@ func TestForceRestart_NonExistent(t *testing.T) {
 // wake still cold-boots because the snaps are stale.
 func TestForceRestart_DestroyFailure(t *testing.T) {
 	store := state.NewMemStore()
-	_, app, dep := seedApp(t, store, api.PlanPro, 512, 5)
-	vmm := &fakeVMM{}
-	engine := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+	_, app, dep := sched.SeedApp(t, store, api.PlanPro, 512, 5)
+	vmm := &sched.FakeVMM{}
+	engine := sched.XNewEngine(t, store, vmm, &sched.FakeNotifier{}, "1.10.0")
+	(*
 
 	// Inject a destroy error so the path returns the destroy
 	// error wrapped. The snap-stale work runs first (the loop
 	// precedes the destroy); the snap IDs are returned to the
 	// caller even though the destroy failed.
-	vmm.destroyErr = errors.New("fake: firecracker wedged")
+	vmm.DestroyErr()) = errors.New("fake: firecracker wedged")
 
 	warm, err := store.CreateSnapshot(context.Background(), state.Snapshot{
 		DeploymentID: dep.ID, FCVersion: "1.10.0",
@@ -207,7 +209,7 @@ func TestForceRestart_DestroyFailure(t *testing.T) {
 		t.Fatalf("CreateSnapshot warm: %v", err)
 	}
 
-	inst := runningInstance(t, store, app, dep, vmm, engine)
+	inst := sched.RunningInstance(t, store, app, dep, vmm, engine)
 
 	snapIDs, err := engine.ForceRestart(context.Background(), inst.ID, "operator_smoke")
 	if err == nil {

@@ -1,7 +1,8 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"net/http"
 	"net/http/httptest"
@@ -29,15 +30,15 @@ func TestMCPConvergenceViewsDetectDegradationAndRecovery(t *testing.T) {
 					if signal == "wrong-app" {
 						appID = "other-app"
 					}
-					writeJSONTest(w, api.RuntimePolicyStatusResponse{AppID: appID, EdgeRules: api.RuntimePolicyComponentStatus{Scope: "account"}, MCPConvergence: &api.MCPPolicyConvergenceSnapshot{State: signal, AdmissionID: "receipt-id", AdmissionHistoryPath: "/v1/deployments/target/audit"}})
+					main.WriteJSONTest(w, api.RuntimePolicyStatusResponse{AppID: appID, EdgeRules: api.RuntimePolicyComponentStatus{Scope: "account"}, MCPConvergence: &api.MCPPolicyConvergenceSnapshot{State: signal, AdmissionID: "receipt-id", AdmissionHistoryPath: "/v1/deployments/target/audit"}})
 				case "/v1/apps/reports/alerts":
-					writeJSONTest(w, []api.AlertRuleResponse{{ID: "rule-id", AppID: "app-id", Enabled: true, Metric: "mcp_policy_unconverged_gateways", State: "firing", WebhookURL: "PRIVATE_URL"}, {ID: "other", AppID: "other-app", Enabled: true, Metric: "mcp_policy_unverified", State: "firing"}})
+					main.WriteJSONTest(w, []api.AlertRuleResponse{{ID: "rule-id", AppID: "app-id", Enabled: true, Metric: "mcp_policy_unconverged_gateways", State: "firing", WebhookURL: "PRIVATE_URL"}, {ID: "other", AppID: "other-app", Enabled: true, Metric: "mcp_policy_unverified", State: "firing"}})
 				default:
 					t.Errorf("unexpected read %s", r.URL.Path)
 				}
 			}))
 			defer server.Close()
-			result := collectMCPConvergence(t.Context(), NewClient(server.URL, "operator"), "reports", "app-id")
+			result := main.CollectMCPConvergence(t.Context(), main.NewClient(server.URL, "operator"), "reports", "app-id")
 			expected := signal
 			if signal == "denied" || signal == "wrong-app" {
 				expected = "unknown"

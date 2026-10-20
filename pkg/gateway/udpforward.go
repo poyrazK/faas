@@ -8,6 +8,7 @@ import (
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/wire"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -50,7 +51,7 @@ func (f UDPForwarder) ServePeer(ctx context.Context, peer DatagramPeer, target T
 	if closer != nil {
 		defer func() { _ = closer.Close() }()
 	}
-	stream, err := cli.ForwardUDPStream(streamCtx) //nolint:contextcheck // streamCtx inherits the caller through the idle session and adds peer cancellation.
+	stream, err := cli.ForwardUDPStream(wire.ForwardContext(streamCtx)) //nolint:contextcheck // retains idle cancellation and replaces inherited route metadata.
 	if err != nil {
 		return err
 	}

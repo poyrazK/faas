@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/routehealth"
 )
@@ -38,8 +39,8 @@ func cliClientErrorReport() api.RouteHealthReport {
 func TestClientErrorCLIAdvisoryVerdictsAndBinding(t *testing.T) {
 	for _, scenario := range []string{"json", "human", "customer", "wrong_counts", "false_verdict", "missing", "wrong_code"} {
 		t.Run(scenario, func(t *testing.T) {
-			resetJSONOut(t)
-			setPreviewTestAuth(t)
+			main.ResetJSONOut(t)
+			main.SetPreviewTestAuth(t)
 			report := cliClientErrorReport()
 			if scenario == "wrong_counts" {
 				report.Routes[0].ClientErrors.Statuses[0].Windows[0].Candidate.Requests = 200
@@ -60,13 +61,13 @@ func TestClientErrorCLIAdvisoryVerdictsAndBinding(t *testing.T) {
 				report.Customers = &api.RouteCustomerHealthReport{GroupBy: "tenant", Routes: []api.RouteCustomerHealthRoute{{Method: "POST", Path: "/checkout", ObservedCustomers: 1, Candidate: api.RouteCustomerHealthAttribution{IdentifiedRequests: 200}, Stable: api.RouteCustomerHealthAttribution{IdentifiedRequests: 200}, Customers: []api.RouteCustomerHealthCohort{{CustomerID: "private", Health: cohort}}}}}
 				routehealth.EvaluateCustomers(&report, "")
 			}
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { writeJSONTest(w, report) }))
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { main.WriteJSONTest(w, report) }))
 			defer server.Close()
 			t.Setenv("FAAS_API", server.URL)
 			var out bytes.Buffer
-			old := osStdout
-			osStdout = &out
-			t.Cleanup(func() { osStdout = old })
+			old := (*main.OsStdout)
+			(*main.OsStdout) = &out
+			t.Cleanup(func() { (*main.OsStdout) = old })
 			args := []string{"routes", "health", "report", "demo", "--deployment", healthCandidateID, "--fail-on-unhealthy"}
 			if scenario != "human" {
 				args = append(args, "--json")
@@ -78,7 +79,7 @@ func TestClientErrorCLIAdvisoryVerdictsAndBinding(t *testing.T) {
 			if scenario == "wrong_counts" || scenario == "false_verdict" || scenario == "missing" || scenario == "wrong_code" {
 				want = 1
 			}
-			if code := run(args); code != want {
+			if code := main.Run(args); code != want {
 				t.Fatalf("exit %d want %d: %s", code, want, out.String())
 			}
 			if scenario == "human" && (!strings.Contains(out.String(), "HTTP 403: regressed") || !strings.Contains(out.String(), "20/100") || !strings.Contains(out.String(), "advisory")) {

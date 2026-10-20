@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -15,7 +16,7 @@ func TestStartPublicPreviewRequiresAcceptedIdentitiesInEveryEnvironment(t *testi
 	for _, scope := range []string{"default", "staging"} {
 		for _, outcome := range []string{"matching", "wrong app", "wrong deployment", "missing app", "missing deployment", "expired", "empty URL", "unsupported"} {
 			t.Run(scope+"/"+outcome, func(t *testing.T) {
-				stdout, stderr := startTestEnvironment(t)
+				stdout, stderr := main.StartTestEnvironment(t)
 				var previewCalls, canonicalCalls atomic.Int32
 				serve := func(calls *atomic.Int32) http.HandlerFunc {
 					return func(w http.ResponseWriter, r *http.Request) {
@@ -23,7 +24,7 @@ func TestStartPublicPreviewRequiresAcceptedIdentitiesInEveryEnvironment(t *testi
 						if r.Header.Get("Authorization") != "" {
 							t.Error("account credentials reached a public route")
 						}
-						w.Header().Set(api.DeploymentIDHeader, startResponseDeploymentID)
+						w.Header().Set(api.DeploymentIDHeader, main.StartResponseDeploymentID)
 						_, _ = w.Write([]byte("accepted deployment"))
 					}
 				}
@@ -31,17 +32,17 @@ func TestStartPublicPreviewRequiresAcceptedIdentitiesInEveryEnvironment(t *testi
 				t.Cleanup(preview.Close)
 				canonical := httptest.NewServer(serve(&canonicalCalls))
 				t.Cleanup(canonical.Close)
-				startTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
+				main.StartTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
 					switch r.URL.Path {
 					case "/v1/apps/first-app":
-						_ = json.NewEncoder(w).Encode(api.AppResponse{ID: startResponseAppID, CanonicalURL: canonical.URL})
-					case "/v1/deployments/" + startResponseDeploymentID + "/url":
-						result := api.DeploymentPreviewURL{AppID: startResponseAppID, DeploymentID: startResponseDeploymentID, Alive: true, URL: preview.URL}
+						_ = json.NewEncoder(w).Encode(api.AppResponse{ID: main.StartResponseAppID, CanonicalURL: canonical.URL})
+					case "/v1/deployments/" + main.StartResponseDeploymentID + "/url":
+						result := api.DeploymentPreviewURL{AppID: main.StartResponseAppID, DeploymentID: main.StartResponseDeploymentID, Alive: true, URL: preview.URL}
 						switch outcome {
 						case "wrong app":
-							result.AppID = startResponseInstanceID
+							result.AppID = main.StartResponseInstanceID
 						case "wrong deployment":
-							result.DeploymentID = startResponseInstanceID
+							result.DeploymentID = main.StartResponseInstanceID
 						case "missing app":
 							result.AppID = ""
 						case "missing deployment":
@@ -60,12 +61,12 @@ func TestStartPublicPreviewRequiresAcceptedIdentitiesInEveryEnvironment(t *testi
 						http.NotFound(w, r)
 					}
 				})
-				runner := startTestRunner(t, startTestSource(t), "")
-				runner.session.AppID, runner.session.DeploymentID = startResponseAppID, startResponseDeploymentID
+				runner := main.StartTestRunner(t, main.StartTestSource(t), "")
+				(*runner.Session()).AppID, (*runner.Session()).DeploymentID = main.StartResponseAppID, main.StartResponseDeploymentID
 				if scope != "default" {
-					runner.session.Environment = scope
+					(*runner.Session()).Environment = scope
 				}
-				code := runner.sendTestRequest("/", "")
+				code := runner.SendTestRequest("/", "")
 				fallback := scope == "default" && (outcome == "expired" || outcome == "empty URL" || outcome == "unsupported")
 				if success := outcome == "matching" || fallback; (code == 0) != success {
 					t.Fatalf("code=%d output=%s stderr=%s", code, stdout, stderr())
@@ -80,7 +81,7 @@ func TestStartPublicPreviewRequiresAcceptedIdentitiesInEveryEnvironment(t *testi
 				if previewCalls.Load() != wantPreview || canonicalCalls.Load() != wantCanonical {
 					t.Fatalf("checked an unverified target: preview=%d canonical=%d", previewCalls.Load(), canonicalCalls.Load())
 				}
-				if code != 0 && (runner.lastRequest != nil || strings.Contains(stdout.String(), "Your app answered.")) {
+				if code != 0 && ((*runner.LastRequest()) != nil || strings.Contains(stdout.String(), "Your app answered.")) {
 					t.Fatal("invalid preview produced successful evidence")
 				}
 			})

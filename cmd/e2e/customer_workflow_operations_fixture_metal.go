@@ -374,7 +374,7 @@ func assertCustomerWorkflowFence(t *testing.T, err error) {
 	}
 }
 
-// customerWorkflowWaitChains are the ADR-1287 Stage 2 workflows deployed beside
+// customerWorkflowWaitChains are the ADR-20261017102231 Stage 2 workflows deployed beside
 // export-chain. Step names equal the guest's routes; waits have no route.
 // Operation workflows are one linear chain, so finish depends only on the wait
 // and declares no input: it receives the Operation's own input (mode,

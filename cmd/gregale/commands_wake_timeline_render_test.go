@@ -1,5 +1,5 @@
 // adr: 350 — the CLI explains the closed application fallback reason.
-package main
+package main_test
 
 import (
 	"bytes"
@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -37,7 +38,7 @@ func TestRenderWakeTimelinePage_TriggersAndContext(t *testing.T) {
 		},
 	}
 	var buf bytes.Buffer
-	renderWakeTimelinePage(&buf, resp)
+	main.RenderWakeTimelinePage(&buf, resp)
 	out := buf.String()
 	for _, want := range []string{
 		"wake wake-1 app app-1 limit 10:",
@@ -57,13 +58,13 @@ func TestRenderWakeTimelinePage_ApplicationRestoreFallback(t *testing.T) {
 		},
 	}}}
 	var buf bytes.Buffer
-	renderWakeTimelinePage(&buf, resp)
+	main.RenderWakeTimelinePage(&buf, resp)
 	if !strings.Contains(buf.String(), "restore_fallback=after_restore_failed (after_restore hook failed; cold boot succeeded)") {
 		t.Fatalf("fallback explanation missing: %s", buf.String())
 	}
 	resp.Events[0].Data["restore_fallback_reason"] = "raw callback /private failed"
 	buf.Reset()
-	renderWakeTimelinePage(&buf, resp)
+	main.RenderWakeTimelinePage(&buf, resp)
 	if strings.Contains(buf.String(), "/private") {
 		t.Fatalf("unrecognized reason exposed: %s", buf.String())
 	}
@@ -75,7 +76,7 @@ func TestRenderWakeTimelinePage_ParkFailureReason(t *testing.T) {
 			Kind: "wake.park_failed", Actor: "schedd", Data: map[string]any{"reason": reason},
 		}}}
 		var buf bytes.Buffer
-		renderWakeTimelinePage(&buf, resp)
+		main.RenderWakeTimelinePage(&buf, resp)
 		if !strings.Contains(buf.String(), "reason="+reason) {
 			t.Fatalf("park failure reason %q missing: %s", reason, buf.String())
 		}
@@ -84,7 +85,7 @@ func TestRenderWakeTimelinePage_ParkFailureReason(t *testing.T) {
 		Kind: "wake.park_failed", Data: map[string]any{"reason": "private callback response"},
 	}}}
 	var buf bytes.Buffer
-	renderWakeTimelinePage(&buf, resp)
+	main.RenderWakeTimelinePage(&buf, resp)
 	if strings.Contains(buf.String(), "private callback response") {
 		t.Fatalf("unknown park reason escaped into CLI: %s", buf.String())
 	}
@@ -100,7 +101,7 @@ func TestRenderSummaryHeader_SortedByKey(t *testing.T) {
 		{Kind: "wake.boot_completed", Data: map[string]any{"trigger": "ignored"}},
 	}
 	var buf bytes.Buffer
-	renderSummaryHeader(&buf, events)
+	main.RenderSummaryHeader(&buf, events)
 	got := buf.String()
 	want := "  triggers: cron.schedule=1 gateway=1 scaleup=1\n"
 	if got != want {
@@ -121,7 +122,7 @@ func TestRenderSummaryHeader_DeduplicatesCanonicalWake(t *testing.T) {
 		}},
 	}
 	var buf bytes.Buffer
-	renderSummaryHeader(&buf, events)
+	main.RenderSummaryHeader(&buf, events)
 	want := "  triggers: cron.schedule=1 gateway=1\n"
 	if got := buf.String(); got != want {
 		t.Errorf("renderSummaryHeader = %q, want %q", got, want)
@@ -136,7 +137,7 @@ func TestRenderSummaryHeader_AbsentNoop(t *testing.T) {
 		{Kind: "wake.boot_completed", Data: map[string]any{}},
 	}
 	var buf bytes.Buffer
-	renderSummaryHeader(&buf, events)
+	main.RenderSummaryHeader(&buf, events)
 	if buf.Len() != 0 {
 		t.Errorf("expected no header line, got %q", buf.String())
 	}
@@ -148,7 +149,7 @@ func TestRenderSummaryHeader_AbsentNoop(t *testing.T) {
 // pre-ADR-123 events).
 func TestRenderContextSuffix_LegacyEvent(t *testing.T) {
 	ev := api.WakeTimelineEvent{Kind: "wake.boot_started", Data: map[string]any{}}
-	if got := renderContextSuffix(ev); got != "" {
+	if got := main.RenderContextSuffix(ev); got != "" {
 		t.Errorf("legacy event rendered context %q, want \"\"", got)
 	}
 }
@@ -161,7 +162,7 @@ func TestRenderContextSuffix_TriggerOnly(t *testing.T) {
 		Kind: "wake.boot_started",
 		Data: map[string]any{"trigger": "cron.schedule"},
 	}
-	got := renderContextSuffix(ev)
+	got := main.RenderContextSuffix(ev)
 	if got != "trigger=cron.schedule" {
 		t.Errorf("renderContextSuffix = %q, want %q", got, "trigger=cron.schedule")
 	}
@@ -174,7 +175,7 @@ func TestRenderContextSuffix_ColdReason(t *testing.T) {
 		Kind: "wake.boot_started",
 		Data: map[string]any{"trigger": "gateway", "cold_reason": "snapshots_stale"},
 	}
-	if got, want := renderContextSuffix(ev), "trigger=gateway cold_reason=snapshots_stale"; got != want {
+	if got, want := main.RenderContextSuffix(ev), "trigger=gateway cold_reason=snapshots_stale"; got != want {
 		t.Errorf("renderContextSuffix = %q, want %q", got, want)
 	}
 }
@@ -194,7 +195,7 @@ func TestRenderRestoreBreakdown_ExactTotalAndPhases(t *testing.T) {
 			},
 		},
 	}
-	got := renderRestoreBreakdown(ev)
+	got := main.RenderRestoreBreakdown(ev)
 	for _, want := range []string{
 		"restore total=596ms",
 		"restore_gate_wait=12ms",
@@ -221,7 +222,7 @@ func TestRenderColdBootBreakdown_AttributesPreGuestDelay(t *testing.T) {
 			},
 		},
 	}
-	got := renderColdBootBreakdown(ev)
+	got := main.RenderColdBootBreakdown(ev)
 	for _, want := range []string{
 		"cold_boot total=23474ms",
 		"resolve_images=20600ms",
@@ -252,7 +253,7 @@ func TestRenderWakeTimelinePage_DefaultSummaryHidesInternalPhases(t *testing.T) 
 		},
 	}
 	var buf bytes.Buffer
-	renderWakeTimelinePage(&buf, resp)
+	main.RenderWakeTimelinePage(&buf, resp)
 	out := buf.String()
 	if !strings.Contains(out, "cold start: queue_to_admit=2ms restore=596ms readiness=131ms wake_to_running=606ms") {
 		t.Errorf("default output missing compact summary:\n%s", out)
@@ -262,7 +263,7 @@ func TestRenderWakeTimelinePage_DefaultSummaryHidesInternalPhases(t *testing.T) 
 	}
 
 	buf.Reset()
-	renderWakeTimelinePageWithOptions(&buf, resp, true)
+	main.RenderWakeTimelinePageWithOptions(&buf, resp, true)
 	if !strings.Contains(buf.String(), "materialize_mem=3ms") {
 		t.Errorf("verbose output missing internal restore phase:\n%s", buf.String())
 	}
@@ -282,7 +283,7 @@ func TestRenderWakeTimelinePage_ColdBootCPUAllowance(t *testing.T) {
 		},
 	}
 	var buf bytes.Buffer
-	renderWakeTimelinePage(&buf, resp)
+	main.RenderWakeTimelinePage(&buf, resp)
 	if got := buf.String(); !strings.Contains(got, "cold start: cold_boot=2401ms cpu=1000m->250m readiness=2200ms") {
 		t.Errorf("cold-boot summary missing CPU transition:\n%s", got)
 	}
@@ -299,12 +300,12 @@ func TestRenderWakeTimelinePage_PostRPCBreakdown(t *testing.T) {
 		},
 	}}}
 	var buf bytes.Buffer
-	renderWakeTimelinePageWithOptions(&buf, resp, true)
+	main.RenderWakeTimelinePageWithOptions(&buf, resp, true)
 	if want := "post-rpc pre_commit=3ms stamp_join=0ms lock_wait=61ms publish=24ms finalize=40ms"; !strings.Contains(buf.String(), want) {
 		t.Fatalf("verbose output missing %q:\n%s", want, buf.String())
 	}
 	buf.Reset()
-	renderWakeTimelinePage(&buf, resp)
+	main.RenderWakeTimelinePage(&buf, resp)
 	if strings.Contains(buf.String(), "post-rpc") {
 		t.Fatalf("default output shows implementation phases:\n%s", buf.String())
 	}

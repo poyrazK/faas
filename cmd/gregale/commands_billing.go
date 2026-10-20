@@ -113,7 +113,7 @@ const billingUsage = "usage: gregale billing <subcommand>\n\n" +
 	"  costs               explain retained usage costs (--month YYYY-MM --json)\n" +
 	"  forecast            show cost projections and coverage (--month YYYY-MM --json)\n" +
 	"  budget-preview      preview a budget's cost and consequences (--file PATH --json)\n" +
-	"  budgets             list, read, save, update, delete and audit budget drafts\n" +
+	"  budgets             manage spending alerts and revisioned budget policies\n" +
 	"  export              download a partial FOCUS 1.4 Invoice Detail projection\n" +
 	"                      (--month YYYY-MM --out PATH; --format zip|csv|metadata)\n" +
 	"\n" +

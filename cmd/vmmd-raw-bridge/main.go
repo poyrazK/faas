@@ -43,6 +43,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -51,6 +52,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/netns"
 )
 
 // dialTimeout caps how long the initial TCP dial against the
@@ -82,7 +85,7 @@ func main() {
 	//    netns (via `nsenter --target <firecracker-pid> --net -- ...`), so
 	//    the 10.0.0.2/30 inner network is directly reachable.
 	d := net.Dialer{Timeout: dialTimeout}
-	conn, err := d.Dial("tcp", net.JoinHostPort(ip, strconv.FormatUint(port, 10)))
+	conn, err := netns.DialBridgeContext(context.Background(), &d, "tcp", net.JoinHostPort(ip, strconv.FormatUint(port, 10)))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "dial guest %s:%d: %v\n", ip, port, err)
 		os.Exit(3)

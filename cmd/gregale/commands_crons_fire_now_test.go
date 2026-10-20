@@ -3,7 +3,7 @@
 // httptest.NewServer fake + t.Setenv + osStdout swap + jsonOutput
 // swap. The dispatch placement lives in main_test.go (see
 // TestRun_DispatchCronsRun / TestRun_DispatchCronsFireNow below).
-package main
+package main_test
 
 import (
 	"bytes"
@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -61,11 +62,11 @@ func TestCmdCronsRun_HappyPath(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
 	var stdout bytes.Buffer
-	oldOut := osStdout
-	osStdout = &stdout
-	defer func() { osStdout = oldOut }()
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	defer func() { (*main.OsStdout) = oldOut }()
 
-	if code := cmdCronsRun([]string{cronsFireNowRunID}); code != 0 {
+	if code := main.CmdCronsRun([]string{cronsFireNowRunID}); code != 0 {
 		t.Errorf("crons run = %d, want 0", code)
 	}
 	if gotMethod != http.MethodPost {
@@ -97,15 +98,15 @@ func TestCmdCronsRun_JSON_Envelope(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
 	var stdout bytes.Buffer
-	oldOut := osStdout
-	osStdout = &stdout
-	defer func() { osStdout = oldOut }()
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	defer func() { (*main.OsStdout) = oldOut }()
 
-	resetJSONOutput()
-	t.Cleanup(resetJSONOutput)
-	jsonOutput = true
+	main.ResetJSONOutput()
+	t.Cleanup(main.ResetJSONOutput)
+	(*main.JsonOutput) = true
 
-	if code := cmdCronsRun([]string{cronsFireNowRunID}); code != 0 {
+	if code := main.CmdCronsRun([]string{cronsFireNowRunID}); code != 0 {
 		t.Errorf("crons run json = %d, want 0", code)
 	}
 	var resp api.FireCronResponse
@@ -127,7 +128,7 @@ func TestCmdCronsRun_BadID_NoServerCall(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	if code := cmdCronsRun([]string{"not-hex"}); code != 1 {
+	if code := main.CmdCronsRun([]string{"not-hex"}); code != 1 {
 		t.Errorf("crons run bad id = %d, want 1", code)
 	}
 	if calls != 0 {
@@ -145,7 +146,7 @@ func TestCmdCronsRun_MissingID_NoServerCall(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	if code := cmdCronsRun([]string{}); code != 1 {
+	if code := main.CmdCronsRun([]string{}); code != 1 {
 		t.Errorf("crons run no args = %d, want 1", code)
 	}
 	if calls != 0 {
@@ -168,11 +169,11 @@ func TestCmdCronsFireNowGet_HappyPath_Terminal(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
 	var stdout bytes.Buffer
-	oldOut := osStdout
-	osStdout = &stdout
-	defer func() { osStdout = oldOut }()
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	defer func() { (*main.OsStdout) = oldOut }()
 
-	if code := cmdCronsFireNowGet([]string{cronsFireNowRequestID}); code != 0 {
+	if code := main.CmdCronsFireNowGet([]string{cronsFireNowRequestID}); code != 0 {
 		t.Errorf("crons fire-now = %d, want 0", code)
 	}
 	if gotMethod != http.MethodGet {
@@ -205,11 +206,11 @@ func TestCmdCronsFireNowGet_Pending(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
 	var stdout bytes.Buffer
-	oldOut := osStdout
-	osStdout = &stdout
-	defer func() { osStdout = oldOut }()
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	defer func() { (*main.OsStdout) = oldOut }()
 
-	if code := cmdCronsFireNowGet([]string{cronsFireNowRequestID}); code != 0 {
+	if code := main.CmdCronsFireNowGet([]string{cronsFireNowRequestID}); code != 0 {
 		t.Errorf("crons fire-now pending = %d, want 0", code)
 	}
 	body := stdout.String()
@@ -238,11 +239,11 @@ func TestCmdCronsFireNowGet_Failed(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
 	var stdout bytes.Buffer
-	oldOut := osStdout
-	osStdout = &stdout
-	defer func() { osStdout = oldOut }()
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	defer func() { (*main.OsStdout) = oldOut }()
 
-	if code := cmdCronsFireNowGet([]string{cronsFireNowRequestID}); code != 0 {
+	if code := main.CmdCronsFireNowGet([]string{cronsFireNowRequestID}); code != 0 {
 		t.Errorf("crons fire-now failed = %d, want 0", code)
 	}
 	body := stdout.String()
@@ -256,11 +257,11 @@ func TestCmdCronsFireNowGet_Failed(t *testing.T) {
 
 func TestRenderFireNowStatusShowsCommandTaskReceipt(t *testing.T) {
 	response := makeFireNowResponse()
-	response.Status = fireNowStatusSucceeded
+	response.Status = main.FireNowStatusSucceeded
 	taskID := "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
 	response.TaskID = &taskID
 	var output bytes.Buffer
-	renderFireNowStatus(&output, response)
+	main.RenderFireNowStatus(&output, response)
 	if !strings.Contains(output.String(), "task: "+taskID) {
 		t.Fatalf("command fire-now status = %q; want task receipt", output.String())
 	}
@@ -276,15 +277,15 @@ func TestCmdCronsFireNowGet_JSON_Envelope(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
 	var stdout bytes.Buffer
-	oldOut := osStdout
-	osStdout = &stdout
-	defer func() { osStdout = oldOut }()
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	defer func() { (*main.OsStdout) = oldOut }()
 
-	resetJSONOutput()
-	t.Cleanup(resetJSONOutput)
-	jsonOutput = true
+	main.ResetJSONOutput()
+	t.Cleanup(main.ResetJSONOutput)
+	(*main.JsonOutput) = true
 
-	if code := cmdCronsFireNowGet([]string{cronsFireNowRequestID}); code != 0 {
+	if code := main.CmdCronsFireNowGet([]string{cronsFireNowRequestID}); code != 0 {
 		t.Errorf("crons fire-now json = %d, want 0", code)
 	}
 	var got api.FireCronRequestResponse
@@ -309,7 +310,7 @@ func TestCmdCronsFireNowGet_BadID_NoServerCall(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	if code := cmdCronsFireNowGet([]string{"not-hex"}); code != 1 {
+	if code := main.CmdCronsFireNowGet([]string{"not-hex"}); code != 1 {
 		t.Errorf("crons fire-now bad id = %d, want 1", code)
 	}
 	if calls != 0 {
@@ -327,7 +328,7 @@ func TestCmdCronsFireNowGet_MissingID_NoServerCall(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	if code := cmdCronsFireNowGet([]string{}); code != 1 {
+	if code := main.CmdCronsFireNowGet([]string{}); code != 1 {
 		t.Errorf("crons fire-now no args = %d, want 1", code)
 	}
 	if calls != 0 {
@@ -352,7 +353,7 @@ func TestCmdCronsFireNowGet_ServerNotFound(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	if code := cmdCronsFireNowGet([]string{cronsFireNowRequestID}); code == 0 {
+	if code := main.CmdCronsFireNowGet([]string{cronsFireNowRequestID}); code == 0 {
 		t.Errorf("crons fire-now 404 = 0, want nonzero")
 	}
 }
@@ -379,7 +380,7 @@ func TestRun_DispatchCronsRun(t *testing.T) {
 	t.Setenv("HOME", dir)
 	t.Setenv("XDG_CONFIG_HOME", dir)
 
-	if code := run([]string{"crons", "run", cronsFireNowRunID}); code != 0 {
+	if code := main.Run([]string{"crons", "run", cronsFireNowRunID}); code != 0 {
 		t.Errorf("run crons run = %d, want 0", code)
 	}
 }
@@ -400,7 +401,7 @@ func TestRun_DispatchCronsFireNow(t *testing.T) {
 	t.Setenv("HOME", dir)
 	t.Setenv("XDG_CONFIG_HOME", dir)
 
-	if code := run([]string{"crons", "fire-now", cronsFireNowRequestID}); code != 0 {
+	if code := main.Run([]string{"crons", "fire-now", cronsFireNowRequestID}); code != 0 {
 		t.Errorf("run crons fire-now = %d, want 0", code)
 	}
 }
@@ -425,12 +426,12 @@ func TestCmdCronsFireNowGet_NoGlyphsInCapturedBuffer(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
 	var stdout bytes.Buffer
-	oldOut := osStdout
-	osStdout = &stdout
-	defer func() { osStdout = oldOut }()
-	defer withTTYForTest(false)()
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	defer func() { (*main.OsStdout) = oldOut }()
+	defer main.WithTTYForTest(false)()
 
-	if code := cmdCronsFireNowGet([]string{cronsFireNowRequestID}); code != 0 {
+	if code := main.CmdCronsFireNowGet([]string{cronsFireNowRequestID}); code != 0 {
 		t.Errorf("crons fire-now = %d, want 0", code)
 	}
 	body := stdout.String()

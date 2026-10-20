@@ -16,11 +16,12 @@
 //  1. Happy path with --from=<stage> explicit
 //  2. Happy path with default from_stage (read from /stages)
 //  3. Cross-account / 404 returns exit 2 (api error)
-package main
+package main_test
 
 import (
 	"bytes"
 	"encoding/json"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -121,7 +122,7 @@ func TestCmdDeploysRetry_ExplicitFrom(t *testing.T) {
 	cap.mu.Lock()
 	defer cap.mu.Unlock()
 
-	exit := cmdDeploysRetry([]string{retryTestID, "--from=image_build"})
+	exit := main.CmdDeploysRetry([]string{retryTestID, "--from=image_build"})
 	if exit != 0 {
 		t.Errorf("cmdDeploysRetry exit = %d, want 0", exit)
 	}
@@ -160,7 +161,7 @@ func TestCmdDeploysRetry_DefaultFromStage(t *testing.T) {
 	cap.mu.Lock()
 	defer cap.mu.Unlock()
 
-	exit := cmdDeploysRetry([]string{retryTestID})
+	exit := main.CmdDeploysRetry([]string{retryTestID})
 	if exit != 0 {
 		t.Errorf("cmdDeploysRetry exit = %d, want 0", exit)
 	}
@@ -189,7 +190,7 @@ func TestCmdDeploysRetry_InvalidFromStageFailsFast(t *testing.T) {
 	cap.mu.Lock()
 	defer cap.mu.Unlock()
 
-	exit := cmdDeploysRetry([]string{retryTestID, "--from=not_a_stage"})
+	exit := main.CmdDeploysRetry([]string{retryTestID, "--from=not_a_stage"})
 	if exit != 1 {
 		t.Errorf("cmdDeploysRetry exit = %d, want 1 (usage error)", exit)
 	}
@@ -201,7 +202,7 @@ func TestCmdDeploysRetry_InvalidFromStageFailsFast(t *testing.T) {
 // TestCmdDeploysRetry_NoArgs — usage error when no deployment id
 // is supplied.
 func TestCmdDeploysRetry_NoArgs(t *testing.T) {
-	exit := cmdDeploysRetry([]string{})
+	exit := main.CmdDeploysRetry([]string{})
 	if exit != 1 {
 		t.Errorf("cmdDeploysRetry with no args: exit = %d, want 1", exit)
 	}
@@ -216,7 +217,7 @@ func TestCmdDeploysRetry_RetryFromTop(t *testing.T) {
 	cap.mu.Lock()
 	defer cap.mu.Unlock()
 
-	exit := cmdDeploysRetry([]string{retryTestID, "--from=source_download"})
+	exit := main.CmdDeploysRetry([]string{retryTestID, "--from=source_download"})
 	if exit != 0 {
 		t.Errorf("cmdDeploysRetry exit = %d, want 0", exit)
 	}
@@ -244,12 +245,12 @@ func TestCmdDeploys_DispatchRetry(t *testing.T) {
 	defer cap.mu.Unlock()
 
 	// Capture stdout to avoid spamming test logs.
-	oldStdout := osStdout
+	oldStdout := (*main.OsStdout)
 	r, w, _ := os.Pipe()
-	osStdout = w
-	defer func() { osStdout = oldStdout }()
+	(*main.OsStdout) = w
+	defer func() { (*main.OsStdout) = oldStdout }()
 
-	exit := cmdDeploys([]string{"retry", retryTestID, "--from=image_build"})
+	exit := main.CmdDeploys([]string{"retry", retryTestID, "--from=image_build"})
 	_ = w.Close()
 	var buf bytes.Buffer
 	_, _ = io.Copy(&buf, r)

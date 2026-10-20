@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -8,12 +8,13 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/routelifecycle"
 )
 
 func TestRoutesLifecycleDeclarationsCapturedContracts(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("FAAS_TOKEN", "test-token")
@@ -26,14 +27,14 @@ func TestRoutesLifecycleDeclarationsCapturedContracts(t *testing.T) {
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/v1/deployments/" + routeMigrationFromDeployment:
-			json.NewEncoder(w).Encode(api.DeploymentResponse{ID: routeMigrationFromDeployment, AppID: "app"})
-		case "/v1/deployments/" + routeMigrationToDeployment:
-			json.NewEncoder(w).Encode(api.DeploymentResponse{ID: routeMigrationToDeployment, AppID: "app"})
-		case "/v1/apps/api/deployments/" + routeMigrationFromDeployment + "/openapi":
-			json.NewEncoder(w).Encode(api.OpenAPIDocResponse{DeploymentID: routeMigrationFromDeployment, AppID: "app", Source: "manual_upload", Doc: before})
-		case "/v1/apps/api/deployments/" + routeMigrationToDeployment + "/openapi":
-			json.NewEncoder(w).Encode(api.OpenAPIDocResponse{DeploymentID: routeMigrationToDeployment, AppID: "app", Source: "manual_upload", Doc: after})
+		case "/v1/deployments/" + main.RouteMigrationFromDeployment:
+			json.NewEncoder(w).Encode(api.DeploymentResponse{ID: main.RouteMigrationFromDeployment, AppID: "app"})
+		case "/v1/deployments/" + main.RouteMigrationToDeployment:
+			json.NewEncoder(w).Encode(api.DeploymentResponse{ID: main.RouteMigrationToDeployment, AppID: "app"})
+		case "/v1/apps/api/deployments/" + main.RouteMigrationFromDeployment + "/openapi":
+			json.NewEncoder(w).Encode(api.OpenAPIDocResponse{DeploymentID: main.RouteMigrationFromDeployment, AppID: "app", Source: "manual_upload", Doc: before})
+		case "/v1/apps/api/deployments/" + main.RouteMigrationToDeployment + "/openapi":
+			json.NewEncoder(w).Encode(api.OpenAPIDocResponse{DeploymentID: main.RouteMigrationToDeployment, AppID: "app", Source: "manual_upload", Doc: after})
 		default:
 			t.Errorf("unexpected read %s", r.URL.Path)
 			http.NotFound(w, r)
@@ -42,11 +43,11 @@ func TestRoutesLifecycleDeclarationsCapturedContracts(t *testing.T) {
 	defer server.Close()
 	t.Setenv("FAAS_API", server.URL)
 	var output bytes.Buffer
-	old, oldJSON := osStdout, jsonOutput
-	osStdout, jsonOutput = &output, true
-	t.Cleanup(func() { osStdout, jsonOutput = old, oldJSON })
+	old, oldJSON := (*main.OsStdout), (*main.JsonOutput)
+	(*main.OsStdout), (*main.JsonOutput) = &output, true
+	t.Cleanup(func() { (*main.OsStdout), (*main.JsonOutput) = old, oldJSON })
 	saved := filepath.Join(t.TempDir(), "review.json")
-	code := cmdRoutes([]string{"lifecycle", "declarations", "api", "--from-deployment", routeMigrationFromDeployment, "--to-deployment", routeMigrationToDeployment, "--out", saved, "--fail-on-findings"})
+	code := main.CmdRoutes([]string{"lifecycle", "declarations", "api", "--from-deployment", main.RouteMigrationFromDeployment, "--to-deployment", main.RouteMigrationToDeployment, "--out", saved, "--fail-on-findings"})
 	if code != 1 {
 		t.Fatalf("expected finding exit, got %d: %s", code, output.String())
 	}
@@ -71,8 +72,8 @@ func TestRoutesLifecycleDeclarationsCapturedContracts(t *testing.T) {
 	// Removing the final operation still compares against the protected baseline.
 	after = map[string]any{"openapi": "3.1.0", "paths": map[string]any{}}
 	output.Reset()
-	jsonOutput = true
-	code = cmdRoutes([]string{"lifecycle", "declarations", "api", "--from-deployment", routeMigrationFromDeployment, "--to-deployment", routeMigrationToDeployment, "--fail-on-findings"})
+	(*main.JsonOutput) = true
+	code = main.CmdRoutes([]string{"lifecycle", "declarations", "api", "--from-deployment", main.RouteMigrationFromDeployment, "--to-deployment", main.RouteMigrationToDeployment, "--fail-on-findings"})
 	if code != 1 {
 		t.Fatalf("empty candidate exit %d", code)
 	}

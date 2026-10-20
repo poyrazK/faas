@@ -21,7 +21,7 @@ func (s *Service) SignalOperation(w http.ResponseWriter, r *http.Request, acct s
 }
 
 // SignalPlatformTenantSelfOperation lets a customer deliver an event to its
-// own Operation with its tenant credentials (ADR-1286).
+// own Operation with its tenant credentials (ADR-20261017100853).
 func (s *Service) SignalPlatformTenantSelfOperation(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	op, _, ok := s.platformTenantSelfOperation(w, r, acct)
 	if ok {
@@ -80,7 +80,7 @@ func (s *Service) SignalOperationsBySubject(w http.ResponseWriter, r *http.Reque
 // SignalPlatformTenantSelfOperationsBySubject delivers one event to the
 // customer's own active Operations of a definition about one subject. The
 // definition fixes app, environment and name; other customers' Operations
-// about the same subject are never reached (ADR-1286).
+// about the same subject are never reached (ADR-20261017100853).
 func (s *Service) SignalPlatformTenantSelfOperationsBySubject(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	store, ok := s.OperationStore(w)
 	if !ok {

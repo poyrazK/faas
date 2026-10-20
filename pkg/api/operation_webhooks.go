@@ -14,7 +14,7 @@ import (
 // fixed here and never derived from provider payload. TakeOverDelivery must be
 // true: bound events no longer reach the endpoint's plain delivery path.
 //
-// Mode "signal" (ADR-1198) delivers mapped provider events to the tenant's
+// Mode "signal" (ADR-20261016100929) delivers mapped provider events to the tenant's
 // waiting Operations whose subject the payload names, instead of starting
 // Operations; EventTypes is then empty and Signals is the filter.
 type PutOperationWebhookBindingRequest struct {

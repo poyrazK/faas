@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"context"
@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -49,15 +50,15 @@ func TestAutomationItemExpectationsRealSimulation(t *testing.T) {
         "1": {state: skipped, when_matched: false, attempt_count: 0, attempts: []}
         "2": {state: mocked, output: null, attempts: [{outcome: success}]}
 `)
-	scenarios, err := loadAutomationScenarios(suite)
+	scenarios, err := main.LoadAutomationScenarios(suite)
 	if err != nil {
 		t.Fatal(err)
 	}
-	response, err := state.SimulateAutomation(context.Background(), scenarios[0].request, api.PlanHobby)
+	response, err := state.SimulateAutomation(context.Background(), (*scenarios[0].Request()), api.PlanHobby)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result := evaluateAutomationScenario(scenarios[0], response); !result.Passed {
+	if result := main.EvaluateAutomationScenario(scenarios[0], response); !result.Passed {
 		t.Fatalf("result=%+v", result)
 	}
 	// Keep the root's correct collected result while changing an individual item.
@@ -66,7 +67,7 @@ func TestAutomationItemExpectationsRealSimulation(t *testing.T) {
 			response.Trace[i].Output = json.RawMessage(`{"id":9007199254740992,"token":"private-output"}`)
 		}
 	}
-	result := evaluateAutomationScenario(scenarios[0], response)
+	result := main.EvaluateAutomationScenario(scenarios[0], response)
 	if result.Passed || len(result.Failures) != 1 || !strings.Contains(result.Failures[0], `loop "sync" item 0 output`) {
 		t.Fatalf("missed incorrect item: %+v", result)
 	}
@@ -81,17 +82,17 @@ func TestAutomationItemExpectationsFailurePolicies(t *testing.T) {
 	for _, policy := range []string{"stop", "continue"} {
 		t.Run(policy, func(t *testing.T) {
 			suite := itemExpectationFixture(t, policy, "    expect_items:\n      sync:\n        \"0\": {state: failed, attempts: [{outcome: failure, http_status: 400}]}\n")
-			scenarios, err := loadAutomationScenarios(suite)
+			scenarios, err := main.LoadAutomationScenarios(suite)
 			if err != nil {
 				t.Fatal(err)
 			}
 			status := 400
-			scenarios[0].request.MockItemAttempts["sync"]["0"] = []api.AutomationSimulationMockAttempt{{Outcome: "failure", HTTPStatus: &status}}
-			response, err := state.SimulateAutomation(context.Background(), scenarios[0].request, api.PlanHobby)
+			(*scenarios[0].Request()).MockItemAttempts["sync"]["0"] = []api.AutomationSimulationMockAttempt{{Outcome: "failure", HTTPStatus: &status}}
+			response, err := state.SimulateAutomation(context.Background(), (*scenarios[0].Request()), api.PlanHobby)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if result := evaluateAutomationScenario(scenarios[0], response); !result.Passed {
+			if result := main.EvaluateAutomationScenario(scenarios[0], response); !result.Passed {
 				t.Fatal(result)
 			}
 			itemState := "skipped"
@@ -100,10 +101,10 @@ func TestAutomationItemExpectationsFailurePolicies(t *testing.T) {
 				itemState = "mocked"
 				output = `[null,null,null]`
 			}
-			scenarios[0].scenario.ExpectItems["sync"]["2"] = automationStepExpectation{State: itemState}
-			scenarios[0].scenario.Expect = map[string]automationStepExpectation{"sync": {State: "failed"}}
-			scenarios[0].outputs = map[string]json.RawMessage{"sync": json.RawMessage(output)}
-			if result := evaluateAutomationScenario(scenarios[0], response); !result.Passed {
+			(*scenarios[0].Scenario()).ExpectItems["sync"]["2"] = main.AutomationStepExpectation{State: itemState}
+			(*scenarios[0].Scenario()).Expect = map[string]main.AutomationStepExpectation{"sync": {State: "failed"}}
+			(*scenarios[0].Outputs()) = map[string]json.RawMessage{"sync": json.RawMessage(output)}
+			if result := main.EvaluateAutomationScenario(scenarios[0], response); !result.Passed {
 				t.Fatalf("policy=%s result=%+v", policy, result)
 			}
 		})
@@ -115,24 +116,24 @@ func TestAutomationItemExpectationsRejectInvalidSuites(t *testing.T) {
 		"missing: {\"0\": {state: mocked}}", "sync: {}", "sync: {\"-1\": {state: mocked}}", "sync: {\"01\": {state: mocked}}", "sync: {\"128\": {state: mocked}}", "sync: {\"0\": {}}", "sync: {\"0\": {state: invalid}}", "sync: {\"0\": {attempt_count: -1}}", "sync: {\"0\": {attempt_count: 26}}", "sync: {\"0\": {attempt_count: 1, attempts: []}}", "sync: {\"0\": {attempts: [{}]}}", "sync: {\"0\": {attempts: [{outcome: unknown}]}}", "sync: {\"0\": {attempts: [{outcome: success, http_status: 200}]}}", "sync: {\"0\": {attempts: [{outcome: failure, http_status: 200}]}}", "sync: {\"0\": {attempts: [{outcome: failure, unknown: true}]}}",
 	} {
 		suite := itemExpectationFixture(t, "continue", "    expect_items:\n      "+expect+"\n")
-		if _, err := loadAutomationScenarios(suite); err == nil {
+		if _, err := main.LoadAutomationScenarios(suite); err == nil {
 			t.Fatalf("accepted %s", expect)
 		}
 	}
 	// Root action names cannot be used as loop item selectors.
-	definition := writeAutomationFixture(t, automationDefinitionYAML)
+	definition := main.WriteAutomationFixture(t, main.AutomationDefinitionYAML)
 	suite := filepath.Join(t.TempDir(), "suite.yaml")
 	if err := os.WriteFile(suite, []byte("definition: "+definition+"\nscenarios:\n  - name: invalid\n    expect_items:\n      record: {\"0\": {state: mocked}}\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := loadAutomationScenarios(suite); err == nil {
+	if _, err := main.LoadAutomationScenarios(suite); err == nil {
 		t.Fatal("accepted non-loop selector")
 	}
 }
 
 func TestAutomationItemExpectationsTraceMatching(t *testing.T) {
 	suite := itemExpectationFixture(t, "continue", "    expect_items:\n      sync:\n        \"0\": {state: mocked, output: null, attempts: [{outcome: failure, http_status: 503}, {outcome: success}]}\n")
-	loaded, err := loadAutomationScenarios(suite)
+	loaded, err := main.LoadAutomationScenarios(suite)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,7 +157,7 @@ func TestAutomationItemExpectationsTraceMatching(t *testing.T) {
 			case "wrong_status":
 				status = 400
 			}
-			result := evaluateAutomationScenario(loaded[0], response)
+			result := main.EvaluateAutomationScenario(loaded[0], response)
 			if result.Passed != (mode == "success") {
 				t.Fatalf("result=%+v", result)
 			}
@@ -165,11 +166,11 @@ func TestAutomationItemExpectationsTraceMatching(t *testing.T) {
 }
 
 func TestAutomationItemExpectationsBlockCheckedPublish(t *testing.T) {
-	resetJSONOut(t)
-	jsonOutput = true
-	output := captureAutomationStdout(t)
+	main.ResetJSONOut(t)
+	(*main.JsonOutput) = true
+	output := main.CaptureAutomationStdout(t)
 	suite := itemExpectationFixture(t, "continue", "    expect_items:\n      sync:\n        \"0\": {state: mocked, output: {id: 9007199254740992}}\n")
-	scenarios, err := loadAutomationScenarios(suite)
+	scenarios, err := main.LoadAutomationScenarios(suite)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,9 +182,9 @@ func TestAutomationItemExpectationsBlockCheckedPublish(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(api.AutomationPublishPolicy{Mode: "optional"})
 
 		case r.Method == "GET":
-			_ = json.NewEncoder(w).Encode(api.AutomationResponse{Name: "batch", Version: 7, Draft: scenarios[0].request.Definition})
+			_ = json.NewEncoder(w).Encode(api.AutomationResponse{Name: "batch", Version: 7, Draft: (*scenarios[0].Request()).Definition})
 		case strings.HasSuffix(r.URL.Path, ":simulate"):
-			response, err := state.SimulateAutomation(r.Context(), scenarios[0].request, api.PlanHobby)
+			response, err := state.SimulateAutomation(r.Context(), (*scenarios[0].Request()), api.PlanHobby)
 			if err != nil {
 				t.Error(err)
 			}
@@ -194,10 +195,10 @@ func TestAutomationItemExpectationsBlockCheckedPublish(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	if code := publishAutomationWithScenarios(api.NewClient(server.URL, "token"), "billing", "batch", 7, false, scenarios); code == 0 || published {
+	if code := main.PublishAutomationWithScenarios(api.NewClient(server.URL, "token"), "billing", "batch", 7, false, scenarios); code == 0 || published {
 		t.Fatalf("exit=%d published=%t", code, published)
 	}
-	var report automationCheckedPublishReport
+	var report main.AutomationCheckedPublishReport
 	if err := json.Unmarshal(output.Bytes(), &report); err != nil || report.Checks.Passed || report.PublicationAttempted || !strings.Contains(output.String(), `item 0 output does not match`) {
 		t.Fatalf("report=%+v err=%v", report, err)
 	}

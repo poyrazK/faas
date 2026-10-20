@@ -4,7 +4,7 @@
 - **Date:** 2026-10-19
 - **Owner:** Operations maintainers
 - **Related:** [ADR-1194](1194-operation-waits-and-approvals.md),
-  [ADR-1286](1286-customer-self-service-operation-signals.md),
+  [ADR-20261017100853](20261017100853-customer-self-service-operation-signals.md),
   [ADR-20261018210500](20261018210500-per-customer-operation-concurrency.md)
 
 ## Context

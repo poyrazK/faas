@@ -76,3 +76,56 @@ func TestTenantSurfaceUnitsAndOverdueHold(t *testing.T) {
 		t.Fatalf("financial outbox has %d records, want only the admitted request", got)
 	}
 }
+
+type spendCappedTenantStore struct{}
+
+func (spendCappedTenantStore) AdmitTenantRequest(context.Context, string, string) (TenantRequestBudgetDecision, error) {
+	return TenantRequestBudgetDecision{Scope: TenantBudgetScopeSpendCap, Limit: 0, Observed: 25000, SpendCurrency: "EUR"}, nil
+}
+
+// adr: 20261019100331 — a tenant past its spend cap gets 402
+// tenant_spend_cap_reached with the cap and amount due, before the upstream;
+// while API monetization is off it is served.
+func TestTenantSpendCap(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		monetized  bool
+		wantStatus int
+	}{
+		{"monetization on", true, http.StatusPaymentRequired},
+		{"monetization off", false, http.StatusOK},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var forwarded atomic.Int64
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				forwarded.Add(1)
+				w.WriteHeader(http.StatusOK)
+			}))
+			t.Cleanup(upstream.Close)
+			backend := &fakeBackend{app: App{ID: uuid.NewString(), AccountID: uuid.NewString(), Plan: api.PlanPro,
+				ConsumerAuthMode: api.ConsumerAuthModeOptional, RoutedSurfaceID: uuid.NewString(), PlatformTenantID: uuid.NewString()},
+				host: "capped-customer.example", upstream: upstream.Listener.Addr().String()}
+			backend.AddTarget(Target{NodeID: upstream.Listener.Addr().String(), InstanceID: uuid.NewString()})
+			h := NewHandlerWith(backend, NewMetrics(), nil).WithAPIMonetization(func() bool { return tc.monetized }).
+				WithTenantRequestBudgetStore(spendCappedTenantStore{})
+			h.requestTelemetry = makeTestRecorder()
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "http://capped-customer.example/generate", nil))
+			if w.Code != tc.wantStatus {
+				t.Fatalf("status = %d, want %d: %s", w.Code, tc.wantStatus, w.Body.String())
+			}
+			if !tc.monetized {
+				return
+			}
+			var problem api.Problem
+			if json.Unmarshal(w.Body.Bytes(), &problem) != nil || problem.Code != api.CodeTenantSpendCapReached ||
+				problem.Limit == nil || *problem.Limit != 0 || problem.Observed == nil || *problem.Observed != 25000 ||
+				w.Header().Get("x-faas-rate-limit-scope") != "platform-tenant-spend-cap" {
+				t.Fatalf("capped tenant body=%s headers=%v", w.Body.String(), w.Header())
+			}
+			if got := forwarded.Load(); got != 0 {
+				t.Fatalf("forwarded %d requests past the cap", got)
+			}
+		})
+	}
+}

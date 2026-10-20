@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -21,13 +22,13 @@ func TestResolveDeploySourceMode(t *testing.T) {
 		worktree   bool
 		nonLocal   bool
 		createOnly bool
-		want       deploySourceMode
+		want       main.DeploySourceMode
 		wantErr    string
 	}{
-		{name: "default", value: "auto", want: deploySourceAuto},
-		{name: "legacy worktree", value: "auto", worktree: true, want: deploySourceWorktree},
-		{name: "explicit head", value: "head", explicit: true, want: deploySourceHEAD},
-		{name: "explicit worktree", value: "worktree", explicit: true, want: deploySourceWorktree},
+		{name: "default", value: "auto", want: main.DeploySourceAuto},
+		{name: "legacy worktree", value: "auto", worktree: true, want: main.DeploySourceWorktree},
+		{name: "explicit head", value: "head", explicit: true, want: main.DeploySourceHEAD},
+		{name: "explicit worktree", value: "worktree", explicit: true, want: main.DeploySourceWorktree},
 		{name: "unknown", value: "branch", explicit: true, wantErr: "invalid --source"},
 		{name: "conflicting spellings", value: "head", explicit: true, worktree: true, wantErr: "cannot be combined"},
 		{name: "remote source", value: "head", explicit: true, nonLocal: true, wantErr: "local directories"},
@@ -35,7 +36,7 @@ func TestResolveDeploySourceMode(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := resolveDeploySourceMode(tt.value, tt.explicit, tt.worktree, tt.nonLocal, tt.createOnly)
+			got, err := main.ResolveDeploySourceMode(tt.value, tt.explicit, tt.worktree, tt.nonLocal, tt.createOnly)
 			if tt.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
 					t.Fatalf("error = %v, want %q", err, tt.wantErr)
@@ -60,38 +61,38 @@ func TestDeploySourceFlagRejectsNonlocalAndMissingHEAD(t *testing.T) {
 		{"--source=head", "--worktree"},
 		{"--source=unknown"},
 	} {
-		if code := cmdDeployTarball(args); code != 1 {
+		if code := main.CmdDeployTarball(args); code != 1 {
 			t.Errorf("cmdDeployTarball(%v) = %d, want 1", args, code)
 		}
 	}
-	withCwd(t, t.TempDir())
-	if code := cmdDeployTarball([]string{"--source=head", "--plan", "--name", "demo"}); code != 1 {
+	main.WithCwd(t, t.TempDir())
+	if code := main.CmdDeployTarball([]string{"--source=head", "--plan", "--name", "demo"}); code != 1 {
 		t.Errorf("--source=head outside Git returned %d, want 1", code)
 	}
 }
 
 func TestDeployExplicitHEADRequiresCommit(t *testing.T) {
 	repo := t.TempDir()
-	mustGit(t, repo, "init", "-q")
-	withCwd(t, repo)
-	if code := cmdDeployTarball([]string{"--source=head", "--plan", "--name", "demo"}); code != 1 {
+	main.MustGit(t, repo, "init", "-q")
+	main.WithCwd(t, repo)
+	if code := main.CmdDeployTarball([]string{"--source=head", "--plan", "--name", "demo"}); code != 1 {
 		t.Errorf("--source=head in an empty repository returned %d, want 1", code)
 	}
 }
 
 func TestDeployExplicitSourceWithoutOrigin(t *testing.T) {
-	repo := initZeroConfigRepo(t)
-	mustGit(t, repo, "remote", "remove", "origin")
+	repo := main.InitZeroConfigRepo(t)
+	main.MustGit(t, repo, "remote", "remove", "origin")
 	if err := os.WriteFile(filepath.Join(repo, "package.json"), []byte("{\"name\":\"dirty\"}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(repo, "local.txt"), []byte("untracked\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	withCwd(t, repo)
+	main.WithCwd(t, repo)
 
 	var archives [][]byte
-	stub := newZeroConfigStubServer(t, func(w http.ResponseWriter, r *http.Request, _ *zeroConfigStubServer) {
+	stub := main.NewZeroConfigStubServer(t, func(w http.ResponseWriter, r *http.Request, _ *main.ZeroConfigStubServer) {
 		switch {
 		case r.URL.Path == "/v1/apps" && r.Method == http.MethodPost:
 			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "a1", Slug: "demo"})
@@ -124,20 +125,20 @@ func TestDeployExplicitSourceWithoutOrigin(t *testing.T) {
 			http.Error(w, "no", http.StatusNotFound)
 		}
 	})
-	t.Setenv("FAAS_API", stub.srv.URL)
+	t.Setenv("FAAS_API", (*stub.Srv()).URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
 	for _, mode := range []string{"auto", "head", "worktree"} {
-		if code := cmdDeployTarball([]string{"--source=" + mode, "--name", "demo", "--no-wait"}); code != 0 {
+		if code := main.CmdDeployTarball([]string{"--source=" + mode, "--name", "demo", "--no-wait"}); code != 0 {
 			t.Fatalf("--source=%s exit = %d, want 0", mode, code)
 		}
 	}
 	if len(archives) != 3 {
 		t.Fatalf("uploaded archives = %d, want 3", len(archives))
 	}
-	auto := readCapturedDeployArchive(t, archives[0])
-	head := readCapturedDeployArchive(t, archives[1])
-	worktree := readCapturedDeployArchive(t, archives[2])
+	auto := main.ReadCapturedDeployArchive(t, archives[0])
+	head := main.ReadCapturedDeployArchive(t, archives[1])
+	worktree := main.ReadCapturedDeployArchive(t, archives[2])
 	find := func(entries map[string][]byte, name string) []byte {
 		for entry, body := range entries {
 			if filepath.Base(entry) == name {

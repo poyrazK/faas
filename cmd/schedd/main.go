@@ -503,7 +503,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithExecutionOutboundRelay(sched.NewLoopbackExecutionOutboundRelay()).
 		WithCloneWakeDispatchRecorder(store.RecordCloneCheckpointWakeDispatch).
 		WithCloneMigrationAdoptionRecorder(store.RecordCloneCheckpointMigrationAdoption).
-		WithCloneMigrationResumeRecorder(store.RecordCloneCheckpointMigrationResume)
+		WithCloneMigrationResumeRecorder(store.RecordCloneCheckpointMigrationResume).
+		WithFinancialComputeAuthority(store)
 	nodeRegistry := sched.NewNodeRegistry(nodes)
 
 	// Tier A3: subscribe to compute_node_changed and refresh the
@@ -2926,7 +2927,7 @@ func (s schedTargetsLedger) Concurrency(appID string) int {
 }
 
 // operationTelemetryStore is the store's Customer Operations reader, or nil
-// for a store without one (ADR-1285).
+// for a store without one (ADR-20261016123221).
 func operationTelemetryStore(store state.Store) state.OperationTelemetryStore {
 	reader, _ := store.(state.OperationTelemetryStore)
 	return reader

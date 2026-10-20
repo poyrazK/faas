@@ -1,9 +1,10 @@
-package main
+package main_test
 
 import (
 	"context"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -21,24 +22,24 @@ func (f *queueWorkloadFakeClient) ConfigureQueueWorkload(_ context.Context, _ st
 
 func TestSetupQueueWorkloadUsesServerProfileDefaults(t *testing.T) {
 	fake := &queueWorkloadFakeClient{}
-	_, err := setupQueueWorkload(context.Background(), fake, "demo", "", defaultQueueWorkloadTargetDepth, defaultQueueWorkloadConcurrency, false)
+	_, err := main.SetupQueueWorkload(context.Background(), fake, "demo", "", main.DefaultQueueWorkloadTargetDepth, main.DefaultQueueWorkloadConcurrency, false)
 	if err != nil {
 		t.Fatalf("setupQueueWorkload() error = %v", err)
 	}
 	if fake.calls != 1 {
 		t.Fatalf("configure calls = %d, want 1", fake.calls)
 	}
-	if fake.req.QueueName != defaultQueueWorkloadQueueName || fake.req.TargetDepth != defaultQueueWorkloadTargetDepth || fake.req.MaxConcurrency != defaultQueueWorkloadConcurrency || fake.req.Force {
+	if fake.req.QueueName != main.DefaultQueueWorkloadQueueName || fake.req.TargetDepth != main.DefaultQueueWorkloadTargetDepth || fake.req.MaxConcurrency != main.DefaultQueueWorkloadConcurrency || fake.req.Force {
 		t.Fatalf("profile request = %+v", fake.req)
 	}
 }
 
 func TestSetupQueueWorkloadRejectsInvalidProfileBeforeNetwork(t *testing.T) {
 	fake := &queueWorkloadFakeClient{}
-	if _, err := setupQueueWorkload(context.Background(), fake, "demo", "orders", 0, 1, false); err == nil {
+	if _, err := main.SetupQueueWorkload(context.Background(), fake, "demo", "orders", 0, 1, false); err == nil {
 		t.Fatal("target depth zero should fail before calling the API")
 	}
-	if _, err := setupQueueWorkload(context.Background(), fake, "demo", "orders", 10, 0, false); err == nil {
+	if _, err := main.SetupQueueWorkload(context.Background(), fake, "demo", "orders", 10, 0, false); err == nil {
 		t.Fatal("max concurrency zero should fail before calling the API")
 	}
 	if fake.calls != 0 {
@@ -49,7 +50,7 @@ func TestSetupQueueWorkloadRejectsInvalidProfileBeforeNetwork(t *testing.T) {
 func TestSetupQueueWorkloadPassesRetryPolicy(t *testing.T) {
 	fake := &queueWorkloadFakeClient{}
 	policy := &api.RetryPolicyDTO{MaxAttempts: 7, BaseSeconds: 2, MaxSeconds: 30, JitterSeconds: 0.5}
-	_, err := setupQueueWorkloadWithRetry(context.Background(), fake, "demo", "orders", 5, 3, true, policy)
+	_, err := main.SetupQueueWorkloadWithRetry(context.Background(), fake, "demo", "orders", 5, 3, true, policy)
 	if err != nil {
 		t.Fatalf("setupQueueWorkloadWithRetry() error = %v", err)
 	}
@@ -75,7 +76,7 @@ func TestValidateQueueRetryPolicy(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if err := validateQueueRetryPolicy(tt.p); (err != nil) != tt.want {
+			if err := main.ValidateQueueRetryPolicy(tt.p); (err != nil) != tt.want {
 				t.Fatalf("validateQueueRetryPolicy(%+v) error = %v, want error=%t", tt.p, err, tt.want)
 			}
 		})

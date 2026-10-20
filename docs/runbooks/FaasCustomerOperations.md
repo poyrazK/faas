@@ -1,11 +1,11 @@
 # FaasCustomerOperations
 
-Alerts for Customer Operations ([ADR-1285](../adr/1285-customer-operations-telemetry.md)).
+Alerts for Customer Operations ([ADR-20261016123221](../adr/20261016123221-customer-operations-telemetry.md)).
 Both are warnings. schedd reads fleet-wide gauges from Postgres in its 60-second
 retention tick; every schedd reports the same values, so rules and panels read
 `max()`.
 
-Dashboard: **faas Customer Operations (ADR-1285)**
+Dashboard: **faas Customer Operations (ADR-20261016123221)**
 (`deploy/grafana/customer-operations.json`).
 
 ```sh

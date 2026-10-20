@@ -1,17 +1,18 @@
-package main
+package main_test
 
 import (
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"reflect"
 	"testing"
 	"time"
 )
 
 func TestDataAPIOnboardingStopsAndNeverClaimsActivationAfterFailure(t *testing.T) {
-	steps := dataAPIOnboardingSteps("/project", "/bundle.json", "data-api-starter")
+	steps := main.DataAPIOnboardingSteps("/project", "/bundle.json", "data-api-starter")
 	for _, fail := range []int{-1, 0, 1, 2} {
 		t.Run(stepsName(fail), func(t *testing.T) {
 			var called, events []string
-			code := runDataAPIOnboarding(steps, func(step dataAPIOnboardingStep) int {
+			code := main.RunDataAPIOnboarding(steps, func(step main.DataAPIOnboardingStep) int {
 				called = append(called, step.Name)
 				if len(called)-1 == fail {
 					return 7
@@ -43,18 +44,18 @@ func stepsName(index int) string {
 
 func TestDataAPIOnboardingUsesCompleteAcceptanceAndLiteralPaths(t *testing.T) {
 	root, bundle := "/project with spaces/$(touch unexpected)", "/approved bundle.json"
-	steps := dataAPIOnboardingSteps(root, bundle, "data-api-starter")
+	steps := main.DataAPIOnboardingSteps(root, bundle, "data-api-starter")
 	if !reflect.DeepEqual(steps[2].Args, []string{"--directory", root, "--port", "0", "--once", "--check", "--replay", "data-api.requests.json"}) {
 		t.Fatal(steps[2])
 	}
-	if got := dataAPIOnboardingQuote("a'$(secret)`cmd`"); got != "'a'\"'\"'$(secret)`cmd`'" {
+	if got := main.DataAPIOnboardingQuote("a'$(secret)`cmd`"); got != "'a'\"'\"'$(secret)`cmd`'" {
 		t.Fatal(got)
 	}
 }
 
 func TestDataAPIOnboardingInvalidInputsDoNotCreateProjects(t *testing.T) {
 	for _, args := range [][]string{{}, {"--path", t.TempDir()}, {"--path", t.TempDir(), "--bundle", "missing.json"}, {"--path", ".", "--bundle", "missing.json"}, {"--path", "x", "--bundle", "x", "unexpected"}, {"--path", "x", "--bundle", "x", "--template", "unknown"}} {
-		if cmdDataAPIOnboard(args) == 0 {
+		if main.CmdDataAPIOnboard(args) == 0 {
 			t.Fatalf("accepted %v", args)
 		}
 	}

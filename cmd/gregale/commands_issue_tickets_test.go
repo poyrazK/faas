@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/issuetracker"
 )
@@ -61,18 +62,18 @@ func TestIssueTicketCLIRetryResumesLinkingAfterProviderSuccess(t *testing.T) {
 	t.Setenv("FAAS_API", server.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_test")
 	t.Setenv("GREGALE_GITHUB_TOKEN", "secret")
-	previousOut, previousJSON := osStdout, jsonOutput
+	previousOut, previousJSON := (*main.OsStdout), (*main.JsonOutput)
 	var out bytes.Buffer
-	osStdout, jsonOutput = &out, true
-	t.Cleanup(func() { osStdout, jsonOutput = previousOut, previousJSON })
+	(*main.OsStdout), (*main.JsonOutput) = &out, true
+	t.Cleanup(func() { (*main.OsStdout), (*main.JsonOutput) = previousOut, previousJSON })
 	provider := &ticketCLIProvider{}
 	args := []string{"create", "--app", "payments", "--issue", issueID, "--provider", "github", "--target", "OWNER/Repo", "--title", "Fix checkout", "--request-id", requestID, "--journal-dir", filepath.Join(t.TempDir(), "journal")}
-	if runIssueTickets(args, provider) == 0 {
+	if main.RunIssueTickets(args, provider) == 0 {
 		t.Fatal("failed linking reported success")
 	}
 	out.Reset()
 	t.Setenv("GREGALE_GITHUB_TOKEN", "")
-	if runIssueTickets(args, provider) != 0 {
+	if main.RunIssueTickets(args, provider) != 0 {
 		t.Fatal("retry did not resume linking")
 	}
 	var outcome issuetracker.Outcome
@@ -82,7 +83,7 @@ func TestIssueTicketCLIRetryResumesLinkingAfterProviderSuccess(t *testing.T) {
 	if provider.creates != 1 || writes != 2 || reads != 4 {
 		t.Fatalf("duplicate creation or missing reads: %d %d %d", provider.creates, writes, reads)
 	}
-	if cmdIssues([]string{"tickets", "create", "--app", "payments", "--issue", issueID, "--provider", "github", "--target", "owner/repo", "--title", "Fix", "--request-id", "invalid"}) == 0 || reads != 4 {
+	if main.CmdIssues([]string{"tickets", "create", "--app", "payments", "--issue", issueID, "--provider", "github", "--target", "owner/repo", "--title", "Fix", "--request-id", "invalid"}) == 0 || reads != 4 {
 		t.Fatal("invalid inputs reached the network")
 	}
 }
@@ -122,20 +123,20 @@ func TestIssueTicketNativeCLIUsesServerReceiptWithoutProviderCredential(t *testi
 	t.Setenv("FAAS_API", server.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_test")
 	t.Setenv("GREGALE_GITHUB_TOKEN", "")
-	oldOut, oldJSON := osStdout, jsonOutput
+	oldOut, oldJSON := (*main.OsStdout), (*main.JsonOutput)
 	var out bytes.Buffer
-	osStdout, jsonOutput = &out, true
-	t.Cleanup(func() { osStdout, jsonOutput = oldOut, oldJSON })
+	(*main.OsStdout), (*main.JsonOutput) = &out, true
+	t.Cleanup(func() { (*main.OsStdout), (*main.JsonOutput) = oldOut, oldJSON })
 	provider := &ticketCLIProvider{}
 	args := []string{"create", "--app", "payments", "--issue", issueID, "--provider", "github", "--target", "OWNER/Repo", "--title", "Fix", "--request-id", requestID, "--native"}
-	if runIssueTickets(args, provider) == 0 {
+	if main.RunIssueTickets(args, provider) == 0 {
 		t.Fatal("incomplete attachment reported success")
 	}
 	out.Reset()
-	if runIssueTickets(args, provider) != 0 || provider.creates != 0 || calls != 2 {
+	if main.RunIssueTickets(args, provider) != 0 || provider.creates != 0 || calls != 2 {
 		t.Fatal("native create used local provider or failed retry")
 	}
-	if runIssueTickets(append(args, "--token-env", "LOCAL_TOKEN"), provider) == 0 || calls != 2 {
+	if main.RunIssueTickets(append(args, "--token-env", "LOCAL_TOKEN"), provider) == 0 || calls != 2 {
 		t.Fatal("native create allowed provider credential")
 	}
 }
@@ -183,22 +184,22 @@ func TestIssueTicketAutoSyncCLIRequiresAlignmentAndPreservesPolicyRevision(t *te
 	t.Setenv("FAAS_API", server.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_test")
 	t.Setenv("GREGALE_GITHUB_TOKEN", "")
-	previousOut := osStdout
+	previousOut := (*main.OsStdout)
 	var out bytes.Buffer
-	osStdout = &out
-	t.Cleanup(func() { osStdout = previousOut })
+	(*main.OsStdout) = &out
+	t.Cleanup(func() { (*main.OsStdout) = previousOut })
 	args := []string{"auto-sync", "--app", "payments", "--issue", issueID, "--link", linkID}
-	if cmdIssueTickets(append(args, "--enable", "--direction", "inbound")) != 0 || writes != 1 {
+	if main.CmdIssueTickets(append(args, "--enable", "--direction", "inbound")) != 0 || writes != 1 {
 		t.Fatal("native policy enable failed")
 	}
-	if cmdIssueTickets(append(args, "--disable")) != 0 || writes != 2 {
+	if main.CmdIssueTickets(append(args, "--disable")) != 0 || writes != 2 {
 		t.Fatal("native policy disable failed")
 	}
 	source = "resolved"
-	if cmdIssueTickets(append(args, "--enable")) == 0 || writes != 2 {
+	if main.CmdIssueTickets(append(args, "--enable")) == 0 || writes != 2 {
 		t.Fatal("unaligned policy enabled")
 	}
-	if cmdIssueTickets(append(args, "--enable", "--disable")) == 0 || writes != 2 {
+	if main.CmdIssueTickets(append(args, "--enable", "--disable")) == 0 || writes != 2 {
 		t.Fatal("ambiguous mode reached provider")
 	}
 }
@@ -234,22 +235,22 @@ func TestIssueTicketLinearConnectionUsesRevisionAndErasesWithoutLocalKey(t *test
 	t.Setenv("FAAS_API", server.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_test")
 	t.Setenv("GREGALE_LINEAR_TOKEN", "lin_api_secret")
-	previousOut, previousJSON := osStdout, jsonOutput
+	previousOut, previousJSON := (*main.OsStdout), (*main.JsonOutput)
 	var out bytes.Buffer
-	osStdout, jsonOutput = &out, true
-	t.Cleanup(func() { osStdout, jsonOutput = previousOut, previousJSON })
-	if code := cmdIssueTickets([]string{"linear-connection", "--app", "payments", "--connect", "--team", team}); code != 0 || !connected || writes != 1 {
+	(*main.OsStdout), (*main.JsonOutput) = &out, true
+	t.Cleanup(func() { (*main.OsStdout), (*main.JsonOutput) = previousOut, previousJSON })
+	if code := main.CmdIssueTickets([]string{"linear-connection", "--app", "payments", "--connect", "--team", team}); code != 0 || !connected || writes != 1 {
 		t.Fatal("connect failed", code)
 	}
 	if strings.Contains(out.String(), "lin_api_secret") {
 		t.Fatal("credential leaked")
 	}
 	t.Setenv("GREGALE_LINEAR_TOKEN", "")
-	if code := cmdIssueTickets([]string{"linear-connection", "--app", "payments", "--disconnect"}); code != 0 || connected || writes != 2 {
+	if code := main.CmdIssueTickets([]string{"linear-connection", "--app", "payments", "--disconnect"}); code != 0 || connected || writes != 2 {
 		t.Fatal("disconnect required key", code)
 	}
 	for _, args := range [][]string{{"--connect", "--disconnect"}, {"--disconnect", "--team", team}, {"--connect", "--team", "invalid"}, {"--connect", "--team", team}} {
-		if code := cmdIssueTickets(append([]string{"linear-connection", "--app", "payments"}, args...)); code == 0 || writes != 2 {
+		if code := main.CmdIssueTickets(append([]string{"linear-connection", "--app", "payments"}, args...)); code == 0 || writes != 2 {
 			t.Fatal("invalid flags changed connection")
 		}
 	}
@@ -285,21 +286,21 @@ func TestIssueTicketNativeLinearUsesServerRecoveryWithoutLocalCredentials(t *tes
 	t.Setenv("FAAS_API", server.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_test")
 	t.Setenv("GREGALE_LINEAR_TOKEN", "")
-	previousOut, previousJSON := osStdout, jsonOutput
+	previousOut, previousJSON := (*main.OsStdout), (*main.JsonOutput)
 	var out bytes.Buffer
-	osStdout, jsonOutput = &out, true
-	t.Cleanup(func() { osStdout, jsonOutput = previousOut, previousJSON })
+	(*main.OsStdout), (*main.JsonOutput) = &out, true
+	t.Cleanup(func() { (*main.OsStdout), (*main.JsonOutput) = previousOut, previousJSON })
 	provider := &ticketCLIProvider{}
 	args := []string{"create", "--app", "payments", "--issue", issueID, "--provider", "linear", "--target", teamID, "--title", "Fix", "--request-id", requestID, "--native", "--recover"}
-	if code := runIssueTickets(args, provider); code != 0 || calls != 1 || provider.creates != 0 {
+	if code := main.RunIssueTickets(args, provider); code != 0 || calls != 1 || provider.creates != 0 {
 		t.Fatal("native Linear used a local credential/provider", code)
 	}
 	for _, flag := range []string{"--token-env", "--journal-dir"} {
-		if code := runIssueTickets(append(args, flag, "local"), provider); code == 0 || calls != 1 {
+		if code := main.RunIssueTickets(append(args, flag, "local"), provider); code == 0 || calls != 1 {
 			t.Fatal("native Linear accepted local credential/journal")
 		}
 	}
-	if code := runIssueTickets([]string{"create", "--app", "payments", "--provider", "github", "--native", "--recover"}, provider); code == 0 || calls != 1 {
+	if code := main.RunIssueTickets([]string{"create", "--app", "payments", "--provider", "github", "--native", "--recover"}, provider); code == 0 || calls != 1 {
 		t.Fatal("GitHub accepted UUID-only recovery")
 	}
 }
@@ -340,18 +341,18 @@ func TestIssueTicketLinearAutoSyncCLIRequiresMappingsAndDisablesOffline(t *testi
 	defer server.Close()
 	t.Setenv("FAAS_API", server.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_test")
-	old := osStdout
+	old := (*main.OsStdout)
 	var out bytes.Buffer
-	osStdout = &out
-	t.Cleanup(func() { osStdout = old })
+	(*main.OsStdout) = &out
+	t.Cleanup(func() { (*main.OsStdout) = old })
 	args := []string{"auto-sync", "--app", "payments", "--issue", issue, "--link", link, "--provider", "linear"}
-	if cmdIssueTickets(append(args, "--enable")) == 0 || reads != 0 || writes != 0 {
+	if main.CmdIssueTickets(append(args, "--enable")) == 0 || reads != 0 || writes != 0 {
 		t.Fatal("missing mappings contacted provider")
 	}
-	if cmdIssueTickets(append(args, "--enable", "--linear-open-state", open, "--linear-resolved-state", resolved)) != 0 || writes != 1 || reads != 1 {
+	if main.CmdIssueTickets(append(args, "--enable", "--linear-open-state", open, "--linear-resolved-state", resolved)) != 0 || writes != 1 || reads != 1 {
 		t.Fatal("Linear delegation failed")
 	}
-	if cmdIssueTickets(append(args, "--disable")) != 0 || writes != 2 || reads != 1 {
+	if main.CmdIssueTickets(append(args, "--disable")) != 0 || writes != 2 || reads != 1 {
 		t.Fatal("offline disable read provider")
 	}
 }
@@ -376,17 +377,17 @@ func TestIssueTicketLinearConnectionCLIStoresWebhookSecretOnlyOnConnect(t *testi
 	t.Setenv("FAAS_TOKEN", "fp_live_test")
 	t.Setenv("GREGALE_LINEAR_TOKEN", "lin_api_secret")
 	t.Setenv("LINEAR_CALLBACK_TEST_SECRET", secret)
-	old := osStdout
+	old := (*main.OsStdout)
 	var out bytes.Buffer
-	osStdout = &out
-	t.Cleanup(func() { osStdout = old })
-	if code := cmdIssueTickets([]string{"linear-connection", "--app", "payments", "--connect", "--team", team, "--webhook-secret-env", "LINEAR_CALLBACK_TEST_SECRET"}); code != 0 || writes != 1 {
+	(*main.OsStdout) = &out
+	t.Cleanup(func() { (*main.OsStdout) = old })
+	if code := main.CmdIssueTickets([]string{"linear-connection", "--app", "payments", "--connect", "--team", team, "--webhook-secret-env", "LINEAR_CALLBACK_TEST_SECRET"}); code != 0 || writes != 1 {
 		t.Fatal("callback configuration failed", code)
 	}
 	if strings.Contains(out.String(), secret) || !strings.Contains(out.String(), "callbacks=true") {
 		t.Fatal("secret exposed or callback metadata missing")
 	}
-	if code := cmdIssueTickets([]string{"linear-connection", "--app", "payments", "--webhook-secret-env", "LINEAR_CALLBACK_TEST_SECRET"}); code == 0 || writes != 1 {
+	if code := main.CmdIssueTickets([]string{"linear-connection", "--app", "payments", "--webhook-secret-env", "LINEAR_CALLBACK_TEST_SECRET"}); code == 0 || writes != 1 {
 		t.Fatal("credential flag allowed during inspection")
 	}
 }
@@ -403,7 +404,7 @@ func TestIssueTicketInboundDirectionRefusesLegacyServerBeforeDelegation(t *testi
 	defer server.Close()
 	t.Setenv("FAAS_API", server.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_test")
-	if cmdIssueTickets([]string{"auto-sync", "--app", "payments", "--issue", "33333333-3333-4333-8333-333333333333", "--link", "55555555-5555-4555-8555-555555555555", "--enable", "--direction", "inbound"}) == 0 || calls != 1 {
+	if main.CmdIssueTickets([]string{"auto-sync", "--app", "payments", "--issue", "33333333-3333-4333-8333-333333333333", "--link", "55555555-5555-4555-8555-555555555555", "--enable", "--direction", "inbound"}) == 0 || calls != 1 {
 		t.Fatal("legacy server silently received outbound authority", calls)
 	}
 }

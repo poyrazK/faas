@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -8,14 +8,15 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func TestDeploymentAdvanceRouteGateCLI(t *testing.T) {
 	for _, scenario := range []string{"json", "report", "blocked", "missing step", "foreign result", "stale result"} {
 		t.Run(scenario, func(t *testing.T) {
-			resetJSONOut(t)
-			setPreviewTestAuth(t)
+			main.ResetJSONOut(t)
+			main.SetPreviewTestAuth(t)
 			id := "11111111-1111-4111-8111-111111111111"
 			calls := 0
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -26,7 +27,7 @@ func TestDeploymentAdvanceRouteGateCLI(t *testing.T) {
 				}
 				if scenario == "blocked" {
 					w.WriteHeader(http.StatusConflict)
-					writeJSONTest(w, api.NewProblem(http.StatusConflict, api.CodeRouteGateBlocked, "Route gate blocked", "check_stale"))
+					main.WriteJSONTest(w, api.NewProblem(http.StatusConflict, api.CodeRouteGateBlocked, "Route gate blocked", "check_stale"))
 					return
 				}
 				result := api.CanaryAdvanceResponse{Deployment: api.DeploymentResponse{ID: id, CanaryStep: 1, TrafficPercent: 10}, AuditID: "42", RouteGate: &api.RouteGateDecision{Mode: "enforce", Status: "allowed", DeploymentID: id, Revision: 1, Reasons: []string{}}}
@@ -38,14 +39,14 @@ func TestDeploymentAdvanceRouteGateCLI(t *testing.T) {
 				case "stale result":
 					result.Deployment.CanaryStep = 0
 				}
-				writeJSONTest(w, result)
+				main.WriteJSONTest(w, result)
 			}))
 			defer server.Close()
 			t.Setenv("FAAS_API", server.URL)
 			var out bytes.Buffer
-			oldOut := osStdout
-			osStdout = &out
-			t.Cleanup(func() { osStdout = oldOut })
+			oldOut := (*main.OsStdout)
+			(*main.OsStdout) = &out
+			t.Cleanup(func() { (*main.OsStdout) = oldOut })
 			args := []string{"deployment", "advance", id, "--expected-step", "0"}
 			if scenario == "json" {
 				args = append(args, "--json")
@@ -60,7 +61,7 @@ func TestDeploymentAdvanceRouteGateCLI(t *testing.T) {
 			if scenario == "json" || scenario == "report" {
 				want = 0
 			}
-			if code := run(args); code != want {
+			if code := main.Run(args); code != want {
 				t.Fatalf("exit %d want %d: %s", code, want, out.String())
 			}
 			if scenario == "report" && !strings.Contains(out.String(), "requirements_violated") {
@@ -81,17 +82,17 @@ func TestDeploymentAdvanceRouteGateCLI(t *testing.T) {
 // summary and wait take the same form. The revision now resolves through
 // the app's deployment list before the advance.
 func TestDeploymentAdvanceAcceptsRevisionWithApp(t *testing.T) {
-	resetJSONOut(t)
-	setPreviewTestAuth(t)
+	main.ResetJSONOut(t)
+	main.SetPreviewTestAuth(t)
 	id := "11111111-1111-4111-8111-111111111111"
 	advanced := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/h3-rollout/deployments":
-			writeJSONTest(w, map[string]any{"items": []api.DeploymentResponse{{ID: id, Revision: 5}}})
+			main.WriteJSONTest(w, map[string]any{"items": []api.DeploymentResponse{{ID: id, Revision: 5}}})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/deployments/"+id+"/canary/advance":
 			advanced = true
-			writeJSONTest(w, api.CanaryAdvanceResponse{Deployment: api.DeploymentResponse{ID: id, CanaryStep: 2, TrafficPercent: 50}, AuditID: "7"})
+			main.WriteJSONTest(w, api.CanaryAdvanceResponse{Deployment: api.DeploymentResponse{ID: id, CanaryStep: 2, TrafficPercent: 50}, AuditID: "7"})
 		default:
 			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
 			http.NotFound(w, r)
@@ -100,10 +101,10 @@ func TestDeploymentAdvanceAcceptsRevisionWithApp(t *testing.T) {
 	defer server.Close()
 	t.Setenv("FAAS_API", server.URL)
 	var out bytes.Buffer
-	oldOut := osStdout
-	osStdout = &out
-	t.Cleanup(func() { osStdout = oldOut })
-	if code := run([]string{"deployment", "advance", "v5", "--app", "h3-rollout", "--expected-step", "1"}); code != 0 || !advanced {
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &out
+	t.Cleanup(func() { (*main.OsStdout) = oldOut })
+	if code := main.Run([]string{"deployment", "advance", "v5", "--app", "h3-rollout", "--expected-step", "1"}); code != 0 || !advanced {
 		t.Fatalf("exit %d advanced=%v: %s", code, advanced, out.String())
 	}
 }

@@ -8,7 +8,7 @@
 // Linux tc argv shape, the byte-counting observer, and the nil
 // accountor guard in dispatch_triggers.go.
 
-package sched
+package sched_test
 
 import (
 	"context"
@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/daemonunitspec"
+	"github.com/onebox-faas/faas/pkg/sched"
 )
 
 // TestNewBrokerAccountor_NoopWhenCapZero pins the canonical
@@ -28,18 +29,18 @@ func TestNewBrokerAccountor_NoopWhenCapZero(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		name string
-		cfg  BrokerEgressConfig
+		cfg  sched.BrokerEgressConfig
 	}{
-		{"zero_cap", BrokerEgressConfig{InterfaceName: "br-brokerq", EgressMbit: 0}},
-		{"negative_cap", BrokerEgressConfig{InterfaceName: "br-brokerq", EgressMbit: -1}},
-		{"empty_interface", BrokerEgressConfig{InterfaceName: "", EgressMbit: 200}},
-		{"empty_both", BrokerEgressConfig{}},
+		{"zero_cap", sched.BrokerEgressConfig{InterfaceName: "br-brokerq", EgressMbit: 0}},
+		{"negative_cap", sched.BrokerEgressConfig{InterfaceName: "br-brokerq", EgressMbit: -1}},
+		{"empty_interface", sched.BrokerEgressConfig{InterfaceName: "", EgressMbit: 200}},
+		{"empty_both", sched.BrokerEgressConfig{}},
 	}
 	for _, c := range cases {
 		c := c
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
-			acc := NewBrokerAccountor(c.cfg)
+			acc := sched.NewBrokerAccountor(c.cfg)
 			if acc == nil {
 				t.Fatalf("NewBrokerAccountor = nil, want noopBrokerAccountor{}")
 			}
@@ -61,7 +62,7 @@ func TestNewBrokerAccountor_NoopWhenCapZero(t *testing.T) {
 // must surface here at -race.
 func TestBrokerEgressObserver_Accumulates(t *testing.T) {
 	t.Parallel()
-	o := newBrokerEgressObserver()
+	o := sched.NewBrokerEgressObserver()
 	if got := o.TotalBytes(); got != 0 {
 		t.Errorf("fresh observer TotalBytes = %d, want 0", got)
 	}
@@ -85,14 +86,14 @@ func TestBrokerTcCommands_NilWhenCapZero_Stub(t *testing.T) {
 	t.Parallel()
 	// Stub contract is "always nil regardless of cap shape",
 	// unlike the linux shape where non-zero cap returns argv.
-	for _, cfg := range []BrokerEgressConfig{
+	for _, cfg := range []sched.BrokerEgressConfig{
 		{InterfaceName: "br-brokerq", EgressMbit: 0},
 		{InterfaceName: "br-brokerq", EgressMbit: 200},
 		{InterfaceName: "", EgressMbit: 200},
 		{},
 	} {
 		cfg := cfg
-		if got := BrokerTcCommands(cfg); got != nil {
+		if got := sched.BrokerTcCommands(cfg); got != nil {
 			t.Errorf("BrokerTcCommands(%+v) = %v, want nil (stub build)", cfg, got)
 		}
 	}

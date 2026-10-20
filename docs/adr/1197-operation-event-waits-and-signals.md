@@ -81,4 +81,4 @@ its history and timeline, as ADR-1194 already does for approval callbacks.
   Operations keep, and bypasses the Operation's history.
 - **Routing provider webhooks straight to waiting Operations now.** That needs
   an endpoint binding mode on top of ADR-1193;
-  [ADR-1198](1198-webhook-delivered-operation-signals.md) adds it.
+  [ADR-20261016100929](20261016100929-webhook-delivered-operation-signals.md) adds it.

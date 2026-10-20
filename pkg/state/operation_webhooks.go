@@ -40,7 +40,7 @@ type OperationWebhookBinding struct {
 	OperationName    string
 	PlatformTenantID string
 	EventTypes       []string
-	// Mode is "start" (ADR-1193) or "signal" (ADR-1198). A signal binding
+	// Mode is "start" (ADR-1193) or "signal" (ADR-20261016100929). A signal binding
 	// reads the subject from the payload and maps provider event types to
 	// the Operation events waiting steps expect.
 	Mode      string

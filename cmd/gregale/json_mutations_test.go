@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -23,7 +24,7 @@ func TestJSONMutations_ParkAndWake(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		paths = append(paths, r.Method+" "+r.URL.Path)
 		if strings.HasSuffix(r.URL.Path, "/wake") {
-			writeJSONTest(w, api.AppWakeResponse{WakeID: "wake-1"})
+			main.WriteJSONTest(w, api.AppWakeResponse{WakeID: "wake-1"})
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
@@ -33,13 +34,13 @@ func TestJSONMutations_ParkAndWake(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
 	var stdout bytes.Buffer
-	oldOut := osStdout
-	osStdout = &stdout
-	defer func() { osStdout = oldOut }()
-	resetJSONOut(t)
-	jsonOutput = true
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	defer func() { (*main.OsStdout) = oldOut }()
+	main.ResetJSONOut(t)
+	(*main.JsonOutput) = true
 
-	if code := cmdPark([]string{"demo"}); code != 0 {
+	if code := main.CmdPark([]string{"demo"}); code != 0 {
 		t.Fatalf("park = %d, want 0", code)
 	}
 	var parked map[string]string
@@ -51,7 +52,7 @@ func TestJSONMutations_ParkAndWake(t *testing.T) {
 	}
 	stdout.Reset()
 
-	if code := cmdWake([]string{"demo"}); code != 0 {
+	if code := main.CmdWake([]string{"demo"}); code != 0 {
 		t.Fatalf("wake = %d, want 0", code)
 	}
 	var waking map[string]string
@@ -72,17 +73,17 @@ func TestJSONMutations_WakeWaitsForCorrelatedRunningInstance(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/apps/demo/wake":
-			writeJSONTest(w, api.AppWakeResponse{WakeID: wakeID})
+			main.WriteJSONTest(w, api.AppWakeResponse{WakeID: wakeID})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/demo/instances":
 			if r.URL.Query().Get("history") != "true" {
 				t.Fatalf("history query = %q, want true", r.URL.Query().Get("history"))
 			}
 			instanceReads++
 			if instanceReads == 1 {
-				writeJSONTest(w, []api.InstanceResponse{})
+				main.WriteJSONTest(w, []api.InstanceResponse{})
 				return
 			}
-			writeJSONTest(w, []api.InstanceResponse{{ID: "instance-1", State: "running", WakeID: wakeID}})
+			main.WriteJSONTest(w, []api.InstanceResponse{{ID: "instance-1", State: "running", WakeID: wakeID}})
 		default:
 			http.NotFound(w, r)
 		}
@@ -92,13 +93,13 @@ func TestJSONMutations_WakeWaitsForCorrelatedRunningInstance(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
 	var stdout bytes.Buffer
-	oldOut := osStdout
-	osStdout = &stdout
-	defer func() { osStdout = oldOut }()
-	resetJSONOut(t)
-	jsonOutput = true
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	defer func() { (*main.OsStdout) = oldOut }()
+	main.ResetJSONOut(t)
+	(*main.JsonOutput) = true
 
-	if code := cmdWake([]string{"--wait", "--poll-interval", "100ms", "--timeout", "2s", "demo"}); code != 0 {
+	if code := main.CmdWake([]string{"--wait", "--poll-interval", "100ms", "--timeout", "2s", "demo"}); code != 0 {
 		t.Fatalf("wake --wait = %d, want 0", code)
 	}
 	var receipt map[string]string
@@ -120,10 +121,10 @@ func TestCmdWakeWaitReturnsAtOnceWhenAlreadyRunning(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/apps/demo/wake":
-			writeJSONTest(w, api.AppWakeResponse{WakeID: "wake-old", AlreadyRunning: true, InstanceID: "instance-9"})
+			main.WriteJSONTest(w, api.AppWakeResponse{WakeID: "wake-old", AlreadyRunning: true, InstanceID: "instance-9"})
 		case r.URL.Path == "/v1/apps/demo/instances":
 			instanceReads++
-			writeJSONTest(w, []api.InstanceResponse{})
+			main.WriteJSONTest(w, []api.InstanceResponse{})
 		default:
 			http.NotFound(w, r)
 		}
@@ -132,14 +133,14 @@ func TestCmdWakeWaitReturnsAtOnceWhenAlreadyRunning(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 	var stdout bytes.Buffer
-	oldOut := osStdout
-	osStdout = &stdout
-	defer func() { osStdout = oldOut }()
-	resetJSONOut(t)
-	jsonOutput = true
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	defer func() { (*main.OsStdout) = oldOut }()
+	main.ResetJSONOut(t)
+	(*main.JsonOutput) = true
 
 	// Flags after the slug, as `gregale wake --help` shows the synopsis.
-	if code := cmdWake([]string{"demo", "--wait", "--timeout", "2s"}); code != 0 {
+	if code := main.CmdWake([]string{"demo", "--wait", "--timeout", "2s"}); code != 0 {
 		t.Fatalf("wake demo --wait = %d, want 0", code)
 	}
 	var receipt map[string]string
@@ -156,11 +157,11 @@ func TestCmdWakeWaitReturnsAtOnceWhenAlreadyRunning(t *testing.T) {
 func TestWaitForAppWakeTimeoutIsNotANetworkError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(150 * time.Millisecond) // every poll is still in flight at the deadline
-		writeJSONTest(w, []api.InstanceResponse{})
+		main.WriteJSONTest(w, []api.InstanceResponse{})
 	}))
 	defer srv.Close()
-	client := NewClient(srv.URL, "fp_live_x")
-	_, err := waitForAppWake(context.Background(), client, "demo", "wake-1", 300*time.Millisecond, 100*time.Millisecond)
+	client := main.NewClient(srv.URL, "fp_live_x")
+	_, err := main.WaitForAppWake(context.Background(), client, "demo", "wake-1", 300*time.Millisecond, 100*time.Millisecond)
 	if err == nil {
 		t.Fatal("waitForAppWake succeeded without a running instance")
 	}
@@ -180,13 +181,13 @@ func TestJSONMutations_QuietDelete(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
 	var stdout bytes.Buffer
-	oldOut := osStdout
-	osStdout = &stdout
-	defer func() { osStdout = oldOut }()
-	resetJSONOut(t)
-	jsonOutput = true
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	defer func() { (*main.OsStdout) = oldOut }()
+	main.ResetJSONOut(t)
+	(*main.JsonOutput) = true
 
-	if code := cmdAppsRm([]string{"-q", "demo"}); code != 0 {
+	if code := main.CmdAppsRm([]string{"-q", "demo"}); code != 0 {
 		t.Fatalf("quiet delete = %d, want 0", code)
 	}
 	var receipt map[string]any
@@ -205,7 +206,7 @@ func TestJSONMutations_CronAddAndRemove(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/crons":
-			writeJSONTest(w, api.CronResponse{
+			main.WriteJSONTest(w, api.CronResponse{
 				ID: jsonMutationCronID, AppID: "demo", Schedule: "0 * * * *", Path: "/tick", Enabled: true,
 			})
 		case r.Method == http.MethodDelete && r.URL.Path == "/v1/crons/"+jsonMutationCronID:
@@ -219,13 +220,13 @@ func TestJSONMutations_CronAddAndRemove(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
 	var stdout bytes.Buffer
-	oldOut := osStdout
-	osStdout = &stdout
-	defer func() { osStdout = oldOut }()
-	resetJSONOut(t)
-	jsonOutput = true
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	defer func() { (*main.OsStdout) = oldOut }()
+	main.ResetJSONOut(t)
+	(*main.JsonOutput) = true
 
-	if code := cmdCrons([]string{"add", "--app", "demo", "--schedule", "0 * * * *", "--path", "/tick"}); code != 0 {
+	if code := main.CmdCrons([]string{"add", "--app", "demo", "--schedule", "0 * * * *", "--path", "/tick"}); code != 0 {
 		t.Fatalf("cron add = %d, want 0", code)
 	}
 	var created api.CronResponse
@@ -237,7 +238,7 @@ func TestJSONMutations_CronAddAndRemove(t *testing.T) {
 	}
 	stdout.Reset()
 
-	if code := cmdCrons([]string{"rm", jsonMutationCronID}); code != 0 {
+	if code := main.CmdCrons([]string{"rm", jsonMutationCronID}); code != 0 {
 		t.Fatalf("cron remove = %d, want 0", code)
 	}
 	var removed map[string]any
@@ -254,7 +255,7 @@ func TestJSONMutations_CronAddAndRemove(t *testing.T) {
 func TestCronAddHumanOutputNamesTheID(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost && r.URL.Path == "/v1/crons" {
-			writeJSONTest(w, api.CronResponse{ID: jsonMutationCronID, AppID: "demo", Schedule: "0 * * * *", Path: "/tick", Enabled: true})
+			main.WriteJSONTest(w, api.CronResponse{ID: jsonMutationCronID, AppID: "demo", Schedule: "0 * * * *", Path: "/tick", Enabled: true})
 			return
 		}
 		http.NotFound(w, r)
@@ -263,11 +264,11 @@ func TestCronAddHumanOutputNamesTheID(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 	var stdout bytes.Buffer
-	oldOut := osStdout
-	osStdout = &stdout
-	defer func() { osStdout = oldOut }()
-	resetJSONOut(t)
-	if code := cmdCrons([]string{"add", "--app", "demo", "--schedule", "0 * * * *", "--path", "/tick"}); code != 0 {
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	defer func() { (*main.OsStdout) = oldOut }()
+	main.ResetJSONOut(t)
+	if code := main.CmdCrons([]string{"add", "--app", "demo", "--schedule", "0 * * * *", "--path", "/tick"}); code != 0 {
 		t.Fatalf("cron add = %d, want 0", code)
 	}
 	if !strings.Contains(stdout.String(), "id: "+jsonMutationCronID) || !strings.Contains(stdout.String(), "gregale crons run "+jsonMutationCronID) {
@@ -281,17 +282,17 @@ func TestCronAddHumanOutputNamesTheID(t *testing.T) {
 
 func TestJSONMutations_InitReceipt(t *testing.T) {
 	var stdout bytes.Buffer
-	oldOut := osStdout
-	osStdout = &stdout
-	defer func() { osStdout = oldOut }()
-	resetJSONOut(t)
-	jsonOutput = true
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	defer func() { (*main.OsStdout) = oldOut }()
+	main.ResetJSONOut(t)
+	(*main.JsonOutput) = true
 
 	dest := filepath.Join(t.TempDir(), "hello")
-	if code := runCmdInit("hello-node", dest, false, "", osStdout, os.Stderr); code != 0 {
+	if code := main.RunCmdInit("hello-node", dest, false, "", (*main.OsStdout), os.Stderr); code != 0 {
 		t.Fatalf("init = %d, want 0", code)
 	}
-	var receipt initReceipt
+	var receipt main.InitReceipt
 	if err := json.Unmarshal(stdout.Bytes(), &receipt); err != nil {
 		t.Fatalf("init output is not JSON: %v\n%s", err, stdout.String())
 	}
@@ -317,12 +318,12 @@ func TestJSONMutations_HonourFAASJSON(t *testing.T) {
 	t.Setenv("FAAS_JSON", "1")
 
 	var stdout bytes.Buffer
-	oldOut := osStdout
-	osStdout = &stdout
-	defer func() { osStdout = oldOut }()
-	resetJSONOut(t)
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	defer func() { (*main.OsStdout) = oldOut }()
+	main.ResetJSONOut(t)
 
-	if code := run([]string{"park", "demo"}); code != 0 {
+	if code := main.Run([]string{"park", "demo"}); code != 0 {
 		t.Fatalf("park via FAAS_JSON = %d, want 0", code)
 	}
 	var receipt map[string]string
