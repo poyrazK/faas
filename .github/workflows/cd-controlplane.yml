@@ -359,13 +359,28 @@ jobs:
             test -s /etc/faas/storage.env
             grep -Eq '^FAAS_STORAGE_BACKEND=(oci|gcs)$' /etc/faas/storage.env
             getent group faas >/dev/null
-            install -o root -g faas -m 0440 "$remote_stage" /etc/faas/apid-storage.env
+            # Unchanged bytes keep their modification time, so deployctl can
+            # still hand apid off instead of restarting it (see the
+            # credentials step's install_if_changed).
+            if [[ -e /etc/faas/apid-storage.env ]] && cmp -s "$remote_stage" /etc/faas/apid-storage.env; then
+              chown root:faas /etc/faas/apid-storage.env
+              chmod 0440 /etc/faas/apid-storage.env
+            else
+              install -o root -g faas -m 0440 "$remote_stage" /etc/faas/apid-storage.env
+            fi
             install -d -o root -g root -m 0755 /etc/systemd/system/faas-apid.service.d
-            cat > /etc/systemd/system/faas-apid.service.d/99-storage-lifecycle.conf <<'CREDENTIALS'
+            dropin=/etc/systemd/system/faas-apid.service.d/99-storage-lifecycle.conf
+            dropin_stage="$(mktemp)"
+            cat > "$dropin_stage" <<'CREDENTIALS'
           [Service]
           EnvironmentFile=/etc/faas/apid-storage.env
           CREDENTIALS
-            chmod 0644 /etc/systemd/system/faas-apid.service.d/99-storage-lifecycle.conf
+            if [[ -e "$dropin" ]] && cmp -s "$dropin_stage" "$dropin"; then
+              chmod 0644 "$dropin"
+            else
+              install -o root -g root -m 0644 "$dropin_stage" "$dropin"
+            fi
+            rm -f -- "$dropin_stage"
             rm -f -- \
               /etc/faas/oci-e2e.env \
               /etc/systemd/system/faas-apid.service.d/99-codex-oci-source.conf \
@@ -659,6 +674,24 @@ jobs:
           grep -qE '^AGE-SECRET-KEY-1[0-9A-Z]+$' "$stage/fleet.age"
           grep -qE '^age1[0-9a-z]+$' "$stage/fleet.age.pub"
           grep -qx -- '-----BEGIN PUBLIC KEY-----' "$stage/sign-pub.pem"
+          # Rewrite host files only when their content changes. deployctl
+          # hands a daemon off (zero-downtime reload) only when no unit input
+          # (unit file, drop-ins, environment files, credential sources) has a
+          # modification time newer than the running process; rewriting
+          # identical bytes on every deploy made apid restart instead
+          # (rc.281: one API probe timed out and the rollout gate failed).
+          install_if_changed() { # MODE SRC DEST
+            if [[ -e "$3" ]] && cmp -s "$2" "$3"; then
+              chown root:root "$3"; chmod "$1" "$3"; return 0
+            fi
+            install -o root -g root -m "$1" "$2" "$3"
+          }
+          write_if_changed() { # MODE DEST < content
+            local tmp; tmp="$(mktemp)"
+            cat > "$tmp"
+            install_if_changed "$1" "$tmp" "$2"
+            rm -f "$tmp"
+          }
           install -d -o root -g root -m 0700 /etc/faas/secrets
           for file in fleet.age fleet.age.pub; do
             if [[ -e "/etc/faas/secrets/$file" ]] && ! cmp -s "$stage/$file" "/etc/faas/secrets/$file"; then
@@ -666,8 +699,8 @@ jobs:
               exit 1
             fi
           done
-          install -o root -g root -m 0400 "$stage/fleet.age" /etc/faas/secrets/fleet.age
-          install -o root -g root -m 0444 "$stage/fleet.age.pub" /etc/faas/secrets/fleet.age.pub
+          install_if_changed 0400 "$stage/fleet.age" /etc/faas/secrets/fleet.age
+          install_if_changed 0444 "$stage/fleet.age.pub" /etc/faas/secrets/fleet.age.pub
 
           # apid and schedd verify image signatures with the fleet's public
           # signing key (LoadCredential=cd_sign_pub below). Compute joins
@@ -677,20 +710,18 @@ jobs:
             echo "existing sign-pub.pem differs from COMPUTE_VERIFY_KEY; use the signing-key rotation procedure" >&2
             exit 1
           fi
-          install -o root -g root -m 0444 "$stage/sign-pub.pem" /etc/faas/secrets/sign-pub.pem
+          install_if_changed 0444 "$stage/sign-pub.pem" /etc/faas/secrets/sign-pub.pem
 
           # Keep both the incoming release and an older rollback release able
           # to read the public recipients while /etc/faas/secrets stays 0700.
           # This drop-in is host state, so deployctl preserves it across the
           # release unit install and any rollback.
           install -d -o root -g root -m 0755 /etc/systemd/system/faas-apid.service.d
-          cat > /etc/faas/apid-age-recipients.env <<'RECIPIENTS'
+          write_if_changed 0644 /etc/faas/apid-age-recipients.env <<'RECIPIENTS'
           FAAS_FLEET_AGE_RECIPIENT_PATH=/run/credentials/faas-apid.service/cd_fleet_age_recipient
           FAAS_HOST_AGE_RECIPIENT_PATH=/run/credentials/faas-apid.service/cd_host_age_recipient
           RECIPIENTS
-          chown root:root /etc/faas/apid-age-recipients.env
-          chmod 0644 /etc/faas/apid-age-recipients.env
-          cat > /etc/systemd/system/faas-apid.service.d/98-age-recipient-credentials.conf <<'CREDENTIALS'
+          write_if_changed 0644 /etc/systemd/system/faas-apid.service.d/98-age-recipient-credentials.conf <<'CREDENTIALS'
           [Service]
           LoadCredential=cd_fleet_age_recipient:/etc/faas/secrets/fleet.age.pub
           LoadCredential=cd_host_age_recipient:/etc/faas/secrets/host.age.pub
@@ -698,25 +729,22 @@ jobs:
           Environment=FAAS_SIGN_PUB=%d/cd_sign_pub
           EnvironmentFile=/etc/faas/apid-age-recipients.env
           CREDENTIALS
-          chmod 0644 /etc/systemd/system/faas-apid.service.d/98-age-recipient-credentials.conf
 
           install -d -o root -g root -m 0755 /etc/systemd/system/faas-schedd.service.d
-          cat > /etc/systemd/system/faas-schedd.service.d/98-signing-public-key-credential.conf <<'CREDENTIALS'
+          write_if_changed 0644 /etc/systemd/system/faas-schedd.service.d/98-signing-public-key-credential.conf <<'CREDENTIALS'
           [Service]
           LoadCredential=cd_sign_pub:/etc/faas/secrets/sign-pub.pem
           Environment=FAAS_SIGN_PUB=%d/cd_sign_pub
           CREDENTIALS
-          chmod 0644 /etc/systemd/system/faas-schedd.service.d/98-signing-public-key-credential.conf
 
           install -d -o root -g root -m 0755 /etc/systemd/system/faas-githubd.service.d
-          cat > /etc/systemd/system/faas-githubd.service.d/98-fleet-recipient-credential.conf <<'CREDENTIALS'
+          write_if_changed 0644 /etc/systemd/system/faas-githubd.service.d/98-fleet-recipient-credential.conf <<'CREDENTIALS'
           [Service]
           LoadCredential=cd_fleet_age_recipient:/etc/faas/secrets/fleet.age.pub
           LoadCredential=cd_github_app_key:/etc/faas/secrets/githubd/app.pem
           Environment=FAAS_HOST_AGE_PUB=%d/cd_fleet_age_recipient
           Environment=FAAS_GITHUB_APP_KEY_PATH=%d/cd_github_app_key
           CREDENTIALS
-          chmod 0644 /etc/systemd/system/faas-githubd.service.d/98-fleet-recipient-credential.conf
           REMOTE
 
       # ADR-580: converge the control-plane bootstrap roles before release
