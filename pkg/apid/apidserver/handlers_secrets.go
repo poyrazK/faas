@@ -298,49 +298,57 @@ func (s *server) setSecret(w http.ResponseWriter, r *http.Request, acct state.Ac
 	if !ok {
 		return
 	}
-	safeAppSlug := logsanitize.Field(app.Slug)
-	safeAppSlug = strings.ReplaceAll(safeAppSlug, "\n", "")
-	safeAppSlug = strings.ReplaceAll(safeAppSlug, "\r", "")
 	scope, _, prob := scopeFromQuery(r, false /* allowAll */)
 	if prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
-	safeScope := logsanitize.Field(scope)
-	safeScope = strings.ReplaceAll(safeScope, "\n", "")
-	safeScope = strings.ReplaceAll(safeScope, "\r", "")
 	var req api.PutAppSecretRequest
 	if err := decodeJSON(r, &req); err != nil {
 		api.WriteProblem(w, api.ErrValidation("invalid JSON body"))
 		return
 	}
+	receipt, prob := s.setAppSecret(r, acct, app, scope, key, req)
+	if prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	writeJSON(w, http.StatusOK, struct {
+		Key          string                   `json:"key"`
+		ConfigChange *api.ConfigChangeReceipt `json:"config_change,omitempty"`
+	}{Key: key, ConfigChange: receipt})
+}
+
+// setAppSecret is shared by the secret PUT route and project apply. Both paths
+// enforce quota, seal at rest, record a config revision, invalidate snapshots,
+// and emit runtime/audit events.
+func (s *server) setAppSecret(r *http.Request, acct state.Account, app state.App, scope, key string, req api.PutAppSecretRequest) (*api.ConfigChangeReceipt, *api.Problem) {
+	ctx := r.Context()
+	safeAppSlug := strings.NewReplacer("\n", "", "\r", "").Replace(logsanitize.Field(app.Slug))
+	safeScope := strings.NewReplacer("\n", "", "\r", "").Replace(logsanitize.Field(scope))
 	limits := api.MustLimitsFor(acct.Plan)
 	// Byte cap: enforced here AND inside secretbox.SealOne. Defense in
 	// depth — if a future refactor drops one of the two, the other still
 	// protects.
 	if prob := req.Validate(limits.SecretValueMaxBytes); prob != nil {
-		api.WriteProblem(w, prob)
-		return
+		return nil, prob
 	}
-	if prob := s.checkSecretQuota(r.Context(), acct, app, scope, key, limits); prob != nil {
-		api.WriteProblem(w, prob)
-		return
+	if prob := s.checkSecretQuota(ctx, acct, app, scope, key, limits); prob != nil {
+		return nil, prob
 	}
 	change := s.beginConfigChange(r, acct, app, scope, key)
-	if prob := s.sealAndPersist(r.Context(), acct, app, scope, key, req.Value, req.SecretClass, limits); prob != nil {
-		s.abandonConfigChange(r.Context(), change)
-		api.WriteProblem(w, prob)
-		return
+	if prob := s.sealAndPersist(ctx, acct, app, scope, key, req.Value, req.SecretClass, limits); prob != nil {
+		s.abandonConfigChange(ctx, change)
+		return nil, prob
 	}
-	revision := s.finishConfigChange(r.Context(), change, state.ConfigSourceSecretSet, key, false)
-	invalidated, err := s.invalidateAppSnapshots(r.Context(), app.ID)
+	revision := s.finishConfigChange(ctx, change, state.ConfigSourceSecretSet, key, false)
+	invalidated, err := s.invalidateAppSnapshots(ctx, app.ID)
 	if err != nil {
 		s.log.Error("secret set: invalidate snapshots", "app", safeAppSlug, "err", err)
-		s.audit.Emit(r.Context(), "secret.snapshot_invalidation_failed", &acct.ID, map[string]any{
+		s.audit.Emit(ctx, "secret.snapshot_invalidation_failed", &acct.ID, map[string]any{
 			"app_id": app.ID, "scope": scope, "name": key, "operation": "set",
 		})
-		api.WriteProblem(w, api.ErrCapacity("could not invalidate application snapshots"))
-		return
+		return nil, api.ErrCapacity("could not invalidate application snapshots")
 	}
 	// Audit + log. VALUE never reaches slog. logsanitize.RedactValue is
 	// used defensively even though we never log req.Value directly — a
@@ -357,18 +365,15 @@ func (s *server) setSecret(w http.ResponseWriter, r *http.Request, acct state.Ac
 	// data.app_id lets the audit log filter by app; data.name is
 	// the secret key (not the value); data.scope is the env-scope
 	// the row was written to (ADR-092 PR-B).
-	s.audit.Emit(r.Context(), "secret.set", &acct.ID, map[string]any{
+	s.audit.Emit(ctx, "secret.set", &acct.ID, map[string]any{
 		"app_id":                 app.ID,
 		"name":                   key,
 		"scope":                  scope,
 		"secret_class_requested": req.SecretClass,
 		"snapshots_invalidated":  invalidated,
 	})
-	s.notifyRuntimeConfigChange(r.Context(), db.NotifySecretRotated, acct, app, "set", scope, key)
-	writeJSON(w, http.StatusOK, struct {
-		Key          string                   `json:"key"`
-		ConfigChange *api.ConfigChangeReceipt `json:"config_change,omitempty"`
-	}{Key: key, ConfigChange: configChangeReceipt(change, revision)})
+	s.notifyRuntimeConfigChange(ctx, db.NotifySecretRotated, acct, app, "set", scope, key)
+	return configChangeReceipt(change, revision), nil
 }
 
 // sealAndPersist runs the "no-recipient / seal / persist" portion of
@@ -647,6 +652,11 @@ func secretRevocationResponse(revocation state.AppSecretRevocation) api.AppSecre
 }
 
 func (s *server) managedSecretConflictProblem(ctx stdctx, accountID, appID, scope, key string) *api.Problem {
+	if pinned, ok := s.store.(state.ProjectReleaseSecretsStore); ok {
+		if yes, err := pinned.ReleaseSecretsPinned(ctx, accountID, appID, scope); err == nil && yes {
+			return api.NewProblem(http.StatusConflict, "project_release_secrets_pinned", "Secret versions are release-bound", "Change these secrets through an atomic verified project release.")
+		}
+	}
 	row, err := s.store.GetAppSecretInScope(ctx, accountID, appID, scope, key)
 	if err == nil && row != nil && row.ManagedObjectStorageCredentialID != "" {
 		return api.ErrManagedObjectStorageSecretConflict()

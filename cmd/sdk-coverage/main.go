@@ -2204,6 +2204,23 @@ var methodRouteMap = map[string]string{
 	"POST /v1/projects":                 "ApplyProjectPlan",
 	"GET /v1/projects/{slug}/environments/{environment}/promotion-preview": "GetProjectEnvironmentPromotionPreview",
 
+	// Deployment intent and promotion helpers use action names rather than
+	// names derived from hyphenated route segments.
+	"GET /v1/apps/{slug}/deployment-cron-staging":                                                  "GetDeploymentCronStagingSnapshot",
+	"GET /v1/apps/{slug}/deployment-staging":                                                       "GetDeploymentStagingSnapshot",
+	"GET /v1/apps/{slug}/deployment-submissions/{attempt_id}":                                      "GetDeploymentSubmission",
+	"GET /v1/project-submissions/{attempt_id}":                                                     "GetProjectSubmission",
+	"POST /v1/apps/{slug}/deployment-cron-staging":                                                 "ApplyDeploymentCronStaging",
+	"POST /v1/apps/{slug}/deployment-staging":                                                      "ApplyDeploymentStaging",
+	"POST /v1/project-submissions/{attempt_id}/{action}":                                           "ControlProjectRelease",
+	"POST /v1/projects/safe-deploy":                                                                "ApplyProjectPlan",
+	"POST /v1/projects/{slug}/deployment-readiness":                                                "CheckProjectDeployment",
+	"POST /v1/projects/{slug}/environments/{environment}/promotion-preview":                        "PreviewProjectEnvironmentPromotionSecrets",
+	"POST /v1/projects/{slug}/environments/{environment}/promotions/{promotion}/abort":             "ControlProjectEnvironmentPromotion",
+	"POST /v1/projects/{slug}/environments/{environment}/promotions/{promotion}/recover":           "ControlProjectEnvironmentPromotion",
+	"POST /v1/projects/{slug}/environments/{environment}/promotions/{promotion}/recover-migration": "RecoverProjectEnvironmentPromotionMigration",
+	"POST /v1/projects/{slug}/release-secrets":                                                     "StageProjectReleaseSecrets",
+
 	// ADR-124 follow-up #3 — persistent --exclude history. The
 	// auto-derivation would produce "DeleteProjectsSlugExclusionsSlug2"
 	// (Swagger-style with both path placeholders preserved); the SDK

@@ -144,6 +144,7 @@ var memDispatched = map[string]bool{
 	"RequestTelemetryRouteCustomers":                          true,
 	"ResolveEnvironmentQualificationService":                  true,
 	"ResolveInstanceMigrationCommit":                          true,
+	"ResolveProjectServiceBinding":                            true,
 	"RouteAdviceConsumers":                                    true,
 	"RouteAdviceRouteStats":                                   true,
 	"RouteAdviceThrottleExcess":                               true,
@@ -207,6 +208,21 @@ var memDispatched = map[string]bool{
 	"WorkflowAlertSnapshot":                                   true,
 	"WorkflowRecoveryReviewCompletionNotificationAllowed":     true,
 	"WorkflowRecoveryReviewNotificationAllowed":               true,
+
+	"PutIdempotent":                                 true,
+	"AttachDeploymentSubmission":                    true,
+	"CreateBuildWithID":                             true,
+	"UpdateProjectEnvironmentPromotionWorkload":     true,
+	"UpdateProjectEnvironmentPromotionVerification": true,
+	"ListPendingSafeProjectSubmissions":             true,
+	"ProjectSubmission":                             true,
+	"ProjectReleaseSetByID":                         true,
+	"AdvanceProjectReleaseVerification":             true,
+	"ReconcileSafeProjectSubmission":                true,
+	"ReleaseAppTaskByDeployment":                    true,
+	"RecordProjectMigrationBaseline":                true,
+	"PinnedProjectReleaseWorkers":                   true,
+	"HeldProjectReleaseWorkers":                     true,
 }
 
 func (s *Mem) AppTaskByID(ctx context.Context, account, app, id string) (state.AppTask, error) {
@@ -1051,6 +1067,13 @@ func (s *Mem) RequestTelemetryRouteCustomers(p0 context.Context, p1 sqlc.Request
 		return o.RequestTelemetryRouteCustomers(p0, p1)
 	}
 	return s.MemStore.RequestTelemetryRouteCustomers(p0, p1)
+}
+
+func (s *Mem) ResolveProjectServiceBinding(p0 context.Context, p1, p2, p3 string, p4 ...string) (state.EnvironmentGitOpsServiceBindingRoute, bool, bool, error) {
+	if o, ok := s.over.(state.ProjectServiceGraphStore); ok {
+		return o.ResolveProjectServiceBinding(p0, p1, p2, p3, p4...)
+	}
+	return s.MemStore.ResolveProjectServiceBinding(p0, p1, p2, p3, p4...)
 }
 
 func (s *Mem) ResolveEnvironmentQualificationService(p0 context.Context, p1 state.EnvironmentQualificationServiceRequest) (state.EnvironmentQualificationServiceRoute, error) {
@@ -3998,4 +4021,130 @@ func (s *Store) ListProjectsForOrg(ctx context.Context, orgID string) ([]state.P
 		return override.ListProjectsForOrg(ctx, orgID)
 	}
 	return s.Store.ListProjectsForOrg(ctx, orgID)
+}
+
+func (s *Mem) PutIdempotent(p0 context.Context, p1 string, p2 string, p3 int, p4 []byte) error {
+	if o, ok := s.over.(interface {
+		PutIdempotent(context.Context, string, string, int, []byte) error
+	}); ok {
+		return o.PutIdempotent(p0, p1, p2, p3, p4)
+	}
+	return s.MemStore.PutIdempotent(p0, p1, p2, p3, p4)
+}
+
+func (s *Mem) AttachDeploymentSubmission(p0 context.Context, p1 string, p2 string, p3 string) (api.DeploymentSubmissionReceipt, error) {
+	if o, ok := s.over.(interface {
+		AttachDeploymentSubmission(context.Context, string, string, string) (api.DeploymentSubmissionReceipt, error)
+	}); ok {
+		return o.AttachDeploymentSubmission(p0, p1, p2, p3)
+	}
+	return s.MemStore.AttachDeploymentSubmission(p0, p1, p2, p3)
+}
+
+func (s *Mem) CreateBuildWithID(p0 context.Context, p1 string, p2 string, p3 state.DeploymentKind, p4 int64, p5 string) (state.Build, error) {
+	if o, ok := s.over.(interface {
+		CreateBuildWithID(context.Context, string, string, state.DeploymentKind, int64, string) (state.Build, error)
+	}); ok {
+		return o.CreateBuildWithID(p0, p1, p2, p3, p4, p5)
+	}
+	return s.MemStore.CreateBuildWithID(p0, p1, p2, p3, p4, p5)
+}
+
+func (s *Mem) UpdateProjectEnvironmentPromotionWorkload(p0 context.Context, p1 string, p2 string, p3 string, p4 string, p5 string, p6 string) (state.ProjectEnvironmentPromotionWorkload, error) {
+	if o, ok := s.over.(interface {
+		UpdateProjectEnvironmentPromotionWorkload(context.Context, string, string, string, string, string, string) (state.ProjectEnvironmentPromotionWorkload, error)
+	}); ok {
+		return o.UpdateProjectEnvironmentPromotionWorkload(p0, p1, p2, p3, p4, p5, p6)
+	}
+	return s.MemStore.UpdateProjectEnvironmentPromotionWorkload(p0, p1, p2, p3, p4, p5, p6)
+}
+
+func (s *Mem) UpdateProjectEnvironmentPromotionVerification(p0 context.Context, p1 string, p2 string, p3 string, p4 string, p5 *time.Time, p6 *time.Time) (state.ProjectEnvironmentPromotion, error) {
+	if o, ok := s.over.(interface {
+		UpdateProjectEnvironmentPromotionVerification(context.Context, string, string, string, string, *time.Time, *time.Time) (state.ProjectEnvironmentPromotion, error)
+	}); ok {
+		return o.UpdateProjectEnvironmentPromotionVerification(p0, p1, p2, p3, p4, p5, p6)
+	}
+	return s.MemStore.UpdateProjectEnvironmentPromotionVerification(p0, p1, p2, p3, p4, p5, p6)
+}
+
+func (s *Mem) ListPendingSafeProjectSubmissions(p0 context.Context) ([]state.SafeProjectSubmission, error) {
+	if o, ok := s.over.(interface {
+		ListPendingSafeProjectSubmissions(context.Context) ([]state.SafeProjectSubmission, error)
+	}); ok {
+		return o.ListPendingSafeProjectSubmissions(p0)
+	}
+	return s.MemStore.ListPendingSafeProjectSubmissions(p0)
+}
+
+func (s *Mem) ProjectSubmission(p0 context.Context, p1 string, p2 string) (api.ProjectSubmissionReceipt, error) {
+	if o, ok := s.over.(interface {
+		ProjectSubmission(context.Context, string, string) (api.ProjectSubmissionReceipt, error)
+	}); ok {
+		return o.ProjectSubmission(p0, p1, p2)
+	}
+	return s.MemStore.ProjectSubmission(p0, p1, p2)
+}
+
+func (s *Mem) ProjectReleaseSetByID(p0 context.Context, p1 string, p2 string, p3 string, p4 string) (state.ProjectReleaseSet, error) {
+	if o, ok := s.over.(interface {
+		ProjectReleaseSetByID(context.Context, string, string, string, string) (state.ProjectReleaseSet, error)
+	}); ok {
+		return o.ProjectReleaseSetByID(p0, p1, p2, p3, p4)
+	}
+	return s.MemStore.ProjectReleaseSetByID(p0, p1, p2, p3, p4)
+}
+
+func (s *Mem) AdvanceProjectReleaseVerification(p0 context.Context, p1 string, p2 string, p3 *state.ProjectReleaseVerificationRound) (*api.ProjectSafeRelease, error) {
+	if o, ok := s.over.(interface {
+		AdvanceProjectReleaseVerification(context.Context, string, string, *state.ProjectReleaseVerificationRound) (*api.ProjectSafeRelease, error)
+	}); ok {
+		return o.AdvanceProjectReleaseVerification(p0, p1, p2, p3)
+	}
+	return s.MemStore.AdvanceProjectReleaseVerification(p0, p1, p2, p3)
+}
+
+func (s *Mem) ReconcileSafeProjectSubmission(p0 context.Context, p1 string, p2 string) (*api.ProjectSafeRelease, error) {
+	if o, ok := s.over.(interface {
+		ReconcileSafeProjectSubmission(context.Context, string, string) (*api.ProjectSafeRelease, error)
+	}); ok {
+		return o.ReconcileSafeProjectSubmission(p0, p1, p2)
+	}
+	return s.MemStore.ReconcileSafeProjectSubmission(p0, p1, p2)
+}
+
+func (s *Mem) ReleaseAppTaskByDeployment(p0 context.Context, p1 string) (state.AppTask, error) {
+	if o, ok := s.over.(interface {
+		ReleaseAppTaskByDeployment(context.Context, string) (state.AppTask, error)
+	}); ok {
+		return o.ReleaseAppTaskByDeployment(p0, p1)
+	}
+	return s.MemStore.ReleaseAppTaskByDeployment(p0, p1)
+}
+
+func (s *Mem) RecordProjectMigrationBaseline(p0 context.Context, p1 string, p2 string, p3 state.ProjectMigrationBaselineRound) (*api.ProjectSafeRelease, error) {
+	if o, ok := s.over.(interface {
+		RecordProjectMigrationBaseline(context.Context, string, string, state.ProjectMigrationBaselineRound) (*api.ProjectSafeRelease, error)
+	}); ok {
+		return o.RecordProjectMigrationBaseline(p0, p1, p2, p3)
+	}
+	return s.MemStore.RecordProjectMigrationBaseline(p0, p1, p2, p3)
+}
+
+func (s *Mem) PinnedProjectReleaseWorkers(p0 context.Context, p1 string) ([]string, error) {
+	if o, ok := s.over.(interface {
+		PinnedProjectReleaseWorkers(context.Context, string) ([]string, error)
+	}); ok {
+		return o.PinnedProjectReleaseWorkers(p0, p1)
+	}
+	return s.MemStore.PinnedProjectReleaseWorkers(p0, p1)
+}
+
+func (s *Mem) HeldProjectReleaseWorkers(p0 context.Context, p1 string) ([]string, error) {
+	if o, ok := s.over.(interface {
+		HeldProjectReleaseWorkers(context.Context, string) ([]string, error)
+	}); ok {
+		return o.HeldProjectReleaseWorkers(p0, p1)
+	}
+	return s.MemStore.HeldProjectReleaseWorkers(p0, p1)
 }

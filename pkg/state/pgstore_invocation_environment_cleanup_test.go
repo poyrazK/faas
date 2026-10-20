@@ -298,18 +298,22 @@ func TestPgInvocationEnvironmentOwnerMigrationBackfillsPins(t *testing.T) {
 	if !ok {
 		t.Fatal("missing migration down section")
 	}
-	// Newer production views depend on environment_id. Roll back their
-	// migration before this older migration, as the real runner does.
-	productionRaw, err := migrations.FS.ReadFile("20261004095153167_production_invocation_work.sql")
-	if err != nil {
-		t.Fatal(err)
-	}
-	productionUp, productionDown, ok := strings.Cut(string(productionRaw), "-- +goose Down")
-	if !ok {
-		t.Fatal("missing production work migration down section")
-	}
-	if _, err := pool.Exec(ctx, productionDown); err != nil {
-		t.Fatal(err)
+	// Roll dependent views back newest first, as the real migration runner
+	// does, then restore them after exercising the historical backfill.
+	var dependentUps []string
+	for _, name := range []string{"20261016144159482_project_worker_pinned_targets.sql", "20261004095153167_production_invocation_work.sql"} {
+		dependentRaw, err := migrations.FS.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		dependentUp, dependentDown, ok := strings.Cut(string(dependentRaw), "-- +goose Down")
+		if !ok {
+			t.Fatalf("missing down section: %s", name)
+		}
+		if _, err := pool.Exec(ctx, dependentDown); err != nil {
+			t.Fatal(err)
+		}
+		dependentUps = append(dependentUps, dependentUp)
 	}
 	if _, err := pool.Exec(ctx, down); err != nil {
 		t.Fatal(err)
@@ -317,8 +321,10 @@ func TestPgInvocationEnvironmentOwnerMigrationBackfillsPins(t *testing.T) {
 	if _, err := pool.Exec(ctx, up); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, productionUp); err != nil {
-		t.Fatal(err)
+	for i := len(dependentUps) - 1; i >= 0; i-- {
+		if _, err := pool.Exec(ctx, dependentUps[i]); err != nil {
+			t.Fatal(err)
+		}
 	}
 	for id, expected := range owners {
 		actual, err := store.InvocationEnvironmentID(ctx, id)

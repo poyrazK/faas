@@ -1485,19 +1485,25 @@ type Manifest struct {
 // deliberately shell-shaped, matching a Procfile's `release:` entry and
 // preserving operators' existing quoting and expansion semantics.
 type ReleaseConfig struct {
-	Command string `yaml:"command"`
+	Command         string `yaml:"command"`
+	ContractCommand string `yaml:"contract_command,omitempty"`
 }
 
 func (c *ReleaseConfig) Validate() error {
 	if c == nil {
 		return nil
 	}
-	_, problem := (api.CreateAppTaskRequest{
-		Command:      []string{c.Command},
-		CommandShell: true,
-	}).Resolve()
-	if problem != nil {
-		return fmt.Errorf("release: %s", problem.Detail)
+	if c.Command == "" && c.ContractCommand == "" {
+		return fmt.Errorf("release: command is required")
+	}
+	for _, command := range []string{c.Command, c.ContractCommand} {
+		if command == "" {
+			continue
+		}
+		_, problem := (api.CreateAppTaskRequest{Command: []string{command}, CommandShell: true}).Resolve()
+		if problem != nil {
+			return fmt.Errorf("release: %s", problem.Detail)
+		}
 	}
 	return nil
 }

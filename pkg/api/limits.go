@@ -21,6 +21,9 @@ import (
 	"time"
 )
 
+// DeploymentAttemptIDBytes is the encoded size of a random 128-bit submission identity.
+const DeploymentAttemptIDBytes = 32
+
 // Migration verification shares normal task and wake admission. These bounds
 // limit orchestration receipts, not customer compute entitlements.
 const (
@@ -12316,6 +12319,132 @@ const (
 	AppEventPublishStatusRecipientsDefault = 100
 	AppEventPublishStatusCursorMaxBytes    = 8192
 )
+
+// ProjectSafeReleaseGracePeriod allows readiness after serial build budgets.
+const ProjectSafeReleaseGracePeriod = 30 * time.Minute
+
+// Project release verification bounds (ADR-20261019120005). Baseline retention must exceed
+// the verification deadline plus recovery time.
+const (
+	ProjectReleaseVerificationMaxProbes    = 5
+	ProjectReleaseVerificationTimeout      = 10 * time.Minute
+	ProjectReleaseVerificationMinRetention = 15 * time.Minute
+	ProjectReleaseVerificationInterval     = time.Minute
+	ProjectReleaseVerificationRounds       = 2
+)
+
+// ProjectReleaseConfigMaxBytes bounds paired-release plaintext configuration (ADR-20261019120006).
+const ProjectReleaseConfigMaxBytes = MaxProjectEnvironmentConfigBytes
+
+// The promotion capture holds both retained variable sets and their guards.
+// It carries no sealed secret values (ADR-20261019120022).
+const ProjectEnvironmentPromotionCaptureMaxBytes = 16 * ProjectReleaseConfigMaxBytes
+
+// Health-gated promotions reserve two verification windows plus one sample
+// interval for restart recovery while the destination baseline remains retained.
+const ProjectPromotionHealthMinRetention = 2*ProjectReleaseVerificationTimeout + ProjectReleaseVerificationInterval
+const ProjectPromotionHealthMaxBytes = 32 << 10
+
+// ProjectPromotionMaxWorkers bounds immutable policies and per-worker evidence in the health journal.
+const ProjectPromotionMaxWorkers = 8
+
+// ProjectDeploymentCheckMaxBytes bounds metadata-only readiness requests.
+const ProjectDeploymentCheckMaxBytes = ProjectEnvironmentPromotionCaptureMaxBytes
+
+// Metadata/report bounds are independent of runtime configuration quotas.
+const (
+	ProjectDeploymentCheckMaxKeys   = 256
+	ProjectDeploymentCheckMaxChecks = 1024
+)
+const ProjectPromotionHealthBatchSize = 20
+
+// ADR-20261019120029: shared across APID dispatchers; one slot prefers recovery work.
+// Promotion admission bounds whole operations, independently of probe leases.
+const ProjectPromotionAdmissionFleetActive = 24
+const ProjectPromotionAdmissionAccountActive = 8
+const ProjectPromotionAdmissionFleetQueued = 128
+const ProjectPromotionAdmissionAccountQueued = 32
+const ProjectPromotionAdmissionWaitTimeout = 15 * time.Minute
+const ProjectPromotionAdmissionRetryAfterSeconds = 5
+
+const ProjectPromotionHealthConcurrency = 4
+const ProjectPromotionHealthAccountConcurrency = 2
+const ProjectPromotionHealthPollInterval = 5 * time.Second
+const ProjectPromotionHealthRoundTimeout = 30 * time.Second
+const ProjectPromotionHealthJobTimeout = 45 * time.Second
+const ProjectPromotionHealthLeaseDuration = time.Minute
+
+// Private native publication barrier protocol bounds; production builds cannot
+// activate this barrier. It shares the existing health worker action deadline.
+const PromotionPublicationEventMaxBytes = 4096
+const PromotionPublicationAckMaxBytes = 1024
+
+// ProjectReleaseWorkerDefaultDrainSeconds is the bounded worker shutdown default.
+const ProjectReleaseWorkerDefaultDrainSeconds = 30
+
+// ProjectPromotionMigrationRecoveryWaitMaxSeconds bounds the CLI's recovery wait.
+const ProjectPromotionMigrationRecoveryWaitMaxSeconds = 24 * 60 * 60
+
+// ProjectReleaseWorkerMaxDrainSeconds bounds the first mixed-release handoff (ADR-20261019120008).
+const ProjectReleaseWorkerMaxDrainSeconds = 60
+
+// Worker outcome verification policy (ADR-20261019120009). Samples are delivery attempts, not side effects.
+const (
+	ProjectWorkerHealthMinAttempts             = 5
+	ProjectWorkerHealthMinFailures             = 3
+	ProjectWorkerHealthErrorMarginPercent      = 20
+	ProjectWorkerHealthMaxBaselineErrorPercent = 20
+	ProjectWorkerHealthLatencyRatio            = 2
+	ProjectWorkerHealthLatencyFloorMS          = 1000
+	ProjectWorkerHealthBaselineWindow          = 5 * time.Minute
+	ProjectWorkerHealthWriteTimeout            = 5 * time.Second
+)
+
+const (
+	ProjectWorkerHealthBacklogIncrease      = 10
+	ProjectWorkerHealthBacklogAgeIncreaseMS = 30000
+)
+
+// Project canary policy bounds (ADR-20261019120010). Admission remains unavailable until
+// graph staging, durable job pins and scheduler overlap are integrated.
+const (
+	ProjectCanaryInitialPercent = 5
+	ProjectCanaryMiddlePercent  = 25
+	ProjectCanaryFinalPercent   = 100
+	ProjectCanaryBucketCount    = 10000
+	ProjectPinnedWorkerReplicas = 1
+)
+
+// ProjectReleaseControlMaxBytes bounds the small generation-fenced operator request.
+const ProjectReleaseControlMaxBytes = 1024
+
+// ADR-20261019120015: bounded post-success monitoring and sufficient existing rollback retention.
+const ProjectReleaseStabilizationWindow = ProjectReleaseVerificationTimeout
+const ProjectReleaseStabilizationMinRetention = ProjectReleaseVerificationTimeout + ProjectReleaseStabilizationWindow + ProjectReleaseVerificationInterval
+
+// ADR-20261019120016: a post-expansion probe round must be fresh at publication.
+const ProjectMigrationBaselineEvidenceMaxAge = 3 * ProjectReleaseVerificationInterval
+
+// ADR-20261019120017: cleanup must start within the freshness window of its admitted health.
+const ProjectMigrationContractStartTimeout = ProjectMigrationBaselineEvidenceMaxAge
+
+// ADR-20261019120020: bounded encrypted version staging before an atomic release.
+const ProjectReleaseSecretStageMaxBytes = ProjectReleaseConfigMaxBytes
+
+// Promotion rollout limits bound operator configuration and signed approvals.
+const (
+	PromotionRolloutPolicyMaxBytes    = 64 << 10
+	PromotionRolloutApprovalMaxBytes  = 1 << 20
+	PromotionRolloutNativeLogMaxBytes = 256 << 20
+	PromotionRolloutMaxTargets        = 128
+	PromotionRolloutApprovalMaxTTL    = 7 * 24 * time.Hour
+)
+const ProjectReleaseSecretStageTTL = 24 * time.Hour
+const ProjectReleaseSecretStagesPerProject = 32
+
+// Promotion migrations get a separate bounded queue/start and execution window.
+const ProjectPromotionMigrationStartTimeout = time.Minute
+const ProjectPromotionMigrationTimeout = ProjectPromotionMigrationStartTimeout + 10*time.Minute
 
 // Operator-preview ticket admission bounds.
 const (

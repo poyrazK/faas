@@ -741,8 +741,8 @@ jobs:
             GOMEMLIMIT=2GiB GOGC=10 GOMAXPROCS=2 go test -race -count=1 -p 4 -timeout="$package_timeout" $PKGS || status=1
           fi
           for pkg in $LARGE; do
-            run="$(python3 scripts/ci/select_package_tests.py --package "${pkg#./}" --cap "$SELECTIVE_CAP" --base "$LIGHT_DIFF_BASE" < "$RUNNER_TEMP/changed-paths.txt")"
-            if [[ -z "$run" ]]; then
+            runs="$(python3 scripts/ci/select_package_tests.py --package "${pkg#./}" --cap "$SELECTIVE_CAP" --batch-size 50 --base "$LIGHT_DIFF_BASE" < "$RUNNER_TEMP/changed-paths.txt")"
+            if [[ -z "$runs" ]]; then
               echo "$pkg: no tests relate to this change; the mega tier runs its full suite"
               continue
             fi
@@ -750,8 +750,14 @@ jobs:
               # pkg/state verifies the whole PostgreSQL catalogue; it keeps the
               # shard's second service to itself.
               [[ "$pkg" == ./pkg/state ]] && export DATABASE_URL="$SPLIT_DATABASE_URL"
-              echo "testing related tests of $pkg (no -race)"
-              go test -count=1 -timeout=8m -run "$run" "$pkg"
+              # Keep every selected test and the per-invocation deadline.
+              # A broad release can select too much PG work for one 8m run.
+              batch_status=0
+              while IFS= read -r run; do
+                echo "testing related test batch of $pkg (no -race)"
+                go test -count=1 -timeout=8m -run "$run" "$pkg" || batch_status=1
+              done <<< "$runs"
+              exit "$batch_status"
             ) || status=1
           done
           exit "$status"

@@ -45,6 +45,7 @@ native_e2e_metal_tests() {
 NATIVE_E2E_REQUIRED_TESTS=(
   TestDeployWakeMetal
   TestSourceDeployWakeMetal
+  TestProjectWorkerReleaseMetal
   TestBuildMetal
   TestWakeTimelineMetal
   TestDeployHealthcheckMetal

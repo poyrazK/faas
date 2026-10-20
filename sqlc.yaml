@@ -282,8 +282,16 @@ sql:
       - "pkg/state/profile_periodic_queries.sql"
       - "pkg/state/project_binding_verification_run_queries.sql"
       - "pkg/state/project_migration_queries.sql"
+      - "pkg/state/project_release_additions_queries.sql"
       - "pkg/state/project_release_staging_queries.sql"
       - "pkg/state/project_service_queries.sql"
+      - "pkg/state/promotion_admission_queries.sql"
+      - "pkg/state/promotion_control_queries.sql"
+      - "pkg/state/promotion_health_queries.sql"
+      - "pkg/state/promotion_recovery_queries.sql"
+      - "pkg/state/promotion_release_configuration_queries.sql"
+      - "pkg/state/promotion_schedule_queries.sql"
+      - "pkg/state/promotion_worker_queries.sql"
       - "pkg/state/public_build_url_queries.sql"
       - "pkg/state/queries.sql"
       - "pkg/state/queue_binding_canary_queries.sql"
@@ -304,6 +312,7 @@ sql:
       - "pkg/state/scenario_work_queries.sql"
       - "pkg/state/scenario_worker_fault_queries.sql"
       - "pkg/state/scoped_telemetry_queries.sql"
+      - "pkg/state/secret_rekey_queries.sql"
       - "pkg/state/selected_trace_queries.sql"
       - "pkg/state/service_wake_ahead_queries.sql"
       - "pkg/state/snapshot_recovery_queries.sql"
@@ -438,6 +447,17 @@ sql:
         emit_interface: true
         emit_methods_with_db_argument: true
         emit_empty_slices: true
+
+  # Disposable customer schema compatibility workload (never catalog SQL).
+  - engine: "postgresql"
+    queries: "pkg/e2etest/migrationprobe/queries.sql"
+    schema: "pkg/e2etest/migrationprobe/schema.sql"
+    gen:
+      go:
+        package: "sqlc"
+        out: "pkg/e2etest/migrationprobe/sqlc"
+        sql_package: "pgx/v5"
+        emit_methods_with_db_argument: true
 
   - engine: "postgresql"
     queries: "pkg/db/migration_recovery_queries.sql"

@@ -437,7 +437,7 @@ func projectsCLICompletionPositions() []cliCompletionPosition {
 	for _, path := range []string{
 		"environments list", "environments create", "environments preflight",
 		"environments diff", "environments preview", "environments promote",
-		"environments status", "environments rollback",
+		"environments status", "environments rollback", "environments abort", "environments recover",
 	} {
 		project(path)
 	}
@@ -2513,7 +2513,7 @@ var cliCommands = []cliCommand{
 	{
 		Name:    dispatchDeployment,
 		DocSlug: "deployment",
-		Short:   "Inspect a deployment, wait for its rollout, advance a canary, or set its minimum instances",
+		Short:   "Inspect release and cron configuration status, wait for rollout, or manage a canary",
 		CompletionPositions: []cliCompletionPosition{
 			{Position: 1, Role: cliCompletionDeploymentID},
 			{Path: []string{"advance"}, Position: 1, Role: cliCompletionDeploymentID},
@@ -2522,6 +2522,8 @@ var cliCommands = []cliCommand{
 			{Path: []string{"set-min-instances"}, Position: 1, Role: cliCompletionDeploymentID},
 		},
 		Examples: []string{
+			"gregale deployment v42 --app my-api",
+			"gregale deployment v42 --app my-api --json",
 			"gregale deployment summary v42 --app my-api",
 			"gregale deployment wait v42 --app my-api",
 			"gregale deployment latest --app my-api",
@@ -2615,8 +2617,31 @@ var cliCommands = []cliCommand{
 			"Source defaults to committed HEAD when origin exists; otherwise local files. Use --source=worktree to include local changes.",
 			resourceProfileHelpNote,
 		},
+		Subcommands: []cliSub{deploymentCheckCommand(), {Name: "resolve-contract", Short: "Record operator checks and a verified roll-forward release after failed cleanup", Positionals: []string{"ATTEMPT_ID"}, Flags: []cliFlag{{Name: "replacement-attempt", Short: "verified corrected deployment attempt", Value: "ID"}, {Name: "task-id", Short: "inspected original cleanup task", Value: "ID"}, {Name: "generation", Short: "inspected cleanup generation", Value: "N"}, {Name: "request-id", Short: "reuse after a lost recovery response", Value: "ID"}, {Name: "evidence-hash", Short: "SHA256 of private SQL/execution evidence", Value: "SHA256"}, {Name: "database-state-checked", Short: "attest database inspection/repair", Bool: true}, {Name: "execution-quiescent", Short: "attest original cleanup execution has stopped", Bool: true}}}, {Name: "contract", Short: "Run planned schema cleanup after retained versions and work drain", Positionals: []string{"ATTEMPT_ID"}, Flags: []cliFlag{{Name: "request-id", Short: "reuse this contract identity after an ambiguous response", Value: "ID"}, {Name: "generation", Short: "require this inspected checkpoint generation", Value: "N"}}}, {Name: "status", Short: "Inspect an atomic project attempt and available recovery actions", Positionals: []string{"ATTEMPT_ID"}}, {Name: "abort", Short: "Stop a progressive rollout and request guarded baseline restoration", Positionals: []string{"ATTEMPT_ID"}, Flags: []cliFlag{{Name: "request-id", Short: "reuse this control identity after an ambiguous response", Value: "ID"}, {Name: "generation", Short: "require this inspected checkpoint generation", Value: "N"}}}, {Name: "recover", Short: "Retry baseline health verification for a blocked progressive deploy", Positionals: []string{"ATTEMPT_ID"}, Flags: []cliFlag{{Name: "request-id", Short: "reuse this control identity after an ambiguous response", Value: "ID"}, {Name: "generation", Short: "require this inspected checkpoint generation", Value: "N"}}}, {Name: "retry", Short: "Rebuild confirmed failed workloads from a saved project deploy", Positionals: []string{"SESSION_ID"}, Examples: []string{"gregale deploy retry SESSION_ID --path . --source=worktree --yes", "gregale deploy retry SESSION_ID --tarball source.tar.gz --yes"}, Flags: []cliFlag{
+			{Name: "tarball", Short: "source archive to rebuild", Value: "PATH"},
+			{Name: "path", Short: "source directory to rebuild (default: current directory)", Value: "DIR"},
+			{Name: "source", Short: "local source policy (default: auto)", Value: "auto|head|worktree", ClosedSet: []string{"auto", "head", "worktree"}},
+			{Name: "worktree", Short: "include working tree changes (alias for --source=worktree)", Bool: true},
+			{Name: "yes", Short: "confirm the retry plan", Bool: true},
+			{Name: "no-wait", Short: "return after acceptance", Bool: true},
+			{Name: "timeout", Short: "maximum wait seconds (default 1200)", Value: "SECONDS"},
+		}}, {Name: "resume", Short: "Reconnect to a saved app or project deploy and finish pending checks", Positionals: []string{"[SESSION_ID]"}, Examples: []string{"gregale deploy resume --app my-api", "gregale deploy resume SESSION_ID --json"}, Flags: []cliFlag{
+			{Name: "app", Short: "select the most recent saved deploy for this app", Value: "SLUG"},
+			{Name: "timeout", Short: "maximum wait seconds (default 1200)", Value: "SECONDS"},
+		}}},
 		Examples: []string{"gregale deploy --plan", "gregale deploy --source=head --name my-api", "gregale deploy --path packages/api --source=worktree"},
 		Flags: []cliFlag{
+			{Name: "atomic", Group: "Projects", Short: "publish an existing HTTP project only after all zero-traffic candidates are ready; requires --project", Bool: true},
+			{Name: "add-services", Group: "Projects", Short: "reserve new HTTP services and publish them with the atomic project release", Bool: true},
+			{Name: "verify", Group: "Projects", Short: "verify critical probe routes after atomic cutover and automatically restore the previous project on regression; requires --atomic", Bool: true},
+			{Name: "workers", Group: "Projects", Short: "include one push-queue worker in a verified atomic project release", Bool: true},
+			{Name: "stabilize", Group: "Projects", Short: "monitor health for ten minutes after progressive rollout succeeds", Bool: true},
+			{Name: "progressive", Group: "Projects", Short: "route project traffic at 5%, 25%, then 100%; requires paired configuration and verification", Bool: true},
+			{Name: "worker-health", Group: "Projects", Short: "require real worker job health; requires --workers", Bool: true},
+			{Name: "migrate", Group: "Projects", Short: "run one backward-compatible migration before verified atomic cutover", Bool: true},
+			{Name: "release-secrets-file", Group: "Projects", Short: "rotate complete production secret snapshots with atomic verified HTTP source", Value: "PATH"},
+			{Name: "release-secrets-request-id", Group: "Projects", Short: "replay the printed encrypted staging request", Value: "ID"},
+			{Name: "config-file", Group: "Projects", Short: "activate non-secret workload variables with an atomic verified release", Value: "PATH"},
 			{Name: "image", Group: "Source and build", Short: "deploy a digest-pinned container image", Value: "REF"},
 			{Name: "tarball", Group: "Source and build", Short: "deploy from a source tarball", Value: "PATH"},
 			{Name: "path", Group: "Source and build", Common: true, Short: "source directory (default: current directory)", Value: "DIR"},
@@ -2716,7 +2741,7 @@ var cliCommands = []cliCommand{
 			{Name: "disable-startup-cpu-boost", Group: "Rollout and health", Short: "disable temporary CPU boost during VM startup"},
 			{Name: "mcp-task-migration-override", Group: "Rollout and health", Short: "allow this deployment to replace incompatible MCP task workers once"},
 			{Name: "no-triggers", Group: "Projects", Short: "skip gregale.yaml trigger and async-route changes"},
-			{Name: "wait", Group: "Confirmation and waiting", Short: "wait for deployment to become live (default)"},
+			{Name: "wait", Group: "Confirmation and waiting", Short: "wait for readiness; projects also wait for rollout and configuration (default)"},
 			{Name: "no-wait", Group: "Confirmation and waiting", Short: "return after deployment is queued"},
 			{Name: "create-only", Group: "Confirmation and waiting", Short: "create or reserve the app without uploading a deployment"},
 			{Name: "timeout", Group: "Confirmation and waiting", Short: "readiness wait limit; seconds or duration, e.g. 10m (default: 1200s; maximum: 24h)", Value: "DURATION"},
@@ -5555,7 +5580,7 @@ var cliCommands = []cliCommand{
 		Subcommands: []cliSub{
 			{Name: "list", Short: "List projects in this account"},
 			{Name: "info", Short: "Show a project and its workloads", Positionals: []string{"<slug>"}},
-			{Name: "environments", Aliases: []string{"envs"}, Short: "Manage project environments (list|create|protect|unprotect|inspect|release-sets|releases|qualify|preflight|history|config [set]|routes set|queues get|queues set|diff|preview|promote|status|rollback); qualify binds probes to release, config, and secret revisions", Subcommands: []cliSub{
+			{Name: "environments", Aliases: []string{"envs"}, Short: "Manage project environments (list|create|protect|unprotect|inspect|release-sets|releases|qualify|preflight|history|config [set]|routes set|queues get|queues set|diff|preview|promote|status|rollback|abort|recover); qualify binds probes to release, config, and secret revisions", Subcommands: []cliSub{
 				{Name: "list", Aliases: []string{"ls"}, Short: "List environments"},
 				{Name: "create", Short: "Create or clone an environment"},
 				{Name: "protect", Short: "Protect an environment"},
@@ -5641,6 +5666,11 @@ var cliCommands = []cliCommand{
 					{Name: "from", Short: "source environment (required unless interactive)", Value: "ENV"},
 					{Name: "to", Short: "target environment (required unless interactive)", Value: "ENV"},
 					{Name: "sync-config", Short: "copy source non-secret environment configuration to the target"},
+					{Name: "verify", Short: "require destination HTTP health (requires --sync-config)"},
+					{Name: "migrate", Short: "run one backward-compatible destination release command"},
+					{Name: "workers", Short: "promote production push workers together"},
+					{Name: "release-secrets-file", Short: "complete production secret snapshots by workload (requires --sync-config --verify --yes)", Value: "PATH"},
+					{Name: "release-secrets-request-id", Short: "replay the printed encrypted staging request", Value: "ID"},
 					{Name: "override-freeze", Short: "promote into production during a deploy freeze; the reason is audited", Value: "REASON"},
 					{Name: "yes", Short: "confirm the promotion"},
 					{Name: "idempotency-key", Short: "stable key for retrying this promotion", Value: "KEY"},
@@ -5650,6 +5680,8 @@ var cliCommands = []cliCommand{
 				}},
 				{Name: "status", Short: "Inspect a promotion"},
 				{Name: "rollback", Short: "Roll back a promotion"},
+				{Name: "abort", Short: "Abort a running promotion; after cutover qualify the baseline before restoration", Positionals: []string{"<project-slug>", "<promotion-id>"}, Flags: promotionControlCLIFlags()},
+				{Name: "recover", Short: "Retry a blocked restoration without rebuilding or extending retention", Positionals: []string{"<project-slug>", "<promotion-id>"}, Flags: promotionControlCLIFlags()},
 			}},
 			{Name: "update", Short: "Update repository or production branch", Positionals: []string{"<slug>"}, Flags: []cliFlag{
 				{Name: "repo", Short: "GitHub repository owner/name; empty unbinds", Value: "OWNER/NAME"},
