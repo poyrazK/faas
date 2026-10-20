@@ -39,6 +39,8 @@ type InvocationsRetention struct {
 	store state.Store
 	now   func() time.Time
 	log   *slog.Logger
+
+	operationTelemetry *OperationTelemetry // ADR-20261016123221; nil reads nothing
 }
 
 // deadlineBreachDetailsStore is implemented by the production stores. The
@@ -64,6 +66,13 @@ func NewInvocationsRetention(store state.Store, log *slog.Logger) *InvocationsRe
 		now:   time.Now,
 		log:   log,
 	}
+}
+
+// WithOperationTelemetry refreshes the Customer Operations gauges after each
+// sweep, so they read the state the sweep left (ADR-20261016123221).
+func (r *InvocationsRetention) WithOperationTelemetry(t *OperationTelemetry) *InvocationsRetention {
+	r.operationTelemetry = t
+	return r
 }
 
 // WithClock injects a frozen time source for tests. Same shape as
@@ -226,6 +235,11 @@ func (r *InvocationsRetention) SweepOnce(ctx context.Context) (int, int, error) 
 		if settled > 0 {
 			r.log.Info("operation deadline sweep", "settled", settled)
 		}
+	}
+	// Telemetry is best effort: a failed read keeps the last snapshot, whose
+	// refresh timestamp then shows its age.
+	if err := r.operationTelemetry.Refresh(ctx, r.now()); err != nil {
+		r.log.Warn("operation telemetry refresh failed", "err", err)
 	}
 	return retentionDeleted, deadlineForced, nil
 }

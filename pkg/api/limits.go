@@ -1204,9 +1204,9 @@ const (
 	OperationIdempotencyKeyMaxBytes                          = 128
 	OperationApprovalCommentMaxBytes                         = 1024 // ADR-1194 recorded with the decision
 	OperationApprovalBodyMaxBytes                            = 2048
-	OperationWebhookEventTypesMax                            = 32 // ADR-1193 event types one binding may admit
-	OperationWebhookReceiptCleanupBatch                      = 16 // expired receipts removed per admission
-	OperationWebhookBindingMaxBytes                          = 4096
+	OperationWebhookEventTypesMax                            = 32    // ADR-1193 event types one binding may admit
+	OperationWebhookReceiptCleanupBatch                      = 16    // expired receipts removed per admission
+	OperationWebhookBindingMaxBytes                          = 16384 // ADR-20261016100929 fits 32 signal mappings and a full subject pointer
 	OperationReportIDMaxBytes                                = 128
 	OperationRecoveryEvidenceMaxBytes                        = 4096
 	OperationEventsPageMax                                   = 100
@@ -1218,6 +1218,8 @@ const (
 	OperationHistoryCursorMaxBytes                           = 512
 	OperationTimelineLogDatesMax                             = 7   // archive days per attempt log window (ADR-1195)
 	OperationDeadlineSweepBatch                              = 100 // workflow Operations settled per deadline sweep (ADR-1196)
+	OperationTelemetryWindowSeconds                          = 900 // outcome window of the Operations gauges (ADR-20261016123221)
+	OperationDeadlineOverdueSeconds                          = 180 // three sweeps past a deadline counts as overdue (ADR-20261016123221)
 	OperationRetentionPageMax                                = 500
 	OperationDefinitionBodyMaxBytes                          = 160000
 	OperationReportBodyMaxBytes                              = 16384
@@ -1243,7 +1245,7 @@ const (
 	OperationPreviewPolicyMaxBytes                           = 64 << 10
 	OperationPreviewCohortsMax                               = 10
 	OperationPreviewTenantsPerCohortMax                      = 10
-	OperationPreviewWindowMax                                = time.Hour
+	OperationPreviewWindowMax                                = 30 * 24 * time.Hour // a pilot runs for weeks; still forces reauthorization (ADR-521)
 	OperationControlPollIntervalMS                           = 1000
 	OperationControlPollMinIntervalMS                        = 100
 	WorkflowStepDefaultTimeout                               = 30 * time.Second

@@ -12543,11 +12543,11 @@ Request cancellation at an observed generation
 
 Deliver a named event to a waiting operation, by ID or by business subject
 
-`gregale customer-operations signal --app <SLUG> [--timeout <D>] --event <NAME> --signal-id <ID> [--payload <JSON>] [--payload-file <PATH>] [--scope <SCOPE>] [--operation <NAME>] [--subject <TYPE:ID>] [<id>]`
+`gregale customer-operations signal [--app <SLUG>] [--timeout <D>] --event <NAME> --signal-id <ID> [--payload <JSON>] [--payload-file <PATH>] [--scope <SCOPE>] [--operation <NAME>] [--subject <TYPE:ID>] [--self] [--definition <UUID>] [<id>]`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--app <SLUG>` | owned application | required |
+| `--app <SLUG>` | owned application; omit with --self |  |
 | `--timeout <D>` | local request/wait deadline; work continues |  |
 | `--event <NAME>` | event the operation waits for | required |
 | `--signal-id <ID>` | stable idempotency key; repeat it to retry safely | required |
@@ -12556,6 +12556,8 @@ Deliver a named event to a waiting operation, by ID or by business subject
 | `--scope <SCOPE>` | environment, for a subject signal |  |
 | `--operation <NAME>` | operation name, for a subject signal |  |
 | `--subject <TYPE:ID>` | business subject, instead of an operation ID |  |
+| `--self` | signal the authenticated tenant&#39;s own operations (ADR-20261017100853) |  |
+| `--definition <UUID>` | operation definition, for a --self subject signal |  |
 
 ### customer-operations approve
 

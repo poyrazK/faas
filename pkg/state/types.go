@@ -4551,6 +4551,11 @@ type Invocation struct {
 	// ExclusiveClaim is short-lived schedd-to-gateway capability metadata. It
 	// is never stored in the invocation ledger or exposed by the customer API.
 	ExclusiveClaim *exclusivework.Claim `json:"-"`
+	// WorkflowOperation is set only by the gateway's workflow resolver, from
+	// the execution ledger, for a step of an Operation-linked run. gatewayd
+	// renders the guest's Operation headers from it; persisted envelopes and
+	// unlinked workflow steps can never assert them.
+	WorkflowOperation *WorkflowOperationStep `json:"-"`
 	// AdmissionMaxPending is the producer's per-app cap on pending work of
 	// this Source, enforced inside the enqueue transaction (0 = uncapped).
 	// It is admission input only, never persisted or customer-authored.
@@ -9500,4 +9505,15 @@ type UDPListener struct {
 	Enabled      bool
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
+}
+
+// WorkflowOperationStep is the ledger-derived identity of one Operation-linked
+// workflow step dispatch: what the guest needs to prove its step to apid.
+type WorkflowOperationStep struct {
+	OperationID string
+	RunID       string
+	StepName    string
+	Generation  int
+	Attempt     int
+	Capability  string
 }

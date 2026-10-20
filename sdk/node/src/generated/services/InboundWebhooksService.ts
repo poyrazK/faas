@@ -372,7 +372,7 @@ export class InboundWebhooksService {
     });
   }
   /**
-   * Route a verified endpoint to a customer operation (ADR-1193).
+   * Route a verified endpoint to a customer operation (ADR-1193, ADR-20261016100929).
    * One binding per endpoint, owned by the same app. The platform tenant is
    * the operation owner; it must be active and linked to the app through an
    * active tenant surface, and it is never derived from provider payload.
@@ -382,6 +382,14 @@ export class InboundWebhooksService {
    * take_over_delivery must be true. Automation and managed exclusive
    * operation bindings must be removed first. An empty event_types list
    * admits every verified event; other types are acknowledged as ignored.
+   *
+   * mode signal (ADR-20261016100929) starts nothing. Each event whose type a signals
+   * entry maps is delivered as that operation event to the platform
+   * tenant's active operations of the named definition whose subject
+   * matches subject.id_from in the provider payload, at most 16 per event.
+   * The subject type must equal the definition's subject type, the
+   * definition must be a workflow, and its live workflow must wait for
+   * every mapped event. event_types must be empty in this mode.
    *
    * @returns OperationWebhookBindingResponse Saved operation binding with its new revision.
    * @throws ApiError
@@ -397,11 +405,11 @@ export class InboundWebhooksService {
      */
     slug: string,
     /**
-     * Endpoint whose future verified events start a customer operation.
+     * Endpoint whose future verified events start or signal customer operations.
      */
     id: string,
     /**
-     * Explicit delivery takeover, operation, owner and event selection.
+     * Explicit delivery takeover, operation, owner, mode and event selection.
      */
     requestBody: PutOperationWebhookBindingRequest,
     /**
@@ -429,7 +437,7 @@ export class InboundWebhooksService {
         403: `The platform tenant is suspended.`,
         404: `code: not_found`,
         409: `Binding revision (operation_webhook_binding_conflict) or routing mode conflict (inbound_webhook_routing_conflict).`,
-        413: `Request body exceeds 4 KiB.`,
+        413: `Request body exceeds 16 KiB.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
@@ -444,7 +452,7 @@ export class InboundWebhooksService {
   }
   /**
    * Inspect an endpoint's customer operation binding.
-   * Returns the bound operation, owner, event selection and revision.
+   * Returns the bound operation, owner, mode, event selection and revision.
    * @returns OperationWebhookBindingResponse Current operation binding for this endpoint.
    * @throws ApiError
    */
@@ -457,7 +465,7 @@ export class InboundWebhooksService {
      */
     slug: string,
     /**
-     * Endpoint whose future verified events start a customer operation.
+     * Endpoint whose future verified events start or signal customer operations.
      */
     id: string,
   }): CancelablePromise<OperationWebhookBindingResponse> {
@@ -499,7 +507,7 @@ export class InboundWebhooksService {
      */
     slug: string,
     /**
-     * Endpoint whose future verified events start a customer operation.
+     * Endpoint whose future verified events start or signal customer operations.
      */
     id: string,
     /**
