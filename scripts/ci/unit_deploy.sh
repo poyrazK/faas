@@ -10,7 +10,8 @@
 #   unit_deploy.sh now                           print the gate host's clock (unix seconds)
 #   unit_deploy.sh gate PLAN DEPLOYED_AT KIND    run the SLO gate for the plan's units; KIND is
 #                                                canary or follower (scripts/ci/release_units.json "gates")
-#   unit_deploy.sh rollback PLAN STAGE           put the plan's services back on the previous release
+#   unit_deploy.sh rollback PLAN STAGE           put the plan's services back on the release that was
+#                                                active before the plan's
 #   unit_deploy.sh cleanup STAGE                 remove the stage dir
 #
 # The control plane's host-configuration step
@@ -163,7 +164,7 @@ cmd_script() {
     # A plan that only applies migrations restarts and verifies no unit.
     if [[ -n "$specs" ]]; then
       echo "if ! bash ${stage}/unit-release-verify.sh ${release_dir}${specs}; then"
-      echo "  ${stage}/bin/deployctl rollback --only '${only}'"
+      echo "  ${stage}/bin/deployctl rollback --only '${only}' $(rollback_flags "$plan")"
       # Put optional units back on the release now active, too.
       echo "  bash ${stage}/unit-release-verify.sh \"\$(readlink -f /opt/faas/current)\"${specs} || true"
       echo '  exit 1'
@@ -241,9 +242,29 @@ REMOTE
   return "$status"
 }
 
+# rollback_flags PLAN: the deployctl rollback flags that put the plan's
+# services back on the release that was active before it. A deploy plan names
+# that release (expect_current); deployctl then refuses unless the plan's own
+# release is still the active one. A converge plan reruns the release already
+# active, so deployctl takes the release its activation history records before
+# it. Directory times are not a rollback target: after deploy A, roll back,
+# deploy B, the newest directory is A, which the first rollback had removed.
+rollback_flags() {
+  local plan="$1" release_id expect
+  release_id="$(plan_field "$plan" .release_id)"
+  expect="$(plan_field "$plan" .expect_current)"
+  [[ "$release_id" =~ ^[0-9a-f]{40}$ && "$expect" =~ ^[0-9a-f]{40}$ ]] || die "plan release ids must be 40 hex: $release_id, $expect"
+  if [[ "$release_id" == "$expect" ]]; then
+    printf -- '--expect-current %s' "$release_id"
+  else
+    printf -- '--expect-current %s --to %s' "$release_id" "$expect"
+  fi
+}
+
 cmd_rollback() {
-  local plan="$1" stage="$2" only specs="" script
+  local plan="$1" stage="$2" only specs="" script flags
   only="$(jq -r '.only | join(",")' "$plan")"
+  flags="$(rollback_flags "$plan")"
   [[ -z "$only" || "$only" =~ ^[a-z0-9,-]+$ ]] || die "plan services must be daemon names: $only"
   [[ "$stage" =~ ^/var/tmp/gregale-units\.[A-Za-z0-9]+$ ]] || die "stage must be a /var/tmp/gregale-units dir: $stage"
   while read -r spec; do
@@ -253,7 +274,7 @@ cmd_rollback() {
   {
     echo 'set -euo pipefail'
     # The staged deployctl: a full release on a compute host ships none.
-    echo "${stage}/bin/deployctl rollback --only '${only}'"
+    echo "${stage}/bin/deployctl rollback --only '${only}' ${flags}"
     [[ -z "$specs" ]] || echo "bash ${stage}/unit-release-verify.sh \"\$(readlink -f /opt/faas/current)\"${specs}"
   } > "$script"
   cmd_run "$script"
