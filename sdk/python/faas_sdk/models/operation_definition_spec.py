@@ -59,7 +59,8 @@ class OperationDefinitionSpec:
     named approver."""
     limits: OperationLimits | Unset = UNSET
     """ADR-1196 bounds fixed onto each accepted Operation. Every field is optional and bounded by the plan;
-    workflow definitions take a deadline and an execution budget (ADR-20261016110803), and job definitions take none."""
+    workflow definitions take a deadline and an execution budget (ADR-20261016110803), and job definitions take
+    none."""
     milestones: OperationDefinitionSpecMilestones | Unset = UNSET
     """Declared public milestone names mapped to bundled JSON Schemas. Requires http_transaction_version 1. At most
     16 names, with an aggregate 16384 schema bytes."""
