@@ -1,6 +1,6 @@
 # ADR 20261020214632 · Safety rails for automatic per-unit deploys
 
-- **Status:** proposed
+- **Status:** accepted by the owner, 2026-10-20 (merge queue: keep the fallback; the repository stays user-owned)
 - **Date:** 2026-10-20
 - **Related:** ADR-1650 (per-unit releases), ADR-1736 (zero-downtime
   restarts and the two-generation hand-off), ADR 202610171900 (release
