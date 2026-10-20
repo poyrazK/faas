@@ -270,7 +270,7 @@ type ServiceProxyRequestAttemptObserver func(runID, callerAppID, generation stri
 // small handler factory so selection and retry behavior can be exercised
 // without a live gRPC server.
 type ServiceProxyConfig struct {
-	AuthorizeBound            ServiceProxyAuthorizer
+	AuthorizeBound ServiceProxyAuthorizer
 	// AdmitRuntime checks current budget holds after selecting the runtime.
 	AdmitRuntime              func(context.Context, string, string) error
 	AdmitManagedAsync         ServiceProxyAsyncAdmitter
