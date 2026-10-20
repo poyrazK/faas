@@ -31,9 +31,32 @@ var (
 	keysRefresh  = flag.Duration("keys-refresh", 0, "how often to read the live keys (default 5s); revocations apply within it")
 )
 
-// watchKeys starts reading the database's live keys from the control plane.
-// The returned function closes the control-plane pool.
-func watchKeys(ctx context.Context, hub *liveserver.Hub, log *slog.Logger) (func(), error) {
+// keySource reads the databases' live keys from the control plane; each
+// hub watches its own database's (liveserver.WatchKeys).
+type keySource struct {
+	ring       liveserver.KeySource
+	identities []*age.X25519Identity
+	pool       *pgxpool.Pool
+}
+
+// Close closes the control-plane pool. A nil source has none.
+func (k *keySource) Close() {
+	if k != nil {
+		k.pool.Close()
+	}
+}
+
+// watch keeps hub's key ring current until ctx ends.
+func (k *keySource) watch(ctx context.Context, hub *liveserver.Hub, log *slog.Logger) {
+	liveserver.WatchKeys(ctx, hub, k.ring, k.identities, *keysRefresh, log)
+}
+
+// openKeySource connects to the control plane named by -keys-dsn-file, or
+// returns nil without -keys-*.
+func openKeySource(ctx context.Context) (*keySource, error) {
+	if *keysDSNFile == "" && *keysIdentity == "" {
+		return nil, nil
+	}
 	if *keysDSNFile == "" || *keysIdentity == "" {
 		return nil, errors.New("livequeryd: -keys-dsn-file and -keys-identity go together")
 	}
@@ -56,16 +79,18 @@ func watchKeys(ctx context.Context, hub *liveserver.Hub, log *slog.Logger) (func
 	if err != nil {
 		return nil, fmt.Errorf("livequeryd: control-plane pool: %w", err)
 	}
-	go liveserver.WatchKeys(ctx, hub, livekeys.New(pool).Ring, []*age.X25519Identity{identity}, *keysRefresh, log)
-	return pool.Close, nil
+	return &keySource{ring: livekeys.New(pool).Ring, identities: []*age.X25519Identity{identity}, pool: pool}, nil
 }
 
 // serveRealtimed serves live frames to realtimed. It accepts no browser
 // origins: browsers reach live queries through realtimed.
-func serveRealtimed(hub *liveserver.Hub, log *slog.Logger) (*http.Server, error) {
+func serveRealtimed(routes *routes, log *slog.Logger) (*http.Server, error) {
 	// RLS-mode claims are believed only from a peer whose client
 	// certificate -client-ca verified: realtimed.
-	mux := realtimedMux(*databaseID, liveserver.WebSocketTrusting(hub, func(r *http.Request) bool { return r.Header.Get("Origin") == "" }, liveserver.VerifiedPeer))
+	noBrowser := func(r *http.Request) bool { return r.Header.Get("Origin") == "" }
+	mux := realtimedMux(routes, func(h *liveserver.Hub) http.Handler {
+		return liveserver.WebSocketTrusting(h, noBrowser, liveserver.VerifiedPeer)
+	})
 	if *tlsCert == "" {
 		if *clientCA != "" || *tlsKey != "" {
 			return nil, errors.New("livequeryd: -tls-key and -client-ca need -tls-cert")
@@ -119,18 +144,22 @@ func realtimedTLS(certFile, keyFile, caFile, name string) (*tls.Config, error) {
 	return conf, nil
 }
 
-// realtimedMux serves live at /live and at /<database>/live, so a backend's
-// live_hub_url may name the database ({database_id}) in its path. Another
-// database's path is not found.
-func realtimedMux(database string, live http.Handler) *http.ServeMux {
+// realtimedMux serves each database's live frames at /<database>/live, the
+// path a backend's live_hub_url names with {database_id}. A process serving
+// one database also answers at /live. A database it does not serve is not
+// found; one whose hub is starting answers 503 and realtimed retries.
+func realtimedMux(routes *routes, live func(*liveserver.Hub) http.Handler) *http.ServeMux {
 	mux := http.NewServeMux()
-	mux.Handle("/live", live)
-	mux.HandleFunc("/{database}/live", func(w http.ResponseWriter, r *http.Request) {
-		if r.PathValue("database") != database {
+	mux.HandleFunc("/live", func(w http.ResponseWriter, r *http.Request) {
+		id, ok := routes.only()
+		if !ok {
 			http.NotFound(w, r)
 			return
 		}
-		live.ServeHTTP(w, r)
+		routes.serve(w, r, id, live)
+	})
+	mux.HandleFunc("/{database}/live", func(w http.ResponseWriter, r *http.Request) {
+		routes.serve(w, r, r.PathValue("database"), live)
 	})
 	return mux
 }
