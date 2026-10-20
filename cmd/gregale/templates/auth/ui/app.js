@@ -364,6 +364,14 @@ export function secondFactors(user) {
   return { factors: verified.filter(factor => factor.factor_type === 'totp' || factor.factor_type === 'phone'), recovery: verified.some(factor => factor.factor_type === 'recovery_code') }
 }
 
+// joinedMessage confirms an accepted invitation. An organization that
+// requires a second factor (sql/0016) is usable only from an aal2 session.
+export function joinedMessage(membership, aal) {
+  const joined = `You joined as ${membership.role}.`
+  if (!membership.mfa_required || aal === 'aal2') return joined
+  return `${joined} This organization requires two-step verification: add a second step to your account, then sign in again, before you use it.`
+}
+
 // completeSignIn asks a user with a verified second factor to complete it
 // after any first-factor sign-in on these pages, so the session handed to
 // the application is aal2; then finish(session) runs.
@@ -534,8 +542,15 @@ async function main() {
         const session = await protect({ email, password }, body => request('POST', '/auth/v1/token?grant_type=password', { body }))
         const membership = await request('POST', '/authz/v1/invitations/accept', { token: session.access_token, body: { token: invitation } })
         sessionStorage.removeItem('gregale.invitation')
-        say(`You joined as ${membership.role}.`)
-        root.append(el('a', { class: 'button', href: handoffURL(config.site_url, session) }, `Continue to ${config.app}`))
+        // Like every sign-in here, a user with a second factor confirms it,
+        // so the session handed over can use an organization requiring one.
+        await completeSignIn(root, session, verified => {
+          render(root, `Join an organization on ${config.app}`)
+          const joined = status(root)
+          joined(joinedMessage(membership, tokenAAL(verified.access_token)))
+          if (membership.mfa_required && tokenAAL(verified.access_token) !== 'aal2') root.append(links([`/ui/account?redirect_to=${encodeURIComponent(config.site_url)}`, 'Add a second step on your account page']))
+          root.append(el('a', { class: 'button', href: handoffURL(config.site_url, verified) }, `Continue to ${config.app}`))
+        })
       } catch (err) { say(err.message) }
     }, 'Sign in and accept', field('Email', 'email', 'email', 'username'), field('Password', 'password', 'password', 'current-password')))
     root.append(links([`/ui/sign-up?redirect_to=${encodeURIComponent(location.origin + '/ui/invitation')}`, 'No account yet? Create one, then reopen this page']))
@@ -674,7 +689,7 @@ async function account(root, config, query) {
     async refresh() {
       let user
       try { user = await ctx.call('GET', '/auth/v1/user') } catch (err) { return say(err.message) }
-      const parts = await Promise.all([profileSection(ctx, user), mfaSection(ctx, user), passkeysSection(ctx), identitiesSection(ctx, user), connectedAppsSection(ctx), sessionsSection(ctx), deletionSection(ctx, root)]
+      const parts = await Promise.all([profileSection(ctx, user), mfaSection(ctx, user), passkeysSection(ctx), identitiesSection(ctx, user), connectedAppsSection(ctx), joinableSection(ctx), sessionsSection(ctx), deletionSection(ctx, root)]
         .map(part => Promise.resolve(part).catch(err => { say(err.message); return null })))
       area.replaceChildren(...parts.filter(Boolean))
     },
@@ -797,6 +812,21 @@ async function connectedAppsSection(ctx) {
   const list = grants.map(grant => row(`${grant.client?.name || 'An application'}, allowed ${when(grant.granted_at)}`,
     confirmButton('Revoke', () => ctx.act(async () => { await ctx.call('DELETE', `/auth/v1/user/oauth/grants?client_id=${encodeURIComponent(grant.client.id)}`); await ctx.refresh() }))))
   return section('Connected apps', ...(list.length ? list : [el('p', {}, 'No other apps can use your account.')]))
+}
+
+// joinableSection offers the organization that verified the person's email
+// domain and lets people at it join (sql/0017).
+async function joinableSection(ctx) {
+  if (ctx.options.organization_domains?.joining !== true) return null
+  const { organizations } = await ctx.call('GET', '/authz/v1/suggested-organizations')
+  if (!organizations.length) return null
+  return section('Organizations you can join', el('p', {}, 'Your organization verified your email domain, so you can join it.'),
+    ...organizations.map(org => row(`${org.name} (${org.domain}), as ${org.role}`,
+      el('button', { type: 'button', class: 'secondary', on: { click: () => ctx.act(async () => {
+        await ctx.call('POST', `/authz/v1/orgs/${encodeURIComponent(org.id)}/join`, {})
+        await ctx.refresh()
+        ctx.say(`You joined ${org.name}.`)
+      }) } }, 'Join'))))
 }
 
 async function sessionsSection(ctx) {
