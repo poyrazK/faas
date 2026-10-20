@@ -1,5 +1,6 @@
 # Architecture Decision Records
 
+- [Guests reach only the bridge services and the public edge on the host](20261020120000-tenant-bridge-host-input-narrowed.md)
 - [DNS proof takes over another account's pending hostname claim](20261020090000-dns-proof-takes-over-pending-claims.md)
 - [Finished invocations without a horizon get the plan default retention](20261019104819-invocation-default-retention.md)
 - [Compose build arguments and target stage for Dockerfile builds](20261019142544-compose-build-args-and-target.md)
