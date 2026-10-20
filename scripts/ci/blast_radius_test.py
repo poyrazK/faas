@@ -71,6 +71,19 @@ class CandidatesTest(unittest.TestCase):
                                "vmmd": ["Makefile (release build recipe)"]})
 
 
+class DaemonTagsTest(unittest.TestCase):
+    def test_daemon_tags(self):
+        self.assertEqual(br.daemon_tags("DAEMONS := a b\n"), ["metal"])
+        self.assertEqual(br.daemon_tags("DAEMON_TAGS := metal,grpcnotrace\n"), ["metal", "grpcnotrace"])
+
+    def test_repository_daemon_tags_are_what_the_recipe_uses(self):
+        makefile = (REPO / "Makefile").read_text(encoding="utf-8")
+        tags = br.daemon_tags(makefile)
+        self.assertIn("metal", tags)
+        if "DAEMON_TAGS :=" in makefile:
+            self.assertNotIn("-tags metal", au.build_recipe(makefile))
+
+
 class CompareTest(unittest.TestCase):
     def test_compare(self):
         base = {"a": ("f1", "c1"), "b": ("f2", "c2"), "l": ("f3", "c3"), "gone": ("f4", "c4")}
@@ -146,7 +159,7 @@ class RepositoryContractTest(unittest.TestCase):
         recipe = au.build_recipe(makefile)
         self.assertEqual(au.makefile_list(makefile, "GO_BUILD_FLAGS"), ["-trimpath", "-buildvcs=false"])
         self.assertIn("BUILD_CGO_ENABLED ?= 0", recipe)
-        self.assertRegex(recipe, r"\$\(GO_BUILD_FLAGS\) -tags metal \\\n\s+-ldflags '\$\(LDFLAGS\) -s -w' "
+        self.assertRegex(recipe, r"\$\(GO_BUILD_FLAGS\) -tags (metal|\$\(DAEMON_TAGS\)) \\\n\s+-ldflags '\$\(LDFLAGS\) -s -w' "
                                  r"-o \$\(BINDIR\)/ \$\(addprefix \./cmd/,\$\(DAEMONS\)\)")
         self.assertRegex(recipe, r"\$\(GO_BUILD_FLAGS\) \\\n\s+-ldflags '\$\(LDFLAGS\) -s -w' "
                                  r"-o \$\(BINDIR\)/ \$\(addprefix \./cmd/,\$\(CLIS\)\)")

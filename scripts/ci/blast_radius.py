@@ -38,6 +38,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shutil
 import struct
 import subprocess
@@ -58,6 +59,13 @@ REASON_LIMIT = 3
 # binary whose other sections are identical runs the same code; only its
 # stack traces (and slog source positions) differ.
 LINE_TABLE = ".gopclntab"
+
+
+def daemon_tags(makefile):
+    """The build tags release builds give daemons: the Makefile's DAEMON_TAGS
+    (comma-separated) when it names them, else metal."""
+    m = re.search(r"^DAEMON_TAGS\s*:=\s*(\S+)\s*$", makefile, re.M)
+    return m.group(1).split(",") if m else ["metal"]
 
 
 def export_tree(sha, dest, root="."):
@@ -81,6 +89,7 @@ class Tree:
         self.daemons = au.makefile_list(makefile, "DAEMONS")
         self.clis = au.makefile_list(makefile, "CLIS")
         self.flags = au.makefile_list(makefile, "GO_BUILD_FLAGS")
+        self.daemon_tags = daemon_tags(makefile)
         self.module = au.module_path(path)
         self.files = set(au.git("ls-tree", "-r", "--name-only", sha, root=root).splitlines())
         self.closures = {}
@@ -96,7 +105,7 @@ class Tree:
                 self.closures[n] = au.closure(f"{self.module}/cmd/{n}", graph)
 
     def tags(self, name):
-        return (["metal"] if name in self.daemons else []) + self.extra_tags
+        return (self.daemon_tags if name in self.daemons else []) + self.extra_tags
 
 
 def candidates(paths, base, head, global_inputs):
