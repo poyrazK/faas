@@ -1942,7 +1942,7 @@ Connect, show, or disconnect a Stripe, Paddle or Lago key for statement invoice 
 | Flag | Meaning | |
 |---|---|---|
 | `--api-url <URL>` | Lago API URL for the EU region or a self-hosted Lago (connect; default https://api.getlago.com) |  |
-| `--collection <MODE>` | what the provider does with exported invoices: none leaves drafts, send emails them (Stripe), charge charges the saved payment method (Stripe, Lago) (connect; default none) | one of `none` · `send` · `charge` |
+| `--collection <MODE>` | what the provider does with exported invoices: none leaves drafts, send emails them (Stripe) or bills customers that have an address (Paddle), charge charges the saved payment method (Stripe, Lago) (connect; default none) | one of `none` · `send` · `charge` |
 | `--days-until-due <N>` | days until a sent invoice is due (connect --collection send; default 30) |  |
 | `--automatic-tax` | have Stripe Tax calculate tax on exported invoices; needs Stripe Tax and customer addresses (connect; Stripe only) |  |
 
