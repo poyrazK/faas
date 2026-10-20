@@ -1,7 +1,8 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"net/http"
 	"strings"
@@ -22,8 +23,8 @@ func TestAutomationRecoverySuppress(t *testing.T) {
 		}
 		_ = json.NewEncoder(w).Encode(api.WorkflowRecoveryAutomaticAction{ActionID: action, Status: "suppressed", Reason: "operator_suppressed", Suppression: &api.WorkflowRecoveryAutomaticSuppression{Reason: req.Reason, ActorKind: "api_key", ActorID: "operator", SuppressedAt: time.Now().UTC()}})
 	})
-	out := captureAutomationStdout(t)
-	if code := cmdAutomationsRecoverySuppress([]string{"--app", "consumer", "--review", review, "--action", action, "--policy-version", "4", "--reason", "handled externally"}); code != 0 {
+	out := main.CaptureAutomationStdout(t)
+	if code := main.CmdAutomationsRecoverySuppress([]string{"--app", "consumer", "--review", review, "--action", action, "--policy-version", "4", "--reason", "handled externally"}); code != 0 {
 		t.Fatalf("code %d", code)
 	}
 	for _, want := range []string{"operator_suppressed", "handled externally", "Suppressed by api_key operator"} {

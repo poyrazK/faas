@@ -34,8 +34,8 @@ die() {
 # debugfs + mkfs.ext4 back imaged's ext4 assembly, tc the per-instance rate
 # limits, nft/iptables the tenant egress policy, gcc the race detector
 # (-race needs cgo), and pg_isready/psql the Postgres pre-flight below.
-for tool in debugfs e2fsck firecracker flock gcc ip iptables jailer make \
-  mkfs.ext4 nft pg_isready psql readlink systemctl systemd-run tar tc \
+for tool in debugfs e2fsck ethtool firecracker flock gcc ip iptables jailer make \
+  mkfs.ext4 nft pg_isready psql python3 readlink systemctl systemd-run tar tc \
   truncate; do
   command -v "${tool}" >/dev/null || die "required host tool is missing: ${tool}"
 done
@@ -64,6 +64,8 @@ fi
 stage_root="/srv/fc/acceptance/e2e-${FAAS_E2E_SOURCE_SHA}-${run_id}"
 guest_init="${stage_root}/faas-guest-init"
 active_services="${stage_root}/active-services"
+financial_provider_rc=125
+financial_native_rc=125
 cache_root="/var/cache/faas-native-e2e"
 # The suite drives the platform through its own per-test sockets, ports and
 # Postgres schema, but vmmd, jailer, cgroups, netns and the tenant IP leases
@@ -198,6 +200,7 @@ mkdir -p "${stage_root}" "${cache_root}/go-build" "${cache_root}/go-mod" \
 cleanup() {
   local rc=$?
   local restore_failed=0
+  local leakcheck_rc=0
   trap - EXIT HUP INT TERM
   set +e
 
@@ -205,7 +208,9 @@ cleanup() {
   # clean. Reaping afterwards would make it permanently unable to fail.
   reap_test_microvms
 
-  if ! bash "${repo_root}/deploy/scripts/leakcheck.sh"; then
+  bash "${repo_root}/deploy/scripts/leakcheck.sh"
+  leakcheck_rc=$?
+  if [[ "${leakcheck_rc}" -ne 0 ]]; then
     echo "native e2e: final leak check failed" >&2
     [[ "${rc}" -ne 0 ]] || rc=1
   fi
@@ -220,6 +225,24 @@ cleanup() {
   if [[ "${restore_failed}" -ne 0 ]]; then
     [[ "${rc}" -ne 0 ]] || rc=1
   fi
+
+  # Only the dedicated cost lane claims full-daemon financial acceptance.
+  # Write its verdict after cleanup/restoration so test success alone cannot
+  # qualify a run that left native resources or services in a failed state.
+  case "${FAAS_E2E_PHASE:-}" in
+    financial|financial-system)
+      python3 "${repo_root}/scripts/ci/financial-system-verdict.py" \
+        --root "${repo_root}" --source-sha "${FAAS_E2E_SOURCE_SHA}" --run-id "${run_id}" \
+        --native-log "${e2e_log:-${transfer_root:-/var/tmp}/cmd-e2e-financial-system.log}" \
+        --native-exit "${financial_native_rc}" \
+        --provider-log "${transfer_root:-/var/tmp}/financial-system-provider.log" \
+        --provider-exit "${financial_provider_rc}" \
+        --leakcheck-exit "${leakcheck_rc}" --restore-exit "${restore_failed}" --runner-exit "${rc}" \
+        --binary-root "${stage_root}/bin" --guest-init "${guest_init}" --kernel "${kernel}" \
+        --output "${transfer_root:-/var/tmp}/financial-system-verdict-${run_id}.json"
+      if [[ "$?" -ne 0 ]]; then rc=1; fi
+      ;;
+  esac
 
   # In phase mode these are SHARED with the phases that follow: the transfer
   # root holds the source tree and the pinned Go toolchain, and the stage root
@@ -444,7 +467,9 @@ if [[ -n "${phase}" ]]; then
     managed-operation-only) phase_timeout=35m ;;
     customer-job-operations-only) phase_timeout=35m ;;
     customer-workflow-operations-only) phase_timeout=35m ;;
-    # Includes native workflow Operations image/guest/recovery scenarios.
+    customer-http-operations-only) phase_timeout=35m ;;
+    financial|financial-system) phase_timeout=35m ;;
+    # Includes native workflow and HTTP Operations image/guest/recovery scenarios.
     wake) phase_timeout=30m ;;
     twonode) phase_timeout=25m ;;
     *) phase_timeout=15m ;;
@@ -474,6 +499,22 @@ fi
 export FAAS_E2E_BIN_DIR="${stage_root}/bin"
 mkdir -p "${FAAS_E2E_BIN_DIR}"
 
+case "${phase}" in
+  financial|financial-system)
+    [[ -z "${FAAS_SKIP_PG_TESTS:-}" ]] || die "financial acceptance rejects FAAS_SKIP_PG_TESTS"
+    export FAAS_FINANCIAL_SYSTEM_ACCEPTANCE=1
+    export FAAS_FINANCIAL_EVIDENCE_DIR="${transfer_root:-/var/tmp}/financial-system-records"
+    # A real meterd child drives a loopback-only Polar contract fixture. The
+    # test validates clone/schema isolation before starting the child.
+    set +e
+    "${FAAS_E2E_GO}" test -race -p=1 -count=1 -timeout=15m -v \
+      ./pkg/e2etest/financialfixture 2>&1 | \
+      tee "${transfer_root:-/var/tmp}/financial-system-provider.log"
+    financial_provider_rc="${PIPESTATUS[0]}"
+    set -e
+    ;;
+esac
+
 # Distinct from the transient unit's own native-e2e.log: the unit already
 # appends this script's stdout there, and tee-ing into the same file would
 # interleave every line with itself and corrupt the tally greps below.
@@ -482,6 +523,12 @@ make GO="${FAAS_E2E_GO}" PKGS=./cmd/e2e/... \
   RUN_ARGS="-timeout=${phase_timeout} -v" test-metal 2>&1 | tee "${e2e_log}"
 e2e_rc="${PIPESTATUS[0]}"
 set -e
+case "${phase}" in
+  financial|financial-system)
+    financial_native_rc="${e2e_rc}"
+    if [[ "${financial_provider_rc}" -ne 0 ]]; then e2e_rc=1; fi
+    ;;
+esac
 
 # Tally + required-test contract. The rules live in native-e2e-verdict.sh so
 # run-native-e2e_test.sh can drive them with synthetic go-test output instead

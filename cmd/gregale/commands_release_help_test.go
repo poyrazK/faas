@@ -1,7 +1,8 @@
-package main
+package main_test
 
 import (
 	"bytes"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"strings"
 	"testing"
 )
@@ -40,13 +41,13 @@ func TestReleaseManagementHelpPaths(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			resetJSONOut(t)
+			main.ResetJSONOut(t)
 			var stdout, stderr bytes.Buffer
-			oldOut, oldErr := osStdout, osStderr
-			osStdout, osStderr = &stdout, &stderr
-			t.Cleanup(func() { osStdout, osStderr = oldOut, oldErr })
+			oldOut, oldErr := (*main.OsStdout), (*main.OsStderr)
+			(*main.OsStdout), (*main.OsStderr) = &stdout, &stderr
+			t.Cleanup(func() { (*main.OsStdout), (*main.OsStderr) = oldOut, oldErr })
 
-			if code := run(tc.args); code != 0 {
+			if code := main.Run(tc.args); code != 0 {
 				t.Fatalf("run(%q) = %d, want 0; stdout=%q stderr=%q", tc.args, code, stdout.String(), stderr.String())
 			}
 			if !strings.Contains(stdout.String(), tc.wantUsage) {

@@ -461,8 +461,9 @@ SELECT id::text FROM customer_operations
 WHERE account_id=$1::uuid AND app_id=$2::uuid AND record ? 'subject'
   AND record #>> '{subject,type}' = $3::text AND record #>> '{subject,id}' = $4::text
   AND record->>'scope' = $5::text AND record->>'name' = $6::text
+  AND ($7::uuid IS NULL OR platform_tenant_id = $7::uuid)
   AND state IN ('accepted','running','waiting')
-ORDER BY created_at,id LIMIT $7::integer
+ORDER BY created_at,id LIMIT $8::integer
 `
 
 type ActiveCustomerOperationsForSubjectParams struct {
@@ -472,6 +473,7 @@ type ActiveCustomerOperationsForSubjectParams struct {
 	SubjectID   string
 	Scope       string
 	Name        string
+	TenantID    pgtype.UUID
 	PageLimit   int32
 }
 
@@ -485,6 +487,7 @@ func (q *Queries) ActiveCustomerOperationsForSubject(ctx context.Context, db DBT
 		arg.SubjectID,
 		arg.Scope,
 		arg.Name,
+		arg.TenantID,
 		arg.PageLimit,
 	)
 	if err != nil {
@@ -1555,7 +1558,9 @@ SELECT max(boundary.changed_at)::timestamptz AS changed_at FROM (
     SELECT changed_at FROM app_runtime_config_changes WHERE app_id = $1::uuid
     UNION ALL
     SELECT changed_at FROM app_runtime_config_scope_changes WHERE app_id = $1::uuid
-        AND scope IN ('default', $2::text)
+        AND (scope IN ('default', $2::text)
+            -- ADR-1136: default-scope deployments read production's project configuration.
+            OR ($2::text = 'default' AND scope = 'default:project-config'))
 ) AS boundary
 `
 
@@ -5509,6 +5514,7 @@ WITH candidate AS (
  SELECT task.id FROM app_tasks task JOIN apps app ON app.id=task.app_id
  WHERE task.status='queued' AND task.cancel_requested_at IS NULL
  AND app.managed_postgres_admission_cutover_id IS NULL
+ AND NOT financial_app_command_held(task.app_id,task.deployment_id,$3::timestamptz)
  AND task.created_at<=$3::timestamptz
  AND (task.retry_at IS NULL OR task.retry_at<=$3)
  AND (task.start_deadline_at IS NULL OR task.start_deadline_at>=$3
@@ -7130,6 +7136,8 @@ SELECT
  OR EXISTS(SELECT 1 FROM deployment_runtime_environment_owners p WHERE p.environment_id::text=($3::uuid)::text)
  OR EXISTS(SELECT 1 FROM environment_management_overrides p WHERE p.environment_id::text=($3::uuid)::text)
  OR EXISTS(SELECT 1 FROM exclusive_work_keys p WHERE p.environment_id::text=($3::uuid)::text)
+ OR EXISTS(SELECT 1 FROM financial_budget_stop_targets p WHERE p.environment_id=($3::uuid)::text AND p.state IN ('requested', 'draining'))
+ OR EXISTS(SELECT 1 FROM financial_preview_command_runtimes p WHERE p.environment_id::text=($3::uuid)::text AND p.phase <> 'retired')
  OR EXISTS(SELECT 1 FROM queue_bindings p WHERE p.environment_id::text=($3::uuid)::text OR (p.app_id IN (SELECT id FROM scoped_apps) AND p.deployment_scope=$1::text))
  OR EXISTS(SELECT 1 FROM triggers p WHERE p.queue_binding_environment_id=$3::uuid OR (p.app_id IN (SELECT id FROM scoped_apps) AND p.queue_binding_scope=$1::text))
  OR EXISTS(SELECT 1 FROM runtime_instance_config_proofs p JOIN instances i ON i.id=p.instance_id WHERE p.environment_id::text=($3::uuid)::text OR (i.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$1::text))
@@ -11330,6 +11338,51 @@ func (q *Queries) CustomerOperationAccountPlan(ctx context.Context, db DBTX, acc
 	return plan, err
 }
 
+const customerOperationActiveTelemetry = `-- name: CustomerOperationActiveTelemetry :many
+SELECT state, coalesce(record #>> '{waiting,kind}', '')::text AS wait_kind, count(*)::bigint AS operations,
+       min((record ->> 'updated_at')::timestamptz)::timestamptz AS oldest_update,
+       (count(*) FILTER (WHERE state IN ('accepted', 'running', 'waiting') AND deadline_at < $1::timestamptz))::bigint AS overdue
+FROM customer_operations
+WHERE state IN ('accepted', 'running', 'waiting', 'requires_reconciliation')
+GROUP BY state, wait_kind
+`
+
+type CustomerOperationActiveTelemetryRow struct {
+	State        string
+	WaitKind     string
+	Operations   int64
+	OldestUpdate pgtype.Timestamptz
+	Overdue      int64
+}
+
+// ADR-20261016123221: fleet-wide pending Operations by state and wait kind, read
+// through the partial index of pending Operations.
+func (q *Queries) CustomerOperationActiveTelemetry(ctx context.Context, db DBTX, overdueBefore pgtype.Timestamptz) ([]CustomerOperationActiveTelemetryRow, error) {
+	rows, err := db.Query(ctx, customerOperationActiveTelemetry, overdueBefore)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []CustomerOperationActiveTelemetryRow{}
+	for rows.Next() {
+		var i CustomerOperationActiveTelemetryRow
+		if err := rows.Scan(
+			&i.State,
+			&i.WaitKind,
+			&i.Operations,
+			&i.OldestUpdate,
+			&i.Overdue,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const customerOperationBlobByKey = `-- name: CustomerOperationBlobByKey :one
 SELECT id, operation_id, account_id, generation, execution_id, attempt, report_id, fingerprint, storage_key, size_bytes, state, expires_at, next_attempt_at, lease_token, lease_until, workflow_run_id, workflow_step, job_run_id FROM customer_operation_result_blobs WHERE storage_key = $1::text
 `
@@ -11631,6 +11684,56 @@ func (q *Queries) CustomerOperationJobSnapshotRetained(ctx context.Context, db D
 	return exists, err
 }
 
+const customerOperationOutcomeTelemetry = `-- name: CustomerOperationOutcomeTelemetry :many
+SELECT event_type, coalesce(data ->> 'failure_code', '')::text AS failure_code, count(*)::bigint AS operations
+FROM customer_operation_events
+WHERE event_type IN ('succeeded', 'failed', 'cancelled', 'reconciliation_required') AND created_at >= $1::timestamptz
+GROUP BY event_type, failure_code
+`
+
+type CustomerOperationOutcomeTelemetryRow struct {
+	EventType   string
+	FailureCode string
+	Operations  int64
+}
+
+// ADR-20261016123221: Operation outcomes since a point, by failure code.
+func (q *Queries) CustomerOperationOutcomeTelemetry(ctx context.Context, db DBTX, since pgtype.Timestamptz) ([]CustomerOperationOutcomeTelemetryRow, error) {
+	rows, err := db.Query(ctx, customerOperationOutcomeTelemetry, since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []CustomerOperationOutcomeTelemetryRow{}
+	for rows.Next() {
+		var i CustomerOperationOutcomeTelemetryRow
+		if err := rows.Scan(&i.EventType, &i.FailureCode, &i.Operations); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const customerOperationOutcomeUnknownAccounts = `-- name: CustomerOperationOutcomeUnknownAccounts :one
+SELECT count(DISTINCT o.account_id)::bigint
+FROM customer_operation_events e
+JOIN customer_operations o ON o.id = e.operation_id
+WHERE e.event_type IN ('succeeded', 'failed', 'cancelled', 'reconciliation_required') AND e.event_type = 'reconciliation_required'
+  AND e.data ->> 'failure_code' = 'execution_outcome_unknown' AND e.created_at >= $1::timestamptz
+`
+
+// ADR-20261016123221: accounts whose attempts ended with an unknown outcome since a point.
+func (q *Queries) CustomerOperationOutcomeUnknownAccounts(ctx context.Context, db DBTX, since pgtype.Timestamptz) (int64, error) {
+	row := db.QueryRow(ctx, customerOperationOutcomeUnknownAccounts, since)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const customerOperationRecoveryTenantStatus = `-- name: CustomerOperationRecoveryTenantStatus :one
 SELECT status FROM platform_tenants WHERE id=$1::uuid AND account_id=$2::uuid
 `
@@ -11726,10 +11829,12 @@ func (q *Queries) CustomerOperationStreamMetric(ctx context.Context, db DBTX, no
 
 const customerOperationWorkflowAttemptWindow = `-- name: CustomerOperationWorkflowAttemptWindow :one
 SELECT r.definition_snapshot, r.resume_count, r.lease_until,
-       a.started_at, clock_timestamp()::timestamptz AS observed_at
+       a.started_at, clock_timestamp()::timestamptz AS observed_at,
+       coalesce((o.record #>> '{limits,max_execution_seconds}')::integer, 0)::integer AS max_execution_seconds
 FROM workflow_runs r
 JOIN workflow_steps s ON s.run_id=r.id
 JOIN workflow_step_attempts a ON a.run_id=r.id AND a.step_name=s.step_name AND a.attempt=s.attempt
+LEFT JOIN customer_operations o ON o.workflow_run_id=r.id
 WHERE r.id=$1::uuid AND s.step_name=$2::text
 AND s.attempt=$3::integer AND s.status='running' AND a.status='running'
 AND r.status='running' AND r.lease_until>clock_timestamp()
@@ -11742,13 +11847,15 @@ type CustomerOperationWorkflowAttemptWindowParams struct {
 }
 
 type CustomerOperationWorkflowAttemptWindowRow struct {
-	DefinitionSnapshot []byte
-	ResumeCount        int32
-	LeaseUntil         pgtype.Timestamptz
-	StartedAt          pgtype.Timestamptz
-	ObservedAt         pgtype.Timestamptz
+	DefinitionSnapshot  []byte
+	ResumeCount         int32
+	LeaseUntil          pgtype.Timestamptz
+	StartedAt           pgtype.Timestamptz
+	ObservedAt          pgtype.Timestamptz
+	MaxExecutionSeconds int32
 }
 
+// ADR-20261016110803: the Operation's execution budget also caps the attempt window.
 func (q *Queries) CustomerOperationWorkflowAttemptWindow(ctx context.Context, db DBTX, arg CustomerOperationWorkflowAttemptWindowParams) (CustomerOperationWorkflowAttemptWindowRow, error) {
 	row := db.QueryRow(ctx, customerOperationWorkflowAttemptWindow, arg.RunID, arg.StepName, arg.Attempt)
 	var i CustomerOperationWorkflowAttemptWindowRow
@@ -11758,6 +11865,7 @@ func (q *Queries) CustomerOperationWorkflowAttemptWindow(ctx context.Context, db
 		&i.LeaseUntil,
 		&i.StartedAt,
 		&i.ObservedAt,
+		&i.MaxExecutionSeconds,
 	)
 	return i, err
 }
@@ -43357,6 +43465,45 @@ func (q *Queries) ListFeatureFlagVersions(ctx context.Context, db DBTX, arg List
 	return items, nil
 }
 
+const listFinishedWorkflowRunAttempts = `-- name: ListFinishedWorkflowRunAttempts :many
+SELECT step_name, attempt, started_at, finished_at FROM workflow_step_attempts
+WHERE run_id=$1::uuid AND finished_at IS NOT NULL
+ORDER BY started_at, step_name, attempt
+`
+
+type ListFinishedWorkflowRunAttemptsRow struct {
+	StepName   string
+	Attempt    int32
+	StartedAt  pgtype.Timestamptz
+	FinishedAt pgtype.Timestamptz
+}
+
+// ADR-20261016110803: the finished step attempts an Operation's execution budget counts.
+func (q *Queries) ListFinishedWorkflowRunAttempts(ctx context.Context, db DBTX, runID pgtype.UUID) ([]ListFinishedWorkflowRunAttemptsRow, error) {
+	rows, err := db.Query(ctx, listFinishedWorkflowRunAttempts, runID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListFinishedWorkflowRunAttemptsRow{}
+	for rows.Next() {
+		var i ListFinishedWorkflowRunAttemptsRow
+		if err := rows.Scan(
+			&i.StepName,
+			&i.Attempt,
+			&i.StartedAt,
+			&i.FinishedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listFirstSuccessfulRequestsForAccountsCreatedSince = `-- name: ListFirstSuccessfulRequestsForAccountsCreatedSince :many
 select a.account_id, min(i.last_request_at)::timestamptz as first_success_at
 from instances i
@@ -47832,6 +47979,81 @@ func (q *Queries) ListUDPListenersForApp(ctx context.Context, db DBTX, appID str
 			&i.Enabled,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listWakeHistoryByWakeIDs = `-- name: ListWakeHistoryByWakeIDs :many
+WITH page AS MATERIALIZED (
+ SELECT DISTINCT ON (wake_id) id, app_id, wake_id, state, started_at FROM instances
+ WHERE app_id = ANY($1::uuid[])
+   AND wake_id = ANY($2::uuid[])
+   AND started_at IS NOT NULL
+ ORDER BY wake_id, started_at ASC, id ASC
+)
+SELECT p.id::text AS instance_id, p.app_id::text AS app_id, p.wake_id::text AS wake_id,
+       p.state, p.started_at, bs.data AS boot_data, bs.at AS boot_at,
+       (bs.id IS NOT NULL)::boolean AS has_meta, bc.at AS completed_at
+FROM page p
+LEFT JOIN LATERAL (
+ SELECT id, data, at FROM events
+ WHERE kind = 'wake.boot_started' AND data->>'app_id' = p.app_id::text AND data->>'wake_id' = p.wake_id::text
+ ORDER BY (actor = 'schedd') DESC, at ASC, id ASC LIMIT 1
+) bs ON true
+LEFT JOIN LATERAL (
+ SELECT at FROM events
+ WHERE kind = 'wake.boot_completed' AND data->>'app_id' = p.app_id::text AND data->>'wake_id' = p.wake_id::text
+ ORDER BY at ASC, id ASC LIMIT 1
+) bc ON true
+ORDER BY p.started_at ASC, p.wake_id
+`
+
+type ListWakeHistoryByWakeIDsParams struct {
+	AppIds  []pgtype.UUID
+	WakeIds []pgtype.UUID
+}
+
+type ListWakeHistoryByWakeIDsRow struct {
+	InstanceID  string
+	AppID       string
+	WakeID      string
+	State       string
+	StartedAt   pgtype.Timestamptz
+	BootData    []byte
+	BootAt      pgtype.Timestamptz
+	HasMeta     bool
+	CompletedAt pgtype.Timestamptz
+}
+
+// The account trace view's per-request wakes: one canonical instance per wake
+// (its first), scoped to the account's apps before reading wake metadata, with
+// the same boot and completion reads as ListAppWakeHistoryPage.
+func (q *Queries) ListWakeHistoryByWakeIDs(ctx context.Context, db DBTX, arg ListWakeHistoryByWakeIDsParams) ([]ListWakeHistoryByWakeIDsRow, error) {
+	rows, err := db.Query(ctx, listWakeHistoryByWakeIDs, arg.AppIds, arg.WakeIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListWakeHistoryByWakeIDsRow{}
+	for rows.Next() {
+		var i ListWakeHistoryByWakeIDsRow
+		if err := rows.Scan(
+			&i.InstanceID,
+			&i.AppID,
+			&i.WakeID,
+			&i.State,
+			&i.StartedAt,
+			&i.BootData,
+			&i.BootAt,
+			&i.HasMeta,
+			&i.CompletedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -54493,6 +54715,7 @@ UPDATE app_tasks SET status='running',started_at=$1::timestamptz,attempt_count=a
 retry_at=NULL,stdout_tail='',stderr_tail='',output_truncated=false,exit_code=NULL,failure_code=NULL,failure_message=NULL,updated_at=$1
 WHERE id=$2::text::uuid AND status='restoring' AND lease_token=$3::text::uuid
 AND cancel_requested_at IS NULL AND lease_expires_at>$1
+AND NOT financial_app_command_held(app_id,deployment_id,$1::timestamptz)
 AND (start_deadline_at IS NULL OR start_deadline_at>=$1 OR EXISTS (
  SELECT 1 FROM schedule_occurrences occurrence WHERE occurrence.id=app_tasks.occurrence_id AND occurrence.started_at IS NOT NULL))
 RETURNING id, account_id, app_id, deployment_id, kind, command, command_shell, deployment_scope, artifact_key, image_digest, status, timeout_seconds, max_output_bytes, lease_token, lease_owner, lease_expires_at, cancel_requested_at, stdout_tail, stderr_tail, output_truncated, exit_code, failure_code, failure_message, started_at, finished_at, created_at, updated_at, cron_id, scheduled_for, retry_max, retry_backoff_seconds, attempt_count, retry_at, failure_rules, occurrence_id, start_deadline_at, work_decision, outcome_code, exclusive_operation_id, exclusive_generation, binding_verification
@@ -69467,7 +69690,9 @@ SELECT (jsonb_build_object(
     'deployment_runtime_scan_current_deployment_id_fkey', (SELECT count(*) FROM deployment_runtime_scan_current WHERE deployment_id = $1::uuid),
     'deployment_runtime_scans_deployment_id_fkey', (SELECT count(*) FROM deployment_runtime_scans WHERE deployment_id = $1::uuid),
     'source_build_rootfs_current_deployment_id_fkey', (SELECT count(*) FROM source_build_rootfs_current WHERE deployment_id = $1::uuid),
-    'source_build_rootfs_deployment_id_fkey', (SELECT count(*) FROM source_build_rootfs WHERE deployment_id = $1::uuid)
+    'source_build_rootfs_deployment_id_fkey', (SELECT count(*) FROM source_build_rootfs WHERE deployment_id = $1::uuid),
+    -- Preview command runtimes (financial previews) hold a deployment while preparing or active.
+    'financial_preview_command_runtimes_deployment_id_fkey', (SELECT count(*) FROM financial_preview_command_runtimes WHERE deployment_id = $1::uuid AND phase <> 'retired')
 ))::jsonb AS borrowers
 `
 
@@ -69525,6 +69750,7 @@ SELECT jsonb_build_object(
  'workflow_automation_live_suites.deployment_id', (SELECT count(*) FROM workflow_automation_live_suites WHERE deployment_id=$1::uuid),
  'workflow_automation_live_verifications.deployment_id', (SELECT count(*) FROM workflow_automation_live_verifications WHERE deployment_id=$1::uuid),
  'workflow_schedule_occurrences.deployment_id', (SELECT count(*) FROM workflow_schedule_occurrences WHERE deployment_id::text=$1::uuid::text),
+ 'release_freezes.source_deployment_id', (SELECT count(*) FROM release_freezes WHERE source_deployment_id=$1::uuid),
  'app_issues.fixed_deployment_id', (SELECT count(*) FROM app_issues WHERE fixed_deployment_id=$1::uuid),
  'debug_regression_observations.deployment_id', (SELECT count(*) FROM debug_regression_observations WHERE deployment_id=$1::uuid),
  'deployment_audit.deployment_id', (SELECT count(*) FROM deployment_audit WHERE deployment_id=$1::uuid),
@@ -86853,6 +87079,53 @@ type StampDeadLetterEventReplayParams struct {
 func (q *Queries) StampDeadLetterEventReplay(ctx context.Context, db DBTX, arg StampDeadLetterEventReplayParams) error {
 	_, err := db.Exec(ctx, stampDeadLetterEventReplay, arg.ReplayedAt, arg.ID)
 	return err
+}
+
+const stampDefaultInvocationRetention = `-- name: StampDefaultInvocationRetention :execrows
+WITH plan_retention AS (
+    SELECT unnest($1::text[]) AS plan, unnest($2::bigint[]) AS seconds
+), batch AS (
+    SELECT i.id, coalesce(i.completed_at, i.created_at) AS settled_at,
+           CASE WHEN i.state IN ('failed', 'dead_letter') THEN greatest(r.seconds, $3::bigint)
+                ELSE r.seconds END AS seconds
+    FROM invocations i
+    LEFT JOIN accounts a ON a.id = i.account_id
+    LEFT JOIN orgs o ON o.id = i.account_id AND NOT o.personal_org AND o.resource_ownership_enabled
+    JOIN plan_retention r ON r.plan = coalesce(a.plan, o.plan)
+    WHERE i.result_retention_until IS NULL
+      AND i.state IN ('completed', 'failed', 'dead_letter', 'cancelled', 'superseded', 'expired')
+    ORDER BY i.created_at
+    LIMIT $4::integer
+    FOR UPDATE OF i SKIP LOCKED
+)
+UPDATE invocations
+SET result_retention_until = batch.settled_at + make_interval(secs => batch.seconds)
+FROM batch
+WHERE invocations.id = batch.id
+`
+
+type StampDefaultInvocationRetentionParams struct {
+	Plans               []string
+	RetentionSeconds    []int64
+	FailureFloorSeconds int64
+	BatchLimit          int32
+}
+
+// ADR 20261019104819: finished rows whose producer set no horizon get the
+// plan default from pkg/api/limits.go. Failed and dead-lettered rows keep at
+// least the failure floor so DLQ replay and execution recovery still find
+// them. The reaper prunes stamped rows once they are due.
+func (q *Queries) StampDefaultInvocationRetention(ctx context.Context, db DBTX, arg StampDefaultInvocationRetentionParams) (int64, error) {
+	result, err := db.Exec(ctx, stampDefaultInvocationRetention,
+		arg.Plans,
+		arg.RetentionSeconds,
+		arg.FailureFloorSeconds,
+		arg.BatchLimit,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const stampDeploymentRuntimeBase = `-- name: StampDeploymentRuntimeBase :exec

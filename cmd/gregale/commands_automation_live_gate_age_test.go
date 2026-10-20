@@ -1,8 +1,9 @@
 // adr: 1301
-package main
+package main_test
 
 import (
 	"encoding/json"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -13,12 +14,12 @@ import (
 func TestAutomationGateEvidenceAgeCLI(t *testing.T) {
 	for _, mode := range []string{"fresh", "stale", "future", "invalid", "request-error"} {
 		t.Run(mode, func(t *testing.T) {
-			resetJSONOut(t)
-			jsonOutput = true
-			out := captureAutomationStdout(t)
-			f := authedFakeAPI(t, "", http.StatusOK)
+			main.ResetJSONOut(t)
+			(*main.JsonOutput) = true
+			out := main.CaptureAutomationStdout(t)
+			f := main.AuthedFakeAPI(t, "", http.StatusOK)
 			calls := 0
-			f.srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			(*f.Srv()).Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				calls++
 				if r.Method != http.MethodGet {
 					t.Error("mutating request")
@@ -48,7 +49,7 @@ func TestAutomationGateEvidenceAgeCLI(t *testing.T) {
 			if err := os.WriteFile(path, []byte(content), 0600); err != nil {
 				t.Fatal(err)
 			}
-			code, stderr := runWithStderr(t, func() int { return run(append(automationGateArgs(), "--policy", path)) })
+			code, stderr := main.RunWithStderr(t, func() int { return main.Run(append(automationGateArgs(), "--policy", path)) })
 			want := map[string]int{"fresh": 0, "stale": 7, "future": 7, "invalid": 1, "request-error": 3}[mode]
 			if code != want {
 				t.Fatalf("exit %d: %s %s", code, stderr, out.String())
@@ -62,7 +63,7 @@ func TestAutomationGateEvidenceAgeCLI(t *testing.T) {
 			if calls != 1 {
 				t.Fatalf("calls %d", calls)
 			}
-			var report automationLiveGateReport
+			var report main.AutomationLiveGateReport
 			if err := json.Unmarshal(out.Bytes(), &report); err != nil {
 				t.Fatal(err)
 			}

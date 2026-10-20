@@ -38,6 +38,11 @@ func observedWorkloadSource(app gitOpsIntentApp, binding EnvironmentGitSourceSpe
 			if app.Type == AppTypeFunction && app.Manifest.BuildDockerfile != "" {
 				return nil, "", "live function has conflicting Dockerfile build metadata"
 			}
+			// A scoped source selection carries no build arguments or target
+			// (ADR-20261019142544); inheriting it would silently drop them.
+			if !app.Manifest.DockerfileBuild.IsZero() {
+				return nil, "", "live Dockerfile build arguments or target require a reviewed scoped import"
+			}
 			if gitCommit != "" && gitCommit != baseline.CommitSHA {
 				return nil, "", "live GitHub deployments disagree on source revision"
 			}

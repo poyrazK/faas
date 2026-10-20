@@ -11,9 +11,12 @@ import { callbackTokens, createRealtimeAuthorizer } from './realtime.mjs'
 import { storageBindings } from './storage.mjs'
 import { createWorkflowStarter, workflowsConfig } from './workflows.mjs'
 import { createEventPublisher, lifecycleConfig, publishesAfter, setLifecycleEvents } from './events.mjs'
-import { createAnonymousPruner, createAuditPruner } from './retention.mjs'
+import { createAnonymousPruner, createAuditPruner, createOrgAuditPruner } from './retention.mjs'
 import { bodyAllowed, smsSendPath } from './sms.mjs'
 import { createScimHandler } from './scim.mjs'
+import { signupRefusal } from './signups.mjs'
+import { impersonated, impersonationBlocked } from './impersonation.mjs'
+import { setDomainJoin } from './orgsso.mjs'
 import { goMemoryLimit, gotrue, limits, pagePolicy, runtimeConfig } from './config.mjs'
 import { accessTokenClaims, authorizationDetails, authorizationResource, bearerClaims, clientTokenAllowed, consentLocation, isClientToken, registrationOpen, wellKnownPath } from './oauth.mjs'
 
@@ -45,6 +48,7 @@ function serveUI(req, res, ui) {
     res.end(JSON.stringify({
       site_url: ui.siteURL, redirect_urls: ui.redirectURLs, app: ui.app, logo_url: branding.logoURL,
       captcha: ui.captcha ? { provider: ui.captcha.provider, site_key: ui.captcha.siteKey, script: ui.captcha.script } : null,
+      web3: ui.web3 ?? { ethereum: false, solana: false },
     }))
   } else if (path === '/ui/brand.css') {
     // The accent colour is validated as #rrggbb, so it cannot break out.
@@ -115,7 +119,10 @@ function readBody(req, res, bodyBytes, done) {
 export function createServer({ upstreamPort = gotrue.port, bodyBytes = limits.bodyBytes, authz, ui, realtime, admin, settings, smsCountries = null, scim, oauth = null } = {}) {
   return http.createServer((req, res) => {
     // A third-party OAuth client's token is good here only for userinfo.
-    if (isClientToken(bearerClaims(req.headers.authorization)) && !clientTokenAllowed(req.method, req.url)) return problem(res, 403, 'oauth_client_token')
+    const bearer = bearerClaims(req.headers.authorization)
+    if (isClientToken(bearer) && !clientTokenAllowed(req.method, req.url)) return problem(res, 403, 'oauth_client_token')
+    // A session support staff opened as a user cannot change the account.
+    if (impersonated(bearer) && impersonationBlocked(req.method, req.url)) return problem(res, 403, 'impersonation_restricted')
     if (settings && req.url.split('?')[0] === '/settings/v1') return serveSettings(req, res, settings)
     if (realtime && req.url === '/realtime/authorize-channel') return realtime(req, res)
     if (admin && /^\/admin\/v1([/?]|$)/.test(req.url)) return admin(req, res)
@@ -215,25 +222,27 @@ export function start(env = process.env) {
   // connection that the database closed while it slept.
   const pool = new pg.Pool({ connectionString: config.gotrueEnv.DATABASE_URL, max: limits.frontPool, idleTimeoutMillis: 5000 })
   pool.on('error', () => {})
-  const tokenHook = config.oauth || config.orgClaims
-  const accessToken = tokenHook ? payload => accessTokenClaims(pool, payload, { orgClaims: config.orgClaims }) : null
-  const hooks = createHookServer({ secret, mailer, api: config.api, app: config.app, accessToken, templates: () => loadEmailTemplates(pool) })
+  const tokenHook = config.oauth || config.orgClaims || config.impersonation
+  const accessToken = tokenHook ? payload => accessTokenClaims(pool, payload, { orgClaims: config.orgClaims, impersonation: config.impersonation }) : null
+  const beforeUserCreated = config.signups ? payload => signupRefusal(pool, config.signups, payload) : null
+  const hooks = createHookServer({ secret, mailer, api: config.api, app: config.app, accessToken, beforeUserCreated, templates: () => loadEmailTemplates(pool) })
   hooks.listen(hookAddress.port, hookAddress.host)
-  const child = spawn(gotrue.binary, ['serve'], { env: { ...config.gotrueEnv, ...hookEnv(secret, { accessToken: tokenHook }), GOMEMLIMIT: goMemoryLimit() }, stdio: ['ignore', 'pipe', 'pipe'] })
+  const child = spawn(gotrue.binary, ['serve'], { env: { ...config.gotrueEnv, ...hookEnv(secret, { accessToken: tokenHook, beforeUserCreated: Boolean(beforeUserCreated) }), GOMEMLIMIT: goMemoryLimit() }, stdio: ['ignore', 'pipe', 'pipe'] })
   filterLogs(child.stdout, process.stdout)
   filterLogs(child.stderr, process.stderr)
   const invitations = { mailer, external: config.external, app: config.app }
-  const ui = { siteURL: config.gotrueEnv.GOTRUE_SITE_URL, redirectURLs: config.redirects, app: config.app, branding: config.branding, captcha: config.captcha }
+  const ui = { siteURL: config.gotrueEnv.GOTRUE_SITE_URL, redirectURLs: config.redirects, app: config.app, branding: config.branding, captcha: config.captcha, web3: config.web3 }
   const workflows = workflowsConfig(env)
   const goTrue = goTrueAdmin(signingKey(config.gotrueEnv.GOTRUE_JWT_KEYS))
   const orgSSO = config.orgSSO ? { admin: goTrue, goTrueError, external: config.external } : null
   const deleteAccount = config.selfDeletion ? claims => deleteOwnAccount({ pool, admin: goTrue }, claims) : null
-  const authz = createAuthzHandler({ pool, authenticate: goTrueAuthenticator(), origins: config.origins, invitations, storage: storageBindings(env), workflows: workflows && createWorkflowStarter(workflows), orgSSO, teamEnabled: config.productControlTeamEnabled, emailEnabled: config.productControlEmailEnabled, deleteAccount, orgClaims: config.orgClaims })
+  const authz = createAuthzHandler({ pool, authenticate: goTrueAuthenticator(), origins: config.origins, invitations, storage: storageBindings(env), workflows: workflows && createWorkflowStarter(workflows), orgSSO, orgDomains: config.orgDomains, teamEnabled: config.productControlTeamEnabled, emailEnabled: config.productControlEmailEnabled, deleteAccount, orgClaims: config.orgClaims, sessions: config.sessions })
   const realtime = createRealtimeAuthorizer({ pool, tokens: callbackTokens(env) })
   // The dashboard is served from the Gregale API origin.
   let dashboard = []
   try { dashboard = [new URL(env.AUTH_GREGALE_API_URL).origin] } catch { /* no dashboard origin sealed */ }
-  const admin = createAdminHandler({ pool, admin: goTrue, keys: adminKeyHashes(env), origins: dashboard, external: config.external, emails: { mailer, api: config.api, app: config.app } })
+  const admin = createAdminHandler({ pool, admin: goTrue, keys: adminKeyHashes(env), origins: dashboard, external: config.external, emails: { mailer, api: config.api, app: config.app },
+    impersonation: config.impersonation ? { siteURL: config.gotrueEnv.GOTRUE_SITE_URL } : null })
   const scim = createScimHandler({ pool, admin: goTrue, base: config.external })
   const oauth = config.oauth ? {
     location: location => consentLocation(location, config.gotrueEnv.GOTRUE_SITE_URL, config.external),
@@ -248,8 +257,14 @@ export function start(env = process.env) {
   setLifecycleEvents(pool, Boolean(lifecycle)).then(() => events?.poke(), err => {
     console.error(JSON.stringify({ level: 'error', event: 'lifecycle_events_setup_failed', sqlstate: err?.code ?? null }))
   })
+  // Joining by email domain happens in triggers on GoTrue's tables, so
+  // the database learns at startup whether addresses here are proven.
+  if (config.orgDomains && !config.domainJoin) console.error(JSON.stringify({ level: 'warning', event: 'domain_join_needs_confirmed_addresses' }))
+  setDomainJoin(pool, config.domainJoin).catch(err => {
+    console.error(JSON.stringify({ level: 'error', event: 'domain_join_setup_failed', sqlstate: err?.code ?? null }))
+  })
   // Activity retention prunes on the same request-driven schedule.
-  const pruners = [createAuditPruner({ pool, days: config.auditRetentionDays }), createAnonymousPruner({ pool, days: config.anonymousRetentionDays })]
+  const pruners = [createAuditPruner({ pool, days: config.auditRetentionDays }), createOrgAuditPruner({ pool, days: config.auditRetentionDays }), createAnonymousPruner({ pool, days: config.anonymousRetentionDays })]
   for (const pruner of pruners) pruner.poke()
   server.on('request', (req, res) => {
     if (publishesAfter(req)) res.on('finish', () => { events?.poke(); for (const pruner of pruners) pruner.poke() })

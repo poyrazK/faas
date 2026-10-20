@@ -1,7 +1,8 @@
-package main
+package main_test
 
 import (
 	"bytes"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"os"
 	"strings"
 	"testing"
@@ -11,7 +12,7 @@ import (
 // without a regenerate fails CI with the exact command to run.
 func TestMarkdownReferenceFresh(t *testing.T) {
 	var buf bytes.Buffer
-	renderMarkdownReference(&buf, customerCliCommands())
+	main.RenderMarkdownReference(&buf, main.CustomerCliCommands())
 	want, err := os.ReadFile("../../docs/cli-reference.md")
 	if err != nil {
 		t.Fatalf("docs/cli-reference.md missing: %v — run `go run ./cmd/gregale man --markdown > docs/cli-reference.md`", err)
@@ -23,7 +24,7 @@ func TestMarkdownReferenceFresh(t *testing.T) {
 
 func TestMarkdownReferenceIncludesGitOpsBindingLifecycle(t *testing.T) {
 	var buf bytes.Buffer
-	renderMarkdownReference(&buf, customerCliCommands())
+	main.RenderMarkdownReference(&buf, main.CustomerCliCommands())
 	for _, action := range []string{"rebind", "unbind"} {
 		if !strings.Contains(buf.String(), "##### projects environments gitops "+action+"\n") {
 			t.Errorf("missing nested GitOps %s reference", action)
@@ -36,7 +37,7 @@ func TestMarkdownReferenceIncludesGitOpsBindingLifecycle(t *testing.T) {
 
 func TestMarkdownReferenceOmitsAdvancedCommands(t *testing.T) {
 	var buf bytes.Buffer
-	renderMarkdownReference(&buf, customerCliCommands())
+	main.RenderMarkdownReference(&buf, main.CustomerCliCommands())
 	out := buf.String()
 	for _, command := range []string{"admin", "mail", "postgres", "rollouts", "github-webhook-secret", "tenant-surfaces", "entities"} {
 		if strings.Contains(out, "## "+command+"\n") {
@@ -47,19 +48,19 @@ func TestMarkdownReferenceOmitsAdvancedCommands(t *testing.T) {
 
 func TestMarkdownReferenceShape(t *testing.T) {
 	var buf bytes.Buffer
-	renderMarkdownReference(&buf, []cliCommand{{
+	main.RenderMarkdownReference(&buf, []main.CliCommand{{
 		Name:        "plan",
 		Short:       "Change the subscription plan.",
 		Positionals: []string{"<plan>"},
 		ClosedSet:   []string{"free", "hobby"},
-		Flags: []cliFlag{
+		Flags: []main.CliFlag{
 			{Name: "json", Short: "machine output"},
 			{Name: "yes", Short: "explicit confirmation", Req: true, Bool: true},
 		},
-		Subcommands: []cliSub{{
+		Subcommands: []main.CliSub{{
 			Name:  "show",
 			Short: "Print the plan.",
-			Flags: []cliFlag{{Name: "org", Short: "org slug", Req: true, Value: "slug"}},
+			Flags: []main.CliFlag{{Name: "org", Short: "org slug", Req: true, Value: "slug"}},
 		}},
 	}})
 	out := buf.String()
@@ -81,11 +82,11 @@ func TestMarkdownReferenceShape(t *testing.T) {
 
 func TestMarkdownReferenceNestedSubcommandSynopsisIncludesPositionals(t *testing.T) {
 	var buf bytes.Buffer
-	renderMarkdownReference(&buf, []cliCommand{{
+	main.RenderMarkdownReference(&buf, []main.CliCommand{{
 		Name: "bindings",
-		Subcommands: []cliSub{{
+		Subcommands: []main.CliSub{{
 			Name: "object-storage",
-			Subcommands: []cliSub{{
+			Subcommands: []main.CliSub{{
 				Name:        "rotate",
 				Short:       "Rotate one storage binding",
 				Positionals: []string{"<app>", "<bucket>", "<binding-id>"},
@@ -99,14 +100,14 @@ func TestMarkdownReferenceNestedSubcommandSynopsisIncludesPositionals(t *testing
 
 func TestMarkdownReferenceEscapesPlaceholdersAndFlagValues(t *testing.T) {
 	var buf bytes.Buffer
-	renderMarkdownReference(&buf, []cliCommand{{
+	main.RenderMarkdownReference(&buf, []main.CliCommand{{
 		Name:  "tail",
 		Short: "Filter by <slug> | <owner>.",
-		Flags: []cliFlag{
+		Flags: []main.CliFlag{
 			{Name: "app", Short: "app <slug>", Value: "slug"},
 			{Name: "include-stateless", Short: "boolean switch"},
 		},
-		Subcommands: []cliSub{{Name: "show", Short: "Show <id>"}},
+		Subcommands: []main.CliSub{{Name: "show", Short: "Show <id>"}},
 	}})
 	out := buf.String()
 	for _, want := range []string{
@@ -126,7 +127,7 @@ func TestMarkdownReferenceEscapesPlaceholdersAndFlagValues(t *testing.T) {
 // flags at all.
 func TestMarkdownReferenceListsAppsRmConfirmation(t *testing.T) {
 	var buf bytes.Buffer
-	renderMarkdownReference(&buf, customerCliCommands())
+	main.RenderMarkdownReference(&buf, main.CustomerCliCommands())
 	if !strings.Contains(buf.String(), "`gregale apps rm [--dry-run] [--yes] [--quiet] [-q] <slug>`") {
 		t.Error("apps rm reference omits its confirmation flags")
 	}

@@ -1,5 +1,5 @@
 // adr: 591 — preview is the default; applying requires reviewed revision evidence.
-package main
+package main_test
 
 import (
 	"bytes"
@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -59,8 +60,8 @@ func TestCmdPostgresReconcile(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_test")
-	previousOut, previousJSON := osStdout, jsonOutput
-	t.Cleanup(func() { osStdout, jsonOutput = previousOut, previousJSON })
+	previousOut, previousJSON := (*main.OsStdout), (*main.JsonOutput)
+	t.Cleanup(func() { (*main.OsStdout), (*main.JsonOutput) = previousOut, previousJSON })
 	for _, apply := range []bool{false, true} {
 		for _, asJSON := range []bool{false, true} {
 			request.ExpectedRevision = ""
@@ -75,12 +76,12 @@ func TestCmdPostgresReconcile(t *testing.T) {
 				t.Fatal(err)
 			}
 			var out bytes.Buffer
-			osStdout, jsonOutput = &out, asJSON
+			(*main.OsStdout), (*main.JsonOutput) = &out, asJSON
 			args := []string{"reconcile", account, "--file", file}
 			if apply {
 				args = append(args, "--apply", "--session-file", sessionFile)
 			}
-			if code := cmdPostgres(args); code != 0 {
+			if code := main.CmdPostgres(args); code != 0 {
 				t.Fatalf("exit=%d", code)
 			}
 			if asJSON {
@@ -97,7 +98,7 @@ func TestCmdPostgresReconcile(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, args := range [][]string{{account, "--file", file}, {"bad", "--file", file}, {account}, {account, "--file", file, "--apply"}} {
-		if cmdPostgresReconcile(args) == 0 {
+		if main.CmdPostgresReconcile(args) == 0 {
 			t.Fatal("invalid file/arguments accepted")
 		}
 	}
@@ -113,14 +114,14 @@ func TestCmdPostgresReconcile(t *testing.T) {
 		if err := os.WriteFile(file, data, 0o600); err != nil {
 			t.Fatal(err)
 		}
-		if cmdPostgresReconcile([]string{account, "--file", file}) == 0 {
+		if main.CmdPostgresReconcile([]string{account, "--file", file}) == 0 {
 			t.Fatal("trailing or oversized evidence accepted")
 		}
 	}
 	if err := os.WriteFile(file, valid, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if cmdPostgresReconcile([]string{account, "--file", file, "--apply", "--session-file", sessionFile}) == 0 {
+	if main.CmdPostgresReconcile([]string{account, "--file", file, "--apply", "--session-file", sessionFile}) == 0 {
 		t.Fatal("apply without preview revision accepted")
 	}
 	request.ExpectedRevision = strings.Repeat("b", 64)
@@ -131,13 +132,13 @@ func TestCmdPostgresReconcile(t *testing.T) {
 	if err := os.WriteFile(file, valid, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if cmdPostgresReconcile([]string{account, "--file", file}) == 0 || cmdPostgresReconcile([]string{account, "--file", file, "--apply"}) == 0 {
+	if main.CmdPostgresReconcile([]string{account, "--file", file}) == 0 || main.CmdPostgresReconcile([]string{account, "--file", file, "--apply"}) == 0 {
 		t.Fatal("preview containing a revision or apply without session accepted")
 	}
 	if err := os.Chmod(sessionFile, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if cmdPostgresReconcile([]string{account, "--file", file, "--apply", "--session-file", sessionFile}) == 0 {
+	if main.CmdPostgresReconcile([]string{account, "--file", file, "--apply", "--session-file", sessionFile}) == 0 {
 		t.Fatal("nonprivate session file accepted")
 	}
 	if calls != 4 {

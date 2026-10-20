@@ -12,7 +12,7 @@
 //     twice (no batching; the watcher trusts the producer to
 //     send only what changed).
 
-package sched
+package sched_test
 
 import (
 	"context"
@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/sched"
 )
 
 // recordingRefreshFunc returns a RouterRefreshFunc that records
@@ -64,7 +65,7 @@ func TestWatcher_ActiveTruePayload_CallsRefresh(t *testing.T) {
 	defer cancel()
 	done := make(chan struct{})
 	go func() {
-		RunRouterRefreshWatcher(ctx, nil, ch, rec.fn)
+		sched.RunRouterRefreshWatcher(ctx, nil, ch, rec.fn)
 		close(done)
 	}()
 	// wait for the refresh; the watcher has no goroutine
@@ -91,7 +92,7 @@ func TestWatcher_ActiveFalsePayload_CallsRefresh(t *testing.T) {
 	defer cancel()
 	done := make(chan struct{})
 	go func() {
-		RunRouterRefreshWatcher(ctx, nil, ch, rec.fn)
+		sched.RunRouterRefreshWatcher(ctx, nil, ch, rec.fn)
 		close(done)
 	}()
 	waitForCalls(t, rec.calls.Load, 1, time.Second)
@@ -118,7 +119,7 @@ func TestWatcher_ComputeNodeKeysLiteral_NoRefresh(t *testing.T) {
 	defer cancel()
 	done := make(chan struct{})
 	go func() {
-		RunRouterRefreshWatcher(ctx, nil, ch, rec.fn)
+		sched.RunRouterRefreshWatcher(ctx, nil, ch, rec.fn)
 		close(done)
 	}()
 	// Give the watcher a tick to consume; nothing should happen.
@@ -141,7 +142,7 @@ func TestWatcher_MalformedJSON_NoPanic(t *testing.T) {
 	defer cancel()
 	done := make(chan struct{})
 	go func() {
-		RunRouterRefreshWatcher(ctx, nil, ch, rec.fn)
+		sched.RunRouterRefreshWatcher(ctx, nil, ch, rec.fn)
 		close(done)
 	}()
 	waitForCalls(t, rec.calls.Load, 1, time.Second)
@@ -164,7 +165,7 @@ func TestWatcher_CtxCancel_Returns(t *testing.T) {
 	defer cancel()
 	done := make(chan struct{})
 	go func() {
-		RunRouterRefreshWatcher(ctx, nil, ch, rec.fn)
+		sched.RunRouterRefreshWatcher(ctx, nil, ch, rec.fn)
 		close(done)
 	}()
 	select {
@@ -194,7 +195,7 @@ func TestWatcher_RefreshError_LogsAndContinues(t *testing.T) {
 	defer cancel()
 	done := make(chan struct{})
 	go func() {
-		RunRouterRefreshWatcher(ctx, nil, ch, rec.fn)
+		sched.RunRouterRefreshWatcher(ctx, nil, ch, rec.fn)
 		close(done)
 	}()
 	waitForCalls(t, rec.calls.Load, 2, time.Second)
@@ -216,7 +217,7 @@ func TestWatcher_BackToBack_RefreshesTwice(t *testing.T) {
 	defer cancel()
 	done := make(chan struct{})
 	go func() {
-		RunRouterRefreshWatcher(ctx, nil, ch, rec.fn)
+		sched.RunRouterRefreshWatcher(ctx, nil, ch, rec.fn)
 		close(done)
 	}()
 	waitForCalls(t, rec.calls.Load, 2, time.Second)

@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -9,16 +9,17 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestMemStoreManagedExecutionWorkflowLeaseAndPayloadRetention(t *testing.T) {
-	store := NewMemStore()
+	store := state.NewMemStore()
 	account, err := store.CreateAccount(context.Background(), "managed-workflow@example.test", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
 	}
 	createdAt := time.Now().UTC().Truncate(time.Millisecond)
-	params := CreateExecutionWorkflowJobParams{
+	params := state.CreateExecutionWorkflowJobParams{
 		AccountID: account.ID, WorkflowID: "managed-chain", PlanID: "0123456789abcdef01234567",
 		StepCount: 2, SealedPlan: []byte("encrypted-plan"), PayloadKID: "age1recipient", CreatedAt: createdAt,
 	}
@@ -29,25 +30,25 @@ func TestMemStoreManagedExecutionWorkflowLeaseAndPayloadRetention(t *testing.T) 
 	if row.Status != api.ManagedExecutionWorkflowQueued || string(row.SealedPlan) != "encrypted-plan" {
 		t.Fatalf("created job = %+v", row)
 	}
-	if _, err := store.CreateExecutionWorkflowJob(context.Background(), params); !errors.Is(err, ErrExecutionWorkflowJobExists) {
+	if _, err := store.CreateExecutionWorkflowJob(context.Background(), params); !errors.Is(err, state.ErrExecutionWorkflowJobExists) {
 		t.Fatalf("duplicate error = %v", err)
 	}
 	claim, err := store.ClaimExecutionWorkflowJob(context.Background(), "worker-a", createdAt.Add(time.Second), time.Minute)
 	if err != nil {
 		t.Fatalf("ClaimExecutionWorkflowJob: %v", err)
 	}
-	if _, err := store.ClaimExecutionWorkflowJob(context.Background(), "worker-b", createdAt.Add(2*time.Second), time.Minute); !errors.Is(err, ErrNotFound) {
+	if _, err := store.ClaimExecutionWorkflowJob(context.Background(), "worker-b", createdAt.Add(2*time.Second), time.Minute); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("concurrent claim error = %v, want ErrNotFound", err)
 	}
 	updateAt := createdAt.Add(3 * time.Second)
-	update := ExecutionWorkflowJobUpdate{Status: api.ManagedExecutionWorkflowQueued, NextStep: 1, ScheduledFor: updateAt, UpdatedAt: updateAt}
-	if err := store.UpdateExecutionWorkflowJob(context.Background(), row.ID, "stale-token", update); !errors.Is(err, ErrExecutionWorkflowLeaseLost) {
+	update := state.ExecutionWorkflowJobUpdate{Status: api.ManagedExecutionWorkflowQueued, NextStep: 1, ScheduledFor: updateAt, UpdatedAt: updateAt}
+	if err := store.UpdateExecutionWorkflowJob(context.Background(), row.ID, "stale-token", update); !errors.Is(err, state.ErrExecutionWorkflowLeaseLost) {
 		t.Fatalf("stale lease update error = %v", err)
 	}
 	if err := store.UpdateExecutionWorkflowJob(context.Background(), row.ID, claim.ClaimToken, update); err != nil {
 		t.Fatalf("release claim: %v", err)
 	}
-	if _, err := store.ClaimExecutionWorkflowJob(context.Background(), "worker-b", updateAt.Add(-time.Second), time.Minute); !errors.Is(err, ErrNotFound) {
+	if _, err := store.ClaimExecutionWorkflowJob(context.Background(), "worker-b", updateAt.Add(-time.Second), time.Minute); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("early claim error = %v, want ErrNotFound", err)
 	}
 	claim, err = store.ClaimExecutionWorkflowJob(context.Background(), "worker-b", updateAt, time.Minute)
@@ -55,7 +56,7 @@ func TestMemStoreManagedExecutionWorkflowLeaseAndPayloadRetention(t *testing.T) 
 		t.Fatalf("reclaim: %v", err)
 	}
 	finishAt := updateAt.Add(time.Second)
-	if err := store.UpdateExecutionWorkflowJob(context.Background(), row.ID, claim.ClaimToken, ExecutionWorkflowJobUpdate{
+	if err := store.UpdateExecutionWorkflowJob(context.Background(), row.ID, claim.ClaimToken, state.ExecutionWorkflowJobUpdate{
 		Status: api.ManagedExecutionWorkflowSucceeded, NextStep: 2, ScheduledFor: finishAt, UpdatedAt: finishAt,
 	}); err != nil {
 		t.Fatalf("complete job: %v", err)
@@ -70,15 +71,15 @@ func TestMemStoreManagedExecutionWorkflowLeaseAndPayloadRetention(t *testing.T) 
 }
 
 func TestMemStoreManagedExecutionWorkflowQueueLimit(t *testing.T) {
-	store := NewMemStore()
+	store := state.NewMemStore()
 	account, err := store.CreateAccount(context.Background(), "managed-workflow-limit@example.test", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
 	}
 	base := time.Now().UTC().Truncate(time.Millisecond)
-	params := make([]CreateExecutionWorkflowJobParams, 0, ExecutionWorkflowManagedMaxActivePerAccount)
-	for i := 0; i < ExecutionWorkflowManagedMaxActivePerAccount; i++ {
-		job := CreateExecutionWorkflowJobParams{
+	params := make([]state.CreateExecutionWorkflowJobParams, 0, state.ExecutionWorkflowManagedMaxActivePerAccount)
+	for i := 0; i < state.ExecutionWorkflowManagedMaxActivePerAccount; i++ {
+		job := state.CreateExecutionWorkflowJobParams{
 			AccountID: account.ID, WorkflowID: "managed-queue-" + strconv.Itoa(i), PlanID: "0123456789abcdef01234567",
 			StepCount: 1, SealedPlan: []byte("sealed"), PayloadKID: "kid", CreatedAt: base.Add(time.Duration(i) * time.Second),
 		}
@@ -87,20 +88,20 @@ func TestMemStoreManagedExecutionWorkflowQueueLimit(t *testing.T) {
 		}
 		params = append(params, job)
 	}
-	if _, err := store.CreateExecutionWorkflowJob(context.Background(), params[0]); !errors.Is(err, ErrExecutionWorkflowJobExists) {
+	if _, err := store.CreateExecutionWorkflowJob(context.Background(), params[0]); !errors.Is(err, state.ErrExecutionWorkflowJobExists) {
 		t.Fatalf("duplicate in full queue error = %v", err)
 	}
 	overflow := params[0]
 	overflow.WorkflowID = "managed-queue-overflow"
-	if _, err := store.CreateExecutionWorkflowJob(context.Background(), overflow); !errors.Is(err, ErrExecutionWorkflowQueueFull) {
+	if _, err := store.CreateExecutionWorkflowJob(context.Background(), overflow); !errors.Is(err, state.ErrExecutionWorkflowQueueFull) {
 		t.Fatalf("full queue error = %v, want ErrExecutionWorkflowQueueFull", err)
 	}
-	claim, err := store.ClaimExecutionWorkflowJob(context.Background(), "queue-test", base.Add(time.Duration(ExecutionWorkflowManagedMaxActivePerAccount+1)*time.Second), time.Minute)
+	claim, err := store.ClaimExecutionWorkflowJob(context.Background(), "queue-test", base.Add(time.Duration(state.ExecutionWorkflowManagedMaxActivePerAccount+1)*time.Second), time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
-	finishedAt := base.Add(time.Duration(ExecutionWorkflowManagedMaxActivePerAccount+2) * time.Second)
-	if err := store.UpdateExecutionWorkflowJob(context.Background(), claim.ID, claim.ClaimToken, ExecutionWorkflowJobUpdate{
+	finishedAt := base.Add(time.Duration(state.ExecutionWorkflowManagedMaxActivePerAccount+2) * time.Second)
+	if err := store.UpdateExecutionWorkflowJob(context.Background(), claim.ID, claim.ClaimToken, state.ExecutionWorkflowJobUpdate{
 		Status: api.ManagedExecutionWorkflowSucceeded, NextStep: 1, ScheduledFor: finishedAt, UpdatedAt: finishedAt,
 	}); err != nil {
 		t.Fatal(err)
@@ -111,7 +112,7 @@ func TestMemStoreManagedExecutionWorkflowQueueLimit(t *testing.T) {
 }
 
 func TestMemStoreManagedExecutionWorkflowOwnershipFilter(t *testing.T) {
-	store := NewMemStore()
+	store := state.NewMemStore()
 	account, err := store.CreateAccount(context.Background(), "managed-workflow-ownership@example.test", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
@@ -119,7 +120,7 @@ func TestMemStoreManagedExecutionWorkflowOwnershipFilter(t *testing.T) {
 	first, second := uuid.NewString(), uuid.NewString()
 	base := time.Now().UTC()
 	for i, principal := range []string{first, second} {
-		_, err := store.CreateExecutionWorkflowJob(context.Background(), CreateExecutionWorkflowJobParams{
+		_, err := store.CreateExecutionWorkflowJob(context.Background(), state.CreateExecutionWorkflowJobParams{
 			AccountID: account.ID, RunsPrincipalID: &principal, WorkflowID: "same-name",
 			PlanID: "0123456789abcdef0123456" + string(rune('0'+i)), StepCount: 1,
 			SealedPlan: []byte("sealed"), PayloadKID: "kid", CreatedAt: base.Add(time.Duration(i) * time.Second),
@@ -145,25 +146,25 @@ func TestMemStoreManagedExecutionWorkflowOwnershipFilter(t *testing.T) {
 }
 
 func TestMemStoreAccountDeletionErasesManagedWorkflowPlan(t *testing.T) {
-	store := NewMemStore()
+	store := state.NewMemStore()
 	account, err := store.CreateAccount(context.Background(), "managed-workflow-delete@example.test", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
 	}
-	row, err := store.CreateExecutionWorkflowJob(context.Background(), CreateExecutionWorkflowJobParams{
+	row, err := store.CreateExecutionWorkflowJob(context.Background(), state.CreateExecutionWorkflowJobParams{
 		AccountID: account.ID, WorkflowID: "delete-me", PlanID: "0123456789abcdef01234567",
 		StepCount: 1, SealedPlan: []byte("encrypted-plan"), PayloadKID: "kid", CreatedAt: time.Now().UTC(),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.UpdateAccountStatus(context.Background(), account.ID, AccountDeletedPending); err != nil {
+	if err := store.UpdateAccountStatus(context.Background(), account.ID, state.AccountDeletedPending); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.DeleteAccount(context.Background(), account.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.ExecutionWorkflowJobByKey(context.Background(), account.ID, row.WorkflowID, nil); !errors.Is(err, ErrNotFound) {
+	if _, err := store.ExecutionWorkflowJobByKey(context.Background(), account.ID, row.WorkflowID, nil); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("deleted account still owns workflow job: %v", err)
 	}
 }

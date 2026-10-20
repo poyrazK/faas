@@ -15,12 +15,21 @@ import { command } from './staging/canary.mjs'
 import { verifyTeamOrderSummary } from './team-order-summary.mjs'
 const enabled = Boolean(process.env.DATA_API_TEST_DATABASE_URL && process.env.DATA_API_POSTGREST_BIN && process.env.DATA_API_RUNTIME_DIR)
 
+// A probe port is closed before it is used, so the OS can hand the same port
+// to the next probe; PostgREST then refuses an admin port equal to its server
+// port. Never return a port twice in one test file.
+const issuedPorts = new Set()
 async function port() {
-  const server = net.createServer()
-  await new Promise(r => server.listen(0, '127.0.0.1', r))
-  const value = server.address().port
-  await new Promise(r => server.close(r))
-  return value
+  for (;;) {
+    const server = net.createServer()
+    await new Promise(r => server.listen(0, '127.0.0.1', r))
+    const value = server.address().port
+    await new Promise(r => server.close(r))
+    if (!issuedPorts.has(value)) {
+      issuedPorts.add(value)
+      return value
+    }
+  }
 }
 
 test('team orders enforce membership, idempotency, concurrency and real dashboard recovery', { skip: !enabled, timeout: 180000 }, async t => {

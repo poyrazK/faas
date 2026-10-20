@@ -1,10 +1,11 @@
-package main
+package main_test
 
 import (
 	"context"
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"math"
 	"os"
 	"path/filepath"
@@ -12,23 +13,23 @@ import (
 	"testing"
 )
 
-func sweepRegPlan() testRunPlan {
-	s := sweepTestScenario("latency")
+func sweepRegPlan() main.TestRunPlan {
+	s := main.SweepTestScenario("latency")
 	s.Resilience.Runs = 4
 	s.Resilience.MinPassRate = .75
 	s.Resilience.FaultSweep.MaxRuns = 12
 	s.Resilience.FaultSweep.MaxWorkloadMinutes = 48
-	s.Resilience.SweepRegression = &testSweepRegressionSpec{MaxPassRateDrop: .25}
-	return testRunPlan{Prepared: &testPreparedScenario{Name: "checkout", Engine: "real-vm", Scenario: s, Profiles: []string{"cold"}}, Profile: "cold", Attempt: 1}
+	s.Resilience.SweepRegression = &main.TestSweepRegressionSpec{MaxPassRateDrop: .25}
+	return main.TestRunPlan{Prepared: &main.TestPreparedScenario{Name: "checkout", Engine: "real-vm", Scenario: s, Profiles: []string{"cold"}}, Profile: "cold", Attempt: 1}
 }
-func sweepRegReceipt(plan testRunPlan, counts []int, value float64, prefix string) testRunReceipt {
+func sweepRegReceipt(plan main.TestRunPlan, counts []int, value float64, prefix string) main.TestRunReceipt {
 	index := map[string]int{}
 	for i, value := range plan.Prepared.Scenario.Resilience.FaultSweep.Values {
 		index[value] = i
 	}
-	row := runSweepTest(context.Background(), plan.Prepared.Scenario, func(ctx context.Context, leaf testRunPlan) testRunReceipt {
+	row := main.RunSweepTest(context.Background(), plan.Prepared.Scenario, func(ctx context.Context, leaf main.TestRunPlan) main.TestRunReceipt {
 		failed := leaf.Attempt > counts[index[leaf.ReplaySweep.Value]]
-		r := deadlineTestReceipt(leaf.Prepared.Scenario, fmt.Sprintf("%s-%s-%d", prefix, leaf.ReplaySweep.Value, leaf.Attempt), testMinimizationTarget{Step: "load", Phase: "recovery"}, failed)
+		r := main.DeadlineTestReceipt(leaf.Prepared.Scenario, fmt.Sprintf("%s-%s-%d", prefix, leaf.ReplaySweep.Value, leaf.Attempt), main.TestMinimizationTarget{Step: "load", Phase: "recovery"}, failed)
 		r.Steps[0].Load.ChaosPhases[2].Recovery.RecoveryMS = &value
 		return r
 	})
@@ -38,25 +39,25 @@ func sweepRegReceipt(plan testRunPlan, counts []int, value float64, prefix strin
 	}
 	return row
 }
-func sweepRegAttach(t *testing.T, plan testRunPlan, baseline testRunReceipt) testRunPlan {
+func sweepRegAttach(t *testing.T, plan main.TestRunPlan, baseline main.TestRunReceipt) main.TestRunPlan {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "baseline.json")
-	if err := writeTestReport(path, []testRunReceipt{baseline}); err != nil {
+	if err := main.WriteTestReport(path, []main.TestRunReceipt{baseline}); err != nil {
 		t.Fatal(err)
 	}
-	plans := []testRunPlan{plan}
-	if err := prepareTestSweepBaselines(path, plans); err != nil {
+	plans := []main.TestRunPlan{plan}
+	if err := main.PrepareTestSweepBaselines(path, plans); err != nil {
 		t.Fatal(err)
 	}
 	return plans[0]
 }
-func sweepRegClone(t *testing.T, row testRunReceipt) testRunReceipt {
+func sweepRegClone(t *testing.T, row main.TestRunReceipt) main.TestRunReceipt {
 	t.Helper()
 	body, err := json.Marshal(row)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var copy testRunReceipt
+	var copy main.TestRunReceipt
 	if err := json.Unmarshal(body, &copy); err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +85,7 @@ func TestSweepRegressionPassRatesAndFailingBaseline(t *testing.T) {
 				counts = []int{4, 4, 4}
 			}
 			current := sweepRegReceipt(plan, counts, 100, "now")
-			applyTestSweepBaseline(plan, &current)
+			main.ApplyTestSweepBaseline(plan, &current)
 			e := current.SweepRegression
 			expected := "passed"
 			if mode == "drop" || mode == "lost" {
@@ -111,22 +112,22 @@ func TestSweepRegressionPassRatesAndFailingBaseline(t *testing.T) {
 
 func TestSweepRegressionRecoveryReports(t *testing.T) {
 	plan := sweepRegPlan()
-	plan.Prepared.Scenario.Resilience.SweepRegression.Recovery = &testRecoveryRegressionSpec{P95IncreasePercent: 20, MinSamples: 2}
+	plan.Prepared.Scenario.Resilience.SweepRegression.Recovery = &main.TestRecoveryRegressionSpec{P95IncreasePercent: 20, MinSamples: 2}
 	baseline := sweepRegReceipt(plan, []int{4, 4, 4}, 100, "before")
 	plan = sweepRegAttach(t, plan, baseline)
 	exact := sweepRegReceipt(plan, []int{4, 4, 4}, 120, "exact")
-	applyTestSweepBaseline(plan, &exact)
+	main.ApplyTestSweepBaseline(plan, &exact)
 	if exact.SweepRegression.Status != "passed" || exact.Status != "passed" || len(exact.SweepRegression.Recovery) != 3 {
 		t.Fatalf("boundary: %+v", exact.SweepRegression)
 	}
 	current := sweepRegReceipt(plan, []int{4, 4, 4}, 121, "slow")
-	applyTestSweepBaseline(plan, &current)
+	main.ApplyTestSweepBaseline(plan, &current)
 	if current.Status != "failed" || current.SweepRegression.Status != "failed" || current.SweepRegression.Recovery[0].BaselineSamples != 4 || !strings.Contains(current.Error, "p95") {
 		t.Fatal("slower recovery accepted")
 	}
 	dir := t.TempDir()
 	html := filepath.Join(dir, "report.html")
-	if err := writeTestHTMLReport(html, "", []testRunReceipt{current}); err != nil {
+	if err := main.WriteTestHTMLReport(html, "", []main.TestRunReceipt{current}); err != nil {
 		t.Fatal(err)
 	}
 	body, err := os.ReadFile(html)
@@ -134,16 +135,16 @@ func TestSweepRegressionRecoveryReports(t *testing.T) {
 		t.Fatal("HTML evidence missing", err)
 	}
 	path := filepath.Join(dir, "report.xml")
-	if err := writeTestJUnit(path, []testRunReceipt{current}); err != nil {
+	if err := main.WriteTestJUnit(path, []main.TestRunReceipt{current}); err != nil {
 		t.Fatal(err)
 	}
 	body, err = os.ReadFile(path)
-	var suite testJUnitSuite
+	var suite main.TestJUnitSuite
 	if err != nil || xml.Unmarshal(body, &suite) != nil || suite.Failures != 1 || !strings.Contains(suite.Cases[0].SystemOut, "max_drop") || !strings.Contains(suite.Cases[0].Failure.Message, "p95") {
 		t.Fatal("JUnit regression missing")
 	}
 	incomplete := sweepRegReceipt(plan, []int{1, 4, 4}, 100, "missing")
-	applyTestSweepBaseline(plan, &incomplete)
+	main.ApplyTestSweepBaseline(plan, &incomplete)
 	if incomplete.SweepRegression.Status != "failed" || !strings.Contains(incomplete.SweepRegression.Error, "confirmed samples") {
 		t.Fatal("sample shortage not enforced")
 	}
@@ -183,20 +184,20 @@ func TestSweepRegressionRejectsInvalidBaselineAndCurrent(t *testing.T) {
 			case "cases":
 				bad.FaultMatrix.Cases = bad.FaultMatrix.Cases[:2]
 			case "prior":
-				bad.SweepRegression = &testSweepRegressionEvidence{Status: "failed"}
+				bad.SweepRegression = &main.TestSweepRegressionEvidence{Status: "failed"}
 				bad.Status = "failed"
 			case "root":
 				bad.FaultMatrix.Passed = 999
 			}
 			path := filepath.Join(t.TempDir(), "bad.json")
-			if err := writeTestReport(path, []testRunReceipt{bad}); err != nil {
+			if err := main.WriteTestReport(path, []main.TestRunReceipt{bad}); err != nil {
 				t.Fatal(err)
 			}
-			if err := prepareTestSweepBaselines(path, []testRunPlan{plan}); err == nil {
+			if err := main.PrepareTestSweepBaselines(path, []main.TestRunPlan{plan}); err == nil {
 				t.Fatal("invalid baseline accepted")
 			}
 			plan = sweepRegAttach(t, plan, valid)
-			applyTestSweepBaseline(plan, &bad)
+			main.ApplyTestSweepBaseline(plan, &bad)
 			if bad.Status != "failed" || bad.SweepRegression.Status != "failed" {
 				t.Fatal("invalid current report accepted")
 			}
@@ -208,42 +209,42 @@ func TestSweepRegressionValidationAndSelection(t *testing.T) {
 	plan := sweepRegPlan()
 	for _, value := range []float64{-1, 1.01, math.NaN(), math.Inf(1)} {
 		plan.Prepared.Scenario.Resilience.SweepRegression.MaxPassRateDrop = value
-		if validateTestResilience(plan.Prepared.Scenario) == nil {
+		if main.ValidateTestResilience(plan.Prepared.Scenario) == nil {
 			t.Fatal("bad allowance accepted")
 		}
 	}
 	plan = sweepRegPlan()
-	plan.Prepared.Scenario.Resilience.SweepRegression.Recovery = &testRecoveryRegressionSpec{MinSamples: 1}
-	if validateTestResilience(plan.Prepared.Scenario) == nil {
+	plan.Prepared.Scenario.Resilience.SweepRegression.Recovery = &main.TestRecoveryRegressionSpec{MinSamples: 1}
+	if main.ValidateTestResilience(plan.Prepared.Scenario) == nil {
 		t.Fatal("bad sample floor accepted")
 	}
 	plan = sweepRegPlan()
 	plan.Prepared.Scenario.Resilience.FaultSweep = nil
-	if validateTestResilience(plan.Prepared.Scenario) == nil {
+	if main.ValidateTestResilience(plan.Prepared.Scenario) == nil {
 		t.Fatal("regression without sweep accepted")
 	}
 	for _, args := range [][]string{{"--sweep-baseline", "base.json", "--validate"}, {"--sweep-baseline", "base.json", "--preflight", "--scenario", "checkout"}, {"--sweep-baseline", "base.json", "--recovery-baseline", "other.json", "--scenario", "checkout"}, {"--sweep-baseline", "base.json", "--baseline", "other.json", "--scenario", "checkout"}} {
-		if cmdTest(args) == 0 {
+		if main.CmdTest(args) == 0 {
 			t.Fatal("invalid flags accepted")
 		}
 	}
 	plan = sweepRegPlan()
 	baseline := sweepRegReceipt(plan, []int{4, 4, 4}, 100, "before")
 	path := filepath.Join(t.TempDir(), "base.json")
-	if err := writeTestReport(path, []testRunReceipt{baseline, baseline}); err != nil {
+	if err := main.WriteTestReport(path, []main.TestRunReceipt{baseline, baseline}); err != nil {
 		t.Fatal(err)
 	}
-	if prepareTestSweepBaselines(path, []testRunPlan{plan}) == nil {
+	if main.PrepareTestSweepBaselines(path, []main.TestRunPlan{plan}) == nil {
 		t.Fatal("duplicate root identity accepted")
 	}
-	if err := writeTestReport(path, []testRunReceipt{baseline}); err != nil {
+	if err := main.WriteTestReport(path, []main.TestRunReceipt{baseline}); err != nil {
 		t.Fatal(err)
 	}
-	if prepareTestSweepBaselines(path, []testRunPlan{plan}, path) == nil {
+	if main.PrepareTestSweepBaselines(path, []main.TestRunPlan{plan}, path) == nil {
 		t.Fatal("output overwrites baseline")
 	}
 	plan.Prepared.Scenario.Resilience.SweepRegression = nil
-	if prepareTestSweepBaselines(path, []testRunPlan{plan}) == nil {
+	if main.PrepareTestSweepBaselines(path, []main.TestRunPlan{plan}) == nil {
 		t.Fatal("missing comparison policy accepted")
 	}
 }
@@ -251,15 +252,15 @@ func TestSweepRegressionValidationAndSelection(t *testing.T) {
 func TestSweepRegressionEndpointRecoveryAndSampleFloor(t *testing.T) {
 	plan := sweepRegPlan()
 	spec := *plan.Prepared.Scenario.Steps[1].Load.ChaosSchedule[2].Recovery
-	plan.Prepared.Scenario.Steps[1].Load.ChaosSchedule[2].StepRecovery = map[string]*testLoadRecoverySpec{"load-probe": &spec}
-	plan.Prepared.Scenario.Resilience.SweepRegression.Recovery = &testRecoveryRegressionSpec{P95IncreasePercent: 20, MinSamples: 2}
-	addEndpoint := func(row *testRunReceipt, value float64) {
+	plan.Prepared.Scenario.Steps[1].Load.ChaosSchedule[2].StepRecovery = map[string]*main.TestLoadRecoverySpec{"load-probe": &spec}
+	plan.Prepared.Scenario.Resilience.SweepRegression.Recovery = &main.TestRecoveryRegressionSpec{P95IncreasePercent: 20, MinSamples: 2}
+	addEndpoint := func(row *main.TestRunReceipt, value float64) {
 		for i := range row.FaultMatrix.Cases {
 			for j := range row.FaultMatrix.Cases[i].Resilience.History {
 				phase := &row.FaultMatrix.Cases[i].Resilience.History[j].Steps[0].Load.ChaosPhases[2]
 				r := *phase.Recovery
 				r.RecoveryMS = &value
-				phase.StepRecovery = map[string]*testLoadRecoveryEvidence{"load-probe": &r}
+				phase.StepRecovery = map[string]*main.TestLoadRecoveryEvidence{"load-probe": &r}
 			}
 		}
 	}
@@ -268,7 +269,7 @@ func TestSweepRegressionEndpointRecoveryAndSampleFloor(t *testing.T) {
 	plan = sweepRegAttach(t, plan, baseline)
 	current := sweepRegReceipt(plan, []int{4, 4, 4}, 100, "now")
 	addEndpoint(&current, 100)
-	applyTestSweepBaseline(plan, &current)
+	main.ApplyTestSweepBaseline(plan, &current)
 	if current.SweepRegression.Status != "failed" || len(current.SweepRegression.Recovery) != 6 || !strings.Contains(current.Error, "load-probe") {
 		t.Fatal("endpoint recovery masked by aggregate")
 	}
@@ -280,10 +281,10 @@ func TestSweepRegressionEndpointRecoveryAndSampleFloor(t *testing.T) {
 	sparse := sweepRegReceipt(plan, []int{1, 4, 4}, 100, "sparse")
 	addEndpoint(&sparse, 80)
 	path := filepath.Join(t.TempDir(), "sparse.json")
-	if err := writeTestReport(path, []testRunReceipt{sparse}); err != nil {
+	if err := main.WriteTestReport(path, []main.TestRunReceipt{sparse}); err != nil {
 		t.Fatal(err)
 	}
-	if prepareTestSweepBaselines(path, []testRunPlan{plan}) == nil {
+	if main.PrepareTestSweepBaselines(path, []main.TestRunPlan{plan}) == nil {
 		t.Fatal("baseline recovery sample shortage accepted")
 	}
 }
@@ -292,22 +293,22 @@ func TestSweepRegressionProfileRepeatSelection(t *testing.T) {
 	plan := sweepRegPlan()
 	before := sweepRegReceipt(plan, []int{4, 4, 4}, 100, "before")
 	path := filepath.Join(t.TempDir(), "profiles.json")
-	if err := writeTestReport(path, []testRunReceipt{before}); err != nil {
+	if err := main.WriteTestReport(path, []main.TestRunReceipt{before}); err != nil {
 		t.Fatal(err)
 	}
 	missing := plan
 	missing.Attempt = 2
-	if prepareTestSweepBaselines(path, []testRunPlan{plan, missing}) == nil {
+	if main.PrepareTestSweepBaselines(path, []main.TestRunPlan{plan, missing}) == nil {
 		t.Fatal("missing outer attempt accepted")
 	}
 	missing = plan
 	missing.Profile = "warm"
-	if prepareTestSweepBaselines(path, []testRunPlan{missing}) == nil {
+	if main.PrepareTestSweepBaselines(path, []main.TestRunPlan{missing}) == nil {
 		t.Fatal("missing profile accepted")
 	}
 	duplicate := sweepRegClone(t, before)
 	duplicate.FaultMatrix.Cases[1].Resilience.History[0].RunID = duplicate.FaultMatrix.Cases[0].Resilience.History[0].RunID
-	if _, err := sweepRegressionGroups(&duplicate, plan); err == nil {
+	if _, err := main.SweepRegressionGroups(&duplicate, plan); err == nil {
 		t.Fatal("duplicate run ID across settings accepted")
 	}
 }

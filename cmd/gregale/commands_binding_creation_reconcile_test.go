@@ -1,7 +1,8 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"net/http"
 	"net/http/httptest"
@@ -134,7 +135,7 @@ func TestBindingCreationReconcilesAndContinuesCLI(t *testing.T) {
 					args = []string{"projects", "environments", "release-sets", "verify", "project", "production", "--durable", "--run-id", id, "--file", manifest}
 				}
 				args = append(args, "--queue-publish", "--wait-timeout", "60s", "--json", "--progress", "ndjson", "--status-read-retries", "0", "--poll-interval", "1ms")
-				code, out, stderr := captureBindingCLI(t, server.URL, args...)
+				code, out, stderr := main.CaptureBindingCLI(t, server.URL, args...)
 				if creates != 1 || other != 0 {
 					t.Fatalf("POST count=%d unexpected=%d %s %s", creates, other, out, stderr)
 				}

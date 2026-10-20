@@ -96,6 +96,12 @@ func WorkloadAdmissionReasonsWithManaged(workloads []reposcan.Workload, managed 
 		if err := workload.ImageProcess.Validate(); err != nil {
 			reasons = append(reasons, fmt.Sprintf("workload %q has an invalid image process: %s", workload.Name, err))
 		}
+		if err := workload.DockerfileBuild.Validate(); err != nil {
+			reasons = append(reasons, fmt.Sprintf("workload %q has invalid build options: %s", workload.Name, err))
+		}
+		if workload.Image != "" && !workload.DockerfileBuild.IsZero() {
+			reasons = append(reasons, fmt.Sprintf("workload %q is a prebuilt image; build options apply only to Dockerfile builds", workload.Name))
+		}
 		if api.IsReservedAppSlug(slug) {
 			// Do not strand a project that already owns a reserved collision:
 			// it must remain deployable while the operator migrates it. Only a

@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -9,38 +9,39 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestMCPReadinessStoreRoundTrip(t *testing.T) {
-	check := func(t *testing.T, s Store, kind DeploymentKind) {
+	check := func(t *testing.T, s state.Store, kind state.DeploymentKind) {
 		ctx := context.Background()
-		source := s.(MCPReadinessStore)
+		source := s.(state.MCPReadinessStore)
 		account, err := s.CreateAccount(ctx, "readiness-gate@example.com", api.PlanPro)
 		if err != nil {
 			t.Fatal(err)
 		}
-		app, err := s.CreateApp(ctx, App{AccountID: account.ID, Slug: "readiness-gate", Type: AppTypeApp, RAMMB: 256, MaxConcurrency: 1, Status: AppActive})
+		app, err := s.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "readiness-gate", Type: state.AppTypeApp, RAMMB: 256, MaxConcurrency: 1, Status: state.AppActive})
 		if err != nil {
 			t.Fatal(err)
 		}
-		stable, err := s.CreateDeployment(ctx, Deployment{AppID: app.ID, Kind: DeploymentKindImage, ImageDigest: "sha256:stable"})
+		stable, err := s.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:stable"})
 		if err != nil {
 			t.Fatal(err)
 		}
 		if err = s.MarkDeploymentLive(ctx, stable.ID); err != nil {
 			t.Fatal(err)
 		}
-		buildURLs := s.(PublicBuildURLStore)
-		if kind == DeploymentKindTarball {
+		buildURLs := s.(state.PublicBuildURLStore)
+		if kind == state.DeploymentKindTarball {
 			if err := buildURLs.SetAppPublicBuildURLs(ctx, account.ID, app.ID, map[string]string{"VITE_API_URL": "https://api.example.com/v1"}); err != nil {
 				t.Fatal(err)
 			}
 		}
-		candidate, err := s.CreateDeployment(ctx, Deployment{AppID: app.ID, Kind: kind, SourcePath: "/tmp/readiness-source.tar.gz", ImageDigest: "sha256:candidate", TrafficPercentExplicit: true, TrafficPercent: 0})
+		candidate, err := s.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: kind, SourcePath: "/tmp/readiness-source.tar.gz", ImageDigest: "sha256:candidate", TrafficPercentExplicit: true, TrafficPercent: 0})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if kind == DeploymentKindTarball {
+		if kind == state.DeploymentKindTarball {
 			if err := buildURLs.SetAppPublicBuildURLs(ctx, account.ID, app.ID, map[string]string{"VITE_API_URL": "https://new-api.example.com"}); err != nil {
 				t.Fatal(err)
 			}
@@ -56,18 +57,18 @@ func TestMCPReadinessStoreRoundTrip(t *testing.T) {
 		blocked := func() {
 			t.Helper()
 			_, err := s.UpdateDeploymentTraffic(ctx, candidate.ID, 20)
-			if !IsMCPReadinessRequired(err) {
+			if !state.IsMCPReadinessRequired(err) {
 				t.Fatalf("expected readiness hold, got %v", err)
 			}
 		}
 
-		if pg, ok := s.(*PgStore); ok {
-			if _, e := pg.pool.Exec(ctx, `UPDATE deployments SET traffic_percent=100 WHERE id=$1`, candidate.ID); !IsMCPReadinessRequired(e) {
+		if pg, ok := s.(*state.PgStore); ok {
+			if _, e := (*pg.Pool()).Exec(ctx, `UPDATE deployments SET traffic_percent=100 WHERE id=$1`, candidate.ID); !state.IsMCPReadinessRequired(e) {
 				t.Fatalf("raw SQL bypassed readiness: %v", e)
 			}
 		}
 		blocked()
-		if _, err := source.GetMCPReadinessPolicy(ctx, "foreign-account", app.ID); !errors.Is(err, ErrNotFound) {
+		if _, err := source.GetMCPReadinessPolicy(ctx, "foreign-account", app.ID); !errors.Is(err, state.ErrNotFound) {
 			t.Fatal("foreign policy visible")
 		}
 		subject, err := source.MCPReadinessSubject(ctx, account.ID, candidate.ID)
@@ -79,12 +80,12 @@ func TestMCPReadinessStoreRoundTrip(t *testing.T) {
 			t.Fatal(err)
 		}
 		passed := api.MCPReadinessEvidence{Role: "reader", Passed: true, ProtocolVersion: api.MCPProtocolVersion, CatalogFormat: 1, CatalogSHA256: strings.Repeat("a", 64), Checks: []api.MCPReadinessCheck{{Name: "ping", Status: "passed"}}}
-		if _, e := source.RecordMCPReadiness(ctx, subject, passed); !errors.Is(e, ErrConflict) {
+		if _, e := source.RecordMCPReadiness(ctx, subject, passed); !errors.Is(e, state.ErrConflict) {
 			t.Fatalf("equal-time success replaced a failure: %v", e)
 		}
 		older := subject
 		older.CapturedAt = older.CapturedAt.Add(-time.Second)
-		if _, err = source.RecordMCPReadiness(ctx, older, passed); !errors.Is(err, ErrConflict) {
+		if _, err = source.RecordMCPReadiness(ctx, older, passed); !errors.Is(err, state.ErrConflict) {
 			t.Fatalf("older success replaced failure: %v", err)
 		}
 		blocked()
@@ -92,7 +93,7 @@ func TestMCPReadinessStoreRoundTrip(t *testing.T) {
 		if err != nil || override.ID == "" {
 			t.Fatalf("override: %+v %v", override, err)
 		}
-		if _, e := source.CreateMCPReadinessOverride(ctx, account.ID, candidate.ID, api.MCPReadinessOverrideRequest{ExpectedRevision: policy.Revision, Reason: "Repeated approval request"}); !errors.Is(e, ErrConflict) {
+		if _, e := source.CreateMCPReadinessOverride(ctx, account.ID, candidate.ID, api.MCPReadinessOverrideRequest{ExpectedRevision: policy.Revision, Reason: "Repeated approval request"}); !errors.Is(e, state.ErrConflict) {
 			t.Fatalf("duplicate pending override accepted: %v", e)
 		}
 		if _, err = s.UpdateDeploymentTraffic(ctx, candidate.ID, 10); err != nil {
@@ -102,7 +103,7 @@ func TestMCPReadinessStoreRoundTrip(t *testing.T) {
 		if err != nil || len(snapshot.Overrides) != 1 || snapshot.Overrides[0].UsedAt == nil || len(snapshot.Evidence) != 1 {
 			t.Fatalf("audit: %+v %v", snapshot, err)
 		}
-		if kind == DeploymentKindTarball {
+		if kind == state.DeploymentKindTarball {
 			urls, err := buildURLs.DeploymentPublicBuildURLs(ctx, candidate.ID)
 			if err != nil || urls["VITE_API_URL"] != "https://api.example.com/v1" {
 				t.Fatalf("readiness override promotion changed the captured build URLs: %v %v", urls, err)
@@ -119,7 +120,7 @@ func TestMCPReadinessStoreRoundTrip(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err = source.RecordMCPReadiness(ctx, oldSubject, passed); !errors.Is(err, ErrConflict) {
+		if _, err = source.RecordMCPReadiness(ctx, oldSubject, passed); !errors.Is(err, state.ErrConflict) {
 			t.Fatalf("old policy report accepted: %v", err)
 		}
 		subject, err = source.MCPReadinessSubject(ctx, account.ID, candidate.ID)
@@ -131,14 +132,14 @@ func TestMCPReadinessStoreRoundTrip(t *testing.T) {
 		}
 		// Age the persisted evidence, independently of API request timestamps.
 		switch store := s.(type) {
-		case *MemStore:
-			store.mu.Lock()
-			e := store.mcpReadiness.evidence[candidate.ID+"/reader"]
+		case *state.MemStore:
+			(*store.Mu()).Lock()
+			e := (*(*store.McpReadiness()).Evidence())[candidate.ID+"/reader"]
 			e.ObservedAt = time.Now().Add(-10 * time.Minute)
-			store.mcpReadiness.evidence[candidate.ID+"/reader"] = e
-			store.mu.Unlock()
-		case *PgStore:
-			if _, err = store.pool.Exec(ctx, `UPDATE deployment_mcp_readiness_evidence SET observed_at=clock_timestamp()-interval '10 minutes' WHERE deployment_id=$1`, candidate.ID); err != nil {
+			(*(*store.McpReadiness()).Evidence())[candidate.ID+"/reader"] = e
+			(*store.Mu()).Unlock()
+		case *state.PgStore:
+			if _, err = (*store.Pool()).Exec(ctx, `UPDATE deployment_mcp_readiness_evidence SET observed_at=clock_timestamp()-interval '10 minutes' WHERE deployment_id=$1`, candidate.ID); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -151,19 +152,19 @@ func TestMCPReadinessStoreRoundTrip(t *testing.T) {
 			t.Fatal(err)
 		}
 		switch store := s.(type) {
-		case *MemStore:
-			store.mu.Lock()
-			d := store.deployments[candidate.ID]
+		case *state.MemStore:
+			(*store.Mu()).Lock()
+			d := (*store.Deployments())[candidate.ID]
 			d.ImageDigest = "sha256:changed"
-			store.deployments[candidate.ID] = d
-			store.mu.Unlock()
-		case *PgStore:
-			if _, err = store.pool.Exec(ctx, `UPDATE deployments SET image_digest='sha256:changed' WHERE id=$1`, candidate.ID); err != nil {
+			(*store.Deployments())[candidate.ID] = d
+			(*store.Mu()).Unlock()
+		case *state.PgStore:
+			if _, err = (*store.Pool()).Exec(ctx, `UPDATE deployments SET image_digest='sha256:changed' WHERE id=$1`, candidate.ID); err != nil {
 				t.Fatal(err)
 			}
 		}
 		blocked()
-		if _, err = source.RecordMCPReadiness(ctx, subject, passed); !errors.Is(err, ErrConflict) {
+		if _, err = source.RecordMCPReadiness(ctx, subject, passed); !errors.Is(err, state.ErrConflict) {
 			t.Fatalf("old artifact report accepted: %v", err)
 		}
 		subject, err = source.MCPReadinessSubject(ctx, account.ID, candidate.ID)
@@ -180,19 +181,19 @@ func TestMCPReadinessStoreRoundTrip(t *testing.T) {
 			t.Fatal(configErr)
 		}
 		switch store := s.(type) {
-		case *MemStore:
-			store.mu.Lock()
-			configured := store.apps[app.ID]
+		case *state.MemStore:
+			(*store.Mu()).Lock()
+			configured := (*store.Apps())[app.ID]
 			configured.Manifest.Env = map[string]string{"MCP_RUNTIME_SETTING": "changed"}
-			store.apps[app.ID] = configured
-			store.mu.Unlock()
-		case *PgStore:
-			if _, err = store.pool.Exec(ctx, `UPDATE apps SET manifest=manifest || '{"env":{"MCP_RUNTIME_SETTING":"changed"}}'::jsonb WHERE id=$1`, app.ID); err != nil {
+			(*store.Apps())[app.ID] = configured
+			(*store.Mu()).Unlock()
+		case *state.PgStore:
+			if _, err = (*store.Pool()).Exec(ctx, `UPDATE apps SET manifest=manifest || '{"env":{"MCP_RUNTIME_SETTING":"changed"}}'::jsonb WHERE id=$1`, app.ID); err != nil {
 				t.Fatal(err)
 			}
 		}
 		blocked()
-		if _, err = source.RecordMCPReadiness(ctx, oldConfigSubject, passed); !errors.Is(err, ErrConflict) {
+		if _, err = source.RecordMCPReadiness(ctx, oldConfigSubject, passed); !errors.Is(err, state.ErrConflict) {
 			t.Fatalf("old app configuration accepted: %v", err)
 		}
 		subject, err = source.MCPReadinessSubject(ctx, account.ID, candidate.ID)
@@ -205,45 +206,45 @@ func TestMCPReadinessStoreRoundTrip(t *testing.T) {
 		if _, err = s.UpdateDeploymentTraffic(ctx, candidate.ID, 100); err != nil {
 			t.Fatalf("fresh evidence promotion: %v", err)
 		}
-		automatic, err := s.CreateDeployment(ctx, Deployment{AppID: app.ID, Kind: DeploymentKindImage, ImageDigest: "sha256:automatic"})
+		automatic, err := s.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:automatic"})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err = s.MarkDeploymentLive(ctx, automatic.ID); !IsMCPReadinessRequired(err) {
+		if err = s.MarkDeploymentLive(ctx, automatic.ID); !state.IsMCPReadinessRequired(err) {
 			t.Fatalf("automatic activation bypassed readiness: %v", err)
 		}
 		live, err := s.DeploymentByID(ctx, candidate.ID)
-		if err != nil || live.TrafficPercent != 100 || live.Status != DeployLive {
+		if err != nil || live.TrafficPercent != 100 || live.Status != state.DeployLive {
 			t.Fatalf("failed activation changed serving deployment: %+v %v", live, err)
 		}
 	}
-	for _, kind := range []DeploymentKind{DeploymentKindImage, DeploymentKindTarball} {
+	for _, kind := range []state.DeploymentKind{state.DeploymentKindImage, state.DeploymentKindTarball} {
 		t.Run(string(kind), func(t *testing.T) {
-			t.Run("memory", func(t *testing.T) { check(t, NewMemStore(), kind) })
-			t.Run("postgres", func(t *testing.T) { check(t, NewPgStore(pgtest.OpenMigrated(t)), kind) })
+			t.Run("memory", func(t *testing.T) { check(t, state.NewMemStore(), kind) })
+			t.Run("postgres", func(t *testing.T) { check(t, state.NewPgStore(pgtest.OpenMigrated(t)), kind) })
 		})
 	}
 }
 
 func TestMCPReadinessAlternativeMemoryPaths(t *testing.T) {
 	ctx := t.Context()
-	s := NewMemStore()
+	s := state.NewMemStore()
 	a, err := s.CreateAccount(ctx, "alternative-readiness@example.com", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, err := s.CreateApp(ctx, App{AccountID: a.ID, Slug: "alternative-readiness", Type: AppTypeApp, Status: AppActive})
+	app, err := s.CreateApp(ctx, state.App{AccountID: a.ID, Slug: "alternative-readiness", Type: state.AppTypeApp, Status: state.AppActive})
 	if err != nil {
 		t.Fatal(err)
 	}
-	stable, err := s.CreateDeployment(ctx, Deployment{AppID: app.ID, Kind: DeploymentKindImage, ImageDigest: "sha256:old"})
+	stable, err := s.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:old"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err = s.MarkDeploymentLive(ctx, stable.ID); err != nil {
 		t.Fatal(err)
 	}
-	current, err := s.CreateDeployment(ctx, Deployment{AppID: app.ID, Kind: DeploymentKindImage, ImageDigest: "sha256:new"})
+	current, err := s.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:new"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -254,7 +255,7 @@ func TestMCPReadinessAlternativeMemoryPaths(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.AutoRollbackDeploymentsTx(ctx, app.ID, current.ID); !IsMCPReadinessRequired(err) {
+	if _, err = s.AutoRollbackDeploymentsTx(ctx, app.ID, current.ID); !state.IsMCPReadinessRequired(err) {
 		t.Fatalf("automatic rollback bypassed readiness: %v", err)
 	}
 	if _, err = s.CreateMCPReadinessOverride(ctx, a.ID, stable.ID, api.MCPReadinessOverrideRequest{ExpectedRevision: p.Revision, Reason: "Emergency return to stable revision"}); err != nil {
@@ -263,14 +264,14 @@ func TestMCPReadinessAlternativeMemoryPaths(t *testing.T) {
 	if target, e := s.AutoRollbackDeploymentsTx(ctx, app.ID, current.ID); e != nil || target != stable.ID {
 		t.Fatalf("audited rollback: %s %v", target, e)
 	}
-	pending, err := s.CreateDeployment(ctx, Deployment{AppID: app.ID, Kind: DeploymentKindImage, ImageDigest: "sha256:next"})
+	pending, err := s.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:next"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = s.UpdateDeploymentStatus(ctx, pending.ID, DeployLive, ""); !IsMCPReadinessRequired(err) {
+	if err = s.UpdateDeploymentStatus(ctx, pending.ID, state.DeployLive, ""); !state.IsMCPReadinessRequired(err) {
 		t.Fatalf("status transition bypassed readiness: %v", err)
 	}
-	if _, err = s.CreateDeployment(ctx, Deployment{AppID: app.ID, Kind: DeploymentKindImage, ImageDigest: "sha256:insert", Status: DeployLive}); !IsMCPReadinessRequired(err) {
+	if _, err = s.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:insert", Status: state.DeployLive}); !state.IsMCPReadinessRequired(err) {
 		t.Fatalf("live insert bypassed readiness: %v", err)
 	}
 }

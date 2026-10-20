@@ -114,6 +114,23 @@ func authSettingsChange(form url.Values) (authsettings.Change, error) {
 		list := strings.FieldsFunc(form.Get("redirect_urls"), func(r rune) bool { return r == '\n' || r == '\r' || r == ',' || r == ' ' })
 		change.RedirectURLs = &list
 	}
+	for name, target := range map[string]**[]string{"signup_domains": &change.SignupAllowedDomains, "blocked_domains": &change.SignupBlockedDomains} {
+		if form.Has(name) {
+			list := strings.FieldsFunc(form.Get(name), func(r rune) bool { return r == '\n' || r == '\r' || r == ',' || r == ' ' })
+			*target = &list
+		}
+	}
+	if form.Has("signup_access") {
+		value := form.Get("signup_access")
+		change.SignupAccess = &value
+	}
+	if form.Has("web3") {
+		chains := []string{}
+		if value := form.Get("web3"); value != "off" {
+			chains = strings.Split(value, ",")
+		}
+		change.Web3 = &chains
+	}
 	if form.Has("password_min_length") {
 		n, err := strconv.Atoi(form.Get("password_min_length"))
 		if err != nil {
@@ -131,7 +148,7 @@ func authSettingsChange(form url.Values) (authsettings.Change, error) {
 	if err := hostedPageChange(form, &change); err != nil {
 		return change, err
 	}
-	for name, target := range map[string]**bool{"signup": &change.Signup, "autoconfirm": &change.Autoconfirm, "leaked_password_check": &change.LeakedPasswordCheck, "mfa": &change.MFA, "mfa_phone": &change.MFAPhone, "recovery_codes": &change.RecoveryCodes, "passkeys": &change.Passkeys, "sso": &change.SSO, "org_sso": &change.OrgSSO, "oauth_server": &change.OAuthServer, "oauth_registration": &change.OAuthRegistration, "anonymous": &change.Anonymous, "identity_linking": &change.IdentityLinking, "self_deletion": &change.SelfDeletion, "org_claims": &change.OrgClaims} {
+	for name, target := range map[string]**bool{"signup": &change.Signup, "autoconfirm": &change.Autoconfirm, "leaked_password_check": &change.LeakedPasswordCheck, "mfa": &change.MFA, "mfa_phone": &change.MFAPhone, "recovery_codes": &change.RecoveryCodes, "passkeys": &change.Passkeys, "sso": &change.SSO, "org_sso": &change.OrgSSO, "oauth_server": &change.OAuthServer, "oauth_registration": &change.OAuthRegistration, "anonymous": &change.Anonymous, "identity_linking": &change.IdentityLinking, "self_deletion": &change.SelfDeletion, "org_claims": &change.OrgClaims, "block_disposable": &change.BlockDisposable, "impersonation": &change.Impersonation, "single_session": &change.SingleSession, "org_domains": &change.OrgDomains} {
 		if !form.Has(name) {
 			continue
 		}
@@ -141,6 +158,17 @@ func authSettingsChange(form url.Values) (authsettings.Change, error) {
 		}
 		on := value == "on"
 		*target = &on
+	}
+	// Session limits read as 45m, 12h or 30d; empty removes the limit.
+	for name, target := range map[string]**int{"session_max_age": &change.SessionMaxAgeMinutes, "session_idle": &change.SessionIdleMinutes} {
+		if !form.Has(name) {
+			continue
+		}
+		minutes, err := authsettings.ParseSessionLimit(strings.TrimSpace(form.Get(name)))
+		if err != nil {
+			return change, errors.New(strings.ReplaceAll(name, "_", " ") + ": " + err.Error())
+		}
+		*target = &minutes
 	}
 	return change, nil
 }

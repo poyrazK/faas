@@ -1,6 +1,6 @@
 // adr: 1330
 
-package sched
+package sched_test
 
 import (
 	"bytes"
@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/fcvm"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
@@ -21,25 +22,25 @@ import (
 // contract unless it models a vmmd that predates ADR-1330.
 type interactiveJobVMM struct {
 	ignoresInteractive bool
-	spec               JobVmmSpec
+	spec               sched.JobVmmSpec
 	calls              int
 }
 
-func (v *interactiveJobVMM) JobColdBoot(_ context.Context, spec JobVmmSpec) (JobVmmResult, error) {
+func (v *interactiveJobVMM) JobColdBoot(_ context.Context, spec sched.JobVmmSpec) (sched.JobVmmResult, error) {
 	v.calls++
 	v.spec = spec
-	return JobVmmResult{InstanceID: spec.InstanceID, NodeID: spec.NodeID, Netns: "fc-job-interactive", HostIP: "10.100.0.27",
+	return sched.JobVmmResult{InstanceID: spec.InstanceID, NodeID: spec.NodeID, Netns: "fc-job-interactive", HostIP: "10.100.0.27",
 		GuestUID: 20027, Interactive: spec.Interactive != nil && !v.ignoresInteractive}, nil
 }
 
 // recordingJobExitWaiter reports the exit-watch spec and settles the task.
 type recordingJobExitWaiter struct {
-	specs chan JobExitSpec
+	specs chan sched.JobExitSpec
 }
 
-func (w *recordingJobExitWaiter) WaitJobExit(_ context.Context, spec JobExitSpec) (JobExitResult, error) {
+func (w *recordingJobExitWaiter) WaitJobExit(_ context.Context, spec sched.JobExitSpec) (sched.JobExitResult, error) {
 	w.specs <- spec
-	return JobExitResult{ExitCode: 0, ErrorClass: "succeeded", LeaseToken: spec.LeaseToken}, nil
+	return sched.JobExitResult{ExitCode: 0, ErrorClass: "succeeded", LeaseToken: spec.LeaseToken}, nil
 }
 
 // failingJobRunAttachStore fails the interactive-session lookup.
@@ -54,7 +55,7 @@ func (failingJobRunAttachStore) JobRunAttachSession(context.Context, string) (st
 // seedInteractiveJobRun adds an interactive one-task run to seedJobRun's job.
 func seedInteractiveJobRun(t *testing.T, store state.Store) (state.Account, state.Job, state.JobRun, state.JobRunAttach) {
 	t.Helper()
-	acct, job, _ := seedJobRun(t, store, json.RawMessage(`{}`), json.RawMessage(`{}`))
+	acct, job, _ := sched.SeedJobRun(t, store, json.RawMessage(`{}`), json.RawMessage(`{}`))
 	digest := sha256.Sum256([]byte("interactive-token"))
 	attach := state.JobRunAttach{TTY: true, TokenSHA256: digest[:], AttachTimeoutSec: 60}
 	one, zero := 1, 0
@@ -83,12 +84,12 @@ func TestEngineWakeJobPassesInteractiveSessionToVMM(t *testing.T) {
 			if tc.interactive {
 				acct, job, run, attach = seedInteractiveJobRun(t, store)
 			} else {
-				acct, job, run = seedJobRun(t, store, json.RawMessage(`{}`), json.RawMessage(`{}`))
+				acct, job, run = sched.SeedJobRun(t, store, json.RawMessage(`{}`), json.RawMessage(`{}`))
 			}
 			vmm := &interactiveJobVMM{}
-			exits := &recordingJobExitWaiter{specs: make(chan JobExitSpec, 1)}
-			e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0").
-				WithJobLeaser(AdaptJobLeaser(NewMemLeaser(nil))).WithJobVmmClient(vmm).WithJobExitWaiter(exits)
+			exits := &recordingJobExitWaiter{specs: make(chan sched.JobExitSpec, 1)}
+			e := sched.XNewEngine(t, store, &sched.FakeVMM{}, &sched.FakeNotifier{}, "1.10.0").
+				WithJobLeaser(sched.AdaptJobLeaser(sched.NewMemLeaser(nil))).WithJobVmmClient(vmm).WithJobExitWaiter(exits)
 
 			if _, err := e.WakeJob(context.Background(), acct.ID, run.ID, 0); err != nil {
 				t.Fatalf("WakeJob: %v", err)
@@ -120,8 +121,8 @@ func TestEngineWakeJobFailsInteractiveRunOnVMMWithoutSessions(t *testing.T) {
 	store := state.NewMemStore()
 	acct, _, run, _ := seedInteractiveJobRun(t, store)
 	vmm := &interactiveJobVMM{ignoresInteractive: true}
-	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0").
-		WithJobLeaser(AdaptJobLeaser(NewMemLeaser(nil))).WithJobVmmClient(vmm)
+	e := sched.XNewEngine(t, store, &sched.FakeVMM{}, &sched.FakeNotifier{}, "1.10.0").
+		WithJobLeaser(sched.AdaptJobLeaser(sched.NewMemLeaser(nil))).WithJobVmmClient(vmm)
 
 	_, err := e.WakeJob(context.Background(), acct.ID, run.ID, 0)
 	if err == nil || !strings.Contains(err.Error(), "interactive mismatch") {
@@ -138,8 +139,8 @@ func TestEngineWakeJobFailsInteractiveRunWhenSessionLookupFails(t *testing.T) {
 	base := state.NewMemStore()
 	acct, _, run, _ := seedInteractiveJobRun(t, base)
 	vmm := &interactiveJobVMM{}
-	e := newEngine(t, statetest.NewMem(failingJobRunAttachStore{MemStore: base}), &fakeVMM{}, &fakeNotifier{}, "1.10.0").
-		WithJobLeaser(AdaptJobLeaser(NewMemLeaser(nil))).WithJobVmmClient(vmm)
+	e := sched.XNewEngine(t, statetest.NewMem(failingJobRunAttachStore{MemStore: base}), &sched.FakeVMM{}, &sched.FakeNotifier{}, "1.10.0").
+		WithJobLeaser(sched.AdaptJobLeaser(sched.NewMemLeaser(nil))).WithJobVmmClient(vmm)
 
 	if _, err := e.WakeJob(context.Background(), acct.ID, run.ID, 0); err == nil || !strings.Contains(err.Error(), "interactive session") {
 		t.Fatalf("WakeJob error = %v, want interactive session failure", err)

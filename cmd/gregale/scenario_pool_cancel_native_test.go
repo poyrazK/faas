@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/chaos"
 )
@@ -43,12 +44,12 @@ func TestNativePoolCancellationRealCommandAndProxy(t *testing.T) {
 	}
 	const runID = "0123456789abcdef0123456789abcdef"
 	const marker = "abcdef0123456789abcdef0123456789"
-	prepared, err := prepareTestSuite("../../examples/scenario-checkout/gregale-pool-cancel-test.yaml", "pool-cancel", testSuiteOptions{Engine: "real-vm", Validate: true, Repeat: 1, MaxWorkloadMinutes: 40})
+	prepared, err := main.PrepareTestSuite("../../examples/scenario-checkout/gregale-pool-cancel-test.yaml", "pool-cancel", main.TestSuiteOptions{Engine: "real-vm", Validate: true, Repeat: 1, MaxWorkloadMinutes: 40})
 	if err != nil {
 		t.Fatal(err)
 	}
 	scenario := prepared[0].Scenario
-	plan, err := scenario.Steps[1].Chaos.plan()
+	plan, err := scenario.Steps[1].Chaos.Plan()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,24 +120,24 @@ func TestNativePoolCancellationRealCommandAndProxy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	proxy, _ := newTestProxy(target)
+	proxy, _ := main.NewTestProxy(target)
 	defer proxy.Close()
 	proofPath := filepath.Join(t.TempDir(), "pool-cancel-proof.json")
-	env := append(testCommandBaseEnv(), "GREGALE_TEST_URL="+proxy.URL, "GREGALE_TEST_RUN_ID="+runID, "GREGALE_NATIVE_CANCEL_MARKER="+marker, "GREGALE_NATIVE_POOL_CANCEL_PROOF="+proofPath)
+	env := append(main.TestCommandBaseEnv(), "GREGALE_TEST_URL="+proxy.URL, "GREGALE_TEST_RUN_ID="+runID, "GREGALE_NATIVE_CANCEL_MARKER="+marker, "GREGALE_NATIVE_POOL_CANCEL_PROOF="+proofPath)
 	source, err := filepath.Abs("../../examples/scenario-checkout/native-probe")
 	if err != nil {
 		t.Fatal(err)
 	}
 	writer := &poolCancelMarkerWriter{marker: marker, ready: make(chan struct{})}
-	old := osStdout
-	osStdout = writer
-	defer func() { osStdout = old }()
+	old := (*main.OsStdout)
+	(*main.OsStdout) = writer
+	defer func() { (*main.OsStdout) = old }()
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	receipt := &testRunReceipt{RunID: runID}
+	receipt := &main.TestRunReceipt{RunID: runID}
 	done := make(chan error, 1)
 	go func() {
-		done <- runTestScenarioSteps(ctx, NewClient(control.URL, "token"), source, proxy.URL, env, nil, runID, scenario.Steps, nil, receipt)
+		done <- main.RunTestScenarioSteps(ctx, main.NewClient(control.URL, "token"), source, proxy.URL, env, nil, runID, scenario.Steps, nil, receipt)
 	}()
 	select {
 	case <-writer.ready:
@@ -164,7 +165,7 @@ m['confirm_pool_checkpoint'](pathlib.Path(sys.argv[1]),sys.argv[2])`
 	}
 	cleanupCtx, stop := context.WithTimeout(context.Background(), 7*time.Second)
 	defer stop()
-	if err := runTestCommand(cleanupCtx, source, env, scenario.Cleanup[0]); err != nil {
+	if err := main.RunTestCommand(cleanupCtx, source, env, scenario.Cleanup[0]); err != nil {
 		t.Fatalf("resource cleanup: %v", err)
 	}
 	data, err := os.ReadFile(proofPath)

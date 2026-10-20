@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -9,17 +9,18 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestMemStoreWorkflowAutomationHealth(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
+	store := state.NewMemStore()
 	appID, now := uuid.NewString(), time.Now().UTC().Truncate(time.Millisecond)
 	after, before := now.Add(-time.Hour), now
 
-	newRun := func(name, status string, created time.Time, duration time.Duration) *WorkflowRun {
+	newRun := func(name, status string, created time.Time, duration time.Duration) *state.WorkflowRun {
 		t.Helper()
-		run := &WorkflowRun{
+		run := &state.WorkflowRun{
 			AppID: appID, WorkflowName: name, Input: json.RawMessage(`{"private_input":"secret"}`),
 			DefinitionSnapshot: json.RawMessage(`{"name":"invoice","steps":[]}`),
 		}
@@ -27,37 +28,37 @@ func TestMemStoreWorkflowAutomationHealth(t *testing.T) {
 			t.Fatal(err)
 		}
 		started, finished := created.Add(-duration), created
-		store.mu.Lock()
-		stored := store.workflowRuns[run.ID]
+		(*store.Mu()).Lock()
+		stored := (*store.WorkflowRuns())[run.ID]
 		stored.Status = status
 		stored.CreatedAt = created
-		if status != WorkflowRunStatusPending {
+		if status != state.WorkflowRunStatusPending {
 			stored.StartedAt = &started
 		}
-		if status == WorkflowRunStatusSucceeded || status == WorkflowRunStatusFailed || status == WorkflowRunStatusDead {
+		if status == state.WorkflowRunStatusSucceeded || status == state.WorkflowRunStatusFailed || status == state.WorkflowRunStatusDead {
 			stored.FinishedAt = &finished
 		}
-		store.workflowRuns[run.ID] = stored
-		store.mu.Unlock()
+		(*store.WorkflowRuns())[run.ID] = stored
+		(*store.Mu()).Unlock()
 		return run
 	}
 
-	newRun("invoice", WorkflowRunStatusSucceeded, now.Add(-30*time.Minute), 100*time.Millisecond)
-	failedOne := newRun("invoice", WorkflowRunStatusFailed, now.Add(-20*time.Minute), 300*time.Millisecond)
-	failedTwo := newRun("invoice", WorkflowRunStatusDead, now.Add(-10*time.Minute), 500*time.Millisecond)
-	newRun("invoice", WorkflowRunStatusRunning, now.Add(-15*time.Minute), 0)
-	newRun("other", WorkflowRunStatusFailed, now.Add(-5*time.Minute), time.Second)
-	newRun("invoice", WorkflowRunStatusPending, now.Add(-2*time.Hour), 0)
+	newRun("invoice", state.WorkflowRunStatusSucceeded, now.Add(-30*time.Minute), 100*time.Millisecond)
+	failedOne := newRun("invoice", state.WorkflowRunStatusFailed, now.Add(-20*time.Minute), 300*time.Millisecond)
+	failedTwo := newRun("invoice", state.WorkflowRunStatusDead, now.Add(-10*time.Minute), 500*time.Millisecond)
+	newRun("invoice", state.WorkflowRunStatusRunning, now.Add(-15*time.Minute), 0)
+	newRun("other", state.WorkflowRunStatusFailed, now.Add(-5*time.Minute), time.Second)
+	newRun("invoice", state.WorkflowRunStatusPending, now.Add(-2*time.Hour), 0)
 
 	parent := "batch"
-	if err := store.CreateWorkflowSteps(ctx, failedOne.ID, []*WorkflowStep{
-		{StepName: "batch[0]", Status: WorkflowStepStatusFailed, ForEachParent: &parent},
-		{StepName: "batch[1]", Status: WorkflowStepStatusDead, ForEachParent: &parent},
-		{StepName: "notify", Status: WorkflowStepStatusFailed},
+	if err := store.CreateWorkflowSteps(ctx, failedOne.ID, []*state.WorkflowStep{
+		{StepName: "batch[0]", Status: state.WorkflowStepStatusFailed, ForEachParent: &parent},
+		{StepName: "batch[1]", Status: state.WorkflowStepStatusDead, ForEachParent: &parent},
+		{StepName: "notify", Status: state.WorkflowStepStatusFailed},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.CreateWorkflowSteps(ctx, failedTwo.ID, []*WorkflowStep{{StepName: "batch[2]", Status: WorkflowStepStatusFailed, ForEachParent: &parent}}); err != nil {
+	if err := store.CreateWorkflowSteps(ctx, failedTwo.ID, []*state.WorkflowStep{{StepName: "batch[2]", Status: state.WorkflowStepStatusFailed, ForEachParent: &parent}}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -65,15 +66,15 @@ func TestMemStoreWorkflowAutomationHealth(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if health.RunCount != 4 || health.CompletedRunCount != 3 || health.StatusCounts[WorkflowRunStatusSucceeded] != 1 ||
-		health.StatusCounts[WorkflowRunStatusFailed] != 1 || health.StatusCounts[WorkflowRunStatusDead] != 1 || health.StatusCounts[WorkflowRunStatusRunning] != 1 || health.StatusCounts[WorkflowRunStatusPending] != 0 ||
+	if health.RunCount != 4 || health.CompletedRunCount != 3 || health.StatusCounts[state.WorkflowRunStatusSucceeded] != 1 ||
+		health.StatusCounts[state.WorkflowRunStatusFailed] != 1 || health.StatusCounts[state.WorkflowRunStatusDead] != 1 || health.StatusCounts[state.WorkflowRunStatusRunning] != 1 || health.StatusCounts[state.WorkflowRunStatusPending] != 0 ||
 		health.ActiveRunCount != 1 || health.QueuedRunCount != 1 {
 		t.Fatalf("run totals/statuses = %+v", health)
 	}
 	if health.P50DurationMS == nil || *health.P50DurationMS != 300 || health.P95DurationMS == nil || *health.P95DurationMS != 480 {
 		t.Fatalf("duration percentiles = %v/%v", health.P50DurationMS, health.P95DurationMS)
 	}
-	if health.LastRun == nil || health.LastRun.ID != failedTwo.ID || health.LastSuccess == nil || health.LastSuccess.Status != WorkflowRunStatusSucceeded || health.LastFailure == nil || health.LastFailure.ID != failedTwo.ID {
+	if health.LastRun == nil || health.LastRun.ID != failedTwo.ID || health.LastSuccess == nil || health.LastSuccess.Status != state.WorkflowRunStatusSucceeded || health.LastFailure == nil || health.LastFailure.ID != failedTwo.ID {
 		t.Fatalf("latest runs = %+v / %+v / %+v", health.LastRun, health.LastSuccess, health.LastFailure)
 	}
 	if len(health.FailedSteps) != 2 || health.FailedSteps[0].StepName != "batch" || health.FailedSteps[0].FailedRunCount != 2 ||
@@ -84,7 +85,7 @@ func TestMemStoreWorkflowAutomationHealth(t *testing.T) {
 		t.Fatalf("failed-step ranking = %+v", health.FailedSteps)
 	}
 
-	if _, err := store.GetWorkflowAutomationHealth(ctx, appID, "invoice", after, before.Add(api.WorkflowAutomationHealthMaxRange)); !errors.Is(err, ErrWorkflowInvalidCreatedRange) {
+	if _, err := store.GetWorkflowAutomationHealth(ctx, appID, "invoice", after, before.Add(api.WorkflowAutomationHealthMaxRange)); !errors.Is(err, state.ErrWorkflowInvalidCreatedRange) {
 		t.Fatalf("overlong window error = %v", err)
 	}
 }

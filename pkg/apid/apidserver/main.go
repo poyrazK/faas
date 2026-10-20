@@ -785,6 +785,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		go srv.runPostReleaseWatchWorker(ctx)
 		go srv.plainRollbacks().Run(ctx)
 		go srv.operation.RunOperationArtifactCleanup(ctx)
+		go srv.operation.RunScheduleFirer(ctx)
 		go srv.object.RunObjectStorageRecovery(ctx)
 		go srv.object.RunObjectStorageAccounting(ctx)
 		go srv.runManagedPostgresReconciler(ctx)
@@ -1623,6 +1624,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err := srv.configureLiveQueries(deps.pool, deps.getenv); err != nil {
 		return fmt.Errorf("apid live queries configuration: %w", err)
 	}
+	srv.configureDataAPIUsage(deps.pool)
 	if err := srv.configureDataPipelines(*cfg, deps.pool); err != nil {
 		return err
 	}

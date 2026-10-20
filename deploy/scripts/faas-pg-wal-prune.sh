@@ -49,7 +49,12 @@ for backup in "${backups[@]}"; do
 done
 
 oldest="${backups[0]}"
-backup_label="$(tar -xOzf "$oldest/base.tar.gz" backup_label 2>/dev/null)" || fail "cannot read backup_label from $oldest/base.tar.gz"
+# backup_label is the archive's first member. Without a stop-at-first-match
+# flag tar decompresses the whole base backup (443 MB, 30-40 s of CPU on the
+# control plane) every hour just to read it.
+first_match=(--occurrence=1)
+tar --version 2>/dev/null | grep -q 'GNU tar' || first_match=(--fast-read)
+backup_label="$(tar "${first_match[@]}" -xOzf "$oldest/base.tar.gz" backup_label 2>/dev/null)" || fail "cannot read backup_label from $oldest/base.tar.gz"
 boundary="$(sed -nE 's/^START WAL LOCATION: .+ \(file ([0-9A-F]{24})\)$/\1/p' <<<"$backup_label" | head -n1)"
 [[ "$boundary" =~ ^[0-9A-F]{24}$ ]] || fail "oldest retained backup has no valid START WAL file: $oldest"
 
@@ -115,15 +120,20 @@ if [[ "$apply" == true ]]; then
   bytes=0
   oldest=0
   newest=0
-  while IFS= read -r wal; do
+  # One stat per batch of files, not a basename and a stat per WAL file:
+  # a day of one-minute segments is ~1,400 files on a busy 2-vCPU host.
+  while read -r size mtime wal; do
     [[ -n "$wal" ]] || continue
-    name="$(basename "$wal")"
+    name="${wal##*/}"
     [[ "$name" =~ ^[0-9A-F]{24}(\.[0-9A-F]{8}\.backup)?$ ]] || continue
-    read -r size mtime < <(stat -c '%s %Y' "$wal")
     bytes=$((bytes + size))
+    # PostgreSQL 16's pg_archivecleanup never removes .backup history files,
+    # so one per daily basebackup stays (331 bytes each). The ages cover WAL
+    # segments only: they say how far back the retained WAL reaches.
+    [[ "$name" =~ ^[0-9A-F]{24}$ ]] || continue
     if ((oldest == 0 || mtime < oldest)); then oldest=$mtime; fi
     if ((mtime > newest)); then newest=$mtime; fi
-  done < <(find "$archive_root" -maxdepth 1 -type f -print)
+  done < <(find "$archive_root" -maxdepth 1 -type f -exec stat -c '%s %Y %n' {} +)
   printf 'bytes=%s\noldest_timestamp_seconds=%s\nnewest_timestamp_seconds=%s\n' \
     "$bytes" "$oldest" "$newest" >"$stats_tmp"
   chmod 0644 "$stats_tmp"

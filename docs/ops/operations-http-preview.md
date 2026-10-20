@@ -11,8 +11,10 @@ acceptance and `test-metal`/`leakcheck`. Cover scheduler restart and uncertain
 dispatch, runtime workload identity, artifact retention, cancellation and
 reconciliation. Measure ordinary mutating ingress with the closed gateway
 resolver: operation metadata resolution adds database work. Qualify store outages
-and fleet rollback as well as the portable tests. A host is not currently
-available; customer activation remains pending these results.
+and fleet rollback as well as the portable tests. The
+[Customer HTTP Operations native lane](customer-http-operations-native.md)
+provides the native harness for the guest scenarios; customer activation remains
+pending its PASS receipts and the separate ingress, outage and rollback checks.
 
 For definitions using `transaction_receipt: postgres_v1`, first run
 `make test-customer-operation-sdk` with a disposable PostgreSQL cluster and SDK
@@ -81,7 +83,8 @@ be created by these closed requests.
 Replace every placeholder below with a canonical nonzero UUID, the exact
 environment and UTC timestamps. The template is intentionally invalid until
 reviewed. `not_before` is inclusive and `expires_at` is exclusive; their interval
-must be positive and no longer than one hour. The entire file is at most 64 KiB,
+must be positive and no longer than 30 days (`OperationPreviewWindowMax`), long
+enough for a pilot without hourly rotation. The entire file is at most 64 KiB,
 with at most ten unique account/app/environment cohorts and ten unique customers
 per cohort. Wildcards, unknown fields and duplicate JSON members are rejected.
 

@@ -115,6 +115,76 @@ export async function handler(request: Request) {
 }
 ```
 
+### Custom claims
+
+Put your own values, such as a plan, a tenant or feature flags, in a user's
+tokens. Your backend sets them with the admin key whenever they change, for
+example from a billing webhook:
+
+```sh
+gregale auth users claims shop-auth ada@example.com --set plan=pro --set seats=5 --unset trial
+```
+
+```ts
+await fetch(`https://shop-auth.gregale.app/admin/v1/users/${userId}/claims`, {
+  method: 'PATCH',
+  headers: { Authorization: `Bearer ${adminKey}`, 'Content-Type': 'application/json' },
+  body: JSON.stringify({ set: { plan: 'pro', seats: 5 }, unset: ['trial'] }),
+})
+```
+
+Tokens carry them as `app_metadata`: `claims.appMetadata.plan` in Node,
+`claims.AppMetadata["plan"]` in Go, `claims.app_metadata["plan"]` in Python,
+and `gregale_auth.claims() -> 'app_metadata' ->> 'plan'` in row-level
+security. Only the admin API can write them; users cannot change their own.
+A change shows in the user's next token, issued at their next refresh, at
+most ten minutes later (the access token lifetime). Names are letters,
+digits and `_`, starting with a letter; `provider` and `providers` are
+GoTrue's own. Values are any JSON except null (unset a claim instead), and a
+user's claims are at most 1,000 bytes of JSON, because every token carries
+them. On the command line a value that is JSON (`5`, `true`, `{"beta":true}`,
+`"007"`) keeps its type, and anything else is text. `gregale auth users claims
+shop-auth USER` without flags shows them, as does the dashboard's user panel,
+where they can be edited as JSON.
+
+### Open the app as a user (impersonation)
+
+Support staff can see exactly what a user sees, without their password:
+
+```sh
+gregale auth config shop-auth --impersonation on
+gregale auth users impersonate shop-auth ada@example.com --reason 'Ticket 4821: billing page blank' --minutes 15
+```
+
+The command prints a link to your site URL that carries a new session for
+the user; open it in a private window, where `@gregale/auth`'s
+`sessionFromUrl()` picks it up as it does after a hosted sign-in. The
+dashboard's user panel has the same under **Open as this user**. The
+session is real (row-level security, `authorize()`, realtime and storage
+treat it like the user's own) and:
+
+- lasts 5 to 60 minutes (default 30), after which it cannot refresh;
+- is recorded with the admin key that opened it and the reason given:
+  `gregale auth impersonations list shop-auth [--user ada@example.com]`;
+  `gregale auth impersonations end shop-auth ID` ends it early;
+- carries `act: {"sub": "admin:<key ID>"}` (RFC 8693) in its tokens, which
+  the backend SDKs report as `claims.actor` (Node and Python) and
+  `claims.Actor` (Go), `auth.actor()` in the browser, and row-level security
+  reads as `gregale_auth.claims() -> 'act'`. Use it to show a banner and to
+  refuse what only the person may do, such as paying;
+- cannot change the user's password, email, phone, second factors,
+  passkeys or linked sign-ins, approve third-party apps, end their other
+  sessions or delete the account (`403 impersonation_restricted`); signing
+  itself out works;
+- appears to the user on their account page as opened by support.
+
+Only users with a confirmed email address can be opened: GoTrue has no
+"sign in as" for administrators, so the Auth app redeems a one-time sign-in
+link for them, which also updates their last sign-in time. Banned users
+cannot be opened. The admin API routes are `POST
+/admin/v1/users/{id}/impersonate` `{reason, minutes?}`, `GET
+/admin/v1/impersonations[?user=]` and `DELETE /admin/v1/impersonations/{id}`.
+
 ## Your data
 
 Users, sessions and identities live in the `auth` schema of your own database,
@@ -216,6 +286,30 @@ gregale auth config shop-auth --passkey-rp-id example.com
 Only HTTPS origins on that domain may use them: the Auth app, your site URL and
 your redirect URLs that are on it.
 
+### Wallet sign-in (Web3)
+
+Let people sign in with an Ethereum or Solana wallet:
+
+```sh
+gregale auth config shop-auth --web3 ethereum,solana   # or ethereum, solana, off
+```
+
+```ts
+await auth.signInWithWeb3({ chain: 'ethereum' }) // window.ethereum; or { chain: 'solana' } with window.solana
+```
+
+The wallet asks its owner to sign a message naming your page (Sign-In With
+Ethereum, EIP-4361, and its Solana equivalent); GoTrue checks the signature,
+that the message names your site URL or an allowed redirect URL over HTTPS
+(or localhost), and that it is at most ten minutes old. The first sign-in
+creates the user, whose sign-in method is `web3`; a wallet has no email
+address, so the [sign-up rules](#who-may-sign-up) that need one refuse it.
+Pass `wallet` to use another injected wallet, `uri` when the page is not
+your site URL, and `statement` to change the line the wallet shows. The
+hosted sign-in page offers the wallets the visitor's browser has. GoTrue
+does not remember the messages it accepted, so a signed message is a
+ten-minute credential for whoever holds it: serve the page over HTTPS.
+
 ### Phone sign-in
 
 Users can sign in with a code texted to their phone, sent through your own SMS
@@ -283,7 +377,9 @@ const { codes } = await auth.mfa.recoveryCodes.generate()   // shown once
 
 Require `aal2` where it matters: in row-level security with
 `gregale_auth.claims()->>'aal' = 'aal2'`, or in a backend from
-`claims.AAL` (Go), `claims.aal` (Python) or `claims.aal` (Node).
+`claims.AAL` (Go), `claims.aal` (Python) or `claims.aal` (Node). An
+organization can also require it of its own members; see
+[Require a second factor](#require-a-second-factor).
 
 ### CAPTCHA
 
@@ -299,6 +395,79 @@ widget's token as `captchaToken` to `signUp`, `signInWithPassword`,
 `signInWithMagicLink`, `resetPasswordForEmail` and `signInWithPasskey`.
 `--captcha off` removes the keys. Changing CAPTCHA always takes all three
 values.
+
+### Who may sign up
+
+Limit sign-up by email domain, refuse throwaway addresses, or open sign-up
+only to invited and approved people, with an optional waitlist:
+
+```sh
+gregale auth config shop-auth --signup-domains acme.com,acme.io     # only these domains (any removes the list)
+gregale auth config shop-auth --blocked-domains spam.example        # refused, with their subdomains (none removes)
+gregale auth config shop-auth --block-disposable on                 # throwaway addresses refused
+gregale auth config shop-auth --signup-access waitlist              # open, invite or waitlist
+```
+
+The Auth app checks every self-service sign-up through GoTrue's
+before-user-created hook: email and phone, magic links and codes, OAuth
+providers, SSO, anonymous users and Web3. Users you create or import with the
+admin key are not checked. An allowed domain matches exactly (`eng.acme.com`
+is not `acme.com`); a blocked or throwaway domain also covers its
+subdomains. The throwaway list is the public-domain
+[disposable-email-domains](https://github.com/disposable-email-domains/disposable-email-domains)
+list, about 10,000 domains, updated with the Auth template. Phone and
+anonymous sign-ups carry no address, so an allowlist or restricted access
+refuses them.
+
+With `--signup-access invite`, an address may sign up when it holds a
+pending organization invitation or you approved it. With `waitlist`, a
+refused sign-up also joins a waitlist (at most 10,000 waiting addresses;
+GoTrue's sign-up rate limits and CAPTCHA stand in front of it). People
+signing in through an identity provider you registered (SSO) are not held
+back by either. Approve addresses, waiting or not:
+
+```sh
+gregale auth signups list shop-auth --status pending
+gregale auth signups approve shop-auth ada@example.com bob@example.com   # emails them; --no-email to skip
+gregale auth signups remove shop-auth eve@example.com
+```
+
+or from the dashboard's **Sign-ups** tab. With an email provider set up,
+approval sends the `signup_approved` email (its wording can be changed like
+the others) with a link to the hosted sign-up page. The admin API routes are
+`GET /admin/v1/signups?status=pending|approved|all`, `POST
+/admin/v1/signups/approve` `{emails, notify?}` and `DELETE
+/admin/v1/signups/{email}`.
+
+A refused sign-up fails with HTTP 403 and a stable code, which the hosted
+pages explain and `@gregale/auth` reports as `AuthError.code`:
+`email_domain_blocked`, `disposable_email`, `email_domain_not_allowed`,
+`signup_restricted` (no address), `signup_invitation_required`, `waitlisted`
+or `waitlist_full`. If the check itself cannot run, sign-up fails with 503
+`signup_check_unavailable` rather than let a restricted sign-up through.
+These rules apply when an account is created: an anonymous user who later
+adds an address, or a user who changes theirs, is not checked again.
+
+### Session limits
+
+By default a session lasts until the user signs out. Limit how long a sign-in
+lasts, how long it may go unused, or how many sessions a user keeps:
+
+```sh
+gregale auth config shop-auth --session-max-age 30d --session-idle 7d --single-session on
+```
+
+- `--session-max-age` ends a session that long after sign-in, whatever its use.
+- `--session-idle` ends a session nobody has used for that long.
+- `--single-session on` keeps only each user's most recently used session:
+  signing in elsewhere ends the older ones.
+
+Limits take `45m`, `12h` or `30d` (15 minutes to 365 days), or `off`. The
+dashboard's Settings form has the same fields. The Auth app applies them when
+a session renews its access token, so a session past its limit ends at its
+next renewal, and an access token already issued keeps working until it
+expires, at most ten minutes later. The user then signs in again. The account
+page's list of sessions leaves out the ones past their limits.
 
 ### Other GoTrue settings
 
@@ -367,14 +536,18 @@ redirect URL origins.
 | Method and path | Effect |
 | --- | --- |
 | `POST /authz/v1/orgs` `{slug, name}` | Create an organization; the caller becomes its owner |
-| `GET /authz/v1/orgs` | The caller's organizations and roles |
-| `GET /authz/v1/orgs/{org}/members` | Members (needs `org:read`) |
+| `GET /authz/v1/orgs` | The caller's organizations, roles and whether each requires a second factor |
+| `PATCH /authz/v1/orgs/{org}` `{mfa_required}` | Require a second factor, or stop (needs `mfa:manage` and an `aal2` session) |
+| `GET /authz/v1/orgs/{org}/members` | Members (needs `org:read`); with `members:manage`, whether each has a second factor |
 | `PATCH /authz/v1/orgs/{org}/members/{user}` `{role}` | Change a role (needs `members:manage`; owners only for `owner`) |
 | `DELETE /authz/v1/orgs/{org}/members/{user}` | Remove a member, or leave |
 | `POST /authz/v1/orgs/{org}/invitations` `{email, role, expires_in?}` | Invite; returns the token once |
 | `GET`/`DELETE /authz/v1/orgs/{org}/invitations[/{id}]` | List or revoke pending invitations |
 | `POST /authz/v1/invitations/accept` `{token}` | Join, if the caller's confirmed email was invited |
+| `GET /authz/v1/suggested-organizations` | The organization the caller may join by email domain |
+| `POST /authz/v1/orgs/{org}/join` | Join it with its domain's role |
 | `POST /authz/v1/authorize` `{action, resource}` | `{"allowed": true or false}` |
+| `GET /authz/v1/orgs/{org}/audit-log` | The organization's audit log (needs `audit:read`) |
 
 No organization can lose its last owner. Invitations last seven days by default
 (300 seconds to 14 days); a user can create up to 100 organizations, and an
@@ -413,6 +586,90 @@ billing, use `authorize()`, which reads the membership each time.
 behind `setActive`; it answers `not_found` for an organization the caller
 does not belong to. Tokens issued to third-party OAuth clients never carry
 these claims.
+
+### Audit log
+
+Each organization has an audit log its owners can read, and so can roles
+you grant `audit:read`:
+
+```ts
+const { entries, next } = await auth.organizations.auditLog(org.id, { limit: 50 })
+const older = await auth.organizations.auditLog(org.id, { cursor: next })
+```
+
+Entries are newest first: `organization.created`, `member.added`,
+`member.role_changed` (`data.from`, `data.to`), `member.removed`
+(`data.account_deleted` when the user was deleted), `invitation.created`,
+`invitation.revoked`, `invitation.accepted`, `domain.added`,
+`domain.verified`, `domain.removed`, `sso.connected`, `sso.updated`,
+`sso.disconnected`, and `member.signed_in` for current members' sign-ins,
+read from the app's sign-in activity. `actor_email` names who made a change
+through the organization API; it is null for changes the application made
+with the admin key, an identity provider or SCIM. The route is `GET
+/authz/v1/orgs/{org}/audit-log?cursor=&limit=` (1 to 100, default 50; pass
+the returned `next` as `cursor`). Entries follow `--activity-retention` and
+go when the organization is deleted. `gregale auth orgs audit shop-auth acme`
+and the dashboard's organization panel show it too.
+
+### Require a second factor
+
+An organization's owner can require its members to sign in with a second
+factor. From then on the organization's permissions hold only in sessions
+verified with one (assurance level `aal2`):
+
+```ts
+await auth.organizations.setMfaRequired(org.id, true)
+const members = await auth.members.list(org.id) // mfa_enabled shows who has a second factor
+```
+
+Only someone holding `mfa:manage` (owners hold every permission; grant it to
+a custom role to share it) can change the setting, and only from an `aal2`
+session, in either direction: turning it on cannot lock that person out, and
+a session without the second factor cannot turn it off. Check `mfa_enabled`
+first: members without a second factor lose access until they add one.
+
+The requirement applies everywhere a permission is checked: `authorize()` in
+row-level security and backends, signed storage URLs, workflows, realtime
+channels and the organization API. Members below `aal2` stay members and still
+see the organization in `GET /authz/v1/orgs`, with `mfa_required: true`; the
+organization API and `setActive` refuse them with `403 mfa_required`, so your
+pages can send them to verify:
+
+```ts
+try {
+  await auth.organizations.setActive(org.id)
+} catch (err) {
+  if (err.code !== 'mfa_required') throw err
+  const { next } = await auth.mfa.assuranceLevel()
+  if (next === 'aal2') showCodePrompt() // the user has a factor: challenge and verify it here
+  else location.assign(auth.hostedAccountUrl()) // no factor yet: add one, then sign in again
+}
+```
+
+Adding a factor on the account page signs out the user's other sessions that
+have not passed a second step (GoTrue does this whenever a factor is
+verified), so they sign in again and confirm the new factor. The hosted
+invitation page asks for the second factor after sign-in and says when the
+organization needs one the user does not have yet.
+
+With organization claims on, tokens below `aal2` leave out such an
+organization's `org_*` claims; the token issued when the user verifies a code
+carries them. Removing one's last second factor lowers one's sessions to
+`aal1` at once, and `authorize()` refuses them from the next check. A token
+issued before still says `aal2` until it expires, at most ten minutes later,
+so row-level security that reads the `aal` claim instead of calling
+`authorize()` sees the change only then. Accepting an invitation through the API
+answers `mfa_required: true` when the organization needs a second factor.
+
+Single sign-on counts as one factor: GoTrue cannot see the identity
+provider's own second step, so members who sign in through SSO also need a
+second factor in your app. The application's operator can change the
+requirement for any organization without being a member, for example when
+its owners lost their factors:
+
+```sh
+gregale auth orgs set shop-auth acme --require-mfa off
+```
 
 ## Organization single sign-on
 
@@ -501,6 +758,56 @@ An SSO user is a separate account from a password or OAuth account with the
 same address. Because an identity provider vouches only for its own domains,
 an SSO user can accept an organization invitation only for an address in one
 of its provider's domains.
+
+### Join by email domain
+
+Let people at a company's email domain join its organization without an
+invitation, the way Slack and Linear do:
+
+```sh
+gregale auth config shop-auth --org-domains on
+```
+
+An organization's owners, and members whose role grants `domains:manage`
+(or `sso:manage`), verify a domain with the same DNS TXT record as SSO, then
+choose how people at it join:
+
+```ts
+const { record } = await auth.organizations.domains.add(org.id, 'acme.com')
+// Publish record: TXT _gregale-auth.acme.com "gregale-auth-verification=…"
+await auth.organizations.domains.verify(org.id, 'acme.com')
+await auth.organizations.domains.setJoin(org.id, 'acme.com', { join: 'suggest' }) // or 'automatic', or 'off'
+```
+
+With `suggest`, people see the organization and join when they choose; the
+hosted account page offers it too:
+
+```ts
+const [acme] = await auth.organizations.suggested() // { id, slug, name, domain, role }
+await auth.organizations.join(acme.id)
+```
+
+With `automatic`, they join as soon as their address is confirmed, at sign-up
+or when they change it, and turning `automatic` on adds the people already
+there. Both join with the domain's `role` (default `member`, never `owner`).
+The routes are `PATCH /authz/v1/orgs/{org}/domains/{domain}` `{join, role?}`,
+`GET /authz/v1/suggested-organizations` and `POST /authz/v1/orgs/{org}/join`.
+
+Only proven addresses count:
+
+- The address must be confirmed. While `--autoconfirm` is on, anyone could
+  claim any address, so nobody joins by domain; `gregale auth status` says
+  so, and the dashboard (or one `auth config` command) refuses both on.
+- The domain must match exactly: `eng.acme.com` is not `acme.com`.
+- An SSO user's address counts only for a domain their identity provider
+  serves.
+- Anonymous and banned users never join.
+
+A person joins by domain once: someone who left the organization or was
+removed comes back only by invitation. Members stay when a domain is
+removed or joining turned off. A domain can be verified by only one
+organization, so an address leads to at most one. `gregale auth orgs get`
+and the dashboard's organization panel show each domain and how people join.
 
 ## Authorize anywhere with one function
 
@@ -649,6 +956,78 @@ organizations whose only member they were are deleted with them. With
 lifecycle events on, `auth.user.deleted` tells your app to remove the
 person's data.
 
+## In React
+
+`@gregale/auth/react` (React 18 or later) signs people in inside your own
+pages instead of sending them to the hosted ones:
+
+```tsx
+import { createAuthClient, resource } from '@gregale/auth'
+import { AuthProvider, Authorized, OrganizationSwitcher, SignedIn, SignedOut, SignIn, UserMenu } from '@gregale/auth/react'
+
+const auth = createAuthClient({ url: 'https://shop-auth.gregale.app' })
+
+<AuthProvider client={auth}>
+  <SignedOut><SignIn providers={['google']} magicLink passkeys /></SignedOut>
+  <SignedIn>
+    <OrganizationSwitcher /> <UserMenu />
+    <Authorized action="write" resource={resource(org.id, 'doc', 42)} fallback={<ReadOnly />}><Editor /></Authorized>
+  </SignedIn>
+</AuthProvider>
+```
+
+`AuthProvider` reads the stored session, completes a redirect from the hosted
+pages, a magic link or OAuth, and re-renders when the session changes.
+`SignIn` offers what you list (OAuth providers, which must be on in the Auth
+app, a sign-in link, passkeys, and email and password with sign-up unless
+`password={false}` or `signUp={false}`); `redirectTo` and every OAuth return
+must be your site URL or under `--redirect-urls`. A user with a verified
+authenticator app or phone stays signed out until `SignIn` has taken the
+second step, like on the hosted pages; turn that off with
+`requireSecondStep={false}`. `OrganizationSwitcher` needs `--org-claims on`.
+
+The hooks are `useAuth` (status, session, user, active organization),
+`useSession`, `useUser`, `useActiveOrganization`, `useAuthorized(action,
+resource)` and `useAuthClient`; `SignInButton` and `SignOutButton` go to the
+hosted sign-in page and sign out. Components render plain HTML with
+`gregale-auth-*` class names to style; `authErrorMessage(err)` gives the same
+sentences for your own forms. `Authorized` and `useAuthorized` decide what to
+show; enforce access in your backend or row-level security.
+
+## In mobile apps
+
+Native clients live in `sdk/swift` (iOS 15+, macOS 12+) and `sdk/kotlin`
+(Android 8+ and the JVM). They sign in with a password, an emailed or texted
+code, an ID token from Sign in with Apple or Google, or in the system browser
+(OAuth with PKCE, or the hosted sign-in page with passkeys and SSO). They keep
+the session in the Keychain or the Android Keystore, refresh it one request
+at a time, and cover second factors, organizations, `authorize` and account
+deletion like `@gregale/auth`.
+
+Browser sign-ins and emailed links return to an HTTPS universal link or
+Android App Link of your app; the Auth app accepts only HTTPS redirect URLs:
+
+```sh
+gregale auth config shop-auth --redirect-urls https://shop.example.com/auth/callback
+```
+
+```swift
+let auth = try AuthClient(url: URL(string: "https://shop-auth.gregale.app")!)
+try await auth.signInWithBrowser(provider: "github", callback: URL(string: "https://shop.example.com/auth/callback")!)
+```
+
+```kotlin
+val auth = AuthClient("https://shop-auth.gregale.app", KeystoreSessionStore(context, "https://shop-auth.gregale.app"))
+auth.startBrowserSignIn(activity, redirectTo = "https://shop.example.com/auth/callback", provider = "github")
+// In the activity the App Link opens:
+auth.completeBrowserSignIn(intent)
+```
+
+For Sign in with Apple or Google on the device, enable the provider with your
+app's bundle ID or client ID and pass the identity token to
+`signInWithIdToken`. Passkeys on the device are not wrapped natively yet; the
+hosted sign-in page in the browser sheet offers them.
+
 ## Files, realtime channels and workflows
 
 Each check names a resource in an organization and goes through the same
@@ -781,9 +1160,11 @@ gregale auth users get shop-auth ada@example.com
 gregale auth users sign-out shop-auth ada@example.com
 gregale auth users ban shop-auth ada@example.com --for 7d
 gregale auth users unban shop-auth ada@example.com
+gregale auth users claims shop-auth ada@example.com --set plan=pro
 gregale auth users delete shop-auth ada@example.com
 gregale auth orgs list shop-auth
 gregale auth orgs get shop-auth acme
+gregale auth orgs set shop-auth acme --require-mfa on
 ```
 
 The **Activity** tab lists GoTrue's audit log newest first: sign-ins,

@@ -25,7 +25,9 @@ type WorkflowOperationDeadlineStore interface {
 
 type workflowOperationWindow struct{ deadline, lease, observed time.Time }
 
-func operationWorkflowWindow(snapshot json.RawMessage, step string, started, lease, now time.Time) (workflowOperationWindow, error) {
+// operationWorkflowWindow is an attempt's fixed deadline: its step timeout,
+// shortened to the Operation's remaining execution budget (ADR-20261016110803).
+func operationWorkflowWindow(snapshot json.RawMessage, step string, started, lease, now time.Time, remaining *time.Duration) (workflowOperationWindow, error) {
 	var spec api.WorkflowSpec
 	if err := json.Unmarshal(snapshot, &spec); err != nil {
 		return workflowOperationWindow{}, err
@@ -39,6 +41,9 @@ func operationWorkflowWindow(snapshot json.RawMessage, step string, started, lea
 			timeout = api.WorkflowStepDefaultTimeout
 		}
 		deadline := started.Add(timeout)
+		if remaining != nil && *remaining < timeout {
+			deadline = started.Add(*remaining)
+		}
 		if started.IsZero() || !deadline.After(now) || !lease.After(now) {
 			return workflowOperationWindow{}, ErrOperationStaleAttempt
 		}
@@ -62,7 +67,15 @@ func (m *MemStore) workflowOperationWindowLocked(run WorkflowRun, step string, a
 	if !exists || record.Status != WorkflowAttemptStatusRunning {
 		return workflowOperationWindow{}, ErrOperationStaleAttempt
 	}
-	return operationWorkflowWindow(run.DefinitionSnapshot, step, record.StartedAt, m.workflowRunLeases[run.ID], time.Now().UTC())
+	var remaining *time.Duration
+	if op, linked := m.operationForWorkflowLocked(run.ID); linked && op.Limits != nil && op.Limits.MaxExecutionSeconds > 0 {
+		usage, err := m.workflowOperationUsageLocked(run)
+		if err != nil {
+			return workflowOperationWindow{}, err
+		}
+		remaining = workflowOperationRemaining(op.Limits.MaxExecutionSeconds, usage)
+	}
+	return operationWorkflowWindow(run.DefinitionSnapshot, step, record.StartedAt, m.workflowRunLeases[run.ID], time.Now().UTC(), remaining)
 }
 
 func (m *MemStore) WorkflowOperationExecutionControl(_ context.Context, id string, a OperationWorkflowAuthority) (api.OperationWorkflowControlResponse, error) {
@@ -102,7 +115,15 @@ func workflowOperationWindowTx(ctx context.Context, db sqlc.DBTX, runID, step st
 	if err != nil {
 		return workflowOperationWindow{}, err
 	}
-	return operationWorkflowWindow(row.DefinitionSnapshot, step, row.StartedAt.Time, row.LeaseUntil.Time, row.ObservedAt.Time)
+	var remaining *time.Duration
+	if row.MaxExecutionSeconds > 0 {
+		usage, err := workflowOperationUsageTx(ctx, db, WorkflowRun{ID: runID, DefinitionSnapshot: row.DefinitionSnapshot})
+		if err != nil {
+			return workflowOperationWindow{}, err
+		}
+		remaining = workflowOperationRemaining(int(row.MaxExecutionSeconds), usage)
+	}
+	return operationWorkflowWindow(row.DefinitionSnapshot, step, row.StartedAt.Time, row.LeaseUntil.Time, row.ObservedAt.Time, remaining)
 }
 
 func checkWorkflowOperationSuccessDeadlineTx(ctx context.Context, db sqlc.DBTX, runID, step string, attempt int) error {

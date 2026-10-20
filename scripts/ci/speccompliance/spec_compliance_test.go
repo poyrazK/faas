@@ -89,6 +89,8 @@ const (
 	rolloutDecisionFile              = "rollout_decision.go"     // ADR-1447 explained rollout decisions
 	releaseRollbackFile              = "release_rollback.go"     // ADR-1448 releases that change the database
 	configRevisionsFile              = "config_revisions.go"     // ADR-1451 guarded, reversible config changes
+	releaseFreezesFile               = "release_freezes.go"      // ADR-20261019071733 deploy freezes
+	releaseGatesFile                 = "release_gates.go"        // ADR-20261019071734 release gates
 	changeTimelineFile               = "change_timeline.go"      // ADR-751 app change timeline DTOs
 	customMetricSeriesFile           = "custom_metric_series.go" // ADR-745 custom metric history DTOs
 	operatorPlatformFlagsFile        = "operator_platform_flags.go"
@@ -103,6 +105,12 @@ const (
 // /dashboard/account/set-password into the public spec — the
 // dashboard auth surface is now real auth, not a backstop fallback.
 var routeExclude = map[string]bool{
+	"GET /v1/apps/{slug}/operation-schedules":                        true, // ADR-20261018161833 Operation schedules; gated by FAAS_OPERATION_SCHEDULES_ACCOUNTS until prod-tested
+	"GET /v1/apps/{slug}/operations/{id}/children":                   true, // ADR-20261018183000 child Operations; gated by FAAS_OPERATION_CHILDREN_ACCOUNTS until prod-tested
+	"GET /v1/platform-tenant-self/customer-operation-schedules":      true, // ADR-20261018161833 Operation schedules; gated by FAAS_OPERATION_SCHEDULES_ACCOUNTS until prod-tested
+	"GET /v1/platform-tenant-self/customer-operation-schedules/{id}": true, // ADR-20261018161833 Operation schedules; gated by FAAS_OPERATION_SCHEDULES_ACCOUNTS until prod-tested
+	"GET /v1/platform-tenant-self/customer-operations/{id}/children": true, // ADR-20261018183000 child Operations; gated by FAAS_OPERATION_CHILDREN_ACCOUNTS until prod-tested
+	"GET /v1/runtime/operations/{id}/children":                       true, // ADR-20261018183000 child Operations; gated by FAAS_OPERATION_CHILDREN_ACCOUNTS until prod-tested
 	// Fixed-executor repair preview routes are documented in docs/data-repair.md;
 	// they are not part of the public SDK contract until native qualification.
 	"GET /v1/apps/{slug}/data-repair/review":                            true,
@@ -343,6 +351,12 @@ var routeExclude = map[string]bool{
 	"DELETE /v1/postgres/databases/{id}/live":      true,
 	"POST /v1/postgres/databases/{id}/live/rotate": true,
 
+	"POST /v1/apps/{slug}/operation-schedules/{id}/cancel":                   true, // ADR-20261018161833 Operation schedules; gated by FAAS_OPERATION_SCHEDULES_ACCOUNTS until prod-tested
+	"POST /v1/platform-tenant-self/customer-operation-schedules":             true, // ADR-20261018161833 Operation schedules; gated by FAAS_OPERATION_SCHEDULES_ACCOUNTS until prod-tested
+	"POST /v1/platform-tenant-self/customer-operation-schedules/{id}/cancel": true, // ADR-20261018161833 Operation schedules; gated by FAAS_OPERATION_SCHEDULES_ACCOUNTS until prod-tested
+	"POST /v1/platform-tenant-self/customer-operation-schedules/{id}/pause":  true, // ADR-20261018161833 Operation schedules; gated by FAAS_OPERATION_SCHEDULES_ACCOUNTS until prod-tested
+	"POST /v1/platform-tenant-self/customer-operation-schedules/{id}/resume": true, // ADR-20261018161833 Operation schedules; gated by FAAS_OPERATION_SCHEDULES_ACCOUNTS until prod-tested
+	"POST /v1/runtime/operations/{id}/children":                              true, // ADR-20261018183000 child Operations; gated by FAAS_OPERATION_CHILDREN_ACCOUNTS until prod-tested
 	// Issue #777 / ADR-091: operator observability backend.
 	// Mirror the operator-only exclusion across both this list
 	// AND cmd/sdk-coverage/main.go::routeExclude. The two lists
@@ -1428,6 +1442,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 	files := []string{
 		filepath.Join(root, "pkg", "api", "data_api_runtime_connections.go"), // ADR-1730 private runtime reporting.
 		filepath.Join(root, "pkg", "api", "data_api_connection_budget.go"),   // ADR-650 read-only shared database planning DTOs.
+		filepath.Join(root, "pkg", "api", "data_api_usage.go"),               // ADR-20261019102108 runtime usage reports and owner views.
 		filepath.Join(root, "pkg", "api", "compose_healthcheck.go"),
 		filepath.Join(root, "pkg", "api", "compose_process.go"), // ADR-1337 Compose process overrides for prebuilt images.
 		filepath.Join(root, "pkg", "api", "environment_gitops.go"),
@@ -1717,6 +1732,8 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", rolloutDecisionFile),
 		filepath.Join(root, "pkg", "api", releaseRollbackFile),
 		filepath.Join(root, "pkg", "api", configRevisionsFile),
+		filepath.Join(root, "pkg", "api", releaseFreezesFile),
+		filepath.Join(root, "pkg", "api", releaseGatesFile),
 		filepath.Join(root, "pkg", "api", platformTenantsFile),
 		filepath.Join(root, "pkg", "api", platformTenantCredentialsFile),
 		filepath.Join(root, "pkg", "api", runtimePolicyFile),
@@ -1775,11 +1792,12 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "operation_workflow_reconciliation.go"),
 		filepath.Join(root, "pkg", "api", "operations_doctor.go"),
 		filepath.Join(root, "pkg", "api", "operations_delivery.go"),
-		filepath.Join(root, "pkg", "api", "operation_timeline.go"), // ADR-1195 timeline DTOs
-		filepath.Join(root, "pkg", "api", "operation_limits.go"),   // ADR-1196 operation limit DTOs
-		filepath.Join(root, "pkg", "api", "operation_signals.go"),  // ADR-1197 operation signal DTOs
-		filepath.Join(root, "pkg", "api", "operation_waits.go"),    // ADR-1194 operation wait and approval DTOs
-		filepath.Join(root, "pkg", "api", "operation_webhooks.go"), // ADR-1193 operation webhook binding DTOs
+		filepath.Join(root, "pkg", "api", "operation_timeline.go"),       // ADR-1195 timeline DTOs
+		filepath.Join(root, "pkg", "api", "operation_limits.go"),         // ADR-1196 operation limit DTOs
+		filepath.Join(root, "pkg", "api", "operation_signals.go"),        // ADR-1197 operation signal DTOs
+		filepath.Join(root, "pkg", "api", "operation_tenant_signals.go"), // ADR-20261017100853 customer signal DTOs
+		filepath.Join(root, "pkg", "api", "operation_waits.go"),          // ADR-1194 operation wait and approval DTOs
+		filepath.Join(root, "pkg", "api", "operation_webhooks.go"),       // ADR-1193 operation webhook binding DTOs
 		filepath.Join(root, "pkg", "api", "route_policy.go"),
 		filepath.Join(root, "pkg", "api", "route_check_history.go"),
 		filepath.Join(root, "pkg", "api", "route_gate.go"),
@@ -1811,11 +1829,21 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "financial", "contracts.go"),
 		filepath.Join(root, "pkg", "financial", "forecast.go"),
 		filepath.Join(root, "pkg", "financial", "budget.go"),
+		filepath.Join(root, "pkg", "financial", "monitor.go"),
+		filepath.Join(root, "pkg", "financial", "stop.go"),
+		filepath.Join(root, "pkg", "financial", "compute.go"),
+		filepath.Join(root, "pkg", "financial", "egress.go"),
 	})
 	if err != nil {
 		t.Fatalf("scan financial DTOs: %v", err)
 	}
-	for name, schema := range map[string]string{"Price": "FinancialPrice", "Attribution": "FinancialAttribution", "Allocation": "FinancialAllocation", "MeterCost": "FinancialMeterCost", "ContractCosts": "FinancialContractCosts", "Forecast": "FinancialForecast", "BudgetSpec": "FinancialBudgetSpec", "BudgetScope": "FinancialBudgetScope"} {
+	for name, schema := range map[string]string{
+		"Price": "FinancialPrice", "Attribution": "FinancialAttribution", "Allocation": "FinancialAllocation",
+		"MeterCost": "FinancialMeterCost", "ContractCosts": "FinancialContractCosts", "Forecast": "FinancialForecast",
+		"BudgetSpec": "FinancialBudgetSpec", "BudgetScope": "FinancialBudgetScope",
+		"BudgetEvaluation": "FinancialBudgetEvaluation", "BudgetAlert": "FinancialBudgetAlert", "BudgetRuntime": "FinancialBudgetRuntime",
+		"BudgetStop": "FinancialBudgetStop", "BudgetStopTarget": "FinancialBudgetStopTarget", "ComputeBalance": "FinancialComputeBalance", "EgressBalance": "FinancialEgressBalance",
+	} {
 		dtos[schema] = financialDTOs[name]
 	}
 	objectDTOs, err := scanDTOs([]string{filepath.Join(root, "pkg", "rehearsalobj", "protocol.go")})

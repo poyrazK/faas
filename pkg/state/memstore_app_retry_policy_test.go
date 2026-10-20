@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -6,17 +6,18 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestMemStoreAppRetryPolicyRoundTripAndClear(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
+	store := state.NewMemStore()
 	account, err := store.CreateAccount(ctx, "retry-policy@example.com", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
 	}
 	policy := json.RawMessage(`{"max_attempts":4,"base_seconds":2,"max_seconds":30}`)
-	app, err := store.CreateApp(ctx, App{AccountID: account.ID, Slug: "retry-policy", RetryPolicyJSON: policy})
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "retry-policy", RetryPolicyJSON: policy})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -24,7 +25,7 @@ func TestMemStoreAppRetryPolicyRoundTripAndClear(t *testing.T) {
 		t.Fatalf("max attempts = %d, want 4", got)
 	}
 	clear := []byte(`{}`)
-	app, err = store.UpdateApp(ctx, app.ID, UpdateAppParams{RetryPolicyJSON: &clear, SetRetryPolicy: true})
+	app, err = store.UpdateApp(ctx, app.ID, state.UpdateAppParams{RetryPolicyJSON: &clear, SetRetryPolicy: true})
 	if err != nil {
 		t.Fatal(err)
 	}

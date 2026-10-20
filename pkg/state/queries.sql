@@ -1542,6 +1542,33 @@ LEFT JOIN LATERAL (
 ) bc ON true
 ORDER BY p.started_at DESC, p.id DESC;
 
+-- The account trace view's per-request wakes: one canonical instance per wake
+-- (its first), scoped to the account's apps before reading wake metadata, with
+-- the same boot and completion reads as ListAppWakeHistoryPage.
+-- name: ListWakeHistoryByWakeIDs :many
+WITH page AS MATERIALIZED (
+ SELECT DISTINCT ON (wake_id) id, app_id, wake_id, state, started_at FROM instances
+ WHERE app_id = ANY(sqlc.arg(app_ids)::uuid[])
+   AND wake_id = ANY(sqlc.arg(wake_ids)::uuid[])
+   AND started_at IS NOT NULL
+ ORDER BY wake_id, started_at ASC, id ASC
+)
+SELECT p.id::text AS instance_id, p.app_id::text AS app_id, p.wake_id::text AS wake_id,
+       p.state, p.started_at, bs.data AS boot_data, bs.at AS boot_at,
+       (bs.id IS NOT NULL)::boolean AS has_meta, bc.at AS completed_at
+FROM page p
+LEFT JOIN LATERAL (
+ SELECT id, data, at FROM events
+ WHERE kind = 'wake.boot_started' AND data->>'app_id' = p.app_id::text AND data->>'wake_id' = p.wake_id::text
+ ORDER BY (actor = 'schedd') DESC, at ASC, id ASC LIMIT 1
+) bs ON true
+LEFT JOIN LATERAL (
+ SELECT at FROM events
+ WHERE kind = 'wake.boot_completed' AND data->>'app_id' = p.app_id::text AND data->>'wake_id' = p.wake_id::text
+ ORDER BY at ASC, id ASC LIMIT 1
+) bc ON true
+ORDER BY p.started_at ASC, p.wake_id;
+
 -- name: ListAllEventsPaged :many
 -- ADR-091 §3.7 / PR #3 — operator-obs backend audit-reading surface.
 -- Reads the live events table (NOT audit_log — distinct source of
@@ -7480,6 +7507,32 @@ WHERE i.id=$1 AND i.source='queue';
 -- name: CountProductionPendingInvocations :one
 SELECT count(*) FROM production_invocation_work WHERE app_id=$1 AND source=$2 AND state IN ('pending','dispatching');
 
+-- name: StampDefaultInvocationRetention :execrows
+-- ADR 20261019104819: finished rows whose producer set no horizon get the
+-- plan default from pkg/api/limits.go. Failed and dead-lettered rows keep at
+-- least the failure floor so DLQ replay and execution recovery still find
+-- them. The reaper prunes stamped rows once they are due.
+WITH plan_retention AS (
+    SELECT unnest(sqlc.arg(plans)::text[]) AS plan, unnest(sqlc.arg(retention_seconds)::bigint[]) AS seconds
+), batch AS (
+    SELECT i.id, coalesce(i.completed_at, i.created_at) AS settled_at,
+           CASE WHEN i.state IN ('failed', 'dead_letter') THEN greatest(r.seconds, sqlc.arg(failure_floor_seconds)::bigint)
+                ELSE r.seconds END AS seconds
+    FROM invocations i
+    LEFT JOIN accounts a ON a.id = i.account_id
+    LEFT JOIN orgs o ON o.id = i.account_id AND NOT o.personal_org AND o.resource_ownership_enabled
+    JOIN plan_retention r ON r.plan = coalesce(a.plan, o.plan)
+    WHERE i.result_retention_until IS NULL
+      AND i.state IN ('completed', 'failed', 'dead_letter', 'cancelled', 'superseded', 'expired')
+    ORDER BY i.created_at
+    LIMIT sqlc.arg(batch_limit)::integer
+    FOR UPDATE OF i SKIP LOCKED
+)
+UPDATE invocations
+SET result_retention_until = batch.settled_at + make_interval(secs => batch.seconds)
+FROM batch
+WHERE invocations.id = batch.id;
+
 -- name: CountProductionPendingQueueWorkInLane :one
 SELECT count(*) FROM production_invocation_work WHERE app_id=$1 AND source='queue' AND state='pending'
     AND work_policy_name=$2 AND work_key_digest=$3;
@@ -9080,7 +9133,9 @@ SELECT max(boundary.changed_at)::timestamptz AS changed_at FROM (
     SELECT changed_at FROM app_runtime_config_changes WHERE app_id = sqlc.arg(app_id)::uuid
     UNION ALL
     SELECT changed_at FROM app_runtime_config_scope_changes WHERE app_id = sqlc.arg(app_id)::uuid
-        AND scope IN ('default', sqlc.arg(scope)::text)
+        AND (scope IN ('default', sqlc.arg(scope)::text)
+            -- ADR-1136: default-scope deployments read production's project configuration.
+            OR (sqlc.arg(scope)::text = 'default' AND scope = 'default:project-config'))
 ) AS boundary;
 
 -- name: LockSnapshotRuntimePublicationScope :one
@@ -11558,6 +11613,7 @@ WITH candidate AS (
  SELECT task.id FROM app_tasks task JOIN apps app ON app.id=task.app_id
  WHERE task.status='queued' AND task.cancel_requested_at IS NULL
  AND app.managed_postgres_admission_cutover_id IS NULL
+ AND NOT financial_app_command_held(task.app_id,task.deployment_id,sqlc.arg(claimed_at)::timestamptz)
  AND task.created_at<=sqlc.arg(claimed_at)::timestamptz
  AND (task.retry_at IS NULL OR task.retry_at<=sqlc.arg(claimed_at))
  AND (task.start_deadline_at IS NULL OR task.start_deadline_at>=sqlc.arg(claimed_at)
@@ -11581,6 +11637,7 @@ UPDATE app_tasks SET status='running',started_at=sqlc.arg(started_at)::timestamp
 retry_at=NULL,stdout_tail='',stderr_tail='',output_truncated=false,exit_code=NULL,failure_code=NULL,failure_message=NULL,updated_at=sqlc.arg(started_at)
 WHERE id=sqlc.arg(id)::text::uuid AND status='restoring' AND lease_token=sqlc.arg(token)::text::uuid
 AND cancel_requested_at IS NULL AND lease_expires_at>sqlc.arg(started_at)
+AND NOT financial_app_command_held(app_id,deployment_id,sqlc.arg(started_at)::timestamptz)
 AND (start_deadline_at IS NULL OR start_deadline_at>=sqlc.arg(started_at) OR EXISTS (
  SELECT 1 FROM schedule_occurrences occurrence WHERE occurrence.id=app_tasks.occurrence_id AND occurrence.started_at IS NOT NULL))
 RETURNING *;
@@ -16641,6 +16698,37 @@ SELECT workflows FROM deployments WHERE id=sqlc.arg(deployment_id)::uuid;
 -- name: GetCustomerOperationForWorkflow :one
 SELECT record FROM customer_operations WHERE workflow_run_id=sqlc.arg(run_id)::uuid;
 
+-- name: CustomerOperationActiveTelemetry :many
+-- ADR-20261016123221: fleet-wide pending Operations by state and wait kind, read
+-- through the partial index of pending Operations.
+SELECT state, coalesce(record #>> '{waiting,kind}', '')::text AS wait_kind, count(*)::bigint AS operations,
+       min((record ->> 'updated_at')::timestamptz)::timestamptz AS oldest_update,
+       (count(*) FILTER (WHERE state IN ('accepted', 'running', 'waiting') AND deadline_at < sqlc.arg(overdue_before)::timestamptz))::bigint AS overdue
+FROM customer_operations
+WHERE state IN ('accepted', 'running', 'waiting', 'requires_reconciliation')
+GROUP BY state, wait_kind;
+
+-- name: CustomerOperationOutcomeTelemetry :many
+-- ADR-20261016123221: Operation outcomes since a point, by failure code.
+SELECT event_type, coalesce(data ->> 'failure_code', '')::text AS failure_code, count(*)::bigint AS operations
+FROM customer_operation_events
+WHERE event_type IN ('succeeded', 'failed', 'cancelled', 'reconciliation_required') AND created_at >= sqlc.arg(since)::timestamptz
+GROUP BY event_type, failure_code;
+
+-- name: CustomerOperationOutcomeUnknownAccounts :one
+-- ADR-20261016123221: accounts whose attempts ended with an unknown outcome since a point.
+SELECT count(DISTINCT o.account_id)::bigint
+FROM customer_operation_events e
+JOIN customer_operations o ON o.id = e.operation_id
+WHERE e.event_type IN ('succeeded', 'failed', 'cancelled', 'reconciliation_required') AND e.event_type = 'reconciliation_required'
+  AND e.data ->> 'failure_code' = 'execution_outcome_unknown' AND e.created_at >= sqlc.arg(since)::timestamptz;
+
+-- name: ListFinishedWorkflowRunAttempts :many
+-- ADR-20261016110803: the finished step attempts an Operation's execution budget counts.
+SELECT step_name, attempt, started_at, finished_at FROM workflow_step_attempts
+WHERE run_id=sqlc.arg(run_id)::uuid AND finished_at IS NOT NULL
+ORDER BY started_at, step_name, attempt;
+
 -- name: LockCustomerOperationForWorkflow :one
 SELECT record FROM customer_operations WHERE workflow_run_id=sqlc.arg(run_id)::uuid FOR UPDATE;
 
@@ -16687,6 +16775,7 @@ SELECT id::text FROM customer_operations
 WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid AND record ? 'subject'
   AND record #>> '{subject,type}' = sqlc.arg(subject_type)::text AND record #>> '{subject,id}' = sqlc.arg(subject_id)::text
   AND record->>'scope' = sqlc.arg(scope)::text AND record->>'name' = sqlc.arg(name)::text
+  AND (sqlc.narg(tenant_id)::uuid IS NULL OR platform_tenant_id = sqlc.narg(tenant_id)::uuid)
   AND state IN ('accepted','running','waiting')
 ORDER BY created_at,id LIMIT sqlc.arg(page_limit)::integer;
 
@@ -16716,11 +16805,14 @@ SELECT EXISTS (SELECT 1 FROM instances WHERE id = sqlc.arg(instance_id)::uuid
 AND app_id = sqlc.arg(app_id)::uuid AND deployment_id = sqlc.arg(deployment_id)::uuid AND state = 'running');
 
 -- name: CustomerOperationWorkflowAttemptWindow :one
+-- ADR-20261016110803: the Operation's execution budget also caps the attempt window.
 SELECT r.definition_snapshot, r.resume_count, r.lease_until,
-       a.started_at, clock_timestamp()::timestamptz AS observed_at
+       a.started_at, clock_timestamp()::timestamptz AS observed_at,
+       coalesce((o.record #>> '{limits,max_execution_seconds}')::integer, 0)::integer AS max_execution_seconds
 FROM workflow_runs r
 JOIN workflow_steps s ON s.run_id=r.id
 JOIN workflow_step_attempts a ON a.run_id=r.id AND a.step_name=s.step_name AND a.attempt=s.attempt
+LEFT JOIN customer_operations o ON o.workflow_run_id=r.id
 WHERE r.id=sqlc.arg(run_id)::uuid AND s.step_name=sqlc.arg(step_name)::text
 AND s.attempt=sqlc.arg(attempt)::integer AND s.status='running' AND a.status='running'
 AND r.status='running' AND r.lease_until>clock_timestamp();
@@ -18681,6 +18773,8 @@ SELECT
  OR EXISTS(SELECT 1 FROM deployment_runtime_environment_owners p WHERE p.environment_id::text=(sqlc.arg(environment_id)::uuid)::text)
  OR EXISTS(SELECT 1 FROM environment_management_overrides p WHERE p.environment_id::text=(sqlc.arg(environment_id)::uuid)::text)
  OR EXISTS(SELECT 1 FROM exclusive_work_keys p WHERE p.environment_id::text=(sqlc.arg(environment_id)::uuid)::text)
+ OR EXISTS(SELECT 1 FROM financial_budget_stop_targets p WHERE p.environment_id=(sqlc.arg(environment_id)::uuid)::text AND p.state IN ('requested', 'draining'))
+ OR EXISTS(SELECT 1 FROM financial_preview_command_runtimes p WHERE p.environment_id::text=(sqlc.arg(environment_id)::uuid)::text AND p.phase <> 'retired')
  OR EXISTS(SELECT 1 FROM queue_bindings p WHERE p.environment_id::text=(sqlc.arg(environment_id)::uuid)::text OR (p.app_id IN (SELECT id FROM scoped_apps) AND p.deployment_scope=sqlc.arg(environment)::text))
  OR EXISTS(SELECT 1 FROM triggers p WHERE p.queue_binding_environment_id=sqlc.arg(environment_id)::uuid OR (p.app_id IN (SELECT id FROM scoped_apps) AND p.queue_binding_scope=sqlc.arg(environment)::text))
  OR EXISTS(SELECT 1 FROM runtime_instance_config_proofs p JOIN instances i ON i.id=p.instance_id WHERE p.environment_id::text=(sqlc.arg(environment_id)::uuid)::text OR (i.app_id IN (SELECT id FROM scoped_apps) AND p.scope=sqlc.arg(environment)::text))
@@ -18813,7 +18907,9 @@ SELECT (jsonb_build_object(
     'deployment_runtime_scan_current_deployment_id_fkey', (SELECT count(*) FROM deployment_runtime_scan_current WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
     'deployment_runtime_scans_deployment_id_fkey', (SELECT count(*) FROM deployment_runtime_scans WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
     'source_build_rootfs_current_deployment_id_fkey', (SELECT count(*) FROM source_build_rootfs_current WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
-    'source_build_rootfs_deployment_id_fkey', (SELECT count(*) FROM source_build_rootfs WHERE deployment_id = sqlc.arg(deployment_id)::uuid)
+    'source_build_rootfs_deployment_id_fkey', (SELECT count(*) FROM source_build_rootfs WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
+    -- Preview command runtimes (financial previews) hold a deployment while preparing or active.
+    'financial_preview_command_runtimes_deployment_id_fkey', (SELECT count(*) FROM financial_preview_command_runtimes WHERE deployment_id = sqlc.arg(deployment_id)::uuid AND phase <> 'retired')
 ))::jsonb AS borrowers;
 
 -- name: ReadCloneDeploymentCleanup :one
@@ -18871,6 +18967,7 @@ SELECT jsonb_build_object(
  'workflow_automation_live_suites.deployment_id', (SELECT count(*) FROM workflow_automation_live_suites WHERE deployment_id=sqlc.arg(deployment_id)::uuid),
  'workflow_automation_live_verifications.deployment_id', (SELECT count(*) FROM workflow_automation_live_verifications WHERE deployment_id=sqlc.arg(deployment_id)::uuid),
  'workflow_schedule_occurrences.deployment_id', (SELECT count(*) FROM workflow_schedule_occurrences WHERE deployment_id::text=sqlc.arg(deployment_id)::uuid::text),
+ 'release_freezes.source_deployment_id', (SELECT count(*) FROM release_freezes WHERE source_deployment_id=sqlc.arg(deployment_id)::uuid),
  'app_issues.fixed_deployment_id', (SELECT count(*) FROM app_issues WHERE fixed_deployment_id=sqlc.arg(deployment_id)::uuid),
  'debug_regression_observations.deployment_id', (SELECT count(*) FROM debug_regression_observations WHERE deployment_id=sqlc.arg(deployment_id)::uuid),
  'deployment_audit.deployment_id', (SELECT count(*) FROM deployment_audit WHERE deployment_id=sqlc.arg(deployment_id)::uuid),

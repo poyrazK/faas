@@ -83,7 +83,7 @@ func ValidateBudget(p BudgetSpec) error {
 		}
 	}
 	if p.Mode == "strict" {
-		if len(p.Meters) != 1 || p.Meters[0] != "compute" || p.Action == "notify" || p.Action == "reject_traffic" {
+		if !StrictAccountEgress(p) && (len(p.Meters) != 1 || p.Meters[0] != "compute" || p.Action == "notify" || p.Action == "reject_traffic") {
 			return fmt.Errorf("%w: strict compute requires a stopping action", ErrInvalid)
 		}
 		// An unrelated workload can consume the shared account allowance and

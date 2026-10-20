@@ -17,11 +17,12 @@
 // conditional UPDATE, audit row, metric) is exercised
 // separately by pkg/sched/engine_test.go (TestReconcileExpiredMigrations_*).
 
-package sched
+package sched_test
 
 import (
 	"context"
 	"errors"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -60,12 +61,12 @@ func (r *recordingMigratingWatchdogHandle) fn(ctx context.Context) (int, error) 
 
 func TestMigratingWatchdog_TickDispatches(t *testing.T) {
 	rec := &recordingMigratingWatchdogHandle{}
-	w := NewMigratingWatchdog(rec.fn, 10*time.Millisecond, nil)
+	w := sched.NewMigratingWatchdog(rec.fn, 10*time.Millisecond, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)
 	go func() { done <- w.Run(ctx) }()
-	if err := waitFor(func() bool { return rec.calls.Load() >= 1 }, 200*time.Millisecond); err != nil {
+	if err := sched.WaitFor(func() bool { return rec.calls.Load() >= 1 }, 200*time.Millisecond); err != nil {
 		t.Fatalf("handle not called within 200ms: %v", err)
 	}
 	cancel()
@@ -77,12 +78,12 @@ func TestMigratingWatchdog_TickDispatches(t *testing.T) {
 
 func TestMigratingWatchdog_RespectsCadence(t *testing.T) {
 	rec := &recordingMigratingWatchdogHandle{}
-	w := NewMigratingWatchdog(rec.fn, 10*time.Millisecond, nil)
+	w := sched.NewMigratingWatchdog(rec.fn, 10*time.Millisecond, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)
 	go func() { done <- w.Run(ctx) }()
-	if err := waitFor(func() bool { return rec.calls.Load() >= 3 }, 300*time.Millisecond); err != nil {
+	if err := sched.WaitFor(func() bool { return rec.calls.Load() >= 3 }, 300*time.Millisecond); err != nil {
 		t.Fatalf("handle not called >= 3 times within 300ms: %v (calls=%d)", err, rec.calls.Load())
 	}
 	cancel()
@@ -94,7 +95,7 @@ func TestMigratingWatchdog_RespectsCadence(t *testing.T) {
 
 func TestMigratingWatchdog_HandlesCtxCancel(t *testing.T) {
 	rec := &recordingMigratingWatchdogHandle{}
-	w := NewMigratingWatchdog(rec.fn, 10*time.Millisecond, nil)
+	w := sched.NewMigratingWatchdog(rec.fn, 10*time.Millisecond, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- w.Run(ctx) }()
@@ -115,13 +116,13 @@ func TestMigratingWatchdog_HandleErrorDoesNotStopLoop(t *testing.T) {
 	failUntil.Store(2) // fail twice, then succeed
 	rec.errAfter = &failUntil
 	rec.err = errors.New("synthetic PG blip")
-	w := NewMigratingWatchdog(rec.fn, 10*time.Millisecond, nil)
+	w := sched.NewMigratingWatchdog(rec.fn, 10*time.Millisecond, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)
 	go func() { done <- w.Run(ctx) }()
 	// After 4 ticks: 2 failures + 2 successes.
-	if err := waitFor(func() bool { return rec.calls.Load() >= 4 }, 400*time.Millisecond); err != nil {
+	if err := sched.WaitFor(func() bool { return rec.calls.Load() >= 4 }, 400*time.Millisecond); err != nil {
 		t.Fatalf("handle not called >= 4 times within 400ms: %v (calls=%d)", err, rec.calls.Load())
 	}
 	cancel()
@@ -137,7 +138,7 @@ func TestMigratingWatchdog_NilHandlePanics(t *testing.T) {
 			t.Fatalf("NewMigratingWatchdog(nil, ...) should panic")
 		}
 	}()
-	_ = NewMigratingWatchdog(nil, 10*time.Millisecond, nil)
+	_ = sched.NewMigratingWatchdog(nil, 10*time.Millisecond, nil)
 }
 
 func TestMigratingWatchdog_ZeroIntervalPanics(t *testing.T) {
@@ -147,5 +148,5 @@ func TestMigratingWatchdog_ZeroIntervalPanics(t *testing.T) {
 		}
 	}()
 	rec := &recordingMigratingWatchdogHandle{}
-	_ = NewMigratingWatchdog(rec.fn, 0, nil)
+	_ = sched.NewMigratingWatchdog(rec.fn, 0, nil)
 }

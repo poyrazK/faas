@@ -34,6 +34,7 @@ NATIVE_E2E_PHASES=(
   logs
   security
   twonode
+  financial
   jobs
 )
 
@@ -69,6 +70,7 @@ native_e2e_phase_files() {
       guest_tracing_metal_test.go \
       image_process_identity_metal_test.go \
       workload_identity_metal_test.go \
+      image_process_identity_metal_test.go \
       source_deploy_wake_metal_test.go \
       secrets_image_deploy_e2e_test.go \
       object_storage_native_metal_test.go \
@@ -91,6 +93,9 @@ native_e2e_phase_files() {
       durable_entities_restore_metal_test.go \
       managed_operation_workflow_metal_test.go \
       customer_workflow_operations_metal_test.go \
+      customer_workflow_operations_v1_metal_test.go \
+      customer_http_operations_metal_test.go \
+      customer_http_operations_v1_metal_test.go \
       feature_flags_native_restore_metal_test.go \
       before_checkpoint_metal_test.go \
       fleet_wake_dedup_e2e_test.go \
@@ -107,12 +112,23 @@ native_e2e_phase_files() {
     security) printf '%s\n' sec11_memory_max_e2e_test.go sec11_seccomp_e2e_test.go ;;
     # Multi-node control plane: recovery arbiter, drain, heartbeat drills.
     twonode) printf '%s\n' twonode_failure_safe_metal_test.go twonode_runbook_test.go ;;
+    financial) printf '%s\n' financial_system_metal_test.go financial_budget_preview_stops_metal_test.go ;;
     # Real jobs harness and scratch-image workload. This phase remains
     # non-blocking until it passes on the dedicated KVM runner.
     jobs) printf '%s\n' jobs_metal_test.go customer_job_operations_metal_test.go \
       image_runs_metal_test.go job_task_logs_metal_test.go image_run_interactive_metal_test.go ;;
     *) echo "native-e2e-phases: unknown phase: $1" >&2; return 1 ;;
   esac
+}
+
+# native_e2e_sibling_files lists the cmd/e2e files matching a glob as the
+# comma-separated --files value native_e2e_inventory takes.
+native_e2e_sibling_files() {
+  local root="${1:?root required}" pattern="${2:?pattern required}" f out=""
+  for f in "${root}"/cmd/e2e/${pattern}; do
+    [[ -f "${f}" ]] && out="${out:+${out},}${f##*/}"
+  done
+  printf '%s' "${out}"
 }
 
 # Derive top-level tests from the phase files using the same Go build context
@@ -205,7 +221,9 @@ native_e2e_assert_phase_partition() {
 # Missing or skipped scenarios fail its dedicated blocking verdict.
 # customer-workflow-operations-only derives every native workflow scenario;
 # its selected tests are blocking independently of the full matrix's phases.
-NATIVE_E2E_LANES=(smoke containers exclusive-operations-only managed-operation-only customer-job-operations-only customer-workflow-operations-only)
+# customer-http-operations-only derives every ordinary HTTP Operations scenario
+# (ADR-521); it is the native gate before a customer preview cohort opens.
+NATIVE_E2E_LANES=(smoke containers exclusive-operations-only managed-operation-only customer-job-operations-only customer-workflow-operations-only customer-http-operations-only financial-system)
 
 # NATIVE_E2E_SMOKE_TESTS lists the smoke lane by NAME. Hand-picked on purpose
 # (see above); native_e2e_assert_lanes below fails if any name is not a real
@@ -239,6 +257,10 @@ native_e2e_lane_tests() {
     containers)
       native_e2e_inventory "$root" --files 'direct_oci_fullrootfs_metal_test.go,direct_oci_port_metal_test.go,direct_oci_autoscale_metal_test.go,deploy_healthcheck_metal_test.go,after_restore_metal_test.go,before_checkpoint_metal_test.go,tcp_ingress_metal_test.go,udp_ingress_metal_test.go,streaming_metal_test.go,sec11_memory_max_e2e_test.go,sec11_seccomp_e2e_test.go'
       ;;
+    financial-system)
+      grep -hoE '^func Test[A-Za-z0-9_]+\(' "${root}/cmd/e2e/financial_system_metal_test.go" |
+        sed -E 's/^func //; s/\($//' | sort -u
+      ;;
     exclusive-operations-only)
       printf '%s\n' "${NATIVE_E2E_EXCLUSIVE_OPERATIONS_TESTS[@]}"
       ;;
@@ -249,7 +271,12 @@ native_e2e_lane_tests() {
       native_e2e_inventory "$root" --files customer_job_operations_metal_test.go
       ;;
     customer-workflow-operations-only)
-      native_e2e_inventory "$root" --files customer_workflow_operations_metal_test.go
+      # Every customer_workflow_operations*_metal_test.go file, so the
+      # ADR-20261017102231 Stage 2 scenarios join the lane without a selector edit.
+      native_e2e_inventory "$root" --files "$(native_e2e_sibling_files "$root" 'customer_workflow_operations*_metal_test.go')"
+      ;;
+    customer-http-operations-only)
+      native_e2e_inventory "$root" --files "$(native_e2e_sibling_files "$root" 'customer_http_operations*_metal_test.go')"
       ;;
     *) echo "native-e2e-phases: unknown lane: ${lane}" >&2; return 1 ;;
   esac

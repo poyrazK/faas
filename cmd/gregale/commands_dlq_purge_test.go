@@ -1,6 +1,7 @@
-package main
+package main_test
 
 import (
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"net/http"
 	"testing"
 )
@@ -20,14 +21,14 @@ func TestDLQPurgeAllConfirmsUnlessYes(t *testing.T) {
 		{name: "--yes skips the prompt", args: []string{"demo", "--all", "--yes"}, want: 0, calls: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			resetJSONOut(t)
-			api := authedFakeAPI(t, `{"purged":0}`, http.StatusOK)
-			pipeStdin(t, tc.stdin)
-			if code := cmdDLQPurge(tc.args); code != tc.want {
+			main.ResetJSONOut(t)
+			api := main.AuthedFakeAPI(t, `{"purged":0}`, http.StatusOK)
+			main.PipeStdin(t, tc.stdin)
+			if code := main.CmdDLQPurge(tc.args); code != tc.want {
 				t.Fatalf("exit = %d, want %d", code, tc.want)
 			}
-			if called := api.sawPath != ""; called != tc.calls {
-				t.Fatalf("API called = %v (%s %s), want %v", called, api.sawMethod, api.sawPath, tc.calls)
+			if called := (*api.SawPath()) != ""; called != tc.calls {
+				t.Fatalf("API called = %v (%s %s), want %v", called, (*api.SawMethod()), (*api.SawPath()), tc.calls)
 			}
 		})
 	}

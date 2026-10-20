@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/mail"
 )
 
@@ -31,7 +32,7 @@ func TestMailDryRun_DefaultFlags(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RenderAllTemplates: %v", err)
 	}
-	if err := writeMailDryRun(&buf, renders); err != nil {
+	if err := main.WriteMailDryRun(&buf, renders); err != nil {
 		t.Fatalf("writeMailDryRun: %v", err)
 	}
 	out := buf.String()
@@ -77,7 +78,7 @@ func TestMailDryRun_WithUnsubscribeURL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RenderAllTemplates: %v", err)
 	}
-	if err := writeMailDryRun(&buf, renders); err != nil {
+	if err := main.WriteMailDryRun(&buf, renders); err != nil {
 		t.Fatal(err)
 	}
 	var roundTrip []mail.RenderTemplate
@@ -104,7 +105,7 @@ func TestMailDryRun_WithUnsubscribeURL(t *testing.T) {
 // close-set subcommand list is "dry-run" today; a typo must be
 // caught loudly rather than silently no-op.
 func TestCmdMailDispatch_UnknownSubcommand(t *testing.T) {
-	if code := cmdMail([]string{"bogus"}); code != 1 {
+	if code := main.CmdMail([]string{"bogus"}); code != 1 {
 		t.Errorf("cmdMail(bogus) = %d, want 1", code)
 	}
 }
@@ -113,7 +114,7 @@ func TestCmdMailDispatch_UnknownSubcommand(t *testing.T) {
 // subcommand returns 1 + usage. Otherwise the operator gets a
 // silent exit-zero with no output.
 func TestCmdMailDispatch_NoArgs(t *testing.T) {
-	if code := cmdMail(nil); code != 1 {
+	if code := main.CmdMail(nil); code != 1 {
 		t.Errorf("cmdMail() = %d, want 1", code)
 	}
 }

@@ -47,9 +47,12 @@ on:
           native customer Job results, restart, recovery, cancellation and cleanup;
           customer-workflow-operations-only: native customer workflow files,
           crash/resume, cancellation, deadlines, owner revocation and cleanup;
+          customer-http-operations-only: native ordinary HTTP Operations files,
+          progress, crash/recovery, cancellation, owner revocation and cleanup;
+          financial-system: full-daemon funding recovery and provider reconciliation;
           bindings: strict PostgreSQL, storage and queue guest qualification.
         type: choice
-        options: [smoke, full, qualify, jobs-only, containers, exclusive-operations-only, managed-operation-only, customer-job-operations-only, customer-workflow-operations-only, bindings]
+        options: [smoke, full, qualify, jobs-only, containers, exclusive-operations-only, managed-operation-only, customer-job-operations-only, customer-workflow-operations-only, customer-http-operations-only, financial-system, bindings]
         default: smoke
       keep_node_running:
         description: >-
@@ -87,7 +90,7 @@ jobs:
     # with a less obvious error than this check.
     if: >-
       github.event_name == 'schedule' ||
-      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.lane != 'bindings')
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.lane != 'financial-system' && inputs.lane != 'bindings')
     runs-on: ubuntu-latest
     # 150 min: the suite is the whole ./cmd/e2e package under -race, including
     # real cold boots, builder microVM builds and the 100-cycle wake loop. The
@@ -244,7 +247,7 @@ jobs:
 
       - name: Phase 1 — fixtures (app shape checks, no microVM)
         id: phase_fixtures
-        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke' && inputs.lane != 'jobs-only' && inputs.lane != 'containers' && inputs.lane != 'exclusive-operations-only' && inputs.lane != 'managed-operation-only' && inputs.lane != 'customer-job-operations-only' && inputs.lane != 'customer-workflow-operations-only'
+        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke' && inputs.lane != 'jobs-only' && inputs.lane != 'containers' && inputs.lane != 'exclusive-operations-only' && inputs.lane != 'managed-operation-only' && inputs.lane != 'customer-job-operations-only' && inputs.lane != 'customer-workflow-operations-only' && inputs.lane != 'customer-http-operations-only'
         continue-on-error: true
         env:
           SOURCE_SHA: ${{ github.sha }}
@@ -263,7 +266,7 @@ jobs:
 
       - name: Phase 2 — build (source → builderd → builder microVM)
         id: phase_build
-        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke' && inputs.lane != 'jobs-only' && inputs.lane != 'containers' && inputs.lane != 'exclusive-operations-only' && inputs.lane != 'managed-operation-only' && inputs.lane != 'customer-job-operations-only' && inputs.lane != 'customer-workflow-operations-only'
+        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke' && inputs.lane != 'jobs-only' && inputs.lane != 'containers' && inputs.lane != 'exclusive-operations-only' && inputs.lane != 'managed-operation-only' && inputs.lane != 'customer-job-operations-only' && inputs.lane != 'customer-workflow-operations-only' && inputs.lane != 'customer-http-operations-only'
         continue-on-error: true
         env:
           SOURCE_SHA: ${{ github.sha }}
@@ -283,7 +286,7 @@ jobs:
 
       - name: Phase 3 — deploy (image, tarball, healthcheck, secrets)
         id: phase_deploy
-        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke' && inputs.lane != 'jobs-only' && inputs.lane != 'containers' && inputs.lane != 'exclusive-operations-only' && inputs.lane != 'managed-operation-only' && inputs.lane != 'customer-job-operations-only' && inputs.lane != 'customer-workflow-operations-only'
+        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke' && inputs.lane != 'jobs-only' && inputs.lane != 'containers' && inputs.lane != 'exclusive-operations-only' && inputs.lane != 'managed-operation-only' && inputs.lane != 'customer-job-operations-only' && inputs.lane != 'customer-workflow-operations-only' && inputs.lane != 'customer-http-operations-only'
         continue-on-error: true
         env:
           SOURCE_SHA: ${{ github.sha }}
@@ -302,7 +305,7 @@ jobs:
 
       - name: Phase 4 — wake (restore, native Flags refresh, scheduling)
         id: phase_wake
-        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke' && inputs.lane != 'jobs-only' && inputs.lane != 'containers' && inputs.lane != 'exclusive-operations-only' && inputs.lane != 'managed-operation-only' && inputs.lane != 'customer-job-operations-only' && inputs.lane != 'customer-workflow-operations-only'
+        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke' && inputs.lane != 'jobs-only' && inputs.lane != 'containers' && inputs.lane != 'exclusive-operations-only' && inputs.lane != 'managed-operation-only' && inputs.lane != 'customer-job-operations-only' && inputs.lane != 'customer-workflow-operations-only' && inputs.lane != 'customer-http-operations-only'
         continue-on-error: true
         env:
           SOURCE_SHA: ${{ github.sha }}
@@ -321,7 +324,7 @@ jobs:
 
       - name: Phase 5 — streaming (response streaming, h2c inner leg)
         id: phase_streaming
-        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke' && inputs.lane != 'jobs-only' && inputs.lane != 'containers' && inputs.lane != 'exclusive-operations-only' && inputs.lane != 'managed-operation-only' && inputs.lane != 'customer-job-operations-only' && inputs.lane != 'customer-workflow-operations-only'
+        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke' && inputs.lane != 'jobs-only' && inputs.lane != 'containers' && inputs.lane != 'exclusive-operations-only' && inputs.lane != 'managed-operation-only' && inputs.lane != 'customer-job-operations-only' && inputs.lane != 'customer-workflow-operations-only' && inputs.lane != 'customer-http-operations-only'
         continue-on-error: true
         env:
           SOURCE_SHA: ${{ github.sha }}
@@ -340,7 +343,7 @@ jobs:
 
       - name: Phase 6 — logs (app log SSE)
         id: phase_logs
-        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke' && inputs.lane != 'jobs-only' && inputs.lane != 'containers' && inputs.lane != 'exclusive-operations-only' && inputs.lane != 'managed-operation-only' && inputs.lane != 'customer-job-operations-only' && inputs.lane != 'customer-workflow-operations-only'
+        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke' && inputs.lane != 'jobs-only' && inputs.lane != 'containers' && inputs.lane != 'exclusive-operations-only' && inputs.lane != 'managed-operation-only' && inputs.lane != 'customer-job-operations-only' && inputs.lane != 'customer-workflow-operations-only' && inputs.lane != 'customer-http-operations-only'
         continue-on-error: true
         env:
           SOURCE_SHA: ${{ github.sha }}
@@ -359,7 +362,7 @@ jobs:
 
       - name: Phase 7 — security fences (§11, ship-blocking)
         id: phase_security
-        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke' && inputs.lane != 'jobs-only' && inputs.lane != 'containers' && inputs.lane != 'exclusive-operations-only' && inputs.lane != 'managed-operation-only' && inputs.lane != 'customer-job-operations-only' && inputs.lane != 'customer-workflow-operations-only'
+        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke' && inputs.lane != 'jobs-only' && inputs.lane != 'containers' && inputs.lane != 'exclusive-operations-only' && inputs.lane != 'managed-operation-only' && inputs.lane != 'customer-job-operations-only' && inputs.lane != 'customer-workflow-operations-only' && inputs.lane != 'customer-http-operations-only'
         continue-on-error: true
         env:
           SOURCE_SHA: ${{ github.sha }}
@@ -378,7 +381,7 @@ jobs:
 
       - name: Phase 8 — two-node (recovery arbiter, drain, drills)
         id: phase_twonode
-        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke' && inputs.lane != 'jobs-only' && inputs.lane != 'containers' && inputs.lane != 'exclusive-operations-only' && inputs.lane != 'managed-operation-only' && inputs.lane != 'customer-job-operations-only' && inputs.lane != 'customer-workflow-operations-only'
+        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke' && inputs.lane != 'jobs-only' && inputs.lane != 'containers' && inputs.lane != 'exclusive-operations-only' && inputs.lane != 'managed-operation-only' && inputs.lane != 'customer-job-operations-only' && inputs.lane != 'customer-workflow-operations-only' && inputs.lane != 'customer-http-operations-only'
         continue-on-error: true
         env:
           SOURCE_SHA: ${{ github.sha }}
@@ -397,7 +400,7 @@ jobs:
 
       - name: Phase 9 — jobs (awaiting native verification, #2569)
         id: phase_jobs
-        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke' && inputs.lane != 'jobs-only' && inputs.lane != 'containers' && inputs.lane != 'exclusive-operations-only' && inputs.lane != 'managed-operation-only' && inputs.lane != 'customer-job-operations-only' && inputs.lane != 'customer-workflow-operations-only'
+        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke' && inputs.lane != 'jobs-only' && inputs.lane != 'containers' && inputs.lane != 'exclusive-operations-only' && inputs.lane != 'managed-operation-only' && inputs.lane != 'customer-job-operations-only' && inputs.lane != 'customer-workflow-operations-only' && inputs.lane != 'customer-http-operations-only'
         continue-on-error: true
         env:
           SOURCE_SHA: ${{ github.sha }}
@@ -488,6 +491,21 @@ jobs:
             --project "$GCP_PROJECT" --zone "$GCP_ZONE" \
             --command "sudo systemd-run --quiet --wait --collect --unit='$unit' --property=RuntimeMaxSec=40m --property='StandardOutput=append:$remote_root/native-e2e.log' --property='StandardError=append:$remote_root/native-e2e.log' --working-directory='$remote_root/source' --setenv=FAAS_E2E_SOURCE_SHA='$SOURCE_SHA' --setenv=FAAS_E2E_GO='$remote_root/tools/go/bin/go' --setenv=FAAS_E2E_RUN_ID='${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}' --setenv=FAAS_E2E_TRANSFER_ROOT='$remote_root' --setenv=FAAS_E2E_PHASE='$PHASE' /bin/bash scripts/ci/run-native-e2e.sh" 2>&1 | tee "$RUNNER_TEMP/phase-$PHASE.log"
 
+      - name: Customer HTTP Operations acceptance (blocking KVM lane)
+        id: phase_customer_http_operations_only
+        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane == 'customer-http-operations-only'
+        continue-on-error: true
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+          PHASE: customer-http-operations-only
+        run: |
+          set -euo pipefail
+          remote_root="/var/tmp/faas-native-e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          unit="faas-e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-$PHASE"
+          gcloud compute ssh "$GCP_INSTANCE" --quiet \
+            --project "$GCP_PROJECT" --zone "$GCP_ZONE" \
+            --command "sudo systemd-run --quiet --wait --collect --unit='$unit' --property=RuntimeMaxSec=40m --property='StandardOutput=append:$remote_root/native-e2e.log' --property='StandardError=append:$remote_root/native-e2e.log' --working-directory='$remote_root/source' --setenv=FAAS_E2E_SOURCE_SHA='$SOURCE_SHA' --setenv=FAAS_E2E_GO='$remote_root/tools/go/bin/go' --setenv=FAAS_E2E_RUN_ID='${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}' --setenv=FAAS_E2E_TRANSFER_ROOT='$remote_root' --setenv=FAAS_E2E_PHASE='$PHASE' /bin/bash scripts/ci/run-native-e2e.sh" 2>&1 | tee "$RUNNER_TEMP/phase-$PHASE.log"
+
       - name: Refresh GCP authentication for cleanup
         if: always() && steps.auth.outcome == 'success'
         uses: google-github-actions/auth@v3
@@ -548,6 +566,7 @@ jobs:
             managed_operation_only=${{ steps.phase_managed_operation_only.outcome }}
             customer_job_operations_only=${{ steps.phase_customer_job_operations_only.outcome }}
             customer_workflow_operations_only=${{ steps.phase_customer_workflow_operations_only.outcome }}
+            customer_http_operations_only=${{ steps.phase_customer_http_operations_only.outcome }}
         run: |
           set -uo pipefail
           # Jobs still needs a successful dedicated-KVM run before it can be
@@ -661,6 +680,17 @@ jobs:
                   lane_tests+=("$selected_test")
                 done < <(native_e2e_lane_tests customer-workflow-operations-only "$GITHUB_WORKSPACE")
                 native_e2e_lane_verdict "$log" "Customer Workflow Operations KVM lane" "${lane_tests[@]}" || rc=1
+                ;;
+              customer-http-operations-only)
+                # This lane requires every native Customer HTTP Operations
+                # scenario to PASS before a customer preview cohort opens.
+                # shellcheck source=scripts/ci/native-e2e-phases.sh
+                source scripts/ci/native-e2e-phases.sh
+                lane_tests=()
+                while IFS= read -r selected_test; do
+                  lane_tests+=("$selected_test")
+                done < <(native_e2e_lane_tests customer-http-operations-only "$GITHUB_WORKSPACE")
+                native_e2e_lane_verdict "$log" "Customer HTTP Operations KVM lane" "${lane_tests[@]}" || rc=1
                 ;;
               *)
                 native_e2e_verdict "$log" || rc=1
@@ -825,3 +855,192 @@ jobs:
         run: |
           set -euo pipefail
           gcloud compute instances stop "$GCP_INSTANCE" --quiet --project "$GCP_PROJECT" --zone "$GCP_ZONE"
+
+  financial-system:
+    name: cost control (full daemons and billing reconciliation)
+    # Sequential host use; its separate budget keeps full/qualify below the
+    # six-hour ceiling of the platform job. A bounded dispatch skips that job.
+    needs: e2e-native
+    if: >-
+      always() && github.ref == 'refs/heads/main' &&
+      (github.event_name == 'schedule' || inputs.lane == 'full' ||
+       inputs.lane == 'qualify' || inputs.lane == 'financial-system')
+    runs-on: ubuntu-latest
+    timeout-minutes: 100
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22.10.0'
+          cache: 'npm'
+          cache-dependency-path: sdk/node/package-lock.json
+
+      - name: Build Node Flags SDK for the native guest fixture
+        working-directory: sdk/node
+        run: npm ci --ignore-scripts --no-audit --no-fund && npm run build
+
+      - name: Build exact-source transfer bundle
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "$SOURCE_SHA" ]]
+          bundle="$RUNNER_TEMP/native-e2e-bundle"
+          mkdir -p "$bundle/source" "$bundle/source/sdk/node/dist" "$bundle/tools/go"
+          git archive "$SOURCE_SHA" | tar -x -C "$bundle/source"
+          cp sdk/node/dist/flags.js "$bundle/source/sdk/node/dist/flags.js"
+          printf '%s\n' "$SOURCE_SHA" > "$bundle/source/.faas-e2e-source-sha"
+
+          go_root="$(go env GOROOT)"
+          bash scripts/ci/package-go-toolchain.sh "$go_root" "$bundle/go.tar.gz"
+          tar -C "$bundle" -czf "$RUNNER_TEMP/native-e2e-bundle.tar.gz" source go.tar.gz
+
+      - id: auth
+        name: Authenticate to GCP with GitHub OIDC
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.GCP_PROJECT }}
+          workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.GCP_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v3
+
+      - name: Start the acceptance node when CI owns its lifecycle
+        id: compute-node
+        run: |
+          set -euo pipefail
+          status="$(
+            gcloud compute instances describe "$GCP_INSTANCE" \
+              --project "$GCP_PROJECT" --zone "$GCP_ZONE" \
+              --format='value(status)'
+          )"
+          case "$status" in
+            RUNNING)
+              echo "Acceptance node was already running; a previous run left it up."
+              ;;
+            TERMINATED)
+              gcloud compute instances start "$GCP_INSTANCE" --quiet \
+                --project "$GCP_PROJECT" --zone "$GCP_ZONE"
+              ;;
+            *)
+              echo "::error::acceptance node is in unexpected state: ${status:-missing}" >&2
+              exit 1
+              ;;
+          esac
+
+          scripts/ci/gcp-oslogin-preflight.sh \
+            --project "$GCP_PROJECT" --zone "$GCP_ZONE" --instance "$GCP_INSTANCE"
+
+          # RUNNING precedes sshd readiness. Bound the wait so a broken boot
+          # fails this job instead of consuming credits until its timeout.
+          for attempt in {1..24}; do
+            if gcloud compute ssh "$GCP_INSTANCE" --quiet \
+              --project "$GCP_PROJECT" --zone "$GCP_ZONE" \
+              --command true >/dev/null 2>&1; then
+              exit 0
+            fi
+            echo "Waiting for acceptance node SSH readiness (${attempt}/24)."
+            sleep 5
+          done
+          echo "::error::acceptance node did not become SSH-ready within 120 seconds" >&2
+          exit 1
+
+      - name: Stage source and toolchain on the acceptance node
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          remote_root="/var/tmp/faas-native-e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-financial"
+          gcloud compute ssh "$GCP_INSTANCE" --quiet \
+            --project "$GCP_PROJECT" --zone "$GCP_ZONE" \
+            --command "mkdir -p '$remote_root' && sudo /usr/local/sbin/faas-canary-artifacts register --path '$remote_root' --run-id '${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-financial' --kind native-e2e"
+          gcloud compute scp "$RUNNER_TEMP/native-e2e-bundle.tar.gz" \
+            "$GCP_INSTANCE:$remote_root/bundle.tar.gz" --quiet \
+            --project "$GCP_PROJECT" --zone "$GCP_ZONE"
+          gcloud compute ssh "$GCP_INSTANCE" --quiet \
+            --project "$GCP_PROJECT" --zone "$GCP_ZONE" \
+            --command "tar -xzf '$remote_root/bundle.tar.gz' -C '$remote_root' && mkdir -p '$remote_root/tools/go' && tar -xzf '$remote_root/go.tar.gz' -C '$remote_root/tools/go' && test -x '$remote_root/tools/go/bin/go'"
+
+      - name: Financial system — native funding recovery and provider receipts
+        id: phase_financial_system
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+          PHASE: financial-system
+        run: |
+          set -euo pipefail
+          remote_root="/var/tmp/faas-native-e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-financial"
+          unit="faas-e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-financial-$PHASE"
+          gcloud compute ssh "$GCP_INSTANCE" --quiet \
+            --project "$GCP_PROJECT" --zone "$GCP_ZONE" \
+            --command "sudo systemd-run --quiet --wait --collect --unit='$unit' --property=RuntimeMaxSec=75m --property='StandardOutput=append:$remote_root/native-e2e.log' --property='StandardError=append:$remote_root/native-e2e.log' --working-directory='$remote_root/source' --setenv=FAAS_E2E_SOURCE_SHA='$SOURCE_SHA' --setenv=FAAS_E2E_GO='$remote_root/tools/go/bin/go' --setenv=FAAS_E2E_RUN_ID='${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-financial' --setenv=FAAS_E2E_TRANSFER_ROOT='$remote_root' --setenv=FAAS_E2E_PHASE='$PHASE' /bin/bash scripts/ci/run-native-e2e.sh"
+
+      - name: Refresh GCP authentication for cleanup
+        if: always() && steps.auth.outcome == 'success'
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.GCP_PROJECT }}
+          workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.GCP_SERVICE_ACCOUNT }}
+
+      - name: Collect log and remove remote transfer bundle
+        if: always() && steps.auth.outcome == 'success'
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          remote_root="/var/tmp/faas-native-e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-financial"
+          cleanup_state="${{ job.status }}"
+          log="$RUNNER_TEMP/native-e2e.log"
+          gcloud compute scp "$GCP_INSTANCE:$remote_root/native-e2e.log" "$log" --quiet \
+            --project "$GCP_PROJECT" --zone "$GCP_ZONE" || true
+          if [[ -f "$log" ]]; then
+            cat "$log"
+          fi
+          archive="$RUNNER_TEMP/financial-system-evidence.tar.gz"
+          gcloud compute ssh "$GCP_INSTANCE" --quiet \
+            --project "$GCP_PROJECT" --zone "$GCP_ZONE" \
+            --command "sudo tar -czf '$remote_root/financial-system-evidence.tar.gz' -C '$remote_root' --ignore-failed-read financial-system-verdict-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-financial.json financial-system-provider.log cmd-e2e-financial-system.log financial-system-records; sudo chmod 0644 '$remote_root/financial-system-evidence.tar.gz'"
+          gcloud compute scp "$GCP_INSTANCE:$remote_root/financial-system-evidence.tar.gz" "$archive" --quiet \
+            --project "$GCP_PROJECT" --zone "$GCP_ZONE"
+          mkdir -p "$RUNNER_TEMP/financial-system-evidence"
+          tar -xzf "$archive" -C "$RUNNER_TEMP/financial-system-evidence"
+          python3 scripts/ci/financial-system-ci-check.py --root "$GITHUB_WORKSPACE" \
+            --evidence "$RUNNER_TEMP/financial-system-evidence" --source-sha "$SOURCE_SHA" \
+            --run-id "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-financial"
+          gcloud compute ssh "$GCP_INSTANCE" --quiet \
+            --project "$GCP_PROJECT" --zone "$GCP_ZONE" \
+            --command "sudo /usr/local/sbin/faas-canary-artifacts finish --path '$remote_root' --state '$cleanup_state'"
+          # The stage root is shared by every phase (guest-init, and the
+          # daemons compiled once for all of them), so no single phase may
+          # remove it — see the phase branch in run-native-e2e.sh's cleanup.
+          # The run owns it, here, on every exit path.
+          stage_root="/srv/fc/acceptance/e2e-${SOURCE_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-financial"
+          gcloud compute ssh "$GCP_INSTANCE" --quiet \
+            --project "$GCP_PROJECT" --zone "$GCP_ZONE" \
+            --command "sudo rm -rf '$stage_root'" || true
+
+      - name: Upload financial evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: native-financial-system-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/financial-system-evidence/
+            ${{ runner.temp }}/native-e2e.log
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Stop the acceptance node
+        if: always() && inputs.keep_node_running != true
+        run: |
+          gcloud compute instances stop "$GCP_INSTANCE" --quiet \
+            --project "$GCP_PROJECT" --zone "$GCP_ZONE"

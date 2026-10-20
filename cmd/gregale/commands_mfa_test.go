@@ -8,7 +8,7 @@
 // by code inspection rather than a tty-allocating test (CI runs
 // without a tty).
 
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -16,6 +16,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -24,7 +25,7 @@ func TestMfa_NoSubcommandExitsOne(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("FAAS_TOKEN", "test")
 	t.Setenv("FAAS_API", "http://unused")
-	code := cmdMfa(nil)
+	code := main.CmdMfa(nil)
 	if code != 1 {
 		t.Errorf("mfa (no sub) exit = %d, want 1", code)
 	}
@@ -35,7 +36,7 @@ func TestMfa_UnknownSubcommandExitsOne(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("FAAS_TOKEN", "test")
 	t.Setenv("FAAS_API", "http://unused")
-	code := cmdMfa([]string{"frobnicate"})
+	code := main.CmdMfa([]string{"frobnicate"})
 	if code != 1 {
 		t.Errorf("mfa frobnicate exit = %d, want 1", code)
 	}
@@ -60,7 +61,7 @@ func TestMfa_NoTokenExitsTwo(t *testing.T) {
 		{"disable", "--password", "x"},
 	} {
 		// errAuth returns exit code 2 (auth), not 1 (user error).
-		if code := cmdMfa(args); code != 2 {
+		if code := main.CmdMfa(args); code != 2 {
 			t.Errorf("mfa %v exit = %d, want 2 (auth)", args, code)
 		}
 	}
@@ -87,7 +88,7 @@ func TestMfa_Enroll_HappyPath(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 
-	if code := cmdMfa([]string{"enroll"}); code != 0 {
+	if code := main.CmdMfa([]string{"enroll"}); code != 0 {
 		t.Fatalf("mfa enroll exit = %d, want 0", code)
 	}
 	if sawMethod != "POST" || sawPath != "/v1/account/mfa/enroll" {
@@ -108,7 +109,7 @@ func TestMfa_Confirm_HappyPath(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 
-	if code := cmdMfa([]string{"confirm", "123456"}); code != 0 {
+	if code := main.CmdMfa([]string{"confirm", "123456"}); code != 0 {
 		t.Fatalf("mfa confirm exit = %d, want 0", code)
 	}
 	if sawBody.Totp != "123456" {
@@ -127,7 +128,7 @@ func TestMfa_Confirm_MissingCodeExitsOne(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 
-	if code := cmdMfa([]string{"confirm"}); code != 1 {
+	if code := main.CmdMfa([]string{"confirm"}); code != 1 {
 		t.Errorf("mfa confirm (no code) exit = %d, want 1", code)
 	}
 }
@@ -145,7 +146,7 @@ func TestMfa_Recover_HappyPath(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 
-	if code := cmdMfa([]string{"recover", "AAAAAAAAAA"}); code != 0 {
+	if code := main.CmdMfa([]string{"recover", "AAAAAAAAAA"}); code != 0 {
 		t.Fatalf("mfa recover exit = %d, want 0", code)
 	}
 	if sawBody.Code != "AAAAAAAAAA" {
@@ -164,7 +165,7 @@ func TestMfa_Disable_MutuallyExclusiveFlags(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 
-	if code := cmdMfa([]string{"disable", "--password", "x", "--recovery-code", "AAAAAAAAAA"}); code != 1 {
+	if code := main.CmdMfa([]string{"disable", "--password", "x", "--recovery-code", "AAAAAAAAAA"}); code != 1 {
 		t.Errorf("mfa disable --password + --recovery-code exit = %d, want 1", code)
 	}
 }
@@ -182,7 +183,7 @@ func TestMfa_Disable_HappyPath(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 
-	if code := cmdMfa([]string{"disable", "--password", "hunter2"}); code != 0 {
+	if code := main.CmdMfa([]string{"disable", "--password", "hunter2"}); code != 0 {
 		t.Fatalf("mfa disable exit = %d, want 0", code)
 	}
 	if sawBody.Password != "hunter2" {
@@ -200,8 +201,8 @@ func TestMfa_Enroll_UnknownJSONOutputShape(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("FAAS_TOKEN", "test")
-	jsonOutput = true
-	defer func() { jsonOutput = false }()
+	(*main.JsonOutput) = true
+	defer func() { (*main.JsonOutput) = false }()
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(api.MFAEnrollResponse{
@@ -214,7 +215,7 @@ func TestMfa_Enroll_UnknownJSONOutputShape(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 
-	if code := cmdMfa([]string{"enroll", "--qr-out", "/tmp/qr.png"}); code != 0 {
+	if code := main.CmdMfa([]string{"enroll", "--qr-out", "/tmp/qr.png"}); code != 0 {
 		t.Fatalf("mfa enroll --json exit = %d, want 0", code)
 	}
 }

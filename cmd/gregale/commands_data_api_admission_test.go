@@ -1,9 +1,10 @@
 // adr: 650 — admission diagnostics preserve bounded, safe metadata.
-package main
+package main_test
 
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"strings"
 	"testing"
 )
@@ -15,7 +16,7 @@ func admissionDiagnosticFixture(t *testing.T, id int, admission string) string {
 }
 
 func TestDataAPIAdmissionDiagnostics(t *testing.T) {
-	c := newDataAPIDiagnosticsCollector("", "")
+	c := main.NewDataAPIDiagnosticsCollector("", "")
 	for i, outcome := range []string{"admitted", "queue_full", "queue_timeout", "cancelled"} {
 		line := admissionDiagnosticFixture(t, i+1, fmt.Sprintf(`{"outcome":%q,"wait_ms":%d,"active":2,"queued":8,"secret":"private-sentinel"}`, outcome, i*400))
 		if outcome == "queue_full" || outcome == "queue_timeout" {
@@ -30,19 +31,19 @@ func TestDataAPIAdmissionDiagnostics(t *testing.T) {
 			}
 			line = string(encoded)
 		}
-		c.observe(line)
-		c.observe(line) // Duplicate requests cannot inflate capacity observations.
+		c.Observe(line)
+		c.Observe(line) // Duplicate requests cannot inflate capacity observations.
 	}
-	c.observe(dataAPIDiagnosticFixture(t, 5, "rest", "completed", 200, 1, nil))
-	c.finish()
-	s := c.report.Admission
-	if c.report.Partial || s.Observed != 4 || s.Admitted != 1 || s.QueueFull != 1 || s.QueueTimeout != 1 || s.Cancelled != 1 || s.PeakActive != 2 || s.PeakQueued != 8 || c.report.Failures.Overloaded != 2 || c.report.Duplicates != 4 {
-		t.Fatalf("wrong admission summary: %+v; failures=%+v; partial=%t", s, c.report.Failures, c.report.Partial)
+	c.Observe(dataAPIDiagnosticFixture(t, 5, "rest", "completed", 200, 1, nil))
+	c.Finish()
+	s := (*c.Report()).Admission
+	if (*c.Report()).Partial || s.Observed != 4 || s.Admitted != 1 || s.QueueFull != 1 || s.QueueTimeout != 1 || s.Cancelled != 1 || s.PeakActive != 2 || s.PeakQueued != 8 || (*c.Report()).Failures.Overloaded != 2 || (*c.Report()).Duplicates != 4 {
+		t.Fatalf("wrong admission summary: %+v; failures=%+v; partial=%t", s, (*c.Report()).Failures, (*c.Report()).Partial)
 	}
 	if s.WaitMS.P50 == nil || *s.WaitMS.P50 != 400 || s.WaitMS.P95 == nil || *s.WaitMS.P95 != 1200 {
 		t.Fatalf("wrong wait percentiles: %+v", s.WaitMS)
 	}
-	encoded, err := json.Marshal(c.report)
+	encoded, err := json.Marshal((*c.Report()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,17 +64,17 @@ func TestDataAPIAdmissionDiagnosticsRejectMalformedMetadata(t *testing.T) {
 		`{"outcome":"admitted","wait_ms":0,"active":1.5,"queued":0}`,
 	} {
 		t.Run(admission, func(t *testing.T) {
-			c := newDataAPIDiagnosticsCollector("", "")
-			c.observe(admissionDiagnosticFixture(t, 1, admission))
-			if !c.report.Partial || c.report.Invalid != 1 || c.report.Summary.Requests != 0 {
+			c := main.NewDataAPIDiagnosticsCollector("", "")
+			c.Observe(admissionDiagnosticFixture(t, 1, admission))
+			if !(*c.Report()).Partial || (*c.Report()).Invalid != 1 || (*c.Report()).Summary.Requests != 0 {
 				t.Fatal("invalid admission record was accepted")
 			}
 		})
 	}
-	c := newDataAPIDiagnosticsCollector("", "")
-	c.observe(dataAPIDiagnosticFixture(t, 1, "rest", "completed", 200, 1, nil))
-	c.finish()
-	if c.report.Partial || c.report.Admission.Observed != 0 || c.report.Admission.WaitMS.P50 != nil {
+	c := main.NewDataAPIDiagnosticsCollector("", "")
+	c.Observe(dataAPIDiagnosticFixture(t, 1, "rest", "completed", 200, 1, nil))
+	c.Finish()
+	if (*c.Report()).Partial || (*c.Report()).Admission.Observed != 0 || (*c.Report()).Admission.WaitMS.P50 != nil {
 		t.Fatal("older runtime logs must retain explicitly empty admission coverage")
 	}
 }

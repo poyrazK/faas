@@ -1,5 +1,12 @@
 # Architecture Decision Records
 
+- [Finished invocations without a horizon get the plan default retention](20261019104819-invocation-default-retention.md)
+- [Compose build arguments and target stage for Dockerfile builds](20261019142544-compose-build-args-and-target.md)
+
+- [Data API usage reporting and owner monthly caps](20261019102108-data-api-usage-and-owner-caps.md)
+
+- [Data API public reads, server keys, aggregates, single-app projects and Python/Go clients](20261018170742-data-api-access-modes-and-clients.md)
+
 - [Tenant egress denies the NAT64 prefixes](20261018194214-tenant-egress-deny-nat64.md)
 - [ADR-1745: Shared-window compound Issues alerts](1745-shared-window-issue-compound-alerts.md)
 - [ADR-1744: Offline grouping previews and reviewed regression baselines](1744-issue-grouping-previews-and-baselines.md)
@@ -140,6 +147,9 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 2026101702 | [Linked replacement repair plans](2026101702-repair-replacement.md) | accepted for internal qualification | Narrow original candidates with parent fencing and fresh approval |
 | 2026101701 | [Reviewed retention of repair payloads](2026101701-repair-retention.md) | accepted for internal qualification | Digest-reviewed compaction retains identities, receipts and closure |
 | 2026101710 | [Daemon-bound repair producers](2026101710-repair-producer-retirement.md) | accepted; native execution pending | Physical producer retirement fences cleanup and capacity release |
+| 1580 | [Zero-downtime daemon restarts](1580-zero-downtime-daemon-restarts.md) | accepted | Opt-in durable listeners, bounded draining and restart-aware routing |
+| 2026101501 | [Internal mail service](2026101501-internal-mail-service.md) | accepted for internal experiment; customer delivery disabled | Independent activation and delivery gates |
+| 2026101601 | [Durable mail producer outbox](2026101601-mail-producer-outbox.md) | accepted for internal experiment; activation disabled | Durable account-deletion producer handoff |
 | 20261016 | [Selective data repair](20261016-selective-data-repair.md) | accepted for internal qualification | Explicit PostgreSQL field-update capture, isolated rehearsal and atomic approved repair; limits in `pkg/api/limits.go` |
 | 1576 | [Internal CI control plane with compute admission closed](1576-internal-ci-control-plane.md) | accepted for internal implementation; native acceptance pending | Default-off Gregale CI; account-scoped operator admission and separate compute/provider qualification |
 | 1571 | [Durable CI execution engine qualification without compute dispatch](1571-ci-execution-engine-qualification.md) | accepted for internal implementation; native acceptance pending | Default-off Gregale CI; account-scoped operator admission and separate compute/provider qualification |
@@ -283,6 +293,9 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 996 | [AI gateway phase 6: Responses API routes, forced tool choice on current Claude models, hard-cap gaps and opt-in content capture](996-ai-gateway-responses-api-hard-cap-gaps-content-capture.md) | accepted | openai routes accept the stateless Responses API (passthrough to OpenAI/Azure, translated replies and stream events for other targets); forced `tool_choice` becomes `auto` plus an instruction on Claude models that reject it; billable calls with unreadable usage settle at their reservation; new end users past the day's 10,000 are refused while per-user limits are set; opt-in capture of the first 32 KiB of logged calls' bodies (1,000 per day, 3 days) |
 | 997 | [AI gateway phase 7: media metering, content guardrails and replay](997-ai-gateway-media-metering-content-guardrails-replay.md) | accepted | Image, Imagen, transcription and speech calls are billable and reserved per image, audio second or character (5 new media prices, 106 catalog models); usage read from the tail of large JSON responses; per-integration content policy (email, payment card, IBAN, secret: off/redact/block, blocked terms) enforced before forwarding; captures always redacted; replay of a captured call on up to 5 targets through outboundd's worker with usage, cost, latency and output text |
 | 998 | [AI gateway preview: plan entitlement, staged account rollout and qualification](998-ai-gateway-preview-rollout.md) | accepted | AI gateway moves to preview on Hobby, Pro and Scale; plan entitlement enforced in apid (402) and outboundd (403); `ai_gateway_accounts` / `FAAS_AI_GATEWAY_ACCOUNTS` limits the gate to listed accounts during the preview; settlement timeout 2 s -> 15 s after the soak dropped usage; acceptance test, failure drills, opt-in soak, alerts, dashboard panels, runbook and customer page |
+| 20261019132139 | [AI gateway: prompt prefixes shared across outboundd replicas](20261019132139-ai-gateway-shared-prompt-prefixes.md) | accepted | Automatic prompt caching marks a prefix once any outboundd has seen it within the cache lifetime: a process that has not asks Postgres, which keeps prefix hashes only, and falls back to its own memory on failure |
+| 20261019123822 | [AI gateway prices, limits and costs in US dollars](20261019123822-ai-gateway-usd.md) | accepted | Amends ADR-1430: the AI gateway catalog takes LiteLLM US-dollar prices with no exchange rate, and price lists, cost limits and costs are read in the billing currency; the catalog response gains currency and deprecates usd_per_eur and fx_source |
+| 20261019072722 | [AI gateway phase 18: metered realtime sessions](20261019072722-ai-gateway-realtime-sessions.md) | accepted | OpenAI and Azure OpenAI Realtime WebSocket sessions pass through outboundd transparently; each provider response is admitted against the caps and settled from its usage, audio tokens are priced at audio prices, and Gemini and Vertex Live stay unmetered |
 | 1440 | [AI gateway phase 17: streaming response cache and cache savings](1440-ai-gateway-stream-cache-savings.md) | accepted | The response cache also stores identical streamed AI responses as they are forwarded and replays them on a hit; hits settle as cached requests with the provider cost they avoided, and settlement records what provider prompt caching saved |
 | 1438 | [AI gateway phase 16: tag budget alerts and tag usage export](1438-ai-gateway-tag-alerts-export.md) | accepted | A tag's daily cost limit alerts at 80% and 100% through the budget alert table and webhook, read back from the existing rollup statement, and a day range of usage by tag exports as CSV or NDJSON |
 | 1437 | [AI gateway phase 15: automatic prompt caching for Claude](1437-ai-gateway-automatic-prompt-caching.md) | accepted | With auto_prompt_cache on, the gateway adds prompt-cache breakpoints to Claude requests that carry none: after a system prompt or tool list it saw repeat, and after the last message of a continuing conversation, on the Anthropic API, Vertex and Bedrock |
@@ -320,6 +333,10 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 1324 | [Block platform tenants with overdue invoices](1324-block-tenants-with-overdue-invoices.md) | accepted | An account rule holds tenants whose exported invoice is unpaid past its due date; tenant admission answers 402 tenant_invoice_overdue |
 | 1325 | [Prorated monthly fees in the first month](1325-prorated-monthly-fees.md) | accepted | App and tenant cards can prorate the base fee and minimum of the month a consumer or tenant is created, by minutes left |
 | 20261018090210 | [API monetization behind a release flag](20261018090210-api-monetization-release-flag.md) | accepted | Runtime setting `api_monetization_enabled` (default off) hides its routes before auth, spec paths, CLI verbs, webhook events and starter billing, and pauses its workers and gateway enforcement |
+| 20261019100330 | [Zero- and three-decimal statement currencies](20261019100330-statement-currencies.md) | accepted | Statements stay in millicents; invoices, exports and payment syncs use each ISO 4217 currency's minor unit (0–3 decimals), converted to Stripe's own units at the edge |
+| 20261019100331 | [Prepaid credit and spend caps for platform tenants](20261019100331-platform-tenant-credit-and-spend-caps.md) | accepted | Tenant credit grants are drawn at finalize; monthly tenant spend caps after credit are checked each minute and enforced through tenant admission with a 402 |
+| 20261019100332 | [Prorated monthly fees across card changes and revocation](20261019100332-prorated-fees-across-card-changes.md) | accepted | Prorating cards charge fees and minimums for the share of the month they are in force, and until a revocation unless the month was already finalized |
+| 20261019100333 | [Paddle invoices sent by Paddle](20261019100333-paddle-send-collection.md) | accepted | Paddle connections can collect with `send`: exports bill the draft transaction with the customer's newest address so Paddle emails it |
 | 650 | [Schema-generated Data APIs](650-schema-generated-data-api.md) | accepted | Ordinary app lifecycle, schema-restricted bindings, private type export and typed application clients |
 | 712 | [Object-storage durable entities](712-object-storage-durable-entities.md) | internal prototype; qualification pending | SQL-free entity state and retry receipts, opt-in alarms and checkpointed cleanup |
 | 1446 | [Safe releases by default](1446-safe-releases-by-default.md) | accepted; n2 drills passed | Default balanced canary and 5xx rollback for production releases, bounded low-traffic hold, crash-loop gate, unfenced plain rollback, verified rollback outcomes |
@@ -401,7 +418,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 567 | [Runtime base convergence](567-runtime-base-convergence.md) | proposed | Keep each node's cached runtime base byte-identical to its shared publication so ADR-510 snapshots restore on any node |
 | 510 | [Snapshot backing image identity](510-snapshot-backing-image-identity.md) | proposed | Restore only onto the kernel and read-only base a capture was taken with; refuse and cold-boot otherwise |
 | 516 | [Replay recent managed PostgreSQL usage corrections](516-managed-postgres-usage-correction-replay.md) | accepted | Recover missing windows first, bound recent revision replay, and reject unsafe collection windows |
-| 566 | [Financial visibility and scoped spending controls](566-financial-visibility-and-scoped-budgets.md) | visibility preview; enforcement pending | Retained compute/egress costs, forecasts and disabled budget drafts; runtime enforcement has separate acceptance gates |
+| 566 | [Financial visibility and scoped spending controls](566-financial-visibility-and-scoped-budgets.md) | monitored notifications preview; stopping pending | Retained costs, forecasts, revisioned budgets and durable spending alerts; stopping and strict limits have separate acceptance gates |
 | 565 | [Managed PostgreSQL fleet usage recovery](565-managed-postgres-fleet-usage-recovery.md) | accepted | Recover one window per database per round across the fleet before correction replay, using durable observation order |
 | 569 | [Managed PostgreSQL terminal usage coverage](569-managed-postgres-terminal-usage-coverage.md) | accepted | Retain known resources through shutdown, recover finite final windows, and require every final correction before completing automatic accounting |
 - [ADR-581: Managed PostgreSQL uncertain accounting intent](581-managed-postgres-uncertain-accounting-intent.md) — durable provider-attempt ownership and identity recovery before deletion
@@ -1414,6 +1431,11 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 
 - [ADR-1118 · Issue split-rule management](1118-issue-split-rule-management.md)
 
+- [ADR-20261016110803 · Workflow Operation execution budget](20261016110803-workflow-operation-execution-budget.md)
+- [ADR-20261016123221 · Customer Operations telemetry](20261016123221-customer-operations-telemetry.md)
+- [ADR-20261017100853 · Customer self-service Operation signals](20261017100853-customer-self-service-operation-signals.md)
+- [ADR-20261017102231 · Leaving the Customer Operations preview](20261017102231-operations-preview-exit.md)
+- [ADR-20261016100929 · Webhook-delivered Operation signals](20261016100929-webhook-delivered-operation-signals.md)
 - [ADR-1197 · Operation event waits and signals](1197-operation-event-waits-and-signals.md)
 - [ADR-1196 · Operation deadlines and budgets](1196-operation-deadlines-and-budgets.md)
 - [ADR-1194 · Operation waits and approvals](1194-operation-waits-and-approvals.md)
@@ -1703,6 +1725,11 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR 202610171900: Release compatibility gates (N±1, deploy order, skew and migration checks, SLO gate)](202610171900-release-compatibility-gates.md)
 - [ADR-1700: Platform flags: per-account release gates managed at runtime](1700-platform-flags.md)
 
+- [Strict app compute reservations](1750-strict-app-compute-reservations.md)
+- [ADR-1746: Shared account compute funding](1746-account-strict-compute.md)
+- [ADR-1747: Independent job compute funding](1747-job-strict-compute.md)
+- [ADR-1748: Shared account compute and egress funding](1748-account-strict-egress.md)
+- [ADR-1749: Funded public forwarding](1749-public-forwarding-egress.md)
 - [ADR-1650: Per-unit control-plane releases](1650-per-unit-control-plane-releases.md)
 
 - [ADR-20261017210000: Reviewed regression triage through management MCP](20261017210000-management-mcp-regression-triage.md)

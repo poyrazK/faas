@@ -1,4 +1,4 @@
-package state
+package state_test
 
 // adr: 456
 
@@ -13,23 +13,24 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/routehealth"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestRouteHealthHistoryKeyPinsEvidenceAndIgnoresRetryClock(t *testing.T) {
 	now := time.Date(2026, 10, 2, 21, 10, 45, 0, time.UTC)
 	anchor := now.Add(-time.Hour)
-	d := Deployment{ID: uuid.NewString(), AppID: uuid.NewString(), CanaryTotalSteps: 4, TrafficPercent: 1}
+	d := state.Deployment{ID: uuid.NewString(), AppID: uuid.NewString(), CanaryTotalSteps: 4, TrafficPercent: 1}
 	g := api.RouteHealthGate{AppID: d.AppID, Mode: "enforce", Revision: 1, Routes: []api.RouteHealthRoute{{Method: "POST", Path: "/checkout", MaxP95MS: 300}}}
 	d.CanaryStepStartedAt = &anchor
-	r, _ := newRouteHealthReport(g, d, now)
+	r, _ := state.NewRouteHealthReport(g, d, now)
 	routehealth.Evaluate(&r, &anchor, "telemetry_unavailable")
-	p := CanaryAdvanceParams{TrafficPercent: 10}
-	_, first, err := buildRouteHealthHistory(r, d, p)
+	p := state.CanaryAdvanceParams{TrafficPercent: 10}
+	_, first, err := state.BuildRouteHealthHistory(r, d, p)
 	if err != nil {
 		t.Fatal(err)
 	}
 	r.CheckedAt = now.Add(time.Second)
-	_, retry, err := buildRouteHealthHistory(r, d, p)
+	_, retry, err := state.BuildRouteHealthHistory(r, d, p)
 	if err != nil || first.Key != retry.Key || string(first.Body) == string(retry.Body) {
 		t.Fatal("key includes retry wall time", err)
 	}
@@ -58,14 +59,14 @@ func TestRouteHealthHistoryKeyPinsEvidenceAndIgnoresRetryClock(t *testing.T) {
 			case "window":
 				report.Routes[0].Windows[0].Start = report.Routes[0].Windows[0].Start.Add(time.Minute)
 			}
-			_, changed, err := buildRouteHealthHistory(report, d, params)
+			_, changed, err := state.BuildRouteHealthHistory(report, d, params)
 			if err != nil || changed.Key == first.Key {
 				t.Fatal("changed evidence deduplicated", err)
 			}
 		})
 	}
 	r.CandidateCommitSHA = strings.Repeat("x", api.RouteHealthHistoryEntryMaxBytes)
-	if _, _, err := buildRouteHealthHistory(r, d, p); !errors.Is(err, ErrInvalidArgument) {
+	if _, _, err := state.BuildRouteHealthHistory(r, d, p); !errors.Is(err, state.ErrInvalidArgument) {
 		t.Fatal("oversized entry accepted", err)
 	}
 }
@@ -73,17 +74,17 @@ func TestRouteHealthHistoryKeyPinsEvidenceAndIgnoresRetryClock(t *testing.T) {
 func TestRouteHealthHistoryMemRetentionBounds(t *testing.T) {
 	for _, size := range []int{1024, api.RouteHealthHistoryEntryMaxBytes} {
 		t.Run(fmt.Sprint(size), func(t *testing.T) {
-			m := NewMemStore()
+			m := state.NewMemStore()
 			for i := range api.RouteHealthHistoryMaxEntries + 10 {
-				m.appendRouteHealthHistoryLocked("dep", routeHealthStoredDecision{Key: fmt.Sprint(i), Body: []byte(strings.Repeat("x", size)), CheckedAt: time.Unix(int64(i), 0)})
+				m.AppendRouteHealthHistoryLocked("dep", state.RouteHealthStoredDecision{Key: fmt.Sprint(i), Body: []byte(strings.Repeat("x", size)), CheckedAt: time.Unix(int64(i), 0)})
 			}
-			entries := m.routeHealthHistory["dep"]
+			entries := (*m.RouteHealthHistory())["dep"]
 			want := min(api.RouteHealthHistoryMaxEntries, api.RouteHealthHistoryMaxBytes/size)
 			if len(entries) != want || entries[len(entries)-1].Key != "109" {
 				t.Fatal("retention exceeded bounds")
 			}
-			m.appendRouteHealthHistoryLocked("dep", entries[len(entries)-1])
-			if len(m.routeHealthHistory["dep"]) != want {
+			m.AppendRouteHealthHistoryLocked("dep", entries[len(entries)-1])
+			if len((*m.RouteHealthHistory())["dep"]) != want {
 				t.Fatal("duplicate grew history")
 			}
 		})

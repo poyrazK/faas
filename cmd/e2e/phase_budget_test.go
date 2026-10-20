@@ -177,6 +177,8 @@ func TestJobTimeoutCoversEveryPhaseCap(t *testing.T) {
 		"managed-operation-only":            true,
 		"customer-job-operations-only":      true,
 		"customer-workflow-operations-only": true,
+		"customer-http-operations-only":     true,
+		"financial-system":                  true, // separate sequential job on the same host
 	}
 	var sum, laneMax time.Duration
 	for phase, d := range phaseOuterBudgets(t) {
@@ -201,6 +203,51 @@ func TestJobTimeoutCoversEveryPhaseCap(t *testing.T) {
 	// GitHub-hosted runners cap a job at 6h; a larger value is silently clamped.
 	if jobTimeout > 6*time.Hour {
 		t.Errorf("job timeout-minutes=%s exceeds GitHub's 6h job ceiling and would be clamped", jobTimeout)
+	}
+}
+
+func TestFinancialJobBudgetIncludesProviderAndNativeCleanup(t *testing.T) {
+	workflow, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "e2e-native.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, financialJob, found := strings.Cut(string(workflow), "\n  financial-system:\n")
+	if !found || !strings.Contains(financialJob, "needs: e2e-native") {
+		t.Fatal("financial job must serialize behind the platform job on the shared host")
+	}
+	// The financial phase runs in its own job, so its systemd unit budget is
+	// that job's RuntimeMaxSec, not one of the platform job's phases.
+	unitMatch := regexp.MustCompile(`RuntimeMaxSec=(\w+)`).FindStringSubmatch(financialJob)
+	if unitMatch == nil {
+		t.Fatal("financial job's systemd unit has no RuntimeMaxSec")
+	}
+	outer, err := time.ParseDuration(unitMatch[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	native := phaseInnerBudgets(t)["financial-system"]
+	body, err := os.ReadFile(filepath.Join("..", "..", "scripts", "ci", "run-native-e2e.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	providerMatch := regexp.MustCompile(`test -race -p=1 -count=1 -timeout=(\w+) -v`).FindStringSubmatch(string(body))
+	if providerMatch == nil {
+		t.Fatal("financial provider test budget is missing")
+	}
+	provider, err := time.ParseDuration(providerMatch[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if native == 0 || outer <= native+provider {
+		t.Fatalf("financial system unit %s must outlast native %s + provider %s, compilation and cleanup", outer, native, provider)
+	}
+	match := regexp.MustCompile(`timeout-minutes:\s*(\d+)`).FindStringSubmatch(financialJob)
+	if match == nil {
+		t.Fatal("financial job has no bounded timeout")
+	}
+	job, err := time.ParseDuration(match[1] + "m")
+	if err != nil || job < outer+20*time.Minute {
+		t.Fatalf("financial job %s must cover its unit %s plus staging and artifact/host cleanup", job, outer)
 	}
 }
 

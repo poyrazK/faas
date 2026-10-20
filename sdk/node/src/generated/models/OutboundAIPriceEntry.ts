@@ -41,5 +41,17 @@ export type OutboundAIPriceEntry = {
    * Charged per GB of code-interpreter container memory per session (ADR-1433).
    */
   millicents_per_code_session_gb?: number;
+  /**
+   * Charged per million uncached audio input tokens (ADR 20261019072722); the input price when absent.
+   */
+  input_audio_millicents_per_mtok?: number;
+  /**
+   * Charged per million cached audio input tokens; the cached input price when absent.
+   */
+  cached_input_audio_millicents_per_mtok?: number;
+  /**
+   * Charged per million audio output tokens; the output price when absent.
+   */
+  output_audio_millicents_per_mtok?: number;
 };
 

@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -10,27 +10,28 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestAutomationRevisionCheckEvidence(t *testing.T) {
-	workflowScheduleStores(t, func(t *testing.T, store Store) {
-		app, _ := seedWorkflowSchedule(t, store, "allow")
-		author := store.(AutomationStore)
+	state.WorkflowScheduleStores(t, func(t *testing.T, store state.Store) {
+		app, _ := state.SeedWorkflowSchedule(t, store, "allow")
+		author := store.(state.AutomationStore)
 		ctx := context.Background()
-		draft := mutateForTest(t, author, app.ID, "receipt", "save", 0, automationDraft("receipt", "/v1", ""), false)
+		draft := state.MutateForTest(t, author, app.ID, "receipt", "save", 0, state.AutomationDraft("receipt", "/v1", ""), false)
 		var definition api.WorkflowSpec
 		_ = json.Unmarshal(draft.Draft, &definition)
 		raw, _ := json.Marshal(definition)
 		evidence := &api.AutomationCheckEvidence{DefinitionHash: fmt.Sprintf("%x", sha256.Sum256(raw)), CheckedVersion: draft.Version, CheckedAt: time.Now().UTC(), CoveragePassed: true, Scenarios: []api.AutomationCheckScenario{{Name: "success", Passed: true, DefinitionValid: true, Complete: true}}, Exclusions: []api.AutomationCheckExclusion{}}
 		bad := *evidence
 		bad.DefinitionHash = "mismatch"
-		if _, err := author.MutateAutomation(ctx, app.ID, "receipt", AutomationMutation{Action: "publish", ExpectedVersion: draft.Version, CheckEvidence: &bad}); !errors.Is(err, ErrAutomationInvalid) {
+		if _, err := author.MutateAutomation(ctx, app.ID, "receipt", state.AutomationMutation{Action: "publish", ExpectedVersion: draft.Version, CheckEvidence: &bad}); !errors.Is(err, state.ErrAutomationInvalid) {
 			t.Fatalf("mismatched evidence: %v", err)
 		}
-		if rows, total, err := author.ListAutomationRevisions(ctx, app.ID, "receipt", AutomationRevisionListOptions{Limit: 10}); err != nil || total != 0 || len(rows) != 0 {
+		if rows, total, err := author.ListAutomationRevisions(ctx, app.ID, "receipt", state.AutomationRevisionListOptions{Limit: 10}); err != nil || total != 0 || len(rows) != 0 {
 			t.Fatalf("rejected publish wrote history: %v/%d/%v", rows, total, err)
 		}
-		published, err := author.MutateAutomation(ctx, app.ID, "receipt", AutomationMutation{Action: "publish", ExpectedVersion: draft.Version, CheckEvidence: evidence})
+		published, err := author.MutateAutomation(ctx, app.ID, "receipt", state.AutomationMutation{Action: "publish", ExpectedVersion: draft.Version, CheckEvidence: evidence})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -53,8 +54,8 @@ func TestAutomationRevisionCheckEvidence(t *testing.T) {
 		if err != nil || !json.Valid(revision.CheckEvidence) {
 			t.Fatal("revision evidence alias escaped", err)
 		}
-		restored := mutateForTest(t, author, app.ID, "receipt", "save", published.Version, revision.Definition, false)
-		plain := mutateForTest(t, author, app.ID, "receipt", "publish", restored.Version, nil, false)
+		restored := state.MutateForTest(t, author, app.ID, "receipt", "save", published.Version, revision.Definition, false)
+		plain := state.MutateForTest(t, author, app.ID, "receipt", "publish", restored.Version, nil, false)
 		revision, err = author.GetAutomationRevision(ctx, app.ID, "receipt", plain.PublishedVersion)
 		if err != nil || len(revision.CheckEvidence) != 0 {
 			t.Fatalf("plain republish inherited checks: %+v/%v", revision, err)

@@ -1,5 +1,5 @@
 // adr: 123 — wake.boot_started names the invocation drain, not an internal daemon.
-package sched
+package sched_test
 
 import (
 	"context"
@@ -9,13 +9,14 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/events"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestDrainWakeIsAttributedToInvocation(t *testing.T) {
-	d, store, _, _, _ := newDrainHarness(t, api.PlanHobby, true)
-	d.engine.WithEvents(events.NewPlatform("schedd", store, testLog(), nil, nil))
-	inv := seedDrainInvocation(t, store, state.InvocationQueue)
+	d, store, _, _, _ := sched.NewDrainHarness(t, api.PlanHobby, true)
+	(*d.Engine()).WithEvents(events.NewPlatform("schedd", store, sched.TestLog(), nil, nil))
+	inv := sched.SeedDrainInvocation(t, store, state.InvocationQueue)
 
 	d.Tick(context.Background())
 
@@ -36,8 +37,8 @@ func TestDrainWakeIsAttributedToInvocation(t *testing.T) {
 			if err := json.Unmarshal(row.Data, &data); err != nil {
 				t.Fatalf("decode boot_started: %v", err)
 			}
-			if data["trigger"] != TriggerInvocation {
-				t.Fatalf("drain wake trigger = %v, want %q", data["trigger"], TriggerInvocation)
+			if data["trigger"] != sched.TriggerInvocation {
+				t.Fatalf("drain wake trigger = %v, want %q", data["trigger"], sched.TriggerInvocation)
 			}
 			return
 		}

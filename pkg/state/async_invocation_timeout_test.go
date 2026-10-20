@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 type countingAccounts struct {
@@ -15,9 +16,9 @@ type countingAccounts struct {
 	calls int
 }
 
-func (c *countingAccounts) AccountByID(context.Context, string) (Account, error) {
+func (c *countingAccounts) AccountByID(context.Context, string) (state.Account, error) {
 	c.calls++
-	return Account{Plan: c.plan}, c.err
+	return state.Account{Plan: c.plan}, c.err
 }
 
 // ADR-1180: an app's async timeout follows its request timeout within its
@@ -36,8 +37,8 @@ func TestAsyncInvocationTimeout(t *testing.T) {
 		{name: "hobby clamped", requestTimeoutS: 600, accounts: &countingAccounts{plan: api.PlanHobby}, want: time.Minute, wantLookups: 1},
 		{name: "lookup failure", requestTimeoutS: 600, accounts: &countingAccounts{err: errors.New("down")}, want: api.AsyncInvocationTimeoutFloor, wantLookups: 1},
 	} {
-		app := App{AccountID: "acct", Manifest: AppManifest{RequestTimeoutS: tc.requestTimeoutS}}
-		if got := AsyncInvocationTimeout(context.Background(), tc.accounts, app); got != tc.want {
+		app := state.App{AccountID: "acct", Manifest: state.AppManifest{RequestTimeoutS: tc.requestTimeoutS}}
+		if got := state.AsyncInvocationTimeout(context.Background(), tc.accounts, app); got != tc.want {
 			t.Errorf("%s: timeout %s, want %s", tc.name, got, tc.want)
 		}
 		if tc.accounts.calls != tc.wantLookups {

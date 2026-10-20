@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/bindingprobe"
 )
@@ -74,15 +75,15 @@ func TestAllObjectStorageWriteJourney(t *testing.T) {
 				}
 			}))
 			defer storage.Close()
-			inventory := api.AppBindingInventory{App: "api", Complete: true, RequestedDeploymentID: pinnedBindingDeployment, VerificationDeploymentID: pinnedBindingDeployment, VerificationScope: "production", Bindings: []api.AppBindingInventoryItem{{Type: api.BindingTypeObjectStorage, Name: "assets", Binding: "ASSETS", Scope: "production", Access: tc.access, State: "enabled"}}}
+			inventory := api.AppBindingInventory{App: "api", Complete: true, RequestedDeploymentID: main.PinnedBindingDeployment, VerificationDeploymentID: main.PinnedBindingDeployment, VerificationScope: "production", Bindings: []api.AppBindingInventoryItem{{Type: api.BindingTypeObjectStorage, Name: "assets", Binding: "ASSETS", Scope: "production", Access: tc.access, State: "enabled"}}}
 			var tasks, cancels atomic.Int32
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch {
 				case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/api/bindings":
-					if r.URL.Query().Get("deployment_id") != pinnedBindingDeployment {
+					if r.URL.Query().Get("deployment_id") != main.PinnedBindingDeployment {
 						t.Errorf("inventory not pinned: %s", r.URL)
 					}
-					writeJSONTest(w, inventory)
+					main.WriteJSONTest(w, inventory)
 				case r.Method == http.MethodPost && r.URL.Path == "/v1/apps/api/tasks":
 					tasks.Add(1)
 					var request api.CreateAppTaskRequest
@@ -93,42 +94,42 @@ func TestAllObjectStorageWriteJourney(t *testing.T) {
 					if tc.access != "read" {
 						expected = []string{api.AppTaskObjectStorageWriteProbeCommand, "ASSETS", tc.access}
 					}
-					if !reflect.DeepEqual(request.Command, expected) || request.VerificationDeploymentID != pinnedBindingDeployment {
+					if !reflect.DeepEqual(request.Command, expected) || request.VerificationDeploymentID != main.PinnedBindingDeployment {
 						t.Errorf("wrong task request: %+v", request)
 					}
-					report := passedObjectStorageCLIReport("ASSETS")
+					report := main.PassedObjectStorageCLIReport("ASSETS")
 					if tc.access != "read" {
 						env := map[string]string{"ASSETS_ENDPOINT": storage.URL, "ASSETS_REGION": "auto", "ASSETS_BUCKET": "assets", "ASSETS_ACCESS_KEY_ID": "private-access", "ASSETS_SECRET_ACCESS_KEY": "private-secret", "ASSETS_ADDRESSING_STYLE": "path"}
 						report = bindingprobe.ObjectStorageWrite(r.Context(), "ASSETS", tc.access, func(k string) string { return env[k] })
 					}
 					switch tc.failure {
 					case "legacy report":
-						report = passedObjectStorageCLIReport("ASSETS")
+						report = main.PassedObjectStorageCLIReport("ASSETS")
 					case "wrong mode":
 						report.Mode = "write"
 					case "wrong prefix":
 						report.Prefix = "OTHER"
 					}
 					raw, _ := json.Marshal(report)
-					task := api.AppTaskResponse{ID: "storage-task", DeploymentID: pinnedBindingDeployment, DeploymentScope: "production", Status: api.AppTaskStatusSucceeded, ExitCode: new(int), StdoutTail: string(raw)}
+					task := api.AppTaskResponse{ID: "storage-task", DeploymentID: main.PinnedBindingDeployment, DeploymentScope: "production", Status: api.AppTaskStatusSucceeded, ExitCode: new(int), StdoutTail: string(raw)}
 					if tc.failure == "wrong deployment" {
 						task.DeploymentID = "bb1d2efe-3e03-452d-8ebc-a28e1328c3c6"
 					}
 					if tc.failure == "wrong scope" {
 						task.DeploymentScope = "staging"
 					}
-					writeJSONTest(w, task)
+					main.WriteJSONTest(w, task)
 				case r.Method == http.MethodDelete && r.URL.Path == "/v1/apps/api/tasks/storage-task":
 					cancels.Add(1)
-					writeJSONTest(w, api.AppTaskResponse{ID: "storage-task", Status: api.AppTaskStatusCancelled})
+					main.WriteJSONTest(w, api.AppTaskResponse{ID: "storage-task", Status: api.AppTaskStatusCancelled})
 				default:
 					t.Errorf("unexpected API request %s %s", r.Method, r.URL)
 					http.NotFound(w, r)
 				}
 			}))
 			defer server.Close()
-			code, out, errs := captureBindingCLI(t, server.URL, "bindings", "verify", "api", "--all", "--deployment", pinnedBindingDeployment, "--object-storage-write", "--require-complete", "--json")
-			var batch serviceBindingProbeBatchReport
+			code, out, errs := main.CaptureBindingCLI(t, server.URL, "bindings", "verify", "api", "--all", "--deployment", main.PinnedBindingDeployment, "--object-storage-write", "--require-complete", "--json")
+			var batch main.ServiceBindingProbeBatchReport
 			if err := json.Unmarshal([]byte(out), &batch); err != nil {
 				t.Fatalf("%v output=%s errors=%s", err, out, errs)
 			}
@@ -190,13 +191,13 @@ func TestAllObjectStorageWriteSelectionAndConsent(t *testing.T) {
 			case "ambiguous":
 				bindings = append(bindings, bindings[2])
 			}
-			inventory := api.AppBindingInventory{App: "api", Complete: true, RequestedDeploymentID: pinnedBindingDeployment, VerificationDeploymentID: pinnedBindingDeployment, VerificationScope: "production", Bindings: bindings}
+			inventory := api.AppBindingInventory{App: "api", Complete: true, RequestedDeploymentID: main.PinnedBindingDeployment, VerificationDeploymentID: main.PinnedBindingDeployment, VerificationScope: "production", Bindings: bindings}
 			commands := map[string][]string{}
 			var commandMu sync.Mutex
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch {
 				case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/api/bindings":
-					writeJSONTest(w, inventory)
+					main.WriteJSONTest(w, inventory)
 				case r.Method == http.MethodPost && r.URL.Path == "/v1/apps/api/tasks":
 					var request api.CreateAppTaskRequest
 					if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
@@ -214,7 +215,7 @@ func TestAllObjectStorageWriteSelectionAndConsent(t *testing.T) {
 					}
 					commands[prefix] = request.Command
 					commandMu.Unlock()
-					report := passedObjectStorageCLIReport(prefix)
+					report := main.PassedObjectStorageCLIReport(prefix)
 					if len(request.Command) == 3 {
 						check := api.ObjectStorageBindingProbeCheck{Status: "passed"}
 						report.Mode = request.Command[2]
@@ -227,21 +228,21 @@ func TestAllObjectStorageWriteSelectionAndConsent(t *testing.T) {
 						report.Download = &download
 					}
 					raw, _ := json.Marshal(report)
-					writeJSONTest(w, api.AppTaskResponse{ID: "task-" + prefix, DeploymentID: pinnedBindingDeployment, DeploymentScope: "production", Status: api.AppTaskStatusSucceeded, ExitCode: new(int), StdoutTail: string(raw)})
+					main.WriteJSONTest(w, api.AppTaskResponse{ID: "task-" + prefix, DeploymentID: main.PinnedBindingDeployment, DeploymentScope: "production", Status: api.AppTaskStatusSucceeded, ExitCode: new(int), StdoutTail: string(raw)})
 				default:
 					t.Errorf("unexpected request (including unconsented queue publication) %s %s", r.Method, r.URL)
 					http.NotFound(w, r)
 				}
 			}))
 			defer server.Close()
-			args := []string{"bindings", "verify", "api", "--all", "--deployment", pinnedBindingDeployment, "--require-complete", "--json"}
+			args := []string{"bindings", "verify", "api", "--all", "--deployment", main.PinnedBindingDeployment, "--require-complete", "--json"}
 			if scenario == "false consent" {
 				args = append(args, "--object-storage-write=false")
 			} else if scenario != "no consent" {
 				args = append(args, "--object-storage-write")
 			}
-			code, out, errs := captureBindingCLI(t, server.URL, args...)
-			var report serviceBindingProbeBatchReport
+			code, out, errs := main.CaptureBindingCLI(t, server.URL, args...)
+			var report main.ServiceBindingProbeBatchReport
 			if err := json.Unmarshal([]byte(out), &report); err != nil {
 				t.Fatalf("%v output=%s errors=%s", err, out, errs)
 			}

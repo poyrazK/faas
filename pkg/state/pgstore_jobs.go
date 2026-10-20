@@ -249,14 +249,26 @@ func (s *PgStore) JobCreate(ctx context.Context, accountID, name, kind, imageRef
 	if len(envOverrides) == 0 {
 		envOverrides = json.RawMessage("{}")
 	}
-	row := s.pool.QueryRow(ctx,
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return Job{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := financialComputeJobCreationAllowed(ctx, tx, accountID); err != nil {
+		return Job{}, err
+	}
+	row := tx.QueryRow(ctx,
 		`insert into jobs (account_id, kind, name, image_ref, ram_mb,
 		                  task_timeout_s, max_parallelism, retry_max,
 		                  env_overrides, command)
 		 values ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10)
 		 returning `+jobSelectCols,
 		accountID, kind, name, imageRef, ramMB, taskTimeoutSec, maxParallelism, retryMax, []byte(envOverrides), command)
-	return scanJob(row)
+	created, err := scanJob(row)
+	if err != nil {
+		return Job{}, err
+	}
+	return created, tx.Commit(ctx)
 }
 
 // JobGetByID returns ErrNotFound when the row is missing OR when it

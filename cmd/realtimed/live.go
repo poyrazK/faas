@@ -15,16 +15,32 @@ import (
 // endpoint's registration; the environment only configures how hubs are
 // dialed. FAAS_REALTIME_LIVE_TLS_CA_FILE verifies wss:// hubs, and
 // FAAS_REALTIME_LIVE_TLS_CERT_FILE with _KEY_FILE is realtimed's client
-// certificate for them.
+// certificate for them. FAAS_REALTIME_LIVE_TLS_SERVER_NAME verifies every
+// hub as that name instead of its URL's host: the fleet PKI's hub leaf is
+// livequeryd.faas wherever the hub runs.
 func liveProxy(getenv func(string) string, log *slog.Logger) (*liveproxy.Proxy, error) {
+	conf, err := liveTLSConfig(getenv)
+	if err != nil {
+		return nil, err
+	}
+	return liveproxy.New(log, conf), nil
+}
+
+// liveTLSConfig is how realtimed dials hubs over wss://, or nil for the
+// system defaults.
+func liveTLSConfig(getenv func(string) string) (*tls.Config, error) {
 	caFile, certFile, keyFile := getenv("FAAS_REALTIME_LIVE_TLS_CA_FILE"), getenv("FAAS_REALTIME_LIVE_TLS_CERT_FILE"), getenv("FAAS_REALTIME_LIVE_TLS_KEY_FILE")
+	serverName := getenv("FAAS_REALTIME_LIVE_TLS_SERVER_NAME")
 	if (certFile == "") != (keyFile == "") {
 		return nil, errors.New("realtimed: FAAS_REALTIME_LIVE_TLS_CERT_FILE and FAAS_REALTIME_LIVE_TLS_KEY_FILE go together")
 	}
-	if caFile == "" && certFile == "" {
-		return liveproxy.New(log, nil), nil
+	if serverName != "" && caFile == "" {
+		return nil, errors.New("realtimed: FAAS_REALTIME_LIVE_TLS_SERVER_NAME needs FAAS_REALTIME_LIVE_TLS_CA_FILE")
 	}
-	conf := &tls.Config{MinVersion: tls.VersionTLS13}
+	if caFile == "" && certFile == "" {
+		return nil, nil
+	}
+	conf := &tls.Config{MinVersion: tls.VersionTLS13, ServerName: serverName}
 	if caFile != "" {
 		pem, err := os.ReadFile(caFile) //nolint:forbidigo // operator-provisioned CA named by the daemon's environment
 		if err != nil {
@@ -42,5 +58,5 @@ func liveProxy(getenv func(string) string, log *slog.Logger) (*liveproxy.Proxy, 
 		}
 		conf.Certificates = []tls.Certificate{cert}
 	}
-	return liveproxy.New(log, conf), nil
+	return conf, nil
 }

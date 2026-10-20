@@ -2,14 +2,16 @@
 
 Source: `deploy/ansible/roles/prometheus/files/faas.rules.yml`.
 Metrics: `vmmd_networkd_dispatcher_errors_last_5m`,
-`vmmd_journal_disk_usage_bytes`, and `vmmd_host_journal_metrics_up`.
+`vmmd_journal_disk_usage_bytes`, `vmmd_journal_oldest_entry_timestamp_seconds`,
+and `vmmd_host_journal_metrics_up`.
 Issue: #2350. Severity: warn.
 
 ## Meaning
 
 The compute host has persistent networkd-dispatcher errors, its local journal
-is approaching the configured bound, its journal is growing faster than 120
-MiB/hour, or vmmd cannot collect those host signals.
+is near the configured bound while holding less than five days of history, its
+journal is growing faster than 120 MiB/hour, or vmmd cannot collect those host
+signals.
 
 Gregale's Firecracker network setup creates `vh<slot>` host veths and removes
 them during routine wake and park cycles. A networkd-dispatcher D-Bus event may
@@ -21,8 +23,12 @@ to the alert.
 
 The host-hardening role caps the persistent journal at 512 MiB, reserves 2 GiB
 of free disk, caps the runtime journal at 128 MiB, and retains no more than
-seven days. The alert fires at 400 MiB so an operator has time to inspect the
-source before rotation removes older entries.
+seven days. On a long-lived node the journal fills toward that bound and stays
+there, so size alone is not pressure. `FaasHostJournalNearLimit` fires when the
+journal is above 400 MiB and its oldest entry is less than five days old: the
+size bound, not the age limit, is removing history (ADR-149 found four days on
+an idle node). If vmmd cannot read the oldest entry
+(`journalctl --list-boots --output=json`), the alert falls back to usage alone.
 
 ## Verify
 
@@ -33,6 +39,7 @@ systemctl status networkd-dispatcher.service --no-pager
 systemctl cat networkd-dispatcher.service
 journalctl -u networkd-dispatcher.service --since '-10 minutes' --no-pager
 journalctl --disk-usage
+journalctl --list-boots --output=json --no-pager
 systemd-analyze cat-config systemd/journald.conf
 ```
 
@@ -42,7 +49,7 @@ Confirm the effective dispatcher unit contains
 
 ```bash
 curl -fsS http://127.0.0.1:9104/metrics \
-  | grep -E '^vmmd_(networkd_dispatcher|journal_disk|host_journal)'
+  | grep -E '^vmmd_(networkd_dispatcher|journal_disk|journal_oldest|host_journal)'
 ```
 
 On a split compute node, use its configured private vmmd metrics address in

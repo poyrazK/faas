@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/hostingconfig"
 	"github.com/onebox-faas/faas/pkg/markers"
 )
@@ -40,6 +41,11 @@ type Profile struct {
 	// deployment. It is relative to the accepted source root and remains empty
 	// for conventional Dockerfile and Railpack builds.
 	DockerfilePath string `json:"dockerfile_path,omitempty"`
+	// DockerfileBuild is the Compose build.args and build.target the app
+	// carried when this deployment was enqueued (ADR-20261019142544). builderd
+	// prefers it to the app's current options so a queued build keeps its
+	// plan's options.
+	DockerfileBuild *api.DockerfileBuildOptions `json:"dockerfile_build,omitempty"`
 	// PackageManager records the lockfile/package-manager choice used by
 	// static inference. It is advisory metadata; the builder remains the
 	// authority for dependency installation.

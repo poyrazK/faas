@@ -217,7 +217,7 @@ func TestComposeUnsupportedKeysWarn(t *testing.T) {
     image: postgres:16
     volumes: [pgdata:/var/lib/postgresql/data]
 `
-	result, err := scanCompose(t, body, "Dockerfile", "FROM node:22\n")
+	result, err := scanCompose(t, body, "Dockerfile", "FROM node:22 AS runtime\n")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -229,16 +229,14 @@ func TestComposeUnsupportedKeysWarn(t *testing.T) {
 		"web: secrets ignored: Compose secrets are not mounted; set them with `gregale secrets set`",
 		"web: networks ignored: services reach each other through depends_on service bindings",
 		"web: mystery ignored: not supported by Gregale",
-		"api: build.args ignored: build args are not passed to the builder",
-		"api: build.target ignored: the builder builds the Dockerfile's final stage",
-		"api: build.cache_from ignored: the builder uses only build.context and build.dockerfile",
+		"api: build.cache_from ignored: the builder uses only build.context, build.dockerfile, build.args and build.target",
 		"api: platform ignored: services run on linux/amd64",
 	} {
 		if !containsWarning(result.Warnings, want) {
 			t.Errorf("warnings lack %q", want)
 		}
 	}
-	for _, quiet := range []string{"container_name", "web: platform", "init", "x-team", "db: volumes"} {
+	for _, quiet := range []string{"container_name", "web: platform", "init", "x-team", "db: volumes", "build.args", "build.target"} {
 		for _, warning := range result.Warnings {
 			if strings.Contains(warning, quiet+" ignored") {
 				t.Errorf("unexpected warning %q", warning)

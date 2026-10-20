@@ -1,6 +1,6 @@
 //go:build !no_pg
 
-package state
+package state_test
 
 // adr: 595
 
@@ -11,21 +11,22 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestPgStandardSnapshotConsumptionPublication(t *testing.T) {
-	standardSnapshotConsumptionPublication(t, newStandardRestorePGStore)
+	state.StandardSnapshotConsumptionPublication(t, newStandardRestorePGStore)
 }
 
 func TestPgStandardSnapshotConsumptionRawReceipt(t *testing.T) {
 	for _, fault := range []string{"complete", "cold fallback", "memory", "command", "partial", "missing", "cold", "paused", "extra", "null", "decimal-version", "decimal restore method", "decimal cold method"} {
 		t.Run(fault, func(t *testing.T) {
-			s, pool := runtimeCapturePGStore(t)
+			s, pool := state.RuntimeCapturePGStore(t)
 			f := rawStandardRestoreFixture(t, s)
 			if err := insertRawRestoreGrant(t, pool, f); err != nil {
 				t.Fatal(err)
 			}
-			r := standardConsumedRestoreReceipt(f.Binding, f)
+			r := state.StandardConsumedRestoreReceipt(f.Binding, f)
 			raw := restoreRawJSON(t, r)
 			var m map[string]any
 			if err := json.Unmarshal(raw, &m); err != nil {

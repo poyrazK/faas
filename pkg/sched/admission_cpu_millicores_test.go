@@ -1,5 +1,5 @@
 // spec: §6.2
-package sched
+package sched_test
 
 import (
 	"fmt"
@@ -7,10 +7,11 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched"
 )
 
-func cpuAdmissionRequest(instance string) Request {
-	return Request{
+func cpuAdmissionRequest(instance string) sched.Request {
+	return sched.Request{
 		Instance:            instance,
 		AppID:               "app-" + instance,
 		Plan:                api.PlanScale,
@@ -27,7 +28,7 @@ func cpuAdmissionRequest(instance string) Request {
 
 func TestAdmit_CPUMillicoreBudgetEnforcedAndReleased(t *testing.T) {
 	t.Parallel()
-	ledger := NewNodeLedger()
+	ledger := sched.NewNodeLedger()
 	for i := 0; i < 4; i++ {
 		if err := ledger.Admit(cpuAdmissionRequest(fmt.Sprintf("fit-%d", i))); err != nil {
 			t.Fatalf("admit %d: %v", i, err)
@@ -51,7 +52,7 @@ func TestAdmit_CPUMillicoreBudgetEnforcedAndReleased(t *testing.T) {
 
 func TestAdmit_CPUOvercommitRecoveryAccountsExistingWithoutAllowingGrowth(t *testing.T) {
 	t.Parallel()
-	ledger := NewNodeLedger()
+	ledger := sched.NewNodeLedger()
 	for i := 0; i < 5; i++ {
 		req := cpuAdmissionRequest(fmt.Sprintf("existing-%d", i))
 		req.AllowCPUOvercommitRecovery = true
@@ -75,7 +76,7 @@ func TestAdmit_CPUOvercommitRecoveryAccountsExistingWithoutAllowingGrowth(t *tes
 
 func TestAdmit_CPUMillicoreZeroBudgetPreservesLegacySeam(t *testing.T) {
 	t.Parallel()
-	ledger := NewNodeLedger()
+	ledger := sched.NewNodeLedger()
 	req := cpuAdmissionRequest("legacy")
 	req.CPUBudgetMillicores = 0
 	if err := ledger.Admit(req); err != nil {
@@ -88,7 +89,7 @@ func TestAdmit_CPUMillicoreZeroBudgetPreservesLegacySeam(t *testing.T) {
 
 func TestAdmit_StartupCPUBoostIsReservedUntilExpiry(t *testing.T) {
 	t.Parallel()
-	ledger := NewNodeLedger()
+	ledger := sched.NewNodeLedger()
 	req := cpuAdmissionRequest("boosted")
 	req.CPUMillicores = 250
 	req.CPUStartupBoostMillicores = 1000
@@ -116,7 +117,7 @@ func TestAdmit_StartupCPUBoostIsReservedUntilExpiry(t *testing.T) {
 
 func TestAdmit_StartupCPUBoostCountsAgainstPhysicalBudget(t *testing.T) {
 	t.Parallel()
-	ledger := NewNodeLedger()
+	ledger := sched.NewNodeLedger()
 	req := cpuAdmissionRequest("boost-over-budget")
 	req.CPUMillicores = 250
 	req.CPUStartupBoostMillicores = 1000
@@ -132,10 +133,10 @@ func TestAdmit_StartupCPUBoostCountsAgainstPhysicalBudget(t *testing.T) {
 
 func TestStartupCPUBoostQuotaMatchesVMMDProfile(t *testing.T) {
 	for _, plan := range []api.Plan{api.PlanFree, api.PlanHobby, api.PlanPro, api.PlanScale} {
-		if got := startupCPUBoostQuota(plan, 250); got != api.DefaultAppCPUMillicores {
+		if got := sched.StartupCPUBoostQuota(plan, 250); got != api.DefaultAppCPUMillicores {
 			t.Errorf("startupCPUBoostQuota(%s, 250) = %d, want %d", plan, got, api.DefaultAppCPUMillicores)
 		}
-		if got := startupCPUBoostQuota(plan, 1000); got != 1000 {
+		if got := sched.StartupCPUBoostQuota(plan, 1000); got != 1000 {
 			t.Errorf("startupCPUBoostQuota(%s, 1000) = %d, want configured quota 1000", plan, got)
 		}
 	}

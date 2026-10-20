@@ -1,5 +1,5 @@
 // spec: §6 — schedd owns admission; a deployment cutover mid-wake fails closed.
-package sched
+package sched_test
 
 import (
 	"errors"
@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -21,12 +22,12 @@ func TestAdmissionReusingWakeSelectionFailsClosedOnCutover(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := t.Context()
 			store := state.NewMemStore()
-			_, app, dep := seedApp(t, store, api.PlanPro, 256, 5)
-			vmm := &fakeVMM{}
-			e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
-			selected, err := e.resolveWakeEnvironment(ctx, app.ID, nil)
-			if err != nil || selected.deployment.ID != dep.ID || !selected.reusableFor(app.ID) {
-				t.Fatalf("selection: %+v %v", selected.deployment, err)
+			_, app, dep := sched.SeedApp(t, store, api.PlanPro, 256, 5)
+			vmm := &sched.FakeVMM{}
+			e := sched.XNewEngine(t, store, vmm, &sched.FakeNotifier{}, "1.10.0")
+			selected, err := e.ResolveWakeEnvironment(ctx, app.ID, nil)
+			if err != nil || (*selected.Deployment()).ID != dep.ID || !selected.ReusableFor(app.ID) {
+				t.Fatalf("selection: %+v %v", (*selected.Deployment()), err)
 			}
 			if tc.cutover {
 				if _, err := store.CreateDeployment(ctx, state.Deployment{
@@ -38,10 +39,10 @@ func TestAdmissionReusingWakeSelectionFailsClosedOnCutover(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			result, err := e.admitAndDispatchWithOptions(withWakeEnvironment(ctx, selected), app.ID, "", "normal", "", false, false)
+			result, err := e.AdmitAndDispatchWithOptions(sched.WithWakeEnvironment(ctx, selected), app.ID, "", "normal", "", false, false)
 			if !tc.cutover {
-				if err != nil || result.InstanceID == "" || vmm.coldBoots+vmm.restores != 1 {
-					t.Fatalf("reused selection did not admit: %+v %v boots=%d", result, err, vmm.coldBoots+vmm.restores)
+				if err != nil || result.InstanceID == "" || (*vmm.ColdBoots())+(*vmm.Restores()) != 1 {
+					t.Fatalf("reused selection did not admit: %+v %v boots=%d", result, err, (*vmm.ColdBoots())+(*vmm.Restores()))
 				}
 				return
 			}
@@ -49,8 +50,8 @@ func TestAdmissionReusingWakeSelectionFailsClosedOnCutover(t *testing.T) {
 			if !errors.As(err, &problem) || problem.Status != http.StatusConflict || problem.Code != api.CodeConflict {
 				t.Fatalf("cutover after selection was admitted: %+v %v", result, err)
 			}
-			if result.InstanceID != "" || vmm.coldBoots+vmm.restores != 0 || e.ledger.ResidentRAM() != 0 {
-				t.Fatalf("cutover reached vmmd or held capacity: %+v boots=%d ram=%d", result, vmm.coldBoots+vmm.restores, e.ledger.ResidentRAM())
+			if result.InstanceID != "" || (*vmm.ColdBoots())+(*vmm.Restores()) != 0 || (*e.XLedger()).ResidentRAM() != 0 {
+				t.Fatalf("cutover reached vmmd or held capacity: %+v boots=%d ram=%d", result, (*vmm.ColdBoots())+(*vmm.Restores()), (*e.XLedger()).ResidentRAM())
 			}
 		})
 	}

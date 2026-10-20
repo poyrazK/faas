@@ -105,6 +105,7 @@ func usageResponse(usage state.OutboundAIUsage) api.OutboundAIUsageResponse {
 			VideoSeconds: item.VideoSeconds, WebSearches: item.WebSearches, FileSearches: item.FileSearches,
 			CodeSessionGB: item.CodeSessionGB, CachedRequests: item.CachedRequests, CacheSavedMillicents: item.CacheSavedMillicents,
 			PromptCacheSavedMillicents: item.PromptCacheSavedMillicents,
+			InputAudioTokens:           item.InputAudioTokens, OutputAudioTokens: item.OutputAudioTokens,
 		})
 	}
 	return out

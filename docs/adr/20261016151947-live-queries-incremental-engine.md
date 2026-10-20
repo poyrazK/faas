@@ -1045,9 +1045,75 @@ Phase 0 did not cover:
 
     A backend's `live_hub_url` still names one hub, so each backend can
     serve one live database until livequeryd hosts several.
+  - **Several databases per process** (2026-10-20). `-databases-file` lists
+    the databases one livequeryd serves:
+    - Each database has its own hub, slot, checkpoint
+      (`<checkpoint-dir>/<id>.checkpoint`), live keys and `/<id>/live` route,
+      which lifts the limit of one live database per backend.
+    - Replication slot names are unique per PostgreSQL server, not per
+      database, so a database's slot defaults to `gregale_live_<id>`, and two
+      entries that name one slot on one server are refused at start.
+    - The process, listener, SQL parser and control-plane connection are
+      shared.
+    - A database that cannot be opened, or whose hub stops on an error, is
+      retried with backoff (one second, doubling, at most a minute). It
+      answers 503 meanwhile, which realtimed retries, and the others keep
+      serving.
+    - The process is ready once it listens. `GET /databases`,
+      `livequery_hub_up` and `livequery_hub_restarts_total` show each
+      database's state.
+    - Metrics carry a `database` label; `livequery_engine_memory_bytes`
+      stays one process-wide series.
+    - A session that reaches a hub as it stops now closes, so realtimed
+      reconnects to the next hub instead of waiting.
+    - The Ansible role takes `faas_livequeryd_databases`, with one credential
+      per connection string. A deploy fails unless every database is served.
+    - The flags for one database remain for development.
+  - **Fleet-PKI leaves** (2026-10-19). Hub and realtimed authenticate with
+    leaves of the internal CA:
+    - livequeryd's server leaf is `livequeryd.faas`;
+    - realtimed's client leaf is `realtimed.faas`.
+
+    They are *feature leaves* (`pkg/pki/feature.go`): a host carries them
+    only when the feature is on. No host role requires them, which avoids
+    the rc.255 failure, where leaves added to the required set broke
+    rollouts of hosts that lacked them.
+
+    How they are issued, used and renewed:
+    - `gregalectl pki issue-feature` issues them on the CA's host. The
+      compute node's leaf is staged there and copied over.
+    - `pki metrics` reports their expiry, and `pki_renew.yml` renews them.
+    - livequeryd's `-client-name` admits only realtimed's leaf, so no other
+      fleet identity can carry RLS claims.
+    - realtimed verifies hubs as `livequeryd.faas`
+      (`FAAS_REALTIME_LIVE_TLS_SERVER_NAME`).
   - **Unverified on Neon:** logical replication on the project, event
     triggers for the schema-change log, and slot persistence across a
     suspend.
+
+- **Data API parity** (2026-10-18, with ADR-20261018170742).
+  - **Claims.** The Data API gateway now owns `gregale_access` and the other
+    `gregale_*` claims, overwriting whatever an identity provider's token
+    carries. RLS-mode sessions do the same: the hub removes the gateway-owned
+    claims from the verified claims and sets `gregale_access` to `user`, so a
+    policy on `gregale_access` returns the same rows live and over REST. The
+    canonical claim text still sorts keys and drops volatile claims, so plan
+    groups are unchanged for tokens that never carried `gregale_*` claims.
+  - **Typed reads.** `liveRead` takes its row type from a generated-contract
+    query (`LiveReadRow`). It returns `parseDataAPIRow`, which decodes
+    PostgreSQL text the way PostgREST encodes JSON: integer, `numeric` and
+    float types become numbers (non-finite values stay strings),
+    `timestamp`/`timestamptz` become ISO 8601 strings, arrays are parsed
+    element by element, and JSON is parsed. Embedded resources already arrive
+    as JSON. Composite top-level columns stay text, because the frame carries
+    no field names; their generated object type does not hold live. Sealed
+    queries keep `parseLiveRow`.
+  - **Not yet:** anonymous live reads of public relations and server-key
+    subscriptions. Both need a realtime endpoint that admits them without an
+    `oidc_jwt` connection, and the Data API's public-read allowlist and key
+    hashes, which live only in the app's sealed secrets today, delivered to
+    realtimed.
+  - The SDK's live module stays unexported and unpacked until launch.
 
 ## Consequences
 

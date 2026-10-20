@@ -28,12 +28,13 @@
 //	out keeps the original test focused and lets a regression here
 //	point at a specific method (each test function in this file
 //	targets one JobStore method).
-package state
+package state_test
 
 import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/onebox-faas/faas/pkg/state"
 	"strings"
 	"testing"
 	"time"
@@ -42,7 +43,7 @@ import (
 // helper — create a fresh job + 3-task run on the supplied store and
 // return the (job, run, fannedTasks) so each coverage test can drive
 // a specific JobStore method without re-walking the create dance.
-func newJobAndRun(t *testing.T, ms *MemStore, accountID, name string) (Job, JobRun, []JobTask) {
+func newJobAndRun(t *testing.T, ms *state.MemStore, accountID, name string) (state.Job, state.JobRun, []state.JobTask) {
 	t.Helper()
 	ctx := context.Background()
 	created, err := ms.JobCreate(ctx,
@@ -77,7 +78,7 @@ func newJobAndRun(t *testing.T, ms *MemStore, accountID, name string) (Job, JobR
 func TestMemStoreJobs_CreateJobInstance(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	ms := NewMemStore()
+	ms := state.NewMemStore()
 	job, run, _ := newJobAndRun(t, ms, "acct-JI", "job-instance")
 
 	created, err := ms.CreateJobInstance(ctx, "instance-1", job.ID, run.ID, 0,
@@ -85,7 +86,7 @@ func TestMemStoreJobs_CreateJobInstance(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateJobInstance: %v", err)
 	}
-	if created.ID != "instance-1" || created.Mode != string(InstanceModeJob) {
+	if created.ID != "instance-1" || created.Mode != string(state.InstanceModeJob) {
 		t.Fatalf("CreateJobInstance = %+v, want job instance", created)
 	}
 	if created.Kind != "job_task" || created.JobID != job.ID || created.JobRunID != run.ID || created.JobTaskIndex != 0 {
@@ -104,11 +105,11 @@ func TestMemStoreJobs_CreateJobInstance(t *testing.T) {
 	}
 
 	if _, err := ms.CreateJobInstance(ctx, "instance-1", job.ID, run.ID, 0,
-		"cold_booting", 256, "node-1", "wake-1"); !errors.Is(err, ErrConflict) {
+		"cold_booting", 256, "node-1", "wake-1"); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("CreateJobInstance duplicate: err = %v, want ErrConflict", err)
 	}
 	if _, err := ms.CreateJobInstance(ctx, "instance-2", "missing-job", run.ID, 0,
-		"cold_booting", 256, "node-1", "wake-2"); !errors.Is(err, ErrNotFound) {
+		"cold_booting", 256, "node-1", "wake-2"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("CreateJobInstance missing job: err = %v, want ErrNotFound", err)
 	}
 }
@@ -116,7 +117,7 @@ func TestMemStoreJobs_CreateJobInstance(t *testing.T) {
 func TestMemStoreJobs_ListJobInstancesAndOrphans(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	ms := NewMemStore()
+	ms := state.NewMemStore()
 	job, run, _ := newJobAndRun(t, ms, "acct-JL", "job-list")
 
 	// Task 1 deliberately has no claimed task owner, so its instance is
@@ -173,7 +174,7 @@ func TestMemStoreJobs_ListJobInstancesAndOrphans(t *testing.T) {
 func TestMemStoreJobs_JobGetByID(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	ms := NewMemStore()
+	ms := state.NewMemStore()
 	created, _, _ := newJobAndRun(t, ms, "acct-A", "g1")
 
 	got, err := ms.JobGetByID(ctx, created.ID)
@@ -184,7 +185,7 @@ func TestMemStoreJobs_JobGetByID(t *testing.T) {
 		t.Fatalf("JobGetByID.ID = %q, want %q", got.ID, created.ID)
 	}
 
-	if _, err := ms.JobGetByID(ctx, "does-not-exist"); !errors.Is(err, ErrNotFound) {
+	if _, err := ms.JobGetByID(ctx, "does-not-exist"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("JobGetByID missing: err = %v, want ErrNotFound", err)
 	}
 }
@@ -194,7 +195,7 @@ func TestMemStoreJobs_JobGetByID(t *testing.T) {
 func TestMemStoreJobs_JobListByAccount(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	ms := NewMemStore()
+	ms := state.NewMemStore()
 	for i, name := range []string{"a", "b", "c"} {
 		ms.JobCreate(ctx, "acct-X", name, "app",
 			"oci://x@sha256:1", []string{"/bin/sh"}, 128, 30, 1, 0,
@@ -222,7 +223,7 @@ func TestMemStoreJobs_JobListByAccount(t *testing.T) {
 func TestMemStoreJobs_JobUpdate(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	ms := NewMemStore()
+	ms := state.NewMemStore()
 	created, err := ms.JobCreate(ctx, "acct-U", "upd", "app", "oci://x@sha256:1", []string{"/bin/sh"}, 128, 60, 2, 0, json.RawMessage(`{}`))
 	if err != nil {
 		t.Fatalf("JobCreate: %v", err)
@@ -246,7 +247,7 @@ func TestMemStoreJobs_JobUpdate(t *testing.T) {
 		t.Fatalf("JobUpdate.TaskTimeoutS = %d, want 60 (nil pointer = untouched)", got.TaskTimeoutS)
 	}
 
-	if _, err := ms.JobUpdate(ctx, "missing-id", nil, nil, nil, nil, nil, nil, nil, nil); !errors.Is(err, ErrNotFound) {
+	if _, err := ms.JobUpdate(ctx, "missing-id", nil, nil, nil, nil, nil, nil, nil, nil); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("JobUpdate missing: err = %v, want ErrNotFound", err)
 	}
 }
@@ -256,14 +257,14 @@ func TestMemStoreJobs_JobUpdate(t *testing.T) {
 func TestMemStoreJobs_JobCreateDuplicate(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	ms := NewMemStore()
+	ms := state.NewMemStore()
 	if _, err := ms.JobCreate(ctx, "acct-D", "dup", "app",
 		"oci://x", []string{"/bin/sh"}, 128, 30, 1, 0, json.RawMessage(`{}`)); err != nil {
 		t.Fatalf("first JobCreate: %v", err)
 	}
 	_, err := ms.JobCreate(ctx, "acct-D", "dup", "app",
 		"oci://x", []string{"/bin/sh"}, 128, 30, 1, 0, json.RawMessage(`{}`))
-	if !errors.Is(err, ErrConflict) {
+	if !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("second JobCreate: err = %v, want ErrConflict", err)
 	}
 	if !strings.Contains(err.Error(), "jobs_account_name_uniq") {
@@ -276,7 +277,7 @@ func TestMemStoreJobs_JobCreateDuplicate(t *testing.T) {
 func TestMemStoreJobs_JobCountByAccount(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	ms := NewMemStore()
+	ms := state.NewMemStore()
 	created, run, _ := newJobAndRun(t, ms, "acct-C", "c1")
 	ms.JobCreate(ctx, "acct-C", "c2", "app",
 		"oci://x", []string{"/bin/sh"}, 128, 30, 1, 0, json.RawMessage(`{}`))
@@ -305,8 +306,8 @@ func TestMemStoreJobs_JobCountByAccount(t *testing.T) {
 func TestMemStoreJobs_JobSoftDelete_NotFound(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	ms := NewMemStore()
-	if _, _, err := ms.JobSoftDelete(ctx, "missing"); !errors.Is(err, ErrNotFound) {
+	ms := state.NewMemStore()
+	if _, _, err := ms.JobSoftDelete(ctx, "missing"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("JobSoftDelete(missing): err = %v, want ErrNotFound", err)
 	}
 }
@@ -317,7 +318,7 @@ func TestMemStoreJobs_JobSoftDelete_NotFound(t *testing.T) {
 func TestMemStoreJobs_JobSoftDelete_HasLive(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	ms := NewMemStore()
+	ms := state.NewMemStore()
 	created, _, _ := newJobAndRun(t, ms, "acct-L", "live")
 	deleted, hasLive, err := ms.JobSoftDelete(ctx, created.ID)
 	if err != nil {
@@ -332,7 +333,7 @@ func TestMemStoreJobs_JobSoftDelete_HasLive(t *testing.T) {
 func TestMemStoreJobs_JobRunGetByID(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	ms := NewMemStore()
+	ms := state.NewMemStore()
 	_, run, _ := newJobAndRun(t, ms, "acct-R", "r1")
 
 	got, err := ms.JobRunGetByID(ctx, run.ID)
@@ -343,7 +344,7 @@ func TestMemStoreJobs_JobRunGetByID(t *testing.T) {
 		t.Fatalf("JobRunGetByID.ID = %q, want %q", got.ID, run.ID)
 	}
 
-	if _, err := ms.JobRunGetByID(ctx, "missing"); !errors.Is(err, ErrNotFound) {
+	if _, err := ms.JobRunGetByID(ctx, "missing"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("JobRunGetByID missing: err = %v, want ErrNotFound", err)
 	}
 }
@@ -352,7 +353,7 @@ func TestMemStoreJobs_JobRunGetByID(t *testing.T) {
 func TestMemStoreJobs_JobRunListByJob(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	ms := NewMemStore()
+	ms := state.NewMemStore()
 	created, _, _ := newJobAndRun(t, ms, "acct-RL", "rl1")
 	for i := 0; i < 3; i++ {
 		_, _, _ = ms.JobRunCreate(ctx, created.ID, created.AccountID, "manual",
@@ -373,7 +374,7 @@ func TestMemStoreJobs_JobRunListByJob(t *testing.T) {
 func TestMemStoreJobs_JobRunListByAccount(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	ms := NewMemStore()
+	ms := state.NewMemStore()
 	created, _, _ := newJobAndRun(t, ms, "acct-RA", "ra1")
 	ms.JobCreate(ctx, "acct-OTHER", "other", "app",
 		"oci://x", []string{"/bin/sh"}, 128, 30, 1, 0, json.RawMessage(`{}`))
@@ -391,7 +392,7 @@ func TestMemStoreJobs_JobRunListByAccount(t *testing.T) {
 func TestMemStoreJobs_JobRunListActive(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	ms := NewMemStore()
+	ms := state.NewMemStore()
 	job, run, _ := newJobAndRun(t, ms, "acct-active", "active-1")
 	_, otherRun, _ := newJobAndRun(t, ms, "acct-other-active", "active-2")
 	if _, err := ms.JobRunCancel(ctx, otherRun.ID); err != nil {
@@ -414,7 +415,7 @@ func TestMemStoreJobs_JobRunListActive(t *testing.T) {
 func TestMemStoreJobs_JobRunRecompute(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	ms := NewMemStore()
+	ms := state.NewMemStore()
 	_, run, _ := newJobAndRun(t, ms, "acct-RR", "rr1")
 
 	// Initially all queued → aggregate=running (running + queued > 0).
@@ -483,7 +484,7 @@ func TestMemStoreJobs_JobRunRecompute(t *testing.T) {
 	}
 
 	// ErrNotFound on missing runID.
-	if _, err := ms.JobRunRecompute(ctx, "missing"); !errors.Is(err, ErrNotFound) {
+	if _, err := ms.JobRunRecompute(ctx, "missing"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("JobRunRecompute(missing): err = %v, want ErrNotFound", err)
 	}
 }
@@ -494,7 +495,7 @@ func TestMemStoreJobs_JobRunRecompute(t *testing.T) {
 func TestMemStoreJobs_JobRunCancel(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	ms := NewMemStore()
+	ms := state.NewMemStore()
 	_, run, _ := newJobAndRun(t, ms, "acct-RC", "rc1")
 
 	r, err := ms.JobRunCancel(ctx, run.ID)
@@ -546,7 +547,7 @@ func TestMemStoreJobs_JobRunCancel(t *testing.T) {
 			mixedCancelled.TasksRunning)
 	}
 
-	if _, err := ms.JobRunCancel(ctx, "missing"); !errors.Is(err, ErrNotFound) {
+	if _, err := ms.JobRunCancel(ctx, "missing"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("JobRunCancel(missing): err = %v, want ErrNotFound", err)
 	}
 }
@@ -555,7 +556,7 @@ func TestMemStoreJobs_JobRunCancel(t *testing.T) {
 func TestMemStoreJobs_JobRunIncrementDeadLetter(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	ms := NewMemStore()
+	ms := state.NewMemStore()
 	_, run, _ := newJobAndRun(t, ms, "acct-DL", "dl1")
 
 	if err := ms.JobRunIncrementDeadLetter(ctx, run.ID); err != nil {
@@ -565,7 +566,7 @@ func TestMemStoreJobs_JobRunIncrementDeadLetter(t *testing.T) {
 	if got.DeadLetterCount != 1 {
 		t.Fatalf("DeadLetterCount = %d, want 1", got.DeadLetterCount)
 	}
-	if err := ms.JobRunIncrementDeadLetter(ctx, "missing"); !errors.Is(err, ErrNotFound) {
+	if err := ms.JobRunIncrementDeadLetter(ctx, "missing"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("JobRunIncrementDeadLetter(missing): err = %v, want ErrNotFound", err)
 	}
 }
@@ -575,10 +576,10 @@ func TestMemStoreJobs_JobRunIncrementDeadLetter(t *testing.T) {
 func TestMemStoreJobs_JobRunReopenDeadLetter(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	ms := NewMemStore()
+	ms := state.NewMemStore()
 	_, run, _ := newJobAndRun(t, ms, "acct-DLR", "dlr1")
 
-	if err := ms.JobRunReopenDeadLetter(ctx, run.ID); !errors.Is(err, ErrNotFound) {
+	if err := ms.JobRunReopenDeadLetter(ctx, run.ID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("JobRunReopenDeadLetter(empty): err = %v, want ErrNotFound", err)
 	}
 	if err := ms.JobRunIncrementDeadLetter(ctx, run.ID); err != nil {
@@ -595,7 +596,7 @@ func TestMemStoreJobs_JobRunReopenDeadLetter(t *testing.T) {
 		t.Fatalf("reopened run = count=%d status=%q finished=%v, want 0/running/nil",
 			got.DeadLetterCount, got.AggregateStatus, got.FinishedAt)
 	}
-	if err := ms.JobRunReopenDeadLetter(ctx, "missing"); !errors.Is(err, ErrNotFound) {
+	if err := ms.JobRunReopenDeadLetter(ctx, "missing"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("JobRunReopenDeadLetter(missing): err = %v, want ErrNotFound", err)
 	}
 }
@@ -605,7 +606,7 @@ func TestMemStoreJobs_JobRunReopenDeadLetter(t *testing.T) {
 func TestMemStoreJobs_JobTaskMarkClaimed(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	ms := NewMemStore()
+	ms := state.NewMemStore()
 	_, run, _ := newJobAndRun(t, ms, "acct-TC", "tc1")
 
 	leaseExp := time.Now().Add(time.Minute).UTC()
@@ -624,34 +625,34 @@ func TestMemStoreJobs_JobTaskMarkClaimed(t *testing.T) {
 	}
 
 	// Already-terminal task → ErrNotFound.
-	if err := ms.JobTaskMarkClaimed(ctx, run.ID, 0, "ins-x", "lt", leaseExp, "n"); !errors.Is(err, ErrNotFound) {
+	if err := ms.JobTaskMarkClaimed(ctx, run.ID, 0, "ins-x", "lt", leaseExp, "n"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("JobTaskMarkClaimed(claimed): err = %v, want ErrNotFound", err)
 	}
 
-	if err := ms.JobTaskMarkClaimed(ctx, "missing", 0, "x", "y", leaseExp, "z"); !errors.Is(err, ErrNotFound) {
+	if err := ms.JobTaskMarkClaimed(ctx, "missing", 0, "x", "y", leaseExp, "z"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("JobTaskMarkClaimed(missing run): err = %v, want ErrNotFound", err)
 	}
-	if err := ms.JobTaskMarkClaimed(ctx, run.ID, 99, "x", "y", leaseExp, "z"); !errors.Is(err, ErrNotFound) {
+	if err := ms.JobTaskMarkClaimed(ctx, run.ID, 99, "x", "y", leaseExp, "z"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("JobTaskMarkClaimed(missing task): err = %v, want ErrNotFound", err)
 	}
 }
 
 func TestMemStoreJobs_CreateAndClaimJobInstanceIsAtomic(t *testing.T) {
-	ms := NewMemStore()
+	ms := state.NewMemStore()
 	job, run, _ := newJobAndRun(t, ms, "acct-atomic-claim", "atomic-claim")
 	ctx := context.Background()
 	expires := time.Now().Add(time.Minute)
 	firstID := "6ad769e8-82c9-4f7d-a3c7-67a87f090da6"
 	if _, err := ms.CreateAndClaimJobInstance(ctx, firstID, job.ID, run.ID, 0, "cold_booting", 128,
-		DefaultLocalNodeName, firstID, "lease-1", expires, DefaultLocalNodeName); err != nil {
+		state.DefaultLocalNodeName, firstID, "lease-1", expires, state.DefaultLocalNodeName); err != nil {
 		t.Fatalf("first CreateAndClaimJobInstance: %v", err)
 	}
 	secondID := "1e5e7654-ce5c-45ce-b334-3f3a389cff56"
 	if _, err := ms.CreateAndClaimJobInstance(ctx, secondID, job.ID, run.ID, 0, "cold_booting", 128,
-		DefaultLocalNodeName, secondID, "lease-2", expires, DefaultLocalNodeName); !errors.Is(err, ErrNotFound) {
+		state.DefaultLocalNodeName, secondID, "lease-2", expires, state.DefaultLocalNodeName); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("second CreateAndClaimJobInstance error=%v, want ErrNotFound", err)
 	}
-	if _, err := ms.InstanceByID(ctx, secondID); !errors.Is(err, ErrNotFound) {
+	if _, err := ms.InstanceByID(ctx, secondID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("losing instance exists, error=%v", err)
 	}
 }
@@ -659,15 +660,15 @@ func TestMemStoreJobs_CreateAndClaimJobInstanceIsAtomic(t *testing.T) {
 func TestMemStoreJobs_AppWatchdogExcludesColdBootingJob(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	ms := NewMemStore()
+	ms := state.NewMemStore()
 	job, run, _ := newJobAndRun(t, ms, "acct-WD", "watchdog")
 	instanceID := "job-watchdog-instance"
 	if _, err := ms.CreateAndClaimJobInstance(ctx, instanceID, job.ID, run.ID, 0,
-		"cold_booting", 256, DefaultLocalNodeName, instanceID, "lease-watchdog",
-		time.Now().Add(time.Minute), DefaultLocalNodeName); err != nil {
+		"cold_booting", 256, state.DefaultLocalNodeName, instanceID, "lease-watchdog",
+		time.Now().Add(time.Minute), state.DefaultLocalNodeName); err != nil {
 		t.Fatal(err)
 	}
-	rows, err := ms.ListInstancesByStatesOlderThan(ctx, []State{StateColdBooting}, time.Now().Add(time.Hour))
+	rows, err := ms.ListInstancesByStatesOlderThan(ctx, []state.State{state.StateColdBooting}, time.Now().Add(time.Hour))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -683,7 +684,7 @@ func TestMemStoreJobs_AppWatchdogExcludesColdBootingJob(t *testing.T) {
 func TestMemStoreJobs_JobTaskMarkTerminal(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	ms := NewMemStore()
+	ms := state.NewMemStore()
 	_, run, _ := newJobAndRun(t, ms, "acct-TT", "tt1")
 
 	fin := time.Now().UTC()
@@ -699,7 +700,7 @@ func TestMemStoreJobs_JobTaskMarkTerminal(t *testing.T) {
 	}
 
 	// Already terminal → ErrNotFound.
-	if err := ms.JobTaskMarkTerminal(ctx, run.ID, 0, "succeeded", 0, "", "", fin); !errors.Is(err, ErrNotFound) {
+	if err := ms.JobTaskMarkTerminal(ctx, run.ID, 0, "succeeded", 0, "", "", fin); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("JobTaskMarkTerminal(terminal): err = %v, want ErrNotFound", err)
 	}
 }
@@ -709,7 +710,7 @@ func TestMemStoreJobs_JobTaskMarkTerminal(t *testing.T) {
 func TestMemStoreJobs_JobTaskRetry(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	ms := NewMemStore()
+	ms := state.NewMemStore()
 	_, run, _ := newJobAndRun(t, ms, "acct-TR", "tr1")
 
 	fin := time.Now().UTC()
@@ -726,7 +727,7 @@ func TestMemStoreJobs_JobTaskRetry(t *testing.T) {
 		t.Fatalf("task 0 Attempt = %d, want 2", t0.Attempt)
 	}
 
-	if err := ms.JobTaskRetry(ctx, "missing", 0, next); !errors.Is(err, ErrNotFound) {
+	if err := ms.JobTaskRetry(ctx, "missing", 0, next); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("JobTaskRetry(missing): err = %v, want ErrNotFound", err)
 	}
 }
@@ -737,7 +738,7 @@ func TestMemStoreJobs_JobTaskRetry(t *testing.T) {
 func TestMemStoreJobs_JobTaskRequeue(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	ms := NewMemStore()
+	ms := state.NewMemStore()
 	_, run, _ := newJobAndRun(t, ms, "acct-TQ", "tq1")
 
 	leaseExp := time.Now().Add(time.Minute).UTC()
@@ -757,7 +758,7 @@ func TestMemStoreJobs_JobTaskRequeue(t *testing.T) {
 		t.Fatalf("task 0 InstanceID = %v, want nil after requeue", t0.InstanceID)
 	}
 
-	if err := ms.JobTaskRequeue(ctx, "missing", 0, next); !errors.Is(err, ErrNotFound) {
+	if err := ms.JobTaskRequeue(ctx, "missing", 0, next); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("JobTaskRequeue(missing): err = %v, want ErrNotFound", err)
 	}
 }
@@ -765,7 +766,7 @@ func TestMemStoreJobs_JobTaskRequeue(t *testing.T) {
 func TestMemStoreJobs_JobTaskFailBootConsumesBudgetAndFencesOldClaim(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	ms := NewMemStore()
+	ms := state.NewMemStore()
 	_, run, _ := newJobAndRun(t, ms, "acct-BF", "bf1")
 	expires := time.Now().Add(time.Minute)
 	if err := ms.JobTaskMarkClaimed(ctx, run.ID, 0, "instance-1", "lease-1", expires, "node-1"); err != nil {
@@ -780,19 +781,19 @@ func TestMemStoreJobs_JobTaskFailBootConsumesBudgetAndFencesOldClaim(t *testing.
 	if err != nil || task.Status != "queued" || task.Attempt != 2 || task.InstanceID != nil || task.NextAttemptAt == nil || task.NextAttemptAt.Before(next.Add(-time.Second)) || task.ErrorClass == nil || *task.ErrorClass != "infra" {
 		t.Fatalf("first boot failure task=%+v err=%v", task, err)
 	}
-	if _, err := ms.JobTaskFailBoot(ctx, run.ID, 0, "instance-1", "lease-1", 1, next, "stale boot"); !errors.Is(err, ErrNotFound) {
+	if _, err := ms.JobTaskFailBoot(ctx, run.ID, 0, "instance-1", "lease-1", 1, next, "stale boot"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("stale claim error=%v, want ErrNotFound", err)
 	}
-	if err := ms.JobTaskCompleteClaimedWithLogs(ctx, run.ID, 0, "instance-1", "lease-1", "succeeded", 0, "", "", "late output", false, time.Now()); !errors.Is(err, ErrNotFound) {
+	if err := ms.JobTaskCompleteClaimedWithLogs(ctx, run.ID, 0, "instance-1", "lease-1", "succeeded", 0, "", "", "late output", false, time.Now()); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("late exit after retry error=%v, want ErrNotFound", err)
 	}
 	if err := ms.JobTaskMarkClaimed(ctx, run.ID, 0, "instance-2", "lease-2", expires, "node-1"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ms.JobTaskFailBoot(ctx, run.ID, 0, "instance-1", "lease-1", 1, next, "stale boot"); !errors.Is(err, ErrNotFound) {
+	if _, err := ms.JobTaskFailBoot(ctx, run.ID, 0, "instance-1", "lease-1", 1, next, "stale boot"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("replaced claim error=%v, want ErrNotFound", err)
 	}
-	if err := ms.JobTaskCompleteClaimedWithLogs(ctx, run.ID, 0, "instance-1", "lease-1", "succeeded", 0, "", "", "late output", false, time.Now()); !errors.Is(err, ErrNotFound) {
+	if err := ms.JobTaskCompleteClaimedWithLogs(ctx, run.ID, 0, "instance-1", "lease-1", "succeeded", 0, "", "", "late output", false, time.Now()); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("late exit after replacement error=%v, want ErrNotFound", err)
 	}
 	retried, err = ms.JobTaskFailBoot(ctx, run.ID, 0, "instance-2", "lease-2", 1, next, "artifact unavailable")
@@ -810,14 +811,14 @@ func TestMemStoreJobs_JobTaskFailBootConsumesBudgetAndFencesOldClaim(t *testing.
 func TestMemStoreJobs_JobTaskCancel(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	ms := NewMemStore()
+	ms := state.NewMemStore()
 	_, run, _ := newJobAndRun(t, ms, "acct-XC", "xc1")
 
 	if err := ms.JobTaskCancel(ctx, run.ID, 0); err != nil {
 		t.Fatalf("JobTaskCancel: %v", err)
 	}
 	// Re-cancel → ErrNotFound (already terminal).
-	if err := ms.JobTaskCancel(ctx, run.ID, 0); !errors.Is(err, ErrNotFound) {
+	if err := ms.JobTaskCancel(ctx, run.ID, 0); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("JobTaskCancel (re-call): err = %v, want ErrNotFound", err)
 	}
 }
@@ -827,7 +828,7 @@ func TestMemStoreJobs_JobTaskCancel(t *testing.T) {
 func TestMemStoreJobs_JobTaskFindStuck(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	ms := NewMemStore()
+	ms := state.NewMemStore()
 	_, run, _ := newJobAndRun(t, ms, "acct-FS", "fs1")
 
 	// Claim task 0 with an already-expired lease; task 1 with a
@@ -863,7 +864,7 @@ func TestMemStoreJobs_JobTaskFindStuck(t *testing.T) {
 func TestMemStoreJobs_JobTaskClaimBatch(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	ms := NewMemStore()
+	ms := state.NewMemStore()
 	_, run, _ := newJobAndRun(t, ms, "acct-CB", "cb1")
 
 	// Set task 0 with a future next_attempt_at — should be skipped.
@@ -897,7 +898,7 @@ func TestMemStoreJobs_JobTaskClaimBatch(t *testing.T) {
 func TestMemStoreJobs_JobTaskGet(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	ms := NewMemStore()
+	ms := state.NewMemStore()
 	_, run, _ := newJobAndRun(t, ms, "acct-TG", "tg1")
 
 	got, err := ms.JobTaskGet(ctx, run.ID, 0)
@@ -908,10 +909,10 @@ func TestMemStoreJobs_JobTaskGet(t *testing.T) {
 		t.Fatalf("JobTaskGet.TaskIndex = %d, want 0", got.TaskIndex)
 	}
 
-	if _, err := ms.JobTaskGet(ctx, run.ID, 99); !errors.Is(err, ErrNotFound) {
+	if _, err := ms.JobTaskGet(ctx, run.ID, 99); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("JobTaskGet(missing task): err = %v, want ErrNotFound", err)
 	}
-	if _, err := ms.JobTaskGet(ctx, "missing", 0); !errors.Is(err, ErrNotFound) {
+	if _, err := ms.JobTaskGet(ctx, "missing", 0); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("JobTaskGet(missing run): err = %v, want ErrNotFound", err)
 	}
 }
@@ -920,7 +921,7 @@ func TestMemStoreJobs_JobTaskGet(t *testing.T) {
 func TestMemStoreJobs_JobTaskList(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	ms := NewMemStore()
+	ms := state.NewMemStore()
 	_, run, _ := newJobAndRun(t, ms, "acct-TL", "tl1")
 
 	all, err := ms.JobTaskList(ctx, run.ID, 0, 0)
@@ -946,7 +947,7 @@ func TestMemStoreJobs_JobTaskList(t *testing.T) {
 func TestMemStoreJobs_JobConcurrentByAccount(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	ms := NewMemStore()
+	ms := state.NewMemStore()
 	job, run, _ := newJobAndRun(t, ms, "acct-CC", "cc1")
 
 	before, _ := ms.JobConcurrentByAccount(ctx, "acct-CC")
@@ -954,9 +955,9 @@ func TestMemStoreJobs_JobConcurrentByAccount(t *testing.T) {
 		t.Fatalf("JobConcurrentByAccount(3 queued) = %d, want 0", before)
 	}
 
-	instanceID := newUUIDString()
+	instanceID := state.NewUUIDString()
 	if _, err := ms.CreateAndClaimJobInstance(ctx, instanceID, job.ID, run.ID, 0,
-		"cold_booting", 128, DefaultLocalNodeName, instanceID, newUUIDString(), time.Now().Add(time.Minute), DefaultLocalNodeName); err != nil {
+		"cold_booting", 128, state.DefaultLocalNodeName, instanceID, state.NewUUIDString(), time.Now().Add(time.Minute), state.DefaultLocalNodeName); err != nil {
 		t.Fatal(err)
 	}
 	active, _ := ms.JobConcurrentByAccount(ctx, "acct-CC")
@@ -964,7 +965,7 @@ func TestMemStoreJobs_JobConcurrentByAccount(t *testing.T) {
 		t.Fatalf("JobConcurrentByAccount(1 live) = %d, want 1", active)
 	}
 	_ = ms.JobTaskMarkTerminal(ctx, run.ID, 0, "succeeded", 0, "", "", time.Now().UTC())
-	_ = ms.UpdateInstanceState(ctx, instanceID, string(StateStopped))
+	_ = ms.UpdateInstanceState(ctx, instanceID, string(state.StateStopped))
 	after, _ := ms.JobConcurrentByAccount(ctx, "acct-CC")
 	if after != 0 {
 		t.Fatalf("JobConcurrentByAccount(after terminal) = %d, want 0", after)
@@ -980,7 +981,7 @@ func TestMemStoreJobs_JobConcurrentByAccount(t *testing.T) {
 func TestMemStoreJobs_ListJobInstances(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	ms := NewMemStore()
+	ms := state.NewMemStore()
 
 	out, err := ms.ListJobInstances(ctx)
 	if err != nil {
@@ -1000,7 +1001,7 @@ func TestMemStoreJobs_ListJobInstances(t *testing.T) {
 func TestMemStoreJobs_ListOrphanedJobInstances(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	ms := NewMemStore()
+	ms := state.NewMemStore()
 	job, run, _ := newJobAndRun(t, ms, "acct-OJI", "oji1")
 	now := time.Now().UTC()
 	if _, err := ms.CreateAndClaimJobInstance(ctx, "orphan-instance", job.ID, run.ID, 0,
@@ -1029,7 +1030,7 @@ func TestMemStoreJobs_ListOrphanedJobInstances(t *testing.T) {
 func TestMemStoreJobs_JobRunCreate_FanOut(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	ms := NewMemStore()
+	ms := state.NewMemStore()
 	created, _, _ := newJobAndRun(t, ms, "acct-FO", "fo1")
 
 	// nil parallelism falls back to job.MaxParallelism (4).
@@ -1058,8 +1059,8 @@ func TestMemStoreJobs_JobRunCreate_FanOut(t *testing.T) {
 func TestMemStoreJobs_JobGetByName_NotFound(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	ms := NewMemStore()
-	if _, err := ms.JobGetByName(ctx, "acct", "missing"); !errors.Is(err, ErrNotFound) {
+	ms := state.NewMemStore()
+	if _, err := ms.JobGetByName(ctx, "acct", "missing"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("JobGetByName(missing): err = %v, want ErrNotFound", err)
 	}
 }
@@ -1070,7 +1071,7 @@ func TestMemStoreJobs_JobGetByName_NotFound(t *testing.T) {
 func TestMemStoreJobs_JobCreateEmptyEnv(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	ms := NewMemStore()
+	ms := state.NewMemStore()
 	created, err := ms.JobCreate(ctx, "acct-E", "empty-env", "app",
 		"oci://x", []string{"/bin/sh"}, 128, 30, 1, 0, nil)
 	if err != nil {

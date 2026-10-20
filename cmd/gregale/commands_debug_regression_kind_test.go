@@ -1,16 +1,17 @@
-package main
+package main_test
 
 import (
 	"bytes"
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func TestRenderDebugRegressionsTableShowsKindAndErrors(t *testing.T) {
 	var out bytes.Buffer
-	renderDebugRegressionsTable(&out, api.DebugRegressionsResponse{Regressions: []api.DebugRegressionItem{
+	main.RenderDebugRegressionsTable(&out, api.DebugRegressionsResponse{Regressions: []api.DebugRegressionItem{
 		{DeploymentID: "dep-81", Route: "POST /pay", Kind: "errors", State: "active", Factor: "1.00", ErrorRatePct: 12.5, ErrorRateBasePct: 0.4, AffectedCount: 61},
 		{DeploymentID: "dep-81", Route: "GET /", State: "active", Factor: "1.50", P95MS: 300, P95BaseMS: 200, AffectedCount: 120},
 	}})

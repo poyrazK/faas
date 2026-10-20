@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -19,7 +20,7 @@ func TestRunAppExecPreservesArgumentsAfterTerminator(t *testing.T) {
 	for _, remoteFlag := range []string{"--help", "-h", "--json", "-j", "--json=custom"} {
 		for _, useJSON := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/json=%t", remoteFlag, useJSON), func(t *testing.T) {
-				resetJSONOut(t)
+				main.ResetJSONOut(t)
 				t.Setenv("FAAS_JSON", "0")
 				t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 				// macOS ignores XDG_CONFIG_HOME; HOME isolates os.UserConfigDir there.
@@ -43,13 +44,13 @@ func TestRunAppExecPreservesArgumentsAfterTerminator(t *testing.T) {
 				defer server.Close()
 				t.Setenv("FAAS_API", server.URL)
 				t.Setenv("FAAS_TOKEN", "test-token")
-				out, stderr, restore := swapIO(t)
+				out, stderr, restore := main.SwapIO(t)
 				defer restore()
 				args := []string{"app", "my-app", "exec", "--detach", "--", "bin/task", remoteFlag}
 				if useJSON {
 					args = append([]string{"--json"}, args...)
 				}
-				if code := run(args); code != 0 || requests.Load() != 1 {
+				if code := main.Run(args); code != 0 || requests.Load() != 1 {
 					t.Fatalf("exit=%d requests=%d stdout=%s stderr=%s", code, requests.Load(), out.String(), stderr())
 				}
 				if useJSON {
@@ -66,7 +67,7 @@ func TestRunAppExecPreservesArgumentsAfterTerminator(t *testing.T) {
 }
 
 func TestCmdAppExecPreservesIdempotencyKeyOnRetry(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	var submissions atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		submissions.Add(1)
@@ -79,10 +80,10 @@ func TestCmdAppExecPreservesIdempotencyKeyOnRetry(t *testing.T) {
 	defer server.Close()
 	t.Setenv("FAAS_API", server.URL)
 	t.Setenv("FAAS_TOKEN", "test-token")
-	_, _, restore := swapIO(t)
+	_, _, restore := main.SwapIO(t)
 	defer restore()
 	for attempt := 0; attempt < 2; attempt++ {
-		if code := cmdAppExec("my-app", []string{"--detach", "--idempotency-key", "stable-task-submit", "--", "bin/task"}); code != 0 {
+		if code := main.CmdAppExec("my-app", []string{"--detach", "--idempotency-key", "stable-task-submit", "--", "bin/task"}); code != 0 {
 			t.Fatalf("attempt %d exit = %d", attempt, code)
 		}
 	}
@@ -114,10 +115,10 @@ func TestCmdAppExecDetachedSubmitsArgv(t *testing.T) {
 	defer server.Close()
 	t.Setenv("FAAS_API", server.URL)
 	t.Setenv("FAAS_TOKEN", "test-token")
-	out, _, restore := swapIO(t)
+	out, _, restore := main.SwapIO(t)
 	defer restore()
 
-	code := cmdAppDispatch([]string{"my-app", "exec", "--detach", "--timeout-seconds", "30", "--max-output-bytes", "2048", "--", "bin/task", "--compact"})
+	code := main.CmdAppDispatch([]string{"my-app", "exec", "--detach", "--timeout-seconds", "30", "--max-output-bytes", "2048", "--", "bin/task", "--compact"})
 	if code != 0 {
 		t.Fatalf("exit = %d", code)
 	}
@@ -143,10 +144,10 @@ func TestCmdAppExecWaitsAndPropagatesRemoteExit(t *testing.T) {
 	defer server.Close()
 	t.Setenv("FAAS_API", server.URL)
 	t.Setenv("FAAS_TOKEN", "test-token")
-	out, errOut, restore := swapIO(t)
+	out, errOut, restore := main.SwapIO(t)
 	defer restore()
 
-	code := cmdAppExec("my-app", []string{"--poll-interval", "1ms", "--wait-timeout", "1s", "--", "bin/task"})
+	code := main.CmdAppExec("my-app", []string{"--poll-interval", "1ms", "--wait-timeout", "1s", "--", "bin/task"})
 	if code != 17 {
 		t.Fatalf("exit = %d, want remote exit 17", code)
 	}
@@ -201,10 +202,10 @@ func TestCmdAppExecCanWaitThroughManagedOperation(t *testing.T) {
 	defer server.Close()
 	t.Setenv("FAAS_API", server.URL)
 	t.Setenv("FAAS_TOKEN", "test-token")
-	out, _, restore := swapIO(t)
+	out, _, restore := main.SwapIO(t)
 	defer restore()
 
-	code := cmdAppExec("my-app", []string{
+	code := main.CmdAppExec("my-app", []string{
 		"--operation-policy", "customer-sync", "--operation-key", `"customer:acme:sync"`,
 		"--equivalence-key", "sync-request-7", "--idempotency-key", "stable-submit",
 		"--poll-interval", "1ms", "--wait-timeout", "1s", "--", "bin/sync", "--full",
@@ -220,9 +221,9 @@ func TestCmdAppExecCanWaitThroughManagedOperation(t *testing.T) {
 func TestCmdAppExecShellRequiresOneCommandString(t *testing.T) {
 	t.Setenv("FAAS_API", "http://127.0.0.1:1")
 	t.Setenv("FAAS_TOKEN", "test-token")
-	_, errOut, restore := swapIO(t)
+	_, errOut, restore := main.SwapIO(t)
 	defer restore()
-	if code := cmdAppExec("my-app", []string{"--shell", "--", "echo", "hello"}); code == 0 {
+	if code := main.CmdAppExec("my-app", []string{"--shell", "--", "echo", "hello"}); code == 0 {
 		t.Fatal("multi-argument shell command unexpectedly succeeded")
 	}
 	if !strings.Contains(errOut(), "usage: gregale app <slug> exec") {

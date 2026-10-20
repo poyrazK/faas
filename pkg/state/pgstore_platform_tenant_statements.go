@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -11,10 +12,10 @@ import (
 
 const platformTenantStatementCols = `id, account_id, platform_tenant_id, period_start, period_end,
        revision, status, currency, billable_units, unpriced_units, amount_millicents,
-       lines, fees, coverage, as_of, created_at, finalized_at`
+       lines, fees, coverage, as_of, created_at, finalized_at, credit_applied_millicents`
 const platformTenantStatementHeaderCols = `id, account_id, platform_tenant_id, period_start, period_end,
        revision, status, currency, billable_units, unpriced_units, amount_millicents,
-       lines, fees, as_of, created_at, finalized_at`
+       lines, fees, as_of, created_at, finalized_at, credit_applied_millicents`
 const platformTenantStatementSummaryCols = `id, account_id, platform_tenant_id, period_start, period_end,
        revision, status, currency, billable_units, unpriced_units, amount_millicents,
        as_of, created_at, finalized_at`
@@ -27,7 +28,7 @@ func scanPlatformTenantStatement(row pgx.Row) (PlatformTenantStatement, error) {
 	var rawLines, rawFees, rawCoverage []byte
 	err := row.Scan(&out.ID, &out.AccountID, &out.TenantID, &out.PeriodStart, &out.PeriodEnd,
 		&out.Revision, &status, &out.Currency, &out.BillableUnits, &out.UnpricedUnits,
-		&out.AmountMillicents, &rawLines, &rawFees, &rawCoverage, &out.AsOf, &out.CreatedAt, &out.FinalizedAt)
+		&out.AmountMillicents, &rawLines, &rawFees, &rawCoverage, &out.AsOf, &out.CreatedAt, &out.FinalizedAt, &out.CreditAppliedMillicents)
 	if err != nil {
 		return out, err
 	}
@@ -69,7 +70,7 @@ func scanPlatformTenantStatementHeader(row pgx.Row) (PlatformTenantStatement, er
 	var rawLines, rawFees []byte
 	err := row.Scan(&out.ID, &out.AccountID, &out.TenantID, &out.PeriodStart, &out.PeriodEnd,
 		&out.Revision, &status, &out.Currency, &out.BillableUnits, &out.UnpricedUnits,
-		&out.AmountMillicents, &rawLines, &rawFees, &out.AsOf, &out.CreatedAt, &out.FinalizedAt)
+		&out.AmountMillicents, &rawLines, &rawFees, &out.AsOf, &out.CreatedAt, &out.FinalizedAt, &out.CreditAppliedMillicents)
 	if err != nil {
 		return out, err
 	}
@@ -468,19 +469,42 @@ func (s *PgStore) ListFinalizedPlatformTenantStatements(ctx context.Context, acc
 	return out, rows.Err()
 }
 
+// FinalizePlatformTenantStatement finalizes a priced draft and draws the
+// tenant's prepaid credit down against it in one transaction
+// (ADR-20261019100331); the finalized-statement webhook sees the credit.
 func (s *PgStore) FinalizePlatformTenantStatement(ctx context.Context, accountID, tenantID, statementID string) (PlatformTenantStatement, bool, error) {
-	out, err := scanPlatformTenantStatementHeader(s.pool.QueryRow(ctx, `update platform_tenant_statements
-		set status = 'finalized', finalized_at = now()
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return PlatformTenantStatement{}, false, fmt.Errorf("begin tenant finalize: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	draft, err := scanPlatformTenantStatementHeader(tx.QueryRow(ctx, `select `+platformTenantStatementHeaderCols+`
+		from platform_tenant_statements
 		where id = $1::uuid and account_id = $2::uuid and platform_tenant_id = $3::uuid
 		and status = 'draft' and unpriced_units = 0 and currency <> ''
-		returning `+platformTenantStatementHeaderCols, statementID, accountID, tenantID))
+		for update`, statementID, accountID, tenantID))
 	if err == nil {
+		applied, err := applyPlatformTenantCredits(ctx, tx, draft)
+		if err != nil {
+			return PlatformTenantStatement{}, false, err
+		}
+		out, err := scanPlatformTenantStatementHeader(tx.QueryRow(ctx, `update platform_tenant_statements
+			set status = 'finalized', finalized_at = now(), credit_applied_millicents = $2
+			where id = $1::uuid
+			returning `+platformTenantStatementHeaderCols, statementID, applied))
+		if err != nil {
+			return PlatformTenantStatement{}, false, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return PlatformTenantStatement{}, false, fmt.Errorf("commit tenant finalize: %w", err)
+		}
 		return out, true, nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return PlatformTenantStatement{}, false, err
 	}
-	out, err = s.GetPlatformTenantStatementHeader(ctx, accountID, tenantID, statementID)
+	_ = tx.Rollback(ctx)
+	out, err := s.GetPlatformTenantStatementHeader(ctx, accountID, tenantID, statementID)
 	if err != nil {
 		return PlatformTenantStatement{}, false, err
 	}

@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"context"
@@ -12,6 +12,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -49,7 +50,7 @@ func TestExportAccountFile_LargeRetryIsAtomicAndReusesRequestID(t *testing.T) {
 	defer srv.Close()
 
 	out := filepath.Join(t.TempDir(), "export.json")
-	if err := ExportAccountFile(NewClient(srv.URL, "token"), context.Background(), out, true); err != nil {
+	if err := main.ExportAccountFile(main.NewClient(srv.URL, "token"), context.Background(), out, true); err != nil {
 		t.Fatalf("ExportAccountFile: %v", err)
 	}
 	mu.Lock()

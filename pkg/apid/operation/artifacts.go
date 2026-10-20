@@ -255,7 +255,7 @@ func (s *Service) AttachOperationArtifact(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Service) DownloadPlatformTenantOperationArtifact(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	op, _, ok := s.platformTenantSelfOperation(w, r, acct)
+	op, _, ok := s.readablePlatformTenantSelfOperation(w, r, acct)
 	if ok {
 		s.downloadOperationArtifact(w, r, op)
 	}

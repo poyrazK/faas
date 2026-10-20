@@ -16,3 +16,4 @@ self-hosted-runner:
     - gregale-profiling-acceptance
     - gregale-scenario-acceptance
     - gregale-gitops-acceptance
+    - gregale-financial-pair
