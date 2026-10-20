@@ -152,7 +152,8 @@ native_e2e_lane_tests customer-job-operations-only "${customer_job_probe}" | gre
 
 customer_workflow_tests="$(native_e2e_lane_tests customer-workflow-operations-only "${repo_root}")"
 for required in TestCustomerWorkflowOperationResultMetal TestCustomerWorkflowOperationRecoveryMetal \
-  TestCustomerWorkflowOperationCancellationMetal TestCustomerWorkflowOperationDeadlineMetal TestCustomerWorkflowOperationOwnerRevocationMetal; do
+  TestCustomerWorkflowOperationCancellationMetal TestCustomerWorkflowOperationDeadlineMetal TestCustomerWorkflowOperationOwnerRevocationMetal \
+  TestCustomerWorkflowOperationWaitsAndSignalsMetal TestCustomerWorkflowOperationEventTimeoutMetal TestCustomerWorkflowOperationBudgetCutMetal; do
   grep -qx "${required}" <<<"${customer_workflow_tests}" || fail "customer Workflow lane lost ${required}"
 done
 native_e2e_is_lane customer-workflow-operations-only || fail "customer Workflow selector is not a lane"
@@ -163,6 +164,24 @@ mkdir -p "${customer_workflow_probe}/cmd/e2e"
 cp "${repo_root}/cmd/e2e/customer_workflow_operations_metal_test.go" "${customer_workflow_probe}/cmd/e2e/"
 printf '\nfunc TestCustomerWorkflowAddedProbe(t *testing.T) {}\n' >> "${customer_workflow_probe}/cmd/e2e/customer_workflow_operations_metal_test.go"
 native_e2e_lane_tests customer-workflow-operations-only "${customer_workflow_probe}" | grep -qx TestCustomerWorkflowAddedProbe || fail "new customer Workflow scenario was omitted"
+
+customer_http_tests="$(native_e2e_lane_tests customer-http-operations-only "${repo_root}")"
+for required in TestCustomerHTTPOperationResultMetal TestCustomerHTTPOperationRecoveryMetal \
+  TestCustomerHTTPOperationCancellationMetal TestCustomerHTTPOperationOwnerRevocationMetal \
+  TestCustomerHTTPOperationWebhookAdmissionMetal TestCustomerHTTPOperationDeadlineCutMetal; do
+  printf '%s\n' "${customer_http_tests}" | grep -qx "${required}" || fail "customer HTTP lane lost ${required}"
+done
+native_e2e_is_lane customer-http-operations-only || fail "customer HTTP selector is not a lane"
+rx="$(native_e2e_lane_regex customer-http-operations-only "${repo_root}")"
+[[ "${rx}" == ^\(*\)\$ ]] || fail "customer HTTP regex is not anchored"
+customer_http_probe="${probe}/customer-http"
+mkdir -p "${customer_http_probe}/cmd/e2e"
+cp "${repo_root}/cmd/e2e/customer_http_operations_metal_test.go" "${customer_http_probe}/cmd/e2e/"
+printf '\nfunc TestCustomerHTTPAddedProbe(t *testing.T) {}\n' >> "${customer_http_probe}/cmd/e2e/customer_http_operations_metal_test.go"
+native_e2e_lane_tests customer-http-operations-only "${customer_http_probe}" | grep -qx TestCustomerHTTPAddedProbe || fail "new customer HTTP scenario was omitted"
+# ADR-20261017102231: a scenario in a sibling customer_http_operations*_metal_test.go file joins the lane.
+printf '//go:build metal\n\npackage e2e\n\nfunc TestCustomerHTTPSiblingProbe(t *testing.T) {}\n' > "${customer_http_probe}/cmd/e2e/customer_http_operations_probe_metal_test.go"
+native_e2e_lane_tests customer-http-operations-only "${customer_http_probe}" | grep -qx TestCustomerHTTPSiblingProbe || fail "a sibling customer HTTP scenario file was omitted"
 
 # The assert must actually bite: a bogus name fails it.
 ( NATIVE_E2E_SMOKE_TESTS+=(TestDoesNotExistAnywhere); native_e2e_assert_lanes "${repo_root}" ) 2>/dev/null &&

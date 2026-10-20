@@ -27,32 +27,49 @@ var (
 	neonEndpoint = flag.String("neon-endpoint", "", "Neon endpoint (compute) ID of the database, for -awake neon")
 )
 
-// awakeProbe returns the configured activity probe, or nil when the hub
-// never releases.
+// awakeConfig is how a database's hub learns that the database it released
+// runs again: the -release-after, -awake and -neon-* flags, or the matching
+// fields of a -databases-file entry.
+type awakeConfig struct {
+	ReleaseAfter time.Duration
+	Source       string // "" or neon
+	NeonKeyFile  string
+	NeonProject  string
+	NeonEndpoint string
+}
+
+// awakeProbe returns the activity probe the flags configure, or nil when
+// the hub never releases.
 func awakeProbe() (func(context.Context) (bool, error), error) {
-	if *releaseAfter <= 0 {
-		if *awakeSource != "" {
-			return nil, errors.New("livequeryd: -awake needs -release-after")
+	return newAwakeProbe(awakeConfig{ReleaseAfter: *releaseAfter, Source: *awakeSource, NeonKeyFile: *neonKeyFile, NeonProject: *neonProject, NeonEndpoint: *neonEndpoint})
+}
+
+// newAwakeProbe returns c's activity probe, or nil when the hub never
+// releases.
+func newAwakeProbe(c awakeConfig) (func(context.Context) (bool, error), error) {
+	if c.ReleaseAfter <= 0 {
+		if c.Source != "" {
+			return nil, errors.New("livequeryd: awake needs release-after")
 		}
 		return nil, nil
 	}
-	switch *awakeSource {
+	switch c.Source {
 	case "neon":
-		if *neonKeyFile == "" || *neonProject == "" || *neonEndpoint == "" {
-			return nil, errors.New("livequeryd: -awake neon needs -neon-api-key-file, -neon-project and -neon-endpoint")
+		if c.NeonKeyFile == "" || c.NeonProject == "" || c.NeonEndpoint == "" {
+			return nil, errors.New("livequeryd: awake neon needs the Neon API key file, project and endpoint")
 		}
-		key, err := os.ReadFile(*neonKeyFile) //nolint:forbidigo // operator-provisioned credential named by a flag
+		key, err := os.ReadFile(c.NeonKeyFile) //nolint:forbidigo // operator-provisioned credential named by a flag or the databases file
 		if err != nil {
-			return nil, fmt.Errorf("livequeryd: read -neon-api-key-file: %w", err)
+			return nil, fmt.Errorf("livequeryd: read the Neon API key file: %w", err)
 		}
-		return neonAwake(&http.Client{Timeout: 10 * time.Second}, *neonAPI, strings.TrimSpace(string(key)), *neonProject, *neonEndpoint), nil
+		return neonAwake(&http.Client{Timeout: 10 * time.Second}, *neonAPI, strings.TrimSpace(string(key)), c.NeonProject, c.NeonEndpoint), nil
 	case "":
 		// A released hub must notice the database waking, or commits made
 		// meanwhile would wait for the next subscriber. A native database's
 		// wake comes from schedd, which is not wired to livequeryd yet.
-		return nil, errors.New("livequeryd: -release-after needs -awake")
+		return nil, errors.New("livequeryd: release-after needs awake")
 	default:
-		return nil, fmt.Errorf("livequeryd: unknown -awake %q", *awakeSource)
+		return nil, fmt.Errorf("livequeryd: unknown awake %q", c.Source)
 	}
 }
 
