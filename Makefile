@@ -103,6 +103,11 @@ bench-platform-tenant-coverage: ## Measure 90-day, two-app statement coverage re
 	@test -n "$$DATABASE_URL" || (echo "DATABASE_URL not set — set it to a disposable PostgreSQL database"; exit 1)
 	@GO="$(GO)" sh scripts/bench-platform-tenant-coverage.sh
 
+.PHONY: bench-event-substrate
+bench-event-substrate: ## Measure event publish, fanout, drain and webhook delivery on disposable PostgreSQL (V12); FAAS_EVENT_SUBSTRATE_BENCH_DIR writes JSON
+	@test -n "$$DATABASE_URL" || (echo "DATABASE_URL not set — set it to a disposable PostgreSQL database"; exit 1)
+	@GO="$(GO)" sh scripts/bench-event-substrate.sh
+
 .PHONY: help
 help: ## List targets
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | \

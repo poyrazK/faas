@@ -23,6 +23,10 @@ const eventFanoutRecoveryBatch = 100
 const eventFanoutSubscriptionBatch = 256
 const eventFanoutRecipientMaxAttempts = api.EventRoutingRetryDefaultAttempts
 
+// eventFanoutSafetyTick re-runs the fanout sweep when no event_published
+// wake arrives; a wake that lands while a sweep runs is coalesced away.
+const eventFanoutSafetyTick = 5 * time.Second
+
 type eventFanoutRouteError struct {
 	code      string
 	retryable bool

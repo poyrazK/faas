@@ -2189,6 +2189,7 @@ Every row is an experiment with a pre-committed pass threshold. Run V1–V5 on a
 | V8 | 5 % churn, 55/40/5 mix, 4 free riders (C-grade) | Cohort curves from first 90 days; monthly sheet re-run with observed values | Documented monthly; sheet updated | beta+ |
 | V9 | Payment path & fees (provider fees) | Confirm Polar catalog and fee schedule for the incorporation country; retain provider-neutral fallback pricing in the sheet | Fee delta reflected in model before launch | pre-incorporation |
 | V10 | Server quote €44 + €39 | Re-quote a comparable bare-metal x86_64 host at order time (post-June-2026 price adjustment) | Within §9.9 sensitivity range (€39–50) | at order |
+| V12 | Event substrate keeps up with the plan event caps | `make bench-event-substrate` on the reference node: publish, fanout, drain and webhook stages plus offered end-to-end rates ([event-substrate-benchmark.md](ops/event-substrate-benchmark.md)) | Event storage, queue depth and workflow caps sit at ≤ 50 % of the highest offered rate the pipeline sustains with nothing pending, and p95 publish-to-handler ≤ 5 s at that rate | before raising event caps |
 
 Standing rules: (1) no number graduates from "assumption" to "fact" without a row here; (2) the §6.2 invariants are enforced as property-based tests, not prose; (3) each ADR gets one adversarial review pass before acceptance.
 
