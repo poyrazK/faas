@@ -12323,6 +12323,8 @@ type RouteInsight struct {
 	FirstDetectedAt pgtype.Timestamptz
 	LastDetectedAt  pgtype.Timestamptz
 	ResolvedAt      pgtype.Timestamptz
+	FixedAt         pgtype.Timestamptz
+	FixAction       pgtype.Text
 }
 
 type RouteLifecycleApproval struct {

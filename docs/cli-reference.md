@@ -10707,15 +10707,20 @@ gregale routes awake my-api --since 24h --json
 
 ### routes insights
 
-List findings about routes that keep the app awake or are safe to cache, evaluated every six hours
+List findings about routes that keep the app awake or are safe to cache, with a fix for each, evaluated every six hours
 
-`gregale routes insights <slug>`
+`gregale routes insights [--fix <INSIGHT_ID>] <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--fix <INSIGHT_ID>` | apply the fix the insight lists now |  |
 
 Examples:
 
 ```sh
 gregale routes insights my-api
 gregale routes insights my-api --json
+gregale routes insights my-api --fix 6c1e0b9a-3f7d-4a51-9c2e-8d4b5f0a1e27
 ```
 
 ### routes priority
