@@ -209,11 +209,15 @@ func serverKeyShape(key string) bool {
 		return false
 	}
 	for _, c := range key[5:] {
-		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '-' || c == '_') {
+		if !base64URLChar(c) {
 			return false
 		}
 	}
 	return true
+}
+
+func base64URLChar(c rune) bool {
+	return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '-' || c == '_'
 }
 
 func validSubscription(s string) bool {
