@@ -83,13 +83,111 @@ type Evidence struct {
 	LockBudgetPassed      bool       `json:"lock_budget_passed"`
 	CleanupConfirmed      bool       `json:"cleanup_confirmed"`
 	Reason                string     `json:"reason,omitempty"`
+	// Schema inventory (ADR-20261020180000) is additive: zero means an older
+	// collector that refused every undeclared relation.
+	SchemaInventoryVersion int            `json:"schema_inventory_version,omitempty"`
+	Schema                 []SchemaObject `json:"schema,omitempty"`
+}
+
+// SchemaInventoryVersion marks evidence carrying the database's final schema
+// inventory. Declared tables still compare row by row; every other object,
+// and the row count of every undeclared table, compares through it.
+const (
+	SchemaInventoryVersion   = 1
+	MaxRelations             = 64
+	MaxSchemaObjects         = 256
+	MaxSchemaDefinitionBytes = 1024
+	MaxUndeclaredRowCount    = 10000
+)
+
+// SchemaObject is one user-schema object: a relation with its columns, an
+// index, constraint, user type, function or trigger. Long definitions are
+// kept as a SHA-256 digest. Rows counts an undeclared table, saturating at
+// MaxUndeclaredRowCount+1.
+type SchemaObject struct {
+	Kind       string `json:"kind"`
+	Name       string `json:"name"`
+	Definition string `json:"definition"`
+	Rows       *int64 `json:"rows,omitempty"`
+}
+
+var schemaKinds = map[string]bool{"table": true, "partitioned_table": true, "view": true, "materialized_view": true, "foreign_table": true,
+	"sequence": true, "index": true, "constraint": true, "type": true, "function": true, "trigger": true}
+
+// SchemaDefinition bounds one definition, keeping a digest of a long one.
+func SchemaDefinition(definition string) string {
+	if len(definition) <= MaxSchemaDefinitionBytes {
+		return definition
+	}
+	return "sha256:" + HashBytes([]byte(definition))
+}
+
+func validSchema(objects []SchemaObject) bool {
+	if len(objects) > MaxSchemaObjects {
+		return false
+	}
+	for i, o := range objects {
+		if !schemaKinds[o.Kind] || o.Name == "" || len(o.Name) > 512 || len(o.Definition) > MaxSchemaDefinitionBytes+len("sha256:") ||
+			o.Rows != nil && (o.Kind != "table" || *o.Rows < 0 || *o.Rows > MaxUndeclaredRowCount+1) {
+			return false
+		}
+		if i > 0 && (objects[i-1].Kind > o.Kind || objects[i-1].Kind == o.Kind && objects[i-1].Name >= o.Name) {
+			return false // canonical order, no duplicates
+		}
+	}
+	return true
+}
+
+// SchemaChange is one object that differs between two final inventories.
+type SchemaChange struct {
+	Kind   string        `json:"kind"`
+	Name   string        `json:"name"`
+	Status string        `json:"status"`
+	Before *SchemaObject `json:"before,omitempty"`
+	After  *SchemaObject `json:"after,omitempty"`
+}
+
+func schemaChanges(before, after []SchemaObject) []SchemaChange {
+	type key struct{ kind, name string }
+	index := map[key]*SchemaObject{}
+	for i := range before {
+		index[key{before[i].Kind, before[i].Name}] = &before[i]
+	}
+	var out []SchemaChange
+	seen := map[key]bool{}
+	for i := range after {
+		a := &after[i]
+		k := key{a.Kind, a.Name}
+		seen[k] = true
+		b, ok := index[k]
+		switch {
+		case !ok:
+			out = append(out, SchemaChange{Kind: a.Kind, Name: a.Name, Status: "added", After: a})
+		case Hash(b) != Hash(a):
+			out = append(out, SchemaChange{Kind: a.Kind, Name: a.Name, Status: "changed", Before: b, After: a})
+		}
+	}
+	for i := range before {
+		b := &before[i]
+		if !seen[key{b.Kind, b.Name}] {
+			out = append(out, SchemaChange{Kind: b.Kind, Name: b.Name, Status: "removed", Before: b})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Kind != out[j].Kind {
+			return out[i].Kind < out[j].Kind
+		}
+		return out[i].Name < out[j].Name
+	})
+	return out
 }
 
 type Comparison struct {
-	Status string  `json:"status"`
-	Reason string  `json:"reason,omitempty"`
-	Before []Delta `json:"before,omitempty"`
-	After  []Delta `json:"after,omitempty"`
+	Status        string         `json:"status"`
+	Reason        string         `json:"reason,omitempty"`
+	Before        []Delta        `json:"before,omitempty"`
+	After         []Delta        `json:"after,omitempty"`
+	SchemaChanges []SchemaChange `json:"schema_changes,omitempty"`
 }
 
 func Hash(v any) string         { b, _ := json.Marshal(v); return HashBytes(b) }
@@ -241,6 +339,11 @@ func (e Evidence) Validate() error {
 			}
 		}
 	}
+	switch {
+	case e.SchemaInventoryVersion == 0 && len(e.Schema) != 0,
+		e.SchemaInventoryVersion != 0 && (e.SchemaInventoryVersion != SchemaInventoryVersion || !validSchema(e.Schema)):
+		return errors.New("PostgreSQL schema inventory is invalid")
+	}
 	body, _ := json.Marshal(e)
 	if len(body) > MaxEvidenceBytes {
 		return errors.New("PostgreSQL evidence exceeds bound")
@@ -261,10 +364,17 @@ func Compare(before, after *Evidence) *Comparison {
 		r.Reason = "PostgreSQL collector contract, fixture or starting data changed"
 		return r
 	}
+	if before.SchemaInventoryVersion != after.SchemaInventoryVersion {
+		r.Reason = "PostgreSQL schema inventory version changed between runs"
+		return r
+	}
 	r.Status = "passed"
 	r.Before = before.Changes
 	r.After = after.Changes
-	if Hash(before.Changes) != Hash(after.Changes) || !before.LockBudgetPassed || !after.LockBudgetPassed {
+	// Both runs start from the same fixture bytes, so their final inventories
+	// differ exactly where the candidate's schema or undeclared data differs.
+	r.SchemaChanges = schemaChanges(before.Schema, after.Schema)
+	if Hash(before.Changes) != Hash(after.Changes) || len(r.SchemaChanges) != 0 || !before.LockBudgetPassed || !after.LockBudgetPassed {
 		r.Status = "failed"
 	}
 	return r

@@ -1578,9 +1578,10 @@ unfinished SQL, collector loss or unconfirmed cleanup is inconclusive.
 
 Version 1 supports one fixture database per run on a dedicated, local PostgreSQL
 16+ cluster, 1–16 ordinary persistent `public` tables, 1–32 selected columns per
-table, and at most 1000 rows per table. All ordinary user tables must be declared;
-views, foreign/partitioned tables, forced row-security filtering, non-built-in scalar column types and additional
-extensions are refused. Select only stable, non-sensitive columns; omitted
+table, and at most 1000 rows per table. Declared tables must be ordinary
+persistent tables whose selected columns have built-in scalar types; other
+relations (up to 64 in total) and columns appear in the schema inventory below.
+Forced row-security filtering and additional extensions are refused. Select only stable, non-sensitive columns; omitted
 columns, sequence counters, schema/index differences and intermediate statements
 are outside the comparison scope. SQL fixtures are bounded to 64 KiB; each
 snapshot to 256 KiB and the full evidence document to 1 MiB. Overflow cannot pass.
@@ -1591,10 +1592,14 @@ its existing task/deployment diagnostics.
 A deployment's release command runs against this fixture as the run's contained
 release, before the candidate primes (see
 [ADR-20261020150000](adr/20261020150000-rehearsal-contained-release-commands.md)).
-Data migrations and new supported-type columns on declared tables are compared.
-To compare which migrations ran, create the migration tool's tracking table in the
-fixture SQL and declare it. A migration that creates an undeclared table, type
-or extension makes the final capture inconclusive. Arbitrary detached work and external
+Declared tables compare row by row.
+
+The collector also seals a schema inventory
+([ADR-20261020180000](adr/20261020180000-rehearsal-postgres-schema-inventory.md)). It covers every relation (with column types), index, constraint, user type, function and trigger, and a bounded row count for each undeclared table. A migration that creates tables, types or indexes is therefore compared as `schema_changes` rather than refused.
+
+Two limits remain:
+- Extensions, views replacing declared tables and forced row security are still refused.
+- An intended migration still reports `failed`, with the exact schema differences listed. Arbitrary detached work and external
 queues still require explicit recipe completion checks.
 
 The adapter is **disabled pending dedicated native qualification**. Operators

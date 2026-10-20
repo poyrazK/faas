@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -171,138 +172,211 @@ func (p *Postgres) Provision(ctx context.Context, r rehearsalpg.Resource, fixtur
 }
 
 func capture(ctx context.Context, c *pgx.Conn, spec rehearsalpg.Spec) ([]rehearsalpg.Snapshot, error) {
+	out, _, err := captureInventory(ctx, c, spec, false)
+	return out, err
+}
+
+// captureInventory reads the declared tables' selected columns and, with
+// withSchema, the database's schema inventory, in one read-only snapshot.
+// Undeclared relations and columns no longer make capture fail: the
+// inventory and undeclared-table row counts carry them (ADR-20261020180000).
+func captureInventory(ctx context.Context, c *pgx.Conn, spec rehearsalpg.Spec, withSchema bool) ([]rehearsalpg.Snapshot, []rehearsalpg.SchemaObject, error) {
 	tx, e := c.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
 	if e != nil {
-		return nil, ErrFixture
+		return nil, nil, ErrFixture
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	q := sqlc.New()
 	if q.ConfigureCapture(ctx, tx) != nil {
-		return nil, ErrFixture
+		return nil, nil, ErrFixture
 	}
 	extensions, e := q.SupportedExtensions(ctx, tx)
 	if e != nil || !extensions.Valid || !extensions.Bool {
-		return nil, ErrFixture
+		return nil, nil, ErrFixture
 	}
 	rels, e := q.Relations(ctx, tx)
-	if e != nil || len(rels) != len(spec.Tables) {
-		return nil, ErrFixture
+	if e != nil || len(rels) > rehearsalpg.MaxRelations {
+		return nil, nil, ErrFixture
 	}
 	expected := map[string]rehearsalpg.Table{}
 	for _, t := range spec.Tables {
 		expected[t.Schema+"."+t.Name] = t
 	}
-	out := make([]rehearsalpg.Snapshot, 0, len(rels))
+	present := 0
+	for _, rel := range rels {
+		if _, declared := expected[rel.SchemaName+"."+rel.TableName]; !declared {
+			continue
+		}
+		if rel.Kind != "r" || rel.Persistence != "p" {
+			return nil, nil, ErrFixture
+		}
+		present++
+	}
+	if present != len(spec.Tables) {
+		return nil, nil, ErrFixture
+	}
+	out := make([]rehearsalpg.Snapshot, 0, len(spec.Tables))
 	// CanonicalSnapshots bounds the compacted inventory at a quarter of
 	// MaxEvidenceBytes. Stop reading at the full bound so customer rows cannot
 	// make apid buffer 16 tables x 1000 rows x 64 KiB before that check runs.
 	scanned := 0
-	for _, rel := range rels {
-		t, ok := expected[rel.SchemaName+"."+rel.TableName]
-		if !ok || rel.Kind != "r" || rel.Persistence != "p" {
-			return nil, ErrFixture
-		}
+	for _, t := range spec.Tables {
 		cols, e := q.Columns(ctx, tx, sqlc.ColumnsParams{SchemaName: t.Schema, TableName: t.Name})
 		if e != nil {
-			return nil, ErrFixture
+			return nil, nil, ErrFixture
 		}
-		available := map[string]bool{}
+		// Only the selected columns are read, so only they need a supported
+		// type; any other column is part of the schema inventory.
+		supported := map[string]bool{}
 		for _, col := range cols {
-			if !col.Supported {
-				return nil, ErrFixture
-			}
-			available[col.Name] = true
+			supported[col.Name] = col.Supported
 		}
 		for _, col := range t.Columns {
-			if !available[col] {
-				return nil, ErrFixture
+			if !supported[col] {
+				return nil, nil, ErrFixture
 			}
 		}
 		command, e := q.FormatSelect(ctx, tx, sqlc.FormatSelectParams{Columns: t.Columns, SchemaName: t.Schema, TableName: t.Name})
 		if e != nil {
-			return nil, ErrFixture
+			return nil, nil, ErrFixture
 		}
 		rows, e := tx.Query(ctx, command)
 		if e != nil {
-			return nil, ErrFixture
+			return nil, nil, ErrFixture
 		}
 		snapshot := rehearsalpg.Snapshot{Table: t.Schema + "." + t.Name, Rows: []json.RawMessage{}}
 		for rows.Next() {
 			var row []byte
 			if rows.Scan(&row) != nil || len(row) == 0 || len(snapshot.Rows) >= rehearsalpg.MaxRows {
 				rows.Close()
-				return nil, ErrFixture
+				return nil, nil, ErrFixture
 			}
 			if scanned += len(row); scanned > rehearsalpg.MaxEvidenceBytes {
 				rows.Close()
-				return nil, rehearsalpg.ErrSnapshotBound
+				return nil, nil, rehearsalpg.ErrSnapshotBound
 			}
 			snapshot.Rows = append(snapshot.Rows, json.RawMessage(row))
 		}
 		e = rows.Err()
 		rows.Close()
 		if e != nil {
-			return nil, ErrFixture
+			return nil, nil, ErrFixture
 		}
 		out = append(out, snapshot)
 	}
+	var schema []rehearsalpg.SchemaObject
+	if withSchema {
+		if schema, e = captureSchema(ctx, tx, q, expected); e != nil {
+			return nil, nil, e
+		}
+	}
 	if tx.Commit(ctx) != nil {
+		return nil, nil, ErrFixture
+	}
+	snapshots, e := rehearsalpg.CanonicalSnapshots(out)
+	return snapshots, schema, e
+}
+
+// captureSchema returns the canonical schema inventory, with a bounded row
+// count for every undeclared table so data written outside the declared
+// tables still differs between runs.
+func captureSchema(ctx context.Context, tx pgx.Tx, q *sqlc.Queries, declared map[string]rehearsalpg.Table) ([]rehearsalpg.SchemaObject, error) {
+	rows, e := q.SchemaInventory(ctx, tx)
+	if e != nil || len(rows) > rehearsalpg.MaxSchemaObjects {
 		return nil, ErrFixture
 	}
-	return rehearsalpg.CanonicalSnapshots(out)
+	out := make([]rehearsalpg.SchemaObject, 0, len(rows))
+	for _, row := range rows {
+		o := rehearsalpg.SchemaObject{Kind: row.Kind, Name: row.Name, Definition: rehearsalpg.SchemaDefinition(row.Definition)}
+		if _, isDeclared := declared[row.RelSchema+"."+row.RelName]; row.Kind == "table" && row.RelSchema != "" && !isDeclared {
+			command, e := q.FormatCount(ctx, tx, sqlc.FormatCountParams{SchemaName: row.RelSchema, TableName: row.RelName})
+			if e != nil {
+				return nil, ErrFixture
+			}
+			var n int64
+			if tx.QueryRow(ctx, command).Scan(&n) != nil {
+				return nil, ErrFixture
+			}
+			o.Rows = &n
+		}
+		out = append(out, o)
+	}
+	// Byte order, not the database collation, is the canonical order.
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Kind != out[j].Kind {
+			return out[i].Kind < out[j].Kind
+		}
+		return out[i].Name < out[j].Name
+	})
+	return out, nil
+}
+
+// SchemaBackend is implemented by collectors that also seal the database's
+// schema inventory (ADR-20261020180000).
+type SchemaBackend interface {
+	FenceAndCaptureSchema(context.Context, rehearsalpg.Resource) ([]rehearsalpg.Snapshot, []rehearsalpg.SchemaObject, error)
 }
 
 func (p *Postgres) FenceAndCapture(ctx context.Context, r rehearsalpg.Resource) ([]rehearsalpg.Snapshot, error) {
+	out, _, err := p.fenceAndCapture(ctx, r, false)
+	return out, err
+}
+
+func (p *Postgres) FenceAndCaptureSchema(ctx context.Context, r rehearsalpg.Resource) ([]rehearsalpg.Snapshot, []rehearsalpg.SchemaObject, error) {
+	return p.fenceAndCapture(ctx, r, true)
+}
+
+func (p *Postgres) fenceAndCapture(ctx context.Context, r rehearsalpg.Resource, withSchema bool) ([]rehearsalpg.Snapshot, []rehearsalpg.SchemaObject, error) {
 	if !p.resourceNames(r) {
-		return nil, ErrFixture
+		return nil, nil, ErrFixture
 	}
 	admin, e := p.connect(ctx, "")
 	if e != nil {
-		return nil, ErrFixture
+		return nil, nil, ErrFixture
 	}
 	defer func() { _ = admin.Close(context.WithoutCancel(ctx)) }()
 	q := sqlc.New()
 	if q.LockFixtureDatabase(ctx, admin, r.DatabaseName) != nil {
-		return nil, ErrFixture
+		return nil, nil, ErrFixture
 	}
 	// Authenticate the reader as the restricted fixture login before disabling
 	// all new connections. Customer objects never execute as an administrator.
 	password := make([]byte, 32)
 	if _, e = rand.Read(password); e != nil {
-		return nil, ErrFixture
+		return nil, nil, ErrFixture
 	}
 	secret := hex.EncodeToString(password)
 	command, e := q.FormatRotateRole(ctx, admin, sqlc.FormatRotateRoleParams{RoleName: r.RoleName, Password: secret})
 	if execFormatted(ctx, admin, command, e) != nil {
-		return nil, ErrFixture
+		return nil, nil, ErrFixture
 	}
 	reader := p.config.Copy()
 	reader.Database, reader.User, reader.Password = r.DatabaseName, r.RoleName, secret
 	data, e := pgx.ConnectConfig(ctx, reader)
 	if e != nil {
-		return nil, ErrFixture
+		return nil, nil, ErrFixture
 	}
 	defer func() { _ = data.Close(context.WithoutCancel(ctx)) }()
 	command, e = q.FormatFreezeRole(ctx, admin, r.RoleName)
 	if execFormatted(ctx, admin, command, e) != nil {
-		return nil, ErrFixture
+		return nil, nil, ErrFixture
 	}
 	command, e = q.FormatFreezeDatabase(ctx, admin, r.DatabaseName)
 	if execFormatted(ctx, admin, command, e) != nil {
-		return nil, ErrFixture
+		return nil, nil, ErrFixture
 	}
 	params := sqlc.PendingSQLParams{DatabaseName: r.DatabaseName, CollectorPid: int32(data.PgConn().PID())}
 	pending, e := q.PendingSQL(ctx, admin, params)
 	if e != nil {
-		return nil, ErrFixture
+		return nil, nil, ErrFixture
 	}
 	if _, e = q.TerminateSessions(ctx, admin, sqlc.TerminateSessionsParams(params)); e != nil {
-		return nil, ErrFixture
+		return nil, nil, ErrFixture
 	}
 	for {
 		count, e := q.OtherSessions(ctx, admin, sqlc.OtherSessionsParams(params))
 		if e != nil {
-			return nil, ErrFixture
+			return nil, nil, ErrFixture
 		}
 		if count == 0 {
 			break
@@ -311,14 +385,14 @@ func (p *Postgres) FenceAndCapture(ctx context.Context, r rehearsalpg.Resource) 
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			return nil, ErrFixture
+			return nil, nil, ErrFixture
 		case <-timer.C:
 		}
 	}
 	if pending > 0 {
-		return nil, ErrPending
+		return nil, nil, ErrPending
 	}
-	return capture(ctx, data, r.Spec)
+	return captureInventory(ctx, data, r.Spec, withSchema)
 }
 
 func (p *Postgres) LockWait(ctx context.Context, r rehearsalpg.Resource) (int64, error) {

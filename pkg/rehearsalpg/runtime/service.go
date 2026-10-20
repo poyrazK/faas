@@ -191,7 +191,12 @@ func (s *Service) Seal(ctx context.Context, account, run, deployment string) (re
 	}
 	w := s.stop(r.ID)
 	result := rehearsalpg.Evidence{Receipt: receipt(r), Status: "incomplete", Provenance: rehearsalpg.Provenance, DeploymentID: deployment, Spec: r.Spec, Before: r.Initial}
-	result.After, e = s.Backend.FenceAndCapture(ctx, r)
+	if schemas, ok := s.Backend.(SchemaBackend); ok {
+		result.After, result.Schema, e = schemas.FenceAndCaptureSchema(ctx, r)
+		result.SchemaInventoryVersion = rehearsalpg.SchemaInventoryVersion
+	} else {
+		result.After, e = s.Backend.FenceAndCapture(ctx, r)
+	}
 	if e != nil {
 		result.Reason = "database collection failed or SQL was unfinished"
 	}

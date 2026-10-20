@@ -1,5 +1,6 @@
 # Architecture Decision Records
 
+- [ADR-20261020180000: Rehearsal PostgreSQL schema inventory](20261020180000-rehearsal-postgres-schema-inventory.md)
 - [ADR-20261020150000: Contained rehearsals run the candidate's release command](20261020150000-rehearsal-contained-release-commands.md)
 - [ADR-20261020090000: Rehearsal event capture](20261020090000-rehearsal-event-capture.md)
 - [ADR-20261019180000: Rehearsal side effects stay inside the run](20261019180000-rehearsal-side-effects-stay-inside-the-run.md)
