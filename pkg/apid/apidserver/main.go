@@ -2640,13 +2640,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			errc <- err
 		}
 	}()
-	// On `systemctl reload` a successor takes the sockets; this generation
-	// then stops its background work (ctx) and finishes its requests.
+	// On `systemctl reload` a successor takes the sockets once it passed
+	// this generation's pre-traffic checks; this generation then stops its
+	// background work (ctx) and finishes its requests.
 	handedOff := make(chan struct{})
 	wire.WatchHandoffs(ctx, "apid", log, func() {
 		close(handedOff)
 		endGeneration()
-	})
+	}, HandoffChecks(listenBind, metricsAddr)...)
 	select {
 	case err := <-errc:
 		return err
