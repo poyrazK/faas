@@ -182,6 +182,8 @@ jobs:
             echo "## Edge lane on ${NODE} (${SLO_GATE}): **${action}**"
             echo
             echo "Restart: $(jq -r '.only | join(", ") | if . == "" then "none" else . end' "$plan")."
+            kept="$(jq -r '.kept // [] | join(", ")' "$plan")"
+            [[ -z "$kept" ]] || echo "Already running this release's code, not restarted: ${kept}."
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Stage the unit release on the node

@@ -367,6 +367,11 @@ The unit lanes enforce the rules above in their workflows:
   full release tag before its commit, which is the release CI compared each
   merge against. Units at that base and units at the unit release's commit
   are therefore at most one release apart.
+- **Code, not closure.** A unit release carries every daemon of its lanes
+  whose import closure changed since the base, and a host restarts only the
+  ones whose code it does not run yet (ADR-1650, "Selection by code"). A
+  daemon it skips keeps running the base's binary or an earlier unit
+  release's over the same base, so N±1 holds for it too.
 - **Order.** The data step rides the control-plane lane. A range whose
   migrations are all lane-eligible counts as eligible. Lane-eligible means:
   - each migration is marked `expand`;
@@ -391,8 +396,8 @@ The unit lanes enforce the rules above in their workflows:
 
   `release-units.yml` deploys the control-plane lane first, and the edge
   lane (`cd-edge-units.yml`) only after it. When the edge lane runs alone,
-  it first checks that the control plane already runs that unit release's
-  control-plane units and has applied its migrations. The runtime step
+  it first checks that the control plane already runs the code of that unit
+  release's control-plane units and has applied its migrations. The runtime step
   (guest and images) always waits for the next full release. A rollback
   restores binaries, never the schema. The previous binaries run against an
   expand-only schema, and their startup migration ignores ledger versions

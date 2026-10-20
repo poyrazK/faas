@@ -1,8 +1,8 @@
 # ADR-1650 · Per-unit control-plane releases
 
 - **Status:** proposed
-- **Date:** 2026-10-17 (slice 2: 2026-10-18)
-- **Related:** ADR-113 (canonical signed release), ADR-129 (deploy version gauge), ADR-580 (control-plane convergence in CD), ADR-1736 (zero-downtime restarts), ADR 202610171900 (release compatibility gates), ADR 20261018084150 (expand-only migrations in per-unit releases), ADR 20261018133100 (host-configuration lane)
+- **Date:** 2026-10-17 (slice 2: 2026-10-18; selection by code: 2026-10-21)
+- **Related:** ADR-113 (canonical signed release), ADR-129 (deploy version gauge), ADR-580 (control-plane convergence in CD), ADR-1736 (zero-downtime restarts), ADR 202610171900 (release compatibility gates), ADR 20261018084150 (expand-only migrations in per-unit releases), ADR 20261018133100 (host-configuration lane), ADR 20261020160744 (daemon blast radius)
 
 ## Context
 
@@ -45,6 +45,8 @@ excludes are not inputs. Each binary gets a **unit version**: the newest
 first-parent commit between the base full release and the head that changed one
 of its inputs. Lanes come from `scripts/ci/release_units.json`, which a test
 keeps in lockstep with `pkg/daemonunitspec` roles, units and readiness URLs.
+Since 2026-10-21 the closure picks the candidates, and a host restarts only
+those whose compiled code it does not run yet ("Selection by code" below).
 
 A range is eligible when at least one control-plane daemon changed and none of
 these did since the base: migrations (since ADR 20261018084150, only those
@@ -356,6 +358,199 @@ and `--expect-current` alone for a converge plan. cd-platform's full-release
 rollback runs `deployctl rollback` without flags, and the release it just
 activated has recorded its predecessor.
 
+## Selection by code (2026-10-21)
+
+**Context.** A unit release carried and restarted every daemon whose import
+closure changed since the base. ADR 20261020160744 measured that this is a
+coarse proxy: of the 12, 12 and 18 release binaries whose closures #5045,
+#5048 and #5052 touched, the compiled code of 1, 1 and 6 changed (with
+`grpcnotrace`). Two effects compound it:
+
+- Comparing release binaries' bytes does not help: every Go binary embeds
+  a build ID that hashes its whole closure, and the unit version stamp
+  differs per commit.
+- Unit versions are cumulative over the base. Once a daemon's closure
+  changed, every later merge that touched it again moved its unit version
+  and restarted it, with the same code. A change to `pkg/state`, which
+  almost every daemon links, therefore restarted almost every control-plane
+  and edge daemon on each merge.
+
+**Decision.**
+
+1. *Candidates stay the closure.* `affected_units.py` still computes each
+   binary's closure and unit version as above. A lane is eligible, and its
+   tarball carries a binary, exactly when it was before.
+2. *Measure the candidates' code.* With `--code` (release-units.yml uses it),
+   every candidate of a deployable lane that nothing blocks is built twice:
+   at the base, from an exported tree with the base's own recipe, and at the
+   head, from the checkout. Both builds use the release flags
+   (linux/amd64, CGO off, `GO_BUILD_FLAGS`, `DAEMON_TAGS` for daemons,
+   `-s -w`), the neutral version stamp `code` and an empty build ID
+   (`scripts/ci/binary_code.py`, shared with `blast_radius.py`). The code
+   digest is a sha256 over the name, size and contents of every section
+   the program loads, except `.gopclntab` (line, file and function tables)
+   and `.go.module` (the runtime's module data), and over no addresses. A
+   line table that grows moves the sections after it and changes the
+   module data's pointers to them; code or data that refers to a moved
+   section changes its own bytes, which the digest covers. On main at
+   #5070, a comment added at the top of `pkg/state/types.go` grows apid's
+   line table by 16 bytes and moves `.typelink` and `.itablink`: digesting
+   addresses would have called that a code change. A candidate is
+   `changed` (or `added`) when the code digests differ, `same` when the
+   files are identical, and `lines` when only the excluded sections
+   differ. The manifest records, for every unit it carries, the status,
+   the head code digest and the base code digest. A blocked lane is not
+   built: it ships nothing, and a full release ships every binary. The
+   shared, compute and tool lanes are reported by closure, as before. If
+   a code build fails, the release falls back to the closure: it carries
+   no digests, and hosts restart by version, which restarts more units,
+   never fewer.
+3. *The host decides what restarts.* `plan_unit_deploy.py` restarts a unit
+   when the code the host runs differs from the release's: the digest
+   `unit-versions.json` records for it (`unit_code`), or the base code
+   digest when the host runs the base binary. A unit whose code the host
+   already runs keeps its binary and its recorded version. When either side
+   has no digest (a release or a record from before this change), the unit
+   versions decide, as before. The edge lane's deploy-order check plans the
+   control-plane lane with the same rule, so it accepts a control plane
+   that runs the release's code under an older unit version.
+4. *Unchanged units still ride along.* The tarball keeps carrying the
+   `same` and `lines` candidates. A revert is the reason. A fix to apid is
+   deployed by one unit release, found bad after its gate, and reverted:
+   apid's code at the head now equals the base's again. A host that runs
+   the base never restarts it, because the release's code digest equals the
+   base code digest. The host that runs the bad apid does restart it,
+   because its recorded digest differs, and it needs a binary for that.
+   Shipping only `changed` units would leave that host with no binary to
+   restore and an eligibility rule that cannot see the revert. Carrying a
+   unit costs its link and its share of the tarball, not a restart.
+5. *Unit versions.* The stamp shipped binaries carry is unchanged:
+   `unit-<newest closure commit>`, the source the binary is built from (the
+   inputs are identical from that commit to the head, so the bytes are
+   reproducible from it). Only the comparison uses the neutral stamp, so the
+   per-commit stamp no longer makes every carried binary look new. Because
+   a host keeps the version of a unit whose code it already runs, its
+   `unit-versions.json` names the commit each running binary was built
+   from, and two hosts, or a host and the newest release, can name
+   different versions for the same code. The skew checks still hold:
+   `FaasDeployVersionSkew` ignores `unit-*` versions; the plan compares
+   digests and falls back to versions; the overlay id is still derived
+   from the recorded versions and the release commit, so a rerun assembles
+   the same directory.
+6. *Line-number-only differences ride along; they do not restart.* A
+   `lines` binary runs the same instructions; only the positions in stack
+   traces and `slog` source attributes moved, because an edit above the
+   functions it links shifted their line numbers. Not restarting keeps
+   those positions accurate: the running binary was built from the commit
+   its version names, so a trace maps exactly onto that commit's source. A
+   restart would only make the positions match a newer commit with the same
+   code, at the cost of the restart (for vmmd, once it joins a lane, a
+   compute drain). #5052 had four such binaries, vmmd among them. The next
+   release that changes a binary's code ships its current line table, and
+   every full release ships every binary.
+
+   One blind spot is accepted. In Go 1.26, `.gopclntab` also holds each
+   function's metadata: GC stack maps, inline trees, defer records. A
+   change that alters only that metadata, with identical instructions,
+   data and type descriptors, is classified `lines`. That takes a word
+   reinterpreted between `uintptr` and a pointer type and nothing else
+   (two non-test files use `unsafe.Pointer`). Telling it apart from a line
+   shift means decoding the table (an inlined function's start line lives
+   in the same metadata), which is version-specific parsing this change
+   does not take on. Such a change reaches production with the next code
+   change to the binary or the next full release.
+7. *Build cost.* Only the candidates of unblocked deployable lanes are
+   built, and the compile work is shared: the head's neutral build and the
+   release build differ only in their link flags, and identical packages at
+   base and head hit the same build-cache entries (`-trimpath` keeps the
+   directory out of the action ID). The base's builds are the same for
+   every unit release over one base, so their digests are cached in the
+   Actions cache per base commit (`--code-cache`; an entry names its base,
+   neutral stamp and Go toolchain and is ignored otherwise). Only the first
+   unit release over a new base builds the base. On the hosted runner,
+   today's head build takes 5-6 minutes (runs 39486341829-39493516693), so
+   that first run takes about 5 minutes longer and later runs about as long
+   as before plus one extra link per carried binary. go.mod and go.sum
+   block the lane, so the base and head builds always use the base's
+   toolchain.
+8. *Unchanged.* N±1 (the base and previous-release checks), the signed
+   tarball and its manifest (the code fields are additive and covered by
+   the signature; the format stays 2), each binary's sha256 and size,
+   deployctl, the data step and the host-configuration step.
+
+**Simulation.** The last 30 merges to main (#5034 to #5070), each taken
+alone (parent to merge), with the release flags of today (`grpcnotrace`
+added to the 21 merges that predate #5059). "Closure" is what a release
+restarted before this change; "code" what restarts now on a host that runs
+the parent; "lines" binaries ride along without restarting.
+
+| merge | closure: all / lanes | code: all / lanes | lines | lane binaries whose code changed |
+| --- | --- | --- | --- | --- |
+| #5070 | 1 / 0 | 1 / 0 | 0 | - |
+| #5065 | 27 / 10 | 27 / 10 | 0 | apid, bridged, gatewayd-internal, gatewayd-public, githubd, livequeryd, maild, meterd, outboundd, s3-gatewayd |
+| #5060 | 2 / 1 | 2 / 1 | 0 | apid |
+| #5066 | 9 / 6 | 2 / 1 | 7 | outboundd |
+| #5068 | 0 / 0 | 0 / 0 | 0 | - |
+| #5041 | 27 / 10 | 0 / 0 | 1 | - |
+| #5019 | 27 / 10 | 15 / 8 | 0 | apid, bridged, gatewayd-internal, gatewayd-public, githubd, meterd, outboundd, s3-gatewayd |
+| #5063 | 0 / 0 | 0 / 0 | 0 | - |
+| #5059 | 28 / 10 | 26 / 10 | 0 | apid, bridged, gatewayd-internal, gatewayd-public, githubd, livequeryd, maild, meterd, outboundd, s3-gatewayd |
+| #5062 | 18 / 10 | 5 / 3 | 5 | apid, gatewayd-internal, meterd |
+| #5061 | 0 / 0 | 0 / 0 | 0 | - |
+| #5058 | 10 / 6 | 10 / 6 | 0 | apid, bridged, gatewayd-internal, gatewayd-public, meterd, outboundd |
+| #5057 | 18 / 10 | 5 / 1 | 9 | apid |
+| #5050 | 27 / 10 | 14 / 8 | 13 | apid, bridged, gatewayd-internal, gatewayd-public, githubd, meterd, outboundd, s3-gatewayd |
+| #5056 | 0 / 0 | 0 / 0 | 0 | - |
+| #5037 | 27 / 10 | 18 / 10 | 9 | apid, bridged, gatewayd-internal, gatewayd-public, githubd, livequeryd, maild, meterd, outboundd, s3-gatewayd |
+| #5055 | 12 / 6 | 1 / 1 | 11 | outboundd |
+| #5054 | 2 / 1 | 1 / 1 | 0 | apid |
+| #5051 | 27 / 10 | 2 / 1 | 25 | apid |
+| #5052 | 18 / 10 | 6 / 2 | 4 | apid, meterd |
+| #5053 | 0 / 0 | 0 / 0 | 0 | - |
+| #5046 | 3 / 1 | 2 / 1 | 0 | apid |
+| #5036 | 27 / 10 | 17 / 9 | 10 | apid, bridged, gatewayd-internal, gatewayd-public, githubd, maild, meterd, outboundd, s3-gatewayd |
+| #5044 | 27 / 10 | 17 / 7 | 10 | apid, bridged, gatewayd-internal, gatewayd-public, meterd, outboundd, s3-gatewayd |
+| #5048 | 12 / 6 | 1 / 0 | 0 | - |
+| #5043 | 2 / 1 | 1 / 1 | 0 | apid |
+| #5035 | 27 / 10 | 18 / 10 | 9 | apid, bridged, gatewayd-internal, gatewayd-public, githubd, livequeryd, maild, meterd, outboundd, s3-gatewayd |
+| #5045 | 12 / 6 | 1 / 0 | 0 | - |
+| #5042 | 1 / 1 | 1 / 1 | 0 | livequeryd |
+| #5034 | 27 / 10 | 21 / 10 | 6 | apid, bridged, gatewayd-internal, gatewayd-public, githubd, livequeryd, maild, meterd, outboundd, s3-gatewayd |
+| **total** | **418 / 175** | **214 / 102** | 119 | |
+
+Release binaries restarted, closure → code: 418 → 214 in all (median per
+merge 12 → 2), 175 → 102 in the control-plane and edge lanes (median 6 →
+1). For the 12 fixes: 52 → 18 in the lanes (median 3.5 → 1); #5045, #5048
+and #5052 come out at 1 (schedd), 1 (vmmd) and 6 binaries, as ADR
+20261020160744 measured. vmmd's code changed in 14 of the 19 merges that
+touched its closure. Merges that change types in shared packages
+(`pkg/state`, `pkg/api`: #5065, #5019, #5035 to #5037) still change most
+daemons' code, because type descriptors and method sets are linked into
+every binary that uses the package. 119 binaries (38 in the lanes) differed
+only in their line tables; restarting those would have taken the lanes
+from 102 to 140. On an Apple-silicon laptop, building a merge's
+candidates at its parent and at the merge took a median of 78 and 10
+seconds with a cold cache for each parent, and 12 and 10 seconds with
+every package cached.
+
+**Consequences.**
+
+- A fix restarts the daemons whose code it changes, on the hosts that do
+  not run that code yet, and nothing else; later merges that touch the same
+  closures without changing their code restart nothing.
+- A unit release that restarts nothing on a host whose active overlay
+  replaced units of the lane still plans `converge`, which re-runs that
+  overlay's activation and gate (unchanged behaviour). Skipping the gate
+  once a record says it passed is a possible follow-up.
+- Changing the neutral stamp, the recipe or the toolchain changes every
+  code digest, so the next unit release restarts every unit it carries,
+  once. That is the safe direction.
+- A deploy job run from a checkout older than this change ignores the
+  digests and restarts by version, as before.
+- Follow-up: compute the base digests when a full release is tagged (a
+  `workflow_run` job in the default branch's cache scope), so even the first
+  unit release over a base skips the base build.
+
 ## Still needed
 
 - **Migrations.** Done in ADR 20261018084150. Every new migration declares
@@ -398,3 +593,13 @@ activated has recorded its predecessor.
   would leave a later one unable to prove what the host runs.
 - **Stamp the merge commit as the version.** The bytes would change on every
   merge, and a rebuild could not show the host already runs that code.
+- **Carry only the units whose code changed (selection by code).** After a
+  revert to base code, a host that runs the reverted unit would have no
+  binary to restore, and the lane's eligibility could not see the revert.
+- **Unit versions from the commit that changed the code.** Finding that
+  commit means building the binary at every closure commit since the base.
+  The digest the host records answers the same question exactly, at deploy
+  time.
+- **Compare code by a digest over section addresses too.** A one-line
+  comment that grows the line table moves the sections after it, and would
+  count as a code change (measured on apid).
