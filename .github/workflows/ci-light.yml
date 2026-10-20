@@ -374,10 +374,11 @@ jobs:
           make verify-action-ref-contents-check
           make deploy-action-head-check
           make environment-preflight-action-check
-      - name: release-safety tool tests (migration lint, SLO gate)
+      - name: release-safety tool tests (migration lint, SLO gate, deploy preflight)
         run: |
           python3 scripts/ci/check_migration_expand_contract_test.py
           python3 scripts/ci/slo_gate_test.py
+          python3 scripts/ci/deploy_preflight_test.py
       - name: per-unit release selection and planning tests
         run: |
           python3 scripts/ci/host_roles_test.py
