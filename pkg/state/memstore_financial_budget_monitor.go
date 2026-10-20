@@ -44,6 +44,7 @@ func (m *MemStore) RecordFinancialBudgetEvaluation(_ context.Context, account, i
 		if _, exists := m.financialBudgetAlerts[alert.ID]; !exists {
 			m.financialBudgetAlerts[alert.ID] = alert
 		}
+		m.enqueueFinancialBudgetAlertChannelsLocked(m.financialBudgetAlerts[alert.ID], e.EvaluatedAt)
 	}
 	return nil
 }

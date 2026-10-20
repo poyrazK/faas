@@ -190,6 +190,34 @@ func (q *Queries) FinancialEvidenceHead(ctx context.Context, db DBTX, arg Financ
 	return through_id, err
 }
 
+const financialLedgerDeliveredComputeMBSeconds = `-- name: FinancialLedgerDeliveredComputeMBSeconds :one
+SELECT coalesce(sum(mb_seconds), 0)::bigint AS mb_seconds
+FROM billing_usage_deliveries
+WHERE provider = $1::text AND account_id = $2::uuid
+  AND window_start >= $3::timestamptz AND window_start < $4::timestamptz
+`
+
+type FinancialLedgerDeliveredComputeMBSecondsParams struct {
+	Provider  string
+	AccountID pgtype.UUID
+	StartAt   pgtype.Timestamptz
+	EndAt     pgtype.Timestamptz
+}
+
+// ADR-20261019193600. Compute MB-seconds the pusher delivered to one provider for one
+// account in [start, end); the ledger dual run compares it with ledger evidence.
+func (q *Queries) FinancialLedgerDeliveredComputeMBSeconds(ctx context.Context, db DBTX, arg FinancialLedgerDeliveredComputeMBSecondsParams) (int64, error) {
+	row := db.QueryRow(ctx, financialLedgerDeliveredComputeMBSeconds,
+		arg.Provider,
+		arg.AccountID,
+		arg.StartAt,
+		arg.EndAt,
+	)
+	var mb_seconds int64
+	err := row.Scan(&mb_seconds)
+	return mb_seconds, err
+}
+
 const financialPriceSnapshotPut = `-- name: FinancialPriceSnapshotPut :one
 INSERT INTO financial_price_snapshots(account_id, period_start, period_end, meter, version, price, plan, effective_from, delivery_mode)
 VALUES($1::uuid, $2::timestamptz,

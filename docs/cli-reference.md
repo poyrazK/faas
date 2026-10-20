@@ -5668,6 +5668,25 @@ Page through immutable policy revisions
 | `--limit <N>` | Page size (1..100) |  |
 | `--json` | Print JSON |  |
 
+#### billing budgets channels
+
+Show or replace the notification channels a budget&#39;s alerts also go to
+
+`gregale billing budgets channels [--set <ID,ID>] [--clear] [--json] ID`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--set <ID,ID>` | Replace with these comma-separated channel IDs |  |
+| `--clear` | Remove every channel; alerts go to the account email only |  |
+| `--json` | Print JSON |  |
+
+Examples:
+
+```sh
+gregale billing budgets channels BUDGET_ID
+gregale billing budgets channels --set CHANNEL_ID,CHANNEL_ID BUDGET_ID
+```
+
 ### billing refresh-invoice
 
 Refresh provider facts for an existing invoice

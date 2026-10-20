@@ -27,6 +27,21 @@
     "kind": "account_identity"
   },
   {
+    "table": "financial_budget_alert_channel_deliveries",
+    "columns": [
+      "account_id",
+      "alert_id",
+      "attempts",
+      "channel_id",
+      "delivered_at",
+      "last_error",
+      "lease_token",
+      "next_attempt_at",
+      "state"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "financial_budget_alerts",
     "columns": [
       "account_id",
@@ -44,6 +59,15 @@
       "threshold_millicents"
     ],
     "kind": "operational"
+  },
+  {
+    "table": "financial_budget_channels",
+    "columns": [
+      "account_id",
+      "channel_id",
+      "policy_id"
+    ],
+    "kind": "configuration"
   },
   {
     "table": "financial_budget_evaluations",

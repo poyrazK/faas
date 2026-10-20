@@ -34295,6 +34295,28 @@ CREATE TABLE public.feature_flag_versions (
 
 
 --
+-- Name: financial_budget_alert_channel_deliveries; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.financial_budget_alert_channel_deliveries (
+    alert_id uuid NOT NULL,
+    channel_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    state text DEFAULT 'pending'::text NOT NULL,
+    attempts integer DEFAULT 0 NOT NULL,
+    next_attempt_at timestamp with time zone NOT NULL,
+    lease_token uuid,
+    delivered_at timestamp with time zone,
+    last_error text DEFAULT ''::text NOT NULL,
+    CONSTRAINT financial_budget_alert_channel_deliveries_attempts_check CHECK ((attempts >= 0)),
+    CONSTRAINT financial_budget_alert_channel_deliveries_check CHECK (((state = 'sending'::text) = (lease_token IS NOT NULL))),
+    CONSTRAINT financial_budget_alert_channel_deliveries_check1 CHECK (((state = 'delivered'::text) = (delivered_at IS NOT NULL))),
+    CONSTRAINT financial_budget_alert_channel_deliveries_last_error_check CHECK ((last_error = ANY (ARRAY[''::text, 'channel_delivery_failed'::text, 'channel_unavailable'::text]))),
+    CONSTRAINT financial_budget_alert_channel_deliveries_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'sending'::text, 'retrying'::text, 'delivered'::text, 'abandoned'::text])))
+);
+
+
+--
 -- Name: financial_budget_alerts; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -34322,6 +34344,17 @@ CREATE TABLE public.financial_budget_alerts (
     CONSTRAINT financial_budget_alerts_revision_check CHECK (((revision >= 1) AND (revision <= '9007199254740991'::bigint))),
     CONSTRAINT financial_budget_alerts_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'sending'::text, 'retrying'::text, 'delivered'::text]))),
     CONSTRAINT financial_budget_alerts_threshold_millicents_check CHECK (((threshold_millicents >= 0) AND (threshold_millicents <= '9007199254740991'::bigint)))
+);
+
+
+--
+-- Name: financial_budget_channels; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.financial_budget_channels (
+    account_id uuid NOT NULL,
+    policy_id uuid NOT NULL,
+    channel_id uuid NOT NULL
 );
 
 
@@ -54455,6 +54488,14 @@ ALTER TABLE ONLY public.feature_flag_versions
 
 
 --
+-- Name: financial_budget_alert_channel_deliveries financial_budget_alert_channel_deliveries_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_budget_alert_channel_deliveries
+    ADD CONSTRAINT financial_budget_alert_channel_deliveries_pkey PRIMARY KEY (alert_id, channel_id);
+
+
+--
 -- Name: financial_budget_alerts financial_budget_alerts_account_id_policy_id_revision_perio_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -54468,6 +54509,14 @@ ALTER TABLE ONLY public.financial_budget_alerts
 
 ALTER TABLE ONLY public.financial_budget_alerts
     ADD CONSTRAINT financial_budget_alerts_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: financial_budget_channels financial_budget_channels_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_budget_channels
+    ADD CONSTRAINT financial_budget_channels_pkey PRIMARY KEY (account_id, policy_id, channel_id);
 
 
 --
@@ -65244,10 +65293,24 @@ CREATE INDEX feature_flag_versions_scope ON public.feature_flag_versions USING b
 
 
 --
+-- Name: financial_budget_alert_channel_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX financial_budget_alert_channel_due_idx ON public.financial_budget_alert_channel_deliveries USING btree (next_attempt_at, alert_id, channel_id) WHERE (state = ANY (ARRAY['pending'::text, 'sending'::text, 'retrying'::text]));
+
+
+--
 -- Name: financial_budget_alert_due_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX financial_budget_alert_due_idx ON public.financial_budget_alerts USING btree (next_attempt_at, id) WHERE (state <> 'delivered'::text);
+
+
+--
+-- Name: financial_budget_channels_channel_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX financial_budget_channels_channel_idx ON public.financial_budget_channels USING btree (channel_id);
 
 
 --
@@ -82328,11 +82391,43 @@ ALTER TABLE ONLY public.feature_flag_versions
 
 
 --
+-- Name: financial_budget_alert_channel_deliveries financial_budget_alert_channel_deliveries_alert_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_budget_alert_channel_deliveries
+    ADD CONSTRAINT financial_budget_alert_channel_deliveries_alert_id_fkey FOREIGN KEY (alert_id) REFERENCES public.financial_budget_alerts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: financial_budget_alert_channel_deliveries financial_budget_alert_channel_deliveries_channel_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_budget_alert_channel_deliveries
+    ADD CONSTRAINT financial_budget_alert_channel_deliveries_channel_id_fkey FOREIGN KEY (channel_id) REFERENCES public.notification_channels(id) ON DELETE CASCADE;
+
+
+--
 -- Name: financial_budget_alerts financial_budget_alerts_account_id_policy_id_revision_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.financial_budget_alerts
     ADD CONSTRAINT financial_budget_alerts_account_id_policy_id_revision_fkey FOREIGN KEY (account_id, policy_id, revision) REFERENCES public.financial_budget_revisions(account_id, policy_id, revision) ON DELETE CASCADE;
+
+
+--
+-- Name: financial_budget_channels financial_budget_channels_account_id_policy_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_budget_channels
+    ADD CONSTRAINT financial_budget_channels_account_id_policy_id_fkey FOREIGN KEY (account_id, policy_id) REFERENCES public.financial_budget_policies(account_id, id) ON DELETE CASCADE;
+
+
+--
+-- Name: financial_budget_channels financial_budget_channels_channel_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_budget_channels
+    ADD CONSTRAINT financial_budget_channels_channel_id_fkey FOREIGN KEY (channel_id) REFERENCES public.notification_channels(id) ON DELETE CASCADE;
 
 
 --

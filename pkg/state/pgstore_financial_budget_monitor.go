@@ -63,6 +63,9 @@ func (s *PgStore) RecordFinancialBudgetEvaluation(ctx context.Context, account, 
 		if err := q.FinancialBudgetAlertInsert(ctx, tx, sqlc.FinancialBudgetAlertInsertParams{ID: alertID, AccountID: aid, PolicyID: pid, Revision: revision, PeriodStart: financialTimestamp(e.PeriodStart), ThresholdMillicents: alert.ThresholdMillicents, Payload: payload, NextAttemptAt: financialTimestamp(e.EvaluatedAt)}); err != nil {
 			return err
 		}
+		if err := enqueueFinancialBudgetAlertChannels(ctx, tx, alertID, e.EvaluatedAt); err != nil {
+			return err
+		}
 	}
 	if stop, crossed := financialBudgetStop(p, e); crossed {
 		if err := insertFinancialBudgetStop(ctx, tx, stop); err != nil {

@@ -5020,6 +5020,24 @@ type FinancialBudgetAlert struct {
 	LastError           string
 }
 
+type FinancialBudgetAlertChannelDelivery struct {
+	AlertID       pgtype.UUID
+	ChannelID     pgtype.UUID
+	AccountID     pgtype.UUID
+	State         string
+	Attempts      int32
+	NextAttemptAt pgtype.Timestamptz
+	LeaseToken    pgtype.UUID
+	DeliveredAt   pgtype.Timestamptz
+	LastError     string
+}
+
+type FinancialBudgetChannel struct {
+	AccountID pgtype.UUID
+	PolicyID  pgtype.UUID
+	ChannelID pgtype.UUID
+}
+
 type FinancialBudgetEvaluation struct {
 	AccountID         pgtype.UUID
 	PolicyID          pgtype.UUID

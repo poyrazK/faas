@@ -69,7 +69,14 @@ func (l *Loop) RunFinancialBudgetsOnce(ctx context.Context) error {
 
 // RunFinancialBudgetDeliveriesOnce keeps provider latency off the sampling and
 // policy-evaluation paths. The durable outbox survives a process or pass timeout.
+// Channel deliveries (ADR-20261019193500) run beside the account email, each
+// within its own pass bound; without an alert evaluator they stay pending.
 func (l *Loop) RunFinancialBudgetDeliveriesOnce(ctx context.Context) error {
+	channelErr := l.evaluator.DeliverFinancialBudgetChannelsOnce(ctx)
+	return errors.Join(l.runFinancialBudgetEmailsOnce(ctx), channelErr)
+}
+
+func (l *Loop) runFinancialBudgetEmailsOnce(ctx context.Context) error {
 	store, ok := l.store.(state.FinancialBudgetMonitorStore)
 	if !ok {
 		return nil

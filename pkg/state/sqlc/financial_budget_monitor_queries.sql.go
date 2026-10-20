@@ -11,6 +11,134 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const financialBudgetAlertChannelClaim = `-- name: FinancialBudgetAlertChannelClaim :one
+WITH candidate AS (
+  SELECT d.alert_id, d.channel_id FROM financial_budget_alert_channel_deliveries d
+  JOIN financial_budget_alerts a ON a.id = d.alert_id
+  JOIN financial_budget_policies p ON p.account_id = a.account_id AND p.id = a.policy_id AND p.revision = a.revision
+  JOIN notification_channels c ON c.id = d.channel_id AND c.account_id = d.account_id
+  -- Unbinding a channel holds its pending deliveries; rebinding resumes them.
+  JOIN financial_budget_channels b ON b.account_id = a.account_id AND b.policy_id = a.policy_id AND b.channel_id = d.channel_id
+  WHERE d.state IN ('pending', 'sending', 'retrying') AND d.next_attempt_at <= $3::timestamptz
+    AND p.deleted_at IS NULL AND p.spec->>'enabled' = 'true'
+    AND p.spec->>'mode' = 'monitored' AND p.spec->>'action' IN ('notify', 'stop_previews')
+  ORDER BY d.next_attempt_at, d.alert_id, d.channel_id FOR UPDATE OF d SKIP LOCKED LIMIT 1
+)
+UPDATE financial_budget_alert_channel_deliveries d SET state = 'sending',
+  attempts = LEAST(d.attempts::bigint + 1, 2147483647)::integer,
+  lease_token = $1::uuid, next_attempt_at = $2::timestamptz
+FROM candidate WHERE d.alert_id = candidate.alert_id AND d.channel_id = candidate.channel_id
+RETURNING d.alert_id, d.channel_id, d.account_id, d.state, d.attempts, d.next_attempt_at, d.lease_token, d.delivered_at, d.last_error
+`
+
+type FinancialBudgetAlertChannelClaimParams struct {
+	LeaseToken pgtype.UUID
+	LeaseUntil pgtype.Timestamptz
+	NowAt      pgtype.Timestamptz
+}
+
+func (q *Queries) FinancialBudgetAlertChannelClaim(ctx context.Context, db DBTX, arg FinancialBudgetAlertChannelClaimParams) (FinancialBudgetAlertChannelDelivery, error) {
+	row := db.QueryRow(ctx, financialBudgetAlertChannelClaim, arg.LeaseToken, arg.LeaseUntil, arg.NowAt)
+	var i FinancialBudgetAlertChannelDelivery
+	err := row.Scan(
+		&i.AlertID,
+		&i.ChannelID,
+		&i.AccountID,
+		&i.State,
+		&i.Attempts,
+		&i.NextAttemptAt,
+		&i.LeaseToken,
+		&i.DeliveredAt,
+		&i.LastError,
+	)
+	return i, err
+}
+
+const financialBudgetAlertChannelGet = `-- name: FinancialBudgetAlertChannelGet :one
+SELECT alert_id, channel_id, account_id, state, attempts, next_attempt_at, lease_token, delivered_at, last_error FROM financial_budget_alert_channel_deliveries
+WHERE alert_id = $1::uuid AND channel_id = $2::uuid
+`
+
+type FinancialBudgetAlertChannelGetParams struct {
+	AlertID   pgtype.UUID
+	ChannelID pgtype.UUID
+}
+
+func (q *Queries) FinancialBudgetAlertChannelGet(ctx context.Context, db DBTX, arg FinancialBudgetAlertChannelGetParams) (FinancialBudgetAlertChannelDelivery, error) {
+	row := db.QueryRow(ctx, financialBudgetAlertChannelGet, arg.AlertID, arg.ChannelID)
+	var i FinancialBudgetAlertChannelDelivery
+	err := row.Scan(
+		&i.AlertID,
+		&i.ChannelID,
+		&i.AccountID,
+		&i.State,
+		&i.Attempts,
+		&i.NextAttemptAt,
+		&i.LeaseToken,
+		&i.DeliveredAt,
+		&i.LastError,
+	)
+	return i, err
+}
+
+const financialBudgetAlertChannelSettle = `-- name: FinancialBudgetAlertChannelSettle :one
+UPDATE financial_budget_alert_channel_deliveries SET state = $1::text, lease_token = NULL,
+  delivered_at = $2::timestamptz, last_error = $3::text,
+  next_attempt_at = $4::timestamptz
+WHERE alert_id = $5::uuid AND channel_id = $6::uuid
+  AND state = 'sending' AND lease_token = $7::uuid
+  AND next_attempt_at > $8::timestamptz
+RETURNING alert_id
+`
+
+type FinancialBudgetAlertChannelSettleParams struct {
+	State         string
+	DeliveredAt   pgtype.Timestamptz
+	LastError     string
+	NextAttemptAt pgtype.Timestamptz
+	AlertID       pgtype.UUID
+	ChannelID     pgtype.UUID
+	LeaseToken    pgtype.UUID
+	NowAt         pgtype.Timestamptz
+}
+
+func (q *Queries) FinancialBudgetAlertChannelSettle(ctx context.Context, db DBTX, arg FinancialBudgetAlertChannelSettleParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, financialBudgetAlertChannelSettle,
+		arg.State,
+		arg.DeliveredAt,
+		arg.LastError,
+		arg.NextAttemptAt,
+		arg.AlertID,
+		arg.ChannelID,
+		arg.LeaseToken,
+		arg.NowAt,
+	)
+	var alert_id pgtype.UUID
+	err := row.Scan(&alert_id)
+	return alert_id, err
+}
+
+const financialBudgetAlertChannelsEnqueue = `-- name: FinancialBudgetAlertChannelsEnqueue :exec
+INSERT INTO financial_budget_alert_channel_deliveries(alert_id, channel_id, account_id, next_attempt_at)
+SELECT a.id, b.channel_id, a.account_id, $1::timestamptz
+FROM financial_budget_alerts a
+JOIN financial_budget_channels b ON b.account_id = a.account_id AND b.policy_id = a.policy_id
+WHERE a.id = $2::uuid
+ON CONFLICT (alert_id, channel_id) DO NOTHING
+`
+
+type FinancialBudgetAlertChannelsEnqueueParams struct {
+	NowAt   pgtype.Timestamptz
+	AlertID pgtype.UUID
+}
+
+// A channel bound after an alert was recorded still receives it once if the
+// current month's evaluation crosses that threshold again.
+func (q *Queries) FinancialBudgetAlertChannelsEnqueue(ctx context.Context, db DBTX, arg FinancialBudgetAlertChannelsEnqueueParams) error {
+	_, err := db.Exec(ctx, financialBudgetAlertChannelsEnqueue, arg.NowAt, arg.AlertID)
+	return err
+}
+
 const financialBudgetAlertClaim = `-- name: FinancialBudgetAlertClaim :one
 WITH candidate AS (
   SELECT a.id FROM financial_budget_alerts a
@@ -64,6 +192,31 @@ type FinancialBudgetAlertDeliveryGetParams struct {
 
 func (q *Queries) FinancialBudgetAlertDeliveryGet(ctx context.Context, db DBTX, arg FinancialBudgetAlertDeliveryGetParams) (FinancialBudgetAlert, error) {
 	row := db.QueryRow(ctx, financialBudgetAlertDeliveryGet, arg.ID, arg.LeaseToken)
+	var i FinancialBudgetAlert
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.PolicyID,
+		&i.Revision,
+		&i.PeriodStart,
+		&i.ThresholdMillicents,
+		&i.Payload,
+		&i.State,
+		&i.Attempts,
+		&i.NextAttemptAt,
+		&i.LeaseToken,
+		&i.DeliveredAt,
+		&i.LastError,
+	)
+	return i, err
+}
+
+const financialBudgetAlertGetByID = `-- name: FinancialBudgetAlertGetByID :one
+SELECT id, account_id, policy_id, revision, period_start, threshold_millicents, payload, state, attempts, next_attempt_at, lease_token, delivered_at, last_error FROM financial_budget_alerts WHERE id = $1::uuid
+`
+
+func (q *Queries) FinancialBudgetAlertGetByID(ctx context.Context, db DBTX, id pgtype.UUID) (FinancialBudgetAlert, error) {
+	row := db.QueryRow(ctx, financialBudgetAlertGetByID, id)
 	var i FinancialBudgetAlert
 	err := row.Scan(
 		&i.ID,
@@ -202,6 +355,90 @@ func (q *Queries) FinancialBudgetAlertSettle(ctx context.Context, db DBTX, arg F
 	var id pgtype.UUID
 	err := row.Scan(&id)
 	return id, err
+}
+
+const financialBudgetChannelsDelete = `-- name: FinancialBudgetChannelsDelete :exec
+
+DELETE FROM financial_budget_channels
+WHERE account_id = $1::uuid AND policy_id = $2::uuid
+`
+
+type FinancialBudgetChannelsDeleteParams struct {
+	AccountID pgtype.UUID
+	PolicyID  pgtype.UUID
+}
+
+// ADR-20261019193500: budget -> notification channel bindings and one
+// durable delivery per alert and channel.
+func (q *Queries) FinancialBudgetChannelsDelete(ctx context.Context, db DBTX, arg FinancialBudgetChannelsDeleteParams) error {
+	_, err := db.Exec(ctx, financialBudgetChannelsDelete, arg.AccountID, arg.PolicyID)
+	return err
+}
+
+const financialBudgetChannelsInsert = `-- name: FinancialBudgetChannelsInsert :exec
+INSERT INTO financial_budget_channels(account_id, policy_id, channel_id)
+SELECT p.account_id, p.id, c.id FROM financial_budget_policies p
+JOIN notification_channels c ON c.account_id = p.account_id AND c.id = ANY($1::uuid[])
+WHERE p.account_id = $2::uuid AND p.id = $3::uuid AND p.deleted_at IS NULL
+ON CONFLICT DO NOTHING
+`
+
+type FinancialBudgetChannelsInsertParams struct {
+	ChannelIds []pgtype.UUID
+	AccountID  pgtype.UUID
+	PolicyID   pgtype.UUID
+}
+
+// Only channels owned by the policy's account are bound.
+func (q *Queries) FinancialBudgetChannelsInsert(ctx context.Context, db DBTX, arg FinancialBudgetChannelsInsertParams) error {
+	_, err := db.Exec(ctx, financialBudgetChannelsInsert, arg.ChannelIds, arg.AccountID, arg.PolicyID)
+	return err
+}
+
+const financialBudgetChannelsList = `-- name: FinancialBudgetChannelsList :many
+SELECT c.id, c.account_id, c.name, c.kind, c.target_sealed, c.target_hint, c.pagerduty_region, c.email, c.last_delivered_at, c.last_error, c.last_error_at, c.created_at, c.updated_at FROM financial_budget_channels b
+JOIN notification_channels c ON c.id = b.channel_id AND c.account_id = b.account_id
+WHERE b.account_id = $1::uuid AND b.policy_id = $2::uuid
+ORDER BY c.name, c.id
+`
+
+type FinancialBudgetChannelsListParams struct {
+	AccountID pgtype.UUID
+	PolicyID  pgtype.UUID
+}
+
+func (q *Queries) FinancialBudgetChannelsList(ctx context.Context, db DBTX, arg FinancialBudgetChannelsListParams) ([]NotificationChannel, error) {
+	rows, err := db.Query(ctx, financialBudgetChannelsList, arg.AccountID, arg.PolicyID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []NotificationChannel{}
+	for rows.Next() {
+		var i NotificationChannel
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.Name,
+			&i.Kind,
+			&i.TargetSealed,
+			&i.TargetHint,
+			&i.PagerdutyRegion,
+			&i.Email,
+			&i.LastDeliveredAt,
+			&i.LastError,
+			&i.LastErrorAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const financialBudgetEvaluationGet = `-- name: FinancialBudgetEvaluationGet :one

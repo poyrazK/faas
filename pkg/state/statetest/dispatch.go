@@ -84,6 +84,7 @@ var memDispatched = map[string]bool{
 	"EnqueueInvocation":                                       true,
 	"FailRunningInstanceIfOwnedByNode":                        true,
 	"FinalizeManagedPostgresBindingRotationsForApp":           true,
+	"FinancialEvidenceCoverage":                               true,
 	"FinalizeObjectS3CredentialRotationsForApp":               true,
 	"GetAppErrorSample":                                       true,
 	"GetFeatureFlags":                                         true,
@@ -336,6 +337,15 @@ func (s *Mem) DeploymentClearSnapshotBackoff(p0 context.Context, p1 string) erro
 		return o.DeploymentClearSnapshotBackoff(p0, p1)
 	}
 	return s.MemStore.DeploymentClearSnapshotBackoff(p0, p1)
+}
+
+func (s *Mem) FinancialEvidenceCoverage(p0 context.Context) (time.Time, error) {
+	if o, ok := s.over.(interface {
+		FinancialEvidenceCoverage(context.Context) (time.Time, error)
+	}); ok {
+		return o.FinancialEvidenceCoverage(p0)
+	}
+	return s.MemStore.FinancialEvidenceCoverage(p0)
 }
 
 func (s *Mem) AppByID(p0 context.Context, p1 string) (state.App, error) {

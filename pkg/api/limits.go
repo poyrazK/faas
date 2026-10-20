@@ -12702,6 +12702,14 @@ const (
 	MaxChannelsPerAlertRule           = 5
 )
 
+// Budget alert channels (ADR-20261019193500). A delivery that keeps failing is
+// abandoned after FinancialBudgetChannelAttemptsMax claims; the account email
+// alert (ADR-566) is unaffected.
+const (
+	MaxChannelsPerFinancialBudget     = 5
+	FinancialBudgetChannelAttemptsMax = 12
+)
+
 // Change timeline bounds (ADR-751). Each source is read with the event cap so
 // one busy source cannot starve the others before the newest-first merge.
 const (

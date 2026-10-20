@@ -115,3 +115,11 @@ SELECT account_id, instance_id, sqlc.arg(source_id)::text, meter, unit, sqlc.arg
 FROM financial_usage_evidence
 WHERE account_id = sqlc.arg(account_id)::uuid AND source_id = sqlc.arg(corrects_source_id)::text AND corrects_source_id IS NULL
 ON CONFLICT(account_id, source_id) DO NOTHING;
+
+-- ADR-20261019193600. Compute MB-seconds the pusher delivered to one provider for one
+-- account in [start, end); the ledger dual run compares it with ledger evidence.
+-- name: FinancialLedgerDeliveredComputeMBSeconds :one
+SELECT coalesce(sum(mb_seconds), 0)::bigint AS mb_seconds
+FROM billing_usage_deliveries
+WHERE provider = sqlc.arg(provider)::text AND account_id = sqlc.arg(account_id)::uuid
+  AND window_start >= sqlc.arg(start_at)::timestamptz AND window_start < sqlc.arg(end_at)::timestamptz;

@@ -1249,12 +1249,25 @@ type Querier interface {
 	FinancialAdjustmentInsert(ctx context.Context, db DBTX, arg FinancialAdjustmentInsertParams) error
 	// ADR-566. Policy mutations serialize per account and publish an atomic audit.
 	FinancialBudgetAccountLock(ctx context.Context, db DBTX, accountID pgtype.UUID) (pgtype.UUID, error)
+	FinancialBudgetAlertChannelClaim(ctx context.Context, db DBTX, arg FinancialBudgetAlertChannelClaimParams) (FinancialBudgetAlertChannelDelivery, error)
+	FinancialBudgetAlertChannelGet(ctx context.Context, db DBTX, arg FinancialBudgetAlertChannelGetParams) (FinancialBudgetAlertChannelDelivery, error)
+	FinancialBudgetAlertChannelSettle(ctx context.Context, db DBTX, arg FinancialBudgetAlertChannelSettleParams) (pgtype.UUID, error)
+	// A channel bound after an alert was recorded still receives it once if the
+	// current month's evaluation crosses that threshold again.
+	FinancialBudgetAlertChannelsEnqueue(ctx context.Context, db DBTX, arg FinancialBudgetAlertChannelsEnqueueParams) error
 	FinancialBudgetAlertClaim(ctx context.Context, db DBTX, arg FinancialBudgetAlertClaimParams) (FinancialBudgetAlert, error)
 	FinancialBudgetAlertDeliveryGet(ctx context.Context, db DBTX, arg FinancialBudgetAlertDeliveryGetParams) (FinancialBudgetAlert, error)
+	FinancialBudgetAlertGetByID(ctx context.Context, db DBTX, id pgtype.UUID) (FinancialBudgetAlert, error)
 	FinancialBudgetAlertInsert(ctx context.Context, db DBTX, arg FinancialBudgetAlertInsertParams) error
 	FinancialBudgetAlertList(ctx context.Context, db DBTX, arg FinancialBudgetAlertListParams) ([]FinancialBudgetAlert, error)
 	FinancialBudgetAlertSettle(ctx context.Context, db DBTX, arg FinancialBudgetAlertSettleParams) (pgtype.UUID, error)
 	FinancialBudgetAppActionEligible(ctx context.Context, db DBTX, arg FinancialBudgetAppActionEligibleParams) (bool, error)
+	// ADR-20261019193500: budget -> notification channel bindings and one
+	// durable delivery per alert and channel.
+	FinancialBudgetChannelsDelete(ctx context.Context, db DBTX, arg FinancialBudgetChannelsDeleteParams) error
+	// Only channels owned by the policy's account are bound.
+	FinancialBudgetChannelsInsert(ctx context.Context, db DBTX, arg FinancialBudgetChannelsInsertParams) error
+	FinancialBudgetChannelsList(ctx context.Context, db DBTX, arg FinancialBudgetChannelsListParams) ([]NotificationChannel, error)
 	FinancialBudgetCount(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
 	FinancialBudgetDelete(ctx context.Context, db DBTX, arg FinancialBudgetDeleteParams) (FinancialBudgetPolicy, error)
 	FinancialBudgetEvaluationGet(ctx context.Context, db DBTX, arg FinancialBudgetEvaluationGetParams) ([]byte, error)
@@ -1325,6 +1338,9 @@ type Querier interface {
 	FinancialEvidenceBySource(ctx context.Context, db DBTX, arg FinancialEvidenceBySourceParams) (FinancialUsageEvidence, error)
 	FinancialEvidenceCoverage(ctx context.Context, db DBTX) (pgtype.Timestamptz, error)
 	FinancialEvidenceHead(ctx context.Context, db DBTX, arg FinancialEvidenceHeadParams) (int64, error)
+	// ADR-20261019193600. Compute MB-seconds the pusher delivered to one provider for one
+	// account in [start, end); the ledger dual run compares it with ledger evidence.
+	FinancialLedgerDeliveredComputeMBSeconds(ctx context.Context, db DBTX, arg FinancialLedgerDeliveredComputeMBSecondsParams) (int64, error)
 	FinancialPreviewCommandActivate(ctx context.Context, db DBTX, arg FinancialPreviewCommandActivateParams) (int64, error)
 	FinancialPreviewCommandHeld(ctx context.Context, db DBTX, arg FinancialPreviewCommandHeldParams) (bool, error)
 	FinancialPreviewCommandList(ctx context.Context, db DBTX, arg FinancialPreviewCommandListParams) ([]FinancialPreviewCommandRuntime, error)
