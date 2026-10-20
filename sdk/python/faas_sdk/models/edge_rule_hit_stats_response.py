@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
+
+from ..types import UNSET, Unset
 
 T = TypeVar("T", bound="EdgeRuleHitStatsResponse")
 
@@ -18,6 +20,9 @@ class EdgeRuleHitStatsResponse:
     """Requests an enforced rule matched."""
     logged: int
     """Requests a log-mode rule matched."""
+    series: list[int] | Unset = UNSET
+    """With series=true, matched plus logged per hour; the first value is the hour starting at since, the last the
+    current hour (ADR-20261020105001)."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -26,6 +31,10 @@ class EdgeRuleHitStatsResponse:
         matched = self.matched
 
         logged = self.logged
+
+        series: list[int] | Unset = UNSET
+        if not isinstance(self.series, Unset):
+            series = self.series
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -36,6 +45,8 @@ class EdgeRuleHitStatsResponse:
                 "logged": logged,
             }
         )
+        if series is not UNSET:
+            field_dict["series"] = series
 
         return field_dict
 
@@ -48,10 +59,13 @@ class EdgeRuleHitStatsResponse:
 
         logged = d.pop("logged")
 
+        series = cast(list[int], d.pop("series", UNSET))
+
         edge_rule_hit_stats_response = cls(
             rule_id=rule_id,
             matched=matched,
             logged=logged,
+            series=series,
         )
 
         edge_rule_hit_stats_response.additional_properties = d

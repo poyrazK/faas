@@ -980,9 +980,31 @@ type AppEdgeRulesData struct {
 	Events EdgeRuleEventsPageData
 	// Recipes is the protection-recipes section (ADR-986).
 	Recipes []EdgeRuleRecipeView
+	// RecipeAlerts is set when the plan includes alert rules, so recipe
+	// forms offer "alert me".
+	RecipeAlerts bool
+	// Suggestions recommends recipes from the app's own traffic (ADR-20261020105000).
+	Suggestions []EdgeRuleSuggestionView
 	// Hosts lists the hostnames the app serves and how many enabled rules
 	// apply to each (ADR-1191), so an uncovered custom domain stands out.
 	Hosts []EdgeRuleHostCoverage
+	// Review lists log-mode rules to decide on and rules that went quiet
+	// (ADR-20261020105001).
+	Review []EdgeRuleReviewView
+}
+
+// EdgeRuleReviewView is one rule in the rule review (ADR-20261020105001). Status is
+// one of the api.EdgeRuleReview* values; Matches and PerDay count from
+// Since, the rule's last change or the start of the 7-day window.
+type EdgeRuleReviewView struct {
+	ID            string
+	Label         string
+	Match         string
+	Status        string
+	Since         string
+	ObservedHours int64
+	Matches       int64
+	PerDay        int64
 }
 
 // EdgeRuleHostCoverage is one hostname of the app and the number of
@@ -1083,6 +1105,10 @@ type EdgeRulePageItem struct {
 	Mode       string
 	Matched24h int64
 	Logged24h  int64
+	// ADR-20261020105001: matches over the last 7 days, as an SVG polyline of
+	// 6-hour totals and their sum.
+	SparkPoints string
+	Matches7d   int64
 }
 
 // CorsPresetPageItem is the read-only preset summary shown beside an app's
@@ -3805,4 +3831,22 @@ type OrgActivityItem struct {
 	OccurredAt string
 	Kind       string
 	Summary    string
+}
+
+// EdgeRuleSuggestionView is one suggested recipe (ADR-20261020105000): the observation
+// behind it, the parameters it is added with (Hidden), the required inputs
+// the user still has to give (Inputs), and the plan gate if any (Blocked).
+type EdgeRuleSuggestionView struct {
+	Recipe  string
+	Title   string
+	Reason  string
+	Hidden  []EdgeRuleSuggestionField
+	Inputs  []EdgeRuleRecipeParamView
+	Blocked string
+}
+
+// EdgeRuleSuggestionField is one pre-filled recipe parameter.
+type EdgeRuleSuggestionField struct {
+	Name  string
+	Value string
 }
