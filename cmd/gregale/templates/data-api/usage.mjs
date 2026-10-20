@@ -14,6 +14,8 @@ export function accessReport(config) {
   const permissions = p => ({ access: p.access, ...(p.relations ? { relations: p.relations.map(name) } : {}),
     ...(p.rpcs ? { rpcs: p.rpcs.map(name) } : {}), subjects: p.subjects })
   return { version: 1, schemas: [...config.schemas],
+    // Live reads verify user tokens against the same issuer (ADR-20261016151947).
+    ...(config.auth ? { auth: { issuer: config.auth.issuer, jwks_url: config.auth.jwks.href, audience: config.auth.audience } } : {}),
     ...(config.publicRead ? { public_read: config.publicRead.map(name) } : {}),
     ...(config.serverKeys ? { server_keys: config.serverKeys.map(k => ({ slot: k.slot, sha256: k.hash.toString('hex'), ...(k.permissions ? { permissions: permissions(k.permissions) } : {}) })) } : {}) }
 }

@@ -85,7 +85,8 @@ and at most 48 hours hourly. `gregale data-api usage NAME` prints them.
 ### Access settings for live reads (amendment, 2026-10-19)
 
 Usage reports may also carry the runtime's access settings: exposed schemas,
-public-read allowlist, and server-key hashes with permissions. Realtime
+the issuer, JWKS URL and audience it verifies user tokens against (added
+2026-10-20), public-read allowlist, and server-key hashes with permissions. Realtime
 endpoints apply them to anonymous and server-key live reads
 (ADR-20261016151947). The runtime sends them after start, after a restore and
 hourly. apid stores the latest per app and forgets them when

@@ -211,10 +211,12 @@ func TestReportHandlerStoresOnlyValidAccessSettings(t *testing.T) {
 		return rec.Code, store
 	}
 	readOnly := false
-	valid := &api.DataAPIAccessConfig{Version: 1, Schemas: []string{"api"}, PublicRead: []string{"api.products"},
+	auth := &api.DataAPIUserAuth{Issuer: "https://auth.example.com", JWKSURL: "https://auth.example.com/.well-known/jwks.json", Audience: "shop"}
+	valid := &api.DataAPIAccessConfig{Version: 1, Schemas: []string{"api"}, Auth: auth, PublicRead: []string{"api.products"},
 		ServerKeys: []api.DataAPIServerKey{{Slot: "a", SHA256: hash, Permissions: &api.DataAPIServerKeyPermissionSet{Access: "read", Relations: []string{"api.orders"}, Subjects: &readOnly}}}}
 	status, store := send(valid)
-	if status != 200 || !strings.Contains(string(store.access), `"public_read":["api.products"]`) || !strings.Contains(string(store.access), hash) {
+	if status != 200 || !strings.Contains(string(store.access), `"public_read":["api.products"]`) || !strings.Contains(string(store.access), hash) ||
+		!strings.Contains(string(store.access), `"audience":"shop"`) {
 		t.Fatalf("valid settings: %d %s", status, store.access)
 	}
 	if status, store = send(nil); status != 200 || store.access != nil {
@@ -228,6 +230,11 @@ func TestReportHandlerStoresOnlyValidAccessSettings(t *testing.T) {
 		"hash":      {Version: 1, Schemas: []string{"api"}, ServerKeys: []api.DataAPIServerKey{{Slot: "a", SHA256: "ABCD"}}},
 		"duplicate": {Version: 1, Schemas: []string{"api"}, ServerKeys: []api.DataAPIServerKey{{Slot: "a", SHA256: hash}, {Slot: "a", SHA256: hash}}},
 		"access":    {Version: 1, Schemas: []string{"api"}, ServerKeys: []api.DataAPIServerKey{{Slot: "a", SHA256: hash, Permissions: &api.DataAPIServerKeyPermissionSet{Access: "admin"}}}},
+		"http jwks": {Version: 1, Schemas: []string{"api"}, Auth: &api.DataAPIUserAuth{Issuer: auth.Issuer, JWKSURL: "http://auth.example.com/jwks", Audience: "shop"}},
+		"private":   {Version: 1, Schemas: []string{"api"}, Auth: &api.DataAPIUserAuth{Issuer: auth.Issuer, JWKSURL: "https://10.0.0.5/jwks", Audience: "shop"}},
+		"issuer":    {Version: 1, Schemas: []string{"api"}, Auth: &api.DataAPIUserAuth{Issuer: "auth.example.com", JWKSURL: auth.JWKSURL, Audience: "shop"}},
+		"audience":  {Version: 1, Schemas: []string{"api"}, Auth: &api.DataAPIUserAuth{Issuer: auth.Issuer, JWKSURL: auth.JWKSURL}},
+		"long aud":  {Version: 1, Schemas: []string{"api"}, Auth: &api.DataAPIUserAuth{Issuer: auth.Issuer, JWKSURL: auth.JWKSURL, Audience: strings.Repeat("a", api.DataAPIAudienceMaxBytes+1)}},
 	} {
 		if status, store := send(bad); status != 400 || store.calls != 0 {
 			t.Fatalf("%s: status %d calls %d", name, status, store.calls)

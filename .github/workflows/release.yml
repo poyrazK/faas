@@ -516,7 +516,7 @@ jobs:
           npm ci --ignore-scripts
           npm test
 
-      # The live-query module stays unpacked until live queries launch.
+      # The live-query module ships as @gregale/data/live and /live/react.
       - name: Verify the package contents
         working-directory: sdk/data
         run: |
@@ -524,8 +524,7 @@ jobs:
           npm pack --dry-run --json > "$RUNNER_TEMP/data-pack.json"
           node -e '
             const files = require(process.argv[1])[0].files.map(f => f.path)
-            for (const f of ["dist/index.js", "dist/index.d.ts", "README.md", "LICENSE"]) if (!files.includes(f)) throw new Error("missing " + f)
-            if (files.some(f => f.startsWith("dist/live/"))) throw new Error("dist/live must not be published yet")
+            for (const f of ["dist/index.js", "dist/index.d.ts", "dist/live/index.js", "dist/live/index.d.ts", "dist/live/react.js", "dist/live/react.d.ts", "README.md", "LICENSE"]) if (!files.includes(f)) throw new Error("missing " + f)
           ' "$RUNNER_TEMP/data-pack.json"
 
       - name: Publish unless this version exists

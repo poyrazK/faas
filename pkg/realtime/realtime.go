@@ -1263,7 +1263,9 @@ func (m *Manager) runConnection(ctx context.Context, c *connection) {
 	connect.CallbackPath = c.endpoint.ConnectPath
 	connect.CallbackAuthToken = c.currentCallbackAuthToken()
 	accepted, err := true, error(nil)
-	if c.ticketToken == "" {
+	// A live-only connection carries no identity for the app to judge; each
+	// live frame brings its own credential, so the app is not asked.
+	if c.ticketToken == "" && !c.liveOnly {
 		accepted, err = m.callConnect(ctx, connect)
 	}
 	if err != nil {
@@ -1537,7 +1539,7 @@ func (m *Manager) removeConnection(ctx context.Context, c *connection) {
 	disconnect.CallbackAuthToken = callbackAuthToken
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), m.cfg.CallbackTimeout)
 	defer cancel()
-	if c.ticketToken != "" {
+	if c.ticketToken != "" || c.liveOnly {
 		return
 	}
 	if err := m.hooks.Disconnect(ctx, disconnect); err != nil {

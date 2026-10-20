@@ -77443,8 +77443,18 @@ components:
       properties:
         version: { type: integer, enum: [1] }
         schemas: { type: array, minItems: 1, maxItems: 8, items: { type: string, pattern: '^[a-z][a-z0-9_]{0,62}$' } }
+        auth: { $ref: '#/components/schemas/DataAPIUserAuth' }
         public_read: { type: array, maxItems: 64, items: { type: string, pattern: '^[a-z][a-z0-9_]{0,62}\.[A-Za-z_][A-Za-z0-9_]{0,62}$' } }
         server_keys: { type: array, maxItems: 2, items: { $ref: '#/components/schemas/DataAPIServerKey' } }
+    DataAPIUserAuth:
+      description: The issuer, JWKS URL and audience the Data API verifies user tokens against. Live reads verify user tokens with the same settings.
+      type: object
+      additionalProperties: false
+      required: [issuer, jwks_url, audience]
+      properties:
+        issuer: { type: string, format: uri, maxLength: 2048 }
+        jwks_url: { type: string, format: uri, maxLength: 2048 }
+        audience: { type: string, minLength: 1, maxLength: 256 }
     DataAPIServerKey:
       description: One server-key rotation slot as the runtime reports it, the SHA-256 of the key and any permissions.
       type: object

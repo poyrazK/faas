@@ -11812,6 +11812,9 @@ const (
 	// accepts (schemaNames in templates/data-api/config.mjs).
 	DataAPIAccessConfigMaxBytes = 32 << 10
 	DataAPIMaxSchemas           = 8
+	// The user-token audience a runtime reports, so live reads verify
+	// tokens as the Data API does.
+	DataAPIAudienceMaxBytes = 256
 	// Anonymous and server-key live reads renew this often, so a revoked key
 	// or a narrowed allowlist reaches open subscriptions within it.
 	LiveQueryKeySessionMax = time.Hour

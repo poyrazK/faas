@@ -531,6 +531,7 @@ export type { DataAPIUsageHour } from './models/DataAPIUsageHour.js';
 export type { DataAPIUsageMonthToDate } from './models/DataAPIUsageMonthToDate.js';
 export type { DataAPIUsageReport } from './models/DataAPIUsageReport.js';
 export type { DataAPIUsageReportResponse } from './models/DataAPIUsageReportResponse.js';
+export type { DataAPIUserAuth } from './models/DataAPIUserAuth.js';
 export type { DataConnection } from './models/DataConnection.js';
 export type { DataConnectionCheck } from './models/DataConnectionCheck.js';
 export type { DataConnectionIssue } from './models/DataConnectionIssue.js';

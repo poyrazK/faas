@@ -1114,6 +1114,50 @@ Phase 0 did not cover:
     PostgreSQL where a visitor without a session sees only published rows,
     follows a new one, and is refused orders that a server key reads.
 
+- **Data API live reads for customers** (2026-10-20). This amends the
+  rollout gate above for Data API reads. Sealed queries stay an operator
+  preview.
+  - **What customers get.** `@gregale/data` exports `./live` and
+    `./live/react`, with React as an optional peer, and packs `dist/live`.
+    `liveSocket(url)` opens the realtime v2 subprotocol, carrying no
+    credential. `gregale data-api live enable|status` appears in customer
+    help and the CLI reference, and `docs/data-api.md#live-reads` documents
+    it. `gregale postgres live` stays out of customer help.
+  - **What still gates access.** The `live_queries` platform flag (ADR-1700)
+    still decides which accounts get live routes. The live API routes stay
+    out of the public OpenAPI spec and generated SDKs. Opening the flag to
+    everyone is the launch step, after testing on production. Outside it,
+    `data-api live` reports that live queries are not available and changes
+    nothing.
+  - **One command.** `data-api live enable` finds the Data API's database
+    through its `data_api` binding. It enables live queries there, discarding
+    the issued secret (Data API reads do not use it), and turns usage
+    reporting on with a fresh restart. It then creates a realtime endpoint on
+    the Data API app with auth mode `none`. Each step runs only if missing.
+  - **Token settings travel with the access settings.** The runtime adds
+    `auth` (issuer, JWKS URL, audience) to its reported access settings. apid
+    validates them like a realtime endpoint's OIDC settings, and realtimed's
+    JWKS client keeps its egress guard. realtimed verifies an RLS-mode
+    read's token with the settings of the Data API serving that database,
+    using the runtime's algorithms (RS256, ES256). It falls back to the
+    endpoint's OIDC policy only when no route reports them. A live read
+    therefore accepts exactly the tokens a REST read does, and the endpoint
+    needs no OIDC settings of its own.
+  - **No app callbacks for live-only connections.** realtimed skips the
+    connect and disconnect callbacks for live-only connections: they carry
+    no identity for the app to judge, and each frame brings its own
+    credential. A Data API runtime answers no realtime callbacks, so its
+    endpoint must use auth mode `none`. Other connections to it still ask
+    the app and are refused; `data-api live status` warns about any other
+    mode.
+  - **Tests:** access-setting validation (non-HTTPS, private JWKS, missing or
+    oversized audience); the runtime's report; realtimed verifying a user's
+    live read with the reported issuer on a live-only connection while the
+    app refuses every connection it is asked about; the CLI against a fake
+    API, where a first enable makes three writes and a second makes none,
+    the status warning and the rollout refusal; the SDK's package exports,
+    pack contents and `liveSocket`.
+
 ## Consequences
 
 - **TRUNCATE waits.** TRUNCATE and table rewrites on live tables wait for the

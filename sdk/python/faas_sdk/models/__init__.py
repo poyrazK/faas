@@ -1036,6 +1036,7 @@ from .data_api_usage_month_to_date import DataAPIUsageMonthToDate
 from .data_api_usage_report import DataAPIUsageReport
 from .data_api_usage_report_response import DataAPIUsageReportResponse
 from .data_api_usage_report_version import DataAPIUsageReportVersion
+from .data_api_user_auth import DataAPIUserAuth
 from .data_connection import DataConnection
 from .data_connection_check import DataConnectionCheck
 from .data_connection_check_state import DataConnectionCheckState
@@ -6802,6 +6803,7 @@ __all__ = (
     "DataAPIUsageReport",
     "DataAPIUsageReportResponse",
     "DataAPIUsageReportVersion",
+    "DataAPIUserAuth",
     "DataConnection",
     "DataConnectionCheck",
     "DataConnectionCheckState",

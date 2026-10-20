@@ -9,6 +9,22 @@ export interface LiveSocket {
   close(): void
 }
 
+/** The realtime subprotocol that carries live frames. */
+export const LIVE_SUBPROTOCOL = 'gregale.realtime.v2'
+
+type LiveSocketConstructor = new (url: string, protocols: string[]) => LiveSocket
+
+/**
+ * Opens sockets to a realtime endpoint for LiveConnection's connect option.
+ * Live frames carry their own credential, so the socket carries none. Pass a
+ * WebSocket class where there is no global one.
+ */
+export function liveSocket(url: string, WebSocketClass?: LiveSocketConstructor): () => LiveSocket {
+  const Socket = WebSocketClass ?? (globalThis as { WebSocket?: LiveSocketConstructor }).WebSocket
+  if (!Socket) throw new Error('liveSocket needs a WebSocket class in this runtime')
+  return () => new Socket(url, [LIVE_SUBPROTOCOL])
+}
+
 export type LiveStatus = 'connecting' | 'live' | 'stale' | 'closed'
 
 export type LiveQueryState<Row> = Readonly<{

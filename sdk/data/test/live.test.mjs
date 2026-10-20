@@ -256,14 +256,15 @@ test('an RLS-mode query subscribes with its read and the user token, and renews 
   conn.close()
 })
 
-test('live queries are not published until launch (ADR-20261016151947 rollout)', async () => {
+test('live queries ship as their own entry points (ADR-20261016151947)', async () => {
   const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
-  assert.deepEqual(Object.keys(pkg.exports), ['.'], 'no ./live export')
-  assert.ok(pkg.files.includes('!dist/live'), 'dist/live stays out of the package')
-  assert.equal(pkg.peerDependencies?.react, undefined, 'no React peer for an unpublished hook')
-  assert.doesNotMatch(readFileSync(new URL('../README.md', import.meta.url), 'utf8'), /live quer/i)
+  assert.deepEqual(Object.keys(pkg.exports), ['.', './live', './live/react'])
+  assert.ok(!pkg.files.some((f) => f.startsWith('!')), 'dist/live is packed')
+  assert.equal(pkg.peerDependencies?.react, '>=18')
+  assert.equal(pkg.peerDependenciesMeta?.react?.optional, true, 'React stays optional outside the hooks')
+  assert.match(readFileSync(new URL('../README.md', import.meta.url), 'utf8'), /^### Live reads$/m)
   const root = await import('../dist/index.js')
-  assert.equal(Object.keys(root).some((k) => /live/i.test(k)), false, 'the root entry exports nothing live')
+  assert.equal(Object.keys(root).some((k) => /live/i.test(k)), false, 'the root entry stays free of the live client')
 })
 
 test('anonymous and server-key reads subscribe and renew with their own credential', async () => {

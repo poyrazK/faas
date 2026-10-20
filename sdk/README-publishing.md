@@ -102,8 +102,8 @@ until the licensing decision above; set the repository variable
 
 1. installs the locked dependencies without lifecycle scripts and runs
    `npm test` (build, declaration and type tests, unit tests);
-2. checks the packed files, including that the unreleased live-query module
-   (`dist/live`) stays out;
+2. checks the packed files, including the live-read module (`dist/live`)
+   behind `@gregale/data/live` and `@gregale/data/live/react`;
 3. publishes the version in `sdk/data/package.json` unless the registry already
    has it, so a CLI release that does not bump the SDK publishes nothing.
 

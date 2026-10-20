@@ -95,9 +95,12 @@ func (m *Manager) verifyLiveToken(ctx context.Context, c *connection, data []byt
 		// reads are admitted by the live proxy against the route's settings.
 		return data, "", ""
 	}
-	policy := c.endpointConfig().ClientAuth
+	policy, ok := dataAPITokenPolicy(c.liveRoutes(), f.Database)
+	if !ok {
+		policy = c.endpointConfig().ClientAuth
+	}
 	if policy.Mode != AuthModeOIDCJWT {
-		return nil, liveproto.CodeForbidden, "RLS-mode live queries need a realtime endpoint that verifies OIDC tokens"
+		return nil, liveproto.CodeForbidden, "RLS-mode live queries need the Data API's token settings (usage reporting on) or a realtime endpoint that verifies OIDC tokens"
 	}
 	verifier, ok := m.cfg.JWTAuthorizer.(ClaimsAuthorizer)
 	if !ok {
@@ -113,6 +116,20 @@ func (m *Manager) verifyLiveToken(ctx context.Context, c *connection, data []byt
 		return nil, liveproto.CodeInternal, "encode the verified frame"
 	}
 	return out, "", ""
+}
+
+// dataAPITokenPolicy returns how the Data API serving database verifies user
+// tokens, as its runtime last reported, so a live read accepts exactly the
+// tokens a REST read does. ok is false when no route reports it.
+func dataAPITokenPolicy(routes []LiveRoute, database string) (AuthPolicy, bool) {
+	for _, r := range routes {
+		if r.Database != database || r.DataAPIRole == "" || r.DataAPIAccess == nil || r.DataAPIAccess.Auth == nil {
+			continue
+		}
+		issuer, jwks, audience, algorithms := r.DataAPIAccess.Auth.Policy()
+		return AuthPolicy{Mode: AuthModeOIDCJWT, Issuer: issuer, JWKSURL: jwks, Audience: audience, Algorithms: algorithms}, true
+	}
+	return AuthPolicy{}, false
 }
 
 // endpointConfig returns the connection's endpoint as currently registered.

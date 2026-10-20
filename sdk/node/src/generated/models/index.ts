@@ -526,6 +526,7 @@ export type { DataAPIUsageHour } from './DataAPIUsageHour.js';
 export type { DataAPIUsageMonthToDate } from './DataAPIUsageMonthToDate.js';
 export type { DataAPIUsageReport } from './DataAPIUsageReport.js';
 export type { DataAPIUsageReportResponse } from './DataAPIUsageReportResponse.js';
+export type { DataAPIUserAuth } from './DataAPIUserAuth.js';
 export type { DataConnection } from './DataConnection.js';
 export type { DataConnectionCheck } from './DataConnectionCheck.js';
 export type { DataConnectionIssue } from './DataConnectionIssue.js';

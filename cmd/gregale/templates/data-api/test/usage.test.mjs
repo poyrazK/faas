@@ -158,16 +158,17 @@ test('a reached cap answers 429 before admission with the limit, observed value 
   assert.equal((await fetch(`${base}/healthz`)).status !== 429, true, 'health checks are never capped')
 })
 
-test('access settings report schemas, the allowlist and key hashes, never keys', () => {
+test('access settings report schemas, the token issuer, the allowlist and key hashes, never keys', () => {
   const hash = 'ab'.repeat(32)
   const config = runtimeConfig({ ...baseEnv, ...env, DATA_API_SCHEMAS: 'api,catalog', DATA_API_PUBLIC_READ: 'api.products',
     DATA_API_SERVER_KEY_A_SHA256: hash, DATA_API_SERVER_KEY_B_SHA256: 'cd'.repeat(32),
     DATA_API_SERVER_KEY_B_PERMISSIONS: '{"version":1,"access":"read","relations":["api.orders"],"subjects":false}' })
-  assert.deepEqual(accessReport(config), { version: 1, schemas: ['api', 'catalog'], public_read: ['api.products'], server_keys: [
+  const auth = { issuer: 'https://issuer.example', jwks_url: 'https://issuer.example/jwks', audience: 'notes' }
+  assert.deepEqual(accessReport(config), { version: 1, schemas: ['api', 'catalog'], auth, public_read: ['api.products'], server_keys: [
     { slot: 'a', sha256: hash },
     { slot: 'b', sha256: 'cd'.repeat(32), permissions: { access: 'read', relations: ['api.orders'], subjects: false } },
   ] })
-  assert.deepEqual(accessReport(runtimeConfig({ ...baseEnv, ...env })), { version: 1, schemas: ['api'] })
+  assert.deepEqual(accessReport(runtimeConfig({ ...baseEnv, ...env })), { version: 1, schemas: ['api'], auth })
 })
 
 test('access settings go out after start, after a restore and hourly', async () => {

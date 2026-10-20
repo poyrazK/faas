@@ -14746,6 +14746,37 @@ Examples:
 gregale data-api usage shop-data --since 30d
 ```
 
+### data-api live
+
+Live reads: results that stay current over a realtime connection
+
+#### data-api live enable
+
+Enable live queries on the database, usage reporting and a live-only realtime endpoint
+
+`gregale data-api live enable [--scope <SCOPE>] [--no-restart] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--scope <SCOPE>` | environment scope of the Data API&#39;s database binding |  |
+| `--no-restart` | store settings without a fresh restart |  |
+
+Examples:
+
+```sh
+gregale data-api live enable shop-data
+```
+
+#### data-api live status
+
+Show what live reads need and the WebSocket URL
+
+`gregale data-api live status [--scope <SCOPE>] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--scope <SCOPE>` | environment scope of the Data API&#39;s database binding |  |
+
 ### data-api server-key
 
 Manage server keys for trusted backends (RLS still applies)
