@@ -85,6 +85,10 @@ export type CreateDeploymentRequest = {
    */
   mcp_task_migration_override?: boolean;
   /**
+   * Release this deployment to production while a deploy freeze is active; the reason is audited with the freezes it overrode (ADR-20261019071733).
+   */
+  override_freeze?: string;
+  /**
    * Opt this deployment out of temporary startup CPU headroom. Omitted or null preserves the default boost.
    */
   disable_startup_cpu_boost?: boolean | null;

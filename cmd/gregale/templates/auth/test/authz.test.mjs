@@ -77,6 +77,22 @@ test('team reads use verified claims and a scoped transaction and hide upstream 
   assert.deepEqual((await bad('GET', `/orgs/${org}/team`)).body, { status: 500, code: 'internal_error' })
 })
 
+test('serves the organization audit log a page at a time, cursor at full precision', async t => {
+  const id = i => `0b5f2f0e-7a51-4d8f-8a3a-5c1b9d2e6f7${i}`
+  const entry = i => ({ id: id(i), occurred_at: '2026-10-19T10:00:00.123Z', position: `2026-10-19 10:00:00.12345${i}+00`, action: 'member.added' })
+  const pool = fakePool((sql, args) => sql.includes('org_audit_entries') ? { rows: Array.from({ length: Math.min(args[3], 3) }, (_, i) => entry(i)) } : { rows: [] })
+  const call = await serve(t, pool)
+  const first = await call('GET', `/orgs/${org}/audit-log?limit=2`)
+  assert.deepEqual(first.body.entries.map(e => Object.keys(e).includes('position')), [false, false], 'positions stay internal')
+  assert.deepEqual(pool.log.find(q => q.sql.includes('org_audit_entries')).args, [org, null, null, 2])
+  const last = await call('GET', `/orgs/${org}/audit-log?cursor=${first.body.next}`)
+  assert.equal(last.body.next, null, 'a short page is the last')
+  assert.deepEqual(pool.log.filter(q => q.sql.includes('org_audit_entries')).at(-1).args, [org, '2026-10-19 10:00:00.123451+00', id(1), 50])
+  for (const query of ['limit=0', 'limit=101', 'limit=x', 'cursor=nope', `cursor=${Buffer.from('["x","y"]').toString('base64url')}`]) {
+    assert.equal((await call('GET', `/orgs/${org}/audit-log?${query}`)).status, 400, query)
+  }
+})
+
 test('authenticates before any database work', async t => {
   const pool = fakePool(() => ({ rows: [] }))
   const call = await serve(t, pool, { authenticate: async () => { throw new HTTPError(401, 'not_authenticated') } })

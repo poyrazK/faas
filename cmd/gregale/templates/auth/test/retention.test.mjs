@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { createAnonymousPruner, createAuditPruner } from '../retention.mjs'
+import { createAnonymousPruner, createAuditPruner, createOrgAuditPruner } from '../retention.mjs'
 import { limits, runtimeConfig } from '../config.mjs'
 
 function fakePool(remaining) {
@@ -28,6 +28,16 @@ test('prunes old activity in batches, at most once per interval', async () => {
   clock += limits.auditPruneIntervalSeconds * 1000
   await pruner.poke()
   assert.equal(pool.calls.length, 4)
+})
+
+test('the organization audit log follows the same retention', async () => {
+  const pool = fakePool(3)
+  await createOrgAuditPruner({ pool, days: 90, log: () => {} }).poke()
+  assert.match(pool.calls[0].sql, /DELETE FROM gregale_auth\.org_audit_log WHERE id IN/)
+  assert.deepEqual(pool.calls[0].args, [90, limits.auditPruneBatch])
+  const idle = fakePool(0)
+  await createOrgAuditPruner({ pool: idle, days: null }).poke()
+  assert.equal(idle.calls.length, 0, 'off while activity is kept forever')
 })
 
 test('a batch cap bounds one run, and no retention means no pruning', async () => {

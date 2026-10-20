@@ -1,5 +1,5 @@
 // adr: 643
-package state
+package state_test
 
 import (
 	"context"
@@ -10,27 +10,28 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
-func backlogFixtureTimes(t *testing.T, store Store, run *WorkflowRun, created time.Time, fallback *time.Time) {
+func backlogFixtureTimes(t *testing.T, store state.Store, run *state.WorkflowRun, created time.Time, fallback *time.Time) {
 	t.Helper()
 	switch s := store.(type) {
-	case *MemStore:
-		s.mu.Lock()
-		fixture := s.workflowRuns[run.ID]
+	case *state.MemStore:
+		(*s.Mu()).Lock()
+		fixture := (*s.WorkflowRuns())[run.ID]
 		fixture.CreatedAt = created
 		if fallback != nil {
-			fixture.UpdatedAt = fallback.Add(-WorkflowRunStaleAfter)
-			delete(s.workflowRunLeases, run.ID)
+			fixture.UpdatedAt = fallback.Add(-state.WorkflowRunStaleAfter)
+			delete((*s.WorkflowRunLeases()), run.ID)
 		}
-		s.workflowRuns[run.ID] = fixture
-		s.mu.Unlock()
-	case *PgStore:
-		if _, err := s.pool.Exec(t.Context(), "UPDATE workflow_runs SET created_at=$2 WHERE id=$1", run.ID, created); err != nil {
+		(*s.WorkflowRuns())[run.ID] = fixture
+		(*s.Mu()).Unlock()
+	case *state.PgStore:
+		if _, err := (*s.Pool()).Exec(t.Context(), "UPDATE workflow_runs SET created_at=$2 WHERE id=$1", run.ID, created); err != nil {
 			t.Fatal(err)
 		}
 		if fallback != nil {
-			if _, err := s.pool.Exec(t.Context(), "UPDATE workflow_runs SET updated_at=$2,lease_until=NULL WHERE id=$1", run.ID, fallback.Add(-WorkflowRunStaleAfter)); err != nil {
+			if _, err := (*s.Pool()).Exec(t.Context(), "UPDATE workflow_runs SET updated_at=$2,lease_until=NULL WHERE id=$1", run.ID, fallback.Add(-state.WorkflowRunStaleAfter)); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -38,36 +39,36 @@ func backlogFixtureTimes(t *testing.T, store Store, run *WorkflowRun, created ti
 }
 
 func TestWorkflowBacklogSignalsMatchQueueHealth(t *testing.T) {
-	workflowScheduleStores(t, func(t *testing.T, store Store) {
+	state.WorkflowScheduleStores(t, func(t *testing.T, store state.Store) {
 		for _, name := range []string{"pending", "parked_due", "expired_lease", "legacy_expired_lease", "live_claim", "future_schedule", "future_wait", "future_retry", "cancelled", "failed", "nominal_fire", "capacity_blocked"} {
 			t.Run(name, func(t *testing.T) {
-				app, _ := seedWorkflowSchedule(t, store, "allow")
+				app, _ := state.SeedWorkflowSchedule(t, store, "allow")
 				now := time.Now().UTC().Truncate(time.Microsecond)
 				wake := now.Add(-10 * time.Minute)
 				if name == "future_schedule" || name == "future_wait" || name == "future_retry" {
 					wake = now.Add(time.Hour)
 				}
-				run := queueHealthRun(t, store, app, "backlog", "", wake, 0)
+				run := state.QueueHealthRun(t, store, app, "backlog", "", wake, 0)
 				backlogFixtureTimes(t, store, run, now.Add(-4*time.Hour), nil)
 				wantDue := true
 				switch name {
 				case "parked_due", "future_wait":
-					queueHealthRunning(t, store, run)
-					if err := store.ScheduleWorkflowRun(t.Context(), run.ID, WorkflowRunStatusAwaitingEvent, wake); err != nil {
+					state.QueueHealthRunning(t, store, run)
+					if err := store.ScheduleWorkflowRun(t.Context(), run.ID, state.WorkflowRunStatusAwaitingEvent, wake); err != nil {
 						t.Fatal(err)
 					}
 					wantDue = name == "parked_due"
 				case "expired_lease", "legacy_expired_lease", "live_claim":
-					queueHealthRunning(t, store, run)
+					state.QueueHealthRunning(t, store, run)
 					if name == "legacy_expired_lease" {
 						backlogFixtureTimes(t, store, run, now.Add(-4*time.Hour), &wake)
 					} else if name == "expired_lease" {
-						queueHealthFixtureLease(t, store, run, wake)
+						state.QueueHealthFixtureLease(t, store, run, wake)
 					}
 					wantDue = name != "live_claim"
 				case "future_retry":
-					queueHealthRunning(t, store, run)
-					if err := store.CreateWorkflowSteps(t.Context(), run.ID, []*WorkflowStep{{StepName: "work", Status: WorkflowStepStatusPending}}); err != nil {
+					state.QueueHealthRunning(t, store, run)
+					if err := store.CreateWorkflowSteps(t.Context(), run.ID, []*state.WorkflowStep{{StepName: "work", Status: state.WorkflowStepStatusPending}}); err != nil {
 						t.Fatal(err)
 					}
 					if _, err := store.StartWorkflowStep(t.Context(), run.ID, "work", 1, json.RawMessage(`{}`)); err != nil {
@@ -85,7 +86,7 @@ func TestWorkflowBacklogSignalsMatchQueueHealth(t *testing.T) {
 					}
 					wantDue = false
 				case "failed":
-					if err := store.MarkWorkflowRunStatus(t.Context(), run.ID, WorkflowRunStatusFailed, nil, nil); err != nil {
+					if err := store.MarkWorkflowRunStatus(t.Context(), run.ID, state.WorkflowRunStatusFailed, nil, nil); err != nil {
 						t.Fatal(err)
 					}
 					wantDue = false
@@ -93,16 +94,16 @@ func TestWorkflowBacklogSignalsMatchQueueHealth(t *testing.T) {
 					backlogFixtureTimes(t, store, run, now, nil)
 				case "capacity_blocked":
 					for range api.WorkflowDispatchMaxPerApp {
-						queueHealthRunning(t, store, queueHealthRun(t, store, app, "other", "", now, 0))
+						state.QueueHealthRunning(t, store, state.QueueHealthRun(t, store, app, "other", "", now, 0))
 					}
 				}
-				health, err := store.(WorkflowAutomationHealthStore).GetWorkflowAutomationHealth(t.Context(), app.ID, "backlog", now.Add(-time.Hour), now)
+				health, err := store.(state.WorkflowAutomationHealthStore).GetWorkflowAutomationHealth(t.Context(), app.ID, "backlog", now.Add(-time.Hour), now)
 				if err != nil {
 					t.Fatal(err)
 				}
 				at := health.Queue.ObservedAt
 				// Age is current state even when no run falls in the count window.
-				snapshot, err := store.(WorkflowAlertStore).WorkflowAlertSnapshot(t.Context(), app.AccountID, app.ID, at, at)
+				snapshot, err := store.(state.WorkflowAlertStore).WorkflowAlertSnapshot(t.Context(), app.AccountID, app.ID, at, at)
 				if err != nil || math.Abs(snapshot.DueAgeSeconds-health.Queue.OldestDueAgeSeconds) > 0.01 {
 					t.Fatalf("alert=%+v queue=%+v err=%v", snapshot, health.Queue, err)
 				}
@@ -118,30 +119,30 @@ func TestWorkflowBacklogSignalsMatchQueueHealth(t *testing.T) {
 }
 
 func TestWorkflowBacklogSignalsRespectAppAndAccountScope(t *testing.T) {
-	workflowScheduleStores(t, func(t *testing.T, store Store) {
-		app, _ := seedWorkflowSchedule(t, store, "allow")
-		other, err := store.CreateApp(t.Context(), App{AccountID: app.AccountID, Slug: "second-backlog-app", Type: AppTypeApp})
+	state.WorkflowScheduleStores(t, func(t *testing.T, store state.Store) {
+		app, _ := state.SeedWorkflowSchedule(t, store, "allow")
+		other, err := store.CreateApp(t.Context(), state.App{AccountID: app.AccountID, Slug: "second-backlog-app", Type: state.AppTypeApp})
 		if err != nil {
 			t.Fatal(err)
 		}
-		foreign, _ := seedWorkflowSchedule(t, store, "allow")
+		foreign, _ := state.SeedWorkflowSchedule(t, store, "allow")
 		now := time.Now().UTC().Truncate(time.Microsecond)
-		for index, fixture := range []App{app, other, foreign} {
-			run := queueHealthRun(t, store, fixture, "backlog", "", now.Add(-time.Duration(index+1)*time.Minute), 0)
+		for index, fixture := range []state.App{app, other, foreign} {
+			run := state.QueueHealthRun(t, store, fixture, "backlog", "", now.Add(-time.Duration(index+1)*time.Minute), 0)
 			backlogFixtureTimes(t, store, run, now.Add(-4*time.Hour), nil)
 		}
 		for _, tc := range []struct {
 			account, app string
 			age          float64
 		}{{app.AccountID, app.ID, 60}, {app.AccountID, "", 120}, {foreign.AccountID, app.ID, 0}} {
-			snapshot, err := store.(WorkflowAlertStore).WorkflowAlertSnapshot(t.Context(), tc.account, tc.app, now, now)
+			snapshot, err := store.(state.WorkflowAlertStore).WorkflowAlertSnapshot(t.Context(), tc.account, tc.app, now, now)
 			if err != nil || math.Abs(snapshot.DueAgeSeconds-tc.age) > 0.01 {
 				t.Fatalf("scope=%+v snapshot=%+v err=%v", tc, snapshot, err)
 			}
 		}
 		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
-		if _, err := store.(WorkflowAlertStore).WorkflowAlertSnapshot(ctx, app.AccountID, app.ID, now, now); !errors.Is(err, context.Canceled) {
+		if _, err := store.(state.WorkflowAlertStore).WorkflowAlertSnapshot(ctx, app.AccountID, app.ID, now, now); !errors.Is(err, context.Canceled) {
 			t.Fatalf("cancelled read: %v", err)
 		}
 	})

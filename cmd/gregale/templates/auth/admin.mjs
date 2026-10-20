@@ -1,10 +1,12 @@
 import { createHash, createPrivateKey, randomBytes, sign, timingSafeEqual } from 'node:crypto'
 import http from 'node:http'
 import { gotrue, limits } from './config.mjs'
-import { HTTPError, readJSON } from './authz.mjs'
+import { auditColumns, auditPage, auditReply, HTTPError, readJSON } from './authz.mjs'
 import { ssoRoute } from './sso.mjs'
 import { oauthRoute } from './oauth.mjs'
 import { emailRoute } from './emails.mjs'
+import { signupsRoute } from './signups.mjs'
+import { impersonationsRoute, startImpersonation } from './impersonation.mjs'
 
 // /admin/v1: owner administration of an application Auth app (ADR-1190
 // phase 6). The owner holds the key; the app stores only its SHA-256 as
@@ -15,10 +17,12 @@ import { emailRoute } from './emails.mjs'
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
+// adminKeyHashes lists each admin key's ID (the secret name's suffix) and
+// SHA-256, so actions such as impersonation record which key acted.
 export function adminKeyHashes(env) {
   return Object.entries(env)
     .filter(([k, v]) => /^AUTH_ADMIN_KEY_[0-9A-F]{8}$/.test(k) && typeof v === 'string' && /^[0-9a-f]{64}$/.test(v))
-    .map(([, v]) => Buffer.from(v, 'hex'))
+    .map(([k, v]) => ({ id: k.slice(-8), hash: Buffer.from(v, 'hex') }))
 }
 
 export function newAdminKey() {
@@ -26,12 +30,13 @@ export function newAdminKey() {
   return { key, hash: createHash('sha256').update(key).digest('hex') }
 }
 
-function keyMatches(hashes, header) {
+// keyMatches returns the ID of the admin key presented, or null.
+function keyMatches(keys, header) {
   const key = /^Bearer (gaak_[A-Za-z0-9_-]{43})$/.exec(header ?? '')?.[1]
-  if (!key) return false
+  if (!key) return null
   const presented = createHash('sha256').update(key).digest()
   // Compare against every hash so timing does not reveal which key matched.
-  return hashes.reduce((found, hash) => timingSafeEqual(hash, presented) || found, false)
+  return keys.reduce((found, { id, hash }) => timingSafeEqual(hash, presented) ? id : found, null)
 }
 
 // signingKey picks the one ES256 key in GOTRUE_JWT_KEYS that signs. GoTrue
@@ -82,6 +87,34 @@ export function goTrueError({ status, data }) {
 }
 
 // Only these fields leave the app; metadata stays in the database.
+// Custom claims are the keys of a user's app_metadata other than GoTrue's
+// own provider and providers. Only the admin API writes app_metadata, and
+// GoTrue puts it in every access token, so a backend or row-level security
+// reads them as app_metadata.<name> from the next token on.
+const goTrueMetadata = new Set(['provider', 'providers'])
+const claimName = /^[A-Za-z][A-Za-z0-9_]{0,63}$/
+
+export function customClaims(appMetadata) {
+  return Object.fromEntries(Object.entries(appMetadata ?? {}).filter(([name]) => !goTrueMetadata.has(name)))
+}
+
+// claimsChange checks {set, unset} against the user's current claims and
+// returns GoTrue's merge patch (null removes a key) and the result.
+export function claimsChange(current, body) {
+  const plain = value => value !== null && typeof value === 'object' && !Array.isArray(value)
+  if (!plain(body) || Object.keys(body).some(key => key !== 'set' && key !== 'unset')) throw new HTTPError(400, 'invalid_claims')
+  const set = body.set ?? {}, unset = body.unset ?? []
+  if (!plain(set) || !Array.isArray(unset) || (Object.keys(set).length === 0 && unset.length === 0)) throw new HTTPError(400, 'invalid_claims')
+  for (const name of [...Object.keys(set), ...unset]) {
+    if (typeof name !== 'string' || !claimName.test(name) || goTrueMetadata.has(name)) throw new HTTPError(400, 'invalid_claim_name')
+  }
+  if (Object.values(set).some(value => value === null) || unset.some(name => Object.hasOwn(set, name))) throw new HTTPError(400, 'invalid_claims')
+  const next = { ...customClaims(current), ...set }
+  for (const name of unset) delete next[name]
+  if (Buffer.byteLength(JSON.stringify(next)) > limits.customClaimsBytes) throw new HTTPError(400, 'claims_too_large')
+  return { patch: { ...set, ...Object.fromEntries(unset.map(name => [name, null])) }, next }
+}
+
 function userView(u) {
   return {
     id: u.id, email: u.email ?? null, phone: u.phone || null,
@@ -89,6 +122,7 @@ function userView(u) {
     email_confirmed_at: u.email_confirmed_at ?? null, banned_until: u.banned_until ?? null,
     providers: Array.isArray(u.app_metadata?.providers) ? u.app_metadata.providers.filter(p => typeof p === 'string') : [],
     anonymous: u.is_anonymous === true,
+    claims: customClaims(u.app_metadata),
   }
 }
 
@@ -227,13 +261,18 @@ async function activity(query, params) {
 }
 
 // adminRoute returns [status, body] for one authorized request.
-export async function adminRoute({ pool, admin, external, emails = {} }, method, url, body) {
+export async function adminRoute({ pool, admin, external, emails = {}, impersonation = null, keyId = null }, method, url, body) {
   const path = url.pathname.replace(/^\/admin\/v1/, '')
   const parts = path.split('/').filter(Boolean)
   const query = async (sql, args) => (await pool.query(sql, args)).rows
   if (parts[0] === 'sso') return ssoRoute({ query, admin, goTrueError, external }, method, parts, body)
   if (parts[0] === 'oauth') return oauthRoute({ admin, goTrueError }, method, parts, body)
   if (parts[0] === 'emails') return emailRoute({ pool, external, ...emails }, method, parts, body)
+  if (parts[0] === 'signups') return signupsRoute({ pool, mailer: emails.mailer, external, app: emails.app, pageParams, likePattern }, method, parts, url, body)
+  if (parts[0] === 'impersonations') {
+    if (!impersonation) throw new HTTPError(404, 'impersonation_disabled')
+    return impersonationsRoute({ pool }, method, parts, url)
+  }
   const user = parts[0] === 'users' && parts[1] && parts[1] !== 'import' ? (uuid.test(parts[1]) ? parts[1] : null) : undefined
   if (user === null) throw new HTTPError(400, 'invalid_id')
 
@@ -254,6 +293,18 @@ export async function adminRoute({ pool, admin, external, emails = {} }, method,
       query('SELECT count(*)::int AS sessions FROM auth.sessions WHERE user_id = $1 AND (not_after IS NULL OR not_after > now())', [user]),
     ])
     return [200, { user: userView(response.data), organizations, active_sessions: sessions }]
+  }
+  if (user && parts[2] === 'claims' && parts.length === 3 && method === 'PATCH') {
+    const current = await admin('GET', `/admin/users/${user}`)
+    if (current.status !== 200) throw goTrueError(current)
+    const { patch } = claimsChange(current.data?.app_metadata, body)
+    const response = await admin('PUT', `/admin/users/${user}`, { app_metadata: patch })
+    if (response.status !== 200) throw goTrueError(response)
+    return [200, { claims: customClaims(response.data?.app_metadata) }]
+  }
+  if (user && parts[2] === 'impersonate' && parts.length === 3 && method === 'POST') {
+    if (!impersonation) throw new HTTPError(404, 'impersonation_disabled')
+    return startImpersonation({ pool, admin, goTrueError, siteURL: impersonation.siteURL, keyId }, user, body)
   }
   if (user && parts[2] === 'sign-out' && parts.length === 3 && method === 'POST') {
     // GoTrue has no admin sign-out; deleting sessions ends their refresh
@@ -279,6 +330,11 @@ export async function adminRoute({ pool, admin, external, emails = {} }, method,
       ORDER BY o.created_at DESC, o.id LIMIT $3 OFFSET $4`, [search, likePattern(search), perPage, (page - 1) * perPage])
     return [200, { organizations: rows.map(({ total, ...org }) => org), total: rows[0]?.total ?? 0, page, per_page: perPage }]
   }
+  if (parts[0] === 'orgs' && parts.length === 3 && parts[2] === 'audit-log' && method === 'GET') {
+    if (!uuid.test(parts[1])) throw new HTTPError(400, 'invalid_id')
+    const { at, id, limit } = auditPage(url.searchParams)
+    return auditReply(await query(`SELECT ${auditColumns} FROM gregale_auth.org_audit_feed($1, $2, $3, $4)`, [parts[1], at, id, limit]), limit)
+  }
   if (parts[0] === 'orgs' && parts.length === 2 && method === 'GET') {
     if (!uuid.test(parts[1])) throw new HTTPError(400, 'invalid_id')
     const [org] = await query('SELECT id, slug, name, created_at FROM gregale_auth.organizations WHERE id = $1', [parts[1]])
@@ -293,7 +349,7 @@ export async function adminRoute({ pool, admin, external, emails = {} }, method,
 }
 
 // createAdminHandler serves /admin/v1. Without a key it does not exist.
-export function createAdminHandler({ pool, admin, keys, origins = [], external, emails = {} }) {
+export function createAdminHandler({ pool, admin, keys, origins = [], external, emails = {}, impersonation = null }) {
   const allowed = new Set(origins)
   return async (req, res) => {
     const headers = { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }
@@ -307,10 +363,11 @@ export function createAdminHandler({ pool, admin, keys, origins = [], external, 
       return res.end()
     }
     try {
-      if (!keyMatches(keys, req.headers.authorization)) { req.resume(); throw new HTTPError(401, 'invalid_admin_key') }
+      const keyId = keyMatches(keys, req.headers.authorization)
+      if (!keyId) { req.resume(); throw new HTTPError(401, 'invalid_admin_key') }
       const url = new URL(req.url, 'http://admin.invalid')
       const body = await readJSON(req, limits.adminBodyBytes)
-      const [status, payload] = await adminRoute({ pool, admin, external, emails }, req.method, url, body)
+      const [status, payload] = await adminRoute({ pool, admin, external, emails, impersonation, keyId }, req.method, url, body)
       reply(status, payload)
     } catch (err) {
       const failure = err instanceof HTTPError ? err : new HTTPError(500, 'internal_error')

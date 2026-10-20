@@ -1,6 +1,9 @@
-package state
+package state_test
 
-import "testing"
+import (
+	"github.com/onebox-faas/faas/pkg/state"
+	"testing"
+)
 
 func TestGitHubActionsRepositoryFromSubject(t *testing.T) {
 	tests := []struct {
@@ -12,31 +15,31 @@ func TestGitHubActionsRepositoryFromSubject(t *testing.T) {
 	}{
 		{
 			name:    "legacy subject",
-			issuer:  githubActionsOIDCIssuer,
+			issuer:  state.GithubActionsOIDCIssuer,
 			subject: "repo:octocat/hello:environment:production",
 			want:    "octocat/hello",
 			wantOK:  true,
 		},
 		{
 			name:    "immutable subject",
-			issuer:  githubActionsOIDCIssuer,
+			issuer:  state.GithubActionsOIDCIssuer,
 			subject: "repo:octocat@123456/hello@789012:environment:production",
 			want:    "octocat/hello",
 			wantOK:  true,
 		},
 		{
 			name:    "immutable subject requires ids on both components",
-			issuer:  githubActionsOIDCIssuer,
+			issuer:  state.GithubActionsOIDCIssuer,
 			subject: "repo:octocat@123456/hello:environment:production",
 		},
 		{
 			name:    "malformed owner id",
-			issuer:  githubActionsOIDCIssuer,
+			issuer:  state.GithubActionsOIDCIssuer,
 			subject: "repo:octocat@owner/hello@789012:environment:production",
 		},
 		{
 			name:    "malformed repo id",
-			issuer:  githubActionsOIDCIssuer,
+			issuer:  state.GithubActionsOIDCIssuer,
 			subject: "repo:octocat@123456/hello@repo:environment:production",
 		},
 		{
@@ -47,7 +50,7 @@ func TestGitHubActionsRepositoryFromSubject(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, ok := githubActionsRepositoryFromSubject(tt.issuer, tt.subject)
+			got, ok := state.GithubActionsRepositoryFromSubject(tt.issuer, tt.subject)
 			if got != tt.want || ok != tt.wantOK {
 				t.Fatalf("githubActionsRepositoryFromSubject() = (%q, %t), want (%q, %t)", got, ok, tt.want, tt.wantOK)
 			}
@@ -56,8 +59,8 @@ func TestGitHubActionsRepositoryFromSubject(t *testing.T) {
 }
 
 func TestGitHubActionsRepositoryIdentityFromSubject(t *testing.T) {
-	identity, ok := githubActionsRepositoryIdentityFromSubject(
-		githubActionsOIDCIssuer,
+	identity, ok := state.GithubActionsRepositoryIdentityFromSubject(
+		state.GithubActionsOIDCIssuer,
 		"repo:octocat@123456/hello@789012:environment:production",
 	)
 	if !ok {
@@ -70,7 +73,7 @@ func TestGitHubActionsRepositoryIdentityFromSubject(t *testing.T) {
 		"repo:octocat@0/hello@789012:ref:refs/heads/main",
 		"repo:octocat@9223372036854775808/hello@789012:ref:refs/heads/main",
 	} {
-		if _, ok := githubActionsRepositoryIdentityFromSubject(githubActionsOIDCIssuer, subject); ok {
+		if _, ok := state.GithubActionsRepositoryIdentityFromSubject(state.GithubActionsOIDCIssuer, subject); ok {
 			t.Errorf("accepted invalid immutable IDs in %q", subject)
 		}
 	}

@@ -1,10 +1,13 @@
 //go:build !no_pg
 
-package state
+package state_test
 
-import "testing"
+import (
+	"github.com/onebox-faas/faas/pkg/state"
+	"testing"
+)
 
 func TestPgApplicationStandardRuntimeConfigPublication(t *testing.T) {
-	s, _ := runtimeCapturePGStore(t)
-	standardRuntimeConfigPublication(t, s)
+	s, _ := state.RuntimeCapturePGStore(t)
+	state.StandardRuntimeConfigPublication(t, s)
 }

@@ -8,7 +8,7 @@
 // (category, name) ordering guarantee + the ErrNotFound path so a
 // future refactor that swaps the map for a sorted slice (or
 // delegates to the pgstore) doesn't drift.
-package state
+package state_test
 
 import (
 	"context"
@@ -16,15 +16,16 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // seedAlertPresetsCatalog writes a deterministic 4-row catalog into
 // the store. The names are out of (category, name) order so the
 // ListAlertPresets sort assertion has signal (if the sort step
 // regresses, the test fires before any other consumer does).
-func seedAlertPresetsCatalog(t *testing.T, m *MemStore) []AlertPreset {
+func seedAlertPresetsCatalog(t *testing.T, m *state.MemStore) []state.AlertPreset {
 	t.Helper()
-	rows := []AlertPreset{
+	rows := []state.AlertPreset{
 		{
 			Name:                   "p95_latency_1s",
 			DisplayName:            "p95 exceeds one second",
@@ -79,7 +80,7 @@ func seedAlertPresetsCatalog(t *testing.T, m *MemStore) []AlertPreset {
 		},
 	}
 	for _, p := range rows {
-		m.alertPresets[p.Name] = p
+		(*m.AlertPresets())[p.Name] = p
 	}
 	return rows
 }
@@ -90,7 +91,7 @@ func seedAlertPresetsCatalog(t *testing.T, m *MemStore) []AlertPreset {
 // a sort drift (e.g. an inadvertent swap to `>` on the secondary
 // key).
 func TestMemStoreAlertPresets_ListOrdered(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	seedAlertPresetsCatalog(t, m)
 	got, err := m.ListAlertPresets(context.Background())
 	if err != nil {
@@ -112,7 +113,7 @@ func TestMemStoreAlertPresets_ListOrdered(t *testing.T) {
 // TestMemStoreAlertPresets_ByName asserts a known row returns
 // the right fields and an unknown row returns ErrNotFound.
 func TestMemStoreAlertPresets_ByName(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	seedAlertPresetsCatalog(t, m)
 	got, err := m.AlertPresetByName(context.Background(), "cert_expiring_14d")
 	if err != nil {
@@ -129,7 +130,7 @@ func TestMemStoreAlertPresets_ByName(t *testing.T) {
 	}
 	// Unknown name returns ErrNotFound so the handler can
 	// translate to 404 (ErrAlertPresetInvalid).
-	if _, err := m.AlertPresetByName(context.Background(), "nope"); !errors.Is(err, ErrNotFound) {
+	if _, err := m.AlertPresetByName(context.Background(), "nope"); !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("err = %v; want ErrNotFound", err)
 	}
 }
@@ -139,7 +140,7 @@ func TestMemStoreAlertPresets_ByName(t *testing.T) {
 // seeded. The handler relies on this so it can range over the
 // result without a nil check.
 func TestMemStoreAlertPresets_EmptyCatalog(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	got, err := m.ListAlertPresets(context.Background())
 	if err != nil {
 		t.Fatalf("ListAlertPresets: %v", err)
@@ -155,7 +156,7 @@ func TestMemStoreAlertPresets_EmptyCatalog(t *testing.T) {
 // gotOrder is a tiny helper used in error messages so a sort-drift
 // failure lists the full ordering at once instead of forcing a
 // second pass through -run -v.
-func gotOrder(rows []AlertPreset) []string {
+func gotOrder(rows []state.AlertPreset) []string {
 	out := make([]string, 0, len(rows))
 	for _, r := range rows {
 		out = append(out, r.Name)

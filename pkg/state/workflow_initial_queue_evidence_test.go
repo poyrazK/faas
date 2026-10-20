@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -9,33 +9,34 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 // adr: 1272
 func TestWorkflowInitialQueuePreparedEvidence(t *testing.T) {
 	for _, paused := range []bool{false, true} {
-		workflowScheduleStores(t, func(t *testing.T, s Store) {
+		state.WorkflowScheduleStores(t, func(t *testing.T, s state.Store) {
 			ctx := context.Background()
-			run, app, r, p := seedInitialAutomatic(t, s)
-			operator := s.(WorkflowRecoveryPolicyOperatorStore)
+			run, app, r, p := state.SeedInitialAutomatic(t, s)
+			operator := s.(state.WorkflowRecoveryPolicyOperatorStore)
 			if paused {
-				if _, err := operator.ControlWorkflowRecoveryPolicy(ctx, app.AccountID, app.ID, controlRequest(p, "pause")); err != nil {
+				if _, err := operator.ControlWorkflowRecoveryPolicy(ctx, app.AccountID, app.ID, state.ControlRequest(p, "pause")); err != nil {
 					t.Fatal(err)
 				}
 			}
 			retained := func() api.WorkflowInitialRecoveryReview {
 				t.Helper()
-				if m, ok := s.(*MemStore); ok {
-					m.mu.Lock()
-					defer m.mu.Unlock()
-					return recoveryPolicyClone(m.initialRecoveryReviews[canonicalMemUUID(r.ID)])
+				if m, ok := s.(*state.MemStore); ok {
+					(*m.Mu()).Lock()
+					defer (*m.Mu()).Unlock()
+					return state.RecoveryPolicyClone((*m.InitialRecoveryReviews())[state.CanonicalMemUUID(r.ID)])
 				}
-				raw, err := sqlc.New().WorkflowInitialReviewGet(ctx, s.(*PgStore).pool, sqlc.WorkflowInitialReviewGetParams{AccountID: mustPgUUID(app.AccountID), AppID: mustPgUUID(app.ID), ID: mustPgUUID(r.ID)})
+				raw, err := sqlc.New().WorkflowInitialReviewGet(ctx, (*s.(*state.PgStore).Pool()), sqlc.WorkflowInitialReviewGetParams{AccountID: state.MustPgUUID(app.AccountID), AppID: state.MustPgUUID(app.ID), ID: state.MustPgUUID(r.ID)})
 				if err != nil {
 					t.Fatal(err)
 				}
-				saved, err := decodeInitialReview(raw)
+				saved, err := state.DecodeInitialReview(raw)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -65,7 +66,7 @@ func TestWorkflowInitialQueuePreparedEvidence(t *testing.T) {
 			if !reflect.DeepEqual(before, retained()) {
 				t.Fatal("queue changed prepared review or receipts")
 			}
-			if _, err := operator.GetWorkflowRecoveryAutomaticQueue(ctx, uuid.NewString(), app.ID); !errors.Is(err, ErrNotFound) {
+			if _, err := operator.GetWorkflowRecoveryAutomaticQueue(ctx, uuid.NewString(), app.ID); !errors.Is(err, state.ErrNotFound) {
 				t.Fatalf("scope %v", err)
 			}
 		})

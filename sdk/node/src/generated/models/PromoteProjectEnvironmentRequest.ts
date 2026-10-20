@@ -15,5 +15,9 @@ export type PromoteProjectEnvironmentRequest = {
    * Short-lived approval for a protected target environment.
    */
   approval_token?: string;
+  /**
+   * Promote into production while a deploy freeze covers one of the apps; the reason is audited (ADR-20261019071733).
+   */
+  override_freeze?: string;
 };
 

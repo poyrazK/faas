@@ -6,7 +6,7 @@
 // cmd/apid/handlers_dashboard.go::renderAlertRuleDetail is
 // exercised in the suite.
 
-package state
+package state_test
 
 import (
 	"context"
@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // TestListDeploymentAuditByAlertRule_FiltersAndCaps pins:
@@ -25,7 +26,7 @@ import (
 //	(c) an explicit limit caps the result,
 //	(d) rows without an AlertRuleID are excluded.
 func TestListDeploymentAuditByAlertRule_FiltersAndCaps(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	ctx := context.Background()
 
 	depID := uuid.New()
@@ -36,9 +37,9 @@ func TestListDeploymentAuditByAlertRule_FiltersAndCaps(t *testing.T) {
 	base := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
 	rules := []*uuid.UUID{&targetRule, &otherRule, nil, &targetRule}
 	for i, ridPtr := range rules {
-		entry := DeploymentAudit{
+		entry := state.DeploymentAudit{
 			DeploymentID: depID,
-			Kind:         DeployRolloutStarted,
+			Kind:         state.DeployRolloutStarted,
 			Actor:        "test",
 			At:           base.Add(time.Duration(i) * time.Second),
 			AlertRuleID:  ridPtr,
@@ -89,7 +90,7 @@ func TestListDeploymentAuditByAlertRule_FiltersAndCaps(t *testing.T) {
 // uuid.Parse error path: a malformed alertRuleID surfaces a
 // wrapped error so the handler can render a 400.
 func TestListDeploymentAuditByAlertRule_InvalidUUID(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	_, err := m.ListDeploymentAuditByAlertRule(context.Background(), "not-a-uuid", 10)
 	if err == nil {
 		t.Fatal("expected error for malformed uuid; got nil")
@@ -101,13 +102,13 @@ func TestListDeploymentAuditByAlertRule_InvalidUUID(t *testing.T) {
 // AlertRuleID are read back with the same pointer value (memstore
 // clones via pointer copy, see memstore.go around line 10039).
 func TestAppendDeploymentAudit_PreservesAlertRuleID(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	ctx := context.Background()
 	ruleID := uuid.New()
 	depID := uuid.New()
-	_, err := m.AppendDeploymentAudit(ctx, DeploymentAudit{
+	_, err := m.AppendDeploymentAudit(ctx, state.DeploymentAudit{
 		DeploymentID: depID,
-		Kind:         DeployAlertRuleFired,
+		Kind:         state.DeployAlertRuleFired,
 		Actor:        "test",
 		At:           time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC),
 		AlertRuleID:  &ruleID,

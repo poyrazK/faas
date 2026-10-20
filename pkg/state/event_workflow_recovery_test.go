@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestWorkflowRecoveryJobs(t *testing.T) {
@@ -19,19 +20,19 @@ func TestWorkflowRecoveryJobs(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			for _, scenario := range []string{"queue", "revision", "count", "generation", "cancel"} {
 				t.Run(scenario, func(t *testing.T) {
-					workflowScheduleStores(t, func(t *testing.T, store Store) {
+					state.WorkflowScheduleStores(t, func(t *testing.T, store state.Store) {
 						ctx := context.Background()
-						app, _ := seedEventWorkflow(t, store)
-						author := store.(AutomationStore)
-						draft := mutateForTest(t, author, app.ID, "paid", "save", 0, automationDraft("paid", "/paid", `{"type":"event","source":"billing.*","event_type":"invoice.paid"}`), false)
-						published := mutateForTest(t, author, app.ID, "paid", "publish", draft.Version, nil, true)
+						app, _ := state.SeedEventWorkflow(t, store)
+						author := store.(state.AutomationStore)
+						draft := state.MutateForTest(t, author, app.ID, "paid", "save", 0, state.AutomationDraft("paid", "/paid", `{"type":"event","source":"billing.*","event_type":"invoice.paid"}`), false)
+						published := state.MutateForTest(t, author, app.ID, "paid", "publish", draft.Version, nil, true)
 						id := uuid.NewString()
-						work := publishWorkflowEvent(t, store, app, id)
+						work := state.PublishWorkflowEvent(t, store, app, id)
 						recipient := work.RecipientSnapshot[0]
-						failure := PublishedEventRecipientProgress{State: PublishedEventRecipientFailed, Attempts: 1, UpdatedAt: time.Now().UTC()}
+						failure := state.PublishedEventRecipientProgress{State: state.PublishedEventRecipientFailed, Attempts: 1, UpdatedAt: time.Now().UTC()}
 						target := api.EventWorkflowRecoveryTarget{EventID: id, SubscriptionID: recipient.ID}
 						if modern {
-							routing := store.(PublishedEventRecipientWorkStore)
+							routing := store.(state.PublishedEventRecipientWorkStore)
 							if err := routing.InitializePublishedEventRecipients(ctx, work, time.Now().UTC()); err != nil {
 								t.Fatal(err)
 							}
@@ -45,10 +46,10 @@ func TestWorkflowRecoveryJobs(t *testing.T) {
 								t.Fatal(err)
 							}
 						} else {
-							if err := store.(PublishedEventRecipientProgressStore).RecordPublishedEventRecipientProgress(ctx, work.ID, work.ClaimToken, recipient.ID, failure); err != nil {
+							if err := store.(state.PublishedEventRecipientProgressStore).RecordPublishedEventRecipientProgress(ctx, work.ID, work.ClaimToken, recipient.ID, failure); err != nil {
 								t.Fatal(err)
 							}
-							if err := store.(PublishedEventWorkStore).FinishPublishedEvent(ctx, work.ID, work.ClaimToken, nil); err != nil {
+							if err := store.(state.PublishedEventWorkStore).FinishPublishedEvent(ctx, work.ID, work.ClaimToken, nil); err != nil {
 								t.Fatal(err)
 							}
 						}
@@ -60,7 +61,7 @@ func TestWorkflowRecoveryJobs(t *testing.T) {
 							wrong := int64(999)
 							req.WorkflowRouting.Events[0].Generation = &wrong
 						}
-						recovery := store.(EventRecoveryStore)
+						recovery := store.(state.EventRecoveryStore)
 						preview, err := recovery.PreviewEventRecovery(ctx, app.AccountID, app.ID, req)
 						if err != nil || preview.MatchedCount != 1 {
 							t.Fatalf("preview=%+v err=%v", preview, err)
@@ -75,13 +76,13 @@ func TestWorkflowRecoveryJobs(t *testing.T) {
 						}
 						changed := req
 						changed.WorkflowRouting = &api.EventWorkflowRecoveryPlan{Name: "paid", PublishedVersion: published.PublishedVersion + 1, Source: "billing.stripe", Events: []api.EventWorkflowRecoveryTarget{target}}
-						if _, err := recovery.CreateEventRecovery(ctx, app.AccountID, app.ID, changed); !errors.Is(err, ErrEventRecoveryRequestConflict) {
+						if _, err := recovery.CreateEventRecovery(ctx, app.AccountID, app.ID, changed); !errors.Is(err, state.ErrEventRecoveryRequestConflict) {
 							t.Fatalf("request conflict=%v", err)
 						}
-						if pg, ok := store.(*PgStore); ok {
-							recovery = NewPgStore(pg.pool.Pool)
+						if pg, ok := store.(*state.PgStore); ok {
+							recovery = state.NewPgStore((*pg.Pool()).Pool)
 						}
-						if _, err := recovery.GetEventRecovery(ctx, uuid.NewString(), job.ID); !errors.Is(err, ErrNotFound) {
+						if _, err := recovery.GetEventRecovery(ctx, uuid.NewString(), job.ID); !errors.Is(err, state.ErrNotFound) {
 							t.Fatalf("tenant lookup=%v", err)
 						}
 						if _, err := recovery.PauseEventRecovery(ctx, app.AccountID, job.ID); err != nil {
@@ -94,7 +95,7 @@ func TestWorkflowRecoveryJobs(t *testing.T) {
 							t.Fatal(err)
 						}
 						if scenario == "revision" {
-							mutateForTest(t, author, app.ID, "paid", "publish", published.Version, nil, false)
+							state.MutateForTest(t, author, app.ID, "paid", "publish", published.Version, nil, false)
 						}
 						if scenario == "cancel" {
 							if _, err := recovery.CancelEventRecovery(ctx, app.AccountID, job.ID); err != nil {
@@ -136,27 +137,27 @@ func TestWorkflowRecoveryJobs(t *testing.T) {
 }
 
 func TestWorkflowRecoveryJobRateAndPartialProgress(t *testing.T) {
-	workflowScheduleStores(t, func(t *testing.T, store Store) {
+	state.WorkflowScheduleStores(t, func(t *testing.T, store state.Store) {
 		ctx := context.Background()
-		app, _ := seedEventWorkflow(t, store)
-		author := store.(AutomationStore)
-		draft := mutateForTest(t, author, app.ID, "paid", "save", 0, automationDraft("paid", "/paid", `{"type":"event","source":"billing.*","event_type":"invoice.paid"}`), false)
-		published := mutateForTest(t, author, app.ID, "paid", "publish", draft.Version, nil, true)
+		app, _ := state.SeedEventWorkflow(t, store)
+		author := store.(state.AutomationStore)
+		draft := state.MutateForTest(t, author, app.ID, "paid", "save", 0, state.AutomationDraft("paid", "/paid", `{"type":"event","source":"billing.*","event_type":"invoice.paid"}`), false)
+		published := state.MutateForTest(t, author, app.ID, "paid", "publish", draft.Version, nil, true)
 		targets := []api.EventWorkflowRecoveryTarget{}
 		for range 2 {
 			id := uuid.NewString()
-			work := publishWorkflowEvent(t, store, app, id)
+			work := state.PublishWorkflowEvent(t, store, app, id)
 			recipient := work.RecipientSnapshot[0]
-			failure := PublishedEventRecipientProgress{State: PublishedEventRecipientFailed, Attempts: 1, UpdatedAt: time.Now().UTC()}
-			if err := store.(PublishedEventRecipientProgressStore).RecordPublishedEventRecipientProgress(ctx, work.ID, work.ClaimToken, recipient.ID, failure); err != nil {
+			failure := state.PublishedEventRecipientProgress{State: state.PublishedEventRecipientFailed, Attempts: 1, UpdatedAt: time.Now().UTC()}
+			if err := store.(state.PublishedEventRecipientProgressStore).RecordPublishedEventRecipientProgress(ctx, work.ID, work.ClaimToken, recipient.ID, failure); err != nil {
 				t.Fatal(err)
 			}
-			if err := store.(PublishedEventWorkStore).FinishPublishedEvent(ctx, work.ID, work.ClaimToken, nil); err != nil {
+			if err := store.(state.PublishedEventWorkStore).FinishPublishedEvent(ctx, work.ID, work.ClaimToken, nil); err != nil {
 				t.Fatal(err)
 			}
 			targets = append(targets, api.EventWorkflowRecoveryTarget{EventID: id, SubscriptionID: recipient.ID})
 		}
-		recovery := store.(EventRecoveryStore)
+		recovery := store.(state.EventRecoveryStore)
 		ordinary, err := recovery.PreviewEventRecovery(ctx, app.AccountID, app.ID, api.EventRecoveryRequest{IncludeNonRetryable: true})
 		if err != nil || ordinary.MatchedCount != 0 {
 			t.Fatalf("ordinary selection=%+v err=%v", ordinary, err)
@@ -182,7 +183,7 @@ func TestWorkflowRecoveryJobRateAndPartialProgress(t *testing.T) {
 		if err != nil || saved.PendingCount != 1 || saved.QueuedCount != 1 {
 			t.Fatalf("partial=%+v %v", saved, err)
 		}
-		preflight, err := store.(EventRecoveryPreflightStore).GetEventRecoveryPreflight(ctx, app.AccountID, job.ID, now)
+		preflight, err := store.(state.EventRecoveryPreflightStore).GetEventRecoveryPreflight(ctx, app.AccountID, job.ID, now)
 		if err != nil || preflight.UnknownCount != 1 || preflight.ReceiptProtectionUntil == nil {
 			t.Fatalf("preflight=%+v %v", preflight, err)
 		}

@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -8,17 +8,18 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 type runtimeIncarnationTestStore interface {
-	ComputeNodeRuntimeIdentityStore
-	CreateComputeNode(context.Context, ComputeNode) (ComputeNode, error)
+	state.ComputeNodeRuntimeIdentityStore
+	CreateComputeNode(context.Context, state.ComputeNode) (state.ComputeNode, error)
 	DeleteComputeNode(context.Context, string) error
 }
 
-func runtimeIncarnationNode(t *testing.T, s runtimeIncarnationTestStore) ComputeNode {
+func runtimeIncarnationNode(t *testing.T, s runtimeIncarnationTestStore) state.ComputeNode {
 	t.Helper()
-	n, err := s.CreateComputeNode(t.Context(), ComputeNode{Name: "native-lineage-" + uuid.NewString(), TargetURL: "unix:///tmp/native-lineage", VPCPUs: 2, MemMB: 1024, MaxConcurrency: 5, AdmissionCeilingMB: 1024, VCPUBudget: 2, Active: true})
+	n, err := s.CreateComputeNode(t.Context(), state.ComputeNode{Name: "native-lineage-" + uuid.NewString(), TargetURL: "unix:///tmp/native-lineage", VPCPUs: 2, MemMB: 1024, MaxConcurrency: 5, AdmissionCeilingMB: 1024, VCPUBudget: 2, Active: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -26,13 +27,13 @@ func runtimeIncarnationNode(t *testing.T, s runtimeIncarnationTestStore) Compute
 }
 
 func TestMemRuntimeIncarnationHistory(t *testing.T) {
-	s := NewMemStore()
+	s := state.NewMemStore()
 	runtimeIncarnationLifecycle(t, s, func(n string) runtimeadmission.Identity {
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		return runtimeadmission.Identity{NodeID: n, Incarnation: s.computeNodeRuntimeIncarnations[n], ProtocolVersion: s.computeNodeRuntimeProtocols[n]}
+		(*s.Mu()).Lock()
+		defer (*s.Mu()).Unlock()
+		return runtimeadmission.Identity{NodeID: n, Incarnation: (*s.ComputeNodeRuntimeIncarnations())[n], ProtocolVersion: (*s.ComputeNodeRuntimeProtocols())[n]}
 	})
-	if len(s.computeNodeRuntimeHistory) != 0 {
+	if len((*s.ComputeNodeRuntimeHistory())) != 0 {
 		t.Fatal("node erasure retained startup history")
 	}
 }
@@ -50,7 +51,7 @@ func runtimeIncarnationLifecycle(t *testing.T, s runtimeIncarnationTestStore, cu
 	}
 	changed := a
 	changed.ProtocolVersion = runtimeadmission.ArtifactProtocolVersion
-	if err := s.RegisterComputeNodeRuntimeIdentity(ctx, changed); !errors.Is(err, ErrApplicationStandardRuntimeStale) {
+	if err := s.RegisterComputeNodeRuntimeIdentity(ctx, changed); !errors.Is(err, state.ErrApplicationStandardRuntimeStale) {
 		t.Fatalf("startup protocol changed: %v", err)
 	}
 	b := changed
@@ -66,7 +67,7 @@ func runtimeIncarnationLifecycle(t *testing.T, s runtimeIncarnationTestStore, cu
 				want = b
 			}
 			err := s.RegisterComputeNodeRuntimeIdentity(ctx, want)
-			if i == 0 && err != nil || i != 0 && err != nil && !errors.Is(err, ErrApplicationStandardRuntimeStale) {
+			if i == 0 && err != nil || i != 0 && err != nil && !errors.Is(err, state.ErrApplicationStandardRuntimeStale) {
 				errs <- err
 			}
 		}(i)
@@ -80,7 +81,7 @@ func runtimeIncarnationLifecycle(t *testing.T, s runtimeIncarnationTestStore, cu
 		t.Fatalf("late registration replaced current startup: %+v", got)
 	}
 	for _, old := range []runtimeadmission.Identity{a, changed} {
-		if err := s.RegisterComputeNodeRuntimeIdentity(ctx, old); !errors.Is(err, ErrApplicationStandardRuntimeStale) {
+		if err := s.RegisterComputeNodeRuntimeIdentity(ctx, old); !errors.Is(err, state.ErrApplicationStandardRuntimeStale) {
 			t.Fatalf("superseded startup reactivated: %v", err)
 		}
 	}
@@ -89,7 +90,7 @@ func runtimeIncarnationLifecycle(t *testing.T, s runtimeIncarnationTestStore, cu
 	}
 	unknown := b
 	unknown.NodeID = uuid.NewString()
-	if err := s.RegisterComputeNodeRuntimeIdentity(ctx, unknown); !errors.Is(err, ErrNotFound) {
+	if err := s.RegisterComputeNodeRuntimeIdentity(ctx, unknown); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("foreign node registered: %v", err)
 	}
 	canceled, cancel := context.WithCancel(ctx)
@@ -105,19 +106,19 @@ func runtimeIncarnationLifecycle(t *testing.T, s runtimeIncarnationTestStore, cu
 	if err := s.DeleteComputeNode(ctx, n.ID); err != nil {
 		t.Fatalf("unused node erasure: %v", err)
 	}
-	if err := s.RegisterComputeNodeRuntimeIdentity(ctx, b); !errors.Is(err, ErrNotFound) {
+	if err := s.RegisterComputeNodeRuntimeIdentity(ctx, b); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("erased node registered: %v", err)
 	}
 }
 
 func TestMemRuntimeIncarnationRestartCannotReanimateGrant(t *testing.T) {
-	runtimeIncarnationGrantReplay(t, NewMemStore())
+	runtimeIncarnationGrantReplay(t, state.NewMemStore())
 }
 
 // Storage fixtures simulate receipts; they do not establish native acceptance.
-func runtimeIncarnationGrantReplay(t *testing.T, s nativeArtifactTestStore) {
+func runtimeIncarnationGrantReplay(t *testing.T, s state.NativeArtifactTestStore) {
 	t.Helper()
-	ins, receipt := issueConsumedNativeFixture(t, s)
+	ins, receipt := state.IssueConsumedNativeFixture(t, s)
 	ctx := t.Context()
 	old := receipt.Binding
 	restarted := runtimeadmission.Identity{NodeID: old.NodeID, Incarnation: uuid.NewString(), ProtocolVersion: runtimeadmission.ProtocolVersion}
@@ -126,37 +127,37 @@ func runtimeIncarnationGrantReplay(t *testing.T, s nativeArtifactTestStore) {
 	}
 	original := runtimeadmission.Identity{NodeID: old.NodeID, Incarnation: old.Incarnation, ProtocolVersion: old.ProtocolVersion}
 	for range 3 {
-		if err := s.RegisterComputeNodeRuntimeIdentity(ctx, original); !errors.Is(err, ErrApplicationStandardRuntimeStale) {
+		if err := s.RegisterComputeNodeRuntimeIdentity(ctx, original); !errors.Is(err, state.ErrApplicationStandardRuntimeStale) {
 			t.Fatalf("old registration reanimated grant: %v", err)
 		}
-		if _, err := s.PublishInstanceApplicationStandardRuntime(ctx, ins.State, StateRunning, receipt); !errors.Is(err, ErrApplicationStandardRuntimeStale) {
+		if _, err := s.PublishInstanceApplicationStandardRuntime(ctx, ins.State, state.StateRunning, receipt); !errors.Is(err, state.ErrApplicationStandardRuntimeStale) {
 			t.Fatalf("superseded receipt published: %v", err)
 		}
-		assertNativeBootUnpublished(t, s, ins)
+		state.AssertNativeBootUnpublished(t, s, ins)
 	}
 	restarted.Incarnation = uuid.NewString()
 	restarted.ProtocolVersion = runtimeadmission.ArtifactProtocolVersion
 	if err := s.RegisterComputeNodeRuntimeIdentity(ctx, restarted); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.RegisterComputeNodeRuntimeIdentity(ctx, original); !errors.Is(err, ErrApplicationStandardRuntimeStale) {
+	if err := s.RegisterComputeNodeRuntimeIdentity(ctx, original); !errors.Is(err, state.ErrApplicationStandardRuntimeStale) {
 		t.Fatalf("later restart restored earlier authority: %v", err)
 	}
-	if _, err := s.PublishInstanceApplicationStandardRuntime(ctx, ins.State, StateRunning, receipt); !errors.Is(err, ErrApplicationStandardRuntimeStale) {
+	if _, err := s.PublishInstanceApplicationStandardRuntime(ctx, ins.State, state.StateRunning, receipt); !errors.Is(err, state.ErrApplicationStandardRuntimeStale) {
 		t.Fatalf("later restart restored old grant: %v", err)
 	}
-	assertNativeBootUnpublished(t, s, ins)
+	state.AssertNativeBootUnpublished(t, s, ins)
 }
 
 func TestMemRuntimeIncarnationPublishedReceiptRemainsFenced(t *testing.T) {
-	runtimeIncarnationPublishedReceipt(t, NewMemStore())
+	runtimeIncarnationPublishedReceipt(t, state.NewMemStore())
 }
 
-func runtimeIncarnationPublishedReceipt(t *testing.T, s contractTestStore) {
+func runtimeIncarnationPublishedReceipt(t *testing.T, s state.ContractTestStore) {
 	t.Helper()
 	ctx := t.Context()
-	ins, r := issueConsumedNativeFixture(t, s)
-	if _, err := s.PublishInstanceApplicationStandardRuntime(ctx, ins.State, StateRunning, r); err != nil {
+	ins, r := state.IssueConsumedNativeFixture(t, s)
+	if _, err := s.PublishInstanceApplicationStandardRuntime(ctx, ins.State, state.StateRunning, r); err != nil {
 		t.Fatal(err)
 	}
 	if current, err := s.GetInstanceApplicationStandardRuntimeReceipt(ctx, ins.ID); err != nil || !current.Equal(r) {
@@ -166,14 +167,14 @@ func runtimeIncarnationPublishedReceipt(t *testing.T, s contractTestStore) {
 	if err := s.RegisterComputeNodeRuntimeIdentity(ctx, newer); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.GetInstanceApplicationStandardRuntimeReceipt(ctx, ins.ID); !errors.Is(err, ErrApplicationStandardRuntimeStale) {
+	if _, err := s.GetInstanceApplicationStandardRuntimeReceipt(ctx, ins.ID); !errors.Is(err, state.ErrApplicationStandardRuntimeStale) {
 		t.Fatalf("restart retained old residency authority: %v", err)
 	}
 	old := runtimeadmission.Identity{NodeID: r.Binding.NodeID, Incarnation: r.Binding.Incarnation, ProtocolVersion: r.Binding.ProtocolVersion}
-	if err := s.RegisterComputeNodeRuntimeIdentity(ctx, old); !errors.Is(err, ErrApplicationStandardRuntimeStale) {
+	if err := s.RegisterComputeNodeRuntimeIdentity(ctx, old); !errors.Is(err, state.ErrApplicationStandardRuntimeStale) {
 		t.Fatalf("old process reactivated published authority: %v", err)
 	}
-	if _, err := s.GetInstanceApplicationStandardRuntimeReceipt(ctx, ins.ID); !errors.Is(err, ErrApplicationStandardRuntimeStale) {
+	if _, err := s.GetInstanceApplicationStandardRuntimeReceipt(ctx, ins.ID); !errors.Is(err, state.ErrApplicationStandardRuntimeStale) {
 		t.Fatalf("replayed startup restored receipt: %v", err)
 	}
 }
