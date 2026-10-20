@@ -11,6 +11,10 @@ import (
 // provider could not be reached; the request is safe to retry (ADR-1502).
 const CodeBillingProviderUnavailable = "billing_provider_unavailable"
 
+// CodeStatementInvoiceExportInProgress reports that another attempt is
+// exporting the statement; retry once it ends (ADR-20261019180000).
+const CodeStatementInvoiceExportInProgress = "statement_invoice_export_in_progress"
+
 // PutBillingConnectionRequest stores the account's own key for a billing
 // provider (ADR-1502, ADR-1507). Stripe takes a restricted key (rk_live_ or
 // rk_test_) with write access to invoices and invoice items, Paddle an API
