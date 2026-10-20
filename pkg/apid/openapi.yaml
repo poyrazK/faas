@@ -28791,6 +28791,153 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/freezes:
+    get:
+      tags: [deployments]
+      operationId: listReleaseFreezes
+      summary: List deploy freezes (ADR-20261019071733).
+      description: "Unlifted freezes that have not ended: active and upcoming windows, weekly windows and after-rollback policies. `app` narrows the list to the freezes covering one app."
+      parameters:
+        - name: app
+          in: query
+          required: false
+          description: Only freezes covering this app's slug.
+          schema: { type: string }
+      responses:
+        '200':
+          description: The account's freezes.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ListReleaseFreezesResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    post:
+      tags: [deployments]
+      operationId: createReleaseFreeze
+      summary: Freeze production releases (ADR-20261019071733).
+      description: "Creates a window, weekly or after-rollback freeze for one app or, without `app`, for every app of the account. While a freeze is active, new production deployments are refused with `release_frozen` unless the request carries `override_freeze`."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateReleaseFreezeRequest' }
+            example: {"app": "my-api", "kind": "window", "ends_at": "2026-12-27T09:00:00Z", "reason": "holiday freeze"}
+      responses:
+        '201':
+          description: The freeze.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReleaseFreeze' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/freezes/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: The freeze's ID.
+        schema: { type: string, format: uuid }
+    delete:
+      tags: [deployments]
+      operationId: liftReleaseFreeze
+      summary: Lift a deploy freeze (ADR-20261019071733).
+      description: "Stops the freeze from withholding releases. The freeze is kept, with who lifted it and when, for the audit trail. 404 `release_freeze_not_found` when no unlifted freeze has this ID."
+      responses:
+        '200':
+          description: The lifted freeze.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReleaseFreeze' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/freeze-status:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [deployments]
+      operationId: getReleaseFreezeStatus
+      summary: Whether production releases of an app are frozen now (ADR-20261019071733).
+      description: "Lists the freezes that would refuse a production release of the app now, and the freeze that starts next within a week."
+      responses:
+        '200':
+          description: The app's freeze status.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReleaseFreezeStatus' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/release-gates:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [deployments]
+      operationId: listReleaseGates
+      summary: List an app's release gates (ADR-20261019071734).
+      description: "Gates on the app's SLOs, new error groups and custom metrics. The canary circuit breaker and the post-release watch abort or roll back a release that fails one."
+      responses:
+        '200':
+          description: The app's release gates.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ListReleaseGatesResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    post:
+      tags: [deployments]
+      operationId: createReleaseGate
+      summary: Add a release gate (ADR-20261019071734).
+      description: "An slo gate names one of the app's SLOs; a new_errors gate counts error groups the release produced first; a custom_metric gate bounds a custom metric's average. Omitted numbers take Gregale's defaults."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateReleaseGateRequest' }
+            example: {"name": "checkout-slo", "kind": "slo", "slo": "checkout", "max_burn_rate": 10}
+      responses:
+        '201':
+          description: The release gate.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReleaseGate' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/release-gates/{name}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: name
+        in: path
+        required: true
+        description: The release gate's name.
+        schema: { type: string, pattern: '^[a-z][a-z0-9_-]{0,62}$' }
+    delete:
+      tags: [deployments]
+      operationId: deleteReleaseGate
+      summary: Remove a release gate (ADR-20261019071734).
+      description: "404 `release_gate_not_found` when the app has no gate with this name."
+      responses:
+        '200':
+          description: The removed release gate.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReleaseGate' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/apps/{slug}/config/rollback:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -87031,6 +87178,11 @@ components:
         no_triggers:
           type: boolean
           description: "Skip reconciling trigger declarations from the uploaded gregale manifest at commit time."
+        override_freeze:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: "Commit this upload to production while a deploy freeze is active; the reason is audited with the freezes it overrode (ADR-20261019071733)."
 
     UploadStartResponse:
       description: "Body of POST /v1/uploads response. The session row persists for 24h; the reaper (cmd/apid/upload_session_reaper.go) flips `status='open'` rows whose `expires_at` has passed to 'expired' on a 5-min ticker. `chunk_size` is server-decided (8 MiB default; 16 MiB for Scale)."
@@ -87715,6 +87867,11 @@ components:
         mcp_task_migration_override:
           type: boolean
           description: "One-use operator override to allow this deployment to cut over while queued MCP tasks still need handler versions it does not provide."
+        override_freeze:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: "Release this source tarball to production while a deploy freeze is active; the reason is audited (ADR-20261019071733)."
         disable_startup_cpu_boost:
           type: [boolean, "null"]
           description: "Opt this source-tarball deployment out of temporary startup CPU headroom. Omitted or null preserves the default boost."
@@ -87808,7 +87965,7 @@ components:
         kind: { type: string, enum: [advance, hold, abort] }
         rule:
           type: string
-          enum: [advance_healthy, advance_probe_evidence, advance_low_traffic, advance_no_predecessor, advance_manual, hold_insufficient_samples, hold_signal_unavailable, hold_observation_unavailable, hold_health_alert, abort_5xx, abort_p95_latency, abort_cold_boot_p95, abort_cpu_per_request, abort_dependency_errors, abort_oom, abort_crash_loop, abort_manual, abort_worker_lease_expired, abort_post_release_5xx, abort_post_release_p95_latency]
+          enum: [advance_healthy, advance_probe_evidence, advance_low_traffic, advance_no_predecessor, advance_manual, hold_insufficient_samples, hold_signal_unavailable, hold_observation_unavailable, hold_health_alert, abort_5xx, abort_p95_latency, abort_cold_boot_p95, abort_cpu_per_request, abort_dependency_errors, abort_oom, abort_crash_loop, abort_manual, abort_worker_lease_expired, abort_post_release_5xx, abort_post_release_p95_latency, abort_release_gate, abort_post_release_gate]
           description: "Closed set; the breaker rules reuse the canary_progression_circuit_breaker_total event names."
         summary: { type: string, maxLength: 256, description: "The circuit breaker's aggregate-only reason." }
         step: { type: integer, minimum: 0, description: "Zero-based canary step that was evaluated." }
@@ -87820,6 +87977,11 @@ components:
         stable: { $ref: '#/components/schemas/RolloutDecisionSample' }
         probes_included: { type: boolean, description: "The 5xx sample included synthetic probes of the app (ADR-1446)." }
         signals: { $ref: '#/components/schemas/RolloutDecisionSignals' }
+        gates:
+          type: array
+          maxItems: 10
+          items: { $ref: '#/components/schemas/ReleaseGateResult' }
+          description: "The release gates judged with this decision (ADR-20261019071734)."
         decided_at: { type: string, format: date-time }
 
     RolloutDecisionSample:
@@ -96169,6 +96331,11 @@ components:
         mcp_task_migration_override:
           type: boolean
           description: "One-use operator override to allow this deployment to cut over while outstanding MCP tasks still need handler versions it does not provide."
+        override_freeze:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: "Release this deployment to production while a deploy freeze is active; the reason is audited with the freezes it overrode (ADR-20261019071733)."
         disable_startup_cpu_boost:
           type: [boolean, "null"]
           description: "Opt this deployment out of temporary startup CPU headroom. Omitted or null preserves the default boost."
@@ -98383,6 +98550,10 @@ components:
         platform_tenant_required:
           type: boolean
           description: "Override the customer identity policy for selected workloads in this scan/apply pair (Hobby and above). Omitted uses Compose declarations and preserves existing app policy. Apply must repeat the same override as scan."
+        override_freeze:
+          type: string
+          maxLength: 200
+          description: "Apply only: release frozen apps to production anyway; the reason is audited (ADR-20261019071733)."
 
     ProjectSummaryResponse:
       description: Project list item with its persisted organization owner.
@@ -99219,6 +99390,7 @@ components:
           pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$'
         promotion_token: { type: string, minLength: 1, description: Exact promotion token returned by the preview endpoint. }
         approval_token: { type: string, minLength: 1, description: Short-lived approval for a protected target environment. }
+        override_freeze: { type: string, minLength: 1, maxLength: 200, description: "Promote into production while a deploy freeze covers one of the apps; the reason is audited (ADR-20261019071733)." }
 
     ProjectEnvironmentPromotionWorkloadResponse:
       description: Result for one workload in an environment promotion.
@@ -99593,6 +99765,11 @@ components:
         mcp_task_migration_override:
           type: boolean
           description: "Source-ref deployment grant consumed once to permit cutover despite outstanding tasks requiring omitted handler versions."
+        override_freeze:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: "Release this source ref to production while a deploy freeze is active; the reason is audited (ADR-20261019071733)."
         disable_startup_cpu_boost:
           type: [boolean, "null"]
           description: "Opt this source-ref deployment out of temporary startup CPU headroom. Omitted or null preserves the default boost."
@@ -103938,6 +104115,117 @@ components:
       properties:
         revisions: { type: array, items: { $ref: '#/components/schemas/ConfigRevision' } }
         guard: { $ref: '#/components/schemas/ConfigGuard' }
+    ReleaseFreezeWeekly:
+      description: "A weekly freeze window: it opens on each listed day at `start` in `time_zone` and lasts `duration_minutes`, so it may run past midnight or into the next week."
+      type: object
+      required: [days, start, duration_minutes, time_zone]
+      properties:
+        days:
+          type: array
+          minItems: 1
+          items: { type: string, enum: [sun, mon, tue, wed, thu, fri, sat] }
+          description: Weekdays the window opens on.
+        start: { type: string, pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$', description: "Local opening time, HH:MM." }
+        duration_minutes: { type: integer, minimum: 1, maximum: 10080, description: How long each window lasts. }
+        time_zone: { type: string, maxLength: 64, description: "IANA time zone, such as Europe/Istanbul or UTC." }
+    ReleaseFreeze:
+      description: "A deploy freeze on production releases of one app or, without `app`, of every app of the account (ADR-20261019071733)."
+      type: object
+      required: [id, kind, reason, source, created_by, created_at, active]
+      properties:
+        id: { type: string, format: uuid }
+        app: { type: string, description: "The covered app's slug; omitted for an account-wide freeze." }
+        kind: { type: string, enum: [window, weekly, after_rollback] }
+        starts_at: { type: string, format: date-time, description: "Window start." }
+        ends_at: { type: string, format: date-time, description: "Window end; omitted for a window that lasts until lifted." }
+        weekly: { $ref: '#/components/schemas/ReleaseFreezeWeekly' }
+        after_rollback_minutes: { type: integer, minimum: 1, maximum: 1440, description: "How long an after-rollback policy freezes an app Gregale rolled back automatically." }
+        reason: { type: string, maxLength: 200 }
+        source: { type: string, enum: [manual, automatic_rollback], description: "automatic_rollback for the window an after-rollback policy created." }
+        source_deployment_id: { type: string, format: uuid, description: "The rolled-back deployment behind an automatic freeze." }
+        created_by: { type: string }
+        created_at: { type: string, format: date-time }
+        active: { type: boolean, description: Whether the freeze withholds production releases now. }
+        next_starts_at: { type: string, format: date-time, description: "When an inactive window or weekly freeze next starts, within a week." }
+    CreateReleaseFreezeRequest:
+      description: "Creates a freeze. A window takes `starts_at` (default now) and optional `ends_at`; a weekly freeze takes `weekly`; an after-rollback policy takes `after_rollback_minutes`."
+      type: object
+      required: [kind, reason]
+      properties:
+        app: { type: string, description: "App slug; omit to freeze every app of the account." }
+        kind: { type: string, enum: [window, weekly, after_rollback] }
+        starts_at: { type: string, format: date-time, description: "Window start; default now." }
+        ends_at: { type: string, format: date-time, description: "Window end; omit to freeze until lifted." }
+        weekly: { $ref: '#/components/schemas/ReleaseFreezeWeekly' }
+        after_rollback_minutes: { type: integer, minimum: 1, maximum: 1440, description: "Freeze length after each automatic rollback." }
+        reason: { type: string, minLength: 1, maxLength: 200 }
+    ListReleaseFreezesResponse:
+      description: "Unlifted freezes that have not ended, oldest first."
+      type: object
+      required: [freezes]
+      properties:
+        freezes: { type: array, items: { $ref: '#/components/schemas/ReleaseFreeze' } }
+    ReleaseFreezeStatus:
+      description: "Whether a production release of the app would be refused now."
+      type: object
+      required: [app, frozen, active]
+      properties:
+        app: { type: string }
+        frozen: { type: boolean }
+        active: { type: array, items: { $ref: '#/components/schemas/ReleaseFreeze' }, description: "The freezes refusing a production release now." }
+        next: { $ref: '#/components/schemas/ReleaseFreeze' }
+    ReleaseGate:
+      description: "One of an app's release gates (ADR-20261019071734)."
+      type: object
+      required: [name, kind, min_samples, created_by, created_at]
+      properties:
+        name: { type: string, pattern: '^[a-z][a-z0-9_-]{0,62}$' }
+        kind: { type: string, enum: [slo, new_errors, custom_metric] }
+        slo: { type: string, description: "slo gates: the SLO judged." }
+        max_burn_rate: { type: integer, minimum: 1, maximum: 1000, description: "slo gates: the burn rate that fails the gate." }
+        max_new_groups: { type: integer, minimum: 0, maximum: 100, description: "new_errors gates: new error groups allowed." }
+        min_events: { type: integer, minimum: 1, maximum: 100000, description: "new_errors gates: events before a group counts." }
+        metric: { type: string, description: "custom_metric gates: the custom metric." }
+        comparison: { type: string, enum: [below, above], description: "custom_metric gates: which side of the threshold fails." }
+        threshold: { type: number, description: "custom_metric gates: the bound on the metric's average." }
+        min_samples: { type: integer, minimum: 1, maximum: 1000000, description: "Requests or metric values a release needs before the gate is judged." }
+        created_by: { type: string }
+        created_at: { type: string, format: date-time }
+    CreateReleaseGateRequest:
+      description: "Adds a release gate. Give exactly one kind's fields; omitted numbers take Gregale's defaults."
+      type: object
+      required: [name, kind]
+      properties:
+        name: { type: string, pattern: '^[a-z][a-z0-9_-]{0,62}$' }
+        kind: { type: string, enum: [slo, new_errors, custom_metric] }
+        slo: { type: string, description: "slo gates: the name of one of the app's SLOs." }
+        max_burn_rate: { type: integer, minimum: 1, maximum: 1000, description: "slo gates: default 10." }
+        max_new_groups: { type: integer, minimum: 0, maximum: 100, description: "new_errors gates: default 0." }
+        min_events: { type: integer, minimum: 1, maximum: 100000, description: "new_errors gates: default 3." }
+        metric: { type: string, pattern: '^[a-z][a-z0-9_]{0,62}$', description: "custom_metric gates: the custom metric's name." }
+        comparison: { type: string, enum: [below, above], description: "custom_metric gates: fail when the average is below or above the threshold." }
+        threshold: { type: number, description: "custom_metric gates: the bound." }
+        min_samples: { type: integer, minimum: 1, maximum: 1000000, description: "Default 20." }
+    ListReleaseGatesResponse:
+      description: "An app's release gates, by name."
+      type: object
+      required: [gates]
+      properties:
+        gates: { type: array, items: { $ref: '#/components/schemas/ReleaseGate' } }
+    ReleaseGateResult:
+      description: "One judged release gate in a rollout decision. Aggregates only: no routes, messages or metric labels."
+      type: object
+      required: [name, kind, passed, summary, observed, bound, samples]
+      properties:
+        name: { type: string }
+        kind: { type: string, enum: [slo, new_errors, custom_metric] }
+        passed: { type: boolean }
+        observed: { type: number, description: "The burn rate, new error groups, or metric average." }
+        bound: { type: number, description: "The value that fails the gate." }
+        samples: { type: integer, format: int64, minimum: 0, description: "The release's requests, new-error events, or metric values." }
+        baseline_bad_fraction: { type: number, description: "slo gates: the predecessor's bad fraction." }
+        error_classes: { type: array, maxItems: 5, items: { type: string }, description: "new_errors gates: the new groups' error classes." }
+        summary: { type: string, description: "What the gate measured, in one line." }
     ConfigRollbackRequest:
       description: "The config revision whose variables a rollback restores (ADR-1451)."
       type: object
@@ -108569,6 +108857,10 @@ components:
           type: array
           items: { $ref: '#/components/schemas/ReleaseRestorePoint' }
           description: "rollback_crosses_release: how to restore each managed PostgreSQL database to before those releases (ADR-1448)."
+        freezes:
+          type: array
+          items: { $ref: '#/components/schemas/ReleaseFreeze' }
+          description: "release_frozen: the freezes refusing the release (ADR-20261019071733)."
         type: { type: string, format: uri-reference, example: "https://gregale.dev/docs/errors/validation_failed"}
         title: { type: string , example: "Validation failed"}
         status: { type: integer , example: 422}

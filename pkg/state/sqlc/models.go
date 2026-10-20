@@ -1121,6 +1121,24 @@ type AppRegistryCredential struct {
 	LastUsedAt        pgtype.Timestamptz
 }
 
+type AppReleaseGate struct {
+	ID           pgtype.UUID
+	AccountID    pgtype.UUID
+	AppID        pgtype.UUID
+	Name         string
+	Kind         string
+	SloID        pgtype.UUID
+	MaxBurnRate  pgtype.Int4
+	MaxNewGroups pgtype.Int4
+	MinEvents    pgtype.Int4
+	MetricName   pgtype.Text
+	Comparison   pgtype.Text
+	Threshold    pgtype.Float8
+	MinSamples   int32
+	CreatedBy    string
+	CreatedAt    pgtype.Timestamptz
+}
+
 type AppResourceAccount struct {
 	AppID                  pgtype.UUID
 	ID                     pgtype.UUID
@@ -11907,6 +11925,27 @@ type ReleaseBundle struct {
 	DaemonHashes []byte
 	CreatedAt    pgtype.Timestamptz
 	AppliedAt    pgtype.Timestamptz
+}
+
+type ReleaseFreeze struct {
+	ID                    pgtype.UUID
+	AccountID             pgtype.UUID
+	AppID                 pgtype.UUID
+	Kind                  string
+	StartsAt              pgtype.Timestamptz
+	EndsAt                pgtype.Timestamptz
+	WeeklyDays            pgtype.Int2
+	WeeklyStartMinute     pgtype.Int2
+	WeeklyDurationMinutes pgtype.Int4
+	TimeZone              pgtype.Text
+	AfterRollbackMinutes  pgtype.Int4
+	Reason                string
+	Source                string
+	SourceDeploymentID    pgtype.UUID
+	CreatedBy             string
+	CreatedAt             pgtype.Timestamptz
+	LiftedAt              pgtype.Timestamptz
+	LiftedBy              pgtype.Text
 }
 
 type RequestAuditEvent struct {
