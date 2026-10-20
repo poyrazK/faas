@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/routerequirements"
 )
@@ -27,8 +28,8 @@ routes:
 func TestRoutesPlanServerSnapshotExportAndGate(t *testing.T) {
 	for _, status := range []string{"ready", "partial"} {
 		t.Run(status, func(t *testing.T) {
-			resetJSONOut(t)
-			setPreviewTestAuth(t)
+			main.ResetJSONOut(t)
+			main.SetPreviewTestAuth(t)
 			dir := t.TempDir()
 			requirements, destination := filepath.Join(dir, "routes.yaml"), filepath.Join(dir, "plan.json")
 			if err := os.WriteFile(requirements, []byte(routePlanConfig), 0o600); err != nil {
@@ -54,15 +55,15 @@ func TestRoutesPlanServerSnapshotExportAndGate(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				writeJSONTest(w, plan)
+				main.WriteJSONTest(w, plan)
 			}))
 			defer server.Close()
 			t.Setenv("FAAS_API", server.URL)
 			var out bytes.Buffer
-			oldOut := osStdout
-			osStdout = &out
-			t.Cleanup(func() { osStdout = oldOut })
-			code := run([]string{"routes", "plan", "my-api", "--requirements", requirements, "--out", destination, "--fail-on-unresolved", "--json"})
+			oldOut := (*main.OsStdout)
+			(*main.OsStdout) = &out
+			t.Cleanup(func() { (*main.OsStdout) = oldOut })
+			code := main.Run([]string{"routes", "plan", "my-api", "--requirements", requirements, "--out", destination, "--fail-on-unresolved", "--json"})
 			wantCode := 0
 			if status == "partial" {
 				wantCode = 1
@@ -94,8 +95,8 @@ func TestRoutesPlanServerSnapshotExportAndGate(t *testing.T) {
 }
 
 func TestRoutesPlanInvalidInputsAndExistingOutputBeforeNetwork(t *testing.T) {
-	resetJSONOut(t)
-	setPreviewTestAuth(t)
+	main.ResetJSONOut(t)
+	main.SetPreviewTestAuth(t)
 	var calls int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls++; http.NotFound(w, r) }))
 	defer server.Close()
@@ -120,7 +121,7 @@ func TestRoutesPlanInvalidInputsAndExistingOutputBeforeNetwork(t *testing.T) {
 		{"my-api", "--requirements", requirements, "--out", destination},
 		{"my-api", "--requirements", requirements, "--out", link},
 	} {
-		if code := cmdRoutesPlan(args); code != 1 {
+		if code := main.CmdRoutesPlan(args); code != 1 {
 			t.Fatalf("%v: exit = %d", args, code)
 		}
 	}
@@ -136,10 +137,10 @@ func TestRoutesPlanInvalidInputsAndExistingOutputBeforeNetwork(t *testing.T) {
 func TestRoutePlanArtifactDoesNotReplaceRacingDestination(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "plan.json")
-	if err := writeRoutePolicyPlan(path, []byte("first")); err != nil {
+	if err := main.WriteRoutePolicyPlan(path, []byte("first")); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeRoutePolicyPlan(path, []byte("second")); err == nil {
+	if err := main.WriteRoutePolicyPlan(path, []byte("second")); err == nil {
 		t.Fatal("planner replaced an existing destination")
 	}
 	body, _ := os.ReadFile(path)
@@ -150,7 +151,7 @@ func TestRoutePlanArtifactDoesNotReplaceRacingDestination(t *testing.T) {
 	if err := os.Symlink(path, link); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeRoutePolicyPlan(link, []byte("unsafe")); err == nil {
+	if err := main.WriteRoutePolicyPlan(link, []byte("unsafe")); err == nil {
 		t.Fatal("planner followed destination symlink")
 	}
 	temporary, _ := filepath.Glob(filepath.Join(dir, ".gregale-route-plan-*.tmp"))
@@ -160,16 +161,16 @@ func TestRoutePlanArtifactDoesNotReplaceRacingDestination(t *testing.T) {
 }
 
 func TestRoutesPlanHelpIsLocalAndRendererSanitizesCodes(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	var out bytes.Buffer
-	oldOut := osStdout
-	osStdout = &out
-	t.Cleanup(func() { osStdout = oldOut })
-	if code := run([]string{"routes", "plan", "--help"}); code != 0 || !strings.Contains(out.String(), "--requirements") {
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &out
+	t.Cleanup(func() { (*main.OsStdout) = oldOut })
+	if code := main.Run([]string{"routes", "plan", "--help"}); code != 0 || !strings.Contains(out.String(), "--requirements") {
 		t.Fatalf("missing local help: %d %s", code, out.String())
 	}
 	out.Reset()
-	renderRoutePolicyPlan(&out, routerequirements.PolicyPlan{App: "my-api", Status: "blocked",
+	main.RenderRoutePolicyPlan(&out, routerequirements.PolicyPlan{App: "my-api", Status: "blocked",
 		Unresolved: []routerequirements.PlanUnresolved{{Method: "POST", Path: "/checkout", Code: "app:\x1b[31m", Requirement: "throttle"}}})
 	if strings.ContainsRune(out.String(), '\x1b') {
 		t.Fatal("renderer included terminal control sequence")

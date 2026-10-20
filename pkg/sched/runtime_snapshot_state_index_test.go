@@ -1,4 +1,4 @@
-package sched
+package sched_test
 
 // adr: 171 — durable state-backed snapshot lookup preserves resolver fallback.
 
@@ -8,10 +8,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-func recordForState(entry RuntimeSnapshot) state.RuntimeSnapshotRecord {
+func recordForState(entry sched.RuntimeSnapshot) state.RuntimeSnapshotRecord {
 	key, _ := entry.Identity.Key()
 	return state.RuntimeSnapshotRecord{
 		Profile:             entry.Identity.Profile,
@@ -37,11 +38,11 @@ func recordForState(entry RuntimeSnapshot) state.RuntimeSnapshotRecord {
 
 func TestStateRuntimeSnapshotIndexResolvesAndRetires(t *testing.T) {
 	store := state.NewMemStore()
-	entry := validRuntimeSnapshot()
+	entry := sched.ValidRuntimeSnapshot()
 	if _, err := store.PublishRuntimeSnapshot(context.Background(), recordForState(entry)); err != nil {
 		t.Fatalf("PublishRuntimeSnapshot: %v", err)
 	}
-	index := NewStateRuntimeSnapshotIndex(store)
+	index := sched.NewStateRuntimeSnapshotIndex(store)
 	key, _ := entry.Identity.Key()
 	got, err := index.LookupRuntimeSnapshot(context.Background(), key)
 	if err != nil {
@@ -51,25 +52,25 @@ func TestStateRuntimeSnapshotIndexResolvesAndRetires(t *testing.T) {
 		t.Fatalf("lookup = %#v, want %#v", got, entry)
 	}
 
-	request := validRuntimeSnapshotRequest()
-	catalog := NewRuntimeSnapshotCatalog(index, runtimeSnapshotVerifierFunc(func(context.Context, RuntimeSnapshot) error { return nil }))
+	request := sched.ValidRuntimeSnapshotRequest()
+	catalog := sched.NewRuntimeSnapshotCatalog(index, sched.RuntimeSnapshotVerifierFunc(func(context.Context, sched.RuntimeSnapshot) error { return nil }))
 	plan, err := catalog.Resolve(context.Background(), request)
-	if err != nil || plan.Mode != RuntimeSnapshotRestore {
+	if err != nil || plan.Mode != sched.RuntimeSnapshotRestore {
 		t.Fatalf("Resolve = %#v, %v", plan, err)
 	}
 	if err := store.RetireRuntimeSnapshot(context.Background(), key, time.Unix(2, 0)); err != nil {
 		t.Fatalf("RetireRuntimeSnapshot: %v", err)
 	}
 	plan, err = catalog.Resolve(context.Background(), request)
-	if err != nil || plan.Mode != RuntimeSnapshotColdBoot || plan.FallbackReason != RuntimeSnapshotFallbackRetired {
+	if err != nil || plan.Mode != sched.RuntimeSnapshotColdBoot || plan.FallbackReason != sched.RuntimeSnapshotFallbackRetired {
 		t.Fatalf("retired Resolve = %#v, %v", plan, err)
 	}
 }
 
 func TestStateRuntimeSnapshotIndexMapsMissingRows(t *testing.T) {
-	index := NewStateRuntimeSnapshotIndex(state.NewMemStore())
+	index := sched.NewStateRuntimeSnapshotIndex(state.NewMemStore())
 	_, err := index.LookupRuntimeSnapshot(context.Background(), "missing")
-	if !errors.Is(err, ErrRuntimeSnapshotNotFound) {
+	if !errors.Is(err, sched.ErrRuntimeSnapshotNotFound) {
 		t.Fatalf("LookupRuntimeSnapshot = %v, want ErrRuntimeSnapshotNotFound", err)
 	}
 }

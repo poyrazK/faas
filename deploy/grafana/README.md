@@ -68,7 +68,7 @@ signal behind quiet pause's soft CPU guarantee. UID
 fixtures in `pkg/promqlrules/testdata/frozen_tier.test.yml`. Runbook:
 `docs/runbooks/FaasFrozenTier.md`.
 
-## `customer-operations.json` (ADR-1285)
+## `customer-operations.json` (ADR-20261016123221)
 
 Customer Operations. The **Pending Operations** row shows accepted, running,
 waiting and reconciliation counts (`schedd_customer_operations`), waits by

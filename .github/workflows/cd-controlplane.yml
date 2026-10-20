@@ -84,10 +84,6 @@ on:
           fleet runner host is unavailable; hosted jobs queue behind CI.
         type: boolean
         default: false
-      maintenance_mode:
-        description: "Planned window with legacy writers stopped before incompatible migrations"
-        type: boolean
-        default: false
   workflow_dispatch:  # manual trigger for deliberate deployment
     inputs:
       deploy_environment:
@@ -134,10 +130,6 @@ on:
           fleet runner host is unavailable; hosted jobs queue behind CI.
         type: boolean
         default: false
-      maintenance_mode:
-        description: "Planned window with legacy writers stopped before incompatible migrations"
-        type: boolean
-        default: false
 
 concurrency:
   group: cd-cp-${{ inputs.deploy_environment }}-${{ inputs.release_tag || 'units' }}
@@ -165,7 +157,6 @@ jobs:
       # compute hosts. Keep the shared storage.env credential read-only.
       APID_STORAGE_LIFECYCLE_ENV: ${{ secrets.COMPUTE_IMAGED_STORAGE_ENV }}
       RELEASE_TAG: ${{ inputs.release_tag }}
-      MAINTENANCE_MODE: ${{ inputs.maintenance_mode }}
       # The critical / best-effort service split is owned by
       # pkg/daemonunitspec (Entry.Critical) and shipped as
       # deploy/etc/daemons.json; the env lists that used to live here were
@@ -368,13 +359,28 @@ jobs:
             test -s /etc/faas/storage.env
             grep -Eq '^FAAS_STORAGE_BACKEND=(oci|gcs)$' /etc/faas/storage.env
             getent group faas >/dev/null
-            install -o root -g faas -m 0440 "$remote_stage" /etc/faas/apid-storage.env
+            # Unchanged bytes keep their modification time, so deployctl can
+            # still hand apid off instead of restarting it (see the
+            # credentials step's install_if_changed).
+            if [[ -e /etc/faas/apid-storage.env ]] && cmp -s "$remote_stage" /etc/faas/apid-storage.env; then
+              chown root:faas /etc/faas/apid-storage.env
+              chmod 0440 /etc/faas/apid-storage.env
+            else
+              install -o root -g faas -m 0440 "$remote_stage" /etc/faas/apid-storage.env
+            fi
             install -d -o root -g root -m 0755 /etc/systemd/system/faas-apid.service.d
-            cat > /etc/systemd/system/faas-apid.service.d/99-storage-lifecycle.conf <<'CREDENTIALS'
+            dropin=/etc/systemd/system/faas-apid.service.d/99-storage-lifecycle.conf
+            dropin_stage="$(mktemp)"
+            cat > "$dropin_stage" <<'CREDENTIALS'
           [Service]
           EnvironmentFile=/etc/faas/apid-storage.env
           CREDENTIALS
-            chmod 0644 /etc/systemd/system/faas-apid.service.d/99-storage-lifecycle.conf
+            if [[ -e "$dropin" ]] && cmp -s "$dropin_stage" "$dropin"; then
+              chmod 0644 "$dropin"
+            else
+              install -o root -g root -m 0644 "$dropin_stage" "$dropin"
+            fi
+            rm -f -- "$dropin_stage"
             rm -f -- \
               /etc/faas/oci-e2e.env \
               /etc/systemd/system/faas-apid.service.d/99-codex-oci-source.conf \
@@ -418,6 +424,7 @@ jobs:
           install -m 0644 deploy/ansible/roles/prometheus/files/faas.rules.yml "${BUNDLE_ROOT}/prometheus/faas.rules.yml"
           install -m 0644 deploy/ansible/roles/prometheus/files/bridge.rules.yml "${BUNDLE_ROOT}/prometheus/bridge.rules.yml"
           install -m 0644 deploy/ansible/roles/prometheus/files/pg_backup.rules.yml "${BUNDLE_ROOT}/prometheus/pg_backup.rules.yml"
+          install -m 0644 deploy/ansible/roles/prometheus/files/data_repair.rules.yml "${BUNDLE_ROOT}/prometheus/data_repair.rules.yml"
           install -m 0644 pkg/promqlrules/data_placement.yaml "${BUNDLE_ROOT}/prometheus/data_placement.yaml"
           # The daemon and guest-runner bytes come only from the verified
           # release.tar.gz. The two controller-local tools are compiled on
@@ -667,6 +674,24 @@ jobs:
           grep -qE '^AGE-SECRET-KEY-1[0-9A-Z]+$' "$stage/fleet.age"
           grep -qE '^age1[0-9a-z]+$' "$stage/fleet.age.pub"
           grep -qx -- '-----BEGIN PUBLIC KEY-----' "$stage/sign-pub.pem"
+          # Rewrite host files only when their content changes. deployctl
+          # hands a daemon off (zero-downtime reload) only when no unit input
+          # (unit file, drop-ins, environment files, credential sources) has a
+          # modification time newer than the running process; rewriting
+          # identical bytes on every deploy made apid restart instead
+          # (rc.281: one API probe timed out and the rollout gate failed).
+          install_if_changed() { # MODE SRC DEST
+            if [[ -e "$3" ]] && cmp -s "$2" "$3"; then
+              chown root:root "$3"; chmod "$1" "$3"; return 0
+            fi
+            install -o root -g root -m "$1" "$2" "$3"
+          }
+          write_if_changed() { # MODE DEST < content
+            local tmp; tmp="$(mktemp)"
+            cat > "$tmp"
+            install_if_changed "$1" "$tmp" "$2"
+            rm -f "$tmp"
+          }
           install -d -o root -g root -m 0700 /etc/faas/secrets
           for file in fleet.age fleet.age.pub; do
             if [[ -e "/etc/faas/secrets/$file" ]] && ! cmp -s "$stage/$file" "/etc/faas/secrets/$file"; then
@@ -674,8 +699,8 @@ jobs:
               exit 1
             fi
           done
-          install -o root -g root -m 0400 "$stage/fleet.age" /etc/faas/secrets/fleet.age
-          install -o root -g root -m 0444 "$stage/fleet.age.pub" /etc/faas/secrets/fleet.age.pub
+          install_if_changed 0400 "$stage/fleet.age" /etc/faas/secrets/fleet.age
+          install_if_changed 0444 "$stage/fleet.age.pub" /etc/faas/secrets/fleet.age.pub
 
           # apid and schedd verify image signatures with the fleet's public
           # signing key (LoadCredential=cd_sign_pub below). Compute joins
@@ -685,20 +710,18 @@ jobs:
             echo "existing sign-pub.pem differs from COMPUTE_VERIFY_KEY; use the signing-key rotation procedure" >&2
             exit 1
           fi
-          install -o root -g root -m 0444 "$stage/sign-pub.pem" /etc/faas/secrets/sign-pub.pem
+          install_if_changed 0444 "$stage/sign-pub.pem" /etc/faas/secrets/sign-pub.pem
 
           # Keep both the incoming release and an older rollback release able
           # to read the public recipients while /etc/faas/secrets stays 0700.
           # This drop-in is host state, so deployctl preserves it across the
           # release unit install and any rollback.
           install -d -o root -g root -m 0755 /etc/systemd/system/faas-apid.service.d
-          cat > /etc/faas/apid-age-recipients.env <<'RECIPIENTS'
+          write_if_changed 0644 /etc/faas/apid-age-recipients.env <<'RECIPIENTS'
           FAAS_FLEET_AGE_RECIPIENT_PATH=/run/credentials/faas-apid.service/cd_fleet_age_recipient
           FAAS_HOST_AGE_RECIPIENT_PATH=/run/credentials/faas-apid.service/cd_host_age_recipient
           RECIPIENTS
-          chown root:root /etc/faas/apid-age-recipients.env
-          chmod 0644 /etc/faas/apid-age-recipients.env
-          cat > /etc/systemd/system/faas-apid.service.d/98-age-recipient-credentials.conf <<'CREDENTIALS'
+          write_if_changed 0644 /etc/systemd/system/faas-apid.service.d/98-age-recipient-credentials.conf <<'CREDENTIALS'
           [Service]
           LoadCredential=cd_fleet_age_recipient:/etc/faas/secrets/fleet.age.pub
           LoadCredential=cd_host_age_recipient:/etc/faas/secrets/host.age.pub
@@ -706,25 +729,22 @@ jobs:
           Environment=FAAS_SIGN_PUB=%d/cd_sign_pub
           EnvironmentFile=/etc/faas/apid-age-recipients.env
           CREDENTIALS
-          chmod 0644 /etc/systemd/system/faas-apid.service.d/98-age-recipient-credentials.conf
 
           install -d -o root -g root -m 0755 /etc/systemd/system/faas-schedd.service.d
-          cat > /etc/systemd/system/faas-schedd.service.d/98-signing-public-key-credential.conf <<'CREDENTIALS'
+          write_if_changed 0644 /etc/systemd/system/faas-schedd.service.d/98-signing-public-key-credential.conf <<'CREDENTIALS'
           [Service]
           LoadCredential=cd_sign_pub:/etc/faas/secrets/sign-pub.pem
           Environment=FAAS_SIGN_PUB=%d/cd_sign_pub
           CREDENTIALS
-          chmod 0644 /etc/systemd/system/faas-schedd.service.d/98-signing-public-key-credential.conf
 
           install -d -o root -g root -m 0755 /etc/systemd/system/faas-githubd.service.d
-          cat > /etc/systemd/system/faas-githubd.service.d/98-fleet-recipient-credential.conf <<'CREDENTIALS'
+          write_if_changed 0644 /etc/systemd/system/faas-githubd.service.d/98-fleet-recipient-credential.conf <<'CREDENTIALS'
           [Service]
           LoadCredential=cd_fleet_age_recipient:/etc/faas/secrets/fleet.age.pub
           LoadCredential=cd_github_app_key:/etc/faas/secrets/githubd/app.pem
           Environment=FAAS_HOST_AGE_PUB=%d/cd_fleet_age_recipient
           Environment=FAAS_GITHUB_APP_KEY_PATH=%d/cd_github_app_key
           CREDENTIALS
-          chmod 0644 /etc/systemd/system/faas-githubd.service.d/98-fleet-recipient-credential.conf
           REMOTE
 
       # ADR-580: converge the control-plane bootstrap roles before release
@@ -941,11 +961,8 @@ jobs:
           # activation. The telemetry-heavy status route is diagnostic only.
           # Host hardening disables TCP forwarding. Run the observer on the
           # control plane so probes still traverse public DNS and Cloudflare.
-          baseline_samples=3
-          if [[ "$MAINTENANCE_MODE" == "true" ]]; then
-            baseline_samples=0
-            echo "::notice::planned maintenance: customer-path availability gate is inconclusive"
-          fi
+          # The healthy baseline always runs: no release stops writers or
+          # opens a maintenance window (ADR-202610171900, amendment 1).
           activation_script="$RUNNER_TEMP/controlplane-activate.sh"
           cat > "$activation_script" <<ACTIVATE
           set -euo pipefail
@@ -977,7 +994,7 @@ jobs:
           ln -sfn /opt/faas/current/bin/gregalectl /usr/local/bin/.gregalectl-${RELEASE_ID}
           mv -Tf /usr/local/bin/.gregalectl-${RELEASE_ID} /usr/local/bin/gregalectl
           ACTIVATE
-          ROLLOUT_BASELINE_SAMPLE_COUNT="$baseline_samples" \
+          ROLLOUT_BASELINE_SAMPLE_COUNT=3 \
             scripts/ci/observe_remote_rollout.sh \
             "root@${{ env.CP_HOST }}" ~/.ssh/deploy_key "$activation_script"
 
@@ -1042,13 +1059,16 @@ jobs:
           release_id="$1"
           source_dir="/opt/faas/releases/${release_id}/prometheus"
           config_dir=/etc/prometheus
-          files=(prometheus.yml faas.rules.yml bridge.rules.yml pg_backup.rules.yml data_placement.yaml)
+          # Every rule file prometheus.yml.j2 lists; promtool check config
+          # fails on any it cannot find.
+          files=(prometheus.yml faas.rules.yml bridge.rules.yml pg_backup.rules.yml data_repair.rules.yml data_placement.yaml)
 
           test -d "$source_dir"
           promtool check rules \
             "$source_dir/faas.rules.yml" \
             "$source_dir/bridge.rules.yml" \
             "$source_dir/pg_backup.rules.yml" \
+            "$source_dir/data_repair.rules.yml" \
             "$source_dir/data_placement.yaml"
 
           validation_dir="$(mktemp -d)"

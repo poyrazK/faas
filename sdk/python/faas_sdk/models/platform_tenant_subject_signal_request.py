@@ -18,7 +18,7 @@ T = TypeVar("T", bound="PlatformTenantSubjectSignalRequest")
 @_attrs_define
 class PlatformTenantSubjectSignalRequest:
     """One named event for the authenticated customer's own active operations of a definition about one business subject
-    (ADR-1286).
+    (ADR-20261017100853).
 
     """
 

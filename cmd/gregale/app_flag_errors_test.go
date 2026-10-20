@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/cmd/gregale/templates"
 )
 
@@ -24,12 +25,12 @@ func TestMergeAppFlag(t *testing.T) {
 		{name: "no flag keeps positionals", positional: []string{"api"}, max: 1, want: []string{"api"}},
 		{name: "flag fills omitted slug", app: "api", max: 1, want: []string{"api"}},
 		{name: "same app twice is fine", positional: []string{"api"}, app: "api", max: 1, want: []string{"api"}},
-		{name: "different apps conflict", positional: []string{"api"}, app: "web", max: 1, wantErr: errAppFlagConflict},
+		{name: "different apps conflict", positional: []string{"api"}, app: "web", max: 1, wantErr: (*main.ErrAppFlagConflict)},
 		{name: "flag fills slug before trailing id", positional: []string{"wake-1"}, app: "api", max: 2, want: []string{"api", "wake-1"}},
-		{name: "full positionals must agree", positional: []string{"web", "wake-1"}, app: "api", max: 2, wantErr: errAppFlagConflict},
+		{name: "full positionals must agree", positional: []string{"web", "wake-1"}, app: "api", max: 2, wantErr: (*main.ErrAppFlagConflict)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := mergeAppFlag(tc.positional, tc.app, tc.max)
+			got, err := main.MergeAppFlag(tc.positional, tc.app, tc.max)
 			if !errors.Is(err, tc.wantErr) || (tc.wantErr == nil && !slices.Equal(got, tc.want)) {
 				t.Fatalf("mergeAppFlag(%q, %q, %d) = (%q, %v), want (%q, %v)", tc.positional, tc.app, tc.max, got, err, tc.want, tc.wantErr)
 			}
@@ -58,8 +59,8 @@ func TestSlugFirstLeavesAcceptAppFlag(t *testing.T) {
 		{"bindings", "slug-a"},
 	} {
 		t.Run(strings.Join(args[:len(args)-1], " "), func(t *testing.T) {
-			stderr, restore := captureStderr(t)
-			code := run(append(append([]string(nil), args...), "--app", "slug-b"))
+			stderr, restore := main.CaptureStderr(t)
+			code := main.Run(append(append([]string(nil), args...), "--app", "slug-b"))
 			restore()
 			out := stderr.String()
 			if code == 0 {
@@ -89,8 +90,8 @@ func TestHumanFlagErrorsUsePublicSpelling(t *testing.T) {
 		{args: []string{"dlq", "list", "x", "--limit", "abc"}, want: []string{`invalid value "abc" for flag --limit`, "usage: gregale dlq list <app>"}},
 	} {
 		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
-			stderr, restore := captureStderr(t)
-			code := run(tc.args)
+			stderr, restore := main.CaptureStderr(t)
+			code := main.Run(tc.args)
 			restore()
 			out := stderr.String()
 			if code == 0 {
@@ -118,7 +119,7 @@ func TestNormalizeFlagDiagnostic(t *testing.T) {
 		`invalid boolean value "maybe" for -all: parse error`: `invalid boolean value "maybe" for --all: parse error`,
 		"bad flag syntax: ---x":                               "bad flag syntax: ---x",
 	} {
-		if got := normalizeFlagDiagnostic(in); got != want {
+		if got := main.NormalizeFlagDiagnostic(in); got != want {
 			t.Errorf("normalizeFlagDiagnostic(%q) = %q, want %q", in, got, want)
 		}
 	}
@@ -134,7 +135,7 @@ func TestCustomerPlatformDoctorSkipsOwnerTools(t *testing.T) {
 	if err := templates.Materialize("customer-platform", dir); err != nil {
 		t.Fatal(err)
 	}
-	refs := scanEnvRefs(dir, envVarRefRegex)
+	refs := main.ScanEnvRefs(dir, (*main.EnvVarRefRegex))
 	for _, owner := range []string{"FAAS_TOKEN", "FAAS_API"} {
 		if slices.Contains(refs, owner) {
 			t.Errorf("doctor env scan reports owner-tool variable %s: %v", owner, refs)
@@ -149,8 +150,8 @@ func TestCustomerPlatformDoctorSkipsOwnerTools(t *testing.T) {
 // version` printed the human "gregale dev" line, breaking the documented
 // "every command accepts --json" contract scripts rely on.
 func TestVersionJSON(t *testing.T) {
-	stdout, restore := captureStdout(t)
-	code := run([]string{"--json", "version"})
+	stdout, restore := main.CaptureStdout(t)
+	code := main.Run([]string{"--json", "version"})
 	restore()
 	out := stdout.String()
 	if code != 0 {
@@ -168,18 +169,18 @@ func TestVersionJSON(t *testing.T) {
 // function template before reporting the manifest error.
 func TestDeployInvalidManifestFailsBeforeDetection(t *testing.T) {
 	dir := t.TempDir()
-	writeFile(t, dir, "package.json", "{}")
-	writeFile(t, dir, "handler.js", "exports.handler = async () => ({})\n")
-	writeFile(t, dir, "gregale.yaml", "function:\n  runtime: node22\n  handler: handler.handler\ntrigers: []\n")
+	main.WriteFile(t, dir, "package.json", "{}")
+	main.WriteFile(t, dir, "handler.js", "exports.handler = async () => ({})\n")
+	main.WriteFile(t, dir, "gregale.yaml", "function:\n  runtime: node22\n  handler: handler.handler\ntrigers: []\n")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, `{"title":"not found","status":404}`, http.StatusNotFound)
 	}))
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "test-token")
-	stdout, restoreOut := captureStdout(t)
-	stderr, restoreErr := captureStderr(t)
-	code := run([]string{"deploy", "--dry-run", "--name", "manifest-typo", "--path", dir})
+	stdout, restoreOut := main.CaptureStdout(t)
+	stderr, restoreErr := main.CaptureStderr(t)
+	code := main.Run([]string{"deploy", "--dry-run", "--name", "manifest-typo", "--path", dir})
 	restoreErr()
 	restoreOut()
 	if code == 0 {
@@ -209,7 +210,7 @@ func TestDebugRequestRefArgsAcceptAppFlag(t *testing.T) {
 		{args: []string{"req-1"}, ok: false},
 		{args: []string{"req-1", "--app"}, ok: false},
 	} {
-		got, ok := debugRequestRefArgs(tc.args)
+		got, ok := main.DebugRequestRefArgs(tc.args)
 		if ok != tc.ok || (tc.ok && !slices.Equal(got, tc.want)) {
 			t.Errorf("debugRequestRefArgs(%q) = (%q, %v), want (%q, %v)", tc.args, got, ok, tc.want, tc.ok)
 		}
@@ -220,18 +221,18 @@ func TestDebugRequestRefArgsAcceptAppFlag(t *testing.T) {
 // the command then demanded --app. It now takes the slug positionally or as
 // --app, and two different apps are refused.
 func TestWebhooksListAcceptsSlugEitherWay(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	for _, args := range [][]string{{"demo"}, {"--app", "demo"}, {"demo", "--app", "demo"}} {
-		f := authedFakeAPI(t, `[]`, http.StatusOK)
-		if code := cmdWebhooksList(args); code != 0 {
+		f := main.AuthedFakeAPI(t, `[]`, http.StatusOK)
+		if code := main.CmdWebhooksList(args); code != 0 {
 			t.Fatalf("webhooks list %q exit = %d, want 0", args, code)
 		}
-		if f.sawPath != "/v1/apps/demo/webhooks" {
-			t.Fatalf("webhooks list %q hit %s, want /v1/apps/demo/webhooks", args, f.sawPath)
+		if (*f.SawPath()) != "/v1/apps/demo/webhooks" {
+			t.Fatalf("webhooks list %q hit %s, want /v1/apps/demo/webhooks", args, (*f.SawPath()))
 		}
 	}
-	authedFakeAPI(t, `[]`, http.StatusOK)
-	if code := cmdWebhooksList([]string{"web", "--app", "demo"}); code != 1 {
+	main.AuthedFakeAPI(t, `[]`, http.StatusOK)
+	if code := main.CmdWebhooksList([]string{"web", "--app", "demo"}); code != 1 {
 		t.Fatalf("conflicting apps exit = %d, want 1", code)
 	}
 }
@@ -250,12 +251,12 @@ func TestRouteHealthTargetErrorNamesTheMissingPiece(t *testing.T) {
 		{positional: []string{"api"}, want: "--deployment is required"},
 		{positional: []string{"api"}, deployment: "v7", want: "canonical deployment UUID"},
 	} {
-		err := routeHealthTargetError(tc.positional, tc.deployment)
+		err := main.RouteHealthTargetError(tc.positional, tc.deployment)
 		if err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("routeHealthTargetError(%q, %q) = %v, want %q", tc.positional, tc.deployment, err, tc.want)
 		}
 	}
-	if err := routeHealthTargetError([]string{"api"}, dep); err != nil {
+	if err := main.RouteHealthTargetError([]string{"api"}, dep); err != nil {
 		t.Errorf("valid target rejected: %v", err)
 	}
 }
@@ -264,18 +265,18 @@ func TestRouteHealthTargetErrorNamesTheMissingPiece(t *testing.T) {
 // to the flag parser and always failed; the documented verb must reach the
 // server, and the legacy verb-less form keeps working.
 func TestGithubWebhookSecretSetVerbDispatches(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	secret := strings.Repeat("a", 32)
 	for _, args := range [][]string{
 		{"set", "--installation-id", "42", "--secret", secret},
 		{"--installation-id", "42", "--secret", secret},
 	} {
-		f := authedFakeAPI(t, `{}`, http.StatusOK)
-		if code := cmdGithubWebhookSecret(args); code != 0 || f.sawMethod == "" {
-			t.Fatalf("github-webhook-secret %q exit=%d request=%s %s, want a request and exit 0", args, code, f.sawMethod, f.sawPath)
+		f := main.AuthedFakeAPI(t, `{}`, http.StatusOK)
+		if code := main.CmdGithubWebhookSecret(args); code != 0 || (*f.SawMethod()) == "" {
+			t.Fatalf("github-webhook-secret %q exit=%d request=%s %s, want a request and exit 0", args, code, (*f.SawMethod()), (*f.SawPath()))
 		}
 	}
-	if code := cmdGithubWebhookSecret([]string{"rotate"}); code != 1 {
+	if code := main.CmdGithubWebhookSecret([]string{"rotate"}); code != 1 {
 		t.Fatalf("unknown verb exit = %d, want 1", code)
 	}
 }
@@ -283,7 +284,7 @@ func TestGithubWebhookSecretSetVerbDispatches(t *testing.T) {
 // production-us hunt #4 (H4-42): `deployment summary <uuid>` demanded --app
 // although the deployment names its app.
 func TestDeploymentSummaryResolvesAppFromDeployment(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	t.Chdir(t.TempDir()) // no linked project
 	const depID = "0123456789abcdef0123456789abcdef"
 	var summaryPath string
@@ -303,8 +304,8 @@ func TestDeploymentSummaryResolvesAppFromDeployment(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_test_x")
-	_, restore := captureStdout(t)
-	code := cmdDeploymentSummary([]string{depID})
+	_, restore := main.CaptureStdout(t)
+	code := main.CmdDeploymentSummary([]string{depID})
 	restore()
 	if code != 0 || summaryPath == "" {
 		t.Fatalf("deployment summary <uuid> exit=%d summary request=%q, want the app resolved from the deployment", code, summaryPath)
@@ -314,7 +315,7 @@ func TestDeploymentSummaryResolvesAppFromDeployment(t *testing.T) {
 // production-us hunt #4 (H4-44): `crons fire-now <cron-id>` answered only "no
 // such fire-now request". The cron id gets pointed at `crons run`.
 func TestCronsFireNowWithCronIDPointsAtRun(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	const id = "332bde0bfde44444b492c067949ad22a"
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -331,8 +332,8 @@ func TestCronsFireNowWithCronIDPointsAtRun(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_test_x")
-	stderr, restore := captureStderr(t)
-	code := cmdCronsFireNowGet([]string{id})
+	stderr, restore := main.CaptureStderr(t)
+	code := main.CmdCronsFireNowGet([]string{id})
 	restore()
 	if code == 0 || !strings.Contains(stderr.String(), "gregale crons run "+id) {
 		t.Fatalf("exit=%d stderr=%q, want a pointer to `crons run`", code, stderr.String())
@@ -343,17 +344,17 @@ func TestCronsFireNowWithCronIDPointsAtRun(t *testing.T) {
 // `cors ls <slug>`) used the slug as the rule id and answered "no such edge
 // rule". The slug is accepted; a non-id is refused before any request.
 func TestCorsRmAcceptsSlugAndValidatesID(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	const id = "622a2d44-d560-49f3-9281-dd191b5282e7"
 	for _, args := range [][]string{{id}, {"h3-hello-node", id}} {
-		f := authedFakeAPI(t, ``, http.StatusNoContent)
-		if code := cmdCorsRm(args); code != 0 || !strings.HasSuffix(f.sawPath, "/"+id) {
-			t.Fatalf("cors rm %q exit=%d path=%s, want a delete of %s", args, code, f.sawPath, id)
+		f := main.AuthedFakeAPI(t, ``, http.StatusNoContent)
+		if code := main.CmdCorsRm(args); code != 0 || !strings.HasSuffix((*f.SawPath()), "/"+id) {
+			t.Fatalf("cors rm %q exit=%d path=%s, want a delete of %s", args, code, (*f.SawPath()), id)
 		}
 	}
-	f := authedFakeAPI(t, ``, http.StatusNoContent)
-	if code := cmdCorsRm([]string{"h3-hello-node"}); code != 1 || f.sawMethod != "" {
-		t.Fatalf("cors rm <slug> exit=%d request=%s, want a local rejection", code, f.sawMethod)
+	f := main.AuthedFakeAPI(t, ``, http.StatusNoContent)
+	if code := main.CmdCorsRm([]string{"h3-hello-node"}); code != 1 || (*f.SawMethod()) != "" {
+		t.Fatalf("cors rm <slug> exit=%d request=%s, want a local rejection", code, (*f.SawMethod()))
 	}
 }
 
@@ -361,7 +362,7 @@ func TestCorsRmAcceptsSlugAndValidatesID(t *testing.T) {
 // although the UUID names its app, and `deploys reorder <id> --priority 10`
 // stopped parsing at the id and called a valid priority out of range.
 func TestDeploysQueueVerbsResolveAppAndParseFlagsAfterID(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	t.Chdir(t.TempDir())
 	const depID = "0123456789abcdef0123456789abcdef"
 	var seen []string
@@ -379,7 +380,7 @@ func TestDeploysQueueVerbsResolveAppAndParseFlagsAfterID(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_test_x")
-	_, restore := captureStdout(t)
+	_, restore := main.CaptureStdout(t)
 	defer restore()
 	for name, args := range map[string][]string{
 		"cancel":  {"cancel", depID},
@@ -387,7 +388,7 @@ func TestDeploysQueueVerbsResolveAppAndParseFlagsAfterID(t *testing.T) {
 		"reorder": {"reorder", depID, "--priority", "10"},
 	} {
 		seen = nil
-		if code := cmdDeploys(args); code != 0 {
+		if code := main.CmdDeploys(args); code != 0 {
 			t.Fatalf("deploys %s exit = %d (requests %q), want 0", name, code, seen)
 		}
 		joined := strings.Join(seen, "\n")
@@ -407,12 +408,12 @@ func TestDeploysQueueVerbsResolveAppAndParseFlagsAfterID(t *testing.T) {
 // production-us hunt #4 (H4-54): `issues resolve <id>` reached the server and
 // failed on "fixed_deployment_id"; the CLI names --deployment first.
 func TestIssuesResolveRequiresDeploymentLocally(t *testing.T) {
-	resetJSONOut(t)
-	f := authedFakeAPI(t, `{}`, http.StatusOK)
-	stderr, restore := captureStderr(t)
-	code := cmdIssues([]string{"resolve", "--app", "demo", "cdb54d72-348d-4112-9e4b-2a9ec68befff"})
+	main.ResetJSONOut(t)
+	f := main.AuthedFakeAPI(t, `{}`, http.StatusOK)
+	stderr, restore := main.CaptureStderr(t)
+	code := main.CmdIssues([]string{"resolve", "--app", "demo", "cdb54d72-348d-4112-9e4b-2a9ec68befff"})
 	restore()
-	if code == 0 || f.sawMethod != "" || !strings.Contains(stderr.String(), "--deployment <uuid> is required") {
-		t.Fatalf("exit=%d request=%s stderr=%q, want a local --deployment error", code, f.sawMethod, stderr.String())
+	if code == 0 || (*f.SawMethod()) != "" || !strings.Contains(stderr.String(), "--deployment <uuid> is required") {
+		t.Fatalf("exit=%d request=%s stderr=%q, want a local --deployment error", code, (*f.SawMethod()), stderr.String())
 	}
 }

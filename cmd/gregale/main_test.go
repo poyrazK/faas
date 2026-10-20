@@ -1,10 +1,11 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -22,7 +23,7 @@ func TestRunExitCodes(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := run(tt.args); got != tt.want {
+			if got := main.Run(tt.args); got != tt.want {
 				t.Errorf("run(%v) = %d, want %d", tt.args, got, tt.want)
 			}
 		})
@@ -40,9 +41,9 @@ func TestRunJSONLocalErrorsAreProblemObjects(t *testing.T) {
 		{name: "unknown flag with custom usage", args: []string{"--json", "login", "--definitely-invalid"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			resetJSONOutput()
-			stderr, restore := captureStderr(t)
-			code := run(tc.args)
+			main.ResetJSONOutput()
+			stderr, restore := main.CaptureStderr(t)
+			code := main.Run(tc.args)
 			restore()
 			if code == 0 {
 				t.Fatalf("run(%v) returned success", tc.args)
@@ -58,7 +59,7 @@ func TestRunJSONLocalErrorsAreProblemObjects(t *testing.T) {
 			if p.Status != 400 || p.Code == "" || p.Title == "" || p.Detail == "" {
 				t.Fatalf("incomplete local Problem: %+v", p)
 			}
-			resetJSONOutput()
+			main.ResetJSONOutput()
 		})
 	}
 }
@@ -68,8 +69,8 @@ func TestRunParentHelpNeverRequiresAuthentication(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "")
 	for _, command := range []string{"app", "secrets", "env", "inspect"} {
 		t.Run(command, func(t *testing.T) {
-			stdout, restore := captureStdout(t)
-			code := run([]string{command, "--help"})
+			stdout, restore := main.CaptureStdout(t)
+			code := main.Run([]string{command, "--help"})
 			restore()
 			if code != 0 {
 				t.Fatalf("%s --help exit = %d, want 0", command, code)

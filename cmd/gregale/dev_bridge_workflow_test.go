@@ -1,6 +1,6 @@
 //go:build unix
 
-package main
+package main_test
 
 import (
 	"context"
@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/devbridge"
 )
@@ -58,7 +59,7 @@ func TestDevBridgeCommandHelper(t *testing.T) {
 // adr: 379 — use an actual supervised child, relay and loopback dependency
 // proxy; preserve its exit code and revoke durable intent when it stops.
 func TestDevBridgeCommandToLocalProcessToRemoteDependency(t *testing.T) {
-	stdout, restore := captureStdout(t)
+	stdout, restore := main.CaptureStdout(t)
 	defer restore()
 	t.Setenv("GREGALE_BRIDGE_HELPER", "1")
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
@@ -140,7 +141,7 @@ func TestDevBridgeCommandToLocalProcessToRemoteDependency(t *testing.T) {
 	}
 	done := make(chan int, 1)
 	go func() {
-		done <- cmdDevBridge([]string{"payments", "--local-port", fmt.Sprint(port), "--ready-path", "/health", "--bind-env", "INVENTORY_URL=inventory", "--", executable, "-test.run=^TestDevBridgeCommandHelper$"})
+		done <- main.CmdDevBridge([]string{"payments", "--local-port", fmt.Sprint(port), "--ready-path", "/health", "--bind-env", "INVENTORY_URL=inventory", "--", executable, "-test.run=^TestDevBridgeCommandHelper$"})
 	}()
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()

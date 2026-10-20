@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"net/http"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/wakehistory"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
@@ -170,12 +172,21 @@ func (s *server) addAccountTraceEvidence(ctx context.Context, accountID string, 
 		return
 	}
 	seenSpans := make(map[string]struct{})
+	var wakeApps, wakeIDs []string
 	for _, row := range rows {
-		slug, ok := appSlugs[uuidFromPg(row.AppID)]
+		appID := uuidFromPg(row.AppID)
+		slug, ok := appSlugs[appID]
 		if !ok {
 			continue // retained rows of a deleted app stay out of the trace
 		}
-		result.Matches = append(result.Matches, api.AccountTraceMatch{App: slug, Request: debugTelemetryGetRowToItem(accountTraceTelemetryRow(row))})
+		match := api.AccountTraceMatch{App: slug, Request: debugTelemetryGetRowToItem(accountTraceTelemetryRow(row))}
+		if wakeID := match.Request.WakeID; wakeID != "" && !slices.Contains(wakeIDs, wakeID) && len(wakeIDs) < api.AccountTraceWakesMax {
+			wakeIDs = append(wakeIDs, wakeID)
+			if !slices.Contains(wakeApps, appID) {
+				wakeApps = append(wakeApps, appID)
+			}
+		}
+		result.Matches = append(result.Matches, match)
 		spans, truncated := parseDebugEvidenceSpans(row.SpansSummary)
 		result.SpansTruncated = result.SpansTruncated || truncated
 		for _, span := range spans {
@@ -186,6 +197,19 @@ func (s *server) addAccountTraceEvidence(ctx context.Context, accountID string, 
 				seenSpans[span.SpanID] = struct{}{}
 			}
 			result.Spans = append(result.Spans, span)
+		}
+	}
+	// How each matched request's app was woken, so a hop's latency can be
+	// read as restore plus everything else.
+	wakes, err := wakehistory.TraceWakes(ctx, s.store, wakeApps, wakeIDs)
+	if err != nil {
+		result.Partial = true
+		result.Errors = append(result.Errors, api.AccountTraceLookupError{Detail: "wake history unavailable"})
+		return
+	}
+	for i := range result.Matches {
+		if wake, ok := wakes[result.Matches[i].Request.WakeID]; ok {
+			result.Matches[i].Wake = &wake
 		}
 	}
 }

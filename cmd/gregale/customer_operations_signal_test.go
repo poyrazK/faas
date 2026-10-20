@@ -1,5 +1,5 @@
 // adr: 1197
-package main
+package main_test
 
 import (
 	"bytes"
@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -35,31 +36,31 @@ func (f *signalTestClient) SignalOperationsBySubject(_ context.Context, app stri
 
 func TestCustomerOperationSignal(t *testing.T) {
 	client := &signalTestClient{}
-	c, err := parseCustomerOperationSignal([]string{signalTestOperation, "--app", "orders", "--event", "payment.succeeded", "--signal-id", "evt_1", "--payload", `{"charge":"ch_1"}`})
+	c, err := main.ParseCustomerOperationSignal([]string{signalTestOperation, "--app", "orders", "--event", "payment.succeeded", "--signal-id", "evt_1", "--payload", `{"charge":"ch_1"}`})
 	if err != nil {
 		t.Fatal(err)
 	}
 	var out bytes.Buffer
-	if err := runCustomerOperationSignal(context.Background(), client, c, &out, false); err != nil {
+	if err := main.RunCustomerOperationSignal(context.Background(), client, c, &out, false); err != nil {
 		t.Fatal(err)
 	}
 	if len(client.single) != 1 || string(client.single[0].Payload) != `{"charge":"ch_1"}` || !strings.Contains(out.String(), "resumed its wait") {
 		t.Fatalf("single signal %+v -> %q", client.single, out.String())
 	}
-	c, err = parseCustomerOperationSignal([]string{"--app", "orders", "--scope", "production", "--operation", "fulfil", "--subject", "order:ord_1", "--event", "payment.succeeded", "--signal-id", "evt_1"})
+	c, err = main.ParseCustomerOperationSignal([]string{"--app", "orders", "--scope", "production", "--operation", "fulfil", "--subject", "order:ord_1", "--event", "payment.succeeded", "--signal-id", "evt_1"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	out.Reset()
-	if err := runCustomerOperationSignal(context.Background(), client, c, &out, false); err != nil {
+	if err := main.RunCustomerOperationSignal(context.Background(), client, c, &out, false); err != nil {
 		t.Fatal(err)
 	}
 	if len(client.subject) != 1 || client.subject[0].Subject != (api.OperationSubject{Type: "order", ID: "ord_1"}) || !strings.Contains(out.String(), "already delivered") {
 		t.Fatalf("subject signal %+v -> %q", client.subject, out.String())
 	}
-	c.subject = "order:none"
+	(*c.Subject()) = "order:none"
 	out.Reset()
-	if err := runCustomerOperationSignal(context.Background(), client, c, &out, false); err != nil || !strings.Contains(out.String(), "nothing was delivered") {
+	if err := main.RunCustomerOperationSignal(context.Background(), client, c, &out, false); err != nil || !strings.Contains(out.String(), "nothing was delivered") {
 		t.Fatalf("unmatched subject %q %v", out.String(), err)
 	}
 }
@@ -74,13 +75,13 @@ func TestParseCustomerOperationSignalRejectsAmbiguousTargets(t *testing.T) {
 		"no signal id":      {signalTestOperation, "--app", "orders", "--event", "payment.succeeded"},
 		"invalid payload":   append([]string{signalTestOperation, "--payload", "{"}, base...),
 	} {
-		if _, err := parseCustomerOperationSignal(args); err == nil {
+		if _, err := main.ParseCustomerOperationSignal(args); err == nil {
 			t.Fatalf("%s: accepted %v", name, args)
 		}
 	}
 }
 
-// ADR-1286: --self reaches only the tenant-self routes, and a subject signal
+// ADR-20261017100853: --self reaches only the tenant-self routes, and a subject signal
 // sends the definition instead of an app, scope and operation name.
 func TestCustomerOperationSignalSelfUsesTenantRoutes(t *testing.T) {
 	const definition = "22222222-2222-2222-2222-222222222222"

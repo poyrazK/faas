@@ -44,6 +44,14 @@ export type PlanWorkload = {
    * Compose entrypoint, user, working_dir and stop overrides for prebuilt image workloads, captured per deployment.
    */
   image_process?: ComposeProcess;
+  /**
+   * Dockerfile stage a source-built Compose service builds (build.target, ADR-20261019142544). Omitted builds the final stage.
+   */
+  build_target?: string;
+  /**
+   * Names of the Compose build.args passed to the Dockerfile build, sorted. Values are not returned.
+   */
+  build_args?: Array<string>;
   command: Array<string>;
   /**
    * Compose service dependencies. The apply path validates the graph, deploys in dependency order, and injects GREGALE_SERVICE_<NAME>_URL plus GREGALE_SERVICE_<NAME>_HTTPS_URL for workload dependencies.

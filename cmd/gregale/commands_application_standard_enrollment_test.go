@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -21,13 +22,13 @@ func TestOrgStandardApplicationCLI(t *testing.T) {
 		if r.Method != http.MethodGet || r.URL.Path != "/v1/orgs/acme/application-standard-enrollments/"+appID {
 			t.Errorf("enrollment read: %s %s", r.Method, r.URL.Path)
 		}
-		writeJSONTestStatus(w, http.StatusOK, api.ApplicationStandardEnrollment{AppID: appID, DesiredRevision: 2, PersistedRevision: 1, ObservedRevision: 0, State: "pending"})
+		main.WriteJSONTestStatus(w, http.StatusOK, api.ApplicationStandardEnrollment{AppID: appID, DesiredRevision: 2, PersistedRevision: 1, ObservedRevision: 0, State: "pending"})
 	}))
 	defer server.Close()
 	t.Setenv("FAAS_API", server.URL)
-	stdout, restore := captureStdout(t)
+	stdout, restore := main.CaptureStdout(t)
 	defer restore()
-	if code := cmdOrgs([]string{"standards", "application", "--org", "acme", "--app", appID}); code != 0 {
+	if code := main.CmdOrgs([]string{"standards", "application", "--org", "acme", "--app", appID}); code != 0 {
 		t.Fatalf("enrollment CLI exit: %d", code)
 	}
 	var got api.ApplicationStandardEnrollment
@@ -45,7 +46,7 @@ func TestOrgStandardApplicationCLIValidation(t *testing.T) {
 		{"--org", "acme", "--app", uuid.Nil.String()}, {"--app", uuid.NewString()},
 		{"--org", "acme", "--app", uuid.NewString(), "extra"},
 	} {
-		if _, _, err := parseStandardApplicationCLI(args); err == nil {
+		if _, _, err := main.ParseStandardApplicationCLI(args); err == nil {
 			t.Fatalf("accepted invalid application view arguments: %v", args)
 		}
 	}

@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -10,17 +10,18 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"gopkg.in/yaml.v3"
 )
 
-func campaignCumulativeFixture(t *testing.T) (testScenario, []testRunReceipt, []string) {
+func campaignCumulativeFixture(t *testing.T) (main.TestScenario, []main.TestRunReceipt, []string) {
 	t.Helper()
 	s, first, firstPath := campaignGuidanceFixture(t)
-	prior := campaignCoverageScenario()
+	prior := main.CampaignCoverageScenario()
 	prior.Resilience.CampaignCoverage.Seeds = []uint64{45, 46, 47}
 	prior.Resilience.CampaignCoverage.MinExercised = map[int]int{0: 2, 1: 2}
-	second := runSweepTest(context.Background(), prior, func(ctx context.Context, p testRunPlan) testRunReceipt {
-		r := campaignCoverageReceipt(t, p, "second-"+p.ReplayCase, false)
+	second := main.RunSweepTest(context.Background(), prior, func(ctx context.Context, p main.TestRunPlan) main.TestRunReceipt {
+		r := main.CampaignCoverageReceipt(t, p, "second-"+p.ReplayCase, false)
 		for i := range r.Steps[0].Load.ChaosPhases {
 			x := r.Steps[0].Load.ChaosPhases[i].Chaos
 			if x != nil && x.Rules[0].Kind == "tcp_reset" {
@@ -30,20 +31,20 @@ func campaignCumulativeFixture(t *testing.T) (testScenario, []testRunReceipt, []
 		return r
 	})
 	secondPath := filepath.Join(t.TempDir(), "second.json")
-	if err := writeTestReport(secondPath, []testRunReceipt{second}); err != nil {
+	if err := main.WriteTestReport(secondPath, []main.TestRunReceipt{second}); err != nil {
 		t.Fatal(err)
 	}
 	c := s.Resilience.CampaignCoverage
 	c.MinExercised[0] = first.FaultMatrix.CampaignCoverage.Choices[0].Exercised + second.FaultMatrix.CampaignCoverage.Choices[0].Exercised
 	c.SeedSearch.FromReport, c.SeedSearch.RunID = "", ""
-	c.SeedSearch.Reports = []testCampaignGuidanceInput{{FromReport: firstPath, RunID: first.RunID}, {FromReport: secondPath, RunID: second.RunID}}
-	return s, []testRunReceipt{first, second}, []string{firstPath, secondPath}
+	c.SeedSearch.Reports = []main.TestCampaignGuidanceInput{{FromReport: firstPath, RunID: first.RunID}, {FromReport: secondPath, RunID: second.RunID}}
+	return s, []main.TestRunReceipt{first, second}, []string{firstPath, secondPath}
 }
 
 func TestCampaignCumulativeCoveragePreviewAndReplay(t *testing.T) {
 	s, prior, paths := campaignCumulativeFixture(t)
 	before, _ := json.Marshal(s)
-	x, err := expandTestFaultSweep(s)
+	x, err := main.ExpandTestFaultSweep(s)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +66,7 @@ func TestCampaignCumulativeCoveragePreviewAndReplay(t *testing.T) {
 	if c.Preview.Candidates < 8 {
 		t.Fatal("excluded candidates not bounded")
 	}
-	again, err := expandTestFaultSweep(s)
+	again, err := main.ExpandTestFaultSweep(s)
 	if err != nil || !reflect.DeepEqual(again, x) {
 		t.Fatal("cumulative selection changed", err)
 	}
@@ -77,7 +78,7 @@ func TestCampaignCumulativeCoveragePreviewAndReplay(t *testing.T) {
 	if result.Status != "failed" || result.FaultMatrix.CampaignCoverage.Choices[1].Exercised != 0 {
 		t.Fatal("prior coverage bypassed new gate")
 	}
-	prepared, err := prepareTestReplay(&result, map[string]testScenario{"checkout": s}, ".")
+	prepared, err := main.PrepareTestReplay(&result, map[string]main.TestScenario{"checkout": s}, ".")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,14 +86,14 @@ func TestCampaignCumulativeCoveragePreviewAndReplay(t *testing.T) {
 		t.Fatal("replay changed cumulative selection")
 	}
 	var out bytes.Buffer
-	printTestCampaignCoverage(&out, result.FaultMatrix.CampaignCoverage)
+	main.PrintTestCampaignCoverage(&out, result.FaultMatrix.CampaignCoverage)
 	for _, row := range prior {
 		if !strings.Contains(out.String(), row.RunID) {
 			t.Fatal("terminal provenance missing")
 		}
 	}
 	html := filepath.Join(t.TempDir(), "coverage.html")
-	if err := writeTestHTMLReport(html, "", []testRunReceipt{result}); err != nil {
+	if err := main.WriteTestHTMLReport(html, "", []main.TestRunReceipt{result}); err != nil {
 		t.Fatal(err)
 	}
 	body, _ := os.ReadFile(html)
@@ -102,7 +103,7 @@ func TestCampaignCumulativeCoveragePreviewAndReplay(t *testing.T) {
 		}
 	}
 	junit := filepath.Join(t.TempDir(), "coverage.xml")
-	if err := writeTestJUnit(junit, []testRunReceipt{result}); err != nil {
+	if err := main.WriteTestJUnit(junit, []main.TestRunReceipt{result}); err != nil {
 		t.Fatal(err)
 	}
 	body, _ = os.ReadFile(junit)
@@ -110,7 +111,7 @@ func TestCampaignCumulativeCoveragePreviewAndReplay(t *testing.T) {
 		t.Fatal("JUnit cumulative evidence missing")
 	}
 	for _, path := range paths {
-		if err := validateTestCampaignGuidanceOptions(x, "checkout", []string{"cold"}, []string{path}); err == nil {
+		if err := main.ValidateTestCampaignGuidanceOptions(x, "checkout", []string{"cold"}, []string{path}); err == nil {
 			t.Fatal("contributing input overwrite allowed")
 		}
 	}
@@ -121,10 +122,10 @@ func TestCampaignCumulativeCoveragePreviewAndReplay(t *testing.T) {
 	}
 	_, _ = f.WriteString("\n")
 	_ = f.Close()
-	if err := validateTestCampaignGuidanceOptions(x, "checkout", []string{"cold"}, nil); err == nil {
+	if err := main.ValidateTestCampaignGuidanceOptions(x, "checkout", []string{"cold"}, nil); err == nil {
 		t.Fatal("changed second input allowed")
 	}
-	if _, err := prepareTestReplay(&result, map[string]testScenario{"checkout": s}, "."); err == nil {
+	if _, err := main.PrepareTestReplay(&result, map[string]main.TestScenario{"checkout": s}, "."); err == nil {
 		t.Fatal("changed second report replay allowed")
 	}
 }
@@ -167,11 +168,11 @@ func TestCampaignCumulativeRejectsDuplicatesAndScope(t *testing.T) {
 					}
 				}
 			case "empty-list":
-				search.Reports = []testCampaignGuidanceInput{}
+				search.Reports = []main.TestCampaignGuidanceInput{}
 			case "single-list":
 				search.Reports = search.Reports[:1]
 			case "too-many":
-				search.Reports = make([]testCampaignGuidanceInput, 11)
+				search.Reports = make([]main.TestCampaignGuidanceInput, 11)
 			case "legacy-mixed":
 				search.FromReport = paths[0]
 				search.RunID = rows[0].RunID
@@ -188,10 +189,10 @@ func TestCampaignCumulativeRejectsDuplicatesAndScope(t *testing.T) {
 			case "excluded-range":
 				search.MaxCandidates = 6
 			}
-			if err := writeTestReport(paths[1], []testRunReceipt{rows[1]}); err != nil {
+			if err := main.WriteTestReport(paths[1], []main.TestRunReceipt{rows[1]}); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := expandTestFaultSweep(s); err == nil {
+			if _, err := main.ExpandTestFaultSweep(s); err == nil {
 				t.Fatal("invalid cumulative guidance accepted")
 			}
 		})
@@ -202,12 +203,12 @@ func TestCampaignCumulativeDoesNotCountNestedGuidance(t *testing.T) {
 	s, first, path := campaignGuidanceFixture(t)
 	second := runCampaignRequirementsTest(t, s, true, 0)
 	secondPath := filepath.Join(t.TempDir(), "second.json")
-	if err := writeTestReport(secondPath, []testRunReceipt{second}); err != nil {
+	if err := main.WriteTestReport(secondPath, []main.TestRunReceipt{second}); err != nil {
 		t.Fatal(err)
 	}
 	next := campaignSeedSearchScenario()
-	next.Resilience.CampaignCoverage.SeedSearch.Reports = []testCampaignGuidanceInput{{FromReport: path, RunID: first.RunID}, {FromReport: secondPath, RunID: second.RunID}}
-	x, err := expandTestFaultSweep(next)
+	next.Resilience.CampaignCoverage.SeedSearch.Reports = []main.TestCampaignGuidanceInput{{FromReport: path, RunID: first.RunID}, {FromReport: secondPath, RunID: second.RunID}}
+	x, err := main.ExpandTestFaultSweep(next)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -220,28 +221,28 @@ func TestCampaignCumulativeDoesNotCountNestedGuidance(t *testing.T) {
 func TestCampaignCumulativeSameFileAndOverlappingSeeds(t *testing.T) {
 	s, rows, paths := campaignCumulativeFixture(t)
 	combined := filepath.Join(t.TempDir(), "combined.json")
-	if err := writeTestReport(combined, rows); err != nil {
+	if err := main.WriteTestReport(combined, rows); err != nil {
 		t.Fatal(err)
 	}
 	for i := range s.Resilience.CampaignCoverage.SeedSearch.Reports {
 		s.Resilience.CampaignCoverage.SeedSearch.Reports[i].FromReport = combined
 	}
-	if _, err := expandTestFaultSweep(s); err != nil {
+	if _, err := main.ExpandTestFaultSweep(s); err != nil {
 		t.Fatal("distinct roots in same report rejected", err)
 	}
 	// Two genuine executions of the same seeds are independent observations.
-	prior := campaignCoverageScenario()
+	prior := main.CampaignCoverageScenario()
 	prior.Resilience.CampaignCoverage.MinExercised = map[int]int{0: 2, 1: 2}
-	second := runSweepTest(context.Background(), prior, func(ctx context.Context, p testRunPlan) testRunReceipt {
-		return campaignCoverageReceipt(t, p, "repeat-"+p.ReplayCase, false)
+	second := main.RunSweepTest(context.Background(), prior, func(ctx context.Context, p main.TestRunPlan) main.TestRunReceipt {
+		return main.CampaignCoverageReceipt(t, p, "repeat-"+p.ReplayCase, false)
 	})
-	if err := writeTestReport(paths[1], []testRunReceipt{second}); err != nil {
+	if err := main.WriteTestReport(paths[1], []main.TestRunReceipt{second}); err != nil {
 		t.Fatal(err)
 	}
-	s.Resilience.CampaignCoverage.SeedSearch.Reports = []testCampaignGuidanceInput{{FromReport: paths[0], RunID: rows[0].RunID}, {FromReport: paths[1], RunID: second.RunID}}
+	s.Resilience.CampaignCoverage.SeedSearch.Reports = []main.TestCampaignGuidanceInput{{FromReport: paths[0], RunID: rows[0].RunID}, {FromReport: paths[1], RunID: second.RunID}}
 	expected := rows[0].FaultMatrix.CampaignCoverage.Choices[0].Exercised + second.FaultMatrix.CampaignCoverage.Choices[0].Exercised
 	s.Resilience.CampaignCoverage.MinExercised = map[int]int{0: expected + 2}
-	x, err := expandTestFaultSweep(s)
+	x, err := main.ExpandTestFaultSweep(s)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -259,22 +260,22 @@ func TestCampaignCumulativeOfflineRelativePaths(t *testing.T) {
 		}
 	}
 	manifest := filepath.Join(dir, "gregale-test.yaml")
-	save := func(s testScenario) map[string]testScenario {
+	save := func(s main.TestScenario) map[string]main.TestScenario {
 		t.Helper()
-		body, err := yaml.Marshal(testManifest{Version: 1, Scenarios: map[string]testScenario{"checkout": s}})
+		body, err := yaml.Marshal(main.TestManifest{Version: 1, Scenarios: map[string]main.TestScenario{"checkout": s}})
 		if err != nil {
 			t.Fatal(err)
 		}
 		if err := os.WriteFile(manifest, body, 0600); err != nil {
 			t.Fatal(err)
 		}
-		normalized, _, err := readTestManifestForScenario(manifest, "checkout", nil)
+		normalized, _, err := main.ReadTestManifestForScenario(manifest, "checkout", nil)
 		if err != nil {
 			t.Fatal(err)
 		}
 		return normalized
 	}
-	prior := campaignCoverageScenario()
+	prior := main.CampaignCoverageScenario()
 	prior.Resilience.CampaignCoverage.MinExercised = map[int]int{0: 2, 1: 2}
 	first := runCampaignRequirementsTest(t, save(prior)["checkout"], true, 0)
 	prior.Resilience.CampaignCoverage.Seeds = []uint64{45, 46, 47}
@@ -286,30 +287,30 @@ func TestCampaignCumulativeOfflineRelativePaths(t *testing.T) {
 			second.FaultMatrix.CampaignCoverage.Seeds[i].Runs[j].RunID = group.Resilience.History[j].RunID
 		}
 	}
-	for name, row := range map[string]testRunReceipt{"first.json": first, "second.json": second} {
-		if err := writeTestReport(filepath.Join(dir, name), []testRunReceipt{row}); err != nil {
+	for name, row := range map[string]main.TestRunReceipt{"first.json": first, "second.json": second} {
+		if err := main.WriteTestReport(filepath.Join(dir, name), []main.TestRunReceipt{row}); err != nil {
 			t.Fatal(err)
 		}
 	}
 	next := campaignSeedSearchScenario()
-	next.Resilience.CampaignCoverage.SeedSearch.Reports = []testCampaignGuidanceInput{{FromReport: "first.json", RunID: first.RunID}, {FromReport: "second.json", RunID: second.RunID}}
+	next.Resilience.CampaignCoverage.SeedSearch.Reports = []main.TestCampaignGuidanceInput{{FromReport: "first.json", RunID: first.RunID}, {FromReport: "second.json", RunID: second.RunID}}
 	normalized := save(next)
-	oldOut, oldJSON := osStdout, jsonOutput
-	defer func() { osStdout, jsonOutput = oldOut, oldJSON }()
+	oldOut, oldJSON := (*main.OsStdout), (*main.JsonOutput)
+	defer func() { (*main.OsStdout), (*main.JsonOutput) = oldOut, oldJSON }()
 	var out bytes.Buffer
-	osStdout = &out
-	jsonOutput = false
+	(*main.OsStdout) = &out
+	(*main.JsonOutput) = false
 	t.Setenv("FAAS_TOKEN", "")
-	if cmdTest([]string{"--manifest", manifest, "--scenario", "checkout", "--validate"}) != 0 || !strings.Contains(out.String(), "guided by 2 campaign batches") || !strings.Contains(out.String(), second.RunID) {
+	if main.CmdTest([]string{"--manifest", manifest, "--scenario", "checkout", "--validate"}) != 0 || !strings.Contains(out.String(), "guided by 2 campaign batches") || !strings.Contains(out.String(), second.RunID) {
 		t.Fatal("cumulative offline preview missing", out.String())
 	}
 	out.Reset()
-	jsonOutput = true
-	if cmdTest([]string{"--manifest", manifest, "--scenario", "checkout", "--validate"}) != 0 || !strings.Contains(out.String(), "contributions") {
+	(*main.JsonOutput) = true
+	if main.CmdTest([]string{"--manifest", manifest, "--scenario", "checkout", "--validate"}) != 0 || !strings.Contains(out.String(), "contributions") {
 		t.Fatal("cumulative JSON preview missing", out.String())
 	}
 	result := runCampaignRequirementsTest(t, normalized["checkout"], true, 0)
-	if _, err := prepareTestReplay(&result, normalized, dir); err != nil {
+	if _, err := main.PrepareTestReplay(&result, normalized, dir); err != nil {
 		t.Fatal("cumulative normalized replay failed", err)
 	}
 }

@@ -213,7 +213,7 @@ route names the definition, which fixes the app, environment and operation, and
 reaches only the customer's own operations; another customer's operation about
 the same subject ID is never signalled. A `signal_id` is per operation whichever
 route delivers it. See
-[ADR-1286](adr/1286-customer-self-service-operation-signals.md).
+[ADR-20261017100853](adr/20261017100853-customer-self-service-operation-signals.md).
 
 ## Deadlines and budgets
 
@@ -249,7 +249,7 @@ accepted work.
   still allowed.
 
 Workflow definitions accept `deadline_seconds` and `max_execution_seconds`
-([ADR-1199](adr/1199-workflow-operation-execution-budget.md)). The budget sums
+([ADR-20261016110803](adr/20261016110803-workflow-operation-execution-budget.md)). The budget sums
 the runtime of the HTTP step attempts; timer, approval and event waits do not
 count. Each attempt is cut at the earlier of its step timeout and the budget
 still unspent. A cut step, like any failed workflow step, needs reconciliation,
@@ -739,7 +739,7 @@ No production cohort is enabled and no replacement PR is open. Native lifecycle
 and fleet rollout qualification remain required before a customer preview. The
 [preview runbook](ops/operations-http-preview.md) describes preparation,
 admission verification and rollback. The proposed
-[ADR-1287](adr/1287-operations-preview-exit.md) sets the evidence for the first
+[ADR-20261017102231](adr/20261017102231-operations-preview-exit.md) sets the evidence for the first
 cohort, for each native execution kind and for general admission per kind.
 
 Owning accounts can observe submission prerequisites with
@@ -848,7 +848,7 @@ output, so it must be at most 64 KiB.
 | non-2xx | Any other refusal. The provider retries the event. |
 
 Operations whose pinned workflow does not wait for the event are skipped. See
-[ADR-1198](adr/1198-webhook-delivered-operation-signals.md).
+[ADR-20261016100929](adr/20261016100929-webhook-delivered-operation-signals.md).
 
 ## Batch Job Operations (closed preview)
 

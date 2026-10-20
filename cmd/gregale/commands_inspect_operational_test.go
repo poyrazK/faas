@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apihostingreceipt"
 )
@@ -33,9 +34,9 @@ func TestCmdInspectSummaryCurrentHealthRemainsSeparateFromVerifiedDeployment(t *
 	}))
 	t.Cleanup(server.Close)
 	configureInspectSummaryTest(t, server.URL)
-	stdout, stderr, restore := swapIO(t)
+	stdout, stderr, restore := main.SwapIO(t)
 	defer restore()
-	if exit := cmdInspect([]string{inspectSlug}); exit != 0 {
+	if exit := main.CmdInspect([]string{inspectSlug}); exit != 0 {
 		t.Fatalf("inspect failed: %d %s", exit, stderr())
 	}
 	for _, want := range []string{"/healthz · verified", "production routes: unknown · insufficient_requests", "rollback rollback-id: blocked", "restart restart-id: retrying", "Current production health is unknown.", "worker recovery (app-wide): waiting_capacity", "worker pool default: desired=2 running=1"} {
@@ -44,12 +45,12 @@ func TestCmdInspectSummaryCurrentHealthRemainsSeparateFromVerifiedDeployment(t *
 		}
 	}
 	stdout.Reset()
-	jsonOutput = true
-	t.Cleanup(resetJSONOutput)
-	if exit := cmdInspect([]string{inspectSlug}); exit != 0 {
+	(*main.JsonOutput) = true
+	t.Cleanup(main.ResetJSONOutput)
+	if exit := main.CmdInspect([]string{inspectSlug}); exit != 0 {
 		t.Fatalf("JSON inspect failed: %d %s", exit, stderr())
 	}
-	var got inspectSummary
+	var got main.InspectSummary
 	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
@@ -73,9 +74,9 @@ func TestCmdInspectSummaryOlderServerRemainsUsable(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	configureInspectSummaryTest(t, server.URL)
-	stdout, stderr, restore := swapIO(t)
+	stdout, stderr, restore := main.SwapIO(t)
 	defer restore()
-	if exit := cmdInspect([]string{inspectSlug}); exit != 0 {
+	if exit := main.CmdInspect([]string{inspectSlug}); exit != 0 {
 		t.Fatalf("older server inspect failed: %d %s", exit, stderr())
 	}
 	if !strings.Contains(stdout.String(), "unavailable: operational") || !strings.Contains(stdout.String(), inspectDepID) {

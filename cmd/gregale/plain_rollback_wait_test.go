@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -60,7 +61,7 @@ func TestCmdPlainRollbackWaitsForTheOutcome(t *testing.T) {
 			}))
 			defer srv.Close()
 			t.Setenv("FAAS_API", srv.URL)
-			if code := cmdRollback(tc.args); code != tc.wantCode || gets != tc.wantGets {
+			if code := main.CmdRollback(tc.args); code != tc.wantCode || gets != tc.wantGets {
 				t.Fatalf("exit=%d GET=%d; want exit=%d GET=%d", code, gets, tc.wantCode, tc.wantGets)
 			}
 		})

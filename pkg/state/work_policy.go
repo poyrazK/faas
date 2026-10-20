@@ -166,6 +166,9 @@ func (s *PgStore) EnqueueKeyedInvocation(ctx context.Context, inv Invocation, po
 		return Invocation{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if err := lockInvocationAdmissionAppDB(ctx, tx, inv); err != nil {
+		return Invocation{}, err
+	}
 	if err := lockInvocationEnvironmentDB(ctx, tx, inv.AppID, inv.AccountID, environment.environment.ID); err != nil {
 		return Invocation{}, err
 	}
@@ -357,6 +360,9 @@ func (m *MemStore) enqueueKeyedInvocationEnvironmentLocked(inv Invocation, polic
 			return Invocation{}, err
 		}
 		return cloneInvocationWorkEnvelope(existing), nil
+	}
+	if err := m.checkKeyedAdmissionDepthLocked(inv, policy, digest[:]); err != nil {
+		return Invocation{}, err
 	}
 	inv.WorkPolicyName = policy.Name
 	if err := m.captureInvocationQueueBindingLocked(&inv); err != nil {

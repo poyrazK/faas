@@ -1,8 +1,9 @@
-package main
+package main_test
 
 import (
 	"bytes"
 	"encoding/json"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"strings"
 	"testing"
 )
@@ -29,26 +30,26 @@ func TestPreviewValidationCompatibilityGates(t *testing.T) {
 		{"ambiguous union", "--fail-on-request-breaking", "incomplete", "unknown", "nullable_union_not_compared", map[string]any{"type": "integer"}, map[string]any{"anyOf": []any{map[string]any{"type": "integer"}, map[string]any{"type": "string"}}}, 0},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			resetJSONOut(t)
-			setPreviewTestAuth(t)
+			main.ResetJSONOut(t)
+			main.SetPreviewTestAuth(t)
 			// Mirror a generated body model with a nullable/constrained field.
 			model := func(field any) map[string]any {
 				return map[string]any{"type": "object", "properties": map[string]any{"quantity": field}, "required": []any{"quantity"}}
 			}
 			reads := servePreviewRequestReport(t, previewRequestDocument(t, model(test.before)), previewRequestDocument(t, model(test.after)), true)
 			var out bytes.Buffer
-			previous := osStdout
-			osStdout = &out
-			t.Cleanup(func() { osStdout = previous })
-			jsonOutput = true
-			if code := cmdPreview([]string{"report", "pr-42-api", "--test-report", previewRequestReceipts(t), test.gate}); code != test.code {
+			previous := (*main.OsStdout)
+			(*main.OsStdout) = &out
+			t.Cleanup(func() { (*main.OsStdout) = previous })
+			(*main.JsonOutput) = true
+			if code := main.CmdPreview([]string{"report", "pr-42-api", "--test-report", previewRequestReceipts(t), test.gate}); code != test.code {
 				t.Fatalf("exit = %d, want %d: %s", code, test.code, out.String())
 			}
-			var report previewRouteReport
+			var report main.PreviewRouteReport
 			if err := json.Unmarshal(out.Bytes(), &report); err != nil {
 				t.Fatal(err)
 			}
-			row := findPreviewReportRoute(t, report, "POST /checkout")
+			row := main.FindPreviewReportRoute(t, report, "POST /checkout")
 			if report.Version != 7 || report.Outcome != test.outcome || report.Requests.Status != "available" || row.RequestCompatibility == nil || row.RequestCompatibility.Status != test.status || len(row.Breaks) != 0 || reads.Load() != 9 {
 				t.Fatalf("report = %+v, route = %+v", report, row)
 			}
@@ -70,14 +71,14 @@ func TestPreviewValidationCompatibilityGates(t *testing.T) {
 }
 
 func TestPreviewValidationFindingsRenderWithoutLimits(t *testing.T) {
-	before := previewReportSpec(t, previewRequestDocument(t, map[string]any{"type": "number", "maximum": 123456789}))
-	after := previewReportSpec(t, previewRequestDocument(t, map[string]any{"type": "number", "maximum": 9876543, "example": "private-example"}))
-	rows, requests := comparePreviewContractsWithRequests(before, after)
-	report := previewRouteReport{Requests: requests, Routes: rows, Outcome: "request_breaking_changes"}
-	prioritizePreviewRouteReview(&report)
+	before := main.PreviewReportSpec(t, previewRequestDocument(t, map[string]any{"type": "number", "maximum": 123456789}))
+	after := main.PreviewReportSpec(t, previewRequestDocument(t, map[string]any{"type": "number", "maximum": 9876543, "example": "private-example"}))
+	rows, requests := main.ComparePreviewContractsWithRequests(before, after)
+	report := main.PreviewRouteReport{Requests: requests, Routes: rows, Outcome: "request_breaking_changes"}
+	main.PrioritizePreviewRouteReview(&report)
 	for _, markdown := range []bool{false, true} {
 		var out bytes.Buffer
-		renderPreviewRouteReport(&out, report, markdown)
+		main.RenderPreviewRouteReport(&out, report, markdown)
 		if !strings.Contains(out.String(), "maximum accepted numeric input became stricter") || strings.Contains(out.String(), "123456789") || strings.Contains(out.String(), "9876543") || strings.Contains(out.String(), "private-") {
 			t.Fatalf("incomplete or unredacted validation finding: %s", out.String())
 		}

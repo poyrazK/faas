@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/deploydiff"
 )
@@ -31,7 +32,7 @@ func TestNormalizeDeployPreviewFlags(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := normalizeDeployPreviewFlags(tt.dryRun, tt.diff)
+			got, err := main.NormalizeDeployPreviewFlags(tt.dryRun, tt.diff)
 			if got != tt.want {
 				t.Fatalf("normalizeDeployPreviewFlags() = %t, want %t", got, tt.want)
 			}
@@ -62,7 +63,7 @@ func TestDeployPreviewRequested(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := deployPreviewRequested(tt.dryRun, tt.diff, tt.serverDiff)
+			got, err := main.DeployPreviewRequested(tt.dryRun, tt.diff, tt.serverDiff)
 			if got != tt.want {
 				t.Fatalf("deployPreviewRequested() = %t, want %t", got, tt.want)
 			}
@@ -82,30 +83,30 @@ func TestDeployPreviewRequested(t *testing.T) {
 // adr: 081
 func TestValidateDeployDiffManifestAcceptsWorkflows(t *testing.T) {
 	dir := t.TempDir()
-	writeManifest(t, dir, `workflows:
+	main.WriteManifest(t, dir, `workflows:
   - name: process_order
     steps:
       - name: charge
         run: charge_stripe
 `)
 
-	if err := validateDeployDiffManifest(dir); err != nil {
+	if err := main.ValidateDeployDiffManifest(dir); err != nil {
 		t.Fatalf("valid workflow preview was rejected: %v", err)
 	}
 }
 
 func TestBuildPreviewBuildPlan_PreservesResolvedSourceIntent(t *testing.T) {
-	got := buildPreviewBuildPlan("", shapeFunction, "python312", "handler.handler", "abc", false, false)
+	got := main.BuildPreviewBuildPlan("", main.ShapeFunction, "python312", "handler.handler", "abc", false, false)
 	if got.Class != "function" || got.Framework != "python" || got.Runtime != "python312" || got.Handler != "handler.handler" || got.SourceSHA256 != "abc" {
 		t.Fatalf("function preview plan = %+v", got)
 	}
 
-	got = buildPreviewBuildPlan("", shapeApp, "", "", "", true, false)
+	got = main.BuildPreviewBuildPlan("", main.ShapeApp, "", "", "", true, false)
 	if got.Class != "app" || got.Framework != "unknown" {
 		t.Fatalf("image preview plan = %+v, want app/unknown", got)
 	}
 
-	got = buildPreviewBuildPlan("", shapeApp, "", "", "abc", false, true)
+	got = main.BuildPreviewBuildPlan("", main.ShapeApp, "", "", "abc", false, true)
 	if got.Class != "app" || got.Framework != "docker" || got.SourceSHA256 != "abc" {
 		t.Fatalf("explicit Dockerfile preview plan = %+v, want app/docker", got)
 	}
@@ -120,7 +121,7 @@ func TestBuildPreviewBuildPlan_PreservesResolvedSourceIntent(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "server.js"), []byte("require('express')().listen(8080)\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	got = buildPreviewBuildPlan(dir, shapeApp, "", "", "abc", false, false)
+	got = main.BuildPreviewBuildPlan(dir, main.ShapeApp, "", "", "abc", false, false)
 	if got.Framework != "node" || got.Entrypoint == "" {
 		t.Fatalf("express app preview plan = %+v, want the node family with the inferred entrypoint", got)
 	}
@@ -128,7 +129,7 @@ func TestBuildPreviewBuildPlan_PreservesResolvedSourceIntent(t *testing.T) {
 
 func TestDiffRequestFromCLI_CarriesBuildPlan(t *testing.T) {
 	want := &api.BuildPlan{Framework: "node", Runtime: "node22", Class: "app", SourceSHA256: "abc"}
-	req := diffRequestFromCLI(diffCLIOptions{BuildPlan: want})
+	req := main.DiffRequestFromCLI(main.DiffCLIOptions{BuildPlan: want})
 	if req.BuildPlan != want {
 		t.Fatalf("build_plan pointer was not carried through: got=%p want=%p", req.BuildPlan, want)
 	}
@@ -137,7 +138,7 @@ func TestDiffRequestFromCLI_CarriesBuildPlan(t *testing.T) {
 func TestDiffRequestFromCLI_PreservesResourceAndProtocolPatch(t *testing.T) {
 	ram, cpu := 512, 750
 	protocol := "grpc"
-	req := diffRequestFromCLI(diffCLIOptions{AppConfig: deploydiff.AppConfigPatch{
+	req := main.DiffRequestFromCLI(main.DiffCLIOptions{AppConfig: deploydiff.AppConfigPatch{
 		RAMMB: &ram, CPUMillicores: &cpu, AppProtocol: &protocol,
 	}})
 	if req.AppConfig == nil {
@@ -156,7 +157,7 @@ func TestDiffRequestFromCLI_PreservesResourceAndProtocolPatch(t *testing.T) {
 
 func TestDiffRequestFromCLI_PreservesScalingPolicy(t *testing.T) {
 	policy := &api.ScalingPolicy{MinInstances: 1, MaxInstances: 3, ScaleOutCooldownS: 5, ScaleInCooldownS: 60}
-	req := diffRequestFromCLI(diffCLIOptions{AppConfig: deploydiff.AppConfigPatch{ScalingPolicy: policy}})
+	req := main.DiffRequestFromCLI(main.DiffCLIOptions{AppConfig: deploydiff.AppConfigPatch{ScalingPolicy: policy}})
 	if req.AppConfig == nil || req.AppConfig.ScalingPolicy != policy {
 		t.Fatalf("scaling_policy = %#v, want original pointer %#v", req.AppConfig, policy)
 	}
@@ -164,7 +165,7 @@ func TestDiffRequestFromCLI_PreservesScalingPolicy(t *testing.T) {
 
 func TestBuildPending_CarriesBuildPlan(t *testing.T) {
 	want := &api.BuildPlan{Framework: "python", Runtime: "python312", Class: "function", Handler: "handler.handler"}
-	pending := buildPending(nil, nil, diffCLIOptions{Slug: "fresh", BuildPlan: want}, deploydiff.EmptyBaseline())
+	pending := main.BuildPending(nil, nil, main.DiffCLIOptions{Slug: "fresh", BuildPlan: want}, deploydiff.EmptyBaseline())
 	if pending.BuildPlan != want {
 		t.Fatalf("build_plan pointer was not carried into local pending projection: got=%p want=%p", pending.BuildPlan, want)
 	}
@@ -172,7 +173,7 @@ func TestBuildPending_CarriesBuildPlan(t *testing.T) {
 
 func TestPreviewCronsFromManifest_IsSharedByPreviewModes(t *testing.T) {
 	dir := t.TempDir()
-	writeManifest(t, dir, `triggers:
+	main.WriteManifest(t, dir, `triggers:
   - kind: cron
     app: fresh
     schedule: "0 3 * * *"
@@ -183,7 +184,7 @@ func TestPreviewCronsFromManifest_IsSharedByPreviewModes(t *testing.T) {
     path: /ignore
 `)
 
-	crons := previewCronsFromManifest(dir, "fresh")
+	crons := main.PreviewCronsFromManifest(dir, "fresh")
 	if len(crons) != 1 {
 		t.Fatalf("cron projection length = %d, want 1: %+v", len(crons), crons)
 	}
@@ -194,8 +195,8 @@ func TestPreviewCronsFromManifest_IsSharedByPreviewModes(t *testing.T) {
 		t.Fatalf("cron enabled = %v, want true", crons[0].Enabled)
 	}
 
-	opts := diffCLIOptions{Cwd: dir, Slug: "fresh"}
-	pending := buildPending(nil, nil, opts, deploydiff.EmptyBaseline())
+	opts := main.DiffCLIOptions{Cwd: dir, Slug: "fresh"}
+	pending := main.BuildPending(nil, nil, opts, deploydiff.EmptyBaseline())
 	if len(pending.Crons) != len(crons) || pending.Crons[0].Path != crons[0].Path {
 		t.Fatalf("local pending crons = %+v, want server request projection %+v", pending.Crons, crons)
 	}
@@ -203,13 +204,13 @@ func TestPreviewCronsFromManifest_IsSharedByPreviewModes(t *testing.T) {
 
 func TestBuildPending_ProjectsManifestScaling(t *testing.T) {
 	dir := t.TempDir()
-	writeManifest(t, dir, `scaling:
+	main.WriteManifest(t, dir, `scaling:
   min_instances: 1
   target:
     metric: rps
     value: 5
 `)
-	pending := buildPending(nil, nil, diffCLIOptions{Cwd: dir, Slug: "fresh"}, deploydiff.EmptyBaseline())
+	pending := main.BuildPending(nil, nil, main.DiffCLIOptions{Cwd: dir, Slug: "fresh"}, deploydiff.EmptyBaseline())
 	if pending.AppConfig.ScalingPolicy == nil || pending.AppConfig.ScalingPolicy.MinInstances != 1 || pending.AppConfig.ScalingPolicy.Target == nil {
 		t.Fatalf("pending scaling policy = %+v, want projected manifest policy", pending.AppConfig.ScalingPolicy)
 	}
@@ -244,7 +245,7 @@ func TestBuildBaseline_UsesAppScopedDeploymentHistory(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	baseline, err := buildBaseline(context.Background(), NewClient(srv.URL, "test"), "target")
+	baseline, err := main.BuildBaseline(context.Background(), main.NewClient(srv.URL, "test"), "target")
 	if err != nil {
 		t.Fatalf("buildBaseline: %v", err)
 	}
@@ -269,7 +270,7 @@ func TestBuildBaseline_DeploymentHistoryFailureIsReturned(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	_, err := buildBaseline(context.Background(), NewClient(srv.URL, "test"), "target")
+	_, err := main.BuildBaseline(context.Background(), main.NewClient(srv.URL, "test"), "target")
 	if err == nil {
 		t.Fatal("buildBaseline succeeded despite deployment history failure")
 	}
@@ -296,7 +297,7 @@ func TestBuildBaseline_EmptyAppScopedHistoryIsValid(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	baseline, err := buildBaseline(context.Background(), NewClient(srv.URL, "test"), "target")
+	baseline, err := main.BuildBaseline(context.Background(), main.NewClient(srv.URL, "test"), "target")
 	if err != nil {
 		t.Fatalf("buildBaseline: %v", err)
 	}
@@ -325,7 +326,7 @@ func TestBuildBaseline_AppScopedHistoryNotFoundIsValid(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	baseline, err := buildBaseline(context.Background(), NewClient(srv.URL, "test"), "target")
+	baseline, err := main.BuildBaseline(context.Background(), main.NewClient(srv.URL, "test"), "target")
 	if err != nil {
 		t.Fatalf("buildBaseline: %v", err)
 	}
@@ -352,24 +353,24 @@ func TestRunDiff_LenientBaselineFailureEmitsWarning(t *testing.T) {
 	defer srv.Close()
 
 	var stdout, stderr bytes.Buffer
-	oldOut, oldErr, oldJSON := osStdout, osStderr, jsonOutput
-	osStdout, osStderr, jsonOutput = &stdout, &stderr, true
-	t.Cleanup(func() { osStdout, osStderr, jsonOutput = oldOut, oldErr, oldJSON })
+	oldOut, oldErr, oldJSON := (*main.OsStdout), (*main.OsStderr), (*main.JsonOutput)
+	(*main.OsStdout), (*main.OsStderr), (*main.JsonOutput) = &stdout, &stderr, true
+	t.Cleanup(func() { (*main.OsStdout), (*main.OsStderr), (*main.JsonOutput) = oldOut, oldErr, oldJSON })
 
-	code := runDiff(context.Background(), NewClient(srv.URL, "test"), diffCLIOptions{
+	code := main.RunDiff(context.Background(), main.NewClient(srv.URL, "test"), main.DiffCLIOptions{
 		Slug:      "target",
 		Cwd:       t.TempDir(),
 		JSON:      true,
 		Lenient:   true,
 		BuildPlan: &api.BuildPlan{Class: "app"},
-		Preview:   newCLIPreview("remote comparison", "target", "", "", "", "Build execution is not verified."),
+		Preview:   main.NewCLIPreview("remote comparison", "target", "", "", "", "Build execution is not verified."),
 	})
 	if code != 0 {
 		t.Fatalf("lenient runDiff exit = %d, want 0; stderr=%s", code, stderr.String())
 	}
 	var envelope struct {
-		Blocking bool              `json:"blocking"`
-		Preview  cliPreviewSummary `json:"preview"`
+		Blocking bool                   `json:"blocking"`
+		Preview  main.CliPreviewSummary `json:"preview"`
 		Diff     struct {
 			Breaks []struct {
 				Code   string `json:"code"`
@@ -411,11 +412,11 @@ func TestRunDiff_StrictBaselineFailureReturnsNonzero(t *testing.T) {
 	defer srv.Close()
 
 	var stderr bytes.Buffer
-	oldErr, oldJSON := osStderr, jsonOutput
-	osStderr, jsonOutput = &stderr, false
-	t.Cleanup(func() { osStderr, jsonOutput = oldErr, oldJSON })
+	oldErr, oldJSON := (*main.OsStderr), (*main.JsonOutput)
+	(*main.OsStderr), (*main.JsonOutput) = &stderr, false
+	t.Cleanup(func() { (*main.OsStderr), (*main.JsonOutput) = oldErr, oldJSON })
 
-	code := runDiff(context.Background(), NewClient(srv.URL, "test"), diffCLIOptions{
+	code := main.RunDiff(context.Background(), main.NewClient(srv.URL, "test"), main.DiffCLIOptions{
 		Slug:      "target",
 		Cwd:       t.TempDir(),
 		JSON:      true,

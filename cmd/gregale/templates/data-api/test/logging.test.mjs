@@ -57,7 +57,8 @@ test('request logs correlate success, auth and rejection without recording calle
     assert.ok(Number.isFinite(Date.parse(record.time)))
     const fields = ['code', 'duration_ms', 'event', 'level', 'method', 'outcome', 'request_id', 'route', 'status', 'time']
     if (item.headers.Authorization && item.route !== 'unknown') {
-      fields.push('admission', 'timings')
+      fields.push('access', 'admission', 'timings')
+      assert.deepEqual(record.access, { kind: 'user' })
       assert.equal(record.admission.outcome, 'admitted')
       assert.ok(record.admission.wait_ms >= 0)
     }

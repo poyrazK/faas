@@ -1,13 +1,13 @@
 //go:build metal
 
-// adr: 1287
+// adr: 20261017102231
 package e2e
 
-// ADR-1287 Stage 1 for ordinary HTTP Operations: the v1 features through the
+// ADR-20261017102231 Stage 1 for ordinary HTTP Operations: the v1 features through the
 // real daemons and a real guest. The base lane already covers results, a lost
 // response with daemon restart and recovery, cancellation and revocation;
 // these add webhook admission, a deadline cut on a running attempt, and the
-// ADR-1285 telemetry read from what the real run left in Postgres.
+// ADR-20261016123221 telemetry read from what the real run left in Postgres.
 
 import (
 	"bytes"
@@ -124,7 +124,7 @@ func TestCustomerHTTPOperationWebhookAdmissionMetal(t *testing.T) {
 // ADR-1196: a running attempt is cut at the Operation deadline. A dispatched
 // attempt may have taken effect, so the Operation needs reconciliation, and a
 // safe_to_retry recovery cannot extend the deadline. The telemetry the
-// schedd collector serves then reads the real outcome (ADR-1285).
+// schedd collector serves then reads the real outcome (ADR-20261016123221).
 func TestCustomerHTTPOperationDeadlineCutMetal(t *testing.T) {
 	f := newCustomerHTTPFixture(t)
 	const deadline = 20 * time.Second

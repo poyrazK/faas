@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"context"
@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/rehearsalpg"
 )
 
@@ -38,8 +39,8 @@ func (c *postgresClientTest) DeleteScenarioPostgres(context.Context, string) err
 	return nil
 }
 
-func postgresScenarioForTest() testScenario {
-	return testScenario{CommandExecution: &testCommandExecutionSpec{Version: 1, Runtime: "contained"}, PostgresFixture: &testPostgresSpec{Version: 1, Fixture: "fixture.sql", MaxLockWaitMS: 50, Tables: []rehearsalpg.Table{{Schema: "public", Name: "imports", Columns: []string{"item"}}}}}
+func postgresScenarioForTest() main.TestScenario {
+	return main.TestScenario{CommandExecution: &main.TestCommandExecutionSpec{Version: 1, Runtime: "contained"}, PostgresFixture: &main.TestPostgresSpec{Version: 1, Fixture: "fixture.sql", MaxLockWaitMS: 50, Tables: []rehearsalpg.Table{{Schema: "public", Name: "imports", Columns: []string{"item"}}}}}
 }
 
 func TestPostgresFixturePinsBytesAndCleansAmbiguousCreation(t *testing.T) {
@@ -48,8 +49,8 @@ func TestPostgresFixturePinsBytesAndCleansAmbiguousCreation(t *testing.T) {
 	if e := os.WriteFile(filepath.Join(dir, "fixture.sql"), body, 0o600); e != nil {
 		t.Fatal(e)
 	}
-	r := testRunReceipt{RunID: strings.Repeat("a", 32)}
-	p, e := prepareTestPostgres(dir, postgresScenarioForTest(), &r)
+	r := main.TestRunReceipt{RunID: strings.Repeat("a", 32)}
+	p, e := main.PrepareTestPostgres(dir, postgresScenarioForTest(), &r)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -57,10 +58,10 @@ func TestPostgresFixturePinsBytesAndCleansAmbiguousCreation(t *testing.T) {
 		t.Fatal(e)
 	}
 	client := &postgresClientTest{createError: true}
-	if e = p.create(t.Context(), client, &r, "app"); e == nil {
+	if e = p.Create(t.Context(), client, &r, "app"); e == nil {
 		t.Fatal("ambiguous creation passed")
 	}
-	p.cleanup(t.Context(), client, &r)
+	p.Cleanup(t.Context(), client, &r)
 	if !client.deleted || client.req.SQL != string(body) || client.req.Spec.FixtureSHA256 != rehearsalpg.HashBytes(body) {
 		t.Fatal("fixture bytes were not pinned or cleanup was skipped")
 	}
@@ -91,7 +92,7 @@ func TestPostgresFixtureRefusesUnsafeRecipeAndFiles(t *testing.T) {
 				}
 				s.PostgresFixture.Fixture = "alias.sql"
 			}
-			if _, e := prepareTestPostgres(dir, s, &testRunReceipt{}); e == nil {
+			if _, e := main.PrepareTestPostgres(dir, s, &main.TestRunReceipt{}); e == nil {
 				t.Fatal("unsupported fixture was admitted")
 			}
 		})
@@ -110,14 +111,14 @@ func postgresEvidenceForTest(rows ...string) *rehearsalpg.Evidence {
 }
 
 func TestPostgresComparisonGatesDuplicateImportsAndLockRegressions(t *testing.T) {
-	a := testRunReceipt{Scenario: "import", Engine: "real-vm", Profile: "warm", Attempt: 1, Status: "passed", Postgres: postgresEvidenceForTest(`{"item":"a"}`)}
+	a := main.TestRunReceipt{Scenario: "import", Engine: "real-vm", Profile: "warm", Attempt: 1, Status: "passed", Postgres: postgresEvidenceForTest(`{"item":"a"}`)}
 	b := a
 	b.Postgres = postgresEvidenceForTest(`{"item":"a"}`, `{"item":"a"}`)
-	comparison, e := compareTestReports("base", "candidate", []testRunReceipt{a}, []testRunReceipt{b})
+	comparison, e := main.CompareTestReports("base", "candidate", []main.TestRunReceipt{a}, []main.TestRunReceipt{b})
 	if e != nil || comparison.PostgresStatus != "failed" {
 		t.Fatalf("duplicate missed: %+v %v", comparison, e)
 	}
-	if text := renderTestComparisonMarkdown(comparison); !strings.Contains(text, "PostgreSQL comparison: FAILED") || !strings.Contains(text, "1 / 0 | 2 / 0") {
+	if text := main.RenderTestComparisonMarkdown(comparison); !strings.Contains(text, "PostgreSQL comparison: FAILED") || !strings.Contains(text, "1 / 0 | 2 / 0") {
 		t.Fatalf("missing database comparison: %s", text)
 	}
 	b.Postgres = postgresEvidenceForTest(`{"item":"a"}`)
@@ -125,12 +126,12 @@ func TestPostgresComparisonGatesDuplicateImportsAndLockRegressions(t *testing.T)
 	b.Postgres.LockBudgetPassed = false
 	b.Status = "failed"
 	b.Error = "PostgreSQL lock-wait budget exceeded"
-	comparison, e = compareTestReports("base", "candidate", []testRunReceipt{a}, []testRunReceipt{b})
+	comparison, e = main.CompareTestReports("base", "candidate", []main.TestRunReceipt{a}, []main.TestRunReceipt{b})
 	if e != nil || comparison.PostgresStatus != "failed" {
 		t.Fatalf("lock regression was not a failed comparison: %+v %v", comparison, e)
 	}
 	b.CleanupError = "unconfirmed cleanup"
-	comparison, _ = compareTestReports("base", "candidate", []testRunReceipt{a}, []testRunReceipt{b})
+	comparison, _ = main.CompareTestReports("base", "candidate", []main.TestRunReceipt{a}, []main.TestRunReceipt{b})
 	if comparison.PostgresStatus != "inconclusive" {
 		t.Fatal("cleanup failure passed")
 	}

@@ -1,9 +1,10 @@
-package main
+package main_test
 
 import (
 	"context"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -41,7 +42,7 @@ func TestBucketDefaultEncryptionCLI(t *testing.T) {
 	} {
 		t.Run(tc.args[0]+tc.args[len(tc.args)-1], func(t *testing.T) {
 			c := &defaultEncryptionCLIClient{}
-			_, err := runBucketDefaultEncryption(t.Context(), c, tc.args)
+			_, err := main.RunBucketDefaultEncryption(t.Context(), c, tc.args)
 			if err != nil || c.method != tc.method || c.app != "demo" || c.bucket != "bucket" {
 				t.Fatal(c, err)
 			}
@@ -60,7 +61,7 @@ func TestBucketDefaultEncryptionCLI(t *testing.T) {
 		{"aws:kms:dsse", "demo", "bucket", key, "true"},
 	} {
 		c := &defaultEncryptionCLIClient{}
-		if _, err := runBucketDefaultEncryption(t.Context(), c, args); err == nil || c.method != "" {
+		if _, err := main.RunBucketDefaultEncryption(t.Context(), c, args); err == nil || c.method != "" {
 			t.Fatal("invalid request dispatched", args, c, err)
 		}
 	}

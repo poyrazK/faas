@@ -47,6 +47,10 @@ func (s *Server) ForwardUDPStream(stream grpc.BidiStreamingServer[vmmdpb.Forward
 	}
 	ctx, cancel := context.WithCancel(stream.Context())
 	defer cancel()
+	ctx, err = s.publicForwardContext(ctx, init.Instance)
+	if err != nil {
+		return err
+	}
 	cmd, input, output, ready, _, err := namespaceBridgeSpawn(ctx, pid, init.Port, "FAAS_VMMD_UDP_BRIDGE_PATH", "/opt/faas/current/bin/vmmd-udp-bridge")
 	if err != nil {
 		return err

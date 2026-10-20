@@ -218,11 +218,17 @@ request, and at least EUR 100.00 of usage a month.
 
 - **Which card.** The card in force when a consumer's month starts (the 1st
   at 00:00 UTC, or when the consumer was created) sets that month's fee and
-  minimum.
-- **Proration.** By default a consumer created mid-month pays the whole
-  month. Add `--prorate-monthly-fees` to charge the first month's fee and
-  minimum for the share of the month left after the consumer was created.
-  A consumer revoked mid-month still pays its last month in full.
+  minimum, unless cards prorate (below).
+- **Proration.** By default a card charges whole months. Add
+  `--prorate-monthly-fees` to charge each card's fee and minimum for the
+  share of the month it is in force:
+  - a consumer created mid-month pays from its creation;
+  - after a plan change or a new card mid-month, the old card charges until
+    the change and the new one from it, each minimum covered by the usage that
+    card priced. A new card that doesn't prorate starts charging next month;
+  - a consumer revoked mid-month pays until the revocation, unless that
+    month's statement was already finalized: finalized fees are never reduced.
+    Finalize monthly statements after the month ends, as billing runs do.
 - **Minimum.** When usage costs less than the minimum, the statement adds a
   top-up for the difference. Late usage lowers the top-up instead of adding
   to the total.
@@ -388,16 +394,16 @@ gregale platform-tenants statement-export --id TENANT_ID --statement-id STATEMEN
   | Provider | Key | What the export creates |
   |---|---|---|
   | Stripe | A restricted key with read and write access to invoices and invoice items. | A draft invoice, unless the connection collects. |
-  | Paddle | An API key with transaction access. | A draft, manually collected transaction with 30-day payment terms. |
+  | Paddle | An API key with transaction access and read access to customers. | A draft, manually collected transaction with 30-day payment terms, unless the connection collects. |
   | Lago | An API key. `--api-url` selects the EU region or a self-hosted Lago. | A one-off invoice on the `gregale_usage` add-on. Lago issues it at once, and charges it only if the connection collects. |
 
 - **Customer.** Use `--customer`, or set the consumer's or tenant's
   `external_ref` to the provider's customer. That is a Stripe `cus_…` ID, a
   Paddle `ctm_…` ID, or the Lago external customer ID.
 - **Invoice lines.** Each rate card and unit price becomes one invoice item,
-  and free requests show as no-charge items. If rounding each item to the cent
-  would change the total, a rounding item keeps the invoice equal to the
-  statement total rounded to the cent. Paddle and Lago reject negative
+  and free requests show as no-charge items. If rounding each item to the
+  currency's smallest unit would change the total, a rounding item keeps the
+  invoice equal to the statement total rounded the same way. Paddle and Lago reject negative
   amounts. They receive one summary item instead when an adjustment has a
   negative line, or when a statement has more than 100 lines.
 - **Drafts by default.** Unless the connection collects, Gregale never
@@ -411,19 +417,23 @@ gregale platform-tenants statement-export --id TENANT_ID --statement-id STATEMEN
   ```bash
   gregale account billing-connection connect stripe --collection charge < stripe-key.txt
   gregale account billing-connection connect stripe --collection send --days-until-due 14 < stripe-key.txt
+  gregale account billing-connection connect paddle --collection send --days-until-due 14 < paddle-key.txt
   gregale account billing-connection connect lago --collection charge < lago-key.txt
   ```
 
   | Collection | Stripe | Lago | Paddle |
   |---|---|---|---|
   | `none` (default) | Draft invoice | Issued, not charged | Draft transaction |
-  | `send` | Finalized and emailed, due after `--days-until-due` (default 30) | Not available | Not available |
+  | `send` | Finalized and emailed, due after `--days-until-due` (default 30) | Not available | Billed with the customer's newest address and emailed, due after `--days-until-due` |
   | `charge` | Finalized and charged to the customer's default payment method | Charged through Lago's payment provider | Not available |
 
   Charges, retries and emails follow your own provider settings. The money
   never passes through Gregale. Each export keeps the mode it started with.
   With `send` or `charge`, an export or billing run reaches your customers
-  directly, so check prices and customer IDs on a draft first.
+  directly, so check prices and customer IDs on a draft first. Paddle can't
+  charge an invoice to a saved card, and needs an address on the customer
+  before it bills one: without one the export stops with the transaction
+  kept as a draft, and exporting again after you add the address bills it.
 - **Tax.** Connect Stripe with `--automatic-tax` to have Stripe Tax add tax
   to each exported invoice. It needs Stripe Tax set up and customer
   addresses. Gregale's statement totals stay net of tax.
@@ -434,8 +444,13 @@ gregale platform-tenants statement-export --id TENANT_ID --statement-id STATEMEN
   resumes the same invoice and never adds an item twice. If Lago issued an
   invoice but the export stopped before tagging it, the retry names that
   invoice and stops; void it in Lago, then retry.
-- **Currencies.** Only two-decimal currencies are supported, such as EUR, USD
-  and GBP. Paddle accepts only USD, EUR and GBP.
+- **Currencies.** Any ISO 4217 currency with up to three decimal places:
+  two-decimal ones such as EUR and USD, zero-decimal ones such as JPY and
+  KRW, and three-decimal ones such as KWD and BHD. Invoices, payment amounts
+  and `amount_minor` fields use the currency's own minor unit (yen for JPY,
+  fils for KWD). Stripe writes three-decimal amounts ending in 0 and MGA in
+  whole units, so Stripe invoices in those currencies round to that. Paddle
+  invoices only USD, EUR and GBP.
 - **Payment status.** Gregale checks each exported invoice in the provider
   until it is paid, voided or deleted. It checks drafts every 6 hours and open
   invoices every hour. List what is still owed:
@@ -527,8 +542,9 @@ gregale consumers credit-void my-api CONSUMER_ID CREDIT_ID
   in full.
 - **Expiry and voiding.** Use `--expires` for credit that lapses. Voiding
   removes what is left of a grant; credit already applied stays applied.
-- **Scope.** Credit pays app consumer statements, not cross-app
-  [platform tenant](#customers-across-several-apps) statements.
+- **Scope.** Consumer credit pays app consumer statements. Customers
+  across several apps have
+  [their own credit](#customer-credit-and-spend-caps).
 
 ### Spend caps
 
@@ -662,6 +678,31 @@ gregale platform-tenants overdue-holds
   `402 tenant_invoice_overdue` on every request, through consumers, surfaces
   and JWT rules, until the invoice is paid or voided.
 
+### Customer credit and spend caps
+
+Customers across several apps get prepaid credit and spend caps too,
+counted over all of their apps:
+
+```bash
+gregale platform-tenants credit-grant --id TENANT_ID --currency USD --amount-millicents 5000000 --note "Annual prepay"
+gregale platform-tenants credits --id TENANT_ID
+gregale platform-tenants credit-void --id TENANT_ID --credit-id CREDIT_ID
+gregale platform-tenants spend-cap-set --id TENANT_ID --currency USD --monthly-cap-millicents 20000000
+gregale platform-tenants spend-cap --id TENANT_ID
+```
+
+- **Credit.** Works like [consumer credit](#prepaid-credit): finalized
+  customer statements draw it down, the statement and the
+  `platform_tenant.statement.finalized` webhook show
+  `credit_applied_millicents` and `amount_due_millicents`, and exported
+  invoices carry the credit line. Customer credit pays only customer
+  statements.
+- **Spend caps.** Once the customer's usage for the month, after credit,
+  passes the cap, every request attributed to the customer gets
+  `402 tenant_spend_cap_reached`, through consumers, surfaces and JWT rules.
+  Caps count usage, not fees, are checked every minute, and can be overshot
+  by about two minutes of traffic, as for consumers.
+
 ### Tenant plans
 
 Package a customer-wide price and request budget once, and move customers
@@ -691,7 +732,6 @@ gregale platform-tenants plan-history --id TENANT_ID
 - Units are requests, optionally weighted by route, the compute seconds or
   response megabytes of billable requests, or units your app reports. App
   and customer-wide cards can price several units at once.
-- Spend caps are for app consumers only.
 - Usage recorded before an upgrade has no compute time, response size or
   route for surface and JWT-rule requests, so it prices as zero seconds and
   megabytes and weight 1.
@@ -703,7 +743,7 @@ gregale platform-tenants plan-history --id TENANT_ID
 - Gregale records the handoff to your billing system, or creates an invoice
   in your own Stripe, Paddle or Lago. Only a connection set to collect has
   your provider send or charge it, and the money never passes through
-  Gregale. Paddle exports are always drafts.
+  Gregale. Paddle can send invoices but not charge them.
 - The Paddle and Lago exports follow those providers' published API
   references and were tested against recorded-shape fakes, not live
   accounts.
@@ -737,8 +777,12 @@ See [ADR-949](adr/949-app-consumer-statement-revisions-and-platform-failure-bill
 [ADR-1322](adr/1322-platform-tenant-fees-and-trials.md),
 [ADR-1324](adr/1324-block-tenants-with-overdue-invoices.md),
 [ADR-1325](adr/1325-prorated-monthly-fees.md),
-[ADR-1310](adr/1310-platform-tenant-resource-pricing-and-source-routes.md), and
-[ADR-1311](adr/1311-statement-invoice-collection.md) for the billing rules.
+[ADR-1310](adr/1310-platform-tenant-resource-pricing-and-source-routes.md),
+[ADR-1311](adr/1311-statement-invoice-collection.md),
+[ADR-20261019100330](adr/20261019100330-statement-currencies.md),
+[ADR-20261019100331](adr/20261019100331-platform-tenant-credit-and-spend-caps.md),
+[ADR-20261019100332](adr/20261019100332-prorated-fees-across-card-changes.md), and
+[ADR-20261019100333](adr/20261019100333-paddle-send-collection.md) for the billing rules.
 
 These decisions were originally numbered ADR-843 through ADR-848. They were
 renumbered to ADR-949 through ADR-954 to resolve collisions with route-health

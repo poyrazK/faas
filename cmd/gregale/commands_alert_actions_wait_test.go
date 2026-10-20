@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"context"
@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -66,7 +67,7 @@ func TestAlertActionWaitPinsPairAndRequiresFinishedHandoff(t *testing.T) {
 			client := &alertWaitFixtureClient{rows: []api.AlertRollback{draining, complete}}
 			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 			defer cancel()
-			last, err := waitAlertRollback(ctx, client, "demo", pin, time.Millisecond)
+			last, err := main.WaitAlertRollback(ctx, client, "demo", pin, time.Millisecond)
 			if scenario == "finished drain" {
 				if err != nil || last.Status != "complete" || client.read != 2 {
 					t.Fatalf("wait %+v %v reads=%d", last, err, client.read)
@@ -88,7 +89,7 @@ func TestAlertActionWaitTimeoutPreservesBlockersAndCancellation(t *testing.T) {
 			cancel()
 		}
 		client := &alertWaitFixtureClient{rows: []api.AlertRollback{pin}}
-		last, err := waitAlertRollback(ctx, client, "demo", pin, time.Millisecond)
+		last, err := main.WaitAlertRollback(ctx, client, "demo", pin, time.Millisecond)
 		cancel()
 		want := context.DeadlineExceeded
 		if canceled {
@@ -131,7 +132,7 @@ func TestCmdAlertActionsWaitUsesGETOnly(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "test-token")
-	if code := cmdAlerts([]string{"actions", "--app", "demo", "--fire", pin.ID, "--wait", "--poll-interval", "1ms", "--timeout", "1s"}); code != 0 || reads != 3 {
+	if code := main.CmdAlerts([]string{"actions", "--app", "demo", "--fire", pin.ID, "--wait", "--poll-interval", "1ms", "--timeout", "1s"}); code != 0 || reads != 3 {
 		t.Fatalf("exit=%d reads=%d", code, reads)
 	}
 }

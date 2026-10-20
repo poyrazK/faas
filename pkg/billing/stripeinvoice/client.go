@@ -261,12 +261,15 @@ type InvoiceState struct {
 	PaidAt          *time.Time
 	HostedURL       string
 	Deleted         bool
+	// Currency is the invoice's lowercase ISO 4217 code.
+	Currency string
 }
 
 // GetInvoice reads an invoice's payment state.
 func (c *Client) GetInvoice(ctx context.Context, key, invoiceID string) (InvoiceState, error) {
 	var out struct {
 		Status            string `json:"status"`
+		Currency          string `json:"currency"`
 		AmountPaid        int64  `json:"amount_paid"`
 		AmountRemaining   int64  `json:"amount_remaining"`
 		DueDate           *int64 `json:"due_date"`
@@ -283,7 +286,8 @@ func (c *Client) GetInvoice(ctx context.Context, key, invoiceID string) (Invoice
 	if err != nil {
 		return InvoiceState{}, err
 	}
-	state := InvoiceState{Status: out.Status, AmountPaid: out.AmountPaid, AmountRemaining: out.AmountRemaining, HostedURL: out.HostedInvoiceURL}
+	state := InvoiceState{Status: out.Status, AmountPaid: out.AmountPaid, AmountRemaining: out.AmountRemaining, HostedURL: out.HostedInvoiceURL,
+		Currency: out.Currency}
 	if out.DueDate != nil {
 		due := time.Unix(*out.DueDate, 0).UTC()
 		state.DueDate = &due

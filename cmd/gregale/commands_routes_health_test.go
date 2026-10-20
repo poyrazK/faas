@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/routehealth"
 )
@@ -38,8 +39,8 @@ func cliHealthReport(status string) api.RouteHealthReport {
 func TestRouteHealthCLIReportsAndFailures(t *testing.T) {
 	for _, scenario := range []string{"healthy", "regressed", "unknown", "wrong_deployment", "false_healthy", "invalid_counts", "human"} {
 		t.Run(scenario, func(t *testing.T) {
-			resetJSONOut(t)
-			setPreviewTestAuth(t)
+			main.ResetJSONOut(t)
+			main.SetPreviewTestAuth(t)
 			status := scenario
 			if status != "regressed" && status != "unknown" {
 				status = "healthy"
@@ -58,14 +59,14 @@ func TestRouteHealthCLIReportsAndFailures(t *testing.T) {
 				if r.Method != "GET" || r.URL.Path != "/v1/apps/demo/route-health/deployments/"+healthCandidateID {
 					t.Error("route binding")
 				}
-				writeJSONTest(w, report)
+				main.WriteJSONTest(w, report)
 			}))
 			defer server.Close()
 			t.Setenv("FAAS_API", server.URL)
 			var out bytes.Buffer
-			old := osStdout
-			osStdout = &out
-			t.Cleanup(func() { osStdout = old })
+			old := (*main.OsStdout)
+			(*main.OsStdout) = &out
+			t.Cleanup(func() { (*main.OsStdout) = old })
 			args := []string{"routes", "health", "report", "demo", "--deployment", healthCandidateID, "--fail-on-unhealthy"}
 			if scenario != "human" {
 				args = append(args, "--json")
@@ -74,7 +75,7 @@ func TestRouteHealthCLIReportsAndFailures(t *testing.T) {
 			if scenario == "healthy" || scenario == "human" {
 				want = 0
 			}
-			if code := run(args); code != want {
+			if code := main.Run(args); code != want {
 				t.Fatalf("exit %d want %d: %s", code, want, out.String())
 			}
 			if scenario == "human" && (!strings.Contains(out.String(), "POST /checkout") || !strings.Contains(out.String(), "0/100") || !strings.Contains(out.String(), "full capture unknown")) {
@@ -86,8 +87,8 @@ func TestRouteHealthCLIReportsAndFailures(t *testing.T) {
 func TestRouteHealthCLIConfiguration(t *testing.T) {
 	for _, scenario := range []string{"get", "set", "abort", "invalid_action", "wrong_action", "missing_revision", "unknown_field", "wrong_routes"} {
 		t.Run(scenario, func(t *testing.T) {
-			resetJSONOut(t)
-			setPreviewTestAuth(t)
+			main.ResetJSONOut(t)
+			main.SetPreviewTestAuth(t)
 			file := filepath.Join(t.TempDir(), "routes.json")
 			body := `[{"method":"POST","path":"/checkout"}]`
 			if scenario == "unknown_field" {
@@ -119,7 +120,7 @@ func TestRouteHealthCLIConfiguration(t *testing.T) {
 				if scenario == "wrong_routes" {
 					g.Routes[0].Path = "/other"
 				}
-				writeJSONTest(w, g)
+				main.WriteJSONTest(w, g)
 			}))
 			defer server.Close()
 			t.Setenv("FAAS_API", server.URL)
@@ -140,7 +141,7 @@ func TestRouteHealthCLIConfiguration(t *testing.T) {
 			if scenario == "get" || scenario == "set" || scenario == "abort" {
 				want = 0
 			}
-			if code := run(args); code != want {
+			if code := main.Run(args); code != want {
 				t.Fatalf("exit %d want %d", code, want)
 			}
 			if (scenario == "unknown_field" || scenario == "missing_revision" || scenario == "invalid_action") && calls != 0 {

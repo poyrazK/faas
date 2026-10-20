@@ -68,15 +68,15 @@ func TestTenantStatementInvoiceRoundingAndCurrency(t *testing.T) {
 	if inv, err = TenantStatementInvoice(statement); err != nil || inv.TotalMinor != 1 || inv.RoundingMinor != -1 {
 		t.Fatalf("rounding invoice = %+v err=%v, want total 1 with a -1 rounding item", inv, err)
 	}
-	statement.Currency = "JPY"
+	statement.Currency = "CLF"
 	if _, err := TenantStatementInvoice(statement); !errors.Is(err, ErrInvoiceCurrencyUnsupported) {
-		t.Fatalf("JPY err = %v", err)
+		t.Fatalf("four-decimal CLF err = %v", err)
 	}
 	statement.Currency, statement.AmountMillicents = "EUR", 999
 	if _, err := TenantStatementInvoice(statement); !errors.Is(err, ErrStatementNotInvoiceable) {
 		t.Fatalf("total mismatch err = %v", err)
 	}
-	if got := millicentsToCents(-1500); got != -2 {
-		t.Fatalf("millicentsToCents(-1500) = %d, want -2", got)
+	if got := (MinorUnit{Exponent: 2, Step: 1}).FromMillicents(-1500); got != -2 {
+		t.Fatalf("FromMillicents(-1500) = %d, want -2", got)
 	}
 }

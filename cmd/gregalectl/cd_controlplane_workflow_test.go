@@ -84,18 +84,23 @@ func TestCDControlPlaneObservesCustomerPathDuringActivation(t *testing.T) {
 	}
 }
 
-func TestCDControlPlanePlannedMaintenanceKeepsDeploymentFailureGate(t *testing.T) {
-	platformBody, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "cd-platform.yml"))
-	if err != nil {
-		t.Fatal(err)
+// No release may stop writers or open a maintenance window
+// (ADR-202610171900, amendment 1): no deploy workflow offers a maintenance
+// input, and the control-plane activation always proves a healthy baseline.
+func TestCDDeployWorkflowsHaveNoMaintenanceWindow(t *testing.T) {
+	workflows, err := filepath.Glob(filepath.Join("..", "..", ".github", "workflows", "*.yml"))
+	if err != nil || len(workflows) == 0 {
+		t.Fatalf("list workflows: %v (%d found)", err, len(workflows))
 	}
-	platform := string(platformBody)
-	for _, required := range []string{
-		"maintenance_mode:",
-		"maintenance_mode: ${{ inputs.maintenance_mode }}",
-	} {
-		if !strings.Contains(platform, required) {
-			t.Errorf("platform workflow is missing maintenance input wiring %q", required)
+	for _, path := range workflows {
+		body, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, forbidden := range []string{"maintenance_mode", "MAINTENANCE_MODE", "baseline_samples=0"} {
+			if strings.Contains(string(body), forbidden) {
+				t.Errorf("%s has %q: releases never stop writers or skip the rollout baseline", filepath.Base(path), forbidden)
+			}
 		}
 	}
 
@@ -104,19 +109,10 @@ func TestCDControlPlanePlannedMaintenanceKeepsDeploymentFailureGate(t *testing.T
 		t.Fatal(err)
 	}
 	control := string(controlBody)
-	if got := strings.Count(control, "      maintenance_mode:"); got != 2 {
-		t.Errorf("control-plane workflow has %d maintenance inputs, want workflow_call and workflow_dispatch", got)
-	}
-	for _, required := range []string{
-		"MAINTENANCE_MODE: ${{ inputs.maintenance_mode }}",
-		`if [[ "$MAINTENANCE_MODE" == "true" ]]; then`,
-		"baseline_samples=0",
-		"ROLLOUT_BASELINE_SAMPLE_COUNT=\"$baseline_samples\"",
-		"scripts/ci/observe_remote_rollout.sh",
-	} {
-		if !strings.Contains(control, required) {
-			t.Errorf("control-plane workflow is missing maintenance behavior %q", required)
-		}
+	activation := strings.Index(control, "${release_dir}/bin/deployctl deploy ${RELEASE_ID}")
+	observe := strings.Index(control, "ROLLOUT_BASELINE_SAMPLE_COUNT=3 \\\n            scripts/ci/observe_remote_rollout.sh")
+	if activation < 0 || observe < activation {
+		t.Errorf("control-plane activation must run under the observer with a 3-sample baseline: activation=%d observe=%d", activation, observe)
 	}
 	observerBody, err := os.ReadFile(filepath.Join("..", "..", "scripts", "ci", "observe_rollout_availability.sh"))
 	if err != nil {
@@ -130,7 +126,7 @@ func TestCDControlPlanePlannedMaintenanceKeepsDeploymentFailureGate(t *testing.T
 		`baseline_ready = bool(baseline) and len(baseline_successful) == len(baseline)`,
 	} {
 		if !strings.Contains(observer, required) {
-			t.Errorf("maintenance observer must preserve wrapped-command failure: missing %q", required)
+			t.Errorf("rollout observer must preserve wrapped-command failure: missing %q", required)
 		}
 	}
 }

@@ -40,7 +40,7 @@ type InvocationsRetention struct {
 	now   func() time.Time
 	log   *slog.Logger
 
-	operationTelemetry *OperationTelemetry // ADR-1285; nil reads nothing
+	operationTelemetry *OperationTelemetry // ADR-20261016123221; nil reads nothing
 }
 
 // deadlineBreachDetailsStore is implemented by the production stores. The
@@ -69,7 +69,7 @@ func NewInvocationsRetention(store state.Store, log *slog.Logger) *InvocationsRe
 }
 
 // WithOperationTelemetry refreshes the Customer Operations gauges after each
-// sweep, so they read the state the sweep left (ADR-1285).
+// sweep, so they read the state the sweep left (ADR-20261016123221).
 func (r *InvocationsRetention) WithOperationTelemetry(t *OperationTelemetry) *InvocationsRetention {
 	r.operationTelemetry = t
 	return r
@@ -101,16 +101,23 @@ func (r *InvocationsRetention) SweepRetention(ctx context.Context, limit int) (i
 	if err != nil {
 		return 0, err
 	}
-	deleted := 0
-	for _, id := range ids {
-		if _, err := r.store.DeleteInvocationsByIDs(ctx, []string{id}); err != nil {
-			if errors.Is(err, state.ErrNotFound) {
+	// One statement per batch keeps up with the stamped backlog
+	// (ADR 20261019104819); a failed batch falls back to per-row deletes
+	// so one stuck row never stalls the rest.
+	deleted, err := r.store.DeleteInvocationsByIDs(ctx, ids)
+	if err != nil {
+		deleted = 0
+		for _, id := range ids {
+			n, err := r.store.DeleteInvocationsByIDs(ctx, []string{id})
+			if err != nil {
+				if errors.Is(err, state.ErrNotFound) {
+					continue
+				}
+				r.log.Warn("invocations retention: delete failed", "id", id, "err", err)
 				continue
 			}
-			r.log.Warn("invocations retention: delete failed", "id", id, "err", err)
-			continue
+			deleted += n
 		}
-		deleted++
 	}
 	if deleted > 0 {
 		r.log.Info("invocations retention sweep", "deleted", deleted, "cutoff", now.Format(time.RFC3339))
@@ -177,6 +184,17 @@ func (r *InvocationsRetention) SweepOnce(ctx context.Context) (int, int, error) 
 	retentionDeleted, err := r.SweepRetention(ctx, 500)
 	if err != nil {
 		return 0, 0, err
+	}
+	// Stamp after reaping: rows stamped with an already-past horizon are
+	// pruned on the next tick, and a stamping failure cannot hold up the
+	// reaper or the deadline sweep below.
+	if stamper, ok := r.store.(state.InvocationDefaultRetentionStore); ok {
+		stamped, err := stamper.StampDefaultInvocationRetention(ctx, 500)
+		if err != nil {
+			r.log.Warn("invocations retention: default stamp failed", "err", err)
+		} else if stamped > 0 {
+			r.log.Info("invocations retention: stamped plan default", "rows", stamped)
+		}
 	}
 	if attempts, ok := r.store.(state.InvocationAttemptRetentionStore); ok {
 		if _, err := attempts.PruneInvocationAttemptHistory(ctx, r.now(), 500); err != nil {

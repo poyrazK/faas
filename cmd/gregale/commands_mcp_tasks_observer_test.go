@@ -1,30 +1,31 @@
-package main
+package main_test
 
 import (
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func TestMCPTasksObserverConfigEnvNames(t *testing.T) {
-	config := mcpTasksObserverSourceConfig{Tasks: &struct {
+	config := main.McpTasksObserverSourceConfig{Tasks: &struct {
 		Enabled        bool   `json:"enabled"`
 		DatabaseURLEnv string `json:"database_url_env"`
 		OwnerKeyEnv    string `json:"owner_key_env"`
 	}{Enabled: true}}
-	databaseEnv, ownerKeyEnv, err := mcpTasksObserverConfigEnvNames(config)
+	databaseEnv, ownerKeyEnv, err := main.McpTasksObserverConfigEnvNames(config)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if databaseEnv != mcpTasksObserverDatabaseEnvDefault || ownerKeyEnv != mcpTasksObserverOwnerKeyEnvDefault {
+	if databaseEnv != main.McpTasksObserverDatabaseEnvDefault || ownerKeyEnv != main.McpTasksObserverOwnerKeyEnvDefault {
 		t.Fatalf("default env names = %q/%q", databaseEnv, ownerKeyEnv)
 	}
 
 	config.Tasks.DatabaseURLEnv = "TASKS_DATABASE_URL"
 	config.Tasks.OwnerKeyEnv = "TASKS_OWNER_KEY"
-	databaseEnv, ownerKeyEnv, err = mcpTasksObserverConfigEnvNames(config)
+	databaseEnv, ownerKeyEnv, err = main.McpTasksObserverConfigEnvNames(config)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,7 +33,7 @@ func TestMCPTasksObserverConfigEnvNames(t *testing.T) {
 		t.Fatalf("custom env names = %q/%q", databaseEnv, ownerKeyEnv)
 	}
 	config.Tasks.DatabaseURLEnv = "database-url"
-	if _, _, err := mcpTasksObserverConfigEnvNames(config); err == nil {
+	if _, _, err := main.McpTasksObserverConfigEnvNames(config); err == nil {
 		t.Fatal("invalid lowercase database env name was accepted")
 	}
 }
@@ -42,7 +43,7 @@ func TestReadMCPTasksObserverSourceConfigRejectsTrailingJSON(t *testing.T) {
 	if err := os.WriteFile(path, []byte(`{"tasks":{"enabled":true}} {}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := readMCPTasksObserverSourceConfig(path); err == nil {
+	if _, err := main.ReadMCPTasksObserverSourceConfig(path); err == nil {
 		t.Fatal("config with trailing JSON was accepted")
 	}
 }
@@ -56,19 +57,19 @@ func TestMCPTasksObserverCredentialRequiresSecretReferenceAndExistingSecret(t *t
 		"production": {{Key: "metrics-token"}},
 	}}
 
-	database := mcpTasksObserverCredential(app, "DATABASE_URL", metadata, true)
+	database := main.McpTasksObserverCredential(app, "DATABASE_URL", metadata, true)
 	if !database.Configured || database.SecretBacked || database.Ready {
 		t.Fatalf("plain database env should not be ready: %+v", database)
 	}
-	token := mcpTasksObserverCredential(app, mcpTasksObserverMetricsTokenEnv, metadata, true)
+	token := main.McpTasksObserverCredential(app, main.McpTasksObserverMetricsTokenEnv, metadata, true)
 	if !token.Configured || !token.SecretBacked || !token.SecretExists || !token.Ready {
 		t.Fatalf("existing scoped token secret should be ready: %+v", token)
 	}
-	missing := mcpTasksObserverCredential(app, mcpTasksObserverMetricsTokenEnv, api.AppSecretListResponse{}, true)
+	missing := main.McpTasksObserverCredential(app, main.McpTasksObserverMetricsTokenEnv, api.AppSecretListResponse{}, true)
 	if missing.SecretExists || missing.Ready {
 		t.Fatalf("missing secret should not be ready: %+v", missing)
 	}
-	unverified := mcpTasksObserverCredential(app, mcpTasksObserverMetricsTokenEnv, api.AppSecretListResponse{}, false)
+	unverified := main.McpTasksObserverCredential(app, main.McpTasksObserverMetricsTokenEnv, api.AppSecretListResponse{}, false)
 	if unverified.SecretExists || unverified.Ready || unverified.MetadataLoaded {
 		t.Fatalf("unavailable secret metadata should not be treated as ready: %+v", unverified)
 	}
@@ -76,43 +77,43 @@ func TestMCPTasksObserverCredentialRequiresSecretReferenceAndExistingSecret(t *t
 
 func TestMCPTasksObserverRequiresMatchingExplicitNamespaceAndWorkerSlug(t *testing.T) {
 	worker := api.AppResponse{Slug: "mcp-worker", Manifest: api.AppManifest{Env: map[string]string{
-		mcpTasksObserverNamespaceEnv:   "tenant-queue",
-		mcpTasksObserverMetricsSlugEnv: "mcp-worker",
+		main.McpTasksObserverNamespaceEnv:   "tenant-queue",
+		main.McpTasksObserverMetricsSlugEnv: "mcp-worker",
 	}}}
 	observer := api.AppResponse{Manifest: api.AppManifest{Env: map[string]string{
-		mcpTasksObserverNamespaceEnv:   " tenant-queue ",
-		mcpTasksObserverMetricsSlugEnv: "mcp-worker",
+		main.McpTasksObserverNamespaceEnv:   " tenant-queue ",
+		main.McpTasksObserverMetricsSlugEnv: "mcp-worker",
 	}}}
-	if !mcpTasksObserverNamespacesMatch(worker, observer) {
+	if !main.McpTasksObserverNamespacesMatch(worker, observer) {
 		t.Fatal("matching explicit namespaces were rejected")
 	}
-	if !mcpTasksObserverMetricsTargetMatches(observer, worker.Slug) {
+	if !main.McpTasksObserverMetricsTargetMatches(observer, worker.Slug) {
 		t.Fatal("observer metrics target matching the worker was rejected")
 	}
-	observer.Manifest.Env[mcpTasksObserverNamespaceEnv] = "different-queue"
-	if mcpTasksObserverNamespacesMatch(worker, observer) {
+	observer.Manifest.Env[main.McpTasksObserverNamespaceEnv] = "different-queue"
+	if main.McpTasksObserverNamespacesMatch(worker, observer) {
 		t.Fatal("mismatched namespaces were accepted")
 	}
-	observer.Manifest.Env[mcpTasksObserverNamespaceEnv] = "tenant-queue"
-	observer.Manifest.EnvSecrets = map[string]string{mcpTasksObserverNamespaceEnv: "secret:queue-name"}
-	if mcpTasksObserverNamespacesMatch(worker, observer) {
+	observer.Manifest.Env[main.McpTasksObserverNamespaceEnv] = "tenant-queue"
+	observer.Manifest.EnvSecrets = map[string]string{main.McpTasksObserverNamespaceEnv: "secret:queue-name"}
+	if main.McpTasksObserverNamespacesMatch(worker, observer) {
 		t.Fatal("secret-backed namespace that cannot be compared was accepted")
 	}
 	observer.Manifest.EnvSecrets = nil
-	observer.Manifest.Env[mcpTasksObserverMetricsSlugEnv] = "other-worker"
-	if mcpTasksObserverMetricsTargetMatches(observer, worker.Slug) {
+	observer.Manifest.Env[main.McpTasksObserverMetricsSlugEnv] = "other-worker"
+	if main.McpTasksObserverMetricsTargetMatches(observer, worker.Slug) {
 		t.Fatal("observer metrics target mismatch was accepted")
 	}
 }
 
 func TestMCPTasksObserverEntrypointDetection(t *testing.T) {
-	if !mcpTasksObserverEntrypointDetected([]string{"npm", "run", "start:tasks-observer"}) {
+	if !main.McpTasksObserverEntrypointDetected([]string{"npm", "run", "start:tasks-observer"}) {
 		t.Fatal("observer start script was not detected")
 	}
-	if !mcpTasksObserverEntrypointDetected([]string{"node", "tasks-observer.js"}) {
+	if !main.McpTasksObserverEntrypointDetected([]string{"node", "tasks-observer.js"}) {
 		t.Fatal("observer source entrypoint was not detected")
 	}
-	if mcpTasksObserverEntrypointDetected([]string{"node", "tasks-worker.js"}) {
+	if main.McpTasksObserverEntrypointDetected([]string{"node", "tasks-worker.js"}) {
 		t.Fatal("worker entrypoint was classified as observer")
 	}
 }

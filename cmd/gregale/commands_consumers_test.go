@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -18,10 +19,10 @@ func withConsumersTestAPI(t *testing.T, handler http.HandlerFunc) *bytes.Buffer 
 	t.Cleanup(srv.Close)
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
-	oldOut, oldJSON := osStdout, jsonOutput
+	oldOut, oldJSON := (*main.OsStdout), (*main.JsonOutput)
 	var stdout bytes.Buffer
-	osStdout, jsonOutput = &stdout, false
-	t.Cleanup(func() { osStdout, jsonOutput = oldOut, oldJSON })
+	(*main.OsStdout), (*main.JsonOutput) = &stdout, false
+	t.Cleanup(func() { (*main.OsStdout), (*main.JsonOutput) = oldOut, oldJSON })
 	return &stdout
 }
 
@@ -59,19 +60,19 @@ func TestCmdConsumersMonetizationLifecycle(t *testing.T) {
 		}
 	})
 
-	if code := cmdConsumers([]string{"key-create", "my-api", "c1", "--name", "prod", "--scopes", "read,write"}); code != 0 {
+	if code := main.CmdConsumers([]string{"key-create", "my-api", "c1", "--name", "prod", "--scopes", "read,write"}); code != 0 {
 		t.Fatalf("key-create exit = %d", code)
 	}
 	if key.Name != "prod" || strings.Join(key.Scopes, ",") != "read,write" || !strings.Contains(stdout.String(), "ck_secret_once") {
 		t.Fatalf("key-create body=%+v output=%q", key, stdout.String())
 	}
-	if code := cmdConsumers([]string{"rate-card-create", "my-api", "--currency", "eur", "--price-millicents", "25", "--included-units", "10000"}); code != 0 {
+	if code := main.CmdConsumers([]string{"rate-card-create", "my-api", "--currency", "eur", "--price-millicents", "25", "--included-units", "10000"}); code != 0 {
 		t.Fatalf("rate-card-create exit = %d", code)
 	}
 	if card.Currency != "EUR" || card.PriceMillicentsPerUnit != 25 || card.IncludedUnitsPerMonth != 10000 || !strings.Contains(stdout.String(), "EUR 0.00025") {
 		t.Fatalf("rate card body=%+v output=%q", card, stdout.String())
 	}
-	if code := cmdConsumers([]string{"statement-draft", "my-api", "c1", "--month", "2026-09"}); code != 0 {
+	if code := main.CmdConsumers([]string{"statement-draft", "my-api", "c1", "--month", "2026-09"}); code != 0 {
 		t.Fatalf("statement-draft exit = %d", code)
 	}
 	wantStart, wantEnd := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC), time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
@@ -81,7 +82,7 @@ func TestCmdConsumersMonetizationLifecycle(t *testing.T) {
 	if !strings.Contains(stdout.String(), "r3 draft") || !strings.Contains(stdout.String(), "only units not covered") {
 		t.Fatalf("adjustment revision not explained: %q", stdout.String())
 	}
-	if code := cmdConsumers([]string{"statement-handoff", "my-api", "c1", "s3", "--invoice-id", "INV-1001"}); code != 0 || claim.ExternalInvoiceID != "INV-1001" {
+	if code := main.CmdConsumers([]string{"statement-handoff", "my-api", "c1", "s3", "--invoice-id", "INV-1001"}); code != 0 || claim.ExternalInvoiceID != "INV-1001" {
 		t.Fatalf("handoff exit=%d body=%+v", code, claim)
 	}
 }
@@ -117,9 +118,9 @@ func TestCmdConsumersRejectsBadArgumentsBeforeCallingAPI(t *testing.T) {
 	} {
 		var code int
 		if strings.HasPrefix(name, "tenant") {
-			code = cmdPlatformTenants(args)
+			code = main.CmdPlatformTenants(args)
 		} else {
-			code = cmdConsumers(args)
+			code = main.CmdConsumers(args)
 		}
 		if code == 0 {
 			t.Errorf("%s: accepted %v", name, args)
@@ -136,7 +137,7 @@ func TestCmdConsumersTieredRateCard(t *testing.T) {
 		w.WriteHeader(http.StatusCreated)
 		_ = json.NewEncoder(w).Encode(api.APIConsumerRateCardResponse{ID: "rc1", Currency: card.Currency, Tiers: card.Tiers})
 	})
-	code := cmdConsumers([]string{"rate-card-create", "my-api", "--currency", "EUR", "--tier", "10000:0", "--tier", "1000000:25", "--tier", "inf:10"})
+	code := main.CmdConsumers([]string{"rate-card-create", "my-api", "--currency", "EUR", "--tier", "10000:0", "--tier", "1000000:25", "--tier", "inf:10"})
 	if code != 0 || len(card.Tiers) != 3 || card.Tiers[0].UpTo == nil || *card.Tiers[0].UpTo != 10000 ||
 		card.Tiers[2].UpTo != nil || card.Tiers[2].PriceMillicentsPerUnit != 10 || card.PriceMillicentsPerUnit != 0 {
 		t.Fatalf("exit=%d body=%+v", code, card)
@@ -156,7 +157,7 @@ func TestCmdConsumersRouteWeights(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(api.APIConsumerRateCardResponse{ID: "rc1", Currency: card.Currency,
 			PriceMillicentsPerUnit: card.PriceMillicentsPerUnit, RouteWeights: card.RouteWeights})
 	})
-	code := cmdConsumers([]string{"rate-card-create", "my-api", "--currency", "EUR", "--price-millicents", "25",
+	code := main.CmdConsumers([]string{"rate-card-create", "my-api", "--currency", "EUR", "--price-millicents", "25",
 		"--weight", "POST /generate=20", "--weight", "GET /items/{id}=2"})
 	if code != 0 || card.RouteWeights["POST /generate"] != 20 || card.RouteWeights["GET /items/{id}"] != 2 || len(card.RouteWeights) != 2 {
 		t.Fatalf("exit=%d body=%+v", code, card)
@@ -198,27 +199,27 @@ func TestCmdConsumersPlans(t *testing.T) {
 			t.Errorf("unexpected route %s %s", r.Method, r.URL.Path)
 		}
 	})
-	if code := cmdConsumers([]string{"plan-create", "my-api", "--name", "pro", "--max-requests-per-minute", "600"}); code != 0 ||
+	if code := main.CmdConsumers([]string{"plan-create", "my-api", "--name", "pro", "--max-requests-per-minute", "600"}); code != 0 ||
 		created.Name != "pro" || created.MaxRequestsPerMinute != 600 || created.MaxUnitsPerMonth != 0 {
 		t.Fatalf("plan-create exit=%d body=%+v", code, created)
 	}
-	if code := cmdConsumers([]string{"plan-update", "my-api", "--plan", "free", "--max-units-per-month", "5000"}); code != 0 ||
+	if code := main.CmdConsumers([]string{"plan-update", "my-api", "--plan", "free", "--max-units-per-month", "5000"}); code != 0 ||
 		updated.MaxRequestsPerMinute != 60 || updated.MaxUnitsPerMonth != 5000 {
 		t.Fatalf("plan-update exit=%d body=%+v, want the per-minute limit kept", code, updated)
 	}
-	if code := cmdConsumers([]string{"set-plan", "my-api", "c1", "--plan", "free"}); code != 0 || assigned.PlanID != "p-free" {
+	if code := main.CmdConsumers([]string{"set-plan", "my-api", "c1", "--plan", "free"}); code != 0 || assigned.PlanID != "p-free" {
 		t.Fatalf("set-plan exit=%d body=%+v", code, assigned)
 	}
-	if code := cmdConsumers([]string{"set-plan", "my-api", "c1", "--plan", "default"}); code != 0 || assigned.PlanID != "" {
+	if code := main.CmdConsumers([]string{"set-plan", "my-api", "c1", "--plan", "default"}); code != 0 || assigned.PlanID != "" {
 		t.Fatalf("set-plan default exit=%d body=%+v", code, assigned)
 	}
-	if code := cmdConsumers([]string{"rate-card-create", "my-api", "--currency", "EUR", "--price-millicents", "5", "--plan", "free"}); code != 0 || card.PlanID != "p-free" {
+	if code := main.CmdConsumers([]string{"rate-card-create", "my-api", "--currency", "EUR", "--price-millicents", "5", "--plan", "free"}); code != 0 || card.PlanID != "p-free" {
 		t.Fatalf("plan rate card exit=%d body=%+v", code, card)
 	}
-	if code := cmdConsumers([]string{"plans", "my-api"}); code != 0 || !strings.Contains(stdout.String(), "1000 units") {
+	if code := main.CmdConsumers([]string{"plans", "my-api"}); code != 0 || !strings.Contains(stdout.String(), "1000 units") {
 		t.Fatalf("plans output = %q", stdout.String())
 	}
-	if code := cmdConsumers([]string{"set-plan", "my-api", "c1", "--plan", "missing"}); code == 0 {
+	if code := main.CmdConsumers([]string{"set-plan", "my-api", "c1", "--plan", "missing"}); code == 0 {
 		t.Fatal("unknown plan name accepted")
 	}
 }
@@ -237,7 +238,7 @@ func TestFormatMillicents(t *testing.T) {
 		{"", 50, "--- 0.0005"},
 		{"EUR", -1500, "EUR -0.015"},
 	} {
-		if got := formatMillicents(tc.currency, tc.millicents); got != tc.want {
+		if got := main.FormatMillicents(tc.currency, tc.millicents); got != tc.want {
 			t.Errorf("formatMillicents(%q, %d) = %q, want %q", tc.currency, tc.millicents, got, tc.want)
 		}
 	}
@@ -261,13 +262,13 @@ func TestCmdPlatformTenantStatementVerbs(t *testing.T) {
 			http.NotFound(w, r)
 		}
 	})
-	if code := cmdPlatformTenants([]string{"statement-draft", "--id", "t1", "--period-start", "2026-09-01T00:00:00Z", "--period-end", "2026-09-02T00:00:00Z"}); code != 0 {
+	if code := main.CmdPlatformTenants([]string{"statement-draft", "--id", "t1", "--period-start", "2026-09-01T00:00:00Z", "--period-end", "2026-09-02T00:00:00Z"}); code != 0 {
 		t.Fatalf("statement-draft exit = %d", code)
 	}
 	if period.PeriodEnd == nil || !period.PeriodEnd.Equal(time.Date(2026, 9, 2, 0, 0, 0, 0, time.UTC)) || !strings.Contains(stdout.String(), "Unpriced units") {
 		t.Fatalf("period=%+v output=%q", period, stdout.String())
 	}
-	if code := cmdPlatformTenants([]string{"statements", "--id", "t1", "--month", "2026-09"}); code != 0 {
+	if code := main.CmdPlatformTenants([]string{"statements", "--id", "t1", "--month", "2026-09"}); code != 0 {
 		t.Fatalf("statements exit = %d", code)
 	}
 	if !strings.Contains(listQuery, "period_start=2026-09-01") || !strings.Contains(stdout.String(), "r1 superseded") {

@@ -24,7 +24,7 @@ PostgreSQL tests, and runs preflight/final native leak checks. The lane has a
 | `TestCustomerHTTPOperationCancellationMetal` | Cancellation while schedd is stopped dispatches no business work. Cancellation while the handler holds a private file is observed through claim control; the uncertain outcome requires reconciliation, publishes no result and fences the old claim. |
 | `TestCustomerHTTPOperationOwnerRevocationMetal` | Suspending the customer while the handler holds a private file immediately denies customer reads, new submissions and downloads. The admitted handler is not interrupted: its settled outcome and bytes remain available to the account. |
 | `TestCustomerHTTPOperationWebhookAdmissionMetal` | A Stripe-signed provider event on an operation-bound endpoint (ADR-1193) admits one Operation for the bound customer. The real guest receives the webhook envelope as input and the Operation succeeds with its typed result. The provider's retry returns the original receipt as a duplicate and never re-enters the handler. |
-| `TestCustomerHTTPOperationDeadlineCutMetal` | A definition with `deadline_seconds: 20` (ADR-1196) cuts the real guest's running attempt at the deadline; the dispatched attempt needs reconciliation. A `safe_to_retry` recovery is refused with 409, and recording an outcome still works. The ADR-1285 telemetry store query and schedd collector read the reconciliation from the real run. |
+| `TestCustomerHTTPOperationDeadlineCutMetal` | A definition with `deadline_seconds: 20` (ADR-1196) cuts the real guest's running attempt at the deadline; the dispatched attempt needs reconciliation. A `safe_to_retry` recovery is refused with 409, and recording an outcome still works. The ADR-20261016123221 telemetry store query and schedd collector read the reconciliation from the real run. |
 
 HTTP and native workflow semantics differ deliberately in two places. A
 generation-2 HTTP recovery is a new invocation, so its file receipt is fresh and
@@ -34,7 +34,7 @@ admitted HTTP handler, while it interrupts native workflow attempts.
 
 The full native suite also selects these scenarios in its wake phase. Every
 top-level test in the `customer_http_operations*_metal_test.go` files is
-required by the dedicated lane (ADR-1287 Stage 1); a skip,
+required by the dedicated lane (ADR-20261017102231 Stage 1); a skip,
 failure or absent PASS receipt fails its runner and final CI verdict. Portable
 script tests verify that the selection grows when a scenario is added.
 

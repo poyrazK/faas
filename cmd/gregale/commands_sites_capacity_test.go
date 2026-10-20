@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -26,24 +27,24 @@ func TestSitesCapacityIndependentOptInAndResponseValidation(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(out)
 	})
 	var out bytes.Buffer
-	old := osStdout
-	osStdout = &out
-	t.Cleanup(func() { osStdout = old })
+	old := (*main.OsStdout)
+	(*main.OsStdout) = &out
+	t.Cleanup(func() { (*main.OsStdout) = old })
 	args := []string{"capacity", "--site", reviewSiteID}
 	t.Setenv("FAAS_FRONTEND_HOSTING_PREVIEW_RESERVATIONS_ENABLED", "")
-	if cmdSites(args) == 0 || calls != 0 {
+	if main.CmdSites(args) == 0 || calls != 0 {
 		t.Fatal("default off")
 	}
 	t.Setenv("FAAS_FRONTEND_HOSTING_PREVIEW_RESERVATIONS_ENABLED", "1")
-	if cmdSites([]string{"capacity", "--site", "bad"}) == 0 || calls != 0 {
+	if main.CmdSites([]string{"capacity", "--site", "bad"}) == 0 || calls != 0 {
 		t.Fatal("invalid input reached network")
 	}
-	if cmdSites(args) != 0 || calls != 1 {
+	if main.CmdSites(args) != 0 || calls != 1 {
 		t.Fatal(out.String())
 	}
 	out.Reset()
 	bad = true
-	if cmdSites(args) == 0 || out.Len() != 0 {
+	if main.CmdSites(args) == 0 || out.Len() != 0 {
 		t.Fatal("foreign evidence returned", out.String())
 	}
 }

@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"context"
@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -27,7 +28,7 @@ func TestDataAPIConnectionBudgetRuntimeCoverageConsistency(t *testing.T) {
 	b.Demand.DataAPIResidentEstimate = 4
 	b.Demand.RuntimeObservations = &api.ConnectionBudgetRuntimeObservations{State: "partial", Source: "workload_report", ObservedInstances: 1, UnobservedInstances: 1, ParkedInstances: 1, ConfiguredConnections: 2, CheckedAt: b.CheckedAt, ExpiresAt: b.ExpiresAt}
 	now := time.Now()
-	if !validDataAPIConnectionBudget(b, now) {
+	if !main.ValidDataAPIConnectionBudget(b, now) {
 		t.Fatal("valid coverage rejected")
 	}
 	for _, change := range []func(*api.ConnectionBudgetRuntimeObservations){
@@ -48,7 +49,7 @@ func TestDataAPIConnectionBudgetRuntimeCoverageConsistency(t *testing.T) {
 		coverage := *b.Demand.RuntimeObservations
 		change(&coverage)
 		invalid.Demand.RuntimeObservations = &coverage
-		if validDataAPIConnectionBudget(invalid, now) {
+		if main.ValidDataAPIConnectionBudget(invalid, now) {
 			t.Fatal("invalid coverage accepted", coverage)
 		}
 	}
@@ -63,7 +64,7 @@ func TestDataAPIConnectionBudgetCapacityFreshnessAndZeroCeiling(t *testing.T) {
 	value.Capacity.Source = "provider_api"
 	value.Capacity.CheckedAt = value.CheckedAt
 	value.Capacity.ExpiresAt = value.ExpiresAt
-	if !validDataAPIConnectionBudget(value, now.Add(time.Second)) {
+	if !main.ValidDataAPIConnectionBudget(value, now.Add(time.Second)) {
 		t.Fatal("verified zero ceiling rejected")
 	}
 	for _, change := range []func(*api.ManagedPostgresConnectionBudget){
@@ -81,7 +82,7 @@ func TestDataAPIConnectionBudgetCapacityFreshnessAndZeroCeiling(t *testing.T) {
 	} {
 		invalid := value
 		change(&invalid)
-		if validDataAPIConnectionBudget(invalid, now.Add(time.Second)) {
+		if main.ValidDataAPIConnectionBudget(invalid, now.Add(time.Second)) {
 			t.Fatal("invalid capacity metadata accepted", invalid.Capacity)
 		}
 	}
@@ -151,7 +152,7 @@ func TestDataAPIConnectionBudgetReadRejectsUnsafeAndInconsistentMetadata(t *test
 				}
 			}))
 			defer srv.Close()
-			got := readDataAPIConnectionBudget(context.Background(), api.NewClient(srv.URL, "owner-token"), "notes")
+			got := main.ReadDataAPIConnectionBudget(context.Background(), api.NewClient(srv.URL, "owner-token"), "notes")
 			want := map[string]string{"within": "within_budget", "over": "over_budget", "not-applicable": "not_applicable"}[mode]
 			if want == "" {
 				want = "unknown"
@@ -163,8 +164,8 @@ func TestDataAPIConnectionBudgetReadRejectsUnsafeAndInconsistentMetadata(t *test
 			if strings.Contains(string(bytes), "private-") {
 				t.Fatal("unsafe metadata escaped")
 			}
-			r := dataAPIHealthReport{Status: "healthy"}
-			attachDataAPIConnectionBudget(&r, got)
+			r := main.DataAPIHealthReport{Status: "healthy"}
+			main.AttachDataAPIConnectionBudget(&r, got)
 			if (want == "unknown") != r.Partial || slices.Contains(r.CurrentFindings, "connection_budget_exceeded") != (want == "over_budget") {
 				t.Fatal(r)
 			}
@@ -176,13 +177,13 @@ func TestDataAPIConnectionBudgetReadRejectsUnsafeAndInconsistentMetadata(t *test
 }
 
 func TestDataAPIConnectionBudgetHumanOutputShowsPlanningAndUnknownCapacity(t *testing.T) {
-	stdout, _, restore := swapIO(t)
+	stdout, _, restore := main.SwapIO(t)
 	defer restore()
 	b := connectionBudgetFixture()
 	b.State = "unknown"
 	b.Databases[0].State = "unknown"
 	b.Databases[0].Capacity = api.ConnectionBudgetCapacity{State: "unknown"}
-	if err := writeDataAPIConnectionBudget(&b); err != nil {
+	if err := main.WriteDataAPIConnectionBudget(&b); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(stdout.String(), "planning only") || !strings.Contains(stdout.String(), "verified usable capacity unknown") {
@@ -195,16 +196,16 @@ func TestConnectionBudgetAcceptsEnforcedSharedCeilings(t *testing.T) {
 	budget.Model = "qualified_shared_connection_limits"
 	budget.Enforced = true
 	budget.Demand = api.ConnectionBudgetDemand{ModeledPeakConnections: 15}
-	if !validDataAPIConnectionBudget(budget, time.Now()) {
+	if !main.ValidDataAPIConnectionBudget(budget, time.Now()) {
 		t.Fatal("valid enforced budget rejected", budget)
 	}
 	budget.State = "over_budget"
 	budget.Reasons = []string{"reserved_capacity_exceeds_allocation"}
-	if !validDataAPIConnectionBudget(budget, time.Now()) {
+	if !main.ValidDataAPIConnectionBudget(budget, time.Now()) {
 		t.Fatal("replication worker overage was hidden", budget)
 	}
 	budget.Enforced = false
-	if validDataAPIConnectionBudget(budget, time.Now()) {
+	if main.ValidDataAPIConnectionBudget(budget, time.Now()) {
 		t.Fatal("unbound planning was labeled enforced")
 	}
 }

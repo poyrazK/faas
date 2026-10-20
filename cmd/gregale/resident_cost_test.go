@@ -1,10 +1,11 @@
-package main
+package main_test
 
 import (
 	"bytes"
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -51,7 +52,7 @@ func TestResidentGBHoursPerMonth(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := ResidentGBHoursPerMonth(tc.plan, tc.ramMB, tc.min)
+			got := main.ResidentGBHoursPerMonth(tc.plan, tc.ramMB, tc.min)
 			if !floatNear(got, tc.want, tol) {
 				t.Errorf("got %.4f, want %.4f (±%.2f)", got, tc.want, tol)
 			}
@@ -62,10 +63,10 @@ func TestResidentGBHoursPerMonth(t *testing.T) {
 func TestResidentGBHoursPerMonth_UnknownPlanReturnsZero(t *testing.T) {
 	// An empty/unknown plan must NOT crash the CLI; production callers
 	// can race a Whoami that returns "" or a stale plan. Returns 0.
-	if got := ResidentGBHoursPerMonth("", 1024, 1); got != 0 {
+	if got := main.ResidentGBHoursPerMonth("", 1024, 1); got != 0 {
 		t.Errorf(`ResidentGBHoursPerMonth("", 1024, 1) = %v, want 0`, got)
 	}
-	if got := ResidentGBHoursPerMonth("enterprise", 1024, 1); got != 0 {
+	if got := main.ResidentGBHoursPerMonth("enterprise", 1024, 1); got != 0 {
 		t.Errorf(`ResidentGBHoursPerMonth("enterprise", ...) = %v, want 0`, got)
 	}
 }
@@ -82,7 +83,7 @@ func TestFormatGBHours(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.want, func(t *testing.T) {
-			if got := formatGBHours(tc.in); got != tc.want {
+			if got := main.FormatGBHours(tc.in); got != tc.want {
 				t.Errorf("got %q, want %q", got, tc.want)
 			}
 		})
@@ -91,11 +92,11 @@ func TestFormatGBHours(t *testing.T) {
 
 func TestPrintResidentCostEcho_Pro(t *testing.T) {
 	var buf bytes.Buffer
-	old := osStdout
-	osStdout = &buf
-	defer func() { osStdout = old }()
+	old := (*main.OsStdout)
+	(*main.OsStdout) = &buf
+	defer func() { (*main.OsStdout) = old }()
 
-	printResidentCostEcho(api.PlanPro, 512, 1)
+	main.PrintResidentCostEcho(api.PlanPro, 512, 1)
 	out := buf.String()
 
 	// Pins UX §6.5 copy.
@@ -117,11 +118,11 @@ func TestPrintResidentCostEcho_Pro(t *testing.T) {
 
 func TestPrintResidentCostEcho_ScalePlural(t *testing.T) {
 	var buf bytes.Buffer
-	old := osStdout
-	osStdout = &buf
-	defer func() { osStdout = old }()
+	old := (*main.OsStdout)
+	(*main.OsStdout) = &buf
+	defer func() { (*main.OsStdout) = old }()
 
-	printResidentCostEcho(api.PlanScale, 1024, 2)
+	main.PrintResidentCostEcho(api.PlanScale, 1024, 2)
 	out := buf.String()
 
 	if !strings.Contains(out, "2 instances of 1024 MB kept warm") {

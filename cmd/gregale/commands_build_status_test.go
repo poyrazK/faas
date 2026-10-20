@@ -1,4 +1,4 @@
-package main
+package main_test
 
 // Test file for issue #741 / DEPLOY-PROV-6 — pins the
 // `gregale build status <id>` rendering. Mirrors the existing
@@ -16,6 +16,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -25,7 +26,7 @@ import (
 // future refactor that loses the strconv.Itoa path trips here.
 func TestPrintBuildStatus_TerminalSucceeded(t *testing.T) {
 	var buf bytes.Buffer
-	printBuildStatus(&buf, api.BuildResponse{
+	main.PrintBuildStatus(&buf, api.BuildResponse{
 		ID:              "00000000000000000000000000000000",
 		DeploymentID:    "00000000000000000000000000000001",
 		Kind:            "railpack",
@@ -73,7 +74,7 @@ func TestFormatArtifactCacheSummary(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := formatArtifactCacheSummary(tt.status, tt.key); got != tt.want {
+			if got := main.FormatArtifactCacheSummary(tt.status, tt.key); got != tt.want {
 				t.Fatalf("formatArtifactCacheSummary(%q, %q) = %q, want %q", tt.status, tt.key, got, tt.want)
 			}
 		})
@@ -89,7 +90,7 @@ func TestFormatArtifactCacheSummary(t *testing.T) {
 // when status=queued and no failure has been recorded.
 func TestPrintBuildStatus_PreRunning(t *testing.T) {
 	var buf bytes.Buffer
-	printBuildStatus(&buf, api.BuildResponse{
+	main.PrintBuildStatus(&buf, api.BuildResponse{
 		ID:           "11111111111111111111111111111111",
 		DeploymentID: "22222222222222222222222222222222",
 		Kind:         "tarball",
@@ -125,7 +126,7 @@ func TestPrintBuildStatus_PreRunning(t *testing.T) {
 // GetDeployment(deployment_id) — not here.
 func TestPrintBuildStatus_Failed(t *testing.T) {
 	var buf bytes.Buffer
-	printBuildStatus(&buf, api.BuildResponse{
+	main.PrintBuildStatus(&buf, api.BuildResponse{
 		ID:              "33333333333333333333333333333333",
 		DeploymentID:    "44444444444444444444444444444444",
 		Kind:            "dockerfile",
@@ -155,7 +156,7 @@ func TestPrintBuildStatus_Failed(t *testing.T) {
 // A silent re-shuffle of printBuildStatus surfaces here.
 func TestPrintBuildStatus_RowOrder(t *testing.T) {
 	var buf bytes.Buffer
-	printBuildStatus(&buf, api.BuildResponse{
+	main.PrintBuildStatus(&buf, api.BuildResponse{
 		ID:         "id",
 		Status:     "succeeded",
 		EnqueuedAt: "2026-08-10T12:00:00Z",
@@ -185,7 +186,7 @@ func TestPrintBuildStatus_BlankDurationForNonTerminal(t *testing.T) {
 	for _, status := range []string{"queued", "running"} {
 		t.Run(status, func(t *testing.T) {
 			var buf bytes.Buffer
-			printBuildStatus(&buf, api.BuildResponse{
+			main.PrintBuildStatus(&buf, api.BuildResponse{
 				ID:         "id",
 				Status:     status,
 				EnqueuedAt: "2026-08-10T12:00:00Z",
@@ -225,7 +226,7 @@ func TestPrintBuildStatus_NumericDurationForTerminal(t *testing.T) {
 	for _, status := range []string{"succeeded", "failed", "cancelled"} {
 		t.Run(status, func(t *testing.T) {
 			var buf bytes.Buffer
-			printBuildStatus(&buf, api.BuildResponse{
+			main.PrintBuildStatus(&buf, api.BuildResponse{
 				ID:              "id",
 				Status:          status,
 				EnqueuedAt:      "2026-08-10T12:00:00Z",
@@ -243,7 +244,7 @@ func TestPrintBuildStatus_NumericDurationForTerminal(t *testing.T) {
 
 func TestPrintBuildStatus_CancelledTimestamp(t *testing.T) {
 	var buf bytes.Buffer
-	printBuildStatus(&buf, api.BuildResponse{
+	main.PrintBuildStatus(&buf, api.BuildResponse{
 		ID:              "id",
 		Status:          api.BuildStatusCancelled,
 		StartedAt:       "2026-09-13T12:00:00Z",

@@ -13,7 +13,7 @@ T = TypeVar("T", bound="OperationLimits")
 @_attrs_define
 class OperationLimits:
     """ADR-1196 bounds fixed onto each accepted Operation. Every field is optional and bounded by the plan; workflow
-    definitions take a deadline and an execution budget (ADR-1199), and job definitions take none.
+    definitions take a deadline and an execution budget (ADR-20261016110803), and job definitions take none.
 
     """
 

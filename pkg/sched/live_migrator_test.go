@@ -19,7 +19,7 @@
 // "watcher does the right filtering and dispatch" half of the
 // contract, mirrored from rebalancer_test.go.
 
-package sched
+package sched_test
 
 import (
 	"context"
@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/sched"
 )
 
 // recordingLiveMigratorHandle is the test stand-in for
@@ -66,14 +67,14 @@ func (r *recordingLiveMigratorHandle) fn(ctx context.Context, deadNodeID string)
 
 func TestLiveMigrator_DispatchesOnDrain(t *testing.T) {
 	rec := &recordingLiveMigratorHandle{}
-	m := NewLiveMigrator(rec.fn, nil)
+	m := sched.NewLiveMigrator(rec.fn, nil)
 	notif := make(chan db.Notification, 1)
 	notif <- db.Notification{Payload: `{"node_id":"dead-1","active":false}`}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)
 	go func() { done <- m.Run(ctx, notif) }()
-	if err := waitFor(func() bool {
+	if err := sched.WaitFor(func() bool {
 		return rec.calls.Load() == 1
 	}, 200*time.Millisecond); err != nil {
 		t.Fatalf("handle not called within 200ms: %v", err)
@@ -88,7 +89,7 @@ func TestLiveMigrator_DispatchesOnDrain(t *testing.T) {
 
 func TestLiveMigrator_FilterActive(t *testing.T) {
 	rec := &recordingLiveMigratorHandle{}
-	m := NewLiveMigrator(rec.fn, nil)
+	m := sched.NewLiveMigrator(rec.fn, nil)
 	notif := make(chan db.Notification, 1)
 	notif <- db.Notification{Payload: `{"node_id":"alive-1","active":true}`}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -106,7 +107,7 @@ func TestLiveMigrator_FilterActive(t *testing.T) {
 
 func TestLiveMigrator_IgnoresComputeNodeKeys(t *testing.T) {
 	rec := &recordingLiveMigratorHandle{}
-	m := NewLiveMigrator(rec.fn, nil)
+	m := sched.NewLiveMigrator(rec.fn, nil)
 	notif := make(chan db.Notification, 1)
 	notif <- db.Notification{Payload: `compute_node_keys`}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -124,7 +125,7 @@ func TestLiveMigrator_IgnoresComputeNodeKeys(t *testing.T) {
 
 func TestLiveMigrator_IgnoresBadJSON(t *testing.T) {
 	rec := &recordingLiveMigratorHandle{}
-	m := NewLiveMigrator(rec.fn, nil)
+	m := sched.NewLiveMigrator(rec.fn, nil)
 	notif := make(chan db.Notification, 1)
 	notif <- db.Notification{Payload: `{this is not json}`}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -145,7 +146,7 @@ func TestLiveMigrator_HandleErrorContinues(t *testing.T) {
 	remaining := atomic.Int32{}
 	remaining.Store(1)
 	rec.errAfter = &remaining
-	m := NewLiveMigrator(rec.fn, nil)
+	m := sched.NewLiveMigrator(rec.fn, nil)
 	notif := make(chan db.Notification, 2)
 	notif <- db.Notification{Payload: `{"node_id":"d1","active":false}`}
 	notif <- db.Notification{Payload: `{"node_id":"d2","active":false}`}
@@ -153,7 +154,7 @@ func TestLiveMigrator_HandleErrorContinues(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() { done <- m.Run(ctx, notif) }()
-	if err := waitFor(func() bool {
+	if err := sched.WaitFor(func() bool {
 		return rec.calls.Load() == 2
 	}, 200*time.Millisecond); err != nil {
 		t.Fatalf("handle not called twice within 200ms: %v", err)
@@ -171,7 +172,7 @@ func TestLiveMigrator_HandleErrorContinues(t *testing.T) {
 
 func TestLiveMigrator_BackToBackSameNode(t *testing.T) {
 	rec := &recordingLiveMigratorHandle{}
-	m := NewLiveMigrator(rec.fn, nil)
+	m := sched.NewLiveMigrator(rec.fn, nil)
 	notif := make(chan db.Notification, 2)
 	notif <- db.Notification{Payload: `{"node_id":"d1","active":false}`}
 	notif <- db.Notification{Payload: `{"node_id":"d1","active":false}`}
@@ -179,7 +180,7 @@ func TestLiveMigrator_BackToBackSameNode(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() { done <- m.Run(ctx, notif) }()
-	if err := waitFor(func() bool {
+	if err := sched.WaitFor(func() bool {
 		return rec.calls.Load() == 2
 	}, 200*time.Millisecond); err != nil {
 		t.Fatalf("handle not called twice within 200ms: %v", err)
@@ -195,7 +196,7 @@ func TestLiveMigrator_NilHandlePanics(t *testing.T) {
 			t.Fatalf("NewLiveMigrator(nil, nil) did not panic")
 		}
 	}()
-	_ = NewLiveMigrator(nil, nil)
+	_ = sched.NewLiveMigrator(nil, nil)
 }
 
 // waitFor is the package-shared helper from

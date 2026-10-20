@@ -1,7 +1,7 @@
 //go:build !no_pg
 
 // adr: 595
-package sched
+package sched_test
 
 // adr: 435, 581. PostgreSQL acceptance retains the same honest portable boundary.
 
@@ -12,6 +12,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -20,9 +21,9 @@ func TestPostgresApplicationStandardComposedWaves(t *testing.T) {
 	if err := db.MigrateUp(t.Context(), pool); err != nil {
 		t.Fatal(err)
 	}
-	exerciseApplicationStandardComposedWaves(t, state.NewPgStore(pool), func(f *composedWaveFixture) {
-		loop := NewLoop(pool, f.engine, f.engine.log)
-		f.refresh = func(t *testing.T, request state.ApplicationStandardRuntimeRefreshRequest) {
+	sched.ExerciseApplicationStandardComposedWaves(t, state.NewPgStore(pool), func(f *sched.ComposedWaveFixture) {
+		loop := sched.NewLoop(pool, (*f.Engine()), (*(*f.Engine()).Log()))
+		(*f.Refresh()) = func(t *testing.T, request state.ApplicationStandardRuntimeRefreshRequest) {
 			t.Helper()
 			before, err := db.GetRuntimeConfigRestartStatus(t.Context(), pool, request.AppID, request.WakeID)
 			if err != nil {
@@ -34,7 +35,7 @@ func TestPostgresApplicationStandardComposedWaves(t *testing.T) {
 				t.Fatal(err)
 			}
 			seen := 0
-			_, err = db.DrainNotificationOutboxOnceForNode(t.Context(), pool, "composed-wave-schedd", f.vmm.identity.NodeID, []string{db.NotifyRuntimeConfigRestart}, func(ctx context.Context, n db.Notification) error {
+			_, err = db.DrainNotificationOutboxOnceForNode(t.Context(), pool, "composed-wave-schedd", (*(*f.Vmm()).Identity()).NodeID, []string{db.NotifyRuntimeConfigRestart}, func(ctx context.Context, n db.Notification) error {
 				var actual state.ApplicationStandardRuntimeRefreshRequest
 				if err := json.Unmarshal([]byte(n.Payload), &actual); err != nil {
 					return err
@@ -45,7 +46,7 @@ func TestPostgresApplicationStandardComposedWaves(t *testing.T) {
 					}
 					seen++
 				}
-				return loop.handleRuntimeConfigRestart(ctx, n)
+				return loop.HandleRuntimeConfigRestart(ctx, n)
 			}, nil)
 			if err != nil {
 				t.Fatal("outbox delivery", err)

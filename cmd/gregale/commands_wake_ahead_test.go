@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -29,17 +30,17 @@ func runWakeAheadCLI(t *testing.T, args ...string) (int, string, []string) {
 				enabled = *req.Enabled
 			}
 		}
-		writeJSONTest(w, api.ServiceWakeAheadResponse{Slug: "demo", Enabled: enabled})
+		main.WriteJSONTest(w, api.ServiceWakeAheadResponse{Slug: "demo", Enabled: enabled})
 	}))
 	t.Cleanup(server.Close)
-	resetJSONOut(t)
-	setPreviewTestAuth(t)
+	main.ResetJSONOut(t)
+	main.SetPreviewTestAuth(t)
 	t.Setenv("FAAS_API", server.URL)
 	var output bytes.Buffer
-	old := osStdout
-	osStdout = &output
-	t.Cleanup(func() { osStdout = old })
-	code := run(append([]string{"wake-ahead"}, args...))
+	old := (*main.OsStdout)
+	(*main.OsStdout) = &output
+	t.Cleanup(func() { (*main.OsStdout) = old })
+	code := main.Run(append([]string{"wake-ahead"}, args...))
 	return code, output.String(), requests
 }
 
@@ -65,18 +66,18 @@ func TestWakeAheadCLI(t *testing.T) {
 
 func TestWakeAheadCLIJSON(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		writeJSONTest(w, api.ServiceWakeAheadResponse{Slug: "demo", Enabled: true, UpdatedAt: "2026-10-10T00:00:00Z"})
+		main.WriteJSONTest(w, api.ServiceWakeAheadResponse{Slug: "demo", Enabled: true, UpdatedAt: "2026-10-10T00:00:00Z"})
 	}))
 	defer server.Close()
-	resetJSONOut(t)
-	setPreviewTestAuth(t)
+	main.ResetJSONOut(t)
+	main.SetPreviewTestAuth(t)
 	t.Setenv("FAAS_API", server.URL)
 	var output bytes.Buffer
-	old := osStdout
-	osStdout = &output
-	t.Cleanup(func() { osStdout = old })
-	jsonOutput = true
-	if code := cmdWakeAhead([]string{"demo"}); code != 0 {
+	old := (*main.OsStdout)
+	(*main.OsStdout) = &output
+	t.Cleanup(func() { (*main.OsStdout) = old })
+	(*main.JsonOutput) = true
+	if code := main.CmdWakeAhead([]string{"demo"}); code != 0 {
 		t.Fatalf("exit %d", code)
 	}
 	var got api.ServiceWakeAheadResponse

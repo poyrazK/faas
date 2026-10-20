@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -37,22 +38,22 @@ func TestTrustedPublishersMutationsHonorJSON(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "test-token")
-	resetJSONOut(t)
-	jsonOutput = true
+	main.ResetJSONOut(t)
+	(*main.JsonOutput) = true
 
 	for _, tc := range []struct {
 		name string
 		run  func() int
 		want string
 	}{
-		{name: "add", run: func() int { return cmdTrustedPublishersAdd([]string{"demo", "ci", keyPath}) }, want: `"added": true`},
-		{name: "remove", run: func() int { return cmdTrustedPublishersRemove([]string{"demo", "ci"}) }, want: `"deleted": true`},
+		{name: "add", run: func() int { return main.CmdTrustedPublishersAdd([]string{"demo", "ci", keyPath}) }, want: `"added": true`},
+		{name: "remove", run: func() int { return main.CmdTrustedPublishersRemove([]string{"demo", "ci"}) }, want: `"deleted": true`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var stdout bytes.Buffer
-			oldOut := osStdout
-			osStdout = &stdout
-			defer func() { osStdout = oldOut }()
+			oldOut := (*main.OsStdout)
+			(*main.OsStdout) = &stdout
+			defer func() { (*main.OsStdout) = oldOut }()
 			if code := tc.run(); code != 0 {
 				t.Fatalf("exit = %d, want 0", code)
 			}
@@ -64,8 +65,8 @@ func TestTrustedPublishersMutationsHonorJSON(t *testing.T) {
 }
 
 func TestTrustedPublishersEmptyJSONEmitsNoProse(t *testing.T) {
-	resetJSONOut(t)
-	jsonOutput = true
+	main.ResetJSONOut(t)
+	(*main.JsonOutput) = true
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet || r.URL.Path != "/v1/apps/demo/trusted_signers" {
 			http.NotFound(w, r)
@@ -77,10 +78,10 @@ func TestTrustedPublishersEmptyJSONEmitsNoProse(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "test-token")
 	var stdout bytes.Buffer
-	oldOut := osStdout
-	osStdout = &stdout
-	t.Cleanup(func() { osStdout = oldOut })
-	if code := cmdTrustedPublishersList([]string{"demo"}); code != 0 {
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	t.Cleanup(func() { (*main.OsStdout) = oldOut })
+	if code := main.CmdTrustedPublishersList([]string{"demo"}); code != 0 {
 		t.Fatalf("trusted-publishers list = %d", code)
 	}
 	if stdout.Len() != 0 {

@@ -43,6 +43,10 @@ class PlatformTenantStatementFinalizedWebhookPayload:
     finalized_at: datetime.datetime
     fees: list[APIConsumerStatementFeeResponse] | Unset = UNSET
     """The revision's monthly base fees and minimum top-ups (ADR-1322), included in amount_millicents."""
+    credit_applied_millicents: int | Unset = UNSET
+    """Tenant prepaid credit this finalized revision drew (ADR-20261019100331)."""
+    amount_due_millicents: int | Unset = UNSET
+    """What remains to invoice after the credit."""
 
     def to_dict(self) -> dict[str, Any]:
         platform_tenant_id = str(self.platform_tenant_id)
@@ -85,6 +89,10 @@ class PlatformTenantStatementFinalizedWebhookPayload:
                 fees_item = fees_item_data.to_dict()
                 fees.append(fees_item)
 
+        credit_applied_millicents = self.credit_applied_millicents
+
+        amount_due_millicents = self.amount_due_millicents
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -108,6 +116,10 @@ class PlatformTenantStatementFinalizedWebhookPayload:
         )
         if fees is not UNSET:
             field_dict["fees"] = fees
+        if credit_applied_millicents is not UNSET:
+            field_dict["credit_applied_millicents"] = credit_applied_millicents
+        if amount_due_millicents is not UNSET:
+            field_dict["amount_due_millicents"] = amount_due_millicents
 
         return field_dict
 
@@ -161,6 +173,10 @@ class PlatformTenantStatementFinalizedWebhookPayload:
 
                 fees.append(fees_item)
 
+        credit_applied_millicents = d.pop("credit_applied_millicents", UNSET)
+
+        amount_due_millicents = d.pop("amount_due_millicents", UNSET)
+
         platform_tenant_statement_finalized_webhook_payload = cls(
             platform_tenant_id=platform_tenant_id,
             external_ref=external_ref,
@@ -178,6 +194,8 @@ class PlatformTenantStatementFinalizedWebhookPayload:
             as_of=as_of,
             finalized_at=finalized_at,
             fees=fees,
+            credit_applied_millicents=credit_applied_millicents,
+            amount_due_millicents=amount_due_millicents,
         )
 
         return platform_tenant_statement_finalized_webhook_payload

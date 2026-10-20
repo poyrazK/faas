@@ -1,7 +1,8 @@
 // adr: 1296
-package main
+package main_test
 
 import (
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"testing"
 )
 
@@ -14,12 +15,12 @@ func TestAutomationLiveSuiteSharesSafeProgressAndResumesOriginalRuns(t *testing.
 				want = 3
 			}
 			result := runLiveSuiteTest(t, append(liveSuiteArgs(f.path), "--share"), want)
-			j, err := readAutomationLiveSuite(f.path)
+			j, err := main.ReadAutomationLiveSuite(f.path)
 			if err != nil || !j.Plan.Shared {
 				t.Fatal("sharing intent was not persisted", err)
 			}
-			id := sharedAutomationLiveSuiteID(j)
-			if !automationLiveUUID(id) {
+			id := main.SharedAutomationLiveSuiteID(j)
+			if !main.AutomationLiveUUID(id) {
 				t.Fatal("invalid stable shared identity")
 			}
 			f.mu.Lock()
@@ -59,17 +60,17 @@ func TestAutomationLiveSuiteSharesSafeProgressAndResumesOriginalRuns(t *testing.
 }
 
 func TestAutomationLiveSuiteSharingPreservesCaseIdempotencyKeys(t *testing.T) {
-	o, err := parseAutomationLiveSuite(liveSuiteArgs("suite.json")[3:])
+	o, err := main.ParseAutomationLiveSuite(liveSuiteArgs("suite.json")[3:])
 	if err != nil {
 		t.Fatal(err)
 	}
-	o.plan.AppID, o.plan.EndpointHash = liveSuiteAppID, liveSuiteHash("endpoint")
-	local := liveSuiteCaseKey(o.plan, "first")
-	o.plan.Shared = true
-	if liveSuiteCaseKey(o.plan, "first") != local {
+	(*o.Plan()).AppID, (*o.Plan()).EndpointHash = liveSuiteAppID, main.LiveSuiteHash("endpoint")
+	local := main.LiveSuiteCaseKey((*o.Plan()), "first")
+	(*o.Plan()).Shared = true
+	if main.LiveSuiteCaseKey((*o.Plan()), "first") != local {
 		t.Fatal("sharing started a different logical case admission")
 	}
-	if _, err := parseAutomationLiveSuite(append(resumeLiveSuiteArgs("suite.json")[3:], "--share")); err == nil {
+	if _, err := main.ParseAutomationLiveSuite(append(resumeLiveSuiteArgs("suite.json")[3:], "--share")); err == nil {
 		t.Fatal("resume could change journal sharing intent")
 	}
 }

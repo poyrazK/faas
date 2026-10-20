@@ -23,11 +23,12 @@
 //  8. TestPressureRebalancer_New_Panics — bad wiring surfaces at startup.
 //  9. TestPressureRebalancer_ColdStartSweep — startup sweep enumerates.
 
-package sched
+package sched_test
 
 import (
 	"context"
 	"errors"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -55,18 +56,18 @@ func (h *dispatchingHandle) handle(_ context.Context, appID string) error {
 	return nil
 }
 
-func newRebalancerWith(t *testing.T, agg *PressureAggregator, threshold int, hook func(appID string), h *dispatchingHandle) *PressureRebalancer {
+func newRebalancerWith(t *testing.T, agg *sched.PressureAggregator, threshold int, hook func(appID string), h *dispatchingHandle) *sched.PressureRebalancer {
 	t.Helper()
-	return NewPressureRebalancer(agg, threshold, 1*time.Second, hook, h.handle, nil)
+	return sched.NewPressureRebalancer(agg, threshold, 1*time.Second, hook, h.handle, nil)
 }
 
 func TestPressureRebalancer_EmptyAggregator(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
-	agg := NewPressureAggregatorForTest(60*time.Second, 100, frozenClockNow(now))
+	agg := sched.NewPressureAggregatorForTest(60*time.Second, 100, frozenClockNow(now))
 	h := &dispatchingHandle{}
 	r := newRebalancerWith(t, agg, 5, nil, h)
-	r.tick(context.Background())
+	r.Tick(context.Background())
 	if h.invokes != 0 {
 		t.Fatalf("empty aggregator must not dispatch, got %d invocations", h.invokes)
 	}
@@ -75,7 +76,7 @@ func TestPressureRebalancer_EmptyAggregator(t *testing.T) {
 func TestPressureRebalancer_ThresholdBoundary(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
-	agg := NewPressureAggregatorForTest(60*time.Second, 100, frozenClockNow(now))
+	agg := sched.NewPressureAggregatorForTest(60*time.Second, 100, frozenClockNow(now))
 	h := &dispatchingHandle{}
 	r := newRebalancerWith(t, agg, 5, nil, h)
 
@@ -83,13 +84,13 @@ func TestPressureRebalancer_ThresholdBoundary(t *testing.T) {
 	for i := 0; i < 4; i++ {
 		agg.IncAtCapacity("app", now.Add(time.Duration(i)*time.Second))
 	}
-	r.tick(context.Background())
+	r.Tick(context.Background())
 	if h.invokes != 0 {
 		t.Fatalf("4 events under threshold must not dispatch, got %d invocations", h.invokes)
 	}
 	// 5th event — over the threshold — one dispatch.
 	agg.IncAtCapacity("app", now.Add(5*time.Second))
-	r.tick(context.Background())
+	r.Tick(context.Background())
 	if h.invokes != 1 || h.apps[0] != "app" {
 		t.Fatalf("5 events over threshold must dispatch once to app, got %v (invokes=%d)", h.apps, h.invokes)
 	}
@@ -98,7 +99,7 @@ func TestPressureRebalancer_ThresholdBoundary(t *testing.T) {
 func TestPressureRebalancer_TwoApps_BothDispatched(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
-	agg := NewPressureAggregatorForTest(60*time.Second, 100, frozenClockNow(now))
+	agg := sched.NewPressureAggregatorForTest(60*time.Second, 100, frozenClockNow(now))
 	for _, id := range []string{"beta", "alpha"} {
 		for i := 0; i < 5; i++ {
 			agg.IncAtCapacity(id, now.Add(time.Duration(i)*time.Second))
@@ -106,7 +107,7 @@ func TestPressureRebalancer_TwoApps_BothDispatched(t *testing.T) {
 	}
 	h := &dispatchingHandle{}
 	r := newRebalancerWith(t, agg, 5, nil, h)
-	r.tick(context.Background())
+	r.Tick(context.Background())
 	if h.invokes != 2 {
 		t.Fatalf("expected 2 invocations, got %d", h.invokes)
 	}
@@ -120,13 +121,13 @@ func TestPressureRebalancer_TwoApps_BothDispatched(t *testing.T) {
 func TestPressureRebalancer_FrozenClock_GCInsideTick(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
-	agg := NewPressureAggregatorForTest(60*time.Second, 100, frozenClockNow(now))
+	agg := sched.NewPressureAggregatorForTest(60*time.Second, 100, frozenClockNow(now))
 	for i := 0; i < 5; i++ {
 		agg.IncAtCapacity("app", now.Add(-59*time.Second+time.Duration(i)*time.Second))
 	}
 	h := &dispatchingHandle{}
 	r := newRebalancerWith(t, agg, 5, nil, h)
-	r.tick(context.Background())
+	r.Tick(context.Background())
 	if h.invokes != 1 {
 		t.Fatalf("expected 1 invocation at the window edge, got %d", h.invokes)
 	}
@@ -139,7 +140,7 @@ func TestPressureRebalancer_FrozenClock_GCInsideTick(t *testing.T) {
 	// WindowEdgePruning test. Verify the watcher re-fires
 	// when the app is still in window.
 	agg.IncAtCapacity("app", now)
-	r.tick(context.Background())
+	r.Tick(context.Background())
 	if h.invokes != 2 {
 		t.Fatalf("expected 2 invocations (still in window), got %d", h.invokes)
 	}
@@ -148,7 +149,7 @@ func TestPressureRebalancer_FrozenClock_GCInsideTick(t *testing.T) {
 func TestPressureRebalancer_HandlerErrorContinues(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
-	agg := NewPressureAggregatorForTest(60*time.Second, 100, frozenClockNow(now))
+	agg := sched.NewPressureAggregatorForTest(60*time.Second, 100, frozenClockNow(now))
 	for _, id := range []string{"alpha", "beta"} {
 		for i := 0; i < 5; i++ {
 			agg.IncAtCapacity(id, now.Add(time.Duration(i)*time.Second))
@@ -157,7 +158,7 @@ func TestPressureRebalancer_HandlerErrorContinues(t *testing.T) {
 	// alpha returns an error; beta must still be dispatched.
 	h := &dispatchingHandle{failOn: map[string]error{"alpha": errors.New("transient blip")}}
 	r := newRebalancerWith(t, agg, 5, nil, h)
-	r.tick(context.Background())
+	r.Tick(context.Background())
 	if h.invokes != 2 {
 		t.Fatalf("handler error on alpha must not skip beta, got %d invocations", h.invokes)
 	}
@@ -166,7 +167,7 @@ func TestPressureRebalancer_HandlerErrorContinues(t *testing.T) {
 func TestPressureRebalancer_BeforeSweepHook(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
-	agg := NewPressureAggregatorForTest(60*time.Second, 100, frozenClockNow(now))
+	agg := sched.NewPressureAggregatorForTest(60*time.Second, 100, frozenClockNow(now))
 	for i := 0; i < 5; i++ {
 		agg.IncAtCapacity("app", now.Add(time.Duration(i)*time.Second))
 	}
@@ -184,7 +185,7 @@ func TestPressureRebalancer_BeforeSweepHook(t *testing.T) {
 	}
 	h := &dispatchingHandle{}
 	r := newRebalancerWith(t, agg, 5, hook, h)
-	r.tick(context.Background())
+	r.Tick(context.Background())
 	if atomic.LoadInt32(&hookInvokes) != 1 {
 		t.Fatalf("hook must fire once per app per tick, got %d", hookInvokes)
 	}
@@ -203,10 +204,10 @@ func TestPressureRebalancer_BeforeSweepHook(t *testing.T) {
 func TestPressureRebalancer_CtxCancel(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
-	agg := NewPressureAggregatorForTest(60*time.Second, 100, frozenClockNow(now))
+	agg := sched.NewPressureAggregatorForTest(60*time.Second, 100, frozenClockNow(now))
 	h := &dispatchingHandle{}
 	// Use a 1ms tick to make the loop fast enough to cancel.
-	r := NewPressureRebalancer(agg, 5, 1*time.Millisecond, nil, h.handle, nil)
+	r := sched.NewPressureRebalancer(agg, 5, 1*time.Millisecond, nil, h.handle, nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
@@ -228,14 +229,14 @@ func TestPressureRebalancer_CtxCancel(t *testing.T) {
 func TestPressureRebalancer_New_PanicsOnBadInputs(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
-	agg := NewPressureAggregatorForTest(60*time.Second, 100, frozenClockNow(now))
+	agg := sched.NewPressureAggregatorForTest(60*time.Second, 100, frozenClockNow(now))
 	ok := func(_ context.Context, _ string) error { return nil }
 	cases := []struct {
 		name         string
-		agg          *PressureAggregator
+		agg          *sched.PressureAggregator
 		threshold    int
 		reassessment time.Duration
-		handle       PressureRebalancerHandle
+		handle       sched.PressureRebalancerHandle
 	}{
 		{"nil aggregator", nil, 5, 1 * time.Second, ok},
 		{"zero threshold", agg, 0, 1 * time.Second, ok},
@@ -251,7 +252,7 @@ func TestPressureRebalancer_New_PanicsOnBadInputs(t *testing.T) {
 					t.Fatalf("expected panic for case %q", tc.name)
 				}
 			}()
-			NewPressureRebalancer(tc.agg, tc.threshold, tc.reassessment, nil, tc.handle, nil)
+			sched.NewPressureRebalancer(tc.agg, tc.threshold, tc.reassessment, nil, tc.handle, nil)
 		})
 	}
 }
@@ -259,7 +260,7 @@ func TestPressureRebalancer_New_PanicsOnBadInputs(t *testing.T) {
 func TestPressureRebalancer_ColdStartSweep(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
-	agg := NewPressureAggregatorForTest(60*time.Second, 100, frozenClockNow(now))
+	agg := sched.NewPressureAggregatorForTest(60*time.Second, 100, frozenClockNow(now))
 	for _, id := range []string{"alpha", "beta"} {
 		for i := 0; i < 5; i++ {
 			agg.IncAtCapacity(id, now.Add(time.Duration(i)*time.Second))

@@ -189,7 +189,7 @@ func TestCustomerHTTPFixtureRejectsUntrustedClaims(t *testing.T) {
 	}
 }
 
-// ADR-1287 Stage 1: a webhook-submitted Operation carries the provider
+// ADR-20261017102231 Stage 1: a webhook-submitted Operation carries the provider
 // envelope and completes without a relay directive; the bounded definition
 // shares the handler; any other path is not an operation route.
 func TestCustomerHTTPFixtureRoutesWebhookAndBoundedDefinitions(t *testing.T) {

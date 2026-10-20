@@ -1,8 +1,9 @@
-package main
+package main_test
 
 import (
 	"archive/tar"
 	"bytes"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"os"
 	"path/filepath"
 	"strings"
@@ -35,7 +36,7 @@ func distArchive(t *testing.T) *bytes.Buffer {
 
 func TestExtractAppTaskTarIntoExistingDirectory(t *testing.T) {
 	dest := t.TempDir()
-	if err := extractAppTaskTar(distArchive(t), dest); err != nil {
+	if err := main.ExtractAppTaskTar(distArchive(t), dest); err != nil {
 		t.Fatal(err)
 	}
 	body, err := os.ReadFile(filepath.Join(dest, "dist", "assets", "app.js"))
@@ -46,7 +47,7 @@ func TestExtractAppTaskTarIntoExistingDirectory(t *testing.T) {
 
 func TestExtractAppTaskTarRenamesToMissingDestination(t *testing.T) {
 	dest := filepath.Join(t.TempDir(), "site")
-	if err := extractAppTaskTar(distArchive(t), dest); err != nil {
+	if err := main.ExtractAppTaskTar(distArchive(t), dest); err != nil {
 		t.Fatal(err)
 	}
 	if body, err := os.ReadFile(filepath.Join(dest, "index.html")); err != nil || string(body) != "<html>" {
@@ -54,7 +55,7 @@ func TestExtractAppTaskTarRenamesToMissingDestination(t *testing.T) {
 	}
 	file := filepath.Join(t.TempDir(), "VERSION.txt")
 	single := buildTestTar(t, []tar.Header{{Name: "VERSION", Typeflag: tar.TypeReg, Mode: 0o644}}, map[string]string{"VERSION": "7"})
-	if err := extractAppTaskTar(single, file); err != nil {
+	if err := main.ExtractAppTaskTar(single, file); err != nil {
 		t.Fatal(err)
 	}
 	if body, _ := os.ReadFile(file); string(body) != "7" {
@@ -73,7 +74,7 @@ func TestExtractAppTaskTarRefusesEscapes(t *testing.T) {
 		},
 	} {
 		dest := t.TempDir()
-		err := extractAppTaskTar(buildTestTar(t, entries, nil), dest)
+		err := main.ExtractAppTaskTar(buildTestTar(t, entries, nil), dest)
 		if err == nil {
 			t.Fatalf("%s: extraction succeeded", name)
 		}
@@ -90,13 +91,13 @@ func TestParsePortForwardSpec(t *testing.T) {
 		"0:[fd00::1]:8080":          {0, "[fd00::1]:8080"},
 		"[fd00::1]:8080":            {8080, "[fd00::1]:8080"},
 	} {
-		local, target, err := parsePortForwardSpec(spec)
+		local, target, err := main.ParsePortForwardSpec(spec)
 		if err != nil || local != want.local || target != want.target {
 			t.Fatalf("%s = %d %q %v", spec, local, target, err)
 		}
 	}
 	for _, bad := range []string{"db", "db:0", "70000:db:5432", "x:db:5432", ":5432"} {
-		if _, _, err := parsePortForwardSpec(bad); err == nil || !strings.Contains(err.Error(), "") {
+		if _, _, err := main.ParsePortForwardSpec(bad); err == nil || !strings.Contains(err.Error(), "") {
 			t.Fatalf("%s accepted", bad)
 		}
 	}

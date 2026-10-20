@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/hosting"
 )
@@ -19,7 +20,7 @@ func TestSitesDiagnoseOnlyReadsAndComparesOriginalManifest(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte("static"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	manifest, err := staticHostingManifest(dir, false)
+	manifest, err := main.StaticHostingManifest(dir, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,11 +41,11 @@ func TestSitesDiagnoseOnlyReadsAndComparesOriginalManifest(t *testing.T) {
 	})
 	t.Setenv("FAAS_FRONTEND_HOSTING_DIAGNOSTICS_ENABLED", "1")
 	var captured bytes.Buffer
-	old := osStdout
-	osStdout = &captured
-	t.Cleanup(func() { osStdout = old })
+	old := (*main.OsStdout)
+	(*main.OsStdout) = &captured
+	t.Cleanup(func() { (*main.OsStdout) = old })
 	args := []string{"diagnose", "--site", reviewSiteID, "--run-id", reviewReleaseID, "--path", dir}
-	if code := cmdSites(args); code != 0 {
+	if code := main.CmdSites(args); code != 0 {
 		t.Fatal(code)
 	}
 	var report api.HostingDiagnostics
@@ -58,7 +59,7 @@ func TestSitesDiagnoseOnlyReadsAndComparesOriginalManifest(t *testing.T) {
 		t.Fatal(err)
 	}
 	captured.Reset()
-	if code := cmdSites(args); code != 0 {
+	if code := main.CmdSites(args); code != 0 {
 		t.Fatal("blocked report should still be printable", code)
 	}
 	if err = json.Unmarshal(captured.Bytes(), &report); err != nil || report.RetryAdvice != "inspect_before_retry" || report.Checks[0].Code != "manifest_changed" {
@@ -78,12 +79,12 @@ func TestSitesDiagnoseDisabledAndInvalidInputsNeverReachAPI(t *testing.T) {
 	calls := 0
 	reviewCLI(t, func(http.ResponseWriter, *http.Request) { calls++ })
 	t.Setenv("FAAS_FRONTEND_HOSTING_DIAGNOSTICS_ENABLED", "")
-	if cmdSites([]string{"diagnose", "--site", reviewSiteID}) == 0 {
+	if main.CmdSites([]string{"diagnose", "--site", reviewSiteID}) == 0 {
 		t.Fatal("default-off ignored")
 	}
 	t.Setenv("FAAS_FRONTEND_HOSTING_DIAGNOSTICS_ENABLED", "1")
 	for _, args := range [][]string{{"--site", "bad"}, {"--site", reviewSiteID, "--run-id", "bad"}, {"--site", reviewSiteID, "--path", "dist"}, {"--site", reviewSiteID, "--spa"}} {
-		if cmdSitesDiagnose(args) == 0 {
+		if main.CmdSitesDiagnose(args) == 0 {
 			t.Fatal("invalid input accepted", args)
 		}
 	}
@@ -96,7 +97,7 @@ func TestSitesDiagnoseManifestMatchNeverClearsOtherBlockers(t *testing.T) {
 	manifest := api.HostingManifest{}
 	for _, fingerprint := range []string{"", hosting.HostingManifestFingerprint(manifest)} {
 		report := api.HostingDiagnostics{RetryAdvice: "inspect_before_retry", ManifestFingerprint: fingerprint}
-		compareDiagnosticManifest(&report, manifest)
+		main.CompareDiagnosticManifest(&report, manifest)
 		if report.RetryAdvice != "inspect_before_retry" {
 			t.Fatal("local match cleared expiry or revocation blocker")
 		}
