@@ -11,7 +11,7 @@ export type RouteInsightFix = {
    */
   id: string;
   action: 'create_cache_rule' | 'set_cache_max_age' | 'add_cache_override' | 'disable_cache_rule';
-  summary: string;
+  summary?: string;
   max_age_seconds?: number;
   /**
    * The cache rule the fix changes or overrides.

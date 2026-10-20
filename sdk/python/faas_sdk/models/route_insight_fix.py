@@ -22,7 +22,7 @@ class RouteInsightFix:
     id: str
     """Covers every value the fix would write; send it back to apply exactly this fix."""
     action: RouteInsightFixAction
-    summary: str
+    summary: str | Unset = UNSET
     max_age_seconds: int | Unset = UNSET
     rule_id: str | Unset = UNSET
     """The cache rule the fix changes or overrides."""
@@ -49,9 +49,10 @@ class RouteInsightFix:
             {
                 "id": id,
                 "action": action,
-                "summary": summary,
             }
         )
+        if summary is not UNSET:
+            field_dict["summary"] = summary
         if max_age_seconds is not UNSET:
             field_dict["max_age_seconds"] = max_age_seconds
         if rule_id is not UNSET:
@@ -68,7 +69,7 @@ class RouteInsightFix:
 
         action = check_route_insight_fix_action(d.pop("action"))
 
-        summary = d.pop("summary")
+        summary = d.pop("summary", UNSET)
 
         max_age_seconds = d.pop("max_age_seconds", UNSET)
 

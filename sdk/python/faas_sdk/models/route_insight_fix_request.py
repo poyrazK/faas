@@ -11,6 +11,8 @@ T = TypeVar("T", bound="RouteInsightFixRequest")
 
 @_attrs_define
 class RouteInsightFixRequest:
+    """Applies the fix an insight listed; refused when the fix changed since (ADR-20261020161310)."""
+
     fix_id: str
     """The fix.id the insight lists now."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

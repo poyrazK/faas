@@ -132,7 +132,8 @@ def sync_detailed(
     Args:
         slug (str):
         id (UUID):
-        body (RouteInsightFixRequest):
+        body (RouteInsightFixRequest): Applies the fix an insight listed; refused when the fix
+            changed since (ADR-20261020161310).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -185,7 +186,8 @@ def sync(
     Args:
         slug (str):
         id (UUID):
-        body (RouteInsightFixRequest):
+        body (RouteInsightFixRequest): Applies the fix an insight listed; refused when the fix
+            changed since (ADR-20261020161310).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -233,7 +235,8 @@ async def asyncio_detailed(
     Args:
         slug (str):
         id (UUID):
-        body (RouteInsightFixRequest):
+        body (RouteInsightFixRequest): Applies the fix an insight listed; refused when the fix
+            changed since (ADR-20261020161310).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -284,7 +287,8 @@ async def asyncio(
     Args:
         slug (str):
         id (UUID):
-        body (RouteInsightFixRequest):
+        body (RouteInsightFixRequest): Applies the fix an insight listed; refused when the fix
+            changed since (ADR-20261020161310).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

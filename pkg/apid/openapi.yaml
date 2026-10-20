@@ -73613,7 +73613,7 @@ components:
     RouteInsightFix:
       type: object
       description: "The edge-rule change applying an active insight would make now, planned from its evidence and the app's current rules (ADR-20261020161310). Absent when the platform has no fix; never in webhook payloads."
-      required: [id, action, summary]
+      required: [id, action]
       properties:
         id: {"type": "string", "description": "Covers every value the fix would write; send it back to apply exactly this fix."}
         action: {"type": "string", "enum": ["create_cache_rule", "set_cache_max_age", "add_cache_override", "disable_cache_rule"]}
@@ -73623,6 +73623,7 @@ components:
         purge_cache: {"type": "boolean", "description": "The fix also purges the route's cached responses."}
     RouteInsightFixRequest:
       type: object
+      description: "Applies the fix an insight listed; refused when the fix changed since (ADR-20261020161310)."
       required: [fix_id]
       properties:
         fix_id: {"type": "string", "description": "The fix.id the insight lists now."}

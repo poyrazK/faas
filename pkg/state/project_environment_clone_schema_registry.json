@@ -14280,6 +14280,7 @@
       "spans_summary",
       "status",
       "trace_id",
+      "trace_inferred",
       "ua_family",
       "wake_id"
     ],
@@ -14426,6 +14427,8 @@
       "app_id",
       "evidence",
       "first_detected_at",
+      "fix_action",
+      "fixed_at",
       "id",
       "kind",
       "last_detected_at",
