@@ -65942,6 +65942,13 @@ CREATE INDEX instances_reaper_state_idx ON public.instances USING btree (started
 
 
 --
+-- Name: instances_recovery_node_live_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX instances_recovery_node_live_idx ON public.instances USING btree (node_id, started_at) WHERE (state = ANY (ARRAY['running'::text, 'cold_booting'::text, 'waking'::text, 'draining'::text, 'snapshotting'::text, 'migrating'::text, 'warm'::text, 'frozen'::text]));
+
+
+--
 -- Name: instances_startup_cpu_boost_until_idx; Type: INDEX; Schema: public; Owner: -
 --
 

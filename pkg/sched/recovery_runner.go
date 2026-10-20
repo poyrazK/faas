@@ -65,20 +65,29 @@ func (r *RecoveryRunner) Tick(ctx context.Context) error {
 			r.rememberError(&firstErr, fmt.Errorf("sched: recovery: list instances for node %s: %w", node.ID, listErr))
 			continue
 		}
-		liveMig, recreated, _, tickErr := r.arbiter.Tick(ctx, []state.ComputeNode{node}, map[string][]state.RecoveryInstance{
-			node.ID: instances,
-		})
-		if tickErr != nil {
-			r.rememberError(&firstErr, fmt.Errorf("sched: recovery: dispatch node %s: %w", node.ID, tickErr))
-			continue
-		}
+		// An empty node has nothing to dispatch and nothing to recheck. A
+		// node that stays unavailable is swept every second for as long as
+		// it is registered, so this halves its reads.
+		remaining := instances
+		var liveMig, recreated int
+		if len(instances) > 0 {
+			var tickErr error
+			liveMig, recreated, _, tickErr = r.arbiter.Tick(ctx, []state.ComputeNode{node}, map[string][]state.RecoveryInstance{
+				node.ID: instances,
+			})
+			if tickErr != nil {
+				r.rememberError(&firstErr, fmt.Errorf("sched: recovery: dispatch node %s: %w", node.ID, tickErr))
+				continue
+			}
 
-		// The arbiter may have migrated or recreated rows during the tick.
-		// Never use the pre-dispatch slice to declare completion.
-		remaining, readErr := r.store.InstanceListByNodeForRecovery(ctx, node.ID)
-		if readErr != nil {
-			r.rememberError(&firstErr, fmt.Errorf("sched: recovery: recheck node %s: %w", node.ID, readErr))
-			continue
+			// The arbiter may have migrated or recreated rows during the tick.
+			// Never use the pre-dispatch slice to declare completion.
+			var readErr error
+			remaining, readErr = r.store.InstanceListByNodeForRecovery(ctx, node.ID)
+			if readErr != nil {
+				r.rememberError(&firstErr, fmt.Errorf("sched: recovery: recheck node %s: %w", node.ID, readErr))
+				continue
+			}
 		}
 		if !recoveryComplete(node.Lifecycle, remaining) {
 			r.log.Debug("sched: recovery: node still has live instances",
