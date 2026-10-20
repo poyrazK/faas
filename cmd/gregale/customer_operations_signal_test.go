@@ -99,17 +99,17 @@ func TestCustomerOperationSignalSelfUsesTenantRoutes(t *testing.T) {
 		_, _ = w.Write([]byte(`{"operation_id":"` + signalTestOperation + `","signal_id":"evt_1","event":"payment.succeeded","duplicate":false,"waiting":true}`))
 	}))
 	defer server.Close()
-	client := tenantCustomerOperationSignalClient{client: api.NewClient(server.URL, "tenant-token").SetCompletionCache(nil), definition: definition}
+	client := main.NewTenantCustomerOperationSignalClient(api.NewClient(server.URL, "tenant-token").SetCompletionCache(nil), definition)
 	for _, args := range [][]string{
 		{signalTestOperation, "--self", "--event", "payment.succeeded", "--signal-id", "evt_1"},
 		{"--self", "--definition", definition, "--subject", "order:ord_1", "--event", "payment.succeeded", "--signal-id", "evt_1"},
 	} {
-		c, err := parseCustomerOperationSignal(args)
+		c, err := main.ParseCustomerOperationSignal(args)
 		if err != nil {
 			t.Fatal(err)
 		}
 		var out bytes.Buffer
-		if err := runCustomerOperationSignal(context.Background(), client, c, &out, false); err != nil || !strings.Contains(out.String(), "resumed its wait") {
+		if err := main.RunCustomerOperationSignal(context.Background(), client, c, &out, false); err != nil || !strings.Contains(out.String(), "resumed its wait") {
 			t.Fatalf("%v: %q %v", args, out.String(), err)
 		}
 	}
@@ -133,7 +133,7 @@ func TestParseCustomerOperationSignalSelfRules(t *testing.T) {
 		"definition without self": append([]string{"--app", "orders", "--definition", definition, "--subject", "order:1"}, base...),
 		"account without app":     append([]string{signalTestOperation}, base...),
 	} {
-		if _, err := parseCustomerOperationSignal(args); err == nil {
+		if _, err := main.ParseCustomerOperationSignal(args); err == nil {
 			t.Fatalf("%s: accepted %v", name, args)
 		}
 	}
