@@ -1,9 +1,14 @@
-// Command livequeryd maintains live queries for one PostgreSQL database
-// (ADR-20261016151947). It runs beside the database: it decodes the database's logical
+// Command livequeryd maintains live queries for PostgreSQL databases
+// (ADR-20261016151947). For each database it decodes the database's logical
 // slot, keeps every subscribed query's result current, checkpoints its state
 // so a restart or a park resumes from the slot, and serves clients. In
 // production realtimed carries the client connections; for development,
 // -dev-listen serves the live frames over a local WebSocket.
+//
+// The flags below serve one database. -databases-file serves several from
+// one process instead (databases.go): each database gets its own hub, slot,
+// checkpoint and route, and one that fails is retried without stopping the
+// others.
 package main
 
 import (
@@ -18,6 +23,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -47,6 +53,8 @@ var (
 	compilerURL       = flag.String("compiler-url", "", "with -role engine: the compiler to send queries to; the engine then never starts the SQL parser")
 	compilerListen    = flag.String("compiler-listen", "", "with -role compiler or all: serve compilation at http://<addr>/compile")
 	perConnection     = flag.Int("max-per-connection", 0, "subscriptions per client connection (default the plan limit); raise it when realtimed proxies many clients over one connection")
+	databasesFile     = flag.String("databases-file", "", "JSON list of the databases to serve from this process, in place of -database-url, -database-id and the other per-database flags")
+	checkpointDir     = flag.String("checkpoint-dir", "", "with -databases-file: directory of the checkpoint files, one <database-id>.checkpoint per database; empty disables checkpoints")
 )
 
 func main() {
@@ -58,6 +66,12 @@ func main() {
 // host with the parser and the memory it needs. -role all runs both in one
 // process.
 func run(ctx context.Context, log *slog.Logger) error {
+	if *databasesFile != "" {
+		return runDatabases(ctx, log)
+	}
+	if *checkpointDir != "" {
+		return errors.New("livequeryd: -checkpoint-dir needs -databases-file")
+	}
 	dsn, err := databaseDSN()
 	if err != nil {
 		return err
@@ -105,48 +119,12 @@ func run(ctx context.Context, log *slog.Logger) error {
 	readySignal := readyProbe.Register()
 	readyProbe.SetReadyObserver(func(ready bool, reason string) { ops.MarkReady("livequeryd", ready, reason) })
 	defer readyProbe.Drain("livequeryd", log)
-	if *install {
-		if err := livequery.Install(ctx, pool); err != nil {
-			return err
-		}
-	}
-	if *createPublication {
-		if err := ensurePublication(ctx, pool, *publication); err != nil {
-			return err
-		}
-	}
-	capture, err := livequery.OpenSlot(ctx, dsn, *slotName, *publication)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = capture.Close() }() //nolint:contextcheck // Close bounds its own shutdown
-	engine, err := openEngine(ctx, pool, capture, compiler, log)
-	if err != nil {
-		return err
-	}
-	engine.VerifyEachRound = *verify
-	// Close the capture the engine holds at exit, which a resume may have
-	// replaced.
-	defer func() { _ = engine.Release() }() //nolint:contextcheck // Release bounds its own shutdown
-	if capture.Created && engine.Queries() > 0 {
-		metrics.SlotLost(engine.Queries())
-		log.Warn("livequeryd: the slot was lost; every query starts over", "queries", engine.Queries())
-	}
 
 	keyring, err := devKeyring()
 	if err != nil {
 		return err
 	}
-	hub := liveserver.New(liveserver.Config{
-		Database: *databaseID, Keyring: keyring, Engine: engine, Checkpoint: *checkpointPath,
-		CheckpointEvery: *checkpointEvery, Metrics: metrics, Logger: log, MaxPerConnection: *perConnection,
-		Pool:         pool,
-		ReleaseAfter: *releaseAfter, Awake: awake, AwakeEvery: *awakeEvery,
-		Reconnect: func(ctx context.Context) (*livequery.Capture, error) {
-			return livequery.OpenSlot(ctx, dsn, *slotName, *publication)
-		},
-	})
-
+	routes := newRoutes([]string{*databaseID})
 	var servers []*http.Server
 	if *compilerListen != "" {
 		srv, err := serve(*compilerListen, compilerMux(pool), log)
@@ -162,40 +140,37 @@ func run(ctx context.Context, log *slog.Logger) error {
 			cancel()
 		}
 	}()
-	if *keysDSNFile != "" || *keysIdentity != "" {
-		if keyring != nil {
-			return errors.New("livequeryd: -dev-secret-file and -keys-* are exclusive")
-		}
-		closeKeys, err := watchKeys(ctx, hub, log)
-		if err != nil {
-			return err
-		}
-		defer closeKeys()
+	if keyring != nil && (*keysDSNFile != "" || *keysIdentity != "") {
+		return errors.New("livequeryd: -dev-secret-file and -keys-* are exclusive")
 	}
+	keys, err := openKeySource(ctx)
+	if err != nil {
+		return err
+	}
+	defer keys.Close()
 	if *listen != "" {
-		srv, err := serveRealtimed(hub, log)
+		srv, err := serveRealtimed(routes, log)
 		if err != nil {
 			return err
 		}
 		servers = append(servers, srv)
 	}
 	if *metricsListen != "" {
-		mux := http.NewServeMux()
-		mux.Handle("GET /metrics", ops.Handler())
-		wire.ControlMuxLite(mux, readyProbe.ReadyFunc(), readyProbe.ReasonFunc())
-		srv, err := serve(*metricsListen, mux, log)
+		srv, err := serve(*metricsListen, controlMux(ops, readyProbe, routes), log)
 		if err != nil {
 			return err
 		}
 		servers = append(servers, srv)
-		go pollSlotLag(ctx, pool, *slotName, metrics, hub.Released, log)
 	}
 	if *devListen != "" {
-		if keyring == nil && *keysDSNFile == "" {
+		if keyring == nil && keys == nil {
 			return errors.New("livequeryd: -dev-listen needs -dev-secret-file or -keys-dsn-file")
 		}
 		mux := http.NewServeMux()
-		mux.Handle("/live", liveserver.WebSocket(hub, originChecker(*devAllowOrigins)))
+		origins := originChecker(*devAllowOrigins)
+		mux.HandleFunc("/live", func(w http.ResponseWriter, r *http.Request) {
+			routes.serve(w, r, *databaseID, func(h *liveserver.Hub) http.Handler { return liveserver.WebSocket(h, origins) })
+		})
 		srv, err := serve(*devListen, mux, log)
 		if err != nil {
 			return err
@@ -203,12 +178,24 @@ func run(ctx context.Context, log *slog.Logger) error {
 		servers = append(servers, srv)
 		log.Warn("livequeryd: serving live frames without realtimed; development only", "addr", *devListen)
 	}
-	// Ready once every listener is up: a released hub still serves the
-	// results it holds, so releasing does not make it unready.
-	readySignal.Set(true, "")
 	defer wire.NotifyReadyWhen(ctx, readyProbe.ReadyFunc())()
 	defer wire.StartWatchdog(ctx, wire.NewLiveness(), ops, log)()
-	return hub.Run(ctx)
+	db := database{
+		ID: *databaseID, DSN: dsn, Slot: *slotName, Publication: *publication, Install: *install,
+		CreatePublication: *createPublication, Checkpoint: *checkpointPath,
+		ReleaseAfter: *releaseAfter, Awake: awake, AwakeEvery: *awakeEvery,
+	}
+	deps := hubDeps{compiler: compiler, keyring: keyring, keys: keys, pollLag: *metricsListen != "", log: log}
+	// Ready once every listener is up and the hub runs: a released hub
+	// still serves the results it holds, so releasing does not make it
+	// unready.
+	var ready atomic.Bool
+	return runDatabase(ctx, db, pool, deps, metrics, func(h *liveserver.Hub) {
+		routes.set(db.ID, h)
+		if h != nil && !ready.Swap(true) {
+			readySignal.Set(true, "")
+		}
+	})
 }
 
 // databaseDSN returns the database connection string from -database-url or
@@ -234,9 +221,9 @@ func databaseDSN() (string, error) {
 }
 
 // openEngine restores the engine from its checkpoint, or starts a new one.
-func openEngine(ctx context.Context, pool *pgxpool.Pool, capture *livequery.Capture, compiler livequery.Compiler, log *slog.Logger) (*livequery.Engine, error) {
-	if *checkpointPath != "" {
-		f, err := os.Open(*checkpointPath) //nolint:forbidigo // livequeryd's own state file, from its flags
+func openEngine(ctx context.Context, pool *pgxpool.Pool, capture *livequery.Capture, compiler livequery.Compiler, checkpoint string, log *slog.Logger) (*livequery.Engine, error) {
+	if checkpoint != "" {
+		f, err := os.Open(checkpoint) //nolint:forbidigo // livequeryd's own state file, from its flags
 		switch {
 		case err == nil:
 			defer func() { _ = f.Close() }()
@@ -252,7 +239,7 @@ func openEngine(ctx context.Context, pool *pgxpool.Pool, capture *livequery.Capt
 		}
 	}
 	engine := livequery.NewEngine(pool, capture)
-	engine.Checkpointed = *checkpointPath != ""
+	engine.Checkpointed = checkpoint != ""
 	engine.Compiler = compiler
 	return engine, nil
 }
