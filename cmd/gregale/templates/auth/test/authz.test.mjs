@@ -341,10 +341,10 @@ test('with one session per user, lists only the most recently active session and
   const now = Date.parse('2026-10-20T12:00:00Z')
   const at = minutes => new Date(now - minutes * 60000).toISOString()
   const session = (id, active, current = false) => ({ id, created_at: at(active + 1), last_active_at: at(active), current })
-  // Most recently active first, as list_sessions returns them.
   const newest = session('n', 1), older = session('o', 5), oldest = session('x', 9)
   const single = { maxAgeMinutes: null, idleMinutes: null, singlePerUser: true }
   assert.deepEqual(liveSessions([newest, older, oldest], single, now).map(s => s.id), ['n'])
+  assert.deepEqual(liveSessions([oldest, newest, older], single, now).map(s => s.id), ['n'], 'whatever order the rows come in')
   assert.deepEqual(liveSessions([newest, { ...older, current: true }, oldest], single, now).map(s => s.id), ['n', 'o'], 'the caller\'s revoked session still shows')
   assert.deepEqual(liveSessions([newest, older], { ...single, singlePerUser: false }, now).map(s => s.id), ['n', 'o'])
   // A newer session past the idle limit is not the one that lives.

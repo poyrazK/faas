@@ -92,11 +92,11 @@ export function sessionLive(session, policy, now = Date.now()) {
 // would refuse to refresh. With one session per user only the most recently
 // active one lives (GoTrue revokes the others at their next refresh); the
 // caller's own session always shows, since its access token still works.
-// sessions arrive most recently active first (list_sessions).
 export function liveSessions(sessions, policy, now = Date.now()) {
   const live = sessions.filter(session => session.current || sessionLive(session, policy, now))
   if (!policy?.singlePerUser) return live
-  const newest = live.find(session => sessionLive(session, policy, now))
+  const active = session => new Date(session.last_active_at).getTime()
+  const newest = live.filter(session => sessionLive(session, policy, now)).reduce((best, session) => !best || active(session) > active(best) ? session : best, null)
   return live.filter(session => session.current || session === newest)
 }
 
