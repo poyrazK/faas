@@ -352,7 +352,7 @@ type Response struct {
 	Replication *ReplicationStatus `json:"replication,omitempty"`
 	// Import answers OpImport and OpImportStatus.
 	Import *ImportStatus `json:"import,omitempty"`
-	// Storage is the volume's use, on a ready database.
+	// Storage is the volume's use, on a ready database or a standby.
 	Storage *StorageStatus `json:"storage,omitempty"`
 	// MarkedAt answers OpMarkDrill.
 	MarkedAt time.Time `json:"marked_at,omitzero"`

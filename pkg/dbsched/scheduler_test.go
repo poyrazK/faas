@@ -46,9 +46,11 @@ type fakeVMM struct {
 	marks   map[string]fakeMark
 	markAt  time.Time
 	markErr string
-	// storage is what a ready guest reports about its volume; stale marks
-	// "node/id" VMs on an outdated base.
-	storage map[string]*dbguest.StorageStatus
+	// storage is what a ready guest reports about its volume, and
+	// standbyStorage what a standby reports; stale marks "node/id" VMs on
+	// an outdated base.
+	storage        map[string]*dbguest.StorageStatus
+	standbyStorage map[string]*dbguest.StorageStatus
 	stale   map[string]bool
 	// onNode records node-scoped calls as "op@node"; volNode is where each
 	// volume was created.
@@ -147,7 +149,7 @@ func newFakeVMM() *fakeVMM {
 	return &fakeVMM{volumes: map[string]bool{}, running: map[string]bool{}, restoring: map[string]bool{}, flushes: map[string]time.Time{}, volNode: map[string]string{}, storage: map[string]*dbguest.StorageStatus{}, stale: map[string]bool{},
 		primaryOn: map[string]string{}, standbyOn: map[string]string{}, standbyVol: map[string]string{}, replMode: map[string]dbguest.ReplicationMode{},
 		unsynced: map[string]bool{}, promoted: map[string]string{}, imports: map[string]dbguest.ImportStatus{}, down: map[string]bool{},
-		majors: map[string]int{}, runMajor: map[string]int{}, upgrading: map[string]int{}, marks: map[string]fakeMark{}}
+		majors: map[string]int{}, runMajor: map[string]int{}, upgrading: map[string]int{}, marks: map[string]fakeMark{}, standbyStorage: map[string]*dbguest.StorageStatus{}}
 }
 
 type fakeMark struct {
@@ -706,7 +708,7 @@ func (f *fakeVMM) standbyControl(node Node, id string, req dbguest.Request) dbgu
 		if f.promoted[id] == node.ID {
 			return dbguest.Response{State: dbguest.StateReady}
 		}
-		return dbguest.Response{State: dbguest.StateStandby}
+		return dbguest.Response{State: dbguest.StateStandby, Storage: f.standbyStorage[id]}
 	}
 	return dbguest.Response{State: dbguest.StateStandby, Error: dbguest.ErrCodeNotReady}
 }

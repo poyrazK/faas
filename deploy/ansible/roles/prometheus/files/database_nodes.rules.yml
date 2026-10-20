@@ -190,6 +190,18 @@ groups:
           description: "The storage guard turned these primaries read-only before their volumes filled; their apps' writes fail with SQLSTATE 25006. schedd logs each database_id ('database is read-only, short of storage'). The customer frees space or grows storage; the guard turns the database writable again on its own."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDatabaseNodes.md"
 
+      - alert: FaasDatabaseStandbyStorageLow
+        expr: max(schedd_database_storage{level="standby_low"}) > 0
+        for: 15m
+        labels:
+          severity: warn
+          component: schedd
+          family: database_nodes
+        annotations:
+          summary: "{{ $value }} native database standby(s) short of storage while their primary is not"
+          description: "A standby normally has more room than its primary, which turns read-only first. These hold data their primary does not, usually WAL their restartpoints kept, and will fill first; a full standby stops replaying and the database loses its failover. schedd logs each database_id ('standby is short of storage'). Restart the database in place (runbook)."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDatabaseNodes.md"
+
       - alert: FaasDatabaseStaleVMs
         expr: max(schedd_database_stale_vms) > 0
         for: 24h

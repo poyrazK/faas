@@ -160,7 +160,7 @@ take `sum`.
 | `schedd_database_stale_restarts_total{result}` | Idle always-on databases schedd restarted onto the current base. |
 | `schedd_database_restore_drills_total{result}` | Daily restore drills: `ok`, `failed`, `skipped` (no capacity, or a source on an outdated guest). |
 | `schedd_database_restore_drill_last_ok_timestamp_seconds{node}` | When the node's last drill passed (0: none yet). |
-| `schedd_database_storage{level}` | Running databases at the last storage sample (every 2 min): `sampled`, `low` (short of the space that ends read-only), `read_only`. |
+| `schedd_database_storage{level}` | Running databases at the last storage sample (every 2 min): `sampled`, `low` (short of the space that ends read-only), `read_only`, `standby_low` (the standby is low while its primary is not). |
 
 ### FaasDatabaseRestoreDrillFailed and FaasDatabaseRestoreDrillStale (warn)
 
@@ -249,6 +249,31 @@ import's bookkeeping) are exempt.
 A stalled WAL archive fills a busy volume too, because WAL stays until
 it is archived. Check `FaasDatabaseArchiveKeeperDown` first when several
 databases turn read-only together.
+
+### FaasDatabaseStandbyStorageLow (warn)
+
+A production-class database's standby has had less free space than the
+storage guard's writable level (twice the read-only threshold) for 15
+minutes, while its primary has more. The guard governs only the primary.
+The standby has the same volume size and no ballast, so normally it has
+more room than the primary. A standby with less holds data the primary
+does not. Usually that is WAL in its `pg_wal` that its restartpoints
+have not let go. Once its volume fills, the standby stops replaying, the
+primary drops to asynchronous (`FaasDatabaseStandbyMissing` follows), and
+re-attaching fails the same way until the space is back.
+
+1. Find the databases: `journalctl -u faas-schedd | grep 'standby is
+   short of storage'` gives each `database_id`, the standby's node, and
+   its free and total bytes.
+2. Restart the database in place in a quiet window (see "Restarting one
+   database"). A clean standby shutdown ends with a restartpoint, which
+   recycles the WAL it no longer needs, so the standby boots with its
+   space back.
+3. If it comes back low, the standby keeps something a restartpoint
+   cannot recycle. Check its console log on its node for restartpoint or
+   replay errors. No operator command re-copies a standby in place yet;
+   until one exists, the database keeps running and drops to
+   asynchronous on its own when the standby stops.
 
 ### FaasDatabaseStandbyMissing (warn)
 

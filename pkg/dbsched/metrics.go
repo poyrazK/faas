@@ -59,7 +59,7 @@ func NewMetrics(reg prometheus.Registerer, prefix string) *Metrics {
 		}, []string{"result"}),
 		storage: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: prefix + "_database_storage",
-			Help: "Running native databases at the last storage sample, by level: sampled, low (short of the space that would end read-only), read_only (the storage guard turned the primary read-only).",
+			Help: "Running native databases at the last storage sample, by level: sampled, low (short of the space that would end read-only), read_only (the storage guard turned the primary read-only), standby_low (the standby is low while its primary is not).",
 		}, []string{"level"}),
 		stale: prometheus.NewGauge(prometheus.GaugeOpts{
 			Name: prefix + "_database_stale_vms",
@@ -111,6 +111,7 @@ func (m *Metrics) sampledStorage(s StorageSample) {
 	m.storage.WithLabelValues("sampled").Set(float64(s.Sampled))
 	m.storage.WithLabelValues("low").Set(float64(s.Low))
 	m.storage.WithLabelValues("read_only").Set(float64(s.ReadOnly))
+	m.storage.WithLabelValues("standby_low").Set(float64(s.StandbyLow))
 	m.stale.Set(float64(s.Stale))
 }
 

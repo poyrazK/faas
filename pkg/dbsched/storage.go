@@ -21,15 +21,24 @@ type StorageSample struct {
 	Low int
 	// ReadOnly is how many primaries the guard turned read-only.
 	ReadOnly int
+	// StandbyLow is how many standbys are short of that space while their
+	// primary is not. The guard governs only the primary, which carries a
+	// ballast the standby lacks, so a standby normally has more room; one
+	// with less holds data its primary does not (WAL its restartpoints
+	// have not let go), and fills first. A full standby stops replaying,
+	// so the primary drops to asynchronous and loses its failover.
+	StandbyLow int
 	// Stale is how many run, or have a standby that runs, an outdated
 	// base or launch; Restarted is how many of them this sample restarted.
 	Stale, Restarted int
 }
 
-// SampleStorage asks every running database's guest for its volume and
-// its node whether it is stale, and records the counts. It never wakes a
-// database, and a guest that does not answer is left out. Each read-only
-// database is logged with its id; the metric carries counts only. Stale
+// SampleStorage asks every running database's guest, and its standby's,
+// for its volume and its node whether it is stale, and records the
+// counts. It never wakes a database, and a guest that does not answer is
+// left out. Each read-only database, and each database whose standby is
+// low while it is not, is logged with its id; the metric carries counts
+// only. Stale
 // always-on databases idle for StaleIdle restart onto the current base,
 // a few per sample; scale-to-zero ones do on their next idle park.
 func (s *Scheduler) SampleStorage(ctx context.Context) (StorageSample, error) {
@@ -44,6 +53,12 @@ func (s *Scheduler) SampleStorage(ctx context.Context) (StorageSample, error) {
 		if !ok {
 			continue
 		}
+		standby, standbyOK := s.sampleStandby(ctx, vm)
+		if st := standby.Storage; standbyOK && st != nil && st.Low && (resp.Storage == nil || !resp.Storage.Low) {
+			sample.StandbyLow++
+			s.log.Warn("dbsched: standby is short of storage, its primary is not", "database_id", vm.DatabaseID,
+				"node_id", vm.StandbyNode, "free_bytes", st.FreeBytes, "total_bytes", st.TotalBytes)
+		}
 		if resp.Storage != nil {
 			sample.Sampled++
 			if resp.Storage.Low || resp.Storage.ReadOnly {
@@ -55,7 +70,7 @@ func (s *Scheduler) SampleStorage(ctx context.Context) (StorageSample, error) {
 					"free_bytes", resp.Storage.FreeBytes, "total_bytes", resp.Storage.TotalBytes)
 			}
 		}
-		if resp.Stale || s.standbyStale(ctx, vm) {
+		if resp.Stale || standbyOK && standby.Stale {
 			sample.Stale++
 			stale = append(stale, vm)
 		}
@@ -77,15 +92,14 @@ func (s *Scheduler) sampleStatus(ctx context.Context, nodeID, id string) (dbgues
 	return resp, err == nil
 }
 
-// standbyStale reports a replicated database whose standby runs an
-// outdated base or launch: its node may have been released before the
-// primary's.
-func (s *Scheduler) standbyStale(ctx context.Context, vm VM) bool {
+// sampleStandby asks a replicated database's running standby for its
+// status: its volume, and whether it runs an outdated base or launch (its
+// node may have been released before the primary's).
+func (s *Scheduler) sampleStandby(ctx context.Context, vm VM) (dbguest.Response, bool) {
 	if !vm.Replicated || vm.StandbyNode == "" || !vm.StandbyRunning {
-		return false
+		return dbguest.Response{}, false
 	}
-	resp, ok := s.sampleStatus(ctx, vm.StandbyNode, vm.DatabaseID)
-	return ok && resp.Stale
+	return s.sampleStatus(ctx, vm.StandbyNode, vm.DatabaseID)
 }
 
 // Restart restarts a running database in place, onto its node's current

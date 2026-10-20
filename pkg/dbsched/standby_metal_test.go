@@ -25,6 +25,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 
 	"github.com/onebox-faas/faas/pkg/dbarchive"
+	"github.com/onebox-faas/faas/pkg/dbguest"
 	"github.com/onebox-faas/faas/pkg/fcvm"
 )
 
@@ -78,9 +79,12 @@ func killNodeVM(t *testing.T, nodeName, id string) {
 }
 
 func TestMetalProductionClassFailover(t *testing.T) {
-	workdir, base := os.Getenv("FAAS_DBVM_WORKDIR"), os.Getenv("FAAS_DBVM_BASE")
-	if workdir == "" || base == "" {
-		t.Skip("set FAAS_DBVM_WORKDIR and FAAS_DBVM_BASE to run the scheduler metal test")
+	workdir, base, guestInit := os.Getenv("FAAS_DBVM_WORKDIR"), os.Getenv("FAAS_DBVM_BASE"), os.Getenv("FAAS_GUEST_INIT")
+	if workdir == "" || base == "" && guestInit == "" {
+		t.Skip("set FAAS_DBVM_WORKDIR and FAAS_DBVM_BASE or FAAS_GUEST_INIT to run the scheduler metal test")
+	}
+	if base == "" {
+		base = metalBase(context.Background(), t, workdir, guestInit, 17)
 	}
 	bucket := &dbarchive.FileRemote{Dir: filepath.Join(workdir, "pcbucket")}
 	_ = os.RemoveAll(bucket.Dir)
@@ -123,6 +127,16 @@ func TestMetalProductionClassFailover(t *testing.T) {
 		}
 		query(ctx, t, a.rt, id, password, "CREATE TABLE kept(v text); INSERT INTO kept SELECT 'bulk' FROM generate_series(1, 20000); INSERT INTO kept VALUES ('acknowledged')")
 	}
+	// A standby reports its volume like its primary, and the storage
+	// sample reads both.
+	standby, err := vmm.Control(ctx, b.node, running, dbguest.Request{Op: dbguest.OpStatus})
+	if err != nil || standby.State != dbguest.StateStandby || standby.Storage == nil || standby.Storage.TotalBytes < 900<<20 || standby.Storage.Low {
+		t.Fatalf("standby status = %+v (storage %+v), %v; want its volume", standby, standby.Storage, err)
+	}
+	if got, err := s.SampleStorage(ctx); err != nil || got.Sampled != 2 || got.StandbyLow != 0 {
+		t.Fatalf("storage sample = %+v, %v", got, err)
+	}
+	t.Logf("standby volume: %d of %d bytes free", standby.Storage.FreeBytes, standby.Storage.TotalBytes)
 	if err := s.Park(ctx, parked); err != nil {
 		t.Fatal(err)
 	}

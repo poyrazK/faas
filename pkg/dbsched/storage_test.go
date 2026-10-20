@@ -150,3 +150,28 @@ func TestRestartParksAndWakesARunningDatabase(t *testing.T) {
 		t.Fatalf("restart of a failed database = %v, want ErrConflict", err)
 	}
 }
+
+// A standby low on space while its primary is not is counted: it fills
+// first, and a full standby ends the primary's failover. Both low is the
+// primary's guard at work, and only the primary counts.
+func TestSampleStorageCountsStandbysLowerThanTheirPrimary(t *testing.T) {
+	s, _, vmm := newStandbyScheduler(t, "db-a", "db-b")
+	s.cfg.Metrics = NewMetrics(prometheus.NewRegistry(), "schedd")
+	ctx := context.Background()
+	diverged, both := wakeReplicated(t, s), wakeReplicated(t, s)
+	low := &dbguest.StorageStatus{TotalBytes: 1 << 30, FreeBytes: 150 << 20, Low: true}
+	vmm.mu.Lock()
+	vmm.storage[diverged.DatabaseID] = &dbguest.StorageStatus{TotalBytes: 1 << 30, FreeBytes: 700 << 20}
+	vmm.standbyStorage[diverged.DatabaseID] = low
+	vmm.storage[both.DatabaseID] = &dbguest.StorageStatus{TotalBytes: 1 << 30, FreeBytes: 100 << 20, Low: true, ReadOnly: true}
+	vmm.standbyStorage[both.DatabaseID] = low
+	vmm.mu.Unlock()
+
+	got, err := s.SampleStorage(ctx)
+	if err != nil || got != (StorageSample{Sampled: 2, Low: 1, ReadOnly: 1, StandbyLow: 1}) {
+		t.Fatalf("sample = %+v, %v; want one standby low below a primary that is not", got, err)
+	}
+	if v := testutil.ToFloat64(s.cfg.Metrics.storage.WithLabelValues("standby_low")); v != 1 {
+		t.Fatalf("standby_low = %v", v)
+	}
+}

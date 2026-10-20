@@ -1961,10 +1961,22 @@ archived. guest-init guards a ready primary every 10 s:
   with it in place. The ballast is at most half the read-only threshold,
   so laying it never turns the database back.
 - **Visibility.** A ready guest's status carries its volume
-  (`StorageStatus`: total, free, read-only, low). schedd samples every
-  running database every 2 minutes without waking any, sets
-  `schedd_database_storage{level}` (counts only), logs each read-only
+  (`StorageStatus`: total, free, read-only, low), and so does a
+  standby's. schedd samples every running database and its running
+  standby every 2 minutes without waking any, and sets
+  `schedd_database_storage{level}` (counts only). It logs each read-only
   `database_id`, and `FaasDatabaseStorageReadOnly` warns after 5 minutes.
+- **Standbys.** The guard governs only the primary. A standby's volume
+  matches its primary's, since every attach grows it to the database's
+  size, and the standby carries no ballast. So the standby normally has
+  more room, and the primary turns read-only first. A standby that is low
+  while its primary is not therefore holds data the primary does not,
+  usually WAL its restartpoints have not let go. It will fill first, and
+  a full standby stops replaying. The primary then drops to asynchronous
+  and loses its failover, and every re-attach fails the same way. schedd
+  counts such standbys (`level="standby_low"`) and logs each
+  `database_id`, and `FaasDatabaseStandbyStorageLow` warns after 15
+  minutes.
 
 On metal (1 GiB volume), the guard turned the database read-only at
 100 MiB free: inserts got `25006`, reads and an admin `CREATE ROLE`
@@ -1975,8 +1987,7 @@ the ballast laid back.
 
 Not yet done: customers see the read-only mode only through `25006` and
 the docs. schedd keeps the sample in memory, so the health collector
-does not report it yet. Standbys have no guard; their volume matches the
-primary's, which turns read-only first.
+does not report it yet.
 
 ### Usage metering
 

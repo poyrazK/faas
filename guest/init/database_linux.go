@@ -903,7 +903,7 @@ func (g *databaseGuest) response() dbguest.Response {
 	g.mu.Lock()
 	resp := dbguest.Response{State: g.state, Major: g.major, Error: g.errCode, RecoveredTo: g.recoveredTo}
 	g.mu.Unlock()
-	if resp.State == dbguest.StateReady {
+	if resp.State == dbguest.StateReady || resp.State == dbguest.StateStandby {
 		resp.Storage = g.storageStatus()
 	}
 	return resp
