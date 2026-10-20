@@ -39,6 +39,10 @@ export type DebugTelemetryRequestItem = {
    * W3C distributed-tracing identifier (32 hex chars), separate from request_id.
    */
   trace_id?: string | null;
+  /**
+   * True when Gregale linked this service call to its caller's trace because the caller sent no traceparent and was serving exactly one request (ADR-1138): the trace id is inferred, not propagated.
+   */
+  trace_inferred?: boolean;
   received_at: string;
   /**
    * Opaque wake identifier when this request admitted a wake; omitted for warm requests.
