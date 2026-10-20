@@ -244,6 +244,9 @@ func (s *server) releaseApprovalDecision(r *http.Request, acct state.Account, ap
 	case api.ReleaseApprovalStateExpired:
 		return state.ReleaseApproval{}, api.ErrReleaseApprovalDecided("This release waited past its approval timeout.")
 	}
+	if d.RolloutAbortedAt != nil {
+		return state.ReleaseApproval{}, api.ErrReleaseApprovalDecided("This release's rollout was aborted; deploy it again to start a new approval.")
+	}
 	actor := actorAccount(r, acct)
 	role, problem := s.releaseApproverRole(r, app, *policy)
 	if problem != nil {

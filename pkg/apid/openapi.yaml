@@ -28938,6 +28938,77 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/release-approval-policy:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [deployments]
+      operationId: getReleaseApprovalPolicy
+      summary: Show an app's release approval policy (ADR-20261020085706).
+      description: "404 `release_approval_policy_not_found` when the app does not require approvals."
+      responses:
+        '200':
+          description: The app's approval policy.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReleaseApprovalPolicy' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    put:
+      tags: [deployments]
+      operationId: setReleaseApprovalPolicy
+      summary: Require approvals for an app's production releases (ADR-20261020085706).
+      description: "Creates or replaces the policy. Each production release then waits in a canary stage until enough eligible people approve it. Organization owners and admins may change the policy. An app outside an organization always counts its owner's own approval."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetReleaseApprovalPolicyRequest' }
+            example: {"required_approvals": 2, "after_stage": 1, "timeout_minutes": 1440, "approvers": "admin"}
+      responses:
+        '200':
+          description: The saved policy.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReleaseApprovalPolicy' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    delete:
+      tags: [deployments]
+      operationId: deleteReleaseApprovalPolicy
+      summary: Stop requiring release approvals (ADR-20261020085706).
+      description: "Releases waiting for approval continue on the canary's next step."
+      responses:
+        '204':
+          description: The policy was removed.
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/release-approvals:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [deployments]
+      operationId: listReleaseApprovals
+      summary: List an app's releases waiting for approval (ADR-20261020085706).
+      description: "Releases in state waiting, and those past their timeout that the canary worker is about to abort."
+      responses:
+        '200':
+          description: The waiting releases.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ListReleaseApprovalsResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/apps/{slug}/config/rollback:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -29734,6 +29805,47 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/deployments/{id}/approvals:
+    parameters:
+      - $ref: '#/components/parameters/Id32'
+    get:
+      tags: [deployments]
+      operationId: getReleaseApproval
+      summary: Show a release's approvals (ADR-20261020085706).
+      description: "The release's approval state, the decisions so far, and when its wait expires."
+      responses:
+        '200':
+          description: The release's approval status.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReleaseApprovalStatus' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    post:
+      tags: [deployments]
+      operationId: decideReleaseApproval
+      summary: Approve or reject a release (ADR-20261020085706).
+      description: "Records one decision per person. A rejection is final and aborts the rollout, restoring the previous release. 403 `release_approval_self` when the deployer approves their own release and the policy does not allow it; 409 `release_approval_decided` for a second decision or a release that no longer accepts one."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DecideReleaseApprovalRequest' }
+            example: {"decision": "approve", "comment": "canary looks clean"}
+      responses:
+        '200':
+          description: The release's approval status after the decision.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReleaseApprovalStatus' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/deployments/{id}/canary/advance:
     parameters:
@@ -87965,7 +88077,7 @@ components:
         kind: { type: string, enum: [advance, hold, abort] }
         rule:
           type: string
-          enum: [advance_healthy, advance_probe_evidence, advance_low_traffic, advance_no_predecessor, advance_manual, hold_insufficient_samples, hold_signal_unavailable, hold_observation_unavailable, hold_health_alert, abort_5xx, abort_p95_latency, abort_cold_boot_p95, abort_cpu_per_request, abort_dependency_errors, abort_oom, abort_crash_loop, abort_manual, abort_worker_lease_expired, abort_post_release_5xx, abort_post_release_p95_latency, abort_release_gate, abort_post_release_gate]
+          enum: [advance_healthy, advance_probe_evidence, advance_low_traffic, advance_no_predecessor, advance_manual, hold_insufficient_samples, hold_signal_unavailable, hold_observation_unavailable, hold_health_alert, abort_5xx, abort_p95_latency, abort_cold_boot_p95, abort_cpu_per_request, abort_dependency_errors, abort_oom, abort_crash_loop, abort_manual, abort_worker_lease_expired, abort_post_release_5xx, abort_post_release_p95_latency, abort_release_gate, abort_post_release_gate, hold_awaiting_approval, abort_approval_rejected, abort_approval_timeout]
           description: "Closed set; the breaker rules reuse the canary_progression_circuit_breaker_total event names."
         summary: { type: string, maxLength: 256, description: "The circuit breaker's aggregate-only reason." }
         step: { type: integer, minimum: 0, description: "Zero-based canary step that was evaluated." }
@@ -104212,6 +104324,69 @@ components:
       required: [gates]
       properties:
         gates: { type: array, items: { $ref: '#/components/schemas/ReleaseGate' } }
+    ReleaseApprovalPolicy:
+      description: "An app's release approval policy (ADR-20261020085706)."
+      type: object
+      required: [app, required_approvals, after_stage, timeout_minutes, approvers, allow_self_approval, updated_by, created_at, updated_at]
+      properties:
+        app: { type: string }
+        required_approvals: { type: integer, minimum: 1, maximum: 5, description: "Distinct eligible people who must approve each production release." }
+        after_stage: { type: integer, minimum: 1, maximum: 10, description: "The canary stage a release waits in, counted from 1." }
+        timeout_minutes: { type: integer, minimum: 10, maximum: 10080, description: "How long a release may wait before its rollout is aborted." }
+        approvers: { type: string, enum: [admin, developer], description: "admin: organization owners and admins; developer: developers too." }
+        allow_self_approval: { type: boolean, description: "Whether the deployer's own approval counts." }
+        updated_by: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    SetReleaseApprovalPolicyRequest:
+      description: "Sets an app's approval policy. Omitted fields take the defaults: stage 1, a 24-hour timeout, owner or admin approvers, no self-approval."
+      type: object
+      required: [required_approvals]
+      properties:
+        required_approvals: { type: integer, minimum: 1, maximum: 5 }
+        after_stage: { type: integer, minimum: 1, maximum: 10, description: "Default 1." }
+        timeout_minutes: { type: integer, minimum: 10, maximum: 10080, description: "Default 1440." }
+        approvers: { type: string, enum: [admin, developer], description: "Default admin." }
+        allow_self_approval: { type: boolean, description: "Default false; always true for an app outside an organization." }
+    DecideReleaseApprovalRequest:
+      description: "One person's decision on a release. A rejection needs a comment."
+      type: object
+      required: [decision]
+      properties:
+        decision: { type: string, enum: [approve, reject] }
+        comment: { type: string, maxLength: 200, description: "Recorded with the decision; required to reject." }
+    ReleaseApprovalDecision:
+      description: "A decision recorded on a release."
+      type: object
+      required: [approver, role, decision, counted, decided_at]
+      properties:
+        approver: { type: string }
+        role: { type: string, enum: [owner, admin, developer, personal], description: "The approver's organization role when they decided; personal for an app outside an organization." }
+        decision: { type: string, enum: [approve, reject] }
+        comment: { type: string }
+        counted: { type: boolean, description: "Whether the approval counts toward the policy; the deployer's own approval does not unless self-approval is allowed." }
+        decided_at: { type: string, format: date-time }
+    ReleaseApprovalStatus:
+      description: "A release's approval state (ADR-20261020085706)."
+      type: object
+      required: [deployment_id, app, state, approvals, decisions]
+      properties:
+        deployment_id: { type: string, format: uuid }
+        app: { type: string }
+        state: { type: string, enum: [not_required, waiting, approved, rejected, expired] }
+        required_approvals: { type: integer, minimum: 1, maximum: 5 }
+        approvals: { type: integer, minimum: 0, description: "Approvals that count toward the policy." }
+        after_stage: { type: integer, minimum: 1, maximum: 10 }
+        deployed_by: { type: string }
+        waiting_since: { type: string, format: date-time, description: "When the canary entered its waiting stage." }
+        expires_at: { type: string, format: date-time, description: "When a release still waiting is aborted." }
+        decisions: { type: array, items: { $ref: '#/components/schemas/ReleaseApprovalDecision' } }
+    ListReleaseApprovalsResponse:
+      description: "An app's releases waiting for approval."
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/ReleaseApprovalStatus' } }
     ReleaseGateResult:
       description: "One judged release gate in a rollout decision. Aggregates only: no routes, messages or metric labels."
       type: object
@@ -108861,6 +109036,8 @@ components:
           type: array
           items: { $ref: '#/components/schemas/ReleaseFreeze' }
           description: "release_frozen: the freezes refusing the release (ADR-20261019071733)."
+        release_approval:
+          $ref: '#/components/schemas/ReleaseApprovalStatus'
         type: { type: string, format: uri-reference, example: "https://gregale.dev/docs/errors/validation_failed"}
         title: { type: string , example: "Validation failed"}
         status: { type: integer , example: 422}

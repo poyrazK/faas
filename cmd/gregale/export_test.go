@@ -571,6 +571,7 @@ var ApplyTestOutageCycles = applyTestOutageCycles
 var ApplyTestPoolExhaustion = applyTestPoolExhaustion
 var ApplyTestRecoveryDeadlineOverrides = applyTestRecoveryDeadlineOverrides
 var ApplyTestSweepBaseline = applyTestSweepBaseline
+var ApprovalPolicyRequest = approvalPolicyRequest
 var AssertOneProblem = assertOneProblem
 var AssessTestPreflight = assessTestPreflight
 var AttachDataAPIConnectionBudget = attachDataAPIConnectionBudget

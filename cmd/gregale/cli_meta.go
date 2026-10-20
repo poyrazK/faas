@@ -151,7 +151,7 @@ func cliHelpGroup(command cliCommand) string {
 		return "API"
 	case "add", "ai", "automations", "bindings", "bucket", "crons", "delayed-task", "events", "send", "deliver", "invocations", "entities", "jobs", "operations", "customer-operations", "run", "runs", "triggers", "webhooks", "workflows", "cache", "postgres":
 		return "Data"
-	case "canary", "freeze", "mirror", "park", "release-gates", "ps", "queue", "dlq", "traffic", "wake", "wake-ahead", "wake-timeline", "workers":
+	case "approvals", "canary", "freeze", "mirror", "park", "release-gates", "ps", "queue", "dlq", "traffic", "wake", "wake-ahead", "wake-timeline", "workers":
 		return "Delivery"
 	case "alerts", "analytics", "channels", "audit-events", "debug", "inspect", "log-drains", "logs", "metrics", "realtime", "slo", "slos", "status", "synthetics", "tail", "throttle-suggestions", "trace":
 		return "Observe"
@@ -1778,6 +1778,48 @@ var cliCommands = []cliCommand{
 			}},
 		},
 		Examples: []string{"gregale billing export --month 2026-09 --out invoices.zip", "gregale billing export --month 2026-09 --format csv --out invoices.csv"},
+	},
+	{
+		Name:    "approvals",
+		DocSlug: "approvals",
+		Short:   "Require people to approve production releases before they leave their first canary stage",
+		Examples: []string{
+			"gregale approvals require --app my-api --approvals 2",
+			"gregale approvals require --app my-api --approvals 1 --approvers developer --timeout 4h",
+			"gregale approvals pending --app my-api",
+			"gregale approvals approve 3f9c1e2a-0b7d-4c55-9e1a-2d6f8b4c7e10 --comment \"canary looks clean\"",
+			"gregale approvals reject v42 --app my-api --reason \"checkout latency is up\"",
+		},
+		Subcommands: []cliSub{
+			{Name: "require", Short: "Require approvals for an app's production releases (ADR-20261020085706)", Flags: []cliFlag{
+				{Name: "app", Short: "app slug (defaults to linked project app)", Value: "slug"},
+				{Name: "approvals", Short: "approvals each production release needs (1-5)", Value: "N", Req: true},
+				{Name: "after-stage", Short: "canary stage the release waits in (default 1)", Value: "N"},
+				{Name: "timeout", Short: "abort a release that waits longer (default 24h)", Value: "DURATION"},
+				{Name: "approvers", Short: "who may approve (default admin: owners and admins)", Value: "ROLE", ClosedSet: []string{"admin", "developer"}},
+				{Name: "allow-self-approval", Short: "count the deployer's own approval", Bool: true},
+			}},
+			{Name: "policy", Short: "Show an app's approval policy", Flags: []cliFlag{
+				{Name: "app", Short: "app slug (defaults to linked project app)", Value: "slug"},
+			}},
+			{Name: "off", Short: "Stop requiring approvals for an app", Flags: []cliFlag{
+				{Name: "app", Short: "app slug (defaults to linked project app)", Value: "slug"},
+			}},
+			{Name: "pending", Short: "List an app's releases waiting for approval", Flags: []cliFlag{
+				{Name: "app", Short: "app slug (defaults to linked project app)", Value: "slug"},
+			}},
+			{Name: "status", Short: "Show a release's approvals", Positionals: []string{"<deployment>"}, Flags: []cliFlag{
+				{Name: "app", Short: "app slug, to resolve a vN revision", Value: "slug"},
+			}},
+			{Name: "approve", Short: "Approve a release", Positionals: []string{"<deployment>"}, Flags: []cliFlag{
+				{Name: "app", Short: "app slug, to resolve a vN revision", Value: "slug"},
+				{Name: "comment", Short: "note recorded with the approval", Value: "TEXT"},
+			}},
+			{Name: "reject", Short: "Reject a release and abort its rollout", Positionals: []string{"<deployment>"}, Flags: []cliFlag{
+				{Name: "app", Short: "app slug, to resolve a vN revision", Value: "slug"},
+				{Name: "reason", Short: "why the release is rejected", Value: "TEXT", Req: true},
+			}},
+		},
 	},
 	{
 		Name:    "freeze",

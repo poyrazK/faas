@@ -80,6 +80,7 @@ Lowering traffic and aborting are never blocked.
 - **The deployer:** when self-approval is off, the deployer's approval is refused with `403 release_approval_self`. The deployer may still reject their own release.
 - **When it applies:** an approval counts toward `required_approvals` as soon as it is recorded, and the next canary tick advances the release. A release can be approved before it reaches the waiting stage.
 - **Rejection:** a rejection is final. It aborts an in-flight rollout through the same path as a manual abort, with rule `abort_approval_rejected`. A rejected release can never gain traffic again.
+- **Aborted releases:** a release whose rollout was aborted (by a rejection, the timeout, the circuit breaker or a person) accepts no more decisions. It can gain traffic again only if it was approved before the abort; otherwise it is deployed again.
 
 `GET /v1/deployments/{id}/approvals` returns the release's approval status:
 - `state`: `not_required`, `waiting`, `approved`, `rejected` or `expired`;
@@ -99,10 +100,10 @@ Every policy change and decision is audited:
 
 | Command | Does |
 |---|---|
-| `gregale approvals require <app> --approvals N [--after-stage N] [--timeout 24h] [--approvers admin\|developer] [--allow-self-approval]` | Sets the policy. |
-| `gregale approvals policy <app>`, `gregale approvals off <app>` | Shows or removes the policy. |
-| `gregale approvals pending <app>` | Lists the app's releases that are waiting. |
-| `gregale approvals status <deployment>` | Shows one release's status and decisions. |
+| `gregale approvals require [--app <app>] --approvals N [--after-stage N] [--timeout 24h] [--approvers admin\|developer] [--allow-self-approval]` | Sets the policy. |
+| `gregale approvals policy`, `gregale approvals off` (with `--app`) | Shows or removes the policy. |
+| `gregale approvals pending [--app <app>]` | Lists the app's releases that are waiting. |
+| `gregale approvals status <deployment\|vN>` | Shows one release's status and decisions. |
 | `gregale approvals approve <deployment> [--comment]`, `gregale approvals reject <deployment> --reason` | Decides on a release. |
 
 `gregale deploy`'s live view shows when a release is waiting and prints the approve command.

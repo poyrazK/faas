@@ -167,6 +167,56 @@ How each gate judges:
 A gate that has too few requests or values (`--min-samples`, default 20) is
 not judged. A gate never holds a rollout on missing evidence.
 
+## Release approvals
+
+Require people to approve each production release before it takes more than
+its first canary stage
+([ADR-20261020085706](adr/20261020085706-release-approvals.md)):
+
+```bash
+# Two owners or admins, other than the deployer, approve every release.
+gregale approvals require --approvals 2
+# One person, developers included, within four hours.
+gregale approvals require --approvals 1 --approvers developer --timeout 4h
+
+gregale approvals pending                 # releases waiting right now
+gregale approvals approve <deployment> --comment "canary looks clean"
+gregale approvals reject <deployment> --reason "checkout latency is up"
+gregale approvals status <deployment>
+gregale approvals off
+```
+
+The release starts its canary as usual. At the stage the policy names
+(`--after-stage`, default 1), it waits. `gregale deploy` shows the wait and
+the approve command. The canary still judges the waiting stage, so a
+regression aborts the release even while it waits. Once enough people
+approve, the rollout continues on its next step.
+
+Waiting ends in one of three ways:
+- **Enough approvals:** the rollout continues.
+- **A rejection:** the rollout is aborted at once (rule
+  `abort_approval_rejected`), and the previous release takes its traffic
+  back.
+- **The timeout passes** (default 24 hours): the rollout is aborted in the
+  same way (rule `abort_approval_timeout`).
+
+While a release waits, nothing gives it more traffic: not `canary advance`,
+`rollouts recover --action promote`, `traffic set`, or
+`POST /v1/deployments/{id}/promote`. Rollbacks and aborts are never held.
+
+Who may approve:
+- **Approvers:** with `--approvers admin` (the default), organization owners
+  and admins; `developer` adds developers.
+- **The deployer:** their own approval does not count unless you pass
+  `--allow-self-approval`. An app outside an organization has one person,
+  whose own approval always counts.
+- **Changing the policy:** only owners and admins can change or remove it.
+
+Releases need a canary to wait in. While the policy is on, a production
+release with `--rollout immediate` or `--traffic-percent` is refused with
+`release_approval_canary_required`. To approve before any traffic, deploy
+with `--no-traffic`, get the approval, then run `gregale traffic set`.
+
 ## Deploy freezes
 
 A freeze stops new production releases of one app, or of every app in the
