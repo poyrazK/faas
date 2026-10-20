@@ -9123,7 +9123,9 @@ SELECT max(boundary.changed_at)::timestamptz AS changed_at FROM (
     SELECT changed_at FROM app_runtime_config_changes WHERE app_id = sqlc.arg(app_id)::uuid
     UNION ALL
     SELECT changed_at FROM app_runtime_config_scope_changes WHERE app_id = sqlc.arg(app_id)::uuid
-        AND scope IN ('default', sqlc.arg(scope)::text)
+        AND (scope IN ('default', sqlc.arg(scope)::text)
+            -- ADR-1136: default-scope deployments read production's project configuration.
+            OR (sqlc.arg(scope)::text = 'default' AND scope = 'default:project-config'))
 ) AS boundary;
 
 -- name: LockSnapshotRuntimePublicationScope :one
