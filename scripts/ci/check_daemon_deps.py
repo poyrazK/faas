@@ -10,11 +10,14 @@ drifting back. scripts/ci/daemon_deps.json lists the rules:
 
   {"rules": [{"package": "pkg/sched", "binaries": ["imaged"], "reason": "..."}]}
 
-A rule's package matches itself only, not its subpackages (pkg/sched/flowcount
-is a separate leaf). Closures are loaded like affected_units.py loads them:
-`go list -deps` under the release build configuration (linux/amd64, CGO
-off, -tags metal for daemons). A violation prints the import chain that
-pulls the package in.
+A package without a dot in its first path element is relative to the
+module (pkg/sched); any other is an import path (golang.org/x/net/trace).
+"binaries": "DAEMONS" names every daemon in the Makefile. A rule's package
+matches itself only, not its subpackages (pkg/sched/flowcount is a separate
+leaf). Closures are loaded like affected_units.py loads them: `go list
+-deps` under the release build configuration (linux/amd64, CGO off, the
+Makefile's DAEMON_TAGS for daemons). A violation prints the import chain
+that pulls the package in.
 
 Usage:
   scripts/ci/check_daemon_deps.py [--config scripts/ci/daemon_deps.json]
@@ -22,6 +25,7 @@ Usage:
 import argparse
 import json
 import os
+import subprocess
 import sys
 from collections import deque
 
@@ -59,14 +63,20 @@ def import_chain(graph, main, target):
     return None
 
 
-def violations(rules, graphs, module):
+def import_path(package, module):
+    """A rule's package as an import path."""
+    return package if "." in package.split("/")[0] else f"{module}/{package}"
+
+
+def violations(rules, graphs, module, daemons=()):
     """[(rule, binary, chain)] for every binary that links a forbidden
     package. graphs maps each binary to the package graph it was loaded
-    from (affected_units.go_graph)."""
+    from ({import path: {"imports": set}})."""
     out = []
     for rule in rules:
-        target = f"{module}/{rule['package']}"
-        for name in rule["binaries"]:
+        target = import_path(rule["package"], module)
+        binaries = list(daemons) if rule["binaries"] == "DAEMONS" else rule["binaries"]
+        for name in binaries:
             if name not in graphs:
                 raise ValueError(f"rule for {rule['package']} names {name}, which is not a release binary")
             chain = import_chain(graphs[name], f"{module}/cmd/{name}", target)
@@ -75,16 +85,29 @@ def violations(rules, graphs, module):
     return out
 
 
+def go_graph(mains, tags, root="."):
+    """Every package reachable from mains under the release build
+    configuration, standard library and modules included:
+    {import path: {"imports": set}}."""
+    env = dict(os.environ, GOOS="linux", GOARCH="amd64", CGO_ENABLED="0")
+    cmd = [os.environ.get("GO", "go"), "list", "-deps", "-json=ImportPath,Imports"]
+    if tags:
+        cmd.append("-tags=" + ",".join(tags))
+    out = subprocess.run(cmd + mains, check=True, capture_output=True, text=True, cwd=root, env=env).stdout
+    return {obj["ImportPath"]: {"imports": set(obj.get("Imports") or [])} for obj in au.decode_stream(out)}
+
+
 def load_graphs(root="."):
+    """({binary: package graph}, module, daemons) for the release binaries."""
     with open(os.path.join(root, "Makefile"), encoding="utf-8") as fh:
         makefile = fh.read()
     module = au.module_path(root)
+    daemons = au.makefile_list(makefile, "DAEMONS")
     graphs = {}
-    for names, tags in ((au.makefile_list(makefile, "DAEMONS"), ["metal"]),
-                        (au.makefile_list(makefile, "CLIS"), [])):
-        graph = au.go_graph([f"./cmd/{n}" for n in names], tags, root)
+    for names, tags in ((daemons, au.daemon_tags(makefile)), (au.makefile_list(makefile, "CLIS"), [])):
+        graph = go_graph([f"./cmd/{n}" for n in names], tags, root)
         graphs.update({n: graph for n in names})
-    return graphs, module
+    return graphs, module, daemons
 
 
 def main():
@@ -92,13 +115,14 @@ def main():
     ap.add_argument("--config", default=DEFAULT_CONFIG, help="rules (default scripts/ci/daemon_deps.json)")
     args = ap.parse_args()
     rules = load_rules(args.config)
-    graphs, module = load_graphs()
-    found = violations(rules, graphs, module)
+    graphs, module, daemons = load_graphs()
+    found = violations(rules, graphs, module, daemons)
     for rule, name, chain in found:
         print(f"{name} links {rule['package']}: {' -> '.join(chain)}\n  {rule['reason']}", file=sys.stderr)
     if found:
         return 1
-    print(f"daemon deps: {sum(len(r['binaries']) for r in rules)} binary/package rules hold")
+    pairs = sum(len(daemons) if r["binaries"] == "DAEMONS" else len(r["binaries"]) for r in rules)
+    print(f"daemon deps: {pairs} binary/package rules hold")
     return 0
 
 

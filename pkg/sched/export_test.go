@@ -23,6 +23,7 @@ import (
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/nodereport"
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
@@ -65,7 +66,7 @@ type WorkPool = workPool
 
 // Package-level consts
 const ArchAMD64 = archAMD64
-const CapacityPayloadDomain = capacityPayloadDomain
+const CapacityPayloadDomain = nodereport.CapacityPayloadDomain
 const GatewayDispatchResponseMaxBytes = gatewayDispatchResponseMaxBytes
 const PressureParkFreshness = pressureParkFreshness
 const RuntimeConfigDrainReasonQuietPeriod = runtimeConfigDrainReasonQuietPeriod
@@ -213,6 +214,14 @@ var XBaseKey = baseKey
 var XDeploymentRuntimePort = deploymentRuntimePort
 var XLayerKey = layerKey
 var XNewEngine = newEngine
+
+// XEventFanoutSafetyTick and XRunEventFanoutSweep let the event substrate
+// benchmark schedule fanout exactly as Loop.Run does (spec Appendix D V12).
+// adr: 647 — the sweep admits independently routed recipients.
+const XEventFanoutSafetyTick = eventFanoutSafetyTick
+
+func (l *Loop) XRunEventFanoutSweep(ctx context.Context) { l.runEventFanoutSweep(ctx) }
+
 var XNewMemCacheOverageChecker = newMemCacheOverageChecker
 var XTestWorkerScopedDemandLifecycle = testWorkerScopedDemandLifecycle
 

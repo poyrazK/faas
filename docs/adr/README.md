@@ -1,5 +1,6 @@
 # Architecture Decision Records
 
+- [What a fix restarts: daemon blast radius](20261020160744-daemon-blast-radius.md)
 - [Finished invocations without a horizon get the plan default retention](20261019104819-invocation-default-retention.md)
 - [Compose build arguments and target stage for Dockerfile builds](20261019142544-compose-build-args-and-target.md)
 
@@ -1720,5 +1721,6 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 
 - [ADR-1136: Project environment configuration reaches every service as environment variables](1136-project-environment-config-as-environment-variables.md)
 - [ADR-1137: Declared dependencies seed opt-in wake-ahead](1137-declared-dependencies-seed-wake-ahead.md) — an opted-in app wakes its declared dependencies until 20 wakes of evidence decide (amends ADR-977)
+- [ADR-1138: Service calls join the caller's trace when it serves one request](1138-service-calls-join-the-callers-trace.md) — a call without traceparent from an instance serving exactly one request continues that request's trace, marked trace_inferred
 
 - [ADR-20261018181846: Route priority in the cold-wake queue](20261018181846-route-priority-in-the-wake-queue.md)
