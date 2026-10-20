@@ -295,3 +295,12 @@ func accountListed(list, accountID string) bool {
 	}
 	return false
 }
+
+// OperationChildrenEnabled reports whether child Operations
+// (ADR-20261018183000) are available to accountID. Default off:
+// FAAS_OPERATION_CHILDREN_ACCOUNTS, a comma-separated list of account UUIDs,
+// names the accounts whose running Operations may start children and that
+// see the children routes. Read at every call.
+func OperationChildrenEnabled(accountID string) bool {
+	return accountListed(os.Getenv("FAAS_OPERATION_CHILDREN_ACCOUNTS"), accountID)
+}
