@@ -470,17 +470,18 @@ func (r *fakeNotifier) Mu() *sync.Mutex        { return &r.mu }
 func (r *fakeNotifier) Count(p0 string) int    { return r.count(p0) }
 
 // Members of fakeVMM
-func (r *fakeVMM) ColdBootHook() *func()      { return &r.coldBootHook }
-func (r *fakeVMM) ColdBoots() *int            { return &r.coldBoots }
-func (r *fakeVMM) DestroyErr() *error         { return &r.destroyErr }
-func (r *fakeVMM) Destroys() *int             { return &r.destroys }
-func (r *fakeVMM) LastColdBootSpec() *AppSpec { return &r.lastColdBootSpec }
-func (r *fakeVMM) LastSnapRef() *SnapshotRef  { return &r.lastSnapRef }
-func (r *fakeVMM) Mu() *sync.Mutex            { return &r.mu }
-func (r *fakeVMM) Restores() *int             { return &r.restores }
-func (r *fakeVMM) SleepFor() *time.Duration   { return &r.sleepFor }
-func (r *fakeVMM) SnapErr() *error            { return &r.snapErr }
-func (r *fakeVMM) Snapshots() *int            { return &r.snapshots }
+func (r *fakeVMM) ColdBootHook() *func()            { return &r.coldBootHook }
+func (r *fakeVMM) ColdBoots() *int                  { return &r.coldBoots }
+func (r *fakeVMM) DestroyErr() *error               { return &r.destroyErr }
+func (r *fakeVMM) Destroys() *int                   { return &r.destroys }
+func (r *fakeVMM) LastColdBootSpec() *AppSpec       { return &r.lastColdBootSpec }
+func (r *fakeVMM) LastColdBootCtx() context.Context { return r.lastColdBootCtx }
+func (r *fakeVMM) LastSnapRef() *SnapshotRef        { return &r.lastSnapRef }
+func (r *fakeVMM) Mu() *sync.Mutex                  { return &r.mu }
+func (r *fakeVMM) Restores() *int                   { return &r.restores }
+func (r *fakeVMM) SleepFor() *time.Duration         { return &r.sleepFor }
+func (r *fakeVMM) SnapErr() *error                  { return &r.snapErr }
+func (r *fakeVMM) Snapshots() *int                  { return &r.snapshots }
 func (r *fakeVMM) StatsHook() *func(context.Context, string) (*StatsSnapshot, error) {
 	return &r.statsHook
 }

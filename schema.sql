@@ -30362,7 +30362,12 @@ CREATE TABLE public.customer_operation_webhook_bindings (
     version bigint NOT NULL,
     created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
     updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    mode text DEFAULT 'start'::text NOT NULL,
+    subject_type text,
+    subject_id_from text,
+    signals jsonb DEFAULT '[]'::jsonb NOT NULL,
     CONSTRAINT customer_operation_webhook_bindings_event_types_check CHECK (((cardinality(event_types) <= 32) AND (array_position(event_types, NULL::text) IS NULL))),
+    CONSTRAINT customer_operation_webhook_bindings_mode_check CHECK (((jsonb_typeof(signals) = 'array'::text) AND (jsonb_array_length(signals) <= 32) AND (((mode = 'start'::text) AND (subject_type IS NULL) AND (subject_id_from IS NULL) AND (jsonb_array_length(signals) = 0)) OR ((mode = 'signal'::text) AND (subject_type IS NOT NULL) AND (subject_id_from IS NOT NULL) AND (jsonb_array_length(signals) > 0) AND (cardinality(event_types) = 0))))),
     CONSTRAINT customer_operation_webhook_bindings_operation_name_check CHECK ((operation_name ~ '^[a-z][a-z0-9-]{0,63}$'::text)),
     CONSTRAINT customer_operation_webhook_bindings_scope_check CHECK (((length(scope) >= 1) AND (length(scope) <= 64))),
     CONSTRAINT customer_operation_webhook_bindings_version_check CHECK ((version > 0))
@@ -63621,6 +63626,13 @@ CREATE INDEX customer_operation_code_pins_expiry_idx ON public.customer_operatio
 --
 
 CREATE UNIQUE INDEX customer_operation_definitions_route_idx ON public.customer_operation_definitions USING btree (deployment_id, ((spec ->> 'method'::text)), ((spec ->> 'path'::text)));
+
+
+--
+-- Name: customer_operation_events_outcome_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX customer_operation_events_outcome_idx ON public.customer_operation_events USING btree (created_at) WHERE (event_type = ANY (ARRAY['succeeded'::text, 'failed'::text, 'cancelled'::text, 'reconciliation_required'::text]));
 
 
 --

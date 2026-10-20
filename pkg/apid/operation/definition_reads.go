@@ -67,7 +67,7 @@ func (s *Service) GetOperationDefinition(w http.ResponseWriter, r *http.Request,
 
 func (s *Service) GetPlatformTenantSelfOperationIdentity(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	w.Header().Set("Cache-Control", "no-store")
-	tenant, ok := httpkit.PlatformTenantSelfID(w, r)
+	tenant, ok := s.activePlatformTenantSelfID(w, r, acct)
 	if !ok {
 		return
 	}

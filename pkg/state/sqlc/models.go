@@ -2840,6 +2840,10 @@ type CustomerOperationWebhookBinding struct {
 	Version          int64
 	CreatedAt        pgtype.Timestamptz
 	UpdatedAt        pgtype.Timestamptz
+	Mode             string
+	SubjectType      pgtype.Text
+	SubjectIDFrom    pgtype.Text
+	Signals          []byte
 }
 
 type CustomerOperationWebhookReceipt struct {

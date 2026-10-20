@@ -228,6 +228,25 @@ for victim in "${customer_workflow_tests[@]}"; do
   done
 done
 
+customer_http_tests=()
+while IFS= read -r selected_test; do
+  customer_http_tests+=("${selected_test}")
+done < <(native_e2e_lane_tests customer-http-operations-only "${repo_root}")
+[[ "${#customer_http_tests[@]}" -ge 4 ]] || fail "customer HTTP lane lost its acceptance scenarios"
+lane_pass_log "${work}/customer-http-green.log" "${customer_http_tests[@]}"
+native_e2e_lane_verdict "${work}/customer-http-green.log" "customer HTTP lane" "${customer_http_tests[@]}" >/dev/null || fail "complete customer HTTP lane was rejected"
+for victim in "${customer_http_tests[@]}"; do
+  for outcome in absent SKIP FAIL; do
+    grep -v -- "--- PASS: ${victim} " "${work}/customer-http-green.log" > "${work}/customer-http-red.log"
+    if [[ "${outcome}" != absent ]]; then
+      printf -- '--- %s: %s (0.00s)\n' "${outcome}" "${victim}" >> "${work}/customer-http-red.log"
+    fi
+    if native_e2e_lane_verdict "${work}/customer-http-red.log" "customer HTTP lane" "${customer_http_tests[@]}" >/dev/null 2>&1; then
+      fail "customer HTTP lane accepted ${victim} ${outcome}"
+    fi
+  done
+done
+
 lane_pass_log "${work}/lane-skip.log" "${lane_tests[@]}"
 grep -v -- "--- PASS: ${lane_tests[0]} " "${work}/lane-skip.log" > "${work}/lane-skip.tmp"
 printf -- '--- SKIP: %s (0.00s)\n' "${lane_tests[0]}" >> "${work}/lane-skip.tmp"
@@ -670,5 +689,11 @@ grep -Fq "inputs.lane == 'customer-workflow-operations-only'" "${workflow}" || f
 grep -Fq 'customer_workflow_operations_only=${{ steps.phase_customer_workflow_operations_only.outcome }}' "${workflow}" || fail "customer Workflow step outcome absent from Verdict"
 customer_workflow_exclusions="$(grep -Fc "inputs.lane != 'customer-workflow-operations-only'" "${workflow}" || true)"
 [[ "${customer_workflow_exclusions}" -eq 9 ]] || fail "customer Workflow lane must skip all nine platform phases"
+
+grep -Fq 'native_e2e_lane_tests customer-http-operations-only "$GITHUB_WORKSPACE"' "${workflow}" || fail "customer HTTP workflow verdict lost its derived scenario set"
+grep -Fq "inputs.lane == 'customer-http-operations-only'" "${workflow}" || fail "customer HTTP workflow dispatch missing"
+grep -Fq 'customer_http_operations_only=${{ steps.phase_customer_http_operations_only.outcome }}' "${workflow}" || fail "customer HTTP step outcome absent from Verdict"
+customer_http_exclusions="$(grep -Fc "inputs.lane != 'customer-http-operations-only'" "${workflow}" || true)"
+[[ "${customer_http_exclusions}" -eq 9 ]] || fail "customer HTTP lane must skip all nine platform phases"
 
 echo "native e2e wrapper contracts OK"

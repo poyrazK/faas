@@ -47,10 +47,12 @@ on:
           native customer Job results, restart, recovery, cancellation and cleanup;
           customer-workflow-operations-only: native customer workflow files,
           crash/resume, cancellation, deadlines, owner revocation and cleanup;
+          customer-http-operations-only: native ordinary HTTP Operations files,
+          progress, crash/recovery, cancellation, owner revocation and cleanup;
           financial-system: full-daemon funding recovery and provider reconciliation;
           bindings: strict PostgreSQL, storage and queue guest qualification.
         type: choice
-        options: [smoke, full, qualify, jobs-only, containers, exclusive-operations-only, managed-operation-only, customer-job-operations-only, customer-workflow-operations-only, financial-system, bindings]
+        options: [smoke, full, qualify, jobs-only, containers, exclusive-operations-only, managed-operation-only, customer-job-operations-only, customer-workflow-operations-only, customer-http-operations-only, financial-system, bindings]
         default: smoke
       keep_node_running:
         description: >-
@@ -245,7 +247,7 @@ jobs:
 
       - name: Phase 1 — fixtures (app shape checks, no microVM)
         id: phase_fixtures
-        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke' && inputs.lane != 'jobs-only' && inputs.lane != 'containers' && inputs.lane != 'exclusive-operations-only' && inputs.lane != 'managed-operation-only' && inputs.lane != 'customer-job-operations-only' && inputs.lane != 'customer-workflow-operations-only'
+        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke' && inputs.lane != 'jobs-only' && inputs.lane != 'containers' && inputs.lane != 'exclusive-operations-only' && inputs.lane != 'managed-operation-only' && inputs.lane != 'customer-job-operations-only' && inputs.lane != 'customer-workflow-operations-only' && inputs.lane != 'customer-http-operations-only'
         continue-on-error: true
         env:
           SOURCE_SHA: ${{ github.sha }}
@@ -264,7 +266,7 @@ jobs:
 
       - name: Phase 2 — build (source → builderd → builder microVM)
         id: phase_build
-        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke' && inputs.lane != 'jobs-only' && inputs.lane != 'containers' && inputs.lane != 'exclusive-operations-only' && inputs.lane != 'managed-operation-only' && inputs.lane != 'customer-job-operations-only' && inputs.lane != 'customer-workflow-operations-only'
+        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke' && inputs.lane != 'jobs-only' && inputs.lane != 'containers' && inputs.lane != 'exclusive-operations-only' && inputs.lane != 'managed-operation-only' && inputs.lane != 'customer-job-operations-only' && inputs.lane != 'customer-workflow-operations-only' && inputs.lane != 'customer-http-operations-only'
         continue-on-error: true
         env:
           SOURCE_SHA: ${{ github.sha }}
@@ -284,7 +286,7 @@ jobs:
 
       - name: Phase 3 — deploy (image, tarball, healthcheck, secrets)
         id: phase_deploy
-        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke' && inputs.lane != 'jobs-only' && inputs.lane != 'containers' && inputs.lane != 'exclusive-operations-only' && inputs.lane != 'managed-operation-only' && inputs.lane != 'customer-job-operations-only' && inputs.lane != 'customer-workflow-operations-only'
+        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke' && inputs.lane != 'jobs-only' && inputs.lane != 'containers' && inputs.lane != 'exclusive-operations-only' && inputs.lane != 'managed-operation-only' && inputs.lane != 'customer-job-operations-only' && inputs.lane != 'customer-workflow-operations-only' && inputs.lane != 'customer-http-operations-only'
         continue-on-error: true
         env:
           SOURCE_SHA: ${{ github.sha }}
@@ -303,7 +305,7 @@ jobs:
 
       - name: Phase 4 — wake (restore, native Flags refresh, scheduling)
         id: phase_wake
-        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke' && inputs.lane != 'jobs-only' && inputs.lane != 'containers' && inputs.lane != 'exclusive-operations-only' && inputs.lane != 'managed-operation-only' && inputs.lane != 'customer-job-operations-only' && inputs.lane != 'customer-workflow-operations-only'
+        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke' && inputs.lane != 'jobs-only' && inputs.lane != 'containers' && inputs.lane != 'exclusive-operations-only' && inputs.lane != 'managed-operation-only' && inputs.lane != 'customer-job-operations-only' && inputs.lane != 'customer-workflow-operations-only' && inputs.lane != 'customer-http-operations-only'
         continue-on-error: true
         env:
           SOURCE_SHA: ${{ github.sha }}
@@ -322,7 +324,7 @@ jobs:
 
       - name: Phase 5 — streaming (response streaming, h2c inner leg)
         id: phase_streaming
-        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke' && inputs.lane != 'jobs-only' && inputs.lane != 'containers' && inputs.lane != 'exclusive-operations-only' && inputs.lane != 'managed-operation-only' && inputs.lane != 'customer-job-operations-only' && inputs.lane != 'customer-workflow-operations-only'
+        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke' && inputs.lane != 'jobs-only' && inputs.lane != 'containers' && inputs.lane != 'exclusive-operations-only' && inputs.lane != 'managed-operation-only' && inputs.lane != 'customer-job-operations-only' && inputs.lane != 'customer-workflow-operations-only' && inputs.lane != 'customer-http-operations-only'
         continue-on-error: true
         env:
           SOURCE_SHA: ${{ github.sha }}
@@ -341,7 +343,7 @@ jobs:
 
       - name: Phase 6 — logs (app log SSE)
         id: phase_logs
-        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke' && inputs.lane != 'jobs-only' && inputs.lane != 'containers' && inputs.lane != 'exclusive-operations-only' && inputs.lane != 'managed-operation-only' && inputs.lane != 'customer-job-operations-only' && inputs.lane != 'customer-workflow-operations-only'
+        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke' && inputs.lane != 'jobs-only' && inputs.lane != 'containers' && inputs.lane != 'exclusive-operations-only' && inputs.lane != 'managed-operation-only' && inputs.lane != 'customer-job-operations-only' && inputs.lane != 'customer-workflow-operations-only' && inputs.lane != 'customer-http-operations-only'
         continue-on-error: true
         env:
           SOURCE_SHA: ${{ github.sha }}
@@ -360,7 +362,7 @@ jobs:
 
       - name: Phase 7 — security fences (§11, ship-blocking)
         id: phase_security
-        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke' && inputs.lane != 'jobs-only' && inputs.lane != 'containers' && inputs.lane != 'exclusive-operations-only' && inputs.lane != 'managed-operation-only' && inputs.lane != 'customer-job-operations-only' && inputs.lane != 'customer-workflow-operations-only'
+        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke' && inputs.lane != 'jobs-only' && inputs.lane != 'containers' && inputs.lane != 'exclusive-operations-only' && inputs.lane != 'managed-operation-only' && inputs.lane != 'customer-job-operations-only' && inputs.lane != 'customer-workflow-operations-only' && inputs.lane != 'customer-http-operations-only'
         continue-on-error: true
         env:
           SOURCE_SHA: ${{ github.sha }}
@@ -379,7 +381,7 @@ jobs:
 
       - name: Phase 8 — two-node (recovery arbiter, drain, drills)
         id: phase_twonode
-        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke' && inputs.lane != 'jobs-only' && inputs.lane != 'containers' && inputs.lane != 'exclusive-operations-only' && inputs.lane != 'managed-operation-only' && inputs.lane != 'customer-job-operations-only' && inputs.lane != 'customer-workflow-operations-only'
+        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke' && inputs.lane != 'jobs-only' && inputs.lane != 'containers' && inputs.lane != 'exclusive-operations-only' && inputs.lane != 'managed-operation-only' && inputs.lane != 'customer-job-operations-only' && inputs.lane != 'customer-workflow-operations-only' && inputs.lane != 'customer-http-operations-only'
         continue-on-error: true
         env:
           SOURCE_SHA: ${{ github.sha }}
@@ -398,7 +400,7 @@ jobs:
 
       - name: Phase 9 — jobs (awaiting native verification, #2569)
         id: phase_jobs
-        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke' && inputs.lane != 'jobs-only' && inputs.lane != 'containers' && inputs.lane != 'exclusive-operations-only' && inputs.lane != 'managed-operation-only' && inputs.lane != 'customer-job-operations-only' && inputs.lane != 'customer-workflow-operations-only'
+        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke' && inputs.lane != 'jobs-only' && inputs.lane != 'containers' && inputs.lane != 'exclusive-operations-only' && inputs.lane != 'managed-operation-only' && inputs.lane != 'customer-job-operations-only' && inputs.lane != 'customer-workflow-operations-only' && inputs.lane != 'customer-http-operations-only'
         continue-on-error: true
         env:
           SOURCE_SHA: ${{ github.sha }}
@@ -489,6 +491,21 @@ jobs:
             --project "$GCP_PROJECT" --zone "$GCP_ZONE" \
             --command "sudo systemd-run --quiet --wait --collect --unit='$unit' --property=RuntimeMaxSec=40m --property='StandardOutput=append:$remote_root/native-e2e.log' --property='StandardError=append:$remote_root/native-e2e.log' --working-directory='$remote_root/source' --setenv=FAAS_E2E_SOURCE_SHA='$SOURCE_SHA' --setenv=FAAS_E2E_GO='$remote_root/tools/go/bin/go' --setenv=FAAS_E2E_RUN_ID='${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}' --setenv=FAAS_E2E_TRANSFER_ROOT='$remote_root' --setenv=FAAS_E2E_PHASE='$PHASE' /bin/bash scripts/ci/run-native-e2e.sh" 2>&1 | tee "$RUNNER_TEMP/phase-$PHASE.log"
 
+      - name: Customer HTTP Operations acceptance (blocking KVM lane)
+        id: phase_customer_http_operations_only
+        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane == 'customer-http-operations-only'
+        continue-on-error: true
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+          PHASE: customer-http-operations-only
+        run: |
+          set -euo pipefail
+          remote_root="/var/tmp/faas-native-e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          unit="faas-e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-$PHASE"
+          gcloud compute ssh "$GCP_INSTANCE" --quiet \
+            --project "$GCP_PROJECT" --zone "$GCP_ZONE" \
+            --command "sudo systemd-run --quiet --wait --collect --unit='$unit' --property=RuntimeMaxSec=40m --property='StandardOutput=append:$remote_root/native-e2e.log' --property='StandardError=append:$remote_root/native-e2e.log' --working-directory='$remote_root/source' --setenv=FAAS_E2E_SOURCE_SHA='$SOURCE_SHA' --setenv=FAAS_E2E_GO='$remote_root/tools/go/bin/go' --setenv=FAAS_E2E_RUN_ID='${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}' --setenv=FAAS_E2E_TRANSFER_ROOT='$remote_root' --setenv=FAAS_E2E_PHASE='$PHASE' /bin/bash scripts/ci/run-native-e2e.sh" 2>&1 | tee "$RUNNER_TEMP/phase-$PHASE.log"
+
       - name: Refresh GCP authentication for cleanup
         if: always() && steps.auth.outcome == 'success'
         uses: google-github-actions/auth@v3
@@ -549,6 +566,7 @@ jobs:
             managed_operation_only=${{ steps.phase_managed_operation_only.outcome }}
             customer_job_operations_only=${{ steps.phase_customer_job_operations_only.outcome }}
             customer_workflow_operations_only=${{ steps.phase_customer_workflow_operations_only.outcome }}
+            customer_http_operations_only=${{ steps.phase_customer_http_operations_only.outcome }}
         run: |
           set -uo pipefail
           # Jobs still needs a successful dedicated-KVM run before it can be
@@ -662,6 +680,17 @@ jobs:
                   lane_tests+=("$selected_test")
                 done < <(native_e2e_lane_tests customer-workflow-operations-only "$GITHUB_WORKSPACE")
                 native_e2e_lane_verdict "$log" "Customer Workflow Operations KVM lane" "${lane_tests[@]}" || rc=1
+                ;;
+              customer-http-operations-only)
+                # This lane requires every native Customer HTTP Operations
+                # scenario to PASS before a customer preview cohort opens.
+                # shellcheck source=scripts/ci/native-e2e-phases.sh
+                source scripts/ci/native-e2e-phases.sh
+                lane_tests=()
+                while IFS= read -r selected_test; do
+                  lane_tests+=("$selected_test")
+                done < <(native_e2e_lane_tests customer-http-operations-only "$GITHUB_WORKSPACE")
+                native_e2e_lane_verdict "$log" "Customer HTTP Operations KVM lane" "${lane_tests[@]}" || rc=1
                 ;;
               *)
                 native_e2e_verdict "$log" || rc=1

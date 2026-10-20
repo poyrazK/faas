@@ -95,8 +95,19 @@ func (m *MemStore) syncOperationWorkflowLocked(runID string) error {
 		return err
 	}
 	events = append(events, publishWorkflowArtifacts(&op, run, m.workflowSteps[runID], false, time.Now().UTC())...)
+	usageChanged := false
+	if op.Usage != nil {
+		usage, err := m.workflowOperationUsageLocked(run)
+		if err != nil {
+			return err
+		}
+		usageChanged = refreshWorkflowOperationUsage(&op, usage)
+	}
 	m.saveOperationWorkflowExecutionLocked(op, run)
 	if len(events) == 0 {
+		if usageChanged {
+			m.operationMemoryLocked().operations[op.ID] = op
+		}
 		return nil
 	}
 	if op.State.Terminal() {

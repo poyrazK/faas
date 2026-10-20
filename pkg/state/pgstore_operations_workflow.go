@@ -154,6 +154,14 @@ func syncOperationWorkflowTx(ctx context.Context, tx pgx.Tx, runID string) error
 		return err
 	}
 	events = append(events, publishWorkflowArtifacts(&op, *run, steps, false, time.Now().UTC())...)
+	usageChanged := false
+	if op.Usage != nil {
+		usage, err := workflowOperationUsageTx(ctx, tx, *run)
+		if err != nil {
+			return err
+		}
+		usageChanged = refreshWorkflowOperationUsage(&op, usage)
+	}
 	// Keep the generation's creation time stable through progress updates.
 	created := op.CreatedAt
 	if run.ResumeCount > 0 {
@@ -175,6 +183,9 @@ func syncOperationWorkflowTx(ctx context.Context, tx pgx.Tx, runID string) error
 		return err
 	}
 	if len(events) == 0 {
+		if usageChanged {
+			return saveOperationRecordTx(ctx, tx, op)
+		}
 		return nil
 	}
 	if op.State.Terminal() {
