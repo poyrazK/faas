@@ -424,6 +424,15 @@ type authPublicSettings struct {
 		Ethereum bool `json:"ethereum"`
 		Solana   bool `json:"solana"`
 	} `json:"web3"`
+	Sessions struct {
+		MaxAgeMinutes *int `json:"max_age_minutes"`
+		IdleMinutes   *int `json:"idle_minutes"`
+		SinglePerUser bool `json:"single_per_user"`
+	} `json:"sessions"`
+	OrganizationDomains struct {
+		Enabled bool `json:"enabled"`
+		Joining bool `json:"joining"`
+	} `json:"organization_domains"`
 	Keys struct {
 		Signing   string   `json:"signing"`
 		Verifying []string `json:"verifying"`

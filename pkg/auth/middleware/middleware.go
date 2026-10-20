@@ -808,6 +808,18 @@ func platformTenantSelfPathAllowed(method, path string) bool {
 	if suffix == "customer-operation-signals" {
 		return method == http.MethodPost
 	}
+	// ADR-20261018161833: a customer manages its own Operation schedules.
+	// apid hides these routes unless the account is allowlisted.
+	if suffix == "customer-operation-schedules" {
+		return method == http.MethodPost || method == http.MethodGet
+	}
+	if strings.HasPrefix(suffix, "customer-operation-schedules/") {
+		parts := strings.Split(suffix, "/")
+		if len(parts) == 2 && parts[1] != "" {
+			return method == http.MethodGet
+		}
+		return len(parts) == 3 && parts[1] != "" && (parts[2] == "pause" || parts[2] == "resume" || parts[2] == "cancel") && method == http.MethodPost
+	}
 	if strings.HasPrefix(suffix, "customer-operations/") {
 		parts := strings.Split(suffix, "/")
 		if len(parts) == 2 && parts[1] != "" {

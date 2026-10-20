@@ -35,15 +35,15 @@
     },
     {
       "type": "timeseries",
-      "title": "Customer-priced AI cost (EUR per hour)",
+      "title": "Customer-priced AI cost (USD per hour)",
       "id": 3,
       "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
-      "description": "Settled cost from customer price lists, rounded up per call. Millicents per second times 3600 / 100000 gives euros per hour. ADR-990.",
+      "description": "Settled cost from customer price lists, rounded up per call. Millicents per second times 3600 / 100000 gives dollars per hour. ADR-990.",
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {"expr": "sum by (integration_id) (rate(outbound_ai_cost_millicents_total[15m])) * 3600 / 100000", "legendFormat": "{{integration_id}}", "refId": "A"}
       ],
-      "fieldConfig": {"defaults": {"unit": "currencyEUR"}, "overrides": []},
+      "fieldConfig": {"defaults": {"unit": "currencyUSD"}, "overrides": []},
       "options": {"legend": {"displayMode": "table", "placement": "right", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
     },
     {
@@ -65,10 +65,10 @@
       "title": "AI budget and guardrail rejections (5m)",
       "id": 5,
       "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
-      "description": "Calls refused before reaching the provider: token and cost hard caps, per-minute limits and per-app guardrails. ADR-990, ADR-991.",
+      "description": "Calls refused before reaching the provider: token and cost hard caps, per-minute limits, per-app guardrails, end-user limits (ADR-994), tag cost limits (ADR-1436) and unmetered writes (ADR-1432). ADR-990, ADR-991.",
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
-        {"expr": "sum by (reason) (rate(outbound_rejections_total{reason=~\"daily_token_limit|daily_cost_limit|monthly_cost_limit|requests_per_minute_limit|tokens_per_minute_limit|outbound_ai_.*\"}[5m]))", "legendFormat": "{{reason}}", "refId": "A"}
+        {"expr": "sum by (reason) (rate(outbound_rejections_total{reason=~\"daily_token_limit|daily_cost_limit|monthly_cost_limit|requests_per_minute_limit|tokens_per_minute_limit|user_daily_token_limit|user_daily_cost_limit|user_tracking_full|tag_daily_cost_limit|outbound_ai_.*\"}[5m]))", "legendFormat": "{{reason}}", "refId": "A"}
       ],
       "fieldConfig": {"defaults": {"unit": "reqps"}, "overrides": []},
       "options": {"legend": {"displayMode": "table", "placement": "right", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
@@ -164,6 +164,260 @@
       ],
       "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
       "options": {"legend": {"displayMode": "table", "placement": "right", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+    {"type": "row", "title": "Routes, canaries and evaluations (ADR-1340, ADR-1431, ADR-1434)", "id": 13, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 48}, "collapsed": false, "panels": []},
+    {
+      "type": "timeseries",
+      "title": "AI route calls by strategy and first pick (5m)",
+      "id": 14,
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 49},
+      "description": "Route calls by the route's strategy and how its first target was picked: ordered, weighted, best (lowest latency or cost), explore (the 5% that keep target stats fresh) or canary. ADR-1434.",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"expr": "sum by (strategy, pick) (rate(outbound_ai_route_calls_total[5m]))", "legendFormat": "{{strategy}} {{pick}}", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "right", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+    {
+      "type": "timeseries",
+      "title": "Canary calls by first target (5m)",
+      "id": 15,
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 49},
+      "description": "Calls of routes with an active model canary, by the target tried first. The canary share should follow the routes' canary percentages. ADR-1340.",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"expr": "sum by (target) (rate(outbound_ai_route_canary_calls_total[5m]))", "legendFormat": "{{target}}", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "right", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+    {
+      "type": "timeseries",
+      "title": "Canary rollbacks (1h)",
+      "id": 16,
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 57},
+      "description": "Model canaries outboundd rolled back because they did worse than the route's first target. One is a customer's model; many at once point at a provider or the gateway (FaasAIGatewayCanaryRollbackWave). ADR-1340.",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"expr": "sum by (reason) (increase(outbound_ai_route_canary_rollbacks_total[1h]))", "legendFormat": "{{reason}}", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "right", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+    {
+      "type": "timeseries",
+      "title": "Evaluations finished (1h)",
+      "id": 17,
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 57},
+      "description": "Evaluations of a candidate model on replayed calls: pass, fail (the candidate lost to the judge) or failed (it could not run). ADR-1431.",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"expr": "sum by (result) (increase(outbound_ai_evaluations_total[1h]))", "legendFormat": "{{result}}", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "right", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+    {"type": "row", "title": "Response guardrails and moderation (ADR-1340, ADR-1435)", "id": 18, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 65}, "collapsed": false, "panels": []},
+    {
+      "type": "timeseries",
+      "title": "Response checks by result (5m)",
+      "id": 19,
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 66},
+      "description": "Provider responses the content policy checked before release: passed, redacted, flagged, blocked, error (the response moderation check failed) or unchecked (over 4 MiB or unreadable, refused with 502). A rising share of error and unchecked fires FaasAIGatewayResponseChecksFailing. ADR-1435.",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"expr": "sum by (result) (rate(outbound_ai_response_checks_total[5m]))", "legendFormat": "{{result}}", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "right", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+    {
+      "type": "timeseries",
+      "title": "Response check findings (1h)",
+      "id": 20,
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 66},
+      "description": "Findings in provider responses that the response policy redacted or blocked, by detector. ADR-1435.",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"expr": "sum by (kind, action) (increase(outbound_ai_response_findings_total[1h]))", "legendFormat": "{{kind}} {{action}}", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "right", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+    {
+      "type": "timeseries",
+      "title": "Request moderation checks by result (5m)",
+      "id": 21,
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 74},
+      "description": "Moderation checks of requests before they reach the provider: passed, flagged, blocked or error. Response moderation is counted with the response checks. ADR-1340.",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"expr": "sum by (result) (rate(outbound_ai_moderation_total[5m]))", "legendFormat": "{{result}}", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "right", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+    {
+      "type": "timeseries",
+      "title": "Moderation checks that failed (15m)",
+      "id": 22,
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 74},
+      "description": "Request and response moderation checks that failed. They usually come from a customer's check integration (a cap reached, a provider outage); most request checks failing points at the gateway (FaasAIGatewayModerationFailing). Customer-managed integrations share one integration_id label, so this is not split by integration. ADR-1340, ADR-1435.",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"expr": "sum(increase(outbound_ai_moderation_total{result=\"error\"}[15m]))", "legendFormat": "request", "refId": "A"},
+        {"expr": "sum(increase(outbound_ai_response_checks_total{result=\"error\"}[15m]))", "legendFormat": "response", "refId": "B"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "right", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+    {"type": "row", "title": "Metering: unmetered writes, tool fees, batches and log export (ADR-1340, ADR-1431, ADR-1432, ADR-1433)", "id": 23, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 82}, "collapsed": false, "panels": []},
+    {
+      "type": "timeseries",
+      "title": "Unmetered writes refused and allowed (5m)",
+      "id": 24,
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 83},
+      "description": "Writes the gateway cannot meter: refused with 403 outbound_ai_endpoint_unmetered, or let through because the integration's AI policy allows them. Allowed calls' spend is outside the caps. ADR-1432.",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"expr": "sum(rate(outbound_rejections_total{reason=\"outbound_ai_endpoint_unmetered\"}[5m]))", "legendFormat": "refused", "refId": "A"},
+        {"expr": "sum by (integration_id) (rate(outbound_ai_unmetered_calls_total[5m]))", "legendFormat": "allowed {{integration_id}}", "refId": "B"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "right", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+    {
+      "type": "timeseries",
+      "title": "Built-in tool uses (1h)",
+      "id": 25,
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 83},
+      "description": "Settled web searches, file searches and GB of code-interpreter sessions, each priced per use. ADR-1433.",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"expr": "sum by (tool) (increase(outbound_ai_tool_uses_total[1h]))", "legendFormat": "{{tool}}", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "right", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+    {
+      "type": "timeseries",
+      "title": "Provider batches settled (1h)",
+      "id": 26,
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 91},
+      "description": "Batches the worker settled: known (usage read from the results), error (the results held no usage) or unknown (charged at the reservation because the batch never ended or its status could not be read; FaasAIGatewayBatchesSettledUnknown). ADR-1431.",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"expr": "sum by (outcome) (increase(outbound_ai_batches_settled_total[1h]))", "legendFormat": "{{outcome}}", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "right", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+    {
+      "type": "timeseries",
+      "title": "AI log export lines written (5m)",
+      "id": 27,
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 91},
+      "description": "Settled AI calls written to the log-drain export outbox; gatewayd-internal's drain workers deliver them to the app's drains. ADR-1340.",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"expr": "sum by (integration_id) (rate(outbound_ai_log_exports_total[5m]))", "legendFormat": "{{integration_id}}", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "right", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+    {"type": "row", "title": "Caching (ADR-1437, ADR-1440)", "id": 28, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 99}, "collapsed": false, "panels": []},
+    {
+      "type": "timeseries",
+      "title": "Response cache lookups (5m)",
+      "id": 29,
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 100},
+      "description": "Response-cache lookups of all outbound integrations by outcome. AI streams are cached too since ADR-1440.",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"expr": "sum by (outcome) (rate(outbound_response_cache_requests_total[5m]))", "legendFormat": "{{outcome}}", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "right", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+    {
+      "type": "timeseries",
+      "title": "Provider cost the response cache avoided (USD per hour)",
+      "id": 30,
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 100},
+      "description": "What the provider would have charged for the cache hits' usage at current prices. Millicents per second times 3600 / 100000 gives dollars per hour. ADR-1440.",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"expr": "sum by (integration_id) (rate(outbound_ai_response_cache_saved_millicents_total[15m])) * 3600 / 100000", "legendFormat": "{{integration_id}}", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "currencyUSD"}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "right", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+    {
+      "type": "timeseries",
+      "title": "Prompt-cache breakpoints added (5m)",
+      "id": 31,
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 108},
+      "description": "Breakpoints automatic prompt caching added to Claude requests: prefix (a repeated system prompt and tool list) or conversation (earlier turns). ADR-1437.",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"expr": "sum by (mark) (rate(outbound_ai_prompt_cache_marks_total[5m]))", "legendFormat": "{{mark}}", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "right", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+    {
+      "type": "timeseries",
+      "title": "Prompt-cache reads per written token (1h)",
+      "id": 32,
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 108},
+      "description": "Cached input tokens read per token written to the cache, for integrations that write. A 5-minute Claude cache write costs 1.25x input and a read 0.1x, so caching saves money above about 0.28 (the threshold line) and costs money below it. ADR-1437.",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"expr": "sum by (integration_id) (rate(outbound_ai_tokens_total{kind=\"cached_input\"}[1h])) / (sum by (integration_id) (rate(outbound_ai_tokens_total{kind=\"cache_write\"}[1h])) > 0)", "legendFormat": "{{integration_id}}", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "short", "min": 0, "custom": {"thresholdsStyle": {"mode": "line"}}, "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 0.28}]}}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "right", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+    {"type": "row", "title": "Realtime sessions (ADR 20261019072722)", "id": 33, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 116}, "collapsed": false, "panels": []},
+    {
+      "type": "timeseries",
+      "title": "Realtime sessions open",
+      "id": 34,
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 117},
+      "description": "Realtime WebSocket sessions open on each outboundd. Each holds one caller and one provider connection until it ends.",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"expr": "sum by (instance) (outbound_ai_realtime_sessions_active)", "legendFormat": "{{instance}}", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "right", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+    {
+      "type": "timeseries",
+      "title": "Realtime session events (1h)",
+      "id": 35,
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 117},
+      "description": "Sessions opened, let through unmetered, and ended: by the client, the provider, a cap refusing a response, the one-hour bound, a provider message the gateway could not read, or failed admission.",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"expr": "sum by (event) (increase(outbound_ai_realtime_sessions_total[1h]))", "legendFormat": "{{event}}", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "right", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+    {
+      "type": "timeseries",
+      "title": "Shared prompt-prefix lookups (5m)",
+      "id": 36,
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 125},
+      "description": "Lookups of prompt prefixes this outboundd had not seen: repeated (another replica saw it, so it is marked), first, refreshed (a background refresh of a prefix this replica keeps seeing) or error (Postgres was slow or failing; the call used local memory). ADR 20261019132139.",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"expr": "sum by (result) (rate(outbound_ai_prompt_cache_shared_total[5m]))", "legendFormat": "{{result}}", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "right", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
     }
   ],
   "refresh": "1m",
@@ -175,5 +429,5 @@
   "timezone": "utc",
   "title": "Gregale AI gateway",
   "uid": "faas-ai-gateway",
-  "version": 2
+  "version": 3
 }

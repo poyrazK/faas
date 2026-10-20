@@ -488,6 +488,18 @@ functions) serve `/authz/v1/sessions`. They leave third-party OAuth clients'
 sessions to connected apps, and the current session to GoTrue's logout. The
 page's image policy adds `data:` for the QR code GoTrue returns inline.
 
+Session limits are typed settings over GoTrue's own: `AUTH_SESSION_MAX_AGE_MINUTES`
+becomes `GOTRUE_SESSIONS_TIMEBOX`, `AUTH_SESSION_IDLE_MINUTES` the inactivity
+timeout and `AUTH_SINGLE_SESSION` `GOTRUE_SESSIONS_SINGLE_PER_USER`, which keeps a
+user's most recently refreshed session and refuses the others at their next
+refresh. GoTrue checks all three when a session refreshes, so they are bounded
+from `AuthSessionMinMinutes` (above the access token lifetime) to
+`AuthSessionMaxMinutes`, and an issued token outlives its session by at most
+`AuthAccessTokenTTLSeconds`, as after a sign-out. `GOTRUE_SESSIONS_*` stays
+managed, not passed through. An idle limit above the maximum age is accepted
+and has no effect: the two are set separately, and refusing the combination
+at start would take the app down.
+
 GoTrue has no endpoint for people to delete themselves. With
 `AUTH_SELF_DELETION` on (off by default: an app may need to settle billing
 or data first), `DELETE /authz/v1/account` deletes the caller through the
@@ -510,6 +522,29 @@ the Auth app's own host, so while Web3 is on its root is added to
 GoTrue's parsers accept and asks an injected wallet (EIP-1193 or Solana) to
 sign it. GoTrue keeps no record of nonces, so a signed message is valid for
 its ten-minute window.
+
+An organization can require a second factor of its members
+(`organizations.mfa_required`, sql/0016). The check lives in
+`has_permission`, so every surface that already goes through it (row-level
+security via `authorize()`, storage signing, workflows, realtime channels and
+the organization functions) refuses sessions below `aal2` for that
+organization without its own code. It reads the session row, not the token's
+`aal` claim: GoTrue lowers a session to `aal1` when its factor is removed,
+while tokens issued earlier keep saying `aal2` until they expire. The access
+token hook does the opposite and reads the claim, because GoTrue calls it
+inside the transaction that raises the session, before the row shows `aal2`;
+below `aal2` it leaves such an organization's claims out. Members are not
+removed: they keep the membership, still list the organization (with
+`mfa_required`), and get `mfa_required` instead of `forbidden` from the
+organization API so an application can send them to verify. Changing the
+setting needs `mfa:manage` and an `aal2` session in both directions, so
+turning it on cannot lock out the person doing it and a session that skipped
+the second factor cannot turn it off; the application's operator can change
+it through the admin API without being a member. Members with `members:manage`
+see which members have a verified second factor. The subject-level
+`authorize_subject` cannot see a session, so for such an organization it needs
+the user to hold some live `aal2` session. Single sign-on counts as one factor:
+GoTrue does not see the identity provider's own second step.
 
 ### Phone sign-in
 
@@ -590,6 +625,22 @@ organization that is being deleted, so cascades cannot fail. Members'
 sign-ins are read from GoTrue's audit log at query time, for current
 members, rather than copied per organization. Entries follow the app's
 activity retention.
+
+Organizations can also let people join by email domain
+(`AUTH_ORG_DOMAINS`, sql/0017), reusing the TXT-verified domains of
+self-service SSO without needing SSO. Joining is 'suggest' (the person
+chooses, from the API or the hosted account page) or 'automatic' (triggers on
+`auth.users` and SSO identities add people when their address is confirmed or
+changes, and turning it on adds those already there). It trusts only proven
+addresses: confirmed while the app confirms addresses, which the front writes
+to `domain_join_settings` at startup because the triggers run inside GoTrue's
+transactions and cannot see the app's settings. With `AUTH_AUTOCONFIRM` on,
+anyone could claim any address, so joining stays off; the dashboard and a
+single `auth config` change refuse the combination, and status reports it. SSO users count only for their provider's
+domains, as with invitations. `membership_history` records every membership
+ever made, so domain joining adds a person once and never undoes an owner's
+removal; the triggers do nothing that can fail inside GoTrue's transaction.
+Domains are managed with `domains:manage` or, as before, `sso:manage`.
 
 ### Dark launch
 
