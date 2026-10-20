@@ -1,5 +1,6 @@
 # Architecture Decision Records
 
+- [Product Control billing records survive app purge](20261020090607-product-control-billing-records-survive-app-purge.md)
 - [Finished invocations without a horizon get the plan default retention](20261019104819-invocation-default-retention.md)
 - [Compose build arguments and target stage for Dockerfile builds](20261019142544-compose-build-args-and-target.md)
 

@@ -1332,6 +1332,15 @@ reasons and 255-byte external references. Finalized data survives flag rollback;
 existing admitted operations continue recording terminal proof while the flag
 is off. See [ADR-1704](../adr/1704-product-control-billing-lifecycle.md).
 
+Billing records outlive their app
+([ADR-20261020090607](../adr/20261020090607-product-control-billing-records-survive-app-purge.md)).
+When an app is purged 7 days after `gregale apps rm`, its receipts, waivers,
+statements, credit notes, invoice handoffs and catalog revisions are kept; its
+catalog head, customer assignments and other configuration are removed. Kept
+records are no longer served through the app's routes, and a new app that
+reuses the slug never sees them. They are erased with the account's final
+deletion. Restore an app within the 7 days to keep using its billing routes.
+
 ## Internal API
 
 All reads/work mutations are authenticated. The gated login and refresh endpoints
