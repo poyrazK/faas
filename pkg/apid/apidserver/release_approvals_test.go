@@ -6,9 +6,11 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/alertchannels"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -284,5 +286,158 @@ func TestReleaseApprovalsRequireACanaryAtReleaseTime(t *testing.T) {
 	var p api.Problem
 	if json.Unmarshal(rec.Body.Bytes(), &p) == nil && p.Code == api.CodeReleaseApprovalCanaryRequired {
 		t.Fatalf("a dark deployment takes no traffic and must not need a canary: %s", rec.Body)
+	}
+}
+
+// approvalChannel creates a notification channel on the fixture's account.
+func approvalChannel(ctx context.Context, t *testing.T, e apidserver.TestEnv, name, kind string) state.NotificationChannel {
+	t.Helper()
+	in := state.NotificationChannel{AccountID: (*e.Acct()).ID, Name: name, Kind: kind, TargetSealed: []byte("sealed")}
+	switch kind {
+	case "email":
+		in.Email, in.TargetSealed = name+"@example.com", nil
+	case "pagerduty":
+		in.PagerDutyRegion = "us"
+	}
+	c, err := (*e.Store()).CreateNotificationChannel(ctx, in, api.MaxNotificationChannelsPerAccount)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
+// approvalEvents lists the release's recorded notifications by event.
+func approvalEvents(ctx context.Context, t *testing.T, f approvalFixture) map[string]alertchannels.ReleaseNotice {
+	t.Helper()
+	due, err := (*f.e.Store()).DueReleaseApprovalEvents(ctx, time.Now().Add(time.Hour), 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := map[string]alertchannels.ReleaseNotice{}
+	for _, ev := range due {
+		if ev.DeploymentID != f.canary.ID {
+			continue
+		}
+		if _, dup := out[ev.Event]; dup {
+			t.Fatalf("event %s recorded twice", ev.Event)
+		}
+		var n alertchannels.ReleaseNotice
+		if err := json.Unmarshal(ev.Payload, &n); err != nil {
+			t.Fatal(err)
+		}
+		out[ev.Event] = n
+	}
+	return out
+}
+
+func TestReleaseApprovalNotifyChannelsMustBeSlackOrEmail(t *testing.T) {
+	ctx := context.Background()
+	e := apidserver.Setup(t, api.PlanPro)
+	if _, err := (*e.Store()).CreateApp(ctx, state.App{AccountID: (*e.Acct()).ID, Slug: "notify-app"}); err != nil {
+		t.Fatal(err)
+	}
+	approvalChannel(ctx, t, e, "releases", "slack")
+	approvalChannel(ctx, t, e, "leads", "email")
+	approvalChannel(ctx, t, e, "pager", "pagerduty")
+	path := "/v1/apps/notify-app/release-approval-policy"
+	for _, bad := range [][]string{{"pager"}, {"nobody"}, {"releases", "releases"}} {
+		apidserver.AssertProblem(t, e.Do(t, http.MethodPut, path, api.SetReleaseApprovalPolicyRequest{RequiredApprovals: 1, NotifyChannels: bad}, nil),
+			http.StatusBadRequest, api.CodeValidation)
+	}
+	var policy api.ReleaseApprovalPolicy
+	if rec := guardDo(t, e, http.MethodPut, path, api.SetReleaseApprovalPolicyRequest{RequiredApprovals: 1, NotifyChannels: []string{"releases", "leads"}}, &policy); rec.Code != http.StatusOK ||
+		len(policy.NotifyChannels) != 2 || policy.NotifyChannels[0] != "releases" {
+		t.Fatalf("set = %d %+v", rec.Code, policy)
+	}
+	var got api.ReleaseApprovalPolicy
+	if rec := guardDo(t, e, http.MethodGet, path, nil, &got); rec.Code != http.StatusOK || len(got.NotifyChannels) != 2 || got.NotifyChannels[1] != "leads" {
+		t.Fatalf("get = %d %+v", rec.Code, got)
+	}
+}
+
+func TestReleaseApprovalEventsAreRecordedOncePerTransition(t *testing.T) {
+	ctx := context.Background()
+	f := newApprovalFixture(ctx, t, "approval-notify", time.Now().Add(-time.Hour), api.SetReleaseApprovalPolicyRequest{RequiredApprovals: 1})
+	approvalChannel(ctx, t, f.e, "releases", "slack")
+	if rec := f.e.Do(t, http.MethodPut, "/v1/apps/approval-notify/release-approval-policy",
+		api.SetReleaseApprovalPolicyRequest{RequiredApprovals: 1, NotifyChannels: []string{"releases"}}, nil); rec.Code != http.StatusOK {
+		t.Fatalf("set policy = %d %s", rec.Code, rec.Body)
+	}
+	client := f.worker(ctx, t)
+	for range 2 {
+		if _, err := client.AdvanceCanaryWithDecision(ctx, f.canary.ID, 0, healthyAdvance(f.prior.ID)); problemCodeOf(err) != api.CodeReleaseApprovalRequired {
+			t.Fatalf("worker advance err = %v", err)
+		}
+	}
+	events := approvalEvents(ctx, t, f)
+	requested, ok := events[state.ReleaseApprovalEventRequested]
+	if !ok || len(events) != 1 || requested.Event != alertchannels.EventApprovalRequested || requested.App != "approval-notify" ||
+		requested.Required != 1 || requested.Approvals != 0 || requested.ExpiresAt == "" || requested.Stage != 1 || requested.TotalStages != 4 ||
+		!strings.HasSuffix(requested.ReviewURL, "/dashboard/releases/"+f.canary.ID+"/approval") {
+		t.Fatalf("events = %+v", events)
+	}
+	if rec := f.e.Do(t, http.MethodPost, "/v1/deployments/"+f.canary.ID+"/approvals",
+		api.DecideReleaseApprovalRequest{Decision: api.ReleaseApprovalDecisionApprove, Comment: "looks clean"}, nil); rec.Code != http.StatusOK {
+		t.Fatalf("approve = %d %s", rec.Code, rec.Body)
+	}
+	events = approvalEvents(ctx, t, f)
+	if approved, ok := events[state.ReleaseApprovalEventApproved]; !ok || approved.Actor == "" || approved.Comment != "looks clean" || approved.Approvals != 1 {
+		t.Fatalf("events after approval = %+v", events)
+	}
+}
+
+func TestReleaseApprovalRejectionAndTimeoutAreRecorded(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name    string
+		started time.Duration
+		event   string
+	}{
+		{name: "rejected", started: -time.Hour, event: state.ReleaseApprovalEventRejected},
+		{name: "expired", started: -2 * time.Hour, event: state.ReleaseApprovalEventExpired},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newApprovalFixture(ctx, t, "approval-"+tc.name, time.Now().Add(tc.started), api.SetReleaseApprovalPolicyRequest{RequiredApprovals: 2, TimeoutMinutes: 60})
+			approvalChannel(ctx, t, f.e, "leads", "email")
+			if rec := f.e.Do(t, http.MethodPut, "/v1/apps/approval-"+tc.name+"/release-approval-policy",
+				api.SetReleaseApprovalPolicyRequest{RequiredApprovals: 2, TimeoutMinutes: 60, NotifyChannels: []string{"leads"}}, nil); rec.Code != http.StatusOK {
+				t.Fatalf("set policy = %d %s", rec.Code, rec.Body)
+			}
+			if tc.event == state.ReleaseApprovalEventRejected {
+				if rec := f.e.Do(t, http.MethodPost, "/v1/deployments/"+f.canary.ID+"/approvals",
+					api.DecideReleaseApprovalRequest{Decision: api.ReleaseApprovalDecisionReject, Comment: "latency is up"}, nil); rec.Code != http.StatusOK {
+					t.Fatalf("reject = %d %s", rec.Code, rec.Body)
+				}
+			} else if _, err := f.worker(ctx, t).AdvanceCanaryWithDecision(ctx, f.canary.ID, 0, healthyAdvance(f.prior.ID)); problemCodeOf(err) != api.CodeReleaseApprovalRequired {
+				t.Fatalf("worker advance err = %v", err)
+			}
+			events := approvalEvents(ctx, t, f)
+			if n, ok := events[tc.event]; !ok || len(events) != 1 || (tc.event == state.ReleaseApprovalEventRejected && n.Comment != "latency is up") {
+				t.Fatalf("events = %+v", events)
+			}
+		})
+	}
+}
+
+func TestReleaseApprovalPageRendersWithoutReleaseData(t *testing.T) {
+	e := apidserver.Setup(t, api.PlanPro)
+	id := "3f9c1e2a-0b7d-4c55-9e1a-2d6f8b4c7e10"
+	req := httptest.NewRequest(http.MethodGet, "/dashboard/releases/"+id+"/approval?intent=approve", nil)
+	req.SetPathValue("id", id)
+	req = req.WithContext(apidserver.WithAccount(req.Context(), *e.Acct()))
+	rec := httptest.NewRecorder()
+	(*e.S()).RenderReleaseApprovalPage(rec, req)
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK || !strings.Contains(body, `value="`+id+`"`) || !strings.Contains(body, `id="intent" value="approve"`) ||
+		!strings.Contains(body, "/v1/deployments/") || rec.Header().Get("Referrer-Policy") != "no-referrer" {
+		t.Fatalf("page = %d %v\n%s", rec.Code, rec.Header(), body)
+	}
+	bad := httptest.NewRequest(http.MethodGet, "/dashboard/releases/not-a-uuid/approval", nil)
+	bad.SetPathValue("id", "not-a-uuid")
+	bad = bad.WithContext(apidserver.WithAccount(bad.Context(), *e.Acct()))
+	rec = httptest.NewRecorder()
+	(*e.S()).RenderReleaseApprovalPage(rec, bad)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("bad id = %d", rec.Code)
 	}
 }

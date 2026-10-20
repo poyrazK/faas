@@ -1222,6 +1222,9 @@ func (r *server) RenderDeveloperEnvironments(p0 http.ResponseWriter, p1 *http.Re
 func (r *server) RenderPreviewsList(p0 http.ResponseWriter, p1 *http.Request, p2 *slog.Logger, p3 state.Account) {
 	r.renderPreviewsList(p0, p1, p2, p3)
 }
+func (r *server) RenderReleaseApprovalPage(p0 http.ResponseWriter, p1 *http.Request) {
+	r.renderReleaseApprovalPage(p0, p1)
+}
 func (r *server) ReplaceProjectEnvironmentQueueBindings(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
 	r.replaceProjectEnvironmentQueueBindings(p0, p1, p2)
 }

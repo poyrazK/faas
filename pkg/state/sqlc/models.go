@@ -1129,6 +1129,7 @@ type AppReleaseApprovalPolicy struct {
 	TimeoutMinutes    int32
 	Approvers         string
 	AllowSelfApproval bool
+	NotifyChannelIds  []pgtype.UUID
 	UpdatedBy         string
 	CreatedAt         pgtype.Timestamptz
 	UpdatedAt         pgtype.Timestamptz
@@ -11989,6 +11990,22 @@ type RecentBuildClaim struct {
 	ClaimedAt pgtype.Timestamptz
 	BuildID   pgtype.UUID
 	OrgID     pgtype.UUID
+}
+
+type ReleaseApprovalEvent struct {
+	ID            pgtype.UUID
+	AccountID     pgtype.UUID
+	AppID         pgtype.UUID
+	DeploymentID  pgtype.UUID
+	Event         string
+	ChannelIds    []pgtype.UUID
+	Payload       []byte
+	State         string
+	Attempts      int32
+	NextAttemptAt pgtype.Timestamptz
+	LastError     string
+	CreatedAt     pgtype.Timestamptz
+	DeliveredAt   pgtype.Timestamptz
 }
 
 type ReleaseBundle struct {

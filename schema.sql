@@ -27148,11 +27148,13 @@ CREATE TABLE public.app_release_approval_policies (
     timeout_minutes integer NOT NULL,
     approvers text NOT NULL,
     allow_self_approval boolean NOT NULL,
+    notify_channel_ids uuid[] DEFAULT '{}'::uuid[] NOT NULL,
     updated_by text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT app_release_approval_policies_after_stage_check CHECK (((after_stage >= 1) AND (after_stage <= 10))),
     CONSTRAINT app_release_approval_policies_approvers_check CHECK ((approvers = ANY (ARRAY['admin'::text, 'developer'::text]))),
+    CONSTRAINT app_release_approval_policies_notify_channel_ids_check CHECK ((cardinality(notify_channel_ids) <= 5)),
     CONSTRAINT app_release_approval_policies_required_approvals_check CHECK (((required_approvals >= 1) AND (required_approvals <= 5))),
     CONSTRAINT app_release_approval_policies_timeout_minutes_check CHECK (((timeout_minutes >= 10) AND (timeout_minutes <= 10080))),
     CONSTRAINT app_release_approval_policies_updated_by_check CHECK (((length(updated_by) >= 1) AND (length(updated_by) <= 320)))
@@ -46911,6 +46913,33 @@ CREATE TABLE public.recent_build_claims (
 
 
 --
+-- Name: release_approval_events; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.release_approval_events (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    event text NOT NULL,
+    channel_ids uuid[] NOT NULL,
+    payload jsonb NOT NULL,
+    state text DEFAULT 'pending'::text NOT NULL,
+    attempts integer DEFAULT 0 NOT NULL,
+    next_attempt_at timestamp with time zone NOT NULL,
+    last_error text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    delivered_at timestamp with time zone,
+    CONSTRAINT release_approval_events_attempts_check CHECK (((attempts >= 0) AND (attempts <= 10))),
+    CONSTRAINT release_approval_events_channel_ids_check CHECK (((cardinality(channel_ids) >= 1) AND (cardinality(channel_ids) <= 5))),
+    CONSTRAINT release_approval_events_event_check CHECK ((event = ANY (ARRAY['requested'::text, 'approved'::text, 'rejected'::text, 'expired'::text]))),
+    CONSTRAINT release_approval_events_last_error_check CHECK ((length(last_error) <= 512)),
+    CONSTRAINT release_approval_events_payload_check CHECK (((jsonb_typeof(payload) = 'object'::text) AND (octet_length((payload)::text) <= 8192))),
+    CONSTRAINT release_approval_events_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'delivered'::text, 'failed'::text])))
+);
+
+
+--
 -- Name: release_bundles; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -60230,6 +60259,22 @@ ALTER TABLE ONLY public.realtime_usage_hours
 
 
 --
+-- Name: release_approval_events release_approval_events_deployment_id_event_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.release_approval_events
+    ADD CONSTRAINT release_approval_events_deployment_id_event_key UNIQUE (deployment_id, event);
+
+
+--
+-- Name: release_approval_events release_approval_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.release_approval_events
+    ADD CONSTRAINT release_approval_events_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: release_bundles release_bundles_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -69622,6 +69667,13 @@ CREATE INDEX recent_build_claims_claimed_at_idx ON public.recent_build_claims US
 --
 
 CREATE INDEX recent_build_claims_org_id_idx ON public.recent_build_claims USING btree (org_id) WHERE (org_id IS NOT NULL);
+
+
+--
+-- Name: release_approval_events_due; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX release_approval_events_due ON public.release_approval_events USING btree (next_attempt_at) WHERE (state = 'pending'::text);
 
 
 --
@@ -89412,6 +89464,30 @@ ALTER TABLE ONLY public.recent_build_claims
 
 ALTER TABLE ONLY public.recent_build_claims
     ADD CONSTRAINT recent_build_claims_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: release_approval_events release_approval_events_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.release_approval_events
+    ADD CONSTRAINT release_approval_events_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: release_approval_events release_approval_events_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.release_approval_events
+    ADD CONSTRAINT release_approval_events_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: release_approval_events release_approval_events_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.release_approval_events
+    ADD CONSTRAINT release_approval_events_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
 
 
 --

@@ -34,9 +34,12 @@ type ReleaseApprovalPolicy struct {
 	TimeoutMinutes    int    `json:"timeout_minutes"`
 	Approvers         string `json:"approvers"`
 	AllowSelfApproval bool   `json:"allow_self_approval"`
-	UpdatedBy         string `json:"updated_by"`
-	CreatedAt         string `json:"created_at"`
-	UpdatedAt         string `json:"updated_at"`
+	// NotifyChannels names the notification channels told when a release
+	// waits, is approved or rejected, or times out.
+	NotifyChannels []string `json:"notify_channels"`
+	UpdatedBy      string   `json:"updated_by"`
+	CreatedAt      string   `json:"created_at"`
+	UpdatedAt      string   `json:"updated_at"`
 }
 
 // SetReleaseApprovalPolicyRequest is the body of
@@ -48,6 +51,8 @@ type SetReleaseApprovalPolicyRequest struct {
 	TimeoutMinutes    int    `json:"timeout_minutes,omitempty"`
 	Approvers         string `json:"approvers,omitempty"`
 	AllowSelfApproval bool   `json:"allow_self_approval,omitempty"`
+	// NotifyChannels names Slack or email notification channels.
+	NotifyChannels []string `json:"notify_channels,omitempty"`
 }
 
 // Normalize fills the defaults and validates the request.
@@ -72,6 +77,16 @@ func (r SetReleaseApprovalPolicyRequest) Normalize() (SetReleaseApprovalPolicyRe
 	}
 	if r.Approvers != ReleaseApproversAdmin && r.Approvers != ReleaseApproversDeveloper {
 		return r, fmt.Errorf("approvers must be %q or %q", ReleaseApproversAdmin, ReleaseApproversDeveloper)
+	}
+	if len(r.NotifyChannels) > ReleaseApprovalNotifyChannelsMax {
+		return r, fmt.Errorf("notify_channels names at most %d channels", ReleaseApprovalNotifyChannelsMax)
+	}
+	seen := map[string]bool{}
+	for _, name := range r.NotifyChannels {
+		if seen[name] || strings.TrimSpace(name) == "" {
+			return r, fmt.Errorf("notify_channels must name distinct channels")
+		}
+		seen[name] = true
 	}
 	return r, nil
 }

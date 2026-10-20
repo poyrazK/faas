@@ -825,6 +825,8 @@ type Querier interface {
 	EnqueueProfileCanaryCheck(ctx context.Context, db DBTX, arg EnqueueProfileCanaryCheckParams) (int64, error)
 	EnqueueProfileDeploymentCheck(ctx context.Context, db DBTX, arg EnqueueProfileDeploymentCheckParams) (int64, error)
 	EnqueueProfilePeriodicMonitor(ctx context.Context, db DBTX, arg EnqueueProfilePeriodicMonitorParams) error
+	// Records an event once per release and kind; a repeat returns no row.
+	EnqueueReleaseApprovalEvent(ctx context.Context, db DBTX, arg EnqueueReleaseApprovalEventParams) (pgtype.UUID, error)
 	EnqueueRouteHealthNotification(ctx context.Context, db DBTX, arg EnqueueRouteHealthNotificationParams) error
 	EnqueueWorkflowResume(ctx context.Context, db DBTX, runID pgtype.UUID) error
 	EnsureAppSecretRuntimeProcess(ctx context.Context, db DBTX, arg EnsureAppSecretRuntimeProcessParams) (int64, error)
@@ -1418,6 +1420,8 @@ type Querier interface {
 	FinishProjectEnvironmentClonePostgresSnapshotRestoreCleanup(ctx context.Context, db DBTX, arg FinishProjectEnvironmentClonePostgresSnapshotRestoreCleanupParams) (ProjectEnvironmentClonePostgresSnapshotRestore, error)
 	FinishQueueCanary(ctx context.Context, db DBTX, arg FinishQueueCanaryParams) error
 	FinishReadinessSubscription(ctx context.Context, db DBTX, arg FinishReadinessSubscriptionParams) (pgtype.UUID, error)
+	// Records one delivery attempt of a pending event.
+	FinishReleaseApprovalEvent(ctx context.Context, db DBTX, arg FinishReleaseApprovalEventParams) (int64, error)
 	FinishScenarioRecorderRequest(ctx context.Context, db DBTX, arg FinishScenarioRecorderRequestParams) (int64, error)
 	FinishScenarioSimulationAttempt(ctx context.Context, db DBTX, arg FinishScenarioSimulationAttemptParams) (int64, error)
 	FinishWorkflowRunCancellation(ctx context.Context, db DBTX, arg FinishWorkflowRunCancellationParams) (WorkflowRun, error)
@@ -2828,6 +2832,7 @@ type Querier interface {
 	ListDueManagedPostgresCutovers(ctx context.Context, db DBTX, arg ListDueManagedPostgresCutoversParams) ([]ManagedPostgresCutover, error)
 	ListDueMigrationCutovers(ctx context.Context, db DBTX, arg ListDueMigrationCutoversParams) ([]ListDueMigrationCutoversRow, error)
 	ListDueMigrationVerifications(ctx context.Context, db DBTX, arg ListDueMigrationVerificationsParams) ([]ListDueMigrationVerificationsRow, error)
+	ListDueReleaseApprovalEvents(ctx context.Context, db DBTX, arg ListDueReleaseApprovalEventsParams) ([]ReleaseApprovalEvent, error)
 	ListDueRouteMonitors(ctx context.Context, db DBTX, batchLimit int32) ([]ListDueRouteMonitorsRow, error)
 	// schedd's egress circuit-breaker feed (ADR-201 §3). Returns every
 	// opted-in upstream joined to its NEWEST probe verdict, which is the

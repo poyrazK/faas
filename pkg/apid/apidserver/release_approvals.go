@@ -3,13 +3,17 @@ package apidserver
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 
+	"github.com/onebox-faas/faas/pkg/alertchannels"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/appaccess"
 	"github.com/onebox-faas/faas/pkg/apid/approval"
@@ -45,7 +49,7 @@ func (s *server) getReleaseApprovalPolicy(w http.ResponseWriter, r *http.Request
 			"Gregale could not read this app's approval policy.", "Retry in a moment.", err)
 		return
 	}
-	writeJSON(w, http.StatusOK, approval.PolicyView(p, app.Slug))
+	writeJSON(w, http.StatusOK, approval.PolicyView(p, app.Slug, s.releaseApprovalChannelNames(r.Context(), acct.ID, p.NotifyChannelIDs)))
 }
 
 // putReleaseApprovalPolicy serves PUT /v1/apps/{slug}/release-approval-policy.
@@ -72,21 +76,26 @@ func (s *server) putReleaseApprovalPolicy(w http.ResponseWriter, r *http.Request
 		api.WriteProblem(w, p)
 		return
 	}
+	channelIDs, problem := s.releaseApprovalChannelIDs(r.Context(), acct.ID, req.NotifyChannels)
+	if problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	saved, err := store.SetReleaseApprovalPolicy(r.Context(), state.ReleaseApprovalPolicy{
 		AppID: app.ID, AccountID: app.AccountID, RequiredApprovals: req.RequiredApprovals, AfterStage: req.AfterStage,
 		TimeoutMinutes: req.TimeoutMinutes, Approvers: req.Approvers, AllowSelfApproval: req.AllowSelfApproval,
-		UpdatedBy: releaseApprovalActorLabel(r, acct),
+		NotifyChannelIDs: channelIDs, UpdatedBy: releaseApprovalActorLabel(r, acct),
 	}, time.Now())
 	if err != nil {
 		writeCustomerInternalProblem(w, r, s.log, "save release approval policy",
 			"Gregale could not save this app's approval policy.", "Retry in a moment.", err)
 		return
 	}
-	view := approval.PolicyView(saved, app.Slug)
+	view := approval.PolicyView(saved, app.Slug, req.NotifyChannels)
 	s.audit.Emit(r.Context(), "release.approval_policy_set", &acct.ID, appaccess.AuditData(r.Context(), map[string]any{
 		"app": app.Slug, "required_approvals": view.RequiredApprovals, "after_stage": view.AfterStage,
 		"timeout_minutes": view.TimeoutMinutes, "approvers": view.Approvers, "allow_self_approval": view.AllowSelfApproval,
-		"actor": view.UpdatedBy,
+		"notify_channels": view.NotifyChannels, "actor": view.UpdatedBy,
 	}))
 	writeJSON(w, http.StatusOK, view)
 }
@@ -113,6 +122,62 @@ func (s *server) releaseApprovalPolicyEligible(ctx context.Context, acct state.A
 		req.AllowSelfApproval = true
 	}
 	return nil
+}
+
+// releaseApprovalChannelIDs resolves notification channel names to IDs.
+// Approvals notify Slack and email channels only.
+func (s *server) releaseApprovalChannelIDs(ctx context.Context, accountID string, names []string) ([]string, *api.Problem) {
+	ids := make([]string, 0, len(names))
+	if len(names) == 0 {
+		return ids, nil
+	}
+	store, ok := s.store.(state.NotificationChannelStore)
+	if !ok {
+		return nil, api.ErrCapacity("notification channels are unavailable")
+	}
+	channels, err := store.ListNotificationChannels(ctx, accountID)
+	if err != nil {
+		logCustomerFailure(s.log, "list notification channels", err)
+		return nil, api.ErrInternal("Gregale could not read your notification channels.").WithHint("Retry in a moment.")
+	}
+	byName := make(map[string]state.NotificationChannel, len(channels))
+	for _, c := range channels {
+		byName[c.Name] = c
+	}
+	for _, name := range names {
+		c, ok := byName[name]
+		if !ok {
+			return nil, api.ErrValidation(fmt.Sprintf("no notification channel is named %q; create it with `gregale channels add`", name))
+		}
+		if c.Kind == alertchannels.KindPagerDuty {
+			return nil, api.ErrValidation(fmt.Sprintf("%q is a PagerDuty channel; release approvals notify Slack or email channels", name))
+		}
+		ids = append(ids, c.ID)
+	}
+	return ids, nil
+}
+
+// releaseApprovalChannelNames names the policy's channels that still exist.
+func (s *server) releaseApprovalChannelNames(ctx context.Context, accountID string, ids []string) []string {
+	names := []string{}
+	store, ok := s.store.(state.NotificationChannelStore)
+	if len(ids) == 0 || !ok {
+		return names
+	}
+	channels, err := store.ListNotificationChannels(ctx, accountID)
+	if err != nil {
+		return names
+	}
+	byID := make(map[string]string, len(channels))
+	for _, c := range channels {
+		byID[c.ID] = c.Name
+	}
+	for _, id := range ids {
+		if name, ok := byID[id]; ok {
+			names = append(names, name)
+		}
+	}
+	return names
 }
 
 // deleteReleaseApprovalPolicy serves DELETE /v1/apps/{slug}/release-approval-policy.
@@ -219,8 +284,8 @@ func (s *server) decideReleaseApproval(w http.ResponseWriter, r *http.Request, a
 			"Gregale could not record your decision.", "Retry in a moment.", err)
 		return
 	}
-	s.afterReleaseApprovalDecision(r, acct, app, d, decision)
-	_, status, err := s.releaseApprovalState(r.Context(), app, d)
+	policy, status, err := s.releaseApprovalState(r.Context(), app, d)
+	s.afterReleaseApprovalDecision(r, acct, app, d, decision, policy, status)
 	if err != nil {
 		writeCustomerInternalProblem(w, r, s.log, "read release approval",
 			"Your decision was recorded, but Gregale could not read the release's approvals.", "Retry the read in a moment.", err)
@@ -283,7 +348,7 @@ func (s *server) releaseApproverRole(r *http.Request, app state.App, policy stat
 
 // afterReleaseApprovalDecision audits a decision and aborts a rejected
 // release that is still rolling out.
-func (s *server) afterReleaseApprovalDecision(r *http.Request, acct state.Account, app state.App, d state.Deployment, decision state.ReleaseApproval) {
+func (s *server) afterReleaseApprovalDecision(r *http.Request, acct state.Account, app state.App, d state.Deployment, decision state.ReleaseApproval, policy *state.ReleaseApprovalPolicy, status api.ReleaseApprovalStatus) {
 	kind := "release.approved"
 	if decision.Decision == state.ReleaseApprovalReject {
 		kind = "release.rejected"
@@ -292,9 +357,45 @@ func (s *server) afterReleaseApprovalDecision(r *http.Request, acct state.Accoun
 		"app": app.Slug, "deployment": d.ID, "approver": decision.Approver, "role": decision.ApproverRole,
 		"comment": decision.Comment,
 	}))
-	if decision.Decision == state.ReleaseApprovalReject {
+	switch {
+	case decision.Decision == state.ReleaseApprovalReject:
 		s.abortForApproval(r.Context(), app, d, api.RolloutRuleAbortApprovalReject, "rejected by "+decision.Approver)
+		s.notifyReleaseApproval(r.Context(), app, d, policy, state.ReleaseApprovalEventRejected, status, decision.Approver, decision.Comment)
+	case status.State == api.ReleaseApprovalStateApproved:
+		s.notifyReleaseApproval(r.Context(), app, d, policy, state.ReleaseApprovalEventApproved, status, decision.Approver, decision.Comment)
 	}
+}
+
+// notifyReleaseApproval records an approval event for the policy's channels;
+// meterd delivers it. A failure is logged: notifications never block a
+// decision or a rollout.
+func (s *server) notifyReleaseApproval(ctx context.Context, app state.App, d state.Deployment, policy *state.ReleaseApprovalPolicy, event string, status api.ReleaseApprovalStatus, actor, comment string) {
+	if policy == nil || len(policy.NotifyChannelIDs) == 0 {
+		return
+	}
+	store, ok := s.store.(state.ReleaseApprovalEventStore)
+	if !ok {
+		return
+	}
+	payload, err := json.Marshal(approval.Notice(event, app, d, status, actor, comment, s.releaseApprovalReviewURL(d.ID)))
+	if err != nil {
+		s.log.Warn("apid: encode release approval notice failed", "deployment", d.ID, "err", err)
+		return
+	}
+	if _, err := store.EnqueueReleaseApprovalEvent(ctx, state.ReleaseApprovalEvent{
+		AccountID: app.AccountID, AppID: app.ID, DeploymentID: d.ID, Event: event, ChannelIDs: policy.NotifyChannelIDs, Payload: payload,
+	}, time.Now()); err != nil {
+		s.log.Warn("apid: record release approval event failed", "deployment", d.ID, "event", event, "err", err)
+	}
+}
+
+// releaseApprovalReviewURL is the approval page on the console host.
+func (s *server) releaseApprovalReviewURL(deploymentID string) string {
+	base := strings.TrimRight(s.cliAuthURLBase, "/")
+	if base == "" {
+		return ""
+	}
+	return base + "/dashboard/releases/" + url.PathEscape(deploymentID) + "/approval"
 }
 
 // releaseApprovalState loads d's approval status. A store without approvals
@@ -375,17 +476,18 @@ func (s *server) releaseApprovalAdvanceProblem(r *http.Request, app state.App, d
 		return nil
 	}
 	if worker {
-		s.recordApprovalWait(r.Context(), app, d, status)
+		s.recordApprovalWait(r.Context(), app, d, policy, status)
 	}
 	return approval.Problem(status)
 }
 
 // recordApprovalWait records a hold_awaiting_approval decision, or aborts a
 // release that was rejected or waited past its timeout.
-func (s *server) recordApprovalWait(ctx context.Context, app state.App, d state.Deployment, status api.ReleaseApprovalStatus) {
+func (s *server) recordApprovalWait(ctx context.Context, app state.App, d state.Deployment, policy *state.ReleaseApprovalPolicy, status api.ReleaseApprovalStatus) {
 	switch status.State {
 	case api.ReleaseApprovalStateExpired:
 		s.abortForApproval(ctx, app, d, api.RolloutRuleAbortApprovalTimeout, "waited past its approval timeout")
+		s.notifyReleaseApproval(ctx, app, d, policy, state.ReleaseApprovalEventExpired, status, "", "")
 		return
 	case api.ReleaseApprovalStateRejected:
 		s.abortForApproval(ctx, app, d, api.RolloutRuleAbortApprovalReject, "rejected")
@@ -406,6 +508,7 @@ func (s *server) recordApprovalWait(ctx context.Context, app state.App, d state.
 	}); err != nil {
 		s.log.Warn("apid: record approval hold failed", "deployment", d.ID, "err", err)
 	}
+	s.notifyReleaseApproval(ctx, app, d, policy, state.ReleaseApprovalEventRequested, status, "", "")
 }
 
 // abortForApproval aborts a rejected or timed-out release that is still

@@ -819,6 +819,13 @@ const ReleaseApprovalTimeoutMax = 7 * 24 * time.Hour
 const ReleaseApprovalTimeoutDefault = 24 * time.Hour
 const ReleaseApprovalCommentMax = 200
 
+// A policy notifies at most ReleaseApprovalNotifyChannelsMax channels; meterd
+// tries an approval event at most ReleaseApprovalNotifyAttemptsMax times,
+// waiting ReleaseApprovalNotifyRetryBase doubled per attempt between tries.
+const ReleaseApprovalNotifyChannelsMax = 5
+const ReleaseApprovalNotifyAttemptsMax = 6
+const ReleaseApprovalNotifyRetryBase = time.Minute
+
 // Verified rollback outcomes (ADR-1446). apid resolves each plain rollback
 // every RollbackOutcomeCheckInterval: complete once the target serves,
 // failed when it leaves activation without serving or when

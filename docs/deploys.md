@@ -212,6 +212,25 @@ Who may approve:
   whose own approval always counts.
 - **Changing the policy:** only owners and admins can change or remove it.
 
+Tell people when a release waits, is approved or rejected, or times out:
+
+```bash
+echo "https://hooks.slack.com/services/…" | gregale channels add --name releases --kind slack --secret-stdin
+gregale approvals require --approvals 2 --notify releases
+```
+
+`--notify` takes up to five Slack or email channels; PagerDuty channels are
+refused, because a release waiting for approval is not an incident. Each
+event is sent once per release.
+
+The Slack message for a waiting release has **Approve**, **Reject** and
+**Review** buttons, and the email has the same links. They open
+`/dashboard/releases/<deployment>/approval` in Gregale; if you are not signed
+in, Gregale asks you to sign in first. The decision is made on that page,
+under your own Gregale account, so your organization role, MFA and the
+self-approval rule apply exactly as in the CLI. The buttons grant nothing by
+themselves.
+
 Releases need a canary to wait in. While the policy is on, a production
 release with `--rollout immediate` or `--traffic-percent` is refused with
 `release_approval_canary_required`. To approve before any traffic, deploy

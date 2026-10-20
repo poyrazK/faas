@@ -72,7 +72,7 @@ func (q *Queries) CreateDeploymentReleaseApproval(ctx context.Context, db DBTX, 
 
 const deleteAppReleaseApprovalPolicy = `-- name: DeleteAppReleaseApprovalPolicy :one
 DELETE FROM app_release_approval_policies WHERE app_id = $1::uuid
-RETURNING app_id, account_id, required_approvals, after_stage, timeout_minutes, approvers, allow_self_approval, updated_by, created_at, updated_at
+RETURNING app_id, account_id, required_approvals, after_stage, timeout_minutes, approvers, allow_self_approval, notify_channel_ids, updated_by, created_at, updated_at
 `
 
 func (q *Queries) DeleteAppReleaseApprovalPolicy(ctx context.Context, db DBTX, appID pgtype.UUID) (AppReleaseApprovalPolicy, error) {
@@ -86,6 +86,7 @@ func (q *Queries) DeleteAppReleaseApprovalPolicy(ctx context.Context, db DBTX, a
 		&i.TimeoutMinutes,
 		&i.Approvers,
 		&i.AllowSelfApproval,
+		&i.NotifyChannelIds,
 		&i.UpdatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -93,8 +94,82 @@ func (q *Queries) DeleteAppReleaseApprovalPolicy(ctx context.Context, db DBTX, a
 	return i, err
 }
 
+const enqueueReleaseApprovalEvent = `-- name: EnqueueReleaseApprovalEvent :one
+INSERT INTO release_approval_events (
+  id, account_id, app_id, deployment_id, event, channel_ids, payload, next_attempt_at, created_at
+)
+VALUES (
+  $1::uuid, $2::uuid, $3::uuid, $4::uuid,
+  $5::text, $6::uuid[], $7::jsonb, $8::timestamptz,
+  $8::timestamptz
+)
+ON CONFLICT (deployment_id, event) DO NOTHING
+RETURNING id
+`
+
+type EnqueueReleaseApprovalEventParams struct {
+	ID           pgtype.UUID
+	AccountID    pgtype.UUID
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+	Event        string
+	ChannelIds   []pgtype.UUID
+	Payload      []byte
+	Now          pgtype.Timestamptz
+}
+
+// Records an event once per release and kind; a repeat returns no row.
+func (q *Queries) EnqueueReleaseApprovalEvent(ctx context.Context, db DBTX, arg EnqueueReleaseApprovalEventParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, enqueueReleaseApprovalEvent,
+		arg.ID,
+		arg.AccountID,
+		arg.AppID,
+		arg.DeploymentID,
+		arg.Event,
+		arg.ChannelIds,
+		arg.Payload,
+		arg.Now,
+	)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const finishReleaseApprovalEvent = `-- name: FinishReleaseApprovalEvent :execrows
+UPDATE release_approval_events
+   SET state = $1::text,
+       attempts = attempts + 1,
+       last_error = $2::text,
+       next_attempt_at = $3::timestamptz,
+       delivered_at = $4::timestamptz
+ WHERE id = $5::uuid AND state = 'pending'
+`
+
+type FinishReleaseApprovalEventParams struct {
+	State         string
+	LastError     string
+	NextAttemptAt pgtype.Timestamptz
+	DeliveredAt   pgtype.Timestamptz
+	ID            pgtype.UUID
+}
+
+// Records one delivery attempt of a pending event.
+func (q *Queries) FinishReleaseApprovalEvent(ctx context.Context, db DBTX, arg FinishReleaseApprovalEventParams) (int64, error) {
+	result, err := db.Exec(ctx, finishReleaseApprovalEvent,
+		arg.State,
+		arg.LastError,
+		arg.NextAttemptAt,
+		arg.DeliveredAt,
+		arg.ID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const getAppReleaseApprovalPolicy = `-- name: GetAppReleaseApprovalPolicy :one
-SELECT app_id, account_id, required_approvals, after_stage, timeout_minutes, approvers, allow_self_approval, updated_by, created_at, updated_at FROM app_release_approval_policies WHERE app_id = $1::uuid
+SELECT app_id, account_id, required_approvals, after_stage, timeout_minutes, approvers, allow_self_approval, notify_channel_ids, updated_by, created_at, updated_at FROM app_release_approval_policies WHERE app_id = $1::uuid
 `
 
 func (q *Queries) GetAppReleaseApprovalPolicy(ctx context.Context, db DBTX, appID pgtype.UUID) (AppReleaseApprovalPolicy, error) {
@@ -108,6 +183,7 @@ func (q *Queries) GetAppReleaseApprovalPolicy(ctx context.Context, db DBTX, appI
 		&i.TimeoutMinutes,
 		&i.Approvers,
 		&i.AllowSelfApproval,
+		&i.NotifyChannelIds,
 		&i.UpdatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -152,17 +228,63 @@ func (q *Queries) ListDeploymentReleaseApprovals(ctx context.Context, db DBTX, d
 	return items, nil
 }
 
+const listDueReleaseApprovalEvents = `-- name: ListDueReleaseApprovalEvents :many
+SELECT id, account_id, app_id, deployment_id, event, channel_ids, payload, state, attempts, next_attempt_at, last_error, created_at, delivered_at FROM release_approval_events
+ WHERE state = 'pending' AND next_attempt_at <= $1::timestamptz
+ ORDER BY next_attempt_at, id
+ LIMIT $2::integer
+`
+
+type ListDueReleaseApprovalEventsParams struct {
+	Now       pgtype.Timestamptz
+	MaxEvents int32
+}
+
+func (q *Queries) ListDueReleaseApprovalEvents(ctx context.Context, db DBTX, arg ListDueReleaseApprovalEventsParams) ([]ReleaseApprovalEvent, error) {
+	rows, err := db.Query(ctx, listDueReleaseApprovalEvents, arg.Now, arg.MaxEvents)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ReleaseApprovalEvent{}
+	for rows.Next() {
+		var i ReleaseApprovalEvent
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.AppID,
+			&i.DeploymentID,
+			&i.Event,
+			&i.ChannelIds,
+			&i.Payload,
+			&i.State,
+			&i.Attempts,
+			&i.NextAttemptAt,
+			&i.LastError,
+			&i.CreatedAt,
+			&i.DeliveredAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const upsertAppReleaseApprovalPolicy = `-- name: UpsertAppReleaseApprovalPolicy :one
 
 INSERT INTO app_release_approval_policies (
   app_id, account_id, required_approvals, after_stage, timeout_minutes, approvers,
-  allow_self_approval, updated_by, created_at, updated_at
+  allow_self_approval, notify_channel_ids, updated_by, created_at, updated_at
 )
 VALUES (
   $1::uuid, $2::uuid, $3::smallint,
   $4::smallint, $5::integer, $6::text,
-  $7::boolean, $8::text, $9::timestamptz,
-  $9::timestamptz
+  $7::boolean, $8::uuid[], $9::text,
+  $10::timestamptz, $10::timestamptz
 )
 ON CONFLICT (app_id) DO UPDATE SET
   required_approvals = EXCLUDED.required_approvals,
@@ -170,9 +292,10 @@ ON CONFLICT (app_id) DO UPDATE SET
   timeout_minutes = EXCLUDED.timeout_minutes,
   approvers = EXCLUDED.approvers,
   allow_self_approval = EXCLUDED.allow_self_approval,
+  notify_channel_ids = EXCLUDED.notify_channel_ids,
   updated_by = EXCLUDED.updated_by,
   updated_at = EXCLUDED.updated_at
-RETURNING app_id, account_id, required_approvals, after_stage, timeout_minutes, approvers, allow_self_approval, updated_by, created_at, updated_at
+RETURNING app_id, account_id, required_approvals, after_stage, timeout_minutes, approvers, allow_self_approval, notify_channel_ids, updated_by, created_at, updated_at
 `
 
 type UpsertAppReleaseApprovalPolicyParams struct {
@@ -183,6 +306,7 @@ type UpsertAppReleaseApprovalPolicyParams struct {
 	TimeoutMinutes    int32
 	Approvers         string
 	AllowSelfApproval bool
+	NotifyChannelIds  []pgtype.UUID
 	UpdatedBy         string
 	Now               pgtype.Timestamptz
 }
@@ -197,6 +321,7 @@ func (q *Queries) UpsertAppReleaseApprovalPolicy(ctx context.Context, db DBTX, a
 		arg.TimeoutMinutes,
 		arg.Approvers,
 		arg.AllowSelfApproval,
+		arg.NotifyChannelIds,
 		arg.UpdatedBy,
 		arg.Now,
 	)
@@ -209,6 +334,7 @@ func (q *Queries) UpsertAppReleaseApprovalPolicy(ctx context.Context, db DBTX, a
 		&i.TimeoutMinutes,
 		&i.Approvers,
 		&i.AllowSelfApproval,
+		&i.NotifyChannelIds,
 		&i.UpdatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,

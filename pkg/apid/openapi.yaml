@@ -104449,7 +104449,7 @@ components:
     ReleaseApprovalPolicy:
       description: "An app's release approval policy (ADR-20261020085706)."
       type: object
-      required: [app, required_approvals, after_stage, timeout_minutes, approvers, allow_self_approval, updated_by, created_at, updated_at]
+      required: [app, required_approvals, after_stage, timeout_minutes, approvers, allow_self_approval, notify_channels, updated_by, created_at, updated_at]
       properties:
         app: { type: string }
         required_approvals: { type: integer, minimum: 1, maximum: 5, description: "Distinct eligible people who must approve each production release." }
@@ -104457,6 +104457,7 @@ components:
         timeout_minutes: { type: integer, minimum: 10, maximum: 10080, description: "How long a release may wait before its rollout is aborted." }
         approvers: { type: string, enum: [admin, developer], description: "admin: organization owners and admins; developer: developers too." }
         allow_self_approval: { type: boolean, description: "Whether the deployer's own approval counts." }
+        notify_channels: { type: array, maxItems: 5, items: { type: string }, description: "Notification channels told when a release waits, is approved or rejected, or times out." }
         updated_by: { type: string }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
@@ -104470,6 +104471,7 @@ components:
         timeout_minutes: { type: integer, minimum: 10, maximum: 10080, description: "Default 1440." }
         approvers: { type: string, enum: [admin, developer], description: "Default admin." }
         allow_self_approval: { type: boolean, description: "Default false; always true for an app outside an organization." }
+        notify_channels: { type: array, maxItems: 5, uniqueItems: true, items: { type: string }, description: "Names of Slack or email notification channels; PagerDuty channels are refused. Slack messages link to the approval page." }
     DecideReleaseApprovalRequest:
       description: "One person's decision on a release. A rejection needs a comment."
       type: object

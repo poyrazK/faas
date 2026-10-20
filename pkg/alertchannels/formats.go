@@ -9,6 +9,9 @@ import (
 // SlackPayload renders a message for a Slack incoming webhook: a fallback
 // text plus a small block layout.
 func SlackPayload(msg Message) map[string]any {
+	if msg.Release != nil {
+		return releaseSlackPayload(*msg.Release)
+	}
 	icon := map[string]string{EventFire: ":rotating_light:", EventResolve: ":white_check_mark:", EventTest: ":wave:"}[msg.Event]
 	text := fmt.Sprintf("%s *%s*\n%s", icon, Headline(msg), Detail(msg))
 	blocks := []map[string]any{{"type": "section", "text": map[string]any{"type": "mrkdwn", "text": text}}}
@@ -57,6 +60,9 @@ func PagerDutyPayload(routingKey string, msg Message) map[string]any {
 
 // EmailContent renders a plain-text email.
 func EmailContent(msg Message) (subject, body string) {
+	if msg.Release != nil {
+		return releaseEmailContent(*msg.Release)
+	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s\n\n%s\n", Headline(msg), Detail(msg))
 	if !msg.OccurredAt.IsZero() {

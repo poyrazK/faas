@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/alertchannels"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -146,12 +147,38 @@ func encode(d api.RolloutDecision) json.RawMessage {
 	return encoded
 }
 
-// PolicyView renders a policy for the API.
-func PolicyView(p state.ReleaseApprovalPolicy, app string) api.ReleaseApprovalPolicy {
+// PolicyView renders a policy for the API with its channels' names.
+func PolicyView(p state.ReleaseApprovalPolicy, app string, channelNames []string) api.ReleaseApprovalPolicy {
+	if channelNames == nil {
+		channelNames = []string{}
+	}
 	return api.ReleaseApprovalPolicy{
 		App: app, RequiredApprovals: p.RequiredApprovals, AfterStage: p.AfterStage, TimeoutMinutes: p.TimeoutMinutes,
-		Approvers: p.Approvers, AllowSelfApproval: p.AllowSelfApproval, UpdatedBy: p.UpdatedBy,
+		Approvers: p.Approvers, AllowSelfApproval: p.AllowSelfApproval, NotifyChannels: channelNames, UpdatedBy: p.UpdatedBy,
 		CreatedAt: p.CreatedAt.UTC().Format(time.RFC3339), UpdatedAt: p.UpdatedAt.UTC().Format(time.RFC3339),
+	}
+}
+
+// noticeEvents maps an outbox event to the channel event it renders as.
+var noticeEvents = map[string]string{
+	state.ReleaseApprovalEventRequested: alertchannels.EventApprovalRequested,
+	state.ReleaseApprovalEventApproved:  alertchannels.EventApprovalApproved,
+	state.ReleaseApprovalEventRejected:  alertchannels.EventApprovalRejected,
+	state.ReleaseApprovalEventExpired:   alertchannels.EventApprovalExpired,
+}
+
+// Notice snapshots what the channels are told about one approval event.
+// actor and comment name the decision behind approved and rejected events.
+func Notice(event string, app state.App, d state.Deployment, status api.ReleaseApprovalStatus, actor, comment, reviewURL string) alertchannels.ReleaseNotice {
+	commit := d.CommitSHA
+	if len(commit) > 12 {
+		commit = commit[:12]
+	}
+	return alertchannels.ReleaseNotice{
+		Event: noticeEvents[event], App: app.Slug, DeploymentID: d.ID, Revision: d.Revision, DeployedBy: d.DeployedBy,
+		Commit: commit, Reason: d.Reason, Stage: d.CanaryStep + 1, TotalStages: d.CanaryTotalSteps,
+		TrafficPercent: d.TrafficPercent, Approvals: status.Approvals, Required: status.RequiredApprovals,
+		ExpiresAt: status.ExpiresAt, Actor: actor, Comment: comment, ReviewURL: reviewURL,
 	}
 }
 

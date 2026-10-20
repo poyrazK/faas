@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>{{.Title}} — Gregale</title>
+  <style nonce="{{.Nonce}}">
+    :root { color-scheme: light dark; }
+    body { font-family: ui-sans-serif, system-ui, sans-serif; max-width: 640px; margin: 3rem auto; padding: 0 1.5rem; line-height: 1.5; }
+    dl { display: grid; grid-template-columns: max-content 1fr; gap: .25rem 1rem; }
+    dt { font-weight: 600; }
+    textarea { width: 100%; box-sizing: border-box; min-height: 4rem; font: inherit; }
+    .actions { display: flex; gap: .75rem; margin-top: .75rem; }
+    button { padding: .6rem 1rem; font: inherit; }
+    .suggested { outline: 2px solid currentColor; }
+    ul { padding-left: 1.2rem; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Release approval</h1>
+    <p>Signed in as <strong>{{.Account.Email}}</strong>.</p>
+    <p id="summary" role="status" aria-live="polite">Loading the release…</p>
+    <dl id="details" hidden>
+      <dt>App</dt><dd id="app"></dd>
+      <dt>Release</dt><dd id="release"></dd>
+      <dt>Deployed by</dt><dd id="deployer"></dd>
+      <dt>Approvals</dt><dd id="approvals"></dd>
+      <dt>Waiting since</dt><dd id="since"></dd>
+      <dt>Aborted after</dt><dd id="expires"></dd>
+    </dl>
+    <h2 id="decisions-title" hidden>Decisions</h2>
+    <ul id="decisions"></ul>
+    <form id="decide" hidden>
+      <label for="comment">Comment (needed to reject)</label>
+      <textarea id="comment" maxlength="200"></textarea>
+      <div class="actions">
+        <button type="button" id="approve">Approve</button>
+        <button type="button" id="reject">Reject and abort</button>
+      </div>
+    </form>
+    <p id="result" role="alert"></p>
+    <p><a id="app-link" href="/dashboard" hidden>Open the app</a></p>
+    <noscript>Enable JavaScript to review this release, or run <code>gregale approvals status {{.Data.DeploymentID}}</code>.</noscript>
+    <input type="hidden" id="deployment" value="{{.Data.DeploymentID}}">
+    <input type="hidden" id="intent" value="{{.Data.Intent}}">
+  </main>
+  <script nonce="{{.Nonce}}">
+    'use strict';
+    const id = document.getElementById('deployment').value;
+    const endpoint = '/v1/deployments/' + encodeURIComponent(id) + '/approvals';
+    const $ = (name) => document.getElementById(name);
+    const text = (name, value) => { $(name).textContent = value || '—'; };
+    const states = {
+      waiting: 'This release is waiting for approval.',
+      approved: 'This release is approved; its rollout continues on the next step.',
+      rejected: 'This release was rejected; its rollout was aborted.',
+      expired: 'Nobody approved this release in time; its rollout was aborted.',
+      not_required: 'This release does not need approval.'
+    };
+    const problemText = async (response) => {
+      try { const p = await response.json(); return p.detail || p.title || ('HTTP ' + response.status); }
+      catch (_) { return 'HTTP ' + response.status; }
+    };
+    const render = (s) => {
+      text('summary', states[s.state] || s.state);
+      text('app', s.app);
+      text('release', s.deployment_id);
+      text('deployer', s.deployed_by);
+      text('approvals', s.approvals + ' of ' + (s.required_approvals || 0));
+      text('since', s.waiting_since);
+      text('expires', s.expires_at);
+      $('details').hidden = false;
+      const list = $('decisions');
+      list.replaceChildren();
+      for (const d of (s.decisions || [])) {
+        const item = document.createElement('li');
+        let line = d.decided_at + ': ' + d.decision + ' by ' + d.approver + ' (' + d.role + ')';
+        if (!d.counted && d.decision === 'approve') { line += ', not counted: the deployer'; }
+        if (d.comment) { line += ': ' + d.comment; }
+        item.textContent = line;
+        list.appendChild(item);
+      }
+      $('decisions-title').hidden = list.children.length === 0;
+      $('decide').hidden = s.state !== 'waiting';
+      if (s.app) { $('app-link').href = '/dashboard/apps/' + encodeURIComponent(s.app); $('app-link').hidden = false; }
+    };
+    const load = async () => {
+      const response = await fetch(endpoint, { credentials: 'same-origin', cache: 'no-store', referrerPolicy: 'no-referrer' });
+      if (!response.ok) { text('summary', 'Could not load this release: ' + await problemText(response)); return; }
+      render(await response.json());
+    };
+    const decide = async (decision) => {
+      const comment = $('comment').value.trim();
+      if (decision === 'reject' && comment === '') { text('result', 'Write why you reject this release.'); $('comment').focus(); return; }
+      $('approve').disabled = true; $('reject').disabled = true; text('result', '');
+      try {
+        const response = await fetch(endpoint, {
+          method: 'POST', credentials: 'same-origin', cache: 'no-store', referrerPolicy: 'no-referrer',
+          headers: { 'Content-Type': 'application/json', 'Idempotency-Key': crypto.randomUUID() },
+          body: JSON.stringify({ decision: decision, comment: comment })
+        });
+        if (!response.ok) { text('result', await problemText(response)); return; }
+        render(await response.json());
+        text('result', decision === 'approve' ? 'Your approval is recorded.' : 'Your rejection is recorded.');
+      } catch (_) { text('result', 'Could not reach Gregale. Try again.'); }
+      finally { $('approve').disabled = false; $('reject').disabled = false; }
+    };
+    $('approve').addEventListener('click', () => decide('approve'));
+    $('reject').addEventListener('click', () => decide('reject'));
+    const intent = $('intent').value;
+    if (intent === 'approve') { $('approve').classList.add('suggested'); }
+    if (intent === 'reject') { $('reject').classList.add('suggested'); }
+    history.replaceState(null, '', location.pathname);
+    load().catch(() => text('summary', 'Could not reach Gregale. Try again.'));
+  </script>
+</body>
+</html>

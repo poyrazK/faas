@@ -1784,7 +1784,7 @@ var cliCommands = []cliCommand{
 		DocSlug: "approvals",
 		Short:   "Require people to approve production releases before they leave their first canary stage",
 		Examples: []string{
-			"gregale approvals require --app my-api --approvals 2",
+			"gregale approvals require --app my-api --approvals 2 --notify releases",
 			"gregale approvals require --app my-api --approvals 1 --approvers developer --timeout 4h",
 			"gregale approvals pending --app my-api",
 			"gregale approvals approve 3f9c1e2a-0b7d-4c55-9e1a-2d6f8b4c7e10 --comment \"canary looks clean\"",
@@ -1798,6 +1798,7 @@ var cliCommands = []cliCommand{
 				{Name: "timeout", Short: "abort a release that waits longer (default 24h)", Value: "DURATION"},
 				{Name: "approvers", Short: "who may approve (default admin: owners and admins)", Value: "ROLE", ClosedSet: []string{"admin", "developer"}},
 				{Name: "allow-self-approval", Short: "count the deployer's own approval", Bool: true},
+				{Name: "notify", Short: "Slack or email channels told when a release waits, is decided or times out", Value: "CHANNEL,..."},
 			}},
 			{Name: "policy", Short: "Show an app's approval policy", Flags: []cliFlag{
 				{Name: "app", Short: "app slug (defaults to linked project app)", Value: "slug"},

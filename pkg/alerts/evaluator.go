@@ -346,6 +346,9 @@ type Stats struct {
 	// by cmd/meterd). The webhook fan-out still fires; the side-
 	// effect just doesn't happen.
 	ActionSkipped int
+	// ReleaseApprovalNotices counts release approval events delivered to at
+	// least one channel this tick (ADR-20261020085706).
+	ReleaseApprovalNotices int
 }
 
 // RunOnce walks the enabled alert-rule list once and applies the
@@ -387,6 +390,7 @@ func (e *Evaluator) RunOnce(ctx context.Context) (Stats, error) {
 			e.retryMCPReadinessIncident(ctx, rule, e.now(), &stats)
 		}
 	}
+	stats.ReleaseApprovalNotices = e.deliverReleaseApprovalEvents(ctx, e.now())
 	return stats, nil
 }
 

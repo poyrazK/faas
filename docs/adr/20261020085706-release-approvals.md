@@ -16,7 +16,8 @@
   - **Approvals for releases without a canary.** An `immediate` release takes all traffic at once, so there is no point to wait at. When an app requires approvals, its production releases must use a canary, and a release that would not is refused.
   - **Approving with a signed token outside Gregale (like project-environment approvals).** Those approve a reviewed plan before it is applied. A release approval is about a running candidate and its evidence, so it attaches to the deployment.
   - **Re-checking an approver's role at advance time.** The approval records the role the person had when they approved. Removing someone from the organization does not withdraw their past approvals, just as it does not undo their past deploys.
-  - **Notifying approvers in Slack in this change.** Notification channels carry alert events only. Slack messages with approve and reject buttons are a separate change. Here the release reports that it is waiting in `gregale deploy`'s live view, in `gregale approvals pending` and in the rollout decision.
+  - **Approving inside Slack without opening Gregale.** The native Slack app ([ADR-1496](1496-native-slack-response-actions.md)) can act on button clicks, but its identity links, delivery snapshots and link-confirmation page are built around issues. Reusing them for releases would mean a second security model to keep in step. Instead, approval messages carry buttons that open a Gregale page, and the person approves there under their own session, organization role and MFA. In-Slack actions can follow by extending ADR-1496's identity links.
+  - **Sending notifications from apid during the request.** Channel delivery (sealed targets, retries, the mail transport and delivery metrics) lives in meterd's alert evaluator. apid records each event durably and meterd delivers it, so a slow Slack never delays a decision or the canary worker.
 
 ## Decision
 
@@ -96,11 +97,34 @@ Every policy change and decision is audited:
 - `release.approved`;
 - `release.rejected`.
 
+### Notifications and the approval page
+
+The policy names up to `api.ReleaseApprovalNotifyChannelsMax` notification channels (`notify_channels`). They must be Slack or email channels: PagerDuty is refused, because a release waiting for approval is not an incident.
+
+apid records one event per release and kind in `release_approval_events`:
+- `requested` when the release starts waiting;
+- `approved` when the approval that satisfies the policy is recorded;
+- `rejected` on a rejection;
+- `expired` when the timeout aborts the release.
+
+The unique key on release and kind makes each event exactly-once, whichever path triggers it.
+
+Each event snapshots its message: app, release, deployer, commit, stage and traffic, approvals so far, the deciding person and comment, the expiry, and the review link. A later policy change does not rewrite a sent message.
+
+meterd's alert evaluator delivers due events on its tick through the same channel sender as alerts. It records each channel's outcome on the channel, and retries an event whose channels all failed, with backoff, up to `api.ReleaseApprovalNotifyAttemptsMax` times. A deleted channel is skipped.
+
+Slack messages for `requested` carry Approve, Reject and Review buttons. They are link buttons to `/dashboard/releases/{deployment}/approval` on the console host; they grant nothing by themselves.
+- **Signing in:** the page needs a signed-in session. An unauthenticated visitor is sent to sign in and returned to the page.
+- **Acting:** the page renders no release data on the server. Its script reads and decides through `GET` and `POST /v1/deployments/{id}/approvals` with the session, so the API's organization access, role check, MFA, same-origin check and self-approval rule all apply unchanged.
+- **Rejecting:** a rejection needs a reason typed on the page.
+
+Email carries the same links.
+
 ### CLI
 
 | Command | Does |
 |---|---|
-| `gregale approvals require [--app <app>] --approvals N [--after-stage N] [--timeout 24h] [--approvers admin\|developer] [--allow-self-approval]` | Sets the policy. |
+| `gregale approvals require [--app <app>] --approvals N [--after-stage N] [--timeout 24h] [--approvers admin\|developer] [--allow-self-approval] [--notify CHANNEL,...]` | Sets the policy. |
 | `gregale approvals policy`, `gregale approvals off` (with `--app`) | Shows or removes the policy. |
 | `gregale approvals pending [--app <app>]` | Lists the app's releases that are waiting. |
 | `gregale approvals status <deployment\|vN>` | Shows one release's status and decisions. |

@@ -35,6 +35,7 @@
       "app_id",
       "approvers",
       "created_at",
+      "notify_channel_ids",
       "required_approvals",
       "timeout_minutes",
       "updated_at",
@@ -14202,6 +14203,25 @@
       "build_id",
       "claimed_at",
       "org_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "release_approval_events",
+    "columns": [
+      "account_id",
+      "app_id",
+      "attempts",
+      "channel_ids",
+      "created_at",
+      "delivered_at",
+      "deployment_id",
+      "event",
+      "id",
+      "last_error",
+      "next_attempt_at",
+      "payload",
+      "state"
     ],
     "kind": "operational"
   },

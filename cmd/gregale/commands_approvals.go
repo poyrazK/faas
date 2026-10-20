@@ -55,8 +55,13 @@ func approvalsApp(app, usage string) (string, bool) {
 }
 
 // approvalPolicyRequest builds a policy request from the CLI flags.
-func approvalPolicyRequest(approvals, afterStage int, timeout, approvers string, allowSelf bool) (api.SetReleaseApprovalPolicyRequest, error) {
+func approvalPolicyRequest(approvals, afterStage int, timeout, approvers string, allowSelf bool, notify string) (api.SetReleaseApprovalPolicyRequest, error) {
 	req := api.SetReleaseApprovalPolicyRequest{RequiredApprovals: approvals, AfterStage: afterStage, Approvers: approvers, AllowSelfApproval: allowSelf}
+	for _, name := range strings.Split(notify, ",") {
+		if name = strings.TrimSpace(name); name != "" {
+			req.NotifyChannels = append(req.NotifyChannels, name)
+		}
+	}
 	if timeout != "" {
 		d, err := time.ParseDuration(timeout)
 		if err != nil || d <= 0 || d%time.Minute != 0 {
@@ -75,17 +80,18 @@ func approvalsRequire(args []string) int {
 	timeout := fs.String("timeout", "", "abort a release that waits longer (default 24h)")
 	approvers := fs.String("approvers", "", "who may approve: admin (owners and admins, default) or developer")
 	allowSelf := fs.Bool("allow-self-approval", false, "count the deployer's own approval")
+	notify := fs.String("notify", "", "comma-separated Slack or email channels told when a release waits, is decided or times out")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
 	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
-	slug, ok := approvalsApp(*app, "usage: gregale approvals require [--app <slug>] --approvals N [--after-stage N] [--timeout 24h] [--approvers admin|developer] [--allow-self-approval]")
+	slug, ok := approvalsApp(*app, "usage: gregale approvals require [--app <slug>] --approvals N [--after-stage N] [--timeout 24h] [--approvers admin|developer] [--allow-self-approval] [--notify CHANNEL,...]")
 	if !ok {
 		return 1
 	}
-	req, err := approvalPolicyRequest(*approvals, *afterStage, *timeout, *approvers, *allowSelf)
+	req, err := approvalPolicyRequest(*approvals, *afterStage, *timeout, *approvers, *allowSelf, *notify)
 	if err != nil {
 		return printErr("Invalid approval policy", err)
 	}
@@ -113,8 +119,12 @@ func approvalPolicySummary(p api.ReleaseApprovalPolicy) string {
 	if p.AllowSelfApproval {
 		self = "the deployer counts"
 	}
-	return fmt.Sprintf("%d approval(s) from %s (%s), waiting in canary stage %d, aborted after %s",
-		p.RequiredApprovals, who, self, p.AfterStage, (time.Duration(p.TimeoutMinutes) * time.Minute).String())
+	notify := "no notifications"
+	if len(p.NotifyChannels) > 0 {
+		notify = "notifying " + strings.Join(p.NotifyChannels, ", ")
+	}
+	return fmt.Sprintf("%d approval(s) from %s (%s), waiting in canary stage %d, aborted after %s, %s",
+		p.RequiredApprovals, who, self, p.AfterStage, (time.Duration(p.TimeoutMinutes) * time.Minute).String(), notify)
 }
 
 func approvalsPolicy(args []string) int {

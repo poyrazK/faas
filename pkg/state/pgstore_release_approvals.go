@@ -2,11 +2,13 @@ package state
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -16,9 +18,91 @@ func releaseApprovalPolicyFromRow(r sqlc.AppReleaseApprovalPolicy) ReleaseApprov
 	return ReleaseApprovalPolicy{
 		AppID: pgUUIDString(r.AppID), AccountID: pgUUIDString(r.AccountID),
 		RequiredApprovals: int(r.RequiredApprovals), AfterStage: int(r.AfterStage), TimeoutMinutes: int(r.TimeoutMinutes),
-		Approvers: r.Approvers, AllowSelfApproval: r.AllowSelfApproval, UpdatedBy: r.UpdatedBy,
-		CreatedAt: r.CreatedAt.Time.UTC(), UpdatedAt: r.UpdatedAt.Time.UTC(),
+		Approvers: r.Approvers, AllowSelfApproval: r.AllowSelfApproval, NotifyChannelIDs: pgUUIDStrings(r.NotifyChannelIds),
+		UpdatedBy: r.UpdatedBy, CreatedAt: r.CreatedAt.Time.UTC(), UpdatedAt: r.UpdatedAt.Time.UTC(),
 	}
+}
+
+func pgUUIDStrings(ids []pgtype.UUID) []string {
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, pgUUIDString(id))
+	}
+	return out
+}
+
+func pgUUIDList(ids []string) []pgtype.UUID {
+	out := make([]pgtype.UUID, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, mustPgUUID(id))
+	}
+	return out
+}
+
+func releaseApprovalEventFromRow(r sqlc.ReleaseApprovalEvent) ReleaseApprovalEvent {
+	e := ReleaseApprovalEvent{
+		ID: pgUUIDString(r.ID), AccountID: pgUUIDString(r.AccountID), AppID: pgUUIDString(r.AppID),
+		DeploymentID: pgUUIDString(r.DeploymentID), Event: r.Event, ChannelIDs: pgUUIDStrings(r.ChannelIds),
+		Payload: json.RawMessage(r.Payload), State: r.State, Attempts: int(r.Attempts),
+		NextAttemptAt: r.NextAttemptAt.Time.UTC(), LastError: r.LastError, CreatedAt: r.CreatedAt.Time.UTC(),
+	}
+	if r.DeliveredAt.Valid {
+		at := r.DeliveredAt.Time.UTC()
+		e.DeliveredAt = &at
+	}
+	return e
+}
+
+var _ ReleaseApprovalEventStore = (*PgStore)(nil)
+
+func (s *PgStore) EnqueueReleaseApprovalEvent(ctx context.Context, e ReleaseApprovalEvent, now time.Time) (bool, error) {
+	if e.ID == "" {
+		e.ID = uuid.NewString()
+	}
+	_, err := sqlc.New().EnqueueReleaseApprovalEvent(ctx, s.pool, sqlc.EnqueueReleaseApprovalEventParams{
+		ID: mustPgUUID(e.ID), AccountID: mustPgUUID(e.AccountID), AppID: mustPgUUID(e.AppID),
+		DeploymentID: mustPgUUID(e.DeploymentID), Event: e.Event, ChannelIds: pgUUIDList(e.ChannelIDs),
+		Payload: []byte(e.Payload), Now: pgTimestamptzUTC(now),
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, mapErr(err)
+	}
+	return true, nil
+}
+
+func (s *PgStore) DueReleaseApprovalEvents(ctx context.Context, now time.Time, limit int) ([]ReleaseApprovalEvent, error) {
+	rows, err := sqlc.New().ListDueReleaseApprovalEvents(ctx, s.pool, sqlc.ListDueReleaseApprovalEventsParams{
+		Now: pgTimestamptzUTC(now), MaxEvents: int32(limit),
+	})
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	out := make([]ReleaseApprovalEvent, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, releaseApprovalEventFromRow(r))
+	}
+	return out, nil
+}
+
+func (s *PgStore) FinishReleaseApprovalEvent(ctx context.Context, id string, attempt ReleaseApprovalEventAttempt) error {
+	delivered := pgtype.Timestamptz{}
+	if attempt.State == ReleaseApprovalEventDelivered {
+		delivered = pgTimestamptzUTC(attempt.At)
+	}
+	n, err := sqlc.New().FinishReleaseApprovalEvent(ctx, s.pool, sqlc.FinishReleaseApprovalEventParams{
+		ID: mustPgUUID(id), State: attempt.State, LastError: attempt.LastError,
+		NextAttemptAt: pgTimestamptzUTC(attempt.NextAttemptAt), DeliveredAt: delivered,
+	})
+	if err != nil {
+		return mapErr(err)
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 func releaseApprovalFromRow(r sqlc.DeploymentReleaseApproval) ReleaseApproval {
@@ -34,7 +118,8 @@ func (s *PgStore) SetReleaseApprovalPolicy(ctx context.Context, p ReleaseApprova
 	row, err := sqlc.New().UpsertAppReleaseApprovalPolicy(ctx, s.pool, sqlc.UpsertAppReleaseApprovalPolicyParams{
 		AppID: mustPgUUID(p.AppID), AccountID: mustPgUUID(p.AccountID),
 		RequiredApprovals: int16(p.RequiredApprovals), AfterStage: int16(p.AfterStage), TimeoutMinutes: int32(p.TimeoutMinutes),
-		Approvers: p.Approvers, AllowSelfApproval: p.AllowSelfApproval, UpdatedBy: p.UpdatedBy, Now: pgTimestamptzUTC(now),
+		Approvers: p.Approvers, AllowSelfApproval: p.AllowSelfApproval, NotifyChannelIds: pgUUIDList(p.NotifyChannelIDs),
+		UpdatedBy: p.UpdatedBy, Now: pgTimestamptzUTC(now),
 	})
 	if err != nil {
 		return ReleaseApprovalPolicy{}, mapErr(err)

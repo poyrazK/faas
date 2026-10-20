@@ -356,6 +356,7 @@ type MemStore struct {
 	// (ADR-20261020085706).
 	releaseApprovalPolicies map[string]ReleaseApprovalPolicy
 	releaseApprovals        map[string]ReleaseApproval
+	releaseApprovalEvents   map[string]ReleaseApprovalEvent
 	// Snapshot restore reservations are separate from mu so the coordinator
 	// can serialize only its short lease/count critical section.
 	snapshotRestorePressureMu sync.Mutex
