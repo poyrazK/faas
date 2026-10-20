@@ -31,6 +31,10 @@ sees their running instances) and runs `ANALYZE` after seeding and after
 publishing, because production tables carry planner statistics a fresh
 database lacks.
 
+A stage that cannot finish its backlog within 10 minutes stops there and
+reports what it processed and what is still pending, instead of failing the
+run.
+
 The isolated stages show each stage's ceiling on the host. The pipeline
 stages show what a customer sees: an offered rate the pipeline sustains
 reports `pending=0` and a latency close to the fanout wake path; a rate it
@@ -59,7 +63,7 @@ version and configuration next to the results.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `FAAS_EVENT_SUBSTRATE_BENCH_EVENTS` | 20000 | events for the isolated stages |
+| `FAAS_EVENT_SUBSTRATE_BENCH_EVENTS` | 2000 | events for the isolated stages |
 | `FAAS_EVENT_SUBSTRATE_BENCH_ACCOUNTS` | 10 | Scale accounts, one app and subscription each |
 | `FAAS_EVENT_SUBSTRATE_BENCH_PUBLISHERS` | 12 | concurrent publishers (apid's pool size) |
 | `FAAS_EVENT_SUBSTRATE_BENCH_DRAIN_CONCURRENCY` | production default | drain dispatch workers |

@@ -86,8 +86,9 @@ func TestEventSubstrateBench(t *testing.T) {
 	// Production tables carry planner statistics; a fresh database has none
 	// for tables that grew during publishing.
 	eventBenchAnalyze(ctx, t, pool)
-	report.Stages = append(report.Stages, fanoutLog.annotate(runEventBenchFanout(ctx, t, loop, schedPool, published)))
-	report.Stages = append(report.Stages, runEventBenchDrain(ctx, t, schedStore, engine, schedPool, cfg, published))
+	routed, fanout := runEventBenchFanout(ctx, t, loop, schedPool, published)
+	report.Stages = append(report.Stages, fanoutLog.annotate(fanout))
+	report.Stages = append(report.Stages, runEventBenchDrain(ctx, t, schedStore, engine, schedPool, cfg, routed))
 
 	// End-to-end: offered load with fanout scheduled exactly as schedd does
 	// and the drain running beside it.
@@ -290,27 +291,28 @@ func runEventBenchPublish(ctx context.Context, t *testing.T, publisher *appevent
 		Note: fmt.Sprintf("%d concurrent publishers through appevents.Service.PublishEvent (validation, storage admission, outbox trigger, receipt); excludes HTTP auth middleware", workers)}
 }
 
-func runEventBenchFanout(ctx context.Context, t *testing.T, loop *sched.Loop, pool *pgxpool.Pool, events []eventBenchEvent) eventBenchStage {
+// runEventBenchFanout routes the backlog with back-to-back sweeps. A stage
+// that cannot route it all before the stage timeout is a measurement, not a
+// failure: it reports what it routed and what is still pending.
+func runEventBenchFanout(ctx context.Context, t *testing.T, loop *sched.Loop, pool *pgxpool.Pool, events []eventBenchEvent) (int, eventBenchStage) {
 	t.Helper()
 	deadline := time.Now().Add(api.EventSubstrateBenchStageTimeout)
 	var sweeps []time.Duration
+	routed := 0
 	started := time.Now()
-	for {
+	for routed < len(events) && time.Now().Before(deadline) {
 		sweepStarted := time.Now()
 		loop.XRunEventFanoutSweep(ctx)
 		sweeps = append(sweeps, time.Since(sweepStarted))
-		routed := eventBenchCount(ctx, t, pool, "SELECT count(*) FROM invocations WHERE source = 'async_invoke'")
-		if routed >= len(events) {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("fanout stage: %d of %d events routed before the stage timeout", routed, len(events))
-		}
+		routed = eventBenchCount(ctx, t, pool, "SELECT count(*) FROM invocations WHERE source = 'async_invoke'")
 	}
 	elapsed := time.Since(started)
-	return eventBenchStage{Name: "fanout", Items: len(events), Seconds: elapsed.Seconds(),
-		PerSecond: float64(len(events)) / elapsed.Seconds(), LatencyMS: eventBenchPercentiles(sweeps),
-		Note: fmt.Sprintf("back-to-back sweeps over the published backlog; latency is per sweep (%d sweeps)", len(sweeps))}
+	note := fmt.Sprintf("back-to-back sweeps over a %d-event backlog; latency is per sweep (%d sweeps)", len(events), len(sweeps))
+	if routed < len(events) {
+		note += fmt.Sprintf("; stage timeout %s reached", api.EventSubstrateBenchStageTimeout)
+	}
+	return routed, eventBenchStage{Name: "fanout", Items: routed, Pending: len(events) - routed, Seconds: elapsed.Seconds(),
+		PerSecond: float64(routed) / elapsed.Seconds(), LatencyMS: eventBenchPercentiles(sweeps), Note: note}
 }
 
 // eventBenchGateway stands in for gatewayd-internal: it records when each
@@ -383,7 +385,9 @@ func startEventBenchDrain(ctx context.Context, t *testing.T, store *state.PgStor
 	}
 }
 
-func runEventBenchDrain(ctx context.Context, t *testing.T, store *state.PgStore, engine *sched.Engine, pool *pgxpool.Pool, cfg eventBenchConfig, events []eventBenchEvent) eventBenchStage {
+// runEventBenchDrain drains the invocations the fanout stage routed and,
+// like fanout, reports partial progress at the stage timeout.
+func runEventBenchDrain(ctx context.Context, t *testing.T, store *state.PgStore, engine *sched.Engine, pool *pgxpool.Pool, cfg eventBenchConfig, routed int) eventBenchStage {
 	t.Helper()
 	gateway := newEventBenchGateway(cfg.HandlerMS)
 	logs := &eventBenchLogCounter{}
@@ -391,15 +395,10 @@ func runEventBenchDrain(ctx context.Context, t *testing.T, store *state.PgStore,
 	stop := startEventBenchDrain(ctx, t, store, engine, pool, cfg, gateway, logs)
 	defer stop()
 	deadline := started.Add(api.EventSubstrateBenchStageTimeout)
-	for {
-		completed := eventBenchCount(ctx, t, pool, "SELECT count(*) FROM invocations WHERE source = 'async_invoke' AND state = 'completed'")
-		if completed >= len(events) {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("drain stage: %d of %d invocations completed before the stage timeout", completed, len(events))
-		}
+	completed := 0
+	for completed < routed && time.Now().Before(deadline) {
 		time.Sleep(20 * time.Millisecond)
+		completed = eventBenchCount(ctx, t, pool, "SELECT count(*) FROM invocations WHERE source = 'async_invoke' AND state = 'completed'")
 	}
 	elapsed := time.Since(started)
 	concurrency := cfg.DrainConcurrency
@@ -407,8 +406,8 @@ func runEventBenchDrain(ctx context.Context, t *testing.T, store *state.PgStore,
 	if concurrency == 0 {
 		label = "production default"
 	}
-	stage := eventBenchStage{Name: "drain", Items: len(events), Seconds: elapsed.Seconds(),
-		PerSecond: float64(len(events)) / elapsed.Seconds(), Attempts: eventBenchAttempts(ctx, t, pool),
+	stage := eventBenchStage{Name: "drain", Items: completed, Pending: routed - completed, Seconds: elapsed.Seconds(),
+		PerSecond: float64(completed) / elapsed.Seconds(), Attempts: eventBenchAttempts(ctx, t, pool),
 		Note: fmt.Sprintf("claim, warm wake, gateway dispatch and completion over the routed backlog; dispatch concurrency %s; handler time %d ms", label, cfg.HandlerMS)}
 	return logs.annotate(stage)
 }

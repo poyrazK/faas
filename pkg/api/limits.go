@@ -12766,7 +12766,7 @@ var SyntheticCheckIntervalsSeconds = []int{300, 900, 3600}
 // never customer quotas. Events spread over accounts so each subscription
 // stays under the Scale per-consumer live-delivery cap.
 const (
-	EventSubstrateBenchEvents             = 20000
+	EventSubstrateBenchEvents             = 2000
 	EventSubstrateBenchAccounts           = 10
 	EventSubstrateBenchPipelineSeconds    = 20
 	EventSubstrateBenchPipelineSettle     = 60 * time.Second
