@@ -146,10 +146,22 @@ func tenantStatementFees(m TenantMonth, usage feeUsage) []state.APIConsumerState
 	if !ok || m.Options.inTrial(at) || m.Options.inTrial(at.Add(time.Minute)) {
 		return nil
 	}
+	streamOf := map[string]string{}
+	for _, card := range m.TenantCards {
+		streamOf[card.ID] = tenantCardUnit(card)
+	}
+	// finalizedUsage is what finalized revisions billed per tenant card; a
+	// minimum top-up falls only by usage billed since (ADR-20261019180000).
 	var finalized [][]state.APIConsumerStatementFee
+	finalizedUsage := newFeeUsage()
 	for _, statement := range m.Previous {
 		if statement.Status == state.APIConsumerUsageStatementFinalized && statement.PeriodStart.Equal(m.Start) && statement.PeriodEnd.Equal(m.End) {
 			finalized = append(finalized, statement.Fees)
+			for _, line := range statement.Lines {
+				if stream, ok := streamOf[line.PlatformTenantRateCardID]; ok {
+					finalizedUsage.add(stream, line.PlatformTenantRateCardID, line.AmountMillicents)
+				}
+			}
 		}
 	}
 	units, streams := TenantUnitStreams(m.TenantCards)
@@ -163,5 +175,5 @@ func tenantStatementFees(m TenantMonth, usage feeUsage) []state.APIConsumerState
 		}
 		charging = append(charging, feeSegments(ordered, at, time.Time{})...)
 	}
-	return monthlyStatementFees(charging, usage, billedFees(finalized...))
+	return monthlyStatementFees(charging, usage, finalizedUsage, billedFees(finalized...))
 }

@@ -332,6 +332,10 @@ check-state-coverage: ## Assert exact pkg/state package coverage ≥ STATE_EXACT
 coverage-checker-test: ## Exercise coverage block union and exact-package gates without Go or Postgres
 	python3 -m unittest discover -s .claude/ci -p test_coverage_floor.py
 
+.PHONY: daemon-deps-check
+daemon-deps-check: ## Fail when a release binary links a package scripts/ci/daemon_deps.json forbids (ADR-1650 unit blast radius)
+	python3 scripts/ci/check_daemon_deps.py
+
 .PHONY: memstore-stubs-check
 memstore-stubs-check: ## Fail pure nil-return MemStore methods that can make tests vacuous (issue #1529 / PR-2b)
 	bash scripts/ci/check_memstore_stubs.sh

@@ -568,6 +568,10 @@ const (
 	StatementInvoiceSyncBatchSize    = 50
 	// The daily overdue email lists at most this many invoices.
 	StatementInvoiceOverdueDigestMax = 20
+	// One export attempt holds its statement this long, so a concurrent
+	// attempt cannot create a second provider invoice; a crashed attempt's
+	// claim expires (ADR-20261019180000).
+	StatementInvoiceExportClaimTTL = 15 * time.Minute
 	// List page sizes.
 	StatementInvoiceListDefault = 50
 	StatementInvoiceListMax     = 200
@@ -615,6 +619,11 @@ const (
 	// An invoice holding its consumer has its payment status read at least
 	// this often, so paying it lifts the hold within minutes.
 	ConsumerOverdueHeldSyncInterval = 15 * time.Minute
+	// Only a payment status read within this long holds a consumer or
+	// tenant: when Gregale cannot read the invoice (a rotated or removed
+	// key), the hold lifts rather than outlasting a payment it cannot see
+	// (ADR-20261019180000).
+	ConsumerOverdueStatusMaxAge = 24 * time.Hour
 )
 
 // PlatformTenantPlansMax bounds the tenant plans one account keeps

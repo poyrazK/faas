@@ -32,9 +32,9 @@ import (
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/markers"
 	"github.com/onebox-faas/faas/pkg/safetext"
-	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
+	"github.com/onebox-faas/faas/pkg/storagekey"
 	"github.com/onebox-faas/faas/pkg/whycopy"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -1671,10 +1671,10 @@ func (b *Builderd) completeBuild(ctx context.Context, build state.Build, dep sta
 			if !ok {
 				return errors.New("source-map build publication store unavailable")
 			}
-			return st.CompleteBuildWithIssueSourceMaps(ctx, build, result.LayerPath, sched.AppLayerKey(app.Slug, dep.ID), result.LayerBytes, prov,
+			return st.CompleteBuildWithIssueSourceMaps(ctx, build, result.LayerPath, storagekey.AppLayer(app.Slug, dep.ID), result.LayerBytes, prov,
 				state.BuildIssueSourceMapPublication{AccountID: app.AccountID, AppID: app.ID, Request: *result.IssueSourceMaps})
 		}
-		return b.store.CompleteBuild(ctx, build, result.LayerPath, sched.AppLayerKey(app.Slug, dep.ID), result.LayerBytes, prov)
+		return b.store.CompleteBuild(ctx, build, result.LayerPath, storagekey.AppLayer(app.Slug, dep.ID), result.LayerBytes, prov)
 	}); err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			return BuildResult{}, nil
