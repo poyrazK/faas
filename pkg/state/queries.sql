@@ -18933,7 +18933,7 @@ SELECT lock_clone_deployment_cleanup_borrower_writers();
 -- name: LockCloneDeploymentCleanupRetirementWriters :exec
 -- Deployment UUID arrays and rehearsal receipts retain original artifacts without
 -- a foreign-key lock; exclude their writers through deletion and receipt commit.
-LOCK TABLE environment_workload_retirements,environment_build_artifact_pins,scenario_cold_preparations,scenario_postgres_faults,scenario_recorder_sessions,scenario_suspend_resumes,scenario_worker_faults,platform_mail_deployment_observations,platform_mail_producer_outbox IN SHARE MODE;
+LOCK TABLE environment_workload_retirements,environment_build_artifact_pins,scenario_cold_preparations,scenario_postgres_faults,scenario_recorder_sessions,scenario_suspend_resumes,scenario_worker_faults IN SHARE MODE;
 
 -- name: DeleteCloneOwnedDeployments :execrows
 DELETE FROM deployments d USING project_environment_clone_workloads w
@@ -18967,11 +18967,6 @@ SELECT jsonb_build_object(
  'scenario_recorder_sessions.deployment_id', (SELECT count(*) FROM scenario_recorder_sessions WHERE deployment_id=sqlc.arg(deployment_id)::uuid),
  'scenario_suspend_resumes.deployment_id', (SELECT count(*) FROM scenario_suspend_resumes WHERE deployment_id=sqlc.arg(deployment_id)::uuid),
  'scenario_worker_faults.deployment_id', (SELECT count(*) FROM scenario_worker_faults WHERE deployment_id=sqlc.arg(deployment_id)::uuid),
- -- Original mail observations and encrypted intents retain the exact failed deployment.
- 'platform_mail_deployment_observations.deployment_id', (SELECT count(*) FROM platform_mail_deployment_observations WHERE deployment_id=sqlc.arg(deployment_id)::uuid),
- 'platform_mail_producer_outbox.deployment_failure_id', (SELECT count(*) FROM platform_mail_producer_outbox WHERE deployment_failure_id=sqlc.arg(deployment_id)::uuid),
- -- This app coordinate qualifies the same deployment reference, never an app/deployment UUID comparison.
- 'platform_mail_producer_outbox.deployment_failure_app_id', (SELECT count(*) FROM platform_mail_producer_outbox WHERE deployment_failure_id=sqlc.arg(deployment_id)::uuid AND deployment_failure_app_id=(SELECT app_id FROM deployments WHERE id=sqlc.arg(deployment_id)::uuid)),
  'workflow_automation_live_suites.deployment_id', (SELECT count(*) FROM workflow_automation_live_suites WHERE deployment_id=sqlc.arg(deployment_id)::uuid),
  'workflow_automation_live_verifications.deployment_id', (SELECT count(*) FROM workflow_automation_live_verifications WHERE deployment_id=sqlc.arg(deployment_id)::uuid),
  'workflow_schedule_occurrences.deployment_id', (SELECT count(*) FROM workflow_schedule_occurrences WHERE deployment_id::text=sqlc.arg(deployment_id)::uuid::text),
