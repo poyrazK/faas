@@ -2696,6 +2696,14 @@ type CustomerOperationAttemptInstance struct {
 	PlacedAt    pgtype.Timestamptz
 }
 
+type CustomerOperationChild struct {
+	ParentOperationID pgtype.UUID
+	ChildKey          string
+	ChildOperationID  pgtype.UUID
+	AccountID         pgtype.UUID
+	CreatedAt         pgtype.Timestamptz
+}
+
 type CustomerOperationCodePin struct {
 	DeploymentID pgtype.UUID
 	AppID        pgtype.UUID
