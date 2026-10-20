@@ -189,6 +189,10 @@ type Change struct {
 	SessionMaxAgeMinutes *int
 	SessionIdleMinutes   *int
 	SingleSession        *bool
+	// OrgDomains lets organizations verify email domains and let people at
+	// them join. Joining needs confirmed addresses, so the Auth app keeps it
+	// off while Autoconfirm is on.
+	OrgDomains *bool
 }
 
 var sessionLimit = regexp.MustCompile(`^([1-9][0-9]{0,5})([mhd])$`)
@@ -222,10 +226,6 @@ func FormatSessionLimit(minutes int) string {
 		return strconv.Itoa(minutes/60) + "h"
 	}
 	return strconv.Itoa(minutes) + "m"
-	// OrgDomains lets organizations verify email domains and let people at
-	// them join. Joining needs confirmed addresses, so the Auth app keeps it
-	// off while Autoconfirm is on.
-	OrgDomains * bool
 }
 
 // Captcha is a CAPTCHA provider and its keys; the secret stays in the app.
