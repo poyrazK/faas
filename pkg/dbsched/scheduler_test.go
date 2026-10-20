@@ -51,7 +51,7 @@ type fakeVMM struct {
 	// an outdated base.
 	storage        map[string]*dbguest.StorageStatus
 	standbyStorage map[string]*dbguest.StorageStatus
-	stale   map[string]bool
+	stale          map[string]bool
 	// onNode records node-scoped calls as "op@node"; volNode is where each
 	// volume was created.
 	onNode       []string
@@ -208,6 +208,10 @@ func (f *fakeVMM) Start(_ context.Context, node Node, vm VM) error {
 	f.running[vm.DatabaseID] = true
 	f.runMajor[vm.DatabaseID] = vm.Major
 	f.primaryOn[vm.DatabaseID] = node.ID
+	// Every primary boot starts asynchronous, as guest-init's does.
+	if f.replMode[vm.DatabaseID] == dbguest.ReplicationSync {
+		f.replMode[vm.DatabaseID] = dbguest.ReplicationAsync
+	}
 	if vm.RestoreSource != "" && !vm.Bootstrapped {
 		f.restoreBoots = append(f.restoreBoots, vm.RestoreTarget)
 		f.untilEnd = append(f.untilEnd, vm.RestoreUntilEnd)
@@ -587,7 +591,7 @@ func TestRecoverParksInFlightDatabases(t *testing.T) {
 	s, store, vmm := newTestScheduler(t, 4096)
 	ctx := context.Background()
 	vm := provision(t, s)
-	if _, err := store.AdmitWake(ctx, vm.DatabaseID); err != nil {
+	if _, err := store.AdmitWake(ctx, vm.DatabaseID, false); err != nil {
 		t.Fatal(err)
 	}
 	stops := vmm.callCount("stop")

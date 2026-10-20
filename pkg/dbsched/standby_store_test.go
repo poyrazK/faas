@@ -23,7 +23,7 @@ func runningReplicated(t *testing.T, s Store, mem int) VM {
 	if err := s.Transition(ctx, placed.DatabaseID, []State{StateProvisioning}, StateParked, TransitionOptions{Bootstrapped: true}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.AdmitWake(ctx, placed.DatabaseID); err != nil {
+	if _, err := s.AdmitWake(ctx, placed.DatabaseID, false); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Transition(ctx, placed.DatabaseID, []State{StateWaking}, StateRunning, TransitionOptions{}); err != nil {
@@ -118,8 +118,18 @@ func TestStoreStandbyClaimAndSync(t *testing.T) {
 			if _, err := s.ClaimStandby(ctx, second.DatabaseID); err != nil {
 				t.Fatalf("claim after the first standby stopped: %v", err)
 			}
-			// Waking makes the primary asynchronous: no longer synced.
-			if _, err := s.AdmitWake(ctx, first.DatabaseID); err != nil {
+			// A wake that resumes the standby keeps trusting it.
+			if _, err := s.AdmitWake(ctx, first.DatabaseID, true); err != nil {
+				t.Fatal(err)
+			}
+			if got, _ := s.Get(ctx, first.DatabaseID); !got.StandbySynced || got.State != StateWaking {
+				t.Fatalf("a resuming wake: %+v; want waking with its standby synced", got)
+			}
+			if err := s.Transition(ctx, first.DatabaseID, []State{StateWaking}, StateParked, TransitionOptions{}); err != nil {
+				t.Fatal(err)
+			}
+			// Any other wake makes the primary asynchronous: no longer synced.
+			if _, err := s.AdmitWake(ctx, first.DatabaseID, false); err != nil {
 				t.Fatal(err)
 			}
 			if got, _ := s.Get(ctx, first.DatabaseID); got.StandbySynced {
@@ -245,7 +255,7 @@ func TestStoreResizeChangesReplication(t *testing.T) {
 			if err := s.FinishResize(ctx, id); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := s.AdmitWake(ctx, id); err != nil {
+			if _, err := s.AdmitWake(ctx, id, false); err != nil {
 				t.Fatal(err)
 			}
 			if err := s.Transition(ctx, id, []State{StateWaking}, StateRunning, TransitionOptions{}); err != nil {
@@ -345,7 +355,7 @@ func TestStoreStandbyCountsIntoUsage(t *testing.T) {
 			if err := s.Transition(ctx, id, []State{StateProvisioning}, StateParked, TransitionOptions{Bootstrapped: true}); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := s.AdmitWake(ctx, id); err != nil {
+			if _, err := s.AdmitWake(ctx, id, false); err != nil {
 				t.Fatal(err)
 			}
 			if err := s.Transition(ctx, id, []State{StateWaking}, StateRunning, TransitionOptions{}); err != nil {

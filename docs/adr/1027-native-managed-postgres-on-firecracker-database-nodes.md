@@ -1552,15 +1552,39 @@ thing a failover trusts:
 
 - It is set only after the primary reports the standby synchronous.
 - It is cleared before a primary may commit without its standby. A wake
-  clears it in the same transaction that admits the wake (primaries boot
-  asynchronous). Before the monitor turns a primary asynchronous, the
-  record goes first.
+  that does not resume the standby (below) clears it in the same
+  transaction that admits the wake, since primaries boot asynchronous.
+  Before the monitor turns a primary asynchronous, the record goes first.
 - A clean park stops the primary, then the standby, so a synchronous
   standby stays synchronized while parked.
 
 Wakes never wait for the standby. It attaches in the background: async
 on the primary, then stop any leftover standby, create and grow the
 volume, boot (and seed) the standby, then sync, then record.
+
+**Resuming after a wake.** A database parked cleanly keeps a synchronized
+standby: the primary stopped first. Its wake resumes that standby when
+the standby's node is active and the monitor does not find it silent:
+
+- Admission keeps `standby_synced`.
+- Once the primary is ready, and before the database is `running` (no
+  client reaches it before that), the wake sets the primary `sync`. The
+  first commit is then acknowledged only once the standby has it, even
+  though the standby is not back yet. Commits wait for the standby's boot.
+- The attach then starts from `sync` rather than `async`.
+- If setting `sync` fails, the record stops trusting the standby, and the
+  wake goes on asynchronous. If even that record write fails, the wake
+  fails.
+- The attach has `StandbyResumeTimeout` (schedd
+  `standby_resume_timeout`, default 30 s; negative turns resuming off).
+  A resume that times out, or whose standby cannot be claimed, stops
+  trusting the standby in the record first, then turns the primary
+  `async`, as a dropped standby does.
+- `schedd_database_standby_resumes_total{result}` counts resumes.
+
+On metal (two nodes, vmmd's gRPC handlers), the wake took 1.2 s, and the
+first commit after it waited 1.2 s for the resumed standby. The primary's
+node was then killed. The failover kept that commit.
 `RunStandbyLoop` (2 s) attaches missing standbys and records syncs. It
 drops a standby that stops keeping up or whose node drains or is lost,
 record first, then async (or `off`, losing the slot, when the node goes).
@@ -1689,9 +1713,11 @@ shows a shape that matches no class.
 
 Not yet done:
 
-- **After every wake the primary runs asynchronous until its standby
-  syncs**, typically a few seconds. A node loss in that window falls back
-  to the archive (up to 60 s of loss), as for other classes.
+- **A wake that cannot resume runs asynchronous until its standby
+  syncs.** That covers a standby that was not synchronized when the
+  database parked, one on a node that is draining, lost or silent, and
+  resuming turned off. A node loss in that window falls back to the
+  archive (up to 60 s of loss), as for other classes.
 - **Several schedd replicas.** A standby claim that never synchronized is
   reclaimed by another replica only after 15 minutes, since that replica
   may still be seeding it.

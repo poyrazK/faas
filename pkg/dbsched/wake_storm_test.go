@@ -40,7 +40,7 @@ func TestStoreAdmitWakeHonoursBootSlots(t *testing.T) {
 				wg.Add(1)
 				go func(id string) {
 					defer wg.Done()
-					_, err := s.AdmitWake(ctx, id)
+					_, err := s.AdmitWake(ctx, id, false)
 					mu.Lock()
 					defer mu.Unlock()
 					switch {
@@ -66,7 +66,7 @@ func TestStoreAdmitWakeHonoursBootSlots(t *testing.T) {
 					break
 				}
 			}
-			if vm, err := s.AdmitWake(ctx, waiting); err != nil || vm.State != StateWaking {
+			if vm, err := s.AdmitWake(ctx, waiting, false); err != nil || vm.State != StateWaking {
 				t.Fatalf("admit after a boot finished = %+v, %v", vm, err)
 			}
 		})

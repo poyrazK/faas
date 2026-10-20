@@ -204,7 +204,7 @@ func TestStoreLoads(t *testing.T) {
 			if loads["db-a"] != (NodeLoad{VolumeBytes: 2 << 30}) || loads["db-b"] != (NodeLoad{VolumeBytes: 2 << 30}) {
 				t.Fatalf("parked loads = %+v", loads)
 			}
-			if _, err := s.AdmitWake(ctx, vm.DatabaseID); err != nil {
+			if _, err := s.AdmitWake(ctx, vm.DatabaseID, false); err != nil {
 				t.Fatal(err)
 			}
 			loads, err = s.Loads(ctx)

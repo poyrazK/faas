@@ -22,13 +22,19 @@ import (
 // StandbySynced records exactly that, and it is the only thing a failover
 // trusts. It is set only after the primary reports the standby
 // synchronous, and cleared before a primary may commit without its
-// standby: before a wake (every primary boots asynchronous) and before
-// the scheduler turns a primary asynchronous because its standby stopped
-// keeping up. A clean park stops the primary first, so a standby that was
-// synchronous stays so while parked.
+// standby: before a wake that does not resume it (every primary boots
+// asynchronous) and before the scheduler turns a primary asynchronous
+// because its standby stopped keeping up. A clean park stops the primary
+// first, so a standby that was synchronous stays so while parked.
 //
 // Standbys attach in the background after a wake: the wake never waits
-// for its standby.
+// for its standby. A wake does resume a standby that was synchronized when
+// the database parked, on a node still active: the record keeps trusting
+// it, and the primary turns synchronous before it serves its first
+// client, so no commit is acknowledged without the standby even before
+// it is back. Commits wait for its boot. If it is not back within
+// StandbyResumeTimeout, or cannot be claimed, the record stops trusting
+// it first and the primary turns asynchronous.
 
 // errStandbyNotNeeded: the database no longer wants this standby (it
 // parked, or its standby moved) by the time a step ran.
@@ -65,7 +71,16 @@ func (s *Scheduler) kickStandby(ctx context.Context, id string) {
 func (s *Scheduler) attachStandby(ctx context.Context, id string) error {
 	vm, primary, standby, fresh, err := s.claimStandby(ctx, id)
 	if err != nil {
+		if !errors.Is(err, errStandbyNotNeeded) {
+			s.relaxPrimary(context.WithoutCancel(ctx), id)
+		}
 		return err
+	}
+	if vm.StandbySynced {
+		// Resuming: commits wait until the standby is back.
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, s.cfg.StandbyResumeTimeout)
+		defer cancel()
 	}
 	if err = s.bootStandby(ctx, vm, primary, standby, fresh); err == nil {
 		err = s.finishAttach(ctx, vm, standby)
@@ -132,7 +147,12 @@ func (s *Scheduler) bootStandby(ctx context.Context, vm VM, primary, standby Nod
 	if err := s.vmm.GrowVolume(ctx, standby, id, vm.VolumeBytes); err != nil {
 		return fmt.Errorf("size the standby volume: %w", err)
 	}
-	if _, err := s.vmm.Replication(ctx, primary, id, dbguest.ReplicationAsync, standby.ID); err != nil {
+	// A resumed standby's primary is synchronous already, and stays so.
+	prepare := dbguest.ReplicationAsync
+	if vm.StandbySynced {
+		prepare = dbguest.ReplicationSync
+	}
+	if _, err := s.vmm.Replication(ctx, primary, id, prepare, standby.ID); err != nil {
 		return fmt.Errorf("prepare the primary: %w", err)
 	}
 	if err := s.vmm.StartStandby(ctx, standby, primary, vm); err != nil {
@@ -224,6 +244,63 @@ func (s *Scheduler) abandonStandby(ctx context.Context, id string, primary, stan
 	}
 	if cur.StandbyNode == standby.ID && cur.StandbyRunning {
 		_ = s.store.ReleaseStandby(ctx, id, false)
+	}
+}
+
+// resumesStandby reports whether a wake resumes the database's standby: a
+// production-class database whose standby was synchronized when it
+// parked, on a node that is active and not silent.
+func (s *Scheduler) resumesStandby(ctx context.Context, vm VM) bool {
+	if s.cfg.StandbyResumeTimeout < 0 || !vm.Replicated || !vm.StandbySynced || vm.PromotePending || vm.StandbyNode == "" {
+		return false
+	}
+	if _, silent := s.nodeFailing.Load(vm.StandbyNode); silent {
+		return false
+	}
+	node, err := s.node(ctx, vm.StandbyNode)
+	return err == nil && node.Lifecycle == NodeActive
+}
+
+// resumeSynchronous makes a woken primary wait for its standby before its
+// first client. When the primary cannot be made synchronous, the record
+// stops trusting the standby, and the database runs asynchronous, as any
+// boot leaves it; no client has committed yet. An error means the record
+// could not say so, and the wake must not go on.
+func (s *Scheduler) resumeSynchronous(ctx context.Context, node Node, vm VM) error {
+	_, err := s.vmm.Replication(ctx, node, vm.DatabaseID, dbguest.ReplicationSync, vm.StandbyNode)
+	if err == nil {
+		s.cfg.Metrics.resumedStandby(true)
+		return nil
+	}
+	s.cfg.Metrics.resumedStandby(false)
+	s.log.Warn("dbsched: resume a synchronized standby; the database wakes asynchronous", "database_id", vm.DatabaseID, "err", err)
+	if err := s.store.MarkStandbySynced(ctx, vm.DatabaseID, false); err != nil {
+		return fmt.Errorf("unsync the standby: %w", err)
+	}
+	return nil
+}
+
+// relaxPrimary turns a resumed primary asynchronous when its standby
+// cannot attach at all: the record stops trusting the standby first, then
+// the primary stops waiting for it. abandonStandby does the same for a
+// claimed standby.
+func (s *Scheduler) relaxPrimary(ctx context.Context, id string) {
+	unlock := s.lock(id)
+	defer unlock()
+	cur, err := s.store.Get(ctx, id)
+	if err != nil || cur.State != StateRunning || !cur.StandbySynced || cur.StandbyRunning {
+		return
+	}
+	node, err := s.node(ctx, cur.NodeID)
+	if err != nil {
+		return
+	}
+	if err := s.store.MarkStandbySynced(ctx, id, false); err != nil {
+		s.log.Warn("dbsched: unsync a standby that cannot attach", "database_id", id, "err", err)
+		return
+	}
+	if _, err := s.vmm.Replication(ctx, node, id, dbguest.ReplicationAsync, cur.StandbyNode); err != nil {
+		s.log.Warn("dbsched: make a primary asynchronous", "database_id", id, "err", err)
 	}
 }
 

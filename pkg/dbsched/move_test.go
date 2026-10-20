@@ -46,7 +46,7 @@ func TestStoreMoveLifecycle(t *testing.T) {
 			if _, err := s.Place(ctx, VM{DatabaseID: uuid.NewString(), NodeID: "db-b", Major: 17, VcpuCount: 1, MemMiB: 384, VolumeBytes: 7 << 30}); !errors.Is(err, ErrNoCapacity) {
 				t.Fatalf("placement into the space a move reserved = %v, want ErrNoCapacity", err)
 			}
-			if _, err := s.AdmitWake(ctx, vm.DatabaseID); !errors.Is(err, ErrConflict) {
+			if _, err := s.AdmitWake(ctx, vm.DatabaseID, false); !errors.Is(err, ErrConflict) {
 				t.Fatalf("wake while moving = %v, want ErrConflict", err)
 			}
 			if _, err := s.BeginMove(ctx, vm.DatabaseID, "", time.Minute); !errors.Is(err, ErrConflict) {

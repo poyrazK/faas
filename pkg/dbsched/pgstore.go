@@ -91,7 +91,7 @@ func vmFromRow(r sqlc.DatabaseVm) (VM, error) {
 		ResizePending: r.ResizePending, MoveNode: r.MoveNode.String, MoveLeaseUntil: r.MoveLeaseUntil.Time,
 		Replicated: r.Replicated, StandbyNode: r.StandbyNode.String, StandbyRunning: r.StandbyRunning, StandbySynced: r.StandbySynced,
 		PromotePending: r.PromotePending, DropStandbySlot: r.DropStandbySlot,
-		Upgrade: Upgrade{Operation: r.UpgradeOperation.String, From: int(r.UpgradeFrom.Int32), To: int(r.UpgradeMajor.Int32), Result: r.UpgradeResult.String},
+		Upgrade:           Upgrade{Operation: r.UpgradeOperation.String, From: int(r.UpgradeFrom.Int32), To: int(r.UpgradeMajor.Int32), Result: r.UpgradeResult.String},
 		UpgradeLeaseUntil: r.UpgradeLeaseUntil.Time,
 	}
 	if r.RestoreSource.Valid {
@@ -247,7 +247,7 @@ func (s *PgStore) getSyncingStandby(ctx context.Context, tx pgx.Tx, id string) (
 	return vm, nil
 }
 
-func (s *PgStore) AdmitWake(ctx context.Context, id string) (VM, error) {
+func (s *PgStore) AdmitWake(ctx context.Context, id string, keepStandbySynced bool) (VM, error) {
 	return inTx(ctx, s.pool, func(tx pgx.Tx) (VM, error) {
 		vm, err := s.get(ctx, tx, id)
 		if err != nil {
@@ -278,8 +278,8 @@ func (s *PgStore) AdmitWake(ctx context.Context, id string) (VM, error) {
 			return VM{}, err
 		}
 		// The primary boots asynchronous: its standby no longer holds every
-		// commit once it may commit without it.
-		if vm.StandbySynced {
+		// commit once it may commit without it, unless the wake resumes it.
+		if vm.StandbySynced && !keepStandbySynced {
 			if _, err := s.q.MarkDatabaseStandbySynced(ctx, tx, sqlc.MarkDatabaseStandbySyncedParams{Synced: false, DatabaseID: mustUUID(vm.DatabaseID)}); err != nil {
 				return VM{}, fmt.Errorf("dbsched: unsync standby of %s: %w", id, err)
 			}

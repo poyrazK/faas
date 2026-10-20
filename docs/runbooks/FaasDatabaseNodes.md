@@ -192,6 +192,7 @@ take `sum`.
 | `schedd_database_node_lifecycle{node,lifecycle}` | 1 for the node's lifecycle. |
 | `schedd_database_failovers_total{trigger,result}` | Failovers by `lost_node`, `running` or `parked`. |
 | `schedd_database_standby_drops_total{reason}` | Standbys given up (`lagging`, `node_gone`, `stale_claim`). |
+| `schedd_database_standby_resumes_total{result}` | Wakes that resumed a synchronized standby, so commits waited for it from the first one: `ok`, or `failed` (the wake went on asynchronous). |
 | `schedd_database_moves_total{result}` | Moves between nodes. |
 | `schedd_database_stale_vms` | Running databases (or their standbys) on an outdated base or launch at the last sample. |
 | `schedd_database_stale_restarts_total{result}` | Idle always-on databases schedd restarted onto the current base. |
@@ -319,7 +320,9 @@ A running production-class database has had no synchronized standby for
 shows whether standbys keep being dropped. If they are `lagging`, the
 standby's node or the link between the nodes is too slow. If the status is
 `none`, no other active node offering the database's major has room. Add
-capacity, or end a node's drain.
+capacity, or end a node's drain. `schedd_database_standby_resumes_total`
+with `result="failed"` rising means wakes could not set their primary
+synchronous, so those wakes ran without a standby until it attached.
 
 ### FaasDatabaseFailedOver (warn)
 

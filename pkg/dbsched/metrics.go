@@ -15,14 +15,16 @@ import (
 type Metrics struct {
 	failovers    *prometheus.CounterVec
 	standbyDrops *prometheus.CounterVec
-	moves        *prometheus.CounterVec
-	storage      *prometheus.GaugeVec
-	stale        prometheus.Gauge
-	staleRestart *prometheus.CounterVec
-	drills       *prometheus.CounterVec
-	drillLastOK  *prometheus.GaugeVec
-	upgrades     *prometheus.CounterVec
-	catalog      *catalogCollector
+	// standbyResumes counts wakes that resumed a synchronized standby.
+	standbyResumes *prometheus.CounterVec
+	moves          *prometheus.CounterVec
+	storage        *prometheus.GaugeVec
+	stale          prometheus.Gauge
+	staleRestart   *prometheus.CounterVec
+	drills         *prometheus.CounterVec
+	drillLastOK    *prometheus.GaugeVec
+	upgrades       *prometheus.CounterVec
+	catalog        *catalogCollector
 }
 
 // Failover triggers: the operator marked the node lost, or the standby
@@ -53,6 +55,10 @@ func NewMetrics(reg prometheus.Registerer, prefix string) *Metrics {
 			Name: prefix + "_database_standby_drops_total",
 			Help: "Standbys given up while their primary ran, by reason (lagging, node_gone, stale_claim). The primary commits without a standby until one attaches again.",
 		}, []string{"reason"}),
+		standbyResumes: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: prefix + "_database_standby_resumes_total",
+			Help: "Wakes of replicated databases that resumed their synchronized standby, so commits waited for it from the first one, by result (ok; failed: the wake went on asynchronous).",
+		}, []string{"result"}),
 		moves: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: prefix + "_database_moves_total",
 			Help: "Database moves between nodes by result (ok, failed).",
@@ -83,7 +89,7 @@ func NewMetrics(reg prometheus.Registerer, prefix string) *Metrics {
 		}, []string{"result"}),
 		catalog: newCatalogCollector(prefix),
 	}
-	reg.MustRegister(m.failovers, m.standbyDrops, m.moves, m.storage, m.stale, m.staleRestart, m.drills, m.drillLastOK, m.upgrades, m.catalog)
+	reg.MustRegister(m.failovers, m.standbyDrops, m.standbyResumes, m.moves, m.storage, m.stale, m.staleRestart, m.drills, m.drillLastOK, m.upgrades, m.catalog)
 	return m
 }
 
@@ -96,6 +102,17 @@ func (m *Metrics) failedOver(trigger string, err error) {
 		result = "failed"
 	}
 	m.failovers.WithLabelValues(trigger, result).Inc()
+}
+
+func (m *Metrics) resumedStandby(ok bool) {
+	if m == nil {
+		return
+	}
+	result := "ok"
+	if !ok {
+		result = "failed"
+	}
+	m.standbyResumes.WithLabelValues(result).Inc()
 }
 
 func (m *Metrics) standbyDropped(reason string) {

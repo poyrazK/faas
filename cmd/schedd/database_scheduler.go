@@ -53,6 +53,11 @@ type DatabaseSchedulerConfig struct {
 	// for this long (default 30s; negative leaves it to the operator's
 	// lost-node mark).
 	AutoFailoverAfter time.Duration `toml:"auto_failover_after"`
+	// StandbyResumeTimeout bounds how long a woken production-class
+	// database's commits wait for its synchronized standby to come back
+	// before it turns asynchronous (default 30s; negative starts every
+	// wake asynchronous, as before ADR-1027's resume).
+	StandbyResumeTimeout time.Duration `toml:"standby_resume_timeout"`
 	// SharedArchive: every database node's dbbackupd uploads to the same
 	// bucket and prefix, so restores may run on any node (ADR-1027).
 	SharedArchive bool                 `toml:"shared_archive"`
@@ -152,7 +157,8 @@ func enableDatabaseScheduler(ctx context.Context, cfg *DatabaseSchedulerConfig, 
 	}
 	sched := dbsched.New(store, vmm, dbsched.Config{IdleTimeout: cfg.IdleTimeout, SharedArchive: cfg.SharedArchive,
 		WakeQueueWait: cfg.WakeQueueWait, EvictIdleAfter: cfg.EvictIdleAfter,
-		EvacuateDraining: cfg.EvacuateDraining, MoveTimeout: cfg.MoveTimeout, AutoFailoverAfter: cfg.AutoFailoverAfter, Metrics: metrics}, log)
+		EvacuateDraining: cfg.EvacuateDraining, MoveTimeout: cfg.MoveTimeout, AutoFailoverAfter: cfg.AutoFailoverAfter,
+		StandbyResumeTimeout: cfg.StandbyResumeTimeout, Metrics: metrics}, log)
 	if err := sched.Recover(ctx); err != nil {
 		_ = vmm.Close()
 		return nil, nil, fmt.Errorf("schedd: recover databases: %w", err)

@@ -134,11 +134,11 @@ type VM struct {
 	// UpgradeFrom boots the volume's cluster of that older major and
 	// upgrades it to Major. The upgrade sets it per boot; stores do not
 	// persist it.
-	UpgradeFrom int
-	LastError       string
-	LastActiveAt    time.Time
-	StateChangedAt  time.Time
-	CreatedAt       time.Time
+	UpgradeFrom    int
+	LastError      string
+	LastActiveAt   time.Time
+	StateChangedAt time.Time
+	CreatedAt      time.Time
 	// NodeTarget is the node's vmmd dial target. The scheduler fills it on
 	// Wake and Get; stores do not persist it.
 	NodeTarget string
@@ -204,10 +204,12 @@ type Store interface {
 	// AdmitWake moves a parked database to waking if its node's RAM
 	// ceiling admits the VM's billable memory (else ErrNoCapacity) and a
 	// boot slot is free (else ErrBootSlotsBusy). A database already
-	// waking or running is returned unchanged.
+	// waking or running is returned unchanged. It clears StandbySynced
+	// unless keepStandbySynced: the wake resumes the standby, making the
+	// primary synchronous before its first client.
 	//
 	// Provisioning and restore boots take no boot slot.
-	AdmitWake(ctx context.Context, id string) (VM, error)
+	AdmitWake(ctx context.Context, id string, keepStandbySynced bool) (VM, error)
 	// Transition changes state only from one of from (compare-and-set).
 	Transition(ctx context.Context, id string, from []State, to State, opts TransitionOptions) error
 	// Touch records activity on a running database.

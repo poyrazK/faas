@@ -155,7 +155,7 @@ func (m *MemStore) syncStandbyLedgerLocked(vm VM, at time.Time) {
 	}
 }
 
-func (m *MemStore) AdmitWake(_ context.Context, id string) (VM, error) {
+func (m *MemStore) AdmitWake(_ context.Context, id string, keepStandbySynced bool) (VM, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	vm, ok := m.vms[id]
@@ -176,8 +176,8 @@ func (m *MemStore) AdmitWake(_ context.Context, id string) (VM, error) {
 		return VM{}, err
 	}
 	// The primary boots asynchronous: its standby no longer holds every
-	// commit once it may commit without it.
-	vm.StandbySynced = false
+	// commit once it may commit without it, unless the wake resumes it.
+	vm.StandbySynced = vm.StandbySynced && keepStandbySynced
 	vm.State, vm.StateChangedAt = StateWaking, m.now()
 	m.vms[id] = vm
 	m.openLocked(id, MeterCompute, computeRate(vm), vm.StateChangedAt)

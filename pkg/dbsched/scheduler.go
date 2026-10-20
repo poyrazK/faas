@@ -193,6 +193,12 @@ type Config struct {
 	StandbySyncTimeout time.Duration
 	// StandbyRetry spaces one database's attach attempts (default 30 s).
 	StandbyRetry time.Duration
+	// StandbyResumeTimeout bounds resuming a production-class database's
+	// synchronized standby after a wake (default 30 s; negative turns
+	// resuming off, so every wake starts asynchronous). The primary is
+	// synchronous before its first client, so commits wait for the
+	// standby meanwhile; past it the primary turns asynchronous.
+	StandbyResumeTimeout time.Duration
 	// StandbyStaleClaim: a running standby that never became synchronous
 	// and is not being attached by this process is given up after this
 	// long (default 15 min); another replica may still be seeding it.
@@ -340,6 +346,9 @@ func New(store Store, vmm VMM, cfg Config, log *slog.Logger) *Scheduler {
 	}
 	if cfg.StandbyRetry <= 0 {
 		cfg.StandbyRetry = 30 * time.Second
+	}
+	if cfg.StandbyResumeTimeout == 0 {
+		cfg.StandbyResumeTimeout = 30 * time.Second
 	}
 	if cfg.StandbyStaleClaim <= 0 {
 		cfg.StandbyStaleClaim = 15 * time.Minute
@@ -617,7 +626,8 @@ func (s *Scheduler) wakeLocked(ctx context.Context, id string) (VM, error) {
 	default:
 		return vm, ErrConflict
 	}
-	if vm, err = s.admitWake(ctx, vm); err != nil {
+	resume := s.resumesStandby(ctx, vm)
+	if vm, err = s.admitWake(ctx, vm, resume); err != nil {
 		return vm, err
 	}
 	// Leaving waking frees a boot slot, and a failed boot its RAM too.
@@ -639,6 +649,13 @@ func (s *Scheduler) wakeLocked(ctx context.Context, id string) (VM, error) {
 		// The boot promoted a standby that took over while parked.
 		if err := s.store.FinishPromotion(ctx, id); err != nil {
 			s.log.Warn("dbsched: record a finished promotion", "database_id", id, "err", err)
+		}
+	}
+	if resume {
+		if err := s.resumeSynchronous(ctx, node, vm); err != nil {
+			_ = s.vmm.Stop(context.WithoutCancel(ctx), node, id)
+			_ = s.store.Transition(context.WithoutCancel(ctx), id, []State{StateWaking}, StateParked, TransitionOptions{LastError: errCodeBoot})
+			return vm, fmt.Errorf("dbsched: wake %s: %w", id, err)
 		}
 	}
 	if err := s.store.Transition(ctx, id, []State{StateWaking}, StateRunning, TransitionOptions{}); err != nil {
@@ -1162,13 +1179,13 @@ func (s *Scheduler) RunIdleLoop(ctx context.Context, interval time.Duration) {
 // node, or after a jittered backoff for other replicas'; over the ceiling
 // it first parks a database nobody is connected to. Waiting wakes retry
 // independently, so admission is not first-come-first-served.
-func (s *Scheduler) admitWake(ctx context.Context, vm VM) (VM, error) {
+func (s *Scheduler) admitWake(ctx context.Context, vm VM, keepStandbySynced bool) (VM, error) {
 	ctx, cancel := context.WithTimeout(ctx, s.cfg.WakeQueueWait)
 	defer cancel()
 	started, delay := s.now(), 20*time.Millisecond
 	for {
 		freed := s.freed.wait(vm.NodeID) // before admission, so no signal is missed
-		admitted, err := s.store.AdmitWake(ctx, vm.DatabaseID)
+		admitted, err := s.store.AdmitWake(ctx, vm.DatabaseID, keepStandbySynced)
 		if errors.Is(err, ErrNoCapacity) && s.evictIdle(ctx, vm.NodeID, vm.DatabaseID) {
 			continue
 		}

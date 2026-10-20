@@ -96,14 +96,14 @@ func TestStoreAdmitWakeEnforcesNodeRAM(t *testing.T) {
 				ids = append(ids, vm.DatabaseID)
 			}
 			for _, id := range ids[:2] {
-				if vm, err := s.AdmitWake(ctx, id); err != nil || vm.State != StateWaking {
+				if vm, err := s.AdmitWake(ctx, id, false); err != nil || vm.State != StateWaking {
 					t.Fatalf("admit %s = %+v, %v", id, vm, err)
 				}
 			}
-			if _, err := s.AdmitWake(ctx, ids[2]); !errors.Is(err, ErrNoCapacity) {
+			if _, err := s.AdmitWake(ctx, ids[2], false); !errors.Is(err, ErrNoCapacity) {
 				t.Fatalf("third admit = %v, want ErrNoCapacity", err)
 			}
-			if vm, err := s.AdmitWake(ctx, ids[0]); err != nil || vm.State != StateWaking {
+			if vm, err := s.AdmitWake(ctx, ids[0], false); err != nil || vm.State != StateWaking {
 				t.Fatalf("re-admit of a waking database = %+v, %v; want unchanged", vm, err)
 			}
 			if err := s.Transition(ctx, ids[0], []State{StateWaking}, StateRunning, TransitionOptions{}); err != nil {
@@ -112,11 +112,11 @@ func TestStoreAdmitWakeEnforcesNodeRAM(t *testing.T) {
 			if err := s.Transition(ctx, ids[0], []State{StateRunning}, StateParked, TransitionOptions{}); err != nil {
 				t.Fatal(err)
 			}
-			if vm, err := s.AdmitWake(ctx, ids[2]); err != nil || vm.State != StateWaking {
+			if vm, err := s.AdmitWake(ctx, ids[2], false); err != nil || vm.State != StateWaking {
 				t.Fatalf("admit after a park = %+v, %v", vm, err)
 			}
 			seedNodes(t, s, Node{ID: "db-a", TargetURL: "unix:///a", AdmissionCeilingMB: 800, VolumeCapacityBytes: 100 << 30, Lifecycle: NodeUnavailable})
-			if _, err := s.AdmitWake(ctx, ids[0]); !errors.Is(err, ErrNodeUnavailable) {
+			if _, err := s.AdmitWake(ctx, ids[0], false); !errors.Is(err, ErrNodeUnavailable) {
 				t.Fatalf("admit on an unavailable node = %v, want ErrNodeUnavailable", err)
 			}
 		})
@@ -144,7 +144,7 @@ func TestStoreConcurrentAdmissionNeverOvercommits(t *testing.T) {
 				wg.Add(1)
 				go func(id string) {
 					defer wg.Done()
-					if _, err := s.AdmitWake(ctx, id); err == nil {
+					if _, err := s.AdmitWake(ctx, id, false); err == nil {
 						mu.Lock()
 						admitted++
 						mu.Unlock()
@@ -352,7 +352,7 @@ func TestStoreUsageLedger(t *testing.T) {
 			if err := s.Transition(ctx, vm.DatabaseID, []State{StateProvisioning}, StateParked, TransitionOptions{Bootstrapped: true}); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := s.AdmitWake(ctx, vm.DatabaseID); err != nil {
+			if _, err := s.AdmitWake(ctx, vm.DatabaseID, false); err != nil {
 				t.Fatal(err)
 			}
 			if err := s.Transition(ctx, vm.DatabaseID, []State{StateWaking}, StateRunning, TransitionOptions{}); err != nil {
@@ -460,7 +460,7 @@ func TestStoreResize(t *testing.T) {
 				t.Fatal("the same shape marked a resize pending")
 			}
 			// Running, the new memory must fit the RAM ceiling.
-			if _, err := s.AdmitWake(ctx, vm.DatabaseID); err != nil {
+			if _, err := s.AdmitWake(ctx, vm.DatabaseID, false); err != nil {
 				t.Fatal(err)
 			}
 			if err := s.Transition(ctx, vm.DatabaseID, []State{StateWaking}, StateRunning, TransitionOptions{}); err != nil {
@@ -547,7 +547,7 @@ func TestStoreMajorUpgrade(t *testing.T) {
 				t.Fatalf("upgrade to the same major = %v, want ErrInvalid", err)
 			}
 			// The other database's VM fills the node's RAM.
-			if _, err := s.AdmitWake(ctx, other.DatabaseID); err != nil {
+			if _, err := s.AdmitWake(ctx, other.DatabaseID, false); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := s.BeginUpgrade(ctx, vm.DatabaseID, 17, uuid.NewString(), time.Minute); !errors.Is(err, ErrNoCapacity) {
@@ -564,10 +564,10 @@ func TestStoreMajorUpgrade(t *testing.T) {
 			if loads, _ := s.Loads(ctx); loads["db-a"].ActiveMB != billableMB(384) {
 				t.Fatalf("an upgrading VM's memory = %d MB on the node, want %d", loads["db-a"].ActiveMB, billableMB(384))
 			}
-			if _, err := s.AdmitWake(ctx, other.DatabaseID); !errors.Is(err, ErrNoCapacity) {
+			if _, err := s.AdmitWake(ctx, other.DatabaseID, false); !errors.Is(err, ErrNoCapacity) {
 				t.Fatalf("wake beside an upgrade on a full node = %v, want ErrNoCapacity", err)
 			}
-			if _, err := s.AdmitWake(ctx, vm.DatabaseID); !errors.Is(err, ErrConflict) {
+			if _, err := s.AdmitWake(ctx, vm.DatabaseID, false); !errors.Is(err, ErrConflict) {
 				t.Fatalf("wake of an upgrading database = %v, want ErrConflict", err)
 			}
 			if _, err := s.BeginUpgrade(ctx, vm.DatabaseID, 17, uuid.NewString(), time.Minute); !errors.Is(err, ErrConflict) {
