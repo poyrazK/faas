@@ -60836,6 +60836,18 @@ func (q *Queries) ObjectS3CredentialLockBucket(ctx context.Context, db DBTX, arg
 	return id, err
 }
 
+const objectS3CredentialLockNamespace = `-- name: ObjectS3CredentialLockNamespace :exec
+SELECT id FROM resource_namespaces WHERE id=$1 FOR KEY SHARE
+`
+
+// The credential's account_id foreign key takes this KEY SHARE lock anyway;
+// taking it before the bucket keeps object storage's account-before-bucket
+// lock order (ADR-533).
+func (q *Queries) ObjectS3CredentialLockNamespace(ctx context.Context, db DBTX, id pgtype.UUID) error {
+	_, err := db.Exec(ctx, objectS3CredentialLockNamespace, id)
+	return err
+}
+
 const objectS3CredentialReseal = `-- name: ObjectS3CredentialReseal :execrows
 UPDATE object_storage_s3_credentials SET secret_sealed=$4,kid=$3
 WHERE id=$1 AND kid=$2 AND status='active'
