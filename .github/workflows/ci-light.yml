@@ -731,12 +731,12 @@ jobs:
             GOMEMLIMIT=2GiB GOGC=10 GOMAXPROCS=2 go test -race -count=1 -run '^$' $PKGS
             echo "::endgroup::"
             echo "testing with -race: $PKGS"
-            # Shard 3 includes the complete GitOps PostgreSQL suite (195
-            # top-level tests on the diagnosed head). It reached test 157
-            # before the 10m package deadline. Retain every test and the
-            # 40m job bound while giving this shard a bounded 15m package run.
+            # The complete GitOps PostgreSQL suite reached test 157 of 195
+            # before a 10m package deadline. Whichever shard the diff assigns
+            # it to keeps every test and the 40m job bound (~13m of race
+            # builds, then the run) with a bounded 18m package deadline.
             package_timeout=10m
-            if [[ "$SHARD" == 3 ]]; then package_timeout=15m; fi
+            if [[ " $PKGS " == *" ./pkg/environmentsync/pgintegration "* ]]; then package_timeout=18m; fi
             # shellcheck disable=SC2086 # space-separated package list
             GOMEMLIMIT=2GiB GOGC=10 GOMAXPROCS=2 go test -race -count=1 -p 4 -timeout="$package_timeout" $PKGS || status=1
           fi

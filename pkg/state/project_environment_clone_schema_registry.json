@@ -14299,6 +14299,7 @@
       "spans_summary",
       "status",
       "trace_id",
+      "trace_inferred",
       "ua_family",
       "wake_id"
     ],
