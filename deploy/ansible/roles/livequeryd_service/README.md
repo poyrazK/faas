@@ -141,5 +141,6 @@ The nftables role opens the hub's port to `faas_compute_allowed_cidrs` when
 - Discovering databases: the list is inventory, so a database enabled for
   live queries in apid is served only once an operator adds it here.
 - Native databases (ADR-1027), where the engine runs inside the database VM.
-- Paging alerts. Prometheus scrapes the hub; `livequery_*` and
-  `livequeryd_daemon_ready` are on the metrics endpoint.
+- Paging. The `live_queries` alerts (`docs/runbooks/FaasLiveQueries.md`)
+  warn rather than page while live queries are a preview. The
+  live-queries Grafana dashboard shows each database.

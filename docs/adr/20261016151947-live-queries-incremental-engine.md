@@ -1069,6 +1069,20 @@ Phase 0 did not cover:
     - The Ansible role takes `faas_livequeryd_databases`, with one credential
       per connection string. A deploy fails unless every database is served.
     - The flags for one database remain for development.
+  - **Alerts and dashboard** (2026-10-20). The `live_queries` alert family
+    warns, without paging, while live queries are a preview:
+    - the hub is down, or a database is not served or keeps restarting;
+    - a released hub cannot reconnect;
+    - slot lag passes 1 GiB, or a slot is lost;
+    - live keys cannot be read;
+    - commit-to-delta p95 exceeds 1 s;
+    - a slow connection is cut off;
+    - realtimed's hub connections keep dropping.
+
+    Each alert has a promtool fixture showing it firing and staying quiet,
+    and triage is in `docs/runbooks/FaasLiveQueries.md`. The live-queries
+    Grafana dashboard shows each database's state, latency, slot lag,
+    resumes and keys, and realtimed's side.
   - **Fleet-PKI leaves** (2026-10-19). Hub and realtimed authenticate with
     leaves of the internal CA:
     - livequeryd's server leaf is `livequeryd.faas`;
