@@ -36,10 +36,12 @@ reports what it processed and what is still pending, instead of failing the
 run.
 
 The isolated stages show each stage's ceiling on the host. The pipeline
-stages show what a customer sees: an offered rate the pipeline sustains
-reports `pending=0` and a latency close to the fanout wake path; a rate it
-cannot sustain leaves events pending or pushes latency toward the safety
-tick.
+stages show what a customer sees. V12 counts an offered rate as sustained
+when the achieved rate is at least 95 % of it, nothing is pending after the
+settle window, and p95 publish-to-handler is at most 5 s. A rate the
+pipeline cannot sustain shows a lower achieved rate, latency that grows with
+the backlog, or events still pending. `pending=0` alone is not enough: a
+backlog can clear during the settle window after the offered load stops.
 
 ## Running it
 
