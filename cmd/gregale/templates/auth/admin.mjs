@@ -164,13 +164,17 @@ export async function deleteUser({ pool, admin }, user) {
   return [200, { deleted: true, organizations_deleted: rowCount }]
 }
 
+// hasFactorSQL is true when the user has a verified second factor; recovery
+// codes only stand in for one.
+const hasFactorSQL = user => `EXISTS (SELECT 1 FROM auth.mfa_factors f WHERE f.user_id = ${user} AND f.status = 'verified' AND f.factor_type::text <> 'recovery_code')`
+
 // deleteOwnAccount lets a signed-in person delete themselves (AUTH_SELF_DELETION).
 // Their session must be recent and, if they have a second factor, have
 // passed it; an anonymous user cannot sign in again, so only holds the
 // session. claims come from a token GoTrue verified.
 export async function deleteOwnAccount({ pool, admin }, claims) {
   const { rows: [session] } = await pool.query(`SELECT u.is_anonymous OR (s.created_at > now() - make_interval(secs => $3)
-      AND (s.aal = 'aal2' OR NOT EXISTS (SELECT 1 FROM auth.mfa_factors f WHERE f.user_id = u.id AND f.status = 'verified' AND f.factor_type::text <> 'recovery_code'))) AS allowed
+      AND (s.aal = 'aal2' OR NOT ${hasFactorSQL('u.id')})) AS allowed
     FROM auth.sessions s JOIN auth.users u ON u.id = s.user_id WHERE s.id = $2 AND s.user_id = $1`, [claims.sub, claims.session_id, limits.reauthenticationSeconds])
   if (!session) throw new HTTPError(401, 'not_authenticated')
   if (!session.allowed) throw new HTTPError(403, 'reauthentication_required')
@@ -325,7 +329,7 @@ export async function adminRoute({ pool, admin, external, emails = {}, impersona
   if (path === '/activity' && method === 'GET') return [200, await activity(query, url.searchParams)]
   if (path === '/orgs' && method === 'GET') {
     const { page, perPage, search } = pageParams(url.searchParams)
-    const rows = await query(`SELECT o.id, o.slug, o.name, o.created_at, (SELECT count(*)::int FROM gregale_auth.memberships m WHERE m.org_id = o.id) AS members, count(*) OVER ()::int AS total
+    const rows = await query(`SELECT o.id, o.slug, o.name, o.created_at, o.mfa_required, (SELECT count(*)::int FROM gregale_auth.memberships m WHERE m.org_id = o.id) AS members, count(*) OVER ()::int AS total
       FROM gregale_auth.organizations o WHERE $1 = '' OR o.slug ILIKE $2 ESCAPE '\\' OR o.name ILIKE $2 ESCAPE '\\'
       ORDER BY o.created_at DESC, o.id LIMIT $3 OFFSET $4`, [search, likePattern(search), perPage, (page - 1) * perPage])
     return [200, { organizations: rows.map(({ total, ...org }) => org), total: rows[0]?.total ?? 0, page, per_page: perPage }]
@@ -337,13 +341,26 @@ export async function adminRoute({ pool, admin, external, emails = {}, impersona
   }
   if (parts[0] === 'orgs' && parts.length === 2 && method === 'GET') {
     if (!uuid.test(parts[1])) throw new HTTPError(400, 'invalid_id')
-    const [org] = await query('SELECT id, slug, name, created_at FROM gregale_auth.organizations WHERE id = $1', [parts[1]])
+    const [org] = await query('SELECT id, slug, name, created_at, mfa_required FROM gregale_auth.organizations WHERE id = $1', [parts[1]])
     if (!org) throw new HTTPError(404, 'not_found')
-    const [members, invitations] = await Promise.all([
-      query('SELECT m.user_id, u.email, m.role, m.created_at FROM gregale_auth.memberships m JOIN auth.users u ON u.id = m.user_id WHERE m.org_id = $1 ORDER BY m.created_at LIMIT 500', [org.id]),
+    const [members, invitations, domains] = await Promise.all([
+      query(`SELECT m.user_id, u.email, m.role, m.created_at, ${hasFactorSQL('m.user_id')} AS mfa_enabled
+        FROM gregale_auth.memberships m JOIN auth.users u ON u.id = m.user_id WHERE m.org_id = $1 ORDER BY m.created_at LIMIT 500`, [org.id]),
       query('SELECT id, email, role, expires_at, created_at FROM gregale_auth.invitations WHERE org_id = $1 AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at > now() ORDER BY created_at DESC LIMIT 500', [org.id]),
+      // Its email domains, and whether people at each join (sql/0017).
+      query('SELECT domain, verified_at, join_mode, join_role FROM gregale_auth.org_domains WHERE org_id = $1 ORDER BY domain', [org.id]),
     ])
-    return [200, { organization: org, members, invitations }]
+    return [200, { organization: org, members, invitations, domains: domains.map(d => ({ domain: d.domain, verified: d.verified_at !== null, join: { mode: d.join_mode, role: d.join_role } })) }]
+  }
+  // The application's operator may change an organization's second-factor
+  // requirement (sql/0016) without being a member, for example to restore
+  // access after its owners lost their factors.
+  if (parts[0] === 'orgs' && parts.length === 2 && method === 'PATCH') {
+    if (!uuid.test(parts[1])) throw new HTTPError(400, 'invalid_id')
+    if (typeof body?.mfa_required !== 'boolean') throw new HTTPError(400, 'invalid_mfa_required')
+    const [org] = await query('UPDATE gregale_auth.organizations SET mfa_required = $2 WHERE id = $1 RETURNING id, slug, name, created_at, mfa_required', [parts[1], body.mfa_required])
+    if (!org) throw new HTTPError(404, 'not_found')
+    return [200, { organization: org }]
   }
   throw new HTTPError(404, 'not_found')
 }

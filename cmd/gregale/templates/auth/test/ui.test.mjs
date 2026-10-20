@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { once } from 'node:events'
-import { allowedRedirect, consentView, deviceName, errorMessage, fragmentParams, handoffURL, qrImage, secondFactors, tokenAAL, web3Message } from '../ui/app.js'
+import { allowedRedirect, consentView, deviceName, errorMessage, fragmentParams, handoffURL, joinedMessage, qrImage, secondFactors, tokenAAL, web3Message } from '../ui/app.js'
 import { createServer } from '../server.mjs'
 
 const site = 'https://shop.example.com'
@@ -119,6 +119,12 @@ test('the hosted pages write wallet messages the way GoTrue parses them', () => 
     'shop-auth.example wants you to sign in with your Ethereum account:\n0xabc\n\nSign in to Shop\n\nURI: https://shop-auth.example/ui/sign-in\nVersion: 1\nChain ID: 1\nNonce: n1\nIssued At: 2026-10-19T10:00:00.000Z')
   assert.equal(web3Message('solana', { ...fields, address: 'So1', statement: undefined }),
     'shop-auth.example wants you to sign in with your Solana account:\nSo1\n\nURI: https://shop-auth.example/ui/sign-in\nVersion: 1\nNonce: n1\nIssued At: 2026-10-19T10:00:00.000Z')
+})
+
+test('an accepted invitation says when the organization needs a second factor first', () => {
+  assert.equal(joinedMessage({ role: 'member' }, 'aal1'), 'You joined as member.')
+  assert.equal(joinedMessage({ role: 'member', mfa_required: true }, 'aal2'), 'You joined as member.')
+  assert.match(joinedMessage({ role: 'admin', mfa_required: true }, 'aal1'), /^You joined as admin\. This organization requires two-step verification/)
 })
 
 test('a sign-in asks for a verified second factor until the session is aal2', () => {

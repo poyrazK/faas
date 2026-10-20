@@ -12079,6 +12079,11 @@ const (
 	// AuthReauthenticationSeconds is how recent a sign-in must be for a
 	// user to delete their own account.
 	AuthReauthenticationSeconds = 600
+	// AuthSessionMinMinutes and AuthSessionMaxMinutes bound an Auth app's
+	// session limits (maximum age, idle timeout). GoTrue applies them when a
+	// session refreshes, so the floor sits above AuthAccessTokenTTLSeconds.
+	AuthSessionMinMinutes = 15
+	AuthSessionMaxMinutes = 365 * 24 * 60
 	// AuthEmailSubjectMaxChars and AuthEmailBodyMaxBytes bound one email
 	// template (`gregale auth emails set`).
 	AuthEmailSubjectMaxChars = 150
