@@ -10461,10 +10461,13 @@ func ValidateEdgeRuleMode(mode string) *Problem {
 }
 
 // EdgeRuleHitStatsResponse is one rule's match counts over a window (ADR-960).
+// Series (ADR-20261020105001, with ?series=true) is matched plus logged per hour, the
+// first value for the hour starting at the response's Since.
 type EdgeRuleHitStatsResponse struct {
-	RuleID  string `json:"rule_id"`
-	Matched int64  `json:"matched"`
-	Logged  int64  `json:"logged"`
+	RuleID  string  `json:"rule_id"`
+	Matched int64   `json:"matched"`
+	Logged  int64   `json:"logged"`
+	Series  []int64 `json:"series,omitempty"`
 }
 
 // EdgeRuleStatsResponse is GET /v1/apps/{slug}/edge-rules/stats.
