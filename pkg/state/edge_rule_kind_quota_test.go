@@ -1,5 +1,5 @@
 // adr: 201
-package state
+package state_test
 
 import (
 	"context"
@@ -7,44 +7,45 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
-func quotaFixture(t *testing.T, plan api.Plan) (*MemStore, Account, App, api.Limits) {
+func quotaFixture(t *testing.T, plan api.Plan) (*state.MemStore, state.Account, state.App, api.Limits) {
 	t.Helper()
-	m := NewMemStore()
+	m := state.NewMemStore()
 	ctx := context.Background()
 	acct, err := m.CreateAccount(ctx, string(plan)+"@example.com", plan)
 	if err != nil {
 		t.Fatalf("CreateAccount: %v", err)
 	}
-	app, err := m.CreateApp(ctx, App{AccountID: acct.ID, Slug: "quota-" + string(plan)})
+	app, err := m.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "quota-" + string(plan)})
 	if err != nil {
 		t.Fatalf("CreateApp: %v", err)
 	}
 	return m, acct, app, api.MustLimitsFor(plan)
 }
 
-func createKindRule(m *MemStore, acct Account, app App, kind EdgeRuleKind, limits api.Limits) error {
-	_, err := m.CreateEdgeRuleIfUnderQuota(context.Background(), CreateEdgeRuleParams{
+func createKindRule(m *state.MemStore, acct state.Account, app state.App, kind state.EdgeRuleKind, limits api.Limits) error {
+	_, err := m.CreateEdgeRuleIfUnderQuota(context.Background(), state.CreateEdgeRuleParams{
 		AccountID: acct.ID,
 		AppID:     app.ID,
 		MatchHost: "h.example",
 		Kind:      kind,
 		Enabled:   true,
-		Action:    EdgeRuleAction{Kind: kind},
+		Action:    state.EdgeRuleAction{Kind: kind},
 	}, limits)
 	return err
 }
 
 // The load-bearing case: Free's quota of 0 must DENY, not skip.
 func TestEdgeRuleKindQuota_FreeZeroDeniesRatherThanSkips(t *testing.T) {
-	for _, kind := range []EdgeRuleKind{EdgeRuleKindCache, EdgeRuleKindRetry, EdgeRuleKindCircuitBreaker} {
+	for _, kind := range []state.EdgeRuleKind{state.EdgeRuleKindCache, state.EdgeRuleKindRetry, state.EdgeRuleKindCircuitBreaker} {
 		m, acct, app, limits := quotaFixture(t, api.PlanFree)
 		err := createKindRule(m, acct, app, kind, limits)
 		if err == nil {
 			t.Fatalf("kind=%s: Free created a rule with a quota of 0; a zero quota must deny, not skip the check", kind)
 		}
-		var quotaErr *EdgeRuleQuotaError
+		var quotaErr *state.EdgeRuleQuotaError
 		if !errors.As(err, &quotaErr) {
 			t.Fatalf("kind=%s: err = %v, want *EdgeRuleQuotaError", kind, err)
 		}
@@ -60,15 +61,15 @@ func TestEdgeRuleKindQuota_FreeZeroDeniesRatherThanSkips(t *testing.T) {
 func TestEdgeRuleKindQuota_AllowsUpToPlanLimitThenDenies(t *testing.T) {
 	cases := []struct {
 		plan  api.Plan
-		kind  EdgeRuleKind
+		kind  state.EdgeRuleKind
 		limit int
 	}{
-		{api.PlanHobby, EdgeRuleKindCache, 1},
-		{api.PlanPro, EdgeRuleKindCache, 5},
-		{api.PlanHobby, EdgeRuleKindRetry, 3},
-		{api.PlanPro, EdgeRuleKindRetry, 10},
-		{api.PlanHobby, EdgeRuleKindCircuitBreaker, 3},
-		{api.PlanScale, EdgeRuleKindCircuitBreaker, 25},
+		{api.PlanHobby, state.EdgeRuleKindCache, 1},
+		{api.PlanPro, state.EdgeRuleKindCache, 5},
+		{api.PlanHobby, state.EdgeRuleKindRetry, 3},
+		{api.PlanPro, state.EdgeRuleKindRetry, 10},
+		{api.PlanHobby, state.EdgeRuleKindCircuitBreaker, 3},
+		{api.PlanScale, state.EdgeRuleKindCircuitBreaker, 25},
 	}
 	for _, tc := range cases {
 		m, acct, app, limits := quotaFixture(t, tc.plan)
@@ -81,7 +82,7 @@ func TestEdgeRuleKindQuota_AllowsUpToPlanLimitThenDenies(t *testing.T) {
 		if err == nil {
 			t.Fatalf("%s/%s: rule %d exceeded the quota of %d but was accepted", tc.plan, tc.kind, tc.limit+1, tc.limit)
 		}
-		var quotaErr *EdgeRuleQuotaError
+		var quotaErr *state.EdgeRuleQuotaError
 		if !errors.As(err, &quotaErr) {
 			t.Fatalf("%s/%s: err = %v, want *EdgeRuleQuotaError", tc.plan, tc.kind, err)
 		}
@@ -96,14 +97,14 @@ func TestEdgeRuleKindQuota_AllowsUpToPlanLimitThenDenies(t *testing.T) {
 func TestEdgeRuleKindQuota_KindsAreIndependent(t *testing.T) {
 	m, acct, app, limits := quotaFixture(t, api.PlanHobby)
 	for i := 0; i < limits.EdgeRulesRetryPerApp; i++ {
-		if err := createKindRule(m, acct, app, EdgeRuleKindRetry, limits); err != nil {
+		if err := createKindRule(m, acct, app, state.EdgeRuleKindRetry, limits); err != nil {
 			t.Fatalf("retry rule %d rejected: %v", i+1, err)
 		}
 	}
-	if err := createKindRule(m, acct, app, EdgeRuleKindRetry, limits); err == nil {
+	if err := createKindRule(m, acct, app, state.EdgeRuleKindRetry, limits); err == nil {
 		t.Fatal("retry quota was not enforced")
 	}
-	if err := createKindRule(m, acct, app, EdgeRuleKindCircuitBreaker, limits); err != nil {
+	if err := createKindRule(m, acct, app, state.EdgeRuleKindCircuitBreaker, limits); err != nil {
 		t.Fatalf("circuit_breaker rejected after retry was exhausted: %v — the two kinds must have independent budgets", err)
 	}
 }
@@ -112,17 +113,17 @@ func TestEdgeRuleKindQuota_KindsAreIndependent(t *testing.T) {
 // cannot alter behaviour for any pre-existing kind.
 func TestEdgeRuleKindQuota_LeavesOtherKindsAlone(t *testing.T) {
 	limits := api.MustLimitsFor(api.PlanFree)
-	for _, kind := range []EdgeRuleKind{
-		EdgeRuleKindRoute, EdgeRuleKindCORSA,
-		EdgeRuleKindThrottle, EdgeRuleKindBudget, EdgeRuleKindGeo,
+	for _, kind := range []state.EdgeRuleKind{
+		state.EdgeRuleKindRoute, state.EdgeRuleKindCORSA,
+		state.EdgeRuleKindThrottle, state.EdgeRuleKindBudget, state.EdgeRuleKindGeo,
 	} {
-		if _, governed := edgeRuleKindQuota(kind, limits); governed {
+		if _, governed := state.EdgeRuleKindQuota(kind, limits); governed {
 			t.Fatalf("kind=%s is unexpectedly governed by the closed-zero helper", kind)
 		}
-		if denied := edgeRuleKindQuotaDenied(kind, limits); denied != nil {
+		if denied := state.EdgeRuleKindQuotaDenied(kind, limits); denied != nil {
 			t.Fatalf("kind=%s was denied by the ADR-201 helper: %+v", kind, denied)
 		}
-		if exceeded := edgeRuleKindQuotaExceeded(kind, limits, 9999); exceeded != nil {
+		if exceeded := state.EdgeRuleKindQuotaExceeded(kind, limits, 9999); exceeded != nil {
 			t.Fatalf("kind=%s was rejected by the ADR-201 helper: %+v", kind, exceeded)
 		}
 	}

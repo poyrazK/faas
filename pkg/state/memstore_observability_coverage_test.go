@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -7,18 +7,19 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/publicstatus"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestMemStoreObjectUploadRoutesLifecycle(t *testing.T) {
 	ctx := context.Background()
-	m := NewMemStore()
+	m := state.NewMemStore()
 	createdAt := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
 
-	if _, err := m.UpsertObjectUploadRoute(ctx, ObjectUploadRoute{AccountID: "acct", AppID: "app", Name: "invalid"}); !errors.Is(err, ErrConflict) {
+	if _, err := m.UpsertObjectUploadRoute(ctx, state.ObjectUploadRoute{AccountID: "acct", AppID: "app", Name: "invalid"}); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("invalid route error = %v, want conflict", err)
 	}
 
-	zRoute := ObjectUploadRoute{
+	zRoute := state.ObjectUploadRoute{
 		ID: "route-z", AccountID: "acct", AppID: "app", Name: "z-route", BucketID: "bucket-z",
 		KeyPrefix: "uploads/", MaxBytes: 1024, AllowedContentTypes: []string{"image/png"}, Enabled: true,
 	}
@@ -30,16 +31,16 @@ func TestMemStoreObjectUploadRoutesLifecycle(t *testing.T) {
 		t.Fatalf("route timestamps = %+v", gotZ)
 	}
 
-	aRoute := ObjectUploadRoute{
+	aRoute := state.ObjectUploadRoute{
 		ID: "route-a", AccountID: "acct", AppID: "app", Name: "a-route", BucketID: "bucket-a",
 		MaxBytes: 2048, AllowedContentTypes: []string{"text/plain"}, CreatedAt: createdAt,
 	}
 	if _, err := m.UpsertObjectUploadRoute(ctx, aRoute); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.UpsertObjectUploadRoute(ctx, ObjectUploadRoute{
+	if _, err := m.UpsertObjectUploadRoute(ctx, state.ObjectUploadRoute{
 		ID: "route-other", AccountID: "acct", AppID: "app", Name: "a-route", BucketID: "bucket-other", MaxBytes: 1,
-	}); !errors.Is(err, ErrConflict) {
+	}); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("duplicate route error = %v, want conflict", err)
 	}
 
@@ -52,11 +53,11 @@ func TestMemStoreObjectUploadRoutesLifecycle(t *testing.T) {
 	if err != nil || fetched.AllowedContentTypes[0] != "image/png" {
 		t.Fatalf("route was not defensively copied: %+v, err=%v", fetched, err)
 	}
-	if _, err := m.GetObjectUploadRoute(ctx, "other", "app", "z-route"); !errors.Is(err, ErrNotFound) {
+	if _, err := m.GetObjectUploadRoute(ctx, "other", "app", "z-route"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("wrong-account lookup error = %v, want not found", err)
 	}
 
-	updated, err := m.UpsertObjectUploadRoute(ctx, ObjectUploadRoute{
+	updated, err := m.UpsertObjectUploadRoute(ctx, state.ObjectUploadRoute{
 		ID: "route-z", AccountID: "acct", AppID: "app", Name: "z-route", BucketID: "bucket-z",
 		MaxBytes: 4096, AllowedContentTypes: []string{"image/jpeg"}, CreatedAt: time.Unix(1, 0),
 	})
@@ -64,11 +65,11 @@ func TestMemStoreObjectUploadRoutesLifecycle(t *testing.T) {
 		t.Fatalf("updated route = %+v, err=%v", updated, err)
 	}
 
-	completion, err := m.RecordObjectUploadCompletion(ctx, ObjectUploadCompletion{RouteID: "route-z", Key: "uploads/file", Bytes: 3})
-	if !errors.Is(err, ErrConflict) || completion.ID != "" {
+	completion, err := m.RecordObjectUploadCompletion(ctx, state.ObjectUploadCompletion{RouteID: "route-z", Key: "uploads/file", Bytes: 3})
+	if !errors.Is(err, state.ErrConflict) || completion.ID != "" {
 		t.Fatalf("invalid completion = %+v, err=%v", completion, err)
 	}
-	completion, err = m.RecordObjectUploadCompletion(ctx, ObjectUploadCompletion{ID: "completion-1", RouteID: "route-z", Key: "uploads/file", Bytes: 3})
+	completion, err = m.RecordObjectUploadCompletion(ctx, state.ObjectUploadCompletion{ID: "completion-1", RouteID: "route-z", Key: "uploads/file", Bytes: 3})
 	if err != nil || completion.CreatedAt.IsZero() {
 		t.Fatalf("completion = %+v, err=%v", completion, err)
 	}
@@ -76,13 +77,13 @@ func TestMemStoreObjectUploadRoutesLifecycle(t *testing.T) {
 	if err := m.DeleteObjectUploadRoute(ctx, "acct", "app", "z-route"); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.DeleteObjectUploadRoute(ctx, "acct", "app", "z-route"); !errors.Is(err, ErrNotFound) {
+	if err := m.DeleteObjectUploadRoute(ctx, "acct", "app", "z-route"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("repeat delete error = %v, want not found", err)
 	}
 }
 
 func TestMemStoreStatusHistoryRollupsAndIncidentWindow(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	ctx := context.Background()
 	day1 := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	day2 := day1.AddDate(0, 0, 1)
@@ -105,7 +106,7 @@ func TestMemStoreStatusHistoryRollupsAndIncidentWindow(t *testing.T) {
 	}
 
 	resolved := day1.Add(4 * time.Hour)
-	m.statusIncidents = []StatusIncident{
+	(*m.StatusIncidents()) = []state.StatusIncident{
 		{ID: 1, Message: "old resolved", PostedAt: day1.Add(-2 * time.Hour), ResolvedAt: &resolved},
 		{ID: 2, Message: "old open", PostedAt: day1.Add(-2 * time.Hour)},
 		{ID: 3, Message: "recent", PostedAt: day2.Add(time.Hour)},

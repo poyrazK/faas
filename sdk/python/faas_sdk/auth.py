@@ -110,6 +110,9 @@ class Claims:
     # The session's active organization when the Auth app has organization
     # claims on; a changed membership shows at the next token.
     organization: Organization | None = None
+    # Set while the app's support staff use the session as the user
+    # (impersonation): who opened it, such as "admin:0A1B2C3D".
+    actor: str | None = None
     app_metadata: Mapping[str, Any] = field(default_factory=dict)
     user_metadata: Mapping[str, Any] = field(default_factory=dict)
     raw: Mapping[str, Any] = field(default_factory=dict)
@@ -166,6 +169,12 @@ def _json_segment(segment: str) -> dict[str, Any]:
 
 def _number(value: Any) -> float | None:
     return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+
+def _actor(payload: Mapping[str, Any]) -> str | None:
+    act = payload.get("act")
+    sub = act.get("sub") if isinstance(act, dict) else None
+    return sub if isinstance(sub, str) and sub else None
 
 
 def _organization(payload: Mapping[str, Any]) -> Organization | None:
@@ -377,6 +386,7 @@ class AuthClient:
             client_id=text("client_id"),
             scopes=tuple((text("scope") or "").split()),
             organization=_organization(payload),
+            actor=_actor(payload),
             app_metadata=mapping("app_metadata"),
             user_metadata=mapping("user_metadata"),
             raw=payload,

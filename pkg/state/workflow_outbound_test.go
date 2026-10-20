@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -6,27 +6,28 @@ import (
 	"errors"
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 	"testing"
 	"time"
 )
 
 func TestWorkflowOutboundPublicationAndAttemptFencing(t *testing.T) {
-	workflowOutboundRecoveryStores(t, func(t *testing.T, store Store, recoverRun func(string)) {
+	workflowOutboundRecoveryStores(t, func(t *testing.T, store state.Store, recoverRun func(string)) {
 		ctx := context.Background()
-		app, _ := seedWorkflowSchedule(t, store, "allow")
-		bindingStore := store.(OutboundBindingStore)
-		offer := memCustomerOutboundOffer(app.AccountID, "crm")
+		app, _ := state.SeedWorkflowSchedule(t, store, "allow")
+		bindingStore := store.(state.OutboundBindingStore)
+		offer := state.MemCustomerOutboundOffer(app.AccountID, "crm")
 		if _, err := bindingStore.CreateOutboundIntegration(ctx, offer); err != nil {
 			t.Fatal(err)
 		}
 		spec := api.WorkflowSpec{Name: "crm", Steps: []api.WorkflowStepSpec{{Name: "send", Outbound: &api.WorkflowOutboundSpec{IntegrationID: offer.ID, Method: "POST", Path: "/v1/contacts/{{input.contact_id}}", Query: map[string]string{"source": "automation"}, IdempotencySupported: true}, Retry: &api.WorkflowRetrySpec{MaxAttempts: 3}}}}
 		definition, _ := json.Marshal(spec)
-		author := store.(AutomationStore)
-		draft, err := author.MutateAutomation(ctx, app.ID, spec.Name, AutomationMutation{Action: "save", Draft: definition})
+		author := store.(state.AutomationStore)
+		draft, err := author.MutateAutomation(ctx, app.ID, spec.Name, state.AutomationMutation{Action: "save", Draft: definition})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := author.MutateAutomation(ctx, app.ID, spec.Name, AutomationMutation{Action: "publish", ExpectedVersion: draft.Version}); !errors.Is(err, ErrAutomationInvalid) {
+		if _, err := author.MutateAutomation(ctx, app.ID, spec.Name, state.AutomationMutation{Action: "publish", ExpectedVersion: draft.Version}); !errors.Is(err, state.ErrAutomationInvalid) {
 			t.Fatalf("published unbound integration: %v", err)
 		}
 		if err := bindingStore.SetOutboundCredential(ctx, app.AccountID, offer.ID, []byte("sealed-placeholder")); err != nil {
@@ -35,13 +36,13 @@ func TestWorkflowOutboundPublicationAndAttemptFencing(t *testing.T) {
 		if _, err := bindingStore.BindOutboundIntegration(ctx, app.AccountID, app.ID, offer.ID); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := author.MutateAutomation(ctx, app.ID, spec.Name, AutomationMutation{Action: "publish", ExpectedVersion: draft.Version}); err != nil {
+		if _, err := author.MutateAutomation(ctx, app.ID, spec.Name, state.AutomationMutation{Action: "publish", ExpectedVersion: draft.Version}); err != nil {
 			t.Fatal(err)
 		}
 		if err := bindingStore.UpdateOutboundBindingPolicy(ctx, app.AccountID, app.ID, offer.ID, []string{"POST"}, []string{"/v1/other"}); err != nil {
 			t.Fatal(err)
 		}
-		if err := store.(WorkflowOutboundStore).ValidateWorkflowOutboundBindings(ctx, app.ID, spec); !errors.Is(err, ErrAutomationInvalid) {
+		if err := store.(state.WorkflowOutboundStore).ValidateWorkflowOutboundBindings(ctx, app.ID, spec); !errors.Is(err, state.ErrAutomationInvalid) {
 			t.Fatalf("ignored narrowed route: %v", err)
 		}
 		if err := bindingStore.UpdateOutboundBindingPolicy(ctx, app.AccountID, app.ID, offer.ID, []string{"POST"}, []string{"/v1/x"}); err != nil {
@@ -52,17 +53,17 @@ func TestWorkflowOutboundPublicationAndAttemptFencing(t *testing.T) {
 		unprovenOutbound := *spec.Steps[0].Outbound
 		unprovenOutbound.Path = "/v1/{{input.contact_id}}/history"
 		unproven.Steps[0].Outbound = &unprovenOutbound
-		if err := store.(WorkflowOutboundStore).ValidateWorkflowOutboundBindings(ctx, app.ID, unproven); !errors.Is(err, ErrAutomationInvalid) {
+		if err := store.(state.WorkflowOutboundStore).ValidateWorkflowOutboundBindings(ctx, app.ID, unproven); !errors.Is(err, state.ErrAutomationInvalid) {
 			t.Fatalf("placeholder sample incorrectly satisfied a narrower route prefix: %v", err)
 		}
 		if err := bindingStore.UpdateOutboundBindingPolicy(ctx, app.AccountID, app.ID, offer.ID, []string{"POST"}, []string{"/v1/contacts"}); err != nil {
 			t.Fatal(err)
 		}
-		run := &WorkflowRun{AppID: app.ID, WorkflowName: spec.Name, DefinitionSnapshot: definition}
+		run := &state.WorkflowRun{AppID: app.ID, WorkflowName: spec.Name, DefinitionSnapshot: definition}
 		if err := store.CreateWorkflowRun(ctx, run); err != nil {
 			t.Fatal(err)
 		}
-		if err := store.CreateWorkflowSteps(ctx, run.ID, []*WorkflowStep{{StepName: "send"}}); err != nil {
+		if err := store.CreateWorkflowSteps(ctx, run.ID, []*state.WorkflowStep{{StepName: "send"}}); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := store.ClaimNextDueWorkflowRun(ctx); err != nil {
@@ -71,7 +72,7 @@ func TestWorkflowOutboundPublicationAndAttemptFencing(t *testing.T) {
 		if _, err := store.StartWorkflowStep(ctx, run.ID, "send", 1, json.RawMessage(`{"id":1}`)); err != nil {
 			t.Fatal(err)
 		}
-		outboundStore := store.(WorkflowOutboundStore)
+		outboundStore := store.(state.WorkflowOutboundStore)
 		first, err := outboundStore.GetWorkflowOutboundAttempt(ctx, run.ID, "send", 1)
 		if err != nil {
 			t.Fatal(err)
@@ -85,14 +86,14 @@ func TestWorkflowOutboundPublicationAndAttemptFencing(t *testing.T) {
 		// Expire the private lease, then recover with a new attempt and token.
 		recoverRun(run.ID)
 		attempts, err := store.GetWorkflowStepAttempts(ctx, run.ID, "send")
-		if err != nil || len(attempts) != 1 || attempts[0].Status != WorkflowAttemptStatusFailed {
+		if err != nil || len(attempts) != 1 || attempts[0].Status != state.WorkflowAttemptStatusFailed {
 			t.Fatalf("recovered attempt remains active: %#v %v", attempts, err)
 		}
 		steps, _ := store.GetWorkflowSteps(ctx, run.ID)
-		if steps[0].Attempt != 1 || steps[0].Status != WorkflowStepStatusPending {
+		if steps[0].Attempt != 1 || steps[0].Status != state.WorkflowStepStatusPending {
 			t.Fatalf("recovery reused outbound attempt: %+v", steps[0])
 		}
-		if _, err := store.StartWorkflowStep(ctx, run.ID, "send", 1, json.RawMessage(`{}`)); !errors.Is(err, ErrWorkflowOutboundAttemptExpired) {
+		if _, err := store.StartWorkflowStep(ctx, run.ID, "send", 1, json.RawMessage(`{}`)); !errors.Is(err, state.ErrWorkflowOutboundAttemptExpired) {
 			t.Fatalf("stale worker rolled back the attempt count: %v", err)
 		}
 		if _, err := store.StartWorkflowStep(ctx, run.ID, "send", 2, json.RawMessage(`{"id":1}`)); err != nil {
@@ -102,10 +103,10 @@ func TestWorkflowOutboundPublicationAndAttemptFencing(t *testing.T) {
 		if err != nil || second.Token == first.Token {
 			t.Fatalf("attempt token reused: %v", err)
 		}
-		if err := store.MarkWorkflowStepAttemptStatus(ctx, run.ID, "send", WorkflowStepStatusSucceeded, 1, nil, json.RawMessage(`{"stale":true}`), nil); !errors.Is(err, ErrWorkflowOutboundAttemptExpired) {
+		if err := store.MarkWorkflowStepAttemptStatus(ctx, run.ID, "send", state.WorkflowStepStatusSucceeded, 1, nil, json.RawMessage(`{"stale":true}`), nil); !errors.Is(err, state.ErrWorkflowOutboundAttemptExpired) {
 			t.Fatalf("stale completion overwrote current attempt: %v", err)
 		}
-		if err := store.ScheduleWorkflowStepRetryWithHTTPStatus(ctx, run.ID, "send", 1, time.Now().Add(time.Minute), nil, "stale retry"); !errors.Is(err, ErrWorkflowOutboundAttemptExpired) {
+		if err := store.ScheduleWorkflowStepRetryWithHTTPStatus(ctx, run.ID, "send", 1, time.Now().Add(time.Minute), nil, "stale retry"); !errors.Is(err, state.ErrWorkflowOutboundAttemptExpired) {
 			t.Fatalf("stale failure parked current attempt: %v", err)
 		}
 		if current, err := outboundStore.GetWorkflowOutboundAttempt(ctx, run.ID, "send", 2); err != nil || current.Token != second.Token {
@@ -117,35 +118,35 @@ func TestWorkflowOutboundPublicationAndAttemptFencing(t *testing.T) {
 		if _, err := outboundStore.GetWorkflowOutboundAttempt(ctx, run.ID, "send", 2); err == nil {
 			t.Fatal("cancelled attempt remained active")
 		}
-		if err := store.MarkWorkflowStepAttemptStatus(ctx, run.ID, "send", WorkflowStepStatusSucceeded, 2, nil, json.RawMessage(`{}`), nil); !errors.Is(err, ErrWorkflowOutboundAttemptExpired) {
+		if err := store.MarkWorkflowStepAttemptStatus(ctx, run.ID, "send", state.WorkflowStepStatusSucceeded, 2, nil, json.RawMessage(`{}`), nil); !errors.Is(err, state.ErrWorkflowOutboundAttemptExpired) {
 			t.Fatalf("cancelled completion changed the run: %v", err)
 		}
 		attempts, err = store.GetWorkflowStepAttempts(ctx, run.ID, "send")
-		if err != nil || len(attempts) != 2 || attempts[1].Status != WorkflowAttemptStatusFailed || attempts[1].FinishedAt == nil {
+		if err != nil || len(attempts) != 2 || attempts[1].Status != state.WorkflowAttemptStatusFailed || attempts[1].FinishedAt == nil {
 			t.Fatalf("cancelled attempt ledger remains running: %+v %v", attempts, err)
 		}
 	})
 }
 
 func TestPgWorkflowOutboundAttemptRejectsInt32OverflowBeforeQuery(t *testing.T) {
-	store := &PgStore{}
-	if _, err := store.GetWorkflowOutboundAttempt(context.Background(), "not-a-uuid", "send", 1<<31); !errors.Is(err, ErrInvalidArgument) {
+	store := &state.PgStore{}
+	if _, err := store.GetWorkflowOutboundAttempt(context.Background(), "not-a-uuid", "send", 1<<31); !errors.Is(err, state.ErrInvalidArgument) {
 		t.Fatalf("out-of-range attempt error = %v", err)
 	}
 }
 
 func TestTenantWorkflowOutboundAttemptRequiresActiveTenantLink(t *testing.T) {
-	workflowScheduleStores(t, func(t *testing.T, store Store) {
+	state.WorkflowScheduleStores(t, func(t *testing.T, store state.Store) {
 		ctx := context.Background()
 		account, err := store.CreateAccount(ctx, "tenant-outbound-"+uuid.NewString()+"@example.com", api.PlanHobby)
 		if err != nil {
 			t.Fatal(err)
 		}
-		app, err := store.CreateApp(ctx, App{AccountID: account.ID, Slug: "tenant-outbound-" + uuid.NewString(), Type: AppTypeApp, RAMMB: 256, PlatformTenantRequired: true})
+		app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "tenant-outbound-" + uuid.NewString(), Type: state.AppTypeApp, RAMMB: 256, PlatformTenantRequired: true})
 		if err != nil {
 			t.Fatal(err)
 		}
-		tenants := store.(PlatformTenantStore)
+		tenants := store.(state.PlatformTenantStore)
 		tenant, _, err := tenants.CreatePlatformTenant(ctx, account.ID, "customer-"+uuid.NewString(), "Customer", 10)
 		if err != nil {
 			t.Fatal(err)
@@ -162,11 +163,11 @@ func TestTenantWorkflowOutboundAttemptRequiresActiveTenantLink(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		run := &WorkflowRun{AppID: app.ID, PlatformTenantID: tenant.ID, WorkflowName: spec.Name, DefinitionSnapshot: snapshot}
+		run := &state.WorkflowRun{AppID: app.ID, PlatformTenantID: tenant.ID, WorkflowName: spec.Name, DefinitionSnapshot: snapshot}
 		if err := store.CreateWorkflowRun(ctx, run); err != nil {
 			t.Fatal(err)
 		}
-		if err := store.CreateWorkflowSteps(ctx, run.ID, []*WorkflowStep{{StepName: "send"}}); err != nil {
+		if err := store.CreateWorkflowSteps(ctx, run.ID, []*state.WorkflowStep{{StepName: "send"}}); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := store.ClaimNextDueWorkflowRun(ctx); err != nil {
@@ -175,18 +176,18 @@ func TestTenantWorkflowOutboundAttemptRequiresActiveTenantLink(t *testing.T) {
 		if _, err := store.StartWorkflowStep(ctx, run.ID, "send", 1, json.RawMessage(`{"id":1}`)); err != nil {
 			t.Fatal(err)
 		}
-		outboundStore := store.(WorkflowOutboundStore)
+		outboundStore := store.(state.WorkflowOutboundStore)
 		lease, err := outboundStore.GetWorkflowOutboundAttempt(ctx, run.ID, "send", 1)
 		if err != nil || lease.PlatformTenantID != tenant.ID {
 			t.Fatalf("tenant outbound lease=%+v err=%v", lease, err)
 		}
-		if _, err := tenants.SetPlatformTenantStatus(ctx, account.ID, tenant.ID, PlatformTenantSuspended); err != nil {
+		if _, err := tenants.SetPlatformTenantStatus(ctx, account.ID, tenant.ID, state.PlatformTenantSuspended); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := outboundStore.GetWorkflowOutboundAttempt(ctx, run.ID, "send", 1); err == nil {
 			t.Fatal("suspended tenant retained an outbound attempt")
 		}
-		if _, err := tenants.SetPlatformTenantStatus(ctx, account.ID, tenant.ID, PlatformTenantActive); err != nil {
+		if _, err := tenants.SetPlatformTenantStatus(ctx, account.ID, tenant.ID, state.PlatformTenantActive); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := store.RevokeAPIConsumer(ctx, account.ID, consumer.ID); err != nil {
@@ -198,31 +199,31 @@ func TestTenantWorkflowOutboundAttemptRequiresActiveTenantLink(t *testing.T) {
 	})
 }
 
-func expireOutboundLease(t *testing.T, store Store, runID string) {
+func expireOutboundLease(t *testing.T, store state.Store, runID string) {
 	t.Helper()
 	switch store := store.(type) {
-	case *MemStore:
-		store.mu.Lock()
-		store.workflowRunLeases[runID] = time.Now().Add(-time.Minute)
-		store.mu.Unlock()
-	case *PgStore:
-		if _, err := store.pool.Exec(context.Background(), `UPDATE workflow_runs SET lease_until=now()-interval '1 minute' WHERE id=$1`, runID); err != nil {
+	case *state.MemStore:
+		(*store.Mu()).Lock()
+		(*store.WorkflowRunLeases())[runID] = time.Now().Add(-time.Minute)
+		(*store.Mu()).Unlock()
+	case *state.PgStore:
+		if _, err := (*store.Pool()).Exec(context.Background(), `UPDATE workflow_runs SET lease_until=now()-interval '1 minute' WHERE id=$1`, runID); err != nil {
 			t.Fatal(err)
 		}
 	}
 }
 
 func TestWorkflowOutboundUnknownMutationIsNotRepeated(t *testing.T) {
-	workflowOutboundRecoveryStores(t, func(t *testing.T, store Store, recoverRun func(string)) {
+	workflowOutboundRecoveryStores(t, func(t *testing.T, store state.Store, recoverRun func(string)) {
 		ctx := context.Background()
-		app, _ := seedWorkflowSchedule(t, store, "allow")
+		app, _ := state.SeedWorkflowSchedule(t, store, "allow")
 		spec := api.WorkflowSpec{Name: "unsafe", Steps: []api.WorkflowStepSpec{{Name: "send", Outbound: &api.WorkflowOutboundSpec{IntegrationID: "00000000-0000-0000-0000-000000000001", Method: "POST", Path: "/send"}}}}
 		snapshot, _ := json.Marshal(spec)
-		run := &WorkflowRun{AppID: app.ID, WorkflowName: spec.Name, DefinitionSnapshot: snapshot}
+		run := &state.WorkflowRun{AppID: app.ID, WorkflowName: spec.Name, DefinitionSnapshot: snapshot}
 		if err := store.CreateWorkflowRun(ctx, run); err != nil {
 			t.Fatal(err)
 		}
-		if err := store.CreateWorkflowSteps(ctx, run.ID, []*WorkflowStep{{StepName: "send"}}); err != nil {
+		if err := store.CreateWorkflowSteps(ctx, run.ID, []*state.WorkflowStep{{StepName: "send"}}); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := store.ClaimNextDueWorkflowRun(ctx); err != nil {
@@ -233,17 +234,17 @@ func TestWorkflowOutboundUnknownMutationIsNotRepeated(t *testing.T) {
 		}
 		recoverRun(run.ID)
 		steps, err := store.GetWorkflowSteps(ctx, run.ID)
-		if err != nil || steps[0].Status != WorkflowStepStatusDead || steps[0].Error == nil {
+		if err != nil || steps[0].Status != state.WorkflowStepStatusDead || steps[0].Error == nil {
 			t.Fatalf("unsafe mutation retried: %#v %v", steps, err)
 		}
 		attempts, err := store.GetWorkflowStepAttempts(ctx, run.ID, "send")
-		if err != nil || len(attempts) != 1 || attempts[0].Status != WorkflowAttemptStatusFailed {
+		if err != nil || len(attempts) != 1 || attempts[0].Status != state.WorkflowAttemptStatusFailed {
 			t.Fatalf("uncertain attempt ledger: %#v %v", attempts, err)
 		}
 	})
 }
 
-func workflowOutboundRecoveryStores(t *testing.T, check func(*testing.T, Store, func(string))) {
+func workflowOutboundRecoveryStores(t *testing.T, check func(*testing.T, state.Store, func(string))) {
 	t.Helper()
 	for _, explicit := range []bool{false, true} {
 		name := "lease expiry"
@@ -251,7 +252,7 @@ func workflowOutboundRecoveryStores(t *testing.T, check func(*testing.T, Store, 
 			name = "explicit recovery"
 		}
 		t.Run(name, func(t *testing.T) {
-			workflowScheduleStores(t, func(t *testing.T, store Store) {
+			state.WorkflowScheduleStores(t, func(t *testing.T, store state.Store) {
 				check(t, store, func(runID string) {
 					t.Helper()
 					if explicit {

@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"errors"
@@ -6,22 +6,23 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestOperatorAlertCollectionHistoryMemoryBoundAndLegacy(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Microsecond)
-	store := NewMemStore()
-	store.operatorAlertCollection = OperatorAlertCollection{LastAttemptAt: now, LastSuccessAt: now}
-	f := OperatorAlertCollectionHistoryFilter{Since: now.Add(-time.Hour), Now: now}
+	store := state.NewMemStore()
+	(*store.OperatorAlertCollection()) = state.OperatorAlertCollection{LastAttemptAt: now, LastSuccessAt: now}
+	f := state.OperatorAlertCollectionHistoryFilter{Since: now.Add(-time.Hour), Now: now}
 	legacy, err := store.OperatorAlertCollectionHistory(t.Context(), f)
 	if err != nil || len(legacy.Outcomes) != 0 || !legacy.Collection.LastSuccessAt.Equal(now) {
 		t.Fatalf("legacy evidence invented: %+v %v", legacy, err)
 	}
 	for i := api.ObsAlertCollectionHistoryOutcomesMax; i >= 0; i-- {
-		store.operatorAlertCollectionOutcomes = append(store.operatorAlertCollectionOutcomes, OperatorAlertCollectionOutcome{AttemptedAt: now.Add(-time.Duration(i) * time.Microsecond), Outcome: "success"})
+		(*store.OperatorAlertCollectionOutcomes()) = append((*store.OperatorAlertCollectionOutcomes()), state.OperatorAlertCollectionOutcome{AttemptedAt: now.Add(-time.Duration(i) * time.Microsecond), Outcome: "success"})
 	}
 	_, err = store.OperatorAlertCollectionHistory(t.Context(), f)
-	var bound *OperatorAlertCollectionHistoryLimitError
+	var bound *state.OperatorAlertCollectionHistoryLimitError
 	if !errors.As(err, &bound) {
 		t.Fatalf("partial memory read: %v", err)
 	}
@@ -34,7 +35,7 @@ func TestOperatorAlertCollectionHistoryMemoryBoundAndLegacy(t *testing.T) {
 	if _, err := store.PruneOperatorAlertHistory(t.Context(), now.Add(time.Second), 1); err != nil {
 		t.Fatal(err)
 	}
-	if len(store.operatorAlertCollectionOutcomes) != api.ObsAlertCollectionHistoryOutcomesMax+1-api.ObsAlertCollectionHistoryPruneBatch {
+	if len((*store.OperatorAlertCollectionOutcomes())) != api.ObsAlertCollectionHistoryOutcomesMax+1-api.ObsAlertCollectionHistoryPruneBatch {
 		t.Fatal("prune batch not bounded")
 	}
 }

@@ -1,10 +1,11 @@
-package state
+package state_test
 
 import (
 	"context"
 	"reflect"
 	"testing"
 
+	"github.com/onebox-faas/faas/pkg/state"
 	"net/netip"
 )
 
@@ -29,12 +30,12 @@ import (
 // test.go pins the column shape + CHECK.
 func TestUpdateApp_WithEgressAllowlist(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
+	store := state.NewMemStore()
 	acct, err := store.CreateAccount(ctx, "alice@example.com", "free")
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, err := store.CreateApp(ctx, App{AccountID: acct.ID, Slug: "api"})
+	app, err := store.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "api"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +53,7 @@ func TestUpdateApp_WithEgressAllowlist(t *testing.T) {
 		netip.MustParsePrefix("8.8.8.0/24"),
 		netip.MustParsePrefix("9.9.9.0/24"),
 	}
-	updated, err := store.UpdateApp(ctx, app.ID, UpdateAppParams{
+	updated, err := store.UpdateApp(ctx, app.ID, state.UpdateAppParams{
 		EgressAllowlist:    &three,
 		SetEgressAllowlist: true,
 	})
@@ -73,7 +74,7 @@ func TestUpdateApp_WithEgressAllowlist(t *testing.T) {
 	}
 
 	// PATCH with unset (no SetEgressAllowlist) — column stays at 3.
-	updated, err = store.UpdateApp(ctx, app.ID, UpdateAppParams{})
+	updated, err = store.UpdateApp(ctx, app.ID, state.UpdateAppParams{})
 	if err != nil {
 		t.Fatalf("unset update: %v", err)
 	}
@@ -85,7 +86,7 @@ func TestUpdateApp_WithEgressAllowlist(t *testing.T) {
 	// accept contract). An empty slice is a deliberate "clear",
 	// not a no-op.
 	empty := []netip.Prefix{}
-	updated, err = store.UpdateApp(ctx, app.ID, UpdateAppParams{
+	updated, err = store.UpdateApp(ctx, app.ID, state.UpdateAppParams{
 		EgressAllowlist:    &empty,
 		SetEgressAllowlist: true,
 	})
@@ -105,12 +106,12 @@ func TestUpdateApp_WithEgressAllowlist(t *testing.T) {
 // double for code paths that don't care about the family split.
 func TestUpdateApp_WithEgressAllowlistV6(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
+	store := state.NewMemStore()
 	acct, err := store.CreateAccount(ctx, "alice@example.com", "free")
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, err := store.CreateApp(ctx, App{AccountID: acct.ID, Slug: "v6"})
+	app, err := store.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "v6"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,7 +120,7 @@ func TestUpdateApp_WithEgressAllowlistV6(t *testing.T) {
 		netip.MustParsePrefix("fe80::/10"),
 		netip.MustParsePrefix("2001:db8::/32"),
 	}
-	updated, err := store.UpdateApp(ctx, app.ID, UpdateAppParams{
+	updated, err := store.UpdateApp(ctx, app.ID, state.UpdateAppParams{
 		EgressAllowlist:    &v6list,
 		SetEgressAllowlist: true,
 	})
@@ -143,12 +144,12 @@ func TestUpdateApp_WithEgressAllowlistV6(t *testing.T) {
 // at emit time; the store cares about neither.
 func TestUpdateApp_WithEgressAllowlistMixed(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
+	store := state.NewMemStore()
 	acct, err := store.CreateAccount(ctx, "alice@example.com", "free")
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, err := store.CreateApp(ctx, App{AccountID: acct.ID, Slug: "mix"})
+	app, err := store.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "mix"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,7 +159,7 @@ func TestUpdateApp_WithEgressAllowlistMixed(t *testing.T) {
 		netip.MustParsePrefix("8.8.8.0/24"),
 		netip.MustParsePrefix("2001:db8::/32"),
 	}
-	updated, err := store.UpdateApp(ctx, app.ID, UpdateAppParams{
+	updated, err := store.UpdateApp(ctx, app.ID, state.UpdateAppParams{
 		EgressAllowlist:    &mixed,
 		SetEgressAllowlist: true,
 	})

@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -8,21 +8,22 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestMemStoreCanaryProgressionIsAtomic(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
+	store := state.NewMemStore()
 	account, err := store.CreateAccount(ctx, "canary-atomic@example.com", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, err := store.CreateApp(ctx, App{AccountID: account.ID, Slug: "canary-atomic"})
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "canary-atomic"})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	prior, err := store.CreateDeployment(ctx, Deployment{AppID: app.ID, ImageDigest: "sha256:prior"})
+	prior, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, ImageDigest: "sha256:prior"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,7 +37,7 @@ func TestMemStoreCanaryProgressionIsAtomic(t *testing.T) {
 	if prior.RolloutState != "complete" || prior.RolloutCompletedAt == nil {
 		t.Fatalf("stable deployment rollout = state:%q completed_at:%v; want complete with terminal timestamp", prior.RolloutState, prior.RolloutCompletedAt)
 	}
-	canary, err := store.CreateDeployment(ctx, Deployment{
+	canary, err := store.CreateDeployment(ctx, state.Deployment{
 		AppID:            app.ID,
 		ImageDigest:      "sha256:canary",
 		CanaryPreset:     "balanced",
@@ -48,29 +49,29 @@ func TestMemStoreCanaryProgressionIsAtomic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, err := store.DeploymentByID(ctx, prior.ID); err != nil || got.Status != DeployLive {
+	if got, err := store.DeploymentByID(ctx, prior.ID); err != nil || got.Status != state.DeployLive {
 		t.Fatalf("prior after canary create = %+v, %v; want live residual", got, err)
 	}
 	if err := store.MarkDeploymentLive(ctx, canary.ID); err != nil {
 		t.Fatal(err)
 	}
 
-	advance := func(expected, percent int) Deployment {
+	advance := func(expected, percent int) state.Deployment {
 		t.Helper()
-		got, _, err := store.AdvanceCanary(ctx, canary.ID, CanaryAdvanceParams{
+		got, _, err := store.AdvanceCanary(ctx, canary.ID, state.CanaryAdvanceParams{
 			ExpectedStep:            expected,
 			TrafficPercent:          percent,
 			RequireSafeReleaseLease: true,
-			Audit:                   DeploymentAudit{Kind: DeployTrafficChanged, Actor: "test"},
+			Audit:                   state.DeploymentAudit{Kind: state.DeployTrafficChanged, Actor: "test"},
 		})
 		if err != nil {
 			t.Fatalf("AdvanceCanary(%d, %d): %v", expected, percent, err)
 		}
 		return got
 	}
-	if _, _, err := store.AdvanceCanary(ctx, canary.ID, CanaryAdvanceParams{
+	if _, _, err := store.AdvanceCanary(ctx, canary.ID, state.CanaryAdvanceParams{
 		ExpectedStep: 0, TrafficPercent: 10, RequireSafeReleaseLease: true,
-	}); !errors.Is(err, ErrSafeReleaseLeaseUnavailable) || !errors.Is(err, ErrSafeReleaseLeaseMissing) {
+	}); !errors.Is(err, state.ErrSafeReleaseLeaseUnavailable) || !errors.Is(err, state.ErrSafeReleaseLeaseMissing) {
 		t.Fatalf("advance without worker lease = %v, want unavailable/missing", err)
 	}
 	unchanged, err := store.DeploymentByID(ctx, canary.ID)
@@ -93,11 +94,11 @@ func TestMemStoreCanaryProgressionIsAtomic(t *testing.T) {
 		t.Errorf("prior traffic after first advance = %d, want 90", prior.TrafficPercent)
 	}
 
-	if _, _, err := store.AdvanceCanary(ctx, canary.ID, CanaryAdvanceParams{
+	if _, _, err := store.AdvanceCanary(ctx, canary.ID, state.CanaryAdvanceParams{
 		ExpectedStep:   0,
 		TrafficPercent: 10,
-		Audit:          DeploymentAudit{Kind: DeployTrafficChanged, Actor: "stale"},
-	}); !errors.Is(err, ErrCanaryStepConflict) {
+		Audit:          state.DeploymentAudit{Kind: state.DeployTrafficChanged, Actor: "stale"},
+	}); !errors.Is(err, state.ErrCanaryStepConflict) {
 		t.Fatalf("stale advance error = %v, want ErrCanaryStepConflict", err)
 	}
 	unchanged, err = store.DeploymentByID(ctx, canary.ID)
@@ -107,12 +108,12 @@ func TestMemStoreCanaryProgressionIsAtomic(t *testing.T) {
 	if unchanged.CanaryStep != 1 || unchanged.TrafficPercent != 10 {
 		t.Fatalf("stale advance mutated deployment = %+v", unchanged)
 	}
-	store.mu.Lock()
-	store.safeReleaseWorkerLeaseUntil = time.Now().Add(-time.Second)
-	store.mu.Unlock()
-	if _, _, err := store.AdvanceCanary(ctx, canary.ID, CanaryAdvanceParams{
+	(*store.Mu()).Lock()
+	(*store.SafeReleaseWorkerLeaseUntil()) = time.Now().Add(-time.Second)
+	(*store.Mu()).Unlock()
+	if _, _, err := store.AdvanceCanary(ctx, canary.ID, state.CanaryAdvanceParams{
 		ExpectedStep: 1, TrafficPercent: 50, RequireSafeReleaseLease: true,
-	}); !errors.Is(err, ErrSafeReleaseLeaseUnavailable) {
+	}); !errors.Is(err, state.ErrSafeReleaseLeaseUnavailable) {
 		t.Fatalf("advance with expired worker lease = %v, want unavailable", err)
 	}
 	unchanged, err = store.DeploymentByID(ctx, canary.ID)
@@ -143,7 +144,7 @@ func TestMemStoreCanaryProgressionIsAtomic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if prior.Status != DeploySuperseded || prior.TrafficPercent != 0 {
+	if prior.Status != state.DeploySuperseded || prior.TrafficPercent != 0 {
 		t.Errorf("prior after terminal advance = %+v, want superseded/0", prior)
 	}
 	audit, err := store.ListDeploymentAudit(ctx, canary.ID, 10)
@@ -154,7 +155,7 @@ func TestMemStoreCanaryProgressionIsAtomic(t *testing.T) {
 		t.Fatalf("audit rows = %d, want 3; rows=%+v", len(audit), audit)
 	}
 	for _, row := range audit {
-		if row.DeploymentID != uuid.MustParse(canary.ID) || row.Kind != DeployTrafficChanged {
+		if row.DeploymentID != uuid.MustParse(canary.ID) || row.Kind != state.DeployTrafficChanged {
 			t.Errorf("audit row = %+v, want canary traffic change", row)
 		}
 	}
@@ -162,23 +163,23 @@ func TestMemStoreCanaryProgressionIsAtomic(t *testing.T) {
 
 func TestMemStoreAdvanceCanaryRequiresElapsedStageDuration(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
+	store := state.NewMemStore()
 	account, err := store.CreateAccount(ctx, "canary-dwell@example.com", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, err := store.CreateApp(ctx, App{AccountID: account.ID, Slug: "canary-dwell"})
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "canary-dwell"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	prior, err := store.CreateDeployment(ctx, Deployment{AppID: app.ID, ImageDigest: "sha256:dwell-prior"})
+	prior, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, ImageDigest: "sha256:dwell-prior"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := store.MarkDeploymentLive(ctx, prior.ID); err != nil {
 		t.Fatal(err)
 	}
-	candidate, err := store.CreateDeployment(ctx, Deployment{
+	candidate, err := store.CreateDeployment(ctx, state.Deployment{
 		AppID: app.ID, ImageDigest: "sha256:dwell-candidate", CanaryPreset: "balanced",
 		CanaryStep: 0, CanaryTotalSteps: 4, RolloutState: "pending", TrafficPercent: 1,
 	})
@@ -191,13 +192,13 @@ func TestMemStoreAdvanceCanaryRequiresElapsedStageDuration(t *testing.T) {
 	if err := store.StampSafeReleaseWorkerLease(ctx, time.Minute); err != nil {
 		t.Fatal(err)
 	}
-	params := CanaryAdvanceParams{
+	params := state.CanaryAdvanceParams{
 		ExpectedStep: 0, TrafficPercent: 10,
 		RequireSafeReleaseLease: true, RequireCanaryStageElapsed: true,
 		CanaryStageDuration: time.Minute,
-		Audit:               DeploymentAudit{Kind: DeployTrafficChanged, Actor: "meterd:canary_progression"},
+		Audit:               state.DeploymentAudit{Kind: state.DeployTrafficChanged, Actor: "meterd:canary_progression"},
 	}
-	if _, _, err := store.AdvanceCanary(ctx, candidate.ID, params); !errors.Is(err, ErrCanaryStageNotElapsed) {
+	if _, _, err := store.AdvanceCanary(ctx, candidate.ID, params); !errors.Is(err, state.ErrCanaryStageNotElapsed) {
 		t.Fatalf("advance before stage duration = %v, want ErrCanaryStageNotElapsed", err)
 	}
 	unchanged, err := store.DeploymentByID(ctx, candidate.ID)
@@ -219,16 +220,16 @@ func TestMemStoreAdvanceCanaryRequiresElapsedStageDuration(t *testing.T) {
 
 func TestMemStoreFirstCanaryCompletesWithoutResidualRevision(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
+	store := state.NewMemStore()
 	account, err := store.CreateAccount(ctx, "canary-first@example.com", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, err := store.CreateApp(ctx, App{AccountID: account.ID, Slug: "canary-first"})
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "canary-first"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	dep, err := store.CreateDeployment(ctx, Deployment{
+	dep, err := store.CreateDeployment(ctx, state.Deployment{
 		AppID:            app.ID,
 		ImageDigest:      "sha256:first-canary",
 		CanaryPreset:     "balanced",
@@ -247,30 +248,30 @@ func TestMemStoreFirstCanaryCompletesWithoutResidualRevision(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Status != DeployLive || got.TrafficPercent != 100 || got.CanaryStep != got.CanaryTotalSteps || got.RolloutState != "complete" {
+	if got.Status != state.DeployLive || got.TrafficPercent != 100 || got.CanaryStep != got.CanaryTotalSteps || got.RolloutState != "complete" {
 		t.Fatalf("first canary activation = %+v, want complete 100%% deployment", got)
 	}
 }
 
 func TestMemStoreStableDeploymentClearsCanaryOverlap(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
+	store := state.NewMemStore()
 	account, err := store.CreateAccount(ctx, "canary-stable@example.com", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, err := store.CreateApp(ctx, App{AccountID: account.ID, Slug: "canary-stable"})
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "canary-stable"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	prior, err := store.CreateDeployment(ctx, Deployment{AppID: app.ID, ImageDigest: "sha256:prior"})
+	prior, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, ImageDigest: "sha256:prior"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := store.MarkDeploymentLive(ctx, prior.ID); err != nil {
 		t.Fatal(err)
 	}
-	canary, err := store.CreateDeployment(ctx, Deployment{
+	canary, err := store.CreateDeployment(ctx, state.Deployment{
 		AppID: app.ID, ImageDigest: "sha256:canary", CanaryPreset: "balanced",
 		CanaryStep: 0, CanaryTotalSteps: 4, RolloutState: "pending", TrafficPercent: 1,
 	})
@@ -280,7 +281,7 @@ func TestMemStoreStableDeploymentClearsCanaryOverlap(t *testing.T) {
 	if err := store.MarkDeploymentLive(ctx, canary.ID); err != nil {
 		t.Fatal(err)
 	}
-	stable, err := store.CreateDeployment(ctx, Deployment{AppID: app.ID, ImageDigest: "sha256:stable"})
+	stable, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, ImageDigest: "sha256:stable"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -292,11 +293,11 @@ func TestMemStoreStableDeploymentClearsCanaryOverlap(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got.Status != DeployLive {
+		if got.Status != state.DeployLive {
 			t.Errorf("overlap deployment %s = %+v, want live before promotion", id, got)
 		}
 	}
-	if stable.TrafficPercent != 100 || stable.Status != DeployPending {
+	if stable.TrafficPercent != 100 || stable.Status != state.DeployPending {
 		t.Fatalf("stable replacement = %+v, want pending/100", stable)
 	}
 	if err := store.MarkDeploymentLive(ctx, stable.ID); err != nil {
@@ -307,7 +308,7 @@ func TestMemStoreStableDeploymentClearsCanaryOverlap(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got.Status != DeploySuperseded || got.TrafficPercent != 0 {
+		if got.Status != state.DeploySuperseded || got.TrafficPercent != 0 {
 			t.Errorf("overlap deployment %s = %+v, want superseded/0 after promotion", id, got)
 		}
 	}

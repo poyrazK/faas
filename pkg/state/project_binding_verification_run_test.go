@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -6,36 +6,37 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/bindingcheck"
+	"github.com/onebox-faas/faas/pkg/state"
 	"sync"
 	"testing"
 	"time"
 )
 
-func graphReceiptFixture(t *testing.T) (*MemStore, Project, GraphVerificationCreate) {
+func graphReceiptFixture(t *testing.T) (*state.MemStore, state.Project, state.GraphVerificationCreate) {
 	t.Helper()
-	m, app, _, first := verificationReceiptFixture(t)
+	m, app, _, first := state.VerificationReceiptFixture(t)
 	ctx := t.Context()
-	project, err := m.CreateProject(ctx, Project{AccountID: app.AccountID, Slug: "graph-receipt"})
+	project, err := m.CreateProject(ctx, state.Project{AccountID: app.AccountID, Slug: "graph-receipt"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = m.CreateProjectEnvironment(ctx, ProjectEnvironment{AccountID: app.AccountID, ProjectID: project.ID, Slug: first.Report.Scope}); err != nil {
+	if _, err = m.CreateProjectEnvironment(ctx, state.ProjectEnvironment{AccountID: app.AccountID, ProjectID: project.ID, Slug: first.Report.Scope}); err != nil {
 		t.Fatal(err)
 	}
-	m.mu.Lock()
-	a := m.apps[app.ID]
+	(*m.Mu()).Lock()
+	a := (*m.Apps())[app.ID]
 	a.ProjectID = project.ID
 	a.Manifest.RevisionPinTTLSeconds = 3600
-	m.apps[a.ID] = a
-	d := m.deployments[first.Report.DeploymentID]
+	(*m.Apps())[a.ID] = a
+	d := (*m.Deployments())[first.Report.DeploymentID]
 	d.Scope = first.Report.Scope
-	m.deployments[d.ID] = d
-	m.mu.Unlock()
-	worker, err := m.CreateApp(ctx, App{AccountID: app.AccountID, ProjectID: project.ID, Slug: "graph-worker", Type: AppTypeFunction, Manifest: AppManifest{RevisionPinTTLSeconds: 3600}})
+	(*m.Deployments())[d.ID] = d
+	(*m.Mu()).Unlock()
+	worker, err := m.CreateApp(ctx, state.App{AccountID: app.AccountID, ProjectID: project.ID, Slug: "graph-worker", Type: state.AppTypeFunction, Manifest: state.AppManifest{RevisionPinTTLSeconds: 3600}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	dep, err := m.CreateDeployment(ctx, Deployment{AppID: worker.ID, Scope: first.Report.Scope, ImageDigest: "sha256:worker"})
+	dep, err := m.CreateDeployment(ctx, state.Deployment{AppID: worker.ID, Scope: first.Report.Scope, ImageDigest: "sha256:worker"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,18 +57,18 @@ func graphReceiptFixture(t *testing.T) (*MemStore, Project, GraphVerificationCre
 	if err != nil {
 		t.Fatal(err)
 	}
-	second := VerificationRunCreate{Report: api.BindingVerificationRun{ID: uuid.NewString(), App: worker.Slug, DeploymentID: dep.ID, Scope: first.Report.Scope, Status: "pending", CreatedAt: first.Report.CreatedAt, ExpiresAt: first.Report.ExpiresAt, QueuePublish: true, Policy: policy, Inventory: api.AppBindingInventory{App: worker.Slug, Complete: true, Scope: first.Report.Scope, RequestedDeploymentID: dep.ID, VerificationDeploymentID: dep.ID, VerificationScope: first.Report.Scope, RuntimeFreshness: &api.BindingRuntimeFreshness{Source: "instance_started_at", ConfigChangedAt: &stamp}}, Steps: []api.BindingVerificationRunStep{}}, Admissions: []VerificationRunAdmission{}}
+	second := state.VerificationRunCreate{Report: api.BindingVerificationRun{ID: uuid.NewString(), App: worker.Slug, DeploymentID: dep.ID, Scope: first.Report.Scope, Status: "pending", CreatedAt: first.Report.CreatedAt, ExpiresAt: first.Report.ExpiresAt, QueuePublish: true, Policy: policy, Inventory: api.AppBindingInventory{App: worker.Slug, Complete: true, Scope: first.Report.Scope, RequestedDeploymentID: dep.ID, VerificationDeploymentID: dep.ID, VerificationScope: first.Report.Scope, RuntimeFreshness: &api.BindingRuntimeFreshness{Source: "instance_started_at", ConfigChangedAt: &stamp}}, Steps: []api.BindingVerificationRunStep{}}, Admissions: []state.VerificationRunAdmission{}}
 	second.Report.ReviewDigest = bindingcheck.VerificationReviewDigest(second.Report.Inventory, policy)
 	empty := ""
-	manifest := api.CheckedProjectReleaseManifest{Project: project.Slug, Environment: first.Report.Scope, TTLSeconds: 60, Deployments: map[string]string{app.Slug: stageCanonicalID(first.Report.DeploymentID), worker.Slug: stageCanonicalID(dep.ID)}, ExpectedActiveReleaseID: &empty, ExpectedFallbackDeployments: map[string]string{}, ExpectedPolicyRevisions: map[string]int64{app.Slug: first.Report.Policy.Revision, worker.Slug: policy.Revision}, ServiceTargets: map[string]map[string]string{app.Slug: {}, worker.Slug: {}}}
-	for _, member := range []App{app, worker} {
+	manifest := api.CheckedProjectReleaseManifest{Project: project.Slug, Environment: first.Report.Scope, TTLSeconds: 60, Deployments: map[string]string{app.Slug: state.StageCanonicalID(first.Report.DeploymentID), worker.Slug: state.StageCanonicalID(dep.ID)}, ExpectedActiveReleaseID: &empty, ExpectedFallbackDeployments: map[string]string{}, ExpectedPolicyRevisions: map[string]int64{app.Slug: first.Report.Policy.Revision, worker.Slug: policy.Revision}, ServiceTargets: map[string]map[string]string{app.Slug: {}, worker.Slug: {}}}
+	for _, member := range []state.App{app, worker} {
 		deps, err := m.LiveDeployments(ctx, member.ID)
 		if err != nil {
 			t.Fatal(err)
 		}
 		for _, d := range deps {
 			if d.Scope == manifest.Environment && d.TrafficPercent > 0 {
-				manifest.ExpectedFallbackDeployments[member.Slug] = stageCanonicalID(d.ID)
+				manifest.ExpectedFallbackDeployments[member.Slug] = state.StageCanonicalID(d.ID)
 			}
 		}
 	}
@@ -76,7 +77,7 @@ func graphReceiptFixture(t *testing.T) (*MemStore, Project, GraphVerificationCre
 	second.Report.GraphRunID = id
 	digests := map[string]string{app.Slug: first.Report.ReviewDigest, worker.Slug: second.Report.ReviewDigest}
 	report := api.ProjectBindingVerificationRun{ID: id, Project: project.Slug, Environment: first.Report.Scope, Status: "pending", CreatedAt: first.Report.CreatedAt, ExpiresAt: first.Report.ExpiresAt, Manifest: manifest, QueuePublish: true, ReviewDigest: api.ProjectBindingVerificationReviewDigest(api.CreateProjectBindingVerificationRunRequest{Manifest: manifest, ReviewDigests: digests, QueuePublish: true}), Members: map[string]api.BindingVerificationRun{app.Slug: first.Report, worker.Slug: second.Report}}
-	return m, project, GraphVerificationCreate{Report: report, Members: map[string]VerificationRunCreate{app.Slug: first, worker.Slug: second}}
+	return m, project, state.GraphVerificationCreate{Report: report, Members: map[string]state.VerificationRunCreate{app.Slug: first, worker.Slug: second}}
 }
 func TestGraphVerificationAtomicCreateReplayAndCancellation(t *testing.T) {
 	m, p, in := graphReceiptFixture(t)
@@ -108,15 +109,15 @@ func TestGraphVerificationAtomicCreateReplayAndCancellation(t *testing.T) {
 	if err = m.SetProjectBindingVerificationRunStatus(ctx, p.AccountID, p.ID, in.Report.Environment, in.Report.ID, "cancelled"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = m.AdmitBindingVerificationRunStep(ctx, p.AccountID, child.Policy.AppID, child.ID, 0); !errors.Is(err, ErrConflict) {
+	if _, err = m.AdmitBindingVerificationRunStep(ctx, p.AccountID, child.Policy.AppID, child.ID, 0); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("parent cancellation did not fence child: %v", err)
 	}
 	if err = m.SetBindingVerificationRunStatus(ctx, p.AccountID, child.Policy.AppID, child.ID, "cancelled"); err != nil {
 		t.Fatalf("cleanup fenced by parent: %v", err)
 	}
-	m.mu.Lock()
-	graphs, runs := len(m.graphVerificationRuns), len(m.bindingVerificationRuns)
-	m.mu.Unlock()
+	(*m.Mu()).Lock()
+	graphs, runs := len((*m.GraphVerificationRuns())), len((*m.BindingVerificationRuns()))
+	(*m.Mu()).Unlock()
 	if graphs != 1 || runs != 2 {
 		t.Fatalf("duplicate receipts: %d %d", graphs, runs)
 	}
@@ -143,25 +144,25 @@ func TestGraphVerificationOtherMemberDriftAndExpiryFenceAdmission(t *testing.T) 
 					t.Fatal(err)
 				}
 			case "membership":
-				m.mu.Lock()
-				a := m.apps[other.Policy.AppID]
+				(*m.Mu()).Lock()
+				a := (*m.Apps())[other.Policy.AppID]
 				a.ProjectID = ""
-				m.apps[a.ID] = a
-				m.mu.Unlock()
+				(*m.Apps())[a.ID] = a
+				(*m.Mu()).Unlock()
 			case "targets":
-				m.mu.Lock()
-				a := m.apps[other.Policy.AppID]
+				(*m.Mu()).Lock()
+				a := (*m.Apps())[other.Policy.AppID]
 				a.Manifest.ServiceBindings = []api.AppServiceBinding{{Service: child.App, Binding: "CHILD"}}
-				m.apps[a.ID] = a
-				m.mu.Unlock()
+				(*m.Apps())[a.ID] = a
+				(*m.Mu()).Unlock()
 			case "expiry":
-				m.mu.Lock()
-				r := m.graphVerificationRuns[in.Report.ID]
+				(*m.Mu()).Lock()
+				r := (*m.GraphVerificationRuns())[in.Report.ID]
 				r.Report.ExpiresAt = time.Now().Add(-time.Second)
-				m.graphVerificationRuns[in.Report.ID] = r
-				m.mu.Unlock()
+				(*m.GraphVerificationRuns())[in.Report.ID] = r
+				(*m.Mu()).Unlock()
 			}
-			if _, err := m.AdmitBindingVerificationRunStep(ctx, p.AccountID, child.Policy.AppID, child.ID, 0); !errors.Is(err, ErrConflict) {
+			if _, err := m.AdmitBindingVerificationRunStep(ctx, p.AccountID, child.Policy.AppID, child.ID, 0); !errors.Is(err, state.ErrConflict) {
 				t.Fatalf("%s admitted new work: %v", change, err)
 			}
 			due, err := m.QueuePeek(ctx, child.Policy.AppID, 10, "")
@@ -174,7 +175,7 @@ func TestGraphVerificationOtherMemberDriftAndExpiryFenceAdmission(t *testing.T) 
 func TestGraphVerificationAtomicCreateCapacityFailure(t *testing.T) {
 	m, p, in := graphReceiptFixture(t)
 	ctx := context.Background()
-	var child VerificationRunCreate
+	var child state.VerificationRunCreate
 	for _, c := range in.Members {
 		if len(c.Report.Steps) == 0 {
 			child = c
@@ -187,12 +188,12 @@ func TestGraphVerificationAtomicCreateCapacityFailure(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := m.CreateProjectBindingVerificationRun(ctx, p.AccountID, p.ID, in); !errors.Is(err, ErrQuotaExceeded) {
+	if _, err := m.CreateProjectBindingVerificationRun(ctx, p.AccountID, p.ID, in); !errors.Is(err, state.ErrQuotaExceeded) {
 		t.Fatalf("capacity error: %v", err)
 	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if len(m.graphVerificationRuns) != 0 || len(m.bindingVerificationRuns) != api.BindingVerificationRunMaxActive {
+	(*m.Mu()).Lock()
+	defer (*m.Mu()).Unlock()
+	if len((*m.GraphVerificationRuns())) != 0 || len((*m.BindingVerificationRuns())) != api.BindingVerificationRunMaxActive {
 		t.Fatal("partial graph/member receipts survived failed creation")
 	}
 }

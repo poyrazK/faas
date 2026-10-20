@@ -1,4 +1,4 @@
-package state
+package state_test
 
 // adr: 184 — operator-managed reserved public IP inventory and tenant claims.
 
@@ -10,14 +10,15 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/networkip"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestMemStoreReservedIPInventoryClaimLifecycle(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
+	store := state.NewMemStore()
 	accountID := uuid.NewString()
 	otherAccountID := uuid.NewString()
-	inventory, err := store.UpsertReservedIPInventory(ctx, ReservedIPInventory{
+	inventory, err := store.UpsertReservedIPInventory(ctx, state.ReservedIPInventory{
 		Region:      "fra1",
 		Address:     netip.MustParseAddr("198.51.100.88"),
 		ProviderRef: "provider-ip-88",
@@ -46,7 +47,7 @@ func TestMemStoreReservedIPInventoryClaimLifecycle(t *testing.T) {
 	if retry, err := store.ClaimReservedIP(ctx, accountID, inventory.ID); err != nil || retry.ID != lease.ID {
 		t.Fatalf("idempotent claim = %#v, %v", retry, err)
 	}
-	if _, err := store.ClaimReservedIP(ctx, otherAccountID, inventory.ID); !errors.Is(err, ErrConflict) {
+	if _, err := store.ClaimReservedIP(ctx, otherAccountID, inventory.ID); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("cross-account claim error = %v, want conflict", err)
 	}
 
@@ -54,7 +55,7 @@ func TestMemStoreReservedIPInventoryClaimLifecycle(t *testing.T) {
 	if _, err := store.AssignReservedIP(ctx, accountID, lease.ID, appID, "node-a"); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.ReleaseReservedIPClaim(ctx, accountID, lease.ID); !errors.Is(err, ErrConflict) {
+	if err := store.ReleaseReservedIPClaim(ctx, accountID, lease.ID); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("release assigned claim error = %v, want conflict", err)
 	}
 	// The connector clears the workload assignment before the tenant releases
@@ -72,32 +73,32 @@ func TestMemStoreReservedIPInventoryClaimLifecycle(t *testing.T) {
 	if released.Status != networkip.InventoryAvailable || released.LeaseID != "" {
 		t.Fatalf("released inventory = %#v", released)
 	}
-	if _, err := store.GetReservedIP(ctx, accountID, lease.ID); !errors.Is(err, ErrNotFound) {
+	if _, err := store.GetReservedIP(ctx, accountID, lease.ID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("released lease lookup = %v, want not found", err)
 	}
 }
 
 func TestMemStoreReservedIPInventoryValidationAndFilters(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
-	first, err := store.UpsertReservedIPInventory(ctx, ReservedIPInventory{Region: "fra1", Address: netip.MustParseAddr("203.0.113.90"), ProviderRef: "provider-ip-90"})
+	store := state.NewMemStore()
+	first, err := store.UpsertReservedIPInventory(ctx, state.ReservedIPInventory{Region: "fra1", Address: netip.MustParseAddr("203.0.113.90"), ProviderRef: "provider-ip-90"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.UpsertReservedIPInventory(ctx, ReservedIPInventory{Region: "ams1", Address: first.Address, ProviderRef: "provider-ip-other"}); !errors.Is(err, ErrConflict) {
+	if _, err := store.UpsertReservedIPInventory(ctx, state.ReservedIPInventory{Region: "ams1", Address: first.Address, ProviderRef: "provider-ip-other"}); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("duplicate address error = %v, want conflict", err)
 	}
-	if _, err := store.UpsertReservedIPInventory(ctx, ReservedIPInventory{Region: "ams1", Address: netip.MustParseAddr("203.0.113.91"), ProviderRef: first.ProviderRef}); !errors.Is(err, ErrConflict) {
+	if _, err := store.UpsertReservedIPInventory(ctx, state.ReservedIPInventory{Region: "ams1", Address: netip.MustParseAddr("203.0.113.91"), ProviderRef: first.ProviderRef}); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("duplicate provider ref error = %v, want conflict", err)
 	}
-	if _, err := store.UpsertReservedIPInventory(ctx, ReservedIPInventory{Region: "fra1", Address: netip.MustParseAddr("10.0.0.90")}); !errors.Is(err, ErrInvalidArgument) {
+	if _, err := store.UpsertReservedIPInventory(ctx, state.ReservedIPInventory{Region: "fra1", Address: netip.MustParseAddr("10.0.0.90")}); !errors.Is(err, state.ErrInvalidArgument) {
 		t.Fatalf("private address error = %v, want invalid argument", err)
 	}
-	retired, err := store.UpsertReservedIPInventory(ctx, ReservedIPInventory{Region: "fra1", Address: netip.MustParseAddr("203.0.113.92"), Status: networkip.InventoryRetired})
+	retired, err := store.UpsertReservedIPInventory(ctx, state.ReservedIPInventory{Region: "fra1", Address: netip.MustParseAddr("203.0.113.92"), Status: networkip.InventoryRetired})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.ClaimReservedIP(ctx, uuid.NewString(), retired.ID); !errors.Is(err, ErrConflict) {
+	if _, err := store.ClaimReservedIP(ctx, uuid.NewString(), retired.ID); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("retired claim error = %v, want conflict", err)
 	}
 	items, err := store.ListReservedIPInventory(ctx, "fra1", networkip.InventoryAvailable)

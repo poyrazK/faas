@@ -231,7 +231,7 @@ func TestAuthTemplateRuntimeBounds(t *testing.T) {
 		"bodyBytes": api.AuthMaxRequestBytes, "authzBodyBytes": api.AuthAuthzBodyBytes, "authzConfigBytes": api.AuthAuthzConfigBytes, "redirectURLs": api.AuthMaxRedirectURLs,
 		"migrationStatementMs": api.AuthMigrationStatementTimeoutMS, "invitationSeconds": api.AuthInvitationTTLSeconds,
 		"emailTimeoutMs": api.AuthEmailTimeoutMs, "hookBodyBytes": api.AuthHookBodyBytes, "storageURLSeconds": api.AuthStorageURLSeconds,
-		"adminBodyBytes": api.AuthAdminBodyBytes, "importBatch": api.AuthImportBatch, "adminPageSize": api.AuthAdminPageSize, "reauthenticationSeconds": api.AuthReauthenticationSeconds, "emailSubjectChars": api.AuthEmailSubjectMaxChars, "emailBodyBytes": api.AuthEmailBodyMaxBytes, "signingKeys": api.AuthMaxSigningKeys,
+		"adminBodyBytes": api.AuthAdminBodyBytes, "importBatch": api.AuthImportBatch, "adminPageSize": api.AuthAdminPageSize, "customClaimsBytes": api.AuthCustomClaimsMaxBytes, "signupDomains": api.AuthSignupDomainsMax, "waitlistPending": api.AuthWaitlistMaxPending, "signupApproveBatch": api.AuthSignupApproveBatch, "impersonationDefaultMinutes": api.AuthImpersonationDefaultMinutes, "impersonationMaxMinutes": api.AuthImpersonationMaxMinutes, "reauthenticationSeconds": api.AuthReauthenticationSeconds, "emailSubjectChars": api.AuthEmailSubjectMaxChars, "emailBodyBytes": api.AuthEmailBodyMaxBytes, "signingKeys": api.AuthMaxSigningKeys,
 		"emailGrantSeconds": api.ProductControlEmailGrantSeconds,
 		"teamMembers":       api.ProductControlTeamMaxMembers, "teamInvitations": api.ProductControlTeamMaxInvitations,
 		"teamEmailBytes": api.ProductControlTeamEmailMaxBytes, "teamContextBytes": api.ProductControlTeamContextMaxBytes,
@@ -564,5 +564,16 @@ func TestAuthConfigAnonymousUsersAndLinking(t *testing.T) {
 	}
 	if code := main.CmdAuth([]string{"config", "shop-auth", "--anonymous-retention", "0"}); code == 0 {
 		t.Fatal("accepted zero days")
+	}
+	if code := main.CmdAuth([]string{"config", "shop-auth", "--web3", "ethereum,solana"}); code != 0 ||
+		sealed["GOTRUE_EXTERNAL_WEB3_ETHEREUM_ENABLED"] != "true" || sealed["GOTRUE_EXTERNAL_WEB3_SOLANA_ENABLED"] != "true" {
+		t.Fatalf("web3 = %d, sealed %v", code, sealed)
+	}
+	if code := main.CmdAuth([]string{"config", "shop-auth", "--web3", "off"}); code != 0 ||
+		sealed["GOTRUE_EXTERNAL_WEB3_ETHEREUM_ENABLED"] != "false" || sealed["GOTRUE_EXTERNAL_WEB3_SOLANA_ENABLED"] != "false" {
+		t.Fatalf("web3 off = %d, sealed %v", code, sealed)
+	}
+	if code := main.CmdAuth([]string{"config", "shop-auth", "--web3", "bitcoin"}); code == 0 {
+		t.Fatal("accepted an unknown chain")
 	}
 }

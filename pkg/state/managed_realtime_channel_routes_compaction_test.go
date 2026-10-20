@@ -1,16 +1,17 @@
-package state
+package state_test
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/onebox-faas/faas/pkg/state"
 	"testing"
 	"time"
 )
 
 func TestMemStoreManagedRealtimeChannelRouteRebuildLifecycle(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
+	store := state.NewMemStore()
 	const endpointID = "endpoint"
 	activeNodes, err := store.ActiveComputeNodes(ctx)
 	if err != nil || len(activeNodes) == 0 {
@@ -18,9 +19,9 @@ func TestMemStoreManagedRealtimeChannelRouteRebuildLifecycle(t *testing.T) {
 	}
 	nodeID := activeNodes[0].ID
 
-	routes := make([]ManagedRealtimeChannelRoute, 0, managedRealtimeChannelRouteLimit+1)
-	for i := 0; i <= managedRealtimeChannelRouteLimit; i++ {
-		routes = append(routes, ManagedRealtimeChannelRoute{
+	routes := make([]state.ManagedRealtimeChannelRoute, 0, state.ManagedRealtimeChannelRouteLimit+1)
+	for i := 0; i <= state.ManagedRealtimeChannelRouteLimit; i++ {
+		routes = append(routes, state.ManagedRealtimeChannelRoute{
 			EndpointID: endpointID,
 			Channel:    fmt.Sprintf("updates-%d", i),
 			NodeID:     nodeID,
@@ -33,12 +34,11 @@ func TestMemStoreManagedRealtimeChannelRouteRebuildLifecycle(t *testing.T) {
 	if err != nil || !view.Disabled || len(view.NodeIDs) != 0 {
 		t.Fatalf("overflow route view = (%+v, %v), want disabled and empty", view, err)
 	}
-
-	store.mu.Lock()
-	overflow := store.realtimeChannelRouteOverflow[endpointID]
+	(*store.Mu()).Lock()
+	overflow := (*store.RealtimeChannelRouteOverflow())[endpointID]
 	overflow.NextRebuildAt = time.Now().Add(-time.Second)
-	store.realtimeChannelRouteOverflow[endpointID] = overflow
-	store.mu.Unlock()
+	(*store.RealtimeChannelRouteOverflow())[endpointID] = overflow
+	(*store.Mu()).Unlock()
 
 	started, err := store.BeginManagedRealtimeChannelRouteRebuild(ctx)
 	if err != nil || !started {
@@ -52,9 +52,9 @@ func TestMemStoreManagedRealtimeChannelRouteRebuildLifecycle(t *testing.T) {
 		t.Fatalf("CurrentManagedRealtimeChannelRouteGeneration: %v", err)
 	}
 	for _, node := range activeNodes {
-		var nodeRoutes []ManagedRealtimeChannelRoute
+		var nodeRoutes []state.ManagedRealtimeChannelRoute
 		if node.ID == nodeID {
-			nodeRoutes = []ManagedRealtimeChannelRoute{{
+			nodeRoutes = []state.ManagedRealtimeChannelRoute{{
 				EndpointID: endpointID,
 				Channel:    "current",
 				NodeID:     node.ID,
@@ -77,7 +77,7 @@ func TestMemStoreManagedRealtimeChannelRouteRebuildLifecycle(t *testing.T) {
 	if err != nil || view.Disabled || len(view.NodeIDs) != 1 || view.NodeIDs[0] != nodeID {
 		t.Fatalf("final route view = (%+v, %v), want enabled route for %s", view, err, nodeID)
 	}
-	if err := store.ReplaceManagedRealtimeChannelRoutes(ctx, nodeID, generation, []ManagedRealtimeChannelRoute{{
+	if err := store.ReplaceManagedRealtimeChannelRoutes(ctx, nodeID, generation, []state.ManagedRealtimeChannelRoute{{
 		EndpointID: endpointID,
 		Channel:    "wrong-node",
 		NodeID:     "node-2",
@@ -87,7 +87,7 @@ func TestMemStoreManagedRealtimeChannelRouteRebuildLifecycle(t *testing.T) {
 }
 
 func TestMemStoreManagedRealtimeChannelRouteLockReleaseAfterCancellation(t *testing.T) {
-	store := NewMemStore()
+	store := state.NewMemStore()
 	ctx := context.Background()
 	lock, err := store.AcquireManagedRealtimeChannelRouteLock(ctx, "node-1")
 	if err != nil {

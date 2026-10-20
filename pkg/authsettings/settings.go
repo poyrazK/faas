@@ -69,7 +69,20 @@ const (
 	secretIdentityLinking = "AUTH_IDENTITY_LINKING"
 	secretSelfDeletion    = "AUTH_SELF_DELETION"
 	secretOrgClaims       = "AUTH_ORG_CLAIMS"
+	secretSignupAllowed   = "AUTH_SIGNUP_ALLOWED_DOMAINS"
+	secretSignupBlocked   = "AUTH_SIGNUP_BLOCKED_DOMAINS"
+	secretBlockDisposable = "AUTH_SIGNUP_BLOCK_DISPOSABLE"
+	secretSignupAccess    = "AUTH_SIGNUP_ACCESS"
+	secretImpersonation   = "AUTH_IMPERSONATION"
 )
+
+// SignupAccessModes are who may sign up: anyone, invited or approved
+// addresses only, or those plus a waitlist that refused sign-ups join.
+var SignupAccessModes = []string{"open", "invite", "waitlist"}
+
+// Web3Chains are the wallets GoTrue verifies sign-ins from, with the secret
+// that turns each on.
+var Web3Chains = map[string]string{"ethereum": "GOTRUE_EXTERNAL_WEB3_ETHEREUM_ENABLED", "solana": "GOTRUE_EXTERNAL_WEB3_SOLANA_ENABLED"}
 
 // CaptchaProviders are the CAPTCHA services GoTrue verifies and the hosted
 // pages render.
@@ -153,6 +166,19 @@ type Change struct {
 	// OrgClaims puts each session's active organization, role and
 	// permissions into its access tokens (org_* claims).
 	OrgClaims *bool
+	// SignupAllowedDomains limits sign-up to addresses at these domains;
+	// SignupBlockedDomains refuses these domains and their subdomains. Empty
+	// removes the list. BlockDisposable refuses throwaway addresses.
+	SignupAllowedDomains *[]string
+	SignupBlockedDomains *[]string
+	BlockDisposable      *bool
+	// SignupAccess is one of SignupAccessModes.
+	SignupAccess *string
+	// Impersonation lets the admin key open time-limited sessions as users.
+	Impersonation *bool
+	// Web3 lists the Web3Chains people may sign in with a wallet from;
+	// empty turns wallet sign-in off.
+	Web3 *[]string
 }
 
 // Captcha is a CAPTCHA provider and its keys; the secret stays in the app.
@@ -285,6 +311,45 @@ func (c Change) Secrets() (map[string]string, []string, error) {
 	}
 	if c.OrgClaims != nil {
 		set[secretOrgClaims] = flag(*c.OrgClaims)
+	}
+	for secret, list := range map[string]*[]string{secretSignupAllowed: c.SignupAllowedDomains, secretSignupBlocked: c.SignupBlockedDomains} {
+		if list == nil {
+			continue
+		}
+		value, err := signupDomains(*list)
+		if err != nil {
+			return nil, nil, err
+		}
+		if value == "" {
+			unset = append(unset, secret)
+		} else {
+			set[secret] = value
+		}
+	}
+	if c.BlockDisposable != nil {
+		set[secretBlockDisposable] = flag(*c.BlockDisposable)
+	}
+	if c.SignupAccess != nil {
+		if !slices.Contains(SignupAccessModes, *c.SignupAccess) {
+			return nil, nil, fmt.Errorf("unknown sign-up access %q; use %s", *c.SignupAccess, strings.Join(SignupAccessModes, ", "))
+		}
+		set[secretSignupAccess] = *c.SignupAccess
+	}
+	if c.Impersonation != nil {
+		set[secretImpersonation] = flag(*c.Impersonation)
+	}
+	if c.Web3 != nil {
+		on := map[string]bool{}
+		for _, chain := range *c.Web3 {
+			chain = strings.ToLower(strings.TrimSpace(chain))
+			if _, known := Web3Chains[chain]; !known {
+				return nil, nil, fmt.Errorf("unknown wallet chain %q; use ethereum, solana or both", chain)
+			}
+			on[chain] = true
+		}
+		for chain, secret := range Web3Chains {
+			set[secret] = strconv.FormatBool(on[chain])
+		}
 	}
 	if c.AnonymousRetentionDays != nil {
 		days := *c.AnonymousRetentionDays
@@ -452,4 +517,26 @@ func RedirectURL(value string) bool {
 		return host == "localhost" || host == "127.0.0.1" || host == "::1"
 	}
 	return false
+}
+
+// signupDomains validates a list of sign-up domains and joins it; empty
+// clears the list.
+func signupDomains(list []string) (string, error) {
+	seen := map[string]bool{}
+	var out []string
+	for _, raw := range list {
+		domain := strings.ToLower(strings.TrimSpace(raw))
+		if domain == "" || seen[domain] {
+			continue
+		}
+		if !hostname.MatchString(domain) {
+			return "", fmt.Errorf("sign-up domain %q must be a domain name such as acme.com", raw)
+		}
+		seen[domain] = true
+		out = append(out, domain)
+	}
+	if len(out) > api.AuthSignupDomainsMax {
+		return "", fmt.Errorf("at most %d sign-up domains are allowed in a list; got %d", api.AuthSignupDomainsMax, len(out))
+	}
+	return strings.Join(out, ","), nil
 }

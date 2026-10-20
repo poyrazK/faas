@@ -1,4 +1,4 @@
-package state
+package state_test
 
 // adr: 171 — provider-neutral reserved public IP lease state and assignment lifecycle.
 
@@ -10,14 +10,15 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/networkip"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestMemStoreReservedIPLeaseLifecycle(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
+	store := state.NewMemStore()
 	accountID := uuid.NewString()
 	appID := uuid.NewString()
-	lease, err := store.UpsertReservedIP(ctx, ReservedIP{
+	lease, err := store.UpsertReservedIP(ctx, state.ReservedIP{
 		AccountID: accountID,
 		Region:    "fra1",
 		Address:   netip.MustParseAddr("198.51.100.24"),
@@ -57,19 +58,19 @@ func TestMemStoreReservedIPLeaseLifecycle(t *testing.T) {
 
 func TestMemStoreReservedIPLeaseConflictsAndRegionFilter(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
+	store := state.NewMemStore()
 	accountID := uuid.NewString()
-	first, err := store.UpsertReservedIP(ctx, ReservedIP{AccountID: accountID, Region: "fra1", Address: netip.MustParseAddr("203.0.113.10")})
+	first, err := store.UpsertReservedIP(ctx, state.ReservedIP{AccountID: accountID, Region: "fra1", Address: netip.MustParseAddr("203.0.113.10")})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.UpsertReservedIP(ctx, ReservedIP{AccountID: uuid.NewString(), Region: "ams1", Address: first.Address}); !errors.Is(err, ErrConflict) {
+	if _, err := store.UpsertReservedIP(ctx, state.ReservedIP{AccountID: uuid.NewString(), Region: "ams1", Address: first.Address}); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("duplicate address error = %v, want conflict", err)
 	}
-	if _, err := store.UpsertReservedIP(ctx, ReservedIP{AccountID: accountID, Region: "fra1", Address: netip.MustParseAddr("10.0.0.2")}); !errors.Is(err, ErrInvalidArgument) {
+	if _, err := store.UpsertReservedIP(ctx, state.ReservedIP{AccountID: accountID, Region: "fra1", Address: netip.MustParseAddr("10.0.0.2")}); !errors.Is(err, state.ErrInvalidArgument) {
 		t.Fatalf("private address error = %v, want invalid argument", err)
 	}
-	second, err := store.UpsertReservedIP(ctx, ReservedIP{AccountID: accountID, Region: "ams1", Address: netip.MustParseAddr("203.0.113.11")})
+	second, err := store.UpsertReservedIP(ctx, state.ReservedIP{AccountID: accountID, Region: "ams1", Address: netip.MustParseAddr("203.0.113.11")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +81,7 @@ func TestMemStoreReservedIPLeaseConflictsAndRegionFilter(t *testing.T) {
 	if _, err := store.AssignReservedIP(ctx, accountID, second.ID, otherApp, "node-b"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.AssignReservedIP(ctx, accountID, first.ID, otherApp, "node-c"); !errors.Is(err, ErrConflict) {
+	if _, err := store.AssignReservedIP(ctx, accountID, first.ID, otherApp, "node-c"); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("reassign owned lease error = %v, want conflict", err)
 	}
 	leases, err := store.ListReservedIPs(ctx, accountID, "fra1")

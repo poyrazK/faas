@@ -34,7 +34,7 @@
 //  7. Pre-PR-A rows (no at_capacity key) WITH a boot_completed row
 //     still produce a valid ReadyInMS — the LATERAL JOIN is
 //     independent of at_capacity's presence in the jsonb payload.
-package state
+package state_test
 
 import (
 	"context"
@@ -44,6 +44,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // insertBootStarted is a tiny test fixture helper. Production code
@@ -104,7 +105,7 @@ func TestLookupBootStartedForWakes_RoundTrip(t *testing.T) {
 	if err := db.MigrateUp(ctx, pool); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	s := NewPgStore(pool)
+	s := state.NewPgStore(pool)
 
 	// Unique-per-test wake_ids so concurrent runs and re-runs don't
 	// collide on the partial jsonb index (events_wake_id_idx, ADR-064).
@@ -200,7 +201,7 @@ func TestLookupBootStartedForWakes_PRAbsentAtCapacity(t *testing.T) {
 	if err := db.MigrateUp(ctx, pool); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	s := NewPgStore(pool)
+	s := state.NewPgStore(pool)
 
 	wakeID := "wake-pre-pr-a-" + t.Name()
 	// No at_capacity key — pre-PR-A shape. Only trigger / queued /
@@ -251,7 +252,7 @@ func TestLookupBootStartedForWakes_ReadyInMS(t *testing.T) {
 	if err := db.MigrateUp(ctx, pool); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	s := NewPgStore(pool)
+	s := state.NewPgStore(pool)
 
 	wakeID := "wake-ready-ms-" + t.Name()
 	// boot_started at T+0; boot_completed at T+65.5s. The 65.5 s
@@ -322,7 +323,7 @@ func TestLookupBootStartedForWakes_PRAbsentAtCapacityWithCompletion(t *testing.T
 	if err := db.MigrateUp(ctx, pool); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	s := NewPgStore(pool)
+	s := state.NewPgStore(pool)
 
 	wakeID := "wake-pre-pr-a-with-compl-" + t.Name()
 	insertBootStarted(t, ctx, pool, map[string]any{
@@ -375,7 +376,7 @@ func TestLookupBootStartedForWakes_EmptyInput(t *testing.T) {
 	if err := db.MigrateUp(ctx, pool); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	s := NewPgStore(pool)
+	s := state.NewPgStore(pool)
 
 	// nil input — exercises the early-return branch at pgstore.go:10362
 	// without touching the pool. The empty-map result is the contract.
@@ -403,7 +404,7 @@ func TestLookupBootStartedForWakes_UnknownWakeID(t *testing.T) {
 	if err := db.MigrateUp(ctx, pool); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	s := NewPgStore(pool)
+	s := state.NewPgStore(pool)
 
 	got, err := s.LookupBootStartedForWakes(ctx, []string{"wake-does-not-exist-" + t.Name()})
 	if err != nil {
@@ -417,7 +418,7 @@ func TestLookupBootStartedForWakes_UnknownWakeID(t *testing.T) {
 // keys is a small helper for nicer error messages — drops the wakeID
 // values into a slice so multi-row failures show the same key set
 // across runs.
-func keys(m map[string]WakeBootMeta) []string {
+func keys(m map[string]state.WakeBootMeta) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {
 		out = append(out, k)

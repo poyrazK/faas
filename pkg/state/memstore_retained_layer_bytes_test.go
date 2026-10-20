@@ -1,28 +1,29 @@
-package state
+package state_test
 
 import (
 	"context"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestMemStoreRetainedLayerBytesDeduplicatesAndDropsClearedDeployments(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
+	store := state.NewMemStore()
 	account, err := store.CreateAccount(ctx, "retained-layers@example.com", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, err := store.CreateApp(ctx, App{AccountID: account.ID, Slug: "retained-layers"})
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "retained-layers"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, err := store.CreateDeployment(ctx, Deployment{AppID: app.ID, Kind: "image", ImageDigest: "sha256:first", Status: DeploySuperseded})
+	first, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: "image", ImageDigest: "sha256:first", Status: state.DeploySuperseded})
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := store.CreateDeployment(ctx, Deployment{AppID: app.ID, Kind: "image", ImageDigest: "sha256:second", Status: DeployLive})
+	second, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: "image", ImageDigest: "sha256:second", Status: state.DeployLive})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,7 +33,7 @@ func TestMemStoreRetainedLayerBytesDeduplicatesAndDropsClearedDeployments(t *tes
 	if err := store.SetDeploymentRootfs(ctx, second.ID, "/layers/shared", "layers/shared", 10); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.SetDeploymentSidecarLayer(ctx, DeploymentSidecarLayer{
+	if _, err := store.SetDeploymentSidecarLayer(ctx, state.DeploymentSidecarLayer{
 		DeploymentID: second.ID, SidecarName: "proxy", StorageKey: "layers/proxy", Bytes: 5, ContentDigest: "sha256:proxy",
 	}); err != nil {
 		t.Fatal(err)

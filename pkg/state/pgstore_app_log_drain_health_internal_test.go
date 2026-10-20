@@ -1,7 +1,8 @@
-package state
+package state_test
 
 import (
 	"errors"
+	"github.com/onebox-faas/faas/pkg/state"
 	"testing"
 	"time"
 )
@@ -40,14 +41,14 @@ func (r appLogDrainHealthScanRowStub) Scan(dest ...any) error {
 }
 
 func TestAppLogDrainHealthHelpers(t *testing.T) {
-	if got := healthStatus(""); got != "unknown" {
+	if got := state.HealthStatus(""); got != "unknown" {
 		t.Fatalf("healthStatus empty = %q, want unknown", got)
 	}
-	if got := healthStatus("healthy"); got != "healthy" {
+	if got := state.HealthStatus("healthy"); got != "healthy" {
 		t.Fatalf("healthStatus healthy = %q, want healthy", got)
 	}
 
-	got, err := scanAppLogDrainHealth(appLogDrainHealthScanRowStub{})
+	got, err := state.ScanAppLogDrainHealth(appLogDrainHealthScanRowStub{})
 	if err != nil {
 		t.Fatalf("scanAppLogDrainHealth: %v", err)
 	}
@@ -59,7 +60,7 @@ func TestAppLogDrainHealthHelpers(t *testing.T) {
 	}
 
 	scanErr := errors.New("scan failed")
-	if _, err := scanAppLogDrainHealth(appLogDrainHealthScanRowStub{err: scanErr}); !errors.Is(err, scanErr) {
+	if _, err := state.ScanAppLogDrainHealth(appLogDrainHealthScanRowStub{err: scanErr}); !errors.Is(err, scanErr) {
 		t.Fatalf("scanAppLogDrainHealth error = %v, want %v", err, scanErr)
 	}
 }
