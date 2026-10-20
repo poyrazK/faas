@@ -2,7 +2,8 @@
 -- ADR 20261019072722: AI gateway phase 18. Price lists price audio tokens
 -- apart from text tokens (input, cached input and output), and the daily
 -- rollup counts the audio part of input and output tokens. Additive and
--- replay-safe.
+-- replay-safe. The checks are added NOT VALID so existing rows are not
+-- scanned under the write-blocking lock; 20261020081644960 validates them.
 
 -- migration-compat: expand
 -- +goose Up
@@ -23,12 +24,12 @@ BEGIN
         ALTER TABLE outbound_ai_price_entries ADD CONSTRAINT outbound_ai_price_entries_audio_chk
             CHECK ((input_audio_millicents_per_mtok IS NULL OR input_audio_millicents_per_mtok BETWEEN 0 AND 1000000000)
                    AND (cached_input_audio_millicents_per_mtok IS NULL OR cached_input_audio_millicents_per_mtok BETWEEN 0 AND 1000000000)
-                   AND (output_audio_millicents_per_mtok IS NULL OR output_audio_millicents_per_mtok BETWEEN 0 AND 1000000000));
+                   AND (output_audio_millicents_per_mtok IS NULL OR output_audio_millicents_per_mtok BETWEEN 0 AND 1000000000)) NOT VALID;
     END IF;
     IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_constraint
                    WHERE conname = 'outbound_ai_usage_daily_audio_chk' AND conrelid = 'outbound_ai_usage_daily'::regclass) THEN
         ALTER TABLE outbound_ai_usage_daily ADD CONSTRAINT outbound_ai_usage_daily_audio_chk
-            CHECK (input_audio_tokens BETWEEN 0 AND input_tokens AND output_audio_tokens BETWEEN 0 AND output_tokens);
+            CHECK (input_audio_tokens BETWEEN 0 AND input_tokens AND output_audio_tokens BETWEEN 0 AND output_tokens) NOT VALID;
     END IF;
 END
 $$;

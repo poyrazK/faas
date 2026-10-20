@@ -6,6 +6,7 @@
 
 -- migration-compat: expand
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin
 CREATE TABLE IF NOT EXISTS outbound_ai_prompt_prefixes (
     integration_id   uuid NOT NULL REFERENCES outbound_integrations(id) ON DELETE CASCADE,
