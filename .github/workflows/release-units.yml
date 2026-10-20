@@ -4,7 +4,13 @@
 # Every push to main builds and signs only the daemons whose Go inputs
 # changed since the full release production runs (the base), each stamped
 # with its unit version, in two lanes: control-plane daemons, and the edge
-# (gatewayd-public, gatewayd-internal). The signed tarball is a workflow
+# (gatewayd-public, gatewayd-internal). Each of them is also built at the
+# base and at the head with a neutral version stamp and no build ID, and
+# the manifest records whether its code changed and the code digests: a
+# deploy restarts a unit only on a host that does not run that code yet
+# (ADR-1650, "Selection by code"; scripts/ci/binary_code.py). The base's
+# digests are cached per base release, so only the first run over a base
+# builds it. The signed tarball is a workflow
 # artifact. cd-controlplane.yml deploys the control-plane lane with
 # `units_run_id`, then cd-edge-units.yml the edge lane host by host, each
 # held on the SLO gate. Migrations added since the base ride along when
@@ -62,7 +68,9 @@ jobs:
   build:
     name: Build and sign changed control-plane units
     runs-on: ubuntu-22.04
-    timeout-minutes: 25
+    # The first run over a new base also builds the base's candidates
+    # (about as long as the head build); later runs restore its digests.
+    timeout-minutes: 35
     concurrency:
       group: release-units-build
       cancel-in-progress: true
@@ -102,19 +110,41 @@ jobs:
             go-lint-${{ runner.os }}-${{ hashFiles('go.sum') }}-
             go-lint-${{ runner.os }}-
 
-      - name: Select changed units
-        id: detect
+      - name: Find the base release
+        id: base
         env:
           BASE_INPUT: ${{ inputs.base }}
-          OUT_DIR: ${{ runner.temp }}/gregale-units
         run: |
           set -euo pipefail
-          mkdir -p "$OUT_DIR"
           base="${BASE_INPUT:-}"
           if [[ -z "$base" ]]; then
             base="$(git describe --tags --abbrev=0 --match 'v[0-9]*.[0-9]*.[0-9]*' HEAD)"
           fi
-          python3 scripts/ci/affected_units.py --base "$base" --head HEAD --output "$OUT_DIR/report.json"
+          echo "ref=$base" >> "$GITHUB_OUTPUT"
+          echo "sha=$(git rev-parse --verify "${base}^{commit}")" >> "$GITHUB_OUTPUT"
+
+      # Code digests of the base's release binaries (affected_units.py
+      # --code-cache): the same for every unit release over one base. Each
+      # run that built more of them saves a new entry; the newest is used.
+      - name: Restore the base release's code digests
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/unit-base-code.json
+          key: unit-base-code-${{ steps.base.outputs.sha }}-${{ github.run_id }}
+          restore-keys: |
+            unit-base-code-${{ steps.base.outputs.sha }}-
+
+      - name: Select changed units
+        id: detect
+        env:
+          BASE: ${{ steps.base.outputs.ref }}
+          CODE_CACHE: ${{ runner.temp }}/unit-base-code.json
+          OUT_DIR: ${{ runner.temp }}/gregale-units
+        run: |
+          set -euo pipefail
+          mkdir -p "$OUT_DIR"
+          python3 scripts/ci/affected_units.py --base "$BASE" --head HEAD --code --code-cache "$CODE_CACHE" \
+            --workdir "$RUNNER_TEMP" --output "$OUT_DIR/report.json"
           eligible="$(jq -r .eligible "$OUT_DIR/report.json")"
           deployable="$(jq -r '.deployable | join(",")' "$OUT_DIR/report.json")"
           {
@@ -122,17 +152,26 @@ jobs:
             echo "deployable=$deployable"
             echo "control_plane=$(jq -r '.lanes["control-plane"].eligible' "$OUT_DIR/report.json")"
             echo "edge=$(jq -r '.lanes.edge.eligible' "$OUT_DIR/report.json")"
+            echo "code_cache_new=$(jq -r '.code_selection.base_built | length > 0' "$OUT_DIR/report.json")"
           } >> "$GITHUB_OUTPUT"
           {
-            echo "## Unit release for \`${GITHUB_SHA:0:12}\` over \`$base\`"
+            echo "## Unit release for \`${GITHUB_SHA:0:12}\` over \`$BASE\`"
             echo
-            echo "| binary | lane | unit version |"
-            echo "| --- | --- | --- |"
-            jq -r '.binaries | to_entries[] | select(.value.changed) | "| \(.key) | \(.value.lane) | `\(.value.commit[0:12])` |"' "$OUT_DIR/report.json"
+            echo "| binary | lane | unit version | code since base |"
+            echo "| --- | --- | --- | --- |"
+            jq -r '.binaries | to_entries[] | select(.value.closure) | "| \(.key) | \(.value.lane) | `\(.value.commit[0:12])` | \(.value.code // "not built") |"' "$OUT_DIR/report.json"
+            echo
+            echo "A host restarts a unit only when the code it runs differs from the release's: \`changed\` units restart on a host that runs the base release; \`same\` and \`lines\` (only line numbers moved) units ride along for hosts on an earlier unit release."
+            code_error="$(jq -r '.code_selection.error // empty' "$OUT_DIR/report.json")"
+            if [[ -n "$code_error" ]]; then
+              echo "::warning::code selection failed, so hosts restart by unit version: ${code_error:0:500}" >&2
+              echo
+              echo "**Code selection failed**, so hosts restart every carried unit whose version moved: \`${code_error:0:300}\`"
+            fi
             echo
             if [[ "$eligible" == true ]]; then
               echo "Deployable as a unit release: **${deployable}**."
-              jq -r '.lanes | to_entries[] | "- \(.key) lane: \(if .value.eligible then (.value.changed | join(", ")) else "not deployable: " + (.value.reasons | join("; ")) end)"' "$OUT_DIR/report.json"
+              jq -r '.lanes | to_entries[] | "- \(.key) lane: \(if .value.eligible then "code changed: \(.value.changed | if length == 0 then "none" else join(", ") end); carried: \(.value.carried | join(", "))" else "not deployable: " + (.value.reasons | join("; ")) end)"' "$OUT_DIR/report.json"
             else
               echo "Not deployable as a unit release: $(jq -r '.reasons | join("; ")' "$OUT_DIR/report.json")."
             fi
@@ -147,6 +186,13 @@ jobs:
               jq -r '.data.migrations[] | "| \(.path | ltrimstr("migrations/")) | \(.compat // "none") | \(if .eligible then "eligible" else "full release" end) | \(.blockers | join("; ")) |"' "$OUT_DIR/report.json"
             fi
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Save the base release's code digests
+        if: steps.detect.outputs.code_cache_new == 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/unit-base-code.json
+          key: unit-base-code-${{ steps.base.outputs.sha }}-${{ github.run_id }}
 
       - name: Build unit binaries
         if: steps.detect.outputs.eligible == 'true'

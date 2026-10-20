@@ -1,26 +1,28 @@
 #!/usr/bin/env python3
 """Report which release binaries a change rebuilds: by import closure and by code.
 
-A per-unit release (docs/adr/1650-per-unit-control-plane-releases.md) ships
-a binary when a file in its import closure changed (affected_units.py).
-That over-approximates: the linker keeps only the code a binary reaches, so
-a fix to one scheduler function can leave most of pkg/sched's importers
+A per-unit release (docs/adr/1650-per-unit-control-plane-releases.md)
+carries a binary when a file in its import closure changed
+(affected_units.py), and restarts it only where its code changed. The
+closure over-approximates: the linker keeps only the code a binary reaches,
+so a fix to one scheduler function can leave most of pkg/sched's importers
 byte-identical, or not, depending on what each one links. This script
 measures both for a change, so a pull request can see how many services its
 rollout restarts and why:
 
   closure  the binary's import closure contains a changed file (or a global
            input or the release build recipe changed): the per-unit release
-           ships it.
+           carries it.
   code     the binary built at head differs from the one built at base,
            with the release build flags (linux/amd64, CGO off, -trimpath,
-           -buildvcs=false, -tags metal for daemons, -s -w), one fixed
-           version stamp and an empty Go build ID. The build ID hashes every
+           -buildvcs=false, the Makefile's DAEMON_TAGS for daemons, -s -w),
+           one fixed version stamp and an empty Go build ID (binary_code.py). The build ID hashes every
            package the binary links, so a release binary's bytes change
            whenever its closure does; blanking it measures the code. A
-           binary whose only differing ELF section is Go's line table
-           (.gopclntab) is "lines": it runs the same code, and only stack
-           trace positions moved (an edit above the functions it links).
+           binary that differs only in Go's line table (.gopclntab), the
+           module data pointing past it and section addresses is "lines":
+           it runs the same code, and only stack trace positions moved (an
+           edit above the functions it links).
 
 Only binaries in the closure set are built: a binary outside it has the
 same inputs at both commits, and release builds are reproducible, so its
@@ -35,12 +37,10 @@ Usage:
                              [--output report.json] [--markdown report.md]
 """
 import argparse
-import hashlib
 import json
 import os
 import re
 import shutil
-import struct
 import subprocess
 import sys
 import tempfile
@@ -48,17 +48,13 @@ import tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import affected_units as au  # noqa: E402
+# The code builds and digests (binary_code.py) the per-unit release selects with.
+from binary_code import LINE_TABLE, VERSION_VAR, build, compare, elf_digests, export_tree  # noqa: E402,F401
 
-VERSION_STAMP = "blast-radius"
-VERSION_VAR = "pkg/wire.Version"
 # The sticky pull-request comment starts with this line.
 MARKER = "<!-- blast-radius -->"
 # How many changed paths a binary's row names.
 REASON_LIMIT = 3
-# The ELF section holding Go's line, file and function-name tables. A
-# binary whose other sections are identical runs the same code; only its
-# stack traces (and slog source positions) differ.
-LINE_TABLE = ".gopclntab"
 
 
 def daemon_tags(makefile):
@@ -66,16 +62,6 @@ def daemon_tags(makefile):
     (comma-separated) when it names them, else metal."""
     m = re.search(r"^DAEMON_TAGS\s*:=\s*(\S+)\s*$", makefile, re.M)
     return m.group(1).split(",") if m else ["metal"]
-
-
-def export_tree(sha, dest, root="."):
-    """Write the files of commit sha into dest."""
-    os.makedirs(dest, exist_ok=True)
-    archive = subprocess.Popen(["git", "archive", "--format=tar", sha], cwd=root, stdout=subprocess.PIPE)
-    untar = subprocess.run(["tar", "-x", "-f", "-", "-C", dest], stdin=archive.stdout, capture_output=True)
-    archive.stdout.close()
-    if archive.wait() != 0 or untar.returncode != 0:
-        raise RuntimeError(f"export {sha}: {untar.stderr.decode().strip()}")
 
 
 class Tree:
@@ -133,66 +119,6 @@ def candidates(paths, base, head, global_inputs):
             hit += [p for p in paths if p not in hit and au.hits(p, dirs, files, exists)]
         if hit:
             out[name] = sorted(hit)
-    return out
-
-
-def elf_digests(path):
-    """(whole file, every section but the line table) sha256 digests of a
-    64-bit little-endian ELF binary."""
-    with open(path, "rb") as fh:
-        data = fh.read()
-    if data[:4] != b"\x7fELF" or data[4] != 2 or data[5] != 1:
-        raise RuntimeError(f"{path} is not a 64-bit little-endian ELF binary")
-    shoff, = struct.unpack_from("<Q", data, 0x28)
-    shentsize, shnum, shstrndx = struct.unpack_from("<HHH", data, 0x3A)
-    headers = [struct.unpack_from("<IIQQQQ", data, shoff + i * shentsize) for i in range(shnum)]
-    names = data[headers[shstrndx][4]:headers[shstrndx][4] + headers[shstrndx][5]]
-    code = hashlib.sha256()
-    for name_off, kind, _, addr, offset, size in headers:
-        name = names[name_off:names.index(b"\0", name_off)]
-        if name.decode() == LINE_TABLE:
-            continue
-        body = b"" if kind == 8 else data[offset:offset + size]  # SHT_NOBITS has no bytes
-        code.update(name + struct.pack("<QQ", addr, size) + hashlib.sha256(body).digest())
-    return hashlib.sha256(data).hexdigest(), code.hexdigest()
-
-
-def build(tree, names, out):
-    """{binary: (file digest, code digest)} of names built from tree with the
-    release flags (elf_digests)."""
-    hashes = {}
-    env = dict(os.environ, GOOS="linux", GOARCH="amd64", CGO_ENABLED="0")
-    ldflags = f"-X {tree.module}/{VERSION_VAR}={VERSION_STAMP} -s -w -buildid="
-    for tags in sorted({tuple(tree.tags(n)) for n in names}):
-        group = sorted(n for n in names if tuple(tree.tags(n)) == tags)
-        if not group:
-            continue
-        cmd = [os.environ.get("GO", "go"), "build", *tree.flags]
-        if tags:
-            cmd.append("-tags=" + ",".join(tags))
-        cmd += ["-ldflags", ldflags, "-o", out + os.sep] + [f"./cmd/{n}" for n in group]
-        run = subprocess.run(cmd, cwd=tree.path, env=env, capture_output=True, text=True)
-        if run.returncode != 0:
-            raise RuntimeError(f"go build at {tree.sha[:12]}: {run.stderr.strip()}")
-        for n in group:
-            hashes[n] = elf_digests(os.path.join(out, n))
-            os.remove(os.path.join(out, n))
-    return hashes
-
-
-def compare(base_hashes, head_hashes, names):
-    """{binary: "changed" | "lines" | "same" | "added" | "removed"} for
-    names. "lines": only the line table differs (build's digests)."""
-    out = {}
-    for n in names:
-        if n not in base_hashes:
-            out[n] = "added"
-        elif n not in head_hashes:
-            out[n] = "removed"
-        elif base_hashes[n] == head_hashes[n]:
-            out[n] = "same"
-        else:
-            out[n] = "lines" if base_hashes[n][1] == head_hashes[n][1] else "changed"
     return out
 
 
@@ -275,10 +201,11 @@ def markdown(rep):
         lines.append(f"| {name} | {b['lane']} | {b['code'] or 'not built'} | {reasons} |")
     lines += ["", "Code is the binary's bytes built with the release flags, one version stamp and an empty Go "
               "build ID (the build ID hashes every linked package, so it changes with the closure). `lines`: "
-              f"only `{LINE_TABLE}` differs, so the binary runs the same code and only stack-trace line "
-              "numbers move. Binaries outside the table have the same inputs at both commits. A binary whose "
-              "closure changed but whose code did not still ships with a per-unit release today, because the "
-              "release selects by closure (`scripts/ci/affected_units.py`)."]
+              f"only `{LINE_TABLE}` (and the addresses after it) differs, so the binary runs the same code "
+              "and only stack-trace line numbers move. Binaries outside the table have the same inputs at both commits. A per-unit release "
+              "restarts a control-plane or edge daemon only on a host that runs other code than the release's "
+              "(`scripts/ci/affected_units.py --code`, ADR-1650 \"Selection by code\"), so `same` and `lines` "
+              "binaries do not restart; a full release restarts every binary."]
     return "\n".join(lines) + "\n"
 
 
