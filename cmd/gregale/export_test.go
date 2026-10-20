@@ -832,6 +832,7 @@ var CmdDomainsShow = cmdDomainsShow
 var CmdDomainsVerify = cmdDomainsVerify
 var CmdEdgeRuleLists = cmdEdgeRuleLists
 var CmdEdgeRules = cmdEdgeRules
+var EdgeRuleTrend = edgeRuleTrend
 var CmdEdgeRulesCreate = cmdEdgeRulesCreate
 var CmdEdgeRulesGet = cmdEdgeRulesGet
 var CmdEdgeRulesList = cmdEdgeRulesList

@@ -702,6 +702,8 @@ export type { EdgeRuleLimitAction } from './EdgeRuleLimitAction.js';
 export type { EdgeRuleListResponse } from './EdgeRuleListResponse.js';
 export type { EdgeRuleMaintenanceAction } from './EdgeRuleMaintenanceAction.js';
 export type { EdgeRuleMatchExpr } from './EdgeRuleMatchExpr.js';
+export type { EdgeRuleRecipeSuggestion } from './EdgeRuleRecipeSuggestion.js';
+export type { EdgeRuleRecipeSuggestionsResponse } from './EdgeRuleRecipeSuggestionsResponse.js';
 export type { EdgeRuleRedirectAction } from './EdgeRuleRedirectAction.js';
 export type { EdgeRuleRespondAction } from './EdgeRuleRespondAction.js';
 export type { EdgeRuleResponse } from './EdgeRuleResponse.js';

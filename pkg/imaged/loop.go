@@ -28,9 +28,9 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/fcvm"
-	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
+	"github.com/onebox-faas/faas/pkg/storagekey"
 )
 
 const (
@@ -867,7 +867,7 @@ func (l *Loop) runAppProtocolSweep(ctx context.Context) {
 // storage key — warm-tier targets delete WarmSnapMemKey +
 // WarmSnapVMStateKey (under /snap/<dep>/warm/), init-tier targets
 // delete SnapMemKey + SnapVMStateKey (under /snap/<dep>/). The
-// per-app ext4 layer (drive1, sched.AppLayerKey) is shared across tiers for a
+// per-app ext4 layer (drive1, storagekey.AppLayer) is shared across tiers for a
 // deployment. It is removed only after the deployment has no remaining
 // non-stale snapshot row; keeping it alongside the retained rows is what
 // makes a historical rollback restore fast instead of falling back to cold
@@ -1020,7 +1020,7 @@ func (l *Loop) deleteSnapshotsAndFiles(ctx context.Context, ts []deleteTarget) e
 		// generations remain eligible for normal rollback-window cleanup.
 		if t.DeploymentStatus == state.DeployLive {
 			l.log.Info("imaged: gc retained live deployment layer after snapshot eviction",
-				"deployment", deploymentID, "layer", sched.AppLayerKey(t.AppSlug, deploymentID))
+				"deployment", deploymentID, "layer", storagekey.AppLayer(t.AppSlug, deploymentID))
 			continue
 		}
 		deployment := state.Deployment{ID: deploymentID, RootfsKey: t.DeploymentRootfsKey}

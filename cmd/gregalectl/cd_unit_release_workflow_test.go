@@ -109,7 +109,7 @@ func TestUnitLaneRestartsOnlyPlannedServicesOverTheExpectedRelease(t *testing.T)
 		"deployctl deploy --only '${only}' --expect-current ${expect} ${release_id}",
 		"ROLLOUT_ACTIVATION_MARKER",
 		"unit-release-verify.sh ${release_dir}${specs}",
-		"deployctl rollback --only '${only}'",
+		`deployctl rollback --only '${only}' $(rollback_flags "$plan")`,
 	)
 	ordinaryActivation := renderUnitActivationForContract(t, false)
 	for _, forbidden := range []string{"migrate", "converge-control-plane", "kgv rotate", "fleet-seal"} {
@@ -395,4 +395,31 @@ func TestFullAndUnitLanesAreExclusive(t *testing.T) {
 	if got := strings.Count(workflow, "      units_run_id:\n"); got != 2 {
 		t.Errorf("units_run_id is declared %d times, want workflow_call and workflow_dispatch", got)
 	}
+}
+
+// TestUnitLanesFetchOnlyMainAndReleaseTags: the planners read main's history
+// and the v* tags. `fetch-depth: 0` downloads every branch instead (about
+// 4,000, 1.66 GB): on 2026-10-20 the first production unit deploy spent more
+// than 13 minutes in that checkout on the control-plane runner, against 15 s
+// for main and the tags without file contents.
+func TestUnitLanesFetchOnlyMainAndReleaseTags(t *testing.T) {
+	for _, wf := range []string{"release-units.yml", "cd-controlplane.yml", "cd-edge-units.yml", "cd-edge-node.yml"} {
+		workflow := readWorkflow(t, wf)
+		if strings.Contains(workflow, "fetch-depth: 0") {
+			t.Errorf("%s checks out every branch (fetch-depth: 0); use filter: blob:none and scripts/ci/fetch_release_history.sh", wf)
+		}
+		if !strings.Contains(workflow, "scripts/ci/fetch_release_history.sh") {
+			t.Errorf("%s does not fetch main's history and the release tags", wf)
+		}
+	}
+	hostConfig := jobBlock(t, readWorkflow(t, "cd-controlplane.yml"), "converge-host-config")
+	orderedIn(t, "converge-host-config", hostConfig,
+		"filter: blob:none",
+		"scripts/ci/fetch_release_history.sh --prefetch-deploy",
+		"plan_host_config.py")
+	units := jobBlock(t, readWorkflow(t, "cd-controlplane.yml"), "deploy-units")
+	orderedIn(t, "deploy-units", units,
+		"filter: blob:none",
+		"scripts/ci/fetch_release_history.sh",
+		"git describe --tags")
 }

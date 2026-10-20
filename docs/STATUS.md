@@ -7,6 +7,20 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Event substrate benchmark (V12) — 2026-10-20
+
+`make bench-event-substrate` measures event publish, fanout routing, the
+invocation drain and webhook delivery on disposable PostgreSQL. The first run
+on `gregale-internal-test-1`, a busy 2 vCPU shared host
+([report](ops/evidence/20261020-event-substrate-bench/REPORT.md)), sustained
+**5 events/s end to end** (p95 publish-to-handler 1.2 s). Above that, fanout
+routing falls behind: it ran 14.8 events/s over a 2,000-event backlog and
+slows as the backlog grows, because `EventRecipientClaim` re-runs the
+ordering scan for every candidate. Publish (307/s) and the drain (48/s) are
+not the bottleneck; webhook delivery sits at its 6.2/s design ceiling. Event
+caps stay where they are until fanout routing is fixed and the benchmark is
+re-run on the reference node.
+
 ## Tenant egress denies NAT64 — 2026-10-18 (branch, not released)
 
 The shared egress denylist adds the NAT64 prefixes `64:ff9b::/96` (RFC 6052)

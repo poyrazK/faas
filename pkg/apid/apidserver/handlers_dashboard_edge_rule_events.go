@@ -2,12 +2,15 @@ package apidserver
 
 // ADR-960/964 on the dashboard edge-rules page: per-rule mode and 24 h hit
 // counts, a mode switch for log-mode rollouts, and the security-events table.
+// ADR-20261020105001: a 7-day trend per rule and the rule review.
 
 import (
+	"cmp"
 	"context"
 	"log/slog"
 	"net/http"
 	"net/url"
+	"slices"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -18,25 +21,98 @@ import (
 
 const dashboardEdgeRuleEventsLimit = 50
 
-// addDashboardEdgeRuleHits fills each rule's last-24 h counts. Counts are
-// telemetry: a read failure leaves them at zero.
-func (s *server) addDashboardEdgeRuleHits(ctx context.Context, log *slog.Logger, appID string, items []dashboard.EdgeRulePageItem) {
+// dashboardEdgeRuleHits is the app's hourly match totals per rule over the
+// review window.
+type dashboardEdgeRuleHits struct {
+	start, now time.Time
+	series     map[string][]int64
+}
+
+// dashboardSparkBucketHours and dashboardSparkBuckets shape the 7-day trend:
+// 28 six-hour totals.
+const (
+	dashboardSparkBucketHours = 6
+	dashboardSparkBuckets     = 28
+)
+
+// addDashboardEdgeRuleHits fills each rule's last-24 h counts and 7-day
+// trend from one read of the hourly buckets. Counts are telemetry: a read
+// failure leaves them at zero and returns ok=false.
+func (s *server) addDashboardEdgeRuleHits(ctx context.Context, log *slog.Logger, appID string, items []dashboard.EdgeRulePageItem) (dashboardEdgeRuleHits, bool) {
 	store, ok := s.store.(state.EdgeRuleHitStore)
 	if !ok {
-		return
+		return dashboardEdgeRuleHits{}, false
 	}
-	stats, err := store.EdgeRuleHitStatsForApp(ctx, appID, time.Now().UTC().Add(-24*time.Hour).Truncate(time.Hour))
+	now := time.Now().UTC()
+	hits := dashboardEdgeRuleHits{start: now.Add(-api.EdgeRuleReviewQuietWindow).Truncate(time.Hour), now: now}
+	rows, err := store.EdgeRuleHitSeriesForApp(ctx, appID, hits.start)
 	if err != nil {
 		log.Warn("dashboard edge rules: hit counts", "app_id", appID, "err", err)
-		return
+		return dashboardEdgeRuleHits{}, false
 	}
-	byRule := make(map[string]state.EdgeRuleHitStats, len(stats))
-	for _, st := range stats {
-		byRule[st.RuleID] = st
+	dayStart := now.Add(-24 * time.Hour).Truncate(time.Hour)
+	day := map[string]state.EdgeRuleHitStats{}
+	for _, h := range rows {
+		if h.Bucket.Before(dayStart) {
+			continue
+		}
+		st := day[h.RuleID]
+		if h.Outcome == state.EdgeRuleHitLogged {
+			st.Logged += h.Hits
+		} else {
+			st.Matched += h.Hits
+		}
+		day[h.RuleID] = st
 	}
+	hits.series = edgerules.EdgeRuleHitSeries(rows, hits.start, now)
 	for i := range items {
-		items[i].Matched24h, items[i].Logged24h = byRule[items[i].ID].Matched, byRule[items[i].ID].Logged
+		items[i].Matched24h, items[i].Logged24h = day[items[i].ID].Matched, day[items[i].ID].Logged
+		trend := api.FoldEdgeRuleSeries(hits.series[items[i].ID], dashboardSparkBucketHours, dashboardSparkBuckets)
+		items[i].SparkPoints = dashboard.SparklinePoints(trend)
+		for _, n := range trend {
+			items[i].Matches7d += n
+		}
 	}
+	return hits, true
+}
+
+// dashboardEdgeRuleReview runs the ADR-20261020105001 review over the app's enabled,
+// unexpired rules: log-mode rules ready to enforce first (most matches
+// first), then those still collecting, then rules that went quiet.
+func dashboardEdgeRuleReview(rules []state.EdgeRule, items []dashboard.EdgeRulePageItem, hits dashboardEdgeRuleHits) []dashboard.EdgeRuleReviewView {
+	byID := make(map[string]dashboard.EdgeRulePageItem, len(items))
+	for _, item := range items {
+		byID[item.ID] = item
+	}
+	var out []dashboard.EdgeRuleReviewView
+	for _, rule := range rules {
+		if rule.ExpiresAt != nil && !rule.ExpiresAt.After(hits.now) {
+			continue
+		}
+		review := api.ReviewEdgeRule(api.EdgeRuleReviewInput{
+			Mode: edgeRuleModeOrDefault(rule.Mode), Enabled: rule.Enabled, ChangedAt: rule.UpdatedAt,
+			SeriesStart: hits.start, Series: hits.series[rule.ID], Now: hits.now,
+		})
+		if review.Status == "" {
+			continue
+		}
+		item := byID[rule.ID]
+		label := cmp.Or(item.Name, string(rule.Kind)+" rule")
+		match := item.MatchHost + item.MatchPath
+		if item.AppWide {
+			match = "every app host " + item.MatchPath
+		}
+		out = append(out, dashboard.EdgeRuleReviewView{
+			ID: rule.ID, Label: label, Match: match, Status: review.Status,
+			Since: review.Since.Format("Jan 2 15:04 MST"), ObservedHours: int64(review.Observed / time.Hour),
+			Matches: review.Matches, PerDay: review.PerDay,
+		})
+	}
+	rank := map[string]int{api.EdgeRuleReviewReady: 0, api.EdgeRuleReviewCollecting: 1, api.EdgeRuleReviewQuiet: 2}
+	slices.SortStableFunc(out, func(a, b dashboard.EdgeRuleReviewView) int {
+		return cmp.Or(cmp.Compare(rank[a.Status], rank[b.Status]), cmp.Compare(b.Matches, a.Matches))
+	})
+	return out
 }
 
 // loadDashboardEdgeRuleEvents reads the events table from the page's own

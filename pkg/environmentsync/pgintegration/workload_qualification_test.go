@@ -462,7 +462,10 @@ func TestPgEnvironmentGitOpsQualificationRecoveryWaitsForPriorInstanceRetirement
 	for _, phase := range []state.State{state.State("pending"), state.StateWaking, state.StateColdBooting, state.StateRunning, state.StateDraining, state.StateWarm, state.StateSnapshotting, state.StateMigrating, state.StateEvictingAccountDeleting} {
 		// Leave enough time for the real fenced admission/phase transactions
 		// under load before deliberately waiting for the short lease to expire.
-		current, err := store.ClaimEnvironmentWorkloadQualification(t.Context(), requests[0].ID, "scheduler", time.Second)
+		// One second was not enough under -race with parallel PostgreSQL jobs:
+		// full CI run 39455888148 lost the lease before admission committed
+		// (state: conflict).
+		current, err := store.ClaimEnvironmentWorkloadQualification(t.Context(), requests[0].ID, "scheduler", 3*time.Second)
 		if err != nil || (prior.ID != "" && (current.Attempt != prior.Attempt+1 || current.ReservedInstanceID == prior.ReservedInstanceID)) {
 			t.Fatalf("fresh attempt after retirement: %+v %v", current, err)
 		}

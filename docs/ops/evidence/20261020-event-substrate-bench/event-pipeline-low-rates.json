@@ -1,0 +1,113 @@
+{
+  "version": 1,
+  "benchmark": "event-substrate",
+  "started_at": "2026-10-20T16:48:26.628974618Z",
+  "host": {
+    "hostname": "gregale-internal-test-1.us-east1-b.c.gregale-prod.internal",
+    "os": "linux",
+    "arch": "amd64",
+    "cpus": 2,
+    "go": "go1.26.9"
+  },
+  "postgres_version": "16.15 (Ubuntu 16.15-0ubuntu0.24.04.1)",
+  "config": {
+    "events": 200,
+    "accounts": 10,
+    "publishers": 12,
+    "drain_concurrency": 0,
+    "handler_ms": 0,
+    "pipeline_rates_per_second": [
+      5,
+      10,
+      20
+    ],
+    "pipeline_seconds": 20,
+    "pipeline_settle_seconds": 60
+  },
+  "stages": [
+    {
+      "name": "publish",
+      "items": 200,
+      "seconds": 4.138310704,
+      "per_second": 48.32889898931088,
+      "latency_ms": {
+        "p50": 150.904327,
+        "p95": 984.677301,
+        "p99": 1335.163929,
+        "max": 1871.929551
+      },
+      "warnings": 0,
+      "note": "12 concurrent publishers through appevents.Service.PublishEvent (validation, storage admission, outbox trigger, receipt); excludes HTTP auth middleware"
+    },
+    {
+      "name": "fanout",
+      "items": 200,
+      "seconds": 19.117139327,
+      "per_second": 10.461816309385314,
+      "latency_ms": {
+        "p50": 8792.415489,
+        "p95": 10308.380493,
+        "p99": 10308.380493,
+        "max": 10308.380493
+      },
+      "warnings": 0,
+      "note": "back-to-back sweeps over a 200-event backlog; latency is per sweep (2 sweeps)"
+    },
+    {
+      "name": "drain",
+      "items": 200,
+      "seconds": 11.088318517,
+      "per_second": 18.036999901596534,
+      "attempts": {
+        "1": 200
+      },
+      "warnings": 0,
+      "note": "claim, warm wake, gateway dispatch and completion over the routed backlog; dispatch concurrency production default; handler time 0 ms"
+    },
+    {
+      "name": "pipeline@5/s",
+      "items": 100,
+      "seconds": 20.100381655,
+      "per_second": 4.975029913182015,
+      "offered_per_second": 5,
+      "latency_ms": {
+        "p50": 508.46179,
+        "p95": 1248.507297,
+        "p99": 1359.85118,
+        "max": 1484.608201
+      },
+      "warnings": 0,
+      "note": "20 s of offered load, publish to handler; fanout on event_published wakes plus a 5s safety tick; publishing took 19.8 s"
+    },
+    {
+      "name": "pipeline@10/s",
+      "items": 200,
+      "seconds": 26.337109443,
+      "per_second": 7.5938477771393,
+      "offered_per_second": 10,
+      "latency_ms": {
+        "p50": 969.768974,
+        "p95": 6739.35222,
+        "p99": 7344.277077,
+        "max": 7444.807852
+      },
+      "warnings": 0,
+      "note": "20 s of offered load, publish to handler; fanout on event_published wakes plus a 5s safety tick; publishing took 19.9 s"
+    },
+    {
+      "name": "pipeline@20/s",
+      "items": 400,
+      "seconds": 43.544140182,
+      "per_second": 9.186081027852042,
+      "offered_per_second": 20,
+      "latency_ms": {
+        "p50": 13901.77013,
+        "p95": 23667.645086,
+        "p99": 24084.779561,
+        "max": 24107.593852
+      },
+      "warnings": 0,
+      "note": "20 s of offered load, publish to handler; fanout on event_published wakes plus a 5s safety tick; publishing took 20.0 s"
+    }
+  ]
+}

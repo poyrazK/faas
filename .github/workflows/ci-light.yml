@@ -388,12 +388,16 @@ jobs:
         run: |
           python3 scripts/ci/host_roles_test.py
           python3 scripts/ci/affected_units_test.py
+          python3 scripts/ci/check_daemon_deps_test.py
+          python3 scripts/ci/blast_radius_test.py
           python3 scripts/ci/plan_unit_deploy_test.py
           python3 scripts/ci/plan_host_config_test.py
           python3 scripts/ci/plan_edge_rollout_test.py
           bash scripts/unit-release-verify_test.sh
           bash scripts/ci/unit_deploy_test.sh
           bash scripts/ci/verify_unit_release_test.sh
+      - name: release binaries link no forbidden package
+        run: make daemon-deps-check
       - name: MemStore stub guard
         run: make memstore-stubs-check
       - name: daemon environment contract

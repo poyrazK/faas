@@ -56,9 +56,9 @@ func TestFeesProrateAcrossCardChanges(t *testing.T) {
 	}
 }
 
-// adr: 20261019100332 — a consumer revoked mid-month pays prorating fees
-// only up to the revocation, unless a revision of the month was finalized
-// before it: finalized fees are never reduced.
+// adr: 20261019100332, 20261019180000 — a consumer revoked mid-month pays
+// prorating fees only up to the revocation, unless a finalized revision
+// priced the month before it: finalized fees are never reduced.
 func TestFeesStopAtRevocation(t *testing.T) {
 	september := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	end := september.AddDate(0, 1, 0)
@@ -73,14 +73,15 @@ func TestFeesStopAtRevocation(t *testing.T) {
 	if got[base] != 1000 {
 		t.Fatalf("revoked after a third of the month: base = %d, want 1000", got[base])
 	}
-	finalizedAt := revoked.AddDate(0, 0, 25)
-	after := []state.APIConsumerUsageStatement{{Status: state.APIConsumerUsageStatementFinalized, FinalizedAt: &finalizedAt,
+	pricedAfter := revoked.AddDate(0, 0, 25)
+	after := []state.APIConsumerUsageStatement{{Status: state.APIConsumerUsageStatementFinalized, AsOf: pricedAfter, FinalizedAt: &pricedAfter,
 		Fees: []state.APIConsumerStatementFee{{Kind: state.StatementFeeBase, RateCardID: card.ID, AmountMillicents: 1000}}}}
 	if got := feeAmounts(APIConsumerStatementFees(cards, september, end, created, QuoteOptions{EndedAt: revoked}, after, nil)); got[base] != 0 {
 		t.Fatalf("adjustment after a revocation-prorated revision: base = %d, want nothing more", got[base])
 	}
-	early := revoked.AddDate(0, 0, -5)
-	before := []state.APIConsumerUsageStatement{{Status: state.APIConsumerUsageStatementFinalized, FinalizedAt: &early,
+	// Priced before the revocation, finalized after it: still the whole month.
+	early, finalizedLater := revoked.AddDate(0, 0, -5), revoked.AddDate(0, 0, 5)
+	before := []state.APIConsumerUsageStatement{{Status: state.APIConsumerUsageStatementFinalized, AsOf: early, FinalizedAt: &finalizedLater,
 		Fees: []state.APIConsumerStatementFee{{Kind: state.StatementFeeBase, RateCardID: card.ID, AmountMillicents: 3000}}}}
 	if got := feeAmounts(APIConsumerStatementFees(cards, september, end, created, QuoteOptions{EndedAt: revoked}, before, nil)); len(got) != 0 {
 		t.Fatalf("revision finalized before the revocation: fees = %v, want none (never reduced, never refunded)", got)
@@ -88,5 +89,54 @@ func TestFeesStopAtRevocation(t *testing.T) {
 	card.ProrateMonthlyFees = false
 	if got := feeAmounts(APIConsumerStatementFees([]state.APIConsumerRateCard{card}, september, end, created, QuoteOptions{EndedAt: revoked}, nil, nil)); got[base] != 3000 {
 		t.Fatalf("a card that does not prorate: base = %d, want the whole month", got[base])
+	}
+}
+
+// adr: 20261019180000 — a finalized minimum top-up falls only by usage
+// billed since: a prorating card's share that shrinks after it was
+// finalized (a later card, a revocation priced later) never refunds it, so
+// a revision never goes negative; late usage still lowers it.
+func TestFinalizedMinimumFallsOnlyByNewUsage(t *testing.T) {
+	september := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	end := september.AddDate(0, 1, 0)
+	created := september.AddDate(0, -1, 0)
+	old := state.APIConsumerRateCard{ID: uuid.NewString(), Currency: "EUR", PriceMillicentsPerUnit: 1,
+		MinimumMillicentsPerMonth: 3000, ProrateMonthlyFees: true, EffectiveFrom: created}
+	free := state.APIConsumerRateCard{ID: uuid.NewString(), Currency: "EUR", PriceMillicentsPerUnit: 1, ProrateMonthlyFees: true,
+		EffectiveFrom: september.AddDate(0, 0, 20)}
+	pricedAt := september.AddDate(0, 0, 5)
+	rev1 := state.APIConsumerUsageStatement{Status: state.APIConsumerUsageStatementFinalized, AsOf: pricedAt, FinalizedAt: &pricedAt,
+		Fees: []state.APIConsumerStatementFee{{Kind: state.StatementFeeMinimum, RateCardID: old.ID, AmountMillicents: 3000}}}
+	minimum := old.ID + "/" + state.StatementFeeMinimum
+	for _, tc := range []struct {
+		name  string
+		cards []state.APIConsumerRateCard
+		opts  QuoteOptions
+		delta []APIConsumerUsageChargeBucket
+		want  int64
+	}{
+		{"card change after finalize", []state.APIConsumerRateCard{old, free}, QuoteOptions{}, nil, 0},
+		{"revocation priced after finalize", []state.APIConsumerRateCard{old}, QuoteOptions{EndedAt: september.AddDate(0, 0, 15)}, nil, 0},
+		{"late usage lowers the top-up", []state.APIConsumerRateCard{old}, QuoteOptions{},
+			[]APIConsumerUsageChargeBucket{{RateCardID: old.ID, AmountMillicents: 400}}, -400},
+		{"late usage after a card change", []state.APIConsumerRateCard{old, free}, QuoteOptions{},
+			[]APIConsumerUsageChargeBucket{{RateCardID: old.ID, AmountMillicents: 400}}, -400},
+	} {
+		got := feeAmounts(APIConsumerStatementFees(tc.cards, september, end, created, tc.opts, []state.APIConsumerUsageStatement{rev1}, tc.delta))
+		if got[minimum] != tc.want {
+			t.Errorf("%s: minimum top-up = %d, want %d (fees %v)", tc.name, got[minimum], tc.want, got)
+		}
+	}
+
+	// The same holds for a platform tenant's month.
+	tenantCard := state.PlatformTenantRateCard{ID: uuid.NewString(), Currency: "EUR", PriceMillicentsPerUnit: 1,
+		MinimumMillicentsPerMonth: 3000, ProrateMonthlyFees: true, EffectiveFrom: created}
+	tenantFree := state.PlatformTenantRateCard{ID: uuid.NewString(), Currency: "EUR", PriceMillicentsPerUnit: 1, ProrateMonthlyFees: true,
+		EffectiveFrom: september.AddDate(0, 0, 20)}
+	month := TenantMonth{Start: september, End: end, TenantCreated: created, TenantCards: []state.PlatformTenantRateCard{tenantCard, tenantFree},
+		Previous: []state.PlatformTenantStatement{{Status: state.APIConsumerUsageStatementFinalized, PeriodStart: september, PeriodEnd: end,
+			Fees: []state.APIConsumerStatementFee{{Kind: state.StatementFeeMinimum, RateCardID: tenantCard.ID, AmountMillicents: 3000}}}}}
+	if got := feeAmounts(tenantStatementFees(month, newFeeUsage())); got[tenantCard.ID+"/"+state.StatementFeeMinimum] != 0 {
+		t.Fatalf("tenant card change after finalize: fees = %v, want no negative top-up", got)
 	}
 }

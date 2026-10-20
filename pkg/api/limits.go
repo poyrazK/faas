@@ -565,6 +565,10 @@ const (
 	StatementInvoiceSyncBatchSize    = 50
 	// The daily overdue email lists at most this many invoices.
 	StatementInvoiceOverdueDigestMax = 20
+	// One export attempt holds its statement this long, so a concurrent
+	// attempt cannot create a second provider invoice; a crashed attempt's
+	// claim expires (ADR-20261019180000).
+	StatementInvoiceExportClaimTTL = 15 * time.Minute
 	// List page sizes.
 	StatementInvoiceListDefault = 50
 	StatementInvoiceListMax     = 200
@@ -612,6 +616,11 @@ const (
 	// An invoice holding its consumer has its payment status read at least
 	// this often, so paying it lifts the hold within minutes.
 	ConsumerOverdueHeldSyncInterval = 15 * time.Minute
+	// Only a payment status read within this long holds a consumer or
+	// tenant: when Gregale cannot read the invoice (a rotated or removed
+	// key), the hold lifts rather than outlasting a payment it cannot see
+	// (ADR-20261019180000).
+	ConsumerOverdueStatusMaxAge = 24 * time.Hour
 )
 
 // PlatformTenantPlansMax bounds the tenant plans one account keeps
@@ -12834,6 +12843,24 @@ const (
 
 // SyntheticCheckIntervalsSeconds is the closed set synthetic_checks accepts.
 var SyntheticCheckIntervalsSeconds = []int{300, 900, 3600}
+
+// Event substrate benchmark workload (spec Appendix D V12,
+// docs/ops/event-substrate-benchmark.md): disposable-database bench sizes,
+// never customer quotas. Events spread over accounts so each subscription
+// stays under the Scale per-consumer live-delivery cap.
+const (
+	EventSubstrateBenchEvents             = 2000
+	EventSubstrateBenchAccounts           = 10
+	EventSubstrateBenchPipelineSeconds    = 20
+	EventSubstrateBenchPipelineSettle     = 60 * time.Second
+	EventSubstrateBenchStageTimeout       = 10 * time.Minute
+	EventSubstrateBenchWebhookDeliveries  = 1000
+	EventSubstrateBenchWebhookSubscribers = 64
+)
+
+// EventSubstrateBenchPipelineRates are the offered end-to-end rates, in
+// events per second, the benchmark runs by default.
+var EventSubstrateBenchPipelineRates = []int{50, 200}
 
 // IssueBulkActionMax bounds one atomic triage transaction.
 const IssueBulkActionMax = 50
