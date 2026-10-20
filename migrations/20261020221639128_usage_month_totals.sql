@@ -9,6 +9,7 @@
 -- production-us one call summed 136,884 rows in 226 ms (5.7% of all statement
 -- time, growing through the month).
 --
+-- Every statement is replay-safe; a re-run keeps the original tracked_from.
 -- No backfill: totals are authoritative only for months starting at or after
 -- usage_month_totals_tracking.tracked_from, the first UTC month that begins
 -- after these triggers exist, so every one of its rows is counted from its
@@ -25,7 +26,7 @@
 -- several totals cannot deadlock on them.
 SET LOCAL lock_timeout = '5s';
 
-CREATE TABLE usage_month_totals (
+CREATE TABLE IF NOT EXISTS usage_month_totals (
     account_id      uuid        NOT NULL,
     month           timestamptz NOT NULL,
     subject_id      uuid        NOT NULL,
@@ -40,17 +41,18 @@ CREATE TABLE usage_month_totals (
     PRIMARY KEY (account_id, month, subject_id)
 );
 
-CREATE TABLE usage_month_totals_tracking (
+CREATE TABLE IF NOT EXISTS usage_month_totals_tracking (
     singleton    boolean     PRIMARY KEY DEFAULT true,
     tracked_from timestamptz NOT NULL,
     CONSTRAINT usage_month_totals_tracking_singleton_check CHECK (singleton)
 );
 
 INSERT INTO usage_month_totals_tracking (tracked_from)
-VALUES ((date_trunc('month', (now() + interval '1 hour') AT TIME ZONE 'UTC') + interval '1 month') AT TIME ZONE 'UTC');
+VALUES ((date_trunc('month', (now() + interval '1 hour') AT TIME ZONE 'UTC') + interval '1 month') AT TIME ZONE 'UTC')
+ON CONFLICT (singleton) DO NOTHING;
 
 -- +goose StatementBegin
-CREATE FUNCTION usage_month_totals_apply() RETURNS trigger
+CREATE OR REPLACE FUNCTION usage_month_totals_apply() RETURNS trigger
 LANGUAGE plpgsql AS $$
 DECLARE
     v_from timestamptz;
@@ -137,13 +139,13 @@ END;
 $$;
 -- +goose StatementEnd
 
-CREATE TRIGGER usage_month_totals_insert AFTER INSERT ON usage_minutes
+CREATE OR REPLACE TRIGGER usage_month_totals_insert AFTER INSERT ON usage_minutes
     REFERENCING NEW TABLE AS usage_month_totals_new
     FOR EACH STATEMENT EXECUTE FUNCTION usage_month_totals_apply();
-CREATE TRIGGER usage_month_totals_update AFTER UPDATE ON usage_minutes
+CREATE OR REPLACE TRIGGER usage_month_totals_update AFTER UPDATE ON usage_minutes
     REFERENCING OLD TABLE AS usage_month_totals_old NEW TABLE AS usage_month_totals_new
     FOR EACH STATEMENT EXECUTE FUNCTION usage_month_totals_apply();
-CREATE TRIGGER usage_month_totals_delete AFTER DELETE ON usage_minutes
+CREATE OR REPLACE TRIGGER usage_month_totals_delete AFTER DELETE ON usage_minutes
     REFERENCING OLD TABLE AS usage_month_totals_old
     FOR EACH STATEMENT EXECUTE FUNCTION usage_month_totals_apply();
 
