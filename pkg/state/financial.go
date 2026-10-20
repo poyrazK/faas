@@ -123,6 +123,18 @@ func validFinancialWindow(account string, start, end time.Time) bool {
 	return account != "" && !start.IsZero() && start.Before(end) && end.Sub(start) <= 32*24*time.Hour
 }
 
+// validStoredFinancialPrice validates a persisted price snapshot. Snapshots
+// written before the USD switch carry the legacy currency and stay valid
+// history (ADR-1430); every other rule is the one a new snapshot must meet.
+// Without this, one pre-switch row made the whole period unreadable and
+// meterd's pricing capture never became ready (rc.279 rollout).
+func validStoredFinancialPrice(p FinancialPriceSnapshot) bool {
+	if p.Price.Currency == financial.LegacyBillingCurrency {
+		p.Price.Currency = financial.BillingCurrency
+	}
+	return validFinancialPrice(p)
+}
+
 func validFinancialPrice(p FinancialPriceSnapshot) bool {
 	start := p.PeriodStart.UTC()
 	if !p.Plan.Valid() || p.EffectiveFrom.Before(start) || !p.EffectiveFrom.Before(p.PeriodEnd) || (p.DeliveryMode != "live" && p.DeliveryMode != "shadow" && p.DeliveryMode != "off") {

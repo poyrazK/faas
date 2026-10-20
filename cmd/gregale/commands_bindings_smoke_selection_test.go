@@ -1,5 +1,5 @@
 // adr: 597
-package main
+package main_test
 
 import (
 	"context"
@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -25,7 +26,7 @@ func smokeTestTask(t *testing.T, command []string) api.AppTaskResponse {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return api.AppTaskResponse{ID: "smoke-task", AppID: "app-1", DeploymentID: pinnedBindingDeployment, DeploymentScope: "staging", Kind: api.AppTaskKindManual,
+	return api.AppTaskResponse{ID: "smoke-task", AppID: "app-1", DeploymentID: main.PinnedBindingDeployment, DeploymentScope: "staging", Kind: api.AppTaskKindManual,
 		Command: command, Status: api.AppTaskStatusSucceeded, ExitCode: new(int), StdoutTail: string(body)}
 }
 
@@ -34,15 +35,15 @@ func smokeTestApp() api.AppResponse {
 }
 
 func smokeTestDeployment() api.DeploymentResponse {
-	return api.DeploymentResponse{ID: pinnedBindingDeployment, AppID: "app-1", Scope: "staging", Status: "live", ImageDigest: "sha256:materialized"}
+	return api.DeploymentResponse{ID: main.PinnedBindingDeployment, AppID: "app-1", Scope: "staging", Status: "live", ImageDigest: "sha256:materialized"}
 }
 
 func smokeTestArgs() []string {
-	return []string{"--json", "bindings", "smoke", "api", "billing", "--caller-deployment", pinnedBindingDeployment, "--target-deployment", smokeTargetID, "--path", "/ready?token=do-not-report", "--expect-status", "200", "--poll-interval", "1ms", "--wait-timeout", "1s"}
+	return []string{"--json", "bindings", "smoke", "api", "billing", "--caller-deployment", main.PinnedBindingDeployment, "--target-deployment", smokeTargetID, "--path", "/ready?token=do-not-report", "--expect-status", "200", "--poll-interval", "1ms", "--wait-timeout", "1s"}
 }
 
 func TestCmdBindingsSmokePinsCallerByIDOrRevision(t *testing.T) {
-	for _, ref := range []string{pinnedBindingDeployment, "v12", strings.ReplaceAll(pinnedBindingDeployment, "-", "")} {
+	for _, ref := range []string{main.PinnedBindingDeployment, "v12", strings.ReplaceAll(main.PinnedBindingDeployment, "-", "")} {
 		t.Run(ref, func(t *testing.T) {
 			var admitted api.CreateAppTaskRequest
 			polls := 0
@@ -52,14 +53,14 @@ func TestCmdBindingsSmokePinsCallerByIDOrRevision(t *testing.T) {
 				case "/v1/apps/api":
 					_ = json.NewEncoder(w).Encode(smokeTestApp())
 				case "/v1/apps/api/deployments":
-					_ = json.NewEncoder(w).Encode(api.DeploymentListResponse{Items: []api.DeploymentResponse{{ID: pinnedBindingDeployment, Revision: 12}}})
-				case "/v1/deployments/" + pinnedBindingDeployment:
+					_ = json.NewEncoder(w).Encode(api.DeploymentListResponse{Items: []api.DeploymentResponse{{ID: main.PinnedBindingDeployment, Revision: 12}}})
+				case "/v1/deployments/" + main.PinnedBindingDeployment:
 					if len(ref) == 32 {
 						api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Deployment not found", "No such deployment."))
 						return
 					}
 					_ = json.NewEncoder(w).Encode(smokeTestDeployment())
-				case "/v1/deployments/" + strings.ReplaceAll(pinnedBindingDeployment, "-", ""):
+				case "/v1/deployments/" + strings.ReplaceAll(main.PinnedBindingDeployment, "-", ""):
 					deployment := smokeTestDeployment()
 					deployment.ID = ref
 					_ = json.NewEncoder(w).Encode(deployment)
@@ -88,12 +89,12 @@ func TestCmdBindingsSmokePinsCallerByIDOrRevision(t *testing.T) {
 			defer srv.Close()
 			args := smokeTestArgs()
 			args[6] = ref
-			code, out, errOut := captureBindingCLI(t, srv.URL, args...)
-			if code != 0 || admitted.SmokeDeploymentID != pinnedBindingDeployment || admitted.VerificationDeploymentID != "" || polls != 1 || strings.Contains(out+errOut, "do-not-report") {
+			code, out, errOut := main.CaptureBindingCLI(t, srv.URL, args...)
+			if code != 0 || admitted.SmokeDeploymentID != main.PinnedBindingDeployment || admitted.VerificationDeploymentID != "" || polls != 1 || strings.Contains(out+errOut, "do-not-report") {
 				t.Fatalf("exit=%d admitted=%+v polls=%d output=%s %s", code, admitted, polls, out, errOut)
 			}
 			var report api.ServiceBindingSmokeReport
-			if err := json.Unmarshal([]byte(out), &report); err != nil || !report.Passed || !sameBindingDeployment(report.CallerDeploymentID, pinnedBindingDeployment) || report.TargetDeploymentID != smokeTargetID {
+			if err := json.Unmarshal([]byte(out), &report); err != nil || !report.Passed || !main.SameBindingDeployment(report.CallerDeploymentID, main.PinnedBindingDeployment) || report.TargetDeploymentID != smokeTargetID {
 				t.Fatalf("report=%+v err=%v", report, err)
 			}
 		})
@@ -114,7 +115,7 @@ func TestCmdBindingsSmokeRejectsUntrustedResults(t *testing.T) {
 		}},
 		{"wrong service", func(_ *api.AppTaskResponse, r *api.ServiceBindingSmokeReport) { r.Service = "other" }},
 		{"wrong target", func(_ *api.AppTaskResponse, r *api.ServiceBindingSmokeReport) {
-			r.TargetDeploymentID = pinnedBindingDeployment
+			r.TargetDeploymentID = main.PinnedBindingDeployment
 		}},
 		{"wrong caller", func(_ *api.AppTaskResponse, r *api.ServiceBindingSmokeReport) { r.CallerDeploymentID = smokeTargetID }},
 		{"wrong app", func(_ *api.AppTaskResponse, r *api.ServiceBindingSmokeReport) { r.App = "other" }},
@@ -135,7 +136,7 @@ func TestCmdBindingsSmokeRejectsUntrustedResults(t *testing.T) {
 				switch r.URL.Path {
 				case "/v1/apps/api":
 					_ = json.NewEncoder(w).Encode(smokeTestApp())
-				case "/v1/deployments/" + pinnedBindingDeployment:
+				case "/v1/deployments/" + main.PinnedBindingDeployment:
 					_ = json.NewEncoder(w).Encode(smokeTestDeployment())
 				case "/v1/apps/api/tasks":
 					var request api.CreateAppTaskRequest
@@ -155,7 +156,7 @@ func TestCmdBindingsSmokeRejectsUntrustedResults(t *testing.T) {
 				}
 			}))
 			defer srv.Close()
-			code, out, errOut := captureBindingCLI(t, srv.URL, smokeTestArgs()...)
+			code, out, errOut := main.CaptureBindingCLI(t, srv.URL, smokeTestArgs()...)
 			var report api.ServiceBindingSmokeReport
 			if err := json.Unmarshal([]byte(out), &report); err != nil || code != 1 || report.Passed || report.Error == "" || strings.Contains(out+errOut, "do-not-report") {
 				t.Fatalf("exit=%d report=%+v decode=%v output=%s %s", code, report, err, out, errOut)
@@ -176,7 +177,7 @@ func TestCmdBindingsSmokeRejectsChangedTaskSelection(t *testing.T) {
 					case "/v1/apps/api":
 						_ = json.NewEncoder(w).Encode(smokeTestApp())
 						return
-					case "/v1/deployments/" + pinnedBindingDeployment:
+					case "/v1/deployments/" + main.PinnedBindingDeployment:
 						_ = json.NewEncoder(w).Encode(smokeTestDeployment())
 						return
 					}
@@ -216,7 +217,7 @@ func TestCmdBindingsSmokeRejectsChangedTaskSelection(t *testing.T) {
 					_ = json.NewEncoder(w).Encode(task)
 				}))
 				defer srv.Close()
-				code, out, errOut := captureBindingCLI(t, srv.URL, smokeTestArgs()...)
+				code, out, errOut := main.CaptureBindingCLI(t, srv.URL, smokeTestArgs()...)
 				wantCancels := 1
 				if when == "admission" && field == "task ID" {
 					wantCancels = 0
@@ -241,7 +242,7 @@ func TestCancelSmokeTaskSurvivesCancelledWaitContext(t *testing.T) {
 	defer srv.Close()
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	cancelSmokeTask(ctx, api.NewClient(srv.URL, "test"), "api", api.AppTaskResponse{ID: "smoke-task", Status: api.AppTaskStatusRunning})
+	main.CancelSmokeTask(ctx, api.NewClient(srv.URL, "test"), "api", api.AppTaskResponse{ID: "smoke-task", Status: api.AppTaskStatusRunning})
 	if cancels != 1 {
 		t.Fatalf("cancellation requests=%d", cancels)
 	}
@@ -255,7 +256,7 @@ func TestCmdBindingsSmokeRejectsUnconfirmedCallerBeforeAdmission(t *testing.T) {
 				switch r.URL.Path {
 				case "/v1/apps/api":
 					_ = json.NewEncoder(w).Encode(smokeTestApp())
-				case "/v1/deployments/" + pinnedBindingDeployment:
+				case "/v1/deployments/" + main.PinnedBindingDeployment:
 					deployment := smokeTestDeployment()
 					switch change {
 					case "deployment":
@@ -274,7 +275,7 @@ func TestCmdBindingsSmokeRejectsUnconfirmedCallerBeforeAdmission(t *testing.T) {
 				}
 			}))
 			defer srv.Close()
-			code, out, errOut := captureBindingCLI(t, srv.URL, smokeTestArgs()...)
+			code, out, errOut := main.CaptureBindingCLI(t, srv.URL, smokeTestArgs()...)
 			if code != 1 || posts != 0 {
 				t.Fatalf("exit=%d posts=%d output=%s %s", code, posts, out, errOut)
 			}
@@ -294,7 +295,7 @@ func TestCmdBindingsSmokeWaitTimeoutBoundsReads(t *testing.T) {
 				switch r.URL.Path {
 				case "/v1/apps/api":
 					_ = json.NewEncoder(w).Encode(smokeTestApp())
-				case "/v1/deployments/" + pinnedBindingDeployment:
+				case "/v1/deployments/" + main.PinnedBindingDeployment:
 					_ = json.NewEncoder(w).Encode(smokeTestDeployment())
 				case "/v1/apps/api/tasks":
 					posts++
@@ -315,7 +316,7 @@ func TestCmdBindingsSmokeWaitTimeoutBoundsReads(t *testing.T) {
 			// Allow setup requests to finish before testing the blocked read.
 			args[len(args)-1] = "1s"
 			start := time.Now()
-			code, out, errOut := captureBindingCLI(t, srv.URL, args...)
+			code, out, errOut := main.CaptureBindingCLI(t, srv.URL, args...)
 			wantPosts := 0
 			if slowRead == "task" {
 				wantPosts = 1
@@ -334,8 +335,8 @@ func TestCmdBindingsSmokeRejectsConflictingTargetAliasesLocally(t *testing.T) {
 		http.Error(w, "unexpected request", 500)
 	}))
 	defer srv.Close()
-	args := append(smokeTestArgs(), "--deployment", pinnedBindingDeployment)
-	code, out, errOut := captureBindingCLI(t, srv.URL, args...)
+	args := append(smokeTestArgs(), "--deployment", main.PinnedBindingDeployment)
+	code, out, errOut := main.CaptureBindingCLI(t, srv.URL, args...)
 	if code != 1 || calls != 0 {
 		t.Fatalf("exit=%d calls=%d output=%s %s", code, calls, out, errOut)
 	}
@@ -348,7 +349,7 @@ func TestCompleteSmokeReportChecksDefault2xxIndependently(t *testing.T) {
 			guest := report
 			guest.Passed, guest.HTTPStatus = true, status
 			body, _ := json.Marshal(guest)
-			completeSmokeReport(&report, api.AppTaskResponse{Status: api.AppTaskStatusSucceeded, ExitCode: new(int), StdoutTail: string(body)}, 0)
+			main.CompleteSmokeReport(&report, api.AppTaskResponse{Status: api.AppTaskStatusSucceeded, ExitCode: new(int), StdoutTail: string(body)}, 0)
 			if report.Passed != (status >= 200 && status < 300) {
 				t.Fatalf("HTTP %d report=%+v", status, report)
 			}
@@ -365,7 +366,7 @@ func TestCmdBindingsSmokeInterruptDuringTaskReadCancelsAdmittedTask(t *testing.T
 		switch r.URL.Path {
 		case "/v1/apps/api":
 			_ = json.NewEncoder(w).Encode(smokeTestApp())
-		case "/v1/deployments/" + pinnedBindingDeployment:
+		case "/v1/deployments/" + main.PinnedBindingDeployment:
 			_ = json.NewEncoder(w).Encode(smokeTestDeployment())
 		case "/v1/apps/api/tasks":
 			var request api.CreateAppTaskRequest
@@ -394,7 +395,7 @@ func TestCmdBindingsSmokeInterruptDuringTaskReadCancelsAdmittedTask(t *testing.T
 		}
 	}))
 	defer srv.Close()
-	code, out, errOut := captureBindingCLI(t, srv.URL, smokeTestArgs()...)
+	code, out, errOut := main.CaptureBindingCLI(t, srv.URL, smokeTestArgs()...)
 	if code != 130 || cancels != 1 || strings.Contains(out, `"passed":true`) {
 		t.Fatalf("exit=%d cancels=%d output=%s %s", code, cancels, out, errOut)
 	}

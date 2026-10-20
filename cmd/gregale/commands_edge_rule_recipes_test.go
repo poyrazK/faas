@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -14,42 +15,42 @@ import (
 // ordinary create request: log mode by default, enforce on request, the
 // --set values applied, and bad input rejected before any request.
 func TestEdgeRulesRecipeCommand(t *testing.T) {
-	resetJSONOut(t)
-	oldOut := osStdout
-	osStdout = io.Discard
-	t.Cleanup(func() { osStdout = oldOut })
+	main.ResetJSONOut(t)
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = io.Discard
+	t.Cleanup(func() { (*main.OsStdout) = oldOut })
 
-	f := authedFakeAPI(t, `{"id":"r1","kind":"ip"}`, http.StatusCreated)
-	if code := cmdEdgeRules([]string{"recipe", "allow-ips-only", "--app", "demo", "--host", "API.example.com", "--set", "cidrs=203.0.113.7 198.51.100.0/24"}); code != 0 {
+	f := main.AuthedFakeAPI(t, `{"id":"r1","kind":"ip"}`, http.StatusCreated)
+	if code := main.CmdEdgeRules([]string{"recipe", "allow-ips-only", "--app", "demo", "--host", "API.example.com", "--set", "cidrs=203.0.113.7 198.51.100.0/24"}); code != 0 {
 		t.Fatalf("exit = %d", code)
 	}
-	if f.sawMethod != http.MethodPost || f.sawPath != "/v1/apps/demo/edge-rules" {
-		t.Fatalf("request = %s %s", f.sawMethod, f.sawPath)
+	if (*f.SawMethod()) != http.MethodPost || (*f.SawPath()) != "/v1/apps/demo/edge-rules" {
+		t.Fatalf("request = %s %s", (*f.SawMethod()), (*f.SawPath()))
 	}
 	var req api.CreateEdgeRuleRequest
-	if err := json.Unmarshal(f.sawBody, &req); err != nil {
+	if err := json.Unmarshal((*f.SawBody()), &req); err != nil {
 		t.Fatal(err)
 	}
 	if req.Kind != "ip" || req.Mode != api.EdgeRuleModeLog || req.MatchHost != "api.example.com" || req.MatchPath != "/admin/**" ||
 		req.Match == nil || req.Match.Not == nil || strings.Join(req.Match.Not.Values, ",") != "203.0.113.7/32,198.51.100.0/24" {
-		t.Fatalf("create request = %s", f.sawBody)
+		t.Fatalf("create request = %s", (*f.SawBody()))
 	}
 
 	// adr: 1191 — without --host the rule covers every host the app serves.
-	f = authedFakeAPI(t, `{"id":"r0","kind":"ip"}`, http.StatusCreated)
-	if code := cmdEdgeRules([]string{"recipe", "block-unverified-bots", "--app", "demo"}); code != 0 {
+	f = main.AuthedFakeAPI(t, `{"id":"r0","kind":"ip"}`, http.StatusCreated)
+	if code := main.CmdEdgeRules([]string{"recipe", "block-unverified-bots", "--app", "demo"}); code != 0 {
 		t.Fatalf("exit = %d", code)
 	}
-	if err := json.Unmarshal(f.sawBody, &req); err != nil || req.MatchHost != api.EdgeRuleAppHosts || f.sawPath != "/v1/apps/demo/edge-rules" {
-		t.Fatalf("default-host request %s %s", f.sawPath, f.sawBody)
+	if err := json.Unmarshal((*f.SawBody()), &req); err != nil || req.MatchHost != api.EdgeRuleAppHosts || (*f.SawPath()) != "/v1/apps/demo/edge-rules" {
+		t.Fatalf("default-host request %s %s", (*f.SawPath()), (*f.SawBody()))
 	}
 
-	f = authedFakeAPI(t, `{"id":"r2","kind":"throttle"}`, http.StatusCreated)
-	if code := cmdEdgeRules([]string{"recipe", "rate-limit-path", "--app", "demo", "--host", "api.example.com", "--set", "per_minute=30", "--enforce"}); code != 0 {
+	f = main.AuthedFakeAPI(t, `{"id":"r2","kind":"throttle"}`, http.StatusCreated)
+	if code := main.CmdEdgeRules([]string{"recipe", "rate-limit-path", "--app", "demo", "--host", "api.example.com", "--set", "per_minute=30", "--enforce"}); code != 0 {
 		t.Fatalf("exit = %d", code)
 	}
-	if err := json.Unmarshal(f.sawBody, &req); err != nil || req.Mode != api.EdgeRuleModeEnforce || req.Kind != "throttle" {
-		t.Fatalf("enforced request = %s", f.sawBody)
+	if err := json.Unmarshal((*f.SawBody()), &req); err != nil || req.Mode != api.EdgeRuleModeEnforce || req.Kind != "throttle" {
+		t.Fatalf("enforced request = %s", (*f.SawBody()))
 	}
 
 	for name, args := range map[string][]string{
@@ -60,13 +61,13 @@ func TestEdgeRulesRecipeCommand(t *testing.T) {
 		"unknown parameter": {"recipe", "block-unverified-bots", "--app", "demo", "--host", "h.example", "--set", "cidrs=1.2.3.4"},
 		"invalid value":     {"recipe", "block-countries", "--app", "demo", "--host", "h.example", "--set", "countries=ZZ"},
 	} {
-		f = authedFakeAPI(t, `{}`, http.StatusCreated)
-		if code := cmdEdgeRules(args); code == 0 || f.sawMethod != "" {
-			t.Errorf("%s: exit %d, request %q; want failure before any request", name, code, f.sawMethod)
+		f = main.AuthedFakeAPI(t, `{}`, http.StatusCreated)
+		if code := main.CmdEdgeRules(args); code == 0 || (*f.SawMethod()) != "" {
+			t.Errorf("%s: exit %d, request %q; want failure before any request", name, code, (*f.SawMethod()))
 		}
 	}
 
-	if code := cmdEdgeRules([]string{"recipes"}); code != 0 {
+	if code := main.CmdEdgeRules([]string{"recipes"}); code != 0 {
 		t.Fatalf("recipes exit = %d", code)
 	}
 }

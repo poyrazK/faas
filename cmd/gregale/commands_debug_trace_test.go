@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -34,13 +35,13 @@ func TestCmdDebugRequestsTrace_RendersParentChildTree(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_test")
 
-	stdout, _, restore := swapIO(t)
+	stdout, _, restore := main.SwapIO(t)
 	defer restore()
-	oldJSON := jsonOutput
-	jsonOutput = false
-	defer func() { jsonOutput = oldJSON }()
+	oldJSON := (*main.JsonOutput)
+	(*main.JsonOutput) = false
+	defer func() { (*main.JsonOutput) = oldJSON }()
 
-	if code := cmdDebugRequests([]string{"trace", "my-app", "request-1"}); code != 0 {
+	if code := main.CmdDebugRequests([]string{"trace", "my-app", "request-1"}); code != 0 {
 		t.Fatalf("cmdDebugRequests(trace) = %d, want 0", code)
 	}
 	got := stdout.String()
@@ -67,9 +68,9 @@ func TestRenderDebugRequestTrace_JSONIsSafeAndBounded(t *testing.T) {
 		SpansTruncated: true,
 	}
 	var out strings.Builder
-	encoded := debugRequestTraceOutput{
+	encoded := main.DebugRequestTraceOutput{
 		Request:        resp.Request,
-		TraceID:        debugRequestTraceID(resp.Request),
+		TraceID:        main.DebugRequestTraceID(resp.Request),
 		Spans:          resp.Spans,
 		SpansTruncated: resp.SpansTruncated,
 	}

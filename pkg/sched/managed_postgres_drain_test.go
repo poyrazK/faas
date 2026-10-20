@@ -1,4 +1,4 @@
-package sched
+package sched_test
 
 import (
 	"context"
@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -61,7 +62,7 @@ func (s *drainTestStore) CompleteManagedPostgresDrain(ctx context.Context, f sta
 }
 
 type drainLegacyVMM struct {
-	RoutedVMM
+	sched.RoutedVMM
 	destroys int
 }
 
@@ -78,29 +79,29 @@ type drainTestVMM struct {
 	calls      int
 }
 
-func (v *drainTestVMM) RetireManagedPostgresDrain(_ context.Context, f state.ManagedPostgresDrainFrame) (ManagedPostgresDrainEvidence, error) {
+func (v *drainTestVMM) RetireManagedPostgresDrain(_ context.Context, f state.ManagedPostgresDrainFrame) (sched.ManagedPostgresDrainEvidence, error) {
 	v.calls++
 	if v.wrongFrame {
 		f.WakeID = uuid.NewString()
 	}
-	return ManagedPostgresDrainEvidence{Frame: f, Proof: v.proof}, v.err
+	return sched.ManagedPostgresDrainEvidence{Frame: f, Proof: v.proof}, v.err
 }
 
-func drainSchedulerFixture(t *testing.T) (*Engine, *drainTestStore, *drainTestVMM) {
+func drainSchedulerFixture(t *testing.T) (*sched.Engine, *drainTestStore, *drainTestVMM) {
 	t.Helper()
 	s := &drainTestStore{MemStore: state.NewMemStore()}
 	v := &drainTestVMM{drainLegacyVMM: &drainLegacyVMM{}}
-	e, err := NewEngine(t.Context(), s, NewNodeLedger(), v, nil, "test-fc", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	e, err := sched.NewEngine(t.Context(), s, sched.NewNodeLedger(), v, nil, "test-fc", slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
 	}
 	e.WithOwnerNodeID(uuid.NewString())
 	f := state.ManagedPostgresDrainFrame{ID: uuid.NewString(), CutoverID: uuid.NewString(), AppID: uuid.NewString(), DeploymentID: uuid.NewString(),
-		InstanceID: uuid.NewString(), NodeID: uuid.NewString(), WakeID: uuid.NewString(), OwnerNodeID: e.ownerNodeID, OwnerRevision: 3, FencedAt: time.Now().UTC()}
+		InstanceID: uuid.NewString(), NodeID: uuid.NewString(), WakeID: uuid.NewString(), OwnerNodeID: (*e.XOwnerNodeID()), OwnerRevision: 3, FencedAt: time.Now().UTC()}
 	s.instance = state.Instance{ID: f.InstanceID, AppID: f.AppID, DeploymentID: f.DeploymentID, NodeID: f.NodeID, WakeID: f.WakeID, State: "running", RAMMB: 256}
 	s.drain.Frame = f
 	v.proof = state.ManagedPostgresDrainProof{DrainID: f.ID, NativeGeneration: uuid.NewString(), KernelBootID: uuid.NewString(), ProcessesExited: true, ResourcesRemoved: true}
-	if err := e.ledger.Admit(Request{Instance: f.InstanceID, AppID: f.AppID, DeploymentID: f.DeploymentID, Plan: api.PlanHobby, RAMMB: 256, VCPU: 1, MaxConcurrency: 2, NodeID: f.NodeID}); err != nil {
+	if err := (*e.XLedger()).Admit(sched.Request{Instance: f.InstanceID, AppID: f.AppID, DeploymentID: f.DeploymentID, Plan: api.PlanHobby, RAMMB: 256, VCPU: 1, MaxConcurrency: 2, NodeID: f.NodeID}); err != nil {
 		t.Fatal(err)
 	}
 	return e, s, v
@@ -125,13 +126,13 @@ func TestManagedPostgresDrainUncertaintyRetainsCapacityUntilRecoveryCommit(t *te
 				t.Fatal("uncertainty accepted")
 			}
 			ins, err := s.InstanceByID(t.Context(), f.InstanceID)
-			if err != nil || ins.State != "running" || s.drain.Proof != nil || e.ledger.ResidentRAM() != 256+api.PerVMOverheadMB || v.destroys != 0 {
+			if err != nil || ins.State != "running" || s.drain.Proof != nil || (*e.XLedger()).ResidentRAM() != 256+api.PerVMOverheadMB || v.destroys != 0 {
 				t.Fatal("failed drain released reservation", ins, err)
 			}
 			v.err, v.wrongFrame, s.writeErr = nil, false, nil
 			v.proof.ResourcesRemoved = true
 			page, err := e.RecoverManagedPostgresDrains(t.Context(), f.OwnerNodeID, "", 1)
-			if err != nil || page.Retired != 1 || s.drain.Proof == nil || e.ledger.ResidentRAM() != 0 {
+			if err != nil || page.Retired != 1 || s.drain.Proof == nil || (*e.XLedger()).ResidentRAM() != 0 {
 				t.Fatal("recovery failed", page, err)
 			}
 			calls := v.calls
@@ -144,13 +145,13 @@ func TestManagedPostgresDrainUncertaintyRetainsCapacityUntilRecoveryCommit(t *te
 
 func TestManagedPostgresDrainNeverFallsBackToGenericDestroy(t *testing.T) {
 	e, s, v := drainSchedulerFixture(t)
-	e.vmm = v.drainLegacyVMM
+	(*e.Vmm()) = v.drainLegacyVMM
 	f := s.drain.Frame
 	if _, err := e.DrainManagedPostgresCutoverInstance(t.Context(), f.CutoverID, f.InstanceID); !errors.Is(err, state.ErrConflict) || s.reserved != 0 || v.destroys != 0 {
 		t.Fatal("legacy capability reached effects", err)
 	}
 	page, err := e.RecoverManagedPostgresDrains(t.Context(), f.OwnerNodeID, "", 1)
-	if err == nil || page.NextCursor != f.ID || e.ledger.ResidentRAM() == 0 {
+	if err == nil || page.NextCursor != f.ID || (*e.XLedger()).ResidentRAM() == 0 {
 		t.Fatal("legacy recovery lost reservation or cursor", page, err)
 	}
 	page, err = e.RecoverManagedPostgresDrains(t.Context(), f.OwnerNodeID, page.NextCursor, 1)

@@ -1,6 +1,7 @@
-package main
+package main_test
 
 import (
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -23,7 +24,7 @@ func TestEgressAllowlistClearSendsEmptyList(t *testing.T) {
 	t.Cleanup(srv.Close)
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_test_x")
-	if code := run([]string{"app", "demo", "egress-allowlist", "clear"}); code != 0 {
+	if code := main.Run([]string{"app", "demo", "egress-allowlist", "clear"}); code != 0 {
 		t.Fatalf("clear exit = %d", code)
 	}
 	if !strings.Contains(patched, `"egress_allowlist":[]`) {

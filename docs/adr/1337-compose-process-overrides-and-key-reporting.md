@@ -81,7 +81,8 @@ classifies its keys:
   each with the platform's alternative; unknown keys get a generic warning.
   `build.*` keys other than `context` and `dockerfile` (including `args`,
   `target` and `secrets`) are warned: the builder builds the Dockerfile's final
-  stage without build arguments.
+  stage without build arguments. ADR-20261019142544 later applies `args` and
+  `target` to Dockerfile builds.
 - **Not resolved, with a prominent warning:** `extends` and top-level
   `include`. The scan does not merge the extended service or the included
   files. The `extends` warning names the base service and, for a base in the
@@ -100,7 +101,7 @@ replaces the container and its keys.
 - Build arguments and targets remain unsupported for source builds. Carrying
   them would need builder, cache-key and frozen-profile changes, and build
   argument values would become stored configuration; that is a separate
-  decision.
+  decision, taken in ADR-20261019142544.
 - Published ports keep their existing meaning. For prebuilt images the
   container target selects the main port (ADR-678); for source builds the
   published port only labels the plan, since the build's serving port comes

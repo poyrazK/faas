@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -46,7 +47,7 @@ func TestDataAPIStatusDoesNotMutateOrExposeCredentials(t *testing.T) {
 				if state == "contract_mismatch" {
 					body["refresh_fingerprint"] = strings.Repeat("c", 64)
 				}
-				writeJSONTest(w, body)
+				main.WriteJSONTest(w, body)
 			}))
 			defer serving.Close()
 			original := http.DefaultTransport
@@ -56,20 +57,20 @@ func TestDataAPIStatusDoesNotMutateOrExposeCredentials(t *testing.T) {
 				if r.Method != "GET" || r.URL.Path != "/v1/apps/notes" {
 					t.Errorf("status mutated app: %s %s", r.Method, r.URL.Path)
 				}
-				writeJSONTest(w, api.AppResponse{Slug: "notes", URL: serving.URL})
+				main.WriteJSONTest(w, api.AppResponse{Slug: "notes", URL: serving.URL})
 			}))
 			defer management.Close()
 			t.Setenv("FAAS_API", management.URL)
 			t.Setenv("FAAS_TOKEN", "owner-test-token")
-			stdout, stderr, restore := swapIO(t)
+			stdout, stderr, restore := main.SwapIO(t)
 			defer restore()
-			code := run([]string{"--json", "data-api", "status", "notes"})
+			code := main.Run([]string{"--json", "data-api", "status", "notes"})
 			invalid := state == "invalid" || state == "missing-jwt" || state == "invalid-token"
 			if (code != 0) != invalid {
 				t.Fatalf("exit=%d output=%s error=%s", code, stdout.String(), stderr())
 			}
 			if !invalid {
-				var result dataAPIStatus
+				var result main.DataAPIStatus
 				if err := json.Unmarshal([]byte(stdout.String()), &result); err != nil {
 					t.Fatal(err)
 				}
@@ -96,8 +97,8 @@ func TestDataAPIStatusDoesNotMutateOrExposeCredentials(t *testing.T) {
 func TestDataAPIStatusBaselineIsSeparateFromAdmissionState(t *testing.T) {
 	paused := false
 	fp := strings.Repeat("a", 64)
-	contract := dataAPIServingContract{Fingerprint: fp, RefreshProtocol: 1, RefreshPaused: &paused, RefreshFingerprint: fp}
-	result, err := describeDataAPIStatus("notes", contract, strings.Repeat("b", 64))
+	contract := main.DataAPIServingContract{Fingerprint: fp, RefreshProtocol: 1, RefreshPaused: &paused, RefreshFingerprint: fp}
+	result, err := main.DescribeDataAPIStatus("notes", contract, strings.Repeat("b", 64))
 	if err != nil || result.State != "active" || result.BaselineMatches == nil || *result.BaselineMatches {
 		t.Fatalf("baseline mismatch changed admission state: %+v %v", result, err)
 	}

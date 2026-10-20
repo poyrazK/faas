@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -27,11 +28,13 @@ func runBindingInventoryTest(t *testing.T, inventory api.AppBindingInventory, sc
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_test")
-	previousOut, previousErr, previousJSON := osStdout, osStderr, jsonOutput
+	previousOut, previousErr, previousJSON := (*main.OsStdout), (*main.OsStderr), (*main.JsonOutput)
 	var stdout, stderr bytes.Buffer
-	osStdout, osStderr = &stdout, &stderr
-	t.Cleanup(func() { osStdout, osStderr, jsonOutput = previousOut, previousErr, previousJSON })
-	code := run(args)
+	(*main.OsStdout), (*main.OsStderr) = &stdout, &stderr
+	t.Cleanup(func() {
+		(*main.OsStdout), (*main.OsStderr), (*main.JsonOutput) = previousOut, previousErr, previousJSON
+	})
+	code := main.Run(args)
 	var got api.AppBindingInventory
 	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
 		t.Fatalf("inventory is not one JSON document: %v\n%s\n%s", err, stdout.String(), stderr.String())
@@ -104,17 +107,17 @@ func TestCmdBindingsRejectsInvalidScopeBeforeRequest(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_test")
-	if code := run([]string{"bindings", "api", "--scope", "__all__"}); code != 1 || calls != 0 {
+	if code := main.Run([]string{"bindings", "api", "--scope", "__all__"}); code != 1 || calls != 0 {
 		t.Fatalf("exit=%d calls=%d", code, calls)
 	}
 }
 
 func TestRenderIncompleteBindingInventoryDoesNotClaimNoBindings(t *testing.T) {
-	previousOut := osStdout
+	previousOut := (*main.OsStdout)
 	var out bytes.Buffer
-	osStdout = &out
-	t.Cleanup(func() { osStdout = previousOut })
-	renderAppBindingInventory(appBindingInventory{App: "api", Bindings: []appBindingInventoryItem{}})
+	(*main.OsStdout) = &out
+	t.Cleanup(func() { (*main.OsStdout) = previousOut })
+	main.RenderAppBindingInventory(main.AppBindingInventory{App: "api", Bindings: []main.AppBindingInventoryItem{}})
 	if strings.Contains(out.String(), "No bindings for") || !strings.Contains(out.String(), "incomplete") {
 		t.Fatalf("unknown inventory rendered as empty: %s", out.String())
 	}

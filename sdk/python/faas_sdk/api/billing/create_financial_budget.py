@@ -98,18 +98,28 @@ def sync_detailed(
     body: CreateFinancialBudgetRequest,
     idempotency_key: str,
 ) -> Response[FinancialBudgetResponse | Problem]:
-    """Save an account-owned budget draft with atomic revision audit.
+    """Save a budget policy with atomic revision audit and supported activation checks.
 
      Requires admin scope and session MFA. Idempotency-Key is required (1..255 bytes).
     It fixes creation identity beyond replay-cache retention. Reusing an operation
-    identity cannot overwrite a changed or deleted policy. Set enabled=false:
-    activation currently returns 422 financial_budget_activation_unavailable.
-    Saving a draft creates no holds, decisions, notifications or workload changes.
+    identity cannot overwrite a changed or deleted policy. Disabled policies are drafts.
+    Activation supports monitored notify, monitored compute-only stop_previews, and strict app/job gross
+    compute or account net compute (optionally combined with egress) suspend_workloads with zero drain
+    and no alert thresholds. Other enabled responses return 422 financial_budget_activation_unavailable.
+    Strict activation requires quiet covered workloads, complete accounting and capable native owners;
+    unavailable authority returns 422 financial_compute_not_ready.
+    Disabled drafts create no notifications or workload changes. Active notification policies never stop
+    workloads.
 
     Args:
         idempotency_key (str):
-        body (CreateFinancialBudgetRequest): New budget intent; this deployment accepts disabled
-            drafts only.
+        body (CreateFinancialBudgetRequest): New budget intent; activation supports monitored
+            notify, monitored compute-only stop_previews, and strict suspend_workloads (app/job gross
+            compute or account net compute optionally combined with egress) with zero drain and no
+            alert thresholds. Strict activation requires quiet covered workloads, complete accounting,
+            and native owners. Account strict activation also requires recorded allowances and native
+            owners capable of funded jobs. Combining compute and egress additionally requires complete
+            egress accounting and byte-capable native owners.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -137,18 +147,28 @@ def sync(
     body: CreateFinancialBudgetRequest,
     idempotency_key: str,
 ) -> FinancialBudgetResponse | Problem | None:
-    """Save an account-owned budget draft with atomic revision audit.
+    """Save a budget policy with atomic revision audit and supported activation checks.
 
      Requires admin scope and session MFA. Idempotency-Key is required (1..255 bytes).
     It fixes creation identity beyond replay-cache retention. Reusing an operation
-    identity cannot overwrite a changed or deleted policy. Set enabled=false:
-    activation currently returns 422 financial_budget_activation_unavailable.
-    Saving a draft creates no holds, decisions, notifications or workload changes.
+    identity cannot overwrite a changed or deleted policy. Disabled policies are drafts.
+    Activation supports monitored notify, monitored compute-only stop_previews, and strict app/job gross
+    compute or account net compute (optionally combined with egress) suspend_workloads with zero drain
+    and no alert thresholds. Other enabled responses return 422 financial_budget_activation_unavailable.
+    Strict activation requires quiet covered workloads, complete accounting and capable native owners;
+    unavailable authority returns 422 financial_compute_not_ready.
+    Disabled drafts create no notifications or workload changes. Active notification policies never stop
+    workloads.
 
     Args:
         idempotency_key (str):
-        body (CreateFinancialBudgetRequest): New budget intent; this deployment accepts disabled
-            drafts only.
+        body (CreateFinancialBudgetRequest): New budget intent; activation supports monitored
+            notify, monitored compute-only stop_previews, and strict suspend_workloads (app/job gross
+            compute or account net compute optionally combined with egress) with zero drain and no
+            alert thresholds. Strict activation requires quiet covered workloads, complete accounting,
+            and native owners. Account strict activation also requires recorded allowances and native
+            owners capable of funded jobs. Combining compute and egress additionally requires complete
+            egress accounting and byte-capable native owners.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -171,18 +191,28 @@ async def asyncio_detailed(
     body: CreateFinancialBudgetRequest,
     idempotency_key: str,
 ) -> Response[FinancialBudgetResponse | Problem]:
-    """Save an account-owned budget draft with atomic revision audit.
+    """Save a budget policy with atomic revision audit and supported activation checks.
 
      Requires admin scope and session MFA. Idempotency-Key is required (1..255 bytes).
     It fixes creation identity beyond replay-cache retention. Reusing an operation
-    identity cannot overwrite a changed or deleted policy. Set enabled=false:
-    activation currently returns 422 financial_budget_activation_unavailable.
-    Saving a draft creates no holds, decisions, notifications or workload changes.
+    identity cannot overwrite a changed or deleted policy. Disabled policies are drafts.
+    Activation supports monitored notify, monitored compute-only stop_previews, and strict app/job gross
+    compute or account net compute (optionally combined with egress) suspend_workloads with zero drain
+    and no alert thresholds. Other enabled responses return 422 financial_budget_activation_unavailable.
+    Strict activation requires quiet covered workloads, complete accounting and capable native owners;
+    unavailable authority returns 422 financial_compute_not_ready.
+    Disabled drafts create no notifications or workload changes. Active notification policies never stop
+    workloads.
 
     Args:
         idempotency_key (str):
-        body (CreateFinancialBudgetRequest): New budget intent; this deployment accepts disabled
-            drafts only.
+        body (CreateFinancialBudgetRequest): New budget intent; activation supports monitored
+            notify, monitored compute-only stop_previews, and strict suspend_workloads (app/job gross
+            compute or account net compute optionally combined with egress) with zero drain and no
+            alert thresholds. Strict activation requires quiet covered workloads, complete accounting,
+            and native owners. Account strict activation also requires recorded allowances and native
+            owners capable of funded jobs. Combining compute and egress additionally requires complete
+            egress accounting and byte-capable native owners.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -208,18 +238,28 @@ async def asyncio(
     body: CreateFinancialBudgetRequest,
     idempotency_key: str,
 ) -> FinancialBudgetResponse | Problem | None:
-    """Save an account-owned budget draft with atomic revision audit.
+    """Save a budget policy with atomic revision audit and supported activation checks.
 
      Requires admin scope and session MFA. Idempotency-Key is required (1..255 bytes).
     It fixes creation identity beyond replay-cache retention. Reusing an operation
-    identity cannot overwrite a changed or deleted policy. Set enabled=false:
-    activation currently returns 422 financial_budget_activation_unavailable.
-    Saving a draft creates no holds, decisions, notifications or workload changes.
+    identity cannot overwrite a changed or deleted policy. Disabled policies are drafts.
+    Activation supports monitored notify, monitored compute-only stop_previews, and strict app/job gross
+    compute or account net compute (optionally combined with egress) suspend_workloads with zero drain
+    and no alert thresholds. Other enabled responses return 422 financial_budget_activation_unavailable.
+    Strict activation requires quiet covered workloads, complete accounting and capable native owners;
+    unavailable authority returns 422 financial_compute_not_ready.
+    Disabled drafts create no notifications or workload changes. Active notification policies never stop
+    workloads.
 
     Args:
         idempotency_key (str):
-        body (CreateFinancialBudgetRequest): New budget intent; this deployment accepts disabled
-            drafts only.
+        body (CreateFinancialBudgetRequest): New budget intent; activation supports monitored
+            notify, monitored compute-only stop_previews, and strict suspend_workloads (app/job gross
+            compute or account net compute optionally combined with egress) with zero drain and no
+            alert thresholds. Strict activation requires quiet covered workloads, complete accounting,
+            and native owners. Account strict activation also requires recorded allowances and native
+            owners capable of funded jobs. Combining compute and egress additionally requires complete
+            egress accounting and byte-capable native owners.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

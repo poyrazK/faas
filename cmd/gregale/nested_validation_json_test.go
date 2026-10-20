@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -62,7 +63,7 @@ func TestNestedCommandValidationJSON(t *testing.T) {
 				label += "/env"
 			}
 			t.Run(label, func(t *testing.T) {
-				resetJSONOut(t)
+				main.ResetJSONOut(t)
 				t.Setenv("FAAS_JSON", "0")
 				var requests atomic.Int32
 				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -78,10 +79,10 @@ func TestNestedCommandValidationJSON(t *testing.T) {
 				} else {
 					argv = append(argv, "--json")
 				}
-				out, restoreOut := captureStdout(t)
+				out, restoreOut := main.CaptureStdout(t)
 				defer restoreOut()
-				errOut, restoreErr := captureStderr(t)
-				code := run(argv)
+				errOut, restoreErr := main.CaptureStderr(t)
+				code := main.Run(argv)
 				restoreErr()
 				var problem api.Problem
 				if err := json.Unmarshal([]byte(errOut.String()), &problem); err != nil {
@@ -96,10 +97,10 @@ func TestNestedCommandValidationJSON(t *testing.T) {
 }
 
 func TestNestedCommandValidationHumanMode(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	t.Setenv("FAAS_JSON", "0")
-	errOut, restore := captureStderr(t)
-	code := run([]string{"debug", "requests", "audit-not-a-verb"})
+	errOut, restore := main.CaptureStderr(t)
+	code := main.Run([]string{"debug", "requests", "audit-not-a-verb"})
 	restore()
 	if code != 1 || errOut.String() != "unknown debug requests subcommand \"audit-not-a-verb\"\n" {
 		t.Fatalf("human diagnostic changed: exit=%d: %s", code, errOut.String())

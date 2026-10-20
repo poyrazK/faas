@@ -1,9 +1,10 @@
-package main
+package main_test
 
 import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -21,7 +22,7 @@ func TestRenderRestoreBreakdown_PrepareAndPreBootPhases(t *testing.T) {
 			"stage_snapshot_ms":       float64(6),
 		},
 	}
-	got := renderRestoreBreakdown(ev)
+	got := main.RenderRestoreBreakdown(ev)
 	for _, want := range []string{
 		"restore total=1386ms",
 		"lease_acquire=2ms",

@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -28,9 +29,9 @@ func appChangesServer(t *testing.T, payload api.AppChangeTimelineResponse) (*str
 func captureAppChangesStdout(t *testing.T) *bytes.Buffer {
 	t.Helper()
 	var stdout bytes.Buffer
-	old := osStdout
-	osStdout = &stdout
-	t.Cleanup(func() { osStdout = old })
+	old := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	t.Cleanup(func() { (*main.OsStdout) = old })
 	return &stdout
 }
 
@@ -46,7 +47,7 @@ func TestCmdAppChanges_RendersTimeline(t *testing.T) {
 	})
 	stdout := captureAppChangesStdout(t)
 
-	if code := cmdAppDispatch([]string{"shop", "changes"}); code != 0 {
+	if code := main.CmdAppDispatch([]string{"shop", "changes"}); code != 0 {
 		t.Fatalf("app shop changes = %d, want 0", code)
 	}
 	if *gotPath != "/v1/apps/shop/changes" || *gotQuery != "" {
@@ -72,7 +73,7 @@ func TestCmdAppChanges_PassesWindow(t *testing.T) {
 	_, gotQuery := appChangesServer(t, api.AppChangeTimelineResponse{AppSlug: "shop"})
 	stdout := captureAppChangesStdout(t)
 
-	if code := cmdAppChanges("shop", []string{"--since", "2026-10-08T12:00:00Z", "--until", "2026-10-09T12:00:00Z"}); code != 0 {
+	if code := main.CmdAppChanges("shop", []string{"--since", "2026-10-08T12:00:00Z", "--until", "2026-10-09T12:00:00Z"}); code != 0 {
 		t.Fatalf("app changes with window = %d, want 0", code)
 	}
 	if *gotQuery != "since=2026-10-08T12%3A00%3A00Z&until=2026-10-09T12%3A00%3A00Z" {
@@ -85,9 +86,9 @@ func TestCmdAppChanges_PassesWindow(t *testing.T) {
 
 func TestCmdAppChanges_RejectsBadWindowBeforeCallingAPI(t *testing.T) {
 	gotPath, _ := appChangesServer(t, api.AppChangeTimelineResponse{})
-	_, _, restore := swapIO(t)
+	_, _, restore := main.SwapIO(t)
 	defer restore()
-	if code := cmdAppChanges("shop", []string{"--since", "yesterday"}); code == 0 {
+	if code := main.CmdAppChanges("shop", []string{"--since", "yesterday"}); code == 0 {
 		t.Fatal("non-RFC3339 --since must fail")
 	}
 	if *gotPath != "" {

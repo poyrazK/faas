@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/hosting"
 )
@@ -70,15 +71,15 @@ func TestHostingCIRetriesReuseRunReleaseAndPreviewAfterLostResponses(t *testing.
 			}))
 			defer server.Close()
 			client := api.NewHostingAutomationClient(server.URL, "site-token")
-			first, err := runHostingCI(t.Context(), client, site, id, "unused", req, time.Second)
+			first, err := main.RunHostingCI(t.Context(), client, site, id, "unused", req, time.Second)
 			if err == nil || first.Run.ID != id {
 				t.Fatal(first, err)
 			}
-			second, err := runHostingCI(t.Context(), client, site, id, "unused", req, time.Second)
+			second, err := main.RunHostingCI(t.Context(), client, site, id, "unused", req, time.Second)
 			if err == nil || second.Run.ReleaseID != releaseID {
 				t.Fatal(second, err)
 			}
-			third, err := runHostingCI(t.Context(), client, site, id, "unused", req, time.Second)
+			third, err := main.RunHostingCI(t.Context(), client, site, id, "unused", req, time.Second)
 			if err != nil || !third.Published || third.State != "publication_acknowledged" || third.Run.ReleaseID != releaseID || puts != 3 || previewCalls != 2 {
 				t.Fatal(third, puts, previewCalls, err)
 			}
@@ -90,7 +91,7 @@ func TestSitesCIRefusesBroadCredentialsAndInvalidIntentBeforeNetworking(t *testi
 	reviewCLI(t, func(http.ResponseWriter, *http.Request) { calls++ })
 	t.Setenv("FAAS_FRONTEND_HOSTING_AUTOMATION_ENABLED", "1")
 	for _, args := range [][]string{{"ci", "--site", reviewSiteID, "--run-id", reviewReleaseID}, {"ci", "--site", reviewSiteID, "--run-id", "bad"}, {"ci", "--site", reviewSiteID, "--run-id", reviewReleaseID, "--wait-timeout", "20m"}} {
-		if cmdSites(args) == 0 {
+		if main.CmdSites(args) == 0 {
 			t.Fatal("invalid CI options accepted")
 		}
 	}
@@ -100,9 +101,9 @@ func TestSitesCIRefusesBroadCredentialsAndInvalidIntentBeforeNetworking(t *testi
 }
 func TestSitesTokenCreationWritesPrivateFileWithoutPrintingSecret(t *testing.T) {
 	var stdout bytes.Buffer
-	old := osStdout
-	osStdout = &stdout
-	defer func() { osStdout = old }()
+	old := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	defer func() { (*main.OsStdout) = old }()
 	token := "fp_host_" + strings.Repeat("a", 64)
 	calls := 0
 	reviewCLI(t, func(w http.ResponseWriter, r *http.Request) {
@@ -115,7 +116,7 @@ func TestSitesTokenCreationWritesPrivateFileWithoutPrintingSecret(t *testing.T) 
 	t.Setenv("FAAS_FRONTEND_HOSTING_AUTOMATION_ENABLED", "1")
 	path := filepath.Join(t.TempDir(), "ci-token")
 	args := []string{"tokens", "create", "--site", reviewSiteID, "--label", "CI", "--out", path}
-	if cmdSites(args) != 0 {
+	if main.CmdSites(args) != 0 {
 		t.Fatal("issuance failed")
 	}
 	contents, err := os.ReadFile(path)
@@ -126,7 +127,7 @@ func TestSitesTokenCreationWritesPrivateFileWithoutPrintingSecret(t *testing.T) 
 	if info.Mode().Perm() != 0600 || strings.Contains(stdout.String(), token) {
 		t.Fatal("credential exposed")
 	}
-	if cmdSites(args) == 0 || calls != 1 {
+	if main.CmdSites(args) == 0 || calls != 1 {
 		t.Fatal("existing private file overwritten")
 	}
 }
@@ -136,12 +137,12 @@ func TestCIUploadGrantsCannotEscapeTheirReleaseOrCarryCredentials(t *testing.T) 
 	valid := "https://private.r2.example/bucket/hosting/staging/" + run.SiteID + "/" + run.ReleaseID + "/index.html?signature=test"
 	for _, url := range []string{"https://other.example/collect", strings.Replace(valid, run.ReleaseID, run.SiteID, 1)} {
 		response := api.HostingUploadResponse{Release: api.HostingRelease{ID: run.ReleaseID, SiteID: run.SiteID, State: "pending"}, Uploads: []api.HostingUpload{{Path: "index.html", URL: url}}}
-		if validateCIUploadGrants(response, run, manifest, "https://private.r2.example/bucket") == nil {
+		if main.ValidateCIUploadGrants(response, run, manifest, "https://private.r2.example/bucket") == nil {
 			t.Fatal("foreign upload origin/release allowed")
 		}
 	}
 	response := api.HostingUploadResponse{Release: api.HostingRelease{ID: run.ReleaseID, SiteID: run.SiteID, State: "pending"}, Uploads: []api.HostingUpload{{Path: "index.html", URL: valid, Headers: map[string][]string{"Authorization": {"Bearer forbidden"}}}}}
-	if validateCIUploadGrants(response, run, manifest, "https://private.r2.example/bucket") == nil {
+	if main.ValidateCIUploadGrants(response, run, manifest, "https://private.r2.example/bucket") == nil {
 		t.Fatal("credential-bearing upload grant allowed")
 	}
 }
@@ -165,7 +166,7 @@ func TestHostingCIExpiredIntentStopsBeforeUploadsOrPreviewMutation(t *testing.T)
 		}
 	}))
 	defer server.Close()
-	result, err := runHostingCI(t.Context(), api.NewHostingAutomationClient(server.URL, "scoped-test-token"), reviewSiteID, run.ID, "unused", req, time.Second)
+	result, err := main.RunHostingCI(t.Context(), api.NewHostingAutomationClient(server.URL, "scoped-test-token"), reviewSiteID, run.ID, "unused", req, time.Second)
 	if err == nil || result.Published || result.Run.ReleaseID != run.ReleaseID {
 		t.Fatal(result, err)
 	}
@@ -185,14 +186,14 @@ func TestSitesCIOIDCRequiresExplicitFlagAndNeverFallsBackToSavedCredentials(t *t
 	for _, settings := range []struct{ flag, token string }{{"", ""}, {"false", ""}, {"1", "fp_live_account_token"}, {"1", "fp_host_" + strings.Repeat("a", 64)}} {
 		t.Setenv("FAAS_FRONTEND_HOSTING_OIDC_ENABLED", settings.flag)
 		t.Setenv("FAAS_TOKEN", settings.token)
-		if code := cmdSitesCI(args); code == 0 {
+		if code := main.CmdSitesCI(args); code == 0 {
 			t.Fatal("OIDC fallback or disabled flow succeeded")
 		}
 	}
 	t.Setenv("FAAS_TOKEN", "")
 	t.Setenv("FAAS_FRONTEND_HOSTING_OIDC_ENABLED", "1")
 	t.Setenv("ACTIONS_ID_TOKEN_REQUEST_URL", "https://attacker.example/job")
-	if code := cmdSitesCI(args); code == 0 {
+	if code := main.CmdSitesCI(args); code == 0 {
 		t.Fatal("GitHub identity request credential sent to untrusted endpoint")
 	}
 }

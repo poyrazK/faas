@@ -1,5 +1,5 @@
 // adr: 201
-package sched
+package sched_test
 
 import (
 	"context"
@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -35,7 +36,7 @@ func TestStoreCandidateReaderProjectsRows(t *testing.T) {
 		Sampled:          sampled,
 	}}}
 	now := time.Date(2026, 9, 21, 12, 5, 0, 0, time.UTC)
-	read := NewStoreEgressCircuitCandidateReader(store, 10*time.Minute, func() time.Time { return now })
+	read := sched.NewStoreEgressCircuitCandidateReader(store, 10*time.Minute, func() time.Time { return now })
 
 	got, err := read(context.Background())
 	if err != nil {
@@ -62,7 +63,7 @@ func TestStoreCandidateReaderProjectsRows(t *testing.T) {
 }
 
 func TestStoreCandidateReaderSurfacesErrors(t *testing.T) {
-	read := NewStoreEgressCircuitCandidateReader(
+	read := sched.NewStoreEgressCircuitCandidateReader(
 		&fakeCandidateStore{err: errors.New("pg down")}, time.Minute, time.Now)
 	if _, err := read(context.Background()); err == nil {
 		t.Fatal("read returned nil on a store failure")
@@ -90,7 +91,7 @@ func TestNodeListerReturnsOnlyLiveNodes(t *testing.T) {
 		{NodeID: "node-e", State: string(state.StateFailed)},
 		{NodeID: "", State: string(state.StateRunning)},
 	}}
-	got, err := NewStoreEgressCircuitNodeLister(store)(context.Background(), "app-1")
+	got, err := sched.NewStoreEgressCircuitNodeLister(store)(context.Background(), "app-1")
 	if err != nil {
 		t.Fatalf("lister: %v", err)
 	}
@@ -112,7 +113,7 @@ func TestNodeListerDeduplicatesNodes(t *testing.T) {
 		{NodeID: "node-a", State: string(state.StateRunning)},
 		{NodeID: "node-a", State: string(state.StateWaking)},
 	}}
-	got, _ := NewStoreEgressCircuitNodeLister(store)(context.Background(), "app-1")
+	got, _ := sched.NewStoreEgressCircuitNodeLister(store)(context.Background(), "app-1")
 	if len(got) != 1 || got[0] != "node-a" {
 		t.Fatalf("nodes = %v, want a single node-a — the set is per node, not per instance", got)
 	}
@@ -120,7 +121,7 @@ func TestNodeListerDeduplicatesNodes(t *testing.T) {
 
 func TestNodeListerSurfacesErrors(t *testing.T) {
 	store := &fakeInstanceStore{err: errors.New("pg down")}
-	if _, err := NewStoreEgressCircuitNodeLister(store)(context.Background(), "app-1"); err == nil {
+	if _, err := sched.NewStoreEgressCircuitNodeLister(store)(context.Background(), "app-1"); err == nil {
 		t.Fatal("lister returned nil on a store failure")
 	}
 }

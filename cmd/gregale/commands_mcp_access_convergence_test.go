@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"context"
@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -54,12 +55,12 @@ func TestMCPAccessConvergence(t *testing.T) {
 						_, _ = w.Write([]byte("PRIVATE_ERROR"))
 						return
 					}
-					writeJSONTest(w, status)
+					main.WriteJSONTest(w, status)
 				case "/v1/edge-rules":
 					if scenario == "changed" {
 						rules[0].Enabled = false
 					}
-					writeJSONTest(w, rules)
+					main.WriteJSONTest(w, rules)
 				default:
 					t.Errorf("unexpected endpoint %s", r.URL.Path)
 					w.WriteHeader(404)
@@ -75,7 +76,7 @@ func TestMCPAccessConvergence(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), deadline)
 			defer cancel()
 			var revision int64
-			check := waitMCPAccessConvergence(ctx, NewClient(server.URL, "operator"), "my-mcp", "app-id", cfg.Auth.Resource, fingerprint, &revision)
+			check := main.WaitMCPAccessConvergence(ctx, main.NewClient(server.URL, "operator"), "my-mcp", "app-id", cfg.Auth.Resource, fingerprint, &revision)
 			want := "unknown"
 			if scenario == "active" || scenario == "delayed" {
 				want = "passed"

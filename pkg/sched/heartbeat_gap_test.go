@@ -1,4 +1,4 @@
-package sched
+package sched_test
 
 // Property test for the heartbeat-gap classifier (CP-1, echo of the
 // package-doc invariant under the new observability surface).
@@ -17,6 +17,7 @@ package sched
 //     -fuzz '^FuzzHeartbeatGapClassifier$' -fuzztime=30s
 
 import (
+	"github.com/onebox-faas/faas/pkg/sched"
 	"testing"
 	"time"
 )
@@ -26,8 +27,8 @@ import (
 // shape's `missed` / `stale` flags on the endpoint so a regression
 // in the classifier is observable end-to-end.
 func TestHeartbeatGapClassification(t *testing.T) {
-	interval := DefaultHeartbeatInterval
-	staleness := DefaultHeartbeatStaleness
+	interval := sched.DefaultHeartbeatInterval
+	staleness := sched.DefaultHeartbeatStaleness
 	base := time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC)
 
 	type gapCase struct {
@@ -96,7 +97,7 @@ func TestHeartbeatGapClassification(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			prev := base
 			curr := base.Add(tc.gap)
-			got := ClassifyHeartbeatGap(prev, curr, interval, staleness)
+			got := sched.ClassifyHeartbeatGap(prev, curr, interval, staleness)
 			if got.Missed != tc.wantMissed {
 				t.Errorf("Missed = %v, want %v (gap=%s, interval=%s, staleness=%s)",
 					got.Missed, tc.wantMissed, tc.gap, interval, staleness)
@@ -112,7 +113,7 @@ func TestHeartbeatGapClassification(t *testing.T) {
 	// regardless of curr. The endpoint emits this on the first row
 	// of a fresh node's history (no previous to compare against).
 	t.Run("first row has no baseline", func(t *testing.T) {
-		got := ClassifyHeartbeatGap(time.Time{}, base, interval, staleness)
+		got := sched.ClassifyHeartbeatGap(time.Time{}, base, interval, staleness)
 		if got.Missed || got.Stale {
 			t.Errorf("first-row: got %+v, want zero summary", got)
 		}
@@ -126,8 +127,8 @@ func TestHeartbeatGapClassification(t *testing.T) {
 // each row carries a per-step gap, so consecutive rows chain
 // through the classifier as the wire shape emits them.
 func TestHeartbeatGapClassification_ChainedSequence(t *testing.T) {
-	interval := DefaultHeartbeatInterval
-	staleness := DefaultHeartbeatStaleness
+	interval := sched.DefaultHeartbeatInterval
+	staleness := sched.DefaultHeartbeatStaleness
 	base := time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC)
 
 	// Per-step gaps in order. Row 0 has no previous row (baseline
@@ -156,7 +157,7 @@ func TestHeartbeatGapClassification_ChainedSequence(t *testing.T) {
 			prev = receivedAt
 		}
 		receivedAt = receivedAt.Add(gap)
-		got := ClassifyHeartbeatGap(prev, receivedAt, interval, staleness)
+		got := sched.ClassifyHeartbeatGap(prev, receivedAt, interval, staleness)
 		if got.Missed != want[i].Missed || got.Stale != want[i].Stale {
 			t.Errorf("row %d (gap=%s, prev=%v, curr=%v): got %+v, want %+v",
 				i, gap, prev, receivedAt, got, want[i])
@@ -183,8 +184,8 @@ func TestHeartbeatGapClassification_ChainedSequence(t *testing.T) {
 // operator UI shows "missed" on every healthy tick. The fuzzer
 // runs as a developer-machine command (no CI fuzz lane).
 func FuzzHeartbeatGapClassifier(f *testing.F) {
-	interval := DefaultHeartbeatInterval
-	staleness := DefaultHeartbeatStaleness
+	interval := sched.DefaultHeartbeatInterval
+	staleness := sched.DefaultHeartbeatStaleness
 
 	f.Add(int64(0), int64(0))
 	f.Add(int64(0), int64(30_000_000_000)) // 30s
@@ -202,7 +203,7 @@ func FuzzHeartbeatGapClassifier(f *testing.F) {
 			// assertions to make).
 			return
 		}
-		got := ClassifyHeartbeatGap(prev, curr, interval, staleness)
+		got := sched.ClassifyHeartbeatGap(prev, curr, interval, staleness)
 
 		// Invariant 1: never both Missed AND Stale false-positive.
 		// A bug here would mean the wire shape emits both flags —

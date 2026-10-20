@@ -6,7 +6,7 @@
 // Test shape mirrors watchdog_test.go and cron_loop_test.go: build a
 // MemStore + Engine, drive loop.runRetention directly so the test
 // doesn't need a real ticker.
-package sched
+package sched_test
 
 import (
 	"context"
@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -39,7 +40,7 @@ func retentionMemStore(t *testing.T, s state.Store) *state.MemStore {
 // are left alone.
 func TestRetentionSweepsTerminalRows(t *testing.T) {
 	store := state.NewMemStore()
-	_, app, dep := seedApp(t, store, api.PlanPro, 512, 5)
+	_, app, dep := sched.SeedApp(t, store, api.PlanPro, 512, 5)
 	ms := retentionMemStore(t, store)
 
 	// One row per state × two ages = 10 fixtures.
@@ -78,7 +79,7 @@ func TestRetentionSweepsTerminalRows(t *testing.T) {
 		}
 	}
 
-	r := NewRetention(store, slog.Default()).
+	r := sched.NewRetention(store, slog.Default()).
 		WithRetention(30 * 24 * time.Hour).
 		WithClock(func() time.Time { return time.Now() })
 
@@ -121,7 +122,7 @@ func TestRetentionSweepsTerminalRows(t *testing.T) {
 func TestRetentionReclaimsRepeatedParkCyclesWithoutDeletingRestoreState(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemStore()
-	_, app, dep := seedApp(t, store, api.PlanPro, 512, 5)
+	_, app, dep := sched.SeedApp(t, store, api.PlanPro, 512, 5)
 	ms := retentionMemStore(t, store)
 	now := time.Date(2026, 9, 13, 18, 0, 0, 0, time.UTC)
 
@@ -196,7 +197,7 @@ func TestRetentionReclaimsRepeatedParkCyclesWithoutDeletingRestoreState(t *testi
 		t.Fatal(err)
 	}
 
-	r := NewRetention(store, slog.Default()).
+	r := sched.NewRetention(store, slog.Default()).
 		WithRetention(30 * 24 * time.Hour).
 		WithClock(func() time.Time { return now })
 	deleted, err := r.SweepOnce(ctx)
@@ -229,7 +230,7 @@ func TestRetentionReclaimsRepeatedParkCyclesWithoutDeletingRestoreState(t *testi
 // a second sweep on the same DB finds zero rows and is a no-op.
 func TestRetentionDoubleTickIsIdempotent(t *testing.T) {
 	store := state.NewMemStore()
-	_, app, dep := seedApp(t, store, api.PlanPro, 512, 5)
+	_, app, dep := sched.SeedApp(t, store, api.PlanPro, 512, 5)
 	ms := retentionMemStore(t, store)
 	old, err := store.CreateInstance(context.Background(), app.ID, dep.ID, string(state.StateStopped), 512, state.DefaultLocalNodeName, "")
 	if err != nil {
@@ -237,7 +238,7 @@ func TestRetentionDoubleTickIsIdempotent(t *testing.T) {
 	}
 	ms.SetTerminalAtForTest(old.ID, time.Now().Add(-40*24*time.Hour))
 
-	r := NewRetention(store, slog.Default()).WithRetention(30 * 24 * time.Hour)
+	r := sched.NewRetention(store, slog.Default()).WithRetention(30 * 24 * time.Hour)
 	first, err := r.SweepOnce(context.Background())
 	if err != nil {
 		t.Fatalf("SweepOnce #1: %v", err)
@@ -261,7 +262,7 @@ func TestRetentionDoubleTickIsIdempotent(t *testing.T) {
 // for started_at.
 func TestRetentionSkipActiveStates(t *testing.T) {
 	store := state.NewMemStore()
-	_, app, dep := seedApp(t, store, api.PlanPro, 512, 5)
+	_, app, dep := sched.SeedApp(t, store, api.PlanPro, 512, 5)
 
 	// Create a STOPPED row WITHOUT a terminal_at (engine bug or
 	// pre-migration backfill regression). Must not be swept.
@@ -270,7 +271,7 @@ func TestRetentionSkipActiveStates(t *testing.T) {
 		t.Fatalf("CreateInstance: %v", err)
 	}
 
-	r := NewRetention(store, slog.Default()).WithRetention(30 * 24 * time.Hour)
+	r := sched.NewRetention(store, slog.Default()).WithRetention(30 * 24 * time.Hour)
 	deleted, err := r.SweepOnce(context.Background())
 	if err != nil {
 		t.Fatalf("SweepOnce: %v", err)
@@ -288,7 +289,7 @@ func TestRetentionSkipActiveStates(t *testing.T) {
 // sweep sees the same rows as a direct SweepOnce call.
 func TestLoopRunRetentionWiresThroughLoop(t *testing.T) {
 	store := state.NewMemStore()
-	_, app, dep := seedApp(t, store, api.PlanPro, 512, 5)
+	_, app, dep := sched.SeedApp(t, store, api.PlanPro, 512, 5)
 	ms := retentionMemStore(t, store)
 
 	old, err := store.CreateInstance(context.Background(), app.ID, dep.ID, string(state.StateFailed), 512, state.DefaultLocalNodeName, "")
@@ -297,11 +298,11 @@ func TestLoopRunRetentionWiresThroughLoop(t *testing.T) {
 	}
 	ms.SetTerminalAtForTest(old.ID, time.Now().Add(-40*24*time.Hour))
 
-	r := NewRetention(store, slog.Default()).WithRetention(30 * 24 * time.Hour)
-	engine := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
-	loop := NewLoop(nil, engine, slog.Default()).WithRetention(r)
+	r := sched.NewRetention(store, slog.Default()).WithRetention(30 * 24 * time.Hour)
+	engine := sched.XNewEngine(t, store, &sched.FakeVMM{}, &sched.FakeNotifier{}, "1.10.0")
+	loop := sched.NewLoop(nil, engine, slog.Default()).WithRetention(r)
 
-	loop.runRetention(context.Background())
+	loop.RunRetention(context.Background())
 
 	if _, err := store.InstanceByID(context.Background(), old.ID); !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("old FAILED row still present after loop.runRetention: %v", err)
@@ -328,9 +329,9 @@ func (s *workflowRetentionCountingStore) SweepExpiredWorkflowEvents(ctx context.
 // retention ticker's dispatch seam without waiting for the hourly ticker.
 func TestLoopRunWorkflowRetentionWiresThroughLoop(t *testing.T) {
 	counting := &workflowRetentionCountingStore{WorkflowStore: state.NewMemStore()}
-	loop := NewLoop(nil, nil, slog.Default()).WithWorkflowRetention(NewWorkflowRetention(counting, slog.Default()))
+	loop := sched.NewLoop(nil, nil, slog.Default()).WithWorkflowRetention(sched.NewWorkflowRetention(counting, slog.Default()))
 
-	loop.runWorkflowRetention(context.Background())
+	loop.RunWorkflowRetention(context.Background())
 
 	if counting.runs != 1 || counting.events != 1 {
 		t.Fatalf("workflow retention calls = runs:%d events:%d, want one each", counting.runs, counting.events)
@@ -343,16 +344,17 @@ func TestLoopRunWorkflowRetentionWiresThroughLoop(t *testing.T) {
 // the retention sweep consumes from.
 func TestTransitionStampsTerminalAt(t *testing.T) {
 	store := state.NewMemStore()
-	_, app, _ := seedApp(t, store, api.PlanPro, 512, 5)
-	vmm := &fakeVMM{}
-	engine := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0").WithOpsMetrics(wire.NewOpsMetrics("schedd"))
+	_, app, _ := sched.SeedApp(t, store, api.PlanPro, 512, 5)
+	vmm := &sched.FakeVMM{}
+	engine := sched.XNewEngine(t, store, vmm, &sched.FakeNotifier{}, "1.10.0").WithOpsMetrics(wire.NewOpsMetrics("schedd"))
 
 	res, err := engine.Wake(context.Background(), app.ID, "", "", "")
 	if err != nil {
 		t.Fatalf("Wake: %v", err)
 	}
+	(*
 	// Drive the instance to STOPPED via Park with a failing snapshot.
-	vmm.snapErr = errBoom
+	vmm.SnapErr()) = (*sched.ErrBoom)
 	if err := engine.Park(context.Background(), res.InstanceID); err == nil {
 		t.Fatal("expected Park to fail (snapErr set)")
 	}

@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/bindings"
 )
@@ -20,21 +21,21 @@ func TestBindingPolicyServiceTargetPlanningAndConfirmation(t *testing.T) {
 	caller := uuid.NewString()
 	inventory := api.AppBindingInventory{App: "api", Complete: true, GeneratedAt: now, RequestedDeploymentID: caller, VerificationDeploymentID: caller, VerificationScope: "production", ServiceTargets: map[string]string{"billing": target}, Bindings: []api.AppBindingInventoryItem{{Type: api.BindingTypeService, Name: "billing", Binding: "BILLING", Scope: "app", Access: "invoke", State: "declared", ServiceTargetDeploymentID: target, VerificationStatus: "passed", Verification: &api.BindingVerification{Result: "passed", Source: "task_guest", DeploymentID: caller, Scope: "production", CheckedAt: &now}}}}
 	policy := api.BindingReleasePolicy{AppID: uuid.NewString(), Scope: "production", Mode: "enforce", Revision: 1, MaxVerificationAge: "10m"}
-	plan, _, _, err := bindingPolicyVerificationPlan(inventory, policy, now)
+	plan, _, _, err := main.BindingPolicyVerificationPlan(inventory, policy, now)
 	if err != nil || len(plan) != 1 || plan[0].Action != "probe" || plan[0].TargetDeploymentID != target {
 		t.Fatalf("legacy evidence reused: %+v %v", plan, err)
 	}
 	inventory.Bindings[0].Verification.TargetDeploymentID = target
 	inventory.Bindings[0].Verification.Checks = []api.BindingVerificationCheck{{Name: "dns", Status: "passed"}, {Name: "tls", Status: "passed"}, {Name: "authorization", Status: "passed"}, {Name: "routing", Status: "passed"}}
-	plan, _, _, err = bindingPolicyVerificationPlan(inventory, policy, now)
+	plan, _, _, err = main.BindingPolicyVerificationPlan(inventory, policy, now)
 	if err != nil || plan[0].Action != "reuse" {
 		t.Fatalf("exact evidence not reused: %+v %v", plan, err)
 	}
-	if !validBindingPolicyServiceTargets(inventory, inventory.ServiceTargets) {
+	if !main.ValidBindingPolicyServiceTargets(inventory, inventory.ServiceTargets) {
 		t.Fatal("valid selection rejected")
 	}
 	inventory.Bindings[0].ServiceTargetDeploymentID = ""
-	if validBindingPolicyServiceTargets(inventory, inventory.ServiceTargets) {
+	if main.ValidBindingPolicyServiceTargets(inventory, inventory.ServiceTargets) {
 		t.Fatal("unconfirmed item target accepted")
 	}
 }
@@ -46,7 +47,7 @@ func TestCheckedReleaseFileRejectsUnknownFieldsAndTrailingIntent(t *testing.T) {
 			t.Fatal(err)
 		}
 		var selection api.PublishProjectReleaseSetRequest
-		if err := readCheckedReleaseFile(file, &selection); err == nil {
+		if err := main.ReadCheckedReleaseFile(file, &selection); err == nil {
 			t.Fatalf("ambiguous manifest accepted: %s", raw)
 		}
 	}
@@ -56,7 +57,7 @@ func TestCheckedReleaseFileRejectsUnknownFieldsAndTrailingIntent(t *testing.T) {
 		t.Fatal(err)
 	}
 	var selection api.PublishProjectReleaseSetRequest
-	if err := readCheckedReleaseFile(file, &selection); err != nil {
+	if err := main.ReadCheckedReleaseFile(file, &selection); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -147,7 +148,7 @@ func checkedReleaseCLIWorkflow(t *testing.T, action string) {
 			args = []string{"projects", "environments", "release-sets", action, "shop", "production", "--json", "--wait-timeout", "3s"}
 		}
 		args = append(args, extra...)
-		code, out, stderr := captureBindingCLI(t, f.server.URL, args...)
+		code, out, stderr := main.CaptureBindingCLI(t, f.server.URL, args...)
 		if code != 0 {
 			t.Fatalf("%s exit=%d out=%s stderr=%s", action, code, out, stderr)
 		}

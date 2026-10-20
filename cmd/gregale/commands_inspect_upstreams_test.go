@@ -4,7 +4,7 @@
 // swap. The dispatch-from-main test lives at the bottom
 // (TestRun_DispatchInspectUpstreams) so the run() switch routing
 // is locked alongside the leaf's behaviour.
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -82,10 +83,10 @@ func TestCmdInspectUpstreams_HappyPath(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	stdout, readStderr, restore := swapIO(t)
+	stdout, readStderr, restore := main.SwapIO(t)
 	defer restore()
 
-	if code := cmdInspect([]string{inspectSlug, "--upstreams"}); code != 0 {
+	if code := main.CmdInspect([]string{inspectSlug, "--upstreams"}); code != 0 {
 		t.Fatalf("inspect upstreams = %d, want 0 (stderr=%s)", code, readStderr())
 	}
 	if gotMethod != http.MethodGet {
@@ -127,10 +128,10 @@ func TestCmdInspectUpstreams_EmptyList(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	stdout, readStderr, restore := swapIO(t)
+	stdout, readStderr, restore := main.SwapIO(t)
 	defer restore()
 
-	if code := cmdInspect([]string{inspectSlug, "--upstreams"}); code != 0 {
+	if code := main.CmdInspect([]string{inspectSlug, "--upstreams"}); code != 0 {
 		t.Fatalf("inspect upstreams (empty) = %d, want 0 (stderr=%s)", code, readStderr())
 	}
 	body := stdout.String()
@@ -155,14 +156,14 @@ func TestCmdInspectUpstreams_JSON_Envelope(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	resetJSONOutput()
-	t.Cleanup(resetJSONOutput)
-	jsonOutput = true
+	main.ResetJSONOutput()
+	t.Cleanup(main.ResetJSONOutput)
+	(*main.JsonOutput) = true
 
-	stdout, readStderr, restore := swapIO(t)
+	stdout, readStderr, restore := main.SwapIO(t)
 	defer restore()
 
-	if code := cmdInspect([]string{inspectSlug, "--upstreams"}); code != 0 {
+	if code := main.CmdInspect([]string{inspectSlug, "--upstreams"}); code != 0 {
 		t.Fatalf("inspect upstreams (json) = %d, want 0 (stderr=%s)", code, readStderr())
 	}
 	var env struct {
@@ -207,10 +208,10 @@ func TestCmdInspectUpstreams_ScopeFilter_Forwarded(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	stdout, readStderr, restore := swapIO(t)
+	stdout, readStderr, restore := main.SwapIO(t)
 	defer restore()
 
-	if code := cmdInspect([]string{inspectSlug, "--upstreams", "--scope=primary"}); code != 0 {
+	if code := main.CmdInspect([]string{inspectSlug, "--upstreams", "--scope=primary"}); code != 0 {
 		t.Fatalf("inspect upstreams (scope) = %d, want 0 (stderr=%s)", code, readStderr())
 	}
 	if gotQuery != "scope=primary" {
@@ -250,10 +251,10 @@ func TestCmdInspectUpstreams_PlanFeatureGated_403(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	_, readStderr, restore := swapIO(t)
+	_, readStderr, restore := main.SwapIO(t)
 	defer restore()
 
-	if code := cmdInspect([]string{inspectSlug, "--upstreams"}); code == 0 {
+	if code := main.CmdInspect([]string{inspectSlug, "--upstreams"}); code == 0 {
 		t.Errorf("inspect upstreams (gated) = 0, want nonzero")
 	}
 	// renderAPIError prints the problem Title + Detail. Pin both
@@ -285,7 +286,7 @@ func TestCmdInspectUpstreams_BadSlug_NoServerCall(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	if code := cmdInspect([]string{"Ab", "--upstreams"}); code == 0 {
+	if code := main.CmdInspect([]string{"Ab", "--upstreams"}); code == 0 {
 		t.Errorf("inspect upstreams (bad slug) = 0, want nonzero")
 	}
 	if calls != 0 {
@@ -305,10 +306,10 @@ func TestCmdInspectUpstreams_ScopeWithoutLeaf_NoServerCall(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	_, readStderr, restore := swapIO(t)
+	_, readStderr, restore := main.SwapIO(t)
 	defer restore()
 
-	if code := cmdInspect([]string{inspectSlug, "--scope=primary"}); code == 0 {
+	if code := main.CmdInspect([]string{inspectSlug, "--scope=primary"}); code == 0 {
 		t.Errorf("inspect (scope without upstreams) = 0, want nonzero")
 	}
 	if calls != 0 {
@@ -342,7 +343,7 @@ func TestRun_DispatchInspectUpstreams(t *testing.T) {
 	t.Setenv("HOME", dir)
 	t.Setenv("XDG_CONFIG_HOME", dir)
 
-	if code := run([]string{"inspect", inspectSlug, "--upstreams"}); code != 0 {
+	if code := main.Run([]string{"inspect", inspectSlug, "--upstreams"}); code != 0 {
 		t.Errorf("run inspect upstreams = %d, want 0", code)
 	}
 }

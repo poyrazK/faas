@@ -1,4 +1,4 @@
-package main
+package main_test
 
 // adr: 644 — verified promotion and gateway resource-policy acceptance.
 
@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/mcphosting"
 )
@@ -78,7 +79,7 @@ func TestMCPPolicyApply(t *testing.T) {
 				resource = "https://other.example/mcp"
 			}
 			cfg := mcphosting.Config{Endpoint: "/mcp", Auth: mcphosting.AuthConfig{Mode: "external-oauth", Issuer: "https://issuer.example", JWKSURL: "https://issuer.example/jwks", Resource: resource, ToolScopes: mcphosting.ScopePolicy{}}}
-			_, err := applyMCPGatewayPolicy(context.Background(), NewClient(server.URL, "operator-key"), "my-mcp", cfg, []string{"RS256"})
+			_, err := main.ApplyMCPGatewayPolicy(context.Background(), main.NewClient(server.URL, "operator-key"), "my-mcp", cfg, []string{"RS256"})
 			valid := mode == "create" || mode == "update"
 			if (err == nil) != valid || (!valid && mode != "older-api" && writes != 0) || (mode == "older-api" && writes != 1) {
 				t.Fatalf("mode=%s err=%v writes=%d", mode, err, writes)

@@ -1,7 +1,8 @@
-package main
+package main_test
 
 import (
 	"bytes"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"strings"
 	"testing"
 )
@@ -12,8 +13,8 @@ import (
 // `compute-policy` plus `bindings list|create|get|delete` were missing from
 // help entirely, so the documented usage could not be run as shown.
 func TestPostgresHelpShowsArgumentsAndParsedFlags(t *testing.T) {
-	oldOut := osStdout
-	t.Cleanup(func() { osStdout = oldOut })
+	oldOut := (*main.OsStdout)
+	t.Cleanup(func() { (*main.OsStdout) = oldOut })
 	parsed := map[string][]string{}
 	for _, file := range []string{"commands_postgres.go", "commands_postgres_compute_policy.go", "commands_postgres_resize.go"} {
 		for fn, flags := range flagsRegisteredIn(t, file) {
@@ -44,9 +45,9 @@ func TestPostgresHelpShowsArgumentsAndParsedFlags(t *testing.T) {
 		name := strings.Join(tc.args, " ")
 		t.Run(name, func(t *testing.T) {
 			var out bytes.Buffer
-			osStdout = &out
+			(*main.OsStdout) = &out
 			args := append(append([]string{"postgres"}, tc.args...), "--help")
-			if code := run(args); code != 0 {
+			if code := main.Run(args); code != 0 {
 				t.Fatalf("postgres %s --help = %d", name, code)
 			}
 			help := out.String()

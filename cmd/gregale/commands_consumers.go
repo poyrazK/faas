@@ -535,8 +535,13 @@ func formatMillicents(currency string, millicents int64) string {
 		sign, millicents = "-", -millicents
 	}
 	fraction := strings.TrimRight(fmt.Sprintf("%05d", millicents%100000), "0")
-	for len(fraction) < 2 {
+	// Show at least the currency's own decimals (ADR-20261019100330).
+	digits, _ := api.CurrencyMinorExponent(currency)
+	for len(fraction) < digits {
 		fraction += "0"
+	}
+	if fraction == "" {
+		return fmt.Sprintf("%s %s%d", currency, sign, millicents/100000)
 	}
 	return fmt.Sprintf("%s %s%d.%s", currency, sign, millicents/100000, fraction)
 }

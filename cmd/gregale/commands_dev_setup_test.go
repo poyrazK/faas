@@ -1,7 +1,8 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"os"
 	"path/filepath"
 	"slices"
@@ -18,17 +19,17 @@ func TestDevSetupReceiptIsReadyAndSecretSafe(t *testing.T) {
 	if err := os.WriteFile(envPath, []byte("API_TOKEN=do-not-render\nLOG_LEVEL=debug\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("FAAS_TOKEN", testAPIKey('a'))
+	t.Setenv("FAAS_TOKEN", main.TestAPIKey('a'))
 
-	config, err := resolveDevSetupSource(dir)
+	config, err := main.ResolveDevSetupSource(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	path, keys, err := resolveSetupEnvFile(dir, envPath)
+	path, keys, err := main.ResolveSetupEnvFile(dir, envPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	receipt := buildDevSetupReceipt(dir, dir, "demo", config, path, keys, "", 0, false, false, false, false, false, "", 0)
+	receipt := main.BuildDevSetupReceipt(dir, dir, "demo", config, path, keys, "", 0, false, false, false, false, false, "", 0)
 	if !receipt.Ready || !receipt.Authenticated {
 		t.Fatalf("receipt readiness = ready:%t authenticated:%t, want both true", receipt.Ready, receipt.Authenticated)
 	}
@@ -58,7 +59,7 @@ func TestDevSetupValidatesManifestBeforePlanning(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "gregale.yaml"), []byte("hosting:\n  port: 70000\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := resolveDevSetupSource(dir); err == nil || !strings.Contains(err.Error(), "port 70000") {
+	if _, err := main.ResolveDevSetupSource(dir); err == nil || !strings.Contains(err.Error(), "port 70000") {
 		t.Fatalf("resolveDevSetupSource error = %v, want manifest port validation", err)
 	}
 }
@@ -69,13 +70,13 @@ func TestCmdDevSetupPrintsNextCommandWithoutRemoteMutation(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Chdir(dir)
-	t.Setenv("FAAS_TOKEN", testAPIKey('b'))
-	stdout, restoreOut := captureStdout(t)
+	t.Setenv("FAAS_TOKEN", main.TestAPIKey('b'))
+	stdout, restoreOut := main.CaptureStdout(t)
 	defer restoreOut()
-	_, restoreErr := captureStderr(t)
+	_, restoreErr := main.CaptureStderr(t)
 	defer restoreErr()
 
-	if code := cmdDevSetup(nil); code != 0 {
+	if code := main.CmdDevSetup(nil); code != 0 {
 		t.Fatalf("cmdDevSetup() = %d, want 0; stdout=%q", code, stdout.String())
 	}
 	if !strings.Contains(stdout.String(), "Developer setup ready") || !strings.Contains(stdout.String(), "gregale dev") {
@@ -103,13 +104,13 @@ func TestCmdDevSetupUsesManifestDevDefaults(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Chdir(dir)
-	t.Setenv("FAAS_TOKEN", testAPIKey('c'))
-	stdout, restoreOut := captureStdout(t)
+	t.Setenv("FAAS_TOKEN", main.TestAPIKey('c'))
+	stdout, restoreOut := main.CaptureStdout(t)
 	defer restoreOut()
-	_, restoreErr := captureStderr(t)
+	_, restoreErr := main.CaptureStderr(t)
 	defer restoreErr()
 
-	if code := cmdDevSetup([]string{"--postgres-region", "us-east-1"}); code != 0 {
+	if code := main.CmdDevSetup([]string{"--postgres-region", "us-east-1"}); code != 0 {
 		t.Fatalf("cmdDevSetup() = %d, want 0; stdout=%q", code, stdout.String())
 	}
 	for _, want := range []string{".env.dev", ".env.services.local", "--service-override-file", "--postgres"} {
@@ -120,7 +121,7 @@ func TestCmdDevSetupUsesManifestDevDefaults(t *testing.T) {
 }
 
 func TestDevSetupRejectsStartOnlyFlags(t *testing.T) {
-	if code := cmdDevSetup([]string{"--once"}); code != 1 {
+	if code := main.CmdDevSetup([]string{"--once"}); code != 1 {
 		t.Fatalf("cmdDevSetup(--once) = %d, want 1", code)
 	}
 }
@@ -151,13 +152,13 @@ func TestCmdDevSetupTTLPrecedence(t *testing.T) {
 				}
 			}
 			t.Chdir(dir)
-			t.Setenv("FAAS_TOKEN", testAPIKey('d'))
-			stdout, restoreOut := captureStdout(t)
+			t.Setenv("FAAS_TOKEN", main.TestAPIKey('d'))
+			stdout, restoreOut := main.CaptureStdout(t)
 			defer restoreOut()
-			_, restoreErr := captureStderr(t)
+			_, restoreErr := main.CaptureStderr(t)
 			defer restoreErr()
 
-			if code := cmdDevSetup(tc.args); code != tc.wantCode {
+			if code := main.CmdDevSetup(tc.args); code != tc.wantCode {
 				t.Fatalf("cmdDevSetup(%v) = %d, want %d; stdout=%q", tc.args, code, tc.wantCode, stdout.String())
 			}
 			if tc.wantOutput != "" && !strings.Contains(stdout.String(), tc.wantOutput) {
@@ -179,9 +180,9 @@ func TestDevSetupRecoveryPreservesEffectiveOptions(t *testing.T) {
 		{name: "explicit default", profile: "default"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			setupConnectionProfiles(t)
+			main.SetupConnectionProfiles(t)
 			if tc.profile == "default" {
-				if err := saveCLIConfig(cliConfig{ActiveProfile: "staging", Profiles: map[string]connectionProfile{"staging": {APIBase: "https://staging.example"}}}); err != nil {
+				if err := main.SaveCLIConfig(main.CliConfig{ActiveProfile: "staging", Profiles: map[string]main.ConnectionProfile{"staging": {APIBase: "https://staging.example"}}}); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -208,7 +209,7 @@ func TestDevSetupRecoveryPreservesEffectiveOptions(t *testing.T) {
 				}
 			}
 			if tc.authenticated {
-				t.Setenv("FAAS_TOKEN", testAPIKey('a'))
+				t.Setenv("FAAS_TOKEN", main.TestAPIKey('a'))
 			}
 			prefix := []string{"gregale"}
 			if tc.profile != "" {
@@ -221,10 +222,10 @@ func TestDevSetupRecoveryPreservesEffectiveOptions(t *testing.T) {
 			if !ready {
 				args = append(args, "--start", "--once", "--no-logs", "--open")
 			}
-			stdout, stderr, restore := swapIO(t)
+			stdout, stderr, restore := main.SwapIO(t)
 			defer restore()
-			code := run(args)
-			var receipt devSetupReceipt
+			code := main.Run(args)
+			var receipt main.DevSetupReceipt
 			if err := json.Unmarshal(stdout.Bytes(), &receipt); err != nil {
 				t.Fatalf("invalid receipt: %v; stdout=%q stderr=%q", err, stdout.String(), stderr())
 			}
@@ -268,7 +269,7 @@ func TestDevSetupRecoveryPreservesEffectiveOptions(t *testing.T) {
 }
 
 func TestDevSetupRecoveryPreservesDisabledManifestDefaults(t *testing.T) {
-	setupConnectionProfiles(t)
+	main.SetupConnectionProfiles(t)
 	dir := t.TempDir()
 	t.Chdir(dir)
 	for name, body := range map[string]string{
@@ -281,11 +282,11 @@ func TestDevSetupRecoveryPreservesDisabledManifestDefaults(t *testing.T) {
 	}
 	args := []string{"--json", "dev", "setup", "--path", ".", "--name", "demo", "--postgres=false", "--env-file", "", "--service-override-file", ""}
 	for attempt := range 2 {
-		stdout, stderr, restore := swapIO(t)
-		code := run(args)
+		stdout, stderr, restore := main.SwapIO(t)
+		code := main.Run(args)
 		output, errorOutput := stdout.String(), stderr()
 		restore()
-		var receipt devSetupReceipt
+		var receipt main.DevSetupReceipt
 		if err := json.Unmarshal([]byte(output), &receipt); err != nil || code != 1 || errorOutput != "" {
 			t.Fatalf("attempt=%d exit=%d err=%v stdout=%q stderr=%q", attempt, code, err, output, errorOutput)
 		}
@@ -306,7 +307,7 @@ func TestDevSetupShellCommandQuotesMetacharacters(t *testing.T) {
 		{"./app$USER", "'./app$USER'"},
 		{"./app'one", "'./app'\"'\"'one'"},
 	} {
-		if got := devSetupShellCommand([]string{"gregale", "dev", "--path", tc.arg}); got != "gregale dev --path "+tc.want {
+		if got := main.DevSetupShellCommand([]string{"gregale", "dev", "--path", tc.arg}); got != "gregale dev --path "+tc.want {
 			t.Errorf("command for %q = %q", tc.arg, got)
 		}
 	}

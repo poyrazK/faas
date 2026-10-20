@@ -1,4 +1,4 @@
-package main
+package main_test
 
 // adr: 1187, 1199
 
@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -39,20 +40,20 @@ func routeAwakeServer(t *testing.T, queries *[]string) *httptest.Server {
 			return
 		}
 		*queries = append(*queries, r.URL.RawQuery)
-		writeJSONTest(w, report)
+		main.WriteJSONTest(w, report)
 	}))
 }
 
 func runRouteAwakeCLI(t *testing.T, server *httptest.Server, args ...string) (int, string) {
 	t.Helper()
-	resetJSONOut(t)
-	setPreviewTestAuth(t)
+	main.ResetJSONOut(t)
+	main.SetPreviewTestAuth(t)
 	t.Setenv("FAAS_API", server.URL)
 	var output bytes.Buffer
-	old := osStdout
-	osStdout = &output
-	t.Cleanup(func() { osStdout = old })
-	return run(args), output.String()
+	old := (*main.OsStdout)
+	(*main.OsStdout) = &output
+	t.Cleanup(func() { (*main.OsStdout) = old })
+	return main.Run(args), output.String()
 }
 
 func TestRoutesAwakeCLI(t *testing.T) {
@@ -112,7 +113,7 @@ func TestRoutesAwakeCLIRejectsBadArguments(t *testing.T) {
 
 func TestAwakeDuration(t *testing.T) {
 	for seconds, want := range map[int64]string{0: "0s", 45: "45s", 60: "1m", 3599: "59m", 3600: "1h 0m", 90061: "25h 1m"} {
-		if got := awakeDuration(seconds); got != want {
+		if got := main.AwakeDuration(seconds); got != want {
 			t.Fatalf("awakeDuration(%d) = %q, want %q", seconds, got, want)
 		}
 	}

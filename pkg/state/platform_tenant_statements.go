@@ -87,6 +87,14 @@ type PlatformTenantStatement struct {
 	AsOf        time.Time
 	CreatedAt   time.Time
 	FinalizedAt *time.Time
+	// CreditAppliedMillicents is prepaid credit drawn down when the statement
+	// was finalized (ADR-20261019100331).
+	CreditAppliedMillicents int64
+}
+
+// AmountDueMillicents is what the statement leaves to invoice after credit.
+func (s PlatformTenantStatement) AmountDueMillicents() int64 {
+	return s.AmountMillicents - s.CreditAppliedMillicents
 }
 
 // PlatformTenantStatementSummary is the bounded list projection. It omits

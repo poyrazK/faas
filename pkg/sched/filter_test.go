@@ -10,10 +10,11 @@
 // so an 80 µs/record 8-filter evaluation (the steady-state cost
 // measured locally) leaves ~920 ms of headroom for the rest of
 // the tick.
-package sched
+package sched_test
 
 import (
 	"encoding/json"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"reflect"
 	"testing"
 	"time"
@@ -31,7 +32,7 @@ func raw(s string) json.RawMessage { return json.RawMessage(s) }
 func TestFilterMatch_AllCases(t *testing.T) {
 	cases := []struct {
 		name    string
-		filter  *FilterCriteria
+		filter  *sched.FilterCriteria
 		payload []byte
 		headers map[string]string
 		want    bool
@@ -45,17 +46,17 @@ func TestFilterMatch_AllCases(t *testing.T) {
 		},
 		{
 			name:   "zero-value filter matches everything",
-			filter: &FilterCriteria{},
+			filter: &sched.FilterCriteria{},
 			want:   true,
 		},
 
 		// 2. Top-level $or with 2 clauses, one match / one not.
 		{
 			name: "$or one matches",
-			filter: &FilterCriteria{
-				OR: []FilterClause{
-					{Op: FilterOpEq, Field: "x-tenant", Value: raw(`"acme"`)},
-					{Op: FilterOpEq, Field: "x-tenant", Value: raw(`"globex"`)},
+			filter: &sched.FilterCriteria{
+				OR: []sched.FilterClause{
+					{Op: sched.FilterOpEq, Field: "x-tenant", Value: raw(`"acme"`)},
+					{Op: sched.FilterOpEq, Field: "x-tenant", Value: raw(`"globex"`)},
 				},
 			},
 			headers: map[string]string{"x-tenant": "globex"},
@@ -63,10 +64,10 @@ func TestFilterMatch_AllCases(t *testing.T) {
 		},
 		{
 			name: "$or none matches",
-			filter: &FilterCriteria{
-				OR: []FilterClause{
-					{Op: FilterOpEq, Field: "x-tenant", Value: raw(`"acme"`)},
-					{Op: FilterOpEq, Field: "x-tenant", Value: raw(`"globex"`)},
+			filter: &sched.FilterCriteria{
+				OR: []sched.FilterClause{
+					{Op: sched.FilterOpEq, Field: "x-tenant", Value: raw(`"acme"`)},
+					{Op: sched.FilterOpEq, Field: "x-tenant", Value: raw(`"globex"`)},
 				},
 			},
 			headers: map[string]string{"x-tenant": "initech"},
@@ -76,10 +77,10 @@ func TestFilterMatch_AllCases(t *testing.T) {
 		// 3. Top-level $and with 2 clauses, both match / one not.
 		{
 			name: "$and both match",
-			filter: &FilterCriteria{
-				AND: []FilterClause{
-					{Op: FilterOpExists, Field: "x-event-id"},
-					{Op: FilterOpEq, Field: "x-tenant", Value: raw(`"acme"`)},
+			filter: &sched.FilterCriteria{
+				AND: []sched.FilterClause{
+					{Op: sched.FilterOpExists, Field: "x-event-id"},
+					{Op: sched.FilterOpEq, Field: "x-tenant", Value: raw(`"acme"`)},
 				},
 			},
 			headers: map[string]string{"x-event-id": "evt-1", "x-tenant": "acme"},
@@ -87,10 +88,10 @@ func TestFilterMatch_AllCases(t *testing.T) {
 		},
 		{
 			name: "$and one missing",
-			filter: &FilterCriteria{
-				AND: []FilterClause{
-					{Op: FilterOpExists, Field: "x-event-id"},
-					{Op: FilterOpEq, Field: "x-tenant", Value: raw(`"acme"`)},
+			filter: &sched.FilterCriteria{
+				AND: []sched.FilterClause{
+					{Op: sched.FilterOpExists, Field: "x-event-id"},
+					{Op: sched.FilterOpEq, Field: "x-tenant", Value: raw(`"acme"`)},
 				},
 			},
 			headers: map[string]string{"x-tenant": "acme"},
@@ -100,9 +101,9 @@ func TestFilterMatch_AllCases(t *testing.T) {
 		// 4. payload jsonpath match on string "$.event.type == order.created".
 		{
 			name: "payload jsonpath string match",
-			filter: &FilterCriteria{
-				Payload: []FilterClause{
-					{Op: FilterOpJsonPath, Path: "$.event.type", Value: raw(`"order.created"`)},
+			filter: &sched.FilterCriteria{
+				Payload: []sched.FilterClause{
+					{Op: sched.FilterOpJsonPath, Path: "$.event.type", Value: raw(`"order.created"`)},
 				},
 			},
 			payload: []byte(`{"event": {"type": "order.created"}}`),
@@ -110,9 +111,9 @@ func TestFilterMatch_AllCases(t *testing.T) {
 		},
 		{
 			name: "payload jsonpath string mismatch",
-			filter: &FilterCriteria{
-				Payload: []FilterClause{
-					{Op: FilterOpJsonPath, Path: "$.event.type", Value: raw(`"order.created"`)},
+			filter: &sched.FilterCriteria{
+				Payload: []sched.FilterClause{
+					{Op: sched.FilterOpJsonPath, Path: "$.event.type", Value: raw(`"order.created"`)},
 				},
 			},
 			payload: []byte(`{"event": {"type": "order.cancelled"}}`),
@@ -122,9 +123,9 @@ func TestFilterMatch_AllCases(t *testing.T) {
 		// 5. payload jsonpath match on nested $.data.id == 42 (number).
 		{
 			name: "payload jsonpath number match",
-			filter: &FilterCriteria{
-				Payload: []FilterClause{
-					{Op: FilterOpJsonPath, Path: "$.data.id", Value: raw(`42`)},
+			filter: &sched.FilterCriteria{
+				Payload: []sched.FilterClause{
+					{Op: sched.FilterOpJsonPath, Path: "$.data.id", Value: raw(`42`)},
 				},
 			},
 			payload: []byte(`{"data": {"id": 42}}`),
@@ -134,9 +135,9 @@ func TestFilterMatch_AllCases(t *testing.T) {
 		// 6. payload jsonpath on array $.items[0].sku == "A".
 		{
 			name: "payload jsonpath array match",
-			filter: &FilterCriteria{
-				Payload: []FilterClause{
-					{Op: FilterOpJsonPath, Path: "$.items[0].sku", Value: raw(`"A"`)},
+			filter: &sched.FilterCriteria{
+				Payload: []sched.FilterClause{
+					{Op: sched.FilterOpJsonPath, Path: "$.items[0].sku", Value: raw(`"A"`)},
 				},
 			},
 			payload: []byte(`{"items": [{"sku": "A"}, {"sku": "B"}]}`),
@@ -149,9 +150,9 @@ func TestFilterMatch_AllCases(t *testing.T) {
 		// trigger.filter_error".)
 		{
 			name: "malformed jsonpath returns error",
-			filter: &FilterCriteria{
-				Payload: []FilterClause{
-					{Op: FilterOpJsonPath, Path: "$.foo[?(@.x>1)]"},
+			filter: &sched.FilterCriteria{
+				Payload: []sched.FilterClause{
+					{Op: sched.FilterOpJsonPath, Path: "$.foo[?(@.x>1)]"},
 				},
 			},
 			payload: []byte(`{"foo": {"x": 2}}`),
@@ -161,25 +162,25 @@ func TestFilterMatch_AllCases(t *testing.T) {
 		// 8. Headers eq / neq / exists.
 		{
 			name:    "headers eq absent",
-			filter:  &FilterCriteria{AND: []FilterClause{{Op: FilterOpEq, Field: "x-tenant", Value: raw(`"acme"`)}}},
+			filter:  &sched.FilterCriteria{AND: []sched.FilterClause{{Op: sched.FilterOpEq, Field: "x-tenant", Value: raw(`"acme"`)}}},
 			headers: map[string]string{},
 			want:    false,
 		},
 		{
 			name:    "headers neq absent IS a match",
-			filter:  &FilterCriteria{AND: []FilterClause{{Op: FilterOpNeq, Field: "x-tenant", Value: raw(`"acme"`)}}},
+			filter:  &sched.FilterCriteria{AND: []sched.FilterClause{{Op: sched.FilterOpNeq, Field: "x-tenant", Value: raw(`"acme"`)}}},
 			headers: map[string]string{},
 			want:    true,
 		},
 		{
 			name:    "headers exists true",
-			filter:  &FilterCriteria{AND: []FilterClause{{Op: FilterOpExists, Field: "x-event-id"}}},
+			filter:  &sched.FilterCriteria{AND: []sched.FilterClause{{Op: sched.FilterOpExists, Field: "x-event-id"}}},
 			headers: map[string]string{"x-event-id": "evt-1"},
 			want:    true,
 		},
 		{
 			name:    "headers exists false",
-			filter:  &FilterCriteria{AND: []FilterClause{{Op: FilterOpExists, Field: "x-event-id"}}},
+			filter:  &sched.FilterCriteria{AND: []sched.FilterClause{{Op: sched.FilterOpExists, Field: "x-event-id"}}},
 			headers: map[string]string{},
 			want:    false,
 		},
@@ -199,15 +200,15 @@ func TestFilterMatch_AllCases(t *testing.T) {
 		// top-level OR slot).
 		{
 			name: "nested branch inside $and is AND-of-children",
-			filter: &FilterCriteria{
-				AND: []FilterClause{
+			filter: &sched.FilterCriteria{
+				AND: []sched.FilterClause{
 					{
-						Clauses: []FilterClause{
-							{Op: FilterOpEq, Field: "x-tenant", Value: raw(`"acme"`)},
-							{Op: FilterOpEq, Field: "x-tenant", Value: raw(`"globex"`)},
+						Clauses: []sched.FilterClause{
+							{Op: sched.FilterOpEq, Field: "x-tenant", Value: raw(`"acme"`)},
+							{Op: sched.FilterOpEq, Field: "x-tenant", Value: raw(`"globex"`)},
 						},
 					},
-					{Op: FilterOpExists, Field: "x-event-id"},
+					{Op: sched.FilterOpExists, Field: "x-event-id"},
 				},
 			},
 			headers: map[string]string{"x-tenant": "globex", "x-event-id": "evt-1"},
@@ -220,15 +221,15 @@ func TestFilterMatch_AllCases(t *testing.T) {
 		// chosen branch).
 		{
 			name: "top-level $or short-circuits on a matching branch",
-			filter: &FilterCriteria{
-				OR: []FilterClause{
+			filter: &sched.FilterCriteria{
+				OR: []sched.FilterClause{
 					{
-						Clauses: []FilterClause{
-							{Op: FilterOpEq, Field: "x-tenant", Value: raw(`"acme"`)},
-							{Op: FilterOpExists, Field: "x-event-id"},
+						Clauses: []sched.FilterClause{
+							{Op: sched.FilterOpEq, Field: "x-tenant", Value: raw(`"acme"`)},
+							{Op: sched.FilterOpExists, Field: "x-event-id"},
 						},
 					},
-					{Op: FilterOpEq, Field: "x-tenant", Value: raw(`"globex"`)},
+					{Op: sched.FilterOpEq, Field: "x-tenant", Value: raw(`"globex"`)},
 				},
 			},
 			headers: map[string]string{"x-tenant": "globex", "x-event-id": "evt-1"},
@@ -238,9 +239,9 @@ func TestFilterMatch_AllCases(t *testing.T) {
 		// 10. Nil payload → no payload clauses match.
 		{
 			name: "nil payload no match",
-			filter: &FilterCriteria{
-				Payload: []FilterClause{
-					{Op: FilterOpJsonPath, Path: "$.event.type", Value: raw(`"order.created"`)},
+			filter: &sched.FilterCriteria{
+				Payload: []sched.FilterClause{
+					{Op: sched.FilterOpJsonPath, Path: "$.event.type", Value: raw(`"order.created"`)},
 				},
 			},
 			payload: nil,
@@ -250,9 +251,9 @@ func TestFilterMatch_AllCases(t *testing.T) {
 		// 11. Empty payload {} → jsonpath fails to find → no match.
 		{
 			name: "empty object payload no match",
-			filter: &FilterCriteria{
-				Payload: []FilterClause{
-					{Op: FilterOpJsonPath, Path: "$.event.type", Value: raw(`"order.created"`)},
+			filter: &sched.FilterCriteria{
+				Payload: []sched.FilterClause{
+					{Op: sched.FilterOpJsonPath, Path: "$.event.type", Value: raw(`"order.created"`)},
 				},
 			},
 			payload: []byte(`{}`),
@@ -321,16 +322,16 @@ func TestFilterMatch_SLO(t *testing.T) {
 	// 8-filter predicate (combines header eq + payload jsonpath
 	// at multiple depths). Mirrors the production "rich filter"
 	// shape customers authoring in the manifest.
-	filter := &FilterCriteria{
-		AND: []FilterClause{
-			{Op: FilterOpEq, Field: "x-tenant", Value: raw(`"acme"`)},
-			{Op: FilterOpExists, Field: "x-event-id"},
-			{Op: FilterOpJsonPath, Path: "$.event.type", Value: raw(`"order.created"`)},
-			{Op: FilterOpJsonPath, Path: "$.data.id", Value: raw(`42`)},
-			{Op: FilterOpJsonPath, Path: "$.items[0].sku", Value: raw(`"A"`)},
-			{Op: FilterOpNeq, Field: "x-source", Value: raw(`"test"`)},
-			{Op: FilterOpExists, Field: "x-region"},
-			{Op: FilterOpJsonPath, Path: "$.nested.deep.key", Value: raw(`"value"`)},
+	filter := &sched.FilterCriteria{
+		AND: []sched.FilterClause{
+			{Op: sched.FilterOpEq, Field: "x-tenant", Value: raw(`"acme"`)},
+			{Op: sched.FilterOpExists, Field: "x-event-id"},
+			{Op: sched.FilterOpJsonPath, Path: "$.event.type", Value: raw(`"order.created"`)},
+			{Op: sched.FilterOpJsonPath, Path: "$.data.id", Value: raw(`42`)},
+			{Op: sched.FilterOpJsonPath, Path: "$.items[0].sku", Value: raw(`"A"`)},
+			{Op: sched.FilterOpNeq, Field: "x-source", Value: raw(`"test"`)},
+			{Op: sched.FilterOpExists, Field: "x-region"},
+			{Op: sched.FilterOpJsonPath, Path: "$.nested.deep.key", Value: raw(`"value"`)},
 		},
 	}
 	payload := []byte(`{
@@ -374,9 +375,9 @@ func TestFilterMatch_SLO(t *testing.T) {
 // equal to a JSON number 42 (the broker-side header is always
 // a string; the customer can compare against a number).
 func TestFilterMatch_HeaderNumericCoercion(t *testing.T) {
-	filter := &FilterCriteria{
-		AND: []FilterClause{
-			{Op: FilterOpEq, Field: "x-retry-count", Value: raw(`3`)},
+	filter := &sched.FilterCriteria{
+		AND: []sched.FilterClause{
+			{Op: sched.FilterOpEq, Field: "x-retry-count", Value: raw(`3`)},
 		},
 	}
 	got, err := filter.Match(nil, map[string]string{"x-retry-count": "3"})
@@ -395,10 +396,10 @@ func TestFilterMatch_HeaderNumericCoercion(t *testing.T) {
 // across every polled record; the predicate composition is
 // orthogonal to whether the clause targets payload or headers.
 func TestFilterMatch_PayloadAndHeadersCombined(t *testing.T) {
-	filter := &FilterCriteria{
-		AND: []FilterClause{
-			{Op: FilterOpEq, Field: "x-tenant", Value: raw(`"acme"`)},
-			{Op: FilterOpJsonPath, Path: "$.event.type", Value: raw(`"order.created"`)},
+	filter := &sched.FilterCriteria{
+		AND: []sched.FilterClause{
+			{Op: sched.FilterOpEq, Field: "x-tenant", Value: raw(`"acme"`)},
+			{Op: sched.FilterOpJsonPath, Path: "$.event.type", Value: raw(`"order.created"`)},
 		},
 	}
 	got, err := filter.Match(
@@ -426,9 +427,9 @@ func TestFilterMatch_JsonPathUnsupportedFormErrors(t *testing.T) {
 	}
 	for _, p := range unsupported {
 		t.Run(p, func(t *testing.T) {
-			filter := &FilterCriteria{
-				Payload: []FilterClause{
-					{Op: FilterOpJsonPath, Path: p, Value: raw(`"x"`)},
+			filter := &sched.FilterCriteria{
+				Payload: []sched.FilterClause{
+					{Op: sched.FilterOpJsonPath, Path: p, Value: raw(`"x"`)},
 				},
 			}
 			// CRIT-2 (PR #993 / issue #757 closure): Match
@@ -469,9 +470,9 @@ func TestFilterMatch_JsonPathUnsupportedFormErrors(t *testing.T) {
 // errors because Match is implemented as MatchCount with the
 // count discarded.
 func TestFilterMatch_OrErrorIsSkipped(t *testing.T) {
-	filter := &FilterCriteria{
-		OR: []FilterClause{
-			{Op: FilterOpJsonPath, Path: "$.foo[?(@.x>1)]"}, // unsupported form
+	filter := &sched.FilterCriteria{
+		OR: []sched.FilterClause{
+			{Op: sched.FilterOpJsonPath, Path: "$.foo[?(@.x>1)]"}, // unsupported form
 		},
 	}
 	matched, clauseErrors := filter.MatchCount([]byte(`{"foo": {"x": 2}}`), nil)
@@ -498,10 +499,10 @@ func TestFilterMatch_OrErrorIsSkipped(t *testing.T) {
 // > 0 because the operator wants visibility into the failed
 // first clause.
 func TestFilterMatch_OrSecondClauseMatches(t *testing.T) {
-	filter := &FilterCriteria{
-		OR: []FilterClause{
-			{Op: FilterOpJsonPath, Path: "$.foo[?(@.x>1)]"}, // errors
-			{Op: FilterOpEq, Field: "x-tenant", Value: raw(`"acme"`)},
+	filter := &sched.FilterCriteria{
+		OR: []sched.FilterClause{
+			{Op: sched.FilterOpJsonPath, Path: "$.foo[?(@.x>1)]"}, // errors
+			{Op: sched.FilterOpEq, Field: "x-tenant", Value: raw(`"acme"`)},
 		},
 	}
 	matched, clauseErrors := filter.MatchCount(
@@ -523,9 +524,9 @@ func TestFilterMatch_OrSecondClauseMatches(t *testing.T) {
 // match"). Here the single $and clause errors so matched is
 // false, clauseErrors is 1.
 func TestFilterMatch_AndErrorIsSkipped(t *testing.T) {
-	filter := &FilterCriteria{
-		AND: []FilterClause{
-			{Op: FilterOpJsonPath, Path: "$.foo[?(@.x>1)]"}, // unsupported form
+	filter := &sched.FilterCriteria{
+		AND: []sched.FilterClause{
+			{Op: sched.FilterOpJsonPath, Path: "$.foo[?(@.x>1)]"}, // unsupported form
 		},
 	}
 	matched, clauseErrors := filter.MatchCount([]byte(`{"foo": {"x": 2}}`), nil)
@@ -542,10 +543,10 @@ func TestFilterMatch_AndErrorIsSkipped(t *testing.T) {
 // jsonpath form) is counted via MatchCount and skipped; the
 // other payload clauses are still evaluated.
 func TestFilterMatch_PayloadErrorIsSkipped(t *testing.T) {
-	filter := &FilterCriteria{
-		Payload: []FilterClause{
-			{Op: FilterOpJsonPath, Path: "$.foo[?(@.x>1)]"}, // errors
-			{Op: FilterOpJsonPath, Path: "$.foo.x", Value: raw("2")},
+	filter := &sched.FilterCriteria{
+		Payload: []sched.FilterClause{
+			{Op: sched.FilterOpJsonPath, Path: "$.foo[?(@.x>1)]"}, // errors
+			{Op: sched.FilterOpJsonPath, Path: "$.foo.x", Value: raw("2")},
 		},
 	}
 	matched, clauseErrors := filter.MatchCount([]byte(`{"foo": {"x": 2}}`), nil)
@@ -561,22 +562,22 @@ func TestFilterMatch_PayloadErrorIsSkipped(t *testing.T) {
 // JSON-round-trip so the apid handler can pass the wire shape
 // straight through.
 func TestFilterCriteriaJSONRoundTrip(t *testing.T) {
-	in := &FilterCriteria{
-		OR: []FilterClause{
-			{Op: FilterOpExists, Field: "x-event-id"},
+	in := &sched.FilterCriteria{
+		OR: []sched.FilterClause{
+			{Op: sched.FilterOpExists, Field: "x-event-id"},
 		},
-		AND: []FilterClause{
-			{Op: FilterOpEq, Field: "x-tenant", Value: raw(`"acme"`)},
+		AND: []sched.FilterClause{
+			{Op: sched.FilterOpEq, Field: "x-tenant", Value: raw(`"acme"`)},
 		},
-		Payload: []FilterClause{
-			{Op: FilterOpJsonPath, Path: "$.event.type", Value: raw(`"order.created"`)},
+		Payload: []sched.FilterClause{
+			{Op: sched.FilterOpJsonPath, Path: "$.event.type", Value: raw(`"order.created"`)},
 		},
 	}
 	b, err := json.Marshal(in)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	var out FilterCriteria
+	var out sched.FilterCriteria
 	if err := json.Unmarshal(b, &out); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
@@ -604,9 +605,9 @@ func TestFilterCriteriaJSONRoundTrip(t *testing.T) {
 // The test mirrors the header-slot path: FilterOpNeq on an
 // absent header returns true.
 func TestFilterMatch_JsonPathNeq_MissingKey(t *testing.T) {
-	filter := &FilterCriteria{
-		Payload: []FilterClause{
-			{Op: FilterOpNeq, Path: "$.missing", Value: raw("42")},
+	filter := &sched.FilterCriteria{
+		Payload: []sched.FilterClause{
+			{Op: sched.FilterOpNeq, Path: "$.missing", Value: raw("42")},
 		},
 	}
 	matched, clauseErrors := filter.MatchCount([]byte(`{"foo": 1}`), nil)
@@ -625,9 +626,9 @@ func TestFilterMatch_JsonPathNeq_MissingKey(t *testing.T) {
 // but for the wrong reason — the dispatch was unconditional.
 // CRIT-3 makes the per-op dispatch explicit.
 func TestFilterMatch_JsonPathEq_MissingKey(t *testing.T) {
-	filter := &FilterCriteria{
-		Payload: []FilterClause{
-			{Op: FilterOpEq, Path: "$.missing", Value: raw("42")},
+	filter := &sched.FilterCriteria{
+		Payload: []sched.FilterClause{
+			{Op: sched.FilterOpEq, Path: "$.missing", Value: raw("42")},
 		},
 	}
 	matched, clauseErrors := filter.MatchCount([]byte(`{"foo": 1}`), nil)
@@ -651,9 +652,9 @@ func TestFilterMatch_JsonPathEq_MissingKey(t *testing.T) {
 // with the resolved value; the jsonpath-vs-payload-root
 // distinction is the top-level switch.
 func TestFilterMatch_JsonPathExists_MissingKey(t *testing.T) {
-	filter := &FilterCriteria{
-		Payload: []FilterClause{
-			{Op: FilterOpExists, Path: "$.missing"},
+	filter := &sched.FilterCriteria{
+		Payload: []sched.FilterClause{
+			{Op: sched.FilterOpExists, Path: "$.missing"},
 		},
 	}
 	matched, clauseErrors := filter.MatchCount([]byte(`{"foo": 1}`), nil)

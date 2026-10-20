@@ -32,6 +32,13 @@ var platformTenantBillingVerbs = map[string][]string{
 	"billing-policy-set":    {"block-overdue-after-days"},
 	"billing-policy-delete": {},
 	"overdue-holds":         {},
+	// Prepaid credit and spend caps (ADR-20261019100331).
+	"credits":          {"id"},
+	"credit-grant":     {"id", "currency", "amount-millicents", "expires", "note"},
+	"credit-void":      {"id", "credit-id"},
+	"spend-cap":        {"id"},
+	"spend-cap-set":    {"id", "currency", "monthly-cap-millicents"},
+	"spend-cap-delete": {"id"},
 }
 
 // accountTenantVerbs address the account's tenants as a whole, not one
@@ -51,6 +58,8 @@ type platformTenantBillingFlags struct {
 	prorate                       bool
 	days, blockAfterDays          int
 	endsAt                        string
+	creditID, expires, note       string
+	amount, monthlyCap            int64
 }
 
 // cmdPlatformTenantBilling handles the billing verbs; handled is false for
@@ -81,6 +90,11 @@ func cmdPlatformTenantBilling(verb string, args []string) (handled bool, code in
 	fs.StringVar(&f.endsAt, "ends-at", "", "trial end, RFC3339 UTC minute (trial-set)")
 	fs.IntVar(&f.blockAfterDays, "block-overdue-after-days", -1, "days past an invoice's due date before the tenant is refused (billing-policy-set)")
 	fs.StringVar(&f.tierMode, "tier-mode", "", "how --tier steps price a month: graduated (default) or volume")
+	fs.StringVar(&f.creditID, "credit-id", "", "credit grant UUID (credit-void)")
+	fs.Int64Var(&f.amount, "amount-millicents", 0, "prepaid credit in millicents; 100000 = 1.00 (credit-grant)")
+	fs.StringVar(&f.expires, "expires", "", "when unused credit expires, RFC3339 (credit-grant)")
+	fs.StringVar(&f.note, "note", "", "note shown with the credit (credit-grant)")
+	fs.Int64Var(&f.monthlyCap, "monthly-cap-millicents", -1, "monthly spend cap in millicents after prepaid credit; 0 allows prepaid usage only (spend-cap-set)")
 	fs.StringVar(&f.month, "month", "", "statement calendar month YYYY-MM")
 	fs.StringVar(&f.periodStart, "period-start", "", "statement period start, RFC3339 UTC minute")
 	fs.StringVar(&f.periodEnd, "period-end", "", "statement period end (exclusive), RFC3339 UTC minute")
@@ -142,7 +156,16 @@ func runPlatformTenantBilling(verb string, f platformTenantBillingFlags) int {
 		if f.blockAfterDays < 0 {
 			err = errors.New("--block-overdue-after-days is required")
 		}
+	case "credit-void":
+		if strings.TrimSpace(f.creditID) == "" {
+			err = errors.New("--credit-id is required")
+		}
 	}
+	if err != nil {
+		return printErr("Invalid platform-tenants arguments", err)
+	}
+	credit, _, err := buildConsumerCreditRequest(verb, consumerFlags{currency: f.currency, amountMillicents: f.amount,
+		expires: f.expires, note: f.note, monthlyCapMillicents: f.monthlyCap})
 	if err != nil {
 		return printErr("Invalid platform-tenants arguments", err)
 	}
@@ -179,7 +202,10 @@ func runPlatformTenantBilling(verb string, f platformTenantBillingFlags) int {
 	case "statement-export":
 		out, err = client.ExportPlatformTenantStatementInvoice(ctx, f.id, f.statementID, api.CreateStatementInvoiceRequest{Provider: strings.TrimSpace(f.provider), Customer: strings.TrimSpace(f.customer)})
 	default:
-		out, err = callTenantControls(ctx, client, verb, f, trial)
+		var handled bool
+		if out, handled, err = callTenantCredits(ctx, client, verb, f, credit); !handled {
+			out, err = callTenantControls(ctx, client, verb, f, trial)
+		}
 	}
 	if err != nil {
 		return printErr("Platform tenant "+verb+" failed", err)
@@ -217,6 +243,55 @@ func callTenantControls(ctx context.Context, client *Client, verb string, f plat
 	return nil, fmt.Errorf("unknown platform-tenants verb %q", verb)
 }
 
+// callTenantCredits runs the credit and spend cap verbs
+// (ADR-20261019100331); handled is false for every other verb.
+func callTenantCredits(ctx context.Context, client *Client, verb string, f platformTenantBillingFlags, request any) (any, bool, error) {
+	var out any
+	var err error
+	switch verb {
+	case "credits":
+		out, err = client.ListPlatformTenantCredits(ctx, f.id)
+	case "credit-grant":
+		out, err = client.CreatePlatformTenantCredit(ctx, f.id, request.(api.CreateAPIConsumerCreditRequest))
+	case "credit-void":
+		out, err = client.VoidPlatformTenantCredit(ctx, f.id, f.creditID)
+	case "spend-cap":
+		out, err = client.GetPlatformTenantSpendCap(ctx, f.id)
+	case "spend-cap-set":
+		out, err = client.PutPlatformTenantSpendCap(ctx, f.id, request.(api.PutAPIConsumerSpendCapRequest))
+	case "spend-cap-delete":
+		if err = client.DeletePlatformTenantSpendCap(ctx, f.id); err == nil {
+			out = map[string]string{"status": "spend cap removed"}
+		}
+	default:
+		return nil, false, nil
+	}
+	return out, true, err
+}
+
+// tenantCreditAsConsumer lets the consumer credit printer show a tenant's
+// credit and spend cap results.
+func tenantCreditAsConsumer(out any) any {
+	credit := func(c api.PlatformTenantCreditResponse) api.APIConsumerCreditResponse {
+		return api.APIConsumerCreditResponse{ID: c.ID, Currency: c.Currency, AmountMillicents: c.AmountMillicents,
+			RemainingMillicents: c.RemainingMillicents, Status: c.Status, Note: c.Note, ExpiresAt: c.ExpiresAt}
+	}
+	switch v := out.(type) {
+	case api.PlatformTenantCreditListResponse:
+		list := api.APIConsumerCreditListResponse{Balances: v.Balances}
+		for _, c := range v.Credits {
+			list.Credits = append(list.Credits, credit(c))
+		}
+		return list
+	case api.PlatformTenantCreditResponse:
+		return credit(v)
+	case api.PlatformTenantSpendCapResponse:
+		return api.APIConsumerSpendCapResponse{Currency: v.Currency, MonthlyCapMillicents: v.MonthlyCapMillicents, Capped: v.Capped,
+			Month: v.Month, AmountDueMillicents: v.AmountDueMillicents, CheckedAt: v.CheckedAt}
+	}
+	return out
+}
+
 // formatTenantRateCardPrice summarizes a tenant card's flat price or ladder.
 func formatTenantRateCardPrice(c api.PlatformTenantRateCardResponse) string {
 	return formatRateCardPrice(api.APIConsumerRateCardResponse{Currency: c.Currency, PriceMillicentsPerUnit: c.PriceMillicentsPerUnit, Tiers: c.Tiers})
@@ -240,6 +315,10 @@ func printPlatformTenantBilling(out any) error {
 		}
 	case api.PlatformTenantStatementResponse:
 		printStatementSummary(tw, v.ID, v.PeriodStart, v.PeriodEnd, v.Revision, v.Status, v.Currency, v.BillableUnits, v.UnpricedUnits, v.AmountMillicents)
+		if v.CreditAppliedMillicents != 0 {
+			_, _ = fmt.Fprintf(tw, "Credit applied\t%s\nAmount due\t%s\n", formatMillicents(v.Currency, v.CreditAppliedMillicents),
+				formatMillicents(v.Currency, v.AmountDueMillicents))
+		}
 	case api.StatementInvoiceExportResponse:
 		printStatementInvoiceExport(tw, v)
 	case api.PlatformTenantStatementHandoffResponse:
@@ -255,7 +334,9 @@ func printPlatformTenantBilling(out any) error {
 			_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", h.TenantID, h.ExportID, h.DueAt.Format(time.RFC3339), h.Since.Format(time.RFC3339))
 		}
 	default:
-		return writeJSONTo(tw, out)
+		if !printConsumerCreditResult(tw, tenantCreditAsConsumer(out)) {
+			return writeJSONTo(tw, out)
+		}
 	}
 	return tw.Flush()
 }

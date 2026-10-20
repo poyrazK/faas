@@ -1,12 +1,13 @@
 // adr: 1151 — schedd asks vmmd to quiet-pause only function apps that serve
 // HTTP, woken as ordinary instances, outside private networks.
-package sched
+package sched_test
 
 import (
 	"context"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -28,7 +29,7 @@ func TestQuietPauseAfterMS(t *testing.T) {
 		{name: "private network peer", app: function, mode: string(state.InstanceModeNormal), network: "net-1"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := quietPauseAfterMS(tc.app, tc.mode, tc.network); got != tc.want {
+			if got := sched.QuietPauseAfterMS(tc.app, tc.mode, tc.network); got != tc.want {
 				t.Fatalf("quietPauseAfterMS = %d, want %d", got, tc.want)
 			}
 		})
@@ -36,7 +37,7 @@ func TestQuietPauseAfterMS(t *testing.T) {
 }
 
 func TestAppSpecToProtoCarriesQuietPause(t *testing.T) {
-	if got := (AppSpec{QuietPauseAfterMS: 2000}).toProto().GetQuietPauseAfterMs(); got != 2000 {
+	if got := (sched.AppSpec{QuietPauseAfterMS: 2000}).ToProto().GetQuietPauseAfterMs(); got != 2000 {
 		t.Fatalf("quiet_pause_after_ms = %d, want 2000", got)
 	}
 }
@@ -67,12 +68,12 @@ func TestWakeAsksVMMDToQuietPauseFunctions(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			vmm := &fakeVMM{}
-			engine := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+			vmm := &sched.FakeVMM{}
+			engine := sched.XNewEngine(t, store, vmm, &sched.FakeNotifier{}, "1.10.0")
 			if _, err := engine.Wake(ctx, app.ID, dep.ID, "", ""); err != nil {
 				t.Fatalf("Wake: %v", err)
 			}
-			if got := vmm.lastColdBootSpec.QuietPauseAfterMS; got != tc.want {
+			if got := (*vmm.LastColdBootSpec()).QuietPauseAfterMS; got != tc.want {
 				t.Fatalf("cold boot quiet_pause_after_ms = %d, want %d", got, tc.want)
 			}
 		})

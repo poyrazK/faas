@@ -1,10 +1,11 @@
-package sched
+package sched_test
 
 import (
 	"context"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -28,8 +29,8 @@ func TestWorkerRecoveryReplacesAFailedWorker(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
 			store := state.NewMemStore()
-			_, app, dep := seedApp(t, store, api.PlanPro, 256, 4)
-			app = configureExecutionMode(t, store, app, dep, tt.mode, state.DeployLive)
+			_, app, dep := sched.SeedApp(t, store, api.PlanPro, 256, 4)
+			app = sched.ConfigureExecutionMode(t, store, app, dep, tt.mode, state.DeployLive)
 			if tt.park {
 				if ok, err := store.CompareAndSetAppStatus(ctx, app.ID, state.AppActive, state.AppEvictedCold); err != nil || !ok {
 					t.Fatalf("CompareAndSetAppStatus = %v, %v", ok, err)
@@ -40,14 +41,14 @@ func TestWorkerRecoveryReplacesAFailedWorker(t *testing.T) {
 					t.Fatalf("CreateInstanceWithMode: %v", err)
 				}
 			}
-			vmm := &fakeVMM{}
-			loop := NewLoop(nil, newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0"), testLog())
+			vmm := &sched.FakeVMM{}
+			loop := sched.NewLoop(nil, sched.XNewEngine(t, store, vmm, &sched.FakeNotifier{}, "1.10.0"), sched.TestLog())
 
-			loop.dispatchWorkerRecovery(ctx)
-			loop.workPool().drain()
+			loop.DispatchWorkerRecovery(ctx)
+			loop.WorkPool().Drain()
 
-			if vmm.coldBoots+vmm.restores != tt.wantBoots {
-				t.Fatalf("boots = %d cold + %d restore, want %d", vmm.coldBoots, vmm.restores, tt.wantBoots)
+			if (*vmm.ColdBoots())+(*vmm.Restores()) != tt.wantBoots {
+				t.Fatalf("boots = %d cold + %d restore, want %d", (*vmm.ColdBoots()), (*vmm.Restores()), tt.wantBoots)
 			}
 		})
 	}

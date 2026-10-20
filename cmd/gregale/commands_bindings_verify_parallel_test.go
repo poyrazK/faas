@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"context"
@@ -12,19 +12,20 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func TestBindingVerificationSharedGraphBudget(t *testing.T) {
-	ctx := withBindingVerificationBudget(context.Background(), 2)
+	ctx := main.WithBindingVerificationBudget(context.Background(), 2)
 	var active, peak atomic.Int32
 	started := make(chan struct{}, 12)
 	release := make(chan struct{})
 	done := make(chan struct{})
 	go func() {
-		runBindingVerificationJobs(ctx, 3, func(member context.Context, _ int) error {
-			runBindingVerificationJobs(member, 4, func(probe context.Context, _ int) error {
-				return withBindingVerificationSlot(probe, func() error {
+		main.RunBindingVerificationJobs(ctx, 3, func(member context.Context, _ int) error {
+			main.RunBindingVerificationJobs(member, 4, func(probe context.Context, _ int) error {
+				return main.WithBindingVerificationSlot(probe, func() error {
 					n := active.Add(1)
 					for old := peak.Load(); n > old && !peak.CompareAndSwap(old, n); old = peak.Load() {
 					}
@@ -58,12 +59,12 @@ func TestBindingVerificationSharedGraphBudget(t *testing.T) {
 }
 
 func TestBindingVerificationFailureJoinsCleanupAndStopsAdmissions(t *testing.T) {
-	ctx := withBindingVerificationBudget(context.Background(), 1)
+	ctx := main.WithBindingVerificationBudget(context.Background(), 1)
 	var admitted atomic.Int32
 	cleaned := false
 	var mu sync.Mutex
-	runBindingVerificationJobs(ctx, 8, func(job context.Context, _ int) error {
-		return withBindingVerificationSlot(job, func() error {
+	main.RunBindingVerificationJobs(ctx, 8, func(job context.Context, _ int) error {
+		return main.WithBindingVerificationSlot(job, func() error {
 			admitted.Add(1)
 			defer func() { mu.Lock(); cleaned = true; mu.Unlock() }()
 			return errors.New("configuration changed")
@@ -95,7 +96,7 @@ func TestQueueCanaryCancellationOwnership(t *testing.T) {
 			if reuse {
 				pending = id
 			}
-			_, err := executeQueueBindingCanary(ctx, api.NewClient(server.URL, "test"), "api", "orders", deployment, true, time.Second, pending)
+			_, err := main.ExecuteQueueBindingCanary(ctx, api.NewClient(server.URL, "test"), "api", "orders", deployment, true, time.Second, pending)
 			if !errors.Is(err, context.DeadlineExceeded) {
 				t.Fatalf("error=%v", err)
 			}
@@ -154,9 +155,9 @@ func TestBindingVerificationParallelPreservesFreshEvidence(t *testing.T) {
 				f.mu.Unlock()
 				_ = json.NewEncoder(w).Encode(canary)
 			})
-			ctx, cancel := context.WithTimeout(withBindingVerificationBudget(context.WithValue(context.Background(), queueCanaryConsentKey{}, true), concurrency), 5*time.Second)
+			ctx, cancel := context.WithTimeout(main.WithBindingVerificationBudget(context.WithValue(context.Background(), main.QueueCanaryConsentKey{}, true), concurrency), 5*time.Second)
 			defer cancel()
-			report, code := executeBindingPolicyVerification(ctx, api.NewClient(f.server.URL, "test"), "api", "", false, false, time.Millisecond, 5*time.Second)
+			report, code := main.ExecuteBindingPolicyVerification(ctx, api.NewClient(f.server.URL, "test"), "api", "", false, false, time.Millisecond, 5*time.Second)
 			if concurrency == 2 && (code != 0 || !report.Passed) {
 				t.Fatalf("parallel verification failed: %+v code=%d", report, code)
 			}
@@ -179,7 +180,7 @@ func TestBindingVerificationConcurrencyFlagsFailBeforeRequests(t *testing.T) {
 		{"projects", "environments", "release-sets", "prepare", "shop", "production", "--file", "unused.json", "--concurrency", "2"},
 	} {
 		f := newBindingPolicyCLIFixture(t)
-		code, _, _ := captureBindingCLI(t, f.server.URL, args...)
+		code, _, _ := main.CaptureBindingCLI(t, f.server.URL, args...)
 		if code == 0 || f.reads != 0 || f.policies != 0 || len(f.requests) != 0 {
 			t.Fatalf("invalid flags reached API: %v code=%d", args, code)
 		}
@@ -189,15 +190,15 @@ func TestBindingVerificationConcurrencyFlagsFailBeforeRequests(t *testing.T) {
 func TestBindingVerificationReviewedSnapshotCannotReplan(t *testing.T) {
 	f := newBindingPolicyCLIFixture(t)
 	client := api.NewClient(f.server.URL, "test")
-	snapshot, err := prepareBindingPolicyVerification(context.Background(), client, "api", "")
+	snapshot, err := main.PrepareBindingPolicyVerification(context.Background(), client, "api", "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	f.mu.Lock()
 	f.policy.Revision++
 	f.mu.Unlock()
-	ctx := context.WithValue(context.Background(), bindingVerificationSnapshotKey{}, snapshot)
-	report, code := executeBindingPolicyVerification(ctx, client, "api", snapshot.inventory.VerificationDeploymentID, false, true, time.Millisecond, time.Second)
+	ctx := context.WithValue(context.Background(), main.BindingVerificationSnapshotKey{}, snapshot)
+	report, code := main.ExecuteBindingPolicyVerification(ctx, client, "api", (*snapshot.Inventory()).VerificationDeploymentID, false, true, time.Millisecond, time.Second)
 	if code == 0 || report.ErrorCode != "release_policy_changed" || len(f.requests) != 0 {
 		t.Fatalf("reviewed policy silently replaced: %+v code=%d writes=%d", report, code, len(f.requests))
 	}

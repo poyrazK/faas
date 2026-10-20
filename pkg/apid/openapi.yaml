@@ -7813,6 +7813,43 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/apps/{slug}/data-api/usage:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Data API app whose reported usage to read.
+        schema: { type: string }
+    get:
+      operationId: getAppDataAPIUsage
+      summary: Read Data API usage
+      description: Usage that the app's Data API runtime reported, per hour or UTC day, with month-to-date totals that owner caps compare against. Counts come from the app's own runtime and are owner telemetry, not billing records. Apps created before usage reporting, or with it off, have no rows.
+      tags: [managed_postgres]
+      parameters:
+        - name: since
+          in: query
+          required: false
+          description: Lookback in whole hours or days, such as 24h, 7d or 30d (default 7d, at most 90d).
+          schema: { type: string, pattern: '^[1-9][0-9]*[hd]$' }
+        - name: granularity
+          in: query
+          required: false
+          description: Bucket size; hour covers at most 48h. Defaults to hour up to 48h, else day.
+          schema: { type: string, enum: [hour, day] }
+      responses:
+        '200':
+          description: Zero-filled usage buckets, window totals and month-to-date totals
+          headers:
+            Cache-Control: { schema: { type: string }, description: 'Always no-store: runtime reports keep arriving.' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DataAPIUsage' }
+        default:
+          description: App lookup, window validation or usage storage failure
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/postgres/databases/{id}/bindings:
     parameters:
       - $ref: '#/components/parameters/ManagedPostgresID'
@@ -13692,6 +13729,149 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /v1/account/platform-tenants/{id}/credits:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Tenant whose prepaid credit is listed or granted.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [platform-tenants]
+      operationId: listPlatformTenantCredits
+      summary: List a tenant's prepaid credit grants, newest first, with the usable balance per currency (ADR-20261019100331).
+      responses:
+        '200':
+          description: The tenant's grants and balances.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantCreditListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [platform-tenants]
+      operationId: createPlatformTenantCredit
+      summary: Grant a tenant prepaid credit that pays its statements across all of its apps.
+      description: |
+        Finalized tenant statements in the credit's currency draw it down,
+        the grant that expires first before grants that never expire, in the
+        same transaction that finalizes them (ADR-20261019100331). The
+        statement's credit_applied_millicents records the draw and invoice
+        exports bill amount_due_millicents. Credit never pays more than a
+        statement's amount. A tenant holds at most 100 grants with credit
+        left.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateAPIConsumerCreditRequest' }
+      responses:
+        '201':
+          description: The tenant's new grant.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantCreditResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The tenant already holds 100 grants with credit left.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '422':
+          description: Invalid tenant credit currency, amount, note or expiry.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/account/platform-tenants/{id}/credits/{credit_id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Tenant that holds the credit.
+        schema: { type: string, format: uuid }
+      - name: credit_id
+        in: path
+        required: true
+        description: Tenant credit grant to void.
+        schema: { type: string, format: uuid }
+    delete:
+      tags: [platform-tenants]
+      operationId: voidPlatformTenantCredit
+      summary: Void what is left of a tenant credit grant; credit already applied stays applied.
+      responses:
+        '200':
+          description: The voided tenant grant.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantCreditResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/account/platform-tenants/{id}/spend-cap:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Tenant whose monthly spend is capped.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [platform-tenants]
+      operationId: getPlatformTenantSpendCap
+      summary: Read a tenant's monthly spend cap and its last check.
+      responses:
+        '200':
+          description: The tenant's cap and whether it is reached this month.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantSpendCapResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [platform-tenants]
+      operationId: putPlatformTenantSpendCap
+      summary: Set a tenant's monthly spend cap across all of its apps (ADR-20261019100331).
+      description: |
+        Once the month's amount due passes the cap, the gateway answers every
+        request attributed to the tenant with 402 `tenant_spend_cap_reached`
+        until the month ends, the cap rises or credit is added. The amount
+        due is the tenant's usage for the month to date priced like a
+        statement, without monthly fees, minus usable prepaid credit. apid
+        checks it every minute and at once when the cap or credit changes, so
+        a tenant can overshoot by about two minutes of traffic. A zero cap
+        allows prepaid usage only.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PutAPIConsumerSpendCapRequest' }
+      responses:
+        '200':
+          description: The tenant's stored cap, checked at once.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantSpendCapResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422':
+          description: Invalid tenant cap currency or amount.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    delete:
+      tags: [platform-tenants]
+      operationId: deletePlatformTenantSpendCap
+      summary: Remove a tenant's spend cap.
+      responses:
+        '204': { description: The tenant's spend cap was removed. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /v1/account/platform-tenant-billing-policy:
     get:
       tags: [platform-tenants]
@@ -14199,7 +14379,8 @@ paths:
         Checks the key against the provider, then seals it at rest. Stripe
         takes a restricted key (rk_live_… or rk_test_…) with read and write
         access to invoices and invoice items; Paddle an API key
-        (pdl_live_apikey_… or pdl_sdbx_apikey_…) with transaction access; Lago
+        (pdl_live_apikey_… or pdl_sdbx_apikey_…) with transaction access and
+        read access to customers; Lago
         an API key and, for the EU region or a self-hosted Lago, api_url. Only
         the last four characters, the mode and the Lago API URL are ever
         returned.
@@ -15421,6 +15602,30 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /v1/runtime/data-api/usage:
+    post:
+      tags: [managed_postgres]
+      operationId: reportDataAPIUsage
+      summary: Report Data API usage deltas
+      description: Private runtime surface. Requires a short-lived gregale:data-api:usage workload assertion; account, app and instance come from it, never from the body. Each report id is applied once, so retried or snapshot-duplicated reports add nothing. Hours must be aligned and at most 48 hours old. Owner API keys and application JWTs are not accepted.
+      x-internal: true
+      security:
+        - dataAPIUsageWorkloadIdentity: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DataAPIUsageReport' }
+      responses:
+        '200':
+          description: Report applied, or already applied; month-to-date totals for owner caps.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DataAPIUsageReportResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
   /v1/runtime/operations/{id}/control:
     get:
@@ -49593,13 +49798,13 @@ paths:
     post:
       tags: [billing]
       operationId: createFinancialBudget
-      summary: Save an account-owned budget draft with atomic revision audit.
+      summary: Save a budget policy with atomic revision audit and supported activation checks.
       description: |
         Requires admin scope and session MFA. Idempotency-Key is required (1..255 bytes).
         It fixes creation identity beyond replay-cache retention. Reusing an operation
-        identity cannot overwrite a changed or deleted policy. Set enabled=false:
-        activation currently returns 422 financial_budget_activation_unavailable.
-        Saving a draft creates no holds, decisions, notifications or workload changes.
+        identity cannot overwrite a changed or deleted policy. Disabled policies are drafts.
+        Activation supports monitored notify, monitored compute-only stop_previews, and strict app/job gross compute or account net compute (optionally combined with egress) suspend_workloads with zero drain and no alert thresholds. Other enabled responses return 422 financial_budget_activation_unavailable. Strict activation requires quiet covered workloads, complete accounting and capable native owners; unavailable authority returns 422 financial_compute_not_ready.
+        Disabled drafts create no notifications or workload changes. Active notification policies never stop workloads.
       parameters:
         - name: Idempotency-Key
           in: header
@@ -49654,12 +49859,12 @@ paths:
     put:
       tags: [billing]
       operationId: updateFinancialBudget
-      summary: Replace a budget draft at its expected revision.
+      summary: Replace a budget policy at its expected revision.
       description: |
         Requires admin scope, session MFA and Idempotency-Key. expected_revision
-        must match the current policy; stale edits return 409. Set enabled=false:
-        activation remains unavailable. Scope ownership and action eligibility are
-        revalidated. Payment, security and user holds are independent of this intent.
+        must match the current policy; stale edits return 409. Monitored notify and compute-only stop_previews
+        policies can activate, along with strict app/job gross compute or account net compute (optionally combined with egress) suspend_workloads with zero drain and no alert thresholds. A limit below committed and reserved funding returns 422 financial_compute_budget_too_low. Other policies remain disabled drafts.
+        Scope ownership and action eligibility are revalidated. Payment, security and user holds are independent of this intent.
       parameters:
         - name: Idempotency-Key
           in: header
@@ -62567,6 +62772,11 @@ components:
       scheme: bearer
       bearerFormat: JWT
       description: Short-lived Gregale workload identity for audience gregale:data-api:connections, bound to a live Data API instance. Customer API keys cannot publish observations.
+    dataAPIUsageWorkloadIdentity:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Short-lived Gregale workload identity for audience gregale:data-api:usage, naming the reporting app and instance. Customer API keys cannot publish usage.
     operationsWorkloadIdentity:
       type: http
       scheme: bearer
@@ -74820,7 +75030,7 @@ components:
         completed_at: { type: string, format: date-time }
     FinancialBudgetResponse:
       type: object
-      description: Saved policy intent; draft and unavailable policies do not protect workloads.
+      description: Saved policy intent with current-revision monitoring, alert delivery and preview stop acknowledgements. Notifications alone never establish workload stopping.
       required: [id, account_id, revision, spec, created_at, updated_at, status, enforcement_ready, reasons]
       properties:
         id: { type: string, format: uuid }
@@ -74830,9 +75040,112 @@ components:
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
         deleted_at: { type: string, format: date-time }
-        status: { type: string, enum: [draft, unavailable, deleted] }
-        enforcement_ready: { type: boolean, description: False until runtime integrations and acceptance are complete. }
+        status: { type: string, enum: [draft, unavailable, active, deleted] }
+        enforcement_ready: { type: boolean, description: True when the selected stopping integration is available; actual per-target teardown is reported in runtime.stops. Strict compute balances are reported in runtime.compute. }
+        notification_ready: { type: boolean, description: True for an enabled supported monitored policy; inspect runtime for evaluation freshness and delivery status. }
+        runtime: { $ref: '#/components/schemas/FinancialBudgetRuntime' }
         reasons: { type: array, items: { type: string } }
+    FinancialBudgetEvaluation:
+      type: object
+      description: Retained evidence boundary; an absent known_millicents means evaluation unavailable, never zero. Partial known costs can trigger labelled notifications; stale observations cannot create new alerts.
+      required: [period_start, period_end, as_of, evaluated_at, evidence_through_id, coverage_complete, fresh, reasons]
+      properties:
+        period_start: { type: string, format: date-time }
+        period_end: { type: string, format: date-time }
+        as_of: { type: string, format: date-time }
+        evaluated_at: { type: string, format: date-time }
+        evidence_through_id: { type: integer, format: int64, minimum: 0 }
+        known_millicents: { type: integer, format: int64, minimum: 0 }
+        coverage_complete: { type: boolean }
+        fresh: { type: boolean }
+        reasons: { type: array, items: { type: string } }
+    FinancialBudgetAlert:
+      type: object
+      description: One threshold event per policy revision and UTC month. Edits re-evaluate monthly spending. Delivery is at least once with a stable transport idempotency key; delivered means accepted by the configured transport, not confirmed inbox receipt.
+      required: [id, policy_revision, threshold_millicents, evaluation, state, attempts, next_attempt_at]
+      properties:
+        id: { type: string, format: uuid }
+        policy_revision: { type: integer, format: int64, minimum: 1 }
+        threshold_millicents: { type: integer, format: int64, minimum: 0 }
+        evaluation: { $ref: '#/components/schemas/FinancialBudgetEvaluation' }
+        state: { type: string, enum: [pending, sending, retrying, delivered] }
+        attempts: { type: integer, minimum: 0, maximum: 2147483647 }
+        next_attempt_at: { type: string, format: date-time }
+        delivered_at: { type: string, format: date-time }
+        last_error: { type: string, enum: [mail_delivery_failed] }
+    FinancialBudgetStopTarget:
+      type: object
+      description: Scheduler observation for one preview target. Enforced means teardown was confirmed and no resident instance remains. Old observations are reported as unavailable.
+      required: [app_id, state, observed_at, resident_count]
+      properties:
+        app_id: { type: string, format: uuid }
+        environment_id: { type: string, format: uuid }
+        state: { type: string, enum: [requested, draining, enforced, failed, unavailable] }
+        observed_at: { type: string, format: date-time }
+        resident_count: { type: integer, minimum: 0, maximum: 2147483647 }
+        last_error: { type: string, enum: [runtime_identity_unavailable, vm_teardown_failed, instance_settlement_failed, scheduler_observation_stale] }
+    FinancialBudgetStop:
+      type: object
+      description: Latched monitored compute threshold decision. Corrections cannot resume work. Policy revisions release only their own hold; in-flight teardown may finish. New matching previews are held too. Metering, scheduler and teardown delay can exceed the limit.
+      required: [id, policy_id, revision, period_start, period_end, requested_at, drain_deadline, resume_rule, evaluation, targets]
+      properties:
+        id: { type: string, format: uuid }
+        policy_id: { type: string, format: uuid }
+        revision: { type: integer, format: int64, minimum: 1 }
+        period_start: { type: string, format: date-time }
+        period_end: { type: string, format: date-time }
+        requested_at: { type: string, format: date-time }
+        drain_deadline: { type: string, format: date-time }
+        resume_rule: { type: string, enum: [manual, next_period] }
+        evaluation: { $ref: '#/components/schemas/FinancialBudgetEvaluation' }
+        targets: { type: array, maxItems: 10000, items: { $ref: '#/components/schemas/FinancialBudgetStopTarget' } }
+    FinancialEgressBalance:
+      type: object
+      description: Egress contribution to a shared account compute and egress budget. Its funding allowance is pinned to the lowest recorded grant for the UTC month; increases benefit funding in a new month. Funded interface bytes include framing margin. Unused or uncertain credits commit conservatively after physical absence; invoice usage remains measured bytes.
+      required: [initialized, committed_bytes, reserved_bytes, allowance_granted_bytes, allowance_committed_bytes, allowance_reserved_bytes, allowance_remaining_bytes, committed_millicents, reserved_millicents]
+      properties:
+        initialized: { type: boolean }
+        committed_bytes: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        reserved_bytes: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        allowance_granted_bytes: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        allowance_committed_bytes: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        allowance_reserved_bytes: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        allowance_remaining_bytes: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        committed_millicents: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        reserved_millicents: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+    FinancialComputeBalance:
+      type: object
+      description: Conservative admission ledger. App/job budgets cap gross compute. Account budgets share included quantities; with meters compute and egress the monetary totals sum both meters under one paid limit and egress shows its contribution. Byte credits include framing and unused credits commit after physical retirement; these upper bounds can exceed invoice charges. Expired funding stays reserved until physical retirement. Subscriptions, storage, builds, object-storage delivery and taxes are excluded. Independent job attempts share account funding with apps.
+      required: [initialized, period_start, period_end, committed_millicents, reserved_millicents, remaining_millicents, unconfirmed_leases, held, observed_at]
+      properties:
+        egress: { $ref: '#/components/schemas/FinancialEgressBalance' }
+        initialized: { type: boolean }
+        app_id: { type: string, format: uuid }
+        job_id: { type: string, format: uuid }
+        account_id: { type: string, format: uuid }
+        scope_kind: { type: string, enum: [account, app, job] }
+        basis: { type: string, enum: [net_usage, gross_usage] }
+        allowance_granted_mb_seconds: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        allowance_committed_mb_seconds: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        allowance_reserved_mb_seconds: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        allowance_remaining_mb_seconds: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        period_start: { type: string, format: date-time }
+        period_end: { type: string, format: date-time }
+        committed_millicents: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        reserved_millicents: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        remaining_millicents: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        unconfirmed_leases: { type: integer, minimum: 0, maximum: 10000 }
+        held: { type: boolean }
+        observed_at: { type: string, format: date-time }
+    FinancialBudgetRuntime:
+      type: object
+      description: Evaluation and alerts cover the current revision and UTC month. Active manual stop decisions can carry over from earlier months until a policy mutation releases that revision.
+      required: [alerts]
+      properties:
+        compute: { $ref: '#/components/schemas/FinancialComputeBalance' }
+        evaluation: { $ref: '#/components/schemas/FinancialBudgetEvaluation' }
+        alerts: { type: array, maxItems: 9, items: { $ref: '#/components/schemas/FinancialBudgetAlert' } }
+        stops: { type: array, maxItems: 1, items: { $ref: '#/components/schemas/FinancialBudgetStop' } }
     FinancialBudgetListResponse:
       type: object
       description: Nondeleted account-owned policy intents with separately reported readiness.
@@ -74841,7 +75154,7 @@ components:
         budgets: { type: array, maxItems: 128, items: { $ref: '#/components/schemas/FinancialBudgetResponse' } }
     CreateFinancialBudgetRequest:
       type: object
-      description: New budget intent; this deployment accepts disabled drafts only.
+      description: New budget intent; activation supports monitored notify, monitored compute-only stop_previews, and strict suspend_workloads (app/job gross compute or account net compute optionally combined with egress) with zero drain and no alert thresholds. Strict activation requires quiet covered workloads, complete accounting, and native owners. Account strict activation also requires recorded allowances and native owners capable of funded jobs. Combining compute and egress additionally requires complete egress accounting and byte-capable native owners.
       required: [spec]
       properties:
         spec: { $ref: '#/components/schemas/FinancialBudgetSpec' }
@@ -74890,14 +75203,14 @@ components:
       properties:
         name: { type: string, minLength: 1, maxLength: 128, description: Nonblank name bounded to 128 UTF-8 bytes. }
         scope: { $ref: '#/components/schemas/FinancialBudgetScope' }
-        currency: { type: string, enum: [EUR] }
-        meters: { type: array, minItems: 1, maxItems: 2, uniqueItems: true, description: Sorted meter names; strict mode covers compute only., items: { type: string, enum: [compute, egress] } }
+        currency: { type: string, enum: [USD, EUR], description: New writes require USD; EUR is retained only for historical policy responses. }
+        meters: { type: array, minItems: 1, maxItems: 2, uniqueItems: true, description: Sorted meter names; strict account net_usage may combine compute and egress under one paid limit; app/job strict covers compute only., items: { type: string, enum: [compute, egress] } }
         basis: { type: string, enum: [net_usage, gross_usage], description: Net usage after the shared account allowance or gross usage before it; strict resource scopes require gross usage. }
         limit_millicents: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
-        notify_millicents: { type: array, maxItems: 8, uniqueItems: true, description: Increasing nonnegative thresholds at or below the limit., items: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 } }
+        notify_millicents: { type: array, maxItems: 8, uniqueItems: true, description: Increasing nonnegative thresholds at or below the limit. Strict compute requires an empty array; configure a separate monitored policy for alerts., items: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 } }
         mode: { type: string, enum: [monitored, strict] }
         action: { type: string, enum: [notify, reject_traffic, suspend_background, stop_previews, suspend_workloads] }
-        drain_seconds: { type: integer, minimum: 0, maximum: 300, description: Notify uses zero; stopping targets drain before the deadline. }
+        drain_seconds: { type: integer, minimum: 0, maximum: 300, description: Notify and strict app compute use zero; monitored stopping targets drain before the deadline. }
         resume_rule: { type: string, enum: [manual, next_period] }
         enabled: { type: boolean }
     FinancialBudgetPreviewRequest:
@@ -74942,7 +75255,7 @@ components:
       properties:
         version: { type: string }
         meter: { type: string }
-        currency: { type: string, enum: [EUR] }
+        currency: { type: string, enum: [USD, EUR] }
         unit: { type: string }
         unit_quantity: { type: integer, format: int64, minimum: 1 }
         millicents_per_unit: { type: integer, format: int64, minimum: 0 }
@@ -75014,7 +75327,7 @@ components:
         complete_through: { type: string, format: date-time }
         price_version: { type: string }
         meter: { type: string }
-        currency: { type: string, enum: [EUR] }
+        currency: { type: string, enum: [USD] }
         projected_quantity: { type: integer, format: int64 }
         projected_net_millicents: { type: integer, format: int64 }
     FinancialMeterCoverage:
@@ -75066,7 +75379,7 @@ components:
       properties:
         app_id: { type: string }
         app_slug: { type: string }
-        currency: { type: string, enum: [EUR] }
+        currency: { type: string, enum: [USD] }
         period_start: { type: string, format: date-time }
         period_end: { type: string, format: date-time }
         as_of: { type: string, format: date-time }
@@ -75082,7 +75395,7 @@ components:
       required: [account_id, currency, period_start, period_end, as_of, retained_from, evidence_through_id, known_usage_millicents, meters, scope, invoices, invoice_reconciliation, missing_bill_components]
       properties:
         account_id: { type: string }
-        currency: { type: string, enum: [EUR] }
+        currency: { type: string, enum: [USD] }
         period_start: { type: string, format: date-time }
         period_end: { type: string, format: date-time }
         as_of: { type: string, format: date-time }
@@ -75102,7 +75415,7 @@ components:
         period_start: { type: string, format: date-time }
         period_end: { type: string, format: date-time }
         as_of: { type: string, format: date-time }
-        currency: { type: string, enum: [EUR] }
+        currency: { type: string, enum: [USD] }
         meters: { type: array, items: { $ref: '#/components/schemas/FinancialMeterCosts' } }
         bill_estimate_available: { type: boolean }
         missing_bill_components: { type: array, items: { type: string } }
@@ -77438,6 +77751,71 @@ components:
         engine_connections: { type: integer, minimum: 1, maximum: 2 }
         refresh_connections: { type: integer, minimum: 0, maximum: 1 }
         observed_at: { type: string, format: date-time }
+    DataAPIUsageCounts:
+      description: Data API usage counts. Admitted requests by access kind, gateway and engine rejections (4xx), errors (5xx), requests refused by owner caps, rows the engine reported and response bytes. Owner telemetry from the app's runtime, not billing records.
+      type: object
+      additionalProperties: false
+      required: [user_requests, anonymous_requests, server_requests, rejected_requests, error_requests, capped_requests, rows_returned, response_bytes]
+      properties:
+        user_requests: { type: integer, format: int64, minimum: 0 }
+        anonymous_requests: { type: integer, format: int64, minimum: 0 }
+        server_requests: { type: integer, format: int64, minimum: 0 }
+        rejected_requests: { type: integer, format: int64, minimum: 0 }
+        error_requests: { type: integer, format: int64, minimum: 0 }
+        capped_requests: { type: integer, format: int64, minimum: 0 }
+        rows_returned: { type: integer, format: int64, minimum: 0 }
+        response_bytes: { type: integer, format: int64, minimum: 0 }
+    DataAPIUsageHour:
+      description: One UTC hour's usage delta in a runtime report.
+      allOf:
+        - $ref: '#/components/schemas/DataAPIUsageCounts'
+        - type: object
+          required: [hour]
+          properties:
+            hour: { type: string, format: date-time, description: UTC hour the delta belongs to; aligned to the hour. }
+    DataAPIUsageReport:
+      description: Private versioned runtime usage report. A report id names the reporting instance and process and is applied once; hours are unique.
+      type: object
+      additionalProperties: false
+      required: [version, report_id, hours]
+      properties:
+        version: { type: integer, enum: [1] }
+        report_id: { type: string, pattern: '^[A-Za-z0-9._:-]{1,128}$' }
+        hours: { type: array, maxItems: 48, items: { $ref: '#/components/schemas/DataAPIUsageHour' } }
+    DataAPIUsageMonthToDate:
+      description: Admitted requests in the current UTC calendar month, all and anonymous, which owner caps compare against.
+      type: object
+      required: [month, requests, anonymous_requests]
+      properties:
+        month: { type: string, pattern: '^[0-9]{4}-[0-9]{2}$', description: UTC calendar month as YYYY-MM. }
+        requests: { type: integer, format: int64, minimum: 0 }
+        anonymous_requests: { type: integer, format: int64, minimum: 0 }
+    DataAPIUsageReportResponse:
+      description: Answer to a runtime usage report.
+      type: object
+      required: [month_to_date]
+      properties:
+        month_to_date: { $ref: '#/components/schemas/DataAPIUsageMonthToDate' }
+    DataAPIUsageBucket:
+      description: One hour or UTC day of an owner usage view.
+      allOf:
+        - $ref: '#/components/schemas/DataAPIUsageCounts'
+        - type: object
+          required: [start]
+          properties:
+            start: { type: string, format: date-time, description: Start of the bucket. }
+    DataAPIUsage:
+      description: An app's reported Data API usage over a window, zero-filled per bucket.
+      type: object
+      required: [app, from, to, granularity, totals, month_to_date, buckets]
+      properties:
+        app: { type: string }
+        from: { type: string, format: date-time }
+        to: { type: string, format: date-time }
+        granularity: { type: string, enum: [hour, day] }
+        totals: { $ref: '#/components/schemas/DataAPIUsageCounts' }
+        month_to_date: { $ref: '#/components/schemas/DataAPIUsageMonthToDate' }
+        buckets: { type: array, items: { $ref: '#/components/schemas/DataAPIUsageBucket' } }
     ConnectionBudgetRuntimeObservations:
       description: Authenticated workload reports of configured resident Data API pools, including the refresh reader. Not live SQL sessions or independent guest attestation. Parked runtimes and future wakes remain estimates; this does not verify Auth or external consumers.
       type: object
@@ -82796,6 +83174,8 @@ components:
           maxItems: 64
           description: "Monthly base fees and minimum top-ups this revision bills (ADR-1322); amount_millicents includes them. A revision can bill fees without lines for a tenant without usage."
           items: { $ref: '#/components/schemas/APIConsumerStatementFeeResponse' }
+        credit_applied_millicents: { type: integer, format: int64, minimum: 0, description: "Prepaid credit drawn when the revision was finalized (ADR-20261019100331)." }
+        amount_due_millicents: { type: integer, format: int64, minimum: 0, description: "amount_millicents less credit_applied_millicents: what invoice exports bill." }
         as_of: { type: string, format: date-time }
         created_at: { type: string, format: date-time }
         finalized_at: { type: string, format: date-time }
@@ -83435,6 +83815,49 @@ components:
         capped: { type: boolean, description: "True while the gateway refuses the consumer this month." }
         month: { type: string, pattern: '^[0-9]{4}-[0-9]{2}$', description: "UTC month of the last check." }
         amount_due_millicents: { type: integer, format: int64, minimum: 0, description: "The month's amount due after prepaid credit at the last check." }
+        checked_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    PlatformTenantCreditResponse:
+      description: "One prepaid credit grant to a platform tenant (ADR-20261019100331)."
+      type: object
+      required: [id, tenant_id, currency, amount_millicents, remaining_millicents, status, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        tenant_id: { type: string, format: uuid }
+        currency: { type: string, pattern: '^[A-Z]{3}$' }
+        amount_millicents: { type: integer, format: int64, minimum: 1 }
+        remaining_millicents: { type: integer, format: int64, minimum: 0 }
+        status: { type: string, enum: [active, used, expired, voided] }
+        note: { type: string }
+        expires_at: { type: string, format: date-time }
+        voided_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+
+    PlatformTenantCreditListResponse:
+      description: "A tenant's credit grants, newest first, with balances per currency."
+      type: object
+      required: [credits, balances]
+      properties:
+        credits:
+          type: array
+          items: { $ref: '#/components/schemas/PlatformTenantCreditResponse' }
+        balances:
+          type: array
+          items: { $ref: '#/components/schemas/APIConsumerCreditBalance' }
+
+    PlatformTenantSpendCapResponse:
+      description: "A tenant's spend cap and its last check (ADR-20261019100331)."
+      type: object
+      required: [tenant_id, currency, monthly_cap_millicents, capped, created_at, updated_at]
+      properties:
+        tenant_id: { type: string, format: uuid }
+        currency: { type: string, pattern: '^[A-Z]{3}$' }
+        monthly_cap_millicents: { type: integer, format: int64, minimum: 0 }
+        capped: { type: boolean, description: "True while the gateway refuses the tenant this month." }
+        month: { type: string, pattern: '^[0-9]{4}-[0-9]{2}$', description: "UTC month of the tenant's last check." }
+        amount_due_millicents: { type: integer, format: int64, minimum: 0, description: "The month's usage after prepaid credit at the last check; monthly fees are not counted." }
         checked_at: { type: string, format: date-time }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
@@ -99915,6 +100338,13 @@ components:
         image_process:
           $ref: '#/components/schemas/ComposeProcess'
           description: "Compose entrypoint, user, working_dir and stop overrides for prebuilt image workloads, captured per deployment."
+        build_target:
+          type: string
+          description: "Dockerfile stage a source-built Compose service builds (build.target, ADR-20261019142544). Omitted builds the final stage."
+        build_args:
+          type: array
+          items: { type: string }
+          description: "Names of the Compose build.args passed to the Dockerfile build, sorted. Values are not returned."
         command:
           type: array
           items: { type: string }
@@ -106741,6 +107171,16 @@ components:
       properties:
         app: { type: string }
         request: { $ref: '#/components/schemas/DebugTelemetryRequestItem' }
+        wake: { $ref: '#/components/schemas/AccountTraceWake' }
+
+    AccountTraceWake:
+      type: object
+      description: "How a matched request's app was woken, when its wake history is still retained. Omitted for warm requests."
+      required: [wake_id]
+      properties:
+        wake_id: { type: string }
+        method: { type: string, description: "How the instance started, for example restore or cold_boot." }
+        ready_in_ms: { type: integer, format: int32, minimum: 0, description: "Milliseconds from boot start to ready; omitted until the wake completed." }
 
     AccountTraceInvocation:
       type: object
@@ -110564,7 +111004,7 @@ components:
       properties:
         secret_key: { type: string, minLength: 8, maxLength: 512, description: "A Stripe secret or restricted key (sk_… or rk_…), a Paddle API key (pdl_…), or a Lago API key.", writeOnly: true }
         api_url: { type: string, format: uri, maxLength: 512, description: "Lago only: the API origin for the EU region or a self-hosted Lago, https:// only; default https://api.getlago.com." }
-        collection: { type: string, enum: [none, send, charge], default: none, description: "What the provider does with exported invoices (ADR-1311): none leaves drafts (Lago issues them without charging); send has Stripe email the invoice; charge has Stripe charge the customer's default payment method, or Lago charge through its payment provider. Paddle supports none only." }
+        collection: { type: string, enum: [none, send, charge], default: none, description: "What the provider does with exported invoices (ADR-1311): none leaves drafts (Lago issues them without charging); send has Stripe email the invoice; charge has Stripe charge the customer's default payment method, or Lago charge through its payment provider. Paddle supports none and send: send bills the transaction so Paddle emails the invoice to the customer's most recent address; Paddle cannot charge a saved card for an invoice." }
         days_until_due: { type: integer, minimum: 1, maximum: 365, default: 30, description: "With collection send, days until a sent invoice is due." }
         automatic_tax: { type: boolean, default: false, description: "Stripe only: have Stripe Tax calculate tax on exported invoices (ADR-1313). Needs Stripe Tax and customer addresses." }
 
@@ -110909,6 +111349,8 @@ components:
           maxItems: 64
           description: "The revision's monthly base fees and minimum top-ups (ADR-1322), included in amount_millicents."
           items: { $ref: '#/components/schemas/APIConsumerStatementFeeResponse' }
+        credit_applied_millicents: { type: integer, format: int64, minimum: 0, description: "Tenant prepaid credit this finalized revision drew (ADR-20261019100331)." }
+        amount_due_millicents: { type: integer, format: int64, minimum: 0, description: "What remains to invoice after the credit." }
         as_of: { type: string, format: date-time }
         finalized_at: { type: string, format: date-time }
       additionalProperties: false

@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -16,8 +17,8 @@ func TestAutomationEventRecoveryJobSubmission(t *testing.T) {
 	for _, mode := range []string{"success", "lost_reply", "scope_changed", "conflict"} {
 		t.Run(mode, func(t *testing.T) {
 			generation := int64(0)
-			p := automationEventPlan{Version: 1, App: "consumer", AppID: inspectorAppID, Name: "paid", Revision: 3, Source: "orders/?+", Key: "incident-1", CreatedAt: time.Now().UTC(), Events: []automationEventPlanItem{{ID: "evt&1", Subscription: "selected", Generation: &generation, Action: recoveryRecipient("routing_replay").RecoveryActions[0]}}}
-			expected := automationEventJobRequest(p, 5, "incident")
+			p := main.AutomationEventPlan{Version: 1, App: "consumer", AppID: inspectorAppID, Name: "paid", Revision: 3, Source: "orders/?+", Key: "incident-1", CreatedAt: time.Now().UTC(), Events: []main.AutomationEventPlanItem{{ID: "evt&1", Subscription: "selected", Generation: &generation, Action: recoveryRecipient("routing_replay").RecoveryActions[0]}}}
+			expected := main.AutomationEventJobRequest(p, 5, "incident")
 			posts := 0
 			eventRecoveryAPI(t, func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
@@ -73,8 +74,8 @@ func TestAutomationEventRecoveryJobSubmission(t *testing.T) {
 				t.Fatal(err)
 			}
 			args := []string{"event-recovery-start", "--plan", path, "--rate", "5", "--reason", "incident"}
-			captureAutomationStdout(t)
-			code := cmdAutomations(args)
+			main.CaptureAutomationStdout(t)
+			code := main.CmdAutomations(args)
 			wantCode := map[string]int{"success": 0, "lost_reply": 3, "scope_changed": 1, "conflict": 5}[mode]
 			if code != wantCode {
 				t.Fatalf("exit=%d", code)
@@ -83,7 +84,7 @@ func TestAutomationEventRecoveryJobSubmission(t *testing.T) {
 				t.Fatal("scope mismatch submitted")
 			}
 			if mode == "lost_reply" {
-				if code := cmdAutomations(args); code != 0 || posts != 2 {
+				if code := main.CmdAutomations(args); code != 0 || posts != 2 {
 					t.Fatalf("retry=%d posts=%d", code, posts)
 				}
 			}
@@ -91,15 +92,15 @@ func TestAutomationEventRecoveryJobSubmission(t *testing.T) {
 	}
 }
 func TestAutomationEventJobKeyPinsSelection(t *testing.T) {
-	p := automationEventPlan{AppID: inspectorAppID, Name: "paid", Key: "incident"}
-	first := automationEventJobRequest(p, 1, "")
+	p := main.AutomationEventPlan{AppID: inspectorAppID, Name: "paid", Key: "incident"}
+	first := main.AutomationEventJobRequest(p, 1, "")
 	p.Revision = 2
-	next := automationEventJobRequest(p, 2, "retry")
+	next := main.AutomationEventJobRequest(p, 2, "retry")
 	if first.RequestID != next.RequestID {
 		t.Fatal("changed plan must conflict under original job key")
 	}
 	p.Key = "next-incident"
-	if automationEventJobRequest(p, 1, "").RequestID == first.RequestID {
+	if main.AutomationEventJobRequest(p, 1, "").RequestID == first.RequestID {
 		t.Fatal("new key reused prior job")
 	}
 }

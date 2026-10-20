@@ -1,5 +1,5 @@
 // adr: 568 — environment intent and runtime ownership contracts.
-package sched
+package sched_test
 
 import (
 	"encoding/json"
@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -23,20 +24,20 @@ func runtimeEnvironmentDeployment(t *testing.T, store state.Store, appID, scope 
 
 func TestRefreshRuntimeConfigForEnvironmentPreservesNeighborsAndIdleDeployments(t *testing.T) {
 	store := state.NewMemStore()
-	account, app, _ := seedApp(t, store, api.PlanPro, 256, 5)
+	account, app, _ := sched.SeedApp(t, store, api.PlanPro, 256, 5)
 	production := runtimeEnvironmentDeployment(t, store, app.ID, "production")
 	idleCanary := runtimeEnvironmentDeployment(t, store, app.ID, "production")
 	staging := runtimeEnvironmentDeployment(t, store, app.ID, "staging")
 	if err := store.UpsertAppEnvInScope(t.Context(), account.ID, app.ID, "production", "MODE", "old"); err != nil {
 		t.Fatal(err)
 	}
-	vmm := &fakeVMM{}
-	engine := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
-	old, err := engine.Wake(t.Context(), app.ID, production.ID, "production", TriggerAppWake)
+	vmm := &sched.FakeVMM{}
+	engine := sched.XNewEngine(t, store, vmm, &sched.FakeNotifier{}, "1.10.0")
+	old, err := engine.Wake(t.Context(), app.ID, production.ID, "production", sched.TriggerAppWake)
 	if err != nil {
 		t.Fatal(err)
 	}
-	neighbor, err := engine.Wake(t.Context(), app.ID, staging.ID, "staging", TriggerAppWake)
+	neighbor, err := engine.Wake(t.Context(), app.ID, staging.ID, "staging", sched.TriggerAppWake)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,7 +51,7 @@ func TestRefreshRuntimeConfigForEnvironmentPreservesNeighborsAndIdleDeployments(
 	if _, err := state.InvalidateAppSnapshotsInScope(t.Context(), store, app.ID, "production"); err != nil {
 		t.Fatal(err)
 	}
-	vmm.coldBootHook = func() {
+	(*vmm.ColdBootHook()) = func() {
 		instance, err := store.InstanceByID(t.Context(), old.InstanceID)
 		if err != nil || instance.State != string(state.StateRunning) {
 			t.Errorf("predecessor withdrawn before replacement became ready: %+v %v", instance, err)
@@ -59,8 +60,8 @@ func TestRefreshRuntimeConfigForEnvironmentPreservesNeighborsAndIdleDeployments(
 	wakeID := uuid.NewString()
 	// Exercise the actual durable event decoder, not only the engine method.
 	raw, _ := json.Marshal(state.EnvironmentGitOpsRuntimeRequest{AppID: app.ID, WakeID: wakeID, Scope: "production"})
-	loop := NewLoop(nil, engine, testLog())
-	if err := loop.handleRuntimeConfigRestart(t.Context(), db.Notification{Channel: db.NotifyRuntimeConfigRestart, Payload: string(raw)}); err != nil {
+	loop := sched.NewLoop(nil, engine, sched.TestLog())
+	if err := loop.HandleRuntimeConfigRestart(t.Context(), db.Notification{Channel: db.NotifyRuntimeConfigRestart, Payload: string(raw)}); err != nil {
 		t.Fatal(err)
 	}
 	for id, expected := range map[string]string{old.InstanceID: string(state.StateStopped), neighbor.InstanceID: string(state.StateRunning), neighborBoot.ID: string(state.StateWaking)} {
@@ -78,11 +79,11 @@ func TestRefreshRuntimeConfigForEnvironmentPreservesNeighborsAndIdleDeployments(
 			t.Fatal("refresh booted a previously idle canary")
 		}
 	}
-	if vmm.coldBoots != 3 || vmm.destroys != 1 || vmm.snapshots != 0 || vmm.warmSnapshots != 0 {
-		t.Fatalf("unexpected VM work: cold=%d destroy=%d snapshots=%d warm=%d", vmm.coldBoots, vmm.destroys, vmm.snapshots, vmm.warmSnapshots)
+	if (*vmm.ColdBoots()) != 3 || (*vmm.Destroys()) != 1 || (*vmm.Snapshots()) != 0 || (*vmm.WarmSnapshots()) != 0 {
+		t.Fatalf("unexpected VM work: cold=%d destroy=%d snapshots=%d warm=%d", (*vmm.ColdBoots()), (*vmm.Destroys()), (*vmm.Snapshots()), (*vmm.WarmSnapshots()))
 	}
-	if err := loop.handleRuntimeConfigRestart(t.Context(), db.Notification{Payload: string(raw)}); err != nil || vmm.coldBoots != 3 {
-		t.Fatalf("duplicate delivery booted again: cold=%d %v", vmm.coldBoots, err)
+	if err := loop.HandleRuntimeConfigRestart(t.Context(), db.Notification{Payload: string(raw)}); err != nil || (*vmm.ColdBoots()) != 3 {
+		t.Fatalf("duplicate delivery booted again: cold=%d %v", (*vmm.ColdBoots()), err)
 	}
 }
 
@@ -90,16 +91,16 @@ func TestRefreshRuntimeConfigForEnvironmentPreservesScaleToZero(t *testing.T) {
 	for _, status := range []state.AppStatus{state.AppActive, state.AppEvictedCold} {
 		t.Run(string(status), func(t *testing.T) {
 			store := state.NewMemStore()
-			_, app, _ := seedApp(t, store, api.PlanPro, 256, 1)
+			_, app, _ := sched.SeedApp(t, store, api.PlanPro, 256, 1)
 			runtimeEnvironmentDeployment(t, store, app.ID, "production")
 			if _, err := store.UpdateApp(t.Context(), app.ID, state.UpdateAppParams{Status: &status}); err != nil {
 				t.Fatal(err)
 			}
-			vmm := &fakeVMM{}
-			engine := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+			vmm := &sched.FakeVMM{}
+			engine := sched.XNewEngine(t, store, vmm, &sched.FakeNotifier{}, "1.10.0")
 			out, err := engine.RefreshRuntimeConfigForEnvironment(t.Context(), app.ID, uuid.NewString(), "production")
 			current, readErr := store.AppByID(t.Context(), app.ID)
-			if err != nil || out.Instance != nil || readErr != nil || current.Status != status || vmm.coldBoots != 0 || vmm.restores != 0 || vmm.destroys != 0 {
+			if err != nil || out.Instance != nil || readErr != nil || current.Status != status || (*vmm.ColdBoots()) != 0 || (*vmm.Restores()) != 0 || (*vmm.Destroys()) != 0 {
 				t.Fatalf("cold environment was activated: %+v %+v %v %v", out, current, err, readErr)
 			}
 		})
@@ -107,7 +108,7 @@ func TestRefreshRuntimeConfigForEnvironmentPreservesScaleToZero(t *testing.T) {
 }
 
 func TestRefreshRuntimeConfigForEnvironmentRejectsInvalidScope(t *testing.T) {
-	engine := &Engine{}
+	engine := &sched.Engine{}
 	for _, scope := range []string{"default", "../production", "Production", ""} {
 		if _, err := engine.RefreshRuntimeConfigForEnvironment(t.Context(), "app", uuid.NewString(), scope); err == nil {
 			t.Fatalf("invalid scope %q accepted", scope)
