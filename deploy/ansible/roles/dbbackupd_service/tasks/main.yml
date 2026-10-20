@@ -8,9 +8,14 @@
     that:
       - inventory_hostname in (groups['database_nodes'] | default([]))
       - dbbackupd_s3_bucket | length == 0 or (dbbackupd_s3_access_key_id | length > 0 and dbbackupd_s3_secret_access_key | length > 0)
+      - dbbackupd_offsite_s3_bucket | length == 0 or dbbackupd_s3_bucket | length > 0
+      - dbbackupd_offsite_s3_bucket | length == 0 or (dbbackupd_offsite_s3_access_key_id | length > 0 and dbbackupd_offsite_s3_secret_access_key | length > 0)
+      - dbbackupd_offsite_s3_bucket | length == 0 or dbbackupd_offsite_s3_bucket != dbbackupd_s3_bucket or dbbackupd_offsite_s3_endpoint != dbbackupd_s3_endpoint
     fail_msg: >-
       dbbackupd runs only on hosts in the database_nodes group, and a bucket
       needs dbbackupd_s3_access_key_id and dbbackupd_s3_secret_access_key.
+      An off-site mirror needs the bucket too, its own credentials, and
+      another bucket than it.
   when: dbbackupd_enabled | bool
 
 - name: dbbackupd_service — create the service group
@@ -58,6 +63,25 @@
   when:
     - dbbackupd_enabled | bool
     - dbbackupd_s3_bucket | length > 0
+  notify: restart faas-dbbackupd
+
+- name: dbbackupd_service — install the off-site mirror's credentials
+  ansible.builtin.copy:
+    content: "{{ item.value }}\n"
+    dest: "/etc/faas/dbbackupd/{{ item.name }}"
+    owner: faas-dbbackupd
+    group: faas-dbbackupd
+    mode: "0400"
+  loop:
+    - { name: offsite-s3-access-key-id, value: "{{ dbbackupd_offsite_s3_access_key_id }}" }
+    - { name: offsite-s3-secret-access-key, value: "{{ dbbackupd_offsite_s3_secret_access_key }}" }
+  loop_control:
+    label: "{{ item.name }}"
+  no_log: true
+  when:
+    - dbbackupd_enabled | bool
+    - dbbackupd_s3_bucket | length > 0
+    - dbbackupd_offsite_s3_bucket | length > 0
   notify: restart faas-dbbackupd
 
 - name: dbbackupd_service — render dbbackupd.toml

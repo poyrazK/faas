@@ -30,3 +30,16 @@ dbbackupd_upload_interval: "10s"
 # Credentials scoped to the bucket prefix (Ansible Vault).
 dbbackupd_s3_access_key_id: ""
 dbbackupd_s3_secret_access_key: ""
+
+# Off-site mirror: a second bucket, at another provider, holding a copy of
+# every archive (ADR-1027). It needs the bucket above. Leave the bucket
+# empty to keep one copy off the node; losing that bucket or its account
+# then loses every restore point.
+dbbackupd_offsite_s3_endpoint: ""
+dbbackupd_offsite_s3_region: ""
+dbbackupd_offsite_s3_bucket: ""
+dbbackupd_offsite_s3_prefix: native-postgres
+dbbackupd_offsite_s3_path_style: false
+dbbackupd_offsite_upload_interval: "1m"
+dbbackupd_offsite_s3_access_key_id: ""
+dbbackupd_offsite_s3_secret_access_key: ""

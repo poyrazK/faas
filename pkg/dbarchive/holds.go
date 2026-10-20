@@ -88,6 +88,10 @@ func (s *TieredStore) PutHold(ctx context.Context, databaseID, name string, poin
 		return Hold{}, err
 	}
 	if s.Remote != nil {
+		// The mirror copies the hold from the bucket once it is there.
+		if err := s.journalOffsite(offsiteOp{Op: offsiteCopy, Database: databaseID, Path: "holds/" + name}); err != nil {
+			return Hold{}, err
+		}
 		return hold, s.Remote.Put(ctx, HoldKey(s.Prefix, databaseID, name), bytes.NewReader(body), int64(len(body)))
 	}
 	if err := os.MkdirAll(s.holdsDir(databaseID), 0o700); err != nil {
@@ -133,6 +137,9 @@ func (s *TieredStore) DeleteHold(ctx context.Context, databaseID, name string) e
 	s.holdsMu.Lock()
 	defer s.holdsMu.Unlock()
 	if s.Remote != nil {
+		if err := s.journalOffsite(offsiteOp{Op: offsiteDelete, Database: databaseID, Path: "holds/" + name}); err != nil {
+			return err
+		}
 		return s.Remote.Delete(ctx, HoldKey(s.Prefix, databaseID, name))
 	}
 	if err := os.Remove(filepath.Join(s.holdsDir(databaseID), name)); err != nil && !errors.Is(err, os.ErrNotExist) {

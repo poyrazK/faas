@@ -57,17 +57,24 @@ secret_access_key_path = "` + key + `"
 	if s3, err := cfg.Remote.s3Config(); err != nil || s3.KeyID != "value" || s3.Secret != "value" {
 		t.Fatalf("credentials = %+v, %v", s3, err)
 	}
+	offsite := strings.Replace(strings.Replace(remote, "[remote]", "[offsite]", 1), `bucket = "b"`, `bucket = "dr"`, 1)
+	cfg, err = LoadConfig(writeConfig(t, remote+offsite))
+	if err != nil || cfg.Offsite == nil || cfg.Offsite.Bucket != "dr" || cfg.Offsite.UploadInterval != time.Minute || cfg.Remote.UploadInterval != 10*time.Second {
+		t.Fatalf("offsite = %+v, %v", cfg, err)
+	}
 	cfg.Remote.SecretAccessKeyPath = shared
 	if _, err := cfg.Remote.s3Config(); err == nil {
 		t.Fatal("a group-readable secret was accepted")
 	}
 	for name, body := range map[string]string{
-		"relative store": `store_dir = "archive"`,
-		"tiny retention": `min_retention = "10m"`,
-		"fast pruning":   `prune_interval = "1s"`,
-		"no prefix":      strings.Replace(remote, `prefix = "native"`, `prefix = "/"`, 1),
-		"no bucket":      strings.Replace(remote, `bucket = "b"`, "", 1),
-		"fast uploads":   remote + "upload_interval = \"10ms\"\n",
+		"relative store":      `store_dir = "archive"`,
+		"tiny retention":      `min_retention = "10m"`,
+		"fast pruning":        `prune_interval = "1s"`,
+		"no prefix":           strings.Replace(remote, `prefix = "native"`, `prefix = "/"`, 1),
+		"no bucket":           strings.Replace(remote, `bucket = "b"`, "", 1),
+		"fast uploads":        remote + "upload_interval = \"10ms\"\n",
+		"offsite alone":       strings.Replace(remote, "[remote]", "[offsite]", 1),
+		"offsite same bucket": remote + strings.Replace(remote, "[remote]", "[offsite]", 1),
 	} {
 		if _, err := LoadConfig(writeConfig(t, body)); err == nil {
 			t.Errorf("%s: accepted", name)

@@ -105,6 +105,43 @@ the commits it holds would be lost too.
    uploads (`dbarchive_pending_files` keeps growing). Check the node's
    egress bandwidth.
 
+## FaasDatabaseArchiveOffsiteStale (warn)
+
+`dbarchive_offsite_pending_oldest_seconds` has been above an hour for 30
+minutes. That is the age of the oldest archive file, or journaled
+deletion, hold or handoff, that the off-site mirror has not applied. The
+bucket is unaffected: the mirror uploads apart from it. But losing the
+bucket now would lose the restore points the mirror lacks.
+
+1. `dbarchive_offsite_errors_total` rising means mirror passes fail.
+   `journalctl -u faas-dbbackupd | grep "off-site pass failed"` names the
+   error, usually the mirror's credentials, endpoint or quota. A
+   `corrupt off-site journal entry` error names a file under
+   `<store_dir>/.offsite-journal/` that dbbackupd did not write. Move it
+   aside, then investigate how it got there, since replay stops at it.
+2. With no errors, the node archives faster than it reaches the mirror
+   (`dbarchive_offsite_pending_files` keeps growing). Check egress to the
+   mirror's provider.
+
+### Losing the bucket
+
+If the bucket, or its provider account, is gone for good, the mirror
+becomes the bucket:
+
+1. On every database node, in dbbackupd.toml, move the `[offsite]`
+   table's values into `[remote]` and drop `[offsite]`, or add a new
+   mirror. In Ansible, set the `dbbackupd_s3_*` variables to the mirror's
+   values.
+2. Stop dbbackupd. Under `dbbackupd_store_dir`, remove every database's
+   `uploaded/` directory: those markers name files the old bucket had,
+   and without them the uploader ships every local file to the new
+   bucket. Remove `uploaded-offsite/` and `.offsite-journal/` too, so a
+   new mirror, if any, starts from scratch.
+3. Start dbbackupd. Restores, pruning and holds now read the former
+   mirror. Restore points are complete up to the mirror's recovery point
+   when the bucket went (`dbarchive_offsite_pending_oldest_seconds`),
+   plus whatever the nodes still hold locally.
+
 ## FaasDatabaseArchivePruneFailing (warn)
 
 At least two hourly prune passes failed in 3 hours

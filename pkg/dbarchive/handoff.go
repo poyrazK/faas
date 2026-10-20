@@ -48,7 +48,8 @@ func (u *Uploader) syncLocked(ctx context.Context, databaseID string) (int, erro
 }
 
 // Release ships what the database's archive still holds here, then
-// removes this node's copy. The bucket keeps everything.
+// removes this node's copy. The bucket keeps everything; the off-site
+// mirror copies from the bucket whatever it had not uploaded from here.
 func (u *Uploader) Release(ctx context.Context, databaseID string) error {
 	if !ValidDatabaseID(databaseID) {
 		return fmt.Errorf("dbarchive: invalid database id %q", databaseID)
@@ -57,6 +58,15 @@ func (u *Uploader) Release(ctx context.Context, databaseID string) error {
 	defer u.Store.maint.Unlock()
 	if _, err := u.syncLocked(ctx, databaseID); err != nil {
 		return err
+	}
+	for _, f := range u.files(databaseID) {
+		if _, err := os.Stat(offsiteMarker(u.Store.dir, databaseID, f.name)); err == nil {
+			continue
+		}
+		rel := filepath.Base(filepath.Dir(f.path)) + "/" + f.name
+		if err := u.Store.journalOffsite(offsiteOp{Op: offsiteCopy, Database: databaseID, Path: rel}); err != nil {
+			return err
+		}
 	}
 	if err := os.RemoveAll(filepath.Join(u.Store.dir, databaseID)); err != nil {
 		return err

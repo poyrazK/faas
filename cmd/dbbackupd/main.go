@@ -42,13 +42,16 @@ func main() {
 }
 
 // metrics are dbbackupd's off-node recovery point: how much archive is
-// still only on this node, and for how long.
+// still only on this node, and for how long; and the off-site mirror's.
 type metrics struct {
 	pendingFiles  prometheus.Gauge
 	pendingOldest prometheus.Gauge
 	uploadErrors  prometheus.Counter
 	pruned        *prometheus.CounterVec
 	pruneErrors   prometheus.Counter
+	offsiteFiles  prometheus.Gauge
+	offsiteOldest prometheus.Gauge
+	offsiteErrors prometheus.Counter
 }
 
 func newMetrics(reg prometheus.Registerer) *metrics {
@@ -63,8 +66,14 @@ func newMetrics(reg prometheus.Registerer) *metrics {
 			Help: "Archive files removed past their retention, by kind (backup, wal)."}, []string{"kind"}),
 		pruneErrors: prometheus.NewCounter(prometheus.CounterOpts{Name: "dbarchive_prune_errors_total",
 			Help: "Prune passes that failed for at least one database."}),
+		offsiteFiles: prometheus.NewGauge(prometheus.GaugeOpts{Name: "dbarchive_offsite_pending_files",
+			Help: "Archive files and journaled deletions, holds and handoffs not yet applied to the off-site mirror."}),
+		offsiteOldest: prometheus.NewGauge(prometheus.GaugeOpts{Name: "dbarchive_offsite_pending_oldest_seconds",
+			Help: "Age of the oldest change not yet in the off-site mirror: the off-site recovery point."}),
+		offsiteErrors: prometheus.NewCounter(prometheus.CounterOpts{Name: "dbarchive_offsite_errors_total",
+			Help: "Off-site mirror passes that stopped on an error."}),
 	}
-	reg.MustRegister(m.pendingFiles, m.pendingOldest, m.uploadErrors, m.pruned, m.pruneErrors)
+	reg.MustRegister(m.pendingFiles, m.pendingOldest, m.uploadErrors, m.pruned, m.pruneErrors, m.offsiteFiles, m.offsiteOldest, m.offsiteErrors)
 	return m
 }
 
@@ -100,6 +109,11 @@ func run(ctx context.Context, configPath string, log *slog.Logger) error {
 			m.uploadErrors.Inc()
 			log.Warn("dbbackupd: upload pass failed", "err", err)
 		})
+		// Before pruning or serving starts: the journal must see every
+		// deletion.
+		if err := startOffsite(ctx, cfg, local, store, m, log); err != nil {
+			return err
+		}
 	} else {
 		log.Warn("dbbackupd: no remote configured; the archive lives only on this node")
 	}
@@ -121,12 +135,39 @@ func run(ctx context.Context, configPath string, log *slog.Logger) error {
 	defer stopNotify()
 	stopWatchdog := daemonunit.WatchdogFromEnv(ctx, func() bool { return true })
 	defer stopWatchdog()
-	log.Info("dbbackupd: serving", "socket", cfg.SocketPath, "store_dir", cfg.StoreDir, "remote", cfg.Remote != nil)
+	log.Info("dbbackupd: serving", "socket", cfg.SocketPath, "store_dir", cfg.StoreDir, "remote", cfg.Remote != nil, "offsite", cfg.Offsite != nil)
 	srv := &dbarchive.Server{Store: store, Backups: store, Retention: store, Log: log}
 	if uploader != nil {
 		srv.Handoff = uploader
 	}
 	return srv.Serve(ctx, ln)
+}
+
+// startOffsite starts the off-site mirror, if one is configured, and makes
+// the store's reads fall back to it.
+func startOffsite(ctx context.Context, cfg *Config, local *dbarchive.LocalStore, store *dbarchive.TieredStore, m *metrics, log *slog.Logger) error {
+	if cfg.Offsite == nil {
+		return nil
+	}
+	s3cfg, err := cfg.Offsite.s3Config()
+	if err != nil {
+		return err
+	}
+	mirror, err := dbarchive.NewS3Remote(s3cfg)
+	if err != nil {
+		return err
+	}
+	offsite := dbarchive.NewOffsite(local, store.Remote, cfg.Remote.Prefix, mirror, cfg.Offsite.Prefix)
+	offsite.OnPending = func(n int, oldest time.Duration) {
+		m.offsiteFiles.Set(float64(n))
+		m.offsiteOldest.Set(oldest.Seconds())
+	}
+	store.Offsite, store.OffsitePrefix = mirror, cfg.Offsite.Prefix
+	go offsite.Run(ctx, cfg.Offsite.UploadInterval, func(err error) {
+		m.offsiteErrors.Inc()
+		log.Warn("dbbackupd: off-site pass failed", "err", err)
+	})
+	return nil
 }
 
 // prune trims every archive to its retention now and every interval.

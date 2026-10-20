@@ -219,8 +219,13 @@ func (s *TieredStore) archiveNames(ctx context.Context, databaseID, baseDir, wal
 }
 
 // remove deletes one archive file: the bucket copy first, so a failure
-// leaves the local file to retry from, then the file and its marker.
+// leaves the local file to retry from, then the file and its markers. The
+// off-site journal records it before anything goes.
 func (s *TieredStore) remove(ctx context.Context, databaseID, path, key string) error {
+	rel := filepath.Base(filepath.Dir(path)) + "/" + filepath.Base(path)
+	if err := s.journalOffsite(offsiteOp{Op: offsiteDelete, Database: databaseID, Path: rel}); err != nil {
+		return err
+	}
 	if s.Remote != nil {
 		if err := s.Remote.Delete(ctx, key); err != nil {
 			return err
@@ -229,8 +234,10 @@ func (s *TieredStore) remove(ctx context.Context, databaseID, path, key string) 
 	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	if err := os.Remove(uploadedMarker(s.dir, databaseID, filepath.Base(path))); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
+	for _, marker := range []string{uploadedMarker(s.dir, databaseID, filepath.Base(path)), offsiteMarker(s.dir, databaseID, filepath.Base(path))} {
+		if err := os.Remove(marker); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
 	}
 	return nil
 }
@@ -262,13 +269,17 @@ func (s *TieredStore) PruneAll(ctx context.Context, now time.Time, minRetention 
 }
 
 // Drop deletes a deleted database's whole archive: every object under its
-// bucket prefix, then the local directory.
+// bucket prefix, then the local directory. The off-site journal records it
+// first.
 func (s *TieredStore) Drop(ctx context.Context, databaseID string) error {
 	if !ValidDatabaseID(databaseID) {
 		return fmt.Errorf("dbarchive: invalid database id %q", databaseID)
 	}
 	s.maint.Lock()
 	defer s.maint.Unlock()
+	if err := s.journalOffsite(offsiteOp{Op: offsiteDrop, Database: databaseID}); err != nil {
+		return err
+	}
 	if s.Remote != nil {
 		keys, err := s.Remote.List(ctx, strings.TrimSuffix(s.Prefix, "/")+"/"+databaseID+"/")
 		if err != nil {

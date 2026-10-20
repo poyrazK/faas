@@ -58,6 +58,20 @@ groups:
           description: "The oldest archive file on {{ $labels.node }} that is not yet in the bucket is older than 15 minutes. Losing the node now would lose those commits; check dbbackupd's upload errors and the bucket's reachability."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDatabaseNodes.md"
 
+      # The off-site mirror's recovery point; the bucket's alert above is
+      # the one that guards against losing the node.
+      - alert: FaasDatabaseArchiveOffsiteStale
+        expr: dbarchive_offsite_pending_oldest_seconds{job="dbbackupd"} > 3600
+        for: 30m
+        labels:
+          severity: warn
+          component: database-node
+          family: database_nodes
+        annotations:
+          summary: "Database node {{ $labels.node }} has not mirrored its archive off-site for {{ $value | humanizeDuration }}"
+          description: "The oldest archive change on {{ $labels.node }} not yet in the off-site mirror is over an hour old. The bucket is unaffected; losing it now would lose what the mirror lacks. Check dbbackupd's off-site errors and the mirror's reachability."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDatabaseNodes.md"
+
       # Pruning runs hourly; two failed passes leave the archive growing.
       - alert: FaasDatabaseArchivePruneFailing
         expr: increase(dbarchive_prune_errors_total{job="dbbackupd"}[3h]) >= 2

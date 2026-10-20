@@ -811,6 +811,40 @@ guest PostgreSQL --archive_command--> guest-init archive-wal --vsock 5434-->
   - Metal (`TestMetalPointInTimeRestore`): after the source's local archive
     is deleted, a runtime backed by an empty store restores it from the
     bucket to the same rows.
+- **Off-site mirror.** The bucket is one bucket at one provider. A
+  suspended account, a deleted bucket or a lost region takes every
+  restore point with it. With an `[offsite]` table in dbbackupd.toml (role
+  variables `dbbackupd_offsite_s3_*`, off by default), each node mirrors
+  its archive to a second bucket, which should be at another provider:
+  - A second uploader (`dbarchive.Offsite`) ships each local WAL file and
+    base backup under its own markers (`<db>/uploaded-offsite/`). It works
+    apart from the bucket's uploader and releases the store's lock while
+    it uploads, so a slow or unreachable mirror never delays the bucket's
+    recovery point, pruning or drops.
+  - Changes the mirror must follow go first into a local journal
+    (`.offsite-journal/` under the store root, one fsynced file per
+    entry, replayed in order). That covers every pruned file, a dropped
+    database's whole archive, each hold placed or removed, and each file
+    a handoff releases before the mirror uploaded it. A copy reads from
+    the bucket. Pruning and drops never wait on the mirror.
+  - The mirror deletes only what the journal says the store deleted. It
+    never infers a deletion from what the bucket lacks, so an emptied
+    bucket cannot empty the mirror.
+  - Reads fall back to the mirror. A WAL file or a backup the bucket fails
+    to serve or lacks comes from it, and when the bucket cannot be listed
+    the mirror's catalog stands in.
+  - `dbarchive_offsite_pending_oldest_seconds` is the mirror's recovery
+    point: the age of the oldest file or journal entry not yet applied.
+    `FaasDatabaseArchiveOffsiteStale` warns past an hour.
+  - Holds and pruning still read the bucket alone. While it is down,
+    pruning stops, which is the safe failure. If it is gone for good, the
+    operator makes the mirror the bucket (runbook), and its holds come
+    along.
+  - Not covered: archive files a node had not mirrored when it was lost.
+    The bucket keeps them, and nothing copies them across later.
+  - The mirror is platform cost, the same bytes stored twice. Customers
+    are billed for restore history once, from the bucket
+    (`ArchiveBytes`).
 - **Restore onto another node.** With `shared_archive` set in schedd's
   `[database_scheduler]` (every node's dbbackupd uploads to the same
   bucket and prefix), a restore leaves the source's node when that node is

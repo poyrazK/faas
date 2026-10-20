@@ -19,11 +19,13 @@ backend only once its settings carry `max_restore_window_seconds`.
 | `dbbackupd_s3_bucket`, `dbbackupd_s3_prefix` | off-node copy; empty bucket keeps it on the node only |
 | `dbbackupd_s3_endpoint`, `dbbackupd_s3_region`, `dbbackupd_s3_path_style` | S3-compatible endpoint |
 | `dbbackupd_s3_access_key_id`, `dbbackupd_s3_secret_access_key` | prefix-scoped credentials (Vault) |
+| `dbbackupd_offsite_s3_*`, `dbbackupd_offsite_upload_interval` | off-site mirror: a second bucket, at another provider, with its own credentials; needs the bucket above; empty bucket turns it off |
 
 Files written on the host:
 
 - `/etc/faas/dbbackupd.toml`: configuration.
-- `/etc/faas/dbbackupd/s3-{access-key-id,secret-access-key}`: owner-only
+- `/etc/faas/dbbackupd/s3-{access-key-id,secret-access-key}` and, with a
+  mirror, `offsite-s3-{access-key-id,secret-access-key}`: owner-only
   files of `faas-dbbackupd`; the daemon refuses group- or world-readable
   secrets.
 
@@ -36,3 +38,5 @@ port 9110 on the overlay address when the manifest renders
 loopback otherwise.
 `dbarchive_pending_oldest_seconds` is the off-node recovery point: how old
 the oldest archive file still only on this node is.
+`dbarchive_offsite_pending_oldest_seconds` is the mirror's: how old the
+oldest file, deletion, hold or handoff not yet applied off-site is.

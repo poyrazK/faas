@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 )
 
 // Store holds archived WAL per database.
@@ -32,6 +33,10 @@ type LocalStore struct {
 	maint     sync.Mutex
 	windowsMu sync.Mutex
 	windows   map[string]int64
+	// offsite journals deletions, holds and handoffs for an off-site
+	// mirror (offsite.go); offsiteLast is the last entry's sequence.
+	offsite     atomic.Bool
+	offsiteLast atomic.Int64
 }
 
 // NewLocalStore creates dir if needed and clears leftovers of remote reads.

@@ -150,6 +150,10 @@ type TieredStore struct {
 	*LocalStore
 	Remote Remote
 	Prefix string
+	// Offsite is the off-site mirror (offsite.go), which reads fall back to
+	// when the bucket fails or lacks an object; nil without one.
+	Offsite       Remote
+	OffsitePrefix string
 	// MinRetention is PruneBucket's floor (DefaultMinRetention when zero).
 	MinRetention time.Duration
 	now          func() time.Time
@@ -162,19 +166,25 @@ func (s *TieredStore) OpenWAL(ctx context.Context, databaseID, name string) (io.
 	if !errors.Is(err, ErrNotFound) || s.Remote == nil {
 		return rc, size, err
 	}
-	return s.fetch(ctx, WALKey(s.Prefix, databaseID, name))
+	rc, size, err = s.fetch(ctx, s.Remote, WALKey(s.Prefix, databaseID, name))
+	if err != nil && s.Offsite != nil {
+		if orc, osize, oerr := s.fetch(ctx, s.Offsite, WALKey(s.OffsitePrefix, databaseID, name)); oerr == nil {
+			return orc, osize, nil
+		}
+	}
+	return rc, size, err
 }
 
 // fetch downloads an object into an already unlinked temporary file, so
 // nothing of it outlives the reader. WAL files are at most a segment;
 // the protocol needs their size before the bytes.
-func (s *TieredStore) fetch(ctx context.Context, key string) (io.ReadCloser, int64, error) {
+func (s *TieredStore) fetch(ctx context.Context, remote Remote, key string) (io.ReadCloser, int64, error) {
 	tmp, err := os.CreateTemp(s.fetchDir(), "fetch-*")
 	if err != nil {
 		return nil, 0, err
 	}
 	_ = os.Remove(tmp.Name())
-	if err := s.Remote.Get(ctx, key, tmp); err != nil {
+	if err := remote.Get(ctx, key, tmp); err != nil {
 		_ = tmp.Close()
 		return nil, 0, err
 	}

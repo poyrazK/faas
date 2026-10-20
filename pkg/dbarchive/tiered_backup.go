@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -19,13 +20,25 @@ const maxManifestBytes = 64 << 10
 // ListAllBackups returns the database's base backups on this node and in
 // the bucket, oldest first. A bucket manifest counts only next to its data
 // (uploads put data first, so this holds unless the data was deleted).
+// When the bucket cannot be listed, the off-site mirror's backups stand
+// in for it.
 func (s *TieredStore) ListAllBackups(ctx context.Context, databaseID string) ([]BackupManifest, error) {
 	local, err := s.ListBackups(databaseID)
 	if err != nil || s.Remote == nil {
 		return local, err
 	}
-	prefix := BaseKey(s.Prefix, databaseID, "")
-	keys, err := s.Remote.List(ctx, prefix)
+	out, err := listRemoteBackups(ctx, s.Remote, BaseKey(s.Prefix, databaseID, ""), local)
+	if err != nil && s.Offsite != nil {
+		if mirrored, oerr := listRemoteBackups(ctx, s.Offsite, BaseKey(s.OffsitePrefix, databaseID, ""), local); oerr == nil {
+			return mirrored, nil
+		}
+	}
+	return out, err
+}
+
+// listRemoteBackups adds the remote's backups under prefix to local.
+func listRemoteBackups(ctx context.Context, remote Remote, prefix string, local []BackupManifest) ([]BackupManifest, error) {
+	keys, err := remote.List(ctx, prefix)
 	if err != nil {
 		return nil, err
 	}
@@ -37,14 +50,14 @@ func (s *TieredStore) ListAllBackups(ctx context.Context, databaseID string) ([]
 	for _, m := range local {
 		known[m.ID] = true
 	}
-	out := local
+	out := slices.Clone(local)
 	for name := range present {
 		id, ok := strings.CutSuffix(name, ".json")
 		if !ok || !ValidBackupID(id) || known[id] || !present[id+".tar.zst"] {
 			continue
 		}
 		var buf bytes.Buffer
-		if err := s.Remote.Get(ctx, prefix+name, &limitedBuffer{buf: &buf, left: maxManifestBytes}); err != nil {
+		if err := remote.Get(ctx, prefix+name, &limitedBuffer{buf: &buf, left: maxManifestBytes}); err != nil {
 			return nil, err
 		}
 		var m BackupManifest
@@ -68,15 +81,23 @@ func (s *TieredStore) SelectBackup(ctx context.Context, wal Store, databaseID st
 
 // OpenBackup reads the local copy, or streams the bucket's through the
 // decoder: a backup can be as large as the volume, so it is not staged.
+// It streams the off-site mirror's copy instead when the bucket cannot
+// say it has the backup and the mirror can.
 func (s *TieredStore) OpenBackup(ctx context.Context, databaseID, id string) (io.ReadCloser, error) {
 	rc, err := s.LocalStore.OpenBackup(ctx, databaseID, id)
 	if !errors.Is(err, ErrNotFound) || s.Remote == nil {
 		return rc, err
 	}
+	remote, key := s.Remote, BaseKey(s.Prefix, databaseID, id+".tar.zst")
+	if s.Offsite != nil && !hasObject(ctx, s.Remote, key) {
+		if mirrored := BaseKey(s.OffsitePrefix, databaseID, id+".tar.zst"); hasObject(ctx, s.Offsite, mirrored) {
+			remote, key = s.Offsite, mirrored
+		}
+	}
 	ctx, cancel := context.WithCancel(ctx)
 	pr, pw := io.Pipe()
 	go func() {
-		_ = pw.CloseWithError(s.Remote.Get(ctx, BaseKey(s.Prefix, databaseID, id+".tar.zst"), pw))
+		_ = pw.CloseWithError(remote.Get(ctx, key, pw))
 	}()
 	dec, err := zstd.NewReader(pr)
 	if err != nil {
@@ -85,6 +106,13 @@ func (s *TieredStore) OpenBackup(ctx context.Context, databaseID, id string) (io
 		return nil, err
 	}
 	return &remoteBackup{dec: dec, pipe: pr, cancel: cancel}, nil
+}
+
+// hasObject reports whether the remote answers that it has key.
+func hasObject(ctx context.Context, remote Remote, key string) bool {
+	sizes, err := remote.Sizes(ctx, key)
+	_, ok := sizes[key]
+	return err == nil && ok
 }
 
 type remoteBackup struct {

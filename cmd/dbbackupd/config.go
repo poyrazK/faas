@@ -32,6 +32,9 @@ type Config struct {
 	// Remote ships the archive off the node; without it the archive lives
 	// only on this node's disk.
 	Remote *RemoteConfig `toml:"remote"`
+	// Offsite mirrors the archive to a second bucket, at another provider
+	// (pkg/dbarchive offsite.go). It needs Remote.
+	Offsite *RemoteConfig `toml:"offsite"`
 }
 
 // RemoteConfig reaches an S3-compatible bucket.
@@ -73,21 +76,40 @@ func (c *Config) validate() error {
 	if c.PruneInterval < time.Minute || c.PruneInterval > 24*time.Hour {
 		return errors.New("dbbackupd: prune_interval must be between 1m and 24h")
 	}
-	r := c.Remote
+	r, o := c.Remote, c.Offsite
 	if r == nil {
+		if o != nil {
+			return errors.New("dbbackupd: offsite needs remote: the mirror copies what reaches the bucket")
+		}
 		return nil
 	}
+	if err := r.validate("remote", 10*time.Second); err != nil {
+		return err
+	}
+	if o == nil {
+		return nil
+	}
+	if err := o.validate("offsite", time.Minute); err != nil {
+		return err
+	}
+	if o.Endpoint == r.Endpoint && o.Bucket == r.Bucket {
+		return errors.New("dbbackupd: offsite must be another bucket than remote")
+	}
+	return nil
+}
+
+func (r *RemoteConfig) validate(name string, defaultInterval time.Duration) error {
 	if r.Bucket == "" || r.AccessKeyIDPath == "" || r.SecretAccessKeyPath == "" {
-		return errors.New("dbbackupd: remote needs bucket, access_key_id_path and secret_access_key_path")
+		return fmt.Errorf("dbbackupd: %s needs bucket, access_key_id_path and secret_access_key_path", name)
 	}
 	if strings.Trim(r.Prefix, "/") == "" {
-		return errors.New("dbbackupd: remote prefix is required (the bucket may hold other data)")
+		return fmt.Errorf("dbbackupd: %s prefix is required (the bucket may hold other data)", name)
 	}
 	if r.UploadInterval == 0 {
-		r.UploadInterval = 10 * time.Second
+		r.UploadInterval = defaultInterval
 	}
 	if r.UploadInterval < time.Second || r.UploadInterval > 10*time.Minute {
-		return errors.New("dbbackupd: remote upload_interval must be between 1s and 10m")
+		return fmt.Errorf("dbbackupd: %s upload_interval must be between 1s and 10m", name)
 	}
 	return nil
 }

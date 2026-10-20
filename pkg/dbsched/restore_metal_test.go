@@ -32,6 +32,8 @@ type metalNode struct {
 	rt         *dbvm.Runtime
 	archive    *dbarchive.LocalStore
 	archiveDir string
+	// offsite mirrors the archive when the node has a mirror.
+	offsite *dbarchive.Offsite
 	// sock is where vmmd serves; partition and heal stop and resume it
 	// while the node's VMs keep running.
 	sock string
@@ -67,6 +69,13 @@ func (n *metalNode) heal(t *testing.T) { n.serve(t) }
 
 func newMetalNode(t *testing.T, workdir string, bases map[int]string, name string, capacity int64, leases dbvm.Leaser, bucket dbarchive.Remote) *metalNode {
 	t.Helper()
+	return newMirroredMetalNode(t, workdir, bases, name, capacity, leases, bucket, nil)
+}
+
+// newMirroredMetalNode is a node whose dbbackupd also mirrors its archive
+// to mirror (nil: none), under the prefix "dr".
+func newMirroredMetalNode(t *testing.T, workdir string, bases map[int]string, name string, capacity int64, leases dbvm.Leaser, bucket, mirror dbarchive.Remote) *metalNode {
+	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	dir, err := os.MkdirTemp(workdir, name)
@@ -81,6 +90,11 @@ func newMetalNode(t *testing.T, workdir string, bases map[int]string, name strin
 	}
 	// A floor this short lets the test prune right away.
 	tiered := &dbarchive.TieredStore{LocalStore: archive, Remote: bucket, Prefix: "native", MinRetention: time.Millisecond}
+	var offsite *dbarchive.Offsite
+	if mirror != nil {
+		offsite = dbarchive.NewOffsite(archive, bucket, "native", mirror, "dr")
+		tiered.Offsite, tiered.OffsitePrefix = mirror, "dr"
+	}
 	archiveLn, err := net.Listen("unix", filepath.Join(dir, "a.sock"))
 	if err != nil {
 		t.Fatal(err)
@@ -114,7 +128,7 @@ func newMetalNode(t *testing.T, workdir string, bases map[int]string, name strin
 	peers := func(_ context.Context, target, _ string) (*grpc.ClientConn, error) {
 		return grpc.NewClient(target, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	}
-	n := &metalNode{rt: rt, archive: archive, archiveDir: archiveDir, sock: sock,
+	n := &metalNode{rt: rt, archive: archive, archiveDir: archiveDir, sock: sock, offsite: offsite,
 		vmmd: vmmdgrpc.New(nil, nil, "test", nil).WithDatabases(rt).WithDatabasePeers(peers),
 		node: Node{ID: name, TargetURL: "unix://" + sock, AdmissionCeilingMB: 2048, VolumeCapacityBytes: capacity, Lifecycle: NodeActive}}
 	n.serve(t)

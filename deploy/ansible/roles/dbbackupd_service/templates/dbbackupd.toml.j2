@@ -16,3 +16,15 @@ access_key_id_path = "/etc/faas/dbbackupd/s3-access-key-id"
 secret_access_key_path = "/etc/faas/dbbackupd/s3-secret-access-key"
 upload_interval = "{{ dbbackupd_upload_interval }}"
 {% endif %}
+{% if dbbackupd_s3_bucket | length > 0 and dbbackupd_offsite_s3_bucket | length > 0 %}
+
+[offsite]
+endpoint = "{{ dbbackupd_offsite_s3_endpoint }}"
+region = "{{ dbbackupd_offsite_s3_region }}"
+bucket = "{{ dbbackupd_offsite_s3_bucket }}"
+prefix = "{{ dbbackupd_offsite_s3_prefix }}"
+path_style = {{ dbbackupd_offsite_s3_path_style | bool | lower }}
+access_key_id_path = "/etc/faas/dbbackupd/offsite-s3-access-key-id"
+secret_access_key_path = "/etc/faas/dbbackupd/offsite-s3-secret-access-key"
+upload_interval = "{{ dbbackupd_offsite_upload_interval }}"
+{% endif %}
