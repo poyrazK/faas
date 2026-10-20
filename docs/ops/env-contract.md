@@ -515,6 +515,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_OFF_HOST_BACKUP_RCLONE_CONFIG` | postgres | `script` |  |  | `` | LoadCredential= path on the postgresql@.service drop-in; consumed by the archive_command shell in the postgres role |
 | `FAAS_OPERATIONS_WORKLOAD_ISSUER` | apid | `default` |  |  | `url` | optional Operations workload issuer override; configures runtime trust without enabling customer admission |
 | `FAAS_OPERATIONS_WORKLOAD_JWKS_PATH` | apid | `default` |  |  | `path-exists` | optional public Operations workload JWKS override; missing trust denies runtime reports; customer admission remains closed |
+| `FAAS_OPERATION_CHILDREN_ACCOUNTS` | apid, shared | `default` |  |  | `` | comma-separated account UUIDs child Operations (ADR-20261018183000) are available to; unset admits none |
 | `FAAS_OPERATION_SCHEDULES_ACCOUNTS` | apid, shared | `default` |  |  | `` | comma-separated account UUIDs Operation schedules (ADR-20261018161833) are available to; unset admits none and stops every schedule firing |
 | `FAAS_OTEL_FLUSH_INTERVAL` | apid, gatewayd-internal, gatewayd-public, outboundd | `default` |  |  | `` |  |
 | `FAAS_OTEL_SPANS_WRITER_ENABLED` | apid, gatewayd-internal, gatewayd-public, outboundd | `default` |  |  | `` |  |
