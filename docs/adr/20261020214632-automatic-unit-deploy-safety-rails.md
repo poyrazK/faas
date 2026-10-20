@@ -65,7 +65,7 @@ owner sets `UNIT_RELEASE_AUTODEPLOY_ENVIRONMENT`.
   that read pull-request metadata (fix-has-test, migration-version hygiene)
   skip on that event, as they do on pushes. A merge-group run is never
   cancelled: a cancelled check takes the PR out of the queue.
-- The ruleset change is prepared in `docs/runbooks/main-merge-queue.md`, not
+- The ruleset change is prepared in `docs/runbooks/MainMergeQueue.md`, not
   applied: a `merge_queue` rule with squash merges, groups that merge only
   when every entry passes (`ALLGREEN`), up to 5 entries built at once, up
   to 5 merged together, at least 1 after a 5 min wait, and a 60 min check
