@@ -90,6 +90,33 @@ func testRehearsalAppsNeverPollRealBrokers(t *testing.T, fx *Fixture) {
 	}
 }
 
+// testRehearsalCronsNeverFireFromTheClock pins that schedd's cron listing
+// omits a rehearsal-enrolled app's crons, so its recipe alone fires them and
+// both revisions see the same number of fires (ADR-20261020200000).
+func testRehearsalCronsNeverFireFromTheClock(t *testing.T, fx *Fixture) {
+	t.Helper()
+	enrolled := enrollRehearsalApp(t, fx)
+	ordinary, err := fx.Store.CreateCron(fx.Ctx, fx.App.ID, "*/5 * * * *", "/tick", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rehearsal, err := fx.Store.CreateCron(fx.Ctx, enrolled.ID, "*/5 * * * *", "/tick", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	crons, err := fx.Store.ListEnabledCrons(fx.Ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listed := map[string]bool{}
+	for _, c := range crons {
+		listed[c.ID] = true
+	}
+	if !listed[ordinary.ID] || listed[rehearsal.ID] {
+		t.Fatalf("clock-fired crons: ordinary=%v rehearsal=%v; want true,false", listed[ordinary.ID], listed[rehearsal.ID])
+	}
+}
+
 // testRehearsalAppsLeaveAccountAlerts pins that account-wide alert aggregates
 // skip rehearsal-enrolled apps, whose candidate revisions and injected faults
 // must not page the account, while app-scoped rules still count them.

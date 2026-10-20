@@ -1287,6 +1287,7 @@ in both capture-only and contained rehearsals:
 - Its route-discovery events do not fan out to other apps.
 - Workflow outbound steps are refused, so they never use live provider credentials.
 - Log drains, deployment-failure mail and Kafka/NATS/Redis Streams/SQS triggers do not run for it.
+- Its crons never fire from the clock. To exercise one, send the cron's request or run its command from the recipe, so both revisions see the same work ([ADR-20261020200000](adr/20261020200000-rehearsal-crons-fire-from-the-recipe.md)).
 
 Contained enrollment refuses an app that already holds real managed PostgreSQL
 or object-storage bindings; declare the isolated fixtures below instead. Builds

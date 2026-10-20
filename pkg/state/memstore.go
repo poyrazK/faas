@@ -5984,7 +5984,7 @@ func (m *MemStore) ListOwnedCronsByNodeID(_ context.Context, nodeID string) ([]C
 	var out []Cron
 	for _, c := range m.crons {
 		app, ok := m.apps[c.AppID]
-		if ok && owner[c.AppID] == nodeID && app.Status != AppDeleted && c.Enabled {
+		if _, rehearsal := m.scenarioActionPolicies[c.AppID]; ok && owner[c.AppID] == nodeID && app.Status != AppDeleted && c.Enabled && !rehearsal {
 			out = append(out, c)
 		}
 	}
@@ -13300,7 +13300,8 @@ func (m *MemStore) ListEnabledCrons(_ context.Context) ([]Cron, error) {
 	defer m.mu.Unlock()
 	var out []Cron
 	for _, c := range m.crons {
-		if c.Enabled && c.SuspendedReason == "" {
+		// Mirrors PgStore: rehearsal-enrolled apps never fire from the clock.
+		if _, rehearsal := m.scenarioActionPolicies[c.AppID]; c.Enabled && c.SuspendedReason == "" && !rehearsal {
 			out = append(out, c)
 		}
 	}
