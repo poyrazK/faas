@@ -3233,6 +3233,14 @@ func (s *server) createDomain(w http.ResponseWriter, r *http.Request, acct state
 	} else {
 		d, err = createDomain(r.Context())
 	}
+	if errors.Is(err, state.ErrConflict) {
+		// Another account's unverified claim yields to DNS proof
+		// (ADR-20261020090000). The takeover records its activity below,
+		// outside the create's activity transaction.
+		if d, err = s.takeOverDomainClaim(r.Context(), acct, app, domain, environmentID, perApp, perAccount, err); err == nil {
+			activityOutboxID, activityMutationAtomic = 0, false
+		}
+	}
 	if err != nil {
 		if errors.Is(err, state.ErrCustomDomainQuotaExceeded) {
 			api.WriteProblem(w, api.NewProblem(http.StatusTooManyRequests, api.CodeQuotaExhausted, "Custom domain quota reached", err.Error()))
@@ -3243,8 +3251,12 @@ func (s *server) createDomain(w http.ResponseWriter, r *http.Request, acct state
 			return
 		}
 		if errors.Is(err, state.ErrConflict) {
-			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation,
-				"Domain taken", err.Error()))
+			problem := api.NewProblem(http.StatusConflict, api.CodeValidation, "Domain taken", err.Error())
+			var pending *claimPendingError
+			if errors.As(err, &pending) {
+				problem.Hint = pending.hint()
+			}
+			api.WriteProblem(w, problem)
 			return
 		}
 		api.WriteProblem(w, api.ErrCapacity("could not create domain"))

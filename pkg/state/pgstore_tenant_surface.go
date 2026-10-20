@@ -456,17 +456,33 @@ func (s *PgStore) TenantSurfaceByHostname(ctx context.Context, hostname string) 
 //   - (TenantHostname{}, ErrNotFound) when the parent surface is missing
 //   - (TenantHostname{}, ErrConflict) on UQ violation
 func (s *PgStore) CreateTenantHostnameIfUnderQuota(ctx context.Context, in CreateTenantHostnameParams, limits api.Limits) (TenantHostname, error) {
+	return s.createTenantHostname(ctx, in, limits, false)
+}
+
+// TakeOverTenantHostnameClaim attaches in.Hostname to in.SurfaceID over
+// another account's unverified row. The caller must first have observed
+// in.ChallengeToken, the claimant's ClaimTakeoverToken, at
+// _faas-verify.<hostname>; the poller then verifies the new row as usual. The
+// old row is deleted rather than reassigned, so nothing keyed by its id
+// crosses accounts. A row on a deleted surface is released whatever its
+// state. A verified row, or one on a live surface of the claimant's own
+// account, returns ErrConflict (ADR-20261020090000).
+func (s *PgStore) TakeOverTenantHostnameClaim(ctx context.Context, in CreateTenantHostnameParams, limits api.Limits) (TenantHostname, error) {
+	return s.createTenantHostname(ctx, in, limits, true)
+}
+
+func (s *PgStore) createTenantHostname(ctx context.Context, in CreateTenantHostnameParams, limits api.Limits, takeover bool) (TenantHostname, error) {
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return TenantHostname{}, fmt.Errorf("state: begin create tenant hostname tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
 
-	var locked int
+	var accountID string
 	if err := tx.QueryRow(ctx,
-		`select 1 from tenant_surfaces where id = $1 and status <> 'deleted' for update`,
+		`select account_id::text from tenant_surfaces where id = $1 and status <> 'deleted' for update`,
 		in.SurfaceID,
-	).Scan(&locked); err != nil {
+	).Scan(&accountID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return TenantHostname{}, ErrNotFound
 		}
@@ -493,6 +509,34 @@ func (s *PgStore) CreateTenantHostnameIfUnderQuota(ctx context.Context, in Creat
 			Limit:     limits.TenantHostnamesPerSurface,
 			Observed:  observed,
 			SurfaceID: in.SurfaceID,
+		}
+	}
+	// Unverified rows reserve their names globally and never expire, so
+	// they get their own cap (ADR-20261020090000).
+	if err := tx.QueryRow(ctx,
+		`select count(*) from tenant_hostnames where surface_id = $1 and verified_at is null`,
+		in.SurfaceID,
+	).Scan(&observed); err != nil {
+		return TenantHostname{}, fmt.Errorf("state: count pending tenant_hostnames for surface %s: %w", in.SurfaceID, err)
+	}
+	if limit := limits.PendingTenantHostnamesPerSurface(); observed >= limit {
+		return TenantHostname{}, &TenantHostnameQuotaError{Limit: limit, Observed: observed, SurfaceID: in.SurfaceID, Pending: true}
+	}
+	if takeover {
+		// Another account's unverified row, or any row left on a deleted
+		// surface (it routes nothing), is released. A row verified
+		// meanwhile, or held by the claimant's own account, survives; the
+		// insert below then reports the conflict.
+		if _, err := tx.Exec(ctx,
+			`delete from tenant_hostnames h
+			  where h.hostname = $1
+			    and exists (select 1 from tenant_surfaces holder
+			                 where holder.id = h.surface_id
+			                   and (holder.status = 'deleted'
+			                        or (h.verified_at is null and holder.account_id <> $2::uuid)))`,
+			in.Hostname, accountID,
+		); err != nil {
+			return TenantHostname{}, fmt.Errorf("state: release pending tenant hostname %s: %w", in.Hostname, err)
 		}
 	}
 
@@ -609,6 +653,16 @@ type TenantHostnameChallengeVerifier interface {
 
 var _ TenantHostnameChallengeVerifier = (*PgStore)(nil)
 var _ TenantHostnameChallengeVerifier = (*MemStore)(nil)
+
+// TenantHostnameClaimTakeover attaches a hostname over another account's
+// unverified row once the claimant proved control of its DNS
+// (ADR-20261020090000).
+type TenantHostnameClaimTakeover interface {
+	TakeOverTenantHostnameClaim(ctx context.Context, in CreateTenantHostnameParams, limits api.Limits) (TenantHostname, error)
+}
+
+var _ TenantHostnameClaimTakeover = (*PgStore)(nil)
+var _ TenantHostnameClaimTakeover = (*MemStore)(nil)
 
 // MarkTenantHostnameVerifiedIfChallenge is the ownership-safe verification
 // write. The token the poller proved is part of the UPDATE predicate, so a

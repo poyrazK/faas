@@ -178,3 +178,52 @@ func TestPgStoreWildcardDomainForHostSkipsExpiredClaim(t *testing.T) {
 		t.Fatalf("verified wildcard past its old deadline = %q, %v; verification never expires", got.Domain, err)
 	}
 }
+
+// Another account's live, unverified claim yields to a takeover, but never
+// a verified row or one held by the claimant's own account
+// (ADR-20261020090000).
+func TestPgStoreTakeOverCustomDomainClaim(t *testing.T) {
+	s, _, ctx := pgStoreWithPool(t)
+	holder, err := s.CreateAccount(ctx, "takeover-holder@example.com", api.PlanScale)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimant, err := s.CreateAccount(ctx, "takeover-claimant@example.com", api.PlanScale)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app := func(accountID, slug string) state.App {
+		a, err := s.CreateApp(ctx, state.App{AccountID: accountID, Slug: slug, Status: state.AppActive})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return a
+	}
+	holderApp, holderOther, claimantApp := app(holder.ID, "takeover-holder"), app(holder.ID, "takeover-holder-two"), app(claimant.ID, "takeover-claimant")
+	const domain = "pg-squatted.example.com"
+	if _, err := s.CreateCustomDomainIfUnderQuota(ctx, domain, holderApp.ID, "holder-token", 10, 10); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CreateCustomDomainIfUnderQuota(ctx, domain, claimantApp.ID, "plain", 10, 10); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("plain create over a live claim = %v, want ErrConflict", err)
+	}
+	if _, err := s.TakeOverCustomDomainClaim(ctx, domain, holderOther.ID, "", "own", 10, 10); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("takeover by the holder's own account = %v, want ErrConflict", err)
+	}
+	got, err := s.TakeOverCustomDomainClaim(ctx, domain, claimantApp.ID, "", "proof", 10, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.AppID != claimantApp.ID || got.ChallengeToken != "proof" || got.Verified() {
+		t.Fatalf("taken-over row = %+v", got)
+	}
+	if matched, err := s.MarkDomainVerifiedIfChallenge(ctx, domain, "holder-token"); err != nil || matched {
+		t.Fatalf("old holder proof matched=%v err=%v", matched, err)
+	}
+	if matched, err := s.MarkDomainVerifiedIfChallenge(ctx, domain, "proof"); err != nil || !matched {
+		t.Fatalf("claimant proof matched=%v err=%v", matched, err)
+	}
+	if _, err := s.TakeOverCustomDomainClaim(ctx, domain, holderApp.ID, "", "back", 10, 10); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("takeover of a verified domain = %v, want ErrConflict", err)
+	}
+}

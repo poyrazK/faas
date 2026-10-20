@@ -412,6 +412,70 @@ func TestPgStore_TenantHostname_VerifyIfChallenge(t *testing.T) {
 	}
 }
 
+// Unverified hostnames are capped per surface, and another account's
+// unverified hostname yields to a takeover (ADR-20261020090000).
+func TestPgStore_TenantHostname_PendingCapAndTakeover(t *testing.T) {
+	s, ctx := pgStore(t)
+	holderAcct, holderApp := pgTenantSurfaceSeed(t, s, ctx, "takeover-holder")
+	claimantAcct, claimantApp := pgTenantSurfaceSeed(t, s, ctx, "takeover-claimant")
+	lim := api.Limits{TenantSurfacesAllowed: true, TenantSurfacesPerAccount: 5, TenantHostnamesPerSurface: 10, TenantHostnamesPendingPerSurface: 2}
+	surface := func(acct, app, name string) state.TenantSurface {
+		surf, err := s.CreateTenantSurfaceIfUnderQuota(ctx, pgTenantSurfaceParams(acct, app, name), lim)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return surf
+	}
+	holder, holderTwo, claimant := surface(holderAcct, holderApp, "holder"), surface(holderAcct, holderApp, "holder-two"), surface(claimantAcct, claimantApp, "claimant")
+	add := func(surf state.TenantSurface, host string) error {
+		_, err := s.CreateTenantHostnameIfUnderQuota(ctx, state.CreateTenantHostnameParams{SurfaceID: surf.ID, Hostname: host, ChallengeToken: "tok-" + host}, lim)
+		return err
+	}
+	for _, host := range []string{"a.pg-squat.example", "b.pg-squat.example"} {
+		if err := add(holder, host); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var qe *state.TenantHostnameQuotaError
+	if err := add(holder, "c.pg-squat.example"); !errors.As(err, &qe) || !qe.Pending || qe.Limit != 2 || qe.Observed != 2 {
+		t.Fatalf("third pending hostname = %v, want the pending cap", err)
+	}
+	if ok, err := s.MarkTenantHostnameVerifiedIfChallenge(ctx, "a.pg-squat.example", "tok-a.pg-squat.example"); err != nil || !ok {
+		t.Fatalf("verify = %v, %v", ok, err)
+	}
+	takeOver := func(surf state.TenantSurface, host string) (state.TenantHostname, error) {
+		return s.TakeOverTenantHostnameClaim(ctx, state.CreateTenantHostnameParams{SurfaceID: surf.ID, Hostname: host, ChallengeToken: "proof"}, lim)
+	}
+	if _, err := takeOver(claimant, "a.pg-squat.example"); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("takeover of a verified hostname = %v, want ErrConflict", err)
+	}
+	if _, err := takeOver(holderTwo, "b.pg-squat.example"); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("takeover from the claimant's own account = %v, want ErrConflict", err)
+	}
+	before, err := s.GetTenantHostnameByName(ctx, "b.pg-squat.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := takeOver(claimant, "b.pg-squat.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.SurfaceID != claimant.ID || got.ChallengeToken != "proof" || got.Verified() || got.ID == before.ID {
+		t.Fatalf("taken-over hostname = %+v (was %s); want a new pending row on the claimant's surface", got, before.ID)
+	}
+	if hosts, _ := s.ListTenantHostnamesForSurface(ctx, holder.ID); len(hosts) != 1 {
+		t.Fatalf("holder surface keeps %d hostnames, want only the verified one", len(hosts))
+	}
+	// A verified hostname left on a deleted surface routes nothing and is
+	// released on proof too.
+	if err := s.UpdateTenantSurfaceStatus(ctx, holder.ID, state.SurfaceStatusDeleted); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := takeOver(claimant, "a.pg-squat.example"); err != nil || got.SurfaceID != claimant.ID {
+		t.Fatalf("takeover from a deleted surface = %+v, %v", got, err)
+	}
+}
+
 func TestPgStore_TenantHostname_DeleteAndResolveByHostname(t *testing.T) {
 	s, ctx := pgStore(t)
 	acct, app := pgTenantSurfaceSeed(t, s, ctx, "resolve")

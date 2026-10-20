@@ -4586,6 +4586,17 @@ func ErrTenantHostnameQuota(p Plan, surfaceID string, limit, observed int) *Prob
 		WithDocs(docsBase + "/plans#tenant-surfaces")
 }
 
+// ErrTenantHostnamePendingQuota is the tenant_hostname_quota problem for
+// the unverified-hostname cap (ADR-20261020090000).
+func ErrTenantHostnamePendingQuota(p Plan, surfaceID string, limit, observed int) *Problem {
+	return NewProblem(http.StatusForbidden, CodeTenantHostnameQuota,
+		"Tenant hostname limit reached",
+		fmt.Sprintf("%s plan caps unverified tenant hostnames at %d per surface; you have %d pending on surface %s. Verify or remove one to add another.",
+			p, limit, observed, surfaceID)).
+		WithLimit(int64(limit), int64(observed)).
+		WithDocs(docsBase + "/plans#tenant-surfaces")
+}
+
 // ErrTenantHostnameAlreadyClaimed is returned when the global UQ on
 // tenant_hostnames.hostname trips (the same hostname is already
 // attached to another surface on any account). 409 surfaces the

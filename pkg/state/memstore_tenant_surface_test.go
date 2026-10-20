@@ -269,10 +269,13 @@ func TestMemStoreTenantHostnameQuota(t *testing.T) {
 // unverified rows and locked the customer out.
 func TestMemStoreTenantHostnameQuotaUnverifiedAllowed(t *testing.T) {
 	m, ctx, acct, app, _ := tenantSurfaceFixture(t)
+	// The pending cap is separate (ADR-20261020090000); set it above the
+	// verified one so only the verified cap is under test.
 	lim := api.Limits{
-		TenantSurfacesPerAccount:  5,
-		TenantHostnamesPerSurface: 2,
-		TenantSurfacesAllowed:     true,
+		TenantSurfacesPerAccount:         5,
+		TenantHostnamesPerSurface:        2,
+		TenantHostnamesPendingPerSurface: 10,
+		TenantSurfacesAllowed:            true,
 	}
 	surf, err := m.CreateTenantSurfaceIfUnderQuota(ctx, CreateTenantSurfaceParams{
 		AccountID: acct.ID, AppID: app.ID, Name: "unverified-cap",
@@ -280,8 +283,8 @@ func TestMemStoreTenantHostnameQuotaUnverifiedAllowed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Add 5 unverified hostnames — well above the cap of 2.
-	// All inserts succeed because the cap counts verified only.
+	// Add 5 unverified hostnames — well above the verified cap of 2.
+	// All inserts succeed because that cap counts verified only.
 	for _, h := range []string{"u1.example", "u2.example", "u3.example", "u4.example", "u5.example"} {
 		if _, err := m.CreateTenantHostnameIfUnderQuota(ctx, CreateTenantHostnameParams{
 			SurfaceID: surf.ID, Hostname: h, ChallengeToken: "tok",
@@ -301,7 +304,7 @@ func TestMemStoreTenantHostnameQuotaUnverifiedAllowed(t *testing.T) {
 		SurfaceID: surf.ID, Hostname: "u6.example", ChallengeToken: "tok",
 	}, lim)
 	var qe *TenantHostnameQuotaError
-	if !errors.As(err, &qe) || qe.Limit != 2 {
+	if !errors.As(err, &qe) || qe.Limit != 2 || qe.Pending {
 		t.Fatalf("post-verify quota = %v (%T); want TenantHostnameQuotaError(Limit=2)", err, err)
 	}
 	if qe.Observed != 2 {

@@ -306,7 +306,9 @@ func TestDNSPoller_TenantHostname_StaleBacklogDoesNotStarveNewHostnames(t *testi
 	ctx := context.Background()
 	e := apidserver.Setup(t, api.PlanPro)
 	store := *e.Store()
-	lim := api.Limits{TenantSurfacesAllowed: true, TenantSurfacesPerAccount: 5, TenantHostnamesPerSurface: 10}
+	// A real backlog spans many surfaces and accounts; one surface with a
+	// raised pending cap stands in for it.
+	lim := api.Limits{TenantSurfacesAllowed: true, TenantSurfacesPerAccount: 5, TenantHostnamesPerSurface: 10, TenantHostnamesPendingPerSurface: 100}
 	app, err := store.CreateApp(ctx, state.App{AccountID: (*e.Acct()).ID, Slug: "hostname-backlog", RAMMB: 256, Status: state.AppActive})
 	if err != nil {
 		t.Fatal(err)

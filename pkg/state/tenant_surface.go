@@ -215,10 +215,17 @@ type TenantHostnameQuotaError struct {
 	Limit     int
 	Observed  int
 	SurfaceID string
+	// Pending is set when the unverified-hostname cap tripped rather than
+	// the verified one (ADR-20261020090000).
+	Pending bool
 }
 
 func (e *TenantHostnameQuotaError) Error() string {
-	return fmt.Sprintf("state: tenant hostname quota exceeded (limit=%d, observed=%d, surface=%s)", e.Limit, e.Observed, e.SurfaceID)
+	kind := "verified"
+	if e.Pending {
+		kind = "pending"
+	}
+	return fmt.Sprintf("state: tenant hostname %s quota exceeded (limit=%d, observed=%d, surface=%s)", kind, e.Limit, e.Observed, e.SurfaceID)
 }
 
 func (e *TenantHostnameQuotaError) Is(target error) bool {

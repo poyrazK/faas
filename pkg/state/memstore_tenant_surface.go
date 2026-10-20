@@ -331,24 +331,68 @@ func (m *MemStore) CreateTenantHostnameIfUnderQuota(_ context.Context, in Create
 	if !ok || s.Status == SurfaceStatusDeleted {
 		return TenantHostname{}, ErrNotFound
 	}
-	observed := 0
-	// Per-surface cap counts VERIFIED hostnames only. See
-	// pgstore_tenant_surface.go:CreateTenantHostnameIfUnderQuota
-	// for the rationale (verified-only floors the customer out of
-	// a lock-by-unverified-tail; the doc at limits.go:449-450 says
-	// "verified hostnames one surface may hold").
+	if err := m.tenantHostnameQuotaLocked(in.SurfaceID, limits); err != nil {
+		return TenantHostname{}, err
+	}
+	return m.insertTenantHostnameLocked(in)
+}
+
+// TakeOverTenantHostnameClaim mirrors PgStore.TakeOverTenantHostnameClaim.
+func (m *MemStore) TakeOverTenantHostnameClaim(_ context.Context, in CreateTenantHostnameParams, limits api.Limits) (TenantHostname, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	defer m.invalidateChangedLifecycleSuccessorsLocked()
+
+	s, ok := m.tenantSurfaces[in.SurfaceID]
+	if !ok || s.Status == SurfaceStatusDeleted {
+		return TenantHostname{}, ErrNotFound
+	}
+	if err := m.tenantHostnameQuotaLocked(in.SurfaceID, limits); err != nil {
+		return TenantHostname{}, err
+	}
+	for _, key := range []string{in.Hostname, strings.ToLower(in.Hostname)} {
+		current, exists := m.tenantHostnames[key]
+		if !exists {
+			continue
+		}
+		holder := m.tenantSurfaces[current.SurfaceID]
+		if holder.Status != SurfaceStatusDeleted && (current.Verified() || holder.AccountID == s.AccountID) {
+			return TenantHostname{}, ErrConflict
+		}
+		delete(m.tenantHostnames, current.Hostname)
+		delete(m.tenantHostnames, strings.ToLower(current.Hostname))
+	}
+	return m.insertTenantHostnameLocked(in)
+}
+
+// tenantHostnameQuotaLocked applies both per-surface caps. The verified cap
+// counts verified hostnames only (see PgStore.CreateTenantHostnameIfUnderQuota
+// for the rationale); the pending cap bounds the unverified rows that reserve
+// names (ADR-20261020090000).
+func (m *MemStore) tenantHostnameQuotaLocked(surfaceID string, limits api.Limits) error {
+	verified, pending := 0, 0
+	seen := map[string]bool{}
 	for _, h := range m.tenantHostnames {
-		if h.SurfaceID == in.SurfaceID && h.Verified() {
-			observed++
+		if h.SurfaceID != surfaceID || seen[h.ID] {
+			continue
+		}
+		seen[h.ID] = true
+		if h.Verified() {
+			verified++
+		} else {
+			pending++
 		}
 	}
-	if observed >= limits.TenantHostnamesPerSurface {
-		return TenantHostname{}, &TenantHostnameQuotaError{
-			Limit:     limits.TenantHostnamesPerSurface,
-			Observed:  observed,
-			SurfaceID: in.SurfaceID,
-		}
+	if verified >= limits.TenantHostnamesPerSurface {
+		return &TenantHostnameQuotaError{Limit: limits.TenantHostnamesPerSurface, Observed: verified, SurfaceID: surfaceID}
 	}
+	if limit := limits.PendingTenantHostnamesPerSurface(); pending >= limit {
+		return &TenantHostnameQuotaError{Limit: limit, Observed: pending, SurfaceID: surfaceID, Pending: true}
+	}
+	return nil
+}
+
+func (m *MemStore) insertTenantHostnameLocked(in CreateTenantHostnameParams) (TenantHostname, error) {
 	if _, exists := m.tenantHostnames[in.Hostname]; exists {
 		return TenantHostname{}, ErrConflict
 	}

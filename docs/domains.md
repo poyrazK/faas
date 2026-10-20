@@ -55,6 +55,16 @@ account cannot add `api.example.com` or `*.shop.example.com` while
 your own wildcard takes over that name once it verifies; until then the name
 is unrouted. An unverified domain releases its name after 7 days.
 
+If another account has added your domain but not verified it, adding it
+returns `409` with a TXT record to publish: the name
+`_faas-verify.<domain>` (`_faas-verify.example.com` for `*.example.com`)
+and a value tied to your account. Publish it and add the domain again. The
+other account's unverified claim moves to your app, and verification
+completes as usual. A verified domain cannot be taken this way. Tenant
+hostnames on a tenant surface work the same, and a surface may hold at most
+as many unverified hostnames as its plan allows verified ones. See
+[the ADR](adr/20261020090000-dns-proof-takes-over-pending-claims.md).
+
 The default `*.gregale.dev` hostname works without a custom domain. Domain
 entitlement, certificate limits, and wildcard behavior are listed in
 [plans](plans.md).
