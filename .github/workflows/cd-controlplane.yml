@@ -1346,9 +1346,15 @@ jobs:
         if: steps.verify.outputs.carries == 'true'
         with:
           # The roles converge from the unit release's commit; the planner's
-          # ancestry and N±1 checks need history and tags.
+          # ancestry and N±1 checks need main's history and the release tags,
+          # not every branch (scripts/ci/fetch_release_history.sh).
           ref: ${{ steps.verify.outputs.git_sha }}
-          fetch-depth: 0
+          filter: blob:none
+
+      - name: Fetch main's history, release tags and the base release's roles
+        if: steps.verify.outputs.carries == 'true'
+        # plan_host_config.py hashes deploy/ at the base release.
+        run: scripts/ci/fetch_release_history.sh --prefetch-deploy
 
       - name: Install pinned Ansible toolchain
         if: steps.verify.outputs.carries == 'true'
@@ -1662,9 +1668,13 @@ jobs:
       - uses: actions/checkout@v7
         with:
           # The planner and deployctl come from the unit release's commit;
-          # the planner's ancestry and N±1 checks need history and tags.
+          # the planner's ancestry and N±1 checks need main's history and the
+          # release tags, not every branch (scripts/ci/fetch_release_history.sh).
           ref: ${{ steps.verify.outputs.git_sha }}
-          fetch-depth: 0
+          filter: blob:none
+
+      - name: Fetch main's history and release tags
+        run: scripts/ci/fetch_release_history.sh
 
       - name: Set up SSH
         env:

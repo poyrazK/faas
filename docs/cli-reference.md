@@ -10509,7 +10509,7 @@ List protection recipes: ready-made rules that start in log mode
 
 Add a protection recipe&#39;s rule to an app, in log mode unless --enforce
 
-`gregale edge-rules recipe [--app <slug>] [--host <HOST>] [--set <NAME=VALUE>] [--enforce] <recipe>`
+`gregale edge-rules recipe [--app <slug>] [--host <HOST>] [--set <NAME=VALUE>] [--enforce] [--alert-webhook-url <URL>] [--alert-webhook-secret-stdin] [--alert-webhook-secret <VALUE>] [--alert-threshold <N>] <recipe>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -10517,12 +10517,32 @@ Add a protection recipe&#39;s rule to an app, in log mode unless --enforce
 | `--host <HOST>` | restrict the rule to one hostname (default: every host the app serves) |  |
 | `--set <NAME=VALUE>` | recipe parameter name=value (repeat) |  |
 | `--enforce` | enforce immediately instead of starting in log mode |  |
+| `--alert-webhook-url <URL>` | also alert this webhook when the rule spikes |  |
+| `--alert-webhook-secret-stdin` | read the spike alert&#39;s webhook signing secret from stdin |  |
+| `--alert-webhook-secret <VALUE>` | spike alert webhook signing secret (prefer --alert-webhook-secret-stdin) |  |
+| `--alert-threshold <N>` | spike alert threshold in matches per hour (default 100) |  |
 
 Examples:
 
 ```sh
 gregale edge-rules recipe block-unverified-bots --app my-api
 gregale edge-rules recipe allow-ips-only --app my-api --set cidrs=203.0.113.7,198.51.100.0/24
+```
+
+### edge-rules suggest
+
+Protection recipes suggested from the app&#39;s recent traffic, with the command to add each
+
+`gregale edge-rules suggest [--app <slug>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug (defaults to linked project context) |  |
+
+Examples:
+
+```sh
+gregale edge-rules suggest --app my-api
 ```
 
 ### edge-rules stats
@@ -10535,6 +10555,22 @@ Per-rule match counts (matched for enforced rules, logged for log-mode rules)
 |---|---|---|
 | `--app <slug>` | app slug | required |
 | `--window <WINDOW>` | window | one of `1h` · `24h` · `7d` |
+
+### edge-rules review
+
+Log-mode rules ready to enforce, still collecting, or quiet for 7 days, with the command for each
+
+`gregale edge-rules review [--app <slug>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug (defaults to linked project context) |  |
+
+Examples:
+
+```sh
+gregale edge-rules review --app my-api
+```
 
 ### edge-rules events
 

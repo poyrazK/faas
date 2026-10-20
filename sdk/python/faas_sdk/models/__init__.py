@@ -1376,6 +1376,9 @@ from .edge_rule_list_response_kind import EdgeRuleListResponseKind
 from .edge_rule_maintenance_action import EdgeRuleMaintenanceAction
 from .edge_rule_match_expr import EdgeRuleMatchExpr
 from .edge_rule_match_expr_op import EdgeRuleMatchExprOp
+from .edge_rule_recipe_suggestion import EdgeRuleRecipeSuggestion
+from .edge_rule_recipe_suggestion_params import EdgeRuleRecipeSuggestionParams
+from .edge_rule_recipe_suggestions_response import EdgeRuleRecipeSuggestionsResponse
 from .edge_rule_redirect_action import EdgeRuleRedirectAction
 from .edge_rule_redirect_action_headers import EdgeRuleRedirectActionHeaders
 from .edge_rule_redirect_action_status_code import EdgeRuleRedirectActionStatusCode
@@ -7182,6 +7185,9 @@ __all__ = (
     "EdgeRuleMaintenanceAction",
     "EdgeRuleMatchExpr",
     "EdgeRuleMatchExprOp",
+    "EdgeRuleRecipeSuggestion",
+    "EdgeRuleRecipeSuggestionParams",
+    "EdgeRuleRecipeSuggestionsResponse",
     "EdgeRuleRedirectAction",
     "EdgeRuleRedirectActionHeaders",
     "EdgeRuleRedirectActionStatusCode",
