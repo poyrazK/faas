@@ -32,7 +32,7 @@ CREATE TEMP TABLE environment_workload_qualification_requests
     (LIKE environment_workload_qualification_requests INCLUDING ALL);
 CREATE TEMP TABLE environment_qualification_job_smoke_receipts
     (LIKE environment_qualification_job_smoke_receipts INCLUDING ALL);
-ALTER TABLE environment_workload_qualification_requests DROP CONSTRAINT environment_workload_qualification_reserved_instance_shape;
+ALTER TABLE environment_workload_qualification_requests DROP CONSTRAINT environment_workload_qualification_reserved_vm_shape;
 ALTER TABLE environment_workload_qualification_requests ADD CONSTRAINT environment_workload_qualification_reserved_instance_shape
     CHECK ((phase='queued' AND reserved_instance_id IS NULL) OR (phase='claimed' AND
         ((execution_mode='job' AND reserved_instance_id IS NULL) OR (execution_mode<>'job' AND reserved_instance_id IS NOT NULL))));
@@ -66,7 +66,7 @@ ALTER TABLE environment_workload_qualification_requests ADD CONSTRAINT environme
 	}
 	validationState := `SELECT convalidated FROM pg_constraint
         WHERE conrelid='pg_temp.environment_workload_qualification_requests'::regclass
-          AND conname='environment_workload_qualification_reserved_instance_shape'`
+          AND conname='environment_workload_qualification_reserved_vm_shape'`
 	if err := tx.QueryRow(ctx, validationState).Scan(&validated); err != nil || validated {
 		t.Fatalf("legacy exception incorrectly validated: %v %v", validated, err)
 	}
@@ -75,7 +75,7 @@ ALTER TABLE environment_workload_qualification_requests ADD CONSTRAINT environme
 	}
 	_, err = tx.Exec(ctx, legacyClaim)
 	var pgErr *pgconn.PgError
-	if !errors.As(err, &pgErr) || pgErr.Code != "23514" || pgErr.ConstraintName != "environment_workload_qualification_reserved_instance_shape" {
+	if !errors.As(err, &pgErr) || pgErr.Code != "23514" || pgErr.ConstraintName != "environment_workload_qualification_reserved_vm_shape" {
 		t.Fatalf("new unreserved claim accepted: %v", err)
 	}
 	if _, err := tx.Exec(ctx, "ROLLBACK TO SAVEPOINT new_claim"); err != nil {

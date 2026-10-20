@@ -19,7 +19,8 @@ func TestRecoveryRetentionMigrationUsesCentralCeilingsAndReplayGuard(t *testing.
 		fmt.Sprintf("NOT BETWEEN 1 AND %d", api.EnvironmentRecoveryMaxSeconds),
 		fmt.Sprintf("NOT BETWEEN 1 AND %d", api.EnvironmentRecoveryMaxBytes),
 		fmt.Sprintf("reserved>%d", api.EnvironmentRecoveryAccountMaxBytes),
-		"IF to_regclass(format('%I.environment_recovery_retained_releases',current_schema())) IS NOT NULL THEN RETURN; END IF;",
+		"IF EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid='project_environments'::regclass AND tgname='environment_recovery_metadata_guard' AND NOT tgisinternal) THEN RETURN; END IF;",
+		"-- +goose NO TRANSACTION",
 	} {
 		if !strings.Contains(string(raw), want) {
 			t.Fatal("migration drifted from contract", want)

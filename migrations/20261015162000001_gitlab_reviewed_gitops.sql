@@ -1,8 +1,13 @@
 -- migration-compat: contract
 -- Provider approval guards require the coordinated GitOps code rollout.
 -- Provider-bound reviewed GitLab evidence; production enforcement remains gated.
+-- Three short transactions (ADR-202610171900 amendment 1): guards and the
+-- widened provider policy check NOT VALID under a new name, its validation,
+-- then the old check's removal and the provider guard. Each skips once that
+-- final guard exists, so a ledger replay never replaces later definitions.
+-- +goose NO TRANSACTION
 -- +goose Up
-SET LOCAL lock_timeout = '5s';
+SET lock_timeout = '5s';
 -- +goose StatementBegin
 DO $gitlab_trust$
 BEGIN
@@ -208,9 +213,33 @@ BEGIN
  RETURN NEW;
 END $_$;
   $candidate_guard$;
-  ALTER TABLE environment_git_sources DROP CONSTRAINT environment_git_sources_gitlab_policy_check;
-  ALTER TABLE environment_git_sources ADD CONSTRAINT environment_git_sources_gitlab_policy_check
-    CHECK (provider <> 'gitlab' OR (installation_id=0 AND approval_policy IN ('manual','protected_branch')));
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='environment_git_sources'::regclass
+                 AND conname='environment_git_sources_provider_policy_check') THEN
+    ALTER TABLE environment_git_sources ADD CONSTRAINT environment_git_sources_provider_policy_check
+      CHECK (provider <> 'gitlab' OR (installation_id=0 AND approval_policy IN ('manual','protected_branch'))) NOT VALID;
+  END IF;
+END;
+$gitlab_trust$;
+-- +goose StatementEnd
+-- +goose StatementBegin
+DO $gitlab_trust$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid='environment_git_sources'::regclass
+             AND tgname='environment_git_provider_guard' AND NOT tgisinternal) THEN
+    RETURN;
+  END IF;
+  ALTER TABLE environment_git_sources VALIDATE CONSTRAINT environment_git_sources_provider_policy_check;
+END;
+$gitlab_trust$;
+-- +goose StatementEnd
+-- +goose StatementBegin
+DO $gitlab_trust$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid='environment_git_sources'::regclass
+             AND tgname='environment_git_provider_guard' AND NOT tgisinternal) THEN
+    RETURN;
+  END IF;
+  ALTER TABLE environment_git_sources DROP CONSTRAINT IF EXISTS environment_git_sources_gitlab_policy_check;
   EXECUTE $provider_guard$
     CREATE OR REPLACE FUNCTION guard_environment_git_source_provider() RETURNS trigger LANGUAGE plpgsql AS $$
     BEGIN

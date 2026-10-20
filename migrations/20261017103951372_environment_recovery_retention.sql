@@ -1,28 +1,30 @@
 -- migration-compat: contract
 -- Recovery protection and retention guards require the coordinated GitOps rollout.
 -- ADR-20261017190807: bounded artifact recovery protection from reviewed Git intent.
+-- Eleven short transactions, each locking at most three existing tables
+-- (ADR-202610171900 amendment 1). The capture trigger is installed before
+-- the backfill so no serving completion is missed between them. Every step
+-- skips once the final project-environment guard exists, so a ledger replay
+-- is a no-op; an interrupted run resumes idempotently.
+-- +goose NO TRANSACTION
 -- +goose Up
-SET LOCAL lock_timeout = '5s';
+SET lock_timeout = '5s';
 -- +goose StatementBegin
 DO $migration$
 BEGIN
-IF to_regclass(format('%I.environment_recovery_retained_releases',current_schema())) IS NOT NULL THEN RETURN; END IF;
+IF EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid='project_environments'::regclass AND tgname='environment_recovery_metadata_guard' AND NOT tgisinternal) THEN RETURN; END IF;
 
 -- Serving handoffs reset their current acknowledgement receipt. Capture the
 -- original completion independently so a handoff cannot renew or erase history.
-CREATE TABLE environment_recovery_serving_history (
+CREATE TABLE IF NOT EXISTS environment_recovery_serving_history (
  graph_id uuid PRIMARY KEY REFERENCES environment_workload_graphs(id) ON DELETE CASCADE CHECK(graph_id<>'00000000-0000-0000-0000-000000000000'::uuid),
  source_id uuid NOT NULL REFERENCES environment_git_sources(id) ON DELETE CASCADE CHECK(source_id<>'00000000-0000-0000-0000-000000000000'::uuid),
  release_set_id uuid NOT NULL REFERENCES project_release_sets(id) ON DELETE CASCADE CHECK(release_set_id<>'00000000-0000-0000-0000-000000000000'::uuid),
  served_at timestamptz NOT NULL CHECK(isfinite(served_at))
 );
-CREATE INDEX environment_recovery_serving_history_source ON environment_recovery_serving_history(source_id,served_at DESC,release_set_id);
-CREATE INDEX environment_recovery_serving_history_release ON environment_recovery_serving_history(release_set_id,source_id,served_at);
-INSERT INTO environment_recovery_serving_history(graph_id,source_id,release_set_id,served_at)
- SELECT r.graph_id,r.source_id,r.release_set_id,r.served_at FROM environment_workload_serving_receipts r
- JOIN project_release_sets rs ON rs.id=r.release_set_id
- WHERE r.served_at IS NOT NULL;
-CREATE FUNCTION environment_recovery_history_guard() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE INDEX IF NOT EXISTS environment_recovery_serving_history_source ON environment_recovery_serving_history(source_id,served_at DESC,release_set_id);
+CREATE INDEX IF NOT EXISTS environment_recovery_serving_history_release ON environment_recovery_serving_history(release_set_id,source_id,served_at);
+CREATE OR REPLACE FUNCTION environment_recovery_history_guard() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF TG_OP='UPDATE' THEN
   IF NEW IS DISTINCT FROM OLD THEN RAISE EXCEPTION 'recovery serving history is immutable' USING ERRCODE='23514'; END IF;
@@ -34,17 +36,46 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
-CREATE TRIGGER environment_recovery_history_guard BEFORE INSERT OR UPDATE ON environment_recovery_serving_history FOR EACH ROW EXECUTE FUNCTION environment_recovery_history_guard();
-CREATE FUNCTION environment_recovery_capture() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE TRIGGER environment_recovery_history_guard BEFORE INSERT OR UPDATE ON environment_recovery_serving_history FOR EACH ROW EXECUTE FUNCTION environment_recovery_history_guard();
+END
+$migration$;
+-- +goose StatementEnd
+-- Capture completed serving before the backfill reads it.
+-- +goose StatementBegin
+DO $migration$
+BEGIN
+IF EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid='project_environments'::regclass AND tgname='environment_recovery_metadata_guard' AND NOT tgisinternal) THEN RETURN; END IF;
+CREATE OR REPLACE FUNCTION environment_recovery_capture() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  INSERT INTO environment_recovery_serving_history(graph_id,source_id,release_set_id,served_at)
  VALUES(NEW.graph_id,NEW.source_id,NEW.release_set_id,NEW.served_at) ON CONFLICT(graph_id) DO NOTHING;
  RETURN NEW;
 END $$;
-CREATE TRIGGER environment_recovery_capture AFTER INSERT OR UPDATE OF served_at ON environment_workload_serving_receipts
+CREATE OR REPLACE TRIGGER environment_recovery_capture AFTER INSERT OR UPDATE OF served_at ON environment_workload_serving_receipts
  FOR EACH ROW WHEN (NEW.served_at IS NOT NULL) EXECUTE FUNCTION environment_recovery_capture();
 
-CREATE FUNCTION environment_recovery_policy_valid() RETURNS trigger LANGUAGE plpgsql AS $$
+END
+$migration$;
+-- +goose StatementEnd
+-- Backfill from the first known surviving completion.
+-- +goose StatementBegin
+DO $migration$
+BEGIN
+IF EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid='project_environments'::regclass AND tgname='environment_recovery_metadata_guard' AND NOT tgisinternal) THEN RETURN; END IF;
+INSERT INTO environment_recovery_serving_history(graph_id,source_id,release_set_id,served_at)
+ SELECT r.graph_id,r.source_id,r.release_set_id,r.served_at FROM environment_workload_serving_receipts r
+ JOIN project_release_sets rs ON rs.id=r.release_set_id
+ WHERE r.served_at IS NOT NULL
+ ON CONFLICT (graph_id) DO NOTHING;
+END
+$migration$;
+-- +goose StatementEnd
+-- Validate reviewed retention policies.
+-- +goose StatementBegin
+DO $migration$
+BEGIN
+IF EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid='project_environments'::regclass AND tgname='environment_recovery_metadata_guard' AND NOT tgisinternal) THEN RETURN; END IF;
+CREATE OR REPLACE FUNCTION environment_recovery_policy_valid() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE p jsonb:=NEW.definition->'recovery_retention';
 BEGIN
  IF p IS NULL THEN RETURN NEW; END IF;
@@ -60,10 +91,18 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
-CREATE TRIGGER environment_recovery_policy_valid BEFORE INSERT OR UPDATE OF definition ON environment_desired_revisions
+CREATE OR REPLACE TRIGGER environment_recovery_policy_valid BEFORE INSERT OR UPDATE OF definition ON environment_desired_revisions
  FOR EACH ROW EXECUTE FUNCTION environment_recovery_policy_valid();
 
-CREATE VIEW environment_recovery_candidates AS
+END
+$migration$;
+-- +goose StatementEnd
+-- Inventory views and account fences; no existing table is locked.
+-- +goose StatementBegin
+DO $migration$
+BEGIN
+IF EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid='project_environments'::regclass AND tgname='environment_recovery_metadata_guard' AND NOT tgisinternal) THEN RETURN; END IF;
+CREATE OR REPLACE VIEW environment_recovery_candidates AS
 WITH policies AS (
  SELECT s.id source_id,s.account_id,s.project_id,s.environment_id,e.slug environment_slug,
   (v.definition->'recovery_retention'->>'releases')::integer max_releases,
@@ -102,20 +141,20 @@ WITH policies AS (
  FROM aged a WHERE a.protected_until IS NULL OR a.protected_until>clock_timestamp()
 )
 SELECT * FROM ranked;
-CREATE VIEW environment_recovery_retained_releases AS
+CREATE OR REPLACE VIEW environment_recovery_retained_releases AS
  SELECT * FROM environment_recovery_candidates WHERE position<=max_releases AND charged_bytes<=max_bytes;
-CREATE VIEW environment_recovery_retained_deployments AS
+CREATE OR REPLACE VIEW environment_recovery_retained_deployments AS
  SELECT p.source_id,p.account_id,p.release_set_id,rm.deployment_id FROM environment_recovery_retained_releases p JOIN project_release_members rm ON rm.release_id=p.release_set_id
  UNION
  SELECT p.source_id,p.account_id,p.release_set_id,(d.environment_workload_runtime->'built_artifact'->>'deployment_id')::uuid
  FROM environment_recovery_retained_releases p JOIN project_release_members rm ON rm.release_id=p.release_set_id JOIN deployments d ON d.id=rm.deployment_id
  WHERE d.environment_workload_runtime ? 'built_artifact';
-CREATE VIEW environment_recovery_retained_keys AS
+CREATE OR REPLACE VIEW environment_recovery_retained_keys AS
  SELECT p.account_id,p.release_set_id,d.rootfs_key storage_key FROM environment_recovery_retained_releases p JOIN project_release_members rm ON rm.release_id=p.release_set_id JOIN deployments d ON d.id=rm.deployment_id
  UNION SELECT p.account_id,p.release_set_id,l.storage_key FROM environment_recovery_retained_releases p JOIN project_release_members rm ON rm.release_id=p.release_set_id JOIN deployment_sidecar_layers l ON l.deployment_id=rm.deployment_id;
 
 -- Protection exists only under an approved policy of an attached source.
-CREATE FUNCTION environment_recovery_account_has_policy(target uuid) RETURNS boolean LANGUAGE sql STABLE AS $$
+CREATE OR REPLACE FUNCTION environment_recovery_account_has_policy(target uuid) RETURNS boolean LANGUAGE sql STABLE AS $$
  SELECT EXISTS(SELECT 1 FROM environment_git_sources s JOIN environment_desired_revisions v ON v.id=s.approved_revision_id AND v.source_id=s.id
   WHERE s.account_id=target AND NOT s.detached AND v.definition ? 'recovery_retention')
 $$;
@@ -124,7 +163,7 @@ $$;
 -- SHARE: it never blocks foreign-key checks, ordinary account updates or other
 -- writers, yet still orders against a first approval's exclusive lock, whose
 -- policy the re-check below sees once granted. Returns whether to evaluate.
-CREATE FUNCTION environment_recovery_lock_account(target uuid) RETURNS boolean LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION environment_recovery_lock_account(target uuid) RETURNS boolean LANGUAGE plpgsql AS $$
 BEGIN
  IF target IS NULL THEN RETURN true; END IF;
  IF environment_recovery_account_has_policy(target) THEN
@@ -137,7 +176,7 @@ END $$;
 
 -- Publication serializes reservations and metadata writers on the account. GC
 -- serializes on each existing storage-key row and re-reads references after lock.
-CREATE FUNCTION environment_recovery_fence() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION environment_recovery_fence() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE account uuid; k text; state text; reserved numeric;
 BEGIN
  IF TG_TABLE_NAME='environment_git_sources' THEN account:=NEW.account_id;
@@ -157,14 +196,22 @@ BEGIN
  END LOOP;
  RETURN NEW;
 END $$;
-CREATE TRIGGER environment_recovery_fence AFTER INSERT OR UPDATE OF approved_revision_id,detached ON environment_git_sources
+END
+$migration$;
+-- +goose StatementEnd
+-- Publication fences on sources and serving receipts.
+-- +goose StatementBegin
+DO $migration$
+BEGIN
+IF EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid='project_environments'::regclass AND tgname='environment_recovery_metadata_guard' AND NOT tgisinternal) THEN RETURN; END IF;
+CREATE OR REPLACE TRIGGER environment_recovery_fence AFTER INSERT OR UPDATE OF approved_revision_id,detached ON environment_git_sources
  FOR EACH ROW EXECUTE FUNCTION environment_recovery_fence();
-CREATE TRIGGER environment_recovery_served_fence AFTER INSERT OR UPDATE OF served_at ON environment_workload_serving_receipts
+CREATE OR REPLACE TRIGGER environment_recovery_served_fence AFTER INSERT OR UPDATE OF served_at ON environment_workload_serving_receipts
  FOR EACH ROW WHEN (NEW.served_at IS NOT NULL) EXECUTE FUNCTION environment_recovery_fence();
 
 -- Metadata cleanup must not erase the bytes or their historical proof. Trust
 -- revocation and producer replacement remain independent and may block rollback.
-CREATE FUNCTION environment_recovery_metadata_guard() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION environment_recovery_metadata_guard() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE account uuid; identity uuid; blocked boolean:=false;
 BEGIN
  IF TG_OP='INSERT' THEN
@@ -250,22 +297,62 @@ BEGIN
  IF TG_OP='UPDATE' THEN RETURN NEW; END IF;
  RETURN OLD;
 END $$;
-CREATE TRIGGER environment_recovery_metadata_guard BEFORE DELETE OR UPDATE OF rootfs_path,rootfs_key,rootfs_bytes,deleted_at,environment_workload_runtime,app_id,scope,build_id,commit_sha,source_sha256,sidecars ON deployments
+END
+$migration$;
+-- +goose StatementEnd
+-- Metadata guards: deployments, desired revisions, source roots.
+-- +goose StatementBegin
+DO $migration$
+BEGIN
+IF EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid='project_environments'::regclass AND tgname='environment_recovery_metadata_guard' AND NOT tgisinternal) THEN RETURN; END IF;
+CREATE OR REPLACE TRIGGER environment_recovery_metadata_guard BEFORE DELETE OR UPDATE OF rootfs_path,rootfs_key,rootfs_bytes,deleted_at,environment_workload_runtime,app_id,scope,build_id,commit_sha,source_sha256,sidecars ON deployments
  FOR EACH ROW EXECUTE FUNCTION environment_recovery_metadata_guard();
-CREATE TRIGGER environment_recovery_metadata_guard BEFORE DELETE OR UPDATE ON environment_desired_revisions FOR EACH ROW EXECUTE FUNCTION environment_recovery_metadata_guard();
-CREATE TRIGGER environment_recovery_metadata_guard BEFORE DELETE ON source_build_rootfs FOR EACH ROW EXECUTE FUNCTION environment_recovery_metadata_guard();
-CREATE TRIGGER environment_recovery_metadata_guard BEFORE DELETE ON deployment_registry_rootfs FOR EACH ROW EXECUTE FUNCTION environment_recovery_metadata_guard();
-CREATE TRIGGER environment_recovery_metadata_guard BEFORE INSERT OR DELETE OR UPDATE ON deployment_sidecar_layers FOR EACH ROW EXECUTE FUNCTION environment_recovery_metadata_guard();
-CREATE TRIGGER environment_recovery_metadata_guard BEFORE INSERT OR DELETE OR UPDATE ON project_release_members FOR EACH ROW EXECUTE FUNCTION environment_recovery_metadata_guard();
-CREATE TRIGGER environment_recovery_metadata_guard BEFORE DELETE OR UPDATE OF account_id,project_id,environment_slug ON project_release_sets FOR EACH ROW EXECUTE FUNCTION environment_recovery_metadata_guard();
-CREATE TRIGGER environment_recovery_metadata_guard BEFORE DELETE ON environment_workload_graphs FOR EACH ROW EXECUTE FUNCTION environment_recovery_metadata_guard();
-CREATE TRIGGER environment_recovery_metadata_guard BEFORE DELETE ON environment_recovery_serving_history FOR EACH ROW EXECUTE FUNCTION environment_recovery_metadata_guard();
-CREATE TRIGGER environment_recovery_metadata_guard BEFORE DELETE OR UPDATE OF graph_id,source_id,release_set_id ON environment_workload_serving_receipts FOR EACH ROW EXECUTE FUNCTION environment_recovery_metadata_guard();
-CREATE TRIGGER environment_recovery_metadata_guard BEFORE DELETE OR UPDATE OF account_id,project_id,environment_id ON environment_git_sources FOR EACH ROW EXECUTE FUNCTION environment_recovery_metadata_guard();
-CREATE TRIGGER environment_recovery_metadata_guard BEFORE DELETE OR UPDATE OF status,account_id,project_id ON apps FOR EACH ROW EXECUTE FUNCTION environment_recovery_metadata_guard();
-CREATE TRIGGER environment_recovery_metadata_guard BEFORE DELETE ON accounts FOR EACH ROW EXECUTE FUNCTION environment_recovery_metadata_guard();
-CREATE TRIGGER environment_recovery_metadata_guard BEFORE DELETE ON projects FOR EACH ROW EXECUTE FUNCTION environment_recovery_metadata_guard();
-CREATE TRIGGER environment_recovery_metadata_guard BEFORE DELETE ON project_environments FOR EACH ROW EXECUTE FUNCTION environment_recovery_metadata_guard();
+CREATE OR REPLACE TRIGGER environment_recovery_metadata_guard BEFORE DELETE OR UPDATE ON environment_desired_revisions FOR EACH ROW EXECUTE FUNCTION environment_recovery_metadata_guard();
+CREATE OR REPLACE TRIGGER environment_recovery_metadata_guard BEFORE DELETE ON source_build_rootfs FOR EACH ROW EXECUTE FUNCTION environment_recovery_metadata_guard();
+END
+$migration$;
+-- +goose StatementEnd
+-- Metadata guards: registry roots, sidecar layers, release members.
+-- +goose StatementBegin
+DO $migration$
+BEGIN
+IF EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid='project_environments'::regclass AND tgname='environment_recovery_metadata_guard' AND NOT tgisinternal) THEN RETURN; END IF;
+CREATE OR REPLACE TRIGGER environment_recovery_metadata_guard BEFORE DELETE ON deployment_registry_rootfs FOR EACH ROW EXECUTE FUNCTION environment_recovery_metadata_guard();
+CREATE OR REPLACE TRIGGER environment_recovery_metadata_guard BEFORE INSERT OR DELETE OR UPDATE ON deployment_sidecar_layers FOR EACH ROW EXECUTE FUNCTION environment_recovery_metadata_guard();
+CREATE OR REPLACE TRIGGER environment_recovery_metadata_guard BEFORE INSERT OR DELETE OR UPDATE ON project_release_members FOR EACH ROW EXECUTE FUNCTION environment_recovery_metadata_guard();
+END
+$migration$;
+-- +goose StatementEnd
+-- Metadata guards: release sets, graphs, serving history and receipts.
+-- +goose StatementBegin
+DO $migration$
+BEGIN
+IF EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid='project_environments'::regclass AND tgname='environment_recovery_metadata_guard' AND NOT tgisinternal) THEN RETURN; END IF;
+CREATE OR REPLACE TRIGGER environment_recovery_metadata_guard BEFORE DELETE OR UPDATE OF account_id,project_id,environment_slug ON project_release_sets FOR EACH ROW EXECUTE FUNCTION environment_recovery_metadata_guard();
+CREATE OR REPLACE TRIGGER environment_recovery_metadata_guard BEFORE DELETE ON environment_workload_graphs FOR EACH ROW EXECUTE FUNCTION environment_recovery_metadata_guard();
+CREATE OR REPLACE TRIGGER environment_recovery_metadata_guard BEFORE DELETE ON environment_recovery_serving_history FOR EACH ROW EXECUTE FUNCTION environment_recovery_metadata_guard();
+CREATE OR REPLACE TRIGGER environment_recovery_metadata_guard BEFORE DELETE OR UPDATE OF graph_id,source_id,release_set_id ON environment_workload_serving_receipts FOR EACH ROW EXECUTE FUNCTION environment_recovery_metadata_guard();
+END
+$migration$;
+-- +goose StatementEnd
+-- Metadata guards: sources, apps, accounts.
+-- +goose StatementBegin
+DO $migration$
+BEGIN
+IF EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid='project_environments'::regclass AND tgname='environment_recovery_metadata_guard' AND NOT tgisinternal) THEN RETURN; END IF;
+CREATE OR REPLACE TRIGGER environment_recovery_metadata_guard BEFORE DELETE OR UPDATE OF account_id,project_id,environment_id ON environment_git_sources FOR EACH ROW EXECUTE FUNCTION environment_recovery_metadata_guard();
+CREATE OR REPLACE TRIGGER environment_recovery_metadata_guard BEFORE DELETE OR UPDATE OF status,account_id,project_id ON apps FOR EACH ROW EXECUTE FUNCTION environment_recovery_metadata_guard();
+CREATE OR REPLACE TRIGGER environment_recovery_metadata_guard BEFORE DELETE ON accounts FOR EACH ROW EXECUTE FUNCTION environment_recovery_metadata_guard();
+END
+$migration$;
+-- +goose StatementEnd
+-- Metadata guards: projects and project environments; the last marks completion.
+-- +goose StatementBegin
+DO $migration$
+BEGIN
+IF EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid='project_environments'::regclass AND tgname='environment_recovery_metadata_guard' AND NOT tgisinternal) THEN RETURN; END IF;
+CREATE OR REPLACE TRIGGER environment_recovery_metadata_guard BEFORE DELETE ON projects FOR EACH ROW EXECUTE FUNCTION environment_recovery_metadata_guard();
+CREATE OR REPLACE TRIGGER environment_recovery_metadata_guard BEFORE DELETE ON project_environments FOR EACH ROW EXECUTE FUNCTION environment_recovery_metadata_guard();
 END
 $migration$;
 -- +goose StatementEnd

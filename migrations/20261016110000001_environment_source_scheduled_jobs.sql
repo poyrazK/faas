@@ -2,27 +2,48 @@
 -- Source-Job qualification and reserved-VM guards require the coordinated GitOps rollout.
 -- Source-backed schedules reuse a qualified deployment layer; they never
 -- ask imaged to pull the internal source reference or rebuild per occurrence.
+-- Each step below is its own short transaction (ADR-202610171900 amendment
+-- 1): a replaced check is added NOT VALID under a new name, validated in a
+-- later transaction, and only then is the old one dropped. Every step is
+-- idempotent, so an interrupted run resumes and a ledger replay is a no-op.
+-- +goose NO TRANSACTION
 -- +goose Up
-SET LOCAL lock_timeout = '5s';
+SET lock_timeout = '5s';
 -- Preserve historical v2 receipts; only the current v3 policy can qualify a
 -- candidate in the Go/runtime guards. Source secret-reference evidence uses v3.
-ALTER TABLE environment_qualification_job_smoke_receipts DROP CONSTRAINT environment_qualification_job_smoke_receipts_policy_id_check;
-ALTER TABLE environment_qualification_job_smoke_receipts ADD CONSTRAINT environment_qualification_job_smoke_receipts_policy_id_check CHECK (policy_id IN ('job-exit-v2','job-exit-v3'));
+-- +goose StatementBegin
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='environment_qualification_job_smoke_receipts'::regclass
+        AND conname='environment_qualification_job_smoke_receipts_policy_check') THEN
+        ALTER TABLE environment_qualification_job_smoke_receipts ADD CONSTRAINT environment_qualification_job_smoke_receipts_policy_check
+            CHECK (policy_id IN ('job-exit-v2','job-exit-v3')) NOT VALID;
+    END IF;
+END $$;
+-- +goose StatementEnd
+ALTER TABLE environment_qualification_job_smoke_receipts VALIDATE CONSTRAINT environment_qualification_job_smoke_receipts_policy_check;
+ALTER TABLE environment_qualification_job_smoke_receipts DROP CONSTRAINT IF EXISTS environment_qualification_job_smoke_receipts_policy_id_check;
 -- Native Job qualification now reserves a VM just like every other graph
 -- member. Enforce the current shape on new writes without discarding legacy
 -- Job claims that predate VM-backed qualification. Those claims cannot satisfy
 -- current execution evidence; an updated claim must acquire its reserved VM.
-ALTER TABLE environment_workload_qualification_requests DROP CONSTRAINT environment_workload_qualification_reserved_instance_shape;
-ALTER TABLE environment_workload_qualification_requests ADD CONSTRAINT environment_workload_qualification_reserved_instance_shape
- CHECK ((phase='queued' AND reserved_instance_id IS NULL) OR (phase='claimed' AND reserved_instance_id IS NOT NULL)) NOT VALID;
+-- +goose StatementBegin
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='environment_workload_qualification_requests'::regclass
+        AND conname='environment_workload_qualification_reserved_vm_shape') THEN
+        ALTER TABLE environment_workload_qualification_requests ADD CONSTRAINT environment_workload_qualification_reserved_vm_shape
+            CHECK ((phase='queued' AND reserved_instance_id IS NULL) OR (phase='claimed' AND reserved_instance_id IS NOT NULL)) NOT VALID;
+    END IF;
+END $$;
+-- +goose StatementEnd
 -- +goose StatementBegin
 DO $$ BEGIN
     IF NOT EXISTS (SELECT 1 FROM environment_workload_qualification_requests
         WHERE NOT ((phase='queued' AND reserved_instance_id IS NULL) OR (phase='claimed' AND reserved_instance_id IS NOT NULL))) THEN
-        ALTER TABLE environment_workload_qualification_requests VALIDATE CONSTRAINT environment_workload_qualification_reserved_instance_shape;
+        ALTER TABLE environment_workload_qualification_requests VALIDATE CONSTRAINT environment_workload_qualification_reserved_vm_shape;
     END IF;
 END $$;
 -- +goose StatementEnd
+ALTER TABLE environment_workload_qualification_requests DROP CONSTRAINT IF EXISTS environment_workload_qualification_reserved_instance_shape;
 -- +goose StatementBegin
 DO $preserve_signed_jobs$
 BEGIN
@@ -213,9 +234,10 @@ CREATE OR REPLACE TRIGGER guard_environment_source_job_artifact BEFORE UPDATE ON
     FOR EACH ROW EXECUTE FUNCTION guard_environment_source_job_artifact();
 -- +goose StatementEnd
 -- +goose Down
-ALTER TABLE environment_qualification_job_smoke_receipts DROP CONSTRAINT environment_qualification_job_smoke_receipts_policy_id_check;
+SET lock_timeout = '5s';
+ALTER TABLE environment_qualification_job_smoke_receipts DROP CONSTRAINT IF EXISTS environment_qualification_job_smoke_receipts_policy_check;
 ALTER TABLE environment_qualification_job_smoke_receipts ADD CONSTRAINT environment_qualification_job_smoke_receipts_policy_id_check CHECK (policy_id='job-exit-v2');
-ALTER TABLE environment_workload_qualification_requests DROP CONSTRAINT environment_workload_qualification_reserved_instance_shape;
+ALTER TABLE environment_workload_qualification_requests DROP CONSTRAINT IF EXISTS environment_workload_qualification_reserved_vm_shape;
 ALTER TABLE environment_workload_qualification_requests ADD CONSTRAINT environment_workload_qualification_reserved_instance_shape
  CHECK ((phase='queued' AND reserved_instance_id IS NULL) OR (phase='claimed' AND
  ((execution_mode='job' AND reserved_instance_id IS NULL) OR (execution_mode<>'job' AND reserved_instance_id IS NOT NULL))));

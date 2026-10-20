@@ -3,16 +3,40 @@
 -- filename: 20261017072644435_environment_built_artifact_reuse.sql
 -- ADR-20261017190804: Immutable code reuse with independent target authority.
 
+-- Five short transactions, each locking at most three existing tables
+-- (ADR-202610171900 amendment 1). Every step skips once the final app guard
+-- exists, so a ledger replay never replaces later definitions; an interrupted
+-- run resumes idempotently.
+-- +goose NO TRANSACTION
 -- +goose Up
-SET LOCAL lock_timeout = '5s';
+SET lock_timeout = '5s';
 -- +goose StatementBegin
 DO $reuse_migration$
 BEGIN
- IF EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid='deployments'::regclass AND tgname='environment_build_artifact_origin_guard' AND NOT tgisinternal) THEN RETURN; END IF;
-ALTER TABLE app_environment_workload_intents ADD CONSTRAINT environment_build_artifact_revision_exclusive
- CHECK (source_revision IS NULL OR NOT (source ? 'build_artifact_id'));
+ IF EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid='apps'::regclass AND tgname='environment_build_artifact_app_guard' AND NOT tgisinternal) THEN RETURN; END IF;
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='app_environment_workload_intents'::regclass AND conname='environment_build_artifact_revision_exclusive') THEN
+  ALTER TABLE app_environment_workload_intents ADD CONSTRAINT environment_build_artifact_revision_exclusive
+   CHECK (source_revision IS NULL OR NOT (source ? 'build_artifact_id')) NOT VALID;
+ END IF;
+END
+$reuse_migration$;
+-- +goose StatementEnd
+-- Validate in a later transaction; validation does not block writers.
+-- +goose StatementBegin
+DO $reuse_migration$
+BEGIN
+ IF EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid='apps'::regclass AND tgname='environment_build_artifact_app_guard' AND NOT tgisinternal) THEN RETURN; END IF;
+ALTER TABLE app_environment_workload_intents VALIDATE CONSTRAINT environment_build_artifact_revision_exclusive;
+END
+$reuse_migration$;
+-- +goose StatementEnd
+-- Pins and manifest pinning: environment_git_sources, deployments and source_build_rootfs.
+-- +goose StatementBegin
+DO $reuse_migration$
+BEGIN
+ IF EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid='apps'::regclass AND tgname='environment_build_artifact_app_guard' AND NOT tgisinternal) THEN RETURN; END IF;
 
-CREATE TABLE environment_build_artifact_pins (
+CREATE TABLE IF NOT EXISTS environment_build_artifact_pins (
  source_id uuid REFERENCES environment_git_sources(id) ON DELETE CASCADE,
  candidate_id uuid REFERENCES deployments(id) ON DELETE CASCADE,
  artifact_id uuid NOT NULL REFERENCES source_build_rootfs(id) ON DELETE RESTRICT,
@@ -22,7 +46,7 @@ CREATE TABLE environment_build_artifact_pins (
 
 -- A manifest pin prevents GC before preparation; a candidate pin retains origin
 -- provenance through rollback/history. Neither pin is qualification authority.
-CREATE FUNCTION environment_pin_build_artifact(artifact uuid, expected_hash text, account uuid, project uuid) RETURNS void LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION environment_pin_build_artifact(artifact uuid, expected_hash text, account uuid, project uuid) RETURNS void LANGUAGE plpgsql AS $$
 DECLARE f source_build_rootfs%ROWTYPE; d deployments%ROWTYPE; a apps%ROWTYPE; retained text;
 BEGIN
  SELECT * INTO f FROM source_build_rootfs WHERE id=artifact FOR SHARE;
@@ -39,7 +63,7 @@ BEGIN
  IF retained IS DISTINCT FROM 'retained' THEN RAISE EXCEPTION 'build artifact is retiring' USING ERRCODE='23514'; END IF;
 END $$;
 
-CREATE FUNCTION environment_build_artifact_source_pins() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION environment_build_artifact_source_pins() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE w jsonb; wanted jsonb;
 BEGIN
  -- Serialize the pin writer with origin deletion/update and the GC key fence.
@@ -56,10 +80,18 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
-CREATE TRIGGER environment_build_artifact_source_pins AFTER INSERT OR UPDATE OF approved_revision_id,detached ON environment_git_sources
+CREATE OR REPLACE TRIGGER environment_build_artifact_source_pins AFTER INSERT OR UPDATE OF approved_revision_id,detached ON environment_git_sources
  FOR EACH ROW EXECUTE FUNCTION environment_build_artifact_source_pins();
 
-CREATE FUNCTION environment_build_artifact_valid(d deployments, materialized boolean) RETURNS boolean LANGUAGE plpgsql AS $$
+END
+$reuse_migration$;
+-- +goose StatementEnd
+-- Candidate pinning and origin guards on deployments.
+-- +goose StatementBegin
+DO $reuse_migration$
+BEGIN
+ IF EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid='apps'::regclass AND tgname='environment_build_artifact_app_guard' AND NOT tgisinternal) THEN RETURN; END IF;
+CREATE OR REPLACE FUNCTION environment_build_artifact_valid(d deployments, materialized boolean) RETURNS boolean LANGUAGE plpgsql AS $$
 DECLARE b jsonb:=d.environment_workload_runtime->'built_artifact'; f source_build_rootfs%ROWTYPE; origin deployments%ROWTYPE; a apps%ROWTYPE; src environment_git_sources%ROWTYPE;
 BEGIN
  SELECT * INTO f FROM source_build_rootfs WHERE id=(b->>'id')::uuid FOR SHARE NOWAIT;
@@ -85,7 +117,7 @@ BEGIN
    AND EXISTS(SELECT 1 FROM environment_build_artifact_pins p WHERE p.candidate_id=d.id AND p.artifact_id=f.id)))) IS TRUE;
 END $$;
 
-CREATE FUNCTION environment_build_artifact_candidate_pin() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION environment_build_artifact_candidate_pin() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE b jsonb:=NEW.environment_workload_runtime->'built_artifact'; a apps%ROWTYPE;
 BEGIN
  IF b IS NOT NULL THEN
@@ -98,10 +130,10 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
-CREATE TRIGGER environment_build_artifact_candidate_pin AFTER INSERT OR UPDATE ON deployments
+CREATE OR REPLACE TRIGGER environment_build_artifact_candidate_pin AFTER INSERT OR UPDATE ON deployments
  FOR EACH ROW EXECUTE FUNCTION environment_build_artifact_candidate_pin();
 
-CREATE FUNCTION environment_build_artifact_origin_guard() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION environment_build_artifact_origin_guard() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF EXISTS(SELECT 1 FROM source_build_rootfs f JOIN environment_build_artifact_pins p ON p.artifact_id=f.id WHERE f.deployment_id=OLD.id) THEN
   IF TG_OP='DELETE' THEN RAISE EXCEPTION 'build artifact provenance is pinned' USING ERRCODE='23514'; END IF;
@@ -112,8 +144,16 @@ BEGIN
  END IF;
  IF TG_OP='DELETE' THEN RETURN OLD; END IF; RETURN NEW;
 END $$;
-CREATE TRIGGER environment_build_artifact_origin_guard BEFORE DELETE OR UPDATE ON deployments FOR EACH ROW EXECUTE FUNCTION environment_build_artifact_origin_guard();
+CREATE OR REPLACE TRIGGER environment_build_artifact_origin_guard BEFORE DELETE OR UPDATE ON deployments FOR EACH ROW EXECUTE FUNCTION environment_build_artifact_origin_guard();
 
+END
+$reuse_migration$;
+-- +goose StatementEnd
+-- Candidate, producer and app guards; the app guard marks completion.
+-- +goose StatementBegin
+DO $reuse_migration$
+BEGIN
+ IF EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid='apps'::regclass AND tgname='environment_build_artifact_app_guard' AND NOT tgisinternal) THEN RETURN; END IF;
 CREATE OR REPLACE FUNCTION guard_environment_workload_candidate() RETURNS trigger
     LANGUAGE plpgsql
     AS $_$
@@ -343,7 +383,7 @@ BEGIN
   'app_id',a.id::text,'deployment_id',d.id::text,'scope',d.scope,'artifacts',artifacts);
 END;
 $_$;
-CREATE FUNCTION environment_build_artifact_app_guard() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION environment_build_artifact_app_guard() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF (TG_OP='DELETE' OR NEW.status='deleted') AND EXISTS(SELECT 1 FROM source_build_rootfs f JOIN environment_build_artifact_pins p ON p.artifact_id=f.id
   WHERE f.input_snapshot->>'app_id'=OLD.id::text AND p.source_id IS NOT NULL) THEN RAISE EXCEPTION 'app has manifest-pinned build artifacts' USING ERRCODE='23514'; END IF;
@@ -361,7 +401,7 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
-CREATE TRIGGER environment_build_artifact_app_guard BEFORE DELETE OR UPDATE OF status ON apps FOR EACH ROW EXECUTE FUNCTION environment_build_artifact_app_guard();
+CREATE OR REPLACE TRIGGER environment_build_artifact_app_guard BEFORE DELETE OR UPDATE OF status ON apps FOR EACH ROW EXECUTE FUNCTION environment_build_artifact_app_guard();
 
 END
 $reuse_migration$;

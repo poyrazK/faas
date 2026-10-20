@@ -938,13 +938,10 @@ CREATE TABLE IF NOT EXISTS platform_mail_deployment_observations (
 CREATE INDEX IF NOT EXISTS platform_mail_deployment_observations_account_idx ON platform_mail_deployment_observations(account_id);
 
 SET LOCAL lock_timeout = '5s';
-ALTER TABLE platform_mail_deployment_fences
-    DROP CONSTRAINT IF EXISTS platform_mail_deployment_fences_scope_check;
-ALTER TABLE platform_mail_deployment_fences
-    ADD CONSTRAINT platform_mail_deployment_fences_scope_check
-    CHECK (scope ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$');
-ALTER TABLE platform_mail_producer_outbox
-    DROP CONSTRAINT IF EXISTS platform_mail_producer_outbox_deployment_failure_check;
+ALTER TABLE platform_mail_deployment_fences DROP CONSTRAINT platform_mail_deployment_fences_scope_check;
+ALTER TABLE platform_mail_deployment_fences ADD CONSTRAINT platform_mail_deployment_fences_scope_check
+    CHECK(scope ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$');
+ALTER TABLE platform_mail_producer_outbox DROP CONSTRAINT platform_mail_producer_outbox_deployment_failure_check;
 ALTER TABLE platform_mail_producer_outbox ADD CONSTRAINT platform_mail_producer_outbox_deployment_failure_check CHECK (
     (template='deployment_failed' AND deployment_failure_id IS NOT NULL AND deployment_failure_app_id IS NOT NULL
         AND deployment_failure_scope IS NOT NULL AND deployment_failure_scope ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'
@@ -957,3 +954,4 @@ ALTER TABLE platform_mail_producer_outbox ADD CONSTRAINT platform_mail_producer_
         AND deployment_failure_scope IS NULL AND deployment_failure_revision IS NULL AND deployment_failure_account_revision IS NULL
         AND deployment_failure_app_revision IS NULL AND deployment_failure_success_revision IS NULL AND deployment_failure_at IS NULL)
 );
+
