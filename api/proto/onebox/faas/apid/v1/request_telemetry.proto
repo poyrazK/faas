@@ -319,6 +319,9 @@ message IncrementRequestTelemetryRequest {
   // ADR-1188: how an anonymous GET body compared with the previous response
   // for its URL on the same gateway; empty when not observed. Never a hash.
   string content_outcome = 37;
+  // ADR-1138: trace_id was inferred by Gregale (the calling instance sent no
+  // traceparent and was serving exactly one request) rather than propagated.
+  bool trace_inferred = 38;
 }
 
 // IncrementRequestTelemetryResponse is the per-record outcome the

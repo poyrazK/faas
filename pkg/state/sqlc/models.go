@@ -12060,6 +12060,7 @@ type RequestTelemetry struct {
 	GuestResourceUsageAvailable bool
 	FlagEvidence                []byte
 	ContentOutcome              string
+	TraceInferred               bool
 }
 
 type RequestTelemetry202610 struct {
@@ -12098,6 +12099,7 @@ type RequestTelemetry202610 struct {
 	GuestResourceUsageAvailable bool
 	FlagEvidence                []byte
 	ContentOutcome              string
+	TraceInferred               bool
 }
 
 type RequestTelemetry202611 struct {
@@ -12136,6 +12138,7 @@ type RequestTelemetry202611 struct {
 	GuestResourceUsageAvailable bool
 	FlagEvidence                []byte
 	ContentOutcome              string
+	TraceInferred               bool
 }
 
 type RequestTelemetry202612 struct {
@@ -12174,6 +12177,7 @@ type RequestTelemetry202612 struct {
 	GuestResourceUsageAvailable bool
 	FlagEvidence                []byte
 	ContentOutcome              string
+	TraceInferred               bool
 }
 
 type RequestTelemetryAppGap struct {
@@ -12237,6 +12241,7 @@ type RequestTelemetryDefault struct {
 	GuestResourceUsageAvailable bool
 	FlagEvidence                []byte
 	ContentOutcome              string
+	TraceInferred               bool
 }
 
 type ReservedIpInventory struct {

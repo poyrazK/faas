@@ -11261,6 +11261,10 @@ type DebugTelemetryRequestItem struct {
 	DeploymentCreatedAt string                       `json:"deployment_created_at,omitempty"`
 	ImageDigest         string                       `json:"image_digest,omitempty"`
 	Guest               *DebugGuestExecutionEvidence `json:"guest,omitempty"`
+	// TraceInferred is true when Gregale linked this service call to its
+	// caller's trace because the caller sent no traceparent and was serving
+	// exactly one request (ADR-1138): the trace id is inferred, not propagated.
+	TraceInferred bool `json:"trace_inferred,omitempty"`
 }
 
 // DebugGuestExecutionEvidence is the bounded execution signal emitted by a
