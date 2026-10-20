@@ -9258,6 +9258,7 @@ type Org struct {
 	BillingAddress           string
 	TaxID                    string
 	ObjectStorageOwnedFrom   pgtype.Timestamptz
+	AsyncQuotaPooledAt       pgtype.Timestamptz
 }
 
 // Curated organization activity timeline; safe display facts only, FK-free and append-only

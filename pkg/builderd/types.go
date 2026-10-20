@@ -39,6 +39,7 @@ type WarmVM interface {
 type VMRequest struct {
 	BuildDependencyDigest string `json:"build_dependency_digest,omitempty"`
 	PublicBuildURLs       map[string]string
+	DockerfileBuild       *api.DockerfileBuildOptions // Compose build.args/target (ADR-20261019142544)
 	BuildID               string
 	TenantID              string
 	DeploymentID          string
@@ -115,6 +116,7 @@ type BuildHandle struct {
 type BuildOutcome struct {
 	BuildDependencyDigest string `json:"build_dependency_digest,omitempty"`
 	PublicBuildURLsSHA256 string
+	DockerfileBuildSHA256 string
 	BuildID               string // echoes handle.BuildID
 	InstanceID            string // echoes handle.Instance
 	// ExportDir is the node-local handoff directory. imaged leases image.tar

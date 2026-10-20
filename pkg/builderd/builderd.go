@@ -903,9 +903,24 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		b.markFailed(ctx, build, state.FailureInfra, "load public build URLs", buildStart)
 		return BuildResult{}, publicErr
 	}
+	dockerfileBuild, buildOptionsIgnored, buildOptionsErr := selectDockerfileBuild(app, dep, frozen != nil && frozen.Source != nil, fw)
+	if buildOptionsErr != nil {
+		b.markFailed(ctx, build, state.FailureInfra, "invalid Compose build options: "+buildOptionsErr.Error(), buildStart)
+		return BuildResult{}, buildOptionsErr
+	}
+	if buildOptionsIgnored {
+		b.emitBuildLog(ctx, build.ID, "Compose build.args and build.target ignored: this service builds without a Dockerfile\n")
+	}
+	if dockerfileBuild != nil && dockerfileBuild.Target != "" {
+		b.emitBuildLog(ctx, build.ID, "building Dockerfile stage "+dockerfileBuild.Target+"\n")
+	}
+	if shadowed := shadowedBuildArgs(dockerfileBuild, publicURLs); len(shadowed) > 0 {
+		b.emitBuildLog(ctx, build.ID, "build arguments "+strings.Join(shadowed, ", ")+" are also public build URLs; the reviewed URLs are used\n")
+	}
 	recipe := BuildCacheRecipe{
 		BuildDependencyDigest: buildDependencyDigest,
 		PublicBuildURLs:       publicURLs,
+		DockerfileBuild:       dockerfileBuild,
 		SourceSHA256:          srcHash, SourceRoot: dep.SourceRoot,
 		DockerfilePath: dockerfilePath,
 		Framework:      fw, Plan: acct.Plan, RuntimeBaseRef: runtimeBaseRef,
@@ -1006,6 +1021,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	vmReq := VMRequest{
 		BuildDependencyDigest: buildDependencyDigest,
 		PublicBuildURLs:       publicURLs,
+		DockerfileBuild:       dockerfileBuild,
 		BuildID:               build.ID,
 		TenantID:              app.AccountID,
 		DeploymentID:          dep.ID,
@@ -1198,6 +1214,13 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	}
 	if out.ExitCode == 0 && out.PublicBuildURLsSHA256 != api.PublicBuildURLsSHA256(publicURLs) {
 		err := fmt.Errorf("builder guest did not acknowledge the reviewed public build URLs")
+		b.markFailed(ctx, build, state.FailureInfra, err.Error(), buildStart)
+		return BuildResult{}, err
+	}
+	if out.ExitCode == 0 && out.DockerfileBuildSHA256 != dockerfileBuild.SHA256() {
+		// An older builder guest ignores the options and builds the final
+		// stage with default arguments; refuse that artifact.
+		err := errors.New("builder guest did not acknowledge the Compose build arguments and target")
 		b.markFailed(ctx, build, state.FailureInfra, err.Error(), buildStart)
 		return BuildResult{}, err
 	}

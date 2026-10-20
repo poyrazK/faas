@@ -56,12 +56,22 @@ func enqueueCompanyQueue(t *testing.T, store state.Store, app state.App, binding
 	return inv
 }
 
+// poolCompanyAsyncQuota moves the company's async reservations to its own
+// counter, which the release after the capture release does.
+func poolCompanyAsyncQuota(t *testing.T, f offboardingFixture) {
+	t.Helper()
+	if err := state.PoolOrgAsyncReservations(t.Context(), f.store, f.org.ID); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestMemOrgQueueOwnership(t *testing.T) { orgQueueOwnership(t, state.NewMemStore()) }
 
 func orgQueueOwnership(t *testing.T, base state.Store) {
 	t.Helper()
 	f := setupOffboarding(t, base)
 	adoptObjectCompany(t, f)
+	poolCompanyAsyncQuota(t, f)
 	store := base.(companyQueueStore)
 	pull := companyQueueApp(t, f, "company-pull", "")
 	push := companyQueueApp(t, f, "company-push", "")
@@ -197,19 +207,35 @@ func orgQueueAdoption(t *testing.T, base state.Store) {
 			t.Fatal(err)
 		}
 	}
+	// Adoption alone moves no reservation: the previous release still
+	// releases company work against the namespace counter.
 	adoptObjectCompany(t, f)
+	later := enqueueCompanyQueue(t, base, app, "")
+	if got, err := base.ClaimInvocationWithCap(t.Context(), later.ID, "", 30, 3); err != nil || got.AsyncQuotaSubjectID != f.actor.ID {
+		t.Fatalf("unpooled company claim: %+v %v", got, err)
+	}
+	if _, cur, err := base.GetAccountAsyncQuota(t.Context(), f.actor.ID); err != nil || cur != 3 {
+		t.Fatalf("unpooled namespace counter: %d %v", cur, err)
+	}
+	if _, _, err := base.GetAccountAsyncQuota(t.Context(), f.org.ID); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("company counter before pooling: %v", err)
+	}
+	poolCompanyAsyncQuota(t, f)
 	for _, tc := range []struct {
 		id   string
 		want int
-	}{{f.actor.ID, 1}, {f.org.ID, 1}} {
+	}{{f.actor.ID, 1}, {f.org.ID, 2}} {
 		_, cur, err := base.GetAccountAsyncQuota(t.Context(), tc.id)
 		if err != nil || cur != tc.want {
-			t.Fatalf("adoption counter %s: %d %v", tc.id, cur, err)
+			t.Fatalf("pooled counter %s: %d %v", tc.id, cur, err)
 		}
 	}
 	got, err := base.InvocationByID(t.Context(), company.ID)
 	if err != nil || got.AsyncQuotaSubjectID != f.org.ID {
-		t.Fatalf("adoption snapshot: %+v %v", got, err)
+		t.Fatalf("pooled snapshot: %+v %v", got, err)
+	}
+	if err := base.CompleteInvocation(t.Context(), later.ID, nil); err != nil {
+		t.Fatal(err)
 	}
 	if err := base.FailInvocation(t.Context(), company.ID, "poison", time.Nanosecond, 1); err != nil {
 		t.Fatal(err)
@@ -314,6 +340,7 @@ func orgQueueTriggerQuota(t *testing.T, base state.Store) {
 func orgQueueCompanyCap(t *testing.T, base state.Store) {
 	f := setupOffboarding(t, base)
 	adoptObjectCompany(t, f)
+	poolCompanyAsyncQuota(t, f)
 	if err := base.UpdateOrgPlan(t.Context(), f.org.ID, api.PlanFree); err != nil {
 		t.Fatal(err)
 	}
@@ -379,6 +406,7 @@ func orgQueueExternalTriggerGuard(t *testing.T, base state.Store) {
 func orgStageQueueOwnership(t *testing.T, base state.Store) {
 	f := setupOffboarding(t, base)
 	adoptObjectCompany(t, f)
+	poolCompanyAsyncQuota(t, f)
 	store := base.(environmentQueueDeliveryTestStore)
 	project, err := base.CreateProject(t.Context(), state.Project{AccountID: f.actor.ID, OrgID: f.org.ID, Slug: "company-stage"})
 	if err != nil {

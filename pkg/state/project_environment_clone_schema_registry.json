@@ -11002,6 +11002,7 @@
     "columns": [
       "abuse_hold_at",
       "abuse_hold_reason",
+      "async_quota_pooled_at",
       "billing_address",
       "billing_email",
       "business_name",

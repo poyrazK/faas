@@ -400,6 +400,7 @@ type MemStore struct {
 	objectAuthorizations        map[string]int64
 	objectUsageCutovers         map[string]time.Time
 	objectOrgOwnedFrom          map[string]time.Time
+	orgAsyncQuotaPooled         map[string]time.Time
 	objectProviderRequests      map[string]int64
 	objectAccessGrants          map[string]ObjectBucketAccessGrant
 	objectS3Credentials         map[string]ObjectS3Credential
@@ -27372,7 +27373,9 @@ func (m *MemStore) ListExpiredInvocationsForReaper(_ context.Context, now time.T
 		if _, _, linked := m.operationForInvocationLocked(id); linked {
 			continue
 		}
-		if inv.ResultRetentionUntil == nil {
+		// Terminal rows only, matching PgStore: a past horizon on a live
+		// row must never delete pending or dispatching work.
+		if inv.ResultRetentionUntil == nil || !invocationTerminalStates[inv.State] {
 			continue
 		}
 		if inv.ResultRetentionUntil.After(now) {
