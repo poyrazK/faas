@@ -3,6 +3,7 @@
 -- customer. One row per child names its parent and the parent's key for it;
 -- the key makes a retried parent replay the child instead of starting another.
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 CREATE TABLE IF NOT EXISTS customer_operation_children (
     parent_operation_id uuid        NOT NULL REFERENCES customer_operations(id) ON DELETE CASCADE,
     child_key           text        NOT NULL CHECK (octet_length(child_key) BETWEEN 1 AND 64),
