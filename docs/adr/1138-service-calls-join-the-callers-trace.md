@@ -22,21 +22,26 @@ unless the call comes from work the app does outside any request.
 
 ## Decision
 
-**Linking.** When a service call reaches the service proxy without a valid
-`traceparent`, the proxy asks the caller's local vmmd for the trace context of
-the request the instance is serving. vmmd answers only when the instance has
-exactly one forward in flight of any kind (HTTP, stream, TCP, UDP, dispatch)
-and that forward is an HTTP request that carried a valid W3C `traceparent`;
-otherwise it answers nothing and the call starts its own trace as before. The
-call then continues that trace exactly as if the caller had forwarded the
-header. A `traceparent` the caller sends always wins. The answer stays inside
-the instance's own account: it is the trace context of a request to the
-calling instance.
+**Linking.** When a guest's service call reaches the node's service proxy
+without a valid `traceparent`, the proxy asks the local vmmd, by the call's
+source address, for the trace context of the request the calling instance is
+serving (`InflightRequestTrace`). vmmd resolves the caller from the same
+host-owned live identity as `ResolveServiceCaller`, never a cached address
+mapping, so a reused address cannot hand one tenant's trace context to
+another; App and Job tasks serve no requests and never match. vmmd answers
+only when the instance has exactly one forward in flight of any kind (HTTP,
+stream, TCP, UDP, dispatch) and that forward is an HTTP request that carried a
+valid W3C `traceparent`; otherwise it answers nothing and the call starts its
+own trace as before. The call then continues that trace exactly as if the
+caller had forwarded the header. A `traceparent` the caller sends always wins.
+The answer stays inside the instance's own account: it is the trace context
+of a request to the calling instance.
 
 vmmd keeps only the `traceparent` of each HTTP forward while it is in flight,
 next to the existing activity counter, and nothing else of the request. The
-proxy waits at most 25 ms for the answer; a timeout, an error or an older vmmd
-that does not implement the call means no link.
+proxy waits at most `ServiceTraceInferenceTimeout` (25 ms, `pkg/api/limits.go`)
+for the answer; a timeout, an error or an older vmmd that does not implement
+the call means no link.
 
 **Marking.** A linked call is recorded as inferred wherever it is shown. The
 hop's request-telemetry row stores `trace_inferred = true` (a new column on
@@ -65,8 +70,8 @@ of node units is safe.
   authorization, admission and billing are untouched. A target app that
   exports its own spans now receives the caller's trace context for linked
   calls, as it would if the caller had forwarded it.
-- Each unlinked service call without trace context costs one local vmmd call
-  (sub-millisecond, bounded at 25 ms).
+- Each guest service call without trace context costs one local vmmd call
+  (sub-millisecond, bounded at 25 ms) and no database query.
 
 ## Rejected alternatives
 
