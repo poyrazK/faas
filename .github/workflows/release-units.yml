@@ -346,3 +346,25 @@ jobs:
     permissions:
       contents: read
       actions: read
+
+  # The post-deploy watch (docs/adr/20261020214632-automatic-unit-deploy-
+  # safety-rails.md): 30 minutes after the last activation, over every unit
+  # release not yet watched clean on every host; a breach rolls each host
+  # back to its known-good release and opens a deploy-freeze issue. It runs
+  # after a failed lane too: this run may own the record of earlier, still
+  # unwatched releases, and a failed lane pauses automatic deploys.
+  watch:
+    name: Watch the deployed units
+    needs: [preflight, deploy, deploy-edge]
+    if: >-
+      !cancelled() && needs.preflight.outputs.go == 'true'
+    uses: ./.github/workflows/cd-unit-watch.yml
+    with:
+      deploy_environment: ${{ inputs.deploy_environment || vars.UNIT_RELEASE_AUTODEPLOY_ENVIRONMENT }}
+      units_run_id: ${{ github.run_id }}
+      deploy_results: deploy=${{ needs.deploy.result }},deploy-edge=${{ needs.deploy-edge.result }}
+    secrets: inherit
+    permissions:
+      contents: read
+      actions: read
+      issues: write

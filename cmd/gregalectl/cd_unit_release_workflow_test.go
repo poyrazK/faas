@@ -401,3 +401,71 @@ func TestUnitDeployWaitsForAdmission(t *testing.T) {
 		}
 	}
 }
+
+// TestUnitDeploysAreWatchedAndPauseAfterARollback: every unit deploy takes
+// the post-deploy watch over before it activates a host and returns the host
+// to the record when it fails; release-units watches after its lanes, failed
+// or not, and only the watch may open a deploy-freeze issue
+// (docs/adr/20261020214632-automatic-unit-deploy-safety-rails.md). The deploy
+// workflows keep their read-only token: cd-platform calls cd-controlplane and
+// grants no issues scope.
+func TestUnitDeploysAreWatchedAndPauseAfterARollback(t *testing.T) {
+	cp := jobBlock(t, readWorkflow(t, "cd-controlplane.yml"), "deploy-units")
+	orderedIn(t, "cd-controlplane deploy-units", cp,
+		"Stage the unit release on the control plane",
+		`unit_deploy.sh watch-open "$UNIT_PLAN" control-plane`,
+		"Activate the unit release",
+		"Hold the units on the SLO gate",
+		"if: failure() && steps.watch_open.outcome == 'success'",
+		"unit_deploy.sh watch-revert control-plane",
+	)
+	node := jobBlock(t, readWorkflow(t, "cd-edge-node.yml"), "deploy")
+	orderedIn(t, "cd-edge-node deploy", node,
+		"Stage the unit release on the node",
+		`unit_deploy.sh watch-open "$UNIT_PLAN" "$NODE" "$RUNNER_TEMP/edge-target.json"`,
+		"Activate the unit release on the node",
+		"Hold the node on the SLO gate",
+		"if: failure() && steps.watch_open.outcome == 'success'",
+		`unit_deploy.sh watch-revert "$NODE"`,
+	)
+	for name, block := range map[string]string{"cd-controlplane deploy-units": cp, "cd-edge-node deploy": node} {
+		if strings.Contains(block, "issues: write") {
+			t.Errorf("%s must not ask for issues: write", name)
+		}
+	}
+
+	release := readWorkflow(t, "release-units.yml")
+	watch := jobBlock(t, release, "watch")
+	for _, required := range []string{
+		"needs: [preflight, deploy, deploy-edge]",
+		"!cancelled() && needs.preflight.outputs.go == 'true'",
+		"uses: ./.github/workflows/cd-unit-watch.yml",
+		"deploy_results: deploy=${{ needs.deploy.result }},deploy-edge=${{ needs.deploy-edge.result }}",
+		"issues: write",
+	} {
+		if !strings.Contains(watch, required) {
+			t.Errorf("release-units watch is missing %q", required)
+		}
+	}
+	for _, job := range []string{"build", "preflight", "deploy", "deploy-edge"} {
+		if strings.Contains(jobBlock(t, release, job), "issues: write") {
+			t.Errorf("release-units %s must not ask for issues: write", job)
+		}
+	}
+
+	unitWatch := readWorkflow(t, "cd-unit-watch.yml")
+	orderedIn(t, "cd-unit-watch", unitWatch,
+		"name: gregale-unit-release",
+		"scripts/ci/verify_unit_release.sh",
+		"COMPUTE_KNOWN_HOSTS",
+		`python3 scripts/ci/unit_watch.py "${args[@]}"`,
+	)
+	for _, required := range []string{`--deployctl "$UNITS_DIR/tools/deployctl"`, "--deploy-results", "args+=(--adopt)"} {
+		if !strings.Contains(unitWatch, required) {
+			t.Errorf("cd-unit-watch is missing %q", required)
+		}
+	}
+	if strings.Contains(unitWatch, "StrictHostKeyChecking=no") {
+		t.Error("cd-unit-watch must never disable host-key checking")
+	}
+}

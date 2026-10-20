@@ -194,6 +194,19 @@ jobs:
           remote="$(scripts/ci/unit_deploy.sh stage "$UNIT_PLAN" "$UNITS_DIR" "$UNITS_DIR/tools/deployctl")"
           echo "REMOTE_STAGE=$remote" >> "$GITHUB_ENV"
 
+      # The post-deploy watch (docs/adr/20261020214632-automatic-unit-deploy-
+      # safety-rails.md): the control plane's watch record learns this node,
+      # its pinned SSH target and the release it gets, before activation.
+      - name: Take over the post-deploy watch
+        id: watch_open
+        if: steps.plan.outputs.action == 'deploy' || steps.plan.outputs.action == 'converge'
+        env:
+          TARGET: ${{ inputs.target }}
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$TARGET" > "$RUNNER_TEMP/edge-target.json"
+          scripts/ci/unit_deploy.sh watch-open "$UNIT_PLAN" "$NODE" "$RUNNER_TEMP/edge-target.json"
+
       - name: Activate the unit release on the node
         if: steps.plan.outputs.action == 'deploy' || steps.plan.outputs.action == 'converge'
         run: |
@@ -215,6 +228,10 @@ jobs:
             echo "::error::rolled ${NODE} back after the SLO gate (exit $status); the edge lane stops and the remaining nodes keep their gateways" >&2
             exit 1
           fi
+
+      - name: Return the node to the watch record
+        if: failure() && steps.watch_open.outcome == 'success'
+        run: scripts/ci/unit_deploy.sh watch-revert "$NODE"
 
       - name: Remove the staged unit release
         if: always() && env.REMOTE_STAGE != ''
