@@ -31,6 +31,17 @@ full `cmd/gregale`/`pkg/state`/`pkg/apid/apidserver` suites and their `-race` ru
 migration history, container/UDP contracts, flags, load, SDK acceptance) is
 caught by the nightly run or, at the latest, the release gate.
 
+`blast-radius.yml` runs on every pull request and is report-only (never
+required): `scripts/ci/blast_radius.py` lists the release binaries whose
+import closure the change touches (what a per-unit release ships,
+ADR-1650) and, of those, the ones whose code changes, built at the merge
+base and the head with the release flags and an empty Go build ID; a
+binary whose only difference is Go's line table (`.gopclntab`) is listed
+as `lines`. The report is the job summary and one sticky pull-request
+comment. Run it locally with
+`python3 scripts/ci/blast_radius.py --base origin/main` (`--closure-only`
+skips the builds; `--tags` measures a build-tag change to the recipe).
+
 ## Currently required
 
 Regenerate this table from the live ruleset rather than editing it by hand:
