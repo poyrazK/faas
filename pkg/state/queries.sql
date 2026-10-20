@@ -10340,7 +10340,7 @@ SELECT lock_source_build_rootfs(sqlc.arg(input)::jsonb)::jsonb AS inputs;
 SELECT lock_source_build_runtime_rootfs(sqlc.arg(input)::jsonb,sqlc.arg(id)::uuid)::jsonb AS inputs;
 
 -- name: HasSourceBuildRootfs :one
-SELECT EXISTS(SELECT 1 FROM source_build_rootfs WHERE deployment_id=sqlc.arg(deployment_id)::uuid)::boolean AS present;
+SELECT EXISTS(SELECT 1 FROM source_build_rootfs WHERE deployment_id=sqlc.arg(deployment_id)::uuid UNION ALL SELECT 1 FROM deployments d WHERE d.id=sqlc.arg(deployment_id)::uuid AND (d.environment_workload_runtime ? 'built_artifact' OR d.environment_workload_runtime->'source' ? 'build_artifact_id'))::boolean AS present;
 
 -- name: AuthorizeSourceBuildRootfsInsert :exec
 SELECT set_config('gregale.source_build_rootfs_insert',sqlc.arg(id)::uuid::text,true);
@@ -10588,7 +10588,7 @@ WHERE a.account_id=sqlc.arg(account_id)::uuid AND a.id=sqlc.arg(app_id)::uuid AN
 
 -- name: GetDeploymentArtifactWorkloads :one
 SELECT d.sidecars, (EXISTS(SELECT 1 FROM deployment_registry_rootfs f WHERE f.deployment_id=d.id)
- OR EXISTS(SELECT 1 FROM source_build_rootfs f WHERE f.deployment_id=d.id))::boolean AS has_registry_producers
+ OR EXISTS(SELECT 1 FROM source_build_rootfs f WHERE f.deployment_id=d.id UNION ALL SELECT 1 WHERE d.environment_workload_runtime ? 'built_artifact' OR d.environment_workload_runtime->'source' ? 'build_artifact_id'))::boolean AS has_registry_producers
 FROM deployments d JOIN apps a ON a.id=d.app_id
 WHERE d.id=sqlc.arg(deployment_id)::uuid AND a.id=sqlc.arg(app_id)::uuid
  AND a.account_id=sqlc.arg(account_id)::uuid AND a.status<>'deleted';
@@ -18908,6 +18908,7 @@ SELECT (jsonb_build_object(
     'deployment_runtime_scans_deployment_id_fkey', (SELECT count(*) FROM deployment_runtime_scans WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
     'source_build_rootfs_current_deployment_id_fkey', (SELECT count(*) FROM source_build_rootfs_current WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
     'source_build_rootfs_deployment_id_fkey', (SELECT count(*) FROM source_build_rootfs WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
+    'environment_build_artifact_pins_candidate_id_fkey', (SELECT count(*) FROM environment_build_artifact_pins WHERE candidate_id = sqlc.arg(deployment_id)::uuid),
     -- Preview command runtimes (financial previews) hold a deployment while preparing or active.
     'financial_preview_command_runtimes_deployment_id_fkey', (SELECT count(*) FROM financial_preview_command_runtimes WHERE deployment_id = sqlc.arg(deployment_id)::uuid AND phase <> 'retired')
 ))::jsonb AS borrowers;

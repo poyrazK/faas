@@ -22858,7 +22858,7 @@ func (q *Queries) GetDeploymentArtifactScanPointer(ctx context.Context, db DBTX,
 
 const getDeploymentArtifactWorkloads = `-- name: GetDeploymentArtifactWorkloads :one
 SELECT d.sidecars, (EXISTS(SELECT 1 FROM deployment_registry_rootfs f WHERE f.deployment_id=d.id)
- OR EXISTS(SELECT 1 FROM source_build_rootfs f WHERE f.deployment_id=d.id))::boolean AS has_registry_producers
+ OR EXISTS(SELECT 1 FROM source_build_rootfs f WHERE f.deployment_id=d.id UNION ALL SELECT 1 WHERE d.environment_workload_runtime ? 'built_artifact' OR d.environment_workload_runtime->'source' ? 'build_artifact_id'))::boolean AS has_registry_producers
 FROM deployments d JOIN apps a ON a.id=d.app_id
 WHERE d.id=$1::uuid AND a.id=$2::uuid
  AND a.account_id=$3::uuid AND a.status<>'deleted'
@@ -25582,7 +25582,7 @@ func (q *Queries) HasScopedBuildExportPublication(ctx context.Context, db DBTX, 
 }
 
 const hasSourceBuildRootfs = `-- name: HasSourceBuildRootfs :one
-SELECT EXISTS(SELECT 1 FROM source_build_rootfs WHERE deployment_id=$1::uuid)::boolean AS present
+SELECT EXISTS(SELECT 1 FROM source_build_rootfs WHERE deployment_id=$1::uuid UNION ALL SELECT 1 FROM deployments d WHERE d.id=$1::uuid AND (d.environment_workload_runtime ? 'built_artifact' OR d.environment_workload_runtime->'source' ? 'build_artifact_id'))::boolean AS present
 `
 
 func (q *Queries) HasSourceBuildRootfs(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (bool, error) {
@@ -69691,6 +69691,7 @@ SELECT (jsonb_build_object(
     'deployment_runtime_scans_deployment_id_fkey', (SELECT count(*) FROM deployment_runtime_scans WHERE deployment_id = $1::uuid),
     'source_build_rootfs_current_deployment_id_fkey', (SELECT count(*) FROM source_build_rootfs_current WHERE deployment_id = $1::uuid),
     'source_build_rootfs_deployment_id_fkey', (SELECT count(*) FROM source_build_rootfs WHERE deployment_id = $1::uuid),
+    'environment_build_artifact_pins_candidate_id_fkey', (SELECT count(*) FROM environment_build_artifact_pins WHERE candidate_id = $1::uuid),
     -- Preview command runtimes (financial previews) hold a deployment while preparing or active.
     'financial_preview_command_runtimes_deployment_id_fkey', (SELECT count(*) FROM financial_preview_command_runtimes WHERE deployment_id = $1::uuid AND phase <> 'retired')
 ))::jsonb AS borrowers
