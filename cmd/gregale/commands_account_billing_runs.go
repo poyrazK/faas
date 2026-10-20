@@ -50,7 +50,7 @@ func cmdAccountBillingRun(args []string) int {
 	fs := newFlagSet("account billing-run "+verb, flag.ContinueOnError)
 	var f billingRunFlags
 	fs.StringVar(&f.month, "month", "", "UTC calendar month to bill, YYYY-MM (default: last month)")
-	fs.StringVar(&f.sources, "sources", "", "comma-separated app_consumers,platform_tenants (default: both)")
+	fs.StringVar(&f.sources, "sources", "", "comma-separated app_consumers,platform_tenants,product_customers (default: app_consumers,platform_tenants)")
 	fs.BoolVar(&f.noFinalize, "no-finalize", false, "only draft statements")
 	fs.StringVar(&f.export, "export", "", "none, stripe, paddle or lago (default none)")
 	fs.BoolVar(&f.noHoldOnGaps, "no-hold-on-gaps", false, "finalize consumers even when request telemetry shows unbilled requests")
