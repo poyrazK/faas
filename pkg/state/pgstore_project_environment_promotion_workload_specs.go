@@ -7,9 +7,11 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 func (s *PgStore) CreateDeploymentForEnvironmentPromotion(ctx context.Context, deployment Deployment, input ProjectEnvironmentPromotionWorkloadSpecInput) (Deployment, error) {
+	deployment = promotionDeploymentCreationMetadata(deployment)
 	created, _, err := s.createDeployment(ctx, deployment, nil, &input)
 	return created, err
 }
@@ -91,6 +93,17 @@ func preparePromotionWorkloadSpecTx(ctx context.Context, tx pgx.Tx, deployment D
 		promotion.ToEnvironment != deployment.Scope || promotion.TargetReleaseSetID != "" {
 		return ErrConflict
 	}
+	hasReleasePin, err := sqlc.New().HasDeploymentReleaseEnvironmentSnapshot(ctx, tx, input.SourceDeploymentID)
+	if err != nil {
+		return err
+	}
+	releaseCapture, err := readPromotionReleaseCaptureDB(ctx, tx, app.AccountID, promotion.ID)
+	if err != nil {
+		return err
+	}
+	if hasReleasePin && releaseCapture == nil {
+		return ErrReleaseConfigurationTransferUnsupported
+	}
 	var found int
 	if err := tx.QueryRow(ctx, `select 1 from project_environment_promotion_workloads w
 		join deployments d on d.id::text = w.source_deployment_id
@@ -131,6 +144,9 @@ func preparePromotionWorkloadSpecTx(ctx context.Context, tx pgx.Tx, deployment D
 		return ErrConflict
 	}
 	settings, err := WorkloadSettingsForPromotion(sourceSettings, targetSettings)
+	if releaseCapture != nil {
+		settings, err = SnapshotWorkloadSettingsForPromotion(sourceSettings, targetSettings, releaseCapture.DestinationConfig != nil)
+	}
 	if err != nil {
 		return err
 	}

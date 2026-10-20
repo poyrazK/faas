@@ -41,7 +41,7 @@ func deploymentCleanupFixture(t *testing.T) (*state.PgStore, *pgxpool.Pool, stat
 }
 
 func TestPgCloneDeploymentCleanupAtomicRecovery(t *testing.T) {
-	for _, fault := range []string{"none", "write", "foreign_key", "soft", "partition", "drain_plan", "stale", "artifact", "sidecar", "runtime_owner", "missing_workload", "other_capture"} {
+	for _, fault := range []string{"none", "write", "foreign_key", "submission_receipt", "release_env", "release_secrets", "soft", "partition", "drain_plan", "stale", "artifact", "sidecar", "runtime_owner", "missing_workload", "other_capture"} {
 		t.Run(fault, func(t *testing.T) {
 			s, pool, l, native := deploymentCleanupFixture(t)
 			id := native.Plan.Workloads[0].TargetDeploymentID
@@ -55,6 +55,12 @@ func TestPgCloneDeploymentCleanupAtomicRecovery(t *testing.T) {
 				_, err = pool.Exec(t.Context(), `CREATE FUNCTION reject_deployment_cleanup() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected receipt failure' USING ERRCODE='40001'; END $$; CREATE TRIGGER reject_deployment_cleanup BEFORE INSERT ON project_environment_clone_deployment_cleanups FOR EACH ROW EXECUTE FUNCTION reject_deployment_cleanup();`)
 			case "foreign_key":
 				_, err = pool.Exec(t.Context(), "INSERT INTO deployment_logs(deployment_id,seq,line) VALUES($1,987654321,'retained')", id)
+			case "submission_receipt":
+				_, err = pool.Exec(t.Context(), "INSERT INTO deployment_submission_receipts(app_id,attempt_id,deployment_id) VALUES($1,repeat('a',32),$2)", native.Plan.Workloads[0].AppID, id)
+			case "release_env":
+				_, err = pool.Exec(t.Context(), "INSERT INTO deployment_release_env_snapshots(deployment_id,values_json) VALUES($1,'[]')", id)
+			case "release_secrets":
+				_, err = pool.Exec(t.Context(), "INSERT INTO deployment_release_secret_snapshots(deployment_id,values_json) VALUES($1,'[]')", id)
 			case "soft":
 				_, err = pool.Exec(t.Context(), "INSERT INTO deployment_audit(deployment_id,kind,actor) VALUES($1,'deploy.created','retained')", id)
 			case "partition":

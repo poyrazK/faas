@@ -109,16 +109,6 @@ func (s *sourceRefSink) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// withResetJSONOutput flips the global jsonOutput flag for the
-// duration of t and restores it. Mirrors the pattern used in
-// commands_decompose_test.go for --json-mode tests.
-func withResetJSONOutput(t *testing.T, v bool) {
-	t.Helper()
-	prev := (*main.JsonOutput)
-	(*main.JsonOutput) = v
-	t.Cleanup(func() { (*main.JsonOutput) = prev })
-}
-
 func TestEnsureSourceRefAppTenantPolicy(t *testing.T) {
 	for _, existing := range []bool{false, true} {
 		t.Run(map[bool]string{false: "create", true: "existing"}[existing], func(t *testing.T) {
@@ -176,7 +166,7 @@ func TestCmdDeployRepoTenantPolicy(t *testing.T) {
 				defer srv.Close()
 				t.Setenv("FAAS_API", srv.URL)
 				t.Setenv("FAAS_TOKEN", "fp_live_x")
-				withResetJSONOutput(t, false)
+				main.WithResetJSONOutput(t, false)
 				_, restore := main.CaptureStdout(t)
 				defer restore()
 				flag := "--no-platform-tenant-required"
@@ -411,7 +401,7 @@ func TestCmdDeployRepoSourceRef(t *testing.T) {
 			// happy_path asserts on JSON stdout; retry_after /
 			// not_found assert on stderr (no stdout pin); the CI
 			// regression case wants a 202 + stdout JSON path.
-			withResetJSONOutput(t, true)
+			main.WithResetJSONOutput(t, true)
 
 			stdout, restore := main.CaptureStdout(t)
 			defer restore()
@@ -588,7 +578,7 @@ func TestCmdDeployRepoSourceRef_NoWait(t *testing.T) {
 	t.Cleanup(srv.Close)
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
-	withResetJSONOutput(t, false)
+	main.WithResetJSONOutput(t, false)
 
 	stdout, restoreOut := main.CaptureStdout(t)
 	defer restoreOut()
@@ -639,7 +629,7 @@ func TestCmdDeployRepoSourceRef_JSONOmitsPreflight(t *testing.T) {
 	t.Cleanup(srv.Close)
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
-	withResetJSONOutput(t, true)
+	main.WithResetJSONOutput(t, true)
 
 	stdout, restoreOut := main.CaptureStdout(t)
 	defer restoreOut()

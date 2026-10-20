@@ -63,6 +63,9 @@ func layerArtifactInstanceActive(raw string) bool {
 }
 
 func (m *MemStore) requireInstanceLayerArtifactsLocked(deploymentID, nextState string) error {
+	if nextState != "parked" && nextState != "stopped" && nextState != "failed" && m.migrationDeploymentRetiredLocked(deploymentID) {
+		return ErrConflict
+	}
 	if !layerArtifactInstanceActive(nextState) {
 		return nil
 	}
