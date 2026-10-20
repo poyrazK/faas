@@ -52,7 +52,8 @@ func (b *Builderd) trustedGitOpsCacheEntry(ctx context.Context, app state.App, d
 	if !known || cached.Bytes <= 0 || (cached.Bytes+(1<<20)-1)>>20 > int64(limits.AppLayerMaxMB) {
 		return CacheToolchain{}, false
 	}
-	if _, ok := b.store.(state.BuildExportPublicationStore); !ok || b.buildPublisher == nil || recipe.GitOpsReuseScope == "" {
+	// A deployment never borrows the export it produced itself.
+	if _, ok := b.store.(state.BuildExportPublicationStore); !ok || b.buildPublisher == nil || recipe.GitOpsReuseScope == "" || cached.Toolchain.OriginDeploymentID == dep.ID {
 		return CacheToolchain{}, false
 	}
 	if _, ok := b.store.(state.DeploymentRuntimeProducerInputStore); !ok {
