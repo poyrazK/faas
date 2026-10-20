@@ -87226,14 +87226,6 @@ ALTER TABLE ONLY public.product_control_billing_documents
 
 
 --
--- Name: product_control_billing_documents product_control_billing_documents_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.product_control_billing_documents
-    ADD CONSTRAINT product_control_billing_documents_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
-
-
---
 -- Name: product_control_billing_documents product_control_billing_documents_operation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -87522,14 +87514,6 @@ ALTER TABLE ONLY public.product_control_receipts
 
 
 --
--- Name: product_control_receipts product_control_receipts_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.product_control_receipts
-    ADD CONSTRAINT product_control_receipts_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
-
-
---
 -- Name: product_control_receipts product_control_receipts_app_id_revision_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -87551,14 +87535,6 @@ ALTER TABLE ONLY public.product_control_receipts
 
 ALTER TABLE ONLY public.product_control_revisions
     ADD CONSTRAINT product_control_revisions_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
-
-
---
--- Name: product_control_revisions product_control_revisions_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.product_control_revisions
-    ADD CONSTRAINT product_control_revisions_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --
