@@ -3447,6 +3447,32 @@
     "kind": "operational"
   },
   {
+    "table": "customer_operation_schedules",
+    "columns": [
+      "account_id",
+      "app_id",
+      "at",
+      "created_at",
+      "cron",
+      "definition_id",
+      "fires",
+      "id",
+      "input",
+      "kind",
+      "last_error",
+      "last_fired_at",
+      "last_operation_id",
+      "lease_token",
+      "lease_until",
+      "next_fire_at",
+      "platform_tenant_id",
+      "state",
+      "timezone",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "customer_operation_stream_leases",
     "columns": [
       "account_id",
@@ -3464,9 +3490,13 @@
       "created_at",
       "endpoint_id",
       "event_types",
+      "mode",
       "operation_name",
       "platform_tenant_id",
       "scope",
+      "signals",
+      "subject_id_from",
+      "subject_type",
       "updated_at",
       "version"
     ],
@@ -11217,7 +11247,9 @@
     "table": "outbound_ai_price_entries",
     "columns": [
       "cache_write_millicents_per_mtok",
+      "cached_input_audio_millicents_per_mtok",
       "cached_input_millicents_per_mtok",
+      "input_audio_millicents_per_mtok",
       "input_image_millicents_per_mtok",
       "input_millicents_per_mtok",
       "millicents_per_audio_minute",
@@ -11228,6 +11260,7 @@
       "millicents_per_video_second",
       "millicents_per_web_search",
       "model_prefix",
+      "output_audio_millicents_per_mtok",
       "output_image_millicents_per_mtok",
       "output_millicents_per_mtok",
       "price_list_id"
@@ -11243,6 +11276,16 @@
       "integration_id"
     ],
     "kind": "configuration"
+  },
+  {
+    "table": "outbound_ai_prompt_prefixes",
+    "columns": [
+      "integration_id",
+      "prefix_hash",
+      "previous_seen_at",
+      "seen_at"
+    ],
+    "kind": "operational"
   },
   {
     "table": "outbound_ai_replay_results",
@@ -11428,9 +11471,11 @@
       "error_requests",
       "file_searches",
       "images",
+      "input_audio_tokens",
       "input_tokens",
       "integration_id",
       "model",
+      "output_audio_tokens",
       "output_tokens",
       "prompt_cache_saved_millicents",
       "requests",

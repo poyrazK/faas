@@ -16,7 +16,7 @@ import (
 const aiCatalogUsage = "usage: gregale ai catalog <openai|anthropic|gemini|azure_openai|bedrock|vertex> [--model NAME]"
 
 // cmdAICatalog lists a provider's built-in prices, or the entry that prices
-// one model. Prices are EUR per million tokens.
+// one model. Prices are USD per million tokens.
 func cmdAICatalog(args []string) int {
 	fs := newFlagSet("ai catalog", flag.ContinueOnError)
 	model := fs.String("model", "", "show only the catalog entry that prices this model")
@@ -34,8 +34,7 @@ func cmdAICatalog(args []string) int {
 	if jsonOutput {
 		return jsonOut(writeJSON(catalog))
 	}
-	_, _ = fmt.Fprintf(osStdout, "Built-in %s prices (EUR per million tokens at %s USD per EUR; generated %s)\n",
-		catalog.AIProvider, catalog.USDPerEUR, catalog.Generated)
+	_, _ = fmt.Fprintf(osStdout, "Built-in %s prices (USD per million tokens; generated %s)\n", catalog.AIProvider, catalog.Generated)
 	if len(catalog.Entries) == 0 {
 		_, _ = fmt.Fprintln(osStdout, "(no catalog entry; set a price list with gregale ai prices set)")
 		return 0

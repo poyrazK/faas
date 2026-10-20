@@ -33,6 +33,8 @@ type operationMemory struct {
 	workflowStateReports   map[string]operationWorkflowStateReceipt
 	webhooks               *operationWebhookMemory
 	attemptInstances       map[operationAttemptKey]string
+	schedules              map[string]OperationSchedule
+	scheduleLeases         map[string]time.Time
 }
 
 // operationAttemptKey names one HTTP attempt of one execution generation.

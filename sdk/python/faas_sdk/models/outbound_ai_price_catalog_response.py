@@ -7,6 +7,8 @@ from typing import TYPE_CHECKING, Any, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..types import UNSET, Unset
+
 if TYPE_CHECKING:
     from ..models.outbound_ai_price_entry import OutboundAIPriceEntry
 
@@ -25,11 +27,14 @@ class OutboundAIPriceCatalogResponse:
     source: str
     """URL of the price data the catalog was generated from."""
     generated: datetime.date
-    usd_per_eur: str
-    """USD per EUR used for the conversion, as a decimal string."""
-    fx_source: str
-    """Source and date of the exchange rate."""
     entries: list[OutboundAIPriceEntry]
+    currency: str | Unset = UNSET
+    """ISO 4217 currency of every catalog price: the billing currency, USD. Absent from responses of releases
+    before ADR 20261019123822."""
+    usd_per_eur: str | Unset = UNSET
+    """Deprecated: always 1, since the catalog is in US dollars."""
+    fx_source: str | Unset = UNSET
+    """Deprecated: names no exchange rate."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -39,14 +44,16 @@ class OutboundAIPriceCatalogResponse:
 
         generated = self.generated.isoformat()
 
-        usd_per_eur = self.usd_per_eur
-
-        fx_source = self.fx_source
-
         entries = []
         for entries_item_data in self.entries:
             entries_item = entries_item_data.to_dict()
             entries.append(entries_item)
+
+        currency = self.currency
+
+        usd_per_eur = self.usd_per_eur
+
+        fx_source = self.fx_source
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -55,11 +62,15 @@ class OutboundAIPriceCatalogResponse:
                 "ai_provider": ai_provider,
                 "source": source,
                 "generated": generated,
-                "usd_per_eur": usd_per_eur,
-                "fx_source": fx_source,
                 "entries": entries,
             }
         )
+        if currency is not UNSET:
+            field_dict["currency"] = currency
+        if usd_per_eur is not UNSET:
+            field_dict["usd_per_eur"] = usd_per_eur
+        if fx_source is not UNSET:
+            field_dict["fx_source"] = fx_source
 
         return field_dict
 
@@ -74,10 +85,6 @@ class OutboundAIPriceCatalogResponse:
 
         generated = datetime.date.fromisoformat(d.pop("generated"))
 
-        usd_per_eur = d.pop("usd_per_eur")
-
-        fx_source = d.pop("fx_source")
-
         entries = []
         _entries = d.pop("entries")
         for entries_item_data in _entries:
@@ -85,13 +92,20 @@ class OutboundAIPriceCatalogResponse:
 
             entries.append(entries_item)
 
+        currency = d.pop("currency", UNSET)
+
+        usd_per_eur = d.pop("usd_per_eur", UNSET)
+
+        fx_source = d.pop("fx_source", UNSET)
+
         outbound_ai_price_catalog_response = cls(
             ai_provider=ai_provider,
             source=source,
             generated=generated,
+            entries=entries,
+            currency=currency,
             usd_per_eur=usd_per_eur,
             fx_source=fx_source,
-            entries=entries,
         )
 
         outbound_ai_price_catalog_response.additional_properties = d
