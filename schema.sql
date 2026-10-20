@@ -23336,8 +23336,10 @@ BEGIN
   OR policy.network_mode IS DISTINCT FROM 'contained' OR policy.simulation_plan IS NULL
   OR policy.sealed_at IS NOT NULL OR policy.recorder_closing OR policy.simulation_failed
   OR spec->>'run_id'<>policy.run_id OR spec->>'deployment_id'<>NEW.deployment_id::text
-  OR NEW.kind<>'manual' OR NEW.command_shell OR NEW.max_output_bytes<>65536
-  OR NOT EXISTS(SELECT 1 FROM deployments WHERE id=NEW.deployment_id AND app_id=NEW.app_id AND status='live')
+  OR NEW.command_shell OR NEW.max_output_bytes<>65536
+  OR NOT (NEW.kind='manual' AND EXISTS(SELECT 1 FROM deployments WHERE id=NEW.deployment_id AND app_id=NEW.app_id AND status='live')
+   OR NEW.kind='release' AND EXISTS(SELECT 1 FROM deployments d WHERE d.id=NEW.deployment_id AND d.app_id=NEW.app_id AND d.status='snapshotting'
+    AND scenario_rehearsal_release_matches(NEW.command,d.id,d.release_command,d.release_command_shell)))
   OR EXISTS(SELECT 1 FROM app_task_attach_sessions WHERE task_id=NEW.id) THEN
   RAISE EXCEPTION 'contained command admission is unavailable' USING ERRCODE='23514';
  END IF;
@@ -23430,10 +23432,27 @@ CREATE FUNCTION public.scenario_rehearsal_execution_active(target_app uuid, exec
  OR EXISTS(SELECT 1 FROM app_tasks t JOIN scenario_test_action_policies p ON p.app_id=t.app_id
   WHERE t.id=execution_id AND t.app_id=target_app AND t.account_id=p.account_id
   AND (deployment IS NULL OR t.deployment_id=deployment) AND t.status IN ('restoring','running')
-  AND t.kind='manual' AND NOT t.command_shell AND t.max_output_bytes=65536
+  AND t.kind IN ('manual','release') AND NOT t.command_shell AND t.max_output_bytes=65536
   AND scenario_rehearsal_command_spec(t.command)->>'run_id'=p.run_id
   AND scenario_rehearsal_command_spec(t.command)->>'deployment_id'=t.deployment_id::text
   AND p.network_mode='contained' AND p.simulation_plan IS NOT NULL AND p.sealed_at IS NULL));
+$$;
+
+
+--
+-- Name: scenario_rehearsal_release_matches(text[], uuid, text[], boolean); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.scenario_rehearsal_release_matches(command text[], deployment uuid, release_command text[], release_shell boolean) RETURNS boolean
+    LANGUAGE sql IMMUTABLE
+    AS $$
+ SELECT coalesce(cardinality(release_command)>0
+  AND (NOT release_shell OR cardinality(release_command)=1)
+  AND scenario_rehearsal_command_spec(command)->>'deployment_id'=deployment::text
+  AND NOT (scenario_rehearsal_command_spec(command) ? 'env')
+  AND NOT (scenario_rehearsal_command_spec(command) ? 'files')
+  AND scenario_rehearsal_command_spec(command)->'command'=to_jsonb(CASE WHEN release_shell
+   THEN ARRAY['/bin/sh','-lc',release_command[1]] ELSE release_command END),false);
 $$;
 
 

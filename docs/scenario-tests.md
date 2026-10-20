@@ -1328,8 +1328,12 @@ Database and object-store access require future isolated adapters. Ordinary app 
 live migration, managed application-standard native admission and GitOps
 qualification remain unsupported for contained apps. Explicit
 [contained rehearsal commands](#execute-rehearsal-commands-in-microvms) extend the
-boundary to deployment-attached command VMs. Builds, other job VMs and standalone
-Runs remain outside this boundary.
+boundary to deployment-attached command VMs. A candidate's own release command,
+for example a database migration, runs the same way: it executes as the run's
+pinned contained command against the isolated fixtures before the deployment
+primes. This requires `FAAS_REHEARSAL_COMMAND_EXECUTION=1` on imaged and apid;
+without it, the candidate fails with `release_phase_unavailable` rather than
+waiting. Builds, other job VMs and standalone Runs remain outside this boundary.
 
 The receipt records `actions.network: contained`; comparisons with a different
 network policy are inconclusive. Blocked requests are not simulated or captured
@@ -1582,7 +1586,15 @@ are outside the comparison scope. SQL fixtures are bounded to 64 KiB; each
 snapshot to 256 KiB and the full evidence document to 1 MiB. Overflow cannot pass.
 The collector samples lock waits approximately every 50ms; short waits may be
 missed. A command or startup migration failure remains a failed execution with
-its existing task/deployment diagnostics. Arbitrary detached work and external
+its existing task/deployment diagnostics.
+
+A deployment's release command runs against this fixture as the run's contained
+release, before the candidate primes (see
+[ADR-20261020150000](adr/20261020150000-rehearsal-contained-release-commands.md)).
+Data migrations and new supported-type columns on declared tables are compared.
+To compare which migrations ran, create the migration tool's tracking table in the
+fixture SQL and declare it. A migration that creates an undeclared table, type
+or extension makes the final capture inconclusive. Arbitrary detached work and external
 queues still require explicit recipe completion checks.
 
 The adapter is **disabled pending dedicated native qualification**. Operators

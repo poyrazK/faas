@@ -1,5 +1,6 @@
 # Architecture Decision Records
 
+- [ADR-20261020150000: Contained rehearsals run the candidate's release command](20261020150000-rehearsal-contained-release-commands.md)
 - [ADR-20261020090000: Rehearsal event capture](20261020090000-rehearsal-event-capture.md)
 - [ADR-20261019180000: Rehearsal side effects stay inside the run](20261019180000-rehearsal-side-effects-stay-inside-the-run.md)
 - [ADR-20261019120000: Rehearsal runtime hooks stay off ordinary hot paths](20261019120000-rehearsal-runtime-hot-path-isolation.md)

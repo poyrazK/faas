@@ -35,6 +35,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/openapidiff"
+	"github.com/onebox-faas/faas/pkg/rehearsalcommand"
 	"github.com/onebox-faas/faas/pkg/rootfs"
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/secretbox"
@@ -118,6 +119,9 @@ type Handler struct {
 	// serving VM is booted. It is an exact opt-in while app-task dispatch is
 	// still dark-launched in schedd.
 	releasePhaseEnabled bool
+	// rehearsalCommandsEnabled mirrors apid's FAAS_REHEARSAL_COMMAND_EXECUTION
+	// gate for the release commands imaged pins in contained rehearsals.
+	rehearsalCommandsEnabled bool
 	// deferLegacyParentBases lets the rolling pre-stage skip child bases the
 	// serving vmmd cannot materialize; the post-switch imaged stages them.
 	deferLegacyParentBases bool
@@ -515,6 +519,14 @@ func (h *Handler) WithHostingSmoke(fn func(context.Context, state.App, state.Dep
 // public-beta compute nodes enable this alongside WithHostingSmoke.
 func (h *Handler) WithHostingSmokeRequired(required bool) *Handler {
 	h.hostingSmokeRequired = required
+	return h
+}
+
+// WithRehearsalCommandsEnabled lets a contained rehearsal's release command run
+// as a pinned contained command (ADR-20261020150000). Disabled, such a
+// deployment fails closed with an actionable reason instead of stalling.
+func (h *Handler) WithRehearsalCommandsEnabled(enabled bool) *Handler {
+	h.rehearsalCommandsEnabled = enabled
 	return h
 }
 
@@ -1940,6 +1952,9 @@ func (h *Handler) handoffSnapshotPrime(ctx context.Context, app state.App, dep s
 			return h.failReleasePhaseUnavailable(ctx, dep)
 		}
 		task, err := h.ensureReleaseTask(ctx, app, dep)
+		if errors.Is(err, errReleaseDeploymentClosed) {
+			return nil
+		}
 		if err != nil {
 			return err
 		}
@@ -1970,11 +1985,19 @@ func (h *Handler) ensureReleaseTask(ctx context.Context, app state.App, dep stat
 	if !errors.Is(err, state.ErrNotFound) {
 		return state.AppTask{}, fmt.Errorf("imaged: load deployment release task: %w", err)
 	}
-	task, err = h.store.CreateAppTask(ctx, state.CreateAppTaskParams{
+	params := state.CreateAppTaskParams{
 		AccountID: app.AccountID, AppID: app.ID, DeploymentID: dep.ID,
 		Kind: state.AppTaskKindRelease, Command: append([]string(nil), dep.ReleaseCommand...),
 		CommandShell: dep.ReleaseCommandShell,
-	})
+	}
+	contained, err := h.prepareContainedRelease(ctx, app, dep, &params)
+	if err != nil {
+		return state.AppTask{}, err
+	}
+	task, err = h.store.CreateAppTask(ctx, params)
+	if contained && err != nil && !errors.Is(err, state.ErrConflict) && state.IsScenarioCommandAdmissionRefused(err) {
+		return state.AppTask{}, h.failContainedRelease(ctx, dep, "the rehearsal run refused the release command: "+err.Error())
+	}
 	if errors.Is(err, state.ErrConflict) {
 		// A duplicate snapshot/build notification can race another imaged
 		// process. The partial unique index is the admission fence; re-read the
@@ -1986,6 +2009,49 @@ func (h *Handler) ensureReleaseTask(ctx context.Context, app state.App, dep stat
 	}
 	h.log.Info("imaged: release task admitted", "deployment_id", dep.ID, "task_id", task.ID)
 	return task, nil
+}
+
+// errReleaseDeploymentClosed reports that release admission already failed the
+// deployment durably; there is nothing left to wait for or prime.
+var errReleaseDeploymentClosed = errors.New("imaged: release admission closed the deployment")
+
+// prepareContainedRelease pins the release of an app enrolled in a contained
+// rehearsal as that run's contained command (ADR-20261020150000): it executes
+// in a fenced command VM against the run's isolated fixtures, with a durable
+// receipt, instead of being refused by containment admission.
+func (h *Handler) prepareContainedRelease(ctx context.Context, app state.App, dep state.Deployment, params *state.CreateAppTaskParams) (bool, error) {
+	policies, ok := h.store.(interface {
+		ScenarioRehearsalNetworkRun(context.Context, string) (string, error)
+	})
+	if !ok {
+		return false, nil
+	}
+	runID, err := policies.ScenarioRehearsalNetworkRun(ctx, app.ID)
+	if err != nil {
+		return false, fmt.Errorf("imaged: read rehearsal containment for release: %w", err)
+	}
+	if runID == "" {
+		return false, nil
+	}
+	if !h.rehearsalCommandsEnabled {
+		return true, h.failContainedRelease(ctx, dep, "release commands in contained rehearsals require FAAS_REHEARSAL_COMMAND_EXECUTION=1 on imaged and apid")
+	}
+	envelope, err := rehearsalcommand.ContainedRelease(runID, dep.ID, dep.ReleaseCommand, dep.ReleaseCommandShell)
+	if err != nil {
+		return true, h.failContainedRelease(ctx, dep, "the release command cannot be pinned as a contained rehearsal command: "+err.Error())
+	}
+	params.Command, params.CommandShell, params.MaxOutputBytes = envelope, false, rehearsalcommand.MaxReceiptBytes
+	return true, nil
+}
+
+func (h *Handler) failContainedRelease(ctx context.Context, dep state.Deployment, detail string) error {
+	failed, err := h.store.SetDeploymentFailed(ctx, dep.ID, api.CodeReleasePhaseUnavailable, detail)
+	if err != nil {
+		return fmt.Errorf("imaged: fail contained rehearsal release: %w", err)
+	}
+	h.log.Warn("imaged: contained rehearsal release cannot run; failing candidate", "deployment_id", dep.ID, "reason", detail)
+	h.notifyDeploymentState(ctx, failed.AppID, failed.ID, state.DeployFailed)
+	return errReleaseDeploymentClosed
 }
 
 // applyReleaseTaskOutcome returns wait=true when deployment priming must not
