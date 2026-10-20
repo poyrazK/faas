@@ -105,6 +105,11 @@ The measurement harness is gated behind the existing
 are referenced from the runbook (Phase D) and the property test
 (Phase E) acceptance criteria.
 
+Event-driven work (event publish, fanout, the invocation drain and
+webhook delivery) has its own control-plane benchmark,
+`make bench-event-substrate` (spec Appendix D V12); see
+[event-substrate-benchmark.md](event-substrate-benchmark.md).
+
 ## §4 Multi-host extrapolation (caveated)
 
 This section projects the §3 numbers across multi-host fleets. Every

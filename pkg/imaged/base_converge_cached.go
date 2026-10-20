@@ -20,8 +20,8 @@ package imaged
 import (
 	"context"
 
-	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/storage"
+	"github.com/onebox-faas/faas/pkg/storagekey"
 )
 
 // cachedBaseRuntimes lists the runtime bases a node can hold without having
@@ -44,7 +44,7 @@ func (h *Handler) rememberCachedBases(ctx context.Context, be storage.StorageBac
 		if ctx.Err() != nil {
 			return
 		}
-		baseKey := sched.BaseKeyForArch(runtime, arch)
+		baseKey := storagekey.BaseForArch(runtime, arch)
 		s := &h.baseConvergence
 		s.mu.Lock()
 		_, staged := s.staged[baseKey]
@@ -66,7 +66,7 @@ func (h *Handler) rememberCachedBases(ctx context.Context, be storage.StorageBac
 			h.log.Debug("imaged: base convergence: skip cached base", "key", baseKey, "err", err)
 			continue
 		}
-		h.rememberStagedBase(ref, baseKey, sched.BaseDigestKeyForArch(runtime, arch))
+		h.rememberStagedBase(ref, baseKey, storagekey.BaseDigestForArch(runtime, arch))
 		h.log.Info("imaged: base convergence: tracking cached base staged by an earlier daemon",
 			"key", baseKey, "ref", ref)
 	}

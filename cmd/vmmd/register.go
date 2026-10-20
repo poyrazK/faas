@@ -52,8 +52,8 @@ import (
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/nodereport"
 	"github.com/onebox-faas/faas/pkg/pki"
-	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -286,7 +286,7 @@ func defaultDetectOverlayIP(ctx context.Context, cfg ComputeNodeConfig) (string,
 //
 // The row is keyed by (compute_node_id, key_id); both vmmd and
 // schedd compute key_id the same way (SHA-256(SPKI) hex, lowercase)
-// via pkg/sched.KeyIDForPublicKey. ON CONFLICT DO NOTHING means a
+// via pkg/nodereport.KeyID. ON CONFLICT DO NOTHING means a
 // re-register (vmmd restart, key rotation mid-flight) is
 // idempotent — a future runbook (issue #316) will own the rotation
 // ceremony; this function is the per-startup no-op-on-repeat.
@@ -369,10 +369,10 @@ func publicKeyPEM(pub *ecdsa.PublicKey) ([]byte, error) {
 }
 
 // Compile-time guard: registerComputeNodeKey depends on
-// sched.KeyIDForPublicKey existing; pin it via an unused-import
+// nodereport.KeyID existing; pin it via an unused-import
 // reference so a future refactor that drops the helper surfaces
 // at build time rather than silently producing an empty key_id.
-var _ = sched.KeyIDForPublicKey
+var _ = nodereport.KeyID
 
 // vmmdServerCertPath returns the on-disk path to the vmmd server
 // leaf cert (the cert that vmmd presents to inbound clients —

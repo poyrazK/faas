@@ -3205,7 +3205,7 @@ INSERT INTO request_telemetry (
     node_id, region, commit_sha, deployment_tag, deployment_created_at, image_digest,
     platform_tenant_id,
     guest_cpu_time_ms, guest_peak_rss_mb, guest_resource_usage_available, flag_evidence,
-    content_outcome
+    content_outcome, trace_inferred
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8, $9, $10, $11,
@@ -3225,7 +3225,8 @@ INSERT INTO request_telemetry (
     sqlc.arg('guest_peak_rss_mb')::int,
     sqlc.arg('guest_resource_usage_available')::bool,
     COALESCE(NULLIF(sqlc.arg('flag_evidence_json')::text, '')::jsonb, '[]'::jsonb),
-    sqlc.arg('content_outcome')::text
+    sqlc.arg('content_outcome')::text,
+    sqlc.arg('trace_inferred')::bool
 );
 
 -- name: ListRequestTelemetryByPlatformTenant :many
@@ -3423,7 +3424,7 @@ SELECT id, deployment_id, route, method, status, latency_ms, count,
        cold_boot, trace_id, received_at, spans_summary, wake_id, instance_id,
        guest_duration_ms, guest_runtime, guest_outcome, guest_error_class,
        consumer_id, node_id, region, commit_sha, deployment_tag,
-       deployment_created_at, image_digest
+       deployment_created_at, image_digest, trace_inferred
 FROM request_telemetry
 WHERE app_id = sqlc.arg(app_id)
   AND (id::text = sqlc.arg(identifier)::text OR trace_id = sqlc.arg(identifier)::text)
@@ -3442,7 +3443,7 @@ SELECT DISTINCT ON (app_id)
        cold_boot, trace_id, received_at, spans_summary, wake_id, instance_id,
        guest_duration_ms, guest_runtime, guest_outcome, guest_error_class,
        consumer_id, node_id, region, commit_sha, deployment_tag,
-       deployment_created_at, image_digest
+       deployment_created_at, image_digest, trace_inferred
 FROM request_telemetry
 WHERE account_id = sqlc.arg(account_id)
   AND trace_id = sqlc.arg(trace_id)::text
@@ -5420,6 +5421,12 @@ UPDATE object_storage_multipart_uploads SET state='aborting',completion_error_co
  completion_versions_observed=completion_versions_observed OR sqlc.arg(versions_observed)::boolean,
  lease_token=NULL,lease_until=NULL,attempt_count=0,last_error_code=sqlc.arg(code),retry_at=now(),updated_at=now()
 WHERE id=sqlc.arg(id) AND lease_token=sqlc.arg(token) AND completion_dispatched AND state='completing_conditional';
+
+-- name: ObjectS3CredentialLockNamespace :exec
+-- The credential's account_id foreign key takes this KEY SHARE lock anyway;
+-- taking it before the bucket keeps object storage's account-before-bucket
+-- lock order (ADR-533).
+SELECT id FROM resource_namespaces WHERE id=$1 FOR KEY SHARE;
 
 -- name: ObjectS3CredentialLockBucket :one
 SELECT b.id FROM object_buckets b

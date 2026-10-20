@@ -11,7 +11,7 @@ can carry.
 A binary's inputs are the files `go build` reads for it: the Go, cgo,
 assembly and embedded files of every module package in its import closure,
 loaded with `go list -deps` under the release build configuration
-(linux/amd64, CGO off, `-tags metal` for daemons). Test files and files a
+(linux/amd64, CGO off, the Makefile's DAEMON_TAGS for daemons). Test files and files a
 build constraint excludes are not inputs. go.mod, go.sum and the Makefile's
 release build recipe are inputs of every binary. A deleted file under a
 package in the closure counts too, since the closure is loaded at head.
@@ -92,7 +92,7 @@ LIST_FIELDS = ",".join([
     "HFiles", "SysoFiles", "EmbedFiles", "Module", "Error", "DepsErrors",
 ])
 FILE_FIELDS = ("GoFiles", "CgoFiles", "SFiles", "CFiles", "HFiles", "SysoFiles", "EmbedFiles")
-RECIPE_VARS = re.compile(r"^(GO|GO_BUILD_FLAGS|LDFLAGS|BUILD_CGO_ENABLED|DAEMONS|CLIS)\s*[:?+]?=")
+RECIPE_VARS = re.compile(r"^(GO|GO_BUILD_FLAGS|DAEMON_TAGS|LDFLAGS|BUILD_CGO_ENABLED|DAEMONS|CLIS)\s*[:?+]?=")
 RECIPE_TARGETS = ("build-release-batch:", "build-release-unit:")
 # How many paths a flag lists in the report; the count is always complete.
 FLAG_PATH_LIMIT = 20
@@ -123,6 +123,13 @@ def load_config(path=DEFAULT_CONFIG):
         if group not in HOST_GROUP_ROLES:
             raise ValueError(f"{path}: host_config converges unknown host group {group!r}")
     return config
+
+
+def daemon_tags(text):
+    """The build tags release builds give daemons: the Makefile's DAEMON_TAGS
+    (comma-separated), else metal."""
+    m = re.search(r"^DAEMON_TAGS\s*:=\s*(\S+)\s*$", text, re.M)
+    return m.group(1).split(",") if m else ["metal"]
 
 
 def makefile_list(text, var):
@@ -211,9 +218,9 @@ def closure(main, graph):
     return dirs, files
 
 
-def binary_closures(daemons, clis, module, root="."):
+def binary_closures(daemons, clis, module, root=".", tags_for_daemons=("metal",)):
     out = {}
-    for names, tags in ((daemons, ["metal"]), (clis, [])):
+    for names, tags in ((daemons, list(tags_for_daemons)), (clis, [])):
         if not names:
             continue
         mains = [f"./cmd/{n}" for n in names]
@@ -533,7 +540,7 @@ def report(base, head, config_path=DEFAULT_CONFIG, root="."):
     with open(os.path.join(root, "Makefile"), encoding="utf-8") as fh:
         makefile = fh.read()
     daemons, clis = makefile_list(makefile, "DAEMONS"), makefile_list(makefile, "CLIS")
-    closures = binary_closures(daemons, clis, module_path(root), root)
+    closures = binary_closures(daemons, clis, module_path(root), root, daemon_tags(makefile))
     commits = range_commits(base_sha, head_sha, root)
     exists = set(git("ls-tree", "-r", "--name-only", head_sha, root=root).splitlines())
     directory = config.get("migrations_dir")
