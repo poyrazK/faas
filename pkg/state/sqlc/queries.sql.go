@@ -91287,6 +91287,27 @@ func (q *Queries) WorkflowResumeSteps(ctx context.Context, db DBTX, runID pgtype
 	return items, nil
 }
 
+const workflowRunDueExists = `-- name: WorkflowRunDueExists :one
+SELECT EXISTS(
+ SELECT 1 FROM workflow_runs candidate
+ WHERE candidate.status IN ('pending','running','awaiting_event')
+ AND ((candidate.status IN ('pending','awaiting_event') AND candidate.scheduled_for<=now())
+  OR (candidate.status='running' AND coalesce(candidate.lease_until,candidate.updated_at+($1::bigint*interval '1 millisecond'))<=now()))
+)::boolean AS due
+`
+
+// Cheap superset of NextFairDueWorkflowRun's due predicate, read before the
+// dispatch transaction. Every scheduler polls several times a second and the
+// fairness lock serialized them even when nothing was due (production-us:
+// 11.5 lock acquisitions a second averaging 12.8 ms of waiting). A run the
+// fair selection could claim always matches this, so "false" is safe to skip.
+func (q *Queries) WorkflowRunDueExists(ctx context.Context, db DBTX, staleMs int64) (bool, error) {
+	row := db.QueryRow(ctx, workflowRunDueExists, staleMs)
+	var due bool
+	err := row.Scan(&due)
+	return due, err
+}
+
 const writeBindingReleasePolicy = `-- name: WriteBindingReleasePolicy :one
 INSERT INTO app_binding_release_policies(app_id,scope,mode,revision,max_age_seconds,require_application_ack,reason,object_storage_requirements,queue_requirements)
 SELECT a.id,$1,$2,$3::bigint+1,$4,$5,$6,$7::jsonb,$8::jsonb

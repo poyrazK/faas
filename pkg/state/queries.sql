@@ -19188,6 +19188,19 @@ SELECT pg_advisory_xact_lock(hashtextextended('workflow-dispatch-fairness',0));
 -- name: LockWorkflowRunConcurrency :exec
 SELECT pg_advisory_xact_lock(hashtextextended('workflow-run-concurrency:' || sqlc.arg(app_id)::uuid::text || ':' || sqlc.arg(workflow_name)::text,0));
 
+-- Cheap superset of NextFairDueWorkflowRun's due predicate, read before the
+-- dispatch transaction. Every scheduler polls several times a second and the
+-- fairness lock serialized them even when nothing was due (production-us:
+-- 11.5 lock acquisitions a second averaging 12.8 ms of waiting). A run the
+-- fair selection could claim always matches this, so "false" is safe to skip.
+-- name: WorkflowRunDueExists :one
+SELECT EXISTS(
+ SELECT 1 FROM workflow_runs candidate
+ WHERE candidate.status IN ('pending','running','awaiting_event')
+ AND ((candidate.status IN ('pending','awaiting_event') AND candidate.scheduled_for<=now())
+  OR (candidate.status='running' AND coalesce(candidate.lease_until,candidate.updated_at+(sqlc.arg(stale_ms)::bigint*interval '1 millisecond'))<=now()))
+)::boolean AS due;
+
 -- name: NextFairDueWorkflowRun :one
 SELECT candidate.id,candidate.status,candidate.app_id,candidate.platform_tenant_id,candidate.workflow_name
 FROM workflow_runs candidate
