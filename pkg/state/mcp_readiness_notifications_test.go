@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"encoding/json"
@@ -11,36 +11,37 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestMCPReadinessNotificationRecovery(t *testing.T) {
-	check := func(t *testing.T, s Store) {
+	check := func(t *testing.T, s state.Store) {
 		ctx := t.Context()
 		account, err := s.CreateAccount(ctx, "notification-recovery@example.com", api.PlanPro)
 		if err != nil {
 			t.Fatal(err)
 		}
-		app, err := s.CreateApp(ctx, App{AccountID: account.ID, Slug: "notification-recovery", Type: AppTypeApp, Status: AppActive})
+		app, err := s.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "notification-recovery", Type: state.AppTypeApp, Status: state.AppActive})
 		if err != nil {
 			t.Fatal(err)
 		}
-		outbox := s.(MCPReadinessOutboxStore)
-		source := s.(MCPReadinessNotificationStore)
-		windows := s.(MCPReadinessMaintenanceStore)
+		outbox := s.(state.MCPReadinessOutboxStore)
+		source := s.(state.MCPReadinessNotificationStore)
+		windows := s.(state.MCPReadinessMaintenanceStore)
 		now := time.Now().UTC().Truncate(time.Microsecond)
-		makeRule := func(name, scope string) AlertRule {
+		makeRule := func(name, scope string) state.AlertRule {
 			t.Helper()
-			r, err := s.CreateAlertRule(ctx, AlertRule{AccountID: account.ID, AppID: app.ID, Name: name, Enabled: true, Metric: AlertMetric(api.MetricMCPReadinessUnhealthy), Comparison: AlertGt, Threshold: 0, WindowSpec: AlertWindow5m, Action: AlertActionWebhook, WebhookURL: "https://example.com/hook", WebhookSecretSealed: []byte("private-secret"), CooldownMinutes: 5, MCPReadinessScope: scope})
+			r, err := s.CreateAlertRule(ctx, state.AlertRule{AccountID: account.ID, AppID: app.ID, Name: name, Enabled: true, Metric: state.AlertMetric(api.MetricMCPReadinessUnhealthy), Comparison: state.AlertGt, Threshold: 0, WindowSpec: state.AlertWindow5m, Action: state.AlertActionWebhook, WebhookURL: "https://example.com/hook", WebhookSecretSealed: []byte("private-secret"), CooldownMinutes: 5, MCPReadinessScope: scope})
 			if err != nil {
 				t.Fatal(err)
 			}
 			return r
 		}
-		observe := func(rule AlertRule, at time.Time, breach bool) MCPReadinessTransition {
+		observe := func(rule state.AlertRule, at time.Time, breach bool) state.MCPReadinessTransition {
 			t.Helper()
 			coverage := strings.Repeat("a", 64)
 			p, _ := json.Marshal(map[string]any{"metric": api.MetricMCPReadinessUnhealthy, "mcp_readiness_coverage_fingerprint": coverage, "mcp_readiness_scopes": []string{"staging"}, "mcp_readiness": []api.MCPReadinessMonitorStatus{}})
-			v, err := outbox.RecordMCPReadinessObservation(ctx, MCPReadinessObservation{Rule: rule, At: at, Breached: breach, Coverage: coverage, Payload: p, ObservedValue: 1})
+			v, err := outbox.RecordMCPReadinessObservation(ctx, state.MCPReadinessObservation{Rule: rule, At: at, Breached: breach, Coverage: coverage, Payload: p, ObservedValue: 1})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -65,7 +66,7 @@ func TestMCPReadinessNotificationRecovery(t *testing.T) {
 		}
 		conflict := func(r api.MCPReadinessNotificationAction, at time.Time) {
 			t.Helper()
-			if _, err := source.ActMCPReadinessNotification(ctx, account.ID, app.ID, r, at); !errors.Is(err, ErrConflict) {
+			if _, err := source.ActMCPReadinessNotification(ctx, account.ID, app.ID, r, at); !errors.Is(err, state.ErrConflict) {
 				t.Fatal("expected conflict", r, err)
 			}
 		}
@@ -84,7 +85,7 @@ func TestMCPReadinessNotificationRecovery(t *testing.T) {
 		}
 		conflict(request(first.EventID, q.Head.DeliveryVersion, "abandon"), now)
 		done := now.Add(time.Second)
-		if err = s.UpdateAlertDeliveryStatus(ctx, claim.Delivery.ID, AlertDeliveryFailed, 1, 503, "private-response-secret", nil); err != nil {
+		if err = s.UpdateAlertDeliveryStatus(ctx, claim.Delivery.ID, state.AlertDeliveryFailed, 1, 503, "private-response-secret", nil); err != nil {
 			t.Fatal(err)
 		}
 		if err = outbox.CompleteMCPReadinessDelivery(ctx, first.EventID, claim.Token, done); err != nil {
@@ -155,11 +156,11 @@ func TestMCPReadinessNotificationRecovery(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err = outbox.CompleteMCPReadinessDelivery(ctx, again.EventID, again.Token, expired); !errors.Is(err, ErrConflict) {
+		if err = outbox.CompleteMCPReadinessDelivery(ctx, again.EventID, again.Token, expired); !errors.Is(err, state.ErrConflict) {
 			t.Fatal("abandonment failed to fence worker", err)
 		}
-		if pg, ok := s.(*PgStore); ok {
-			source = NewPgStore(pg.pool.Pool)
+		if pg, ok := s.(*state.PgStore); ok {
+			source = state.NewPgStore((*pg.Pool()).Pool)
 		} // Durable receipt survives a new store instance.
 		duplicate, err := source.ActMCPReadinessNotification(ctx, account.ID, app.ID, abandon, expired.Add(time.Hour))
 		if err != nil || duplicate != abandoned {
@@ -169,7 +170,7 @@ func TestMCPReadinessNotificationRecovery(t *testing.T) {
 		if err != nil || !won || next.EventID != recovered.EventID {
 			t.Fatal("queue did not advance", next, won, err)
 		}
-		if err = s.UpdateAlertDeliveryStatus(ctx, next.Delivery.ID, AlertDeliveryDelivered, 1, 200, "", &expired); err != nil {
+		if err = s.UpdateAlertDeliveryStatus(ctx, next.Delivery.ID, state.AlertDeliveryDelivered, 1, 200, "", &expired); err != nil {
 			t.Fatal(err)
 		}
 		if err = outbox.CompleteMCPReadinessDelivery(ctx, next.EventID, next.Token, expired); err != nil {
@@ -183,7 +184,7 @@ func TestMCPReadinessNotificationRecovery(t *testing.T) {
 			t.Fatal("old retry receipt changed", duplicate, err)
 		}
 		conflict(request(first.EventID, abandoned.DeliveryVersion, "retry"), expired)
-		history, err := s.(MCPReadinessIncidentStore).ListMCPReadinessIncidents(ctx, account.ID, app.ID, "staging", "", 20)
+		history, err := s.(state.MCPReadinessIncidentStore).ListMCPReadinessIncidents(ctx, account.ID, app.ID, "staging", "", 20)
 		if err != nil || len(history.Events) != 2 {
 			t.Fatal(history, err)
 		}
@@ -195,7 +196,7 @@ func TestMCPReadinessNotificationRecovery(t *testing.T) {
 		pausedRule := makeRule("paused", "staging")
 		paused := observe(pausedRule, now, true)
 		disabled := false
-		if _, err = s.UpdateAlertRule(ctx, pausedRule.ID, UpdateAlertRuleParams{Enabled: &disabled}); err != nil {
+		if _, err = s.UpdateAlertRule(ctx, pausedRule.ID, state.UpdateAlertRuleParams{Enabled: &disabled}); err != nil {
 			t.Fatal(err)
 		}
 		q = health(pausedRule.ID, now)
@@ -204,7 +205,7 @@ func TestMCPReadinessNotificationRecovery(t *testing.T) {
 		}
 		conflict(request(paused.EventID, q.Head.DeliveryVersion, "abandon"), now)
 		enabled := true
-		if _, err = s.UpdateAlertRule(ctx, pausedRule.ID, UpdateAlertRuleParams{Enabled: &enabled}); err != nil {
+		if _, err = s.UpdateAlertRule(ctx, pausedRule.ID, state.UpdateAlertRuleParams{Enabled: &enabled}); err != nil {
 			t.Fatal(err)
 		}
 		conflict(request(paused.EventID, 0, "retry"), now) // Unattempted work cannot be retried.
@@ -223,7 +224,7 @@ func TestMCPReadinessNotificationRecovery(t *testing.T) {
 		for err := range decisions {
 			if err == nil {
 				successes++
-			} else if errors.Is(err, ErrConflict) {
+			} else if errors.Is(err, state.ErrConflict) {
 				conflicts++
 			} else {
 				t.Fatal(err)
@@ -257,7 +258,7 @@ func TestMCPReadinessNotificationRecovery(t *testing.T) {
 			}
 		}
 
-		history, err = s.(MCPReadinessIncidentStore).ListMCPReadinessIncidents(ctx, account.ID, app.ID, "staging", "", 20)
+		history, err = s.(state.MCPReadinessIncidentStore).ListMCPReadinessIncidents(ctx, account.ID, app.ID, "staging", "", 20)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -292,23 +293,23 @@ func TestMCPReadinessNotificationRecovery(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err = source.ListMCPReadinessNotificationQueues(ctx, foreign.ID, app.ID, "", "", 20, now); !errors.Is(err, ErrNotFound) {
+		if _, err = source.ListMCPReadinessNotificationQueues(ctx, foreign.ID, app.ID, "", "", 20, now); !errors.Is(err, state.ErrNotFound) {
 			t.Fatal("foreign health", err)
 		}
-		if _, err = source.ActMCPReadinessNotification(ctx, foreign.ID, app.ID, retry, now); !errors.Is(err, ErrNotFound) {
+		if _, err = source.ActMCPReadinessNotification(ctx, foreign.ID, app.ID, retry, now); !errors.Is(err, state.ErrNotFound) {
 			t.Fatal("foreign receipt", err)
 		}
 		bad := request(uuid.NewString(), 0, "abandon")
-		if _, err = source.ActMCPReadinessNotification(ctx, account.ID, app.ID, bad, now); !errors.Is(err, ErrNotFound) {
+		if _, err = source.ActMCPReadinessNotification(ctx, account.ID, app.ID, bad, now); !errors.Is(err, state.ErrNotFound) {
 			t.Fatal("unknown event", err)
 		}
 		if err = s.DeleteAlertRule(ctx, rule.ID); err != nil {
 			t.Fatal(err)
 		}
-		if _, err = source.ActMCPReadinessNotification(ctx, account.ID, app.ID, retry, now); !errors.Is(err, ErrNotFound) {
+		if _, err = source.ActMCPReadinessNotification(ctx, account.ID, app.ID, retry, now); !errors.Is(err, state.ErrNotFound) {
 			t.Fatal("deleted rule kept receipt", err)
 		}
 	}
-	t.Run("memory", func(t *testing.T) { check(t, NewMemStore()) })
-	t.Run("postgres", func(t *testing.T) { check(t, NewPgStore(pgtest.OpenMigrated(t))) })
+	t.Run("memory", func(t *testing.T) { check(t, state.NewMemStore()) })
+	t.Run("postgres", func(t *testing.T) { check(t, state.NewPgStore(pgtest.OpenMigrated(t))) })
 }

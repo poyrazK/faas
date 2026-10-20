@@ -1,16 +1,17 @@
-package state
+package state_test
 
 import (
 	"context"
 	"errors"
+	"github.com/onebox-faas/faas/pkg/state"
 	"net/netip"
 	"testing"
 )
 
 func TestMemStorePrivateNetworkAttachmentLifecycle(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	ctx := context.Background()
-	in := AppPrivateNetworkAttachment{
+	in := state.AppPrivateNetworkAttachment{
 		AccountID: "acct-1", AppID: "app-1", NetworkID: "prod-vpc", Region: "fra1",
 		CIDRs:        []netip.Prefix{netip.MustParsePrefix("10.20.0.0/16")},
 		AllowedCIDRs: []netip.Prefix{netip.MustParsePrefix("10.20.8.0/24")}, Status: "pending",
@@ -33,7 +34,7 @@ func TestMemStorePrivateNetworkAttachmentLifecycle(t *testing.T) {
 	if len(read.AllowedCIDRs) != 1 || read.AllowedCIDRs[0].String() != "10.20.8.0/24" {
 		t.Fatalf("allowed CIDRs did not round-trip: %v", read.AllowedCIDRs)
 	}
-	updated, err := m.UpsertAppPrivateNetworkAttachment(ctx, AppPrivateNetworkAttachment{
+	updated, err := m.UpsertAppPrivateNetworkAttachment(ctx, state.AppPrivateNetworkAttachment{
 		AccountID: "acct-1", AppID: "app-1", NetworkID: "prod-vpc-2", Region: "ams1",
 		CIDRs: []netip.Prefix{netip.MustParsePrefix("10.40.0.0/16")}, Status: "ready",
 	})
@@ -46,25 +47,25 @@ func TestMemStorePrivateNetworkAttachmentLifecycle(t *testing.T) {
 	if err := m.DeleteAppPrivateNetworkAttachment(ctx, "acct-1", "app-1"); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
-	if _, err := m.GetAppPrivateNetworkAttachment(ctx, "acct-1", "app-1"); !errors.Is(err, ErrNotFound) {
+	if _, err := m.GetAppPrivateNetworkAttachment(ctx, "acct-1", "app-1"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("get after delete err = %v, want ErrNotFound", err)
 	}
 }
 
 func TestMemStorePrivateNetworkAttachmentAccountIsolation(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	ctx := context.Background()
-	_, err := m.UpsertAppPrivateNetworkAttachment(ctx, AppPrivateNetworkAttachment{
+	_, err := m.UpsertAppPrivateNetworkAttachment(ctx, state.AppPrivateNetworkAttachment{
 		AccountID: "acct-1", AppID: "app-1", NetworkID: "prod-vpc", Region: "fra1",
 		CIDRs: []netip.Prefix{netip.MustParsePrefix("10.20.0.0/16")},
 	})
 	if err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
-	if _, err := m.GetAppPrivateNetworkAttachment(ctx, "acct-2", "app-1"); !errors.Is(err, ErrNotFound) {
+	if _, err := m.GetAppPrivateNetworkAttachment(ctx, "acct-2", "app-1"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("cross-account get err = %v, want ErrNotFound", err)
 	}
-	if err := m.DeleteAppPrivateNetworkAttachment(ctx, "acct-2", "app-1"); !errors.Is(err, ErrNotFound) {
+	if err := m.DeleteAppPrivateNetworkAttachment(ctx, "acct-2", "app-1"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("cross-account delete err = %v, want ErrNotFound", err)
 	}
 }

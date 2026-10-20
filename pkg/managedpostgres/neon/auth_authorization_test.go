@@ -390,6 +390,69 @@ func TestSQLActiveOrganizationIsChosenByAMemberForTheirSession(t *testing.T) {
 	deniedSQL(t, f.connect(t, f.readonly.name), `SELECT gregale_auth.set_active_organization('`+org.String()+`')`)
 }
 
+// TestSQLOrganizationAuditLogRecordsChangesAndSignIns pins sql/0020: every
+// membership, invitation and domain change is recorded with its actor, an
+// organization's deletion cascades cleanly, and audit:read gates reading.
+func TestSQLOrganizationAuditLogRecordsChangesAndSignIns(t *testing.T) {
+	f := newCredentialFixture(t)
+	ctx := context.Background()
+	_, owner := installAuthorization(t, f)
+	alice, bob := newAuthUser(t, owner, "alice@example.test"), newAuthUser(t, owner, "bob@example.test")
+	actAs(ctx, t, owner, alice)
+	var org uuid.UUID
+	if err := owner.QueryRow(ctx, `SELECT id FROM gregale_auth.create_organization('acme', 'Acme')`).Scan(&org); err != nil {
+		t.Fatal(err)
+	}
+	executeSQL(t, owner, `SELECT gregale_auth.invite($1, 'bob@example.test', 'member', $2, 3600)`, org, tokenHash(t))
+	executeSQL(t, owner, `INSERT INTO gregale_auth.memberships (org_id, user_id, role) VALUES ($1, $2, 'member')`, org, bob.id)
+	executeSQL(t, owner, `SELECT gregale_auth.set_member_role($1, $2, 'admin')`, org, bob.id)
+	executeSQL(t, owner, `SELECT gregale_auth.add_org_domain($1, 'acme.com', $2)`, org, strings.Repeat("a", 32))
+	executeSQL(t, owner, `INSERT INTO auth.audit_log_entries (id, payload, created_at) VALUES (gen_random_uuid(), json_build_object('action', 'login', 'actor_id', $1::text), now())`, bob.id)
+	executeSQL(t, owner, `SELECT gregale_auth.remove_member($1, $2)`, org, bob.id)
+	rows, err := owner.Query(ctx, `SELECT action, coalesce(actor_email, '-'), coalesce(target_email, '-') FROM gregale_auth.org_audit_entries($1, NULL, NULL, 100) ORDER BY occurred_at`, org)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for rows.Next() {
+		var action, actor, target string
+		if err := rows.Scan(&action, &actor, &target); err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, action+" "+actor+" "+target)
+	}
+	rows.Close()
+	want := []string{
+		"organization.created alice@example.test -", "member.added alice@example.test alice@example.test", "invitation.created alice@example.test -",
+		"member.added alice@example.test bob@example.test", "member.role_changed alice@example.test bob@example.test", "domain.added alice@example.test -",
+		"member.removed alice@example.test bob@example.test",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("audit log\n%v\nwant\n%v", got, want)
+	}
+	// A former member's sign-in is not the organization's to see; a member's is.
+	executeSQL(t, owner, `INSERT INTO auth.audit_log_entries (id, payload, created_at) VALUES (gen_random_uuid(), json_build_object('action', 'login', 'actor_id', $1::text), now())`, alice.id)
+	if !queryBool(t, owner, `SELECT count(*) = 1 FROM gregale_auth.org_audit_entries($1, NULL, NULL, 100) WHERE action = 'member.signed_in'`, org) {
+		t.Fatal("sign-ins are not limited to current members")
+	}
+	// Changes without a caller (the admin key, SSO, SCIM) have no actor.
+	executeSQL(t, owner, `SELECT set_config('request.jwt.claims', '', false)`)
+	executeSQL(t, owner, `INSERT INTO gregale_auth.memberships (org_id, user_id, role) VALUES ($1, $2, 'member')`, org, bob.id)
+	if !queryBool(t, owner, `SELECT actor_id IS NULL FROM gregale_auth.org_audit_log WHERE org_id = $1 ORDER BY occurred_at DESC LIMIT 1`, org) {
+		t.Fatal("a change without a caller has an actor")
+	}
+	actAs(ctx, t, owner, bob)
+	wantSQLError(t, owner, "42501", "forbidden", `SELECT gregale_auth.org_audit_entries($1, NULL, NULL, 10)`, org)
+	executeSQL(t, owner, `DELETE FROM gregale_auth.organizations WHERE id = $1`, org)
+	if queryBool(t, owner, `SELECT EXISTS (SELECT 1 FROM gregale_auth.org_audit_log WHERE org_id = $1)`, org) {
+		t.Fatal("entries outlived their organization")
+	}
+	if err := f.manager.Ensure(ctx, f.material, f.readonly); err != nil {
+		t.Fatal(err)
+	}
+	deniedSQL(t, f.connect(t, f.readonly.name), `SELECT gregale_auth.org_audit_feed('`+org.String()+`', NULL, NULL, 10)`)
+}
+
 // TestSQLLifecycleEventsRecordUserChangesOnlyWhenEnabled pins the outbox the
 // Auth app publishes (ADR-1190): nothing while off, one row per change while
 // on, and never an address or metadata.

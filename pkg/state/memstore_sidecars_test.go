@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"bytes"
@@ -8,20 +8,21 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // memSidecarsFixture creates an account + app for sidecar round-trip
 // tests. The deployment is created separately by the test so the test
 // can pin the Sidecars raw bytes verbatim.
-func memSidecarsFixture(t *testing.T) (*MemStore, context.Context, App) {
+func memSidecarsFixture(t *testing.T) (*state.MemStore, context.Context, state.App) {
 	t.Helper()
 	ctx := context.Background()
-	m := NewMemStore()
+	m := state.NewMemStore()
 	account, err := m.CreateAccount(ctx, "sidecars-"+uuid.NewString()+"@example.com", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, err := m.CreateApp(ctx, App{AccountID: account.ID, Slug: "sidecars-" + uuid.NewString(), RAMMB: 512, Status: AppActive})
+	app, err := m.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "sidecars-" + uuid.NewString(), RAMMB: 512, Status: state.AppActive})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +46,7 @@ func TestMemStore_Deployment_Sidecars_RoundTrip(t *testing.T) {
 		{"name":"scraper","image":"ghcr.io/me/scraper@sha256:0000000000000000000000000000000000000000000000000000000000000002","type":"sidecar"}
 	]`)
 
-	dep, err := m.CreateDeployment(ctx, Deployment{
+	dep, err := m.CreateDeployment(ctx, state.Deployment{
 		AppID:       app.ID,
 		ImageDigest: "sha256:sidecars",
 		Sidecars:    raw,
@@ -72,7 +73,7 @@ func TestMemStore_Deployment_Sidecars_RoundTrip(t *testing.T) {
 func TestMemStore_Deployment_Sidecars_DefaultEmpty(t *testing.T) {
 	m, ctx, app := memSidecarsFixture(t)
 
-	dep, err := m.CreateDeployment(ctx, Deployment{
+	dep, err := m.CreateDeployment(ctx, state.Deployment{
 		AppID:       app.ID,
 		ImageDigest: "sha256:no-sidecars",
 	})
@@ -110,7 +111,7 @@ func TestMemStore_Deployment_Sidecars_VariousJSONPayloads(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			raw := json.RawMessage(tc.payload)
-			dep, err := m.CreateDeployment(ctx, Deployment{
+			dep, err := m.CreateDeployment(ctx, state.Deployment{
 				AppID:       app.ID,
 				ImageDigest: "sha256:case-" + tc.name,
 				Sidecars:    raw,

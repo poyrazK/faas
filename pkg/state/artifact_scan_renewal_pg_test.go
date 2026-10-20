@@ -1,6 +1,6 @@
 //go:build !no_pg
 
-package state
+package state_test
 
 // adr: 435
 
@@ -12,26 +12,27 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 func TestPgArtifactScanRenewal(t *testing.T) {
-	s, _ := registryVerificationPGStore(t)
-	artifactScanRenewal(t, s)
+	s, _ := state.RegistryVerificationPGStore(t)
+	state.ArtifactScanRenewal(t, s)
 }
 func TestPgArtifactScanRenewalCurrentKey(t *testing.T) {
-	s, _ := registryVerificationPGStore(t)
-	artifactScanRenewalCurrentKey(t, s)
+	s, _ := state.RegistryVerificationPGStore(t)
+	state.ArtifactScanRenewalCurrentKey(t, s)
 }
 
 func TestPgArtifactScanRenewalRejectsForeignApproval(t *testing.T) {
-	s, _ := registryVerificationPGStore(t)
-	artifactScanRenewalRejectsForeignApproval(t, s)
+	s, _ := state.RegistryVerificationPGStore(t)
+	state.ArtifactScanRenewalRejectsForeignApproval(t, s)
 }
 
 func TestPgArtifactScanRenewalDoesNotWaitForCurrentInputs(t *testing.T) {
-	s, pool := registryVerificationPGStore(t)
-	in, root, app, dep := artifactScanFixture(t, s, false)
+	s, pool := state.RegistryVerificationPGStore(t)
+	in, root, app, dep := state.ArtifactScanFixture(t, s, false)
 	origin, err := s.GetDeploymentRegistryVerificationByID(t.Context(), app.AccountID, app.ID, dep.ID, root.Input.RegistryVerificationID)
 	if err != nil {
 		t.Fatal(err)
@@ -63,12 +64,12 @@ func TestPgArtifactScanRenewalDoesNotWaitForCurrentInputs(t *testing.T) {
 			}
 			bounded, cancel := context.WithTimeout(t.Context(), time.Second)
 			defer cancel()
-			if _, err := s.PublishDeploymentArtifactScan(bounded, in); !errors.Is(err, ErrApplicationStandardRuntimeBusy) {
+			if _, err := s.PublishDeploymentArtifactScan(bounded, in); !errors.Is(err, state.ErrApplicationStandardRuntimeBusy) {
 				t.Fatalf("renewal waited or bypassed %s: %v", key, err)
 			}
 		})
 	}
-	if _, err := s.GetCurrentDeploymentArtifactScan(t.Context(), app.AccountID, app.ID, dep.ID, ""); !errors.Is(err, ErrNotFound) {
+	if _, err := s.GetCurrentDeploymentArtifactScan(t.Context(), app.AccountID, app.ID, dep.ID, ""); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("busy renewal selected evidence: %v", err)
 	}
 	if _, err := s.PublishDeploymentArtifactScan(t.Context(), in); err != nil {
@@ -77,15 +78,15 @@ func TestPgArtifactScanRenewalDoesNotWaitForCurrentInputs(t *testing.T) {
 }
 
 func TestPgArtifactScanRenewsExpiredOrigin(t *testing.T) {
-	s, pool := registryVerificationPGStore(t)
-	in, root, app, dep := artifactScanFixture(t, s, false)
+	s, pool := state.RegistryVerificationPGStore(t)
+	in, root, app, dep := state.ArtifactScanFixture(t, s, false)
 	origin, err := s.GetDeploymentRegistryVerificationByID(t.Context(), app.AccountID, app.ID, dep.ID, root.Input.RegistryVerificationID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	short := origin.Input
 	short.ID = uuid.NewString()
-	short, hash, err := prepareRegistryVerification(short)
+	short, hash, err := state.PrepareRegistryVerification(short)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,12 +100,12 @@ func TestPgArtifactScanRenewsExpiredOrigin(t *testing.T) {
 	}
 	defer tx.Rollback(t.Context())
 	q := sqlc.New()
-	if err := q.AuthorizeDeploymentRegistryVerificationInsert(t.Context(), tx, mustPgUUID(short.ID)); err != nil {
+	if err := q.AuthorizeDeploymentRegistryVerificationInsert(t.Context(), tx, state.MustPgUUID(short.ID)); err != nil {
 		t.Fatal(err)
 	}
 	// Test-only private SQLC insertion gives this real storage-clock row a
 	// short valid lifetime. No immutable row is updated to simulate expiry.
-	row, err := q.InsertDeploymentRegistryVerification(t.Context(), tx, sqlc.InsertDeploymentRegistryVerificationParams{ID: mustPgUUID(short.ID), AccountID: mustPgUUID(app.AccountID), AppID: mustPgUUID(app.ID), DeploymentID: mustPgUUID(dep.ID), WorkloadName: "", InputSnapshot: raw, InputHash: hash, Payload: short.Proof.Evidence.Payload, Signature: short.Proof.Evidence.Signature, TtlSeconds: 1})
+	row, err := q.InsertDeploymentRegistryVerification(t.Context(), tx, sqlc.InsertDeploymentRegistryVerificationParams{ID: state.MustPgUUID(short.ID), AccountID: state.MustPgUUID(app.AccountID), AppID: state.MustPgUUID(app.ID), DeploymentID: state.MustPgUUID(dep.ID), WorkloadName: "", InputSnapshot: raw, InputHash: hash, Payload: short.Proof.Evidence.Payload, Signature: short.Proof.Evidence.Signature, TtlSeconds: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,7 +120,7 @@ func TestPgArtifactScanRenewsExpiredOrigin(t *testing.T) {
 	}
 	in.RootfsProducerID, in.RootfsInputHash = root.ID, root.InputHash
 	time.Sleep(time.Until(row.ExpiresAt.Time) + 50*time.Millisecond)
-	if _, err := s.PublishDeploymentArtifactScan(t.Context(), in); !errors.Is(err, ErrApplicationStandardRuntimeStale) {
+	if _, err := s.PublishDeploymentArtifactScan(t.Context(), in); !errors.Is(err, state.ErrApplicationStandardRuntimeStale) {
 		t.Fatalf("expired original proof renewed legacy scan: %v", err)
 	}
 	fresh := short

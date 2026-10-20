@@ -4,7 +4,7 @@
 // itself enforces the schema and the 64-char CHECK).
 //
 // Build tag mirrors memstore_test.go:1 (none — pure unit).
-package state
+package state_test
 
 import (
 	"context"
@@ -12,14 +12,15 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestMemStore_Deployment_SourceURLAndCommitSHA(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	ctx := context.Background()
 	acc, _ := m.CreateAccount(ctx, "src-url@example.com", api.PlanHobby)
-	app, _ := m.CreateApp(ctx, App{AccountID: acc.ID, Slug: "src-app"})
-	dep, _ := m.CreateDeployment(ctx, Deployment{AppID: app.ID, ImageDigest: "sha256:src"})
+	app, _ := m.CreateApp(ctx, state.App{AccountID: acc.ID, Slug: "src-app"})
+	dep, _ := m.CreateDeployment(ctx, state.Deployment{AppID: app.ID, ImageDigest: "sha256:src"})
 
 	const wantURL = "https://github.com/acme/app@main"
 	const wantSHA = "0123456789abcdef0123456789abcdef01234567" // 40-char sha1
@@ -70,11 +71,11 @@ func TestMemStore_Deployment_SourceURL_CommitSHALengthCap(t *testing.T) {
 	// at 64 chars so a unit-test path doesn't let through values the DB
 	// would reject. This is the "we won't silently pass a value that
 	// fails the DB layer" guard.
-	m := NewMemStore()
+	m := state.NewMemStore()
 	ctx := context.Background()
 	acc, _ := m.CreateAccount(ctx, "src-len@example.com", api.PlanHobby)
-	app, _ := m.CreateApp(ctx, App{AccountID: acc.ID, Slug: "len-app"})
-	dep, _ := m.CreateDeployment(ctx, Deployment{AppID: app.ID})
+	app, _ := m.CreateApp(ctx, state.App{AccountID: acc.ID, Slug: "len-app"})
+	dep, _ := m.CreateDeployment(ctx, state.Deployment{AppID: app.ID})
 
 	if err := m.SetDeploymentSourceURL(ctx, dep.ID, "url", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdefa"); err == nil {
 		// 65 chars
@@ -87,9 +88,9 @@ func TestMemStore_Deployment_SourceURL_CommitSHALengthCap(t *testing.T) {
 }
 
 func TestMemStore_Deployment_SourceURL_NotFound(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	ctx := context.Background()
-	if err := m.SetDeploymentSourceURL(ctx, "no-such-id", "url", "sha"); !errors.Is(err, ErrNotFound) {
+	if err := m.SetDeploymentSourceURL(ctx, "no-such-id", "url", "sha"); !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("missing deployment: got %v, want ErrNotFound", err)
 	}
 }

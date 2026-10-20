@@ -1,17 +1,20 @@
 //go:build !no_pg
 
-package state
+package state_test
 
 // adr: 435/422 — standards compose with ordinary lifecycle and capacity checks.
 
-import "testing"
+import (
+	"github.com/onebox-faas/faas/pkg/state"
+	"testing"
+)
 
 func TestPgInstanceApplicationStandardUnmanagedPlanCompatibility(t *testing.T) {
-	s, _ := runtimeCapturePGStore(t)
+	s, _ := state.RuntimeCapturePGStore(t)
 	standardUnmanagedPlanCompatibility(t, s)
 }
 
 func TestPgInstanceApplicationStandardManagedPlanStaysStrict(t *testing.T) {
-	s, _ := runtimeCapturePGStore(t)
+	s, _ := state.RuntimeCapturePGStore(t)
 	standardManagedPlanStaysStrict(t, s)
 }

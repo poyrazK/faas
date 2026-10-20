@@ -1,9 +1,10 @@
-package state
+package state_test
 
 import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/onebox-faas/faas/pkg/state"
 	"strings"
 	"testing"
 	"time"
@@ -11,7 +12,7 @@ import (
 
 func TestMemStoreJobAttemptsReplayAndSnapshot(t *testing.T) {
 	ctx := context.Background()
-	st := NewMemStore()
+	st := state.NewMemStore()
 	job, err := st.JobCreate(ctx, "acct-replay", "batch-replay", "batch", "registry.example/job:v1",
 		[]string{"/bin/job", "--old"}, 256, 60, 2, 1, json.RawMessage(`{"BASE":"old"}`))
 	if err != nil {
@@ -21,7 +22,7 @@ func TestMemStoreJobAttemptsReplayAndSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	run, tasks, err := st.JobRunCreate(ctx, job.ID, job.AccountID, "manual", nil, nil, nil,
-		json.RawMessage(`{"RUN":"one"}`), 2, JobRunOptions{Inputs: []JobInput{{ID: "a", Ref: "obj-a"}, {ID: "b", Ref: "obj-b"}}})
+		json.RawMessage(`{"RUN":"one"}`), 2, state.JobRunOptions{Inputs: []state.JobInput{{ID: "a", Ref: "obj-a"}, {ID: "b", Ref: "obj-b"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,10 +58,10 @@ func TestMemStoreJobAttemptsReplayAndSnapshot(t *testing.T) {
 		replayTasks[0].InputID != "a" || replayTasks[0].SourceTaskIndex == nil || *replayTasks[0].SourceTaskIndex != 0 {
 		t.Fatalf("replay = %+v, tasks = %+v", replay, replayTasks)
 	}
-	legacy := st.jobRuns[run.ID]
+	legacy := (*st.JobRuns())[run.ID]
 	legacy.ImageResolvedDigestSnapshot = ""
-	st.jobRuns[run.ID] = legacy
-	if _, _, err := st.JobRunReplayFailed(ctx, run.ID, job.AccountID); !errors.Is(err, ErrConflict) {
+	(*st.JobRuns())[run.ID] = legacy
+	if _, _, err := st.JobRunReplayFailed(ctx, run.ID, job.AccountID); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("legacy run without digest replay error = %v, want conflict", err)
 	}
 }

@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -8,17 +8,18 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 func TestWorkflowRecoveryAutomaticOutstandingWait(t *testing.T) {
-	workflowScheduleStores(t, func(t *testing.T, s Store) {
+	state.WorkflowScheduleStores(t, func(t *testing.T, s state.Store) {
 		ctx := context.Background()
-		review, app, _, now := seedAutomaticRecoveryReview(t, s, nil)
-		runAutomaticPolicy(t, s, now)
+		review, app, _, now := state.SeedAutomaticRecoveryReview(t, s, nil)
+		state.RunAutomaticPolicy(t, s, now)
 		// Retain a distinct pending plan behind the committed child. Its target
 		// is deliberately never revalidated while that child holds the slot.
-		pending := recoveryPolicyClone(review)
+		pending := state.RecoveryPolicyClone(review)
 		pending.ID = uuid.NewString()
 		pending.ObservedAt = now.Add(time.Second)
 		pending.Plan.Key += "-waiting"
@@ -29,26 +30,26 @@ func TestWorkflowRecoveryAutomaticOutstandingWait(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if m, ok := s.(*MemStore); ok {
-			m.mu.Lock()
-			p := m.recoveryPolicies[canonicalMemUUID(app.ID)]
+		if m, ok := s.(*state.MemStore); ok {
+			(*m.Mu()).Lock()
+			p := (*m.RecoveryPolicies())[state.CanonicalMemUUID(app.ID)]
 			p.Reviews[pending.ID] = raw
 			p.Executions[id] = &api.WorkflowRecoveryAutomaticAction{ActionID: id, Position: pending.Plan.Actions[0].Position, Status: "pending", Reason: "awaiting_execution"}
-			m.mu.Unlock()
+			(*m.Mu()).Unlock()
 		} else {
-			pg := s.(*PgStore)
+			pg := s.(*state.PgStore)
 			q := sqlc.New()
-			if _, err = q.WorkflowRecoveryPolicyReviewInsert(ctx, pg.pool, sqlc.WorkflowRecoveryPolicyReviewInsertParams{ID: mustPgUUID(pending.ID), AppID: mustPgUUID(app.ID), JobID: mustPgUUID(pending.JobID), Fingerprint: id, Review: raw, NowAt: pgtypeFromTime(pending.ObservedAt)}); err != nil {
+			if _, err = q.WorkflowRecoveryPolicyReviewInsert(ctx, (*pg.Pool()), sqlc.WorkflowRecoveryPolicyReviewInsertParams{ID: state.MustPgUUID(pending.ID), AppID: state.MustPgUUID(app.ID), JobID: state.MustPgUUID(pending.JobID), Fingerprint: id, Review: raw, NowAt: state.PgtypeFromTime(pending.ObservedAt)}); err != nil {
 				t.Fatal(err)
 			}
-			if err = q.WorkflowRecoveryAutomaticExecutionInsert(ctx, pg.pool, sqlc.WorkflowRecoveryAutomaticExecutionInsertParams{ActionID: mustPgUUID(id), AppID: mustPgUUID(app.ID), ReviewID: mustPgUUID(pending.ID), PolicyVersion: pending.PolicyVersion, Position: pending.Plan.Actions[0].Position}); err != nil {
+			if err = q.WorkflowRecoveryAutomaticExecutionInsert(ctx, (*pg.Pool()), sqlc.WorkflowRecoveryAutomaticExecutionInsertParams{ActionID: state.MustPgUUID(id), AppID: state.MustPgUUID(app.ID), ReviewID: state.MustPgUUID(pending.ID), PolicyVersion: pending.PolicyVersion, Position: pending.Plan.Actions[0].Position}); err != nil {
 				t.Fatal(err)
 			}
 		}
 		for i := 1; i <= 2; i++ {
 			at := now.Add(time.Duration(i) * time.Minute)
-			runAutomaticPolicy(t, s, at)
-			out, err := s.(WorkflowRecoveryPolicyOperatorStore).GetWorkflowRecoveryAutomaticQueue(ctx, app.AccountID, app.ID)
+			state.RunAutomaticPolicy(t, s, at)
+			out, err := s.(state.WorkflowRecoveryPolicyOperatorStore).GetWorkflowRecoveryAutomaticQueue(ctx, app.AccountID, app.ID)
 			if err != nil {
 				t.Fatal(err)
 			}

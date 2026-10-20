@@ -1,6 +1,6 @@
 //go:build !no_pg
 
-package state
+package state_test
 
 import (
 	"errors"
@@ -9,25 +9,26 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestPgApplicationStandardLogHealth(t *testing.T) {
-	s, _ := standardOperationPGStore(t)
+	s, _ := state.StandardOperationPGStore(t)
 	standardLogHealthLifecycle(t, s)
 }
 
 func TestPgApplicationStandardLogHealthExceptionDeadline(t *testing.T) {
-	s, _ := standardOperationPGStore(t)
+	s, _ := state.StandardOperationPGStore(t)
 	standardLogHealthExceptionDeadline(t, s)
 }
 
 func TestPgApplicationStandardLogHealthNonwaitingAndRawGuards(t *testing.T) {
-	s, p := standardOperationPGStore(t)
+	s, p := state.StandardOperationPGStore(t)
 	ctx := t.Context()
-	f := newStandardLocalIntentFixture(ctx, t, s)
-	c := standardLogInventorySession(t, s, standardLogInventoryNode(t, s).ID)
-	d := standardLogDeliveryDrain(t, s, f)
-	e := ApplicationStandardLogHealthEvent{EventRevision: 1, Status: "unknown", Reason: "idle"}
+	f := state.NewStandardLocalIntentFixture(ctx, t, s)
+	c := state.StandardLogInventorySession(t, s, state.StandardLogInventoryNode(t, s).ID)
+	d := state.StandardLogDeliveryDrain(t, s, f)
+	e := state.ApplicationStandardLogHealthEvent{EventRevision: 1, Status: "unknown", Reason: "idle"}
 	standardLogHealthWrite(t, s, c, d, e)
 	for _, query := range []string{
 		`SELECT pg_advisory_xact_lock_shared(hashtextextended('gregale.application-standard.controls.'||$1::uuid::text,0))`,
@@ -38,12 +39,12 @@ func TestPgApplicationStandardLogHealthNonwaitingAndRawGuards(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := tx.Exec(ctx, query, f.app.ID); err != nil {
+		if _, err := tx.Exec(ctx, query, (*f.App()).ID); err != nil {
 			t.Fatal(err)
 		}
 		_, err = s.RecordApplicationStandardLogHealth(ctx, c, d, e)
 		_ = tx.Rollback(ctx)
-		if !errors.Is(err, ErrApplicationStandardReviewBusy) {
+		if !errors.Is(err, state.ErrApplicationStandardReviewBusy) {
 			t.Fatalf("storage waited on mutation: %v", err)
 		}
 	}
@@ -51,23 +52,23 @@ func TestPgApplicationStandardLogHealthNonwaitingAndRawGuards(t *testing.T) {
 		`UPDATE application_standard_log_health SET binding=jsonb_set(binding,'{drain_config_hash}','"wrong"') WHERE app_id=$1`,
 		`UPDATE application_standard_log_health SET source_instance_id='00000000-0000-0000-0000-000000000001',sequence=1,status='healthy',reason='delivered',event_revision=2 WHERE app_id=$1`,
 	} {
-		if _, err := p.Exec(ctx, query, f.app.ID); !errors.Is(standardLogHealthPGError(err), ErrApplicationStandardLogDeliveryStale) {
+		if _, err := p.Exec(ctx, query, (*f.App()).ID); !errors.Is(state.StandardLogHealthPGError(err), state.ErrApplicationStandardLogDeliveryStale) {
 			t.Fatalf("raw stale tuple accepted: %v", err)
 		}
 	}
-	if _, err := p.Exec(ctx, `UPDATE application_standard_log_health SET session_id=$2 WHERE app_id=$1`, f.app.ID, uuid.NewString()); !errors.Is(standardLogHealthPGError(err), ErrApplicationStandardLogConsumerFenced) {
+	if _, err := p.Exec(ctx, `UPDATE application_standard_log_health SET session_id=$2 WHERE app_id=$1`, (*f.App()).ID, uuid.NewString()); !errors.Is(state.StandardLogHealthPGError(err), state.ErrApplicationStandardLogConsumerFenced) {
 		t.Fatalf("raw wrong session accepted: %v", err)
 	}
-	if _, err := p.Exec(ctx, `UPDATE application_standard_log_health SET status='degraded',reason='retrying',event_revision=2 WHERE app_id=$1`, f.app.ID); err != nil {
+	if _, err := p.Exec(ctx, `UPDATE application_standard_log_health SET status='degraded',reason='retrying',event_revision=2 WHERE app_id=$1`, (*f.App()).ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := p.Exec(ctx, `UPDATE application_standard_log_health SET status='unknown',reason='idle',event_revision=1 WHERE app_id=$1`, f.app.ID); !errors.Is(standardLogHealthPGError(err), ErrApplicationStandardLogHealthStale) {
+	if _, err := p.Exec(ctx, `UPDATE application_standard_log_health SET status='unknown',reason='idle',event_revision=1 WHERE app_id=$1`, (*f.App()).ID); !errors.Is(state.StandardLogHealthPGError(err), state.ErrApplicationStandardLogHealthStale) {
 		t.Fatal("raw older event overwrote current health")
 	}
-	if _, err := p.Exec(ctx, `UPDATE application_standard_log_health SET event_at=$2,observed_at=$2 WHERE app_id=$1`, f.app.ID, time.Now().Add(time.Hour)); err != nil {
+	if _, err := p.Exec(ctx, `UPDATE application_standard_log_health SET event_at=$2,observed_at=$2 WHERE app_id=$1`, (*f.App()).ID, time.Now().Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
-	rows, err := s.ListApplicationStandardLogHealth(ctx, f.owner.PersonalOrg.ID, f.app.ID)
+	rows, err := s.ListApplicationStandardLogHealth(ctx, (*f.Owner()).PersonalOrg.ID, (*f.App()).ID)
 	if err != nil || len(rows) != 1 || rows[0].EventAt.After(time.Now()) || rows[0].ObservedAt.After(time.Now()) {
 		t.Fatal("caller supplied health clocks")
 	}
@@ -76,14 +77,14 @@ func TestPgApplicationStandardLogHealthNonwaitingAndRawGuards(t *testing.T) {
 		t.Fatal(err)
 	}
 	var count int
-	if err := p.QueryRow(ctx, `SELECT count(*) FROM application_standard_log_health WHERE app_id=$1`, f.app.ID).Scan(&count); err != nil || count != 0 {
+	if err := p.QueryRow(ctx, `SELECT count(*) FROM application_standard_log_health WHERE app_id=$1`, (*f.App()).ID).Scan(&count); err != nil || count != 0 {
 		t.Fatal("node cascade retained private health")
 	}
 }
 
-func standardLogHealthAgePGFixture(t *testing.T, s *PgStore, f standardLocalIntentFixture) {
+func standardLogHealthAgePGFixture(t *testing.T, s *state.PgStore, f state.StandardLocalIntentFixture) {
 	t.Helper()
-	tx, err := s.pool.Begin(t.Context())
+	tx, err := (*s.Pool()).Begin(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}

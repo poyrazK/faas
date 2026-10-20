@@ -1,19 +1,20 @@
-package state
+package state_test
 
 import (
 	"errors"
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
 // spec: command cron failures retry the same logical scheduled occurrence with bounded exponential backoff.
 func TestMemCommandCronRetriesOneOccurrenceAndKeepsOneRun(t *testing.T) {
-	store, ctx, _, app, _ := memCoverageFixture(t)
-	deployment, err := store.CreateDeployment(ctx, Deployment{
-		AppID: app.ID, ImageDigest: "sha256:retry", Status: DeployLive,
-		Kind: DeploymentKindImage, CreatedAt: time.Date(2026, 9, 24, 10, 0, 0, 0, time.UTC),
+	store, ctx, _, app, _ := state.MemCoverageFixture(t)
+	deployment, err := store.CreateDeployment(ctx, state.Deployment{
+		AppID: app.ID, ImageDigest: "sha256:retry", Status: state.DeployLive,
+		Kind: state.DeploymentKindImage, CreatedAt: time.Date(2026, 9, 24, 10, 0, 0, 0, time.UTC),
 	})
 	if err != nil {
 		t.Fatalf("CreateDeployment: %v", err)
@@ -21,7 +22,7 @@ func TestMemCommandCronRetriesOneOccurrenceAndKeepsOneRun(t *testing.T) {
 	if err := store.SetDeploymentRootfs(ctx, deployment.ID, "/rootfs/retry", "apps/retry.ext4", 4096); err != nil {
 		t.Fatalf("SetDeploymentRootfs: %v", err)
 	}
-	cron, err := store.CreateCronWithOptions(ctx, app.ID, "* * * * *", "", true, CronOptions{
+	cron, err := store.CreateCronWithOptions(ctx, app.ID, "* * * * *", "", true, state.CronOptions{
 		Command: []string{"bin/maintenance"}, RetryMax: 1, RetryBackoffSeconds: 10,
 	})
 	if err != nil {
@@ -47,22 +48,22 @@ func TestMemCommandCronRetriesOneOccurrenceAndKeepsOneRun(t *testing.T) {
 	}
 	failureCode, failureMessage := "command_failed", "temporary outage"
 	failedAt := claimAt.Add(2 * time.Second)
-	queued, err := store.CompleteAppTask(ctx, CompleteAppTaskParams{
-		ID: task.ID, LeaseToken: *first.LeaseToken, Status: AppTaskFailed,
+	queued, err := store.CompleteAppTask(ctx, state.CompleteAppTaskParams{
+		ID: task.ID, LeaseToken: *first.LeaseToken, Status: state.AppTaskFailed,
 		FailureCode: &failureCode, FailureMessage: &failureMessage, FinishedAt: failedAt,
 	})
 	if err != nil {
 		t.Fatalf("CompleteAppTask(first failure): %v", err)
 	}
 	wantRetryAt := failedAt.Add(10 * time.Second)
-	if queued.Status != AppTaskQueued || queued.AttemptCount != 1 || queued.RetryAt == nil ||
+	if queued.Status != state.AppTaskQueued || queued.AttemptCount != 1 || queued.RetryAt == nil ||
 		!queued.RetryAt.Equal(wantRetryAt) || queued.FinishedAt != nil || queued.FailureMessage == nil || *queued.FailureMessage != failureMessage {
 		t.Fatalf("retry queue row = %+v; want one queued occurrence with retry deadline and failure", queued)
 	}
 	if runs, err := store.ListCronAppTaskRuns(ctx, cron.ID, 10, ""); err != nil || len(runs) != 1 || runs[0].ID != task.ID {
 		t.Fatalf("run history while retrying = %+v, %v; want one logical row", runs, err)
 	}
-	if _, err := store.ClaimNextAppTask(ctx, "sched-b", wantRetryAt.Add(-time.Nanosecond), time.Minute); !errors.Is(err, ErrNotFound) {
+	if _, err := store.ClaimNextAppTask(ctx, "sched-b", wantRetryAt.Add(-time.Nanosecond), time.Minute); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("early retry claim = %v, want ErrNotFound", err)
 	}
 
@@ -75,11 +76,11 @@ func TestMemCommandCronRetriesOneOccurrenceAndKeepsOneRun(t *testing.T) {
 		t.Fatalf("MarkAppTaskRunning(retry) = %+v, %v", running, err)
 	}
 	exitCode := 0
-	succeeded, err := store.CompleteAppTask(ctx, CompleteAppTaskParams{
-		ID: task.ID, LeaseToken: *second.LeaseToken, Status: AppTaskSucceeded,
+	succeeded, err := store.CompleteAppTask(ctx, state.CompleteAppTaskParams{
+		ID: task.ID, LeaseToken: *second.LeaseToken, Status: state.AppTaskSucceeded,
 		ExitCode: &exitCode, FinishedAt: wantRetryAt.Add(2 * time.Second),
 	})
-	if err != nil || succeeded.Status != AppTaskSucceeded || succeeded.AttemptCount != 2 || succeeded.RetryAt != nil {
+	if err != nil || succeeded.Status != state.AppTaskSucceeded || succeeded.AttemptCount != 2 || succeeded.RetryAt != nil {
 		t.Fatalf("CompleteAppTask(success) = %+v, %v", succeeded, err)
 	}
 	if runs, err := store.ListCronAppTaskRuns(ctx, cron.ID, 10, ""); err != nil || len(runs) != 1 || runs[0].AttemptCount != 2 {
@@ -88,10 +89,10 @@ func TestMemCommandCronRetriesOneOccurrenceAndKeepsOneRun(t *testing.T) {
 }
 
 func TestMemCommandCronClassifiesStructuredOutcomeFromSuccessfulExit(t *testing.T) {
-	store, ctx, _, app, _ := memCoverageFixture(t)
-	deployment, err := store.CreateDeployment(ctx, Deployment{
-		AppID: app.ID, ImageDigest: "sha256:classified", Status: DeployLive,
-		Kind: DeploymentKindImage, CreatedAt: time.Date(2026, 9, 24, 10, 0, 0, 0, time.UTC),
+	store, ctx, _, app, _ := state.MemCoverageFixture(t)
+	deployment, err := store.CreateDeployment(ctx, state.Deployment{
+		AppID: app.ID, ImageDigest: "sha256:classified", Status: state.DeployLive,
+		Kind: state.DeploymentKindImage, CreatedAt: time.Date(2026, 9, 24, 10, 0, 0, 0, time.UTC),
 	})
 	if err != nil {
 		t.Fatalf("CreateDeployment: %v", err)
@@ -99,7 +100,7 @@ func TestMemCommandCronClassifiesStructuredOutcomeFromSuccessfulExit(t *testing.
 	if err := store.SetDeploymentRootfs(ctx, deployment.ID, "/rootfs/classified", "apps/classified.ext4", 4096); err != nil {
 		t.Fatalf("SetDeploymentRootfs: %v", err)
 	}
-	cron, err := store.CreateCronWithOptions(ctx, app.ID, "* * * * *", "", true, CronOptions{
+	cron, err := store.CreateCronWithOptions(ctx, app.ID, "* * * * *", "", true, state.CronOptions{
 		Command: []string{"bin/synchronize"}, RetryMax: 3, RetryBackoffSeconds: 5,
 		FailureRules: &workpolicy.FailureRules{
 			Version:          workpolicy.Version,
@@ -124,14 +125,14 @@ func TestMemCommandCronClassifiesStructuredOutcomeFromSuccessfulExit(t *testing.
 		t.Fatalf("MarkAppTaskRunning: %v", err)
 	}
 	exitCode := 0
-	completed, err := store.CompleteAppTask(ctx, CompleteAppTaskParams{
-		ID: task.ID, LeaseToken: *running.LeaseToken, Status: AppTaskSucceeded,
+	completed, err := store.CompleteAppTask(ctx, state.CompleteAppTaskParams{
+		ID: task.ID, LeaseToken: *running.LeaseToken, Status: state.AppTaskSucceeded,
 		ExitCode: &exitCode, OutcomeCode: "invalid_record", FinishedAt: firedAt.Add(3 * time.Second),
 	})
 	if err != nil {
 		t.Fatalf("CompleteAppTask: %v", err)
 	}
-	if completed.Status != AppTaskFailed || completed.RetryAt != nil || completed.FailureCode == nil || *completed.FailureCode != "classified_outcome" ||
+	if completed.Status != state.AppTaskFailed || completed.RetryAt != nil || completed.FailureCode == nil || *completed.FailureCode != "classified_outcome" ||
 		completed.OutcomeCode != "invalid_record" || completed.WorkDecision == nil || completed.WorkDecision.Classification != "permanent" || completed.WorkDecision.Action != "fail_partition" {
 		t.Fatalf("classified command outcome = %+v; want terminal permanent failure with recorded code and decision", completed)
 	}
@@ -143,8 +144,8 @@ func TestCronAppTaskRetryAtUsesExponentialBackoff(t *testing.T) {
 		attempt int
 		want    time.Duration
 	}{{attempt: 1, want: 10 * time.Second}, {attempt: 2, want: 20 * time.Second}, {attempt: 3, want: 40 * time.Second}} {
-		task := AppTask{Kind: AppTaskKindCron, AttemptCount: test.attempt, RetryMax: 3, RetryBackoffSeconds: 10}
-		got := cronAppTaskRetryAt(task, AppTaskRunning, AppTaskFailed, firedAt)
+		task := state.AppTask{Kind: state.AppTaskKindCron, AttemptCount: test.attempt, RetryMax: 3, RetryBackoffSeconds: 10}
+		got := state.CronAppTaskRetryAt(task, state.AppTaskRunning, state.AppTaskFailed, firedAt)
 		if got == nil || !got.Equal(firedAt.Add(test.want)) {
 			t.Errorf("attempt %d retry_at = %v, want %v", test.attempt, got, firedAt.Add(test.want))
 		}

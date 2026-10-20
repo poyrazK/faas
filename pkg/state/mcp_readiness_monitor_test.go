@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"errors"
@@ -8,22 +8,23 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestMCPReadinessContinuousStore(t *testing.T) {
-	check := func(t *testing.T, s Store) {
+	check := func(t *testing.T, s state.Store) {
 		ctx := t.Context()
-		source := s.(MCPReadinessStore)
-		monitors := s.(MCPReadinessMonitorStore)
+		source := s.(state.MCPReadinessStore)
+		monitors := s.(state.MCPReadinessMonitorStore)
 		a, err := s.CreateAccount(ctx, "continuous@example.com", api.PlanPro)
 		if err != nil {
 			t.Fatal(err)
 		}
-		app, err := s.CreateApp(ctx, App{AccountID: a.ID, Slug: "continuous", Type: AppTypeApp, Status: AppActive})
+		app, err := s.CreateApp(ctx, state.App{AccountID: a.ID, Slug: "continuous", Type: state.AppTypeApp, Status: state.AppActive})
 		if err != nil {
 			t.Fatal(err)
 		}
-		d, err := s.CreateDeployment(ctx, Deployment{AppID: app.ID, Kind: DeploymentKindImage, ImageDigest: "sha256:stable"})
+		d, err := s.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:stable"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -46,7 +47,7 @@ func TestMCPReadinessContinuousStore(t *testing.T) {
 		if list()[0].State != "pending" {
 			t.Fatal("unobserved monitor reported healthy")
 		}
-		claim := func() MCPReadinessMonitorJob {
+		claim := func() state.MCPReadinessMonitorJob {
 			t.Helper()
 			jobs, e := monitors.ClaimMCPReadinessMonitors(ctx)
 			if e != nil || len(jobs) != 1 {
@@ -57,15 +58,15 @@ func TestMCPReadinessContinuousStore(t *testing.T) {
 		forceDue := func() {
 			t.Helper()
 			switch store := s.(type) {
-			case *MemStore:
-				store.mu.Lock()
-				for key, j := range store.readinessMonitorJobsLocked() {
+			case *state.MemStore:
+				(*store.Mu()).Lock()
+				for key, j := range store.ReadinessMonitorJobsLocked() {
 					j.Status.NextProbeAt = time.Now().Add(-time.Second)
-					store.mcpReadiness.monitors[key] = j
+					(*(*store.McpReadiness()).Monitors())[key] = j
 				}
-				store.mu.Unlock()
-			case *PgStore:
-				if _, e := store.pool.Exec(ctx, `UPDATE deployment_mcp_readiness_monitors SET next_probe_at=now()-interval '1 second'`); e != nil {
+				(*store.Mu()).Unlock()
+			case *state.PgStore:
+				if _, e := (*store.Pool()).Exec(ctx, `UPDATE deployment_mcp_readiness_monitors SET next_probe_at=now()-interval '1 second'`); e != nil {
 					t.Fatal(e)
 				}
 			}
@@ -81,7 +82,7 @@ func TestMCPReadinessContinuousStore(t *testing.T) {
 		if list()[0].State != "degraded" {
 			t.Fatal("transient failure fired early")
 		}
-		if err = monitors.CompleteMCPReadinessMonitor(ctx, job, failed, "protocol_failure"); !errors.Is(err, ErrConflict) {
+		if err = monitors.CompleteMCPReadinessMonitor(ctx, job, failed, "protocol_failure"); !errors.Is(err, state.ErrConflict) {
 			t.Fatal("duplicate completion", err)
 		}
 		forceDue()
@@ -113,7 +114,7 @@ func TestMCPReadinessContinuousStore(t *testing.T) {
 		if _, err = source.SetMCPReadinessPolicy(ctx, a.ID, app.ID, request); err != nil {
 			t.Fatal(err)
 		}
-		if err = monitors.CompleteMCPReadinessMonitor(ctx, job, passed, ""); !errors.Is(err, ErrConflict) {
+		if err = monitors.CompleteMCPReadinessMonitor(ctx, job, passed, ""); !errors.Is(err, state.ErrConflict) {
 			t.Fatal("stale policy accepted", err)
 		}
 		if list()[0].State != "pending" {
@@ -122,21 +123,21 @@ func TestMCPReadinessContinuousStore(t *testing.T) {
 		expireLease := func() {
 			t.Helper()
 			switch store := s.(type) {
-			case *MemStore:
-				store.mu.Lock()
-				for key, j := range store.readinessMonitorJobsLocked() {
+			case *state.MemStore:
+				(*store.Mu()).Lock()
+				for key, j := range store.ReadinessMonitorJobsLocked() {
 					j.LeaseUntil = time.Now().Add(-time.Second)
-					store.mcpReadiness.monitors[key] = j
+					(*(*store.McpReadiness()).Monitors())[key] = j
 				}
-				store.mu.Unlock()
-			case *PgStore:
-				if _, e := store.pool.Exec(ctx, `UPDATE deployment_mcp_readiness_monitors SET lease_until=now()-interval '1 second',next_probe_at=now()-interval '1 second'`); e != nil {
+				(*store.Mu()).Unlock()
+			case *state.PgStore:
+				if _, e := (*store.Pool()).Exec(ctx, `UPDATE deployment_mcp_readiness_monitors SET lease_until=now()-interval '1 second',next_probe_at=now()-interval '1 second'`); e != nil {
 					t.Fatal(e)
 				}
 			}
 		}
 		expireLease()
-		if err = monitors.CompleteMCPReadinessMonitor(ctx, job, passed, ""); !errors.Is(err, ErrConflict) {
+		if err = monitors.CompleteMCPReadinessMonitor(ctx, job, passed, ""); !errors.Is(err, state.ErrConflict) {
 			t.Fatal("expired lease accepted", err)
 		}
 		job = claim()
@@ -158,14 +159,14 @@ func TestMCPReadinessContinuousStore(t *testing.T) {
 		if err = s.UpsertAppSecret(ctx, a.ID, app.ID, "ROTATED", []byte("opaque ciphertext")); err != nil {
 			t.Fatal(err)
 		}
-		if err = monitors.CompleteMCPReadinessMonitor(ctx, job, passed, ""); !errors.Is(err, ErrConflict) {
+		if err = monitors.CompleteMCPReadinessMonitor(ctx, job, passed, ""); !errors.Is(err, state.ErrConflict) {
 			t.Fatal("changed runtime subject accepted", err)
 		}
 
-		if _, err = monitors.ListMCPReadinessMonitoring(ctx, "foreign", app.ID, ""); !errors.Is(err, ErrNotFound) {
+		if _, err = monitors.ListMCPReadinessMonitoring(ctx, "foreign", app.ID, ""); !errors.Is(err, state.ErrNotFound) {
 			t.Fatal("foreign monitor visible")
 		}
 	}
-	t.Run("memory", func(t *testing.T) { check(t, NewMemStore()) })
-	t.Run("postgres", func(t *testing.T) { check(t, NewPgStore(pgtest.OpenMigrated(t))) })
+	t.Run("memory", func(t *testing.T) { check(t, state.NewMemStore()) })
+	t.Run("postgres", func(t *testing.T) { check(t, state.NewPgStore(pgtest.OpenMigrated(t))) })
 }

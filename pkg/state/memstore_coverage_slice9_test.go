@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"errors"
@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // This slice closes the remaining real-branch gaps in MemStore that the
@@ -15,21 +16,21 @@ import (
 // paths of the list helpers.
 
 func TestMemStoreCoverageClaimNextQueuedBuild(t *testing.T) {
-	m, ctx, _, _, deployment := memCoverageSlice4Fixture(t)
+	m, ctx, _, _, deployment := state.MemCoverageSlice4Fixture(t)
 	// The slice4 fixture already has one queued build on the deployment;
 	// add two more with deterministic, distinct EnqueuedAt values so
 	// FIFO is observable (CreateBuild stamps EnqueuedAt=now, so we set
 	// them directly on the internal map to avoid timestamp ties).
-	queued1, err := m.CreateBuild(ctx, deployment.ID, DeploymentKindImage, 10, "/tmp/q1.log")
+	queued1, err := m.CreateBuild(ctx, deployment.ID, state.DeploymentKindImage, 10, "/tmp/q1.log")
 	if err != nil {
 		t.Fatal(err)
 	}
-	queued2, err := m.CreateBuild(ctx, deployment.ID, DeploymentKindImage, 10, "/tmp/q2.log")
+	queued2, err := m.CreateBuild(ctx, deployment.ID, state.DeploymentKindImage, 10, "/tmp/q2.log")
 	if err != nil {
 		t.Fatal(err)
 	}
 	// A running build must not be picked.
-	running, err := m.CreateBuild(ctx, deployment.ID, DeploymentKindImage, 10, "/tmp/q3.log")
+	running, err := m.CreateBuild(ctx, deployment.ID, state.DeploymentKindImage, 10, "/tmp/q3.log")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,14 +39,14 @@ func TestMemStoreCoverageClaimNextQueuedBuild(t *testing.T) {
 	}
 	// Backdate the two queued rows so the order is deterministic.
 	base := time.Now().Add(-time.Hour)
-	m.mu.Lock()
-	b1 := m.builds[queued1.ID]
+	(*m.Mu()).Lock()
+	b1 := (*m.Builds())[queued1.ID]
 	b1.EnqueuedAt = base
-	m.builds[queued1.ID] = b1
-	b2 := m.builds[queued2.ID]
+	(*m.Builds())[queued1.ID] = b1
+	b2 := (*m.Builds())[queued2.ID]
 	b2.EnqueuedAt = base.Add(time.Minute)
-	m.builds[queued2.ID] = b2
-	m.mu.Unlock()
+	(*m.Builds())[queued2.ID] = b2
+	(*m.Mu()).Unlock()
 
 	// FIFO: the earliest EnqueuedAt wins. queued1 (base) before queued2
 	// (base+1m) before the fixture build (now).
@@ -53,14 +54,14 @@ func TestMemStoreCoverageClaimNextQueuedBuild(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if picked.ID != queued1.ID || picked.Status != BuildRunning {
+	if picked.ID != queued1.ID || picked.Status != state.BuildRunning {
 		t.Fatalf("picked = %s/%s, want %s/running", picked.ID, picked.Status, queued1.ID)
 	}
 	second, err := m.ClaimNextQueuedBuild(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if second.ID != queued2.ID || second.Status != BuildRunning {
+	if second.ID != queued2.ID || second.Status != state.BuildRunning {
 		t.Fatalf("second = %s/%s, want %s/running", second.ID, second.Status, queued2.ID)
 	}
 	// Queue still has the fixture build (created first, EnqueuedAt=now
@@ -69,43 +70,43 @@ func TestMemStoreCoverageClaimNextQueuedBuild(t *testing.T) {
 		t.Fatalf("fixture build claim = %v", err)
 	}
 	// Queue drained → ErrNotFound.
-	if _, err := m.ClaimNextQueuedBuild(ctx); !errors.Is(err, ErrNotFound) {
+	if _, err := m.ClaimNextQueuedBuild(ctx); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("drained = %v", err)
 	}
 }
 
 func TestMemStoreCoverageUpdateBuildStatusCAS(t *testing.T) {
-	m, ctx, _, _, deployment := memCoverageSlice4Fixture(t)
-	build, err := m.CreateBuild(ctx, deployment.ID, DeploymentKindImage, 10, "/tmp/cas.log")
+	m, ctx, _, _, deployment := state.MemCoverageSlice4Fixture(t)
+	build, err := m.CreateBuild(ctx, deployment.ID, state.DeploymentKindImage, 10, "/tmp/cas.log")
 	if err != nil {
 		t.Fatal(err)
 	}
 	// Terminal transition from queued (not running) → ErrNotFound.
-	if err := m.UpdateBuildStatus(ctx, build.ID, BuildSucceeded, "", false, true); !errors.Is(err, ErrNotFound) {
+	if err := m.UpdateBuildStatus(ctx, build.ID, state.BuildSucceeded, "", false, true); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("terminal from queued = %v", err)
 	}
 	// Flip to running, then succeed with failure class + timestamps.
 	if _, err := m.ClaimQueuedBuild(ctx, build.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.UpdateBuildStatus(ctx, build.ID, BuildFailed, FailureTimeout, false, true); err != nil {
+	if err := m.UpdateBuildStatus(ctx, build.ID, state.BuildFailed, state.FailureTimeout, false, true); err != nil {
 		t.Fatal(err)
 	}
 	got, err := m.BuildByID(ctx, build.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Status != BuildFailed || got.FailureClass != FailureTimeout || got.FinishedAt.IsZero() {
+	if got.Status != state.BuildFailed || got.FailureClass != state.FailureTimeout || got.FinishedAt.IsZero() {
 		t.Fatalf("failed build = %+v", got)
 	}
 	// Missing build → ErrNotFound.
-	if err := m.UpdateBuildStatus(ctx, "missing", BuildSucceeded, "", false, true); !errors.Is(err, ErrNotFound) {
+	if err := m.UpdateBuildStatus(ctx, "missing", state.BuildSucceeded, "", false, true); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("update missing = %v", err)
 	}
 }
 
 func TestMemStoreCoverageDomainsAndKeys(t *testing.T) {
-	m, ctx, account, app, _ := memCoverageSlice4Fixture(t)
+	m, ctx, account, app, _ := state.MemCoverageSlice4Fixture(t)
 	// ListDomainsForApp populated + empty.
 	dom, err := m.CreateCustomDomain(ctx, "app.example.com", app.ID, "tok")
 	if err != nil {
@@ -133,13 +134,13 @@ func TestMemStoreCoverageDomainsAndKeys(t *testing.T) {
 	if err := m.TouchKeyLastUsed(ctx, key.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.TouchKeyLastUsed(ctx, "missing"); !errors.Is(err, ErrNotFound) {
+	if err := m.TouchKeyLastUsed(ctx, "missing"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("touch missing = %v", err)
 	}
 }
 
 func TestMemStoreCoverageAccountProviderRemap(t *testing.T) {
-	m, ctx, account, _, _ := memCoverageSlice4Fixture(t)
+	m, ctx, account, _, _ := state.MemCoverageSlice4Fixture(t)
 	if err := m.UpdateAccountProviderCustomerID(ctx, account.ID, "cus_1"); err != nil {
 		t.Fatal(err)
 	}
@@ -150,67 +151,67 @@ func TestMemStoreCoverageAccountProviderRemap(t *testing.T) {
 	if err := m.UpdateAccountProviderCustomerID(ctx, account.ID, "cus_2"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.AccountByProviderCustomerID(ctx, "cus_1"); !errors.Is(err, ErrNotFound) {
+	if _, err := m.AccountByProviderCustomerID(ctx, "cus_1"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("old provider still resolvable = %v", err)
 	}
 	if got, err := m.AccountByProviderCustomerID(ctx, "cus_2"); err != nil || got.ID != account.ID {
 		t.Fatalf("new provider = %+v, %v", got, err)
 	}
 	// Missing account / missing provider.
-	if err := m.UpdateAccountProviderCustomerID(ctx, "missing", "cus_3"); !errors.Is(err, ErrNotFound) {
+	if err := m.UpdateAccountProviderCustomerID(ctx, "missing", "cus_3"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("update missing = %v", err)
 	}
-	if _, err := m.AccountByProviderCustomerID(ctx, "missing"); !errors.Is(err, ErrNotFound) {
+	if _, err := m.AccountByProviderCustomerID(ctx, "missing"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("by provider missing = %v", err)
 	}
 	// UpdateAccountStatus (hit/miss).
-	if err := m.UpdateAccountStatus(ctx, account.ID, AccountSuspended); err != nil {
+	if err := m.UpdateAccountStatus(ctx, account.ID, state.AccountSuspended); err != nil {
 		t.Fatal(err)
 	}
 	acct, _ := m.AccountByID(ctx, account.ID)
-	if acct.Status != AccountSuspended {
+	if acct.Status != state.AccountSuspended {
 		t.Fatalf("status = %s", acct.Status)
 	}
-	if err := m.UpdateAccountStatus(ctx, "missing", AccountActive); !errors.Is(err, ErrNotFound) {
+	if err := m.UpdateAccountStatus(ctx, "missing", state.AccountActive); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("status missing = %v", err)
 	}
 	// AuthenticateKey — missing hash.
-	if _, _, err := m.AuthenticateKey(ctx, []byte("nope")); !errors.Is(err, ErrNotFound) {
+	if _, _, err := m.AuthenticateKey(ctx, []byte("nope")); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("authenticate missing = %v", err)
 	}
 	// AccountByID — missing.
-	if _, err := m.AccountByID(ctx, "missing"); !errors.Is(err, ErrNotFound) {
+	if _, err := m.AccountByID(ctx, "missing"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("account missing = %v", err)
 	}
 }
 
 func TestMemStoreCoverageSetProjectScanSourceDowngrade(t *testing.T) {
-	m, ctx, account, _, _ := memCoverageSlice4Fixture(t)
-	proj, err := m.CreateProject(ctx, Project{AccountID: account.ID, Slug: "scan-proj", ScanSource: ProjectScanSourceConvention})
+	m, ctx, account, _, _ := state.MemCoverageSlice4Fixture(t)
+	proj, err := m.CreateProject(ctx, state.Project{AccountID: account.ID, Slug: "scan-proj", ScanSource: state.ProjectScanSourceConvention})
 	if err != nil {
 		t.Fatal(err)
 	}
 	// Upgrade → allowed.
-	if got, err := m.SetProjectScanSource(ctx, proj.ID, ProjectScanSourceCompose); err != nil || got.ScanSource != ProjectScanSourceCompose {
+	if got, err := m.SetProjectScanSource(ctx, proj.ID, state.ProjectScanSourceCompose); err != nil || got.ScanSource != state.ProjectScanSourceCompose {
 		t.Fatalf("upgrade = %+v, %v", got, err)
 	}
 	// Downgrade → ErrScanSourceDowngrade.
-	if _, err := m.SetProjectScanSource(ctx, proj.ID, ProjectScanSourceSingle); !errors.Is(err, ErrScanSourceDowngrade) {
+	if _, err := m.SetProjectScanSource(ctx, proj.ID, state.ProjectScanSourceSingle); !errors.Is(err, state.ErrScanSourceDowngrade) {
 		t.Fatalf("downgrade = %v", err)
 	}
 	// Same tier → no-op.
-	if got, err := m.SetProjectScanSource(ctx, proj.ID, ProjectScanSourceCompose); err != nil || got.ScanSource != ProjectScanSourceCompose {
+	if got, err := m.SetProjectScanSource(ctx, proj.ID, state.ProjectScanSourceCompose); err != nil || got.ScanSource != state.ProjectScanSourceCompose {
 		t.Fatalf("same tier = %+v, %v", got, err)
 	}
 	// Missing project.
-	if _, err := m.SetProjectScanSource(ctx, "missing", ProjectScanSourceSingle); !errors.Is(err, ErrNotFound) {
+	if _, err := m.SetProjectScanSource(ctx, "missing", state.ProjectScanSourceSingle); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("missing project = %v", err)
 	}
 }
 
 func TestMemStoreCoverageDeleteProjectWithRepo(t *testing.T) {
-	m, ctx, account, _, _ := memCoverageSlice4Fixture(t)
-	proj, err := m.CreateProject(ctx, Project{AccountID: account.ID, Slug: "repo-proj", InstallID: 55, RepoFullName: "acme/repo"})
+	m, ctx, account, _, _ := state.MemCoverageSlice4Fixture(t)
+	proj, err := m.CreateProject(ctx, state.Project{AccountID: account.ID, Slug: "repo-proj", InstallID: 55, RepoFullName: "acme/repo"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,11 +219,11 @@ func TestMemStoreCoverageDeleteProjectWithRepo(t *testing.T) {
 	if err := m.DeleteProject(ctx, proj.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.ProjectByRepo(ctx, "", 55, "acme/repo"); !errors.Is(err, ErrNotFound) {
+	if _, err := m.ProjectByRepo(ctx, "", 55, "acme/repo"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("repo lookup after delete = %v", err)
 	}
 	// A standalone project (no install) also deletes cleanly.
-	standalone, err := m.CreateProject(ctx, Project{AccountID: account.ID, Slug: "standalone-proj"})
+	standalone, err := m.CreateProject(ctx, state.Project{AccountID: account.ID, Slug: "standalone-proj"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -232,13 +233,13 @@ func TestMemStoreCoverageDeleteProjectWithRepo(t *testing.T) {
 }
 
 func TestMemStoreCoverageListUnplacedAndAllApps(t *testing.T) {
-	m, ctx, _, app, _ := memCoverageSlice4Fixture(t)
+	m, ctx, _, app, _ := state.MemCoverageSlice4Fixture(t)
 	// The fixture app has no node owner → unplaced.
 	if got, err := m.ListUnplacedApps(ctx); err != nil || len(got) != 1 || got[0].ID != app.ID {
 		t.Fatalf("unplaced = %+v, %v", got, err)
 	}
 	// Claim it → no longer unplaced.
-	if err := m.SetAppNodeID(ctx, app.ID, DefaultLocalNodeName); err != nil {
+	if err := m.SetAppNodeID(ctx, app.ID, state.DefaultLocalNodeName); err != nil {
 		t.Fatal(err)
 	}
 	if got, err := m.ListUnplacedApps(ctx); err != nil || len(got) != 0 {
@@ -257,7 +258,7 @@ func TestMemStoreCoverageListUnplacedAndAllApps(t *testing.T) {
 	}
 	// ListAppsByNodeID — after soft-delete the app is excluded; assert
 	// empty.
-	if got, err := m.ListAppsByNodeID(ctx, DefaultLocalNodeName); err != nil || len(got) != 0 {
+	if got, err := m.ListAppsByNodeID(ctx, state.DefaultLocalNodeName); err != nil || len(got) != 0 {
 		t.Fatalf("apps by node = %+v, %v", got, err)
 	}
 }
@@ -278,14 +279,14 @@ func TestMemStoreCoverageListUnplacedAndAllApps(t *testing.T) {
 //     isolation is the SQL store's job; the memstore mimics it
 //     via the apps.AccountID join).
 func TestMemStoreCoverageListBuildsForAccountPaged(t *testing.T) {
-	m, ctx, account, _, deployment := memCoverageSlice4Fixture(t)
+	m, ctx, account, _, deployment := state.MemCoverageSlice4Fixture(t)
 	// Second app + deployment under the same account for the
 	// cross-app filter.
-	app2, err := m.CreateApp(ctx, App{ID: "00000000-0000-0000-0000-00000000slice9b", AccountID: account.ID, Slug: "slice9b"})
+	app2, err := m.CreateApp(ctx, state.App{ID: "00000000-0000-0000-0000-00000000slice9b", AccountID: account.ID, Slug: "slice9b"})
 	if err != nil {
 		t.Fatalf("CreateApp app2: %v", err)
 	}
-	dep2, err := m.CreateDeployment(ctx, Deployment{ID: "00000000-0000-0000-0000-00000000slice9d", AppID: app2.ID, Kind: DeploymentKindImage, CreatedAt: time.Now()})
+	dep2, err := m.CreateDeployment(ctx, state.Deployment{ID: "00000000-0000-0000-0000-00000000slice9d", AppID: app2.ID, Kind: state.DeploymentKindImage, CreatedAt: time.Now()})
 	if err != nil {
 		t.Fatalf("CreateDeployment dep2: %v", err)
 	}
@@ -295,11 +296,11 @@ func TestMemStoreCoverageListBuildsForAccountPaged(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateAccount other: %v", err)
 	}
-	otherApp, err := m.CreateApp(ctx, App{ID: "00000000-0000-0000-0000-00000000slice9c", AccountID: otherAcct.ID, Slug: "slice9c"})
+	otherApp, err := m.CreateApp(ctx, state.App{ID: "00000000-0000-0000-0000-00000000slice9c", AccountID: otherAcct.ID, Slug: "slice9c"})
 	if err != nil {
 		t.Fatalf("CreateApp other: %v", err)
 	}
-	otherDep, err := m.CreateDeployment(ctx, Deployment{ID: "00000000-0000-0000-0000-00000000slice9e", AppID: otherApp.ID, Kind: DeploymentKindImage, CreatedAt: time.Now()})
+	otherDep, err := m.CreateDeployment(ctx, state.Deployment{ID: "00000000-0000-0000-0000-00000000slice9e", AppID: otherApp.ID, Kind: state.DeploymentKindImage, CreatedAt: time.Now()})
 	if err != nil {
 		t.Fatalf("CreateDeployment other: %v", err)
 	}
@@ -309,40 +310,42 @@ func TestMemStoreCoverageListBuildsForAccountPaged(t *testing.T) {
 	// (zero StartedAt) per deployment, plus one cross-account
 	// build.
 	base := time.Now().Add(-time.Hour)
-	ownedBuilds := []Build{}
+	ownedBuilds := []state.Build{}
 	for i := 0; i < 5; i++ {
-		b, err := m.CreateBuild(ctx, deployment.ID, DeploymentKindImage, 100, "/tmp/p.log")
+		b, err := m.CreateBuild(ctx, deployment.ID, state.DeploymentKindImage, 100, "/tmp/p.log")
 		if err != nil {
 			t.Fatalf("CreateBuild owned[%d]: %v", i, err)
 		}
+		(*
 		// Backdate + claim + mark running so StartedAt sticks.
-		m.mu.Lock()
-		row := m.builds[b.ID]
+		m.Mu()).Lock()
+		row := (*m.Builds())[b.ID]
 		row.StartedAt = base.Add(time.Duration(i) * time.Minute)
-		m.builds[b.ID] = row
-		m.mu.Unlock()
+		(*m.Builds())[b.ID] = row
+		(*m.Mu()).Unlock()
 		if _, err := m.ClaimQueuedBuild(ctx, b.ID); err != nil {
 			t.Fatalf("ClaimQueuedBuild[%d]: %v", i, err)
 		}
+		(*
 		// After ClaimQueuedBuild the row's StartedAt may have been
 		// re-stamped; restore the deterministic value.
-		m.mu.Lock()
-		row = m.builds[b.ID]
+		m.Mu()).Lock()
+		row = (*m.Builds())[b.ID]
 		row.StartedAt = base.Add(time.Duration(i) * time.Minute)
-		m.builds[b.ID] = row
-		m.mu.Unlock()
-		ownedBuilds = append(ownedBuilds, m.builds[b.ID])
+		(*m.Builds())[b.ID] = row
+		(*m.Mu()).Unlock()
+		ownedBuilds = append(ownedBuilds, (*m.Builds())[b.ID])
 	}
 	// 1 queued build on the second owned deployment — zero
 	// StartedAt, must surface at the BOTTOM of the account-wide
 	// first page and drop off once `before` is set.
-	queued2, err := m.CreateBuild(ctx, dep2.ID, DeploymentKindImage, 50, "/tmp/q2.log")
+	queued2, err := m.CreateBuild(ctx, dep2.ID, state.DeploymentKindImage, 50, "/tmp/q2.log")
 	if err != nil {
 		t.Fatalf("CreateBuild queued2: %v", err)
 	}
 	_ = queued2
 	// 1 build on the other-account deployment — must never surface.
-	_, err = m.CreateBuild(ctx, otherDep.ID, DeploymentKindImage, 999, "/tmp/x.log")
+	_, err = m.CreateBuild(ctx, otherDep.ID, state.DeploymentKindImage, 999, "/tmp/x.log")
 	if err != nil {
 		t.Fatalf("CreateBuild other: %v", err)
 	}
@@ -393,7 +396,7 @@ func TestMemStoreCoverageListBuildsForAccountPaged(t *testing.T) {
 		t.Fatalf("status running len = %d, want 5", len(got))
 	}
 	for _, b := range got {
-		if b.Status != BuildRunning {
+		if b.Status != state.BuildRunning {
 			t.Errorf("status filter leaked %s/%s", b.ID, b.Status)
 		}
 	}
@@ -479,7 +482,7 @@ func TestMemStoreCoverageListBuildsForAccountPaged(t *testing.T) {
 	// ListBuildsForAccountPaged returns them at the TOP of the
 	// result in the same order. Queued rows (zero StartedAt) sort
 	// to the bottom — their relative order is not asserted.
-	expected := append([]Build{}, ownedBuilds...)
+	expected := append([]state.Build{}, ownedBuilds...)
 	sort.Slice(expected, func(i, j int) bool {
 		if expected[i].StartedAt.IsZero() {
 			return false

@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -7,12 +7,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
 func TestJobImageFailureSettlesQueuedRuns(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
+	store := state.NewMemStore()
 	job, err := store.JobCreate(ctx, "account", "broken-image", "app", "example.invalid/image:v1", []string{"/job"}, 128, 30, 1, 0, json.RawMessage(`{}`))
 	if err != nil {
 		t.Fatal(err)
@@ -21,7 +22,7 @@ func TestJobImageFailureSettlesQueuedRuns(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.JobUpdate(ctx, job.ID, []string{"/other"}, nil, nil, nil, nil, nil, nil, nil); !errors.Is(err, ErrConflict) {
+	if _, err := store.JobUpdate(ctx, job.ID, []string{"/other"}, nil, nil, nil, nil, nil, nil, nil); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("update with active run = %v, want ErrConflict", err)
 	}
 	if deleted, active, err := store.JobSoftDelete(ctx, job.ID); err != nil || deleted || !active {
@@ -43,7 +44,7 @@ func TestJobImageFailureSettlesQueuedRuns(t *testing.T) {
 			t.Fatalf("task %d = %+v, %v", i, task, err)
 		}
 	}
-	if _, _, err := store.JobRunCreate(ctx, job.ID, job.AccountID, "manual", nil, nil, nil, nil, 1); !errors.Is(err, ErrConflict) {
+	if _, _, err := store.JobRunCreate(ctx, job.ID, job.AccountID, "manual", nil, nil, nil, nil, 1); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("create run on failed image = %v, want ErrConflict", err)
 	}
 	newImage := "example.invalid/image:v2"
@@ -54,7 +55,7 @@ func TestJobImageFailureSettlesQueuedRuns(t *testing.T) {
 
 func TestJobTaskReapClaimedRetriesThenDeadLetters(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
+	store := state.NewMemStore()
 	job, err := store.JobCreate(ctx, "account", "reap", "app", "example.invalid/image:v1", []string{"/job"}, 128, 30, 1, 1, json.RawMessage(`{}`))
 	if err != nil {
 		t.Fatal(err)
@@ -68,7 +69,7 @@ func TestJobTaskReapClaimedRetriesThenDeadLetters(t *testing.T) {
 	if err := store.JobTaskMarkClaimed(ctx, run.ID, 0, "instance-1", "lease-1", expired, "node-1"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.JobTaskReapClaimed(ctx, run.ID, 0, "lease-1", expired.Add(-time.Second), 1, time.Now()); !errors.Is(err, ErrNotFound) {
+	if _, err := store.JobTaskReapClaimed(ctx, run.ID, 0, "lease-1", expired.Add(-time.Second), 1, time.Now()); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("premature reap = %v, want ErrNotFound", err)
 	}
 	retry, err := store.JobTaskReapClaimed(ctx, run.ID, 0, "lease-1", cutoff, 1, time.Now())
@@ -102,13 +103,13 @@ func TestJobTaskReaperHonorsUncertainOutcomePolicy(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
-			store := NewMemStore()
+			store := state.NewMemStore()
 			job, err := store.JobCreate(ctx, "account", "uncertain-"+tc.name, "app", "example.invalid/image:v1", []string{"/job"}, 128, 30, 1, 1, json.RawMessage(`{}`))
 			if err != nil {
 				t.Fatal(err)
 			}
 			rules := &workpolicy.FailureRules{Version: workpolicy.Version, UnmatchedFailure: "retry", UncertainOutcome: tc.uncertainOutcome}
-			run, _, err := store.JobRunCreate(ctx, job.ID, job.AccountID, "manual", nil, nil, nil, nil, 1, JobRunOptions{FailureRules: rules})
+			run, _, err := store.JobRunCreate(ctx, job.ID, job.AccountID, "manual", nil, nil, nil, nil, 1, state.JobRunOptions{FailureRules: rules})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -135,7 +136,7 @@ func TestJobTaskReaperHonorsUncertainOutcomePolicy(t *testing.T) {
 
 func TestJobMaterializationRetryExhaustionSettlesRun(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
+	store := state.NewMemStore()
 	job, err := store.JobCreate(ctx, "account", "retry-exhausted-image", "app", "example.invalid/image:v1", []string{"/job"}, 128, 30, 1, 0, json.RawMessage(`{}`))
 	if err != nil {
 		t.Fatal(err)

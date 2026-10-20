@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -6,21 +6,22 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestMemStoreUpdateAppRequestRatePolicy(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
+	store := state.NewMemStore()
 	account, err := store.CreateAccount(ctx, "request-rate-policy@example.com", api.PlanPro)
 	if err != nil {
 		t.Fatalf("create account: %v", err)
 	}
-	app, err := store.CreateApp(ctx, App{AccountID: account.ID, Slug: "request-rate-policy"})
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "request-rate-policy"})
 	if err != nil {
 		t.Fatalf("create app: %v", err)
 	}
 	rps, burst := 25, 120
-	updated, err := store.UpdateApp(ctx, app.ID, UpdateAppParams{
+	updated, err := store.UpdateApp(ctx, app.ID, state.UpdateAppParams{
 		RequestRateLimitRPS: &rps, SetRequestRateLimitRPS: true,
 		RequestRateLimitBurst: &burst, SetRequestRateLimitBurst: true,
 	})
@@ -32,7 +33,7 @@ func TestMemStoreUpdateAppRequestRatePolicy(t *testing.T) {
 		t.Fatalf("set policy = (%v, %v), want (%d, %d)", updated.RequestRateLimitRPS, updated.RequestRateLimitBurst, rps, burst)
 	}
 
-	updated, err = store.UpdateApp(ctx, app.ID, UpdateAppParams{MaxConcurrency: requestRatePolicyIntPtr(3)})
+	updated, err = store.UpdateApp(ctx, app.ID, state.UpdateAppParams{MaxConcurrency: requestRatePolicyIntPtr(3)})
 	if err != nil {
 		t.Fatalf("update unrelated field: %v", err)
 	}
@@ -42,7 +43,7 @@ func TestMemStoreUpdateAppRequestRatePolicy(t *testing.T) {
 	}
 
 	zeroRPS, zeroBurst := 0, 0
-	updated, err = store.UpdateApp(ctx, app.ID, UpdateAppParams{
+	updated, err = store.UpdateApp(ctx, app.ID, state.UpdateAppParams{
 		RequestRateLimitRPS: &zeroRPS, SetRequestRateLimitRPS: true,
 		RequestRateLimitBurst: &zeroBurst, SetRequestRateLimitBurst: true,
 	})
@@ -54,9 +55,9 @@ func TestMemStoreUpdateAppRequestRatePolicy(t *testing.T) {
 	}
 
 	negative := -1
-	if _, err := store.UpdateApp(ctx, app.ID, UpdateAppParams{
+	if _, err := store.UpdateApp(ctx, app.ID, state.UpdateAppParams{
 		RequestRateLimitRPS: &negative, SetRequestRateLimitRPS: true,
-	}); !errors.Is(err, ErrInvalidArgument) {
+	}); !errors.Is(err, state.ErrInvalidArgument) {
 		t.Fatalf("negative override error = %v, want ErrInvalidArgument", err)
 	}
 }
