@@ -129,7 +129,76 @@ tests:
     eval_time: 20m
     exp_samples:
     - labels: '{__name__="builderd_build_worker_progress_allowance_seconds",job="builderd",instance="b"}'
-      value: 120
+      value: 180
+# rc.282 production: builderd polls every 2 s, but Prometheus sees each
+# completion only at its next 15 s scrape, so the observed age reaches ~17 s.
+# Two poll intervals alone (4 s) paged a healthy worker.
+- name: fast poller is not stalled by scrape staleness
+  interval: 1m
+  input_series:
+  - series: up{job="builderd",instance="b"}
+    values: 1x90
+  - series: builderd_build_worker_enabled{job="builderd",instance="b"}
+    values: 1x90
+  - series: builderd_build_worker_inflight{job="builderd",instance="b"}
+    values: '0x90'
+  - series: builderd_build_worker_started_timestamp_seconds{job="builderd",instance="b"}
+    values: 1x90
+  - series: builderd_build_worker_last_attempt_timestamp_seconds{job="builderd",instance="b"}
+    values: -17+60x90
+  - series: builderd_build_worker_last_completed_timestamp_seconds{job="builderd",instance="b"}
+    values: -17+60x90
+  - series: builderd_build_worker_interval_seconds{job="builderd",instance="b"}
+    values: 2x90
+  - series: builderd_build_worker_busy_allowance_seconds{job="builderd",instance="b"}
+    values: 600x90
+  - series: builderd_build_slots_in_use{job="builderd",instance="b"}
+    values: '0x90'
+  - series: builderd_build_slots_limit{job="builderd",instance="b"}
+    values: 1x90
+  - *id001
+  - series: builderd_build_claims_total{job="builderd",instance="b",source="poll",outcome="not_claimed"}
+    values: 0+100x90
+  - *id002
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FaasBuilderWorkerStalled
+    exp_alerts: []
+  promql_expr_test:
+  - expr: builderd_build_worker_progress_age_seconds
+    eval_time: 20m
+    exp_samples:
+    - labels: '{__name__="builderd_build_worker_progress_age_seconds",job="builderd",instance="b"}'
+      value: 17
+  - expr: builderd_build_worker_progress_allowance_seconds
+    eval_time: 20m
+    exp_samples:
+    - labels: '{__name__="builderd_build_worker_progress_allowance_seconds",job="builderd",instance="b"}'
+      value: 64
 - name: stopped idle worker respects exact allowance then five minute hold
   interval: 1m
   input_series:
@@ -186,10 +255,10 @@ tests:
   - eval_time: 3m
     alertname: FaasBuilderWorkerStalled
     exp_alerts: []
-  - eval_time: 8m
+  - eval_time: 9m
     alertname: FaasBuilderWorkerStalled
     exp_alerts: []
-  - eval_time: 9m
+  - eval_time: 10m
     alertname: FaasBuilderWorkerStalled
     exp_alerts:
     - exp_labels:
@@ -202,8 +271,8 @@ tests:
       exp_annotations: &id028
         summary: Durable build polling has stopped progressing
         description: The expected poller has exceeded its progress allowance for 5m. Idle allowance is two poll
-          intervals; an in-flight iteration also receives the effective running-build recovery threshold. Notification
-          work cannot renew poller progress. Capture logs and goroutines before intervening.
+          intervals plus a 60 s scrape margin; an in-flight iteration also receives the effective running-build recovery
+          threshold. Notification work cannot renew poller progress. Capture logs and goroutines before intervening.
         runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildWorker.md
 - name: poller that never starts is detected on an idle builder
   interval: 1m
@@ -256,10 +325,10 @@ tests:
   - *id025
   - *id026
   alert_rule_test:
-  - eval_time: 8m
+  - eval_time: 9m
     alertname: FaasBuilderWorkerStalled
     exp_alerts: []
-  - eval_time: 9m
+  - eval_time: 10m
     alertname: FaasBuilderWorkerStalled
     exp_alerts:
     - exp_labels:
@@ -321,13 +390,13 @@ tests:
   - *id025
   - *id026
   alert_rule_test:
-  - eval_time: 13m
-    alertname: FaasBuilderWorkerStalled
-    exp_alerts: []
-  - eval_time: 18m
+  - eval_time: 14m
     alertname: FaasBuilderWorkerStalled
     exp_alerts: []
   - eval_time: 19m
+    alertname: FaasBuilderWorkerStalled
+    exp_alerts: []
+  - eval_time: 20m
     alertname: FaasBuilderWorkerStalled
     exp_alerts:
     - exp_labels:
@@ -340,15 +409,15 @@ tests:
       exp_annotations: *id028
   promql_expr_test:
   - expr: builderd_build_worker_progress_age_seconds
-    eval_time: 13m
+    eval_time: 14m
     exp_samples:
     - labels: '{__name__="builderd_build_worker_progress_age_seconds",job="builderd",instance="b"}'
-      value: 720
+      value: 780
   - expr: builderd_build_worker_progress_allowance_seconds
-    eval_time: 13m
+    eval_time: 14m
     exp_samples:
     - labels: '{__name__="builderd_build_worker_progress_allowance_seconds",job="builderd",instance="b"}'
-      value: 720
+      value: 780
 - name: healthy fifteen minute build does not look like stopped polling
   interval: 1m
   input_series:
@@ -416,7 +485,7 @@ tests:
     eval_time: 16m
     exp_samples:
     - labels: '{__name__="builderd_build_worker_progress_allowance_seconds",job="builderd",instance="b"}'
-      value: 1620
+      value: 1680
 - name: saturation and repeated slot denials are diagnostics while poller progresses
   interval: 1m
   input_series:

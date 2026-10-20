@@ -9510,21 +9510,24 @@ type OutboundAiLogExport struct {
 }
 
 type OutboundAiPriceEntry struct {
-	PriceListID                    pgtype.UUID
-	ModelPrefix                    string
-	InputMillicentsPerMtok         int64
-	CachedInputMillicentsPerMtok   pgtype.Int8
-	CacheWriteMillicentsPerMtok    pgtype.Int8
-	OutputMillicentsPerMtok        int64
-	InputImageMillicentsPerMtok    pgtype.Int8
-	OutputImageMillicentsPerMtok   pgtype.Int8
-	MillicentsPerImage             pgtype.Int8
-	MillicentsPerAudioMinute       pgtype.Int8
-	MillicentsPerMillionCharacters pgtype.Int8
-	MillicentsPerVideoSecond       pgtype.Int8
-	MillicentsPerWebSearch         pgtype.Int8
-	MillicentsPerFileSearch        pgtype.Int8
-	MillicentsPerCodeSessionGb     pgtype.Int8
+	PriceListID                       pgtype.UUID
+	ModelPrefix                       string
+	InputMillicentsPerMtok            int64
+	CachedInputMillicentsPerMtok      pgtype.Int8
+	CacheWriteMillicentsPerMtok       pgtype.Int8
+	OutputMillicentsPerMtok           int64
+	InputImageMillicentsPerMtok       pgtype.Int8
+	OutputImageMillicentsPerMtok      pgtype.Int8
+	MillicentsPerImage                pgtype.Int8
+	MillicentsPerAudioMinute          pgtype.Int8
+	MillicentsPerMillionCharacters    pgtype.Int8
+	MillicentsPerVideoSecond          pgtype.Int8
+	MillicentsPerWebSearch            pgtype.Int8
+	MillicentsPerFileSearch           pgtype.Int8
+	MillicentsPerCodeSessionGb        pgtype.Int8
+	InputAudioMillicentsPerMtok       pgtype.Int8
+	CachedInputAudioMillicentsPerMtok pgtype.Int8
+	OutputAudioMillicentsPerMtok      pgtype.Int8
 }
 
 type OutboundAiPriceList struct {
@@ -9532,6 +9535,13 @@ type OutboundAiPriceList struct {
 	IntegrationID pgtype.UUID
 	EffectiveFrom pgtype.Timestamptz
 	CreatedAt     pgtype.Timestamptz
+}
+
+type OutboundAiPromptPrefix struct {
+	IntegrationID  pgtype.UUID
+	PrefixHash     []byte
+	SeenAt         pgtype.Timestamptz
+	PreviousSeenAt pgtype.Timestamptz
 }
 
 type OutboundAiReplay struct {
@@ -9694,6 +9704,8 @@ type OutboundAiUsageDaily struct {
 	CachedRequests             int64
 	CacheSavedMillicents       int64
 	PromptCacheSavedMillicents int64
+	InputAudioTokens           int64
+	OutputAudioTokens          int64
 }
 
 type OutboundAiUserUsageDaily struct {

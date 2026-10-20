@@ -2,6 +2,7 @@ package outbound
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"net/http"
@@ -22,28 +23,99 @@ const (
 	promptCacheMarkConversation = "conversation"
 )
 
+// AIPromptPrefixBackend shares prompt-prefix sightings across outboundd
+// replicas (ADR 20261019132139).
+type AIPromptPrefixBackend interface {
+	// SeenAIPromptPrefix records a sighting of a prefix hash and reports
+	// whether an earlier one fell within lifetime.
+	SeenAIPromptPrefix(ctx context.Context, integrationID string, key [32]byte, lifetime time.Duration) (bool, error)
+}
+
+// Results counted in outbound_ai_prompt_cache_shared_total.
+const (
+	promptPrefixSharedRepeated  = "repeated"
+	promptPrefixSharedFirst     = "first"
+	promptPrefixSharedRefreshed = "refreshed"
+	promptPrefixSharedError     = "error"
+)
+
 // promptPrefixes remembers the stable prompt prefixes this process saw, so
 // a prefix is marked only once it repeats within the cache lifetime. It is
 // bounded and starts over when full.
 type promptPrefixes struct {
 	mu   sync.Mutex
-	seen map[[32]byte]time.Time
+	seen map[[32]byte]promptPrefixSighting
+}
+
+// promptPrefixSighting is when this process last saw a prefix and last told
+// the other replicas about it.
+type promptPrefixSighting struct {
+	last, shared time.Time
 }
 
 // promptPrefixesMax bounds the remembered prefixes.
 const promptPrefixesMax = 10_000
 
-// repeated records a prefix and reports whether it was seen within the
-// cache lifetime.
-func (p *promptPrefixes) repeated(key [32]byte, now time.Time) bool {
+// repeated records a prefix and reports whether this process saw it within
+// the cache lifetime, and whether the shared row is due a refresh.
+func (p *promptPrefixes) repeated(key [32]byte, now time.Time) (repeated, refresh bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.seen == nil || len(p.seen) >= promptPrefixesMax {
-		p.seen = make(map[[32]byte]time.Time)
+		p.seen = make(map[[32]byte]promptPrefixSighting)
 	}
-	last, ok := p.seen[key]
-	p.seen[key] = now
-	return ok && now.Sub(last) < api.OutboundAIPromptCacheLifetimeSeconds*time.Second
+	sighting, ok := p.seen[key]
+	repeated = ok && now.Sub(sighting.last) < api.OutboundAIPromptCacheLifetimeSeconds*time.Second
+	refresh = repeated && now.Sub(sighting.shared) >= api.OutboundAIPromptPrefixRefreshSeconds*time.Second
+	sighting.last = now
+	if refresh || !repeated {
+		// A first sight is shared synchronously; a due refresh in the
+		// background. Either way the next one is a minute away.
+		sighting.shared = now
+	}
+	p.seen[key] = sighting
+	return repeated, refresh
+}
+
+// sharedPrefixes asks the other replicas about prefixes this process has not
+// seen (ADR 20261019132139). A slow or failing backend answers "not seen",
+// so marking never delays a call beyond its lookup bound.
+type sharedPrefixes struct {
+	backend       AIPromptPrefixBackend
+	integrationID string
+	metrics       *Metrics
+	metricID      string
+}
+
+func (s sharedPrefixes) seen(ctx context.Context, key [32]byte) bool {
+	ctx, cancel := context.WithTimeout(ctx, api.OutboundAIPromptPrefixLookupTimeout)
+	defer cancel()
+	repeated, err := s.backend.SeenAIPromptPrefix(ctx, s.integrationID, key, api.OutboundAIPromptCacheLifetimeSeconds*time.Second)
+	switch {
+	case err != nil:
+		s.metrics.ObserveAIPromptPrefixShared(s.metricID, promptPrefixSharedError)
+		return false
+	case repeated:
+		s.metrics.ObserveAIPromptPrefixShared(s.metricID, promptPrefixSharedRepeated)
+	default:
+		s.metrics.ObserveAIPromptPrefixShared(s.metricID, promptPrefixSharedFirst)
+	}
+	return repeated
+}
+
+// refresh keeps a locally repeated prefix fresh for the other replicas, in
+// the background.
+func (s sharedPrefixes) refresh(ctx context.Context, key [32]byte) {
+	ctx = context.WithoutCancel(ctx)
+	go func() {
+		ctx, cancel := context.WithTimeout(ctx, api.OutboundAIPromptPrefixLookupTimeout)
+		defer cancel()
+		result := promptPrefixSharedRefreshed
+		if _, err := s.backend.SeenAIPromptPrefix(ctx, s.integrationID, key, api.OutboundAIPromptCacheLifetimeSeconds*time.Second); err != nil {
+			result = promptPrefixSharedError
+		}
+		s.metrics.ObserveAIPromptPrefixShared(s.metricID, result)
+	}()
 }
 
 func promptPrefixKey(integrationID, model string, parts ...json.RawMessage) [32]byte {
@@ -78,17 +150,21 @@ func (h *Handler) applyPromptCache(r *http.Request, integration Integration, pla
 		prefixes: &h.promptPrefixes,
 		now:      time.Now(),
 	}
+	if backend, ok := h.Backend.(AIPromptPrefixBackend); ok {
+		marker.shared = &sharedPrefixes{backend: backend, integrationID: integration.ID,
+			metrics: h.Metrics, metricID: integration.MetricLabel()}
+	}
 	var body []byte
 	var marks []string
 	switch plan.endpoint.format {
 	case aiFormatAnthropic, aiFormatBedrockInvoke:
-		body, marks = marker.anthropic(ai.body, plan.endpoint.format == aiFormatBedrockInvoke)
+		body, marks = marker.anthropic(r.Context(), ai.body, plan.endpoint.format == aiFormatBedrockInvoke)
 	case aiFormatBedrockConverse:
 		model := strings.ToLower(plan.facts.model)
 		if !strings.Contains(model, "anthropic") && !strings.Contains(model, "claude") {
 			return nil
 		}
-		body, marks = marker.converse(ai.body)
+		body, marks = marker.converse(r.Context(), ai.body)
 	default:
 		return nil
 	}
@@ -98,17 +174,19 @@ func (h *Handler) applyPromptCache(r *http.Request, integration Integration, pla
 	return marks
 }
 
-// promptCacheMarker places breakpoints in one request body.
+// promptCacheMarker places breakpoints in one request body. shared, when
+// set, answers for prefixes this process has not seen.
 type promptCacheMarker struct {
 	session  bool
 	key      func(parts ...json.RawMessage) [32]byte
 	prefixes *promptPrefixes
+	shared   *sharedPrefixes
 	now      time.Time
 }
 
 // wantsPrefix reports a stable prefix worth a breakpoint: long enough, and
 // repeated or part of a named session.
-func (m promptCacheMarker) wantsPrefix(parts ...json.RawMessage) bool {
+func (m promptCacheMarker) wantsPrefix(ctx context.Context, parts ...json.RawMessage) bool {
 	size := 0
 	for _, part := range parts {
 		size += len(part)
@@ -116,8 +194,20 @@ func (m promptCacheMarker) wantsPrefix(parts ...json.RawMessage) bool {
 	if promptCacheTokens(size) < api.OutboundAIPromptCacheMinTokens {
 		return false
 	}
-	repeated := m.prefixes.repeated(m.key(parts...), m.now)
-	return repeated || m.session
+	key := m.key(parts...)
+	repeated, refresh := m.prefixes.repeated(key, m.now)
+	switch {
+	case m.session:
+		return true
+	case m.shared == nil:
+		return repeated
+	case repeated:
+		if refresh {
+			m.shared.refresh(ctx, key)
+		}
+		return true
+	}
+	return m.shared.seen(ctx, key)
 }
 
 // wantsConversation reports a prompt worth caching for its next turn.
@@ -131,7 +221,7 @@ var ephemeralCache = map[string]any{"type": "ephemeral"}
 // anthropic marks an Anthropic Messages body: the last system block, or
 // else the last tool, and the last eligible block of the last message. A
 // Bedrock invoke body must name its anthropic_version.
-func (m promptCacheMarker) anthropic(body []byte, invoke bool) ([]byte, []string) {
+func (m promptCacheMarker) anthropic(ctx context.Context, body []byte, invoke bool) ([]byte, []string) {
 	if bytes.Contains(body, []byte(`"cache_control"`)) {
 		return body, nil
 	}
@@ -140,7 +230,7 @@ func (m promptCacheMarker) anthropic(body []byte, invoke bool) ([]byte, []string
 		return body, nil
 	}
 	var marks []string
-	if m.wantsPrefix(fields["tools"], fields["system"]) {
+	if m.wantsPrefix(ctx, fields["tools"], fields["system"]) {
 		if marked, ok := markAnthropicBlocks(fields["system"], false); ok {
 			fields["system"], marks = marked, append(marks, promptCacheMarkPrefix)
 		} else if marked, ok := markLastObject(fields["tools"], "cache_control", ephemeralCache); ok {
@@ -159,7 +249,7 @@ func (m promptCacheMarker) anthropic(body []byte, invoke bool) ([]byte, []string
 
 // converse marks a Bedrock Converse body with cachePoint blocks: after the
 // system blocks, or else the tools, and after the last message's content.
-func (m promptCacheMarker) converse(body []byte) ([]byte, []string) {
+func (m promptCacheMarker) converse(ctx context.Context, body []byte) ([]byte, []string) {
 	if bytes.Contains(body, []byte(`"cachePoint"`)) {
 		return body, nil
 	}
@@ -169,7 +259,7 @@ func (m promptCacheMarker) converse(body []byte) ([]byte, []string) {
 	}
 	cachePoint := map[string]any{"cachePoint": map[string]any{"type": "default"}}
 	var marks []string
-	if m.wantsPrefix(fields["toolConfig"], fields["system"]) {
+	if m.wantsPrefix(ctx, fields["toolConfig"], fields["system"]) {
 		if marked, ok := appendToArray(fields["system"], cachePoint); ok {
 			fields["system"], marks = marked, append(marks, promptCacheMarkPrefix)
 		} else if marked, ok := appendToolCachePoint(fields["toolConfig"], cachePoint); ok {
