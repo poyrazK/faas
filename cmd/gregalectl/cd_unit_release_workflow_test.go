@@ -105,7 +105,7 @@ func TestUnitLaneRestartsOnlyPlannedServicesOverTheExpectedRelease(t *testing.T)
 		"deployctl deploy --only '${only}' --expect-current ${expect} ${release_id}",
 		"ROLLOUT_ACTIVATION_MARKER",
 		"unit-release-verify.sh ${release_dir}${specs}",
-		"deployctl rollback --only '${only}'",
+		`deployctl rollback --only '${only}' $(rollback_flags "$plan")`,
 	)
 	for _, forbidden := range []string{"converge-control-plane", "kgv rotate", "fleet-seal"} {
 		if strings.Contains(helper, forbidden) {

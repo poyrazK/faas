@@ -31,7 +31,7 @@ func (e *Engine) reconcileStrictCompute(ctx context.Context, app state.App, now 
 		}
 		held = held || balance.Held
 	}
-	rows, err := e.store.ListInstancesForApp(ctx, app.ID)
+	rows, err := e.liveInstancesForApp(ctx, app.ID)
 	if err != nil {
 		return err
 	}

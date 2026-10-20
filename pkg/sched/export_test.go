@@ -36,6 +36,7 @@ type ComposedWaveFixture = composedWaveFixture
 type DiscardWriter = discardWriter
 type DrainSynth = drainSynth
 type ExecutionBackendFunc = executionBackendFunc
+type FakeDeadLetterStore = fakeDeadLetterStore
 type FakeLogStream = fakeLogStream
 type FakeNotifier = fakeNotifier
 type FakeVMM = fakeVMM
@@ -404,13 +405,19 @@ func (r *Loop) ProcessFireNowRequest(p0 context.Context, p1 state.FireNowRequest
 func (r *Loop) RecoverPrimeCandidate(p0 context.Context, p1 string, p2 time.Time) error {
 	return r.recoverPrimeCandidate(p0, p1, p2)
 }
-func (r *Loop) RunInstanceStats(p0 context.Context)     { r.runInstanceStats(p0) }
-func (r *Loop) RunPrimeRecovery(p0 context.Context)     { r.runPrimeRecovery(p0) }
-func (r *Loop) RunReaper(p0 context.Context)            { r.runReaper(p0) }
-func (r *Loop) RunRetention(p0 context.Context)         { r.runRetention(p0) }
-func (r *Loop) RunScaleUp(p0 context.Context)           { r.runScaleUp(p0) }
-func (r *Loop) RunServiceRecovery(p0 context.Context)   { r.runServiceRecovery(p0) }
-func (r *Loop) RunWorkflowRetention(p0 context.Context) { r.runWorkflowRetention(p0) }
+func (r *Loop) RunInstanceStats(p0 context.Context) { r.runInstanceStats(p0) }
+func (r *Loop) RunPrimeRecovery(p0 context.Context) { r.runPrimeRecovery(p0) }
+func (r *Loop) RunReaper(p0 context.Context)        { r.runReaper(p0) }
+func (r *Loop) RecordTriggerConsumerHealth(p0 context.Context, p1 storeLike, p2 sqlc.Trigger, p3 PollResult) {
+	r.recordTriggerConsumerHealth(p0, p1, p2, p3)
+}
+
+// Health returns the consumer health observations the fake recorded.
+func (r *fakeDeadLetterStore) Health() []state.TriggerConsumerHealthObservation { return r.health }
+func (r *Loop) RunRetention(p0 context.Context)                                 { r.runRetention(p0) }
+func (r *Loop) RunScaleUp(p0 context.Context)                                   { r.runScaleUp(p0) }
+func (r *Loop) RunServiceRecovery(p0 context.Context)                           { r.runServiceRecovery(p0) }
+func (r *Loop) RunWorkflowRetention(p0 context.Context)                         { r.runWorkflowRetention(p0) }
 func (r *Loop) RunWorkflowSchedulesTick(p0 context.Context) error {
 	return r.runWorkflowSchedulesTick(p0)
 }

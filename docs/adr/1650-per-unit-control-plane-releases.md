@@ -87,8 +87,9 @@ one.
    on failure.
 5. `scripts/unit-release-verify.sh` checks each unit (active, running from the
    new release, readiness 200) and restarts enabled optional units onto it. On
-   failure the workflow runs `deployctl rollback --only` and the units are back
-   on the previous release. All of this runs under the same public-path
+   failure the workflow runs `deployctl rollback --only <services>
+   --expect-current <overlay> --to <base>` and the units are back on the
+   release the plan was built over. All of this runs under the same public-path
    availability observer as a full activation.
 
 The unit lane never runs role convergence, KGV rotation or fleet-seal
@@ -136,7 +137,10 @@ unit, in parallel on the control plane, where Prometheus listens at
 before activation. A pass (0) promotes the
 units. A breach (1), an inconclusive result (3) or a misconfigured gate (2)
 runs `deployctl rollback --only` on the plan's services, which restores the
-release that was active before them, and fails the run. A converge run (a
+release that was active before them, and fails the run. A deploy plan passes
+that release (`--to`, its `expect_current`). A converge plan reruns the
+release already active, so deployctl takes the release its activation history
+records before it (see "Rollback target" below). A converge run (a
 rerun after an interrupted deploy) gates again. Gating per unit keeps each
 unit's own "still scraped" check.
 
@@ -317,6 +321,40 @@ the three breaches came from the new code:
   (`faas_object_storage_gateway_managed` is off), so "no healthy scrape
   target" could never clear. A job with no `up` series at all is now skipped,
   and readiness checks cover it. A configured target at `up == 0` still fails.
+
+## Rollback target (production-us, 2026-10-20)
+
+Run 39473046675 activated overlay c7fe89a5 over rc.283 (ec2334def4) and its
+gate rolled it back to rc.283. Run 39480533579 then activated overlay
+21b559ca over rc.283, its gate failed, and `deployctl rollback --only`
+restored c7fe89a5: the overlay run 1 had already rolled back. The rollback
+took the newest retained directory other than the active one. Directory
+times say when a release was installed, not which release a deploy
+replaced, so automatic rollback was unsafe from the second failed run on.
+
+A rollback now restores exactly the release that was active before the
+deploy it undoes:
+
+- `deployctl deploy` (full and `--only` alike) records each activation in
+  `<releases root>/.activation-history.json`, a bounded stack of release ids
+  written before the activation and unwound when the deploy rolls itself
+  back. `deployctl rollback` pops it.
+- `deployctl rollback --to <release-id>` names the target instead, and
+  `--expect-current <release-id>` refuses unless that release is still
+  active, so a failed gate never rolls back a release deployed since. When
+  the target is already active the rollback is a converged rerun: it only
+  restarts daemons still on another release.
+- Without `--to` and without a history entry for the active release (it was
+  activated by an older deployctl, or the history is already unwound to
+  it), `deployctl rollback` refuses and lists the retained releases. It no
+  longer guesses.
+- Retention keeps the active release's rollback target even when newer,
+  rolled-back releases fill the retention window.
+
+The unit lanes pass `--expect-current <overlay> --to <base>` from the plan,
+and `--expect-current` alone for a converge plan. cd-platform's full-release
+rollback runs `deployctl rollback` without flags, and the release it just
+activated has recorded its predecessor.
 
 ## Still needed
 

@@ -354,7 +354,8 @@ set in `scripts/ci/release_units.json` under `gates`. They run one gate per rest
 unit, in parallel on the control plane (Prometheus at `127.0.0.1:9095`),
 through `scripts/ci/unit_deploy.sh gate`. Exit 1 or 3 from any of them rolls
 the host's units back to the release that was active before
-(`deployctl rollback --only`) and stops the run.
+(`deployctl rollback --only … --expect-current <overlay> --to <base>`) and
+stops the run.
 `scripts/ci/observe_rollout_availability.sh` keeps doing the black-box
 probing during the control plane's activation itself.
 
