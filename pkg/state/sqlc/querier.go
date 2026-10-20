@@ -3813,6 +3813,10 @@ type Querier interface {
 	ObjectS3CredentialList(ctx context.Context, db DBTX, arg ObjectS3CredentialListParams) ([]ObjectStorageS3Credential, error)
 	ObjectS3CredentialListForRekey(ctx context.Context, db DBTX, arg ObjectS3CredentialListForRekeyParams) ([]ObjectStorageS3Credential, error)
 	ObjectS3CredentialLockBucket(ctx context.Context, db DBTX, arg ObjectS3CredentialLockBucketParams) (pgtype.UUID, error)
+	// The credential's account_id foreign key takes this KEY SHARE lock anyway;
+	// taking it before the bucket keeps object storage's account-before-bucket
+	// lock order (ADR-533).
+	ObjectS3CredentialLockNamespace(ctx context.Context, db DBTX, id pgtype.UUID) error
 	ObjectS3CredentialReseal(ctx context.Context, db DBTX, arg ObjectS3CredentialResealParams) (int64, error)
 	ObjectS3CredentialResolve(ctx context.Context, db DBTX, accessKeyID string) (ObjectS3CredentialResolveRow, error)
 	ObjectS3CredentialRevoke(ctx context.Context, db DBTX, arg ObjectS3CredentialRevokeParams) (int64, error)

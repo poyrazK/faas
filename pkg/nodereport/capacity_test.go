@@ -1,31 +1,29 @@
 // adr: 053
-// capacity_sign_test.go — ADR-053 node_signature tests.
+// capacity_test.go — ADR-053 node_signature tests.
 //
 // Pins the canonical-payload / sign / verify triangle that
 // the vmmd publisher and schedd handler both depend on:
 //
 //  1. CanonicalPayload shape (domain || node_id || int64 || 5×int32)
 //  2. HashCanonicalPayload returns 32-byte SHA-256
-//  3. KeyIDForPublicKey is stable + lowercase-hex + 64 chars
-//  4. SignNodeReport + VerifyNodeSignature round-trip
+//  3. KeyID is stable + lowercase-hex + 64 chars
+//  4. SignCapacity + VerifyCapacity round-trip
 //  5. Tampered NodeID → ErrSignatureMismatch
 //  6. Replayed SampledAt → ErrSignatureMismatch
 //  7. Wrong key → ErrUnknownNodeKey
 //  8. Unknown key_id → ErrUnknownNodeKey
 //  9. Empty sig → ErrEmptySignature
 // 10. Nil registry → ErrUnknownNodeKey
-// 11. Non-P-256 curve → SignNodeReport error
-// 12. Nil key → SignNodeReport error
+// 11. Non-P-256 curve → SignCapacity error
+// 12. Nil key → SignCapacity error
 //
-// White-box test (package sched) so it can reach nodeKeyLookup
-// directly without re-exporting the helper for production
-// callers. Companion tests live in:
+// Companion tests live in:
 //   - pkg/scheddgrpc/capacity_test.go (handler-side: end-to-end
 //     unsigned + signed report wire round-trip)
 //   - cmd/vmmd/capacity_publisher_e2e_test.go (publisher-side:
 //     the producer stamps node_signature before Send)
 
-package sched_test
+package nodereport_test
 
 import (
 	"crypto/ecdsa"
@@ -34,12 +32,12 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
-	"github.com/onebox-faas/faas/pkg/sched"
+	"github.com/onebox-faas/faas/pkg/nodereport"
 	"testing"
 	"time"
 )
 
-// stubKeyLookup is a nodeKeyLookup backed by a map. Tests inject
+// stubKeyLookup is a nodereport.KeyLookup backed by a map. Tests inject
 // this into VerifyNodeSignature without spinning up a real
 // NodeKeyRegistry (which has a Postgres loader behind it).
 type stubKeyLookup struct {
@@ -64,7 +62,7 @@ func generateTestP256(t *testing.T) (*ecdsa.PrivateKey, string) {
 	if err != nil {
 		t.Fatalf("ecdsa.GenerateKey: %v", err)
 	}
-	keyID, err := sched.KeyIDForPublicKey(&priv.PublicKey)
+	keyID, err := nodereport.KeyID(&priv.PublicKey)
 	if err != nil {
 		t.Fatalf("KeyIDForPublicKey: %v", err)
 	}
@@ -74,8 +72,8 @@ func generateTestP256(t *testing.T) (*ecdsa.PrivateKey, string) {
 // sampleReport returns a deterministic CapacityReport for the
 // signature tests. The struct fields are small enough to fit
 // in a single integer-line for the round-trip + negative tests.
-func sampleReport(nodeID string) sched.CapacityReport {
-	return sched.CapacityReport{
+func sampleReport(nodeID string) nodereport.CapacityReport {
+	return nodereport.CapacityReport{
 		NodeID:        nodeID,
 		SampledAt:     time.UnixMilli(1730000000000),
 		LiveCount:     12,
@@ -97,18 +95,18 @@ func TestCanonicalPayload_Shape(t *testing.T) {
 	got := r.CanonicalPayload()
 
 	// Domain prefix.
-	if string(got[:len(sched.CapacityPayloadDomain)]) != sched.CapacityPayloadDomain {
+	if string(got[:len(nodereport.CapacityPayloadDomain)]) != nodereport.CapacityPayloadDomain {
 		t.Errorf("domain prefix = %q, want %q",
-			got[:len(sched.CapacityPayloadDomain)], sched.CapacityPayloadDomain)
+			got[:len(nodereport.CapacityPayloadDomain)], nodereport.CapacityPayloadDomain)
 	}
-	if string(got[len(sched.CapacityPayloadDomain):len(sched.CapacityPayloadDomain)+len("node-1")]) != "node-1" {
+	if string(got[len(nodereport.CapacityPayloadDomain):len(nodereport.CapacityPayloadDomain)+len("node-1")]) != "node-1" {
 		t.Errorf("node_id segment = %q, want %q",
-			got[len(sched.CapacityPayloadDomain):len(sched.CapacityPayloadDomain)+len("node-1")], "node-1")
+			got[len(nodereport.CapacityPayloadDomain):len(nodereport.CapacityPayloadDomain)+len("node-1")], "node-1")
 	}
 
 	// Total length: 16 (domain) + 6 (node-1) + 8 (int64) + 5*4 (int32s)
 	// = 16 + 6 + 8 + 20 = 50 bytes.
-	if wantLen := len(sched.CapacityPayloadDomain) + len("node-1") + 8 + 20; len(got) != wantLen {
+	if wantLen := len(nodereport.CapacityPayloadDomain) + len("node-1") + 8 + 20; len(got) != wantLen {
 		t.Errorf("payload length = %d, want %d", len(got), wantLen)
 	}
 }
@@ -132,7 +130,7 @@ func TestHashCanonicalPayload_Digest(t *testing.T) {
 func TestKeyIDForPublicKey_Stable(t *testing.T) {
 	t.Parallel()
 	priv, keyID1 := generateTestP256(t)
-	keyID2, err := sched.KeyIDForPublicKey(&priv.PublicKey)
+	keyID2, err := nodereport.KeyID(&priv.PublicKey)
 	if err != nil {
 		t.Fatalf("KeyIDForPublicKey: %v", err)
 	}
@@ -158,7 +156,7 @@ func TestKeyIDForPublicKey_Stable(t *testing.T) {
 // capacityStreamer interface doesn't get a hex-encode of nil.
 func TestKeyIDForPublicKey_NilKey(t *testing.T) {
 	t.Parallel()
-	if _, err := sched.KeyIDForPublicKey(nil); err == nil {
+	if _, err := nodereport.KeyID(nil); err == nil {
 		t.Error("KeyIDForPublicKey(nil) succeeded; want error")
 	}
 }
@@ -172,7 +170,7 @@ func TestSignAndVerify_HappyPath(t *testing.T) {
 	priv, keyID := generateTestP256(t)
 	r := sampleReport("node-1")
 
-	sig, err := sched.SignNodeReport(priv, r)
+	sig, err := nodereport.SignCapacity(priv, r)
 	if err != nil {
 		t.Fatalf("SignNodeReport: %v", err)
 	}
@@ -187,7 +185,7 @@ func TestSignAndVerify_HappyPath(t *testing.T) {
 	keys := &stubKeyLookup{keys: map[string]*ecdsa.PublicKey{
 		keyID: &priv.PublicKey,
 	}}
-	if err := sched.VerifyNodeSignature(report, sig, keys); err != nil {
+	if err := nodereport.VerifyCapacity(report, sig, keys); err != nil {
 		t.Errorf("VerifyNodeSignature: %v", err)
 	}
 }
@@ -200,7 +198,7 @@ func TestVerifyNodeSignature_CrossNodeKeyRejected(t *testing.T) {
 	t.Parallel()
 	priv, keyID := generateTestP256(t)
 	report := sampleReport("node-2")
-	sig, err := sched.SignNodeReport(priv, report)
+	sig, err := nodereport.SignCapacity(priv, report)
 	if err != nil {
 		t.Fatalf("SignNodeReport: %v", err)
 	}
@@ -211,7 +209,7 @@ func TestVerifyNodeSignature_CrossNodeKeyRejected(t *testing.T) {
 		owner: "node-1",
 		keys:  map[string]*ecdsa.PublicKey{keyID: &priv.PublicKey},
 	}
-	if err := sched.VerifyNodeSignature(report, sig, keys); !errors.Is(err, sched.ErrUnknownNodeKey) {
+	if err := nodereport.VerifyCapacity(report, sig, keys); !errors.Is(err, nodereport.ErrUnknownNodeKey) {
 		t.Fatalf("cross-node key: err = %v, want ErrUnknownNodeKey", err)
 	}
 }
@@ -224,7 +222,7 @@ func TestVerifyNodeSignature_TamperedPayload(t *testing.T) {
 	t.Parallel()
 	priv, keyID := generateTestP256(t)
 	r := sampleReport("node-1")
-	sig, err := sched.SignNodeReport(priv, r)
+	sig, err := nodereport.SignCapacity(priv, r)
 	if err != nil {
 		t.Fatalf("SignNodeReport: %v", err)
 	}
@@ -237,7 +235,7 @@ func TestVerifyNodeSignature_TamperedPayload(t *testing.T) {
 	keys := &stubKeyLookup{keys: map[string]*ecdsa.PublicKey{
 		keyID: &priv.PublicKey,
 	}}
-	if err := sched.VerifyNodeSignature(tampered, sig, keys); !errors.Is(err, sched.ErrSignatureMismatch) {
+	if err := nodereport.VerifyCapacity(tampered, sig, keys); !errors.Is(err, nodereport.ErrSignatureMismatch) {
 		t.Errorf("tampered payload: err = %v, want ErrSignatureMismatch", err)
 	}
 }
@@ -253,7 +251,7 @@ func TestVerifyNodeSignature_ReplayedTimestamp(t *testing.T) {
 	t.Parallel()
 	priv, keyID := generateTestP256(t)
 	r := sampleReport("node-1")
-	sig, err := sched.SignNodeReport(priv, r)
+	sig, err := nodereport.SignCapacity(priv, r)
 	if err != nil {
 		t.Fatalf("SignNodeReport: %v", err)
 	}
@@ -266,7 +264,7 @@ func TestVerifyNodeSignature_ReplayedTimestamp(t *testing.T) {
 	keys := &stubKeyLookup{keys: map[string]*ecdsa.PublicKey{
 		keyID: &priv.PublicKey,
 	}}
-	if err := sched.VerifyNodeSignature(replayed, sig, keys); !errors.Is(err, sched.ErrSignatureMismatch) {
+	if err := nodereport.VerifyCapacity(replayed, sig, keys); !errors.Is(err, nodereport.ErrSignatureMismatch) {
 		t.Errorf("replayed timestamp: err = %v, want ErrSignatureMismatch", err)
 	}
 }
@@ -279,7 +277,7 @@ func TestVerifyNodeSignature_WrongKey(t *testing.T) {
 	signer, keyID := generateTestP256(t)
 	_, otherKeyID := generateTestP256(t)
 	r := sampleReport("node-1")
-	sig, err := sched.SignNodeReport(signer, r)
+	sig, err := nodereport.SignCapacity(signer, r)
 	if err != nil {
 		t.Fatalf("SignNodeReport: %v", err)
 	}
@@ -293,7 +291,7 @@ func TestVerifyNodeSignature_WrongKey(t *testing.T) {
 	keys := &stubKeyLookup{keys: map[string]*ecdsa.PublicKey{
 		otherKeyID: &wrongPriv.PublicKey,
 	}}
-	if err := sched.VerifyNodeSignature(report, sig, keys); !errors.Is(err, sched.ErrUnknownNodeKey) {
+	if err := nodereport.VerifyCapacity(report, sig, keys); !errors.Is(err, nodereport.ErrUnknownNodeKey) {
 		t.Errorf("wrong key: err = %v, want ErrUnknownNodeKey", err)
 	}
 }
@@ -306,7 +304,7 @@ func TestVerifyNodeSignature_UnknownKeyID(t *testing.T) {
 	t.Parallel()
 	priv, keyID := generateTestP256(t)
 	r := sampleReport("node-1")
-	sig, err := sched.SignNodeReport(priv, r)
+	sig, err := nodereport.SignCapacity(priv, r)
 	if err != nil {
 		t.Fatalf("SignNodeReport: %v", err)
 	}
@@ -316,7 +314,7 @@ func TestVerifyNodeSignature_UnknownKeyID(t *testing.T) {
 	report.NodeKeyID = keyID
 
 	keys := &stubKeyLookup{keys: map[string]*ecdsa.PublicKey{}}
-	if err := sched.VerifyNodeSignature(report, sig, keys); !errors.Is(err, sched.ErrUnknownNodeKey) {
+	if err := nodereport.VerifyCapacity(report, sig, keys); !errors.Is(err, nodereport.ErrUnknownNodeKey) {
 		t.Errorf("unknown key: err = %v, want ErrUnknownNodeKey", err)
 	}
 }
@@ -334,7 +332,7 @@ func TestVerifyNodeSignature_EmptySignature(t *testing.T) {
 	keys := &stubKeyLookup{keys: map[string]*ecdsa.PublicKey{
 		keyID: nil, // populated elsewhere; the empty-sig check fires first
 	}}
-	if err := sched.VerifyNodeSignature(r, nil, keys); !errors.Is(err, sched.ErrEmptySignature) {
+	if err := nodereport.VerifyCapacity(r, nil, keys); !errors.Is(err, nodereport.ErrEmptySignature) {
 		t.Errorf("empty sig: err = %v, want ErrEmptySignature", err)
 	}
 }
@@ -348,7 +346,7 @@ func TestVerifyNodeSignature_NilRegistry(t *testing.T) {
 	t.Parallel()
 	priv, keyID := generateTestP256(t)
 	r := sampleReport("node-1")
-	sig, err := sched.SignNodeReport(priv, r)
+	sig, err := nodereport.SignCapacity(priv, r)
 	if err != nil {
 		t.Fatalf("SignNodeReport: %v", err)
 	}
@@ -357,7 +355,7 @@ func TestVerifyNodeSignature_NilRegistry(t *testing.T) {
 	report.NodeSignature = sig
 	report.NodeKeyID = keyID
 
-	if err := sched.VerifyNodeSignature(report, sig, nil); !errors.Is(err, sched.ErrUnknownNodeKey) {
+	if err := nodereport.VerifyCapacity(report, sig, nil); !errors.Is(err, nodereport.ErrUnknownNodeKey) {
 		t.Errorf("nil registry: err = %v, want ErrUnknownNodeKey", err)
 	}
 }
@@ -372,7 +370,7 @@ func TestSignNodeReport_RejectsNonP256(t *testing.T) {
 		t.Fatalf("generate P-224: %v", err)
 	}
 	r := sampleReport("node-1")
-	if _, err := sched.SignNodeReport(priv, r); err == nil {
+	if _, err := nodereport.SignCapacity(priv, r); err == nil {
 		t.Error("SignNodeReport on P-224 key succeeded; want error")
 	}
 }
@@ -386,7 +384,7 @@ func TestSignNodeReport_RejectsNonP256(t *testing.T) {
 func TestSignNodeReport_RejectsNilKey(t *testing.T) {
 	t.Parallel()
 	r := sampleReport("node-1")
-	if _, err := sched.SignNodeReport(nil, r); err == nil {
+	if _, err := nodereport.SignCapacity(nil, r); err == nil {
 		t.Error("SignNodeReport on nil key succeeded; want error")
 	}
 }
@@ -410,14 +408,14 @@ func TestSignNodeReport_RejectsNegativeFields(t *testing.T) {
 
 	cases := []struct {
 		name string
-		mut  func(*sched.CapacityReport)
+		mut  func(*nodereport.CapacityReport)
 	}{
-		{"pre-epoch SampledAt", func(r *sched.CapacityReport) { r.SampledAt = time.UnixMilli(-1) }},
-		{"negative LiveCount", func(r *sched.CapacityReport) { r.LiveCount = -1 }},
-		{"negative LeasedCount", func(r *sched.CapacityReport) { r.LeasedCount = -1 }},
-		{"negative UsedMB", func(r *sched.CapacityReport) { r.UsedMB = -1 }},
-		{"negative RAMHeadroomMB", func(r *sched.CapacityReport) { r.RAMHeadroomMB = -1 }},
-		{"negative VCPUBusy", func(r *sched.CapacityReport) { r.VCPUBusy = -1 }},
+		{"pre-epoch SampledAt", func(r *nodereport.CapacityReport) { r.SampledAt = time.UnixMilli(-1) }},
+		{"negative LiveCount", func(r *nodereport.CapacityReport) { r.LiveCount = -1 }},
+		{"negative LeasedCount", func(r *nodereport.CapacityReport) { r.LeasedCount = -1 }},
+		{"negative UsedMB", func(r *nodereport.CapacityReport) { r.UsedMB = -1 }},
+		{"negative RAMHeadroomMB", func(r *nodereport.CapacityReport) { r.RAMHeadroomMB = -1 }},
+		{"negative VCPUBusy", func(r *nodereport.CapacityReport) { r.VCPUBusy = -1 }},
 	}
 	for _, tc := range cases {
 		tc := tc
@@ -425,7 +423,7 @@ func TestSignNodeReport_RejectsNegativeFields(t *testing.T) {
 			t.Parallel()
 			r := base
 			tc.mut(&r)
-			if _, err := sched.SignNodeReport(priv, r); err == nil {
+			if _, err := nodereport.SignCapacity(priv, r); err == nil {
 				t.Errorf("SignNodeReport(%s) succeeded; want error", tc.name)
 			}
 		})

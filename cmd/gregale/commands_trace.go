@@ -479,6 +479,11 @@ func renderTraceWaterfall(w io.Writer, result api.AccountTraceLookupResponse) {
 func traceMatchBreakdown(match api.AccountTraceMatch) string {
 	request := match.Request
 	var parts []string
+	if request.TraceInferred {
+		// ADR-1138: the caller did not forward trace context; Gregale linked
+		// the call because the caller was serving exactly one request.
+		parts = append(parts, "trace linked by Gregale")
+	}
 	wakeMS := 0
 	switch {
 	case match.Wake != nil && match.Wake.ReadyInMS > 0:
