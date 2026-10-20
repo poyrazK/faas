@@ -34,6 +34,9 @@ func TestHostJournalMetricsCountsAllocatedSparseBytes(t *testing.T) {
 	t.Cleanup(func() { hostJournalDirs = originalDirs })
 
 	run := func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		if out, ok := listBoots(args); ok && name == "journalctl" {
+			return out, nil
+		}
 		if name == "journalctl" {
 			return nil, nil
 		}
