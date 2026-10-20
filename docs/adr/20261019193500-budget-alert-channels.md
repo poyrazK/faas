@@ -1,4 +1,4 @@
-# ADR: Budget alerts on notification channels
+# ADR: Budget alerts on notification channels, and projected overruns
 
 Date: 2026-10-19
 Status: Accepted
@@ -13,6 +13,11 @@ finance contact who is not the account owner never receives one.
 
 Alert rules already deliver to Slack, PagerDuty and email through
 notification channels (ADR-749). Budgets cannot use them.
+
+Every budget alert also arrives after the money is spent: a threshold fires
+once known usage reaches it. `GET /v1/billing/forecast` already projects each
+meter to the end of the month at its current rate, but no budget uses that
+projection.
 
 ## Decision
 
@@ -53,12 +58,45 @@ notification channels (ADR-749). Budgets cannot use them.
    (`FinancialBudgetDeliveryInterval`), beside the email outbox. A meterd
    with no alert evaluator (no host identity and no Prometheus) leaves channel
    deliveries pending. The email outbox still runs.
+7. **Projected overrun.** Each evaluation of a monitored budget also projects
+   its amount to the end of the UTC month (`projected_millicents` on the
+   evaluation). The projection uses each selected meter's run-rate forecast:
+   - Gross usage scales the scope's gross amount by the forecast's
+     projected-to-observed quantity.
+   - Net usage takes the account's projected net charge, in the scope's share
+     of the observed quantity. This is how the ledger allocates a net charge.
+
+   There is no projection (`projection_reason` says why) when any selected
+   meter has no forecast, or the evidence is incomplete or stale.
+   `ForecastMeter` also needs at least a day of uninterrupted coverage, so a
+   quiet month start never projects.
+
+   When the projection reaches the limit while known usage is still below it,
+   meterd raises one projected-overrun alert for that policy revision and
+   month. It goes to the account email and the bound channels, through the
+   same outboxes, leases and retries. It is a `warning` and shares the budget
+   month's PagerDuty incident. It is an estimate, not a decision: it never
+   stops a workload, even on a `stop_previews` budget.
+8. **Storage of projections.** Projected-overrun alerts live in their own
+   table, `financial_budget_projection_alerts`, with its own email outbox.
+   `financial_budget_alerts` keys an alert by policy, revision, month and
+   threshold, and the previous release inserts into it. A projection at the
+   limit would take the limit alert's key, so the real limit alert would be
+   dropped. Channel deliveries name their source with `kind` (`threshold` or
+   `projection`) and cascade from the policy.
 
 ## Consequences
 
-- Two tables, `financial_budget_channels` (configuration) and
-  `financial_budget_alert_channel_deliveries` (operational), added with an
-  expand migration.
+- Three tables, added with an expand migration:
+  `financial_budget_channels` (configuration),
+  `financial_budget_projection_alerts` and
+  `financial_budget_alert_channel_deliveries` (operational).
+- `GET /v1/billing/budgets/{id}` reports `runtime.evaluation.projected_millicents`
+  and `runtime.projection`. `gregale billing budgets get` prints the
+  projected month end.
+- A linear run rate overstates a month front-loaded by a one-off burst and
+  understates one that grows. The alert says it is an estimate, and fires at
+  most once a month per revision.
 - `meterd_alert_channel_deliveries_total{kind,outcome}` now also counts
   budget deliveries. No new metric.
 - Strict budgets have no thresholds (ADR-1750), so a channel bound to one
@@ -73,3 +111,9 @@ notification channels (ADR-749). Budgets cannot use them.
     that had already accepted.
   - **Unlimited retries.** A deleted Slack webhook would retry until the end
     of the month.
+  - **A projection as a row in `financial_budget_alerts`.** It would share the
+    limit alert's unique key. Changing that key needs a contract migration
+    and breaks the previous release's `ON CONFLICT` insert.
+  - **Run-rate on the budget's net amount.** Net usage stays at zero until the
+    allowance is used, and then grows faster than linear. Only the quantity
+    is linear.

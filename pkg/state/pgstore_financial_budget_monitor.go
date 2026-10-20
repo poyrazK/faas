@@ -67,6 +67,11 @@ func (s *PgStore) RecordFinancialBudgetEvaluation(ctx context.Context, account, 
 			return err
 		}
 	}
+	if projection, ok := financialBudgetProjectionAlert(p, e); ok {
+		if err := insertFinancialBudgetProjection(ctx, tx, projection); err != nil {
+			return err
+		}
+	}
 	if stop, crossed := financialBudgetStop(p, e); crossed {
 		if err := insertFinancialBudgetStop(ctx, tx, stop); err != nil {
 			return err
@@ -111,6 +116,18 @@ func (s *PgStore) FinancialBudgetRuntime(ctx context.Context, account, id string
 		}
 		out.Alerts = append(out.Alerts, a.BudgetAlert)
 	}
+	projection, err := q.FinancialBudgetProjectionGet(ctx, s.pool, sqlc.FinancialBudgetProjectionGetParams{AccountID: aid, PolicyID: pid, Revision: p.Revision, PeriodStart: financialTimestamp(month)})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return out, nil
+	}
+	if err != nil {
+		return out, err
+	}
+	a, err := financialBudgetProjectionFromRow(projection)
+	if err != nil {
+		return out, err
+	}
+	out.Projection = &a.BudgetAlert
 	return out, nil
 }
 

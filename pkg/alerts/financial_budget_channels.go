@@ -82,12 +82,17 @@ func FinancialBudgetChannelMessage(a state.FinancialBudgetAlertDelivery, channel
 	if !a.Evaluation.CoverageComplete {
 		coverage = " Usage coverage is partial, so more costs may be missing."
 	}
-	summary := fmt.Sprintf("Known usage this month is %s, past the %s threshold of a %s budget (%s, %s, %s).%s %s It covers the selected usage meters, not your total invoice.",
-		budgetMoney(a.Spec.Currency, known), budgetMoney(a.Spec.Currency, a.ThresholdMillicents), budgetMoney(a.Spec.Currency, a.Spec.LimitMillicents),
-		strings.Join(a.Spec.Meters, " + "), strings.ReplaceAll(a.Spec.Basis, "_", " "), scope, coverage, effect)
+	detail := fmt.Sprintf("%s, %s, %s", strings.Join(a.Spec.Meters, " + "), strings.ReplaceAll(a.Spec.Basis, "_", " "), scope)
+	summary := fmt.Sprintf("Known usage this month is %s, past the %s threshold of a %s budget (%s).%s %s It covers the selected usage meters, not your total invoice.",
+		budgetMoney(a.Spec.Currency, known), budgetMoney(a.Spec.Currency, a.ThresholdMillicents), budgetMoney(a.Spec.Currency, a.Spec.LimitMillicents), detail, coverage, effect)
 	severity := "warning"
 	if a.ThresholdMillicents >= a.Spec.LimitMillicents {
 		severity = "error"
+	}
+	if a.Kind == financial.BudgetAlertProjection && a.Evaluation.ProjectedMillicents != nil {
+		summary = fmt.Sprintf("At the current rate, usage this month is projected to reach %s, above the %s limit (%s). Known usage so far is %s. %s The projection is an estimate from this month's run rate, not an invoice.",
+			budgetMoney(a.Spec.Currency, *a.Evaluation.ProjectedMillicents), budgetMoney(a.Spec.Currency, a.Spec.LimitMillicents), detail, budgetMoney(a.Spec.Currency, known), effect)
+		severity = "warning"
 	}
 	month := a.Evaluation.PeriodStart.UTC().Format("2006-01")
 	msg := alertchannels.Message{

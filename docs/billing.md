@@ -254,6 +254,21 @@ its pending alerts, and deleting it discards them. On PagerDuty, every threshold
 of one budget in one month updates a single incident: `warning` below the
 limit, `error` at it. Amounts are the selected usage meters, not the invoice.
 
+### Projected overruns
+
+Each evaluation also projects the budget to the end of the UTC month at this
+month's usage rate (`runtime.evaluation.projected_millicents`; `gregale billing
+budgets get` prints "Projected month end"). When the projection reaches the
+limit while known usage is still below it, the account email and the bound
+channels get one "projected to exceed its limit" alert for the month. It
+shows the projected amount, the limit and the usage so far. It is an estimate,
+not an invoice, and it never stops a workload.
+
+A projection needs complete, fresh evidence for every selected meter and at
+least a day of usage this month. Otherwise `projection_reason` says why it is
+unavailable (for example `compute:insufficient_history`). Editing the budget
+starts a new revision, so a still-projected overrun can alert again.
+
 ## Active spending notifications
 
 For example, save this specification to `budget.json` and run

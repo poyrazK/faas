@@ -34,9 +34,11 @@
       "attempts",
       "channel_id",
       "delivered_at",
+      "kind",
       "last_error",
       "lease_token",
       "next_attempt_at",
+      "policy_id",
       "state"
     ],
     "kind": "operational"
@@ -57,6 +59,25 @@
       "revision",
       "state",
       "threshold_millicents"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "financial_budget_projection_alerts",
+    "columns": [
+      "account_id",
+      "attempts",
+      "delivered_at",
+      "id",
+      "last_error",
+      "lease_token",
+      "limit_millicents",
+      "next_attempt_at",
+      "payload",
+      "period_start",
+      "policy_id",
+      "revision",
+      "state"
     ],
     "kind": "operational"
   },

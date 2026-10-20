@@ -5022,8 +5022,10 @@ type FinancialBudgetAlert struct {
 
 type FinancialBudgetAlertChannelDelivery struct {
 	AlertID       pgtype.UUID
+	Kind          string
 	ChannelID     pgtype.UUID
 	AccountID     pgtype.UUID
+	PolicyID      pgtype.UUID
 	State         string
 	Attempts      int32
 	NextAttemptAt pgtype.Timestamptz
@@ -5056,6 +5058,22 @@ type FinancialBudgetPolicy struct {
 	CreatedAt pgtype.Timestamptz
 	UpdatedAt pgtype.Timestamptz
 	DeletedAt pgtype.Timestamptz
+}
+
+type FinancialBudgetProjectionAlert struct {
+	ID              pgtype.UUID
+	AccountID       pgtype.UUID
+	PolicyID        pgtype.UUID
+	Revision        int64
+	PeriodStart     pgtype.Timestamptz
+	LimitMillicents int64
+	Payload         []byte
+	State           string
+	Attempts        int32
+	NextAttemptAt   pgtype.Timestamptz
+	LeaseToken      pgtype.UUID
+	DeliveredAt     pgtype.Timestamptz
+	LastError       string
 }
 
 type FinancialBudgetRevision struct {

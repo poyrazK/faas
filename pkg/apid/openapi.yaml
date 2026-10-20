@@ -75020,12 +75020,15 @@ components:
         coverage_complete: { type: boolean }
         fresh: { type: boolean }
         reasons: { type: array, items: { type: string } }
+        projected_millicents: { type: integer, format: int64, minimum: 0, description: 'Month-end amount at the current run rate (ADR-20261019193500): an estimate, not an invoice. Absent, with projection_reason, when a selected meter has no forecast or the evidence is incomplete or stale.' }
+        projection_reason: { type: string, description: 'Why no projection is available, for example compute:insufficient_history (less than a day of evidence) or incomplete_evidence.' }
     FinancialBudgetAlert:
       type: object
       description: One threshold event per policy revision and UTC month. Edits re-evaluate monthly spending. Delivery is at least once with a stable transport idempotency key; delivered means accepted by the configured transport, not confirmed inbox receipt.
       required: [id, policy_revision, threshold_millicents, evaluation, state, attempts, next_attempt_at]
       properties:
         id: { type: string, format: uuid }
+        kind: { type: string, enum: [projection], description: 'Absent for a crossed threshold. projection marks a projected-overrun alert (ADR-20261019193500), whose threshold_millicents is the limit.' }
         policy_revision: { type: integer, format: int64, minimum: 1 }
         threshold_millicents: { type: integer, format: int64, minimum: 0 }
         evaluation: { $ref: '#/components/schemas/FinancialBudgetEvaluation' }
@@ -75106,6 +75109,7 @@ components:
         compute: { $ref: '#/components/schemas/FinancialComputeBalance' }
         evaluation: { $ref: '#/components/schemas/FinancialBudgetEvaluation' }
         alerts: { type: array, maxItems: 9, items: { $ref: '#/components/schemas/FinancialBudgetAlert' } }
+        projection: { $ref: '#/components/schemas/FinancialBudgetAlert' }
         stops: { type: array, maxItems: 1, items: { $ref: '#/components/schemas/FinancialBudgetStop' } }
     FinancialBudgetListResponse:
       type: object

@@ -116,6 +116,17 @@ func TestDeliverFinancialBudgetChannels(t *testing.T) {
 	}
 }
 
+func TestFinancialBudgetChannelMessageProjection(t *testing.T) {
+	known, projected := int64(40000), int64(125000)
+	a := state.FinancialBudgetAlertDelivery{PolicyID: "p", Spec: financial.BudgetSpec{Name: "monthly", Scope: financial.BudgetScope{Kind: "account"}, Currency: "USD", Meters: []string{"compute"}, Basis: "net_usage", LimitMillicents: 100000, Mode: "monitored", Action: "notify"}}
+	a.ID, a.Kind, a.ThresholdMillicents = "projection", financial.BudgetAlertProjection, 100000
+	a.Evaluation = financial.BudgetEvaluation{PeriodStart: time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC), KnownMillicents: &known, ProjectedMillicents: &projected, CoverageComplete: true}
+	m := alerts.FinancialBudgetChannelMessage(a, "chan", "")
+	if m.Severity != "warning" || m.DedupKey != "budget-p-2026-10" || !strings.Contains(m.Summary, "projected to reach USD 1.25") || !strings.Contains(m.Summary, "USD 1.00 limit") || !strings.Contains(m.Summary, "USD 0.40") || !strings.Contains(m.Summary, "estimate") {
+		t.Fatalf("message = %+v", m)
+	}
+}
+
 func TestFinancialBudgetChannelMessageAtLimit(t *testing.T) {
 	known := int64(100000)
 	a := state.FinancialBudgetAlertDelivery{PolicyID: "p", Spec: financial.BudgetSpec{Name: "previews", Scope: financial.BudgetScope{Kind: "app", ID: "app-1"}, Currency: "USD", Meters: []string{"compute"}, Basis: "gross_usage", LimitMillicents: 100000, Mode: "monitored", Action: "stop_previews", DrainSeconds: 30}}

@@ -46,6 +46,15 @@ func (m *MemStore) RecordFinancialBudgetEvaluation(_ context.Context, account, i
 		}
 		m.enqueueFinancialBudgetAlertChannelsLocked(m.financialBudgetAlerts[alert.ID], e.EvaluatedAt)
 	}
+	if projection, ok := financialBudgetProjectionAlert(p, e); ok {
+		if m.financialBudgetProjections == nil {
+			m.financialBudgetProjections = map[string]FinancialBudgetAlertDelivery{}
+		}
+		if _, exists := m.financialBudgetProjections[projection.ID]; !exists {
+			m.financialBudgetProjections[projection.ID] = projection
+		}
+		m.enqueueFinancialBudgetAlertChannelsLocked(m.financialBudgetProjections[projection.ID], e.EvaluatedAt)
+	}
 	return nil
 }
 
@@ -73,6 +82,12 @@ func (m *MemStore) FinancialBudgetRuntime(_ context.Context, account, id string,
 		}
 	}
 	sort.Slice(out.Alerts, func(i, j int) bool { return out.Alerts[i].ThresholdMillicents < out.Alerts[j].ThresholdMillicents })
+	for _, a := range m.financialBudgetProjections {
+		if a.AccountID == account && a.PolicyID == id && a.PolicyRevision == p.Revision && a.Evaluation.PeriodStart.Equal(month) {
+			projection := cloneFinancialBudgetAlert(a).BudgetAlert
+			out.Projection = &projection
+		}
+	}
 	return out, nil
 }
 

@@ -84,7 +84,7 @@ func (m *MemStore) enqueueFinancialBudgetAlertChannelsLocked(alert FinancialBudg
 			m.financialBudgetChannelDeliveries = map[string]FinancialBudgetAlertChannelDelivery{}
 		}
 		d := FinancialBudgetAlertChannelDelivery{State: "pending", NextAttemptAt: now.UTC()}
-		d.Alert.ID, d.Alert.AccountID, d.Alert.PolicyID, d.Channel.ID = alert.ID, alert.AccountID, alert.PolicyID, c.ID
+		d.Alert.ID, d.Alert.Kind, d.Alert.AccountID, d.Alert.PolicyID, d.Channel.ID = alert.ID, alert.Kind, alert.AccountID, alert.PolicyID, c.ID
 		m.financialBudgetChannelDeliveries[key] = d
 	}
 }
@@ -99,6 +99,9 @@ func (m *MemStore) ClaimFinancialBudgetAlertChannel(_ context.Context, now time.
 	var nextKey string
 	for key, d := range m.financialBudgetChannelDeliveries {
 		alert, ok := m.financialBudgetAlerts[d.Alert.ID]
+		if d.Alert.Kind == financial.BudgetAlertProjection {
+			alert, ok = m.financialBudgetProjections[d.Alert.ID]
+		}
 		p := m.financialBudgets[d.Alert.PolicyID]
 		channel, owned := m.notificationChannelLocked(d.Alert.AccountID, d.Channel.ID)
 		if !ok || !owned || !slices.Contains(m.financialBudgetChannels[d.Alert.PolicyID], d.Channel.ID) || p.DeletedAt != nil || p.Revision != alert.PolicyRevision || !p.Spec.Enabled || !financial.Monitored(p.Spec) ||

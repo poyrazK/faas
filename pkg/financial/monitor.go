@@ -20,10 +20,23 @@ type BudgetEvaluation struct {
 	CoverageComplete  bool      `json:"coverage_complete"`
 	Fresh             bool      `json:"fresh"`
 	Reasons           []string  `json:"reasons"`
+	// ProjectedMillicents is the month-end amount at the current run rate
+	// (ADR-20261019193500). It is nil, with ProjectionReason, when a selected
+	// meter has no forecast or the evidence is incomplete or stale.
+	ProjectedMillicents *int64 `json:"projected_millicents,omitempty"`
+	ProjectionReason    string `json:"projection_reason,omitempty"`
 }
 
+// BudgetAlertProjection marks a projected-overrun alert (ADR-20261019193500):
+// the month-end projection reached the limit while known usage had not. Its
+// ThresholdMillicents is the limit.
+const BudgetAlertProjection = "projection"
+
 type BudgetAlert struct {
-	ID                  string           `json:"id"`
+	ID string `json:"id"`
+	// Kind is empty for a crossed threshold and BudgetAlertProjection for a
+	// projected overrun.
+	Kind                string           `json:"kind,omitempty"`
 	PolicyRevision      int64            `json:"policy_revision"`
 	ThresholdMillicents int64            `json:"threshold_millicents"`
 	Evaluation          BudgetEvaluation `json:"evaluation"`
@@ -40,5 +53,7 @@ type BudgetRuntime struct {
 	Compute    *ComputeBalance   `json:"compute,omitempty"`
 	Evaluation *BudgetEvaluation `json:"evaluation,omitempty"`
 	Alerts     []BudgetAlert     `json:"alerts"`
-	Stops      []BudgetStop      `json:"stops,omitempty"`
+	// Projection is this month's projected-overrun alert, if one was raised.
+	Projection *BudgetAlert `json:"projection,omitempty"`
+	Stops      []BudgetStop `json:"stops,omitempty"`
 }

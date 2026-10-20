@@ -14,11 +14,13 @@ import (
 const financialBudgetAlertChannelClaim = `-- name: FinancialBudgetAlertChannelClaim :one
 WITH candidate AS (
   SELECT d.alert_id, d.channel_id FROM financial_budget_alert_channel_deliveries d
-  JOIN financial_budget_alerts a ON a.id = d.alert_id
-  JOIN financial_budget_policies p ON p.account_id = a.account_id AND p.id = a.policy_id AND p.revision = a.revision
+  LEFT JOIN financial_budget_alerts a ON d.kind = 'threshold' AND a.id = d.alert_id
+  LEFT JOIN financial_budget_projection_alerts pa ON d.kind = 'projection' AND pa.id = d.alert_id
+  JOIN financial_budget_policies p ON p.account_id = d.account_id AND p.id = d.policy_id
+    AND p.revision = COALESCE(a.revision, pa.revision)
   JOIN notification_channels c ON c.id = d.channel_id AND c.account_id = d.account_id
   -- Unbinding a channel holds its pending deliveries; rebinding resumes them.
-  JOIN financial_budget_channels b ON b.account_id = a.account_id AND b.policy_id = a.policy_id AND b.channel_id = d.channel_id
+  JOIN financial_budget_channels b ON b.account_id = d.account_id AND b.policy_id = d.policy_id AND b.channel_id = d.channel_id
   WHERE d.state IN ('pending', 'sending', 'retrying') AND d.next_attempt_at <= $3::timestamptz
     AND p.deleted_at IS NULL AND p.spec->>'enabled' = 'true'
     AND p.spec->>'mode' = 'monitored' AND p.spec->>'action' IN ('notify', 'stop_previews')
@@ -28,7 +30,7 @@ UPDATE financial_budget_alert_channel_deliveries d SET state = 'sending',
   attempts = LEAST(d.attempts::bigint + 1, 2147483647)::integer,
   lease_token = $1::uuid, next_attempt_at = $2::timestamptz
 FROM candidate WHERE d.alert_id = candidate.alert_id AND d.channel_id = candidate.channel_id
-RETURNING d.alert_id, d.channel_id, d.account_id, d.state, d.attempts, d.next_attempt_at, d.lease_token, d.delivered_at, d.last_error
+RETURNING d.alert_id, d.kind, d.channel_id, d.account_id, d.policy_id, d.state, d.attempts, d.next_attempt_at, d.lease_token, d.delivered_at, d.last_error
 `
 
 type FinancialBudgetAlertChannelClaimParams struct {
@@ -42,8 +44,10 @@ func (q *Queries) FinancialBudgetAlertChannelClaim(ctx context.Context, db DBTX,
 	var i FinancialBudgetAlertChannelDelivery
 	err := row.Scan(
 		&i.AlertID,
+		&i.Kind,
 		&i.ChannelID,
 		&i.AccountID,
+		&i.PolicyID,
 		&i.State,
 		&i.Attempts,
 		&i.NextAttemptAt,
@@ -55,7 +59,7 @@ func (q *Queries) FinancialBudgetAlertChannelClaim(ctx context.Context, db DBTX,
 }
 
 const financialBudgetAlertChannelGet = `-- name: FinancialBudgetAlertChannelGet :one
-SELECT alert_id, channel_id, account_id, state, attempts, next_attempt_at, lease_token, delivered_at, last_error FROM financial_budget_alert_channel_deliveries
+SELECT alert_id, kind, channel_id, account_id, policy_id, state, attempts, next_attempt_at, lease_token, delivered_at, last_error FROM financial_budget_alert_channel_deliveries
 WHERE alert_id = $1::uuid AND channel_id = $2::uuid
 `
 
@@ -69,8 +73,10 @@ func (q *Queries) FinancialBudgetAlertChannelGet(ctx context.Context, db DBTX, a
 	var i FinancialBudgetAlertChannelDelivery
 	err := row.Scan(
 		&i.AlertID,
+		&i.Kind,
 		&i.ChannelID,
 		&i.AccountID,
+		&i.PolicyID,
 		&i.State,
 		&i.Attempts,
 		&i.NextAttemptAt,
@@ -119,8 +125,8 @@ func (q *Queries) FinancialBudgetAlertChannelSettle(ctx context.Context, db DBTX
 }
 
 const financialBudgetAlertChannelsEnqueue = `-- name: FinancialBudgetAlertChannelsEnqueue :exec
-INSERT INTO financial_budget_alert_channel_deliveries(alert_id, channel_id, account_id, next_attempt_at)
-SELECT a.id, b.channel_id, a.account_id, $1::timestamptz
+INSERT INTO financial_budget_alert_channel_deliveries(alert_id, kind, channel_id, account_id, policy_id, next_attempt_at)
+SELECT a.id, 'threshold', b.channel_id, a.account_id, a.policy_id, $1::timestamptz
 FROM financial_budget_alerts a
 JOIN financial_budget_channels b ON b.account_id = a.account_id AND b.policy_id = a.policy_id
 WHERE a.id = $2::uuid
@@ -504,4 +510,225 @@ func (q *Queries) FinancialBudgetEvaluationPut(ctx context.Context, db DBTX, arg
 	var policy_id pgtype.UUID
 	err := row.Scan(&policy_id)
 	return policy_id, err
+}
+
+const financialBudgetProjectionChannelsEnqueue = `-- name: FinancialBudgetProjectionChannelsEnqueue :exec
+INSERT INTO financial_budget_alert_channel_deliveries(alert_id, kind, channel_id, account_id, policy_id, next_attempt_at)
+SELECT a.id, 'projection', b.channel_id, a.account_id, a.policy_id, $1::timestamptz
+FROM financial_budget_projection_alerts a
+JOIN financial_budget_channels b ON b.account_id = a.account_id AND b.policy_id = a.policy_id
+WHERE a.id = $2::uuid
+ON CONFLICT (alert_id, channel_id) DO NOTHING
+`
+
+type FinancialBudgetProjectionChannelsEnqueueParams struct {
+	NowAt   pgtype.Timestamptz
+	AlertID pgtype.UUID
+}
+
+func (q *Queries) FinancialBudgetProjectionChannelsEnqueue(ctx context.Context, db DBTX, arg FinancialBudgetProjectionChannelsEnqueueParams) error {
+	_, err := db.Exec(ctx, financialBudgetProjectionChannelsEnqueue, arg.NowAt, arg.AlertID)
+	return err
+}
+
+const financialBudgetProjectionClaim = `-- name: FinancialBudgetProjectionClaim :one
+WITH candidate AS (
+  SELECT a.id FROM financial_budget_projection_alerts a
+  JOIN financial_budget_policies p ON p.account_id = a.account_id AND p.id = a.policy_id AND p.revision = a.revision
+  WHERE a.state != 'delivered' AND a.next_attempt_at <= $3::timestamptz
+    AND p.deleted_at IS NULL AND p.spec->>'enabled' = 'true'
+    AND p.spec->>'mode' = 'monitored' AND p.spec->>'action' IN ('notify', 'stop_previews')
+  ORDER BY a.next_attempt_at, a.id FOR UPDATE OF a SKIP LOCKED LIMIT 1
+)
+UPDATE financial_budget_projection_alerts a SET state = 'sending', attempts = LEAST(a.attempts::bigint + 1, 2147483647)::integer,
+  lease_token = $1::uuid, next_attempt_at = $2::timestamptz
+FROM candidate WHERE a.id = candidate.id RETURNING a.id, a.account_id, a.policy_id, a.revision, a.period_start, a.limit_millicents, a.payload, a.state, a.attempts, a.next_attempt_at, a.lease_token, a.delivered_at, a.last_error
+`
+
+type FinancialBudgetProjectionClaimParams struct {
+	LeaseToken pgtype.UUID
+	LeaseUntil pgtype.Timestamptz
+	NowAt      pgtype.Timestamptz
+}
+
+func (q *Queries) FinancialBudgetProjectionClaim(ctx context.Context, db DBTX, arg FinancialBudgetProjectionClaimParams) (FinancialBudgetProjectionAlert, error) {
+	row := db.QueryRow(ctx, financialBudgetProjectionClaim, arg.LeaseToken, arg.LeaseUntil, arg.NowAt)
+	var i FinancialBudgetProjectionAlert
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.PolicyID,
+		&i.Revision,
+		&i.PeriodStart,
+		&i.LimitMillicents,
+		&i.Payload,
+		&i.State,
+		&i.Attempts,
+		&i.NextAttemptAt,
+		&i.LeaseToken,
+		&i.DeliveredAt,
+		&i.LastError,
+	)
+	return i, err
+}
+
+const financialBudgetProjectionDeliveryGet = `-- name: FinancialBudgetProjectionDeliveryGet :one
+SELECT id, account_id, policy_id, revision, period_start, limit_millicents, payload, state, attempts, next_attempt_at, lease_token, delivered_at, last_error FROM financial_budget_projection_alerts
+WHERE id = $1::uuid AND lease_token = $2::uuid AND state = 'sending'
+`
+
+type FinancialBudgetProjectionDeliveryGetParams struct {
+	ID         pgtype.UUID
+	LeaseToken pgtype.UUID
+}
+
+func (q *Queries) FinancialBudgetProjectionDeliveryGet(ctx context.Context, db DBTX, arg FinancialBudgetProjectionDeliveryGetParams) (FinancialBudgetProjectionAlert, error) {
+	row := db.QueryRow(ctx, financialBudgetProjectionDeliveryGet, arg.ID, arg.LeaseToken)
+	var i FinancialBudgetProjectionAlert
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.PolicyID,
+		&i.Revision,
+		&i.PeriodStart,
+		&i.LimitMillicents,
+		&i.Payload,
+		&i.State,
+		&i.Attempts,
+		&i.NextAttemptAt,
+		&i.LeaseToken,
+		&i.DeliveredAt,
+		&i.LastError,
+	)
+	return i, err
+}
+
+const financialBudgetProjectionGet = `-- name: FinancialBudgetProjectionGet :one
+SELECT id, account_id, policy_id, revision, period_start, limit_millicents, payload, state, attempts, next_attempt_at, lease_token, delivered_at, last_error FROM financial_budget_projection_alerts
+WHERE account_id = $1::uuid AND policy_id = $2::uuid
+  AND revision = $3::bigint AND period_start = $4::timestamptz
+`
+
+type FinancialBudgetProjectionGetParams struct {
+	AccountID   pgtype.UUID
+	PolicyID    pgtype.UUID
+	Revision    int64
+	PeriodStart pgtype.Timestamptz
+}
+
+func (q *Queries) FinancialBudgetProjectionGet(ctx context.Context, db DBTX, arg FinancialBudgetProjectionGetParams) (FinancialBudgetProjectionAlert, error) {
+	row := db.QueryRow(ctx, financialBudgetProjectionGet,
+		arg.AccountID,
+		arg.PolicyID,
+		arg.Revision,
+		arg.PeriodStart,
+	)
+	var i FinancialBudgetProjectionAlert
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.PolicyID,
+		&i.Revision,
+		&i.PeriodStart,
+		&i.LimitMillicents,
+		&i.Payload,
+		&i.State,
+		&i.Attempts,
+		&i.NextAttemptAt,
+		&i.LeaseToken,
+		&i.DeliveredAt,
+		&i.LastError,
+	)
+	return i, err
+}
+
+const financialBudgetProjectionGetByID = `-- name: FinancialBudgetProjectionGetByID :one
+SELECT id, account_id, policy_id, revision, period_start, limit_millicents, payload, state, attempts, next_attempt_at, lease_token, delivered_at, last_error FROM financial_budget_projection_alerts WHERE id = $1::uuid
+`
+
+func (q *Queries) FinancialBudgetProjectionGetByID(ctx context.Context, db DBTX, id pgtype.UUID) (FinancialBudgetProjectionAlert, error) {
+	row := db.QueryRow(ctx, financialBudgetProjectionGetByID, id)
+	var i FinancialBudgetProjectionAlert
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.PolicyID,
+		&i.Revision,
+		&i.PeriodStart,
+		&i.LimitMillicents,
+		&i.Payload,
+		&i.State,
+		&i.Attempts,
+		&i.NextAttemptAt,
+		&i.LeaseToken,
+		&i.DeliveredAt,
+		&i.LastError,
+	)
+	return i, err
+}
+
+const financialBudgetProjectionInsert = `-- name: FinancialBudgetProjectionInsert :exec
+INSERT INTO financial_budget_projection_alerts(id, account_id, policy_id, revision, period_start, limit_millicents, payload, next_attempt_at)
+VALUES($1::uuid, $2::uuid, $3::uuid, $4::bigint,
+  $5::timestamptz, $6::bigint, $7::jsonb, $8::timestamptz)
+ON CONFLICT (account_id, policy_id, revision, period_start) DO NOTHING
+`
+
+type FinancialBudgetProjectionInsertParams struct {
+	ID              pgtype.UUID
+	AccountID       pgtype.UUID
+	PolicyID        pgtype.UUID
+	Revision        int64
+	PeriodStart     pgtype.Timestamptz
+	LimitMillicents int64
+	Payload         []byte
+	NextAttemptAt   pgtype.Timestamptz
+}
+
+func (q *Queries) FinancialBudgetProjectionInsert(ctx context.Context, db DBTX, arg FinancialBudgetProjectionInsertParams) error {
+	_, err := db.Exec(ctx, financialBudgetProjectionInsert,
+		arg.ID,
+		arg.AccountID,
+		arg.PolicyID,
+		arg.Revision,
+		arg.PeriodStart,
+		arg.LimitMillicents,
+		arg.Payload,
+		arg.NextAttemptAt,
+	)
+	return err
+}
+
+const financialBudgetProjectionSettle = `-- name: FinancialBudgetProjectionSettle :one
+UPDATE financial_budget_projection_alerts SET state = $1::text, lease_token = NULL,
+  delivered_at = $2::timestamptz, last_error = $3::text,
+  next_attempt_at = $4::timestamptz
+WHERE id = $5::uuid AND state = 'sending' AND lease_token = $6::uuid
+  AND next_attempt_at > $7::timestamptz
+RETURNING id
+`
+
+type FinancialBudgetProjectionSettleParams struct {
+	State         string
+	DeliveredAt   pgtype.Timestamptz
+	LastError     string
+	NextAttemptAt pgtype.Timestamptz
+	ID            pgtype.UUID
+	LeaseToken    pgtype.UUID
+	NowAt         pgtype.Timestamptz
+}
+
+func (q *Queries) FinancialBudgetProjectionSettle(ctx context.Context, db DBTX, arg FinancialBudgetProjectionSettleParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, financialBudgetProjectionSettle,
+		arg.State,
+		arg.DeliveredAt,
+		arg.LastError,
+		arg.NextAttemptAt,
+		arg.ID,
+		arg.LeaseToken,
+		arg.NowAt,
+	)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
 }

@@ -77,18 +77,26 @@ func (l *Loop) RunFinancialBudgetDeliveriesOnce(ctx context.Context) error {
 }
 
 func (l *Loop) runFinancialBudgetEmailsOnce(ctx context.Context) error {
-	store, ok := l.store.(state.FinancialBudgetMonitorStore)
-	if !ok {
-		return nil
-	}
 	ctx, cancelPass := context.WithTimeout(ctx, api.FinancialBudgetAlertLease)
 	defer cancelPass()
+	var failures []error
+	if store, ok := l.store.(state.FinancialBudgetMonitorStore); ok {
+		failures = append(failures, l.sendFinancialBudgetEmails(ctx, store.ClaimFinancialBudgetAlert, store.SettleFinancialBudgetAlert))
+	}
+	// ADR-20261019193500: projected-overrun alerts share the pass bound.
+	if store, ok := l.store.(state.FinancialBudgetProjectionStore); ok {
+		failures = append(failures, l.sendFinancialBudgetEmails(ctx, store.ClaimFinancialBudgetProjection, store.SettleFinancialBudgetProjection))
+	}
+	return errors.Join(failures...)
+}
+
+func (l *Loop) sendFinancialBudgetEmails(ctx context.Context, claim func(context.Context, time.Time) (state.FinancialBudgetAlertDelivery, error), settle func(context.Context, string, string, time.Time, bool) error) error {
 	var failures []error
 	for range api.FinancialBudgetAlertBatch {
 		if ctx.Err() != nil {
 			return errors.Join(append(failures, ctx.Err())...)
 		}
-		a, err := store.ClaimFinancialBudgetAlert(ctx, l.now().UTC())
+		a, err := claim(ctx, l.now().UTC())
 		if errors.Is(err, state.ErrNotFound) {
 			break
 		}
@@ -106,7 +114,7 @@ func (l *Loop) runFinancialBudgetEmailsOnce(ctx context.Context) error {
 			}
 			cancel()
 		}
-		settleErr := store.SettleFinancialBudgetAlert(ctx, a.ID, a.LeaseToken, l.now().UTC(), err == nil)
+		settleErr := settle(ctx, a.ID, a.LeaseToken, l.now().UTC(), err == nil)
 		if err != nil {
 			// Never persist provider response text, credentials or recipient data.
 			failures = append(failures, errors.New("financial budget alert delivery failed"))
@@ -125,6 +133,10 @@ func financialBudgetAlertMail(a state.FinancialBudgetAlertDelivery, recipient st
 	effect := "This is a spending notification. Workloads continue running."
 	if financial.PreviewStopping(a.Spec) {
 		effect = "This policy stops matching previews at its recorded compute limit. Production can continue. Metering, drain and teardown delays can exceed the budget. Check budget runtime for actual stopping status; this email is not a teardown acknowledgement."
+	}
+	if a.Kind == financial.BudgetAlertProjection && a.Evaluation.ProjectedMillicents != nil {
+		body := fmt.Sprintf("At the current rate, your budget %q is projected to reach %s by the end of %s (UTC), above its %s limit.\n\nKnown recorded usage so far: %s\nScope: %s %s\nBasis: %s\nEvidence through: %s\n\nThe projection extends this month's usage rate to the end of the month; it is an estimate, not an invoice, and it covers the selected usage meters only. %s\n\nAlert ID: %s\nPolicy revision: %d\n", a.Spec.Name, amount(*a.Evaluation.ProjectedMillicents), a.Evaluation.PeriodStart.Format("2006-01"), amount(a.ThresholdMillicents), amount(*a.Evaluation.KnownMillicents), a.Spec.Scope.Kind, a.Spec.Scope.ID, a.Spec.Basis, a.Evaluation.AsOf.Format(time.RFC3339), effect, a.ID, a.PolicyRevision)
+		return mail.Message{To: []string{recipient}, Subject: "Gregale budget projected to exceed its limit", TextBody: body, MessageID: "financial-budget-" + a.ID}
 	}
 	body := fmt.Sprintf("Your budget %q reached its %s notification threshold.\n\nKnown recorded usage: %s\nUsage month: %s (UTC)\nScope: %s %s\nBasis: %s\nEvidence through: %s\n%s\n\n%s It covers the selected usage meters, not your total invoice.\n\nAlert ID: %s\nPolicy revision: %d\n", a.Spec.Name, amount(a.ThresholdMillicents), amount(*a.Evaluation.KnownMillicents), a.Evaluation.PeriodStart.Format("2006-01"), a.Spec.Scope.Kind, a.Spec.Scope.ID, a.Spec.Basis, a.Evaluation.AsOf.Format(time.RFC3339), coverage, effect, a.ID, a.PolicyRevision)
 	return mail.Message{To: []string{recipient}, Subject: "Gregale budget spending alert", TextBody: body, MessageID: "financial-budget-" + a.ID}

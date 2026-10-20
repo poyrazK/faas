@@ -85,12 +85,22 @@ func (s *PgStore) ClaimFinancialBudgetAlertChannel(ctx context.Context, now time
 		return FinancialBudgetAlertChannelDelivery{}, financialBudgetStoreError(err)
 	}
 	out := financialBudgetAlertChannelFromRow(row)
-	alert, err := q.FinancialBudgetAlertGetByID(ctx, s.pool, row.AlertID)
-	if err != nil {
-		return out, financialBudgetStoreError(err)
-	}
-	if out.Alert, err = financialBudgetAlertFromRow(alert); err != nil {
-		return out, err
+	if row.Kind == financial.BudgetAlertProjection {
+		projection, err := q.FinancialBudgetProjectionGetByID(ctx, s.pool, row.AlertID)
+		if err != nil {
+			return out, financialBudgetStoreError(err)
+		}
+		if out.Alert, err = financialBudgetProjectionFromRow(projection); err != nil {
+			return out, err
+		}
+	} else {
+		alert, err := q.FinancialBudgetAlertGetByID(ctx, s.pool, row.AlertID)
+		if err != nil {
+			return out, financialBudgetStoreError(err)
+		}
+		if out.Alert, err = financialBudgetAlertFromRow(alert); err != nil {
+			return out, err
+		}
 	}
 	// The claimed lease, not the email alert's, fences this delivery.
 	out.Alert.LeaseToken = ""

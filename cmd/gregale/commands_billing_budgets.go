@@ -306,8 +306,20 @@ func printBillingBudgetRuntime(runtime *financial.BudgetRuntime) error {
 			return err
 		}
 	}
+	projection := "unavailable (" + e.ProjectionReason + ")"
+	if e.ProjectedMillicents != nil {
+		projection = financialMoney(*e.ProjectedMillicents) + " at the current rate (an estimate, not an invoice)"
+	}
+	if _, err := fmt.Fprintf(osStdout, "Projected month end: %s\n", projection); err != nil {
+		return err
+	}
 	for _, a := range runtime.Alerts {
 		if _, err := fmt.Fprintf(osStdout, "Alert %s: %s at %s (%d attempts)\n", a.ID, a.State, financialMoney(a.ThresholdMillicents), a.Attempts); err != nil {
+			return err
+		}
+	}
+	if a := runtime.Projection; a != nil {
+		if _, err := fmt.Fprintf(osStdout, "Projected-overrun alert %s: %s (%d attempts)\n", a.ID, a.State, a.Attempts); err != nil {
 			return err
 		}
 	}

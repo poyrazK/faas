@@ -1894,6 +1894,7 @@ from .financial_app_costs_response_currency import FinancialAppCostsResponseCurr
 from .financial_app_meter_costs import FinancialAppMeterCosts
 from .financial_attribution import FinancialAttribution
 from .financial_budget_alert import FinancialBudgetAlert
+from .financial_budget_alert_kind import FinancialBudgetAlertKind
 from .financial_budget_alert_last_error import FinancialBudgetAlertLastError
 from .financial_budget_alert_state import FinancialBudgetAlertState
 from .financial_budget_channels_response import FinancialBudgetChannelsResponse
@@ -7637,6 +7638,7 @@ __all__ = (
     "FinancialAppMeterCosts",
     "FinancialAttribution",
     "FinancialBudgetAlert",
+    "FinancialBudgetAlertKind",
     "FinancialBudgetAlertLastError",
     "FinancialBudgetAlertState",
     "FinancialBudgetChannelsResponse",
