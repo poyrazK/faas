@@ -11719,6 +11719,12 @@ const (
 	AppHealthWarningErrorRatePct    = 5.0
 	AppHealthUnhealthyErrorRatePct  = 25.0
 	AppHealthCollectorInterval      = 30 * time.Second
+	// AppHealthCollectorQuietInterval spaces observations of a quiet app: an
+	// unchanged assessment with no instances, no required capacity and no
+	// requests in the metrics window (ADR-734 amendment 1). It plus a lost
+	// lease, the collection timeout and one idle sweep stays under
+	// AppHealthEvidenceMaxAge, so a quiet app never records an evidence gap.
+	AppHealthCollectorQuietInterval = 75 * time.Second
 	AppHealthCollectorIdleInterval  = time.Second
 	AppHealthCollectorLease         = 30 * time.Second
 	AppHealthCollectorBatch         = 20
