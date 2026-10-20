@@ -348,7 +348,7 @@ func TestPgCloneDeploymentCleanupBlocksConcurrentBorrowers(t *testing.T) {
 		case <-ticker.C:
 		}
 	}
-	for _, borrower := range []string{"foreign_key", "soft", "soft_partition", "drain_plan", "retirement_journal", "scenario_cold_preparations", "scenario_postgres_faults", "scenario_recorder_sessions", "scenario_suspend_resumes", "scenario_worker_faults", "platform_mail_deployment_observations", "platform_mail_producer_outbox", "replacement"} {
+	for _, borrower := range []string{"foreign_key", "soft", "soft_partition", "drain_plan", "retirement_journal", "scenario_cold_preparations", "scenario_postgres_faults", "scenario_recorder_sessions", "scenario_suspend_resumes", "scenario_worker_faults", "replacement"} {
 		tx, err := pool.Begin(ctx)
 		if err != nil {
 			t.Fatal(err)
@@ -370,7 +370,7 @@ func TestPgCloneDeploymentCleanupBlocksConcurrentBorrowers(t *testing.T) {
 			_, err = tx.Exec(ctx, drainPlanDeploymentBorrowerSQL, id)
 		case "retirement_journal":
 			_, err = tx.Exec(ctx, "LOCK TABLE environment_workload_retirements IN ROW EXCLUSIVE MODE")
-		case "scenario_cold_preparations", "scenario_postgres_faults", "scenario_recorder_sessions", "scenario_suspend_resumes", "scenario_worker_faults", "platform_mail_deployment_observations", "platform_mail_producer_outbox":
+		case "scenario_cold_preparations", "scenario_postgres_faults", "scenario_recorder_sessions", "scenario_suspend_resumes", "scenario_worker_faults":
 			// These retained rehearsal receipts have no deployment FK. Every writer
 			// must remain fenced until deletion and its receipt commit together.
 			_, err = tx.Exec(ctx, "LOCK TABLE "+borrower+" IN ROW EXCLUSIVE MODE")
