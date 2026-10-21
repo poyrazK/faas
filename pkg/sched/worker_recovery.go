@@ -148,7 +148,8 @@ func (e *Engine) observeWorkerRecoveryFleet(ctx context.Context, appID string, p
 	if attempt == nil {
 		return nil
 	}
-	rows, err := e.store.ListInstancesForApp(ctx, appID)
+	// Counts live worker rows only (CountsForRAM below).
+	rows, err := e.liveInstancesForApp(ctx, appID)
 	if err != nil {
 		return err
 	}

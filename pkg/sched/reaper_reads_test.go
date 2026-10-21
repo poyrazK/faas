@@ -4,6 +4,7 @@ package sched_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -169,5 +170,39 @@ func TestParkAppReadsOnlyLiveInstances(t *testing.T) {
 	}
 	if state.IsLive(got.State) {
 		t.Fatalf("live instance state = %s after ParkApp, want it parked", got.State)
+	}
+}
+
+// TestReconcileWorkerAppReadsOnlyLiveInstances pins the worker reconcile's
+// read: the targets trigger reconciles every project worker app each second,
+// so it must not list the app's history. Parked and stopped rows stay unread
+// and the newest live worker still wins.
+func TestReconcileWorkerAppReadsOnlyLiveInstances(t *testing.T) {
+	ctx := context.Background()
+	mem := state.NewMemStore()
+	_, app, dep := sched.SeedApp(t, mem, api.PlanPro, 256, 4)
+	sched.ConfigureExecutionMode(t, mem, app, dep, api.ExecutionModeWorker, state.DeployLive)
+	for i, st := range []state.State{state.StateParked, state.StateStopped, state.StateFailed} {
+		if _, err := mem.CreateInstanceWithMode(ctx, app.ID, dep.ID, string(st), 256, state.DefaultLocalNodeName, fmt.Sprintf("wake-history-%d", i), string(state.InstanceModeWorker)); err != nil {
+			t.Fatalf("CreateInstanceWithMode(%s): %v", st, err)
+		}
+	}
+	live, err := mem.CreateInstanceWithMode(ctx, app.ID, dep.ID, string(state.StateRunning), 256, state.DefaultLocalNodeName, "wake-live", string(state.InstanceModeWorker))
+	if err != nil {
+		t.Fatalf("CreateInstanceWithMode(running): %v", err)
+	}
+	counter := newReaperReadCounter(mem)
+	engine := sched.XNewEngine(t, statetest.NewMem(counter), &sched.FakeVMM{}, &sched.FakeNotifier{}, "1.10.0")
+	counter.reset()
+
+	if err := engine.ReconcileWorkerPools(ctx, app.ID, "test"); err != nil {
+		t.Fatalf("ReconcileWorkerPools: %v", err)
+	}
+	if n := counter.historyReads[app.ID]; n != 0 {
+		t.Fatalf("%d instance history reads, want 0", n)
+	}
+	got, err := mem.InstanceByID(ctx, live.ID)
+	if err != nil || got.State != string(state.StateRunning) {
+		t.Fatalf("live worker = %+v (%v), want it still running", got, err)
 	}
 }
