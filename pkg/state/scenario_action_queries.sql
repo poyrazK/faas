@@ -135,9 +135,24 @@ SELECT EXISTS(SELECT 1 FROM scenario_test_action_policies WHERE account_id=sqlc.
  (SELECT count(*) FROM scenario_captured_events WHERE account_id=sqlc.arg(account_id)::text::uuid AND run_id=sqlc.arg(run_id)::text)::bigint AS captured;
 
 -- name: InsertScenarioCapturedEvent :exec
-INSERT INTO scenario_captured_events(account_id,run_id,app_id,source,type,schema_version,data,oversized)
+INSERT INTO scenario_captured_events(account_id,run_id,app_id,source,type,schema_version,data,oversized,event_id)
 VALUES(sqlc.arg(account_id)::text::uuid,sqlc.arg(run_id)::text,sqlc.arg(app_id)::text::uuid,sqlc.arg(source)::text,
- sqlc.arg(type)::text,sqlc.arg(schema_version)::text,sqlc.narg(data)::jsonb,sqlc.arg(oversized)::boolean);
+ sqlc.arg(type)::text,sqlc.arg(schema_version)::text,sqlc.narg(data)::jsonb,sqlc.arg(oversized)::boolean,nullif(sqlc.arg(event_id)::text,''));
+
+-- name: ScenarioCapturedEventIdentity :one
+-- Whether a captured event with this source and ID carries the same type,
+-- schema version and data. A run's events are few and read under the run
+-- lock, so the run index bounds this lookup (ADR-20261021120000).
+SELECT (type=sqlc.arg(type)::text AND schema_version=sqlc.arg(schema_version)::text
+  AND data IS NOT DISTINCT FROM sqlc.narg(data)::jsonb AND oversized=sqlc.arg(oversized)::boolean)::boolean AS same
+FROM scenario_captured_events
+WHERE account_id=sqlc.arg(account_id)::text::uuid AND run_id=sqlc.arg(run_id)::text
+ AND source=sqlc.arg(source)::text AND event_id=sqlc.arg(event_id)::text
+ORDER BY created_at,id LIMIT 1;
+
+-- name: ScenarioRehearsalNetworkPolicy :one
+SELECT run_id,account_id::text AS account_id FROM scenario_test_action_policies
+WHERE app_id=sqlc.arg(app_id)::text::uuid AND network_mode='contained';
 
 -- name: ScenarioCapturedEvents :many
 SELECT e.id::text AS id,p.workload_name AS workload,e.source,e.type,e.schema_version,e.data,e.oversized

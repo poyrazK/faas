@@ -1274,6 +1274,14 @@ over 64 KiB, make the evidence incomplete. A comparison between servers with
 different event capture versions is inconclusive. See
 [ADR-20261020090000](adr/20261020090000-rehearsal-event-capture.md).
 
+A repeated publish with the same source and `id` counts once, as in production.
+The same content is a duplicate; different content is refused with
+`409 Event identity conflict`. Contained apps can also publish through the
+public API routes (`/v1/events:publish` and `:publish-batch`) at the run-local
+platform API described under containment. Those publishes are validated like
+the public API and captured the same way. See
+[ADR-20261021120000](adr/20261021120000-rehearsal-public-api-event-capture.md).
+
 This setting covers Gregale-managed webhooks. Direct application HTTP calls,
 email/payment SDKs and workload network containment are separate capabilities.
 A passing action comparison applies to the declared scope; existing `behavior`

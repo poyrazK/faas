@@ -33,6 +33,11 @@ func TestCaptureGuestEventFailsClosedForInstalledRuns(t *testing.T) {
 	if captured, err := captureGuestEvent(t.Context(), struct{}{}, "app", "run", "account", envelope); !captured || err == nil {
 		t.Fatalf("contained app without capture storage: %v %v", captured, err)
 	}
+	// A retried publish of an event the run holds is a success, as a
+	// duplicate production publish is.
+	if captured, err := captureGuestEvent(t.Context(), &eventCaptureStub{captured: true, err: state.ErrScenarioEventDuplicate}, "app", "run", "account", envelope); !captured || err != nil {
+		t.Fatalf("duplicate capture: %v %v", captured, err)
+	}
 	stub := &eventCaptureStub{captured: true, err: errors.New("sealed")}
 	captured, err := captureGuestEvent(t.Context(), stub, "app", "run", "account", envelope)
 	if !captured || err == nil || stub.app != "app" || stub.run != "run" || stub.event.AccountID != "account" || stub.event.Source != "orders" ||

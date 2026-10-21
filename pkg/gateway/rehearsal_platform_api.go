@@ -3,7 +3,6 @@ package gateway
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,23 +17,35 @@ import (
 )
 
 // RehearsalPlatformAPIStore names the contained caller's run and captures its
-// queue work as run evidence.
+// platform work as run evidence.
 type RehearsalPlatformAPIStore interface {
-	ScenarioRehearsalNetworkRun(ctx context.Context, appID string) (string, error)
+	state.ScenarioRehearsalNetworkPolicyStore
 	state.ScenarioQueueCaptureStore
+	state.ScenarioEventCaptureStore
+	state.EventSchemaStore
 }
 
+// rehearsalPlatformCall is one request from a contained caller.
+type rehearsalPlatformCall struct {
+	store  RehearsalPlatformAPIStore
+	caller string
+	policy state.ScenarioRehearsalNetworkPolicy
+	now    time.Time
+}
+
+type rehearsalPlatformRoute func(http.ResponseWriter, *http.Request, rehearsalPlatformCall)
+
 // WithRehearsalPlatformAPI serves a contained rehearsal guest's platform API
-// calls at api.svc.gregale on the guest service listener. Queue sends and
-// delayed tasks are validated like the public API and captured, never
-// enqueued. Every other request, including one from a caller outside a
+// calls at api.svc.gregale on the guest service listener. Each call is
+// validated like the public API and captured as run evidence, never
+// performed. Every other request, including one from a caller outside a
 // contained run, reaches next unchanged.
 func WithRehearsalPlatformAPI(next http.Handler, resolve ServiceProxyCallerResolver, store RehearsalPlatformAPIStore) http.Handler {
 	if resolve == nil || store == nil {
 		return next
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		kind, slug, ok := rehearsalPlatformAPIRoute(r)
+		route, ok := rehearsalPlatformAPIRoute(r)
 		if !ok {
 			next.ServeHTTP(w, r)
 			return
@@ -44,44 +55,56 @@ func WithRehearsalPlatformAPI(next http.Handler, resolve ServiceProxyCallerResol
 			next.ServeHTTP(w, r)
 			return
 		}
-		run, err := store.ScenarioRehearsalNetworkRun(r.Context(), caller)
+		policy, contained, err := store.ScenarioRehearsalNetworkPolicy(r.Context(), caller)
 		if err != nil {
 			api.WriteProblem(w, api.ErrCapacity("rehearsal platform API unavailable"))
 			return
 		}
-		if run == "" {
+		if !contained {
 			next.ServeHTTP(w, r)
 			return
 		}
-		serveRehearsalQueueCapture(w, r, store, caller, kind, slug, time.Now().UTC())
+		route(w, r, rehearsalPlatformCall{store: store, caller: caller, policy: policy, now: time.Now().UTC()})
 	})
 }
 
-// rehearsalPlatformAPIRoute matches the public API's queue and delayed-task
-// paths on the reserved platform host only.
-func rehearsalPlatformAPIRoute(r *http.Request) (kind, slug string, ok bool) {
+// rehearsalPlatformAPIRoute matches the public API paths the run-local API
+// serves, on the reserved platform host only.
+func rehearsalPlatformAPIRoute(r *http.Request) (rehearsalPlatformRoute, bool) {
 	host := r.Host
 	if h, _, err := net.SplitHostPort(host); err == nil {
 		host = h
 	}
 	if r.Method != http.MethodPost || !strings.EqualFold(strings.TrimSuffix(host, "."), api.ScenarioPlatformAPIHost) {
-		return "", "", false
+		return nil, false
+	}
+	switch r.URL.Path {
+	case "/v1/events:publish":
+		return serveRehearsalEventPublish, true
+	case "/v1/events:publish-batch":
+		return serveRehearsalEventBatch, true
 	}
 	rest, found := strings.CutPrefix(r.URL.Path, "/v1/apps/")
 	if !found {
-		return "", "", false
+		return nil, false
 	}
 	slug, route, found := strings.Cut(rest, "/")
 	if !found || slug == "" {
-		return "", "", false
+		return nil, false
 	}
 	switch route {
 	case "queues/send":
-		return api.ScenarioQueueKindQueue, slug, true
+		return queueCaptureRoute(api.ScenarioQueueKindQueue, slug), true
 	case "delayed-tasks":
-		return api.ScenarioQueueKindDelayedTask, slug, true
+		return queueCaptureRoute(api.ScenarioQueueKindDelayedTask, slug), true
 	}
-	return "", "", false
+	return nil, false
+}
+
+func queueCaptureRoute(kind, slug string) rehearsalPlatformRoute {
+	return func(w http.ResponseWriter, r *http.Request, call rehearsalPlatformCall) {
+		serveRehearsalQueueCapture(w, r, call.store, call.caller, kind, slug, call.now)
+	}
 }
 
 func serveRehearsalQueueCapture(w http.ResponseWriter, r *http.Request, store state.ScenarioQueueCaptureStore, caller, kind, slug string, now time.Time) {
@@ -96,7 +119,7 @@ func serveRehearsalQueueCapture(w http.ResponseWriter, r *http.Request, store st
 		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "no such app"))
 		return
 	case errors.Is(err, state.ErrScenarioActionsSealed):
-		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "rehearsal_actions_sealed", "Rehearsal actions sealed", "the rehearsal run no longer accepts queue work"))
+		api.WriteProblem(w, rehearsalSealedProblem())
 		return
 	case err != nil:
 		api.WriteProblem(w, api.ErrCapacity("rehearsal queue capture unavailable"))

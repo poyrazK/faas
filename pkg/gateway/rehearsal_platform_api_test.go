@@ -21,10 +21,50 @@ type fakeRehearsalPlatformAPIStore struct {
 	run      string
 	err      error
 	captured []state.ScenarioQueueCapture
+	events   []state.ScenarioEventCapture
+	eventRun string
 }
 
-func (f *fakeRehearsalPlatformAPIStore) ScenarioRehearsalNetworkRun(context.Context, string) (string, error) {
-	return f.run, nil
+const fakeRehearsalAccount = "5b0f6f0e-8a43-4d0e-9a4f-2d8f7a1c9e01"
+
+func (f *fakeRehearsalPlatformAPIStore) ScenarioRehearsalNetworkPolicy(context.Context, string) (state.ScenarioRehearsalNetworkPolicy, bool, error) {
+	return state.ScenarioRehearsalNetworkPolicy{RunID: f.run, AccountID: fakeRehearsalAccount}, f.run != "", nil
+}
+
+// CaptureScenarioEvent mirrors the store's identity rule: the same source and
+// ID with the same content is a duplicate, different content a conflict.
+func (f *fakeRehearsalPlatformAPIStore) CaptureScenarioEvent(_ context.Context, appID, installedRunID string, event state.ScenarioEventCapture) (bool, error) {
+	if appID != "caller" {
+		return false, nil
+	}
+	if f.err != nil {
+		return true, f.err
+	}
+	f.eventRun = installedRunID
+	for _, prior := range f.events {
+		if prior.Source == event.Source && prior.ID == event.ID {
+			if prior.Type == event.Type && string(prior.Data) == string(event.Data) {
+				return true, state.ErrScenarioEventDuplicate
+			}
+			return true, state.ErrScenarioEventIdentityConflict
+		}
+	}
+	f.events = append(f.events, event)
+	return true, nil
+}
+
+func (f *fakeRehearsalPlatformAPIStore) PutEventSchema(context.Context, state.EventSchema) (bool, error) {
+	return false, nil
+}
+
+func (f *fakeRehearsalPlatformAPIStore) ListEventSchemasForSourceType(context.Context, string, string, string) ([]state.EventSchema, error) {
+	return nil, nil
+}
+
+// LookupEventSchemaForPublish registers no schemas: unversioned events pass
+// and any schema version is unknown, as for an account without a registry.
+func (f *fakeRehearsalPlatformAPIStore) LookupEventSchemaForPublish(context.Context, string, string, string, string) (bool, json.RawMessage, error) {
+	return false, nil, nil
 }
 
 func (f *fakeRehearsalPlatformAPIStore) CaptureScenarioQueueMessage(_ context.Context, appID string, msg state.ScenarioQueueCapture) (string, bool, error) {

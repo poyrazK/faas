@@ -44,9 +44,9 @@ func (q *Queries) InsertScenarioActionPolicy(ctx context.Context, db DBTX, arg I
 }
 
 const insertScenarioCapturedEvent = `-- name: InsertScenarioCapturedEvent :exec
-INSERT INTO scenario_captured_events(account_id,run_id,app_id,source,type,schema_version,data,oversized)
+INSERT INTO scenario_captured_events(account_id,run_id,app_id,source,type,schema_version,data,oversized,event_id)
 VALUES($1::text::uuid,$2::text,$3::text::uuid,$4::text,
- $5::text,$6::text,$7::jsonb,$8::boolean)
+ $5::text,$6::text,$7::jsonb,$8::boolean,nullif($9::text,''))
 `
 
 type InsertScenarioCapturedEventParams struct {
@@ -58,6 +58,7 @@ type InsertScenarioCapturedEventParams struct {
 	SchemaVersion string
 	Data          []byte
 	Oversized     bool
+	EventID       string
 }
 
 func (q *Queries) InsertScenarioCapturedEvent(ctx context.Context, db DBTX, arg InsertScenarioCapturedEventParams) error {
@@ -70,6 +71,7 @@ func (q *Queries) InsertScenarioCapturedEvent(ctx context.Context, db DBTX, arg 
 		arg.SchemaVersion,
 		arg.Data,
 		arg.Oversized,
+		arg.EventID,
 	)
 	return err
 }
@@ -441,6 +443,45 @@ func (q *Queries) ScenarioCapturedActions(ctx context.Context, db DBTX, arg Scen
 	return items, nil
 }
 
+const scenarioCapturedEventIdentity = `-- name: ScenarioCapturedEventIdentity :one
+SELECT (type=$1::text AND schema_version=$2::text
+  AND data IS NOT DISTINCT FROM $3::jsonb AND oversized=$4::boolean)::boolean AS same
+FROM scenario_captured_events
+WHERE account_id=$5::text::uuid AND run_id=$6::text
+ AND source=$7::text AND event_id=$8::text
+ORDER BY created_at,id LIMIT 1
+`
+
+type ScenarioCapturedEventIdentityParams struct {
+	Type          string
+	SchemaVersion string
+	Data          []byte
+	Oversized     bool
+	AccountID     string
+	RunID         string
+	Source        string
+	EventID       string
+}
+
+// Whether a captured event with this source and ID carries the same type,
+// schema version and data. A run's events are few and read under the run
+// lock, so the run index bounds this lookup (ADR-20261021120000).
+func (q *Queries) ScenarioCapturedEventIdentity(ctx context.Context, db DBTX, arg ScenarioCapturedEventIdentityParams) (bool, error) {
+	row := db.QueryRow(ctx, scenarioCapturedEventIdentity,
+		arg.Type,
+		arg.SchemaVersion,
+		arg.Data,
+		arg.Oversized,
+		arg.AccountID,
+		arg.RunID,
+		arg.Source,
+		arg.EventID,
+	)
+	var same bool
+	err := row.Scan(&same)
+	return same, err
+}
+
 const scenarioCapturedEvents = `-- name: ScenarioCapturedEvents :many
 SELECT e.id::text AS id,p.workload_name AS workload,e.source,e.type,e.schema_version,e.data,e.oversized
 FROM scenario_captured_events e JOIN scenario_test_action_policies p ON p.app_id=e.app_id AND p.account_id=e.account_id AND p.run_id=e.run_id
@@ -630,6 +671,23 @@ func (q *Queries) ScenarioQueueCaptureTarget(ctx context.Context, db DBTX, arg S
 	var target string
 	err := row.Scan(&target)
 	return target, err
+}
+
+const scenarioRehearsalNetworkPolicy = `-- name: ScenarioRehearsalNetworkPolicy :one
+SELECT run_id,account_id::text AS account_id FROM scenario_test_action_policies
+WHERE app_id=$1::text::uuid AND network_mode='contained'
+`
+
+type ScenarioRehearsalNetworkPolicyRow struct {
+	RunID     string
+	AccountID string
+}
+
+func (q *Queries) ScenarioRehearsalNetworkPolicy(ctx context.Context, db DBTX, appID string) (ScenarioRehearsalNetworkPolicyRow, error) {
+	row := db.QueryRow(ctx, scenarioRehearsalNetworkPolicy, appID)
+	var i ScenarioRehearsalNetworkPolicyRow
+	err := row.Scan(&i.RunID, &i.AccountID)
+	return i, err
 }
 
 const scenarioRehearsalNetworkRun = `-- name: ScenarioRehearsalNetworkRun :one

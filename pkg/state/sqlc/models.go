@@ -12507,6 +12507,7 @@ type ScenarioCapturedEvent struct {
 	Data          []byte
 	Oversized     bool
 	CreatedAt     pgtype.Timestamptz
+	EventID       pgtype.Text
 }
 
 type ScenarioCapturedQueueMessage struct {

@@ -14638,6 +14638,7 @@
       "app_id",
       "created_at",
       "data",
+      "event_id",
       "id",
       "oversized",
       "run_id",
