@@ -123,7 +123,7 @@ function fakePostgREST(state) {
   const visible = (row, claims) => row.bucket === 'avatars' || (claims.sub && row.owner === claims.sub)
   const filter = url => {
     const params = new URL(url, 'http://x').searchParams
-    const value = key => JSON.parse(params.get(key).slice(3))
+    const value = key => params.get(key).slice(3)
     return [value('bucket'), value('name')]
   }
   return http.createServer((req, res) => {

@@ -126,9 +126,6 @@ export async function checkStorageTable(connection, schema) {
   } finally { await client.end() }
 }
 
-// A PostgREST filter value in double quotes, so commas and parentheses in
-// names stay part of the value.
-const quoted = value => encodeURIComponent(`"${value.replace(/[\\"]/g, c => `\\${c}`)}"`)
 
 // rows asks PostgREST about storage_objects as the caller.
 function rows(ctx, { method, query, body, prefer, token, signal }) {
@@ -157,7 +154,9 @@ function rows(ctx, { method, query, body, prefer, token, signal }) {
   })
 }
 
-const rowFilter = route => `bucket=eq.${quoted(route.bucket)}&name=eq.${quoted(route.name)}`
+// An eq filter takes the rest of the parameter as its value, so a percent-
+// encoded name needs no quoting (PostgREST would compare the quotes too).
+const rowFilter = route => `bucket=eq.${encodeURIComponent(route.bucket)}&name=eq.${encodeURIComponent(route.name)}`
 const columns = 'select=bucket,name,owner,size,content_type,created_at,updated_at'
 
 // refused answers a PostgREST refusal: RLS and the guard answer 401/403.
