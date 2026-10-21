@@ -82,6 +82,10 @@ flag still cannot use a capability its plan lacks; the inspector reports both.
 | `service_map` | Service map preview (ADR-1131) | apid | `FAAS_SERVICE_MAP_ENABLED` |
 | `guest_tracing` | In-guest request tracing setting (ADR-958) | apid | `FAAS_GUEST_TRACING_ENABLED` (vmmd's receiver still needs it on the node) |
 | `static_egress_ip` | Static egress IP management (ADR-119) | apid | `FAAS_STATIC_EGRESS_IP_ENABLED` |
+| `realtime_resume` | v2 resumable realtime protocol (ADR-369) | apid → realtimed | `FAAS_REALTIME_RESUME_PREVIEW_ENABLED` |
+| `realtime_tickets` | Realtime subscription tickets (ADR-1117) | apid → realtimed | `FAAS_REALTIME_TICKETS_PREVIEW_ENABLED` |
+| `realtime_access` | Realtime principal access revocation (ADR-1113) | apid → realtimed | `FAAS_REALTIME_ACCESS_PREVIEW_ENABLED` |
+| `realtime_occupancy` | Realtime channel occupancy (ADR-1324) | apid → realtimed | `FAAS_REALTIME_OCCUPANCY_PREVIEW_ENABLED` |
 
 The environment and TOML values seed the flag at boot. Once an operator has
 written the flag, they are ignored, including after a restart.
@@ -98,6 +102,23 @@ Two of these flags have limits:
   only the account. Plan rules never match it.
 - Unless `live_queries` includes every account, the live-query routes stay
   hidden from accounts outside it.
+
+The four realtime flags are decided by apid, which has no realtime node
+database pool to share.
+
+- **Delivery.** apid decides each endpoint's account and sends the decisions
+  with the endpoint's registration. The 30-second endpoint reconcile replays
+  every registration, so a change reaches realtime nodes within about 30
+  seconds and applies to new connections.
+- **Node switch.** A node's `FAAS_REALTIME_*_PREVIEW_ENABLED` stays a
+  capability: a preview is on only where the node enables it and the flag
+  allows the account.
+- **Before any operator write.** apid sends no decisions, so registrations
+  stay unchanged.
+- **Upgrade order.** Upgrade every realtime node before writing any of these
+  flags, because an older node refuses a registration that carries decisions.
+  Retained messages (`FAAS_REALTIME_RETAINED_PREVIEW_ENABLED`) stay an
+  environment switch.
 
 Turning `anomaly_alerts` off refuses only new or changed baseline rules.
 Existing rules keep evaluating. In the same way, turning

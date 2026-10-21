@@ -9,6 +9,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/livequeries"
 	"github.com/onebox-faas/faas/pkg/platformflags"
+	"github.com/onebox-faas/faas/pkg/realtime"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -26,6 +27,11 @@ func (r *server) SeedPlatformFlag(flagKey string, def platformflags.Definition) 
 // AdvancePlatformFlagRamps runs one pass of the automatic ramp worker.
 func (r *server) AdvancePlatformFlagRamps(ctx context.Context, now time.Time) {
 	r.advancePlatformFlagRamps(ctx, now)
+}
+
+// RealtimeEndpointPreviews decides the realtime preview flags for an endpoint.
+func (r *server) RealtimeEndpointPreviews(ctx context.Context, accountID, appID string) (*realtime.EndpointPreviews, error) {
+	return r.realtimeEndpointPreviews(ctx, accountID, appID)
 }
 
 // PlatformFlagRampActor is the audit actor of automatic ramp writes.

@@ -1,6 +1,7 @@
 package apidserver
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -16,6 +17,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/authz"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/platformflags"
+	"github.com/onebox-faas/faas/pkg/realtime"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -222,6 +224,45 @@ func (s *server) seedEnvPlatformFlags(getenv func(string) string) {
 	s.seedPlatformFlag(platformflags.ServiceMap, platformflags.FromAccountList(s.serviceMap.Enabled, true, nil))
 	s.seedPlatformFlag(platformflags.GuestTracing, platformflags.FromAccountList(s.guestTracingEnabled, true, nil))
 	s.seedPlatformFlag(platformflags.StaticEgressIP, platformflags.FromAccountList(envTruthy(getenv("FAAS_STATIC_EGRESS_IP_ENABLED")), true, nil))
+	// Realtime previews (ADR 20261021080640): apid's own switches; a realtime
+	// node keeps its own as a capability.
+	s.seedPlatformFlag(platformflags.RealtimeResume, platformflags.FromAccountList(getenv("FAAS_REALTIME_RESUME_PREVIEW_ENABLED") == "1", true, nil))
+	s.seedPlatformFlag(platformflags.RealtimeTickets, platformflags.FromAccountList(s.realtime.TicketsPreviewEnabled, true, nil))
+	s.seedPlatformFlag(platformflags.RealtimeAccess, platformflags.FromAccountList(s.realtime.AccessPreviewEnabled, true, nil))
+	s.seedPlatformFlag(platformflags.RealtimeOccupancy, platformflags.FromAccountList(s.realtime.OccupancyPreviewEnabled, true, nil))
+}
+
+// realtimeEndpointPreviews decides the realtime preview flags for one
+// endpoint's account and app (ADR 20261021080640). Until an operator writes
+// one of them it returns nil, so registrations stay byte-identical for older
+// realtime nodes, which refuse an unknown field. Each decision defaults to on:
+// realtimed still requires its own switch, so "on" defers to the node.
+func (s *server) realtimeEndpointPreviews(ctx context.Context, accountID, appID string) (*realtime.EndpointPreviews, error) {
+	snapshot := s.platformFlags().Snapshot()
+	written := false
+	for _, key := range platformflags.RealtimePreviews {
+		if _, version, ok := snapshot.Definition(key); ok && version > 0 {
+			written = true
+		}
+	}
+	if !written {
+		return nil, nil
+	}
+	acct, err := s.store.AccountByID(ctx, accountID)
+	if err != nil {
+		return nil, fmt.Errorf("load account %s: %w", accountID, err)
+	}
+	app, err := s.store.AppByID(ctx, appID)
+	if err != nil {
+		return nil, fmt.Errorf("load app %s: %w", appID, err)
+	}
+	subject := appFlagSubject(acct, app)
+	return &realtime.EndpointPreviews{
+		Resume:    s.platformFlagOr(platformflags.RealtimeResume, subject, true),
+		Tickets:   s.platformFlagOr(platformflags.RealtimeTickets, subject, true),
+		Access:    s.platformFlagOr(platformflags.RealtimeAccess, subject, true),
+		Occupancy: s.platformFlagOr(platformflags.RealtimeOccupancy, subject, true),
+	}, nil
 }
 
 // registerPlatformFlagRetireBy exports each preview flag's retire-by date as

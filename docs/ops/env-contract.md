@@ -611,7 +611,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_PYROSCOPE_URL` | apid, profiled | `default` |  |  | `` | private tenant-enabled backend configured in /etc/faas/profiling.env |
 | `FAAS_QUIET_PAUSE` | vmmd | `default` |  |  | `` | optional boolean switch for ADR-1151 quiet pause between requests; production default is off |
 | `FAAS_QUOTA_INTERVAL` | meterd | `default` |  |  | `` |  |
-| `FAAS_REALTIME_ACCESS_PREVIEW_ENABLED` | apid, realtimed | `default` |  | 0 | `` | operator-only durable principal channel/session revocation preview; enable on apid and every realtime node before use |
+| `FAAS_REALTIME_ACCESS_PREVIEW_ENABLED` | apid, realtimed, shared | `default` |  | 0 | `` | operator-only durable principal channel/session revocation preview; enable on apid and every realtime node before use; on apid, the boot fallback for the realtime_access platform flag (ADR 20261021080640), which then decides per account and is sent to realtime nodes with each endpoint registration; this switch stays a node capability |
 | `FAAS_REALTIME_CALLBACK_DEAD_MAX_BYTES` | realtimed | `default` |  |  | `` |  |
 | `FAAS_REALTIME_CALLBACK_OUTBOX` | realtimed | `default` |  |  | `` |  |
 | `FAAS_REALTIME_CALLBACK_REPLAY_WORKERS` | realtimed | `default` |  |  | `` | bounded parallel callback recovery; values above 32 are capped |
@@ -632,17 +632,17 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_REALTIME_MAX_AGE` | realtimed | `default` |  |  | `` |  |
 | `FAAS_REALTIME_MAX_CONNECTIONS` | realtimed | `default` |  | 10000 | `` | node connection cap; 6000 with FAAS_REALTIME_FAIR_USE_ENABLED=1, sized to realtimed's 512 MB MemoryMax at ~52 KB per idle connection (ADR-1323); raise only with MemoryMax |
 | `FAAS_REALTIME_MAX_MESSAGE_BYTES` | realtimed | `default` |  |  | `` |  |
-| `FAAS_REALTIME_OCCUPANCY_PREVIEW_ENABLED` | apid, realtimed | `default` |  | 0 | `` | channel occupancy preview: the occupancy API on apid, live occupancy frames and SSE events on realtimed (ADR-1324); enable on apid and every realtime node |
+| `FAAS_REALTIME_OCCUPANCY_PREVIEW_ENABLED` | apid, realtimed, shared | `default` |  | 0 | `` | channel occupancy preview: the occupancy API on apid, live occupancy frames and SSE events on realtimed (ADR-1324); enable on apid and every realtime node; on apid, the boot fallback for the realtime_occupancy platform flag (ADR 20261021080640), which then decides per account and is sent to realtime nodes with each endpoint registration; this switch stays a node capability |
 | `FAAS_REALTIME_OUTBOUND_BUDGET_ENABLED` | realtimed | `default` |  | 0 | `` | node outbound payload budget and slow-consumer shedding (ADR-1323); also sets a 384 MiB soft memory limit unless GOMEMLIMIT is set |
 | `FAAS_REALTIME_OUTBOUND_NODE_BYTES` | realtimed | `default` |  | 67108864 | `` | outbound payload budget across every connection on the node, with FAAS_REALTIME_OUTBOUND_BUDGET_ENABLED=1; the largest backlogs are disconnected first (ADR-1323); raise only with MemoryMax |
 | `FAAS_REALTIME_OUTBOUND_QUEUE` | realtimed | `default` |  |  | `` |  |
 | `FAAS_REALTIME_OUTBOUND_QUEUE_BYTES` | realtimed | `default` |  | 4194304 | `` | per-connection outbound payload budget, including a frame being written |
 | `FAAS_REALTIME_PONG_WAIT` | realtimed | `default` |  |  | `` |  |
-| `FAAS_REALTIME_RESUME_PREVIEW_ENABLED` | realtimed | `default` |  | 0 | `` | operator-only v2 WebSocket resume preview; requires apid history reader and OIDC endpoint authentication |
+| `FAAS_REALTIME_RESUME_PREVIEW_ENABLED` | apid, realtimed, shared | `default` |  | 0 | `` | operator-only v2 WebSocket resume preview; requires apid history reader and OIDC endpoint authentication; on apid, the boot fallback for the realtime_resume platform flag (ADR 20261021080640), which then decides per account and is sent to realtime nodes with each endpoint registration; this switch stays a node capability |
 | `FAAS_REALTIME_RETAINED_PREVIEW_ENABLED` | apid | `default` |  | 0 | `` | operator-only retained outbound history preview; off pending plan entitlements and fleet qualification |
 | `FAAS_REALTIME_ROLE` | realtimed, shared | `dropin` |  |  | `` |  |
 | `FAAS_REALTIME_SOCKET` | apid, gatewayd-internal, realtimed, shared | `unit` |  |  | `` |  |
-| `FAAS_REALTIME_TICKETS_PREVIEW_ENABLED` | apid, realtimed | `default` |  | 0 | `` | operator-only short-lived channel subscription tickets; requires resume preview and private ticket reader |
+| `FAAS_REALTIME_TICKETS_PREVIEW_ENABLED` | apid, realtimed, shared | `default` |  | 0 | `` | operator-only short-lived channel subscription tickets; requires resume preview and private ticket reader; on apid, the boot fallback for the realtime_tickets platform flag (ADR 20261021080640), which then decides per account and is sent to realtime nodes with each endpoint registration; this switch stays a node capability |
 | `FAAS_REALTIME_TRANSACTIONAL_PREVIEW_ENABLED` | schedd | `default` |  | 0 | `` | opt-in transactional realtime outbox dispatcher; requires managed Commit relay and explicit customer schema installation |
 | `FAAS_REALTIME_USAGE_ENABLED` | apid, realtimed | `default` |  | 0 | `` | realtimed records per-endpoint realtime usage with apid and apid serves GET /v1/usage/realtime (ADR-1323); recorded only, not billed; uses the private history target |
 | `FAAS_REALTIME_WRITE_WAIT` | realtimed | `default` |  |  | `` |  |

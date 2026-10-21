@@ -158,6 +158,33 @@ func TestOrganizationPreviewsNeedOwnerOrAdminAndApplyUnderTheCompany(t *testing.
 	}
 }
 
+func TestRealtimePreviewDecisionsWaitForAnOperatorWrite(t *testing.T) {
+	e := apidserver.NewObsEnv(t, []string{"admin"}, "ops@faas.dev", "ops@faas.dev")
+	ctx := context.Background()
+	acct := *e.Acct()
+	app, err := (*e.Store()).CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "chat"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := *e.S()
+	if previews, err := s.RealtimeEndpointPreviews(ctx, acct.ID, app.ID); err != nil || previews != nil {
+		t.Fatalf("before any operator write = %+v, %v; want none so older realtime nodes accept the registration", previews, err)
+	}
+	denied := platformflags.Definition{Enabled: true, Default: true, Rules: []platformflags.Rule{
+		platformFlagRule("denied", false, func(r *platformflags.Rule) { r.Accounts = []string{uuid.MustParse(acct.ID).String()} }),
+	}}
+	if code := patchPlatformConfig(t, e, platformflags.ConfigKey(platformflags.RealtimeTickets), denied, 0); code != http.StatusOK {
+		t.Fatalf("write realtime_tickets = %d", code)
+	}
+	previews, err := s.RealtimeEndpointPreviews(ctx, acct.ID, app.ID)
+	if err != nil || previews == nil {
+		t.Fatalf("after a write = %+v, %v", previews, err)
+	}
+	if previews.Tickets || !previews.Resume || !previews.Access || !previews.Occupancy {
+		t.Fatalf("previews = %+v, want tickets denied and the unwritten flags deferring to the node", previews)
+	}
+}
+
 func TestOperatorOptInAndSelfServeWritesAreChecked(t *testing.T) {
 	e := apidserver.NewObsEnv(t, []string{"admin"}, "ops@faas.dev", "ops@faas.dev")
 	orgOptIn := platformflags.OptIns{Orgs: []string{uuid.NewString()}}

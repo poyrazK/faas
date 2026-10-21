@@ -1459,6 +1459,10 @@ func newServerWithDeps(
 	}
 	s.platformFlagAdmin.Host = platformFlagAdminHost{s}
 	s.previews.Host = previewsHost{s}
+	s.realtime.PreviewReleased = func(r *http.Request, acct state.Account, flagKey string, legacy bool) bool {
+		return s.platformFlagOr(flagKey, flagSubject(r, acct), legacy)
+	}
+	s.realtime.EndpointPreviews = s.realtimeEndpointPreviews
 	// ADR-120: wire the package-level appsDomainFunc seam (declared at
 	// cmd/apid/dns_probes.go:125) to the server's apps base domain so
 	// checkPointsToGregale has the configured Gregale apex in

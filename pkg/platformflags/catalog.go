@@ -47,7 +47,15 @@ const (
 	ServiceMap           = "service_map"
 	GuestTracing         = "guest_tracing"
 	StaticEgressIP       = "static_egress_ip"
+	RealtimeResume       = "realtime_resume"
+	RealtimeTickets      = "realtime_tickets"
+	RealtimeAccess       = "realtime_access"
+	RealtimeOccupancy    = "realtime_occupancy"
 )
+
+// RealtimePreviews are the flags apid decides per endpoint and sends to
+// realtimed with the endpoint's registration (ADR 20261021080640).
+var RealtimePreviews = []string{RealtimeResume, RealtimeTickets, RealtimeAccess, RealtimeOccupancy}
 
 // Attribute is a subject attribute a rule can constrain beyond the account,
 // which every consumer always knows (ADR 20261021080640).
@@ -213,6 +221,55 @@ var catalog = []Spec{
 		Attributes:   []Attribute{AttributePlan, AttributeOrg},
 		LegacyEnv:    []string{"FAAS_STATIC_EGRESS_IP_ENABLED"},
 		HealthRoutes: []string{"GET /v1/apps/{slug}/static-egress-ip", "PUT /v1/apps/{slug}/static-egress-ip", "DELETE /v1/apps/{slug}/static-egress-ip"},
+	},
+	{
+		Key:         RealtimeResume,
+		Label:       "Realtime resume protocol",
+		Description: "Release the v2 resumable realtime protocol (history, presence, signals) to accounts. apid sends the decision with each endpoint's registration; a realtime node also needs FAAS_REALTIME_RESUME_PREVIEW_ENABLED. Takes effect for new connections within the 30-second endpoint reconcile.",
+		ADR:         "ADR-369",
+		Consumers:   []string{"apid"},
+		Attributes:  []Attribute{AttributePlan, AttributeOrg},
+		LegacyEnv:   []string{"FAAS_REALTIME_RESUME_PREVIEW_ENABLED"},
+		RetireBy:    "2027-01-31",
+	},
+	{
+		Key:         RealtimeTickets,
+		Label:       "Realtime subscription tickets",
+		Description: "Release short-lived channel subscription tickets to accounts: the ticket API on apid and ticket connections on realtime nodes, which also need FAAS_REALTIME_TICKETS_PREVIEW_ENABLED.",
+		ADR:         "ADR-1117",
+		Consumers:   []string{"apid"},
+		Attributes:  []Attribute{AttributePlan, AttributeOrg},
+		LegacyEnv:   []string{"FAAS_REALTIME_TICKETS_PREVIEW_ENABLED"},
+		RetireBy:    "2027-01-31",
+		HealthRoutes: []string{
+			"POST /v1/apps/{slug}/realtime/endpoints/{id}/tickets", "DELETE /v1/apps/{slug}/realtime/endpoints/{id}/tickets",
+			"DELETE /v1/apps/{slug}/realtime/endpoints/{id}/tickets/{ticket}",
+		},
+	},
+	{
+		Key:         RealtimeAccess,
+		Label:       "Realtime access revocation",
+		Description: "Release durable principal channel and session revocation to accounts: the access API on apid and its enforcement on realtime nodes, which also need FAAS_REALTIME_ACCESS_PREVIEW_ENABLED.",
+		ADR:         "ADR-1113",
+		Consumers:   []string{"apid"},
+		Attributes:  []Attribute{AttributePlan, AttributeOrg},
+		LegacyEnv:   []string{"FAAS_REALTIME_ACCESS_PREVIEW_ENABLED"},
+		RetireBy:    "2027-01-31",
+		HealthRoutes: []string{
+			"GET /v1/apps/{slug}/realtime/endpoints/{id}/principals/{principal}/access",
+			"POST /v1/apps/{slug}/realtime/endpoints/{id}/principals/{principal}/access",
+		},
+	},
+	{
+		Key:          RealtimeOccupancy,
+		Label:        "Realtime channel occupancy",
+		Description:  "Release channel occupancy to accounts: the occupancy API on apid and live occupancy frames and SSE events on realtime nodes, which also need FAAS_REALTIME_OCCUPANCY_PREVIEW_ENABLED.",
+		ADR:          "ADR-1324",
+		Consumers:    []string{"apid"},
+		Attributes:   []Attribute{AttributePlan, AttributeOrg},
+		LegacyEnv:    []string{"FAAS_REALTIME_OCCUPANCY_PREVIEW_ENABLED"},
+		RetireBy:     "2027-01-31",
+		HealthRoutes: []string{"GET /v1/apps/{slug}/realtime/endpoints/{id}/occupancy"},
 	},
 }
 

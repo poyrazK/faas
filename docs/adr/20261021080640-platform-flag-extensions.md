@@ -33,6 +33,11 @@ Realtimed has no database pool. Rather than give it one, apid decides the realti
 
 **Covered so far:** `operation_schedules`, `operation_children`, `service_map`, `guest_tracing` and `static_egress_ip`. All five keep their environment gate until an operator writes the flag. `guest_tracing` decides by account and plan only, because creating an app has no organization yet. Both operation flags decide by account only, because the schedule firer and the cancellation cascade know nothing else.
 
+**Realtime previews:** `realtime_resume`, `realtime_tickets`, `realtime_access` and `realtime_occupancy`.
+- apid gates its own API surfaces for them per request. It sends each endpoint's decisions in the registration's `previews` field, but only once an operator has written one of these flags, so older realtime nodes, which refuse unknown fields, keep accepting registrations.
+- A realtime node keeps its environment switch as a capability, so a preview is on only when the node enables it and the decision allows it.
+- Upgrade realtime nodes before writing these flags.
+
 **Pending, with the product-area gates:** `FAAS_OPERATION_CONCURRENCY_ACCOUNTS` (ADR-20261018210500). It is enforced inside the state layer's queue admission as well as in apid, so a flag needs a release check injected into the store rather than a handler change.
 
 **Not migrated:**
@@ -42,6 +47,7 @@ Realtimed has no database pool. Rather than give it one, apid decides the realti
   - `FAAS_CUSTOM_METRIC_HISTORY_ENABLED` registers a fleet-wide Prometheus exporter at boot;
 - gates bound to native qualification: `FAAS_REHEARSAL_*`, `FAAS_CI_*`, `FAAS_DATA_REPAIR_REHEARSAL_DISPATCH`;
 - internal services: `FAAS_INTERNAL_MAIL_*`, `FAAS_PRODUCT_CONTROL_ENABLED`;
+- retained realtime messages (`FAAS_REALTIME_RETAINED_PREVIEW_ENABLED`): a storage preview checked by about forty handlers and background workers, many with no account in hand. It stays an environment kill switch;
 - fleet infrastructure: `FAAS_REALTIME_CHANNEL_ROUTING_ENABLED`, the private-network fabric, and the telemetry kill switches.
 
 ## 3. Scheduled rules, automatic ramps and retire-by reminders
