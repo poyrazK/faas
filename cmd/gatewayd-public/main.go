@@ -780,7 +780,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 	defer wire.StartWatchdog(ctx, wire.NewLiveness(), opsMetrics, log)()
 
 	// Drain orchestration.
-	if err := runDrain(ctx, log, publicSrv, controlSrv, strings.TrimSpace(os.Getenv(publicPrivateListenEnv)), pgProbeSig, pgStop, traceSetup, drainTracker, gatewayMetrics, rawIngressDrain, endHandoffWork); err != nil {
+	checks := handoffChecks(publicSrv.Addr, controlSrv.Addr, edgeMode == edgeModeCompute)
+	if err := runDrain(ctx, log, publicSrv, controlSrv, strings.TrimSpace(os.Getenv(publicPrivateListenEnv)), pgProbeSig, pgStop, traceSetup, drainTracker, gatewayMetrics, rawIngressDrain, endHandoffWork, checks); err != nil {
 		return err
 	}
 	return nil
@@ -949,7 +950,7 @@ func buildServers(listenAddr, controlAddr string, publicHandler http.Handler, co
 // plane's private address (ADR-1343 §2): compute-node edges forward
 // credential-bound requests there. It shares publicSrv, so Shutdown closes and
 // drains it with the public listener.
-func runDrain(ctx context.Context, log *slog.Logger, publicSrv, controlSrv *http.Server, privateAddr string, pgProbeSig *gateway.ReadySignal, pgStop func(), traceSetup *gateway.TraceSetup, drainTracker *drain.Tracker, gMetrics *gateway.Metrics, tcpDrain func(context.Context) error, endHandoffWork func()) error {
+func runDrain(ctx context.Context, log *slog.Logger, publicSrv, controlSrv *http.Server, privateAddr string, pgProbeSig *gateway.ReadySignal, pgStop func(), traceSetup *gateway.TraceSetup, drainTracker *drain.Tracker, gMetrics *gateway.Metrics, tcpDrain func(context.Context) error, endHandoffWork func(), checks []wire.HandoffCheck) error {
 	drainCtx, cancelDrain := context.WithCancel(context.Background())
 	defer cancelDrain()
 	forceCtx, forceCancel := context.WithCancel(context.WithoutCancel(ctx))
@@ -1029,7 +1030,9 @@ func runDrain(ctx context.Context, log *slog.Logger, publicSrv, controlSrv *http
 		case err := <-errc:
 			return err
 		case <-handoffs:
-			if _, err := wire.Handoff(forceCtx, wire.HandoffOptions{Log: log}); err != nil {
+			// The successor takes traffic only after it passed this
+			// generation's pre-traffic checks (handoff_checks.go).
+			if _, err := wire.Handoff(forceCtx, wire.HandoffOptions{Log: log, Checks: checks}); err != nil {
 				log.Warn("gatewayd-public: hand-off failed; this generation keeps serving", "err", err)
 				continue
 			}

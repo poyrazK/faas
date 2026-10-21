@@ -539,6 +539,7 @@ type HostEntry struct {
 	CircuitBreaker []EdgeRuleCircuitBreakerResolved
 	Async          []EdgeRuleAsyncResolved
 	WAF            []EdgeRuleWAFResolved
+	Challenge      []EdgeRuleChallengeResolved
 	PathGlobErrs   []PathGlobError
 }
 
@@ -973,6 +974,18 @@ func (c *EdgeRuleCache) GetWAF(host string) ([]EdgeRuleWAFResolved, bool) {
 		return nil, true
 	}
 	return slices.Clone(entry.WAF), true
+}
+
+// GetChallenge returns a defensive copy of the compiled kind=challenge rules.
+func (c *EdgeRuleCache) GetChallenge(host string) ([]EdgeRuleChallengeResolved, bool) {
+	entry, ok := c.getEntry(host)
+	if !ok {
+		return nil, false
+	}
+	if entry.Challenge == nil {
+		return nil, true
+	}
+	return slices.Clone(entry.Challenge), true
 }
 
 // getEntry promotes the entry on hit and returns it. Internal —

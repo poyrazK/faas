@@ -52,8 +52,14 @@ func gitRootFromCwd(start string) (string, error) {
 			return "", ErrNotInGitRepo
 		}
 		// filepath.Dir of "/" returns "/"; stop there.
-		if _, err := os.Stat(filepath.Join(cur, ".git")); err == nil {
-			return cur, nil
+		if metadata, err := os.Stat(filepath.Join(cur, ".git")); err == nil {
+			// Empty metadata placeholders do not identify a Git repository.
+			if !metadata.IsDir() {
+				return cur, nil
+			}
+			if _, err := os.Stat(filepath.Join(cur, ".git", "HEAD")); err == nil {
+				return cur, nil
+			}
 		}
 		parent := filepath.Dir(cur)
 		if parent == cur {

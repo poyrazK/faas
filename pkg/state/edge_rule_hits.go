@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"fmt"
+	"sort"
 	"time"
 )
 
@@ -39,6 +40,9 @@ type EdgeRuleHitStore interface {
 	RecordEdgeRuleHits(ctx context.Context, hits []EdgeRuleHit) error
 	// EdgeRuleHitStatsForApp totals each rule's hits since the given time.
 	EdgeRuleHitStatsForApp(ctx context.Context, appID string, since time.Time) ([]EdgeRuleHitStats, error)
+	// EdgeRuleHitSeriesForApp returns the app's hourly buckets since the
+	// given time, one per rule, hour and outcome, oldest first (ADR-20261020105001).
+	EdgeRuleHitSeriesForApp(ctx context.Context, appID string, since time.Time) ([]EdgeRuleHit, error)
 	// PruneEdgeRuleHitCounts deletes buckets older than before.
 	PruneEdgeRuleHitCounts(ctx context.Context, before time.Time) (int64, error)
 }
@@ -115,6 +119,28 @@ func (s *PgStore) EdgeRuleHitStatsForApp(ctx context.Context, appID string, sinc
 	return out, rows.Err()
 }
 
+func (s *PgStore) EdgeRuleHitSeriesForApp(ctx context.Context, appID string, since time.Time) ([]EdgeRuleHit, error) {
+	rows, err := s.pool.Query(ctx, `
+		select rule_id::text, bucket_start, outcome, hits
+		from edge_rule_hit_counts
+		where app_id = $1 and bucket_start >= date_trunc('hour', $2::timestamptz)
+		order by bucket_start, rule_id, outcome`, appID, since.UTC())
+	if err != nil {
+		return nil, fmt.Errorf("state: edge-rule hit series: %w", err)
+	}
+	defer rows.Close()
+	var out []EdgeRuleHit
+	for rows.Next() {
+		h := EdgeRuleHit{AppID: appID}
+		if err := rows.Scan(&h.RuleID, &h.Bucket, &h.Outcome, &h.Hits); err != nil {
+			return nil, fmt.Errorf("state: scan edge-rule hit series: %w", err)
+		}
+		h.Bucket = h.Bucket.UTC()
+		out = append(out, h)
+	}
+	return out, rows.Err()
+}
+
 func (s *PgStore) PruneEdgeRuleHitCounts(ctx context.Context, before time.Time) (int64, error) {
 	tag, err := s.pool.Exec(ctx, `delete from edge_rule_hit_counts where bucket_start < $1`, before.UTC())
 	if err != nil {
@@ -161,6 +187,40 @@ func (m *MemStore) EdgeRuleHitStatsForApp(_ context.Context, appID string, since
 	}
 	sortEdgeRuleHitStats(out)
 	return out, nil
+}
+
+func (m *MemStore) EdgeRuleHitSeriesForApp(_ context.Context, appID string, since time.Time) ([]EdgeRuleHit, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	from := since.UTC().Truncate(time.Hour)
+	var out []EdgeRuleHit
+	for k, n := range m.edgeRuleHitCounts {
+		if k.app == appID && !k.bucket.Before(from) {
+			out = append(out, EdgeRuleHit{RuleID: k.rule, AppID: k.app, Bucket: k.bucket, Outcome: k.outcome, Hits: n})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		a, b := out[i], out[j]
+		if !a.Bucket.Equal(b.Bucket) {
+			return a.Bucket.Before(b.Bucket)
+		}
+		if a.RuleID != b.RuleID {
+			return a.RuleID < b.RuleID
+		}
+		return a.Outcome < b.Outcome
+	})
+	return out, nil
+}
+
+// SetEdgeRuleUpdatedAtForTest backdates a rule's last change so rule-review
+// tests (ADR-20261020105001) can stand in for days of log-mode traffic.
+func (m *MemStore) SetEdgeRuleUpdatedAtForTest(id string, at time.Time) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if r, ok := m.edgeRules[id]; ok {
+		r.UpdatedAt = at
+		m.edgeRules[id] = r
+	}
 }
 
 func (m *MemStore) PruneEdgeRuleHitCounts(_ context.Context, before time.Time) (int64, error) {

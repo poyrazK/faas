@@ -52,6 +52,12 @@ closes five product gaps, all opt-in:
   standard-library clients from the fingerprinted contract, offline with
   `--snapshot-file`.
 
+- **Live reads.** `gregale data-api live enable` connects a Data API to
+  realtime. `@gregale/data/live` then keeps a read current for signed-in
+  users, visitors on public relations and server keys, with RLS deciding each
+  row. Live reads verify tokens exactly as the Data API does. Accounts get
+  them through the `live_queries` platform flag.
+
 Every request now carries a gateway-owned `gregale_access` claim (`user`,
 `anonymous` or `server`) for policies. Logs and `data-api diagnostics` report
 access kinds and the server-key slot, never subjects, addresses or keys.

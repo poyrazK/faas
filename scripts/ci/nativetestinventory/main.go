@@ -97,6 +97,15 @@ func isTest(fn *ast.FuncDecl) bool {
 // Every metal-bearing test must have an owner. Extra tag suites are deliberately
 // separate from the general metal phases, and their strict runner contracts own
 // their complete test sets. Unknown extra tags fail this check instead of hiding.
+// laneTagSuites are extra tag sets that one native lane builds as a whole
+// (FAAS_METAL_TEST_TAGS in run-native-e2e.sh); that lane's phase contract in
+// native-e2e-phases.sh owns the files it selects.
+var laneTagSuites = []string{
+	"promotionacceptance",                          // project-environment-promotion-only
+	"contractacceptance",                           // project-migration-contract-only
+	"contractacceptance,managed_postgres_contract", // project-migration-sql-only
+}
+
 func checkCoverage(root string) error {
 	var suites []struct{ Tag, Contract string }
 	data, err := os.ReadFile(filepath.Join(root, "scripts/ci/binding-native-suites.json"))
@@ -136,6 +145,17 @@ func checkCoverage(root string) error {
 		}
 		if len(extra) != 1 || extra[0] != contract.Root {
 			return fmt.Errorf("%s runner contract %s does not cover selected tests %v", suite.Tag, contract.Root, extra)
+		}
+	}
+	for _, tag := range laneTagSuites {
+		selected, err := inventory(root, "metal,"+tag, "")
+		if err != nil {
+			return err
+		}
+		for _, test := range selected {
+			if !slices.Contains(general, test) {
+				owned[test.File] = true
+			}
 		}
 	}
 	files, err := filepath.Glob(filepath.Join(root, "cmd/e2e/*_test.go"))

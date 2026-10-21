@@ -41,6 +41,11 @@ func TestEdgeRuleRecipesBuildValidRequests(t *testing.T) {
 				if err := json.Unmarshal(req.Action, &a); err != nil || a.KeyBy != "ip" || a.RequestsPerSecond <= 0 || a.Burst < 1 {
 					t.Fatalf("throttle action %s: %v", req.Action, err)
 				}
+			case "challenge":
+				var a EdgeRuleChallengeAction
+				if err := json.Unmarshal(req.Action, &a); err != nil || a.Validate() != nil || req.Match == nil {
+					t.Fatalf("challenge action %s: %v", req.Action, err)
+				}
 			default:
 				t.Fatalf("unexpected kind %q", req.Kind)
 			}
@@ -74,6 +79,9 @@ func TestEdgeRuleRecipeConditions(t *testing.T) {
 	bots := compile(EdgeRuleRecipeBlockUnverifiedBots, nil)
 	allow := compile(EdgeRuleRecipeAllowIPsOnly, map[string]string{"cidrs": "203.0.113.7 198.51.100.0/24"})
 	countries := compile(EdgeRuleRecipeBlockCountries, map[string]string{"countries": "KP,IR"})
+	scanners := compile(EdgeRuleRecipeBlockScannerPaths, nil)
+	challenge := compile(EdgeRuleRecipeChallengePath, map[string]string{"path": "/login"})
+	custom := compile(EdgeRuleRecipeBlockScannerPaths, map[string]string{"paths": "/.env /old-admin/"})
 	for _, tc := range []struct {
 		name  string
 		p     *EdgeRuleMatchProgram
@@ -90,6 +98,18 @@ func TestEdgeRuleRecipeConditions(t *testing.T) {
 		{"blocked country", countries, EdgeRuleMatchInput{Country: "KP"}, true},
 		{"other country", countries, EdgeRuleMatchInput{Country: "DE"}, false},
 		{"unknown country", countries, EdgeRuleMatchInput{}, false},
+		// adr: 986 amendment — scanner paths by prefix, nothing else.
+		{"env file", scanners, EdgeRuleMatchInput{Path: "/.env.production"}, true},
+		{"git metadata", scanners, EdgeRuleMatchInput{Path: "/.git/config"}, true},
+		{"wordpress login", scanners, EdgeRuleMatchInput{Path: "/wp-login.php"}, true},
+		{"app route", scanners, EdgeRuleMatchInput{Path: "/api/users"}, false},
+		{"github path", scanners, EdgeRuleMatchInput{Path: "/.github/workflows"}, false},
+		{"custom prefix", custom, EdgeRuleMatchInput{Path: "/old-admin/login"}, true},
+		{"default dropped", custom, EdgeRuleMatchInput{Path: "/wp-login.php"}, false},
+		// adr: 831 — amendment 7: challenge-path spares verified crawlers.
+		{"challenge browser", challenge, EdgeRuleMatchInput{Headers: ua("Mozilla/5.0 (Windows NT 10.0) Chrome/129.0")}, true},
+		{"challenge spoofed crawler", challenge, EdgeRuleMatchInput{Headers: ua(googlebot), VerifiedBot: verified("")}, true},
+		{"challenge verified crawler", challenge, EdgeRuleMatchInput{Headers: ua(googlebot), VerifiedBot: verified("googlebot")}, false},
 	} {
 		if got := tc.p.Matches(tc.in); got != tc.block {
 			t.Errorf("%s: matches=%v, want %v", tc.name, got, tc.block)
@@ -114,6 +134,8 @@ func TestEdgeRuleRecipeRejectsBadInput(t *testing.T) {
 		"zero rate":           {EdgeRuleRecipeRateLimitPath, "h", map[string]string{"per_minute": "0"}},
 		"rate not a number":   {EdgeRuleRecipeRateLimitPath, "h", map[string]string{"per_minute": "ten"}},
 		"burst out of bounds": {EdgeRuleRecipeRateLimitPath, "h", map[string]string{"burst": "100000"}},
+		"scanner not a path":  {EdgeRuleRecipeBlockScannerPaths, "h", map[string]string{"paths": "/.env wp-admin"}},
+		"scanner root prefix": {EdgeRuleRecipeBlockScannerPaths, "h", map[string]string{"paths": "/"}},
 	} {
 		if _, prob := BuildEdgeRuleRecipe(tc.id, tc.host, tc.values, false); prob == nil {
 			t.Errorf("%s: built, want error", name)

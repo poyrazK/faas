@@ -181,7 +181,7 @@ func TestEnvContract_Sorted(t *testing.T) {
 // sets it.
 func TestEnvContract_EveryReadIsDeclared(t *testing.T) {
 	root := repoRoot(t)
-	reads := scanLiterals(t, root, append(append([]string{}, daemonDirs...), "pkg", "guest"))
+	reads := scanLiterals(t, root, append(append([]string{}, daemonDirs...), "pkg", "guest", "internal"))
 	byName := EnvContractByName()
 	var missing []string
 	for name, files := range reads {
@@ -218,7 +218,7 @@ func TestEnvContract_EveryReadIsDeclared(t *testing.T) {
 // by something, so the doc never advertises a knob that does nothing.
 func TestEnvContract_NoStaleEntries(t *testing.T) {
 	root := repoRoot(t)
-	reads := scanLiterals(t, root, append(append([]string{}, daemonDirs...), "pkg", "guest"))
+	reads := scanLiterals(t, root, append(append([]string{}, daemonDirs...), "pkg", "guest", "internal"))
 	// Script consumers: shell under deploy/scripts, shell embedded in role
 	// tasks (postgres archive_command), and ExecStart lines in units.
 	scripts := readTree(t, root, []string{"deploy/scripts", "deploy/ansible/roles", "deploy/systemd"}, func(p string) bool {

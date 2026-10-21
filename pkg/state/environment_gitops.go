@@ -13,8 +13,8 @@ import (
 
 var ErrEnvironmentGitManaged = errors.New("setting is managed by the environment Git source")
 
-// EnvironmentGitSourceSpec is populated only after server-side GitHub
-// installation/repository identity verification. A ref selects candidates;
+// EnvironmentGitSourceSpec is populated only after server-side provider
+// account/repository identity verification. A ref selects candidates;
 // reconciliation always executes a persisted exact commit SHA.
 type EnvironmentGitSourceSpec = api.EnvironmentGitSourceSpec
 

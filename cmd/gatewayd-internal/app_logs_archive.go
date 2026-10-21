@@ -378,6 +378,7 @@ func (h *ArchiveLogsHandler) serveArchiveWithAccount(ctx_ context.Context, w htt
 	var body bytes.Buffer
 	if _, err := h.S3.GetObject(ctx_, key, &body); err != nil {
 		// 4xx → archive_missing; 5xx / network → archive_degraded.
+		h.logArchiveReadError(appID, instance, day, err)
 		renderArchiveTerminal(w, flusher, archiveTerminalForError(err))
 		return
 	}
@@ -557,6 +558,29 @@ func renderArchiveTerminal(w http.ResponseWriter, flusher http.Flusher, reason s
 	_, _ = fmt.Fprintf(w, "event: end\ndata: %s\n\n", reasonJSON)
 	if flusher != nil {
 		flusher.Flush()
+	}
+}
+
+// logArchiveReadError records why an archived day could not be read. The
+// SSE terminal folds NoSuchKey and AccessDenied into archive_missing on
+// purpose, so this line is the only place an operator can tell a real gap
+// (404) from credentials or bucket-policy drift (403). Hunt #11 (H11-8) found
+// every parked instance's archive reported as a gap with nothing logged.
+func (h *ArchiveLogsHandler) logArchiveReadError(appID, instance, day string, err error) {
+	if h.Log == nil {
+		return
+	}
+	var p *logarchive.Permanent
+	switch {
+	case errors.As(err, &p) && p.StatusCode == http.StatusNotFound:
+		h.Log.Info("logarchive.readback.missing", "app", appID, "instance", instance, "day", day,
+			"status", p.StatusCode, "code", p.Code)
+	case errors.As(err, &p):
+		h.Log.Warn("logarchive.readback.rejected", "app", appID, "instance", instance, "day", day,
+			"status", p.StatusCode, "code", p.Code, "err", err)
+	default:
+		h.Log.Warn("logarchive.readback.unavailable", "app", appID, "instance", instance, "day", day,
+			"err", err)
 	}
 }
 

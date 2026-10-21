@@ -189,6 +189,10 @@ type ServiceProxyReleaseResolver func(ctx context.Context, callerAppID, callerDe
 // an active reviewed environment graph. TargetDeploymentID and ReleaseSetID
 // are selected by the platform store, never by a guest header.
 type ServiceProxyEnvironmentBinding struct {
+	// FrozenPolicy means the resolver already enforced the deployment's
+	// immutable caller and target policies. The bound authorizer still checks
+	// live tenant ownership and deletion before any endpoint lookup.
+	FrozenPolicy       bool
 	Target             ServiceTarget
 	TargetDeploymentID string
 	ReleaseSetID       string
@@ -266,6 +270,7 @@ type ServiceProxyRequestAttemptObserver func(runID, callerAppID, generation stri
 // small handler factory so selection and retry behavior can be exercised
 // without a live gRPC server.
 type ServiceProxyConfig struct {
+	AuthorizeBound ServiceProxyAuthorizer
 	// AdmitRuntime checks current budget holds after selecting the runtime.
 	AdmitRuntime              func(context.Context, string, string) error
 	AdmitManagedAsync         ServiceProxyAsyncAdmitter
@@ -317,6 +322,10 @@ type ServiceProxyConfig struct {
 	// ObserveRequest receives only an actual vmmd response from the selected
 	// target, never a platform rejection or synthetic chaos response (ADR-429).
 	ObserveRequest func(*http.Request, ServiceRequestObservation)
+	// InferCallerTrace returns the traceparent of the one request the calling
+	// instance (identified by remoteAddr) is serving, for a call that arrived
+	// without trace context, or "" (ADR-1138). Nil disables linking.
+	InferCallerTrace func(ctx context.Context, remoteAddr string) string
 	// Metrics observes internal call outcomes, cold-path wake latency, and
 	// ADR-201 §2 breaker transitions. nil is allowed and every observation
 	// is a no-op — the breaker keeps working and simply publishes nothing.
@@ -351,6 +360,7 @@ type ServiceProxyConfig struct {
 // endpoints that recently failed transport, and retries one alternate target
 // for safe idempotent requests.
 type ServiceProxy struct {
+	authorizeBound            ServiceProxyAuthorizer
 	admitRuntime              func(context.Context, string, string) error
 	apiMonetization           func() bool
 	apiMonetizationFor        func(accountID string) bool
@@ -376,6 +386,7 @@ type ServiceProxy struct {
 	observeRequestAttempt     ServiceProxyRequestAttemptObserver
 	observeTCPAttempt         ServiceProxyChaosObserver
 	observeRequest            func(*http.Request, ServiceRequestObservation)
+	inferCallerTrace          func(context.Context, string) string
 	metrics                   *Metrics
 	endpointTTL               time.Duration
 	now                       func() time.Time
@@ -474,6 +485,7 @@ func NewServiceProxy(cfg ServiceProxyConfig) *ServiceProxy {
 		resolveCaller:             cfg.ResolveCaller,
 		resolveCallerIdentity:     cfg.ResolveCallerIdentity,
 		resolveRelease:            cfg.ResolveRelease,
+		authorizeBound:            cfg.AuthorizeBound,
 		devBridge:                 cfg.DevBridge,
 		forward:                   cfg.Forward,
 		rawForward:                cfg.RawForward,
@@ -486,6 +498,7 @@ func NewServiceProxy(cfg ServiceProxyConfig) *ServiceProxy {
 		observeRequestAttempt:     cfg.ObserveRequestAttempt,
 		observeTCPAttempt:         cfg.ObserveTCPAttempt,
 		observeRequest:            cfg.ObserveRequest,
+		inferCallerTrace:          cfg.InferCallerTrace,
 		metrics:                   cfg.Metrics,
 		endpointTTL:               ttl,
 		now:                       now,
@@ -516,6 +529,9 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// requests so target flag decisions can be attached to this dependency span.
 	r = withGuestExecutionEvidence(r, p.apiMonetization != nil && p.apiMonetization())
 	r = withServiceWakeRecorder(r)
+	// A caller that forwarded no trace context joins the trace of the one
+	// request its instance is serving, marked as inferred (ADR-1138).
+	r = p.withInferredCallerTrace(r)
 	// The guest-facing service-proxy listener is a standalone http.Server, not
 	// wrapped by otelhttp. Extract W3C context here so a caller that forwards
 	// its inbound traceparent joins the original request instead of always
@@ -526,6 +542,9 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		attribute.String("gregale.dependency.kind", "service_proxy"),
 		attribute.String("http.request.method", r.Method),
 	)
+	if traceInferredOf(r) {
+		dependencySpan.SetAttributes(attribute.Bool("gregale.trace.inferred", true))
+	}
 	if validServiceDNSLabel(service) {
 		dependencySpan.SetAttributes(attribute.String("gregale.service.name", service))
 	}
@@ -629,6 +648,10 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		serviceProxyProblem(dispatchWriter, http.StatusUnauthorized, "caller identity is required")
 		return
 	}
+	if requested, present, valid := serviceReleaseFromRequest(r); present && valid {
+		dependencyCtx = context.WithValue(dependencyCtx, requestedServiceReleaseKey{}, requested)
+		r = r.WithContext(dependencyCtx)
+	}
 	var environmentBinding *ServiceProxyEnvironmentBinding
 	if p.resolveEnvironmentBinding != nil {
 		binding, managed, found, err := p.resolveEnvironmentBinding(dependencyCtx, caller, callerDeploymentID, service)
@@ -700,7 +723,15 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	dependencySpan.SetAttributes(attribute.String("gregale.service.target_app_id", target.AppID))
-	callerInfo, err := p.authorize(dependencyCtx, caller, target.AppID)
+	authorize := p.authorize
+	if environmentBinding != nil && environmentBinding.FrozenPolicy {
+		authorize = p.authorizeBound
+		if authorize == nil {
+			serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "frozen service authorization is unavailable")
+			return
+		}
+	}
+	callerInfo, err := authorize(dependencyCtx, caller, target.AppID)
 	if err != nil {
 		if errors.Is(err, ErrServiceProxyPreviewProductionDenied) {
 			p.metrics.IncServiceCall(ServiceCallPreviewDenied)
@@ -2261,4 +2292,13 @@ func (w *serviceProxyResponseWriter) commit() {
 		_, _ = w.dst.Write(w.buffer.Bytes())
 		w.buffer.Reset()
 	}
+}
+
+type requestedServiceReleaseKey struct{}
+
+// RequestedServiceRelease returns a syntactically valid request hint. Resolvers
+// must still prove the node-verified caller belongs to that exact graph.
+func RequestedServiceRelease(ctx context.Context) string {
+	id, _ := ctx.Value(requestedServiceReleaseKey{}).(string)
+	return id
 }

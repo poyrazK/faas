@@ -87,15 +87,15 @@ func TestGregaleCLI_Deploy_HappyPath_ReachesAPID(t *testing.T) {
 			hits[1] = r.URL.Path
 			// Return a plain DeploymentResponse — the SSE tail is opened
 			// separately on /v1/deployments/{id}/logs by streamDeployLogs.
-			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d-smoke", Status: "pending", AppID: "smoke-app"})
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d-smoke", Status: "pending", AppID: "a-smoke"})
 		case r.Method == "GET" && r.URL.Path == "/v1/deployments/d-smoke":
 			// The CLI reads the terminal row after the live frame so a
 			// durable hosting receipt can be rendered when present.
-			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d-smoke", Status: "live", AppID: "smoke-app"})
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d-smoke", Status: "live", AppID: "a-smoke"})
 		case r.Method == "GET" && r.URL.Path == "/v1/apps/smoke-app/deployments/d-smoke/summary":
 			hits[3] = r.URL.Path
 			_ = json.NewEncoder(w).Encode(api.DeploymentSummaryResponse{
-				Deployment: api.DeploymentResponse{ID: "d-smoke", Status: "live", AppID: "smoke-app"},
+				Deployment: api.DeploymentResponse{ID: "d-smoke", Status: "live", AppID: "a-smoke"},
 				Changes:    []api.DeploymentChange{},
 			})
 		case strings.HasPrefix(r.URL.Path, "/v1/deployments/") && strings.HasSuffix(r.URL.Path, "/logs"):

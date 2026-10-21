@@ -81,14 +81,16 @@ func headerHasToken(header http.Header, name, token string) bool {
 }
 
 // realtimePath reports a provider path that opens a metered session:
-// OpenAI's /v1/realtime and Azure OpenAI's /openai/v1/realtime and
-// /openai/realtime.
+// OpenAI's /v1/realtime, Azure OpenAI's /openai/v1/realtime and
+// /openai/realtime, and Gemini's and Vertex's Live API.
 func realtimePath(provider, path string) bool {
 	switch provider {
 	case api.OutboundAIProviderOpenAI:
 		return path == "/v1/realtime"
 	case api.OutboundAIProviderAzureOpenAI:
 		return path == "/openai/v1/realtime" || path == "/openai/realtime"
+	case api.OutboundAIProviderGemini, api.OutboundAIProviderVertex:
+		return livePath(provider, path)
 	}
 	return false
 }
@@ -143,6 +145,12 @@ type realtimeSession struct {
 	// reserves at least as much, since a session's context only grows.
 	lastInput int64
 	open      map[string]*realtimeResponse
+	// live marks a Gemini or Vertex Live session (ADR 20261020161811):
+	// turns are admitted and waiting for usage, oldest first, and
+	// generating marks the newest still producing output.
+	live       bool
+	turns      []*realtimeResponse
+	generating bool
 
 	client   net.Conn
 	clientMu sync.Mutex
@@ -165,6 +173,9 @@ type realtimeResponse struct {
 	reserve   aiReservation
 	started   time.Time
 	firstByte time.Time
+	// grounding is a Live turn's search grounding (ADR-1433), seen before
+	// its usage.
+	grounding aiRawUsage
 }
 
 // serveRealtime opens the session at the provider, switches the caller's
@@ -209,7 +220,7 @@ func (h *Handler) serveRealtime(w http.ResponseWriter, r *http.Request, session 
 	}
 	session.client, session.upstream = client, upstream
 	session.open = make(map[string]*realtimeResponse)
-	session.message = wsMessage{maxSize: api.OutboundAIRealtimeMaxMessageBytes}
+	session.message = wsMessage{maxSize: api.OutboundAIRealtimeMaxMessageBytes, binary: session.live}
 	session.span = noop.Span{}
 	event := aiRealtimeOpened
 	if !session.metered {
@@ -262,6 +273,10 @@ func writeSwitchingProtocols(out *bufio.Writer, header http.Header) error {
 // run carries the session: the caller's frames go to the provider
 // untouched, and the provider's are read, metered and forwarded.
 func (s *realtimeSession) run(ctx context.Context, clientIn *bufio.Reader) {
+	if s.live && !s.forwardLiveSetup(clientIn) {
+		s.h.Metrics.ObserveAIRealtimeSession(s.endEvent())
+		return
+	}
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -380,6 +395,9 @@ type realtimeSessionConfig struct {
 // meter reads one complete provider message. It returns the end event when
 // the message ends the session.
 func (s *realtimeSession) meter(ctx context.Context, message []byte, now time.Time) string {
+	if s.live {
+		return s.meterLive(ctx, message, now)
+	}
 	if bytes.Contains(message, realtimeDeltaMarker) {
 		for _, open := range s.open {
 			if open.firstByte.IsZero() {
@@ -472,6 +490,20 @@ func (s *realtimeSession) admitResponse(ctx context.Context, id string, now time
 		s.closeWith(aiRealtimeClosedUnreadable, "", "", "outbound_ai_realtime_unreadable")
 		return aiRealtimeClosedUnreadable
 	}
+	response, end := s.admit(ctx, now)
+	if end != "" {
+		return end
+	}
+	if id == "" {
+		id = response.leaseID
+	}
+	s.open[id] = response
+	return ""
+}
+
+// admit admits one response or Live turn at its reservation. A refusal ends
+// the session: the provider stops when its connection closes.
+func (s *realtimeSession) admit(ctx context.Context, now time.Time) (*realtimeResponse, string) {
 	reserve := s.reservation()
 	spec := s.spec
 	spec.AIReservedTokens, spec.AIReservedCostMillicents = reserve.tokens, reserve.cost
@@ -483,21 +515,17 @@ func (s *realtimeSession) admitResponse(ctx context.Context, id string, now time
 		s.h.Metrics.ObserveRejection(s.metricID, "backend_unavailable")
 		s.closeWith(aiRealtimeClosedError, "outbound_admission_unavailable", "Outbound admission is temporarily unavailable",
 			"outbound_admission_unavailable")
-		return aiRealtimeClosedError
+		return nil, aiRealtimeClosedError
 	}
 	if !decision.Granted {
 		s.h.Metrics.ObserveAdmission(s.metricID, "rejected")
 		s.h.Metrics.ObserveRejection(s.metricID, decision.Reason)
 		s.closeWith(aiRealtimeClosedCap, "outbound_budget_exhausted", "Outbound integration budget is exhausted: "+decision.Reason,
 			"outbound_budget_exhausted")
-		return aiRealtimeClosedCap
+		return nil, aiRealtimeClosedCap
 	}
 	s.h.Metrics.ObserveAdmission(s.metricID, "granted")
-	if id == "" {
-		id = decision.LeaseID
-	}
-	s.open[id] = &realtimeResponse{leaseID: decision.LeaseID, reserve: reserve, started: now}
-	return ""
+	return &realtimeResponse{leaseID: decision.LeaseID, reserve: reserve, started: now}, ""
 }
 
 // settleResponse settles a finished response from its usage. A response
@@ -546,14 +574,18 @@ func (s *realtimeSession) settleTranscription(ctx context.Context, fields *aiUsa
 	s.settle(ctx, &realtimeResponse{started: now}, usage, AIUsageOutcomeKnown, aiMediaTranscription, now)
 }
 
-// settleOpen settles the responses a session ended in the middle of at
-// their reservations.
+// settleOpen settles the responses and Live turns a session ended in the
+// middle of at their reservations.
 func (s *realtimeSession) settleOpen(ctx context.Context) {
 	now := time.Now()
 	for id, open := range s.open {
 		delete(s.open, id)
 		s.settle(ctx, open, open.reserve.estimate, AIUsageOutcomeUnknown, aiMediaNone, now)
 	}
+	for _, turn := range s.turns {
+		s.settle(ctx, turn, turn.reserve.estimate, AIUsageOutcomeUnknown, aiMediaNone, now)
+	}
+	s.turns = nil
 }
 
 // settle records one response or transcription in the background, so a
@@ -596,12 +628,13 @@ func (s *realtimeSession) writeClientFrame(data []byte, control, mid bool) bool 
 
 // closeWith ends the session from the gateway's side: an error event when
 // no provider message is half-forwarded, then a close frame, then both
-// connections close.
+// connections close. Live has no error event, so its close reason alone
+// names the refusal.
 func (s *realtimeSession) closeWith(event, code, message, reason string) {
 	s.endOnce.Do(func() {
 		s.end = event
 		s.clientMu.Lock()
-		if code != "" && !s.midMessage {
+		if code != "" && !s.midMessage && !s.live {
 			payload, _ := json.Marshal(map[string]any{"type": "error",
 				"error": map[string]string{"type": "gateway_error", "code": code, "message": message}})
 			_, _ = s.client.Write(wsServerFrame(wsOpText, payload))

@@ -119,6 +119,7 @@ func UnitSchedd() daemonunit.Unit {
 		},
 		LoadCredential: []daemonunit.LoadCred{
 			{Name: "fleet.age", Path: "/etc/faas/secrets/fleet.age"},
+			{Name: "fleet.age.previous", Path: "/etc/faas/secrets/fleet.age.previous", Optional: true},
 			{Name: "host.age", Path: "/etc/faas/secrets/host.age"},
 			{Name: "host.age.previous", Path: "/etc/faas/secrets/host.age.previous", Optional: true},
 			{Name: "faas_sign_pub", Path: "/etc/faas/secrets/sign-pub.pem"},

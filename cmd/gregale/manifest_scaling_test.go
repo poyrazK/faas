@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -22,7 +23,7 @@ func (f *fakeManifestScalingClient) UpdateApp(_ context.Context, _ string, req a
 	return f.app, nil
 }
 
-func TestApplyManifestScalingPolicy(t *testing.T) {
+func TestManifestSavedScalingPolicy(t *testing.T) {
 	dir := t.TempDir()
 	writeManifest(t, dir, `scaling:
   min_instances: 1
@@ -35,7 +36,7 @@ func TestApplyManifestScalingPolicy(t *testing.T) {
   max_queue_wait_ms: 1250
 `)
 	fake := &fakeManifestScalingClient{}
-	if err := applyManifestScalingPolicy(context.Background(), fake, "api", dir); err != nil {
+	if err := applyManifestSavedSettingsForTest(t, fake, "api", dir); err != nil {
 		t.Fatalf("applyManifestScalingPolicy: %v", err)
 	}
 	if len(fake.updates) != 1 || fake.updates[0].ScalingPolicy == nil {
@@ -46,10 +47,20 @@ func TestApplyManifestScalingPolicy(t *testing.T) {
 		policy.ConcurrencyOverflow != api.ConcurrencyOverflowDrop || policy.MaxQueueDepth != 17 || policy.MaxQueueWaitMS != 1250 {
 		t.Fatalf("policy = %+v, want defaults 5/60", policy)
 	}
-	if err := applyManifestScalingPolicy(context.Background(), fake, "api", dir); err != nil {
+	if err := applyManifestSavedSettingsForTest(t, fake, "api", dir); err != nil {
 		t.Fatalf("idempotent apply: %v", err)
 	}
 	if len(fake.updates) != 1 {
 		t.Fatalf("idempotent apply made %d PATCH calls, want 1", len(fake.updates))
 	}
+}
+
+func applyManifestSavedSettingsForTest(t *testing.T, client deploySettingsClient, slug, dir string) error {
+	t.Helper()
+	steps, err := prepareDeploySettings(context.Background(), client, slug, dir)
+	if err != nil {
+		return err
+	}
+	session := &savedDeploySession{path: filepath.Join(t.TempDir(), "settings.json"), record: deploySessionRecord{AppSlug: slug, Settings: steps}}
+	return session.applySettings(context.Background(), client)
 }

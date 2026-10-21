@@ -55,6 +55,8 @@ var memDispatched = map[string]bool{
 	"DeploymentSidecarRAMs":                                   true,
 	"ListBillingWindowInstances":                              true,
 	"ListInstancesForApp":                                     true,
+	"AccountByID":                                             true,
+	"InstanceListByNodeForRecovery":                           true,
 	"ActiveComputeNodes":                                      true,
 	"ActivePrewarmFloor":                                      true,
 	"ActiveProjectReleaseSet":                                 true,
@@ -62,6 +64,11 @@ var memDispatched = map[string]bool{
 	"AdmitScheduledWorkflow":                                  true,
 	"AppByID":                                                 true,
 	"AppBySlug":                                               true,
+	"GetProductBillingDocument":                               true,
+	"ListProductBillingDocuments":                             true,
+	"GetProductBillingHandoff":                                true,
+	"HandoffProductBilling":                                   true,
+	"StatementHandoffBlocked":                                 true,
 	"AppRuntimeConfigChangedAt":                               true,
 	"AppRuntimeConfigChangedAtInScope":                        true,
 	"ClaimPreviewTeardown":                                    true,
@@ -137,9 +144,12 @@ var memDispatched = map[string]bool{
 	"RecoverCanaryRouteHealth":                                true,
 	"RenewInvocationLease":                                    true,
 	"RenewOperationExecution":                                 true,
+	"RequestTelemetryAnalyticsByDimension":                    true,
+	"RequestTelemetryAnalyticsByRoute":                        true,
 	"RequestTelemetryRouteCustomers":                          true,
 	"ResolveEnvironmentQualificationService":                  true,
 	"ResolveInstanceMigrationCommit":                          true,
+	"ResolveProjectServiceBinding":                            true,
 	"RouteAdviceConsumers":                                    true,
 	"RouteAdviceRouteStats":                                   true,
 	"RouteAdviceThrottleExcess":                               true,
@@ -203,6 +213,21 @@ var memDispatched = map[string]bool{
 	"WorkflowAlertSnapshot":                                   true,
 	"WorkflowRecoveryReviewCompletionNotificationAllowed":     true,
 	"WorkflowRecoveryReviewNotificationAllowed":               true,
+
+	"PutIdempotent":                                 true,
+	"AttachDeploymentSubmission":                    true,
+	"CreateBuildWithID":                             true,
+	"UpdateProjectEnvironmentPromotionWorkload":     true,
+	"UpdateProjectEnvironmentPromotionVerification": true,
+	"ListPendingSafeProjectSubmissions":             true,
+	"ProjectSubmission":                             true,
+	"ProjectReleaseSetByID":                         true,
+	"AdvanceProjectReleaseVerification":             true,
+	"ReconcileSafeProjectSubmission":                true,
+	"ReleaseAppTaskByDeployment":                    true,
+	"RecordProjectMigrationBaseline":                true,
+	"PinnedProjectReleaseWorkers":                   true,
+	"HeldProjectReleaseWorkers":                     true,
 }
 
 func (s *Mem) AppTaskByID(ctx context.Context, account, app, id string) (state.AppTask, error) {
@@ -1022,6 +1047,24 @@ func (s *Mem) RenewOperationExecution(p0 context.Context, p1 string, p2 int, p3 
 	return s.MemStore.RenewOperationExecution(p0, p1, p2, p3)
 }
 
+func (s *Mem) RequestTelemetryAnalyticsByDimension(p0 context.Context, p1 sqlc.RequestTelemetryAnalyticsByDimensionParams) ([]sqlc.RequestTelemetryAnalyticsByDimensionRow, error) {
+	if o, ok := s.over.(interface {
+		RequestTelemetryAnalyticsByDimension(context.Context, sqlc.RequestTelemetryAnalyticsByDimensionParams) ([]sqlc.RequestTelemetryAnalyticsByDimensionRow, error)
+	}); ok {
+		return o.RequestTelemetryAnalyticsByDimension(p0, p1)
+	}
+	return s.MemStore.RequestTelemetryAnalyticsByDimension(p0, p1)
+}
+
+func (s *Mem) RequestTelemetryAnalyticsByRoute(p0 context.Context, p1 sqlc.RequestTelemetryAnalyticsByRouteParams) ([]sqlc.RequestTelemetryAnalyticsByRouteRow, error) {
+	if o, ok := s.over.(interface {
+		RequestTelemetryAnalyticsByRoute(context.Context, sqlc.RequestTelemetryAnalyticsByRouteParams) ([]sqlc.RequestTelemetryAnalyticsByRouteRow, error)
+	}); ok {
+		return o.RequestTelemetryAnalyticsByRoute(p0, p1)
+	}
+	return s.MemStore.RequestTelemetryAnalyticsByRoute(p0, p1)
+}
+
 func (s *Mem) RequestTelemetryRouteCustomers(p0 context.Context, p1 sqlc.RequestTelemetryRouteCustomersParams) ([]sqlc.RequestTelemetryRouteCustomersRow, error) {
 	if o, ok := s.over.(interface {
 		RequestTelemetryRouteCustomers(context.Context, sqlc.RequestTelemetryRouteCustomersParams) ([]sqlc.RequestTelemetryRouteCustomersRow, error)
@@ -1029,6 +1072,13 @@ func (s *Mem) RequestTelemetryRouteCustomers(p0 context.Context, p1 sqlc.Request
 		return o.RequestTelemetryRouteCustomers(p0, p1)
 	}
 	return s.MemStore.RequestTelemetryRouteCustomers(p0, p1)
+}
+
+func (s *Mem) ResolveProjectServiceBinding(p0 context.Context, p1, p2, p3 string, p4 ...string) (state.EnvironmentGitOpsServiceBindingRoute, bool, bool, error) {
+	if o, ok := s.over.(state.ProjectServiceGraphStore); ok {
+		return o.ResolveProjectServiceBinding(p0, p1, p2, p3, p4...)
+	}
+	return s.MemStore.ResolveProjectServiceBinding(p0, p1, p2, p3, p4...)
 }
 
 func (s *Mem) ResolveEnvironmentQualificationService(p0 context.Context, p1 state.EnvironmentQualificationServiceRequest) (state.EnvironmentQualificationServiceRoute, error) {
@@ -1236,6 +1286,24 @@ func (s *Mem) ListInstancesForApp(p0 context.Context, p1 string) ([]state.Instan
 		return o.ListInstancesForApp(p0, p1)
 	}
 	return s.MemStore.ListInstancesForApp(p0, p1)
+}
+
+func (s *Mem) AccountByID(p0 context.Context, p1 string) (state.Account, error) {
+	if o, ok := s.over.(interface {
+		AccountByID(context.Context, string) (state.Account, error)
+	}); ok {
+		return o.AccountByID(p0, p1)
+	}
+	return s.MemStore.AccountByID(p0, p1)
+}
+
+func (s *Mem) InstanceListByNodeForRecovery(p0 context.Context, p1 string) ([]state.RecoveryInstance, error) {
+	if o, ok := s.over.(interface {
+		InstanceListByNodeForRecovery(context.Context, string) ([]state.RecoveryInstance, error)
+	}); ok {
+		return o.InstanceListByNodeForRecovery(p0, p1)
+	}
+	return s.MemStore.InstanceListByNodeForRecovery(p0, p1)
 }
 
 // pgDispatched lists the methods Pg forwards to its override.
@@ -3958,4 +4026,175 @@ func (s *Store) ListProjectsForOrg(ctx context.Context, orgID string) ([]state.P
 		return override.ListProjectsForOrg(ctx, orgID)
 	}
 	return s.Store.ListProjectsForOrg(ctx, orgID)
+}
+
+func (s *Mem) GetProductBillingDocument(p0 context.Context, p1 state.ProductBillingScope, p2 string) (api.ProductBillingDocument, error) {
+	if o, ok := s.over.(interface {
+		GetProductBillingDocument(context.Context, state.ProductBillingScope, string) (api.ProductBillingDocument, error)
+	}); ok {
+		return o.GetProductBillingDocument(p0, p1, p2)
+	}
+	return s.MemStore.GetProductBillingDocument(p0, p1, p2)
+}
+
+func (s *Mem) ListProductBillingDocuments(p0 context.Context, p1 state.ProductBillingScope, p2 string) (api.ProductBillingDocuments, error) {
+	if o, ok := s.over.(interface {
+		ListProductBillingDocuments(context.Context, state.ProductBillingScope, string) (api.ProductBillingDocuments, error)
+	}); ok {
+		return o.ListProductBillingDocuments(p0, p1, p2)
+	}
+	return s.MemStore.ListProductBillingDocuments(p0, p1, p2)
+}
+
+func (s *Mem) GetProductBillingHandoff(p0 context.Context, p1 state.ProductBillingScope, p2 string) (api.ProductInvoiceHandoff, error) {
+	if o, ok := s.over.(interface {
+		GetProductBillingHandoff(context.Context, state.ProductBillingScope, string) (api.ProductInvoiceHandoff, error)
+	}); ok {
+		return o.GetProductBillingHandoff(p0, p1, p2)
+	}
+	return s.MemStore.GetProductBillingHandoff(p0, p1, p2)
+}
+
+func (s *Mem) HandoffProductBilling(p0 context.Context, p1 state.ProductBillingScope, p2, p3 string) (api.ProductInvoiceHandoff, error) {
+	if o, ok := s.over.(interface {
+		HandoffProductBilling(context.Context, state.ProductBillingScope, string, string) (api.ProductInvoiceHandoff, error)
+	}); ok {
+		return o.HandoffProductBilling(p0, p1, p2, p3)
+	}
+	return s.MemStore.HandoffProductBilling(p0, p1, p2, p3)
+}
+
+func (s *Mem) StatementHandoffBlocked(p0 context.Context, p1, p2, p3 string) (bool, error) {
+	if o, ok := s.over.(interface {
+		StatementHandoffBlocked(context.Context, string, string, string) (bool, error)
+	}); ok {
+		return o.StatementHandoffBlocked(p0, p1, p2, p3)
+	}
+	return s.MemStore.StatementHandoffBlocked(p0, p1, p2, p3)
+}
+
+func (s *Mem) PutIdempotent(p0 context.Context, p1 string, p2 string, p3 int, p4 []byte) error {
+	if o, ok := s.over.(interface {
+		PutIdempotent(context.Context, string, string, int, []byte) error
+	}); ok {
+		return o.PutIdempotent(p0, p1, p2, p3, p4)
+	}
+	return s.MemStore.PutIdempotent(p0, p1, p2, p3, p4)
+}
+
+func (s *Mem) AttachDeploymentSubmission(p0 context.Context, p1 string, p2 string, p3 string) (api.DeploymentSubmissionReceipt, error) {
+	if o, ok := s.over.(interface {
+		AttachDeploymentSubmission(context.Context, string, string, string) (api.DeploymentSubmissionReceipt, error)
+	}); ok {
+		return o.AttachDeploymentSubmission(p0, p1, p2, p3)
+	}
+	return s.MemStore.AttachDeploymentSubmission(p0, p1, p2, p3)
+}
+
+func (s *Mem) CreateBuildWithID(p0 context.Context, p1 string, p2 string, p3 state.DeploymentKind, p4 int64, p5 string) (state.Build, error) {
+	if o, ok := s.over.(interface {
+		CreateBuildWithID(context.Context, string, string, state.DeploymentKind, int64, string) (state.Build, error)
+	}); ok {
+		return o.CreateBuildWithID(p0, p1, p2, p3, p4, p5)
+	}
+	return s.MemStore.CreateBuildWithID(p0, p1, p2, p3, p4, p5)
+}
+
+func (s *Mem) UpdateProjectEnvironmentPromotionWorkload(p0 context.Context, p1 string, p2 string, p3 string, p4 string, p5 string, p6 string) (state.ProjectEnvironmentPromotionWorkload, error) {
+	if o, ok := s.over.(interface {
+		UpdateProjectEnvironmentPromotionWorkload(context.Context, string, string, string, string, string, string) (state.ProjectEnvironmentPromotionWorkload, error)
+	}); ok {
+		return o.UpdateProjectEnvironmentPromotionWorkload(p0, p1, p2, p3, p4, p5, p6)
+	}
+	return s.MemStore.UpdateProjectEnvironmentPromotionWorkload(p0, p1, p2, p3, p4, p5, p6)
+}
+
+func (s *Mem) UpdateProjectEnvironmentPromotionVerification(p0 context.Context, p1 string, p2 string, p3 string, p4 string, p5 *time.Time, p6 *time.Time) (state.ProjectEnvironmentPromotion, error) {
+	if o, ok := s.over.(interface {
+		UpdateProjectEnvironmentPromotionVerification(context.Context, string, string, string, string, *time.Time, *time.Time) (state.ProjectEnvironmentPromotion, error)
+	}); ok {
+		return o.UpdateProjectEnvironmentPromotionVerification(p0, p1, p2, p3, p4, p5, p6)
+	}
+	return s.MemStore.UpdateProjectEnvironmentPromotionVerification(p0, p1, p2, p3, p4, p5, p6)
+}
+
+func (s *Mem) ListPendingSafeProjectSubmissions(p0 context.Context) ([]state.SafeProjectSubmission, error) {
+	if o, ok := s.over.(interface {
+		ListPendingSafeProjectSubmissions(context.Context) ([]state.SafeProjectSubmission, error)
+	}); ok {
+		return o.ListPendingSafeProjectSubmissions(p0)
+	}
+	return s.MemStore.ListPendingSafeProjectSubmissions(p0)
+}
+
+func (s *Mem) ProjectSubmission(p0 context.Context, p1 string, p2 string) (api.ProjectSubmissionReceipt, error) {
+	if o, ok := s.over.(interface {
+		ProjectSubmission(context.Context, string, string) (api.ProjectSubmissionReceipt, error)
+	}); ok {
+		return o.ProjectSubmission(p0, p1, p2)
+	}
+	return s.MemStore.ProjectSubmission(p0, p1, p2)
+}
+
+func (s *Mem) ProjectReleaseSetByID(p0 context.Context, p1 string, p2 string, p3 string, p4 string) (state.ProjectReleaseSet, error) {
+	if o, ok := s.over.(interface {
+		ProjectReleaseSetByID(context.Context, string, string, string, string) (state.ProjectReleaseSet, error)
+	}); ok {
+		return o.ProjectReleaseSetByID(p0, p1, p2, p3, p4)
+	}
+	return s.MemStore.ProjectReleaseSetByID(p0, p1, p2, p3, p4)
+}
+
+func (s *Mem) AdvanceProjectReleaseVerification(p0 context.Context, p1 string, p2 string, p3 *state.ProjectReleaseVerificationRound) (*api.ProjectSafeRelease, error) {
+	if o, ok := s.over.(interface {
+		AdvanceProjectReleaseVerification(context.Context, string, string, *state.ProjectReleaseVerificationRound) (*api.ProjectSafeRelease, error)
+	}); ok {
+		return o.AdvanceProjectReleaseVerification(p0, p1, p2, p3)
+	}
+	return s.MemStore.AdvanceProjectReleaseVerification(p0, p1, p2, p3)
+}
+
+func (s *Mem) ReconcileSafeProjectSubmission(p0 context.Context, p1 string, p2 string) (*api.ProjectSafeRelease, error) {
+	if o, ok := s.over.(interface {
+		ReconcileSafeProjectSubmission(context.Context, string, string) (*api.ProjectSafeRelease, error)
+	}); ok {
+		return o.ReconcileSafeProjectSubmission(p0, p1, p2)
+	}
+	return s.MemStore.ReconcileSafeProjectSubmission(p0, p1, p2)
+}
+
+func (s *Mem) ReleaseAppTaskByDeployment(p0 context.Context, p1 string) (state.AppTask, error) {
+	if o, ok := s.over.(interface {
+		ReleaseAppTaskByDeployment(context.Context, string) (state.AppTask, error)
+	}); ok {
+		return o.ReleaseAppTaskByDeployment(p0, p1)
+	}
+	return s.MemStore.ReleaseAppTaskByDeployment(p0, p1)
+}
+
+func (s *Mem) RecordProjectMigrationBaseline(p0 context.Context, p1 string, p2 string, p3 state.ProjectMigrationBaselineRound) (*api.ProjectSafeRelease, error) {
+	if o, ok := s.over.(interface {
+		RecordProjectMigrationBaseline(context.Context, string, string, state.ProjectMigrationBaselineRound) (*api.ProjectSafeRelease, error)
+	}); ok {
+		return o.RecordProjectMigrationBaseline(p0, p1, p2, p3)
+	}
+	return s.MemStore.RecordProjectMigrationBaseline(p0, p1, p2, p3)
+}
+
+func (s *Mem) PinnedProjectReleaseWorkers(p0 context.Context, p1 string) ([]string, error) {
+	if o, ok := s.over.(interface {
+		PinnedProjectReleaseWorkers(context.Context, string) ([]string, error)
+	}); ok {
+		return o.PinnedProjectReleaseWorkers(p0, p1)
+	}
+	return s.MemStore.PinnedProjectReleaseWorkers(p0, p1)
+}
+
+func (s *Mem) HeldProjectReleaseWorkers(p0 context.Context, p1 string) ([]string, error) {
+	if o, ok := s.over.(interface {
+		HeldProjectReleaseWorkers(context.Context, string) ([]string, error)
+	}); ok {
+		return o.HeldProjectReleaseWorkers(p0, p1)
+	}
+	return s.MemStore.HeldProjectReleaseWorkers(p0, p1)
 }

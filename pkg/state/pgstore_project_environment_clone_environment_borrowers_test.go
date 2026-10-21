@@ -258,3 +258,59 @@ func TestPgCloneEnvironmentBorrowerForeignKeyInventory(t *testing.T) {
 		t.Fatal("environment borrower inventory changed; review explicit counts before metadata retirement", actual)
 	}
 }
+
+func TestPgCloneEnvironmentHostingBorrowers(t *testing.T) {
+	for _, status := range []string{"active", "suspended", "deleting"} {
+		t.Run(status, func(t *testing.T) {
+			s, pool, l, _ := configurationCleanupFixtureForPhase(t, true, "materialized")
+			native, err := s.ReserveProjectEnvironmentCloneCheckpointWorkloadRetirement(t.Context(), l)
+			if err != nil {
+				t.Fatal(err)
+			}
+			retireConfigurationCleanupFixture(t, s, l)
+			if err = s.CleanupProjectEnvironmentCloneConfigurationForLease(t.Context(), l); err != nil {
+				t.Fatal(err)
+			}
+			if err = s.CleanupProjectEnvironmentCloneWorkloadsForLease(t.Context(), l); err != nil {
+				t.Fatal(err)
+			}
+			targetID, sourceID := uuid.NewString(), uuid.NewString()
+			for _, site := range []struct{ id, environment string }{{targetID, l.Operation.TargetEnvironment}, {sourceID, l.Operation.SourceEnvironment}} {
+				storedStatus := status
+				if status == "suspended" {
+					storedStatus = "active"
+				}
+				if _, err = pool.Exec(t.Context(), `INSERT INTO hosting_sites(id,account_id,project_id,environment,name,hostname,origin_id,status,durable_routing,suspended) VALUES($1,$2,$3,$4,'retained',$5,$6,$7,true,$8)`, site.id, l.Operation.AccountID, l.Operation.ProjectID, site.environment, site.id+".example.com", strings.Repeat("a", 64), storedStatus, status == "suspended"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			// A trust's environment is a GitHub claim, independent of the
+			// site's Gregale environment. Matching its text grants no ownership.
+			if _, err = pool.Exec(t.Context(), `INSERT INTO hosting_oidc_trusts(id,account_id,site_id,repository_owner_id,repository_id,repository,ref,workflow_ref,event_name,environment) VALUES(gen_random_uuid(),$1,$2,'1','1','test/repository','refs/heads/main','test/repository/.github/workflows/ci.yml@refs/heads/main','workflow_dispatch',$3)`, l.Operation.AccountID, sourceID, l.Operation.TargetEnvironment); err != nil {
+				t.Fatal(err)
+			}
+			report, err := s.ProjectEnvironmentCloneEnvironmentBorrowersForLease(t.Context(), l)
+			if err != nil || report.References["hosting_sites"] != 1 {
+				t.Fatal("hosting inventory lost a retained site or included another environment", report, err)
+			}
+			if err = s.CleanupProjectEnvironmentCloneEnvironmentForLease(t.Context(), l); !errors.Is(err, state.ErrConflict) || !strings.Contains(err.Error(), "hosting_sites") {
+				t.Fatal("hosting borrower did not block cleanup before deletion", err)
+			}
+			var retained bool
+			if err = pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM hosting_sites WHERE id=$1) AND EXISTS(SELECT 1 FROM project_environments WHERE id=$2) AND NOT EXISTS(SELECT 1 FROM project_environment_clone_environment_cleanups WHERE operation_id=$3)`, targetID, native.Plan.EnvironmentID, l.Operation.ID).Scan(&retained); err != nil || !retained {
+				t.Fatal("blocked hosting cleanup changed retained metadata", err)
+			}
+			// Simulate the separate hosting owner's completed retirement. A site
+			// in the source environment must not block or be removed by recovery.
+			if _, err = pool.Exec(t.Context(), "DELETE FROM hosting_sites WHERE id=$1", targetID); err != nil {
+				t.Fatal(err)
+			}
+			if err = s.CleanupProjectEnvironmentCloneEnvironmentForLease(t.Context(), l); err != nil {
+				t.Fatal("cleanup after hosting retirement", err)
+			}
+			if err = pool.QueryRow(t.Context(), "SELECT EXISTS(SELECT 1 FROM hosting_sites WHERE id=$1) AND EXISTS(SELECT 1 FROM hosting_oidc_trusts WHERE site_id=$1)", sourceID).Scan(&retained); err != nil || !retained {
+				t.Fatal("source hosting site or external trust was removed", err)
+			}
+		})
+	}
+}

@@ -110,6 +110,16 @@ type DeploymentStore interface {
 	ConcurrencyForDeployment(ctx context.Context, appID, deploymentID string) (int, error)
 }
 
+// FloorCandidateStore is an optional DeploymentStore extension that lists only
+// the live deployments of apps able to carry a floor. When the store has it,
+// the per-deployment sweep reads those rows instead of every deployment and
+// skips the per-deployment app read for apps without a floor, which made the
+// one-second sweep the largest steady Postgres load on the control plane.
+type FloorCandidateStore interface {
+	ListFloorDeployments(ctx context.Context) ([]state.Deployment, error)
+	ListFloorDeploymentsByNodeID(ctx context.Context, nodeID string) ([]state.Deployment, error)
+}
+
 // Ledger is the read-only slice of NodeLedger the trigger needs.
 // Concurrency counts toward max_concurrency; ResidentRAM and
 // HeadroomMB back the §6.2-2 ceiling pre-check.
@@ -509,9 +519,15 @@ func (t *Trigger) Tick(ctx context.Context) error {
 func (t *Trigger) tickPerDeployment(ctx context.Context) error {
 	var deps []state.Deployment
 	var err error
-	if t.ownerNodeID != "" {
+	candidates, filtered := t.deploymentStore.(FloorCandidateStore)
+	switch {
+	case filtered && t.ownerNodeID != "":
+		deps, err = candidates.ListFloorDeploymentsByNodeID(ctx, t.ownerNodeID)
+	case filtered:
+		deps, err = candidates.ListFloorDeployments(ctx)
+	case t.ownerNodeID != "":
 		deps, err = t.deploymentStore.ListDeploymentsByNodeID(ctx, t.ownerNodeID)
-	} else {
+	default:
 		deps, err = t.deploymentStore.ListAllDeployments(ctx)
 	}
 	if err != nil {

@@ -61,3 +61,40 @@ coherent.
 - Adding a recipe is a reviewed code change to the catalog.
 - Recipes cover every hostname the app serves, custom domains included
   (`match_host: "@app"`, ADR-1191); `--host` restricts one to a single host.
+
+## Amendment (2026-10-14): "alert me"
+
+A recipe can also create a spike alert for the rule it adds: an
+`edge_rule_activity` alert (ADR-1192 amendment) scoped to that rule, over a
+1-hour window, firing above a threshold (default 100 matches per hour), to
+a webhook URL and secret the user supplies — alerts deliver to webhooks
+only. Counting both modes means the alert keeps working after "Start
+enforcing". The dashboard checks the alert inputs and the plan's alert
+allowance before creating the rule; if the alert still fails (for example
+the webhook URL is refused), the rule stays and the page says the alert was
+not added. CLI: `gregale edge-rules recipe <id> --alert-webhook-url …
+(--alert-webhook-secret-stdin | --alert-webhook-secret …) [--alert-threshold N]`.
+
+## Amendment (2026-10-15): block scanner paths
+
+A fifth recipe, `block-scanner-paths`, answers 403 to requests whose path
+starts with one of the prefixes vulnerability scanners probe on every
+public site: `/.env`, `/.git/`, `/.svn/`, `/.hg/`, `/.aws/`, `/.ssh/`,
+`/.DS_Store`, `/vendor/phpunit/`, `/wp-`, `/xmlrpc.php`, `/phpmyadmin`,
+`/pma/`, `/cgi-bin/` and `/server-status`. Like the other blocking recipes
+it is one `kind=ip` deny-all rule on `/**` whose match condition (`path`
+`prefix` over the list) decides what is blocked, so its log-mode count is
+the requests it would block. The list is the recipe's `paths` parameter:
+the user can drop a prefix their app really serves (a WordPress site's
+`/wp-admin`) or add their own, up to the 64-value condition limit.
+
+## Amendment (2026-10-21): challenge visitors on a path
+
+Recipe `challenge-path` adds one `kind=challenge` rule (ADR-831 amendment 7)
+on a path (default `/**`) and optional methods, matching only requests that
+are not verified crawlers (`verified_bot missing`, ADR-973), with the default
+difficulty and pass lifetime. Browsers solve a short proof of work once per
+pass; requests with a verified API key, consumer key or JWT pass straight
+through; scripts that cannot run JavaScript get 403. Like every recipe it
+starts in log mode, where the count is the requests it would challenge. It
+needs a plan with challenge rules (Hobby and above).

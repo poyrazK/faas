@@ -65,4 +65,23 @@ func TestEdgeRuleModeAndStats(t *testing.T) {
 	if rec := e.Do(t, "GET", "/v1/apps/"+slug+"/edge-rules/stats?window=30d", nil, nil); rec.Code != http.StatusBadRequest {
 		t.Fatalf("bad window: %d, want 400", rec.Code)
 	}
+
+	// adr: 20261020105001 — series=true adds each rule's hourly totals, one per hour
+	// from since through the current hour.
+	if got := read("24h"); got.Rules[0].Series != nil {
+		t.Fatalf("series without series=true: %+v", got.Rules[0])
+	}
+	rec = e.Do(t, "GET", "/v1/apps/"+slug+"/edge-rules/stats?window=24h&series=true", nil, nil)
+	var withSeries api.EdgeRuleStatsResponse
+	_ = json.Unmarshal(rec.Body.Bytes(), &withSeries)
+	if rec.Code != http.StatusOK || len(withSeries.Rules) != 1 {
+		t.Fatalf("series: %d %s", rec.Code, rec.Body.String())
+	}
+	series := withSeries.Rules[0].Series
+	if len(series) != 25 || series[24] != 7 || series[21] != 2 {
+		t.Fatalf("series = %v, want 25 hours with 2 three hours ago and 7 now", series)
+	}
+	if rec := e.Do(t, "GET", "/v1/apps/"+slug+"/edge-rules/stats?series=maybe", nil, nil); rec.Code != http.StatusBadRequest {
+		t.Fatalf("bad series: %d, want 400", rec.Code)
+	}
 }

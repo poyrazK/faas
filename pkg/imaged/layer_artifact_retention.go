@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
+	"github.com/onebox-faas/faas/pkg/storagekey"
 )
 
 func (h *Handler) deleteLayerArtifact(ctx context.Context, backend storage.StorageBackend, key string) error {
@@ -34,7 +34,7 @@ func (h *Handler) deleteDeploymentLayers(ctx context.Context, backend storage.St
 	if err != nil {
 		return fmt.Errorf("list deployment layers for deletion: %w", err)
 	}
-	keys := map[string]bool{sched.AppLayerKey(appSlug, deployment.ID): true}
+	keys := map[string]bool{storagekey.AppLayer(appSlug, deployment.ID): true}
 	if deployment.RootfsKey != "" {
 		keys[deployment.RootfsKey] = true
 	}

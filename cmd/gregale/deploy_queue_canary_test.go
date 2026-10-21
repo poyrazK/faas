@@ -132,7 +132,7 @@ func TestQueueCanaryPreviewAndIdempotency(t *testing.T) {
 func TestQueueCanaryCLIRedeployment(t *testing.T) {
 	main.WithCwd(t, t.TempDir())
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	withResetJSONOutput(t, false)
+	main.WithResetJSONOutput(t, false)
 	archive := queueCanaryArchive(t, "wrapper/", queueCanaryManifest)
 	var uploaded []map[string]string
 	mutations := 0

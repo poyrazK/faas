@@ -56,6 +56,9 @@ func TestCmdLinkStoresSingleWorkloadContextAndIgnoresIt(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(root, ".git", "HEAD"), []byte("ref: refs/heads/main\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	nested := filepath.Join(root, "services", "api")
 	if err := os.MkdirAll(nested, 0o755); err != nil {
 		t.Fatal(err)

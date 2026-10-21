@@ -75,11 +75,18 @@ MATCHES
       woke by restore in 610 ms (wake …) · app ≈270 ms · other ≈20 ms
 ```
 
-A call to another service joins the trace only when the calling code forwards
-the `traceparent` header of the request it is handling. With tracing on, the
-Node.js and Python instrumentation does this for the HTTP clients it supports;
-elsewhere, copy the header onto the outgoing request yourself. Without it, each
-service call starts a trace of its own.
+A call to another service joins the trace when the calling code forwards the
+`traceparent` header of the request it is handling. With tracing on, the
+Node.js and Python instrumentation does this for the HTTP clients it supports.
+
+When the caller forwards nothing, Gregale links the call itself if the calling
+instance is serving exactly one request at that moment. The hop is shown as
+"trace linked by Gregale" and returned with `trace_inferred: true`, so it can
+be told apart from propagated context. An instance serving several requests at
+once (or holding a WebSocket or TCP session) is not linked, because Gregale
+cannot tell which request made the call; forward `traceparent` yourself for
+busy services. A call made by background work while exactly one request is in
+flight is linked to that request.
 
 For a request that found its app parked, the line under it says how the app
 was woken (restored from a snapshot or cold booted) and how long the instance

@@ -221,7 +221,7 @@ func accountTraceTelemetryRow(row sqlc.ListRequestTelemetryByAccountTraceRow) sq
 		ID: row.ID, DeploymentID: row.DeploymentID, Route: row.Route, Method: row.Method,
 		Status: row.Status, LatencyMs: row.LatencyMs, Count: row.Count, ColdBoot: row.ColdBoot,
 		TraceID: row.TraceID, ReceivedAt: row.ReceivedAt, SpansSummary: row.SpansSummary,
-		WakeID: row.WakeID, InstanceID: row.InstanceID, GuestDurationMs: row.GuestDurationMs,
+		WakeID: row.WakeID, InstanceID: row.InstanceID, GuestDurationMs: row.GuestDurationMs, TraceInferred: row.TraceInferred,
 		GuestRuntime: row.GuestRuntime, GuestOutcome: row.GuestOutcome, GuestErrorClass: row.GuestErrorClass,
 		ConsumerID: row.ConsumerID, NodeID: row.NodeID, Region: row.Region, CommitSha: row.CommitSha,
 		DeploymentTag: row.DeploymentTag, DeploymentCreatedAt: row.DeploymentCreatedAt, ImageDigest: row.ImageDigest,

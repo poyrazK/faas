@@ -471,6 +471,9 @@ func statementInvoiceItems(inv billing.StatementInvoice) []statementInvoiceItem 
 	items := make([]statementInvoiceItem, 0, len(inv.Lines)+1)
 	for _, line := range inv.Lines {
 		noun := unitNoun(line.Unit)
+		if line.Label != "" {
+			noun = line.Label
+		}
 		description := fmt.Sprintf("%d %s at %s %s each", line.Units, noun, formatMillicentsDecimal(line.PriceMillicentsPerUnit), inv.Currency)
 		switch {
 		case line.Credit:
