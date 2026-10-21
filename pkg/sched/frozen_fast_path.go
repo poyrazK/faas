@@ -27,6 +27,9 @@ type frozenTicket struct {
 	fence      state.RuntimeAppConfigFence
 	generation int64
 	chargeMB   int
+	// owner is the deployment's scaling owner as read at freeze, for the
+	// coordinated wake's selection (ADR-1740 amendment 2026-10-22).
+	owner state.RuntimeScalingState
 }
 
 // frozenTickets holds the tickets of this schedd's frozen VMs, by app. They
@@ -68,6 +71,15 @@ func (t *frozenTickets) drop(instanceID string) {
 // Tickets of VMs that left the frozen state some other way are dropped on
 // the way.
 func (t *frozenTickets) take(appID, preferred string, frozen func(instanceID string) bool) (frozenTicket, bool) {
+	return t.choose(appID, preferred, frozen, true)
+}
+
+// peek is take without removing the ticket.
+func (t *frozenTickets) peek(appID, preferred string, frozen func(instanceID string) bool) (frozenTicket, bool) {
+	return t.choose(appID, preferred, frozen, false)
+}
+
+func (t *frozenTickets) choose(appID, preferred string, frozen func(instanceID string) bool, remove bool) (frozenTicket, bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	var best frozenTicket
@@ -83,7 +95,7 @@ func (t *frozenTickets) take(appID, preferred string, frozen func(instanceID str
 			best, found = ticket, true
 		}
 	}
-	if found {
+	if found && remove {
 		delete(t.byApp[appID], best.plan.frozen.ID)
 	}
 	if len(t.byApp[appID]) == 0 {
@@ -189,9 +201,12 @@ func (e *Engine) thawTicketFor(ctx context.Context, ins state.Instance, chargeMB
 			return frozenTicket{}, noThawTicket("managed_standards")
 		}
 	}
-	acct, err := e.store.AccountByID(ctx, app.AccountID)
+	acct, teamOrg, err := e.generationAccount(ctx, app)
 	if err != nil {
 		return frozenTicket{}, err
+	}
+	if teamOrg {
+		return frozenTicket{}, noThawTicket("organization")
 	}
 	limits, ok := api.LimitsFor(acct.Plan)
 	if !acct.Active() || !ok {
@@ -234,7 +249,27 @@ func (e *Engine) thawTicketFor(ctx context.Context, ins state.Instance, chargeMB
 	} else {
 		return frozenTicket{}, fmt.Errorf("sched: frozen fast path: node: %w", nodeErr)
 	}
-	return frozenTicket{plan: plan, fence: captured, generation: basis.Generation, chargeMB: chargeMB}, nil
+	return frozenTicket{plan: plan, fence: captured, generation: basis.Generation, chargeMB: chargeMB, owner: scaling}, nil
+}
+
+// ticketSelection is a coordinated production wake's selection taken from
+// the app's thaw ticket instead of EnsureWake's fresh reads (ADR-1740
+// amendment 2026-10-22). The ticket names the deployment, app settings,
+// account and scaling owner the freeze read, and the guarded thaw commits
+// only while the app's runtime generation, which every change to them
+// moves, is the ticket's. Only the fast path may decide from it: the
+// selection is marked, so admission reads afresh, and a wake the fast path
+// does not take drops it.
+func (e *Engine) ticketSelection(ctx context.Context, appID, deploymentID string) (wakeEnvironment, bool) {
+	if !e.frozenFastPath.Load() || deploymentID != "" || ScopeFrom(ctx) != "" || e.ledger.Concurrency(appID) > 0 {
+		return wakeEnvironment{}, false
+	}
+	ticket, ok := e.thawTickets.peek(appID, PreferredInstanceFromContext(ctx), e.ledger.IsFrozen)
+	if !ok {
+		return wakeEnvironment{}, false
+	}
+	plan := ticket.plan
+	return wakeEnvironment{app: plan.app, deployment: plan.dep, owner: ticket.owner, account: plan.acct, limits: plan.limits, fromTicket: true}, true
 }
 
 // thawFromTicketLocked is wake phase 1's fast path (ADR-1740). It runs
@@ -326,4 +361,29 @@ func (e *Engine) refreezeLocked(ctx context.Context, thawer FrozenVMM, ticket fr
 		return
 	}
 	e.log.Debug("sched: frozen fast path refused; frozen again", "instance", frozen.ID, "refused_by", why)
+}
+
+// ticketedWakeEnvironment is EnsureWake's selection for a production wake a
+// thaw ticket can serve. The app read, which decides ownership and lifecycle
+// and which the runtime generation does not cover, and the budget check run
+// at once; the ticket supplies the rest (ADR-1740 amendment 2026-10-22).
+// ok=false sends the wake through the fresh reads, which report any refusal
+// as they always have.
+func (e *Engine) ticketedWakeEnvironment(ctx context.Context, appID, deploymentID string) (wakeEnvironment, *state.App, bool) {
+	selected, ok := e.ticketSelection(ctx, appID, deploymentID)
+	if !ok {
+		return wakeEnvironment{}, nil, false
+	}
+	var (
+		app               state.App
+		appErr, budgetErr error
+	)
+	concurrently(
+		func() { app, appErr = e.store.AppByID(ctx, appID) },
+		func() { budgetErr = e.checkFinancialBudgetAdmission(ctx, selected.app, selected.deployment.ID) },
+	)
+	if appErr != nil || budgetErr != nil || !e.ownsApp(app) || app.Status != state.AppActive {
+		return wakeEnvironment{}, nil, false
+	}
+	return selected, &app, true
 }

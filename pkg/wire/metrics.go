@@ -2251,14 +2251,14 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	}
 	frozenThawTickets := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_frozen_thaw_tickets_total",
-		Help: "Thaw tickets recorded when a VM froze (ADR-1740) by outcome: issued, error (a read failed), or why the VM must thaw through the ordinary path.",
+		Help: "Thaw tickets recorded when a VM froze (ADR-1740) by outcome: issued, error (a read failed), or why the VM must thaw through the ordinary path (organization: a team organization's app).",
 	}, []string{"outcome"})
 	for _, outcome := range FrozenThawTicketOutcomes {
 		frozenThawTickets.WithLabelValues(outcome)
 	}
 	ownerCacheTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_owner_cache_total",
-		Help: "schedd owner cache (ADR-1741) by outcome: hit, miss, invalidated (an app's generation moved), resync (every entry dropped), refused (an admission found its entry's generation moved), guarded_publish (a boot published on its admission's generation), guarded_publish_moved (the generation moved during the boot; it published through the fence), selection (a coordinated wake selected other than the entry's deployment; it decided from its own reads).",
+		Help: "schedd owner cache (ADR-1741) by outcome: hit, miss, invalidated (an app's generation moved), resync (every entry dropped), refused (an admission found its entry's generation moved), guarded_publish (a boot published on its admission's generation), guarded_publish_moved (the generation moved during the boot; it published through the fence), selection (a coordinated wake selected other than the entry's deployment; it decided from its own reads), organization (a team organization's app, which the cache does not serve).",
 	}, []string{"outcome"})
 	for _, outcome := range OwnerCacheOutcomes {
 		ownerCacheTotal.WithLabelValues(outcome)
@@ -6221,10 +6221,10 @@ var (
 	// label sets of the ADR-1740 fast path's series.
 	FrozenFastPathSkipReasons = []string{"deployment", "scope", "selection", "no_ticket", "capacity"}
 	FrozenThawTicketOutcomes  = []string{"issued", "error", "mode", "not_selected", "operator_cold_boot",
-		"app_inactive", "managed_standards", "account", "shape", "config"}
+		"app_inactive", "managed_standards", "account", "organization", "shape", "config"}
 	// OwnerCacheOutcomes are schedd_owner_cache_total's closed label set
 	// (ADR-1741).
-	OwnerCacheOutcomes = []string{"hit", "miss", "invalidated", "resync", "refused", "guarded_publish", "guarded_publish_moved", "selection"}
+	OwnerCacheOutcomes = []string{"hit", "miss", "invalidated", "resync", "refused", "guarded_publish", "guarded_publish_moved", "selection", "organization"}
 	FrozenParkReasons  = []string{"ttl", "memory_pressure", "superseded", "config_changed", "stale",
 		"ineligible", "no_capacity", "thaw_failed", "publish_failed", "node_restart", "park"}
 	// FrozenCompressOutcomes: compressed keeps the VM frozen; insufficient,

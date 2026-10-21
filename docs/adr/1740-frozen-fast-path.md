@@ -11,7 +11,9 @@
   which the generation covers, so a ticketed thaw is that one statement.
   Amended 2026-10-21 (see "Amendment: coordinated wakes"): a coordinated
   wake whose selection is the ticket's deployment and environment takes
-  the fast path.
+  the fast path. Amended 2026-10-22 (see "Amendment: the selection from the
+  ticket"): EnsureWake takes that selection from the ticket, and apps of a
+  team organization get no ticket.
 - Date: 2026-10-15
 - Amends: ADR-1151 decision 2, "Thaw path"
 - Builds on: ADR-1151 (pause tiers), the scaling roadmap's wake rule (zero
@@ -210,4 +212,46 @@ The fast path was dark without anyone seeing why, so it now reports itself:
   `issued`, `error` (a read failed), or why the VM thaws through the
   ordinary path (`mode`, `not_selected`, `operator_cold_boot`,
   `app_inactive`, `managed_standards`, `account`, `shape`, `config`).
+
+## Amendment: the selection from the ticket (2026-10-22)
+
+Measured on rc.288 (production-us, 2026-10-21 20:52–21:06 UTC, 14 thaws
+with the fast path on, curl on the control plane straight at
+gatewayd-public): the fast path engaged 14 of 14 times; a thaw took p50
+85 ms and p90 187 ms end to end. Of a typical 74 ms inside gatewayd-internal,
+the scheduler's part was 43 ms. EnsureWake's selection reads (ten
+statements, one after another) and the gRPC hop took 9–57 ms of that
+(median 12), the guarded statement 17–233 ms (median 26), and vmmd's thaw
+4–12 ms.
+
+**EnsureWake takes its selection from the ticket.** For a production wake
+of an app whose frozen VM holds a ticket, with nothing of the app live in
+the ledger, EnsureWake reads the app (ownership and lifecycle, which the
+runtime generation does not cover) and checks the financial budget at
+once, and builds the selection from the ticket: the deployment, the app
+resolved for it, the account and limits, and the scaling owner the freeze
+read (now kept on the ticket). The standards check, the account, the
+release and deployment and the scaling owner are not read again: the
+guarded thaw commits only while the generation, which every change to them
+moves, is the ticket's. On Postgres a coordinated thaw is now 3 statements
+in 2 sequential round trips (11 in 11 before).
+
+Only the fast path may decide from that selection. It is marked
+(`fromTicket`), so admission never reuses its app, account or limits, and
+a wake the fast path does not take drops it and resolves production from
+fresh reads, as an uncoordinated wake does. When the app was deployed after
+the freeze, the selection still names the ticket's deployment; the guarded
+statement refuses it (the deploy moved the generation), the VM is frozen
+again, and the wake proceeds to the new deployment. When the app read
+fails, the app is not active, this schedd does not own it or the budget
+refuses, EnsureWake falls back to its fresh reads, which report the error
+as before.
+
+**Apps of a team organization get no ticket.** The ordinary path admits
+under `state.AppResourceAccount`, which takes a team organization's status,
+plan and abuse hold from the organization's row. The ticket read the app's
+own account, and `orgs` has no generation trigger, so a ticket could thaw
+a suspended organization's VM under the wrong plan. A ticket is now issued
+only for an app outside any organization or in a personal one;
+`schedd_frozen_thaw_tickets_total{outcome="organization"}` counts the rest.
 

@@ -143,6 +143,7 @@ var NewExecutionCoordinatorFixture = newExecutionCoordinatorFixture
 var NewFakeNotify = newFakeNotify
 var NewFireNowHarness = newFireNowHarness
 var NewFrozenFixture = newFrozenFixture
+var NewFrozenFixtureInStore = newFrozenFixtureInStore
 var NewMockChecker = newMockChecker
 var NewNodeCapacityTable = newNodeCapacityTable
 var NewNodePresenceTracker = newNodePresenceTracker

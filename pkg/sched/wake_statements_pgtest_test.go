@@ -349,12 +349,17 @@ func TestPostgresTicketedThawStatements(t *testing.T) {
 		wake func(ctx context.Context, e *Engine, appID string) (string, error)
 		// onlyThaw: the thaw is the only statement before the answer.
 		onlyThaw bool
+		// maxRoundTrips bounds the sequential round trips before the answer.
+		maxRoundTrips int
 	}{
-		{name: "wake", onlyThaw: true, wake: func(ctx context.Context, e *Engine, appID string) (string, error) {
+		{name: "wake", onlyThaw: true, maxRoundTrips: 1, wake: func(ctx context.Context, e *Engine, appID string) (string, error) {
 			result, err := e.Wake(ctx, appID, "", "", "")
 			return result.InstanceID, err
 		}},
-		{name: "coordinated wake", wake: func(ctx context.Context, e *Engine, appID string) (string, error) {
+		// EnsureWake takes its selection from the ticket (ADR-1740 amendment
+		// 2026-10-22): the app read and the budget check at once, then the
+		// thaw. It read ten rows one after another before.
+		{name: "coordinated wake", maxRoundTrips: 2, wake: func(ctx context.Context, e *Engine, appID string) (string, error) {
 			out, err := e.EnsureWake(ctx, appID, TriggerGateway)
 			if err != nil || out.Instance == nil {
 				return "", err
@@ -395,7 +400,11 @@ func TestPostgresTicketedThawStatements(t *testing.T) {
 					names = append(names, name)
 				}
 			}
-			t.Logf("%s: %d statements %v, %d sequential round trips", tc.name, len(names), names, pf.tracer.sequentialRoundTrips(answered))
+			roundTrips := pf.tracer.sequentialRoundTrips(answered)
+			t.Logf("%s: %d statements %v, %d sequential round trips", tc.name, len(names), names, roundTrips)
+			if roundTrips > tc.maxRoundTrips {
+				t.Fatalf("%d sequential round trips before the answer, want at most %d", roundTrips, tc.maxRoundTrips)
+			}
 			got := map[string]int{}
 			for _, name := range names {
 				got[name]++
