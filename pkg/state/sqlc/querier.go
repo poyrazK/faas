@@ -2298,6 +2298,9 @@ type Querier interface {
 	// Private immutable reviewed participants and durable verification (ADR-694).
 	InsertRuntimeUpgradeVerification(ctx context.Context, db DBTX, arg InsertRuntimeUpgradeVerificationParams) (RuntimeUpgradeVerification, error)
 	InsertScenarioActionPolicy(ctx context.Context, db DBTX, arg InsertScenarioActionPolicyParams) error
+	InsertScenarioCapturedEvent(ctx context.Context, db DBTX, arg InsertScenarioCapturedEventParams) error
+	InsertScenarioCapturedPlatformCall(ctx context.Context, db DBTX, arg InsertScenarioCapturedPlatformCallParams) (string, error)
+	InsertScenarioCapturedQueueMessage(ctx context.Context, db DBTX, arg InsertScenarioCapturedQueueMessageParams) (string, error)
 	InsertScenarioColdPreparation(ctx context.Context, db DBTX, arg InsertScenarioColdPreparationParams) error
 	InsertScenarioRecorderRequest(ctx context.Context, db DBTX, arg InsertScenarioRecorderRequestParams) error
 	InsertScenarioSimulationAttempt(ctx context.Context, db DBTX, arg InsertScenarioSimulationAttemptParams) error
@@ -3021,6 +3024,8 @@ type Querier interface {
 	// the customer-facing API — those carry host_redacted_hash only
 	// (ADR-098 §11).
 	ListEgressCircuitCandidates(ctx context.Context, db DBTX, sampledAt pgtype.Timestamptz) ([]ListEgressCircuitCandidatesRow, error)
+	// A rehearsal-enrolled app's candidate output never leaves for a customer
+	// log destination (ADR-20261019180000).
 	ListEnabledAppLogDrainsWithStandardBinding(ctx context.Context, db DBTX) ([]ListEnabledAppLogDrainsWithStandardBindingRow, error)
 	ListEnabledCrons(ctx context.Context, db DBTX) ([]ListEnabledCronsRow, error)
 	ListEnabledCustomerAlertRules(ctx context.Context, db DBTX) ([]AlertRule, error)
@@ -3033,6 +3038,9 @@ type Querier interface {
 	// ADR-118 / issue #757: filter_criteria is included so the dispatch
 	// tick can evaluate per-record predicates without a second round-trip
 	// (the column is JSONB; empty/null means "no filter").
+	// A rehearsal-enrolled app never polls or commits offsets on a real external
+	// broker; its queue, cron and realtime inputs stay inside the app
+	// (ADR-20261019180000).
 	ListEnabledTriggers(ctx context.Context, db DBTX) ([]ListEnabledTriggersRow, error)
 	ListEnabledUDPListeners(ctx context.Context, db DBTX) ([]AppUdpListener, error)
 	ListEnvironmentGitOpsOverrideExpirations(ctx context.Context, db DBTX, sourceID pgtype.UUID) ([]ListEnvironmentGitOpsOverrideExpirationsRow, error)
@@ -5559,6 +5567,9 @@ type Querier interface {
 	SaveRuntimeInstanceConfigProof(ctx context.Context, db DBTX, arg SaveRuntimeInstanceConfigProofParams) (SaveRuntimeInstanceConfigProofRow, error)
 	SaveServiceRolloutHandoff(ctx context.Context, db DBTX, arg SaveServiceRolloutHandoffParams) error
 	SaveWebhookAutomationBinding(ctx context.Context, db DBTX, arg SaveWebhookAutomationBindingParams) (WorkflowWebhookBinding, error)
+	// A contained member cannot reach real managed PostgreSQL or object storage;
+	// refuse it at enrollment instead of failing later (ADR-20261019180000).
+	ScenarioActionAppHasManagedBindings(ctx context.Context, db DBTX, appID string) (bool, error)
 	ScenarioActionAppUnstarted(ctx context.Context, db DBTX, appID string) (pgtype.Bool, error)
 	ScenarioActionPoliciesForRun(ctx context.Context, db DBTX, arg ScenarioActionPoliciesForRunParams) ([]ScenarioActionPoliciesForRunRow, error)
 	ScenarioActionRunCanEnroll(ctx context.Context, db DBTX, arg ScenarioActionRunCanEnrollParams) (pgtype.Bool, error)
@@ -5566,22 +5577,55 @@ type Querier interface {
 	ScenarioActionSnapshotSummary(ctx context.Context, db DBTX, arg ScenarioActionSnapshotSummaryParams) (ScenarioActionSnapshotSummaryRow, error)
 	ScenarioCaptureReceiver(ctx context.Context, db DBTX, webhookID string) (ScenarioCaptureReceiverRow, error)
 	ScenarioCapturedActions(ctx context.Context, db DBTX, arg ScenarioCapturedActionsParams) ([]ScenarioCapturedActionsRow, error)
+	// Whether a captured event with this source and ID carries the same type,
+	// schema version and data. A run's events are few and read under the run
+	// lock, so the run index bounds this lookup (ADR-20261021120000).
+	ScenarioCapturedEventIdentity(ctx context.Context, db DBTX, arg ScenarioCapturedEventIdentityParams) (bool, error)
+	ScenarioCapturedEvents(ctx context.Context, db DBTX, arg ScenarioCapturedEventsParams) ([]ScenarioCapturedEventsRow, error)
+	ScenarioCapturedPlatformCalls(ctx context.Context, db DBTX, arg ScenarioCapturedPlatformCallsParams) ([]ScenarioCapturedPlatformCallsRow, error)
+	ScenarioCapturedQueueMessages(ctx context.Context, db DBTX, arg ScenarioCapturedQueueMessagesParams) ([]ScenarioCapturedQueueMessagesRow, error)
+	// A captured workflow run is named by its starter, target, workflow and
+	// start ordinal, so a later event to it compares across sibling runs.
+	ScenarioCapturedWorkflowRunReference(ctx context.Context, db DBTX, arg ScenarioCapturedWorkflowRunReferenceParams) (string, error)
 	ScenarioColdInventory(ctx context.Context, db DBTX, appID string) (ScenarioColdInventoryRow, error)
 	ScenarioColdPreparation(ctx context.Context, db DBTX, appID string) (ScenarioColdPreparationRow, error)
 	ScenarioCommandCallersByHostIP(ctx context.Context, db DBTX, arg ScenarioCommandCallersByHostIPParams) ([]ScenarioCommandCallersByHostIPRow, error)
+	// Any enrolled app, contained or capture-only, publishes into its run's
+	// evidence instead of the account's event bus (ADR-20261020090000).
+	ScenarioEventCapturePolicy(ctx context.Context, db DBTX, appID string) (ScenarioEventCapturePolicyRow, error)
+	ScenarioEventCaptureState(ctx context.Context, db DBTX, arg ScenarioEventCaptureStateParams) (ScenarioEventCaptureStateRow, error)
+	ScenarioExternalWorkflowRunInAccount(ctx context.Context, db DBTX, arg ScenarioExternalWorkflowRunInAccountParams) (bool, error)
 	ScenarioManagedWorkBindings(ctx context.Context, db DBTX, arg ScenarioManagedWorkBindingsParams) ([]ScenarioManagedWorkBindingsRow, error)
 	ScenarioManagedWorkInventoryValid(ctx context.Context, db DBTX, arg ScenarioManagedWorkInventoryValidParams) (pgtype.Bool, error)
 	ScenarioManagedWorkJobs(ctx context.Context, db DBTX, arg ScenarioManagedWorkJobsParams) ([]ScenarioManagedWorkJobsRow, error)
+	// Earlier captures under the same key; each kind applies the production
+	// replay rule to them (ADR-20261021150000).
+	ScenarioPlatformCallsByIdempotencyKey(ctx context.Context, db DBTX, arg ScenarioPlatformCallsByIdempotencyKeyParams) ([]ScenarioPlatformCallsByIdempotencyKeyRow, error)
+	ScenarioPlatformCaptureState(ctx context.Context, db DBTX, arg ScenarioPlatformCaptureStateParams) (ScenarioPlatformCaptureStateRow, error)
+	ScenarioQueueCaptureState(ctx context.Context, db DBTX, arg ScenarioQueueCaptureStateParams) (ScenarioQueueCaptureStateRow, error)
+	// A member of the same run is named by its workload, so sibling runs compare;
+	// any other app must exist in the caller's account, as for a real send.
+	ScenarioQueueCaptureTarget(ctx context.Context, db DBTX, arg ScenarioQueueCaptureTargetParams) (string, error)
+	// A run member's endpoint is named by its workload and creation order, so
+	// sibling runs compare; another account app's endpoint keeps its ID. The
+	// endpoint must belong to the addressed app, as in production
+	// (ADR-20261021180000).
+	ScenarioRealtimeEndpointTarget(ctx context.Context, db DBTX, arg ScenarioRealtimeEndpointTargetParams) (string, error)
 	ScenarioRecorderAttemptOwner(ctx context.Context, db DBTX, arg ScenarioRecorderAttemptOwnerParams) (bool, error)
 	ScenarioRecorderRequestAvailable(ctx context.Context, db DBTX, arg ScenarioRecorderRequestAvailableParams) (bool, error)
 	ScenarioRecorderRunCounts(ctx context.Context, db DBTX, arg ScenarioRecorderRunCountsParams) (ScenarioRecorderRunCountsRow, error)
 	ScenarioRecorderSession(ctx context.Context, db DBTX, arg ScenarioRecorderSessionParams) (ScenarioRecorderSessionRow, error)
 	ScenarioRecorderSnapshot(ctx context.Context, db DBTX, arg ScenarioRecorderSnapshotParams) (ScenarioRecorderSnapshotRow, error)
+	ScenarioRehearsalNetworkPolicy(ctx context.Context, db DBTX, appID string) (ScenarioRehearsalNetworkPolicyRow, error)
 	ScenarioRehearsalNetworkRun(ctx context.Context, db DBTX, appID string) (string, error)
 	ScenarioRehearsalSimulationRun(ctx context.Context, db DBTX, appID string) (string, error)
 	ScenarioResumingCallersByHostIP(ctx context.Context, db DBTX, arg ScenarioResumingCallersByHostIPParams) ([]ScenarioResumingCallersByHostIPRow, error)
 	ScenarioSimulationPolicy(ctx context.Context, db DBTX, arg ScenarioSimulationPolicyParams) (ScenarioSimulationPolicyRow, error)
 	ScenarioSimulationRunAttempts(ctx context.Context, db DBTX, arg ScenarioSimulationRunAttemptsParams) ([]ScenarioSimulationRunAttemptsRow, error)
+	// Ordinary webhook deliveries the capture fence suppressed, attributed like
+	// the snapshot summary: the delivery's app first, then the receiver's app.
+	// Managed operation effects are accounted separately as captured intent.
+	ScenarioSuppressedWebhookEvents(ctx context.Context, db DBTX, arg ScenarioSuppressedWebhookEventsParams) ([]ScenarioSuppressedWebhookEventsRow, error)
 	ScenarioSuspendCheckpoint(ctx context.Context, db DBTX, arg ScenarioSuspendCheckpointParams) (ScenarioSuspendCheckpointRow, error)
 	ScenarioSuspendCommandsPending(ctx context.Context, db DBTX, arg ScenarioSuspendCommandsPendingParams) (bool, error)
 	ScenarioSuspendResume(ctx context.Context, db DBTX, id string) (ScenarioSuspendResumeRow, error)
