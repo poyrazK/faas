@@ -26,6 +26,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/events"
+	"github.com/onebox-faas/faas/pkg/fcvm/activity"
 	"github.com/onebox-faas/faas/pkg/fcvm/logbuf"
 	"github.com/onebox-faas/faas/pkg/financial"
 	"github.com/onebox-faas/faas/pkg/frameworkready"
@@ -423,6 +424,9 @@ type Instance struct {
 	// Immutable launch identity; late network work cannot acquire a replacement VM.
 	nativeGeneration          string
 	operatorRestartGeneration string
+	wakeID                    string                        // original scheduler wake; source migration authority
+	functionMigration         *functionMigrationSource      // guarded by Manager.mu
+	functionDestination       *functionMigrationDestination // guarded by Manager.mu
 	Lease                     Lease
 	Net                       netns.Config
 	Method                    WakeMethod // how it came up; a restore that fell back reads WakeColdBoot
@@ -676,6 +680,9 @@ type Instance struct {
 	// so the Manager is the single owner of the in-memory
 	// copy.
 	TailCount int
+	// functionExecutions is incarnation-scoped ownership, guarded by Manager.mu.
+	// It is independent of legacy terminal-only tail counters and database rows.
+	functionExecutions *functionExecutionState
 	// tailSecondsAccum (issue #667 / ADR-078) is the in-memory
 	// accumulator of wall-clock seconds spent draining waitUntil
 	// tasks since the previous Sampler tick. Each call to
@@ -1223,8 +1230,12 @@ type Manager struct {
 
 	// Frozen tier (ADR-1151; freeze.go). freezeActivity is vmmd's forward
 	// activity tracker; without it Freeze cannot see forwards in flight.
-	freezeActivity QuietActivity
-	freezeMetrics  *FreezeMetrics
+	freezeActivity                QuietActivity
+	freezeMetrics                 *FreezeMetrics
+	functionActivity              *activity.ActivityTracker
+	functionMigrationSources      map[string]*functionMigrationSource
+	functionMigrationDestinations map[string]*functionMigrationDestination
+	functionStarting              map[string]*Instance
 }
 
 type appCPUPolicy struct {
@@ -3388,8 +3399,9 @@ type WakeRequest struct {
 	// Set only by WakeAdmitted after validating and consuming its grant.
 	admission *runtimeadmission.Binding
 	// Complete approved source identities; only WakeAdmitted accepts them.
-	ArtifactSources []runtimeadmission.ArtifactSource         `json:"artifact_sources,omitempty"`
-	SnapshotRestore *runtimeadmission.SnapshotRestoreEvidence `json:"snapshot_restore,omitempty"`
+	ArtifactSources              []runtimeadmission.ArtifactSource         `json:"artifact_sources,omitempty"`
+	SnapshotRestore              *runtimeadmission.SnapshotRestoreEvidence `json:"snapshot_restore,omitempty"`
+	functionMigrationDestination *runtimeadmission.FunctionMigrationDestinationGrant
 	// ExecutionOnly is an internal vmmd/schedd fence for the disposable
 	// one-shot path. Ordinary app wakes leave it false and can never be used by
 	// ExecuteExecution. It is not accepted from the public app wake proto.
@@ -4197,6 +4209,13 @@ func (m *Manager) WakeWithNetworkReady(ctx context.Context, req WakeRequest, hoo
 
 func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNetworkReadyHook) (_ *Instance, err error) {
 	coldStartupStarted := time.Now()
+	m.mu.Lock()
+	destination := m.functionMigrationDestinations[req.Instance]
+	blockedDestination := destination != nil && !destination.published && (req.functionMigrationDestination == nil || !destination.grant.Equal(*req.functionMigrationDestination))
+	m.mu.Unlock()
+	if blockedDestination {
+		return nil, runtimeadmission.ErrReplay
+	}
 	if err := m.applyRehearsalNetwork(ctx, &req); err != nil {
 		return nil, err
 	}
@@ -4357,6 +4376,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	m.waking[req.Instance] = struct{}{}
 	m.mu.Unlock()
 	lease = m.beginProcessAttempt(lease)
+	m.beginFunctionExecutionBoot(lease, req)
 	// Any failure from this point — Plan validation, wire-side
 	// allowlist checks, bringUp, cgroup write — must fully clean up.
 	// Registering the cleanup BEFORE the validation loop is
@@ -4951,8 +4971,9 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		}
 	}
 	inst := &Instance{
+		functionDestination: m.functionDestinationForWake(req),
 		publicForwardTarget: publicTarget,
-		Lease:               lease, Net: nc, Method: method,
+		Lease:               lease, Net: nc, Method: method, wakeID: wakeID,
 		ExecutionOnly: req.ExecutionOnly, DataRepairOnly: req.dataRepairOnly, AppTaskOnly: req.AppTaskOnly, QualificationOnly: qualificationOnly, Paused: req.KeepPaused,
 		ExecutionID:                     executionID,
 		ExecutionLeaseToken:             req.ExecutionLeaseToken,
@@ -5094,12 +5115,19 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		if exitCode, exited := m.pendingProcessExits[req.Instance]; exited {
 			delete(m.pendingProcessExits, req.Instance)
 			delete(m.waking, req.Instance)
+			m.dropFunctionStartingLocked(req.Instance, inst.Lease.processGeneration)
 			m.mu.Unlock()
 			err = fmt.Errorf("wake %s: firecracker exited before lifecycle registration (exit code %d)", req.Instance, exitCode)
 			return nil, err
 		}
 		delete(m.waking, req.Instance)
 		m.live[req.Instance] = inst
+		if starting := m.functionStarting[req.Instance]; starting != nil && starting.Lease.processGeneration == inst.Lease.processGeneration {
+			inst.functionExecutions = starting.functionExecutions
+			delete(m.functionStarting, req.Instance)
+		} else if starting != nil {
+			m.dropFunctionStartingLocked(req.Instance, starting.Lease.processGeneration)
+		}
 		// Issue #470 / PR #470-FU-B: maintain the CID→instance
 		// reverse index so the framework_ready DGRAM receipt path
 		// can resolve the peer CID to a live Instance in O(1)
@@ -5137,7 +5165,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	// The Manager selects its daemon lifecycle context so the loop
 	// survives the short-lived Wake RPC and exits with vmmd shutdown
 	// or explicit instance teardown.
-	if !req.ExecutionOnly && !req.AppTaskOnly && !lease.IsBuilder && !req.KeepPaused {
+	if !req.ExecutionOnly && !req.AppTaskOnly && !lease.IsBuilder && !req.KeepPaused && req.functionMigrationDestination == nil {
 		m.startLivenessLoop(ctx, req.Instance, lease.Slot, req.LivenessProbe)
 		m.startReadinessLoop(ctx, req.Instance, lease.Slot, req.ReadinessProbe)
 		m.startFrameworkReadyLoop(ctx, req.Instance)
@@ -5190,7 +5218,7 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 	// running VM and violate the caller's explicit paused-state requirement.
 	// Refuse before either VMM path starts; callers can reconcile or retry with
 	// a compatible captured snapshot.
-	if req.KeepPaused && !restorable {
+	if (req.KeepPaused || req.functionMigrationDestination != nil) && !restorable {
 		return WakeRestore, fmt.Errorf("warm-pool paused restore requires a usable snapshot matching the requested memory shape")
 	}
 	if restorable {
@@ -5199,7 +5227,7 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 		// VM process starts, so there is nothing to kill; the wake cold-boots
 		// and schedd marks the snapshot stale.
 		if refusal := m.verifySnapshotBacking(ctx, req.Snapshot, req.BaseKey); refusal != nil {
-			if req.KeepPaused {
+			if req.KeepPaused || req.functionMigrationDestination != nil {
 				return WakeRestore, fmt.Errorf("warm-pool paused restore: %w", refusal)
 			}
 			m.log.Warn("snapshot backing images not verified, cold booting instead of restoring",
@@ -5284,7 +5312,7 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 			m.rememberInstanceBacking(req.Instance, req.BaseKey)
 			return WakeRestore, nil
 		} else {
-			if req.KeepPaused {
+			if req.KeepPaused || req.functionMigrationDestination != nil {
 				// A paused warm-pool entry must never silently turn into a
 				// running cold boot. The scheduler can retry reconciliation;
 				// returning the restore error preserves the paused-state
@@ -5336,6 +5364,7 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 				return WakeColdBoot, fmt.Errorf("wake %s: cannot clean failed restore before cold boot: %w", req.Instance, errors.Join(rErr, killErr))
 			}
 			lease = m.beginProcessAttempt(lease)
+			m.beginFunctionExecutionBoot(lease, req)
 		}
 	}
 
@@ -5618,7 +5647,7 @@ func (m *Manager) Park(ctx context.Context, instance string, spec SnapshotSpec) 
 }
 
 func (m *Manager) parkWithCleanupResult(ctx context.Context, instance string, spec SnapshotSpec) (SnapshotInfo, bool, error) {
-	operationCtx, inst, spec, flight, err := m.beginSnapshotFlight(ctx, instance, spec)
+	operationCtx, inst, spec, flight, err := m.beginSnapshotFlight(ctx, instance, spec, snapshotTerminal)
 	if err != nil {
 		return SnapshotInfo{}, false, fmt.Errorf("park %s: %w", instance, err)
 	}
@@ -5678,26 +5707,47 @@ func (m *Manager) parkWithCleanupResult(ctx context.Context, instance string, sp
 //  4. Return the SnapshotInfo the engine writes into the snapshots
 //     row (tier='warm').
 //
-// Failure path: any error from SnapshotKeepAlive OR ResumeVM is
+// Qualified Node capture instead keeps the guest paused through publication,
+// then recovers all workers' resources under this flight. Failed or cancelled
+// captures also recover; unconfirmed recovery seals admission and retires the
+// physical VM (ADR-20261018030612).
+//
+// Ordinary failure path: any error from SnapshotKeepAlive OR ResumeVM is
 // surfaced as-is. The engine's captureWarmSnapshotLocked decides
 // whether to Destroy the VM and skip the init-tier capture (the
 // locked decision in PR-A: yes, destroy on warm failure). The
 // Manager itself does NOT touch m.live on the error path — the
 // engine owns the destroy so the audit/state-machine transitions
 // stay in one place.
-func (m *Manager) WarmSnapshot(ctx context.Context, instance string, spec SnapshotSpec) (SnapshotInfo, error) {
-	ctx, inst, spec, flight, err := m.beginSnapshotFlight(ctx, instance, spec)
+func (m *Manager) WarmSnapshot(ctx context.Context, instance string, spec SnapshotSpec) (info SnapshotInfo, retErr error) {
+	ctx, inst, spec, flight, err := m.beginSnapshotFlight(ctx, instance, spec, snapshotWarm)
 	if err != nil {
 		return SnapshotInfo{}, fmt.Errorf("warm_snapshot %s: %w", instance, err)
 	}
-	defer m.finishInstanceFlight(instance, flight)
+	retire := false
+	defer func() {
+		if retire {
+			m.failFunctionResources(inst)
+		}
+		m.finishInstanceFlight(instance, flight)
+		// CaptureAdmitted owns an outer authority flight. It joins physical
+		// teardown only after ending that flight; retiring here would wait on
+		// our own caller. Failed execution admission stays sealed meanwhile.
+		if retire && spec.admittedGrant == nil {
+			retErr = errors.Join(retErr, m.retireFunctionExecutionOwner(context.WithoutCancel(ctx), inst))
+		}
+	}()
 	if inst.AppTaskOnly {
 		return SnapshotInfo{}, fmt.Errorf("warm_snapshot %s: app task instances cannot be snapshotted", instance)
 	}
 	if m.isFrozen(inst) {
 		return SnapshotInfo{}, fmt.Errorf("warm_snapshot %s: %w", instance, ErrInstanceFrozen)
 	}
-	info, err := m.warmSnapshotInstance(ctx, inst, spec)
+	if m.functionResourcesEnabled(inst) {
+		info, err, retire = m.warmFunctionSnapshot(ctx, inst, spec, flight)
+	} else {
+		info, err = m.warmSnapshotInstance(ctx, inst, spec)
+	}
 	if err != nil {
 		return SnapshotInfo{}, err
 	}
@@ -5786,7 +5836,7 @@ func (m *Manager) SnapshotKeepAlive(ctx context.Context, instance string, spec S
 	if m == nil {
 		return SnapshotInfo{}, fmt.Errorf("snapshot_keep_alive %s: nil manager", instance)
 	}
-	ctx, inst, spec, flight, err := m.beginSnapshotFlight(ctx, instance, spec)
+	ctx, inst, spec, flight, err := m.beginSnapshotFlight(ctx, instance, spec, snapshotMigration)
 	if err != nil {
 		return SnapshotInfo{}, fmt.Errorf("snapshot_keep_alive %s: %w", instance, err)
 	}

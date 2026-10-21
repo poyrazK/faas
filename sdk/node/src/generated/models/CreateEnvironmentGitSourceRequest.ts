@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Select a Git definition. GitHub uses the project's bound repository; GitLab.com requires an account OAuth connection, a repository path and an explicit ref. Repository identity is verified by the server. GitLab.com currently supports report mode, manual approval and prune=false.
+ * Select a Git definition. GitHub uses the project's bound repository; GitLab.com requires an account OAuth connection, a repository path and an explicit ref. Repository identity is verified by the server. Both providers support manual or verified protected-branch approval. Production enforcement remains unavailable in this preview.
  */
 export type CreateEnvironmentGitSourceRequest = {
   provider?: 'github' | 'gitlab';

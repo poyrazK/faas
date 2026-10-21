@@ -1601,6 +1601,13 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 			}
 			return releaseID, deploymentID, err
 		}).
+		WithProjectCanaryResolver(func(ctx context.Context, appID, scope, key string) (string, string, error) {
+			releaseID, deploymentID, err := pgStore.ResolveProjectCanary(ctx, appID, scope, key)
+			if errors.Is(err, state.ErrNotFound) {
+				err = gateway.ErrReleaseGone
+			}
+			return releaseID, deploymentID, err
+		}).
 		WithRevisionPinResolver(func(ctx context.Context, appID, scope, deploymentID string) (bool, error) {
 			_, err := pgStore.ResolveRevisionPin(ctx, appID, scope, deploymentID)
 			if errors.Is(err, state.ErrNotFound) {
@@ -1990,6 +1997,12 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 			backend.RecordTarget(appID, target)
 			inv.InstanceID = instanceID
 			inv.ResolvedDeploymentID = deploymentID
+			if inv.Source == "esm" && inv.Attempts > 0 && inv.DeploymentScope == "production" && inv.QueueBindingID != "" && app.Manifest.ExecutionMode == api.ExecutionModeWorker {
+				if err := pgStore.BeginProjectWorkerJobEvidence(ctx, inv); err != nil {
+					return inv, 0, err
+				}
+				inv.WorkerJobEvidence = true
+			}
 			return synth.forwardInvocationWithStatus(ctx, target, inv)
 		},
 	}
@@ -2001,6 +2014,7 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 	// of the synthAdapter struct literal, which broke the compile.
 	// Restoring the off-the-brace call keeps both sides readable.
 	deps.synth = gateway.NewSynthServer(gatewaydInternalSocket, synth, log)
+	deps.synth.WithWorkerJobEvidence(pgStore.FinishProjectWorkerJobEvidence)
 	// ADR-119 — wire the synth-side metrics, audit emitter, and app-mode
 	// lookup here. The verifier itself is loaded later from the cluster key or
 	// environment fallback and is attached after that load completes.
@@ -2940,6 +2954,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		handler.WithWAFInlineChecker(wafInspector)
 	} else {
 		log.Warn("edge waf in-path checks disabled by FAAS_EDGE_WAF_INLINE_DISABLED; warn and block rules only observe")
+	}
+	// ADR-831 amendment 7 — kind=challenge. Tokens and passes are signed
+	// with a key derived from the session key every gateway shares, so a
+	// pass issued by one gateway is honoured by all.
+	if deps.sessions != nil {
+		handler.WithEdgeChallengeKey(gateway.DeriveEdgeChallengeKey(deps.sessions.BindingKey()))
 	}
 	// Issue #561 / ADR-091 PR 5 — arm the per-rule JWT verifier.
 	// nil-safe: deps.edgeJWKSAdapter nil falls through
@@ -3976,6 +3996,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			Authorize:                 newServiceProxyAuthorizer(pgStore),
 			AllowAlias:                guestServiceAliasAllowed,
 			ResolveEnvironmentBinding: newServiceProxyEnvironmentBindingResolver(pgStore),
+			AuthorizeBound:            newServiceProxyBoundAuthorizer(pgStore),
 			ResolveChaos: func(ctx context.Context, runID, callerAppID, targetWorkload string) (chaos.Lease, error) {
 				return pgStore.ScenarioTestChaosForCall(ctx, runID, callerAppID, targetWorkload)
 			},
@@ -4028,7 +4049,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			identityResolver := newServiceProxyCallerIdentityResolver(pgStore.ListAllInstances, cfg.NodeName)
 			identityResolver.lookup = pgStore.LiveServiceCallersByHostIP
 			if cfg.NodeName != "" {
-				identityResolver.lookup = newServiceProxyLiveLookup(pgStore, deps.nodeCache.cache, newLocalNodeID(pgStore, cfg.NodeName))
+				localNode := newLocalNodeID(pgStore, cfg.NodeName)
+				identityResolver.lookup = newServiceProxyLiveLookup(pgStore, deps.nodeCache.cache, localNode)
+				// ADR-1138: guest calls without trace context join the trace of
+				// the one request their instance is serving.
+				serviceProxyConfig.InferCallerTrace = newServiceTraceInference(deps.nodeCache.cache, localNode, api.ServiceTraceInferenceTimeout)
 			}
 			serviceProxyConfig.ResolveCallerIdentity = func(ctx context.Context, remote string) (string, string, error) {
 				if err := ordinaryQualificationCallerGuard(ctx, pgStore, cfg.NodeName, remote); err != nil {

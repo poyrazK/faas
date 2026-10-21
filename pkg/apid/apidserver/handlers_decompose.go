@@ -30,6 +30,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/deploystaging"
 	"github.com/onebox-faas/faas/pkg/apid/projectmigration"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
@@ -99,7 +100,8 @@ func (s *server) scanProject(w http.ResponseWriter, r *http.Request, acct state.
 //
 //  1. Reading the reconcile Result's added + changed slices from
 //     scanService's third + fourth return values.
-//  2. Stamping cron app_id from the post-reconcile slug→ID map.
+//  2. Preserving legacy removal cleanup; selected HTTP schedules are
+//     bound to deployment intents by scanService.
 //  3. Emitting per-app NotifyAppChanged (kind=created for added,
 //     kind=updated for changed) so schedd picks up the rows.
 //  4. Emitting the project.created audit row (gated by the
@@ -131,10 +133,8 @@ func (s *server) applyProject(w http.ResponseWriter, r *http.Request, acct state
 	// apid-side audit pipeline only fires the per-project
 	// project.created row (at the bottom of this function).
 
-	// Cron replacement is now part of reconcile's atomic project mutation.
-	// Keep the legacy fallback below disabled for stores that implement the
-	// new seam; it remains documented here only for source compatibility with
-	// older test doubles.
+	// Atomic reconcile cascades removed apps. Older adapters still need
+	// removal cleanup here; HTTP replacement never falls back to early writes.
 	if _, atomic := s.store.(state.ProjectReconcileStore); !atomic {
 		// Soft-delete crons for workloads the scan dropped (H8 fix).
 		// Pre-fix, the cron-stamping loop below tried to look up
@@ -211,42 +211,6 @@ func (s *server) applyProject(w http.ResponseWriter, r *http.Request, acct state
 			}
 		}
 
-		// Build the slug→ID map for cron stamping. The cron list is
-		// encoded by name in resp.CronNames; both Added and Changed
-		// contribute to the map because a cron can attach to either a
-		// newly-created or an updated app. Removed-slug crons were
-		// soft-deleted above; the loop below only stamps NEW crons.
-		slugToID := make(map[string]string, len(added)+len(changed))
-		for _, a := range added {
-			slugToID[a.Slug] = a.ID
-			slugToID[a.WorkloadName] = a.ID
-		}
-		for _, a := range changed {
-			slugToID[a.Slug] = a.ID
-			slugToID[a.WorkloadName] = a.ID
-		}
-		for i, name := range resp.CronNames {
-			appID := slugToID[name]
-			if appID == "" {
-				// H8 fix: removed workload — the cron for it was
-				// soft-deleted in the loop above. This branch is
-				// now a defensive no-op rather than a 500.
-				continue
-			}
-			// The schedule + path + enabled flags ride on the planCron
-			// entry captured earlier. resp.Crons has the same length
-			// + order as resp.CronNames (scan_service.go populates
-			// them in the same loop).
-			if i >= len(resp.Crons) {
-				continue
-			}
-			c := resp.Crons[i]
-			if _, err := s.store.CreateCron(r.Context(), appID, c.Schedule, c.Path, c.Enabled); err != nil {
-				api.WriteProblem(w, api.ErrInternal(
-					fmt.Sprintf("stamp cron app_id: %v", err)))
-				return
-			}
-		}
 	}
 
 	// Notify every touched app. PostgreSQL delivers the
@@ -281,6 +245,7 @@ func (s *server) applyProject(w http.ResponseWriter, r *http.Request, acct state
 	// carries the inserted/updated IDs so the CLI's --yes flow
 	// can render "applied: <slug> → <app_id>".
 	type applyResp struct {
+		SubmissionAttemptID string `json:"submission_attempt_id,omitempty"`
 		scanPlanResponse
 		ProjectID string         `json:"project_id"`
 		AppIDs    []appSummary   `json:"apps"`
@@ -407,6 +372,9 @@ func (s *server) applyProject(w http.ResponseWriter, r *http.Request, acct state
 	// returns the same Skipped partition without writing audit rows.
 	s.emitProjectApplyExclusionAudits(r.Context(), r, acct, insertedProject, resp, added, changed)
 
+	if tracker := deploystaging.ProjectSubmissionFromContext(r.Context()); tracker != nil {
+		out.SubmissionAttemptID = tracker.Receipt.AttemptID
+	}
 	writeJSON(w, http.StatusOK, out)
 }
 

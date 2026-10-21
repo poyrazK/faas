@@ -77,8 +77,9 @@ func NewRuntimeAppSecretFence(snapshot RuntimeAppValuesSnapshot) (RuntimeAppSecr
 		AccountID, AppID string
 		Owner            RuntimeAppSecretFence
 		Grants           RuntimeAppSecretGrants
+		Versions         map[string]string `json:"versions,omitempty"`
 		Secrets          []runtimeSecretFingerprintRow
-	}{snapshot.AccountID, snapshot.AppID, fence, grants, rows})
+	}{snapshot.AccountID, snapshot.AppID, fence, grants, snapshot.ReleaseSecretVersionIDs, rows})
 	if err != nil {
 		return RuntimeAppSecretFence{}, ErrConflict
 	}

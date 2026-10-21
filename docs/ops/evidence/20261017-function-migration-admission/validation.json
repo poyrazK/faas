@@ -1,0 +1,44 @@
+{
+  "checks": [
+    {
+      "label": "ordinary lint",
+      "command": "go tool golangci-lint run --timeout=25m --new-from-rev=2a8c6551526399db76c5bde443ce75503bb2e5b9 ./pkg/runtimeadmission ./pkg/state ./pkg/fcvm ./pkg/vmmdgrpc",
+      "exit": 0,
+      "output": "0 issues.\n",
+      "raw_log_sha256": "e92606b0bf483111dff0a120c315ea165821348f31365020e2468a0059095c47"
+    },
+    {
+      "label": "qualification-build lint",
+      "command": "go tool golangci-lint run --build-tags=metal,function_background_native --timeout=25m --new-from-rev=2a8c6551526399db76c5bde443ce75503bb2e5b9 ./pkg/runtimeadmission ./pkg/fcvm ./pkg/vmmdgrpc ./cmd/e2e",
+      "exit": 0,
+      "output": "0 issues.\n",
+      "raw_log_sha256": "e92606b0bf483111dff0a120c315ea165821348f31365020e2468a0059095c47"
+    },
+    {
+      "label": "source policy",
+      "command": "make adr-number-uniqueness-check sealed-env-scope-check runbook-sql-check shell-quoting-check text-encoding-check",
+      "exit": 0,
+      "output": "bash scripts/ci/check_adr_number_uniqueness.sh\nadr-number-uniqueness: OK \u2014 1333 ADRs, 1129 distinct numbers, 164 pre-existing duplicates held at the baseline\nsealed-env-scope-check: OK (only faas-apid.service loads sealed.env)\nrunbook SQL gate: no mutating SQL outside docs/break-glass/\nshell-quoting-check: clean\ntext-encoding-check: clean\n",
+      "raw_log_sha256": "cebd65695177c7e90740c6adcaa752fbae7f843c405eceae1ab6e78055b8de62"
+    },
+    {
+      "label": "documentation",
+      "command": "make docs-links-check",
+      "exit": 0,
+      "output": "docs-links-check: OK\n....\n----------------------------------------------------------------------\nRan 4 tests in 0.518s\n\nOK\n",
+      "raw_log_sha256": "e7799c00067fe68ad8db2be2f22088f81f35bf65213dbce97feda8b7d625c95c"
+    },
+    {
+      "label": "workflow syntax",
+      "command": "actionlint .github/workflows/function-backends.yml",
+      "exit": 0,
+      "output": "",
+      "raw_log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "whitespace",
+      "command": "git diff --check",
+      "exit": 0
+    }
+  ]
+}

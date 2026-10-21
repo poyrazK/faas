@@ -4,6 +4,8 @@
 
 These signals aggregate starter-reported RPC events attributed by the host to an
 app UUID. They are diagnostic evidence, not a complete host-verified request ledger.
+Alerts indicate elevated RPC failures, slow execution, aggregation capacity
+pressure, or missing telemetry heartbeats.
 
 Alerts are internal operator warnings through existing Alertmanager routing.
 They do not automatically roll back, promote, or otherwise mutate deployments.
@@ -29,6 +31,12 @@ reset on vmmd restart or aggregate expiry. The original logs remain the place to
 inspect individual observations.
 
 ## Recover
+
+Restore failing providers or downstream dependencies, or deploy a reviewed fix
+for the application error identified in its structured logs. For aggregation
+pressure, adjust placement or the collector's cardinality budget after reviewing
+host capacity. Confirm error rates, execution latency and telemetry coverage have
+returned to normal before closing the incident.
 
 For `FaasMCPProtocolAggregationCapacity`, a vmmd collector has filled its bounded
 1,024-app table. Apps expire after one hour without accepted events. Check active

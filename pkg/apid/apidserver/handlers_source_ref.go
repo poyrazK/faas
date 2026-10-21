@@ -305,7 +305,10 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 			s.log.Warn("source-ref manifest rollback incomplete", "app_id", app.ID, "err", rollbackErr)
 		}
 	}(r.Context())
-	stagedManifest, manifestProblem = s.applySourceRefManifest(r.Context(), acct, app, manifest, rollout.Scope, !req.NoTriggers)
+	stagedManifest, manifestProblem = s.stageSourceDeploymentManifest(r, acct, app, manifest, rollout, !req.NoTriggers)
+	if stagedManifest.cronIntent != nil {
+		r = r.WithContext(state.ContextWithDeploymentSubmission(r.Context(), stagedManifest.cronIntent.SessionID))
+	}
 	if manifestProblem != nil {
 		api.WriteProblem(w, manifestProblem)
 		return

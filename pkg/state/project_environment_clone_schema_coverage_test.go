@@ -32,6 +32,9 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		"data_repair_rehearsals":            state.CloneSchemaOperational,
 		"migration_verifications":           state.CloneSchemaOperational,
 		"project_migrations":                state.CloneSchemaOperational,
+		// Function capture and destination authority stay with their original instance.
+		"function_migration_sources":      state.CloneSchemaOperational,
+		"function_migration_destinations": state.CloneSchemaOperational,
 
 		// MCP policies and notification credentials need an isolated strategy.
 		// Evidence, overrides, leases and incident delivery authority stay at source.
@@ -178,15 +181,19 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		"environment_managed_fields":               state.CloneSchemaConfiguration,
 		"environment_management_overrides":         state.CloneSchemaConfiguration,
 		"environment_workload_graphs":              state.CloneSchemaConfiguration,
-		"deployment_route_policy_snapshots":        state.CloneSchemaConfiguration,
-		"instance_runtime_config_receipts":         state.CloneSchemaOperational,
-		"snapshot_runtime_config_receipts":         state.CloneSchemaOperational,
-		"financial_budget_policies":                state.CloneSchemaConfiguration,
-		"financial_budget_revisions":               state.CloneSchemaConfiguration,
-		"financial_usage_evidence":                 state.CloneSchemaIdentity,
-		"financial_price_snapshots":                state.CloneSchemaIdentity,
-		"financial_evidence_coverage":              state.CloneSchemaOperational,
-		"financial_sampling_windows":               state.CloneSchemaOperational,
+		// GitOps artifact pins and first-serving history are retention
+		// evidence of the source environment, never copied configuration.
+		"environment_build_artifact_pins":      state.CloneSchemaOperational,
+		"environment_recovery_serving_history": state.CloneSchemaOperational,
+		"deployment_route_policy_snapshots":    state.CloneSchemaConfiguration,
+		"instance_runtime_config_receipts":     state.CloneSchemaOperational,
+		"snapshot_runtime_config_receipts":     state.CloneSchemaOperational,
+		"financial_budget_policies":            state.CloneSchemaConfiguration,
+		"financial_budget_revisions":           state.CloneSchemaConfiguration,
+		"financial_usage_evidence":             state.CloneSchemaIdentity,
+		"financial_price_snapshots":            state.CloneSchemaIdentity,
+		"financial_evidence_coverage":          state.CloneSchemaOperational,
+		"financial_sampling_windows":           state.CloneSchemaOperational,
 		// Retained funding and execution authority stay with their original owners.
 		"financial_budget_alerts":            state.CloneSchemaOperational,
 		"financial_budget_evaluations":       state.CloneSchemaOperational,
@@ -211,6 +218,8 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		// Capacity and runtime observations are source-bound, expiring evidence.
 		"managed_postgres_connection_capacity":     state.CloneSchemaOperational,
 		"data_api_runtime_connection_observations": state.CloneSchemaOperational,
+		"project_environment_promotion_controls":   state.CloneSchemaOperational,
+		"project_release_additions":                state.CloneSchemaOperational,
 
 		"object_bucket_encryption":                           state.CloneSchemaConfiguration,
 		"object_bucket_lifecycle":                            state.CloneSchemaConfiguration,

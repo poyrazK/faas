@@ -17,7 +17,7 @@ RUN cd /app/gotrue-migrations \
  && test "$(ls | wc -l)" -eq "$(wc -l < /app/migrations.sha256)"
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts
-COPY config.mjs server.mjs authz.mjs admin.mjs email.mjs emails.mjs events.mjs impersonation.mjs logs.mjs oauth.mjs orgsso.mjs realtime.mjs retention.mjs scim.mjs signups.mjs sms.mjs sso.mjs storage.mjs workflows.mjs migrate.mjs product-email.mjs team.mjs upstream-migrate.mjs disposable-domains.txt ./
+COPY config.mjs server.mjs authz.mjs admin.mjs email.mjs emails.mjs events.mjs impersonation.mjs logs.mjs oauth.mjs orgsso.mjs realtime.mjs retention.mjs scim.mjs signups.mjs sms.mjs sso.mjs storage.mjs workflows.mjs migrate.mjs product-email.mjs team.mjs upstream-migrate.mjs serviceaccounts.mjs disposable-domains.txt ./
 COPY sql/ ./sql/
 COPY ui/ ./ui/
 EXPOSE 8080

@@ -45,6 +45,7 @@ const (
 	EdgeRuleRecipeAllowIPsOnly        = "allow-ips-only"
 	EdgeRuleRecipeBlockCountries      = "block-countries"
 	EdgeRuleRecipeBlockScannerPaths   = "block-scanner-paths"
+	EdgeRuleRecipeChallengePath       = "challenge-path"
 )
 
 // EdgeRuleScannerPath is one path prefix vulnerability scanners probe.
@@ -141,6 +142,18 @@ var EdgeRuleRecipes = []EdgeRuleRecipe{
 			{Name: "paths", Label: "Path prefixes", Help: "Blocked when a request path starts with one of these; comma- or space-separated.", Default: strings.Join(EdgeRuleScannerPrefixes(), ", ")},
 		},
 		build: buildBlockScannerPaths,
+	},
+	{
+		ID:      EdgeRuleRecipeChallengePath,
+		Kind:    "challenge",
+		Title:   "Challenge visitors on a path",
+		Summary: "Ask browsers on a path, such as a sign-in page or a whole site under attack, to solve a short proof of work before they reach your app. Verified search crawlers and requests with a verified API key or JWT pass straight through; scripts that cannot run JavaScript get 403.",
+		LogNote: "In log mode the match count is the requests it would challenge, including visitors who would already hold a pass.",
+		Params: []EdgeRuleRecipeParam{
+			{Name: "path", Label: "Path", Help: "Path to challenge: /** is the whole site, /login is one page and the form it posts to.", Default: "/**"},
+			{Name: "methods", Label: "Methods", Help: "Comma-separated; empty means every method, so a sign-in page and its form post are both covered."},
+		},
+		build: buildChallengePath,
 	},
 }
 
@@ -337,6 +350,21 @@ func buildBlockScannerPaths(v recipeValues) (CreateEdgeRuleRequest, error) {
 		Kind:      "ip",
 		Action:    recipeDenyAll(),
 		Match:     &EdgeRuleMatchExpr{Field: "path", Op: "prefix", Values: prefixes},
+	}, nil
+}
+
+func buildChallengePath(v recipeValues) (CreateEdgeRuleRequest, error) {
+	var methods []string
+	for _, m := range recipeSplit(v["methods"]) {
+		methods = append(methods, strings.ToUpper(m))
+	}
+	action, _ := json.Marshal(EdgeRuleChallengeAction{})
+	return CreateEdgeRuleRequest{
+		MatchPath:    v["path"],
+		MatchMethods: methods,
+		Kind:         "challenge",
+		Action:       action,
+		Match:        &EdgeRuleMatchExpr{Field: "verified_bot", Op: "missing"},
 	}, nil
 }
 

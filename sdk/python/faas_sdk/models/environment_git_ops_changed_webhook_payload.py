@@ -28,6 +28,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.environment_git_ops_change import EnvironmentGitOpsChange
+    from ..models.environment_git_ops_diagnostic import EnvironmentGitOpsDiagnostic
 
 
 T = TypeVar("T", bound="EnvironmentGitOpsChangedWebhookPayload")
@@ -35,9 +36,11 @@ T = TypeVar("T", bound="EnvironmentGitOpsChangedWebhookPayload")
 
 @_attrs_define
 class EnvironmentGitOpsChangedWebhookPayload:
-    """Value-free account webhook emitted atomically with a current GitOps report or completed source poll. Unchanged
-    status is silent; first failures and later recoveries are delivered to explicit environment.gitops.changed
-    subscribers. The drift and source axes remain independent.
+    """Value-free account webhook for independent drift, source and rollout axes. Rollout serving and failure outcomes are
+    assessed from current exact-commit graph evidence when a current report completes; approval and control transactions
+    supersede pending rollouts. Each terminal outcome is delivered once per approval generation. Pending observations
+    stay silent. Existing drift/source transition rules and explicit environment.gitops.changed subscriptions apply.
+    Delivery is signed and at least once; deduplicate retries by transition_id.
 
     """
 
@@ -58,6 +61,12 @@ class EnvironmentGitOpsChangedWebhookPayload:
     details_truncated: bool
     approved_revision_id: UUID | Unset = UNSET
     commit_sha: str | Unset = UNSET
+    definition_digest: str | Unset = UNSET
+    graph_id: UUID | Unset = UNSET
+    plan_hash: str | Unset = UNSET
+    diagnostics: list[EnvironmentGitOpsDiagnostic] | Unset = UNSET
+    """Safe mapped blocker codes and guidance, optionally scoped to a workload. Never includes upstream error text,
+    logs, values or secret-reference targets."""
     run_id: UUID | Unset = UNSET
     error_code: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -102,6 +111,21 @@ class EnvironmentGitOpsChangedWebhookPayload:
 
         commit_sha = self.commit_sha
 
+        definition_digest = self.definition_digest
+
+        graph_id: str | Unset = UNSET
+        if not isinstance(self.graph_id, Unset):
+            graph_id = str(self.graph_id)
+
+        plan_hash = self.plan_hash
+
+        diagnostics: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.diagnostics, Unset):
+            diagnostics = []
+            for diagnostics_item_data in self.diagnostics:
+                diagnostics_item = diagnostics_item_data.to_dict()
+                diagnostics.append(diagnostics_item)
+
         run_id: str | Unset = UNSET
         if not isinstance(self.run_id, Unset):
             run_id = str(self.run_id)
@@ -133,6 +157,14 @@ class EnvironmentGitOpsChangedWebhookPayload:
             field_dict["approved_revision_id"] = approved_revision_id
         if commit_sha is not UNSET:
             field_dict["commit_sha"] = commit_sha
+        if definition_digest is not UNSET:
+            field_dict["definition_digest"] = definition_digest
+        if graph_id is not UNSET:
+            field_dict["graph_id"] = graph_id
+        if plan_hash is not UNSET:
+            field_dict["plan_hash"] = plan_hash
+        if diagnostics is not UNSET:
+            field_dict["diagnostics"] = diagnostics
         if run_id is not UNSET:
             field_dict["run_id"] = run_id
         if error_code is not UNSET:
@@ -143,6 +175,7 @@ class EnvironmentGitOpsChangedWebhookPayload:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.environment_git_ops_change import EnvironmentGitOpsChange
+        from ..models.environment_git_ops_diagnostic import EnvironmentGitOpsDiagnostic
 
         d = dict(src_dict)
         version = check_environment_git_ops_changed_webhook_payload_version(d.pop("version"))
@@ -189,6 +222,26 @@ class EnvironmentGitOpsChangedWebhookPayload:
 
         commit_sha = d.pop("commit_sha", UNSET)
 
+        definition_digest = d.pop("definition_digest", UNSET)
+
+        _graph_id = d.pop("graph_id", UNSET)
+        graph_id: UUID | Unset
+        if isinstance(_graph_id, Unset):
+            graph_id = UNSET
+        else:
+            graph_id = UUID(_graph_id)
+
+        plan_hash = d.pop("plan_hash", UNSET)
+
+        _diagnostics = d.pop("diagnostics", UNSET)
+        diagnostics: list[EnvironmentGitOpsDiagnostic] | Unset = UNSET
+        if _diagnostics is not UNSET:
+            diagnostics = []
+            for diagnostics_item_data in _diagnostics:
+                diagnostics_item = EnvironmentGitOpsDiagnostic.from_dict(diagnostics_item_data)
+
+                diagnostics.append(diagnostics_item)
+
         _run_id = d.pop("run_id", UNSET)
         run_id: UUID | Unset
         if isinstance(_run_id, Unset):
@@ -216,6 +269,10 @@ class EnvironmentGitOpsChangedWebhookPayload:
             details_truncated=details_truncated,
             approved_revision_id=approved_revision_id,
             commit_sha=commit_sha,
+            definition_digest=definition_digest,
+            graph_id=graph_id,
+            plan_hash=plan_hash,
+            diagnostics=diagnostics,
             run_id=run_id,
             error_code=error_code,
         )

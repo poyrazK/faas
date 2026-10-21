@@ -239,6 +239,9 @@ func (c *AppTaskCoordinator) SweepOnce(ctx context.Context) (state.AppTaskSweepR
 		return state.AppTaskSweepResult{}, fmt.Errorf("sched: sweep app tasks: %w", err)
 	}
 	c.config.Metrics.swept(result)
+	if err := c.quiescePromotionMigrations(ctx); err != nil {
+		return result, err
+	}
 	return result, nil
 }
 

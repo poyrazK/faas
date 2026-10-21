@@ -87,3 +87,14 @@ it is one `kind=ip` deny-all rule on `/**` whose match condition (`path`
 the requests it would block. The list is the recipe's `paths` parameter:
 the user can drop a prefix their app really serves (a WordPress site's
 `/wp-admin`) or add their own, up to the 64-value condition limit.
+
+## Amendment (2026-10-21): challenge visitors on a path
+
+Recipe `challenge-path` adds one `kind=challenge` rule (ADR-831 amendment 7)
+on a path (default `/**`) and optional methods, matching only requests that
+are not verified crawlers (`verified_bot missing`, ADR-973), with the default
+difficulty and pass lifetime. Browsers solve a short proof of work once per
+pass; requests with a verified API key, consumer key or JWT pass straight
+through; scripts that cannot run JavaScript get 403. Like every recipe it
+starts in log mode, where the count is the requests it would challenge. It
+needs a plan with challenge rules (Hobby and above).

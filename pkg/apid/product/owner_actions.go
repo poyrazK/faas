@@ -256,7 +256,7 @@ func (s *Service) applyOwnerAction(r *http.Request, c *ownerContext, a ownerActi
 		id = doc.ID
 	case "handoff":
 		var handoff api.ProductInvoiceHandoff
-		handoff, err = c.billing.HandoffProductBilling(r.Context(), scope, a.Document, a.Reference)
+		handoff, err = s.handoffManually(r.Context(), c.billing, c.account.ID, scope, a.Document, a.Reference)
 		id = handoff.DocumentID
 	default:
 		return state.ErrInvalidArgument

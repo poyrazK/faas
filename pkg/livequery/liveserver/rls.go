@@ -48,6 +48,37 @@ func rlsClaims(raw json.RawMessage) (string, bool) {
 	return string(canonical), err == nil
 }
 
+// sessionClaims canonicalizes the claims of an RLS-mode frame. A user's
+// verified token claims become a signed-in session (rlsClaims). Anonymous and
+// server-key reads arrive with the claims realtimed built after admitting
+// them, which must be exactly the Data API gateway's claims for that kind.
+func sessionClaims(access string, raw json.RawMessage) (string, bool) {
+	if access == "" {
+		return rlsClaims(raw)
+	}
+	if access != liveproto.AccessAnonymous && access != liveproto.AccessServer {
+		return "", false
+	}
+	var claims map[string]string
+	if err := json.Unmarshal(raw, &claims); err != nil || claims["gregale_access"] != access {
+		return "", false
+	}
+	for k, v := range claims {
+		switch {
+		case k == "gregale_access":
+		case access == liveproto.AccessServer && k == "gregale_server_key" && (v == "a" || v == "b"):
+		case access == liveproto.AccessServer && k == "sub" && v != "":
+		default:
+			return "", false
+		}
+	}
+	if access == liveproto.AccessServer && claims["gregale_server_key"] == "" {
+		return "", false
+	}
+	canonical, err := json.Marshal(claims) // map keys sort: one text per claim set
+	return string(canonical), err == nil
+}
+
 // defaultDataAPISchema is the schema a read names none of: the Data API's
 // first exposed schema by default (ADR-650), the only one its login may
 // read unless DATA_API_SCHEMAS adds others.
@@ -83,9 +114,12 @@ func (h *Hub) session(sess *Session, f liveproto.ClientFrame) (*livequery.Sessio
 	if f.Role == "" {
 		return nil, time.Time{}, &rlsRefusal{liveproto.CodeForbidden, "the read names no Data API login to read as"}
 	}
-	canonical, ok := rlsClaims(f.Claims)
+	if f.Anonymous || f.ServerKey != "" {
+		return nil, time.Time{}, &rlsRefusal{liveproto.CodeProtocol, "realtimed admits anonymous and server-key reads before they reach the hub"}
+	}
+	canonical, ok := sessionClaims(f.Access, f.Claims)
 	if !ok {
-		return nil, time.Time{}, &rlsRefusal{liveproto.CodeProtocol, "the claims are not a JSON object"}
+		return nil, time.Time{}, &rlsRefusal{liveproto.CodeProtocol, "the claims do not match the read's access kind"}
 	}
 	expires := time.Unix(f.ClaimsExpires, 0)
 	if f.ClaimsExpires <= 0 || !h.cfg.Now().Before(expires) {

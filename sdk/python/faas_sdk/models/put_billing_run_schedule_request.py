@@ -19,7 +19,8 @@ class PutBillingRunScheduleRequest:
 
     sources: list[BillingRunSourcesItem] | Unset = UNSET
     """Which customers a run bills. With platform_tenants, a consumer's tenant-attributed usage is billed on the
-    tenant statement and its app item is skipped."""
+    tenant statement and its app item is skipped. product_customers bills each Product Control customer's statement
+    for the month and needs Product Control to be enabled (ADR-20261018212918)."""
     finalize: bool | Unset = UNSET
     """Finalize each drafted statement in scheduled runs (default true)."""
     export: BillingRunExport | Unset = UNSET

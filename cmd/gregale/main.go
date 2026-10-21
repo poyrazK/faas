@@ -848,7 +848,13 @@ func printLocalCommandHelpDetail(w io.Writer, command cliCommand, showAll bool) 
 	compact := command.CompactHelp && !showAll
 	usage := "gregale " + command.Name
 	if len(command.Subcommands) > 0 && !command.SubcommandsAfterPositionals && command.Name != "logs" {
-		usage += " <" + command.subcommandChoice() + ">"
+		choice := " <" + command.subcommandChoice() + ">"
+		// Compact help stays within 80 columns; its Commands section lists
+		// the choices when they no longer fit on the usage line.
+		if command.CompactHelp && len("  "+usage+choice+" [flags]") > 80 {
+			choice = " [command]"
+		}
+		usage += choice
 	}
 	for _, positional := range command.Positionals {
 		usage += " " + positional

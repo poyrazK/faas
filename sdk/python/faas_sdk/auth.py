@@ -21,6 +21,12 @@ that the session is still active. Each method has an ``_async`` twin.
 An API or MCP server that third-party OAuth clients call passes its resource
 URL as ``audience``; ``Claims.client_id`` and ``Claims.scopes`` then name the
 client and what its user granted.
+
+A backend acting as an organization's service account gets its tokens with
+the client-credentials grant::
+
+    machine = ClientCredentials("https://shop-auth.gregale.app", client_id, client_secret)
+    headers = {"Authorization": f"Bearer {machine.token()}"}
 """
 
 from __future__ import annotations
@@ -30,13 +36,14 @@ import base64
 import binascii
 import ipaddress
 import json
+import re
 import threading
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 import httpx
 
@@ -91,6 +98,14 @@ class Organization:
 
 
 @dataclass(frozen=True)
+class ServiceAccount:
+    """A service account's token: the account and the secret it was issued for."""
+
+    id: str
+    secret_id: str
+
+
+@dataclass(frozen=True)
 class Claims:
     """A verified access token's claims. ``raw`` holds every claim."""
 
@@ -113,6 +128,13 @@ class Claims:
     # Set while the app's support staff use the session as the user
     # (impersonation): who opened it, such as "admin:0A1B2C3D".
     actor: str | None = None
+    # Set when the token belongs to an organization's service account (the
+    # client-credentials grant), not a person: subject is the account's ID,
+    # organization the account's and scopes what the token was narrowed to.
+    # authorize applies the account's role and refuses as soon as the
+    # account or its secret is revoked; verify alone accepts the token until
+    # it expires.
+    service_account: ServiceAccount | None = None
     app_metadata: Mapping[str, Any] = field(default_factory=dict)
     user_metadata: Mapping[str, Any] = field(default_factory=dict)
     raw: Mapping[str, Any] = field(default_factory=dict)
@@ -175,6 +197,18 @@ def _actor(payload: Mapping[str, Any]) -> str | None:
     act = payload.get("act")
     sub = act.get("sub") if isinstance(act, dict) else None
     return sub if isinstance(sub, str) and sub else None
+
+
+def _service_account(payload: Mapping[str, Any]) -> ServiceAccount | None:
+    sub, secret = payload.get("sub"), payload.get("secret_id")
+    if (
+        payload.get("service_account") is not True
+        or not isinstance(sub, str)
+        or not isinstance(secret, str)
+        or not secret
+    ):
+        return None
+    return ServiceAccount(id=sub, secret_id=secret)
 
 
 def _organization(payload: Mapping[str, Any]) -> Organization | None:
@@ -387,6 +421,7 @@ class AuthClient:
             scopes=tuple((text("scope") or "").split()),
             organization=_organization(payload),
             actor=_actor(payload),
+            service_account=_service_account(payload),
             app_metadata=mapping("app_metadata"),
             user_metadata=mapping("user_metadata"),
             raw=payload,
@@ -534,6 +569,95 @@ def _allowed(response: httpx.Response) -> bool:
         raise AuthError("malformed response from /authz/v1/authorize") from exc
 
 
+_SERVICE_ACCOUNT_ID = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+_SERVICE_ACCOUNT_SECRET = re.compile(r"^gasa_[A-Za-z0-9_-]{43}$")
+# A token is fetched again this long before it expires, so a request that
+# carries it still finds it valid.
+_CREDENTIALS_REFRESH_MARGIN = 60.0
+
+
+class ClientCredentials:
+    """Gets access tokens for an organization's service account with the
+    client-credentials grant, for a backend calling an API or the Data API as
+    that organization. ``token`` caches one until a minute before it expires;
+    concurrent callers share one request. Keep the secret out of browsers."""
+
+    def __init__(
+        self,
+        auth_url: str,
+        client_id: str,
+        client_secret: str,
+        *,
+        scope: tuple[str, ...] | list[str] = (),
+        timeout: float = 10.0,
+        http_client: httpx.Client | None = None,
+        clock: Callable[[], float] = time.time,
+    ) -> None:
+        if not _SERVICE_ACCOUNT_ID.match(client_id):
+            raise ValueError("client_id must be a service account ID")
+        if not _SERVICE_ACCOUNT_SECRET.match(client_secret):
+            raise ValueError("client_secret must be a service account secret")
+        self.token_url = _origin(auth_url) + "/auth/v1/oauth/token"
+        self._auth = (quote(client_id, safe=""), quote(client_secret, safe=""))
+        self._form = {"grant_type": "client_credentials", **({"scope": " ".join(scope)} if scope else {})}
+        self._timeout = timeout
+        self._http = http_client
+        self._owns_http = http_client is None
+        self._clock = clock
+        self._lock = threading.Lock()
+        self._token: str | None = None
+        self._refresh_at = float("-inf")
+
+    def token(self) -> str:
+        """Return a valid access token, fetching a new one when needed. A
+        refusal raises InvalidTokenError (invalid_client), AuthError
+        (invalid_scope) or AuthUnavailableError."""
+        with self._lock:
+            if self._token is not None and self._clock() < self._refresh_at:
+                return self._token
+            if self._http is None:
+                self._http = httpx.Client(timeout=self._timeout)
+            try:
+                response = self._http.post(
+                    self.token_url,
+                    data=self._form,
+                    auth=self._auth,
+                    headers={"Accept": "application/json"},
+                    follow_redirects=False,
+                )
+            except httpx.HTTPError as exc:
+                raise AuthUnavailableError(str(exc)) from exc
+            try:
+                body = response.json()
+            except ValueError:
+                body = {}
+            body = body if isinstance(body, dict) else {}
+            token, expires_in = body.get("access_token"), _number(body.get("expires_in"))
+            if response.status_code != 200 or not isinstance(token, str) or not token or not expires_in:
+                code = body.get("error") if isinstance(body.get("error"), str) else f"http_{response.status_code}"
+                status = response.status_code if response.status_code != 200 else 502
+                message = f"{code} (HTTP {status})"
+                if status == 401:
+                    raise InvalidTokenError(message, status=status, code=code)
+                if status == 429 or status >= 500:
+                    raise AuthUnavailableError(message, status=status, code=code)
+                raise AuthError(message, status=status, code=code)
+            self._token = token
+            self._refresh_at = self._clock() + expires_in - _CREDENTIALS_REFRESH_MARGIN
+            return token
+
+    def clear(self) -> None:
+        """Drop the cached token, for example after an API answered 401."""
+        with self._lock:
+            self._token = None
+
+    def close(self) -> None:
+        """Close the HTTP client this object created, if any."""
+        if self._owns_http and self._http is not None:
+            self._http.close()
+            self._http = None
+
+
 __all__ = [
     "AUDIENCE",
     "DEFAULT_LEEWAY",
@@ -541,9 +665,11 @@ __all__ = [
     "AuthError",
     "AuthUnavailableError",
     "Claims",
+    "ClientCredentials",
     "InvalidTokenError",
     "NoTokenError",
     "Organization",
+    "ServiceAccount",
     "TokenExpiredError",
     "bearer_token",
     "resource",

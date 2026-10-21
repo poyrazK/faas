@@ -86,3 +86,13 @@ traffic is bots" without new collection.
 - Thresholds are fixed constants; tuning them, or adding signals such as
   geographic concentration, is a change to one pure function and its table
   test.
+
+## Amendment (2026-10-21): challenge as the softer alternative
+
+A sign-in-path or `/admin` suggestion now carries an `alternative`:
+`challenge-path` on the same path (ADR-986 amendment, ADR-831 amendment 7).
+It suits apps that cannot list their admin IPs or would rather slow
+credential stuffing with a browser check than a per-IP limit. The
+alternative is left out when an enabled challenge rule already covers the
+path. The dashboard offers it as a second "log mode" button and
+`gregale edge-rules suggest` prints its command.

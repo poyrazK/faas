@@ -23,6 +23,9 @@ type productMemory struct {
 	planChanges       map[string]productMemoryPlanChange
 	help              map[string]productHelpRow
 	notificationReads map[string]productNotificationRead
+	// overduePolicies are keyed by app, overdueHolds by app/tenant.
+	overduePolicies map[string]ProductOverduePolicy
+	overdueHolds    map[string]ProductOverdueHold
 }
 
 type productMemoryReceipt struct {
@@ -230,6 +233,9 @@ func (m *MemStore) prepareProductOperationLocked(op *Operation, def OperationDef
 	grant, err := productGrant(catalog, customer, admission.ProductFeature, def, admission.ProductControlEnabled)
 	if err != nil {
 		return err
+	}
+	if hold, held := m.productOverdueHoldLocked(op.AccountID, op.AppID, op.PlatformTenantID); held {
+		return productOverdueRefusal(hold)
 	}
 	feature := catalog.Spec.Features[admission.ProductFeature]
 	if feature.Operation != nil {

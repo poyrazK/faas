@@ -89,9 +89,15 @@ func (s *decomposeSink) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// Project deploys now honor the normal wait contract. Return a
 		// terminal fixture for each golden deployment so these planner tests
 		// exercise that path without a real scheduler.
-		main.WriteJSONTestStatus(w, http.StatusOK, api.DeploymentResponse{
-			ID: strings.TrimPrefix(r.URL.Path, "/v1/deployments/"), Status: main.StatusLive,
-		})
+		id := strings.TrimPrefix(r.URL.Path, "/v1/deployments/")
+		var appID string
+		for _, build := range s.applyBody.Builds {
+			if build.DeploymentID == id {
+				appID = build.AppID
+				break
+			}
+		}
+		main.WriteJSONTestStatus(w, http.StatusOK, api.DeploymentResponse{ID: id, AppID: appID, Status: main.StatusLive})
 	default:
 		http.Error(w, "decomposeSink: not found: "+r.URL.Path, http.StatusNotFound)
 	}
@@ -240,7 +246,7 @@ var goldenApply = api.ApplyResponse{
 // extracts explicit archives before handing them to the API.
 func writeTarball(t *testing.T) string {
 	t.Helper()
-	path := writeDeploySourceArchive(t, map[string]string{"fixture/README.md": "fixture"})
+	path := main.WriteDeploySourceArchive(t, map[string]string{"fixture/README.md": "fixture"})
 	fixturePath := filepath.Join(filepath.Dir(path), "fixture.tar.gz")
 	if err := os.Rename(path, fixturePath); err != nil {
 		t.Fatalf("rename tarball fixture: %v", err)
@@ -1375,7 +1381,7 @@ func TestCmdDeployTarball_DoctorStrict_FailsFast(t *testing.T) {
 
 	if code := main.CmdDeployTarball([]string{
 		"--doctor-strict",
-		"--tarball", writeDeploySourceArchive(t, map[string]string{
+		"--tarball", main.WriteDeploySourceArchive(t, map[string]string{
 			"fixture/data/marker.txt": "archive-only",
 		}),
 		"--project-slug", "fixture",
@@ -1540,7 +1546,7 @@ func TestCmdDeployTarball_DoctorStrict_JSON(t *testing.T) {
 
 	if code := main.CmdDeployTarball([]string{
 		"--doctor-strict",
-		"--tarball", writeDeploySourceArchive(t, map[string]string{
+		"--tarball", main.WriteDeploySourceArchive(t, map[string]string{
 			"fixture/data/marker.txt": "archive-only",
 		}),
 		"--project-slug", "fixture",

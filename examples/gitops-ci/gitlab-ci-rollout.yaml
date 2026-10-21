@@ -1,0 +1,15 @@
+gregale-gitops-rollout:
+  tags: [gregale-cli]
+  timeout: 20m
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+  variables:
+    GIT_STRATEGY: none
+  script:
+    - >-
+      gregale projects environments gitops wait "$GREGALE_PROJECT" "$GREGALE_ENVIRONMENT"
+      --commit "$CI_COMMIT_SHA" --timeout 15m --json > gitops-rollout.json
+  artifacts:
+    when: always
+    paths: [gitops-rollout.json]
+    expire_in: 7 days

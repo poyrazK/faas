@@ -58,6 +58,9 @@ func (s *Service) requestedSchedule(r *http.Request, acct state.Account, store s
 	if problem != nil {
 		return state.BillingRunSchedule{}, problem
 	}
+	if problem := s.requireProductControl(opts); problem != nil {
+		return state.BillingRunSchedule{}, problem
+	}
 	delay := api.BillingRunScheduleDefaultDelayHours
 	if req.DelayHours != nil {
 		delay = *req.DelayHours

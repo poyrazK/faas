@@ -582,7 +582,7 @@ func (e *Engine) drainDeploymentInstances(ctx context.Context, deploymentID stri
 	if !e.ownsApp(app) {
 		return
 	}
-	instances, err := e.store.ListInstancesForApp(ctx, dep.AppID)
+	instances, err := e.liveInstancesForApp(ctx, dep.AppID)
 	if err != nil {
 		e.log.Warn("sched: list deployment drain", "deployment", deploymentID, "err", err)
 		return
