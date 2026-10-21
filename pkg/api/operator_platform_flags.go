@@ -53,6 +53,14 @@ type PlatformFlagSelfServe struct {
 	MaxSubjects int      `json:"max_subjects,omitempty"`
 }
 
+// PlatformFlagOptIns is the stored value of platform_flag_opt_ins.<key>: the
+// accounts and organizations that joined a self-serve preview. Operators
+// write it with PATCH /v1/admin/config/platform_flag_opt_ins.<key>.
+type PlatformFlagOptIns struct {
+	Accounts []string `json:"accounts,omitempty"`
+	Orgs     []string `json:"orgs,omitempty"`
+}
+
 // OperatorPlatformFlagOptIns counts the accounts and organizations that
 // joined a self-serve preview.
 type OperatorPlatformFlagOptIns struct {
