@@ -36,6 +36,10 @@ class FinancialBudgetRuntime:
     evaluation: FinancialBudgetEvaluation | Unset = UNSET
     """Retained evidence boundary; an absent known_millicents means evaluation unavailable, never zero. Partial
     known costs can trigger labelled notifications; stale observations cannot create new alerts."""
+    projection: FinancialBudgetAlert | Unset = UNSET
+    """One threshold event per policy revision and UTC month. Edits re-evaluate monthly spending. Delivery is at
+    least once with a stable transport idempotency key; delivered means accepted by the configured transport, not
+    confirmed inbox receipt."""
     stops: list[FinancialBudgetStop] | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -52,6 +56,10 @@ class FinancialBudgetRuntime:
         evaluation: dict[str, Any] | Unset = UNSET
         if not isinstance(self.evaluation, Unset):
             evaluation = self.evaluation.to_dict()
+
+        projection: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.projection, Unset):
+            projection = self.projection.to_dict()
 
         stops: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.stops, Unset):
@@ -71,6 +79,8 @@ class FinancialBudgetRuntime:
             field_dict["compute"] = compute
         if evaluation is not UNSET:
             field_dict["evaluation"] = evaluation
+        if projection is not UNSET:
+            field_dict["projection"] = projection
         if stops is not UNSET:
             field_dict["stops"] = stops
 
@@ -105,6 +115,13 @@ class FinancialBudgetRuntime:
         else:
             evaluation = FinancialBudgetEvaluation.from_dict(_evaluation)
 
+        _projection = d.pop("projection", UNSET)
+        projection: FinancialBudgetAlert | Unset
+        if isinstance(_projection, Unset):
+            projection = UNSET
+        else:
+            projection = FinancialBudgetAlert.from_dict(_projection)
+
         _stops = d.pop("stops", UNSET)
         stops: list[FinancialBudgetStop] | Unset = UNSET
         if _stops is not UNSET:
@@ -118,6 +135,7 @@ class FinancialBudgetRuntime:
             alerts=alerts,
             compute=compute,
             evaluation=evaluation,
+            projection=projection,
             stops=stops,
         )
 

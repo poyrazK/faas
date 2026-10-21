@@ -980,6 +980,7 @@ export type { FinancialAppCostsResponse } from './FinancialAppCostsResponse.js';
 export type { FinancialAppMeterCosts } from './FinancialAppMeterCosts.js';
 export type { FinancialAttribution } from './FinancialAttribution.js';
 export type { FinancialBudgetAlert } from './FinancialBudgetAlert.js';
+export type { FinancialBudgetChannelsResponse } from './FinancialBudgetChannelsResponse.js';
 export type { FinancialBudgetEvaluation } from './FinancialBudgetEvaluation.js';
 export type { FinancialBudgetHistoryResponse } from './FinancialBudgetHistoryResponse.js';
 export type { FinancialBudgetListResponse } from './FinancialBudgetListResponse.js';
@@ -2783,6 +2784,7 @@ export type { SetBindingReleasePolicyRequest } from './SetBindingReleasePolicyRe
 export type { SetCanaryRouteGateRequest } from './SetCanaryRouteGateRequest.js';
 export type { SetDeploymentAliasRequest } from './SetDeploymentAliasRequest.js';
 export type { SetEnvironmentRouteBudgetsRequest } from './SetEnvironmentRouteBudgetsRequest.js';
+export type { SetFinancialBudgetChannelsRequest } from './SetFinancialBudgetChannelsRequest.js';
 export type { SetGraceWindowRequest } from './SetGraceWindowRequest.js';
 export type { SetMCPReadinessFallbackRequest } from './SetMCPReadinessFallbackRequest.js';
 export type { SetMCPReadinessPagerDutyAcknowledgementsRequest } from './SetMCPReadinessPagerDutyAcknowledgementsRequest.js';

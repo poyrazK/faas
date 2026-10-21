@@ -4341,6 +4341,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("PUT /v1/billing/budgets/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireFinancialBudgetIdempotency(s.updateFinancialBudget)))))
 	mux.HandleFunc("DELETE /v1/billing/budgets/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireFinancialBudgetIdempotency(s.deleteFinancialBudget)))))
 	mux.HandleFunc("GET /v1/billing/budgets/{id}/revisions", s.authLimited(s.requireMFA(s.requireScope(api.ScopesUsageReadSurface...)(s.listFinancialBudgetRevisions))))
+	mux.HandleFunc("GET /v1/billing/budgets/{id}/channels", s.authLimited(s.requireMFA(s.requireScope(api.ScopesUsageReadSurface...)(s.getFinancialBudgetChannels))))
+	mux.HandleFunc("PUT /v1/billing/budgets/{id}/channels", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireFinancialBudgetIdempotency(s.setFinancialBudgetChannels)))))
 	mux.HandleFunc("POST /v1/invoices/{id}/refresh", s.authLimited(s.requireMFA(s.requireScope(api.ScopesUsageReadSurface...)(s.postInvoiceRefresh))))
 	mux.HandleFunc("POST /v1/invoices/backfill", s.authLimited(s.requireMFA(s.requireScope(api.ScopesUsageReadSurface...)(s.postInvoiceHistoryBackfill))))
 

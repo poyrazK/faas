@@ -28,6 +28,12 @@ class FinancialBudgetEvaluation:
     fresh: bool
     reasons: list[str]
     known_millicents: int | Unset = UNSET
+    projected_millicents: int | Unset = UNSET
+    """Month-end amount at the current run rate (ADR-20261019193500): an estimate, not an invoice. Absent, with
+    projection_reason, when a selected meter has no forecast or the evidence is incomplete or stale."""
+    projection_reason: str | Unset = UNSET
+    """Why no projection is available, for example compute:insufficient_history (less than a day of evidence) or
+    incomplete_evidence."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -49,6 +55,10 @@ class FinancialBudgetEvaluation:
 
         known_millicents = self.known_millicents
 
+        projected_millicents = self.projected_millicents
+
+        projection_reason = self.projection_reason
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -65,6 +75,10 @@ class FinancialBudgetEvaluation:
         )
         if known_millicents is not UNSET:
             field_dict["known_millicents"] = known_millicents
+        if projected_millicents is not UNSET:
+            field_dict["projected_millicents"] = projected_millicents
+        if projection_reason is not UNSET:
+            field_dict["projection_reason"] = projection_reason
 
         return field_dict
 
@@ -89,6 +103,10 @@ class FinancialBudgetEvaluation:
 
         known_millicents = d.pop("known_millicents", UNSET)
 
+        projected_millicents = d.pop("projected_millicents", UNSET)
+
+        projection_reason = d.pop("projection_reason", UNSET)
+
         financial_budget_evaluation = cls(
             period_start=period_start,
             period_end=period_end,
@@ -99,6 +117,8 @@ class FinancialBudgetEvaluation:
             fresh=fresh,
             reasons=reasons,
             known_millicents=known_millicents,
+            projected_millicents=projected_millicents,
+            projection_reason=projection_reason,
         )
 
         financial_budget_evaluation.additional_properties = d

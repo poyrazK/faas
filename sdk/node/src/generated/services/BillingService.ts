@@ -8,6 +8,7 @@ import type { BillingRetryResponse } from '../models/BillingRetryResponse.js';
 import type { BillingStatusResponse } from '../models/BillingStatusResponse.js';
 import type { CreateFinancialBudgetRequest } from '../models/CreateFinancialBudgetRequest.js';
 import type { DeleteFinancialBudgetRequest } from '../models/DeleteFinancialBudgetRequest.js';
+import type { FinancialBudgetChannelsResponse } from '../models/FinancialBudgetChannelsResponse.js';
 import type { FinancialBudgetHistoryResponse } from '../models/FinancialBudgetHistoryResponse.js';
 import type { FinancialBudgetListResponse } from '../models/FinancialBudgetListResponse.js';
 import type { FinancialBudgetPreviewRequest } from '../models/FinancialBudgetPreviewRequest.js';
@@ -17,6 +18,7 @@ import type { FinancialCostsResponse } from '../models/FinancialCostsResponse.js
 import type { FinancialForecastResponse } from '../models/FinancialForecastResponse.js';
 import type { InvoiceHistoryBackfillResponse } from '../models/InvoiceHistoryBackfillResponse.js';
 import type { InvoiceRefreshResponse } from '../models/InvoiceRefreshResponse.js';
+import type { SetFinancialBudgetChannelsRequest } from '../models/SetFinancialBudgetChannelsRequest.js';
 import type { UpdateFinancialBudgetRequest } from '../models/UpdateFinancialBudgetRequest.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
@@ -437,6 +439,94 @@ export class BillingService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * List the notification channels a budget's threshold alerts also go to.
+   * Requires usage:read and session MFA (ADR-20261019193500). Each channel
+   * reports its latest delivery outcome. Alerts always go to the account
+   * email; channels are in addition to it. Deleted or foreign policies
+   * return 404.
+   *
+   * @returns FinancialBudgetChannelsResponse Bound channels in name order; empty when only the account email is used.
+   * @throws ApiError
+   */
+  public static getFinancialBudgetChannels({
+    id,
+  }: {
+    /**
+     * Stable identity of a live account-owned budget policy.
+     */
+    id: string,
+  }): CancelablePromise<FinancialBudgetChannelsResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/billing/budgets/{id}/channels',
+      path: {
+        'id': id,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Replace the notification channels a budget's threshold alerts also go to.
+   * Requires admin scope, session MFA and Idempotency-Key (ADR-20261019193500).
+   * Every id must be one of the account's notification channels, at most 5,
+   * without duplicates. Each threshold alert is delivered once per channel
+   * and retried with backoff for up to 12 attempts. A channel added later
+   * receives a threshold already crossed this month when it is next
+   * re-evaluated. Removing a channel holds its pending deliveries; deleting
+   * the channel discards them. Does not change the policy revision.
+   *
+   * @returns FinancialBudgetChannelsResponse The budget's channels after the replacement.
+   * @throws ApiError
+   */
+  public static setFinancialBudgetChannels({
+    id,
+    idempotencyKey,
+    requestBody,
+  }: {
+    /**
+     * Stable identity of a live account-owned budget policy.
+     */
+    id: string,
+    /**
+     * Retry key for this replacement.
+     */
+    idempotencyKey: string,
+    requestBody: SetFinancialBudgetChannelsRequest,
+  }): CancelablePromise<FinancialBudgetChannelsResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/billing/budgets/{id}/channels',
+      path: {
+        'id': id,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
