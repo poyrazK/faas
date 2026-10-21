@@ -7,18 +7,81 @@
 -- platform tenant items. product_discovered_at records their discovery apart
 -- from discovered_at, which a previous release sets without discovering them.
 -- migration-compat: expand
+--
+-- The two sources CHECKs are replaced online and keep their names: the wider
+-- list is added NOT VALID under a temporary name and validated, the old one
+-- dropped, then the same list is added back under the old name, validated,
+-- and the temporary one dropped. Each step is its own transaction; a VALIDATE
+-- takes SHARE UPDATE EXCLUSIVE, so runs and schedules keep being written
+-- during the scans, and a CHECK always holds. Every step is re-runnable.
+-- +goose NO TRANSACTION
 
 -- +goose Up
-SET LOCAL lock_timeout = '5s';
--- +goose StatementBegin
-ALTER TABLE billing_runs ADD COLUMN IF NOT EXISTS product_discovered_at timestamptz;
-ALTER TABLE billing_runs DROP CONSTRAINT IF EXISTS billing_runs_sources_chk;
-ALTER TABLE billing_runs ADD CONSTRAINT billing_runs_sources_chk CHECK (
-  cardinality(sources) BETWEEN 1 AND 3 AND sources <@ ARRAY['app_consumers', 'platform_tenants', 'product_customers']::text[]);
-ALTER TABLE billing_run_schedules DROP CONSTRAINT IF EXISTS billing_run_schedules_sources_chk;
-ALTER TABLE billing_run_schedules ADD CONSTRAINT billing_run_schedules_sources_chk CHECK (
-  cardinality(sources) BETWEEN 1 AND 3 AND sources <@ ARRAY['app_consumers', 'platform_tenants', 'product_customers']::text[]);
+SET lock_timeout = '5s';
 
+ALTER TABLE billing_runs ADD COLUMN IF NOT EXISTS product_discovered_at timestamptz;
+
+-- +goose StatementBegin
+DO $sources$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'billing_runs'::regclass AND conname = 'billing_runs_sources_chk_v2') THEN
+    ALTER TABLE billing_runs ADD CONSTRAINT billing_runs_sources_chk_v2 CHECK (
+      cardinality(sources) BETWEEN 1 AND 3 AND sources <@ ARRAY['app_consumers', 'platform_tenants', 'product_customers']::text[]) NOT VALID;
+  END IF;
+END
+$sources$;
+-- +goose StatementEnd
+
+ALTER TABLE billing_runs VALIDATE CONSTRAINT billing_runs_sources_chk_v2;
+
+ALTER TABLE billing_runs DROP CONSTRAINT IF EXISTS billing_runs_sources_chk;
+
+-- +goose StatementBegin
+DO $sources$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'billing_runs'::regclass AND conname = 'billing_runs_sources_chk') THEN
+    ALTER TABLE billing_runs ADD CONSTRAINT billing_runs_sources_chk CHECK (
+      cardinality(sources) BETWEEN 1 AND 3 AND sources <@ ARRAY['app_consumers', 'platform_tenants', 'product_customers']::text[]) NOT VALID;
+  END IF;
+END
+$sources$;
+-- +goose StatementEnd
+
+ALTER TABLE billing_runs VALIDATE CONSTRAINT billing_runs_sources_chk;
+
+ALTER TABLE billing_runs DROP CONSTRAINT IF EXISTS billing_runs_sources_chk_v2;
+
+-- +goose StatementBegin
+DO $sources$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'billing_run_schedules'::regclass AND conname = 'billing_run_schedules_sources_chk_v2') THEN
+    ALTER TABLE billing_run_schedules ADD CONSTRAINT billing_run_schedules_sources_chk_v2 CHECK (
+      cardinality(sources) BETWEEN 1 AND 3 AND sources <@ ARRAY['app_consumers', 'platform_tenants', 'product_customers']::text[]) NOT VALID;
+  END IF;
+END
+$sources$;
+-- +goose StatementEnd
+
+ALTER TABLE billing_run_schedules VALIDATE CONSTRAINT billing_run_schedules_sources_chk_v2;
+
+ALTER TABLE billing_run_schedules DROP CONSTRAINT IF EXISTS billing_run_schedules_sources_chk;
+
+-- +goose StatementBegin
+DO $sources$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'billing_run_schedules'::regclass AND conname = 'billing_run_schedules_sources_chk') THEN
+    ALTER TABLE billing_run_schedules ADD CONSTRAINT billing_run_schedules_sources_chk CHECK (
+      cardinality(sources) BETWEEN 1 AND 3 AND sources <@ ARRAY['app_consumers', 'platform_tenants', 'product_customers']::text[]) NOT VALID;
+  END IF;
+END
+$sources$;
+-- +goose StatementEnd
+
+ALTER TABLE billing_run_schedules VALIDATE CONSTRAINT billing_run_schedules_sources_chk;
+
+ALTER TABLE billing_run_schedules DROP CONSTRAINT IF EXISTS billing_run_schedules_sources_chk_v2;
+
+-- +goose StatementBegin
 CREATE TABLE IF NOT EXISTS billing_run_product_items (
     run_id            uuid NOT NULL REFERENCES billing_runs(id) ON DELETE CASCADE,
     app_id            uuid NOT NULL,
@@ -48,16 +111,32 @@ COMMENT ON TABLE billing_run_product_items IS
   'One Product Control customer (app and platform tenant) of a billing run (ADR-20261018212918).';
 -- +goose StatementEnd
 
+RESET lock_timeout;
+
 -- +goose Down
--- +goose StatementBegin
+SET lock_timeout = '5s';
+
 DROP TABLE IF EXISTS billing_run_product_items;
+
 DELETE FROM billing_run_schedules WHERE 'product_customers' = ANY(sources);
+
 DELETE FROM billing_runs WHERE 'product_customers' = ANY(sources);
-ALTER TABLE billing_run_schedules DROP CONSTRAINT IF EXISTS billing_run_schedules_sources_chk;
-ALTER TABLE billing_run_schedules ADD CONSTRAINT billing_run_schedules_sources_chk CHECK (
-  cardinality(sources) BETWEEN 1 AND 2 AND sources <@ ARRAY['app_consumers', 'platform_tenants']::text[]);
-ALTER TABLE billing_runs DROP CONSTRAINT IF EXISTS billing_runs_sources_chk;
-ALTER TABLE billing_runs ADD CONSTRAINT billing_runs_sources_chk CHECK (
-  cardinality(sources) BETWEEN 1 AND 2 AND sources <@ ARRAY['app_consumers', 'platform_tenants']::text[]);
-ALTER TABLE billing_runs DROP COLUMN IF EXISTS product_discovered_at;
+
+-- +goose StatementBegin
+DO $sources$
+BEGIN
+  ALTER TABLE billing_run_schedules DROP CONSTRAINT IF EXISTS billing_run_schedules_sources_chk_v2;
+  ALTER TABLE billing_run_schedules DROP CONSTRAINT IF EXISTS billing_run_schedules_sources_chk;
+  ALTER TABLE billing_run_schedules ADD CONSTRAINT billing_run_schedules_sources_chk CHECK (
+    cardinality(sources) BETWEEN 1 AND 2 AND sources <@ ARRAY['app_consumers', 'platform_tenants']::text[]);
+  ALTER TABLE billing_runs DROP CONSTRAINT IF EXISTS billing_runs_sources_chk_v2;
+  ALTER TABLE billing_runs DROP CONSTRAINT IF EXISTS billing_runs_sources_chk;
+  ALTER TABLE billing_runs ADD CONSTRAINT billing_runs_sources_chk CHECK (
+    cardinality(sources) BETWEEN 1 AND 2 AND sources <@ ARRAY['app_consumers', 'platform_tenants']::text[]);
+END
+$sources$;
 -- +goose StatementEnd
+
+ALTER TABLE billing_runs DROP COLUMN IF EXISTS product_discovered_at;
+
+RESET lock_timeout;

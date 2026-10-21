@@ -132,8 +132,8 @@ func TestProductControlStatementInvoiceLinesAndRounding(t *testing.T) {
 	if _, err := ProductControlStatementInvoice(empty); !errors.Is(err, ErrStatementNotInvoiceable) {
 		t.Fatalf("statement without successes err = %v", err)
 	}
-	doc.Currency = "JPY"
+	doc.Currency = "CLF"
 	if _, err := ProductControlStatementInvoice(doc); !errors.Is(err, ErrInvoiceCurrencyUnsupported) {
-		t.Fatalf("JPY err = %v", err)
+		t.Fatalf("four-decimal CLF err = %v", err)
 	}
 }
