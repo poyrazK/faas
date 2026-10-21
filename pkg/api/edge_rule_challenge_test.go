@@ -1,6 +1,9 @@
 package api
 
-import "testing"
+import (
+	"net/http"
+	"testing"
+)
 
 func TestEdgeRuleChallengeActionValidate(t *testing.T) {
 	for _, tc := range []struct {
@@ -49,5 +52,32 @@ func TestChallengeLimitsByPlan(t *testing.T) {
 	}
 	if !EdgeRuleKindUsesProtectivePathMatch("challenge") {
 		t.Error("challenge must match paths protectively")
+	}
+}
+
+// adr: 831 — amendment 7: only a GET or HEAD navigation gets the challenge
+// page; Sec-Fetch-Mode decides when present, otherwise Accept text/html.
+func TestEdgeChallengeNavigation(t *testing.T) {
+	for _, tc := range []struct {
+		method, mode, accept string
+		want                 bool
+	}{
+		{"GET", "navigate", "", true},
+		{"GET", "cors", "text/html", false},
+		{"GET", "", "text/html,application/xhtml+xml", true},
+		{"HEAD", "", "TEXT/HTML", true},
+		{"GET", "", "application/json", false},
+		{"POST", "navigate", "text/html", false},
+	} {
+		h := http.Header{}
+		if tc.mode != "" {
+			h.Set("Sec-Fetch-Mode", tc.mode)
+		}
+		if tc.accept != "" {
+			h.Set("Accept", tc.accept)
+		}
+		if got := EdgeChallengeNavigation(tc.method, h); got != tc.want {
+			t.Errorf("%s mode=%q accept=%q: %v, want %v", tc.method, tc.mode, tc.accept, got, tc.want)
+		}
 	}
 }

@@ -1,0 +1,21 @@
+# ADR-20261020120000: Product Control customers keep their billing details in the owner's Paddle
+
+- **Status:** accepted for internal implementation; needs Paddle sandbox qualification before owners rely on it
+- **Date:** 2026-10-20
+- **Amends:** ADR-20261019100333 (Paddle invoices sent by Paddle): a billed transaction also carries the customer's business
+- **Implements:** ADR-20261018212918 §6 and slice 5 ("customer billing details so Paddle exports can be billed")
+- **Decision:** Product Control customers enter the billing address and business their invoices go to in the customer portal. Gregale writes them to the owner's Paddle customer and never stores them. With the Paddle connection's collection `send` (ADR-20261019100333), the next export bills the transaction with that address, and now also with that business.
+  - **Customer portal.** A new customer permission, `billing:manage` (`manage_billing`), lets a workspace role read and change the workspace's billing address (country, postal code, region, city, two address lines) and business (name, tax identifier) at `GET`/`PUT /v1/product-control/customer/{slug}/billing-details`. The workspace `owner` role holds it by default; the per-role permission bound becomes 6.
+  - **Where it lives.** Only in the owner's Paddle, on the Paddle customer the export already bills: the platform tenant's `ctm_…` external reference. The portal updates the customer's most recently updated active address and business in place, or creates them. Saving unchanged details writes nothing.
+  - **Available** only when the account has a Paddle connection and the customer's external reference is a Paddle customer ID; otherwise the routes answer 409 `product_billing_details_unavailable`, as they do when the owner's key cannot manage addresses.
+  - **Business on invoices.** When ADR-20261019100333 bills a transaction, it now also sets `business_id` to the customer's most recently updated active business, so the tax identifier reaches the invoice. A customer without a business is billed as before.
+  - **Audit.** Each change is `product.customer.billing_details_updated` with the changed parts (`address`, `business`) and never their values.
+- **Why:** ADR-20261019100333 bills a Paddle transaction only for a customer with an address and fails the export otherwise, but Product Control captured no address, so every Product Control customer's export failed until the owner typed the address into Paddle by hand. Customers know their own address and tax identifier.
+- **Consequences:**
+  - **No new personal data in Gregale.** The portal calls the owner's Paddle with the owner's sealed key (ADR-1507); Gregale keeps only the audit event.
+  - **Paddle permissions.** The owner's key now also needs write access to customers' addresses and businesses for the portal step; exports need read access to businesses.
+  - **Other providers.** Stripe and Lago customers cannot edit billing details in the portal yet.
+  - **Qualification.** The address and business request shapes follow Paddle Billing API v1 and recorded fakes. They must be checked against a Paddle sandbox account before owners rely on them.
+- **Rejected alternatives:**
+  - **Storing the address in Gregale** and sending it on each export would make Gregale hold customers' postal and tax data and keep it in sync with Paddle.
+  - **Reusing `manage_plan` or `view_billing`** would let roles that choose plans or read statements also change where invoices are addressed.

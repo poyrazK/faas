@@ -1023,6 +1023,8 @@ from .dashboard_discard_failed_event_body import DashboardDiscardFailedEventBody
 from .dashboard_replay_account_failed_event_body import DashboardReplayAccountFailedEventBody
 from .dashboard_replay_app_debug_request_body import DashboardReplayAppDebugRequestBody
 from .dashboard_replay_failed_event_body import DashboardReplayFailedEventBody
+from .data_api_access_config import DataAPIAccessConfig
+from .data_api_access_config_version import DataAPIAccessConfigVersion
 from .data_api_connection_budgets import DataAPIConnectionBudgets
 from .data_api_connection_budgets_state import DataAPIConnectionBudgetsState
 from .data_api_connection_budgets_version import DataAPIConnectionBudgetsVersion
@@ -1030,6 +1032,10 @@ from .data_api_runtime_connection_report import DataAPIRuntimeConnectionReport
 from .data_api_runtime_connection_report_runtime_model import DataAPIRuntimeConnectionReportRuntimeModel
 from .data_api_runtime_connection_report_state import DataAPIRuntimeConnectionReportState
 from .data_api_runtime_connection_report_version import DataAPIRuntimeConnectionReportVersion
+from .data_api_server_key import DataAPIServerKey
+from .data_api_server_key_permission_set import DataAPIServerKeyPermissionSet
+from .data_api_server_key_permission_set_access import DataAPIServerKeyPermissionSetAccess
+from .data_api_server_key_slot import DataAPIServerKeySlot
 from .data_api_usage import DataAPIUsage
 from .data_api_usage_bucket import DataAPIUsageBucket
 from .data_api_usage_counts import DataAPIUsageCounts
@@ -1039,6 +1045,7 @@ from .data_api_usage_month_to_date import DataAPIUsageMonthToDate
 from .data_api_usage_report import DataAPIUsageReport
 from .data_api_usage_report_response import DataAPIUsageReportResponse
 from .data_api_usage_report_version import DataAPIUsageReportVersion
+from .data_api_user_auth import DataAPIUserAuth
 from .data_connection import DataConnection
 from .data_connection_check import DataConnectionCheck
 from .data_connection_check_state import DataConnectionCheckState
@@ -1354,6 +1361,7 @@ from .durable_entity_validator_deployment_info import DurableEntityValidatorDepl
 from .durable_entity_validator_deployment_info_source import DurableEntityValidatorDeploymentInfoSource
 from .durable_entity_validator_deployment_info_status import DurableEntityValidatorDeploymentInfoStatus
 from .edge_protection_response import EdgeProtectionResponse
+from .edge_protection_response_challenge import EdgeProtectionResponseChallenge
 from .edge_protection_response_pre_auth import EdgeProtectionResponsePreAuth
 from .edge_protection_response_range import EdgeProtectionResponseRange
 from .edge_protection_response_rejections_item import EdgeProtectionResponseRejectionsItem
@@ -1391,6 +1399,8 @@ from .edge_rule_maintenance_action import EdgeRuleMaintenanceAction
 from .edge_rule_match_expr import EdgeRuleMatchExpr
 from .edge_rule_match_expr_op import EdgeRuleMatchExprOp
 from .edge_rule_recipe_suggestion import EdgeRuleRecipeSuggestion
+from .edge_rule_recipe_suggestion_alternative import EdgeRuleRecipeSuggestionAlternative
+from .edge_rule_recipe_suggestion_alternative_params import EdgeRuleRecipeSuggestionAlternativeParams
 from .edge_rule_recipe_suggestion_params import EdgeRuleRecipeSuggestionParams
 from .edge_rule_recipe_suggestions_response import EdgeRuleRecipeSuggestionsResponse
 from .edge_rule_redirect_action import EdgeRuleRedirectAction
@@ -6958,6 +6968,8 @@ __all__ = (
     "DashboardReplayAccountFailedEventBody",
     "DashboardReplayAppDebugRequestBody",
     "DashboardReplayFailedEventBody",
+    "DataAPIAccessConfig",
+    "DataAPIAccessConfigVersion",
     "DataAPIConnectionBudgets",
     "DataAPIConnectionBudgetsState",
     "DataAPIConnectionBudgetsVersion",
@@ -6965,6 +6977,10 @@ __all__ = (
     "DataAPIRuntimeConnectionReportRuntimeModel",
     "DataAPIRuntimeConnectionReportState",
     "DataAPIRuntimeConnectionReportVersion",
+    "DataAPIServerKey",
+    "DataAPIServerKeyPermissionSet",
+    "DataAPIServerKeyPermissionSetAccess",
+    "DataAPIServerKeySlot",
     "DataAPIUsage",
     "DataAPIUsageBucket",
     "DataAPIUsageCounts",
@@ -6974,6 +6990,7 @@ __all__ = (
     "DataAPIUsageReport",
     "DataAPIUsageReportResponse",
     "DataAPIUsageReportVersion",
+    "DataAPIUserAuth",
     "DataConnection",
     "DataConnectionCheck",
     "DataConnectionCheckState",
@@ -7287,6 +7304,7 @@ __all__ = (
     "DurableEntityValidatorDeploymentInfoSource",
     "DurableEntityValidatorDeploymentInfoStatus",
     "EdgeProtectionResponse",
+    "EdgeProtectionResponseChallenge",
     "EdgeProtectionResponsePreAuth",
     "EdgeProtectionResponseRange",
     "EdgeProtectionResponseRejectionsItem",
@@ -7324,6 +7342,8 @@ __all__ = (
     "EdgeRuleMatchExpr",
     "EdgeRuleMatchExprOp",
     "EdgeRuleRecipeSuggestion",
+    "EdgeRuleRecipeSuggestionAlternative",
+    "EdgeRuleRecipeSuggestionAlternativeParams",
     "EdgeRuleRecipeSuggestionParams",
     "EdgeRuleRecipeSuggestionsResponse",
     "EdgeRuleRedirectAction",

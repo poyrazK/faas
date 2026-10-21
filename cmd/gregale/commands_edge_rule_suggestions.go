@@ -52,7 +52,12 @@ func cmdEdgeRulesSuggest(args []string) int {
 	}
 	_, _ = fmt.Fprintf(osStdout, "Suggested protections for %s, from the last %s of traffic:\n\n", slug, out.Window)
 	for _, sg := range out.Suggestions {
-		_, _ = fmt.Fprintf(osStdout, "%s — %s\n  %s\n  Add in log mode: %s\n\n", sg.Recipe, sg.Title, sg.Reason, edgeRuleSuggestCommand(slug, sg))
+		_, _ = fmt.Fprintf(osStdout, "%s — %s\n  %s\n  Add in log mode: %s\n", sg.Recipe, sg.Title, sg.Reason, edgeRuleSuggestCommand(slug, sg))
+		if alt := sg.Alternative; alt != nil {
+			_, _ = fmt.Fprintf(osStdout, "  Or %s: %s\n", strings.ToLower(alt.Title[:1])+alt.Title[1:],
+				edgeRuleSuggestCommand(slug, api.EdgeRuleRecipeSuggestion{Recipe: alt.Recipe, Params: alt.Params}))
+		}
+		_, _ = fmt.Fprintln(osStdout)
 	}
 	return 0
 }

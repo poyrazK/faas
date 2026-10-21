@@ -3,6 +3,7 @@ package api
 import (
 	"fmt"
 	"net/http"
+	"strings"
 )
 
 // ErrChallengeRequired answers a non-navigation request on a challenged
@@ -52,4 +53,18 @@ func (a *EdgeRuleChallengeAction) Validate() *Problem {
 			MinEdgeChallengePassTTLSeconds, MaxEdgeChallengePassTTLSeconds, a.PassTTLSeconds))
 	}
 	return nil
+}
+
+// EdgeChallengeNavigation reports whether a request is a browser navigation,
+// which gets the challenge page; any other request on a challenged route
+// gets 403 challenge_required (ADR-831 amendment 7). Sec-Fetch-Mode decides
+// when present; otherwise an Accept naming text/html does.
+func EdgeChallengeNavigation(method string, header http.Header) bool {
+	if method != http.MethodGet && method != http.MethodHead {
+		return false
+	}
+	if mode := header.Get("Sec-Fetch-Mode"); mode != "" {
+		return strings.EqualFold(mode, "navigate")
+	}
+	return strings.Contains(strings.ToLower(header.Get("Accept")), "text/html")
 }

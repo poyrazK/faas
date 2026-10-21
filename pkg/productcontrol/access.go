@@ -27,7 +27,7 @@ func ValidateAccess(policy *api.ProductAccessPolicy) error {
 		}
 		seen := map[api.ProductPermission]bool{}
 		for _, permission := range permissions {
-			if seen[permission] || !slices.Contains([]api.ProductPermission{api.ProductPermissionViewWork, api.ProductPermissionRunWork, api.ProductPermissionViewBilling, api.ProductPermissionManagePlan, api.ProductPermissionManageTeam}, permission) {
+			if seen[permission] || !slices.Contains([]api.ProductPermission{api.ProductPermissionViewWork, api.ProductPermissionRunWork, api.ProductPermissionViewBilling, api.ProductPermissionManagePlan, api.ProductPermissionManageTeam, api.ProductPermissionManageBilling}, permission) {
 				return fmt.Errorf("invalid or duplicate product permission for role %q", role)
 			}
 			seen[permission] = true
@@ -40,7 +40,7 @@ func ValidateAccess(policy *api.ProductAccessPolicy) error {
 // Nil catalog access uses this default, including previously published catalogs.
 func DefaultAccess() api.ProductAccessPolicy {
 	return api.ProductAccessPolicy{Roles: map[string][]api.ProductPermission{
-		"owner":  {api.ProductPermissionViewWork, api.ProductPermissionRunWork, api.ProductPermissionViewBilling},
+		"owner":  {api.ProductPermissionViewWork, api.ProductPermissionRunWork, api.ProductPermissionViewBilling, api.ProductPermissionManageBilling},
 		"admin":  {api.ProductPermissionViewWork, api.ProductPermissionRunWork, api.ProductPermissionViewBilling},
 		"member": {api.ProductPermissionViewWork},
 	}}
@@ -67,6 +67,8 @@ func EffectiveAccess(policy *api.ProductAccessPolicy, role string) api.ProductPe
 			out.ManagePlan = true
 		case api.ProductPermissionManageTeam:
 			out.ManageTeam = true
+		case api.ProductPermissionManageBilling:
+			out.ManageBilling = true
 		}
 	}
 	return out
