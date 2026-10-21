@@ -337,7 +337,7 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 	if req.Profiling != nil && req.Profiling.Enabled && s.profileBackend == nil {
 		return state.App{}, api.ErrCapacity("CPU profiling is unavailable on this installation")
 	}
-	if req.Tracing != nil && req.Tracing.Enabled && !s.guestTracingEnabled {
+	if req.Tracing != nil && req.Tracing.Enabled && !s.guestTracingFor(acct) {
 		return state.App{}, api.ErrCapacity("request tracing is unavailable on this installation")
 	}
 	lifecycle := lifecycleManifestFromCreate(req)

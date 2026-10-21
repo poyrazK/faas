@@ -284,6 +284,40 @@ func TestEnvGatesYieldToOperatorPlatformFlags(t *testing.T) {
 			t.Fatal("the operator rule must decide once written, whatever the environment says")
 		}
 	})
+	t.Run("operation_schedules_and_children", func(t *testing.T) {
+		t.Setenv("FAAS_OPERATION_SCHEDULES_ACCOUNTS", acct.ID)
+		t.Setenv("FAAS_OPERATION_CHILDREN_ACCOUNTS", acct.ID)
+		if !s.OperationSchedulesOpen(acct.ID) || s.OperationSchedulesOpen(other.ID) || !s.OperationChildrenOpen(acct.ID) {
+			t.Fatal("the environment allowlists must decide until an operator writes the flags")
+		}
+		apply(platformflags.OperationSchedules, only(other.ID), 1)
+		apply(platformflags.OperationChildren, off, 1)
+		if s.OperationSchedulesOpen(acct.ID) || !s.OperationSchedulesOpen(other.ID) || s.OperationChildrenOpen(acct.ID) {
+			t.Fatal("the operator values must decide once written, whatever the allowlists say")
+		}
+	})
+	t.Run("service_map_guest_tracing_static_egress", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/v1/service-map", nil)
+		if !s.ServiceMapReleased(req, acct, true) || s.GuestTracingReleased(acct, false) {
+			t.Fatal("the environment gates must decide until an operator writes the flags")
+		}
+		t.Setenv("FAAS_STATIC_EGRESS_IP_ENABLED", "1")
+		if !s.StaticEgressIPReleased(me) {
+			t.Fatal("FAAS_STATIC_EGRESS_IP_ENABLED must decide until an operator writes the flag")
+		}
+		apply(platformflags.ServiceMap, only(acct.ID), 1)
+		apply(platformflags.GuestTracing, only(acct.ID), 1)
+		apply(platformflags.StaticEgressIP, off, 1)
+		if !s.ServiceMapReleased(req, acct, false) || s.ServiceMapReleased(req, other, true) {
+			t.Fatal("service_map must follow the operator rule once written")
+		}
+		if !s.GuestTracingReleased(acct, false) || s.GuestTracingReleased(other, true) {
+			t.Fatal("guest_tracing must follow the operator rule once written")
+		}
+		if s.StaticEgressIPReleased(me) {
+			t.Fatal("an operator kill switch must override FAAS_STATIC_EGRESS_IP_ENABLED")
+		}
+	})
 	t.Run("live_queries", func(t *testing.T) {
 		if err := s.ConfigureLiveQueriesForTest(func(string) string { return "" }); err != nil {
 			t.Fatal(err)

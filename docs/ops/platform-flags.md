@@ -70,11 +70,17 @@ flag still cannot use a capability its plan lacks; the inspector reports both.
 | `change_timeline` | App change timeline preview (ADR-751) | apid | `FAAS_CHANGE_TIMELINE_ENABLED` |
 | `anomaly_alerts` | Baseline alert comparisons (ADR-744) | apid | `FAAS_ANOMALY_ALERTS_ENABLED` |
 | `trigger_batch_delivery` | `delivery: batch` on triggers (ADR-1321) | apid | `FAAS_TRIGGER_BATCH_DELIVERY_PREVIEW_ENABLED` |
+| `operation_schedules` | Operation schedules: routes and firing (ADR-20261018161833) | apid | `FAAS_OPERATION_SCHEDULES_ACCOUNTS` |
+| `operation_children` | Child Operations and cancellation cascade (ADR-20261018183000) | apid | `FAAS_OPERATION_CHILDREN_ACCOUNTS` |
+| `service_map` | Service map preview (ADR-1131) | apid | `FAAS_SERVICE_MAP_ENABLED` |
+| `guest_tracing` | In-guest request tracing setting (ADR-958) | apid | `FAAS_GUEST_TRACING_ENABLED` (vmmd's receiver still needs it on the node) |
+| `static_egress_ip` | Static egress IP management (ADR-119) | apid | `FAAS_STATIC_EGRESS_IP_ENABLED` |
 
 The environment and TOML values seed the flag at boot. Once an operator has
 written the flag, they are ignored, including after a restart.
 
-The last five flags were added after their environment gates had shipped.
+Every flag after `customer_flags` was added after its environment gate had
+shipped.
 Until an operator writes one of them, its existing gate still decides, and
 `FAAS_APPLICATION_AUTH_*` is still re-read on every call. The first operator
 write hands the decision to the flag.

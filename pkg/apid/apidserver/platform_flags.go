@@ -172,6 +172,19 @@ func (s *server) applicationAuthEnabled(subject platformflags.Subject) bool {
 	return s.platformFlagOr(platformflags.ApplicationAuth, subject, api.ApplicationAuthEnabled(subject.AccountID))
 }
 
+// guestTracingFor is the guest_tracing release gate (ADR-958). It decides by
+// account and plan: creating an app has no organization yet.
+func (s *server) guestTracingFor(acct state.Account) bool {
+	return s.platformFlagOr(platformflags.GuestTracing, platformflags.Subject{AccountID: acct.ID, Plan: string(acct.Plan)}, s.guestTracingEnabled)
+}
+
+// staticEgressIPFor is the static_egress_ip release gate (ADR-119); the
+// environment value is still re-read on every call until an operator writes
+// the flag.
+func (s *server) staticEgressIPFor(subject platformflags.Subject) bool {
+	return s.platformFlagOr(platformflags.StaticEgressIP, subject, api.StaticEgressIPEnabled())
+}
+
 // changeTimelineFor is the change_timeline release gate (ADR-751).
 func (s *server) changeTimelineFor(subject platformflags.Subject) bool {
 	return s.platformFlagOr(platformflags.ChangeTimeline, subject, s.changeTimelineEnabled)
@@ -181,19 +194,37 @@ func (s *server) changeTimelineFor(subject platformflags.Subject) bool {
 // platform flags as each flag's boot fallback (version 0). Live queries seed
 // theirs in configureLiveQueries, where the rollout is parsed.
 func (s *server) seedEnvPlatformFlags(getenv func(string) string) {
-	authAll := false
-	switch strings.ToLower(strings.TrimSpace(getenv("FAAS_APPLICATION_AUTH_ENABLED"))) {
-	case "1", "true", "yes", "on":
-		authAll = true
-	}
-	var authAccounts []string
-	for _, id := range strings.Split(getenv("FAAS_APPLICATION_AUTH_ACCOUNTS"), ",") {
-		if id = strings.TrimSpace(id); id != "" {
-			authAccounts = append(authAccounts, id)
-		}
-	}
+	authAll := envTruthy(getenv("FAAS_APPLICATION_AUTH_ENABLED"))
+	authAccounts := envAccountList(getenv("FAAS_APPLICATION_AUTH_ACCOUNTS"))
 	s.seedPlatformFlag(platformflags.ApplicationAuth, platformflags.FromAccountList(authAll || len(authAccounts) > 0, authAll, authAccounts))
 	s.seedPlatformFlag(platformflags.ChangeTimeline, platformflags.FromAccountList(s.changeTimelineEnabled, true, nil))
 	s.seedPlatformFlag(platformflags.AnomalyAlerts, platformflags.FromAccountList(s.anomalyAlertsEnabled, true, nil))
 	s.seedPlatformFlag(platformflags.TriggerBatchDelivery, platformflags.FromAccountList(s.triggerBatchDeliveryEnabled, true, nil))
+	schedules := envAccountList(getenv("FAAS_OPERATION_SCHEDULES_ACCOUNTS"))
+	s.seedPlatformFlag(platformflags.OperationSchedules, platformflags.FromAccountList(len(schedules) > 0, false, schedules))
+	children := envAccountList(getenv("FAAS_OPERATION_CHILDREN_ACCOUNTS"))
+	s.seedPlatformFlag(platformflags.OperationChildren, platformflags.FromAccountList(len(children) > 0, false, children))
+	s.seedPlatformFlag(platformflags.ServiceMap, platformflags.FromAccountList(s.serviceMap.Enabled, true, nil))
+	s.seedPlatformFlag(platformflags.GuestTracing, platformflags.FromAccountList(s.guestTracingEnabled, true, nil))
+	s.seedPlatformFlag(platformflags.StaticEgressIP, platformflags.FromAccountList(envTruthy(getenv("FAAS_STATIC_EGRESS_IP_ENABLED")), true, nil))
+}
+
+// envAccountList splits a comma-separated account allowlist, dropping blanks.
+func envAccountList(value string) []string {
+	var out []string
+	for _, id := range strings.Split(value, ",") {
+		if id = strings.TrimSpace(id); id != "" {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+// envTruthy is the 1/true/yes/on reading pkg/api's environment gates use.
+func envTruthy(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
 }

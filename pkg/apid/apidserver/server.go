@@ -1419,6 +1419,12 @@ func newServerWithDeps(
 	}
 	s.object.InventoryWake = make(chan struct{}, 1)
 	s.operation.Host = operationHost{s}
+	s.operation.SchedulesReleased = func(accountID string) bool {
+		return s.platformFlagOr(platformflags.OperationSchedules, platformflags.Subject{AccountID: accountID}, api.OperationSchedulesEnabled(accountID))
+	}
+	s.operation.ChildrenReleased = func(accountID string) bool {
+		return s.platformFlagOr(platformflags.OperationChildren, platformflags.Subject{AccountID: accountID}, api.OperationChildrenEnabled(accountID))
+	}
 	s.productControl.Host = operationHost{s}
 	s.productControl.StartOperation = s.operation.StartProductOperation
 	s.productControl.AuthOrigin = s.productAuthOrigin
@@ -1440,6 +1446,9 @@ func newServerWithDeps(
 	s.consumerControls.Host = consumerControlsHost{s}
 	s.tenantPlans.Host = tenantPlansHost{s}
 	s.serviceMap.Host = serviceMapHost{s}
+	s.serviceMap.Released = func(r *http.Request, acct state.Account) bool {
+		return s.platformFlagOr(platformflags.ServiceMap, flagSubject(r, acct), s.serviceMap.Enabled)
+	}
 	s.platformFlagAdmin.Host = platformFlagAdminHost{s}
 	// ADR-120: wire the package-level appsDomainFunc seam (declared at
 	// cmd/apid/dns_probes.go:125) to the server's apps base domain so

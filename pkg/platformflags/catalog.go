@@ -39,6 +39,11 @@ const (
 	ChangeTimeline       = "change_timeline"
 	AnomalyAlerts        = "anomaly_alerts"
 	TriggerBatchDelivery = "trigger_batch_delivery"
+	OperationSchedules   = "operation_schedules"
+	OperationChildren    = "operation_children"
+	ServiceMap           = "service_map"
+	GuestTracing         = "guest_tracing"
+	StaticEgressIP       = "static_egress_ip"
 )
 
 // Attribute is a subject attribute a rule can constrain beyond the account,
@@ -146,6 +151,49 @@ var catalog = []Spec{
 		Consumers:   []string{"apid"},
 		Attributes:  []Attribute{AttributePlan, AttributeOrg},
 		LegacyEnv:   []string{"FAAS_TRIGGER_BATCH_DELIVERY_PREVIEW_ENABLED"},
+	},
+	{
+		Key:         OperationSchedules,
+		Label:       "Operation schedules",
+		Description: "Release Operation schedules to accounts: the schedule routes, and firing of their schedules. Decided by account only, because the schedule firer knows nothing else.",
+		ADR:         "ADR-20261018161833",
+		Consumers:   []string{"apid"},
+		LegacyEnv:   []string{"FAAS_OPERATION_SCHEDULES_ACCOUNTS"},
+	},
+	{
+		Key:         OperationChildren,
+		Label:       "Child Operations",
+		Description: "Release child Operations to accounts: starting children and cascading a parent's cancellation to them. Decided by account only.",
+		ADR:         "ADR-20261018183000",
+		Consumers:   []string{"apid"},
+		LegacyEnv:   []string{"FAAS_OPERATION_CHILDREN_ACCOUNTS"},
+	},
+	{
+		Key:         ServiceMap,
+		Label:       "Service map",
+		Description: "Release the service map preview (GET /v1/service-map and its dashboard page) to accounts. The plan check for per-app metrics still applies.",
+		ADR:         "ADR-1131",
+		Consumers:   []string{"apid"},
+		Attributes:  []Attribute{AttributePlan, AttributeOrg},
+		LegacyEnv:   []string{"FAAS_SERVICE_MAP_ENABLED"},
+	},
+	{
+		Key:         GuestTracing,
+		Label:       "Guest request tracing",
+		Description: "Release in-guest request tracing to accounts: apps may turn tracing on. vmmd's trace receiver still needs FAAS_GUEST_TRACING_ENABLED on the node; the flag only releases the setting.",
+		ADR:         "ADR-958",
+		Consumers:   []string{"apid"},
+		Attributes:  []Attribute{AttributePlan},
+		LegacyEnv:   []string{"FAAS_GUEST_TRACING_ENABLED"},
+	},
+	{
+		Key:         StaticEgressIP,
+		Label:       "Static egress IP",
+		Description: "Release static egress IP management for apps to accounts.",
+		ADR:         "ADR-119",
+		Consumers:   []string{"apid"},
+		Attributes:  []Attribute{AttributePlan, AttributeOrg},
+		LegacyEnv:   []string{"FAAS_STATIC_EGRESS_IP_ENABLED"},
 	},
 }
 

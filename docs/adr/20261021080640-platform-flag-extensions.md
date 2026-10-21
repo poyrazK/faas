@@ -31,8 +31,13 @@ Every customer-facing release gate moves onto a flag, following the two kinds of
 
 Realtimed has no database pool. Rather than give it one, apid decides the realtime preview flags for each endpoint's account. It sends the decisions with the endpoint configuration it already syncs to realtimed, and resyncs affected endpoints when a realtime flag changes.
 
+**Covered so far:** `operation_schedules`, `operation_children`, `service_map`, `guest_tracing` and `static_egress_ip`. All five keep their environment gate until an operator writes the flag. `guest_tracing` decides by account and plan only, because creating an app has no organization yet. Both operation flags decide by account only, because the schedule firer and the cancellation cascade know nothing else.
+
 **Not migrated:**
 
+- enforcement and infrastructure toggles:
+  - `FAAS_API_CONTRACT_DIFF_ENABLED` gates promotions and rollbacks in apid *and* imaged, so a per-account decision in apid alone would enforce inconsistently;
+  - `FAAS_CUSTOM_METRIC_HISTORY_ENABLED` registers a fleet-wide Prometheus exporter at boot;
 - gates bound to native qualification: `FAAS_REHEARSAL_*`, `FAAS_CI_*`, `FAAS_DATA_REPAIR_REHEARSAL_DISPATCH`;
 - internal services: `FAAS_INTERNAL_MAIL_*`, `FAAS_PRODUCT_CONTROL_ENABLED`;
 - fleet infrastructure: `FAAS_REALTIME_CHANNEL_ROUTING_ENABLED`, the private-network fabric, and the telemetry kill switches.

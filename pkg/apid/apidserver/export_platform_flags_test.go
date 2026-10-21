@@ -57,6 +57,35 @@ func FlagSubject(r *http.Request, acct state.Account) platformflags.Subject {
 	return flagSubject(r, acct)
 }
 
+// OperationSchedulesOpen and OperationChildrenOpen are the gates apid wires
+// into the operation service.
+func (r *server) OperationSchedulesOpen(accountID string) bool {
+	return r.operation.SchedulesReleased(accountID)
+}
+
+func (r *server) OperationChildrenOpen(accountID string) bool {
+	return r.operation.ChildrenReleased(accountID)
+}
+
+// ServiceMapReleased is the service_map gate; legacy sets
+// FAAS_SERVICE_MAP_ENABLED's parsed value first.
+func (r *server) ServiceMapReleased(req *http.Request, acct state.Account, legacy bool) bool {
+	r.serviceMap.Enabled = legacy
+	return r.serviceMap.Released(req, acct)
+}
+
+// GuestTracingReleased is the guest_tracing gate; legacy sets
+// FAAS_GUEST_TRACING_ENABLED's parsed value first.
+func (r *server) GuestTracingReleased(acct state.Account, legacy bool) bool {
+	r.guestTracingEnabled = legacy
+	return r.guestTracingFor(acct)
+}
+
+// StaticEgressIPReleased is the static_egress_ip gate.
+func (r *server) StaticEgressIPReleased(subject platformflags.Subject) bool {
+	return r.staticEgressIPFor(subject)
+}
+
 // LiveGate is the live-query gate currently in effect.
 func (r *server) LiveGate() livequeries.Gate { return r.liveGate() }
 
