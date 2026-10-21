@@ -84,6 +84,43 @@ app.mount("/order_followup", serve_workflows([order_followup]))
 body)` is the same logic for any other framework. Step functions may be sync or
 async. Python durations are seconds, `timedelta` or strings such as `"3d"`.
 
+## Go
+
+```go
+import faas "github.com/poyrazK/faas/sdk/go"
+
+var orderFollowup = faas.DefineWorkflow("order_followup", func(ctx context.Context, wf *faas.Workflow, input json.RawMessage) (any, error) {
+	order, err := faas.WorkflowDecode[Order](input)
+	if err != nil {
+		return nil, err
+	}
+	charge, err := faas.WorkflowStep(wf, "charge", func(ctx context.Context, sc faas.WorkflowStepContext) (Charge, error) {
+		return payments.Charge(ctx, order.ID, sc.IdempotencyKey)
+	}, faas.WithStepRetry(3, "exponential"))
+	if err != nil {
+		return nil, err
+	}
+	wf.Sleep("delivery_delay", 72*time.Hour)
+	approval, ok, err := faas.WorkflowWaitForEvent[Approval](wf, "refund_approval", faas.WorkflowWaitOptions{Event: "approved", Timeout: 7 * 24 * time.Hour})
+	if err != nil || !ok {
+		return map[string]string{"outcome": "expired"}, err
+	}
+	return map[string]any{"charge": charge.ID, "approved": approval.OK}, nil
+})
+
+func main() {
+	http.Handle("/order_followup", faas.ServeWorkflows(orderFollowup))
+	log.Fatal(http.ListenAndServe(":"+os.Getenv("PORT"), nil))
+}
+```
+
+Go has no suspendable functions, so the SDK unwinds the workflow function at
+its first new operation (deferred calls run) and calls it again on the next
+boundary. Call `wf` only from the goroutine the workflow runs on, and use
+`faas.WorkflowParallel` to run several steps concurrently; decode their results
+with `faas.WorkflowDecode`. Return `faas.NonRetryable(err)` to fail a step at
+once. `faas.RunWorkflowLocally` is the local test runner.
+
 ## Operations
 
 | Call | Behavior |

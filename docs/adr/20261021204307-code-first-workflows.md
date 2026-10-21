@@ -127,6 +127,13 @@ observed value in its error.
   and `runWorkflowInvocation` (the protocol core, for any framework).
 - Python: `faas_sdk.workflows` exports `workflow`, `serve_workflows` (an ASGI
   app) and `run_workflow_invocation`.
+- Go: `github.com/poyrazK/faas/sdk/go` exports `DefineWorkflow`,
+  `WorkflowStep`, `WorkflowParallel`, `Workflow.Sleep`,
+  `WorkflowWaitForEvent`, `ServeWorkflows` (an `http.Handler`),
+  `RunWorkflowInvocation` and `RunWorkflowLocally`. Go functions cannot be
+  suspended, so the SDK unwinds the workflow at its first new operation with a
+  recovered sentinel panic; concurrency goes through `WorkflowParallel`
+  (amended 2026-10-22).
 - Steps receive `{ attempt, idempotencyKey }`; the key is
   `workflow/<run-id>/<operation-name>`, the declarative step key format.
 
