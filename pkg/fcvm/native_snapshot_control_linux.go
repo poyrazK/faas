@@ -72,6 +72,11 @@ func (v *JailerVMM) controlNativeQualificationSnapshot(ctx context.Context, leas
 // The complete producer holds the physical lock through control, freezing and
 // uploads. This helper must never acquire that lock again or retry an effect.
 func (v *JailerVMM) controlNativeQualificationSnapshotLocked(ctx context.Context, lease Lease, permit nativeSnapshotCapturePermit, owner nativeLaunchRecord, action nativeSnapshotControlAction) error {
+	if action == nativeSnapshotPause && v.functionPauseBarrier != nil {
+		if err := v.functionPauseBarrier(lease.Instance); err != nil {
+			return err
+		}
+	}
 	r := v.nativeRecovery
 	method, path, body, err := nativeSnapshotControlRequest(permit.Capture.CaptureID, action)
 	if err != nil {

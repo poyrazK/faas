@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/functionlifetime"
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -221,6 +222,9 @@ func applyAppLifecycle(manifest api.AppManifest, app state.App) api.AppManifest 
 	if app.Manifest.BeforeCheckpoint != nil {
 		hook := *app.Manifest.BeforeCheckpoint
 		manifest.BeforeCheckpoint = &hook
+	}
+	if app.Type == state.AppTypeFunction {
+		functionlifetime.ConfigureResources(&manifest, app.Runtime)
 	}
 	manifest.StartupDeadlineS = app.Manifest.StartupDeadlineS
 	manifest.MaxRetries = app.Manifest.MaxRetries

@@ -43,6 +43,9 @@ func (m *Manager) CaptureAdmitted(ctx context.Context, grant runtimeadmission.Sn
 	info, ack, err := m.finishAdmittedSnapshot(flightCtx, g, inst, flight, info, err)
 	if err != nil {
 		releaseGate()
+		if g.Mode == "warm" && errors.Is(err, errWarmSnapshotAdmissionBusy) && !errors.Is(err, ErrFunctionWarmCapture) {
+			return SnapshotInfo{}, runtimeadmission.SnapshotAcknowledgment{}, err
+		}
 		return m.failedAdmittedSnapshot(ctx, inst.Lease.Instance, err)
 	}
 	return info, ack, nil
@@ -102,6 +105,9 @@ func (m *Manager) consumeSnapshotGrant(g runtimeadmission.SnapshotGrant, flight 
 }
 
 func (m *Manager) checkAdmittedSnapshotSpecLocked(instance string, spec SnapshotSpec, parent runtimeadmission.Receipt) error {
+	if spec.functionMigrationGrant != nil {
+		return m.checkFunctionMigrationSnapshotLocked(instance, spec, parent)
+	}
 	g := spec.admittedGrant
 	flight := m.runtimeAdmissionFlights[instance]
 	if g == nil || flight == nil {
