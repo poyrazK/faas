@@ -1,7 +1,7 @@
 # Product Control payment collection through owner billing connections
 
 Date: 2026-10-18
-Status: Accepted for internal implementation (owner chose "owners bring their own provider" now, Paddle embedded billing later); not implemented
+Status: Accepted for internal implementation (owner chose "owners bring their own provider" now, Paddle embedded billing later); slices 1–4 and the slice 5 billing details implemented (#5067); live provider qualification is `make product-control-provider-qualification`
 Related: ADR-1701 (Product Control), ADR-1704 (billing review, finalization and invoice handoff), ADR-1502–1504 (statement invoice exports, billing runs, payment status), ADR-1507 (Paddle and Lago exports), ADR-1311 (provider collection), ADR-1313 (Stripe automatic tax), ADR-1315 (blocking consumers with overdue invoices)
 
 ## Context

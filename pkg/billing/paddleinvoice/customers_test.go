@@ -23,7 +23,7 @@ func TestPaddleCustomerBillingDetails(t *testing.T) {
 		bodies = append(bodies, body)
 		switch r.Method + " " + r.URL.Path {
 		case "GET /customers/ctm_1/addresses":
-			// Paddle answers order_by=updated_at[DESC]&per_page=1 with the newest.
+			// Paddle answers order_by=id[DESC]&per_page=1 with the newest.
 			_, _ = fmt.Fprint(w, `{"data":[{"id":"add_new","status":"active","country_code":"US","postal_code":"94107","city":"San Francisco","updated_at":"2026-10-01T00:00:00Z"}]}`)
 		case "GET /customers/ctm_2/addresses", "GET /customers/ctm_2/businesses":
 			_, _ = fmt.Fprint(w, `{"data":[]}`)
@@ -48,7 +48,7 @@ func TestPaddleCustomerBillingDetails(t *testing.T) {
 	const key = "pdl_sdbx_apikey_01abcd"
 
 	address, ok, err := c.ActiveAddress(ctx, key, "ctm_1")
-	if err != nil || !ok || address.ID != "add_new" || address.PostalCode != "94107" || requests[0] != "GET /customers/ctm_1/addresses?status=active&order_by=updated_at%5BDESC%5D&per_page=1" {
+	if err != nil || !ok || address.ID != "add_new" || address.PostalCode != "94107" || requests[0] != "GET /customers/ctm_1/addresses?status=active&order_by=id%5BDESC%5D&per_page=1" {
 		t.Fatalf("active address = %+v %v %v %v", address, ok, err, requests)
 	}
 	business, ok, err := c.ActiveBusiness(ctx, key, "ctm_1")
