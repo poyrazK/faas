@@ -94,15 +94,44 @@ func (t *frozenTickets) take(appID, preferred string, frozen func(instanceID str
 
 var errNoThawTicket = errors.New("sched: frozen VM gets no thaw ticket")
 
+// noThawTicket is why a frozen VM gets no ticket, one of
+// wire.FrozenThawTicketOutcomes. It matches errNoThawTicket.
+type noThawTicket string
+
+func (r noThawTicket) Error() string        { return errNoThawTicket.Error() + ": " + string(r) }
+func (r noThawTicket) Is(target error) bool { return target == errNoThawTicket }
+
 // issueThawTicket records the ticket for a VM that just froze. The caller
 // holds the app lock. A VM without one thaws through ADR-1151's path.
 func (e *Engine) issueThawTicket(ctx context.Context, ins state.Instance, chargeMB int) {
 	ticket, err := e.thawTicketFor(ctx, ins, chargeMB)
 	if err != nil {
-		e.log.Debug("sched: frozen fast path: no ticket", "instance", ins.ID, "err", err)
+		var refused noThawTicket
+		outcome := "error"
+		if errors.As(err, &refused) {
+			outcome = string(refused)
+		}
+		e.observeThawTicket(outcome)
+		e.log.Info("sched: frozen fast path: no ticket", "instance", ins.ID, "outcome", outcome, "err", err)
 		return
 	}
 	e.thawTickets.put(ticket)
+	e.observeThawTicket("issued")
+}
+
+func (e *Engine) observeThawTicket(outcome string) {
+	if e != nil && e.ops != nil {
+		e.ops.FrozenThawTickets(outcome).Inc()
+	}
+}
+
+// observeFastPathSkip counts a wake that could have thawed an app's frozen
+// VM but did not take the fast path. Wakes of apps with nothing frozen are
+// not counted.
+func (e *Engine) observeFastPathSkip(appID, reason string) {
+	if e != nil && e.ops != nil && e.ledger.FrozenCountForApp(appID) > 0 {
+		e.ops.FrozenFastPathSkipped(reason).Inc()
+	}
 }
 
 // thawTicketFor reads, off the request path, everything the ordinary wake
@@ -111,7 +140,7 @@ func (e *Engine) issueThawTicket(ctx context.Context, ins state.Instance, charge
 func (e *Engine) thawTicketFor(ctx context.Context, ins state.Instance, chargeMB int) (frozenTicket, error) {
 	guards, ok := e.store.(state.FrozenThawStore)
 	if !ok || (ins.Mode != "" && ins.Mode != string(state.InstanceModeNormal)) {
-		return frozenTicket{}, errNoThawTicket
+		return frozenTicket{}, noThawTicket("mode")
 	}
 	// The generation is read before everything else: a change after it moves
 	// the generation the guarded thaw compares, and a change before it shows
@@ -121,7 +150,7 @@ func (e *Engine) thawTicketFor(ctx context.Context, ins state.Instance, chargeMB
 		return frozenTicket{}, err
 	}
 	if !basis.Selected || basis.Generation <= 0 {
-		return frozenTicket{}, errNoThawTicket
+		return frozenTicket{}, noThawTicket("not_selected")
 	}
 	// An operator cold boot (ADR-1523) advances the deployment's recovery
 	// generation, a deployments column, so one after the read above moves the
@@ -130,7 +159,7 @@ func (e *Engine) thawTicketFor(ctx context.Context, ins state.Instance, chargeMB
 	if fresh, err := e.snapshotRecoveryFresh(ctx, ins.ID); err != nil {
 		return frozenTicket{}, err
 	} else if !fresh {
-		return frozenTicket{}, errNoThawTicket
+		return frozenTicket{}, noThawTicket("operator_cold_boot")
 	}
 	// The ticket stands in for the wake's workload-retirement gate; a
 	// retirement after this moves the generation the guarded thaw checks.
@@ -146,7 +175,7 @@ func (e *Engine) thawTicketFor(ctx context.Context, ins state.Instance, chargeMB
 	// whose admission captured managed standards publishes only with a
 	// receipt, so it keeps the ordinary path.
 	if app.Status != state.AppActive {
-		return frozenTicket{}, errNoThawTicket
+		return frozenTicket{}, noThawTicket("app_inactive")
 	}
 	if err := e.checkApplicationStandardAdmission(ctx, app); err != nil {
 		return frozenTicket{}, err
@@ -157,7 +186,7 @@ func (e *Engine) thawTicketFor(ctx context.Context, ins state.Instance, chargeMB
 			return frozenTicket{}, err
 		}
 		if err == nil && capture.Managed {
-			return frozenTicket{}, errNoThawTicket
+			return frozenTicket{}, noThawTicket("managed_standards")
 		}
 	}
 	acct, err := e.store.AccountByID(ctx, app.AccountID)
@@ -166,7 +195,7 @@ func (e *Engine) thawTicketFor(ctx context.Context, ins state.Instance, chargeMB
 	}
 	limits, ok := api.LimitsFor(acct.Plan)
 	if !acct.Active() || !ok {
-		return frozenTicket{}, errNoThawTicket
+		return frozenTicket{}, noThawTicket("account")
 	}
 	dep, err := e.store.DeploymentByID(ctx, ins.DeploymentID)
 	if err != nil {
@@ -177,7 +206,7 @@ func (e *Engine) thawTicketFor(ctx context.Context, ins state.Instance, chargeMB
 		return frozenTicket{}, err
 	}
 	if ins.RAMMB != resolved.RAMMB || !instanceModeMatchesApp(resolved, ins) || securityQuarantineErr(dep) != nil {
-		return frozenTicket{}, errNoThawTicket
+		return frozenTicket{}, noThawTicket("shape")
 	}
 	scaling, err := e.runtimeScalingStateForDeployment(ctx, resolved, dep)
 	if err != nil {
@@ -192,7 +221,7 @@ func (e *Engine) thawTicketFor(ctx context.Context, ins state.Instance, chargeMB
 		return frozenTicket{}, err
 	}
 	if captured != values.ConfigFence || runtimeValuesHaveEphemeralSecrets(values.Snapshot) {
-		return frozenTicket{}, errNoThawTicket
+		return frozenTicket{}, noThawTicket("config")
 	}
 	plan := frozenThawPlan{frozen: ins, app: resolved, acct: acct, limits: limits, dep: dep,
 		environmentKey: runtimeEnvironmentAdmissionKey(scaling.Scope, scaling.EnvironmentID),
@@ -211,13 +240,19 @@ func (e *Engine) thawTicketFor(ctx context.Context, ins state.Instance, chargeMB
 // thawFromTicketLocked is wake phase 1's fast path (ADR-1740). It runs
 // under the app lock before any read and reports handled=false whenever the
 // ordinary path must decide: no ticket, a running instance phase 1 would
-// return, a capacity refusal, or a thaw the guards refused (the VM is then
-// frozen again, or parked).
+// return, a coordinated wake that selected another deployment, a capacity
+// refusal, or a thaw the guards refused (the VM is then frozen again, or
+// parked).
 func (e *Engine) thawFromTicketLocked(ctx context.Context, appID, deploymentID, scope string, wakeStarted time.Time) (WakeResult, bool) {
-	if !e.frozenFastPath.Load() || deploymentID != "" || scope != "" || e.ledger.Concurrency(appID) > 0 {
+	if !e.frozenFastPath.Load() || e.ledger.Concurrency(appID) > 0 {
 		return WakeResult{}, false
 	}
-	if _, selected := wakeEnvironmentFrom(ctx); selected {
+	if deploymentID != "" || scope != "" {
+		reason := "scope"
+		if deploymentID != "" {
+			reason = "deployment"
+		}
+		e.observeFastPathSkip(appID, reason)
 		return WakeResult{}, false
 	}
 	thawer, ok := e.vmm.(FrozenVMM)
@@ -227,11 +262,22 @@ func (e *Engine) thawFromTicketLocked(ctx context.Context, appID, deploymentID, 
 	}
 	ticket, ok := e.thawTickets.take(appID, PreferredInstanceFromContext(ctx), e.ledger.IsFrozen)
 	if !ok {
+		e.observeFastPathSkip(appID, "no_ticket")
+		return WakeResult{}, false
+	}
+	// A coordinated wake (EnsureWake, the gateway's path) selected its
+	// production deployment from fresh reads moments ago. The ticket serves
+	// it only for that deployment and environment; another selection means
+	// the frozen VM is not the one the wake chose.
+	if selected, ok := wakeEnvironmentFrom(ctx); ok && !ticket.serves(selected) {
+		e.thawTickets.put(ticket)
+		e.observeFastPathSkip(appID, "selection")
 		return WakeResult{}, false
 	}
 	plan, timing := ticket.plan, thawTiming{wakeStarted: wakeStarted, thawTried: time.Now()}
 	if _, _, refused := e.wakeServingCapacity(plan.app, plan.limits, plan.dep.ID, plan.environmentKey, plan.production).refusal(); refused {
 		e.thawTickets.put(ticket)
+		e.observeFastPathSkip(appID, "capacity")
 		return WakeResult{}, false
 	}
 	if !e.readmitFrozenLocked(ctx, plan) {
@@ -256,6 +302,13 @@ func (e *Engine) thawFromTicketLocked(ctx context.Context, appID, deploymentID, 
 		return WakeResult{}, false
 	}
 	return e.answerThaw(ctx, plan, fresh, bookkeeping, timing, "fast"), true
+}
+
+// serves reports whether a coordinated wake's selection is the thaw this
+// ticket allows: the same app, deployment and admission environment.
+func (t frozenTicket) serves(selected wakeEnvironment) bool {
+	return selected.app.ID == t.plan.app.ID && selected.deployment.ID == t.plan.dep.ID &&
+		runtimeEnvironmentAdmissionKey(selected.owner.Scope, selected.owner.EnvironmentID) == t.plan.environmentKey
 }
 
 // refreezeLocked returns a VM the fast path thawed but may not publish to
