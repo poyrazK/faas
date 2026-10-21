@@ -5480,6 +5480,29 @@ type FleetSealDomainProbe struct {
 	UpdatedAt  pgtype.Timestamptz
 }
 
+type FunctionMigrationDestination struct {
+	Token      pgtype.UUID
+	InstanceID pgtype.UUID
+	LeaseToken string
+	NodeID     pgtype.UUID
+	WakeID     pgtype.UUID
+	Phase      string
+	GrantData  []byte
+	Receipt    []byte
+}
+
+type FunctionMigrationSource struct {
+	InstanceID    pgtype.UUID
+	LeaseToken    string
+	SourceNodeID  string
+	SourceWakeID  pgtype.UUID
+	Phase         string
+	CaptureToken  pgtype.UUID
+	CaptureGrant  []byte
+	RecoveryGrant []byte
+	CaptureResult []byte
+}
+
 type GatewayConcurrencyQueueLease struct {
 	LeaseID   pgtype.UUID
 	AppID     pgtype.UUID
@@ -12097,6 +12120,19 @@ type ProjectEnvironmentRoutePolicy struct {
 	DeclaredRoutes          []byte
 	CreatedAt               pgtype.Timestamptz
 	UpdatedAt               pgtype.Timestamptz
+}
+
+type ProjectEnvironmentSecret struct {
+	AccountID       pgtype.UUID
+	ProjectID       pgtype.UUID
+	EnvironmentSlug string
+	Key             string
+	Ciphertext      []byte
+	Kid             string
+	ValueHash       string
+	SecretVersion   int64
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
 }
 
 type ProjectEnvironmentWorkloadDeploymentSpec struct {

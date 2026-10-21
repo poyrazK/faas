@@ -15073,6 +15073,67 @@ Examples:
 gregale data-api usage shop-data --since 30d
 ```
 
+### data-api storage
+
+File storage governed by RLS on storage_objects
+
+#### data-api storage sql
+
+Print the storage_objects migration (table, RLS, guard trigger, example policies)
+
+`gregale data-api storage sql [--schema <SCHEMA>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--schema <SCHEMA>` | the Data API&#39;s first exposed schema (default api) |  |
+
+Examples:
+
+```sh
+gregale data-api storage sql > migrations/0005_storage.sql
+```
+
+#### data-api storage enable
+
+Bind a bucket read-write and turn storage on
+
+`gregale data-api storage enable --bucket <BUCKET> [--scope <SCOPE>] [--region <REGION>] [--max-object-bytes <N>] [--no-restart] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--bucket <BUCKET>` | bucket to store files in (created and bound when needed) | required |
+| `--scope <SCOPE>` | environment scope |  |
+| `--region <REGION>` | object-storage region for a new bucket |  |
+| `--max-object-bytes <N>` | largest upload in bytes (default 25 MiB, at most 100 MiB) |  |
+| `--no-restart` | store settings without a fresh restart |  |
+
+Examples:
+
+```sh
+gregale data-api storage enable shop-data --bucket uploads
+```
+
+#### data-api storage status
+
+Show whether storage is on and its bound buckets
+
+`gregale data-api storage status [--scope <SCOPE>] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--scope <SCOPE>` | environment scope |  |
+
+#### data-api storage disable
+
+Turn storage off; buckets stay bound and keep their files
+
+`gregale data-api storage disable [--scope <SCOPE>] [--no-restart] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--scope <SCOPE>` | environment scope |  |
+| `--no-restart` | store settings without a fresh restart |  |
+
 ### data-api live
 
 Live reads: results that stay current over a realtime connection

@@ -320,6 +320,10 @@ test: grafana-mirror-check ## Unit tests — must pass on any machine, no KVM ne
 test-apid: ## apidserver tests with bounded compiler memory (ADR-982); RUN='^TestX' narrows, RACE=1 adds -race
 	$(GO_TEST) -count=1 $(if $(RACE),-race) $(if $(RUN),-run '$(RUN)') ./pkg/apid/apidserver/
 
+.PHONY: product-control-provider-qualification
+product-control-provider-qualification: ## Qualify Product Control exports against real Stripe test mode, Paddle sandbox and a Lago test org; set FAAS_QUALIFY_* (docs/ops/product-control.md)
+	$(GO_TEST) -count=1 -v -run '^TestProductControlProviderQualification$$' ./pkg/apid/apidserver/
+
 .PHONY: test-changed
 test-changed: ## Vet + test only what your change affects (ci-light's selection vs origin/main); RACE=1, BASE=<ref>, VET=importers|0, DRY_RUN=1
 	@LDFLAGS=$(GO_TEST_LDFLAGS) GOMEMLIMIT=$(GO_TEST_MEMLIMIT) GO=$(GO) bash scripts/test-changed.sh $(TEST_GCFLAGS)
@@ -572,6 +576,27 @@ test-metal: ## Integration tests tagged //go:build metal — needs KVM + root (R
 	  CGO_ENABLED=0 $(GO) build -o "$$helper_dir/vmmd-jail-helper" ./cmd/vmmd-jail-helper; \
 	  if [ -n "$${RUN_REGEX:-}" ]; then set -- -run "$$RUN_REGEX"; else set --; fi; \
 	  FAAS_TEST_VMMD_BINARY="$$helper_dir/vmmd" $(GO) test -tags "$${FAAS_METAL_TEST_TAGS:-metal}" -race -count=1 $(RUN_ARGS) "$$@" $(PKGS)
+
+.PHONY: test-function-background-native
+test-function-background-native: ## Strict Node execution lifetime/capture/thaw gate on the isolated native KVM host (ADR-20261018030610)
+	@test "$$(id -u)" = 0 || (echo "requires root on the isolated native KVM acceptance host" >&2; exit 1)
+	@test -c /dev/kvm || (echo "/dev/kvm missing; native qualification cannot skip" >&2; exit 1)
+	@test -r /etc/faas/builder-acceptance-host || (echo "requires the designated isolated acceptance host" >&2; exit 1)
+	@set -eu; helper_dir=$$(mktemp -d); trap 'rm -rf "$$helper_dir"' EXIT; \
+	  CGO_ENABLED=0 $(GO) build -tags metal,function_background_native -o "$$helper_dir/guest-init" ./guest/init; \
+	  CGO_ENABLED=0 $(GO) build -tags metal,function_background_native -o "$$helper_dir/node22-runner" ./guest/runners/node22; \
+	  CGO_ENABLED=0 $(GO) build -tags metal,function_background_native -o "$$helper_dir/node24-runner" ./guest/runners/node24; \
+	  FAAS_GUEST_INIT="$$helper_dir/guest-init" FAAS_E2E_FUNCTION_RUNNER_NODE22="$$helper_dir/node22-runner" \
+	  FAAS_E2E_FUNCTION_RUNNER_NODE24="$$helper_dir/node24-runner" \
+	  FAAS_REQUIRE_FUNCTION_BACKGROUND_METAL=1 $(GO) test -tags metal,function_background_native \
+	  -race -count=1 -v -run '^TestFunction(Background|ResourcesPostgres|MigrationAdmissionPostgres)Metal$$' -timeout 90m ./cmd/e2e
+	$(MAKE) leakcheck
+
+.PHONY: test-function-migration-native
+test-function-migration-native: ## Guarded Node22/24 migration, replies and coordinator restart on native KVM hosts (ADR-20261018030616)
+	@test -n "$${FAAS_FUNCTION_MIGRATION_NATIVE_CONFIG:-}" || (echo "FAAS_FUNCTION_MIGRATION_NATIVE_CONFIG must name the isolated two-host fixture" >&2; exit 1)
+	@test -n "$${FAAS_FUNCTION_MIGRATION_NATIVE_EVIDENCE:-}" || (echo "FAAS_FUNCTION_MIGRATION_NATIVE_EVIDENCE must name a new private directory outside this checkout" >&2; exit 1)
+	python3 scripts/ci/function-migration-native.py --config "$$FAAS_FUNCTION_MIGRATION_NATIVE_CONFIG" --out "$$FAAS_FUNCTION_MIGRATION_NATIVE_EVIDENCE"
 
 .PHONY: test-metal-builder
 test-metal-builder: ## Native KVM builder acceptance — requires staged release assets and root

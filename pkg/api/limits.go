@@ -2757,6 +2757,9 @@ type Limits struct {
 	// with 413 CodeSecretValueTooLarge before sealing.
 	SecretCountMax      int // max secrets per app across all scopes (Free 8, Hobby 25, Pro 50, Scale 100)
 	SecretValueMaxBytes int // per-secret value byte cap (Free 4K, Hobby 8K, Pro 16K, Scale 32K)
+	// ProjectSecretCountMax bounds the secrets one project environment shares
+	// with its services (ADR-1139); each value uses SecretValueMaxBytes.
+	ProjectSecretCountMax int // (Free 8, Hobby 25, Pro 50, Scale 100)
 
 	// Customer env vars (issue #395 / ADR-045). Plaintext per-app store
 	// for non-sensitive runtime config (LOG_LEVEL, FEATURE_X, etc.). The
@@ -4111,6 +4114,7 @@ var planLimits = map[Plan]Limits{
 		EgressExtraPortsMax:            0,
 		ServiceTCPSessionsPerAccount:   16,
 		SecretCountMax:                 8,
+		ProjectSecretCountMax:          8,
 		SecretValueMaxBytes:            4 * 1024,
 		EnvVarsMax:                     16,
 		EnvValueMaxBytes:               4 * 1024,
@@ -4511,6 +4515,7 @@ var planLimits = map[Plan]Limits{
 		EgressExtraPortsMax:            0,
 		ServiceTCPSessionsPerAccount:   64,
 		SecretCountMax:                 25,
+		ProjectSecretCountMax:          25,
 		SecretValueMaxBytes:            8 * 1024,
 		EnvVarsMax:                     32,
 		EnvValueMaxBytes:               8 * 1024,
@@ -4937,6 +4942,7 @@ var planLimits = map[Plan]Limits{
 		EgressExtraPortsMax:            8,
 		ServiceTCPSessionsPerAccount:   256,
 		SecretCountMax:                 50,
+		ProjectSecretCountMax:          50,
 		SecretValueMaxBytes:            16 * 1024,
 		EnvVarsMax:                     64,
 		EnvValueMaxBytes:               16 * 1024,
@@ -5325,6 +5331,7 @@ var planLimits = map[Plan]Limits{
 		EgressExtraPortsMax:            32,
 		ServiceTCPSessionsPerAccount:   1024,
 		SecretCountMax:                 100,
+		ProjectSecretCountMax:          100,
 		SecretValueMaxBytes:            32 * 1024,
 		EnvVarsMax:                     256,
 		EnvValueMaxBytes:               32 * 1024,
@@ -10591,6 +10598,21 @@ func AsyncInvocationLease(timeout time.Duration) time.Duration {
 // one guest. This is a runtime safety bound, not the plan's HTTP concurrency.
 const FunctionInterpreterMaxWorkers = 4
 
+// FunctionPostgresMaxPools bounds registered pool owners per interpreter.
+// It is a structural runtime bound, not a database connection entitlement.
+const FunctionPostgresMaxPools = 16
+
+// FunctionCancellationGrace is the cleanup acknowledgement budget shared by
+// the runner and the host's execution-ownership watchdog (ADR-20261018030610).
+const FunctionCancellationGrace = 5 * time.Second
+
+// FunctionExecutionLeaseDuration bounds an abandoned runner's full execution.
+// Expiry requires VM retirement, never a counter decrement while work runs.
+func FunctionExecutionLeaseDuration(plan Plan, foreground time.Duration) time.Duration {
+	// One cleanup grace also covers terminal transport reconciliation.
+	return min(foreground, RequestBudgetPlanMax) + time.Duration(plan.TailTimeoutSeconds())*time.Second + 2*FunctionCancellationGrace
+}
+
 // FunctionConcurrencyEnv carries an app's function_concurrency to its
 // generated adapter (ADR-1342). imaged stamps it on function deployments
 // whose setting is above one; the adapter then advertises that many slots
@@ -11975,6 +11997,15 @@ const (
 	// The user-token audience a runtime reports, so live reads verify
 	// tokens as the Data API does.
 	DataAPIAudienceMaxBytes = 256
+	// File storage (ADR-20261021101510), mirrored in the runtime's limits:
+	// the default and largest object an owner may allow, the transfers one
+	// instance streams at once, how long one transfer may take, and how long
+	// a signed download link works.
+	DataAPIStorageObjectDefaultBytes = 25 << 20
+	DataAPIStorageObjectMaxBytes     = 100 << 20
+	DataAPIStorageTransfers          = 4
+	DataAPIStorageTransferTimeout    = 120 * time.Second
+	DataAPIStorageSignedURLTTL       = 60 * time.Second
 	// Anonymous and server-key live reads renew this often, so a revoked key
 	// or a narrowed allowlist reaches open subscriptions within it.
 	LiveQueryKeySessionMax = time.Hour
