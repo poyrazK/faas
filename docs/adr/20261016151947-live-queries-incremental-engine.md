@@ -1112,6 +1112,41 @@ Phase 0 did not cover:
     writer (287 ms against 1.2 ms). The marker statement now sets
     `synchronous_commit` on for its own transaction
     (`TestRoundsDoNotWaitForTheWALWriter`).
+  - **Discovered databases and live logins** (2026-10-21). livequeryd learns
+    the databases it serves from the control plane, instead of an operator
+    listing each one.
+    - **Live login.** When live queries are enabled, apid asks the database's
+      provider (`managedpostgres.LiveLoginIssuer`) to prepare it and issue a
+      login. As the owner, the provider:
+      - installs the schema-change log and creates the publication;
+      - creates `gregale_live_<scope>`: `LOGIN NOINHERIT REPLICATION`, reading
+        the `public`, `api` and `gregale_live` schemas and writing nothing;
+      - grants it `SET` without inheritance on the database's read-only,
+        read-write and Data API binding logins, and on ones created later,
+        so a live query reads as its app.
+    - **Storage.** apid seals the login's connection string to livequeryd's
+      recipient (namespace `livequery-login`) and stores it in
+      `managed_postgres_live_logins`. The row also holds the slot
+      (`gregale_live_<database id>`) and how to wake-check the database
+      (`neon:<project>/<endpoint>`). Issuing runs while the database row is
+      locked and only when live queries are off, because issuing gives the
+      login a new password.
+    - **Disable.** apid revokes the login first: `NOLOGIN`, its sessions
+      ended, the slot dropped, then the role. If revoking fails, nothing is
+      removed.
+    - **Discovery.** `-discover-backends` reads the live databases of those
+      backends that have a login, every 15 s by default:
+      - new ones start, ones whose login changed restart, and ones gone stop,
+        with their series and checkpoint removed;
+      - a failed read keeps the current set;
+      - `-discover-release-after` lets discovered Neon databases scale to
+        zero.
+    - **Without a live-login provider**, live queries still turn on, and an
+      operator lists the database (`-databases-file`).
+    - **Unverified on Neon.** It is not yet known whether the owner login may
+      grant `REPLICATION`, create event triggers and a publication `FOR ALL
+      TABLES`, and end the live login's sessions. Stock PostgreSQL needs a
+      superuser for each; the production test settles them.
   - **Fleet-PKI leaves** (2026-10-19). Hub and realtimed authenticate with
     leaves of the internal CA:
     - livequeryd's server leaf is `livequeryd.faas`;

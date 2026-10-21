@@ -75,6 +75,30 @@ The hub serves each listed database at `/<database_id>/live`:
 - **Changing the list restarts the hub.** Every database then resumes from
   its checkpoint, and realtimed reconnects.
 
+## Discovering databases
+
+With `faas_livequeryd_discover_backends`, the hub serves every live database
+of those managed Postgres backends without an inventory entry:
+- **Enabling** (`gregale postgres live enable`) makes the database's provider
+  prepare it and issue its live login. apid seals the login to this hub's
+  identity, and the hub picks it up within `-discover-every` (15 s).
+- **Disabling** revokes the login and drops the slot, and the hub stops
+  serving the database.
+- **Scale to zero.** `faas_livequeryd_discover_release_after` releases
+  discovered Neon databases when idle; it needs
+  `faas_livequeryd_neon_api_key_src`.
+- **Listed databases** in `faas_livequeryd_databases` are served beside
+  discovered ones, and discovery leaves them alone.
+
+```yaml
+faas_livequeryd_discover_backends: [neon-us-1]   # BackendConfig IDs whose live_hub_url names this hub
+faas_livequeryd_discover_release_after: 5m
+```
+
+A backend's provider must issue live logins (the Neon provider does). On any
+other backend, enabling live queries issues no login, and the database must
+be listed.
+
 ## Inventory
 
 ```yaml
@@ -138,8 +162,9 @@ The nftables role opens the hub's port to `faas_compute_allowed_cidrs` when
 
 ## Not covered yet
 
-- Discovering databases: the list is inventory, so a database enabled for
-  live queries in apid is served only once an operator adds it here.
+- Live logins on Neon are unverified: the owner login may not be allowed to
+  grant `REPLICATION`, create event triggers or a publication `FOR ALL
+  TABLES` (see the ADR).
 - Native databases (ADR-1027), where the engine runs inside the database VM.
 - Paging. The `live_queries` alerts (`docs/runbooks/FaasLiveQueries.md`)
   warn rather than page while live queries are a preview. The
