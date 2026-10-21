@@ -101,6 +101,23 @@ func (q *Queries) DeleteLiveKeys(ctx context.Context, db DBTX, arg DeleteLiveKey
 	return result.RowsAffected(), nil
 }
 
+const deleteLiveLogin = `-- name: DeleteLiveLogin :execrows
+DELETE FROM managed_postgres_live_logins WHERE database_id=$1::text::uuid AND account_id=$2::text::uuid
+`
+
+type DeleteLiveLoginParams struct {
+	DatabaseID string
+	AccountID  string
+}
+
+func (q *Queries) DeleteLiveLogin(ctx context.Context, db DBTX, arg DeleteLiveLoginParams) (int64, error) {
+	result, err := db.Exec(ctx, deleteLiveLogin, arg.DatabaseID, arg.AccountID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deleteRetiringLiveKeys = `-- name: DeleteRetiringLiveKeys :exec
 DELETE FROM managed_postgres_live_keys WHERE database_id=$1::text::uuid AND retires_at IS NOT NULL
 `
@@ -209,6 +226,51 @@ func (q *Queries) LiveDatabaseApps(ctx context.Context, db DBTX, databaseID stri
 	return items, nil
 }
 
+const liveDatabases = `-- name: LiveDatabases :many
+SELECT d.id::text AS database_id,d.backend_id,l.sealed_login,l.recipient,l.slot
+ FROM managed_postgres_live_logins l
+ JOIN managed_postgres_databases d ON d.id=l.database_id
+ WHERE d.backend_id=ANY($1::text[]) AND d.deleted_at IS NULL AND d.state NOT IN ('deleting','deleted')
+ AND EXISTS (SELECT 1 FROM managed_postgres_live_keys k WHERE k.database_id=d.id AND (k.retires_at IS NULL OR k.retires_at>clock_timestamp()))
+ ORDER BY d.id
+`
+
+type LiveDatabasesRow struct {
+	DatabaseID  string
+	BackendID   string
+	SealedLogin []byte
+	Recipient   string
+	Slot        string
+}
+
+// The live databases of the given backends that have a login: the databases
+// livequeryd serves there.
+func (q *Queries) LiveDatabases(ctx context.Context, db DBTX, backendIds []string) ([]LiveDatabasesRow, error) {
+	rows, err := db.Query(ctx, liveDatabases, backendIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []LiveDatabasesRow{}
+	for rows.Next() {
+		var i LiveDatabasesRow
+		if err := rows.Scan(
+			&i.DatabaseID,
+			&i.BackendID,
+			&i.SealedLogin,
+			&i.Recipient,
+			&i.Slot,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const liveKeyRing = `-- name: LiveKeyRing :many
 SELECT k.kid,k.sealed_secret,k.recipient,k.retires_at FROM managed_postgres_live_keys k
  JOIN managed_postgres_databases d ON d.id=k.database_id
@@ -239,6 +301,41 @@ func (q *Queries) LiveKeyRing(ctx context.Context, db DBTX, databaseID string) (
 			&i.Recipient,
 			&i.RetiresAt,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const liveLoginOf = `-- name: LiveLoginOf :many
+SELECT provider_identity_id,slot FROM managed_postgres_live_logins
+ WHERE database_id=$1::text::uuid AND account_id=$2::text::uuid
+`
+
+type LiveLoginOfParams struct {
+	DatabaseID string
+	AccountID  string
+}
+
+type LiveLoginOfRow struct {
+	ProviderIdentityID string
+	Slot               string
+}
+
+func (q *Queries) LiveLoginOf(ctx context.Context, db DBTX, arg LiveLoginOfParams) ([]LiveLoginOfRow, error) {
+	rows, err := db.Query(ctx, liveLoginOf, arg.DatabaseID, arg.AccountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []LiveLoginOfRow{}
+	for rows.Next() {
+		var i LiveLoginOfRow
+		if err := rows.Scan(&i.ProviderIdentityID, &i.Slot); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -283,4 +380,33 @@ func (q *Queries) RetireActiveLiveKey(ctx context.Context, db DBTX, arg RetireAc
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const upsertLiveLogin = `-- name: UpsertLiveLogin :exec
+INSERT INTO managed_postgres_live_logins (database_id,account_id,sealed_login,recipient,provider_identity_id,slot)
+ VALUES ($1::text::uuid,$2::text::uuid,$3::bytea,$4::text,
+ $5::text,$6::text)
+ ON CONFLICT (database_id) DO UPDATE SET sealed_login=EXCLUDED.sealed_login, recipient=EXCLUDED.recipient,
+ provider_identity_id=EXCLUDED.provider_identity_id, slot=EXCLUDED.slot, created_at=now()
+`
+
+type UpsertLiveLoginParams struct {
+	DatabaseID         string
+	AccountID          string
+	SealedLogin        []byte
+	Recipient          string
+	ProviderIdentityID string
+	Slot               string
+}
+
+func (q *Queries) UpsertLiveLogin(ctx context.Context, db DBTX, arg UpsertLiveLoginParams) error {
+	_, err := db.Exec(ctx, upsertLiveLogin,
+		arg.DatabaseID,
+		arg.AccountID,
+		arg.SealedLogin,
+		arg.Recipient,
+		arg.ProviderIdentityID,
+		arg.Slot,
+	)
+	return err
 }

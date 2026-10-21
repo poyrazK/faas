@@ -22,6 +22,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/livequery"
 	"github.com/onebox-faas/faas/pkg/livequery/liveserver"
+	"github.com/onebox-faas/faas/pkg/livequery/schemalog"
 	"github.com/onebox-faas/faas/pkg/livequery/seal"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -58,7 +59,7 @@ func runDatabase(ctx context.Context, db database, pool *pgxpool.Pool, deps hubD
 		}
 	}
 	if db.CreatePublication {
-		if err := ensurePublication(ctx, pool, db.Publication); err != nil {
+		if err := schemalog.EnsurePublication(ctx, pool, db.Publication); err != nil {
 			return err
 		}
 	}

@@ -64,7 +64,27 @@ type Route struct {
 	DataAPIRole        string // the app's Data API binding login
 }
 
-// Store reads and writes managed_postgres_live_keys.
+// Login is the login livequeryd decodes a live database with: its
+// connection string sealed to livequeryd, the provider's name for it, and
+// the replication slot it decodes.
+type Login struct {
+	Sealed    []byte
+	Recipient string
+	Identity  string
+	Slot      string
+}
+
+// LiveDatabase is a database livequeryd serves.
+type LiveDatabase struct {
+	DatabaseID string
+	BackendID  string
+	Sealed     []byte
+	Recipient  string
+	Slot       string
+}
+
+// Store reads and writes managed_postgres_live_keys and
+// managed_postgres_live_logins.
 type Store struct {
 	pool *pgxpool.Pool
 	q    *sqlc.Queries
@@ -73,8 +93,9 @@ type Store struct {
 // New returns a store over pool.
 func New(pool *pgxpool.Pool) *Store { return &Store{pool: pool, q: sqlc.New()} }
 
-// Enable stores a database's first key.
-func (s *Store) Enable(ctx context.Context, accountID, databaseID string, key NewKey) error {
+// Enable stores a database's first key and, when the database's provider
+// issued one, its login, in one transaction.
+func (s *Store) Enable(ctx context.Context, accountID, databaseID string, key NewKey, login *Login) error {
 	return s.locked(ctx, accountID, databaseID, func(tx pgx.Tx) error {
 		active, err := s.q.HasActiveLiveKey(ctx, tx, databaseID)
 		if err != nil {
@@ -85,8 +106,46 @@ func (s *Store) Enable(ctx context.Context, accountID, databaseID string, key Ne
 		}
 		// Retiring keys exist only beside an active one (Disable removes
 		// every key), so the database has no keys here.
-		return s.insert(ctx, tx, accountID, databaseID, key)
+		if err := s.insert(ctx, tx, accountID, databaseID, key); err != nil {
+			return err
+		}
+		if login == nil {
+			return nil
+		}
+		err = s.q.UpsertLiveLogin(ctx, tx, sqlc.UpsertLiveLoginParams{DatabaseID: databaseID, AccountID: accountID,
+			SealedLogin: login.Sealed, Recipient: login.Recipient, ProviderIdentityID: login.Identity, Slot: login.Slot})
+		if err != nil {
+			return fmt.Errorf("livekeys: store login: %w", err)
+		}
+		return nil
 	})
+}
+
+// LoginOf returns a database's login, without its sealed connection string,
+// or ok false when it has none.
+func (s *Store) LoginOf(ctx context.Context, accountID, databaseID string) (Login, bool, error) {
+	rows, err := s.q.LiveLoginOf(ctx, s.pool, sqlc.LiveLoginOfParams{DatabaseID: databaseID, AccountID: accountID})
+	if err != nil {
+		return Login{}, false, fmt.Errorf("livekeys: read login: %w", err)
+	}
+	if len(rows) == 0 {
+		return Login{}, false, nil
+	}
+	return Login{Identity: rows[0].ProviderIdentityID, Slot: rows[0].Slot}, true, nil
+}
+
+// LiveDatabases lists the live databases of the given backends that have a
+// login, by database ID.
+func (s *Store) LiveDatabases(ctx context.Context, backendIDs []string) ([]LiveDatabase, error) {
+	rows, err := s.q.LiveDatabases(ctx, s.pool, backendIDs)
+	if err != nil {
+		return nil, fmt.Errorf("livekeys: list live databases: %w", err)
+	}
+	out := make([]LiveDatabase, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, LiveDatabase{DatabaseID: r.DatabaseID, BackendID: r.BackendID, Sealed: r.SealedLogin, Recipient: r.Recipient, Slot: r.Slot})
+	}
+	return out, nil
 }
 
 // Rotate makes key the active key. The previous active key retires after
@@ -116,8 +175,8 @@ func (s *Store) Rotate(ctx context.Context, accountID, databaseID string, key Ne
 	})
 }
 
-// Disable removes every key of a database, revoking its outstanding seals.
-// It reports whether there were any.
+// Disable removes every key of a database, revoking its outstanding seals,
+// and its login. It reports whether there were any keys.
 func (s *Store) Disable(ctx context.Context, accountID, databaseID string) (bool, error) {
 	var removed bool
 	err := s.locked(ctx, accountID, databaseID, func(tx pgx.Tx) error {
@@ -126,6 +185,9 @@ func (s *Store) Disable(ctx context.Context, accountID, databaseID string) (bool
 			return fmt.Errorf("livekeys: delete keys: %w", err)
 		}
 		removed = n > 0
+		if _, err := s.q.DeleteLiveLogin(ctx, tx, sqlc.DeleteLiveLoginParams{DatabaseID: databaseID, AccountID: accountID}); err != nil {
+			return fmt.Errorf("livekeys: delete login: %w", err)
+		}
 		return nil
 	})
 	return removed, err

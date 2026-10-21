@@ -35,7 +35,7 @@ type Databases interface {
 
 // Keys stores live secrets; *livekeys.Store implements it.
 type Keys interface {
-	Enable(ctx context.Context, accountID, databaseID string, key livekeys.NewKey) error
+	Enable(ctx context.Context, accountID, databaseID string, key livekeys.NewKey, login *livekeys.Login) error
 	Rotate(ctx context.Context, accountID, databaseID string, key livekeys.NewKey, overlap time.Duration) error
 	Disable(ctx context.Context, accountID, databaseID string) (bool, error)
 	Keys(ctx context.Context, accountID, databaseID string) ([]livekeys.Key, error)
@@ -76,7 +76,7 @@ func (s *Service) Enable(w http.ResponseWriter, r *http.Request, acct state.Acco
 	if !ok {
 		return
 	}
-	err := s.Keys.Enable(r.Context(), acct.ID, db.ID, key)
+	err := s.Keys.Enable(r.Context(), acct.ID, db.ID, key, nil)
 	if errors.Is(err, livekeys.ErrEnabled) {
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "live_queries_enabled", "Live queries are already enabled",
 			"this database already has a live secret; rotate it to issue a new one").WithFix("gregale postgres live rotate "+db.Name).WithDocs(docsURL))

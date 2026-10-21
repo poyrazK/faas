@@ -38,3 +38,13 @@ type ManagedPostgresLiveKey struct {
 	CreatedAt    pgtype.Timestamptz
 	RetiresAt    pgtype.Timestamptz
 }
+
+type ManagedPostgresLiveLogin struct {
+	DatabaseID         pgtype.UUID
+	AccountID          pgtype.UUID
+	SealedLogin        []byte
+	Recipient          string
+	ProviderIdentityID string
+	Slot               string
+	CreatedAt          pgtype.Timestamptz
+}

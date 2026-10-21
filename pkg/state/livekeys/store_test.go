@@ -34,13 +34,15 @@ func open(t *testing.T) *pgxpool.Pool {
 			access text NOT NULL DEFAULT 'read_write', provider_identity_id text, state text NOT NULL, created_at timestamptz NOT NULL DEFAULT clock_timestamp(), deleted_at timestamptz)`); err != nil {
 		t.Fatal(err)
 	}
-	raw, err := migrations.FS.ReadFile("20261017121336518_managed_postgres_live_keys.sql")
-	if err != nil {
-		t.Fatal(err)
-	}
-	up, _, _ := strings.Cut(string(raw), "-- +goose Down")
-	if _, err := pool.Exec(ctx, up); err != nil {
-		t.Fatalf("apply migration: %v", err)
+	for _, name := range []string{"20261017121336518_managed_postgres_live_keys.sql", "20261020203204512_managed_postgres_live_logins.sql"} {
+		raw, err := migrations.FS.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		up, _, _ := strings.Cut(string(raw), "-- +goose Down")
+		if _, err := pool.Exec(ctx, up); err != nil {
+			t.Fatalf("apply migration %s: %v", name, err)
+		}
 	}
 	if _, err := pool.Exec(ctx, `INSERT INTO managed_postgres_databases (id, account_id, state) VALUES ($1, $2, 'ready')`, dbID, account); err != nil {
 		t.Fatal(err)
@@ -76,13 +78,13 @@ func TestStoreLifecycle(t *testing.T) {
 	if err := store.Rotate(ctx, account, dbID, key("aaaaaaaaaaaaaaaa"), time.Hour); !errors.Is(err, livekeys.ErrDisabled) {
 		t.Fatalf("rotate before enable: %v, want ErrDisabled", err)
 	}
-	if err := store.Enable(ctx, other, dbID, key("aaaaaaaaaaaaaaaa")); !errors.Is(err, livekeys.ErrNotFound) {
+	if err := store.Enable(ctx, other, dbID, key("aaaaaaaaaaaaaaaa"), nil); !errors.Is(err, livekeys.ErrNotFound) {
 		t.Fatalf("enable from another account: %v, want ErrNotFound", err)
 	}
-	if err := store.Enable(ctx, account, dbID, key("aaaaaaaaaaaaaaaa")); err != nil {
+	if err := store.Enable(ctx, account, dbID, key("aaaaaaaaaaaaaaaa"), nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Enable(ctx, account, dbID, key("bbbbbbbbbbbbbbbb")); !errors.Is(err, livekeys.ErrEnabled) {
+	if err := store.Enable(ctx, account, dbID, key("bbbbbbbbbbbbbbbb"), nil); !errors.Is(err, livekeys.ErrEnabled) {
 		t.Fatalf("second enable: %v, want ErrEnabled", err)
 	}
 
@@ -150,7 +152,7 @@ func TestStoreRefusesMalformedKeys(t *testing.T) {
 		{KID: "aaaaaaaaaaaaaaaa", Sealed: []byte("x"), Recipient: "not-a-recipient"},
 	}
 	for _, k := range bad {
-		if err := store.Enable(ctx, account, dbID, k); err == nil {
+		if err := store.Enable(ctx, account, dbID, k, nil); err == nil {
 			t.Fatalf("enable accepted %+v", k)
 		}
 	}
@@ -191,7 +193,7 @@ func TestStoreRoutes(t *testing.T) {
 		}
 		return strings.Join(kids(got, func(r livekeys.Route) string { return r.KID + "@" + r.DatabaseID + "/" + r.BackendID }), ",")
 	}
-	if err := store.Enable(ctx, account, dbID, key("aaaaaaaaaaaaaaaa")); err != nil {
+	if err := store.Enable(ctx, account, dbID, key("aaaaaaaaaaaaaaaa"), nil); err != nil {
 		t.Fatal(err)
 	}
 	bind(app, dbID, "provisioning")
@@ -243,5 +245,73 @@ func TestStoreRoutes(t *testing.T) {
 	login(otherApp, dbID, "read_only", "gregale_ro_other")
 	if got := roles(); got != "gregale_ro_1|gregale_api_1" {
 		t.Fatalf("roles with a read-only binding = %q", got)
+	}
+}
+
+// adr: 20261016151947 — a database enabled with a login is one livequeryd
+// discovers on its backend, until live queries are disabled or the database
+// is deleted; the login's sealed connection string and slot come with it.
+func TestStoreLogins(t *testing.T) {
+	pool := open(t)
+	store := livekeys.New(pool)
+	ctx := context.Background()
+	discover := func(backends ...string) []livekeys.LiveDatabase {
+		t.Helper()
+		dbs, err := store.LiveDatabases(ctx, backends)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return dbs
+	}
+	login := &livekeys.Login{Sealed: []byte("sealed-login"), Recipient: recipient, Identity: "gregale_live_ab12", Slot: "gregale_live_db"}
+	if _, ok, err := store.LoginOf(ctx, account, dbID); err != nil || ok {
+		t.Fatalf("login before enable: %v, %v", ok, err)
+	}
+	if err := store.Enable(ctx, account, dbID, key("aaaaaaaaaaaaaaaa"), login); err != nil {
+		t.Fatal(err)
+	}
+	got := discover("native-a", "neon-b")
+	if len(got) != 1 || got[0].DatabaseID != dbID || got[0].BackendID != "native-a" || string(got[0].Sealed) != "sealed-login" ||
+		got[0].Recipient != recipient || got[0].Slot != "gregale_live_db" {
+		t.Fatalf("discovered %+v", got)
+	}
+	if got := discover("neon-b"); len(got) != 0 {
+		t.Fatalf("another backend discovered %+v", got)
+	}
+	if l, ok, err := store.LoginOf(ctx, account, dbID); err != nil || !ok || l.Identity != "gregale_live_ab12" || l.Slot != "gregale_live_db" || l.Sealed != nil {
+		t.Fatalf("login of = %+v, %v, %v", l, ok, err)
+	}
+	if _, ok, err := store.LoginOf(ctx, other, dbID); err != nil || ok {
+		t.Fatalf("another account read the login: %v, %v", ok, err)
+	}
+	// Rotation keeps the login.
+	if err := store.Rotate(ctx, account, dbID, key("bbbbbbbbbbbbbbbb"), 0); err != nil {
+		t.Fatal(err)
+	}
+	if got := discover("native-a"); len(got) != 1 {
+		t.Fatalf("after rotation discovered %+v", got)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE managed_postgres_databases SET state='deleting' WHERE id=$1`, dbID); err != nil {
+		t.Fatal(err)
+	}
+	if got := discover("native-a"); len(got) != 0 {
+		t.Fatalf("a deleting database was discovered: %+v", got)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE managed_postgres_databases SET state='ready' WHERE id=$1`, dbID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Disable(ctx, account, dbID); err != nil {
+		t.Fatal(err)
+	}
+	if got := discover("native-a"); len(got) != 0 {
+		t.Fatalf("a disabled database was discovered: %+v", got)
+	}
+	if _, ok, err := store.LoginOf(ctx, account, dbID); err != nil || ok {
+		t.Fatalf("login after disable: %v, %v", ok, err)
+	}
+	bad := *login
+	bad.Slot = "Bad Slot"
+	if err := store.Enable(ctx, account, dbID, key("cccccccccccccccc"), &bad); err == nil {
+		t.Error("a malformed slot name was stored")
 	}
 }

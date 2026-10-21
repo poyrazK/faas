@@ -40,7 +40,7 @@ type keys struct {
 	list   []livekeys.Key // newest first
 }
 
-func (k *keys) Enable(_ context.Context, _, _ string, key livekeys.NewKey) error {
+func (k *keys) Enable(_ context.Context, _, _ string, key livekeys.NewKey, _ *livekeys.Login) error {
 	for _, x := range k.list {
 		if x.RetiresAt.IsZero() {
 			return livekeys.ErrEnabled

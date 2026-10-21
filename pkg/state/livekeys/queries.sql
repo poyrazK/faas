@@ -59,3 +59,27 @@ SELECT DISTINCT k.kid,d.id::text AS database_id,d.backend_id,d.backend_fingerpri
 SELECT DISTINCT b.app_id::text AS app_id FROM managed_postgres_bindings b
  WHERE b.database_id=sqlc.arg(database_id)::text::uuid AND b.state IN ('ready','retiring')
  ORDER BY 1;
+
+-- name: UpsertLiveLogin :exec
+INSERT INTO managed_postgres_live_logins (database_id,account_id,sealed_login,recipient,provider_identity_id,slot)
+ VALUES (sqlc.arg(database_id)::text::uuid,sqlc.arg(account_id)::text::uuid,sqlc.arg(sealed_login)::bytea,sqlc.arg(recipient)::text,
+ sqlc.arg(provider_identity_id)::text,sqlc.arg(slot)::text)
+ ON CONFLICT (database_id) DO UPDATE SET sealed_login=EXCLUDED.sealed_login, recipient=EXCLUDED.recipient,
+ provider_identity_id=EXCLUDED.provider_identity_id, slot=EXCLUDED.slot, created_at=now();
+
+-- name: LiveLoginOf :many
+SELECT provider_identity_id,slot FROM managed_postgres_live_logins
+ WHERE database_id=sqlc.arg(database_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid;
+
+-- name: DeleteLiveLogin :execrows
+DELETE FROM managed_postgres_live_logins WHERE database_id=sqlc.arg(database_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid;
+
+-- name: LiveDatabases :many
+-- The live databases of the given backends that have a login: the databases
+-- livequeryd serves there.
+SELECT d.id::text AS database_id,d.backend_id,l.sealed_login,l.recipient,l.slot
+ FROM managed_postgres_live_logins l
+ JOIN managed_postgres_databases d ON d.id=l.database_id
+ WHERE d.backend_id=ANY(sqlc.arg(backend_ids)::text[]) AND d.deleted_at IS NULL AND d.state NOT IN ('deleting','deleted')
+ AND EXISTS (SELECT 1 FROM managed_postgres_live_keys k WHERE k.database_id=d.id AND (k.retires_at IS NULL OR k.retires_at>clock_timestamp()))
+ ORDER BY d.id;
