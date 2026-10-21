@@ -53,7 +53,7 @@ func startHAComponents(
 	ctx context.Context,
 	log *slog.Logger,
 	pool *pgxpool.Pool,
-	pgStore *state.PgStore,
+	pgStore *state.EdgeStore,
 	inflight *gateway.ConnStateTracker,
 	nodeName, nodeIP string,
 	metrics ...*wire.OpsMetrics,

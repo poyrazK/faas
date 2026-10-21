@@ -117,7 +117,7 @@ func selectInternalUpstreamMode(computeDiscovery, internalTarget string) interna
 
 // selectInternalDialer builds the control-plane edge's upstream dialer for
 // mode. Static mode also points target at the configured host.
-func selectInternalDialer(ctx context.Context, mode internalUpstreamMode, internalTarget string, target *url.URL, pgStore *state.PgStore, pool *pgxpool.Pool, log *slog.Logger) (gateway.InternalDialer, error) {
+func selectInternalDialer(ctx context.Context, mode internalUpstreamMode, internalTarget string, target *url.URL, pgStore *state.EdgeStore, pool *pgxpool.Pool, log *slog.Logger) (gateway.InternalDialer, error) {
 	switch mode {
 	case internalUpstreamDatabase:
 		cgp := newComputeGatewayPool(pgStore, log).(*computeGatewayPool).withRestartWait()
@@ -272,13 +272,10 @@ func run(ctx context.Context, log *slog.Logger) error {
 		return fmt.Errorf("gatewayd-public: open db: %w", err)
 	}
 	defer pool.Close()
-	// pgStore is the shared state.Store. gatewayd-public only
-	// needs ActiveComputeNodes (for the leader-election adapter
-	// in cmd/gatewayd-public/store_adapter.go); the rest of the
-	// store's surface is for gatewayd-internal (apps, accounts,
-	// sessions). We construct it here so the DNSHandoff wiring
-	// has a Store to call into. Mirrors cmd/gatewayd-internal/run.go:366.
-	pgStore := state.NewPgStore(pool)
+	// pgStore is the edge store: the queries gatewayd-public runs and
+	// nothing else, so a store change elsewhere does not change this
+	// daemon (docs/adr/20261021092138-edge-store-blast-radius.md).
+	pgStore := state.NewEdgeStore(pool)
 	tcpMetrics := tcpmetrics.New(prometheus.NewRegistry(), "gatewayd_public")
 	tcpStop, tcpDrain, err := startTCPIngress(ctx, log, pgStore, tcpMetrics)
 	if err != nil {
