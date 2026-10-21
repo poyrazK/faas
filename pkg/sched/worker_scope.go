@@ -279,6 +279,12 @@ func (e *Engine) reconcileWorkerScopes(ctx context.Context, appID, onlyScope str
 			}
 			byDeployment[dep.ID] = dep
 		}
+		// A held GitOps candidate is not live yet: its instance is a
+		// qualification VM owned by attempt-bound native retirement (ADR-568).
+		// Scaling must neither count nor stop it.
+		if dep.Status != state.DeployLive && dep.EnvironmentWorkloadHeld() {
+			continue
+		}
 		scope := normalizedDeploymentScope(dep.Scope)
 		if dep.AppID != appID || api.ValidateScope(scope) != nil {
 			return state.ErrConflict
