@@ -1595,6 +1595,7 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-1132: Wake-ahead evidence survives gateway restarts](1132-wake-ahead-evidence-survives-restarts.md)
 
 - [ADR-1331: Retained GitOps workload retirement and reviewed recovery](1331-gitops-workload-retirement.md)
+- [ADR-20261017190801: Provider-bound GitLab review and workload provenance](20261017190801-gitlab-reviewed-gitops.md)
 
 - [ADR-1520: Rate-limit token leasing](1520-rate-limit-token-leasing.md)
 - [ADR-1522: Recoverable operator restart execution](1522-recoverable-operator-restart-execution.md)
@@ -1696,6 +1697,30 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-1500: Source-built apps run on the shared runtime base](1500-shared-runtime-source-apps.md)
 - [ADR-1501: Reconcile worker pools once at scheduler start](1501-worker-startup-reconcile.md)
 - [ADR-1591: Managed Postgres data pipelines](1591-managed-postgres-data-pipelines.md)
+
+- [ADR-20261017190802: Reviewed source-backed scheduled Jobs](20261017190802-gitops-source-scheduled-jobs.md)
+
+- [ADR-20261017190803: Read-only GitOps promotion proposals](20261017190803-gitops-promotion-proposals.md)
+
+- [ADR-20261017190804: Reuse signed build artifacts across GitOps environments](20261017190804-gitops-built-artifact-reuse.md)
+
+- [ADR-20261017190805: Reviewed GitOps rollback proposals](20261017190805-gitops-reviewed-rollback-proposals.md)
+
+- [ADR-20261017190806: GitOps recovery catalog](20261017190806-gitops-recovery-catalog.md)
+
+- [ADR-20261017190807: Bounded GitOps recovery artifact retention](20261017190807-gitops-bounded-recovery-retention.md)
+
+- [ADR-20261017190808: Signed artifact promotion and rollback for scheduled Jobs](20261017190808-gitops-scheduled-job-artifact-promotion-and-rollback.md)
+
+- [ADR-20261017190809: Reuse signed builds for unchanged isolated GitOps contexts](20261017190809-gitops-unchanged-build-context-reuse.md)
+
+- [ADR-20261017190810: Reviewed GitOps promotion pull and merge requests](20261017190810-gitops-promotion-review-requests.md)
+
+- [ADR-20261017190811: Reviewed GitOps recovery pull and merge requests](20261017190811-gitops-rollback-review-requests.md)
+
+- [ADR-20261017190812: Wait for a GitOps commit's recorded serving evidence](20261017190812-gitops-wait-for-serving-commit.md)
+
+- [ADR-20261017190813: Durable GitOps rollout outcome notifications](20261017190813-gitops-rollout-outcome-notifications.md)
 
 - [ADR-20261017191501: Browser and Task migration parity for Go/Python MCP starters](20261017191501-mcp-go-python-starter-parity.md)
 - [ADR-20261017191502: Bounded starter protocol observations](20261017191502-mcp-starter-protocol-telemetry.md)

@@ -1457,8 +1457,13 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "compose_healthcheck.go"),
 		filepath.Join(root, "pkg", "api", "compose_process.go"), // ADR-1337 Compose process overrides for prebuilt images.
 		filepath.Join(root, "pkg", "api", "environment_gitops.go"),
+		filepath.Join(root, "pkg", "api", "environment_gitops_explanation.go"),
 		filepath.Join(root, "pkg", "api", "environment_workload_retirement.go"), // ADR-1331 retained workload retirement and recovery DTO
 		filepath.Join(root, "pkg", "api", "environment_gitops_preview.go"),
+		filepath.Join(root, "pkg", "api", "environment_gitops_promotion.go"),
+		filepath.Join(root, "pkg", "api", "environment_gitops_rollback.go"),
+		filepath.Join(root, "pkg", "api", "environment_gitops_releases.go"),
+		filepath.Join(root, "pkg", "api", "environment_recovery_retention.go"),
 		filepath.Join(root, "pkg", "api", "environment_gitops_notifications.go"),
 		filepath.Join(root, "pkg", "api", "environment_definition.go"),
 		filepath.Join(root, "pkg", "api", dtoFile),

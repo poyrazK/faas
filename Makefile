@@ -1685,8 +1685,14 @@ test-environment-gitops-core: ## Strict contract, planner, worker, and real Post
 	@GREGALE_GITOPS_ACCEPTANCE=1 $(GO) test -p 1 ./pkg/environmentsync/... ./pkg/environmentgitops ./pkg/gregalemanifest -count=1
 
 .PHONY: test-environment-gitops-native
-test-environment-gitops-native: ## Isolated native API/worker/queue/guest acceptance with strict pass and leak gates.
+test-environment-gitops-native: ## Isolated native API/worker/queue and source scheduled-Job acceptance with strict pass and leak gates.
 	@GO="$(GO)" bash scripts/test-environment-gitops-native.sh
+
+.PHONY: test-environment-gitops-report
+test-environment-gitops-report: ## Test structured native acceptance evidence; no KVM or database required.
+	@python3 scripts/gitops_native_report_test.py
+	@python3 scripts/ci/gitops_native_ci_test.py
+	@bash -n scripts/ci/run-gitops-native-acceptance.sh
 
 .PHONY: test-environment-gitops-controls
 test-environment-gitops-controls: test-environment-gitops-core ## API/CLI/dashboard review workflows and SDK contracts; does not replace native runtime acceptance.

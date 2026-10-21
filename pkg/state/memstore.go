@@ -3797,6 +3797,9 @@ func (m *MemStore) DeleteProject(ctx context.Context, projectID string) error {
 }
 
 func (m *MemStore) deleteProjectLocked(projectID string) error {
+	if m.recoveryProtectedScopeLocked("", projectID, "") {
+		return ErrConflict
+	}
 	for _, site := range m.hostingSites {
 		if site.ProjectID == projectID {
 			return ErrConflict
@@ -4009,6 +4012,9 @@ func (m *MemStore) DeleteProjectEnvironmentWithCleanup(
 	defer m.mu.Unlock()
 	if err := m.checkOrgAccessLocked(ctx); err != nil {
 		return ProjectEnvironmentCleanupJob{}, err
+	}
+	if m.recoveryProtectedScopeLocked(accountID, projectID, slug) {
+		return ProjectEnvironmentCleanupJob{}, ErrConflict
 	}
 
 	project, ok := m.projects[projectID]
@@ -7058,6 +7064,11 @@ func (m *MemStore) ClaimAppDeletion(_ context.Context, id string) error {
 func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	for _, dep := range m.deployments {
+		if dep.AppID == id && m.recoveryProtectedDeploymentLocked(dep.ID) {
+			return ErrConflict
+		}
+	}
 	a, ok := m.apps[id]
 	_, claimed := m.appDeletionClaims[id]
 	if !ok || !claimed || a.Status != AppDeleted || a.DeleteGraceUntil == nil || a.DeleteGraceUntil.After(time.Now()) {
@@ -7293,6 +7304,11 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 func (m *MemStore) SoftDeleteAppCascade(_ context.Context, id string) (App, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	for _, dep := range m.deployments {
+		if dep.AppID == id && m.recoveryProtectedDeploymentLocked(dep.ID) {
+			return App{}, ErrConflict
+		}
+	}
 	a, ok := m.apps[id]
 	if !ok {
 		return App{}, ErrNotFound
@@ -10003,6 +10019,9 @@ func (m *MemStore) ClearDeployment(_ context.Context, id, principal string) erro
 	if !ok {
 		return ErrNotFound
 	}
+	if m.buildArtifactOriginPinnedLocked(id) || m.recoveryProtectedDeploymentLocked(id) {
+		return ErrConflict
+	}
 	if d.Status == DeployLive {
 		return ErrCancelLiveForbidden
 	}
@@ -10063,6 +10082,9 @@ func (m *MemStore) ClearObsoleteDeployments(ctx context.Context, appID string, o
 			continue
 		}
 		if skippable[id] {
+			continue
+		}
+		if m.buildArtifactOriginPinnedLocked(id) || m.recoveryProtectedDeploymentLocked(id) {
 			continue
 		}
 		if d.DeletedAt != nil {
@@ -10597,6 +10619,10 @@ func (m *MemStore) SetDeploymentRootfs(_ context.Context, id, path, key string, 
 	if !ok {
 		return ErrNotFound
 	}
+	if ((m.buildArtifactOriginPinnedLocked(d.ID) || m.recoveryProtectedDeploymentLocked(d.ID)) || candidateFrozenInputs(d).BuiltArtifact != nil) &&
+		(d.RootfsPath != path || d.RootfsKey != key || d.RootfsBytes != bytes) {
+		return ErrInvalidStateTransition
+	}
 	if d.EnvironmentWorkloadRuntime != "" && d.Status == DeployLive &&
 		(d.RootfsPath != path || d.RootfsKey != key || d.RootfsBytes != bytes) {
 		return ErrInvalidStateTransition
@@ -10629,6 +10655,9 @@ func (m *MemStore) SetDeploymentRootfsIfActive(_ context.Context, id, path, key 
 	d, ok := m.deployments[id]
 	if !ok {
 		return ErrNotFound
+	}
+	if ((m.buildArtifactOriginPinnedLocked(d.ID) || m.recoveryProtectedDeploymentLocked(d.ID)) || candidateFrozenInputs(d).BuiltArtifact != nil) && (d.RootfsPath != path || d.RootfsKey != key || d.RootfsBytes != bytes) {
+		return ErrInvalidStateTransition
 	}
 	if d.Status.IsTerminal() || d.Status == DeployLive {
 		return ErrInvalidStateTransition
@@ -11421,6 +11450,13 @@ func (m *MemStore) SetDeploymentSidecarLayer(_ context.Context, l DeploymentSide
 	defer m.mu.Unlock()
 	if _, ok := m.deployments[l.DeploymentID]; !ok {
 		return DeploymentSidecarLayer{}, ErrNotFound
+	}
+	if m.recoveryProtectedDeploymentLocked(l.DeploymentID) {
+		existing, ok := m.deploymentSidecarLayers[l.DeploymentID+"\x00"+l.SidecarName]
+		if ok && existing.StorageKey == l.StorageKey && existing.Bytes == l.Bytes && existing.ContentDigest == l.ContentDigest {
+			return existing, nil
+		}
+		return DeploymentSidecarLayer{}, ErrConflict
 	}
 	if l.StorageKey != "" {
 		if err := m.requireLayerArtifactsRetainedLocked([]string{l.StorageKey}); err != nil {
@@ -22814,6 +22850,9 @@ func AppDeleteGraceDuration() time.Duration {
 func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.recoveryProtectedScopeLocked(id, "", "") {
+		return ErrConflict
+	}
 	a, ok := m.accounts[id]
 	if !ok {
 		return ErrNotFound

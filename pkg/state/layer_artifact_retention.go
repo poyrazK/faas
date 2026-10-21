@@ -109,7 +109,7 @@ func (m *MemStore) deploymentLayerKeysLocked(d Deployment) []string {
 
 func (m *MemStore) deploymentLayerArtifactReferencedLocked(d Deployment) bool {
 	now := time.Now().UTC()
-	active := d.DeletedAt == nil && (d.Status == DeployLive || !d.Status.IsTerminal()) || m.workflowRetainsDeploymentLocked(d.ID) || m.workloadRetirementRetainsDeploymentLocked(d.ID)
+	active := d.DeletedAt == nil && (d.Status == DeployLive || !d.Status.IsTerminal()) || m.workflowRetainsDeploymentLocked(d.ID) || m.workloadRetirementRetainsDeploymentLocked(d.ID) || m.recoveryProtectedDeploymentLocked(d.ID)
 	for _, instance := range m.instances {
 		active = active || instance.DeploymentID == d.ID && layerArtifactInstanceActive(instance.State)
 	}
@@ -131,6 +131,21 @@ func (m *MemStore) deploymentLayerArtifactReferencedLocked(d Deployment) bool {
 }
 
 func (m *MemStore) layerArtifactReferencedLocked(key string) bool {
+	for id, root := range m.sourceBuildRootfs {
+		if root.Input.StorageKey == key && m.buildArtifactPinnedLocked(id) {
+			return true
+		}
+	}
+	for _, job := range m.jobs {
+		if isEnvironmentGitOpsSourceJob(job.ImageRef) && job.Status != "deleted" && job.ImageMaterializationStatus == "ready" && job.ImageStorageKey == key {
+			return true
+		}
+	}
+	for _, run := range m.jobRuns {
+		if isEnvironmentGitOpsSourceJob(run.ImageRefSnapshot) && (run.AggregateStatus == "queued" || run.AggregateStatus == "running") && run.ImageStorageKeySnapshot == key {
+			return true
+		}
+	}
 	for _, d := range m.deployments {
 		app := m.apps[d.AppID]
 		if app.ID == "" || app.Status == AppDeleted || !m.deploymentLayerArtifactReferencedLocked(d) {

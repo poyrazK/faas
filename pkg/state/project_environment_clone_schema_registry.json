@@ -4896,6 +4896,15 @@
     "kind": "operational"
   },
   {
+    "table": "environment_build_artifact_pins",
+    "columns": [
+      "artifact_id",
+      "candidate_id",
+      "source_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "environment_desired_revisions",
     "columns": [
       "approved_at",
@@ -5223,6 +5232,16 @@
       "instance_id",
       "recorded_at",
       "snapshot"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "environment_recovery_serving_history",
+    "columns": [
+      "graph_id",
+      "release_set_id",
+      "served_at",
+      "source_id"
     ],
     "kind": "operational"
   },
@@ -14852,6 +14871,21 @@
     "kind": "operational"
   },
   {
+    "table": "runtime_config_apply_receipts",
+    "columns": [
+      "config_key",
+      "daemon",
+      "error",
+      "instance",
+      "reported_at",
+      "scope",
+      "scope_id",
+      "status",
+      "version"
+    ],
+    "kind": "platform_configuration"
+  },
+  {
     "table": "runtime_config_entries",
     "columns": [
       "actor_id",
@@ -16640,20 +16674,5 @@
       "workflow_name"
     ],
     "kind": "operational"
-  },
-  {
-    "table": "runtime_config_apply_receipts",
-    "columns": [
-      "config_key",
-      "daemon",
-      "error",
-      "instance",
-      "reported_at",
-      "scope",
-      "scope_id",
-      "status",
-      "version"
-    ],
-    "kind": "platform_configuration"
   }
 ]

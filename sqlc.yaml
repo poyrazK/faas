@@ -187,6 +187,7 @@ sql:
       - "pkg/state/edge_rule_replay_retention_queries.sql"
       - "pkg/state/email_verification_queries.sql"
       - "pkg/state/entity_outbox_delivery_queries.sql"
+      - "pkg/state/environment_source_job_queries.sql"
       - "pkg/state/environment_workload_retirement_queries.sql"
       - "pkg/state/event_circuit_queries.sql"
       - "pkg/state/event_consumer_execution_queries.sql"

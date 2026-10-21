@@ -209,6 +209,14 @@ func snapshotProcs() []*exec.Cmd {
 // buffer (logged on teardown so a flaky failure has the daemon's last words).
 func Start(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv ...string) *Harness {
 	t.Helper()
+	return StartWithAPIDEnv(t, pool, which, nil, extraEnv...)
+}
+
+// StartWithAPIDEnv confines provider proxies, trust roots and OAuth keys to
+// apid. Builder and image downloads retain their own normal transport trust.
+// APID restarts reuse the same scoped launch environment.
+func StartWithAPIDEnv(t *testing.T, pool *pgxpool.Pool, which Which, apidOnlyEnv []string, extraEnv ...string) *Harness {
+	t.Helper()
 
 	tmp := harnessTempDir(t)
 	// Daemon binaries are built once per process and shared across tests;
@@ -277,7 +285,7 @@ func Start(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv ...string) *H
 		if scheddVerifies {
 			h.ensureSignPub(t)
 		}
-		startAPID(t, h, bin, dbURL, extraEnv...)
+		startAPID(t, h, bin, dbURL, append(append([]string(nil), extraEnv...), apidOnlyEnv...)...)
 	}
 
 	// Both socket paths are fixed up front: vmmd's env carries schedd's target

@@ -67,6 +67,7 @@ native_e2e_phase_files() {
       dev_loop_metal_test.go \
       dev_watch_metal_test.go \
       environment_gitops_native_metal_test.go \
+      environment_gitops_source_jobs_native_metal_test.go \
       deploy_override_port_metal_test.go \
       deploy_wake_metal_test.go \
       safe_release_drill_metal_test.go \
@@ -81,6 +82,8 @@ native_e2e_phase_files() {
       image_process_identity_metal_test.go \
       source_deploy_wake_metal_test.go \
       secrets_image_deploy_e2e_test.go \
+      object_storage_native_metal_test.go \
+      queue_binding_native_metal_test.go \
       queue_push_parallel_metal_test.go \
       private_service_tcp_metal_test.go \
       scenario_tcp_chaos_metal_test.go \

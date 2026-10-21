@@ -204,6 +204,7 @@ type Querier interface {
 	BindDeploymentRuntimeRelease(ctx context.Context, db DBTX, arg BindDeploymentRuntimeReleaseParams) (string, error)
 	BindEnvironmentGitOpsQueue(ctx context.Context, db DBTX, arg BindEnvironmentGitOpsQueueParams) (int64, error)
 	BindEnvironmentGitOpsResource(ctx context.Context, db DBTX, arg BindEnvironmentGitOpsResourceParams) (int64, error)
+	BindEnvironmentSourceJobArtifact(ctx context.Context, db DBTX, arg BindEnvironmentSourceJobArtifactParams) (int64, error)
 	BindExclusiveWorkSubmission(ctx context.Context, db DBTX, arg BindExclusiveWorkSubmissionParams) error
 	BindInstanceSnapshotRecovery(ctx context.Context, db DBTX, arg BindInstanceSnapshotRecoveryParams) (int64, error)
 	BindInvocationEnvironment(ctx context.Context, db DBTX, arg BindInvocationEnvironmentParams) (int64, error)
@@ -367,6 +368,7 @@ type Querier interface {
 	ClearApplicationStandardControlBindings(ctx context.Context, db DBTX, appID pgtype.UUID) error
 	ClearInstanceRuntimeConfigReceipt(ctx context.Context, db DBTX, instanceID pgtype.UUID) error
 	ClearMFA(ctx context.Context, db DBTX, id pgtype.UUID) (int64, error)
+	ClearObsoleteDeploymentsRetainingRecovery(ctx context.Context, db DBTX, arg ClearObsoleteDeploymentsRetainingRecoveryParams) (int64, error)
 	ClearServiceRolloutPredecessorPin(ctx context.Context, db DBTX, deploymentID pgtype.UUID) error
 	// Records that the spool file has been removed. Terminal status is
 	// required so an out-of-order cleanup call cannot hide the path of
@@ -395,8 +397,9 @@ type Querier interface {
 	CloneEnvironmentCleanupHasReplacement(ctx context.Context, db DBTX, arg CloneEnvironmentCleanupHasReplacementParams) (bool, error)
 	// Original clone journals and historical secret/runtime-change tombstones are
 	// retained evidence, as are production_lifecycle_reviews attached to retained
-	// deployments and append-only binding/MCP readiness policy history. All other
-	// known operational references must close first.
+	// deployments and append-only binding policy history. MCP readiness history and
+	// scoped alert selectors remain borrowers while retained. All other known
+	// operational references must close first.
 	CloneEnvironmentCleanupHasScopeBorrowers(ctx context.Context, db DBTX, arg CloneEnvironmentCleanupHasScopeBorrowersParams) (bool, error)
 	CloneManagedSecretWithdrawalHasExternalOwners(ctx context.Context, db DBTX, environmentID pgtype.UUID) (pgtype.Bool, error)
 	CloneObjectGrantRevocationDispatch(ctx context.Context, db DBTX, arg CloneObjectGrantRevocationDispatchParams) (ProjectEnvironmentCloneObjectGrantRevocation, error)
@@ -864,6 +867,7 @@ type Querier interface {
 	EnsureExclusiveWorkQuota(ctx context.Context, db DBTX, arg EnsureExclusiveWorkQuotaParams) error
 	EnvironmentBindingCandidate(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (EnvironmentBindingCandidateRow, error)
 	EnvironmentBindingReleaseRequired(ctx context.Context, db DBTX, arg EnvironmentBindingReleaseRequiredParams) (bool, error)
+	EnvironmentBuildArtifactOrigin(ctx context.Context, db DBTX, arg EnvironmentBuildArtifactOriginParams) (string, error)
 	EnvironmentFieldGitOwned(ctx context.Context, db DBTX, arg EnvironmentFieldGitOwnedParams) (bool, error)
 	EnvironmentFieldOwnershipLegacyApp(ctx context.Context, db DBTX, arg EnvironmentFieldOwnershipLegacyAppParams) (bool, error)
 	EnvironmentGitOpsCandidateByInput(ctx context.Context, db DBTX, arg EnvironmentGitOpsCandidateByInputParams) (pgtype.UUID, error)
@@ -899,16 +903,21 @@ type Querier interface {
 	EnvironmentQueueClaimCapacity(ctx context.Context, db DBTX, invocationID pgtype.UUID) (EnvironmentQueueClaimCapacityRow, error)
 	EnvironmentQueueDeliveryClock(ctx context.Context, db DBTX) (pgtype.Timestamptz, error)
 	EnvironmentQueueDeliveryReceiptExists(ctx context.Context, db DBTX, invocationID pgtype.UUID) (bool, error)
+	EnvironmentRecoveryReleaseFirstServing(ctx context.Context, db DBTX, arg EnvironmentRecoveryReleaseFirstServingParams) (pgtype.Timestamptz, error)
 	EnvironmentSecretReferenceQuota(ctx context.Context, db DBTX, arg EnvironmentSecretReferenceQuotaParams) (EnvironmentSecretReferenceQuotaRow, error)
 	EnvironmentSecretReferenceSourcePresent(ctx context.Context, db DBTX, arg EnvironmentSecretReferenceSourcePresentParams) (bool, error)
 	// Public controls check authority before source/quota checks, including a
 	// no-op delete. The storage trigger still checks authority at the write.
 	EnvironmentSecretReferenceWriteOwned(ctx context.Context, db DBTX, arg EnvironmentSecretReferenceWriteOwnedParams) (bool, error)
+	EnvironmentSourceJobArtifactReady(ctx context.Context, db DBTX, arg EnvironmentSourceJobArtifactReadyParams) (bool, error)
 	EnvironmentWorkloadAdmissionRetired(ctx context.Context, db DBTX, arg EnvironmentWorkloadAdmissionRetiredParams) (bool, error)
 	EnvironmentWorkloadGraphByIDForUpdate(ctx context.Context, db DBTX, id pgtype.UUID) (EnvironmentWorkloadGraph, error)
 	EnvironmentWorkloadGraphForPreparation(ctx context.Context, db DBTX, arg EnvironmentWorkloadGraphForPreparationParams) (EnvironmentWorkloadGraph, error)
 	// Status reads use a read-only transaction and must not lock the candidate graph.
 	EnvironmentWorkloadGraphForStatus(ctx context.Context, db DBTX, arg EnvironmentWorkloadGraphForStatusParams) (EnvironmentWorkloadGraph, error)
+	// Retained serving receipts select historical graphs without requiring them to
+	// remain active or to match the source's current approved revision.
+	EnvironmentWorkloadGraphsForRollback(ctx context.Context, db DBTX, arg EnvironmentWorkloadGraphsForRollbackParams) ([]EnvironmentWorkloadGraph, error)
 	EnvironmentWorkloadIntent(ctx context.Context, db DBTX, arg EnvironmentWorkloadIntentParams) (AppEnvironmentWorkloadIntent, error)
 	EnvironmentWorkloadIntentContext(ctx context.Context, db DBTX, arg EnvironmentWorkloadIntentContextParams) ([]byte, error)
 	EnvironmentWorkloadIntentLockSource(ctx context.Context, db DBTX, arg EnvironmentWorkloadIntentLockSourceParams) ([]pgtype.UUID, error)
@@ -2917,10 +2926,13 @@ type Querier interface {
 	ListEnabledUDPListeners(ctx context.Context, db DBTX) ([]AppUdpListener, error)
 	ListEnvironmentGitOpsOverrideExpirations(ctx context.Context, db DBTX, sourceID pgtype.UUID) ([]ListEnvironmentGitOpsOverrideExpirationsRow, error)
 	ListEnvironmentGitOpsRuns(ctx context.Context, db DBTX, arg ListEnvironmentGitOpsRunsParams) ([]EnvironmentGitopsRun, error)
+	// Include expired release windows, but only completed serving history of this binding.
+	ListEnvironmentGitRecoveryReleases(ctx context.Context, db DBTX, arg ListEnvironmentGitRecoveryReleasesParams) ([]string, error)
 	// Discovery does not authorize cleanup. Recheck under the original request
 	// and immutable frame locks before any native retirement RPC.
 	ListEnvironmentQualificationExecutionsForRecovery(ctx context.Context, db DBTX, arg ListEnvironmentQualificationExecutionsForRecoveryParams) ([]EnvironmentQualificationExecution, error)
 	ListEnvironmentQueueCleanupInvocations(ctx context.Context, db DBTX, environmentID pgtype.UUID) ([]pgtype.UUID, error)
+	ListEnvironmentRecoveryProtection(ctx context.Context, db DBTX, arg ListEnvironmentRecoveryProtectionParams) ([]ListEnvironmentRecoveryProtectionRow, error)
 	ListEnvironmentServingGatewayNames(ctx context.Context, db DBTX) ([]string, error)
 	// Graph discovery is advisory. Every member is claimed atomically by the
 	// graph claim method, which rechecks source authority, artifacts, smoke policy
@@ -3236,8 +3248,9 @@ type Querier interface {
 	LockCheckedRollbackScope(ctx context.Context, db DBTX, arg LockCheckedRollbackScopeParams) ([]pgtype.UUID, error)
 	LockClaimedProfileCanaryCheck(ctx context.Context, db DBTX, arg LockClaimedProfileCanaryCheckParams) ([]byte, error)
 	LockClaimedProfileDeploymentCheck(ctx context.Context, db DBTX, arg LockClaimedProfileDeploymentCheckParams) ([]byte, error)
-	// These retained binding receipts and stages were added after the original
-	// migration-owned writer fence. Keep their writers out of the deletion window.
+	// These binding and MCP references were added after the original migration-owned
+	// writer fence. Keep their writers out of the deletion window, including writers
+	// of resolved incidents, cancelled maintenance and retained policy history.
 	LockCloneBindingEnvironmentCleanupBorrowers(ctx context.Context, db DBTX) error
 	LockCloneCheckpointObjectPublicationBucket(ctx context.Context, db DBTX, arg LockCloneCheckpointObjectPublicationBucketParams) (ObjectBucket, error)
 	LockCloneCheckpointObjectPublicationKeys(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]pgtype.UUID, error)
@@ -3247,7 +3260,8 @@ type Querier interface {
 	// Match the permanent retirement fence's table-before-instance lock order.
 	LockCloneCheckpointWakeDispatchTables(ctx context.Context, db DBTX) error
 	LockCloneDeploymentCleanupBorrowerWriters(ctx context.Context, db DBTX) error
-	// Deployment UUID arrays retain original artifacts without a foreign-key lock.
+	// Deployment UUID arrays and rehearsal receipts retain original artifacts without
+	// a foreign-key lock; exclude their writers through deletion and receipt commit.
 	LockCloneDeploymentCleanupRetirementWriters(ctx context.Context, db DBTX) error
 	LockCloneEnvironmentCleanupScopeBorrowers(ctx context.Context, db DBTX) error
 	// Environment-scoped MCP readiness policies, incidents and maintenance windows
@@ -3611,6 +3625,7 @@ type Querier interface {
 	MarkUploadSessionCommitted(ctx context.Context, db DBTX, arg MarkUploadSessionCommittedParams) (MarkUploadSessionCommittedRow, error)
 	MarkWorkflowOutboundUnknown(ctx context.Context, db DBTX, runID pgtype.UUID) error
 	MarkWorkflowRunStatusFenced(ctx context.Context, db DBTX, arg MarkWorkflowRunStatusFencedParams) (int64, error)
+	MaterializeEnvironmentBuildArtifact(ctx context.Context, db DBTX, id pgtype.UUID) error
 	MigrateInstanceRuntimeConfig(ctx context.Context, db DBTX, arg MigrateInstanceRuntimeConfigParams) (Instance, error)
 	MigrationAdmissionNodePending(ctx context.Context, db DBTX, nodeID pgtype.UUID) (bool, error)
 	MigrationAdmissionNodeResources(ctx context.Context, db DBTX, nodeIds []pgtype.UUID) ([]MigrationAdmissionNodeResourcesRow, error)
@@ -4140,6 +4155,7 @@ type Querier interface {
 	PrepareEnvironmentWorkloadRetirementGateways(ctx context.Context, db DBTX, arg PrepareEnvironmentWorkloadRetirementGatewaysParams) (EnvironmentWorkloadRetirement, error)
 	PrepareMigrationContractRuntime(ctx context.Context, db DBTX, arg PrepareMigrationContractRuntimeParams) (int64, error)
 	PreviewEventExecutionLineageRetries(ctx context.Context, db DBTX, arg PreviewEventExecutionLineageRetriesParams) ([]EventExecutionLineageCase, error)
+	ProbeManagedPostgresCredential(ctx context.Context, db DBTX, access string) (ProbeManagedPostgresCredentialRow, error)
 	ProductBillingCredited(ctx context.Context, db DBTX, operationID pgtype.UUID) (int64, error)
 	ProductBillingDocument(ctx context.Context, db DBTX, arg ProductBillingDocumentParams) (ProductControlBillingDocument, error)
 	ProductBillingDocuments(ctx context.Context, db DBTX, arg ProductBillingDocumentsParams) ([]ProductControlBillingDocument, error)
@@ -4524,6 +4540,8 @@ type Querier interface {
 	ReadEnvironmentQueueDeliveryReceipt(ctx context.Context, db DBTX, invocationID pgtype.UUID) (InvocationEnvironmentQueueReceipt, error)
 	ReadEnvironmentQueueInvocation(ctx context.Context, db DBTX, id pgtype.UUID) (Invocation, error)
 	ReadEnvironmentQueueProducerPlan(ctx context.Context, db DBTX, id pgtype.UUID) (string, error)
+	ReadEnvironmentRecoveryPolicy(ctx context.Context, db DBTX, sourceID pgtype.UUID) ([]byte, error)
+	ReadEnvironmentRecoveryServingHistory(ctx context.Context, db DBTX, graphID pgtype.UUID) (pgtype.Timestamptz, error)
 	ReadEnvironmentRouteBudgets(ctx context.Context, db DBTX, arg ReadEnvironmentRouteBudgetsParams) ([]byte, error)
 	ReadExclusiveWorkKey(ctx context.Context, db DBTX, arg ReadExclusiveWorkKeyParams) (ExclusiveWorkKey, error)
 	ReadExclusiveWorkOperation(ctx context.Context, db DBTX, arg ReadExclusiveWorkOperationParams) (ExclusiveWorkOperation, error)

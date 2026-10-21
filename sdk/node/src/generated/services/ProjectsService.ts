@@ -28,11 +28,16 @@ import type { EnvironmentGitOpsPlan } from '../models/EnvironmentGitOpsPlan.js';
 import type { EnvironmentGitOpsStatusResponse } from '../models/EnvironmentGitOpsStatusResponse.js';
 import type { EnvironmentGitSource } from '../models/EnvironmentGitSource.js';
 import type { EnvironmentGitSourceUpdate } from '../models/EnvironmentGitSourceUpdate.js';
+import type { ListEnvironmentGitReleasesResponse } from '../models/ListEnvironmentGitReleasesResponse.js';
 import type { PlanResponse } from '../models/PlanResponse.js';
 import type { PrepareProjectRollbackRequest } from '../models/PrepareProjectRollbackRequest.js';
 import type { PreviewEnvironmentGitPlanResponse } from '../models/PreviewEnvironmentGitPlanResponse.js';
+import type { PreviewEnvironmentGitPromotionRequest } from '../models/PreviewEnvironmentGitPromotionRequest.js';
+import type { PreviewEnvironmentGitPromotionResponse } from '../models/PreviewEnvironmentGitPromotionResponse.js';
 import type { PreviewEnvironmentGitRevisionRequest } from '../models/PreviewEnvironmentGitRevisionRequest.js';
 import type { PreviewEnvironmentGitRevisionResponse } from '../models/PreviewEnvironmentGitRevisionResponse.js';
+import type { PreviewEnvironmentGitRollbackRequest } from '../models/PreviewEnvironmentGitRollbackRequest.js';
+import type { PreviewEnvironmentGitRollbackResponse } from '../models/PreviewEnvironmentGitRollbackResponse.js';
 import type { Problem } from '../models/Problem.js';
 import type { ProjectApplyRequest } from '../models/ProjectApplyRequest.js';
 import type { ProjectBindingVerificationReview } from '../models/ProjectBindingVerificationReview.js';
@@ -1443,6 +1448,166 @@ export class ProjectsService {
     return __request(OpenAPI, {
       method: 'POST',
       url: '/v1/projects/{slug}/environments/{environment}/gitops/plan',
+      path: {
+        'slug': slug,
+        'environment': environment,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Preview image promotion from a proven serving environment release.
+   * Read-only, value-redacted proposal. Reads both bound sources, source release, current graph evidence, artifacts, target intent and ownership on one snapshot. Source builds without a portable artifact reference are blocked. The hash grants no approval or execution authority; expected_plan_hash rejects changed observations. Target review and fresh qualification remain required.
+   * @returns PreviewEnvironmentGitPromotionResponse Read-only promotion proposal; blockers prevent patch and manifest export.
+   * @throws ApiError
+   */
+  public static previewEnvironmentGitPromotion({
+    slug,
+    environment,
+    requestBody,
+  }: {
+    /**
+     * Project owning the environment Git authority.
+     */
+    slug: string,
+    /**
+     * Registered environment selected for Git intent management.
+     */
+    environment: string,
+    /**
+     * Source environment, immutable target-manifest commit, and optional previously reviewed observation hash.
+     */
+    requestBody: PreviewEnvironmentGitPromotionRequest,
+  }): CancelablePromise<PreviewEnvironmentGitPromotionResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/projects/{slug}/environments/{environment}/gitops/promotion-plan',
+      path: {
+        'slug': slug,
+        'environment': environment,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * List retained GitOps serving releases and current rollback eligibility.
+   * Verifies the immutable target manifest commit through the bound provider and assesses each release using the rollback planner on one scoped observation snapshot per page. Only completed serving history of the current source is listed. Eligibility can change after observation. Release compatibility deadlines do not guarantee artifact retention. This read-only catalog never pins artifacts or authorizes rollback execution.
+   * @returns ListEnvironmentGitReleasesResponse Bounded recovery catalog with current eligibility and public artifact identities.
+   * @throws ApiError
+   */
+  public static listEnvironmentGitReleases({
+    slug,
+    environment,
+    targetCommitSha,
+    before,
+  }: {
+    /**
+     * Project owning the environment Git authority.
+     */
+    slug: string,
+    /**
+     * Registered environment selected for Git intent management.
+     */
+    environment: string,
+    /**
+     * Immutable commit containing the target manifest whose configuration will be preserved.
+     */
+    targetCommitSha: string,
+    /**
+     * next_before release UUID from the previous recovery page in this Git source scope.
+     */
+    before?: string,
+  }): CancelablePromise<ListEnvironmentGitReleasesResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/projects/{slug}/environments/{environment}/gitops/releases',
+      path: {
+        'slug': slug,
+        'environment': environment,
+      },
+      query: {
+        'target_commit_sha': targetCommitSha,
+        'before': before,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Propose a code rollback from a retained GitOps serving release.
+   * Read-only, value-redacted proposal selecting exact retained artifacts in this environment. Rechecks historical serving evidence, current artifact trust, identity mappings, target intent and ownership on one snapshot. It preserves current configuration and changes only compatible workload sources. Review the observation hash before export; normal Git approval and fresh qualification remain required.
+   * @returns PreviewEnvironmentGitRollbackResponse Read-only rollback proposal; blockers prevent patch and manifest export.
+   * @throws ApiError
+   */
+  public static previewEnvironmentGitRollback({
+    slug,
+    environment,
+    requestBody,
+  }: {
+    /**
+     * Project owning the environment Git authority.
+     */
+    slug: string,
+    /**
+     * Registered environment selected for Git intent management.
+     */
+    environment: string,
+    /**
+     * Retained release UUID, immutable target-manifest commit, and optional previously reviewed observation hash.
+     */
+    requestBody: PreviewEnvironmentGitRollbackRequest,
+  }): CancelablePromise<PreviewEnvironmentGitRollbackResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/projects/{slug}/environments/{environment}/gitops/rollback-plan',
       path: {
         'slug': slug,
         'environment': environment,

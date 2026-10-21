@@ -682,6 +682,14 @@ jobs:
             exit 0
           fi
           bash scripts/ci/test_python_storage_starter.sh
+      - name: GitOps report and provider fixture contracts (no KVM)
+        if: matrix.shard == 1
+        run: |
+          if ! grep -qE '^(cmd/e2e/environment_gitops|pkg/e2etest/(gitarchive/|gitlabfixture/|builderbase|harness|testdata/gitopsjob/)|scripts/(test-environment-gitops-native|gitops_native_report|ci/(gitops.native|run-gitops-native))|\.github/workflows/(ci(-light)?|gitops-native)\.yml)' "$RUNNER_TEMP/changed-paths.txt"; then
+            exit 0
+          fi
+          make test-environment-gitops-report
+          go test -race -p 1 ./pkg/e2etest/gitarchive ./pkg/e2etest/gitlabfixture -count=1 -v -timeout=2m
       # The managed-Postgres fixture API check and the GitOps native e2e
       # compile build apidserver and cmd/e2e under extra build tags, which
       # nothing caches: 18 minutes on their own. The mega tier runs both (pg
@@ -716,8 +724,14 @@ jobs:
             GOMEMLIMIT=2GiB GOGC=10 GOMAXPROCS=2 go test -race -count=1 -run '^$' $PKGS
             echo "::endgroup::"
             echo "testing with -race: $PKGS"
+            # The complete GitOps PostgreSQL suite reached test 157 of 195
+            # before a 10m package deadline. Whichever shard the diff assigns
+            # it to keeps every test and the 40m job bound (~13m of race
+            # builds, then the run) with a bounded 18m package deadline.
+            package_timeout=10m
+            if [[ " $PKGS " == *" ./pkg/environmentsync/pgintegration "* ]]; then package_timeout=18m; fi
             # shellcheck disable=SC2086 # space-separated package list
-            GOMEMLIMIT=2GiB GOGC=10 GOMAXPROCS=2 go test -race -count=1 -p 4 -timeout=10m $PKGS || status=1
+            GOMEMLIMIT=2GiB GOGC=10 GOMAXPROCS=2 go test -race -count=1 -p 4 -timeout="$package_timeout" $PKGS || status=1
           fi
           for pkg in $LARGE; do
             runs="$(python3 scripts/ci/select_package_tests.py --package "${pkg#./}" --cap "$SELECTIVE_CAP" --batch-size 50 --base "$LIGHT_DIFF_BASE" < "$RUNNER_TEMP/changed-paths.txt")"

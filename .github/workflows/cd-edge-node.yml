@@ -4,7 +4,7 @@
 # per later node with the follower gate. Plans the node, swaps its gateway
 # binaries in a hard-linked overlay, restarts only the planned services
 # (deployctl reloads one into a second generation when both binaries
-# support the ADR-1580 hand-off), holds the node on the SLO gate, and rolls
+# support the ADR-20261018072701 hand-off), holds the node on the SLO gate, and rolls
 # it back to the binaries it ran before on a failure, which fails the run
 # and stops the lane.
 

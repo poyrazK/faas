@@ -7005,6 +7005,28 @@ func (q *Queries) ClearInstanceRuntimeConfigReceipt(ctx context.Context, db DBTX
 	return err
 }
 
+const clearObsoleteDeploymentsRetainingRecovery = `-- name: ClearObsoleteDeploymentsRetainingRecovery :execrows
+UPDATE deployments SET deleted_at=$1::timestamptz,deleted_by_principal='system'
+WHERE app_id=$2::uuid AND status IN ('superseded','failed','cancelled')
+ AND created_at<$3::timestamptz AND deleted_at IS NULL
+ AND NOT EXISTS(SELECT 1 FROM environment_recovery_retained_deployments p WHERE p.deployment_id=deployments.id)
+ AND id NOT IN (SELECT id FROM (SELECT id,row_number() OVER(PARTITION BY app_id ORDER BY created_at DESC,id) rn FROM deployments WHERE app_id=$2::uuid) recent WHERE rn<=2)
+`
+
+type ClearObsoleteDeploymentsRetainingRecoveryParams struct {
+	DeletedAt pgtype.Timestamptz
+	AppID     pgtype.UUID
+	OlderThan pgtype.Timestamptz
+}
+
+func (q *Queries) ClearObsoleteDeploymentsRetainingRecovery(ctx context.Context, db DBTX, arg ClearObsoleteDeploymentsRetainingRecoveryParams) (int64, error) {
+	result, err := db.Exec(ctx, clearObsoleteDeploymentsRetainingRecovery, arg.DeletedAt, arg.AppID, arg.OlderThan)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const clearServiceRolloutPredecessorPin = `-- name: ClearServiceRolloutPredecessorPin :exec
 DELETE FROM deployment_revision_pins WHERE deployment_id=$1::uuid
 `
@@ -7348,8 +7370,10 @@ WITH scoped_apps AS (SELECT id FROM apps WHERE project_id=$2::uuid)
 SELECT
  (EXISTS(SELECT 1 FROM app_binding_release_policies p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$1::text)
  OR EXISTS(SELECT 1 FROM app_mcp_readiness_policies p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$1::text)
+ OR EXISTS(SELECT 1 FROM app_mcp_readiness_policy_history p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$1::text)
  OR EXISTS(SELECT 1 FROM mcp_readiness_incidents p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$1::text)
  OR EXISTS(SELECT 1 FROM mcp_readiness_maintenance_windows p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$1::text)
+ OR EXISTS(SELECT 1 FROM alert_rules p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.mcp_readiness_scope=$1::text)
  OR EXISTS(SELECT 1 FROM binding_verification_runs p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$1::text)
  OR EXISTS(SELECT 1 FROM project_binding_verification_runs p WHERE p.project_id=$2::uuid AND p.environment_slug=$1::text)
  OR EXISTS(SELECT 1 FROM app_tasks p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.deployment_scope=$1::text)
@@ -7406,8 +7430,9 @@ type CloneEnvironmentCleanupHasScopeBorrowersParams struct {
 
 // Original clone journals and historical secret/runtime-change tombstones are
 // retained evidence, as are production_lifecycle_reviews attached to retained
-// deployments and append-only binding/MCP readiness policy history. All other
-// known operational references must close first.
+// deployments and append-only binding policy history. MCP readiness history and
+// scoped alert selectors remain borrowers while retained. All other known
+// operational references must close first.
 func (q *Queries) CloneEnvironmentCleanupHasScopeBorrowers(ctx context.Context, db DBTX, arg CloneEnvironmentCleanupHasScopeBorrowersParams) (bool, error) {
 	row := db.QueryRow(ctx, cloneEnvironmentCleanupHasScopeBorrowers,
 		arg.Environment,
@@ -10549,7 +10574,7 @@ func (q *Queries) CreateDevBridgeWebhookReplay(ctx context.Context, db DBTX, arg
 const createEnvironmentGitOpsSourceBuild = `-- name: CreateEnvironmentGitOpsSourceBuild :exec
 WITH queued AS (
  INSERT INTO builds(id,deployment_id,kind,source_bytes,status,log_path)
- VALUES($1::uuid,$2::uuid,'github',$3::bigint,'queued',$4::text)
+ VALUES($1::uuid,$2::uuid,$3::text,$4::bigint,'queued',$5::text)
  RETURNING id,deployment_id
 )
 UPDATE deployments d SET status='building',build_id=queued.id FROM queued
@@ -10559,6 +10584,7 @@ WHERE d.id=queued.deployment_id AND d.environment_workload_held AND d.status='pe
 type CreateEnvironmentGitOpsSourceBuildParams struct {
 	BuildID      pgtype.UUID
 	DeploymentID pgtype.UUID
+	Kind         string
 	SourceBytes  int64
 	LogPath      string
 }
@@ -10567,6 +10593,7 @@ func (q *Queries) CreateEnvironmentGitOpsSourceBuild(ctx context.Context, db DBT
 	_, err := db.Exec(ctx, createEnvironmentGitOpsSourceBuild,
 		arg.BuildID,
 		arg.DeploymentID,
+		arg.Kind,
 		arg.SourceBytes,
 		arg.LogPath,
 	)
@@ -14549,6 +14576,27 @@ func (q *Queries) EnvironmentBindingReleaseRequired(ctx context.Context, db DBTX
 	return exists, err
 }
 
+const environmentBuildArtifactOrigin = `-- name: EnvironmentBuildArtifactOrigin :one
+SELECT f.deployment_id::text FROM deployments d JOIN apps a ON a.id=d.app_id
+ JOIN environment_build_artifact_pins p ON p.candidate_id=d.id
+ JOIN source_build_rootfs f ON f.id=p.artifact_id
+WHERE d.id=$1::uuid AND d.app_id=$2::uuid AND a.account_id=$3::uuid
+ AND environment_build_artifact_valid(d,true)
+`
+
+type EnvironmentBuildArtifactOriginParams struct {
+	DeploymentID pgtype.UUID
+	AppID        pgtype.UUID
+	AccountID    pgtype.UUID
+}
+
+func (q *Queries) EnvironmentBuildArtifactOrigin(ctx context.Context, db DBTX, arg EnvironmentBuildArtifactOriginParams) (string, error) {
+	row := db.QueryRow(ctx, environmentBuildArtifactOrigin, arg.DeploymentID, arg.AppID, arg.AccountID)
+	var f_deployment_id string
+	err := row.Scan(&f_deployment_id)
+	return f_deployment_id, err
+}
+
 const environmentFieldGitOwned = `-- name: EnvironmentFieldGitOwned :one
 SELECT EXISTS(SELECT 1 FROM environment_managed_fields f JOIN active_environment_git_sources s ON s.id=f.source_id
  LEFT JOIN environment_gitops_resources r ON r.source_id=s.id AND r.logical_name=f.resource
@@ -15267,6 +15315,23 @@ func (q *Queries) EnvironmentQueueDeliveryReceiptExists(ctx context.Context, db 
 	return exists, err
 }
 
+const environmentRecoveryReleaseFirstServing = `-- name: EnvironmentRecoveryReleaseFirstServing :one
+SELECT min(h.served_at)::timestamptz AS served_at FROM environment_recovery_serving_history h
+WHERE h.source_id=$1::uuid AND h.release_set_id=$2::uuid
+`
+
+type EnvironmentRecoveryReleaseFirstServingParams struct {
+	SourceID  pgtype.UUID
+	ReleaseID pgtype.UUID
+}
+
+func (q *Queries) EnvironmentRecoveryReleaseFirstServing(ctx context.Context, db DBTX, arg EnvironmentRecoveryReleaseFirstServingParams) (pgtype.Timestamptz, error) {
+	row := db.QueryRow(ctx, environmentRecoveryReleaseFirstServing, arg.SourceID, arg.ReleaseID)
+	var served_at pgtype.Timestamptz
+	err := row.Scan(&served_at)
+	return served_at, err
+}
+
 const environmentSecretReferenceQuota = `-- name: EnvironmentSecretReferenceQuota :one
 SELECT ((SELECT count(*) FROM app_envs WHERE app_id=$1::uuid)
  +(SELECT count(*) FROM app_environment_secret_refs WHERE app_id=$1::uuid))::bigint AS total,
@@ -15444,6 +15509,56 @@ func (q *Queries) EnvironmentWorkloadGraphForStatus(ctx context.Context, db DBTX
 		&i.PreparedAt,
 	)
 	return i, err
+}
+
+const environmentWorkloadGraphsForRollback = `-- name: EnvironmentWorkloadGraphsForRollback :many
+SELECT g.id, g.source_id, g.environment_id, g.revision_id, g.generation, g.intent_version, g.plan_hash, g.definition_digest, g.members, g.resource_ids, g.phase, g.error_code, g.created_at, g.prepared_at FROM environment_workload_graphs g
+JOIN environment_workload_serving_receipts r ON r.graph_id=g.id
+WHERE g.source_id=$1::uuid AND g.environment_id=$2::uuid
+ AND r.release_set_id=$3::uuid
+`
+
+type EnvironmentWorkloadGraphsForRollbackParams struct {
+	SourceID      pgtype.UUID
+	EnvironmentID pgtype.UUID
+	ReleaseID     pgtype.UUID
+}
+
+// Retained serving receipts select historical graphs without requiring them to
+// remain active or to match the source's current approved revision.
+func (q *Queries) EnvironmentWorkloadGraphsForRollback(ctx context.Context, db DBTX, arg EnvironmentWorkloadGraphsForRollbackParams) ([]EnvironmentWorkloadGraph, error) {
+	rows, err := db.Query(ctx, environmentWorkloadGraphsForRollback, arg.SourceID, arg.EnvironmentID, arg.ReleaseID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []EnvironmentWorkloadGraph{}
+	for rows.Next() {
+		var i EnvironmentWorkloadGraph
+		if err := rows.Scan(
+			&i.ID,
+			&i.SourceID,
+			&i.EnvironmentID,
+			&i.RevisionID,
+			&i.Generation,
+			&i.IntentVersion,
+			&i.PlanHash,
+			&i.DefinitionDigest,
+			&i.Members,
+			&i.ResourceIds,
+			&i.Phase,
+			&i.ErrorCode,
+			&i.CreatedAt,
+			&i.PreparedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const environmentWorkloadIntent = `-- name: EnvironmentWorkloadIntent :one
@@ -23300,7 +23415,7 @@ func (q *Queries) GetDeploymentArtifactScanPointer(ctx context.Context, db DBTX,
 
 const getDeploymentArtifactWorkloads = `-- name: GetDeploymentArtifactWorkloads :one
 SELECT d.sidecars, (EXISTS(SELECT 1 FROM deployment_registry_rootfs f WHERE f.deployment_id=d.id)
- OR EXISTS(SELECT 1 FROM source_build_rootfs f WHERE f.deployment_id=d.id))::boolean AS has_registry_producers
+ OR EXISTS(SELECT 1 FROM source_build_rootfs f WHERE f.deployment_id=d.id UNION ALL SELECT 1 WHERE d.environment_workload_runtime ? 'built_artifact' OR d.environment_workload_runtime->'source' ? 'build_artifact_id'))::boolean AS has_registry_producers
 FROM deployments d JOIN apps a ON a.id=d.app_id
 WHERE d.id=$1::uuid AND a.id=$2::uuid
  AND a.account_id=$3::uuid AND a.status<>'deleted'
@@ -26053,7 +26168,7 @@ func (q *Queries) HasScopedBuildExportPublication(ctx context.Context, db DBTX, 
 }
 
 const hasSourceBuildRootfs = `-- name: HasSourceBuildRootfs :one
-SELECT EXISTS(SELECT 1 FROM source_build_rootfs WHERE deployment_id=$1::uuid)::boolean AS present
+SELECT EXISTS(SELECT 1 FROM source_build_rootfs WHERE deployment_id=$1::uuid UNION ALL SELECT 1 FROM deployments d WHERE d.id=$1::uuid AND (d.environment_workload_runtime ? 'built_artifact' OR d.environment_workload_runtime->'source' ? 'build_artifact_id'))::boolean AS present
 `
 
 func (q *Queries) HasSourceBuildRootfs(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (bool, error) {
@@ -37141,7 +37256,16 @@ SELECT EXISTS (
     JOIN apps a ON a.id = p.app_id
     WHERE p.storage_key = $1::text AND a.status <> 'deleted'
       AND op.status NOT IN ('ready', 'compensated')
-) AS referenced
+) OR EXISTS (
+    SELECT 1 FROM jobs j WHERE j.status<>'deleted' AND j.image_ref LIKE 'gregale-source://%'
+        AND j.image_materialization_status='ready' AND j.image_storage_key=$1::text
+) OR EXISTS (
+    SELECT 1 FROM job_runs r WHERE r.image_ref_snapshot LIKE 'gregale-source://%'
+        AND r.aggregate_status IN ('queued','running') AND r.image_storage_key_snapshot=$1::text
+ ) OR EXISTS (
+ SELECT 1 FROM environment_build_artifact_pins p JOIN source_build_rootfs f ON f.id=p.artifact_id
+ WHERE f.input_snapshot->>'storage_key'=$1::text
+ ) OR EXISTS (SELECT 1 FROM environment_recovery_retained_keys p WHERE p.storage_key=$1::text) AS referenced
 `
 
 func (q *Queries) LayerArtifactHasReferences(ctx context.Context, db DBTX, storageKey string) (pgtype.Bool, error) {
@@ -43179,6 +43303,59 @@ func (q *Queries) ListEnvironmentGitOpsRuns(ctx context.Context, db DBTX, arg Li
 	return items, nil
 }
 
+const listEnvironmentGitRecoveryReleases = `-- name: ListEnvironmentGitRecoveryReleases :many
+SELECT rs.id::text FROM project_release_sets rs
+WHERE rs.account_id=$1::uuid AND rs.project_id=$2::uuid
+ AND rs.environment_slug=$3::text
+ AND EXISTS (SELECT 1 FROM environment_workload_graphs g
+  JOIN environment_recovery_serving_history r ON r.graph_id=g.id
+  WHERE r.source_id=$4::uuid AND g.source_id=$4::uuid AND g.environment_id=$5::uuid
+   AND r.release_set_id=rs.id AND r.served_at IS NOT NULL)
+ AND ($6::timestamptz IS NULL OR (rs.created_at,rs.id)<($6::timestamptz,$7::uuid))
+ORDER BY rs.created_at DESC,rs.id DESC LIMIT $8
+`
+
+type ListEnvironmentGitRecoveryReleasesParams struct {
+	AccountID     pgtype.UUID
+	ProjectID     pgtype.UUID
+	Environment   string
+	SourceID      pgtype.UUID
+	EnvironmentID pgtype.UUID
+	BeforeAt      pgtype.Timestamptz
+	BeforeID      pgtype.UUID
+	PageLimit     int32
+}
+
+// Include expired release windows, but only completed serving history of this binding.
+func (q *Queries) ListEnvironmentGitRecoveryReleases(ctx context.Context, db DBTX, arg ListEnvironmentGitRecoveryReleasesParams) ([]string, error) {
+	rows, err := db.Query(ctx, listEnvironmentGitRecoveryReleases,
+		arg.AccountID,
+		arg.ProjectID,
+		arg.Environment,
+		arg.SourceID,
+		arg.EnvironmentID,
+		arg.BeforeAt,
+		arg.BeforeID,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var rs_id string
+		if err := rows.Scan(&rs_id); err != nil {
+			return nil, err
+		}
+		items = append(items, rs_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listEnvironmentQualificationExecutionsForRecovery = `-- name: ListEnvironmentQualificationExecutionsForRecovery :many
 SELECT e.instance_id, e.request_id, e.frame, e.cleanup_token, e.dispatch_started, e.retirement, e.created_at, e.retired_at, e.capture_instance_id FROM environment_qualification_executions e
 WHERE e.frame->>'node_id'=$1::text AND e.retired_at IS NULL
@@ -43245,6 +43422,53 @@ func (q *Queries) ListEnvironmentQueueCleanupInvocations(ctx context.Context, db
 			return nil, err
 		}
 		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listEnvironmentRecoveryProtection = `-- name: ListEnvironmentRecoveryProtection :many
+SELECT release_set_id::text,graph_id::text,protected_until::timestamptz,bytes::bigint,coalesce(available,false)::boolean AS available,
+ CASE WHEN position>max_releases THEN 'outside_policy' WHEN charged_bytes>max_bytes THEN 'budget_exceeded' ELSE 'protected' END::text AS status
+FROM environment_recovery_candidates WHERE source_id=$1::uuid AND (position<=max_releases OR release_set_id=ANY($2::uuid[])) ORDER BY served_at DESC,release_set_id DESC
+`
+
+type ListEnvironmentRecoveryProtectionParams struct {
+	SourceID   pgtype.UUID
+	ReleaseIds []pgtype.UUID
+}
+
+type ListEnvironmentRecoveryProtectionRow struct {
+	ReleaseSetID   string
+	GraphID        string
+	ProtectedUntil pgtype.Timestamptz
+	Bytes          int64
+	Available      bool
+	Status         string
+}
+
+func (q *Queries) ListEnvironmentRecoveryProtection(ctx context.Context, db DBTX, arg ListEnvironmentRecoveryProtectionParams) ([]ListEnvironmentRecoveryProtectionRow, error) {
+	rows, err := db.Query(ctx, listEnvironmentRecoveryProtection, arg.SourceID, arg.ReleaseIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListEnvironmentRecoveryProtectionRow{}
+	for rows.Next() {
+		var i ListEnvironmentRecoveryProtectionRow
+		if err := rows.Scan(
+			&i.ReleaseSetID,
+			&i.GraphID,
+			&i.ProtectedUntil,
+			&i.Bytes,
+			&i.Available,
+			&i.Status,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -50089,11 +50313,12 @@ func (q *Queries) LockCheckedRollbackScope(ctx context.Context, db DBTX, arg Loc
 }
 
 const lockCloneBindingEnvironmentCleanupBorrowers = `-- name: LockCloneBindingEnvironmentCleanupBorrowers :exec
-LOCK TABLE binding_verification_runs,project_binding_verification_runs,project_release_stages IN SHARE MODE
+LOCK TABLE binding_verification_runs,project_binding_verification_runs,project_release_stages,app_mcp_readiness_policies,app_mcp_readiness_policy_history,mcp_readiness_incidents,mcp_readiness_maintenance_windows,alert_rules IN SHARE MODE
 `
 
-// These retained binding receipts and stages were added after the original
-// migration-owned writer fence. Keep their writers out of the deletion window.
+// These binding and MCP references were added after the original migration-owned
+// writer fence. Keep their writers out of the deletion window, including writers
+// of resolved incidents, cancelled maintenance and retained policy history.
 func (q *Queries) LockCloneBindingEnvironmentCleanupBorrowers(ctx context.Context, db DBTX) error {
 	_, err := db.Exec(ctx, lockCloneBindingEnvironmentCleanupBorrowers)
 	return err
@@ -50220,10 +50445,11 @@ func (q *Queries) LockCloneDeploymentCleanupBorrowerWriters(ctx context.Context,
 }
 
 const lockCloneDeploymentCleanupRetirementWriters = `-- name: LockCloneDeploymentCleanupRetirementWriters :exec
-LOCK TABLE environment_workload_retirements IN SHARE MODE
+LOCK TABLE environment_workload_retirements,environment_build_artifact_pins,scenario_cold_preparations,scenario_postgres_faults,scenario_recorder_sessions,scenario_suspend_resumes,scenario_worker_faults IN SHARE MODE
 `
 
-// Deployment UUID arrays retain original artifacts without a foreign-key lock.
+// Deployment UUID arrays and rehearsal receipts retain original artifacts without
+// a foreign-key lock; exclude their writers through deletion and receipt commit.
 func (q *Queries) LockCloneDeploymentCleanupRetirementWriters(ctx context.Context, db DBTX) error {
 	_, err := db.Exec(ctx, lockCloneDeploymentCleanupRetirementWriters)
 	return err
@@ -55741,6 +55967,17 @@ func (q *Queries) MarkWorkflowRunStatusFenced(ctx context.Context, db DBTX, arg 
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const materializeEnvironmentBuildArtifact = `-- name: MaterializeEnvironmentBuildArtifact :exec
+UPDATE deployments SET rootfs_path=environment_workload_runtime->'built_artifact'->>'rootfs_path',
+ rootfs_key=environment_workload_runtime->'built_artifact'->>'storage_key',rootfs_bytes=(environment_workload_runtime->'built_artifact'->>'bytes')::bigint,
+ status='snapshotting' WHERE id=$1::uuid AND status='pending' AND environment_workload_held
+`
+
+func (q *Queries) MaterializeEnvironmentBuildArtifact(ctx context.Context, db DBTX, id pgtype.UUID) error {
+	_, err := db.Exec(ctx, materializeEnvironmentBuildArtifact, id)
+	return err
 }
 
 const migrateInstanceRuntimeConfig = `-- name: MigrateInstanceRuntimeConfig :one
@@ -66232,6 +66469,83 @@ func (q *Queries) PrepareMigrationContractRuntime(ctx context.Context, db DBTX, 
 	return result.RowsAffected(), nil
 }
 
+const probeManagedPostgresCredential = `-- name: ProbeManagedPostgresCredential :one
+SELECT session_user::text AS login, current_user::text AS effective_user,
+ current_database()::text AS database_name, current_setting('server_version_num')::integer AS version_num,
+ current_setting('transaction_read_only')::boolean AS read_only,
+ current_setting('row_security')='on' AS row_security,
+ has_schema_privilege(current_user,'public','USAGE') AS schema_usage,
+ has_schema_privilege(current_user,'public','CREATE') AS schema_create,
+ (r.rolsuper OR r.rolcreatedb OR r.rolcreaterole OR r.rolreplication OR r.rolbypassrls OR r.rolinherit
+ OR e.rolsuper OR e.rolcreatedb OR e.rolcreaterole OR e.rolreplication OR e.rolbypassrls OR e.rolinherit) AS unsafe_role,
+ (($1::text<>'migration' AND has_database_privilege(current_user,current_database(),'CREATE'))
+ OR has_database_privilege(current_user,current_database(),'TEMPORARY')
+ OR EXISTS (SELECT 1 FROM pg_catalog.pg_auth_members WHERE member=r.oid
+ AND ($1::text<>'migration' OR roleid<>e.oid))
+ OR EXISTS (SELECT 1 FROM pg_catalog.pg_auth_members WHERE member=e.oid AND e.oid<>r.oid)) AS elevated_runtime,
+ NOT EXISTS (SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
+ WHERE n.nspname='public' AND ((c.relkind IN ('r','p','v','m','f') AND NOT
+ (has_table_privilege(current_user,c.oid,'SELECT') AND
+ (($1::text='read_only' AND NOT (has_table_privilege(current_user,c.oid,'INSERT')
+ OR has_table_privilege(current_user,c.oid,'UPDATE') OR has_table_privilege(current_user,c.oid,'DELETE')))
+ OR ($1::text<>'read_only' AND has_table_privilege(current_user,c.oid,'INSERT')
+ AND has_table_privilege(current_user,c.oid,'UPDATE') AND has_table_privilege(current_user,c.oid,'DELETE')))
+ AND ($1::text='migration' OR
+ (c.relowner<>e.oid AND NOT has_table_privilege(current_user,c.oid,'TRUNCATE')))))
+ OR (c.relkind='S' AND NOT (has_sequence_privilege(current_user,c.oid,'SELECT') AND
+ (($1::text='read_only' AND NOT (has_sequence_privilege(current_user,c.oid,'USAGE')
+ OR has_sequence_privilege(current_user,c.oid,'UPDATE'))) OR ($1::text<>'read_only'
+ AND has_sequence_privilege(current_user,c.oid,'USAGE')))))))
+ AND ($1::text<>'read_only' OR NOT (
+ EXISTS (SELECT 1 FROM pg_catalog.pg_namespace n WHERE n.nspname !~ '^pg_' AND n.nspname<>'information_schema'
+ AND has_schema_privilege(current_user,n.oid,'CREATE'))
+ OR EXISTS (SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
+ WHERE n.nspname !~ '^pg_' AND n.nspname<>'information_schema' AND
+ ((c.relkind IN ('r','p','v','m','f') AND (has_table_privilege(current_user,c.oid,'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
+ OR has_any_column_privilege(current_user,c.oid,'INSERT,UPDATE,REFERENCES')))
+ OR (c.relkind='S' AND has_sequence_privilege(current_user,c.oid,'USAGE,UPDATE'))))
+ OR EXISTS (SELECT 1 FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace
+ WHERE n.nspname !~ '^pg_' AND n.nspname<>'information_schema' AND p.prosecdef AND has_function_privilege(current_user,p.oid,'EXECUTE'))
+ OR EXISTS (SELECT 1 FROM pg_catalog.pg_default_acl d, LATERAL aclexplode(d.defaclacl) a
+ WHERE a.grantee IN (0,e.oid) AND
+ ((d.defaclobjtype='r' AND a.privilege_type IN ('INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER'))
+ OR (d.defaclobjtype='S' AND a.privilege_type IN ('USAGE','UPDATE')))))) AS data_access
+FROM pg_catalog.pg_roles r JOIN pg_catalog.pg_roles e ON e.rolname=current_user WHERE r.rolname=session_user
+`
+
+type ProbeManagedPostgresCredentialRow struct {
+	Login           string
+	EffectiveUser   string
+	DatabaseName    string
+	VersionNum      int32
+	ReadOnly        bool
+	RowSecurity     bool
+	SchemaUsage     bool
+	SchemaCreate    bool
+	UnsafeRole      pgtype.Bool
+	ElevatedRuntime pgtype.Bool
+	DataAccess      pgtype.Bool
+}
+
+func (q *Queries) ProbeManagedPostgresCredential(ctx context.Context, db DBTX, access string) (ProbeManagedPostgresCredentialRow, error) {
+	row := db.QueryRow(ctx, probeManagedPostgresCredential, access)
+	var i ProbeManagedPostgresCredentialRow
+	err := row.Scan(
+		&i.Login,
+		&i.EffectiveUser,
+		&i.DatabaseName,
+		&i.VersionNum,
+		&i.ReadOnly,
+		&i.RowSecurity,
+		&i.SchemaUsage,
+		&i.SchemaCreate,
+		&i.UnsafeRole,
+		&i.ElevatedRuntime,
+		&i.DataAccess,
+	)
+	return i, err
+}
+
 const projectEnvironmentCloneQuota = `-- name: ProjectEnvironmentCloneQuota :many
 SELECT a.slug,
  (SELECT count(*) FROM app_secrets s WHERE s.app_id=a.id)::bigint AS secret_count,
@@ -70924,6 +71238,7 @@ SELECT (jsonb_build_object(
     'source_build_rootfs_current_deployment_id_fkey', (SELECT count(*) FROM source_build_rootfs_current WHERE deployment_id = $1::uuid),
     'source_build_rootfs_deployment_id_fkey', (SELECT count(*) FROM source_build_rootfs WHERE deployment_id = $1::uuid)
 ) || jsonb_build_object(
+    'environment_build_artifact_pins_candidate_id_fkey', (SELECT count(*) FROM environment_build_artifact_pins WHERE candidate_id = $1::uuid),
     'deployment_cron_outcomes_deployment_id_fkey', (SELECT count(*) FROM deployment_cron_outcomes WHERE deployment_id = $1::uuid),
     'deployment_project_release_workers_deployment_id_fkey', (SELECT count(*) FROM deployment_project_release_workers WHERE deployment_id = $1::uuid),
     'deployment_release_env_snapshots_deployment_id_fkey', (SELECT count(*) FROM deployment_release_env_snapshots WHERE deployment_id = $1::uuid),
@@ -70976,6 +71291,12 @@ SELECT jsonb_build_object(
  'route_probe_observations.deployment_id', (SELECT count(*) FROM route_probe_observations WHERE deployment_id::text=$1::uuid::text),
  'runtime_upgrade_gateway_drains.deployment_id', (SELECT count(*) FROM runtime_upgrade_gateway_drains WHERE deployment_id::text=$1::uuid::text),
  'runtime_upgrade_gateway_receipts.deployment_id', (SELECT count(*) FROM runtime_upgrade_gateway_receipts WHERE deployment_id::text=$1::uuid::text),
+ 'scenario_cold_preparations.deployment_id', (SELECT count(*) FROM scenario_cold_preparations WHERE deployment_id=$1::uuid),
+ -- PostgreSQL recovery receipts keep the original dispatch identity in JSON.
+ 'scenario_postgres_faults.receipt.deployment_id', (SELECT count(*) FROM scenario_postgres_faults WHERE receipt->>'deployment_id'=$1::uuid::text),
+ 'scenario_recorder_sessions.deployment_id', (SELECT count(*) FROM scenario_recorder_sessions WHERE deployment_id=$1::uuid),
+ 'scenario_suspend_resumes.deployment_id', (SELECT count(*) FROM scenario_suspend_resumes WHERE deployment_id=$1::uuid),
+ 'scenario_worker_faults.deployment_id', (SELECT count(*) FROM scenario_worker_faults WHERE deployment_id=$1::uuid),
  'workflow_automation_live_suites.deployment_id', (SELECT count(*) FROM workflow_automation_live_suites WHERE deployment_id=$1::uuid),
  'workflow_automation_live_verifications.deployment_id', (SELECT count(*) FROM workflow_automation_live_verifications WHERE deployment_id=$1::uuid),
  'workflow_schedule_occurrences.deployment_id', (SELECT count(*) FROM workflow_schedule_occurrences WHERE deployment_id::text=$1::uuid::text),
@@ -71000,10 +71321,6 @@ SELECT jsonb_build_object(
  'project_environment_promotion_workloads.target_deployment_id', (SELECT count(*) FROM project_environment_promotion_workloads WHERE target_deployment_id=$1::uuid::text),
  'request_audit_events.deployment_id', (SELECT count(*) FROM request_audit_events WHERE deployment_id=$1::uuid),
  'request_telemetry.deployment_id', (SELECT count(*) FROM request_telemetry WHERE deployment_id=$1::uuid),
- 'scenario_cold_preparations.deployment_id', (SELECT count(*) FROM scenario_cold_preparations WHERE deployment_id=$1::uuid),
- 'scenario_recorder_sessions.deployment_id', (SELECT count(*) FROM scenario_recorder_sessions WHERE deployment_id=$1::uuid),
- 'scenario_suspend_resumes.deployment_id', (SELECT count(*) FROM scenario_suspend_resumes WHERE deployment_id=$1::uuid),
- 'scenario_worker_faults.deployment_id', (SELECT count(*) FROM scenario_worker_faults WHERE deployment_id=$1::uuid),
  'upload_commit_outcomes.deployment_id', (SELECT count(*) FROM upload_commit_outcomes WHERE deployment_id=$1::uuid::text),
  'upload_sessions.deployment_id', (SELECT count(*) FROM upload_sessions WHERE deployment_id=$1::uuid::text),
  'instance_application_standard_admissions.deployment_id', (SELECT count(*) FROM instance_application_standard_admissions WHERE deployment_id=$1::uuid)
@@ -72304,6 +72621,30 @@ func (q *Queries) ReadEnvironmentQueueProducerPlan(ctx context.Context, db DBTX,
 	var plan string
 	err := row.Scan(&plan)
 	return plan, err
+}
+
+const readEnvironmentRecoveryPolicy = `-- name: ReadEnvironmentRecoveryPolicy :one
+SELECT coalesce(v.definition->'recovery_retention','null'::jsonb)::jsonb FROM environment_git_sources s
+LEFT JOIN environment_desired_revisions v ON v.id=s.approved_revision_id
+WHERE s.id=$1::uuid AND NOT s.detached
+`
+
+func (q *Queries) ReadEnvironmentRecoveryPolicy(ctx context.Context, db DBTX, sourceID pgtype.UUID) ([]byte, error) {
+	row := db.QueryRow(ctx, readEnvironmentRecoveryPolicy, sourceID)
+	var column_1 []byte
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const readEnvironmentRecoveryServingHistory = `-- name: ReadEnvironmentRecoveryServingHistory :one
+SELECT served_at FROM environment_recovery_serving_history WHERE graph_id=$1::uuid
+`
+
+func (q *Queries) ReadEnvironmentRecoveryServingHistory(ctx context.Context, db DBTX, graphID pgtype.UUID) (pgtype.Timestamptz, error) {
+	row := db.QueryRow(ctx, readEnvironmentRecoveryServingHistory, graphID)
+	var served_at pgtype.Timestamptz
+	err := row.Scan(&served_at)
+	return served_at, err
 }
 
 const readExclusiveWorkKey = `-- name: ReadExclusiveWorkKey :one
@@ -85052,6 +85393,7 @@ WITH retained_deployments AS (
     SELECT d.id, d.app_id, d.build_id, d.image_digest, d.rootfs_path, d.rootfs_bytes, d.status, d.error, d.created_at, d.kind, d.source_path, d.source_bytes, d.handler, d.log_path, d.error_code, d.rootfs_key, d.source_url, d.commit_sha, d.override_entrypoint, d.override_cmd, d.override_env, d.override_env_secrets, d.override_port, d.override_healthcheck, d.sidecars, d.min_instances, d.scan_result, d.scan_status, d.scanned_at, d.override_liveness_probe, d.parked_reason, d.parked_at, d.traffic_percent, d.scope, d.secret_findings, d.secret_scanned_at, d.error_hint, d.error_why, d.error_fix, d.error_relevant_logs, d.stage_state, d.deployed_by_user_id, d.deployed_via, d.deployed_from_ip, d.pusher_login, d.reason, d.tag, d.deployed_by, d.pr_number, d.rollback_on_5xx, d.first_wake_at, d.first_5xx_window_ends_at, d.first_5xx_count, d.last_auto_rollback_at, d.last_auto_rollback_reason, d.liveness_restart_count, d.canary_preset, d.canary_step, d.canary_total_steps, d.canary_step_started_at, d.rollout_state, d.rollout_started_at, d.rollout_completed_at, d.rollout_aborted_at, d.rollout_aborted_reason, d.cancelled_at, d.cancelled_by_principal, d.cancel_reason, d.deleted_at, d.deleted_by_principal, d.priority, d.reordered_at, d.reordered_by_principal, d.canary_stages, d.snapshot_miss_count, d.snapshot_miss_last_at, d.snapshot_miss_backoff_until, d.workflows, d.source_root, d.full_rootfs_allow_auto, d.full_rootfs_override, d.source_sha256, d.api_hosting_receipt, d.inferred_profile, d.traffic_percent_explicit, d.revision, d.service_rollout_handoff, d.release_command, d.release_command_shell, d.disable_startup_cpu_boost, d.override_main_depends_on, d.override_readiness_probe, d.secret_reload_signal, d.github_source_ref, d.github_installation_id, d.environment_workload_runtime, d.serving_ended_at, d.runtime_upgrade_routing_token, d.environment_workload_held, d.rollback_prepared_at, d.rollout_decision, d.snapshot_recovery_generation, d.runtime_base, d.mail_failure_revision, d.mail_failed_at, d.mail_failure_account_id, d.mail_failure_account_revision, d.mail_failure_app_revision, d.mail_failure_success_revision FROM deployments d JOIN apps a ON a.id = d.app_id
     WHERE d.app_id = $1::uuid AND a.status <> 'deleted'
       AND (d.deleted_at IS NULL
+           OR EXISTS (SELECT 1 FROM environment_recovery_retained_deployments p WHERE p.deployment_id=d.id)
            OR EXISTS (SELECT 1 FROM snapshots sn WHERE sn.deployment_id = d.id AND NOT sn.stale)
            OR EXISTS (SELECT 1 FROM instances i WHERE i.deployment_id = d.id AND i.state IN ('pending', 'waking', 'cold_booting', 'running', 'snapshotting', 'migrating', 'warm', 'frozen', 'draining'))
            OR EXISTS (SELECT 1 FROM deployment_aliases al WHERE al.deployment_id = d.id)

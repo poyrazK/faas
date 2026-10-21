@@ -22,7 +22,7 @@
 # binaries it ran before and stops the lane.
 #
 # deployctl restarts each service, or reloads it into a second generation
-# when the running and the new binary both support the hand-off (ADR-1580);
+# when the running and the new binary both support the hand-off (ADR-20261018072701);
 # that choice is deployctl's, not this workflow's.
 #
 # Compute targets: edge_targets, or the environment variable

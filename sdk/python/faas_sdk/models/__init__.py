@@ -1456,13 +1456,27 @@ from .environment_git_ops_changed_webhook_payload_previous_status import (
 )
 from .environment_git_ops_changed_webhook_payload_status import EnvironmentGitOpsChangedWebhookPayloadStatus
 from .environment_git_ops_changed_webhook_payload_version import EnvironmentGitOpsChangedWebhookPayloadVersion
+from .environment_git_ops_diagnostic import EnvironmentGitOpsDiagnostic
+from .environment_git_ops_diagnostic_actor import EnvironmentGitOpsDiagnosticActor
+from .environment_git_ops_explanation import EnvironmentGitOpsExplanation
+from .environment_git_ops_explanation_source_freshness import EnvironmentGitOpsExplanationSourceFreshness
+from .environment_git_ops_explanation_status import EnvironmentGitOpsExplanationStatus
 from .environment_git_ops_override_request import EnvironmentGitOpsOverrideRequest
 from .environment_git_ops_plan import EnvironmentGitOpsPlan
 from .environment_git_ops_run import EnvironmentGitOpsRun
 from .environment_git_ops_run_status import EnvironmentGitOpsRunStatus
 from .environment_git_ops_run_steps_type_0_item import EnvironmentGitOpsRunStepsType0Item
 from .environment_git_ops_status_response import EnvironmentGitOpsStatusResponse
+from .environment_git_promotion_artifact import EnvironmentGitPromotionArtifact
+from .environment_git_promotion_change import EnvironmentGitPromotionChange
+from .environment_git_promotion_origin import EnvironmentGitPromotionOrigin
+from .environment_git_promotion_origin_provider import EnvironmentGitPromotionOriginProvider
+from .environment_git_promotion_target import EnvironmentGitPromotionTarget
 from .environment_git_protected_branch_evidence import EnvironmentGitProtectedBranchEvidence
+from .environment_git_recovery_release import EnvironmentGitRecoveryRelease
+from .environment_git_recovery_release_eligibility import EnvironmentGitRecoveryReleaseEligibility
+from .environment_git_recovery_release_protection_status import EnvironmentGitRecoveryReleaseProtectionStatus
+from .environment_git_recovery_release_retention_status import EnvironmentGitRecoveryReleaseRetentionStatus
 from .environment_git_review_evidence import EnvironmentGitReviewEvidence
 from .environment_git_reviewed_merge_evidence import EnvironmentGitReviewedMergeEvidence
 from .environment_git_revision_approval import EnvironmentGitRevisionApproval
@@ -1482,12 +1496,19 @@ from .environment_queue_binding import EnvironmentQueueBinding
 from .environment_queue_binding_mode import EnvironmentQueueBindingMode
 from .environment_queue_smoke import EnvironmentQueueSmoke
 from .environment_queue_smoke_payload_type_0 import EnvironmentQueueSmokePayloadType0
+from .environment_recovery_retention import EnvironmentRecoveryRetention
 from .environment_route_budgets import EnvironmentRouteBudgets
 from .environment_route_budgets_budget_source import EnvironmentRouteBudgetsBudgetSource
 from .environment_route_contract import EnvironmentRouteContract
 from .environment_service_binding import EnvironmentServiceBinding
 from .environment_workload import EnvironmentWorkload
 from .environment_workload_activation_evidence import EnvironmentWorkloadActivationEvidence
+from .environment_workload_progress import EnvironmentWorkloadProgress
+from .environment_workload_progress_activation import EnvironmentWorkloadProgressActivation
+from .environment_workload_progress_build_cache_status import EnvironmentWorkloadProgressBuildCacheStatus
+from .environment_workload_progress_preparation import EnvironmentWorkloadProgressPreparation
+from .environment_workload_progress_qualification import EnvironmentWorkloadProgressQualification
+from .environment_workload_progress_serving import EnvironmentWorkloadProgressServing
 from .environment_workload_queue_bindings import EnvironmentWorkloadQueueBindings
 from .environment_workload_queue_recoveries import EnvironmentWorkloadQueueRecoveries
 from .environment_workload_queue_smoke import EnvironmentWorkloadQueueSmoke
@@ -2317,6 +2338,8 @@ from .list_dev_bridges_response import ListDevBridgesResponse
 from .list_durable_entity_registry_response_200 import ListDurableEntityRegistryResponse200
 from .list_edge_rule_events_outcome import ListEdgeRuleEventsOutcome
 from .list_edge_rule_lists_response import ListEdgeRuleListsResponse
+from .list_environment_git_releases_request import ListEnvironmentGitReleasesRequest
+from .list_environment_git_releases_response import ListEnvironmentGitReleasesResponse
 from .list_event_acknowledgment_history_page_kind import ListEventAcknowledgmentHistoryPageKind
 from .list_event_deliveries_state import ListEventDeliveriesState
 from .list_event_execution_lineage_retry_job_controls_action import ListEventExecutionLineageRetryJobControlsAction
@@ -4145,8 +4168,12 @@ from .preview_durable_entity_quota_policy_response_200 import PreviewDurableEnti
 from .preview_durable_entity_retirement_response_200 import PreviewDurableEntityRetirementResponse200
 from .preview_environment_git_plan_response import PreviewEnvironmentGitPlanResponse
 from .preview_environment_git_plan_response_provider import PreviewEnvironmentGitPlanResponseProvider
+from .preview_environment_git_promotion_request import PreviewEnvironmentGitPromotionRequest
+from .preview_environment_git_promotion_response import PreviewEnvironmentGitPromotionResponse
 from .preview_environment_git_revision_request import PreviewEnvironmentGitRevisionRequest
 from .preview_environment_git_revision_response import PreviewEnvironmentGitRevisionResponse
+from .preview_environment_git_rollback_request import PreviewEnvironmentGitRollbackRequest
+from .preview_environment_git_rollback_response import PreviewEnvironmentGitRollbackResponse
 from .preview_environment_member_response import PreviewEnvironmentMemberResponse
 from .preview_environment_status_response import PreviewEnvironmentStatusResponse
 from .preview_environment_status_response_phase import PreviewEnvironmentStatusResponsePhase
@@ -7359,13 +7386,27 @@ __all__ = (
     "EnvironmentGitOpsChangedWebhookPayloadPreviousStatus",
     "EnvironmentGitOpsChangedWebhookPayloadStatus",
     "EnvironmentGitOpsChangedWebhookPayloadVersion",
+    "EnvironmentGitOpsDiagnostic",
+    "EnvironmentGitOpsDiagnosticActor",
+    "EnvironmentGitOpsExplanation",
+    "EnvironmentGitOpsExplanationSourceFreshness",
+    "EnvironmentGitOpsExplanationStatus",
     "EnvironmentGitOpsOverrideRequest",
     "EnvironmentGitOpsPlan",
     "EnvironmentGitOpsRun",
     "EnvironmentGitOpsRunStatus",
     "EnvironmentGitOpsRunStepsType0Item",
     "EnvironmentGitOpsStatusResponse",
+    "EnvironmentGitPromotionArtifact",
+    "EnvironmentGitPromotionChange",
+    "EnvironmentGitPromotionOrigin",
+    "EnvironmentGitPromotionOriginProvider",
+    "EnvironmentGitPromotionTarget",
     "EnvironmentGitProtectedBranchEvidence",
+    "EnvironmentGitRecoveryRelease",
+    "EnvironmentGitRecoveryReleaseEligibility",
+    "EnvironmentGitRecoveryReleaseProtectionStatus",
+    "EnvironmentGitRecoveryReleaseRetentionStatus",
     "EnvironmentGitReviewedMergeEvidence",
     "EnvironmentGitReviewEvidence",
     "EnvironmentGitRevisionApproval",
@@ -7385,12 +7426,19 @@ __all__ = (
     "EnvironmentQueueBindingMode",
     "EnvironmentQueueSmoke",
     "EnvironmentQueueSmokePayloadType0",
+    "EnvironmentRecoveryRetention",
     "EnvironmentRouteBudgets",
     "EnvironmentRouteBudgetsBudgetSource",
     "EnvironmentRouteContract",
     "EnvironmentServiceBinding",
     "EnvironmentWorkload",
     "EnvironmentWorkloadActivationEvidence",
+    "EnvironmentWorkloadProgress",
+    "EnvironmentWorkloadProgressActivation",
+    "EnvironmentWorkloadProgressBuildCacheStatus",
+    "EnvironmentWorkloadProgressPreparation",
+    "EnvironmentWorkloadProgressQualification",
+    "EnvironmentWorkloadProgressServing",
     "EnvironmentWorkloadQueueBindings",
     "EnvironmentWorkloadQueueRecoveries",
     "EnvironmentWorkloadQueueSmoke",
@@ -8174,6 +8222,8 @@ __all__ = (
     "ListDurableEntityRegistryResponse200",
     "ListEdgeRuleEventsOutcome",
     "ListEdgeRuleListsResponse",
+    "ListEnvironmentGitReleasesRequest",
+    "ListEnvironmentGitReleasesResponse",
     "ListEventAcknowledgmentHistoryPageKind",
     "ListEventDeliveriesState",
     "ListEventExecutionLineageRetryJobControlsAction",
@@ -9814,8 +9864,12 @@ __all__ = (
     "PreviewDurableEntityRetirementResponse200",
     "PreviewEnvironmentGitPlanResponse",
     "PreviewEnvironmentGitPlanResponseProvider",
+    "PreviewEnvironmentGitPromotionRequest",
+    "PreviewEnvironmentGitPromotionResponse",
     "PreviewEnvironmentGitRevisionRequest",
     "PreviewEnvironmentGitRevisionResponse",
+    "PreviewEnvironmentGitRollbackRequest",
+    "PreviewEnvironmentGitRollbackResponse",
     "PreviewEnvironmentMemberResponse",
     "PreviewEnvironmentStatusResponse",
     "PreviewEnvironmentStatusResponsePhase",
