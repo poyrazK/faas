@@ -66,6 +66,8 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
     // File storage (ADR-20261021101510) shares REST's credentials and admission.
     let storage = null
     if (config.storage && req.url.startsWith('/storage/v1/') && !guarded) {
+      // A missing or unsafe storage_objects table disables storage, not the API.
+      if (config.storageUnavailable) return problem(res, 503, 'storage_unavailable')
       storage = storageRoute(req, config.storage)
       if (storage.code) return problem(res, storage.status, storage.code)
     } else if (!req.url.startsWith('/rest/v1/') && req.url !== '/openapi.json' && req.url !== '/__gregale/schema') return problem(res, 404, 'not_found')
@@ -347,9 +349,11 @@ export async function main(env = process.env) {
     }
   }
   if (config.storage) {
-    try { await checkStorageTable(config.connection, config.storage.schema) } catch (error) {
+    // Storage fails closed on its own: REST keeps serving while the owner's
+    // migration adds or repairs storage_objects.
+    try { await checkStorageTable(config.connection, config.storage.schema) } catch {
       runtimeFailure('data_api_storage_unsafe')
-      throw Object.assign(new Error('File storage is not installed'), { cause: error, reported: true })
+      config.storageUnavailable = true
     }
   }
   const snapshot = await inspect(config.connection, config.schemas)

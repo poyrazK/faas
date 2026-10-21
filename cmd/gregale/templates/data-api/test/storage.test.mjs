@@ -155,13 +155,14 @@ function fakePostgREST(state) {
   })
 }
 
-async function fixture(t, env = {}) {
+async function fixture(t, { unavailable = false, ...env } = {}) {
   const s3 = await fakeS3(t)
   const s3Env = name => ({ [`GREGALE_S3_${name}_ENDPOINT`]: `http://127.0.0.1:${s3.port}`, [`GREGALE_S3_${name}_REGION`]: 'us-east-1', [`GREGALE_S3_${name}_BUCKET`]: `real-${name.toLowerCase()}`, [`GREGALE_S3_${name}_ACCESS_KEY_ID`]: 'AKID', [`GREGALE_S3_${name}_SECRET_ACCESS_KEY`]: 'secret' })
   const config = runtimeConfig({ ...baseEnv, DATA_API_STORAGE: 'on', DATA_API_STORAGE_MAX_OBJECT_BYTES: '1000', ...s3Env('UPLOADS'), ...s3Env('AVATARS'),
     DATA_API_SERVER_KEY_A_SHA256: hash(keyA), DATA_API_SERVER_KEY_B_SHA256: hash(keyB), DATA_API_SERVER_KEY_B_PERMISSIONS: '{"version":1,"access":"read","relations":["api.notes"]}', ...env })
   config.fingerprint = 'a'.repeat(64)
   config.functions = []
+  config.storageUnavailable = unavailable
   const state = { calls: [], rows: new Map(), logs: [] }
   const upstream = fakePostgREST(state)
   const ready = http.createServer((_req, res) => res.end('{}'))
@@ -330,6 +331,15 @@ test('transfers release the SQL slot and are bounded per instance', async t => {
   assert.equal(JSON.parse(busy.body).code, 'storage_busy')
   for (const request of started) request.end('67890')
   assert.deepEqual(await Promise.all(slow), Array(limits.storageTransfers).fill(200))
+})
+
+test('without a safe storage_objects table, storage answers 503 and REST keeps serving', async t => {
+  const { state, send } = await fixture(t, { unavailable: true })
+  const refused = await send('/storage/v1/object/uploads/a.txt', { headers: as('alice') })
+  assert.equal(refused.status, 503)
+  assert.equal(JSON.parse(refused.body).code, 'storage_unavailable')
+  assert.equal((await send('/rest/v1/notes', { headers: as('alice') })).status, 200)
+  assert.equal(state.calls.filter(call => call.path.startsWith('/storage_objects')).length, 0)
 })
 
 test('preflights allow PUT only when storage is on', async t => {

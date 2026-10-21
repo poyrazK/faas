@@ -41,10 +41,13 @@ the same engine, so that "users see their own files" is one policy.
   - So a REST write cannot make the table disagree with the bucket, while
     REST reads, generated types and live reads of the table work as for any
     table. A file list is a query on `storage_objects`.
-- **Startup check.** The runtime refuses to start with storage on unless the
-  table exists in the first schema with RLS enabled and the enabled guard
-  trigger fires before each row insert, update and delete, with the claim
-  check in its body. The failure is reported as `data_api_storage_unsafe`.
+- **Startup check.** At startup the runtime checks that the table exists in
+  the first schema with RLS enabled, and that the enabled guard trigger fires
+  before each row insert, update and delete, with the claim check in its body.
+  - If not, it reports `data_api_storage_unsafe` and turns only storage off:
+    storage routes answer `503 storage_unavailable` and REST keeps serving.
+  - So turning storage on before the migration that adds the table takes
+    nothing else down, and a broken table never serves files.
 
 ### Buckets
 
