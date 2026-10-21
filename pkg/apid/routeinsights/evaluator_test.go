@@ -202,6 +202,10 @@ func TestEvaluatorRunOnce(t *testing.T) {
 		if uuid.UUID(u.AppID.Bytes).String() != proApp || !u.ObservedAt.Time.Equal(now) {
 			t.Fatalf("upsert = %+v", u)
 		}
+		// adr: 20261020161310 — a fixed insight reopens only after a full window.
+		if !u.RefixBefore.Time.Equal(now.Add(-api.RouteInsightWindow)) {
+			t.Fatalf("refix bound = %v, want %v", u.RefixBefore.Time, now.Add(-api.RouteInsightWindow))
+		}
 		var evidence map[string]any
 		if err := json.Unmarshal(u.Evidence, &evidence); err != nil {
 			t.Fatalf("evidence is not JSON: %v", err)

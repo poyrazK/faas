@@ -11,8 +11,58 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const getRouteInsight = `-- name: GetRouteInsight :one
+SELECT id, kind, method, route, state, message, evidence, first_detected_at, last_detected_at, resolved_at, fixed_at, fix_action
+FROM route_insights
+WHERE id = $1
+  AND app_id = $2
+  AND account_id = $3
+`
+
+type GetRouteInsightParams struct {
+	ID        pgtype.UUID
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+type GetRouteInsightRow struct {
+	ID              pgtype.UUID
+	Kind            string
+	Method          string
+	Route           string
+	State           string
+	Message         string
+	Evidence        []byte
+	FirstDetectedAt pgtype.Timestamptz
+	LastDetectedAt  pgtype.Timestamptz
+	ResolvedAt      pgtype.Timestamptz
+	FixedAt         pgtype.Timestamptz
+	FixAction       pgtype.Text
+}
+
+// One insight of an app, for applying its fix.
+func (q *Queries) GetRouteInsight(ctx context.Context, db DBTX, arg GetRouteInsightParams) (GetRouteInsightRow, error) {
+	row := db.QueryRow(ctx, getRouteInsight, arg.ID, arg.AppID, arg.AccountID)
+	var i GetRouteInsightRow
+	err := row.Scan(
+		&i.ID,
+		&i.Kind,
+		&i.Method,
+		&i.Route,
+		&i.State,
+		&i.Message,
+		&i.Evidence,
+		&i.FirstDetectedAt,
+		&i.LastDetectedAt,
+		&i.ResolvedAt,
+		&i.FixedAt,
+		&i.FixAction,
+	)
+	return i, err
+}
+
 const listRouteInsights = `-- name: ListRouteInsights :many
-SELECT kind, method, route, state, message, evidence, first_detected_at, last_detected_at, resolved_at
+SELECT id, kind, method, route, state, message, evidence, first_detected_at, last_detected_at, resolved_at, fixed_at, fix_action
 FROM route_insights
 WHERE app_id = $1
   AND account_id = $2
@@ -29,6 +79,7 @@ type ListRouteInsightsParams struct {
 }
 
 type ListRouteInsightsRow struct {
+	ID              pgtype.UUID
 	Kind            string
 	Method          string
 	Route           string
@@ -38,6 +89,8 @@ type ListRouteInsightsRow struct {
 	FirstDetectedAt pgtype.Timestamptz
 	LastDetectedAt  pgtype.Timestamptz
 	ResolvedAt      pgtype.Timestamptz
+	FixedAt         pgtype.Timestamptz
+	FixAction       pgtype.Text
 }
 
 // An app's active insights, then the ones resolved since resolved_since.
@@ -56,6 +109,7 @@ func (q *Queries) ListRouteInsights(ctx context.Context, db DBTX, arg ListRouteI
 	for rows.Next() {
 		var i ListRouteInsightsRow
 		if err := rows.Scan(
+			&i.ID,
 			&i.Kind,
 			&i.Method,
 			&i.Route,
@@ -65,6 +119,8 @@ func (q *Queries) ListRouteInsights(ctx context.Context, db DBTX, arg ListRouteI
 			&i.FirstDetectedAt,
 			&i.LastDetectedAt,
 			&i.ResolvedAt,
+			&i.FixedAt,
+			&i.FixAction,
 		); err != nil {
 			return nil, err
 		}
@@ -74,6 +130,46 @@ func (q *Queries) ListRouteInsights(ctx context.Context, db DBTX, arg ListRouteI
 		return nil, err
 	}
 	return items, nil
+}
+
+const markRouteInsightsFixed = `-- name: MarkRouteInsightsFixed :execrows
+UPDATE route_insights
+SET state = 'resolved', resolved_at = $1, fixed_at = $1, fix_action = $2
+WHERE app_id = $3
+  AND account_id = $4
+  AND method = $5
+  AND route = $6
+  AND kind = ANY($7::text[])
+  AND state = 'active'
+`
+
+type MarkRouteInsightsFixedParams struct {
+	FixedAt   pgtype.Timestamptz
+	FixAction pgtype.Text
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+	Method    string
+	Route     string
+	Kinds     []string
+}
+
+// Resolve a route's active insights of the given kinds with the fix that
+// resolved them (ADR-20261020161310). The webhook trigger reports each as
+// resolved.
+func (q *Queries) MarkRouteInsightsFixed(ctx context.Context, db DBTX, arg MarkRouteInsightsFixedParams) (int64, error) {
+	result, err := db.Exec(ctx, markRouteInsightsFixed,
+		arg.FixedAt,
+		arg.FixAction,
+		arg.AppID,
+		arg.AccountID,
+		arg.Method,
+		arg.Route,
+		arg.Kinds,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const resolveStaleRouteInsights = `-- name: ResolveStaleRouteInsights :execrows
@@ -146,6 +242,61 @@ func (q *Queries) RouteInsightCandidateApps(ctx context.Context, db DBTX, arg Ro
 	return items, nil
 }
 
+const routeInsightsDetectedSince = `-- name: RouteInsightsDetectedSince :many
+SELECT kind, method, route, message, first_detected_at, count(*) OVER ()::bigint AS total
+FROM route_insights
+WHERE app_id = $1
+  AND state = 'active'
+  AND first_detected_at >= $2
+ORDER BY first_detected_at DESC, kind, method, route
+LIMIT $3::int
+`
+
+type RouteInsightsDetectedSinceParams struct {
+	AppID    pgtype.UUID
+	Since    pgtype.Timestamptz
+	RowLimit int32
+}
+
+type RouteInsightsDetectedSinceRow struct {
+	Kind            string
+	Method          string
+	Route           string
+	Message         string
+	FirstDetectedAt pgtype.Timestamptz
+	Total           int64
+}
+
+// An app's active insights that became active at or after since, newest
+// first, for the route_insights_detected alert metric. total counts every
+// match, not only the rows returned.
+func (q *Queries) RouteInsightsDetectedSince(ctx context.Context, db DBTX, arg RouteInsightsDetectedSinceParams) ([]RouteInsightsDetectedSinceRow, error) {
+	rows, err := db.Query(ctx, routeInsightsDetectedSince, arg.AppID, arg.Since, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RouteInsightsDetectedSinceRow{}
+	for rows.Next() {
+		var i RouteInsightsDetectedSinceRow
+		if err := rows.Scan(
+			&i.Kind,
+			&i.Method,
+			&i.Route,
+			&i.Message,
+			&i.FirstDetectedAt,
+			&i.Total,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const upsertRouteInsight = `-- name: UpsertRouteInsight :exec
 INSERT INTO route_insights (account_id, app_id, kind, method, route, state, message, evidence, first_detected_at, last_detected_at)
 VALUES ($1, $2, $3, $4, $5, 'active',
@@ -156,22 +307,29 @@ ON CONFLICT (app_id, kind, method, route) DO UPDATE SET
     evidence = EXCLUDED.evidence,
     first_detected_at = CASE WHEN route_insights.state = 'resolved' THEN EXCLUDED.first_detected_at ELSE route_insights.first_detected_at END,
     last_detected_at = EXCLUDED.last_detected_at,
-    resolved_at = NULL
+    resolved_at = NULL,
+    fixed_at = NULL,
+    fix_action = NULL
+WHERE route_insights.fixed_at IS NULL OR route_insights.fixed_at < $9
 `
 
 type UpsertRouteInsightParams struct {
-	AccountID  pgtype.UUID
-	AppID      pgtype.UUID
-	Kind       string
-	Method     string
-	Route      string
-	Message    string
-	Evidence   []byte
-	ObservedAt pgtype.Timestamptz
+	AccountID   pgtype.UUID
+	AppID       pgtype.UUID
+	Kind        string
+	Method      string
+	Route       string
+	Message     string
+	Evidence    []byte
+	ObservedAt  pgtype.Timestamptz
+	RefixBefore pgtype.Timestamptz
 }
 
 // Record an observed insight. A new or resolved insight (re)opens with this
-// observation as its first detection; an active one only refreshes.
+// observation as its first detection; an active one only refreshes. An
+// insight a fix resolved after refix_before stays resolved: its evidence
+// window still holds observations from before the fix
+// (ADR-20261020161310).
 func (q *Queries) UpsertRouteInsight(ctx context.Context, db DBTX, arg UpsertRouteInsightParams) error {
 	_, err := db.Exec(ctx, upsertRouteInsight,
 		arg.AccountID,
@@ -182,6 +340,7 @@ func (q *Queries) UpsertRouteInsight(ctx context.Context, db DBTX, arg UpsertRou
 		arg.Message,
 		arg.Evidence,
 		arg.ObservedAt,
+		arg.RefixBefore,
 	)
 	return err
 }
