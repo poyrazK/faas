@@ -450,6 +450,7 @@ func TestKeylessLiveFramesReachTheProxyButKeysStayOutOfBrowsers(t *testing.T) {
 			JWKSURL: "https://issuer.example/.well-known/jwks.json", Algorithms: []string{"RS256"},
 		},
 		LiveRoutes: []LiveRoute{testLiveRoute},
+		Preview:    true,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -527,8 +528,8 @@ func TestEndpointsWithoutOIDCAcceptLiveOnlyConnections(t *testing.T) {
 	m := NewManager(Config{ResumePreview: true, HistoryReader: &testResumeHistory{}, ResumePollInterval: 15 * time.Millisecond, Live: live}, &testChannelHooks{})
 	t.Cleanup(func() { _ = m.Close() })
 	for _, e := range []Endpoint{
-		{ID: "public", AppID: "app-1", AccountID: "acct-1", CallbackURL: "https://app.example", ClientAuth: AuthPolicy{Mode: AuthModeNone}, LiveRoutes: []LiveRoute{testLiveRoute}},
-		{ID: "plain", AppID: "app-1", AccountID: "acct-1", CallbackURL: "https://app.example", ClientAuth: AuthPolicy{Mode: AuthModeNone}},
+		{ID: "public", AppID: "app-1", AccountID: "acct-1", CallbackURL: "https://app.example", ClientAuth: AuthPolicy{Mode: AuthModeNone}, LiveRoutes: []LiveRoute{testLiveRoute}, Preview: true},
+		{ID: "plain", AppID: "app-1", AccountID: "acct-1", CallbackURL: "https://app.example", ClientAuth: AuthPolicy{Mode: AuthModeNone}, Preview: true},
 	} {
 		if err := m.RegisterEndpoint(e); err != nil {
 			t.Fatal(err)
