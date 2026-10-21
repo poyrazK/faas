@@ -62,6 +62,19 @@ type Message struct {
 	DashboardURL string
 	OccurredAt   time.Time
 	DedupKey     string
+
+	// Summary, when set, replaces the metric/threshold detail line. Budget
+	// alerts (ADR-20261019193500) preformat exact money amounts here and
+	// leave Threshold and Observed zero, so money never passes through a
+	// float.
+	Summary string
+	// Severity, when set, is the PagerDuty severity of a fire.
+	Severity string
+	// IdempotencyKey, when set, replaces the email idempotency key derived
+	// from DedupKey, so messages that share a DedupKey still send.
+	IdempotencyKey string
+	// Footer, when set, replaces the email footer that names an alert rule.
+	Footer string
 	// Notes are optional lines explaining what fired, such as the route
 	// insights behind route_insights_detected (ADR-20261020161310).
 	Notes []string
@@ -140,7 +153,11 @@ func (s *Sender) Send(ctx context.Context, t Target, msg Message) error {
 			return errors.New("alertchannels: email transport not configured")
 		}
 		subject, body := EmailContent(msg)
-		return s.Mail.SendEmail(ctx, t.Email, subject, body, msg.DedupKey+":"+msg.Event+":"+msg.OccurredAt.UTC().Format(time.RFC3339))
+		key := msg.IdempotencyKey
+		if key == "" {
+			key = msg.DedupKey + ":" + msg.Event + ":" + msg.OccurredAt.UTC().Format(time.RFC3339)
+		}
+		return s.Mail.SendEmail(ctx, t.Email, subject, body, key)
 	}
 	return fmt.Errorf("alertchannels: unknown channel kind %q", t.Kind)
 }
@@ -211,6 +228,9 @@ func Headline(msg Message) string {
 func Detail(msg Message) string {
 	if msg.Event == EventTest {
 		return "This channel is set up correctly. Real alerts will look like this, with the rule, the observed value and a dashboard link."
+	}
+	if msg.Summary != "" {
+		return msg.Summary
 	}
 	scope := ""
 	if msg.AppSlug != "" {

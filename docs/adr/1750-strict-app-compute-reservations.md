@@ -97,8 +97,107 @@ Run [native acceptance](../runbooks/financial-strict-compute-acceptance.md), the
 full VM suite and leakcheck on dedicated native x86_64 Linux KVM. Compilation,
 skipped metal tests or cloud checks cannot promote the strict capability.
 
+Release is per account through the `strict_budgets` platform flag
+([ADR-1700](1700-platform-flags.md)). It is off until an operator writes it.
+Without it, creating or enabling any strict budget (app, job or account,
+including the shared egress cap of ADR-1746 to ADR-1748) returns 422
+`financial_budget_activation_unavailable`. A strict budget that is already
+enabled keeps enforcing and stays editable, and disabling or deleting one is
+never gated, so withdrawing the flag cannot strand a customer's cap. The flag
+gates customer activation only: vmmd still registers every native boot, as
+activation requires.
+
 - **Rejected:** reclaim expired funds without retirement; infer strict caps
   from delayed totals; bill stale rows beyond funding; use shared net allowance
   for app caps; silently skip unsupported VM constructors.
-- **Rollback:** disable new strict policies first. Keep financial enforcement
+- **Rollback:** disable new strict policies first (withdraw `strict_budgets`). Keep financial enforcement
   and recovery until every strict attempt settles; preserve financial history.
+
+## Amendment 1 (2026-10-20): strict project caps
+
+A strict budget can cap a project: `scope={kind:project,id:PROJECT_ID}`, with
+the same terms as an app cap (`gross_usage`, `meters=[compute]`,
+`suspend_workloads`, zero drain, no alert thresholds).
+
+- **One shared book.** `financial_compute_scope_books` holds one book per
+  project and UTC month (`scope_kind=project`). Every strict attempt of an app in the project funds
+  its own app book and the project book. Both move by the same gross amounts
+  on acquire, renewal and settlement, under the account lock. The cap
+  therefore admits no more than its limit across all of the project's apps.
+  A denial holds the policy, and the hold stops every app in the project:
+  gateway admission, scheduler reconcile, vmmd and
+  `financial_app_command_held` all see the project policy.
+- **The lease records the project.** A lease stores the project it funded in
+  `project_id`, and renewal and settlement use that project. An app that
+  moves out of the project stays bounded by the old cap until its attempt
+  settles. An app that moves into a capped project without funding the
+  project stops at its next renewal, as an unbudgeted attempt does when an
+  app cap appears.
+- **Activation** needs a quiet project: no running instance, task, open
+  billing interval or unsettled attempt of any project app. It also needs
+  capable owners and complete sampling since the project or the month began.
+  The month's book starts at the project's retained gross charges, as an app
+  book does. A new month opens the book once no project attempt is
+  unsettled.
+- **Scope.** A project cap covers the project's apps. Jobs belong to no
+  project and are not covered; use job caps. Environment caps are
+  amendment 2.
+- **Release.** Project caps are strict budgets. They go through the same
+  native acceptance before strict budgets are released to customers.
+
+## Amendment 2 (2026-10-21): strict environment caps
+
+A strict budget can cap a project environment:
+`scope={kind:environment,id:ENVIRONMENT_ID}`, with the same terms as an app
+cap. It bounds the gross compute of every deployment that runs in the
+environment, across the project's apps.
+
+- **The environment of an attempt.** A deployment runs in its recorded
+  runtime owner (`deployment_runtime_environment_owners`). A deployment
+  without an owner counts toward the project's environment of the same name
+  (`default` is `production`). `financial_compute_deployment_environment`
+  implements this rule once, and the stores mirror it. The fallback can only
+  count a deployment toward a cap, never exclude one. vmmd sends the wake's
+  `DeploymentID` in the compute request; the ledger prefers the instance's
+  recorded deployment. vmmd calls the store in-process, so no RPC changes.
+  An app in a project whose attempt names no deployment fails closed while
+  any environment of the project is capped.
+- **Shared book.** The environment book is a `financial_compute_scope_books`
+  row (`scope_kind=environment`). It moves with the app book, as a project
+  book does, and an attempt can fund an app, a project and an environment
+  book at once. The lease records `environment_id` and `deployment_id`.
+  Renewal re-resolves the deployment's environment: an attempt now counted in
+  a capped environment that it does not fund stops, and the environment it
+  funds still bounds it until it settles.
+- **Holds.** A held environment cap stops only that environment's
+  deployments. Gateways resolve the deployment from the routed scope only
+  when an environment cap applies. Calls that name no deployment, such as
+  service-proxy calls, are bounded by acquire and renewal instead. The
+  scheduler retires only instances whose deployment runs in the held
+  environment. `financial_app_command_held` resolves the command's
+  deployment. `FinancialComputePolicies` keeps reporting every policy that
+  can apply to the app, so routing and vmmd's bypass guard stay
+  conservative. `FinancialComputeDeploymentEnvironment` narrows it to one
+  deployment.
+- **Activation** needs a quiet environment: no running instance, task, open
+  billing interval or unsettled attempt of a deployment in it, and no
+  running project instance with an unknown deployment. Sampling must be
+  complete from the earliest creation of the environment and the project's
+  apps, or from the month start. The book starts at the month's retained
+  gross charges that were attributed to the environment, or that came from a
+  deployment now in it.
+- **Billing boundary.** An instance in a capped environment bills only funded
+  residency, and an unfunded VM there bills nothing, as for an app cap.
+  Capacity floors are app-wide and carry no environment, so an environment cap
+  neither counts nor waives them. An attempt funded only by environment caps
+  still opens its app's own book; that book is marked `environment_only` and
+  waives no floor, so a small staging cap cannot waive production floors.
+  App, account and project funding clear the mark. Those caps still waive
+  floors.
+- **Owner capability.** `financial_compute_owners.scope_compute_incarnation`
+  records owners that enforce project and environment caps. Owner validity
+  and fleet readiness require it, like the account and job capabilities, so
+  scheduler routing refuses strict work on a node whose vmmd predates shared
+  books. This closes the same skew gap for project caps.
+- **Release.** Environment caps are strict budgets and go through the same
+  native acceptance before strict budgets are released.

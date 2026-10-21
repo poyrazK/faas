@@ -13,6 +13,7 @@ export type FinancialBudgetRuntime = {
   compute?: FinancialComputeBalance;
   evaluation?: FinancialBudgetEvaluation;
   alerts: Array<FinancialBudgetAlert>;
+  projection?: FinancialBudgetAlert;
   stops?: Array<FinancialBudgetStop>;
 };
 
