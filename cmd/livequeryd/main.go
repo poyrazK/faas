@@ -66,6 +66,15 @@ func main() {
 // host with the parser and the memory it needs. -role all runs both in one
 // process.
 func run(ctx context.Context, log *slog.Logger) error {
+	// The first parse compiles the SQL parser to native code, which takes
+	// seconds. Start it now, beside connecting and restoring checkpoints, so
+	// no subscriber waits for it. An engine with a remote compiler never
+	// parses.
+	if *role != "engine" {
+		go func() {
+			log.Info("livequeryd: SQL parser ready", "took", livequery.WarmParser().Round(time.Millisecond))
+		}()
+	}
 	if *databasesFile != "" {
 		return runDatabases(ctx, log)
 	}
