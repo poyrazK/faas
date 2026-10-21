@@ -1387,9 +1387,10 @@ and, optionally, its business name and tax identifier. The routes are
   no Paddle connection, the tenant's external reference is not a Paddle customer ID,
   or the Paddle key cannot manage customer addresses.
 - **Billing.** With collection `send`, the next export, or a retry of one that
-  failed for lack of an address, bills the transaction with the customer's active
-  address and business, so Paddle issues the invoice with the connection's payment
-  terms. A billed invoice cannot be changed in Paddle, so finalize statements only
+  failed for lack of an address, bills the transaction with the customer's newest
+  active address and business, the ones the portal edits, so Paddle issues the
+  invoice with the connection's payment terms. Paddle orders them only by ID, so
+  "newest" means created last, not edited last. A billed invoice cannot be changed in Paddle, so finalize statements only
   after review.
 - Leaving the business name empty keeps the current business.
 
@@ -1697,6 +1698,45 @@ private commercial projections, scoped receipts, owner policy CAS, Origin/CSRF
 and the default-off routes. Browser contracts cover explicit comparisons,
 storage failure, cross-tab references, response loss, read-only reload recovery,
 history and logout/permission fencing. These checks do not qualify a real host.
+
+### Provider qualification
+
+The payment tests above use recorded fakes of Stripe, Paddle and Lago.
+`make product-control-provider-qualification` runs the owner flow
+(ADR-20261018212918) against each provider's real API through apid's routes and
+clients, for every provider whose test credentials are set; with none set it
+skips. Each provider gets a fresh customer and one finalized EUR 12.50 statement:
+
+1. The billing connection accepts the test key (`send` collection, 14 days, for
+   Stripe and Paddle; Lago without collection).
+2. Paddle only: the export without an address is refused with 422 and keeps the
+   draft. Billing details are written, read back field for field, skipped when
+   unchanged and updated with a cleared line. A second address created in Paddle
+   becomes the newest active one (ADR-20261020120000 amendment 1).
+3. The export completes, and repeating it returns the same invoice. Paddle's
+   transaction is `billed` with the newest address and the business.
+4. The payment sync reads it as open with EUR 12.50 remaining, a due date and,
+   for Stripe and Paddle, an https page to pay it. The owner's statement shows
+   the same.
+5. An overdue policy of 0 days holds the customer once the payment sync and hold
+   workers run past the provider's real due date. Their clocks are moved; the
+   provider is not.
+6. The invoice is settled in the provider: paid out of band in Stripe, cancelled
+   in Paddle (a sandbox invoice is paid only through checkout) and marked paid in
+   Lago. The sync reads `paid` or `void`, and the hold lifts.
+
+| Variable | Value |
+| --- | --- |
+| `FAAS_QUALIFY_STRIPE_TEST_KEY` | A Stripe test-mode secret or restricted key (`sk_test_…`, `rk_test_…`) |
+| `FAAS_QUALIFY_PADDLE_SANDBOX_KEY` | A Paddle sandbox API key (`pdl_sdbx_apikey_…`) with customer, address, business and transaction access |
+| `FAAS_QUALIFY_LAGO_KEY`, `FAAS_QUALIFY_LAGO_URL`, `FAAS_QUALIFY_LAGO_TEST_ORG=1` | Lago has no test mode: the key and public API URL of a Lago organization kept for tests, and the acknowledgement that it is one |
+| `FAAS_QUALIFY_EVIDENCE_DIR` | Optional: writes `product-control-<provider>.json` with the customer, invoice, links, due date and passed checks, never a key |
+
+Live keys are refused. Paddle gives a transaction a payment page only when the
+sandbox has a default payment link (Checkout settings); without one, step 4
+fails, as customers could not pay. Lago's URL goes through apid's egress guard,
+so a Lago on a private address is refused. Every run leaves its customer and its
+paid or cancelled invoice in the provider.
 
 
 ### Unsubscribing from notification email
