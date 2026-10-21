@@ -5716,7 +5716,7 @@ Require people to approve production releases before they leave their first cana
 Examples:
 
 ```sh
-gregale approvals require --app my-api --approvals 2
+gregale approvals require --app my-api --approvals 2 --notify releases
 gregale approvals require --app my-api --approvals 1 --approvers developer --timeout 4h
 gregale approvals pending --app my-api
 gregale approvals approve 3f9c1e2a-0b7d-4c55-9e1a-2d6f8b4c7e10 --comment "canary looks clean"
@@ -5727,7 +5727,7 @@ gregale approvals reject v42 --app my-api --reason "checkout latency is up"
 
 Require approvals for an app&#39;s production releases (ADR-20261020085706)
 
-`gregale approvals require [--app <slug>] --approvals <N> [--after-stage <N>] [--timeout <DURATION>] [--approvers <ROLE>] [--allow-self-approval]`
+`gregale approvals require [--app <slug>] --approvals <N> [--after-stage <N>] [--timeout <DURATION>] [--approvers <ROLE>] [--allow-self-approval] [--notify <CHANNEL,...>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -5737,6 +5737,7 @@ Require approvals for an app&#39;s production releases (ADR-20261020085706)
 | `--timeout <DURATION>` | abort a release that waits longer (default 24h) |  |
 | `--approvers <ROLE>` | who may approve (default admin: owners and admins) | one of `admin` · `developer` |
 | `--allow-self-approval` | count the deployer&#39;s own approval |  |
+| `--notify <CHANNEL,...>` | Slack or email channels told when a release waits, is decided or times out |  |
 
 ### approvals policy
 

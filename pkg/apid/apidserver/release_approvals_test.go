@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -133,7 +134,7 @@ func TestReleaseApprovalPolicyRoundTripAndValidation(t *testing.T) {
 		t.Fatalf("policy = %+v", policy)
 	}
 	var got api.ReleaseApprovalPolicy
-	if rec := guardDo(t, e, http.MethodGet, path, nil, &got); rec.Code != http.StatusOK || got != policy {
+	if rec := guardDo(t, e, http.MethodGet, path, nil, &got); rec.Code != http.StatusOK || !reflect.DeepEqual(got, policy) {
 		t.Fatalf("get = %d %+v, want %+v", rec.Code, got, policy)
 	}
 	rec = e.Do(t, http.MethodPut, "/v1/apps/instant-app/release-approval-policy", api.SetReleaseApprovalPolicyRequest{RequiredApprovals: 1}, nil)
