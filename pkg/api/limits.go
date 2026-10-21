@@ -88,7 +88,7 @@ const (
 	ProductControlMaxFeatures                             = 32
 	ProductControlAccessMaxRoles                          = 32
 	ProductControlAccessRoleMaxBytes                      = 32
-	ProductControlAccessMaxPermissions                    = 5
+	ProductControlAccessMaxPermissions                    = 6
 	ProductControlTeamMaxMembers                          = 500
 	ProductControlTeamMaxInvitations                      = 500
 	ProductControlTeamMaxAuthRoles                        = 64
@@ -624,6 +624,18 @@ const (
 	// key), the hold lifts rather than outlasting a payment it cannot see
 	// (ADR-20261019180000).
 	ConsumerOverdueStatusMaxAge = 24 * time.Hour
+)
+
+// ProductBillingDetailsFieldMaxBytes bounds each billing address and
+// business field a customer enters (ADR-20261020120000).
+const ProductBillingDetailsFieldMaxBytes = 255
+
+// Product Control overdue holds (ADR-20261018212918) reuse the ADR-1315
+// values: a held customer's new starts are refused until its invoice is paid.
+const (
+	ProductOverdueBlockMaxDays     = ConsumerOverdueBlockMaxDays
+	ProductOverdueCheckInterval    = ConsumerOverdueCheckInterval
+	ProductOverdueHeldSyncInterval = ConsumerOverdueHeldSyncInterval
 )
 
 // PlatformTenantPlansMax bounds the tenant plans one account keeps
@@ -12141,6 +12153,16 @@ const (
 	// a session support staff open as a user (gregale auth users impersonate).
 	AuthImpersonationDefaultMinutes = 30
 	AuthImpersonationMaxMinutes     = 60
+	// AuthServiceAccountsPerOrg bounds one organization's service accounts,
+	// AuthServiceAccountSecrets each account's live secrets (two let a
+	// backend switch without downtime), AuthServiceAccountSecretMaxDays a
+	// secret's optional lifetime, and AuthServiceAccountTokensPerMinute both
+	// the tokens one account gets and the failed client-credentials requests
+	// from one address, since that path bypasses GoTrue's own rate limits.
+	AuthServiceAccountsPerOrg         = 50
+	AuthServiceAccountSecrets         = 2
+	AuthServiceAccountSecretMaxDays   = 3650
+	AuthServiceAccountTokensPerMinute = 60
 	// AuthReauthenticationSeconds is how recent a sign-in must be for a
 	// user to delete their own account.
 	AuthReauthenticationSeconds = 600

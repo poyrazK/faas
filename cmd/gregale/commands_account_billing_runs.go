@@ -50,7 +50,7 @@ func cmdAccountBillingRun(args []string) int {
 	fs := newFlagSet("account billing-run "+verb, flag.ContinueOnError)
 	var f billingRunFlags
 	fs.StringVar(&f.month, "month", "", "UTC calendar month to bill, YYYY-MM (default: last month)")
-	fs.StringVar(&f.sources, "sources", "", "comma-separated app_consumers,platform_tenants (default: both)")
+	fs.StringVar(&f.sources, "sources", "", "comma-separated app_consumers,platform_tenants,product_customers (default: app_consumers,platform_tenants)")
 	fs.BoolVar(&f.noFinalize, "no-finalize", false, "only draft statements")
 	fs.StringVar(&f.export, "export", "", "none, stripe, paddle or lago (default none)")
 	fs.BoolVar(&f.noHoldOnGaps, "no-hold-on-gaps", false, "finalize consumers even when request telemetry shows unbilled requests")
@@ -195,7 +195,12 @@ func billingRunShow(ctx context.Context, client *api.Client, runID, outcome stri
 		if item.AmountMillicents != nil {
 			amount = formatMillicents(item.Currency, *item.AmountMillicents)
 		}
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", item.SourceKind, item.ExternalRef, item.Outcome, amount,
+		customer := item.ExternalRef
+		if item.SourceKind == "product_control" && len(item.AppID) >= 8 {
+			// A tenant is a customer of each Product Control app separately.
+			customer += " · app " + item.AppID[:8]
+		}
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", item.SourceKind, customer, item.Outcome, amount,
 			dashIfEmpty(item.InvoiceID), dashIfEmpty(item.PaymentStatus), item.Reason)
 	}
 	_ = tw.Flush()

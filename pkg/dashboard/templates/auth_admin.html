@@ -64,6 +64,7 @@
 <label>End sessions not used for this long (45m, 12h or 30d; empty for never)<input name="session_idle" maxlength="8" pattern="[1-9][0-9]{0,5}[mhd]"></label>
 <label>Keep only each user's most recently used session<select name="single_session"><option value="off">Off</option><option value="on">On</option></select></label>
 <label>Organization email domains<select name="org_domains"><option value="off">Off</option><option value="on">Organizations may verify domains and let people at them join (needs autoconfirm off)</option></select></label>
+<label>Service accounts, for organizations' scripts and servers<select name="service_accounts"><option value="off">Off</option><option value="on">Organizations may make service accounts that get tokens with the client-credentials grant</option></select></label>
 <button type="submit">Save and restart</button>
 </form>
 <h3>Sign-in providers</h3>
@@ -715,7 +716,7 @@
       sso: settings.sso?.enabled ? 'on' : 'off', sms_countries: (settings.phone?.countries ?? []).join(','), org_sso: settings.sso?.self_service ? 'on' : 'off',
       oauth_server: settings.oauth?.enabled ? 'on' : 'off', oauth_registration: settings.oauth?.dynamic_registration ? 'on' : 'off',
       anonymous: settings.anonymous?.enabled ? 'on' : 'off', anonymous_retention_days: settings.anonymous?.retention_days ? String(settings.anonymous.retention_days) : '',
-      identity_linking: settings.identity_linking ? 'on' : 'off', self_deletion: settings.self_deletion ? 'on' : 'off', org_claims: settings.organization_claims ? 'on' : 'off', impersonation: settings.impersonation ? 'on' : 'off', org_domains: settings.organization_domains?.enabled ? 'on' : 'off',
+      identity_linking: settings.identity_linking ? 'on' : 'off', self_deletion: settings.self_deletion ? 'on' : 'off', org_claims: settings.organization_claims ? 'on' : 'off', impersonation: settings.impersonation ? 'on' : 'off', org_domains: settings.organization_domains?.enabled ? 'on' : 'off', service_accounts: settings.service_accounts?.enabled ? 'on' : 'off',
       web3: [settings.web3?.ethereum && 'ethereum', settings.web3?.solana && 'solana'].filter(Boolean).join(',') || 'off',
       session_max_age: sessionLimit(settings.sessions?.max_age_minutes), session_idle: sessionLimit(settings.sessions?.idle_minutes), single_session: settings.sessions?.single_per_user ? 'on' : 'off',
     }

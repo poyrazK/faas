@@ -698,6 +698,77 @@ token; an API or MCP server accepts one for its own resource
 (`gregale mcp init --auth-app`, the SDKs' audience option). GoTrue issues
 only the OpenID scopes, so finer permissions come from `authorize()`.
 
+### Service accounts
+
+A B2B application's customers want their own scripts and servers to call
+the application's API, and its Data API, as their organization: without a
+person, a browser or a password. GoTrue has no machine principal and no
+client-credentials grant, and the OAuth server's clients act only for a
+consenting user. `AUTH_SERVICE_ACCOUNTS` (off by default) adds service
+accounts, with no GoTrue user behind them.
+
+A service account belongs to one organization and holds one of its roles,
+like a member; it is not in `auth.users`, so it never signs in, never
+counts as a user and is not listed among members. Members holding
+`members:manage` create, rename, re-role, disable and delete their
+organization's service accounts through `/authz/v1/orgs/<id>/service-accounts`
+and issue or revoke its secrets; as with invitations, only an owner gives one
+the owner role. The app's operator does the same for any organization with
+an admin key (`/admin/v1/service-accounts`, `gregale auth service-accounts`).
+An organization holds at most `AuthServiceAccountsPerOrg`, each with at most
+`AuthServiceAccountSecrets` live secrets, two so a secret can be rotated
+without downtime. A secret is shown once and stored as a SHA-256 digest; it
+may expire. The organization's audit log records each change.
+
+A backend exchanges its client ID (the service account's ID) and a secret
+for an access token with RFC 6749's client-credentials grant at the OAuth
+token endpoint `<host>/auth/v1/oauth/token`, authenticating with HTTP Basic or
+in the form body; the front answers that grant itself and passes every other
+grant to GoTrue. An optional `scope` lists permissions to narrow the token to;
+each must be one the role holds. The front signs the token with the app's
+current signing key, so it verifies like a user's token everywhere:
+
+    iss <host>/auth/v1   aud authenticated   role authenticated   exp +600 s
+    sub <service account ID>   service_account true   secret_id <secret ID>
+    org_id, org_slug, org_role, org_permissions   scope (when narrowed)
+
+There is no refresh token and no session: a backend asks again when its token
+expires. This path bypasses GoTrue's rate limits, so it keeps two of its own,
+both `AuthServiceAccountTokensPerMinute`: failed requests per client address,
+checked before the database is asked, and tokens per service account, counted
+only once the secret matched, so knowing an account's ID (which is not secret)
+is not enough to exhaust its budget.
+
+The SQL helpers know the new principal. `has_permission()`, and through it
+`authorize()` in row-level security, storage and the front, grants a token
+marked `service_account` the permissions of its account's role in its own
+organization, within the token's scope, while `service_account_active()`
+holds: the account exists and is not disabled and the token's secret is
+neither revoked nor expired. Deleting, disabling or revoking therefore takes
+effect at once wherever `authorize()` runs, and at the token's expiry, at
+most 600 seconds later, in edge-only JWT checks, as sign-out does. A
+service-account token never satisfies `session_active()`, so policies written
+for people (`auth.uid() = owner_id`, `session_active()`) keep refusing it, and
+a user's token never satisfies `service_account_active()`. An organization
+that requires a second factor (`mfa_required`) applies it to the people who
+manage its service accounts; the accounts themselves have no factor to verify.
+
+On the Auth host such a token reaches only `/authz/v1/authorize` and
+`/authz/v1/storage/sign`; GoTrue's user endpoints and every other route answer
+`service_account_token`. Managed realtime checks subjects, not tokens, and
+refuses service accounts. The SDKs' verifiers expose the account
+(`serviceAccount`), so an API can tell it from a person; Node, Go and Python
+backends get a client-credentials helper that caches the token until shortly
+before it expires.
+
+Rejected: a GoTrue user per service account with a long-lived session, which
+would have needed no new SQL but would put machines in user lists, member
+lists, sign-up rules, domain joining and lifecycle events; opaque API keys
+checked by the Auth app on every request, which would wake a parked Auth app
+for every API call; a separate audience for these tokens, which would keep
+them out of the Data API and of `authorize()` in row-level security, the main
+reasons to have them.
+
 ### Anonymous users and identity linking
 
 GoTrue's anonymous users let people start, for example fill a cart, before
@@ -843,3 +914,17 @@ join with real TXT resolution (25, plus 5 under autoconfirm), Web3 (10),
 self-deletion, email templates and session limits (6). That run found the
 account page listing sessions GoTrue had revoked under one session per user;
 the list now keeps only the live one.
+
+On 2026-10-21 the image built from the service-accounts branch ran against
+GoTrue v2.197.0 and PostgreSQL 16 on the same host (31 checks with
+`AUTH_SERVICE_ACCOUNTS` on, 3 with it off): an owner made an account, the
+token endpoint issued and narrowed tokens that the SDK verified against the
+published keys, `authorize()` granted the role from the front and from an
+unprivileged database role (which could not read the accounts table), the
+token reached no other route, other grants still reached GoTrue, discovery
+listed the grant, revoking or disabling ended tokens at once, the operator
+managed accounts with an admin key, the audit log recorded the changes, and
+both rate limits held. With it off the grant and routes did not exist.
+Review between the first and second runs found that failed requests counted
+against an account's budget, so anyone knowing its ID could block it;
+failures now count per client address.
