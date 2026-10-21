@@ -78,6 +78,9 @@ func Path(p string) bool {
 var WebhookEvents = []string{
 	"usage_statement.finalized",
 	"consumer.usage_threshold",
+	"consumer.signed_up",
+	"consumer.plan_changed",
+	"consumer.closed",
 	"platform_tenant.statement.finalized",
 }
 
@@ -86,6 +89,9 @@ var WebhookEvents = []string{
 var Schemas = []string{
 	"APIConsumerUsageThresholdWebhookPayload",
 	"APIConsumerUsageStatementFinalizedWebhookPayload",
+	"APIConsumerSignedUpWebhookPayload",
+	"APIConsumerPlanChangedWebhookPayload",
+	"APIConsumerClosedWebhookPayload",
 	"PlatformTenantStatementFinalizedWebhookPayload",
 }
 

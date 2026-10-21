@@ -19,6 +19,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"github.com/onebox-faas/faas/pkg/billing"
+	"github.com/onebox-faas/faas/pkg/billing/stripeinvoice"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -30,6 +31,12 @@ type Host interface {
 	// Released reports whether API monetization is released to an account
 	// (ADR-20261020170649).
 	Released(accountID string) bool
+	// OfferedPlans lists the plans sign-up offers with their current prices
+	// (ADR-20261021143000).
+	OfferedPlans(ctx context.Context, app state.App, settings state.APIConsumerSignupSettings) ([]api.ConsumerSignupPlan, error)
+	// StripeKey opens the account's Stripe billing connection (ADR-1502).
+	StripeKey(ctx context.Context, accountID string) (key string, livemode bool, problem *api.Problem)
+	Audit(ctx context.Context, event, accountID string, fields map[string]any)
 }
 
 // Service serves the consumer billing endpoints. Now is the clock; nil uses
@@ -37,6 +44,9 @@ type Host interface {
 type Service struct {
 	Host Host
 	Now  func() time.Time
+	// Stripe is the customer portal client (ADR-20261021183000); nil uses
+	// the real API.
+	Stripe *stripeinvoice.Client
 
 	mu       sync.Mutex
 	limiters map[string]*rate.Limiter

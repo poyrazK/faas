@@ -4,6 +4,8 @@
 -- row turns sign-up on for an app; each sign-up saves a card with Stripe
 -- Checkout and, once complete, names the consumer it created and the key it
 -- last issued. Gregale keeps only the hash of a sign-up's claim token.
+-- ADR-20261021183000: the settings also say whether customers may change
+-- plans or close their account with their own key.
 
 -- migration-compat: expand
 
@@ -22,6 +24,8 @@ CREATE TABLE IF NOT EXISTS api_consumer_signup_settings (
     return_url text NOT NULL DEFAULT '',
     trial_days integer NOT NULL DEFAULT 0,
     daily_limit integer NOT NULL,
+    customer_plan_changes boolean NOT NULL DEFAULT false,
+    customer_closing boolean NOT NULL DEFAULT false,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT api_consumer_signup_settings_provider_chk CHECK (provider = 'stripe'),

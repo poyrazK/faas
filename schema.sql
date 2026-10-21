@@ -27288,6 +27288,8 @@ CREATE TABLE public.api_consumer_signup_settings (
     return_url text DEFAULT ''::text NOT NULL,
     trial_days integer DEFAULT 0 NOT NULL,
     daily_limit integer NOT NULL,
+    customer_plan_changes boolean DEFAULT false NOT NULL,
+    customer_closing boolean DEFAULT false NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT api_consumer_signup_settings_limit_chk CHECK (((daily_limit >= 1) AND (daily_limit <= 1000))),

@@ -44,8 +44,12 @@ type APIConsumerSignupSettings struct {
 	ReturnURL   string
 	TrialDays   int
 	DailyLimit  int
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	// CustomerPlanChanges and CustomerClosing let customers change plans
+	// and close their account with their own key (ADR-20261021183000).
+	CustomerPlanChanges bool
+	CustomerClosing     bool
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
 }
 
 // APIConsumerSignupStatus is a sign-up's state: pending until its consumer
@@ -356,6 +360,11 @@ func (m *MemStore) CompleteAPIConsumerSignup(_ context.Context, in APIConsumerSi
 	}
 	s.Status, s.ConsumerID, s.CompletedAt = APIConsumerSignupCompleted, c.ID, &now
 	m.apiConsumerSignups[s.ID] = s
+	payload, err := consumerSignedUpWebhookPayload(s, c, in)
+	if err != nil {
+		return APIConsumer{}, false, err
+	}
+	m.enqueueAppWebhookEventLocked(s.AccountID, s.AppID, AppWebhookEventConsumerSignedUp, s.ID, payload, now)
 	return c, true, nil
 }
 

@@ -11,12 +11,12 @@ import (
 )
 
 const apiConsumerSignupSettingsCols = `app_id::text, account_id::text, enabled, provider, plan_ids::text[], key_scopes,
-	display_name, terms_url, return_url, trial_days, daily_limit, created_at, updated_at`
+	display_name, terms_url, return_url, trial_days, daily_limit, customer_plan_changes, customer_closing, created_at, updated_at`
 
 func scanAPIConsumerSignupSettings(row pgx.Row) (APIConsumerSignupSettings, error) {
 	var s APIConsumerSignupSettings
 	err := row.Scan(&s.AppID, &s.AccountID, &s.Enabled, &s.Provider, &s.PlanIDs, &s.KeyScopes, &s.DisplayName, &s.TermsURL,
-		&s.ReturnURL, &s.TrialDays, &s.DailyLimit, &s.CreatedAt, &s.UpdatedAt)
+		&s.ReturnURL, &s.TrialDays, &s.DailyLimit, &s.CustomerPlanChanges, &s.CustomerClosing, &s.CreatedAt, &s.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return APIConsumerSignupSettings{}, ErrNotFound
 	}
@@ -52,15 +52,17 @@ func (s *PgStore) PutAPIConsumerSignupSettings(ctx context.Context, in APIConsum
 	}
 	in = cloneAPIConsumerSignupSettings(in)
 	out, err := scanAPIConsumerSignupSettings(s.pool.QueryRow(ctx, `insert into api_consumer_signup_settings
-			(app_id, account_id, enabled, provider, plan_ids, key_scopes, display_name, terms_url, return_url, trial_days, daily_limit)
-		select a.id, a.account_id, $3, $4, $5::uuid[], $6, $7, $8, $9, $10, $11 from apps a
+			(app_id, account_id, enabled, provider, plan_ids, key_scopes, display_name, terms_url, return_url, trial_days, daily_limit,
+			 customer_plan_changes, customer_closing)
+		select a.id, a.account_id, $3, $4, $5::uuid[], $6, $7, $8, $9, $10, $11, $12, $13 from apps a
 		 where a.id = $1::uuid and a.account_id = $2::uuid
 		on conflict (app_id) do update
 		   set enabled = excluded.enabled, provider = excluded.provider, plan_ids = excluded.plan_ids, key_scopes = excluded.key_scopes,
 		       display_name = excluded.display_name, terms_url = excluded.terms_url, return_url = excluded.return_url,
-		       trial_days = excluded.trial_days, daily_limit = excluded.daily_limit, updated_at = now()
+		       trial_days = excluded.trial_days, daily_limit = excluded.daily_limit,
+		       customer_plan_changes = excluded.customer_plan_changes, customer_closing = excluded.customer_closing, updated_at = now()
 		returning `+apiConsumerSignupSettingsCols, in.AppID, in.AccountID, in.Enabled, in.Provider, in.PlanIDs, in.KeyScopes,
-		in.DisplayName, in.TermsURL, in.ReturnURL, in.TrialDays, in.DailyLimit))
+		in.DisplayName, in.TermsURL, in.ReturnURL, in.TrialDays, in.DailyLimit, in.CustomerPlanChanges, in.CustomerClosing))
 	if err != nil && !errors.Is(err, ErrNotFound) {
 		return APIConsumerSignupSettings{}, fmt.Errorf("put consumer sign-up settings: %w", err)
 	}
@@ -224,9 +226,18 @@ func (s *PgStore) CompleteAPIConsumerSignup(ctx context.Context, in APIConsumerS
 			return APIConsumer{}, false, fmt.Errorf("start signed-up consumer trial: %w", err)
 		}
 	}
-	if _, err := tx.Exec(ctx, `update api_consumer_signups set status = 'completed', consumer_id = $2::uuid, completed_at = now()
-		where id = $1::uuid`, signup.ID, c.ID); err != nil {
+	var completedAt time.Time
+	if err := tx.QueryRow(ctx, `update api_consumer_signups set status = 'completed', consumer_id = $2::uuid, completed_at = now()
+		where id = $1::uuid returning completed_at`, signup.ID, c.ID).Scan(&completedAt); err != nil {
 		return APIConsumer{}, false, fmt.Errorf("complete consumer sign-up: %w", err)
+	}
+	signup.Status, signup.ConsumerID, signup.CompletedAt = APIConsumerSignupCompleted, c.ID, &completedAt
+	payload, err := consumerSignedUpWebhookPayload(signup, c, in)
+	if err != nil {
+		return APIConsumer{}, false, err
+	}
+	if err := enqueueAppWebhookEventTx(ctx, tx, signup.AccountID, signup.AppID, AppWebhookEventConsumerSignedUp, signup.ID, payload); err != nil {
+		return APIConsumer{}, false, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return APIConsumer{}, false, fmt.Errorf("commit consumer sign-up completion: %w", err)

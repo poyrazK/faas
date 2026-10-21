@@ -91,6 +91,7 @@ type consumerFlags struct {
 	termsURL, returnURL                  string
 	dailyLimit                           int
 	disabled                             bool
+	customerPlanChanges, customerClosing bool
 }
 
 var consumerVerbFlags = map[string][]string{
@@ -110,7 +111,7 @@ var consumerVerbFlags = map[string][]string{
 	"statement-export":   {"customer", "provider"},
 	"credit-grant":       {"currency", "amount-millicents", "expires", "note"},
 	"spend-cap-set":      {"currency", "monthly-cap-millicents"},
-	"signup-set":         {"display-name", "plans", "key-scopes", "terms-url", "return-url", "trial-days", "daily-limit", "disabled"},
+	"signup-set":         {"display-name", "plans", "key-scopes", "terms-url", "return-url", "trial-days", "daily-limit", "disabled", "customer-plan-changes", "customer-closing"},
 }
 
 // cmdConsumers manages an app's API consumers and their monetization:
@@ -188,6 +189,8 @@ func registerConsumerMonetizationFlags(fs *flag.FlagSet, f *consumerFlags) {
 	fs.StringVar(&f.returnURL, "return-url", "", "https URL the page links to after showing the key (signup-set)")
 	fs.IntVar(&f.dailyLimit, "daily-limit", 0, "sign-ups per UTC day; default 100, at most 1000 (signup-set)")
 	fs.BoolVar(&f.disabled, "disabled", false, "keep the settings but stop taking sign-ups (signup-set)")
+	fs.BoolVar(&f.customerPlanChanges, "customer-plan-changes", false, "let customers switch between the offered plans with their own key (signup-set)")
+	fs.BoolVar(&f.customerClosing, "customer-closing", false, "let customers close their account with their own key (signup-set)")
 }
 
 func consumerVerbUsage(verb string, positionals []string) string {

@@ -22,6 +22,8 @@ type signupStripe struct {
 	customers      []string
 	successURL     string
 	defaultPayment string
+	portalCustomer string
+	portalReturn   string
 }
 
 func (f *signupStripe) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -44,6 +46,9 @@ func (f *signupStripe) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			status, intent = "complete", `{"id":"seti_1","status":"succeeded","payment_method":"pm_1"}`
 		}
 		_, _ = fmt.Fprintf(w, `{"id":%q,"status":%q,"customer":"cus_1","setup_intent":%s}`, strings.TrimPrefix(r.URL.Path, "/v1/checkout/sessions/"), status, intent)
+	case r.Method == http.MethodPost && r.URL.Path == "/v1/billing_portal/sessions":
+		f.portalCustomer, f.portalReturn = r.PostForm.Get("customer"), r.PostForm.Get("return_url")
+		_, _ = fmt.Fprint(w, `{"id":"bps_1","url":"https://billing.stripe.test/session/bps_1"}`)
 	case r.Method == http.MethodPost && r.URL.Path == "/v1/customers/cus_1":
 		f.defaultPayment = r.PostForm.Get("invoice_settings[default_payment_method]")
 		_, _ = fmt.Fprint(w, `{"id":"cus_1"}`)

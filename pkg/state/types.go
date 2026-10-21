@@ -3943,6 +3943,9 @@ type AppWebhookEvent string
 
 const (
 	AppWebhookEventConsumerUsageThreshold                  AppWebhookEvent = "consumer.usage_threshold"
+	AppWebhookEventConsumerSignedUp                        AppWebhookEvent = "consumer.signed_up"
+	AppWebhookEventConsumerPlanChanged                     AppWebhookEvent = "consumer.plan_changed"
+	AppWebhookEventConsumerClosed                          AppWebhookEvent = "consumer.closed"
 	AppWebhookEventAutomationPaused                        AppWebhookEvent = "automation.paused"
 	AppWebhookEventRealtimeConsumerGroupLagExceeded        AppWebhookEvent = "realtime.consumer_group.lag_exceeded"
 	AppWebhookEventRealtimeConsumerGroupLagRecovered       AppWebhookEvent = "realtime.consumer_group.lag_recovered"
@@ -4075,6 +4078,9 @@ var AllAppWebhookEvents = []AppWebhookEvent{
 	AppWebhookEventBudgetThreshold,
 	AppWebhookEventUsageStatementFinalized,
 	AppWebhookEventConsumerUsageThreshold,
+	AppWebhookEventConsumerSignedUp,
+	AppWebhookEventConsumerPlanChanged,
+	AppWebhookEventConsumerClosed,
 	AppWebhookEventOutboundAIBudgetThreshold,
 	AppWebhookEventPlatformTenantStatementFinalized,
 	AppWebhookEventDebugRegressionDetected,

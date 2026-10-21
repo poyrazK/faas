@@ -25,7 +25,8 @@ func buildConsumerSignupRequest(verb string, f consumerFlags) (any, bool, error)
 	}
 	enabled := !f.disabled
 	req := api.PutConsumerSignupRequest{Enabled: &enabled, DisplayName: strings.TrimSpace(f.displayName), TermsURL: f.termsURL,
-		ReturnURL: f.returnURL, TrialDays: f.trialDays, DailyLimit: f.dailyLimit}
+		ReturnURL: f.returnURL, TrialDays: f.trialDays, DailyLimit: f.dailyLimit, CustomerPlanChanges: f.customerPlanChanges,
+		CustomerClosing: f.customerClosing}
 	if f.keyScopes != "" {
 		req.KeyScopes = splitList(f.keyScopes)
 	}
@@ -98,6 +99,7 @@ func printConsumerSignupResult(tw *tabwriter.Writer, out any) bool {
 		if v.ReturnURL != "" {
 			_, _ = fmt.Fprintf(tw, "Return\t%s\n", v.ReturnURL)
 		}
+		_, _ = fmt.Fprintf(tw, "Customers may\t%s\n", customerSelfService(v))
 	case api.ConsumerSignupListResponse:
 		_, _ = fmt.Fprintln(tw, "ID\tSTATUS\tEMAIL\tNAME\tCONSUMER\tCREATED")
 		for _, s := range v.Signups {
@@ -112,4 +114,18 @@ func printConsumerSignupResult(tw *tabwriter.Writer, out any) bool {
 		return false
 	}
 	return true
+}
+
+// customerSelfService names what customers may do with their own key
+// (ADR-20261021183000).
+func customerSelfService(v api.ConsumerSignupSettingsResponse) string {
+	var can []string
+	if v.CustomerPlanChanges {
+		can = append(can, "change plans")
+	}
+	if v.CustomerClosing {
+		can = append(can, "close their account")
+	}
+	can = append(can, "update their card in the Stripe portal")
+	return strings.Join(can, ", ")
 }

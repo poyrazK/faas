@@ -3302,6 +3302,8 @@ var cliCommands = []cliCommand{
 				{Name: "trial-days", Short: "free trial for each new customer", Value: "N"},
 				{Name: "daily-limit", Short: "sign-ups per UTC day (default 100, at most 1000)", Value: "N"},
 				{Name: "disabled", Short: "keep the settings but stop taking sign-ups"},
+				{Name: "customer-plan-changes", Short: "let customers switch between the offered plans with their own key"},
+				{Name: "customer-closing", Short: "let customers close their account with their own key"},
 			}, Examples: []string{"gregale consumers signup-set my-api --display-name \"Weather API\" --plans pro --trial-days 14"}},
 			{Name: "signup-delete", Short: "Turn sign-up off; pending sign-ups can no longer complete", Positionals: []string{"<slug>"}},
 			{Name: "signups", Short: "List the app's latest sign-ups", Positionals: []string{"<slug>"}},

@@ -7069,6 +7069,183 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/consumer-billing/{slug}/plans:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: The app whose plans the consumer reads.
+        schema: { type: string }
+    get:
+      tags: [consumers]
+      operationId: listConsumerBillingPlans
+      summary: List the plans you can switch to with your consumer key (ADR-20261021183000).
+      security:
+        - consumerKey: []
+      responses:
+        '200':
+          description: Your current plan, the offered plans and what you may do on your own.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConsumerBillingPlansResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: The consumer key lacks the billing scope to list plans.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429':
+          description: Plan reads for this key are rate limited.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/consumer-billing/{slug}/plan:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: The app whose plan the consumer changes.
+        schema: { type: string }
+    put:
+      tags: [consumers]
+      operationId: changeConsumerBillingPlan
+      summary: Switch to another offered plan from the next minute with your consumer key.
+      description: |
+        Only when the app owner lets customers change plans. The app owner
+        gets a consumer.plan_changed webhook.
+      security:
+        - consumerKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ChangeConsumerBillingPlanRequest' }
+      responses:
+        '200':
+          description: The scheduled plan change.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConsumerBillingPlanChangeResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: The consumer key lacks the billing scope to change plans.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: Plan changes are not offered (`consumer_self_service_unavailable`), you are already on the plan, or a change is pending.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '422':
+          description: The plan is not one of the offered plans.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429':
+          description: Plan changes for this key are rate limited.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/consumer-billing/{slug}/portal:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: The app whose billing portal the consumer opens.
+        schema: { type: string }
+    post:
+      tags: [consumers]
+      operationId: createConsumerBillingPortalSession
+      summary: Open Stripe's customer portal to update your card and see invoices.
+      description: |
+        For consumers billed through the app owner's Stripe (external_ref
+        cus_...). The URL is short-lived; return_url defaults to the app's
+        sign-up return URL.
+      security:
+        - consumerKey: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateConsumerBillingPortalRequest' }
+      responses:
+        '200':
+          description: The portal URL to send the customer to.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConsumerBillingPortalResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: The consumer key lacks the billing scope to open the portal.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: The account is not billed through Stripe, or the owner's Stripe portal is not set up (`consumer_self_service_unavailable`).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '422':
+          description: return_url is not an https URL.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429':
+          description: Portal sessions for this key are rate limited.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '502':
+          description: Stripe could not be reached for the portal (`billing_provider_unavailable`).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/consumer-billing/{slug}/close:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: The app whose account the consumer closes.
+        schema: { type: string }
+    post:
+      tags: [consumers]
+      operationId: closeConsumerBillingAccount
+      summary: Close your account with your consumer key.
+      description: |
+        Only when the app owner lets customers close their account. Your
+        keys stop working at once; usage until then is still billed. The app
+        owner gets a consumer.closed webhook.
+      security:
+        - consumerKey: []
+      responses:
+        '200':
+          description: The closed account.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConsumerBillingCloseResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: The consumer key lacks the billing scope to close the account.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: Closing is not offered (`consumer_self_service_unavailable`).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429':
+          description: Account closing for this key is rate limited.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/consumer-signup/{slug}:
     parameters:
       - name: slug
@@ -114053,11 +114230,13 @@ components:
         return_url: { type: string, format: uri, maxLength: 2048, description: "https URL shown after the key; it never carries the key." }
         trial_days: { type: integer, minimum: 0, maximum: 365 }
         daily_limit: { type: integer, minimum: 1, maximum: 1000, description: "Sign-ups per UTC day (default 100)." }
+        customer_plan_changes: { type: boolean, description: "Let customers switch between plan_ids with their own key (ADR-20261021183000)." }
+        customer_closing: { type: boolean, description: "Let customers close their account with their own key (ADR-20261021183000)." }
 
     ConsumerSignupSettingsResponse:
       description: "An app's sign-up settings."
       type: object
-      required: [app, enabled, provider, plan_ids, key_scopes, display_name, daily_limit, page_url, created_at, updated_at]
+      required: [app, enabled, provider, plan_ids, key_scopes, display_name, daily_limit, page_url, customer_plan_changes, customer_closing, created_at, updated_at]
       properties:
         app: { type: string }
         enabled: { type: boolean }
@@ -114074,6 +114253,8 @@ components:
         trial_days: { type: integer }
         daily_limit: { type: integer }
         page_url: { type: string, format: uri, description: "The hosted sign-up page to link customers to." }
+        customer_plan_changes: { type: boolean }
+        customer_closing: { type: boolean }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
 
@@ -114183,6 +114364,94 @@ components:
         plan_id: { type: string, format: uuid }
         trial_ends_at: { type: string, format: date-time }
         return_url: { type: string }
+
+    ConsumerBillingPlansResponse:
+      description: "The plans a consumer can switch between (ADR-20261021183000)."
+      type: object
+      required: [can_change, can_close, plans]
+      properties:
+        current_plan_id: { type: string, format: uuid, description: "Omitted on the app's default plan." }
+        can_change: { type: boolean }
+        can_close: { type: boolean }
+        plans:
+          type: array
+          items: { $ref: '#/components/schemas/ConsumerSignupPlan' }
+
+    ChangeConsumerBillingPlanRequest:
+      description: "Switches to one of the offered plans from the next minute."
+      type: object
+      required: [plan_id]
+      properties:
+        plan_id: { type: string, format: uuid }
+
+    ConsumerBillingPlanChangeResponse:
+      description: "A scheduled plan change."
+      type: object
+      required: [plan_id, effective_from]
+      properties:
+        plan_id: { type: string, format: uuid }
+        effective_from: { type: string, format: date-time }
+
+    CreateConsumerBillingPortalRequest:
+      description: "Opens the payment provider's customer portal."
+      type: object
+      properties:
+        return_url: { type: string, format: uri, maxLength: 2048 }
+
+    ConsumerBillingPortalResponse:
+      description: "A short-lived customer portal URL."
+      type: object
+      required: [url]
+      properties:
+        url: { type: string, format: uri }
+
+    ConsumerBillingCloseResponse:
+      description: "A closed consumer account."
+      type: object
+      required: [consumer_id, closed_at]
+      properties:
+        consumer_id: { type: string, format: uuid }
+        closed_at: { type: string, format: date-time }
+
+    APIConsumerSignedUpWebhookPayload:
+      type: object
+      description: Data delivered with consumer.signed_up once a customer's sign-up created their consumer (ADR-20261021183000). signup_id is stable across retries.
+      required: [signup_id, app_id, consumer_id, external_ref, name, email, livemode, signed_up_at]
+      properties:
+        signup_id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        consumer_id: { type: string, format: uuid }
+        external_ref: { type: string, description: "The customer's Stripe customer." }
+        name: { type: string }
+        email: { type: string }
+        plan_id: { type: string, format: uuid }
+        trial_ends_at: { type: string, format: date-time }
+        livemode: { type: boolean }
+        signed_up_at: { type: string, format: date-time }
+
+    APIConsumerPlanChangedWebhookPayload:
+      type: object
+      description: Data delivered with consumer.plan_changed when a customer switched plans with their own key. assignment_id is stable across retries; an omitted plan is the app's default plan.
+      required: [assignment_id, app_id, consumer_id, external_ref, effective_from, changed_at]
+      properties:
+        assignment_id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        consumer_id: { type: string, format: uuid }
+        external_ref: { type: string }
+        from_plan_id: { type: string, format: uuid }
+        to_plan_id: { type: string, format: uuid }
+        effective_from: { type: string, format: date-time }
+        changed_at: { type: string, format: date-time }
+
+    APIConsumerClosedWebhookPayload:
+      type: object
+      description: Data delivered with consumer.closed when a customer closed their account with their own key.
+      required: [app_id, consumer_id, external_ref, closed_at]
+      properties:
+        app_id: { type: string, format: uuid }
+        consumer_id: { type: string, format: uuid }
+        external_ref: { type: string }
+        closed_at: { type: string, format: date-time }
 
     CreateBillingRunRequest:
       description: "A month-end billing run (ADR-1503). Omitted options bill both sources, finalize, do not export, and hold consumers with completeness gaps."
@@ -114660,6 +114929,9 @@ components:
               - operation.finished
               - usage_statement.finalized
               - consumer.usage_threshold
+              - consumer.signed_up
+              - consumer.plan_changed
+              - consumer.closed
               - outbound.ai_budget.threshold
               - issue.created
               - issue.assigned
@@ -115715,6 +115987,9 @@ components:
               - operation.finished
               - usage_statement.finalized
               - consumer.usage_threshold
+              - consumer.signed_up
+              - consumer.plan_changed
+              - consumer.closed
               - outbound.ai_budget.threshold
               - issue.created
               - issue.assigned
@@ -115896,6 +116171,9 @@ components:
               - operation.finished
               - usage_statement.finalized
               - consumer.usage_threshold
+              - consumer.signed_up
+              - consumer.plan_changed
+              - consumer.closed
               - outbound.ai_budget.threshold
               - issue.created
               - issue.assigned

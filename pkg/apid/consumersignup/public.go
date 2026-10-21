@@ -100,7 +100,7 @@ func (s *Service) Form(w http.ResponseWriter, r *http.Request) {
 			out.Livemode = conn.Livemode
 		}
 	}
-	plans, err := s.offeredPlans(r.Context(), app, set)
+	plans, err := s.OfferedPlans(r.Context(), app, set)
 	if err != nil {
 		api.WriteProblem(w, api.ErrInternal("could not read the plans"))
 		return
@@ -109,9 +109,9 @@ func (s *Service) Form(w http.ResponseWriter, r *http.Request) {
 	httpkit.WriteJSON(w, http.StatusOK, out)
 }
 
-// offeredPlans lists the plans sign-up offers with each unit's current
+// OfferedPlans lists the plans sign-up offers with each unit's current
 // price; no plan IDs offer the app's default plan.
-func (s *Service) offeredPlans(ctx context.Context, app state.App, set state.APIConsumerSignupSettings) ([]api.ConsumerSignupPlan, error) {
+func (s *Service) OfferedPlans(ctx context.Context, app state.App, set state.APIConsumerSignupSettings) ([]api.ConsumerSignupPlan, error) {
 	var cards []state.APIConsumerRateCard
 	if store, ok := s.Host.Store().(state.APIConsumerRateCardStore); ok {
 		var err error
@@ -368,6 +368,9 @@ func (s *Service) completedConsumer(ctx context.Context, w http.ResponseWriter, 
 		return state.APIConsumer{}, false
 	}
 	if created {
+		if outbox, ok := s.Host.Store().(state.AppWebhookEventOutboxStore); ok {
+			_, _ = outbox.RelayAppWebhookEventOutboxSource(ctx, state.AppWebhookEventConsumerSignedUp, signup.ID)
+		}
 		s.Host.Audit(ctx, "api_consumer.created", app.AccountID, map[string]any{"app_id": app.ID, "consumer_id": consumer.ID,
 			"external_ref": consumer.ExternalRef, "signup_id": signup.ID})
 		s.Host.Audit(ctx, "api_consumer.signed_up", app.AccountID, map[string]any{"app_id": app.ID, "consumer_id": consumer.ID,

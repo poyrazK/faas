@@ -592,6 +592,8 @@
       "account_id",
       "app_id",
       "created_at",
+      "customer_closing",
+      "customer_plan_changes",
       "daily_limit",
       "display_name",
       "enabled",

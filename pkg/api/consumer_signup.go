@@ -42,24 +42,33 @@ type PutConsumerSignupRequest struct {
 	ReturnURL   string   `json:"return_url,omitempty"`
 	TrialDays   int      `json:"trial_days,omitempty"`
 	DailyLimit  int      `json:"daily_limit,omitempty"`
+	// CustomerPlanChanges lets customers switch between the offered plans,
+	// and CustomerClosing lets them close their account, with their own key
+	// (ADR-20261021183000).
+	CustomerPlanChanges bool `json:"customer_plan_changes,omitempty"`
+	CustomerClosing     bool `json:"customer_closing,omitempty"`
 }
 
 // ConsumerSignupSettingsResponse is an app's sign-up settings. PageURL is
 // the hosted sign-up page to link customers to.
 type ConsumerSignupSettingsResponse struct {
-	App         string    `json:"app"`
-	Enabled     bool      `json:"enabled"`
-	Provider    string    `json:"provider"`
-	PlanIDs     []string  `json:"plan_ids"`
-	KeyScopes   []string  `json:"key_scopes"`
-	DisplayName string    `json:"display_name"`
-	TermsURL    string    `json:"terms_url,omitempty"`
-	ReturnURL   string    `json:"return_url,omitempty"`
-	TrialDays   int       `json:"trial_days,omitempty"`
-	DailyLimit  int       `json:"daily_limit"`
-	PageURL     string    `json:"page_url"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	App         string   `json:"app"`
+	Enabled     bool     `json:"enabled"`
+	Provider    string   `json:"provider"`
+	PlanIDs     []string `json:"plan_ids"`
+	KeyScopes   []string `json:"key_scopes"`
+	DisplayName string   `json:"display_name"`
+	TermsURL    string   `json:"terms_url,omitempty"`
+	ReturnURL   string   `json:"return_url,omitempty"`
+	TrialDays   int      `json:"trial_days,omitempty"`
+	DailyLimit  int      `json:"daily_limit"`
+	PageURL     string   `json:"page_url"`
+	// CustomerPlanChanges and CustomerClosing are what customers may do
+	// with their own key (ADR-20261021183000).
+	CustomerPlanChanges bool      `json:"customer_plan_changes"`
+	CustomerClosing     bool      `json:"customer_closing"`
+	CreatedAt           time.Time `json:"created_at"`
+	UpdatedAt           time.Time `json:"updated_at"`
 }
 
 // ConsumerSignupResponse is one sign-up as the app owner sees it.
@@ -212,4 +221,52 @@ func (c *Client) CreateConsumerSignup(ctx context.Context, app string, req Creat
 func (c *Client) CompleteConsumerSignup(ctx context.Context, app, signupID string, req CompleteConsumerSignupRequest) (CompleteConsumerSignupResponse, error) {
 	var out CompleteConsumerSignupResponse
 	return out, c.do(ctx, "POST", "/v1/consumer-signup/"+url.PathEscape(app)+"/signups/"+url.PathEscape(signupID)+"/complete", req, &out)
+}
+
+// App webhook events about customers acting on their own account
+// (ADR-20261021183000).
+const (
+	WebhookEventConsumerSignedUp    = "consumer.signed_up"
+	WebhookEventConsumerPlanChanged = "consumer.plan_changed"
+	WebhookEventConsumerClosed      = "consumer.closed"
+)
+
+// APIConsumerSignedUpWebhookPayload is delivered with consumer.signed_up
+// once a customer's sign-up created their consumer. signup_id is stable
+// across retries.
+type APIConsumerSignedUpWebhookPayload struct {
+	SignupID    string     `json:"signup_id"`
+	AppID       string     `json:"app_id"`
+	ConsumerID  string     `json:"consumer_id"`
+	ExternalRef string     `json:"external_ref"`
+	Name        string     `json:"name"`
+	Email       string     `json:"email"`
+	PlanID      string     `json:"plan_id,omitempty"`
+	TrialEndsAt *time.Time `json:"trial_ends_at,omitempty"`
+	Livemode    bool       `json:"livemode"`
+	SignedUpAt  time.Time  `json:"signed_up_at"`
+}
+
+// APIConsumerPlanChangedWebhookPayload is delivered with
+// consumer.plan_changed when a customer switched plans with their own key.
+// assignment_id is stable across retries; an empty plan ID is the app's
+// default plan.
+type APIConsumerPlanChangedWebhookPayload struct {
+	AssignmentID  string    `json:"assignment_id"`
+	AppID         string    `json:"app_id"`
+	ConsumerID    string    `json:"consumer_id"`
+	ExternalRef   string    `json:"external_ref"`
+	FromPlanID    string    `json:"from_plan_id,omitempty"`
+	ToPlanID      string    `json:"to_plan_id,omitempty"`
+	EffectiveFrom time.Time `json:"effective_from"`
+	ChangedAt     time.Time `json:"changed_at"`
+}
+
+// APIConsumerClosedWebhookPayload is delivered with consumer.closed when a
+// customer closed their account with their own key.
+type APIConsumerClosedWebhookPayload struct {
+	AppID       string    `json:"app_id"`
+	ConsumerID  string    `json:"consumer_id"`
+	ExternalRef string    `json:"external_ref"`
+	ClosedAt    time.Time `json:"closed_at"`
 }

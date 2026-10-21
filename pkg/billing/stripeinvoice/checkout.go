@@ -126,3 +126,19 @@ func (c *Client) SetDefaultPaymentMethod(ctx context.Context, key, customer, pay
 	form.Set("invoice_settings[default_payment_method]", paymentMethod)
 	return c.do(ctx, key, http.MethodPost, "/v1/customers/"+url.PathEscape(customer), "", form, nil)
 }
+
+// CreatePortalSession returns a short-lived Stripe customer portal URL
+// where the customer updates their card and sees and pays invoices
+// (ADR-20261021183000). An empty returnURL uses the portal's default; live
+// mode needs the portal saved once in the Stripe dashboard.
+func (c *Client) CreatePortalSession(ctx context.Context, key, customer, returnURL string) (string, error) {
+	form := url.Values{}
+	form.Set("customer", customer)
+	if returnURL != "" {
+		form.Set("return_url", returnURL)
+	}
+	var out struct {
+		URL string `json:"url"`
+	}
+	return out.URL, c.do(ctx, key, http.MethodPost, "/v1/billing_portal/sessions", "", form, &out)
+}
