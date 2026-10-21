@@ -103811,7 +103811,7 @@ components:
         enabled: { type: boolean, default: true }
         kind:
           type: string
-          enum: [route, rewrite, redirect, headers, cors, jwt, ip, validate, limit, maintenance, geo, throttle, budget, cache, respond, retry, circuit_breaker, async, waf]
+          enum: [route, rewrite, redirect, headers, cors, jwt, ip, validate, limit, maintenance, geo, throttle, budget, cache, respond, retry, circuit_breaker, async, waf, challenge]
         validate_mode:
           type: string
           enum: [block, observe, warn]
@@ -103842,6 +103842,7 @@ components:
             - { $ref: '#/components/schemas/EdgeRuleCircuitBreakerAction' }
             - { $ref: '#/components/schemas/EdgeRuleAsyncAction' }
             - { $ref: '#/components/schemas/EdgeRuleWAFAction' }
+            - { $ref: '#/components/schemas/EdgeRuleChallengeAction' }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
         name: { type: string, description: Operator-facing rule name. }
@@ -103885,7 +103886,7 @@ components:
         enabled: { type: boolean, default: true }
         kind:
           type: string
-          enum: [route, rewrite, redirect, headers, cors, jwt, ip, validate, limit, maintenance, geo, throttle, budget, cache, respond, retry, circuit_breaker, async, waf]
+          enum: [route, rewrite, redirect, headers, cors, jwt, ip, validate, limit, maintenance, geo, throttle, budget, cache, respond, retry, circuit_breaker, async, waf, challenge]
         validate_mode:
           type: string
           enum: [block, observe, warn]
@@ -103915,6 +103916,7 @@ components:
             - { $ref: '#/components/schemas/EdgeRuleCircuitBreakerAction' }
             - { $ref: '#/components/schemas/EdgeRuleAsyncAction' }
             - { $ref: '#/components/schemas/EdgeRuleWAFAction' }
+            - { $ref: '#/components/schemas/EdgeRuleChallengeAction' }
         name: { type: string, maxLength: 100, description: Optional operator-facing name for the new rule. }
         description: { type: string, maxLength: 1000, description: Optional operator-facing notes for the new rule. }
         expires_at: { type: string, format: date-time, description: Optional time after which the gateway stops applying the new rule. }
@@ -103965,6 +103967,7 @@ components:
             - { $ref: '#/components/schemas/EdgeRuleCircuitBreakerAction' }
             - { $ref: '#/components/schemas/EdgeRuleAsyncAction' }
             - { $ref: '#/components/schemas/EdgeRuleWAFAction' }
+            - { $ref: '#/components/schemas/EdgeRuleChallengeAction' }
         name: { type: string, maxLength: 100, description: Replacement rule name. }
         description: { type: string, maxLength: 1000, description: Replacement rule notes. }
         expires_at: { type: string, format: date-time, description: New expiry; the gateway stops applying the rule after it. }
@@ -105130,6 +105133,31 @@ components:
           maximum: 65536
           default: 8192
           description: Request body prefix inspected. Larger and streaming bodies are inspected up to this size only; larger values use more of the app's inspection budget.
+    EdgeRuleChallengeAction:
+      description: |
+        Asks browsers on matched routes to prove they run a real browser
+        before the request reaches the app (ADR-831 amendment 7). A request
+        without a valid pass is answered at the edge: a page load gets a page
+        that solves a short proof of work in the browser and sets a signed
+        pass cookie, and any other request gets 403 challenge_required.
+        Requests with a verified API key, consumer key or JWT subject are
+        never challenged. Use log mode to see what a rule would challenge,
+        and add a verified_bot missing condition so search crawlers pass.
+        Hobby and above. Omitted values are stored as their defaults.
+      type: object
+      properties:
+        difficulty:
+          type: integer
+          minimum: 10
+          maximum: 22
+          default: 16
+          description: Leading zero bits the browser must find in a SHA-256 hash. Each extra bit doubles the work; the default takes tens to a few hundred milliseconds.
+        pass_ttl_seconds:
+          type: integer
+          minimum: 300
+          maximum: 86400
+          default: 3600
+          description: How long a solved challenge lets the browser through.
     EdgeRuleAsyncAction:
       description: |
         Marks the matched route for durable asynchronous execution (ADR-215).

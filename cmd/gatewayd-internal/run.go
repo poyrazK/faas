@@ -2955,6 +2955,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	} else {
 		log.Warn("edge waf in-path checks disabled by FAAS_EDGE_WAF_INLINE_DISABLED; warn and block rules only observe")
 	}
+	// ADR-831 amendment 7 — kind=challenge. Tokens and passes are signed
+	// with a key derived from the session key every gateway shares, so a
+	// pass issued by one gateway is honoured by all.
+	if deps.sessions != nil {
+		handler.WithEdgeChallengeKey(gateway.DeriveEdgeChallengeKey(deps.sessions.BindingKey()))
+	}
 	// Issue #561 / ADR-091 PR 5 — arm the per-rule JWT verifier.
 	// nil-safe: deps.edgeJWKSAdapter nil falls through
 	// (applyEdgeRuleJWT short-circuits, matching pre-PR-5 + dev
@@ -4043,7 +4049,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			identityResolver := newServiceProxyCallerIdentityResolver(pgStore.ListAllInstances, cfg.NodeName)
 			identityResolver.lookup = pgStore.LiveServiceCallersByHostIP
 			if cfg.NodeName != "" {
-				identityResolver.lookup = newServiceProxyLiveLookup(pgStore, deps.nodeCache.cache, newLocalNodeID(pgStore, cfg.NodeName))
+				localNode := newLocalNodeID(pgStore, cfg.NodeName)
+				identityResolver.lookup = newServiceProxyLiveLookup(pgStore, deps.nodeCache.cache, localNode)
+				// ADR-1138: guest calls without trace context join the trace of
+				// the one request their instance is serving.
+				serviceProxyConfig.InferCallerTrace = newServiceTraceInference(deps.nodeCache.cache, localNode, api.ServiceTraceInferenceTimeout)
 			}
 			serviceProxyConfig.ResolveCallerIdentity = func(ctx context.Context, remote string) (string, string, error) {
 				if err := ordinaryQualificationCallerGuard(ctx, pgStore, cfg.NodeName, remote); err != nil {

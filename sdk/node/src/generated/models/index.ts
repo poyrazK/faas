@@ -704,6 +704,7 @@ export type { EdgeRuleAsyncAction } from './EdgeRuleAsyncAction.js';
 export type { EdgeRuleBudgetAction } from './EdgeRuleBudgetAction.js';
 export type { EdgeRuleCORSAction } from './EdgeRuleCORSAction.js';
 export type { EdgeRuleCacheAction } from './EdgeRuleCacheAction.js';
+export type { EdgeRuleChallengeAction } from './EdgeRuleChallengeAction.js';
 export type { EdgeRuleCircuitBreakerAction } from './EdgeRuleCircuitBreakerAction.js';
 export type { EdgeRuleEventResponse } from './EdgeRuleEventResponse.js';
 export type { EdgeRuleEventsResponse } from './EdgeRuleEventsResponse.js';

@@ -309,6 +309,9 @@ type Server struct {
 	// constructors; production cmd/vmmd uses
 	// NewWithCPUAndNetAndActivity.
 	activity *activity.ActivityTracker
+	// inflightTraces holds each in-flight HTTP forward's traceparent for
+	// InflightRequestTrace (ADR-1138).
+	inflightTraces inflightTraces
 	// identitySigner mints execution-only assertions for the scheduler's
 	// outbound relay. Tokens are sent only over the vmmd↔schedd stream.
 	identitySigner *workloadidentity.Signer

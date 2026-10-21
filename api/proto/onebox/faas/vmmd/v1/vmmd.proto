@@ -242,6 +242,16 @@ service Vmmd {
   // `vmmd_op_duration_seconds` dashboards (ADR-016).
   rpc Stats(StatsRequest) returns (StatsResponse);
 
+  // InflightRequestTrace returns the W3C traceparent of the one request the
+  // instance behind a service call's source address is serving, so the
+  // node's service proxy can link a call made without trace context to that
+  // request (ADR-1138). The caller is resolved from the same host-owned live
+  // identity as ResolveServiceCaller. It answers only when exactly one
+  // forward of any kind is in flight and it is an HTTP request that carried a
+  // valid traceparent; otherwise traceparent is empty. Older vmmds answer
+  // Unimplemented, which callers treat as empty.
+  rpc InflightRequestTrace(InflightRequestTraceRequest) returns (InflightRequestTraceResponse);
+
 // Ping is a wire-only liveness probe (issue #97 / ADR-025 axis 3,
   // PR #114). Returns the vmmd process's Firecracker version + the
   // server-side timestamp at the moment the handler ran; schedd's
@@ -3119,4 +3129,16 @@ message RehearseSuspendResumeRequest {
 message RehearseSuspendResumeResponse {
   string instance = 1;
   string receipt_id = 2;
+}
+
+// InflightRequestTraceRequest carries the service call's source address on
+// the tenant bridge (ADR-1138).
+message InflightRequestTraceRequest {
+  string source_ip = 1;
+}
+
+// InflightRequestTraceResponse carries the lone in-flight request's
+// traceparent, or nothing.
+message InflightRequestTraceResponse {
+  string traceparent = 1;
 }
