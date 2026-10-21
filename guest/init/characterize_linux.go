@@ -485,16 +485,17 @@ func collectSocketInodes(pid int, depth int, out map[uint64]struct{}, visited ma
 	}
 }
 
-// runL7Probes kicks off the three probes concurrently against the
-// observed port. Returns the first non-empty class hint and falls
-// back to "http" if every probe is inconclusive. The 2 s ctx budget
-// is bounded — a slow / unresponsive listener costs us 2 s of boot,
+// runL7Probes runs the L7 probes against the observed port and returns the
+// first non-empty class hint plus any captured OpenAPI document. The 2 s ctx
+// budget is bounded — a slow / unresponsive listener costs us 2 s of boot,
 // not unbounded hangs.
 //
-// ADR-122 §D4: probeHTTP now ALWAYS runs (previously it only ran
-// when probeGraphQL + probeGRPC were both empty). The body capture
-// is the load-bearing endpoint discovery path; the class hint logic
-// is unchanged (first non-empty wins).
+// ADR-122 §D4: probeHTTP ALWAYS runs; the body capture is the load-bearing
+// endpoint discovery path. The HTTP/2-preface gRPC probe runs only when
+// neither HTTP/1.1 probe got an HTTP/1.x answer (collectL7Probes): sent to
+// an HTTP/1 server it only produced an error line in the customer's own
+// logs at every cold boot (gunicorn: "Invalid HTTP Version: (2, 0)",
+// Hunt 11 H11-5).
 func runL7Probes(ctx context.Context, _ RunArgs, port int) (string, []byte, bool) {
 	if port <= 0 {
 		// No bind means there is no L7 class hint. The caller combines the
@@ -503,66 +504,7 @@ func runL7Probes(ctx context.Context, _ RunArgs, port int) (string, []byte, bool
 	}
 	probeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-
-	probes := []func() probeResult{
-		probeGraphQL(port),
-		probeGRPC(port),
-		probeHTTP(port),
-	}
-	resCh := make(chan probeResult, len(probes))
-	for _, fn := range probes {
-		fn := fn
-		go func() {
-			resCh <- fn()
-		}()
-	}
-	collected := 0
-	var openAPIDoc []byte
-	var openAPIDocTruncated bool
-	for collected < len(probes) {
-		select {
-		case <-probeCtx.Done():
-			// Deadline: return whatever openapi_doc we got, no
-			// class hint (the engine re-derives from runtime shape).
-			return "", openAPIDoc, openAPIDocTruncated
-		case r := <-resCh:
-			collected++
-			if r.Class != "" {
-				// First non-empty class wins; the openapi_doc fields
-				// from the probeHTTP result (if any) survive the
-				// round-trip regardless of which probe won.
-				if r.OpenAPIDoc != nil {
-					openAPIDoc = r.OpenAPIDoc
-					openAPIDocTruncated = r.OpenAPIDocTruncated
-				}
-				return r.Class, openAPIDoc, openAPIDocTruncated
-			}
-			// Empty class — keep collecting, but capture the
-			// openapi_doc fields from probeHTTP even though the
-			// class is empty (a non-OpenAPI HTTP service still
-			// runs probeHTTP and may capture a doc).
-			if r.OpenAPIDoc != nil && openAPIDoc == nil {
-				openAPIDoc = r.OpenAPIDoc
-				openAPIDocTruncated = r.OpenAPIDocTruncated
-			}
-		}
-	}
-	// All probes ran without a class hint. Surface the captured
-	// openapi_doc (if any) but DO NOT default to classHTTP — the
-	// engine re-derives from runtime shape (workload class hint is
-	// a guest best-guess, not authoritative). ADR-051 §"Class hint
-	// fallback": "no probe matched" is itself a signal.
-	return "", openAPIDoc, openAPIDocTruncated
-}
-
-// probeResult is the inner return shape of every probe.
-// Class is the workload-class hint (empty = inconclusive).
-// OpenAPIDoc + OpenAPIDocTruncated are populated by probeHTTP
-// only; the other probes leave them at the zero value.
-type probeResult struct {
-	Class               string
-	OpenAPIDoc          []byte
-	OpenAPIDocTruncated bool
+	return collectL7Probes(probeCtx, []func() probeResult{probeGraphQL(port), probeHTTP(port)}, probeGRPC(port))
 }
 
 func probeGraphQL(port int) func() probeResult {
@@ -585,13 +527,13 @@ func probeGraphQL(port int) func() probeResult {
 		}
 		defer func() { _ = resp.Body.Close() }()
 		if resp.StatusCode != http.StatusOK {
-			return probeResult{}
+			return probeResult{HTTP1: true}
 		}
 		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		if bytes.Contains(raw, []byte("__schema")) {
-			return probeResult{Class: classGraphQL}
+			return probeResult{Class: classGraphQL, HTTP1: true}
 		}
-		return probeResult{}
+		return probeResult{HTTP1: true}
 	}
 }
 
@@ -658,7 +600,7 @@ func probeHTTP(port int) func() probeResult {
 		// http-class hit. 3xx (redirect) falls through to the
 		// class == "" branch; 4xx/5xx likewise.
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			return probeResult{}
+			return probeResult{HTTP1: true}
 		}
 		// Content-Type gate. We accept application/json or
 		// application/openapi+json (the canonical OpenAPI 3.1
@@ -667,7 +609,7 @@ func probeHTTP(port int) func() probeResult {
 		if !isOpenAPIContentType(ctype) {
 			// Still an http-class hit (we got a 200 OK), but no
 			// doc to capture.
-			return probeResult{Class: classHTTP}
+			return probeResult{Class: classHTTP, HTTP1: true}
 		}
 		// Read the body up to the cap. We read up to N+1 bytes
 		// (LimitReader caps at N) so we can detect overflow: if
@@ -676,7 +618,7 @@ func probeHTTP(port int) func() probeResult {
 		const cap = VsockCharacterizationMaxBody
 		body, err := io.ReadAll(io.LimitReader(resp.Body, int64(cap)+1))
 		if err != nil {
-			return probeResult{Class: classHTTP}
+			return probeResult{Class: classHTTP, HTTP1: true}
 		}
 		truncated := false
 		if len(body) > cap {
@@ -685,12 +627,13 @@ func probeHTTP(port int) func() probeResult {
 		}
 		// Shape sniff: top-level `openapi` or `swagger` key.
 		if !looksLikeOpenAPIDoc(body) {
-			return probeResult{Class: classHTTP}
+			return probeResult{Class: classHTTP, HTTP1: true}
 		}
 		return probeResult{
 			Class:               classHTTP,
 			OpenAPIDoc:          body,
 			OpenAPIDocTruncated: truncated,
+			HTTP1:               true,
 		}
 	}
 }
