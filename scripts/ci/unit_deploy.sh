@@ -76,6 +76,17 @@ ssh_opts() { # prefix: UNIT or UNIT_GATE
   local port="${!port_var:-${UNIT_SSH_PORT:-22}}"
   printf '%s\n' -i "$key" -p "$port" -o BatchMode=yes -o IdentitiesOnly=yes \
     -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$known"
+  # In a CI job, one connection per host carries every ssh and scp of the
+  # job: a new connection from the busy control-plane runner costs about a
+  # second, and a node deploy makes a dozen. UNIT_SSH_MUX_DIR= turns it off.
+  # ssh refuses a socket path that does not fit a sockaddr_un (104 bytes on
+  # macOS) while it creates it as <dir>/<40-hex %C>.<16 random>, so a longer
+  # directory connects without sharing.
+  local mux="${UNIT_SSH_MUX_DIR-${RUNNER_TEMP:+$RUNNER_TEMP/ssh-mux}}"
+  if [[ -n "$mux" ]] && (( ${#mux} + 58 < 104 )); then
+    install -d -m 0700 "$mux"
+    printf '%s\n' -o ControlMaster=auto -o "ControlPath=$mux/%C" -o ControlPersist=120
+  fi
 }
 
 deploy_target() { printf '%s' "${UNIT_SSH_TARGET:?set UNIT_SSH_TARGET}"; }
@@ -146,12 +157,14 @@ cmd_stage() {
   fi
   install -m 0755 "$deployctl" "$local_stage/bin/deployctl"
   install -m 0755 "$repo_root/scripts/unit-release-verify.sh" "$local_stage/unit-release-verify.sh"
-  tar --create --gzip --file "$local_stage.tar.gz" --directory "$local_stage" .
+  # Not compressed: gzip of the binaries cost seconds of the busy runner's
+  # CPU and the hosts share a fast network.
+  tar --create --file "$local_stage.tar" --directory "$local_stage" .
   remote_stage="$(remote UNIT "$target" 'mktemp -d /var/tmp/gregale-units.XXXXXXXX')"
   [[ "$remote_stage" =~ ^/var/tmp/gregale-units\.[A-Za-z0-9]+$ ]] || die "unexpected remote stage dir: $remote_stage"
-  copy UNIT "$local_stage.tar.gz" "$target:$remote_stage/stage.tar.gz"
-  rm -f -- "$local_stage.tar.gz"
-  remote UNIT "$target" "tar --extract --gzip --file '$remote_stage/stage.tar.gz' --directory '$remote_stage' --no-same-owner && rm -f -- '$remote_stage/stage.tar.gz'"
+  copy UNIT "$local_stage.tar" "$target:$remote_stage/stage.tar"
+  rm -f -- "$local_stage.tar"
+  remote UNIT "$target" "tar --extract --file '$remote_stage/stage.tar' --directory '$remote_stage' --no-same-owner && rm -f -- '$remote_stage/stage.tar'"
   printf '%s\n' "$remote_stage"
 }
 

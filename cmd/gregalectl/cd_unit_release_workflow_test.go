@@ -274,16 +274,27 @@ func TestUnitLanesGateEveryHostAndRollBack(t *testing.T) {
 // only after the control-plane lane of the same unit release is on the
 // control plane (deploy order), canary first, one host at a time, stopping
 // at the first failure, never alongside a full compute rollout of the node.
+// A release that carries nothing for the control plane skips that lane (its
+// plan could only be "none"), and the edge lane still needs the preflight's
+// go and a lane that did not fail.
 func TestEdgeLaneFollowsTheControlPlaneOneHostAtATime(t *testing.T) {
 	release := readWorkflow(t, "release-units.yml")
 	edgeCall := jobBlock(t, release, "deploy-edge")
-	for _, required := range []string{"needs: [build, deploy]", "uses: ./.github/workflows/cd-edge-units.yml"} {
+	for _, required := range []string{
+		"needs: [build, preflight, deploy]",
+		"!cancelled() && needs.build.outputs.edge == 'true' && needs.preflight.outputs.go == 'true'",
+		"(needs.deploy.result == 'success' || needs.deploy.result == 'skipped')",
+		"uses: ./.github/workflows/cd-edge-units.yml",
+	} {
 		if !strings.Contains(edgeCall, required) {
 			t.Errorf("release-units deploy-edge is missing %q", required)
 		}
 	}
-	if !strings.Contains(jobBlock(t, release, "deploy"), "units_lane: control-plane") {
-		t.Error("release-units deploy must run the control-plane lane")
+	cp := jobBlock(t, release, "deploy")
+	for _, required := range []string{"units_lane: control-plane", "needs.build.outputs.control_plane == 'true'"} {
+		if !strings.Contains(cp, required) {
+			t.Errorf("release-units deploy is missing %q", required)
+		}
 	}
 
 	edge := readWorkflow(t, "cd-edge-units.yml")
