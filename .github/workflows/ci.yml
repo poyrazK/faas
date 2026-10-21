@@ -1682,6 +1682,10 @@ jobs:
         run: bash scripts/ci/run-native-e2e_test.sh
       - name: native e2e phase partition contract
         run: bash scripts/ci/native-e2e-phases_test.sh
+      - name: native environment promotion evidence contract
+        run: |
+          python3 scripts/ci/promotion-qualification_test.py
+          bash scripts/ci/native-e2e-combined-verdict_test.sh
       - name: financial native evidence and host restoration contracts
         run: |
           python3 scripts/ci/financial-system-verdict_test.py
@@ -2970,6 +2974,9 @@ jobs:
         # KVM-only acceptance harness type-checked on ordinary PR CI without
         # trying to boot a VM.
         run: go test -tags metal -run '^$' cmd/e2e/jobs_harness_stub.go cmd/e2e/jobs_metal_test.go
+      - name: compile environment promotion native acceptance
+        # Compile the tagged suite without invoking TestMain or booting guests.
+        run: go test -c -tags metal,promotionacceptance -o "$RUNNER_TEMP/environment-promotion.test" ./cmd/e2e
       - name: e2e tests (shard 1)
         run: |
           E2E_RUN=$(go run ./scripts/ci/e2eshard -shard=1 -shards=4)

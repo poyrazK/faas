@@ -4,6 +4,7 @@
 /* eslint-disable */
 import type { AppReleaseReview } from './AppReleaseReview.js';
 import type { BuildPlan } from './BuildPlan.js';
+import type { DeploymentConfigurationStatus } from './DeploymentConfigurationStatus.js';
 import type { DeploymentHealthcheck } from './DeploymentHealthcheck.js';
 import type { DeploymentLivenessProbe } from './DeploymentLivenessProbe.js';
 import type { DeploymentPromotionHold } from './DeploymentPromotionHold.js';
@@ -25,6 +26,10 @@ import type { WorkloadDependency } from './WorkloadDependency.js';
  * One deployment: id, app, source ref, build status, commit SHA, and lifecycle timestamps. The optional `has_overrides` and `override_*` fields are the persisted echo of the create-time overrides object (issue #460 / ADR-053); they round-trip via `GET /v1/apps/{slug}/deployments/{id}` so a customer can audit what their last deploy pinned. Env values are NEVER echoed — only the keys (`override_env_keys`); env_secrets refs ARE echoed because the ref shape is non-secret by design.
  */
 export type DeploymentResponse = {
+  /**
+   * Read-only diagnostics included by GET /v1/deployments/{id}; absent on older servers and other response surfaces.
+   */
+  configuration?: DeploymentConfigurationStatus;
   /**
    * Intent snapshot committed with a zero-traffic reviewed candidate.
    */

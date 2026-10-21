@@ -17,7 +17,7 @@ import { createRateLimiter, admitRateLimit } from './rate-limit.mjs'
 import { createUserConcurrency, admitUserConcurrency } from './user-concurrency.mjs'
 import { qualifiedConnectionEngine, startConnectionReporter } from './connection-observations.mjs'
 import { createPoolObservation } from './pool.mjs'
-import { createUsage, addResponseBytes } from './usage.mjs'
+import { createUsage, addResponseBytes, accessReport } from './usage.mjs'
 import { publicReadTarget, publicRpcTarget, publicRpcListed, publicReadCache, clientKey, matchServerKey, serverKeyAllows, serverSubject, checkPublicRelations, checkPublicFunctions } from './access.mjs'
 
 export function createServer(config, verify, upstreamPort = 3000, readyPort = 3001, log) {
@@ -32,7 +32,7 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
     res.setHeader('Retry-After', String(limits.overloadRetrySeconds))
     problem(res, 503, 'data_api_overloaded')
   })
-  const usage = createUsage(config.usage)
+  const usage = createUsage(config.usage, { access: accessReport(config) })
   const server = http.createServer(async (req, res) => {
     const guarded = /^\/__gregale\/contract\/([a-f0-9]{64})(\/rest\/v1\/.*)$/.exec(req.url)
     if (guarded) req.url = guarded[2]

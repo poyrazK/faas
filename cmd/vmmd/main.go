@@ -49,6 +49,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/fcvm/logbuf"
 	"github.com/onebox-faas/faas/pkg/fcvm/netstats"
 	"github.com/onebox-faas/faas/pkg/frameworkready"
+	"github.com/onebox-faas/faas/pkg/functionlifetime"
 	"github.com/onebox-faas/faas/pkg/imaged"
 	"github.com/onebox-faas/faas/pkg/mcpprotocol"
 	"github.com/onebox-faas/faas/pkg/netns"
@@ -1166,6 +1167,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		Activity: activityTracker,
 		Metrics:  fcvm.NewFreezeMetrics(ops.Registry(), mgr),
 	})
+	if functionlifetime.NativeQualificationBuild {
+		mgr.WithFunctionExecutionActivity(activityTracker)
+	}
 	// issue #299: wire the artifact backend the Manager uses to
 	// read Grype scan sidecars at boot time. Mirrors the VMM's
 	// own WithStorage wiring at line 223 above; the VMM uses
@@ -1355,6 +1359,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	defer closeTraceReceiver()
 	guestReceiverHealth := newGuestVsockReceiverHealth(ops.Registry())
 	jailer.WithGuestVsockTransportObserver(guestReceiverHealth.Observe)
+	if functionlifetime.NativeQualificationBuild {
+		if err := mgr.RegisterFunctionExecutionReceiver(jailer); err != nil {
+			return err
+		}
+		go mgr.RunFunctionExecutionWatchdog(ctx)
+	}
 	recv, err := StartFrameworkReadyReceiver(ctx, log, mgr, jailer)
 	if err != nil {
 		log.Warn("vmmd: framework_ready receiver unavailable", "err", err, "goos", runtime.GOOS)
@@ -1622,6 +1632,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	vmmdProbe, grpcBound := BuildReadinessProbe()
 	vmmdProbe.RegisterSignal(guestReceiverHealth.Signal(guestReceiverEvents), nil)
 	vmmdProbe.RegisterSignal(guestReceiverHealth.Signal(guestReceiverIdentity), nil)
+	if functionlifetime.NativeQualificationBuild {
+		vmmdProbe.RegisterSignal(guestReceiverHealth.Signal(guestReceiverFunction), nil)
+	}
 	vmmdProbe.SetReadyObserver(func(ready bool, reason string) {
 		ops.MarkReady("vmmd", ready, reason)
 	})

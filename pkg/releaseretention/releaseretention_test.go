@@ -166,3 +166,40 @@ func TestPruneKeepsTheBaseOfAnActiveUnitRelease(t *testing.T) {
 		t.Fatalf("old base survived after a full release took over: %v", err)
 	}
 }
+
+// TestPruneKeepsProtectedReleases: the deploy controller protects the release
+// a rollback of the active one restores. Newer releases that were rolled back
+// can push it out of the window by directory time.
+func TestPruneKeepsProtectedReleases(t *testing.T) {
+	root := t.TempDir()
+	releases := filepath.Join(root, "releases")
+	ids := []string{
+		"0000000000000000000000000000000000000001", // rollback target
+		"0000000000000000000000000000000000000002",
+		"0000000000000000000000000000000000000003",
+		"0000000000000000000000000000000000000004", // active
+	}
+	for i, id := range ids {
+		path := filepath.Join(releases, id)
+		if err := os.MkdirAll(path, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		when := time.Unix(int64(i+1), 0)
+		if err := os.Chtimes(path, when, when); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(filepath.Join("releases", ids[3]), filepath.Join(root, "current")); err != nil {
+		t.Fatal(err)
+	}
+	report, err := Prune(releases, filepath.Join(root, "current"), 1, ids[0])
+	if err != nil {
+		t.Fatalf("Prune: %v", err)
+	}
+	if len(report.Removed) != 1 || report.Removed[0] != ids[1] {
+		t.Fatalf("Removed = %v, want only %s", report.Removed, ids[1])
+	}
+	if _, err := os.Stat(filepath.Join(releases, ids[0])); err != nil {
+		t.Fatalf("protected release pruned: %v", err)
+	}
+}

@@ -34,6 +34,9 @@ type DataAPIUsageReport struct {
 	Version  int                `json:"version"`
 	ReportID string             `json:"report_id"`
 	Hours    []DataAPIUsageHour `json:"hours"`
+	// Access, when present, replaces the app's stored access settings for
+	// live reads (ADR-20261016151947). Runtimes send it after starting and hourly.
+	Access *DataAPIAccessConfig `json:"access,omitempty"`
 }
 
 // DataAPIUsageMonthToDate is what owner caps compare against: admitted

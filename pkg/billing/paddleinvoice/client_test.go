@@ -121,7 +121,7 @@ func TestPaddleBillTransaction(t *testing.T) {
 	if err != nil || address != "add_1" {
 		t.Fatalf("CustomerAddress = %q, %v", address, err)
 	}
-	if err := c.BillTransaction(ctx, key, "txn_1", address); err != nil || billed["status"] != "billed" || billed["address_id"] != "add_1" {
+	if err := c.BillTransaction(ctx, key, "txn_1", address, ""); err != nil || billed["status"] != "billed" || billed["address_id"] != "add_1" {
 		t.Fatalf("BillTransaction body = %v, %v", billed, err)
 	}
 	if _, err := c.CustomerAddress(ctx, key, "ctm_2"); !errors.Is(err, ErrNoAddress) {

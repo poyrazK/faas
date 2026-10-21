@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"syscall"
 
 	"github.com/onebox-faas/faas/pkg/releasebundle"
@@ -99,19 +100,8 @@ func (c *Controller) DeployOver(ctx context.Context, releaseID, expectedCurrent 
 		// production-us rc.252 kept apid, schedd, meterd, githubd and
 		// gatewayd-public on rc.251 (and outboundd on rc.249) behind a
 		// current pointer that named rc.252, through two reruns.
-		if runner, ok := c.runtime.(ReleaseRunner); ok {
-			running, err := runner.RunningFrom(ctx, manifest, releaseRoot)
-			if err != nil {
-				return fmt.Errorf("deploycontroller: inspect running daemons for %q: %w", releaseID, err)
-			}
-			if !running {
-				if err := c.runtime.Restart(ctx, manifest); err != nil {
-					return fmt.Errorf("deploycontroller: restart active release %q: %w", releaseID, err)
-				}
-				if err := c.runtime.Healthy(ctx, manifest); err != nil {
-					return fmt.Errorf("deploycontroller: active release %q unhealthy after restart: %w", releaseID, err)
-				}
-			}
+		if err := c.restartStale(ctx, manifest, releaseRoot); err != nil {
+			return fmt.Errorf("deploycontroller: %w", err)
 		}
 		return nil
 	}
@@ -155,6 +145,13 @@ func (c *Controller) DeployOver(ctx context.Context, releaseID, expectedCurrent 
 	if err := c.runtime.Migrate(ctx, manifest, releaseRoot, rollbackTarget); err != nil {
 		return fmt.Errorf("deploycontroller: migrate %q: %w", releaseID, err)
 	}
+	// Record what this activation replaces before anything changes, so the
+	// rollback verb restores exactly that release. A crash after this leaves
+	// the history ahead of the pointer, which a rollback refuses to trust
+	// and the next deployment repairs.
+	if err := c.recordActivation(rollbackTarget, releaseID); err != nil {
+		return fmt.Errorf("deploycontroller: release %q: %w", releaseID, err)
+	}
 	if err := c.runtime.Activate(ctx, releaseRoot); err != nil {
 		return c.rollback(ctx, releaseID, rollbackTarget, fmt.Errorf("activate: %w", err))
 	}
@@ -167,7 +164,14 @@ func (c *Controller) DeployOver(ctx context.Context, releaseID, expectedCurrent 
 	if err := c.runtime.Healthy(ctx, manifest); err != nil {
 		return c.rollback(ctx, releaseID, rollbackTarget, err)
 	}
-	if _, err := releaseretention.Prune(c.config.ReleasesRoot, c.config.CurrentPath, releaseretention.DefaultKeepPrevious); err != nil {
+	// The rollback target can be older than the retention window: a release
+	// built over a base installed before several others that were rolled
+	// back. Keep it while it is the release a rollback restores.
+	var protected []string
+	if rollbackTarget != "" {
+		protected = append(protected, filepath.Base(rollbackTarget))
+	}
+	if _, err := releaseretention.Prune(c.config.ReleasesRoot, c.config.CurrentPath, releaseretention.DefaultKeepPrevious, protected...); err != nil {
 		return fmt.Errorf("deploycontroller: release %q is healthy but retention failed: %w", releaseID, err)
 	}
 	return nil
@@ -241,8 +245,20 @@ func readCurrentTarget(path string) (string, error) {
 	return filepath.Clean(target), nil
 }
 
-// Rollback activates the newest verified retained release other than the one
-// currently active, and reports which release it activated.
+// RollbackRequest says what a rollback restores. Both fields are optional.
+type RollbackRequest struct {
+	// Target is the release id to activate. Empty restores the release the
+	// activation history records as active before the current one.
+	Target string
+	// ExpectedCurrent refuses unless this release id is active, so a gate
+	// that failed on one release never rolls back a release that has
+	// replaced it since. When Target is already active the rollback has
+	// completed, and a rerun is a converged no-op.
+	ExpectedCurrent string
+}
+
+// Rollback activates the release that was active before the current one, or
+// req.Target, and reports which release it activated.
 //
 // Deploy is already transactional across its own steps: activate, publish,
 // restart and health each unwind to the previous release. What it cannot see
@@ -252,11 +268,21 @@ func readCurrentTarget(path string) (string, error) {
 // offers only "rerun CD"; this is the other half of that story, so a gate
 // failure can put the fleet back instead of leaving a bad release serving.
 //
+// Without a target the release comes from the activation history, never from
+// directory times: a retained directory's time says when it was installed, not
+// whether it was the release this one replaced, and the newest one is often
+// a release an earlier rollback removed. When the history records nothing
+// before the active release the rollback refuses rather than guess.
+//
 // The lock is the same one Deploy takes, so a rollback cannot interleave with
 // a deployment. The target is re-verified before activation: a retained
-// directory that has drifted is never activated just because it is the
-// newest.
-func (c *Controller) Rollback(ctx context.Context) (string, error) {
+// directory that has drifted is never activated.
+func (c *Controller) Rollback(ctx context.Context, req RollbackRequest) (string, error) {
+	for _, id := range []string{req.Target, req.ExpectedCurrent} {
+		if id != "" && !plainReleaseID(id) {
+			return "", fmt.Errorf("deploycontroller: rollback: %q is not a release id", id)
+		}
+	}
 	lock, err := acquireLock(c.config.LockPath)
 	if err != nil {
 		return "", err
@@ -270,15 +296,134 @@ func (c *Controller) Rollback(ctx context.Context) (string, error) {
 	if current == "" {
 		return "", errors.New("deploycontroller: rollback: no release is active")
 	}
-
-	target, err := newestVerifiedRollback(c.config.ReleasesRoot, current)
-	if err != nil {
-		return "", fmt.Errorf("deploycontroller: rollback: no verified retained release to roll back to: %w", err)
+	active := filepath.Base(current)
+	if req.Target != "" && active == req.Target {
+		if err := c.convergeRollback(ctx, current); err != nil {
+			return "", fmt.Errorf("deploycontroller: rollback to %q: %w", req.Target, err)
+		}
+		return current, nil
 	}
+	if req.ExpectedCurrent != "" && active != req.ExpectedCurrent {
+		return "", fmt.Errorf("deploycontroller: rollback: expected release %q to be active, but the active release is %q", req.ExpectedCurrent, active)
+	}
+
+	targetID := req.Target
+	if targetID == "" {
+		targetID, err = c.recordedPredecessor(active)
+		if err != nil {
+			return "", fmt.Errorf("deploycontroller: rollback: %w", err)
+		}
+	}
+	target := filepath.Join(c.config.ReleasesRoot, targetID)
 	if err := c.activateRelease(ctx, target); err != nil {
-		return "", fmt.Errorf("deploycontroller: rollback to %q: %w", filepath.Base(target), err)
+		return "", fmt.Errorf("deploycontroller: rollback to %q: %w", targetID, err)
+	}
+	if err := c.recordActive(targetID); err != nil {
+		return "", fmt.Errorf("deploycontroller: rolled back to %q: %w", targetID, err)
 	}
 	return target, nil
+}
+
+// ErrNoRecordedRelease is a rollback without a target that the activation
+// history cannot resolve: the caller has to name the release.
+var ErrNoRecordedRelease = errors.New("name the release to roll back to")
+
+// recordedPredecessor returns the release the history records as active
+// before active.
+func (c *Controller) recordedPredecessor(active string) (string, error) {
+	h, err := readHistory(c.config.ReleasesRoot)
+	if err != nil {
+		return "", fmt.Errorf("%w: %w", err, ErrNoRecordedRelease)
+	}
+	if id, ok := h.predecessor(active); ok {
+		return id, nil
+	}
+	return "", fmt.Errorf("the activation history records no release before %q: %w (retained: %s)", active, ErrNoRecordedRelease, strings.Join(retainedReleases(c.config.ReleasesRoot, active), ", "))
+}
+
+// convergeRollback finishes a rollback whose target is already active: a
+// rerun after the pointer moved, or after the rollback completed. It restarts
+// the daemons that still run another release, and records the target.
+func (c *Controller) convergeRollback(ctx context.Context, current string) error {
+	manifest, err := releasebundle.Read(current)
+	if err != nil {
+		return fmt.Errorf("read release: %w", err)
+	}
+	if err := verifyInstalledRelease(current, manifest); err != nil {
+		return fmt.Errorf("verify release: %w", err)
+	}
+	if err := c.restartStale(ctx, manifest, current); err != nil {
+		return err
+	}
+	return c.recordActive(filepath.Base(current))
+}
+
+// restartStale restarts the release's daemons when one of them does not run a
+// binary from releaseRoot. The pointer is published before the restart, so a
+// cancelled activation or rollback leaves exactly that state.
+func (c *Controller) restartStale(ctx context.Context, manifest releasebundle.Manifest, releaseRoot string) error {
+	runner, ok := c.runtime.(ReleaseRunner)
+	if !ok {
+		return nil
+	}
+	running, err := runner.RunningFrom(ctx, manifest, releaseRoot)
+	if err != nil {
+		return fmt.Errorf("inspect running daemons for %q: %w", manifest.ReleaseID, err)
+	}
+	if running {
+		return nil
+	}
+	if err := c.runtime.Restart(ctx, manifest); err != nil {
+		return fmt.Errorf("restart active release %q: %w", manifest.ReleaseID, err)
+	}
+	if err := c.runtime.Healthy(ctx, manifest); err != nil {
+		return fmt.Errorf("active release %q unhealthy after restart: %w", manifest.ReleaseID, err)
+	}
+	return nil
+}
+
+// recordActivation records that release replaces previous (a path; empty on
+// a first activation). An unreadable history is replaced: this activation
+// knows exactly what it replaces.
+func (c *Controller) recordActivation(previous, release string) error {
+	h, err := readHistory(c.config.ReleasesRoot)
+	if err != nil {
+		h = history{}
+	}
+	if previous == "" {
+		h = history{Releases: []string{release}}
+	} else {
+		h = h.activated(filepath.Base(previous), release)
+	}
+	return writeHistory(c.config.ReleasesRoot, h)
+}
+
+// recordActive records that a rollback made id the active release again.
+func (c *Controller) recordActive(id string) error {
+	h, err := readHistory(c.config.ReleasesRoot)
+	if err != nil {
+		h = history{}
+	}
+	return writeHistory(c.config.ReleasesRoot, h.unwindTo(id))
+}
+
+// retainedReleases names the release directories under root other than
+// active, for an operator choosing a rollback target.
+func retainedReleases(root, active string) []string {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return nil
+	}
+	var names []string
+	for _, entry := range entries {
+		if !entry.IsDir() || entry.Name() == active {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(root, entry.Name(), releasebundle.ManifestName)); err == nil {
+			names = append(names, entry.Name())
+		}
+	}
+	return names
 }
 
 // activateRelease runs the activate → publish → restart → health sequence
@@ -314,6 +459,9 @@ func (c *Controller) rollback(ctx context.Context, releaseID, previous string, c
 	}
 	if err := c.activateRelease(ctx, previous); err != nil {
 		return fmt.Errorf("deploycontroller: release %q failed; rollback: %w: %w", releaseID, err, cause)
+	}
+	if err := c.recordActive(filepath.Base(previous)); err != nil {
+		return fmt.Errorf("deploycontroller: release %q rolled back, but %w: %w", releaseID, err, cause)
 	}
 	return fmt.Errorf("deploycontroller: release %q rolled back: %w", releaseID, cause)
 }

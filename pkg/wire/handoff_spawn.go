@@ -47,8 +47,19 @@ func spawnSuccessor() error {
 	if err != nil || readyFD != activationFirstFD+sockets {
 		return fmt.Errorf("invalid %s", daemonunit.HandoffReadyFDEnv)
 	}
+	// A checking predecessor's connections and go pipe follow the ready
+	// pipe (handoff_check.go).
+	lastFD := readyFD
+	if value := os.Getenv(daemonunit.HandoffGoFDEnv); value != "" {
+		goFD, err := strconv.Atoi(value)
+		probes, perr := loadHandoffProbes(os.LookupEnv)
+		if err != nil || perr != nil || goFD != readyFD+len(probes)+1 {
+			return fmt.Errorf("invalid %s or %s", daemonunit.HandoffGoFDEnv, handoffCheckFDsEnv)
+		}
+		lastFD = goFD
+	}
 	files := []*os.File{os.Stdin, os.Stdout, os.Stderr}
-	for fd := activationFirstFD; fd <= readyFD; fd++ {
+	for fd := activationFirstFD; fd <= lastFD; fd++ {
 		files = append(files, os.NewFile(uintptr(fd), "handoff"))
 	}
 	exe, err := os.Executable()
@@ -59,7 +70,7 @@ func spawnSuccessor() error {
 	if err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintf(files[len(files)-1], "%s %d\n", handoffPIDLine, p.Pid); err != nil {
+	if _, err := fmt.Fprintf(files[3+readyFD-activationFirstFD], "%s %d\n", handoffPIDLine, p.Pid); err != nil {
 		return err
 	}
 	return p.Release()

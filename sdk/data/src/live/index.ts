@@ -1,9 +1,4 @@
 /**
- * Not published: live queries are an operator preview (ADR-20261016151947) until
- * launch. package.json neither exports nor packs dist/live; launching adds
- * the "./live" and "./live/react" exports, the react peer dependency and the
- * README section back.
- *
  * Live queries (ADR-20261016151947): SQL results that stay current. A backend seals a
  * query, or (RLS mode) the browser sends a Data API read with its user's
  * token; it subscribes over the app's realtime endpoint and holds the result
@@ -22,14 +17,18 @@
  * RLS mode, as the signed-in user:
  *   const mine = connection.query({ database, token: () => auth.accessToken(),
  *     ...liveRead(data.from('messages').select('id, body').eq('channel_id', id).order('id', { ascending: false }).limit(50)) })
+ *
+ * A visitor without a session (public relations only), or a trusted backend:
+ *   connection.query({ database, anonymous: true, ...liveRead(visitor.from('products').select('id, name')) })
+ *   connection.query({ database, serverKey: process.env.SHOP_SERVER_KEY!, ...liveRead(backend.from('orders').select('id')) })
  */
 
 export { sql, toPostgresText } from './sql.js'
 export { createLiveSealer, LiveSealError, LIVE_SEAL_DEFAULT_TTL_SECONDS, LIVE_SEAL_MAX_TTL_SECONDS } from './seal.js'
 export type { LiveQueryText, LiveSealer, LiveSealOptions } from './seal.js'
-export { LiveConnection, LiveQueryClosedError, liveRead, parseDataAPIRow, parseDataAPIValue, parseLiveRow, parseLiveValue } from './client.js'
+export { LIVE_SUBPROTOCOL, LiveConnection, LiveQueryClosedError, liveRead, liveSocket, parseDataAPIRow, parseDataAPIValue, parseLiveRow, parseLiveValue } from './client.js'
 export type {
-  LiveConnectionOptions, LiveQuery, LiveQueryOptions, LiveQueryState, LiveReadOptions, LiveReadRow, LiveSealedOptions, LiveSocket, LiveStatus,
+  LiveConnectionOptions, LiveQuery, LiveQueryOptions, LiveQueryState, LiveReadCredential, LiveReadOptions, LiveReadRow, LiveSealedOptions, LiveSocket, LiveStatus,
 } from './client.js'
 export { LiveProtocolError, LiveResult, LiveSnapshot, parseLiveServerFrame, LIVE_TYPES } from './protocol.js'
 export type {

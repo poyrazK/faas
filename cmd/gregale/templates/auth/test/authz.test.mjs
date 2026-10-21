@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import http from 'node:http'
 import { once } from 'node:events'
 import { createHash } from 'node:crypto'
-import { createAuthzHandler, hashToken, HTTPError, sessionLive } from '../authz.mjs'
+import { createAuthzHandler, hashToken, HTTPError, liveSessions, sessionLive } from '../authz.mjs'
 import { createServer } from '../server.mjs'
 
 const org = '6f1c1a52-34c0-4a8e-9c55-2f5d7c0e4a11'
@@ -335,4 +335,22 @@ test('leaves sessions past the app limits out of the list', async t => {
   const pool = fakePool(sql => sql.includes('list_sessions') ? { rows: [old, mine] } : { rows: [] })
   const call = await serve(t, pool, { sessions: { maxAgeMinutes: 60, idleMinutes: null } })
   assert.deepEqual((await call('GET', '/sessions')).body.sessions.map(s => s.id), ['m'], 'the caller\'s own session always shows')
+})
+
+test('with one session per user, lists only the most recently active session and the caller\'s', async t => {
+  const now = Date.parse('2026-10-20T12:00:00Z')
+  const at = minutes => new Date(now - minutes * 60000).toISOString()
+  const session = (id, active, current = false) => ({ id, created_at: at(active + 1), last_active_at: at(active), current })
+  const newest = session('n', 1), older = session('o', 5), oldest = session('x', 9)
+  const single = { maxAgeMinutes: null, idleMinutes: null, singlePerUser: true }
+  assert.deepEqual(liveSessions([newest, older, oldest], single, now).map(s => s.id), ['n'])
+  assert.deepEqual(liveSessions([oldest, newest, older], single, now).map(s => s.id), ['n'], 'whatever order the rows come in')
+  assert.deepEqual(liveSessions([newest, { ...older, current: true }, oldest], single, now).map(s => s.id), ['n', 'o'], 'the caller\'s revoked session still shows')
+  assert.deepEqual(liveSessions([newest, older], { ...single, singlePerUser: false }, now).map(s => s.id), ['n', 'o'])
+  // A newer session past the idle limit is not the one that lives.
+  assert.deepEqual(liveSessions([newest, older], { ...single, idleMinutes: 3 }, now).map(s => s.id), ['n'])
+  assert.deepEqual(liveSessions([session('i', 10), older], { ...single, idleMinutes: 8 }, now).map(s => s.id), ['o'])
+  const pool = fakePool(sql => sql.includes('list_sessions') ? { rows: [newest, older, { ...oldest, current: true }] } : { rows: [] })
+  const call = await serve(t, pool, { sessions: single })
+  assert.deepEqual((await call('GET', '/sessions')).body.sessions.map(s => s.id), ['n', 'x'])
 })

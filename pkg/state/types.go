@@ -2476,6 +2476,11 @@ func (m AppManifest) MarshalJSON() ([]byte, error) {
 
 // Deployment is one attempt to ship a version of an app.
 type Deployment struct {
+	// submissionAttemptID is creation-only metadata, never copied onto the wire.
+	submissionAttemptID  string
+	releaseWorkerAttempt string
+	releaseConfigAttempt string
+	retryDeploymentID    string
 	// BuildDependencies is trusted APID admission input, captured atomically in
 	// a separate durable gate before the build can enter the queue.
 	BuildDependencies []DeploymentDependencyPin `json:"-"`
@@ -3604,10 +3609,11 @@ const (
 	AlertMetricWorkflowWaitingAge     AlertMetric = "workflow_waiting_age_seconds"
 	AlertMetricWorkflowDueAge         AlertMetric = "workflow_due_age_seconds"
 	// ADR-746: guest log lines vmmd classified as error / warn in the window.
-	AlertMetricLogErrorLines   AlertMetric = "log_error_lines"
-	AlertMetricLogWarnLines    AlertMetric = "log_warn_lines"
-	AlertMetricEdgeRuleHits    AlertMetric = "edge_rule_hits"     // ADR-1192
-	AlertMetricEdgeRuleLogHits AlertMetric = "edge_rule_log_hits" // ADR-1192
+	AlertMetricLogErrorLines    AlertMetric = "log_error_lines"
+	AlertMetricLogWarnLines     AlertMetric = "log_warn_lines"
+	AlertMetricEdgeRuleHits     AlertMetric = "edge_rule_hits"     // ADR-1192
+	AlertMetricEdgeRuleLogHits  AlertMetric = "edge_rule_log_hits" // ADR-1192
+	AlertMetricEdgeRuleActivity AlertMetric = "edge_rule_activity" // ADR-1192 amendment
 	// AlertMetricSLOBurnRate is the customer-facing ADR-082 API
 	// availability burn-rate signal. The evaluator combines the 1h
 	// 14.4x and 6h 6x Google SRE windows into one effective value.
@@ -4579,6 +4585,7 @@ type Invocation struct {
 	PlatformTenantID string `json:"platform_tenant_id,omitempty"`
 	InstanceID       string `json:"instance_id,omitempty"`
 	// ResolvedDeploymentID proves the release member that handled synthetic dispatch.
+	WorkerJobEvidence    bool             `json:"-"`
 	ResolvedDeploymentID string           `json:"-"`
 	Source               InvocationSource `json:"source"`
 	// EnvironmentID is authenticated operational ownership, never request intent.
@@ -6339,6 +6346,9 @@ type CreditLedgerEntry struct {
 // lifecycle fields are stored as an app-owned manifest patch alongside the
 // existing resource and scaling settings.
 type UpdateAppParams struct {
+	// Explicit policy writes relinquish a previous deploy's ownership even at the same value.
+	TouchDeploymentPolicies           bool
+	DeploySettingsGuard               *DeploySettingsGuard
 	ExpectedServiceBindingFingerprint string
 	// Visibility is the app edge exposure policy. SetVisibility distinguishes
 	// an explicit public reset from an omitted field.
@@ -7563,6 +7573,14 @@ type ProjectEnvironmentConfig struct {
 // project-environment promotion. The operation remains available after the
 // request ends so a caller can inspect or resume a partial promotion.
 type ProjectEnvironmentPromotion struct {
+	Approval         *PromotionApprovalIntent
+	ConsumedApproval *ProjectEnvironmentApproval
+	// Admission-only policy. Durable progress belongs to the health store.
+	ReleaseSecrets               map[string]map[string]string
+	Workers                      bool
+	Migrate                      bool
+	ResolveServiceBindings       bool
+	HealthPolicy                 *api.ProjectPromotionHealthPolicy
 	ID                           string
 	AccountID                    string
 	ProjectID                    string
@@ -7604,6 +7622,8 @@ type ProjectEnvironmentPromotion struct {
 	// actual snapshots atomically with creation; callers cannot supply payloads.
 	SourceFeatureFlagsHash         string
 	PreviousTargetFeatureFlagsHash string
+	// Preview identity; the store captures the private configuration itself.
+	ReleaseConfigurationHash string
 }
 
 // ProjectEnvironmentPromotionWorkload is one checkpoint within a promotion.
@@ -7969,6 +7989,12 @@ const (
 	// Limits.EdgeRulesWAFPerApp (Free 0 / Hobby 0 / Pro 5 / Scale 20). See
 	// migrations/20261009172820417_edge_rules_kind_waf.sql.
 	EdgeRuleKindWAF EdgeRuleKind = "waf"
+	// EdgeRuleKindChallenge asks browsers on matched routes to solve a
+	// proof of work and carry a signed pass before the request reaches the
+	// app (ADR-831 amendment 7). Quota via Limits.EdgeRulesChallengePerApp
+	// (Free 0 / Hobby 3 / Pro 10 / Scale 25). See
+	// migrations/20261019134529781_edge_rules_kind_challenge.sql.
+	EdgeRuleKindChallenge EdgeRuleKind = "challenge"
 )
 
 // IsValid reports whether k is a closed-set kind. New kinds land via
@@ -7982,7 +8008,7 @@ func (k EdgeRuleKind) IsValid() bool {
 		EdgeRuleKindMaintenance, EdgeRuleKindThrottle, EdgeRuleKindGeo,
 		EdgeRuleKindBudget, EdgeRuleKindCache, EdgeRuleKindRespond,
 		EdgeRuleKindRetry, EdgeRuleKindCircuitBreaker, EdgeRuleKindAsync,
-		EdgeRuleKindWAF:
+		EdgeRuleKindWAF, EdgeRuleKindChallenge:
 		return true
 	}
 	return false
@@ -8432,6 +8458,16 @@ type EdgeRuleAction struct {
 	Async *EdgeRuleAsyncAction `json:"async,omitempty"`
 	// WAF carries the kind=waf scoring knobs (ADR-831 step 1).
 	WAF *EdgeRuleWAFAction `json:"waf,omitempty"`
+	// Challenge carries the kind=challenge work and pass knobs (ADR-831
+	// amendment 7).
+	Challenge *EdgeRuleChallengeAction `json:"challenge,omitempty"`
+}
+
+// EdgeRuleChallengeAction is the stored kind=challenge payload. Values are
+// the effective ones written by api.EdgeRuleChallengeAction.Validate.
+type EdgeRuleChallengeAction struct {
+	Difficulty     int `json:"difficulty,omitempty"`
+	PassTTLSeconds int `json:"pass_ttl_seconds,omitempty"`
 }
 
 // EdgeRuleWAFAction is the stored kind=waf payload (ADR-831 step 1). Values

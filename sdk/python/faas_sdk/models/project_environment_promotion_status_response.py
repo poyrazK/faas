@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from ..models.project_environment_promotion_status_workload_response import (
         ProjectEnvironmentPromotionStatusWorkloadResponse,
     )
+    from ..models.project_promotion_health import ProjectPromotionHealth
 
 
 T = TypeVar("T", bound="ProjectEnvironmentPromotionStatusResponse")
@@ -46,6 +47,9 @@ class ProjectEnvironmentPromotionStatusResponse:
     created_at: datetime.datetime
     updated_at: datetime.datetime
     workloads: list[ProjectEnvironmentPromotionStatusWorkloadResponse]
+    health: ProjectPromotionHealth | Unset = UNSET
+    """Durable destination health checkpoint. Includes counts only, without challenge tokens, credentials or
+    response bodies."""
     sync_config: bool | Unset = UNSET
     """Config sync was enabled for this promotion."""
     error: str | Unset = UNSET
@@ -83,6 +87,10 @@ class ProjectEnvironmentPromotionStatusResponse:
         for workloads_item_data in self.workloads:
             workloads_item = workloads_item_data.to_dict()
             workloads.append(workloads_item)
+
+        health: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.health, Unset):
+            health = self.health.to_dict()
 
         sync_config = self.sync_config
 
@@ -139,6 +147,8 @@ class ProjectEnvironmentPromotionStatusResponse:
                 "workloads": workloads,
             }
         )
+        if health is not UNSET:
+            field_dict["health"] = health
         if sync_config is not UNSET:
             field_dict["sync_config"] = sync_config
         if error is not UNSET:
@@ -174,6 +184,7 @@ class ProjectEnvironmentPromotionStatusResponse:
         from ..models.project_environment_promotion_status_workload_response import (
             ProjectEnvironmentPromotionStatusWorkloadResponse,
         )
+        from ..models.project_promotion_health import ProjectPromotionHealth
 
         d = dict(src_dict)
         promotion_id = d.pop("promotion_id")
@@ -198,6 +209,13 @@ class ProjectEnvironmentPromotionStatusResponse:
             workloads_item = ProjectEnvironmentPromotionStatusWorkloadResponse.from_dict(workloads_item_data)
 
             workloads.append(workloads_item)
+
+        _health = d.pop("health", UNSET)
+        health: ProjectPromotionHealth | Unset
+        if isinstance(_health, Unset):
+            health = UNSET
+        else:
+            health = ProjectPromotionHealth.from_dict(_health)
 
         sync_config = d.pop("sync_config", UNSET)
 
@@ -275,6 +293,7 @@ class ProjectEnvironmentPromotionStatusResponse:
             created_at=created_at,
             updated_at=updated_at,
             workloads=workloads,
+            health=health,
             sync_config=sync_config,
             error=error,
             completed_at=completed_at,

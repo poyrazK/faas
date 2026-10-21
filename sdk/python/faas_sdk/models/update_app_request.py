@@ -133,6 +133,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.after_restore_hook import AfterRestoreHook
+    from ..models.app_deploy_settings_condition import AppDeploySettingsCondition
     from ..models.before_checkpoint_hook import BeforeCheckpointHook
     from ..models.declared_route import DeclaredRoute
     from ..models.pre_auth_rate_limit_config import PreAuthRateLimitConfig
@@ -155,6 +156,13 @@ T = TypeVar("T", bound="UpdateAppRequest")
 class UpdateAppRequest:
     """Partial update — every field is optional; omitted fields are unchanged."""
 
+    deploy_settings_condition: AppDeploySettingsCondition | Unset = UNSET
+    """Atomic preconditions for single-app lifecycle/scaling recovery. The app must retain this identity and its
+    newest deployment must be the expected live deployment. Every targeted field must still match its observed
+    value, including targeted fields omitted from the partial update because they already match the desired value.
+    Checked in the same transaction as the update. A conflict returns 409 deploy_settings_conflict with field names,
+    without setting values. Cannot be combined with environment edits or other app fields. Ordinary updates can omit
+    this object."""
     profiling: ProfilingConfig | Unset = UNSET
     """Opt-in sampled CPU profiling baked into each deployment (ADR-819)."""
     tracing: TracingConfig | Unset = UNSET
@@ -420,6 +428,10 @@ class UpdateAppRequest:
         from ..models.scaling_policy import ScalingPolicy
         from ..models.service_caller_scopes import ServiceCallerScopes
         from ..models.service_reliability_policies import ServiceReliabilityPolicies
+
+        deploy_settings_condition: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.deploy_settings_condition, Unset):
+            deploy_settings_condition = self.deploy_settings_condition.to_dict()
 
         profiling: dict[str, Any] | Unset = UNSET
         if not isinstance(self.profiling, Unset):
@@ -914,6 +926,8 @@ class UpdateAppRequest:
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
+        if deploy_settings_condition is not UNSET:
+            field_dict["deploy_settings_condition"] = deploy_settings_condition
         if profiling is not UNSET:
             field_dict["profiling"] = profiling
         if tracing is not UNSET:
@@ -1062,6 +1076,7 @@ class UpdateAppRequest:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.after_restore_hook import AfterRestoreHook
+        from ..models.app_deploy_settings_condition import AppDeploySettingsCondition
         from ..models.before_checkpoint_hook import BeforeCheckpointHook
         from ..models.declared_route import DeclaredRoute
         from ..models.pre_auth_rate_limit_config import PreAuthRateLimitConfig
@@ -1077,6 +1092,13 @@ class UpdateAppRequest:
         from ..models.workload_port import WorkloadPort
 
         d = dict(src_dict)
+        _deploy_settings_condition = d.pop("deploy_settings_condition", UNSET)
+        deploy_settings_condition: AppDeploySettingsCondition | Unset
+        if isinstance(_deploy_settings_condition, Unset):
+            deploy_settings_condition = UNSET
+        else:
+            deploy_settings_condition = AppDeploySettingsCondition.from_dict(_deploy_settings_condition)
+
         _profiling = d.pop("profiling", UNSET)
         profiling: ProfilingConfig | Unset
         if isinstance(_profiling, Unset):
@@ -2166,6 +2188,7 @@ class UpdateAppRequest:
         expected_service_binding_fingerprint = d.pop("expected_service_binding_fingerprint", UNSET)
 
         update_app_request = cls(
+            deploy_settings_condition=deploy_settings_condition,
             profiling=profiling,
             tracing=tracing,
             visibility=visibility,

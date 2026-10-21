@@ -600,6 +600,11 @@ func applyRetirementView(view *api.MCPCatalogMonitorSnapshot, r api.MCPOAuthReti
 	}
 }
 func (m *MemStore) retireDeletedAppLocked(app App, at time.Time) error {
+	for _, dep := range m.deployments {
+		if dep.AppID == app.ID && m.recoveryProtectedDeploymentLocked(dep.ID) {
+			return ErrConflict
+		}
+	}
 	root, ok := m.mcpCatalogMonitors[app.ID]
 	if !ok || m.mcpCatalogMonitorOwners[app.ID] != app.AccountID {
 		return nil

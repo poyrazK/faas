@@ -730,3 +730,46 @@ func TestArchiveStream_ScopeCheckUsesAccountAppAndDayWindow(t *testing.T) {
 		t.Fatalf("owned archive did not stream: %s", rec.Body.String())
 	}
 }
+
+// TestArchiveStream_ReadErrorsAreLoggedByCause: the terminal folds 404 and
+// 403 into archive_missing, so the log line must say which one it was
+// (Hunt #11 H11-8: every parked instance's archive looked like a gap and
+// nothing was logged).
+func TestArchiveStream_ReadErrorsAreLoggedByCause(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status int
+		body   string
+		want   []string
+		reason string
+	}{
+		{"not found", http.StatusNotFound, `<Error><Code>NoSuchKey</Code></Error>`,
+			[]string{"level=INFO", "logarchive.readback.missing", "status=404"}, "archive_missing"},
+		{"access denied", http.StatusForbidden, `<Error><Code>AccessDenied</Code></Error>`,
+			[]string{"level=WARN", "logarchive.readback.rejected", "status=403"}, "archive_missing"},
+		{"server error", http.StatusInternalServerError, `<Error><Code>InternalError</Code></Error>`,
+			[]string{"level=WARN", "logarchive.readback.unavailable"}, "archive_degraded"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var logs bytes.Buffer
+			srv := newFakeS3(t, tc.status, []byte(tc.body))
+			h := &ArchiveLogsHandler{
+				Scope:    ownedArchiveScope(),
+				S3:       newArchiveTestClient(t, srv),
+				Bucket:   "test-bucket",
+				Log:      slog.New(slog.NewTextHandler(&logs, nil)),
+				Backstop: 5 * time.Second,
+			}
+			out := driveStream(t, h, state.Account{ID: "acct-1", Plan: api.PlanHobby},
+				"archive=1&instance=inst-abc&date="+archiveTestDate())
+			if !strings.Contains(out, `"reason":"`+tc.reason+`"`) {
+				t.Errorf("terminal = %s, want %s", out, tc.reason)
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(logs.String(), want) {
+					t.Errorf("log %q missing %q", logs.String(), want)
+				}
+			}
+		})
+	}
+}

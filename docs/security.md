@@ -349,6 +349,48 @@ produces more false positives; it is available in `observe` only. The
 `edge_waf_detections` alert preset notifies you of bursts, and blocked
 requests also count toward `edge_rejection_pressure`.
 
+## Browser challenge (preview)
+
+A `kind=challenge` edge rule keeps scripts and scrapers off browser pages.
+An app can have 3 on Hobby, 10 on Pro and 25 on Scale; Free has none. A matched request without a valid pass never reaches your app:
+
+- A page load gets a short page that does a small calculation in the
+  browser (a proof of work, tens to a few hundred milliseconds by default),
+  then reloads the page with a signed pass cookie. No third-party script is
+  involved, so it works the same on custom domains.
+- Any other request (an API call, an image, a script without the pass) gets
+  `403` with code `challenge_required`.
+- Requests with a verified API key, consumer key or JWT are never
+  challenged, so API clients keep working.
+
+The pass lasts an hour by default and is tied to the browser's address
+range and User-Agent, so it cannot be copied to another machine. Start in
+log mode to see what the rule would challenge, and add a `verified_bot
+missing` condition so search engine crawlers still reach your pages:
+
+```sh
+gregale edge-rules create --app my-site --kind challenge --match-host my-site.example.com \
+  --match-path '/*' --match '{"field":"verified_bot","op":"missing"}' --mode log
+gregale edge-rules update <rule-id> --mode enforce
+```
+
+`--challenge-difficulty` (10 to 22, default 16) sets how much work a browser
+does; each step doubles it. `--challenge-pass-ttl` (300 to 86400 seconds)
+sets how long a pass lasts. Visitors need JavaScript; without it the page
+explains that it is required.
+
+An enforced challenge rule records what it did as security events, with
+the client's address, country, User-Agent and path: `challenged` (the page
+was served), `rejected` (a request that was not a page load got `403`),
+`solved` (a browser earned a pass) and `failed` (a solution was refused: a
+forged token, one carried to another machine, or too little work). Visitors
+who already hold a pass or a verified credential are counted, not recorded.
+In log mode the rule's matches appear as `logged` events instead.
+
+```sh
+gregale edge-rules events --app my-site --outcome rejected
+```
+
 ## Outbound connections and DNS
 
 Workloads reach the internet by name. Outbound TCP is allowed only to addresses
