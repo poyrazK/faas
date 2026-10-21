@@ -12,13 +12,22 @@ ALTER TABLE route_insights
     ADD COLUMN IF NOT EXISTS fixed_at timestamptz,
     ADD COLUMN IF NOT EXISTS fix_action text;
 -- The checks are added NOT VALID and validated by 20261020161912631, so
--- this transaction never scans route_insights under its lock.
-ALTER TABLE route_insights ADD CONSTRAINT route_insights_fix_action_check
-    CHECK (fix_action IN ('create_cache_rule', 'set_cache_max_age', 'add_cache_override', 'disable_cache_rule')) NOT VALID;
-ALTER TABLE route_insights ADD CONSTRAINT route_insights_fix_pair_check
-    CHECK ((fixed_at IS NULL) = (fix_action IS NULL)) NOT VALID;
-ALTER TABLE route_insights ADD CONSTRAINT route_insights_fixed_resolved_check
-    CHECK (fixed_at IS NULL OR state = 'resolved') NOT VALID;
+-- this transaction never scans route_insights under its lock. Each is
+-- guarded so a replay over existing objects is a no-op.
+DO $$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'route_insights'::regclass AND conname = 'route_insights_fix_action_check') THEN
+  ALTER TABLE route_insights ADD CONSTRAINT route_insights_fix_action_check
+      CHECK (fix_action IN ('create_cache_rule', 'set_cache_max_age', 'add_cache_override', 'disable_cache_rule')) NOT VALID;
+ END IF;
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'route_insights'::regclass AND conname = 'route_insights_fix_pair_check') THEN
+  ALTER TABLE route_insights ADD CONSTRAINT route_insights_fix_pair_check
+      CHECK ((fixed_at IS NULL) = (fix_action IS NULL)) NOT VALID;
+ END IF;
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'route_insights'::regclass AND conname = 'route_insights_fixed_resolved_check') THEN
+  ALTER TABLE route_insights ADD CONSTRAINT route_insights_fixed_resolved_check
+      CHECK (fixed_at IS NULL OR state = 'resolved') NOT VALID;
+ END IF;
+END $$;
 
 CREATE OR REPLACE FUNCTION enqueue_route_insight_webhooks()
 RETURNS trigger LANGUAGE plpgsql AS $$

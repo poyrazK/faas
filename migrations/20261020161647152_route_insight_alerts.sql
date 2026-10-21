@@ -7,7 +7,8 @@
 -- of its current definition (which keeps metrics other migrations added) is
 -- added NOT VALID and validated, the old one is dropped, and the copy takes
 -- the old name so later migrations find it. Every step commits on its own and
--- is guarded, so a rerun after a partial failure converges. The "New route
+-- is guarded, so a rerun after a partial failure or a replay over an already
+-- migrated schema converges without narrowing a later widening. The "New route
 -- insights" preset puts the rule in the dashboard preset grid. The previous
 -- release survives every step, but RENAME CONSTRAINT is a contract statement
 -- to migration-lint, so a full release applies this migration.
@@ -27,7 +28,8 @@ END $$;
 -- +goose StatementEnd
 -- +goose StatementBegin
 DO $$ BEGIN
- IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid = 'alert_rules'::regclass AND conname = 'alert_rules_metric_next_chk') THEN
+ IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid = 'alert_rules'::regclass AND conname = 'alert_rules_metric_next_chk')
+    AND position('route_insights_detected' in pg_get_constraintdef((SELECT oid FROM pg_constraint WHERE conrelid = 'alert_rules'::regclass AND conname = 'alert_rules_metric_chk'))) = 0 THEN
   EXECUTE format('ALTER TABLE alert_rules ADD CONSTRAINT alert_rules_metric_next_chk CHECK ((%s) OR metric IN (''route_insights_detected'')) NOT VALID',
     regexp_replace(route_insight_alert_metric_base('rules'), '^CHECK \((.*)\)$', '\1'));
  END IF;
@@ -35,14 +37,27 @@ END $$;
 -- +goose StatementEnd
 -- +goose StatementBegin
 DO $$ BEGIN
- IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid = 'alert_presets'::regclass AND conname = 'alert_presets_metric_next_chk') THEN
+ IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid = 'alert_presets'::regclass AND conname = 'alert_presets_metric_next_chk')
+    AND position('route_insights_detected' in pg_get_constraintdef((SELECT oid FROM pg_constraint WHERE conrelid = 'alert_presets'::regclass AND conname = 'alert_presets_metric_chk'))) = 0 THEN
   EXECUTE format('ALTER TABLE alert_presets ADD CONSTRAINT alert_presets_metric_next_chk CHECK ((%s) OR metric IN (''route_insights_detected'')) NOT VALID',
     regexp_replace(route_insight_alert_metric_base('presets'), '^CHECK \((.*)\)$', '\1'));
  END IF;
 END $$;
 -- +goose StatementEnd
-ALTER TABLE alert_rules VALIDATE CONSTRAINT alert_rules_metric_next_chk;
-ALTER TABLE alert_presets VALIDATE CONSTRAINT alert_presets_metric_next_chk;
+-- +goose StatementBegin
+DO $$ BEGIN
+ IF EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid = 'alert_rules'::regclass AND conname = 'alert_rules_metric_next_chk') THEN
+  ALTER TABLE alert_rules VALIDATE CONSTRAINT alert_rules_metric_next_chk;
+ END IF;
+END $$;
+-- +goose StatementEnd
+-- +goose StatementBegin
+DO $$ BEGIN
+ IF EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid = 'alert_presets'::regclass AND conname = 'alert_presets_metric_next_chk') THEN
+  ALTER TABLE alert_presets VALIDATE CONSTRAINT alert_presets_metric_next_chk;
+ END IF;
+END $$;
+-- +goose StatementEnd
 -- +goose StatementBegin
 DO $$ BEGIN
  IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid = 'alert_rules'::regclass AND conname = 'alert_rules_route_insights_chk') THEN
@@ -52,10 +67,34 @@ DO $$ BEGIN
 END $$;
 -- +goose StatementEnd
 ALTER TABLE alert_rules VALIDATE CONSTRAINT alert_rules_route_insights_chk;
-ALTER TABLE alert_rules DROP CONSTRAINT IF EXISTS alert_rules_metric_chk;
-ALTER TABLE alert_rules RENAME CONSTRAINT alert_rules_metric_next_chk TO alert_rules_metric_chk;
-ALTER TABLE alert_presets DROP CONSTRAINT IF EXISTS alert_presets_metric_chk;
-ALTER TABLE alert_presets RENAME CONSTRAINT alert_presets_metric_next_chk TO alert_presets_metric_chk;
+-- +goose StatementBegin
+DO $$ BEGIN
+ IF EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid = 'alert_rules'::regclass AND conname = 'alert_rules_metric_next_chk') THEN
+  ALTER TABLE alert_rules DROP CONSTRAINT IF EXISTS alert_rules_metric_chk;
+ END IF;
+END $$;
+-- +goose StatementEnd
+-- +goose StatementBegin
+DO $$ BEGIN
+ IF EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid = 'alert_rules'::regclass AND conname = 'alert_rules_metric_next_chk') THEN
+  ALTER TABLE alert_rules RENAME CONSTRAINT alert_rules_metric_next_chk TO alert_rules_metric_chk;
+ END IF;
+END $$;
+-- +goose StatementEnd
+-- +goose StatementBegin
+DO $$ BEGIN
+ IF EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid = 'alert_presets'::regclass AND conname = 'alert_presets_metric_next_chk') THEN
+  ALTER TABLE alert_presets DROP CONSTRAINT IF EXISTS alert_presets_metric_chk;
+ END IF;
+END $$;
+-- +goose StatementEnd
+-- +goose StatementBegin
+DO $$ BEGIN
+ IF EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid = 'alert_presets'::regclass AND conname = 'alert_presets_metric_next_chk') THEN
+  ALTER TABLE alert_presets RENAME CONSTRAINT alert_presets_metric_next_chk TO alert_presets_metric_chk;
+ END IF;
+END $$;
+-- +goose StatementEnd
 INSERT INTO alert_presets(name, display_name, description, category, metric, comparison, threshold, window_spec, default_cooldown_minutes, minimum_plan)
 SELECT 'route_insights_detected', 'New route insights',
        'A route started keeping the app awake, became safe to cache, or has a cache rule serving stale or too-short responses.',
