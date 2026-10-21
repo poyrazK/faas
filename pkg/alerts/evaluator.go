@@ -885,6 +885,8 @@ func (e *Evaluator) observe(ctx context.Context, rule state.AlertRule) (float64,
 		return value, compareFloat(value, rule.Comparison, rule.Threshold), ""
 	case state.AlertMetricEdgeRuleHits, state.AlertMetricEdgeRuleLogHits, state.AlertMetricEdgeRuleActivity:
 		return e.observeEdgeRuleHits(ctx, rule)
+	case state.AlertMetricRouteInsightsDetected:
+		return e.observeRouteInsights(ctx, rule)
 	case state.AlertMetricFailedInvocs:
 		// Postgres-backed. No Prometheus dependency; the
 		// per-rule source filter expands "any" to every alertable

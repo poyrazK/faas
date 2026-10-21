@@ -201,6 +201,12 @@ const (
 	ProductControlOnboardingExternalRefMaxBytes           = 256
 	ProductControlMaxMonthlyStarts                  int64 = 1000000
 	ProductControlMaxUnitPriceMillicents            int64 = 1000000000
+	// ProductControlMaxMonthlyFeeMillicents bounds a plan's monthly fee
+	// (ADR-20261021154511): 100,000 in the catalog currency's major unit.
+	ProductControlMaxMonthlyFeeMillicents int64 = 10000000000
+	// ProductControlPlanHistoryMonthMaxPlans bounds the distinct plans one
+	// customer month is read with for its fee.
+	ProductControlPlanHistoryMonthMaxPlans = 1000
 )
 
 // Operator restart execution and persistence budgets (ADR-1522).
@@ -1331,6 +1337,11 @@ type OperationPlanLimits struct {
 	// ChildrenPerOperation bounds the child Operations one Operation may
 	// start (ADR-20261018183000).
 	ChildrenPerOperation int
+	// ConcurrencyPoliciesPerApp bounds per-customer concurrency policies
+	// (ADR-20261018210500).
+	ConcurrencyPoliciesPerApp int
+	// ApprovalFormsPerApp bounds approval input forms (ADR-20261019001500).
+	ApprovalFormsPerApp int
 }
 
 // OperationScheduleOnceHorizon bounds how far ahead a once schedule may fire.
@@ -2781,6 +2792,9 @@ type Limits struct {
 	// with 413 CodeSecretValueTooLarge before sealing.
 	SecretCountMax      int // max secrets per app across all scopes (Free 8, Hobby 25, Pro 50, Scale 100)
 	SecretValueMaxBytes int // per-secret value byte cap (Free 4K, Hobby 8K, Pro 16K, Scale 32K)
+	// ProjectSecretCountMax bounds the secrets one project environment shares
+	// with its services (ADR-1139); each value uses SecretValueMaxBytes.
+	ProjectSecretCountMax int // (Free 8, Hobby 25, Pro 50, Scale 100)
 
 	// Customer env vars (issue #395 / ADR-045). Plaintext per-app store
 	// for non-sensitive runtime config (LOG_LEVEL, FEATURE_X, etc.). The
@@ -4135,6 +4149,7 @@ var planLimits = map[Plan]Limits{
 		EgressExtraPortsMax:            0,
 		ServiceTCPSessionsPerAccount:   16,
 		SecretCountMax:                 8,
+		ProjectSecretCountMax:          8,
 		SecretValueMaxBytes:            4 * 1024,
 		EnvVarsMax:                     16,
 		EnvValueMaxBytes:               4 * 1024,
@@ -4535,6 +4550,7 @@ var planLimits = map[Plan]Limits{
 		EgressExtraPortsMax:            0,
 		ServiceTCPSessionsPerAccount:   64,
 		SecretCountMax:                 25,
+		ProjectSecretCountMax:          25,
 		SecretValueMaxBytes:            8 * 1024,
 		EnvVarsMax:                     32,
 		EnvValueMaxBytes:               8 * 1024,
@@ -4553,7 +4569,7 @@ var planLimits = map[Plan]Limits{
 		MaxDelayedTasksPerApp:       5,
 		MaxSourceBytesPerInvocation: 64 * 1024,
 		AsyncInvokeAllowed:          true,
-		Operations:                  OperationPlanLimits{Allowed: true, DefinitionsPerApp: 10, PendingPerAccount: 1000, ReportsPerOperation: 1024, RecoveriesPerOperation: 32, ReportBytes: 4096, SchemaBytes: 65536, ProgressStages: 16, SubscriptionsPerAccount: 100, ReportMinIntervalMS: 100, ResultRetentionSeconds: 604800, EventRetentionSeconds: 86400, IdempotencyRetentionSeconds: 2592000, ArtifactsPerOperation: 8, ArtifactMaxBytes: 8 << 20, ArtifactTotalMaxBytes: 32 << 20, RetainedArtifactBytesPerAccount: 256 << 20, RetainedArtifactsPerAccount: 256, DeadlineSecondsMax: 86400, AttemptsMax: 3, ExecutionSecondsMax: 3600, SchedulesPerAccount: 10, ScheduleMinIntervalSeconds: 300, ChildrenPerOperation: 10},
+		Operations:                  OperationPlanLimits{Allowed: true, DefinitionsPerApp: 10, PendingPerAccount: 1000, ReportsPerOperation: 1024, RecoveriesPerOperation: 32, ReportBytes: 4096, SchemaBytes: 65536, ProgressStages: 16, SubscriptionsPerAccount: 100, ReportMinIntervalMS: 100, ResultRetentionSeconds: 604800, EventRetentionSeconds: 86400, IdempotencyRetentionSeconds: 2592000, ArtifactsPerOperation: 8, ArtifactMaxBytes: 8 << 20, ArtifactTotalMaxBytes: 32 << 20, RetainedArtifactBytesPerAccount: 256 << 20, RetainedArtifactsPerAccount: 256, DeadlineSecondsMax: 86400, AttemptsMax: 3, ExecutionSecondsMax: 3600, SchedulesPerAccount: 10, ScheduleMinIntervalSeconds: 300, ChildrenPerOperation: 10, ConcurrencyPoliciesPerApp: 10, ApprovalFormsPerApp: 10},
 		// Hobby: 3 attempts. Tight on the cheap tier — a worker that
 		// keeps re-trying a bad payload would otherwise burn the
 		// per-app rps budget and starve the rest of the queue.
@@ -4961,6 +4977,7 @@ var planLimits = map[Plan]Limits{
 		EgressExtraPortsMax:            8,
 		ServiceTCPSessionsPerAccount:   256,
 		SecretCountMax:                 50,
+		ProjectSecretCountMax:          50,
 		SecretValueMaxBytes:            16 * 1024,
 		EnvVarsMax:                     64,
 		EnvValueMaxBytes:               16 * 1024,
@@ -4983,7 +5000,7 @@ var planLimits = map[Plan]Limits{
 		MaxDelayedTasksPerApp:       50,
 		MaxSourceBytesPerInvocation: 256 * 1024,
 		AsyncInvokeAllowed:          true,
-		Operations:                  OperationPlanLimits{Allowed: true, DefinitionsPerApp: 50, PendingPerAccount: 10000, ReportsPerOperation: 4096, RecoveriesPerOperation: 128, ReportBytes: 8192, SchemaBytes: 65536, ProgressStages: 32, SubscriptionsPerAccount: 1000, ReportMinIntervalMS: 100, ResultRetentionSeconds: 2592000, EventRetentionSeconds: 604800, IdempotencyRetentionSeconds: 7776000, ArtifactsPerOperation: 16, ArtifactMaxBytes: 32 << 20, ArtifactTotalMaxBytes: 128 << 20, RetainedArtifactBytesPerAccount: 1024 << 20, RetainedArtifactsPerAccount: 1024, DeadlineSecondsMax: 604800, AttemptsMax: 10, ExecutionSecondsMax: 86400, SchedulesPerAccount: 100, ScheduleMinIntervalSeconds: 60, ChildrenPerOperation: 100},
+		Operations:                  OperationPlanLimits{Allowed: true, DefinitionsPerApp: 50, PendingPerAccount: 10000, ReportsPerOperation: 4096, RecoveriesPerOperation: 128, ReportBytes: 8192, SchemaBytes: 65536, ProgressStages: 32, SubscriptionsPerAccount: 1000, ReportMinIntervalMS: 100, ResultRetentionSeconds: 2592000, EventRetentionSeconds: 604800, IdempotencyRetentionSeconds: 7776000, ArtifactsPerOperation: 16, ArtifactMaxBytes: 32 << 20, ArtifactTotalMaxBytes: 128 << 20, RetainedArtifactBytesPerAccount: 1024 << 20, RetainedArtifactsPerAccount: 1024, DeadlineSecondsMax: 604800, AttemptsMax: 10, ExecutionSecondsMax: 86400, SchedulesPerAccount: 100, ScheduleMinIntervalSeconds: 60, ChildrenPerOperation: 100, ConcurrencyPoliciesPerApp: 100, ApprovalFormsPerApp: 100},
 		// Pro: 10 attempts. Trades tolerance against "a poisoned row
 		// churns indefinitely". At 10 retries a transient downstream
 		// flap has plenty of room, while a permanently-bad payload
@@ -5349,6 +5366,7 @@ var planLimits = map[Plan]Limits{
 		EgressExtraPortsMax:            32,
 		ServiceTCPSessionsPerAccount:   1024,
 		SecretCountMax:                 100,
+		ProjectSecretCountMax:          100,
 		SecretValueMaxBytes:            32 * 1024,
 		EnvVarsMax:                     256,
 		EnvValueMaxBytes:               32 * 1024,
@@ -5378,7 +5396,7 @@ var planLimits = map[Plan]Limits{
 		MaxDelayedTasksPerApp:       1_000_000,
 		MaxSourceBytesPerInvocation: 1024 * 1024,
 		AsyncInvokeAllowed:          true,
-		Operations:                  OperationPlanLimits{Allowed: true, DefinitionsPerApp: 200, PendingPerAccount: 100000, ReportsPerOperation: 16384, RecoveriesPerOperation: 256, ReportBytes: 16384, SchemaBytes: 65536, ProgressStages: 64, SubscriptionsPerAccount: 10000, ReportMinIntervalMS: 100, ResultRetentionSeconds: 7776000, EventRetentionSeconds: 2592000, IdempotencyRetentionSeconds: 15552000, ArtifactsPerOperation: 32, ArtifactMaxBytes: 64 << 20, ArtifactTotalMaxBytes: 256 << 20, RetainedArtifactBytesPerAccount: 4096 << 20, RetainedArtifactsPerAccount: 4096, DeadlineSecondsMax: 2592000, AttemptsMax: 25, ExecutionSecondsMax: 604800, SchedulesPerAccount: 1000, ScheduleMinIntervalSeconds: 60, ChildrenPerOperation: 1000},
+		Operations:                  OperationPlanLimits{Allowed: true, DefinitionsPerApp: 200, PendingPerAccount: 100000, ReportsPerOperation: 16384, RecoveriesPerOperation: 256, ReportBytes: 16384, SchemaBytes: 65536, ProgressStages: 64, SubscriptionsPerAccount: 10000, ReportMinIntervalMS: 100, ResultRetentionSeconds: 7776000, EventRetentionSeconds: 2592000, IdempotencyRetentionSeconds: 15552000, ArtifactsPerOperation: 32, ArtifactMaxBytes: 64 << 20, ArtifactTotalMaxBytes: 256 << 20, RetainedArtifactBytesPerAccount: 4096 << 20, RetainedArtifactsPerAccount: 4096, DeadlineSecondsMax: 2592000, AttemptsMax: 25, ExecutionSecondsMax: 604800, SchedulesPerAccount: 1000, ScheduleMinIntervalSeconds: 60, ChildrenPerOperation: 1000, ConcurrencyPoliciesPerApp: 1000, ApprovalFormsPerApp: 1000},
 		// Scale: 25 attempts. The highest tier gets the most
 		// tolerance so an upstream outage lasting a few minutes
 		// doesn't dump the queue into dead_letter on a single bad
@@ -10615,6 +10633,21 @@ func AsyncInvocationLease(timeout time.Duration) time.Duration {
 // one guest. This is a runtime safety bound, not the plan's HTTP concurrency.
 const FunctionInterpreterMaxWorkers = 4
 
+// FunctionPostgresMaxPools bounds registered pool owners per interpreter.
+// It is a structural runtime bound, not a database connection entitlement.
+const FunctionPostgresMaxPools = 16
+
+// FunctionCancellationGrace is the cleanup acknowledgement budget shared by
+// the runner and the host's execution-ownership watchdog (ADR-20261018030610).
+const FunctionCancellationGrace = 5 * time.Second
+
+// FunctionExecutionLeaseDuration bounds an abandoned runner's full execution.
+// Expiry requires VM retirement, never a counter decrement while work runs.
+func FunctionExecutionLeaseDuration(plan Plan, foreground time.Duration) time.Duration {
+	// One cleanup grace also covers terminal transport reconciliation.
+	return min(foreground, RequestBudgetPlanMax) + time.Duration(plan.TailTimeoutSeconds())*time.Second + 2*FunctionCancellationGrace
+}
+
 // FunctionConcurrencyEnv carries an app's function_concurrency to its
 // generated adapter (ADR-1342). imaged stamps it on function deployments
 // whose setting is above one; the adapter then advertises that many slots
@@ -11999,6 +12032,15 @@ const (
 	// The user-token audience a runtime reports, so live reads verify
 	// tokens as the Data API does.
 	DataAPIAudienceMaxBytes = 256
+	// File storage (ADR-20261021101510), mirrored in the runtime's limits:
+	// the default and largest object an owner may allow, the transfers one
+	// instance streams at once, how long one transfer may take, and how long
+	// a signed download link works.
+	DataAPIStorageObjectDefaultBytes = 25 << 20
+	DataAPIStorageObjectMaxBytes     = 100 << 20
+	DataAPIStorageTransfers          = 4
+	DataAPIStorageTransferTimeout    = 120 * time.Second
+	DataAPIStorageSignedURLTTL       = 60 * time.Second
 	// Anonymous and server-key live reads renew this often, so a revoked key
 	// or a narrowed allowlist reaches open subscriptions within it.
 	LiveQueryKeySessionMax = time.Hour
@@ -12148,6 +12190,11 @@ const (
 	// what one end user can create in the customer's database.
 	AuthMaxOrganizationsPerUser     = 100
 	AuthMaxPendingInvitationsPerOrg = 500
+	// AuthInvitationsPerInviterPerHour and AuthInvitationsPerAddressPerDay
+	// bound the invitation emails any signed-in member can make the app send,
+	// through the customer's own email provider.
+	AuthInvitationsPerInviterPerHour = 50
+	AuthInvitationsPerAddressPerDay  = 10
 	// AuthEmailTimeoutMs bounds one provider request; AuthHookBodyBytes
 	// bounds GoTrue's send-email hook payload; AuthEmailAPIKeyMaxBytes
 	// bounds the sealed provider key.

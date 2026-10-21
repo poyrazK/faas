@@ -1300,6 +1300,82 @@ narrowed allowlist reaches them within the hour. Live connections count
 against your realtime connection limits. If live queries are not yet
 available to your account, `enable` says so and changes nothing.
 
+## File storage
+
+Files are rows: a table `storage_objects` in your API's schema records every
+stored file, and your row-level security policies on it decide who may
+upload, download and remove each one. The same tokens, public-read allowlist
+and server keys apply as for REST.
+
+1. Add the table with a migration. The printed SQL creates it with RLS and a
+   guard trigger, and includes example policies to adapt:
+
+   ```sh
+   gregale data-api storage sql > migrations/0005_storage.sql
+   ```
+
+   ```sql
+   -- Signed-in users manage their own files in "uploads", up to 10 MiB each.
+   CREATE POLICY own_uploads ON api.storage_objects
+     USING (bucket = 'uploads' AND owner = current_setting('request.jwt.claims', true)::jsonb ->> 'sub')
+     WITH CHECK (bucket = 'uploads' AND owner = current_setting('request.jwt.claims', true)::jsonb ->> 'sub' AND size <= 10485760);
+   ```
+
+2. Bind a bucket and turn storage on:
+
+   ```sh
+   gregale data-api storage enable shop-data --bucket uploads
+   ```
+
+   This creates the bucket if needed, binds it to the Data API app with read
+   and write access, and restarts the API. In storage routes a bucket goes by
+   its name in lower case with other characters as `_` (`user-files` becomes
+   `user_files`). `storage status` lists them; `storage disable` turns storage
+   off and keeps the buckets and their files.
+
+3. Use it from the browser or a backend:
+
+   ```ts
+   import { createStorageClient } from '@gregale/data'
+
+   const files = createStorageClient({ url: 'https://shop-data.gregale.dev', accessToken: () => session.accessToken }).from('uploads')
+   await files.upload(`${userId}/avatar.png`, file)            // a Blob brings its type
+   const image = await (await files.download(`${userId}/avatar.png`)).blob()
+   const { url } = await files.signedUrl(`${userId}/avatar.png`) // 60 seconds, no token, for <img src>
+   await files.remove(`${userId}/avatar.png`)
+   ```
+
+Each route asks PostgreSQL first, as the caller:
+
+| Route | Your policies decide |
+|---|---|
+| `PUT /storage/v1/object/{bucket}/{name}` | INSERT, or UPDATE when replacing (`WITH CHECK` sees `size` and `content_type`) |
+| `GET`/`HEAD /storage/v1/object/{bucket}/{name}` | SELECT |
+| `POST /storage/v1/sign/{bucket}/{name}` | SELECT |
+| `DELETE /storage/v1/object/{bucket}/{name}` | DELETE |
+
+- **Refusals and missing files.** A refused upload answers
+  `403 storage_forbidden`. A file the caller may not see answers
+  `404 storage_not_found`, exactly like a missing one.
+- **Owners.** `owner` is the caller's `sub`. A server key acting for a user
+  (`X-Gregale-Subject`) uploads as that user. Replacing a file keeps its owner
+  and creation time.
+- **List files with queries.** Query `storage_objects` like any table: REST,
+  generated types and [live reads](#live-reads) all follow your policies.
+  Only the storage routes can change its rows; REST writes to it are refused.
+- **Visitors.** They can download and sign files when
+  `api.storage_objects` is in the [public-read allowlist](#public-reads);
+  policies still decide which files. Visitors cannot upload or remove files.
+- **Sizes.** Uploads need `Content-Length` and are at most 25 MiB by default
+  (`--max-object-bytes`, up to 100 MiB). Files stream through the Data API,
+  four transfers at a time per instance, each within two minutes.
+- **Safe serving.** Downloads are served with `Content-Security-Policy:
+  sandbox` and `nosniff`, so an uploaded page cannot run as your API's
+  origin.
+- **Before the migration.** Until `storage_objects` exists with RLS and its
+  guard trigger, storage routes answer `503 storage_unavailable` and the rest
+  of the API keeps serving.
+
 ## Aggregates
 
 Aggregate queries are off by default. Turn them on with:

@@ -480,6 +480,11 @@ func TestResolveWorkloadCommandPath(t *testing.T) {
 }
 
 func TestDiscoverSidecarDevicesCarriesWorkloadNames(t *testing.T) {
+	// This fixture describes the virtio-blk base layout, independent of the
+	// development host's /proc/cmdline (which may itself boot from pmem).
+	previous := bootRootOnPmem
+	bootRootOnPmem = func() bool { return false }
+	t.Cleanup(func() { bootRootOnPmem = previous })
 	root := t.TempDir()
 	path := filepath.Join(root, "etc", "faas", "workloads.json")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -583,6 +588,9 @@ func TestEnsureMountDirectoryTreeCreatesSafePath(t *testing.T) {
 }
 
 func TestDiscoverSidecarDevicesReadsOptimizedDriveRoster(t *testing.T) {
+	previous := bootRootOnPmem
+	bootRootOnPmem = func() bool { return false }
+	t.Cleanup(func() { bootRootOnPmem = previous })
 	root := t.TempDir()
 	path := filepath.Join(root, "upper", "etc", "faas", "workloads.json")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

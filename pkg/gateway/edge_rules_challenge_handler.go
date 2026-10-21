@@ -66,6 +66,7 @@ func (h *Handler) applyEdgeRuleChallenge(w http.ResponseWriter, r *http.Request,
 	if !isBrowserNavigation(r) {
 		api.WriteProblem(w, api.ErrChallengeRequired(rule.ID))
 		h.metrics.ObserveEdgeChallenge(app.ID, "rejected")
+		h.recordChallengeEvent(r, rule.ID, app.ID, EdgeRuleEventRejected)
 		return true
 	}
 	nonce := make([]byte, 16)
@@ -76,6 +77,7 @@ func (h *Handler) applyEdgeRuleChallenge(w http.ResponseWriter, r *http.Request,
 	}, bindingFor(r))
 	writeChallengePage(w, r, token, rule.Difficulty)
 	h.metrics.ObserveEdgeChallenge(app.ID, "issued")
+	h.recordChallengeEvent(r, rule.ID, app.ID, EdgeRuleEventChallenged)
 	return true
 }
 
@@ -98,14 +100,14 @@ func (h *Handler) handleChallengeSolve(w http.ResponseWriter, r *http.Request, a
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, challengeSolveMaxBody)
 	if r.ParseForm() != nil {
-		return h.rejectChallengeSolve(w, app, rule.ID, "invalid")
+		return h.rejectChallengeSolve(w, r, app, rule.ID)
 	}
 	token, counter := r.PostForm.Get("token"), r.PostForm.Get("counter")
 	back := safeReturnPath(r.PostForm.Get("return"))
 	binding := bindingFor(r)
 	var t challengeToken
 	if !openChallenge(h.challengeKey, "token", challengeTokenPrefix, token, binding, &t) || t.AppID != app.ID {
-		return h.rejectChallengeSolve(w, app, rule.ID, "invalid")
+		return h.rejectChallengeSolve(w, r, app, rule.ID)
 	}
 	now := h.challengeClock()
 	w.Header().Set("Cache-Control", "no-store")
@@ -115,19 +117,23 @@ func (h *Handler) handleChallengeSolve(w http.ResponseWriter, r *http.Request, a
 		return true
 	}
 	if !challengeWorkValid(token, counter, t.Difficulty) {
-		return h.rejectChallengeSolve(w, app, rule.ID, "invalid")
+		return h.rejectChallengeSolve(w, r, app, t.RuleID)
 	}
 	pass := sealChallenge(h.challengeKey, "pass", challengePassPrefix, challengePass{
 		AppID: app.ID, Expires: now.Add(time.Duration(t.PassTTL) * time.Second).Unix(),
 	}, binding)
 	http.SetCookie(w, challengeCookie(pass, t.PassTTL))
 	h.metrics.ObserveEdgeChallenge(app.ID, "solved")
+	h.recordChallengeEvent(r, t.RuleID, app.ID, EdgeRuleEventSolved)
 	http.Redirect(w, r, back, http.StatusSeeOther)
 	return true
 }
 
-func (h *Handler) rejectChallengeSolve(w http.ResponseWriter, app App, ruleID, outcome string) bool {
+// rejectChallengeSolve answers a solution that does not hold with 403.
+// ruleID is the token's rule once the token opened, else the host's.
+func (h *Handler) rejectChallengeSolve(w http.ResponseWriter, r *http.Request, app App, ruleID string) bool {
 	api.WriteProblem(w, api.ErrChallengeRequired(ruleID))
-	h.metrics.ObserveEdgeChallenge(app.ID, outcome)
+	h.metrics.ObserveEdgeChallenge(app.ID, "invalid")
+	h.recordChallengeEvent(r, ruleID, app.ID, EdgeRuleEventFailed)
 	return true
 }

@@ -3357,6 +3357,22 @@
     "kind": "configuration"
   },
   {
+    "table": "customer_operation_approval_forms",
+    "columns": [
+      "account_id",
+      "app_id",
+      "created_at",
+      "id",
+      "input_schema",
+      "operation",
+      "required",
+      "scope",
+      "step",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "customer_operation_attempt_instances",
     "columns": [
       "attempt",
@@ -3384,6 +3400,21 @@
       "app_id",
       "deployment_id",
       "expires_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "customer_operation_concurrency_policies",
+    "columns": [
+      "account_id",
+      "app_id",
+      "created_at",
+      "id",
+      "max_running",
+      "operation",
+      "platform_tenant_id",
+      "scope",
+      "updated_at"
     ],
     "kind": "operational"
   },
@@ -3479,6 +3510,19 @@
       "occurred_at",
       "operation_id",
       "payload"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "customer_operation_queue",
+    "columns": [
+      "account_id",
+      "app_id",
+      "operation",
+      "operation_id",
+      "platform_tenant_id",
+      "queued_at",
+      "scope"
     ],
     "kind": "operational"
   },
@@ -6393,6 +6437,35 @@
       "updated_at"
     ],
     "kind": "platform_configuration"
+  },
+  {
+    "table": "function_migration_destinations",
+    "columns": [
+      "grant_data",
+      "instance_id",
+      "lease_token",
+      "node_id",
+      "phase",
+      "receipt",
+      "token",
+      "wake_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "function_migration_sources",
+    "columns": [
+      "capture_grant",
+      "capture_result",
+      "capture_token",
+      "instance_id",
+      "lease_token",
+      "phase",
+      "recovery_grant",
+      "source_node_id",
+      "source_wake_id"
+    ],
+    "kind": "operational"
   },
   {
     "table": "gateway_concurrency_queue_leases",
@@ -12725,6 +12798,20 @@
     "kind": "operational"
   },
   {
+    "table": "product_control_plan_history",
+    "columns": [
+      "account_id",
+      "app_id",
+      "effective_at",
+      "first_assignment",
+      "id",
+      "plan",
+      "revision",
+      "tenant_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "product_control_receipts",
     "columns": [
       "account_id",
@@ -13982,6 +14069,22 @@
     "kind": "configuration"
   },
   {
+    "table": "project_environment_secrets",
+    "columns": [
+      "account_id",
+      "ciphertext",
+      "created_at",
+      "environment_slug",
+      "key",
+      "kid",
+      "project_id",
+      "secret_version",
+      "updated_at",
+      "value_hash"
+    ],
+    "kind": "configuration"
+  },
+  {
     "table": "project_environment_edge_policies",
     "columns": [
       "account_id",
@@ -14826,6 +14929,8 @@
       "app_id",
       "evidence",
       "first_detected_at",
+      "fix_action",
+      "fixed_at",
       "id",
       "kind",
       "last_detected_at",

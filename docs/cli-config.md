@@ -104,15 +104,16 @@ Upgrading does not move or replace existing credentials.
 
 `profile use <name>` saves the active connection. The prefix option
 `gregale --profile <name> <command>` selects a connection for that command only.
-Put it **before the command**: some commands have their own `--profile` option
-for resource or test settings, and those options retain their meaning.
+Put it **before the command**: after the command, `--profile` keeps that
+command's own meaning, such as a test profile or the deprecated spelling of the
+RAM/CPU size (use `--size` instead).
 Arguments after `--` are forwarded unchanged.
 
 For example, this previews a deployment using the `staging` connection and the
-`small` RAM/CPU resource profile:
+`small` RAM/CPU size:
 
 ```bash
-gregale --profile staging deploy --profile small --dry-run
+gregale --profile staging deploy --size small --dry-run
 ```
 
 `FAAS_API` and `FAAS_TOKEN` still override the selected connection's endpoint

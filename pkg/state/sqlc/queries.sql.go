@@ -21994,7 +21994,7 @@ SELECT r.receipt::jsonb AS receipt,coalesce(i.state IN ('running','snapshotting'
  AND r.receipt->'binding'->>'node_id'=i.node_id::text
  AND r.receipt->'binding'->>'incarnation'=n.vmmd_incarnation::text
  AND (r.receipt->'binding'->>'protocol_version')::integer<=n.vmmd_admission_protocol
- AND r.receipt->'binding'->>'captured_input_hash'=a.native_input_hash
+ AND r.receipt->'binding'->>'captured_input_hash'=application_standard_native_input_hash(a.input_snapshot,i.node_id)
  AND r.receipt->>'netns'=i.netns AND r.receipt->>'host_ip'=host(i.host_ip)
  AND r.receipt->>'lease_uid'=i.guest_uid::text AND r.receipt->>'paused'='false'
  AND (i.application_standard_promotion_token IS NULL OR p.parent_token=b.token),false)::boolean AS valid
@@ -22002,7 +22002,7 @@ FROM instances i JOIN instance_application_standard_admissions a ON a.instance_i
 JOIN instance_application_standard_boots b ON b.token=i.application_standard_boot_token AND b.instance_id=i.id
 LEFT JOIN instance_application_standard_promotions p ON p.token=i.application_standard_promotion_token AND p.instance_id=i.id
 JOIN compute_nodes n ON n.id=i.node_id
-CROSS JOIN LATERAL (SELECT CASE WHEN i.application_standard_promotion_token IS NULL THEN b.receipt ELSE p.receipt END AS receipt) r
+CROSS JOIN LATERAL (SELECT coalesce(function_migration_runtime_receipt(i.id,i.node_id,i.wake_id),CASE WHEN i.application_standard_promotion_token IS NULL THEN b.receipt ELSE p.receipt END) AS receipt) r
 WHERE i.id=$1::uuid
 `
 
@@ -67533,11 +67533,12 @@ func (q *Queries) PublishInstanceRuntimeConfig(ctx context.Context, db DBTX, arg
 
 const publishOwnedInstanceRuntime = `-- name: PublishOwnedInstanceRuntime :one
 UPDATE instances SET netns=$1::text, host_ip=$2::inet,
-    guest_uid=$3::integer, started_at=clock_timestamp(), state=$4::text
-WHERE id=$5::uuid AND app_id=$6::uuid
-    AND deployment_id=$7::uuid AND node_id=$8::uuid
-    AND wake_id=$9::uuid AND state=$10::text
-    AND ($10::text NOT IN ('warm','frozen') OR EXISTS (
+    guest_uid=$3::integer, started_at=clock_timestamp(), state=$4::text,
+    last_request_at=CASE WHEN $5::text IN ('warm','frozen') THEN clock_timestamp() ELSE last_request_at END
+WHERE id=$6::uuid AND app_id=$7::uuid
+    AND deployment_id=$8::uuid AND node_id=$9::uuid
+    AND wake_id=$10::uuid AND state=$5::text
+    AND ($5::text NOT IN ('warm','frozen') OR EXISTS (
         SELECT 1 FROM runtime_instance_config_proofs proof WHERE proof.instance_id=instances.id
             AND proof.wake_id=instances.wake_id AND proof.node_id=instances.node_id
             AND proof.deployment_id=instances.deployment_id
@@ -67553,12 +67554,12 @@ type PublishOwnedInstanceRuntimeParams struct {
 	HostIp            netip.Addr
 	GuestUid          int32
 	TargetState       string
+	ExpectedState     string
 	InstanceID        pgtype.UUID
 	AppID             pgtype.UUID
 	DeploymentID      pgtype.UUID
 	NodeID            pgtype.UUID
 	WakeID            pgtype.UUID
-	ExpectedState     string
 	ConfigFingerprint string
 }
 
@@ -67582,18 +67583,22 @@ type PublishOwnedInstanceRuntimeRow struct {
 	RequestCount     int64
 }
 
+// A thawed frozen VM or a promoted warm one resumes for a wake: that is its
+// latest activity, not the request it paused after, which the reaper would
+// otherwise measure idleness from until the activity batch reports the
+// request that woke it (ADR-1151).
 func (q *Queries) PublishOwnedInstanceRuntime(ctx context.Context, db DBTX, arg PublishOwnedInstanceRuntimeParams) (PublishOwnedInstanceRuntimeRow, error) {
 	row := db.QueryRow(ctx, publishOwnedInstanceRuntime,
 		arg.Netns,
 		arg.HostIp,
 		arg.GuestUid,
 		arg.TargetState,
+		arg.ExpectedState,
 		arg.InstanceID,
 		arg.AppID,
 		arg.DeploymentID,
 		arg.NodeID,
 		arg.WakeID,
-		arg.ExpectedState,
 		arg.ConfigFingerprint,
 	)
 	var i PublishOwnedInstanceRuntimeRow
@@ -77743,7 +77748,14 @@ SELECT (SELECT values_json FROM deployment_release_secret_snapshots WHERE deploy
         FROM project_environment_config_versions c
         WHERE owner.project_id IS NOT NULL AND c.account_id=owner.account_id AND c.project_id=owner.project_id
             AND c.environment_slug=CASE WHEN owner.scope='default' THEN 'production' ELSE owner.scope END
-        ORDER BY c.version DESC LIMIT 1),'{}'::jsonb)::jsonb AS project_config
+        ORDER BY c.version DESC LIMIT 1),'{}'::jsonb)::jsonb AS project_config,
+    owner.project_id,
+    -- ADR-1139: the project environment secrets the deployment inherits.
+    COALESCE((SELECT jsonb_agg(jsonb_build_object('key',p.key,'ciphertext',encode(p.ciphertext,'base64'),'kid',p.kid,
+        'value_hash',p.value_hash,'secret_version',p.secret_version,'created_at',p.created_at,'updated_at',p.updated_at) ORDER BY p.key)
+        FROM project_environment_secrets p
+        WHERE owner.project_id IS NOT NULL AND p.account_id=owner.account_id AND p.project_id=owner.project_id
+            AND p.environment_slug=CASE WHEN owner.scope='default' THEN 'production' ELSE owner.scope END),'[]'::jsonb)::jsonb AS project_secrets
 FROM owner
 `
 
@@ -77770,6 +77782,8 @@ type ReadRuntimeAppValuesForDeploymentRow struct {
 	Secrets                    []byte
 	ReloadSignals              []byte
 	ProjectConfig              []byte
+	ProjectID                  pgtype.UUID
+	ProjectSecrets             []byte
 }
 
 func (q *Queries) ReadRuntimeAppValuesForDeployment(ctx context.Context, db DBTX, arg ReadRuntimeAppValuesForDeploymentParams) (ReadRuntimeAppValuesForDeploymentRow, error) {
@@ -77792,6 +77806,8 @@ func (q *Queries) ReadRuntimeAppValuesForDeployment(ctx context.Context, db DBTX
 		&i.Secrets,
 		&i.ReloadSignals,
 		&i.ProjectConfig,
+		&i.ProjectID,
+		&i.ProjectSecrets,
 	)
 	return i, err
 }
@@ -90945,7 +90961,7 @@ WITH generation_lock AS (
         SELECT 1 FROM app_application_standards s WHERE s.org_id=a.org_id AND s.app_id=a.id
             AND (s.exception_expires_at IS NULL OR now()<s.exception_expires_at)))
 ), thawed AS (
-    UPDATE instances SET started_at=clock_timestamp(), state='running'
+    UPDATE instances SET started_at=clock_timestamp(), last_request_at=clock_timestamp(), state='running'
     WHERE id=$3::uuid AND app_id=$1::uuid
         AND deployment_id=$4::uuid AND node_id=$5::uuid
         AND wake_id=$6::uuid AND state='frozen'
@@ -91016,6 +91032,7 @@ type ThawFrozenInstanceRow struct {
 // config proof must still be the ticket's, and an enrollment exception,
 // which expires with time and moves no generation, must not have expired.
 // The transition event and instance_changed notification commit with it.
+// The thaw is the instance's latest activity, as in PublishOwnedInstanceRuntime.
 // No row means a guard refused and nothing changed.
 func (q *Queries) ThawFrozenInstance(ctx context.Context, db DBTX, arg ThawFrozenInstanceParams) (ThawFrozenInstanceRow, error) {
 	row := db.QueryRow(ctx, thawFrozenInstance,

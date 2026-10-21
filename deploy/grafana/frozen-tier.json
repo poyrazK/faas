@@ -149,7 +149,7 @@
       },
       "targets": [
         {
-          "expr": "sum(increase(schedd_frozen_thaw_total{outcome=\"success\"}[1h])) / clamp_min(sum(increase(schedd_frozen_thaw_total[1h])), 1)",
+          "expr": "sum(increase(schedd_frozen_thaw_total{outcome=~\"success|fast\"}[1h])) / clamp_min(sum(increase(schedd_frozen_thaw_total[1h])), 1)",
           "refId": "A"
         }
       ],

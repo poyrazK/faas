@@ -540,9 +540,9 @@ export class EdgeRulesService {
      */
     rule?: string,
     /**
-     * Only events with this outcome; detected, warned and blocked are kind=waf detections.
+     * Only events with this outcome; detected, warned and blocked are kind=waf detections; challenged, rejected, solved and failed are kind=challenge outcomes.
      */
-    outcome?: 'matched' | 'logged' | 'detected' | 'warned' | 'blocked',
+    outcome?: 'matched' | 'logged' | 'detected' | 'warned' | 'blocked' | 'challenged' | 'rejected' | 'solved' | 'failed',
     /**
      * Duration such as 1h, 24h or 7d.
      */

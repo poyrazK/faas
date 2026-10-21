@@ -31,6 +31,11 @@ func WriteHandlerFailure(w http.ResponseWriter, r *http.Request, err error) {
 		return
 	}
 	message := "handler process failed"
+	if errors.Is(err, errBackgroundCapacity) {
+		// The handler and its side effects already ran before its registration
+		// reached admission. Treat refusal as terminal, never as retryable work.
+		message = "background task capacity exceeded"
+	}
 	if isProtocolFailure(err) {
 		message = "handler returned an invalid response"
 	}
@@ -45,6 +50,9 @@ func WriteHandlerFailure(w http.ResponseWriter, r *http.Request, err error) {
 }
 
 func isCustomerCodeFailure(err error) bool {
+	if errors.Is(err, errBackgroundCapacity) {
+		return true
+	}
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) {
 		// ExitCode is -1 when a signal ended the process.

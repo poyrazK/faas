@@ -117,7 +117,7 @@ func selectInternalUpstreamMode(computeDiscovery, internalTarget string) interna
 
 // selectInternalDialer builds the control-plane edge's upstream dialer for
 // mode. Static mode also points target at the configured host.
-func selectInternalDialer(ctx context.Context, mode internalUpstreamMode, internalTarget string, target *url.URL, pgStore *state.PgStore, pool *pgxpool.Pool, log *slog.Logger) (gateway.InternalDialer, error) {
+func selectInternalDialer(ctx context.Context, mode internalUpstreamMode, internalTarget string, target *url.URL, pgStore *state.EdgeStore, pool *pgxpool.Pool, log *slog.Logger) (gateway.InternalDialer, error) {
 	switch mode {
 	case internalUpstreamDatabase:
 		cgp := newComputeGatewayPool(pgStore, log).(*computeGatewayPool).withRestartWait()
@@ -272,13 +272,10 @@ func run(ctx context.Context, log *slog.Logger) error {
 		return fmt.Errorf("gatewayd-public: open db: %w", err)
 	}
 	defer pool.Close()
-	// pgStore is the shared state.Store. gatewayd-public only
-	// needs ActiveComputeNodes (for the leader-election adapter
-	// in cmd/gatewayd-public/store_adapter.go); the rest of the
-	// store's surface is for gatewayd-internal (apps, accounts,
-	// sessions). We construct it here so the DNSHandoff wiring
-	// has a Store to call into. Mirrors cmd/gatewayd-internal/run.go:366.
-	pgStore := state.NewPgStore(pool)
+	// pgStore is the edge store: the queries gatewayd-public runs and
+	// nothing else, so a store change elsewhere does not change this
+	// daemon (docs/adr/20261021092138-edge-store-blast-radius.md).
+	pgStore := state.NewEdgeStore(pool)
 	tcpMetrics := tcpmetrics.New(prometheus.NewRegistry(), "gatewayd_public")
 	tcpStop, tcpDrain, err := startTCPIngress(ctx, log, pgStore, tcpMetrics)
 	if err != nil {
@@ -649,34 +646,11 @@ func run(ctx context.Context, log *slog.Logger) error {
 			return fmt.Errorf("gatewayd-public: compute edge routes: %w", err)
 		}
 	} else if publicStorageRegistry != nil {
-		requestMetrics, _ := any(pgStore).(state.ObjectStorageProviderUsageStore)
-		accounting, _ := any(pgStore).(state.ObjectStorageAccountingStore)
-		publicHandler, publicErr := objectstorage.NewPublicReadHandler(objectstorage.PublicReadConfig{
-			Store: pgStore, Registry: publicStorageRegistry, RequestMetrics: requestMetrics,
-			Accounting: accounting, Enabled: s3Flag.Load, AppsDomain: os.Getenv("FAAS_APPS_DOMAIN"),
-			Next: controlPlaneHandler, Log: log,
-		})
-		if publicErr != nil {
-			return fmt.Errorf("gatewayd-public: public object storage handler: %w", publicErr)
+		rootHandler, err = publicObjectStorageRoot(pgStore, publicStorageRegistry, s3Flag.Load,
+			os.Getenv("FAAS_APPS_DOMAIN"), controlPlaneHandler, log)
+		if err != nil {
+			return err
 		}
-		rootHandler = publicHandler
-		if routes, routeStoreOK := any(pgStore).(state.ObjectUploadRouteStore); routeStoreOK {
-			if buckets, bucketStoreOK := any(pgStore).(state.ObjectBucketStore); bucketStoreOK {
-				if authenticator, authOK := any(pgStore).(objectstorage.UploadAuthenticator); authOK {
-					upload, uploadErr := objectstorage.NewUploadHandler(objectstorage.UploadConfig{
-						Store: pgStore, Routes: routes, Buckets: buckets, Authenticator: authenticator,
-						Registry: publicStorageRegistry, Accounting: accounting, RequestMetrics: requestMetrics, Enabled: s3Flag.Load,
-						AppsDomain: os.Getenv("FAAS_APPS_DOMAIN"), Next: publicHandler, Log: log,
-					})
-					if uploadErr != nil {
-						return fmt.Errorf("gatewayd-public: object upload handler: %w", uploadErr)
-					}
-					rootHandler = upload
-					log.Info("gatewayd-public: policy-controlled object uploads enabled")
-				}
-			}
-		}
-		log.Info("gatewayd-public: public object storage reads enabled")
 	}
 	tenantRoot = rootHandler
 	traceMux.Handle("/", rootHandler)

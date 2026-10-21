@@ -169,6 +169,10 @@ func (s *server) createAlertRule(w http.ResponseWriter, r *http.Request, acct st
 		api.WriteProblem(w, prob)
 		return
 	}
+	if prob := api.ValidateRouteInsightAlert(req.Metric, req.WindowSpec, app.ID); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	if prob := s.anomalyAlertsGate(acct, req.Comparison); prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -941,6 +945,9 @@ func validateAlertRuleRowUpdate(merged state.AlertRule) *api.Problem {
 		return p
 	}
 	if p := api.ValidateMCPProtocolAlert(string(merged.Metric), string(merged.Comparison), string(merged.WindowSpec), merged.Threshold, merged.MCPMinCalls, merged.MCPForMinutes); p != nil {
+		return p
+	}
+	if p := api.ValidateRouteInsightAlert(string(merged.Metric), string(merged.WindowSpec), merged.AppID); p != nil {
 		return p
 	}
 	if api.IsMCPProtocolMetric(string(merged.Metric)) && merged.AppID == "" {

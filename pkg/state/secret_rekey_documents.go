@@ -105,7 +105,7 @@ func TransformSecretRekeyDocument(d SecretRekeyDocument, transform func(SecretRe
 				}
 			}
 		}
-	case "app", "bundle", "deployment":
+	case "app", "bundle", "deployment", "project":
 		if err := visit(value); err != nil {
 			return nil, err
 		}

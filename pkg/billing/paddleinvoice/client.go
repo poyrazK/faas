@@ -262,8 +262,7 @@ func termsDays(days int) int {
 // needs before it bills a transaction (ADR-20261019100333).
 var ErrNoAddress = errors.New("paddle customer has no active address")
 
-// CustomerAddress returns the ID of the customer's most recently updated
-// active address.
+// CustomerAddress returns the ID of the customer's newest active address.
 func (c *Client) CustomerAddress(ctx context.Context, key, customerID string) (string, error) {
 	address, ok, err := c.ActiveAddress(ctx, key, customerID)
 	if err != nil {

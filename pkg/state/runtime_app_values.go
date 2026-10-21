@@ -24,6 +24,10 @@ type RuntimeAppValuesSnapshot struct {
 	SecretGrants  RuntimeAppSecretGrants
 	Configuration RuntimeAppConfiguration
 	SidecarLayers []DeploymentSidecarLayer
+
+	// InheritedSecrets are the project environment secrets the deployment
+	// inherits (ADR-1139), without the keys the app sets itself.
+	InheritedSecrets []ProjectEnvironmentSecret
 }
 
 type RuntimeAppValuesStore interface {

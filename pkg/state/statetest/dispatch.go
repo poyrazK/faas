@@ -154,9 +154,12 @@ var memDispatched = map[string]bool{
 	"RouteAdviceRouteStats":                                   true,
 	"RouteAdviceThrottleExcess":                               true,
 	"ListRouteInsights":                                       true,
+	"GetRouteInsight":                                         true,
+	"MarkRouteInsightsFixed":                                  true,
 	"ResolveStaleRouteInsights":                               true,
 	"RouteAwakeMinutes":                                       true,
 	"RouteInsightCandidateApps":                               true,
+	"RouteInsightsDetectedSince":                              true,
 	"UpsertRouteInsight":                                      true,
 	"RouteAwakeRouteMinutes":                                  true,
 	"RouteAwakeSourceMinutes":                                 true,
@@ -523,6 +526,15 @@ func (s *Mem) EdgeRuleHitStatsForApp(p0 context.Context, p1 string, p2 time.Time
 		return o.EdgeRuleHitStatsForApp(p0, p1, p2)
 	}
 	return s.MemStore.EdgeRuleHitStatsForApp(p0, p1, p2)
+}
+
+func (s *Mem) RouteInsightsDetectedSince(p0 context.Context, p1 string, p2 time.Time, p3 int) ([]state.RouteInsightDetection, int64, error) {
+	if o, ok := s.over.(interface {
+		RouteInsightsDetectedSince(context.Context, string, time.Time, int) ([]state.RouteInsightDetection, int64, error)
+	}); ok {
+		return o.RouteInsightsDetectedSince(p0, p1, p2, p3)
+	}
+	return s.MemStore.RouteInsightsDetectedSince(p0, p1, p2, p3)
 }
 
 func (s *Mem) EnvironmentWorkloadAdmissionRetired(p0 context.Context, p1 string, p2 string) (bool, error) {
@@ -1135,6 +1147,24 @@ func (s *Mem) ListRouteInsights(p0 context.Context, p1 sqlc.ListRouteInsightsPar
 	return s.MemStore.ListRouteInsights(p0, p1)
 }
 
+func (s *Mem) GetRouteInsight(p0 context.Context, p1 sqlc.GetRouteInsightParams) (sqlc.GetRouteInsightRow, error) {
+	if o, ok := s.over.(interface {
+		GetRouteInsight(context.Context, sqlc.GetRouteInsightParams) (sqlc.GetRouteInsightRow, error)
+	}); ok {
+		return o.GetRouteInsight(p0, p1)
+	}
+	return s.MemStore.GetRouteInsight(p0, p1)
+}
+
+func (s *Mem) MarkRouteInsightsFixed(p0 context.Context, p1 sqlc.MarkRouteInsightsFixedParams) (int64, error) {
+	if o, ok := s.over.(interface {
+		MarkRouteInsightsFixed(context.Context, sqlc.MarkRouteInsightsFixedParams) (int64, error)
+	}); ok {
+		return o.MarkRouteInsightsFixed(p0, p1)
+	}
+	return s.MemStore.MarkRouteInsightsFixed(p0, p1)
+}
+
 func (s *Mem) ResolveStaleRouteInsights(p0 context.Context, p1 sqlc.ResolveStaleRouteInsightsParams) (int64, error) {
 	if o, ok := s.over.(interface {
 		ResolveStaleRouteInsights(context.Context, sqlc.ResolveStaleRouteInsightsParams) (int64, error)
@@ -1308,6 +1338,8 @@ func (s *Mem) InstanceListByNodeForRecovery(p0 context.Context, p1 string) ([]st
 
 // pgDispatched lists the methods Pg forwards to its override.
 var pgDispatched = map[string]bool{
+	"MigrateInstanceOwnerWithRuntimeConfig":                              true,
+	"ResolveInstanceMigrationCommit":                                     true,
 	"ScenarioWebhookDeliveryBlocked":                                     true,
 	"SubmitOperatorRecovery":                                             true,
 	"AbandonProjectEnvironmentCloneConfigurationFence":                   true,
@@ -2631,6 +2663,24 @@ func (s *Pg) WithdrawProjectEnvironmentCloneCheckpointObjects(p0 context.Context
 		return o.WithdrawProjectEnvironmentCloneCheckpointObjects(p0, p1)
 	}
 	return s.PgStore.WithdrawProjectEnvironmentCloneCheckpointObjects(p0, p1)
+}
+
+func (s *Pg) MigrateInstanceOwnerWithRuntimeConfig(ctx context.Context, id, from, to, lease string, input state.RuntimeConfigMigration) error {
+	if o, ok := s.over.(interface {
+		MigrateInstanceOwnerWithRuntimeConfig(context.Context, string, string, string, string, state.RuntimeConfigMigration) error
+	}); ok {
+		return o.MigrateInstanceOwnerWithRuntimeConfig(ctx, id, from, to, lease, input)
+	}
+	return s.PgStore.MigrateInstanceOwnerWithRuntimeConfig(ctx, id, from, to, lease, input)
+}
+
+func (s *Pg) ResolveInstanceMigrationCommit(ctx context.Context, attempt state.MigrationCommitAttempt) (state.MigrationCommitResolution, error) {
+	if o, ok := s.over.(interface {
+		ResolveInstanceMigrationCommit(context.Context, state.MigrationCommitAttempt) (state.MigrationCommitResolution, error)
+	}); ok {
+		return o.ResolveInstanceMigrationCommit(ctx, attempt)
+	}
+	return s.PgStore.ResolveInstanceMigrationCommit(ctx, attempt)
 }
 
 func (s *Pg) WithdrawProjectEnvironmentCloneCheckpointPgBindings(p0 context.Context, p1 state.ProjectEnvironmentCloneLease) error {

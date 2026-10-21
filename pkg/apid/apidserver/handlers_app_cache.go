@@ -55,15 +55,23 @@ func (s *server) purgeAppCache(w http.ResponseWriter, r *http.Request, acct stat
 			return
 		}
 	}
+	if prob := s.requestCachePurge(r.Context(), app, pathGlob, tag); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// requestCachePurge records a validated purge of an app's cached responses;
+// route-insight fixes share it (ADR-20261020161310).
+func (s *server) requestCachePurge(ctx context.Context, app state.App, pathGlob, tag string) *api.Problem {
 	if purger, ok := s.store.(interface {
 		CreateResponseCachePurge(context.Context, string, string, string) (int64, error)
 	}); ok {
-		if _, err := purger.CreateResponseCachePurge(r.Context(), app.ID, pathGlob, tag); err != nil {
-			api.WriteProblem(w, api.ErrCapacity("could not request cache purge"))
-			return
+		if _, err := purger.CreateResponseCachePurge(ctx, app.ID, pathGlob, tag); err != nil {
+			return api.ErrCapacity("could not request cache purge")
 		}
-		w.WriteHeader(http.StatusNoContent)
-		return
+		return nil
 	}
 	payload, err := json.Marshal(struct {
 		AppID    string `json:"app_id"`
@@ -71,16 +79,13 @@ func (s *server) purgeAppCache(w http.ResponseWriter, r *http.Request, acct stat
 		Tag      string `json:"tag,omitempty"`
 	}{AppID: app.ID, PathGlob: pathGlob, Tag: tag})
 	if err != nil {
-		api.WriteProblem(w, api.ErrInternal("could not encode cache purge request"))
-		return
+		return api.ErrInternal("could not encode cache purge request")
 	}
 	if s.notif == nil {
-		api.WriteProblem(w, api.ErrCapacity("cache purge notifications are unavailable"))
-		return
+		return api.ErrCapacity("cache purge notifications are unavailable")
 	}
-	if err := s.notif.Notify(r.Context(), db.NotifyCachePurge, string(payload)); err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not request cache purge"))
-		return
+	if err := s.notif.Notify(ctx, db.NotifyCachePurge, string(payload)); err != nil {
+		return api.ErrCapacity("could not request cache purge")
 	}
-	w.WriteHeader(http.StatusNoContent)
+	return nil
 }

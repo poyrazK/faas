@@ -1244,9 +1244,12 @@ without re-running the build.
   every catalog row must have non-empty Title/Hint/Fix (and
   Hint ≤200 bytes, Why ≤512 bytes).
 - `cmd/gregale/lint_tripwires_test.go::TestLintTripwire_NoGlyphLiteralOutsideOutput` —
-  every customer-facing glyph (`✓ ✗ → ! — 💡 ┌─ │ └─`) is
+  every customer-facing glyph (`✓ ✗ → ! — ┌─ │ └─`) is
   centralised in `cmd/gregale/output.go`; no other file may
   use them verbatim.
+- `cmd/gregale/lint_tripwires_test.go::TestLintTripwire_NoEmojiInCLIOutput` —
+  no CLI string literal carries an emoji (UX spec §3.2). The hint
+  row renders as plain `hint:`.
 - `cmd/gregale/lint_tripwires_test.go::TestLintTripwire_NoLiteralDocsDomainEverywhere` —
   every docs URL routes through `wire.DocsHost`.
 
@@ -1651,6 +1654,7 @@ Prometheus (node_exporter + per-daemon `/metrics`) → self-hosted Grafana OSS o
 | `vmmd_snapshot_materialize_seconds{artifact,source}` p95 | `source="materialized"` rare; local sources ≪ 10 ms | `histogram_quantile(0.95, sum by (le) (rate(vmmd_snapshot_materialize_seconds_bucket{artifact="mem",source="materialized"}[5m]))) > 0.2` for 15 m warn — wakes are fetching the memory blob across the network. At the 130 MB fleet snapshot target one fetch can exceed the whole §6.3 wake budget, so a sustained rate means placement is landing away from snapshot replicas (ADR-063). Compare against the local-source quantile to price locality |
 | `vmmd_snapshot_materialize_bytes_total{artifact,source}` rate | n/a | none — diagnostic. Divided by the histogram it gives effective fetch throughput, which separates "the object is large" from "the fetch was slow". The `source="materialized"` series is the fleet's remote snapshot read volume |
 | `vmmd_restore_phase_duration_seconds{phase}` p50/p95 | quiet-node floor per phase (metal harness: stage_drives/stage_snapshot ≈ 0, resume_hook ≈ 33 ms) | none — diagnostic, operator-only. Splits the restore window, including the sub-phases the customer `wake.restore_breakdown` event omits (`stage_writable`, `pre_boot_join_wait`, `network_wait`), so a regression in one phase is attributable without Debug logs (hunt #9) |
+| `vmmd_resume_guest_stage_duration_seconds{stage}` p50/p95 | Go guest `total` ≪ `resume_hook`; Node/Python dominated by `userspace_reseed` | none — diagnostic, operator-only. The guest's own split of `resume_hook` from the ADR-022 timing frame: kernel reseed (`entropy`, `hwrng`), `clock`, `uuid_marker`, the ADR-687 `userspace_reseed` barrier, `after_restore`, the guest `total`, and `outside_guest` (the host's ack wait minus `total`: vsock transport plus the time before guest-init's handler ran). Guests captured before the frame shipped are not observed |
 | `vmmd_restore_pre_boot_files_total{outcome}` ratio | `skipped` dominates once captures are learned (#3490) | none — diagnostic. A `written` share near 100 % means the learned pre-boot skip is not firing |
 | `<daemon>_db_notify_hub_delivered_total{channel}` rate | n/a | none — diagnostic. `pg_notify` carries no routing, so one emit fans out to every interested subscriber on every daemon on every node. `sum by (channel) (rate(...))` divided by the channel's emit rate is the **broadcast amplification factor**; it grows linearly with fleet size while useful work stays flat |
 | `schedd_app_ownership_checks_total{outcome}` rate | `not_owned` ≈ (N-1)/N of the total on an N-node fleet | none — diagnostic, and the consumer-side half of the above. ADR-062 shards apps by `apps.node_id`; every schedd still receives every app-scoped notification and all but the owner discard it at `ownsApp`. A `not_owned` share materially **above** (N-1)/N means ownership is skewed, not merely broadcast. Read both series before deciding whether per-owner notify channels are worth building |

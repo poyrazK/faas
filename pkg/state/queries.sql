@@ -1701,8 +1701,13 @@ select id, app_id, deployment_id, state, coalesce(netns, ''), coalesce(guest_uid
 from instances where id = $1;
 
 -- name: PublishOwnedInstanceRuntime :one
+-- A thawed frozen VM or a promoted warm one resumes for a wake: that is its
+-- latest activity, not the request it paused after, which the reaper would
+-- otherwise measure idleness from until the activity batch reports the
+-- request that woke it (ADR-1151).
 UPDATE instances SET netns=sqlc.arg(netns)::text, host_ip=sqlc.arg(host_ip)::inet,
-    guest_uid=sqlc.arg(guest_uid)::integer, started_at=clock_timestamp(), state=sqlc.arg(target_state)::text
+    guest_uid=sqlc.arg(guest_uid)::integer, started_at=clock_timestamp(), state=sqlc.arg(target_state)::text,
+    last_request_at=CASE WHEN sqlc.arg(expected_state)::text IN ('warm','frozen') THEN clock_timestamp() ELSE last_request_at END
 WHERE id=sqlc.arg(instance_id)::uuid AND app_id=sqlc.arg(app_id)::uuid
     AND deployment_id=sqlc.arg(deployment_id)::uuid AND node_id=sqlc.arg(node_id)::uuid
     AND wake_id=sqlc.arg(wake_id)::uuid AND state=sqlc.arg(expected_state)::text
@@ -1758,6 +1763,7 @@ WHERE a.id=sqlc.arg(app_id)::uuid AND d.id=sqlc.arg(deployment_id)::uuid;
 -- config proof must still be the ticket's, and an enrollment exception,
 -- which expires with time and moves no generation, must not have expired.
 -- The transition event and instance_changed notification commit with it.
+-- The thaw is the instance's latest activity, as in PublishOwnedInstanceRuntime.
 -- No row means a guard refused and nothing changed.
 WITH generation_lock AS (
     SELECT g.app_id FROM app_runtime_generations g
@@ -1768,7 +1774,7 @@ WITH generation_lock AS (
         SELECT 1 FROM app_application_standards s WHERE s.org_id=a.org_id AND s.app_id=a.id
             AND (s.exception_expires_at IS NULL OR now()<s.exception_expires_at)))
 ), thawed AS (
-    UPDATE instances SET started_at=clock_timestamp(), state='running'
+    UPDATE instances SET started_at=clock_timestamp(), last_request_at=clock_timestamp(), state='running'
     WHERE id=sqlc.arg(instance_id)::uuid AND app_id=sqlc.arg(app_id)::uuid
         AND deployment_id=sqlc.arg(deployment_id)::uuid AND node_id=sqlc.arg(node_id)::uuid
         AND wake_id=sqlc.arg(wake_id)::uuid AND state='frozen'
@@ -7914,7 +7920,14 @@ SELECT (SELECT values_json FROM deployment_release_secret_snapshots WHERE deploy
         FROM project_environment_config_versions c
         WHERE owner.project_id IS NOT NULL AND c.account_id=owner.account_id AND c.project_id=owner.project_id
             AND c.environment_slug=CASE WHEN owner.scope='default' THEN 'production' ELSE owner.scope END
-        ORDER BY c.version DESC LIMIT 1),'{}'::jsonb)::jsonb AS project_config
+        ORDER BY c.version DESC LIMIT 1),'{}'::jsonb)::jsonb AS project_config,
+    owner.project_id,
+    -- ADR-1139: the project environment secrets the deployment inherits.
+    COALESCE((SELECT jsonb_agg(jsonb_build_object('key',p.key,'ciphertext',encode(p.ciphertext,'base64'),'kid',p.kid,
+        'value_hash',p.value_hash,'secret_version',p.secret_version,'created_at',p.created_at,'updated_at',p.updated_at) ORDER BY p.key)
+        FROM project_environment_secrets p
+        WHERE owner.project_id IS NOT NULL AND p.account_id=owner.account_id AND p.project_id=owner.project_id
+            AND p.environment_slug=CASE WHEN owner.scope='default' THEN 'production' ELSE owner.scope END),'[]'::jsonb)::jsonb AS project_secrets
 FROM owner;
 
 -- name: LockRuntimeConfigWorkloadSpec :many
@@ -10197,7 +10210,7 @@ SELECT r.receipt::jsonb AS receipt,coalesce(i.state IN ('running','snapshotting'
  AND r.receipt->'binding'->>'node_id'=i.node_id::text
  AND r.receipt->'binding'->>'incarnation'=n.vmmd_incarnation::text
  AND (r.receipt->'binding'->>'protocol_version')::integer<=n.vmmd_admission_protocol
- AND r.receipt->'binding'->>'captured_input_hash'=a.native_input_hash
+ AND r.receipt->'binding'->>'captured_input_hash'=application_standard_native_input_hash(a.input_snapshot,i.node_id)
  AND r.receipt->>'netns'=i.netns AND r.receipt->>'host_ip'=host(i.host_ip)
  AND r.receipt->>'lease_uid'=i.guest_uid::text AND r.receipt->>'paused'='false'
  AND (i.application_standard_promotion_token IS NULL OR p.parent_token=b.token),false)::boolean AS valid
@@ -10205,7 +10218,7 @@ FROM instances i JOIN instance_application_standard_admissions a ON a.instance_i
 JOIN instance_application_standard_boots b ON b.token=i.application_standard_boot_token AND b.instance_id=i.id
 LEFT JOIN instance_application_standard_promotions p ON p.token=i.application_standard_promotion_token AND p.instance_id=i.id
 JOIN compute_nodes n ON n.id=i.node_id
-CROSS JOIN LATERAL (SELECT CASE WHEN i.application_standard_promotion_token IS NULL THEN b.receipt ELSE p.receipt END AS receipt) r
+CROSS JOIN LATERAL (SELECT coalesce(function_migration_runtime_receipt(i.id,i.node_id,i.wake_id),CASE WHEN i.application_standard_promotion_token IS NULL THEN b.receipt ELSE p.receipt END) AS receipt) r
 WHERE i.id=sqlc.arg(instance_id)::uuid;
 
 -- Private diagnostic: current parent/control/artifact fences are nonwaiting.

@@ -7,7 +7,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
-func (s *PgStore) ReadTrackedObjectUploadMutation(ctx context.Context, c ObjectUploadCompletion) (ObjectBucketMutation, error) {
+func (s *pgCore) ReadTrackedObjectUploadMutation(ctx context.Context, c ObjectUploadCompletion) (ObjectBucketMutation, error) {
 	if !validUploadMutationScope(c) {
 		return ObjectBucketMutation{}, ErrConflict
 	}

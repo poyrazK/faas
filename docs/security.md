@@ -379,6 +379,18 @@ does; each step doubles it. `--challenge-pass-ttl` (300 to 86400 seconds)
 sets how long a pass lasts. Visitors need JavaScript; without it the page
 explains that it is required.
 
+An enforced challenge rule records what it did as security events, with
+the client's address, country, User-Agent and path: `challenged` (the page
+was served), `rejected` (a request that was not a page load got `403`),
+`solved` (a browser earned a pass) and `failed` (a solution was refused: a
+forged token, one carried to another machine, or too little work). Visitors
+who already hold a pass or a verified credential are counted, not recorded.
+In log mode the rule's matches appear as `logged` events instead.
+
+```sh
+gregale edge-rules events --app my-site --outcome rejected
+```
+
 ## Outbound connections and DNS
 
 Workloads reach the internet by name. Outbound TCP is allowed only to addresses
