@@ -886,8 +886,13 @@ type Manager struct {
 	// ProcessExited records a pending marker only for this narrow phase;
 	// an exit observed after explicit Destroy has removed live must not
 	// be mistaken for a future Wake of the same id.
-	waking     map[string]struct{}
-	exportDirs map[string]string // instance -> host export dir (builder VMs only, M6)
+	waking map[string]wakingInstance
+	// provenWorkers holds the deployments whose declared worker passed the
+	// full characterization window on this node; their later cold boots
+	// use the short window (ADR-20261018101500). Guarded by mu. Losing it on restart
+	// costs one full window per deployment.
+	provenWorkers map[string]struct{}
+	exportDirs    map[string]string // instance -> host export dir (builder VMs only, M6)
 	// cidToID (issue #470 / PR #470-FU-B) is the reverse
 	// Firecracker-vsock-CID → instance id index the framework_ready
 	// DGRAM receipt path uses to resolve the peer CID to a live
@@ -1287,7 +1292,7 @@ func NewManager(run Runner, vmm VMM, paths Paths, fcVersion string, log *slog.Lo
 		pendingProcessExits:               make(map[string]int),
 		processGenerations:                make(map[string]uint64),
 		processStartedAt:                  make(map[string]time.Time),
-		waking:                            make(map[string]struct{}),
+		waking:                            make(map[string]wakingInstance),
 		exportDirs:                        make(map[string]string),
 		// Issue #470 / PR #470-FU-B: O(1) CID→instance lookup
 		// for the framework_ready DGRAM receipt path. See the
@@ -2824,6 +2829,92 @@ func (m *Manager) InstanceIdentity(instance string) (appID, accountID string, er
 		return "", "", fmt.Errorf("fcvm: InstanceIdentity %s: not live", instance)
 	}
 	return inst.AppID, inst.AccountID, nil
+}
+
+// wakingInstance is the identity a wake fixed for its lease before the
+// instance is published live. Qualification restores leave it empty: their
+// candidates get no workload identity.
+type wakingInstance struct {
+	appID     string
+	accountID string
+	contained bool // a rehearsal run contains it (ADR-20261017201005)
+}
+
+// WorkloadTokenIdentity resolves the identity a workload-identity token is
+// minted for: a live instance, or one still booting. A guest's workload runs
+// before readiness (a worker is characterized for the whole
+// CharacterizationDeadline), and the identity is fixed when the wake starts,
+// so a queue consumer can lease while it boots (ADR-1141 amendment
+// 2026-10-17). Other guest services keep InstanceIdentity's live-only rule.
+//
+// A live instance goes through InstanceExternalActionIdentity. A booting one
+// gets the same rehearsal containment: no token while its app has a contained
+// run or the wake joined one.
+func (m *Manager) WorkloadTokenIdentity(ctx context.Context, instance string) (string, string, error) {
+	m.mu.Lock()
+	_, live := m.live[instance]
+	booting, waking := m.waking[instance]
+	m.mu.Unlock()
+	if live || !waking {
+		return m.InstanceExternalActionIdentity(ctx, instance)
+	}
+	if booting.appID == "" || booting.accountID == "" {
+		return "", "", fmt.Errorf("fcvm: WorkloadTokenIdentity %s: booting without an app identity", instance)
+	}
+	if booting.contained {
+		return "", "", ErrRehearsalExternalActionDenied
+	}
+	run, err := m.rehearsalNetworkRun(ctx, booting.appID)
+	if err != nil {
+		return "", "", err
+	}
+	if run != "" {
+		return "", "", ErrRehearsalExternalActionDenied
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if current, ok := m.waking[instance]; !ok || current != booting {
+		return "", "", fmt.Errorf("fcvm: WorkloadTokenIdentity %s: changed during policy read", instance)
+	}
+	return booting.appID, booting.accountID, nil
+}
+
+// workerProven reports whether a declared worker's deployment already
+// passed the full characterization window on this node, so its next cold
+// boot only has to show that the process started (ADR-20261018101500).
+func (m *Manager) workerProven(req WakeRequest) bool {
+	if req.ExecutionMode != api.ExecutionModeWorker || req.DeploymentID == "" {
+		return false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	_, ok := m.provenWorkers[req.DeploymentID]
+	return ok
+}
+
+// recordProvenWorkerLocked remembers a declared worker's deployment once one
+// of its cold boots characterized as a worker. The caller holds mu.
+func (m *Manager) recordProvenWorkerLocked(inst *Instance) {
+	if inst.Method != WakeColdBoot || inst.ExecutionMode != api.ExecutionModeWorker || inst.DeploymentID == "" ||
+		inst.Characterization.ObservedClass != api.ExecutionModeWorker {
+		return
+	}
+	if m.provenWorkers == nil {
+		m.provenWorkers = make(map[string]struct{})
+	}
+	m.provenWorkers[inst.DeploymentID] = struct{}{}
+}
+
+// forgetProvenWorker sends a deployment's next cold boot back through the
+// full window after one failed, so a regression surfaces as a startup
+// failure rather than as a crash after readiness.
+func (m *Manager) forgetProvenWorker(deploymentID string) {
+	if deploymentID == "" {
+		return
+	}
+	m.mu.Lock()
+	delete(m.provenWorkers, deploymentID)
+	m.mu.Unlock()
 }
 
 // HasInstanceOwnership gates recovered failure reports (ADR-471). An absent
@@ -4371,9 +4462,9 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	lease.DisableStartupCPUBoost = req.DisableStartupCPUBoost
 	m.mu.Lock()
 	if m.waking == nil {
-		m.waking = make(map[string]struct{})
+		m.waking = make(map[string]wakingInstance)
 	}
-	m.waking[req.Instance] = struct{}{}
+	m.waking[req.Instance] = wakingInstance{appID: req.AppID, accountID: req.AccountID, contained: req.RehearsalRunID != ""}
 	m.mu.Unlock()
 	lease = m.beginProcessAttempt(lease)
 	m.beginFunctionExecutionBoot(lease, req)
@@ -5122,6 +5213,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		}
 		delete(m.waking, req.Instance)
 		m.live[req.Instance] = inst
+		m.recordProvenWorkerLocked(inst)
 		if starting := m.functionStarting[req.Instance]; starting != nil && starting.Lease.processGeneration == inst.Lease.processGeneration {
 			inst.functionExecutions = starting.functionExecutions
 			delete(m.functionStarting, req.Instance)
@@ -5375,6 +5467,7 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 		timings.coldBootMs = time.Since(coldBootStartedAt).Milliseconds()
 	}
 	if coldBootErr != nil {
+		m.forgetProvenWorker(req.DeploymentID)
 		// Issue #1059 / ADR-127: terminal cold-boot failure
 		// counter. Distinct from the restore-fallback
 		// IncrementAbove because BootColdBoot is reached only

@@ -36,13 +36,19 @@ func (e *Engine) parkFrozenLocked(ctx context.Context, frozen state.Instance, re
 		e.log.Warn("sched: frozen park: destroy", "instance", frozen.ID, "reason", reason, "err", err)
 	}
 	e.ledger.Release(frozen.ID)
-	if err := updateInstanceStateCAS(cleanupCtx, e.store, frozen.ID, string(state.StateFrozen), string(state.StateParked)); err != nil {
+	// A worker has no snapshot to wake from (ADR-138): it stops, and the
+	// pool cold-boots the next one (ADR-20261019103000).
+	next := state.StateParked
+	if !instanceModeUsesSnapshots(frozen.Mode) {
+		next = state.StateStopped
+	}
+	if err := updateInstanceStateCAS(cleanupCtx, e.store, frozen.ID, string(state.StateFrozen), string(next)); err != nil {
 		if !errors.Is(err, state.ErrConflict) {
 			e.log.Warn("sched: frozen park: park row", "instance", frozen.ID, "reason", reason, "err", err)
 		}
 		return
 	}
-	e.recordCommittedInstanceTransition(cleanupCtx, frozen, state.StateFrozen, state.StateParked, frozen.AppID, "frozen_park", reason)
+	e.recordCommittedInstanceTransition(cleanupCtx, frozen, state.StateFrozen, next, frozen.AppID, "frozen_park", reason)
 	e.observeFrozenPark(reason)
 }
 

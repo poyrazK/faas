@@ -29,10 +29,13 @@ func (s *adoptIdentityNode) AdoptMigratedInstance(ctx context.Context, _ *vmmdpb
 	return &vmmdpb.AdoptMigratedInstanceResponse{}, nil
 }
 
-// The destination boot emits wake timeline events, which vmmd drops without
-// the app identity: every migration lost its readiness and boot rows (H5-18).
-func TestAdoptMigratedInstanceCarriesAppIdentity(t *testing.T) {
-	node := &adoptIdentityNode{}
+func (s *adoptIdentityNode) CreateColdBoot(ctx context.Context, _ *vmmdpb.CreateColdBootRequest) (*vmmdpb.WakeResponse, error) {
+	s.fields, _ = wire.CorrelationFromIncoming(ctx)
+	return &vmmdpb.WakeResponse{}, nil
+}
+
+func newAdoptIdentityClient(t *testing.T, node *adoptIdentityNode) *sched.VMMClient {
+	t.Helper()
 	server := grpc.NewServer()
 	vmmdpb.RegisterVmmdServer(server, node)
 	listener := bufconn.Listen(1024 * 1024)
@@ -43,7 +46,29 @@ func TestAdoptMigratedInstanceCarriesAppIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = conn.Close(); _ = listener.Close() })
-	client := sched.NewVMMClient(conn)
+	return sched.NewVMMClient(conn)
+}
+
+// A deploy prime boots without wake correlation, yet vmmd keys a proven
+// worker deployment on the deployment it reads from this metadata (ADR-20261018101500).
+func TestCreateColdBootCarriesIdentityWithoutWakeCorrelation(t *testing.T) {
+	node := &adoptIdentityNode{}
+	client := newAdoptIdentityClient(t, node)
+	app := sched.AppSpec{Plan: api.PlanPro, AppID: "app-1", DeploymentID: "dep-1"}
+	_, _ = client.CreateColdBoot(t.Context(), "instance-1", app)
+	if node.fields.AppID != "app-1" || node.fields.DeploymentID != "dep-1" || node.fields.InstanceID != "instance-1" {
+		t.Fatalf("cold boot correlation = %+v, want the app, deployment and instance", node.fields)
+	}
+	if node.fields.WakeID != "" {
+		t.Fatalf("cold boot invented wake id %q; wake events stay keyed on a real wake", node.fields.WakeID)
+	}
+}
+
+// The destination boot emits wake timeline events, which vmmd drops without
+// the app identity: every migration lost its readiness and boot rows (H5-18).
+func TestAdoptMigratedInstanceCarriesAppIdentity(t *testing.T) {
+	node := &adoptIdentityNode{}
+	client := newAdoptIdentityClient(t, node)
 	app := sched.AppSpec{Plan: api.PlanPro, AppID: "app-1", DeploymentID: "dep-1"}
 	if _, err := client.AdoptMigratedInstance(t.Context(), "source", "instance-1", app, "mem", "state", "lease"); err != nil {
 		t.Fatal(err)
