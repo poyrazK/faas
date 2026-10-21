@@ -7,6 +7,7 @@ import type { CreateEdgeRuleRequest } from '../models/CreateEdgeRuleRequest.js';
 import type { DeploymentRoutePolicySnapshotResponse } from '../models/DeploymentRoutePolicySnapshotResponse.js';
 import type { EdgeRuleEventsResponse } from '../models/EdgeRuleEventsResponse.js';
 import type { EdgeRuleListResponse } from '../models/EdgeRuleListResponse.js';
+import type { EdgeRuleRecipeSuggestionsResponse } from '../models/EdgeRuleRecipeSuggestionsResponse.js';
 import type { EdgeRuleResponse } from '../models/EdgeRuleResponse.js';
 import type { EdgeRuleSetVersionResponse } from '../models/EdgeRuleSetVersionResponse.js';
 import type { EdgeRuleStatsResponse } from '../models/EdgeRuleStatsResponse.js';
@@ -593,6 +594,7 @@ export class EdgeRulesService {
   public static getEdgeRuleStats({
     slug,
     window = '24h',
+    series = false,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
@@ -602,6 +604,10 @@ export class EdgeRulesService {
      * How far back to total hit counts.
      */
     window?: '1h' | '24h' | '7d',
+    /**
+     * Also return each rule's hourly totals (ADR-20261020105001).
+     */
+    series?: boolean,
   }): CancelablePromise<EdgeRuleStatsResponse> {
     return __request(OpenAPI, {
       method: 'GET',
@@ -611,10 +617,52 @@ export class EdgeRulesService {
       },
       query: {
         'window': window,
+        'series': series,
       },
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Protection recipes suggested from an app's own traffic.
+   * ADR-20261020105000. Reads the app's request telemetry over the last 7 days (or
+   * the plan's telemetry retention when shorter) and recommends
+   * protection recipes (ADR-986) with the parameters to add them with:
+   * blocking unverified bots when bots are a noticeable share of
+   * requests, rate-limiting busy or failing sign-in paths, and limiting
+   * /admin to known IPs. Recipes already added and paths an enabled rule
+   * of the same kind covers are skipped. Read-only; apply a suggestion
+   * with the recipe (dashboard or `gregale edge-rules recipe`). Plans
+   * without request analytics get 402.
+   *
+   * @returns EdgeRuleRecipeSuggestionsResponse Ranked suggestions, possibly empty.
+   * @throws ApiError
+   */
+  public static getEdgeRuleSuggestions({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<EdgeRuleRecipeSuggestionsResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/edge-rules/suggestions',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
