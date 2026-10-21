@@ -16196,6 +16196,47 @@ Alias for config set
 | `--if-hash <HASH>` | apply only if the current config hash matches |  |
 | `--yes` | confirm the configuration update |  |
 
+#### projects environments secrets
+
+List or change secrets shared by every service of the environment (values are write-only)
+
+`gregale projects environments secrets <set|rotate|unset> <project-slug> <environment-slug>`
+
+Examples:
+
+```sh
+gregale projects environments secrets shop production
+printf 'DATABASE_PASSWORD=%s\n' "$PW" | gregale projects environments secrets set shop production --from-stdin
+```
+
+##### projects environments secrets set
+
+Set shared secrets; services receive them at their next boot unless they set the key themselves
+
+`gregale projects environments secrets set [--from-stdin] [--file <PATH>] <project-slug> <environment-slug> [KEY=VALUE...]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--from-stdin` | read KEY=VALUE pairs from stdin (one per line) |  |
+| `--file <PATH>` | read KEY=VALUE pairs from a private file |  |
+
+##### projects environments secrets rotate
+
+Replace the values of existing shared secrets
+
+`gregale projects environments secrets rotate [--from-stdin] [--file <PATH>] <project-slug> <environment-slug> [KEY=VALUE...]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--from-stdin` | read KEY=VALUE pairs from stdin (one per line) |  |
+| `--file <PATH>` | read KEY=VALUE pairs from a private file |  |
+
+##### projects environments secrets unset
+
+Remove shared secrets
+
+`gregale projects environments secrets unset <project-slug> <environment-slug> <KEY...>`
+
 #### projects environments routes
 
 Manage environment routes
