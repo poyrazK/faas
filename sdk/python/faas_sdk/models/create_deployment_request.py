@@ -102,6 +102,9 @@ class CreateDeploymentRequest:
     mcp_task_migration_override: bool | Unset = UNSET
     """One-use operator override to allow this deployment to cut over while outstanding MCP tasks still need
     handler versions it does not provide."""
+    override_freeze: str | Unset = UNSET
+    """Release this deployment to production while a deploy freeze is active; the reason is audited with the
+    freezes it overrode (ADR-20261019071733)."""
     disable_startup_cpu_boost: bool | None | Unset = UNSET
     """Opt this deployment out of temporary startup CPU headroom. Omitted or null preserves the default boost."""
     full_rootfs_allow_auto: bool | None | Unset = UNSET
@@ -221,6 +224,8 @@ class CreateDeploymentRequest:
 
         mcp_task_migration_override = self.mcp_task_migration_override
 
+        override_freeze = self.override_freeze
+
         disable_startup_cpu_boost: bool | None | Unset
         if isinstance(self.disable_startup_cpu_boost, Unset):
             disable_startup_cpu_boost = UNSET
@@ -278,6 +283,8 @@ class CreateDeploymentRequest:
             field_dict["rollback_on_5xx"] = rollback_on_5xx
         if mcp_task_migration_override is not UNSET:
             field_dict["mcp_task_migration_override"] = mcp_task_migration_override
+        if override_freeze is not UNSET:
+            field_dict["override_freeze"] = override_freeze
         if disable_startup_cpu_boost is not UNSET:
             field_dict["disable_startup_cpu_boost"] = disable_startup_cpu_boost
         if full_rootfs_allow_auto is not UNSET:
@@ -488,6 +495,8 @@ class CreateDeploymentRequest:
 
         mcp_task_migration_override = d.pop("mcp_task_migration_override", UNSET)
 
+        override_freeze = d.pop("override_freeze", UNSET)
+
         def _parse_disable_startup_cpu_boost(data: object) -> bool | None | Unset:
             if data is None:
                 return data
@@ -534,6 +543,7 @@ class CreateDeploymentRequest:
             canary=canary,
             rollback_on_5xx=rollback_on_5xx,
             mcp_task_migration_override=mcp_task_migration_override,
+            override_freeze=override_freeze,
             disable_startup_cpu_boost=disable_startup_cpu_boost,
             full_rootfs_allow_auto=full_rootfs_allow_auto,
             full_rootfs_override=full_rootfs_override,

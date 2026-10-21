@@ -1,23 +1,24 @@
 //go:build !no_pg
 
-package state
+package state_test
 
 import (
 	"context"
 	"errors"
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/state"
 	"testing"
 	"time"
 )
 
 func TestPgSourceBuildRootfsLifecycle(t *testing.T) {
-	s, _ := registryVerificationPGStore(t)
-	sourceBuildRootfsLifecycle(t, s)
+	s, _ := state.RegistryVerificationPGStore(t)
+	state.SourceBuildRootfsLifecycle(t, s)
 }
 
 func TestPgSourceBuildRootfsQueuedClaimsAreFenced(t *testing.T) {
-	s, pool := registryVerificationPGStore(t)
-	f := sourceBuildRootfsFixture(t, s)
+	s, pool := state.RegistryVerificationPGStore(t)
+	f := state.SourceBuildRootfsFixture(t, s)
 	queuedID := uuid.NewString()
 	// An older queued row can still be claimed. It must not change the
 	// latest-started build between the approval check and rootfs stamp.
@@ -29,11 +30,11 @@ func TestPgSourceBuildRootfsQueuedClaimsAreFenced(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer tx.Rollback(t.Context())
-	input, _, err := prepareSourceBuildRootfs(f.Input)
+	input, _, err := state.PrepareSourceBuildRootfs(f.Input)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := lockSourceBuildRootfsParents(t.Context(), tx, input); err != nil {
+	if err := state.LockSourceBuildRootfsParents(t.Context(), tx, input); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
@@ -41,7 +42,7 @@ func TestPgSourceBuildRootfsQueuedClaimsAreFenced(t *testing.T) {
 	if _, err := s.ClaimQueuedBuild(ctx, queuedID); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatal("queued claim bypassed publication fence", err)
 	}
-	if queued, err := s.BuildByID(t.Context(), queuedID); err != nil || queued.Status != BuildQueued {
+	if queued, err := s.BuildByID(t.Context(), queuedID); err != nil || queued.Status != state.BuildQueued {
 		t.Fatal("queued claim changed while the publication lock was held", err)
 	}
 	if err := tx.Rollback(t.Context()); err != nil {
@@ -49,35 +50,41 @@ func TestPgSourceBuildRootfsQueuedClaimsAreFenced(t *testing.T) {
 	}
 	// An autocommit query cancelled by its caller may finish after unlock.
 	// Either that claim or this retry must leave a running latest build.
-	if _, err := s.ClaimQueuedBuild(t.Context(), queuedID); err != nil && !errors.Is(err, ErrNotFound) {
+	if _, err := s.ClaimQueuedBuild(t.Context(), queuedID); err != nil && !errors.Is(err, state.ErrNotFound) {
 		t.Fatal(err)
 	}
-	if claimed, err := s.BuildByID(t.Context(), queuedID); err != nil || claimed.Status != BuildRunning {
+	if claimed, err := s.BuildByID(t.Context(), queuedID); err != nil || claimed.Status != state.BuildRunning {
 		t.Fatal("unlocked queued claim did not run", err)
 	}
-	if _, err := s.PublishSourceBuildRootfs(t.Context(), f.Input); !errors.Is(err, ErrApplicationStandardRuntimeStale) {
+	if _, err := s.PublishSourceBuildRootfs(t.Context(), f.Input); !errors.Is(err, state.ErrApplicationStandardRuntimeStale) {
 		t.Fatal("newly claimed build failed to invalidate old approval", err)
 	}
 }
 func TestPgSourceBuildRootfsSuperseded(t *testing.T) {
-	s, _ := registryVerificationPGStore(t)
-	sourceBuildRootfsSuperseded(t, s)
+	s, _ := state.RegistryVerificationPGStore(t)
+	state.SourceBuildRootfsSuperseded(t, s)
 }
 func TestPgSourceBuildRootfsLateIntent(t *testing.T) {
 	for _, mode := range []string{"command", "manifest", "require_signed", "security_policy"} {
-		t.Run(mode, func(t *testing.T) { s, _ := registryVerificationPGStore(t); sourceBuildRootfsLateIntent(t, s, mode) })
+		t.Run(mode, func(t *testing.T) {
+			s, _ := state.RegistryVerificationPGStore(t)
+			state.SourceBuildRootfsLateIntent(t, s, mode)
+		})
 	}
 }
 
 func TestPgSourceBuildRootfsSubstitution(t *testing.T) {
 	for _, mode := range []string{"approval", "owner", "scope", "base hash", "injected guest", "missing runner", "wrong kind", "new build", "queued build"} {
-		t.Run(mode, func(t *testing.T) { s, _ := registryVerificationPGStore(t); sourceBuildRootfsSubstitution(t, s, mode) })
+		t.Run(mode, func(t *testing.T) {
+			s, _ := state.RegistryVerificationPGStore(t)
+			state.SourceBuildRootfsSubstitution(t, s, mode)
+		})
 	}
 }
 
 func TestPgSourceBuildRootfsRollsBackFailedStamp(t *testing.T) {
-	s, pool := registryVerificationPGStore(t)
-	f := sourceBuildRootfsFixture(t, s)
+	s, pool := state.RegistryVerificationPGStore(t)
+	f := state.SourceBuildRootfsFixture(t, s)
 	// Force a storage write failure after the producer INSERT. Both it and
 	// the current pointer must roll back with deployment metadata.
 	_, err := pool.Exec(t.Context(), `CREATE FUNCTION refuse_source_fixture_stamp() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'fixture stamp failure';END;$$;
@@ -99,8 +106,8 @@ func TestPgSourceBuildRootfsRollsBackFailedStamp(t *testing.T) {
 }
 
 func TestPgSourceBuildRootfsOwnerErasure(t *testing.T) {
-	s, pool := registryVerificationPGStore(t)
-	id := sourceBuildRootfsOwnerErasure(t, s)
+	s, pool := state.RegistryVerificationPGStore(t)
+	id := state.SourceBuildRootfsOwnerErasure(t, s)
 	var count int
 	if err := pool.QueryRow(t.Context(), `SELECT count(*) FROM source_build_rootfs WHERE id=$1`, id).Scan(&count); err != nil || count != 0 {
 		t.Fatal("erasure retained producer", count, err)
@@ -108,8 +115,8 @@ func TestPgSourceBuildRootfsOwnerErasure(t *testing.T) {
 }
 
 func TestPgSourceBuildRootfsNonwaitingAndImmutable(t *testing.T) {
-	s, pool := registryVerificationPGStore(t)
-	f := sourceBuildRootfsFixture(t, s)
+	s, pool := state.RegistryVerificationPGStore(t)
+	f := state.SourceBuildRootfsFixture(t, s)
 	for _, target := range []string{"app", "deployment", "build", "approval", "publisher", "artifact", "base"} {
 		t.Run(target, func(t *testing.T) {
 			tx, err := pool.Begin(t.Context())
@@ -138,7 +145,7 @@ func TestPgSourceBuildRootfsNonwaitingAndImmutable(t *testing.T) {
 			}
 			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 			defer cancel()
-			if _, err := s.PublishSourceBuildRootfs(ctx, f.Input); !errors.Is(err, ErrApplicationStandardRuntimeBusy) {
+			if _, err := s.PublishSourceBuildRootfs(ctx, f.Input); !errors.Is(err, state.ErrApplicationStandardRuntimeBusy) {
 				t.Fatal("publication waited or bypassed fence", err)
 			}
 		})
@@ -158,28 +165,28 @@ func TestPgSourceBuildRootfsNonwaitingAndImmutable(t *testing.T) {
 }
 
 func TestPgSourceBuildRootfsSoftDeleteRestore(t *testing.T) {
-	s, pool := registryVerificationPGStore(t)
-	id := sourceBuildRootfsSoftDeleteRestore(t, s)
+	s, pool := state.RegistryVerificationPGStore(t)
+	id := state.SourceBuildRootfsSoftDeleteRestore(t, s)
 	if _, err := pool.Exec(t.Context(), `DELETE FROM source_build_rootfs WHERE id=$1`, id); err == nil {
 		t.Fatal("restored live owner evidence erased")
 	}
 }
 
 func TestPgSourceBuildRootfsSharedRuntime(t *testing.T) {
-	s, _ := registryVerificationPGStore(t)
-	sourceBuildRootfsSharedRuntime(t, s)
+	s, _ := state.RegistryVerificationPGStore(t)
+	state.SourceBuildRootfsSharedRuntime(t, s)
 }
 
 func TestPgSetDeploymentRuntimeBase(t *testing.T) {
-	s, _ := registryVerificationPGStore(t)
-	_, _, dep, _, _ := buildExportFixtureClaim(t, s, AppTypeApp, "", "")
+	s, _ := state.RegistryVerificationPGStore(t)
+	_, _, dep, _, _ := state.BuildExportFixtureClaim(t, s, state.AppTypeApp, "", "")
 	if err := s.SetDeploymentRuntimeBase(t.Context(), dep.ID, "node22"); err != nil {
 		t.Fatal(err)
 	}
 	if got, err := s.DeploymentByID(t.Context(), dep.ID); err != nil || got.RuntimeBase != "node22" {
 		t.Fatalf("runtime base = %q (%v), want node22", got.RuntimeBase, err)
 	}
-	if err := s.SetDeploymentRuntimeBase(t.Context(), dep.ID, "python312"); !errors.Is(err, ErrInvalidArgument) {
+	if err := s.SetDeploymentRuntimeBase(t.Context(), dep.ID, "python312"); !errors.Is(err, state.ErrInvalidArgument) {
 		t.Fatalf("non-shared runtime accepted: %v", err)
 	}
 }

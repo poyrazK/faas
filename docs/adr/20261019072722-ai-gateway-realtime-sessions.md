@@ -1,0 +1,58 @@
+# ADR 20261019072722 · AI gateway phase 18: metered realtime sessions
+
+- **Status:** accepted
+- **Date:** 2026-10-19
+- **Relates to:** ADR-988 (AI gateway), ADR-989 (app relay), ADR-990 (prices, caps), ADR-994 (price catalog), ADR-997 (media metering), ADR-1120 (keyed settlement), ADR-1432 (unmetered endpoints), ADR-1435 (response checks), ADR-1436 (usage tags)
+- **Decision:**
+  - **OpenAI and Azure OpenAI Realtime sessions pass through the gateway, metered.** A WebSocket upgrade to `/v1/realtime` (Azure: `/openai/v1/realtime` or `/openai/realtime`) on an `openai` or `azure_openai` integration opens a session. Until now, outboundd stripped `Upgrade` as a hop-by-hop header, so these calls failed at the provider.
+  - **The proxy is transparent.**
+    - outboundd forwards the caller's handshake (`Sec-WebSocket-Key`, `Sec-WebSocket-Version`, `Sec-WebSocket-Protocol`) with the provider credential, through its ordinary egress client. The provider's `101` reaches the caller unchanged.
+    - It drops `Sec-WebSocket-Extensions`, so no compression is negotiated and every provider message stays readable.
+    - Frames are copied unchanged in both directions. outboundd reads the provider's text messages, up to `OutboundAIRealtimeMaxMessageBytes`, to meter the session; it never reads or changes what the caller sends.
+  - **The upgrade is admitted like a call:** plan gate, rate limits, caps, app attachment, `X-Gregale-AI-User` and `X-Gregale-AI-Tags`, with no reservation. A refusal is the usual problem response, before any `101`.
+  - **Each response is admitted and settled.**
+    - When the provider announces a response (`response.created`), outboundd admits it with a reservation.
+      - The reserved input is the previous response's input tokens, since a session's context only grows, or `OutboundAIRealtimeInputReserveTokens` for the first.
+      - The reserved output is `OutboundAIRealtimeOutputReserveTokens`.
+      - Both are priced at the model's audio prices, the dearer kind.
+    - `response.done` settles the response under its own lease (ADR-1120) with `response.usage`, split into text, audio, image and cached tokens. The settlement includes cancelled and incomplete responses, which report usage too.
+    - Each response is one request in usage, the request log and `outbound_ai_requests_total`. Tags and the end user of the upgrade apply to every response.
+  - **A refused response ends the session.** outboundd sends the caller an `error` event naming the refusal (for example `outbound_budget_exhausted` with the rejection reason), then closes both sides with close code 1008. The provider stops generating when its connection closes.
+  - **Transcriptions settle too.** `conversation.item.input_audio_transcription.completed` carries its own usage, in tokens or in seconds. It settles as one request of the transcription model named in the latest `session.created` or `session.updated`. Transcriptions follow input audio and cannot be refused ahead, so they count against caps from the next response's admission on.
+  - **The model** is `session.model` from `session.created` or `session.updated`, else the URL's `model` (Azure: `deployment`). Azure deployments with arbitrary names therefore price as the model they serve.
+  - **Unreadable usage fails closed.**
+    - A provider message outboundd cannot read (compressed, larger than the bound, malformed or not JSON) ends the session with 1008.
+    - A response that reports no usage settles as unknown usage at its reservation (ADR-996).
+    - A session that ends with responses open, for any reason, settles them the same way.
+  - **Sessions are bounded.** A session lasts at most `OutboundAIRealtimeSessionMaxSeconds`; outboundd then closes it with 1008.
+  - **Content policies cannot be enforced on audio.** An integration whose content policy checks requests or responses (detectors, blocked terms, moderation) refuses sessions with `403 outbound_ai_realtime_policy_unenforceable`.
+  - **Everything else stays unmetered.**
+    - A WebSocket upgrade to any other path of an AI integration is unmetered (ADR-1432). That includes Gemini's and Vertex's Live API, whose usage semantics are unsettled (below). It is refused with `403 outbound_ai_endpoint_unmetered`, or, with `allow_unmetered`, proxied without metering and counted in `outbound_ai_unmetered_calls_total`.
+    - WebRTC calls (`POST /v1/realtime/calls`) and ephemeral client secrets (`POST /v1/realtime/client_secrets`) stay unmetered writes: their media and keys bypass the gateway.
+    - Routes (`/r/…`) refuse upgrades with `400 outbound_ai_route_realtime_unsupported`, since a session cannot fall back to another target midway.
+    - Integrations without an AI provider keep ignoring `Upgrade`.
+  - **Audio prices.**
+    - The price catalog gains the providers' realtime models and three fields, `input_audio`, `cached_input_audio` and `output_audio`, in EUR millicents per million tokens from the same LiteLLM source.
+    - Price-list entries gain `input_audio_millicents_per_mtok`, `cached_input_audio_millicents_per_mtok` and `output_audio_millicents_per_mtok`. An absent audio price falls back to the text price of the same kind.
+    - Chat Completions audio usage (`prompt_tokens_details.audio_tokens`, `completion_tokens_details.audio_tokens`) is now priced at the audio prices too. Before, audio models through Chat Completions were priced at their text prices, about eight times too low.
+  - **Visibility.**
+    - Usage items gain `input_audio_tokens` and `output_audio_tokens`, which are part of the input and output totals.
+    - `outbound_ai_realtime_sessions_total{event}` counts sessions: opened, refused, and each kind of end.
+    - `outbound_ai_realtime_sessions_active` gauges open sessions.
+- **Why:**
+  - Voice apps are a common use of AI models, and the realtime APIs are how they are built. Through the gateway they failed, and outside it they escape caps, usage reports and tags.
+  - Admitting each response reuses every cap the gateway already has (daily and monthly cost, tokens, per-minute limits, end users, tags) at the granularity the provider bills. A session-wide reservation would either reserve far too much or let a long session run past its caps.
+  - Audio tokens cost eight to sixteen times text tokens, so pricing them as text would let caps admit eight times the spend they name.
+- **Consequences:**
+  - **A refused response can overshoot slightly.** The provider has already started generating it when `response.created` arrives, and anything it generates before the connection closes is not seen. This is bounded by the time to close, milliseconds.
+  - **Responses that outlive their lease** (longer than the integration's request timeout) still settle under the lease's key; only their in-flight slot is freed early.
+  - **Gemini and Vertex Live stay unmetered** (superseded by ADR 20261020161811, which meters them after a measured session). Google documents `usageMetadata` only as "usage metadata about response(s)" and as sent "periodically". Vertex's reference calls it the session's usage so far, while developers report per-turn values that re-bill the context. Metering on a guess would let caps admit up to twice the spend, or refuse half of it. They need a measured session against a real key first.
+  - **Per-second models are not token-priced.** Models priced per session second (`gpt-live-1`, `gpt-realtime-translate`) have no token prices; like other unpriced models, they settle tokens with no cost, so cost caps do not bound them.
+  - **New columns:**
+    - `outbound_ai_price_entries.input_audio_millicents_per_mtok`, `cached_input_audio_millicents_per_mtok` and `output_audio_millicents_per_mtok`;
+    - `outbound_ai_usage_daily.input_audio_tokens` and `output_audio_tokens`.
+- **Rejected alternatives:**
+  - **One reservation for the whole session.** It cannot be sized: sessions last up to an hour and their cost grows with the conversation.
+  - **Admitting on the caller's `response.create`.** With server-side voice activity detection, the provider creates responses without one.
+  - **Re-framing messages with a WebSocket library.** A transparent byte copy keeps the provider's framing, subprotocols and close codes exactly, and reads only one direction.
+  - **Metering Gemini Live from a guessed reading of `usageMetadata`.** Fail-closed is the gateway's rule for what it cannot meter (ADR-1432).

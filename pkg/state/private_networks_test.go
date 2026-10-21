@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 type privateNetworkScanRowStub struct {
@@ -37,7 +38,7 @@ func (r privateNetworkScanRowStub) Scan(dest ...any) error {
 
 func TestPrivateNetworkScannersAcceptPostgresInetText(t *testing.T) {
 	created := time.Date(2026, 9, 17, 0, 0, 0, 0, time.UTC)
-	network, err := scanPrivateNetwork(privateNetworkScanRowStub{values: []any{
+	network, err := state.ScanPrivateNetwork(privateNetworkScanRowStub{values: []any{
 		"network-id", "account-id", "prod", "fra1", "10.55.0.0/28", "ready", "", created, created,
 	}})
 	if err != nil {
@@ -54,7 +55,7 @@ func TestPrivateNetworkScannersAcceptPostgresInetText(t *testing.T) {
 		{text: "10.55.0.2/32", want: "10.55.0.2"},
 		{text: "10.55.0.3", want: "10.55.0.3"},
 	} {
-		address, err := scanPrivateNetworkAddress(privateNetworkScanRowStub{values: []any{
+		address, err := state.ScanPrivateNetworkAddress(privateNetworkScanRowStub{values: []any{
 			"address-id", "account-id", "network-id", "app", "app-id", tc.text, created,
 		}})
 		if err != nil {
@@ -65,26 +66,26 @@ func TestPrivateNetworkScannersAcceptPostgresInetText(t *testing.T) {
 		}
 	}
 
-	if _, err := scanPrivateNetwork(privateNetworkScanRowStub{values: []any{
+	if _, err := state.ScanPrivateNetwork(privateNetworkScanRowStub{values: []any{
 		"network-id", "account-id", "prod", "fra1", "not-a-cidr", "ready", "", created, created,
 	}}); err == nil {
 		t.Fatal("invalid network CIDR unexpectedly scanned")
 	}
-	if _, err := scanPrivateNetworkAddress(privateNetworkScanRowStub{values: []any{
+	if _, err := state.ScanPrivateNetworkAddress(privateNetworkScanRowStub{values: []any{
 		"address-id", "account-id", "network-id", "app", "app-id", "not-an-address", created,
 	}}); err == nil {
 		t.Fatal("invalid network address unexpectedly scanned")
 	}
 	scanErr := errors.New("scan failed")
-	if _, err := scanPrivateNetwork(privateNetworkScanRowStub{err: scanErr}); !errors.Is(err, scanErr) {
+	if _, err := state.ScanPrivateNetwork(privateNetworkScanRowStub{err: scanErr}); !errors.Is(err, scanErr) {
 		t.Fatalf("scanPrivateNetwork error = %v, want %v", err, scanErr)
 	}
 }
 
 func TestMemStorePrivateNetworkLifecycleAndAddressAllocation(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
-	network, err := store.CreatePrivateNetwork(ctx, PrivateNetwork{
+	store := state.NewMemStore()
+	network, err := store.CreatePrivateNetwork(ctx, state.PrivateNetwork{
 		AccountID: "acct-1", Name: "prod", Region: "fra1", CIDR: netip.MustParsePrefix("10.42.0.0/28"),
 		AllowedCIDRs:  []netip.Prefix{netip.MustParsePrefix("10.42.0.0/30")},
 		FirewallRules: []api.PrivateNetworkFirewallRule{{Direction: "ingress", Protocol: "tcp", Ports: []string{"443"}}},
@@ -109,13 +110,13 @@ func TestMemStorePrivateNetworkLifecycleAndAddressAllocation(t *testing.T) {
 	if err != nil || len(updated.FirewallRules) != 1 || updated.FirewallRules[0].Protocol != "udp" {
 		t.Fatalf("UpdatePrivateNetworkFirewallPolicy = %+v, err=%v", updated, err)
 	}
-	if _, err := store.UpdatePrivateNetworkPolicy(ctx, "acct-1", network.ID, []netip.Prefix{netip.MustParsePrefix("10.43.0.0/30")}); !errors.Is(err, ErrInvalidArgument) {
+	if _, err := store.UpdatePrivateNetworkPolicy(ctx, "acct-1", network.ID, []netip.Prefix{netip.MustParsePrefix("10.43.0.0/30")}); !errors.Is(err, state.ErrInvalidArgument) {
 		t.Fatalf("outside policy err = %v, want invalid argument", err)
 	}
-	if _, err := store.CreatePrivateNetwork(ctx, PrivateNetwork{AccountID: "acct-1", Name: "prod", Region: "fra1", CIDR: netip.MustParsePrefix("10.43.0.0/28")}); !errors.Is(err, ErrConflict) {
+	if _, err := store.CreatePrivateNetwork(ctx, state.PrivateNetwork{AccountID: "acct-1", Name: "prod", Region: "fra1", CIDR: netip.MustParsePrefix("10.43.0.0/28")}); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("duplicate name err = %v, want conflict", err)
 	}
-	if _, err := store.CreatePrivateNetwork(ctx, PrivateNetwork{AccountID: "acct-1", Name: "overlap", Region: "fra1", CIDR: netip.MustParsePrefix("10.42.0.0/28")}); !errors.Is(err, ErrConflict) {
+	if _, err := store.CreatePrivateNetwork(ctx, state.PrivateNetwork{AccountID: "acct-1", Name: "overlap", Region: "fra1", CIDR: netip.MustParsePrefix("10.42.0.0/28")}); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("overlap err = %v, want conflict", err)
 	}
 	first, err := store.AllocatePrivateNetworkAddress(ctx, "acct-1", network.ID, "app", "app-1")
@@ -137,7 +138,7 @@ func TestMemStorePrivateNetworkLifecycleAndAddressAllocation(t *testing.T) {
 	if err != nil || len(addresses) != 2 || addresses[0].Address.String() != "10.42.0.2" || addresses[1].Address.String() != "10.42.0.3" {
 		t.Fatalf("ListPrivateNetworkAddresses = %+v, err=%v", addresses, err)
 	}
-	if got := PrivateNetworkAddressCapacity(network.CIDR); got != 13 {
+	if got := state.PrivateNetworkAddressCapacity(network.CIDR); got != 13 {
 		t.Fatalf("PrivateNetworkAddressCapacity = %d, want 13", got)
 	}
 	if addresses, err := store.ListPrivateNetworkAddresses(ctx, "other-account", network.ID); err != nil || len(addresses) != 0 {
@@ -149,7 +150,7 @@ func TestMemStorePrivateNetworkLifecycleAndAddressAllocation(t *testing.T) {
 	if err := store.DeletePrivateNetwork(ctx, "acct-1", network.ID); err != nil {
 		t.Fatalf("delete network: %v", err)
 	}
-	if _, err := store.GetPrivateNetwork(ctx, "acct-1", network.ID); !errors.Is(err, ErrNotFound) {
+	if _, err := store.GetPrivateNetwork(ctx, "acct-1", network.ID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("deleted network err = %v, want not found", err)
 	}
 }
@@ -173,10 +174,10 @@ func TestValidatePrivateNetworkCIDR(t *testing.T) {
 
 func TestMemStorePrivateNetworkValidationAndErrorPaths(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
-	valid := PrivateNetwork{AccountID: "acct-1", Name: "prod", Region: "fra1", CIDR: netip.MustParsePrefix("10.42.0.0/28")}
+	store := state.NewMemStore()
+	valid := state.PrivateNetwork{AccountID: "acct-1", Name: "prod", Region: "fra1", CIDR: netip.MustParsePrefix("10.42.0.0/28")}
 
-	for name, network := range map[string]PrivateNetwork{
+	for name, network := range map[string]state.PrivateNetwork{
 		"missing account": {Name: "prod", Region: "fra1", CIDR: valid.CIDR},
 		"missing name":    {AccountID: "acct-1", Region: "fra1", CIDR: valid.CIDR},
 		"missing region":  {AccountID: "acct-1", Name: "prod", CIDR: valid.CIDR},
@@ -187,7 +188,7 @@ func TestMemStorePrivateNetworkValidationAndErrorPaths(t *testing.T) {
 		"bad status":      {AccountID: "acct-1", Name: "prod", Region: "fra1", CIDR: valid.CIDR, Status: "pending"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, err := store.CreatePrivateNetwork(ctx, network); !errors.Is(err, ErrInvalidArgument) {
+			if _, err := store.CreatePrivateNetwork(ctx, network); !errors.Is(err, state.ErrInvalidArgument) {
 				t.Fatalf("CreatePrivateNetwork error = %v, want invalid argument", err)
 			}
 		})
@@ -197,52 +198,52 @@ func TestMemStorePrivateNetworkValidationAndErrorPaths(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreatePrivateNetwork: %v", err)
 	}
-	if _, err := store.CreatePrivateNetwork(ctx, PrivateNetwork{AccountID: "acct-1", Name: "zeta", Region: "fra1", CIDR: netip.MustParsePrefix("10.43.0.0/28")}); err != nil {
+	if _, err := store.CreatePrivateNetwork(ctx, state.PrivateNetwork{AccountID: "acct-1", Name: "zeta", Region: "fra1", CIDR: netip.MustParsePrefix("10.43.0.0/28")}); err != nil {
 		t.Fatalf("CreatePrivateNetwork zeta: %v", err)
 	}
-	if _, err := store.CreatePrivateNetwork(ctx, PrivateNetwork{AccountID: "acct-1", Name: "alpha", Region: "fra2", CIDR: netip.MustParsePrefix("10.44.0.0/28")}); err != nil {
+	if _, err := store.CreatePrivateNetwork(ctx, state.PrivateNetwork{AccountID: "acct-1", Name: "alpha", Region: "fra2", CIDR: netip.MustParsePrefix("10.44.0.0/28")}); err != nil {
 		t.Fatalf("CreatePrivateNetwork alpha: %v", err)
 	}
 	networks, err := store.ListPrivateNetworks(ctx, "acct-1")
 	if err != nil || len(networks) != 3 || networks[0].Name != "alpha" || networks[2].Name != "zeta" {
 		t.Fatalf("ListPrivateNetworks = %+v, err=%v", networks, err)
 	}
-	if _, err := store.GetPrivateNetwork(ctx, "other-account", first.ID); !errors.Is(err, ErrNotFound) {
+	if _, err := store.GetPrivateNetwork(ctx, "other-account", first.ID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("GetPrivateNetwork wrong account = %v, want not found", err)
 	}
 
-	if _, err := store.AllocatePrivateNetworkAddress(ctx, "acct-1", first.ID, "", "owner"); !errors.Is(err, ErrInvalidArgument) {
+	if _, err := store.AllocatePrivateNetworkAddress(ctx, "acct-1", first.ID, "", "owner"); !errors.Is(err, state.ErrInvalidArgument) {
 		t.Fatalf("invalid owner type error = %v, want invalid argument", err)
 	}
-	if _, err := store.AllocatePrivateNetworkAddress(ctx, "other-account", first.ID, "app", "owner"); !errors.Is(err, ErrNotFound) {
+	if _, err := store.AllocatePrivateNetworkAddress(ctx, "other-account", first.ID, "app", "owner"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("wrong account allocation = %v, want not found", err)
 	}
-	if err := store.ReleasePrivateNetworkAddress(ctx, "acct-1", first.ID, "app", "missing"); !errors.Is(err, ErrNotFound) {
+	if err := store.ReleasePrivateNetworkAddress(ctx, "acct-1", first.ID, "app", "missing"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("missing release = %v, want not found", err)
 	}
 
-	if _, err := store.UpsertAppPrivateNetworkAttachment(ctx, AppPrivateNetworkAttachment{
+	if _, err := store.UpsertAppPrivateNetworkAttachment(ctx, state.AppPrivateNetworkAttachment{
 		AccountID: "acct-1", AppID: "app-1", NetworkID: first.ID, Region: first.Region, Status: "pending",
 	}); err != nil {
 		t.Fatalf("UpsertAppPrivateNetworkAttachment: %v", err)
 	}
-	if err := store.DeletePrivateNetwork(ctx, "acct-1", first.ID); !errors.Is(err, ErrConflict) {
+	if err := store.DeletePrivateNetwork(ctx, "acct-1", first.ID); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("delete attached network = %v, want conflict", err)
 	}
 	if err := store.DeleteAppPrivateNetworkAttachment(ctx, "acct-1", "app-1"); err != nil {
 		t.Fatalf("DeleteAppPrivateNetworkAttachment: %v", err)
 	}
-	if err := store.DeletePrivateNetwork(ctx, "other-account", first.ID); !errors.Is(err, ErrNotFound) {
+	if err := store.DeletePrivateNetwork(ctx, "other-account", first.ID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("delete wrong account = %v, want not found", err)
 	}
 
-	if _, _, ok := firstPrivateNetworkAddress(netip.MustParsePrefix("2001:db8::/64")); ok {
+	if _, _, ok := state.FirstPrivateNetworkAddress(netip.MustParsePrefix("2001:db8::/64")); ok {
 		t.Fatal("IPv6 address unexpectedly accepted")
 	}
-	if _, _, ok := firstPrivateNetworkAddress(netip.MustParsePrefix("10.0.0.0/31")); ok {
+	if _, _, ok := state.FirstPrivateNetworkAddress(netip.MustParsePrefix("10.0.0.0/31")); ok {
 		t.Fatal("/31 network unexpectedly accepted")
 	}
-	if _, ok := allocatePrivateNetworkAddress(netip.MustParsePrefix("10.0.0.0/31"), nil); ok {
+	if _, ok := state.AllocatePrivateNetworkAddress(netip.MustParsePrefix("10.0.0.0/31"), nil); ok {
 		t.Fatal("allocation from /31 unexpectedly succeeded")
 	}
 

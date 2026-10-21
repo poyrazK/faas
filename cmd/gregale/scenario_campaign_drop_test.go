@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -11,12 +11,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"gopkg.in/yaml.v3"
 )
 
 func TestCampaignCoverageDropBoundariesAndSampleMinimum(t *testing.T) {
 	s, _, _ := campaignRegressionFixture(t)
-	x, err := expandTestFaultSweep(s)
+	x, err := main.ExpandTestFaultSweep(s)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -26,8 +27,8 @@ func TestCampaignCoverageDropBoundariesAndSampleMinimum(t *testing.T) {
 	reg.MaxDropPercentagePoints = map[int]float64{0: 30}
 	reg.Baseline.Planned = []int{10, 10, 0}
 	reg.Baseline.Exercised = []int{9, 1, 0}
-	e := &testCampaignCoverageEvidence{Choices: []testCampaignChoiceCoverage{{Index: 0, Planned: 10, Exercised: 6}, {Index: 1, Planned: 10, Exercised: 5}, {Index: 2}}}
-	if err := evaluateTestCampaignCoverageRegression(x, e); err != nil {
+	e := &main.TestCampaignCoverageEvidence{Choices: []main.TestCampaignChoiceCoverage{{Index: 0, Planned: 10, Exercised: 6}, {Index: 1, Planned: 10, Exercised: 5}, {Index: 2}}}
+	if err := main.EvaluateTestCampaignCoverageRegression(x, e); err != nil {
 		t.Fatal("equal drop boundary failed", err)
 	}
 	c := e.Regression.Choices[0]
@@ -38,31 +39,31 @@ func TestCampaignCoverageDropBoundariesAndSampleMinimum(t *testing.T) {
 		t.Fatal("unconfigured choices gained checks")
 	}
 	reg.MaxDropPercentagePoints[0] = 29.99
-	if err := evaluateTestCampaignCoverageRegression(x, e); err == nil || e.Regression.Choices[0].LostCoverage || e.Regression.Choices[0].CurrentRate < reg.MinExercisedRate {
+	if err := main.EvaluateTestCampaignCoverageRegression(x, e); err == nil || e.Regression.Choices[0].LostCoverage || e.Regression.Choices[0].CurrentRate < reg.MinExercisedRate {
 		t.Fatal("partial drop above absolute floor was missed")
 	}
 	reg.MaxDropPercentagePoints[0] = 0
 	e.Choices[0].Exercised = 9
-	if err := evaluateTestCampaignCoverageRegression(x, e); err != nil || *e.Regression.Choices[0].MaxDropPercentagePoints != 0 {
+	if err := main.EvaluateTestCampaignCoverageRegression(x, e); err != nil || *e.Regression.Choices[0].MaxDropPercentagePoints != 0 {
 		t.Fatal("zero allowance equality failed", err)
 	}
 	e.Choices[0].Exercised = 10
-	if err := evaluateTestCampaignCoverageRegression(x, e); err != nil || *e.Regression.Choices[0].DropPercentagePoints != -10 {
+	if err := main.EvaluateTestCampaignCoverageRegression(x, e); err != nil || *e.Regression.Choices[0].DropPercentagePoints != -10 {
 		t.Fatal("improvement was treated as regression", err)
 	}
 	e.Choices[0].Exercised = 8
-	if err := evaluateTestCampaignCoverageRegression(x, e); err == nil {
+	if err := main.EvaluateTestCampaignCoverageRegression(x, e); err == nil {
 		t.Fatal("zero allowance permitted a drop")
 	}
 	reg.MaxDropPercentagePoints[0] = 100
 	reg.MinExercisedRate = 0
 	e.Choices[0].Exercised = 0
-	if err := evaluateTestCampaignCoverageRegression(x, e); err == nil || !e.Regression.Choices[0].LostCoverage || e.Regression.Choices[0].DropStatus != "passed" {
+	if err := main.EvaluateTestCampaignCoverageRegression(x, e); err == nil || !e.Regression.Choices[0].LostCoverage || e.Regression.Choices[0].DropStatus != "passed" {
 		t.Fatal("tolerance cleared complete coverage loss")
 	}
 	e.Choices[0].Exercised = 9
 	reg.MinPlannedEvents = 11
-	if err := evaluateTestCampaignCoverageRegression(x, e); err == nil || e.Regression.Choices[0].DropPercentagePoints != nil {
+	if err := main.EvaluateTestCampaignCoverageRegression(x, e); err == nil || e.Regression.Choices[0].DropPercentagePoints != nil {
 		t.Fatal("insufficient samples passed drop check")
 	}
 	reg.MinPlannedEvents = 2
@@ -71,11 +72,11 @@ func TestCampaignCoverageDropBoundariesAndSampleMinimum(t *testing.T) {
 	reg.Baseline.Exercised[0] = 3
 	e.Choices[0].Planned = 3
 	e.Choices[0].Exercised = 2
-	if err := evaluateTestCampaignCoverageRegression(x, e); err != nil {
+	if err := main.EvaluateTestCampaignCoverageRegression(x, e); err != nil {
 		t.Fatal("fractional count boundary failed", err)
 	}
 	reg.MaxDropPercentagePoints[0] = math.Nextafter(reg.MaxDropPercentagePoints[0], math.Inf(-1))
-	if err := evaluateTestCampaignCoverageRegression(x, e); err == nil {
+	if err := main.EvaluateTestCampaignCoverageRegression(x, e); err == nil {
 		t.Fatal("fractional boundary permitted a larger drop")
 	}
 }
@@ -111,7 +112,7 @@ func TestCampaignCoverageDropValidation(t *testing.T) {
 			case "orphan-min":
 				reg.MaxDropPercentagePoints = nil
 			}
-			if _, err := expandTestFaultSweep(s); err == nil {
+			if _, err := main.ExpandTestFaultSweep(s); err == nil {
 				t.Fatal("invalid drop policy accepted")
 			}
 		})
@@ -121,7 +122,7 @@ func TestCampaignCoverageDropValidation(t *testing.T) {
 	reg.MaxDropPercentagePoints = map[int]float64{0: 0}
 	reg.MinPlannedEvents = baseline.FaultMatrix.CampaignCoverage.Choices[0].Planned
 	before, _ := json.Marshal(s)
-	x, err := expandTestFaultSweep(s)
+	x, err := main.ExpandTestFaultSweep(s)
 	if err != nil {
 		t.Fatal("exact minimum rejected", err)
 	}
@@ -129,7 +130,7 @@ func TestCampaignCoverageDropValidation(t *testing.T) {
 	if !bytes.Equal(before, after) {
 		t.Fatal("drop policy mutated source")
 	}
-	again, err := expandTestFaultSweep(x)
+	again, err := main.ExpandTestFaultSweep(x)
 	if err != nil || !reflect.DeepEqual(x, again) {
 		t.Fatal("drop expansion is not idempotent", err)
 	}
@@ -142,9 +143,9 @@ func TestCampaignCoverageDropExecutionReportsAndReplay(t *testing.T) {
 	reg.MinPlannedEvents = 2
 	reg.MaxDropPercentagePoints = map[int]float64{0: 0}
 	calls := 0
-	result := runSweepTest(context.Background(), s, func(ctx context.Context, p testRunPlan) testRunReceipt {
+	result := main.RunSweepTest(context.Background(), s, func(ctx context.Context, p main.TestRunPlan) main.TestRunReceipt {
 		calls++
-		r := campaignCoverageReceipt(t, p, "drop-"+p.ReplayCase, false)
+		r := main.CampaignCoverageReceipt(t, p, "drop-"+p.ReplayCase, false)
 		if p.CampaignSeed.Seed == 42 {
 			r.Steps[0].Load.ChaosPhases[3].Chaos.Matches[0].Matches = 0
 		}
@@ -157,10 +158,10 @@ func TestCampaignCoverageDropExecutionReportsAndReplay(t *testing.T) {
 	if c.LostCoverage || c.CurrentRate < reg.MinExercisedRate || c.DropStatus != "failed" || c.MaxDropPercentagePoints == nil || *c.MaxDropPercentagePoints != 0 {
 		t.Fatal("drop-only failure missing", c)
 	}
-	if finishTestRunReports("", []testRunReceipt{result}, "", "") != 1 {
+	if main.FinishTestRunReports("", []main.TestRunReceipt{result}, "", "") != 1 {
 		t.Fatal("drop did not fail CI")
 	}
-	prepared, err := prepareTestReplay(&result, map[string]testScenario{"checkout": s}, ".")
+	prepared, err := main.PrepareTestReplay(&result, map[string]main.TestScenario{"checkout": s}, ".")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,12 +186,12 @@ func TestCampaignCoverageDropExecutionReportsAndReplay(t *testing.T) {
 		cov.Regression = &edit
 		r.CampaignCoverage = &cov
 		changed.Resilience = &r
-		if _, err := prepareTestReplay(&result, map[string]testScenario{"checkout": changed}, "."); err == nil {
+		if _, err := main.PrepareTestReplay(&result, map[string]main.TestScenario{"checkout": changed}, "."); err == nil {
 			t.Fatal("changed drop policy replay allowed", kind)
 		}
 	}
 	var out bytes.Buffer
-	printTestCampaignCoverage(&out, result.FaultMatrix.CampaignCoverage)
+	main.PrintTestCampaignCoverage(&out, result.FaultMatrix.CampaignCoverage)
 	if !strings.Contains(out.String(), "allowed 0.000000") || !strings.Contains(out.String(), "minimum 2 planned events") {
 		t.Fatal("terminal drop evidence missing", out.String())
 	}
@@ -198,13 +199,13 @@ func TestCampaignCoverageDropExecutionReportsAndReplay(t *testing.T) {
 	html := filepath.Join(dir, "drop.html")
 	junit := filepath.Join(dir, "drop.xml")
 	report := filepath.Join(dir, "drop.json")
-	if err := writeTestHTMLReport(html, "", []testRunReceipt{result}); err != nil {
+	if err := main.WriteTestHTMLReport(html, "", []main.TestRunReceipt{result}); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeTestJUnit(junit, []testRunReceipt{result}); err != nil {
+	if err := main.WriteTestJUnit(junit, []main.TestRunReceipt{result}); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeTestReport(report, []testRunReceipt{result}); err != nil {
+	if err := main.WriteTestReport(report, []main.TestRunReceipt{result}); err != nil {
 		t.Fatal(err)
 	}
 	htmlBody, _ := os.ReadFile(html)
@@ -231,46 +232,46 @@ func TestCampaignCoverageDropOfflineValidationAndReplay(t *testing.T) {
 		}
 	}
 	manifest := filepath.Join(dir, "gregale-test.yaml")
-	save := func(s testScenario) map[string]testScenario {
+	save := func(s main.TestScenario) map[string]main.TestScenario {
 		t.Helper()
-		body, err := yaml.Marshal(testManifest{Version: 1, Scenarios: map[string]testScenario{"checkout": s}})
+		body, err := yaml.Marshal(main.TestManifest{Version: 1, Scenarios: map[string]main.TestScenario{"checkout": s}})
 		if err != nil {
 			t.Fatal(err)
 		}
 		if err := os.WriteFile(manifest, body, 0600); err != nil {
 			t.Fatal(err)
 		}
-		normalized, _, err := readTestManifestForScenario(manifest, "checkout", nil)
+		normalized, _, err := main.ReadTestManifestForScenario(manifest, "checkout", nil)
 		if err != nil {
 			t.Fatal(err)
 		}
 		return normalized
 	}
-	prior := campaignCoverageScenario()
+	prior := main.CampaignCoverageScenario()
 	prior.Resilience.CampaignCoverage.MinExercised = map[int]int{0: 1, 1: 1}
 	baseline := runCampaignRequirementsTest(t, save(prior)["checkout"], false, 0)
-	if err := writeTestReport(filepath.Join(dir, "baseline.json"), []testRunReceipt{baseline}); err != nil {
+	if err := main.WriteTestReport(filepath.Join(dir, "baseline.json"), []main.TestRunReceipt{baseline}); err != nil {
 		t.Fatal(err)
 	}
-	next := campaignCoverageScenario()
-	next.Resilience.CampaignCoverage.Regression = &testCampaignCoverageRegressionSpec{FromReport: "baseline.json", RunID: baseline.RunID, MinExercisedRate: 0.5, MaxDropPercentagePoints: map[int]float64{0: 0}, MinPlannedEvents: 2}
+	next := main.CampaignCoverageScenario()
+	next.Resilience.CampaignCoverage.Regression = &main.TestCampaignCoverageRegressionSpec{FromReport: "baseline.json", RunID: baseline.RunID, MinExercisedRate: 0.5, MaxDropPercentagePoints: map[int]float64{0: 0}, MinPlannedEvents: 2}
 	normalized := save(next)
-	oldOut, oldJSON := osStdout, jsonOutput
-	defer func() { osStdout, jsonOutput = oldOut, oldJSON }()
+	oldOut, oldJSON := (*main.OsStdout), (*main.JsonOutput)
+	defer func() { (*main.OsStdout), (*main.JsonOutput) = oldOut, oldJSON }()
 	var out bytes.Buffer
-	osStdout = &out
-	jsonOutput = false
+	(*main.OsStdout) = &out
+	(*main.JsonOutput) = false
 	t.Setenv("FAAS_TOKEN", "")
-	if cmdTest([]string{"--manifest", manifest, "--scenario", "checkout", "--validate"}) != 0 || !strings.Contains(out.String(), "drop allowances (percentage points)") {
+	if main.CmdTest([]string{"--manifest", manifest, "--scenario", "checkout", "--validate"}) != 0 || !strings.Contains(out.String(), "drop allowances (percentage points)") {
 		t.Fatal("drop preview missing", out.String())
 	}
 	out.Reset()
-	jsonOutput = true
-	if cmdTest([]string{"--manifest", manifest, "--scenario", "checkout", "--validate"}) != 0 || !strings.Contains(out.String(), "min_planned_events") {
+	(*main.JsonOutput) = true
+	if main.CmdTest([]string{"--manifest", manifest, "--scenario", "checkout", "--validate"}) != 0 || !strings.Contains(out.String(), "min_planned_events") {
 		t.Fatal("JSON drop preview missing", out.String())
 	}
 	result := runCampaignRequirementsTest(t, normalized["checkout"], true, 0)
-	if _, err := prepareTestReplay(&result, normalized, dir); err != nil {
+	if _, err := main.PrepareTestReplay(&result, normalized, dir); err != nil {
 		t.Fatal("normalized drop replay failed", err)
 	}
 }

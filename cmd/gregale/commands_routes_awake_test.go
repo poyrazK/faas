@@ -1,6 +1,6 @@
-package main
+package main_test
 
-// adr: 1187
+// adr: 1187, 1199
 
 import (
 	"bytes"
@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -17,7 +18,11 @@ func routeAwakeServer(t *testing.T, queries *[]string) *httptest.Server {
 	t.Helper()
 	report := api.RouteAwakeResponse{
 		Slug: "demo", IdleTimeoutSeconds: 300, WindowSeconds: 7 * 24 * 3600, AwakeSeconds: 120 * 3600, AwakeShare: 0.71,
-		GBHours: 31.2, Wakes: 14, UnattributedSeconds: 3600, OtherRoutesSeconds: 1800, RoutesLimit: 10,
+		GBHours: 31.2, Wakes: 14, UnattributedSeconds: 3600, OtherRoutesSeconds: 1800, RoutesLimit: 10, MinInstances: 1,
+		Sources: []api.RouteAwakeSource{
+			{Source: api.RouteAwakeSourceRouteProbe, Events: 600, AwakeSeconds: 2 * 3600, AwakeShare: 0.02},
+			{Source: api.RouteAwakeSourcePrewarm, Events: 3},
+		},
 		Routes: []api.RouteAwakeRoute{{
 			Method: "GET", Route: "/health", Requests: 10080, Wakes: 2, AwakeSeconds: 110 * 3600, AwakeShare: 0.92,
 			Pattern: api.RouteAwakePatternPeriodic, IntervalSeconds: 60,
@@ -35,20 +40,20 @@ func routeAwakeServer(t *testing.T, queries *[]string) *httptest.Server {
 			return
 		}
 		*queries = append(*queries, r.URL.RawQuery)
-		writeJSONTest(w, report)
+		main.WriteJSONTest(w, report)
 	}))
 }
 
 func runRouteAwakeCLI(t *testing.T, server *httptest.Server, args ...string) (int, string) {
 	t.Helper()
-	resetJSONOut(t)
-	setPreviewTestAuth(t)
+	main.ResetJSONOut(t)
+	main.SetPreviewTestAuth(t)
 	t.Setenv("FAAS_API", server.URL)
 	var output bytes.Buffer
-	old := osStdout
-	osStdout = &output
-	t.Cleanup(func() { osStdout = old })
-	return run(args), output.String()
+	old := (*main.OsStdout)
+	(*main.OsStdout) = &output
+	t.Cleanup(func() { (*main.OsStdout) = old })
+	return main.Run(args), output.String()
 }
 
 func TestRoutesAwakeCLI(t *testing.T) {
@@ -63,10 +68,14 @@ func TestRoutesAwakeCLI(t *testing.T) {
 		"demo was awake 71% of the last 168h 0m: 120h 0m running, 31.2 GB-h, 14 wakes. Idle timeout: 300s.",
 		"GET /health", "every ~60s", "-100h 0m awake, +40 wakes", "POST /orders", "no change",
 		"Other routes", "Unattributed", "Suggestions", "GET /health is called about every 1m0s",
+		"Route probes (canary)", "keeps at least 1 instance(s) running",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("output missing %q:\n%s", want, out)
 		}
+	}
+	if strings.Contains(out, "Scheduled prewarm") {
+		t.Fatalf("a source that explains no awake time is not listed:\n%s", out)
 	}
 	if len(queries) != 1 || queries[0] != "since=24h" {
 		t.Fatalf("queries = %v", queries)
@@ -104,7 +113,7 @@ func TestRoutesAwakeCLIRejectsBadArguments(t *testing.T) {
 
 func TestAwakeDuration(t *testing.T) {
 	for seconds, want := range map[int64]string{0: "0s", 45: "45s", 60: "1m", 3599: "59m", 3600: "1h 0m", 90061: "25h 1m"} {
-		if got := awakeDuration(seconds); got != want {
+		if got := main.AwakeDuration(seconds); got != want {
 			t.Fatalf("awakeDuration(%d) = %q, want %q", seconds, got, want)
 		}
 	}

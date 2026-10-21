@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -28,12 +29,12 @@ func TestAppsTCPTLSStatusCommand(t *testing.T) {
 	defer backend.Close()
 	t.Setenv("FAAS_API", backend.URL)
 	t.Setenv("FAAS_TOKEN", "fp_test")
-	stdout, _, restore := swapIO(t)
+	stdout, _, restore := main.SwapIO(t)
 	defer restore()
-	previous := jsonOutput
-	defer func() { jsonOutput = previous }()
-	jsonOutput = false
-	if code := cmdAppsTCP("test-app", []string{"tls-status", "echo"}); code != 0 {
+	previous := (*main.JsonOutput)
+	defer func() { (*main.JsonOutput) = previous }()
+	(*main.JsonOutput) = false
+	if code := main.CmdAppsTCP("test-app", []string{"tls-status", "echo"}); code != 0 {
 		t.Fatalf("status exit=%d", code)
 	}
 	for _, text := range []string{"edge-one", "ready", "edge-two", "unknown", expiry.Format(time.RFC3339), "fleet coverage unknown"} {
@@ -42,15 +43,15 @@ func TestAppsTCPTLSStatusCommand(t *testing.T) {
 		}
 	}
 	stdout.Reset()
-	jsonOutput = true
-	if code := cmdAppsTCP("test-app", []string{"tls-status", "echo"}); code != 0 {
+	(*main.JsonOutput) = true
+	if code := main.CmdAppsTCP("test-app", []string{"tls-status", "echo"}); code != 0 {
 		t.Fatalf("JSON status exit=%d", code)
 	}
 	var decoded api.TCPListenerTLSStatusResponse
 	if err := json.Unmarshal(stdout.Bytes(), &decoded); err != nil || decoded.Scope != out.Scope || len(decoded.Observations) != 2 || decoded.Observations[1].NotAfter != nil {
 		t.Fatalf("JSON projection=%+v err=%v", decoded, err)
 	}
-	if code := cmdAppsTCP("test-app", []string{"tls-status"}); code == 0 || requests.Load() != 2 {
+	if code := main.CmdAppsTCP("test-app", []string{"tls-status"}); code == 0 || requests.Load() != 2 {
 		t.Fatalf("missing listener sent request: exit=%d requests=%d", code, requests.Load())
 	}
 }

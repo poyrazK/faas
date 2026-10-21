@@ -6,6 +6,11 @@ package gateway
 // URL. Only the outcome leaves the gateway, on the request telemetry row:
 // never the body or its hash. The route advisor turns the outcomes into a
 // measured safe max-age for a cache rule.
+//
+// On a route with a cache rule (ADR-1199) the same comparison runs on each
+// body the cache stores: a refill. A body that changed within the rule's
+// max-age is stale; an unchanged one reports how long the body has stayed the
+// same, the evidence that a longer max-age would be safe.
 
 import (
 	"container/list"
@@ -31,9 +36,10 @@ type contentObserver struct {
 }
 
 type contentEntry struct {
-	key  string
-	sum  uint64
-	seen time.Time
+	key   string
+	sum   uint64
+	seen  time.Time
+	since time.Time // when this body was first seen
 }
 
 func newContentObserver(max int) *contentObserver {
@@ -46,17 +52,46 @@ func newContentObserver(max int) *contentObserver {
 // would have served the previous body, correctly when identical and stale
 // when changed.
 func (o *contentObserver) observe(key string, sum uint64, now time.Time) string {
+	return o.record(key, sum, now, func(e *contentEntry, same bool, gap time.Duration) string {
+		return api.ContentOutcomeFor(same, gap)
+	})
+}
+
+// observeRefill records a body stored under a cache rule with maxAge. A
+// changed body stored within the rule's max-age (plus a small lag) is stale:
+// the previous copy was very probably served after the content changed. An
+// unchanged body is bucketed by how long it has stayed the same, since every
+// refill in between matched it.
+func (o *contentObserver) observeRefill(key string, sum uint64, now time.Time, maxAge time.Duration) string {
+	return o.record(key, sum, now, func(e *contentEntry, same bool, gap time.Duration) string {
+		switch {
+		case same:
+			return api.ContentOutcomeFor(true, now.Sub(e.since))
+		case api.ContentRefillStale(gap, maxAge):
+			return api.ContentOutcomeStale
+		default:
+			return api.ContentOutcomeFor(false, gap)
+		}
+	})
+}
+
+// record stores sum as the latest body for key and classifies it with
+// classify against the previous entry, which it sees before the update.
+func (o *contentObserver) record(key string, sum uint64, now time.Time, classify func(e *contentEntry, same bool, gap time.Duration) string) string {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	if el, ok := o.entries[key]; ok {
 		e := el.Value.(*contentEntry)
-		gap := now.Sub(e.seen)
 		same := e.sum == sum
-		e.sum, e.seen = sum, now
+		outcome := classify(e, same, now.Sub(e.seen))
+		if !same {
+			e.sum, e.since = sum, now
+		}
+		e.seen = now
 		o.order.MoveToFront(el)
-		return api.ContentOutcomeFor(same, gap)
+		return outcome
 	}
-	o.entries[key] = o.order.PushFront(&contentEntry{key: key, sum: sum, seen: now})
+	o.entries[key] = o.order.PushFront(&contentEntry{key: key, sum: sum, seen: now, since: now})
 	for o.order.Len() > o.max {
 		oldest := o.order.Back()
 		o.order.Remove(oldest)
@@ -99,8 +134,7 @@ type contentTee struct {
 }
 
 func newContentTee(w http.ResponseWriter, observer *contentObserver, appID string, r *http.Request) *contentTee {
-	t := &contentTee{ResponseWriter: w, observer: observer, status: http.StatusOK,
-		key: appID + "\x00" + hostname(r.Host) + "\x00" + r.URL.RequestURI() + "\x00" + strings.ToLower(strings.Join(r.Header.Values("Accept-Encoding"), ", "))}
+	t := &contentTee{ResponseWriter: w, observer: observer, status: http.StatusOK, key: contentKey(appID, r, "")}
 	t.hash.SetSeed(observer.seed)
 	return t
 }
@@ -182,16 +216,62 @@ func (t *contentTee) storable() bool {
 	}).shouldStore()
 }
 
+// contentKey identifies a URL's response: app, host, request URI and every
+// Accept-Encoding value, plus the cache rule's vary hash when it has one.
+func contentKey(appID string, r *http.Request, vary string) string {
+	return appID + "\x00" + hostname(r.Host) + "\x00" + r.URL.RequestURI() + "\x00" +
+		strings.ToLower(strings.Join(r.Header.Values("Accept-Encoding"), ", ")) + vary
+}
+
+// refillObserver classifies the body a cache rule's miss stores (ADR-1199).
+// The cache writer has buffered the whole body by the time telemetry asks.
+type refillObserver struct {
+	cw       *cacheWriter
+	observer *contentObserver
+	key      string
+	maxAge   time.Duration
+	done     bool
+	outcome  string
+}
+
+func newRefillObserver(cw *cacheWriter, observer *contentObserver, appID string, r *http.Request, rule *EdgeRuleCacheResolved) *refillObserver {
+	vary := ""
+	if len(rule.VaryOn) > 0 {
+		sum := computeVaryHash(r, rule.VaryOn)
+		vary = "\x00" + string(sum[:])
+	}
+	return &refillObserver{cw: cw, observer: observer, key: contentKey(appID, r, vary), maxAge: time.Duration(rule.MaxAgeSeconds) * time.Second}
+}
+
+func (o *refillObserver) finish(now time.Time) string {
+	if o.done {
+		return o.outcome
+	}
+	o.done = true
+	if !o.cw.shouldStore() {
+		o.outcome = api.ContentOutcomeUncacheable
+		return o.outcome
+	}
+	var hash maphash.Hash
+	hash.SetSeed(o.observer.seed)
+	_, _ = hash.Write(o.cw.buf.Bytes())
+	o.outcome = o.observer.observeRefill(o.key, hash.Sum64(), now, o.maxAge)
+	return o.outcome
+}
+
+// contentFinisher classifies a completed response once.
+type contentFinisher interface{ finish(now time.Time) string }
+
 type contentTeeKey struct{}
 
-func withContentTee(ctx context.Context, t *contentTee) context.Context {
+func withContentTee(ctx context.Context, t contentFinisher) context.Context {
 	return context.WithValue(ctx, contentTeeKey{}, t)
 }
 
 // contentOutcome is the telemetry outcome for a request: empty unless the
 // response came from the app and its body was observed.
 func contentOutcome(ctx context.Context, target Target, now time.Time) string {
-	t, _ := ctx.Value(contentTeeKey{}).(*contentTee)
+	t, _ := ctx.Value(contentTeeKey{}).(contentFinisher)
 	if t == nil || (target.DeploymentID == "" && target.InstanceID == "") {
 		return ""
 	}

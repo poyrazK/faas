@@ -161,6 +161,35 @@ func (s *Service) ownerOverview(r *http.Request, c *ownerContext, q url.Values) 
 		c.data.Attention = append(c.data.Attention, dashboard.ProductControlAttention{TenantID: item.TenantID, Period: item.Period, Unresolved: item.Unresolved, NeedsReview: item.NeedsReview, URL: ownerURL(c, item.TenantID, item.Period, nil)})
 	}
 	c.data.NextAttentionURL = ownerPageURL(c, q, "attention_cursor", attention.NextCursor)
+	return s.ownerOverdue(r, c)
+}
+
+// ownerOverdue shows the app's overdue policy and held customers
+// (ADR-20261018212918).
+func (s *Service) ownerOverdue(r *http.Request, c *ownerContext) error {
+	store, ok := s.Host.Store().(state.ProductOverdueStore)
+	if !ok {
+		return nil
+	}
+	view := &dashboard.ProductControlOverdue{Policy: "No overdue policy. Customers with unpaid invoices can keep starting work."}
+	policy, err := store.GetProductOverduePolicy(r.Context(), c.account.ID, c.app.ID)
+	switch {
+	case err == nil && policy.BlockOverdueAfterDays == 0:
+		view.Policy = "New starts are refused as soon as an exported invoice is past its due date and unpaid."
+	case err == nil:
+		view.Policy = fmt.Sprintf("New starts are refused %d days after an exported invoice's due date while it is unpaid.", policy.BlockOverdueAfterDays)
+	case !errors.Is(err, state.ErrNotFound):
+		return err
+	}
+	holds, err := store.ListProductOverdueHolds(r.Context(), c.account.ID, c.app.ID)
+	if err != nil {
+		return err
+	}
+	for _, h := range holds {
+		view.Holds = append(view.Holds, dashboard.ProductControlOverdueHold{TenantID: h.TenantID, DueAt: h.DueAt.UTC().Format(time.DateOnly),
+			Since: h.Since.UTC().Format(time.RFC3339), URL: ownerURL(c, h.TenantID, c.data.Period, nil), InvoiceURL: api.ProviderHostedURL(h.HostedInvoiceURL)})
+	}
+	c.data.Overdue = view
 	return nil
 }
 
@@ -182,6 +211,11 @@ func (s *Service) ownerCustomer(r *http.Request, c *ownerContext, q url.Values) 
 		return err
 	}
 	c.data.Customer = &customer
+	if hold, err := customerOverdueHold(r.Context(), c.products, c.account.ID, c.app.ID, tenant.ID); err != nil {
+		return err
+	} else if hold != nil {
+		c.data.CustomerHold = "New starts are refused until the invoice due " + hold.DueAt.UTC().Format(time.DateOnly) + " is paid. Suspension is separate."
+	}
 	catalog, err := c.products.GetProductCatalog(r.Context(), c.account.ID, c.app.ID, customer.Revision)
 	if err != nil {
 		return err
@@ -265,8 +299,14 @@ func (s *Service) ownerDocuments(r *http.Request, c *ownerContext, scope state.P
 	if err != nil {
 		return err
 	}
+	if err := s.withInvoices(r.Context(), c.account.ID, &page, true); err != nil {
+		return err
+	}
 	for _, doc := range page.Documents {
 		item := dashboard.ProductControlDocument{ID: doc.ID, Kind: doc.Kind, Amount: ownerMoney(doc.Currency, doc.AmountMillicents), CreatedAt: doc.CreatedAt.UTC().Format(time.RFC3339), OperationID: doc.OperationID, StatementID: doc.StatementID, Reason: doc.Reason}
+		if doc.Invoice != nil {
+			item.Exported, item.Invoice, item.InvoiceURL, item.DashboardURL = true, ownerInvoice(*doc.Invoice), doc.Invoice.HostedInvoiceURL, doc.Invoice.DashboardURL
+		}
 		handoff, err := c.billing.GetProductBillingHandoff(r.Context(), scope, doc.ID)
 		if err == nil {
 			item.Reference = handoff.ExternalInvoiceID
@@ -288,6 +328,48 @@ func ownerDocumentPage(r *http.Request, c *ownerContext, scope state.ProductBill
 	}
 	doc, err := c.owner.GetProductOwnerDocument(r.Context(), scope, q.Get("document"))
 	return api.ProductBillingDocuments{Documents: []api.ProductBillingDocument{doc}}, err
+}
+
+// ownerInvoice summarises a statement's export and payment status.
+func ownerInvoice(e api.ProductDocumentInvoice) string {
+	provider := map[string]string{"stripe": "Stripe", "paddle": "Paddle", "lago": "Lago"}[e.Provider]
+	if e.ExportStatus != state.StatementInvoiceExportCompleted {
+		return "Export to " + provider + " has not finished. Retry gregale product statements export; it resumes the same invoice."
+	}
+	status := e.PaymentStatus
+	switch {
+	case e.Overdue:
+		status = "overdue"
+	case status == "":
+		status = "payment status not synced yet"
+	}
+	parts := []string{"Invoiced in " + provider + " as " + e.InvoiceID, status}
+	if e.DueAt != nil {
+		parts = append(parts, "due "+e.DueAt.UTC().Format("2006-01-02"))
+	}
+	if e.AmountRemainingMinor != nil {
+		parts = append(parts, ownerMinor(e.Currency, *e.AmountRemainingMinor)+" remaining")
+	}
+	return strings.Join(parts, " · ")
+}
+
+// ownerMinor formats an amount in the currency's minor unit, which has zero
+// to three decimal places (ADR-20261019100330).
+func ownerMinor(currency string, n int64) string {
+	sign := ""
+	if n < 0 {
+		sign = "-"
+		n = -n
+	}
+	exp, _ := api.CurrencyMinorExponent(currency)
+	if exp == 0 {
+		return fmt.Sprintf("%s %s%d", currency, sign, n)
+	}
+	unit := int64(1)
+	for range exp {
+		unit *= 10
+	}
+	return fmt.Sprintf("%s %s%d.%0*d", currency, sign, n/unit, exp, n%unit)
 }
 
 func ownerMoney(currency string, n int64) string {
@@ -342,6 +424,10 @@ func (s *Service) ownerError(w http.ResponseWriter, r *http.Request, c *ownerCon
 		status, message = 409, "Reconcile unresolved runs or explicitly waive their charges before finalizing."
 	case errors.Is(err, state.ErrProductBillingOpenPeriod):
 		status, message = 409, "Only a closed UTC month can be finalized."
+	case errors.Is(err, errDocumentExported):
+		status, message = 409, "This statement was exported to your billing provider, which records its invoice as the handoff."
+	case errors.Is(err, errPlanPricingUnavailable):
+		status, message = 409, "Plan fees and included starts are not enabled yet. Publish the catalog without them."
 	case errors.Is(err, state.ErrConflict):
 		status, message = 409, "This action conflicts with retained evidence. Review current assignments, credit balances, or invoice handoffs."
 	}

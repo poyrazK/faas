@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/debugger"
 	"github.com/onebox-faas/faas/pkg/routehealth"
@@ -64,7 +65,7 @@ func TestRouteLatencyInvestigationSharedSDKFixture(t *testing.T) {
 		t.Fatal(err)
 	}
 	opts := api.RouteHealthInvestigationOptions{Method: r.Selection.Method, Path: r.Selection.Path, Signal: "latency", CustomerID: r.Selection.CustomerID, CustomerGroupBy: r.Selection.CustomerGroupBy}
-	if err := validateCLIInvestigation(r, opts, "demo", r.Report.DeploymentID); err != nil {
+	if err := main.ValidateCLIInvestigation(r, opts, "demo", r.Report.DeploymentID); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -72,8 +73,8 @@ func TestRouteLatencyInvestigationSharedSDKFixture(t *testing.T) {
 func TestRouteLatencyCLIWireHumanAndRejectsForgedDiagnostics(t *testing.T) {
 	for _, scenario := range []string{"human", "json", "customer", "delta", "sample_count", "missing_diagnostics", "wrong_link", "cross_side", "unexpected_stage", "exclusive_missing", "wrong_signal", "wrong_route_p95", "mixed_filters"} {
 		t.Run(scenario, func(t *testing.T) {
-			resetJSONOut(t)
-			setPreviewTestAuth(t)
+			main.ResetJSONOut(t)
+			main.SetPreviewTestAuth(t)
 			opts := api.RouteHealthInvestigationOptions{Method: "POST", Path: "/checkout", Signal: "latency"}
 			if scenario == "customer" {
 				opts.CustomerID = uuid.NewString()
@@ -105,14 +106,14 @@ func TestRouteLatencyCLIWireHumanAndRejectsForgedDiagnostics(t *testing.T) {
 				if req.Method != "GET" || req.URL.Query().Get("signal") != "latency" || req.URL.Query().Get("status_code") != "0" || req.URL.Query().Get("customer_id") != opts.CustomerID {
 					t.Error("latency request lost scope")
 				}
-				writeJSONTest(w, r)
+				main.WriteJSONTest(w, r)
 			}))
 			defer server.Close()
 			t.Setenv("FAAS_API", server.URL)
 			var output bytes.Buffer
-			old := osStdout
-			osStdout = &output
-			t.Cleanup(func() { osStdout = old })
+			old := (*main.OsStdout)
+			(*main.OsStdout) = &output
+			t.Cleanup(func() { (*main.OsStdout) = old })
 			args := []string{"routes", "health", "investigate", "demo", "--deployment", healthCandidateID, "--route", "POST /checkout", "--signal", "latency"}
 			if scenario != "human" {
 				args = append(args, "--json")
@@ -127,7 +128,7 @@ func TestRouteLatencyCLIWireHumanAndRejectsForgedDiagnostics(t *testing.T) {
 			if scenario == "human" || scenario == "json" || scenario == "customer" {
 				want = 0
 			}
-			if code := run(args); code != want {
+			if code := main.Run(args); code != want {
 				t.Fatalf("exit %d want %d: %s", code, want, output.String())
 			}
 			if scenario == "human" {

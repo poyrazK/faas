@@ -62,19 +62,6 @@ func tenantCardInForceIn(cards []state.PlatformTenantRateCard, start, end time.T
 	return false
 }
 
-// tenantStreamCardsAt returns, for each stream, the card in force at
-// minute; streams that have not started are absent.
-func tenantStreamCardsAt(cards []state.PlatformTenantRateCard, minute time.Time) []state.PlatformTenantRateCard {
-	units, streams := TenantUnitStreams(cards)
-	var out []state.PlatformTenantRateCard
-	for _, unit := range units {
-		if card := tenantCardAt(streams[unit], minute); card != nil {
-			out = append(out, *card)
-		}
-	}
-	return out
-}
-
 func tenantCardsAsApp(cards []state.PlatformTenantRateCard) []state.APIConsumerRateCard {
 	out := make([]state.APIConsumerRateCard, 0, len(cards))
 	for _, card := range cards {
@@ -151,7 +138,7 @@ type TenantMonth struct {
 // charge up to its minimum. streamUsage is the stream's charge for the
 // whole month as priced now. A trial running at the fee instant, or
 // starting the minute after, waives them.
-func tenantStatementFees(m TenantMonth, streamUsage map[string]int64) []state.APIConsumerStatementFee {
+func tenantStatementFees(m TenantMonth, usage feeUsage) []state.APIConsumerStatementFee {
 	if m.TenantCreated.IsZero() || !IsCalendarMonth(m.Start, m.End) {
 		return nil
 	}
@@ -159,17 +146,34 @@ func tenantStatementFees(m TenantMonth, streamUsage map[string]int64) []state.AP
 	if !ok || m.Options.inTrial(at) || m.Options.inTrial(at.Add(time.Minute)) {
 		return nil
 	}
+	streamOf := map[string]string{}
+	for _, card := range m.TenantCards {
+		streamOf[card.ID] = tenantCardUnit(card)
+	}
+	// finalizedUsage is what finalized revisions billed per tenant card; a
+	// minimum top-up falls only by usage billed since (ADR-20261019180000).
 	var finalized [][]state.APIConsumerStatementFee
+	finalizedUsage := newFeeUsage()
 	for _, statement := range m.Previous {
 		if statement.Status == state.APIConsumerUsageStatementFinalized && statement.PeriodStart.Equal(m.Start) && statement.PeriodEnd.Equal(m.End) {
 			finalized = append(finalized, statement.Fees)
+			for _, line := range statement.Lines {
+				if stream, ok := streamOf[line.PlatformTenantRateCardID]; ok {
+					finalizedUsage.add(stream, line.PlatformTenantRateCardID, line.AmountMillicents)
+				}
+			}
 		}
 	}
-	var inForce []feeCard
-	for _, card := range tenantStreamCardsAt(m.TenantCards, at) {
-		inForce = append(inForce, feeCard{id: card.ID, stream: tenantCardUnit(card),
-			base: card.BaseFeeMillicentsPerMonth, minimum: card.MinimumMillicentsPerMonth,
-			prorate: card.ProrateMonthlyFees, hasMonthlyCharge: card.MonthlyFees()})
+	units, streams := TenantUnitStreams(m.TenantCards)
+	var charging []feeCard
+	for _, unit := range units {
+		ordered := make([]feeCard, 0, len(streams[unit]))
+		for _, card := range streams[unit] {
+			ordered = append(ordered, feeCard{id: card.ID, stream: tenantCardUnit(card), effectiveFrom: card.EffectiveFrom,
+				base: card.BaseFeeMillicentsPerMonth, minimum: card.MinimumMillicentsPerMonth,
+				prorate: card.ProrateMonthlyFees, hasMonthlyCharge: card.MonthlyFees()})
+		}
+		charging = append(charging, feeSegments(ordered, at, time.Time{})...)
 	}
-	return monthlyStatementFees(inForce, at, streamUsage, billedFees(finalized...))
+	return monthlyStatementFees(charging, usage, finalizedUsage, billedFees(finalized...))
 }

@@ -1,20 +1,21 @@
 // ADR-076: release outcome fan-out shares the durable webhook delivery ledger.
-package state
+package state_test
 
 import (
 	"encoding/json"
+	"github.com/onebox-faas/faas/pkg/state"
 	"testing"
 )
 
 func TestMemStoreRolloutOutcomeWebhooks(t *testing.T) {
-	m, ctx, account, app := webhookFixture(t)
-	completedHook := memSampleWebhook(account.ID, app.ID)
-	completedHook.EventFilter = []string{string(AppWebhookEventRolloutCompleted)}
+	m, ctx, account, app := state.WebhookFixture(t)
+	completedHook := state.MemSampleWebhook(account.ID, app.ID)
+	completedHook.EventFilter = []string{string(state.AppWebhookEventRolloutCompleted)}
 	completedHook, err := m.CreateAppWebhook(ctx, completedHook)
 	if err != nil {
 		t.Fatal(err)
 	}
-	allHook := memSampleWebhook(account.ID, app.ID)
+	allHook := state.MemSampleWebhook(account.ID, app.ID)
 	allHook.EventFilter = nil
 	allHook, err = m.CreateAppWebhook(ctx, allHook)
 	if err != nil {
@@ -24,22 +25,22 @@ func TestMemStoreRolloutOutcomeWebhooks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	foreignHook := memSampleWebhook(otherAccount.ID, app.ID)
+	foreignHook := state.MemSampleWebhook(otherAccount.ID, app.ID)
 	foreignHook, err = m.CreateAppWebhook(ctx, foreignHook)
 	if err != nil {
 		t.Fatal(err)
 	}
-	accountHook := seedMemAccountReleaseHook(m, account.ID,
-		[]string{string(AppWebhookEventRolloutCompleted), string(AppWebhookEventRolloutAborted)}, true)
-	completedOnlyAccountHook := seedMemAccountReleaseHook(m, account.ID,
-		[]string{string(AppWebhookEventRolloutCompleted)}, true)
-	disabledAccountHook := seedMemAccountReleaseHook(m, account.ID,
-		[]string{string(AppWebhookEventRolloutAborted)}, false)
-	foreignAccountHook := seedMemAccountReleaseHook(m, otherAccount.ID,
-		[]string{string(AppWebhookEventRolloutAborted)}, true)
-	emptyFilterAccountHook := seedMemAccountReleaseHook(m, account.ID, nil, true)
+	accountHook := state.SeedMemAccountReleaseHook(m, account.ID,
+		[]string{string(state.AppWebhookEventRolloutCompleted), string(state.AppWebhookEventRolloutAborted)}, true)
+	completedOnlyAccountHook := state.SeedMemAccountReleaseHook(m, account.ID,
+		[]string{string(state.AppWebhookEventRolloutCompleted)}, true)
+	disabledAccountHook := state.SeedMemAccountReleaseHook(m, account.ID,
+		[]string{string(state.AppWebhookEventRolloutAborted)}, false)
+	foreignAccountHook := state.SeedMemAccountReleaseHook(m, otherAccount.ID,
+		[]string{string(state.AppWebhookEventRolloutAborted)}, true)
+	emptyFilterAccountHook := state.SeedMemAccountReleaseHook(m, account.ID, nil, true)
 
-	stable, err := m.CreateDeployment(ctx, Deployment{AppID: app.ID, ImageDigest: "sha256:stable"})
+	stable, err := m.CreateDeployment(ctx, state.Deployment{AppID: app.ID, ImageDigest: "sha256:stable"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,7 +51,7 @@ func TestMemStoreRolloutOutcomeWebhooks(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	canary, err := m.CreateDeployment(ctx, Deployment{
+	canary, err := m.CreateDeployment(ctx, state.Deployment{
 		AppID: app.ID, ImageDigest: "sha256:canary", CanaryPreset: "balanced",
 		CanaryTotalSteps: 2, TrafficPercent: 10,
 	})
@@ -65,7 +66,7 @@ func TestMemStoreRolloutOutcomeWebhooks(t *testing.T) {
 	}
 
 	for _, tc := range []struct {
-		hook AppWebhook
+		hook state.AppWebhook
 		want int
 	}{
 		{completedHook, 1}, {allHook, 2}, {foreignHook, 0},
@@ -78,7 +79,7 @@ func TestMemStoreRolloutOutcomeWebhooks(t *testing.T) {
 		}
 		rolloutCount := 0
 		for _, delivery := range got {
-			if delivery.Event == AppWebhookEventRolloutCompleted || delivery.Event == AppWebhookEventRolloutAborted {
+			if delivery.Event == state.AppWebhookEventRolloutCompleted || delivery.Event == state.AppWebhookEventRolloutAborted {
 				rolloutCount++
 			}
 		}
@@ -101,7 +102,7 @@ func TestMemStoreRolloutOutcomeWebhooks(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, delivery := range got {
-		if delivery.Event != AppWebhookEventRolloutCompleted && delivery.Event != AppWebhookEventRolloutAborted {
+		if delivery.Event != state.AppWebhookEventRolloutCompleted && delivery.Event != state.AppWebhookEventRolloutAborted {
 			continue
 		}
 		var payload map[string]any
@@ -112,11 +113,11 @@ func TestMemStoreRolloutOutcomeWebhooks(t *testing.T) {
 			t.Errorf("wrong app in %s: %v", delivery.Event, payload)
 		}
 		switch delivery.Event {
-		case AppWebhookEventRolloutCompleted:
+		case state.AppWebhookEventRolloutCompleted:
 			if payload["deployment_id"] != stable.ID || payload["rollout_state"] != "complete" || payload["completed_at"] == nil {
 				t.Errorf("completed payload = %v", payload)
 			}
-		case AppWebhookEventRolloutAborted:
+		case state.AppWebhookEventRolloutAborted:
 			if payload["deployment_id"] != canary.ID || payload["reason"] != "manual stop" || payload["rollout_state"] != "aborted" || payload["aborted_at"] == nil {
 				t.Errorf("aborted payload = %v", payload)
 			}

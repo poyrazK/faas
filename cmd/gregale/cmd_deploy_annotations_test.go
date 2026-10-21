@@ -2,9 +2,10 @@
 // annotation helpers added by issue #977 / ADR-116. Pure-function
 // tests; no daemon / network / DB seam.
 
-package main
+package main_test
 
 import (
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"os"
 	"os/exec"
 	"strings"
@@ -39,7 +40,7 @@ func TestIsValidDeploymentAnnotationTag(t *testing.T) {
 		{"incident_recover", false}, // typo
 	}
 	for _, tc := range tests {
-		if got := isValidDeploymentAnnotationTag(tc.in); got != tc.want {
+		if got := main.IsValidDeploymentAnnotationTag(tc.in); got != tc.want {
 			t.Errorf("isValidDeploymentAnnotationTag(%q) = %v, want %v", tc.in, got, tc.want)
 		}
 	}
@@ -50,7 +51,7 @@ func TestIsValidDeploymentAnnotationTag(t *testing.T) {
 // fails on `len(DeploymentAnnotationTags) != 5` is the canonical
 // tripwire when an operator wants to add a 6th tag.
 func TestDeploymentAnnotationTags_MirrorsDB(t *testing.T) {
-	if got, want := len(DeploymentAnnotationTags), 5; got != want {
+	if got, want := len(main.DeploymentAnnotationTags), 5; got != want {
 		t.Fatalf("DeploymentAnnotationTags length = %d, want %d (DB CHECK is the source of truth — widen the migration first)", got, want)
 	}
 	// Ordering matters for help text; do not re-sort without a docs PR.
@@ -62,24 +63,24 @@ func TestDeploymentAnnotationTags_MirrorsDB(t *testing.T) {
 		"partner_request",
 	}
 	for i, w := range want {
-		if DeploymentAnnotationTags[i] != w {
-			t.Errorf("DeploymentAnnotationTags[%d] = %q, want %q", i, DeploymentAnnotationTags[i], w)
+		if main.DeploymentAnnotationTags[i] != w {
+			t.Errorf("DeploymentAnnotationTags[%d] = %q, want %q", i, main.DeploymentAnnotationTags[i], w)
 		}
 	}
 }
 
 func TestDeployTagHelpNamesEveryAcceptedValue(t *testing.T) {
-	command, ok := lookupCliCommand("deploy")
+	command, ok := main.LookupCliCommand("deploy")
 	if !ok {
 		t.Fatal("deploy metadata is missing")
 	}
 	var out strings.Builder
-	printLocalCommandHelpDetail(&out, command, true)
+	main.PrintLocalCommandHelpDetail(&out, command, true)
 	help := out.String()
 	if !strings.Contains(help, "--tag <TAG>") {
 		t.Fatal("deploy --tag metadata is missing")
 	}
-	for _, tag := range DeploymentAnnotationTags {
+	for _, tag := range main.DeploymentAnnotationTags {
 		if !strings.Contains(help, tag) {
 			t.Errorf("deploy --tag help %q does not name accepted value %q", help, tag)
 		}
@@ -92,7 +93,7 @@ func TestDeployTagHelpNamesEveryAcceptedValue(t *testing.T) {
 // auto-capture (e.g. when running as a service account whose git
 // config carries someone else's name).
 func TestResolveDeployedBy_ExplicitWins(t *testing.T) {
-	got := resolveDeployedBy("ci-bot")
+	got := main.ResolveDeployedBy("ci-bot")
 	if got != "ci-bot" {
 		t.Errorf("explicit --deployed-by must win; got %q, want ci-bot", got)
 	}
@@ -113,7 +114,7 @@ func TestResolveDeployedBy_NonGitRepoFallsBackToEmpty(t *testing.T) {
 	if err := os.Chdir(dir); err != nil {
 		t.Fatalf("chdir to temp: %v", err)
 	}
-	got := resolveDeployedBy("")
+	got := main.ResolveDeployedBy("")
 	if got != "" {
 		t.Errorf("non-git dir should yield \"\"; got %q", got)
 	}
@@ -143,7 +144,7 @@ func TestResolveDeployedBy_AutoCapturesGitUserName(t *testing.T) {
 	if err := os.Chdir(dir); err != nil {
 		t.Fatalf("chdir to temp git repo: %v", err)
 	}
-	got := resolveDeployedBy("")
+	got := main.ResolveDeployedBy("")
 	if got != "Test User 977" {
 		t.Errorf("git config user.name auto-capture: got %q, want %q", got, "Test User 977")
 	}
@@ -155,7 +156,7 @@ func TestResolveDeployedBy_AutoCapturesGitUserName(t *testing.T) {
 // case where a developer happens to lack it).
 func runGitCmdOrSkip(t *testing.T, dir string, args ...string) {
 	t.Helper()
-	if _, err := runGitCmd(dir, args...); err != nil {
+	if _, err := main.RunGitCmd(dir, args...); err != nil {
 		t.Skipf("git %v failed: %v", args, err)
 	}
 }

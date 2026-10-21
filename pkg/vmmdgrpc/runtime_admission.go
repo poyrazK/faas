@@ -246,7 +246,7 @@ func (s *Server) wakeAdmittedWithBridge(ctx context.Context, vmm admittedRuntime
 			s.streamBridges = newStreamBridgeManager(s.log)
 		}
 		hook = func(ready fcvm.WakeNetworkReady) {
-			s.streamBridges.prewarm(ctx, &vmmdpb.ForwardHTTPRequestInit{Instance: ready.Instance, Port: uint32(req.Request.Port), AppProtocol: protocol}, ready.Netns)
+			s.streamBridges.prewarm(withPublicTarget(ctx, ready.PublicTarget), &vmmdpb.ForwardHTTPRequestInit{Instance: ready.Instance, Port: uint32(req.Request.Port), AppProtocol: protocol}, ready.Netns)
 		}
 	}
 	inst, receipt, err := vmm.WakeAdmitted(ctx, req, hook)
@@ -259,6 +259,8 @@ func (s *Server) wakeAdmittedWithBridge(ctx context.Context, vmm admittedRuntime
 func admissionStatus(err error) error {
 	var code codes.Code
 	switch {
+	case errors.Is(err, fcvm.ErrFunctionWarmCapture):
+		return grpcerr.ToStatus(toProblem(err))
 	case errors.Is(err, runtimeadmission.ErrUnavailable):
 		code = codes.Unimplemented
 	case errors.Is(err, runtimeadmission.ErrInvalid):

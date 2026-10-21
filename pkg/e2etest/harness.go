@@ -51,8 +51,12 @@ package e2etest
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/x509"
 	"encoding/hex"
+	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -160,16 +164,28 @@ type Harness struct {
 	// Per-daemon state. nil for a daemon not started (e.g. quota test skips
 	// the metal-only daemons).
 	procs []*exec.Cmd
+	// Controlled fault stops remain reaped until their explicit restart.
+	expectedStops map[*exec.Cmd]bool
 	// scheddEnv/config retain the launch recipe so metal acceptance tests can
 	// fault-inject a schedd restart without reaching into this package's
 	// private process list.
 	scheddEnv        []string
 	scheddConfigPath string
+	vmmdLaunchEnv    []string
 	// apidEnv/listen/socket retain the launch recipe for restart durability
 	// tests that exercise persistent control-plane state across apid lifetimes.
 	apidEnv              []string
 	apidListen           string
 	requestTelemetrySock string
+	// killed holds daemons stopped on purpose by KillAPID or KillSchedd.
+	killed map[*exec.Cmd]bool
+}
+
+func (h *Harness) markKilled(proc *exec.Cmd) {
+	if h.killed == nil {
+		h.killed = map[*exec.Cmd]bool{}
+	}
+	h.killed[proc] = true
 }
 
 // currentHarness points at the most recently booted Harness. Used by
@@ -196,6 +212,14 @@ func snapshotProcs() []*exec.Cmd {
 // buffer (logged on teardown so a flaky failure has the daemon's last words).
 func Start(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv ...string) *Harness {
 	t.Helper()
+	return StartWithAPIDEnv(t, pool, which, nil, extraEnv...)
+}
+
+// StartWithAPIDEnv confines provider proxies, trust roots and OAuth keys to
+// apid. Builder and image downloads retain their own normal transport trust.
+// APID restarts reuse the same scoped launch environment.
+func StartWithAPIDEnv(t *testing.T, pool *pgxpool.Pool, which Which, apidOnlyEnv []string, extraEnv ...string) *Harness {
+	t.Helper()
 
 	tmp := harnessTempDir(t)
 	// Daemon binaries are built once per process and shared across tests;
@@ -208,6 +232,7 @@ func Start(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv ...string) *H
 	// imaged, schedd's signature verifier and vmmd must resolve the same
 	// app artifacts. Keep explicit caller overrides last, as for other env.
 	extraEnv = append([]string{"FAAS_APPS_ROOT=" + appsRoot}, extraEnv...)
+	extraEnv = append(internalSvcKeyEnv(t, tmp, extraEnv), extraEnv...)
 
 	// Socket dir lives outside t.TempDir() because macOS's t.TempDir() is
 	// under /var/folders/.../T/<random> and a test name + random suffix
@@ -218,6 +243,15 @@ func Start(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv ...string) *H
 
 	h := &Harness{T: t, Pool: pool, TmpDir: tmp, BinDir: bin, ImagedTmp: appsRoot, SockDir: sockDir, RecoveryHMACKeyHex: newRecoveryHMACKeyHex(t), HostHMACKeyPath: newHostHMACKeyFile(t, tmp)}
 	currentHarness = h
+	// Stop is registered with t.Cleanup only once every daemon is up. A
+	// t.Fatal part-way through (a daemon that never listens or subscribes)
+	// must not leave the daemons already started running on the host.
+	booted := false
+	defer func() {
+		if !booted {
+			h.stop()
+		}
+	}()
 	if which&Gatewayd != 0 {
 		reserveGatewayAddresses(t, h)
 		// APID starts first, but its probes must target this reserved control
@@ -254,7 +288,7 @@ func Start(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv ...string) *H
 		if scheddVerifies {
 			h.ensureSignPub(t)
 		}
-		startAPID(t, h, bin, dbURL, extraEnv...)
+		startAPID(t, h, bin, dbURL, append(append([]string(nil), extraEnv...), apidOnlyEnv...)...)
 	}
 
 	// Both socket paths are fixed up front: vmmd's env carries schedd's target
@@ -300,7 +334,7 @@ failure_report_dir = %q
 `,
 			sockPath, "root", kernelPath, filepath.Join(tmp, "vmmd-resources"), filepath.Join(tmp, "vmmd-failures"),
 		)
-		if os.Getenv("GREGALE_GITOPS_NATIVE_ACCEPTANCE") == "1" {
+		if os.Getenv("GREGALE_GITOPS_NATIVE_ACCEPTANCE") == "1" || os.Getenv("FAAS_FINANCIAL_SYSTEM_ACCEPTANCE") == "1" {
 			images, publications := filepath.Join(tmp, "native-images"), filepath.Join(tmp, "native-publications")
 			for _, path := range []string{images, publications} {
 				if err := os.Mkdir(path, 0o700); err != nil {
@@ -321,8 +355,11 @@ failure_report_dir = %q
 			t.Fatalf("e2etest: write vmmd.toml: %v", err)
 		}
 		env := append(vmmdEnv(dbURL, cfgPath, h.ScheddSock), extraEnv...)
+		h.vmmdLaunchEnv = append([]string(nil), env...)
 		h.procs = append(h.procs, startProc(t, bin, "vmmd", env))
-		waitUnix(t, sockPath, 10*time.Second)
+		// vmmd reconciles netns, jails and its journal before it listens;
+		// on a loaded shared acceptance host that took longer than 10s.
+		waitUnix(t, sockPath, time.Minute)
 	}
 
 	// Start the gateway before imaged when the reference-node acceptance opts
@@ -428,6 +465,7 @@ failure_report_dir = %q
 	}
 
 	h.requireDaemonsAlive(t)
+	booted = true
 	t.Cleanup(h.stop)
 	return h
 }
@@ -758,11 +796,21 @@ func StartWithEnv(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv []stri
 	}
 	// Match Start: share imaged's app store with every harness daemon.
 	extraEnv = append([]string{"FAAS_APPS_ROOT=" + appsRoot}, extraEnv...)
+	extraEnv = append(internalSvcKeyEnv(t, tmp, extraEnv), extraEnv...)
 	// See Start for why sockDir lives outside t.TempDir() — macOS sun_path
 	// limit, and `/tmp/faas-e2e-sock-*` is short and stable everywhere.
 	sockDir := newHarnessSocketDir(t)
 	h := &Harness{T: t, Pool: pool, TmpDir: tmp, BinDir: bin, ImagedTmp: appsRoot, SockDir: sockDir, RecoveryHMACKeyHex: newRecoveryHMACKeyHex(t), HostHMACKeyPath: newHostHMACKeyFile(t, tmp)}
 	currentHarness = h
+	// Stop is registered with t.Cleanup only once every daemon is up. A
+	// t.Fatal part-way through (a daemon that never listens or subscribes)
+	// must not leave the daemons already started running on the host.
+	booted := false
+	defer func() {
+		if !booted {
+			h.stop()
+		}
+	}()
 	if which&Gatewayd != 0 {
 		reserveGatewayAddresses(t, h)
 		extraEnv = append([]string{"FAAS_GATEWAYD_CONTROL_URL=http://" + h.gatewayControlAddr}, extraEnv...)
@@ -890,6 +938,7 @@ func StartWithEnv(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv []stri
 		startGatewaydPublic(t, h, bin, dbURL, extraEnv)
 	}
 	h.requireDaemonsAlive(t)
+	booted = true
 	t.Cleanup(h.stop)
 	return h
 }
@@ -1519,6 +1568,42 @@ func newRecoveryHMACKeyHex(t *testing.T) string {
 // (crypto/rand) so two parallel tests don't share a key, and
 // so a leaked key from one test's debug output is useless for
 // the next test's value_hash discriminator.
+// internalSvcKeyEnv gives this harness its own internal-service signing key:
+// schedd mints workflow and exclusive-operation tokens with the private half
+// and gatewayd-internal verifies them with the public half. Without it
+// gatewayd-internal has no verifier and answers every workflow step with 500,
+// and schedd falls back to whatever key the host has at
+// /etc/faas/secrets/internal-svc. A caller that sets either variable keeps it.
+func internalSvcKeyEnv(t *testing.T, dir string, extraEnv []string) []string {
+	t.Helper()
+	for _, entry := range extraEnv {
+		if strings.HasPrefix(entry, "FAAS_INTERNAL_SVC_KEY_PATH=") || strings.HasPrefix(entry, "FAAS_INTERNAL_SVC_PUBKEYS=") {
+			return nil
+		}
+	}
+	public, private, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("e2etest: internal-svc key: %v", err)
+	}
+	privateDER, err := x509.MarshalPKCS8PrivateKey(private)
+	if err != nil {
+		t.Fatalf("e2etest: internal-svc key: %v", err)
+	}
+	publicDER, err := x509.MarshalPKIXPublicKey(public)
+	if err != nil {
+		t.Fatalf("e2etest: internal-svc key: %v", err)
+	}
+	keyPath := filepath.Join(dir, "internal-svc-schedd.ed25519")
+	if err := os.WriteFile(keyPath, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: privateDER}), 0o600); err != nil {
+		t.Fatalf("e2etest: write internal-svc key: %v", err)
+	}
+	pubkeys, err := json.Marshal(map[string]string{"schedd": string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: publicDER}))})
+	if err != nil {
+		t.Fatalf("e2etest: internal-svc pubkeys: %v", err)
+	}
+	return []string{"FAAS_INTERNAL_SVC_KEY_PATH=" + keyPath, "FAAS_INTERNAL_SVC_PUBKEYS=" + string(pubkeys)}
+}
+
 func newHostHMACKeyFile(t *testing.T, dir string) string {
 	t.Helper()
 	var b [32]byte
@@ -1774,7 +1859,9 @@ func (h *Harness) killChild(name string) error {
 					return fmt.Errorf("e2etest: reap %s: %w", name, err)
 				}
 			}
+			h.markKilled(proc)
 		}
+		h.markDaemonStopped(proc)
 		return nil
 	}
 	return fmt.Errorf("e2etest: %s process not found", name)
@@ -1836,6 +1923,18 @@ func (h *Harness) SetAPIDEnv(key, value string) error {
 	return nil
 }
 
+// APIDPID identifies the live child for peer-credential checks in fault tests.
+func (h *Harness) APIDPID() (int, error) {
+	if h != nil {
+		for _, proc := range h.procs {
+			if proc != nil && proc.Process != nil && proc.ProcessState == nil && filepath.Base(proc.Path) == "apid" {
+				return proc.Process.Pid, nil
+			}
+		}
+	}
+	return 0, fmt.Errorf("e2etest: live apid process not found")
+}
+
 // KillAPID terminates and reaps the apid child while leaving the rest of the
 // harness alive. Reaping here is important because Harness.stop owns the
 // single Wait call for every process it starts.
@@ -1858,7 +1957,9 @@ func (h *Harness) KillAPID() error {
 					return fmt.Errorf("e2etest: reap apid: %w", err)
 				}
 			}
+			h.markKilled(proc)
 		}
+		h.markDaemonStopped(proc)
 		return nil
 	}
 	return fmt.Errorf("e2etest: apid process not found")
@@ -2172,7 +2273,7 @@ func (h *Harness) requireDaemonsAlive(t *testing.T) {
 	// scheduled. One sleep for the whole set, not one per daemon.
 	time.Sleep(150 * time.Millisecond)
 
-	if name, out, dead := firstDeadDaemon(h.procs); dead {
+	if name, out, dead := firstDeadDaemon(h.watchedDaemons()); dead {
 		t.Fatalf("e2etest: %s exited during startup; nothing it owns will happen, "+
 			"and the failure would otherwise surface much later as an unrelated "+
 			"timeout.\n%s", name, out)
@@ -2295,13 +2396,7 @@ func (h *Harness) VmmdLogs() string {
 //     clone. This is what lets the e2e shards skip replaying every
 //     migration inside apid on each test.
 func daemonDSN(base string, pool *pgxpool.Pool) string {
-	if schema := pgtest.SchemaOf(pool); schema != "" {
-		return injectSearchPath(base, schema)
-	}
-	if db := pool.Config().ConnConfig.Database; db != "" {
-		return injectDatabase(base, db)
-	}
-	return base
+	return isolatedDatabaseURL(base, pool)
 }
 
 // injectDatabase rewrites the database name in a DSN. URL-form DSNs
@@ -3067,9 +3162,11 @@ func startImaged(t *testing.T, h *Harness, bin, dbURL, tmp, appsRoot string, ext
 	// did not exist yet, and imaged's catch-up sweep only looks at
 	// deployments older than two hours: the image deploy sat in `pending`
 	// until the test gave up, in every image-deploy test. Wait for the
-	// subscription itself, not the process.
+	// subscription itself, not the process. Restaging a base whose guest init
+	// changed takes close to three minutes on a two-vCPU shared host, so the
+	// wait leaves headroom beyond that.
 	imagedStart := time.Now()
-	if err := h.waitImagedListens(imagedSubscribeTimeout(t)); err != nil {
+	if err := h.waitImagedListens(10 * time.Minute); err != nil {
 		// Say why: an imaged that exited (metrics port taken, base
 		// staging failed) is otherwise reported only as "never
 		// subscribed", with its last words lost — smoke run
@@ -3078,22 +3175,6 @@ func startImaged(t *testing.T, h *Harness, bin, dbURL, tmp, appsRoot string, ext
 		t.Fatalf("e2etest: imaged did not subscribe to its notify channels: %v", err)
 	}
 	t.Logf("e2etest: imaged subscribed after %s", time.Since(imagedStart).Round(time.Millisecond))
-}
-
-// imagedSubscribeTimeout bounds imaged's base staging before it subscribes.
-// FAAS_E2E_IMAGED_SUBSCRIBE_TIMEOUT (a Go duration) raises it on a shared
-// test node, where other runs rewriting the same base images can keep the
-// disk busy past the default.
-func imagedSubscribeTimeout(t *testing.T) time.Duration {
-	raw := os.Getenv("FAAS_E2E_IMAGED_SUBSCRIBE_TIMEOUT")
-	if raw == "" {
-		return 3 * time.Minute
-	}
-	d, err := time.ParseDuration(raw)
-	if err != nil || d <= 0 {
-		t.Fatalf("e2etest: FAAS_E2E_IMAGED_SUBSCRIBE_TIMEOUT=%q: want a positive duration", raw)
-	}
-	return d
 }
 
 // A placeholder is safe only when no guest kernel is configured. Otherwise

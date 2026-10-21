@@ -22,6 +22,12 @@ const [org] = await auth.organizations.list()
 const canWrite = await auth.authorize('write', resource(org.id, 'doc', 42))
 ```
 
+In React, `@gregale/auth/react` provides `AuthProvider`, `SignIn` (with the
+second step for users who have one), `SignedIn`/`SignedOut`, `UserMenu`,
+`OrganizationSwitcher`, `Authorized` and hooks (`useAuth`, `useUser`,
+`useActiveOrganization`, `useAuthorized`). See
+[Application Auth](../../docs/application-auth.md#in-react).
+
 In a backend, verify tokens and check permissions with `@gregale/auth/server`
 (`createVerifier`, `verify`, `authorize`, `bearerToken`): it checks the ES256
 signature against the Auth app's keys, the issuer, the audience and the

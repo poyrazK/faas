@@ -10,12 +10,17 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // Billing run vocabulary (ADR-1503).
 const (
 	BillingRunSourceAppConsumers    = "app_consumers"
 	BillingRunSourcePlatformTenants = "platform_tenants"
+	// BillingRunSourceProductCustomers bills Product Control customers'
+	// months (ADR-20261018212918); their items have source kind
+	// StatementSourceProductControl.
+	BillingRunSourceProductCustomers = "product_customers"
 
 	BillingRunExportNone   = "none"
 	BillingRunExportStripe = "stripe"
@@ -77,11 +82,20 @@ type BillingRun struct {
 	// NotifiedAt is when the account was told about the completed run
 	// (ADR-1504).
 	NotifiedAt *time.Time
-	Counts     map[string]int
+	// ProductDiscoveredAt is when Product Control customers were discovered;
+	// a previous release sets DiscoveredAt without discovering them.
+	ProductDiscoveredAt *time.Time
+	Counts              map[string]int
+}
+
+// Discovered reports whether every included source's items were added.
+func (r BillingRun) Discovered() bool {
+	return r.DiscoveredAt != nil && (!r.Includes(BillingRunSourceProductCustomers) || r.ProductDiscoveredAt != nil)
 }
 
 // BillingRunItem is one customer of a run. SourceID is the consumer or
-// platform tenant ID; AppID is set for app consumers only.
+// platform tenant ID; AppID is set for app consumers and Product Control
+// customers, whose StatementID is their statement document.
 type BillingRunItem struct {
 	RunID            string
 	SourceKind       string
@@ -104,8 +118,15 @@ type BillingRunItem struct {
 	PaymentStatus string
 }
 
-// Key orders items within a run and is the item list cursor.
-func (i BillingRunItem) Key() string { return i.SourceKind + "/" + i.SourceID }
+// Key orders items within a run and is the item list cursor. A tenant can
+// be a customer of several Product Control apps, so their keys include the
+// app.
+func (i BillingRunItem) Key() string {
+	if i.SourceKind == StatementSourceProductControl {
+		return i.SourceKind + "/" + i.AppID + "/" + i.SourceID
+	}
+	return i.SourceKind + "/" + i.SourceID
+}
 
 // BillingRunSchedule starts a run for NextPeriodStart's month at NextRunAt.
 type BillingRunSchedule struct {
@@ -139,6 +160,10 @@ type BillingRunStore interface {
 	// tenantReason.
 	DiscoverBillingRunItems(ctx context.Context, runID, owner, tenantReason string, now time.Time) error
 	ListDueBillingRunItems(ctx context.Context, runID, owner string, now time.Time, limit int) ([]BillingRunItem, error)
+	// RenewBillingRunLease extends owner's lease to until before the next
+	// item, so a long batch keeps its run (ADR-20261019180000);
+	// ErrBillingRunLeaseLost once another worker holds it.
+	RenewBillingRunLease(ctx context.Context, runID, owner string, until time.Time) error
 	UpdateBillingRunItem(ctx context.Context, owner string, item BillingRunItem) error
 	// ReleaseBillingRun completes the run when no item is pending, and
 	// otherwise frees the lease for the next tick.
@@ -157,11 +182,12 @@ type BillingRunStore interface {
 
 // ValidateBillingRunOptions checks a run's or schedule's options.
 func ValidateBillingRunOptions(o BillingRunOptions) error {
-	if len(o.Sources) == 0 || len(o.Sources) > 2 {
-		return fmt.Errorf("%w: sources must list app_consumers, platform_tenants or both", ErrInvalidArgument)
+	if len(o.Sources) == 0 || len(o.Sources) > 3 {
+		return fmt.Errorf("%w: sources must list one or more of app_consumers, platform_tenants and product_customers", ErrInvalidArgument)
 	}
 	for i, source := range o.Sources {
-		if (source != BillingRunSourceAppConsumers && source != BillingRunSourcePlatformTenants) || slices.Contains(o.Sources[:i], source) {
+		known := source == BillingRunSourceAppConsumers || source == BillingRunSourcePlatformTenants || source == BillingRunSourceProductCustomers
+		if !known || slices.Contains(o.Sources[:i], source) {
 			return fmt.Errorf("%w: unknown or repeated source %q", ErrInvalidArgument, source)
 		}
 	}
@@ -236,6 +262,7 @@ func (m *MemStore) insertBillingRunLocked(run BillingRun) (BillingRun, error) {
 	run.ID, run.Status, run.CreatedAt = uuid.NewString(), BillingRunQueued, time.Now().UTC()
 	run.Sources = slices.Clone(run.Sources)
 	run.DiscoveredAt, run.StartedAt, run.CompletedAt, run.NotifiedAt, run.LeaseOwner, run.LeaseUntil = nil, nil, nil, nil, "", nil
+	run.ProductDiscoveredAt = nil
 	m.billingRuns[run.ID] = run
 	m.billingRunItems[run.ID] = map[string]BillingRunItem{}
 	return m.billingRunWithCountsLocked(run), nil
@@ -355,9 +382,32 @@ func (m *MemStore) DiscoverBillingRunItems(_ context.Context, runID, owner, tena
 	if err != nil {
 		return err
 	}
-	if run.DiscoveredAt != nil {
+	if run.Discovered() {
 		return nil
 	}
+	items := m.billingRunItems[runID]
+	add := func(item BillingRunItem) {
+		item.RunID, item.NextAttemptAt, item.UpdatedAt = runID, now.UTC(), now.UTC()
+		if _, ok := items[item.Key()]; !ok {
+			items[item.Key()] = item
+		}
+	}
+	discovered := now.UTC()
+	if run.DiscoveredAt == nil {
+		m.discoverUsageCustomersLocked(run, tenantReason, add)
+		run.DiscoveredAt = &discovered
+	}
+	if run.Includes(BillingRunSourceProductCustomers) && run.ProductDiscoveredAt == nil {
+		m.discoverProductCustomersLocked(run, add)
+		run.ProductDiscoveredAt = &discovered
+	}
+	m.billingRuns[runID] = run
+	return nil
+}
+
+// discoverUsageCustomersLocked adds app consumers and platform tenants with
+// billable usage in the run's month (ADR-1503).
+func (m *MemStore) discoverUsageCustomersLocked(run BillingRun, tenantReason string, add func(BillingRunItem)) {
 	inMonth := func(b APIConsumerUsageBucket) bool {
 		return b.AccountID == run.AccountID && b.BillableUnits > 0 && !b.WindowStart.Before(run.PeriodStart) && b.WindowStart.Before(run.PeriodEnd)
 	}
@@ -371,13 +421,6 @@ func (m *MemStore) DiscoverBillingRunItems(_ context.Context, runID, owner, tena
 		}
 		if bucket.ConsumerKey != "" {
 			attributed[bucket.AppID+"\x00"+bucket.ConsumerKey] = true
-		}
-	}
-	items := m.billingRunItems[runID]
-	add := func(item BillingRunItem) {
-		item.RunID, item.NextAttemptAt, item.UpdatedAt = runID, now.UTC(), now.UTC()
-		if _, ok := items[item.Key()]; !ok {
-			items[item.Key()] = item
 		}
 	}
 	if run.Includes(BillingRunSourceAppConsumers) {
@@ -410,10 +453,43 @@ func (m *MemStore) DiscoverBillingRunItems(_ context.Context, runID, owner, tena
 			}
 		}
 	}
-	discovered := now.UTC()
-	run.DiscoveredAt = &discovered
-	m.billingRuns[runID] = run
-	return nil
+}
+
+// discoverProductCustomersLocked adds each assigned customer of a Product
+// Control app with a published catalog that has receipts in the run's month
+// (ADR-20261018212918).
+func (m *MemStore) discoverProductCustomersLocked(run BillingRun, add func(BillingRunItem)) {
+	d := m.productLocked()
+	period := run.PeriodStart.UTC().Format("2006-01")
+	for _, r := range d.receipts {
+		if r.account != run.AccountID || r.receipt.Period != period || d.heads[r.app] == "" {
+			continue
+		}
+		if _, assigned := d.customers[r.app+"/"+r.tenant]; !assigned {
+			continue
+		}
+		if tenant, ok := m.platformTenants[r.tenant]; ok && tenant.AccountID == run.AccountID {
+			add(BillingRunItem{SourceKind: StatementSourceProductControl, SourceID: tenant.ID, AppID: r.app,
+				ExternalRef: tenant.ExternalRef, Outcome: BillingRunItemPending})
+		}
+	}
+	// A customer whose month owes a plan fee is billed without runs too
+	// (ADR-20261021154511).
+	for key, entries := range d.planHistory {
+		app, tenantID, _ := strings.Cut(key, "/")
+		if len(entries) == 0 || entries[0].account != run.AccountID || d.heads[app] == "" {
+			continue
+		}
+		scope := ProductBillingScope{AccountID: run.AccountID, AppID: app, TenantID: tenantID, Period: period}
+		fee := productMonthFee(m.productMonthPlansLocked(scope), period, func(revision string) (api.ProductCatalog, bool) {
+			c, ok := d.revisions[app+"/"+revision]
+			return c, ok
+		})
+		if tenant, ok := m.platformTenants[tenantID]; ok && fee != nil && tenant.AccountID == run.AccountID {
+			add(BillingRunItem{SourceKind: StatementSourceProductControl, SourceID: tenant.ID, AppID: app,
+				ExternalRef: tenant.ExternalRef, Outcome: BillingRunItemPending})
+		}
+	}
 }
 
 // discoverFeeConsumersLocked adds the consumers of apps whose cards charge
@@ -455,6 +531,22 @@ func (m *MemStore) ListDueBillingRunItems(_ context.Context, runID, owner string
 	return out, nil
 }
 
+func (m *MemStore) RenewBillingRunLease(_ context.Context, runID, owner string, until time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.billingRunMapsLocked()
+	run, err := m.leasedBillingRunLocked(runID, owner)
+	if err != nil {
+		return err
+	}
+	until = until.UTC()
+	if run.LeaseUntil == nil || until.After(*run.LeaseUntil) {
+		run.LeaseUntil = &until
+		m.billingRuns[runID] = run
+	}
+	return nil
+}
+
 func (m *MemStore) UpdateBillingRunItem(_ context.Context, owner string, item BillingRunItem) error {
 	if !validBillingRunItemOutcome(item.Outcome) || len(item.Reason) > 1000 {
 		return fmt.Errorf("%w: invalid billing run item", ErrInvalidArgument)
@@ -487,7 +579,7 @@ func (m *MemStore) ReleaseBillingRun(_ context.Context, runID, owner string, now
 		pending = pending || item.Outcome == BillingRunItemPending
 	}
 	run.LeaseOwner, run.LeaseUntil = "", nil
-	if run.DiscoveredAt != nil && !pending {
+	if run.Discovered() && !pending {
 		completed := now.UTC()
 		run.Status, run.CompletedAt = BillingRunCompleted, &completed
 	}

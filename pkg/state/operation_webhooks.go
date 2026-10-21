@@ -4,6 +4,7 @@ package state
 import (
 	"context"
 	"crypto/subtle"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
@@ -13,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/operations"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -38,9 +40,26 @@ type OperationWebhookBinding struct {
 	OperationName    string
 	PlatformTenantID string
 	EventTypes       []string
-	Version          int64
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
+	// Mode is "start" (ADR-1193) or "signal" (ADR-20261016100929). A signal binding
+	// reads the subject from the payload and maps provider event types to
+	// the Operation events waiting steps expect.
+	Mode      string
+	Subject   *api.OperationSubjectSpec
+	Signals   []api.OperationWebhookSignal
+	Version   int64
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+// SignalEvent returns the Operation event a signal binding maps a provider
+// event type to, or "" when the binding ignores it.
+func (b OperationWebhookBinding) SignalEvent(eventType string) string {
+	for _, signal := range b.Signals {
+		if signal.ProviderEvent == eventType {
+			return signal.Event
+		}
+	}
+	return ""
 }
 
 // Admits reports whether an event type is in the binding's allowlist; an
@@ -58,6 +77,9 @@ type OperationWebhookBindingOptions struct {
 	OperationName    string
 	PlatformTenantID string
 	EventTypes       []string
+	Mode             string
+	Subject          *api.OperationSubjectSpec
+	Signals          []api.OperationWebhookSignal
 }
 
 // WebhookOperationAdmission is one verified provider event for a bound
@@ -86,7 +108,10 @@ type OperationWebhookStore interface {
 	AdmitWebhookOperation(context.Context, WebhookOperationAdmission) (WebhookOperationReceipt, error)
 }
 
-func validateOperationWebhookBinding(opts OperationWebhookBindingOptions) error {
+func validateOperationWebhookBinding(opts *OperationWebhookBindingOptions) error {
+	if opts.Mode == "" {
+		opts.Mode = api.OperationWebhookModeStart
+	}
 	for _, id := range []string{opts.EndpointID, opts.AccountID, opts.AppID, opts.PlatformTenantID} {
 		if _, err := operationUUID(id); err != nil {
 			return ErrInvalidArgument
@@ -101,6 +126,36 @@ func validateOperationWebhookBinding(opts OperationWebhookBindingOptions) error 
 			return ErrInvalidArgument
 		}
 		seen[eventType] = true
+	}
+	return validateOperationWebhookMode(*opts)
+}
+
+// validateOperationWebhookMode keeps the two binding modes disjoint: a start
+// binding carries no signal fields; a signal binding names a subject pointer
+// and 1-32 distinct provider events, each mapped to a bounded event name.
+func validateOperationWebhookMode(opts OperationWebhookBindingOptions) error {
+	switch opts.Mode {
+	case api.OperationWebhookModeStart:
+		if opts.Subject != nil || len(opts.Signals) != 0 {
+			return ErrInvalidArgument
+		}
+		return nil
+	case api.OperationWebhookModeSignal:
+	default:
+		return ErrInvalidArgument
+	}
+	if opts.Subject == nil || len(opts.EventTypes) != 0 || len(opts.Signals) == 0 || len(opts.Signals) > api.OperationWebhookEventTypesMax {
+		return ErrInvalidArgument
+	}
+	if err := operations.ValidateOperationSubjectSpec(*opts.Subject); err != nil {
+		return fmt.Errorf("%w: %w", ErrInvalidArgument, err)
+	}
+	seen := map[string]bool{}
+	for _, signal := range opts.Signals {
+		if !api.ValidInboundWebhookEventType(signal.ProviderEvent) || seen[signal.ProviderEvent] || !operations.ValidOperationSignalEvent(signal.Event) {
+			return ErrInvalidArgument
+		}
+		seen[signal.ProviderEvent] = true
 	}
 	return nil
 }
@@ -118,14 +173,32 @@ func operationWebhookEventLock(endpointID, providerEventID string) string {
 	return "customer-operation-webhook/" + endpointID + "/" + providerEventID
 }
 
-func operationWebhookBindingFromSQL(row sqlc.CustomerOperationWebhookBinding) OperationWebhookBinding {
-	return OperationWebhookBinding{EndpointID: pgUUIDString(row.EndpointID), AccountID: pgUUIDString(row.AccountID), AppID: pgUUIDString(row.AppID),
+func operationWebhookBindingFromSQL(row sqlc.CustomerOperationWebhookBinding) (OperationWebhookBinding, error) {
+	b := OperationWebhookBinding{EndpointID: pgUUIDString(row.EndpointID), AccountID: pgUUIDString(row.AccountID), AppID: pgUUIDString(row.AppID),
 		Scope: row.Scope, OperationName: row.OperationName, PlatformTenantID: pgUUIDString(row.PlatformTenantID), EventTypes: slices.Clone(row.EventTypes),
-		Version: row.Version, CreatedAt: row.CreatedAt.Time, UpdatedAt: row.UpdatedAt.Time}
+		Mode: row.Mode, Version: row.Version, CreatedAt: row.CreatedAt.Time, UpdatedAt: row.UpdatedAt.Time}
+	if row.SubjectType.Valid {
+		b.Subject = &api.OperationSubjectSpec{Type: row.SubjectType.String, IDFrom: row.SubjectIDFrom.String}
+	}
+	if err := json.Unmarshal(row.Signals, &b.Signals); err != nil {
+		return OperationWebhookBinding{}, fmt.Errorf("state: decode operation webhook signals: %w", err)
+	}
+	if len(b.Signals) == 0 {
+		b.Signals = nil
+	}
+	return b, nil
+}
+
+func operationWebhookSignalsJSON(signals []api.OperationWebhookSignal) []byte {
+	if len(signals) == 0 {
+		return []byte("[]")
+	}
+	raw, _ := json.Marshal(signals)
+	return raw
 }
 
 func (s *PgStore) SaveOperationWebhookBinding(ctx context.Context, opts OperationWebhookBindingOptions) (OperationWebhookBinding, error) {
-	if err := validateOperationWebhookBinding(opts); err != nil {
+	if err := validateOperationWebhookBinding(&opts); err != nil {
 		return OperationWebhookBinding{}, err
 	}
 	tx, err := s.pool.Begin(ctx)
@@ -156,8 +229,13 @@ func (s *PgStore) SaveOperationWebhookBinding(ctx context.Context, opts Operatio
 	if prior.Version != opts.ExpectedVersion {
 		return OperationWebhookBinding{}, ErrOperationWebhookVersionConflict
 	}
-	row, err := q.SaveOperationWebhookBinding(ctx, tx, sqlc.SaveOperationWebhookBindingParams{EndpointID: endpoint, AccountID: account, AppID: app,
-		Scope: opts.Scope, OperationName: opts.OperationName, PlatformTenantID: tenant, EventTypes: append([]string{}, opts.EventTypes...)})
+	params := sqlc.SaveOperationWebhookBindingParams{EndpointID: endpoint, AccountID: account, AppID: app, Scope: opts.Scope, OperationName: opts.OperationName,
+		PlatformTenantID: tenant, EventTypes: append([]string{}, opts.EventTypes...), Mode: opts.Mode, Signals: operationWebhookSignalsJSON(opts.Signals)}
+	if opts.Subject != nil {
+		params.SubjectType = pgtype.Text{String: opts.Subject.Type, Valid: true}
+		params.SubjectIDFrom = pgtype.Text{String: opts.Subject.IDFrom, Valid: true}
+	}
+	row, err := q.SaveOperationWebhookBinding(ctx, tx, params)
 	if isUniqueViolation(err) {
 		return OperationWebhookBinding{}, ErrOperationWebhookRoutingConflict
 	}
@@ -167,7 +245,7 @@ func (s *PgStore) SaveOperationWebhookBinding(ctx context.Context, opts Operatio
 	if err := tx.Commit(ctx); err != nil {
 		return OperationWebhookBinding{}, err
 	}
-	return operationWebhookBindingFromSQL(row), nil
+	return operationWebhookBindingFromSQL(row)
 }
 
 func (s *PgStore) OperationWebhookBinding(ctx context.Context, endpointID string) (OperationWebhookBinding, error) {
@@ -179,7 +257,7 @@ func (s *PgStore) OperationWebhookBinding(ctx context.Context, endpointID string
 	if err != nil {
 		return OperationWebhookBinding{}, mapErr(err)
 	}
-	return operationWebhookBindingFromSQL(row), nil
+	return operationWebhookBindingFromSQL(row)
 }
 
 func (s *PgStore) DeleteOperationWebhookBinding(ctx context.Context, endpointID, accountID string, version int64) error {
@@ -322,7 +400,7 @@ func operationWebhookReceiptKey(endpointID, providerEventID string) string {
 }
 
 func (m *MemStore) SaveOperationWebhookBinding(_ context.Context, opts OperationWebhookBindingOptions) (OperationWebhookBinding, error) {
-	if err := validateOperationWebhookBinding(opts); err != nil {
+	if err := validateOperationWebhookBinding(&opts); err != nil {
 		return OperationWebhookBinding{}, err
 	}
 	m.mu.Lock()
@@ -362,7 +440,8 @@ func (m *MemStore) SaveOperationWebhookBinding(_ context.Context, opts Operation
 	now := time.Now().UTC()
 	data.webhookBindingRevision++
 	binding := OperationWebhookBinding{EndpointID: opts.EndpointID, AccountID: opts.AccountID, AppID: opts.AppID, Scope: opts.Scope, OperationName: opts.OperationName,
-		PlatformTenantID: opts.PlatformTenantID, EventTypes: slices.Clone(opts.EventTypes), Version: data.webhookBindingRevision, CreatedAt: now, UpdatedAt: now}
+		PlatformTenantID: opts.PlatformTenantID, EventTypes: slices.Clone(opts.EventTypes), Mode: opts.Mode, Subject: cloneOperationSubjectSpec(opts.Subject),
+		Signals: slices.Clone(opts.Signals), Version: data.webhookBindingRevision, CreatedAt: now, UpdatedAt: now}
 	if prior.Version != 0 {
 		binding.CreatedAt = prior.CreatedAt
 	}
@@ -474,4 +553,12 @@ func (m *MemStore) deleteOperationWebhookEndpointLocked(endpointID string) {
 func (m *MemStore) operationWebhookBoundLocked(endpointID string) bool {
 	_, ok := m.operationWebhookMemoryLocked().webhookBindings[endpointID]
 	return ok
+}
+
+func cloneOperationSubjectSpec(spec *api.OperationSubjectSpec) *api.OperationSubjectSpec {
+	if spec == nil {
+		return nil
+	}
+	c := *spec
+	return &c
 }

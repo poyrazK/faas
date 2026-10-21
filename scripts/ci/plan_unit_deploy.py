@@ -15,9 +15,9 @@ lane on one host role:
             commit is not an ancestor of this one (newer or diverged), or
             one listing a unit of this lane that this release does not
             carry;
-  deploy    a carried unit of this lane that runs on this host role has a
-            version the host does not run, or (control-plane lane on the
-            control plane) the release's data step is not applied yet:
+  deploy    a carried unit of this lane that runs on this host role
+            runs other code on the host (below), or (control-plane lane on
+            the control plane) the release's data step is not applied yet:
             assemble an overlay over the active release that replaces those
             binaries and bin/migrate, restart only their services, then
             gate them on the SLO gate;
@@ -35,6 +35,16 @@ before it activates or restarts anything, as a full release does; a
 failed migration stops the lane there. unit-versions.json records the
 applied data version. The edge lane refuses a control plane that has not
 applied it (deploy order: data, control plane, edge).
+
+Code, not versions (docs/adr/1650-per-unit-control-plane-releases.md,
+"Selection by code"): a release built with affected_units.py --code gives
+each unit the digest of its code (binary_code.py: neutral version stamp, no
+build ID, no line table) and of base's. A unit restarts when the code the
+host runs differs: the digest unit-versions.json records for it, or base's
+when the host runs the base binary. A unit whose code the host already runs
+keeps its binary and the version recorded for it, so a host's unit versions
+name the source of the binaries it runs. Without digests on either side (a
+release or a record from before them) the unit versions decide, as before.
 
 Writes plan.json and, for deploy, unit-versions.json into --out.
 
@@ -124,6 +134,19 @@ def activation(release, names, host_role):
     return only, verify, gate
 
 
+def runs_other_code(unit, host_version, host_code):
+    """Whether a host whose recorded version and code digest for a unit are
+    host_version and host_code (None: it runs the base binary) must restart
+    it onto the release's binary."""
+    code = unit.get("code_digest")
+    if code:
+        if host_version is None and unit.get("base_code_digest"):
+            return unit["base_code_digest"] != code
+        if host_version is not None and host_code:
+            return host_code != code
+    return host_version != unit["version"]
+
+
 def plan(release, host, lane, host_role, is_ancestor=git_is_ancestor, expect=None, previous_release=None):
     if release.get("kind") != KIND_RELEASE or release.get("format_version") != FORMAT:
         raise Refused(f"not a format {FORMAT} unit release manifest")
@@ -145,7 +168,7 @@ def plan(release, host, lane, host_role, is_ancestor=git_is_ancestor, expect=Non
     if data_version and host_data != data_version and lane == "edge" and host_role == "control-plane":
         raise Refused(f"deploy order: the control plane has not applied this release's migrations ({data_version}); "
                       "deploy its control-plane lane first")
-    host_versions, host_lanes = {}, {}
+    host_versions, host_lanes, host_codes = {}, {}, {}
     if previous:
         if previous.get("kind") != KIND_VERSIONS or previous.get("base_sha") != base:
             raise Refused(f"active release {current} records unit versions for another base")
@@ -153,6 +176,7 @@ def plan(release, host, lane, host_role, is_ancestor=git_is_ancestor, expect=Non
             raise Refused(f"host runs a unit release built at {previous['git_sha']}, which is not an ancestor of {commit}")
         host_versions = previous["units"]
         host_lanes = previous.get("unit_lanes") or {}
+        host_codes = previous.get("unit_code") or {}
 
     scope = sorted(name for name, unit in release["units"].items()
                    if unit["lane"] == lane and host_services(unit, host_role))
@@ -161,23 +185,36 @@ def plan(release, host, lane, host_role, is_ancestor=git_is_ancestor, expect=Non
     if missing:
         raise Refused(f"host runs {lane} unit versions this release does not carry: {', '.join(missing)}")
 
-    changed = [name for name in scope if host_versions.get(name) != release["units"][name]["version"]]
+    changed = [name for name in scope
+               if runs_other_code(release["units"][name], host_versions.get(name), host_codes.get(name))]
+    # Carried units whose code the host already runs: no restart.
+    kept = [name for name in scope if name not in changed]
     if not changed and not apply_data:
         replaced = [n for n in (previous or {}).get("replaced", []) if n in scope]
         if replaced:
             only, verify, gate = activation(release, replaced, host_role)
             return {"action": "converge", "lane": lane, "release_id": current, "expect_current": current,
-                    "units": replaced, "only": only, "verify": verify, "gate": gate, "replace": {}}
+                    "units": replaced, "only": only, "verify": verify, "gate": gate, "replace": {}, "kept": kept}
         return {"action": "none", "lane": lane, "release_id": current, "units": [], "only": [], "verify": [],
-                "gate": [], "replace": {}}
+                "gate": [], "replace": {}, "kept": kept}
     if expect is not None and set(changed) != set(expect):
         raise Refused(f"unit release would restart {', '.join(changed)}, not the expected {', '.join(sorted(expect))}")
 
-    versions = dict(host_versions)
-    lanes = dict(host_lanes)
+    versions, lanes, codes = dict(host_versions), dict(host_lanes), dict(host_codes)
     for name in scope:
-        versions[name] = release["units"][name]["version"]
-        lanes[name] = lane
+        unit = release["units"][name]
+        if name in changed:
+            versions[name] = unit["version"]
+            codes.pop(name, None)
+            if unit.get("code_digest"):
+                codes[name] = unit["code_digest"]
+        elif name in versions and versions[name] == unit["version"] and unit.get("code_digest"):
+            # The same version is the same build: learn its digest.
+            codes[name] = unit["code_digest"]
+        # Otherwise the host keeps the binary it runs, base's or an earlier
+        # unit release's with the same code, and its record.
+        if name in versions:
+            lanes[name] = lane
     only, verify, gate = activation(release, changed, host_role)
     record = {
         "format_version": 1,
@@ -189,6 +226,8 @@ def plan(release, host, lane, host_role, is_ancestor=git_is_ancestor, expect=Non
         "unit_lanes": lanes,
         "replaced": changed,
     }
+    if codes:
+        record["unit_code"] = codes
     # The data version this host's database has applied, carried forward
     # by every later overlay over it.
     recorded_data = data_version if apply_data else host_data
@@ -203,8 +242,8 @@ def plan(release, host, lane, host_role, is_ancestor=git_is_ancestor, expect=Non
         replace["bin/migrate"] = "bin/migrate"
         gate = gate + [["--unit", "migrations"]]
     return {"action": "deploy", "lane": lane, "release_id": overlay_id(current, commit, versions, recorded_data),
-            "expect_current": current, "commit": commit, "units": changed, "only": only, "verify": verify,
-            "gate": gate, "replace": replace, "unit_versions": record,
+            "expect_current": current, "commit": commit, "units": changed, "kept": kept, "only": only,
+            "verify": verify, "gate": gate, "replace": replace, "unit_versions": record,
             "migrations": [m["path"] for m in migrations] if apply_data else []}
 
 

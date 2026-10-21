@@ -25,8 +25,11 @@
      are current, its captured config proof still matches the deployment's
      configuration (the thaw's config-fence check, made before freezing a VM
      that could never thaw), it has no ephemeral secret and no profiling, the app has no
-     enabled push binding (the push path does not thaw a frozen worker), and
-     the node is below `FrozenMaxPerNode`. The freeze is ADR-1151's: RUNNING →
+     enabled push binding (the push path does not thaw a frozen worker), the
+     app is in no project, and the node is below `FrozenMaxPerNode`. A
+     project app's surplus worker takes the release drain claim and stops
+     (ADR-20261019120012): the claim lasts until the instance row is
+     deleted, so a thawed worker would still count as drained. The freeze is ADR-1151's: RUNNING →
      FROZEN, vmmd pauses the VM in place, the ledger books only a frozen
      charge. It stamps the freeze time in `last_request_at`, which a worker
      never otherwise sets, so FrozenTTL counts from the freeze. An ineligible

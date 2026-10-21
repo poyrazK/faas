@@ -90,12 +90,18 @@ func financialIntervalPlanSuite(t *testing.T, store financialTestStore) {
 	}
 }
 
-func financialAccount(t *testing.T, store state.Store) state.Account {
+// accountCreator is all the account helpers need; a narrow parameter keeps
+// test interfaces from embedding state.Store (scripts/ci/teststorecheck).
+type accountCreator interface {
+	CreateAccount(context.Context, string, api.Plan) (state.Account, error)
+}
+
+func financialAccount(t *testing.T, store accountCreator) state.Account {
 	t.Helper()
 	return financialAccountWithContext(t, t.Context(), store)
 }
 
-func financialAccountWithContext(t *testing.T, ctx context.Context, store state.Store) state.Account {
+func financialAccountWithContext(t *testing.T, ctx context.Context, store accountCreator) state.Account {
 	t.Helper()
 	a, err := store.CreateAccount(ctx, uuid.NewString()+"@financial.example", api.PlanHobby)
 	if err != nil {

@@ -465,25 +465,31 @@ type ProjectEnvironmentConfigDiffResponse struct {
 // target environment release identity. Values are deployment metadata only;
 // the preview never exposes source bytes or secrets.
 type ProjectEnvironmentPromotionChange struct {
-	SourceWorkloadConfigHash   string `json:"source_workload_config_hash,omitempty"`
-	TargetWorkloadConfigHash   string `json:"target_workload_config_hash,omitempty"`
-	PromotedWorkloadConfigHash string `json:"promoted_workload_config_hash,omitempty"`
-	WorkloadSlug               string `json:"workload_slug"`
-	WorkloadName               string `json:"workload_name"`
-	Kind                       string `json:"kind"`
-	SourceDeploymentID         string `json:"source_deployment_id,omitempty"`
-	TargetDeploymentID         string `json:"target_deployment_id,omitempty"`
-	SourceBuildID              string `json:"source_build_id,omitempty"`
-	TargetBuildID              string `json:"target_build_id,omitempty"`
-	SourceRevision             string `json:"source_revision,omitempty"`
-	TargetRevision             string `json:"target_revision,omitempty"`
-	SourceRevisionKind         string `json:"source_revision_kind,omitempty"`
-	TargetRevisionKind         string `json:"target_revision_kind,omitempty"`
+	SecretChanges              []ProjectEnvironmentConfigChange `json:"secret_changes,omitempty"`
+	ReleaseConfigurationHash   string                           `json:"release_configuration_hash,omitempty"`
+	EnvironmentChanges         []ProjectEnvironmentConfigChange `json:"environment_changes,omitempty"`
+	SourceWorkloadConfigHash   string                           `json:"source_workload_config_hash,omitempty"`
+	TargetWorkloadConfigHash   string                           `json:"target_workload_config_hash,omitempty"`
+	PromotedWorkloadConfigHash string                           `json:"promoted_workload_config_hash,omitempty"`
+	WorkloadSlug               string                           `json:"workload_slug"`
+	WorkloadName               string                           `json:"workload_name"`
+	Kind                       string                           `json:"kind"`
+	SourceDeploymentID         string                           `json:"source_deployment_id,omitempty"`
+	TargetDeploymentID         string                           `json:"target_deployment_id,omitempty"`
+	SourceBuildID              string                           `json:"source_build_id,omitempty"`
+	TargetBuildID              string                           `json:"target_build_id,omitempty"`
+	SourceRevision             string                           `json:"source_revision,omitempty"`
+	TargetRevision             string                           `json:"target_revision,omitempty"`
+	SourceRevisionKind         string                           `json:"source_revision_kind,omitempty"`
+	TargetRevisionKind         string                           `json:"target_revision_kind,omitempty"`
 }
 
 // ProjectEnvironmentPromotionPreviewResponse is a read-only promotion plan
 // between two registered environments in one project.
 type ProjectEnvironmentPromotionPreviewResponse struct {
+	Secrets                *ProjectReleaseSecretConfiguration       `json:"secrets,omitempty"`
+	DestinationConfigHash  string                                   `json:"destination_config_hash,omitempty"`
+	Health                 *ProjectPromotionHealthPolicy            `json:"health,omitempty"`
 	ProjectSlug            string                                   `json:"project_slug"`
 	FromEnvironment        string                                   `json:"from_environment"`
 	ToEnvironment          string                                   `json:"to_environment"`
@@ -557,6 +563,9 @@ type PromoteProjectEnvironmentRequest struct {
 	FromEnvironment string `json:"from_environment"`
 	PromotionToken  string `json:"promotion_token"`
 	ApprovalToken   string `json:"approval_token,omitempty"`
+	// OverrideFreeze promotes into production while a freeze covers one of
+	// the project's apps (ADR-20261019071733); it is the audited reason.
+	OverrideFreeze string `json:"override_freeze,omitempty"`
 }
 
 // ProjectEnvironmentPromotionWorkloadResponse reports one workload's
@@ -574,6 +583,7 @@ type ProjectEnvironmentPromotionWorkloadResponse struct {
 // ProjectEnvironmentPromotionResponse is returned after a guarded promotion
 // has applied all changed workloads in the current preview.
 type ProjectEnvironmentPromotionResponse struct {
+	Status          string                                           `json:"status,omitempty"`
 	PromotionID     string                                           `json:"promotion_id"`
 	ProjectSlug     string                                           `json:"project_slug"`
 	FromEnvironment string                                           `json:"from_environment"`
@@ -614,6 +624,7 @@ type ProjectEnvironmentPromotionStatusWorkloadResponse struct {
 // ProjectEnvironmentPromotionStatusResponse is the durable status view for
 // one promotion operation.
 type ProjectEnvironmentPromotionStatusResponse struct {
+	Health                  *ProjectPromotionHealth                             `json:"health,omitempty"`
 	PromotionID             string                                              `json:"promotion_id"`
 	ProjectSlug             string                                              `json:"project_slug"`
 	FromEnvironment         string                                              `json:"from_environment"`

@@ -139,3 +139,9 @@ func ExtractOperationSubject(spec *api.OperationSubjectSpec, input []byte) (*api
 	}
 	return subject, nil
 }
+
+// ValidateOperationSubjectSpec checks a subject declaration outside a
+// definition, as a signal-mode webhook binding carries one (ADR-20261016100929).
+func ValidateOperationSubjectSpec(spec api.OperationSubjectSpec) error {
+	return validateSubjectSpec(spec)
+}

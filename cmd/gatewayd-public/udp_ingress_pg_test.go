@@ -29,7 +29,8 @@ func TestUDPIngressPostgresStartupAndShutdown(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	store := state.NewPgStore(pool)
-	stop, err := startUDPIngress(ctx, log, store, nil)
+	edge := state.NewEdgeStore(pool)
+	stop, err := startUDPIngress(ctx, log, edge, nil)
 	if err != nil || stop == nil {
 		t.Fatalf("startup stop present=%v err=%v", stop != nil, err)
 	}
@@ -60,7 +61,7 @@ func TestUDPIngressPostgresStartupAndShutdown(t *testing.T) {
 	if _, err := store.CreateUDPListener(ctx, state.UDPListener{AccountID: account.ID, AppID: app.ID, ListenerName: "echo", GuestPort: 5353, PublicPort: address.Port, Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
-	stop, err = startUDPIngress(ctx, log, store, nil)
+	stop, err = startUDPIngress(ctx, log, edge, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +77,7 @@ func TestUDPIngressPostgresStartupAndShutdown(t *testing.T) {
 	}
 	_ = probe.Close()
 	pool.Close()
-	failedStop, err := startUDPIngress(ctx, log, store, nil)
+	failedStop, err := startUDPIngress(ctx, log, edge, nil)
 	if err == nil || failedStop != nil {
 		t.Fatalf("closed database startup stop present=%v err=%v", failedStop != nil, err)
 	}

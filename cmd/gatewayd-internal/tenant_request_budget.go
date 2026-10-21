@@ -21,5 +21,6 @@ func (a tenantRequestBudgetStore) AdmitTenantRequest(ctx context.Context, accoun
 	return gateway.TenantRequestBudgetDecision{
 		Allowed: decision.Allowed, Scope: decision.Scope, Limit: decision.Limit,
 		Observed: decision.Observed, RetryAfterSeconds: decision.RetryAfterSeconds, OverdueDueAt: decision.OverdueDueAt,
+		SpendCurrency: decision.SpendCurrency,
 	}, err
 }

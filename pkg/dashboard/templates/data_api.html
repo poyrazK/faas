@@ -2,12 +2,21 @@
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 {{if .Data.RefreshSeconds}}<meta http-equiv="refresh" content="{{.Data.RefreshSeconds}}">{{end}}
 <title>{{.Title}} — Gregale</title>
-<style nonce="{{.Nonce}}">body{font:16px system-ui;max-width:1000px;margin:2rem auto;padding:0 1rem}section{margin:2rem 0}table{border-collapse:collapse;width:100%}th,td{padding:.5rem;text-align:left;border-bottom:1px solid #ccc}code{overflow-wrap:anywhere}form{display:inline-block;margin-right:1rem}button{padding:.5rem}pre{white-space:pre-wrap}</style></head>
+<style nonce="{{.Nonce}}">body{font:16px system-ui;max-width:1000px;margin:2rem auto;padding:0 1rem}section{margin:2rem 0}table{border-collapse:collapse;width:100%}meter{width:8rem}th,td{padding:.5rem;text-align:left;border-bottom:1px solid #ccc}code{overflow-wrap:anywhere}form{display:inline-block;margin-right:1rem}button{padding:.5rem}pre{white-space:pre-wrap}</style></head>
 <body><header><a href="/dashboard/apps/{{.Data.Slug}}">{{.Data.Slug}}</a> · <a href="/dashboard/apps/{{.Data.Slug}}/env">Environment &amp; secrets</a></header>
 <main>{{template "email-verification-banner" .}}<h1>Data API</h1>
 <p>Inspect the database schema and download application types from your deployed <code>data-api</code> app.</p>
 {{if .Data.Message}}<p role="status">{{.Data.Message}}</p>{{end}}
 <section><h2>Database bindings</h2>{{if .Data.Bindings}}<table><tr><th>Database</th><th>State</th><th>Credential generation</th></tr>{{range .Data.Bindings}}<tr><td>{{.DatabaseName}}</td><td>{{.State}}{{if .RotationPending}} · rotation pending{{end}}</td><td>{{.CredentialGeneration}}</td></tr>{{end}}</table>{{else}}<p>No managed Data API binding is recorded in the default environment. Check the app's database configuration before running operations.</p>{{end}}</section>
+<section><h2>Usage</h2>{{with .Data.Usage}}
+<p>This month ({{.Month}}): {{.MonthRequests}} requests, {{.MonthAnonymous}} anonymous. Last 7 days: {{.Totals.Requests}} requests, {{.Totals.Rows}} rows, {{.Totals.Bytes}} bytes{{if .Totals.Capped}}, {{.Totals.Capped}} refused by monthly caps{{end}}.</p>
+<table><tr><th>Day (UTC)</th><th>Requests</th><th></th><th>Anonymous</th><th>Server keys</th><th>Rejected</th><th>Errors</th><th>Capped</th><th>Rows</th><th>Bytes</th></tr>{{range .Days}}<tr><td>{{.Label}}</td><td>{{.Requests}}</td><td><meter min="0" max="{{$.Data.Usage.Max}}" value="{{.Requests}}">{{.Requests}}</meter></td><td>{{.Anonymous}}</td><td>{{.Server}}</td><td>{{.Rejected}}</td><td>{{.Errors}}</td><td>{{.Capped}}</td><td>{{.Rows}}</td><td>{{.Bytes}}</td></tr>{{end}}</table>
+<p>The Data API runtime reports these counts; they are not your bill. More history: <code>gregale data-api usage {{$.Data.Slug}} --since 30d</code></p>
+{{else}}<p>{{if .Data.UsageMessage}}{{.Data.UsageMessage}}{{else}}No usage reported yet.{{end}}</p>{{end}}</section>
+{{if .Data.Access}}<section><h2>Access</h2><p>These settings are sealed app secrets, so this page shows which are set. Change them with the CLI; each change restarts the runtime.</p>
+<table><tr><th>Setting</th><th>State</th><th>Change with</th></tr>{{range .Data.Access}}<tr><td>{{.Name}}</td><td>{{.State}}</td><td><code>{{.Command}}</code></td></tr>{{end}}</table>
+<h3>Server keys</h3><table><tr><th>Slot</th><th>State</th></tr>{{range .Data.ServerKeys}}<tr><td>{{.Slot}}</td><td>{{if .InUse}}In use{{if .Restricted}}, restricted{{end}}{{else}}Empty{{end}}</td></tr>{{end}}</table>
+<p>Create, list and revoke keys with <code>gregale data-api server-key create|list|revoke {{.Data.Slug}}</code>. A new key is shown once.</p></section>{{end}}
 <section><h2>Schema and types</h2>
 {{if .Data.Enabled}}<form method="post" action="/dashboard/apps/{{.Data.Slug}}/data-api/schema"><input type="hidden" name="csrf_token" value="{{.Data.CSRFToken}}"><button type="submit">Inspect schema</button></form><form method="post" action="/dashboard/apps/{{.Data.Slug}}/data-api/types"><input type="hidden" name="csrf_token" value="{{.Data.CSRFToken}}"><button type="submit">Generate TypeScript</button></form>{{else}}<p>Schema operations require app tasks to be enabled on this host.</p>{{end}}
 {{if .Data.TaskID}}<p role="status">Operation <code>{{.Data.TaskID}}</code>: {{.Data.TaskStatus}}</p>{{end}}

@@ -1211,6 +1211,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			}
 			return nil
 		}, log)
+	watcher.Daemon = "meterd" // ADR-1700 apply receipts
 	if err := watcher.Reconcile(runtimeCtx); err != nil {
 		log.Warn("meterd: initial runtime config reconcile failed", "err", err)
 	}
@@ -1233,6 +1234,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	loop := meter.NewLoop(store, cpu, parker, pusher, pn, mailer, dunning, residency, evaluator, deps.now, log, mc, ops).
 		WithQuotaWarnings(func() bool { return deps.getenv(internalmail.QuotaWarningOutboxEnableEnv) == "1" }, quotaWarningCommands).
 		WithBillingEnabled(billingMode.Enabled()).
+		WithFinancialBudgets().
 		WithEgress(egress).
 		WithProbe(probe).
 		WithPartitionCreate(gatedPartitionCreate).

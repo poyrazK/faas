@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bufio"
@@ -15,13 +15,14 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-func startRecoveryRunner(t *testing.T, input, publicURL string, logs http.HandlerFunc) (*startRunner, *atomic.Int32) {
+func startRecoveryRunner(t *testing.T, input, publicURL string, logs http.HandlerFunc) (*main.StartRunner, *atomic.Int32) {
 	t.Helper()
 	var mutations atomic.Int32
-	startTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
+	main.StartTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			mutations.Add(1)
 		}
@@ -38,12 +39,12 @@ func startRecoveryRunner(t *testing.T, input, publicURL string, logs http.Handle
 			http.NotFound(w, r)
 		}
 	})
-	runner := startTestRunner(t, startTestSource(t), input)
-	runner.session.AppID, runner.session.DeploymentID, runner.session.Status = "app-1", "d1", statusLive
-	if err := saveStartSession(runner.statePath, runner.session); err != nil {
+	runner := main.StartTestRunner(t, main.StartTestSource(t), input)
+	(*runner.Session()).AppID, (*runner.Session()).DeploymentID, (*runner.Session()).Status = "app-1", "d1", main.StatusLive
+	if err := main.SaveStartSession((*runner.StatePath()), (*runner.Session())); err != nil {
 		t.Fatal(err)
 	}
-	runner.deploy = func(context.Context, []string, bool, ...deployExecution) int {
+	(*runner.Deploy()) = func(context.Context, []string, bool, ...main.DeployExecution) int {
 		t.Fatal("request recovery submitted a deployment")
 		return 1
 	}
@@ -51,7 +52,7 @@ func startRecoveryRunner(t *testing.T, input, publicURL string, logs http.Handle
 }
 
 func TestStartFirstResponseRetryReusesDeployment(t *testing.T) {
-	stdout, stderr := startTestEnvironment(t)
+	stdout, stderr := main.StartTestEnvironment(t)
 	var requests, logs atomic.Int32
 	public := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "" || r.URL.Path != "/" {
@@ -73,18 +74,18 @@ func TestStartFirstResponseRetryReusesDeployment(t *testing.T) {
 		}
 		_, _ = fmt.Fprint(w, "event: log\ndata: {\"line\":\"Waiting for the database\",\"deployment_id\":\"d1\"}\n\n")
 	})
-	before, _ := os.ReadFile(runner.statePath)
-	if code := runner.checkFirstResponse("/", ""); code != 0 || requests.Load() != 2 || logs.Load() != 1 || mutations.Load() != 0 || runner.lastRequest == nil || runner.lastRequest.servedDeployment != "d1" {
+	before, _ := os.ReadFile((*runner.StatePath()))
+	if code := runner.CheckFirstResponse("/", ""); code != 0 || requests.Load() != 2 || logs.Load() != 1 || mutations.Load() != 0 || (*runner.LastRequest()) == nil || (*(*runner.LastRequest()).ServedDeployment()) != "d1" {
 		t.Fatalf("code=%d requests=%d logs=%d mutations=%d stderr=%s stdout=%s", code, requests.Load(), logs.Load(), mutations.Load(), stderr(), stdout)
 	}
-	after, _ := os.ReadFile(runner.statePath)
-	if !bytes.Equal(before, after) || runner.session.DeploymentID != "d1" || strings.Count(stdout.String(), "Your app answered.") != 1 || !strings.Contains(stdout.String(), "Waiting for the database") {
+	after, _ := os.ReadFile((*runner.StatePath()))
+	if !bytes.Equal(before, after) || (*runner.Session()).DeploymentID != "d1" || strings.Count(stdout.String(), "Your app answered.") != 1 || !strings.Contains(stdout.String(), "Waiting for the database") {
 		t.Fatalf("retry changed recovery metadata or reported false success: %s", stdout)
 	}
 }
 
 func TestStartMissingRouteCanCheckAnotherPathWithoutPersistingQuery(t *testing.T) {
-	stdout, stderr := startTestEnvironment(t)
+	stdout, stderr := main.StartTestEnvironment(t)
 	var requests atomic.Int32
 	other := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Error("alternate path escaped the app") }))
 	defer other.Close()
@@ -103,11 +104,11 @@ func TestStartMissingRouteCanCheckAnotherPathWithoutPersistingQuery(t *testing.T
 	defer public.Close()
 	input := "2\n" + other.URL + "/escape\n//invalid-host/escape\n/healthz?token=ephemeral-query-value\n"
 	runner, mutations := startRecoveryRunner(t, input, public.URL, nil)
-	before, _ := os.ReadFile(runner.statePath)
-	if code := runner.checkFirstResponse("/", ""); code != 0 || requests.Load() != 2 || mutations.Load() != 0 || runner.lastRequest == nil || runner.lastRequest.path != "/healthz?token=ephemeral-query-value" {
+	before, _ := os.ReadFile((*runner.StatePath()))
+	if code := runner.CheckFirstResponse("/", ""); code != 0 || requests.Load() != 2 || mutations.Load() != 0 || (*runner.LastRequest()) == nil || (*(*runner.LastRequest()).Path()) != "/healthz?token=ephemeral-query-value" {
 		t.Fatalf("code=%d requests=%d mutations=%d stderr=%s stdout=%s", code, requests.Load(), mutations.Load(), stderr(), stdout)
 	}
-	after, _ := os.ReadFile(runner.statePath)
+	after, _ := os.ReadFile((*runner.StatePath()))
 	if !bytes.Equal(before, after) || bytes.Contains(after, []byte("ephemeral-query-value")) {
 		t.Fatal("alternate path/query became durable session state")
 	}
@@ -116,7 +117,7 @@ func TestStartMissingRouteCanCheckAnotherPathWithoutPersistingQuery(t *testing.T
 func TestStartOtherHTTPFailuresCanCheckAnotherHealthPath(t *testing.T) {
 	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden, http.StatusFound, http.StatusServiceUnavailable} {
 		t.Run(fmt.Sprintf("HTTP %d", status), func(t *testing.T) {
-			startTestEnvironment(t)
+			main.StartTestEnvironment(t)
 			requests := 0
 			public := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				requests++
@@ -136,9 +137,9 @@ func TestStartOtherHTTPFailuresCanCheckAnotherHealthPath(t *testing.T) {
 			}))
 			defer public.Close()
 			runner, mutations := startRecoveryRunner(t, "2\n/ready\n", public.URL, nil)
-			before, _ := os.ReadFile(runner.statePath)
-			code := runner.checkFirstResponse("/", "")
-			after, _ := os.ReadFile(runner.statePath)
+			before, _ := os.ReadFile((*runner.StatePath()))
+			code := runner.CheckFirstResponse("/", "")
+			after, _ := os.ReadFile((*runner.StatePath()))
 			if code != 0 || requests != 2 || mutations.Load() != 0 || !bytes.Equal(before, after) {
 				t.Fatalf("alternate path changed deployment state: code=%d requests=%d mutations=%d", code, requests, mutations.Load())
 			}
@@ -149,7 +150,7 @@ func TestStartOtherHTTPFailuresCanCheckAnotherHealthPath(t *testing.T) {
 func TestStartFirstResponseRecoveryCannotBypassGreetingOrRevision(t *testing.T) {
 	for _, mismatch := range []string{"greeting", "revision"} {
 		t.Run(mismatch, func(t *testing.T) {
-			stdout, stderr := startTestEnvironment(t)
+			stdout, stderr := main.StartTestEnvironment(t)
 			var requests atomic.Int32
 			public := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path != "/" {
@@ -168,7 +169,7 @@ func TestStartFirstResponseRecoveryCannotBypassGreetingOrRevision(t *testing.T) 
 			}))
 			defer public.Close()
 			runner, mutations := startRecoveryRunner(t, "\n", public.URL, nil)
-			if code := runner.checkFirstResponse("/", "new greeting"); code != 0 || requests.Load() != 2 || mutations.Load() != 0 || strings.Count(stdout.String(), "Your app answered.") != 1 || strings.Contains(stdout.String(), "Check another GET path") {
+			if code := runner.CheckFirstResponse("/", "new greeting"); code != 0 || requests.Load() != 2 || mutations.Load() != 0 || strings.Count(stdout.String(), "Your app answered.") != 1 || strings.Contains(stdout.String(), "Check another GET path") {
 				t.Fatalf("code=%d requests=%d stderr=%s stdout=%s", code, requests.Load(), stderr(), stdout)
 			}
 		})
@@ -178,7 +179,7 @@ func TestStartFirstResponseRecoveryCannotBypassGreetingOrRevision(t *testing.T) 
 func TestStartUnresolvedRequestFinishEOFAndCancelKeepFailure(t *testing.T) {
 	for _, outcome := range []string{"finish", "EOF", "cancel"} {
 		t.Run(outcome, func(t *testing.T) {
-			stdout, _ := startTestEnvironment(t)
+			stdout, _ := main.StartTestEnvironment(t)
 			var requests atomic.Int32
 			public := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				requests.Add(1)
@@ -194,11 +195,11 @@ func TestStartUnresolvedRequestFinishEOFAndCancelKeepFailure(t *testing.T) {
 			if outcome == "cancel" {
 				ctx, cancel := context.WithCancel(context.Background())
 				defer cancel()
-				runner.ctx = ctx
-				runner.prompt.reader = bufio.NewReader(&startCancelRequestInput{cancel: cancel})
+				(*runner.Ctx()) = ctx
+				(*(*runner.Prompt()).Reader()) = bufio.NewReader(&startCancelRequestInput{cancel: cancel})
 				want = 130
 			}
-			if code := runner.checkFirstResponse("/", ""); code != want || requests.Load() != 1 || mutations.Load() != 0 || runner.lastRequest != nil || runner.session.DeploymentID != "d1" || strings.Contains(stdout.String(), "Your app answered.") {
+			if code := runner.CheckFirstResponse("/", ""); code != want || requests.Load() != 1 || mutations.Load() != 0 || (*runner.LastRequest()) != nil || (*runner.Session()).DeploymentID != "d1" || strings.Contains(stdout.String(), "Your app answered.") {
 				t.Fatalf("code=%d want=%d requests=%d mutations=%d stdout=%s", code, want, requests.Load(), mutations.Load(), stdout)
 			}
 		})
@@ -213,16 +214,16 @@ func (r *startCancelRequestInput) Read([]byte) (int, error) {
 }
 
 func TestStartAppIdentityFailureCannotFetchRuntimeLogs(t *testing.T) {
-	startTestEnvironment(t)
+	main.StartTestEnvironment(t)
 	runner, mutations := startRecoveryRunner(t, "2\n", "https://must-not-contact.example.test", func(http.ResponseWriter, *http.Request) { t.Error("identity mismatch fetched logs") })
-	runner.session.AppID = "different-app"
-	if code := runner.checkFirstResponse("/", ""); code == 0 || mutations.Load() != 0 || runner.lastRequest != nil {
+	(*runner.Session()).AppID = "different-app"
+	if code := runner.CheckFirstResponse("/", ""); code == 0 || mutations.Load() != 0 || (*runner.LastRequest()) != nil {
 		t.Fatalf("identity mismatch reported success: code=%d mutations=%d", code, mutations.Load())
 	}
 }
 
 func TestStartRequestRecoveryCancellationWhileFetchingLogs(t *testing.T) {
-	stdout, _ := startTestEnvironment(t)
+	stdout, _ := main.StartTestEnvironment(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	public := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -233,28 +234,28 @@ func TestStartRequestRecoveryCancellationWhileFetchingLogs(t *testing.T) {
 		cancel()
 		<-r.Context().Done()
 	})
-	runner.ctx = ctx
-	if code := runner.checkFirstResponse("/", ""); code != 130 || mutations.Load() != 0 || strings.Contains(stdout.String(), "Choose [") {
+	(*runner.Ctx()) = ctx
+	if code := runner.CheckFirstResponse("/", ""); code != 130 || mutations.Load() != 0 || strings.Contains(stdout.String(), "Choose [") {
 		t.Fatalf("cancellation did not stop the log fetch: code=%d stdout=%s", code, stdout)
 	}
 }
 
 func TestStartPrivateRequestRecoveryUsesPinnedResponseCheck(t *testing.T) {
-	stdout, stderr := startTestEnvironment(t)
+	stdout, stderr := main.StartTestEnvironment(t)
 	var invocations, deployments atomic.Int32
-	startTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer "+loadToken() {
+	main.StartTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer "+main.LoadToken() {
 			t.Error("account credentials did not stay on the control plane")
 		}
 		switch r.URL.Path {
 		case "/v1/apps/first-app":
-			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: startResponseAppID, Slug: "first-app", RequireAuthn: true, CanonicalURL: "https://must-not-contact.example.test"})
-		case "/v1/apps/first-app/deployments/" + startResponseDeploymentID + "/response-check":
+			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: main.StartResponseAppID, Slug: "first-app", RequireAuthn: true, CanonicalURL: "https://must-not-contact.example.test"})
+		case "/v1/apps/first-app/deployments/" + main.StartResponseDeploymentID + "/response-check":
 			var request api.DeploymentResponseCheckRequest
-			if err := json.NewDecoder(r.Body).Decode(&request); err != nil || request.AppID != startResponseAppID || request.Path != "/" || request.Scope != "default" {
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil || request.AppID != main.StartResponseAppID || request.Path != "/" || request.Scope != "default" {
 				t.Errorf("retry changed the response check: %+v, %v", request, err)
 			}
-			response := api.DeploymentResponseCheckResult{AppID: startResponseAppID, DeploymentID: startResponseDeploymentID, InstanceID: startResponseInstanceID, Scope: "default", HTTPStatus: 200, Body: `{"message":"hello"}`}
+			response := api.DeploymentResponseCheckResult{AppID: main.StartResponseAppID, DeploymentID: main.StartResponseDeploymentID, InstanceID: main.StartResponseInstanceID, Scope: "default", HTTPStatus: 200, Body: `{"message":"hello"}`}
 			if invocations.Add(1) == 1 {
 				response.HTTPStatus, response.Body = 503, "Temporary error"
 			}
@@ -265,18 +266,18 @@ func TestStartPrivateRequestRecoveryUsesPinnedResponseCheck(t *testing.T) {
 			http.NotFound(w, r)
 		}
 	})
-	runner := startTestRunner(t, startTestSource(t), "\n")
-	runner.session.AppID, runner.session.DeploymentID = startResponseAppID, startResponseDeploymentID
-	if code := runner.checkFirstResponse("/", ""); code != 0 || invocations.Load() != 2 || deployments.Load() != 0 || runner.lastRequest == nil || runner.lastRequest.servedDeployment != startResponseDeploymentID {
+	runner := main.StartTestRunner(t, main.StartTestSource(t), "\n")
+	(*runner.Session()).AppID, (*runner.Session()).DeploymentID = main.StartResponseAppID, main.StartResponseDeploymentID
+	if code := runner.CheckFirstResponse("/", ""); code != 0 || invocations.Load() != 2 || deployments.Load() != 0 || (*runner.LastRequest()) == nil || (*(*runner.LastRequest()).ServedDeployment()) != main.StartResponseDeploymentID {
 		t.Fatalf("code=%d invocations=%d deployments=%d stderr=%s stdout=%s", code, invocations.Load(), deployments.Load(), stderr(), stdout)
 	}
-	if strings.Contains(stdout.String(), loadToken()) || !strings.Contains(stdout.String(), "HTTP 200") || strings.Contains(stdout.String(), "Verified URL") {
+	if strings.Contains(stdout.String(), main.LoadToken()) || !strings.Contains(stdout.String(), "HTTP 200") || strings.Contains(stdout.String(), "Verified URL") {
 		t.Fatalf("private response check falsely proved public access: %s", stdout)
 	}
 }
 
 func TestStartRequestLogsAreBoundedScopedAndRedacted(t *testing.T) {
-	stdout, _ := startTestEnvironment(t)
+	stdout, _ := main.StartTestEnvironment(t)
 	var logs atomic.Int32
 	runner, _ := startRecoveryRunner(t, "", "", func(w http.ResponseWriter, r *http.Request) {
 		logs.Add(1)
@@ -284,24 +285,24 @@ func TestStartRequestLogsAreBoundedScopedAndRedacted(t *testing.T) {
 			t.Errorf("paid-plan log scope changed: %s", r.URL)
 		}
 		for i := 0; i < 12; i++ {
-			line := fmt.Sprintf("error-%02d %s private-log-value-123\x1b\nsecond line", i, loadToken())
+			line := fmt.Sprintf("error-%02d %s private-log-value-123\x1b\nsecond line", i, main.LoadToken())
 			encoded, _ := json.Marshal(map[string]string{"line": line, "deployment_id": "d1"})
 			_, _ = fmt.Fprintf(w, "event: log\ndata: %s\n\n", encoded)
 		}
 		_, _ = fmt.Fprint(w, "event: log\ndata: {\"line\":\"wrong-deployment-log\",\"deployment_id\":\"other-deploy\"}\n\n")
 		_, _ = fmt.Fprint(w, "event: stage\ndata: {\"line\":\"not-a-log-frame\"}\n\n")
 	})
-	runner.account.Plan = "pro"
-	runner.secretsFile = filepath.Join(t.TempDir(), "secrets.env")
-	if err := os.WriteFile(runner.secretsFile, []byte("PASSWORD=private-log-value-123\n"), 0o600); err != nil {
+	(*runner.Account()).Plan = "pro"
+	(*runner.SecretsFile()) = filepath.Join(t.TempDir(), "secrets.env")
+	if err := os.WriteFile((*runner.SecretsFile()), []byte("PASSWORD=private-log-value-123\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	runner.showRequestLogs(5)
+	runner.ShowRequestLogs(5)
 	got := stdout.String()
 	if logs.Load() != 1 || strings.Count(got, "error-") != 5 || !strings.Contains(got, "error-11") || !strings.Contains(got, "[REDACTED]") {
 		t.Fatalf("incorrect log preview: %s", got)
 	}
-	for _, forbidden := range []string{loadToken(), "private-log-value-123", "wrong-deployment-log", "not-a-log-frame", "\x1b"} {
+	for _, forbidden := range []string{main.LoadToken(), "private-log-value-123", "wrong-deployment-log", "not-a-log-frame", "\x1b"} {
 		if strings.Contains(got, forbidden) {
 			t.Errorf("log preview leaked %q: %s", forbidden, got)
 		}
@@ -309,12 +310,12 @@ func TestStartRequestLogsAreBoundedScopedAndRedacted(t *testing.T) {
 }
 
 func TestStartStarterBlankGreetingFinishesWithoutChanges(t *testing.T) {
-	startTestEnvironment(t)
-	source := startTestSource(t)
-	runner := startTestRunner(t, source, "\n")
-	runner.session.Template = "hello-node"
+	main.StartTestEnvironment(t)
+	source := main.StartTestSource(t)
+	runner := main.StartTestRunner(t, source, "\n")
+	(*runner.Session()).Template = "hello-node"
 	before, _ := os.ReadFile(filepath.Join(source, "handler.js"))
-	if code := runner.starterWalkthrough(); code != 0 {
+	if code := runner.StarterWalkthrough(); code != 0 {
 		t.Fatalf("blank greeting code=%d", code)
 	}
 	after, _ := os.ReadFile(filepath.Join(source, "handler.js"))
@@ -324,15 +325,15 @@ func TestStartStarterBlankGreetingFinishesWithoutChanges(t *testing.T) {
 }
 
 func TestStartStarterAppIdentityChangeRefusesEdit(t *testing.T) {
-	startTestEnvironment(t)
-	startTestAPI(t, func(w http.ResponseWriter, _ *http.Request) {
+	main.StartTestEnvironment(t)
+	main.StartTestAPI(t, func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "replacement-app", Slug: "first-app"})
 	})
-	source := startTestSource(t)
-	runner := startTestRunner(t, source, "new greeting\ny\n")
-	runner.session.Template, runner.session.AppID = "hello-node", "app-1"
+	source := main.StartTestSource(t)
+	runner := main.StartTestRunner(t, source, "new greeting\ny\n")
+	(*runner.Session()).Template, (*runner.Session()).AppID = "hello-node", "app-1"
 	before, _ := os.ReadFile(filepath.Join(source, "handler.js"))
-	if code := runner.starterWalkthrough(); code == 0 {
+	if code := runner.StarterWalkthrough(); code == 0 {
 		t.Fatal("replacement app accepted a greeting deployment")
 	}
 	after, _ := os.ReadFile(filepath.Join(source, "handler.js"))
@@ -342,21 +343,21 @@ func TestStartStarterAppIdentityChangeRefusesEdit(t *testing.T) {
 }
 
 func TestStartStarterChangedFileIsNotWrittenOrDeployed(t *testing.T) {
-	startTestEnvironment(t)
-	startTestAPI(t, func(w http.ResponseWriter, _ *http.Request) {
+	main.StartTestEnvironment(t)
+	main.StartTestAPI(t, func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "app-1", Slug: "first-app"})
 	})
-	source := startTestSource(t)
-	runner := startTestRunner(t, source, "")
-	runner.session.Template = "hello-node"
-	runner.session.AppID = "app-1"
+	source := main.StartTestSource(t)
+	runner := main.StartTestRunner(t, source, "")
+	(*runner.Session()).Template = "hello-node"
+	(*runner.Session()).AppID = "app-1"
 	input := &startChangedGreetingInput{path: filepath.Join(source, "handler.js")}
-	runner.prompt.reader = bufio.NewReader(input)
-	runner.deploy = func(context.Context, []string, bool, ...deployExecution) int {
+	(*(*runner.Prompt()).Reader()) = bufio.NewReader(input)
+	(*runner.Deploy()) = func(context.Context, []string, bool, ...main.DeployExecution) int {
 		t.Error("stale preview submitted a deployment")
 		return 1
 	}
-	if code := runner.starterWalkthrough(); code == 0 {
+	if code := runner.StarterWalkthrough(); code == 0 {
 		t.Fatal("changed source accepted the stale edit")
 	}
 	after, _ := os.ReadFile(input.path)

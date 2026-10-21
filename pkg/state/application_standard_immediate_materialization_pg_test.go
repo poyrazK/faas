@@ -1,15 +1,18 @@
 //go:build !no_pg
 
-package state
+package state_test
 
-import "testing"
+import (
+	"github.com/onebox-faas/faas/pkg/state"
+	"testing"
+)
 
 func TestPgApplicationStandardImmediateClaim(t *testing.T) {
-	s, _ := standardOperationPGStore(t)
+	s, _ := state.StandardOperationPGStore(t)
 	standardImmediateClaim(t, s)
 }
 
 func TestPgApplicationStandardImmediateReviewPrecedence(t *testing.T) {
-	s, _ := standardOperationPGStore(t)
+	s, _ := state.StandardOperationPGStore(t)
 	standardImmediateReviewPrecedence(t, s)
 }

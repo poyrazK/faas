@@ -2,7 +2,7 @@
 
 package state_test
 
-// adr: 1187
+// adr: 1187, 1199
 
 import (
 	"testing"
@@ -124,5 +124,51 @@ func TestRouteAwakeQueriesPG(t *testing.T) {
 	}
 	if !rows[0].Minute.Time.Equal(minute(0)) || !rows[2].Minute.Time.Equal(minute(1)) {
 		t.Fatalf("minutes = %v %v", rows[0].Minute.Time, rows[2].Minute.Time)
+	}
+}
+
+// TestRouteAwakeSourceMinutesPG reads probe and prewarm events per minute
+// (ADR-1199): probes the app answered without a 5xx or auth rejection, and
+// prewarms that admitted instances.
+func TestRouteAwakeSourceMinutesPG(t *testing.T) {
+	pool := pgtest.OpenMigrated(t)
+	if err := db.MigrateUp(t.Context(), pool); err != nil {
+		t.Fatal(err)
+	}
+	s := state.NewPgStore(pool)
+	a, app, _, d := healthFixture(t, s)
+	b, other, _, od := healthFixture(t, s)
+	base := time.Now().UTC().Truncate(time.Minute).Add(-30 * time.Minute)
+	minute := func(n int) time.Time { return base.Add(time.Duration(n) * time.Minute) }
+	probe := func(account, appID, deployment, path string, at time.Time, requests, errors, unauthenticated int) {
+		t.Helper()
+		if _, err := pool.Exec(t.Context(), `INSERT INTO route_probe_observations(app_id,account_id,deployment_id,method,path,window_start,requests,server_errors,unauthenticated)
+			VALUES($1,$2,$3,'GET',$4,$5,$6,$7,$8)`, appID, account, deployment, path, at, requests, errors, unauthenticated); err != nil {
+			t.Fatal(err)
+		}
+	}
+	prewarm := func(at time.Time, admitted int) {
+		t.Helper()
+		if _, err := pool.Exec(t.Context(), `INSERT INTO prewarm_intents(app_id,account_id,count,wake_at,expires_at,status,fired_at,admitted_count)
+			VALUES($1,$2,2,$3,$4,'succeeded',$3,$5)`, app.ID, a.ID, at, at.Add(time.Hour), admitted); err != nil {
+			t.Fatal(err)
+		}
+	}
+	probe(a.ID, app.ID, d.ID, "/health", minute(0), 10, 2, 3)
+	probe(a.ID, app.ID, d.ID, "/users/42", minute(0), 4, 0, 0)
+	probe(a.ID, app.ID, d.ID, "/health", minute(1), 3, 3, 0) // every probe failed: kept nothing awake
+	probe(b.ID, other.ID, od.ID, "/health", minute(0), 50, 0, 0)
+	prewarm(minute(2).Add(20*time.Second), 2)
+	prewarm(minute(3), 0) // admitted nothing
+	rows, err := s.RouteAwakeSourceMinutes(t.Context(), sqlc.RouteAwakeSourceMinutesParams{
+		AccountID: pgUUID(t, a.ID), AppID: pgUUID(t, app.ID),
+		SinceAt: pgtype.Timestamptz{Time: minute(-1), Valid: true}, UntilAt: pgtype.Timestamptz{Time: minute(10), Valid: true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 || !rows[0].Minute.Time.Equal(minute(0)) || rows[0].Source != "route_probe" || rows[0].Events != 9 ||
+		!rows[1].Minute.Time.Equal(minute(2)) || rows[1].Source != "prewarm" || rows[1].Events != 2 {
+		t.Fatalf("rows = %+v", rows)
 	}
 }

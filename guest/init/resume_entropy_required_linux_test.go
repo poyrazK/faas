@@ -10,6 +10,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/onebox-faas/faas/pkg/resumetimingproto"
 	"golang.org/x/sys/unix"
 )
 
@@ -19,7 +20,7 @@ import (
 func TestResumeWithoutEntropyNacks(t *testing.T) {
 	ran := false
 	orig := runResumeHookFn
-	runResumeHookFn = func(int64, []byte) error { ran = true; return nil }
+	runResumeHookFn = func(int64, []byte, *resumetimingproto.Timings) error { ran = true; return nil }
 	t.Cleanup(func() { runResumeHookFn = orig })
 
 	fds, err := unix.Socketpair(unix.AF_UNIX, unix.SOCK_STREAM, 0)

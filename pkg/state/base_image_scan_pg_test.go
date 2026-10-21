@@ -1,6 +1,6 @@
 //go:build !no_pg
 
-package state
+package state_test
 
 // adr: 435
 
@@ -14,22 +14,23 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 func TestPgBaseScanLifecycle(t *testing.T) {
-	s, _ := registryVerificationPGStore(t)
+	s, _ := state.RegistryVerificationPGStore(t)
 	baseScanLifecycle(t, s)
 }
 func TestPgBaseScanRefusals(t *testing.T) {
-	s, _ := registryVerificationPGStore(t)
+	s, _ := state.RegistryVerificationPGStore(t)
 	baseScanRefusals(t, s)
 }
 
 func TestPgBaseScanFreshnessUsesAdvancingStorageClock(t *testing.T) {
-	s, pool := registryVerificationPGStore(t)
+	s, pool := state.RegistryVerificationPGStore(t)
 	in, base := baseScanFixture(t, s)
-	in, hash, err := prepareBaseImageScan(in)
+	in, hash, err := state.PrepareBaseImageScan(in)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,20 +44,20 @@ func TestPgBaseScanFreshnessUsesAdvancingStorageClock(t *testing.T) {
 	}
 	defer tx.Rollback(t.Context())
 	q := sqlc.New()
-	if err := q.AuthorizeBaseImageScanInsert(t.Context(), tx, mustPgUUID(in.ID)); err != nil {
+	if err := q.AuthorizeBaseImageScanInsert(t.Context(), tx, state.MustPgUUID(in.ID)); err != nil {
 		t.Fatal(err)
 	}
 	// Test-only private SQLC publication with a short, valid lease. The same
 	// transaction stays open across expiry to distinguish clock_timestamp()
 	// from transaction-frozen now(); this is a storage-clock test, not a scan.
-	row, err := q.InsertBaseImageScan(t.Context(), tx, sqlc.InsertBaseImageScanParams{ID: mustPgUUID(in.ID), InputSnapshot: raw, InputHash: hash, ProducerID: mustPgUUID(base.ID), TtlSeconds: 0.3, DbMaxAgeSeconds: api.ApplicationStandardScannerDBMaxAge.Seconds()})
+	row, err := q.InsertBaseImageScan(t.Context(), tx, sqlc.InsertBaseImageScanParams{ID: state.MustPgUUID(in.ID), InputSnapshot: raw, InputHash: hash, ProducerID: state.MustPgUUID(base.ID), TtlSeconds: 0.3, DbMaxAgeSeconds: api.ApplicationStandardScannerDBMaxAge.Seconds()})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := q.SelectBaseImageScan(t.Context(), tx, sqlc.SelectBaseImageScanParams{StorageKey: in.Artifact.StorageKey, ID: mustPgUUID(in.ID)}); err != nil {
+	if err := q.SelectBaseImageScan(t.Context(), tx, sqlc.SelectBaseImageScanParams{StorageKey: in.Artifact.StorageKey, ID: state.MustPgUUID(in.ID)}); err != nil {
 		t.Fatal(err)
 	}
-	params := sqlc.GetFreshBaseImageScanParams{ProducerID: mustPgUUID(base.ID), ProducerHash: base.InputHash, DbMaxAgeSeconds: api.ApplicationStandardScannerDBMaxAge.Seconds()}
+	params := sqlc.GetFreshBaseImageScanParams{ProducerID: state.MustPgUUID(base.ID), ProducerHash: base.InputHash, DbMaxAgeSeconds: api.ApplicationStandardScannerDBMaxAge.Seconds()}
 	if _, err := q.GetFreshBaseImageScan(t.Context(), tx, params); err != nil {
 		t.Fatalf("new lease not fresh: %v", err)
 	}
@@ -67,7 +68,7 @@ func TestPgBaseScanFreshnessUsesAdvancingStorageClock(t *testing.T) {
 	if err := tx.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.GetFreshBaseImageScan(t.Context(), base.ID, base.InputHash); !errors.Is(err, ErrApplicationStandardRuntimeStale) {
+	if _, err := s.GetFreshBaseImageScan(t.Context(), base.ID, base.InputHash); !errors.Is(err, state.ErrApplicationStandardRuntimeStale) {
 		t.Fatalf("expired lease stayed usable: %v", err)
 	}
 	retry, err := s.PublishBaseImageScan(t.Context(), in)
@@ -76,7 +77,7 @@ func TestPgBaseScanFreshnessUsesAdvancingStorageClock(t *testing.T) {
 	}
 }
 func TestPgBaseScanAtomicImmutableAndNonwaiting(t *testing.T) {
-	s, pool := registryVerificationPGStore(t)
+	s, pool := state.RegistryVerificationPGStore(t)
 	in, _ := baseScanFixture(t, s)
 	tx, err := pool.Begin(t.Context())
 	if err != nil {
@@ -87,7 +88,7 @@ func TestPgBaseScanAtomicImmutableAndNonwaiting(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
-	if _, err := s.PublishBaseImageScan(ctx, in); !errors.Is(err, ErrApplicationStandardReviewBusy) {
+	if _, err := s.PublishBaseImageScan(ctx, in); !errors.Is(err, state.ErrApplicationStandardReviewBusy) {
 		t.Fatalf("scan waited or bypassed base fence: %v", err)
 	}
 	if err := tx.Rollback(t.Context()); err != nil {

@@ -1,12 +1,18 @@
 from typing import Literal
 
-ListEdgeRuleEventsOutcome = Literal["blocked", "detected", "logged", "matched", "warned"]
+ListEdgeRuleEventsOutcome = Literal[
+    "blocked", "challenged", "detected", "failed", "logged", "matched", "rejected", "solved", "warned"
+]
 
 LIST_EDGE_RULE_EVENTS_OUTCOME_VALUES: set[ListEdgeRuleEventsOutcome] = {
     "blocked",
+    "challenged",
     "detected",
+    "failed",
     "logged",
     "matched",
+    "rejected",
+    "solved",
     "warned",
 }
 

@@ -113,9 +113,13 @@ func UnitSchedd() daemonunit.Unit {
 			{Key: "FAAS_CI_TRANSPORT_ENABLED", Value: "0"},
 			{Key: "FAAS_CI_RUNTIME_URL", Value: ""},
 			{Key: "FAAS_WORKFLOWS_ENABLED", Value: "1"},
+			// ADR-1189: fire the prewarm intents the API accepts (ADR-160);
+			// without the drain they would stay pending.
+			{Key: "FAAS_PREWARM_ENABLED", Value: "1"},
 		},
 		LoadCredential: []daemonunit.LoadCred{
 			{Name: "fleet.age", Path: "/etc/faas/secrets/fleet.age"},
+			{Name: "fleet.age.previous", Path: "/etc/faas/secrets/fleet.age.previous", Optional: true},
 			{Name: "host.age", Path: "/etc/faas/secrets/host.age"},
 			{Name: "host.age.previous", Path: "/etc/faas/secrets/host.age.previous", Optional: true},
 			{Name: "faas_sign_pub", Path: "/etc/faas/secrets/sign-pub.pem"},

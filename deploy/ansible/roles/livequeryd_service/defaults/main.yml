@@ -1,0 +1,92 @@
+---
+# Live queries (ADR-20261016151947): one hub process for the managed databases
+# listed below. This role is included only when faas_livequeryd_managed=true,
+# so an unconfigured hub cannot turn an unrelated control-plane bootstrap into
+# a crash loop. faas_livequeryd_enabled=false stops the hub and removes its
+# configuration.
+faas_livequeryd_enabled: true
+
+# The databases the hub serves. Each entry:
+#   id:               the database ID seals and live_hub_url name
+#                     (letters, digits, _ or -)
+#   database_url_src: controller-local file holding its connection string; its
+#                     role needs REPLICATION, and superuser (or event-trigger
+#                     rights) for the schema-change log
+# and optionally slot, publication, install, create_publication,
+# release_after, awake, awake_every, neon_api_key_src (default: the role-wide
+# settings below), and neon_project and neon_endpoint for awake: neon.
+# Each database has its own slot, checkpoint and /<id>/live route; one that
+# cannot be opened is retried without stopping the others.
+#
+#   faas_livequeryd_databases:
+#     - id: 3f1c
+#       database_url_src: secrets/live/3f1c.dsn
+#       release_after: 5m
+#       awake: neon
+#       neon_project: proj-1
+#       neon_endpoint: ep-1
+faas_livequeryd_databases: []
+
+# Controller-local secret files shared by every database. Each is copied to
+# /etc/faas/secrets/livequeryd/ as 0400 root:root and reaches the hub as a
+# systemd credential, never on its command line:
+# - a read-only control-plane connection string, where the databases' live
+#   keys are read;
+faas_livequeryd_keys_dsn_src: ""
+# - the age identity that opens those keys. apid seals each live secret to its
+#   recipient (faas_livequeryd_keys_recipient_src).
+faas_livequeryd_keys_identity_src: ""
+
+# The age recipient (public key) paired with the identity above. The role gives
+# it to apid as FAAS_APID_LIVE_KEY_RECIPIENT_FILE; without it apid answers
+# live_queries_unavailable.
+faas_livequeryd_keys_recipient_src: ""
+
+# Defaults for every database that does not set its own. A database's slot
+# defaults to gregale_live_<id>: slot names are unique per PostgreSQL server,
+# and databases may share one.
+faas_livequeryd_publication: gregale_live
+# Install the schema-change log (event triggers) and create the publication.
+faas_livequeryd_install: true
+faas_livequeryd_create_publication: true
+
+# realtimed reaches the hub here. The nftables role opens the port to
+# faas_compute_allowed_cidrs only. A non-loopback listener requires TLS: a
+# server certificate and the CA that signed realtimed's client certificates.
+faas_livequeryd_listen: "0.0.0.0:9480"
+faas_livequeryd_tls_cert: /etc/faas/tls/livequeryd/server.crt
+faas_livequeryd_tls_key: /etc/faas/tls/livequeryd/server.key
+faas_livequeryd_client_ca: /etc/faas/tls/ca/ca.crt
+# Accept only this client identity: the fleet PKI's realtimed live client
+# leaf (faas_realtime_live_tls_managed on realtimed's hosts). Empty accepts
+# any client certificate the CA signed.
+faas_livequeryd_client_name: realtimed.faas
+# By default the hub's server leaf is the fleet PKI's livequeryd.faas feature
+# leaf, issued and renewed from the CA on this host (tasks/pki.yml). Setting
+# both controller-local sources below installs those files instead.
+faas_livequeryd_tls_cert_src: ""
+faas_livequeryd_tls_key_src: ""
+
+# Loopback metrics, /readyz and /healthz.
+faas_livequeryd_metrics_listen: "127.0.0.1:9471"
+
+# realtimed carries every client of a database over one connection, so the
+# per-connection limit is the database's subscription limit.
+faas_livequeryd_max_per_connection: 10000
+
+# The hub's memory ceiling (systemd MemoryMax=). The SQL parser is shared, but
+# each database's results are not: raise it with the number of databases and
+# the size of their live results (livequery_engine_memory_bytes).
+faas_livequeryd_memory_max: 512M
+
+# Scale to zero, for databases that do not set their own: release a database
+# after this long with nothing to apply (for example "5m"); empty never
+# releases. Releasing needs a way to learn the database runs again: "neon"
+# polls the Neon API for the endpoint's compute (each database names its
+# neon_project and neon_endpoint).
+faas_livequeryd_release_after: ""
+faas_livequeryd_awake: ""
+faas_livequeryd_awake_every: 5s
+# Controller-local Neon API key for every database of one Neon account; a
+# database's neon_api_key_src overrides it.
+faas_livequeryd_neon_api_key_src: ""

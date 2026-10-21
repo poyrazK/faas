@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -9,27 +9,28 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestWorkflowRecoveryReviewCompletionLifecycle(t *testing.T) {
 	for _, scenario := range []string{"cancel", "retry_failed", "retry_succeeded", "no_receivers", "concurrent"} {
 		t.Run(scenario, func(t *testing.T) {
-			workflowScheduleStores(t, func(t *testing.T, s Store) {
+			state.WorkflowScheduleStores(t, func(t *testing.T, s state.Store) {
 				ctx := context.Background()
 				retry := scenario == "retry_failed" || scenario == "retry_succeeded"
 				review, app, run, now := seedRecoveryNotificationReview(t, s, retry)
-				inspector := s.(WorkflowRecoveryReviewInspector)
-				notices := s.(WorkflowRecoveryReviewCompletionNotificationStore)
-				policies := s.(WorkflowRecoveryPolicyStore)
-				var hook AppWebhook
+				inspector := s.(state.WorkflowRecoveryReviewInspector)
+				notices := s.(state.WorkflowRecoveryReviewCompletionNotificationStore)
+				policies := s.(state.WorkflowRecoveryPolicyStore)
+				var hook state.AppWebhook
 				var err error
 				if scenario != "no_receivers" {
-					hook, err = s.CreateAppWebhook(ctx, AppWebhook{AccountID: app.AccountID, AppID: app.ID, Enabled: true, TargetURL: "https://completion.example.test/finished", SecretSealed: []byte("sealed"), EventFilter: []string{string(AppWebhookEventRecoveryReviewFinished)}})
+					hook, err = s.CreateAppWebhook(ctx, state.AppWebhook{AccountID: app.AccountID, AppID: app.ID, Enabled: true, TargetURL: "https://completion.example.test/finished", SecretSealed: []byte("sealed"), EventFilter: []string{string(state.AppWebhookEventRecoveryReviewFinished)}})
 					if err != nil {
 						t.Fatal(err)
 					}
 				}
-				status, err := InspectWorkflowRecoveryReview(ctx, inspector, app.AccountID, app.ID, review.ID, now)
+				status, err := state.InspectWorkflowRecoveryReview(ctx, inspector, app.AccountID, app.ID, review.ID, now)
 				if err != nil || status.Complete || status.Outcome != "pending" {
 					t.Fatalf("unapplied=%+v %v", status, err)
 				}
@@ -42,25 +43,25 @@ func TestWorkflowRecoveryReviewCompletionLifecycle(t *testing.T) {
 				}
 				want := "cancelled"
 				if retry {
-					child, e := s.(EventRecoveryStore).CreateEventRecovery(ctx, app.AccountID, app.ID, *review.Plan.Actions[0].Retry)
+					child, e := s.(state.EventRecoveryStore).CreateEventRecovery(ctx, app.AccountID, app.ID, *review.Plan.Actions[0].Retry)
 					if e != nil {
 						t.Fatal(e)
 					}
-					status, e = InspectWorkflowRecoveryReview(ctx, inspector, app.AccountID, app.ID, review.ID, now)
+					status, e = state.InspectWorkflowRecoveryReview(ctx, inspector, app.AccountID, app.ID, review.ID, now)
 					if e != nil || status.Complete || status.Outcome != "pending" || status.Actions[0].ChildJobID != child.ID || status.Actions[0].ResumeCount != 2 {
 						t.Fatalf("admission pending=%+v %v", status, e)
 					}
-					if did, e := s.(EventRecoveryStore).ProcessNextEventRecovery(ctx, time.Now().UTC()); e != nil || !did {
+					if did, e := s.(state.EventRecoveryStore).ProcessNextEventRecovery(ctx, time.Now().UTC()); e != nil || !did {
 						t.Fatalf("admit=%t %v", did, e)
 					}
-					status, e = InspectWorkflowRecoveryReview(ctx, inspector, app.AccountID, app.ID, review.ID, now)
+					status, e = state.InspectWorkflowRecoveryReview(ctx, inspector, app.AccountID, app.ID, review.ID, now)
 					if e != nil || status.Complete || status.Outcome != "pending" {
 						t.Fatalf("queued=%+v %v", status, e)
 					}
 					if _, e = s.ClaimNextDueWorkflowRun(ctx); e != nil {
 						t.Fatal(e)
 					}
-					status, e = InspectWorkflowRecoveryReview(ctx, inspector, app.AccountID, app.ID, review.ID, now)
+					status, e = state.InspectWorkflowRecoveryReview(ctx, inspector, app.AccountID, app.ID, review.ID, now)
 					if e != nil || status.Complete || status.Outcome != "running" {
 						t.Fatalf("running=%+v %v", status, e)
 					}
@@ -68,16 +69,16 @@ func TestWorkflowRecoveryReviewCompletionLifecycle(t *testing.T) {
 						t.Fatal(e)
 					}
 					if retry && scenario == "retry_failed" {
-						failResumeRun(t, s, run, "send")
+						state.FailResumeRun(t, s, run, "send")
 						want = "failed"
 					} else {
-						if e = s.MarkWorkflowRunStatus(WithWorkflowRunGeneration(ctx, run.ID, 2), run.ID, WorkflowRunStatusSucceeded, nil, nil); e != nil {
+						if e = s.MarkWorkflowRunStatus(state.WithWorkflowRunGeneration(ctx, run.ID, 2), run.ID, state.WorkflowRunStatusSucceeded, nil, nil); e != nil {
 							t.Fatal(e)
 						}
 						want = "succeeded"
 					}
 				} else {
-					response, e := s.(WorkflowRecoveryCancellationStore).WorkflowRecoveryCancellation(ctx, app.AccountID, review.JobID, *review.Plan.Actions[0].Cancellation, false)
+					response, e := s.(state.WorkflowRecoveryCancellationStore).WorkflowRecoveryCancellation(ctx, app.AccountID, review.JobID, *review.Plan.Actions[0].Cancellation, false)
 					if e != nil || response.Outcome != "cancelled" {
 						t.Fatalf("cancel=%+v %v", response, e)
 					}
@@ -108,11 +109,11 @@ func TestWorkflowRecoveryReviewCompletionLifecycle(t *testing.T) {
 				if scenario != "no_receivers" && (len(n.ReceiverWebhookIDs) != 1 || n.ReceiverWebhookIDs[0] != hook.ID) {
 					t.Fatalf("receivers=%+v", n)
 				}
-				if pg, ok := s.(*PgStore); ok {
-					s = NewPgStore(pg.pool.Pool)
-					notices = s.(WorkflowRecoveryReviewCompletionNotificationStore)
-					inspector = s.(WorkflowRecoveryReviewInspector)
-					policies = s.(WorkflowRecoveryPolicyStore)
+				if pg, ok := s.(*state.PgStore); ok {
+					s = state.NewPgStore((*pg.Pool()).Pool)
+					notices = s.(state.WorkflowRecoveryReviewCompletionNotificationStore)
+					inspector = s.(state.WorkflowRecoveryReviewInspector)
+					policies = s.(state.WorkflowRecoveryPolicyStore)
 				}
 				if worked, e := notices.ProcessNextWorkflowRecoveryReviewCompletion(ctx, captureAt.Add(time.Hour)); e != nil || worked {
 					t.Fatalf("duplicate=%t %v", worked, e)
@@ -122,30 +123,30 @@ func TestWorkflowRecoveryReviewCompletionLifecycle(t *testing.T) {
 					t.Fatal(e)
 				}
 				if retry && want == "failed" {
-					if _, _, _, e := s.(WorkflowResumeStore).ResumeWorkflowRun(ctx, resumeOptions(run, app, 2)); e != nil {
+					if _, _, _, e := s.(state.WorkflowResumeStore).ResumeWorkflowRun(ctx, state.ResumeOptions(run, app, 2)); e != nil {
 						t.Fatal(e)
 					}
 				}
 				// The retained snapshot also outlives removal of the live workflow row.
-				if m, ok := s.(*MemStore); ok {
-					m.mu.Lock()
-					delete(m.workflowRuns, run.ID)
-					m.mu.Unlock()
+				if m, ok := s.(*state.MemStore); ok {
+					(*m.Mu()).Lock()
+					delete((*m.WorkflowRuns()), run.ID)
+					(*m.Mu()).Unlock()
 				} else {
-					if _, e := s.(*PgStore).pool.Exec(ctx, "DELETE FROM workflow_runs WHERE id=$1::uuid", run.ID); e != nil {
+					if _, e := (*s.(*state.PgStore).Pool()).Exec(ctx, "DELETE FROM workflow_runs WHERE id=$1::uuid", run.ID); e != nil {
 						t.Fatal(e)
 					}
 				}
-				status, err = InspectWorkflowRecoveryReview(ctx, inspector, app.AccountID, app.ID, review.ID, captureAt.Add(time.Hour))
+				status, err = state.InspectWorkflowRecoveryReview(ctx, inspector, app.AccountID, app.ID, review.ID, captureAt.Add(time.Hour))
 				expected := n.Result
 				expected.ObservedAt = status.ObservedAt
 				if err != nil || !reflect.DeepEqual(status, expected) {
 					t.Fatalf("snapshot changed=%+v %v", status, err)
 				}
-				if _, e := s.CreateAppWebhook(ctx, AppWebhook{AccountID: app.AccountID, AppID: app.ID, Enabled: true, TargetURL: "https://completion.example.test/late", SecretSealed: []byte("sealed"), EventFilter: []string{string(AppWebhookEventRecoveryReviewFinished)}}); e != nil {
+				if _, e := s.CreateAppWebhook(ctx, state.AppWebhook{AccountID: app.AccountID, AppID: app.ID, Enabled: true, TargetURL: "https://completion.example.test/late", SecretSealed: []byte("sealed"), EventFilter: []string{string(state.AppWebhookEventRecoveryReviewFinished)}}); e != nil {
 					t.Fatal(e)
 				}
-				if _, e := s.(AppWebhookEventOutboxStore).DrainAppWebhookEventOutbox(ctx, 32); e != nil {
+				if _, e := s.(state.AppWebhookEventOutboxStore).DrainAppWebhookEventOutbox(ctx, 32); e != nil {
 					t.Fatal(e)
 				}
 				rows, e := s.ClaimDueAppWebhookDeliveries(ctx, 32, captureAt.Add(time.Hour))
@@ -154,7 +155,7 @@ func TestWorkflowRecoveryReviewCompletionLifecycle(t *testing.T) {
 				}
 				count := 0
 				for _, row := range rows {
-					if row.Event != AppWebhookEventRecoveryReviewFinished {
+					if row.Event != state.AppWebhookEventRecoveryReviewFinished {
 						continue
 					}
 					count++
@@ -209,7 +210,7 @@ func TestRecoveryReviewOutcomeAggregation(t *testing.T) {
 		for i, v := range tc.outcomes {
 			out.Actions = append(out.Actions, api.WorkflowRecoveryReviewActionStatus{Outcome: v, Complete: tc.complete[i]})
 		}
-		finishRecoveryReviewOutcome(&out)
+		state.FinishRecoveryReviewOutcome(&out)
 		if out.Outcome != tc.want || out.Complete != tc.done {
 			t.Fatalf("aggregate=%+v", out)
 		}
@@ -217,7 +218,7 @@ func TestRecoveryReviewOutcomeAggregation(t *testing.T) {
 }
 
 type recoveryReviewItemsEvidence struct {
-	WorkflowRecoveryReviewInspector
+	state.WorkflowRecoveryReviewInspector
 	rows api.EventRecoveryItems
 }
 
@@ -271,7 +272,7 @@ func TestRecoveryReviewRequiresExactFinalEvidence(t *testing.T) {
 			}
 			s := recoveryReviewItemsEvidence{rows: api.EventRecoveryItems{JobID: child.ID, Items: []api.EventRecoveryItem{item}}}
 			out := api.WorkflowRecoveryReviewActionStatus{Outcome: "unknown"}
-			err := inspectRecoveryReviewRetryOutcome(context.Background(), s, "account", plan, action, child, &out)
+			err := state.InspectRecoveryReviewRetryOutcome(context.Background(), s, "account", plan, action, child, &out)
 			if (err != nil) != wantError || out.Complete != wantComplete || out.Outcome != wantOutcome {
 				t.Fatalf("proof=%+v err=%v", out, err)
 			}

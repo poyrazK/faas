@@ -1,20 +1,21 @@
-package main
+package main_test
 
 import (
 	"bytes"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"strings"
 	"testing"
 )
 
 func TestMCPConnectionHealthOutput(t *testing.T) {
-	oldOut, oldJSON := osStdout, jsonOutput
+	oldOut, oldJSON := (*main.OsStdout), (*main.JsonOutput)
 	var output bytes.Buffer
-	osStdout = &output
-	jsonOutput = false
-	t.Cleanup(func() { osStdout = oldOut; jsonOutput = oldJSON })
+	(*main.OsStdout) = &output
+	(*main.JsonOutput) = false
+	t.Cleanup(func() { (*main.OsStdout) = oldOut; (*main.JsonOutput) = oldJSON })
 	snapshot := api.MCPConnectionHealthSnapshot{TotalIssues: 1, Complete: false, NextOffset: 50, Items: []api.MCPConnectionHealthIssue{{AppSlug: "app", Role: "reader", Kind: "issuance_unknown", State: "manual_required", RecoveryAction: "review_provider", RecoveryPath: "/v1/mcp-oauth-retirements", RetirementID: "retirement"}}}
-	if writeMCPConnectionHealth(snapshot) != 0 {
+	if main.WriteMCPConnectionHealth(snapshot) != 0 {
 		t.Fatal("output failed")
 	}
 	for _, want := range []string{"1 tracked issues", "Inventory is incomplete", "app/reader", "review_provider", "Retirement: retirement", "--offset 50"} {

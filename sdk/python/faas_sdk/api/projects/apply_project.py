@@ -15,9 +15,17 @@ def _get_kwargs(
     *,
     body: ProjectApplyRequest,
     plan_token: str | Unset = UNSET,
+    project_retry_targets: str | Unset = UNSET,
+    deployment_attempt_id: str | Unset = UNSET,
     idempotency_key: str | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
+    if not isinstance(project_retry_targets, Unset):
+        headers["Project-Retry-Targets"] = project_retry_targets
+
+    if not isinstance(deployment_attempt_id, Unset):
+        headers["Deployment-Attempt-ID"] = deployment_attempt_id
+
     if not isinstance(idempotency_key, Unset):
         headers["Idempotency-Key"] = idempotency_key
 
@@ -106,6 +114,8 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: ProjectApplyRequest,
     plan_token: str | Unset = UNSET,
+    project_retry_targets: str | Unset = UNSET,
+    deployment_attempt_id: str | Unset = UNSET,
     idempotency_key: str | Unset = UNSET,
 ) -> Response[ApplyResponse | Problem]:
     """Apply a deploy plan in one transaction.
@@ -124,6 +134,8 @@ def sync_detailed(
 
     Args:
         plan_token (str | Unset):
+        project_retry_targets (str | Unset):
+        deployment_attempt_id (str | Unset):
         idempotency_key (str | Unset):
         body (ProjectApplyRequest): Multipart body for POST /v1/projects (apply). Same shape as
             ProjectScanRequest; the apply handler resolves AppIDs and
@@ -140,6 +152,8 @@ def sync_detailed(
     kwargs = _get_kwargs(
         body=body,
         plan_token=plan_token,
+        project_retry_targets=project_retry_targets,
+        deployment_attempt_id=deployment_attempt_id,
         idempotency_key=idempotency_key,
     )
 
@@ -155,6 +169,8 @@ def sync(
     client: AuthenticatedClient | Client,
     body: ProjectApplyRequest,
     plan_token: str | Unset = UNSET,
+    project_retry_targets: str | Unset = UNSET,
+    deployment_attempt_id: str | Unset = UNSET,
     idempotency_key: str | Unset = UNSET,
 ) -> ApplyResponse | Problem | None:
     """Apply a deploy plan in one transaction.
@@ -173,6 +189,8 @@ def sync(
 
     Args:
         plan_token (str | Unset):
+        project_retry_targets (str | Unset):
+        deployment_attempt_id (str | Unset):
         idempotency_key (str | Unset):
         body (ProjectApplyRequest): Multipart body for POST /v1/projects (apply). Same shape as
             ProjectScanRequest; the apply handler resolves AppIDs and
@@ -190,6 +208,8 @@ def sync(
         client=client,
         body=body,
         plan_token=plan_token,
+        project_retry_targets=project_retry_targets,
+        deployment_attempt_id=deployment_attempt_id,
         idempotency_key=idempotency_key,
     ).parsed
 
@@ -199,6 +219,8 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: ProjectApplyRequest,
     plan_token: str | Unset = UNSET,
+    project_retry_targets: str | Unset = UNSET,
+    deployment_attempt_id: str | Unset = UNSET,
     idempotency_key: str | Unset = UNSET,
 ) -> Response[ApplyResponse | Problem]:
     """Apply a deploy plan in one transaction.
@@ -217,6 +239,8 @@ async def asyncio_detailed(
 
     Args:
         plan_token (str | Unset):
+        project_retry_targets (str | Unset):
+        deployment_attempt_id (str | Unset):
         idempotency_key (str | Unset):
         body (ProjectApplyRequest): Multipart body for POST /v1/projects (apply). Same shape as
             ProjectScanRequest; the apply handler resolves AppIDs and
@@ -233,6 +257,8 @@ async def asyncio_detailed(
     kwargs = _get_kwargs(
         body=body,
         plan_token=plan_token,
+        project_retry_targets=project_retry_targets,
+        deployment_attempt_id=deployment_attempt_id,
         idempotency_key=idempotency_key,
     )
 
@@ -246,6 +272,8 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: ProjectApplyRequest,
     plan_token: str | Unset = UNSET,
+    project_retry_targets: str | Unset = UNSET,
+    deployment_attempt_id: str | Unset = UNSET,
     idempotency_key: str | Unset = UNSET,
 ) -> ApplyResponse | Problem | None:
     """Apply a deploy plan in one transaction.
@@ -264,6 +292,8 @@ async def asyncio(
 
     Args:
         plan_token (str | Unset):
+        project_retry_targets (str | Unset):
+        deployment_attempt_id (str | Unset):
         idempotency_key (str | Unset):
         body (ProjectApplyRequest): Multipart body for POST /v1/projects (apply). Same shape as
             ProjectScanRequest; the apply handler resolves AppIDs and
@@ -282,6 +312,8 @@ async def asyncio(
             client=client,
             body=body,
             plan_token=plan_token,
+            project_retry_targets=project_retry_targets,
+            deployment_attempt_id=deployment_attempt_id,
             idempotency_key=idempotency_key,
         )
     ).parsed

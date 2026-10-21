@@ -1,5 +1,5 @@
 // adr: 500
-package sched
+package sched_test
 
 import (
 	"context"
@@ -15,6 +15,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/audit"
 	"github.com/onebox-faas/faas/pkg/events"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -92,15 +93,15 @@ func foreachOrchestrationSpec() api.WorkflowSpec {
 func TestWorkflowForEachExecutesInOrderAndCollectsResults(t *testing.T) {
 	for _, items := range []string{`[{"n":9007199254740993},true,null]`, `[]`} {
 		t.Run(items, func(t *testing.T) {
-			guardOrchestrationStores(t, func(t *testing.T, store state.Store) {
+			sched.GuardOrchestrationStores(t, func(t *testing.T, store state.Store) {
 				ctx := context.Background()
 				spec := foreachOrchestrationSpec()
 				if _, err := api.ValidateWorkflowDAG(spec, api.PlanHobby); err != nil {
 					t.Fatal(err)
 				}
-				run := createGuardedRun(t, store, spec, `{"items":`+items+`}`)
+				run := sched.CreateGuardedRun(t, store, spec, `{"items":`+items+`}`)
 				executor := &foreachExecutor{}
-				if err := NewWorkflowOrchestrator(store, executor, nil, nil, nil).DispatchTick(ctx); err != nil {
+				if err := sched.NewWorkflowOrchestrator(store, executor, nil, nil, nil).DispatchTick(ctx); err != nil {
 					t.Fatal(err)
 				}
 				final, err := store.GetWorkflowRun(ctx, run.ID)
@@ -108,11 +109,11 @@ func TestWorkflowForEachExecutesInOrderAndCollectsResults(t *testing.T) {
 				if items != "[]" {
 					want = `[{"index":0,"item":{"n":9007199254740993}},{"index":1,"item":true},{"index":2,"item":null}]`
 				}
-				if err != nil || final.Status != state.WorkflowRunStatusSucceeded || !workflowJSONEqual(final.Output, []byte(want)) {
+				if err != nil || final.Status != state.WorkflowRunStatusSucceeded || !sched.WorkflowJSONEqual(final.Output, []byte(want)) {
 					t.Fatalf("ordered result: %+v %v", final, err)
 				}
 				for i, name := range executor.names {
-					if name != api.WorkflowForEachItemName("batch", i) || executor.keys[i] != workflowStepIdempotencyKey(run.ID, name) {
+					if name != api.WorkflowForEachItemName("batch", i) || executor.keys[i] != sched.WorkflowStepIdempotencyKey(run.ID, name) {
 						t.Fatal("item identity/key unstable")
 					}
 				}
@@ -131,18 +132,18 @@ func TestWorkflowForEachExecutesInOrderAndCollectsResults(t *testing.T) {
 }
 
 func TestWorkflowForEachExecutesUpToConfiguredParallelLimit(t *testing.T) {
-	guardOrchestrationStores(t, func(t *testing.T, store state.Store) {
+	sched.GuardOrchestrationStores(t, func(t *testing.T, store state.Store) {
 		ctx := context.Background()
 		spec := foreachOrchestrationSpec()
 		spec.Steps[1].ForEach.MaxParallel = 3
-		run := createGuardedRun(t, store, spec, `{"items":[0,1,2,3,4]}`)
+		run := sched.CreateGuardedRun(t, store, spec, `{"items":[0,1,2,3,4]}`)
 		executor := &boundedParallelForeachExecutor{
 			entered: make(chan string, 8),
 			release: make(chan struct{}),
 		}
 		dispatchDone := make(chan error, 1)
 		go func() {
-			dispatchDone <- NewWorkflowOrchestrator(store, executor, nil, nil, nil).DispatchTick(ctx)
+			dispatchDone <- sched.NewWorkflowOrchestrator(store, executor, nil, nil, nil).DispatchTick(ctx)
 		}()
 		started := make([]string, 0, 3)
 		for range 3 {
@@ -159,7 +160,7 @@ func TestWorkflowForEachExecutesUpToConfiguredParallelLimit(t *testing.T) {
 			t.Fatal(err)
 		}
 		final, err := store.GetWorkflowRun(ctx, run.ID)
-		if err != nil || final.Status != state.WorkflowRunStatusSucceeded || !workflowJSONEqual(final.Output, []byte(`[ {"index":0,"item":0},{"index":1,"item":1},{"index":2,"item":2},{"index":3,"item":3},{"index":4,"item":4} ]`)) {
+		if err != nil || final.Status != state.WorkflowRunStatusSucceeded || !sched.WorkflowJSONEqual(final.Output, []byte(`[ {"index":0,"item":0},{"index":1,"item":1},{"index":2,"item":2},{"index":3,"item":3},{"index":4,"item":4} ]`)) {
 			t.Fatalf("parallel batch result: %+v %v", final, err)
 		}
 		executor.mu.Lock()
@@ -172,11 +173,11 @@ func TestWorkflowForEachExecutesUpToConfiguredParallelLimit(t *testing.T) {
 }
 
 func TestWorkflowForEachRetryResumesItemWithSameInputAndKey(t *testing.T) {
-	guardOrchestrationStores(t, func(t *testing.T, store state.Store) {
+	sched.GuardOrchestrationStores(t, func(t *testing.T, store state.Store) {
 		ctx := context.Background()
-		run := createGuardedRun(t, store, foreachOrchestrationSpec(), `{"items":["{{input.secret}}",2]}`)
+		run := sched.CreateGuardedRun(t, store, foreachOrchestrationSpec(), `{"items":["{{input.secret}}",2]}`)
 		executor := &foreachExecutor{retryFirst: true}
-		orchestrator := NewWorkflowOrchestrator(store, executor, nil, nil, nil)
+		orchestrator := sched.NewWorkflowOrchestrator(store, executor, nil, nil, nil)
 		if err := orchestrator.DispatchTick(ctx); err != nil {
 			t.Fatal(err)
 		}
@@ -204,7 +205,7 @@ func TestWorkflowForEachRetryResumesItemWithSameInputAndKey(t *testing.T) {
 			t.Fatal(err)
 		}
 		final, err := store.GetWorkflowRun(ctx, run.ID)
-		if err != nil || final.Status != state.WorkflowRunStatusSucceeded || len(executor.inputs) != 3 || !workflowJSONEqual(executor.inputs[0], executor.inputs[1]) || executor.keys[0] != executor.keys[1] || executor.keys[1] == executor.keys[2] {
+		if err != nil || final.Status != state.WorkflowRunStatusSucceeded || len(executor.inputs) != 3 || !sched.WorkflowJSONEqual(executor.inputs[0], executor.inputs[1]) || executor.keys[0] != executor.keys[1] || executor.keys[1] == executor.keys[2] {
 			t.Fatalf("retry changed item or key: %+v inputs=%s keys=%v %v", final, executor.inputs, executor.keys, err)
 		}
 	})
@@ -213,7 +214,7 @@ func TestWorkflowForEachRetryResumesItemWithSameInputAndKey(t *testing.T) {
 func TestWorkflowForEachFailsWithoutDispatchingLaterItems(t *testing.T) {
 	for _, mode := range []string{"failed item", "output limit", "invalid list", "false guard"} {
 		t.Run(mode, func(t *testing.T) {
-			guardOrchestrationStores(t, func(t *testing.T, store state.Store) {
+			sched.GuardOrchestrationStores(t, func(t *testing.T, store state.Store) {
 				ctx := context.Background()
 				spec := foreachOrchestrationSpec()
 				input := `{"items":[0,1,2]}`
@@ -224,8 +225,8 @@ func TestWorkflowForEachFailsWithoutDispatchingLaterItems(t *testing.T) {
 				if mode == "false guard" {
 					spec.Steps[1].When = &api.WorkflowGuardSpec{Ref: "input.active", Op: "eq", Value: json.RawMessage(`true`)}
 				}
-				run := createGuardedRun(t, store, spec, input)
-				if err := NewWorkflowOrchestrator(store, executor, nil, nil, nil).DispatchTick(ctx); err != nil {
+				run := sched.CreateGuardedRun(t, store, spec, input)
+				if err := sched.NewWorkflowOrchestrator(store, executor, nil, nil, nil).DispatchTick(ctx); err != nil {
 					t.Fatal(err)
 				}
 				final, err := store.GetWorkflowRun(ctx, run.ID)
@@ -274,11 +275,11 @@ func (e *foreachCancellingExecutor) ExecuteStep(ctx context.Context, _, _, _ str
 }
 
 func TestWorkflowForEachCancellationStopsActiveAppRequest(t *testing.T) {
-	guardOrchestrationStores(t, func(t *testing.T, store state.Store) {
+	sched.GuardOrchestrationStores(t, func(t *testing.T, store state.Store) {
 		ctx := context.Background()
-		run := createGuardedRun(t, store, foreachOrchestrationSpec(), `{"items":[0,1]}`)
+		run := sched.CreateGuardedRun(t, store, foreachOrchestrationSpec(), `{"items":[0,1]}`)
 		executor := &foreachCancellingExecutor{store: store, runID: run.ID}
-		if err := NewWorkflowOrchestrator(store, executor, nil, nil, nil).DispatchTick(ctx); err != nil {
+		if err := sched.NewWorkflowOrchestrator(store, executor, nil, nil, nil).DispatchTick(ctx); err != nil {
 			t.Fatal(err)
 		}
 		final, err := store.GetWorkflowRun(ctx, run.ID)
@@ -297,7 +298,7 @@ func (e *foreachOutboundRecorder) ExecuteOutboundStep(_ context.Context, runID, 
 	if attempt != 1 || target.Method != "POST" || target.Path != "/send" {
 		return 0, nil, time.Time{}, fmt.Errorf("unexpected item action")
 	}
-	e.identities = append(e.identities, workflowStepIdempotencyKey(runID, name))
+	e.identities = append(e.identities, sched.WorkflowStepIdempotencyKey(runID, name))
 	e.inputs = append(e.inputs, slices.Clone(input))
 	output, err := json.Marshal(struct {
 		Status int             `json:"status"`
@@ -307,7 +308,7 @@ func (e *foreachOutboundRecorder) ExecuteOutboundStep(_ context.Context, runID, 
 }
 
 func TestWorkflowForEachUsesNativeOutboundActionAndCollectsProviderResults(t *testing.T) {
-	guardOrchestrationStores(t, func(t *testing.T, store state.Store) {
+	sched.GuardOrchestrationStores(t, func(t *testing.T, store state.Store) {
 		ctx := context.Background()
 		spec := api.WorkflowSpec{Name: "provider_batch", Steps: []api.WorkflowStepSpec{{Name: "batch", ForEach: &api.WorkflowForEachSpec{
 			Items: "input.items", Action: api.WorkflowForEachActionSpec{Outbound: &api.WorkflowOutboundSpec{IntegrationID: "00000000-0000-0000-0000-000000000001", Method: "POST", Path: "/send", IdempotencySupported: true}},
@@ -315,18 +316,18 @@ func TestWorkflowForEachUsesNativeOutboundActionAndCollectsProviderResults(t *te
 		if _, err := api.ValidateWorkflowDAG(spec, api.PlanHobby); err != nil {
 			t.Fatal(err)
 		}
-		run := createGuardedRun(t, store, spec, `{"items":[{"n":9007199254740993},{"literal":"{{input.secret}}"}]}`)
+		run := sched.CreateGuardedRun(t, store, spec, `{"items":[{"n":9007199254740993},{"literal":"{{input.secret}}"}]}`)
 		provider := &foreachOutboundRecorder{}
-		if err := NewWorkflowOrchestrator(store, nil, nil, nil, nil).WithOutboundExecutor(provider).DispatchTick(ctx); err != nil {
+		if err := sched.NewWorkflowOrchestrator(store, nil, nil, nil, nil).WithOutboundExecutor(provider).DispatchTick(ctx); err != nil {
 			t.Fatal(err)
 		}
 		final, err := store.GetWorkflowRun(ctx, run.ID)
 		want := `[{"status":200,"body":{"n":9007199254740993}},{"status":200,"body":{"literal":"{{input.secret}}"}}]`
-		if err != nil || final.Status != state.WorkflowRunStatusSucceeded || !workflowJSONEqual(final.Output, []byte(want)) || len(provider.identities) != 2 {
+		if err != nil || final.Status != state.WorkflowRunStatusSucceeded || !sched.WorkflowJSONEqual(final.Output, []byte(want)) || len(provider.identities) != 2 {
 			t.Fatalf("native iteration result: %+v calls=%v %v", final, provider.identities, err)
 		}
 		for i, identity := range provider.identities {
-			if identity != workflowStepIdempotencyKey(run.ID, api.WorkflowForEachItemName("batch", i)) {
+			if identity != sched.WorkflowStepIdempotencyKey(run.ID, api.WorkflowForEachItemName("batch", i)) {
 				t.Fatal("native item identity changed")
 			}
 		}
@@ -334,7 +335,7 @@ func TestWorkflowForEachUsesNativeOutboundActionAndCollectsProviderResults(t *te
 }
 
 func TestWorkflowForEachRunsMaximumBatch(t *testing.T) {
-	guardOrchestrationStores(t, func(t *testing.T, store state.Store) {
+	sched.GuardOrchestrationStores(t, func(t *testing.T, store state.Store) {
 		items := make([]int, api.WorkflowForEachMaxItems)
 		for index := range items {
 			items[index] = index
@@ -343,10 +344,10 @@ func TestWorkflowForEachRunsMaximumBatch(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		run := createGuardedRun(t, store, foreachOrchestrationSpec(), `{"items":`+string(raw)+`}`)
+		run := sched.CreateGuardedRun(t, store, foreachOrchestrationSpec(), `{"items":`+string(raw)+`}`)
 		executor := &foreachExecutor{}
 		ctx := context.Background()
-		if err := NewWorkflowOrchestrator(store, executor, nil, nil, nil).DispatchTick(ctx); err != nil {
+		if err := sched.NewWorkflowOrchestrator(store, executor, nil, nil, nil).DispatchTick(ctx); err != nil {
 			t.Fatal(err)
 		}
 		final, err := store.GetWorkflowRun(ctx, run.ID)
@@ -375,8 +376,8 @@ func TestWorkflowForEachPreservesOutboundAuditPolicyForAppItems(t *testing.T) {
 	if _, err := api.ValidateWorkflowDAG(spec, api.PlanHobby); err != nil {
 		t.Fatal(err)
 	}
-	run := createGuardedRun(t, store, spec, `{"items":[0]}`)
-	orchestrator := NewWorkflowOrchestrator(store, &foreachExecutor{}, audit.New(store, slog.Default(), nil, "schedd"), nil, nil).WithOutboundExecutor(&foreachOutboundRecorder{})
+	run := sched.CreateGuardedRun(t, store, spec, `{"items":[0]}`)
+	orchestrator := sched.NewWorkflowOrchestrator(store, &foreachExecutor{}, audit.New(store, slog.Default(), nil, "schedd"), nil, nil).WithOutboundExecutor(&foreachOutboundRecorder{})
 	if err := orchestrator.DispatchTick(ctx); err != nil {
 		t.Fatal(err)
 	}

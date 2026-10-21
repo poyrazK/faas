@@ -19,7 +19,8 @@ const (
 	tenantSkipReason  = "billed on the platform tenant's statement: this consumer's usage this month is attributed to a platform tenant"
 	overlapSkipReason = "another statement already handed off part of this usage to an invoice"
 	zeroTotalReason   = "nothing to invoice: the statement total is zero"
-	// creditCoveredReason: prepaid credit paid the whole statement (ADR-1306).
+	// creditCoveredReason: prepaid credit paid the whole statement (ADR-1306,
+	// ADR-20261019100331).
 	creditCoveredReason = "nothing to invoice: prepaid credit covers the statement"
 )
 
@@ -167,7 +168,7 @@ func (s *Service) advanceRun(ctx context.Context, store state.BillingRunStore) e
 }
 
 func (s *Service) processBatch(ctx context.Context, store state.BillingRunStore, run state.BillingRun, owner string) error {
-	if run.DiscoveredAt == nil {
+	if !run.Discovered() {
 		if err := store.DiscoverBillingRunItems(ctx, run.ID, owner, tenantSkipReason, s.now()); err != nil {
 			return fmt.Errorf("discover billing run items: %w", err)
 		}
@@ -184,6 +185,11 @@ func (s *Service) processBatch(ctx context.Context, store state.BillingRunStore,
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+		// Each customer can take several provider calls; keep the lease so
+		// no other worker bills the same customers meanwhile.
+		if err := store.RenewBillingRunLease(ctx, run.ID, owner, s.now().Add(api.BillingRunLeaseTTL)); err != nil {
+			return fmt.Errorf("renew billing run lease: %w", err)
+		}
 		if err := store.UpdateBillingRunItem(ctx, owner, s.processItem(ctx, acct, run, item)); err != nil {
 			return fmt.Errorf("record billing run item: %w", err)
 		}
@@ -197,9 +203,12 @@ func (s *Service) processItem(ctx context.Context, acct state.Account, run state
 	item.Attempts++
 	item.Reason = ""
 	var transient *api.Problem
-	if item.SourceKind == state.StatementSourceAppConsumer {
+	switch item.SourceKind {
+	case state.StatementSourceAppConsumer:
 		transient = s.billConsumer(ctx, acct, run, &item)
-	} else {
+	case state.StatementSourceProductControl:
+		transient = s.billProductCustomer(ctx, acct, run, &item)
+	default:
 		transient = s.billTenant(ctx, acct, run, &item)
 	}
 	if transient == nil {
@@ -222,9 +231,10 @@ func problemDetail(p *api.Problem) string {
 }
 
 // settle records a deterministic problem as the item's outcome and passes
-// a transient one (status 500 or above) back for a retry.
+// a transient one (status 500 or above, or an export another attempt is
+// still running) back for a retry.
 func settle(item *state.BillingRunItem, outcome string, p *api.Problem) *api.Problem {
-	if p.Status >= 500 {
+	if p.Status >= 500 || p.Code == api.CodeStatementInvoiceExportInProgress {
 		return p
 	}
 	item.Outcome, item.Reason = outcome, problemDetail(p)

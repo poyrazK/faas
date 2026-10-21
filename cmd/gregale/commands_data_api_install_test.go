@@ -1,6 +1,7 @@
-package main
+package main_test
 
 import (
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"os"
 	"path/filepath"
 	"testing"
@@ -20,7 +21,7 @@ func TestDataAPIInstallRejectsInvalidArgumentsBeforeRunningTools(t *testing.T) {
 		{"--bundle", "bundle.json", "--directory", root, "--client-directory", "missing"},
 		{"--bundle", "bundle.json", "--directory", root, "unexpected"},
 	} {
-		if cmdDataAPIInstall(args) == 0 {
+		if main.CmdDataAPIInstall(args) == 0 {
 			t.Fatalf("accepted invalid install arguments: %v", args)
 		}
 	}

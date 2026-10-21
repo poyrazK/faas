@@ -22,7 +22,7 @@ class ServiceWakeAheadResponse:
 
     slug: str
     enabled: bool
-    """Whether a cold wake of this app also wakes the services it is measured to call."""
+    """Whether a cold wake of this app also wakes the services it declares or is measured to call."""
     updated_at: datetime.datetime | Unset = UNSET
     """Omitted until the opt-in is first changed."""
     learned: ServiceWakeAheadLearned | Unset = UNSET

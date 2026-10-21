@@ -93,12 +93,16 @@ func RunJob(log *slog.Logger) error {
 			LeaseToken: manifest.LeaseToken,
 		}, log)
 	}
+	proc, failure := prepareJobProcess(*manifest, secrets, log)
+	if failure != nil {
+		return shipAndPoweroff(*failure, log)
+	}
 	if manifest.Interactive != nil {
 		if manifest.StartHeld || manifest.Interactive.AttachTimeoutSec <= 0 {
 			log.Error("runJob: invalid interactive manifest")
 			return shipAndPoweroff(JobExitPayload{ExitCode: 75, ErrorClass: "infra", LeaseToken: manifest.LeaseToken}, log)
 		}
-		return runInteractiveJob(*manifest, buildEnvForJobWithSecrets(*manifest, secrets), log)
+		return runInteractiveJob(*manifest, proc, log)
 	}
 	if manifest.StartHeld {
 		control, err := listenJobStartGate(log)
@@ -124,20 +128,16 @@ func RunJob(log *slog.Logger) error {
 			}
 			return shipAndPoweroff(payload, log)
 		}
-		env := buildEnvForJobWithSecrets(*manifest, secrets)
-		payload := superviseJobCommandWithSignals(*manifest, env, jobTerminationGrace, log, os.Stdout, os.Stderr, control.signals)
+		payload := superviseJobCommandWithSignals(*manifest, proc, jobTerminationGrace, log, os.Stdout, os.Stderr, control.signals)
 		return shipAndPoweroff(payload, log)
 	}
-
-	// Build merged env (systemEnv ⊕ job.Env ⊕ jobEnvBaseline).
-	env := buildEnvForJobWithSecrets(*manifest, secrets)
-	return runViaOSExec(*manifest, env, log)
+	return runViaOSExec(*manifest, proc, log)
 }
 
 // runViaOSExec keeps guest-init alive as PID 1, supervises the workload, ships
 // its terminal result, and powers the VM off.
-func runViaOSExec(m JobManifest, env []string, log *slog.Logger) error {
-	payload := superviseJobCommand(m, env, jobTerminationGrace, log)
+func runViaOSExec(m JobManifest, proc jobProcess, log *slog.Logger) error {
+	payload := superviseJobCommandWithSignals(m, proc, jobTerminationGrace, log, os.Stdout, os.Stderr, nil)
 	return shipAndPoweroff(payload, log)
 }
 
@@ -150,17 +150,17 @@ func superviseJobCommand(m JobManifest, env []string, grace time.Duration, log *
 // tests can provide bounded in-memory writers without redirecting process-wide
 // stdout/stderr.
 func superviseJobCommandWithOutput(m JobManifest, env []string, grace time.Duration, log *slog.Logger, stdout, stderr io.Writer) JobExitPayload {
-	return superviseJobCommandWithSignals(m, env, grace, log, stdout, stderr, nil)
+	return superviseJobCommandWithSignals(m, guestJobProcess(m, env), grace, log, stdout, stderr, nil)
 }
 
-func superviseJobCommandWithSignals(m JobManifest, env []string, grace time.Duration, log *slog.Logger, stdout, stderr io.Writer, controlSignals chan os.Signal) JobExitPayload {
+func superviseJobCommandWithSignals(m JobManifest, proc jobProcess, grace time.Duration, log *slog.Logger, stdout, stderr io.Writer, controlSignals chan os.Signal) JobExitPayload {
 	// The guest's stdout and stderr are inherited by guest-init from the
 	// serial console. vmmd already routes that console into the per-instance
 	// customer log ring, so inheriting both streams makes job output available
 	// through the normal logs API. Keep the streams separate here only until
 	// they cross the guest console boundary; the host deliberately merges them
 	// in arrival order, matching the app-runtime log contract.
-	return superviseJobCommandWithStdio(m, env, grace, log, consoleJobStdio{stdout: stdout, stderr: stderr}, controlSignals)
+	return superviseJobCommandWithStdio(m, proc, grace, log, consoleJobStdio{stdout: stdout, stderr: stderr}, controlSignals)
 }
 
 // jobStdio wires a job command's standard streams: attach before Start,
@@ -192,7 +192,7 @@ func (c consoleJobStdio) attach(cmd *exec.Cmd) error {
 func (consoleJobStdio) started() {}
 func (consoleJobStdio) finish()  {}
 
-func superviseJobCommandWithStdio(m JobManifest, env []string, grace time.Duration, log *slog.Logger, stdio jobStdio, controlSignals chan os.Signal) JobExitPayload {
+func superviseJobCommandWithStdio(m JobManifest, proc jobProcess, grace time.Duration, log *slog.Logger, stdio jobStdio, controlSignals chan os.Signal) JobExitPayload {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -205,10 +205,17 @@ func superviseJobCommandWithStdio(m JobManifest, env []string, grace time.Durati
 		defer closeControl()
 	}
 
-	cmd := exec.Command(m.Command[0], m.Command[1:]...)
-	cmd.Env = env
+	cmd := exec.Command(proc.Argv[0], proc.Argv[1:]...)
+	cmd.Env = proc.Env
+	cmd.Dir = proc.Dir
 	defer stdio.finish()
-	if err := stdio.attach(cmd); err != nil {
+	err := stdio.attach(cmd)
+	if err == nil && proc.Credential != nil {
+		// stdio chooses the process group or session; the identity is the
+		// image's USER or the -u override (ADR-1790).
+		cmd.SysProcAttr.Credential = proc.Credential
+	}
+	if err != nil {
 		log.Error("runJob: attach command stdio", "err", err)
 		return JobExitPayload{
 			ExitCode:           126,
@@ -218,7 +225,7 @@ func superviseJobCommandWithStdio(m JobManifest, env []string, grace time.Durati
 		}
 	}
 	if err := cmd.Start(); err != nil {
-		log.Error("runJob: os/exec start", "err", err, "command", m.Command[0])
+		log.Error("runJob: os/exec start", "err", err, "command", proc.Argv[0])
 		exitCode := int32(126)
 		if errors.Is(err, os.ErrNotExist) {
 			exitCode = 127

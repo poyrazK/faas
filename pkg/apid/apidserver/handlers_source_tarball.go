@@ -62,6 +62,8 @@ type sidecarPayload struct {
 	MCPTaskMigrationOverride bool                       `json:"mcp_task_migration_override,omitempty"`
 	Healthcheck              *api.DeploymentHealthcheck `json:"healthcheck,omitempty"`
 	NoTriggers               bool                       `json:"no_triggers,omitempty"`
+	// OverrideFreeze is api.CreateDeploymentRequest.OverrideFreeze.
+	OverrideFreeze string `json:"override_freeze,omitempty"`
 }
 
 // fieldNameTarball is the multipart field name on both
@@ -149,7 +151,7 @@ func (s *server) handleSourceTarballDeploy(w http.ResponseWriter, r *http.Reques
 			return
 		}
 	}
-	rolloutReq := &api.CreateDeploymentRequest{Environment: sidecar.Environment, TrafficPercent: sidecar.TrafficPercent, Canary: sidecar.Canary, RollbackOn5xx: sidecar.RollbackOn5xx, DisableStartupCPUBoost: sidecar.DisableStartupCPUBoost, MCPTaskMigrationOverride: sidecar.MCPTaskMigrationOverride}
+	rolloutReq := &api.CreateDeploymentRequest{Environment: sidecar.Environment, TrafficPercent: sidecar.TrafficPercent, Canary: sidecar.Canary, RollbackOn5xx: sidecar.RollbackOn5xx, DisableStartupCPUBoost: sidecar.DisableStartupCPUBoost, MCPTaskMigrationOverride: sidecar.MCPTaskMigrationOverride, OverrideFreeze: sidecar.OverrideFreeze}
 	rolloutReq.Overrides = sourceHealthcheckOverrides(sidecar.Healthcheck)
 	healthOverrides, healthProblem := validateOverrides(rolloutReq, limits, acct.Plan)
 	if healthProblem != nil {
@@ -157,6 +159,10 @@ func (s *server) handleSourceTarballDeploy(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if prob := s.applyDeploymentEnvironment(r.Context(), acct, app, rolloutReq); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	if prob := s.releaseFreezeProblem(r, acct, app, rolloutReq.Scope, rolloutReq.OverrideFreeze); prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
@@ -255,7 +261,10 @@ func (s *server) handleSourceTarballDeploy(w http.ResponseWriter, r *http.Reques
 	if !s.admitCanaryDeployment(w, r, rollout) {
 		return
 	}
-	stagedManifest, manifestProblem = s.applySourceRefManifest(r.Context(), acct, app, manifest, rollout.Scope, !sidecar.NoTriggers)
+	stagedManifest, manifestProblem = s.stageSourceDeploymentManifest(r, acct, app, manifest, rollout, !sidecar.NoTriggers)
+	if stagedManifest.cronIntent != nil {
+		r = r.WithContext(state.ContextWithDeploymentSubmission(r.Context(), stagedManifest.cronIntent.SessionID))
+	}
 	if manifestProblem != nil {
 		api.WriteProblem(w, manifestProblem)
 		return
@@ -322,7 +331,7 @@ func (s *server) handleSourceTarballDeploy(w http.ResponseWriter, r *http.Reques
 
 	s.auditLocalTarballDeploy(r, acct, app, res, sidecar, spoolBytes, ann)
 
-	d, err := s.store.LatestDeployment(r.Context(), app.ID)
+	d, err := s.store.DeploymentByID(r.Context(), res.DeploymentID)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not read deployment"))
 		return

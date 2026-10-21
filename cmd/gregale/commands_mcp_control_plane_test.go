@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/mcphosting"
 )
@@ -39,18 +40,18 @@ func TestMCPControlPlaneCompatibility(t *testing.T) {
 				fmt.Fprint(w, tc.body)
 			}))
 			defer srv.Close()
-			check := checkMCPConditionalParking(t.Context(), NewClient(srv.URL, "operator"))
+			check := main.CheckMCPConditionalParking(t.Context(), main.NewClient(srv.URL, "operator"))
 			if check.Name != "conditional_parking" || check.Status != tc.want {
 				t.Fatalf("check=%+v", check)
 			}
 			if tc.want != "passed" && !strings.Contains(strings.ToLower(check.Detail), "upgrade") {
 				t.Fatalf("missing upgrade guidance: %+v", check)
 			}
-			oldOut, oldJSON := osStdout, jsonOutput
+			oldOut, oldJSON := (*main.OsStdout), (*main.JsonOutput)
 			var output bytes.Buffer
-			osStdout, jsonOutput = &output, true
-			defer func() { osStdout, jsonOutput = oldOut, oldJSON }()
-			printMCPHostingDoctor(mcpTasksStatusResult{ControlPlaneChecks: []mcphosting.Check{check}}, "")
+			(*main.OsStdout), (*main.JsonOutput) = &output, true
+			defer func() { (*main.OsStdout), (*main.JsonOutput) = oldOut, oldJSON }()
+			main.PrintMCPHostingDoctor(main.McpTasksStatusResult{ControlPlaneChecks: []mcphosting.Check{check}}, "")
 			var report struct {
 				Checks []mcphosting.Check `json:"checks"`
 			}
@@ -76,18 +77,18 @@ func TestMCPControlPlaneRejectsAdaptersBeforeMutation(t *testing.T) {
 				fmt.Fprint(w, `{"registry_version":1,"capabilities":[]}`)
 			}))
 			defer srv.Close()
-			c := NewClient(srv.URL, "operator")
-			p := mcpNativeReleasePlan{}
-			s := mcpNativeReleaseState{Stage: "web_restored"}
+			c := main.NewClient(srv.URL, "operator")
+			p := main.McpNativeReleasePlan{}
+			s := main.McpNativeReleaseState{Stage: "web_restored"}
 			before := s.Stage
 			var err error
 			switch action {
 			case "start":
-				err = startMCPNativeRelease(context.Background(), c, p, &s, filepath.Join(t.TempDir(), "state.json"))
+				err = main.StartMCPNativeRelease(context.Background(), c, p, &s, filepath.Join(t.TempDir(), "state.json"))
 			case "drain":
-				err = drainMCPNativeRelease(context.Background(), c, p, &s, filepath.Join(t.TempDir(), "state.json"))
+				err = main.DrainMCPNativeRelease(context.Background(), c, p, &s, filepath.Join(t.TempDir(), "state.json"))
 			default:
-				err = checkMCPNativeRetirement(context.Background(), c, p, &s)
+				err = main.CheckMCPNativeRetirement(context.Background(), c, p, &s)
 			}
 			if err == nil || !strings.Contains(err.Error(), "Upgrade") || requests != 1 || s.Stage != before {
 				t.Fatalf("requests=%d stage=%s err=%v", requests, s.Stage, err)
@@ -117,22 +118,22 @@ func TestMCPControlPlaneRejectsGatesBeforeSideEffects(t *testing.T) {
 				}
 			}
 			state := filepath.Join(root, "journal.json")
-			s := mcpNativeReleaseState{Version: 1, Stage: "web_restored", Fingerprint: "fixture", WorkerIDs: []string{"captured-worker"}, PreviousDeployments: map[string]string{}, Parked: map[string]bool{}}
+			s := main.McpNativeReleaseState{Version: 1, Stage: "web_restored", Fingerprint: "fixture", WorkerIDs: []string{"captured-worker"}, PreviousDeployments: map[string]string{}, Parked: map[string]bool{}}
 			if action == "release" {
 				s.Stage = "prepared"
-			} else if err := saveMCPNativeState(state, &s); err != nil {
+			} else if err := main.SaveMCPNativeState(state, &s); err != nil {
 				t.Fatal(err)
 			}
-			p := mcpNativeReleasePlan{WorkerPath: root}
-			oldOut := osStdout
+			p := main.McpNativeReleasePlan{WorkerPath: root}
+			oldOut := (*main.OsStdout)
 			var output bytes.Buffer
-			osStdout = &output
-			defer func() { osStdout = oldOut }()
+			(*main.OsStdout) = &output
+			defer func() { (*main.OsStdout) = oldOut }()
 			code := 0
 			if action == "release" {
-				code = runMCPNativeRelease(p, s, state, "plan.json")
+				code = main.RunMCPNativeRelease(p, s, state, "plan.json")
 			} else {
-				code = runMCPNativeRetirement(p, s, state, "plan.json", action == "retire")
+				code = main.RunMCPNativeRetirement(p, s, state, "plan.json", action == "retire")
 			}
 			if code == 0 || requests != 1 {
 				t.Fatalf("code=%d requests=%d", code, requests)
@@ -145,7 +146,7 @@ func TestMCPControlPlaneRejectsGatesBeforeSideEffects(t *testing.T) {
 					t.Fatalf("preflight wrote journal: %v", err)
 				}
 			} else {
-				restored, err := loadMCPNativeState(state, s.Fingerprint)
+				restored, err := main.LoadMCPNativeState(state, s.Fingerprint)
 				if err != nil || restored.Stage != s.Stage {
 					t.Fatalf("journal changed: %+v %v", restored, err)
 				}
@@ -182,11 +183,11 @@ func TestMCPControlPlaneHostingDoctorIntegration(t *testing.T) {
 			defer srv.Close()
 			t.Setenv("FAAS_API", srv.URL)
 			t.Setenv("FAAS_TOKEN", "operator")
-			oldOut, oldJSON := osStdout, jsonOutput
+			oldOut, oldJSON := (*main.OsStdout), (*main.JsonOutput)
 			var output bytes.Buffer
-			osStdout, jsonOutput = &output, true
-			defer func() { osStdout, jsonOutput = oldOut, oldJSON }()
-			cmdMCPTasksReport([]string{"--app", "worker"}, true)
+			(*main.OsStdout), (*main.JsonOutput) = &output, true
+			defer func() { (*main.OsStdout), (*main.JsonOutput) = oldOut, oldJSON }()
+			main.CmdMCPTasksReport([]string{"--app", "worker"}, true)
 			var report struct {
 				Checks []mcphosting.Check `json:"checks"`
 			}
@@ -202,7 +203,7 @@ func TestMCPControlPlaneHostingDoctorIntegration(t *testing.T) {
 			}
 			output.Reset()
 			capabilityReads = 0
-			if code := cmdMCPTasksReport([]string{"--app", "worker"}, false); code != 0 || capabilityReads != 0 {
+			if code := main.CmdMCPTasksReport([]string{"--app", "worker"}, false); code != 0 || capabilityReads != 0 {
 				t.Fatalf("status required compatibility: code=%d reads=%d", code, capabilityReads)
 			}
 		})

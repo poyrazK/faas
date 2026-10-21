@@ -1,6 +1,6 @@
 //go:build !no_pg
 
-package state
+package state_test
 
 // adr: 435. Raw SQL and Go gates must bind the same composed identity/findings.
 
@@ -12,25 +12,26 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 func TestPgNativeComposedPolicyAuthority(t *testing.T) {
-	nativeComposedPolicyAuthority(t, func(t *testing.T) nativeArtifactTestStore { s, _ := runtimeCapturePGStore(t); return s })
+	nativeComposedPolicyAuthority(t, func(t *testing.T) state.NativeArtifactTestStore { s, _ := state.RuntimeCapturePGStore(t); return s })
 }
 
 func TestPgNativeComposedIdentityHashMatchesGo(t *testing.T) {
-	s, pool := runtimeCapturePGStore(t)
-	_, _, app, dep := nativeArtifactFixture(t, s, true)
+	s, pool := state.RuntimeCapturePGStore(t)
+	_, _, app, dep := state.NativeArtifactFixture(t, s, true)
 	inputs, err := s.GetFreshDeploymentRuntimeProducerInputs(t.Context(), app.AccountID, app.ID, dep.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, key := range []string{inputs.Artifacts[1].StorageKey, "apps/a\"<>&.ext4", "apps/\u2028\u2029/雪.ext4"} {
-		identity := inputs.deploymentRuntimeArtifactIdentity
-		identity.Artifacts = append([]DeploymentRuntimeArtifact(nil), identity.Artifacts...)
+		identity := (*inputs.DeploymentRuntimeArtifactIdentity())
+		identity.Artifacts = append([]state.DeploymentRuntimeArtifact(nil), identity.Artifacts...)
 		identity.Artifacts[1].StorageKey = key
-		identity, hash, err := prepareRuntimeArtifactIdentity(identity)
+		identity, hash, err := state.PrepareRuntimeArtifactIdentity(identity)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -46,11 +47,11 @@ func TestPgNativeComposedIdentityHashMatchesGo(t *testing.T) {
 }
 
 func TestPgNativeComposedRawDeadlineContracts(t *testing.T) {
-	s, pool := runtimeCapturePGStore(t)
-	component, _, app, dep := nativeArtifactFixture(t, s, false)
-	app = manageNativeArtifactApp(t, s, app)
-	value := publishNativeComposedScan(t, s, app, dep, component.Report)
-	identity, err := json.Marshal(value.Input.deploymentRuntimeArtifactIdentity)
+	s, pool := state.RuntimeCapturePGStore(t)
+	component, _, app, dep := state.NativeArtifactFixture(t, s, false)
+	app = state.ManageNativeArtifactApp(t, s, app)
+	value := state.PublishNativeComposedScan(t, s, app, dep, component.Report)
+	identity, err := json.Marshal((*value.Input.DeploymentRuntimeArtifactIdentity()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +63,7 @@ func TestPgNativeComposedRawDeadlineContracts(t *testing.T) {
 	if err := pool.QueryRow(t.Context(), `SELECT application_standard_native_composed_views_deadline($1::jsonb,$2::jsonb,clock_timestamp(),false)`, snapshot, identity).Scan(&deadline); err != nil {
 		t.Fatal("composed view/report deadline", err)
 	}
-	ins, _ := nativeArtifactAttempt(t, s, app, dep)
+	ins, _ := state.NativeArtifactAttempt(t, s, app, dep)
 	capture, err := s.GetInstanceApplicationStandardAdmission(t.Context(), ins.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -76,11 +77,11 @@ func TestPgNativeComposedRawDeadlineContracts(t *testing.T) {
 			if _, err := pool.Exec(t.Context(), `SELECT application_standard_native_base_producer_current($1::jsonb,clock_timestamp())`, raw); err != nil {
 				t.Fatal("current base producer", err)
 			}
-		} else if err := pool.QueryRow(t.Context(), `SELECT application_standard_native_producer_deadline($1::jsonb,$2::jsonb,clock_timestamp())`, capture.inputs, raw).Scan(&deadline); err != nil {
+		} else if err := pool.QueryRow(t.Context(), `SELECT application_standard_native_producer_deadline($1::jsonb,$2::jsonb,clock_timestamp())`, (*capture.Inputs()), raw).Scan(&deadline); err != nil {
 			t.Fatal("current signed producer deadline", err)
 		}
 	}
-	if err := pool.QueryRow(t.Context(), `SELECT application_standard_native_artifact_deadline($1::jsonb,clock_timestamp())`, capture.inputs).Scan(&deadline); err != nil || !deadline.Equal(value.ExpiresAt) {
+	if err := pool.QueryRow(t.Context(), `SELECT application_standard_native_artifact_deadline($1::jsonb,clock_timestamp())`, (*capture.Inputs())).Scan(&deadline); err != nil || !deadline.Equal(value.ExpiresAt) {
 		t.Fatal("composed authority deadline", deadline, value.ExpiresAt, err)
 	}
 }
@@ -88,11 +89,11 @@ func TestPgNativeComposedRawDeadlineContracts(t *testing.T) {
 func TestPgNativeComposedRawAuthorityRejectsMalformedPrivateFacts(t *testing.T) {
 	for _, mode := range []string{"wrong input hash", "wrong source hash", "missing view", "duplicate report", "understated finding count", "future tree", "projection mismatch"} {
 		t.Run(mode, func(t *testing.T) {
-			s, pool := runtimeCapturePGStore(t)
-			component, _, app, dep := nativeArtifactFixture(t, s, false)
-			app = manageNativeArtifactApp(t, s, app)
-			in := nativeComposedScanInput(t, s, app, dep, component.Report)
-			in, hash, err := prepareDeploymentRuntimeScan(in)
+			s, pool := state.RuntimeCapturePGStore(t)
+			component, _, app, dep := state.NativeArtifactFixture(t, s, false)
+			app = state.ManageNativeArtifactApp(t, s, app)
+			in := state.NativeComposedScanInput(t, s, app, dep, component.Report)
+			in, hash, err := state.PrepareDeploymentRuntimeScan(in)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -122,10 +123,10 @@ func TestPgNativeComposedRawAuthorityRejectsMalformedPrivateFacts(t *testing.T) 
 			}
 			defer tx.Rollback(t.Context())
 			q := sqlc.New()
-			if err := q.AuthorizeDeploymentRuntimeScanInsert(t.Context(), tx, mustPgUUID(in.ID)); err != nil {
+			if err := q.AuthorizeDeploymentRuntimeScanInsert(t.Context(), tx, state.MustPgUUID(in.ID)); err != nil {
 				t.Fatal(err)
 			}
-			row, err := q.InsertDeploymentRuntimeScan(t.Context(), tx, sqlc.InsertDeploymentRuntimeScanParams{ID: mustPgUUID(in.ID), DeploymentID: mustPgUUID(dep.ID), InputSnapshot: raw, InputHash: hash, PublisherExpiresAt: standardPgTime(time.Now().Add(time.Minute)), TtlSeconds: 60, DbMaxAgeSeconds: api.ApplicationStandardScannerDBMaxAge.Seconds()})
+			row, err := q.InsertDeploymentRuntimeScan(t.Context(), tx, sqlc.InsertDeploymentRuntimeScanParams{ID: state.MustPgUUID(in.ID), DeploymentID: state.MustPgUUID(dep.ID), InputSnapshot: raw, InputHash: hash, PublisherExpiresAt: state.StandardPgTime(time.Now().Add(time.Minute)), TtlSeconds: 60, DbMaxAgeSeconds: api.ApplicationStandardScannerDBMaxAge.Seconds()})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -135,7 +136,7 @@ func TestPgNativeComposedRawAuthorityRejectsMalformedPrivateFacts(t *testing.T) 
 			if err := tx.Commit(t.Context()); err != nil {
 				t.Fatal(err)
 			}
-			ins, candidate := nativeArtifactAttempt(t, s, app, dep)
+			ins, candidate := state.NativeArtifactAttempt(t, s, app, dep)
 			candidate.Token = uuid.NewString()
 			candidate.ExpiresAtUnixNano = row.ExpiresAt.Time.UnixNano()
 			raw, err = json.Marshal(candidate)
@@ -143,10 +144,10 @@ func TestPgNativeComposedRawAuthorityRejectsMalformedPrivateFacts(t *testing.T) 
 				t.Fatal(err)
 			}
 			_, err = pool.Exec(t.Context(), `INSERT INTO instance_application_standard_boots(token,instance_id,expected_state,binding) VALUES($1,$2,$3,$4::jsonb)`, candidate.Token, ins.ID, ins.State, raw)
-			if !errors.Is(mapErr(err), ErrApplicationStandardRuntimeStale) {
+			if !errors.Is(state.MapErr(err), state.ErrApplicationStandardRuntimeStale) {
 				t.Fatal("raw native grant accepted malformed composed facts", mode, err)
 			}
-			assertNativeBootUnpublished(t, s, ins)
+			state.AssertNativeBootUnpublished(t, s, ins)
 		})
 	}
 }

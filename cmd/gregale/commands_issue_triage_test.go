@@ -1,9 +1,10 @@
-package main
+package main_test
 
 import (
 	"bytes"
 	"encoding/json"
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"net/http"
 	"net/http/httptest"
@@ -36,20 +37,20 @@ func TestIssueTriageCLIComparisonAndExplicitBatch(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_test")
-	oldOut, oldJSON := osStdout, jsonOutput
+	oldOut, oldJSON := (*main.OsStdout), (*main.JsonOutput)
 	var out bytes.Buffer
-	osStdout, jsonOutput = &out, false
-	t.Cleanup(func() { osStdout, jsonOutput = oldOut, oldJSON })
-	if cmdIssues([]string{"compare-releases", "--app", "payments", "--baseline", baseline, "--candidate", candidate}) != 0 {
+	(*main.OsStdout), (*main.JsonOutput) = &out, false
+	t.Cleanup(func() { (*main.OsStdout), (*main.JsonOutput) = oldOut, oldJSON })
+	if main.CmdIssues([]string{"compare-releases", "--app", "payments", "--baseline", baseline, "--candidate", candidate}) != 0 {
 		t.Fatal("comparison failed")
 	}
 	if !strings.Contains(out.String(), "Unknown") {
 		t.Fatal("missing traffic displayed as zero health")
 	}
-	if cmdIssues([]string{"bulk", "--app", "payments", "--issues", id, "--action", "assign"}) != 0 {
+	if main.CmdIssues([]string{"bulk", "--app", "payments", "--issues", id, "--action", "assign"}) != 0 {
 		t.Fatal("batch failed")
 	}
-	if cmdIssues([]string{"bulk", "--app", "payments", "--issues", id + "," + id, "--action", "resolve", "--deployment", candidate}) == 0 {
+	if main.CmdIssues([]string{"bulk", "--app", "payments", "--issues", id + "," + id, "--action", "resolve", "--deployment", candidate}) == 0 {
 		t.Fatal("duplicate selection accepted")
 	}
 	if requests != 2 || !strings.Contains(out.String(), "Updated 1 canonical") {

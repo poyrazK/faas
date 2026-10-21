@@ -1,13 +1,14 @@
-package state
+package state_test
 
 import (
 	"context"
+	"github.com/onebox-faas/faas/pkg/state"
 	"testing"
 	"time"
 )
 
 func TestMemStoreListFreshCustomMetrics(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	ctx := context.Background()
 	now := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
 	for _, p := range []struct {

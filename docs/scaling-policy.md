@@ -48,7 +48,7 @@ scaling rule, choose a stabilization window, or decide how signals combine.
 | `rps` | requests per second per instance | steady traffic with predictable per-request cost |
 | `cpu` | max CPU percent across instances | CPU-bound work whose request count understates its cost |
 | `queue_depth` | backlog each worker should drain, in Gregale's own queue | job and worker apps |
-| `queue_lag` | backlog still on the external broker | Kafka / AMQP / NATS / Redis Streams / SQS triggers |
+| `queue_lag` | backlog still on the external broker | Kafka / NATS / Redis Streams / SQS-compatible triggers |
 | `custom` | any number your app pushes | backlogs only your app knows about |
 
 `queue_lag` and `queue_depth` are different quantities and are not

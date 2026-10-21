@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -8,14 +8,15 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/cmd/gregale/templates"
 )
 
 func TestDataAPIStarterScaffoldIncludesApplicationWorkflows(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	dest := filepath.Join(t.TempDir(), "notes")
 	var out, stderr bytes.Buffer
-	if code := runCmdInit("data-api-starter", dest, false, "", &out, &stderr); code != 0 {
+	if code := main.RunCmdInit("data-api-starter", dest, false, "", &out, &stderr); code != 0 {
 		t.Fatalf("init exit=%d: %s", code, stderr.String())
 	}
 	for _, file := range []string{
@@ -35,16 +36,16 @@ func TestDataAPIStarterScaffoldIncludesApplicationWorkflows(t *testing.T) {
 			t.Fatalf("scaffolded %s workflow differs from embedded source", name)
 		}
 	}
-	manifest, err := loadDevManifest(dest)
+	manifest, err := main.LoadDevManifest(dest)
 	if err != nil || manifest == nil || manifest.Hosting == nil || manifest.Hosting.Health != "/healthz" || manifest.Release == nil || manifest.Release.Command != "node migrations/release.mjs" {
 		t.Fatalf("starter must declare its readiness endpoint and release migration: %+v, %v", manifest, err)
 	}
 	configFile, _ := os.ReadFile(filepath.Join(dest, "data-api.json"))
-	var config dataAPISyncConfig
+	var config main.DataAPISyncConfig
 	if err := json.Unmarshal(configFile, &config); err != nil || config.Output != "client/src/database.types.ts" || strings.Join(config.Check.Command, " ") != "npm run typecheck" {
 		t.Fatalf("scaffold cannot use the sync workflow: %+v, %v", config, err)
 	}
-	if !strings.Contains(out.String(), "--replay data-api.requests.json") || !strings.Contains(out.String(), "data-api sync") || !strings.Contains(out.String(), "tools/artifacts.mjs pin") || docsURLForTemplate("data-api-starter") != "https://gregale.dev/docs/data-api" {
+	if !strings.Contains(out.String(), "--replay data-api.requests.json") || !strings.Contains(out.String(), "data-api sync") || !strings.Contains(out.String(), "tools/artifacts.mjs pin") || main.DocsURLForTemplate("data-api-starter") != "https://gregale.dev/docs/data-api" {
 		t.Fatal("scaffold did not explain the Data API next steps")
 	}
 }
@@ -69,10 +70,10 @@ func TestDataAPIStarterUploadKeepsMigrationAndExcludesClientTools(t *testing.T) 
 		}
 	}
 	archive := filepath.Join(t.TempDir(), "migration.tar.gz")
-	if _, err := packDirToTarGz(dest, archive, defaultZeroConfigSourceCapMB, nil); err != nil {
+	if _, err := main.PackDirToTarGz(dest, archive, main.DefaultZeroConfigSourceCapMB, nil); err != nil {
 		t.Fatal(err)
 	}
-	entries := tarEntries(t, archive)
+	entries := main.TarEntries(t, archive)
 	if !entries["notes/migrations/sql/0016_note_search.sql"] || !entries["notes/migrations/sql/0015_note_change_feed.sql"] || !entries["notes/migrations/sql/0014_note_atomic_batches.sql"] || !entries["notes/migrations/sql/0013_note_mutation_receipts.sql"] || !entries["notes/migrations/cleanup-receipts.mjs"] {
 		t.Fatal("migration upload missing versioned mutation/batch receipts or owner cleanup")
 	}

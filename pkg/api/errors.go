@@ -89,6 +89,9 @@ type Problem struct {
 	// (ADR-1448).
 	CrossedReleases []RollbackCrossedRelease `json:"crossed_releases,omitempty"`
 	RestorePoints   []ReleaseRestorePoint    `json:"restore_points,omitempty"`
+	// Freezes lists the active freezes behind release_frozen
+	// (ADR-20261019071733).
+	Freezes []ReleaseFreeze `json:"freezes,omitempty"`
 	// Type is a URI identifying the problem class (RFC 9457 "type").
 	Type string `json:"type"`
 	// Title is a short, stable, human-readable summary.
@@ -637,6 +640,11 @@ const (
 	// CodeUnauthorized so a customer can tell "I need to log in" from
 	// "my key does not have permission for this endpoint".
 	CodeForbidden = "insufficient_scope"
+	// CodeChallengeRequired is returned by gatewayd for a request on a
+	// kind=challenge route that carries no valid pass and is not a browser
+	// navigation (ADR-831 amendment 7). A browser earns the pass by loading
+	// a page on the route; other clients need a verified credential.
+	CodeChallengeRequired = "challenge_required"
 	// CodePreviewProductionDependencyDenied is returned by the internal
 	// service proxy when a project preview tries to call a production
 	// dependency while its preview_service_policy is deny. The rejection
@@ -878,6 +886,20 @@ const (
 	// so the caller must acknowledge them; the problem lists them with
 	// restore points for managed PostgreSQL databases.
 	CodeRollbackCrossesRelease = "rollback_crosses_release"
+	// CodeReleaseFrozen means a freeze withholds production releases of the
+	// app (ADR-20261019071733); the problem lists the active freezes.
+	// override_freeze with a reason releases anyway, audited.
+	CodeReleaseFrozen = "release_frozen"
+	// CodeReleaseFreezeNotFound means the account has no such unlifted freeze.
+	CodeReleaseFreezeNotFound = "release_freeze_not_found"
+	// CodeReleaseFreezeLimit means the account already holds
+	// ReleaseFreezesMax freezes that have not ended.
+	CodeReleaseFreezeLimit = "release_freeze_limit"
+	// CodeReleaseGateLimit means the app already has ReleaseGatesPerAppMax
+	// release gates (ADR-20261019071734).
+	CodeReleaseGateLimit = "release_gate_limit"
+	// CodeReleaseGateNotFound means the app has no release gate by that name.
+	CodeReleaseGateNotFound = "release_gate_not_found"
 	// CodeConfigRevisionNotFound means the scope has no such config revision
 	// (ADR-1451), or it was pruned past ConfigRevisionsRetained.
 	CodeConfigRevisionNotFound = "config_revision_not_found"
@@ -2027,7 +2049,7 @@ func StatusForCode(code string) int {
 		return http.StatusServiceUnavailable
 	case CodeUnauthorized, CodeConsumerKeyRequired, CodeConsumerKeyInvalid, CodeConsumerKeyInactive:
 		return http.StatusUnauthorized
-	case CodeConsumerScopeMissing, CodePlatformTenantRequired:
+	case CodeConsumerScopeMissing, CodePlatformTenantRequired, CodeChallengeRequired:
 		return http.StatusForbidden
 	case CodeSessionExpired, CodeSessionInvalid:
 		return http.StatusUnauthorized

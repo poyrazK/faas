@@ -326,7 +326,7 @@ func NewEvaluator(o EvaluatorOptions) *Evaluator {
 type Stats struct {
 	Evaluated           int // rules walked this tick (enabled list)
 	Fired               int // rules that crossed the threshold
-	Delivered           int // rules whose dispatch returned 2xx/3xx
+	Delivered           int // rules whose dispatch returned 2xx
 	Failed              int // rules whose dispatch hit a terminal/retry-exhausted state
 	SkippedDegraded     int // rules skipped because Prometheus returned a degraded source
 	SkippedInsufficient int // target-signal rules without enough selected failures
@@ -883,8 +883,10 @@ func (e *Evaluator) observe(ctx context.Context, rule state.AlertRule) (float64,
 			value = snapshot.DueAgeSeconds
 		}
 		return value, compareFloat(value, rule.Comparison, rule.Threshold), ""
-	case state.AlertMetricEdgeRuleHits, state.AlertMetricEdgeRuleLogHits:
+	case state.AlertMetricEdgeRuleHits, state.AlertMetricEdgeRuleLogHits, state.AlertMetricEdgeRuleActivity:
 		return e.observeEdgeRuleHits(ctx, rule)
+	case state.AlertMetricRouteInsightsDetected:
+		return e.observeRouteInsights(ctx, rule)
 	case state.AlertMetricFailedInvocs:
 		// Postgres-backed. No Prometheus dependency; the
 		// per-rule source filter expands "any" to every alertable

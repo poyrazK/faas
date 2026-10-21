@@ -8,7 +8,7 @@
 // every CI lane. Whitebox `package state` (matches every existing
 // memstore_*_test.go).
 
-package state
+package state_test
 
 import (
 	"context"
@@ -17,12 +17,13 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // --- Accounts --------------------------------------------------------
 
 func TestMemStore_AccountByProviderCustomerID_HitMiss(t *testing.T) {
-	store := NewMemStore()
+	store := state.NewMemStore()
 	ctx := context.Background()
 
 	a1, err := store.CreateAccount(ctx, "alice@example.com", api.PlanFree)
@@ -42,21 +43,21 @@ func TestMemStore_AccountByProviderCustomerID_HitMiss(t *testing.T) {
 	}
 
 	// Miss → ErrNotFound.
-	if _, err := store.AccountByProviderCustomerID(ctx, "cus_no_such"); !errors.Is(err, ErrNotFound) {
+	if _, err := store.AccountByProviderCustomerID(ctx, "cus_no_such"); !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("miss: err = %v, want ErrNotFound", err)
 	}
 }
 
 func TestMemStore_UpdateAccountProviderCustomerID_MissReturnsErrNotFound(t *testing.T) {
-	store := NewMemStore()
+	store := state.NewMemStore()
 	err := store.UpdateAccountProviderCustomerID(context.Background(), "no-such-acct", "cus_x")
-	if !errors.Is(err, ErrNotFound) {
+	if !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("err = %v, want ErrNotFound", err)
 	}
 }
 
 func TestMemStore_ListAllAccounts_Empty(t *testing.T) {
-	store := NewMemStore()
+	store := state.NewMemStore()
 	got, err := store.ListAllAccounts(context.Background())
 	if err != nil {
 		t.Fatalf("err = %v", err)
@@ -67,7 +68,7 @@ func TestMemStore_ListAllAccounts_Empty(t *testing.T) {
 }
 
 func TestMemStore_ListAllAccounts_Populated(t *testing.T) {
-	store := NewMemStore()
+	store := state.NewMemStore()
 	ctx := context.Background()
 	for i, email := range []string{"a@x.com", "b@x.com", "c@x.com"} {
 		if _, err := store.CreateAccount(ctx, email, api.PlanFree); err != nil {
@@ -84,9 +85,9 @@ func TestMemStore_ListAllAccounts_Populated(t *testing.T) {
 }
 
 func TestMemStore_UpdateAccountPlan_RoundTrip(t *testing.T) {
-	store := NewMemStore()
+	store := state.NewMemStore()
 	ctx := context.Background()
-	created, err := store.CreateAccountWithPersonalOrg(ctx, CreateAccountWithPersonalOrgParams{Email: "a@x.com", Plan: api.PlanFree})
+	created, err := store.CreateAccountWithPersonalOrg(ctx, state.CreateAccountWithPersonalOrgParams{Email: "a@x.com", Plan: api.PlanFree})
 	if err != nil {
 		t.Fatalf("create account with personal org: %v", err)
 	}
@@ -111,37 +112,37 @@ func TestMemStore_UpdateAccountPlan_RoundTrip(t *testing.T) {
 }
 
 func TestMemStore_UpdateAccountPlan_MissReturnsErrNotFound(t *testing.T) {
-	store := NewMemStore()
-	if err := store.UpdateAccountPlan(context.Background(), "no-such", api.PlanPro); !errors.Is(err, ErrNotFound) {
+	store := state.NewMemStore()
+	if err := store.UpdateAccountPlan(context.Background(), "no-such", api.PlanPro); !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("err = %v, want ErrNotFound", err)
 	}
 }
 
 func TestMemStore_UpdateAccountStatus_RoundTrip(t *testing.T) {
-	store := NewMemStore()
+	store := state.NewMemStore()
 	ctx := context.Background()
 	a, _ := store.CreateAccount(ctx, "a@x.com", api.PlanFree)
-	if err := store.UpdateAccountStatus(ctx, a.ID, AccountSuspended); err != nil {
+	if err := store.UpdateAccountStatus(ctx, a.ID, state.AccountSuspended); err != nil {
 		t.Fatalf("update: %v", err)
 	}
 	got, err := store.AccountByID(ctx, a.ID)
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
-	if got.Status != AccountSuspended {
+	if got.Status != state.AccountSuspended {
 		t.Errorf("status = %q, want suspended", got.Status)
 	}
 }
 
 func TestMemStore_UpdateAccountStatus_MissReturnsErrNotFound(t *testing.T) {
-	store := NewMemStore()
-	if err := store.UpdateAccountStatus(context.Background(), "no-such", AccountSuspended); !errors.Is(err, ErrNotFound) {
+	store := state.NewMemStore()
+	if err := store.UpdateAccountStatus(context.Background(), "no-such", state.AccountSuspended); !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("err = %v, want ErrNotFound", err)
 	}
 }
 
 func TestMemStore_UpdateAccountStripeSubscriptionItem_RoundTrip(t *testing.T) {
-	store := NewMemStore()
+	store := state.NewMemStore()
 	ctx := context.Background()
 	a, _ := store.CreateAccount(ctx, "a@x.com", api.PlanFree)
 	if err := store.UpdateAccountStripeSubscriptionItem(ctx, a.ID, "si_test_001"); err != nil {
@@ -157,8 +158,8 @@ func TestMemStore_UpdateAccountStripeSubscriptionItem_RoundTrip(t *testing.T) {
 }
 
 func TestMemStore_UpdateAccountStripeSubscriptionItem_MissReturnsErrNotFound(t *testing.T) {
-	store := NewMemStore()
-	if err := store.UpdateAccountStripeSubscriptionItem(context.Background(), "no-such", "x"); !errors.Is(err, ErrNotFound) {
+	store := state.NewMemStore()
+	if err := store.UpdateAccountStripeSubscriptionItem(context.Background(), "no-such", "x"); !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("err = %v, want ErrNotFound", err)
 	}
 }
@@ -166,7 +167,7 @@ func TestMemStore_UpdateAccountStripeSubscriptionItem_MissReturnsErrNotFound(t *
 // --- API keys --------------------------------------------------------
 
 func TestMemStore_CreateAPIKey_HappyPath(t *testing.T) {
-	store := NewMemStore()
+	store := state.NewMemStore()
 	ctx := context.Background()
 	a, _ := store.CreateAccount(ctx, "a@x.com", api.PlanFree)
 	k, err := store.CreateAPIKey(ctx, a.ID, []byte("hash-1"), "ci", []string{"read", "write"})
@@ -176,7 +177,7 @@ func TestMemStore_CreateAPIKey_HappyPath(t *testing.T) {
 	if k.ID == "" {
 		t.Error("key ID empty")
 	}
-	if k.Status != string(APIKeyStatusActive) {
+	if k.Status != string(state.APIKeyStatusActive) {
 		t.Errorf("status = %q, want active", k.Status)
 	}
 	if len(k.Scopes) != 2 {
@@ -185,7 +186,7 @@ func TestMemStore_CreateAPIKey_HappyPath(t *testing.T) {
 }
 
 func TestMemStore_CreateAPIKey_DuplicateHashRejected(t *testing.T) {
-	store := NewMemStore()
+	store := state.NewMemStore()
 	ctx := context.Background()
 	a, _ := store.CreateAccount(ctx, "a@x.com", api.PlanFree)
 	if _, err := store.CreateAPIKey(ctx, a.ID, []byte("h"), "k1", []string{"admin"}); err != nil {
@@ -197,7 +198,7 @@ func TestMemStore_CreateAPIKey_DuplicateHashRejected(t *testing.T) {
 }
 
 func TestMemStore_ListAPIKeys_Filter(t *testing.T) {
-	store := NewMemStore()
+	store := state.NewMemStore()
 	ctx := context.Background()
 	a, _ := store.CreateAccount(ctx, "a@x.com", api.PlanFree)
 	for i := 0; i < 3; i++ {
@@ -215,7 +216,7 @@ func TestMemStore_ListAPIKeys_Filter(t *testing.T) {
 }
 
 func TestMemStore_GetAPIKey_HitMissCrossAccount(t *testing.T) {
-	store := NewMemStore()
+	store := state.NewMemStore()
 	ctx := context.Background()
 	a1, _ := store.CreateAccount(ctx, "a1@x.com", api.PlanFree)
 	a2, _ := store.CreateAccount(ctx, "a2@x.com", api.PlanFree)
@@ -233,18 +234,18 @@ func TestMemStore_GetAPIKey_HitMissCrossAccount(t *testing.T) {
 	}
 
 	// Cross-account lookup must fail.
-	if _, err := store.GetAPIKey(ctx, a2.ID, k1.ID); !errors.Is(err, ErrNotFound) {
+	if _, err := store.GetAPIKey(ctx, a2.ID, k1.ID); !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("cross-account: err = %v, want ErrNotFound", err)
 	}
 
 	// Miss by keyID.
-	if _, err := store.GetAPIKey(ctx, a1.ID, "no-such"); !errors.Is(err, ErrNotFound) {
+	if _, err := store.GetAPIKey(ctx, a1.ID, "no-such"); !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("miss: err = %v, want ErrNotFound", err)
 	}
 }
 
 func TestMemStore_DeleteAPIKeyReturning_OwnerHit(t *testing.T) {
-	store := NewMemStore()
+	store := state.NewMemStore()
 	ctx := context.Background()
 	a, _ := store.CreateAccount(ctx, "a@x.com", api.PlanFree)
 	k, err := store.CreateAPIKey(ctx, a.ID, []byte("h"), "k", []string{"admin"})
@@ -259,24 +260,24 @@ func TestMemStore_DeleteAPIKeyReturning_OwnerHit(t *testing.T) {
 		t.Errorf("returned ID = %q", got.ID)
 	}
 	// And the row is gone.
-	if _, err := store.GetAPIKey(ctx, a.ID, k.ID); !errors.Is(err, ErrNotFound) {
+	if _, err := store.GetAPIKey(ctx, a.ID, k.ID); !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("after-delete: err = %v, want ErrNotFound", err)
 	}
 }
 
 func TestMemStore_DeleteAPIKeyReturning_CrossAccountFails(t *testing.T) {
-	store := NewMemStore()
+	store := state.NewMemStore()
 	ctx := context.Background()
 	a1, _ := store.CreateAccount(ctx, "a1@x.com", api.PlanFree)
 	a2, _ := store.CreateAccount(ctx, "a2@x.com", api.PlanFree)
 	k, _ := store.CreateAPIKey(ctx, a1.ID, []byte("h"), "k", []string{"admin"})
-	if _, err := store.DeleteAPIKeyReturning(ctx, a2.ID, k.ID); !errors.Is(err, ErrNotFound) {
+	if _, err := store.DeleteAPIKeyReturning(ctx, a2.ID, k.ID); !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("cross-account delete: err = %v, want ErrNotFound", err)
 	}
 }
 
 func TestMemStore_MarkAPIKeyRevoked_HitMiss(t *testing.T) {
-	store := NewMemStore()
+	store := state.NewMemStore()
 	ctx := context.Background()
 	a, _ := store.CreateAccount(ctx, "a@x.com", api.PlanFree)
 	k, _ := store.CreateAPIKey(ctx, a.ID, []byte("h"), "k", []string{"admin"})
@@ -284,7 +285,7 @@ func TestMemStore_MarkAPIKeyRevoked_HitMiss(t *testing.T) {
 	if err != nil {
 		t.Fatalf("revoke: %v", err)
 	}
-	if got.Status != string(APIKeyStatusRevoked) {
+	if got.Status != string(state.APIKeyStatusRevoked) {
 		t.Errorf("status = %q, want revoked", got.Status)
 	}
 	if got.RevokedAt == nil {
@@ -300,13 +301,13 @@ func TestMemStore_MarkAPIKeyRevoked_HitMiss(t *testing.T) {
 		t.Errorf("re-revoke changed timestamp: got %v, want %v", again.RevokedAt, got.RevokedAt)
 	}
 
-	if _, err := store.MarkAPIKeyRevoked(ctx, a.ID, "no-such"); !errors.Is(err, ErrNotFound) {
+	if _, err := store.MarkAPIKeyRevoked(ctx, a.ID, "no-such"); !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("miss: err = %v, want ErrNotFound", err)
 	}
 }
 
 func TestMemStore_TouchKeyLastUsed_HitMiss(t *testing.T) {
-	store := NewMemStore()
+	store := state.NewMemStore()
 	ctx := context.Background()
 	a, _ := store.CreateAccount(ctx, "a@x.com", api.PlanFree)
 	k, _ := store.CreateAPIKey(ctx, a.ID, []byte("h"), "k", []string{"admin"})
@@ -323,7 +324,7 @@ func TestMemStore_TouchKeyLastUsed_HitMiss(t *testing.T) {
 		t.Errorf("LastUsedAt %v not after %v", got.LastUsedAt, before)
 	}
 
-	if err := store.TouchKeyLastUsed(ctx, "no-such-key"); !errors.Is(err, ErrNotFound) {
+	if err := store.TouchKeyLastUsed(ctx, "no-such-key"); !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("miss: err = %v, want ErrNotFound", err)
 	}
 }
@@ -331,12 +332,12 @@ func TestMemStore_TouchKeyLastUsed_HitMiss(t *testing.T) {
 // --- MFA (issue #186) ------------------------------------------------
 
 func TestMemStore_MFASecret_RoundTrip(t *testing.T) {
-	store := NewMemStore()
+	store := state.NewMemStore()
 	ctx := context.Background()
 	a, _ := store.CreateAccount(ctx, "a@x.com", api.PlanFree)
 
 	// Empty initial state.
-	if _, err := store.ReadMFASecret(ctx, a.ID); !errors.Is(err, ErrNotFound) {
+	if _, err := store.ReadMFASecret(ctx, a.ID); !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("read empty: err = %v, want ErrNotFound", err)
 	}
 
@@ -355,7 +356,7 @@ func TestMemStore_MFASecret_RoundTrip(t *testing.T) {
 }
 
 func TestMemStore_MFAEnrolled_Clear(t *testing.T) {
-	store := NewMemStore()
+	store := state.NewMemStore()
 	ctx := context.Background()
 	a, _ := store.CreateAccount(ctx, "a@x.com", api.PlanFree)
 
@@ -377,7 +378,7 @@ func TestMemStore_MFAEnrolled_Clear(t *testing.T) {
 }
 
 func TestMemStore_SetMFARequired_Toggle(t *testing.T) {
-	store := NewMemStore()
+	store := state.NewMemStore()
 	ctx := context.Background()
 	a, _ := store.CreateAccount(ctx, "a@x.com", api.PlanFree)
 
@@ -409,7 +410,7 @@ func TestMemStore_SetMFARequired_Toggle(t *testing.T) {
 }
 
 func TestMemStore_ConsumeRecoveryCode_HitMissLastCode(t *testing.T) {
-	store := NewMemStore()
+	store := state.NewMemStore()
 	ctx := context.Background()
 	a, _ := store.CreateAccount(ctx, "a@x.com", api.PlanFree)
 
@@ -454,15 +455,15 @@ func TestMemStore_ConsumeRecoveryCode_HitMissLastCode(t *testing.T) {
 }
 
 func TestMemStore_ConsumeRecoveryCode_MissingAccount(t *testing.T) {
-	store := NewMemStore()
+	store := state.NewMemStore()
 	_, _, _, err := store.ConsumeRecoveryCode(context.Background(), "no-such", []byte("x"))
-	if !errors.Is(err, ErrNotFound) {
+	if !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("err = %v, want ErrNotFound", err)
 	}
 }
 
 func TestMemStore_MatchRecoveryCode_NotConsuming(t *testing.T) {
-	store := NewMemStore()
+	store := state.NewMemStore()
 	ctx := context.Background()
 	a, _ := store.CreateAccount(ctx, "a@x.com", api.PlanFree)
 	h := []byte("hash-1")
@@ -491,12 +492,12 @@ func TestMemStore_MatchRecoveryCode_NotConsuming(t *testing.T) {
 // --- Apps on a compute node -----------------------------------------
 
 func TestMemStore_ListAppsByNodeID_EmptyAndFiltered(t *testing.T) {
-	store := NewMemStore()
+	store := state.NewMemStore()
 	ctx := context.Background()
 	owner, _ := store.CreateAccount(ctx, "a@x.com", api.PlanFree)
-	a1, _ := store.CreateApp(ctx, App{AccountID: owner.ID, Slug: "a1"})
-	a2, _ := store.CreateApp(ctx, App{AccountID: owner.ID, Slug: "a2"})
-	a3, _ := store.CreateApp(ctx, App{AccountID: owner.ID, Slug: "a3"})
+	a1, _ := store.CreateApp(ctx, state.App{AccountID: owner.ID, Slug: "a1"})
+	a2, _ := store.CreateApp(ctx, state.App{AccountID: owner.ID, Slug: "a2"})
+	a3, _ := store.CreateApp(ctx, state.App{AccountID: owner.ID, Slug: "a3"})
 
 	// No apps placed yet → empty.
 	got, err := store.ListAppsByNodeID(ctx, "node-1")
@@ -527,19 +528,19 @@ func TestMemStore_ListAppsByNodeID_EmptyAndFiltered(t *testing.T) {
 }
 
 func TestMemStore_SetAppNodeID_NotFound(t *testing.T) {
-	store := NewMemStore()
-	if err := store.SetAppNodeID(context.Background(), "no-such-app", "node-1"); !errors.Is(err, ErrNotFound) {
+	store := state.NewMemStore()
+	if err := store.SetAppNodeID(context.Background(), "no-such-app", "node-1"); !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("err = %v, want ErrNotFound", err)
 	}
 }
 
 func TestMemStore_ListUnplacedApps_Filter(t *testing.T) {
-	store := NewMemStore()
+	store := state.NewMemStore()
 	ctx := context.Background()
 	owner, _ := store.CreateAccount(ctx, "a@x.com", api.PlanFree)
-	a1, _ := store.CreateApp(ctx, App{AccountID: owner.ID, Slug: "a1"})
-	a2, _ := store.CreateApp(ctx, App{AccountID: owner.ID, Slug: "a2"})
-	a3, _ := store.CreateApp(ctx, App{AccountID: owner.ID, Slug: "a3"})
+	a1, _ := store.CreateApp(ctx, state.App{AccountID: owner.ID, Slug: "a1"})
+	a2, _ := store.CreateApp(ctx, state.App{AccountID: owner.ID, Slug: "a2"})
+	a3, _ := store.CreateApp(ctx, state.App{AccountID: owner.ID, Slug: "a3"})
 	_ = a2
 	_ = a3
 
@@ -557,11 +558,11 @@ func TestMemStore_ListUnplacedApps_Filter(t *testing.T) {
 }
 
 func TestMemStore_ListOwnedCronsByNodeID_Filtered(t *testing.T) {
-	store := NewMemStore()
+	store := state.NewMemStore()
 	ctx := context.Background()
 	owner, _ := store.CreateAccount(ctx, "a@x.com", api.PlanFree)
-	a1, _ := store.CreateApp(ctx, App{AccountID: owner.ID, Slug: "a1"})
-	a2, _ := store.CreateApp(ctx, App{AccountID: owner.ID, Slug: "a2"})
+	a1, _ := store.CreateApp(ctx, state.App{AccountID: owner.ID, Slug: "a1"})
+	a2, _ := store.CreateApp(ctx, state.App{AccountID: owner.ID, Slug: "a2"})
 
 	if _, err := store.CreateCron(ctx, a1.ID, "*/5 * * * *", "/healthz", true); err != nil {
 		t.Fatalf("seed cron 1: %v", err)
@@ -582,10 +583,10 @@ func TestMemStore_ListOwnedCronsByNodeID_Filtered(t *testing.T) {
 }
 
 func TestMemStore_ListOrphanedApps_EmptyWhenNoCooldown(t *testing.T) {
-	store := NewMemStore()
+	store := state.NewMemStore()
 	ctx := context.Background()
 	owner, _ := store.CreateAccount(ctx, "a@x.com", api.PlanFree)
-	if _, err := store.CreateApp(ctx, App{AccountID: owner.ID, Slug: "a1"}); err != nil {
+	if _, err := store.CreateApp(ctx, state.App{AccountID: owner.ID, Slug: "a1"}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 	got, err := store.ListOrphanedApps(ctx, 3600, 100)
@@ -598,10 +599,10 @@ func TestMemStore_ListOrphanedApps_EmptyWhenNoCooldown(t *testing.T) {
 }
 
 func TestMemStore_ReassignAppOwner_Happy(t *testing.T) {
-	store := NewMemStore()
+	store := state.NewMemStore()
 	ctx := context.Background()
 	owner, _ := store.CreateAccount(ctx, "a@x.com", api.PlanFree)
-	app, _ := store.CreateApp(ctx, App{AccountID: owner.ID, Slug: "a1", NodeID: "node-old"})
+	app, _ := store.CreateApp(ctx, state.App{AccountID: owner.ID, Slug: "a1", NodeID: "node-old"})
 
 	if err := store.ReassignAppOwner(ctx, app.ID, "node-old", "node-new"); err != nil {
 		t.Fatalf("reassign: %v", err)
@@ -616,11 +617,11 @@ func TestMemStore_ReassignAppOwner_Happy(t *testing.T) {
 }
 
 func TestMemStore_ReassignAppOwner_MismatchFromID(t *testing.T) {
-	store := NewMemStore()
+	store := state.NewMemStore()
 	ctx := context.Background()
 	owner, _ := store.CreateAccount(ctx, "a@x.com", api.PlanFree)
-	app, _ := store.CreateApp(ctx, App{AccountID: owner.ID, Slug: "a1", NodeID: "node-old"})
-	if err := store.ReassignAppOwner(ctx, app.ID, "wrong", "node-new"); !errors.Is(err, ErrConflict) {
+	app, _ := store.CreateApp(ctx, state.App{AccountID: owner.ID, Slug: "a1", NodeID: "node-old"})
+	if err := store.ReassignAppOwner(ctx, app.ID, "wrong", "node-new"); !errors.Is(err, state.ErrConflict) {
 		t.Errorf("err = %v, want ErrConflict on from-node mismatch", err)
 	}
 }
@@ -628,22 +629,22 @@ func TestMemStore_ReassignAppOwner_MismatchFromID(t *testing.T) {
 // --- Instances on a compute node ------------------------------------
 
 func TestMemStore_ListInstancesByNodeID_Filtered(t *testing.T) {
-	store := NewMemStore()
+	store := state.NewMemStore()
 	ctx := context.Background()
 	owner, _ := store.CreateAccount(ctx, "a@x.com", api.PlanFree)
 	// Two apps on different nodes; instances inherit the app's
 	// NodeID for ListInstancesByNodeID (it joins via app owner).
-	app1, _ := store.CreateApp(ctx, App{AccountID: owner.ID, Slug: "a1", NodeID: "node-1"})
-	app2, _ := store.CreateApp(ctx, App{AccountID: owner.ID, Slug: "a2", NodeID: "node-2"})
+	app1, _ := store.CreateApp(ctx, state.App{AccountID: owner.ID, Slug: "a1", NodeID: "node-1"})
+	app2, _ := store.CreateApp(ctx, state.App{AccountID: owner.ID, Slug: "a2", NodeID: "node-2"})
 
 	// 3 instances on app1 (node-1), 2 on app2 (node-2).
 	for i := 0; i < 3; i++ {
-		if _, err := store.CreateInstance(ctx, app1.ID, "dep-1", string(StateRunning), 256, "node-1", "wake-"+string(rune('a'+i))); err != nil {
+		if _, err := store.CreateInstance(ctx, app1.ID, "dep-1", string(state.StateRunning), 256, "node-1", "wake-"+string(rune('a'+i))); err != nil {
 			t.Fatalf("seed app1 %d: %v", i, err)
 		}
 	}
 	for i := 0; i < 2; i++ {
-		if _, err := store.CreateInstance(ctx, app2.ID, "dep-1", string(StateRunning), 256, "node-2", "wake-"+string(rune('a'+i))); err != nil {
+		if _, err := store.CreateInstance(ctx, app2.ID, "dep-1", string(state.StateRunning), 256, "node-2", "wake-"+string(rune('a'+i))); err != nil {
 			t.Fatalf("seed app2 %d: %v", i, err)
 		}
 	}
@@ -657,13 +658,13 @@ func TestMemStore_ListInstancesByNodeID_Filtered(t *testing.T) {
 }
 
 func TestMemStore_ListLiveInstancesOnNode_FilteredByState(t *testing.T) {
-	store := NewMemStore()
+	store := state.NewMemStore()
 	ctx := context.Background()
 	owner, _ := store.CreateAccount(ctx, "a@x.com", api.PlanFree)
-	app, _ := store.CreateApp(ctx, App{AccountID: owner.ID, Slug: "a1"})
+	app, _ := store.CreateApp(ctx, state.App{AccountID: owner.ID, Slug: "a1"})
 
 	// Mix of live + parked instances on node-1.
-	for i, state := range []State{StateRunning, StateRunning, StateParked, StateRunning} {
+	for i, state := range []state.State{state.StateRunning, state.StateRunning, state.StateParked, state.StateRunning} {
 		if _, err := store.CreateInstance(ctx, app.ID, "dep-1", string(state), 256, "node-1", "wake-"+string(rune('a'+i))); err != nil {
 			t.Fatalf("seed %d: %v", i, err)
 		}
@@ -678,33 +679,33 @@ func TestMemStore_ListLiveInstancesOnNode_FilteredByState(t *testing.T) {
 }
 
 func TestMemStore_MarkInstanceMigrating_HitMiss(t *testing.T) {
-	store := NewMemStore()
+	store := state.NewMemStore()
 	ctx := context.Background()
 	owner, _ := store.CreateAccount(ctx, "a@x.com", api.PlanFree)
-	app, _ := store.CreateApp(ctx, App{AccountID: owner.ID, Slug: "a1"})
-	inst, err := store.CreateInstance(ctx, app.ID, "dep-1", string(StateRunning), 256, "node-1", "wake-a")
+	app, _ := store.CreateApp(ctx, state.App{AccountID: owner.ID, Slug: "a1"})
+	inst, err := store.CreateInstance(ctx, app.ID, "dep-1", string(state.StateRunning), 256, "node-1", "wake-a")
 	if err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 	if err := store.MarkInstanceMigrating(ctx, inst.ID, "node-1", "lease-tok-1"); err != nil {
 		t.Fatalf("mark migrating: %v", err)
 	}
-	if err := store.MarkInstanceMigrating(ctx, "no-such", "node-1", "lease-x"); !errors.Is(err, ErrNotFound) {
+	if err := store.MarkInstanceMigrating(ctx, "no-such", "node-1", "lease-x"); !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("miss: err = %v, want ErrNotFound", err)
 	}
 }
 
 func TestMemStore_MigrateInstanceOwner_SweepExtra_Happy(t *testing.T) {
-	store := NewMemStore()
+	store := state.NewMemStore()
 	ctx := context.Background()
 	owner, _ := store.CreateAccount(ctx, "a@x.com", api.PlanFree)
-	app, _ := store.CreateApp(ctx, App{AccountID: owner.ID, Slug: "a1", NodeID: "node-1"})
-	inst, _ := store.CreateInstance(ctx, app.ID, "dep-1", string(StateRunning), 256, "node-1", "wake-a")
+	app, _ := store.CreateApp(ctx, state.App{AccountID: owner.ID, Slug: "a1", NodeID: "node-1"})
+	inst, _ := store.CreateInstance(ctx, app.ID, "dep-1", string(state.StateRunning), 256, "node-1", "wake-a")
 	// Migrate requires State="migrating" + lease-token match.
 	if err := store.MarkInstanceMigrating(ctx, inst.ID, "node-1", "lease-tok-1"); err != nil {
 		t.Fatalf("mark migrating: %v", err)
 	}
-	if err := store.MigrateInstanceOwner(ctx, inst.ID, "node-1", "node-2", "stale-lease"); !errors.Is(err, ErrConflict) {
+	if err := store.MigrateInstanceOwner(ctx, inst.ID, "node-1", "node-2", "stale-lease"); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("stale migrate lease: %v, want ErrConflict", err)
 	}
 	if err := store.MigrateInstanceOwner(ctx, inst.ID, "node-1", "node-2", "lease-tok-1"); err != nil {
@@ -720,12 +721,12 @@ func TestMemStore_MigrateInstanceOwner_SweepExtra_Happy(t *testing.T) {
 }
 
 func TestMemStore_MigrateInstanceOwner_FromMismatch(t *testing.T) {
-	store := NewMemStore()
+	store := state.NewMemStore()
 	ctx := context.Background()
 	owner, _ := store.CreateAccount(ctx, "a@x.com", api.PlanFree)
-	app, _ := store.CreateApp(ctx, App{AccountID: owner.ID, Slug: "a1"})
-	inst, _ := store.CreateInstance(ctx, app.ID, "dep-1", string(StateRunning), 256, "node-1", "wake-a")
-	if err := store.MigrateInstanceOwner(ctx, inst.ID, "wrong", "node-2", "lease-x"); !errors.Is(err, ErrConflict) {
+	app, _ := store.CreateApp(ctx, state.App{AccountID: owner.ID, Slug: "a1"})
+	inst, _ := store.CreateInstance(ctx, app.ID, "dep-1", string(state.StateRunning), 256, "node-1", "wake-a")
+	if err := store.MigrateInstanceOwner(ctx, inst.ID, "wrong", "node-2", "lease-x"); !errors.Is(err, state.ErrConflict) {
 		t.Errorf("err = %v, want ErrConflict on from-node mismatch", err)
 	}
 }

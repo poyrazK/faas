@@ -65,9 +65,13 @@ account during the preview; contact support to have it turned on for yours.
   are metered and capped like chat.
 - **Tool fees.** Web search, file search, code-interpreter containers and
   Gemini search grounding are counted, priced and capped like tokens.
+- **Realtime voice.** OpenAI and Azure OpenAI Realtime sessions, and Gemini
+  and Vertex AI Live sessions, run through the gateway over WebSocket. Each
+  response or model turn is checked against your caps and settled from its
+  usage, with audio tokens at audio prices.
 - **No unmetered spend.** Calls the gateway cannot meter, such as realtime
-  client secrets, vector stores or fine-tuning, are refused unless you allow
-  them for the integration.
+  client secrets, Live ephemeral tokens, vector stores or fine-tuning, are
+  refused unless you allow them for the integration.
 
 ## Set up
 
@@ -124,7 +128,7 @@ usage by tag, and cap one tag's daily cost:
 
 ```sh
 gregale ai tags <id> --key feature
-gregale ai tag-limits <id> --set feature=search:20     # EUR per UTC day
+gregale ai tag-limits <id> --set feature=search:20     # USD per UTC day
 gregale ai tags export <id> --from 2026-10-01 --to 2026-10-31 > ai-tags.csv
 ```
 
@@ -166,6 +170,8 @@ canary only if the new model does not do worse.
 | `403 outbound_ai_endpoint_unmetered` | The gateway cannot meter this call against your caps. `gregale ai policy <id> --allow-unmetered on` lets such calls through, outside the caps. |
 | `400 outbound_ai_batch_unreadable` | The gateway could not read the batch's requests to size them against your caps. |
 | `413 outbound_ai_batch_too_large` | The batch is larger than the gateway can size. |
+| `403 outbound_ai_realtime_policy_unenforceable` | The integration's content policy checks requests or responses, which a realtime session's audio cannot be checked against. |
+| Realtime `error` event, then close code `1008` | A cap refused the session's next response (`outbound_budget_exhausted`), the session reached its one-hour limit, or the provider sent a message the gateway could not read. |
 
 Request bodies a content policy must inspect are limited to 4 MiB. Usage,
 alerts, the request log and captures each have their own retention; see the

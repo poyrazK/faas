@@ -1,6 +1,6 @@
 //go:build !no_pg
 
-package state
+package state_test
 
 // adr: 595. Raw SQL must preserve catalog authority independently of Go stores.
 // Native receipts in these fixtures are simulations of verified cold fallback.
@@ -19,11 +19,12 @@ import (
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
+	"github.com/onebox-faas/faas/pkg/state"
 	"google.golang.org/protobuf/proto"
 )
 
 func TestPgStandardRestoreEvidenceWireMatchesProtobuf(t *testing.T) {
-	s, pool := runtimeCapturePGStore(t)
+	s, pool := state.RuntimeCapturePGStore(t)
 	f := rawStandardRestoreFixture(t, s)
 	for _, tc := range []struct {
 		name string
@@ -79,13 +80,13 @@ func TestPgStandardRestoreEvidenceWireMatchesProtobuf(t *testing.T) {
 	}
 }
 
-func rawStandardRestoreFixture(t *testing.T, s *PgStore) standardRestoreFixture {
+func rawStandardRestoreFixture(t *testing.T, s *state.PgStore) state.StandardRestoreFixture {
 	t.Helper()
-	f := standardRestoreTestFixture(t, s)
+	f := state.StandardRestoreTestFixture(t, s)
 	// Use storage's actual clock and producer deadline without calling the Go
 	// issuer. Raw writes still independently pass every grant/publication guard.
 	var raw []byte
-	if err := s.pool.QueryRow(t.Context(), `SELECT application_standard_lock_native_boot($1::uuid,$2)`, f.Target.ID, f.Target.State).Scan(&raw); err != nil {
+	if err := (*s.Pool()).QueryRow(t.Context(), `SELECT application_standard_lock_native_boot($1::uuid,$2)`, f.Target.ID, f.Target.State).Scan(&raw); err != nil {
 		t.Fatal(err)
 	}
 	var clock struct {
@@ -112,7 +113,7 @@ func restoreRawJSON(t *testing.T, value any) []byte {
 	return raw
 }
 
-func insertRawRestoreGrant(t *testing.T, pool *pgxpool.Pool, f standardRestoreFixture) error {
+func insertRawRestoreGrant(t *testing.T, pool *pgxpool.Pool, f state.StandardRestoreFixture) error {
 	t.Helper()
 	_, err := pool.Exec(t.Context(), `INSERT INTO instance_application_standard_boots(token,instance_id,expected_state,binding) VALUES($1,$2,$3,$4::jsonb)`, f.Binding.Token, f.Target.ID, f.Target.State, restoreRawJSON(t, f.Binding))
 	return err
@@ -126,12 +127,12 @@ func recordRawRestoreReceipt(t *testing.T, pool *pgxpool.Pool, r runtimeadmissio
 
 func publishRawRestoreReceipt(t *testing.T, pool *pgxpool.Pool, r runtimeadmission.Receipt) error {
 	t.Helper()
-	return publishRawRestoreTuple(t, pool, r, string(StateRunning))
+	return publishRawRestoreTuple(t, pool, r, string(state.StateRunning))
 }
 
 func publishRawRestoreTuple(t *testing.T, pool *pgxpool.Pool, r runtimeadmission.Receipt, next string) error {
 	t.Helper()
-	if next == string(StateWaking) {
+	if next == string(state.StateWaking) {
 		// This writer publishes only the network tuple. Reassigning WAKING
 		// after acknowledgment correctly trips the separate receipt-reuse fence.
 		_, err := pool.Exec(t.Context(), `UPDATE instances SET application_standard_boot_token=$2,netns=$3,host_ip=$4::inet,guest_uid=$5 WHERE id=$1`, r.Binding.InstanceID, r.Binding.Token, r.Netns, r.HostIP, r.LeaseUID)
@@ -156,39 +157,45 @@ func assertRawRestoreRefused(t *testing.T, err error, busy bool) {
 func TestPgStandardSnapshotRestoreRawGrantRefusal(t *testing.T) {
 	for _, tc := range []struct {
 		name string
-		edit func(*testing.T, *PgStore, *standardRestoreFixture)
+		edit func(*testing.T, *state.PgStore, *state.StandardRestoreFixture)
 	}{
-		{"unknown catalog", func(_ *testing.T, _ *PgStore, f *standardRestoreFixture) {
+		{"unknown catalog", func(_ *testing.T, _ *state.PgStore, f *state.StandardRestoreFixture) {
 			f.Binding.SnapshotCaptureToken = uuid.NewString()
 		}},
-		{"changed evidence", func(_ *testing.T, _ *PgStore, f *standardRestoreFixture) {
+		{"changed evidence", func(_ *testing.T, _ *state.PgStore, f *state.StandardRestoreFixture) {
 			f.Binding.SnapshotEvidenceHash = strings.Repeat("0", 64)
 		}},
-		{"partial token", func(_ *testing.T, _ *PgStore, f *standardRestoreFixture) { f.Binding.SnapshotEvidenceHash = "" }},
-		{"partial hash", func(_ *testing.T, _ *PgStore, f *standardRestoreFixture) { f.Binding.SnapshotCaptureToken = "" }},
-		{"different account", func(_ *testing.T, _ *PgStore, f *standardRestoreFixture) { f.Binding.AccountID = uuid.NewString() }},
-		{"stale cache", func(t *testing.T, s *PgStore, f *standardRestoreFixture) {
+		{"partial token", func(_ *testing.T, _ *state.PgStore, f *state.StandardRestoreFixture) {
+			f.Binding.SnapshotEvidenceHash = ""
+		}},
+		{"partial hash", func(_ *testing.T, _ *state.PgStore, f *state.StandardRestoreFixture) {
+			f.Binding.SnapshotCaptureToken = ""
+		}},
+		{"different account", func(_ *testing.T, _ *state.PgStore, f *state.StandardRestoreFixture) {
+			f.Binding.AccountID = uuid.NewString()
+		}},
+		{"stale cache", func(t *testing.T, s *state.PgStore, f *state.StandardRestoreFixture) {
 			if err := s.MarkSnapshotStale(t.Context(), f.Snapshot.ID); err != nil {
 				t.Fatal(err)
 			}
 		}},
-		{"deleted cache", func(t *testing.T, s *PgStore, f *standardRestoreFixture) {
+		{"deleted cache", func(t *testing.T, s *state.PgStore, f *state.StandardRestoreFixture) {
 			if _, err := s.DeleteSnapshotsByID(t.Context(), []string{f.Snapshot.ID}); err != nil {
 				t.Fatal(err)
 			}
 		}},
-		{"GC cache", func(t *testing.T, s *PgStore, f *standardRestoreFixture) {
+		{"GC cache", func(t *testing.T, s *state.PgStore, f *state.StandardRestoreFixture) {
 			if _, err := s.MarkOldSnapshotsStale(t.Context(), []string{f.Snapshot.ID}); err != nil {
 				t.Fatal(err)
 			}
 		}},
-		{"current RAM", func(t *testing.T, s *PgStore, f *standardRestoreFixture) {
+		{"current RAM", func(t *testing.T, s *state.PgStore, f *state.StandardRestoreFixture) {
 			ram := f.Target.RAMMB * 2
-			if _, err := s.UpdateApp(t.Context(), f.Target.AppID, UpdateAppParams{RAMMB: &ram}); err != nil {
+			if _, err := s.UpdateApp(t.Context(), f.Target.AppID, state.UpdateAppParams{RAMMB: &ram}); err != nil {
 				t.Fatal(err)
 			}
 		}},
-		{"caller rewrote memory", func(t *testing.T, _ *PgStore, f *standardRestoreFixture) {
+		{"caller rewrote memory", func(t *testing.T, _ *state.PgStore, f *state.StandardRestoreFixture) {
 			f.Evidence.Capture.Memory.Digest = "sha256:" + strings.Repeat("0", 64)
 			var err error
 			f.Binding.SnapshotEvidenceHash, err = f.Evidence.Hash()
@@ -198,12 +205,12 @@ func TestPgStandardSnapshotRestoreRawGrantRefusal(t *testing.T) {
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			s, pool := runtimeCapturePGStore(t)
+			s, pool := state.RuntimeCapturePGStore(t)
 			f := rawStandardRestoreFixture(t, s)
 			tc.edit(t, s, &f)
 			assertRawRestoreRefused(t, insertRawRestoreGrant(t, pool, f), false)
-			assertStandardRestoreNoGrant(t, s, f.Binding.Token)
-			assertNativeBootUnpublished(t, s, f.Target)
+			state.AssertStandardRestoreNoGrant(t, s, f.Binding.Token)
+			state.AssertNativeBootUnpublished(t, s, f.Target)
 		})
 	}
 }
@@ -212,12 +219,12 @@ func TestPgStandardSnapshotRestoreRawReceiptAndPublicationFence(t *testing.T) {
 	for _, phase := range []string{"receipt", "waking network tuple", "publication"} {
 		for _, invalidation := range []string{"stale", "delete", "GC"} {
 			t.Run(phase+"/"+invalidation, func(t *testing.T) {
-				s, pool := runtimeCapturePGStore(t)
+				s, pool := state.RuntimeCapturePGStore(t)
 				f := rawStandardRestoreFixture(t, s)
 				if err := insertRawRestoreGrant(t, pool, f); err != nil {
 					t.Fatal("current raw grant refused", err)
 				}
-				r := consumedNativeReceipt(f.Binding, f.Capture)
+				r := state.ConsumedNativeReceipt(f.Binding, f.Capture)
 				if phase != "receipt" {
 					if err := recordRawRestoreReceipt(t, pool, r); err != nil {
 						t.Fatal("current raw receipt refused", err)
@@ -243,7 +250,7 @@ func TestPgStandardSnapshotRestoreRawReceiptAndPublicationFence(t *testing.T) {
 					err = publishRawRestoreReceipt(t, pool, r)
 				}
 				assertRawRestoreRefused(t, err, false)
-				assertNativeBootUnpublished(t, s, f.Target)
+				state.AssertNativeBootUnpublished(t, s, f.Target)
 				var received bool
 				if err := pool.QueryRow(t.Context(), `SELECT receipt IS NOT NULL FROM instance_application_standard_boots WHERE token=$1`, f.Binding.Token).Scan(&received); err != nil || received != (phase != "receipt") {
 					t.Fatal("refusal changed immutable acknowledgment", received, err)
@@ -254,12 +261,12 @@ func TestPgStandardSnapshotRestoreRawReceiptAndPublicationFence(t *testing.T) {
 }
 
 func TestPgStandardSnapshotRestoreRawAuthorityAndResidentHistory(t *testing.T) {
-	s, pool := runtimeCapturePGStore(t)
+	s, pool := state.RuntimeCapturePGStore(t)
 	f := rawStandardRestoreFixture(t, s)
 	if err := insertRawRestoreGrant(t, pool, f); err != nil {
 		t.Fatal(err)
 	}
-	r := consumedNativeReceipt(f.Binding, f.Capture)
+	r := state.ConsumedNativeReceipt(f.Binding, f.Capture)
 	if err := recordRawRestoreReceipt(t, pool, r); err != nil {
 		t.Fatal(err)
 	}
@@ -280,24 +287,24 @@ func TestPgStandardSnapshotRestoreRawAuthorityAndResidentHistory(t *testing.T) {
 	if _, err := s.DeleteSnapshotsByID(t.Context(), []string{f.Snapshot.ID}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.UpdateInstanceStateToTerminal(t.Context(), f.Target.ID, string(StateStopped), time.Now()); err != nil {
+	if err := s.UpdateInstanceStateToTerminal(t.Context(), f.Target.ID, string(state.StateStopped), time.Now()); err != nil {
 		t.Fatal("cleanup depended on a cache", err)
 	}
 	if err := s.DeleteInstance(t.Context(), f.Target.ID); err != nil {
 		t.Fatal(err)
 	}
-	if saved := standardSnapshotGet(t, s, f.Grant); !saved.Grant.Equal(f.Grant) {
+	if saved := state.StandardSnapshotGet(t, s, f.Grant); !saved.Grant.Equal(f.Grant) {
 		t.Fatal("cleanup rewrote historical catalog")
 	}
 }
 
 func TestPgStandardSnapshotRestoreRawWakingCleanup(t *testing.T) {
-	s, pool := runtimeCapturePGStore(t)
+	s, pool := state.RuntimeCapturePGStore(t)
 	f := rawStandardRestoreFixture(t, s)
 	if err := insertRawRestoreGrant(t, pool, f); err != nil {
 		t.Fatal(err)
 	}
-	r := consumedNativeReceipt(f.Binding, f.Capture)
+	r := state.ConsumedNativeReceipt(f.Binding, f.Capture)
 	if err := recordRawRestoreReceipt(t, pool, r); err != nil {
 		t.Fatal(err)
 	}
@@ -307,7 +314,7 @@ func TestPgStandardSnapshotRestoreRawWakingCleanup(t *testing.T) {
 	if err := s.MarkSnapshotStale(t.Context(), f.Snapshot.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.UpdateInstanceStateToTerminal(t.Context(), f.Target.ID, string(StateStopped), time.Now()); err != nil {
+	if err := s.UpdateInstanceStateToTerminal(t.Context(), f.Target.ID, string(state.StateStopped), time.Now()); err != nil {
 		t.Fatal("waking cleanup required a current cache", err)
 	}
 	if err := s.DeleteInstance(t.Context(), f.Target.ID); err != nil {
@@ -316,11 +323,11 @@ func TestPgStandardSnapshotRestoreRawWakingCleanup(t *testing.T) {
 }
 
 func TestPgStandardRestoreCatalogRAMLimit(t *testing.T) {
-	s, pool := runtimeCapturePGStore(t)
+	s, pool := state.RuntimeCapturePGStore(t)
 	f := rawStandardRestoreFixture(t, s)
-	ack := *standardSnapshotGet(t, s, f.Grant).Acknowledgment
+	ack := *state.StandardSnapshotGet(t, s, f.Grant).Acknowledgment
 	var input map[string]any
-	if err := json.Unmarshal(f.Capture.inputs, &input); err != nil {
+	if err := json.Unmarshal((*f.Capture.Inputs()), &input); err != nil {
 		t.Fatal(err)
 	}
 	for _, ram := range []int64{api.ApplicationStandardSnapshotMaxArtifactBytes >> 20, (api.ApplicationStandardSnapshotMaxArtifactBytes >> 20) + 1} {
@@ -348,7 +355,7 @@ func TestPgStandardRestoreCatalogRAMLimit(t *testing.T) {
 func TestPgStandardSnapshotRestoreRawCatalogContention(t *testing.T) {
 	for _, table := range []string{"catalog", "cache"} {
 		t.Run(table, func(t *testing.T) {
-			s, pool := runtimeCapturePGStore(t)
+			s, pool := state.RuntimeCapturePGStore(t)
 			f := rawStandardRestoreFixture(t, s)
 			for _, phase := range []string{"grant", "receipt", "publication"} {
 				tx, err := pool.Begin(t.Context())
@@ -364,7 +371,7 @@ func TestPgStandardSnapshotRestoreRawCatalogContention(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				r := consumedNativeReceipt(f.Binding, f.Capture)
+				r := state.ConsumedNativeReceipt(f.Binding, f.Capture)
 				run := func() error {
 					switch phase {
 					case "grant":

@@ -24,18 +24,30 @@ const (
 	EdgeRuleEventBlocked  = "blocked"
 )
 
+// Outcomes of kind=challenge events (ADR-831 amendment 7 follow-up): the
+// challenge page served, a non-browser request refused, a solution that
+// earned a pass, and one that was refused.
+const (
+	EdgeRuleEventChallenged = "challenged"
+	EdgeRuleEventRejected   = "rejected"
+	EdgeRuleEventSolved     = "solved"
+	EdgeRuleEventFailed     = "failed"
+)
+
 // IsEdgeRuleEventOutcome reports whether outcome is a stored event outcome.
 func IsEdgeRuleEventOutcome(outcome string) bool {
 	switch outcome {
-	case EdgeRuleHitMatched, EdgeRuleHitLogged, EdgeRuleEventDetected, EdgeRuleEventWarned, EdgeRuleEventBlocked:
+	case EdgeRuleHitMatched, EdgeRuleHitLogged, EdgeRuleEventDetected, EdgeRuleEventWarned, EdgeRuleEventBlocked,
+		EdgeRuleEventChallenged, EdgeRuleEventRejected, EdgeRuleEventSolved, EdgeRuleEventFailed:
 		return true
 	}
 	return false
 }
 
-// EdgeRuleEvent is one sampled rule match or kind=waf detection. Outcome is
-// EdgeRuleHitMatched, EdgeRuleHitLogged or a detection outcome; the WAF*
-// fields are set on detections only. ID is assigned by the store.
+// EdgeRuleEvent is one sampled rule match, kind=waf detection or
+// kind=challenge outcome. Outcome is EdgeRuleHitMatched, EdgeRuleHitLogged
+// or one of the outcomes above; the WAF* fields are set on detections only.
+// ID is assigned by the store.
 type EdgeRuleEvent struct {
 	ID         int64
 	RuleID     string

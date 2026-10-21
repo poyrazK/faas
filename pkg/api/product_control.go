@@ -52,11 +52,34 @@ type ProductResolvedBinding struct {
 type ProductPlan struct {
 	Label    string                         `json:"label"`
 	Features map[string]ProductFeatureGrant `json:"features"`
+	// MonthlyFeeMillicents is charged once for each UTC month a customer
+	// holds the plan (ADR-20261021154511). Omitted when zero, so existing
+	// catalog revisions hash as before.
+	MonthlyFeeMillicents int64 `json:"monthly_fee_millicents,omitempty"`
 }
 
 type ProductFeatureGrant struct {
 	MonthlyStarts       int64 `json:"monthly_starts"`
 	UnitPriceMillicents int64 `json:"unit_price_millicents"`
+	// IncludedStarts are the first starts of a UTC month, admitted at price
+	// 0; later starts cost UnitPriceMillicents up to MonthlyStarts
+	// (ADR-20261021154511). Omitted when zero, so existing catalog
+	// revisions and quotes hash as before.
+	IncludedStarts int64 `json:"included_starts,omitempty"`
+}
+
+// CodeProductPlanPricingUnavailable refuses a catalog with included starts
+// while the product_control_plan_pricing_enabled release gate is off
+// (ADR-20261021154511).
+const CodeProductPlanPricingUnavailable = "product_plan_pricing_unavailable"
+
+// StartPriceMillicents is the price of a start admitted after startsBefore
+// starts of the feature this month.
+func (g ProductFeatureGrant) StartPriceMillicents(startsBefore int64) int64 {
+	if startsBefore < g.IncludedStarts {
+		return 0
+	}
+	return g.UnitPriceMillicents
 }
 
 type ProductCatalog struct {
@@ -105,6 +128,9 @@ type ProductPortal struct {
 	Customer   ProductCustomer                   `json:"customer"`
 	Catalog    ProductCatalog                    `json:"catalog"`
 	Usage      *ProductUsage                     `json:"usage,omitempty"`
+	// OverdueHold explains why new starts are refused while an exported
+	// invoice is overdue (ADR-20261018212918); separate from Suspended.
+	OverdueHold *ProductCustomerOverdueHold `json:"overdue_hold,omitempty"`
 }
 
 // ProductOperationReceipt is immutable admission evidence persisted inside an
@@ -132,6 +158,10 @@ type ProductAdmissionEvidence struct {
 	Name               string `json:"name"`
 	MonthlyStarts      int64  `json:"monthly_starts"`
 	StartsBefore       int64  `json:"starts_before"`
+	// IncludedStarts is the grant's included starts when it had any
+	// (ADR-20261021154511); the run was included when StartsBefore was
+	// below it.
+	IncludedStarts int64 `json:"included_starts,omitempty"`
 }
 
 type ProductReceiptEvidence struct {

@@ -120,6 +120,70 @@ func TestWorkerPoolStopsSurplusWorkerWithoutTheWorkersSwitch(t *testing.T) {
 	}
 }
 
+// A project app's surplus worker takes the release drain claim and stops
+// (ADR-20261019120012): the claim outlives a thaw, so it must not freeze.
+func TestWorkerPoolStopsAProjectAppsSurplusWorker(t *testing.T) {
+	ctx := t.Context()
+	store := state.NewMemStore()
+	acct, err := store.CreateAccount(ctx, "frozen-project@example.test", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err := store.CreateProject(ctx, state.Project{AccountID: acct.ID, Slug: "frozen-project"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateProjectEnvironment(ctx, state.ProjectEnvironment{AccountID: acct.ID, ProjectID: project.ID, Slug: "staging"}); err != nil {
+		t.Fatal(err)
+	}
+	policy := &state.ScalingPolicy{Targets: []state.ScalingTarget{{Metric: api.ScalingMetricQueueDepth, Value: 10}}}
+	app, err := store.CreateApp(ctx, state.App{AccountID: acct.ID, ProjectID: project.ID, Slug: "frozen-project-worker", Type: state.AppTypeApp,
+		WorkloadClass: state.WorkloadClassWorker, Status: state.AppActive, RAMMB: 256, MaxConcurrency: 5,
+		Manifest: state.AppManifest{ExecutionMode: api.ExecutionModeWorker, WorkerReplicas: &state.WorkerScaling{Min: 0}}, ScalingPolicy: policy})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if app, err = store.UpdateApp(ctx, app.ID, state.UpdateAppParams{ScalingPolicy: policy, SetScalingPolicy: true}); err != nil {
+		t.Fatal(err)
+	}
+	dep, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Scope: "staging", Kind: state.DeploymentKindImage,
+		ImageDigest: "sha256:staging", Status: state.DeployLive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpdateDeploymentStatus(ctx, dep.ID, state.DeployLive, ""); err != nil {
+		t.Fatal(err)
+	}
+	vmm := &frozenFakeVMM{fakeVMM: &fakeVMM{}}
+	engine := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0").WithWorkerScaleInStabilization(0)
+	engine.EnableFrozenTier()
+	engine.EnableFrozenTierWorkers()
+	if err := engine.SeedLedger(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	demand := enqueueScopedDemand(t, store, acct, app, "staging", "", 10)
+	if err := engine.ReconcileWorkerPools(ctx, app.ID, TriggerWorkerPool); err != nil {
+		t.Fatal(err)
+	}
+	if rows := workerRows(t, store, app.ID, "staging"); len(rows) != 1 || rows[0].State != string(state.StateRunning) {
+		t.Fatalf("scale out from zero: rows=%+v", rows)
+	}
+	cancelDemand(t, store, demand)
+	if err := engine.ReconcileWorkerPools(ctx, app.ID, TriggerWorkerPool); err != nil {
+		t.Fatal(err)
+	}
+	engine.WaitWorkerStops()
+	for _, row := range workerRows(t, store, app.ID, "staging") {
+		if state.State(row.State).CountsForRAM() {
+			t.Fatalf("project worker %s is %s; a project app's surplus worker stops", row.ID, row.State)
+		}
+	}
+	if vmm.freezes != 0 {
+		t.Fatalf("froze %d project workers", vmm.freezes)
+	}
+}
+
 // A frozen worker is still resident, so it keeps its account worker slot
 // until a pool elsewhere needs it: Hobby's single slot then goes to the
 // environment with demand and the frozen worker stops.

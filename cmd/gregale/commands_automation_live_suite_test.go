@@ -1,5 +1,5 @@
 // adr: 1295
-package main
+package main_test
 
 import (
 	"context"
@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -42,11 +43,11 @@ type liveSuiteFixture struct {
 
 func newLiveSuiteFixture(t *testing.T, mode string) *liveSuiteFixture {
 	t.Helper()
-	resetJSONOut(t)
-	jsonOutput = true
+	main.ResetJSONOut(t)
+	(*main.JsonOutput) = true
 	f := &liveSuiteFixture{t: t, mode: mode, path: filepath.Join(t.TempDir(), "suite.json"), runs: map[string]api.AutomationLiveVerification{}, keys: map[string]string{}}
-	server := authedFakeAPI(t, "", 200)
-	server.srv.Config.Handler = http.HandlerFunc(f.serveHTTP)
+	server := main.AuthedFakeAPI(t, "", 200)
+	(*server.Srv()).Config.Handler = http.HandlerFunc(f.serveHTTP)
 	return f
 }
 
@@ -65,7 +66,7 @@ func (f *liveSuiteFixture) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		var request api.SaveAutomationLiveSuiteRequest
 		decoder := json.NewDecoder(r.Body)
 		decoder.DisallowUnknownFields()
-		if decoder.Decode(&request) != nil || request.ExpectedVersion != 7 || request.ExpectedPublishedVersion != 4 || request.ExpectedDeploymentID != liveCLIDeployment {
+		if decoder.Decode(&request) != nil || request.ExpectedVersion != 7 || request.ExpectedPublishedVersion != 4 || request.ExpectedDeploymentID != main.LiveCLIDeployment {
 			f.t.Error("shared history changed the frozen target or sent non-metadata fields")
 		}
 		if f.mode == "share-fails-before" || f.mode == "share-fails-after" && len(f.keys) > 0 {
@@ -78,7 +79,7 @@ func (f *liveSuiteFixture) serveHTTP(w http.ResponseWriter, r *http.Request) {
 			f.t.Error("resume changed shared suite identity")
 		}
 		f.sharedID, f.sharedRequest = id, request
-		view := api.AutomationLiveSuite{AutomationLiveSuiteSummary: api.AutomationLiveSuiteSummary{ID: id, Name: "report", Version: 7, PublishedVersion: 4, DeploymentID: liveCLIDeployment}}
+		view := api.AutomationLiveSuite{AutomationLiveSuiteSummary: api.AutomationLiveSuiteSummary{ID: id, Name: "report", Version: 7, PublishedVersion: 4, DeploymentID: main.LiveCLIDeployment}}
 		for _, member := range request.Cases {
 			view.Cases = append(view.Cases, api.AutomationLiveSuiteCase{Name: member.Name, RunID: member.RunID})
 		}
@@ -89,7 +90,7 @@ func (f *liveSuiteFixture) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	case r.Method == "GET" && r.URL.Path == "/v1/apps/billing":
 		id := liveSuiteAppID
 		if f.mode == "app-changed" {
-			id = liveCLIRun
+			id = main.LiveCLIRun
 		}
 		response = map[string]string{"id": id, "slug": "billing"}
 	case r.Method == "GET" && r.URL.Path == "/v1/apps/billing/automations/report":
@@ -111,9 +112,9 @@ func (f *liveSuiteFixture) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		response = api.AutomationResponse{Name: "report", Version: version, PublishedVersion: 4, Published: &def, TestSuite: suite}
 	case r.Method == "GET" && r.URL.Path == liveSuiteAPIPath:
-		deployment := liveCLIDeployment
+		deployment := main.LiveCLIDeployment
 		if f.mode == "deployment-changed" {
-			deployment = liveCLIRun
+			deployment = main.LiveCLIRun
 		}
 		response = api.ListAutomationLiveVerificationsResponse{DeploymentID: deployment, PublishedVersion: 4}
 	case r.Method == "POST" && r.URL.Path == liveSuiteAPIPath:
@@ -121,11 +122,11 @@ func (f *liveSuiteFixture) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		var target api.StartAutomationLiveVerificationRequest
 		decoder := json.NewDecoder(strings.NewReader(string(body)))
 		decoder.DisallowUnknownFields()
-		if decoder.Decode(&target) != nil || target.ExpectedVersion != 7 || target.ExpectedPublishedVersion != 4 || target.ExpectedDeploymentID != liveCLIDeployment || !target.ConfirmRealActions {
+		if decoder.Decode(&target) != nil || target.ExpectedVersion != 7 || target.ExpectedPublishedVersion != 4 || target.ExpectedDeploymentID != main.LiveCLIDeployment || !target.ConfirmRealActions {
 			f.t.Errorf("suite changed its original start fences: %s", body)
 		}
 		key := r.Header.Get("Idempotency-Key")
-		if !validLiveSuiteHash(key) {
+		if !main.ValidLiveSuiteHash(key) {
 			f.t.Error("suite omitted its derived stable case key")
 		}
 		f.starts = append(f.starts, liveSuiteAdmission{key, string(body), target.CaseName})
@@ -144,7 +145,7 @@ func (f *liveSuiteFixture) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		id := f.keys[key]
 		if id == "" {
 			id = fmt.Sprintf("00000000-0000-4000-8000-%012d", len(f.keys)+10)
-			view := liveCLIView("succeeded")
+			view := main.LiveCLIView("succeeded")
 			view.RunID, view.CaseName = id, target.CaseName
 			if f.mode == "pending" {
 				view.RunStatus = "running"
@@ -191,7 +192,7 @@ func (f *liveSuiteFixture) serveHTTP(w http.ResponseWriter, r *http.Request) {
 				view.RunStatus, view.ReportCurrent = "running", false
 			}
 			if f.mode == "wrong-run" {
-				view.RunID = liveCLIRun
+				view.RunID = main.LiveCLIRun
 			}
 		} else {
 			f.t.Errorf("unexpected execution mutation: %s %s", r.Method, r.URL.Path)
@@ -210,22 +211,22 @@ func (f *liveSuiteFixture) serveHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func liveSuiteArgs(path string) []string {
-	return []string{"automations", "live", "suite", "--app", "billing", "--name", "report", "--case", "first", "--case", "second", "--expected-version", "7", "--expected-published-version", "4", "--expected-deployment-id", liveCLIDeployment, "--idempotency-key", "suite-ci-key", "--journal", path, "--confirm-real-actions"}
+	return []string{"automations", "live", "suite", "--app", "billing", "--name", "report", "--case", "first", "--case", "second", "--expected-version", "7", "--expected-published-version", "4", "--expected-deployment-id", main.LiveCLIDeployment, "--idempotency-key", "suite-ci-key", "--journal", path, "--confirm-real-actions"}
 }
 
 type liveSuiteTestResult struct {
-	SchemaVersion int                             `json:"schema_version"`
-	Outcome       string                          `json:"outcome"`
-	ExitCode      int                             `json:"exit_code"`
-	Summary       map[string]int                  `json:"summary"`
-	Cases         []automationLiveSuiteCaseResult `json:"cases"`
-	Resume        string                          `json:"resume"`
+	SchemaVersion int                                  `json:"schema_version"`
+	Outcome       string                               `json:"outcome"`
+	ExitCode      int                                  `json:"exit_code"`
+	Summary       map[string]int                       `json:"summary"`
+	Cases         []main.AutomationLiveSuiteCaseResult `json:"cases"`
+	Resume        string                               `json:"resume"`
 }
 
 func runLiveSuiteTest(t *testing.T, args []string, want int) liveSuiteTestResult {
 	t.Helper()
-	out := captureAutomationStdout(t)
-	code, stderr := runWithStderr(t, func() int { return run(args) })
+	out := main.CaptureAutomationStdout(t)
+	code, stderr := main.RunWithStderr(t, func() int { return main.Run(args) })
 	var result liveSuiteTestResult
 	if code != want || json.Unmarshal(out.Bytes(), &result) != nil || result.SchemaVersion != 1 || result.ExitCode != want {
 		t.Fatalf("exit=%d want=%d stdout=%s stderr=%s", code, want, out, stderr)
@@ -248,7 +249,7 @@ func TestAutomationLiveSuiteSequentialResults(t *testing.T) {
 			f := newLiveSuiteFixture(t, mode)
 			want := map[string]int{"failed": 1, "case-missing": 1, "conflict-second": 5, "wrong-admission": 3, "final-resumed": 1}[mode]
 			result := runLiveSuiteTest(t, liveSuiteArgs(f.path), want)
-			j, err := readAutomationLiveSuite(f.path)
+			j, err := main.ReadAutomationLiveSuite(f.path)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -298,7 +299,7 @@ func TestAutomationLiveSuiteResumeLostAdmission(t *testing.T) {
 	if first.Cases[0].RunID != "" || first.Summary["not_started"] != 1 {
 		t.Fatal("uncertain admission not retained", first)
 	}
-	j, err := readAutomationLiveSuite(f.path)
+	j, err := main.ReadAutomationLiveSuite(f.path)
 	if err != nil || j.Cases[0].AttemptedAt == nil {
 		t.Fatal("intent was not durable before admission", err)
 	}
@@ -314,27 +315,27 @@ func TestAutomationLiveSuiteResumeKnownRun(t *testing.T) {
 	for _, mode := range []string{"passed", "record-missing", "wrong-run", "version-changed", "deployment-changed", "app-changed", "failed"} {
 		t.Run(mode, func(t *testing.T) {
 			f := newLiveSuiteFixture(t, "pending")
-			o, err := parseAutomationLiveSuite(liveSuiteArgs(f.path)[3:])
+			o, err := main.ParseAutomationLiveSuite(liveSuiteArgs(f.path)[3:])
 			if err != nil {
 				t.Fatal(err)
 			}
-			client, err := authedClient()
+			client, err := main.AuthedClient()
 			if err != nil {
 				t.Fatal(err)
 			}
-			journal, err := prepareAutomationLiveSuite(t.Context(), client, o)
+			journal, err := main.PrepareAutomationLiveSuite(t.Context(), client, o)
 			if err != nil {
 				t.Fatal(err)
 			}
 			// Establish accepted, persisted work before expiring the invocation.
 			// A short wall-clock budget can expire before admission on busy CI.
-			if _, err := admitOrReadAutomationLiveSuiteCase(t.Context(), client, o.path, &journal, 0); err != nil {
+			if _, err := main.AdmitOrReadAutomationLiveSuiteCase(t.Context(), client, (*o.Path()), &journal, 0); err != nil {
 				t.Fatal(err)
 			}
 			ctx, cancel := context.WithDeadline(t.Context(), time.Now().Add(-time.Second))
 			defer cancel()
-			out := captureAutomationStdout(t)
-			code := executeAutomationLiveSuite(ctx, client, o, &journal)
+			out := main.CaptureAutomationStdout(t)
+			code := main.ExecuteAutomationLiveSuite(ctx, client, o, &journal)
 			var first liveSuiteTestResult
 			if code != 124 || json.Unmarshal(out.Bytes(), &first) != nil || first.ExitCode != 124 {
 				t.Fatal("deadline did not stop the suite", code, out)
@@ -366,24 +367,24 @@ func TestAutomationLiveSuiteResumeKnownRun(t *testing.T) {
 
 func TestAutomationLiveSuiteInterruptAndResume(t *testing.T) {
 	f := newLiveSuiteFixture(t, "pending")
-	o, err := parseAutomationLiveSuite(liveSuiteArgs(f.path)[3:])
+	o, err := main.ParseAutomationLiveSuite(liveSuiteArgs(f.path)[3:])
 	if err != nil {
 		t.Fatal(err)
 	}
-	c, err := authedClient()
+	c, err := main.AuthedClient()
 	if err != nil {
 		t.Fatal(err)
 	}
-	j, err := prepareAutomationLiveSuite(context.Background(), c, o)
+	j, err := main.PrepareAutomationLiveSuite(context.Background(), c, o)
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	f.onRead = cancel
-	o.interval = time.Millisecond
-	out := captureAutomationStdout(t)
-	code := executeAutomationLiveSuite(ctx, c, o, &j)
+	(*o.Interval()) = time.Millisecond
+	out := main.CaptureAutomationStdout(t)
+	code := main.ExecuteAutomationLiveSuite(ctx, c, o, &j)
 	var result liveSuiteTestResult
 	if code != 130 || json.Unmarshal(out.Bytes(), &result) != nil || result.Outcome != "interrupted" {
 		t.Fatal("interruption lost suite progress", code, out)
@@ -406,14 +407,14 @@ func TestAutomationLiveSuiteInterruptAndResume(t *testing.T) {
 func TestAutomationLiveSuitePersistenceFailureStopsAdmissions(t *testing.T) {
 	f := newLiveSuiteFixture(t, "passed")
 	f.onStart = func() {
-		j, err := readAutomationLiveSuite(f.path)
+		j, err := main.ReadAutomationLiveSuite(f.path)
 		if err != nil {
 			f.t.Error(err)
 			return
 		}
 		// A competing writer ignores the advisory lock. Compare-and-swap must
 		// stop this process, retaining the accepted identity in its CI report.
-		if err := saveAutomationLiveSuite(f.path, &j, false); err != nil {
+		if err := main.SaveAutomationLiveSuite(f.path, &j, false); err != nil {
 			f.t.Error(err)
 		}
 	}
@@ -431,13 +432,13 @@ func TestAutomationLiveSuitePersistenceFailureStopsAdmissions(t *testing.T) {
 func TestAutomationLiveSuiteExpiredUncertainAdmission(t *testing.T) {
 	f := newLiveSuiteFixture(t, "lost-ack")
 	runLiveSuiteTest(t, liveSuiteArgs(f.path), 3)
-	j, err := readAutomationLiveSuite(f.path)
+	j, err := main.ReadAutomationLiveSuite(f.path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	old := time.Now().UTC().Add(-25 * time.Hour)
 	j.Plan.CreatedAt, j.Cases[0].AttemptedAt = old, &old
-	j.Fingerprint = liveSuiteHash(j.Plan)
+	j.Fingerprint = main.LiveSuiteHash(j.Plan)
 	raw, _ := json.Marshal(j)
 	if err := os.WriteFile(f.path, raw, 0600); err != nil {
 		t.Fatal(err)
@@ -458,7 +459,7 @@ func TestAutomationLiveSuiteRejectsUnsafeLocalProgress(t *testing.T) {
 			args := resumeLiveSuiteArgs(f.path)
 			switch mode {
 			case "locked":
-				lock, err := lockAutomationLiveSuite(f.path)
+				lock, err := main.LockAutomationLiveSuite(f.path)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -470,7 +471,7 @@ func TestAutomationLiveSuiteRejectsUnsafeLocalProgress(t *testing.T) {
 					t.Fatal(err)
 				}
 			case "fingerprint":
-				j, err := readAutomationLiveSuite(f.path)
+				j, err := main.ReadAutomationLiveSuite(f.path)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -510,7 +511,7 @@ func TestAutomationLiveSuiteRejectsUnsafeLocalProgress(t *testing.T) {
 			f.mu.Lock()
 			before := len(f.calls)
 			f.mu.Unlock()
-			code, _ := runWithStderr(t, func() int { return run(args) })
+			code, _ := main.RunWithStderr(t, func() int { return main.Run(args) })
 			f.mu.Lock()
 			defer f.mu.Unlock()
 			if code == 0 || len(f.calls) != before {
@@ -522,24 +523,24 @@ func TestAutomationLiveSuiteRejectsUnsafeLocalProgress(t *testing.T) {
 
 func TestAutomationLiveSuiteSelectionAndStableKeys(t *testing.T) {
 	args := liveSuiteArgs(filepath.Join(t.TempDir(), "suite.json"))[3:]
-	o, err := parseAutomationLiveSuite(args)
+	o, err := main.ParseAutomationLiveSuite(args)
 	if err != nil {
 		t.Fatal(err)
 	}
-	p := o.plan
-	p.AppID, p.EndpointHash, p.CreatedAt = liveSuiteAppID, liveSuiteHash("http://fixture"), time.Now().UTC()
-	key := liveSuiteCaseKey(p, "first")
+	p := (*o.Plan())
+	p.AppID, p.EndpointHash, p.CreatedAt = liveSuiteAppID, main.LiveSuiteHash("http://fixture"), time.Now().UTC()
+	key := main.LiveSuiteCaseKey(p, "first")
 	p.CreatedAt = p.CreatedAt.Add(time.Hour)
 	p.Cases = []string{"second", "first"}
-	if liveSuiteCaseKey(p, "first") != key || liveSuiteCaseKey(p, "second") == key {
+	if main.LiveSuiteCaseKey(p, "first") != key || main.LiveSuiteCaseKey(p, "second") == key {
 		t.Fatal("journal creation time or selection order changed a stable case key")
 	}
 	p.Target.ExpectedVersion++
-	if liveSuiteCaseKey(p, "first") == key {
+	if main.LiveSuiteCaseKey(p, "first") == key {
 		t.Fatal("case key did not bind its frozen target")
 	}
 	for _, extra := range [][]string{{"--case", "first"}, {"--confirm-real-actions=false"}, {"--timeout", "0"}, {"--poll-interval", "1ms"}, {"--resume", "other.json"}, {"--case", "\n"}} {
-		if _, err := parseAutomationLiveSuite(append(append([]string(nil), args...), extra...)); err == nil {
+		if _, err := main.ParseAutomationLiveSuite(append(append([]string(nil), args...), extra...)); err == nil {
 			t.Fatal("accepted invalid suite options", extra)
 		}
 	}
@@ -547,22 +548,22 @@ func TestAutomationLiveSuiteSelectionAndStableKeys(t *testing.T) {
 	for i := 0; i < api.AutomationLiveSuiteMaxCases; i++ {
 		tooMany = append(tooMany, "--case", fmt.Sprint(i))
 	}
-	if _, err := parseAutomationLiveSuite(tooMany); err == nil {
+	if _, err := main.ParseAutomationLiveSuite(tooMany); err == nil {
 		t.Fatal("accepted an unbounded suite")
 	}
 	resume := resumeLiveSuiteArgs("suite.json")[3:]
-	if _, err := parseAutomationLiveSuite(append(resume, "--app", "")); err == nil {
+	if _, err := main.ParseAutomationLiveSuite(append(resume, "--app", "")); err == nil {
 		t.Fatal("resume accepted conflicting selection flags")
 	}
-	if !reflect.DeepEqual(o.plan.Cases, []string{"first", "second"}) {
+	if !reflect.DeepEqual((*o.Plan()).Cases, []string{"first", "second"}) {
 		t.Fatal("explicit selection order changed")
 	}
 }
 
 func TestAutomationLiveSuiteManifestHelp(t *testing.T) {
 	f := newLiveSuiteFixture(t, "passed")
-	output := captureAutomationStdout(t)
-	code := run([]string{"automations", "live", "suite", "--help"})
+	output := main.CaptureAutomationStdout(t)
+	code := main.Run([]string{"automations", "live", "suite", "--help"})
 	if code != 0 {
 		t.Fatal(code, output)
 	}

@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -6,11 +6,12 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/publicstatus"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestStatusUptimeBucketsAndIncidentsCoverage(t *testing.T) {
 	ctx := context.Background()
-	m := NewMemStore()
+	m := state.NewMemStore()
 	base := time.Date(2026, 9, 12, 12, 0, 0, 0, time.UTC)
 	since := base.Add(-24 * time.Hour)
 	recordCompleteStatusInterval(t, m, base, "", publicstatus.StateOperational)
@@ -24,7 +25,7 @@ func TestStatusUptimeBucketsAndIncidentsCoverage(t *testing.T) {
 	}
 
 	resolved := base.Add(-2 * time.Hour)
-	m.statusIncidents = []StatusIncident{
+	(*m.StatusIncidents()) = []state.StatusIncident{
 		{ID: 1, PostedAt: base.Add(-48 * time.Hour), ResolvedAt: &resolved},
 		{ID: 2, PostedAt: base.Add(-48 * time.Hour)},
 		{ID: 3, PostedAt: base.Add(-time.Hour), ResolvedAt: &resolved},

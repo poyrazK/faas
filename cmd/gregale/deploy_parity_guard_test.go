@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"fmt"
@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/deploydiff"
 )
@@ -47,7 +48,7 @@ func TestDeployInvalidIntentFailsBeforeNetwork(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			before := requests.Load()
-			if code := cmdDeployTarball(tc.args); code == 0 {
+			if code := main.CmdDeployTarball(tc.args); code == 0 {
 				t.Fatalf("cmdDeployTarball(%v) returned success", tc.args)
 			}
 			if got := requests.Load(); got != before {
@@ -71,19 +72,19 @@ func TestValidateSingleAppManifestTargets(t *testing.T) {
 		}
 		return dir
 	}
-	if err := validateSingleAppManifestTargets(write(t, "triggers:\n  - kind: cron\n    app: typo-app\n    schedule: '* * * * *'\n    path: /tick\n"), "real-app"); err == nil {
+	if err := main.ValidateSingleAppManifestTargets(write(t, "triggers:\n  - kind: cron\n    app: typo-app\n    schedule: '* * * * *'\n    path: /tick\n"), "real-app"); err == nil {
 		t.Fatal("mismatched trigger target was accepted")
 	}
-	if err := validateSingleAppManifestTargets(write(t, "triggers:\n  - kind: queue\n    app: real-app\n    slug: jobs\n    config: {mode: queue}\n"), "real-app"); err == nil {
+	if err := main.ValidateSingleAppManifestTargets(write(t, "triggers:\n  - kind: queue\n    app: real-app\n    slug: jobs\n    config: {mode: queue}\n"), "real-app"); err == nil {
 		t.Fatal("non-cron trigger was silently accepted on the cron-only path")
 	}
-	if err := validateSingleAppManifestTargets(write(t, "async_routes:\n  - app: typo-app\n    name: create-report\n    match_host: reports.example.com\n    match_path: /reports\n"), "real-app"); err == nil {
+	if err := main.ValidateSingleAppManifestTargets(write(t, "async_routes:\n  - app: typo-app\n    name: create-report\n    match_host: reports.example.com\n    match_path: /reports\n"), "real-app"); err == nil {
 		t.Fatal("mismatched async route target was accepted")
 	}
-	if err := validateSingleAppManifestTargets(write(t, "async_routes:\n  - app: real-app\n    name: create-report\n    match_host: reports.example.com\n    match_path: /reports\n"), "real-app"); err != nil {
+	if err := main.ValidateSingleAppManifestTargets(write(t, "async_routes:\n  - app: real-app\n    name: create-report\n    match_host: reports.example.com\n    match_path: /reports\n"), "real-app"); err != nil {
 		t.Fatalf("matching async route target: %v", err)
 	}
-	if err := validateProjectManifestConfig(write(t, "async_routes:\n  - app: reports\n    name: create-report\n    match_host: reports.example.com\n    match_path: /reports\n")); err != nil {
+	if err := main.ValidateProjectManifestConfig(write(t, "async_routes:\n  - app: reports\n    name: create-report\n    match_host: reports.example.com\n    match_path: /reports\n")); err != nil {
 		t.Fatalf("project deploy async_routes: %v", err)
 	}
 }
@@ -106,7 +107,7 @@ func TestValidateSingleAppManifestTargetsRejectsEveryUnifiedKindExplicitly(t *te
 			if err := os.WriteFile(filepath.Join(dir, "gregale.yaml"), []byte(body), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			err := validateSingleAppManifestTargets(dir, "real-app")
+			err := main.ValidateSingleAppManifestTargets(dir, "real-app")
 			if err == nil {
 				t.Fatal("non-cron manifest trigger was accepted")
 			}
@@ -124,21 +125,21 @@ func TestDiffAdaptersCarryDeploymentIntent(t *testing.T) {
 	traffic := 25
 	vcpu := 4
 	workflow := api.WorkflowSpec{Name: "release", Steps: []api.WorkflowStepSpec{{Name: "ship", Run: "real-app"}}}
-	opts := diffCLIOptions{
+	opts := main.DiffCLIOptions{
 		AppConfig:      deployDiffAppConfigWithVCPU(vcpu),
 		TrafficPercent: &traffic,
 		Canary:         nil,
 		Workflows:      []api.WorkflowSpec{workflow},
 		NoTriggers:     true,
 	}
-	req := diffRequestFromCLI(opts)
+	req := main.DiffRequestFromCLI(opts)
 	if req.AppConfig == nil || req.AppConfig.VCPU == nil || *req.AppConfig.VCPU != vcpu {
 		t.Fatalf("server diff lost vcpu: %+v", req.AppConfig)
 	}
 	if req.TrafficPercent == nil || *req.TrafficPercent != traffic || len(req.Workflows) != 1 {
 		t.Fatalf("server diff lost rollout/workflow intent: %+v", req)
 	}
-	pending := buildPending(t.Context(), nil, opts, deployEmptyBaseline())
+	pending := main.BuildPending(t.Context(), nil, opts, deployEmptyBaseline())
 	if pending.Crons != nil {
 		t.Fatalf("--no-triggers projected crons: %+v", pending.Crons)
 	}

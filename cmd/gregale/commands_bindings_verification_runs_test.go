@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/bindings"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -33,7 +34,7 @@ func TestDurableVerificationCrashChild(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if code := executeDurableProjectVerification(t.Context(), client, run, time.Millisecond, 10*time.Second); code != 0 {
+			if code := main.ExecuteDurableProjectVerification(t.Context(), client, run, time.Millisecond, 10*time.Second); code != 0 {
 				t.Fatalf("graph resume exit=%d", code)
 			}
 		} else {
@@ -41,7 +42,7 @@ func TestDurableVerificationCrashChild(t *testing.T) {
 			if err := json.Unmarshal([]byte(os.Getenv("GREGALE_VERIFICATION_TEST_MANIFEST")), &manifest); err != nil {
 				t.Fatal(err)
 			}
-			if code := createDurableProjectVerification(t.Context(), client, manifest, id, false, false, time.Millisecond, 10*time.Second); code != 0 {
+			if code := main.CreateDurableProjectVerification(t.Context(), client, manifest, id, false, false, time.Millisecond, 10*time.Second); code != 0 {
 				t.Fatalf("graph create exit=%d", code)
 			}
 		}
@@ -54,19 +55,19 @@ func TestDurableVerificationCrashChild(t *testing.T) {
 			t.Fatal(err)
 		}
 		if os.Getenv("GREGALE_VERIFICATION_TEST_QUEUE") == "1" {
-			bounded, cancel := context.WithTimeout(context.WithValue(context.WithValue(context.Background(), bindingVerificationRunKey{}, &run), bindingVerificationRunStepKey{}, bindingVerificationRunStepContext{Run: &run, Index: 0}), 30*time.Millisecond)
+			bounded, cancel := context.WithTimeout(context.WithValue(context.WithValue(context.Background(), main.BindingVerificationRunKey{}, &run), main.BindingVerificationRunStepKey{}, main.BindingVerificationRunStepContext{Run: &run, Index: 0}), 30*time.Millisecond)
 			defer cancel()
-			_, err := executeQueueBindingCanary(bounded, client, run.App, "orders", run.DeploymentID, true, time.Millisecond, "")
+			_, err := main.ExecuteQueueBindingCanary(bounded, client, run.App, "orders", run.DeploymentID, true, time.Millisecond, "")
 			if !errors.Is(err, context.DeadlineExceeded) {
 				t.Fatalf("pending queue resume: %v", err)
 			}
 			return
 		}
-		if code := executeDurableBindingVerification(context.Background(), client, run, time.Millisecond, 10*time.Second); code != 0 {
+		if code := main.ExecuteDurableBindingVerification(context.Background(), client, run, time.Millisecond, 10*time.Second); code != 0 {
 			t.Fatalf("resume exit=%d", code)
 		}
 	} else {
-		if code := runDurableBindingVerification(context.Background(), client, "receipt", os.Getenv("GREGALE_VERIFICATION_TEST_DEPLOYMENT"), id, false, false, os.Getenv("GREGALE_VERIFICATION_TEST_QUEUE") == "1", time.Millisecond, 10*time.Second); code != 0 {
+		if code := main.RunDurableBindingVerification(context.Background(), client, "receipt", os.Getenv("GREGALE_VERIFICATION_TEST_DEPLOYMENT"), id, false, false, os.Getenv("GREGALE_VERIFICATION_TEST_QUEUE") == "1", time.Millisecond, 10*time.Second); code != 0 {
 			t.Fatalf("create exit=%d", code)
 		}
 	}

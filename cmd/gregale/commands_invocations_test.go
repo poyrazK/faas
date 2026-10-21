@@ -9,7 +9,7 @@
 // records the request, t.Setenv for FAAS_API / FAAS_TOKEN, swapIO
 // for the human-mode labelled-block assertions, and an inline
 // fixture for the api.Invocation payload.
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -22,6 +22,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -64,12 +65,12 @@ func TestCmdInvocationsGet_HappyPath(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	stdout, _, restore := swapIO(t)
+	stdout, _, restore := main.SwapIO(t)
 	defer restore()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	if code := cmdInvocationsGet([]string{inv.ID}); code != 0 {
+	if code := main.CmdInvocationsGet([]string{inv.ID}); code != 0 {
 		t.Fatalf("invocation = %d, want 0", code)
 	}
 	out := stdout.String()
@@ -92,11 +93,11 @@ func TestCmdInvocationsGet_HappyPath(t *testing.T) {
 // TestCmdInvocationsGet_NoPositional ensures the usage line renders when
 // the customer forgets the id.
 func TestCmdInvocationsGet_NoPositional(t *testing.T) {
-	_, stderr, restore := swapIO(t)
+	_, stderr, restore := main.SwapIO(t)
 	defer restore()
 	t.Setenv("FAAS_API", "http://example.invalid")
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
-	if code := cmdInvocationsGet(nil); code != 1 {
+	if code := main.CmdInvocationsGet(nil); code != 1 {
 		t.Errorf("invocation bare = %d, want 1 (usage)", code)
 	}
 	if !strings.Contains(stderr(), "usage: gregale invocations get") {
@@ -121,12 +122,12 @@ func TestCmdInvocationsWait_PendingThenCompleted(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	stdout, _, restore := swapIO(t)
+	stdout, _, restore := main.SwapIO(t)
 	defer restore()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	if code := cmdInvocationsWait([]string{"--interval=100ms", "--timeout=1s", inv.ID}); code != 0 {
+	if code := main.CmdInvocationsWait([]string{"--interval=100ms", "--timeout=1s", inv.ID}); code != 0 {
 		t.Fatalf("invocations wait = %d, want 0", code)
 	}
 	if gets.Load() != 2 {
@@ -146,12 +147,12 @@ func TestCmdInvocationsWait_FailedReturnsNonzero(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	stdout, _, restore := swapIO(t)
+	stdout, _, restore := main.SwapIO(t)
 	defer restore()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	if code := cmdInvocationsWait([]string{inv.ID}); code != 1 {
+	if code := main.CmdInvocationsWait([]string{inv.ID}); code != 1 {
 		t.Fatalf("invocations wait failed state = %d, want 1", code)
 	}
 	if !strings.Contains(stdout.String(), "State:      failed") || !strings.Contains(stdout.String(), "handler failed") {
@@ -169,12 +170,12 @@ func TestCmdInvocationsWait_TimeoutReturnsLastStatus(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	stdout, stderr, restore := swapIO(t)
+	stdout, stderr, restore := main.SwapIO(t)
 	defer restore()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	if code := cmdInvocationsWait([]string{"--interval=5s", "--timeout=1s", inv.ID}); code != 124 {
+	if code := main.CmdInvocationsWait([]string{"--interval=5s", "--timeout=1s", inv.ID}); code != 124 {
 		t.Fatalf("invocations wait timeout = %d, want 124", code)
 	}
 	if !strings.Contains(stdout.String(), "State:      pending") {
@@ -192,15 +193,15 @@ func TestCmdInvocationsWait_JSON(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	stdout, _, restore := swapIO(t)
+	stdout, _, restore := main.SwapIO(t)
 	defer restore()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
-	previousJSONOutput := jsonOutput
-	jsonOutput = true
-	defer func() { jsonOutput = previousJSONOutput }()
+	previousJSONOutput := (*main.JsonOutput)
+	(*main.JsonOutput) = true
+	defer func() { (*main.JsonOutput) = previousJSONOutput }()
 
-	if code := cmdInvocationsWait([]string{inv.ID}); code != 0 {
+	if code := main.CmdInvocationsWait([]string{inv.ID}); code != 0 {
 		t.Fatalf("invocations wait --json = %d, want 0", code)
 	}
 	var got api.Invocation
@@ -225,7 +226,7 @@ func TestRunInvocationsWaitJSONAPIErrors(t *testing.T) {
 		{http.StatusServiceUnavailable, 3},
 	} {
 		t.Run(fmt.Sprint(tc.status), func(t *testing.T) {
-			resetJSONOut(t)
+			main.ResetJSONOut(t)
 			problem := api.Problem{Status: tc.status, Code: "wait_test_error", Title: "Invocation unavailable", Detail: "Cannot inspect this invocation"}
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Method != http.MethodGet || r.URL.Path != "/v1/invocations/inv-json-error" {
@@ -238,9 +239,9 @@ func TestRunInvocationsWaitJSONAPIErrors(t *testing.T) {
 			defer server.Close()
 			t.Setenv("FAAS_API", server.URL)
 			t.Setenv("FAAS_TOKEN", "test-token")
-			out, stderr, restore := swapIO(t)
+			out, stderr, restore := main.SwapIO(t)
 			defer restore()
-			if code := run([]string{"invocations", "wait", "inv-json-error", "--json"}); code != tc.exit {
+			if code := main.Run([]string{"invocations", "wait", "inv-json-error", "--json"}); code != tc.exit {
 				t.Fatalf("exit = %d, want %d", code, tc.exit)
 			}
 			var got api.Problem
@@ -261,7 +262,7 @@ func TestRunInvocationsWaitJSONAPIErrors(t *testing.T) {
 }
 
 func TestRunInvocationsWaitJSONTimeoutPreservesLastStatus(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	inv := invocationFixture()
 	inv.State = "pending"
 	inv.Result = nil
@@ -275,9 +276,9 @@ func TestRunInvocationsWaitJSONTimeoutPreservesLastStatus(t *testing.T) {
 	defer server.Close()
 	t.Setenv("FAAS_API", server.URL)
 	t.Setenv("FAAS_TOKEN", "test-token")
-	out, stderr, restore := swapIO(t)
+	out, stderr, restore := main.SwapIO(t)
 	defer restore()
-	if code := run([]string{"invocations", "wait", inv.ID, "--json", "--timeout", "250ms", "--interval", "1s"}); code != 124 {
+	if code := main.Run([]string{"invocations", "wait", inv.ID, "--json", "--timeout", "250ms", "--interval", "1s"}); code != 124 {
 		t.Fatalf("exit = %d, want 124", code)
 	}
 	var got api.Invocation
@@ -300,9 +301,9 @@ func TestRunInvocationsWaitJSONTimeoutPreservesLastStatus(t *testing.T) {
 }
 
 func TestCmdInvocationsWait_NoID(t *testing.T) {
-	_, stderr, restore := swapIO(t)
+	_, stderr, restore := main.SwapIO(t)
 	defer restore()
-	if code := cmdInvocationsWait(nil); code != 1 {
+	if code := main.CmdInvocationsWait(nil); code != 1 {
 		t.Fatalf("invocations wait without id = %d, want 1", code)
 	}
 	if !strings.Contains(stderr(), "usage: gregale invocations wait") {
@@ -317,7 +318,7 @@ func TestCmdInvocationsGet_Unauthenticated(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 	t.Setenv("XDG_CONFIG_HOME", dir)
-	if code := cmdInvocationsGet([]string{"abc"}); code == 0 {
+	if code := main.CmdInvocationsGet([]string{"abc"}); code == 0 {
 		t.Error("invocation without token must fail")
 	}
 }
@@ -334,16 +335,16 @@ func TestCmdInvocationsGet_JSON_SingleRecord(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	stdout, _, restore := swapIO(t)
+	stdout, _, restore := main.SwapIO(t)
 	defer restore()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	resetJSONOutput()
-	t.Cleanup(resetJSONOutput)
-	jsonOutput = true
+	main.ResetJSONOutput()
+	t.Cleanup(main.ResetJSONOutput)
+	(*main.JsonOutput) = true
 
-	if code := cmdInvocationsGet([]string{inv.ID}); code != 0 {
+	if code := main.CmdInvocationsGet([]string{inv.ID}); code != 0 {
 		t.Fatalf("invocation --json = %d, want 0", code)
 	}
 	var got api.Invocation
@@ -385,12 +386,12 @@ func TestCmdInvocationsGet_ReplayHappyPath(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	stdout, _, restore := swapIO(t)
+	stdout, _, restore := main.SwapIO(t)
 	defer restore()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	if code := cmdInvocationsGet([]string{"--replay", inv.ID}); code != 0 {
+	if code := main.CmdInvocationsGet([]string{"--replay", inv.ID}); code != 0 {
 		t.Fatalf("invocations get --replay = %d, want 0", code)
 	}
 	out := stdout.String()
@@ -434,16 +435,16 @@ func TestCmdInvocationsGet_ReplayJSONEnvelope(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	stdout, _, restore := swapIO(t)
+	stdout, _, restore := main.SwapIO(t)
 	defer restore()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	resetJSONOutput()
-	t.Cleanup(resetJSONOutput)
-	jsonOutput = true
+	main.ResetJSONOutput()
+	t.Cleanup(main.ResetJSONOutput)
+	(*main.JsonOutput) = true
 
-	if code := cmdInvocationsGet([]string{"--replay", inv.ID}); code != 0 {
+	if code := main.CmdInvocationsGet([]string{"--replay", inv.ID}); code != 0 {
 		t.Fatalf("invocation --replay (json mode) = %d, want 0", code)
 	}
 	var env struct {
@@ -482,12 +483,12 @@ func TestCmdInvocationsGet_Replay_NotReplayable(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	_, stderr, restore := swapIO(t)
+	_, stderr, restore := main.SwapIO(t)
 	defer restore()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	code := cmdInvocationsGet([]string{"--replay", inv.ID})
+	code := main.CmdInvocationsGet([]string{"--replay", inv.ID})
 	if code == 0 {
 		t.Fatalf("replay on completed invocation must fail; got exit 0")
 	}
@@ -511,12 +512,12 @@ func TestCmdInvocationsGet_Replay_NotFound(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	_, stderr, restore := swapIO(t)
+	_, stderr, restore := main.SwapIO(t)
 	defer restore()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	code := cmdInvocationsGet([]string{"--replay", "x"})
+	code := main.CmdInvocationsGet([]string{"--replay", "x"})
 	if code == 0 {
 		t.Fatalf("replay on missing invocation must fail; got exit 0")
 	}
@@ -540,12 +541,12 @@ func TestCmdInvocationsGet_Read_NotFound(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	_, stderr, restore := swapIO(t)
+	_, stderr, restore := main.SwapIO(t)
 	defer restore()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	code := cmdInvocationsGet([]string{"missing-id"})
+	code := main.CmdInvocationsGet([]string{"missing-id"})
 	if code == 0 {
 		t.Fatalf("read on missing invocation must fail; got exit 0")
 	}
@@ -569,12 +570,12 @@ func TestRun_DispatchInvocationsGet(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	stdout, _, restore := swapIO(t)
+	stdout, _, restore := main.SwapIO(t)
 	defer restore()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	if code := run([]string{"invocations", "get", inv.ID}); code != 0 {
+	if code := main.Run([]string{"invocations", "get", inv.ID}); code != 0 {
 		t.Fatalf("run invocations get = %d, want 0", code)
 	}
 	if !strings.Contains(stdout.String(), "Invocation:") {
@@ -595,7 +596,7 @@ func TestRun_DispatchInvocationsGet(t *testing.T) {
 // under max-1 and emits a valid UTF-8 "…" suffix.
 func TestOneLine(t *testing.T) {
 	t.Run("short ASCII passes through", func(t *testing.T) {
-		got := oneLine("hello world")
+		got := main.OneLine("hello world")
 		if got != "hello world" {
 			t.Errorf("oneLine(short ASCII) = %q, want %q", got, "hello world")
 		}
@@ -603,7 +604,7 @@ func TestOneLine(t *testing.T) {
 	t.Run("exact-rune-cap not truncated", func(t *testing.T) {
 		// 120 runes of ASCII sits exactly at the cap; no truncation.
 		s := strings.Repeat("a", 120)
-		got := oneLine(s)
+		got := main.OneLine(s)
 		if got != s {
 			t.Errorf("oneLine(120 'a's) was truncated; rune count = %d", utf8.RuneCountInString(got))
 		}
@@ -613,7 +614,7 @@ func TestOneLine(t *testing.T) {
 		// logic, s[:119] would split in the middle of a glyph and
 		// emit invalid UTF-8. The new path keeps 119 runes + "…".
 		s := strings.Repeat("宁", 200)
-		got := oneLine(s)
+		got := main.OneLine(s)
 		if !utf8.ValidString(got) {
 			t.Fatalf("oneLine(%d '宁') = %q is not valid UTF-8", len(s), got)
 		}
@@ -625,7 +626,7 @@ func TestOneLine(t *testing.T) {
 		}
 	})
 	t.Run("newlines collapsed to spaces", func(t *testing.T) {
-		got := oneLine("line1\nline2\r\nline3")
+		got := main.OneLine("line1\nline2\r\nline3")
 		if got != "line1 line2  line3" {
 			t.Errorf("oneLine(newlines) = %q, want %q", got, "line1 line2  line3")
 		}

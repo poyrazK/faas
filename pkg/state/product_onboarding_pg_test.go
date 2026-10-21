@@ -1,23 +1,26 @@
 //go:build !no_pg
 
 // ADR-1707: verified workspace onboarding, retained setup and activation evidence.
-package state
+package state_test
 
-import "testing"
+import (
+	"github.com/onebox-faas/faas/pkg/state"
+	"testing"
+)
 
 func TestProductControlOnboardingPostgres(t *testing.T) {
-	s := newPgStore(t)
-	write := func(op Operation, settle bool) {
+	s := state.XNewPgStore(t)
+	write := func(op state.Operation, settle bool) {
 		t.Helper()
-		tx, err := s.pool.Begin(t.Context())
+		tx, err := (*s.Pool()).Begin(t.Context())
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer func() { _ = tx.Rollback(t.Context()) }()
 		if settle {
-			err = settleProductOperationTx(t.Context(), tx, op)
+			err = state.SettleProductOperationTx(t.Context(), tx, op)
 		} else {
-			err = insertProductOperationTx(t.Context(), tx, op)
+			err = state.InsertProductOperationTx(t.Context(), tx, op)
 		}
 		if err != nil {
 			t.Fatal(err)
@@ -28,9 +31,9 @@ func TestProductControlOnboardingPostgres(t *testing.T) {
 	}
 	retireAuth := func(id string) {
 		t.Helper()
-		if _, err := s.pool.Exec(t.Context(), "DELETE FROM apps WHERE id=$1", id); err != nil {
+		if _, err := (*s.Pool()).Exec(t.Context(), "DELETE FROM apps WHERE id=$1", id); err != nil {
 			t.Fatal(err)
 		}
 	}
-	productOnboardingContract(t, s, func(op Operation) { write(op, false) }, func(op Operation) { write(op, true) }, retireAuth)
+	productOnboardingContract(t, s, func(op state.Operation) { write(op, false) }, func(op state.Operation) { write(op, true) }, retireAuth)
 }

@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -56,13 +57,13 @@ func TestCmdDebugRequestsInspect_SelectsLatestAndRendersInvestigation(t *testing
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_test")
 
-	stdout, _, restore := swapIO(t)
+	stdout, _, restore := main.SwapIO(t)
 	defer restore()
-	oldJSON := jsonOutput
-	jsonOutput = false
-	defer func() { jsonOutput = oldJSON }()
+	oldJSON := (*main.JsonOutput)
+	(*main.JsonOutput) = false
+	defer func() { (*main.JsonOutput) = oldJSON }()
 
-	if code := cmdDebugRequests([]string{
+	if code := main.CmdDebugRequests([]string{
 		"inspect", "my-app", "--latest", "--since", "6h", "--route", "GET /checkout",
 		"--status", "500", "--min-latency-ms", "250",
 	}); code != 0 {
@@ -104,16 +105,16 @@ func TestCmdDebugRequestsInspect_JSONIncludesEvidenceTreeAndActions(t *testing.T
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_test")
 
-	stdout, _, restore := swapIO(t)
+	stdout, _, restore := main.SwapIO(t)
 	defer restore()
-	oldJSON := jsonOutput
-	jsonOutput = true
-	defer func() { jsonOutput = oldJSON }()
+	oldJSON := (*main.JsonOutput)
+	(*main.JsonOutput) = true
+	defer func() { (*main.JsonOutput) = oldJSON }()
 
-	if code := cmdDebugRequests([]string{"inspect", "my-app", "request-1"}); code != 0 {
+	if code := main.CmdDebugRequests([]string{"inspect", "my-app", "request-1"}); code != 0 {
 		t.Fatalf("cmdDebugRequests(inspect exact) = %d, want 0", code)
 	}
-	var got debugRequestInspectOutput
+	var got main.DebugRequestInspectOutput
 	if err := json.Unmarshal([]byte(stdout.String()), &got); err != nil {
 		t.Fatalf("inspect JSON: %v\n%s", err, stdout.String())
 	}

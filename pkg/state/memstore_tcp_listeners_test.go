@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -7,17 +7,18 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
-func tcpListenerFixture(t *testing.T) (*MemStore, context.Context, Account, App) {
+func tcpListenerFixture(t *testing.T) (*state.MemStore, context.Context, state.Account, state.App) {
 	t.Helper()
 	ctx := context.Background()
-	m := NewMemStore()
+	m := state.NewMemStore()
 	account, err := m.CreateAccount(ctx, "tcp-listener-"+uuid.NewString()+"@example.com", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, err := m.CreateApp(ctx, App{AccountID: account.ID, Slug: "tcp-" + uuid.NewString(), Status: AppActive, RAMMB: 256})
+	app, err := m.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "tcp-" + uuid.NewString(), Status: state.AppActive, RAMMB: 256})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -26,7 +27,7 @@ func tcpListenerFixture(t *testing.T) (*MemStore, context.Context, Account, App)
 
 func TestMemStoreTCPListenerLifecycleAndRouteLookup(t *testing.T) {
 	m, ctx, account, app := tcpListenerFixture(t)
-	created, err := m.CreateTCPListener(ctx, TCPListener{
+	created, err := m.CreateTCPListener(ctx, state.TCPListener{
 		AccountID: account.ID, AppID: app.ID, ListenerName: "Postgres",
 		GuestPort: 5432, PublicPort: 40123, Enabled: true,
 	})
@@ -48,7 +49,7 @@ func TestMemStoreTCPListenerLifecycleAndRouteLookup(t *testing.T) {
 	if err != nil || disabled.Enabled {
 		t.Fatalf("disable = %+v, %v", disabled, err)
 	}
-	if _, err := m.TCPListenerByPublicPort(ctx, created.PublicPort); !errors.Is(err, ErrNotFound) {
+	if _, err := m.TCPListenerByPublicPort(ctx, created.PublicPort); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("disabled public lookup = %v, want ErrNotFound", err)
 	}
 	rows, err := m.ListTCPListenersForApp(ctx, app.ID)
@@ -58,14 +59,14 @@ func TestMemStoreTCPListenerLifecycleAndRouteLookup(t *testing.T) {
 	if err := m.DeleteTCPListener(ctx, created.ID); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
-	if _, err := m.TCPListenerByID(ctx, created.ID); !errors.Is(err, ErrNotFound) {
+	if _, err := m.TCPListenerByID(ctx, created.ID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("read after delete = %v, want ErrNotFound", err)
 	}
 }
 
 func TestMemStoreTCPListenerTLSIntent(t *testing.T) {
 	m, ctx, account, app := tcpListenerFixture(t)
-	base := TCPListener{AppID: app.ID, AccountID: account.ID, ListenerName: "echo", GuestPort: 9000, PublicPort: 40125, TLSMode: api.TCPListenerTLSTerminate, TLSHostname: " Echo.Example "}
+	base := state.TCPListener{AppID: app.ID, AccountID: account.ID, ListenerName: "echo", GuestPort: 9000, PublicPort: 40125, TLSMode: api.TCPListenerTLSTerminate, TLSHostname: " Echo.Example "}
 	created, err := m.CreateTCPListener(ctx, base)
 	if err != nil || created.TLSMode != api.TCPListenerTLSTerminate || created.TLSHostname != "echo.example" {
 		t.Fatalf("created=%+v err=%v", created, err)
@@ -84,23 +85,23 @@ func TestMemStoreTCPListenerTLSIntent(t *testing.T) {
 	base.ListenerName = "invalid"
 	base.PublicPort++
 	base.TLSHostname = "*.example"
-	if _, err := m.CreateTCPListener(ctx, base); !errors.Is(err, ErrInvalidTCPListener) {
+	if _, err := m.CreateTCPListener(ctx, base); !errors.Is(err, state.ErrInvalidTCPListener) {
 		t.Fatalf("invalid TLS intent accepted: %v", err)
 	}
 }
 
 func TestMemStoreTCPListenerRejectsCollisionsAndInvalidPorts(t *testing.T) {
 	m, ctx, account, app := tcpListenerFixture(t)
-	first, err := m.CreateTCPListener(ctx, TCPListener{AccountID: account.ID, AppID: app.ID, ListenerName: "one", GuestPort: 1001, PublicPort: 40124})
+	first, err := m.CreateTCPListener(ctx, state.TCPListener{AccountID: account.ID, AppID: app.ID, ListenerName: "one", GuestPort: 1001, PublicPort: 40124})
 	if err != nil {
 		t.Fatalf("first create: %v", err)
 	}
-	_, err = m.CreateTCPListener(ctx, TCPListener{AccountID: account.ID, AppID: app.ID, ListenerName: "two", GuestPort: 1002, PublicPort: first.PublicPort})
-	if !errors.Is(err, ErrConflict) {
+	_, err = m.CreateTCPListener(ctx, state.TCPListener{AccountID: account.ID, AppID: app.ID, ListenerName: "two", GuestPort: 1002, PublicPort: first.PublicPort})
+	if !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("public collision = %v, want ErrConflict", err)
 	}
-	_, err = m.CreateTCPListener(ctx, TCPListener{AccountID: account.ID, AppID: app.ID, ListenerName: "udp", GuestPort: 53, PublicPort: 40125, Protocol: "udp"})
-	if !errors.Is(err, ErrInvalidTCPListener) {
+	_, err = m.CreateTCPListener(ctx, state.TCPListener{AccountID: account.ID, AppID: app.ID, ListenerName: "udp", GuestPort: 53, PublicPort: 40125, Protocol: "udp"})
+	if !errors.Is(err, state.ErrInvalidTCPListener) {
 		t.Fatalf("protocol error = %v, want ErrInvalidTCPListener", err)
 	}
 }

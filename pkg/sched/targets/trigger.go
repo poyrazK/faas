@@ -751,6 +751,16 @@ func (t *Trigger) Tick(ctx context.Context) error {
 		// misses half the fleet.
 		declared := policy.EffectiveTargets()
 		if len(declared) == 0 {
+			if app.ProjectID != "" && app.Manifest.ExecutionMode == api.ExecutionModeWorker {
+				if pool, ok := t.engine.(ScopedWorkerPoolEngine); ok && !t.admissionBackoffActive(app.ID, now) {
+					if err := pool.ReconcileWorkerPools(ctx, app.ID, workerPoolTriggerTargets); err != nil {
+						t.recordAdmissionFailure(app.ID, now)
+						t.log.Warn("targets: reconcile graph worker", "app_id", app.ID, "err", err)
+					} else {
+						t.clearAdmissionBackoff(app.ID)
+					}
+				}
+			}
 			continue
 		}
 		// This trigger owns the two axes it can observe. rps and cpu are

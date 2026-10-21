@@ -27,6 +27,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/extension"
+	"github.com/onebox-faas/faas/pkg/functionlifetime"
 	"github.com/onebox-faas/faas/pkg/overlaymetadata"
 	"golang.org/x/sys/unix"
 )
@@ -318,6 +319,13 @@ func boot() error {
 	}
 	if manifest.BeforeCheckpoint != nil {
 		beforeCheckpoint.Store(&beforeCheckpointRuntime{hook: *manifest.BeforeCheckpoint, port: manifest.EffectivePort()})
+	}
+	if functionlifetime.NativeQualificationBuild {
+		proxy, err := startFunctionExecutionProxy(lookupUID(manifest.EffectiveUser()))
+		if err != nil {
+			return fmt.Errorf("function lifetime proxy: %w", err)
+		}
+		functionExecutions.Store(proxy)
 	}
 	// Bind before starting the workload and grant only its configured group
 	// access to the local signal socket. The runner does not inherit root UID.
@@ -642,6 +650,14 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 	defer retireGeneration()
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("run %v: %w", argv, err)
+	}
+	if proxy := functionExecutions.Load(); proxy != nil {
+		if err := proxy.bind(cmd.Process.Pid); err != nil {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+			return err
+		}
+		defer proxy.retire(cmd.Process.Pid)
 	}
 	outputPipe.closeWriter()
 	retireImageReadiness := installImageReadinessRuntime(cmd, m, func() []string {
@@ -1760,6 +1776,16 @@ func buildArgv(m api.BuildManifest) []string {
 		if m.DockerfilePath != "" {
 			argv = append(argv, "--opt", "filename="+m.DockerfilePath)
 		}
+		if m.DockerfileBuild != nil && m.DockerfileBuild.Target != "" {
+			argv = append(argv, "--opt", "target="+m.DockerfileBuild.Target)
+		}
+		// Compose build arguments (ADR-20261019142544); a reviewed public
+		// build URL of the same name replaces the argument.
+		for _, key := range m.DockerfileBuild.ArgNames() {
+			if _, reviewed := m.PublicBuildURLs[key]; !reviewed {
+				argv = append(argv, "--opt", "build-arg:"+key+"="+m.DockerfileBuild.Args[key])
+			}
+		}
 		for _, key := range publicBuildURLKeys(m.PublicBuildURLs) {
 			argv = append(argv, "--opt", "build-arg:"+key+"="+m.PublicBuildURLs[key])
 		}
@@ -2057,6 +2083,17 @@ func tailOf(data []byte, n int) string {
 	return string(data[len(data)-n:])
 }
 
+// dockerfileBuildAcknowledgement is the digest of the Compose build arguments
+// and target this guest applied (ADR-20261019142544). Only buildArgv's
+// Dockerfile branch applies them, so other builds acknowledge none and
+// builderd refuses an artifact built without options it sent.
+func dockerfileBuildAcknowledgement(m api.BuildManifest) string {
+	if m.Framework != api.FrameworkDockerfile {
+		return ""
+	}
+	return m.DockerfileBuild.SHA256()
+}
+
 // writeBuildDone writes /etc/faas/build-done.json (vmmd's Destroy loopback-
 // mounts the chroot drive1 to copy it out). Warm builders call this while the
 // guest remains alive; ordinary builders call it immediately before poweroff.
@@ -2078,6 +2115,7 @@ func writeBuildDone(m api.BuildManifest, runErr error, logTail string) {
 	}
 	if runErr == nil {
 		done.PublicBuildURLsSHA256 = api.PublicBuildURLsSHA256(m.PublicBuildURLs)
+		done.DockerfileBuildSHA256 = dockerfileBuildAcknowledgement(m)
 		done.BuildDependencyDigest = m.BuildDependencyDigest
 		done.DependencyCacheUnchanged = m.DependencyCache && dependencyCacheKept(m.OutDir)
 		sourceMap, watchErr := devWatchSourceMap(m, buildDevPatchSourceMap(m, readBuildPlan))

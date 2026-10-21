@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/issues"
 )
@@ -43,11 +44,11 @@ func TestIssueTeamsCLIInboxAndCodeownersPreview(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_test")
-	previousOut, previousJSON := osStdout, jsonOutput
+	previousOut, previousJSON := (*main.OsStdout), (*main.JsonOutput)
 	var out bytes.Buffer
-	osStdout, jsonOutput = &out, true
-	t.Cleanup(func() { osStdout, jsonOutput = previousOut, previousJSON })
-	if cmdIssues([]string{"teams", "save", "--app", "payments", "--key", "payments", "--name", "Payments", "--members", member}) != 0 || cmdIssues([]string{"teams", "inbox", "--app", "payments", "--key", "payments"}) != 0 {
+	(*main.OsStdout), (*main.JsonOutput) = &out, true
+	t.Cleanup(func() { (*main.OsStdout), (*main.JsonOutput) = previousOut, previousJSON })
+	if main.CmdIssues([]string{"teams", "save", "--app", "payments", "--key", "payments", "--name", "Payments", "--members", member}) != 0 || main.CmdIssues([]string{"teams", "inbox", "--app", "payments", "--key", "payments"}) != 0 {
 		t.Fatal("team management journey failed")
 	}
 	dir := t.TempDir()
@@ -60,14 +61,14 @@ func TestIssueTeamsCLIInboxAndCodeownersPreview(t *testing.T) {
 	}
 	out.Reset()
 	before := requests
-	if cmdIssues([]string{"codeowners", "preview", "--file", file, "--bindings-file", bindings, "--source-root", "/app"}) != 0 {
+	if main.CmdIssues([]string{"codeowners", "preview", "--file", file, "--bindings-file", bindings, "--source-root", "/app"}) != 0 {
 		t.Fatal("offline preview failed")
 	}
 	var compiled issues.CodeownersImport
 	if err := json.Unmarshal(out.Bytes(), &compiled); err != nil || len(compiled.Rules) != 1 || compiled.Rules[0].AssigneeTeamID != id {
 		t.Fatalf("preview: %s %v", out.String(), err)
 	}
-	if cmdIssues([]string{"codeowners", "apply", "--file", file, "--bindings-file", bindings, "--source-root", "/app", "--app", "payments"}) == 0 {
+	if main.CmdIssues([]string{"codeowners", "apply", "--file", file, "--bindings-file", bindings, "--source-root", "/app", "--app", "payments"}) == 0 {
 		t.Fatal("implicit policy replacement allowed")
 	}
 	if requests != before {

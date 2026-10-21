@@ -50,6 +50,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/object"
 	"github.com/onebox-faas/faas/pkg/apid/operatorobs"
 	"github.com/onebox-faas/faas/pkg/apid/receivers"
+	"github.com/onebox-faas/faas/pkg/apid/routeinsights"
 	"github.com/onebox-faas/faas/pkg/audit"
 	"github.com/onebox-faas/faas/pkg/auth"
 	"github.com/onebox-faas/faas/pkg/authcode"
@@ -76,6 +77,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/meter"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/openapidiff"
+	"github.com/onebox-faas/faas/pkg/promotionrollout"
 	"github.com/onebox-faas/faas/pkg/ratelimit/peraccount"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"github.com/onebox-faas/faas/pkg/role"
@@ -773,6 +775,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// block short-circuits to nil when pool is nil.
 	deps.pool = pool
 	deps.bgBefore = func(ctx context.Context, log *slog.Logger, srv *server) {
+		go srv.runCronActivationWorker(ctx)
+		go srv.runSafeProjectReleaseWorker(ctx)
+		go srv.runPromotionHealthWorker(ctx)
 		go srv.runMailOutbox(ctx)
 		go srv.runHostingReconciler(ctx)
 		go srv.runSafeReleaseEmergencyAbort(ctx)
@@ -784,6 +789,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 		go srv.runPostReleaseWatchWorker(ctx)
 		go srv.plainRollbacks().Run(ctx)
 		go srv.operation.RunOperationArtifactCleanup(ctx)
+		go srv.operation.RunScheduleFirer(ctx)
+		go srv.operation.RunOperationQueueReleaser(ctx)
 		go srv.object.RunObjectStorageRecovery(ctx)
 		go srv.object.RunObjectStorageAccounting(ctx)
 		go srv.runManagedPostgresReconciler(ctx)
@@ -879,10 +886,11 @@ func run(ctx context.Context, log *slog.Logger) error {
 		srv.statementInvoices.Enabled = srv.apiMonetizationEnabled
 		srv.consumerCredits.Enabled = srv.apiMonetizationEnabled
 		srv.consumerControls.Enabled = srv.apiMonetizationEnabled
-		srv.billingRuns.Start(ctx, log)       // ADR-1503
-		srv.statementInvoices.Start(ctx, log) // ADR-1504
-		srv.consumerCredits.Start(ctx, log)   // ADR-1306
-		srv.consumerControls.Start(ctx, log)  // ADR-1315
+		srv.billingRuns.Start(ctx, log)                // ADR-1503
+		srv.statementInvoices.Start(ctx, log)          // ADR-1504
+		srv.consumerCredits.Start(ctx, log)            // ADR-1306
+		srv.consumerControls.Start(ctx, log)           // ADR-1315
+		srv.productControl.StartOverdueHolds(ctx, log) // ADR-20261018212918
 		startFeatureFlagAutoAdvancer(ctx, srv, log)
 		srv.startIssuesMaintenance(ctx)
 		srv.startIssueTrackerAutoSync(ctx)
@@ -946,6 +954,13 @@ func run(ctx context.Context, log *slog.Logger) error {
 		// audit auditor makes with pkg/audit.Auditor.SetOps).
 		eventRetentionCleanup.SetOps(srv.ops)
 		go func() { _ = eventRetentionCleanup.Run(ctx) }()
+		// ADR-1198: proactive route insights. Every RouteInsightInterval the
+		// evaluator records which routes keep running apps awake and which are
+		// measured safe to cache; a trigger notifies subscribed app webhooks.
+		if insightStore, ok := srv.store.(routeinsights.Store); ok {
+			insights := &routeinsights.Evaluator{Store: insightStore, Log: log}
+			go func() { _ = insights.Run(ctx) }()
+		}
 		// Issue #562 / PR-A: log archive shipper. Walks the local
 		// spool dir every cfg.FlushInterval (5 min default) and
 		// gzip-PUTs .partial files to s3://{bucket}/faas-logs/{instance}/
@@ -1511,6 +1526,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithWorkflowRuntimeEnabled(workflowsEnabledFromEnv(deps.getenv)).
 		WithExecutionAPIEnabled(executionAPIEnabledFromEnv(deps.getenv)).
 		WithAppTaskAPIEnabled(appTaskAPIEnabledFromEnv(deps.getenv)).
+		WithAtomicWorkerReleaseEnabled(deps.getenv("FAAS_ATOMIC_WORKER_RELEASES_ENABLED") == "1").
+		WithProjectCanariesEnabled(deps.getenv("FAAS_PROJECT_CANARIES_ENABLED") == "1").
+		WithPromotionHealthEnabled(deps.getenv("FAAS_PROMOTION_HEALTH_ENABLED") == "1").
+		WithPromotionServiceGraphEnabled(deps.getenv("FAAS_PROMOTION_SERVICE_GRAPH_ENABLED") == "1").
+		WithPromotionMigrationsEnabled(deps.getenv("FAAS_PROMOTION_MIGRATIONS_ENABLED") == "1").
+		WithPromotionWorkersEnabled(deps.getenv("FAAS_PROMOTION_WORKERS_ENABLED") == "1").
+		WithProjectReleaseSecretsEnabled(deps.getenv("FAAS_PROJECT_RELEASE_SECRETS_ENABLED") == "1").
+		WithAtomicServiceAdditionsEnabled(deps.getenv("FAAS_ATOMIC_SERVICE_ADDITIONS_ENABLED") == "1").
+		WithProjectMigrationContractsEnabled(deps.getenv("FAAS_PROJECT_MIGRATION_CONTRACTS_ENABLED") == "1").
 		WithInteractiveAppTasksEnabled(apptaskattach.EnabledFromEnv(deps.getenv)).
 		WithImageRunsEnabled(imagerun.EnabledFromEnv(deps.getenv)).
 		WithInternalCIConfig(ci.ConfigFromEnv(deps.getenv)).
@@ -1523,6 +1547,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithRealtimeFairUseEnabled(deps.getenv("FAAS_REALTIME_FAIR_USE_ENABLED") == "1").
 		WithTriggerBatchDeliveryEnabled(deps.getenv("FAAS_TRIGGER_BATCH_DELIVERY_PREVIEW_ENABLED") == "1").
 		WithGitHubDeploysAvailable(githubDeploysAvailabilityProbe(deps.getenv, resolveGithubdBridgeSock(deps.getenv, cfg)))
+	srv.promotionRollout = promotionrollout.FromEnv(deps.getenv, wire.GitSHA)
 	if err := srv.configureMailOutbox(ctx, deps.pool, deps.getenv); err != nil {
 		return fmt.Errorf("apid: producer mail outbox: %w", err)
 	}
@@ -1583,6 +1608,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	srv.serviceMap.Enabled = deps.getenv("FAAS_SERVICE_MAP_ENABLED") == "1"
 	srv.changeTimelineEnabled = deps.getenv("FAAS_CHANGE_TIMELINE_ENABLED") == "1"
 	srv.anomalyAlertsEnabled = deps.getenv("FAAS_ANOMALY_ALERTS_ENABLED") == "1"
+	srv.seedEnvPlatformFlags(deps.getenv) // ADR-1700 boot fallbacks for the gates above
+
 	srv.customMetricHistoryEnabled = deps.getenv("FAAS_CUSTOM_METRIC_HISTORY_ENABLED") == "1"
 	if srv.customMetricHistoryEnabled {
 		// ADR-745: expose fresh pushed gauges so Prometheus keeps history.
@@ -1613,6 +1640,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err := srv.configureLiveQueries(deps.pool, deps.getenv); err != nil {
 		return fmt.Errorf("apid live queries configuration: %w", err)
 	}
+	srv.configureDataAPIUsage(deps.pool)
 	if err := srv.configureDataPipelines(*cfg, deps.pool); err != nil {
 		return err
 	}
@@ -1630,6 +1658,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// before any listener is exposed. Database state wins over the
 	// bootstrap fallback for catalogued runtime settings.
 	srv.WithRuntimeConfigManager(newRuntimeConfigManager(deps.getenv))
+	// ADR-1700: report what this apid applies so the console shows
+	// convergence per consumer, not only the database acknowledgement.
+	srv.runtimeConfig.enableReceipts("apid")
 	// Seed legacy consumers from the same bootstrap snapshot before the
 	// durable reconciliation. The durable operator value must win after a
 	// restart; calling WithDataPlacement after reconcile would overwrite it
@@ -2625,13 +2656,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			errc <- err
 		}
 	}()
-	// On `systemctl reload` a successor takes the sockets; this generation
-	// then stops its background work (ctx) and finishes its requests.
+	// On `systemctl reload` a successor takes the sockets once it passed
+	// this generation's pre-traffic checks; this generation then stops its
+	// background work (ctx) and finishes its requests.
 	handedOff := make(chan struct{})
 	wire.WatchHandoffs(ctx, "apid", log, func() {
 		close(handedOff)
 		endGeneration()
-	})
+	}, HandoffChecks(listenBind, metricsAddr)...)
 	select {
 	case err := <-errc:
 		return err

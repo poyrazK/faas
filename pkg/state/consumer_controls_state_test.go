@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -110,6 +111,18 @@ func checkConsumerControls(t *testing.T, ctx context.Context, st state.Store, ac
 	policy, err := st.(state.APIConsumerPlanStore).GetAPIConsumerPlanPolicy(ctx, accountID, appID, consumer.ID, now)
 	if err != nil || !policy.OverdueBlocked {
 		t.Fatalf("plan policy = %+v, %v", policy, err)
+	}
+	// A status not read within the max age holds no longer (ADR-20261019180000).
+	stale := now.Add(api.ConsumerOverdueStatusMaxAge + time.Hour)
+	if _, lifted, err := overdue.SyncAPIConsumerOverdueHolds(ctx, stale); err != nil || len(lifted) != 1 {
+		t.Fatalf("stale status lift = %+v, %v", lifted, err)
+	}
+	if _, err := st.(state.StatementInvoicePaymentStore).RecordStatementInvoicePayment(ctx, export.ID, state.StatementInvoicePayment{
+		Status: state.InvoicePaymentOpen, AmountRemainingMinor: 375, DueAt: &due}, stale, &next); err != nil {
+		t.Fatal(err)
+	}
+	if placed, _, err := overdue.SyncAPIConsumerOverdueHolds(ctx, stale); err != nil || len(placed) != 1 {
+		t.Fatalf("fresh status hold = %+v, %v", placed, err)
 	}
 	if err := overdue.DeleteAPIConsumerBillingPolicy(ctx, accountID, appID); err != nil {
 		t.Fatal(err)

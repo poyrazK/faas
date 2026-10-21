@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -7,23 +7,24 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestMemReleaseInventoryTiedCursorIncludesExpiredGraphs(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
+	store := state.NewMemStore()
 	account, err := store.CreateAccount(ctx, "release-history@example.test", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
 	}
-	project, err := store.CreateProject(ctx, Project{AccountID: account.ID, Slug: "release-history"})
+	project, err := store.CreateProject(ctx, state.Project{AccountID: account.ID, Slug: "release-history"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	at := time.Now().UTC().Add(-time.Hour)
 	for i := 1; i <= 3; i++ {
 		id := fmt.Sprintf("00000000-0000-0000-0000-%012d", i)
-		store.projectReleaseSets[id] = ProjectReleaseSet{ID: id, AccountID: account.ID, ProjectID: project.ID, EnvironmentSlug: "production", CreatedAt: at, ExpiresAt: &at}
+		(*store.ProjectReleaseSets())[id] = state.ProjectReleaseSet{ID: id, AccountID: account.ID, ProjectID: project.ID, EnvironmentSlug: "production", CreatedAt: at, ExpiresAt: &at}
 	}
 	page, err := store.ListProjectReleaseSetsBefore(ctx, account.ID, project.ID, "production", time.Time{}, "", 2)
 	if err != nil || len(page) != 2 || page[0].ID != "00000000-0000-0000-0000-000000000003" || page[1].ID != "00000000-0000-0000-0000-000000000002" {

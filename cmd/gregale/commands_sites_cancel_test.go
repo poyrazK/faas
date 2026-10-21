@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/hosting"
 )
@@ -28,24 +29,24 @@ func TestSitesCancelIsExplicitOperatorMutation(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(run)
 	})
 	var out bytes.Buffer
-	old := osStdout
-	osStdout = &out
-	t.Cleanup(func() { osStdout = old })
+	old := (*main.OsStdout)
+	(*main.OsStdout) = &out
+	t.Cleanup(func() { (*main.OsStdout) = old })
 	args := []string{"cancel", "--site", reviewSiteID, "--run-id", reviewReleaseID}
 	t.Setenv("FAAS_FRONTEND_HOSTING_CANCELLATION_ENABLED", "")
-	if cmdSites(args) == 0 || calls != 0 {
+	if main.CmdSites(args) == 0 || calls != 0 {
 		t.Fatal("default off")
 	}
 	t.Setenv("FAAS_FRONTEND_HOSTING_CANCELLATION_ENABLED", "1")
-	if cmdSites([]string{"cancel", "--site", reviewSiteID, "--run-id", "bad"}) == 0 || calls != 0 {
+	if main.CmdSites([]string{"cancel", "--site", reviewSiteID, "--run-id", "bad"}) == 0 || calls != 0 {
 		t.Fatal("invalid ID sent")
 	}
-	if cmdSites(args) != 0 || calls != 1 {
+	if main.CmdSites(args) != 0 || calls != 1 {
 		t.Fatal(out.String(), calls)
 	}
 	out.Reset()
 	bad = true
-	if cmdSites(args) == 0 || out.Len() != 0 || calls != 2 {
+	if main.CmdSites(args) == 0 || out.Len() != 0 || calls != 2 {
 		t.Fatal("unconfirmed cancellation exposed", out.String(), calls)
 	}
 }
@@ -70,7 +71,7 @@ func TestHostingCICanceledIntentStopsBeforeUploads(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	result, err := runHostingCI(t.Context(), api.NewHostingAutomationClient(server.URL, "scoped-test-token"), reviewSiteID, reviewReleaseID, "unused", req, time.Second)
+	result, err := main.RunHostingCI(t.Context(), api.NewHostingAutomationClient(server.URL, "scoped-test-token"), reviewSiteID, reviewReleaseID, "unused", req, time.Second)
 	if err == nil || result.State != "canceled" || !result.Run.Canceled || calls != 3 {
 		t.Fatal(result, err, calls)
 	}

@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -53,6 +54,18 @@ func TestTrigger_ReconcilesScopedWorkerPools(t *testing.T) {
 	tr.waitWorkerPoolRuns()
 	if len(engine.calls) != 2 || len(engine.desired) != 0 || len(engine.admitCalls) != 0 {
 		t.Fatalf("failed scoped reconciliation bypassed backoff: %v", engine.calls)
+	}
+}
+
+func TestTriggerRepairsGraphWorkerWithoutScalingPolicy(t *testing.T) {
+	store := &fakeStore{apps: []state.App{{ID: "graph-worker", ProjectID: "project", WorkloadClass: state.WorkloadClassWorker, Manifest: state.AppManifest{ExecutionMode: api.ExecutionModeWorker}, MaxConcurrency: 5}}}
+	engine := &scopedWorkerPoolFake{workerPoolFakeEngine: &workerPoolFakeEngine{fakeEngine: &fakeEngine{}}}
+	tr := New(store, nil, engine, &fakeLedger{conc: map[string]int{}}, Options{QueueStatsReader: &fakeQueueStats{byApp: map[string]state.QueueStats{}}})
+	if err := tr.Tick(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if len(engine.calls) != 1 || engine.calls[0] != "graph-worker:worker.pool" {
+		t.Fatalf("missed handoff was not repaired: %v", engine.calls)
 	}
 }
 

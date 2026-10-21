@@ -44,6 +44,7 @@ import (
 )
 
 func main() {
+	publicForwarding := flag.Bool("public-forwarding", false, "retain the native-recovery bridge generation guard; requires nftables 1.1.3+ and Linux 6.13+")
 	// Default-empty string + explicit fallback inside render via
 	// `DefaultHostPolicy`: an empty flag/env means "use the Go
 	// default", which is the source-of-truth for the EX44 shape.
@@ -72,6 +73,7 @@ func main() {
 	flag.Parse()
 
 	policy := netns.DefaultHostPolicy
+	policy.PublicForwarding = *publicForwarding
 	if iface := pickValue(*publicIface, "FAAS_PUBLIC_IFACE"); iface != "" {
 		policy.PublicIface = iface
 	}

@@ -1,7 +1,8 @@
-package main
+package main_test
 
 import (
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"testing"
 )
 
@@ -22,7 +23,7 @@ func TestCustomerOperationMilestoneCommand(t *testing.T) {
 		{[]string{id, "--app", "orders", "--subject-type", "order", "--subject-id", "42"}, false},
 		{[]string{id, "--app", "orders", "--limit", "101"}, false},
 	} {
-		_, err := parseCustomerMilestoneCommand(tc.args)
+		_, err := main.ParseCustomerMilestoneCommand(tc.args)
 		if (err == nil) != tc.valid {
 			t.Fatalf("%v: %v", tc.args, err)
 		}

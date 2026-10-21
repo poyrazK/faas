@@ -1,4 +1,4 @@
-package sched
+package sched_test
 
 // adr: 177
 
@@ -8,6 +8,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/hostport"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -35,8 +36,8 @@ func TestAdmitInstanceLeasesDeclaredPortsAndReleasesOnStop(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateDeployment: %v", err)
 	}
-	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
-	result, err := e.AdmitInstanceForDeployment(ctx, app.ID, dep.ID, "", TriggerServiceReplica)
+	e := sched.XNewEngine(t, store, &sched.FakeVMM{}, &sched.FakeNotifier{}, "1.10.0")
+	result, err := e.AdmitInstanceForDeployment(ctx, app.ID, dep.ID, "", sched.TriggerServiceReplica)
 	if err != nil {
 		t.Fatalf("AdmitInstanceForDeployment: %v", err)
 	}
@@ -56,7 +57,7 @@ func TestAdmitInstanceLeasesDeclaredPortsAndReleasesOnStop(t *testing.T) {
 			t.Fatalf("lease outside registry range: %+v", lease)
 		}
 	}
-	e.transition(ctx, result.InstanceID, app.ID, state.StateStopped)
+	e.Transition(ctx, result.InstanceID, app.ID, state.StateStopped)
 	leases, err = store.ListHostPortLeases(ctx, "", result.InstanceID)
 	if err != nil {
 		t.Fatalf("ListHostPortLeases after stop: %v", err)
