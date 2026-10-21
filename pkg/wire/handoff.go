@@ -2,7 +2,7 @@
 
 package wire
 
-// Two-generation hand-off (docs/adr/1580-zero-downtime-daemon-restarts.md).
+// Two-generation hand-off (docs/adr/1736-zero-downtime-daemon-restarts.md).
 //
 // systemd restarts a service by stopping it and then starting it, so a
 // request still running when the stop's grace ends is cut. A hand-off avoids
@@ -57,6 +57,9 @@ type HandoffOptions struct {
 	Args []string
 	// Log receives progress; nil discards it.
 	Log *slog.Logger
+	// Checks are sent to the successor before it accepts traffic; a failed
+	// one stops it and rejects the hand-off (handoff_check.go).
+	Checks []HandoffCheck
 
 	// Test seams: whether the process runs under systemd, the main-PID
 	// notification and its confirmation, the cgroup memory check, how freed
@@ -130,6 +133,14 @@ func handoff(ctx context.Context, opts HandoffOptions) (int, error) {
 		return 0, err
 	}
 	defer closeFiles(files)
+	checks, err := prepareHandoffChecks(opts.Checks, processActivation().serves)
+	if err != nil {
+		return 0, err
+	}
+	defer checks.close()
+	if checks == nil && len(opts.Checks) > 0 {
+		opts.Log.Warn("hand-off: pre-traffic checks skipped", "file", handoffChecksSkipFile)
+	}
 	readR, readW, err := os.Pipe()
 	if err != nil {
 		return 0, fmt.Errorf("wire: hand-off ready pipe: %w", err)
@@ -141,12 +152,20 @@ func handoff(ctx context.Context, opts HandoffOptions) (int, error) {
 	cmd := exec.Command(opts.Path, opts.Args...) //nolint:gosec // the daemon's own ExecStart path and arguments
 	cmd.Env = append(handoffEnv(os.Environ(), len(files)), handoffSpawnEnv+"=1")
 	cmd.ExtraFiles = append(append([]*os.File(nil), files...), readW)
+	if checks != nil {
+		// The check connections and the go pipe follow the ready pipe.
+		cmd.Env = append(cmd.Env, checks.env(activationFirstFD+len(files)+1)...)
+		cmd.ExtraFiles = append(cmd.ExtraFiles, checks.extraFiles()...)
+	}
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 	if err := cmd.Start(); err != nil {
 		_ = readW.Close()
 		return 0, fmt.Errorf("wire: start successor %s: %w", opts.Path, err)
 	}
 	_ = readW.Close()
+	if checks != nil {
+		checks.started()
+	}
 	lines := handoffLines(readR)
 	pid, err := waitSuccessorStarted(ctx, cmd, lines)
 	if err != nil {
@@ -154,7 +173,14 @@ func handoff(ctx context.Context, opts HandoffOptions) (int, error) {
 	}
 	opts.Log.Info("hand-off: successor started", "pid", pid, "path", opts.Path, "sockets", len(files))
 
-	if err := waitSuccessorReady(ctx, lines, opts.ReadyTimeout); err != nil {
+	report, err := waitSuccessorReport(ctx, lines, opts.ReadyTimeout)
+	if err == nil && report == daemonunit.HandoffChecksMessage {
+		err = checkSuccessor(ctx, checks, lines, opts.Log, pid)
+	} else if err == nil && checks != nil {
+		// A successor from a release before pre-traffic checks.
+		opts.Log.Warn("hand-off: successor does not take pre-traffic checks; handing off unchecked", "pid", pid)
+	}
+	if err != nil {
 		stopSuccessor(pid)
 		return 0, fmt.Errorf("wire: successor %d: %w", pid, err)
 	}
@@ -257,7 +283,8 @@ func handoffEnv(env []string, sockets int) []string {
 	for _, kv := range env {
 		key, _, _ := strings.Cut(kv, "=")
 		switch key {
-		case "LISTEN_PID", "LISTEN_FDS", "LISTEN_FDNAMES", "WATCHDOG_PID", handoffFDsEnv, handoffParentEnv, daemonunit.HandoffReadyFDEnv:
+		case "LISTEN_PID", "LISTEN_FDS", "LISTEN_FDNAMES", "WATCHDOG_PID", handoffFDsEnv, handoffParentEnv,
+			daemonunit.HandoffReadyFDEnv, handoffCheckFDsEnv, daemonunit.HandoffGoFDEnv:
 			continue
 		}
 		out = append(out, kv)
@@ -313,23 +340,53 @@ func waitSuccessorStarted(ctx context.Context, intermediate *exec.Cmd, lines <-c
 	return 0, errors.New("intermediate did not start the successor")
 }
 
-func waitSuccessorReady(ctx context.Context, lines <-chan string, timeout time.Duration) error {
+// waitSuccessorReport returns the successor's readiness report: ready, or
+// checks when it waits for this process's pre-traffic checks.
+func waitSuccessorReport(ctx context.Context, lines <-chan string, timeout time.Duration) (string, error) {
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
 	select {
 	case got, ok := <-lines:
-		if ok && got == daemonunit.HandoffReadyMessage {
-			return nil
+		if ok && (got == daemonunit.HandoffReadyMessage || got == daemonunit.HandoffChecksMessage) {
+			return got, nil
 		}
 		if !ok {
-			return errors.New("exited before ready")
+			return "", errors.New("exited before ready")
 		}
-		return fmt.Errorf("unexpected readiness report %q", got)
+		return "", fmt.Errorf("unexpected readiness report %q", got)
 	case <-timer.C:
-		return fmt.Errorf("not ready within %v", timeout)
+		return "", fmt.Errorf("not ready within %v", timeout)
 	case <-ctx.Done():
-		return ctx.Err()
+		return "", ctx.Err()
 	}
+}
+
+// handoffReleaseTimeout bounds the wait for a checked successor to open its
+// listeners once released.
+const handoffReleaseTimeout = 30 * time.Second
+
+// checkSuccessor runs the pre-traffic checks against a successor that waits
+// for them, then releases it and waits until it reports ready.
+func checkSuccessor(ctx context.Context, checks *handoffChecks, lines <-chan string, log *slog.Logger, pid int) error {
+	if checks == nil {
+		return errors.New("successor waits for pre-traffic checks this process did not send")
+	}
+	if err := checks.run(); err != nil {
+		log.Error("hand-off: successor failed its pre-traffic check; this generation keeps serving", "pid", pid, "err", err)
+		return err
+	}
+	log.Info("hand-off: successor passed its pre-traffic checks", "pid", pid, "checks", len(checks.checks))
+	if err := checks.release(); err != nil {
+		return fmt.Errorf("release after pre-traffic checks: %w", err)
+	}
+	report, err := waitSuccessorReport(ctx, lines, handoffReleaseTimeout)
+	if err != nil {
+		return fmt.Errorf("after pre-traffic checks: %w", err)
+	}
+	if report != daemonunit.HandoffReadyMessage {
+		return fmt.Errorf("after pre-traffic checks: unexpected readiness report %q", report)
+	}
+	return nil
 }
 
 // stopSuccessor ends a successor that did not take over. It is PID 1's

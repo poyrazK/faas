@@ -375,6 +375,14 @@ and a 120-second statement timeout. Serving startup performs no DDL. For other
 frameworks, declare your migration tool as the release command and configure it
 to use the migration connection.
 
+A rollback never undoes a migration. A rollback to a release that has not
+served since a later release command ran is refused with
+`rollback_crosses_release`, which gives the `gregale postgres restore`
+command for each database the release commands can migrate, at the moment
+before the earliest of them
+([ADR-1448](adr/1448-releases-that-change-the-database.md); see
+[Releases that change the database](deploys.md#releases-that-change-the-database)).
+
 Migration sessions automatically switch to the schema owner. `SET ROLE NONE`
 removes DDL access until that owner is selected again, so normal migrations do
 not assign ownership to a disposable login. Both runtime and migration

@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -6,28 +6,29 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestMemStoreBuildCacheOutcomeAndStats(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
+	store := state.NewMemStore()
 	acct, err := store.CreateAccount(ctx, "cache-observer@example.com", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, err := store.CreateApp(ctx, App{AccountID: acct.ID, Slug: "cache-observer", RAMMB: 256})
+	app, err := store.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "cache-observer", RAMMB: 256})
 	if err != nil {
 		t.Fatal(err)
 	}
-	dep, err := store.CreateDeployment(ctx, Deployment{AppID: app.ID, Kind: DeploymentKindTarball})
+	dep, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindTarball})
 	if err != nil {
 		t.Fatal(err)
 	}
-	build, err := store.CreateBuild(ctx, dep.ID, DeploymentKindTarball, 1, "")
+	build, err := store.CreateBuild(ctx, dep.ID, state.DeploymentKindTarball, 1, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SetBuildCacheOutcome(ctx, build.ID, "hit", ""); !errors.Is(err, ErrNotFound) {
+	if err := store.SetBuildCacheOutcome(ctx, build.ID, "hit", ""); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("SetBuildCacheOutcome before claim = %v, want ErrNotFound", err)
 	}
 	if _, err := store.ClaimQueuedBuild(ctx, build.ID); err != nil {
@@ -37,7 +38,7 @@ func TestMemStoreBuildCacheOutcomeAndStats(t *testing.T) {
 	if err := store.SetBuildCacheOutcome(ctx, build.ID, "hit", key); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.UpdateBuildStatus(ctx, build.ID, BuildSucceeded, "", false, true); err != nil {
+	if err := store.UpdateBuildStatus(ctx, build.ID, state.BuildSucceeded, "", false, true); err != nil {
 		t.Fatal(err)
 	}
 	got, err := store.BuildByID(ctx, build.ID)
@@ -58,20 +59,20 @@ func TestMemStoreBuildCacheOutcomeAndStats(t *testing.T) {
 
 func TestBuildCacheOutcomeValidation(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
+	store := state.NewMemStore()
 	acct, err := store.CreateAccount(ctx, "cache-validation@example.com", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, err := store.CreateApp(ctx, App{AccountID: acct.ID, Slug: "cache-validation", RAMMB: 256})
+	app, err := store.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "cache-validation", RAMMB: 256})
 	if err != nil {
 		t.Fatal(err)
 	}
-	dep, err := store.CreateDeployment(ctx, Deployment{AppID: app.ID, Kind: DeploymentKindTarball})
+	dep, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindTarball})
 	if err != nil {
 		t.Fatal(err)
 	}
-	build, err := store.CreateBuild(ctx, dep.ID, DeploymentKindTarball, 1, "")
+	build, err := store.CreateBuild(ctx, dep.ID, state.DeploymentKindTarball, 1, "")
 	if err != nil {
 		t.Fatal(err)
 	}

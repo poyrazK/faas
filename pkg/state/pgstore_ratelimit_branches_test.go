@@ -1,12 +1,13 @@
-package state
+package state_test
 
 import (
 	"context"
+	"github.com/onebox-faas/faas/pkg/state"
 	"testing"
 )
 
 func TestPGRateLimitBackend_ConsumeTokenRejectsInvalidPolicy(t *testing.T) {
-	b := &PGRateLimitBackend{}
+	b := &state.PGRateLimitBackend{}
 	for _, tc := range []struct {
 		name       string
 		rps, burst float64
@@ -25,14 +26,14 @@ func TestPGRateLimitBackend_ConsumeTokenRejectsInvalidPolicy(t *testing.T) {
 }
 
 func TestPGRateLimitBackend_InvalidateNoOp(t *testing.T) {
-	b := &PGRateLimitBackend{}
+	b := &state.PGRateLimitBackend{}
 	b.Invalidate("app", "subject", "hobby")
 	b.Invalidate("", "", "")
 }
 
 func TestPGRateLimitBackend_NewStoresFields(t *testing.T) {
-	b := NewPGRateLimitBackend(nil)
-	if b == nil || b.pool != nil {
+	b := state.NewPGRateLimitBackend(nil)
+	if b == nil || (*b.Pool()) != nil {
 		t.Fatalf("backend=%+v", b)
 	}
 }

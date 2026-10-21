@@ -1,7 +1,8 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"net/http"
 	"strings"
 	"testing"
@@ -18,13 +19,13 @@ func TestSecretReferenceCLIExplicitEnvironmentTransport(t *testing.T) {
 			{"unset", http.MethodDelete, "/URL", "URL", "", 204},
 		} {
 			t.Run(environment+"/"+tc.op, func(t *testing.T) {
-				resetJSONOut(t)
-				f := authedFakeAPI(t, strings.ReplaceAll(tc.response, `"environment":"production"`, `"environment":"`+environment+`"`), tc.status)
+				main.ResetJSONOut(t)
+				f := main.AuthedFakeAPI(t, strings.ReplaceAll(tc.response, `"environment":"production"`, `"environment":"`+environment+`"`), tc.status)
 				args := []string{"refs", tc.op, "--app", "shop-api", "--environment", environment}
 				if tc.argument != "" {
 					args = append(args, tc.argument)
 				}
-				if cmdSecrets(args) != 0 {
+				if main.CmdSecrets(args) != 0 {
 					t.Fatal("reference command failed")
 				}
 				expectedPath, expectedQuery := "/v1/apps/shop-api/secret-references"+tc.suffix, "environment="+environment
@@ -32,12 +33,12 @@ func TestSecretReferenceCLIExplicitEnvironmentTransport(t *testing.T) {
 					// Human listing also checks source metadata in this exact environment.
 					expectedPath, expectedQuery = "/v1/apps/shop-api/secrets", "scope="+environment
 				}
-				if f.sawMethod != tc.method || f.sawPath != expectedPath || f.sawQuery != expectedQuery {
-					t.Fatalf("transport: %s %s", f.sawMethod, f.sawPath)
+				if (*f.SawMethod()) != tc.method || (*f.SawPath()) != expectedPath || (*f.SawQuery()) != expectedQuery {
+					t.Fatalf("transport: %s %s", (*f.SawMethod()), (*f.SawPath()))
 				}
 				if tc.op == "set" {
 					var body map[string]string
-					if err := json.Unmarshal(f.sawBody, &body); err != nil || body["reference"] != "secret:DATABASE" {
+					if err := json.Unmarshal((*f.SawBody()), &body); err != nil || body["reference"] != "secret:DATABASE" {
 						t.Fatalf("source names: %+v %v", body, err)
 					}
 				}
@@ -57,9 +58,9 @@ func TestSecretReferenceCLIRejectsImplicitOrInvalidIntent(t *testing.T) {
 		{"set", "--app", "shop-api", "--environment", "production", "URL=secret:DATABASE", "unexpected"},
 		{"unset", "--app", "shop-api", "--environment", "production", "URL", "unexpected"},
 	} {
-		resetJSONOut(t)
-		f := authedFakeAPI(t, `{}`, 200)
-		if cmdSecretReferences(args) == 0 || f.sawMethod != "" {
+		main.ResetJSONOut(t)
+		f := main.AuthedFakeAPI(t, `{}`, 200)
+		if main.CmdSecretReferences(args) == 0 || (*f.SawMethod()) != "" {
 			t.Fatalf("invalid input reached API: %v", args)
 		}
 	}

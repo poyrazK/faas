@@ -18,15 +18,14 @@ func TestOrgPostgresOwnershipMigration(t *testing.T) {
 	for _, mixed := range []bool{false, true} {
 		t.Run(map[bool]string{false: "binding and restore roots", true: "mixed roots refused"}[mixed], func(t *testing.T) {
 			ctx, pool := t.Context(), pgtest.OpenMigrated(t)
-			raw, err := migrations.FS.ReadFile("20261018003100005_org_managed_postgres_ownership.sql")
+			raw, err := migrations.FS.ReadFile("20261019190114433_org_managed_postgres_ownership_online.sql")
 			if err != nil {
 				t.Fatal(err)
 			}
-			up, down, ok := strings.Cut(string(raw), "-- +goose Down")
-			if !ok {
+			if !strings.Contains(string(raw), "-- +goose Down") {
 				t.Fatal("missing rollback")
 			}
-			if _, err := pool.Exec(ctx, down); err != nil {
+			if err := pgtest.ExecMigration(ctx, t, pool, string(raw), false); err != nil {
 				t.Fatal("legacy schema:", err)
 			}
 			store := state.NewPgStore(pool)
@@ -65,7 +64,7 @@ func TestOrgPostgresOwnershipMigration(t *testing.T) {
 				}
 				insert(other.ID)
 			}
-			_, err = pool.Exec(ctx, up)
+			err = pgtest.ExecMigration(ctx, t, pool, string(raw), true)
 			if mixed {
 				if err == nil || !strings.Contains(err.Error(), "remediate mixed managed PostgreSQL ownership") {
 					t.Fatalf("mixed legacy ownership accepted: %v", err)

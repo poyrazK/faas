@@ -444,6 +444,7 @@ func (m *MemStore) checkServiceCapacityDeploymentLocked(dep Deployment) error {
 		m.deployments[dep.ID] = old
 	} else {
 		delete(m.deployments, dep.ID)
+		delete(m.publicBuildURLs, dep.ID)
 	}
 	return err
 }

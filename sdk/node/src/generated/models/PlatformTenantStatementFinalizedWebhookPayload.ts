@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { APIConsumerStatementFeeResponse } from './APIConsumerStatementFeeResponse.js';
 import type { PlatformTenantStatementLineResponse } from './PlatformTenantStatementLineResponse.js';
 /**
  * Immutable cross-app statement snapshot delivered once per finalized revision to tenant-scoped receivers.
@@ -23,6 +24,18 @@ export type PlatformTenantStatementFinalizedWebhookPayload = {
   amount_millicents: number;
   priced: boolean;
   lines: Array<PlatformTenantStatementLineResponse>;
+  /**
+   * The revision's monthly base fees and minimum top-ups (ADR-1322), included in amount_millicents.
+   */
+  fees?: Array<APIConsumerStatementFeeResponse>;
+  /**
+   * Tenant prepaid credit this finalized revision drew (ADR-20261019100331).
+   */
+  credit_applied_millicents?: number;
+  /**
+   * What remains to invoice after the credit.
+   */
+  amount_due_millicents?: number;
   as_of: string;
   finalized_at: string;
 };

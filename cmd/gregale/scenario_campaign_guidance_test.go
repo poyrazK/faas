@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -10,16 +10,17 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"gopkg.in/yaml.v3"
 )
 
-func campaignGuidanceFixture(t *testing.T) (testScenario, testRunReceipt, string) {
+func campaignGuidanceFixture(t *testing.T) (main.TestScenario, main.TestRunReceipt, string) {
 	t.Helper()
-	s := campaignCoverageScenario()
+	s := main.CampaignCoverageScenario()
 	s.Resilience.CampaignCoverage.MinExercised = map[int]int{0: 2, 1: 2}
 	// Retain observed matches only for choice 0, creating a real choice-1 deficit.
-	result := runSweepTest(context.Background(), s, func(ctx context.Context, p testRunPlan) testRunReceipt {
-		r := campaignCoverageReceipt(t, p, "prior-"+p.ReplayCase, false)
+	result := main.RunSweepTest(context.Background(), s, func(ctx context.Context, p main.TestRunPlan) main.TestRunReceipt {
+		r := main.CampaignCoverageReceipt(t, p, "prior-"+p.ReplayCase, false)
 		for i := range r.Steps[0].Load.ChaosPhases {
 			x := r.Steps[0].Load.ChaosPhases[i].Chaos
 			if x != nil && x.Rules[0].Kind == "tcp_reset" {
@@ -29,7 +30,7 @@ func campaignGuidanceFixture(t *testing.T) (testScenario, testRunReceipt, string
 		return r
 	})
 	path := filepath.Join(t.TempDir(), "prior.json")
-	if err := writeTestReport(path, []testRunReceipt{result}); err != nil {
+	if err := main.WriteTestReport(path, []main.TestRunReceipt{result}); err != nil {
 		t.Fatal(err)
 	}
 	next := campaignSeedSearchScenario()
@@ -41,7 +42,7 @@ func campaignGuidanceFixture(t *testing.T) (testScenario, testRunReceipt, string
 func TestCampaignGuidanceDeficitsExclusionsAndReplay(t *testing.T) {
 	s, prior, _ := campaignGuidanceFixture(t)
 	before, _ := json.Marshal(s)
-	x, err := expandTestFaultSweep(s)
+	x, err := main.ExpandTestFaultSweep(s)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +61,7 @@ func TestCampaignGuidanceDeficitsExclusionsAndReplay(t *testing.T) {
 	if c.Preview.Candidates < 5 {
 		t.Fatal("excluded seeds not counted within candidate limit")
 	}
-	y, err := expandTestFaultSweep(s)
+	y, err := main.ExpandTestFaultSweep(s)
 	if err != nil || !reflect.DeepEqual(x, y) {
 		t.Fatal("nondeterministic guidance", err)
 	}
@@ -72,7 +73,7 @@ func TestCampaignGuidanceDeficitsExclusionsAndReplay(t *testing.T) {
 	if failed.Status != "failed" || failed.FaultMatrix.CampaignCoverage.Choices[0].MinExercised != 0 || failed.FaultMatrix.CampaignCoverage.Choices[1].RequirementStatus != "failed" {
 		t.Fatal("prior counts passed new gate")
 	}
-	prepared, err := prepareTestReplay(&failed, map[string]testScenario{"checkout": s}, ".")
+	prepared, err := main.PrepareTestReplay(&failed, map[string]main.TestScenario{"checkout": s}, ".")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,14 +84,17 @@ func TestCampaignGuidanceDeficitsExclusionsAndReplay(t *testing.T) {
 	if passed.Status != "passed" {
 		t.Fatal("additional observed coverage failed", passed.Error)
 	}
-	if err := validateTestCampaignGuidanceOptions(x, "other", []string{"cold"}, nil); err == nil {
+	if err := main.ValidateTestCampaignGuidanceOptions(x, "other", []string{"cold"}, nil); err == nil {
 		t.Fatal("scenario mismatch allowed")
 	}
-	if err := validateTestCampaignGuidanceOptions(x, "checkout", []string{"warm"}, nil); err == nil {
+	if err := main.ValidateTestCampaignGuidanceOptions(x, "checkout", []string{"warm"}, nil); err == nil {
 		t.Fatal("profile mismatch allowed")
 	}
 	var calls int
-	wrong := runTestFaultMatrix(context.Background(), testRunPlan{Prepared: &testPreparedScenario{Name: "checkout", Engine: "real-vm", Scenario: x}, Profile: "warm"}, func(context.Context, testRunPlan) testRunReceipt { calls++; return testRunReceipt{Status: "passed"} })
+	wrong := main.RunTestFaultMatrix(context.Background(), main.TestRunPlan{Prepared: &main.TestPreparedScenario{Name: "checkout", Engine: "real-vm", Scenario: x}, Profile: "warm"}, func(context.Context, main.TestRunPlan) main.TestRunReceipt {
+		calls++
+		return main.TestRunReceipt{Status: "passed"}
+	})
 	if wrong.Status != "failed" || calls != 0 {
 		t.Fatal("incompatible profile executed")
 	}
@@ -100,7 +104,7 @@ func TestCampaignGuidanceRejectsInvalidEvidenceAndChangedInputs(t *testing.T) {
 	for _, kind := range []string{"duplicate-root", "duplicate-leaf", "summary", "choice", "cleanup", "skipped", "missing-history", "workload", "already-met", "missing-id", "excluded-range", "attempt", "seed-metadata", "run-counts", "replay", "seed-summary", "interrupted", "aborted-last-cycle"} {
 		t.Run(kind, func(t *testing.T) {
 			s, prior, path := campaignGuidanceFixture(t)
-			rows := []testRunReceipt{prior}
+			rows := []main.TestRunReceipt{prior}
 			switch kind {
 			case "aborted-last-cycle":
 				rows[0].FaultMatrix.Cases[0].Resilience.History[0].Steps[0].Load.OutageCycles.Completed--
@@ -139,27 +143,27 @@ func TestCampaignGuidanceRejectsInvalidEvidenceAndChangedInputs(t *testing.T) {
 			case "excluded-range":
 				s.Resilience.CampaignCoverage.SeedSearch.MaxCandidates = 3
 			}
-			if err := writeTestReport(path, rows); err != nil {
+			if err := main.WriteTestReport(path, rows); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := expandTestFaultSweep(s); err == nil {
+			if _, err := main.ExpandTestFaultSweep(s); err == nil {
 				t.Fatal("invalid guidance accepted")
 			}
 		})
 	}
 	s, _, path := campaignGuidanceFixture(t)
-	x, err := expandTestFaultSweep(s)
+	x, err := main.ExpandTestFaultSweep(s)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := validateTestCampaignGuidanceOptions(x, "checkout", []string{"cold"}, []string{path}); err == nil {
+	if err := main.ValidateTestCampaignGuidanceOptions(x, "checkout", []string{"cold"}, []string{path}); err == nil {
 		t.Fatal("input overwrite allowed")
 	}
 	hardlink := filepath.Join(t.TempDir(), "alias.json")
 	if err := os.Link(path, hardlink); err != nil {
 		t.Fatal(err)
 	}
-	if err := validateTestCampaignGuidanceOptions(x, "checkout", []string{"cold"}, []string{hardlink}); err == nil {
+	if err := main.ValidateTestCampaignGuidanceOptions(x, "checkout", []string{"cold"}, []string{hardlink}); err == nil {
 		t.Fatal("hardlink overwrite allowed")
 	}
 	failed := runCampaignRequirementsTest(t, s, true, 0)
@@ -169,10 +173,10 @@ func TestCampaignGuidanceRejectsInvalidEvidenceAndChangedInputs(t *testing.T) {
 	}
 	_, _ = f.WriteString("\n")
 	_ = f.Close()
-	if err := validateTestCampaignGuidanceOptions(x, "checkout", []string{"cold"}, nil); err == nil {
+	if err := main.ValidateTestCampaignGuidanceOptions(x, "checkout", []string{"cold"}, nil); err == nil {
 		t.Fatal("changed report allowed")
 	}
-	if _, err := prepareTestReplay(&failed, map[string]testScenario{"checkout": s}, "."); err == nil {
+	if _, err := main.PrepareTestReplay(&failed, map[string]main.TestScenario{"checkout": s}, "."); err == nil {
 		t.Fatal("changed report replay allowed")
 	}
 }
@@ -184,11 +188,11 @@ func TestCampaignGuidanceOfflineRelativePathAndReports(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	s := campaignCoverageScenario()
+	s := main.CampaignCoverageScenario()
 	s.Resilience.CampaignCoverage.MinExercised = map[int]int{0: 2, 1: 2}
-	save := func(s testScenario) string {
+	save := func(s main.TestScenario) string {
 		t.Helper()
-		body, err := yaml.Marshal(testManifest{Version: 1, Scenarios: map[string]testScenario{"checkout": s}})
+		body, err := yaml.Marshal(main.TestManifest{Version: 1, Scenarios: map[string]main.TestScenario{"checkout": s}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -199,43 +203,43 @@ func TestCampaignGuidanceOfflineRelativePathAndReports(t *testing.T) {
 		return path
 	}
 	manifest := save(s)
-	normalized, _, err := readTestManifestForScenario(manifest, "checkout", nil)
+	normalized, _, err := main.ReadTestManifestForScenario(manifest, "checkout", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	prior := runCampaignRequirementsTest(t, normalized["checkout"], true, 0)
 	report := filepath.Join(dir, "prior.json")
-	if err := writeTestReport(report, []testRunReceipt{prior}); err != nil {
+	if err := main.WriteTestReport(report, []main.TestRunReceipt{prior}); err != nil {
 		t.Fatal(err)
 	}
 	next := campaignSeedSearchScenario()
 	next.Resilience.CampaignCoverage.SeedSearch.FromReport = "prior.json"
 	next.Resilience.CampaignCoverage.SeedSearch.RunID = prior.RunID
 	manifest = save(next)
-	normalized, _, err = readTestManifestForScenario(manifest, "checkout", nil)
+	normalized, _, err = main.ReadTestManifestForScenario(manifest, "checkout", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	oldOut, oldJSON := osStdout, jsonOutput
-	defer func() { osStdout, jsonOutput = oldOut, oldJSON }()
+	oldOut, oldJSON := (*main.OsStdout), (*main.JsonOutput)
+	defer func() { (*main.OsStdout), (*main.JsonOutput) = oldOut, oldJSON }()
 	var out bytes.Buffer
-	osStdout = &out
-	jsonOutput = false
+	(*main.OsStdout) = &out
+	(*main.JsonOutput) = false
 	t.Setenv("FAAS_TOKEN", "")
-	if cmdTest([]string{"--manifest", manifest, "--scenario", "checkout", "--validate"}) != 0 || !strings.Contains(out.String(), "guided by run") {
+	if main.CmdTest([]string{"--manifest", manifest, "--scenario", "checkout", "--validate"}) != 0 || !strings.Contains(out.String(), "guided by run") {
 		t.Fatal("guidance preview missing", out.String())
 	}
 	out.Reset()
-	jsonOutput = true
-	if cmdTest([]string{"--manifest", manifest, "--scenario", "checkout", "--validate"}) != 0 || !strings.Contains(out.String(), "report_sha256") {
+	(*main.JsonOutput) = true
+	if main.CmdTest([]string{"--manifest", manifest, "--scenario", "checkout", "--validate"}) != 0 || !strings.Contains(out.String(), "report_sha256") {
 		t.Fatal("JSON guidance missing", out.String())
 	}
 	result := runCampaignRequirementsTest(t, normalized["checkout"], true, 0)
-	if _, err := prepareTestReplay(&result, normalized, dir); err != nil {
+	if _, err := main.PrepareTestReplay(&result, normalized, dir); err != nil {
 		t.Fatal("normalized replay failed", err)
 	}
 	html := filepath.Join(dir, "report.html")
-	if err := writeTestHTMLReport(html, "", []testRunReceipt{result}); err != nil {
+	if err := main.WriteTestHTMLReport(html, "", []main.TestRunReceipt{result}); err != nil {
 		t.Fatal(err)
 	}
 	body, _ := os.ReadFile(html)
@@ -249,16 +253,16 @@ func TestCampaignGuidanceLegacyPassingLeavesAndRepeatedRuns(t *testing.T) {
 	for i := range prior.FaultMatrix.Cases {
 		prior.FaultMatrix.Cases[i].Resilience.History[0].Replay = nil
 	}
-	if err := writeTestReport(path, []testRunReceipt{prior}); err != nil {
+	if err := main.WriteTestReport(path, []main.TestRunReceipt{prior}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := expandTestFaultSweep(s); err != nil {
+	if _, err := main.ExpandTestFaultSweep(s); err != nil {
 		t.Fatal("legacy passing leaves rejected", err)
 	}
 	s.Resilience.Runs = 2
 	s.Resilience.CampaignCoverage.MaxRuns = 8
 	s.Resilience.CampaignCoverage.MaxWorkloadMinutes = 32
-	x, err := expandTestFaultSweep(s)
+	x, err := main.ExpandTestFaultSweep(s)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -267,7 +271,7 @@ func TestCampaignGuidanceLegacyPassingLeavesAndRepeatedRuns(t *testing.T) {
 			t.Fatal("new batch repeat weights missing")
 		}
 	}
-	if err := validateTestSuiteOptions([]testPreparedScenario{{Name: "checkout", Engine: "real-vm", Scenario: x, Profiles: []string{"warm"}}}, testSuiteOptions{Repeat: 1}); err == nil {
+	if err := main.ValidateTestSuiteOptions([]main.TestPreparedScenario{{Name: "checkout", Engine: "real-vm", Scenario: x, Profiles: []string{"warm"}}}, main.TestSuiteOptions{Repeat: 1}); err == nil {
 		t.Fatal("suite mismatched profile allowed")
 	}
 }

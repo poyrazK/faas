@@ -58,6 +58,11 @@ func touchGitOpsMemoryIntent(memory *environmentGitOpsMemory) {
 }
 
 func (m *MemStore) gitOpsGuardAppRemovalLocked(appID string) ([]*environmentGitOpsMemory, error) {
+	for _, root := range m.sourceBuildRootfs {
+		if sameStandardUUID(root.Input.AppID, appID) && m.buildArtifactSourcePinnedLocked(root.ID) {
+			return nil, ErrConflict
+		}
+	}
 	var sources []*environmentGitOpsMemory
 	for _, memory := range m.environmentGitOps {
 		if memory.source.Detached {
@@ -111,7 +116,7 @@ func (m *MemStore) gitOpsGuardConfigurationLocked(config ProjectEnvironmentConfi
 func (m *MemStore) gitOpsSnapshotLocked(memory *environmentGitOpsMemory) gitOpsIntentSnapshot {
 	source := memory.source
 	snapshot := gitOpsIntentSnapshot{Version: source.IntentVersion, Project: m.projects[source.ProjectID].Slug, Environment: source.EnvironmentSlug, EnvironmentID: source.EnvironmentID,
-		Repository: source.Spec.Repository, Plan: m.accounts[source.AccountID].Plan, SourceID: source.ID, Prune: source.Spec.Prune}
+		GitSource: source.Spec, Repository: source.Spec.Repository, Plan: m.accounts[source.AccountID].Plan, SourceID: source.ID, Prune: source.Spec.Prune}
 	config := m.projectEnvironmentConfigLatestLocked(source.ProjectID, source.EnvironmentSlug)
 	_ = json.Unmarshal(config.Values, &snapshot.Configuration)
 	for resource, appID := range memory.resources {
@@ -581,7 +586,9 @@ func (m *MemStore) applyEnvironmentGitOps(_ context.Context, lease EnvironmentGi
 	}
 	if configChanged {
 		key := projectEnvironmentConfigKey(source.ProjectID, source.EnvironmentSlug)
+		before := m.latestProjectEnvironmentConfigValuesLocked(source.ProjectID, source.EnvironmentSlug)
 		m.projectEnvironmentConfigs[key] = append(m.projectEnvironmentConfigs[key], ProjectEnvironmentConfig{ID: newID(), AccountID: source.AccountID, ProjectID: source.ProjectID, EnvironmentSlug: source.EnvironmentSlug, Version: int64(len(m.projectEnvironmentConfigs[key]) + 1), Values: configValues, ConfigHash: configHash, CreatedAt: now})
+		m.projectConfigRuntimeChangeLocked(source.ProjectID, source.EnvironmentSlug, before, configValues, now)
 	}
 	if len(steps) > 0 {
 		memory.source.IntentVersion++

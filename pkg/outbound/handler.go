@@ -16,6 +16,7 @@ import (
 	"go.opentelemetry.io/otel/codes"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/trace"
 )
 
@@ -73,6 +74,10 @@ type Handler struct {
 	// during the staged preview rollout; nil admits every account
 	// (ADR-998).
 	AIGatewayRollout AIGatewayRollout
+	// AIGatewayFlags, when set, is the live ai_gateway platform flag
+	// (ADR-1700). It replaces AIGatewayEnabled and AIGatewayRollout, so an
+	// operator change applies to the next call without a restart.
+	AIGatewayFlags *platformflags.Set
 	// aiContainers charges each code-interpreter container once per
 	// session window (ADR-1433).
 	aiContainers aiContainerSessions
@@ -81,6 +86,14 @@ type Handler struct {
 	promptPrefixes promptPrefixes
 	// routeRandom replaces the routing draw in tests (ADR-1434).
 	routeRandom func(int) int
+}
+
+// aiGatewayOn reports the AI gateway kill switch.
+func (h *Handler) aiGatewayOn() bool {
+	if h.AIGatewayFlags != nil {
+		return h.AIGatewayFlags.Snapshot().GloballyEnabled(platformflags.AIGateway)
+	}
+	return h.AIGatewayEnabled
 }
 
 // ManagedCredentialResolver supplies a customer-sealed Authorization value
@@ -223,7 +236,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	metricIntegrationID := integration.MetricLabel()
-	if integration.AIProvider != "" && !h.AIGatewayEnabled {
+	if integration.AIProvider != "" && !h.aiGatewayOn() {
 		h.Metrics.ObserveRejection(metricIntegrationID, "ai_gateway_disabled")
 		writeProblem(w, http.StatusServiceUnavailable, "outbound_ai_gateway_disabled", "The AI gateway is not enabled on this platform", "")
 		return
@@ -320,6 +333,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				"letters, digits, _ . or - starting with a letter, values of 1 to 64 letters, digits or . _ : @ + / -", "")
 		return
 	}
+	// ADR 20261019072722: a WebSocket upgrade on an AI integration is a
+	// realtime session, metered or let through unmetered, or refused.
+	realtime, realtimeRejection := planRealtime(r, integration, path)
+	if realtimeRejection != nil {
+		h.Metrics.ObserveRejection(metricIntegrationID, realtimeRejection.code)
+		writeProblem(w, realtimeRejection.status, realtimeRejection.code, realtimeRejection.title, "")
+		return
+	}
 	var managedAuthorization string
 	var poolKeys []ManagedKey
 	if integration.ProviderAuthMode == ProviderAuthManaged && integration.CredentialSource != CredentialSourceCustomerSealed {
@@ -391,7 +412,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if aiPlan != nil {
 		reserve, guard = aiPlan.reserve, aiPlan.guard
 	}
-	decision, err := h.Backend.Admit(r.Context(), AdmissionSpec{
+	spec := AdmissionSpec{
 		IntegrationID: integration.ID, RatePerSecond: integration.RatePerSecond,
 		Burst: integration.Burst, MaxInFlight: integration.MaxInFlight,
 		DailyRequestLimit:              integration.DailyRequestLimit,
@@ -415,7 +436,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		RetryBudgetPerMinute:           integration.RetryBudgetPerMinute,
 		LeaseTTL:                       integration.RequestTimeout,
 		PolicyRevision:                 integration.PolicyRevision,
-	})
+	}
+	decision, err := h.Backend.Admit(r.Context(), spec)
 	if err != nil {
 		h.Metrics.ObserveAdmission(metricIntegrationID, "error")
 		h.Metrics.ObserveRejection(metricIntegrationID, "backend_unavailable")
@@ -473,7 +495,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			writeProblem(w, http.StatusServiceUnavailable, "outbound_provider_credential_unavailable", "Outbound provider credential is unavailable", "1")
 			return
 		}
-		if pool, ok := h.CredentialResolver.(ManagedKeyPoolResolver); ok && h.AIGatewayEnabled {
+		if pool, ok := h.CredentialResolver.(ManagedKeyPoolResolver); ok && h.aiGatewayOn() {
 			// ADR-991: a pool of keys rotates per call and on 429s.
 			keys, poolErr := pool.Authorizations(ctx, integration.ID)
 			if keys = validManagedKeys(keys); poolErr == nil && len(keys) > 0 {
@@ -547,6 +569,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			writeProblem(w, http.StatusServiceUnavailable, "outbound_provider_credential_unavailable", "Outbound provider credential is unavailable", "1")
 			return
 		}
+	}
+	if realtime != realtimeNone {
+		// The upgrade itself was admitted like a call, with no reservation;
+		// each response is admitted with its own (ADR 20261019072722).
+		h.serveRealtime(w, r, &realtimeSession{h: h, integration: integration, appID: appID, metricID: metricIntegrationID,
+			metered: realtime == realtimeMetered, spec: spec, endUser: aiEndUser, tags: aiTags,
+			model: realtimeURLModel(r.URL.Query()), live: livePath(integration.AIProvider, path)}, upstreamReq)
+		return
 	}
 	var resp *http.Response
 	attempts := 0
@@ -978,5 +1008,13 @@ func (h *Handler) aiGatewayAdmitsAccount(integration Integration) bool {
 	if integration.OwnerKind != IntegrationOwnerCustomer {
 		return true
 	}
-	return h.AIGatewayRollout.Allows(integration.AccountID) && AIGatewayEntitled(integration.AccountPlan)
+	if !AIGatewayEntitled(integration.AccountPlan) {
+		return false
+	}
+	if h.AIGatewayFlags != nil {
+		return h.AIGatewayFlags.Enabled(platformflags.AIGateway, platformflags.Subject{
+			AccountID: integration.AccountID, Plan: string(integration.AccountPlan),
+		})
+	}
+	return h.AIGatewayRollout.Allows(integration.AccountID)
 }

@@ -8,7 +8,7 @@
 export type FinancialPrice = {
   version: string;
   meter: string;
-  currency: 'EUR';
+  currency: 'USD' | 'EUR';
   unit: string;
   unit_quantity: number;
   millicents_per_unit: number;

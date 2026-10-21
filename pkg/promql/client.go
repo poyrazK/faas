@@ -156,7 +156,10 @@ func (c *Client) QueryScalar(ctx context.Context, query string) (float64, error)
 // and the new vector-query helpers — extracted here so all three
 // share the same wire shape.
 type queryResponse struct {
-	Data struct {
+	Status   string   `json:"status"`
+	Warnings []string `json:"warnings"`
+	Infos    []string `json:"infos"`
+	Data     struct {
 		ResultType string `json:"resultType"`
 		Result     []struct {
 			Metric map[string]string `json:"metric"`
@@ -177,12 +180,36 @@ type VectorSample struct {
 // with malformed values are ignored; a non-vector response is a contract
 // error. This is used by the public-status evaluator for ALERTS{}.
 func (c *Client) QueryVector(ctx context.Context, query string) ([]VectorSample, error) {
+	return c.queryVector(ctx, query, false)
+}
+
+// QueryVectorStrict rejects malformed samples rather than dropping evidence.
+// Use it when omitted rows could make an incomplete health read look quiet.
+func (c *Client) QueryVectorStrict(ctx context.Context, query string) ([]VectorSample, error) {
+	return c.queryVector(ctx, query, true)
+}
+
+// QueryVectorStrictAt pins related evidence reads to the same evaluation time.
+// Use timestamp(selector) when original sample freshness matters: an instant
+// query's result timestamp is the evaluation time, not the scrape time.
+func (c *Client) QueryVectorStrictAt(ctx context.Context, query string, at time.Time) ([]VectorSample, error) {
+	return c.queryVectorAt(ctx, query, true, &at)
+}
+
+func (c *Client) queryVector(ctx context.Context, query string, strict bool) ([]VectorSample, error) {
+	return c.queryVectorAt(ctx, query, strict, nil)
+}
+
+func (c *Client) queryVectorAt(ctx context.Context, query string, strict bool, at *time.Time) ([]VectorSample, error) {
 	if c == nil || c.baseURL == "" {
 		return nil, fmt.Errorf("promql: client not configured")
 	}
 	qctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 	u := c.baseURL + "/api/v1/query?query=" + url.QueryEscape(query)
+	if at != nil {
+		u += "&time=" + url.QueryEscape(at.UTC().Format(time.RFC3339Nano))
+	}
 	req, err := http.NewRequestWithContext(qctx, http.MethodGet, u, nil)
 	if err != nil {
 		return nil, err
@@ -203,17 +230,32 @@ func (c *Client) QueryVector(ctx context.Context, query string) ([]VectorSample,
 	if err := validatePromQLSeries(len(payload.Data.Result)); err != nil {
 		return nil, err
 	}
+	if strict && (payload.Status != "success" || payload.Data.Result == nil || len(payload.Warnings) > 0 || len(payload.Infos) > 0) {
+		return nil, errors.New("promql: incomplete vector response")
+	}
 	if payload.Data.ResultType != "vector" {
 		return nil, fmt.Errorf("expected vector, got %q for query %q", payload.Data.ResultType, query)
 	}
 	out := make([]VectorSample, 0, len(payload.Data.Result))
 	for _, row := range payload.Data.Result {
+		if strict {
+			timestamp, ok := row.Value[0].(float64)
+			if !ok || math.IsNaN(timestamp) || math.IsInf(timestamp, 0) {
+				return nil, errors.New("promql: invalid vector timestamp")
+			}
+		}
 		raw, ok := row.Value[1].(string)
 		if !ok {
+			if strict {
+				return nil, errors.New("promql: invalid vector sample")
+			}
 			continue
 		}
 		value, err := strconv.ParseFloat(raw, 64)
 		if err != nil || math.IsNaN(value) || math.IsInf(value, 0) {
+			if strict {
+				return nil, errors.New("promql: invalid vector value")
+			}
 			continue
 		}
 		labels := make(map[string]string, len(row.Metric))

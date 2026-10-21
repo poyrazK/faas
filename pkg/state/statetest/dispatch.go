@@ -25,6 +25,19 @@ import (
 
 // memDispatched lists the methods Mem forwards to its override.
 var memDispatched = map[string]bool{
+	"RestoreApp":                             true,
+	"RestoreAppWithActivity":                 true,
+	"AppTaskByID":                            true,
+	"LiveDeployment":                         true,
+	"ResolveEnvironmentGitOpsServiceBinding": true,
+
+	"ClaimNextQueuedBuild":                                    true,
+	"ClaimQueuedBuild":                                        true,
+	"ListBuildsAwaitingImage":                                 true,
+	"ListDeploymentsForOperator":                              true,
+	"ListResumableImagePreparations":                          true,
+	"PublishImagePreparationLayer":                            true,
+	"RequeueBuildIfClaim":                                     true,
 	"ScenarioWebhookDeliveryBlocked":                          true,
 	"CreateInstanceWithMode":                                  true,
 	"CreateAndClaimJobInstance":                               true,
@@ -36,11 +49,14 @@ var memDispatched = map[string]bool{
 	"BindInstanceSnapshotRecovery":                            true,
 	"CompleteOperatorPark":                                    true,
 	"CompleteOperatorRestart":                                 true,
-	"ListProjectsForOrg":                                      true,
-	"ProjectByOrgSlug":                                        true,
 	"ProcessNextWorkflowInitialManualCompletion":              true,
 	"AcceptEntityOutboxDelivery":                              true,
 	"AccountPasswordByAccountID":                              true,
+	"DeploymentSidecarRAMs":                                   true,
+	"ListBillingWindowInstances":                              true,
+	"ListInstancesForApp":                                     true,
+	"AccountByID":                                             true,
+	"InstanceListByNodeForRecovery":                           true,
 	"ActiveComputeNodes":                                      true,
 	"ActivePrewarmFloor":                                      true,
 	"ActiveProjectReleaseSet":                                 true,
@@ -52,10 +68,13 @@ var memDispatched = map[string]bool{
 	"AppRuntimeConfigChangedAtInScope":                        true,
 	"ClaimPreviewTeardown":                                    true,
 	"CloneProjectEnvironment":                                 true,
+	"ComputeNodeByID":                                         true,
 	"ComputeNodeUsedMB":                                       true,
 	"ComputeNodeUsedMBByNode":                                 true,
 	"CountWakeBootStarted24h":                                 true,
 	"CreateAppTask":                                           true,
+	"DeploymentClearSnapshotBackoff":                          true,
+	"EnvironmentWorkloadAdmissionRetired":                     true,
 	"CreateCheckedRollback":                                   true,
 	"CreateInstance":                                          true,
 	"CreateProjectEnvironmentPromotion":                       true,
@@ -120,14 +139,22 @@ var memDispatched = map[string]bool{
 	"RecoverCanaryRouteHealth":                                true,
 	"RenewInvocationLease":                                    true,
 	"RenewOperationExecution":                                 true,
+	"RequestTelemetryAnalyticsByDimension":                    true,
+	"RequestTelemetryAnalyticsByRoute":                        true,
 	"RequestTelemetryRouteCustomers":                          true,
 	"ResolveEnvironmentQualificationService":                  true,
 	"ResolveInstanceMigrationCommit":                          true,
+	"ResolveProjectServiceBinding":                            true,
 	"RouteAdviceConsumers":                                    true,
 	"RouteAdviceRouteStats":                                   true,
 	"RouteAdviceThrottleExcess":                               true,
+	"ListRouteInsights":                                       true,
+	"ResolveStaleRouteInsights":                               true,
 	"RouteAwakeMinutes":                                       true,
+	"RouteInsightCandidateApps":                               true,
+	"UpsertRouteInsight":                                      true,
 	"RouteAwakeRouteMinutes":                                  true,
+	"RouteAwakeSourceMinutes":                                 true,
 	"RuntimeAppValuesForDeployment":                           true,
 	"RuntimeScalingStateForDeployment":                        true,
 	"SafeReleaseWorkerLeaseHealth":                            true,
@@ -181,6 +208,46 @@ var memDispatched = map[string]bool{
 	"WorkflowAlertSnapshot":                                   true,
 	"WorkflowRecoveryReviewCompletionNotificationAllowed":     true,
 	"WorkflowRecoveryReviewNotificationAllowed":               true,
+
+	"PutIdempotent":                                 true,
+	"AttachDeploymentSubmission":                    true,
+	"CreateBuildWithID":                             true,
+	"UpdateProjectEnvironmentPromotionWorkload":     true,
+	"UpdateProjectEnvironmentPromotionVerification": true,
+	"ListPendingSafeProjectSubmissions":             true,
+	"ProjectSubmission":                             true,
+	"ProjectReleaseSetByID":                         true,
+	"AdvanceProjectReleaseVerification":             true,
+	"ReconcileSafeProjectSubmission":                true,
+	"ReleaseAppTaskByDeployment":                    true,
+	"RecordProjectMigrationBaseline":                true,
+	"PinnedProjectReleaseWorkers":                   true,
+	"HeldProjectReleaseWorkers":                     true,
+}
+
+func (s *Mem) AppTaskByID(ctx context.Context, account, app, id string) (state.AppTask, error) {
+	if over, ok := s.over.(interface {
+		AppTaskByID(context.Context, string, string, string) (state.AppTask, error)
+	}); ok {
+		return over.AppTaskByID(ctx, account, app, id)
+	}
+	return s.MemStore.AppTaskByID(ctx, account, app, id)
+}
+
+func (s *Mem) LiveDeployment(ctx context.Context, appID string) (state.Deployment, error) {
+	if o, ok := s.over.(interface {
+		LiveDeployment(context.Context, string) (state.Deployment, error)
+	}); ok {
+		return o.LiveDeployment(ctx, appID)
+	}
+	return s.MemStore.LiveDeployment(ctx, appID)
+}
+
+func (s *Mem) ResolveEnvironmentGitOpsServiceBinding(ctx context.Context, appID, deploymentID, service string) (state.EnvironmentGitOpsServiceBindingRoute, bool, bool, error) {
+	if o, ok := s.over.(state.EnvironmentGitOpsServiceBindingStore); ok {
+		return o.ResolveEnvironmentGitOpsServiceBinding(ctx, appID, deploymentID, service)
+	}
+	return s.MemStore.ResolveEnvironmentGitOpsServiceBinding(ctx, appID, deploymentID, service)
 }
 
 func (s *Mem) CompleteOperatorRestart(ctx context.Context, completion state.OperatorRestartCompletion) (state.OperatorRestartResult, error) {
@@ -190,6 +257,24 @@ func (s *Mem) CompleteOperatorRestart(ctx context.Context, completion state.Oper
 		return override.CompleteOperatorRestart(ctx, completion)
 	}
 	return s.MemStore.CompleteOperatorRestart(ctx, completion)
+}
+
+func (s *Mem) RestoreApp(ctx context.Context, id string, limits api.Limits) (state.App, error) {
+	if o, ok := s.over.(interface {
+		RestoreApp(context.Context, string, api.Limits) (state.App, error)
+	}); ok {
+		return o.RestoreApp(ctx, id, limits)
+	}
+	return s.MemStore.RestoreApp(ctx, id, limits)
+}
+
+func (s *Mem) RestoreAppWithActivity(ctx context.Context, id string, limits api.Limits, entry state.OrgActivity) (state.App, int64, error) {
+	if o, ok := s.over.(interface {
+		RestoreAppWithActivity(context.Context, string, api.Limits, state.OrgActivity) (state.App, int64, error)
+	}); ok {
+		return o.RestoreAppWithActivity(ctx, id, limits, entry)
+	}
+	return s.MemStore.RestoreAppWithActivity(ctx, id, limits, entry)
 }
 
 func (s *Mem) AcceptEntityOutboxDelivery(p0 context.Context, p1 state.AppWebhookDelivery) (string, error) {
@@ -253,6 +338,24 @@ func (s *Mem) AdmitScheduledWorkflow(p0 context.Context, p1 string, p2 string, p
 		return o.AdmitScheduledWorkflow(p0, p1, p2, p3, p4)
 	}
 	return s.MemStore.AdmitScheduledWorkflow(p0, p1, p2, p3, p4)
+}
+
+func (s *Mem) ComputeNodeByID(p0 context.Context, p1 string) (state.ComputeNode, error) {
+	if o, ok := s.over.(interface {
+		ComputeNodeByID(context.Context, string) (state.ComputeNode, error)
+	}); ok {
+		return o.ComputeNodeByID(p0, p1)
+	}
+	return s.MemStore.ComputeNodeByID(p0, p1)
+}
+
+func (s *Mem) DeploymentClearSnapshotBackoff(p0 context.Context, p1 string) error {
+	if o, ok := s.over.(interface {
+		DeploymentClearSnapshotBackoff(context.Context, string) error
+	}); ok {
+		return o.DeploymentClearSnapshotBackoff(p0, p1)
+	}
+	return s.MemStore.DeploymentClearSnapshotBackoff(p0, p1)
 }
 
 func (s *Mem) AppByID(p0 context.Context, p1 string) (state.App, error) {
@@ -415,6 +518,15 @@ func (s *Mem) EdgeRuleHitStatsForApp(p0 context.Context, p1 string, p2 time.Time
 		return o.EdgeRuleHitStatsForApp(p0, p1, p2)
 	}
 	return s.MemStore.EdgeRuleHitStatsForApp(p0, p1, p2)
+}
+
+func (s *Mem) EnvironmentWorkloadAdmissionRetired(p0 context.Context, p1 string, p2 string) (bool, error) {
+	if o, ok := s.over.(interface {
+		EnvironmentWorkloadAdmissionRetired(context.Context, string, string) (bool, error)
+	}); ok {
+		return o.EnvironmentWorkloadAdmissionRetired(p0, p1, p2)
+	}
+	return s.MemStore.EnvironmentWorkloadAdmissionRetired(p0, p1, p2)
 }
 
 func (s *Mem) EnqueueInvocation(p0 context.Context, p1 state.Invocation) (state.Invocation, error) {
@@ -930,6 +1042,24 @@ func (s *Mem) RenewOperationExecution(p0 context.Context, p1 string, p2 int, p3 
 	return s.MemStore.RenewOperationExecution(p0, p1, p2, p3)
 }
 
+func (s *Mem) RequestTelemetryAnalyticsByDimension(p0 context.Context, p1 sqlc.RequestTelemetryAnalyticsByDimensionParams) ([]sqlc.RequestTelemetryAnalyticsByDimensionRow, error) {
+	if o, ok := s.over.(interface {
+		RequestTelemetryAnalyticsByDimension(context.Context, sqlc.RequestTelemetryAnalyticsByDimensionParams) ([]sqlc.RequestTelemetryAnalyticsByDimensionRow, error)
+	}); ok {
+		return o.RequestTelemetryAnalyticsByDimension(p0, p1)
+	}
+	return s.MemStore.RequestTelemetryAnalyticsByDimension(p0, p1)
+}
+
+func (s *Mem) RequestTelemetryAnalyticsByRoute(p0 context.Context, p1 sqlc.RequestTelemetryAnalyticsByRouteParams) ([]sqlc.RequestTelemetryAnalyticsByRouteRow, error) {
+	if o, ok := s.over.(interface {
+		RequestTelemetryAnalyticsByRoute(context.Context, sqlc.RequestTelemetryAnalyticsByRouteParams) ([]sqlc.RequestTelemetryAnalyticsByRouteRow, error)
+	}); ok {
+		return o.RequestTelemetryAnalyticsByRoute(p0, p1)
+	}
+	return s.MemStore.RequestTelemetryAnalyticsByRoute(p0, p1)
+}
+
 func (s *Mem) RequestTelemetryRouteCustomers(p0 context.Context, p1 sqlc.RequestTelemetryRouteCustomersParams) ([]sqlc.RequestTelemetryRouteCustomersRow, error) {
 	if o, ok := s.over.(interface {
 		RequestTelemetryRouteCustomers(context.Context, sqlc.RequestTelemetryRouteCustomersParams) ([]sqlc.RequestTelemetryRouteCustomersRow, error)
@@ -937,6 +1067,13 @@ func (s *Mem) RequestTelemetryRouteCustomers(p0 context.Context, p1 sqlc.Request
 		return o.RequestTelemetryRouteCustomers(p0, p1)
 	}
 	return s.MemStore.RequestTelemetryRouteCustomers(p0, p1)
+}
+
+func (s *Mem) ResolveProjectServiceBinding(p0 context.Context, p1, p2, p3 string, p4 ...string) (state.EnvironmentGitOpsServiceBindingRoute, bool, bool, error) {
+	if o, ok := s.over.(state.ProjectServiceGraphStore); ok {
+		return o.ResolveProjectServiceBinding(p0, p1, p2, p3, p4...)
+	}
+	return s.MemStore.ResolveProjectServiceBinding(p0, p1, p2, p3, p4...)
 }
 
 func (s *Mem) ResolveEnvironmentQualificationService(p0 context.Context, p1 state.EnvironmentQualificationServiceRequest) (state.EnvironmentQualificationServiceRoute, error) {
@@ -984,6 +1121,42 @@ func (s *Mem) RouteAdviceThrottleExcess(p0 context.Context, p1 sqlc.RouteAdviceT
 	return s.MemStore.RouteAdviceThrottleExcess(p0, p1)
 }
 
+func (s *Mem) ListRouteInsights(p0 context.Context, p1 sqlc.ListRouteInsightsParams) ([]sqlc.ListRouteInsightsRow, error) {
+	if o, ok := s.over.(interface {
+		ListRouteInsights(context.Context, sqlc.ListRouteInsightsParams) ([]sqlc.ListRouteInsightsRow, error)
+	}); ok {
+		return o.ListRouteInsights(p0, p1)
+	}
+	return s.MemStore.ListRouteInsights(p0, p1)
+}
+
+func (s *Mem) ResolveStaleRouteInsights(p0 context.Context, p1 sqlc.ResolveStaleRouteInsightsParams) (int64, error) {
+	if o, ok := s.over.(interface {
+		ResolveStaleRouteInsights(context.Context, sqlc.ResolveStaleRouteInsightsParams) (int64, error)
+	}); ok {
+		return o.ResolveStaleRouteInsights(p0, p1)
+	}
+	return s.MemStore.ResolveStaleRouteInsights(p0, p1)
+}
+
+func (s *Mem) RouteInsightCandidateApps(p0 context.Context, p1 sqlc.RouteInsightCandidateAppsParams) ([]sqlc.RouteInsightCandidateAppsRow, error) {
+	if o, ok := s.over.(interface {
+		RouteInsightCandidateApps(context.Context, sqlc.RouteInsightCandidateAppsParams) ([]sqlc.RouteInsightCandidateAppsRow, error)
+	}); ok {
+		return o.RouteInsightCandidateApps(p0, p1)
+	}
+	return s.MemStore.RouteInsightCandidateApps(p0, p1)
+}
+
+func (s *Mem) UpsertRouteInsight(p0 context.Context, p1 sqlc.UpsertRouteInsightParams) error {
+	if o, ok := s.over.(interface {
+		UpsertRouteInsight(context.Context, sqlc.UpsertRouteInsightParams) error
+	}); ok {
+		return o.UpsertRouteInsight(p0, p1)
+	}
+	return s.MemStore.UpsertRouteInsight(p0, p1)
+}
+
 func (s *Mem) RouteAwakeMinutes(p0 context.Context, p1 sqlc.RouteAwakeMinutesParams) ([]sqlc.RouteAwakeMinutesRow, error) {
 	if o, ok := s.over.(interface {
 		RouteAwakeMinutes(context.Context, sqlc.RouteAwakeMinutesParams) ([]sqlc.RouteAwakeMinutesRow, error)
@@ -1000,6 +1173,15 @@ func (s *Mem) RouteAwakeRouteMinutes(p0 context.Context, p1 sqlc.RouteAwakeRoute
 		return o.RouteAwakeRouteMinutes(p0, p1)
 	}
 	return s.MemStore.RouteAwakeRouteMinutes(p0, p1)
+}
+
+func (s *Mem) RouteAwakeSourceMinutes(p0 context.Context, p1 sqlc.RouteAwakeSourceMinutesParams) ([]sqlc.RouteAwakeSourceMinutesRow, error) {
+	if o, ok := s.over.(interface {
+		RouteAwakeSourceMinutes(context.Context, sqlc.RouteAwakeSourceMinutesParams) ([]sqlc.RouteAwakeSourceMinutesRow, error)
+	}); ok {
+		return o.RouteAwakeSourceMinutes(p0, p1)
+	}
+	return s.MemStore.RouteAwakeSourceMinutes(p0, p1)
 }
 
 func (s *Mem) RuntimeAppValuesForDeployment(p0 context.Context, p1 string, p2 string, p3 string) (state.RuntimeAppValuesSnapshot, error) {
@@ -1074,80 +1256,121 @@ func (s *Mem) WarmPoolReconciliationAppIDs(p0 context.Context, p1 string) ([]str
 	return s.MemStore.WarmPoolReconciliationAppIDs(p0, p1)
 }
 
+func (s *Mem) DeploymentSidecarRAMs(p0 context.Context, p1 string) ([]int, error) {
+	if o, ok := s.over.(interface {
+		DeploymentSidecarRAMs(context.Context, string) ([]int, error)
+	}); ok {
+		return o.DeploymentSidecarRAMs(p0, p1)
+	}
+	return s.MemStore.DeploymentSidecarRAMs(p0, p1)
+}
+
+func (s *Mem) ListBillingWindowInstances(p0 context.Context, p1, p2 time.Time) ([]state.Instance, error) {
+	if o, ok := s.over.(interface {
+		ListBillingWindowInstances(context.Context, time.Time, time.Time) ([]state.Instance, error)
+	}); ok {
+		return o.ListBillingWindowInstances(p0, p1, p2)
+	}
+	return s.MemStore.ListBillingWindowInstances(p0, p1, p2)
+}
+
+func (s *Mem) ListInstancesForApp(p0 context.Context, p1 string) ([]state.Instance, error) {
+	if o, ok := s.over.(interface {
+		ListInstancesForApp(context.Context, string) ([]state.Instance, error)
+	}); ok {
+		return o.ListInstancesForApp(p0, p1)
+	}
+	return s.MemStore.ListInstancesForApp(p0, p1)
+}
+
+func (s *Mem) AccountByID(p0 context.Context, p1 string) (state.Account, error) {
+	if o, ok := s.over.(interface {
+		AccountByID(context.Context, string) (state.Account, error)
+	}); ok {
+		return o.AccountByID(p0, p1)
+	}
+	return s.MemStore.AccountByID(p0, p1)
+}
+
+func (s *Mem) InstanceListByNodeForRecovery(p0 context.Context, p1 string) ([]state.RecoveryInstance, error) {
+	if o, ok := s.over.(interface {
+		InstanceListByNodeForRecovery(context.Context, string) ([]state.RecoveryInstance, error)
+	}); ok {
+		return o.InstanceListByNodeForRecovery(p0, p1)
+	}
+	return s.MemStore.InstanceListByNodeForRecovery(p0, p1)
+}
+
 // pgDispatched lists the methods Pg forwards to its override.
 var pgDispatched = map[string]bool{
-	"MigrateInstanceOwnerWithRuntimeConfig":                                  true,
-	"ResolveInstanceMigrationCommit":                                         true,
-	"ScenarioWebhookDeliveryBlocked":                                         true,
-	"SubmitOperatorRecovery":                                                 true,
-	"ListProjectsForOrg":                                                     true,
-	"ProjectByOrgSlug":                                                       true,
-	"AbandonProjectEnvironmentCloneConfigurationFence":                       true,
-	"AbandonProjectEnvironmentCloneObjectWriteFences":                        true,
-	"AcquireProjectEnvironmentCloneConfigurationFence":                       true,
-	"AcquireProjectEnvironmentCloneObjectWriteFence":                         true,
-	"AdoptProjectEnvironmentCloneCheckpoint":                                 true,
-	"AdoptProjectEnvironmentClonePostgresSnapshotRestore":                    true,
-	"AdvanceProjectEnvironmentCloneCheckpointIntent":                         true,
-	"AdvanceProjectEnvironmentCloneOperation":                                true,
-	"AllocateProjectEnvironmentClonePostgresVerificationRead":                true,
-	"BeginProjectEnvironmentClonePostgresCopyReaderCleanup":                  true,
-	"BeginProjectEnvironmentClonePostgresCopyTargetCleanup":                  true,
-	"BeginProjectEnvironmentClonePostgresSnapshotRestoreCleanup":             true,
-	"ClaimNextProjectEnvironmentClone":                                       true,
-	"ClaimProjectEnvironmentCloneCheckpointCaptureRetirement":                true,
-	"ClaimProjectEnvironmentCloneCheckpointObjectCopy":                       true,
-	"ClaimProjectEnvironmentCloneCheckpointObjectRetirement":                 true,
-	"ClaimProjectEnvironmentCloneCheckpointObjectTarget":                     true,
-	"ClaimProjectEnvironmentCloneCheckpointObjectVerification":               true,
-	"ClaimProjectEnvironmentCloneCheckpointPgActivation":                     true,
-	"ClaimProjectEnvironmentCloneCheckpointPostgresCopyRetirement":           true,
-	"ClaimProjectEnvironmentCloneCheckpointPostgresCredential":               true,
-	"ClaimProjectEnvironmentCloneCheckpointPostgresCredentialRetirement":     true,
-	"ClaimProjectEnvironmentCloneCheckpointPostgresIsolation":                true,
-	"ClaimProjectEnvironmentCloneCheckpointPostgresRuntime":                  true,
-	"ClaimProjectEnvironmentCloneCheckpointPostgresTargetCompensation":       true,
-	"ClaimProjectEnvironmentCloneCheckpointPostgresVerification":             true,
-	"ClaimProjectEnvironmentCloneCheckpointRelease":                          true,
-	"ClaimProjectEnvironmentCloneCheckpointSourceCompensation":               true,
-	"ClaimProjectEnvironmentCloneCheckpointWorkloadRetirement":               true,
-	"ClaimProjectEnvironmentClonePostgresArchiveUpload":                      true,
-	"ClaimProjectEnvironmentClonePostgresCopyReaderCleanup":                  true,
-	"ClaimProjectEnvironmentClonePostgresCopyReaderRequest":                  true,
-	"ClaimProjectEnvironmentClonePostgresImport":                             true,
-	"ClaimProjectEnvironmentClonePostgresSnapshotRestoreRequest":             true,
-	"ClaimProjectEnvironmentClonePostgresVerification":                       true,
-	"ClaimProjectEnvironmentClonePostgresVerificationAttempt":                true,
-	"CleanupProjectEnvironmentCloneConfigurationForLease":                    true,
-	"CleanupProjectEnvironmentCloneDeploymentsForLease":                      true,
-	"CleanupProjectEnvironmentCloneEnvironmentForLease":                      true,
-	"CleanupProjectEnvironmentCloneWorkloadsForLease":                        true,
-	"CompleteInvocationClaim":                                                true,
-	"CompleteProjectEnvironmentCloneCheckpointCompensation":                  true,
-	"ConsumerKeyByAppAndPrefix":                                              true,
-	"DispatchProjectEnvironmentCloneObjectGrantRevocation":                   true,
-	"EnqueueInvocation":                                                      true,
-	"FinishProjectEnvironmentCloneCheckpointCaptureRetirement":               true,
-	"FinishProjectEnvironmentCloneCheckpointObjectCopy":                      true,
-	"FinishProjectEnvironmentCloneCheckpointObjectRetirement":                true,
-	"FinishProjectEnvironmentCloneCheckpointObjectTarget":                    true,
-	"FinishProjectEnvironmentCloneCheckpointObjectVerification":              true,
-	"FinishProjectEnvironmentCloneCheckpointPgActivation":                    true,
-	"FinishProjectEnvironmentCloneCheckpointPostgresCopyRetirement":          true,
-	"FinishProjectEnvironmentCloneCheckpointPostgresCredential":              true,
-	"FinishProjectEnvironmentCloneCheckpointPostgresCredentialRetirement":    true,
-	"FinishProjectEnvironmentCloneCheckpointPostgresIsolation":               true,
-	"FinishProjectEnvironmentCloneCheckpointPostgresRuntime":                 true,
-	"FinishProjectEnvironmentCloneCheckpointPostgresTargetCompensation":      true,
-	"FinishProjectEnvironmentCloneCheckpointPostgresVerification":            true,
-	"FinishProjectEnvironmentCloneCheckpointRelease":                         true,
-	"FinishProjectEnvironmentCloneCheckpointSourceCompensation":              true,
-	"FinishProjectEnvironmentCloneCheckpointWorkloadRetirement":              true,
-	"FinishProjectEnvironmentClonePostgresCopyReaderCleanup":                 true,
-	"FinishProjectEnvironmentClonePostgresCopyTargetCleanup":                 true,
-	"FinishProjectEnvironmentClonePostgresSnapshotCleanup":                   true,
-	"FinishProjectEnvironmentClonePostgresSnapshotRestoreCleanup":            true,
-	"FinishProjectEnvironmentClonePostgresWriteFenceAbandonment":             true,
+	"ScenarioWebhookDeliveryBlocked":                                     true,
+	"SubmitOperatorRecovery":                                             true,
+	"AbandonProjectEnvironmentCloneConfigurationFence":                   true,
+	"AbandonProjectEnvironmentCloneObjectWriteFences":                    true,
+	"AcquireProjectEnvironmentCloneConfigurationFence":                   true,
+	"AcquireProjectEnvironmentCloneObjectWriteFence":                     true,
+	"AdoptProjectEnvironmentCloneCheckpoint":                             true,
+	"AdoptProjectEnvironmentClonePostgresSnapshotRestore":                true,
+	"AdvanceProjectEnvironmentCloneCheckpointIntent":                     true,
+	"AdvanceProjectEnvironmentCloneOperation":                            true,
+	"AllocateProjectEnvironmentClonePostgresVerificationRead":            true,
+	"BeginProjectEnvironmentClonePostgresCopyReaderCleanup":              true,
+	"BeginProjectEnvironmentClonePostgresCopyTargetCleanup":              true,
+	"BeginProjectEnvironmentClonePostgresSnapshotRestoreCleanup":         true,
+	"ClaimNextProjectEnvironmentClone":                                   true,
+	"ClaimProjectEnvironmentCloneCheckpointCaptureRetirement":            true,
+	"ClaimProjectEnvironmentCloneCheckpointObjectCopy":                   true,
+	"ClaimProjectEnvironmentCloneCheckpointObjectRetirement":             true,
+	"ClaimProjectEnvironmentCloneCheckpointObjectTarget":                 true,
+	"ClaimProjectEnvironmentCloneCheckpointObjectVerification":           true,
+	"ClaimProjectEnvironmentCloneCheckpointPgActivation":                 true,
+	"ClaimProjectEnvironmentCloneCheckpointPostgresCopyRetirement":       true,
+	"ClaimProjectEnvironmentCloneCheckpointPostgresCredential":           true,
+	"ClaimProjectEnvironmentCloneCheckpointPostgresCredentialRetirement": true,
+	"ClaimProjectEnvironmentCloneCheckpointPostgresIsolation":            true,
+	"ClaimProjectEnvironmentCloneCheckpointPostgresRuntime":              true,
+	"ClaimProjectEnvironmentCloneCheckpointPostgresTargetCompensation":   true,
+	"ClaimProjectEnvironmentCloneCheckpointPostgresVerification":         true,
+	"ClaimProjectEnvironmentCloneCheckpointRelease":                      true,
+	"ClaimProjectEnvironmentCloneCheckpointSourceCompensation":           true,
+	"ClaimProjectEnvironmentCloneCheckpointWorkloadRetirement":           true,
+	"ClaimProjectEnvironmentClonePostgresArchiveUpload":                  true,
+	"ClaimProjectEnvironmentClonePostgresCopyReaderCleanup":              true,
+	"ClaimProjectEnvironmentClonePostgresCopyReaderRequest":              true,
+	"ClaimProjectEnvironmentClonePostgresImport":                         true,
+	"ClaimProjectEnvironmentClonePostgresSnapshotRestoreRequest":         true,
+	"ClaimProjectEnvironmentClonePostgresVerification":                   true,
+	"ClaimProjectEnvironmentClonePostgresVerificationAttempt":            true,
+	"CleanupProjectEnvironmentCloneConfigurationForLease":                true,
+	"CleanupProjectEnvironmentCloneDeploymentsForLease":                  true,
+	"CleanupProjectEnvironmentCloneEnvironmentForLease":                  true,
+	"CleanupProjectEnvironmentCloneWorkloadsForLease":                    true,
+	"CompleteInvocationClaim":                                            true,
+	"CompleteProjectEnvironmentCloneCheckpointCompensation":              true,
+	"ConsumerKeyByAppAndPrefix":                                          true,
+	"DispatchProjectEnvironmentCloneObjectGrantRevocation":               true,
+	"EnqueueInvocation": true,
+	"FinishProjectEnvironmentCloneCheckpointCaptureRetirement":            true,
+	"FinishProjectEnvironmentCloneCheckpointObjectCopy":                   true,
+	"FinishProjectEnvironmentCloneCheckpointObjectRetirement":             true,
+	"FinishProjectEnvironmentCloneCheckpointObjectTarget":                 true,
+	"FinishProjectEnvironmentCloneCheckpointObjectVerification":           true,
+	"FinishProjectEnvironmentCloneCheckpointPgActivation":                 true,
+	"FinishProjectEnvironmentCloneCheckpointPostgresCopyRetirement":       true,
+	"FinishProjectEnvironmentCloneCheckpointPostgresCredential":           true,
+	"FinishProjectEnvironmentCloneCheckpointPostgresCredentialRetirement": true,
+	"FinishProjectEnvironmentCloneCheckpointPostgresIsolation":            true,
+	"FinishProjectEnvironmentCloneCheckpointPostgresRuntime":              true,
+	"FinishProjectEnvironmentCloneCheckpointPostgresTargetCompensation":   true,
+	"FinishProjectEnvironmentCloneCheckpointPostgresVerification":         true,
+	"FinishProjectEnvironmentCloneCheckpointRelease":                      true,
+	"FinishProjectEnvironmentCloneCheckpointSourceCompensation":           true,
+	"FinishProjectEnvironmentCloneCheckpointWorkloadRetirement":           true,
+	"FinishProjectEnvironmentClonePostgresCopyReaderCleanup":              true,
+	"FinishProjectEnvironmentClonePostgresCopyTargetCleanup":              true,
+	"FinishProjectEnvironmentClonePostgresSnapshotCleanup":                true,
+	"FinishProjectEnvironmentClonePostgresSnapshotRestoreCleanup":         true,
+	"FinishProjectEnvironmentClonePostgresWriteFenceAbandonment":          true,
 	"GetAPIConsumerByID":                                                     true,
 	"MaterializeProjectEnvironmentCloneForLease":                             true,
 	"PrepareProjectEnvironmentCloneCheckpointObjectCredentialValues":         true,
@@ -2434,10 +2657,25 @@ func (s *Pg) WithdrawProjectEnvironmentCloneCheckpointPgBindings(p0 context.Cont
 
 // storeDispatched lists the methods Store forwards to its override.
 var storeDispatched = map[string]bool{
+	"ListAllApps":                                   true,
+	"ListAllInstances":                              true,
+	"OperatorAlertCollectionHistory":                true,
+	"OperatorAlertCollectionStatus":                 true,
+	"OperatorAlertEpisode":                          true,
+	"OperatorAlertEpisodes":                         true,
+	"OperatorAlertRecurrence":                       true,
+	"OperatorAlertResponseTimes":                    true,
+	"OperatorAlertRetentionStatus":                  true,
+	"OperatorAlertTriageHistory":                    true,
+	"OperatorAlertWorkload":                         true,
+	"OperatorAuditTraceCoverage":                    true,
+	"OperatorCapacityProfiles":                      true,
+	"OperatorIncidentContext":                       true,
+	"OperatorOverview":                              true,
+	"OperatorTenantApps":                            true,
+	"RecordOperatorAlertSnapshot":                   true,
 	"ScenarioWebhookDeliveryBlocked":                true,
 	"SubmitOperatorRecovery":                        true,
-	"ListProjectsForOrg":                            true,
-	"ProjectByOrgSlug":                              true,
 	"MCPPolicyConvergenceSnapshot":                  true,
 	"LatestAccountEdgeRulePolicyPosition":           true,
 	"LatestEdgeRuleChangeID":                        true,
@@ -2493,6 +2731,8 @@ var storeDispatched = map[string]bool{
 	"ListAppEnvInScope":                             true,
 	"ListAppTrustedSignersForApp":                   true,
 	"ListDeploymentsForOperator":                    true,
+	"ProjectByOrgSlug":                              true,
+	"ListProjectsForOrg":                            true,
 }
 
 func (s *Store) AccountByID(p0 context.Context, p1 string) (state.Account, error) {
@@ -3117,58 +3357,220 @@ func (s *Mem) CompleteOperatorPark(ctx context.Context, completion state.Operato
 	return s.MemStore.CompleteOperatorPark(ctx, completion)
 }
 
-func (s *Mem) ProjectByOrgSlug(ctx context.Context, orgID, slug string) (state.Project, error) {
-	if override, ok := s.over.(interface {
-		ProjectByOrgSlug(context.Context, string, string) (state.Project, error)
+func (s *Mem) ClaimNextQueuedBuild(ctx context.Context) (state.Build, error) {
+	if over, ok := s.over.(interface {
+		ClaimNextQueuedBuild(context.Context) (state.Build, error)
 	}); ok {
-		return override.ProjectByOrgSlug(ctx, orgID, slug)
+		return over.ClaimNextQueuedBuild(ctx)
 	}
-	return s.MemStore.ProjectByOrgSlug(ctx, orgID, slug)
+	return s.MemStore.ClaimNextQueuedBuild(ctx)
 }
 
-func (s *Mem) ListProjectsForOrg(ctx context.Context, orgID string) ([]state.Project, error) {
-	if override, ok := s.over.(interface {
-		ListProjectsForOrg(context.Context, string) ([]state.Project, error)
+func (s *Mem) ClaimQueuedBuild(ctx context.Context, id string) (state.Build, error) {
+	if over, ok := s.over.(interface {
+		ClaimQueuedBuild(context.Context, string) (state.Build, error)
 	}); ok {
-		return override.ListProjectsForOrg(ctx, orgID)
+		return over.ClaimQueuedBuild(ctx, id)
 	}
-	return s.MemStore.ListProjectsForOrg(ctx, orgID)
+	return s.MemStore.ClaimQueuedBuild(ctx, id)
 }
 
-func (s *Pg) ProjectByOrgSlug(ctx context.Context, orgID, slug string) (state.Project, error) {
-	if override, ok := s.over.(interface {
-		ProjectByOrgSlug(context.Context, string, string) (state.Project, error)
+func (s *Mem) ListBuildsAwaitingImage(ctx context.Context, node string, limit int) ([]state.BuildImageWork, error) {
+	if o, ok := s.over.(interface {
+		ListBuildsAwaitingImage(context.Context, string, int) ([]state.BuildImageWork, error)
 	}); ok {
-		return override.ProjectByOrgSlug(ctx, orgID, slug)
+		return o.ListBuildsAwaitingImage(ctx, node, limit)
 	}
-	return s.PgStore.ProjectByOrgSlug(ctx, orgID, slug)
+	return s.MemStore.ListBuildsAwaitingImage(ctx, node, limit)
 }
 
-func (s *Pg) ListProjectsForOrg(ctx context.Context, orgID string) ([]state.Project, error) {
-	if override, ok := s.over.(interface {
-		ListProjectsForOrg(context.Context, string) ([]state.Project, error)
+func (s *Mem) ListDeploymentsForOperator(ctx context.Context, filter state.OperatorDeploymentFilter) ([]state.Deployment, error) {
+	if f, ok := s.over.(interface {
+		ListDeploymentsForOperator(context.Context, state.OperatorDeploymentFilter) ([]state.Deployment, error)
 	}); ok {
-		return override.ListProjectsForOrg(ctx, orgID)
+		return f.ListDeploymentsForOperator(ctx, filter)
 	}
-	return s.PgStore.ListProjectsForOrg(ctx, orgID)
+	return s.MemStore.ListDeploymentsForOperator(ctx, filter)
 }
 
-func (s *Store) ProjectByOrgSlug(ctx context.Context, orgID, slug string) (state.Project, error) {
-	if override, ok := s.over.(interface {
-		ProjectByOrgSlug(context.Context, string, string) (state.Project, error)
+func (s *Mem) ListResumableImagePreparations(ctx context.Context, node string, limit int) ([]state.BuildImageWork, error) {
+	if o, ok := s.over.(interface {
+		ListResumableImagePreparations(context.Context, string, int) ([]state.BuildImageWork, error)
 	}); ok {
-		return override.ProjectByOrgSlug(ctx, orgID, slug)
+		return o.ListResumableImagePreparations(ctx, node, limit)
 	}
-	return s.Store.ProjectByOrgSlug(ctx, orgID, slug)
+	return s.MemStore.ListResumableImagePreparations(ctx, node, limit)
 }
 
-func (s *Store) ListProjectsForOrg(ctx context.Context, orgID string) ([]state.Project, error) {
-	if override, ok := s.over.(interface {
-		ListProjectsForOrg(context.Context, string) ([]state.Project, error)
+func (s *Mem) PublishImagePreparationLayer(ctx context.Context, id, token, path, key string, bytes int64) error {
+	if o, ok := s.over.(interface {
+		PublishImagePreparationLayer(context.Context, string, string, string, string, int64) error
 	}); ok {
-		return override.ListProjectsForOrg(ctx, orgID)
+		return o.PublishImagePreparationLayer(ctx, id, token, path, key, bytes)
 	}
-	return s.Store.ListProjectsForOrg(ctx, orgID)
+	return s.MemStore.PublishImagePreparationLayer(ctx, id, token, path, key, bytes)
+}
+
+func (s *Mem) RequeueBuildIfClaim(ctx context.Context, claim state.Build) error {
+	if over, ok := s.over.(interface {
+		RequeueBuildIfClaim(context.Context, state.Build) error
+	}); ok {
+		return over.RequeueBuildIfClaim(ctx, claim)
+	}
+	return s.MemStore.RequeueBuildIfClaim(ctx, claim)
+}
+
+func (s *Store) ListAllApps(ctx context.Context) ([]state.App, error) {
+	if o, ok := s.over.(interface {
+		ListAllApps(context.Context) ([]state.App, error)
+	}); ok {
+		return o.ListAllApps(ctx)
+	}
+	return s.Store.ListAllApps(ctx)
+}
+
+func (s *Store) ListAllInstances(ctx context.Context) ([]state.Instance, error) {
+	if o, ok := s.over.(interface {
+		ListAllInstances(context.Context) ([]state.Instance, error)
+	}); ok {
+		return o.ListAllInstances(ctx)
+	}
+	return s.Store.ListAllInstances(ctx)
+}
+
+func (s *Store) OperatorAlertCollectionHistory(ctx context.Context, f state.OperatorAlertCollectionHistoryFilter) (state.OperatorAlertCollectionHistorySnapshot, error) {
+	if o, ok := s.over.(interface {
+		OperatorAlertCollectionHistory(context.Context, state.OperatorAlertCollectionHistoryFilter) (state.OperatorAlertCollectionHistorySnapshot, error)
+	}); ok {
+		return o.OperatorAlertCollectionHistory(ctx, f)
+	}
+	return s.Store.OperatorAlertCollectionHistory(ctx, f)
+}
+
+func (s *Store) OperatorAlertCollectionStatus(ctx context.Context) (state.OperatorAlertCollection, error) {
+	if o, ok := s.over.(interface {
+		OperatorAlertCollectionStatus(context.Context) (state.OperatorAlertCollection, error)
+	}); ok {
+		return o.OperatorAlertCollectionStatus(ctx)
+	}
+	return s.Store.OperatorAlertCollectionStatus(ctx)
+}
+
+func (s *Store) OperatorAlertEpisode(ctx context.Context, id string) (state.OperatorAlertEpisode, state.OperatorAlertCollection, error) {
+	if o, ok := s.over.(interface {
+		OperatorAlertEpisode(context.Context, string) (state.OperatorAlertEpisode, state.OperatorAlertCollection, error)
+	}); ok {
+		return o.OperatorAlertEpisode(ctx, id)
+	}
+	return s.Store.OperatorAlertEpisode(ctx, id)
+}
+
+func (s *Store) OperatorAlertEpisodes(ctx context.Context, f state.OperatorAlertFilter) (state.OperatorAlertPage, error) {
+	if o, ok := s.over.(interface {
+		OperatorAlertEpisodes(context.Context, state.OperatorAlertFilter) (state.OperatorAlertPage, error)
+	}); ok {
+		return o.OperatorAlertEpisodes(ctx, f)
+	}
+	return s.Store.OperatorAlertEpisodes(ctx, f)
+}
+
+func (s *Store) OperatorAlertRecurrence(ctx context.Context, f state.OperatorAlertRecurrenceFilter) (state.OperatorAlertRecurrenceSnapshot, error) {
+	if o, ok := s.over.(interface {
+		OperatorAlertRecurrence(context.Context, state.OperatorAlertRecurrenceFilter) (state.OperatorAlertRecurrenceSnapshot, error)
+	}); ok {
+		return o.OperatorAlertRecurrence(ctx, f)
+	}
+	return s.Store.OperatorAlertRecurrence(ctx, f)
+}
+
+func (s *Store) OperatorAlertResponseTimes(ctx context.Context, f state.OperatorAlertResponseTimesFilter) (state.OperatorAlertResponseTimesSnapshot, error) {
+	if o, ok := s.over.(interface {
+		OperatorAlertResponseTimes(context.Context, state.OperatorAlertResponseTimesFilter) (state.OperatorAlertResponseTimesSnapshot, error)
+	}); ok {
+		return o.OperatorAlertResponseTimes(ctx, f)
+	}
+	return s.Store.OperatorAlertResponseTimes(ctx, f)
+}
+
+func (s *Store) OperatorAlertRetentionStatus(ctx context.Context, now time.Time) (state.OperatorAlertRetention, error) {
+	if o, ok := s.over.(interface {
+		OperatorAlertRetentionStatus(context.Context, time.Time) (state.OperatorAlertRetention, error)
+	}); ok {
+		return o.OperatorAlertRetentionStatus(ctx, now)
+	}
+	return s.Store.OperatorAlertRetentionStatus(ctx, now)
+}
+
+func (s *Store) OperatorAlertTriageHistory(ctx context.Context, f state.OperatorAlertTriageHistoryFilter) (state.OperatorAlertTriageHistorySnapshot, error) {
+	if o, ok := s.over.(interface {
+		OperatorAlertTriageHistory(context.Context, state.OperatorAlertTriageHistoryFilter) (state.OperatorAlertTriageHistorySnapshot, error)
+	}); ok {
+		return o.OperatorAlertTriageHistory(ctx, f)
+	}
+	return s.Store.OperatorAlertTriageHistory(ctx, f)
+}
+
+func (s *Store) OperatorAlertWorkload(ctx context.Context, f state.OperatorAlertWorkloadFilter) (state.OperatorAlertWorkloadSnapshot, error) {
+	if o, ok := s.over.(interface {
+		OperatorAlertWorkload(context.Context, state.OperatorAlertWorkloadFilter) (state.OperatorAlertWorkloadSnapshot, error)
+	}); ok {
+		return o.OperatorAlertWorkload(ctx, f)
+	}
+	return s.Store.OperatorAlertWorkload(ctx, f)
+}
+
+func (s *Store) OperatorAuditTraceCoverage(ctx context.Context, since time.Time) (float64, error) {
+	if o, ok := s.over.(interface {
+		OperatorAuditTraceCoverage(context.Context, time.Time) (float64, error)
+	}); ok {
+		return o.OperatorAuditTraceCoverage(ctx, since)
+	}
+	return s.Store.OperatorAuditTraceCoverage(ctx, since)
+}
+
+func (s *Store) OperatorCapacityProfiles(ctx context.Context) ([]api.ObsCapacityProfile, error) {
+	if o, ok := s.over.(interface {
+		OperatorCapacityProfiles(context.Context) ([]api.ObsCapacityProfile, error)
+	}); ok {
+		return o.OperatorCapacityProfiles(ctx)
+	}
+	return s.Store.OperatorCapacityProfiles(ctx)
+}
+
+func (s *Store) OperatorIncidentContext(ctx context.Context, f state.OperatorIncidentContextFilter) (api.ObsIncidentContextResponse, error) {
+	if o, ok := s.over.(interface {
+		OperatorIncidentContext(context.Context, state.OperatorIncidentContextFilter) (api.ObsIncidentContextResponse, error)
+	}); ok {
+		return o.OperatorIncidentContext(ctx, f)
+	}
+	return s.Store.OperatorIncidentContext(ctx, f)
+}
+
+func (s *Store) OperatorOverview(ctx context.Context, now time.Time) (api.ObsOverviewResponse, error) {
+	if o, ok := s.over.(interface {
+		OperatorOverview(context.Context, time.Time) (api.ObsOverviewResponse, error)
+	}); ok {
+		return o.OperatorOverview(ctx, now)
+	}
+	return s.Store.OperatorOverview(ctx, now)
+}
+
+func (s *Store) OperatorTenantApps(ctx context.Context, accountID string) ([]api.ObsTenantApp, error) {
+	if o, ok := s.over.(interface {
+		OperatorTenantApps(context.Context, string) ([]api.ObsTenantApp, error)
+	}); ok {
+		return o.OperatorTenantApps(ctx, accountID)
+	}
+	return s.Store.OperatorTenantApps(ctx, accountID)
+}
+
+func (s *Store) RecordOperatorAlertSnapshot(ctx context.Context, snap state.OperatorAlertSnapshot) error {
+	if o, ok := s.over.(interface {
+		RecordOperatorAlertSnapshot(context.Context, state.OperatorAlertSnapshot) error
+	}); ok {
+		return o.RecordOperatorAlertSnapshot(ctx, snap)
+	}
+	return s.Store.RecordOperatorAlertSnapshot(ctx, snap)
 }
 
 func (s *Mem) AppTaskAttachByTask(p0 context.Context, p1 string) (state.AppTaskAttach, error) {
@@ -3619,4 +4021,148 @@ func (s *Store) ListDeploymentsForOperator(p0 context.Context, p1 state.Operator
 		return o.ListDeploymentsForOperator(p0, p1)
 	}
 	return s.Store.ListDeploymentsForOperator(p0, p1)
+}
+
+func (s *Store) ProjectByOrgSlug(ctx context.Context, orgID, slug string) (state.Project, error) {
+	if override, ok := s.over.(interface {
+		ProjectByOrgSlug(context.Context, string, string) (state.Project, error)
+	}); ok {
+		return override.ProjectByOrgSlug(ctx, orgID, slug)
+	}
+	return s.Store.ProjectByOrgSlug(ctx, orgID, slug)
+}
+
+func (s *Store) ListProjectsForOrg(ctx context.Context, orgID string) ([]state.Project, error) {
+	if override, ok := s.over.(interface {
+		ListProjectsForOrg(context.Context, string) ([]state.Project, error)
+	}); ok {
+		return override.ListProjectsForOrg(ctx, orgID)
+	}
+	return s.Store.ListProjectsForOrg(ctx, orgID)
+}
+
+func (s *Mem) PutIdempotent(p0 context.Context, p1 string, p2 string, p3 int, p4 []byte) error {
+	if o, ok := s.over.(interface {
+		PutIdempotent(context.Context, string, string, int, []byte) error
+	}); ok {
+		return o.PutIdempotent(p0, p1, p2, p3, p4)
+	}
+	return s.MemStore.PutIdempotent(p0, p1, p2, p3, p4)
+}
+
+func (s *Mem) AttachDeploymentSubmission(p0 context.Context, p1 string, p2 string, p3 string) (api.DeploymentSubmissionReceipt, error) {
+	if o, ok := s.over.(interface {
+		AttachDeploymentSubmission(context.Context, string, string, string) (api.DeploymentSubmissionReceipt, error)
+	}); ok {
+		return o.AttachDeploymentSubmission(p0, p1, p2, p3)
+	}
+	return s.MemStore.AttachDeploymentSubmission(p0, p1, p2, p3)
+}
+
+func (s *Mem) CreateBuildWithID(p0 context.Context, p1 string, p2 string, p3 state.DeploymentKind, p4 int64, p5 string) (state.Build, error) {
+	if o, ok := s.over.(interface {
+		CreateBuildWithID(context.Context, string, string, state.DeploymentKind, int64, string) (state.Build, error)
+	}); ok {
+		return o.CreateBuildWithID(p0, p1, p2, p3, p4, p5)
+	}
+	return s.MemStore.CreateBuildWithID(p0, p1, p2, p3, p4, p5)
+}
+
+func (s *Mem) UpdateProjectEnvironmentPromotionWorkload(p0 context.Context, p1 string, p2 string, p3 string, p4 string, p5 string, p6 string) (state.ProjectEnvironmentPromotionWorkload, error) {
+	if o, ok := s.over.(interface {
+		UpdateProjectEnvironmentPromotionWorkload(context.Context, string, string, string, string, string, string) (state.ProjectEnvironmentPromotionWorkload, error)
+	}); ok {
+		return o.UpdateProjectEnvironmentPromotionWorkload(p0, p1, p2, p3, p4, p5, p6)
+	}
+	return s.MemStore.UpdateProjectEnvironmentPromotionWorkload(p0, p1, p2, p3, p4, p5, p6)
+}
+
+func (s *Mem) UpdateProjectEnvironmentPromotionVerification(p0 context.Context, p1 string, p2 string, p3 string, p4 string, p5 *time.Time, p6 *time.Time) (state.ProjectEnvironmentPromotion, error) {
+	if o, ok := s.over.(interface {
+		UpdateProjectEnvironmentPromotionVerification(context.Context, string, string, string, string, *time.Time, *time.Time) (state.ProjectEnvironmentPromotion, error)
+	}); ok {
+		return o.UpdateProjectEnvironmentPromotionVerification(p0, p1, p2, p3, p4, p5, p6)
+	}
+	return s.MemStore.UpdateProjectEnvironmentPromotionVerification(p0, p1, p2, p3, p4, p5, p6)
+}
+
+func (s *Mem) ListPendingSafeProjectSubmissions(p0 context.Context) ([]state.SafeProjectSubmission, error) {
+	if o, ok := s.over.(interface {
+		ListPendingSafeProjectSubmissions(context.Context) ([]state.SafeProjectSubmission, error)
+	}); ok {
+		return o.ListPendingSafeProjectSubmissions(p0)
+	}
+	return s.MemStore.ListPendingSafeProjectSubmissions(p0)
+}
+
+func (s *Mem) ProjectSubmission(p0 context.Context, p1 string, p2 string) (api.ProjectSubmissionReceipt, error) {
+	if o, ok := s.over.(interface {
+		ProjectSubmission(context.Context, string, string) (api.ProjectSubmissionReceipt, error)
+	}); ok {
+		return o.ProjectSubmission(p0, p1, p2)
+	}
+	return s.MemStore.ProjectSubmission(p0, p1, p2)
+}
+
+func (s *Mem) ProjectReleaseSetByID(p0 context.Context, p1 string, p2 string, p3 string, p4 string) (state.ProjectReleaseSet, error) {
+	if o, ok := s.over.(interface {
+		ProjectReleaseSetByID(context.Context, string, string, string, string) (state.ProjectReleaseSet, error)
+	}); ok {
+		return o.ProjectReleaseSetByID(p0, p1, p2, p3, p4)
+	}
+	return s.MemStore.ProjectReleaseSetByID(p0, p1, p2, p3, p4)
+}
+
+func (s *Mem) AdvanceProjectReleaseVerification(p0 context.Context, p1 string, p2 string, p3 *state.ProjectReleaseVerificationRound) (*api.ProjectSafeRelease, error) {
+	if o, ok := s.over.(interface {
+		AdvanceProjectReleaseVerification(context.Context, string, string, *state.ProjectReleaseVerificationRound) (*api.ProjectSafeRelease, error)
+	}); ok {
+		return o.AdvanceProjectReleaseVerification(p0, p1, p2, p3)
+	}
+	return s.MemStore.AdvanceProjectReleaseVerification(p0, p1, p2, p3)
+}
+
+func (s *Mem) ReconcileSafeProjectSubmission(p0 context.Context, p1 string, p2 string) (*api.ProjectSafeRelease, error) {
+	if o, ok := s.over.(interface {
+		ReconcileSafeProjectSubmission(context.Context, string, string) (*api.ProjectSafeRelease, error)
+	}); ok {
+		return o.ReconcileSafeProjectSubmission(p0, p1, p2)
+	}
+	return s.MemStore.ReconcileSafeProjectSubmission(p0, p1, p2)
+}
+
+func (s *Mem) ReleaseAppTaskByDeployment(p0 context.Context, p1 string) (state.AppTask, error) {
+	if o, ok := s.over.(interface {
+		ReleaseAppTaskByDeployment(context.Context, string) (state.AppTask, error)
+	}); ok {
+		return o.ReleaseAppTaskByDeployment(p0, p1)
+	}
+	return s.MemStore.ReleaseAppTaskByDeployment(p0, p1)
+}
+
+func (s *Mem) RecordProjectMigrationBaseline(p0 context.Context, p1 string, p2 string, p3 state.ProjectMigrationBaselineRound) (*api.ProjectSafeRelease, error) {
+	if o, ok := s.over.(interface {
+		RecordProjectMigrationBaseline(context.Context, string, string, state.ProjectMigrationBaselineRound) (*api.ProjectSafeRelease, error)
+	}); ok {
+		return o.RecordProjectMigrationBaseline(p0, p1, p2, p3)
+	}
+	return s.MemStore.RecordProjectMigrationBaseline(p0, p1, p2, p3)
+}
+
+func (s *Mem) PinnedProjectReleaseWorkers(p0 context.Context, p1 string) ([]string, error) {
+	if o, ok := s.over.(interface {
+		PinnedProjectReleaseWorkers(context.Context, string) ([]string, error)
+	}); ok {
+		return o.PinnedProjectReleaseWorkers(p0, p1)
+	}
+	return s.MemStore.PinnedProjectReleaseWorkers(p0, p1)
+}
+
+func (s *Mem) HeldProjectReleaseWorkers(p0 context.Context, p1 string) ([]string, error) {
+	if o, ok := s.over.(interface {
+		HeldProjectReleaseWorkers(context.Context, string) ([]string, error)
+	}); ok {
+		return o.HeldProjectReleaseWorkers(p0, p1)
+	}
+	return s.MemStore.HeldProjectReleaseWorkers(p0, p1)
 }

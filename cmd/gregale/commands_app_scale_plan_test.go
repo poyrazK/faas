@@ -1,8 +1,9 @@
-package main
+package main_test
 
 import (
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -26,7 +27,7 @@ func TestBuildAppScalePlanChangesListsOnlyRequestedSettings(t *testing.T) {
 		{name: "require authn", request: api.UpdateAppRequest{RequireAuthn: &tru}, want: "require_authn"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			changes, err := buildAppScalePlanChanges(app, tc.request)
+			changes, err := main.BuildAppScalePlanChanges(app, tc.request)
 			if err != nil {
 				t.Fatalf("buildAppScalePlanChanges: %v", err)
 			}

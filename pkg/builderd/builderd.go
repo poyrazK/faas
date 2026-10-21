@@ -32,9 +32,9 @@ import (
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/markers"
 	"github.com/onebox-faas/faas/pkg/safetext"
-	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
+	"github.com/onebox-faas/faas/pkg/storagekey"
 	"github.com/onebox-faas/faas/pkg/whycopy"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -165,7 +165,8 @@ type Builderd struct {
 	// don't care about metrics; all observations guard on nil (the
 	// ObserveBuild* methods are also nil-safe). Wired in production via
 	// WithOpsMetrics from cmd/builderd.
-	ops *wire.OpsMetrics
+	ops      *wire.OpsMetrics
+	pipeline *PipelineMetrics
 	// events is the pkg/events.Platform (issue #517 / PR-C /
 	// ADR-064). When non-nil, the markSucceeded / markFailed
 	// helpers emit wake.build_succeeded / wake.build_failed on
@@ -509,8 +510,10 @@ type BuildResult struct {
 	// Runtime is the runtime the artifact was built FROM: the app's own, or
 	// the shared runner base it was built on (H10-140). The export claim
 	// signs it.
-	Runtime  string
-	DevPatch *api.DevPatchSourceMap
+	Runtime                    string
+	DevPatch                   *api.DevPatchSourceMap
+	IssueSourceMaps            *api.PublishIssueSourceMapsRequest
+	IssueSourceMapsImageSHA256 string
 }
 
 // ProcessOne claims the next queued build (or processes the buildID passed in
@@ -542,10 +545,11 @@ func (b *Builderd) ProcessOne(ctx context.Context, buildID string) (BuildResult,
 	} else {
 		build, err = b.store.ClaimQueuedBuild(ctx, buildID)
 	}
+	b.pipeline.observeClaim(ctx, "notification", err)
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
-			// Already claimed (duplicate notify) or terminal. Drop
-			// silently — the other claimant owns it.
+			// Missing, already claimed/terminal, or affinity-deferred.
+			// No claim was acquired; this does not prove an empty queue.
 			return BuildResult{}, nil
 		}
 		return BuildResult{}, fmt.Errorf("builderd: claim build %s: %w", buildID, err)
@@ -555,11 +559,11 @@ func (b *Builderd) ProcessOne(ctx context.Context, buildID string) (BuildResult,
 
 // ProcessNext is the durability-net worker surface (PR-B). It picks
 // the next queued build via SELECT … FOR UPDATE SKIP LOCKED, runs the
-// canonical pipeline, and returns ErrNotFound when the queue is
-// empty (the worker sleeps without surfacing an error). On slot
+// canonical pipeline, and returns ErrNotFound when no eligible row is
+// claimed (empty, locked or affinity-deferred). On slot
 // denial (DecideSlot returns !Allowed) the row is re-queued rather
-// than marked failed — the worker calls store.RequeueBuild right
-// after seeing ErrNoSlot so the build stays in the FIFO position
+// than marked failed — processClaimedBuild requeues before returning
+// ErrNoSlot so the build stays in the FIFO position
 // until a slot opens up. cmd/builderd's workerLoop in main.go owns
 // the cadence.
 //
@@ -585,6 +589,7 @@ func (b *Builderd) ProcessNext(ctx context.Context) (BuildResult, error) {
 	} else {
 		build, err = b.store.ClaimNextQueuedBuild(ctx)
 	}
+	b.pipeline.observeClaim(ctx, "poll", err)
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			return BuildResult{}, state.ErrNotFound
@@ -617,11 +622,15 @@ func (b *Builderd) stopIfBuildCancelled(ctx context.Context, claim state.Build) 
 // requeueClaim returns a worker-owned claim to the durable queue. Production
 // stores implement the claim-fenced capability; the legacy fallback preserves
 // compatibility with older state.Store implementations.
-func (b *Builderd) requeueClaim(ctx context.Context, claim state.Build) error {
+func (b *Builderd) requeueClaim(ctx context.Context, claim state.Build, reason string) error {
+	var err error
 	if fenced, ok := b.store.(state.BuildClaimRecoveryStore); ok {
-		return fenced.RequeueBuildIfClaim(ctx, claim)
+		err = fenced.RequeueBuildIfClaim(ctx, claim)
+	} else {
+		err = b.store.RequeueBuild(ctx, claim.ID)
 	}
-	return b.store.RequeueBuild(ctx, claim.ID)
+	b.pipeline.observeRequeue(ctx, reason, err)
+	return err
 }
 
 // processClaimedBuild runs the canonical pipeline for a build that
@@ -643,6 +652,11 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		b.recoverClaimAfterLookupFailure(ctx, build, "load deployment", err)
 		return BuildResult{}, fmt.Errorf("builderd: load deployment: %w", err)
 	}
+	buildGate, stop, gateErr := b.admitBuildDependencies(ctx, build, dep)
+	if stop || gateErr != nil {
+		return BuildResult{}, gateErr
+	}
+	buildDependencyDigest := state.BuildDependencyDigest(buildGate)
 	app, err := state.AppForDeployment(ctx, b.store, dep)
 	if err != nil {
 		b.recoverClaimAfterLookupFailure(ctx, build, "load app", err)
@@ -754,7 +768,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 			return BuildResult{}, err
 		}
 		b.emitBuildLog(ctx, build.ID, fmt.Sprintf("source storage unavailable — requeued (%v)\n", err))
-		if rerr := b.requeueClaim(ctx, build); rerr != nil {
+		if rerr := b.requeueClaim(ctx, build, requeueSource); rerr != nil {
 			b.log.Warn("builderd: requeue on source-storage failure", "build", build.ID, "err", rerr)
 		}
 		return BuildResult{}, err
@@ -766,7 +780,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 				return BuildResult{}, err
 			}
 			b.emitBuildLog(ctx, build.ID, fmt.Sprintf("source spool lag — requeued (%v)\n", err))
-			if rerr := b.requeueClaim(ctx, build); rerr != nil {
+			if rerr := b.requeueClaim(ctx, build, requeueSource); rerr != nil {
 				b.log.Warn("builderd: requeue on source-lag", "build", build.ID, "err", rerr)
 			}
 			return BuildResult{}, err
@@ -862,6 +876,21 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	if watch.Command != "" {
 		b.emitBuildLog(ctx, build.ID, "watch mode: building a development image that starts "+watch.Command+"\n")
 	}
+	sourceMaps, mapsErr := buildIssueSourceMapConfig(dep.SourcePath, dep.SourceRoot)
+	if mapsErr == nil && sourceMaps != nil && (fw != FrameworkNode || watch.Command != "") {
+		mapsErr = errors.New("automatic source maps require a production Node source build")
+	}
+	if mapsErr != nil {
+		b.markFailed(ctx, build, state.FailureUserError, "source-map build config: "+mapsErr.Error(), buildStart)
+		return BuildResult{}, mapsErr
+	}
+	if sourceMaps != nil {
+		if _, ok := b.store.(state.BuildIssueSourceMapStore); !ok {
+			mapsErr = errors.New("source-map build publication store unavailable")
+			b.markFailed(ctx, build, state.FailureInfra, mapsErr.Error(), buildStart)
+			return BuildResult{}, mapsErr
+		}
+	}
 
 	// The cache recipe includes the selected member as well as the complete
 	// source context. Sibling apps can share archive bytes without sharing
@@ -869,15 +898,45 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	if b.stopIfBuildCancelled(ctx, build) {
 		return BuildResult{}, nil
 	}
+	publicURLs, publicErr := deploymentPublicBuildURLs(ctx, b.store, app, dep)
+	if publicErr != nil {
+		b.markFailed(ctx, build, state.FailureInfra, "load public build URLs", buildStart)
+		return BuildResult{}, publicErr
+	}
+	dockerfileBuild, buildOptionsIgnored, buildOptionsErr := selectDockerfileBuild(app, dep, frozen != nil && frozen.Source != nil, fw)
+	if buildOptionsErr != nil {
+		b.markFailed(ctx, build, state.FailureInfra, "invalid Compose build options: "+buildOptionsErr.Error(), buildStart)
+		return BuildResult{}, buildOptionsErr
+	}
+	if buildOptionsIgnored {
+		b.emitBuildLog(ctx, build.ID, "Compose build.args and build.target ignored: this service builds without a Dockerfile\n")
+	}
+	if dockerfileBuild != nil && dockerfileBuild.Target != "" {
+		b.emitBuildLog(ctx, build.ID, "building Dockerfile stage "+dockerfileBuild.Target+"\n")
+	}
+	if shadowed := shadowedBuildArgs(dockerfileBuild, publicURLs); len(shadowed) > 0 {
+		b.emitBuildLog(ctx, build.ID, "build arguments "+strings.Join(shadowed, ", ")+" are also public build URLs; the reviewed URLs are used\n")
+	}
 	recipe := BuildCacheRecipe{
-		SourceSHA256: srcHash, SourceRoot: dep.SourceRoot,
+		BuildDependencyDigest: buildDependencyDigest,
+		PublicBuildURLs:       publicURLs,
+		DockerfileBuild:       dockerfileBuild,
+		SourceSHA256:          srcHash, SourceRoot: dep.SourceRoot,
 		DockerfilePath: dockerfilePath,
 		Framework:      fw, Plan: acct.Plan, RuntimeBaseRef: runtimeBaseRef,
 		Function:        app.Type == state.AppTypeFunction,
 		DevWatchCommand: watch.Command,
 		DevWatchHost:    watch.Host,
 	}
+	reuseScope, reuseOptedIn := gitOpsReuseScope(app, dep)
+	recipe.GitOpsReuseScope = reuseScope
+	if sourceMaps != nil {
+		recipe.IssueSourceMapsDirectory = sourceMaps.Directory
+	}
 	buildEnvironment, cacheAvailable := b.resolveBuildEnvironment()
+	if reuseOptedIn && (reuseScope == "" || b.buildPublisher == nil) {
+		cacheAvailable = false
+	}
 	if cacheAvailable {
 		recipe.BuilderBaseIdentity = buildEnvironment.BuilderBaseIdentity
 		recipe.TargetPlatform = buildEnvironment.TargetPlatform
@@ -887,6 +946,16 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		cacheKeySHA256 = ""
 	}
 	cached, cacheOutcome, cacheHit := b.lookupCurrentCacheEntry(recipe, buildEnvironment, cacheAvailable, dep.ID)
+	if cacheHit && reuseOptedIn {
+		trusted, ok := b.trustedGitOpsCacheEntry(ctx, app, dep, recipe, buildEnvironment, cached)
+		if !ok || !b.buildEnvironmentStillCurrent(buildEnvironment) {
+			b.cache.ReleaseLease(cached.Path)
+			cached, cacheOutcome, cacheHit = CacheEntry{}, cacheOutcomeInvalidated, false
+			b.emitBuildLog(ctx, build.ID, "[gitops] unchanged build reuse unavailable: origin is not a current same-app signed retained producer with matching inputs; building afresh\n")
+		} else {
+			cached.Toolchain = trusted
+		}
+	}
 	b.observeCacheOutcome(ctx, build.ID, cacheOutcome, cacheKeySHA256)
 	if cacheHit {
 		if b.stopIfBuildCancelled(ctx, build) {
@@ -900,15 +969,30 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		// (PR-B review finding M-3).
 		b.ops.ObserveBuildQueueWait(time.Since(build.EnqueuedAt))
 		buildStart = time.Now()
+		if reuseOptedIn {
+			b.emitBuildLog(ctx, build.ID, fmt.Sprintf("[gitops] unchanged isolated context and recipe verified; reusing signed origin deployment %s build %s; target qualification remains required\n", cached.Toolchain.OriginDeploymentID, cached.Toolchain.OriginBuildID))
+		}
 		b.emitBuildLog(ctx, build.ID, "build started (cache hit)\n")
 		b.emitBuildLog(ctx, build.ID, fmt.Sprintf("[build] cache hit (sha256:%s) — skipping vm spawn\n", cacheKeySHA256))
 		completed, completeErr := b.completeBuild(ctx, build, dep, app, acct, srcHash, ver,
 			BuildResult{BuildID: build.ID, LayerPath: cached.Path, LayerBytes: cached.Bytes, CacheHit: true,
 				BuildkitVer: cached.Toolchain.BuildkitVer, RailpackVer: cached.Toolchain.RailpackVer,
 				BuilderBaseDigest: buildEnvironment.BaseDigest, RuntimeBaseRef: runtimeBaseRef, Runtime: runtimeName,
-				DevPatch: cached.Toolchain.DevPatch}, buildStart)
+				DevPatch:        cached.Toolchain.DevPatch,
+				IssueSourceMaps: cached.Toolchain.IssueSourceMaps, IssueSourceMapsImageSHA256: cached.Toolchain.IssueSourceMapsImageSHA256}, buildStart)
 		if completeErr != nil || completed.BuildID == "" {
 			b.cache.ReleaseLease(cached.Path)
+		} else if reuseOptedIn && b.buildEnvironmentStillCurrent(buildEnvironment) {
+			// Keep the verified origin. After its own signed completion this
+			// target becomes the fallback origin, used only once the current
+			// one stops being a live signed producer; a target that never
+			// goes live therefore cannot stall reuse. Bytes are unchanged, so
+			// only the metadata is rewritten.
+			metadata := cached.Toolchain
+			metadata.NextOriginDeploymentID, metadata.NextOriginBuildID = dep.ID, build.ID
+			if err := b.cache.UpdateBuildOrigins(recipe, cached.Path, metadata); err != nil {
+				b.log.Warn("builderd: record GitOps cache fallback origin (continuing)", "err", err)
+			}
 		}
 		return completed, completeErr
 
@@ -928,7 +1012,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		// running state with no live owner; the worker will
 		// never see it again. PR-C follow-up: stuck-running
 		// sweep (ADR-031).
-		if err := b.requeueClaim(ctx, build); err != nil {
+		if err := b.requeueClaim(ctx, build, requeueNoSlot); err != nil {
 			b.log.Warn("builderd: requeue on no-slot", "build", build.ID, "err", err)
 		}
 		b.emitBuildLog(ctx, build.ID, fmt.Sprintf("no slot (%s) — requeued\n", slot.Reason))
@@ -964,26 +1048,30 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 
 	dependencyCacheKey := dependencyCacheKeyForApp(app, fw, dep.SourceRoot, runtimeBaseRef)
 	vmReq := VMRequest{
-		BuildID:            build.ID,
-		TenantID:           app.AccountID,
-		DeploymentID:       dep.ID,
-		SourcePath:         dep.SourcePath,
-		SourceSHA256:       srcHash,
-		SourceRoot:         dep.SourceRoot,
-		DockerfilePath:     dockerfilePath,
-		Framework:          fw,
-		Runtime:            runtimeName,
-		RuntimeBaseRef:     runtimeBaseRef,
-		Function:           app.Type == state.AppTypeFunction,
-		SharedRuntime:      sharedRuntime != "",
-		DevWatchCommand:    watch.Command,
-		DevWatchHost:       watch.Host,
-		DependencyCacheKey: dependencyCacheKey,
-		LogPath:            dep.LogPath,
-		RAMMB:              api.BuildVMRAMMB,
-		TimeoutSec:         b.cfg.BuildTimeoutSeconds,
-		Plan:               string(acct.Plan),
-		WarmScopeKey:       builderWarmScopeKey(app.AccountID, app.ID, fw, runtimeBaseRef),
+		BuildDependencyDigest: buildDependencyDigest,
+		PublicBuildURLs:       publicURLs,
+		DockerfileBuild:       dockerfileBuild,
+		BuildID:               build.ID,
+		TenantID:              app.AccountID,
+		DeploymentID:          dep.ID,
+		SourcePath:            dep.SourcePath,
+		SourceSHA256:          srcHash,
+		SourceRoot:            dep.SourceRoot,
+		DockerfilePath:        dockerfilePath,
+		Framework:             fw,
+		Runtime:               runtimeName,
+		RuntimeBaseRef:        runtimeBaseRef,
+		IssueSourceMaps:       sourceMaps,
+		Function:              app.Type == state.AppTypeFunction,
+		SharedRuntime:         sharedRuntime != "",
+		DevWatchCommand:       watch.Command,
+		DevWatchHost:          watch.Host,
+		DependencyCacheKey:    dependencyCacheKey,
+		LogPath:               dep.LogPath,
+		RAMMB:                 api.BuildVMRAMMB,
+		TimeoutSec:            b.cfg.BuildTimeoutSeconds,
+		Plan:                  string(acct.Plan),
+		WarmScopeKey:          builderWarmScopeKey(app.AccountID, app.ID, fw, runtimeBaseRef),
 	}
 	warmVM, warmResult, warmSnapshot, warmStarted := b.prepareWarmBuilder(ctx, slot, vmReq)
 	var warmCaptured WarmSnapshot
@@ -1148,6 +1236,23 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	if b.stopIfBuildCancelled(ctx, build) {
 		return BuildResult{}, nil
 	}
+	if out.ExitCode == 0 && out.BuildDependencyDigest != buildDependencyDigest {
+		err := errors.New("builder guest did not acknowledge the selected build dependencies")
+		b.markFailed(ctx, build, state.FailureInfra, err.Error(), buildStart)
+		return BuildResult{}, err
+	}
+	if out.ExitCode == 0 && out.PublicBuildURLsSHA256 != api.PublicBuildURLsSHA256(publicURLs) {
+		err := fmt.Errorf("builder guest did not acknowledge the reviewed public build URLs")
+		b.markFailed(ctx, build, state.FailureInfra, err.Error(), buildStart)
+		return BuildResult{}, err
+	}
+	if out.ExitCode == 0 && out.DockerfileBuildSHA256 != dockerfileBuild.SHA256() {
+		// An older builder guest ignores the options and builds the final
+		// stage with default arguments; refuse that artifact.
+		err := errors.New("builder guest did not acknowledge the Compose build arguments and target")
+		b.markFailed(ctx, build, state.FailureInfra, err.Error(), buildStart)
+		return BuildResult{}, err
+	}
 	if out.DependencyCacheStoreError != "" {
 		b.log.Warn("builderd: dependency cache store failed (continuing)", "build", build.ID, "err", out.DependencyCacheStoreError)
 		b.emitBuildLog(ctx, build.ID, "dependency cache could not be saved — the next build may reinstall dependencies\n")
@@ -1242,11 +1347,19 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		}
 	}
 
-	result, err := b.completeBuild(ctx, build, dep, app, acct, srcHash, ver,
-		BuildResult{BuildID: build.ID, LayerPath: out.OCIImage, LayerBytes: artifactBytes,
-			BuildkitVer: out.BuildkitVer, RailpackVer: out.RailpackVer,
-			BuilderBaseDigest: buildEnvironment.BaseDigest, RuntimeBaseRef: runtimeBaseRef, Runtime: runtimeName,
-			DevPatch: out.DevPatch}, buildStart)
+	buildResult := BuildResult{BuildID: build.ID, LayerPath: out.OCIImage, LayerBytes: artifactBytes,
+		BuildkitVer: out.BuildkitVer, RailpackVer: out.RailpackVer,
+		BuilderBaseDigest: buildEnvironment.BaseDigest, RuntimeBaseRef: runtimeBaseRef, Runtime: runtimeName,
+		DevPatch: out.DevPatch}
+	if sourceMaps != nil {
+		set, digest, mapsErr := readBuildIssueSourceMaps(out.OCIImage, vmReq)
+		if mapsErr != nil {
+			b.markFailed(ctx, build, state.FailureInfra, "source-map build handoff: "+mapsErr.Error(), buildStart)
+			return BuildResult{}, mapsErr
+		}
+		buildResult.IssueSourceMaps, buildResult.IssueSourceMapsImageSHA256 = &set.Request, digest
+	}
+	result, err := b.completeBuild(ctx, build, dep, app, acct, srcHash, ver, buildResult, buildStart)
 	if err != nil || result.BuildID == "" {
 		return result, err
 	}
@@ -1255,9 +1368,13 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	// the successful deployment intact but deliberately skips cache publication.
 	if cacheAvailable && b.buildEnvironmentStillCurrent(buildEnvironment) {
 		if err := b.cache.StoreBuildWithToolchain(recipe, out.OCIImage, artifactBytes, CacheToolchain{
-			BuildkitVer: result.BuildkitVer,
-			RailpackVer: result.RailpackVer,
-			DevPatch:    result.DevPatch,
+			OriginDeploymentID: dep.ID, OriginBuildID: build.ID,
+			BuildkitVer:                result.BuildkitVer,
+			RailpackVer:                result.RailpackVer,
+			DevPatch:                   result.DevPatch,
+			IssueSourceMaps:            result.IssueSourceMaps,
+			IssueSourceMapsDigest:      buildIssueSourceMapMetadata(result.IssueSourceMaps),
+			IssueSourceMapsImageSHA256: result.IssueSourceMapsImageSHA256,
 		}); err != nil {
 			b.log.Warn("builderd: cache store failed (continuing)", "err", err)
 		}
@@ -1302,6 +1419,14 @@ func (b *Builderd) lookupCurrentCacheEntry(recipe BuildCacheRecipe, environment 
 	}
 	if !ok {
 		return CacheEntry{}, outcome, false
+	}
+	if recipe.IssueSourceMapsDirectory != "" && !validCachedIssueSourceMaps(cached, recipe.IssueSourceMapsDirectory) {
+		b.cache.ReleaseLease(cached.Path)
+		return CacheEntry{}, cacheOutcomeInvalidated, false
+	}
+	if recipe.IssueSourceMapsDirectory == "" {
+		cached.Toolchain.IssueSourceMaps = nil
+		cached.Toolchain.IssueSourceMapsImageSHA256 = ""
 	}
 	if !b.buildEnvironmentStillCurrent(environment) {
 		b.cache.ReleaseLease(cached.Path)
@@ -1571,10 +1696,21 @@ func (b *Builderd) completeBuild(ctx context.Context, build state.Build, dep sta
 		DevPatch: result.DevPatch,
 	}
 	if err := retryStateMutation(ctx, func() error {
-		return b.store.CompleteBuild(ctx, build, result.LayerPath, sched.AppLayerKey(app.Slug, dep.ID), result.LayerBytes, prov)
+		if result.IssueSourceMaps != nil {
+			st, ok := b.store.(state.BuildIssueSourceMapStore)
+			if !ok {
+				return errors.New("source-map build publication store unavailable")
+			}
+			return st.CompleteBuildWithIssueSourceMaps(ctx, build, result.LayerPath, storagekey.AppLayer(app.Slug, dep.ID), result.LayerBytes, prov,
+				state.BuildIssueSourceMapPublication{AccountID: app.AccountID, AppID: app.ID, Request: *result.IssueSourceMaps})
+		}
+		return b.store.CompleteBuild(ctx, build, result.LayerPath, storagekey.AppLayer(app.Slug, dep.ID), result.LayerBytes, prov)
 	}); err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			return BuildResult{}, nil
+		}
+		if result.IssueSourceMaps != nil && (errors.Is(err, state.ErrIssueSourceMapsConflict) || errors.Is(err, state.ErrIssueQuota) || errors.Is(err, state.ErrInvalidArgument)) {
+			b.markFailed(ctx, build, state.FailureUserError, "source-map publication: "+err.Error(), buildStart)
 		}
 		b.ops.ObserveProvenanceWrite("error")
 		return BuildResult{}, fmt.Errorf("builderd: commit build completion: %w", err)
@@ -1585,6 +1721,9 @@ func (b *Builderd) completeBuild(ctx context.Context, build state.Build, dep sta
 		code = "cache_hit"
 	}
 	b.observeSucceeded(ctx, build.ID, code, buildStart)
+	if result.IssueSourceMaps != nil {
+		b.emitBuildLog(ctx, build.ID, fmt.Sprintf("source maps ready (%d maps)\n", len(result.IssueSourceMaps.Manifest.Artifacts)))
+	}
 	if b.notif != nil {
 		if err := b.notif.Notify(ctx, db.NotifySnapshotBoot, b.snapshotBootPayload(app.ID, dep.ID)); err != nil {
 			b.log.Warn("builderd: image notification failed; durable imaged poll will recover", "build", build.ID, "err", err)
@@ -1612,7 +1751,7 @@ func (b *Builderd) requeueClaimAfterCancellation(ctx context.Context, claim stat
 	if current.Status != state.BuildRunning || !current.StartedAt.Equal(claim.StartedAt) {
 		return
 	}
-	if err := b.requeueClaim(recoveryCtx, claim); err != nil && !errors.Is(err, state.ErrNotFound) {
+	if err := b.requeueClaim(recoveryCtx, claim, requeueCancellation); err != nil && !errors.Is(err, state.ErrNotFound) {
 		b.log.Warn("builderd: requeue cancelled claim", "build", claim.ID, "err", err)
 		return
 	}
@@ -1640,7 +1779,7 @@ func (b *Builderd) recoverClaimAfterLookupFailure(ctx context.Context, claim sta
 		return
 	}
 	if err := retryStateMutation(ctx, func() error {
-		return b.requeueClaim(ctx, claim)
+		return b.requeueClaim(ctx, claim, requeueLookup)
 	}); err != nil && !errors.Is(err, state.ErrNotFound) {
 		b.log.Warn("builderd: requeue after claim lookup failure", "build", claim.ID, "phase", phase, "err", err)
 	}

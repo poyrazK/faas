@@ -2,7 +2,7 @@
 // the per-workload filesystem handle (issue #463 / ADR-069 /
 // PR-B). Mirrors pgstore_sidecar_layers_test.go so a regression in
 // the in-memory store surfaces in unit tests without PG.
-package state
+package state_test
 
 import (
 	"bytes"
@@ -11,17 +11,18 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // memSidecarLayersFixture creates an account + app + deployment
 // for in-process sidecar-layer tests.
-func memSidecarLayersFixture(t *testing.T) (*MemStore, context.Context, Deployment) {
+func memSidecarLayersFixture(t *testing.T) (*state.MemStore, context.Context, state.Deployment) {
 	t.Helper()
 	ctx := context.Background()
 	m, _, app := memSidecarsFixture(t)
-	dep, err := m.CreateDeployment(ctx, Deployment{
+	dep, err := m.CreateDeployment(ctx, state.Deployment{
 		AppID:       app.ID,
-		Kind:        DeploymentKindImage,
+		Kind:        state.DeploymentKindImage,
 		ImageDigest: "sha256:mem-sidecar-layer-fixture",
 	})
 	if err != nil {
@@ -36,7 +37,7 @@ func memSidecarLayersFixture(t *testing.T) (*MemStore, context.Context, Deployme
 func TestMemStore_SetDeploymentSidecarLayer_UpsertRoundTrip(t *testing.T) {
 	m, ctx, dep := memSidecarLayersFixture(t)
 
-	first := DeploymentSidecarLayer{
+	first := state.DeploymentSidecarLayer{
 		DeploymentID:  dep.ID,
 		SidecarName:   "migrator",
 		StorageKey:    "apps/m.ext4",
@@ -51,7 +52,7 @@ func TestMemStore_SetDeploymentSidecarLayer_UpsertRoundTrip(t *testing.T) {
 		t.Errorf("first round-trip: got %+v", got)
 	}
 
-	second := DeploymentSidecarLayer{
+	second := state.DeploymentSidecarLayer{
 		DeploymentID:  dep.ID,
 		SidecarName:   "migrator",
 		StorageKey:    "apps/m-v2.ext4",
@@ -78,7 +79,7 @@ func TestMemStore_SetDeploymentSidecarLayer_UpsertRoundTrip(t *testing.T) {
 // relies on deterministic ordering.
 func TestMemStore_ListDeploymentSidecarLayers_Order(t *testing.T) {
 	m, ctx, dep := memSidecarLayersFixture(t)
-	seed := []DeploymentSidecarLayer{
+	seed := []state.DeploymentSidecarLayer{
 		{DeploymentID: dep.ID, SidecarName: "scraper", StorageKey: "s", Bytes: 1, ContentDigest: "sha256:00"},
 		{DeploymentID: dep.ID, SidecarName: "migrator", StorageKey: "m", Bytes: 1, ContentDigest: "sha256:01"},
 	}
@@ -120,16 +121,16 @@ func TestMemStore_ListDeploymentSidecarLayers_Empty(t *testing.T) {
 // ErrNotFound when the FK target row doesn't exist (mirrors the
 // pgstore defence-in-depth check).
 func TestMemStore_SetDeploymentSidecarLayer_MissingDeployment(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	ctx := context.Background()
-	_, err := m.SetDeploymentSidecarLayer(ctx, DeploymentSidecarLayer{
+	_, err := m.SetDeploymentSidecarLayer(ctx, state.DeploymentSidecarLayer{
 		DeploymentID:  uuid.NewString(),
 		SidecarName:   "orphan",
 		StorageKey:    "x",
 		Bytes:         1,
 		ContentDigest: "sha256:00",
 	})
-	if !errors.Is(err, ErrNotFound) {
+	if !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("got %v; want ErrNotFound", err)
 	}
 }
@@ -138,7 +139,7 @@ func TestMemStore_SetDeploymentSidecarLayer_MissingDeployment(t *testing.T) {
 // future refactor on the Store interface can't silently drop
 // the new methods without breaking compilation.
 func TestMemStore_SatisfiesStoreInterface(t *testing.T) {
-	var _ Store = (*MemStore)(nil)
+	var _ state.Store = (*state.MemStore)(nil)
 	// The "must compile" property is sufficient; the assertion
 	// here exists to point readers at the contract.
 	_ = bytes.Runes // keep `bytes` import retained if other tests drop it

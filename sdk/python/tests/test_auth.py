@@ -12,7 +12,6 @@ import pytest
 ec = pytest.importorskip("cryptography.hazmat.primitives.asymmetric.ec")
 from cryptography.hazmat.primitives import hashes  # noqa: E402
 from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature  # noqa: E402
-
 from faas_sdk.auth import (  # noqa: E402
     AuthClient,
     AuthError,
@@ -130,6 +129,14 @@ def test_verify_accepts_an_auth_app_token():
     assert claims.app_metadata == {"provider": "email"}
     assert claims.raw["aal"] == "aal1"
     assert claims.organization is None
+
+
+def test_verify_reads_the_impersonating_actor():
+    key, clock = Key("0A1B2C3D"), Clock()
+    auth = AuthApp(key).client(clock)
+    assert auth.verify(key.sign({**user_claims(clock), "act": {"sub": "admin:0A1B2C3D"}})).actor == "admin:0A1B2C3D"
+    assert auth.verify(key.sign(user_claims(clock))).actor is None
+    assert auth.verify(key.sign({**user_claims(clock), "act": "admin"})).actor is None
 
 
 def test_verify_reads_the_active_organization():

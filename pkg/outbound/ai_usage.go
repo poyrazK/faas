@@ -43,6 +43,12 @@ type AIUsage struct {
 	WebSearches   int64
 	FileSearches  int64
 	CodeSessionGB int64
+	// Audio usage (ADR 20261019072722): InputAudioTokens and
+	// OutputAudioTokens are the audio parts of InputTokens and OutputTokens,
+	// and CachedInputAudioTokens the audio part of CachedInputTokens.
+	InputAudioTokens       int64
+	CachedInputAudioTokens int64
+	OutputAudioTokens      int64
 }
 
 // priceModel is the name a call is priced under: a video call's model
@@ -322,17 +328,21 @@ type aiUsageFields struct {
 	OutputTokens        *int64 `json:"output_tokens"`
 	PromptTokensDetails *struct {
 		CachedTokens *int64 `json:"cached_tokens"`
+		AudioTokens  *int64 `json:"audio_tokens"`
 	} `json:"prompt_tokens_details"`
-	InputTokensDetails *struct {
-		CachedTokens *int64 `json:"cached_tokens"`
-		ImageTokens  *int64 `json:"image_tokens"`
-	} `json:"input_tokens_details"`
+	// Chat completions audio output (ADR 20261019072722).
+	CompletionTokensDetails *struct {
+		AudioTokens *int64 `json:"audio_tokens"`
+	} `json:"completion_tokens_details"`
+	InputTokensDetails *openAITokenDetails `json:"input_tokens_details"`
 	// OpenAI image generation output and transcription duration usage
 	// (ADR-997).
-	OutputTokensDetails *struct {
-		ImageTokens *int64 `json:"image_tokens"`
-	} `json:"output_tokens_details"`
-	Seconds *float64 `json:"seconds"`
+	OutputTokensDetails *openAITokenDetails `json:"output_tokens_details"`
+	// OpenAI Realtime usage names its details in the singular
+	// (ADR 20261019072722).
+	InputTokenDetails  *openAITokenDetails `json:"input_token_details"`
+	OutputTokenDetails *openAITokenDetails `json:"output_token_details"`
+	Seconds            *float64            `json:"seconds"`
 
 	CacheReadInputTokens     *int64 `json:"cache_read_input_tokens"`
 	CacheCreationInputTokens *int64 `json:"cache_creation_input_tokens"`
@@ -348,6 +358,10 @@ type aiUsageFields struct {
 	// Gemini token counts by modality (ADR-997).
 	PromptTokensByModality     []geminiModalityCount `json:"promptTokensDetails"`
 	CandidatesTokensByModality []geminiModalityCount `json:"candidatesTokensDetails"`
+	// The Gemini API's Live usage names output "response" tokens
+	// (ADR 20261020161811).
+	ResponseTokenCount       *int64                `json:"responseTokenCount"`
+	ResponseTokensByModality []geminiModalityCount `json:"responseTokensDetails"`
 	// Bedrock Converse usage.
 	BedrockInputTokens      *int64 `json:"inputTokens"`
 	BedrockOutputTokens     *int64 `json:"outputTokens"`
@@ -360,17 +374,29 @@ type aiUsageFields struct {
 	CacheWriteInputTokenCount *int64 `json:"cacheWriteInputTokenCount"`
 }
 
+// openAITokenDetails is a token breakdown by kind: cached, image and audio
+// tokens, and the cached tokens' own breakdown.
+type openAITokenDetails struct {
+	CachedTokens        *int64 `json:"cached_tokens"`
+	ImageTokens         *int64 `json:"image_tokens"`
+	AudioTokens         *int64 `json:"audio_tokens"`
+	CachedTokensDetails *struct {
+		AudioTokens *int64 `json:"audio_tokens"`
+	} `json:"cached_tokens_details"`
+}
+
 type geminiModalityCount struct {
 	Modality   string `json:"modality"`
 	TokenCount *int64 `json:"tokenCount"`
 }
 
-// geminiImageTokens sums the IMAGE modality counts, or returns nil.
-func geminiImageTokens(counts []geminiModalityCount) *int64 {
+// geminiModalityTokens sums one modality's counts (IMAGE, AUDIO), or
+// returns nil.
+func geminiModalityTokens(counts []geminiModalityCount, modality string) *int64 {
 	var total int64
 	seen := false
 	for _, count := range counts {
-		if count.Modality == "IMAGE" && count.TokenCount != nil {
+		if count.Modality == modality && count.TokenCount != nil {
 			total += max(*count.TokenCount, 0)
 			seen = true
 		}
@@ -470,6 +496,8 @@ type aiRawUsage struct {
 	inputImage, outputImage, geminiPromptImage, geminiCandidatesImage int64
 	seenOutputImage                                                   bool
 	images, audioSeconds                                              int64
+	// Audio token counts (ADR 20261019072722).
+	inputAudio, cachedInputAudio, outputAudio, geminiPromptAudio, geminiCandidatesAudio int64
 	// Built-in tool uses (ADR-1433). webSearchRequests is Anthropic's;
 	// the Responses counts take the larger of a final response's items and
 	// the items streamed one by one.
@@ -512,9 +540,30 @@ func (r *aiRawUsage) merge(fields *aiUsageFields) {
 	take(&r.output, fields.OutputTokens)
 	if fields.PromptTokensDetails != nil {
 		take(&r.cached, fields.PromptTokensDetails.CachedTokens)
+		take(&r.inputAudio, fields.PromptTokensDetails.AudioTokens)
 	}
-	if fields.InputTokensDetails != nil {
-		take(&r.cached, fields.InputTokensDetails.CachedTokens)
+	if fields.CompletionTokensDetails != nil {
+		take(&r.outputAudio, fields.CompletionTokensDetails.AudioTokens)
+	}
+	for _, details := range []*openAITokenDetails{fields.InputTokensDetails, fields.InputTokenDetails} {
+		if details == nil {
+			continue
+		}
+		take(&r.cached, details.CachedTokens)
+		take(&r.inputImage, details.ImageTokens)
+		take(&r.inputAudio, details.AudioTokens)
+		if details.CachedTokensDetails != nil {
+			take(&r.cachedInputAudio, details.CachedTokensDetails.AudioTokens)
+		}
+	}
+	for _, details := range []*openAITokenDetails{fields.OutputTokensDetails, fields.OutputTokenDetails} {
+		if details == nil {
+			continue
+		}
+		if take(&r.outputImage, details.ImageTokens) {
+			r.seenOutputImage = true
+		}
+		take(&r.outputAudio, details.AudioTokens)
 	}
 	take(&r.cacheRead, fields.CacheReadInputTokens)
 	take(&r.cacheCreation, fields.CacheCreationInputTokens)
@@ -523,20 +572,19 @@ func (r *aiRawUsage) merge(fields *aiUsageFields) {
 	}
 	take(&r.geminiPrompt, fields.PromptTokenCount)
 	take(&r.geminiCandidates, fields.CandidatesTokenCount)
+	take(&r.geminiCandidates, fields.ResponseTokenCount)
 	take(&r.geminiCached, fields.CachedContentTokenCount)
 	take(&r.geminiThoughts, fields.ThoughtsTokenCount)
 	take(&r.bedrockInput, fields.BedrockInputTokens)
 	take(&r.bedrockOutput, fields.BedrockOutputTokens)
 	take(&r.bedrockCacheRead, fields.BedrockCacheReadTokens)
 	take(&r.bedrockCacheWrite, fields.BedrockCacheWriteTokens)
-	if fields.InputTokensDetails != nil {
-		take(&r.inputImage, fields.InputTokensDetails.ImageTokens)
-	}
-	if fields.OutputTokensDetails != nil && take(&r.outputImage, fields.OutputTokensDetails.ImageTokens) {
-		r.seenOutputImage = true
-	}
-	take(&r.geminiPromptImage, geminiImageTokens(fields.PromptTokensByModality))
-	take(&r.geminiCandidatesImage, geminiImageTokens(fields.CandidatesTokensByModality))
+	take(&r.geminiPromptImage, geminiModalityTokens(fields.PromptTokensByModality, "IMAGE"))
+	take(&r.geminiCandidatesImage, geminiModalityTokens(fields.CandidatesTokensByModality, "IMAGE"))
+	take(&r.geminiPromptAudio, geminiModalityTokens(fields.PromptTokensByModality, "AUDIO"))
+	take(&r.geminiCandidatesAudio, geminiModalityTokens(fields.CandidatesTokensByModality, "AUDIO"))
+	take(&r.geminiCandidatesImage, geminiModalityTokens(fields.ResponseTokensByModality, "IMAGE"))
+	take(&r.geminiCandidatesAudio, geminiModalityTokens(fields.ResponseTokensByModality, "AUDIO"))
 	if fields.Seconds != nil {
 		r.noteAudioSeconds(*fields.Seconds)
 	}
@@ -712,6 +760,8 @@ func (r aiRawUsage) normalizeTokens(format aiWireFormat, media aiMediaKind) AIUs
 		usage.OutputTokens = r.geminiCandidates + r.geminiThoughts
 		usage.InputImageTokens = min(r.geminiPromptImage, usage.InputTokens)
 		usage.OutputImageTokens = min(r.geminiCandidatesImage, usage.OutputTokens)
+		usage.InputAudioTokens = min(r.geminiPromptAudio, usage.InputTokens-usage.InputImageTokens)
+		usage.OutputAudioTokens = min(r.geminiCandidatesAudio, usage.OutputTokens-usage.OutputImageTokens)
 	case format == aiFormatBedrockConverse:
 		usage.InputTokens = r.bedrockInput + r.bedrockCacheRead + r.bedrockCacheWrite
 		usage.CachedInputTokens = r.bedrockCacheRead
@@ -734,6 +784,10 @@ func (r aiRawUsage) normalizeTokens(format aiWireFormat, media aiMediaKind) AIUs
 		if media == aiMediaImage && !r.seenOutputImage {
 			usage.OutputImageTokens = usage.OutputTokens
 		}
+		// ADR 20261019072722: audio is the rest of a part, never more.
+		usage.InputAudioTokens = min(r.inputAudio, usage.InputTokens-usage.InputImageTokens)
+		usage.CachedInputAudioTokens = min(r.cachedInputAudio, usage.CachedInputTokens, usage.InputAudioTokens)
+		usage.OutputAudioTokens = min(r.outputAudio, usage.OutputTokens-usage.OutputImageTokens)
 	}
 	return usage
 }

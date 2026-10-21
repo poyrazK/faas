@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -8,6 +8,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -144,11 +145,11 @@ func recoveryPreviewArgs() []string {
 func TestAutomationRecoveryPreviewReadOnlyBoundedAndScoped(t *testing.T) {
 	for _, mode := range []string{"event", "human", "schedule", "manual", "empty", "changed_status", "wrong_app", "wrong_status", "wrong_automation", "wrong_diagnostics", "wrong_events", "over_limit", "diagnostics_error", "policy_error", "unpublished", "wrong_diagnostics_id", "over_events"} {
 		t.Run(mode, func(t *testing.T) {
-			resetJSONOut(t)
-			jsonOutput = mode != "human"
-			out := captureAutomationStdout(t)
+			main.ResetJSONOut(t)
+			(*main.JsonOutput) = mode != "human"
+			out := main.CaptureAutomationStdout(t)
 			calls := automationRecoveryServer(t, mode)
-			code := cmdAutomations(recoveryPreviewArgs())
+			code := main.CmdAutomations(recoveryPreviewArgs())
 			bad := strings.HasPrefix(mode, "wrong_") || mode == "over_limit" || mode == "diagnostics_error" || mode == "policy_error" || mode == "over_events"
 			if bad {
 				if code == 0 {
@@ -175,7 +176,7 @@ func TestAutomationRecoveryPreviewReadOnlyBoundedAndScoped(t *testing.T) {
 				}
 				return
 			}
-			var report automationRecoveryPreview
+			var report main.AutomationRecoveryPreview
 			if err := json.Unmarshal(out.Bytes(), &report); err != nil {
 				t.Fatal(err)
 			}
@@ -227,7 +228,7 @@ func TestAutomationRecoveryPreviewRejectsInvalidOptionsBeforeRequests(t *testing
 	} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			calls := automationRecoveryServer(t, "event")
-			if cmdAutomationsRecoveryPreview(args) == 0 || len(calls()) != 0 {
+			if main.CmdAutomationsRecoveryPreview(args) == 0 || len(calls()) != 0 {
 				t.Fatal("invalid options made a request")
 			}
 		})
@@ -235,16 +236,16 @@ func TestAutomationRecoveryPreviewRejectsInvalidOptionsBeforeRequests(t *testing
 }
 
 func TestAutomationRecoveryPreviewUsesFailureScheduleWarning(t *testing.T) {
-	resetJSONOut(t)
-	out := captureAutomationStdout(t)
+	main.ResetJSONOut(t)
+	out := main.CaptureAutomationStdout(t)
 	automationRecoveryServer(t, "schedule")
-	if cmdAutomations(recoveryPreviewArgs()) != 0 || !strings.Contains(out.String(), "without catch-up") {
+	if main.CmdAutomations(recoveryPreviewArgs()) != 0 || !strings.Contains(out.String(), "without catch-up") {
 		t.Fatal("missing failure-pause catch-up warning")
 	}
 }
 
 func TestAutomationRecoveryPreviewDiscovery(t *testing.T) {
-	command, ok := lookupCliCommand("automations")
+	command, ok := main.LookupCliCommand("automations")
 	if !ok {
 		t.Fatal("missing automations")
 	}
@@ -262,18 +263,18 @@ func TestAutomationRecoveryPreviewDiscovery(t *testing.T) {
 func TestAutomationRecoveryEventReasons(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
-		out   automationRecoveryPreview
+		out   main.AutomationRecoveryPreview
 		match api.WorkflowEventReplayPreviewMatch
 		want  string
 	}{
-		{"existing", automationRecoveryPreview{FailurePaused: true}, api.WorkflowEventReplayPreviewMatch{AdmissionRecorded: true}, "already_admitted"},
-		{"filter", automationRecoveryPreview{Enabled: true}, api.WorkflowEventReplayPreviewMatch{}, "filter_mismatch"},
-		{"failure pause", automationRecoveryPreview{Enabled: true, FailurePaused: true}, api.WorkflowEventReplayPreviewMatch{FilterMatched: true}, "automatic_admission_failure_paused"},
-		{"manual pause", automationRecoveryPreview{}, api.WorkflowEventReplayPreviewMatch{FilterMatched: true}, "automatic_admission_disabled"},
-		{"advisory", automationRecoveryPreview{Enabled: true}, api.WorkflowEventReplayPreviewMatch{FilterMatched: true}, "potential_admission_requires_current_gates"},
+		{"existing", main.AutomationRecoveryPreview{FailurePaused: true}, api.WorkflowEventReplayPreviewMatch{AdmissionRecorded: true}, "already_admitted"},
+		{"filter", main.AutomationRecoveryPreview{Enabled: true}, api.WorkflowEventReplayPreviewMatch{}, "filter_mismatch"},
+		{"failure pause", main.AutomationRecoveryPreview{Enabled: true, FailurePaused: true}, api.WorkflowEventReplayPreviewMatch{FilterMatched: true}, "automatic_admission_failure_paused"},
+		{"manual pause", main.AutomationRecoveryPreview{}, api.WorkflowEventReplayPreviewMatch{FilterMatched: true}, "automatic_admission_disabled"},
+		{"advisory", main.AutomationRecoveryPreview{Enabled: true}, api.WorkflowEventReplayPreviewMatch{FilterMatched: true}, "potential_admission_requires_current_gates"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := automationRecoveryEventReason(tc.out, tc.match); got != tc.want {
+			if got := main.AutomationRecoveryEventReason(tc.out, tc.match); got != tc.want {
 				t.Fatalf("got %s want %s", got, tc.want)
 			}
 		})

@@ -46,6 +46,11 @@ def _parse_response(
 
         return response_200
 
+    if response.status_code == 202:
+        response_202 = ProjectEnvironmentPromotionResponse.from_dict(response.json())
+
+        return response_202
+
     if response.status_code == 400:
         response_400 = Problem.from_dict(response.json())
 
@@ -106,6 +111,15 @@ def sync_detailed(
     failed verification automatically rolls back the promotion. Target
     configuration remains target-scoped unless the token was created with
     `sync_config=true`; secrets are never copied from the source environment.
+    A health-gated promotion returns 202 with status=running. A leased worker
+    checks dark candidates in the destination before atomic cutover, then
+    requires fresh post-cutover health. Check the promotion status endpoint
+    for phase, evidence, deadline and any guarded automatic rollback.
+    Excess verified promotions wait durably with health.phase=queued and an
+    admission receipt for at most 15 minutes. Dispatch revalidates the approved
+    intent before preparing workloads and starts a fresh health window.
+    A full waiting queue returns 429 (project_promotion_queue_full) with
+    Retry-After; no operation is accepted and approval remains available.
 
     Args:
         slug (str):
@@ -154,6 +168,15 @@ def sync(
     failed verification automatically rolls back the promotion. Target
     configuration remains target-scoped unless the token was created with
     `sync_config=true`; secrets are never copied from the source environment.
+    A health-gated promotion returns 202 with status=running. A leased worker
+    checks dark candidates in the destination before atomic cutover, then
+    requires fresh post-cutover health. Check the promotion status endpoint
+    for phase, evidence, deadline and any guarded automatic rollback.
+    Excess verified promotions wait durably with health.phase=queued and an
+    admission receipt for at most 15 minutes. Dispatch revalidates the approved
+    intent before preparing workloads and starts a fresh health window.
+    A full waiting queue returns 429 (project_promotion_queue_full) with
+    Retry-After; no operation is accepted and approval remains available.
 
     Args:
         slug (str):
@@ -197,6 +220,15 @@ async def asyncio_detailed(
     failed verification automatically rolls back the promotion. Target
     configuration remains target-scoped unless the token was created with
     `sync_config=true`; secrets are never copied from the source environment.
+    A health-gated promotion returns 202 with status=running. A leased worker
+    checks dark candidates in the destination before atomic cutover, then
+    requires fresh post-cutover health. Check the promotion status endpoint
+    for phase, evidence, deadline and any guarded automatic rollback.
+    Excess verified promotions wait durably with health.phase=queued and an
+    admission receipt for at most 15 minutes. Dispatch revalidates the approved
+    intent before preparing workloads and starts a fresh health window.
+    A full waiting queue returns 429 (project_promotion_queue_full) with
+    Retry-After; no operation is accepted and approval remains available.
 
     Args:
         slug (str):
@@ -243,6 +275,15 @@ async def asyncio(
     failed verification automatically rolls back the promotion. Target
     configuration remains target-scoped unless the token was created with
     `sync_config=true`; secrets are never copied from the source environment.
+    A health-gated promotion returns 202 with status=running. A leased worker
+    checks dark candidates in the destination before atomic cutover, then
+    requires fresh post-cutover health. Check the promotion status endpoint
+    for phase, evidence, deadline and any guarded automatic rollback.
+    Excess verified promotions wait durably with health.phase=queued and an
+    admission receipt for at most 15 minutes. Dispatch revalidates the approved
+    intent before preparing workloads and starts a fresh health window.
+    A full waiting queue returns 429 (project_promotion_queue_full) with
+    Retry-After; no operation is accepted and approval remains available.
 
     Args:
         slug (str):

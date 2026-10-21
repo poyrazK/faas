@@ -13,14 +13,14 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func seedAIIntegration(t *testing.T, e apidserver.TestEnv, name, provider string) string {
 	t.Helper()
-	(*(
 	// ADR-991: the AI gateway APIs are closed until the release gate opens.
-	*e.S()).AiGatewayEnabled()) = true
+	(*e.S()).EnablePlatformFlagForAll(platformflags.AIGateway)
 	id := uuid.NewString()
 	(*e.Store()).SeedOutboundIntegrationOffer(state.OutboundIntegrationOffer{
 		ID: id, AccountID: (*e.Acct()).ID, Name: name, Origin: "https://api.example.com",

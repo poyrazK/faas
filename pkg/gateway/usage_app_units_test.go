@@ -21,11 +21,11 @@ func TestUsageCommitRecordsAppReportedUnits(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := &Handler{usageOutbox: q, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	h := &Handler{usageOutbox: q, apiMonetization: monetizationOn, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	app := uuid.New()
 	r := withAppAndAccount(httptest.NewRequest(http.MethodPost, "/generate", nil), uuid.New(), app)
 	r = r.WithContext(authmw.WithConsumer(r.Context(), authmw.ConsumerIdentity{ID: uuid.NewString(), AppID: app.String()}))
-	r = withGuestExecutionEvidence(r)
+	r = withGuestExecutionEvidence(r, true)
 	holder := &usageCommitHolder{}
 	r = r.WithContext(withUsageCommitHolder(r.Context(), holder))
 	h.armUsageCommit(r, Target{})
@@ -50,7 +50,7 @@ func TestUsageCommitRecordsAppReportedUnits(t *testing.T) {
 // adr: 1318 — on the reverse-proxy path a Gregale-Usage trailer is recorded
 // when the body ends and removed before trailers reach the client.
 func TestUsageTrailerRecordedAtBodyEnd(t *testing.T) {
-	r := withGuestExecutionEvidence(httptest.NewRequest(http.MethodGet, "/stream", nil))
+	r := withGuestExecutionEvidence(httptest.NewRequest(http.MethodGet, "/stream", nil), true)
 	resp := &http.Response{Header: http.Header{}, Body: io.NopCloser(strings.NewReader("data")),
 		Trailer: http.Header{"Gregale-Usage": {"tokens=42"}}, Request: r}
 	stripGuestEvidenceResponseHeaders(resp)

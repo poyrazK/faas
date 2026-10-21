@@ -1,4 +1,4 @@
-# Internal mail service with independent activation and delivery gates
+# ADR-1737: Internal mail service with independent activation and delivery gates
 
 - Status: accepted for an internal experiment; customer availability is disabled.
 - Date: 2026-10-15

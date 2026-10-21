@@ -30,12 +30,6 @@ on:
           cd-platform has passed once.
         type: boolean
         default: false
-      maintenance_mode:
-        description: >-
-          Planned incompatible-migration window: old writers are stopped before
-          activation, so skip the healthy customer-path baseline gate.
-        type: boolean
-        default: false
       hosted_runners:
         description: >-
           Run the coordination jobs (plan, control-plane deploy, compute
@@ -252,7 +246,6 @@ jobs:
       deploy_environment: ${{ inputs.deploy_environment }}
       hosted_runner: ${{ inputs.hosted_runners }}
       release_tag: ${{ inputs.release_tag }}
-      maintenance_mode: ${{ inputs.maintenance_mode }}
     secrets: inherit
 
   compute-prepare:
@@ -571,11 +564,13 @@ jobs:
       # and returned success, so until now a failure left the bad release
       # serving and the documented remedy was "rerun CD".
       #
-      # deployctl rollback activates the newest verified retained release under
-      # the same lock a deploy takes. It re-verifies the target first, so a
-      # drifted retained directory is refused rather than shipped as a
-      # recovery. The step keeps the job red either way: a successful rollback
-      # means the fleet is safe, not that the release was good.
+      # deployctl rollback activates the release its activation history records
+      # as active before this one (ADR-1650 "Rollback target"; it refuses
+      # rather than guess when there is none), under the same lock a deploy
+      # takes. It re-verifies the target first, so a drifted retained
+      # directory is refused rather than shipped as a recovery. The step keeps
+      # the job red either way: a successful rollback means the fleet is safe,
+      # not that the release was good.
       #
       # The binary comes from the release that just failed, which is the same
       # path cd-controlplane already uses. That is sound because the gates

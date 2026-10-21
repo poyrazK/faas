@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -8,6 +8,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/environmentsync"
+	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
@@ -28,7 +29,7 @@ func TestChangedWorkloadIntentsPersistsReviewedSchedule(t *testing.T) {
 		t.Fatal(err)
 	}
 	const appID = "app-reports"
-	changed := changedWorkloadIntents(gitOpsIntentSnapshot{}, plan, map[string]string{"workload/reports": appID}, false)
+	changed := state.ChangedWorkloadIntents(state.GitOpsIntentSnapshot{}, plan, map[string]string{"workload/reports": appID}, false)
 	got, exists := changed[appID]
 	if !exists || got.Variables["MODE"] != "safe" || got.Schedule == nil || got.Schedule.Cron != "0 3 * * *" || got.Schedule.Timezone != "Europe/Istanbul" ||
 		got.Schedule.SchedulePolicy == nil || got.Schedule.SchedulePolicy.Overlap != "skip" ||
@@ -47,22 +48,22 @@ func TestChangedWorkloadIntentsPersistsReviewedSchedule(t *testing.T) {
 
 func TestValidateWorkloadIntentRejectsVariableServiceBindingCollision(t *testing.T) {
 	const appID = "550e8400-e29b-41d4-a716-446655440002"
-	row := EnvironmentWorkloadIntent{AppID: appID, Variables: map[string]string{"DATABASE_URL": "not-a-url"},
-		ServiceBindings: map[string]EnvironmentScopedServiceBinding{"database": {
+	row := state.EnvironmentWorkloadIntent{AppID: appID, Variables: map[string]string{"DATABASE_URL": "not-a-url"},
+		ServiceBindings: map[string]state.EnvironmentScopedServiceBinding{"database": {
 			Workload: "postgres", EnvKey: "DATABASE_URL", TargetAppID: "550e8400-e29b-41d4-a716-446655440003",
 		}}}
-	if _, err := validateWorkloadIntent(row, App{ID: appID}, "production", api.PlanScale); !errors.Is(err, ErrInvalidArgument) {
+	if _, err := state.ValidateWorkloadIntent(row, state.App{ID: appID}, "production", api.PlanScale); !errors.Is(err, state.ErrInvalidArgument) {
 		t.Fatalf("variable collision error = %v, want ErrInvalidArgument", err)
 	}
 }
 
 func TestEnvironmentWorkloadIntentByJobReturnsFrozenBindings(t *testing.T) {
-	store := NewMemStore()
-	store.appEnvironmentWorkloadIntents = map[environmentWorkloadIntentKey]EnvironmentWorkloadIntent{
+	store := state.NewMemStore()
+	(*store.AppEnvironmentWorkloadIntents()) = map[state.EnvironmentWorkloadIntentKey]state.EnvironmentWorkloadIntent{
 		{AppID: "app-1", EnvironmentID: "env-1"}: {
 			AccountID: "account-1", AppID: "app-1", EnvironmentID: "env-1", JobID: "job-1",
 			Variables: map[string]string{"MODE": "safe"},
-			ServiceBindings: map[string]EnvironmentScopedServiceBinding{
+			ServiceBindings: map[string]state.EnvironmentScopedServiceBinding{
 				"database": {Workload: "postgres", EnvKey: "DATABASE_URL", TargetAppID: "app-2"},
 			},
 		},
@@ -71,13 +72,13 @@ func TestEnvironmentWorkloadIntentByJobReturnsFrozenBindings(t *testing.T) {
 	if err != nil || got.JobID != "job-1" || got.Variables["MODE"] != "safe" || got.ServiceBindings["database"].TargetAppID != "app-2" {
 		t.Fatalf("intent by Job = %+v, err %v", got, err)
 	}
-	got.ServiceBindings["database"] = EnvironmentScopedServiceBinding{TargetAppID: "mutated"}
+	got.ServiceBindings["database"] = state.EnvironmentScopedServiceBinding{TargetAppID: "mutated"}
 	got.Variables["MODE"] = "mutated"
-	stored := store.appEnvironmentWorkloadIntents[environmentWorkloadIntentKey{AppID: "app-1", EnvironmentID: "env-1"}]
+	stored := (*store.AppEnvironmentWorkloadIntents())[state.EnvironmentWorkloadIntentKey{AppID: "app-1", EnvironmentID: "env-1"}]
 	if stored.Variables["MODE"] != "safe" || stored.ServiceBindings["database"].TargetAppID != "app-2" {
 		t.Fatal("intent lookup returned mutable store state")
 	}
-	if _, err := store.EnvironmentWorkloadIntentByJob(context.Background(), "account-1", "missing"); !errors.Is(err, ErrNotFound) {
+	if _, err := store.EnvironmentWorkloadIntentByJob(context.Background(), "account-1", "missing"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("missing intent error = %v, want ErrNotFound", err)
 	}
 }

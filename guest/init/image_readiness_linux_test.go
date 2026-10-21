@@ -79,11 +79,12 @@ func TestImageReadinessGraceRetriesAndTimeout(t *testing.T) {
 		name     string
 		retries  int
 		grace    time.Duration
+		timeout  time.Duration
 		want     string
 		attempts string
 	}{
-		{"retry budget", 3, 0, "unhealthy", "xxx"},
-		{"startup grace", 1, 100 * time.Millisecond, "", "xxx"},
+		{"retry budget", 3, 0, 5 * time.Second, "unhealthy", "xxx"},
+		{"startup grace", 1, 100 * time.Millisecond, 5 * time.Second, "", "xxx"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			marker := filepath.Join(t.TempDir(), "attempts")
@@ -97,6 +98,7 @@ func TestImageReadinessGraceRetriesAndTimeout(t *testing.T) {
 			r.env = append(r.env, "ATTEMPTS="+marker)
 			r.manifest.Healthcheck.ImageTiming.StartPeriodNS = int64(tc.grace)
 			r.manifest.Healthcheck.ImageTiming.StartIntervalNS = int64(5 * time.Millisecond)
+			r.manifest.Healthcheck.ImageTiming.TimeoutNS = int64(tc.timeout)
 			if result := r.check(t.Context(), slog.Default()); result != tc.want {
 				t.Fatalf("result %q want %q", result, tc.want)
 			}

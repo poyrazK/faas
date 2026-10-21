@@ -1,6 +1,6 @@
 //go:build !no_pg
 
-package state
+package state_test
 
 // adr: 435. Real PostgreSQL enforces the producer cut below Go APIs.
 
@@ -13,34 +13,35 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestPgInstanceRuntimeArtifactCaptureRenewal(t *testing.T) {
-	s, _ := registryVerificationPGStore(t)
-	runtimeArtifactCaptureRenewal(t, s)
+	s, _ := state.RegistryVerificationPGStore(t)
+	state.RuntimeArtifactCaptureRenewal(t, s)
 }
 func TestPgInstanceRuntimeArtifactCaptureProducerReplacement(t *testing.T) {
-	s, _ := registryVerificationPGStore(t)
-	runtimeArtifactCaptureProducerReplacement(t, s)
+	s, _ := state.RegistryVerificationPGStore(t)
+	state.RuntimeArtifactCaptureProducerReplacement(t, s)
 }
 func TestPgInstanceRuntimeArtifactCaptureTwoDrives(t *testing.T) {
-	s, _ := registryVerificationPGStore(t)
-	runtimeArtifactCaptureTwoDrives(t, s)
+	s, _ := state.RegistryVerificationPGStore(t)
+	state.RuntimeArtifactCaptureTwoDrives(t, s)
 }
 func TestPgInstanceRuntimeArtifactCaptureSidecars(t *testing.T) {
-	s, _ := registryVerificationPGStore(t)
-	runtimeArtifactCaptureSidecars(t, s)
+	s, _ := state.RegistryVerificationPGStore(t)
+	state.RuntimeArtifactCaptureSidecars(t, s)
 }
 
 func TestPgInstanceRuntimeArtifactCaptureDoesNotBackfill(t *testing.T) {
-	s, _ := registryVerificationPGStore(t)
-	runtimeArtifactCaptureDoesNotBackfill(t, s)
+	s, _ := state.RegistryVerificationPGStore(t)
+	state.RuntimeArtifactCaptureDoesNotBackfill(t, s)
 }
 
 func TestPgInstanceRuntimeArtifactCaptureHoldsBaseFence(t *testing.T) {
-	s, pool := registryVerificationPGStore(t)
-	_, base, app, dep := artifactScanBaseFixture(t, s)
-	node, err := s.UpsertComputeNode(t.Context(), ComputeNode{Name: "base-cut", TargetURL: "unix:///tmp/base-cut.sock", VPCPUs: 4, VCPUBudget: 4 * api.CPUOvercommit, MemMB: 4096, MaxConcurrency: 8, AdmissionCeilingMB: 4096, Active: true})
+	s, pool := state.RegistryVerificationPGStore(t)
+	_, base, app, dep := state.ArtifactScanBaseFixture(t, s)
+	node, err := s.UpsertComputeNode(t.Context(), state.ComputeNode{Name: "base-cut", TargetURL: "unix:///tmp/base-cut.sock", VPCPUs: 4, VCPUBudget: 4 * api.CPUOvercommit, MemMB: 4096, MaxConcurrency: 8, AdmissionCeilingMB: 4096, Active: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +58,7 @@ func TestPgInstanceRuntimeArtifactCaptureHoldsBaseFence(t *testing.T) {
 	replacement.ID = uuid.NewString()
 	bounded, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
-	if _, err := s.PublishBaseImageProducer(bounded, replacement); !errors.Is(err, ErrApplicationStandardReviewBusy) {
+	if _, err := s.PublishBaseImageProducer(bounded, replacement); !errors.Is(err, state.ErrApplicationStandardReviewBusy) {
 		t.Fatalf("base publication committed inside a captured input cut: %v", err)
 	}
 	current, err := s.GetCurrentBaseImageProducer(t.Context(), base.Input.Artifact.StorageKey)
@@ -70,15 +71,15 @@ func TestPgInstanceRuntimeArtifactCaptureHoldsBaseFence(t *testing.T) {
 	if _, err := s.PublishBaseImageProducer(t.Context(), replacement); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.PublishInstanceRuntime(t.Context(), instanceID, string(StateColdBooting), "stale-cut", "10.100.0.8", 20008); !errors.Is(err, ErrApplicationStandardRuntimeStale) {
+	if _, err := s.PublishInstanceRuntime(t.Context(), instanceID, string(state.StateColdBooting), "stale-cut", "10.100.0.8", 20008); !errors.Is(err, state.ErrApplicationStandardRuntimeStale) {
 		t.Fatalf("committed later base publication escaped capture comparison: %v", err)
 	}
 }
 
 func TestPgInstanceRuntimeArtifactCaptureRawProducerGuard(t *testing.T) {
-	s, pool := registryVerificationPGStore(t)
-	_, root, app, dep := artifactScanFixture(t, s, false)
-	ins, _ := createRuntimeArtifactCapture(t, s, app, dep)
+	s, pool := state.RegistryVerificationPGStore(t)
+	_, root, app, dep := state.ArtifactScanFixture(t, s, false)
+	ins, _ := state.CreateRuntimeArtifactCapture(t, s, app, dep)
 	replacement := root.Input
 	replacement.ID = uuid.NewString()
 	if _, err := s.PublishDeploymentRegistryRootfs(t.Context(), replacement); err != nil {
@@ -90,15 +91,15 @@ func TestPgInstanceRuntimeArtifactCaptureRawProducerGuard(t *testing.T) {
 		t.Fatalf("raw SQL bypassed private producer identity: %v", err)
 	}
 	got, err := s.InstanceByID(t.Context(), ins.ID)
-	if err != nil || got.State != string(StateColdBooting) || got.Netns != "" {
+	if err != nil || got.State != string(state.StateColdBooting) || got.Netns != "" {
 		t.Fatalf("failed publication saved a runtime tuple: %v", err)
 	}
 }
 
 func TestPgInstanceRuntimeArtifactCaptureBaseFence(t *testing.T) {
-	s, pool := registryVerificationPGStore(t)
-	_, base, app, dep := artifactScanBaseFixture(t, s)
-	node, err := s.UpsertComputeNode(t.Context(), ComputeNode{Name: "base-fence", TargetURL: "unix:///tmp/base-fence.sock", VPCPUs: 4, VCPUBudget: 4 * api.CPUOvercommit, MemMB: 4096, MaxConcurrency: 8, AdmissionCeilingMB: 4096, Active: true})
+	s, pool := state.RegistryVerificationPGStore(t)
+	_, base, app, dep := state.ArtifactScanBaseFixture(t, s)
+	node, err := s.UpsertComputeNode(t.Context(), state.ComputeNode{Name: "base-fence", TargetURL: "unix:///tmp/base-fence.sock", VPCPUs: 4, VCPUBudget: 4 * api.CPUOvercommit, MemMB: 4096, MaxConcurrency: 8, AdmissionCeilingMB: 4096, Active: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,7 +113,7 @@ func TestPgInstanceRuntimeArtifactCaptureBaseFence(t *testing.T) {
 	}
 	bounded, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
-	if _, err := s.CreateInstance(bounded, app.ID, dep.ID, string(StateColdBooting), 128, node.ID, uuid.NewString()); !errors.Is(err, ErrApplicationStandardRuntimeBusy) {
+	if _, err := s.CreateInstance(bounded, app.ID, dep.ID, string(state.StateColdBooting), 128, node.ID, uuid.NewString()); !errors.Is(err, state.ErrApplicationStandardRuntimeBusy) {
 		t.Fatalf("capture ignored or waited on current base publication: %v", err)
 	}
 	var count int
@@ -122,5 +123,5 @@ func TestPgInstanceRuntimeArtifactCaptureBaseFence(t *testing.T) {
 	if err := tx.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	createRuntimeArtifactCapture(t, s, app, dep)
+	state.CreateRuntimeArtifactCapture(t, s, app, dep)
 }

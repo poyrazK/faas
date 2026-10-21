@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 	"github.com/onebox-faas/faas/pkg/mcphosting"
@@ -22,9 +23,9 @@ func TestMCPPrivateOnboardingEachRuntime(t *testing.T) {
 	for _, runtime := range []string{"node", "go", "python"} {
 		t.Run(runtime, func(t *testing.T) {
 			dest := filepath.Join(t.TempDir(), "server")
-			out, stderr, restore := swapIO(t)
+			out, stderr, restore := main.SwapIO(t)
 			defer restore()
-			if code := cmdMCP(privateMCPInitArgsWithCommand(dest, runtime)); code != 0 {
+			if code := main.CmdMCP(privateMCPInitArgsWithCommand(dest, runtime)); code != 0 {
 				t.Fatalf("exit %d: %s", code, stderr())
 			}
 			config, err := mcphosting.Load(dest)
@@ -76,9 +77,9 @@ func TestMCPOnboardingInvalidAuthDoesNotCreateFiles(t *testing.T) {
 				args = []string{"--path", dest}
 			}
 			args = append(args, tc.flags...)
-			_, _, restore := swapIO(t)
+			_, _, restore := main.SwapIO(t)
 			defer restore()
-			if code := cmdMCPInit(args); code == 0 {
+			if code := main.CmdMCPInit(args); code == 0 {
 				t.Fatal("invalid onboarding accepted")
 			}
 			if _, err := os.Stat(dest); !os.IsNotExist(err) {
@@ -90,16 +91,16 @@ func TestMCPOnboardingInvalidAuthDoesNotCreateFiles(t *testing.T) {
 
 func TestMCPTaskStackReservationPreservesExecutionRoles(t *testing.T) {
 	root := t.TempDir()
-	withCwd(t, root)
-	_, stderr, restore := swapIO(t)
+	main.WithCwd(t, root)
+	_, stderr, restore := main.SwapIO(t)
 	defer restore()
-	if cmdMCPInit([]string{"--path", filepath.Join(root, "stack"), "--runtime", "python", "--tasks", "--name", "reports"}) != 0 {
+	if main.CmdMCPInit([]string{"--path", filepath.Join(root, "stack"), "--runtime", "python", "--tasks", "--name", "reports"}) != 0 {
 		t.Fatal(stderr())
 	}
 	for _, role := range []string{"web", "worker", "observer"} {
 		t.Run(role, func(t *testing.T) {
 			var mode string
-			stub := newZeroConfigStubServer(t, func(w http.ResponseWriter, r *http.Request, z *zeroConfigStubServer) {
+			stub := main.NewZeroConfigStubServer(t, func(w http.ResponseWriter, r *http.Request, z *main.ZeroConfigStubServer) {
 				if r.Method == http.MethodGet && r.URL.Path == "/v1/apps/reports-"+role {
 					http.NotFound(w, r)
 					return
@@ -114,15 +115,15 @@ func TestMCPTaskStackReservationPreservesExecutionRoles(t *testing.T) {
 					t.Error(err)
 				}
 				mode = request.ExecutionMode
-				writeJSONTest(w, api.AppResponse{ID: "reserved", Slug: "reports-" + role})
+				main.WriteJSONTest(w, api.AppResponse{ID: "reserved", Slug: "reports-" + role})
 			})
-			t.Setenv("FAAS_API", stub.srv.URL)
+			t.Setenv("FAAS_API", (*stub.Srv()).URL)
 			t.Setenv("FAAS_TOKEN", "operator")
 			args := []string{"--create-only", "--path", filepath.Join(root, "stack", role), "--name", "reports-" + role}
 			if role != "web" {
 				args = append(args, "--execution-mode", "worker")
 			}
-			if code := cmdDeployTarball(args); code != 0 {
+			if code := main.CmdDeployTarball(args); code != 0 {
 				t.Fatalf("reservation failed: %d %s", code, stderr())
 			}
 			if role != "web" && mode != api.ExecutionModeWorker || role == "web" && mode == api.ExecutionModeWorker {
@@ -153,9 +154,9 @@ func TestMCPOnboardingPreservesOccupiedAndSymlinkDestinations(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			_, _, restore := swapIO(t)
+			_, _, restore := main.SwapIO(t)
 			defer restore()
-			if cmdMCPInit(privateMCPInitArgs(dest, "node")) == 0 {
+			if main.CmdMCPInit(privateMCPInitArgs(dest, "node")) == 0 {
 				t.Fatal("unsafe destination accepted")
 			}
 			entries, err := os.ReadDir(actual)
@@ -173,13 +174,13 @@ func TestMCPTaskStackMaterializesValidRoles(t *testing.T) {
 	for _, runtime := range []string{"node", "go", "python"} {
 		t.Run(runtime, func(t *testing.T) {
 			dest := filepath.Join(t.TempDir(), "stack")
-			out, stderr, restore := swapIO(t)
+			out, stderr, restore := main.SwapIO(t)
 			defer restore()
-			oldJSON := jsonOutput
-			jsonOutput = true
-			defer func() { jsonOutput = oldJSON }()
+			oldJSON := (*main.JsonOutput)
+			(*main.JsonOutput) = true
+			defer func() { (*main.JsonOutput) = oldJSON }()
 			args := append(privateMCPInitArgs(dest, runtime), "--tasks", "--name", "reports")
-			if code := cmdMCPInit(args); code != 0 {
+			if code := main.CmdMCPInit(args); code != 0 {
 				t.Fatalf("exit %d: %s", code, stderr())
 			}
 			var receipt struct {
@@ -241,7 +242,7 @@ func TestMCPTaskStackMaterializesValidRoles(t *testing.T) {
 
 func TestMCPStarterCapabilityReferenceFresh(t *testing.T) {
 	var got bytes.Buffer
-	if err := renderMCPStarterCapabilities(&got); err != nil {
+	if err := main.RenderMCPStarterCapabilities(&got); err != nil {
 		t.Fatal(err)
 	}
 	want, err := os.ReadFile("../../docs/mcp-capabilities.md")
@@ -254,12 +255,12 @@ func TestMCPStarterCapabilityReferenceFresh(t *testing.T) {
 }
 
 func TestMCPCapabilitiesJSONDispatchAndFilter(t *testing.T) {
-	stdout, stderr, restore := swapIO(t)
+	stdout, stderr, restore := main.SwapIO(t)
 	defer restore()
-	oldJSON := jsonOutput
-	jsonOutput = true
-	defer func() { jsonOutput = oldJSON }()
-	if code := cmdMCP([]string{"capabilities", "--runtime", "python"}); code != 0 {
+	oldJSON := (*main.JsonOutput)
+	(*main.JsonOutput) = true
+	defer func() { (*main.JsonOutput) = oldJSON }()
+	if code := main.CmdMCP([]string{"capabilities", "--runtime", "python"}); code != 0 {
 		t.Fatalf("exit %d: %s", code, stderr())
 	}
 	var result struct {

@@ -1,15 +1,16 @@
-package sched
+package sched_test
 
 import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched"
 )
 
 // adr: 164
 // adr: 009
 func TestAppSpecPrivateNetworkCIDRsWire(t *testing.T) {
-	got := (AppSpec{PrivateNetworkCIDRs: []string{"10.42.0.0/16", "192.168.10.0/24"}, PrivateNetworkAllowedCIDRs: []string{"10.42.8.0/24"}, PrivateNetworkID: "net-1", PrivateNetworkAddress: "10.42.0.2"}).toProto()
+	got := (sched.AppSpec{PrivateNetworkCIDRs: []string{"10.42.0.0/16", "192.168.10.0/24"}, PrivateNetworkAllowedCIDRs: []string{"10.42.8.0/24"}, PrivateNetworkID: "net-1", PrivateNetworkAddress: "10.42.0.2"}).ToProto()
 	if len(got.GetPrivateNetworkCidrs()) != 2 || got.GetPrivateNetworkCidrs()[0] != "10.42.0.0/16" {
 		t.Fatalf("private network CIDRs did not round-trip: %v", got.GetPrivateNetworkCidrs())
 	}
@@ -22,9 +23,9 @@ func TestAppSpecPrivateNetworkCIDRsWire(t *testing.T) {
 }
 
 func TestAppSpecPrivateNetworkFirewallRulesWire(t *testing.T) {
-	got := (AppSpec{PrivateNetworkCIDRs: []string{"10.42.0.0/16"}, PrivateNetworkFirewallRules: []api.PrivateNetworkFirewallRule{{
+	got := (sched.AppSpec{PrivateNetworkCIDRs: []string{"10.42.0.0/16"}, PrivateNetworkFirewallRules: []api.PrivateNetworkFirewallRule{{
 		Direction: "ingress", Protocol: "tcp", CIDRs: []string{"10.42.8.0/24"}, Ports: []string{"443"},
-	}}}).toProto()
+	}}}).ToProto()
 	rules := got.GetPrivateNetworkFirewallRules()
 	if len(rules) != 1 || rules[0].GetDirection() != "ingress" || rules[0].GetProtocol() != "tcp" || rules[0].GetPorts()[0] != "443" {
 		t.Fatalf("private network firewall rules did not cross vmmd wire: %#v", rules)

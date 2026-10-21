@@ -1,5 +1,5 @@
 // spec: §17 — bounded Failed Events projection retention.
-package sched
+package sched_test
 
 import (
 	"context"
@@ -9,13 +9,14 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestDeadLetterRetentionPurgesOldProjectionOnly(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemStore()
-	account, app, _ := seedApp(t, store, api.PlanPro, 256, 5)
+	account, app, _ := sched.SeedApp(t, store, api.PlanPro, 256, 5)
 	now := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
 
 	old, err := store.EnqueueInvocation(ctx, state.Invocation{
@@ -51,7 +52,7 @@ func TestDeadLetterRetentionPurgesOldProjectionOnly(t *testing.T) {
 		t.Fatalf("replay old event: %v", err)
 	}
 
-	retention := NewDeadLetterRetention(store, slog.Default()).
+	retention := sched.NewDeadLetterRetention(store, slog.Default()).
 		WithRetention(24 * time.Hour).
 		WithClock(func() time.Time { return now })
 	deleted, err := retention.SweepOnce(ctx)

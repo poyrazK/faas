@@ -9,6 +9,7 @@ import (
 
 func bindingFromDeliveryRow(row sqlc.FinishManagedPostgresBindingProvisionRow) Binding {
 	return Binding{
+		ConnectionLimit:            row.ConnectionLimit,
 		ID:                         row.ID,
 		AccountID:                  row.AccountID,
 		DatabaseAccountID:          row.DatabaseAccountID,

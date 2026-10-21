@@ -15,7 +15,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
-// Two-generation hand-off (docs/adr/1580-zero-downtime-daemon-restarts.md).
+// Two-generation hand-off (docs/adr/1736-zero-downtime-daemon-restarts.md).
 // A daemon whose unit reloads by hand-off is reloaded instead of restarted
 // when nothing it read at start has changed: the successor inherits the old
 // process's environment, credentials and sockets, so only a new binary can
@@ -151,6 +151,11 @@ func parseUnixTimestamp(v string) (time.Time, error) {
 // reloadByHandoff reloads service and waits until its successor is the
 // unit's main process. A false result with a nil error means the hand-off
 // did not happen and the old generation still serves; the caller restarts.
+// A successor the old generation rejected in a pre-traffic check
+// (docs/adr/20261020214632-automatic-unit-deploy-safety-rails.md) is an
+// error instead: restarting would put the binary that failed in front of
+// customers, so the deploy fails and rolls back while the old generation
+// still serves.
 func (r hostRuntime) reloadByHandoff(ctx context.Context, service string) (bool, string, error) {
 	if !daemonunitspec.HandsOffOnReload(service) {
 		return false, "", nil
@@ -185,6 +190,9 @@ func (r hostRuntime) reloadByHandoff(ctx context.Context, service string) (bool,
 			return true, "", nil
 		}
 		if status := now.get("StatusText"); status != oldStatus && strings.HasPrefix(status, wire.HandoffStatusFailed) {
+			if wire.HandoffRejected(status) {
+				return false, status, fmt.Errorf("deployctl: %s: the new binary failed its pre-traffic check and was not started: %s", service, status)
+			}
 			return false, status, nil
 		}
 	}

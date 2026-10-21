@@ -25,7 +25,7 @@ func (s *fleetTestNodes) ActiveComputeNodes(context.Context) ([]state.ComputeNod
 	return append([]state.ComputeNode(nil), s.nodes...), nil
 }
 
-func (s *fleetTestNodes) ListInstancesOnNodeID(_ context.Context, nodeID string) ([]state.Instance, error) {
+func (s *fleetTestNodes) ListActiveInstancesOnNodeID(_ context.Context, nodeID string) ([]state.Instance, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]state.Instance(nil), s.instances[nodeID]...), nil

@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"encoding/json"
@@ -6,37 +6,38 @@ import (
 	"fmt"
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 	"testing"
 	"time"
 )
 
 func TestVerificationRunListPaginationIsolationAndExpiry(t *testing.T) {
-	m, app, _, in := verificationReceiptFixture(t)
-	m.bindingVerificationRuns = map[string]verificationRunRecord{}
+	m, app, _, in := state.VerificationReceiptFixture(t)
+	(*m.BindingVerificationRuns()) = map[string]state.VerificationRunRecord{}
 	created := time.Now().UTC().Truncate(time.Microsecond).Add(-time.Hour)
 	// Seed retained receipts directly to exercise tied timestamps and old states,
 	// independently of admission caps and create-time pruning.
 	for i := 1; i <= 5; i++ {
-		r := cloneVerificationRecord(verificationRunRecord{Report: in.Report})
+		r := state.CloneVerificationRecord(state.VerificationRunRecord{Report: in.Report})
 		r.Report.ID = fmt.Sprintf("11111111-1111-4111-8111-%012d", i)
 		r.Report.CreatedAt = created
 		r.Report.ExpiresAt = created.Add(time.Minute)
 		r.Report.Status = "passed"
-		m.bindingVerificationRuns[r.Report.ID] = r
+		(*m.BindingVerificationRuns())[r.Report.ID] = r
 	}
-	child := cloneVerificationRecord(verificationRunRecord{Report: in.Report})
+	child := state.CloneVerificationRecord(state.VerificationRunRecord{Report: in.Report})
 	child.Report.ID = uuid.NewString()
 	child.Report.GraphRunID = uuid.NewString()
 	child.Report.Status = "pending"
-	m.bindingVerificationRuns[child.Report.ID] = child
+	(*m.BindingVerificationRuns())[child.Report.ID] = child
 	first, e := m.ListBindingVerificationRuns(t.Context(), app.AccountID, app.ID, api.BindingVerificationRunListOptions{Limit: 2, Status: "expired"})
 	if e != nil || len(first.Runs) != 2 || first.NextCursor == "" || first.Runs[0].ID != "11111111-1111-4111-8111-000000000005" {
 		t.Fatalf("first: %+v %v", first, e)
 	}
-	newer := cloneVerificationRecord(verificationRunRecord{Report: in.Report})
+	newer := state.CloneVerificationRecord(state.VerificationRunRecord{Report: in.Report})
 	newer.Report.ID = uuid.NewString()
 	newer.Report.CreatedAt = time.Now()
-	m.bindingVerificationRuns[newer.Report.ID] = newer
+	(*m.BindingVerificationRuns())[newer.Report.ID] = newer
 	all := append([]api.BindingVerificationRunSummary{}, first.Runs...)
 	cursor := first.NextCursor
 	for cursor != "" {
@@ -62,7 +63,7 @@ func TestVerificationRunListPaginationIsolationAndExpiry(t *testing.T) {
 		t.Fatal("tenant leak", e)
 	}
 	for _, o := range []api.BindingVerificationRunListOptions{{Cursor: first.NextCursor}, {Status: "expired", Cursor: first.NextCursor, Scope: "other"}, {Limit: 101}, {Cursor: "bad"}, {DeploymentID: "bad"}} {
-		if _, err := m.ListBindingVerificationRuns(t.Context(), app.AccountID, app.ID, o); !errors.Is(err, ErrInvalidArgument) {
+		if _, err := m.ListBindingVerificationRuns(t.Context(), app.AccountID, app.ID, o); !errors.Is(err, state.ErrInvalidArgument) {
 			t.Fatalf("invalid options accepted: %+v %v", o, err)
 		}
 	}
@@ -82,7 +83,7 @@ func TestVerificationRunListPaginationIsolationAndExpiry(t *testing.T) {
 }
 func TestGraphVerificationRunListRootsAndFilters(t *testing.T) {
 	m, p, in := graphReceiptFixture(t)
-	beforeTasks, beforeInv := len(m.appTasks), len(m.invocations)
+	beforeTasks, beforeInv := len((*m.AppTasks())), len((*m.Invocations()))
 	root, e := m.CreateProjectBindingVerificationRun(t.Context(), p.AccountID, p.ID, in)
 	if e != nil {
 		t.Fatal(e)
@@ -111,7 +112,7 @@ func TestGraphVerificationRunListRootsAndFilters(t *testing.T) {
 			t.Fatal("missing member linkage", name, e)
 		}
 	}
-	if beforeTasks != len(m.appTasks) || beforeInv != len(m.invocations) {
+	if beforeTasks != len((*m.AppTasks())) || beforeInv != len((*m.Invocations())) {
 		t.Fatal("listing created work")
 	}
 }

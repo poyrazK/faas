@@ -1,13 +1,14 @@
 // adr: 127 — persistent node telemetry provides bounded flow detail with a
 // freshness-bounded fallback to local observation.
 
-package sched
+package sched_test
 
 import (
 	"context"
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/sched/flowcount"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -39,13 +40,13 @@ func (f *nodeAwareFlowFallback) Snapshot(_ context.Context, _ string) ([]flowcou
 }
 
 func TestNodeAwareFlowCounterPrefersFreshRemoteTelemetry(t *testing.T) {
-	cache := NewNodeTelemetryCache()
+	cache := sched.NewNodeTelemetryCache()
 	now := time.Unix(300, 0)
 	remote := int64(4)
-	cache.Replace("node-a", now, now, []NodeTelemetry{{InstanceID: "vm-1", OpenConns: remote}})
+	cache.Replace("node-a", now, now, []sched.NodeTelemetry{{InstanceID: "vm-1", OpenConns: remote}})
 	fallback := &nodeAwareFlowFallback{count: 99}
-	counter := NewNodeAwareFlowCounter(cache, fallback)
-	counter.now = func() time.Time { return now }
+	counter := sched.NewNodeAwareFlowCounter(cache, fallback)
+	(*counter.Now()) = func() time.Time { return now }
 
 	got, err := counter.Open(context.Background(), "vm-1")
 	if err != nil || got != remote {
@@ -54,17 +55,17 @@ func TestNodeAwareFlowCounterPrefersFreshRemoteTelemetry(t *testing.T) {
 }
 
 func TestNodeAwareFlowCounterSnapshotPrefersFreshRemoteTelemetry(t *testing.T) {
-	cache := NewNodeTelemetryCache()
+	cache := sched.NewNodeTelemetryCache()
 	now := time.Unix(350, 0)
-	cache.Replace("node-a", now, now, []NodeTelemetry{{
+	cache.Replace("node-a", now, now, []sched.NodeTelemetry{{
 		InstanceID: "vm-1",
 		FlowSummaries: []flowcount.FlowSummary{{
 			InstanceID: "vm-1", Protocol: "tcp", RemoteIP: "203.0.113.10", RemotePort: 443, Count: 2,
 		}},
 	}})
 	fallback := &nodeAwareFlowFallback{flows: []flowcount.FlowSummary{{RemoteIP: "192.0.2.1"}}}
-	counter := NewNodeAwareFlowCounter(cache, fallback)
-	counter.now = func() time.Time { return now }
+	counter := sched.NewNodeAwareFlowCounter(cache, fallback)
+	(*counter.Now()) = func() time.Time { return now }
 
 	got, err := counter.Snapshot(context.Background(), "vm-1")
 	if err != nil || len(got) != 1 || got[0].RemoteIP != "203.0.113.10" {
@@ -73,12 +74,12 @@ func TestNodeAwareFlowCounterSnapshotPrefersFreshRemoteTelemetry(t *testing.T) {
 }
 
 func TestNodeAwareFlowCounterSnapshotFallsBackWhenRemoteIsStale(t *testing.T) {
-	cache := NewNodeTelemetryCache()
+	cache := sched.NewNodeTelemetryCache()
 	now := time.Unix(450, 0)
-	cache.Replace("node-a", now, now, []NodeTelemetry{{InstanceID: "vm-1"}})
+	cache.Replace("node-a", now, now, []sched.NodeTelemetry{{InstanceID: "vm-1"}})
 	fallback := &nodeAwareFlowFallback{flows: []flowcount.FlowSummary{{RemoteIP: "192.0.2.1", Count: 1}}}
-	counter := NewNodeAwareFlowCounter(cache, fallback)
-	counter.now = func() time.Time { return now.Add(TelemetryFreshness + time.Nanosecond) }
+	counter := sched.NewNodeAwareFlowCounter(cache, fallback)
+	(*counter.Now()) = func() time.Time { return now.Add(sched.TelemetryFreshness + time.Nanosecond) }
 
 	got, err := counter.Snapshot(context.Background(), "vm-1")
 	if err != nil || len(got) != 1 || got[0].RemoteIP != "192.0.2.1" {
@@ -87,13 +88,13 @@ func TestNodeAwareFlowCounterSnapshotFallsBackWhenRemoteIsStale(t *testing.T) {
 }
 
 func TestNodeAwareFlowCounterFallsBackWhenRemoteIsMissingOrStale(t *testing.T) {
-	cache := NewNodeTelemetryCache()
+	cache := sched.NewNodeTelemetryCache()
 	now := time.Unix(400, 0)
 	remote := int64(4)
-	cache.Replace("node-a", now, now, []NodeTelemetry{{InstanceID: "vm-1", OpenConns: remote}})
+	cache.Replace("node-a", now, now, []sched.NodeTelemetry{{InstanceID: "vm-1", OpenConns: remote}})
 	fallback := &nodeAwareFlowFallback{count: 7}
-	counter := NewNodeAwareFlowCounter(cache, fallback)
-	counter.now = func() time.Time { return now.Add(TelemetryFreshness + time.Nanosecond) }
+	counter := sched.NewNodeAwareFlowCounter(cache, fallback)
+	(*counter.Now()) = func() time.Time { return now.Add(sched.TelemetryFreshness + time.Nanosecond) }
 
 	got, err := counter.Open(context.Background(), "vm-1")
 	if err != nil || got != fallback.count {
@@ -106,7 +107,7 @@ func TestNodeAwareFlowCounterFallsBackWhenRemoteIsMissingOrStale(t *testing.T) {
 
 func TestNodeAwareFlowCounterWarmForwardsLocalReader(t *testing.T) {
 	fallback := &nodeAwareFlowFallback{}
-	counter := NewNodeAwareFlowCounter(nil, fallback)
+	counter := sched.NewNodeAwareFlowCounter(nil, fallback)
 	instances := []state.Instance{{ID: "vm-1"}, {ID: "vm-2"}}
 	if err := counter.Warm(context.Background(), instances); err != nil {
 		t.Fatalf("Warm: %v", err)
@@ -117,12 +118,12 @@ func TestNodeAwareFlowCounterWarmForwardsLocalReader(t *testing.T) {
 }
 
 func TestNodeAwareFlowCounterWarmOnlyForMissingRemoteTelemetry(t *testing.T) {
-	cache := NewNodeTelemetryCache()
+	cache := sched.NewNodeTelemetryCache()
 	now := time.Unix(500, 0)
-	cache.Replace("node-a", now, now, []NodeTelemetry{{InstanceID: "vm-remote"}})
+	cache.Replace("node-a", now, now, []sched.NodeTelemetry{{InstanceID: "vm-remote"}})
 	fallback := &nodeAwareFlowFallback{}
-	counter := NewNodeAwareFlowCounter(cache, fallback)
-	counter.now = func() time.Time { return now }
+	counter := sched.NewNodeAwareFlowCounter(cache, fallback)
+	(*counter.Now()) = func() time.Time { return now }
 
 	instances := []state.Instance{{ID: "vm-remote"}, {ID: "vm-missing"}}
 	if err := counter.Warm(context.Background(), instances); err != nil {
@@ -132,7 +133,7 @@ func TestNodeAwareFlowCounterWarmOnlyForMissingRemoteTelemetry(t *testing.T) {
 		t.Fatalf("fallback warm = calls:%d count:%d ids:%v, want one call for vm-missing", fallback.warmCalls, fallback.warmed, fallback.warmedIDs)
 	}
 
-	cache.Replace("node-a", now, now, []NodeTelemetry{{InstanceID: "vm-remote"}, {InstanceID: "vm-missing"}})
+	cache.Replace("node-a", now, now, []sched.NodeTelemetry{{InstanceID: "vm-remote"}, {InstanceID: "vm-missing"}})
 	if err := counter.Warm(context.Background(), instances); err != nil {
 		t.Fatalf("Warm with complete telemetry: %v", err)
 	}
@@ -143,7 +144,7 @@ func TestNodeAwareFlowCounterWarmOnlyForMissingRemoteTelemetry(t *testing.T) {
 
 func TestNodeAwareFlowCounterWarmEmptyFleetSkipsFallback(t *testing.T) {
 	fallback := &nodeAwareFlowFallback{}
-	counter := NewNodeAwareFlowCounter(nil, fallback)
+	counter := sched.NewNodeAwareFlowCounter(nil, fallback)
 	if err := counter.Warm(context.Background(), nil); err != nil {
 		t.Fatalf("Warm: %v", err)
 	}

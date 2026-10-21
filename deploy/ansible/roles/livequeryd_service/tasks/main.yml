@@ -1,0 +1,358 @@
+---
+- name: livequeryd_service — require a configured hub when enabled
+  ansible.builtin.assert:
+    that:
+      - faas_box_role | default('single-box') in ['control-plane', 'single-box']
+      - faas_livequeryd_databases | length > 0
+      - (faas_livequeryd_databases | map(attribute='id') | unique | list | length) == (faas_livequeryd_databases | length)
+      - faas_livequeryd_keys_dsn_src | length > 0
+      - faas_livequeryd_keys_identity_src | length > 0
+      - faas_livequeryd_keys_recipient_src | length > 0
+      - faas_livequeryd_listen is match('^(127\.0\.0\.1|\[::1\]):') or faas_livequeryd_tls_cert | length > 0
+    fail_msg: >-
+      livequeryd runs on a control-plane (or single-box) host and needs at
+      least one entry in faas_livequeryd_databases (each id once), the live-key
+      DSN, identity and recipient sources, and TLS for a non-loopback listener.
+      See roles/livequeryd_service/README.md.
+  when: faas_livequeryd_enabled | bool
+
+- name: livequeryd_service — require each database's settings
+  ansible.builtin.assert:
+    that:
+      - item.id | default('') is match('^[A-Za-z0-9_-]{1,128}$')
+      - item.database_url_src | default('') | length > 0
+      - item.slot is not defined or item.slot is match('^[a-z0-9_]{1,63}$')
+      - item.publication | default(faas_livequeryd_publication) is match('^[a-z0-9_]{1,63}$')
+      - item.awake | default(faas_livequeryd_awake) in ['', 'neon']
+      - >-
+        (item.release_after | default(faas_livequeryd_release_after) | length == 0) or
+        (item.awake | default(faas_livequeryd_awake) | length > 0)
+      - >-
+        (item.release_after | default(faas_livequeryd_release_after) | length == 0) or
+        item.awake | default(faas_livequeryd_awake) != 'neon' or (
+        (item.neon_api_key_src | default(faas_livequeryd_neon_api_key_src) | length > 0) and
+        item.neon_project | default('') is match('^[A-Za-z0-9_-]+$') and
+        item.neon_endpoint | default('') is match('^[A-Za-z0-9_-]+$'))
+    fail_msg: >-
+      livequeryd database {{ item.id | default('(no id)') }} needs an id, a
+      database_url_src, a valid slot and publication, and awake (with the
+      Neon project, endpoint and API key for neon) when it releases the
+      database.
+  loop: "{{ faas_livequeryd_databases }}"
+  loop_control:
+    label: "{{ item.id | default('(no id)') }}"
+  when: faas_livequeryd_enabled | bool
+
+- name: livequeryd_service — install systemd unit
+  ansible.builtin.copy:
+    src: faas-livequeryd.service
+    dest: /etc/systemd/system/faas-livequeryd.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart faas-livequeryd
+
+- name: livequeryd_service — create unit drop-in directories
+  ansible.builtin.file:
+    path: "/etc/systemd/system/{{ item }}.service.d"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop: [faas-livequeryd, faas-apid]
+
+- name: livequeryd_service — create checkpoint directory
+  ansible.builtin.file:
+    path: /var/lib/faas/livequeryd
+    state: directory
+    owner: faas
+    group: faas
+    mode: "0700"
+
+- name: livequeryd_service — create secret directory
+  ansible.builtin.file:
+    path: /etc/faas/secrets/livequeryd
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+  when: faas_livequeryd_enabled | bool
+
+# PRIVATE bucket: 0400 root:root. systemd hands each file to the hub as a
+# credential (LoadCredential=), so the faas user never reads the originals.
+- name: livequeryd_service — install live-key secrets
+  ansible.builtin.copy:
+    src: "{{ item.src }}"
+    dest: "/etc/faas/secrets/livequeryd/{{ item.dest }}"
+    owner: root
+    group: root
+    mode: "0400"
+  loop:
+    - { src: "{{ faas_livequeryd_keys_dsn_src }}", dest: keys-dsn }
+    - { src: "{{ faas_livequeryd_keys_identity_src }}", dest: keys.age }
+  loop_control:
+    label: "{{ item.dest }}"
+  no_log: true
+  when: faas_livequeryd_enabled | bool
+  notify: restart faas-livequeryd
+
+- name: livequeryd_service — install each database's connection string
+  ansible.builtin.copy:
+    src: "{{ item.database_url_src }}"
+    dest: "/etc/faas/secrets/livequeryd/{{ item.id }}.database-url"
+    owner: root
+    group: root
+    mode: "0400"
+  loop: "{{ faas_livequeryd_databases }}"
+  loop_control:
+    label: "{{ item.id }}"
+  no_log: true
+  when: faas_livequeryd_enabled | bool
+  notify: restart faas-livequeryd
+
+- name: livequeryd_service — install the databases' own Neon API keys
+  ansible.builtin.copy:
+    src: "{{ item.neon_api_key_src }}"
+    dest: "/etc/faas/secrets/livequeryd/{{ item.id }}.neon-api-key"
+    owner: root
+    group: root
+    mode: "0400"
+  loop: "{{ faas_livequeryd_databases | selectattr('neon_api_key_src', 'defined') | selectattr('neon_api_key_src') | list }}"
+  loop_control:
+    label: "{{ item.id }}"
+  no_log: true
+  when: faas_livequeryd_enabled | bool
+  notify: restart faas-livequeryd
+
+- name: livequeryd_service — install the shared Neon API key
+  ansible.builtin.copy:
+    src: "{{ faas_livequeryd_neon_api_key_src }}"
+    dest: /etc/faas/secrets/livequeryd/neon-api-key
+    owner: root
+    group: root
+    mode: "0400"
+  no_log: true
+  when:
+    - faas_livequeryd_enabled | bool
+    - faas_livequeryd_neon_api_key_src | length > 0
+  notify: restart faas-livequeryd
+
+- name: livequeryd_service — remove a shared Neon API key no longer used
+  ansible.builtin.file:
+    path: /etc/faas/secrets/livequeryd/neon-api-key
+    state: absent
+  when: not (faas_livequeryd_enabled | bool) or faas_livequeryd_neon_api_key_src | length == 0
+
+# A database dropped from the list must not leave its connection string or
+# key behind.
+- name: livequeryd_service — find per-database secrets
+  ansible.builtin.find:
+    paths: /etc/faas/secrets/livequeryd
+    patterns: ["*.database-url", "*.neon-api-key"]
+  register: faas_livequeryd_secret_files
+  when: faas_livequeryd_enabled | bool
+
+- name: livequeryd_service — remove secrets of databases no longer served
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ faas_livequeryd_secret_files.files | default([]) }}"
+  loop_control:
+    label: "{{ item.path | basename }}"
+  vars:
+    faas_livequeryd_expected_secrets: >-
+      {{ (faas_livequeryd_databases | map(attribute='id') | map('regex_replace', '$', '.database-url') | list) +
+         (faas_livequeryd_databases | selectattr('neon_api_key_src', 'defined') | selectattr('neon_api_key_src')
+          | map(attribute='id') | map('regex_replace', '$', '.neon-api-key') | list) }}
+  when:
+    - faas_livequeryd_enabled | bool
+    - item.path | basename not in faas_livequeryd_expected_secrets
+  notify: restart faas-livequeryd
+
+- name: livequeryd_service — create live-key recipient directory
+  ansible.builtin.file:
+    path: /etc/faas/livequeryd
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: faas_livequeryd_enabled | bool
+
+# The list of databases names no secret: each connection string is a
+# credential the drop-in loads.
+- name: livequeryd_service — install the list of databases
+  ansible.builtin.template:
+    src: databases.json.j2
+    dest: /etc/faas/livequeryd/databases.json
+    owner: root
+    group: root
+    mode: "0644"
+  when: faas_livequeryd_enabled | bool
+  notify: restart faas-livequeryd
+
+# The recipient is public; apid refuses a file that grants group or other write.
+- name: livequeryd_service — install live-key recipient for apid
+  ansible.builtin.copy:
+    src: "{{ faas_livequeryd_keys_recipient_src }}"
+    dest: /etc/faas/livequeryd/keys.recipient
+    owner: root
+    group: root
+    mode: "0644"
+  when: faas_livequeryd_enabled | bool
+  notify: restart faas-apid for live queries
+
+- name: livequeryd_service — fleet-PKI server leaf
+  ansible.builtin.include_tasks: pki.yml
+  when:
+    - faas_livequeryd_enabled | bool
+    - faas_livequeryd_tls_cert | length > 0
+    - faas_livequeryd_tls_cert_src | length == 0
+
+- name: livequeryd_service — create TLS directory
+  ansible.builtin.file:
+    path: "{{ faas_livequeryd_tls_cert | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when:
+    - faas_livequeryd_enabled | bool
+    - faas_livequeryd_tls_cert | length > 0
+    - faas_livequeryd_tls_cert_src | length > 0
+
+- name: livequeryd_service — install TLS certificate
+  ansible.builtin.copy:
+    src: "{{ faas_livequeryd_tls_cert_src }}"
+    dest: "{{ faas_livequeryd_tls_cert }}"
+    owner: root
+    group: root
+    mode: "0644"
+  when:
+    - faas_livequeryd_enabled | bool
+    - faas_livequeryd_tls_cert | length > 0
+    - faas_livequeryd_tls_cert_src | length > 0
+  notify: restart faas-livequeryd
+
+- name: livequeryd_service — install TLS private key
+  ansible.builtin.copy:
+    src: "{{ faas_livequeryd_tls_key_src }}"
+    dest: "{{ faas_livequeryd_tls_key }}"
+    owner: root
+    group: root
+    mode: "0400"
+  no_log: true
+  when:
+    - faas_livequeryd_enabled | bool
+    - faas_livequeryd_tls_cert | length > 0
+    - faas_livequeryd_tls_key_src | length > 0
+  notify: restart faas-livequeryd
+
+- name: livequeryd_service — inspect TLS files
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - "{{ faas_livequeryd_tls_cert }}"
+    - "{{ faas_livequeryd_tls_key }}"
+    - "{{ faas_livequeryd_client_ca }}"
+  register: faas_livequeryd_tls_files
+  when:
+    - faas_livequeryd_enabled | bool
+    - faas_livequeryd_tls_cert | length > 0
+
+- name: livequeryd_service — require TLS files
+  ansible.builtin.assert:
+    that: item.stat.exists
+    fail_msg: "livequeryd TLS file is missing: {{ item.item }}"
+  loop: "{{ faas_livequeryd_tls_files.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when:
+    - faas_livequeryd_enabled | bool
+    - faas_livequeryd_tls_cert | length > 0
+
+- name: livequeryd_service — install hub configuration drop-in
+  ansible.builtin.template:
+    src: 50-faas-livequeryd.conf.j2
+    dest: /etc/systemd/system/faas-livequeryd.service.d/50-faas-livequeryd.conf
+    owner: root
+    group: root
+    mode: "0644"
+  when: faas_livequeryd_enabled | bool
+  notify: restart faas-livequeryd
+
+- name: livequeryd_service — wire live queries into apid
+  ansible.builtin.template:
+    src: 99-faas-live-queries.conf.j2
+    dest: /etc/systemd/system/faas-apid.service.d/99-faas-live-queries.conf
+    owner: root
+    group: root
+    mode: "0644"
+  when: faas_livequeryd_enabled | bool
+  notify: restart faas-apid for live queries
+
+# cd-controlplane treats the hub drop-in as the "configured" marker: without
+# it a release leaves livequeryd alone.
+- name: livequeryd_service — remove hub configuration when disabled
+  ansible.builtin.file:
+    path: /etc/systemd/system/faas-livequeryd.service.d/50-faas-livequeryd.conf
+    state: absent
+  when: not (faas_livequeryd_enabled | bool)
+  notify: restart faas-livequeryd
+
+- name: livequeryd_service — remove apid live-query wiring when disabled
+  ansible.builtin.file:
+    path: /etc/systemd/system/faas-apid.service.d/99-faas-live-queries.conf
+    state: absent
+  when: not (faas_livequeryd_enabled | bool)
+  notify: restart faas-apid for live queries
+
+# Apply configuration restarts before probing, so an already-running hub
+# cannot pass the readiness check with its old configuration.
+- name: livequeryd_service — apply configuration handlers before readiness
+  ansible.builtin.meta: flush_handlers
+
+- name: livequeryd_service — enable and start the hub
+  ansible.builtin.systemd_service:
+    name: faas-livequeryd.service
+    enabled: true
+    state: started
+    daemon_reload: true
+  when: faas_livequeryd_enabled | bool
+
+- name: livequeryd_service — stop and disable the hub when requested
+  ansible.builtin.systemd_service:
+    name: faas-livequeryd.service
+    enabled: false
+    state: stopped
+    daemon_reload: true
+  when: not (faas_livequeryd_enabled | bool)
+
+- name: livequeryd_service — verify readiness
+  ansible.builtin.uri:
+    url: "http://{{ faas_livequeryd_metrics_listen }}/readyz"
+    method: GET
+    status_code: 200
+    timeout: 2
+  register: faas_livequeryd_ready
+  until: faas_livequeryd_ready.status | default(0) == 200
+  retries: 30
+  delay: 2
+  when: faas_livequeryd_enabled | bool
+
+# The process is ready once it listens; a database it cannot open is retried
+# in the background. Fail the run if one is still not served, so a bad
+# connection string or a missing slot right is seen at deploy time.
+- name: livequeryd_service — verify every database is served
+  ansible.builtin.uri:
+    url: "http://{{ faas_livequeryd_metrics_listen }}/databases"
+    method: GET
+    status_code: 200
+    return_content: true
+    timeout: 2
+  register: faas_livequeryd_databases_status
+  until: >-
+    faas_livequeryd_databases_status.json is defined and
+    (faas_livequeryd_databases_status.json.databases | rejectattr('running') | list | length) == 0
+  retries: 30
+  delay: 2
+  when: faas_livequeryd_enabled | bool

@@ -70,6 +70,11 @@ measured:
   warning. Each gateway compares on its own and forgets after a restart, so
   quiet routes take longer to measure.
 
+Routes that already have a cache rule are checked too: each time the edge
+refills its copy, the gateway compares the new body with the old one. A rule
+that served stale bodies, or one far shorter than the content's lifetime,
+becomes a `cache_stale` or `cache_too_short` [route insight](route-insights.md).
+
 ## Reading the estimates
 
 Estimates replay your retained telemetry; they are not guarantees.

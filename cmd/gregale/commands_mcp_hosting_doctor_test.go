@@ -1,19 +1,20 @@
-package main
+package main_test
 
 import (
 	"bytes"
 	"encoding/json"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"testing"
 )
 
 func TestHostingDoctorFailsClosedWithoutLocalEvidence(t *testing.T) {
-	oldOut, oldJSON := osStdout, jsonOutput
+	oldOut, oldJSON := (*main.OsStdout), (*main.JsonOutput)
 	var output bytes.Buffer
-	osStdout, jsonOutput = &output, true
-	t.Cleanup(func() { osStdout, jsonOutput = oldOut, oldJSON })
-	result := mcpTasksStatusResult{AppSlug: "worker", Configured: true, ScaleToZeroConfigured: true, Metrics: []mcpTasksMetricStatus{{Name: "mcp_tasks_observer_heartbeat", Present: true, Value: 0}}}
-	result.diagnose()
-	if code := printMCPHostingDoctor(result, ""); code != 1 {
+	(*main.OsStdout), (*main.JsonOutput) = &output, true
+	t.Cleanup(func() { (*main.OsStdout), (*main.JsonOutput) = oldOut, oldJSON })
+	result := main.McpTasksStatusResult{AppSlug: "worker", Configured: true, ScaleToZeroConfigured: true, Metrics: []main.McpTasksMetricStatus{{Name: "mcp_tasks_observer_heartbeat", Present: true, Value: 0}}}
+	result.Diagnose()
+	if code := main.PrintMCPHostingDoctor(result, ""); code != 1 {
 		t.Fatalf("exit = %d, want 1", code)
 	}
 	var report struct {

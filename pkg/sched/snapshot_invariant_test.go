@@ -1,4 +1,4 @@
-package sched
+package sched_test
 
 // Property test scaffolding for spec invariant §6.2-3 ("An app always
 // has a live snapshot OR a cold-bootable rootfs — never neither"),

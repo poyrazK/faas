@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"encoding/json"
@@ -9,31 +9,32 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/profiling"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
-func periodicFixture(t *testing.T) (*MemStore, string, time.Time) {
+func periodicFixture(t *testing.T) (*state.MemStore, string, time.Time) {
 	t.Helper()
-	m := NewMemStore()
+	m := state.NewMemStore()
 	app, account, dep := uuid.NewString(), uuid.NewString(), uuid.NewString()
 	now := time.Now().UTC().Truncate(time.Minute).Add(api.ProfileAutoIngestionGrace)
 	old := now.Add(-time.Hour)
-	m.accounts[account] = Account{ID: account, Plan: api.PlanHobby, Status: AccountActive}
-	m.apps[app] = App{ID: app, AccountID: account, Slug: "periodic", Runtime: "node24", Status: AppActive}
-	m.deployments[dep] = Deployment{ID: dep, AppID: app, Scope: "prod", Status: DeployLive, RolloutState: "complete", RolloutCompletedAt: &old}
+	(*m.Accounts())[account] = state.Account{ID: account, Plan: api.PlanHobby, Status: state.AccountActive}
+	(*m.Apps())[app] = state.App{ID: app, AccountID: account, Slug: "periodic", Runtime: "node24", Status: state.AppActive}
+	(*m.Deployments())[dep] = state.Deployment{ID: dep, AppID: app, Scope: "prod", Status: state.DeployLive, RolloutState: "complete", RolloutCompletedAt: &old}
 	options := api.DefaultProfileRegressionOptions()
 	options.Routes = []string{"POST /checkout"}
-	m.profileDeploymentPolicies = map[string]api.ProfileDeploymentPolicy{app: {AppID: app, Revision: 1, UpdatedAt: &old, Config: api.ProfileDeploymentPolicyConfig{Enabled: true, NotifyRouteRegressions: true, Runtime: "node24", WindowSeconds: 60, Options: options, Periodic: &api.PeriodicProfilePolicy{IntervalSeconds: 60, Confirmations: 2}}}}
-	m.appWebhooks = map[string]AppWebhook{"hook": {ID: "hook", AppID: app, AccountID: account, Scope: AppWebhookScopeApp, Enabled: true}}
+	(*m.ProfileDeploymentPolicies()) = map[string]api.ProfileDeploymentPolicy{app: {AppID: app, Revision: 1, UpdatedAt: &old, Config: api.ProfileDeploymentPolicyConfig{Enabled: true, NotifyRouteRegressions: true, Runtime: "node24", WindowSeconds: 60, Options: options, Periodic: &api.PeriodicProfilePolicy{IntervalSeconds: 60, Confirmations: 2}}}}
+	(*m.AppWebhooks()) = map[string]state.AppWebhook{"hook": {ID: "hook", AppID: app, AccountID: account, Scope: state.AppWebhookScopeApp, Enabled: true}}
 	if err := m.DiscoverProfilePeriodicMonitors(t.Context(), now); err != nil {
 		t.Fatal(err)
 	}
 	return m, app, now
 }
-func periodicAssessment(work ProfilePeriodicWork, at time.Time, status string) ProfilePeriodicResult {
-	check := PeriodicProfileCheck(work.Monitor)
+func periodicAssessment(work state.ProfilePeriodicWork, at time.Time, status string) state.ProfilePeriodicResult {
+	check := state.PeriodicProfileCheck(work.Monitor)
 	a := profiling.NewRegressionAssessment(api.ProfileInvestigation{Revision: 1, Investigation: api.ProfileInvestigationInput{Baseline: *check.Baseline, Candidate: check.Candidate}}, check.Config.Options, at)
 	if status == "inconclusive" {
-		return ProfilePeriodicResult{Assessment: a}
+		return state.ProfilePeriodicResult{Assessment: a}
 	}
 	count := int64(1000)
 	percent, zero := 100.0, 0.0
@@ -52,7 +53,7 @@ func periodicAssessment(work ProfilePeriodicWork, at time.Time, status string) P
 	}
 	a.Status = status
 	a.RouteChecks = []api.ProfileRouteRegression{{Route: work.Monitor.Route, Status: status, BaselineRequests: &count, CandidateRequests: &count, Metric: metric, LabelCoverage: &api.ProfileRouteLabelComparison{Available: true, Consistent: true, Baseline: labels, Candidate: labels, DeltaPercentagePoints: &zero, MinimumPercent: 80, MaximumChangePercentagePoints: 20}}}
-	return ProfilePeriodicResult{Assessment: a}
+	return state.ProfilePeriodicResult{Assessment: a}
 }
 func TestProfilePeriodicBaselineConfirmationAndRecovery(t *testing.T) {
 	m, app, at := periodicFixture(t)
@@ -78,34 +79,34 @@ func TestProfilePeriodicBaselineConfirmationAndRecovery(t *testing.T) {
 	}
 	baseline := *first.Baseline
 	apply("regressed")
-	if len(m.appWebhookEventOutbox) != 0 {
+	if len((*m.AppWebhookEventOutbox())) != 0 {
 		t.Fatal("single observation alerted")
 	}
 	apply("inconclusive")
 	apply("regressed")
-	if len(m.appWebhookEventOutbox) != 0 {
+	if len((*m.AppWebhookEventOutbox())) != 0 {
 		t.Fatal("unknown evidence did not interrupt confirmation")
 	}
 	opened := apply("regressed")
-	if len(m.appWebhookEventOutbox) != 1 || opened.History[0].Transition != "profile.route_regressed" || opened.History[0].InvestigationID == "" {
+	if len((*m.AppWebhookEventOutbox())) != 1 || opened.History[0].Transition != "profile.route_regressed" || opened.History[0].InvestigationID == "" {
 		t.Fatal("missing confirmed incident and evidence")
 	}
 	incident := opened.History[0].IncidentID
-	if !periodicQueryEqual(*opened.Baseline, baseline) {
+	if !state.PeriodicQueryEqual(*opened.Baseline, baseline) {
 		t.Fatal("baseline drifted")
 	}
 	apply("regressed")
 	apply("no_regression_detected")
-	if len(m.appWebhookEventOutbox) != 1 {
+	if len((*m.AppWebhookEventOutbox())) != 1 {
 		t.Fatal("duplicate or premature recovery")
 	}
 	recovered := apply("no_regression_detected")
-	if len(m.appWebhookEventOutbox) != 2 || recovered.History[0].Transition != "profile.route_recovered" || recovered.History[0].IncidentID != incident {
+	if len((*m.AppWebhookEventOutbox())) != 2 || recovered.History[0].Transition != "profile.route_recovered" || recovered.History[0].IncidentID != incident {
 		t.Fatal("missing matching confirmed recovery")
 	}
 	apply("regressed")
 	reopened := apply("regressed")
-	if len(m.appWebhookEventOutbox) != 3 || reopened.History[0].IncidentID == incident {
+	if len((*m.AppWebhookEventOutbox())) != 3 || reopened.History[0].IncidentID == incident {
 		t.Fatal("new confirmed episode did not get its own incident")
 	}
 	// Baseline expiry keeps the old incident context intact and restarts calibration.
@@ -119,17 +120,17 @@ func TestProfilePeriodicBaselineConfirmationAndRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	rows, _ := m.ListProfilePeriodicMonitors(t.Context(), work.AccountID, app)
-	if rows[0].Baseline != nil || rows[0].History[0].Status != "baseline_expired" || len(m.appWebhookEventOutbox) != 3 {
+	if rows[0].Baseline != nil || rows[0].History[0].Status != "baseline_expired" || len((*m.AppWebhookEventOutbox())) != 3 {
 		t.Fatal("expiry falsely recovered or retained expired baseline")
 	}
 	at = rows[0].NextAttemptAt
 	repinned := apply("no_regression_detected")
-	if repinned.Baseline == nil || periodicQueryEqual(*repinned.Baseline, baseline) {
+	if repinned.Baseline == nil || state.PeriodicQueryEqual(*repinned.Baseline, baseline) {
 		t.Fatal("expired reference was reused")
 	}
 	apply("no_regression_detected")
 	apply("no_regression_detected")
-	if len(m.appWebhookEventOutbox) != 3 {
+	if len((*m.AppWebhookEventOutbox())) != 3 {
 		t.Fatal("new baseline recovered an old incident")
 	}
 }
@@ -139,7 +140,7 @@ func TestProfilePeriodicLeasesRetriesAndPolicyChanges(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.ClaimProfilePeriodicMonitor(t.Context(), at); !errors.Is(err, ErrNotFound) {
+	if _, err := m.ClaimProfilePeriodicMonitor(t.Context(), at); !errors.Is(err, state.ErrNotFound) {
 		t.Fatal("double claim", err)
 	}
 	later := at.Add(api.ProfileAutoLeaseDuration + time.Second)
@@ -147,10 +148,10 @@ func TestProfilePeriodicLeasesRetriesAndPolicyChanges(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !periodicQueryEqual(first.Monitor.Candidate, reclaimed.Monitor.Candidate) {
+	if !state.PeriodicQueryEqual(first.Monitor.Candidate, reclaimed.Monitor.Candidate) {
 		t.Fatal("lease recovery changed windows")
 	}
-	if err := m.FinishProfilePeriodicMonitor(t.Context(), first, periodicAssessment(first, later, "no_regression_detected"), later); !errors.Is(err, ErrProfileCheckLease) {
+	if err := m.FinishProfilePeriodicMonitor(t.Context(), first, periodicAssessment(first, later, "no_regression_detected"), later); !errors.Is(err, state.ErrProfileCheckLease) {
 		t.Fatal("stale owner committed", err)
 	}
 	retry := periodicAssessment(reclaimed, later, "inconclusive")
@@ -162,7 +163,7 @@ func TestProfilePeriodicLeasesRetriesAndPolicyChanges(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !periodicQueryEqual(next.Monitor.Candidate, first.Monitor.Candidate) {
+	if !state.PeriodicQueryEqual(next.Monitor.Candidate, first.Monitor.Candidate) {
 		t.Fatal("retry changed windows")
 	}
 	malformed := periodicAssessment(next, later, "inconclusive")
@@ -170,28 +171,28 @@ func TestProfilePeriodicLeasesRetriesAndPolicyChanges(t *testing.T) {
 	if err := m.FinishProfilePeriodicMonitor(t.Context(), next, malformed, later.Add(api.ProfileAutoRetryInterval)); err == nil {
 		t.Fatal("foreign comparison accepted")
 	}
-	p := m.profileDeploymentPolicies[app]
+	p := (*m.ProfileDeploymentPolicies())[app]
 	p.Revision++
-	m.profileDeploymentPolicies[app] = p
-	if err := m.FinishProfilePeriodicMonitor(t.Context(), next, periodicAssessment(next, later, "inconclusive"), later.Add(api.ProfileAutoRetryInterval)); !errors.Is(err, ErrProfileCheckLease) {
+	(*m.ProfileDeploymentPolicies())[app] = p
+	if err := m.FinishProfilePeriodicMonitor(t.Context(), next, periodicAssessment(next, later, "inconclusive"), later.Add(api.ProfileAutoRetryInterval)); !errors.Is(err, state.ErrProfileCheckLease) {
 		t.Fatal("changed policy committed", err)
 	}
-	if len(m.appWebhookEventOutbox) != 0 {
+	if len((*m.AppWebhookEventOutbox())) != 0 {
 		t.Fatal("invalidated work alerted")
 	}
 }
 func TestProfilePeriodicPolicyBoundsAndWorkContract(t *testing.T) {
 	m, app, _ := periodicFixture(t)
-	config := m.profileDeploymentPolicies[app].Config
+	config := (*m.ProfileDeploymentPolicies())[app].Config
 	zero := int64(0)
 	for _, interval := range []int{0, 59, 61, 86460} {
 		c := config
 		c.Periodic = &api.PeriodicProfilePolicy{IntervalSeconds: interval, Confirmations: 2}
-		if ValidateProfileDeploymentPolicy(api.SaveProfileDeploymentPolicyRequest{ExpectedRevision: &zero, Config: c}) == nil {
+		if state.ValidateProfileDeploymentPolicy(api.SaveProfileDeploymentPolicyRequest{ExpectedRevision: &zero, Config: c}) == nil {
 			t.Fatal("bad interval accepted", interval)
 		}
 	}
-	var work ProfilePeriodicWork
+	var work state.ProfilePeriodicWork
 	if err := json.Unmarshal([]byte(`{"monitor":{"id":"test"},"account_id":"owned"}`), &work); err != nil || work.AccountID != "owned" {
 		t.Fatal("SQL work contract lost ownership", err, work)
 	}

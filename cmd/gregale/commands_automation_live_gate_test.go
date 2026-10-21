@@ -1,5 +1,5 @@
 // adr: 1299
-package main
+package main_test
 
 import (
 	"context"
@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/automationgate"
 )
@@ -20,14 +21,14 @@ const gateCLICandidate = "00000000-0000-4000-8000-000000000011"
 
 func automationGateArgs() []string {
 	return []string{"automations", "live", "gate", "--app", "billing", "--name", "case/report", "--baseline", gateCLIBaseline, "--candidate", gateCLICandidate,
-		"--expected-version", "7", "--expected-published-version", "4", "--expected-deployment-id", liveCLIDeployment}
+		"--expected-version", "7", "--expected-published-version", "4", "--expected-deployment-id", main.LiveCLIDeployment}
 }
 
 func automationGateView() api.AutomationLiveSuiteComparison {
 	now := time.Now().UTC()
-	summary := api.AutomationLiveSuiteSummary{Name: "case/report", Version: 7, PublishedVersion: 4, DeploymentID: liveCLIDeployment, CreatedAt: now, UpdatedAt: now, CaseCount: 1, LinkedRuns: 1}
+	summary := api.AutomationLiveSuiteSummary{Name: "case/report", Version: 7, PublishedVersion: 4, DeploymentID: main.LiveCLIDeployment, CreatedAt: now, UpdatedAt: now, CaseCount: 1, LinkedRuns: 1}
 	view := api.AutomationLiveSuiteComparison{Baseline: summary, Candidate: summary, BaselineOutdated: true, ObservedAt: now, Summary: api.AutomationLiveSuiteComparisonCounts{Total: 1, Unchanged: 1}, Cases: []api.AutomationLiveSuiteCaseComparison{
-		{Name: "happy", Change: "unchanged", Baseline: &api.AutomationLiveSuiteObservation{RunID: liveCLIRun, Result: "passed"}, Candidate: &api.AutomationLiveSuiteObservation{RunID: "00000000-0000-4000-8000-000000000012", Result: "passed"}},
+		{Name: "happy", Change: "unchanged", Baseline: &api.AutomationLiveSuiteObservation{RunID: main.LiveCLIRun, Result: "passed"}, Candidate: &api.AutomationLiveSuiteObservation{RunID: "00000000-0000-4000-8000-000000000012", Result: "passed"}},
 	}}
 	view.Baseline.ID, view.Candidate.ID = gateCLIBaseline, gateCLICandidate
 	return view
@@ -36,12 +37,12 @@ func automationGateView() api.AutomationLiveSuiteComparison {
 func TestAutomationGateCLIReadOnlyReportsAndErrors(t *testing.T) {
 	for _, mode := range []string{"passed", "unchanged-failure", "regression", "pending", "incompatible", "outdated", "wrong-target", "wrong-id", "wrong-name", "false-counts", "future-result", "missing-freshness", "empty", "malformed", "401", "403", "404", "410", "409", "429", "503"} {
 		t.Run(mode, func(t *testing.T) {
-			resetJSONOut(t)
-			jsonOutput = true
-			out := captureAutomationStdout(t)
-			f := authedFakeAPI(t, "", http.StatusOK)
+			main.ResetJSONOut(t)
+			(*main.JsonOutput) = true
+			out := main.CaptureAutomationStdout(t)
+			f := main.AuthedFakeAPI(t, "", http.StatusOK)
 			var calls atomic.Int32
-			f.srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			(*f.Srv()).Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				calls.Add(1)
 				want := "/v1/apps/billing/automations/case%2Freport/live-suites/" + gateCLICandidate + "/compare/" + gateCLIBaseline
 				if r.Method != "GET" || r.URL.EscapedPath() != want || r.Header.Get("Authorization") != "Bearer test-token" || r.Header.Get("Idempotency-Key") != "" || r.ContentLength > 0 {
@@ -78,7 +79,7 @@ func TestAutomationGateCLIReadOnlyReportsAndErrors(t *testing.T) {
 				case "wrong-target":
 					view.Candidate.Version++
 				case "wrong-id":
-					view.Baseline.ID = liveCLIDeployment
+					view.Baseline.ID = main.LiveCLIDeployment
 				case "wrong-name":
 					view.Candidate.Name = "PRIVATE foreign"
 				case "false-counts":
@@ -95,7 +96,7 @@ func TestAutomationGateCLIReadOnlyReportsAndErrors(t *testing.T) {
 				}
 				_ = json.NewEncoder(w).Encode(fields)
 			})
-			code, stderr := runWithStderr(t, func() int { return run(automationGateArgs()) })
+			code, stderr := main.RunWithStderr(t, func() int { return main.Run(automationGateArgs()) })
 			want, outcome := 0, "passed"
 			switch mode {
 			case "unchanged-failure", "regression":
@@ -107,7 +108,7 @@ func TestAutomationGateCLIReadOnlyReportsAndErrors(t *testing.T) {
 			case "401", "403", "404", "410", "409", "429", "503":
 				want, outcome = map[string]int{"401": 2, "403": 6, "404": 4, "410": 4, "409": 5, "429": 3, "503": 3}[mode], "error"
 			}
-			var report automationLiveGateReport
+			var report main.AutomationLiveGateReport
 			if code != want || json.Unmarshal(out.Bytes(), &report) != nil || report.SchemaVersion != 1 || report.Policy != "strict_v1" || report.ExitCode != code || report.Outcome != outcome || report.BaselineID != gateCLIBaseline || report.CandidateID != gateCLICandidate || report.Expected.PublishedVersion != 4 || calls.Load() != 1 {
 				t.Fatalf("exit=%d want=%d report=%s stderr=%s calls=%d", code, want, out, stderr, calls.Load())
 			}
@@ -128,13 +129,13 @@ func TestAutomationGateCLIReadOnlyReportsAndErrors(t *testing.T) {
 func TestAutomationGateCLIRejectsUnreviewedOptionsLocally(t *testing.T) {
 	for _, extra := range [][]string{{"--baseline", gateCLICandidate}, {"--candidate", "bad"}, {"--expected-version", "0"}, {"--expected-published-version", "8"}, {"--expected-version", "PRIVATE"}, {"--expected-deployment-id", ""}, {"--case", "override"}, {"--confirm-real-actions"}, {"--wait"}, {"unexpected"}} {
 		t.Run(strings.Join(extra, " "), func(t *testing.T) {
-			resetJSONOut(t)
-			jsonOutput = true
-			out := captureAutomationStdout(t)
-			f := authedFakeAPI(t, "", 200)
+			main.ResetJSONOut(t)
+			(*main.JsonOutput) = true
+			out := main.CaptureAutomationStdout(t)
+			f := main.AuthedFakeAPI(t, "", 200)
 			var calls atomic.Int32
-			f.srv.Config.Handler = http.HandlerFunc(func(http.ResponseWriter, *http.Request) { calls.Add(1) })
-			code, stderr := runWithStderr(t, func() int { return run(append(automationGateArgs(), extra...)) })
+			(*f.Srv()).Config.Handler = http.HandlerFunc(func(http.ResponseWriter, *http.Request) { calls.Add(1) })
+			code, stderr := main.RunWithStderr(t, func() int { return main.Run(append(automationGateArgs(), extra...)) })
 			if code != 1 || out.Len() != 0 || calls.Load() != 0 || strings.Contains(stderr, "PRIVATE") {
 				t.Fatal("invalid gate options reached API or exposed values", code, out, stderr)
 			}
@@ -143,15 +144,15 @@ func TestAutomationGateCLIRejectsUnreviewedOptionsLocally(t *testing.T) {
 }
 
 func TestAutomationGateCLIHumanOutputAndManifestHelp(t *testing.T) {
-	resetJSONOut(t)
-	out := captureAutomationStdout(t)
-	f := authedFakeAPI(t, "", 200)
+	main.ResetJSONOut(t)
+	out := main.CaptureAutomationStdout(t)
+	f := main.AuthedFakeAPI(t, "", 200)
 	var calls atomic.Int32
-	f.srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	(*f.Srv()).Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
 		_ = json.NewEncoder(w).Encode(automationGateView())
 	})
-	if code := run([]string{"automations", "live", "gate", "--help"}); code != 0 || calls.Load() != 0 {
+	if code := main.Run([]string{"automations", "live", "gate", "--help"}); code != 0 || calls.Load() != 0 {
 		t.Fatal("gate help contacted API", code)
 	}
 	for _, flag := range []string{"--baseline", "--candidate", "--expected-version", "--expected-published-version", "--expected-deployment-id"} {
@@ -160,7 +161,7 @@ func TestAutomationGateCLIHumanOutputAndManifestHelp(t *testing.T) {
 		}
 	}
 	out.Reset()
-	if code := run(automationGateArgs()); code != 0 || !strings.Contains(out.String(), "Automation gate passed") || !strings.Contains(out.String(), "happy: unchanged (baseline passed, candidate passed)") || strings.Contains(out.String(), "{\n") {
+	if code := main.Run(automationGateArgs()); code != 0 || !strings.Contains(out.String(), "Automation gate passed") || !strings.Contains(out.String(), "happy: unchanged (baseline passed, candidate passed)") || strings.Contains(out.String(), "{\n") {
 		t.Fatal("human gate output missing decision or case evidence", code, out)
 	}
 }
@@ -168,15 +169,15 @@ func TestAutomationGateCLIHumanOutputAndManifestHelp(t *testing.T) {
 func TestAutomationGateCLIInterruptionAndDeadlineAreReadOnly(t *testing.T) {
 	for _, mode := range []string{"before-request", "during-request", "deadline"} {
 		t.Run(mode, func(t *testing.T) {
-			resetJSONOut(t)
-			jsonOutput = true
-			out := captureAutomationStdout(t)
-			f := authedFakeAPI(t, "", 200)
-			o, err := parseAutomationLiveGate(automationGateArgs()[3:])
+			main.ResetJSONOut(t)
+			(*main.JsonOutput) = true
+			out := main.CaptureAutomationStdout(t)
+			f := main.AuthedFakeAPI(t, "", 200)
+			o, err := main.ParseAutomationLiveGate(automationGateArgs()[3:])
 			if err != nil {
 				t.Fatal(err)
 			}
-			client, err := authedClient()
+			client, err := main.AuthedClient()
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -188,7 +189,7 @@ func TestAutomationGateCLIInterruptionAndDeadlineAreReadOnly(t *testing.T) {
 				defer stop()
 			}
 			var calls atomic.Int32
-			f.srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			(*f.Srv()).Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				calls.Add(1)
 				if r.Method != "GET" {
 					t.Error("interrupted gate mutated execution")
@@ -201,12 +202,12 @@ func TestAutomationGateCLIInterruptionAndDeadlineAreReadOnly(t *testing.T) {
 			if mode == "before-request" {
 				cancel()
 			}
-			code, stderr := runWithStderr(t, func() int { return runAutomationLiveGate(ctx, client, o) })
+			code, stderr := main.RunWithStderr(t, func() int { return main.RunAutomationLiveGate(ctx, client, o) })
 			want := 130
 			if mode == "deadline" {
 				want = 3
 			}
-			var report automationLiveGateReport
+			var report main.AutomationLiveGateReport
 			if code != want || json.Unmarshal(out.Bytes(), &report) != nil || report.ExitCode != want || report.Comparison != nil || stderr == "" || mode == "before-request" && calls.Load() != 0 {
 				t.Fatal(code, out, stderr, calls.Load())
 			}
@@ -221,17 +222,17 @@ func (automationGateBrokenWriter) Write([]byte) (int, error) {
 }
 
 func TestAutomationGateCLIOutputFailureCannotPass(t *testing.T) {
-	resetJSONOut(t)
-	jsonOutput = true
-	previous := osStdout
-	osStdout = automationGateBrokenWriter{}
-	t.Cleanup(func() { osStdout = previous })
-	o, err := parseAutomationLiveGate(automationGateArgs()[3:])
+	main.ResetJSONOut(t)
+	(*main.JsonOutput) = true
+	previous := (*main.OsStdout)
+	(*main.OsStdout) = automationGateBrokenWriter{}
+	t.Cleanup(func() { (*main.OsStdout) = previous })
+	o, err := main.ParseAutomationLiveGate(automationGateArgs()[3:])
 	if err != nil {
 		t.Fatal(err)
 	}
-	code, stderr := runWithStderr(t, func() int {
-		return renderAutomationLiveGate(o, nil, automationgate.Result{Outcome: "passed"}, "passed")
+	code, stderr := main.RunWithStderr(t, func() int {
+		return main.RenderAutomationLiveGate(o, nil, automationgate.Result{Outcome: "passed"}, "passed")
 	})
 	if code != 3 || strings.Contains(stderr, "PRIVATE") {
 		t.Fatal("unwritten report passed or leaked writer details", code, stderr)

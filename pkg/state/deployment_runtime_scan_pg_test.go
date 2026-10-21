@@ -1,6 +1,6 @@
 //go:build !no_pg
 
-package state
+package state_test
 
 // adr: 435. Actual PostgreSQL publication, immutability and nonwaiting fences.
 
@@ -12,26 +12,27 @@ import (
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestPgRuntimeScanLifecycle(t *testing.T) {
-	s, _ := registryVerificationPGStore(t)
-	runtimeScanLifecycle(t, s)
+	s, _ := state.RegistryVerificationPGStore(t)
+	state.RuntimeScanLifecycle(t, s)
 }
 
 func TestPgRuntimeScanReplacement(t *testing.T) {
-	s, _ := registryVerificationPGStore(t)
-	runtimeScanReplacement(t, s)
+	s, _ := state.RegistryVerificationPGStore(t)
+	state.RuntimeScanReplacement(t, s)
 }
 
 func TestPgRuntimeScanPublicationAndFreshReadDoNotWait(t *testing.T) {
-	s, pool := registryVerificationPGStore(t)
-	_, base, app, dep := artifactScanBaseFixture(t, s)
+	s, pool := state.RegistryVerificationPGStore(t)
+	_, base, app, dep := state.ArtifactScanBaseFixture(t, s)
 	inputs, err := s.GetFreshDeploymentRuntimeProducerInputs(t.Context(), app.AccountID, app.ID, dep.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	in := runtimeScanInputFixture(t, inputs)
+	in := state.RuntimeScanInputFixture(t, inputs)
 	if _, err := s.PublishDeploymentRuntimeScan(t.Context(), in); err != nil {
 		t.Fatal(err)
 	}
@@ -58,10 +59,10 @@ func TestPgRuntimeScanPublicationAndFreshReadDoNotWait(t *testing.T) {
 			}
 			bounded, cancel := context.WithTimeout(t.Context(), time.Second)
 			defer cancel()
-			if _, err := s.PublishDeploymentRuntimeScan(bounded, in); !errors.Is(err, ErrApplicationStandardRuntimeBusy) {
+			if _, err := s.PublishDeploymentRuntimeScan(bounded, in); !errors.Is(err, state.ErrApplicationStandardRuntimeBusy) {
 				t.Fatalf("publication bypassed/waited for %s fence: %v", kind, err)
 			}
-			if _, err := s.GetFreshDeploymentRuntimeScan(bounded, app.AccountID, app.ID, dep.ID); !errors.Is(err, ErrApplicationStandardRuntimeBusy) {
+			if _, err := s.GetFreshDeploymentRuntimeScan(bounded, app.AccountID, app.ID, dep.ID); !errors.Is(err, state.ErrApplicationStandardRuntimeBusy) {
 				t.Fatalf("fresh read bypassed/waited for %s fence: %v", kind, err)
 			}
 			if err := tx.Rollback(t.Context()); err != nil {
@@ -75,13 +76,13 @@ func TestPgRuntimeScanPublicationAndFreshReadDoNotWait(t *testing.T) {
 }
 
 func TestPgRuntimeScanStorageGuardsRejectMutationAndReselection(t *testing.T) {
-	s, pool := registryVerificationPGStore(t)
-	_, _, app, dep := artifactScanBaseFixture(t, s)
+	s, pool := state.RegistryVerificationPGStore(t)
+	_, _, app, dep := state.ArtifactScanBaseFixture(t, s)
 	inputs, err := s.GetFreshDeploymentRuntimeProducerInputs(t.Context(), app.AccountID, app.ID, dep.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	in := runtimeScanInputFixture(t, inputs)
+	in := state.RuntimeScanInputFixture(t, inputs)
 	if _, err := s.PublishDeploymentRuntimeScan(t.Context(), in); err != nil {
 		t.Fatal(err)
 	}
@@ -104,13 +105,13 @@ func TestPgRuntimeScanStorageGuardsRejectMutationAndReselection(t *testing.T) {
 }
 
 func TestPgRuntimeScanDatabaseDeadlineAndExpiredRetry(t *testing.T) {
-	s, _ := registryVerificationPGStore(t)
-	_, _, app, dep := artifactScanBaseFixture(t, s)
+	s, _ := state.RegistryVerificationPGStore(t)
+	_, _, app, dep := state.ArtifactScanBaseFixture(t, s)
 	inputs, err := s.GetFreshDeploymentRuntimeProducerInputs(t.Context(), app.AccountID, app.ID, dep.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	in := runtimeScanInputFixture(t, inputs)
+	in := state.RuntimeScanInputFixture(t, inputs)
 	built := time.Now().UTC().Add(-api.ApplicationStandardScannerDBMaxAge + 2*time.Second)
 	in.Reports[0].Report.ScannerDBBuiltAt = built.Format(time.RFC3339Nano)
 	value, err := s.PublishDeploymentRuntimeScan(t.Context(), in)
@@ -121,7 +122,7 @@ func TestPgRuntimeScanDatabaseDeadlineAndExpiredRetry(t *testing.T) {
 		t.Fatal("database age did not cap durable lease", value.ExpiresAt, built)
 	}
 	time.Sleep(time.Until(value.ExpiresAt.Add(10 * time.Millisecond)))
-	if _, err := s.GetFreshDeploymentRuntimeScan(t.Context(), app.AccountID, app.ID, dep.ID); !errors.Is(err, ErrApplicationStandardRuntimeStale) {
+	if _, err := s.GetFreshDeploymentRuntimeScan(t.Context(), app.AccountID, app.ID, dep.ID); !errors.Is(err, state.ErrApplicationStandardRuntimeStale) {
 		t.Fatal("expired database retained fresh scan", err)
 	}
 	retry, err := s.PublishDeploymentRuntimeScan(t.Context(), in)
@@ -129,7 +130,7 @@ func TestPgRuntimeScanDatabaseDeadlineAndExpiredRetry(t *testing.T) {
 		t.Fatal("expired exact retry renewed clocks", err)
 	}
 	in.ID = "48b2ebdc-7330-49a1-b7fe-2aa06c912e38"
-	if _, err := s.PublishDeploymentRuntimeScan(t.Context(), in); !errors.Is(err, ErrApplicationStandardRuntimeStale) {
+	if _, err := s.PublishDeploymentRuntimeScan(t.Context(), in); !errors.Is(err, state.ErrApplicationStandardRuntimeStale) {
 		t.Fatal("expired database accepted new publication", err)
 	}
 	history, err := s.GetCurrentDeploymentRuntimeScan(t.Context(), app.AccountID, app.ID, dep.ID)

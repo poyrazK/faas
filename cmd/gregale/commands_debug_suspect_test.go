@@ -1,8 +1,9 @@
-package main
+package main_test
 
 import (
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -26,7 +27,7 @@ func TestFormatSuspectedDependency(t *testing.T) {
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if got := formatSuspectedDependency(tc.suspect); got != tc.want {
+			if got := main.FormatSuspectedDependency(tc.suspect); got != tc.want {
 				t.Fatalf("got %q, want %q", got, tc.want)
 			}
 		})

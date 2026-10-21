@@ -1,5 +1,5 @@
 // adr: 233
-package state
+package state_test
 
 import (
 	"context"
@@ -7,32 +7,33 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestMemProjectEnvironmentEdgePolicyCloneAndDelete(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
+	store := state.NewMemStore()
 	account, err := store.CreateAccount(ctx, "environment-edge-policy@example.test", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
 	}
-	project, err := store.CreateProject(ctx, Project{AccountID: account.ID, Slug: "edge-shop", ScanSource: ProjectScanSourceCompose})
+	project, err := store.CreateProject(ctx, state.Project{AccountID: account.ID, Slug: "edge-shop", ScanSource: state.ProjectScanSourceCompose})
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, err := store.CreateApp(ctx, App{AccountID: account.ID, ProjectID: project.ID, Slug: "edge-shop-api", Status: AppActive})
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, ProjectID: project.ID, Slug: "edge-shop-api", Status: state.AppActive})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.GetProjectEnvironmentEdgePolicy(ctx, account.ID, app.ID, "production"); !errors.Is(err, ErrNotFound) {
+	if _, err := store.GetProjectEnvironmentEdgePolicy(ctx, account.ID, app.ID, "production"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("missing policy = %v, want ErrNotFound", err)
 	}
-	input := ProjectEnvironmentEdgePolicy{
+	input := state.ProjectEnvironmentEdgePolicy{
 		AccountID: account.ID, ProjectID: project.ID, AppID: app.ID, EnvironmentSlug: "production",
-		Rules: []ProjectEnvironmentEdgeRule{{
-			Kind: EdgeRuleKindHeaders, MatchPath: "/api/*", Priority: 100, Enabled: true,
-			Action: EdgeRuleAction{Kind: EdgeRuleKindHeaders, Headers: &EdgeRuleHeadersAction{
-				ResponseHeaders: []EdgeRuleHeaderOp{{Name: "X-Environment", Value: "production", Action: "set"}},
+		Rules: []state.ProjectEnvironmentEdgeRule{{
+			Kind: state.EdgeRuleKindHeaders, MatchPath: "/api/*", Priority: 100, Enabled: true,
+			Action: state.EdgeRuleAction{Kind: state.EdgeRuleKindHeaders, Headers: &state.EdgeRuleHeadersAction{
+				ResponseHeaders: []state.EdgeRuleHeaderOp{{Name: "X-Environment", Value: "production", Action: "set"}},
 			}},
 		}},
 	}
@@ -44,7 +45,7 @@ func TestMemProjectEnvironmentEdgePolicyCloneAndDelete(t *testing.T) {
 	if err != nil || stored.Rules[0].Action.Headers.ResponseHeaders[0].Value != "production" {
 		t.Fatalf("policy alias leaked: %+v err=%v", stored, err)
 	}
-	_, result, err := store.CloneProjectEnvironment(ctx, ProjectEnvironmentClone{
+	_, result, err := store.CloneProjectEnvironment(ctx, state.ProjectEnvironmentClone{
 		AccountID: account.ID, ProjectID: project.ID, SourceSlug: "production", TargetSlug: "staging",
 	}, api.MustLimitsFor(account.Plan))
 	if err != nil || result.PoliciesCopied != 1 {
@@ -65,18 +66,18 @@ func TestMemProjectEnvironmentEdgePolicyCloneAndDelete(t *testing.T) {
 	if err := store.DeleteProjectEnvironment(ctx, account.ID, project.ID, "staging"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.GetProjectEnvironmentEdgePolicy(ctx, account.ID, app.ID, "staging"); !errors.Is(err, ErrNotFound) {
+	if _, err := store.GetProjectEnvironmentEdgePolicy(ctx, account.ID, app.ID, "staging"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("deleted policy = %v, want ErrNotFound", err)
 	}
 }
 
 func TestEnvironmentEdgePolicyRejectsApplicationCORSPreset(t *testing.T) {
 	presetID := "preset-id"
-	rules := []ProjectEnvironmentEdgeRule{{
-		Kind: EdgeRuleKindCORSA, MatchPath: "/", Enabled: true,
-		Action: EdgeRuleAction{Kind: EdgeRuleKindCORSA, CORS: &EdgeRuleCORSAction{CorsPresetID: &presetID}},
+	rules := []state.ProjectEnvironmentEdgeRule{{
+		Kind: state.EdgeRuleKindCORSA, MatchPath: "/", Enabled: true,
+		Action: state.EdgeRuleAction{Kind: state.EdgeRuleKindCORSA, CORS: &state.EdgeRuleCORSAction{CorsPresetID: &presetID}},
 	}}
-	if validProjectEnvironmentEdgeRules(rules) {
+	if state.ValidProjectEnvironmentEdgeRules(rules) {
 		t.Fatal("environment-owned CORS must not reference an application-owned preset")
 	}
 }

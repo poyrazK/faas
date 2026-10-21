@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -42,13 +43,13 @@ func TestSummarizeProjectApply_AllSuccess(t *testing.T) {
 		},
 	}
 
-	status := summarizeProjectApply(apply)
-	if status.appsReconciled != 2 || status.buildsQueued != 2 || status.buildsFailed != 0 {
+	status := main.SummarizeProjectApply(apply)
+	if (*status.AppsReconciled()) != 2 || (*status.BuildsQueued()) != 2 || (*status.BuildsFailed()) != 0 {
 		t.Fatalf("unexpected success status: %+v", status)
 	}
 
 	var out bytes.Buffer
-	if code := renderProjectApplyResult(&out, plan, apply); code != 0 {
+	if code := main.RenderProjectApplyResult(&out, plan, apply); code != 0 {
 		t.Fatalf("all-success apply exit = %d, want 0", code)
 	}
 	text := out.String()
@@ -70,15 +71,15 @@ func TestRenderProjectApplyResult_ImageDeployment(t *testing.T) {
 	apply := api.ApplyResponse{ProjectID: "image-project",
 		Apps: []api.ApplyResponseApp{{Slug: "image"}, {Slug: "source"}},
 		Builds: []api.AppliedBuild{
-			{Slug: "image", DeploymentID: "image-deployment", DeploymentStatus: statusLive},
+			{Slug: "image", DeploymentID: "image-deployment", DeploymentStatus: main.StatusLive},
 			{Slug: "source", DeploymentID: "source-deployment", BuildID: "source-build"},
 		}}
-	status := summarizeProjectApply(apply)
-	if status.imagesQueued != 1 || status.buildsQueued != 1 || status.buildsFailed != 0 {
+	status := main.SummarizeProjectApply(apply)
+	if (*status.ImagesQueued()) != 1 || (*status.BuildsQueued()) != 1 || (*status.BuildsFailed()) != 0 {
 		t.Fatalf("mixed image/source receipt = %+v", status)
 	}
 	var out bytes.Buffer
-	if code := renderProjectApplyResult(&out, plan, apply); code != 0 {
+	if code := main.RenderProjectApplyResult(&out, plan, apply); code != 0 {
 		t.Fatalf("image apply exit = %d: %s", code, out.String())
 	}
 	for _, want := range []string{
@@ -104,7 +105,7 @@ func TestRenderProjectApplyResult_PartialFailure(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	if code := renderProjectApplyResult(&out, plan, apply); code != 1 {
+	if code := main.RenderProjectApplyResult(&out, plan, apply); code != 1 {
 		t.Fatalf("partial apply exit = %d, want 1", code)
 	}
 	text := out.String()
@@ -135,7 +136,7 @@ func TestRenderProjectApplyResult_AllFailed(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	if code := renderProjectApplyResult(&out, plan, apply); code != 1 {
+	if code := main.RenderProjectApplyResult(&out, plan, apply); code != 1 {
 		t.Fatalf("all-failed apply exit = %d, want 1", code)
 	}
 	text := out.String()
@@ -159,7 +160,7 @@ func TestRenderProjectApplyResult_EmptyBuildsForChangedWorkloadFails(t *testing.
 	}
 
 	var out bytes.Buffer
-	if code := renderProjectApplyResult(&out, plan, apply); code != 1 {
+	if code := main.RenderProjectApplyResult(&out, plan, apply); code != 1 {
 		t.Fatalf("empty-build apply exit = %d, want 1", code)
 	}
 	text := out.String()
@@ -184,7 +185,7 @@ func TestRenderProjectApplyResult_EmptyBuildsForNoopSucceeds(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	if code := renderProjectApplyResult(&out, plan, apply); code != 0 {
+	if code := main.RenderProjectApplyResult(&out, plan, apply); code != 0 {
 		t.Fatalf("no-op apply exit = %d, want 0", code)
 	}
 	text := out.String()
@@ -204,7 +205,7 @@ func TestRenderProjectApplyResult_UnchangedUpdateWithNoBuildsSucceeds(t *testing
 	apply := api.ApplyResponse{ProjectID: "project-1"}
 
 	var out bytes.Buffer
-	if code := renderProjectApplyResult(&out, plan, apply); code != 0 {
+	if code := main.RenderProjectApplyResult(&out, plan, apply); code != 0 {
 		t.Fatalf("unchanged update apply exit = %d, want 0", code)
 	}
 	if !strings.Contains(out.String(), "Summary: apps reconciled=0, builds queued=0, builds failed=0") {
@@ -278,11 +279,11 @@ func TestCmdDeployTarball_ProjectBuildFailuresSetExitCode(t *testing.T) {
 			t.Setenv("FAAS_TOKEN", "fp_live_x")
 
 			var stdout, stderr bytes.Buffer
-			oldOut, oldErr, oldJSON := osStdout, osStderr, jsonOutput
-			osStdout, osStderr, jsonOutput = &stdout, &stderr, tc.json
-			t.Cleanup(func() { osStdout, osStderr, jsonOutput = oldOut, oldErr, oldJSON })
+			oldOut, oldErr, oldJSON := (*main.OsStdout), (*main.OsStderr), (*main.JsonOutput)
+			(*main.OsStdout), (*main.OsStderr), (*main.JsonOutput) = &stdout, &stderr, tc.json
+			t.Cleanup(func() { (*main.OsStdout), (*main.OsStderr), (*main.JsonOutput) = oldOut, oldErr, oldJSON })
 
-			code := cmdDeployTarball([]string{
+			code := main.CmdDeployTarball([]string{
 				"--tarball", writeTarball(t),
 				"--project-slug", "fixture",
 				"--yes",
@@ -311,6 +312,24 @@ func TestCmdDeployTarball_ProjectBuildFailuresSetExitCode(t *testing.T) {
 	}
 }
 
+func TestRenderProjectApplyConfiguration(t *testing.T) {
+	config := api.NewDeploymentConfigurationStatus("conflict", "cron_changed")
+	apply := api.ApplyResponse{ProjectID: "demo", Builds: []api.AppliedBuild{{Slug: "back", AppID: "app", DeploymentID: "dep", BuildID: "build", Configuration: &config}}}
+	var out bytes.Buffer
+	if code := main.RenderProjectApplyResult(&out, api.PlanResponse{}, apply); code != 1 {
+		t.Fatalf("configuration conflict exit=%d, want 1", code)
+	}
+	for _, want := range []string{"crons=conflicted", config.Crons.Message, config.Crons.Hint} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("receipt missing %q: %s", want, out.String())
+		}
+	}
+	data, err := json.Marshal(apply)
+	if err != nil || !strings.Contains(string(data), `"configuration"`) {
+		t.Fatalf("JSON=%s err=%v", data, err)
+	}
+}
+
 // H10-88: Apps is the whole project membership while Builds holds only what
 // the apply enqueued. Editing one service of a two-service project printed
 // "applied with failures" and exited 1 because the untouched service counted
@@ -324,12 +343,12 @@ func TestSummarizeProjectApply_UnchangedWorkloadIsNotAFailure(t *testing.T) {
 		Unchanged: []string{"app-b"},
 	}
 
-	status := summarizeProjectApply(apply)
-	if status.buildsFailed != 0 || status.missingBuilds != 0 || status.buildsQueued != 1 || status.unchanged != 1 {
+	status := main.SummarizeProjectApply(apply)
+	if (*status.BuildsFailed()) != 0 || (*status.MissingBuilds()) != 0 || (*status.BuildsQueued()) != 1 || (*status.Unchanged()) != 1 {
 		t.Fatalf("status = %+v, want 1 queued, 1 unchanged, 0 failed", status)
 	}
 	var out bytes.Buffer
-	if code := renderProjectApplyResult(&out, plan, apply); code != 0 {
+	if code := main.RenderProjectApplyResult(&out, plan, apply); code != 0 {
 		t.Fatalf("apply with an unchanged workload exit = %d, want 0:\n%s", code, out.String())
 	}
 	for _, want := range []string{
@@ -343,7 +362,7 @@ func TestSummarizeProjectApply_UnchangedWorkloadIsNotAFailure(t *testing.T) {
 
 	// A server without the field still has its missing builds counted.
 	apply.Unchanged = nil
-	if status := summarizeProjectApply(apply); status.missingBuilds != 1 || status.buildsFailed != 1 {
+	if status := main.SummarizeProjectApply(apply); (*status.MissingBuilds()) != 1 || (*status.BuildsFailed()) != 1 {
 		t.Fatalf("legacy response status = %+v, want 1 missing build", status)
 	}
 }

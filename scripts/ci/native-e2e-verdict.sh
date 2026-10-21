@@ -27,56 +27,25 @@
 # with "did not accept within 10s". CI already runs the non-metal e2e tests
 # sharded across four dedicated runners, so repeating them here buys nothing and
 # costs the signal this gate exists for.
-#
-# native_e2e_gate_compiles reports whether the gate's `go test -tags metal` on
-# linux/amd64 compiles a metal-tagged file. A file can also require a dedicated
-# tag (`//go:build metal && object_storage_native`): only its own target sets
-# that tag (make test-object-storage-native), so `-tags metal` never compiles
-# it, and requiring its tests here fails the gate on tests it cannot run. Only
-# a plain conjunction is decided; any other constraint keeps the file, so a
-# test that does not compile is reported by the verdict, never dropped quietly.
-native_e2e_gate_compiles() {
-  local constraint term
-  local -a terms
-  constraint="$(grep -m1 '^//go:build ' "$1")"
-  constraint="${constraint#//go:build }"
-  [[ "${constraint}" =~ ^[A-Za-z0-9_!\&\ ]+$ ]] || return 0
-  read -ra terms <<<"${constraint//&&/ }"
-  for term in "${terms[@]}"; do
-    case "${term}" in
-      metal | linux | amd64) ;;
-      '!metal' | '!linux' | '!amd64') return 1 ;;
-      '!'*) ;;
-      *) return 1 ;;
-    esac
-  done
+# Always run the inventory tool from its real module, including when a
+# contract test inspects a disposable source tree. Go build.Context handles
+# Linux/amd64 and dedicated tags, while AST discovery ignores files without
+# tests; this avoids text-pipeline failures under pipefail.
+native_e2e_inventory() {
+  local root="${1:?repository required}" tool_root
+  shift
+  tool_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+  (cd "$tool_root" && "${FAAS_E2E_GO:-${GO:-go}}" run ./scripts/ci/nativetestinventory --root "$root" "$@")
 }
 
 native_e2e_metal_tests() {
-  local repo_root="$1" file
-  # Read the file list rather than splitting it: an unquoted expansion here
-  # behaves differently under zsh (no word splitting), and a path with a space
-  # would break it under bash. One grep per file is plenty at this scale.
-  grep -l '^//go:build metal' "${repo_root}"/cmd/e2e/*_test.go 2>/dev/null |
-    while IFS= read -r file; do
-      [[ -n "${file}" ]] || continue
-      native_e2e_gate_compiles "${file}" || continue
-      # `|| true` is load-bearing: a metal-tagged file may legitimately declare
-      # no top-level Test func (cmd/e2e/fixtures_test.go is fixtures only), and
-      # grep exits 1 there. The runner sets `set -Eeuo pipefail`, so when such a
-      # file was LAST in the list the while loop's status became the pipeline's
-      # status, the command substitution failed, and the gate died three seconds
-      # in with no output at all. It passed local testing only because that file
-      # sorted elsewhere under a different grep implementation.
-      grep -hoE '^func Test[A-Za-z0-9_]+\(' "${file}" || true
-    done |
-    sed -E 's/^func //; s/\($//' |
-    sort -u
+  native_e2e_inventory "${1:?repository required}"
 }
 
 NATIVE_E2E_REQUIRED_TESTS=(
   TestDeployWakeMetal
   TestSourceDeployWakeMetal
+  TestProjectWorkerReleaseMetal
   TestBuildMetal
   TestWakeTimelineMetal
   TestDeployHealthcheckMetal

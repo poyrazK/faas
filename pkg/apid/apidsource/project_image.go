@@ -26,7 +26,7 @@ func enqueueProjectImage(ctx context.Context, store Store, notif Notifier, p Enq
 	if len(p.OperationDefinitions) > 0 {
 		return EnqueueResult{}, api.ErrSourceInvalid("project image workloads cannot publish source-defined operations")
 	}
-	profile, err := frameworkprofile.CaptureImageRuntime(p.ImageCommand, p.ImageHealthcheck)
+	profile, err := frameworkprofile.CaptureImageRuntime(p.ImageCommand, p.ImageHealthcheck, p.ImageProcess)
 	if err != nil {
 		return EnqueueResult{}, fmt.Errorf("apidsource: capture project image runtime: %w", err)
 	}

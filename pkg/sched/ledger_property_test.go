@@ -1,4 +1,4 @@
-package sched
+package sched_test
 
 // Property-based test for the admission ledger — the mechanised form of
 // invariants §6.2-1 (per-app concurrency) and §6.2-2 (Σ(ram+8) ≤ 47,600 MB).
@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched"
 )
 
 // propApp is one app in the fuzz universe, with a plan and the request shape the
@@ -55,7 +56,7 @@ func FuzzLedgerInvariants(f *testing.F) {
 	f.Add(make([]byte, 256)) // 256 admits of the same (free) instance → dedup + churn
 
 	f.Fuzz(func(t *testing.T, ops []byte) {
-		l := NewNodeLedger()
+		l := sched.NewNodeLedger()
 		for i, b := range ops {
 			applyOp(l, b)
 			checkLedgerInvariants(t, l, i)
@@ -69,7 +70,7 @@ func FuzzLedgerInvariants(f *testing.F) {
 //	bit 0-1: action (0,3 = Admit; 1 = BeginSnapshot; 2 = Release)
 //	bit 2-3: app index into propApps
 //	bit 4-6: instance index within the app (0..7)
-func applyOp(l *NodeLedger, b byte) {
+func applyOp(l *sched.NodeLedger, b byte) {
 	app := propApps[(b>>2)&0x03]
 	inst := fmt.Sprintf("%s-%d", app.id, int(b>>4)%instancesPerApp)
 	switch b & 0x03 {
@@ -78,7 +79,7 @@ func applyOp(l *NodeLedger, b byte) {
 	case 2:
 		l.Release(inst)
 	default: // 0 and 3 both Admit — weight admission higher than teardown
-		_ = l.Admit(Request{
+		_ = l.Admit(sched.Request{
 			Instance:       inst,
 			AppID:          app.id,
 			Plan:           app.plan,
@@ -105,7 +106,7 @@ func applyOp(l *NodeLedger, b byte) {
 //
 // Per-app concurrency (§6.2-1) stays global — it's per-app, not
 // per-node — so the perApp map keeps its single-counter shape.
-func checkLedgerInvariants(t *testing.T, l *NodeLedger, step int) {
+func checkLedgerInvariants(t *testing.T, l *sched.NodeLedger, step int) {
 	t.Helper()
 	checkLedgerInvariantsForNodes(t, l, step, nil)
 }
@@ -120,7 +121,7 @@ func checkLedgerInvariants(t *testing.T, l *NodeLedger, step int) {
 // issue #297 acceptance item 5: a future refactor that mistakenly
 // folds the global api.RAMAdmissionCeilingMB constant into the
 // per-node Admit path must fail here.
-func checkLedgerInvariantsForNodes(t *testing.T, l *NodeLedger, step int, fleet []propNode) {
+func checkLedgerInvariantsForNodes(t *testing.T, l *sched.NodeLedger, step int, fleet []propNode) {
 	t.Helper()
 
 	ceilingFor := func(nodeID string) int {
@@ -144,25 +145,25 @@ func checkLedgerInvariantsForNodes(t *testing.T, l *NodeLedger, step int, fleet 
 	wantConc := map[string]int{}
 	wantPerNodeRAM := map[string]int{}
 	wantPerNodeVCPU := map[string]int{}
-	for _, e := range l.entries {
-		wantRAM += e.admissionMB
-		wantVCPU += e.vcpu
-		wantPerNodeRAM[e.nodeID] += e.admissionMB
-		wantPerNodeVCPU[e.nodeID] += e.vcpu
-		if e.countsConc {
-			wantConc[e.appID]++
+	for _, e := range *l.Entries() {
+		wantRAM += (*e.AdmissionMB())
+		wantVCPU += (*e.Vcpu())
+		wantPerNodeRAM[(*e.NodeID())] += (*e.AdmissionMB())
+		wantPerNodeVCPU[(*e.NodeID())] += (*e.Vcpu())
+		if *e.CountsConc() {
+			wantConc[(*e.AppID())]++
 		}
 	}
 
 	// Cached per-node aggregates must equal the recomputed truth (no drift).
-	for nodeID, node := range l.resident {
-		if node.residentRAM != wantPerNodeRAM[nodeID] {
+	for nodeID, node := range *l.Resident() {
+		if (*node.ResidentRAM()) != wantPerNodeRAM[nodeID] {
 			t.Fatalf("step %d: resident[%q].residentRAM=%d, recomputed=%d",
-				step, nodeID, node.residentRAM, wantPerNodeRAM[nodeID])
+				step, nodeID, (*node.ResidentRAM()), wantPerNodeRAM[nodeID])
 		}
-		if node.usedVCPU != wantPerNodeVCPU[nodeID] {
+		if (*node.UsedVCPU()) != wantPerNodeVCPU[nodeID] {
 			t.Fatalf("step %d: resident[%q].usedVCPU=%d, recomputed=%d",
-				step, nodeID, node.usedVCPU, wantPerNodeVCPU[nodeID])
+				step, nodeID, (*node.UsedVCPU()), wantPerNodeVCPU[nodeID])
 		}
 		// Per-node RAM ceiling — the load-bearing assertion. Each
 		// node's resident is capped at its own AdmissionCeilingMB
@@ -170,13 +171,13 @@ func checkLedgerInvariantsForNodes(t *testing.T, l *NodeLedger, step int, fleet 
 		// future refactor that re-introduces a box-wide ceiling
 		// inside Admit must fail this check before it ships.
 		ceiling := ceilingFor(nodeID)
-		if node.residentRAM > ceiling {
+		if (*node.ResidentRAM()) > ceiling {
 			t.Fatalf("step %d: node %q residentRAM=%d breached per-node ceiling %d",
-				step, nodeID, node.residentRAM, ceiling)
+				step, nodeID, (*node.ResidentRAM()), ceiling)
 		}
 	}
 	for nodeID, want := range wantPerNodeRAM {
-		if _, ok := l.resident[nodeID]; !ok {
+		if _, ok := (*l.Resident())[nodeID]; !ok {
 			t.Fatalf("step %d: resident map missing node %q (want RAM=%d)", step, nodeID, want)
 		}
 	}
@@ -190,7 +191,7 @@ func checkLedgerInvariantsForNodes(t *testing.T, l *NodeLedger, step int, fleet 
 	}
 
 	// perApp must have no stale/zero/negative entries and match the truth.
-	for app, c := range l.perApp {
+	for app, c := range *l.PerApp() {
 		if c <= 0 {
 			t.Fatalf("step %d: perApp[%q]=%d — stale/negative entry left behind", step, app, c)
 		}
@@ -199,8 +200,8 @@ func checkLedgerInvariantsForNodes(t *testing.T, l *NodeLedger, step int, fleet 
 		}
 	}
 	for app, c := range wantConc {
-		if l.perApp[app] != c {
-			t.Fatalf("step %d: perApp missing app %q (have %d, want %d)", step, app, l.perApp[app], c)
+		if (*l.PerApp())[app] != c {
+			t.Fatalf("step %d: perApp missing app %q (have %d, want %d)", step, app, (*l.PerApp())[app], c)
 		}
 	}
 
@@ -238,7 +239,7 @@ func checkLedgerInvariantsForNodes(t *testing.T, l *NodeLedger, step int, fleet 
 		t.Fatalf("step %d: usedVCPU=%d exceeded %d vCPU slots", step, usedVCPU, api.VCPUSlots)
 	}
 	for _, app := range propApps { // §6.2-1
-		if got := l.perApp[app.id]; got > app.conc {
+		if got := (*l.PerApp())[app.id]; got > app.conc {
 			t.Fatalf("step %d: app %q concurrency=%d exceeded cap %d", step, app.id, got, app.conc)
 		}
 	}
@@ -324,7 +325,7 @@ func FuzzLedgerInvariantsMultiNode(f *testing.F) {
 		fleetIdx := (int(ops[0]>>6) & 0x03) % len(propFleet)
 		fleet := propFleet[fleetIdx]
 		ops = ops[1:]
-		l := NewNodeLedger()
+		l := sched.NewNodeLedger()
 		for i, b := range ops {
 			applyOpMultiNode(l, b, fleet)
 			checkLedgerInvariantsForNodes(t, l, i, fleet)
@@ -346,7 +347,7 @@ func FuzzLedgerInvariantsMultiNode(f *testing.F) {
 // N=4; nodes are picked round-robin modulo len(fleet). The
 // Admit path threads NodeID and NodeCeilingMB through Request
 // so the per-node ceiling check inside Admit runs end-to-end.
-func applyOpMultiNode(l *NodeLedger, b byte, fleet []propNode) {
+func applyOpMultiNode(l *sched.NodeLedger, b byte, fleet []propNode) {
 	app := propApps[(b>>2)&0x03]
 	inst := fmt.Sprintf("%s-%d", app.id, int(b>>4)%instancesPerApp)
 	nodeIdx := int((b>>7)&0x01) % len(fleet)
@@ -366,7 +367,7 @@ func applyOpMultiNode(l *NodeLedger, b byte, fleet []propNode) {
 	case 2:
 		l.Release(inst)
 	default: // 0 and 3 both Admit
-		_ = l.Admit(Request{
+		_ = l.Admit(sched.Request{
 			Instance:       inst,
 			AppID:          app.id,
 			Plan:           app.plan,
@@ -396,7 +397,7 @@ func TestNodeLedger_PerNodeCeiling_AdmitRefusesOverflowingNode(t *testing.T) {
 		// is far below the global 47,600 MB constant.
 		const smallCeiling = 12_000
 		scaleLimits := api.MustLimitsFor(api.PlanScale)
-		l := NewNodeLedger()
+		l := sched.NewNodeLedger()
 
 		// Fill the node up to its per-node ceiling. Each scale
 		// admit adds 1,032 MB billable (1024 + 8); 12,000 /
@@ -407,7 +408,7 @@ func TestNodeLedger_PerNodeCeiling_AdmitRefusesOverflowingNode(t *testing.T) {
 		var lastErr error
 		admitted := 0
 		for i := 0; i < scaleLimits.MaxConcurrency; i++ {
-			err := l.Admit(Request{
+			err := l.Admit(sched.Request{
 				Instance:       fmt.Sprintf("small-%d", i),
 				AppID:          "small-app", // distinct appID so per-app cap is freshly applied
 				Plan:           api.PlanScale,
@@ -454,7 +455,7 @@ func TestNodeLedger_PerNodeCeiling_AdmitRefusesOverflowingNode(t *testing.T) {
 func TestNodeLedger_PerNodeCeiling_TwoNodesAdmitIndependently(t *testing.T) {
 	const halfCeiling = 23_800
 	scaleLimits := api.MustLimitsFor(api.PlanScale)
-	l := NewNodeLedger()
+	l := sched.NewNodeLedger()
 
 	// Fill node-0 as far as its ceiling allows, capped at the per-app
 	// concurrency limit. The count derives from the plan's RAM so a
@@ -467,7 +468,7 @@ func TestNodeLedger_PerNodeCeiling_TwoNodesAdmitIndependently(t *testing.T) {
 		t.Fatalf("fixture admits %d Scale instances under %d MB; widen the ceiling", fill, halfCeiling)
 	}
 	for i := 0; i < fill; i++ {
-		err := l.Admit(Request{
+		err := l.Admit(sched.Request{
 			Instance:       fmt.Sprintf("node0-%d", i),
 			AppID:          "node0-app", // distinct appID so per-app cap is freshly applied
 			Plan:           api.PlanScale,
@@ -494,7 +495,7 @@ func TestNodeLedger_PerNodeCeiling_TwoNodesAdmitIndependently(t *testing.T) {
 	// already near its ceiling, well under 47,600 MB cluster-wide,
 	// but a tighter fold against the cluster sum would surface
 	// here).
-	err := l.Admit(Request{
+	err := l.Admit(sched.Request{
 		Instance:       "node1-0",
 		AppID:          "node1-app", // distinct appID so per-app cap is freshly applied
 		Plan:           api.PlanScale,

@@ -174,22 +174,3 @@ func QuoteConsumerUsage(cards []state.APIConsumerRateCard, usage []state.APICons
 	quote.Priced = quote.UnpricedUnits == 0
 	return quote, nil
 }
-
-// streamCardsAt returns, for each unit stream, the card in force at
-// minute; streams that have not started are absent.
-func streamCardsAt(cards []state.APIConsumerRateCard, minute time.Time) []state.APIConsumerRateCard {
-	units, streams := UnitStreams(cards)
-	var out []state.APIConsumerRateCard
-	for _, unit := range units {
-		var current *state.APIConsumerRateCard
-		for i, card := range streams[unit] {
-			if !card.EffectiveFrom.After(minute) && (current == nil || card.EffectiveFrom.After(current.EffectiveFrom)) {
-				current = &streams[unit][i]
-			}
-		}
-		if current != nil {
-			out = append(out, *current)
-		}
-	}
-	return out
-}

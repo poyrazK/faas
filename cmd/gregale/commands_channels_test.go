@@ -1,4 +1,4 @@
-package main
+package main_test
 
 // adr: 749 — `gregale channels` lists, tests and adds alert notification
 // channels; secret destinations are only read from stdin.
@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -39,20 +40,20 @@ func channelsTestServer(t *testing.T) *httptest.Server {
 func captureChannelsStdout(t *testing.T) *bytes.Buffer {
 	t.Helper()
 	var buf bytes.Buffer
-	prev := osStdout
-	osStdout = &buf
-	t.Cleanup(func() { osStdout = prev })
+	prev := (*main.OsStdout)
+	(*main.OsStdout) = &buf
+	t.Cleanup(func() { (*main.OsStdout) = prev })
 	return &buf
 }
 
 func TestCmdChannelsJSONOutput(t *testing.T) {
-	resetJSONOutput()
+	main.ResetJSONOutput()
 	channelsTestServer(t)
 	buf := captureChannelsStdout(t)
-	jsonOutput = true
-	defer func() { resetJSONOutput() }()
+	(*main.JsonOutput) = true
+	defer func() { main.ResetJSONOutput() }()
 
-	if code := cmdChannels([]string{"list"}); code != 0 {
+	if code := main.CmdChannels([]string{"list"}); code != 0 {
 		t.Fatalf("gregale channels list --json = %d", code)
 	}
 	var list []api.NotificationChannelResponse
@@ -61,7 +62,7 @@ func TestCmdChannelsJSONOutput(t *testing.T) {
 	}
 
 	buf.Reset()
-	if code := cmdChannels([]string{"test", "ch-1"}); code != 0 {
+	if code := main.CmdChannels([]string{"test", "ch-1"}); code != 0 {
 		t.Fatalf("gregale channels test --json = %d", code)
 	}
 	var res api.TestNotificationChannelResponse
@@ -71,10 +72,10 @@ func TestCmdChannelsJSONOutput(t *testing.T) {
 }
 
 func TestCmdChannelsListText(t *testing.T) {
-	resetJSONOutput()
+	main.ResetJSONOutput()
 	channelsTestServer(t)
 	buf := captureChannelsStdout(t)
-	if code := cmdChannels([]string{"list"}); code != 0 {
+	if code := main.CmdChannels([]string{"list"}); code != 0 {
 		t.Fatalf("gregale channels list = %d", code)
 	}
 	out := buf.String()
@@ -86,7 +87,7 @@ func TestCmdChannelsListText(t *testing.T) {
 }
 
 func TestCmdChannelsArgumentErrors(t *testing.T) {
-	resetJSONOutput()
+	main.ResetJSONOutput()
 	channelsTestServer(t)
 	captureChannelsStdout(t)
 	tests := []struct {
@@ -102,7 +103,7 @@ func TestCmdChannelsArgumentErrors(t *testing.T) {
 		{"rm with two ids", []string{"rm", "a", "b"}},
 	}
 	for _, tt := range tests {
-		if code := cmdChannels(tt.args); code == 0 {
+		if code := main.CmdChannels(tt.args); code == 0 {
 			t.Errorf("%s: exit 0, want an error", tt.name)
 		}
 	}

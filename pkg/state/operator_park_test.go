@@ -16,12 +16,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-type parkTestStore interface {
-	state.Store
-	state.OperatorParkStore
-	state.AuditEventOutboxStore
-	state.HostPortLeaseStore
-}
+type parkTestStore = contractTestStore
 
 type parkFixture struct {
 	store  parkTestStore

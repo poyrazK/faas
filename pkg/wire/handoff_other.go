@@ -15,6 +15,7 @@ type HandoffOptions struct {
 	Path         string
 	Args         []string
 	Log          *slog.Logger
+	Checks       []HandoffCheck
 }
 
 // HandoffRequests never delivers off unix.

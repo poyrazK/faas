@@ -4,6 +4,7 @@
 /* eslint-disable */
 import type { AdoptEnvironmentGitOpsRequest } from '../models/AdoptEnvironmentGitOpsRequest.js';
 import type { AdoptEnvironmentGitOpsResponse } from '../models/AdoptEnvironmentGitOpsResponse.js';
+import type { ApplyCachedProjectPlanRequest } from '../models/ApplyCachedProjectPlanRequest.js';
 import type { ApplyResponse } from '../models/ApplyResponse.js';
 import type { ApproveEnvironmentGitRevisionRequest } from '../models/ApproveEnvironmentGitRevisionRequest.js';
 import type { ApproveEnvironmentGitRevisionResponse } from '../models/ApproveEnvironmentGitRevisionResponse.js';
@@ -18,6 +19,7 @@ import type { CreateProjectBindingVerificationRunRequest } from '../models/Creat
 import type { CreateProjectEnvironmentApprovalRequest } from '../models/CreateProjectEnvironmentApprovalRequest.js';
 import type { CreateProjectEnvironmentQualificationRequest } from '../models/CreateProjectEnvironmentQualificationRequest.js';
 import type { CreateProjectEnvironmentRequest } from '../models/CreateProjectEnvironmentRequest.js';
+import type { CreateProjectMigrationRequest } from '../models/CreateProjectMigrationRequest.js';
 import type { DetachEnvironmentGitSourceRequest } from '../models/DetachEnvironmentGitSourceRequest.js';
 import type { EnvironmentFieldOwnershipRequest } from '../models/EnvironmentFieldOwnershipRequest.js';
 import type { EnvironmentFieldOwnershipResponse } from '../models/EnvironmentFieldOwnershipResponse.js';
@@ -26,16 +28,24 @@ import type { EnvironmentGitOpsPlan } from '../models/EnvironmentGitOpsPlan.js';
 import type { EnvironmentGitOpsStatusResponse } from '../models/EnvironmentGitOpsStatusResponse.js';
 import type { EnvironmentGitSource } from '../models/EnvironmentGitSource.js';
 import type { EnvironmentGitSourceUpdate } from '../models/EnvironmentGitSourceUpdate.js';
+import type { ListEnvironmentGitReleasesResponse } from '../models/ListEnvironmentGitReleasesResponse.js';
 import type { PlanResponse } from '../models/PlanResponse.js';
 import type { PrepareProjectRollbackRequest } from '../models/PrepareProjectRollbackRequest.js';
 import type { PreviewEnvironmentGitPlanResponse } from '../models/PreviewEnvironmentGitPlanResponse.js';
+import type { PreviewEnvironmentGitPromotionRequest } from '../models/PreviewEnvironmentGitPromotionRequest.js';
+import type { PreviewEnvironmentGitPromotionResponse } from '../models/PreviewEnvironmentGitPromotionResponse.js';
 import type { PreviewEnvironmentGitRevisionRequest } from '../models/PreviewEnvironmentGitRevisionRequest.js';
 import type { PreviewEnvironmentGitRevisionResponse } from '../models/PreviewEnvironmentGitRevisionResponse.js';
+import type { PreviewEnvironmentGitRollbackRequest } from '../models/PreviewEnvironmentGitRollbackRequest.js';
+import type { PreviewEnvironmentGitRollbackResponse } from '../models/PreviewEnvironmentGitRollbackResponse.js';
+import type { Problem } from '../models/Problem.js';
 import type { ProjectApplyRequest } from '../models/ProjectApplyRequest.js';
 import type { ProjectBindingVerificationReview } from '../models/ProjectBindingVerificationReview.js';
 import type { ProjectBindingVerificationRun } from '../models/ProjectBindingVerificationRun.js';
 import type { ProjectBindingVerificationRunDiagnostics } from '../models/ProjectBindingVerificationRunDiagnostics.js';
 import type { ProjectDeletePreviewResponse } from '../models/ProjectDeletePreviewResponse.js';
+import type { ProjectDeploymentCheckRequest } from '../models/ProjectDeploymentCheckRequest.js';
+import type { ProjectDeploymentReadiness } from '../models/ProjectDeploymentReadiness.js';
 import type { ProjectEnvironmentApprovalResponse } from '../models/ProjectEnvironmentApprovalResponse.js';
 import type { ProjectEnvironmentApprovalStatusResponse } from '../models/ProjectEnvironmentApprovalStatusResponse.js';
 import type { ProjectEnvironmentCloneOperationResponse } from '../models/ProjectEnvironmentCloneOperationResponse.js';
@@ -46,6 +56,7 @@ import type { ProjectEnvironmentEdgePolicyResponse } from '../models/ProjectEnvi
 import type { ProjectEnvironmentPromotionListResponse } from '../models/ProjectEnvironmentPromotionListResponse.js';
 import type { ProjectEnvironmentPromotionPreviewResponse } from '../models/ProjectEnvironmentPromotionPreviewResponse.js';
 import type { ProjectEnvironmentPromotionResponse } from '../models/ProjectEnvironmentPromotionResponse.js';
+import type { ProjectEnvironmentPromotionSecretPreviewRequest } from '../models/ProjectEnvironmentPromotionSecretPreviewRequest.js';
 import type { ProjectEnvironmentPromotionStatusResponse } from '../models/ProjectEnvironmentPromotionStatusResponse.js';
 import type { ProjectEnvironmentQualificationResponse } from '../models/ProjectEnvironmentQualificationResponse.js';
 import type { ProjectEnvironmentQueueBindingsResponse } from '../models/ProjectEnvironmentQueueBindingsResponse.js';
@@ -53,18 +64,30 @@ import type { ProjectEnvironmentReleaseListResponse } from '../models/ProjectEnv
 import type { ProjectEnvironmentResponse } from '../models/ProjectEnvironmentResponse.js';
 import type { ProjectEnvironmentRoutePolicyResponse } from '../models/ProjectEnvironmentRoutePolicyResponse.js';
 import type { ProjectEnvironmentStateResponse } from '../models/ProjectEnvironmentStateResponse.js';
+import type { ProjectMigration } from '../models/ProjectMigration.js';
+import type { ProjectMigrationList } from '../models/ProjectMigrationList.js';
+import type { ProjectMigrationRecoveryRequest } from '../models/ProjectMigrationRecoveryRequest.js';
+import type { ProjectPromotionControl } from '../models/ProjectPromotionControl.js';
+import type { ProjectPromotionControlRequest } from '../models/ProjectPromotionControlRequest.js';
+import type { ProjectPromotionMigrationRecovery } from '../models/ProjectPromotionMigrationRecovery.js';
+import type { ProjectPromotionMigrationRecoveryRequest } from '../models/ProjectPromotionMigrationRecoveryRequest.js';
+import type { ProjectReleaseControlRequest } from '../models/ProjectReleaseControlRequest.js';
+import type { ProjectReleaseSecretStageRequest } from '../models/ProjectReleaseSecretStageRequest.js';
+import type { ProjectReleaseSecretStageResponse } from '../models/ProjectReleaseSecretStageResponse.js';
 import type { ProjectReleaseSetListResponse } from '../models/ProjectReleaseSetListResponse.js';
 import type { ProjectReleaseSetResponse } from '../models/ProjectReleaseSetResponse.js';
 import type { ProjectReleaseStage } from '../models/ProjectReleaseStage.js';
 import type { ProjectResponse } from '../models/ProjectResponse.js';
 import type { ProjectScanRequest } from '../models/ProjectScanRequest.js';
 import type { ProjectSourceRefScanRequest } from '../models/ProjectSourceRefScanRequest.js';
+import type { ProjectSubmissionReceipt } from '../models/ProjectSubmissionReceipt.js';
 import type { ProjectSummaryResponse } from '../models/ProjectSummaryResponse.js';
 import type { PromoteProjectEnvironmentRequest } from '../models/PromoteProjectEnvironmentRequest.js';
 import type { PublishProjectReleaseSetRequest } from '../models/PublishProjectReleaseSetRequest.js';
 import type { RebindEnvironmentGitSourceRequest } from '../models/RebindEnvironmentGitSourceRequest.js';
 import type { RemoveEnvironmentGitOpsOverrideRequest } from '../models/RemoveEnvironmentGitOpsOverrideRequest.js';
 import type { ReplaceProjectEnvironmentQueueBindingsRequest } from '../models/ReplaceProjectEnvironmentQueueBindingsRequest.js';
+import type { ResumeProjectMigrationRequest } from '../models/ResumeProjectMigrationRequest.js';
 import type { ReviewProjectBindingVerificationRequest } from '../models/ReviewProjectBindingVerificationRequest.js';
 import type { StageProjectReleaseRequest } from '../models/StageProjectReleaseRequest.js';
 import type { UpdateProjectEnvironmentConfigRequest } from '../models/UpdateProjectEnvironmentConfigRequest.js';
@@ -76,6 +99,128 @@ import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class ProjectsService {
+  /**
+   * Save and apply a reviewed multi-service migration
+   * Save and apply a reviewed multi-service migration. Source-backed HTTP and GraphQL services only. Secret values are request-only; the receipt retains key names. Existing reconcile, sealing, deployment admission, verification and cutover owners remain authoritative. No domain or production traffic changes are performed by this endpoint.
+   * @returns ProjectMigration Save and apply a reviewed multi-service migration result.
+   * @returns Problem Save and apply a reviewed multi-service migration error.
+   * @throws ApiError
+   */
+  public static createProjectMigration({
+    requestBody,
+  }: {
+    requestBody: CreateProjectMigrationRequest,
+  }): CancelablePromise<ProjectMigration | Problem> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/project-migrations',
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * List saved project migrations for the authenticated account
+   * List saved project migrations for the authenticated account. Source-backed HTTP and GraphQL services only. Secret values are request-only; the receipt retains key names. Existing reconcile, sealing, deployment admission, verification and cutover owners remain authoritative. No domain or production traffic changes are performed by this endpoint.
+   * @returns ProjectMigrationList List saved project migrations for the authenticated account result.
+   * @returns Problem List saved project migrations for the authenticated account error.
+   * @throws ApiError
+   */
+  public static listProjectMigrations({
+    project,
+  }: {
+    /**
+     * Optional exact project slug to filter migration records.
+     */
+    project?: string,
+  }): CancelablePromise<ProjectMigrationList | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/project-migrations',
+      query: {
+        'project': project,
+      },
+    });
+  }
+  /**
+   * Inspect each reserved deployment and its recorded verification and cutover
+   * Inspect each reserved deployment and its recorded verification and cutover. Source-backed HTTP and GraphQL services only. Secret values are request-only; the receipt retains key names. Existing reconcile, sealing, deployment admission, verification and cutover owners remain authoritative. No domain or production traffic changes are performed by this endpoint.
+   * @returns ProjectMigration Inspect each reserved deployment and its recorded verification and cutover result.
+   * @returns Problem Inspect each reserved deployment and its recorded verification and cutover error.
+   * @throws ApiError
+   */
+  public static getProjectMigration({
+    migration,
+  }: {
+    /**
+     * Creator-owned migration journal UUID.
+     */
+    migration: string,
+  }): CancelablePromise<ProjectMigration | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/project-migrations/{migration}',
+      path: {
+        'migration': migration,
+      },
+    });
+  }
+  /**
+   * Resume unfinished migration services while preserving accepted deployments
+   * Resume unfinished migration services while preserving accepted deployments. Source-backed HTTP and GraphQL services only. Secret values are request-only; the receipt retains key names. Existing reconcile, sealing, deployment admission, verification and cutover owners remain authoritative. No domain or production traffic changes are performed by this endpoint.
+   * @returns ProjectMigration Resume unfinished migration services while preserving accepted deployments result.
+   * @returns Problem Resume unfinished migration services while preserving accepted deployments error.
+   * @throws ApiError
+   */
+  public static resumeProjectMigration({
+    migration,
+    requestBody,
+  }: {
+    /**
+     * Saved migration to resume after reviewing unfinished services.
+     */
+    migration: string,
+    requestBody: ResumeProjectMigrationRequest,
+  }): CancelablePromise<ProjectMigration | Problem> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/project-migrations/{migration}/resume',
+      path: {
+        'migration': migration,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Deploy an account-owned reviewed project source without another upload.
+   * Applies the exact archive retained by a project scan, not the current
+   * head of a mutable Git ref. The normal scanner and apply admission gates
+   * run again. The account-scoped source expires after one hour; rescan on
+   * preview_expired. Initial secrets require secrets:write or admin and are
+   * sealed before any deployment is enqueued. Failed configuration starts
+   * no builds; saved apps and any completed configuration remain available
+   * for correction. Values are never included in responses or scan plans.
+   *
+   * @returns ApplyResponse Project applied with per-workload deployment receipts.
+   * @throws ApiError
+   */
+  public static applyCachedProjectPlan({
+    requestBody,
+  }: {
+    requestBody: ApplyCachedProjectPlanRequest,
+  }): CancelablePromise<ApplyResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/projects/apply-plan',
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        403: `The caller lacks deployment or secret write permission.`,
+        409: `The plan is stale, blocked, or requires environment approval.`,
+        410: `The account-owned reviewed source expired; scan again.`,
+      },
+    });
+  }
   /**
    * Scan an uploaded tarball and return a deploy plan.
    * Dry-run. Accepts a multipart upload (`source=<tar.gz>`,
@@ -94,12 +239,44 @@ export class ProjectsService {
    */
   public static scanProject({
     formData,
+    projectAddServices,
+    projectStabilization,
+    projectProgressive,
+    projectWorkerHealth,
+    projectReleaseMode,
   }: {
     formData: ProjectScanRequest,
+    /**
+     * Require planned HTTP source service additions; disabled until native qualification. No removals or configuration changes.
+     */
+    projectAddServices?: 'required',
+    /**
+     * Plan a progressive release with ten minutes of monitoring after rollout success.
+     */
+    projectStabilization?: 'required',
+    /**
+     * Preview a progressive project rollout with immutable paired configuration and verified health.
+     */
+    projectProgressive?: 'required',
+    /**
+     * Require real worker job outcomes in an atomic verified worker release.
+     */
+    projectWorkerHealth?: 'required',
+    /**
+     * Set atomic to preview a source-only safe project release against the active production graph.
+     */
+    projectReleaseMode?: 'atomic' | 'atomic-verify' | 'atomic-config-verify' | 'atomic-migrate-verify' | 'atomic-config-migrate-verify' | 'atomic-verify-workers' | 'atomic-config-verify-workers' | 'atomic-migrate-verify-workers' | 'atomic-config-migrate-verify-workers',
   }): CancelablePromise<PlanResponse> {
     return __request(OpenAPI, {
       method: 'POST',
       url: '/v1/projects/scan',
+      headers: {
+        'Project-Add-Services': projectAddServices,
+        'Project-Stabilization': projectStabilization,
+        'Project-Progressive': projectProgressive,
+        'Project-Worker-Health': projectWorkerHealth,
+        'Project-Release-Mode': projectReleaseMode,
+      },
       formData: formData,
       mediaType: 'multipart/form-data',
       errors: {
@@ -157,6 +334,171 @@ export class ProjectsService {
     });
   }
   /**
+   * Read a durable project apply acceptance receipt.
+   * Recover the selected workload set and accepted deployment identities for an owned attempt. Reads do not enqueue builds, change configuration, or restart interrupted submissions.
+   * @returns ProjectSubmissionReceipt Current project submission and accepted workload identities. Reads never enqueue builds.
+   * @throws ApiError
+   */
+  public static getProjectSubmission({
+    attemptId,
+  }: {
+    /**
+     * The opaque project apply attempt recorded before submission.
+     */
+    attemptId: string,
+  }): CancelablePromise<ProjectSubmissionReceipt> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/project-submissions/{attempt_id}',
+      path: {
+        'attempt_id': attemptId,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Control an owned progressive deployment or admit planned schema cleanup.
+   * Persist a generation-fenced operator decision. Before full activation abort preserves the unchanged baseline. At full traffic new unassigned work is blocked while fresh baseline health permits paired graph/config restoration. Recovery retries that bounded verification without forcing health or overwriting newer intent. Reusing the same request identity and generation is idempotent. Contract admission additionally requires fresh current health and drained retained versions and work; it permanently fences retired deployments before queuing the source-declared cleanup task.
+   * @returns ProjectSubmissionReceipt Durable decision and current receipt; acceptance does not imply restoration has completed.
+   * @throws ApiError
+   */
+  public static controlProjectRelease({
+    attemptId,
+    action,
+    requestBody,
+  }: {
+    /**
+     * Durable project deployment attempt.
+     */
+    attemptId: string,
+    /**
+     * Abort a running canary, retry baseline recovery, or run declared schema cleanup after stabilization and drain barriers.
+     */
+    action: 'abort' | 'recover' | 'contract' | 'resolve-contract',
+    requestBody: (ProjectReleaseControlRequest | ProjectMigrationRecoveryRequest),
+  }): CancelablePromise<ProjectSubmissionReceipt> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/project-submissions/{attempt_id}/{action}',
+      path: {
+        'attempt_id': attemptId,
+        'action': action,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        410: `Retained rollback baseline expired; deploy a compatible replacement.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Build an existing HTTP project and atomically publish its ready release.
+   * Requires an active production release set, the complete project, no_triggers=true, and a durable attempt. Candidates receive zero traffic and publish only after every candidate completes readiness. Project-Add-Services opts into independent HTTP source additions behind native qualification admission. All serving services must remain unchanged. Additions cannot combine with configuration, secrets, migrations, workers or progressive rollout. Verified releases probe existing critical routes and restore the original membership on regression; new services are checked by startup readiness. Failed or withdrawn additions remain quota-counted reservations without a default route and may be retried with identical settings.
+   * @returns ApplyResponse Accepted candidate deployments and durable safe release state.
+   * @throws ApiError
+   */
+  public static safeApplyProject({
+    deploymentAttemptId,
+    formData,
+    projectAddServices,
+    projectStabilization,
+    projectProgressive,
+    projectWorkerHealth,
+    projectReleaseMode,
+    planToken,
+  }: {
+    /**
+     * Durable identity for this safe project submission and release operation.
+     */
+    deploymentAttemptId: string,
+    formData: ProjectApplyRequest,
+    /**
+     * Apply the scanned independent HTTP service additions after native qualification; preserve existing membership and configuration.
+     */
+    projectAddServices?: 'required',
+    /**
+     * Require ten minutes of guarded health monitoring after progressive rollout success.
+     */
+    projectStabilization?: 'required',
+    /**
+     * Submit a progressive project rollout behind native qualification admission.
+     */
+    projectProgressive?: 'required',
+    /**
+     * Keep the required worker delivery health policy when applying the scanned release.
+     */
+    projectWorkerHealth?: 'required',
+    /**
+     * atomic-verify enables durable probes; atomic-config-verify pairs configuration; atomic-migrate-verify and atomic-config-migrate-verify also admit one backward-compatible migration.
+     */
+    projectReleaseMode?: 'atomic' | 'atomic-verify' | 'atomic-config-verify' | 'atomic-migrate-verify' | 'atomic-config-migrate-verify' | 'atomic-verify-workers' | 'atomic-config-verify-workers' | 'atomic-migrate-verify-workers' | 'atomic-config-migrate-verify-workers',
+    /**
+     * Scan token bound to the safe release baseline.
+     */
+    planToken?: string,
+  }): CancelablePromise<ApplyResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/projects/safe-deploy',
+      headers: {
+        'Project-Add-Services': projectAddServices,
+        'Project-Stabilization': projectStabilization,
+        'Project-Progressive': projectProgressive,
+        'Project-Worker-Health': projectWorkerHealth,
+        'Project-Release-Mode': projectReleaseMode,
+        'Deployment-Attempt-ID': deploymentAttemptId,
+      },
+      query: {
+        'plan_token': planToken,
+      },
+      formData: formData,
+      mediaType: 'multipart/form-data',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
    * List durable projects owned by the current account.
    * @returns ProjectSummaryResponse Account-scoped project summaries.
    * @throws ApiError
@@ -194,10 +536,20 @@ export class ProjectsService {
    */
   public static applyProject({
     formData,
+    projectRetryTargets,
+    deploymentAttemptId,
     planToken,
     idempotencyKey,
   }: {
     formData: ProjectApplyRequest,
+    /**
+     * JSON object mapping selected app IDs to their latest failed deployment IDs. Requires Deployment-Attempt-ID, exact only selection, no_triggers=true, and no secret or exclusion changes. Forces unchanged workloads to rebuild; rejects stale targets. Acceptance checks the target under the app lock.
+     */
+    projectRetryTargets?: string,
+    /**
+     * Durable project submission identity. Reuse only for the same request; inspect its receipt after an uncertain response.
+     */
+    deploymentAttemptId?: string,
     /**
      * Echo of the dry-run plan_token (base64-JSON). Omit to skip the cache.
      */
@@ -213,6 +565,8 @@ export class ProjectsService {
       method: 'POST',
       url: '/v1/projects',
       headers: {
+        'Project-Retry-Targets': projectRetryTargets,
+        'Deployment-Attempt-ID': deploymentAttemptId,
         'Idempotency-Key': idempotencyKey,
       },
       query: {
@@ -227,6 +581,92 @@ export class ProjectsService {
         403: `code: plan_limit_apps | plan_limit_ram | plan_limit_concurrency | plan_min_instances_not_allowed | plan_limit_secrets | plan_cron_quota | app_layer_too_large | image_egress_denied`,
         409: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         413: `code: source_too_large`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Stage encrypted application secret versions for an atomic HTTP release.
+   * Requires MFA and secrets write permission. Admission defaults off pending native qualification. Values are encrypted before persistence; the response contains opaque version IDs. Request replay is bounded to the staging window. Existing production keys only; managed credentials are unsupported.
+   * @returns ProjectReleaseSecretStageResponse Immutable staged version references, without encrypted or plaintext values.
+   * @throws ApiError
+   */
+  public static stageProjectReleaseSecrets({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * Existing project slug owning the proposed secret snapshots.
+     */
+    slug: string,
+    requestBody: ProjectReleaseSecretStageRequest,
+  }): CancelablePromise<ProjectReleaseSecretStageResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/projects/{slug}/release-secrets',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Check project deployment or environment promotion readiness without submitting work.
+   * Evaluates declared metadata and current account/project state without source
+   * uploads, credential staging, probe execution, builds, approvals or writes.
+   * Only key names and bounded remedies appear in the report. Status is blocked
+   * when a definite blocker exists, otherwise unknown when a required read fails,
+   * otherwise ready. Ready applies to control-plane prerequisites; deployment
+   * still validates source bytes and runtime health. A state hash is provided
+   * only when required state was readable. It is a comparison identity, not
+   * an approval or an apply token. Deployment admission remains authoritative.
+   *
+   * @returns ProjectDeploymentReadiness Current prerequisite report, including blocked and unknown outcomes.
+   * @throws ApiError
+   */
+  public static checkProjectDeployment({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * Project slug in the authenticated account; a missing project can be checked as a proposed first deployment.
+     */
+    slug: string,
+    requestBody: ProjectDeploymentCheckRequest,
+  }): CancelablePromise<ProjectDeploymentReadiness> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/projects/{slug}/deployment-readiness',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
@@ -1008,6 +1448,166 @@ export class ProjectsService {
     return __request(OpenAPI, {
       method: 'POST',
       url: '/v1/projects/{slug}/environments/{environment}/gitops/plan',
+      path: {
+        'slug': slug,
+        'environment': environment,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Preview image promotion from a proven serving environment release.
+   * Read-only, value-redacted proposal. Reads both bound sources, source release, current graph evidence, artifacts, target intent and ownership on one snapshot. Source builds without a portable artifact reference are blocked. The hash grants no approval or execution authority; expected_plan_hash rejects changed observations. Target review and fresh qualification remain required.
+   * @returns PreviewEnvironmentGitPromotionResponse Read-only promotion proposal; blockers prevent patch and manifest export.
+   * @throws ApiError
+   */
+  public static previewEnvironmentGitPromotion({
+    slug,
+    environment,
+    requestBody,
+  }: {
+    /**
+     * Project owning the environment Git authority.
+     */
+    slug: string,
+    /**
+     * Registered environment selected for Git intent management.
+     */
+    environment: string,
+    /**
+     * Source environment, immutable target-manifest commit, and optional previously reviewed observation hash.
+     */
+    requestBody: PreviewEnvironmentGitPromotionRequest,
+  }): CancelablePromise<PreviewEnvironmentGitPromotionResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/projects/{slug}/environments/{environment}/gitops/promotion-plan',
+      path: {
+        'slug': slug,
+        'environment': environment,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * List retained GitOps serving releases and current rollback eligibility.
+   * Verifies the immutable target manifest commit through the bound provider and assesses each release using the rollback planner on one scoped observation snapshot per page. Only completed serving history of the current source is listed. Eligibility can change after observation. Release compatibility deadlines do not guarantee artifact retention. This read-only catalog never pins artifacts or authorizes rollback execution.
+   * @returns ListEnvironmentGitReleasesResponse Bounded recovery catalog with current eligibility and public artifact identities.
+   * @throws ApiError
+   */
+  public static listEnvironmentGitReleases({
+    slug,
+    environment,
+    targetCommitSha,
+    before,
+  }: {
+    /**
+     * Project owning the environment Git authority.
+     */
+    slug: string,
+    /**
+     * Registered environment selected for Git intent management.
+     */
+    environment: string,
+    /**
+     * Immutable commit containing the target manifest whose configuration will be preserved.
+     */
+    targetCommitSha: string,
+    /**
+     * next_before release UUID from the previous recovery page in this Git source scope.
+     */
+    before?: string,
+  }): CancelablePromise<ListEnvironmentGitReleasesResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/projects/{slug}/environments/{environment}/gitops/releases',
+      path: {
+        'slug': slug,
+        'environment': environment,
+      },
+      query: {
+        'target_commit_sha': targetCommitSha,
+        'before': before,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Propose a code rollback from a retained GitOps serving release.
+   * Read-only, value-redacted proposal selecting exact retained artifacts in this environment. Rechecks historical serving evidence, current artifact trust, identity mappings, target intent and ownership on one snapshot. It preserves current configuration and changes only compatible workload sources. Review the observation hash before export; normal Git approval and fresh qualification remain required.
+   * @returns PreviewEnvironmentGitRollbackResponse Read-only rollback proposal; blockers prevent patch and manifest export.
+   * @throws ApiError
+   */
+  public static previewEnvironmentGitRollback({
+    slug,
+    environment,
+    requestBody,
+  }: {
+    /**
+     * Project owning the environment Git authority.
+     */
+    slug: string,
+    /**
+     * Registered environment selected for Git intent management.
+     */
+    environment: string,
+    /**
+     * Retained release UUID, immutable target-manifest commit, and optional previously reviewed observation hash.
+     */
+    requestBody: PreviewEnvironmentGitRollbackRequest,
+  }): CancelablePromise<PreviewEnvironmentGitRollbackResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/projects/{slug}/environments/{environment}/gitops/rollback-plan',
       path: {
         'slug': slug,
         'environment': environment,
@@ -2241,6 +2841,13 @@ export class ProjectsService {
    * Protected-target promotions from an active source release set also
    * require the latest passing health and smoke qualification, which is
    * bound to that immutable release-set ID and expires after 24 hours.
+   * With `verify=true`, the exact GET/HEAD critical probe policy is also
+   * captured in the approval identity. The first milestone requires pinned
+   * HTTP configuration, a probe for every HTTP workload, at most five probes,
+   * and at least 21 minutes of revision retention. With `workers=true`, one
+   * existing production push worker participates in the same cutover. Its
+   * destination binding and credentials remain unchanged; startup proof and
+   * real delivery health gate promotion.
    *
    * @returns ProjectEnvironmentPromotionPreviewResponse Promotion preview and immutable promotion identity.
    * @throws ApiError
@@ -2250,6 +2857,9 @@ export class ProjectsService {
     environment,
     from,
     syncConfig = false,
+    verify = false,
+    migrate = false,
+    workers = false,
   }: {
     /**
      * Project slug owning the environment promotion preview.
@@ -2267,6 +2877,18 @@ export class ProjectsService {
      * Opt in to copying the source's non-secret configuration atomically with the target release graph.
      */
     syncConfig?: boolean,
+    /**
+     * Require destination HTTP probes before cutover and success; requires snapshot-aware sync_config and qualified operator admission.
+     */
+    verify?: boolean,
+    /**
+     * Run exactly one source release command as a backward-compatible destination migration before health probes. Requires sync_config, verify and qualified migration admission. Schema changes remain after code/config rollback.
+     */
+    migrate?: boolean,
+    /**
+     * Promote HTTP services and one existing production push worker with coordinated job admission and delivery health. Requires sync_config and verify; migration combinations are unsupported.
+     */
+    workers?: boolean,
   }): CancelablePromise<ProjectEnvironmentPromotionPreviewResponse> {
     return __request(OpenAPI, {
       method: 'GET',
@@ -2278,6 +2900,9 @@ export class ProjectsService {
       query: {
         'from': from,
         'sync_config': syncConfig,
+        'verify': verify,
+        'migrate': migrate,
+        'workers': workers,
       },
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
@@ -2292,6 +2917,55 @@ export class ProjectsService {
     });
   }
   /**
+   * Preview promotion with destination production secret changes.
+   * Read-only, bounded preview containing immutable secret version references
+   * from the authenticated release-secrets staging endpoint. Requires MFA,
+   * secrets write permission, sync_config, verify, complete HTTP release graphs
+   * and production as the destination. Existing application-owned persistent
+   * secret keys only; workers, migrations, managed credentials, explicit grants
+   * and reload hooks are refused. Each mentioned workload supplies a complete
+   * secret map; an empty map removes its serving secrets and omitted workloads
+   * inherit production versions. Source secrets are never copied. Approval and
+   * execution revalidate the exact versions and destination baseline. New
+   * admissions also require qualified operator rollout for the secrets scope.
+   *
+   * @returns ProjectEnvironmentPromotionPreviewResponse Promotion preview with secret key changes and version references only.
+   * @throws ApiError
+   */
+  public static previewProjectEnvironmentPromotionSecrets({
+    slug,
+    environment,
+    requestBody,
+  }: {
+    /**
+     * Project slug owning the environment promotion preview.
+     */
+    slug: string,
+    /**
+     * Target environment receiving the promotion preview.
+     */
+    environment: string,
+    requestBody: ProjectEnvironmentPromotionSecretPreviewRequest,
+  }): CancelablePromise<ProjectEnvironmentPromotionPreviewResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/projects/{slug}/environments/{environment}/promotion-preview',
+      path: {
+        'slug': slug,
+        'environment': environment,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Secret releases or destination verification are unavailable.`,
+      },
+    });
+  }
+  /**
    * Execute a guarded promotion between project environments.
    * Revalidates the supplied promotion token against current live
    * deployments and environment configuration before promoting immutable
@@ -2301,6 +2975,15 @@ export class ProjectsService {
    * failed verification automatically rolls back the promotion. Target
    * configuration remains target-scoped unless the token was created with
    * `sync_config=true`; secrets are never copied from the source environment.
+   * A health-gated promotion returns 202 with status=running. A leased worker
+   * checks dark candidates in the destination before atomic cutover, then
+   * requires fresh post-cutover health. Check the promotion status endpoint
+   * for phase, evidence, deadline and any guarded automatic rollback.
+   * Excess verified promotions wait durably with health.phase=queued and an
+   * admission receipt for at most 15 minutes. Dispatch revalidates the approved
+   * intent before preparing workloads and starts a fresh health window.
+   * A full waiting queue returns 429 (project_promotion_queue_full) with
+   * Retry-After; no operation is accepted and approval remains available.
    *
    * @returns ProjectEnvironmentPromotionResponse Promotion result for each project workload.
    * @throws ApiError
@@ -2449,6 +3132,153 @@ export class ProjectsService {
       errors: {
         401: `code: unauthorized`,
         404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Abort an in-progress environment promotion.
+   * A durable generation-fenced operator decision. Before cutover, abort preserves destination intent and retires unused candidates. After cutover, abort or recover requires fresh server-owned baseline health and worker startup proof before atomic restoration. Recovery never rebuilds or extends retention. Migration incidents use recover-migration. Identical request replay returns that decision's durable receipt even after a newer decision.
+   * @returns ProjectPromotionControl Terminal operator decision acknowledgement.
+   * @throws ApiError
+   */
+  public static abortProjectEnvironmentPromotion({
+    slug,
+    environment,
+    promotion,
+    requestBody,
+  }: {
+    /**
+     * Project slug owning the abort request.
+     */
+    slug: string,
+    /**
+     * Destination environment of the promotion being aborted.
+     */
+    environment: string,
+    /**
+     * Durable promotion identifier to abort.
+     */
+    promotion: string,
+    requestBody: ProjectPromotionControlRequest,
+  }): CancelablePromise<ProjectPromotionControl> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/projects/{slug}/environments/{environment}/promotions/{promotion}/abort',
+      path: {
+        'slug': slug,
+        'environment': environment,
+        'promotion': promotion,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `Stale generation, reused request identity, unsupported phase, or changed destination intent; inspect promotion status.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Retry guarded restoration of a blocked environment promotion.
+   * Retry a blocked restoration with a generation-fenced operator decision. Fresh server-owned baseline health and worker startup proof are required before atomic restoration. The retained baseline is reused without rebuilding or extending retention; migration incidents require recover-migration. An identical request replays its original durable receipt even after a newer decision.
+   * @returns ProjectPromotionControl Terminal acknowledgement of the restoration recovery decision.
+   * @throws ApiError
+   */
+  public static recoverProjectEnvironmentPromotion({
+    slug,
+    environment,
+    promotion,
+    requestBody,
+  }: {
+    /**
+     * Project slug owning the restoration recovery request.
+     */
+    slug: string,
+    /**
+     * Destination environment receiving the restored baseline.
+     */
+    environment: string,
+    /**
+     * Durable promotion identifier whose blocked restoration is being retried.
+     */
+    promotion: string,
+    requestBody: ProjectPromotionControlRequest,
+  }): CancelablePromise<ProjectPromotionControl> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/projects/{slug}/environments/{environment}/promotions/{promotion}/recover',
+      path: {
+        'slug': slug,
+        'environment': environment,
+        'promotion': promotion,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `Recovery rejected because the inspected generation, request identity, phase or destination intent no longer permits restoration.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Recover an interrupted promotion migration without replaying SQL.
+   * Records explicit database inspection, requests scheduler-confirmed teardown of the original runtime, and either resumes the captured promotion's health checks or resolves the incident through a different verified active repair promotion. Original task outcomes remain unchanged. Same-request replay returns the durable acknowledgement.
+   * @returns ProjectPromotionMigrationRecovery Existing terminal recovery acknowledgement.
+   * @throws ApiError
+   */
+  public static recoverProjectEnvironmentPromotionMigration({
+    slug,
+    environment,
+    promotion,
+    requestBody,
+  }: {
+    /**
+     * Project slug owning the migration recovery request.
+     */
+    slug: string,
+    /**
+     * Destination environment whose migration was inspected.
+     */
+    environment: string,
+    /**
+     * Durable promotion identifier with the interrupted migration task.
+     */
+    promotion: string,
+    requestBody: ProjectPromotionMigrationRecoveryRequest,
+  }): CancelablePromise<ProjectPromotionMigrationRecovery> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/projects/{slug}/environments/{environment}/promotions/{promotion}/recover-migration',
+      path: {
+        'slug': slug,
+        'environment': environment,
+        'promotion': promotion,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `Task, generation, runtime or destination intent changed; inspect current promotion status.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and

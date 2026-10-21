@@ -1,6 +1,9 @@
-package main
+package main_test
 
-import "testing"
+import (
+	"github.com/onebox-faas/faas/cmd/gregale"
+	"testing"
+)
 
 // TestFlagSetCommandName pins H10-123: `gregale workflows list h5-wf`
 // printed "usage: gregale workflows-list [flags]", a name nobody can type.
@@ -14,7 +17,7 @@ func TestFlagSetCommandName(t *testing.T) {
 		"workflows-nosuch": "workflows-nosuch",
 	}
 	for in, want := range cases {
-		if got := flagSetCommandName(in); got != want {
+		if got := main.FlagSetCommandName(in); got != want {
 			t.Errorf("flagSetCommandName(%q) = %q, want %q", in, got, want)
 		}
 	}

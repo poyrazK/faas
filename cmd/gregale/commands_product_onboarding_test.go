@@ -1,5 +1,5 @@
 // ADR-1707: verified workspace onboarding, retained setup and activation evidence.
-package main
+package main_test
 
 import (
 	"bytes"
@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/productcontrol"
 )
@@ -70,12 +71,12 @@ func TestProductOnboardingReviewAndConfirmation(t *testing.T) {
 	if err = os.WriteFile(tokenFile, []byte("short.access.token\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	client := NewClient(srv.URL, "owner")
-	c, err := parseProductCommand([]string{"customers", "onboard", "--app", "exports", "--external-ref", "acme", "--name", "Acme customer", "--plan", "starter", "--workspace", "acme", "--auth-token-file", tokenFile, "--file", reviewFile})
+	client := main.NewClient(srv.URL, "owner")
+	c, err := main.ParseProductCommand([]string{"customers", "onboard", "--app", "exports", "--external-ref", "acme", "--name", "Acme customer", "--plan", "starter", "--workspace", "acme", "--auth-token-file", tokenFile, "--file", reviewFile})
 	if err != nil {
 		t.Fatal(err)
 	}
-	value, err := runProductCommand(t.Context(), client, c)
+	value, err := main.RunProductCommand(t.Context(), client, c)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,21 +97,21 @@ func TestProductOnboardingReviewAndConfirmation(t *testing.T) {
 	}
 	mu.Unlock()
 	var output bytes.Buffer
-	if err = writeProductOutput(&output, value, false); err != nil || !strings.Contains(output.String(), "25000 EUR millicents") {
+	if err = main.WriteProductOutput(&output, value, false); err != nil || !strings.Contains(output.String(), "25000 EUR millicents") {
 		t.Fatalf("price review: %s %v", output.String(), err)
 	}
-	if _, err = runProductCommand(t.Context(), client, c); err == nil {
+	if _, err = main.RunProductCommand(t.Context(), client, c); err == nil {
 		t.Fatal("existing review overwritten")
 	}
 	if again, _ := os.ReadFile(reviewFile); !bytes.Equal(raw, again) {
 		t.Fatal("saved confirmation changed")
 	}
-	c, err = parseProductCommand([]string{"customers", "onboard", "--app", "exports", "--file", reviewFile, "--confirm", "--auth-token-file", tokenFile})
+	c, err = main.ParseProductCommand([]string{"customers", "onboard", "--app", "exports", "--file", reviewFile, "--confirm", "--auth-token-file", tokenFile})
 	if err != nil {
 		t.Fatal(err)
 	}
 	for range 2 {
-		if _, err = runProductCommand(t.Context(), client, c); err != nil {
+		if _, err = main.RunProductCommand(t.Context(), client, c); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -120,7 +121,7 @@ func TestProductOnboardingReviewAndConfirmation(t *testing.T) {
 	}
 	mu.Unlock()
 	// Catalog bytes in a saved review must still hash to the reviewed revision.
-	p, err := readProductOnboardingPreview(reviewFile)
+	p, err := main.ReadProductOnboardingPreview(reviewFile)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,25 +130,25 @@ func TestProductOnboardingReviewAndConfirmation(t *testing.T) {
 	grant.UnitPriceMillicents = 1
 	plan.Features["export"] = grant
 	p.Catalog.Spec.Plans["starter"] = plan
-	if validateProductOnboardingPreview(p) == nil {
+	if main.ValidateProductOnboardingPreview(p) == nil {
 		t.Fatal("tampered displayed price accepted")
 	}
 }
 
 func TestProductOnboardingSelectorsAndArguments(t *testing.T) {
 	list := api.ProductOnboardingWorkspaces{AuthApp: "auth", Workspaces: []api.ProductOnboardingWorkspace{{ID: uuid.NewString(), Slug: "first", Name: "Acme", Role: "owner"}, {ID: uuid.NewString(), Slug: "second", Name: "Acme", Role: "admin"}}}
-	if _, err := selectProductOnboardingWorkspace(list, "Acme"); err == nil {
+	if _, err := main.SelectProductOnboardingWorkspace(list, "Acme"); err == nil {
 		t.Fatal("ambiguous workspace name accepted")
 	}
-	if _, err := selectProductOnboardingWorkspace(list, "first"); err != nil {
+	if _, err := main.SelectProductOnboardingWorkspace(list, "first"); err != nil {
 		t.Fatal(err)
 	}
 	list.Workspaces[0].Role = "member"
-	if _, err := selectProductOnboardingWorkspace(list, "first"); err == nil {
+	if _, err := main.SelectProductOnboardingWorkspace(list, "first"); err == nil {
 		t.Fatal("ordinary member can link workspace")
 	}
 	for _, args := range [][]string{{"customers", "workspaces", "--app", "exports"}, {"customers", "onboard", "--app", "exports"}, {"customers", "onboard", "--app", "exports", "--confirm", "--plan", "pro"}, {"customers", "onboarding", "--app", "exports", "--id", "invalid"}} {
-		if _, err := parseProductCommand(args); err == nil {
+		if _, err := main.ParseProductCommand(args); err == nil {
 			t.Fatalf("invalid command accepted: %v", args)
 		}
 	}
@@ -155,7 +156,7 @@ func TestProductOnboardingSelectorsAndArguments(t *testing.T) {
 	if err := os.WriteFile(path, []byte("sensitive/token/value"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := readProductOnboardingToken(path); err == nil || strings.Contains(err.Error(), "sensitive") {
+	if _, err := main.ReadProductOnboardingToken(path); err == nil || strings.Contains(err.Error(), "sensitive") {
 		t.Fatalf("token error disclosed contents: %v", err)
 	}
 }

@@ -539,6 +539,57 @@ generated services. The canonical mapping:
 Regenerate via `npm run gen` (committed per ADR-013; CI's
 `sdk-gen-node` job is the dirty-diff gate).
 
+## Batched trigger delivery
+
+A trigger with `delivery: batch` sends one request with several records
+(ADR-1321). `handleTriggerBatch` parses the body, runs your handler for each
+record in delivery order and returns the response body; a record whose handler
+throws is retried, the rest are complete:
+
+```ts
+import { handleTriggerBatch, isTriggerBatch } from '@gregale/sdk-node/triggers/runtime';
+
+export async function POST(request: Request) {
+  const result = await handleTriggerBatch(await request.json(), async (record) => {
+    await saveOrder(record.data); // record.isJSON, record.bytes, record.text(), record.metadata
+  });
+  return Response.json(result); // {"batchItemFailures": [...]}
+}
+```
+
+`isTriggerBatch(request.headers)` tells batch and single-record deliveries apart.
+Options: `concurrency` (1-100) for records that do not depend on each other's
+order, `stopOnFailure` to retry every record after a failure in order, and
+`onError` to log each failure. A malformed body throws `TriggerBatchError`;
+let the request fail so the whole batch is retried.
+
+## Realtime in the browser and React
+
+`createRealtimeClient` keeps one WebSocket per endpoint and subscribes channels
+while something watches them. Each channel handle has an immutable view
+(`status`, recent `messages`, `presence`, `occupancy`, `error`) that changes
+only when something does, so it works with `useSyncExternalStore` and other
+stores:
+
+```ts
+import { createBrowserRealtimeTicketSocketFactory, createRealtimeClient } from '@gregale/sdk-node/browser';
+
+const client = createRealtimeClient({ url, webSocketFactory: createBrowserRealtimeTicketSocketFactory(fetchTicket) });
+const lobby = client.channel('lobby', { occupancy: true });
+const stop = lobby.subscribe(() => render(lobby.getView()));
+```
+
+React bindings live in `@gregale/sdk-node/react` (React 18+, an optional peer
+dependency): `RealtimeProvider`, `useRealtimeChannel(channel, options)`,
+`usePresence(channel)`, `useOccupancy(channel)` and `useRealtimeClient()`.
+A channel is released `lingerMs` (default 1 s) after its last watcher leaves.
+A client watches at most 8 channels at once; a refused channel reports
+`status: 'error'` with the server's code while the others continue.
+
+`consumeRealtimeChannels` also takes a `controller` callback whose `add()` and
+`remove()` change the channel set on a live connection, plus per-channel
+`onSubscriptionError` and connection-level `onConnectionChange` hooks.
+
 ## Transactional operation handlers
 
 Customer Operations HTTP definitions explicitly enable

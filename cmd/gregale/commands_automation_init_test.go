@@ -1,7 +1,8 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,13 +10,13 @@ import (
 )
 
 func TestCmdAutomationsInitCreatesLocalStarter(t *testing.T) {
-	resetJSONOut(t)
-	output := captureAutomationStdout(t)
+	main.ResetJSONOut(t)
+	output := main.CaptureAutomationStdout(t)
 	dir := filepath.Join(t.TempDir(), "report")
-	if code := cmdAutomations([]string{"init", "--template", "scheduled-report", "--path", dir}); code != 0 {
+	if code := main.CmdAutomations([]string{"init", "--template", "scheduled-report", "--path", dir}); code != 0 {
 		t.Fatalf("exit=%d", code)
 	}
-	if _, ok := readAutomationDefinition(filepath.Join(dir, "automation.yaml")); !ok {
+	if _, ok := main.ReadAutomationDefinition(filepath.Join(dir, "automation.yaml")); !ok {
 		t.Fatal("generated definition cannot be loaded by CLI")
 	}
 	if !strings.Contains(output.String(), "README.md") {
@@ -25,7 +26,7 @@ func TestCmdAutomationsInitCreatesLocalStarter(t *testing.T) {
 	if err := os.WriteFile(marker, []byte("keep"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if code := cmdAutomationsInit([]string{"--template", "contact-sync", "--path", dir}); code != 1 {
+	if code := main.CmdAutomationsInit([]string{"--template", "contact-sync", "--path", dir}); code != 1 {
 		t.Fatalf("overwrote existing destination: %d", code)
 	}
 	data, err := os.ReadFile(marker)
@@ -35,10 +36,10 @@ func TestCmdAutomationsInitCreatesLocalStarter(t *testing.T) {
 }
 
 func TestCmdAutomationsInitJSONAndDiscovery(t *testing.T) {
-	resetJSONOut(t)
-	jsonOutput = true
-	output := captureAutomationStdout(t)
-	if code := cmdAutomationsInit([]string{"--list"}); code != 0 {
+	main.ResetJSONOut(t)
+	(*main.JsonOutput) = true
+	output := main.CaptureAutomationStdout(t)
+	if code := main.CmdAutomationsInit([]string{"--list"}); code != 0 {
 		t.Fatalf("list exit=%d", code)
 	}
 	var list struct {
@@ -49,7 +50,7 @@ func TestCmdAutomationsInitJSONAndDiscovery(t *testing.T) {
 	}
 	output.Reset()
 	dir := filepath.Join(t.TempDir(), "approval")
-	if code := cmdAutomationsInit([]string{"--template", "approval-flow", "--path", dir}); code != 0 {
+	if code := main.CmdAutomationsInit([]string{"--template", "approval-flow", "--path", dir}); code != 0 {
 		t.Fatalf("create exit=%d", code)
 	}
 	var receipt struct {
@@ -61,7 +62,7 @@ func TestCmdAutomationsInitJSONAndDiscovery(t *testing.T) {
 		t.Fatalf("receipt=%s err=%v", output.String(), err)
 	}
 	for _, args := range [][]string{nil, {"--list", "--template", "contact-sync"}, {"--template", "unknown"}, {"--list", "unexpected"}} {
-		if code := cmdAutomationsInit(args); code != 1 {
+		if code := main.CmdAutomationsInit(args); code != 1 {
 			t.Fatalf("accepted %v: %d", args, code)
 		}
 	}

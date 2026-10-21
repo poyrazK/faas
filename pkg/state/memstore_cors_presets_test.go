@@ -1,4 +1,4 @@
-package state
+package state_test
 
 // Coverage for the MemStore side of the cors_presets read path
 // (issue #975 item #4 / Mega-Foundation #979-b, slot 00294). The
@@ -19,13 +19,14 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // memSampleCorsPreset returns the simplest valid seed row. The
 // caller is expected to set the row's ID, CreatedAt, and
 // UpdatedAt to deterministic values.
-func memSampleCorsPreset(accountID, appID, name string) CorsPreset {
-	return CorsPreset{
+func memSampleCorsPreset(accountID, appID, name string) state.CorsPreset {
+	return state.CorsPreset{
 		ID:               uuid.NewString(),
 		AccountID:        accountID,
 		AppID:            appID,
@@ -45,22 +46,22 @@ func memSampleCorsPreset(accountID, appID, name string) CorsPreset {
 // memSeedCorsPreset inserts a preset into the memstore map. Used
 // by the read-path tests to bypass the (not-yet-existing) write
 // surface — same pattern as memstore_app_webhooks_test.go.
-func memSeedCorsPreset(m *MemStore, p CorsPreset) CorsPreset {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.corsPresets[p.ID] = p
+func memSeedCorsPreset(m *state.MemStore, p state.CorsPreset) state.CorsPreset {
+	(*m.Mu()).Lock()
+	defer (*m.Mu()).Unlock()
+	(*m.CorsPresets())[p.ID] = p
 	return p
 }
 
-func corsFixture(t *testing.T) (m *MemStore, ctx context.Context, accountID, appID string) {
+func corsFixture(t *testing.T) (m *state.MemStore, ctx context.Context, accountID, appID string) {
 	t.Helper()
 	ctx = context.Background()
-	m = NewMemStore()
+	m = state.NewMemStore()
 	acct, err := m.CreateAccount(ctx, "cors-"+uuid.NewString()+"@example.com", api.PlanHobby)
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, err := m.CreateApp(ctx, App{
+	app, err := m.CreateApp(ctx, state.App{
 		AccountID: acct.ID,
 		Slug:      "cors-" + strconv.Itoa(int(time.Now().UnixNano())),
 		RAMMB:     256, MaxConcurrency: 1, IdleTimeoutS: 30,
@@ -117,7 +118,7 @@ func TestMemStore_CorsPreset_AppScopedRead(t *testing.T) {
 func TestMemStore_CorsPreset_GetByID_NotFound(t *testing.T) {
 	m, ctx, acct, _ := corsFixture(t)
 	_, err := m.GetCorsPresetByID(ctx, acct, uuid.NewString())
-	if !errors.Is(err, ErrNotFound) {
+	if !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("GetCorsPresetByID(unknown) = %v, want ErrNotFound", err)
 	}
 }
@@ -133,7 +134,7 @@ func TestMemStore_CorsPreset_GetByID_CrossTenantRejects(t *testing.T) {
 	memSeedCorsPreset(m, seed)
 
 	_, err := m.GetCorsPresetByID(ctx, acctB, seed.ID)
-	if !errors.Is(err, ErrNotFound) {
+	if !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("GetCorsPresetByID(cross-tenant) = %v, want ErrNotFound", err)
 	}
 }

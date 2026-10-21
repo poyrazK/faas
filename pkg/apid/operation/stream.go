@@ -79,6 +79,14 @@ func (s *Service) operationStreamAuthorized(ctx context.Context, bearer string, 
 	if err != nil || !acct.Active() || acct.ID != op.AccountID || token.TenantID != op.PlatformTenantID {
 		return false
 	}
+	// Suspension closes an open stream at the next recheck, as it closes reads.
+	tenants, ok := s.Host.Store().(state.PlatformTenantStore)
+	if !ok {
+		return false
+	}
+	if customer, err := tenants.GetPlatformTenant(ctx, acct.ID, op.PlatformTenantID); err != nil || customer.Status != state.PlatformTenantActive {
+		return false
+	}
 	for _, scope := range token.Scopes {
 		if scope == api.ScopePlatformTenantOperationsRead {
 			return true

@@ -67,10 +67,18 @@ func renderRouteAwake(w io.Writer, r api.RouteAwakeResponse) {
 	if r.OtherRoutesSeconds > 0 {
 		_, _ = fmt.Fprintf(tw, "Other routes\t\t\t%s\t%.0f%%\t\t\n", awakeDuration(r.OtherRoutesSeconds), awakeShare(r.OtherRoutesSeconds, r.AwakeSeconds))
 	}
+	for _, src := range r.Sources {
+		if src.AwakeSeconds > 0 {
+			_, _ = fmt.Fprintf(tw, "%s\t%d\t\t%s\t%.0f%%\t\t\n", awakeSourceLabel(src.Source), src.Events, awakeDuration(src.AwakeSeconds), 100*src.AwakeShare)
+		}
+	}
 	if r.UnattributedSeconds > 0 {
-		_, _ = fmt.Fprintf(tw, "Unattributed\t\t\t%s\t%.0f%%\tprobes, prewarm, min instances, cron, queue\t\n", awakeDuration(r.UnattributedSeconds), awakeShare(r.UnattributedSeconds, r.AwakeSeconds))
+		_, _ = fmt.Fprintf(tw, "Unattributed\t\t\t%s\t%.0f%%\tmin instances, cron, queue, waitUntil\t\n", awakeDuration(r.UnattributedSeconds), awakeShare(r.UnattributedSeconds, r.AwakeSeconds))
 	}
 	_ = tw.Flush()
+	if r.MinInstances > 0 {
+		_, _ = fmt.Fprintf(w, "\n%s keeps at least %d instance(s) running (min instances), so it never parks.\n", r.Slug, r.MinInstances)
+	}
 	printed := false
 	for _, route := range r.Routes {
 		if route.Suggestion == nil {
@@ -83,6 +91,18 @@ func renderRouteAwake(w io.Writer, r api.RouteAwakeResponse) {
 		_, _ = fmt.Fprintf(w, "  %s\n", route.Suggestion.Message)
 	}
 	_, _ = fmt.Fprintln(w, "\nFigures are estimates at minute resolution. WITHOUT IT assumes every other request is unchanged.")
+}
+
+// awakeSourceLabel names a non-request awake cause (ADR-1199).
+func awakeSourceLabel(source string) string {
+	switch source {
+	case api.RouteAwakeSourceRouteProbe:
+		return "Route probes (canary)"
+	case api.RouteAwakeSourcePrewarm:
+		return "Scheduled prewarm"
+	default:
+		return source
+	}
 }
 
 func awakePattern(r api.RouteAwakeRoute) string {

@@ -33,11 +33,13 @@ import (
 	"github.com/onebox-faas/faas/pkg/fcvm/leakcheck"
 	"github.com/onebox-faas/faas/pkg/fcvm/logbuf"
 	"github.com/onebox-faas/faas/pkg/fcvm/netstats"
+	"github.com/onebox-faas/faas/pkg/financial"
 	"github.com/onebox-faas/faas/pkg/grpcerr"
+	"github.com/onebox-faas/faas/pkg/leaser"
 	"github.com/onebox-faas/faas/pkg/privatenetwork"
-	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/sched/flowcount"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/storagekey"
 	pkgtrace "github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/vmmdmount"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -307,6 +309,9 @@ type Server struct {
 	// constructors; production cmd/vmmd uses
 	// NewWithCPUAndNetAndActivity.
 	activity *activity.ActivityTracker
+	// inflightTraces holds each in-flight HTTP forward's traceparent for
+	// InflightRequestTrace (ADR-1138).
+	inflightTraces inflightTraces
 	// identitySigner mints execution-only assertions for the scheduler's
 	// outbound relay. Tokens are sent only over the vmmd↔schedd stream.
 	identitySigner *workloadidentity.Signer
@@ -476,7 +481,7 @@ func (s *Server) WithExecutionIdentitySigner(signer *workloadidentity.Signer) *S
 // common lease interface. Durable storage is preferred when configured so
 // callers retain lease state across vmmd restarts; the hot tracker remains the
 // compatibility fallback for in-memory/unit-test fixtures.
-func (s *Server) MigrationLeaser() sched.Leaser[any] {
+func (s *Server) MigrationLeaser() leaser.Leaser[any] {
 	if s == nil {
 		return nil
 	}
@@ -697,7 +702,7 @@ func (s *Server) wakeWithBridgePrewarm(ctx context.Context, wr fcvm.WakeRequest,
 		s.streamBridges = newStreamBridgeManager(s.log)
 	}
 	inst, err := fastVMM.WakeWithNetworkReady(ctx, wr, func(ready fcvm.WakeNetworkReady) {
-		s.streamBridges.prewarm(ctx, &vmmdpb.ForwardHTTPRequestInit{
+		s.streamBridges.prewarm(withPublicTarget(ctx, ready.PublicTarget), &vmmdpb.ForwardHTTPRequestInit{
 			Instance:    ready.Instance,
 			Port:        uint32(wr.Port),
 			AppProtocol: appProtocol,
@@ -818,13 +823,14 @@ func (s *Server) jobColdBoot(ctx context.Context, req *vmmdpb.JobColdBootRequest
 		go s.serveInteractiveJob(context.WithoutCancel(ctx), interactiveVMM, req.GetInstance(), attach, boot.Interactive, boot.TaskTimeoutSec)
 	}
 	return &vmmdpb.JobColdBootResponse{
-		Instance:    inst.Lease.Instance,
-		NodeId:      boot.NodeID,
-		Netns:       inst.Lease.Netns,
-		HostIp:      inst.Lease.HostIP.String(),
-		GuestUid:    int32(inst.Lease.UID),
-		StartHeld:   startHeld,
-		Interactive: attach != nil,
+		Instance:     inst.Lease.Instance,
+		NodeId:       boot.NodeID,
+		Netns:        inst.Lease.Netns,
+		HostIp:       inst.Lease.HostIP.String(),
+		GuestUid:     int32(inst.Lease.UID),
+		StartHeld:    startHeld,
+		Interactive:  attach != nil,
+		ImageProcess: boot.ImageProcess,
 	}, nil
 }
 
@@ -1312,6 +1318,7 @@ func (s *Server) FrameworkReady(ctx context.Context, req *vmmdpb.FrameworkReadyR
 // unbounded across the vmmd process lifetime. issue #279.
 func (s *Server) Destroy(ctx context.Context, req *vmmdpb.DestroyRequest) (*vmmdpb.DestroyResponse, error) {
 	const op = "Destroy"
+	ctx = withIncomingCorrelation(ctx)
 	start := time.Now()
 	exportDir := s.exportDirFor(req.GetInstance())
 	var code int
@@ -2034,7 +2041,7 @@ func (s *Server) SeccompStatus(ctx context.Context, req *vmmdpb.SeccompStatusReq
 //     a misbehaving caller or a leaked token from another
 //     `faas`-group member cannot read arbitrary storage bytes
 //     through vmmd's loopback mount; the allow-list is the
-//     host-arch + sibling-arch set from sched.IsParentBaseKey).
+//     host-arch + sibling-arch set from storagekey.IsParentBase).
 //  3. vmm.MountParentExt4 returns vmmdmount.ErrNotFound →
 //     NotFound (the storage backend has no such key — the
 //     load-bearing wire code for imaged's pre-staging checks).
@@ -2056,8 +2063,8 @@ func (s *Server) MountParentExt4ReadOnly(ctx context.Context, req *vmmdpb.MountP
 	// Allow-list check (review finding #4): only the canonical
 	// parent-base storage keys may be loopback-mounted. The set
 	// is per-arch (host + sibling for heterogenous clusters);
-	// see sched.IsParentBaseKey.
-	if !sched.IsParentBaseKey(req.GetStorageKey()) {
+	// see storagekey.IsParentBase.
+	if !storagekey.IsParentBase(req.GetStorageKey()) {
 		err := api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
 			"storage_key not in allow-list",
 			"only the canonical parent base ext4 key may be mounted").
@@ -2098,7 +2105,7 @@ func (s *Server) MaterializeParentExt4(ctx context.Context, req *vmmdpb.Material
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(err)
 	}
-	if !sched.IsParentBaseKey(req.GetStorageKey()) {
+	if !storagekey.IsParentBase(req.GetStorageKey()) {
 		err := api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
 			"storage_key not in allow-list",
 			"only the canonical parent base ext4 key may be materialized").
@@ -2340,6 +2347,13 @@ func toProblem(err error) *api.Problem {
 		return api.NewProblem(500, api.CodeInternal,
 			"Function warm capture failed", "function checkpoint or resource recovery did not complete; retire the source VM before replacing it")
 	}
+	if errors.Is(err, financial.ErrComputeUnavailable) || errors.Is(err, financial.ErrComputeFence) {
+		return api.NewProblem(503, "financial_compute_unavailable", "Compute admission unavailable", "The VM compute authority or stable execution attempt could not be verified.")
+	}
+	if errors.Is(err, financial.ErrComputeBudget) {
+		return api.NewProblem(402, "financial_budget_held", "Compute budget held", "The workload cannot reserve its next compute execution window.")
+	}
+
 	if errors.Is(err, fcvm.ErrAppAdmissionFenced) {
 		return api.NewProblem(409, api.CodeDatabaseCutoverFenced,
 			"Database cutover in progress", "app admission is fenced for a managed PostgreSQL cutover")

@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/routeimpact"
 	"github.com/onebox-faas/faas/pkg/routemonitor"
@@ -35,8 +36,8 @@ func cliProductionIncident(t *testing.T) api.RouteMonitorIncident {
 }
 
 func TestRouteMonitorPreviewCLIUsesReadOnlyEndpoint(t *testing.T) {
-	resetJSONOut(t)
-	setPreviewTestAuth(t)
+	main.ResetJSONOut(t)
+	main.SetPreviewTestAuth(t)
 	incident := cliProductionIncident(t)
 	proposedRoutes := []api.RouteMonitorRoute{incident.OpeningReport.Routes[0].Route}
 	routeFile := filepath.Join(t.TempDir(), "budgets.json")
@@ -59,7 +60,7 @@ func TestRouteMonitorPreviewCLIUsesReadOnlyEndpoint(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.CustomerGroupBy != "" || !routemonitor.RoutesEqual(req.Routes, proposedRoutes) {
 			t.Errorf("preview request does not match proposed budgets: %+v %v", req, err)
 		}
-		writeJSONTest(w, api.RouteMonitorPreview{
+		main.WriteJSONTest(w, api.RouteMonitorPreview{
 			CurrentRevision:                     incident.OpeningReport.Revision,
 			PreviewOnly:                         true,
 			ConfigChangeResetsObservationAnchor: true,
@@ -69,10 +70,10 @@ func TestRouteMonitorPreviewCLIUsesReadOnlyEndpoint(t *testing.T) {
 	defer server.Close()
 	t.Setenv("FAAS_API", server.URL)
 	var output bytes.Buffer
-	old := osStdout
-	osStdout = &output
-	t.Cleanup(func() { osStdout = old })
-	if code := run([]string{"routes", "monitor", "preview", "demo", "--routes", routeFile, "--json"}); code != 0 {
+	old := (*main.OsStdout)
+	(*main.OsStdout) = &output
+	t.Cleanup(func() { (*main.OsStdout) = old })
+	if code := main.Run([]string{"routes", "monitor", "preview", "demo", "--routes", routeFile, "--json"}); code != 0 {
 		t.Fatalf("exit %d: %s", code, output.String())
 	}
 	var got api.RouteMonitorPreview
@@ -85,14 +86,14 @@ func TestRouteMonitorPreviewCLIUsesReadOnlyEndpoint(t *testing.T) {
 }
 
 func TestParseRouteMonitorPreviewOptions(t *testing.T) {
-	options, err := parseRouteMonitorCLI([]string{"preview", "demo", "--routes", "budgets.json", "--customer-group-by", "tenant", "--customer-details", "--fail-on-unhealthy"})
+	options, err := main.ParseRouteMonitorCLI([]string{"preview", "demo", "--routes", "budgets.json", "--customer-group-by", "tenant", "--customer-details", "--fail-on-unhealthy"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if options.action != "preview" || options.customerGroupBy != "tenant" || !options.customerDetails || !options.fail {
+	if (*options.Action()) != "preview" || (*options.CustomerGroupBy()) != "tenant" || !(*options.CustomerDetails()) || !(*options.Fail()) {
 		t.Fatalf("preview options were not preserved: %+v", options)
 	}
-	if _, err := parseRouteMonitorCLI([]string{"preview", "demo"}); err == nil {
+	if _, err := main.ParseRouteMonitorCLI([]string{"preview", "demo"}); err == nil {
 		t.Fatal("preview accepted no proposed budgets")
 	}
 }
@@ -108,10 +109,10 @@ func TestRenderRouteMonitorIncidentIncludesTransitionEvidence(t *testing.T) {
 		Evidence: []api.RouteMonitorEvidence{incident.Evidence[0]},
 	}}
 	var output bytes.Buffer
-	old := osStdout
-	osStdout = &output
-	t.Cleanup(func() { osStdout = old })
-	renderRouteMonitorIncident(incident, "demo")
+	old := (*main.OsStdout)
+	(*main.OsStdout) = &output
+	t.Cleanup(func() { (*main.OsStdout) = old })
+	main.RenderRouteMonitorIncident(incident, "demo")
 	for _, expected := range []string{"Transition 44444444-4444-4444-8444-444444444444", "Newly violated: POST /checkout — latency", "POST /checkout — errors evidence"} {
 		if !strings.Contains(output.String(), expected) {
 			t.Fatalf("incident explanation omitted %q: %s", expected, output.String())
@@ -122,8 +123,8 @@ func TestRenderRouteMonitorIncidentIncludesTransitionEvidence(t *testing.T) {
 func TestRouteMonitorIncidentSourceImpactCorrelation(t *testing.T) {
 	for _, scenario := range []string{"matched", "repository_mismatch", "base_revision_mismatch", "baseline_unavailable", "baseline_repository_mismatch", "baseline_source_root_mismatch", "candidate_revision_mismatch", "incident_revision_mismatch", "app_identity_mismatch", "deployment_unavailable", "route_not_reported", "analysis_incomplete", "human", "out"} {
 		t.Run(scenario, func(t *testing.T) {
-			resetJSONOut(t)
-			setPreviewTestAuth(t)
+			main.ResetJSONOut(t)
+			main.SetPreviewTestAuth(t)
 			incident := cliProductionIncident(t)
 			incident.Baseline = &api.RouteMonitorDeploymentBaseline{DeploymentID: "66666666-6666-4666-8666-666666666666", CommitSHA: strings.Repeat("c", 40), Repository: "github.com/team/service", SourceRoot: "."}
 			source := investigationSourceFixture("POST", "/checkout")
@@ -171,7 +172,7 @@ func TestRouteMonitorIncidentSourceImpactCorrelation(t *testing.T) {
 				calls = append(calls, r.URL.Path)
 				switch r.URL.Path {
 				case "/v1/apps/demo/route-monitor/incidents/" + incident.ID:
-					writeJSONTest(w, incident)
+					main.WriteJSONTest(w, incident)
 				case "/v1/deployments/" + incident.DeploymentID:
 					if scenario == "deployment_unavailable" {
 						w.WriteHeader(http.StatusServiceUnavailable)
@@ -184,7 +185,7 @@ func TestRouteMonitorIncidentSourceImpactCorrelation(t *testing.T) {
 					if scenario == "app_identity_mismatch" {
 						appID = "99999999-9999-4999-8999-999999999999"
 					}
-					writeJSONTest(w, api.DeploymentResponse{ID: incident.DeploymentID, AppID: appID, CommitSHA: commit, SourceURL: "https://github.com/team/service", SourceRoot: "."})
+					main.WriteJSONTest(w, api.DeploymentResponse{ID: incident.DeploymentID, AppID: appID, CommitSHA: commit, SourceURL: "https://github.com/team/service", SourceRoot: "."})
 				default:
 					t.Errorf("unexpected request %s", r.URL.Path)
 					http.NotFound(w, r)
@@ -193,9 +194,9 @@ func TestRouteMonitorIncidentSourceImpactCorrelation(t *testing.T) {
 			defer server.Close()
 			t.Setenv("FAAS_API", server.URL)
 			var output bytes.Buffer
-			old := osStdout
-			osStdout = &output
-			t.Cleanup(func() { osStdout = old })
+			old := (*main.OsStdout)
+			(*main.OsStdout) = &output
+			t.Cleanup(func() { (*main.OsStdout) = old })
 			args := []string{"routes", "monitor", "explain", "demo", "--incident", incident.ID, "--source-impact", impactPath}
 			if scenario != "human" {
 				args = append(args, "--json")
@@ -203,7 +204,7 @@ func TestRouteMonitorIncidentSourceImpactCorrelation(t *testing.T) {
 			if scenario == "out" {
 				args = append(args, "--out", filepath.Join(t.TempDir(), "incident.json"))
 			}
-			if code := run(args); code != 0 {
+			if code := main.Run(args); code != 0 {
 				t.Fatalf("exit %d: %s", code, output.String())
 			}
 			wantCalls := 2
@@ -229,7 +230,7 @@ func TestRouteMonitorIncidentSourceImpactCorrelation(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			var got routeMonitorIncidentWithSource
+			var got main.RouteMonitorIncidentWithSource
 			if err := json.Unmarshal(jsonBody, &got); err != nil {
 				t.Fatal(err)
 			}
@@ -291,7 +292,7 @@ func TestRouteMonitorIncidentSourceImpactCorrelation(t *testing.T) {
 }
 
 func TestRouteMonitorIncidentSourceImpactAutoUsesSavedReleasePair(t *testing.T) {
-	setPreviewTestAuth(t)
+	main.SetPreviewTestAuth(t)
 	root := t.TempDir()
 	routeImpactGit(t, root, "init", "-q")
 	routeImpactGit(t, root, "remote", "add", "origin", "https://github.com/team/service.git")
@@ -329,21 +330,21 @@ func TestRouteMonitorIncidentSourceImpactAutoUsesSavedReleasePair(t *testing.T) 
 			http.NotFound(w, r)
 			return
 		}
-		writeJSONTest(w, api.DeploymentResponse{
+		main.WriteJSONTest(w, api.DeploymentResponse{
 			ID: incident.DeploymentID, AppID: incident.AppID, CommitSHA: candidateCommit,
 			SourceURL: "https://github.com/team/service", SourceRoot: "services/api",
 		})
 	}))
 	defer server.Close()
 	t.Setenv("FAAS_API", server.URL)
-	client, err := authedClient()
+	client, err := main.AuthedClient()
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// Start inside the application root to verify auto mode finds the Git root
 	// before applying the stored repository-relative source root.
-	correlation := correlateRouteMonitorIncidentSourceAuto(context.Background(), client, incident, "demo", sourceRoot)
+	correlation := main.CorrelateRouteMonitorIncidentSourceAuto(context.Background(), client, incident, "demo", sourceRoot)
 	if calls != 1 {
 		t.Fatalf("deployment detail requests = %d, want 1", calls)
 	}
@@ -355,7 +356,7 @@ func TestRouteMonitorIncidentSourceImpactAutoUsesSavedReleasePair(t *testing.T) 
 	}
 
 	incident.Baseline.CommitSHA = strings.Repeat("d", 40)
-	correlation = correlateRouteMonitorIncidentSourceAuto(context.Background(), client, incident, "demo", sourceRoot)
+	correlation = main.CorrelateRouteMonitorIncidentSourceAuto(context.Background(), client, incident, "demo", sourceRoot)
 	if correlation.Status != "unavailable" || correlation.Reason != "local_analysis_unavailable" || len(correlation.Routes) != 0 {
 		t.Fatalf("missing local baseline revision did not fail safely: %+v", correlation)
 	}
@@ -363,11 +364,11 @@ func TestRouteMonitorIncidentSourceImpactAutoUsesSavedReleasePair(t *testing.T) 
 
 func TestParseRouteMonitorExplainAcceptsAutomaticSourceImpact(t *testing.T) {
 	incidentID := cliProductionIncident(t).ID
-	options, err := parseRouteMonitorCLI([]string{"explain", "demo", "--incident", incidentID, "--source-impact", "auto"})
+	options, err := main.ParseRouteMonitorCLI([]string{"explain", "demo", "--incident", incidentID, "--source-impact", "auto"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if options.action != "explain" || options.sourceImpact != "auto" {
+	if (*options.Action()) != "explain" || (*options.SourceImpact()) != "auto" {
 		t.Fatalf("automatic source-impact option was not preserved: %+v", options)
 	}
 }
@@ -386,7 +387,7 @@ func TestRouteMonitorSourceMappingRequiresUniqueNormalizedRoute(t *testing.T) {
 	incident := cliProductionIncident(t)
 	incident.OpeningReport.Routes[0].Route.Path = "/orders/{id}"
 	source := investigationSourceFixture("POST", "/orders/{order_id}")
-	matched := correlateRouteMonitorAffectedRoutes(incident, source)
+	matched := main.CorrelateRouteMonitorAffectedRoutes(incident, source)
 	if len(matched) != 1 || matched[0].Status != "matched" || matched[0].Source == nil || matched[0].Source.Mapping != "parameter_names" {
 		t.Fatalf("unique parameter-name mapping was not accepted: %+v", matched)
 	}
@@ -404,7 +405,7 @@ func TestRouteMonitorSourceMappingRequiresUniqueNormalizedRoute(t *testing.T) {
 		second.After = &after
 	}
 	source.Routes = append(source.Routes, second)
-	ambiguous := correlateRouteMonitorAffectedRoutes(incident, source)
+	ambiguous := main.CorrelateRouteMonitorAffectedRoutes(incident, source)
 	if len(ambiguous) != 1 || ambiguous[0].Status != "unavailable" || ambiguous[0].Reason != "ambiguous_route_mapping" || ambiguous[0].Source != nil {
 		t.Fatalf("ambiguous parameter mapping exposed source evidence: %+v", ambiguous)
 	}
@@ -414,8 +415,8 @@ func TestRouteMonitorSourceMappingRequiresUniqueNormalizedRoute(t *testing.T) {
 func TestProductionRouteMonitorCLIReportsAndIncidentEvidence(t *testing.T) {
 	for _, scenario := range []string{"human", "timeline", "json", "export", "overwrite", "symlink", "wrong_id", "wrong_weight", "wrong_link", "wrong_verdict", "report", "report_gate", "incidents"} {
 		t.Run(scenario, func(t *testing.T) {
-			resetJSONOut(t)
-			setPreviewTestAuth(t)
+			main.ResetJSONOut(t)
+			main.SetPreviewTestAuth(t)
 			incident := cliProductionIncident(t)
 			switch scenario {
 			case "wrong_id":
@@ -444,25 +445,25 @@ func TestProductionRouteMonitorCLIReportsAndIncidentEvidence(t *testing.T) {
 				}
 				switch r.URL.Path {
 				case "/v1/apps/demo/route-monitor/report":
-					writeJSONTest(w, incident.OpeningReport)
+					main.WriteJSONTest(w, incident.OpeningReport)
 				case "/v1/apps/demo/route-monitor/incidents":
 					if r.URL.Query().Get("limit") != "5" {
 						t.Error("page limit lost")
 					}
-					writeJSONTest(w, api.RouteMonitorIncidentPage{AppID: incident.AppID, Incidents: []api.RouteMonitorIncident{incident}})
+					main.WriteJSONTest(w, api.RouteMonitorIncidentPage{AppID: incident.AppID, Incidents: []api.RouteMonitorIncident{incident}})
 				default:
 					if r.URL.Path != "/v1/apps/demo/route-monitor/incidents/"+cliProductionIncident(t).ID {
 						t.Error("incident scope lost")
 					}
-					writeJSONTest(w, incident)
+					main.WriteJSONTest(w, incident)
 				}
 			}))
 			defer server.Close()
 			t.Setenv("FAAS_API", server.URL)
 			var output bytes.Buffer
-			old := osStdout
-			osStdout = &output
-			t.Cleanup(func() { osStdout = old })
+			old := (*main.OsStdout)
+			(*main.OsStdout) = &output
+			t.Cleanup(func() { (*main.OsStdout) = old })
 			args := []string{"routes", "monitor", "explain", "demo", "--incident", cliProductionIncident(t).ID}
 			if scenario == "report" || scenario == "report_gate" {
 				args = []string{"routes", "monitor", "report", "demo"}
@@ -494,7 +495,7 @@ func TestProductionRouteMonitorCLIReportsAndIncidentEvidence(t *testing.T) {
 			if strings.HasPrefix(scenario, "wrong_") || scenario == "overwrite" || scenario == "symlink" || scenario == "report_gate" {
 				want = 1
 			}
-			if code := run(args); code != want {
+			if code := main.Run(args); code != want {
 				t.Fatalf("exit %d want %d: %s", code, want, output.String())
 			}
 			if scenario == "human" && (!strings.Contains(output.String(), "gregale debug requests inspect demo") || !strings.Contains(output.String(), "managed_binding/postgres")) {
@@ -519,8 +520,8 @@ func TestProductionRouteMonitorCLIReportsAndIncidentEvidence(t *testing.T) {
 	}
 }
 func TestProductionRouteMonitorCLIIntentAndEarlyValidation(t *testing.T) {
-	resetJSONOut(t)
-	setPreviewTestAuth(t)
+	main.ResetJSONOut(t)
+	main.SetPreviewTestAuth(t)
 	i := cliProductionIncident(t)
 	calls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -532,7 +533,7 @@ func TestProductionRouteMonitorCLIIntentAndEarlyValidation(t *testing.T) {
 		if json.NewDecoder(r.Body).Decode(&req) != nil || !req.Enabled || req.ExpectedRevision == nil || *req.ExpectedRevision != 0 || req.Routes[0].Max5xxRateBPS == nil || *req.Routes[0].Max5xxRateBPS != 0 {
 			t.Error("zero budget lost")
 		}
-		writeJSONTest(w, api.RouteMonitorConfig{AppID: i.AppID, Enabled: true, Revision: 1, UpdatedAt: i.OpeningReport.ObservationAnchor, Routes: req.Routes})
+		main.WriteJSONTest(w, api.RouteMonitorConfig{AppID: i.AppID, Enabled: true, Revision: 1, UpdatedAt: i.OpeningReport.ObservationAnchor, Routes: req.Routes})
 	}))
 	defer server.Close()
 	t.Setenv("FAAS_API", server.URL)
@@ -540,19 +541,19 @@ func TestProductionRouteMonitorCLIIntentAndEarlyValidation(t *testing.T) {
 	if err := os.WriteFile(path, []byte(`[{"method":"POST","path":"/checkout","max_5xx_rate_bps":0}]`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if code := run([]string{"routes", "monitor", "set", "demo", "--mode", "enabled", "--routes", path, "--expected-revision", "0", "--json"}); code != 0 {
+	if code := main.Run([]string{"routes", "monitor", "set", "demo", "--mode", "enabled", "--routes", path, "--expected-revision", "0", "--json"}); code != 0 {
 		t.Fatal("zero budget rejected")
 	}
 	for _, args := range [][]string{{"explain", "demo"}, {"incidents", "demo", "--limit", "11"}, {"set", "demo", "--mode", "bad", "--routes", path, "--expected-revision", "0"}, {"explain", "demo", "--incident", "bad"}} {
 		before := calls
-		if code := cmdRoutesMonitor(args); code != 1 || calls != before {
+		if code := main.CmdRoutesMonitor(args); code != 1 || calls != before {
 			t.Fatal("invalid input reached server")
 		}
 	}
 	if err := os.WriteFile(path, []byte(`[{"method":"POST","path":"/checkout","max_p95_ms":100,"typo":1}]`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := readRouteMonitorRoutes(path); err == nil {
+	if _, err := main.ReadRouteMonitorRoutes(path); err == nil {
 		t.Fatal("unknown budget field accepted")
 	}
 }

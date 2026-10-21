@@ -52,7 +52,7 @@ func TestGithubActionDefaultPinIsValidSHA(t *testing.T) {
 func TestRenderGithubSetupWorkflowSafeRollout(t *testing.T) {
 	workflow := renderGithubSetupWorkflow("api", "acme/api", "main", githubSetupRolloutSafe, nil, "", false)
 	for _, want := range []string{
-		"# Balanced health-gated rollout; available on Pro/Scale.",
+		"# Balanced health-gated rollout; available on every plan.",
 		`rollout: "safe"`,
 		`wait: "true"`,
 	} {
@@ -209,6 +209,9 @@ func TestCmdGithubSetupRejectsMalformedDependabotBeforeNetworkOrWrites(t *testin
 	if err := os.Mkdir(filepath.Join(repoDir, ".git"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(repoDir, ".git", "HEAD"), []byte("ref: refs/heads/main\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	dependabotPath := filepath.Join(repoDir, defaultGithubSetupDependabotPath)
 	if err := os.MkdirAll(filepath.Dir(dependabotPath), 0o755); err != nil {
 		t.Fatal(err)
@@ -290,6 +293,9 @@ func TestCmdGithubSetupPinActionResolvesAnnotatedTag(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(repoDir, ".git"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(repoDir, ".git", "HEAD"), []byte("ref: refs/heads/main\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	t.Chdir(repoDir)
 
 	commitSHA := "f1e2d3c4b5a6987654321098765432109abcdef0"
@@ -359,6 +365,9 @@ func TestCmdGithubSetupPinActionFailureDoesNotMutate(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(repoDir, ".git"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(repoDir, ".git", "HEAD"), []byte("ref: refs/heads/main\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	t.Chdir(repoDir)
 	installFakeGithubActionTagGit(t, "not-a-sha refs/tags/v0\n")
 
@@ -413,6 +422,9 @@ func TestCmdGithubSetupRestoresWorkflowWhenPolicyUpdateFails(t *testing.T) {
 		t.Run(strconv.FormatBool(existed), func(t *testing.T) {
 			repoDir := t.TempDir()
 			if err := os.Mkdir(filepath.Join(repoDir, ".git"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(repoDir, ".git", "HEAD"), []byte("ref: refs/heads/main\n"), 0600); err != nil {
 				t.Fatal(err)
 			}
 			t.Chdir(repoDir)
@@ -524,6 +536,9 @@ func TestCmdGithubSetupBindsAndIsIdempotent(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(repoDir, ".git"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(repoDir, ".git", "HEAD"), []byte("ref: refs/heads/main\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	t.Chdir(repoDir)
 	dependabotPath := filepath.Join(repoDir, defaultGithubSetupDependabotPath)
 	if err := os.MkdirAll(filepath.Dir(dependabotPath), 0o755); err != nil {
@@ -616,6 +631,9 @@ func TestCmdGithubSetupUsesSavedDeployBranchMappings(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(repoDir, ".git"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(repoDir, ".git", "HEAD"), []byte("ref: refs/heads/main\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	t.Chdir(repoDir)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -654,6 +672,9 @@ func TestCmdGithubSetupUsesSavedDeployBranchMappings(t *testing.T) {
 func TestCmdGithubSetupDryRunDoesNotWriteOrCallAPI(t *testing.T) {
 	repoDir := t.TempDir()
 	if err := os.Mkdir(filepath.Join(repoDir, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repoDir, ".git", "HEAD"), []byte("ref: refs/heads/main\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	t.Chdir(repoDir)

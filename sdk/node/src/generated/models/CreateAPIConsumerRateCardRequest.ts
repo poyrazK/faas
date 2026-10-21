@@ -38,6 +38,10 @@ export type CreateAPIConsumerRateCardRequest = {
    */
   minimum_millicents_per_month?: number;
   /**
+   * Scale the base fee and minimum in a consumer's first month to the share of it left after the consumer was created (ADR-1325).
+   */
+  prorate_monthly_fees?: boolean;
+  /**
    * How tiers price a consumer's month (ADR-1309): graduated prices each unit at the step its position falls in; volume prices every unit of the month at the step the month's total reaches. volume needs tiers.
    */
   tier_mode?: 'graduated' | 'volume';

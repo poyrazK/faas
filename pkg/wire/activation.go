@@ -16,7 +16,7 @@
 // itself. A daemon that adopts this calls RequireInheritedListenersClaimed
 // once its listeners are bound: a socket unit that passes an address the
 // daemon never serves would otherwise accept and hold connections forever.
-// See docs/adr/1580-zero-downtime-daemon-restarts.md.
+// See docs/adr/1736-zero-downtime-daemon-restarts.md.
 
 package wire
 
@@ -65,6 +65,10 @@ type activationSet struct {
 	// shared are the listeners and packet conns this process serves, which
 	// a hand-off passes to the successor.
 	shared []any
+	// probes are a checking predecessor's connections, served by the ready
+	// gate of the listener each names before this successor is released
+	// (handoff_probe.go).
+	probes []*handoffProbe
 }
 
 var (
@@ -121,7 +125,11 @@ func loadHandoff(lookup func(string) (string, bool), inspect func(fd int) (netwo
 	if err != nil || count < 0 {
 		return &activationSet{err: fmt.Errorf("wire: invalid %s=%q", handoffFDsEnv, value)}
 	}
-	return inheritedSet(firstFDs(count), nil, sourceHandoff, inspect)
+	set := inheritedSet(firstFDs(count), nil, sourceHandoff, inspect)
+	if set.probes, err = loadHandoffProbes(lookup); err != nil && set.err == nil {
+		set.err = err
+	}
+	return set
 }
 
 func firstFDs(count int) []int {
@@ -254,9 +262,34 @@ func (s *activationSet) listener(network, address string) (net.Listener, bool, e
 	}
 	s.share(l)
 	if sock.source == sourceHandoff {
-		return newReadyGate(l, handoffReady()), true, nil
+		s.mu.Lock()
+		probes := s.probesFor(sock, l.Addr())
+		s.mu.Unlock()
+		return newReadyGate(l, handoffReady(), probes...), true, nil
 	}
 	return l, true, nil
+}
+
+// serves reports whether this process serves a shared listener on
+// network/address (matched like an inherited socket).
+func (s *activationSet) serves(network, address string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, x := range s.shared {
+		l, ok := x.(net.Listener)
+		if !ok {
+			continue
+		}
+		addr := l.Addr()
+		sock := &inheritedSocket{network: addr.Network(), addr: addr.String()}
+		if sock.network == "unixpacket" {
+			continue
+		}
+		if inheritedMatches(sock, network, address) {
+			return true
+		}
+	}
+	return false
 }
 
 // InheritedPacketConn is InheritedListener for a datagram socket ("udp").

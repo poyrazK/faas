@@ -96,7 +96,7 @@ runtime/external-consumer coverage remains unverified, so capacity evidence alon
 overall budget known.
 Private engine headers now supply request-correlated combined transaction
 timings in logs, CLI diagnostics and health, with unknown/absent coverage kept
-separate ([ADR-1662](../adr/1662-data-api-database-timing-telemetry.md)).
+separate ([ADR-1731](../adr/1731-data-api-database-timing-telemetry.md)).
 Provider/native and live hosted qualification, isolated SQL/pool timing,
 automated allocation sources and aggregate budget enforcement remain open.
 
@@ -302,7 +302,7 @@ report combined pool acquisition/session/SQL time. Diagnostics and health keep
 observed, unknown and absent coverage separate and preserve completed engine
 samples after downstream cancellation. Error responses, deadlines and engine
 restarts cannot inherit old measurements. No additional SQL pool or probe is
-created. SQL execution and pool wait remain individually unknown; see ADR-1662.
+created. SQL execution and pool wait remain individually unknown; see ADR-1731.
 
 Local checks cover distinct verification/refresh/signing/engine/streaming delays,
 cancelled and timed-out phases, late-callback stability, legacy/malformed logs,
@@ -387,7 +387,7 @@ real SQL locks, isolated users, rejected invocation counters, deadlines, cancell
 work, recovery, tracking pressure and redaction. This protects local HTTP admission;
 SQL completion, fair queuing across identities, coordination across runtimes and
 aggregate connection-budget enforcement remain separate. See
-[ADR-1663](../adr/1663-data-api-user-concurrency-limits.md).
+[ADR-1732](../adr/1732-data-api-user-concurrency-limits.md).
 
 ## Data API: database lock contention
 
@@ -407,7 +407,7 @@ existing SQL-transaction retry behavior: two HTTP requests can succeed after one
 victim is retried, with partial writes rolled back. Login defaults are per lock
 acquisition and can be overridden by trusted SQL settings/functions; they do not
 prove SQL cancellation or fleet-wide capacity. See
-[ADR-1664](../adr/1664-data-api-lock-contention-policy.md).
+[ADR-1733](../adr/1733-data-api-lock-contention-policy.md).
 
 ## Data API: SQL deadlines across transaction retries
 
@@ -423,7 +423,7 @@ unmodified trusted hooks/functions and normal timeout behavior are assumptions;
 pool acquisition, arbitrary owner SQL and external effects stay outside the bound.
 Native checks cover injected repeated serialization/deadlock faults, HTTP
 cancellation, rollback, RLS, independent user progress, recovery and composed
-refresh waits. See [ADR-1665](../adr/1665-data-api-sql-retry-deadlines.md).
+refresh waits. See [ADR-1734](../adr/1734-data-api-sql-retry-deadlines.md).
 
 ## Data API: deadline grants during credential rotation
 
@@ -441,7 +441,7 @@ The actual owner command is tested for explicit enrollment, read-only checking
 and removal. Other bindings retain manual grants. Databases with coordinated SQL
 refresh gates use the shared-gate enrollment below to preserve pause/fingerprint
 state across both serving generations. See
-[ADR-1666](../adr/1666-data-api-deadline-grant-rotation.md).
+[ADR-1735](../adr/1735-data-api-deadline-grant-rotation.md).
 
 ## Data API: coordinated refresh during credential rotation
 

@@ -1,4 +1,4 @@
-package sched
+package sched_test
 
 // adr: 191
 
@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -19,22 +20,22 @@ type fakeReported struct {
 	ids []string
 }
 
-func (f *fakeReported) SnapshotActivity(time.Time) map[string]InstanceActivity {
+func (f *fakeReported) SnapshotActivity(time.Time) map[string]sched.InstanceActivity {
 	if f.ids == nil {
 		return nil
 	}
-	out := make(map[string]InstanceActivity, len(f.ids))
+	out := make(map[string]sched.InstanceActivity, len(f.ids))
 	for _, id := range f.ids {
-		out[id] = InstanceActivity{}
+		out[id] = sched.InstanceActivity{}
 	}
 	return out
 }
 
 type divergenceFixture struct {
 	store    *state.MemStore
-	engine   *Engine
+	engine   *sched.Engine
 	reported *fakeReported
-	rec      *InstanceDivergenceReconciler
+	rec      *sched.InstanceDivergenceReconciler
 	now      time.Time
 }
 
@@ -44,8 +45,8 @@ func newDivergenceFixture(t *testing.T, n int) (*divergenceFixture, []state.Inst
 	t.Helper()
 	ctx := context.Background()
 	store := state.NewMemStore()
-	_, app, dep := seedApp(t, store, api.PlanHobby, 256, 5)
-	engine := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+	_, app, dep := sched.SeedApp(t, store, api.PlanHobby, 256, 5)
+	engine := sched.XNewEngine(t, store, &sched.FakeVMM{}, &sched.FakeNotifier{}, "1.10.0")
 
 	var rows []state.Instance
 	for range n {
@@ -59,7 +60,7 @@ func newDivergenceFixture(t *testing.T, n int) (*divergenceFixture, []state.Inst
 	reported := &fakeReported{}
 	// Every seeded instance is old enough to be judged.
 	now := time.Now().UTC().Add(time.Duration(api.InstanceDivergenceGraceSeconds+60) * time.Second)
-	rec := NewInstanceDivergenceReconciler(engine, reported, testLog()).
+	rec := sched.NewInstanceDivergenceReconciler(engine, reported, sched.TestLog()).
 		WithClock(func() time.Time { return now })
 
 	f := &divergenceFixture{store: store, engine: engine, reported: reported, rec: rec, now: now}
@@ -89,7 +90,7 @@ func TestDivergence_ReportedInstanceIsNeverTouched(t *testing.T) {
 			t.Fatalf("acted on %d reported instances; want 0", n)
 		}
 	}
-	if got := f.rec.candidateCount(); got != 0 {
+	if got := f.rec.CandidateCount(); got != 0 {
 		t.Fatalf("candidates=%d want 0", got)
 	}
 }
@@ -108,7 +109,7 @@ func TestDivergence_RequiresTwoConsecutiveSweeps(t *testing.T) {
 	if n != 0 {
 		t.Fatalf("first sweep acted on %d; want 0 (confirm-twice)", n)
 	}
-	if got := f.rec.candidateCount(); got != 1 {
+	if got := f.rec.CandidateCount(); got != 1 {
 		t.Fatalf("candidates after first sweep=%d want 1", got)
 	}
 
@@ -129,7 +130,7 @@ func TestDivergence_ReappearingInstanceClearsCandidate(t *testing.T) {
 	if _, err := f.rec.Reconcile(context.Background()); err != nil {
 		t.Fatalf("first Reconcile: %v", err)
 	}
-	if got := f.rec.candidateCount(); got != 1 {
+	if got := f.rec.CandidateCount(); got != 1 {
 		t.Fatalf("candidates=%d want 1", got)
 	}
 
@@ -138,7 +139,7 @@ func TestDivergence_ReappearingInstanceClearsCandidate(t *testing.T) {
 	if _, err := f.rec.Reconcile(context.Background()); err != nil {
 		t.Fatalf("second Reconcile: %v", err)
 	}
-	if got := f.rec.candidateCount(); got != 0 {
+	if got := f.rec.CandidateCount(); got != 0 {
 		t.Fatalf("candidates after reappearance=%d want 0", got)
 	}
 
@@ -179,7 +180,7 @@ func TestDivergence_EmptySnapshotResetsCandidates(t *testing.T) {
 	if _, err := f.rec.Reconcile(context.Background()); err != nil {
 		t.Fatalf("seed Reconcile: %v", err)
 	}
-	if got := f.rec.candidateCount(); got != 1 {
+	if got := f.rec.CandidateCount(); got != 1 {
 		t.Fatalf("candidates=%d want 1", got)
 	}
 
@@ -188,8 +189,8 @@ func TestDivergence_EmptySnapshotResetsCandidates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
-	if n != 0 || f.rec.candidateCount() != 0 {
-		t.Fatalf("acted=%d candidates=%d; an empty snapshot must reset both", n, f.rec.candidateCount())
+	if n != 0 || f.rec.CandidateCount() != 0 {
+		t.Fatalf("acted=%d candidates=%d; an empty snapshot must reset both", n, f.rec.CandidateCount())
 	}
 }
 
@@ -215,7 +216,7 @@ func TestDivergence_GraceWindowProtectsFreshInstances(t *testing.T) {
 
 // Report-only is the shipped default: the counter moves, the row does not.
 func TestDivergence_ReportOnlyLeavesRowsAlone(t *testing.T) {
-	t.Setenv(DivergenceEnforceEnv, "")
+	t.Setenv(sched.DivergenceEnforceEnv, "")
 	f, rows := newDivergenceFixture(t, 2)
 	f.reported.ids = []string{rows[0].ID}
 
@@ -232,12 +233,12 @@ func TestDivergence_ReportOnlyLeavesRowsAlone(t *testing.T) {
 // Under enforcement the row lands FAILED (not PARKED: no snapshot was
 // taken because the VM is gone) and the admission slot is released.
 func TestDivergence_EnforceFailsRowAndReleasesLedger(t *testing.T) {
-	t.Setenv(DivergenceEnforceEnv, "1")
+	t.Setenv(sched.DivergenceEnforceEnv, "1")
 	f, rows := newDivergenceFixture(t, 2)
 	f.reported.ids = []string{rows[0].ID}
 
 	gone := rows[1]
-	if err := f.engine.Ledger().Admit(Request{
+	if err := f.engine.Ledger().Admit(sched.Request{
 		Instance: gone.ID, AppID: gone.AppID, Plan: api.PlanHobby, RAMMB: gone.RAMMB, NodeID: "node-a",
 	}); err != nil {
 		t.Fatalf("ledger Admit: %v", err)
@@ -266,7 +267,7 @@ func TestDivergence_EnforceFailsRowAndReleasesLedger(t *testing.T) {
 // A peer that moved the row first wins; the sweep counts it and does not
 // error or double-write.
 func TestDivergence_PeerConflictIsBenign(t *testing.T) {
-	t.Setenv(DivergenceEnforceEnv, "1")
+	t.Setenv(sched.DivergenceEnforceEnv, "1")
 	f, rows := newDivergenceFixture(t, 2)
 	f.reported.ids = []string{rows[0].ID}
 	ctx := context.Background()
@@ -331,12 +332,12 @@ func TestDivergence_TickLimitCapsTheBatch(t *testing.T) {
 // A reconciler without a reader has no evidence and must never act.
 func TestDivergence_NilReaderIsInert(t *testing.T) {
 	f, _ := newDivergenceFixture(t, 2)
-	rec := NewInstanceDivergenceReconciler(f.engine, nil, testLog())
+	rec := sched.NewInstanceDivergenceReconciler(f.engine, nil, sched.TestLog())
 	n, err := rec.Reconcile(context.Background())
 	if err != nil || n != 0 {
 		t.Fatalf("acted=%d err=%v; a reconciler with no reader must be inert", n, err)
 	}
-	var nilRec *InstanceDivergenceReconciler
+	var nilRec *sched.InstanceDivergenceReconciler
 	if n, err := nilRec.Reconcile(context.Background()); err != nil || n != 0 {
 		t.Fatalf("nil receiver acted=%d err=%v", n, err)
 	}
@@ -344,8 +345,8 @@ func TestDivergence_NilReaderIsInert(t *testing.T) {
 
 func TestDivergenceEnforceEnv(t *testing.T) {
 	for raw, want := range map[string]bool{"": false, "0": false, "true": false, "1": true} {
-		t.Setenv(DivergenceEnforceEnv, raw)
-		if got := DivergenceEnforceEnabled(); got != want {
+		t.Setenv(sched.DivergenceEnforceEnv, raw)
+		if got := sched.DivergenceEnforceEnabled(); got != want {
 			t.Fatalf("%q: got %v want %v", raw, got, want)
 		}
 	}

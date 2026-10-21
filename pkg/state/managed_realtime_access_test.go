@@ -13,11 +13,7 @@ import (
 func TestRealtimeAccessStoresPersistConcurrentDeniesAndSessionCutoff(t *testing.T) {
 	for _, name := range []string{"memory", "postgres"} {
 		t.Run(name, func(t *testing.T) {
-			var store interface {
-				state.Store
-				CreateManagedRealtimeEndpointIfUnderQuota(context.Context, state.ManagedRealtimeEndpoint, int, int) (state.ManagedRealtimeEndpoint, error)
-				DeleteManagedRealtimeEndpoint(context.Context, string) error
-			}
+			var store contractTestStore
 			if name == "memory" {
 				store = state.NewMemStore()
 			} else {

@@ -1,37 +1,38 @@
-package state
+package state_test
 
 import (
 	"errors"
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestMemAppParkTransitionRecoversAndDedupesAcrossCycles(t *testing.T) {
-	store, ctx, account, app := webhookFixture(t)
-	hook := memSampleWebhook(account.ID, app.ID)
-	hook.EventFilter = []string{string(AppWebhookEventAppParked)}
+	store, ctx, account, app := state.WebhookFixture(t)
+	hook := state.MemSampleWebhook(account.ID, app.ID)
+	hook.EventFilter = []string{string(state.AppWebhookEventAppParked)}
 	hook, err := store.CreateAppWebhook(ctx, hook)
 	if err != nil {
 		t.Fatal(err)
 	}
-	dep, err := store.CreateDeployment(ctx, Deployment{AppID: app.ID, ImageDigest: "sha256:park-outbox", Status: DeployLive})
+	dep, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, ImageDigest: "sha256:park-outbox", Status: state.DeployLive})
 	if err != nil {
 		t.Fatal(err)
 	}
-	instance, err := store.CreateInstance(ctx, app.ID, dep.ID, string(StateRunning), 128, "node-1", "")
+	instance, err := store.CreateInstance(ctx, app.ID, dep.ID, string(state.StateRunning), 128, "node-1", "")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	transition, changed, err := store.BeginAppParkTransition(ctx, app.ID, AppActive)
+	transition, changed, err := store.BeginAppParkTransition(ctx, app.ID, state.AppActive)
 	if err != nil || !changed || transition.ID == "" {
 		t.Fatalf("begin park transition = %+v changed=%v err=%v", transition, changed, err)
 	}
 	if complete, err := store.CompleteDrainedAppParkTransition(ctx, transition.ID); err != nil || complete {
 		t.Fatalf("completed before drain = %v, %v", complete, err)
 	}
-	if err := store.UpdateInstanceState(ctx, instance.ID, string(StateParked)); err != nil {
+	if err := store.UpdateInstanceState(ctx, instance.ID, string(state.StateParked)); err != nil {
 		t.Fatal(err)
 	}
 	// This is the dispatcher recovery path after the request process exits.
@@ -44,7 +45,7 @@ func TestMemAppParkTransitionRecoversAndDedupesAcrossCycles(t *testing.T) {
 
 	// An idempotent retry after the outbox row has been deleted reuses the
 	// durable completed transition instead of creating a second event.
-	retry, changed, err := store.BeginAppParkTransition(ctx, app.ID, AppEvictedCold)
+	retry, changed, err := store.BeginAppParkTransition(ctx, app.ID, state.AppEvictedCold)
 	if err != nil || changed || retry.ID != transition.ID {
 		t.Fatalf("retry transition = %+v changed=%v err=%v", retry, changed, err)
 	}
@@ -59,10 +60,10 @@ func TestMemAppParkTransitionRecoversAndDedupesAcrossCycles(t *testing.T) {
 		t.Fatalf("deliveries after retry = %d, %v; want one", len(got), err)
 	}
 
-	if changed, err := store.CompareAndSetAppStatus(ctx, app.ID, AppEvictedCold, AppActive); err != nil || !changed {
+	if changed, err := store.CompareAndSetAppStatus(ctx, app.ID, state.AppEvictedCold, state.AppActive); err != nil || !changed {
 		t.Fatalf("wake app for next park = %v, %v", changed, err)
 	}
-	second, changed, err := store.BeginAppParkTransition(ctx, app.ID, AppActive)
+	second, changed, err := store.BeginAppParkTransition(ctx, app.ID, state.AppActive)
 	if err != nil || !changed || second.ID == transition.ID {
 		t.Fatalf("second park transition = %+v changed=%v err=%v", second, changed, err)
 	}
@@ -82,13 +83,13 @@ func TestMemAppParkTransitionRecoversAndDedupesAcrossCycles(t *testing.T) {
 }
 
 func TestMemAppWebhookEventOutboxHealthTracksPendingOnly(t *testing.T) {
-	store, ctx, account, app := webhookFixture(t)
-	hook := memSampleWebhook(account.ID, app.ID)
-	hook.EventFilter = []string{string(AppWebhookEventAppParked)}
+	store, ctx, account, app := state.WebhookFixture(t)
+	hook := state.MemSampleWebhook(account.ID, app.ID)
+	hook.EventFilter = []string{string(state.AppWebhookEventAppParked)}
 	if _, err := store.CreateAppWebhook(ctx, hook); err != nil {
 		t.Fatal(err)
 	}
-	if _, changed, err := store.BeginAppParkTransition(ctx, app.ID, AppActive); err != nil || !changed {
+	if _, changed, err := store.BeginAppParkTransition(ctx, app.ID, state.AppActive); err != nil || !changed {
 		t.Fatalf("begin park transition changed=%v err=%v", changed, err)
 	}
 	if n, err := store.DrainDrainedAppParkTransitions(ctx, 16); err != nil || n != 1 {
@@ -108,26 +109,26 @@ func TestMemAppWebhookEventOutboxHealthTracksPendingOnly(t *testing.T) {
 }
 
 func TestMemAppParkRejectsChangedDeployment(t *testing.T) {
-	store, ctx, _, app := webhookFixture(t)
-	first, err := store.CreateDeployment(ctx, Deployment{AppID: app.ID, ImageDigest: "sha256:first", Status: DeployLive})
+	store, ctx, _, app := state.WebhookFixture(t)
+	first, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, ImageDigest: "sha256:first", Status: state.DeployLive})
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := store.CreateDeployment(ctx, Deployment{AppID: app.ID, ImageDigest: "sha256:second", Status: DeployLive})
+	second, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, ImageDigest: "sha256:second", Status: state.DeployLive})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, changed, err := store.BeginAppParkTransitionIfDeployment(ctx, app.ID, AppActive, first.ID); !errors.Is(err, ErrConflict) || changed {
+	if _, changed, err := store.BeginAppParkTransitionIfDeployment(ctx, app.ID, state.AppActive, first.ID); !errors.Is(err, state.ErrConflict) || changed {
 		t.Fatalf("stale park: changed=%v err=%v", changed, err)
 	}
 	current, _ := store.AppByID(ctx, app.ID)
-	if current.Status != AppActive {
+	if current.Status != state.AppActive {
 		t.Fatalf("stale park changed status: %s", current.Status)
 	}
-	if _, changed, err := store.BeginAppParkTransitionIfDeployment(ctx, app.ID, AppActive, second.ID); err != nil || !changed {
+	if _, changed, err := store.BeginAppParkTransitionIfDeployment(ctx, app.ID, state.AppActive, second.ID); err != nil || !changed {
 		t.Fatalf("current park: changed=%v err=%v", changed, err)
 	}
-	if _, _, err := store.BeginAppParkTransitionIfDeployment(ctx, app.ID, AppEvictedCold, first.ID); !errors.Is(err, ErrConflict) {
+	if _, _, err := store.BeginAppParkTransitionIfDeployment(ctx, app.ID, state.AppEvictedCold, first.ID); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("stale retry: %v", err)
 	}
 }

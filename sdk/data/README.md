@@ -26,6 +26,39 @@ src/database.types.ts`. Use `--check` in CI to fail when your file differs
 from the database. Refresh the serving schema cache after migrations with
 `gregale data-api refresh my-data` and verify restart completion.
 
+### Public data without a session
+
+When the owner enables [public reads or public RPCs](../../docs/data-api.md#public-reads),
+create the client with `anonymous: true`. Requests then go out without an
+`Authorization` header whenever there is no token:
+
+```ts
+const visitor = createDataClient<Database>({ url: 'https://my-data.gregale.dev', anonymous: true }).schema('api')
+const { data: products } = await visitor.from('products').select('id,name').limit(20)
+const { data: results } = await visitor.rpc('search_products', { q: 'lamp' }, { get: true })
+```
+
+Anonymous callers must call public RPCs with `{ get: true }`; a `POST` returns
+`405 public_rpc_requires_get`. Arguments and results keep their generated
+types.
+
+One client can serve signed-in and signed-out visitors: with `anonymous: true`,
+`accessToken` may return `null`, and the request is then anonymous. An empty
+or malformed token still throws before any request is sent. Without
+`anonymous: true`, a missing token always throws, so a broken session never
+silently becomes anonymous access:
+
+```ts
+const db = createDataClient<Database>({
+  url: 'https://my-data.gregale.dev',
+  anonymous: true,
+  accessToken: async () => (await auth.getSession())?.accessToken ?? null,
+}).schema('api')
+```
+
+Anonymous requests through `expectedSchemaFingerprint` reach the API on a
+contract-pinned path, so the Data API does not mark them for the edge cache.
+
 ### Pin requests to the generated contract
 
 Regenerated TypeScript files also export a runtime `schemaFingerprint` value.

@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -34,6 +35,7 @@ type hostJournalMetrics struct {
 	now              func() time.Time
 	dispatcherErrors prometheus.Gauge
 	journalBytes     prometheus.Gauge
+	oldestEntry      prometheus.Gauge
 	up               prometheus.Gauge
 	lastSuccess      prometheus.Gauge
 }
@@ -56,6 +58,10 @@ func newHostJournalMetrics(reg prometheus.Registerer, run hostJournalCommand, no
 			Name: "vmmd_journal_disk_usage_bytes",
 			Help: "Bytes occupied by persistent and runtime systemd journals on this compute host.",
 		}),
+		oldestEntry: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "vmmd_journal_oldest_entry_timestamp_seconds",
+			Help: "Unix timestamp of the oldest entry the local journal still holds. With journal usage near its size bound, a recent value means rotation is removing history younger than the retention target.",
+		}),
 		up: prometheus.NewGauge(prometheus.GaugeOpts{
 			Name: "vmmd_host_journal_metrics_up",
 			Help: "Whether vmmd successfully sampled networkd-dispatcher errors and local journal disk usage during its latest host-journal collection pass (1 success, 0 failure).",
@@ -65,7 +71,7 @@ func newHostJournalMetrics(reg prometheus.Registerer, run hostJournalCommand, no
 			Help: "Unix timestamp of vmmd's latest successful networkd-dispatcher and journal-usage collection pass.",
 		}),
 	}
-	reg.MustRegister(m.dispatcherErrors, m.journalBytes, m.up, m.lastSuccess)
+	reg.MustRegister(m.dispatcherErrors, m.journalBytes, m.oldestEntry, m.up, m.lastSuccess)
 	return m
 }
 
@@ -152,19 +158,60 @@ func (m *hostJournalMetrics) sample(ctx context.Context) error {
 	if usageOK {
 		m.journalBytes.Set(float64(journalBytes))
 	}
+	// The retained span is a refinement of the usage signal, so its failure
+	// leaves up alone: without it FaasHostJournalNearLimit falls back to
+	// firing on usage alone.
+	oldestErr := m.sampleOldestEntry(ctx)
 
 	// A host commonly has only persistent or only runtime storage. Missing one
 	// directory is harmless when the other produced a valid usage value.
 	if journalErr == nil && usageOK {
 		m.up.Set(1)
 		m.lastSuccess.Set(float64(m.now().Unix()))
-		return nil
+		return oldestErr
 	}
 	m.up.Set(0)
 	if journalErr != nil {
 		usageErrs = append(usageErrs, fmt.Errorf("journalctl: %w", journalErr))
 	}
-	return errors.Join(usageErrs...)
+	return errors.Join(append(usageErrs, oldestErr)...)
+}
+
+// sampleOldestEntry sets the oldest retained entry's timestamp from the
+// first entry of the earliest boot journald still holds. A full 512 MiB
+// journal is the steady state of a long-lived node; only the span it holds
+// says whether rotation is outrunning MaxRetentionSec (ADR-149: four days of
+// history instead of seven).
+func (m *hostJournalMetrics) sampleOldestEntry(ctx context.Context) error {
+	out, err := m.run(ctx, "journalctl", "--list-boots", "--output=json", "--no-pager", "--quiet")
+	if err != nil {
+		return fmt.Errorf("journalctl --list-boots: %w", err)
+	}
+	oldest, err := oldestJournalEntryMicros(out)
+	if err != nil {
+		return fmt.Errorf("journalctl --list-boots: %w", err)
+	}
+	m.oldestEntry.Set(float64(oldest) / 1e6)
+	return nil
+}
+
+func oldestJournalEntryMicros(out []byte) (uint64, error) {
+	var boots []struct {
+		FirstEntry uint64 `json:"first_entry"`
+	}
+	if err := json.Unmarshal(out, &boots); err != nil {
+		return 0, fmt.Errorf("parse: %w", err)
+	}
+	var oldest uint64
+	for _, boot := range boots {
+		if boot.FirstEntry > 0 && (oldest == 0 || boot.FirstEntry < oldest) {
+			oldest = boot.FirstEntry
+		}
+	}
+	if oldest == 0 {
+		return 0, errors.New("no boot with a first entry")
+	}
+	return oldest, nil
 }
 
 func journalNoMatches(out []byte, err error) bool {

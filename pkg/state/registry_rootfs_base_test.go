@@ -1,4 +1,4 @@
-package state
+package state_test
 
 // adr: 435
 
@@ -8,27 +8,25 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/imagechain"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
-type registryBaseTestStore interface {
-	registryRootfsTestStore
-	BaseImageProducerStore
-}
+type registryBaseTestStore = state.ContractTestStore
 
 func registryRootfsBaseBinding(t *testing.T, s registryBaseTestStore) {
-	inBase := baseProducerFixture(t, "base/bound.ext4", "parent")
+	inBase := state.BaseProducerFixture(t, "base/bound.ext4", "parent")
 	base, err := s.PublishBaseImageProducer(t.Context(), inBase)
 	if err != nil {
 		t.Fatal(err)
 	}
-	full := baseProducerFixture(t, "base/unpublished.ext4", "parent", "app")
-	verification, app, dep := registryVerificationFixtureWithChain(t, s, false, full.ImageChain)
+	full := state.BaseProducerFixture(t, "base/unpublished.ext4", "parent", "app")
+	verification, app, dep := state.RegistryVerificationFixtureWithChain(t, s, false, full.ImageChain)
 	signed, err := s.RecordDeploymentRegistryVerification(t.Context(), verification)
 	if err != nil {
 		t.Fatal(err)
 	}
 	appArtifact := []byte("actual app output")
-	in := DeploymentRegistryRootfsInput{ID: uuid.NewString(), RegistryVerificationID: signed.ID, RegistryInputHash: signed.InputHash, AccountID: app.AccountID, OrgID: app.OrgID, AppID: app.ID, DeploymentID: dep.ID, Scope: dep.Scope, Kind: "app-layer", StorageKey: "apps/" + app.Slug + "/" + dep.ID + ".ext4", RootfsPath: "/srv/apps/" + dep.ID + ".ext4", ArtifactDigest: imagechain.Digest(appArtifact), ArtifactBytes: int64(len(appArtifact)), ContentBytes: 8, LayerStart: 1, Layers: full.Layers[1:], BaseProducerID: base.ID, BaseInputHash: base.InputHash}
+	in := state.DeploymentRegistryRootfsInput{ID: uuid.NewString(), RegistryVerificationID: signed.ID, RegistryInputHash: signed.InputHash, AccountID: app.AccountID, OrgID: app.OrgID, AppID: app.ID, DeploymentID: dep.ID, Scope: dep.Scope, Kind: "app-layer", StorageKey: "apps/" + app.Slug + "/" + dep.ID + ".ext4", RootfsPath: "/srv/apps/" + dep.ID + ".ext4", ArtifactDigest: imagechain.Digest(appArtifact), ArtifactBytes: int64(len(appArtifact)), ContentBytes: 8, LayerStart: 1, Layers: full.Layers[1:], BaseProducerID: base.ID, BaseInputHash: base.InputHash}
 	for _, mode := range []string{"wrong base hash", "wrong prefix", "wrong start"} {
 		t.Run(mode, func(t *testing.T) {
 			bad := in
@@ -37,7 +35,7 @@ func registryRootfsBaseBinding(t *testing.T, s registryBaseTestStore) {
 			case "wrong base hash":
 				bad.BaseInputHash = imagechain.Digest([]byte("other"))[7:]
 			case "wrong prefix":
-				other, err := s.PublishBaseImageProducer(t.Context(), baseProducerFixture(t, "base/unrelated.ext4", "other"))
+				other, err := s.PublishBaseImageProducer(t.Context(), state.BaseProducerFixture(t, "base/unrelated.ext4", "other"))
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -46,10 +44,10 @@ func registryRootfsBaseBinding(t *testing.T, s registryBaseTestStore) {
 				bad.LayerStart = 0
 				bad.Layers = full.Layers
 			}
-			if _, err := s.PublishDeploymentRegistryRootfs(t.Context(), bad); !errors.Is(err, ErrApplicationStandardRuntimeStale) {
+			if _, err := s.PublishDeploymentRegistryRootfs(t.Context(), bad); !errors.Is(err, state.ErrApplicationStandardRuntimeStale) {
 				t.Fatalf("unbound base accepted: %v", err)
 			}
-			if _, err := s.GetCurrentDeploymentRegistryRootfs(t.Context(), app.AccountID, app.ID, dep.ID, ""); !errors.Is(err, ErrNotFound) {
+			if _, err := s.GetCurrentDeploymentRegistryRootfs(t.Context(), app.AccountID, app.ID, dep.ID, ""); !errors.Is(err, state.ErrNotFound) {
 				t.Fatalf("failed attempt published: %v", err)
 			}
 		})
@@ -68,7 +66,7 @@ func registryRootfsBaseBinding(t *testing.T, s registryBaseTestStore) {
 	}
 	changed := in
 	changed.ID = uuid.NewString()
-	if _, err := s.PublishDeploymentRegistryRootfs(t.Context(), changed); !errors.Is(err, ErrApplicationStandardRuntimeStale) {
+	if _, err := s.PublishDeploymentRegistryRootfs(t.Context(), changed); !errors.Is(err, state.ErrApplicationStandardRuntimeStale) {
 		t.Fatalf("superseded base acquired new producer: %v", err)
 	}
 	historical, err := s.GetCurrentDeploymentRegistryRootfs(t.Context(), app.AccountID, app.ID, dep.ID, "")
@@ -76,4 +74,6 @@ func registryRootfsBaseBinding(t *testing.T, s registryBaseTestStore) {
 		t.Fatalf("history lost or failed attempt changed selection: %v", err)
 	}
 }
-func TestMemRegistryRootfsBaseBinding(t *testing.T) { registryRootfsBaseBinding(t, NewMemStore()) }
+func TestMemRegistryRootfsBaseBinding(t *testing.T) {
+	registryRootfsBaseBinding(t, state.NewMemStore())
+}

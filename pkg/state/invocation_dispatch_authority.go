@@ -9,8 +9,9 @@ import (
 // Private store capability: caller-controlled Invocation fields never certify
 // canary membership or its absence. Read this with the existing environment owner.
 type invocationDispatchAuthority struct {
-	EnvironmentID, AppID, AccountID string
-	QueueCanary                     bool
+	EnvironmentID, AppID, AccountID  string
+	QueueBindingID, QueueName, Scope string
+	QueueCanary                      bool
 }
 type invocationDispatchAuthorityReader interface {
 	invocationDispatchAuthority(context.Context, string) (invocationDispatchAuthority, error)
@@ -24,7 +25,7 @@ func (s *PgStore) invocationDispatchAuthority(ctx context.Context, id string) (i
 	if err != nil {
 		return invocationDispatchAuthority{}, mapErr(err)
 	}
-	return invocationDispatchAuthority{EnvironmentID: row.EnvironmentID, AppID: pgUUIDString(row.AppID), AccountID: pgUUIDString(row.AccountID), QueueCanary: row.QueueCanary}, nil
+	return invocationDispatchAuthority{EnvironmentID: row.EnvironmentID, AppID: pgUUIDString(row.AppID), AccountID: pgUUIDString(row.AccountID), QueueCanary: row.QueueCanary, QueueBindingID: row.QueueBindingID, QueueName: row.QueueName, Scope: row.DeploymentScope}, nil
 }
 
 func (m *MemStore) invocationDispatchAuthority(_ context.Context, id string) (invocationDispatchAuthority, error) {
@@ -35,5 +36,5 @@ func (m *MemStore) invocationDispatchAuthority(_ context.Context, id string) (in
 		return invocationDispatchAuthority{}, ErrNotFound
 	}
 	_, canary := m.queueBindingCanaries[id]
-	return invocationDispatchAuthority{EnvironmentID: inv.EnvironmentID, AppID: inv.AppID, AccountID: inv.AccountID, QueueCanary: canary}, nil
+	return invocationDispatchAuthority{EnvironmentID: inv.EnvironmentID, AppID: inv.AppID, AccountID: inv.AccountID, QueueCanary: canary, QueueBindingID: inv.QueueBindingID, QueueName: inv.QueueName, Scope: inv.DeploymentScope}, nil
 }

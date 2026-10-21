@@ -44,11 +44,11 @@ import (
 // inside the handler revalidates ownership against the URL path).
 const dashboardFireCronAction = "fire_cron"
 
-// dashboardFireCronIDRe mirrors the cronIDPattern shape used in the
-// CLI (cmd/gregale/commands2.go::cronIDPattern): 32 lowercase hex
-// chars. Validated before concatenating into the redirect target so
-// a malformed id can't compose into an open-redirect URL.
-var dashboardFireCronIDRe = regexp.MustCompile(`^[0-9a-f]{32}$`)
+// dashboardFireCronIDRe accepts legacy 32-character lowercase hex IDs and
+// canonical lowercase UUIDs returned by the cron API. Validate before
+// concatenating into the redirect target so a malformed ID cannot compose
+// an open-redirect URL.
+var dashboardFireCronIDRe = regexp.MustCompile(`^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$`)
 
 // Dashboard cron-run glyph vocabulary (issue #791 PR-E / ADR-090).
 // Mirrors the closed vocab the CLI's "crons runs" command prints

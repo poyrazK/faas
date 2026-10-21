@@ -35,9 +35,9 @@ import (
 	"github.com/onebox-faas/faas/pkg/durableentity/validatorbundle"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/role"
-	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
+	"github.com/onebox-faas/faas/pkg/storagekey"
 	"github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/wire"
 
@@ -279,7 +279,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// "default-local" in LoadConfig; multi-node deployments
 		// override per-builder via the toml field.
 		BuilderNodeID: cfg.BuilderNodeID,
-	}, log).WithOpsMetrics(ops).WithEvents(eventsPlatform).WithSourceStorage(sourceStorage).WithValidatorBuild(validatorArtifacts.Build)
+	}, log).WithOpsMetrics(ops).WithPipelineMetrics(ops.Registry()).WithEvents(eventsPlatform).WithSourceStorage(sourceStorage).WithValidatorBuild(validatorArtifacts.Build)
 	publisher, err := loadBuildPublisher()
 	if err != nil {
 		return err
@@ -350,6 +350,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	cancelQueue := newIDWorkQueue(notificationCtx, buildNotificationQueueCapacity, buildNotificationWorkers, func(workCtx context.Context, buildID string) {
 		cancelBuild(workCtx, driver, ops, buildID, log)
 	})
+	registerIDWorkQueueMetrics(ops.Registry(), buildQueue, cancelQueue)
 
 	// PR-B: durable worker. LISTEN/NOTIFY above is the fast path
 	// (apid emits on build_queued immediately after CreateBuild); this
@@ -364,7 +365,6 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if pollInterval <= 0 {
 		pollInterval = 2 * time.Second
 	}
-	go workerLoop(runCtx, b, pollInterval, log)
 
 	// Stuck-running build reaper (issue #195 B1.4). Free-function
 	// goroutine next to workerLoop; cadence + threshold come from
@@ -379,7 +379,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if reapThreshold <= 0 {
 		reapThreshold = 15 * time.Minute
 	}
-	go builderdpkg.ReaperLoopWithVM(runCtx, store, driver, reapInterval, reapThreshold, log)
+	workerMetrics := newBuildWorkerMetrics(ops.Registry(), pollInterval, reapThreshold)
+	go workerLoopWithMetrics(runCtx, b, pollInterval, log, workerMetrics)
+
+	reaperMetrics := builderdpkg.NewReaperMetrics(ops.Registry(), reapInterval, reapThreshold)
+	go builderdpkg.ReaperLoopWithMetrics(runCtx, store, driver, reapInterval, reapThreshold, log, reaperMetrics)
 
 	// Build cache GC (issue #196 B2.1). Content-addressed cache at
 	// cfg.CacheDir grows forever as builds accumulate; a sweep at startup
@@ -520,7 +524,7 @@ func resolveBuilderBasePath(configured string, sourceStorage storage.StorageBack
 	if sourceStorage == nil {
 		return configured, nil
 	}
-	key := sched.BaseKey("builder")
+	key := storagekey.Base("builder")
 	if resolver, ok := sourceStorage.(storage.LocalPathResolver); ok {
 		path, local, err := resolver.LocalPath(key)
 		if err != nil {
@@ -562,7 +566,7 @@ func resolveBuilderBaseDigestPath(ctx context.Context, sourceStorage storage.Sto
 	if !ok {
 		return "", nil
 	}
-	key := sched.BaseDigestKey("builder")
+	key := storagekey.BaseDigest("builder")
 	path, local, err := resolver.LocalPath(key)
 	if err != nil {
 		return "", fmt.Errorf("builderd: resolve builder base digest sidecar %q: %w", key, err)
@@ -644,36 +648,48 @@ func cancelBuild(ctx context.Context, driver any, ops *wire.OpsMetrics, buildID 
 	ops.ObserveBuildCancelled("ok")
 }
 
-// workerLoop is the durable build-queue worker (PR-B). On each tick it
-// calls store.ClaimNextQueuedBuild (SELECT … FOR UPDATE SKIP LOCKED
-// inside the store). On hit it invokes ProcessNext and re-queues the
-// build row on ErrNoSlot so the row preserves its FIFO position
-// until a builder slot opens. Empty queue (ErrNotFound) is the
-// expected idle state — no log noise. Errors get logged at WARN and
-// the next tick retries; ctx cancel exits cleanly.
+// workerLoop is the durable build-queue worker. ProcessNext claims eligible
+// queued work and executes the full pipeline. On slot denial the pipeline
+// requeues before returning ErrNoSlot. A direct ErrNotFound means no eligible
+// claim (empty, locked or affinity-deferred); parent lookup failures are logged
+// separately. Context cancellation and drain retain their existing exit behavior.
 //
 // Cadence is set by the caller (FAAS_BUILDER_POLL_INTERVAL, default
 // 2 s); we hand-roll time.NewTicker rather than re-using imaged's
 // WithGCChannel seam because the worker is short and the seam
 // doesn't pay for itself here.
 func workerLoop(ctx context.Context, b *builderdpkg.Builderd, interval time.Duration, log *slog.Logger) {
+	workerLoopWithMetrics(ctx, b, interval, log, nil)
+}
+
+type buildWorkerProcessor interface {
+	ProcessNext(context.Context) (builderdpkg.BuildResult, error)
+}
+
+func workerLoopWithMetrics(ctx context.Context, b buildWorkerProcessor, interval time.Duration, log *slog.Logger, metrics *buildWorkerMetrics) {
+	normalStop := false
+	defer func() { metrics.stop(normalStop) }()
 	t := time.NewTicker(interval)
 	defer t.Stop()
 	for {
 		select {
 		case <-ctx.Done():
+			normalStop = true
 			return
 		case <-t.C:
 		}
+		metrics.begin()
 		_, err := b.ProcessNext(ctx)
+		metrics.finish(err)
 		if err == nil {
 			continue
 		}
 		if errors.Is(err, builderdpkg.ErrDraining) || errors.Is(err, context.Canceled) {
+			normalStop = ctx.Err() != nil || errors.Is(err, builderdpkg.ErrDraining)
 			return
 		}
 		// Distinguish the two "nothing to do" cases at the worker's
-		// eye line: an empty queue is normal idle (claim itself
+		// eye line: no eligible claim is normal idle (claim itself
 		// surfaces ErrNotFound, no build row was ever touched); a
 		// vanished-row means we CAS-claimed a build row but its
 		// parent deployment/app was concurrently deleted between
@@ -681,7 +697,7 @@ func workerLoop(ctx context.Context, b *builderdpkg.Builderd, interval time.Dura
 		// operator can correlate it with an apid/schedd event.
 		// state.ErrNotFound matches both because ProcessNext
 		// wraps the inner DeploymentByID/AppByID misses with %w.
-		// Empty queue: claim returned ErrNotFound unwrapped. Log
+		// No eligible claim: ErrNotFound returned unwrapped. Log
 		// signature: errors.Is is true AND the err chain has no
 		// "load deployment"/"load app" wrap (those are the vanished
 		// row markers).
@@ -690,7 +706,7 @@ func workerLoop(ctx context.Context, b *builderdpkg.Builderd, interval time.Dura
 			case isVanishedRowErr(err):
 				log.Warn("builderd: worker tick — vanished row (deployment/app deleted mid-claim)", "err", err)
 			default:
-				log.Debug("builderd: worker tick — queue empty")
+				log.Debug("builderd: worker tick — no eligible build")
 			}
 			continue
 		}

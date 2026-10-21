@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -7,10 +7,11 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestDomainDoctorBatchInterleavesAccounts(t *testing.T) {
-	store := NewMemStore()
+	store := state.NewMemStore()
 	ctx := context.Background()
 	large, err := store.CreateAccount(ctx, "doctor-large@example.test", api.PlanScale)
 	if err != nil {
@@ -20,11 +21,11 @@ func TestDomainDoctorBatchInterleavesAccounts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	largeApp, err := store.CreateApp(ctx, App{AccountID: large.ID, Slug: "doctor-large"})
+	largeApp, err := store.CreateApp(ctx, state.App{AccountID: large.ID, Slug: "doctor-large"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	smallApp, err := store.CreateApp(ctx, App{AccountID: small.ID, Slug: "doctor-small"})
+	smallApp, err := store.CreateApp(ctx, state.App{AccountID: small.ID, Slug: "doctor-small"})
 	if err != nil {
 		t.Fatal(err)
 	}

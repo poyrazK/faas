@@ -9,12 +9,16 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	managedpostgresapi "github.com/onebox-faas/faas/pkg/apid/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/apid/postgresaccess"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func managedPostgresProblem(w http.ResponseWriter, err error) {
+	if managedpostgresapi.WriteCapacityProblem(w, err) {
+		return
+	}
 	status, code, title := http.StatusInternalServerError, "managed_postgres_error", "Managed PostgreSQL error"
 	detail := err.Error()
 	switch {
@@ -436,7 +440,7 @@ func (s *server) createManagedPostgresBinding(w http.ResponseWriter, r *http.Req
 		return
 	}
 	// Application Auth is a dark launch: without it the mode is unknown.
-	if managedpostgres.CredentialAccess(req.Access) == managedpostgres.CredentialAuth && !api.ApplicationAuthEnabled(acct.ID) {
+	if managedpostgres.CredentialAccess(req.Access) == managedpostgres.CredentialAuth && !s.applicationAuthEnabled(acct) {
 		managedPostgresProblem(w, managedpostgres.ErrInvalid)
 		return
 	}

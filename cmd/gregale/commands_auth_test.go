@@ -1,5 +1,5 @@
 // adr: 1190 — application Auth reuses the app, binding and deploy lifecycles.
-package main
+package main_test
 
 import (
 	"bytes"
@@ -16,6 +16,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -30,38 +31,38 @@ func TestAuthCreateDeploysRuntimeAfterConfiguration(t *testing.T) {
 }
 
 func testAuthCreateDeploysRuntime(t *testing.T, resume, workflows bool) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("FAAS_TOKEN", "test-token")
 	t.Chdir(t.TempDir())
 	const database = "00000000-0000-0000-0000-000000000001"
 	var dockerfile, source int32
-	base := zeroConfigDeployServer(t, "shop-auth", &dockerfile, &source, nil)
+	base := main.ZeroConfigDeployServer(t, "shop-auth", &dockerfile, &source, nil)
 	defer base.Close()
 	secrets := map[string]string{}
 	created, patched, minted := 0, 0, 0
 	var bindingAccess string
-	app := map[string]any{"id": "app", "slug": "shop-auth", "type": "app", "url": "https://shop-auth.gregale.app", "require_authn": true, "public_auth": map[string]string{"mode": "bearer"}}
+	app := map[string]any{"id": "a1", "slug": "shop-auth", "type": "app", "url": "https://shop-auth.gregale.app", "require_authn": true, "public_auth": map[string]string{"mode": "bearer"}}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == "GET" && r.URL.Path == "/v1/postgres/databases":
-			writeJSONTest(w, api.ManagedPostgresDatabaseList{Items: []api.ManagedPostgresDatabase{{ID: database, State: "ready"}}})
+			main.WriteJSONTest(w, api.ManagedPostgresDatabaseList{Items: []api.ManagedPostgresDatabase{{ID: database, State: "ready"}}})
 		case r.Method == "POST" && r.URL.Path == "/v1/apps":
 			var body api.CreateAppRequest
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.RequireAuthn == nil || *body.RequireAuthn {
 				t.Error("end-user sign-in would be blocked by the paid-plan owner-key default", err)
 			}
 			created++
-			writeJSONTest(w, app)
+			main.WriteJSONTest(w, app)
 		case r.Method == "GET" && r.URL.Path == "/v1/apps/shop-auth":
-			writeJSONTest(w, app)
+			main.WriteJSONTest(w, app)
 		case r.Method == "GET" && r.URL.Path == "/v1/apps/shop-auth/secrets":
 			list := api.AppSecretListResponse{}
 			if resume {
-				list.Secrets = []api.AppSecretResponse{{Key: authSigningKeyPrefix + "0A1B2C3D"}, {Key: authSignerPrefix + "0A1B2C3D"}, {Key: authJWTSecretName}, {Key: authEventsKeyName}}
+				list.Secrets = []api.AppSecretResponse{{Key: main.AuthSigningKeyPrefix + "0A1B2C3D"}, {Key: main.AuthSignerPrefix + "0A1B2C3D"}, {Key: main.AuthJWTSecretName}, {Key: main.AuthEventsKeyName}}
 			}
-			writeJSONTest(w, list)
+			main.WriteJSONTest(w, list)
 		case r.Method == "POST" && r.URL.Path == "/v1/keys":
 			var body api.CreateKeyRequest
 			_ = json.NewDecoder(r.Body).Decode(&body)
@@ -69,24 +70,24 @@ func testAuthCreateDeploysRuntime(t *testing.T, resume, workflows bool) {
 				t.Errorf("workflow key scopes = %v, want only events:publish", body.Scopes)
 			}
 			minted++
-			writeJSONTest(w, api.APIKeyResponse{ID: "key-1", Plaintext: "fp_live_events_only"})
+			main.WriteJSONTest(w, api.APIKeyResponse{ID: "key-1", Plaintext: "fp_live_events_only"})
 		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/bindings"):
 			var body api.CreateManagedPostgresBindingRequest
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			bindingAccess = body.Access
-			writeJSONTest(w, api.ManagedPostgresBinding{ID: "binding", State: "ready"})
+			main.WriteJSONTest(w, api.ManagedPostgresBinding{ID: "binding", State: "ready"})
 		case r.Method == "PATCH" && r.URL.Path == "/v1/apps/shop-auth":
 			var body api.UpdateAppRequest
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.RequireAuthn == nil || *body.RequireAuthn || body.PublicAuth == nil || body.PublicAuth.Mode != "open" {
 				t.Error("end-user sign-in would be blocked by inherited edge authentication", err)
 			}
 			patched++
-			writeJSONTest(w, map[string]any{})
+			main.WriteJSONTest(w, map[string]any{})
 		case r.Method == "PUT" && strings.HasPrefix(r.URL.Path, "/v1/apps/shop-auth/secrets/"):
 			var body api.PutAppSecretRequest
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			secrets[strings.TrimPrefix(r.URL.Path, "/v1/apps/shop-auth/secrets/")] = body.Value
-			writeJSONTest(w, map[string]any{})
+			main.WriteJSONTest(w, map[string]any{})
 		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/deployments"):
 			if patched != 1 || secrets["AUTH_SITE_URL"] == "" {
 				t.Errorf("deployment preceded configuration: patched=%d secrets=%d", patched, len(secrets))
@@ -105,7 +106,7 @@ func testAuthCreateDeploysRuntime(t *testing.T, resume, workflows bool) {
 	if workflows {
 		args = append(args, "--workflows")
 	}
-	if code := cmdAuth(args); code != 0 {
+	if code := main.CmdAuth(args); code != 0 {
 		t.Fatal("create failed", code)
 	}
 	if bindingAccess != "auth" {
@@ -127,7 +128,7 @@ func testAuthCreateDeploysRuntime(t *testing.T, resume, workflows bool) {
 	wantMinted := 0
 	if workflows && !resume {
 		wantMinted = 1
-		if secrets[authEventsKeyName] != "fp_live_events_only" {
+		if secrets[main.AuthEventsKeyName] != "fp_live_events_only" {
 			t.Fatal("workflow key not sealed in the Auth app")
 		}
 	}
@@ -137,14 +138,14 @@ func testAuthCreateDeploysRuntime(t *testing.T, resume, workflows bool) {
 	// A new app gets one key and the marker that makes it sign.
 	keys, signers := 0, 0
 	for name := range secrets {
-		if authSigningKeyName.MatchString(name) {
+		if (*main.AuthSigningKeyName).MatchString(name) {
 			keys++
-			if _, ok := secrets[authSignerPrefix+strings.TrimPrefix(name, authSigningKeyPrefix)]; ok {
+			if _, ok := secrets[main.AuthSignerPrefix+strings.TrimPrefix(name, main.AuthSigningKeyPrefix)]; ok {
 				signers++
 			}
 		}
 	}
-	_, secret := secrets[authJWTSecretName]
+	_, secret := secrets[main.AuthJWTSecretName]
 	if resume && (keys != 0 || secret) {
 		t.Fatal("resume replaced signing material that already signed sessions")
 	}
@@ -154,35 +155,35 @@ func testAuthCreateDeploysRuntime(t *testing.T, resume, workflows bool) {
 }
 
 func TestAuthCreateRejectsUnsafeURLs(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	for _, args := range [][]string{
 		{"create", "shop-auth", "--database", "db", "--site-url", "http://shop.example.com"},
 		{"create", "shop-auth", "--database", "db", "--site-url", "https://user:pw@shop.example.com"},
 		{"create", "shop-auth", "--database", "db", "--site-url", "https://shop.example.com", "--redirect-urls", "javascript:alert(1)"},
 		{"create", "shop-auth", "--site-url", "https://shop.example.com"},
 	} {
-		if code := cmdAuth(args); code == 0 {
+		if code := main.CmdAuth(args); code == 0 {
 			t.Fatalf("accepted %v", args)
 		}
 	}
 	for value, want := range map[string]bool{"https://a.example/cb": true, "http://localhost:3000/cb": true, "http://127.0.0.1/cb": true, "http://[::1]:8080/": true, "http://a.example": false, "https://a.example/#x": false, "ftp://a.example": false, "https:///x": false} {
-		if authRedirectURL(value) != want {
+		if main.AuthRedirectURL(value) != want {
 			t.Errorf("authRedirectURL(%q) = %v", value, !want)
 		}
 	}
 }
 
 func TestAuthAccountVerbsPointToLogin(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	for _, verb := range []string{"login", "logout", "whoami", "token"} {
-		if code := cmdAuth([]string{verb}); code == 0 {
+		if code := main.CmdAuth([]string{verb}); code == 0 {
 			t.Fatalf("%s treated as an application Auth command", verb)
 		}
 	}
 }
 
 func TestNewAuthSigningKeyIsConsistentES256(t *testing.T) {
-	id, value, err := newAuthSigningKey()
+	id, value, err := main.NewAuthSigningKey()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,7 +191,7 @@ func TestNewAuthSigningKeyIsConsistentES256(t *testing.T) {
 	if err := json.Unmarshal([]byte(value), &key); err != nil {
 		t.Fatalf("key = %s: %v", value, err)
 	}
-	if !authAdminKeyID.MatchString(id) || key["kty"] != "EC" || key["crv"] != "P-256" || key["alg"] != "ES256" || key["kid"] != "gregale-"+strings.ToLower(id) {
+	if !(*main.AuthAdminKeyID).MatchString(id) || key["kty"] != "EC" || key["crv"] != "P-256" || key["alg"] != "ES256" || key["kid"] != "gregale-"+strings.ToLower(id) {
 		t.Fatalf("unexpected key header %s: %v", id, key)
 	}
 	// The Auth app assigns key_ops from the signer marker.
@@ -212,11 +213,11 @@ func TestNewAuthSigningKeyIsConsistentES256(t *testing.T) {
 	if string(point[1:33]) != string(decode("x")) || string(point[33:65]) != string(decode("y")) {
 		t.Fatal("public coordinates do not match the private scalar")
 	}
-	otherID, other, _ := newAuthSigningKey()
+	otherID, other, _ := main.NewAuthSigningKey()
 	if other == value || otherID == id {
 		t.Fatal("key generation repeated")
 	}
-	if secret, err := randomAuthSecret(); err != nil || len(secret) < 32 {
+	if secret, err := main.RandomAuthSecret(); err != nil || len(secret) < 32 {
 		t.Fatalf("JWT secret too short: %d %v", len(secret), err)
 	}
 }
@@ -230,7 +231,7 @@ func TestAuthTemplateRuntimeBounds(t *testing.T) {
 		"bodyBytes": api.AuthMaxRequestBytes, "authzBodyBytes": api.AuthAuthzBodyBytes, "authzConfigBytes": api.AuthAuthzConfigBytes, "redirectURLs": api.AuthMaxRedirectURLs,
 		"migrationStatementMs": api.AuthMigrationStatementTimeoutMS, "invitationSeconds": api.AuthInvitationTTLSeconds,
 		"emailTimeoutMs": api.AuthEmailTimeoutMs, "hookBodyBytes": api.AuthHookBodyBytes, "storageURLSeconds": api.AuthStorageURLSeconds,
-		"adminBodyBytes": api.AuthAdminBodyBytes, "importBatch": api.AuthImportBatch, "adminPageSize": api.AuthAdminPageSize, "reauthenticationSeconds": api.AuthReauthenticationSeconds, "emailSubjectChars": api.AuthEmailSubjectMaxChars, "emailBodyBytes": api.AuthEmailBodyMaxBytes, "signingKeys": api.AuthMaxSigningKeys,
+		"adminBodyBytes": api.AuthAdminBodyBytes, "importBatch": api.AuthImportBatch, "adminPageSize": api.AuthAdminPageSize, "customClaimsBytes": api.AuthCustomClaimsMaxBytes, "signupDomains": api.AuthSignupDomainsMax, "waitlistPending": api.AuthWaitlistMaxPending, "signupApproveBatch": api.AuthSignupApproveBatch, "impersonationDefaultMinutes": api.AuthImpersonationDefaultMinutes, "impersonationMaxMinutes": api.AuthImpersonationMaxMinutes, "reauthenticationSeconds": api.AuthReauthenticationSeconds, "sessionMinMinutes": api.AuthSessionMinMinutes, "sessionMaxMinutes": api.AuthSessionMaxMinutes, "emailSubjectChars": api.AuthEmailSubjectMaxChars, "emailBodyBytes": api.AuthEmailBodyMaxBytes, "signingKeys": api.AuthMaxSigningKeys,
 		"emailGrantSeconds": api.ProductControlEmailGrantSeconds,
 		"teamMembers":       api.ProductControlTeamMaxMembers, "teamInvitations": api.ProductControlTeamMaxInvitations,
 		"teamEmailBytes": api.ProductControlTeamEmailMaxBytes, "teamContextBytes": api.ProductControlTeamContextMaxBytes,
@@ -278,16 +279,16 @@ func TestReadAuthzFileAcceptsOnlyRolesAndPolicies(t *testing.T) {
 		}
 		return path
 	}
-	got, err := readAuthzFile(write("ok.json", `{"roles": {"editor": ["doc:write"]}, "policies": [{"action": "write", "resource": "doc", "permission": "doc:write"}]}`))
+	got, err := main.ReadAuthzFile(write("ok.json", `{"roles": {"editor": ["doc:write"]}, "policies": [{"action": "write", "resource": "doc", "permission": "doc:write"}]}`))
 	if err != nil || !strings.Contains(got, `"editor":["doc:write"]`) {
 		t.Fatalf("valid document rejected: %q %v", got, err)
 	}
 	for name, body := range map[string]string{"array.json": `[]`, "null.json": `null`, "extra.json": `{"roles": {}, "admins": []}`, "broken.json": `{`} {
-		if _, err := readAuthzFile(write(name, body)); err == nil {
+		if _, err := main.ReadAuthzFile(write(name, body)); err == nil {
 			t.Fatalf("%s accepted", name)
 		}
 	}
-	if _, err := readAuthzFile(write("large.json", `{"roles":{"r":["`+strings.Repeat("x", api.AuthAuthzConfigBytes)+`"]}}`)); err == nil {
+	if _, err := main.ReadAuthzFile(write("large.json", `{"roles":{"r":["`+strings.Repeat("x", api.AuthAuthzConfigBytes)+`"]}}`)); err == nil {
 		t.Fatal("oversized document accepted")
 	}
 }
@@ -298,7 +299,7 @@ func authIssuerServer(t *testing.T, handle func(w http.ResponseWriter, r *http.R
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "GET" && r.URL.Path == "/v1/apps/shop-auth" {
-			writeJSONTest(w, map[string]any{"id": "auth-app", "slug": "shop-auth", "type": "app", "url": "https://shop-auth.gregale.app"})
+			main.WriteJSONTest(w, map[string]any{"id": "auth-app", "slug": "shop-auth", "type": "app", "url": "https://shop-auth.gregale.app"})
 			return
 		}
 		if !handle(w, r) {
@@ -328,7 +329,7 @@ func TestEdgeRuleJWTAuthUsesTheAuthAppIssuer(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(sampleEdgeRuleResponse(edgeRuleTestID))
 		return true
 	})
-	if code := cmdEdgeRulesCreate([]string{"--app", "shop", "--kind", "jwt", "--match-host", "shop.example.com", "--jwt-auth", "shop-auth"}); code != 0 {
+	if code := main.CmdEdgeRulesCreate([]string{"--app", "shop", "--kind", "jwt", "--match-host", "shop.example.com", "--jwt-auth", "shop-auth"}); code != 0 {
 		t.Fatalf("create = %d", code)
 	}
 	encoded, _ := json.Marshal(action)
@@ -337,21 +338,21 @@ func TestEdgeRuleJWTAuthUsesTheAuthAppIssuer(t *testing.T) {
 			t.Fatalf("action %s lacks %s", encoded, want)
 		}
 	}
-	if code := cmdEdgeRulesCreate([]string{"--app", "shop", "--kind", "jwt", "--match-host", "shop.example.com", "--jwt-auth", "shop-auth", "--jwt-issuer", "https://other.example"}); code == 0 {
+	if code := main.CmdEdgeRulesCreate([]string{"--app", "shop", "--kind", "jwt", "--match-host", "shop.example.com", "--jwt-auth", "shop-auth", "--jwt-issuer", "https://other.example"}); code == 0 {
 		t.Fatal("--jwt-auth combined with an explicit issuer")
 	}
-	if code := cmdEdgeRulesCreate([]string{"--app", "shop", "--kind", "cors", "--match-host", "shop.example.com", "--jwt-auth", "shop-auth"}); code == 0 {
+	if code := main.CmdEdgeRulesCreate([]string{"--app", "shop", "--kind", "cors", "--match-host", "shop.example.com", "--jwt-auth", "shop-auth"}); code == 0 {
 		t.Fatal("--jwt-auth accepted for a non-JWT rule")
 	}
 }
 
 func TestDataAPIAuthFlagReplacesManualIssuer(t *testing.T) {
 	t.Setenv("FAAS_APPLICATION_AUTH_ENABLED", "1")
-	resetJSONOut(t)
-	if code := cmdDataAPI([]string{"create", "notes-data", "--database", "db", "--auth", "shop-auth", "--issuer", "https://other.example"}); code == 0 {
+	main.ResetJSONOut(t)
+	if code := main.CmdDataAPI([]string{"create", "notes-data", "--database", "db", "--auth", "shop-auth", "--issuer", "https://other.example"}); code == 0 {
 		t.Fatal("--auth combined with an explicit issuer")
 	}
-	if code := cmdDataAPI([]string{"create", "notes-data", "--database", "db"}); code == 0 {
+	if code := main.CmdDataAPI([]string{"create", "notes-data", "--database", "db"}); code == 0 {
 		t.Fatal("create accepted without an issuer or --auth")
 	}
 	t.Setenv("HOME", t.TempDir())
@@ -366,7 +367,7 @@ func TestDataAPIAuthFlagReplacesManualIssuer(t *testing.T) {
 		}
 		return false
 	})
-	_ = cmdDataAPI([]string{"create", "notes-data", "--database", "db", "--auth", "shop-auth"})
+	_ = main.CmdDataAPI([]string{"create", "notes-data", "--database", "db", "--auth", "shop-auth"})
 	if !resolved {
 		t.Fatal("create did not continue after resolving the Auth app")
 	}
@@ -416,16 +417,16 @@ func TestAuthTemplatePinsVerifiedMigrations(t *testing.T) {
 
 func TestAuthEmailSettingsTakeTheKeyOnlyFromStdin(t *testing.T) {
 	withStdin := func(value string) {
-		previous := osStdin
-		osStdin = strings.NewReader(value)
-		t.Cleanup(func() { osStdin = previous })
+		previous := (*main.OsStdin)
+		(*main.OsStdin) = strings.NewReader(value)
+		t.Cleanup(func() { (*main.OsStdin) = previous })
 	}
 	withStdin("re_test_key_123\n")
-	var opts authCreateOptions
-	if err := authEmailSettings(&opts, "resend", "Shop <auth@shop.example.com>", true); err != nil {
+	var opts main.AuthCreateOptions
+	if err := main.AuthEmailSettings(&opts, "resend", "Shop <auth@shop.example.com>", true); err != nil {
 		t.Fatal(err)
 	}
-	if opts.emailProvider != "resend" || opts.emailFrom != "Shop <auth@shop.example.com>" || opts.emailAPIKey != "re_test_key_123" {
+	if (*opts.EmailProvider()) != "resend" || (*opts.EmailFrom()) != "Shop <auth@shop.example.com>" || (*opts.EmailAPIKey()) != "re_test_key_123" {
 		t.Fatalf("unexpected settings: %+v", opts)
 	}
 	for _, tc := range []struct{ provider, from, key string }{
@@ -438,11 +439,11 @@ func TestAuthEmailSettingsTakeTheKeyOnlyFromStdin(t *testing.T) {
 		{"postmark", "auth@shop.example.com", ""},
 	} {
 		withStdin(tc.key)
-		if err := authEmailSettings(&authCreateOptions{}, tc.provider, tc.from, true); err == nil {
+		if err := main.AuthEmailSettings(&main.AuthCreateOptions{}, tc.provider, tc.from, true); err == nil {
 			t.Fatalf("accepted %+v", tc)
 		}
 	}
-	if code := cmdAuth([]string{"create", "shop-auth", "--database", "db", "--site-url", "https://shop.example.com", "--email-from", "auth@shop.example.com"}); code == 0 {
+	if code := main.CmdAuth([]string{"create", "shop-auth", "--database", "db", "--site-url", "https://shop.example.com", "--email-from", "auth@shop.example.com"}); code == 0 {
 		t.Fatal("--email-from accepted without --email-provider")
 	}
 }
@@ -490,27 +491,27 @@ func TestRealtimeCreateWithAuthWiresCallbackAndOIDC(t *testing.T) {
 			var body api.PutAppSecretRequest
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			sealed[strings.TrimPrefix(r.URL.Path, "/v1/apps/shop-auth/secrets/")] = body.Value
-			writeJSONTest(w, map[string]any{})
+			main.WriteJSONTest(w, map[string]any{})
 		case r.Method == "DELETE" && strings.HasPrefix(r.URL.Path, "/v1/apps/shop-auth/secrets/AUTH_REALTIME_CALLBACK_TOKEN_"):
 			unset++
 			w.WriteHeader(http.StatusNoContent)
 		case r.Method == "POST" && r.URL.Path == "/v1/apps/shop/realtime/endpoints":
 			if fail {
 				w.WriteHeader(http.StatusUnprocessableEntity)
-				writeJSONTest(w, map[string]any{"code": "invalid"})
+				main.WriteJSONTest(w, map[string]any{"code": "invalid"})
 				return true
 			}
 			_ = json.NewDecoder(r.Body).Decode(&endpoint)
-			writeJSONTest(w, map[string]any{"id": "ep1", "app_slug": "shop", "enabled": true})
+			main.WriteJSONTest(w, map[string]any{"id": "ep1", "app_slug": "shop", "enabled": true})
 		case r.Method == "POST" && r.URL.Path == "/v1/apps/shop-auth/restart":
 			restarted++
-			writeJSONTest(w, map[string]any{"app_id": "auth-app", "wake_id": "w1"})
+			main.WriteJSONTest(w, map[string]any{"app_id": "auth-app", "wake_id": "w1"})
 		default:
 			return false
 		}
 		return true
 	})
-	if code := cmdRealtimeCreate([]string{"shop", "--auth", "shop-auth", "--allowed-origin", "https://shop.example.com"}); code != 0 {
+	if code := main.CmdRealtimeCreate([]string{"shop", "--auth", "shop-auth", "--allowed-origin", "https://shop.example.com"}); code != 0 {
 		t.Fatalf("create = %d", code)
 	}
 	if len(sealed) != 1 {
@@ -530,11 +531,11 @@ func TestRealtimeCreateWithAuthWiresCallbackAndOIDC(t *testing.T) {
 		t.Fatal("the Auth app was not restarted to load the token")
 	}
 	fail = true
-	if code := cmdRealtimeCreate([]string{"shop", "--auth", "shop-auth"}); code == 0 || unset != 1 {
+	if code := main.CmdRealtimeCreate([]string{"shop", "--auth", "shop-auth"}); code == 0 || unset != 1 {
 		t.Fatalf("failed create left the sealed token behind: code=%d unset=%d", code, unset)
 	}
 	for _, extra := range [][]string{{"--callback-url", "https://x.example"}, {"--auth-mode", "none"}, {"--message-path", "/m"}} {
-		if code := cmdRealtimeCreate(append([]string{"shop", "--auth", "shop-auth"}, extra...)); code == 0 {
+		if code := main.CmdRealtimeCreate(append([]string{"shop", "--auth", "shop-auth"}, extra...)); code == 0 {
 			t.Fatalf("--auth accepted with %v", extra)
 		}
 	}
@@ -545,23 +546,34 @@ func TestAuthConfigAnonymousUsersAndLinking(t *testing.T) {
 	sealed, removed, _ := authSettingsWorld(t, nil, nil)
 	captureAuthStdout(t)
 	var stderr bytes.Buffer
-	oldErr := osStderr
-	osStderr = &stderr
-	t.Cleanup(func() { osStderr = oldErr })
-	if code := cmdAuth([]string{"config", "shop-auth", "--anonymous", "on", "--anonymous-retention", "30", "--identity-linking", "on", "--self-deletion", "on", "--org-claims", "on"}); code != 0 ||
-		sealed["GOTRUE_EXTERNAL_ANONYMOUS_USERS_ENABLED"] != "true" || sealed["AUTH_ANONYMOUS_RETENTION_DAYS"] != "30" || sealed["AUTH_IDENTITY_LINKING"] != "1" || sealed["AUTH_SELF_DELETION"] != "1" || sealed["AUTH_ORG_CLAIMS"] != "1" {
-		t.Fatalf("config = %d, sealed %v", code, sortedKeys(sealed))
+	oldErr := (*main.OsStderr)
+	(*main.OsStderr) = &stderr
+	t.Cleanup(func() { (*main.OsStderr) = oldErr })
+	if code := main.CmdAuth([]string{"config", "shop-auth", "--anonymous", "on", "--anonymous-retention", "30", "--identity-linking", "on", "--self-deletion", "on", "--org-claims", "on", "--org-domains", "on", "--session-max-age", "30d", "--session-idle", "off", "--single-session", "on"}); code != 0 ||
+		sealed["GOTRUE_EXTERNAL_ANONYMOUS_USERS_ENABLED"] != "true" || sealed["AUTH_ANONYMOUS_RETENTION_DAYS"] != "30" || sealed["AUTH_IDENTITY_LINKING"] != "1" || sealed["AUTH_SELF_DELETION"] != "1" || sealed["AUTH_ORG_CLAIMS"] != "1" || sealed["AUTH_SESSION_MAX_AGE_MINUTES"] != "43200" || sealed["AUTH_SINGLE_SESSION"] != "1" || sealed["AUTH_ORG_DOMAINS"] != "1" {
+		t.Fatalf("config = %d, sealed %v", code, main.SortedKeys(sealed))
 	}
 	if !strings.Contains(stderr.String(), "turn on CAPTCHA") {
 		t.Fatalf("no CAPTCHA advice: %q", stderr.String())
 	}
-	if code := cmdAuth([]string{"config", "shop-auth", "--anonymous-retention", "forever"}); code != 0 {
+	if code := main.CmdAuth([]string{"config", "shop-auth", "--anonymous-retention", "forever"}); code != 0 {
 		t.Fatalf("forever = %d", code)
 	}
 	if !slices.Contains(*removed, "AUTH_ANONYMOUS_RETENTION_DAYS") {
 		t.Fatalf("forever kept the retention secret; removed %v", *removed)
 	}
-	if code := cmdAuth([]string{"config", "shop-auth", "--anonymous-retention", "0"}); code == 0 {
+	if code := main.CmdAuth([]string{"config", "shop-auth", "--anonymous-retention", "0"}); code == 0 {
 		t.Fatal("accepted zero days")
+	}
+	if code := main.CmdAuth([]string{"config", "shop-auth", "--web3", "ethereum,solana"}); code != 0 ||
+		sealed["GOTRUE_EXTERNAL_WEB3_ETHEREUM_ENABLED"] != "true" || sealed["GOTRUE_EXTERNAL_WEB3_SOLANA_ENABLED"] != "true" {
+		t.Fatalf("web3 = %d, sealed %v", code, sealed)
+	}
+	if code := main.CmdAuth([]string{"config", "shop-auth", "--web3", "off"}); code != 0 ||
+		sealed["GOTRUE_EXTERNAL_WEB3_ETHEREUM_ENABLED"] != "false" || sealed["GOTRUE_EXTERNAL_WEB3_SOLANA_ENABLED"] != "false" {
+		t.Fatalf("web3 off = %d, sealed %v", code, sealed)
+	}
+	if code := main.CmdAuth([]string{"config", "shop-auth", "--web3", "bitcoin"}); code == 0 {
+		t.Fatal("accepted an unknown chain")
 	}
 }

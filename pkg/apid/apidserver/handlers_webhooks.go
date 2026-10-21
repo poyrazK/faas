@@ -64,10 +64,10 @@ const defaultAppWebhookDeliveryFormat = "json"
 // alert-rule default (empty failure_source).
 func defaultAppWebhookEventFilter() []string { return []string{} }
 
-// validateWebhookEventFilter rejects out-of-vocabulary entries
-// before persist. Returns an ErrAppWebhookInvalid problem on
-// failure.
-func validateWebhookEventFilter(events []string) *api.Problem {
+// validateWebhookEventFilter rejects entries outside vocabulary
+// (s.appWebhookEvents) before persist. Returns an
+// ErrAppWebhookInvalid problem on failure.
+func validateWebhookEventFilter(events, vocabulary []string) *api.Problem {
 	if len(events) == 0 {
 		return nil
 	}
@@ -75,14 +75,14 @@ func validateWebhookEventFilter(events []string) *api.Problem {
 		return api.ErrAppWebhookInvalid(fmt.Sprintf("event_filter has %d entries; max %d",
 			len(events), api.AppWebhookEventFilterLenMax))
 	}
-	allowed := make(map[string]struct{}, len(api.AllowedAppWebhookEvents))
-	for _, e := range api.AllowedAppWebhookEvents {
+	allowed := make(map[string]struct{}, len(vocabulary))
+	for _, e := range vocabulary {
 		allowed[e] = struct{}{}
 	}
 	for _, e := range events {
 		if _, ok := allowed[e]; !ok {
 			return api.ErrAppWebhookInvalid(fmt.Sprintf("event %q is not in the closed vocabulary; allowed: %s",
-				e, strings.Join(api.AllowedAppWebhookEvents, ", ")))
+				e, strings.Join(vocabulary, ", ")))
 		}
 	}
 	return nil
@@ -275,7 +275,7 @@ func (s *server) createAppWebhook(w http.ResponseWriter, r *http.Request, acct s
 		api.WriteProblem(w, prob)
 		return
 	}
-	if prob := validateWebhookEventFilter(req.EventFilter); prob != nil {
+	if prob := validateWebhookEventFilter(req.EventFilter, s.appWebhookEvents()); prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
@@ -525,7 +525,7 @@ func (s *server) updateAppWebhook(w http.ResponseWriter, r *http.Request, acct s
 		params.TargetURL = req.TargetURL
 	}
 	if req.EventFilter != nil {
-		if prob := validateWebhookEventFilter(*req.EventFilter); prob != nil {
+		if prob := validateWebhookEventFilter(*req.EventFilter, s.appWebhookEvents()); prob != nil {
 			api.WriteProblem(w, prob)
 			return
 		}

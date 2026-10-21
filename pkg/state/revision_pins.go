@@ -21,6 +21,13 @@ type RevisionPinStore interface {
 }
 
 func (s *PgStore) ResolveRevisionPin(ctx context.Context, appID, scope, deploymentID string) (Deployment, error) {
+	retired, fenceErr := s.ProjectMigrationDeploymentRetired(ctx, deploymentID)
+	if fenceErr != nil {
+		return Deployment{}, fenceErr
+	}
+	if retired {
+		return Deployment{}, ErrNotFound
+	}
 	var manifestJSON []byte
 	if err := s.pool.QueryRow(ctx, `select coalesce(manifest, '{}'::jsonb) from apps where id = $1 and status <> 'deleted'`, appID).Scan(&manifestJSON); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -80,6 +87,9 @@ func (s *PgStore) ExpireRevisionPins(ctx context.Context) (int64, error) {
 func (m *MemStore) ResolveRevisionPin(_ context.Context, appID, scope, deploymentID string) (Deployment, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.migrationDeploymentRetiredLocked(deploymentID) {
+		return Deployment{}, ErrNotFound
+	}
 	app, ok := m.apps[appID]
 	if !ok || app.Status == AppDeleted || app.Manifest.RevisionPinTTLSeconds <= 0 {
 		return Deployment{}, ErrNotFound

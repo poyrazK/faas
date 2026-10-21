@@ -27,6 +27,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/appaccess"
 	"github.com/onebox-faas/faas/pkg/apid/object"
 	"github.com/onebox-faas/faas/pkg/apid/orgbilling"
+	"github.com/onebox-faas/faas/pkg/apid/release"
 	"github.com/onebox-faas/faas/pkg/apid/trafficguard"
 	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/billing/stripe"
@@ -983,6 +984,10 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
 		return
 	}
+	if problem := validateDeploySettingsCondition(req, environment); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	if req.ExpectedServiceBindingFingerprint != nil {
 		if problem := validateServiceBindingPlanRequest(req, environment.Slug); problem != nil {
 			api.WriteProblem(w, problem)
@@ -1513,6 +1518,8 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		return
 	}
 	configActivityAtomic := false
+	params.TouchDeploymentPolicies = req.Profiling != nil || req.Tracing != nil
+	params = guardedDeploySettingsParams(req, acct, params)
 	var configActivityOutboxID int64
 	var updated state.App
 	var err error
@@ -1539,7 +1546,9 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		updated, err = s.store.UpdateApp(r.Context(), app.ID, params)
 	}
 	if err != nil {
-		if errors.Is(err, state.ErrServiceBindingPlanConflict) {
+		if problem := deploySettingsUpdateProblem(err); problem != nil {
+			api.WriteProblem(w, problem)
+		} else if errors.Is(err, state.ErrServiceBindingPlanConflict) {
 			api.WriteProblem(w, serviceBindingPlanConflictProblem())
 		} else if problem := state.ServiceCapacityProblem(err); problem != nil {
 			api.WriteProblem(w, problem)
@@ -1974,56 +1983,6 @@ func (s *server) deleteApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// restoreApp reactivates a deleted app while its seven-day grace window is
-// open. The tombstone lookup is deliberately separate from loadApp so normal
-// customer reads continue to hide deleted slugs.
-func (s *server) restoreApp(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	app, err := s.store.AppBySlugIncludingDeleted(r.Context(), r.PathValue("slug"))
-	if err != nil || app.AccountID != acct.ID {
-		s.notFound(w, "no such app")
-		return
-	}
-	limits := api.MustLimitsFor(acct.Plan)
-	restored, err := s.restoreAppWithActivity(r.Context(), r, acct, app, limits)
-	if err != nil {
-		var qe *state.QuotaError
-		if errors.As(err, &qe) {
-			api.WriteProblem(w, appaccess.QuotaProblem(qe, limits))
-			return
-		}
-		if errors.Is(err, state.ErrOrgAppAdmissionUnavailable) {
-			api.WriteProblem(w, appaccess.AdmissionUnavailableProblem())
-			return
-		}
-		if errors.Is(err, state.ErrConflict) {
-			api.WriteProblem(w, api.NewProblem(http.StatusConflict,
-				api.CodeAppNotRestorable, "App not restorable",
-				"the seven-day app deletion grace window has lapsed"))
-			return
-		}
-		api.WriteProblem(w, api.ErrCapacity("could not restore app"))
-		return
-	}
-	_ = s.notif.Notify(r.Context(), db.NotifyAppChanged,
-		fmt.Sprintf(`{"app_id":"%s","kind":"restored"}`, restored.ID))
-	s.audit.Emit(r.Context(), "app.restored", &acct.ID, map[string]any{
-		"app_id": restored.ID,
-		"slug":   restored.Slug,
-	})
-	resp := s.appResponseWithContext(r.Context(), restored, acct.Plan)
-	// RestoreApp persists the storage state as active, but the customer-facing
-	// read model calls an app with no deployments "undeployed". Keep this
-	// mutation response consistent with GET /v1/apps/{slug} and listApps so
-	// automation does not observe active and undeployed for the same row.
-	if _, latestErr := s.store.LatestDeployment(r.Context(), restored.ID); errors.Is(latestErr, state.ErrNotFound) && resp.Status == string(state.AppActive) {
-		resp.Status = api.AppStatusUndeployed
-	} else if latestErr != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not resolve restored app deployment state"))
-		return
-	}
-	writeJSON(w, http.StatusOK, s.withParkedDeploymentRef(r.Context(), resp, restored))
-}
-
 // --- deployments -----------------------------------------------------------
 
 // getDeployment returns one deployment by id.
@@ -2039,7 +1998,16 @@ func (s *server) getDeployment(w http.ResponseWriter, r *http.Request, acct stat
 		s.notFound(w, "no such deployment")
 		return
 	}
-	writeJSON(w, http.StatusOK, s.deploymentResponseWithBuild(r.Context(), d, app))
+	response := s.withRolloutHold(r.Context(), s.deploymentResponseWithBuild(r.Context(), d, app))
+	if store, ok := s.store.(state.DeploymentConfigurationStore); ok {
+		configuration, err := store.DeploymentConfiguration(r.Context(), acct.ID, d.ID)
+		if err != nil {
+			api.WriteProblem(w, api.ErrCapacity("could not read deployment configuration status"))
+			return
+		}
+		response.Configuration = &configuration
+	}
+	writeJSON(w, http.StatusOK, s.withRelease(r.Context(), response, d))
 }
 
 // updateDeploymentMinInstances (issue #557 closure / ADR-074) is the
@@ -2364,12 +2332,18 @@ func (s *server) rollbackApp(w http.ResponseWriter, r *http.Request, acct state.
 		return
 	}
 
-	target, problem := s.rollbackAppCore(r, acct, app, req)
+	trigger := state.RollbackTriggerManual
+	if req.AlertRuleID != nil && *req.AlertRuleID != "" {
+		trigger = state.RollbackTriggerAlert
+	}
+	target, operation, problem := s.rollbackAppCore(r, acct, app, req, trigger)
 	if problem != nil {
 		api.WriteProblem(w, problem)
 		return
 	}
-	writeJSON(w, http.StatusAccepted, s.deploymentResponse(r.Context(), target, app))
+	response := s.deploymentResponse(r.Context(), target, app)
+	response.RollbackOperation = operation
+	writeJSON(w, http.StatusAccepted, response)
 }
 
 // zeroTrafficRollbackCandidates lists, newest first, the app's live
@@ -2444,8 +2418,10 @@ func rollbackDuringTrafficSplitProblem(appSlug, earlier string) *api.Problem {
 // rollbackAppCore performs the shared rollback state transition for the REST
 // and dashboard surfaces. The caller owns authentication and app lookup;
 // this helper owns target selection, notifications, and audit records so the
-// two entry points cannot drift.
-func (s *server) rollbackAppCore(r *http.Request, acct state.Account, app state.App, req api.RollbackRequest) (state.Deployment, *api.Problem) {
+// two entry points cannot drift. It also opens the ADR-1446 outcome ledger
+// row; the returned receipt is nil only when that write failed, and the
+// rollback itself still proceeds.
+func (s *server) rollbackAppCore(r *http.Request, acct state.Account, app state.App, req api.RollbackRequest, trigger string) (state.Deployment, *api.RollbackOperation, *api.Problem) {
 	ctx := r.Context()
 	alertRuleID := uuid.Nil
 	if req.AlertRuleID != nil && *req.AlertRuleID != "" {
@@ -2466,94 +2442,98 @@ func (s *server) rollbackAppCore(r *http.Request, acct state.Account, app state.
 		// reference so the operator sees the string they typed.
 		resolved, problem := s.resolveDeploymentRef(ctx, app.ID, *req.TargetDeploymentID)
 		if problem != nil {
-			return state.Deployment{}, problem
+			return state.Deployment{}, nil, problem
 		}
 		req.TargetDeploymentID = &resolved
 		target, err = s.store.GetDeploymentByIDScopedToSuperseded(ctx, app.ID, *req.TargetDeploymentID)
 		if err != nil {
 			switch {
 			case errors.Is(err, state.ErrNoRollbackTarget):
-				return state.Deployment{}, api.ErrRollbackTargetNotFound(fmt.Sprintf("no rollback-eligible deployment with id %q belongs to app %q", *req.TargetDeploymentID, app.ID))
+				return state.Deployment{}, nil, api.ErrRollbackTargetNotFound(fmt.Sprintf("no rollback-eligible deployment with id %q belongs to app %q", *req.TargetDeploymentID, app.ID))
 			case errors.Is(err, state.ErrRollbackTargetAlreadyLive):
 				candidate, readErr := s.store.DeploymentByID(ctx, *req.TargetDeploymentID)
 				if readErr != nil {
-					return state.Deployment{}, customerCapacityProblem(s.log, "load rollback target state", "Deployment temporarily unavailable",
+					return state.Deployment{}, nil, customerCapacityProblem(s.log, "load rollback target state", "Deployment temporarily unavailable",
 						"Gregale could not load the rollback target right now.",
 						"Retry the request in a moment; if it continues, contact support.", readErr)
 				}
 				if candidate.Status == state.DeployLive {
-					return state.Deployment{}, api.ErrRollbackTargetAlreadyLive(fmt.Sprintf("deployment %q is already the current live deployment", *req.TargetDeploymentID))
+					return state.Deployment{}, nil, api.ErrRollbackTargetAlreadyLive(fmt.Sprintf("deployment %q is already the current live deployment", *req.TargetDeploymentID))
 				}
-				return state.Deployment{}, api.ErrRollbackTargetIneligible(fmt.Sprintf("deployment %q has status %q; only a superseded or zero-traffic live deployment can be rolled back", *req.TargetDeploymentID, candidate.Status))
+				return state.Deployment{}, nil, api.ErrRollbackTargetIneligible(fmt.Sprintf("deployment %q has status %q; only a superseded or zero-traffic live deployment can be rolled back", *req.TargetDeploymentID, candidate.Status))
 			default:
-				return state.Deployment{}, customerCapacityProblem(s.log, "load rollback target", "Deployment temporarily unavailable",
+				return state.Deployment{}, nil, customerCapacityProblem(s.log, "load rollback target", "Deployment temporarily unavailable",
 					"Gregale could not load the rollback target right now.",
 					"Retry the request in a moment; if it continues, contact support.", err)
 			}
 		}
 	} else {
 		if earlier, split := s.trafficSplitEarlierRelease(ctx, app.ID); split {
-			return state.Deployment{}, rollbackDuringTrafficSplitProblem(app.Slug, earlier)
+			return state.Deployment{}, nil, rollbackDuringTrafficSplitProblem(app.Slug, earlier)
 		}
 		target, err = s.store.LatestSupersededDeployment(ctx, app.ID)
 		if err != nil {
-			return state.Deployment{}, api.ErrNoRollbackTargetWithCandidates(app.Slug, s.zeroTrafficRollbackCandidates(ctx, app.ID))
+			return state.Deployment{}, nil, api.ErrNoRollbackTargetWithCandidates(app.Slug, s.zeroTrafficRollbackCandidates(ctx, app.ID))
 		}
 	}
 	if policies, ok := s.store.(state.BindingReleasePolicyStore); ok {
 		policy, err := policies.GetBindingReleasePolicy(ctx, acct.ID, app.ID, target.Scope)
 		if err != nil {
-			return state.Deployment{}, api.ErrCapacity("could not read rollback release policy")
+			return state.Deployment{}, nil, api.ErrCapacity("could not read rollback release policy")
 		}
 		if policy.Mode == "enforce" {
-			return state.Deployment{}, api.NewProblem(http.StatusConflict, api.CodeBindingReleaseRequired, "Exact rollback required", "Use target_deployment_id and expected_current_deployment_id to start a checked historical rollback.")
+			return state.Deployment{}, nil, api.NewProblem(http.StatusConflict, api.CodeBindingReleaseRequired, "Exact rollback required", "Use target_deployment_id and expected_current_deployment_id to start a checked historical rollback.")
 		}
+	}
+	crossed, problem := s.rollbackReleaseGuard(ctx, app, target, req.AcknowledgeReleases)
+	if problem != nil {
+		return state.Deployment{}, nil, problem
 	}
 
 	if problem := s.verifyRollbackTargetArtifact(ctx, target); problem != nil {
-		return state.Deployment{}, problem
+		return state.Deployment{}, nil, problem
 	}
 	if problem := s.durable.ValidatorReleaseProblem(ctx, app, target); problem != nil {
-		return state.Deployment{}, problem
+		return state.Deployment{}, nil, problem
 	}
 	var current state.Deployment
 	current, err = s.store.LiveDeploymentForScope(ctx, app.ID, target.Scope)
 	if err != nil && !errors.Is(err, state.ErrNotFound) {
-		return state.Deployment{}, customerCapacityProblem(s.log, "load current deployment for rollback", "Deployment temporarily unavailable",
+		return state.Deployment{}, nil, customerCapacityProblem(s.log, "load current deployment for rollback", "Deployment temporarily unavailable",
 			"Gregale could not load the current deployment right now.",
 			"Retry the request in a moment; if it continues, contact support.", err)
 	}
 	if api.ApiContractDiffEnabled() && strings.EqualFold(strings.TrimSpace(target.Scope), "prod") {
 		check, gateErr := openapidiff.CheckDeploymentPromotion(ctx, s.store, app.ID, target.ID, "prod")
 		if gateErr != nil && !errors.Is(gateErr, openapidiff.ErrSnapshotBaselineMissing) {
-			return state.Deployment{}, api.ErrCapacity("could not evaluate API contract")
+			return state.Deployment{}, nil, api.ErrCapacity("could not evaluate API contract")
 		}
 		if check.Diff.Blocking() {
 			problem := contractGateProblem(check.Diff)
-			return state.Deployment{}, problem
+			return state.Deployment{}, nil, problem
 		}
 	}
 	priorTargetStatus := target.Status
 	target, err = s.store.PrepareDeploymentRollback(ctx, app.ID, target.ID)
 	if err != nil {
 		if errors.Is(err, state.ErrNoRollbackTarget) || errors.Is(err, state.ErrRollbackTargetAlreadyLive) {
-			return state.Deployment{}, api.ErrRollbackTargetIneligible("rollback target changed state while the request was being validated; refresh deployments and retry")
+			return state.Deployment{}, nil, api.ErrRollbackTargetIneligible("rollback target changed state while the request was being validated; refresh deployments and retry")
 		}
-		return state.Deployment{}, api.ErrCapacity("could not prepare rollback target")
+		return state.Deployment{}, nil, api.ErrCapacity("could not prepare rollback target")
 	}
 	primePayload, marshalErr := json.Marshal(map[string]string{
 		"app_id": app.ID, "deployment_id": target.ID,
 	})
 	if marshalErr != nil {
 		_ = s.store.UpdateDeploymentStatus(ctx, target.ID, priorTargetStatus, "")
-		return state.Deployment{}, api.ErrCapacity("could not encode rollback readiness request")
+		return state.Deployment{}, nil, api.ErrCapacity("could not encode rollback readiness request")
 	}
 	if err := s.notif.Notify(ctx, db.NotifySnapshotPrime, string(primePayload)); err != nil {
 		// NotifySnapshotPrime is durable in production, so an error means no
 		// handoff committed. Restore eligibility while leaving the current live
 		// deployment untouched.
 		_ = s.store.UpdateDeploymentStatus(ctx, target.ID, priorTargetStatus, "")
-		return state.Deployment{}, api.ErrCapacity("could not queue rollback readiness check")
+		return state.Deployment{}, nil, api.ErrCapacity("could not queue rollback readiness check")
 	}
 	s.log.Info("app rollback readiness requested", "app", app.ID, "from", current.ID, "to", target.ID, "account", acct.ID, "mode", mode)
 	s.audit.Emit(ctx, "app.rollback_requested", &acct.ID, map[string]any{
@@ -2576,11 +2556,12 @@ func (s *server) rollbackAppCore(r *http.Request, acct state.Account, app state.
 		DeploymentID: depUUID, AccountID: acctUUID, Kind: state.DeployRolledBack,
 		Actor: "apid:rollback", At: time.Now().UTC(),
 		Data: json.RawMessage(safetext.JSONObject(struct {
-			From  string `json:"from"`
-			To    string `json:"to"`
-			Mode  string `json:"mode"`
-			Phase string `json:"phase"`
-		}{From: current.ID, To: target.ID, Mode: mode, Phase: "readiness_requested"})),
+			From            string   `json:"from"`
+			To              string   `json:"to"`
+			Mode            string   `json:"mode"`
+			Phase           string   `json:"phase"`
+			CrossedReleases []string `json:"crossed_releases,omitempty"`
+		}{From: current.ID, To: target.ID, Mode: mode, Phase: "readiness_requested", CrossedReleases: crossedReleaseIDs(crossed)})),
 	}
 	if alertRuleID != uuid.Nil {
 		auditEntry.AlertRuleID = &alertRuleID
@@ -2596,7 +2577,10 @@ func (s *server) rollbackAppCore(r *http.Request, acct state.Account, app state.
 		activity.DeploymentID = &targetID
 	}
 	s.recordAppActivity(ctx, r, acct, app, activity)
-	return target, nil
+	if trigger != state.RollbackTriggerManual {
+		s.freezeAfterAutomaticRollback(ctx, acct.ID, app, current.ID, automaticRollbackCause(trigger, current))
+	}
+	return target, s.plainRollbacks().Record(ctx, acct, app, target, current.ID, trigger), nil
 }
 
 func (s *server) verifyRollbackTargetArtifact(ctx context.Context, target state.Deployment) *api.Problem {
@@ -5970,6 +5954,7 @@ func (s *server) deploymentResponse(parent context.Context, d state.Deployment, 
 		RolloutCompletedAt:   d.RolloutCompletedAt,
 		RolloutAbortedAt:     d.RolloutAbortedAt,
 		RolloutAbortedReason: d.RolloutAbortedReason,
+		RolloutDecision:      release.DecodeDecision(d.RolloutDecision),
 		APIHostingReceipt:    d.APIHostingReceipt,
 	}
 	if d.ServiceRolloutHandoff.Action != "" {

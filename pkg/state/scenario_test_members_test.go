@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -7,20 +7,21 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestScenarioTestMembersFenceAndCleanup(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
+	store := state.NewMemStore()
 	account, err := store.CreateAccount(ctx, "scenario-members@example.com", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
 	}
 	expiry := time.Now().Add(time.Hour)
-	create := func(slug string) App {
+	create := func(slug string) state.App {
 		t.Helper()
-		app, createErr := store.CreateApp(ctx, App{AccountID: account.ID, Slug: slug, RAMMB: 128,
-			Status: AppActive, PreviewOfSlug: slug, PreviewPrState: PreviewPrStateOpen,
+		app, createErr := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: slug, RAMMB: 128,
+			Status: state.AppActive, PreviewOfSlug: slug, PreviewPrState: state.PreviewPrStateOpen,
 			PreviewExpiresAt: &expiry})
 		if createErr != nil {
 			t.Fatal(createErr)
@@ -29,7 +30,7 @@ func TestScenarioTestMembersFenceAndCleanup(t *testing.T) {
 	}
 	apiApp, worker := create("dev-scenario-api"), create("dev-scenario-worker")
 	runID := "0123456789abcdef0123456789abcdef"
-	if err := store.RegisterScenarioTestMembers(ctx, account.ID, runID, []ScenarioTestMember{
+	if err := store.RegisterScenarioTestMembers(ctx, account.ID, runID, []state.ScenarioTestMember{
 		{Workload: "api", AppID: apiApp.ID}, {Workload: "worker", AppID: worker.ID},
 	}); err != nil {
 		t.Fatal(err)
@@ -42,16 +43,16 @@ func TestScenarioTestMembersFenceAndCleanup(t *testing.T) {
 	if err != nil || resolved.ID != worker.ID {
 		t.Fatalf("worker = (%+v, %v)", resolved, err)
 	}
-	if _, err := store.ScenarioTestAppByWorkload(ctx, account.ID, runID, "production"); !errors.Is(err, ErrNotFound) {
+	if _, err := store.ScenarioTestAppByWorkload(ctx, account.ID, runID, "production"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("missing sibling = %v", err)
 	}
-	if err := store.DeleteScenarioTestMembers(ctx, account.ID, runID); !errors.Is(err, ErrConflict) {
+	if err := store.DeleteScenarioTestMembers(ctx, account.ID, runID); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("premature cleanup = %v", err)
 	}
 	if _, err := store.SoftDeleteAppCascade(ctx, worker.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.ScenarioTestAppByWorkload(ctx, account.ID, runID, "worker"); !errors.Is(err, ErrNotFound) {
+	if _, err := store.ScenarioTestAppByWorkload(ctx, account.ID, runID, "worker"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("deleted sibling = %v", err)
 	}
 	if _, err := store.ScenarioTestMemberByApp(ctx, apiApp.ID); err != nil {
@@ -63,12 +64,12 @@ func TestScenarioTestMembersFenceAndCleanup(t *testing.T) {
 	if err := store.DeleteScenarioTestMembers(ctx, account.ID, runID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.ScenarioTestMemberByApp(ctx, apiApp.ID); !errors.Is(err, ErrNotFound) {
+	if _, err := store.ScenarioTestMemberByApp(ctx, apiApp.ID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("membership after cleanup = %v", err)
 	}
 	second := create("dev-scenario-second-run")
 	otherRunID := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-	if err := store.RegisterScenarioTestMembers(ctx, account.ID, otherRunID, []ScenarioTestMember{{Workload: "second", AppID: second.ID}}); err != nil {
+	if err := store.RegisterScenarioTestMembers(ctx, account.ID, otherRunID, []state.ScenarioTestMember{{Workload: "second", AppID: second.ID}}); err != nil {
 		t.Fatal(err)
 	}
 	if removed, err := store.PruneScenarioTestMembers(ctx, 10); err != nil || removed != 0 {

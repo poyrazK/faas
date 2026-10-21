@@ -30,6 +30,9 @@ func runAllBindingProbes(ctx context.Context, client bindingInventoryProbeClient
 	if err != nil {
 		return printErr("Could not load app bindings", err)
 	}
+	if inventory.ServiceBindingSource == "environment_release" {
+		client = &managedInventoryProbeClient{bindingInventoryProbeClient: client, inventory: inventory, slug: slug}
+	}
 	selection := prepareAllBindingProbes(ctx, client, slug, inventory, options)
 	if options.dryRun {
 		return previewAllBindingProbes(inventory, selection, options)
@@ -171,6 +174,9 @@ func bindingProbeOmission(item api.AppBindingInventoryItem, scope string) (strin
 	}
 	switch item.Type {
 	case api.BindingTypeService:
+		if api.ServiceBindingVerificationUnsupported(item) {
+			return "unsupported", api.ManagedServiceVerificationUnsupported
+		}
 		return "", ""
 	case api.BindingTypePostgres, api.BindingTypeObjectStorage:
 		if item.Scope != scope {
@@ -203,6 +209,9 @@ func allBindingQueueOmission(item api.AppBindingInventoryItem, inventory api.App
 		return "unsupported", "queue_delivery_unsupported"
 	}
 	if !item.QueueCanarySupported {
+		if item.QueueCanaryReason != "" {
+			return "unsupported", item.QueueCanaryReason
+		}
 		return "unsupported", "queue_handler_unsupported"
 	}
 	if item.ConsumerState != "active" {

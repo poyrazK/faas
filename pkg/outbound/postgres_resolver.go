@@ -100,7 +100,9 @@ const currentAIPricesSQL = `
 	       entry.cache_write_millicents_per_mtok, entry.output_millicents_per_mtok,
 	       entry.input_image_millicents_per_mtok, entry.output_image_millicents_per_mtok, entry.millicents_per_image,
 	       entry.millicents_per_audio_minute, entry.millicents_per_million_characters, entry.millicents_per_video_second,
-	       entry.millicents_per_web_search, entry.millicents_per_file_search, entry.millicents_per_code_session_gb
+	       entry.millicents_per_web_search, entry.millicents_per_file_search, entry.millicents_per_code_session_gb,
+	       entry.input_audio_millicents_per_mtok, entry.cached_input_audio_millicents_per_mtok,
+	       entry.output_audio_millicents_per_mtok
 	  FROM outbound_ai_price_entries entry
 	 WHERE entry.price_list_id = (
 	       SELECT list.id FROM outbound_ai_price_lists list
@@ -303,7 +305,8 @@ func scanAIPrices(rows pgx.Rows) ([]AIPrice, error) {
 			&entry.CacheWriteMillicentsPerMTok, &entry.OutputMillicentsPerMTok, &entry.InputImageMillicentsPerMTok,
 			&entry.OutputImageMillicentsPerMTok, &entry.MillicentsPerImage, &entry.MillicentsPerAudioMinute,
 			&entry.MillicentsPerMillionCharacters, &entry.MillicentsPerVideoSecond, &entry.MillicentsPerWebSearch,
-			&entry.MillicentsPerFileSearch, &entry.MillicentsPerCodeSessionGB); err != nil {
+			&entry.MillicentsPerFileSearch, &entry.MillicentsPerCodeSessionGB, &entry.InputAudioMillicentsPerMTok,
+			&entry.CachedInputAudioMillicentsPerMTok, &entry.OutputAudioMillicentsPerMTok); err != nil {
 			return nil, err
 		}
 		entries = append(entries, entry)

@@ -98,12 +98,22 @@ const (
 // Workload is one discoverable unit of work. Stable, deterministic
 // fields; the confirm table in Phase 3 reads these verbatim.
 type Workload struct {
-	Name             string                  // service name; deterministic sort key
-	RootDir          string                  // build context relative to repo root; "" = root
-	Dockerfile       string                  // explicit path if declared (relative to RootDir)
+	Name string // service name; deterministic sort key
+	// AppSlug is control-plane allocation metadata, never a repository declaration.
+	// Name remains the identity used by dependencies, configuration and reconcile.
+	AppSlug    string `json:"-"`
+	RootDir    string // build context relative to repo root; "" = root
+	Dockerfile string // explicit path if declared (relative to RootDir)
+	// DockerfileBuild carries a source-built Compose service's build.args
+	// and build.target (ADR-20261019142544). Nil builds the final stage with
+	// every ARG at its default.
+	DockerfileBuild  *api.DockerfileBuildOptions
 	Image            string                  // prebuilt OCI image when the source declares one
 	ImageHealthcheck *api.ComposeHealthcheck // partial Compose override for prebuilt images
-	Command          []string                // start-command override (compose `command:`, Procfile rhs)
+	// ImageProcess carries a prebuilt image's Compose entrypoint, user,
+	// working_dir and stop contract (ADR-1337). Nil inherits the image.
+	ImageProcess *api.ComposeProcess
+	Command      []string // start-command override (compose `command:`, Procfile rhs)
 	// CommandShell distinguishes shell-form strings from exec-form argv. The
 	// plan wire keeps Command as an array, while reconciliation uses this bit
 	// to preserve argument boundaries when persisting start_command.
@@ -276,8 +286,11 @@ type Managed struct {
 type Result struct {
 	Workloads []Workload
 	Managed   []Managed
-	Tier      Tier // highest tier that produced any workload
-	Warnings  []string
+	// DependencyReferences validate source-reviewed services omitted from a
+	// partial migration. They are never reconciled or built.
+	DependencyReferences []Workload `json:"-"`
+	Tier                 Tier       // highest tier that produced any workload
+	Warnings             []string
 	// DetectionWarnings is the structured skip/merge decision trail used
 	// by the scan explainability surface. Warnings remains the legacy
 	// human-readable list for compatibility.
@@ -461,6 +474,9 @@ func hashWorkloadSource(fsys fs.FS, workload Workload) (string, error) {
 	_, _ = fmt.Fprintf(h, "root=%s\x00dockerfile=%s\x00shell=%t\x00release_shell=%t\x00", workload.RootDir, workload.Dockerfile, workload.CommandShell, workload.ReleaseCommandShell)
 	if workload.Image != "" {
 		_, _ = fmt.Fprintf(h, "image=%s\x00", workload.Image)
+	}
+	if sum := workload.DockerfileBuild.SHA256(); sum != "" {
+		_, _ = fmt.Fprintf(h, "dockerfile_build=%s\x00", sum)
 	}
 	for _, arg := range workload.Command {
 		_, _ = fmt.Fprintf(h, "arg=%d:%s\x00", len(arg), arg)

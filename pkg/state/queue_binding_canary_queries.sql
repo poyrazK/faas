@@ -4,14 +4,15 @@ SELECT jsonb_build_object(
  'EnvironmentID',b.environment_id,'BindingScope',b.deployment_scope,'TriggerID',t.id,
  'RevisionTTLSeconds',coalesce((a.manifest->>'revision_pin_ttl_seconds')::int,0),'MaxAttempts',t.max_attempts,'PayloadMaxBytes',t.payload_max_bytes,'FilterCriteria',t.filter_criteria,'PoisonStrategy',t.broker_poison_strategy,'Config',t.config,'BatchSize',t.batch_size_max,'BatchWindow',t.batch_window_ms,
  'Retry',b.retry_policy,'Concurrency',b.max_concurrency,
- 'DeploymentID',d.id,'OverrideEnv',d.override_env,'RootfsKey',d.rootfs_key,'ImageDigest',d.image_digest
-)::jsonb AS snapshot
+ 'DeploymentID',d.id,'OverrideEnv',d.override_env,'RootfsKey',d.rootfs_key,'ImageDigest',d.image_digest,
+ 'ConsumerClass',b.workload_class,'ManagedRuntime',d.environment_workload_runtime
+)::jsonb AS snapshot, to_jsonb(d)::jsonb AS deployment
 FROM apps a JOIN queue_bindings b ON b.app_id=a.id AND b.account_id=a.account_id
 JOIN deployments d ON d.app_id=a.id
 JOIN triggers t ON t.queue_binding_id=b.id AND t.app_id=a.id AND t.account_id=a.account_id
 WHERE a.id=sqlc.arg(app_id)::uuid AND a.account_id=sqlc.arg(account_id)::uuid AND a.status<>'deleted'
 AND d.id=sqlc.arg(deployment_id)::uuid AND d.status='live' AND d.deleted_at IS NULL
-AND coalesce((a.manifest->>'revision_pin_ttl_seconds')::int,0)>0 AND (d.traffic_percent>0 OR EXISTS(SELECT 1 FROM deployment_revision_pins pins WHERE pins.deployment_id=d.id AND pins.expires_at>clock_timestamp()))
+AND (d.environment_workload_runtime IS NOT NULL OR (coalesce((a.manifest->>'revision_pin_ttl_seconds')::int,0)>0 AND (d.traffic_percent>0 OR EXISTS(SELECT 1 FROM deployment_revision_pins pins WHERE pins.deployment_id=d.id AND pins.expires_at>clock_timestamp()))))
 AND b.name=sqlc.arg(binding)::text AND b.enabled AND b.retired_at IS NULL AND b.mode='push'
 AND ((b.deployment_scope='' AND d.scope IN ('production','default')) OR (b.deployment_scope=d.scope AND EXISTS(SELECT 1 FROM project_environments e WHERE e.id=b.environment_id AND e.project_id=a.project_id AND e.account_id=a.account_id AND e.slug=d.scope)))
 AND t.enabled AND t.kind='queue' AND t.source='queue'
@@ -50,5 +51,23 @@ SELECT EXISTS(SELECT 1 FROM queue_binding_canaries c JOIN invocations i ON i.id=
 
 -- name: ReadInvocationDispatchAuthority :one
 SELECT coalesce(i.environment_id::text,'')::text AS environment_id, i.app_id, i.account_id,
+ coalesce(i.queue_binding_id::text,'')::text AS queue_binding_id,i.queue_name,i.deployment_scope,
  EXISTS(SELECT 1 FROM queue_binding_canaries c WHERE c.id=i.id)::boolean AS queue_canary
 FROM invocations i WHERE i.id=sqlc.arg(invocation_id)::uuid;
+
+-- name: QueueCanaryManagedAuthority :one
+SELECT release.id::text AS release_id, source.generation
+FROM deployments d JOIN apps a ON a.id=d.app_id
+JOIN project_release_members member ON member.app_id=a.id AND member.deployment_id=d.id
+JOIN project_release_sets release ON release.id=member.release_id
+JOIN active_environment_git_sources source ON source.id::text=d.environment_workload_runtime->>'source_id'
+JOIN project_environments environment ON environment.id=source.environment_id
+WHERE d.id=sqlc.arg(deployment_id)::uuid AND a.id=sqlc.arg(app_id)::uuid AND a.account_id=sqlc.arg(account_id)::uuid
+ AND coalesce(a.preview_of_slug,'')='' AND NOT d.environment_workload_held
+ AND release.active AND release.account_id=a.account_id AND release.project_id=a.project_id AND release.environment_slug=d.scope
+ AND source.account_id=a.account_id AND source.project_id=a.project_id AND source.mode='enforce' AND NOT source.suspended
+ AND source.environment_id::text=d.environment_workload_runtime->>'environment_id'
+ AND environment.account_id=a.account_id AND environment.project_id=a.project_id AND environment.slug=d.scope
+-- Admission holds the parent app lock, also required by release publication.
+-- Read committed authority without reversing the publisher's release/app lock order.
+;

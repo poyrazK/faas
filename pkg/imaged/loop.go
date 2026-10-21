@@ -28,9 +28,9 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/fcvm"
-	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
+	"github.com/onebox-faas/faas/pkg/storagekey"
 )
 
 const (
@@ -204,6 +204,33 @@ func (l *Loop) WithSecurityLeaseChannel(ch <-chan time.Time) *Loop {
 // mode the LISTEN subscriber is skipped and the loop is purely ticker
 // driven.
 func (l *Loop) Run(ctx context.Context) error {
+	if l.handler != nil && l.handler.postCaptureMetrics != nil {
+		m := l.handler.postCaptureMetrics
+		observeCtx, stopObservation := context.WithCancel(ctx)
+		defer stopObservation()
+		m.start(ctx)
+		defer m.stop()
+		reader, _ := l.store.(state.PostCaptureObservationStore)
+		go m.run(observeCtx, reader, l.log)
+	}
+	if l.handler != nil && l.handler.preparationMetrics != nil {
+		m := l.handler.preparationMetrics
+		observeCtx, stopObservation := context.WithCancel(ctx)
+		defer stopObservation()
+		m.start(ctx)
+		defer m.stop()
+		reader, _ := l.store.(state.ImagePreparationProgressObservationStore)
+		go m.run(observeCtx, reader, l.handler.nodeName, l.log)
+	}
+	if l.handler != nil && l.handler.handoffMetrics != nil {
+		m := l.handler.handoffMetrics
+		observeCtx, stopObservation := context.WithCancel(ctx)
+		defer stopObservation()
+		m.start(ctx)
+		defer m.stop()
+		reader, _ := l.store.(state.BuildImageHandoffObservationStore)
+		go m.run(observeCtx, reader, l.handler.nodeName, l.log)
+	}
 	// Serialize recovery with notification handling: replay cannot race an
 	// imaged conversion in this process, and deployment status deduplicates it.
 	buildTicker := time.NewTicker(2 * time.Second)
@@ -840,7 +867,7 @@ func (l *Loop) runAppProtocolSweep(ctx context.Context) {
 // storage key — warm-tier targets delete WarmSnapMemKey +
 // WarmSnapVMStateKey (under /snap/<dep>/warm/), init-tier targets
 // delete SnapMemKey + SnapVMStateKey (under /snap/<dep>/). The
-// per-app ext4 layer (drive1, sched.AppLayerKey) is shared across tiers for a
+// per-app ext4 layer (drive1, storagekey.AppLayer) is shared across tiers for a
 // deployment. It is removed only after the deployment has no remaining
 // non-stale snapshot row; keeping it alongside the retained rows is what
 // makes a historical rollback restore fast instead of falling back to cold
@@ -993,7 +1020,7 @@ func (l *Loop) deleteSnapshotsAndFiles(ctx context.Context, ts []deleteTarget) e
 		// generations remain eligible for normal rollback-window cleanup.
 		if t.DeploymentStatus == state.DeployLive {
 			l.log.Info("imaged: gc retained live deployment layer after snapshot eviction",
-				"deployment", deploymentID, "layer", sched.AppLayerKey(t.AppSlug, deploymentID))
+				"deployment", deploymentID, "layer", storagekey.AppLayer(t.AppSlug, deploymentID))
 			continue
 		}
 		deployment := state.Deployment{ID: deploymentID, RootfsKey: t.DeploymentRootfsKey}
@@ -1050,25 +1077,32 @@ func (l *Loop) recoverBuildHandoffs(ctx context.Context) {
 	if l.handler == nil || l.store == nil {
 		return
 	}
+	m := l.handler.handoffMetrics
+	m.beginRecovery()
+	defer m.finishRecovery()
 	if images, ok := l.store.(state.DeploymentImagePreparationStore); ok {
 		work, err := images.ListResumableImagePreparations(ctx, l.handler.nodeName, 16)
+		m.observeQuery(ctx, "resume", err)
 		if err != nil {
 			l.log.Warn("imaged: list resumable image preparations", "err", err)
 		} else {
-			l.recoverImageWork(ctx, work)
+			l.recoverImageWork(ctx, work, "resume")
 		}
 	}
 	work, err := l.store.ListBuildsAwaitingImage(ctx, l.handler.nodeName, 16)
+	m.observeQuery(ctx, "awaiting", err)
 	if err != nil {
 		l.log.Warn("imaged: recover build handoffs", "err", err)
 		return
 	}
-	l.recoverImageWork(ctx, work)
+	l.recoverImageWork(ctx, work, "awaiting")
 }
 
-func (l *Loop) recoverImageWork(ctx context.Context, work []state.BuildImageWork) {
+func (l *Loop) recoverImageWork(ctx context.Context, work []state.BuildImageWork, source string) {
 	for _, item := range work {
-		if err := l.handler.handleSnapshotBoot(ctx, snapshotBootPayload{AppID: item.AppID, DeploymentID: item.DeploymentID, NodeID: item.NodeID}); err != nil {
+		err := l.handler.handleSnapshotBoot(ctx, snapshotBootPayload{AppID: item.AppID, DeploymentID: item.DeploymentID, NodeID: item.NodeID})
+		l.handler.handoffMetrics.observeWork(ctx, source, err)
+		if err != nil {
 			l.log.Warn("imaged: recovered build handoff failed", "deployment", item.DeploymentID, "err", err)
 		}
 	}

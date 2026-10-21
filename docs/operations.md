@@ -190,12 +190,30 @@ with a different event or payload is `409 operation_signal_conflict`.
 - A signal that arrives before its wait is held and used when the wait starts.
 - A subject signal reaches at most 16 active operations of that definition,
   matched by the [subject](#business-references) fixed at acceptance.
-- History records each delivery as a `signal_received` event.
+- History records each delivery as a `signal_received` event, with its
+  `source`: `account`, `customer` or `webhook`.
 - A wait that times out settles `failed` with `event_timeout`.
 - Native workflow event injection is refused for operation runs, so every event
   appears in the operation's history.
 
 See [ADR-1197](adr/1197-operation-event-waits-and-signals.md).
+
+A customer resumes its own operations with its tenant credentials and the
+`platform_tenant:operations:manage` scope, without the account's token:
+
+```sh
+gregale customer-operations signal OP_ID --self --event payment.succeeded --signal-id evt_3Nx
+gregale customer-operations signal --self --definition DEF_ID --subject order:ord_42 \
+  --event payment.succeeded --signal-id evt_3Nx
+```
+
+The routes are `POST /v1/platform-tenant-self/customer-operations/{id}/signals`
+and `POST /v1/platform-tenant-self/customer-operation-signals`. The subject
+route names the definition, which fixes the app, environment and operation, and
+reaches only the customer's own operations; another customer's operation about
+the same subject ID is never signalled. A `signal_id` is per operation whichever
+route delivers it. See
+[ADR-20261017100853](adr/20261017100853-customer-self-service-operation-signals.md).
 
 ## Deadlines and budgets
 
@@ -219,7 +237,7 @@ accepted work.
   deadline_exceeded` when its deadline passes, whether it is queued, retrying,
   running or waiting for a timer or approval. Its completion callback fires.
   An HTTP attempt still running at the deadline is cut. Unless the definition
-  declares `recovery: safe_to_retry`, that attempt needs reconciliation,
+  declares `recovery: safe_retry`, that attempt needs reconciliation,
   because Gregale cannot know whether it took effect. Workflow Operations
   settle within one minute of the deadline.
 - **Attempts.** `max_attempts` becomes the HTTP execution's retry policy.
@@ -230,10 +248,17 @@ accepted work.
   once a deadline has passed or the budget is spent. Recording an outcome is
   still allowed.
 
-Workflow definitions accept only `deadline_seconds`; their steps carry their own
-retries and timeouts. Job definitions accept no limits. Reads return `limits`,
-`deadline_at` and `usage {execution_ms, attempts}`, and
-`gregale customer-operations get` prints the deadline and budget. See
+Workflow definitions accept `deadline_seconds` and `max_execution_seconds`
+([ADR-20261016110803](adr/20261016110803-workflow-operation-execution-budget.md)). The budget sums
+the runtime of the HTTP step attempts; timer, approval and event waits do not
+count. Each attempt is cut at the earlier of its step timeout and the budget
+still unspent. A cut step, like any failed workflow step, needs reconciliation,
+and `safe_to_retry` recovery is refused once the budget is spent. Workflow steps
+never retry automatically, so `max_attempts` is HTTP-only.
+
+Job definitions accept no limits. Reads return `limits`, `deadline_at` and
+`usage {execution_ms, attempts}`, and `gregale customer-operations get` prints
+the deadline and budget. See
 [ADR-1196](adr/1196-operation-deadlines-and-budgets.md).
 
 ## Contract
@@ -493,6 +518,13 @@ Customer bearer tokens use a separate namespace:
   is exposed through `X-Gregale-Artifact-SHA256`. Results can expire independently
   of the operation's successful business outcome.
 
+While the owning account suspends a customer, that customer's reads close at
+once: listing, status, events, milestones, identity, submission lookup and
+artifact downloads return `403`, and an open event stream ends with
+`auth_expired` at its next credential recheck. Suspension does not cancel
+admitted work, and the account keeps reading every outcome. Resuming the
+customer reopens its reads.
+
 Runtime `POST /v1/runtime/operations/{id}/progress` and `.../{id}/artifacts`
 require a fresh workload JWT for audience `gregale:operations`, plus the current
 invocation ID, attempt and ephemeral capability. Customer and account tokens do
@@ -686,7 +718,8 @@ Update every API and gateway binary before native rollout; older binaries fail
 closed on the new field. See [ADR-666](adr/666-operation-execution-preview-admission.md).
 
 The policy is capped at 64 KiB, ten cohorts, ten customers per cohort and a
-one-hour window. Each admission reads the file again. Missing, unreadable,
+30-day window (raised from one hour so a pilot can run without hourly file
+rotation). Each admission reads the file again. Missing, unreadable,
 malformed, expired or group/world-writable files close admission, without a
 cached open fallback. Changes use atomic file replacement and require no daemon
 restart. The allowed cohort covers definition registration and source deployment;
@@ -705,7 +738,9 @@ closure on every serving node and inspect accepted work separately.
 No production cohort is enabled and no replacement PR is open. Native lifecycle
 and fleet rollout qualification remain required before a customer preview. The
 [preview runbook](ops/operations-http-preview.md) describes preparation,
-admission verification and rollback.
+admission verification and rollback. The proposed
+[ADR-20261017102231](adr/20261017102231-operations-preview-exit.md) sets the evidence for the first
+cohort, for each native execution kind and for general admission per kind.
 
 Owning accounts can observe submission prerequisites with
 `gregale customer-operations doctor --app SLUG --deployment DEPLOYMENT_UUID
@@ -779,6 +814,41 @@ binding with its `expected_version` returns the endpoint to ordinary delivery;
 admitted operations and their receipts are retained. An endpoint has one
 delivery mode: remove an automation or exclusive operation binding first. See
 [ADR-1193](adr/1193-webhook-submitted-customer-operations.md).
+
+### Resume waiting Operations from a webhook
+
+A binding with `"mode":"signal"` starts nothing. It delivers provider events as
+signals to Operations already waiting on a `wait_for_event` step:
+
+```sh
+curl -X PUT "$GREGALE_API/v1/apps/shop/inbound-webhooks/$ENDPOINT/operation-binding" \
+  -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
+  -d '{"expected_version":0,"operation":"fulfil","platform_tenant_id":"'$TENANT'",
+       "take_over_delivery":true,"mode":"signal",
+       "subject":{"type":"order","id_from":"/data/object/metadata/order_id"},
+       "signals":[{"provider_event":"payment_intent.succeeded","event":"payment.succeeded"}]}'
+```
+
+`subject.id_from` points into the provider payload, and `subject.type` must
+match the type the operation declares. Each `signals` entry maps a provider
+event type to the event a wait step names. When you bind, the operation must be
+a workflow that waits for every mapped event. Leave `event_types` empty;
+`signals` is the filter.
+
+A mapped event reaches the bound customer's active Operations of that
+definition about that subject, at most 16. Other customers' Operations with the
+same subject ID are never reached. The provider body becomes the wait step's
+output, so it must be at most 64 KiB.
+
+| Answer | Meaning |
+|---|---|
+| `202 signaled` | At least one Operation received the signal. A provider retry is the same signal, so it lands once and returns `duplicate: true`. |
+| `202 unmatched` | No active Operation is waiting on that subject. The event is dropped. |
+| `202 ignored` | The event type is unmapped, or the payload lacks the subject. |
+| non-2xx | Any other refusal. The provider retries the event. |
+
+Operations whose pinned workflow does not wait for the event are skipped. See
+[ADR-20261016100929](adr/20261016100929-webhook-delivered-operation-signals.md).
 
 ## Batch Job Operations (closed preview)
 

@@ -1,0 +1,1963 @@
+# Authoritative slots, bounded outcomes and separate idle/busy polling allowances.
+rule_files:
+- ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
+evaluation_interval: 1m
+tests:
+- name: healthy idle polls are progress even without any eligible claim
+  interval: 1m
+  input_series:
+  - series: up{job="builderd",instance="b"}
+    values: 1x90
+  - series: builderd_build_worker_enabled{job="builderd",instance="b"}
+    values: 1x90
+  - series: builderd_build_worker_inflight{job="builderd",instance="b"}
+    values: '0x90'
+  - series: builderd_build_worker_started_timestamp_seconds{job="builderd",instance="b"}
+    values: 60x90
+  - series: builderd_build_worker_last_attempt_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x90
+  - series: builderd_build_worker_last_completed_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x90
+  - series: builderd_build_worker_interval_seconds{job="builderd",instance="b"}
+    values: 60x90
+  - series: builderd_build_worker_busy_allowance_seconds{job="builderd",instance="b"}
+    values: 600x90
+  - series: builderd_build_slots_in_use{job="builderd",instance="b"}
+    values: '0x90'
+  - series: builderd_build_slots_limit{job="builderd",instance="b"}
+    values: 1x90
+  - &id001
+    series: builderd_build_claims_total{job="builderd",instance="b",source="poll",outcome="claimed"}
+    values: '0x90'
+  - series: builderd_build_claims_total{job="builderd",instance="b",source="poll",outcome="not_claimed"}
+    values: 0+100x90
+  - &id002
+    series: builderd_build_claims_total{job="builderd",instance="b",source="poll",outcome="error"}
+    values: '0x90'
+  - &id003
+    series: builderd_build_claims_total{job="builderd",instance="b",source="poll",outcome="canceled"}
+    values: '0x90'
+  - &id004
+    series: builderd_build_claims_total{job="builderd",instance="b",source="notification",outcome="claimed"}
+    values: '0x90'
+  - &id005
+    series: builderd_build_claims_total{job="builderd",instance="b",source="notification",outcome="not_claimed"}
+    values: '0x90'
+  - &id006
+    series: builderd_build_claims_total{job="builderd",instance="b",source="notification",outcome="error"}
+    values: '0x90'
+  - &id007
+    series: builderd_build_claims_total{job="builderd",instance="b",source="notification",outcome="canceled"}
+    values: '0x90'
+  - &id008
+    series: builderd_build_requeues_total{job="builderd",instance="b",reason="no_slot",outcome="accepted"}
+    values: '0x90'
+  - &id009
+    series: builderd_build_requeues_total{job="builderd",instance="b",reason="no_slot",outcome="not_requeued"}
+    values: '0x90'
+  - &id010
+    series: builderd_build_requeues_total{job="builderd",instance="b",reason="no_slot",outcome="error"}
+    values: '0x90'
+  - &id011
+    series: builderd_build_requeues_total{job="builderd",instance="b",reason="no_slot",outcome="canceled"}
+    values: '0x90'
+  - &id012
+    series: builderd_build_requeues_total{job="builderd",instance="b",reason="source_unavailable",outcome="accepted"}
+    values: '0x90'
+  - &id013
+    series: builderd_build_requeues_total{job="builderd",instance="b",reason="source_unavailable",outcome="not_requeued"}
+    values: '0x90'
+  - &id014
+    series: builderd_build_requeues_total{job="builderd",instance="b",reason="source_unavailable",outcome="error"}
+    values: '0x90'
+  - &id015
+    series: builderd_build_requeues_total{job="builderd",instance="b",reason="source_unavailable",outcome="canceled"}
+    values: '0x90'
+  - &id016
+    series: builderd_build_requeues_total{job="builderd",instance="b",reason="context_canceled",outcome="accepted"}
+    values: '0x90'
+  - &id017
+    series: builderd_build_requeues_total{job="builderd",instance="b",reason="context_canceled",outcome="not_requeued"}
+    values: '0x90'
+  - &id018
+    series: builderd_build_requeues_total{job="builderd",instance="b",reason="context_canceled",outcome="error"}
+    values: '0x90'
+  - &id019
+    series: builderd_build_requeues_total{job="builderd",instance="b",reason="context_canceled",outcome="canceled"}
+    values: '0x90'
+  - &id020
+    series: builderd_build_requeues_total{job="builderd",instance="b",reason="lookup_failure",outcome="accepted"}
+    values: '0x90'
+  - &id021
+    series: builderd_build_requeues_total{job="builderd",instance="b",reason="lookup_failure",outcome="not_requeued"}
+    values: '0x90'
+  - &id022
+    series: builderd_build_requeues_total{job="builderd",instance="b",reason="lookup_failure",outcome="error"}
+    values: '0x90'
+  - &id023
+    series: builderd_build_requeues_total{job="builderd",instance="b",reason="lookup_failure",outcome="canceled"}
+    values: '0x90'
+  - &id024
+    series: builderd_build_slot_decisions_total{job="builderd",instance="b",outcome="granted"}
+    values: '0x90'
+  - &id025
+    series: builderd_build_slot_decisions_total{job="builderd",instance="b",outcome="limit"}
+    values: '0x90'
+  - &id026
+    series: builderd_build_slot_decisions_total{job="builderd",instance="b",outcome="policy"}
+    values: '0x90'
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FaasBuilderQueueTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasBuilderWorkerStalled
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasBuilderClaimsFailing
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasBuilderRequeuesFailing
+    exp_alerts: []
+  promql_expr_test:
+  - expr: builderd_build_worker_progress_age_seconds
+    eval_time: 20m
+    exp_samples:
+    - labels: '{__name__="builderd_build_worker_progress_age_seconds",job="builderd",instance="b"}'
+      value: 0
+  - expr: builderd_build_worker_progress_allowance_seconds
+    eval_time: 20m
+    exp_samples:
+    - labels: '{__name__="builderd_build_worker_progress_allowance_seconds",job="builderd",instance="b"}'
+      value: 180
+# rc.282 production: builderd polls every 2 s, but Prometheus sees each
+# completion only at its next 15 s scrape, so the observed age reaches ~17 s.
+# Two poll intervals alone (4 s) paged a healthy worker.
+- name: fast poller is not stalled by scrape staleness
+  interval: 1m
+  input_series:
+  - series: up{job="builderd",instance="b"}
+    values: 1x90
+  - series: builderd_build_worker_enabled{job="builderd",instance="b"}
+    values: 1x90
+  - series: builderd_build_worker_inflight{job="builderd",instance="b"}
+    values: '0x90'
+  - series: builderd_build_worker_started_timestamp_seconds{job="builderd",instance="b"}
+    values: 1x90
+  - series: builderd_build_worker_last_attempt_timestamp_seconds{job="builderd",instance="b"}
+    values: -17+60x90
+  - series: builderd_build_worker_last_completed_timestamp_seconds{job="builderd",instance="b"}
+    values: -17+60x90
+  - series: builderd_build_worker_interval_seconds{job="builderd",instance="b"}
+    values: 2x90
+  - series: builderd_build_worker_busy_allowance_seconds{job="builderd",instance="b"}
+    values: 600x90
+  - series: builderd_build_slots_in_use{job="builderd",instance="b"}
+    values: '0x90'
+  - series: builderd_build_slots_limit{job="builderd",instance="b"}
+    values: 1x90
+  - *id001
+  - series: builderd_build_claims_total{job="builderd",instance="b",source="poll",outcome="not_claimed"}
+    values: 0+100x90
+  - *id002
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FaasBuilderWorkerStalled
+    exp_alerts: []
+  promql_expr_test:
+  - expr: builderd_build_worker_progress_age_seconds
+    eval_time: 20m
+    exp_samples:
+    - labels: '{__name__="builderd_build_worker_progress_age_seconds",job="builderd",instance="b"}'
+      value: 17
+  - expr: builderd_build_worker_progress_allowance_seconds
+    eval_time: 20m
+    exp_samples:
+    - labels: '{__name__="builderd_build_worker_progress_allowance_seconds",job="builderd",instance="b"}'
+      value: 64
+- name: stopped idle worker respects exact allowance then five minute hold
+  interval: 1m
+  input_series:
+  - series: up{job="builderd",instance="b"}
+    values: 1x90
+  - series: builderd_build_worker_enabled{job="builderd",instance="b"}
+    values: 1x90
+  - series: builderd_build_worker_inflight{job="builderd",instance="b"}
+    values: '0x90'
+  - series: builderd_build_worker_started_timestamp_seconds{job="builderd",instance="b"}
+    values: 60x90
+  - series: builderd_build_worker_last_attempt_timestamp_seconds{job="builderd",instance="b"}
+    values: 60x90
+  - series: builderd_build_worker_last_completed_timestamp_seconds{job="builderd",instance="b"}
+    values: 60x90
+  - series: builderd_build_worker_interval_seconds{job="builderd",instance="b"}
+    values: 60x90
+  - series: builderd_build_worker_busy_allowance_seconds{job="builderd",instance="b"}
+    values: 600x90
+  - series: builderd_build_slots_in_use{job="builderd",instance="b"}
+    values: '0x90'
+  - series: builderd_build_slots_limit{job="builderd",instance="b"}
+    values: 1x90
+  - *id001
+  - &id027
+    series: builderd_build_claims_total{job="builderd",instance="b",source="poll",outcome="not_claimed"}
+    values: '0x90'
+  - *id002
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  alert_rule_test:
+  - eval_time: 3m
+    alertname: FaasBuilderWorkerStalled
+    exp_alerts: []
+  - eval_time: 9m
+    alertname: FaasBuilderWorkerStalled
+    exp_alerts: []
+  - eval_time: 10m
+    alertname: FaasBuilderWorkerStalled
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: builderd
+        family: build_queue_worker
+        public_status: internal
+        job: builderd
+        instance: b
+      exp_annotations: &id028
+        summary: Durable build polling has stopped progressing
+        description: The expected poller has exceeded its progress allowance for 5m. Idle allowance is two poll
+          intervals plus a 60 s scrape margin; an in-flight iteration also receives the effective running-build recovery
+          threshold. Notification work cannot renew poller progress. Capture logs and goroutines before intervening.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildWorker.md
+- name: poller that never starts is detected on an idle builder
+  interval: 1m
+  input_series:
+  - series: up{job="builderd",instance="b"}
+    values: 1x90
+  - series: builderd_build_worker_enabled{job="builderd",instance="b"}
+    values: 1x90
+  - series: builderd_build_worker_inflight{job="builderd",instance="b"}
+    values: '0x90'
+  - series: builderd_build_worker_started_timestamp_seconds{job="builderd",instance="b"}
+    values: 60x90
+  - series: builderd_build_worker_last_attempt_timestamp_seconds{job="builderd",instance="b"}
+    values: '0x90'
+  - series: builderd_build_worker_last_completed_timestamp_seconds{job="builderd",instance="b"}
+    values: '0x90'
+  - series: builderd_build_worker_interval_seconds{job="builderd",instance="b"}
+    values: 60x90
+  - series: builderd_build_worker_busy_allowance_seconds{job="builderd",instance="b"}
+    values: 600x90
+  - series: builderd_build_slots_in_use{job="builderd",instance="b"}
+    values: '0x90'
+  - series: builderd_build_slots_limit{job="builderd",instance="b"}
+    values: 1x90
+  - *id001
+  - *id027
+  - *id002
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  alert_rule_test:
+  - eval_time: 9m
+    alertname: FaasBuilderWorkerStalled
+    exp_alerts: []
+  - eval_time: 10m
+    alertname: FaasBuilderWorkerStalled
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: builderd
+        family: build_queue_worker
+        public_status: internal
+        job: builderd
+        instance: b
+      exp_annotations: *id028
+- name: busy worker receives full configured allowance and hold
+  interval: 1m
+  input_series:
+  - series: up{job="builderd",instance="b"}
+    values: 1x90
+  - series: builderd_build_worker_enabled{job="builderd",instance="b"}
+    values: 1x90
+  - series: builderd_build_worker_inflight{job="builderd",instance="b"}
+    values: 1x90
+  - series: builderd_build_worker_started_timestamp_seconds{job="builderd",instance="b"}
+    values: 60x90
+  - series: builderd_build_worker_last_attempt_timestamp_seconds{job="builderd",instance="b"}
+    values: 60x90
+  - series: builderd_build_worker_last_completed_timestamp_seconds{job="builderd",instance="b"}
+    values: '0x90'
+  - series: builderd_build_worker_interval_seconds{job="builderd",instance="b"}
+    values: 60x90
+  - series: builderd_build_worker_busy_allowance_seconds{job="builderd",instance="b"}
+    values: 600x90
+  - series: builderd_build_slots_in_use{job="builderd",instance="b"}
+    values: '0x90'
+  - series: builderd_build_slots_limit{job="builderd",instance="b"}
+    values: 1x90
+  - *id001
+  - *id027
+  - *id002
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  alert_rule_test:
+  - eval_time: 14m
+    alertname: FaasBuilderWorkerStalled
+    exp_alerts: []
+  - eval_time: 19m
+    alertname: FaasBuilderWorkerStalled
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasBuilderWorkerStalled
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: builderd
+        family: build_queue_worker
+        public_status: internal
+        job: builderd
+        instance: b
+      exp_annotations: *id028
+  promql_expr_test:
+  - expr: builderd_build_worker_progress_age_seconds
+    eval_time: 14m
+    exp_samples:
+    - labels: '{__name__="builderd_build_worker_progress_age_seconds",job="builderd",instance="b"}'
+      value: 780
+  - expr: builderd_build_worker_progress_allowance_seconds
+    eval_time: 14m
+    exp_samples:
+    - labels: '{__name__="builderd_build_worker_progress_allowance_seconds",job="builderd",instance="b"}'
+      value: 780
+- name: healthy fifteen minute build does not look like stopped polling
+  interval: 1m
+  input_series:
+  - series: up{job="builderd",instance="b"}
+    values: 1x90
+  - series: builderd_build_worker_enabled{job="builderd",instance="b"}
+    values: 1x90
+  - series: builderd_build_worker_inflight{job="builderd",instance="b"}
+    values: 1x16 0x73
+  - series: builderd_build_worker_started_timestamp_seconds{job="builderd",instance="b"}
+    values: 60x90
+  - series: builderd_build_worker_last_attempt_timestamp_seconds{job="builderd",instance="b"}
+    values: 60x16 1020+60x73
+  - series: builderd_build_worker_last_completed_timestamp_seconds{job="builderd",instance="b"}
+    values: 0x16 1020+60x73
+  - series: builderd_build_worker_interval_seconds{job="builderd",instance="b"}
+    values: 60x90
+  - series: builderd_build_worker_busy_allowance_seconds{job="builderd",instance="b"}
+    values: 1500x90
+  - series: builderd_build_slots_in_use{job="builderd",instance="b"}
+    values: '0x90'
+  - series: builderd_build_slots_limit{job="builderd",instance="b"}
+    values: 1x90
+  - *id001
+  - *id027
+  - *id002
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  alert_rule_test:
+  - eval_time: 16m
+    alertname: FaasBuilderWorkerStalled
+    exp_alerts: []
+  - eval_time: 25m
+    alertname: FaasBuilderWorkerStalled
+    exp_alerts: []
+  promql_expr_test:
+  - expr: builderd_build_worker_progress_age_seconds
+    eval_time: 16m
+    exp_samples:
+    - labels: '{__name__="builderd_build_worker_progress_age_seconds",job="builderd",instance="b"}'
+      value: 900
+  - expr: builderd_build_worker_progress_allowance_seconds
+    eval_time: 16m
+    exp_samples:
+    - labels: '{__name__="builderd_build_worker_progress_allowance_seconds",job="builderd",instance="b"}'
+      value: 1680
+- name: saturation and repeated slot denials are diagnostics while poller progresses
+  interval: 1m
+  input_series:
+  - series: up{job="builderd",instance="b"}
+    values: 1x90
+  - series: builderd_build_worker_enabled{job="builderd",instance="b"}
+    values: 1x90
+  - series: builderd_build_worker_inflight{job="builderd",instance="b"}
+    values: '0x90'
+  - series: builderd_build_worker_started_timestamp_seconds{job="builderd",instance="b"}
+    values: 60x90
+  - series: builderd_build_worker_last_attempt_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x90
+  - series: builderd_build_worker_last_completed_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x90
+  - series: builderd_build_worker_interval_seconds{job="builderd",instance="b"}
+    values: 60x90
+  - series: builderd_build_worker_busy_allowance_seconds{job="builderd",instance="b"}
+    values: 600x90
+  - series: builderd_build_slots_in_use{job="builderd",instance="b"}
+    values: 1x90
+  - series: builderd_build_slots_limit{job="builderd",instance="b"}
+    values: 1x90
+  - *id001
+  - *id027
+  - *id002
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - series: builderd_build_slot_decisions_total{job="builderd",instance="b",outcome="limit"}
+    values: 0+100x90
+  - *id026
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FaasBuilderQueueTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasBuilderWorkerStalled
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasBuilderClaimsFailing
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasBuilderRequeuesFailing
+    exp_alerts: []
+- name: poll claim failures are not hidden by successful notification claims
+  interval: 1m
+  input_series:
+  - series: up{job="builderd",instance="b"}
+    values: 1x90
+  - series: builderd_build_worker_enabled{job="builderd",instance="b"}
+    values: 1x90
+  - series: builderd_build_worker_inflight{job="builderd",instance="b"}
+    values: '0x90'
+  - series: builderd_build_worker_started_timestamp_seconds{job="builderd",instance="b"}
+    values: 60x90
+  - series: builderd_build_worker_last_attempt_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x90
+  - series: builderd_build_worker_last_completed_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x90
+  - series: builderd_build_worker_interval_seconds{job="builderd",instance="b"}
+    values: 60x90
+  - series: builderd_build_worker_busy_allowance_seconds{job="builderd",instance="b"}
+    values: 600x90
+  - series: builderd_build_slots_in_use{job="builderd",instance="b"}
+    values: '0x90'
+  - series: builderd_build_slots_limit{job="builderd",instance="b"}
+    values: 1x90
+  - *id001
+  - *id027
+  - series: builderd_build_claims_total{job="builderd",instance="b",source="poll",outcome="error"}
+    values: 0+60x90
+  - *id003
+  - *id004
+  - series: builderd_build_claims_total{job="builderd",instance="b",source="notification",outcome="not_claimed"}
+    values: 0+600x90
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: FaasBuilderClaimsFailing
+    exp_alerts: []
+  - eval_time: 10m
+    alertname: FaasBuilderClaimsFailing
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: builderd
+        family: build_queue_worker
+        public_status: internal
+        job: builderd
+        instance: b
+        source: poll
+      exp_annotations: &id029
+        summary: Build claims are persistently failing
+        description: Claim errors exceed 10% of completed non-canceled claim calls with at least three errors in
+          each rolling 5m window, sustained for 5m. Not-claimed results include affinity and claim races and do
+          not establish an empty queue.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildWorker.md
+- name: notification claim failures are not hidden by healthy polling
+  interval: 1m
+  input_series:
+  - series: up{job="builderd",instance="b"}
+    values: 1x90
+  - series: builderd_build_worker_enabled{job="builderd",instance="b"}
+    values: 1x90
+  - series: builderd_build_worker_inflight{job="builderd",instance="b"}
+    values: '0x90'
+  - series: builderd_build_worker_started_timestamp_seconds{job="builderd",instance="b"}
+    values: 60x90
+  - series: builderd_build_worker_last_attempt_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x90
+  - series: builderd_build_worker_last_completed_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x90
+  - series: builderd_build_worker_interval_seconds{job="builderd",instance="b"}
+    values: 60x90
+  - series: builderd_build_worker_busy_allowance_seconds{job="builderd",instance="b"}
+    values: 600x90
+  - series: builderd_build_slots_in_use{job="builderd",instance="b"}
+    values: '0x90'
+  - series: builderd_build_slots_limit{job="builderd",instance="b"}
+    values: 1x90
+  - *id001
+  - series: builderd_build_claims_total{job="builderd",instance="b",source="poll",outcome="not_claimed"}
+    values: 0+600x90
+  - *id002
+  - *id003
+  - *id004
+  - *id005
+  - series: builderd_build_claims_total{job="builderd",instance="b",source="notification",outcome="error"}
+    values: 0+60x90
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: FaasBuilderClaimsFailing
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: builderd
+        family: build_queue_worker
+        public_status: internal
+        job: builderd
+        instance: b
+        source: notification
+      exp_annotations: *id029
+- name: failed no-slot requeues alert independently of worker response and fences
+  interval: 1m
+  input_series:
+  - series: up{job="builderd",instance="b"}
+    values: 1x90
+  - series: builderd_build_worker_enabled{job="builderd",instance="b"}
+    values: 1x90
+  - series: builderd_build_worker_inflight{job="builderd",instance="b"}
+    values: '0x90'
+  - series: builderd_build_worker_started_timestamp_seconds{job="builderd",instance="b"}
+    values: 60x90
+  - series: builderd_build_worker_last_attempt_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x90
+  - series: builderd_build_worker_last_completed_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x90
+  - series: builderd_build_worker_interval_seconds{job="builderd",instance="b"}
+    values: 60x90
+  - series: builderd_build_worker_busy_allowance_seconds{job="builderd",instance="b"}
+    values: 600x90
+  - series: builderd_build_slots_in_use{job="builderd",instance="b"}
+    values: '0x90'
+  - series: builderd_build_slots_limit{job="builderd",instance="b"}
+    values: 1x90
+  - *id001
+  - *id027
+  - *id002
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - *id008
+  - series: builderd_build_requeues_total{job="builderd",instance="b",reason="no_slot",outcome="not_requeued"}
+    values: 0+600x90
+  - series: builderd_build_requeues_total{job="builderd",instance="b",reason="no_slot",outcome="error"}
+    values: 0+60x90
+  - series: builderd_build_requeues_total{job="builderd",instance="b",reason="no_slot",outcome="canceled"}
+    values: 0+600x90
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: FaasBuilderRequeuesFailing
+    exp_alerts: []
+  - eval_time: 10m
+    alertname: FaasBuilderRequeuesFailing
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: builderd
+        family: build_queue_worker
+        public_status: internal
+        job: builderd
+        instance: b
+        reason: no_slot
+      exp_annotations:
+        summary: Build requeues are persistently failing
+        description: Requeue errors exceed 10% of accepted/error calls with at least three errors in each rolling
+          5m window, sustained for 5m. ErrNoSlot can mask a failed requeue at the worker return boundary; inspect
+          durable build state and recovery. Fenced stale claims and cancellation are excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildWorker.md
+- name: fenced claims and parent cancellation are not database failures
+  interval: 1m
+  input_series:
+  - series: up{job="builderd",instance="b"}
+    values: 1x90
+  - series: builderd_build_worker_enabled{job="builderd",instance="b"}
+    values: 1x90
+  - series: builderd_build_worker_inflight{job="builderd",instance="b"}
+    values: '0x90'
+  - series: builderd_build_worker_started_timestamp_seconds{job="builderd",instance="b"}
+    values: 60x90
+  - series: builderd_build_worker_last_attempt_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x90
+  - series: builderd_build_worker_last_completed_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x90
+  - series: builderd_build_worker_interval_seconds{job="builderd",instance="b"}
+    values: 60x90
+  - series: builderd_build_worker_busy_allowance_seconds{job="builderd",instance="b"}
+    values: 600x90
+  - series: builderd_build_slots_in_use{job="builderd",instance="b"}
+    values: '0x90'
+  - series: builderd_build_slots_limit{job="builderd",instance="b"}
+    values: 1x90
+  - *id001
+  - *id027
+  - *id002
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - series: builderd_build_claims_total{job="builderd",instance="b",source="notification",outcome="canceled"}
+    values: 0+100x90
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - series: builderd_build_requeues_total{job="builderd",instance="b",reason="context_canceled",outcome="not_requeued"}
+    values: 0+100x90
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FaasBuilderRequeuesFailing
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasBuilderClaimsFailing
+    exp_alerts: []
+- name: one isolated burst is not persistent builderd_build_claims_total
+  interval: 1m
+  input_series:
+  - series: up{job="builderd",instance="b"}
+    values: 1x90
+  - series: builderd_build_worker_enabled{job="builderd",instance="b"}
+    values: 1x90
+  - series: builderd_build_worker_inflight{job="builderd",instance="b"}
+    values: '0x90'
+  - series: builderd_build_worker_started_timestamp_seconds{job="builderd",instance="b"}
+    values: 60x90
+  - series: builderd_build_worker_last_attempt_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x90
+  - series: builderd_build_worker_last_completed_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x90
+  - series: builderd_build_worker_interval_seconds{job="builderd",instance="b"}
+    values: 60x90
+  - series: builderd_build_worker_busy_allowance_seconds{job="builderd",instance="b"}
+    values: 600x90
+  - series: builderd_build_slots_in_use{job="builderd",instance="b"}
+    values: '0x90'
+  - series: builderd_build_slots_limit{job="builderd",instance="b"}
+    values: 1x90
+  - *id001
+  - *id027
+  - series: builderd_build_claims_total{job="builderd",instance="b",source="poll",outcome="error"}
+    values: 0 3x89
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: FaasBuilderClaimsFailing
+    exp_alerts: []
+  - eval_time: 8m
+    alertname: FaasBuilderClaimsFailing
+    exp_alerts: []
+  - eval_time: 12m
+    alertname: FaasBuilderClaimsFailing
+    exp_alerts: []
+- name: one isolated burst is not persistent builderd_build_requeues_total
+  interval: 1m
+  input_series:
+  - series: up{job="builderd",instance="b"}
+    values: 1x90
+  - series: builderd_build_worker_enabled{job="builderd",instance="b"}
+    values: 1x90
+  - series: builderd_build_worker_inflight{job="builderd",instance="b"}
+    values: '0x90'
+  - series: builderd_build_worker_started_timestamp_seconds{job="builderd",instance="b"}
+    values: 60x90
+  - series: builderd_build_worker_last_attempt_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x90
+  - series: builderd_build_worker_last_completed_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x90
+  - series: builderd_build_worker_interval_seconds{job="builderd",instance="b"}
+    values: 60x90
+  - series: builderd_build_worker_busy_allowance_seconds{job="builderd",instance="b"}
+    values: 600x90
+  - series: builderd_build_slots_in_use{job="builderd",instance="b"}
+    values: '0x90'
+  - series: builderd_build_slots_limit{job="builderd",instance="b"}
+    values: 1x90
+  - *id001
+  - *id027
+  - *id002
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - series: builderd_build_requeues_total{job="builderd",instance="b",reason="no_slot",outcome="error"}
+    values: 0 3x89
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: FaasBuilderRequeuesFailing
+    exp_alerts: []
+  - eval_time: 8m
+    alertname: FaasBuilderRequeuesFailing
+    exp_alerts: []
+  - eval_time: 12m
+    alertname: FaasBuilderRequeuesFailing
+    exp_alerts: []
+- name: healthy claim recovery clears rolling failure warning
+  interval: 1m
+  input_series:
+  - series: up{job="builderd",instance="b"}
+    values: 1x90
+  - series: builderd_build_worker_enabled{job="builderd",instance="b"}
+    values: 1x90
+  - series: builderd_build_worker_inflight{job="builderd",instance="b"}
+    values: '0x90'
+  - series: builderd_build_worker_started_timestamp_seconds{job="builderd",instance="b"}
+    values: 60x90
+  - series: builderd_build_worker_last_attempt_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x90
+  - series: builderd_build_worker_last_completed_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x90
+  - series: builderd_build_worker_interval_seconds{job="builderd",instance="b"}
+    values: 60x90
+  - series: builderd_build_worker_busy_allowance_seconds{job="builderd",instance="b"}
+    values: 600x90
+  - series: builderd_build_slots_in_use{job="builderd",instance="b"}
+    values: '0x90'
+  - series: builderd_build_slots_limit{job="builderd",instance="b"}
+    values: 1x90
+  - *id001
+  - series: builderd_build_claims_total{job="builderd",instance="b",source="poll",outcome="not_claimed"}
+    values: 0x9 0+600x80
+  - series: builderd_build_claims_total{job="builderd",instance="b",source="poll",outcome="error"}
+    values: 0+60x9 540x80
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: FaasBuilderClaimsFailing
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: builderd
+        family: build_queue_worker
+        public_status: internal
+        job: builderd
+        instance: b
+        source: poll
+      exp_annotations: *id029
+  - eval_time: 16m
+    alertname: FaasBuilderClaimsFailing
+    exp_alerts: []
+- name: intentional shutdown withdraws poll expectation
+  interval: 1m
+  input_series:
+  - series: up{job="builderd",instance="b"}
+    values: 1x90
+  - series: builderd_build_worker_enabled{job="builderd",instance="b"}
+    values: '0x90'
+  - series: builderd_build_worker_inflight{job="builderd",instance="b"}
+    values: '0x90'
+  - series: builderd_build_worker_started_timestamp_seconds{job="builderd",instance="b"}
+    values: 60x90
+  - series: builderd_build_worker_last_attempt_timestamp_seconds{job="builderd",instance="b"}
+    values: 60x90
+  - series: builderd_build_worker_last_completed_timestamp_seconds{job="builderd",instance="b"}
+    values: 60x90
+  - series: builderd_build_worker_interval_seconds{job="builderd",instance="b"}
+    values: 60x90
+  - series: builderd_build_worker_busy_allowance_seconds{job="builderd",instance="b"}
+    values: 600x90
+  - series: builderd_build_slots_in_use{job="builderd",instance="b"}
+    values: '0x90'
+  - series: builderd_build_slots_limit{job="builderd",instance="b"}
+    values: 1x90
+  - *id001
+  - *id027
+  - *id002
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  alert_rule_test:
+  - eval_time: 30m
+    alertname: FaasBuilderQueueTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 30m
+    alertname: FaasBuilderWorkerStalled
+    exp_alerts: []
+  - eval_time: 30m
+    alertname: FaasBuilderClaimsFailing
+    exp_alerts: []
+  - eval_time: 30m
+    alertname: FaasBuilderRequeuesFailing
+    exp_alerts: []
+- name: healthy sibling cannot repair missing worker configuration
+  interval: 1m
+  input_series:
+  - series: up{job="builderd",instance="b"}
+    values: 1x90
+  - series: builderd_build_worker_enabled{job="builderd",instance="b"}
+    values: 1x90
+  - series: builderd_build_worker_inflight{job="builderd",instance="b"}
+    values: '0x90'
+  - series: builderd_build_worker_started_timestamp_seconds{job="builderd",instance="b"}
+    values: 60x90
+  - series: builderd_build_worker_last_attempt_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x90
+  - series: builderd_build_worker_last_completed_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x90
+  - series: builderd_build_worker_interval_seconds{job="builderd",instance="b"}
+    values: 60x90
+  - series: builderd_build_slots_in_use{job="builderd",instance="b"}
+    values: '0x90'
+  - series: builderd_build_slots_limit{job="builderd",instance="b"}
+    values: 1x90
+  - *id001
+  - *id027
+  - *id002
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - series: up{job="builderd",instance="c"}
+    values: 1x90
+  - series: builderd_build_worker_enabled{job="builderd",instance="c"}
+    values: 1x90
+  - series: builderd_build_worker_inflight{job="builderd",instance="c"}
+    values: '0x90'
+  - series: builderd_build_worker_started_timestamp_seconds{job="builderd",instance="c"}
+    values: 60x90
+  - series: builderd_build_worker_last_attempt_timestamp_seconds{job="builderd",instance="c"}
+    values: 0+60x90
+  - series: builderd_build_worker_last_completed_timestamp_seconds{job="builderd",instance="c"}
+    values: 0+60x90
+  - series: builderd_build_worker_interval_seconds{job="builderd",instance="c"}
+    values: 60x90
+  - series: builderd_build_worker_busy_allowance_seconds{job="builderd",instance="c"}
+    values: 600x90
+  - series: builderd_build_slots_in_use{job="builderd",instance="c"}
+    values: '0x90'
+  - series: builderd_build_slots_limit{job="builderd",instance="c"}
+    values: 1x90
+  - series: builderd_build_claims_total{job="builderd",instance="c",source="poll",outcome="claimed"}
+    values: '0x90'
+  - series: builderd_build_claims_total{job="builderd",instance="c",source="poll",outcome="not_claimed"}
+    values: '0x90'
+  - series: builderd_build_claims_total{job="builderd",instance="c",source="poll",outcome="error"}
+    values: '0x90'
+  - series: builderd_build_claims_total{job="builderd",instance="c",source="poll",outcome="canceled"}
+    values: '0x90'
+  - series: builderd_build_claims_total{job="builderd",instance="c",source="notification",outcome="claimed"}
+    values: '0x90'
+  - series: builderd_build_claims_total{job="builderd",instance="c",source="notification",outcome="not_claimed"}
+    values: '0x90'
+  - series: builderd_build_claims_total{job="builderd",instance="c",source="notification",outcome="error"}
+    values: '0x90'
+  - series: builderd_build_claims_total{job="builderd",instance="c",source="notification",outcome="canceled"}
+    values: '0x90'
+  - series: builderd_build_requeues_total{job="builderd",instance="c",reason="no_slot",outcome="accepted"}
+    values: '0x90'
+  - series: builderd_build_requeues_total{job="builderd",instance="c",reason="no_slot",outcome="not_requeued"}
+    values: '0x90'
+  - series: builderd_build_requeues_total{job="builderd",instance="c",reason="no_slot",outcome="error"}
+    values: '0x90'
+  - series: builderd_build_requeues_total{job="builderd",instance="c",reason="no_slot",outcome="canceled"}
+    values: '0x90'
+  - series: builderd_build_requeues_total{job="builderd",instance="c",reason="source_unavailable",outcome="accepted"}
+    values: '0x90'
+  - series: builderd_build_requeues_total{job="builderd",instance="c",reason="source_unavailable",outcome="not_requeued"}
+    values: '0x90'
+  - series: builderd_build_requeues_total{job="builderd",instance="c",reason="source_unavailable",outcome="error"}
+    values: '0x90'
+  - series: builderd_build_requeues_total{job="builderd",instance="c",reason="source_unavailable",outcome="canceled"}
+    values: '0x90'
+  - series: builderd_build_requeues_total{job="builderd",instance="c",reason="context_canceled",outcome="accepted"}
+    values: '0x90'
+  - series: builderd_build_requeues_total{job="builderd",instance="c",reason="context_canceled",outcome="not_requeued"}
+    values: '0x90'
+  - series: builderd_build_requeues_total{job="builderd",instance="c",reason="context_canceled",outcome="error"}
+    values: '0x90'
+  - series: builderd_build_requeues_total{job="builderd",instance="c",reason="context_canceled",outcome="canceled"}
+    values: '0x90'
+  - series: builderd_build_requeues_total{job="builderd",instance="c",reason="lookup_failure",outcome="accepted"}
+    values: '0x90'
+  - series: builderd_build_requeues_total{job="builderd",instance="c",reason="lookup_failure",outcome="not_requeued"}
+    values: '0x90'
+  - series: builderd_build_requeues_total{job="builderd",instance="c",reason="lookup_failure",outcome="error"}
+    values: '0x90'
+  - series: builderd_build_requeues_total{job="builderd",instance="c",reason="lookup_failure",outcome="canceled"}
+    values: '0x90'
+  - series: builderd_build_slot_decisions_total{job="builderd",instance="c",outcome="granted"}
+    values: '0x90'
+  - series: builderd_build_slot_decisions_total{job="builderd",instance="c",outcome="limit"}
+    values: '0x90'
+  - series: builderd_build_slot_decisions_total{job="builderd",instance="c",outcome="policy"}
+    values: '0x90'
+  alert_rule_test:
+  - eval_time: 6m
+    alertname: FaasBuilderQueueTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: builderd
+        family: build_queue_telemetry
+        public_status: internal
+        job: builderd
+        instance: b
+      exp_annotations: &id030
+        summary: Builder queue diagnostics are unavailable
+        description: The builder is scraped but its worker progress, slot state or bounded claim/requeue counters
+          are missing or inconsistent. Worker and admission health are unknown; inspect instrumentation, clocks
+          and scrape configuration.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildWorker.md
+  - eval_time: 20m
+    alertname: FaasBuilderWorkerStalled
+    exp_alerts: []
+  promql_expr_test:
+  - expr: builderd_build_worker_progress_age_seconds
+    eval_time: 10m
+    exp_samples:
+    - labels: '{__name__="builderd_build_worker_progress_age_seconds",job="builderd",instance="c"}'
+      value: 0
+- name: incomplete bounded family builderd_build_claims_total
+  interval: 1m
+  input_series:
+  - series: up{job="builderd",instance="b"}
+    values: 1x90
+  - series: builderd_build_worker_enabled{job="builderd",instance="b"}
+    values: 1x90
+  - series: builderd_build_worker_inflight{job="builderd",instance="b"}
+    values: '0x90'
+  - series: builderd_build_worker_started_timestamp_seconds{job="builderd",instance="b"}
+    values: 60x90
+  - series: builderd_build_worker_last_attempt_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x90
+  - series: builderd_build_worker_last_completed_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x90
+  - series: builderd_build_worker_interval_seconds{job="builderd",instance="b"}
+    values: 60x90
+  - series: builderd_build_worker_busy_allowance_seconds{job="builderd",instance="b"}
+    values: 600x90
+  - series: builderd_build_slots_in_use{job="builderd",instance="b"}
+    values: '0x90'
+  - series: builderd_build_slots_limit{job="builderd",instance="b"}
+    values: 1x90
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  alert_rule_test:
+  - eval_time: 6m
+    alertname: FaasBuilderQueueTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: builderd
+        family: build_queue_telemetry
+        public_status: internal
+        job: builderd
+        instance: b
+      exp_annotations: *id030
+  promql_expr_test:
+  - expr: builderd_build_worker_progress_age_seconds
+    eval_time: 10m
+    exp_samples: []
+- name: incomplete bounded family builderd_build_requeues_total
+  interval: 1m
+  input_series:
+  - series: up{job="builderd",instance="b"}
+    values: 1x90
+  - series: builderd_build_worker_enabled{job="builderd",instance="b"}
+    values: 1x90
+  - series: builderd_build_worker_inflight{job="builderd",instance="b"}
+    values: '0x90'
+  - series: builderd_build_worker_started_timestamp_seconds{job="builderd",instance="b"}
+    values: 60x90
+  - series: builderd_build_worker_last_attempt_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x90
+  - series: builderd_build_worker_last_completed_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x90
+  - series: builderd_build_worker_interval_seconds{job="builderd",instance="b"}
+    values: 60x90
+  - series: builderd_build_worker_busy_allowance_seconds{job="builderd",instance="b"}
+    values: 600x90
+  - series: builderd_build_slots_in_use{job="builderd",instance="b"}
+    values: '0x90'
+  - series: builderd_build_slots_limit{job="builderd",instance="b"}
+    values: 1x90
+  - *id001
+  - *id027
+  - *id002
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  alert_rule_test:
+  - eval_time: 6m
+    alertname: FaasBuilderQueueTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: builderd
+        family: build_queue_telemetry
+        public_status: internal
+        job: builderd
+        instance: b
+      exp_annotations: *id030
+  promql_expr_test:
+  - expr: builderd_build_worker_progress_age_seconds
+    eval_time: 10m
+    exp_samples: []
+- name: incomplete bounded family builderd_build_slot_decisions_total
+  interval: 1m
+  input_series:
+  - series: up{job="builderd",instance="b"}
+    values: 1x90
+  - series: builderd_build_worker_enabled{job="builderd",instance="b"}
+    values: 1x90
+  - series: builderd_build_worker_inflight{job="builderd",instance="b"}
+    values: '0x90'
+  - series: builderd_build_worker_started_timestamp_seconds{job="builderd",instance="b"}
+    values: 60x90
+  - series: builderd_build_worker_last_attempt_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x90
+  - series: builderd_build_worker_last_completed_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x90
+  - series: builderd_build_worker_interval_seconds{job="builderd",instance="b"}
+    values: 60x90
+  - series: builderd_build_worker_busy_allowance_seconds{job="builderd",instance="b"}
+    values: 600x90
+  - series: builderd_build_slots_in_use{job="builderd",instance="b"}
+    values: '0x90'
+  - series: builderd_build_slots_limit{job="builderd",instance="b"}
+    values: 1x90
+  - *id001
+  - *id027
+  - *id002
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id026
+  alert_rule_test:
+  - eval_time: 6m
+    alertname: FaasBuilderQueueTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: builderd
+        family: build_queue_telemetry
+        public_status: internal
+        job: builderd
+        instance: b
+      exp_annotations: *id030
+  promql_expr_test:
+  - expr: builderd_build_worker_progress_age_seconds
+    eval_time: 10m
+    exp_samples: []
+- name: invalid builderd_build_worker_last_attempt_timestamp_seconds
+  interval: 1m
+  input_series:
+  - series: up{job="builderd",instance="b"}
+    values: 1x90
+  - series: builderd_build_worker_enabled{job="builderd",instance="b"}
+    values: 1x90
+  - series: builderd_build_worker_inflight{job="builderd",instance="b"}
+    values: '0x90'
+  - series: builderd_build_worker_started_timestamp_seconds{job="builderd",instance="b"}
+    values: 60x90
+  - series: builderd_build_worker_last_attempt_timestamp_seconds{job="builderd",instance="b"}
+    values: 9000x90
+  - series: builderd_build_worker_last_completed_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x90
+  - series: builderd_build_worker_interval_seconds{job="builderd",instance="b"}
+    values: 60x90
+  - series: builderd_build_worker_busy_allowance_seconds{job="builderd",instance="b"}
+    values: 600x90
+  - series: builderd_build_slots_in_use{job="builderd",instance="b"}
+    values: '0x90'
+  - series: builderd_build_slots_limit{job="builderd",instance="b"}
+    values: 1x90
+  - *id001
+  - *id027
+  - *id002
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  alert_rule_test:
+  - eval_time: 6m
+    alertname: FaasBuilderQueueTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: builderd
+        family: build_queue_telemetry
+        public_status: internal
+        job: builderd
+        instance: b
+      exp_annotations: *id030
+  - eval_time: 30m
+    alertname: FaasBuilderWorkerStalled
+    exp_alerts: []
+  promql_expr_test:
+  - expr: builderd_build_worker_progress_age_seconds
+    eval_time: 10m
+    exp_samples: []
+- name: invalid builderd_build_worker_inflight
+  interval: 1m
+  input_series:
+  - series: up{job="builderd",instance="b"}
+    values: 1x90
+  - series: builderd_build_worker_enabled{job="builderd",instance="b"}
+    values: 1x90
+  - series: builderd_build_worker_inflight{job="builderd",instance="b"}
+    values: 0.5x90
+  - series: builderd_build_worker_started_timestamp_seconds{job="builderd",instance="b"}
+    values: 60x90
+  - series: builderd_build_worker_last_attempt_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x90
+  - series: builderd_build_worker_last_completed_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x90
+  - series: builderd_build_worker_interval_seconds{job="builderd",instance="b"}
+    values: 60x90
+  - series: builderd_build_worker_busy_allowance_seconds{job="builderd",instance="b"}
+    values: 600x90
+  - series: builderd_build_slots_in_use{job="builderd",instance="b"}
+    values: '0x90'
+  - series: builderd_build_slots_limit{job="builderd",instance="b"}
+    values: 1x90
+  - *id001
+  - *id027
+  - *id002
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  alert_rule_test:
+  - eval_time: 6m
+    alertname: FaasBuilderQueueTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: builderd
+        family: build_queue_telemetry
+        public_status: internal
+        job: builderd
+        instance: b
+      exp_annotations: *id030
+  - eval_time: 30m
+    alertname: FaasBuilderWorkerStalled
+    exp_alerts: []
+  promql_expr_test:
+  - expr: builderd_build_worker_progress_age_seconds
+    eval_time: 10m
+    exp_samples: []
+- name: invalid builderd_build_slots_in_use
+  interval: 1m
+  input_series:
+  - series: up{job="builderd",instance="b"}
+    values: 1x90
+  - series: builderd_build_worker_enabled{job="builderd",instance="b"}
+    values: 1x90
+  - series: builderd_build_worker_inflight{job="builderd",instance="b"}
+    values: '0x90'
+  - series: builderd_build_worker_started_timestamp_seconds{job="builderd",instance="b"}
+    values: 60x90
+  - series: builderd_build_worker_last_attempt_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x90
+  - series: builderd_build_worker_last_completed_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x90
+  - series: builderd_build_worker_interval_seconds{job="builderd",instance="b"}
+    values: 60x90
+  - series: builderd_build_worker_busy_allowance_seconds{job="builderd",instance="b"}
+    values: 600x90
+  - series: builderd_build_slots_in_use{job="builderd",instance="b"}
+    values: 2x90
+  - series: builderd_build_slots_limit{job="builderd",instance="b"}
+    values: 1x90
+  - *id001
+  - *id027
+  - *id002
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  alert_rule_test:
+  - eval_time: 6m
+    alertname: FaasBuilderQueueTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: builderd
+        family: build_queue_telemetry
+        public_status: internal
+        job: builderd
+        instance: b
+      exp_annotations: *id030
+  - eval_time: 30m
+    alertname: FaasBuilderWorkerStalled
+    exp_alerts: []
+  promql_expr_test:
+  - expr: builderd_build_worker_progress_age_seconds
+    eval_time: 10m
+    exp_samples: []
+- name: invalid builderd_build_worker_interval_seconds
+  interval: 1m
+  input_series:
+  - series: up{job="builderd",instance="b"}
+    values: 1x90
+  - series: builderd_build_worker_enabled{job="builderd",instance="b"}
+    values: 1x90
+  - series: builderd_build_worker_inflight{job="builderd",instance="b"}
+    values: '0x90'
+  - series: builderd_build_worker_started_timestamp_seconds{job="builderd",instance="b"}
+    values: 60x90
+  - series: builderd_build_worker_last_attempt_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x90
+  - series: builderd_build_worker_last_completed_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x90
+  - series: builderd_build_worker_interval_seconds{job="builderd",instance="b"}
+    values: '0x90'
+  - series: builderd_build_worker_busy_allowance_seconds{job="builderd",instance="b"}
+    values: 600x90
+  - series: builderd_build_slots_in_use{job="builderd",instance="b"}
+    values: '0x90'
+  - series: builderd_build_slots_limit{job="builderd",instance="b"}
+    values: 1x90
+  - *id001
+  - *id027
+  - *id002
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  alert_rule_test:
+  - eval_time: 6m
+    alertname: FaasBuilderQueueTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: builderd
+        family: build_queue_telemetry
+        public_status: internal
+        job: builderd
+        instance: b
+      exp_annotations: *id030
+  - eval_time: 30m
+    alertname: FaasBuilderWorkerStalled
+    exp_alerts: []
+  promql_expr_test:
+  - expr: builderd_build_worker_progress_age_seconds
+    eval_time: 10m
+    exp_samples: []
+- name: inflight without an attempt is unknown
+  interval: 1m
+  input_series:
+  - series: up{job="builderd",instance="b"}
+    values: 1x90
+  - series: builderd_build_worker_enabled{job="builderd",instance="b"}
+    values: 1x90
+  - series: builderd_build_worker_inflight{job="builderd",instance="b"}
+    values: 1x90
+  - series: builderd_build_worker_started_timestamp_seconds{job="builderd",instance="b"}
+    values: 60x90
+  - series: builderd_build_worker_last_attempt_timestamp_seconds{job="builderd",instance="b"}
+    values: '0x90'
+  - series: builderd_build_worker_last_completed_timestamp_seconds{job="builderd",instance="b"}
+    values: '0x90'
+  - series: builderd_build_worker_interval_seconds{job="builderd",instance="b"}
+    values: 60x90
+  - series: builderd_build_worker_busy_allowance_seconds{job="builderd",instance="b"}
+    values: 600x90
+  - series: builderd_build_slots_in_use{job="builderd",instance="b"}
+    values: '0x90'
+  - series: builderd_build_slots_limit{job="builderd",instance="b"}
+    values: 1x90
+  - *id001
+  - *id027
+  - *id002
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  alert_rule_test:
+  - eval_time: 6m
+    alertname: FaasBuilderQueueTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: builderd
+        family: build_queue_telemetry
+        public_status: internal
+        job: builderd
+        instance: b
+      exp_annotations: *id030
+- name: idle with uncompleted attempt is unknown
+  interval: 1m
+  input_series:
+  - series: up{job="builderd",instance="b"}
+    values: 1x90
+  - series: builderd_build_worker_enabled{job="builderd",instance="b"}
+    values: 1x90
+  - series: builderd_build_worker_inflight{job="builderd",instance="b"}
+    values: '0x90'
+  - series: builderd_build_worker_started_timestamp_seconds{job="builderd",instance="b"}
+    values: 60x90
+  - series: builderd_build_worker_last_attempt_timestamp_seconds{job="builderd",instance="b"}
+    values: 60x90
+  - series: builderd_build_worker_last_completed_timestamp_seconds{job="builderd",instance="b"}
+    values: '0x90'
+  - series: builderd_build_worker_interval_seconds{job="builderd",instance="b"}
+    values: 60x90
+  - series: builderd_build_worker_busy_allowance_seconds{job="builderd",instance="b"}
+    values: 600x90
+  - series: builderd_build_slots_in_use{job="builderd",instance="b"}
+    values: '0x90'
+  - series: builderd_build_slots_limit{job="builderd",instance="b"}
+    values: 1x90
+  - *id001
+  - *id027
+  - *id002
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  alert_rule_test:
+  - eval_time: 6m
+    alertname: FaasBuilderQueueTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: builderd
+        family: build_queue_telemetry
+        public_status: internal
+        job: builderd
+        instance: b
+      exp_annotations: *id030
+- name: failed scrape is handled by existing daemon health
+  interval: 1m
+  input_series:
+  - series: up{job="builderd",instance="b"}
+    values: '0x90'
+  - series: builderd_build_worker_enabled{job="builderd",instance="b"}
+    values: 1x90
+  - series: builderd_build_worker_inflight{job="builderd",instance="b"}
+    values: '0x90'
+  - series: builderd_build_worker_started_timestamp_seconds{job="builderd",instance="b"}
+    values: 60x90
+  - series: builderd_build_worker_last_attempt_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x90
+  - series: builderd_build_worker_last_completed_timestamp_seconds{job="builderd",instance="b"}
+    values: 0+60x90
+  - series: builderd_build_worker_interval_seconds{job="builderd",instance="b"}
+    values: 60x90
+  - series: builderd_build_worker_busy_allowance_seconds{job="builderd",instance="b"}
+    values: 600x90
+  - series: builderd_build_slots_in_use{job="builderd",instance="b"}
+    values: '0x90'
+  - series: builderd_build_slots_limit{job="builderd",instance="b"}
+    values: 1x90
+  - *id001
+  - *id027
+  - *id002
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FaasBuilderQueueTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasBuilderWorkerStalled
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasBuilderClaimsFailing
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasBuilderRequeuesFailing
+    exp_alerts: []
+- name: no target does not invent a builder installation
+  interval: 1m
+  input_series: []
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FaasBuilderQueueTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasBuilderWorkerStalled
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasBuilderClaimsFailing
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasBuilderRequeuesFailing
+    exp_alerts: []
+- name: idle recovery clears progress warning
+  interval: 1m
+  input_series:
+  - series: up{job="builderd",instance="b"}
+    values: 1x90
+  - series: builderd_build_worker_enabled{job="builderd",instance="b"}
+    values: 1x90
+  - series: builderd_build_worker_inflight{job="builderd",instance="b"}
+    values: '0x90'
+  - series: builderd_build_worker_started_timestamp_seconds{job="builderd",instance="b"}
+    values: 60x90
+  - series: builderd_build_worker_last_attempt_timestamp_seconds{job="builderd",instance="b"}
+    values: 60x19 1200+60x70
+  - series: builderd_build_worker_last_completed_timestamp_seconds{job="builderd",instance="b"}
+    values: 60x19 1200+60x70
+  - series: builderd_build_worker_interval_seconds{job="builderd",instance="b"}
+    values: 60x90
+  - series: builderd_build_worker_busy_allowance_seconds{job="builderd",instance="b"}
+    values: 600x90
+  - series: builderd_build_slots_in_use{job="builderd",instance="b"}
+    values: '0x90'
+  - series: builderd_build_slots_limit{job="builderd",instance="b"}
+    values: 1x90
+  - *id001
+  - *id027
+  - *id002
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  alert_rule_test:
+  - eval_time: 19m
+    alertname: FaasBuilderWorkerStalled
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: builderd
+        family: build_queue_worker
+        public_status: internal
+        job: builderd
+        instance: b
+      exp_annotations: *id028
+  - eval_time: 20m
+    alertname: FaasBuilderWorkerStalled
+    exp_alerts: []

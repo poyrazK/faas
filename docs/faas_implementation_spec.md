@@ -1947,6 +1947,25 @@ request therefore does not create an instance transition or resident usage.
 |---|---|---|---|
 | `gateway_cors_preflight_edge_total` | `app` | `pkg/gateway/metrics.go::ObserveCORSPreflightEdge` | Counter of matching CORS preflights answered by the gateway without waking the resolved app. |
 
+### 12.9 Customer Operations (ADR-20261016123221)
+
+schedd reads fleet-wide Operation state from Postgres in its 60-second
+retention tick and serves one snapshot per scrape. Every schedd reports the
+same values, so rules and panels aggregate with `max`. Alerts are `warn`
+(ADR-1235); dashboard `deploy/grafana/customer-operations.json`, runbook
+`docs/runbooks/FaasCustomerOperations.md`.
+
+| Metric name | Labels | Producer | Semantics |
+|---|---|---|---|
+| `schedd_customer_operations` | `state` | `pkg/sched/operation_telemetry.go` | Operations `accepted`, `running`, `waiting` or `requires_reconciliation`. |
+| `schedd_customer_operations_waiting` | `kind` | same | Waiting Operations by `timer`, `approval`, `event`. |
+| `schedd_customer_operations_oldest_update_seconds` | `state` | same | Time since the least recently changed Operation in that state changed. |
+| `schedd_customer_operations_overdue` | — | same | Active Operations more than 180 s past their deadline. Alert `FaasCustomerOperationDeadlinesOverdue`: > 0 for 10m. |
+| `schedd_customer_operations_settled_recent` | `outcome`, `failure_code` | same | Outcomes in the last 900 s; `failure_code` is a closed set plus `none` and `other`. |
+| `schedd_customer_operations_outcome_unknown_accounts` | — | same | Accounts with an `execution_outcome_unknown` reconciliation in the last 900 s. Alert `FaasCustomerOperationOutcomesUnknown`: ≥ 3 for 5m. |
+| `schedd_customer_operations_telemetry_refreshed_timestamp_seconds` | — | same | When the snapshot was last read. |
+| `apid_customer_operation_webhook_events_total` | `mode`, `result` | `pkg/apid/operation/metrics.go` | Verified provider events on operation-bound endpoints; `result` is `accepted`, `duplicate`, `ignored`, `signaled`, `unmatched` or `refused` (non-2xx). |
+
 ---
 
 ## 13. RAM budget ledger (enforced as systemd slices)
@@ -2189,6 +2208,7 @@ Every row is an experiment with a pre-committed pass threshold. Run V1–V5 on a
 | V8 | 5 % churn, 55/40/5 mix, 4 free riders (C-grade) | Cohort curves from first 90 days; monthly sheet re-run with observed values | Documented monthly; sheet updated | beta+ |
 | V9 | Payment path & fees (provider fees) | Confirm Polar catalog and fee schedule for the incorporation country; retain provider-neutral fallback pricing in the sheet | Fee delta reflected in model before launch | pre-incorporation |
 | V10 | Server quote €44 + €39 | Re-quote a comparable bare-metal x86_64 host at order time (post-June-2026 price adjustment) | Within §9.9 sensitivity range (€39–50) | at order |
+| V12 | Event substrate keeps up with the plan event caps | `make bench-event-substrate` on the reference node: publish, fanout, drain and webhook stages plus offered end-to-end rates ([event-substrate-benchmark.md](ops/event-substrate-benchmark.md)) | Event storage, queue depth and workflow caps sit at ≤ 50 % of the highest offered rate the pipeline sustains (achieved ≥ 95 % of offered, nothing pending after the settle window, p95 publish-to-handler ≤ 5 s). 2026-10-20 on `gregale-internal-test-1`: sustains 5 events/s; fanout routing is O(backlog²) ([report](ops/evidence/20261020-event-substrate-bench/REPORT.md)) | before raising event caps |
 
 Standing rules: (1) no number graduates from "assumption" to "fact" without a row here; (2) the §6.2 invariants are enforced as property-based tests, not prose; (3) each ADR gets one adversarial review pass before acceptance.
 

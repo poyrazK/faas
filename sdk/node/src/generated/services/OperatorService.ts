@@ -9,6 +9,10 @@ import type { ManagedPostgresUsageImportRequest } from '../models/ManagedPostgre
 import type { ManagedPostgresUsageImportResult } from '../models/ManagedPostgresUsageImportResult.js';
 import type { ManagedPostgresUsageOperatorResponse } from '../models/ManagedPostgresUsageOperatorResponse.js';
 import type { ObjectStorageUsageReport } from '../models/ObjectStorageUsageReport.js';
+import type { OperatorAccountPlatformFlags } from '../models/OperatorAccountPlatformFlags.js';
+import type { OperatorPlatformFlag } from '../models/OperatorPlatformFlag.js';
+import type { OperatorPlatformFlagDecision } from '../models/OperatorPlatformFlagDecision.js';
+import type { OperatorPlatformFlagList } from '../models/OperatorPlatformFlagList.js';
 import type { OperatorRuntimeConfig } from '../models/OperatorRuntimeConfig.js';
 import type { OperatorRuntimeConfigOperation } from '../models/OperatorRuntimeConfigOperation.js';
 import type { OperatorRuntimeConfigRevision } from '../models/OperatorRuntimeConfigRevision.js';
@@ -403,6 +407,121 @@ export class OperatorService {
         'limit': limit,
       },
       errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * List platform flags
+   * Returns every catalogued platform flag (ADR-1700) with apid's live
+   * definition, the per-daemon apply receipts and convergence, and the
+   * shared account groups. Change a flag with
+   * PATCH /v1/admin/config/{config_key}. Operator-only.
+   *
+   * @returns OperatorPlatformFlagList Platform flags and groups
+   * @throws ApiError
+   */
+  public static listOperatorPlatformFlags(): CancelablePromise<OperatorPlatformFlagList> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/admin/flags',
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+      },
+    });
+  }
+  /**
+   * Get a platform flag
+   * One platform flag with its live definition, apply receipts and convergence. Operator-only.
+   * @returns OperatorPlatformFlag Platform flag
+   * @throws ApiError
+   */
+  public static getOperatorPlatformFlag({
+    key,
+  }: {
+    /**
+     * Platform flag key, for example ai_gateway.
+     */
+    key: string,
+  }): CancelablePromise<OperatorPlatformFlag> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/admin/flags/{key}',
+      path: {
+        'key': key,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Explain a platform flag for an account
+   * Evaluates the flag for one account against apid's live definition
+   * and reports the matching rule, the reason, and whether the account's
+   * plan is entitled to the capability the flag releases. Records
+   * nothing. Operator-only.
+   *
+   * @returns OperatorPlatformFlagDecision Decision
+   * @throws ApiError
+   */
+  public static inspectOperatorPlatformFlag({
+    key,
+    accountId,
+  }: {
+    /**
+     * Platform flag key.
+     */
+    key: string,
+    /**
+     * Account to evaluate.
+     */
+    accountId: string,
+  }): CancelablePromise<OperatorPlatformFlagDecision> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/admin/flags/{key}/decision',
+      path: {
+        'key': key,
+      },
+      query: {
+        'account_id': accountId,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * List platform flags for an account
+   * Every platform flag decided for one account, with plan entitlement. Operator-only.
+   * @returns OperatorAccountPlatformFlags Decisions for the account
+   * @throws ApiError
+   */
+  public static listOperatorAccountPlatformFlags({
+    id,
+  }: {
+    /**
+     * Account ID.
+     */
+    id: string,
+  }): CancelablePromise<OperatorAccountPlatformFlags> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/admin/accounts/{id}/flags',
+      path: {
+        'id': id,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,

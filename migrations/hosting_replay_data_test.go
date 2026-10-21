@@ -23,6 +23,7 @@ func TestHostingMigrationReplayPreservesAcceptedIntent(t *testing.T) {
 	}
 	if _, err := pool.Exec(ctx, `
 INSERT INTO accounts(id,email) VALUES('11111111-1111-4111-8111-111111111111','hosting-replay@example.com');
+INSERT INTO orgs(id,slug,name,personal_org,personal_owner_account_id,plan,status) SELECT gen_random_uuid(),'u-111111111111','Personal',true,id,plan,status FROM accounts WHERE id='11111111-1111-4111-8111-111111111111';
 INSERT INTO projects(id,account_id,slug) VALUES('22222222-2222-4222-8222-222222222222','11111111-1111-4111-8111-111111111111','hosting-replay');
 INSERT INTO project_environments(account_id,project_id,slug) VALUES('11111111-1111-4111-8111-111111111111','22222222-2222-4222-8222-222222222222','production') ON CONFLICT DO NOTHING;
 INSERT INTO hosting_sites(id,account_id,project_id,environment,name,hostname,origin_id,durable_routing)

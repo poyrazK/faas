@@ -335,6 +335,18 @@ func (s *PgStore) PrepareEnvironmentGitOpsWorkloadServing(ctx context.Context, l
 			}
 		}
 	}
+	if _, err := q.SetEnvironmentGitOpsLeaseContext(ctx, tx, lease.LeaseToken); err != nil {
+		return EnvironmentWorkloadServingReceipt{}, false, mapErr(err)
+	}
+	weightsCurrent, err := q.EnvironmentWorkloadServingCutoverWeightsMatch(ctx, tx, graphID)
+	if err != nil {
+		return EnvironmentWorkloadServingReceipt{}, false, mapErr(err)
+	}
+	if !weightsCurrent.Valid || !weightsCurrent.Bool {
+		if _, err := q.AuthorizeEnvironmentBindingTraffic(ctx, tx, sqlc.AuthorizeEnvironmentBindingTrafficParams{GraphID: graphID, ReleaseID: mustPgUUID(release.ID)}); err != nil {
+			return EnvironmentWorkloadServingReceipt{}, false, mapErr(err)
+		}
+	}
 	// Validate every app's live siblings before changing any weights. A normal
 	// canary/service rollout retains traffic ownership until its own handoff
 	// finishes; GitOps cannot race that owner.
@@ -478,6 +490,15 @@ func loadEnvironmentWorkloadServingReceipt(ctx context.Context, tx sqlc.DBTX, gr
 	if row.ServedAt.Valid {
 		servedAt := row.ServedAt.Time
 		receipt.ServedAt = &servedAt
+	}
+
+	first, historyErr := q.ReadEnvironmentRecoveryServingHistory(ctx, tx, graphID)
+	if historyErr != nil && !errors.Is(historyErr, pgx.ErrNoRows) {
+		return receipt, false, mapErr(historyErr)
+	}
+	if historyErr == nil && first.Valid {
+		at := first.Time
+		receipt.FirstServedAt = &at
 	}
 	receiptRows, err := q.EnvironmentWorkloadServingRoutes(ctx, tx, graphID)
 	if err != nil {

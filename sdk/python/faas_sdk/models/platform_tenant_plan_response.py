@@ -12,10 +12,6 @@ from ..models.platform_tenant_plan_response_tier_mode import (
     PlatformTenantPlanResponseTierMode,
     check_platform_tenant_plan_response_tier_mode,
 )
-from ..models.platform_tenant_plan_response_unit import (
-    PlatformTenantPlanResponseUnit,
-    check_platform_tenant_plan_response_unit,
-)
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
@@ -42,8 +38,11 @@ class PlatformTenantPlanResponse:
     route_weights: PlatformTenantPlanResponseRouteWeights | Unset = UNSET
     request_budget: PlatformTenantPlanBudget | Unset = UNSET
     """The request budget a tenant plan sets (ADR-240); zero disables a ceiling."""
-    unit: PlatformTenantPlanResponseUnit | Unset = UNSET
-    """What the plan's card prices (ADR-1310)."""
+    unit: str | Unset = UNSET
+    """What the plan's card prices (ADR-1310, ADR-1319)."""
+    base_fee_millicents_per_month: int | Unset = UNSET
+    minimum_millicents_per_month: int | Unset = UNSET
+    prorate_monthly_fees: bool | Unset = UNSET
     tier_mode: PlatformTenantPlanResponseTierMode | Unset = UNSET
     """How the plan's ladder prices a month (ADR-1309)."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -78,9 +77,13 @@ class PlatformTenantPlanResponse:
         if not isinstance(self.request_budget, Unset):
             request_budget = self.request_budget.to_dict()
 
-        unit: str | Unset = UNSET
-        if not isinstance(self.unit, Unset):
-            unit = self.unit
+        unit = self.unit
+
+        base_fee_millicents_per_month = self.base_fee_millicents_per_month
+
+        minimum_millicents_per_month = self.minimum_millicents_per_month
+
+        prorate_monthly_fees = self.prorate_monthly_fees
 
         tier_mode: str | Unset = UNSET
         if not isinstance(self.tier_mode, Unset):
@@ -107,6 +110,12 @@ class PlatformTenantPlanResponse:
             field_dict["request_budget"] = request_budget
         if unit is not UNSET:
             field_dict["unit"] = unit
+        if base_fee_millicents_per_month is not UNSET:
+            field_dict["base_fee_millicents_per_month"] = base_fee_millicents_per_month
+        if minimum_millicents_per_month is not UNSET:
+            field_dict["minimum_millicents_per_month"] = minimum_millicents_per_month
+        if prorate_monthly_fees is not UNSET:
+            field_dict["prorate_monthly_fees"] = prorate_monthly_fees
         if tier_mode is not UNSET:
             field_dict["tier_mode"] = tier_mode
 
@@ -156,12 +165,13 @@ class PlatformTenantPlanResponse:
         else:
             request_budget = PlatformTenantPlanBudget.from_dict(_request_budget)
 
-        _unit = d.pop("unit", UNSET)
-        unit: PlatformTenantPlanResponseUnit | Unset
-        if isinstance(_unit, Unset):
-            unit = UNSET
-        else:
-            unit = check_platform_tenant_plan_response_unit(_unit)
+        unit = d.pop("unit", UNSET)
+
+        base_fee_millicents_per_month = d.pop("base_fee_millicents_per_month", UNSET)
+
+        minimum_millicents_per_month = d.pop("minimum_millicents_per_month", UNSET)
+
+        prorate_monthly_fees = d.pop("prorate_monthly_fees", UNSET)
 
         _tier_mode = d.pop("tier_mode", UNSET)
         tier_mode: PlatformTenantPlanResponseTierMode | Unset
@@ -182,6 +192,9 @@ class PlatformTenantPlanResponse:
             route_weights=route_weights,
             request_budget=request_budget,
             unit=unit,
+            base_fee_millicents_per_month=base_fee_millicents_per_month,
+            minimum_millicents_per_month=minimum_millicents_per_month,
+            prorate_monthly_fees=prorate_monthly_fees,
             tier_mode=tier_mode,
         )
 

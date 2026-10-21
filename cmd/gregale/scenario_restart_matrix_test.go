@@ -1,8 +1,9 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
 	"encoding/xml"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -11,7 +12,7 @@ import (
 )
 
 func TestHTTPRestartMatrixExampleManifest(t *testing.T) {
-	prepared, err := prepareTestSuite("../../examples/scenario-http-write/gregale-restart-matrix-test.yaml", "http-restart-matrix", testSuiteOptions{Engine: "real-vm", Validate: true, Repeat: 1, MaxWorkloadMinutes: 60})
+	prepared, err := main.PrepareTestSuite("../../examples/scenario-http-write/gregale-restart-matrix-test.yaml", "http-restart-matrix", main.TestSuiteOptions{Engine: "real-vm", Validate: true, Repeat: 1, MaxWorkloadMinutes: 60})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -20,7 +21,7 @@ func TestHTTPRestartMatrixExampleManifest(t *testing.T) {
 	if len(prepared) != len(names) {
 		t.Fatalf("matrix omitted checkpoint: %+v", prepared)
 	}
-	plans := prepareTestRunPlans(prepared, 1)
+	plans := main.PrepareTestRunPlans(prepared, 1)
 	if len(plans) != 3 {
 		t.Fatalf("matrix scheduled %d runs", len(plans))
 	}
@@ -28,7 +29,7 @@ func TestHTTPRestartMatrixExampleManifest(t *testing.T) {
 		if p.Name != names[i] || p.Engine != "real-vm" || !reflect.DeepEqual(p.Profiles, []string{"warm"}) || plans[i].Prepared.Name != names[i] {
 			t.Fatalf("checkpoint scheduling: %+v", p)
 		}
-		if _, err := collectTestValidationForEngine(map[string]testScenario{p.Name: p.Scenario}, p.ManifestDir, p.Name, p.Engine); err != nil {
+		if _, err := main.CollectTestValidationForEngine(map[string]main.TestScenario{p.Name: p.Scenario}, p.ManifestDir, p.Name, p.Engine); err != nil {
 			t.Fatal(err)
 		}
 		restart := p.Scenario.Steps[1].Restart
@@ -47,26 +48,26 @@ func TestHTTPRestartMatrixExampleManifest(t *testing.T) {
 }
 
 func TestHTTPRestartMatrixCombinedReportsIdentifyFailedCheckpoint(t *testing.T) {
-	captureSuiteTestOutput(t)
+	main.CaptureSuiteTestOutput(t)
 	names := []string{"write-before-acceptance", "write-pending", "write-committed"}
-	results := make([]testRunReceipt, 0, 3)
+	results := make([]main.TestRunReceipt, 0, 3)
 	for i, name := range names {
 		status := "passed"
 		if i == 1 {
 			status = "failed"
 		}
-		results = append(results, testRunReceipt{Suite: "http-restart-matrix", Scenario: name, Engine: "real-vm", Profile: "warm", Status: status, Steps: []testScenarioStepEvidence{{Name: "replace-caller", Status: status, Restart: &testRestartEvidence{Workload: "app", Status: status, InFlight: &testRestartInFlightEvidence{Name: "interrupted-write", PendingAtRestart: true, Joined: true, Outcome: "request_ended"}}}}})
+		results = append(results, main.TestRunReceipt{Suite: "http-restart-matrix", Scenario: name, Engine: "real-vm", Profile: "warm", Status: status, Steps: []main.TestScenarioStepEvidence{{Name: "replace-caller", Status: status, Restart: &main.TestRestartEvidence{Workload: "app", Status: status, InFlight: &main.TestRestartInFlightEvidence{Name: "interrupted-write", PendingAtRestart: true, Joined: true, Outcome: "request_ended"}}}}})
 	}
 	directory := t.TempDir()
 	jsonPath, xmlPath, htmlPath := filepath.Join(directory, "results.json"), filepath.Join(directory, "results.xml"), filepath.Join(directory, "results.html")
-	if code := finishTestRunReports("http-restart-matrix", results, jsonPath, xmlPath, htmlPath); code != 1 {
+	if code := main.FinishTestRunReports("http-restart-matrix", results, jsonPath, xmlPath, htmlPath); code != 1 {
 		t.Fatal("partial checkpoint failure passed the matrix")
 	}
 	body, err := os.ReadFile(jsonPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var reports []testRunReceipt
+	var reports []main.TestRunReceipt
 	if err := json.Unmarshal(body, &reports); err != nil || len(reports) != 3 {
 		t.Fatalf("combined receipts: %v", err)
 	}
@@ -79,7 +80,7 @@ func TestHTTPRestartMatrixCombinedReportsIdentifyFailedCheckpoint(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	var junit testJUnitSuite
+	var junit main.TestJUnitSuite
 	if err := xml.Unmarshal(body, &junit); err != nil || junit.Tests != 3 || junit.Failures != 1 || junit.Skipped != 0 || junit.Cases[1].Failure == nil {
 		t.Fatalf("JUnit hid checkpoint failure: %+v, %v", junit, err)
 	}

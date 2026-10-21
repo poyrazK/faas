@@ -1,5 +1,5 @@
 // adr: 662
-package main
+package main_test
 
 import (
 	"bytes"
@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/operations"
 )
@@ -61,7 +62,7 @@ func (f *recoveryReceiptTestClient) RecoverOperationWithReceipt(_ context.Contex
 	}
 	return f.decision, nil
 }
-func newRecoveryReceiptTest(t *testing.T, resolution string) (*recoveryReceiptTestClient, customerOperationCommand) {
+func newRecoveryReceiptTest(t *testing.T, resolution string) (*recoveryReceiptTestClient, main.CustomerOperationCommand) {
 	t.Helper()
 	dir := t.TempDir()
 	evidence := filepath.Join(dir, "evidence.txt")
@@ -77,7 +78,7 @@ func newRecoveryReceiptTest(t *testing.T, resolution string) (*recoveryReceiptTe
 	if resolution == "succeeded" {
 		args = append(args, "--result-file", result)
 	}
-	c, err := parseCustomerOperationCommand(args)
+	c, err := main.ParseCustomerOperationCommand(args)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,39 +89,39 @@ func TestCustomerOperationRecoveryReceiptLostResponse(t *testing.T) {
 		t.Run(resolution, func(t *testing.T) {
 			f, c := newRecoveryReceiptTest(t, resolution)
 			f.lose = true
-			if _, err := recoverCustomerOperationWithReceipt(t.Context(), f, c, f.now); err == nil {
+			if _, err := main.RecoverCustomerOperationWithReceipt(t.Context(), f, c, f.now); err == nil {
 				t.Fatal("lost response not surfaced")
 			}
-			before, err := os.ReadFile(c.receipt)
+			before, err := os.ReadFile((*c.Receipt()))
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err = os.Remove(filepath.Join(filepath.Dir(c.receipt), "evidence.txt")); err != nil {
+			if err = os.Remove(filepath.Join(filepath.Dir((*c.Receipt())), "evidence.txt")); err != nil {
 				t.Fatal(err)
 			}
-			if err = os.Remove(filepath.Join(filepath.Dir(c.receipt), "result.json")); err != nil {
+			if err = os.Remove(filepath.Join(filepath.Dir((*c.Receipt())), "result.json")); err != nil {
 				t.Fatal(err)
 			}
-			c, err = parseCustomerOperationCommand([]string{"recover", deliveryTestOperation, "--app", "exports", "--receipt-file", f.path})
+			c, err = main.ParseCustomerOperationCommand([]string{"recover", deliveryTestOperation, "--app", "exports", "--receipt-file", f.path})
 			if err != nil {
 				t.Fatal(err)
 			}
-			decision, err := recoverCustomerOperationWithReceipt(t.Context(), f, c, f.now.Add(time.Second))
+			decision, err := main.RecoverCustomerOperationWithReceipt(t.Context(), f, c, f.now.Add(time.Second))
 			if err != nil {
 				t.Fatal(err)
 			}
-			cached, err := recoverCustomerOperationWithReceipt(t.Context(), f, c, f.now.Add(2*time.Hour))
+			cached, err := main.RecoverCustomerOperationWithReceipt(t.Context(), f, c, f.now.Add(2*time.Hour))
 			if err != nil || cached != decision {
 				t.Fatal("immutable acknowledgement", cached, err)
 			}
 			if f.posts != 2 || f.decisions != 1 {
 				t.Fatal("decision repeated", f.posts, f.decisions)
 			}
-			after, _ := os.ReadFile(c.receipt)
+			after, _ := os.ReadFile((*c.Receipt()))
 			if !bytes.Equal(before, after) {
 				t.Fatal("request changed")
 			}
-			for _, path := range []string{c.receipt, c.receipt + ".decided.json"} {
+			for _, path := range []string{(*c.Receipt()), (*c.Receipt()) + ".decided.json"} {
 				info, e := os.Stat(path)
 				if e != nil || info.Mode().Perm() != 0600 {
 					t.Fatal("receipt not private", e)
@@ -139,15 +140,15 @@ func TestCustomerOperationRecoveryReceiptLostResponse(t *testing.T) {
 func TestCustomerOperationRecoveryReceiptAcceptsOnlyOneExecutionFamily(t *testing.T) {
 	f, c := newRecoveryReceiptTest(t, "safe_to_retry")
 	f.lose = true
-	if _, err := recoverCustomerOperationWithReceipt(t.Context(), f, c, f.now); err == nil {
+	if _, err := main.RecoverCustomerOperationWithReceipt(t.Context(), f, c, f.now); err == nil {
 		t.Fatal("expected lost response")
 	}
-	raw, err := os.ReadFile(c.receipt)
+	raw, err := os.ReadFile((*c.Receipt()))
 	if err != nil {
 		t.Fatal(err)
 	}
-	var receipt customerOperationRecoveryReceipt
-	if err := decodeCustomerOperationReceipt(raw, &receipt); err != nil {
+	var receipt main.CustomerOperationRecoveryReceipt
+	if err := main.DecodeCustomerOperationReceipt(raw, &receipt); err != nil {
 		t.Fatal(err)
 	}
 	for _, family := range []string{"http", "workflow", "job", "mixed", "missing", "invalid-job"} {
@@ -166,7 +167,7 @@ func TestCustomerOperationRecoveryReceiptAcceptsOnlyOneExecutionFamily(t *testin
 			case "invalid-job":
 				decision.JobRunID = "not-a-run-id"
 			}
-			err := validateCustomerOperationRecoveryDecision(decision, receipt)
+			err := main.ValidateCustomerOperationRecoveryDecision(decision, receipt)
 			valid := family == "http" || family == "workflow" || family == "job"
 			if (err == nil) != valid {
 				t.Fatalf("valid=%v error=%v", valid, err)
@@ -176,26 +177,26 @@ func TestCustomerOperationRecoveryReceiptAcceptsOnlyOneExecutionFamily(t *testin
 }
 func TestCustomerOperationRecoveryReceiptConflicts(t *testing.T) {
 	f, c := newRecoveryReceiptTest(t, "safe_to_retry")
-	if _, err := recoverCustomerOperationWithReceipt(t.Context(), f, c, f.now); err != nil {
+	if _, err := main.RecoverCustomerOperationWithReceipt(t.Context(), f, c, f.now); err != nil {
 		t.Fatal(err)
 	}
 	resume := []string{"recover", deliveryTestOperation, "--app", "exports", "--receipt-file", f.path}
 	for _, extra := range [][]string{{"--recovery-id", "other"}, {"--expected-generation", "2"}, {"--resolution", "failed"}, {"--inspection-revision", "sha256:" + strings.Repeat("b", 64)}} {
-		changed, err := parseCustomerOperationCommand(append(append([]string{}, resume...), extra...))
+		changed, err := main.ParseCustomerOperationCommand(append(append([]string{}, resume...), extra...))
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err = recoverCustomerOperationWithReceipt(t.Context(), f, changed, f.now); err == nil {
+		if _, err = main.RecoverCustomerOperationWithReceipt(t.Context(), f, changed, f.now); err == nil {
 			t.Fatal("changed selector accepted", extra)
 		}
 	}
 	f.account = "44444444-4444-4444-4444-444444444444"
-	if _, err := recoverCustomerOperationWithReceipt(t.Context(), f, c, f.now); err == nil {
+	if _, err := main.RecoverCustomerOperationWithReceipt(t.Context(), f, c, f.now); err == nil {
 		t.Fatal("account crossed")
 	}
 	f.account = deliveryTestAccount
 	f.origin = "https://other.example.com"
-	if _, err := recoverCustomerOperationWithReceipt(t.Context(), f, c, f.now); err == nil {
+	if _, err := main.RecoverCustomerOperationWithReceipt(t.Context(), f, c, f.now); err == nil {
 		t.Fatal("origin crossed")
 	}
 	if f.posts != 1 {
@@ -207,7 +208,7 @@ func TestCustomerOperationRecoveryReceiptRefusesUnsafeMutation(t *testing.T) {
 		t.Run(kind, func(t *testing.T) {
 			f, c := newRecoveryReceiptTest(t, "succeeded")
 			ctx := t.Context()
-			r := customerOperationRecoveryReceipt{Version: 1, API: f.origin, AccountID: f.account, App: c.app, OperationID: c.id, Request: c.recovery, CreatedAt: f.now.Add(-time.Minute), ReplayNotAfter: f.now.Add(time.Hour)}
+			r := main.CustomerOperationRecoveryReceipt{Version: 1, API: f.origin, AccountID: f.account, App: (*c.App()), OperationID: (*c.Id()), Request: (*c.Recovery()), CreatedAt: f.now.Add(-time.Minute), ReplayNotAfter: f.now.Add(time.Hour)}
 			if kind == "expired" {
 				r.ReplayNotAfter = f.now.Add(-time.Second)
 			}
@@ -217,31 +218,31 @@ func TestCustomerOperationRecoveryReceiptRefusesUnsafeMutation(t *testing.T) {
 			if kind == "changed-result" {
 				r.Request.Result = []byte(`{"file":"changed.csv"}`)
 			}
-			raw, _ := encodeCustomerOperationRecoveryReceipt(r)
+			raw, _ := main.EncodeCustomerOperationRecoveryReceipt(r)
 			if kind == "oversized" {
 				raw = bytes.Repeat([]byte("x"), api.OperationRecoveryReceiptMaxBytes+1)
 			}
-			if err := os.WriteFile(c.receipt, raw, 0600); err != nil {
+			if err := os.WriteFile((*c.Receipt()), raw, 0600); err != nil {
 				t.Fatal(err)
 			}
 			switch kind {
 			case "public":
-				if err := os.Chmod(c.receipt, 0644); err != nil {
+				if err := os.Chmod((*c.Receipt()), 0644); err != nil {
 					t.Fatal(err)
 				}
 			case "symlink":
-				if err := os.Rename(c.receipt, c.receipt+".target"); err != nil {
+				if err := os.Rename((*c.Receipt()), (*c.Receipt())+".target"); err != nil {
 					t.Fatal(err)
 				}
-				if err := os.Symlink(c.receipt+".target", c.receipt); err != nil {
+				if err := os.Symlink((*c.Receipt())+".target", (*c.Receipt())); err != nil {
 					t.Fatal(err)
 				}
 			case "bad-ack", "orphan-ack":
-				if err := os.WriteFile(c.receipt+".decided.json", []byte(`{"version":1,"request_sha256":"wrong"}`), 0600); err != nil {
+				if err := os.WriteFile((*c.Receipt())+".decided.json", []byte(`{"version":1,"request_sha256":"wrong"}`), 0600); err != nil {
 					t.Fatal(err)
 				}
 				if kind == "orphan-ack" {
-					if err := os.Remove(c.receipt); err != nil {
+					if err := os.Remove((*c.Receipt())); err != nil {
 						t.Fatal(err)
 					}
 				}
@@ -250,7 +251,7 @@ func TestCustomerOperationRecoveryReceiptRefusesUnsafeMutation(t *testing.T) {
 				ctx, cancel = context.WithCancel(ctx)
 				cancel()
 			}
-			if _, err := recoverCustomerOperationWithReceipt(ctx, f, c, f.now); err == nil {
+			if _, err := main.RecoverCustomerOperationWithReceipt(ctx, f, c, f.now); err == nil {
 				t.Fatal("unsafe mutation allowed", kind)
 			}
 			if f.posts != 0 {
@@ -267,7 +268,7 @@ func TestCustomerOperationRecoveryConcurrentReceipt(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, err := recoverCustomerOperationWithReceipt(t.Context(), f, c, f.now)
+			_, err := main.RecoverCustomerOperationWithReceipt(t.Context(), f, c, f.now)
 			errs <- err
 		}()
 	}
@@ -286,15 +287,15 @@ func TestCustomerOperationRecoveryReceiptPreviewAndSelectors(t *testing.T) {
 	f, _ := newRecoveryReceiptTest(t, "safe_to_retry")
 	for _, extra := range [][]string{{"--preview", "--expected-generation", "1", "--resolution", "failed"}, {"--self"}, {"--expected-generation", "0"}} {
 		args := append([]string{"recover", deliveryTestOperation, "--app", "exports", "--receipt-file", f.path}, extra...)
-		if _, err := parseCustomerOperationCommand(args); err == nil {
+		if _, err := main.ParseCustomerOperationCommand(args); err == nil {
 			t.Fatal("ambiguous apply accepted", args)
 		}
 	}
-	c, err := parseCustomerOperationCommand([]string{"recover", deliveryTestOperation, "--app", "exports", "--receipt-file", f.path})
+	c, err := main.ParseCustomerOperationCommand([]string{"recover", deliveryTestOperation, "--app", "exports", "--receipt-file", f.path})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = recoverCustomerOperationWithReceipt(t.Context(), f, c, f.now); err == nil {
+	if _, err = main.RecoverCustomerOperationWithReceipt(t.Context(), f, c, f.now); err == nil {
 		t.Fatal("new receipt inferred a decision")
 	}
 	if f.posts != 0 {
@@ -304,8 +305,8 @@ func TestCustomerOperationRecoveryReceiptPreviewAndSelectors(t *testing.T) {
 
 func TestCustomerOperationRecoveryReceiptRetainsRequestDepth(t *testing.T) {
 	f, c := newRecoveryReceiptTest(t, "succeeded")
-	c.recovery.Result = []byte(strings.Repeat("[", api.OperationJSONMaxDepth-1) + "0" + strings.Repeat("]", api.OperationJSONMaxDepth-1))
-	if _, err := recoverCustomerOperationWithReceipt(t.Context(), f, c, f.now); err != nil {
+	(*c.Recovery()).Result = []byte(strings.Repeat("[", api.OperationJSONMaxDepth-1) + "0" + strings.Repeat("]", api.OperationJSONMaxDepth-1))
+	if _, err := main.RecoverCustomerOperationWithReceipt(t.Context(), f, c, f.now); err != nil {
 		t.Fatal("local receipt narrowed HTTP request depth", err)
 	}
 }

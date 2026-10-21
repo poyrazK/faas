@@ -1,7 +1,7 @@
 //go:build !no_pg
 
 // adr: 421
-package sched
+package sched_test
 
 import (
 	"context"

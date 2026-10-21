@@ -51,14 +51,9 @@ func TestPgCloneSchemaRegistryCoversMigratedApplicationTablesAndFailsBeforeReser
 		t.Fatalf("schema inventory is incomplete: %d/%d %v", len(coverage.Tables), len(policies), err)
 	}
 	for _, want := range []state.ProjectEnvironmentCloneCoverageBlocker{
+		{Table: "deployment_public_build_urls", Code: "isolated_strategy_unavailable"},
 		{Table: "app_mcp_readiness_policies", Code: "isolated_strategy_unavailable"},
-		{Table: "app_mcp_readiness_policy_history", Code: "isolated_strategy_unavailable"},
-		{Table: "mcp_readiness_fallback_policies", Code: "isolated_strategy_unavailable"},
 		{Table: "mcp_readiness_maintenance_windows", Code: "isolated_strategy_unavailable"},
-		{Table: "mcp_readiness_incident_events", Code: "isolated_data_strategy_unavailable"},
-		{Table: "mcp_readiness_pagerduty_acknowledgements", Code: "isolated_strategy_unavailable"},
-		{Table: "mcp_readiness_pagerduty_policies", Code: "isolated_strategy_unavailable"},
-		{Table: "mcp_readiness_reminder_defaults", Code: "isolated_strategy_unavailable"},
 		{Table: "product_control_heads", Code: "isolated_strategy_unavailable"},
 		{Table: "product_control_revisions", Code: "isolated_strategy_unavailable"},
 		{Table: "product_control_customers", Code: "isolated_strategy_unavailable"},
@@ -94,8 +89,31 @@ func TestPgCloneSchemaRegistryCoversMigratedApplicationTablesAndFailsBeforeReser
 		{Table: "issue_slack_interaction_policies", Code: "isolated_strategy_unavailable"},
 		{Table: "issue_slack_routing_policies", Code: "isolated_strategy_unavailable"},
 		{Table: "issue_ingest_tokens", Code: "isolated_strategy_unavailable"},
+		// Pipeline and readiness customer intent also requires an explicit isolated strategy.
+		{Table: "alert_rule_channels", Code: "isolated_strategy_unavailable"},
+		{Table: "app_mcp_readiness_policy_history", Code: "isolated_strategy_unavailable"},
+		{Table: "app_slos", Code: "isolated_strategy_unavailable"},
+		{Table: "data_pipeline_alerts", Code: "isolated_strategy_unavailable"},
+		{Table: "data_pipelines", Code: "isolated_strategy_unavailable"},
+		{Table: "mcp_readiness_fallback_policies", Code: "isolated_strategy_unavailable"},
+		{Table: "mcp_readiness_pagerduty_acknowledgements", Code: "isolated_strategy_unavailable"},
+		{Table: "mcp_readiness_pagerduty_policies", Code: "isolated_strategy_unavailable"},
+		{Table: "mcp_readiness_reminder_defaults", Code: "isolated_strategy_unavailable"},
+		{Table: "notification_channels", Code: "isolated_strategy_unavailable"},
+		{Table: "synthetic_checks", Code: "isolated_strategy_unavailable"},
 	} {
 		assertCloneCoverageBlocker(t, coverage, want)
+	}
+	// Readiness evidence, overrides and incident history stay with the source
+	// environment, so a clone resets them instead of needing a copy strategy.
+	for _, table := range []string{
+		"deployment_mcp_readiness_overrides", "mcp_readiness_attention_actions", "mcp_readiness_incident_attention",
+		"mcp_readiness_incident_events", "mcp_readiness_incidents", "mcp_readiness_notification_actions",
+		"mcp_readiness_pagerduty_ack_events",
+	} {
+		for _, code := range []string{"isolated_strategy_unavailable", "isolated_data_strategy_unavailable"} {
+			assertNoCloneCoverageBlocker(t, coverage, state.ProjectEnvironmentCloneCoverageBlocker{Table: table, Code: code})
+		}
 	}
 	rawCoverage, err := json.Marshal(coverage)
 	if err != nil || strings.Contains(string(rawCoverage), "must-not-be-in-coverage") {
@@ -180,4 +198,13 @@ func assertCloneCoverageBlocker(t *testing.T, coverage state.ProjectEnvironmentC
 		}
 	}
 	t.Fatalf("missing blocker %+v in %+v", want, coverage.Blockers)
+}
+
+func assertNoCloneCoverageBlocker(t *testing.T, coverage state.ProjectEnvironmentCloneSchemaCoverage, want state.ProjectEnvironmentCloneCoverageBlocker) {
+	t.Helper()
+	for _, actual := range coverage.Blockers {
+		if actual == want {
+			t.Fatalf("unexpected blocker %+v in %+v", want, coverage.Blockers)
+		}
+	}
 }

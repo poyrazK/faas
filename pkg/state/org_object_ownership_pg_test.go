@@ -38,15 +38,14 @@ func TestPostgresOrgObjectOwnershipBackfill(t *testing.T) {
 		t.Run(scenario, func(t *testing.T) {
 			pool := pgtest.OpenMigrated(t)
 			ctx := t.Context()
-			raw, err := migrations.FS.ReadFile("20261018003100006_org_object_storage_ownership.sql")
+			raw, err := migrations.FS.ReadFile("20261019190114551_org_object_storage_ownership_online.sql")
 			if err != nil {
 				t.Fatal(err)
 			}
-			up, down, ok := strings.Cut(string(raw), "-- +goose Down")
-			if !ok {
+			if !strings.Contains(string(raw), "-- +goose Down") {
 				t.Fatal("missing rollback")
 			}
-			if _, err := pool.Exec(ctx, down); err != nil {
+			if err := pgtest.ExecMigration(ctx, t, pool, string(raw), false); err != nil {
 				t.Fatalf("restore legacy schema: %v", err)
 			}
 			store := state.NewPgStore(pool)
@@ -101,7 +100,7 @@ func TestPostgresOrgObjectOwnershipBackfill(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			_, err = pool.Exec(ctx, up)
+			err = pgtest.ExecMigration(ctx, t, pool, string(raw), true)
 			if scenario != "retained roots and history" {
 				if err == nil || !strings.Contains(err.Error(), "remediate") {
 					t.Fatalf("unsafe migration accepted: %v", err)
