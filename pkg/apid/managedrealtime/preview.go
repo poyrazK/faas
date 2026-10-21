@@ -3,6 +3,7 @@ package managedrealtime
 import (
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/google/uuid"
@@ -66,6 +67,19 @@ func (r PreviewRollout) Off() bool { return !r.all && len(r.accounts) == 0 }
 
 // All reports whether every account sees the previews ("*").
 func (r PreviewRollout) All() bool { return r.all }
+
+// Accounts returns whether every account is listed and, if not, the listed
+// account IDs in order.
+func (r PreviewRollout) Accounts() (all bool, accounts []string) {
+	if r.all {
+		return true, nil
+	}
+	for id := range r.accounts {
+		accounts = append(accounts, id)
+	}
+	slices.Sort(accounts)
+	return false, accounts
+}
 
 // PreviewVisible reports whether an account sees realtime previews. A
 // Service without a gate shows them to nobody.

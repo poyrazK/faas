@@ -177,7 +177,10 @@ type server struct {
 	dataAPIUsage *usagestore.Store
 	// liveRollout is who sees live queries (FAAS_LIVE_QUERIES_ACCOUNTS);
 	// nobody until configured.
-	liveRollout                   livequeries.Rollout
+	liveRollout livequeries.Rollout
+	// realtimeRollout is who sees the realtime preview until an operator
+	// writes the realtime_preview platform flag (ADR-20261019102657).
+	realtimeRollout               managedrealtime.PreviewGate
 	clonePostgresContentsReadPool *copycontents.ReadPool
 	cloneWorkerAdmission          func(context.Context) error
 	// Installed only by private wiring for an independently qualified owner.

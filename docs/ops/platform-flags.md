@@ -55,21 +55,25 @@ flag still cannot use a capability its plan lacks; the inspector reports both.
 | `change_timeline` | App change timeline preview (ADR-751) | apid | `FAAS_CHANGE_TIMELINE_ENABLED` |
 | `anomaly_alerts` | Baseline alert comparisons (ADR-744) | apid | `FAAS_ANOMALY_ALERTS_ENABLED` |
 | `trigger_batch_delivery` | `delivery: batch` on triggers (ADR-1321) | apid | `FAAS_TRIGGER_BATCH_DELIVERY_PREVIEW_ENABLED` |
+| `realtime_preview` | Realtime preview: retained history and what builds on it, tickets, access controls, occupancy, usage, endpoint slugs and channel rules, the v2 protocol and SSE (ADR-20261019102657) | apid | `FAAS_REALTIME_PREVIEW_ACCOUNTS` |
 
 The environment and TOML values seed the flag at boot. Once an operator has
 written the flag, they are ignored, including after a restart.
 
-The last five flags were added after their environment gates had shipped.
+The last six flags were added after their environment gates had shipped.
 Until an operator writes one of them, its existing gate still decides, and
 `FAAS_APPLICATION_AUTH_*` is still re-read on every call. The first operator
 write hands the decision to the flag.
 
-Two of these flags have limits:
+`live_queries` and `realtime_preview` have limits:
 
-- `live_queries` is decided by account only, because the realtime path knows
-  only the account. Plan rules never match it.
+- `live_queries` and `realtime_preview` are decided by account only, because
+  the realtime path knows only the account. Plan rules never match them.
 - Unless `live_queries` includes every account, the live-query routes stay
-  hidden from accounts outside it.
+  hidden from accounts outside it. Unless `realtime_preview` includes every
+  account, the served OpenAPI document leaves the realtime preview out.
+  realtimed applies a change to an account's endpoints within the 30 s
+  endpoint resync.
 
 Turning `anomaly_alerts` off refuses only new or changed baseline rules.
 Existing rules keep evaluating. In the same way, turning

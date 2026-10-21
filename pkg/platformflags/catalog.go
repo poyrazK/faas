@@ -38,6 +38,7 @@ const (
 	ChangeTimeline       = "change_timeline"
 	AnomalyAlerts        = "anomaly_alerts"
 	TriggerBatchDelivery = "trigger_batch_delivery"
+	RealtimePreview      = "realtime_preview"
 )
 
 // Spec declares one platform flag. Adding a flag is a code change: the
@@ -123,6 +124,14 @@ var catalog = []Spec{
 		ADR:         "ADR-1321",
 		Consumers:   []string{"apid"},
 		LegacyEnv:   []string{"FAAS_TRIGGER_BATCH_DELIVERY_PREVIEW_ENABLED"},
+	},
+	{
+		Key:         RealtimePreview,
+		Label:       "Realtime preview",
+		Description: "Release the realtime preview (retained history and what builds on it, tickets, access controls, occupancy, usage, endpoint slugs and channel rules, the v2 protocol and SSE) to accounts. Each feature also needs its daemon flag. Decided by account only: plan rules never match. Unless every account is included, the served OpenAPI document leaves the preview out.",
+		ADR:         "ADR-20261019102657",
+		Consumers:   []string{"apid"},
+		LegacyEnv:   []string{"FAAS_REALTIME_PREVIEW_ACCOUNTS"},
 	},
 }
 

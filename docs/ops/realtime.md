@@ -19,9 +19,11 @@ defaults to `0`; with all of them off, realtimed, apid and schedd behave as
 they did before the features existed.
 
 **Who sees a preview.** A daemon flag says the daemon is ready for a feature;
-`FAAS_REALTIME_PREVIEW_ACCOUNTS` on apid says which accounts see it
-(ADR-20261019102657): comma-separated account IDs while you test on
-production, `*` at launch, empty (the default) for nobody. It covers retained
+the `realtime_preview` platform flag says which accounts see it
+(ADR-20261019102657, [platform flags](platform-flags.md)).
+`FAAS_REALTIME_PREVIEW_ACCOUNTS` on apid seeds the flag until an operator
+writes it: comma-separated account IDs while you test on production, `*` at
+launch, empty (the default) for nobody. It covers retained
 history and everything built on it (consumer groups, inbox, push, schedules,
 snapshots, reducers, read progress, realtime triggers, publisher and worker
 credentials), tickets, access controls, occupancy, the usage API, and on

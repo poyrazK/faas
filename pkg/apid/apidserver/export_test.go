@@ -1574,3 +1574,18 @@ func RealtimePreviewEveryone() managedrealtime.PreviewRollout {
 func (s *server) AppWebhookEventsForTest(accountID string) []string {
 	return s.appWebhookEvents(accountID)
 }
+
+// ConfigureRealtimePreviewForTest reads FAAS_REALTIME_PREVIEW_ACCOUNTS from
+// getenv, seeding the realtime_preview platform flag.
+func (s *server) ConfigureRealtimePreviewForTest(getenv func(string) string) error {
+	return s.configureRealtimePreview(getenv)
+}
+
+// RealtimePreviewGateForTest is the gate the realtime handlers consult.
+func (s *server) RealtimePreviewGateForTest() managedrealtime.PreviewGate {
+	return s.realtime.Preview
+}
+
+// RealtimePreviewPublishedForTest reports whether the served spec lists the
+// realtime preview.
+func (s *server) RealtimePreviewPublishedForTest() bool { return s.realtimePreviewPublished() }

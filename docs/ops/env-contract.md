@@ -637,7 +637,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_REALTIME_OUTBOUND_QUEUE` | realtimed | `default` |  |  | `` |  |
 | `FAAS_REALTIME_OUTBOUND_QUEUE_BYTES` | realtimed | `default` |  | 4194304 | `` | per-connection outbound payload budget, including a frame being written |
 | `FAAS_REALTIME_PONG_WAIT` | realtimed | `default` |  |  | `` |  |
-| `FAAS_REALTIME_PREVIEW_ACCOUNTS` | apid | `default` |  |  | `` | ADR-20261019102657 realtime preview rollout: comma-separated account UUIDs, or `*` at launch; empty shows realtime preview features to nobody even where their daemon flags are on |
+| `FAAS_REALTIME_PREVIEW_ACCOUNTS` | apid, shared | `default` |  |  | `` | ADR-20261019102657 realtime preview rollout: comma-separated account UUIDs, or `*` at launch; empty shows realtime preview features to nobody even where their daemon flags are on; boot fallback for the realtime_preview platform flag (ADR-1700), ignored once an operator writes platform_flag.realtime_preview |
 | `FAAS_REALTIME_RESUME_PREVIEW_ENABLED` | realtimed | `default` |  | 0 | `` | operator-only v2 WebSocket resume preview; requires apid history reader and OIDC endpoint authentication |
 | `FAAS_REALTIME_RETAINED_PREVIEW_ENABLED` | apid | `default` |  | 0 | `` | operator-only retained outbound history preview; off pending plan entitlements and fleet qualification |
 | `FAAS_REALTIME_ROLE` | realtimed, shared | `dropin` |  |  | `` |  |
