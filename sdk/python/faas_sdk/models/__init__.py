@@ -4779,6 +4779,17 @@ from .release_approval_policy_approvers import ReleaseApprovalPolicyApprovers
 from .release_approval_status import ReleaseApprovalStatus
 from .release_approval_status_state import ReleaseApprovalStatusState
 from .release_database_ref import ReleaseDatabaseRef
+from .release_diff import ReleaseDiff
+from .release_diff_code import ReleaseDiffCode
+from .release_diff_config import ReleaseDiffConfig
+from .release_diff_database import ReleaseDiffDatabase
+from .release_diff_dependencies import ReleaseDiffDependencies
+from .release_diff_field import ReleaseDiffField
+from .release_diff_field_field import ReleaseDiffFieldField
+from .release_diff_key import ReleaseDiffKey
+from .release_diff_key_change import ReleaseDiffKeyChange
+from .release_diff_package import ReleaseDiffPackage
+from .release_diff_side import ReleaseDiffSide
 from .release_freeze import ReleaseFreeze
 from .release_freeze_kind import ReleaseFreezeKind
 from .release_freeze_source import ReleaseFreezeSource
@@ -10449,6 +10460,17 @@ __all__ = (
     "ReleaseApprovalStatus",
     "ReleaseApprovalStatusState",
     "ReleaseDatabaseRef",
+    "ReleaseDiff",
+    "ReleaseDiffCode",
+    "ReleaseDiffConfig",
+    "ReleaseDiffDatabase",
+    "ReleaseDiffDependencies",
+    "ReleaseDiffField",
+    "ReleaseDiffFieldField",
+    "ReleaseDiffKey",
+    "ReleaseDiffKeyChange",
+    "ReleaseDiffPackage",
+    "ReleaseDiffSide",
     "ReleaseFreeze",
     "ReleaseFreezeKind",
     "ReleaseFreezeSource",
