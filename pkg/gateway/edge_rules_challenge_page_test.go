@@ -62,10 +62,15 @@ func TestChallengePageMatchesHTMLTemplate(t *testing.T) {
 			if strings.Join(g, "\n") != strings.Join(w, "\n") {
 				t.Fatalf("page tokens differ from html/template's:\ngot  %q\nwant %q", g, w)
 			}
+			// A value that broke out of its attribute would add a tag;
+			// inside one, the tokenizer hands it back as the decoded value.
 			for _, tok := range g {
-				if strings.HasPrefix(tok, "start img") || strings.Contains(tok, "onerror") {
+				if strings.HasPrefix(tok, "StartTag img") || strings.HasPrefix(tok, "StartTag script") && !strings.Contains(tok, "nonce=") {
 					t.Fatalf("a value broke out of its attribute: %s", tok)
 				}
+			}
+			if !strings.Contains(strings.Join(g, "\n"), "name=return value="+d.Return) {
+				t.Errorf("the return path does not decode back to %q", d.Return)
 			}
 		})
 	}
