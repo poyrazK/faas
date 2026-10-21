@@ -13,6 +13,10 @@ import (
 // inputs against current intent. CapturedInputHash includes the target node;
 // comparing it with the historical parent's hash would forbid cross-node use.
 func (c SnapshotCapture) CheckRestoreInputs(binding Binding, sources []ArtifactSource, memoryKey, vmstateKey string, memoryBytes int64, now time.Time) error {
+	return c.checkRestoreInputs(binding, sources, memoryKey, vmstateKey, memoryBytes, now, false)
+}
+
+func (c SnapshotCapture) checkRestoreInputs(binding Binding, sources []ArtifactSource, memoryKey, vmstateKey string, memoryBytes int64, now time.Time, migration bool) error {
 	if err := binding.Validate(now); err != nil {
 		return err
 	}
@@ -20,7 +24,7 @@ func (c SnapshotCapture) CheckRestoreInputs(binding Binding, sources []ArtifactS
 		return ErrInvalid
 	}
 	parent := c.Parent.Binding
-	if c.Parent.Paused || binding.Token == parent.Token || binding.InstanceID == parent.InstanceID {
+	if c.Parent.Paused || binding.Token == parent.Token || binding.InstanceID == parent.InstanceID && !migration {
 		return ErrReplay
 	}
 	if binding.AppID != parent.AppID || binding.AccountID != parent.AccountID || binding.DeploymentID != parent.DeploymentID || binding.DesiredRevision != parent.DesiredRevision || binding.EffectiveHash != parent.EffectiveHash || binding.EgressRevision != parent.EgressRevision {

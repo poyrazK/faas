@@ -9,6 +9,9 @@
   locks only the generation row and keeps the proof and enrollment-expiry
   checks. The ticket also keeps the workload-retirement gate's verdict,
   which the generation covers, so a ticketed thaw is that one statement.
+  Amended 2026-10-21 (see "Amendment: coordinated wakes"): a coordinated
+  wake whose selection is the ticket's deployment and environment takes
+  the fast path.
 - Date: 2026-10-15
 - Amends: ADR-1151 decision 2, "Thaw path"
 - Builds on: ADR-1151 (pause tiers), the scaling roadmap's wake rule (zero
@@ -170,3 +173,41 @@ that was running when the edit landed.
    metrics, behind `frozen_fast_path`.
 4. Turn it on with `frozen_tier` in the same canary, comparing
    `wake.thaw_breakdown` and thaw errors against the ordinary path.
+
+## Amendment: coordinated wakes (2026-10-21)
+
+Section 2 kept the fast path away from any wake carrying a coordinated wake
+selection. Every gateway wake carries one: the gateway calls schedd's
+`EnsureWake`, which resolves the production deployment, its app settings,
+account and scaling owner from fresh reads before it enters the wake
+coordinator (ADR-098, ADR-590). With the frozen tier on in production-us
+(rc.285, 2026-10-21), every thaw took ADR-1151's path:
+`schedd_frozen_thaw_total{outcome="fast"}` and `fast_refused` stayed 0, and
+`publish_ms` (the ordinary publication) was 63 ms of a 97 ms schedd thaw.
+
+A selection names a deployment the same way the ticket's basis does: for a
+production wake with no explicit deployment it comes from
+`ResolveProductionDeployment`, which section 3's conformance test ties to
+`FrozenThawBasis`. So:
+
+- A coordinated wake takes the fast path when its selection is the
+  ticket's app, deployment and admission environment
+  (`runtimeEnvironmentAdmissionKey` of the selected scaling owner). Any
+  other selection leaves the ticket in place and the ordinary path decides.
+- Such a wake also defers the workload-retirement gate, as an
+  uncoordinated production wake does; a step that decides from fresh reads
+  runs it first.
+- The guarded statement is unchanged: the selection being fresher than the
+  ticket only means a change after the freeze has already moved the
+  generation, and `ThawFrozenInstance` refuses it.
+
+The fast path was dark without anyone seeing why, so it now reports itself:
+
+- `schedd_frozen_fast_path_skipped_total{reason}` counts wakes of an app
+  with a frozen VM that did not take the fast path: `deployment` (the wake
+  named one), `scope`, `selection`, `no_ticket`, `capacity`.
+- `schedd_frozen_thaw_tickets_total{outcome}` counts tickets at freeze:
+  `issued`, `error` (a read failed), or why the VM thaws through the
+  ordinary path (`mode`, `not_selected`, `operator_cold_boot`,
+  `app_inactive`, `managed_standards`, `account`, `shape`, `config`).
+

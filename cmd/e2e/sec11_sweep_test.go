@@ -27,6 +27,7 @@ import (
 	"encoding/json"
 	"errors"
 	"filippo.io/age"
+	"flag"
 	"fmt"
 	"io"
 	"net"
@@ -48,6 +49,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/e2etest"
+	"github.com/onebox-faas/faas/pkg/functionlifetime"
 	"github.com/onebox-faas/faas/pkg/netns"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 )
@@ -158,6 +160,17 @@ func waitTCP(t *testing.T, addr string, d time.Duration, proc ...*exec.Cmd) {
 // *before* any KVM/listener binding, so the test is CI-safe (no
 // /dev/kvm needed, no root needed).
 func TestMain(m *testing.M) {
+	// adr: 1577
+	// The prepared two-host fixture uses already-running daemons. Avoid
+	// building unrelated local services, and reject a broader test selection.
+	if os.Getenv("FAAS_REQUIRE_FUNCTION_MIGRATION_NATIVE") == "1" {
+		flag.Parse()
+		if !functionlifetime.NativeQualificationBuild || flag.Lookup("test.run").Value.String() != "^TestFunctionMigrationDestinationPostgresMetal$" {
+			fmt.Fprintln(os.Stderr, "native migration requires its qualified build and exact reply-boundary suite")
+			os.Exit(2)
+		}
+		os.Exit(m.Run())
+	}
 	// Commit subprocesses exercise customer transactions and HTTP processing.
 	if os.Getenv("GREGALE_COMMIT_PRODUCER") == "1" || os.Getenv("GREGALE_COMMIT_HTTP_CONSUMER") == "1" {
 		os.Exit(m.Run())

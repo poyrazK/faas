@@ -46,12 +46,13 @@ func customerPath(customerID, kind, id string) string {
 	return path
 }
 
-// newestActive is the query for a customer's most recently updated active
-// address or business.
-const newestActive = "?status=active&order_by=updated_at%5BDESC%5D&per_page=1"
+// newestActive is the query for a customer's newest active address or
+// business. Paddle orders these lists only by ID, and its IDs grow with
+// creation time (ADR-20261020120000 amendment 1).
+const newestActive = "?status=active&order_by=id%5BDESC%5D&per_page=1"
 
-// ActiveAddress returns the customer's most recently updated active address;
-// ok is false when the customer has none.
+// ActiveAddress returns the customer's newest active address; ok is false
+// when the customer has none.
 func (c *Client) ActiveAddress(ctx context.Context, key, customerID string) (Address, bool, error) {
 	var out struct {
 		Data []Address `json:"data"`
@@ -77,8 +78,8 @@ func (c *Client) PutAddress(ctx context.Context, key, customerID string, a Addre
 	return out.Data, err
 }
 
-// ActiveBusiness returns the customer's most recently updated active
-// business; ok is false when the customer has none.
+// ActiveBusiness returns the customer's newest active business; ok is false
+// when the customer has none.
 func (c *Client) ActiveBusiness(ctx context.Context, key, customerID string) (Business, bool, error) {
 	var out struct {
 		Data []Business `json:"data"`

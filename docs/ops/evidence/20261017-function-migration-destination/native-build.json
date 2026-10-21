@@ -1,0 +1,25 @@
+{
+  "command": [
+    "go",
+    "test",
+    "-p",
+    "1",
+    "-race",
+    "-tags",
+    "metal,function_background_native",
+    "-c",
+    "-o",
+    "/tmp/function-destination-native.test",
+    "./cmd/e2e"
+  ],
+  "exit_code": 0,
+  "executed": false,
+  "native_destination_acceptance": false,
+  "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "bytes": 240781977,
+  "sha256": "e7bec9af9d714c95b17ab2edbf455a8eeac2ae1232a8d4fcab3db1c8a2b34110",
+  "source_only_suite_symbols": [
+    "github.com/onebox-faas/faas/cmd/e2e_test.TestFunctionMigrationAdmissionPostgresMetal",
+    "github.com/onebox-faas/faas/cmd/e2e_test.TestFunctionResourcesPostgresMetal"
+  ]
+}
