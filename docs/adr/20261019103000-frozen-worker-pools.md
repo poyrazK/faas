@@ -80,5 +80,10 @@
   at scale-in as above, the second froze, and three thaws took 685, 714
   and 815 ms from the send to the worker's RUNNING row and 792–850 ms to
   the message's lease, against about 4 s for a cold boot. vmmd's thaw took
-  2–4 ms and schedd's thaw 29–39 ms; the rest passes before schedd starts
-  the thaw and is not broken down here.
+  2–4 ms and schedd's thaw 29–39 ms; the rest was the wait for the pool's
+  next 1 s reconcile tick. With a queue message waking an idle pool
+  (ADR-20261018101500 decision 3, revision 9b3520e501) three thaws took
+  350, 180 and 159 ms to RUNNING and 206–384 ms to the lease, on a node
+  under shared disk load (vmmd's thaw 3–70 ms, schedd's 34–118 ms). The
+  first message arrived as the account's run was finishing the freeze and
+  waited for it.

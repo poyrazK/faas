@@ -100,4 +100,7 @@
   before) and leased at 4.0 s; a burst of three was RUNNING at 5.0, 8.5 and
   11.9 s (11.9, 23.7 and 35.5 s before) and leased at 4.1, 7.6 and 11.0 s.
   The node's disk was under heavy shared load in that run, which lengthened
-  disk staging (`provision`, 0.6–2.4 s) and the token times.
+  disk staging (`provision`, 0.6–2.4 s) and the token times. For decision
+  3, `TestWorkerFrozenThawMetal` on n2 (2026-10-21) took a frozen worker
+  from the send to RUNNING in 685–815 ms before it and 159–350 ms after
+  (ADR-20261019103000).
