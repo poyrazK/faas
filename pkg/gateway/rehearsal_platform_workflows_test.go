@@ -107,7 +107,7 @@ func TestRehearsalPlatformAPICapturesContainedWorkflowEvents(t *testing.T) {
 		{name: "other-run-route-passes-through", path: "/v1/workflows/runs/x/cancel", body: `{}`, status: http.StatusTeapot},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			store :=&fakeRehearsalPlatformAPIStore{run: strings.Repeat("a", 32)}
+			store := &fakeRehearsalPlatformAPIStore{run: strings.Repeat("a", 32)}
 			response := serveRehearsalPlatformWithKey(t, store, tc.path, tc.body, "")
 			if response.Code != tc.status {
 				t.Fatalf("status = %d, want %d: %s", response.Code, tc.status, response.Body)

@@ -106,6 +106,9 @@ func rehearsalPlatformAPIRoute(r *http.Request) (rehearsalPlatformRoute, bool) {
 	case "delayed-tasks":
 		return queueCaptureRoute(api.ScenarioQueueKindDelayedTask, slug), true
 	}
+	if rest, ok := strings.CutPrefix(route, "realtime/"); ok {
+		return realtimeRoute(slug, rest)
+	}
 	if workflow, ok := strings.CutPrefix(route, "workflows/"); ok {
 		if name, ok := strings.CutSuffix(workflow, "/runs"); ok && name != "" && !strings.Contains(name, "/") {
 			return workflowStartRoute(slug, name), true

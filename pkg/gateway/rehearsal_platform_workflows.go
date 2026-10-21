@@ -117,6 +117,9 @@ func captureRehearsalPlatformCall(r *http.Request, call rehearsalPlatformCall, c
 	case !captured || errors.Is(err, state.ErrNotFound):
 		return result, notFound
 	case errors.Is(err, state.ErrScenarioIdempotencyConflict):
+		if conflict == nil {
+			conflict = api.NewProblem(http.StatusConflict, api.CodeConflict, "Idempotency key conflict", "this Idempotency-Key was already used for a different request")
+		}
 		return result, conflict
 	case errors.Is(err, state.ErrScenarioActionsSealed):
 		return result, rehearsalSealedProblem()

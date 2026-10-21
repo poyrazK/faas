@@ -5102,6 +5102,11 @@ type Querier interface {
 	// A member of the same run is named by its workload, so sibling runs compare;
 	// any other app must exist in the caller's account, as for a real send.
 	ScenarioQueueCaptureTarget(ctx context.Context, db DBTX, arg ScenarioQueueCaptureTargetParams) (string, error)
+	// A run member's endpoint is named by its workload and creation order, so
+	// sibling runs compare; another account app's endpoint keeps its ID. The
+	// endpoint must belong to the addressed app, as in production
+	// (ADR-20261021180000).
+	ScenarioRealtimeEndpointTarget(ctx context.Context, db DBTX, arg ScenarioRealtimeEndpointTargetParams) (string, error)
 	ScenarioRecorderAttemptOwner(ctx context.Context, db DBTX, arg ScenarioRecorderAttemptOwnerParams) (bool, error)
 	ScenarioRecorderRequestAvailable(ctx context.Context, db DBTX, arg ScenarioRecorderRequestAvailableParams) (bool, error)
 	ScenarioRecorderRunCounts(ctx context.Context, db DBTX, arg ScenarioRecorderRunCountsParams) (ScenarioRecorderRunCountsRow, error)

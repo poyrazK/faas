@@ -1374,6 +1374,16 @@ content. Workflow definitions, plan gates and run status are not checked, and
 run reads are not served. See
 [ADR-20261021150000](adr/20261021150000-rehearsal-workflow-capture.md).
 
+Realtime channel publishes and backend signals are captured the same way:
+`…/realtime/endpoints/{id}/channels/{channel}/publish`, `…/signals` and
+`…/activity-scopes/{scope}/signals`. They are validated like the public API and
+never delivered. A publish answers with no subscribers; a retained publish
+gets no history sequence. A run member's endpoint is named by workload and
+creation order (`workload:chat/endpoint#1`), so preview endpoint IDs never
+compare. `publish-batch`, publisher-credential publishes and realtime reads are
+not served. See
+[ADR-20261021180000](adr/20261021180000-rehearsal-realtime-capture.md).
+
 Database and object-store access require future isolated adapters. Ordinary app tasks,
 live migration, managed application-standard native admission and GitOps
 qualification remain unsupported for contained apps. Explicit

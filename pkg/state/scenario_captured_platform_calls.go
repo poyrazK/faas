@@ -17,11 +17,13 @@ import (
 
 // ScenarioPlatformCallCapture is one workflow or realtime call an enrolled app
 // requested through the run-local platform API. Address is what the request
-// named: the {slug} of a workflow start, or the run ID of a workflow event.
-// Name is the workflow or event name. Message is nil when Oversized.
+// named: the {slug} of a workflow start or realtime call, or the run ID of a
+// workflow event. Endpoint is a realtime call's endpoint ID. Name is the
+// workflow, event or channel name. Message is nil when Oversized.
 type ScenarioPlatformCallCapture struct {
 	Kind           string
 	Address        string
+	Endpoint       string
 	Name           string
 	IdempotencyKey string
 	Message        json.RawMessage
@@ -52,9 +54,14 @@ type memScenarioCapturedPlatformCall struct {
 	call                                ScenarioPlatformCallCapture
 }
 
+func scenarioRealtimeKind(kind string) bool {
+	return kind == api.ScenarioPlatformKindRealtimePublish || kind == api.ScenarioPlatformKindRealtimeSignal
+}
+
 func validScenarioPlatformCall(call ScenarioPlatformCallCapture) bool {
-	if call.Kind != api.ScenarioPlatformKindWorkflowRun && call.Kind != api.ScenarioPlatformKindWorkflowEvent {
-		return false // realtime kinds resolve their own targets
+	if call.Kind != api.ScenarioPlatformKindWorkflowRun && call.Kind != api.ScenarioPlatformKindWorkflowEvent && !scenarioRealtimeKind(call.Kind) ||
+		scenarioRealtimeKind(call.Kind) != (call.Endpoint != "") {
+		return false
 	}
 	return call.Name != "" && len(call.Name) <= 256 && len(call.IdempotencyKey) <= WorkflowRunIdempotencyKeyMaxBytes && call.Oversized == (call.Message == nil)
 }
@@ -142,6 +149,20 @@ func (s *PgStore) CaptureScenarioPlatformCall(ctx context.Context, appID string,
 // captured start or, for a run outside the rehearsal, by run:<id>.
 func (s *PgStore) scenarioPlatformTarget(ctx context.Context, tx pgx.Tx, accountID, runID string, call ScenarioPlatformCallCapture) (string, error) {
 	q := sqlc.New()
+	if scenarioRealtimeKind(call.Kind) {
+		endpoint, err := uuid.Parse(call.Endpoint)
+		if err != nil || !api.ValidAppSlug(call.Address) {
+			return "", ErrNotFound
+		}
+		target, err := q.ScenarioRealtimeEndpointTarget(ctx, tx, sqlc.ScenarioRealtimeEndpointTargetParams{AccountID: accountID, RunID: runID, Slug: call.Address, EndpointID: endpoint.String()})
+		if err != nil {
+			return "", fmt.Errorf("resolve rehearsal realtime endpoint: %w", err)
+		}
+		if target == "" {
+			return "", ErrNotFound
+		}
+		return target, nil
+	}
 	if call.Kind == api.ScenarioPlatformKindWorkflowRun {
 		if !api.ValidAppSlug(call.Address) {
 			return "", ErrNotFound
@@ -229,6 +250,9 @@ func (m *MemStore) CaptureScenarioPlatformCall(ctx context.Context, appID string
 
 // scenarioPlatformTargetLocked mirrors PgStore.scenarioPlatformTarget.
 func (m *MemStore) scenarioPlatformTargetLocked(member ScenarioTestMember, call ScenarioPlatformCallCapture) string {
+	if scenarioRealtimeKind(call.Kind) {
+		return m.scenarioRealtimeTargetLocked(member, call)
+	}
 	if call.Kind == api.ScenarioPlatformKindWorkflowRun {
 		if !api.ValidAppSlug(call.Address) {
 			return ""
@@ -257,6 +281,36 @@ func (m *MemStore) scenarioPlatformTargetLocked(member ScenarioTestMember, call 
 		if canonicalMemUUID(runID) == id.String() && sameScenarioAccount(m.apps[run.AppID].AccountID, member.AccountID) {
 			return "run:" + id.String()
 		}
+	}
+	return ""
+}
+
+// scenarioRealtimeTargetLocked mirrors ScenarioRealtimeEndpointTarget.
+func (m *MemStore) scenarioRealtimeTargetLocked(member ScenarioTestMember, call ScenarioPlatformCallCapture) string {
+	id, err := uuid.Parse(call.Endpoint)
+	if err != nil || !api.ValidAppSlug(call.Address) {
+		return ""
+	}
+	for key, endpoint := range m.managedRealtimeEndpoints {
+		if canonicalMemUUID(key) != id.String() || !sameScenarioAccount(endpoint.AccountID, member.AccountID) {
+			continue
+		}
+		app := m.apps[endpoint.AppID]
+		owner, enrolled := m.scenarioActionPolicyLocked(endpoint.AppID)
+		inRun := enrolled && owner.Member.RunID == member.RunID && owner.Member.AccountID == member.AccountID && owner.Member.Workload != ""
+		if app.Slug != call.Address && (!inRun || owner.Member.Workload != call.Address) {
+			return ""
+		}
+		if !inRun {
+			return "app:" + app.Slug + "/endpoint:" + id.String()
+		}
+		ordinal := 0
+		for _, other := range m.managedRealtimeEndpoints {
+			if other.AppID == endpoint.AppID && (other.CreatedAt.Before(endpoint.CreatedAt) || other.CreatedAt.Equal(endpoint.CreatedAt) && canonicalMemUUID(other.ID) <= id.String()) {
+				ordinal++
+			}
+		}
+		return "workload:" + owner.Member.Workload + "/endpoint#" + strconv.Itoa(ordinal)
 	}
 	return ""
 }

@@ -878,6 +878,39 @@ func (q *Queries) ScenarioQueueCaptureTarget(ctx context.Context, db DBTX, arg S
 	return target, err
 }
 
+const scenarioRealtimeEndpointTarget = `-- name: ScenarioRealtimeEndpointTarget :one
+SELECT coalesce((SELECT CASE WHEN p.app_id IS NOT NULL THEN 'workload:' || p.workload_name || '/endpoint#' ||
+   (SELECT count(*) FROM managed_realtime_endpoints x WHERE x.app_id=e.app_id AND (x.created_at,x.id)<=(e.created_at,e.id))::text
+  ELSE 'app:' || a.slug || '/endpoint:' || e.id::text END
+ FROM managed_realtime_endpoints e JOIN apps a ON a.id=e.app_id AND a.account_id=e.account_id
+ LEFT JOIN scenario_test_action_policies p ON p.app_id=e.app_id AND p.account_id=e.account_id AND p.run_id=$1::text AND p.workload_name<>''
+ WHERE e.id=$2::text::uuid AND e.account_id=$3::text::uuid
+  AND (a.slug=$4::text OR p.workload_name=$4::text)),'')::text AS target
+`
+
+type ScenarioRealtimeEndpointTargetParams struct {
+	RunID      string
+	EndpointID string
+	AccountID  string
+	Slug       string
+}
+
+// A run member's endpoint is named by its workload and creation order, so
+// sibling runs compare; another account app's endpoint keeps its ID. The
+// endpoint must belong to the addressed app, as in production
+// (ADR-20261021180000).
+func (q *Queries) ScenarioRealtimeEndpointTarget(ctx context.Context, db DBTX, arg ScenarioRealtimeEndpointTargetParams) (string, error) {
+	row := db.QueryRow(ctx, scenarioRealtimeEndpointTarget,
+		arg.RunID,
+		arg.EndpointID,
+		arg.AccountID,
+		arg.Slug,
+	)
+	var target string
+	err := row.Scan(&target)
+	return target, err
+}
+
 const scenarioRehearsalNetworkPolicy = `-- name: ScenarioRehearsalNetworkPolicy :one
 SELECT run_id,account_id::text AS account_id FROM scenario_test_action_policies
 WHERE app_id=$1::text::uuid AND network_mode='contained'

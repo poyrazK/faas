@@ -213,6 +213,19 @@ WHERE c.id=sqlc.arg(id)::text::uuid AND c.account_id=sqlc.arg(account_id)::text:
 SELECT EXISTS(SELECT 1 FROM workflow_runs wr JOIN apps a ON a.id=wr.app_id
  WHERE wr.id=sqlc.arg(id)::text::uuid AND a.account_id=sqlc.arg(account_id)::text::uuid)::boolean AS present;
 
+-- name: ScenarioRealtimeEndpointTarget :one
+-- A run member's endpoint is named by its workload and creation order, so
+-- sibling runs compare; another account app's endpoint keeps its ID. The
+-- endpoint must belong to the addressed app, as in production
+-- (ADR-20261021180000).
+SELECT coalesce((SELECT CASE WHEN p.app_id IS NOT NULL THEN 'workload:' || p.workload_name || '/endpoint#' ||
+   (SELECT count(*) FROM managed_realtime_endpoints x WHERE x.app_id=e.app_id AND (x.created_at,x.id)<=(e.created_at,e.id))::text
+  ELSE 'app:' || a.slug || '/endpoint:' || e.id::text END
+ FROM managed_realtime_endpoints e JOIN apps a ON a.id=e.app_id AND a.account_id=e.account_id
+ LEFT JOIN scenario_test_action_policies p ON p.app_id=e.app_id AND p.account_id=e.account_id AND p.run_id=sqlc.arg(run_id)::text AND p.workload_name<>''
+ WHERE e.id=sqlc.arg(endpoint_id)::text::uuid AND e.account_id=sqlc.arg(account_id)::text::uuid
+  AND (a.slug=sqlc.arg(slug)::text OR p.workload_name=sqlc.arg(slug)::text)),'')::text AS target;
+
 -- name: InsertScenarioCapturedPlatformCall :one
 INSERT INTO scenario_captured_platform_calls(account_id,run_id,app_id,kind,target,name,idempotency_key,message,oversized)
 VALUES(sqlc.arg(account_id)::text::uuid,sqlc.arg(run_id)::text,sqlc.arg(app_id)::text::uuid,sqlc.arg(kind)::text,sqlc.arg(target)::text,
