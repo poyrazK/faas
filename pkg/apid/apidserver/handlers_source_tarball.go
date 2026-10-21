@@ -139,9 +139,11 @@ func (s *server) handleSourceTarballDeploy(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad multipart", err.Error()))
 		return
 	}
-	r, replied := s.replyMultipartSubmission(w, r, app, fingerprint.Sum())
-	if replied {
+	if s.replyMultipartSubmission(w, r, app, fingerprint.Sum()) {
 		return
+	}
+	if state.DeploymentSubmissionAttempt(r.Context()) != "" {
+		r = r.WithContext(state.ContextWithDeploymentSubmissionFingerprint(r.Context(), fingerprint.Sum()))
 	}
 	tarballFile, _, err := r.FormFile(fieldNameTarball)
 	if err != nil {

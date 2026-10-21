@@ -369,9 +369,11 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		_ = part.Close()
 	}
 
-	r, replied := s.replyMultipartSubmission(w, r, app, fingerprint.Sum())
-	if replied {
+	if s.replyMultipartSubmission(w, r, app, fingerprint.Sum()) {
 		return
+	}
+	if state.DeploymentSubmissionAttempt(r.Context()) != "" {
+		r = r.WithContext(state.ContextWithDeploymentSubmissionFingerprint(r.Context(), fingerprint.Sum()))
 	}
 	if sourcePath == "" {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,

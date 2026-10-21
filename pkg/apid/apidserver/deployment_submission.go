@@ -120,18 +120,15 @@ func (s *server) jsonSubmissionFingerprint(w http.ResponseWriter, r *http.Reques
 	return fingerprint, true
 }
 
-// replyMultipartSubmission finishes a multipart attempt once its fields and
-// source are fingerprinted: it replays or refuses an accepted attempt, or
-// returns a request whose deployment will record the fingerprint.
-func (s *server) replyMultipartSubmission(w http.ResponseWriter, r *http.Request, app state.App, fingerprint string) (*http.Request, bool) {
-	if receipt, accepted := r.Context().Value(acceptedSubmissionKey{}).(api.DeploymentSubmissionReceipt); accepted {
+// replyMultipartSubmission replays or refuses an accepted attempt once a
+// multipart request's fields and source are fingerprinted. Otherwise the
+// caller carries the fingerprint to the receipt written with the deployment.
+func (s *server) replyMultipartSubmission(w http.ResponseWriter, r *http.Request, app state.App, fingerprint string) bool {
+	receipt, accepted := r.Context().Value(acceptedSubmissionKey{}).(api.DeploymentSubmissionReceipt)
+	if accepted {
 		s.replyAcceptedSubmission(w, r, app, receipt, fingerprint)
-		return r, true
 	}
-	if state.DeploymentSubmissionAttempt(r.Context()) == "" {
-		return r, false
-	}
-	return r.WithContext(state.ContextWithDeploymentSubmissionFingerprint(r.Context(), fingerprint)), false
+	return accepted
 }
 
 func (s *server) replyAcceptedSubmission(w http.ResponseWriter, r *http.Request, app state.App, receipt api.DeploymentSubmissionReceipt, fingerprint string) {
