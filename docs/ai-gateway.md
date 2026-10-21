@@ -55,6 +55,11 @@ account during the preview; contact support to have it turned on for yours.
 - **Visibility.** Usage and cost by app, model and end user, budget alerts at
   80% and 100%, an opt-in request log, opt-in capture of request and response
   bodies, and replay of a captured call against other models.
+- **Quality signals.** Every call returns its ID in `X-Gregale-AI-Call` and is
+  marked when its answer stopped at the token limit, was refused or filtered,
+  was empty, or broke the JSON it was asked for. Apps rate calls by ID, a judge
+  model can score a sample of them, and you can be alerted when a model's
+  quality drifts from its last week.
 - **AI traces.** Group an agent's calls into one task with
   `X-Gregale-AI-Trace` or your existing `traceparent`, see each task's calls,
   cost and requested tools in order, and stop a task that makes too many
@@ -145,6 +150,26 @@ gregale ai traces <id> <trace-id>
 gregale ai policy <id> --trace-max-calls 50 --trace-max-cost 2 --trace-max-repeated-tool-calls 3
 ```
 
+Each response carries `X-Gregale-AI-Call: <call-id>`. With the request log on,
+your app can rate the call through the gateway, the same way it calls the
+model:
+
+```sh
+curl -X POST "$GATEWAY/i/$INTEGRATION_ID/_gregale/feedback" \
+  -H 'Content-Type: application/json' \
+  -d '{"call_id": "<call-id>", "rating": "bad", "label": "wrong_answer"}'
+```
+
+Score a sample of calls with a judge model of your choice, and get
+`outbound.ai_quality.drift` webhooks when a model's quality drifts:
+
+```sh
+gregale ai policy <id> --request-log-content on --online-eval-percent 5 \
+  --online-eval-judge <openai-id> --online-eval-model gpt-5-mini --quality-alerts on
+gregale ai usage <id>            # QUALITY and SCORE columns
+gregale ai quality-alerts <id>
+```
+
 ### Outside Gregale
 
 To call the gateway from your laptop, CI or a notebook as one of your apps,
@@ -173,6 +198,7 @@ canary only if the new model does not do worse.
 | Response | Meaning |
 | --- | --- |
 | `429` with `X-Gregale-Outbound-Rejection` | A cap or rate limit was reached; `Retry-After` says when it resets. Trace limits (`trace_call_limit`, `trace_cost_limit`, `trace_tool_loop`) never reset: start a new trace. |
+| `404 outbound_ai_call_not_found` | Feedback named a call that is not in the integration's request log, or that another app made. |
 | `400 outbound_ai_trace_invalid` | `X-Gregale-AI-Trace` is empty, longer than 64 characters or has a character outside `A-Z a-z 0-9 . _ : @ + = / \| -`. |
 | `400 outbound_ai_content_blocked` | The content policy blocked the request. The problem names the detector, never the content. |
 | `402 plan_feature_gated` | Your plan does not include the AI gateway. |

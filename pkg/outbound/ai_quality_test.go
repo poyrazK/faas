@@ -36,7 +36,9 @@ func TestQualityFlagsAreReadFromEveryFormat(t *testing.T) {
 	anthropic := func(contentType string) *aiUsageObserver {
 		return newAIUsageObserver(api.OutboundAIProviderAnthropic, contentType, nil)
 	}
-	gemini := func() *aiUsageObserver { return newAIUsageObserver(api.OutboundAIProviderGemini, "application/json", nil) }
+	gemini := func() *aiUsageObserver {
+		return newAIUsageObserver(api.OutboundAIProviderGemini, "application/json", nil)
+	}
 	converse := func() *aiUsageObserver {
 		return newAIUsageObserverFormat(aiFormatBedrockConverse, "application/json", nil)
 	}

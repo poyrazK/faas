@@ -1008,6 +1008,81 @@ resets, so start a new one.
 - With trace limits set, a call of a new trace past the day's 100,000 is
   refused with `trace_untracked`, since it could not be limited.
 
+## AI quality signals
+
+The gateway reports the quality of AI answers it can see without reading them
+for meaning (ADR 20261021171712).
+
+**Call IDs.** Every AI call's response carries `X-Gregale-AI-Call: <uuid>`,
+the ID of its request-log entry. The log-export line carries it as `call_id`
+and OTLP drains get `gregale.ai.call_id`. Realtime turns get IDs in the log,
+but a WebSocket has no per-turn header.
+
+**Quality flags.** A call that answered (2xx with known usage) of a text
+generation endpoint is marked with:
+
+| Flag | When |
+| --- | --- |
+| `truncated` | The model stopped at the output-token limit (`finish_reason` `length`, `stop_reason` `max_tokens`, `MAX_TOKENS`, `max_output_tokens`). |
+| `refused` | The provider refused or filtered the answer: a refusal field, `content_filter`, Anthropic `refusal`, a Gemini safety block, a Bedrock guardrail. |
+| `empty` | The answer had no text and requested no tools. Thoughts do not count as text. |
+| `invalid_json` | JSON was asked for (`response_format` or `text.format` `json_object`/`json_schema`, Gemini `responseMimeType: application/json`) and the answer is not JSON; a tool call's arguments are not JSON; or Gemini reports `MALFORMED_FUNCTION_CALL`. Up to 64 KiB of text and 16 KiB of arguments per call are checked. |
+| `tool_error` | The newest message of the request reports a failed tool: an Anthropic `tool_result` with `is_error: true` or a Bedrock `toolResult` with `status: error`. |
+
+Flags are on request-log entries (`quality_flags`), the log-export line,
+`gregale.ai.quality_flags`, the daily usage (`truncated_requests` and the
+rest, the QUALITY column of `gregale ai usage`) and
+`outbound_ai_quality_flags_total{integration_id, flag}`. They describe the
+provider's answer, before response guardrails change it.
+
+**Feedback.** An app rates its own logged call with `POST
+/i/<integration>/_gregale/feedback` and `{"call_id": "...", "rating":
+"good"|"bad", "label": "wrong_answer"}`, authenticated as for AI calls. For a
+route call, use the integration `X-Gregale-AI-Route-Target` names.
+
+- Feedback needs the request log; a call that is not logged, or that another
+  app made, gets `404 outbound_ai_call_not_found`.
+- A later rating replaces the earlier one. The label is optional: up to 32
+  lowercase letters, digits, `_`, `.` or `-`, starting with a letter. There
+  is no free text.
+- A person can rate any logged call with `gregale ai feedback <id> <call-id>
+  --good|--bad [--label L]` (or `PUT .../ai-requests/{request}/feedback`).
+- Ratings leave with the request log after 7 days; the daily usage keeps
+  `good_feedback` and `bad_feedback`.
+
+**Online evaluations.** `gregale ai policy <id> --online-eval-percent 5
+--online-eval-judge <integration-id> --online-eval-model <model>
+[--online-eval-rubric TEXT]` (policy field `online_evaluation`) scores that
+share of answered app calls from 1 to 5.
+
+- It needs `--request-log-content on`: only calls whose bodies were captured
+  whole are sampled. The judge integration must be one of the account's
+  enabled AI integrations.
+- outboundd's worker sends the redacted request and answer text, and the
+  rubric, to the judge. The call is metered and capped under the caller
+  `evaluation` on the judge integration.
+- At most 1,000 calls per integration per UTC day are evaluated. A call whose
+  capture expired, or whose judge reply has no score, counts as a judge
+  error.
+- Scores are on request-log entries (`evaluation_score`) and in the daily
+  usage (`evaluated_requests`, `evaluation_score_sum`, `evaluation_errors`;
+  the SCORE column).
+
+**Drift alerts.** With `--quality-alerts on`, outboundd compares each model's
+UTC day so far with its previous 7 days every 10 minutes, over app and Runs
+calls:
+
+- A flag rate, or the share of bad ratings, alerts when it is at least 5
+  percentage points and at least twice the baseline. The day needs 100
+  answered calls and the baseline 500; for ratings, each side needs 20 rated
+  calls.
+- The mean evaluation score alerts when it drops by at least 0.5, with 20
+  evaluations on each side.
+- Each alert fires once per integration, model, metric and UTC day, goes to
+  every bound app as `outbound.ai_quality.drift`, and is listed by `gregale
+  ai quality-alerts <id>` (or `GET .../ai-quality-alerts`) for 31 days.
+  Rates are basis points and scores hundredths.
+
 ## Provider key pools
 
 `gregale ai keys add <id> --label second --from-stdin` adds an extra sealed
