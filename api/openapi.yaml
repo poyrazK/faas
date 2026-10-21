@@ -86828,6 +86828,52 @@ components:
         type: { type: string }
         payload: { description: Committed JSON business data bounded to 64 KiB per intent. }
 
+    ScenarioCapturedEvent:
+      description: An event an enrolled app published. It never reached the account's event bus; the sealed snapshot is its only record. Platform-generated IDs and times do not compare (ADR-20261020090000).
+      type: object
+      required: [id, workload, source, type, data]
+      properties:
+        id: { type: string, format: uuid }
+        workload: { type: string }
+        source: { type: string, maxLength: 256 }
+        type: { type: string, maxLength: 256 }
+        schema_version: { type: string, maxLength: 256 }
+        data: { description: Published JSON event data bounded to 64 KiB. }
+
+    ScenarioSuppressedWebhookEvents:
+      description: Count of ordinary webhook deliveries the capture fence suppressed for one workload and event type. Their payloads carry platform-generated identifiers, so only multiplicity compares.
+      type: object
+      required: [workload, event, count]
+      properties:
+        workload: { type: string }
+        event: { type: string, maxLength: 256 }
+        count: { type: integer, format: int64, minimum: 1 }
+
+    ScenarioCapturedQueueMessage:
+      description: A queue send or delayed task an enrolled app requested through the run-local platform API. It was never enqueued (ADR-20261021090000).
+      type: object
+      required: [id, workload, kind, target, message]
+      properties:
+        id: { type: string, format: uuid }
+        workload: { type: string }
+        kind: { type: string, enum: [queue, delayed_task] }
+        target: { type: string, pattern: '^(workload|app):[a-z0-9][a-z0-9-]{0,62}$', description: "A member of the same run is named workload:<name>; any other app is app:<slug>." }
+        queue_name: { type: string, maxLength: 256 }
+        schedule: { type: string, pattern: '^(absolute|delay:[0-9]{1,8})$', description: "A delayed task's requested delay, or absolute when it gave scheduled_at." }
+        message: { description: "The request's business content, bounded to 64 KiB." }
+
+    ScenarioCapturedPlatformCall:
+      description: A workflow or realtime call an enrolled app requested through the run-local platform API. It was never performed (ADR-20261021150000, ADR-20261021180000).
+      type: object
+      required: [id, workload, kind, target, name, message]
+      properties:
+        id: { type: string, format: uuid }
+        workload: { type: string }
+        kind: { type: string, enum: [workflow_run, workflow_event, realtime_publish, realtime_signal] }
+        target: { type: string, maxLength: 512, description: "What the call addressed, without platform IDs the run created." }
+        name: { type: string, maxLength: 256, description: "The workflow, event or channel name." }
+        message: { description: "The call's compared content, bounded to 64 KiB." }
+
     ScenarioActionSnapshot:
       description: Bounded evidence for a sealed action window. Version 1 covers managed webhooks. Version 2 adds declared simulated relay attempts and durable host recorder coverage. Incomplete snapshots never establish equivalent behavior.
       type: object
@@ -86869,6 +86915,28 @@ components:
         suppressed_deliveries: { type: integer, format: int64, minimum: 0, description: Unsupported ordinary deliveries blocked by the run policy; these are not successful business effects. }
         truncated: { type: boolean }
         reason: { type: string }
+        event_capture_version: { type: integer, enum: [1], description: Present from servers that capture published events. A comparison across capture versions is inconclusive. }
+        published_events:
+          type: array
+          maxItems: 256
+          items: { $ref: '#/components/schemas/ScenarioCapturedEvent' }
+        suppressed_webhook_events:
+          type: array
+          maxItems: 256
+          items: { $ref: '#/components/schemas/ScenarioSuppressedWebhookEvents' }
+        incomplete_captured_events: { type: integer, format: int64, minimum: 0 }
+        queue_capture_version: { type: integer, enum: [1], description: Present from servers that capture queue sends and delayed tasks. }
+        queue_messages:
+          type: array
+          maxItems: 256
+          items: { $ref: '#/components/schemas/ScenarioCapturedQueueMessage' }
+        incomplete_queue_messages: { type: integer, format: int64, minimum: 0 }
+        platform_capture_version: { type: integer, enum: [1], description: Present from servers that capture workflow and realtime calls. }
+        platform_calls:
+          type: array
+          maxItems: 256
+          items: { $ref: '#/components/schemas/ScenarioCapturedPlatformCall' }
+        incomplete_platform_calls: { type: integer, format: int64, minimum: 0 }
 
     RegisterScenarioTestResponse:
       description: Acknowledgement that the versioned webhook capture policy was committed before source deployment.

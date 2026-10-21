@@ -2688,6 +2688,9 @@ export type { ScalingTarget } from './models/ScalingTarget.js';
 export type { ScanResult } from './models/ScanResult.js';
 export type { ScenarioActionSnapshot } from './models/ScenarioActionSnapshot.js';
 export type { ScenarioCapturedAction } from './models/ScenarioCapturedAction.js';
+export type { ScenarioCapturedEvent } from './models/ScenarioCapturedEvent.js';
+export type { ScenarioCapturedPlatformCall } from './models/ScenarioCapturedPlatformCall.js';
+export type { ScenarioCapturedQueueMessage } from './models/ScenarioCapturedQueueMessage.js';
 export type { ScenarioColdPreparation } from './models/ScenarioColdPreparation.js';
 export type { ScenarioColdStartEvidence } from './models/ScenarioColdStartEvidence.js';
 export type { ScenarioColdStartSpec } from './models/ScenarioColdStartSpec.js';
@@ -2715,6 +2718,7 @@ export type { ScenarioSimulationAttempt } from './models/ScenarioSimulationAttem
 export type { ScenarioSimulationFixture } from './models/ScenarioSimulationFixture.js';
 export type { ScenarioSimulationPlan } from './models/ScenarioSimulationPlan.js';
 export type { ScenarioSimulationResponse } from './models/ScenarioSimulationResponse.js';
+export type { ScenarioSuppressedWebhookEvents } from './models/ScenarioSuppressedWebhookEvents.js';
 export type { ScenarioSuspendResumeEvidence } from './models/ScenarioSuspendResumeEvidence.js';
 export type { ScenarioSuspendResumeReceipt } from './models/ScenarioSuspendResumeReceipt.js';
 export type { ScenarioSuspendResumeSpec } from './models/ScenarioSuspendResumeSpec.js';
