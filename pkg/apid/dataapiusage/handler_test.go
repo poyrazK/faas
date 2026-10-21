@@ -24,14 +24,15 @@ var now = time.Date(2026, 10, 19, 10, 30, 0, 0, time.UTC)
 type fakeStore struct {
 	account, app, report string
 	hours                []usage.Hour
+	access               []byte
 	calls                int
 	err                  error
 	stored               []usage.Hour
 }
 
-func (s *fakeStore) Record(_ context.Context, account, app, report string, hours []usage.Hour, _ time.Time) (usage.MonthToDate, error) {
+func (s *fakeStore) Record(_ context.Context, account, app, report string, hours []usage.Hour, access []byte, _ time.Time) (usage.MonthToDate, error) {
 	s.calls++
-	s.account, s.app, s.report, s.hours = account, app, report, hours
+	s.account, s.app, s.report, s.hours, s.access = account, app, report, hours, access
 	return usage.MonthToDate{Month: usage.MonthStart(now), Requests: 12, AnonymousRequests: 5}, s.err
 }
 
@@ -192,6 +193,51 @@ func TestQueryHandlerZeroFillsBucketsAndTotals(t *testing.T) {
 	for _, query := range []string{"?since=91d", "?since=0d", "?since=7w", "?since=3d&granularity=hour", "?granularity=minute", "?since=1d&since=2d", "?other=1"} {
 		if status, _ := get(query); status != 400 {
 			t.Fatalf("%s accepted: %d", query, status)
+		}
+	}
+}
+
+func TestReportHandlerStoresOnlyValidAccessSettings(t *testing.T) {
+	s, verifier := signer(t)
+	token, _ := s.Mint(now, uuid.NewString(), uuid.NewString(), uuid.NewString(), workloadidentity.DataAPIUsageAudience)
+	hash := strings.Repeat("ab", 32)
+	send := func(access *api.DataAPIAccessConfig) (int, *fakeStore) {
+		body, _ := json.Marshal(api.DataAPIUsageReport{Version: 1, ReportID: "r", Access: access})
+		store := &fakeStore{}
+		req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(string(body)))
+		req.Header.Set("Authorization", "Bearer "+token.AccessToken)
+		rec := httptest.NewRecorder()
+		ReportHandler{Store: store, Verifier: verifier, Now: func() time.Time { return now }}.ServeHTTP(rec, req)
+		return rec.Code, store
+	}
+	readOnly := false
+	auth := &api.DataAPIUserAuth{Issuer: "https://auth.example.com", JWKSURL: "https://auth.example.com/.well-known/jwks.json", Audience: "shop"}
+	valid := &api.DataAPIAccessConfig{Version: 1, Schemas: []string{"api"}, Auth: auth, PublicRead: []string{"api.products"},
+		ServerKeys: []api.DataAPIServerKey{{Slot: "a", SHA256: hash, Permissions: &api.DataAPIServerKeyPermissionSet{Access: "read", Relations: []string{"api.orders"}, Subjects: &readOnly}}}}
+	status, store := send(valid)
+	if status != 200 || !strings.Contains(string(store.access), `"public_read":["api.products"]`) || !strings.Contains(string(store.access), hash) ||
+		!strings.Contains(string(store.access), `"audience":"shop"`) {
+		t.Fatalf("valid settings: %d %s", status, store.access)
+	}
+	if status, store = send(nil); status != 200 || store.access != nil {
+		t.Fatal("a report without settings must keep the stored ones")
+	}
+	for name, bad := range map[string]*api.DataAPIAccessConfig{
+		"version":   {Version: 2, Schemas: []string{"api"}},
+		"schemas":   {Version: 1},
+		"relation":  {Version: 1, Schemas: []string{"api"}, PublicRead: []string{"products"}},
+		"slot":      {Version: 1, Schemas: []string{"api"}, ServerKeys: []api.DataAPIServerKey{{Slot: "c", SHA256: hash}}},
+		"hash":      {Version: 1, Schemas: []string{"api"}, ServerKeys: []api.DataAPIServerKey{{Slot: "a", SHA256: "ABCD"}}},
+		"duplicate": {Version: 1, Schemas: []string{"api"}, ServerKeys: []api.DataAPIServerKey{{Slot: "a", SHA256: hash}, {Slot: "a", SHA256: hash}}},
+		"access":    {Version: 1, Schemas: []string{"api"}, ServerKeys: []api.DataAPIServerKey{{Slot: "a", SHA256: hash, Permissions: &api.DataAPIServerKeyPermissionSet{Access: "admin"}}}},
+		"http jwks": {Version: 1, Schemas: []string{"api"}, Auth: &api.DataAPIUserAuth{Issuer: auth.Issuer, JWKSURL: "http://auth.example.com/jwks", Audience: "shop"}},
+		"private":   {Version: 1, Schemas: []string{"api"}, Auth: &api.DataAPIUserAuth{Issuer: auth.Issuer, JWKSURL: "https://10.0.0.5/jwks", Audience: "shop"}},
+		"issuer":    {Version: 1, Schemas: []string{"api"}, Auth: &api.DataAPIUserAuth{Issuer: "auth.example.com", JWKSURL: auth.JWKSURL, Audience: "shop"}},
+		"audience":  {Version: 1, Schemas: []string{"api"}, Auth: &api.DataAPIUserAuth{Issuer: auth.Issuer, JWKSURL: auth.JWKSURL}},
+		"long aud":  {Version: 1, Schemas: []string{"api"}, Auth: &api.DataAPIUserAuth{Issuer: auth.Issuer, JWKSURL: auth.JWKSURL, Audience: strings.Repeat("a", api.DataAPIAudienceMaxBytes+1)}},
+	} {
+		if status, store := send(bad); status != 400 || store.calls != 0 {
+			t.Fatalf("%s: status %d calls %d", name, status, store.calls)
 		}
 	}
 }

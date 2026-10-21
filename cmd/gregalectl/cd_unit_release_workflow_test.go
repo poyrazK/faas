@@ -274,16 +274,27 @@ func TestUnitLanesGateEveryHostAndRollBack(t *testing.T) {
 // only after the control-plane lane of the same unit release is on the
 // control plane (deploy order), canary first, one host at a time, stopping
 // at the first failure, never alongside a full compute rollout of the node.
+// A release that carries nothing for the control plane skips that lane (its
+// plan could only be "none"), and the edge lane still needs the preflight's
+// go and a lane that did not fail.
 func TestEdgeLaneFollowsTheControlPlaneOneHostAtATime(t *testing.T) {
 	release := readWorkflow(t, "release-units.yml")
 	edgeCall := jobBlock(t, release, "deploy-edge")
-	for _, required := range []string{"needs: [build, deploy]", "uses: ./.github/workflows/cd-edge-units.yml"} {
+	for _, required := range []string{
+		"needs: [build, preflight, deploy]",
+		"!cancelled() && needs.build.outputs.edge == 'true' && needs.preflight.outputs.go == 'true'",
+		"(needs.deploy.result == 'success' || needs.deploy.result == 'skipped')",
+		"uses: ./.github/workflows/cd-edge-units.yml",
+	} {
 		if !strings.Contains(edgeCall, required) {
 			t.Errorf("release-units deploy-edge is missing %q", required)
 		}
 	}
-	if !strings.Contains(jobBlock(t, release, "deploy"), "units_lane: control-plane") {
-		t.Error("release-units deploy must run the control-plane lane")
+	cp := jobBlock(t, release, "deploy")
+	for _, required := range []string{"units_lane: control-plane", "needs.build.outputs.control_plane == 'true'"} {
+		if !strings.Contains(cp, required) {
+			t.Errorf("release-units deploy is missing %q", required)
+		}
 	}
 
 	edge := readWorkflow(t, "cd-edge-units.yml")
@@ -422,6 +433,50 @@ func TestUnitLanesFetchOnlyMainAndReleaseTags(t *testing.T) {
 		"filter: blob:none",
 		"scripts/ci/fetch_release_history.sh",
 		"git describe --tags")
+}
+
+// TestUnitReleaseBuildReadsTheReleaseBuildCache: unit releases compile with
+// the release recipe (linux/amd64, CGO off, -trimpath, the daemon tags),
+// which none of the light tier's caches hold: on 2026-10-21 a one-daemon unit
+// release spent 194 s comparing code and 72 s building, from scratch. The
+// build job reads a release build cache of its own, per base release, and
+// never writes one, since saving would sit on the deploy path; the
+// warm-build-cache job writes it, with the same paths and key, and nothing
+// that deploys waits for it.
+func TestUnitReleaseBuildReadsTheReleaseBuildCache(t *testing.T) {
+	release := readWorkflow(t, "release-units.yml")
+	const key = "key: go-unit-build-${{ runner.os }}-${{ hashFiles('go.mod', 'go.sum') }}-"
+	const paths = "~/.cache/go-build\n            ~/go/pkg/mod\n          " + key
+	build := jobBlock(t, release, "build")
+	orderedIn(t, "release-units build", build,
+		"Find the base release",
+		"Restore the release build cache",
+		paths+"${{ steps.base.outputs.sha }}",
+		"Select changed units",
+		"Build unit binaries")
+	if strings.Count(build, key) != 1 {
+		t.Error("release-units build must only restore the release build cache: writing it belongs to warm-build-cache")
+	}
+	warm := jobBlock(t, release, "warm-build-cache")
+	for _, required := range []string{
+		"needs: [build]",
+		"needs.build.outputs.build_cache_hit != 'true'",
+		"continue-on-error: true",
+		"python3 scripts/ci/warm_unit_build_cache.py",
+		"actions/cache/save",
+	} {
+		if !strings.Contains(warm, required) {
+			t.Errorf("release-units warm-build-cache is missing %q", required)
+		}
+	}
+	if strings.Count(warm, paths+"${{ needs.build.outputs.base_sha }}") != 2 {
+		t.Error("warm-build-cache must restore and save the build job's paths under its key")
+	}
+	for _, job := range []string{"preflight", "deploy", "deploy-edge", "watch"} {
+		if strings.Contains(jobBlock(t, release, job), "warm-build-cache") {
+			t.Errorf("release-units %s must not wait for the build cache", job)
+		}
+	}
 }
 
 // TestUnitDeployWaitsForAdmission: an automatic unit deploy starts only after

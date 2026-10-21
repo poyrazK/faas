@@ -3021,6 +3021,13 @@ type CustomerWorkflowReadinessSubscription struct {
 	LeaseUntil       pgtype.Timestamptz
 }
 
+// ADR-20261016151947 Data API access settings last reported by the runtime, applied to anonymous and server-key live reads.
+type DataApiAccessConfig struct {
+	AppID      pgtype.UUID
+	Config     []byte
+	ReportedAt pgtype.Timestamptz
+}
+
 type DataApiRuntimeConnectionObservation struct {
 	BindingID            pgtype.UUID
 	InstanceID           pgtype.UUID

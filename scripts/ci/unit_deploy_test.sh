@@ -396,4 +396,29 @@ if bash "$helper" pin-node 10.0.0.2 22 "SHA256:$(printf 'z%.0s' {1..43})" "$test
 fi
 unset WATCH_RECORD WATCH_OWNER UNITS_SHA
 
+# In a job (RUNNER_TEMP set) every ssh of the job shares one connection per
+# host; UNIT_SSH_MUX_DIR= turns that off.
+cat > "$stub/ssh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$STUB_LOG.opts"
+EOF
+chmod +x "$stub/ssh"
+short_temp="$(mktemp -d /tmp/ud.XXXXXX)"
+: > "$STUB_LOG.opts"
+RUNNER_TEMP="$short_temp" bash "$helper" cleanup /var/tmp/gregale-units.Mux1
+grep -Fq -- "-o ControlMaster=auto -o ControlPath=$short_temp/ssh-mux/%C -o ControlPersist=120" "$STUB_LOG.opts" \
+  || fail "ssh does not reuse one connection per host in a job: $(cat "$STUB_LOG.opts")"
+[[ "$(stat -c %a "$short_temp/ssh-mux" 2>/dev/null || stat -f %Lp "$short_temp/ssh-mux")" == 700 ]] \
+  || fail "the connection directory is not private"
+rm -rf -- "$short_temp"
+: > "$STUB_LOG.opts"
+RUNNER_TEMP=/tmp UNIT_SSH_MUX_DIR='' bash "$helper" cleanup /var/tmp/gregale-units.Mux2
+if grep -Fq ControlMaster "$STUB_LOG.opts"; then fail "UNIT_SSH_MUX_DIR= still shares connections"; fi
+# The runners' /opt/actions-runner-2/_work/_temp/ssh-mux fits; a longer
+# directory would make ssh refuse to connect, so it connects without sharing.
+: > "$STUB_LOG.opts"
+UNIT_SSH_MUX_DIR="/opt/actions-runner-2/_work/_temp/$(printf 'x%.0s' {1..20})" bash "$helper" cleanup /var/tmp/gregale-units.Mux3
+if grep -Fq ControlMaster "$STUB_LOG.opts"; then fail "a socket path ssh cannot bind still shares connections"; fi
+[[ -s "$STUB_LOG.opts" ]] || fail "a long socket directory stopped ssh"
+
 echo "unit_deploy tests passed"

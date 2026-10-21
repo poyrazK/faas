@@ -11954,7 +11954,7 @@ const (
 	DataAPIRuntimeConnectionReportInterval = 15 * time.Second
 	// Owner usage telemetry (ADR-20261019102108): the runtime reports hourly
 	// deltas under workload identity. Owner-facing counts, never billing records.
-	DataAPIUsageReportMaxBytes  = 16 << 10
+	DataAPIUsageReportMaxBytes  = 64 << 10
 	DataAPIUsageReportTimeout   = 5 * time.Second
 	DataAPIUsageReportInterval  = 15 * time.Second
 	DataAPIUsageReportMaxHours  = 48
@@ -11967,6 +11967,17 @@ const (
 	// A wall-clock jump this large against the monotonic clock means a
 	// snapshot restore: pending counts are dropped, not reported per instance.
 	DataAPIUsageRestoreJump = 5 * time.Second
+	// Access settings a runtime reports for live reads without a user token
+	// (ADR-20261016151947): stored size, and the schema count the runtime
+	// accepts (schemaNames in templates/data-api/config.mjs).
+	DataAPIAccessConfigMaxBytes = 32 << 10
+	DataAPIMaxSchemas           = 8
+	// The user-token audience a runtime reports, so live reads verify
+	// tokens as the Data API does.
+	DataAPIAudienceMaxBytes = 256
+	// Anonymous and server-key live reads renew this often, so a revoked key
+	// or a narrowed allowlist reaches open subscriptions within it.
+	LiveQueryKeySessionMax = time.Hour
 	// Operator capacity observations never run in customer request handling.
 	DataAPIConnectionCapacityTimeout     = 10 * time.Second
 	DataAPIConnectionCapacityLease       = 15 * time.Second

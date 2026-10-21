@@ -31852,6 +31852,25 @@ CREATE TABLE public.customer_workflow_readiness_subscriptions (
 
 
 --
+-- Name: data_api_access_configs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.data_api_access_configs (
+    app_id uuid NOT NULL,
+    config jsonb NOT NULL,
+    reported_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT data_api_access_configs_config_check CHECK (((jsonb_typeof(config) = 'object'::text) AND (octet_length((config)::text) <= 32768)))
+);
+
+
+--
+-- Name: TABLE data_api_access_configs; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.data_api_access_configs IS 'ADR-20261016151947 Data API access settings last reported by the runtime, applied to anonymous and server-key live reads.';
+
+
+--
 -- Name: data_api_runtime_connection_observations; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -55167,6 +55186,14 @@ ALTER TABLE ONLY public.customer_workflow_readiness_notifications
 
 ALTER TABLE ONLY public.customer_workflow_readiness_subscriptions
     ADD CONSTRAINT customer_workflow_readiness_subscriptions_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: data_api_access_configs data_api_access_configs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_api_access_configs
+    ADD CONSTRAINT data_api_access_configs_pkey PRIMARY KEY (app_id);
 
 
 --
@@ -83624,6 +83651,14 @@ ALTER TABLE ONLY public.customer_workflow_readiness_subscriptions
 
 ALTER TABLE ONLY public.customer_workflow_readiness_subscriptions
     ADD CONSTRAINT customer_workflow_readiness_subscriptions_tenant_id_fkey FOREIGN KEY (tenant_id) REFERENCES public.platform_tenants(id) ON DELETE CASCADE;
+
+
+--
+-- Name: data_api_access_configs data_api_access_configs_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_api_access_configs
+    ADD CONSTRAINT data_api_access_configs_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --
