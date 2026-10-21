@@ -16,7 +16,9 @@ test('an impersonated token cannot change the account, only sign itself out', ()
   for (const [method, url] of [['PUT', '/auth/v1/user'], ['POST', '/auth/v1/factors'], ['DELETE', '/auth/v1/factors/f1'], ['POST', '/auth/v1/passkeys/registration/options'],
     ['GET', '/auth/v1/user/identities/authorize?provider=github'], ['DELETE', '/auth/v1/user/identities/i1'], ['GET', '/auth/v1/reauthenticate'],
     ['POST', '/auth/v1/logout'], ['POST', '/auth/v1/logout?scope=global'], ['POST', '/auth/v1/logout?scope=others'], ['POST', '/auth/v1/oauth/authorizations/a1/consent'],
-    ['DELETE', '/authz/v1/account'], ['DELETE', '/authz/v1/sessions/s1']]) {
+    ['DELETE', '/authz/v1/account'], ['DELETE', '/authz/v1/sessions/s1'],
+    // GoTrue's router serves these as the paths above.
+    ['PUT', '/auth/v1/user/'], ['PUT', '/auth/v1/user//?x=1'], ['POST', '/auth/v1/factors/'], ['POST', '/auth/v1/logout/?scope=local']]) {
     assert.equal(impersonationBlocked(method, url), true, `${method} ${url}`)
   }
   for (const [method, url] of [['GET', '/auth/v1/user'], ['POST', '/auth/v1/logout?scope=local'], ['POST', '/auth/v1/token?grant_type=refresh_token'],
@@ -30,11 +32,17 @@ test('the front refuses account changes from an impersonated token before GoTrue
   server.listen(0, '127.0.0.1')
   await once(server, 'listening')
   t.after(() => server.close())
-  const call = (method, path, token) => fetch(`http://127.0.0.1:${server.address().port}${path}`, { method, headers: { Authorization: `Bearer ${token}` } })
+  const call = (method, path, token, scheme = 'Bearer') => fetch(`http://127.0.0.1:${server.address().port}${path}`, { method, headers: { Authorization: `${scheme} ${token}` } })
   const marked = jwt({ sub: user, session_id: session, act: { sub: 'admin:0A1B2C3D' } })
-  const response = await call('PUT', '/auth/v1/user', marked)
-  assert.equal(response.status, 403)
-  assert.equal((await response.json()).code, 'impersonation_restricted')
+  // GoTrue reads the scheme in any letter case and serves /user/ as /user.
+  for (const [path, scheme] of [['/auth/v1/user', 'Bearer'], ['/auth/v1/user', 'bearer'], ['/auth/v1/user', 'BEARER'], ['/auth/v1/user/', 'Bearer']]) {
+    const response = await call('PUT', path, marked, scheme)
+    assert.equal(response.status, 403, `${scheme} ${path}`)
+    assert.equal((await response.json()).code, 'impersonation_restricted')
+  }
+  // A bearer token GoTrue would try but the front cannot read never reaches it.
+  const unreadable = await call('PUT', '/auth/v1/user', 'a.!!!.c')
+  assert.deepEqual([unreadable.status, (await unreadable.json()).code], [401, 'invalid_token'])
   assert.equal((await call('PUT', '/auth/v1/user', jwt({ sub: user, session_id: session }))).status, 502, 'an ordinary token goes on to GoTrue')
 })
 

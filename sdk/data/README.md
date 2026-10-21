@@ -59,6 +59,28 @@ const db = createDataClient<Database>({
 Anonymous requests through `expectedSchemaFingerprint` reach the API on a
 contract-pinned path, so the Data API does not mark them for the edge cache.
 
+### File storage
+
+When the owner turns on [file storage](../../docs/data-api.md#file-storage),
+`createStorageClient` takes the same options as `createDataClient`. The
+owner's policies on `storage_objects` decide each upload, download and
+removal:
+
+```ts
+import { createStorageClient, StorageError } from '@gregale/data'
+
+const files = createStorageClient({ url: 'https://my-data.gregale.dev', accessToken: () => session.accessToken }).from('uploads')
+const stored = await files.upload(`${userId}/report.pdf`, file)   // { bucket, name, owner, size, content_type, ... }
+const response = await files.download(`${userId}/report.pdf`, { range: { start: 0, end: 1023 } })
+const { url, expiresAt } = await files.signedUrl(`${userId}/report.pdf`)
+await files.remove(`${userId}/report.pdf`)
+```
+
+Refusals throw `StorageError` with the Data API's `code`, such as
+`storage_forbidden` or `storage_not_found`. List files by querying
+`storage_objects` with `createDataClient`, or follow the list with a live
+read.
+
 ### Live reads
 
 A live read is a Data API read whose result stays current: it arrives once,
