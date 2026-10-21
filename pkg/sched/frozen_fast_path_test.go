@@ -167,3 +167,85 @@ func TestThawTicketRefusesAVMThatPredatesAnOperatorColdBoot(t *testing.T) {
 		t.Fatalf("thawTicketFor after an operator cold boot = %v, want errNoThawTicket", err)
 	}
 }
+
+func fastPathSkips(ops *wire.OpsMetrics) map[string]float64 {
+	out := map[string]float64{}
+	for _, reason := range wire.FrozenFastPathSkipReasons {
+		if n := testutil.ToFloat64(ops.FrozenFastPathSkipped(reason)); n != 0 {
+			out[reason] = n
+		}
+	}
+	return out
+}
+
+// The gateway wakes through EnsureWake, whose coordinated selection kept
+// every real wake off the fast path (production-us 2026-10-21: fast=0 and
+// fast_refused=0 across all thaws while the unit tests, which call Wake,
+// passed). A selection of the ticket's own deployment is the thaw the ticket
+// allows.
+func TestTicketedThawServesACoordinatedWake(t *testing.T) {
+	f, ops := frozenWithTicket(t)
+	counter := sched.CountReads(f)
+	out, err := (*f.E()).EnsureWake(t.Context(), (*f.App()).ID, sched.TriggerGateway)
+	if err != nil || out.Instance == nil || out.Instance.InstanceID != (*f.Ins()).ID || (*(*f.Vmm()).Thaws()) != 1 {
+		t.Fatalf("EnsureWake: %+v, %v, thaws %d", out.Instance, err, (*(*f.Vmm()).Thaws()))
+	}
+	if got := thawOutcomes(ops); got["fast"] != 1 || got["success"] != 0 {
+		t.Fatalf("thaw outcomes = %v, want one fast thaw", got)
+	}
+	if got := fastPathSkips(ops); len(got) != 0 {
+		t.Fatalf("fast path skips = %v, want none", got)
+	}
+	// The ticket carries the workload-retirement gate's verdict.
+	if reads := counter.Reads(); reads["ComputeNodeByID"] != 0 || reads["ManagedPostgresAdmissionFenced"] != 0 {
+		t.Fatalf("coordinated ticketed thaw read %v after the selection; want none of the thaw path's reads", reads)
+	}
+	if n := testutil.ToFloat64(ops.FrozenThawTickets("issued")); n != 1 {
+		t.Fatalf("tickets issued = %v, want 1", n)
+	}
+}
+
+// A coordinated wake that selected another deployment, or found no ticket,
+// takes the ordinary path, and the skip says why.
+func TestFastPathSkipsAreCounted(t *testing.T) {
+	t.Run("no ticket", func(t *testing.T) {
+		f := sched.NewFrozenFixture(t, true)
+		ops := wire.NewOpsMetrics("schedd")
+		(*f.E()).WithOpsMetrics(ops)
+		(*f.E()).EnableFrozenTier()
+		if handled, err := (*f.E()).FreezeIdle(t.Context(), (*f.Ins()).ID, 150); err != nil || !handled {
+			t.Fatalf("FreezeIdle: %v, %v", handled, err)
+		}
+		// Switched on after the freeze, as after a schedd restart.
+		(*f.E()).EnableFrozenFastPath()
+		if _, err := (*f.E()).EnsureWake(t.Context(), (*f.App()).ID, sched.TriggerGateway); err != nil {
+			t.Fatalf("EnsureWake: %v", err)
+		}
+		if got := fastPathSkips(ops); got["no_ticket"] != 1 || len(got) != 1 {
+			t.Fatalf("fast path skips = %v, want one no_ticket", got)
+		}
+		if got := thawOutcomes(ops); got["success"] != 1 {
+			t.Fatalf("thaw outcomes = %v, want the ordinary thaw", got)
+		}
+	})
+	t.Run("another deployment selected", func(t *testing.T) {
+		f, ops := frozenWithTicket(t)
+		next, err := (*f.Store()).CreateDeployment(t.Context(), state.Deployment{AppID: (*f.App()).ID, Kind: state.DeploymentKindImage,
+			ImageDigest: "sha256:next", Status: state.DeployLive})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := (*f.Store()).MarkDeploymentLive(t.Context(), next.ID); err != nil {
+			t.Fatal(err)
+		}
+		// The ordinary path may cold boot the new deployment; only the
+		// fast path's decision is under test.
+		_, _ = (*f.E()).EnsureWake(t.Context(), (*f.App()).ID, sched.TriggerGateway)
+		if got := fastPathSkips(ops); got["selection"] != 1 {
+			t.Fatalf("fast path skips = %v, want one selection", got)
+		}
+		if got := thawOutcomes(ops); got["fast"] != 0 {
+			t.Fatalf("thaw outcomes = %v; the fast path thawed a deployment the wake did not select", got)
+		}
+	})
+}

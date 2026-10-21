@@ -2943,8 +2943,10 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 	deploymentSmoke := deploymentID != "" && trigger == TriggerDeploymentSmoke
 	// A coordinated wake resolved app, account and owner moments ago; only the
 	// live deployment is re-read here, so a cutover still fails closed below.
+	// An owner cache entry that serves the selection decides instead: its
+	// generation guard stands in for that read (ADR-1741).
 	selected, reuseSelection := wakeEnvironmentFrom(ctx)
-	reuseSelection = reuseSelection && !deploymentSmoke && selected.reusableFor(appID)
+	reuseSelection = reuseSelection && !deploymentSmoke && !useCache && selected.reusableFor(appID)
 	if reuseSelection {
 		app, acct, limits = selected.app, selected.account, selected.limits
 		if deploymentID == "" {
