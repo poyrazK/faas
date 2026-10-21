@@ -40,6 +40,10 @@ class PutConsumerSignupRequest:
     trial_days: int | Unset = UNSET
     daily_limit: int | Unset = UNSET
     """Sign-ups per UTC day (default 100)."""
+    customer_plan_changes: bool | Unset = UNSET
+    """Let customers switch between plan_ids with their own key (ADR-20261021183000)."""
+    customer_closing: bool | Unset = UNSET
+    """Let customers close their account with their own key (ADR-20261021183000)."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -73,6 +77,10 @@ class PutConsumerSignupRequest:
 
         daily_limit = self.daily_limit
 
+        customer_plan_changes = self.customer_plan_changes
+
+        customer_closing = self.customer_closing
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -96,6 +104,10 @@ class PutConsumerSignupRequest:
             field_dict["trial_days"] = trial_days
         if daily_limit is not UNSET:
             field_dict["daily_limit"] = daily_limit
+        if customer_plan_changes is not UNSET:
+            field_dict["customer_plan_changes"] = customer_plan_changes
+        if customer_closing is not UNSET:
+            field_dict["customer_closing"] = customer_closing
 
         return field_dict
 
@@ -139,6 +151,10 @@ class PutConsumerSignupRequest:
 
         daily_limit = d.pop("daily_limit", UNSET)
 
+        customer_plan_changes = d.pop("customer_plan_changes", UNSET)
+
+        customer_closing = d.pop("customer_closing", UNSET)
+
         put_consumer_signup_request = cls(
             display_name=display_name,
             enabled=enabled,
@@ -149,6 +165,8 @@ class PutConsumerSignupRequest:
             return_url=return_url,
             trial_days=trial_days,
             daily_limit=daily_limit,
+            customer_plan_changes=customer_plan_changes,
+            customer_closing=customer_closing,
         )
 
         put_consumer_signup_request.additional_properties = d

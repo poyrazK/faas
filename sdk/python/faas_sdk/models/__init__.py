@@ -96,6 +96,7 @@ from .alert_rule_response_metric import AlertRuleResponseMetric
 from .alert_rule_response_state import AlertRuleResponseState
 from .alert_rule_response_window_spec import AlertRuleResponseWindowSpec
 from .api_consumer_billing_policy_response import APIConsumerBillingPolicyResponse
+from .api_consumer_closed_webhook_payload import APIConsumerClosedWebhookPayload
 from .api_consumer_credit_balance import APIConsumerCreditBalance
 from .api_consumer_credit_list_response import APIConsumerCreditListResponse
 from .api_consumer_credit_response import APIConsumerCreditResponse
@@ -105,6 +106,7 @@ from .api_consumer_overdue_hold_list_response import APIConsumerOverdueHoldListR
 from .api_consumer_overdue_hold_response import APIConsumerOverdueHoldResponse
 from .api_consumer_plan_assignment_list_response import APIConsumerPlanAssignmentListResponse
 from .api_consumer_plan_assignment_response import APIConsumerPlanAssignmentResponse
+from .api_consumer_plan_changed_webhook_payload import APIConsumerPlanChangedWebhookPayload
 from .api_consumer_plan_list_response import APIConsumerPlanListResponse
 from .api_consumer_plan_response import APIConsumerPlanResponse
 from .api_consumer_rate_card_list_response import APIConsumerRateCardListResponse
@@ -114,6 +116,7 @@ from .api_consumer_rate_card_response_tier_mode import APIConsumerRateCardRespon
 from .api_consumer_rate_card_tier import APIConsumerRateCardTier
 from .api_consumer_response import APIConsumerResponse
 from .api_consumer_response_status import APIConsumerResponseStatus
+from .api_consumer_signed_up_webhook_payload import APIConsumerSignedUpWebhookPayload
 from .api_consumer_spend_cap_response import APIConsumerSpendCapResponse
 from .api_consumer_statement_fee_response import APIConsumerStatementFeeResponse
 from .api_consumer_statement_fee_response_kind import APIConsumerStatementFeeResponseKind
@@ -676,6 +679,7 @@ from .capability_status import CapabilityStatus
 from .capability_status_maturity import CapabilityStatusMaturity
 from .capability_status_plans_item import CapabilityStatusPlansItem
 from .capability_status_unavailable_reason import CapabilityStatusUnavailableReason
+from .change_consumer_billing_plan_request import ChangeConsumerBillingPlanRequest
 from .change_managed_postgres_compute_policy_request import ChangeManagedPostgresComputePolicyRequest
 from .change_member_role_request import ChangeMemberRoleRequest
 from .change_member_role_request_role import ChangeMemberRoleRequestRole
@@ -756,10 +760,14 @@ from .connection_budget_runtime_observations_source import ConnectionBudgetRunti
 from .connection_budget_runtime_observations_state import ConnectionBudgetRuntimeObservationsState
 from .consume_invoice_response import ConsumeInvoiceResponse
 from .consumed_credit_row import ConsumedCreditRow
+from .consumer_billing_close_response import ConsumerBillingCloseResponse
 from .consumer_billing_day import ConsumerBillingDay
 from .consumer_billing_invoice import ConsumerBillingInvoice
 from .consumer_billing_invoice_payment_status import ConsumerBillingInvoicePaymentStatus
 from .consumer_billing_plan import ConsumerBillingPlan
+from .consumer_billing_plan_change_response import ConsumerBillingPlanChangeResponse
+from .consumer_billing_plans_response import ConsumerBillingPlansResponse
+from .consumer_billing_portal_response import ConsumerBillingPortalResponse
 from .consumer_billing_spend_cap import ConsumerBillingSpendCap
 from .consumer_billing_statement import ConsumerBillingStatement
 from .consumer_billing_statements_response import ConsumerBillingStatementsResponse
@@ -835,6 +843,7 @@ from .create_commit_source_body import CreateCommitSourceBody
 from .create_commit_source_request import CreateCommitSourceRequest
 from .create_commit_source_request_contract_version import CreateCommitSourceRequestContractVersion
 from .create_commit_source_request_destination import CreateCommitSourceRequestDestination
+from .create_consumer_billing_portal_request import CreateConsumerBillingPortalRequest
 from .create_consumer_key_request import CreateConsumerKeyRequest
 from .create_consumer_key_request_scopes_item import CreateConsumerKeyRequestScopesItem
 from .create_consumer_signup_request import CreateConsumerSignupRequest
@@ -6090,6 +6099,7 @@ __all__ = (
     "AlertRuleResponseState",
     "AlertRuleResponseWindowSpec",
     "APIConsumerBillingPolicyResponse",
+    "APIConsumerClosedWebhookPayload",
     "APIConsumerCreditBalance",
     "APIConsumerCreditListResponse",
     "APIConsumerCreditResponse",
@@ -6099,6 +6109,7 @@ __all__ = (
     "APIConsumerOverdueHoldResponse",
     "APIConsumerPlanAssignmentListResponse",
     "APIConsumerPlanAssignmentResponse",
+    "APIConsumerPlanChangedWebhookPayload",
     "APIConsumerPlanListResponse",
     "APIConsumerPlanResponse",
     "APIConsumerRateCardListResponse",
@@ -6108,6 +6119,7 @@ __all__ = (
     "APIConsumerRateCardTier",
     "APIConsumerResponse",
     "APIConsumerResponseStatus",
+    "APIConsumerSignedUpWebhookPayload",
     "APIConsumerSpendCapResponse",
     "APIConsumerStatementFeeResponse",
     "APIConsumerStatementFeeResponseKind",
@@ -6662,6 +6674,7 @@ __all__ = (
     "CapabilityStatusMaturity",
     "CapabilityStatusPlansItem",
     "CapabilityStatusUnavailableReason",
+    "ChangeConsumerBillingPlanRequest",
     "ChangeManagedPostgresComputePolicyRequest",
     "ChangeMemberRoleRequest",
     "ChangeMemberRoleRequestRole",
@@ -6734,10 +6747,14 @@ __all__ = (
     "ConnectionBudgetRuntimeObservationsState",
     "ConsumedCreditRow",
     "ConsumeInvoiceResponse",
+    "ConsumerBillingCloseResponse",
     "ConsumerBillingDay",
     "ConsumerBillingInvoice",
     "ConsumerBillingInvoicePaymentStatus",
     "ConsumerBillingPlan",
+    "ConsumerBillingPlanChangeResponse",
+    "ConsumerBillingPlansResponse",
+    "ConsumerBillingPortalResponse",
     "ConsumerBillingSpendCap",
     "ConsumerBillingStatement",
     "ConsumerBillingStatementsResponse",
@@ -6813,6 +6830,7 @@ __all__ = (
     "CreateCommitSourceRequest",
     "CreateCommitSourceRequestContractVersion",
     "CreateCommitSourceRequestDestination",
+    "CreateConsumerBillingPortalRequest",
     "CreateConsumerKeyRequest",
     "CreateConsumerKeyRequestScopesItem",
     "CreateConsumerSignupRequest",

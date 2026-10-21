@@ -30,6 +30,8 @@ class ConsumerSignupSettingsResponse:
     daily_limit: int
     page_url: str
     """The hosted sign-up page to link customers to."""
+    customer_plan_changes: bool
+    customer_closing: bool
     created_at: datetime.datetime
     updated_at: datetime.datetime
     terms_url: str | Unset = UNSET
@@ -57,6 +59,10 @@ class ConsumerSignupSettingsResponse:
 
         page_url = self.page_url
 
+        customer_plan_changes = self.customer_plan_changes
+
+        customer_closing = self.customer_closing
+
         created_at = self.created_at.isoformat()
 
         updated_at = self.updated_at.isoformat()
@@ -79,6 +85,8 @@ class ConsumerSignupSettingsResponse:
                 "display_name": display_name,
                 "daily_limit": daily_limit,
                 "page_url": page_url,
+                "customer_plan_changes": customer_plan_changes,
+                "customer_closing": customer_closing,
                 "created_at": created_at,
                 "updated_at": updated_at,
             }
@@ -116,6 +124,10 @@ class ConsumerSignupSettingsResponse:
 
         page_url = d.pop("page_url")
 
+        customer_plan_changes = d.pop("customer_plan_changes")
+
+        customer_closing = d.pop("customer_closing")
+
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
 
         updated_at = datetime.datetime.fromisoformat(d.pop("updated_at"))
@@ -135,6 +147,8 @@ class ConsumerSignupSettingsResponse:
             display_name=display_name,
             daily_limit=daily_limit,
             page_url=page_url,
+            customer_plan_changes=customer_plan_changes,
+            customer_closing=customer_closing,
             created_at=created_at,
             updated_at=updated_at,
             terms_url=terms_url,
