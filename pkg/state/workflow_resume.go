@@ -94,6 +94,10 @@ func workflowResumePlan(run WorkflowRun, steps map[string]WorkflowStep, expected
 	if json.Unmarshal(run.DefinitionSnapshot, &spec) != nil {
 		return spec, nil, workflowResumeBlocked("invalid_definition", "", ErrWorkflowResumeUnsafe)
 	}
+	if spec.Code != nil {
+		// A code run's journal is replayed by its own code (ADR-20261021204307).
+		return spec, nil, workflowResumeBlocked("code_workflow", "", ErrWorkflowResumeUnsafe)
+	}
 	if _, err := api.ValidateWorkflowDAG(spec, plan); err != nil {
 		return spec, nil, workflowResumeBlocked("invalid_definition", "", ErrWorkflowResumeUnsafe)
 	}

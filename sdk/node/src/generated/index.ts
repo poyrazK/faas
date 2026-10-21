@@ -2939,6 +2939,7 @@ export type { WorkerScaling } from './models/WorkerScaling.js';
 export type { WorkflowCallbackResponse } from './models/WorkflowCallbackResponse.js';
 export type { WorkflowCallbackWebhookBindingResponse } from './models/WorkflowCallbackWebhookBindingResponse.js';
 export type { WorkflowCallbackWebhookReceiptResponse } from './models/WorkflowCallbackWebhookReceiptResponse.js';
+export type { WorkflowCodeSpec } from './models/WorkflowCodeSpec.js';
 export type { WorkflowConditionSpec } from './models/WorkflowConditionSpec.js';
 export type { WorkflowDiagnosticBlocker } from './models/WorkflowDiagnosticBlocker.js';
 export type { WorkflowDiagnosticStep } from './models/WorkflowDiagnosticStep.js';

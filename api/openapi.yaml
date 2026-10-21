@@ -93176,6 +93176,24 @@ components:
         overlap: { type: string, enum: [skip, allow], description: Omitted uses the published overlap behavior or skip. }
         enabled: { type: boolean, default: true, description: Whether this tenant's schedule is active. }
 
+    WorkflowCodeSpec:
+      description: "A code-first workflow's entry handler (ADR-20261021204307). Exactly one of run or path. Gregale POSTs the run's journal to it at every durable boundary; the SDKs (@gregale/sdk-node/workflows, faas_sdk.workflows) answer with the operations the code reaches next. A code workflow has an empty steps list."
+      type: object
+      additionalProperties: false
+      properties:
+        run:
+          type: string
+          description: "Handler name; the entry path is /<run>."
+        path:
+          type: string
+          description: "Explicit entry path starting with '/'."
+        timeout:
+          type: string
+          description: "Per-call timeout as a duration string; at most the plan's step timeout. Default 30s."
+          example: "60s"
+        retry:
+          $ref: '#/components/schemas/WorkflowRetrySpec'
+
     WorkflowRetrySpec:
       description: "Retry policy for one workflow step."
       type: object
@@ -93484,6 +93502,8 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/WorkflowStepSpec'
+        code:
+          $ref: '#/components/schemas/WorkflowCodeSpec'
 
     PreviewEventRequest:
       description: Event fields to evaluate without persisting or delivering the event.
@@ -97972,7 +97992,7 @@ components:
       properties:
         code:
           type: string
-          enum: [run_not_failed, resume_limit_reached, cancelled, invalid_definition, incomplete_step_state, active_step, handler_executed, failed_control_step, failure_before_dispatch, unsafe_mutation, no_failed_actions, active_attempt, account_inactive, plan_not_allowed, app_deleted, maintenance, tenant_required, tenant_unavailable, deployment_unavailable, pinned_deployment_unavailable, integration_unavailable, active_run_quota, runtime_disabled]
+          enum: [run_not_failed, resume_limit_reached, cancelled, invalid_definition, code_workflow, incomplete_step_state, active_step, handler_executed, failed_control_step, failure_before_dispatch, unsafe_mutation, no_failed_actions, active_attempt, account_inactive, plan_not_allowed, app_deleted, maintenance, tenant_required, tenant_unavailable, deployment_unavailable, pinned_deployment_unavailable, integration_unavailable, active_run_quota, runtime_disabled]
         message: { type: string, description: Fixed explanation without private values. }
         step_name: { type: string, description: Affected step when the planner blocker is step-specific. }
 

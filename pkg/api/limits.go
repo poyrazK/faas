@@ -7755,6 +7755,25 @@ const (
 	ExecutionSealedPayloadMaxBytes = 3 << 20
 )
 
+// Code-first workflows (ADR-20261021204307). The journal bound covers the
+// outputs, event payloads and errors sent to the entry handler on every
+// durable boundary, so a run's per-boundary cost stays small. With the run
+// input (at most WorkflowRunInputMaxBytes) the request stays under
+// WorkflowCodeRequestMaxBytes, which base64-encoded fits the gateway's 4 MiB
+// synthetic dispatch body. One call's answer must fit the scheduler's 1 MiB
+// invocation response, so its results are bounded by
+// WorkflowCodeResponseMaxBytes.
+const (
+	WorkflowCodeMaxOps                         = 1000
+	WorkflowCodeJournalMaxBytes          int64 = 3 << 19  // 1.5 MiB
+	WorkflowCodeRequestMaxBytes          int64 = 11 << 18 // 2.75 MiB
+	WorkflowCodeResponseMaxBytes         int64 = 960 << 10
+	WorkflowCodeOpNameMaxBytes                 = 128
+	WorkflowCodeErrorMaxBytes                  = 4 << 10
+	WorkflowCodeStepDefaultMaxAttempts         = 3
+	WorkflowCodeDriverDefaultMaxAttempts       = 5
+)
+
 // ExecutionPlanLimits is the complete admission envelope for disposable
 // one-shot executions. It is returned as a value so callers cannot mutate the
 // package-level plan tables.
