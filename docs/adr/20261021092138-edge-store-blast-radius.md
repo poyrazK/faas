@@ -77,27 +77,35 @@ pool for narrow jobs: `state.NewPGRateLimitBackend` and
 
 1. **An edge store.** gatewayd-internal and gatewayd-public stop linking
    `*state.PgStore` and `state.Store`.
-   - A concrete `state.EdgeStore`, built over the same pool, implements
-     exactly the interfaces the gateway packages consume. That is about 250
-     methods: 213 in gatewayd-internal and 50 in gatewayd-public, which
-     overlap.
-   - Each query has one implementation, a package-level function over
-     `sqlc.DBTX`. The `*PgStore` method and the `EdgeStore` method are
-     one-line wrappers over it, so the two cannot drift.
-   - Plain functions have no method table: a binary carries only the ones
-     it calls.
-   - A generator writes the wrappers, and a test checks that every
-     `EdgeStore` method has a `*PgStore` twin calling the same function.
+   - The store's fields move into a shared `pgCore` (the pool and the
+     admission probe). `PgStore` and a new `EdgeStore` both embed it.
+   - A query an edge daemon runs is a method of `*pgCore`. `*PgStore` gets
+     it by promotion, so its API and `state.Store` are unchanged, and there
+     is one implementation of each query. Every other query stays a method
+     of `*PgStore`.
+   - `EdgeStore` is never a `PgStore`, so an edge daemon carries `pgCore`'s
+     method names, not `PgStore`'s.
+   - Moving a query is a receiver change, `(s *PgStore)` to `(s *pgCore)`.
+     The compiler names any helper it calls that has to move with it, and
+     any method a consumer's interface requires.
+   - (Changed from package-level functions plus generated wrappers on both
+     types. Building the prototype showed the embedding needs neither, and
+     two copies cannot drift.)
 2. **Gateway packages take narrow interfaces.** Files in `pkg/gateway` that
    take `state.Store` take the interface of the methods they call, as most
    of the package already does. Otherwise adding a method to `state.Store`
    still changes the edge daemons through the interface's own method list.
-3. **A link-level guard.** A check links each edge daemon with
-   `-ldflags=-dumpdep` and fails when `type:*…/pkg/state.PgStore` or
-   `type:…/pkg/state.Store` is reachable. It runs where the blast-radius job
-   already builds the binaries, on changes to `pkg/gateway`, `pkg/state`
-   and `cmd/gatewayd-*`. `scripts/ci/daemon_deps.json` cannot express it,
-   because the gateways still import `pkg/state`.
+3. **A link-level guard.** `scripts/ci/check_edge_store.sh` links each
+   edge daemon with `-ldflags=-dumpdep` and fails, naming the referrers,
+   when `type:*…/pkg/state.PgStore` or `type:…/pkg/state.Store` is
+   reachable.
+   - It runs in its own workflow, `edge-store.yml`, on every Go change: any
+     import can bring the types back, and the blast-radius job is
+     report-only.
+   - It restores the release build cache, so the links reuse compiled
+     packages.
+   - `scripts/ci/daemon_deps.json` cannot express this, because the gateways
+     still import `pkg/state`.
 4. **Not decided here:** a per-domain split of `*PgStore` for the
    control-plane daemons. Their lane is cheaper (one host, one gate),
    apid links the whole store regardless (finding 7), and the edge store
@@ -116,9 +124,20 @@ pool for narrow jobs: `state.NewPGRateLimitBackend` and
 - **Smaller pull requests.** Useful for review, but a 4-file store fix
   still changes 12-17 daemons.
 
-## Validation before acceptance
+## Validation
 
-- **V1 (gatewayd-public, 50 methods):** build the edge store for it alone.
+- **V1 (gatewayd-public, 50 methods): passed 2026-10-21.**
+  - 55 queries moved to `*pgCore`: the 50 it runs and 5 more its TCP
+    listener interface requires.
+  - `runtimeconfig.Watcher` takes a two-method interface instead of
+    `state.Store`.
+  - gatewayd-public then links no `*PgStore` method and reaches neither
+    type.
+  - Adding a `*PgStore` method left its code digest unchanged and changed
+    bridged's. Editing a query it runs changed it and left bridged
+    unchanged.
+
+  The V1 test as planned: build the edge store for it alone.
   Adding a `*PgStore` method must leave gatewayd-public's code digest
   unchanged, and editing a query it calls must change it.
 - **V2:** the `-dumpdep` guard finds neither type in gatewayd-public, and
@@ -133,8 +152,8 @@ pool for narrow jobs: `state.NewPGRateLimitBackend` and
   it changes a query the gateways run. The lane runs only for gateway
   changes, and with the canary that is about 7 of the 11 minutes of an
   edge-only deploy.
-- A new query the gateways need takes a wrapper on `EdgeStore` as well as
-  on `*PgStore`, from the generator.
+- A new query the gateways need is written on `*pgCore`; everything else
+  stays on `*PgStore`. The guard and the compiler catch a wrong choice.
 - Edge daemon binaries shrink further: they stop carrying the names and
   types of about 4,000 store methods.
 - Gateway tests keep their fakes: they implement the same narrow
