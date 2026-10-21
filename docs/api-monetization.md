@@ -431,6 +431,12 @@ gregale platform-tenants statement-export --id TENANT_ID --statement-id STATEMEN
   | `send` | Finalized and emailed, due after `--days-until-due` (default 30) | Not available | Billed with the customer's newest address and emailed, due after `--days-until-due` |
   | `charge` | Finalized and charged to the customer's default payment method | Charged through Lago's payment provider | Not available |
 
+  A Paddle invoice billed with `send` also carries the customer's most recently
+  updated active business, and so its tax identifier, when it has one
+  ([ADR-20261020120000](adr/20261020120000-product-control-customer-billing-details.md)).
+  Product Control customers can enter their address and business in the
+  portal; for other customers, add them in Paddle.
+
   Charges, retries and emails follow your own provider settings. The money
   never passes through Gregale. Each export keeps the mode it started with.
   With `send` or `charge`, an export or billing run reaches your customers
@@ -513,6 +519,11 @@ completeness. It then finalizes the statement and, with `--export stripe`,
   tenant's statement, so those consumers are skipped in the app part of the
   run. Use `--sources app_consumers` to bill every consumer by app statement
   instead.
+- **Product Control customers.** With `--sources product_customers` (alone or
+  with the other sources), the run also bills each Product Control customer's
+  statement for the month, once per app. It is accepted only while Product
+  Control is enabled. See
+  [Product Control billing runs](ops/product-control.md#bill-every-customer-in-a-billing-run).
 - **Running a month again.** Late usage becomes adjustment statements.
   Statements already invoiced stay `up_to_date`. Every finalized statement of
   the month without a handoff is exported, oldest first. Statements with a
