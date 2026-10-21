@@ -10,8 +10,13 @@ requests, except `FaasQuietResumeErrors`.
 
 Dashboard: **faas frozen tier and quiet pause (ADR-1151)**
 (`deploy/grafana/frozen-tier.json`). Switches: schedd `frozen_tier` and
-`frozen_tier_apps` (`FAAS_FROZEN_TIER`, `FAAS_FROZEN_TIER_APPS`), vmmd
-`quiet_pause` (`FAAS_QUIET_PAUSE`); all off by default.
+`frozen_tier_apps` (`FAAS_FROZEN_TIER`, `FAAS_FROZEN_TIER_APPS`), schedd
+`frozen_tier_early_freeze_after_s` (`FAAS_FROZEN_TIER_EARLY_FREEZE_AFTER_S`,
+ADR-20261021215353: freeze `between_requests` instances that many seconds
+after their last request; `schedd_frozen_total{outcome="frozen_early"}`),
+vmmd `quiet_pause` (`FAAS_QUIET_PAUSE`); all off by default. To back out early
+freeze, set it to 0 on the node's schedd; instances already frozen park on
+their usual TTL.
 
 ```sh
 curl -fsS http://127.0.0.1:9103/metrics | grep -E '^schedd_frozen_'

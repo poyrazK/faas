@@ -5785,6 +5785,12 @@ const (
 	// the same capacity as 1 h in the ADR's simulation while holding fewer
 	// resident VMs.
 	FrozenTTLSeconds = 600
+	// FrozenEarlyFreezeMinSeconds and FrozenEarlyFreezeMaxSeconds bound
+	// schedd's frozen_tier_early_freeze_after_s (ADR-20261021215353): at
+	// least the 2 s quiet pause, and well inside the shortest app idle
+	// timeout's order of magnitude.
+	FrozenEarlyFreezeMinSeconds = 2
+	FrozenEarlyFreezeMaxSeconds = 300
 	// FrozenMaxPerNode caps a node's frozen instances: each holds a
 	// Firecracker process, a jail uid and a network namespace.
 	FrozenMaxPerNode = 1000

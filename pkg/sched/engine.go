@@ -665,6 +665,10 @@ type Engine struct {
 	// frozenTierApps (schedd `frozen_tier_apps`) extends the frozen tier
 	// from functions to request-mode apps.
 	frozenTierApps atomic.Bool
+	// earlyFreezeAfterMS (schedd `frozen_tier_early_freeze_after_s`,
+	// ADR-20261021215353) freezes quiet between_requests instances this long
+	// after their last request instead of at their idle timeout; 0 is off.
+	earlyFreezeAfterMS atomic.Int64
 	// restorePlacementMu serializes only the brief choose-and-reserve window
 	// for snapshot restores. restorePlacementInFlight approximates vmmd's
 	// per-node restore I/O pressure until each CreateFromSnapshot RPC returns.

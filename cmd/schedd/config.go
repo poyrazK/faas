@@ -203,6 +203,12 @@ type Config struct {
 	// Off by default and ignored unless frozen_tier is on.
 	// FAAS_FROZEN_TIER_APPS overrides it.
 	FrozenTierApps bool `toml:"frozen_tier_apps"`
+	// FrozenTierEarlyFreezeAfterS (ADR-20261021215353) freezes a quiet
+	// between_requests instance this many seconds after its last request
+	// instead of at its idle timeout, so it stops accruing usage soon after
+	// it last served. 0 (the default) is off; otherwise 2-300. Ignored unless
+	// frozen_tier is on. FAAS_FROZEN_TIER_EARLY_FREEZE_AFTER_S overrides it.
+	FrozenTierEarlyFreezeAfterS int `toml:"frozen_tier_early_freeze_after_s"`
 
 	// FrozenFastPath (ADR-1740) thaws a frozen VM from a ticket recorded
 	// when it froze: one runtime-values read beside the vmmd thaw and one
@@ -566,6 +572,18 @@ func LoadConfig(path string) (*Config, error) {
 			return nil, fmt.Errorf("schedd: FAAS_FROZEN_TIER_APPS must be a boolean (got %q)", v)
 		}
 		c.FrozenTierApps = enabled
+	}
+	// ADR-20261021215353: FAAS_FROZEN_TIER_EARLY_FREEZE_AFTER_S overrides
+	// frozen_tier_early_freeze_after_s.
+	if v := os.Getenv("FAAS_FROZEN_TIER_EARLY_FREEZE_AFTER_S"); v != "" {
+		seconds, err := strconv.Atoi(v)
+		if err != nil {
+			return nil, fmt.Errorf("schedd: FAAS_FROZEN_TIER_EARLY_FREEZE_AFTER_S must be an integer (got %q)", v)
+		}
+		c.FrozenTierEarlyFreezeAfterS = seconds
+	}
+	if s := c.FrozenTierEarlyFreezeAfterS; s != 0 && (s < api.FrozenEarlyFreezeMinSeconds || s > api.FrozenEarlyFreezeMaxSeconds) {
+		return nil, fmt.Errorf("schedd: frozen_tier_early_freeze_after_s must be 0 or %d-%d (got %d)", api.FrozenEarlyFreezeMinSeconds, api.FrozenEarlyFreezeMaxSeconds, s)
 	}
 	applyRoutingEnv()
 	return c, nil
