@@ -38,12 +38,13 @@ CREATE TABLE IF NOT EXISTS deployment_release_approvals (
 CREATE INDEX IF NOT EXISTS deployment_release_approvals_app ON deployment_release_approvals(app_id, created_at);
 
 -- One notification per release and event; meterd delivers the snapshot.
+-- Scheduled releases (ADR-20261021152201) add the schedule_* events.
 CREATE TABLE IF NOT EXISTS release_approval_events (
  id uuid PRIMARY KEY,
  account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
  app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
  deployment_id uuid NOT NULL REFERENCES deployments(id) ON DELETE CASCADE,
- event text NOT NULL CHECK (event IN ('requested','approved','rejected','expired')),
+ event text NOT NULL CHECK (event IN ('requested','approved','rejected','expired','schedule_started','schedule_blocked')),
  channel_ids uuid[] NOT NULL CHECK (cardinality(channel_ids) BETWEEN 1 AND 5),
  payload jsonb NOT NULL CHECK (jsonb_typeof(payload) = 'object' AND octet_length(payload::text) <= 8192),
  state text NOT NULL DEFAULT 'pending' CHECK (state IN ('pending','delivered','failed')),

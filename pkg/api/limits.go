@@ -847,14 +847,31 @@ const ReleaseApprovalCommentMax = 200
 // tries an approval event at most ReleaseApprovalNotifyAttemptsMax times,
 // waiting ReleaseApprovalNotifyRetryBase doubled per attempt between tries.
 const ReleaseApprovalNotifyChannelsMax = 5
+const ReleaseApprovalNotifyAttemptsMax = 6
+const ReleaseApprovalNotifyRetryBase = time.Minute
 
 // A release diff (ADR-20261021101117) lists at most ReleaseDiffPackagesMax
 // packages per change kind and reads at most ReleaseDiffSBOMMaxBytes of each
 // build's SBOM.
 const ReleaseDiffPackagesMax = 100
 const ReleaseDiffSBOMMaxBytes = 16 << 20
-const ReleaseApprovalNotifyAttemptsMax = 6
-const ReleaseApprovalNotifyRetryBase = time.Minute
+
+// Scheduled releases (ADR-20261021152201). A release may be scheduled at
+// most ScheduledReleaseMaxAhead ahead, and up to ScheduledReleasePastSkew in
+// the past for clock skew. apid looks for due schedules every
+// ScheduledReleaseCheckInterval, ScheduledReleaseBatch at a time, and gives
+// up on a release that is still not ready ScheduledReleaseStartGrace after
+// its time. A schedule notifies at most ScheduledReleaseNotifyChannelsMax
+// channels; a listing returns at most ScheduledReleaseListMax schedules.
+// Plan-independent: scheduling changes when a release starts, not what it
+// may use.
+const ScheduledReleaseMaxAhead = 7 * 24 * time.Hour
+const ScheduledReleasePastSkew = time.Minute
+const ScheduledReleaseCheckInterval = 15 * time.Second
+const ScheduledReleaseBatch = 20
+const ScheduledReleaseStartGrace = time.Hour
+const ScheduledReleaseNotifyChannelsMax = 5
+const ScheduledReleaseListMax = 50
 
 // Verified rollback outcomes (ADR-1446). apid resolves each plain rollback
 // every RollbackOutcomeCheckInterval: complete once the target serves,

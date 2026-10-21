@@ -64,6 +64,9 @@ type sidecarPayload struct {
 	NoTriggers               bool                       `json:"no_triggers,omitempty"`
 	// OverrideFreeze is api.CreateDeploymentRequest.OverrideFreeze.
 	OverrideFreeze string `json:"override_freeze,omitempty"`
+	// ReleaseAt and ReleaseNotify are api.CreateDeploymentRequest's.
+	ReleaseAt     string   `json:"release_at,omitempty"`
+	ReleaseNotify []string `json:"release_notify,omitempty"`
 }
 
 // fieldNameTarball is the multipart field name on both
@@ -151,7 +154,7 @@ func (s *server) handleSourceTarballDeploy(w http.ResponseWriter, r *http.Reques
 			return
 		}
 	}
-	rolloutReq := &api.CreateDeploymentRequest{Environment: sidecar.Environment, TrafficPercent: sidecar.TrafficPercent, Canary: sidecar.Canary, RollbackOn5xx: sidecar.RollbackOn5xx, DisableStartupCPUBoost: sidecar.DisableStartupCPUBoost, MCPTaskMigrationOverride: sidecar.MCPTaskMigrationOverride, OverrideFreeze: sidecar.OverrideFreeze}
+	rolloutReq := &api.CreateDeploymentRequest{Environment: sidecar.Environment, TrafficPercent: sidecar.TrafficPercent, Canary: sidecar.Canary, RollbackOn5xx: sidecar.RollbackOn5xx, DisableStartupCPUBoost: sidecar.DisableStartupCPUBoost, MCPTaskMigrationOverride: sidecar.MCPTaskMigrationOverride, OverrideFreeze: sidecar.OverrideFreeze, ReleaseAt: sidecar.ReleaseAt, ReleaseNotify: sidecar.ReleaseNotify}
 	rolloutReq.Overrides = sourceHealthcheckOverrides(sidecar.Healthcheck)
 	healthOverrides, healthProblem := validateOverrides(rolloutReq, limits, acct.Plan)
 	if healthProblem != nil {
@@ -162,7 +165,8 @@ func (s *server) handleSourceTarballDeploy(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, prob)
 		return
 	}
-	if prob := s.releaseFreezeProblem(r, acct, app, rolloutReq.Scope, rolloutReq.OverrideFreeze); prob != nil {
+	sched, prob := s.releaseFreezeOrSchedule(r, acct, app, rolloutReq)
+	if prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
@@ -179,6 +183,7 @@ func (s *server) handleSourceTarballDeploy(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, prob)
 		return
 	}
+	sched.park(rolloutReq)
 	rollout, rolloutProblem := buildDeploymentForInsert(app, rolloutReq, healthOverrides, limits, acct.Plan)
 	if rolloutProblem != nil {
 		api.WriteProblem(w, rolloutProblem)
@@ -338,6 +343,10 @@ func (s *server) handleSourceTarballDeploy(w http.ResponseWriter, r *http.Reques
 	d, err := s.store.DeploymentByID(r.Context(), res.DeploymentID)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not read deployment"))
+		return
+	}
+	if prob := s.recordReleaseSchedule(r, acct, app, d, sched); prob != nil {
+		api.WriteProblem(w, prob)
 		return
 	}
 	writeJSON(w, http.StatusAccepted, s.deploymentResponse(r.Context(), d, app))

@@ -37,6 +37,16 @@ func TestGated(t *testing.T) {
 		{name: "candidate after the policy", policy: testPolicy(), app: app, want: true},
 		{name: "no policy", app: app},
 		{name: "created before the policy", policy: testPolicy(), app: app, edit: func(d *state.Deployment) { d.CreatedAt = t0.Add(-time.Minute) }},
+		// adr: 20261021152201 — a scheduled release starts its rollout at its
+		// time, so a policy set while it waited gates it.
+		{name: "scheduled before the policy, started after it", policy: testPolicy(), app: app, edit: func(d *state.Deployment) {
+			started := t0.Add(time.Minute)
+			d.CreatedAt, d.RolloutStartedAt = t0.Add(-time.Hour), &started
+		}, want: true},
+		{name: "rolling out before the policy", policy: testPolicy(), app: app, edit: func(d *state.Deployment) {
+			started := t0.Add(-time.Minute)
+			d.CreatedAt, d.RolloutStartedAt = t0.Add(-time.Hour), &started
+		}},
 		{name: "completed a rollout", policy: testPolicy(), app: app, edit: func(d *state.Deployment) { d.RolloutCompletedAt = &completed }},
 		{name: "serving release", policy: testPolicy(), app: app, edit: func(d *state.Deployment) { d.TrafficPercent = 100 }},
 		{name: "named scope", policy: testPolicy(), app: app, edit: func(d *state.Deployment) { d.Scope = "staging" }},
@@ -157,5 +167,29 @@ func TestRoleAllowed(t *testing.T) {
 	}
 	if !RoleAllowed(api.ReleaseApproversDeveloper, state.OrgRoleDeveloper) || RoleAllowed(api.ReleaseApproversDeveloper, state.OrgRoleViewer) {
 		t.Fatal("developer approvers: developers too, never viewers")
+	}
+}
+
+// adr: 20261021152201 — a release waiting without traffic cannot be given
+// traffic by hand past an approval policy; it starts through a schedule.
+func TestParkedNeedsCanary(t *testing.T) {
+	app := state.App{ID: "app", Slug: "shop"}
+	parked := state.Deployment{ID: "dep", Scope: api.DefaultEnvScope, Status: state.DeployLive, TrafficPercentExplicit: true}
+	if !ParkedNeedsCanary(testPolicy(), app, parked) {
+		t.Fatal("a parked production release of an app with a policy needs a canary")
+	}
+	if ParkedNeedsCanary(nil, app, parked) {
+		t.Fatal("no policy, no requirement")
+	}
+	serving := parked
+	serving.TrafficPercent = 100
+	staging := parked
+	staging.Scope = "staging"
+	demoted := parked
+	demoted.TrafficPercentExplicit = false
+	for name, d := range map[string]state.Deployment{"serving": serving, "named scope": staging, "a release demoted to 0%": demoted} {
+		if ParkedNeedsCanary(testPolicy(), app, d) {
+			t.Fatalf("%s needs no canary", name)
+		}
 	}
 }

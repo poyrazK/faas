@@ -49006,7 +49006,7 @@ CREATE TABLE public.release_approval_events (
     delivered_at timestamp with time zone,
     CONSTRAINT release_approval_events_attempts_check CHECK (((attempts >= 0) AND (attempts <= 10))),
     CONSTRAINT release_approval_events_channel_ids_check CHECK (((cardinality(channel_ids) >= 1) AND (cardinality(channel_ids) <= 5))),
-    CONSTRAINT release_approval_events_event_check CHECK ((event = ANY (ARRAY['requested'::text, 'approved'::text, 'rejected'::text, 'expired'::text]))),
+    CONSTRAINT release_approval_events_event_check CHECK ((event = ANY (ARRAY['requested'::text, 'approved'::text, 'rejected'::text, 'expired'::text, 'schedule_started'::text, 'schedule_blocked'::text]))),
     CONSTRAINT release_approval_events_last_error_check CHECK ((length(last_error) <= 512)),
     CONSTRAINT release_approval_events_payload_check CHECK (((jsonb_typeof(payload) = 'object'::text) AND (octet_length((payload)::text) <= 8192))),
     CONSTRAINT release_approval_events_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'delivered'::text, 'failed'::text])))
@@ -50900,6 +50900,39 @@ CREATE TABLE public.schedule_occurrences (
     CONSTRAINT schedule_occurrences_schedule_policy_check CHECK (((jsonb_typeof(schedule_policy) = 'object'::text) AND ((schedule_policy ->> 'version'::text) = '1'::text))),
     CONSTRAINT schedule_occurrences_schedule_revision_check CHECK ((schedule_revision >= 1)),
     CONSTRAINT schedule_occurrences_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'queued'::text, 'running'::text, 'succeeded'::text, 'failed'::text, 'cancelled'::text, 'skipped_overlap'::text, 'missed_deadline'::text, 'coalesced'::text, 'waiting_replacement'::text, 'uncertain'::text])))
+);
+
+
+--
+-- Name: scheduled_releases; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.scheduled_releases (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    release_at timestamp with time zone NOT NULL,
+    canary jsonb,
+    notify_channel_ids uuid[] DEFAULT '{}'::uuid[] NOT NULL,
+    override_freeze text DEFAULT ''::text NOT NULL,
+    override_freeze_ids uuid[] DEFAULT '{}'::uuid[] NOT NULL,
+    state text DEFAULT 'scheduled'::text NOT NULL,
+    outcome_code text DEFAULT ''::text NOT NULL,
+    outcome_detail text DEFAULT ''::text NOT NULL,
+    scheduled_by text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    started_at timestamp with time zone,
+    CONSTRAINT scheduled_releases_canary_check CHECK (((canary IS NULL) OR ((jsonb_typeof(canary) = 'object'::text) AND (octet_length((canary)::text) <= 4096)))),
+    CONSTRAINT scheduled_releases_check CHECK (((state = 'started'::text) = (started_at IS NOT NULL))),
+    CONSTRAINT scheduled_releases_notify_channel_ids_check CHECK ((cardinality(notify_channel_ids) <= 5)),
+    CONSTRAINT scheduled_releases_outcome_code_check CHECK ((length(outcome_code) <= 64)),
+    CONSTRAINT scheduled_releases_outcome_detail_check CHECK ((length(outcome_detail) <= 500)),
+    CONSTRAINT scheduled_releases_override_freeze_check CHECK ((length(override_freeze) <= 200)),
+    CONSTRAINT scheduled_releases_override_freeze_ids_check CHECK ((cardinality(override_freeze_ids) <= 50)),
+    CONSTRAINT scheduled_releases_scheduled_by_check CHECK (((length(scheduled_by) >= 1) AND (length(scheduled_by) <= 320))),
+    CONSTRAINT scheduled_releases_state_check CHECK ((state = ANY (ARRAY['scheduled'::text, 'started'::text, 'blocked'::text, 'expired'::text, 'cancelled'::text, 'superseded'::text])))
 );
 
 
@@ -63503,6 +63536,14 @@ ALTER TABLE ONLY public.schedule_occurrences
 
 
 --
+-- Name: scheduled_releases scheduled_releases_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scheduled_releases
+    ADD CONSTRAINT scheduled_releases_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: service_caller_key_history service_caller_key_history_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -72860,6 +72901,34 @@ CREATE INDEX schedule_occurrences_pending ON public.schedule_occurrences USING b
 --
 
 CREATE INDEX schedule_occurrences_succeeded_job_release_proof ON public.schedule_occurrences USING btree (job_id, schedule_revision, finished_at, id) WHERE ((job_id IS NOT NULL) AND (job_run_id IS NOT NULL) AND (status = 'succeeded'::text));
+
+
+--
+-- Name: scheduled_releases_account; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX scheduled_releases_account ON public.scheduled_releases USING btree (account_id, created_at);
+
+
+--
+-- Name: scheduled_releases_deployment; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX scheduled_releases_deployment ON public.scheduled_releases USING btree (deployment_id, created_at);
+
+
+--
+-- Name: scheduled_releases_due; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX scheduled_releases_due ON public.scheduled_releases USING btree (release_at) WHERE (state = 'scheduled'::text);
+
+
+--
+-- Name: scheduled_releases_one_pending; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX scheduled_releases_one_pending ON public.scheduled_releases USING btree (app_id) WHERE (state = 'scheduled'::text);
 
 
 --
@@ -93971,6 +94040,30 @@ ALTER TABLE ONLY public.schedule_occurrences
 
 ALTER TABLE ONLY public.schedule_occurrences
     ADD CONSTRAINT schedule_occurrences_job_run_id_fkey FOREIGN KEY (job_run_id) REFERENCES public.job_runs(id) ON DELETE SET NULL;
+
+
+--
+-- Name: scheduled_releases scheduled_releases_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scheduled_releases
+    ADD CONSTRAINT scheduled_releases_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: scheduled_releases scheduled_releases_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scheduled_releases
+    ADD CONSTRAINT scheduled_releases_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: scheduled_releases scheduled_releases_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scheduled_releases
+    ADD CONSTRAINT scheduled_releases_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
 
 
 --

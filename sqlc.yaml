@@ -314,6 +314,7 @@ sql:
       - "pkg/state/scenario_suspend_queries.sql"
       - "pkg/state/scenario_work_queries.sql"
       - "pkg/state/scenario_worker_fault_queries.sql"
+      - "pkg/state/scheduled_release_queries.sql"
       - "pkg/state/scoped_telemetry_queries.sql"
       - "pkg/state/secret_rekey_queries.sql"
       - "pkg/state/selected_trace_queries.sql"

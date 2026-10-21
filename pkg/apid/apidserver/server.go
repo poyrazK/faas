@@ -4290,6 +4290,11 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/deployments/{id}/approvals", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.decideReleaseApproval)))))
 	// Release diff (ADR-20261021101117).
 	mux.HandleFunc("GET /v1/deployments/{id}/diff", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getReleaseDiff)))
+	// Scheduled releases (ADR-20261021152201).
+	mux.HandleFunc("GET /v1/scheduled-releases", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.listScheduledReleases)))
+	mux.HandleFunc("GET /v1/deployments/{id}/schedule", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getDeploymentSchedule)))
+	mux.HandleFunc("PUT /v1/deployments/{id}/schedule", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.putDeploymentSchedule))))
+	mux.HandleFunc("DELETE /v1/deployments/{id}/schedule", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteDeploymentSchedule))))
 
 	// Data upstreams (ADR-098 §D4 / PR-B). The full handler family is
 	// gated on s.dataPlacementEnabled (FAAS_DATA_PLACEMENT=1); when

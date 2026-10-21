@@ -44,7 +44,8 @@ Changing or removing the policy needs the organization's `manage_app_security` a
 A deployment needs approval when all of these hold:
 - its app has a policy;
 - it is in the app's default (production) scope;
-- it has never completed a rollout and is not the app's serving release.
+- it has never completed a rollout and is not the app's serving release;
+- it was created, or its rollout started, after the policy. A scheduled release ([ADR-20261021152201](20261021152201-scheduled-releases.md)) starts its rollout at its time, so a policy set while it waited applies to it.
 
 A rollback restores a release that already served, so rollbacks never wait. An app's first release has nothing to compare against and does not wait.
 
@@ -55,7 +56,7 @@ After the ADR-1446 default fills in the rollout, a production release of an app 
 - an explicit `--traffic-percent` above 0;
 - a canary worker that is unavailable.
 
-The check runs on the same paths as freezes: JSON and image deploys, multipart source deploys, tarball deploys, upload sessions, git-ref deploys and GitHub pushes. `--no-traffic` (a dark deployment) is allowed, because it takes no traffic.
+The check runs on the same paths as freezes: JSON and image deploys, multipart source deploys, tarball deploys, upload sessions, git-ref deploys and GitHub pushes. `--no-traffic` (a dark deployment) is allowed, because it takes no traffic. Giving that release traffic by hand later is refused with `release_approval_canary_required`; it starts through a schedule, whose canary can wait (ADR-20261021152201).
 
 ### Waiting
 

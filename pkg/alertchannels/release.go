@@ -14,6 +14,10 @@ const (
 	EventApprovalApproved  = "approval_approved"
 	EventApprovalRejected  = "approval_rejected"
 	EventApprovalExpired   = "approval_expired"
+
+	// Scheduled release outcomes (ADR-20261021152201).
+	EventScheduleStarted = "schedule_started"
+	EventScheduleBlocked = "schedule_blocked"
 )
 
 // ReleaseNotice is the snapshot apid records for one approval event; meterd
@@ -39,6 +43,11 @@ type ReleaseNotice struct {
 	// Changes summarizes the release diff (ADR-20261021101117), such as
 	// "new code, 2 config keys".
 	Changes string `json:"changes,omitempty"`
+	// ReleaseAt, Rollout and Detail describe a scheduled release's start:
+	// its time, how its rollout starts, and why it did not start.
+	ReleaseAt string `json:"release_at,omitempty"`
+	Rollout   string `json:"rollout,omitempty"`
+	Detail    string `json:"detail,omitempty"`
 }
 
 // ErrReleaseNoticeKind refuses a channel kind that does not receive release
@@ -59,6 +68,10 @@ func releaseHeadline(n ReleaseNotice) string {
 		return fmt.Sprintf("Rejected: %s of %s", release, n.App)
 	case EventApprovalExpired:
 		return fmt.Sprintf("Approval timed out: %s of %s", release, n.App)
+	case EventScheduleStarted:
+		return fmt.Sprintf("Started: scheduled %s of %s", release, n.App)
+	case EventScheduleBlocked:
+		return fmt.Sprintf("Did not start: scheduled %s of %s", release, n.App)
 	}
 	return fmt.Sprintf("Approval needed: %s of %s", release, n.App)
 }
@@ -87,6 +100,11 @@ func releaseLines(n ReleaseNotice) []string {
 		lines = append(lines, fmt.Sprintf("Rejected by %s; the rollout was aborted and the previous release serves again.", n.Actor))
 	case EventApprovalExpired:
 		lines = append(lines, "Nobody approved it in time; the rollout was aborted and the previous release serves again.")
+	case EventScheduleStarted:
+		lines = append(lines, fmt.Sprintf("Its rollout started at %s: %s.", n.ReleaseAt, n.Rollout))
+	case EventScheduleBlocked:
+		lines = append(lines, fmt.Sprintf("It was scheduled for %s and did not start: %s.", n.ReleaseAt, n.Detail),
+			"It stays built without traffic. Schedule it again, or promote it by hand.")
 	default:
 		lines = append(lines, fmt.Sprintf("Waiting for %d more approval(s) (%d of %d) at %d%% traffic, canary stage %d of %d.",
 			max(n.Required-n.Approvals, 0), n.Approvals, n.Required, n.TrafficPercent, n.Stage, n.TotalStages))
@@ -134,7 +152,8 @@ func reviewLink(review, intent string) string {
 
 func releaseSlackPayload(n ReleaseNotice) map[string]any {
 	icon := map[string]string{EventApprovalRequested: ":hourglass_flowing_sand:", EventApprovalApproved: ":white_check_mark:",
-		EventApprovalRejected: ":no_entry:", EventApprovalExpired: ":alarm_clock:"}[n.Event]
+		EventApprovalRejected: ":no_entry:", EventApprovalExpired: ":alarm_clock:", EventScheduleStarted: ":rocket:",
+		EventScheduleBlocked: ":warning:"}[n.Event]
 	lines := releaseLines(n)
 	escaped := make([]string, 0, len(lines))
 	for _, line := range lines {
@@ -176,6 +195,10 @@ func releaseEmailContent(n ReleaseNotice) (subject, body string) {
 	} else if link := reviewLink(n.ReviewURL, ""); link != "" {
 		fmt.Fprintf(&b, "\nReview: %s\n", link)
 	}
-	b.WriteString("\nYou receive this because this app's release approval policy notifies this address. Change it with `gregale approvals require --notify`.\n")
+	if n.Event == EventScheduleStarted || n.Event == EventScheduleBlocked {
+		b.WriteString("\nYou receive this because this scheduled release notifies this address.\n")
+	} else {
+		b.WriteString("\nYou receive this because this app's release approval policy notifies this address. Change it with `gregale approvals require --notify`.\n")
+	}
 	return "[Gregale] " + headline, b.String()
 }

@@ -13420,6 +13420,25 @@ type ScheduleOccurrence struct {
 	ExclusiveOperationID pgtype.UUID
 }
 
+type ScheduledRelease struct {
+	ID                pgtype.UUID
+	AccountID         pgtype.UUID
+	AppID             pgtype.UUID
+	DeploymentID      pgtype.UUID
+	ReleaseAt         pgtype.Timestamptz
+	Canary            []byte
+	NotifyChannelIds  []pgtype.UUID
+	OverrideFreeze    string
+	OverrideFreezeIds []pgtype.UUID
+	State             string
+	OutcomeCode       string
+	OutcomeDetail     string
+	ScheduledBy       string
+	CreatedAt         pgtype.Timestamptz
+	UpdatedAt         pgtype.Timestamptz
+	StartedAt         pgtype.Timestamptz
+}
+
 type ServiceCallerKey struct {
 	NodeID       string
 	KeyID        string

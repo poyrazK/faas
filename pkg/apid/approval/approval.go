@@ -16,8 +16,10 @@ import (
 )
 
 // Gated reports whether a release needs approval before it takes more
-// traffic. Releases created before the policy, releases that completed a
-// rollout and the app's serving release never wait, so a rollback never does.
+// traffic. Releases whose rollout started before the policy, releases that
+// completed a rollout and the app's serving release never wait, so a
+// rollback never does. A scheduled release starts its rollout when its time
+// comes (ADR-20261021152201), so a policy set while it waited gates it.
 func Gated(policy *state.ReleaseApprovalPolicy, app state.App, d state.Deployment) bool {
 	if policy == nil || !RequestMode(app) {
 		return false
@@ -25,10 +27,27 @@ func Gated(policy *state.ReleaseApprovalPolicy, app state.App, d state.Deploymen
 	if d.Scope != "" && d.Scope != api.DefaultEnvScope {
 		return false
 	}
-	if d.CreatedAt.Before(policy.CreatedAt) || d.RolloutCompletedAt != nil {
+	if startedBefore(d, policy.CreatedAt) || d.RolloutCompletedAt != nil {
 		return false
 	}
 	return d.Status != state.DeployLive || d.TrafficPercent != 100
+}
+
+// startedBefore reports whether d was created, and its rollout started,
+// before t. A release not yet rolling out counts from its creation.
+func startedBefore(d state.Deployment, t time.Time) bool {
+	return d.CreatedAt.Before(t) && (d.RolloutStartedAt == nil || d.RolloutStartedAt.Before(t))
+}
+
+// ParkedNeedsCanary reports whether giving a parked release traffic by hand
+// would skip the approvals its app requires: a production release waiting
+// without traffic can only start through a schedule, whose canary can wait
+// (ADR-20261021152201).
+func ParkedNeedsCanary(policy *state.ReleaseApprovalPolicy, app state.App, d state.Deployment) bool {
+	if policy == nil || !RequestMode(app) || (d.Scope != "" && d.Scope != api.DefaultEnvScope) {
+		return false
+	}
+	return d.Status == state.DeployLive && d.TrafficPercent == 0 && d.TrafficPercentExplicit && d.CanaryTotalSteps == 0
 }
 
 // RequestMode reports whether the app serves request traffic through a

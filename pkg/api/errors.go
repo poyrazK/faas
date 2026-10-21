@@ -922,6 +922,16 @@ const (
 	CodeReleaseApprovalDecided = "release_approval_decided"
 	// CodeReleaseApprovalPolicyNotFound means the app has no approval policy.
 	CodeReleaseApprovalPolicyNotFound = "release_approval_policy_not_found"
+	// CodeReleaseScheduled means the release waits for its scheduled start
+	// (ADR-20261021152201), so it takes no traffic by hand until the schedule
+	// is cancelled or moved.
+	CodeReleaseScheduled = "release_scheduled"
+	// CodeReleaseNotParked means the release cannot be scheduled: it is not
+	// live without traffic, or it already has a canary ladder.
+	CodeReleaseNotParked = "release_not_parked"
+	// CodeScheduledReleaseNotFound means the release has no schedule, or no
+	// pending one to cancel.
+	CodeScheduledReleaseNotFound = "scheduled_release_not_found"
 	// CodeConfigRevisionNotFound means the scope has no such config revision
 	// (ADR-1451), or it was pruned past ConfigRevisionsRetained.
 	CodeConfigRevisionNotFound = "config_revision_not_found"

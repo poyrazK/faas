@@ -70,3 +70,31 @@ func TestReleaseEmailAndPagerDuty(t *testing.T) {
 		t.Fatalf("PagerDuty send err = %v, want ErrReleaseNoticeKind", err)
 	}
 }
+
+// adr: 20261021152201 — scheduled release outcomes render with a Review
+// button only.
+func TestScheduleNotices(t *testing.T) {
+	notice := ReleaseNotice{Event: EventScheduleBlocked, App: "shop", DeploymentID: "d42", Revision: 42,
+		ReleaseAt: "2026-10-22T02:00:00Z", Rollout: "safe canary", Detail: "Production releases of shop are frozen",
+		ReviewURL: "https://console.gregale.dev/dashboard/releases/d42/approval"}
+	raw, err := json.Marshal(SlackPayload(ReleaseMessage(notice, time.Now())))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(raw)
+	for _, want := range []string{"Did not start: scheduled release v42 of shop", "did not start: Production releases of shop are frozen.",
+		"Schedule it again, or promote it by hand.", `"action_id":"release_review"`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("blocked payload lacks %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "release_approve") {
+		t.Fatalf("a schedule notice offered an approval: %s", body)
+	}
+	notice.Event, notice.Detail = EventScheduleStarted, ""
+	subject, text := EmailContent(ReleaseMessage(notice, time.Now()))
+	if subject != "[Gregale] Started: scheduled release v42 of shop" || !strings.Contains(text, "Its rollout started at 2026-10-22T02:00:00Z: safe canary.") ||
+		!strings.Contains(text, "this scheduled release notifies this address") || strings.Contains(text, "approvals approve") {
+		t.Fatalf("started email = %q\n%s", subject, text)
+	}
+}

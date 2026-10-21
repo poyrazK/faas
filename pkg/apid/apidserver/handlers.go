@@ -719,7 +719,8 @@ func (s *server) createImageDeployment(w http.ResponseWriter, r *http.Request, a
 			return
 		}
 	}
-	if p := s.releaseFreezeProblem(r, acct, app, req.Scope, req.OverrideFreeze); p != nil {
+	sched, p := s.releaseFreezeOrSchedule(r, acct, app, &req)
+	if p != nil {
 		api.WriteProblem(w, p)
 		return
 	}
@@ -791,6 +792,7 @@ func (s *server) createImageDeployment(w http.ResponseWriter, r *http.Request, a
 		api.WriteProblem(w, p)
 		return
 	}
+	sched.park(&req)
 	dep, sErr := buildDeploymentForInsert(app, &req, overrides, limits, acct.Plan)
 	if sErr != nil {
 		api.WriteProblem(w, sErr)
@@ -868,6 +870,10 @@ func (s *server) createImageDeployment(w http.ResponseWriter, r *http.Request, a
 	}
 	if activityOutboxID > 0 {
 		s.deliverOrgActivityOutbox(r.Context(), activityOutboxID)
+	}
+	if p := s.recordReleaseSchedule(r, acct, app, d, sched); p != nil {
+		api.WriteProblem(w, p)
+		return
 	}
 	notifyAndAuditDeployment(r, s, acct, app, d, prev, &req)
 	writeJSON(w, http.StatusAccepted, s.deploymentResponse(r.Context(), d, app))

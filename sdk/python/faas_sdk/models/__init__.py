@@ -5297,6 +5297,10 @@ from .schedule_policy import SchedulePolicy
 from .schedule_policy_missed_runs import SchedulePolicyMissedRuns
 from .schedule_policy_overlap import SchedulePolicyOverlap
 from .schedule_policy_version import SchedulePolicyVersion
+from .schedule_release_request import ScheduleReleaseRequest
+from .scheduled_release import ScheduledRelease
+from .scheduled_release_list_response import ScheduledReleaseListResponse
+from .scheduled_release_state import ScheduledReleaseState
 from .scoped_app_env_response import ScopedAppEnvResponse
 from .scoped_app_secret_response import ScopedAppSecretResponse
 from .scoped_app_secret_response_delivery_status import ScopedAppSecretResponseDeliveryStatus
@@ -10977,12 +10981,16 @@ __all__ = (
     "ScenarioWorkerFault",
     "ScenarioWorkerFaultState",
     "ScenarioWorkerTermination",
+    "ScheduledRelease",
+    "ScheduledReleaseListResponse",
+    "ScheduledReleaseState",
     "ScheduleOccurrenceResponse",
     "ScheduleOccurrenceResponseStatus",
     "SchedulePolicy",
     "SchedulePolicyMissedRuns",
     "SchedulePolicyOverlap",
     "SchedulePolicyVersion",
+    "ScheduleReleaseRequest",
     "ScopedAppEnvResponse",
     "ScopedAppSecretResponse",
     "ScopedAppSecretResponseDeliveryStatus",

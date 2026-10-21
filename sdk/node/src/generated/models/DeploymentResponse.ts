@@ -18,6 +18,7 @@ import type { LogExcerpt } from './LogExcerpt.js';
 import type { RollbackOperation } from './RollbackOperation.js';
 import type { RolloutDecision } from './RolloutDecision.js';
 import type { ScanResult } from './ScanResult.js';
+import type { ScheduledRelease } from './ScheduledRelease.js';
 import type { SecretScanResult } from './SecretScanResult.js';
 import type { ServiceRolloutHandoffResponse } from './ServiceRolloutHandoffResponse.js';
 import type { WorkflowSpec } from './WorkflowSpec.js';
@@ -39,6 +40,10 @@ export type DeploymentResponse = {
    * Latest blocked automatic MCP task promotion; omitted once the candidate becomes live or terminal. A hold is not a failed deployment.
    */
   promotion_hold?: DeploymentPromotionHold;
+  /**
+   * The schedule of a release that waits live without traffic for its scheduled start, or how its latest schedule ended (ADR-20261021152201).
+   */
+  scheduled_release?: ScheduledRelease;
   durable_entity_validator?: DurableEntityValidatorDeploymentInfo;
   /**
    * Actual stage progress; the same document GET /v1/deployments/{id}/stages serves. retry_requested_stage and retry_restart_reason appear when prerequisites must be rebuilt; hosting_verification appears during unavailable candidate verification recovery (ADR-481, ADR-482).

@@ -75,6 +75,9 @@ const (
 	ReleaseApprovalEventApproved  = "approved"
 	ReleaseApprovalEventRejected  = "rejected"
 	ReleaseApprovalEventExpired   = "expired"
+	// Scheduled release outcomes share the outbox (ADR-20261021152201).
+	ReleaseApprovalEventScheduleStarted = "schedule_started"
+	ReleaseApprovalEventScheduleBlocked = "schedule_blocked"
 
 	ReleaseApprovalEventPending   = "pending"
 	ReleaseApprovalEventDelivered = "delivered"

@@ -184,8 +184,18 @@ func ErrReleaseApprovalRejected(status ReleaseApprovalStatus) *Problem {
 func ErrReleaseApprovalCanaryRequired(app string) *Problem {
 	return NewProblem(http.StatusConflict, CodeReleaseApprovalCanaryRequired, "Release approvals need a canary",
 		fmt.Sprintf("%s requires approvals for production releases, and this release would take traffic without a canary to wait in.", app)).
-		WithHint("Deploy with --rollout safe or fast (or without --rollout immediate and --traffic-percent), deploy with --no-traffic and approve before `gregale traffic set`, or remove the policy with `gregale approvals off`.").
+		WithHint("Deploy with --rollout safe or fast (or without --rollout immediate and --traffic-percent), or remove the policy with `gregale approvals off`.").
 		WithDocs(docsBase + "/deploys#release-approvals")
+}
+
+// ErrReleaseApprovalParked refuses traffic by hand for a release that waits
+// without traffic while its app requires approvals: it starts through a
+// schedule, whose canary can wait (ADR-20261021152201).
+func ErrReleaseApprovalParked(app, release string) *Problem {
+	return NewProblem(http.StatusConflict, CodeReleaseApprovalCanaryRequired, "Release approvals need a canary",
+		fmt.Sprintf("%s requires release approvals, so %s cannot take traffic by hand.", app, release)).
+		WithHint(fmt.Sprintf("Start it through a canary that waits for approval: `gregale scheduled-releases set %s --app %s --at now`.", release, app)).
+		WithDocs(docsBase + "/deploys#scheduled-releases")
 }
 
 // ErrReleaseApprovalSelf refuses the deployer's own approval.

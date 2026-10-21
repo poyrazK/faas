@@ -5990,6 +5990,7 @@ func (s *server) deploymentResponse(parent context.Context, d state.Deployment, 
 	if len(d.OverrideCmd) > 0 {
 		resp.OverrideCmd = d.OverrideCmd
 	}
+	resp.ScheduledRelease = s.deploymentScheduleView(parent, d, app)
 	if len(d.OverrideEnv) > 0 {
 		// Decode the jsonb map to surface the KEYS only. Values are
 		// never echoed (ADR-053 §Decision 4). Stable order: sorted

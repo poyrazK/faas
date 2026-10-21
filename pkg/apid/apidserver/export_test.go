@@ -1265,6 +1265,12 @@ func (r *server) SetPostReleaseTelemetry(t PostReleaseTelemetry) {
 func (r *server) SetReleaseGateEvidence(e state.ReleaseGateEvidenceStore) {
 	r.releaseGateEvidence = e
 }
+
+// StartDueScheduledReleases runs one pass of the scheduled release worker
+// (ADR-20261021152201) at now.
+func (r *server) StartDueScheduledReleases(ctx context.Context, now time.Time) {
+	r.startDueScheduledReleases(ctx, now)
+}
 func (r *server) RollbackProjectEnvironmentPromotion(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
 	r.rollbackProjectEnvironmentPromotion(p0, p1, p2)
 }

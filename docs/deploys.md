@@ -309,8 +309,10 @@ themselves.
 
 Releases need a canary to wait in. While the policy is on, a production
 release with `--rollout immediate` or `--traffic-percent` is refused with
-`release_approval_canary_required`. To approve before any traffic, deploy
-with `--no-traffic`, get the approval, then run `gregale traffic set`.
+`release_approval_canary_required`. A release deployed with `--no-traffic`
+can't be given traffic by hand either; start it with
+`gregale scheduled-releases set <release> --at now`, which rolls it out
+through a canary that waits for approval.
 
 ## Deploy freezes
 
@@ -362,6 +364,59 @@ An `--after-rollback` freeze is a policy. Each time the rollout circuit
 breaker, the post-release watch, the first-wake 5xx guard or an alert rule
 rolls an app back, Gregale freezes that app for the given time. The freeze
 names the release that was rolled back, and you can lift it like any other.
+
+## Scheduled releases
+
+Build a release now and start it later: at a quiet hour, at a launch time, or
+when the team is around to watch
+([ADR-20261021152201](adr/20261021152201-scheduled-releases.md)):
+
+```bash
+# Build now; start the rollout at 02:00 local time and tell #releases how it went.
+gregale deploy --at 02:00 --release-notify releases
+# Other ways to say when: +2h, "2026-10-22 09:00" (local time), or an RFC 3339 time.
+gregale deploy --at "2026-10-22 09:00" --rollout fast
+
+gregale scheduled-releases list
+gregale scheduled-releases show v44 --app my-api
+gregale scheduled-releases set v44 --app my-api --at +30m   # move it
+gregale scheduled-releases set v44 --app my-api --at now    # start it on the next pass
+gregale scheduled-releases cancel v44 --app my-api
+```
+
+The build, readiness check and snapshot happen right away, so a broken build
+shows up while you are still there. The release then waits live without
+traffic; production stays on the current release, and nothing wakes the
+waiting one. At its time, Gregale starts the rollout the deploy would have
+had: the same canary (`--rollout safe` or `fast`, or the app's release
+policy), or all traffic at once for `--rollout immediate`.
+
+Just before it starts, Gregale checks again:
+- **Freezes.** A freeze active at that moment stops the release, including a
+  freeze created after you scheduled it. Scheduling into a freeze you know
+  about needs `--override-freeze REASON`, which covers exactly the freezes
+  active at the scheduled time.
+- **Approvals.** If the app requires approvals, the release must roll out
+  through a canary, and it waits for approval in that canary like any other
+  release. A policy added while the release waited applies to it.
+- **Newer releases.** If a newer release serves traffic by then, the
+  scheduled one is superseded and never starts.
+
+If the build is still running, or another rollout is still in progress,
+Gregale waits for up to an hour past the scheduled time, then gives up
+(`expired`). A release that could not start stays built without traffic:
+schedule it again, or promote it by hand. `--release-notify` channels (Slack
+or email, up to five) hear when the release starts and when it can't.
+
+While a release waits for its time, `gregale traffic set` and `gregale
+traffic promote` refuse it with `release_scheduled`; move or cancel the
+schedule instead. `gregale traffic promote --deployment v44 --at 09:00`
+schedules a release you deployed with `--no-traffic`.
+
+A scheduled release is a production release of a request app: previews,
+named environments, services, workers and jobs release immediately. An app
+has one pending schedule at a time; scheduling another release cancels the
+earlier schedule and leaves that release waiting without traffic.
 
 ## Revisions
 

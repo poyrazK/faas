@@ -17,6 +17,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/appaccess"
 	"github.com/onebox-faas/faas/pkg/apid/approval"
+	"github.com/onebox-faas/faas/pkg/apid/schedule"
 	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -150,7 +151,7 @@ func (s *server) releaseApprovalChannelIDs(ctx context.Context, accountID string
 			return nil, api.ErrValidation(fmt.Sprintf("no notification channel is named %q; create it with `gregale channels add`", name))
 		}
 		if c.Kind == alertchannels.KindPagerDuty {
-			return nil, api.ErrValidation(fmt.Sprintf("%q is a PagerDuty channel; release approvals notify Slack or email channels", name))
+			return nil, api.ErrValidation(fmt.Sprintf("%q is a PagerDuty channel; release notifications go to Slack or email channels", name))
 		}
 		ids = append(ids, c.ID)
 	}
@@ -433,13 +434,21 @@ func (s *server) releaseApprovalState(ctx context.Context, app state.App, d stat
 // releaseApprovalTrafficProblem refuses more traffic for a release that
 // waits for approval or was rejected (ADR-20261020085706).
 func (s *server) releaseApprovalTrafficProblem(r *http.Request, app state.App, d state.Deployment) *api.Problem {
-	_, status, err := s.releaseApprovalState(r.Context(), app, d)
+	// ADR-20261021152201: a release waiting for its scheduled start takes
+	// no traffic by hand.
+	if p := s.scheduledReleaseTrafficProblem(r, d); p != nil {
+		return p
+	}
+	policy, status, err := s.releaseApprovalState(r.Context(), app, d)
 	if err != nil {
 		logCustomerFailure(s.log, "read release approvals", err)
 		return api.ErrInternal("Gregale could not read this release's approvals.").WithHint("Retry in a moment.")
 	}
 	if approval.Blocks(status) {
 		return approval.Problem(status)
+	}
+	if approval.ParkedNeedsCanary(policy, app, d) {
+		return api.ErrReleaseApprovalParked(app.Slug, schedule.Ref(d))
 	}
 	return nil
 }

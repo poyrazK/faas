@@ -93,6 +93,7 @@ const (
 	releaseGatesFile                 = "release_gates.go"        // ADR-20261019071734 release gates
 	releaseApprovalsFile             = "release_approvals.go"    // ADR-20261020085706 release approvals
 	releaseDiffFile                  = "release_diff.go"         // ADR-20261021101117 release diff
+	scheduledReleasesFile            = "scheduled_releases.go"   // ADR-20261021152201 scheduled releases
 	changeTimelineFile               = "change_timeline.go"      // ADR-751 app change timeline DTOs
 	customMetricSeriesFile           = "custom_metric_series.go" // ADR-745 custom metric history DTOs
 	operatorPlatformFlagsFile        = "operator_platform_flags.go"
@@ -1779,6 +1780,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", releaseGatesFile),
 		filepath.Join(root, "pkg", "api", releaseApprovalsFile),
 		filepath.Join(root, "pkg", "api", releaseDiffFile),
+		filepath.Join(root, "pkg", "api", scheduledReleasesFile),
 		filepath.Join(root, "pkg", "api", platformTenantsFile),
 		filepath.Join(root, "pkg", "api", platformTenantCredentialsFile),
 		filepath.Join(root, "pkg", "api", runtimePolicyFile),

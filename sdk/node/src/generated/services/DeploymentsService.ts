@@ -52,6 +52,9 @@ import type { RollbackRequest } from '../models/RollbackRequest.js';
 import type { RolloutTransitionResponse } from '../models/RolloutTransitionResponse.js';
 import type { RuntimeUpgradePreviewResponse } from '../models/RuntimeUpgradePreviewResponse.js';
 import type { ScanResult } from '../models/ScanResult.js';
+import type { ScheduledRelease } from '../models/ScheduledRelease.js';
+import type { ScheduledReleaseListResponse } from '../models/ScheduledReleaseListResponse.js';
+import type { ScheduleReleaseRequest } from '../models/ScheduleReleaseRequest.js';
 import type { SecretScanResult } from '../models/SecretScanResult.js';
 import type { SetDeploymentAliasRequest } from '../models/SetDeploymentAliasRequest.js';
 import type { SetReleaseApprovalPolicyRequest } from '../models/SetReleaseApprovalPolicyRequest.js';
@@ -1203,6 +1206,37 @@ export class DeploymentsService {
     });
   }
   /**
+   * List scheduled releases (ADR-20261021152201).
+   * The account's scheduled releases: pending ones first, soonest first, then the most recently ended.
+   * @returns ScheduledReleaseListResponse The scheduled releases.
+   * @throws ApiError
+   */
+  public static listScheduledReleases({
+    app,
+  }: {
+    /**
+     * Only this app's schedules.
+     */
+    app?: string,
+  }): CancelablePromise<ScheduledReleaseListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/scheduled-releases',
+      query: {
+        'app': app,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
    * List deploy freezes (ADR-20261019071733).
    * Unlifted freezes that have not ended: active and upcoming windows, weekly windows and after-rollback policies. `app` narrows the list to the freezes covering one app.
    * @returns ListReleaseFreezesResponse The account's freezes.
@@ -2191,6 +2225,105 @@ export class DeploymentsService {
       },
       errors: {
         400: `code: validation_failed | env_var_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Show a release's schedule (ADR-20261021152201).
+   * The release's newest schedule: pending, or how it ended. 404 `scheduled_release_not_found` when the release was never scheduled.
+   * @returns ScheduledRelease The schedule.
+   * @throws ApiError
+   */
+  public static getDeploymentSchedule({
+    id,
+  }: {
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+  }): CancelablePromise<ScheduledRelease> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/deployments/{id}/schedule',
+      path: {
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Schedule, or move, the start of a release waiting without traffic (ADR-20261021152201).
+   * The release must be live without traffic and without a canary ladder, or still building to go live without traffic; otherwise 409 `release_not_parked`. A release_at that has passed starts it on apid's next pass. Freezes active at release_at refuse the schedule with 409 `release_frozen` unless override_freeze gives a reason. An app that requires approvals needs a canary: 409 `release_approval_canary_required`. An app's earlier pending schedule is cancelled.
+   * @returns ScheduledRelease The pending schedule.
+   * @throws ApiError
+   */
+  public static scheduleDeployment({
+    id,
+    requestBody,
+  }: {
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+    requestBody: ScheduleReleaseRequest,
+  }): CancelablePromise<ScheduledRelease> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/deployments/{id}/schedule',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | env_var_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Cancel a release's pending schedule (ADR-20261021152201).
+   * The release stays live without traffic. 404 `scheduled_release_not_found` when it has no pending schedule.
+   * @returns ScheduledRelease The cancelled schedule.
+   * @throws ApiError
+   */
+  public static cancelDeploymentSchedule({
+    id,
+  }: {
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+  }): CancelablePromise<ScheduledRelease> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/deployments/{id}/schedule',
+      path: {
+        'id': id,
+      },
+      errors: {
         401: `code: unauthorized`,
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses

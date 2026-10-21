@@ -15646,6 +15646,28 @@
     "kind": "operational"
   },
   {
+    "table": "scheduled_releases",
+    "columns": [
+      "account_id",
+      "app_id",
+      "canary",
+      "created_at",
+      "deployment_id",
+      "id",
+      "notify_channel_ids",
+      "outcome_code",
+      "outcome_detail",
+      "override_freeze",
+      "override_freeze_ids",
+      "release_at",
+      "scheduled_by",
+      "started_at",
+      "state",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "service_caller_key_history",
     "columns": [
       "key_id",
