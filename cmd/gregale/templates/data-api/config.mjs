@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto'
 
 // Mirrors pkg/api/limits.go; TestDataAPIRuntimeBounds checks this contract.
-export const limits = Object.freeze({ pool: 2, connectionReportMs: 5000, connectionReportIntervalMs: 15000, connectionReportBytes: 4096, rows: 1000, bodyBytes: 1048576, responseBytes: 16777216, outputBytes: 1048576, queryMs: 15000, lockMs: 5000, relations: 1000, columns: 10000, types: 20000, queuedRequests: 8, admissionWaitMs: 1000, overloadRetrySeconds: 1, healthProbeMs: 2000, healthBytes: 8192, rateLimitDefaultPerSecond: 10, rateLimitDefaultBurst: 20, rateLimitMaxPerSecond: 1000, rateLimitMaxBurst: 1000, rateLimitMaxSubjects: 4096, rateLimitSweepMs: 1000, userConcurrencyMaxSubjects: 4096, userConcurrencyCooldownMs: 15000, publicReadMaxRelations: 64, serverKeySubjectMaxBytes: 255, publicReadMaxAgeSeconds: 3600, cacheTagMaxBytes: 128, cacheTagsMax: 32, serverKeyPermissionsBytes: 4096, serverKeyPermissionsEntries: 64, publicRpcMaxFunctions: 64, usageReportMs: 5000, usageReportIntervalMs: 15000, usageReportMaxHours: 48, usageMonthlyCapMax: 1000000000000, usageRestoreJumpMs: 5000 })
+export const limits = Object.freeze({ pool: 2, connectionReportMs: 5000, connectionReportIntervalMs: 15000, connectionReportBytes: 4096, rows: 1000, bodyBytes: 1048576, responseBytes: 16777216, outputBytes: 1048576, queryMs: 15000, lockMs: 5000, relations: 1000, columns: 10000, types: 20000, queuedRequests: 8, admissionWaitMs: 1000, overloadRetrySeconds: 1, healthProbeMs: 2000, healthBytes: 8192, rateLimitDefaultPerSecond: 10, rateLimitDefaultBurst: 20, rateLimitMaxPerSecond: 1000, rateLimitMaxBurst: 1000, rateLimitMaxSubjects: 4096, rateLimitSweepMs: 1000, userConcurrencyMaxSubjects: 4096, userConcurrencyCooldownMs: 15000, publicReadMaxRelations: 64, serverKeySubjectMaxBytes: 255, publicReadMaxAgeSeconds: 3600, cacheTagMaxBytes: 128, cacheTagsMax: 32, serverKeyPermissionsBytes: 4096, serverKeyPermissionsEntries: 64, publicRpcMaxFunctions: 64, usageReportMs: 5000, usageReportIntervalMs: 15000, usageReportMaxHours: 48, usageMonthlyCapMax: 1000000000000, usageRestoreJumpMs: 5000, storageObjectDefaultBytes: 26214400, storageObjectMaxBytes: 104857600, storageTransfers: 4, storageTransferMs: 120000, storageSignSeconds: 60 })
 
 export const relationPart = /^[A-Za-z_][A-Za-z0-9_]{0,62}$/
 const schemaPart = /^[a-z][a-z0-9_]{0,62}$/
@@ -217,6 +217,48 @@ export function usageConfig(env) {
   return Object.freeze({ endpoint: new URL('/v1/runtime/data-api/usage', api).href, identity: identity.href, caps: monthlyCaps(env.DATA_API_MONTHLY_CAPS) })
 }
 
+// File storage (ADR-20261021101510): a bucket binding's secret suffixes.
+const suffixes = ['ENDPOINT', 'REGION', 'BUCKET', 'ACCESS_KEY_ID', 'SECRET_ACCESS_KEY']
+
+// storageBindings maps each bucket bound to the app (GREGALE_S3_<NAME>_*
+// secrets) to its credentials, named by the binding in lower case.
+export function storageBindings(env) {
+  const bindings = new Map()
+  for (const key of Object.keys(env)) {
+    const match = /^GREGALE_S3_([A-Z0-9_]+)_ENDPOINT$/.exec(key)
+    if (!match) continue
+    const prefix = `GREGALE_S3_${match[1]}`
+    const name = match[1].toLowerCase()
+    if (!/^[a-z][a-z0-9_]{0,62}$/.test(name) || suffixes.some(s => !env[`${prefix}_${s}`])) continue
+    let endpoint
+    try { endpoint = new URL(env[`${prefix}_ENDPOINT`]) } catch { continue }
+    if (endpoint.protocol !== 'https:' && !['localhost', '127.0.0.1'].includes(endpoint.hostname)) continue
+    bindings.set(name, Object.freeze({
+      endpoint, region: env[`${prefix}_REGION`], bucket: env[`${prefix}_BUCKET`],
+      accessKeyId: env[`${prefix}_ACCESS_KEY_ID`], secretAccessKey: env[`${prefix}_SECRET_ACCESS_KEY`],
+      virtualHosted: env[`${prefix}_ADDRESSING_STYLE`] === 'virtual',
+    }))
+  }
+  return bindings
+}
+
+// storageConfig reads DATA_API_STORAGE=on and the per-object ceiling.
+export function storageConfig(env, schemas) {
+  if (env.DATA_API_STORAGE === undefined) {
+    if (env.DATA_API_STORAGE_MAX_OBJECT_BYTES !== undefined) throw new Error('DATA_API_STORAGE_MAX_OBJECT_BYTES needs DATA_API_STORAGE=on')
+    return null
+  }
+  if (env.DATA_API_STORAGE !== 'on') throw new Error('Invalid DATA_API_STORAGE')
+  const buckets = storageBindings(env)
+  if (!buckets.size) throw new Error('DATA_API_STORAGE needs a bucket bound to the app')
+  let maxObjectBytes = limits.storageObjectDefaultBytes
+  if (env.DATA_API_STORAGE_MAX_OBJECT_BYTES !== undefined) {
+    maxObjectBytes = Number(env.DATA_API_STORAGE_MAX_OBJECT_BYTES)
+    if (!/^[1-9][0-9]*$/.test(env.DATA_API_STORAGE_MAX_OBJECT_BYTES) || !Number.isSafeInteger(maxObjectBytes) || maxObjectBytes > limits.storageObjectMaxBytes) throw new Error('Invalid DATA_API_STORAGE_MAX_OBJECT_BYTES')
+  }
+  return Object.freeze({ buckets, maxObjectBytes, schema: schemas[0] })
+}
+
 export function runtimeConfig(env) {
   const connection = databaseURL(env.DATABASE_URL)
   const role = decodeURIComponent(new URL(connection).username)
@@ -236,9 +278,12 @@ export function runtimeConfig(env) {
   if (aggregates && !sqlDeadline) throw new Error('Aggregates require DATA_API_SQL_DEADLINE=1')
   if (schemas.includes('gregale_data_api')) throw new Error('Refresh control schema cannot be exposed')
   const secret = randomBytes(32)
-  return { connection, role, schemas, auth, secret, coordinatedRefresh, sqlDeadline, queryShapes, readOnly, aggregates, publicRead: publicReadConfig(env.DATA_API_PUBLIC_READ, schemas), serverKeys: serverKeyConfig(env),
+  const storage = storageConfig(env, schemas)
+  return { connection, role, schemas, auth, secret, storage, coordinatedRefresh, sqlDeadline, queryShapes, readOnly, aggregates, publicRead: publicReadConfig(env.DATA_API_PUBLIC_READ, schemas), serverKeys: serverKeyConfig(env),
     publicRpc: publicRpcConfig(env.DATA_API_PUBLIC_RPC, schemas), usage: usageConfig(env), publicReadMaxAge: publicReadMaxAge(env.DATA_API_PUBLIC_READ_MAX_AGE, env.DATA_API_PUBLIC_READ !== undefined || env.DATA_API_PUBLIC_RPC !== undefined), connectionObservation: connectionObservationConfig(env), rateLimit: rateLimitConfig(env), userConcurrency: userConcurrencyConfig(env, coordinatedRefresh ? limits.pool - 1 : limits.pool), acceptedContracts: acceptedContracts(env.DATA_API_ACCEPTED_CONTRACTS), origins: (env.DATA_API_ALLOWED_ORIGINS ?? '').split(',').filter(Boolean),
     postgrestEnv: { PGRST_DB_URI: connection, PGRST_DB_SCHEMAS: schemas.join(','), PGRST_JWT_SECRET: secret.toString('base64url'),
       PGRST_SERVER_HOST: '127.0.0.1', PGRST_SERVER_PORT: '3000', PGRST_ADMIN_SERVER_PORT: '3001', PGRST_SERVER_TIMING_ENABLED: 'true',
-      PGRST_DB_POOL: String(coordinatedRefresh ? limits.pool - 1 : limits.pool), PGRST_DB_MAX_ROWS: String(limits.rows), ...(sqlDeadline ? { PGRST_DB_PRE_REQUEST: 'gregale_data_api.check_deadline_request', PGRST_DB_CONFIG: 'false' } : coordinatedRefresh ? { PGRST_DB_PRE_REQUEST: 'gregale_data_api.check_request' } : {}), PGRST_DB_CHANNEL_ENABLED: 'false', PGRST_DB_PREPARED_STATEMENTS: 'false', ...(aggregates ? { PGRST_DB_AGGREGATES_ENABLED: 'true' } : {}) } }
+      PGRST_DB_POOL: String(coordinatedRefresh ? limits.pool - 1 : limits.pool), PGRST_DB_MAX_ROWS: String(limits.rows), ...(sqlDeadline ? { PGRST_DB_PRE_REQUEST: 'gregale_data_api.check_deadline_request', PGRST_DB_CONFIG: 'false' } : coordinatedRefresh ? { PGRST_DB_PRE_REQUEST: 'gregale_data_api.check_request' } : {}), PGRST_DB_CHANNEL_ENABLED: 'false', PGRST_DB_PREPARED_STATEMENTS: 'false', ...(aggregates ? { PGRST_DB_AGGREGATES_ENABLED: 'true' } : {}),
+      // Storage authorizes before transferring with Prefer: tx=rollback dry runs.
+      ...(storage ? { PGRST_DB_TX_END: 'commit-allow-override' } : {}) } }
 }

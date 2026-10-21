@@ -1,10 +1,15 @@
 # Architecture Decision Records
 
+- [Product Control plan fees, included starts and overage](20261021154511-product-control-plan-fees-and-overage.md)
+- [Data API file storage](20261021101510-data-api-file-storage.md)
+- [Keep the edge lane off the store type: edge store](20261021092138-edge-store-blast-radius.md)
 - [Product Control billing records survive app purge](20261020090607-product-control-billing-records-survive-app-purge.md)
 - [Product Control customers keep their billing details in the owner's Paddle](20261020120000-product-control-customer-billing-details.md)
 - [Safety rails for automatic per-unit deploys](20261020214632-automatic-unit-deploy-safety-rails.md)
 - [What a fix restarts: daemon blast radius](20261020160744-daemon-blast-radius.md)
 - [Finished invocations without a horizon get the plan default retention](20261019104819-invocation-default-retention.md)
+- [Resolve Compose extends and include](20261019190527-compose-extends-and-include.md)
+
 - [Compose build arguments and target stage for Dockerfile builds](20261019142544-compose-build-args-and-target.md)
 
 - [Data API usage reporting and owner monthly caps](20261019102108-data-api-usage-and-owner-caps.md)
@@ -143,6 +148,8 @@ its baseline line in the same change (the gate fails on a stale entry).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
+| 20261019103000 | [Frozen worker pools](20261019103000-frozen-worker-pools.md) | accepted; behind `frozen_tier_workers` | A pool scaling in freezes a surplus worker that holds no lease and thaws it before booting new ones; a frozen worker stops instead of parking and gives up its account slot when another pool needs it |
+| 20261018101500 | [Worker pools scale out off the scheduler loop, with brief characterization for proven workers](20261018101500-worker-pool-scale-out-off-loop.md) | accepted | The targets trigger reconciles worker apps in background runs, one per account at a time; a declared worker whose deployment passed the full window on the node boots with `faas.worker=proven` and is characterized in 1 s |
 | 1728 | [Owner-authorized deployment response checks](1728-owner-authorized-deployment-response-checks.md) | accepted; native deployment validation pending | Exact-deployment GET checks through the trusted gateway, with bounded HTTP evidence and no forwarded account credentials |
 | 2026101709 | [Receipt-bound repairable operation transactions](2026101709-repairable-operation-transactions.md) | accepted for internal qualification | Go, Node and Python capture, business writes and receipt bindings commit together; replay survives payload compaction |
 | 2026101708 | [Application writer capture readiness](2026101708-repair-capture-readiness.md) | accepted for internal qualification | Read-only checks on the actual application writer connection |
@@ -235,6 +242,14 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 1286 | [Dashboard workflow diagnosis and recovery](1286-dashboard-workflow-diagnosis-and-recovery.md) | accepted | Scoped diagnostics and attempt inspection, recovery previews, confirmed idempotent continuation and cancellation |
 | 1285 | [Guided automation dashboard](1285-guided-automation-dashboard.md) | accepted | App-owner starter, validation, simulation, checked publishing, and run inspection flow |
 | 1540 | [Function cancellation completion and trusted lifecycle context](1540-function-cancellation-cleanup-and-lifecycle-context.md) | accepted | Shared slots remain occupied through cleanup; Node abort signals, Python cancellation events and socket-derived function lifecycle context support bounded database work |
+| 20261018005023 | [Negotiated Node post-response execution completion](20261018005023-function-background-completion-protocol.md) | implementation for qualification | Function execution/resource lifecycle and fenced migration; native acceptance pending, production off |
+| 20261018030610 | [Acknowledged function VM execution lifetime](20261018030610-function-vm-execution-lifetime.md) | implementation for qualification | Function execution/resource lifecycle and fenced migration; native acceptance pending, production off |
+| 20261018030611 | [Automatic PostgreSQL ownership in Node functions](20261018030611-function-postgres-resource-lifecycle.md) | implementation for qualification | Function execution/resource lifecycle and fenced migration; native acceptance pending, production off |
+| 20261018030612 | [Recover Node resources after warm capture](20261018030612-function-warm-snapshot-resource-recovery.md) | implementation for qualification | Function execution/resource lifecycle and fenced migration; native acceptance pending, production off |
+| 20261018030613 | [Recover a function migration source after rollback](20261018030613-function-migration-source-rollback.md) | implementation for qualification | Function execution/resource lifecycle and fenced migration; native acceptance pending, production off |
+| 20261018030614 | [Admit function migration capture and source recovery](20261018030614-function-migration-admission.md) | implementation for qualification | Function execution/resource lifecycle and fenced migration; native acceptance pending, production off |
+| 20261018030615 | [Restore and publish a measured function migration destination](20261018030615-function-migration-destination.md) | implementation for qualification | Function execution/resource lifecycle and fenced migration; native acceptance pending, production off |
+| 20261018030616 | [Reconstruct measured function handoffs at scheduler startup](20261018030616-function-migration-scheduler-restart.md) | implementation for qualification | Function execution/resource lifecycle and fenced migration; native acceptance pending, production off |
 | 202610171901 | [Organization application authorization](202610171901-organization-application-authorization.md) | accepted; local validation | Current membership, operation roles, credential scopes and caller attribution |
 | 202610171902 | [Organization offboarding fences](202610171902-organization-offboarding-fences.md) | accepted; local validation | Transaction ordering, credential revocation and stream cancellation |
 | 202610171903 | [Organization application quota ownership](202610171903-organization-application-quota-ownership.md) | accepted; local validation | Shared application admission across creator namespaces |
@@ -1782,5 +1797,8 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-1136: Project environment configuration reaches every service as environment variables](1136-project-environment-config-as-environment-variables.md)
 - [ADR-1137: Declared dependencies seed opt-in wake-ahead](1137-declared-dependencies-seed-wake-ahead.md) — an opted-in app wakes its declared dependencies until 20 wakes of evidence decide (amends ADR-977)
 - [ADR-1138: Service calls join the caller's trace when it serves one request](1138-service-calls-join-the-callers-trace.md) — a call without traceparent from an instance serving exactly one request continues that request's trace, marked trace_inferred
+- [ADR-1139: Project environment secrets reach every service of the environment](1139-project-environment-secrets.md) — sealed secrets set once per project environment, below each app's own values, covered by rekey and key retirement (amends ADR-1136)
 
 - [ADR-20261018181846: Route priority in the cold-wake queue](20261018181846-route-priority-in-the-wake-queue.md)
+
+- [ADR-20261020161310: Route insight fixes, dashboard panel and alerts](20261020161310-route-insight-fixes-and-alerts.md)

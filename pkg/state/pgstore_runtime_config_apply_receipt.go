@@ -5,7 +5,7 @@ import (
 	"fmt"
 )
 
-func (s *PgStore) RecordRuntimeConfigApplyReceipt(ctx context.Context, receipt RuntimeConfigApplyReceipt) error {
+func (s *pgCore) RecordRuntimeConfigApplyReceipt(ctx context.Context, receipt RuntimeConfigApplyReceipt) error {
 	receipt, err := normalizeRuntimeConfigApplyReceipt(receipt)
 	if err != nil {
 		return err

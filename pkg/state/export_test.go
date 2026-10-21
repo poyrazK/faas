@@ -410,6 +410,7 @@ var PrepareSourceBuildRootfs = prepareSourceBuildRootfs
 var ProductActivityContract = productActivityContract
 var ProductBillingPGFixture = productBillingPGFixture
 var ProductControlContract = productControlContract
+var ProductIncludedStartsContract = productIncludedStartsContract
 var ProductDeploymentPilot = productDeploymentPilot
 var ProductHelpContract = productHelpContract
 var ProductNotificationAttention = productNotificationAttention

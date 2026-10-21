@@ -11,6 +11,9 @@ import (
 func SlackPayload(msg Message) map[string]any {
 	icon := map[string]string{EventFire: ":rotating_light:", EventResolve: ":white_check_mark:", EventTest: ":wave:"}[msg.Event]
 	text := fmt.Sprintf("%s *%s*\n%s", icon, Headline(msg), Detail(msg))
+	for _, note := range msg.Notes {
+		text += "\n• " + note
+	}
 	blocks := []map[string]any{{"type": "section", "text": map[string]any{"type": "mrkdwn", "text": text}}}
 	if msg.DashboardURL != "" {
 		blocks = append(blocks, map[string]any{"type": "context", "elements": []map[string]any{{"type": "mrkdwn", "text": fmt.Sprintf("<%s|Open in Gregale>", msg.DashboardURL)}}})
@@ -38,16 +41,20 @@ func PagerDutyPayload(routingKey string, msg Message) map[string]any {
 	if source == "" {
 		source = "gregale"
 	}
+	details := map[string]any{
+		"rule": msg.RuleName, "metric": msg.Metric, "observed": msg.Observed,
+		"comparison": msg.Comparison, "threshold": msg.Threshold, "window": msg.Window,
+	}
+	if len(msg.Notes) > 0 {
+		details["notes"] = msg.Notes
+	}
 	out["payload"] = map[string]any{
-		"summary":   truncate(Headline(msg)+" — "+Detail(msg), 1024),
-		"source":    source,
-		"severity":  severity,
-		"timestamp": msg.OccurredAt.UTC().Format(time.RFC3339),
-		"component": msg.Metric,
-		"custom_details": map[string]any{
-			"rule": msg.RuleName, "metric": msg.Metric, "observed": msg.Observed,
-			"comparison": msg.Comparison, "threshold": msg.Threshold, "window": msg.Window,
-		},
+		"summary":        truncate(Headline(msg)+" — "+Detail(msg), 1024),
+		"source":         source,
+		"severity":       severity,
+		"timestamp":      msg.OccurredAt.UTC().Format(time.RFC3339),
+		"component":      msg.Metric,
+		"custom_details": details,
 	}
 	if msg.DashboardURL != "" {
 		out["links"] = []map[string]any{{"href": msg.DashboardURL, "text": "Open in Gregale"}}
@@ -59,6 +66,12 @@ func PagerDutyPayload(routingKey string, msg Message) map[string]any {
 func EmailContent(msg Message) (subject, body string) {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s\n\n%s\n", Headline(msg), Detail(msg))
+	if len(msg.Notes) > 0 {
+		b.WriteString("\n")
+		for _, note := range msg.Notes {
+			fmt.Fprintf(&b, "- %s\n", note)
+		}
+	}
 	if !msg.OccurredAt.IsZero() {
 		fmt.Fprintf(&b, "\nAt: %s\n", msg.OccurredAt.UTC().Format(time.RFC1123))
 	}

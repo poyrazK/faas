@@ -12,9 +12,19 @@ package fcvm
 // cannot find it, fails to load and takes the cold-boot path (ADR-005); it
 // can never be pointed at the node-wide base.
 //
-// A copy's name covers the base's path, size and modification time, so a
-// changed base gets a fresh copy. Copies not used for pmemCopyMaxIdle are
-// swept, at most once per pmemSweepEvery per directory.
+// A copy's name covers the base's path, size and file identity (device,
+// inode and, where the filesystem records it, birth time), so a replaced base
+// gets a fresh copy. It deliberately leaves out the modification time: the
+// node cache bumps a cached base's mtime on every read to keep its LRU order
+// (storage.LocalCacheBackend.touchCacheFile), and an mtime-derived name gave
+// every wake a new clone whose page cache was empty. On production-us
+// (rc.285) that left ~200 stale clones a day per node, and every restored
+// guest read its runtime base from disk through DAX: ~110 waits on I/O,
+// ~100 ms of vCPU time, inside each restore's resume. Every writer of a base
+// replaces it by renaming a new file into place (storage.LocalStorageBackend
+// Put, LocalCacheBackend fills and Refresh), so new content always arrives
+// with a new identity. Copies not used for pmemCopyMaxIdle are swept, at most
+// once per pmemSweepEvery per directory.
 
 import (
 	"crypto/sha256"
@@ -193,8 +203,12 @@ func (s *pmemBaseStore) accountCopy(account, base string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("pmem base: %w", err)
 	}
+	id, err := pmemBaseFileIdentity(base, st)
+	if err != nil {
+		return "", fmt.Errorf("pmem base: %w", err)
+	}
 	acct := sha256.Sum256([]byte(account))
-	src := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%d\x00%d", base, st.Size(), st.ModTime().UnixNano())))
+	src := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%d\x00%s", base, st.Size(), id)))
 	dir := filepath.Join(root, hex.EncodeToString(acct[:8]))
 	dst := filepath.Join(dir, hex.EncodeToString(src[:8])+".ext4")
 	s.mu.Lock()

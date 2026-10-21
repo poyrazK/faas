@@ -2714,6 +2714,19 @@ type CustomerOperation struct {
 	DataRepairID        pgtype.UUID
 }
 
+type CustomerOperationApprovalForm struct {
+	ID          pgtype.UUID
+	AccountID   pgtype.UUID
+	AppID       pgtype.UUID
+	Scope       string
+	Operation   string
+	Step        string
+	InputSchema []byte
+	Required    bool
+	CreatedAt   pgtype.Timestamptz
+	UpdatedAt   pgtype.Timestamptz
+}
+
 type CustomerOperationAttemptInstance struct {
 	OperationID pgtype.UUID
 	Generation  int32
@@ -2734,6 +2747,18 @@ type CustomerOperationCodePin struct {
 	DeploymentID pgtype.UUID
 	AppID        pgtype.UUID
 	ExpiresAt    pgtype.Timestamptz
+}
+
+type CustomerOperationConcurrencyPolicy struct {
+	ID               pgtype.UUID
+	AccountID        pgtype.UUID
+	AppID            pgtype.UUID
+	Scope            string
+	Operation        string
+	PlatformTenantID pgtype.UUID
+	MaxRunning       int32
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
 }
 
 type CustomerOperationDefinition struct {
@@ -2808,6 +2833,16 @@ type CustomerOperationMilestone struct {
 	OccurredAt    pgtype.Timestamptz
 	CreatedAt     pgtype.Timestamptz
 	Fingerprint   string
+}
+
+type CustomerOperationQueue struct {
+	OperationID      pgtype.UUID
+	AccountID        pgtype.UUID
+	AppID            pgtype.UUID
+	Scope            string
+	Operation        string
+	PlatformTenantID pgtype.UUID
+	QueuedAt         pgtype.Timestamptz
 }
 
 type CustomerOperationRecovery struct {
@@ -5414,6 +5449,29 @@ type FleetSealDomainProbe struct {
 	Recipient  string
 	SealedBlob []byte
 	UpdatedAt  pgtype.Timestamptz
+}
+
+type FunctionMigrationDestination struct {
+	Token      pgtype.UUID
+	InstanceID pgtype.UUID
+	LeaseToken string
+	NodeID     pgtype.UUID
+	WakeID     pgtype.UUID
+	Phase      string
+	GrantData  []byte
+	Receipt    []byte
+}
+
+type FunctionMigrationSource struct {
+	InstanceID    pgtype.UUID
+	LeaseToken    string
+	SourceNodeID  string
+	SourceWakeID  pgtype.UUID
+	Phase         string
+	CaptureToken  pgtype.UUID
+	CaptureGrant  []byte
+	RecoveryGrant []byte
+	CaptureResult []byte
 }
 
 type GatewayConcurrencyQueueLease struct {
@@ -10746,6 +10804,18 @@ type ProductControlPlanChange struct {
 	CreatedAt   pgtype.Timestamptz
 }
 
+// Each Product Control customer assignment to a catalog revision and plan, from effective_at; prices monthly plan fees (ADR-20261021154511).
+type ProductControlPlanHistory struct {
+	ID              int64
+	AccountID       pgtype.UUID
+	AppID           pgtype.UUID
+	TenantID        pgtype.UUID
+	Revision        string
+	Plan            string
+	FirstAssignment bool
+	EffectiveAt     pgtype.Timestamptz
+}
+
 type ProductControlReceipt struct {
 	OperationID         pgtype.UUID
 	AccountID           pgtype.UUID
@@ -12047,6 +12117,19 @@ type ProjectEnvironmentRoutePolicy struct {
 	UpdatedAt               pgtype.Timestamptz
 }
 
+type ProjectEnvironmentSecret struct {
+	AccountID       pgtype.UUID
+	ProjectID       pgtype.UUID
+	EnvironmentSlug string
+	Key             string
+	Ciphertext      []byte
+	Kid             string
+	ValueHash       string
+	SecretVersion   int64
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+}
+
 type ProjectEnvironmentWorkloadDeploymentSpec struct {
 	DeploymentID pgtype.UUID
 	SpecID       pgtype.UUID
@@ -12743,6 +12826,8 @@ type RouteInsight struct {
 	FirstDetectedAt pgtype.Timestamptz
 	LastDetectedAt  pgtype.Timestamptz
 	ResolvedAt      pgtype.Timestamptz
+	FixedAt         pgtype.Timestamptz
+	FixAction       pgtype.Text
 }
 
 type RouteLifecycleApproval struct {

@@ -259,6 +259,7 @@ type ServiceBindingProbeBatchReport = serviceBindingProbeBatchReport
 type Shape = shape
 type SourceRefAppPolicy = sourceRefAppPolicy
 type StartPendingSubmission = startPendingSubmission
+type StartPrompt = startPrompt
 type StartRunner = startRunner
 type TestActionEvidence = testActionEvidence
 type TestActionSpec = testActionSpec
@@ -656,10 +657,14 @@ var CheckMCPNativeRetirement = checkMCPNativeRetirement
 var CheckProfileConnection = checkProfileConnection
 var CheckRetainedHostingPlan = checkRetainedHostingPlan
 var CheckTestPoolAfterDrain = checkTestPoolAfterDrain
+var ChooseMenuAction = chooseMenuAction
 var ClassifyDevRuntimeLog = classifyDevRuntimeLog
 var CleanupUploadCacheExclusive = cleanupUploadCacheExclusive
 var CliConfigPath = cliConfigPath
 var CliHelpGroup = cliHelpGroup
+var CliHelpGroups = &cliHelpGroups
+var CliRelatedCommands = &cliRelatedCommands
+var CliSeeAlso = cliSeeAlso
 var CliPreAuthPatch = cliPreAuthPatch
 var CliRevisionPinTTLSeconds = cliRevisionPinTTLSeconds
 var CliSessionMetadataPath = cliSessionMetadataPath
@@ -785,6 +790,7 @@ var CmdDataAPIExplain = cmdDataAPIExplain
 var CmdDataAPIFixture = cmdDataAPIFixture
 var CmdDataAPIInstall = cmdDataAPIInstall
 var CmdDataAPILive = cmdDataAPILive
+var CmdDataAPIStorage = cmdDataAPIStorage
 var CmdDataAPIMigration = cmdDataAPIMigration
 var CmdDataAPIOnboard = cmdDataAPIOnboard
 var CmdDataAPIRefresh = cmdDataAPIRefresh
@@ -1144,6 +1150,8 @@ var DataAPIOnboardingQuote = dataAPIOnboardingQuote
 var DataAPIOnboardingSteps = dataAPIOnboardingSteps
 var DataAPIOrigin = dataAPIOrigin
 var DataAPIReadinessURL = dataAPIReadinessURL
+var DataAPIStorageName = dataAPIStorageName
+var DataAPIStorageSQL = dataAPIStorageSQL
 var DataRepairCheckPolicyFile = dataRepairCheckPolicyFile
 var DataRepairRetentionScope = dataRepairRetentionScope
 var DeadlineTestReceipt = deadlineTestReceipt
@@ -1206,6 +1214,7 @@ var DoctorImageListenerCheck = doctorImageListenerCheck
 var DrainMCPNativeRelease = drainMCPNativeRelease
 var EdgePolicySummary = edgePolicySummary
 var EdgeRuleValidateFlagsVisited = edgeRuleValidateFlagsVisited
+var EditDistance = editDistance
 var EffectiveKeyring = effectiveKeyring
 var EgressAllowlistChangeNeedsRestart = egressAllowlistChangeNeedsRestart
 var EmitInspectWatchEvent = emitInspectWatchEvent
@@ -1217,6 +1226,7 @@ var EndpointRecoveryReport = endpointRecoveryReport
 var EndpointRecoverySpec = endpointRecoverySpec
 var EnsurePostgresEgress = ensurePostgresEgress
 var EnsureSourceRefApp = ensureSourceRefApp
+var ErrAuth = errAuth
 var EnvCreate = envCreate
 var EnvPull = envPull
 var EnvPush = envPush
@@ -1311,7 +1321,6 @@ var IsTerminalBuildStatus = isTerminalBuildStatus
 var IsTerminalDeploymentStatus = isTerminalDeploymentStatus
 var IsValidDeploymentAnnotationTag = isValidDeploymentAnnotationTag
 var JsonOut = jsonOut
-var Levenshtein = levenshtein
 var LinkedAppSlug = linkedAppSlug
 var LinkedProjectContext = linkedProjectContext
 var LiveCLIView = liveCLIView
@@ -1363,6 +1372,7 @@ var McpTasksObserverMetricsTargetMatches = mcpTasksObserverMetricsTargetMatches
 var McpTasksObserverNamespacesMatch = mcpTasksObserverNamespacesMatch
 var McpToken = mcpToken
 var MdFlagLabel = mdFlagLabel
+var MenuActions = menuActions
 var MergeAppFlag = mergeAppFlag
 var MergeDevSetupYAML = mergeDevSetupYAML
 var MigrationEndpoint = migrationEndpoint
@@ -1499,6 +1509,7 @@ var PrintAutomationCheckReport = printAutomationCheckReport
 var PrintAutomationDefinitionDiff = printAutomationDefinitionDiff
 var PrintAutomationRevisionDetails = printAutomationRevisionDetails
 var PrintBuildStatus = printBuildStatus
+var PrintDeployColdWakeSentence = printDeployColdWakeSentence
 var PrintDoctorReport = printDoctorReport
 var PrintDomainDNSRecords = printDomainDNSRecords
 var PrintErr = printErr
@@ -2202,6 +2213,10 @@ func (r *mcpServeOptions) StateFile() *string   { return &r.stateFile }
 // Members of mcpTasksStatusResult
 func (r *mcpTasksStatusResult) Diagnose() { r.diagnose() }
 
+// Members of menuAction
+func (r *menuAction) Args() *[]string { return &r.args }
+func (r *menuAction) Label() *string  { return &r.label }
+
 // Members of productCommand
 func (r *productCommand) App() *string         { return &r.app }
 func (r *productCommand) EmailStatus() *string { return &r.emailStatus }
@@ -2254,6 +2269,13 @@ func (r *startFileEdit) Path() *string { return &r.path }
 
 // Members of startPrompt
 func (r *startPrompt) Reader() **bufio.Reader { return &r.reader }
+func (r *startPrompt) Writer() *io.Writer     { return &r.writer }
+func (r *startPrompt) Confirm(ctx context.Context, label string) (bool, error) {
+	return r.confirm(ctx, label)
+}
+func (r *startPrompt) ConfirmYes(ctx context.Context, label string) (bool, error) {
+	return r.confirmYes(ctx, label)
+}
 
 // Members of startRequestResult
 func (r *startRequestResult) Path() *string             { return &r.path }
@@ -2272,6 +2294,7 @@ func (r *startRunner) RequestFailure() **startRequestFailure { return &r.request
 func (r *startRunner) SecretsFile() *string                  { return &r.secretsFile }
 func (r *startRunner) Session() *startSession                { return &r.session }
 func (r *startRunner) StatePath() *string                    { return &r.statePath }
+func (r *startRunner) Authenticate() int                     { return r.authenticate() }
 func (r *startRunner) CheckFirstResponse(p0 string, p1 string) int {
 	return r.checkFirstResponse(p0, p1)
 }

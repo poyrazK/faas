@@ -52,6 +52,10 @@ func (s *PgStore) CompareAndSwapSecretRekeyDocument(ctx context.Context, before 
 		changed, err = q.CompareAndSwapPromotionSecretCapture(ctx, tx, sqlc.CompareAndSwapPromotionSecretCaptureParams{DocumentID: before.ID, Previous: before.Payload, Replacement: after})
 	case "deployment":
 		changed, err = q.CompareAndSwapReleaseSecretSnapshot(ctx, tx, sqlc.CompareAndSwapReleaseSecretSnapshotParams{DocumentID: before.ID, Previous: before.Payload, Replacement: after})
+	case "project":
+		// ADR-1139: the reseal changes kid and ciphertext only, so the
+		// runtime-change trigger does not fire.
+		changed, err = q.CompareAndSwapProjectSecretEnvelope(ctx, tx, sqlc.CompareAndSwapProjectSecretEnvelopeParams{DocumentID: before.ID, Previous: before.Payload, Replacement: after})
 	default:
 		return ErrInvalidArgument
 	}

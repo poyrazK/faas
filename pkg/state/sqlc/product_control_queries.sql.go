@@ -330,6 +330,70 @@ func (q *Queries) ProductControlManagedApp(ctx context.Context, db DBTX, arg Pro
 	return column_1, err
 }
 
+const productControlMonthPlans = `-- name: ProductControlMonthPlans :many
+SELECT h.revision, h.plan, bool_or(h.first_assignment)::boolean AS first_assignment, min(h.effective_at)::timestamptz AS since
+FROM product_control_plan_history h
+WHERE h.account_id=$1::uuid AND h.app_id=$2::uuid AND h.tenant_id=$3::uuid
+  AND h.effective_at < $4::timestamptz
+  AND h.effective_at >= COALESCE((SELECT max(s.effective_at) FROM product_control_plan_history s
+      WHERE s.account_id=$1::uuid AND s.app_id=$2::uuid AND s.tenant_id=$3::uuid
+        AND s.effective_at <= $5::timestamptz), '-infinity'::timestamptz)
+GROUP BY h.revision, h.plan
+ORDER BY since, h.revision, h.plan
+LIMIT $6::int
+`
+
+type ProductControlMonthPlansParams struct {
+	AccountID  pgtype.UUID
+	AppID      pgtype.UUID
+	TenantID   pgtype.UUID
+	MonthEnd   pgtype.Timestamptz
+	MonthStart pgtype.Timestamptz
+	PageLimit  int32
+}
+
+type ProductControlMonthPlansRow struct {
+	Revision        string
+	Plan            string
+	FirstAssignment bool
+	Since           pgtype.Timestamptz
+}
+
+// The plans a customer held in a month: the one in force when it starts and
+// those assigned during it, each with when it was first held and whether it
+// includes their first assignment ever (ADR-20261021154511).
+func (q *Queries) ProductControlMonthPlans(ctx context.Context, db DBTX, arg ProductControlMonthPlansParams) ([]ProductControlMonthPlansRow, error) {
+	rows, err := db.Query(ctx, productControlMonthPlans,
+		arg.AccountID,
+		arg.AppID,
+		arg.TenantID,
+		arg.MonthEnd,
+		arg.MonthStart,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ProductControlMonthPlansRow{}
+	for rows.Next() {
+		var i ProductControlMonthPlansRow
+		if err := rows.Scan(
+			&i.Revision,
+			&i.Plan,
+			&i.FirstAssignment,
+			&i.Since,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const productControlOwnedApp = `-- name: ProductControlOwnedApp :one
 SELECT id FROM apps WHERE account_id=$1 AND id=$2 AND status<>'deleted' FOR SHARE
 `
@@ -369,9 +433,19 @@ func (q *Queries) ProductControlPutRevision(ctx context.Context, db DBTX, arg Pr
 }
 
 const productControlSetCustomer = `-- name: ProductControlSetCustomer :exec
-INSERT INTO product_control_customers(account_id,app_id,tenant_id,revision,plan,suspended,auth_organization_id)
-VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(app_id,tenant_id) DO UPDATE
-SET revision=EXCLUDED.revision,plan=EXCLUDED.plan,suspended=EXCLUDED.suspended,auth_organization_id=EXCLUDED.auth_organization_id
+WITH prior AS (
+  SELECT c.revision, c.plan FROM product_control_customers c
+  WHERE c.app_id=$2::uuid AND c.tenant_id=$3::uuid
+), assigned AS (
+  INSERT INTO product_control_customers(account_id,app_id,tenant_id,revision,plan,suspended,auth_organization_id)
+  VALUES ($1::uuid,$2::uuid,$3::uuid,$4::text,$5::text,
+    $6::boolean,$7::uuid)
+  ON CONFLICT(app_id,tenant_id) DO UPDATE
+  SET revision=EXCLUDED.revision,plan=EXCLUDED.plan,suspended=EXCLUDED.suspended,auth_organization_id=EXCLUDED.auth_organization_id
+)
+INSERT INTO product_control_plan_history(account_id,app_id,tenant_id,revision,plan,first_assignment)
+SELECT $1::uuid,$2::uuid,$3::uuid,$4::text,$5::text,NOT EXISTS(SELECT 1 FROM prior)
+WHERE NOT EXISTS(SELECT 1 FROM prior p WHERE p.revision=$4::text AND p.plan=$5::text)
 `
 
 type ProductControlSetCustomerParams struct {
@@ -384,6 +458,8 @@ type ProductControlSetCustomerParams struct {
 	AuthOrganizationID pgtype.UUID
 }
 
+// A change of revision or plan is appended to the plan history in the same
+// statement, so every writer records it (ADR-20261021154511).
 func (q *Queries) ProductControlSetCustomer(ctx context.Context, db DBTX, arg ProductControlSetCustomerParams) error {
 	_, err := db.Exec(ctx, productControlSetCustomer,
 		arg.AccountID,

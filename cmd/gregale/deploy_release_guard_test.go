@@ -131,6 +131,7 @@ func TestProjectDeployRejectsExecutionConfigurationBeforeRequest(t *testing.T) {
 		{name: "dockerfile", args: []string{"--dockerfile"}},
 		{name: "vcpu", args: []string{"--vcpu", "2"}},
 		{name: "profile", args: []string{"--profile", "small"}},
+		{name: "size", args: []string{"--size", "small"}},
 		{name: "require authn", args: []string{"--require-authn"}},
 		{name: "no require authn", args: []string{"--no-require-authn"}},
 		{name: "app protocol", args: []string{"--app-protocol", "grpc"}},

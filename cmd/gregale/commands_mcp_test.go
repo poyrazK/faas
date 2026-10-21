@@ -323,8 +323,8 @@ func TestMCPHelpAndCompletion(t *testing.T) {
 			t.Errorf("MCP help omitted %q", required)
 		}
 	}
-	if main.CliHelpGroup(command) != "API" {
-		t.Fatal("MCP not discoverable with API commands")
+	if main.CliHelpGroup(command) != "Develop & deploy" {
+		t.Fatal("MCP not discoverable with deploy commands")
 	}
 }
 

@@ -22,6 +22,21 @@ func (m *MemStore) SeedProductBillingDocumentForTest(accountID, appID string, do
 	m.productLocked().documents[doc.ID] = productMemoryDocument{account: accountID, app: appID, document: doc}
 }
 
+// SeedProductPlanHistoryForTest appends a backdated assignment to a
+// customer's plan history (ADR-20261021154511), which a MemStore otherwise
+// records at the current time.
+func (m *MemStore) SeedProductPlanHistoryForTest(account, app, tenant, revision, plan string, first bool, at time.Time) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	d := m.productLocked()
+	if d.planHistory == nil {
+		d.planHistory = map[string][]productMemoryPlanEntry{}
+	}
+	key := app + "/" + tenant
+	d.planHistory[key] = append(d.planHistory[key], productMemoryPlanEntry{account: account, revision: revision, plan: plan, first: first, at: at.UTC()})
+	sort.SliceStable(d.planHistory[key], func(i, j int) bool { return d.planHistory[key][i].at.Before(d.planHistory[key][j].at) })
+}
+
 // SeedProductOperationForTest stores an operation's Product Control receipt
 // and, when the operation is terminal, its outcome, which a MemStore cannot
 // otherwise backdate into a closed month.
@@ -127,7 +142,11 @@ func (m *MemStore) reviewProductBillingLocked(scope ProductBillingScope) (api.Pr
 		}
 		return a.UnitPriceMillicents < b.UnitPriceMillicents
 	})
-	return productBillingReview(scope, catalog.Spec.Currency, out, time.Now())
+	fee := productMonthFee(m.productMonthPlansLocked(scope), scope.Period, func(revision string) (api.ProductCatalog, bool) {
+		c, ok := m.productLocked().revisions[scope.AppID+"/"+revision]
+		return c, ok
+	})
+	return productBillingReview(scope, catalog.Spec.Currency, out, fee, time.Now())
 }
 
 func (m *MemStore) ReviewProductBilling(_ context.Context, scope ProductBillingScope) (api.ProductBillingReview, error) {

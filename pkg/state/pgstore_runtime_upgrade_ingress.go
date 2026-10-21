@@ -10,7 +10,7 @@ import (
 
 var _ RuntimeUpgradeIngressBindingStore = (*PgStore)(nil)
 
-func (s *PgStore) AuthorizeRuntimeUpgradeGatewayIngress(ctx context.Context, slotID, sessionID string) (RuntimeUpgradeIngressBinding, error) {
+func (s *pgCore) AuthorizeRuntimeUpgradeGatewayIngress(ctx context.Context, slotID, sessionID string) (RuntimeUpgradeIngressBinding, error) {
 	if !canonicalRuntimeUpgradeGatewayUUID(slotID) || !canonicalRuntimeUpgradeGatewayUUID(sessionID) {
 		return RuntimeUpgradeIngressBinding{}, ErrInvalidArgument
 	}
