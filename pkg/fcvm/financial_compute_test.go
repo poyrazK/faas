@@ -18,6 +18,7 @@ type computeAuthorityFixture struct {
 	settlements int
 	rejected    bool
 	lease       financial.ComputeLease
+	acquired    financial.ComputeRequest
 }
 
 func (f *computeAuthorityFixture) CancelFinancialCompute(context.Context, financial.ComputeRequest) (financial.ComputeLease, error) {
@@ -39,6 +40,7 @@ func (f *computeAuthorityFixture) FinancialComputeRetired(context.Context, strin
 func (f *computeAuthorityFixture) AcquireFinancialCompute(_ context.Context, r financial.ComputeRequest) (financial.ComputeLease, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.acquired = r
 	if f.acquireErr != nil {
 		return financial.ComputeLease{}, f.acquireErr
 	}
@@ -89,6 +91,21 @@ func TestFinancialComputeDeniesAllWakeModesBeforeAllocation(t *testing.T) {
 				t.Fatalf("budget bypass: %v", err)
 			}
 		})
+	}
+}
+
+// adr: 1750 — amendment 2: the wake's deployment selects the environment
+// book the ledger funds.
+func TestFinancialComputeRequestNamesDeployment(t *testing.T) {
+	authority := &computeAuthorityFixture{acquireErr: financial.ErrComputeBudget}
+	m := newTestManager(&fakeRunner{}, &fakeVMM{}).WithFinancialComputeAuthority(authority, "node", "incarnation")
+	req := admissionWake("environment-cap")
+	req.AccountID, req.DeploymentID = "account", "deployment"
+	if _, err := m.Wake(t.Context(), req); !errors.Is(err, financial.ErrComputeBudget) {
+		t.Fatalf("wake: %v", err)
+	}
+	if authority.acquired.DeploymentID != "deployment" || authority.acquired.AppID != req.AppID {
+		t.Fatalf("compute request: %+v", authority.acquired)
 	}
 }
 

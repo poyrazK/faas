@@ -29,8 +29,25 @@ func StrictJobCompute(p BudgetSpec) bool {
 	return p.Mode == "strict" && p.Scope.Kind == "job" && p.Basis == "gross_usage" && p.Action == "suspend_workloads" && len(p.Meters) == 1 && p.Meters[0] == "compute" && p.DrainSeconds == 0 && len(p.NotifyMillicents) == 0
 }
 
+// StrictProjectCompute caps gross compute for every app in one project
+// (ADR-1750, amendment 1). Jobs belong to no project and are not covered.
+func StrictProjectCompute(p BudgetSpec) bool {
+	return p.Mode == "strict" && p.Scope.Kind == "project" && p.Basis == "gross_usage" && p.Action == "suspend_workloads" && len(p.Meters) == 1 && p.Meters[0] == "compute" && p.DrainSeconds == 0 && len(p.NotifyMillicents) == 0
+}
+
+// StrictEnvironmentCompute caps gross compute for every deployment that runs
+// in one project environment (ADR-1750, amendment 2).
+func StrictEnvironmentCompute(p BudgetSpec) bool {
+	return p.Mode == "strict" && p.Scope.Kind == "environment" && p.Basis == "gross_usage" && p.Action == "suspend_workloads" && len(p.Meters) == 1 && p.Meters[0] == "compute" && p.DrainSeconds == 0 && len(p.NotifyMillicents) == 0
+}
+
+// StrictSharedCompute is a strict cap whose book several apps fund.
+func StrictSharedCompute(p BudgetSpec) bool {
+	return StrictProjectCompute(p) || StrictEnvironmentCompute(p)
+}
+
 func StrictCompute(p BudgetSpec) bool {
-	return StrictAppCompute(p) || StrictAccountCompute(p) || StrictJobCompute(p)
+	return StrictAppCompute(p) || StrictAccountCompute(p) || StrictJobCompute(p) || StrictSharedCompute(p)
 }
 
 // ComputeBalance is a conservative admission ledger, not an invoice. Committed
@@ -40,6 +57,8 @@ type ComputeBalance struct {
 	Initialized         bool           `json:"initialized"`
 	AppID               string         `json:"app_id,omitempty"`
 	JobID               string         `json:"job_id,omitempty"`
+	ProjectID           string         `json:"project_id,omitempty"`
+	EnvironmentID       string         `json:"environment_id,omitempty"`
 	AccountID           string         `json:"account_id"`
 	ScopeKind           string         `json:"scope_kind"`
 	Basis               string         `json:"basis"`
@@ -58,16 +77,23 @@ type ComputeBalance struct {
 }
 
 type ComputeBook struct {
-	Egress      EgressBook `json:"egress"`
-	AccountID   string     `json:"account_id"`
-	AppID       string     `json:"app_id"`
-	JobID       string     `json:"job_id,omitempty"`
-	PeriodStart time.Time  `json:"period_start"`
-	PeriodEnd   time.Time  `json:"period_end"`
-	Committed   int64      `json:"committed"`
-	Reserved    int64      `json:"reserved"`
-	// Quantity fields apply only to the shared account book, where both
-	// resource IDs are empty.
+	Egress    EgressBook `json:"egress"`
+	AccountID string     `json:"account_id"`
+	AppID     string     `json:"app_id"`
+	JobID     string     `json:"job_id,omitempty"`
+	// ProjectID or EnvironmentID names a shared book (ADR-1750, amendments 1
+	// and 2); its app and job IDs are empty, like the account book's.
+	ProjectID     string    `json:"project_id,omitempty"`
+	EnvironmentID string    `json:"environment_id,omitempty"`
+	PeriodStart   time.Time `json:"period_start"`
+	PeriodEnd     time.Time `json:"period_end"`
+	Committed     int64     `json:"committed"`
+	Reserved      int64     `json:"reserved"`
+	// EnvironmentOnly marks an app book that only environment caps have
+	// funded this month. It waives no capacity floor (ADR-1750, amendment 2).
+	EnvironmentOnly bool `json:"environment_only,omitempty"`
+	// Quantity fields apply only to the shared account book, where every
+	// resource ID is empty.
 	QuantityCommitted int64 `json:"quantity_committed"`
 	QuantityReserved  int64 `json:"quantity_reserved"`
 	AllowanceGranted  int64 `json:"allowance_granted"`
@@ -77,44 +103,50 @@ type ComputeBook struct {
 // lease remains funded until its owner confirms physical retirement. Strict
 // billing can consume only [StartedAt, FundedUntil), even after a daemon crash.
 type ComputeLease struct {
-	EgressFunded        bool       `json:"egress_funded"`
-	EgressGranted       int64      `json:"egress_granted_bytes"`
-	EgressGrant         int64      `json:"egress_grant_bytes"`
-	EgressSequence      int64      `json:"egress_sequence"`
-	ID                  string     `json:"id"`
-	Fence               string     `json:"fence"`
-	RequestID           string     `json:"request_id"`
-	RequestOperation    string     `json:"request_operation"`
-	RequestEgressRefill bool       `json:"request_egress_refill"`
-	RequestRevision     int64      `json:"request_revision"`
-	Revision            int64      `json:"revision"`
-	AccountID           string     `json:"account_id"`
-	AppID               string     `json:"app_id"`
-	JobID               string     `json:"job_id,omitempty"`
-	JobRunID            string     `json:"job_run_id,omitempty"`
-	JobTaskIndex        int        `json:"job_task_index,omitempty"`
-	InstanceID          string     `json:"instance_id"`
-	NodeID              string     `json:"node_id"`
-	Incarnation         string     `json:"incarnation"`
-	Strict              bool       `json:"strict"`
-	AccountFunded       bool       `json:"account_funded"`
-	QuantityCommitted   int64      `json:"quantity_committed"`
-	QuantityReserved    int64      `json:"quantity_reserved"`
-	Denied              bool       `json:"denied"`
-	AttemptID           string     `json:"attempt_id"`
-	Fenced              bool       `json:"fenced"`
-	DenialReason        string     `json:"denial_reason,omitempty"`
-	BillableMB          int        `json:"billable_mb"`
-	RateMillicents      int64      `json:"rate_millicents"`
-	RateQuantity        int64      `json:"rate_quantity"`
-	PeriodStart         time.Time  `json:"period_start"`
-	StartedAt           time.Time  `json:"started_at"`
-	GrantedAt           time.Time  `json:"granted_at"`
-	RunUntil            time.Time  `json:"run_until"`
-	FundedUntil         time.Time  `json:"funded_until"`
-	Committed           int64      `json:"committed"`
-	Reserved            int64      `json:"reserved"`
-	SettledAt           *time.Time `json:"settled_at,omitempty"`
+	EgressFunded        bool   `json:"egress_funded"`
+	EgressGranted       int64  `json:"egress_granted_bytes"`
+	EgressGrant         int64  `json:"egress_grant_bytes"`
+	EgressSequence      int64  `json:"egress_sequence"`
+	ID                  string `json:"id"`
+	Fence               string `json:"fence"`
+	RequestID           string `json:"request_id"`
+	RequestOperation    string `json:"request_operation"`
+	RequestEgressRefill bool   `json:"request_egress_refill"`
+	RequestRevision     int64  `json:"request_revision"`
+	Revision            int64  `json:"revision"`
+	AccountID           string `json:"account_id"`
+	AppID               string `json:"app_id"`
+	JobID               string `json:"job_id,omitempty"`
+	JobRunID            string `json:"job_run_id,omitempty"`
+	JobTaskIndex        int    `json:"job_task_index,omitempty"`
+	InstanceID          string `json:"instance_id"`
+	NodeID              string `json:"node_id"`
+	Incarnation         string `json:"incarnation"`
+	Strict              bool   `json:"strict"`
+	AccountFunded       bool   `json:"account_funded"`
+	// ProjectID and EnvironmentID are the shared books this attempt also
+	// funds, fixed at acquire so settlement is unaffected if the app later
+	// moves. DeploymentID is the deployment the attempt runs.
+	ProjectID         string     `json:"project_id,omitempty"`
+	EnvironmentID     string     `json:"environment_id,omitempty"`
+	DeploymentID      string     `json:"deployment_id,omitempty"`
+	QuantityCommitted int64      `json:"quantity_committed"`
+	QuantityReserved  int64      `json:"quantity_reserved"`
+	Denied            bool       `json:"denied"`
+	AttemptID         string     `json:"attempt_id"`
+	Fenced            bool       `json:"fenced"`
+	DenialReason      string     `json:"denial_reason,omitempty"`
+	BillableMB        int        `json:"billable_mb"`
+	RateMillicents    int64      `json:"rate_millicents"`
+	RateQuantity      int64      `json:"rate_quantity"`
+	PeriodStart       time.Time  `json:"period_start"`
+	StartedAt         time.Time  `json:"started_at"`
+	GrantedAt         time.Time  `json:"granted_at"`
+	RunUntil          time.Time  `json:"run_until"`
+	FundedUntil       time.Time  `json:"funded_until"`
+	Committed         int64      `json:"committed"`
+	Reserved          int64      `json:"reserved"`
+	SettledAt         *time.Time `json:"settled_at,omitempty"`
 }
 
 type ComputeRequest struct {
@@ -127,6 +159,9 @@ type ComputeRequest struct {
 	Revision                                          int64
 	JobID, JobRunID                                   string
 	JobTaskIndex                                      int
+	// DeploymentID selects the environment an app attempt runs in; the
+	// ledger prefers the instance's recorded deployment.
+	DeploymentID string
 }
 
 // BindComputeRequest derives one stable financial identity from the scheduler's

@@ -1,10 +1,11 @@
 from typing import Literal
 
-FinancialBudgetSpecMetersItem = Literal["compute", "egress"]
+FinancialBudgetSpecMetersItem = Literal["compute", "egress", "object_storage"]
 
 FINANCIAL_BUDGET_SPEC_METERS_ITEM_VALUES: set[FinancialBudgetSpecMetersItem] = {
     "compute",
     "egress",
+    "object_storage",
 }
 
 
