@@ -27,6 +27,7 @@ func scanOutboundOffer(row pgx.Row) (OutboundIntegrationOffer, error) {
 	var id, accountID pgtype.UUID
 	var dailyRequestLimit, aiDailyTokenLimit, aiDailyCostLimit, aiMonthlyCostLimit pgtype.Int8
 	var aiUserDailyTokenLimit, aiUserDailyCostLimit pgtype.Int8
+	var traceMaxCalls, traceMaxCost, traceMaxRepeats pgtype.Int8
 	var accountPlan string
 	var requestPolicy api.OutboundRequestPolicy
 	var offer OutboundIntegrationOffer
@@ -46,9 +47,12 @@ func scanOutboundOffer(row pgx.Row) (OutboundIntegrationOffer, error) {
 		&offer.AIAutoPromptCache,
 		&offer.AIContentPolicy.Response.Email, &offer.AIContentPolicy.Response.PaymentCard, &offer.AIContentPolicy.Response.IBAN,
 		&offer.AIContentPolicy.Response.Secret, &offer.AIContentPolicy.Response.BlockedTerms,
-		&offer.AIContentPolicy.Response.Moderation); err != nil {
+		&offer.AIContentPolicy.Response.Moderation, &traceMaxCalls, &traceMaxCost, &traceMaxRepeats); err != nil {
 		return OutboundIntegrationOffer{}, mapErr(err)
 	}
+	offer.AITraceMaxCalls = outboundAITokenLimit(traceMaxCalls)
+	offer.AITraceMaxCostMillicents = outboundAITokenLimit(traceMaxCost)
+	offer.AITraceMaxRepeatedToolCalls = outboundAITokenLimit(traceMaxRepeats)
 	offer.AIUserDailyTokenLimit = outboundAITokenLimit(aiUserDailyTokenLimit)
 	offer.AIUserDailyCostLimit = outboundAITokenLimit(aiUserDailyCostLimit)
 	offer.AIDailyTokenLimit = outboundAITokenLimit(aiDailyTokenLimit)
@@ -148,7 +152,9 @@ func (s *PgStore) ListOutboundIntegrationOffers(ctx context.Context, accountID s
 		       integration.ai_moderation_categories, integration.ai_moderation_on_error, integration.ai_allow_unmetered,
 		       integration.ai_auto_prompt_cache,
 		       integration.ai_response_email, integration.ai_response_payment_card, integration.ai_response_iban,
-		       integration.ai_response_secret, integration.ai_response_blocked_terms, integration.ai_response_moderation
+		       integration.ai_response_secret, integration.ai_response_blocked_terms, integration.ai_response_moderation,
+		       integration.ai_trace_max_calls, integration.ai_trace_max_cost_millicents,
+		       integration.ai_trace_max_repeated_tool_calls
 		  FROM outbound_integrations integration
 		  JOIN accounts account ON account.id = integration.account_id
 		  LEFT JOIN outbound_integration_credentials credential

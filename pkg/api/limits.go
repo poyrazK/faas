@@ -1475,6 +1475,21 @@ const (
 	OutboundAITagsPerDay       = 1_000
 	OutboundAITagLimitsMax     = 20
 	OutboundAITagUsagePageMax  = 1_000
+	// AI traces (ADR 20261020202035): the new traces one integration
+	// records per UTC day (with trace limits set, later new traces are
+	// refused), the distinct models a trace lists, the tool names kept per
+	// response, the longest tool name, the page size of a trace listing,
+	// the logged calls one trace read returns, and the largest per-trace
+	// call and repeated-tool-call limits. Traces follow
+	// OutboundAIRequestLogRetentionDays.
+	OutboundAITracesPerDay                    = 100_000
+	OutboundAITraceModelsMax                  = 8
+	OutboundAIToolCallsPerResponseMax         = 16
+	OutboundAIToolNameMaxBytes                = 64
+	OutboundAITracePageMax                    = 200
+	OutboundAITraceCallsMax                   = 500
+	MaxOutboundAITraceCalls             int64 = 1_000_000
+	MaxOutboundAITraceRepeatedToolCalls int64 = 1_000
 	// Automatic prompt caching (ADR-1437): the estimated prompt or prefix
 	// tokens below which no breakpoint is added, and the cache lifetime a
 	// repeated prefix must recur within.

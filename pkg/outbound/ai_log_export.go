@@ -34,9 +34,13 @@ type aiLogExportLine struct {
 	Canary            bool   `json:"canary,omitempty"`
 	EndUser           string `json:"end_user,omitempty"`
 	// Tags are the call's usage tags by key (ADR-1436).
-	Tags                 map[string]string `json:"tags,omitempty"`
-	Moderation           string            `json:"moderation,omitempty"`
-	ModerationCategories []string          `json:"moderation_categories,omitempty"`
+	Tags map[string]string `json:"tags,omitempty"`
+	// TraceID is the call's AI trace and ToolCalls the tools its response
+	// requested (ADR 20261020202035).
+	TraceID              string   `json:"trace_id,omitempty"`
+	ToolCalls            []string `json:"tool_calls,omitempty"`
+	Moderation           string   `json:"moderation,omitempty"`
+	ModerationCategories []string `json:"moderation_categories,omitempty"`
 	// ADR-1435: the response check's result, what it found and the
 	// categories its moderation flagged.
 	ResponseCheck                string   `json:"response_check,omitempty"`
@@ -59,7 +63,7 @@ func aiLogExportFor(integration Integration, record AIUsageRecord, settlement ai
 		Outcome: string(record.Outcome), InputTokens: usage.InputTokens, CachedInputTokens: usage.CachedInputTokens,
 		CacheWriteTokens: usage.CacheWriteTokens, OutputTokens: usage.OutputTokens, CostMillicents: record.CostMillicents,
 		DurationMS: max(now.Sub(settlement.started).Milliseconds(), 0), Attempts: settlement.attempts,
-		RouteID: settlement.route.routeID, EndUser: record.EndUser,
+		RouteID: settlement.route.routeID, EndUser: record.EndUser, TraceID: record.TraceID, ToolCalls: record.ToolCalls,
 		Moderation: settlement.moderation.result, ModerationCategories: settlement.moderation.categories,
 	}
 	if settlement.route.routeID != "" {
@@ -97,6 +101,9 @@ func aiLogExportFor(integration Integration, record AIUsageRecord, settlement ai
 	}
 	if len(record.Tags) > 0 {
 		export.Attributes["gregale.ai.tags"] = formatAITags(record.Tags)
+	}
+	if record.TraceID != "" {
+		export.Attributes["gregale.ai.trace_id"] = record.TraceID
 	}
 	return export
 }

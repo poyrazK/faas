@@ -42278,9 +42278,11 @@ CREATE TABLE public.outbound_admission_leases (
     ai_reserved_cost_millicents bigint DEFAULT 0 NOT NULL,
     ai_end_user text,
     ai_tags text[],
+    ai_trace_id text,
     CONSTRAINT outbound_admission_leases_ai_end_user_chk CHECK (((ai_end_user IS NULL) OR (ai_end_user ~ '^[A-Za-z0-9._:@+=/|-]{1,64}$'::text))),
     CONSTRAINT outbound_admission_leases_ai_reservation_chk CHECK (((ai_reserved_tokens >= 0) AND (ai_reserved_cost_millicents >= 0))),
-    CONSTRAINT outbound_admission_leases_ai_tags_chk CHECK (((ai_tags IS NULL) OR (array_to_string(ai_tags, ','::text) ~ '^[a-z][a-z0-9_.-]{0,31}=[A-Za-z0-9._:@+/-]{1,64}(,[a-z][a-z0-9_.-]{0,31}=[A-Za-z0-9._:@+/-]{1,64}){0,4}$'::text)))
+    CONSTRAINT outbound_admission_leases_ai_tags_chk CHECK (((ai_tags IS NULL) OR (array_to_string(ai_tags, ','::text) ~ '^[a-z][a-z0-9_.-]{0,31}=[A-Za-z0-9._:@+/-]{1,64}(,[a-z][a-z0-9_.-]{0,31}=[A-Za-z0-9._:@+/-]{1,64}){0,4}$'::text))),
+    CONSTRAINT outbound_admission_leases_ai_trace_id_chk CHECK (((ai_trace_id IS NULL) OR (ai_trace_id ~ '^[A-Za-z0-9._:@+=/|-]{1,64}$'::text)))
 );
 
 
@@ -42643,12 +42645,15 @@ CREATE TABLE public.outbound_ai_request_log (
     attempts smallint NOT NULL,
     end_user text,
     tags text[],
+    trace_id text,
+    tool_calls text[],
     CONSTRAINT outbound_ai_request_log_caller_chk CHECK (((length(caller) >= 1) AND (length(caller) <= 64))),
     CONSTRAINT outbound_ai_request_log_end_user_chk CHECK (((end_user IS NULL) OR (end_user ~ '^[A-Za-z0-9._:@+=/|-]{1,64}$'::text))),
     CONSTRAINT outbound_ai_request_log_model_chk CHECK ((((length(model) >= 1) AND (length(model) <= 128)) AND (model ~ '^[ -~]+$'::text))),
     CONSTRAINT outbound_ai_request_log_outcome_chk CHECK ((outcome = ANY (ARRAY['known'::text, 'unknown'::text, 'error'::text]))),
     CONSTRAINT outbound_ai_request_log_status_chk CHECK (((status >= 100) AND (status <= 599))),
     CONSTRAINT outbound_ai_request_log_tags_chk CHECK (((tags IS NULL) OR (array_to_string(tags, ','::text) ~ '^[a-z][a-z0-9_.-]{0,31}=[A-Za-z0-9._:@+/-]{1,64}(,[a-z][a-z0-9_.-]{0,31}=[A-Za-z0-9._:@+/-]{1,64}){0,4}$'::text))),
+    CONSTRAINT outbound_ai_request_log_trace_chk CHECK ((((trace_id IS NULL) OR (trace_id ~ '^[A-Za-z0-9._:@+=/|-]{1,64}$'::text)) AND ((tool_calls IS NULL) OR (cardinality(tool_calls) <= 16)))),
     CONSTRAINT outbound_ai_request_log_values_chk CHECK (((input_tokens >= 0) AND (cached_input_tokens >= 0) AND (cache_write_tokens >= 0) AND (output_tokens >= 0) AND (cost_millicents >= 0) AND (duration_ms >= 0) AND ((ttfb_ms IS NULL) OR (ttfb_ms >= 0)) AND ((attempts >= 0) AND (attempts <= 100))))
 );
 
@@ -42767,6 +42772,48 @@ CREATE TABLE public.outbound_ai_tag_usage_daily (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT outbound_ai_tag_usage_daily_tag_chk CHECK ((tag ~ '^[a-z][a-z0-9_.-]{0,31}=([A-Za-z0-9._:@+/-]{1,64}|~other)$'::text)),
     CONSTRAINT outbound_ai_tag_usage_daily_values_chk CHECK (((requests >= 0) AND ((error_requests >= 0) AND (error_requests <= requests)) AND (input_tokens >= 0) AND (output_tokens >= 0) AND (cost_millicents >= 0)))
+);
+
+
+--
+-- Name: outbound_ai_trace_days; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.outbound_ai_trace_days (
+    integration_id uuid NOT NULL,
+    usage_date date NOT NULL,
+    traces bigint DEFAULT 0 NOT NULL,
+    CONSTRAINT outbound_ai_trace_days_traces_chk CHECK ((traces >= 0))
+);
+
+
+--
+-- Name: outbound_ai_traces; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.outbound_ai_traces (
+    integration_id uuid NOT NULL,
+    trace_id text NOT NULL,
+    caller text NOT NULL,
+    end_user text,
+    first_at timestamp with time zone DEFAULT now() NOT NULL,
+    last_at timestamp with time zone DEFAULT now() NOT NULL,
+    calls bigint DEFAULT 0 NOT NULL,
+    error_calls bigint DEFAULT 0 NOT NULL,
+    usage_unknown_calls bigint DEFAULT 0 NOT NULL,
+    input_tokens bigint DEFAULT 0 NOT NULL,
+    output_tokens bigint DEFAULT 0 NOT NULL,
+    cost_millicents bigint DEFAULT 0 NOT NULL,
+    tool_calls bigint DEFAULT 0 NOT NULL,
+    tool_signature bytea,
+    repeated_tool_calls bigint DEFAULT 0 NOT NULL,
+    models text[] DEFAULT '{}'::text[] NOT NULL,
+    CONSTRAINT outbound_ai_traces_caller_chk CHECK (((length(caller) >= 1) AND (length(caller) <= 64))),
+    CONSTRAINT outbound_ai_traces_end_user_chk CHECK (((end_user IS NULL) OR (end_user ~ '^[A-Za-z0-9._:@+=/|-]{1,64}$'::text))),
+    CONSTRAINT outbound_ai_traces_models_chk CHECK ((cardinality(models) <= 8)),
+    CONSTRAINT outbound_ai_traces_tool_signature_chk CHECK (((tool_signature IS NULL) OR (octet_length(tool_signature) = 16))),
+    CONSTRAINT outbound_ai_traces_trace_id_chk CHECK ((trace_id ~ '^[A-Za-z0-9._:@+=/|-]{1,64}$'::text)),
+    CONSTRAINT outbound_ai_traces_values_chk CHECK (((calls >= 0) AND ((error_calls >= 0) AND (error_calls <= calls)) AND ((usage_unknown_calls >= 0) AND (usage_unknown_calls <= calls)) AND (input_tokens >= 0) AND (output_tokens >= 0) AND (cost_millicents >= 0) AND (tool_calls >= 0) AND ((repeated_tool_calls >= 0) AND (repeated_tool_calls <= calls)) AND (first_at <= last_at)))
 );
 
 
@@ -42987,6 +43034,9 @@ CREATE TABLE public.outbound_integrations (
     ai_response_blocked_terms text DEFAULT 'off'::text NOT NULL,
     ai_response_moderation text DEFAULT 'off'::text NOT NULL,
     ai_auto_prompt_cache boolean DEFAULT false NOT NULL,
+    ai_trace_max_calls bigint,
+    ai_trace_max_cost_millicents bigint,
+    ai_trace_max_repeated_tool_calls bigint,
     CONSTRAINT outbound_customer_integration_policy_chk CHECK (((owner_kind <> 'customer'::text) OR ((provider_auth_mode = 'managed'::text) AND (credential_source = 'customer_sealed'::text) AND ((cardinality(allowed_methods) >= 1) AND (cardinality(allowed_methods) <= 6)) AND ((cardinality(allowed_path_prefixes) >= 1) AND (cardinality(allowed_path_prefixes) <= 32))))),
     CONSTRAINT outbound_integrations_ai_allow_unmetered_chk CHECK (((NOT ai_allow_unmetered) OR (ai_provider IS NOT NULL))),
     CONSTRAINT outbound_integrations_ai_auto_prompt_cache_chk CHECK (((NOT ai_auto_prompt_cache) OR (ai_provider IS NOT NULL))),
@@ -42999,6 +43049,7 @@ CREATE TABLE public.outbound_integrations (
     CONSTRAINT outbound_integrations_ai_request_log_chk CHECK (((NOT ai_request_log_enabled) OR (ai_provider IS NOT NULL))),
     CONSTRAINT outbound_integrations_ai_request_log_content_chk CHECK (((NOT ai_request_log_content) OR ai_request_log_enabled)),
     CONSTRAINT outbound_integrations_ai_response_policy_chk CHECK (((ai_response_email = ANY (ARRAY['off'::text, 'redact'::text, 'block'::text])) AND (ai_response_payment_card = ANY (ARRAY['off'::text, 'redact'::text, 'block'::text])) AND (ai_response_iban = ANY (ARRAY['off'::text, 'redact'::text, 'block'::text])) AND (ai_response_secret = ANY (ARRAY['off'::text, 'redact'::text, 'block'::text])) AND (ai_response_blocked_terms = ANY (ARRAY['off'::text, 'block'::text])) AND (ai_response_moderation = ANY (ARRAY['off'::text, 'flag'::text, 'block'::text])) AND ((ai_provider IS NOT NULL) OR ((ai_response_email = 'off'::text) AND (ai_response_payment_card = 'off'::text) AND (ai_response_iban = 'off'::text) AND (ai_response_secret = 'off'::text) AND (ai_response_blocked_terms = 'off'::text) AND (ai_response_moderation = 'off'::text))) AND ((ai_response_moderation = 'off'::text) OR ((ai_moderation_kind IS NOT NULL) AND (cardinality(ai_moderation_categories) >= 1) AND (NOT (ai_moderation_categories <@ ARRAY['prompt_injection'::text])) AND ((ai_moderation_kind = 'openai_moderation'::text) OR (ai_moderation_model IS NOT NULL)))))),
+    CONSTRAINT outbound_integrations_ai_trace_limits_chk CHECK ((((ai_trace_max_calls IS NULL) OR ((ai_provider IS NOT NULL) AND ((ai_trace_max_calls >= 1) AND (ai_trace_max_calls <= 1000000)))) AND ((ai_trace_max_cost_millicents IS NULL) OR ((ai_provider IS NOT NULL) AND ((ai_trace_max_cost_millicents >= 1) AND (ai_trace_max_cost_millicents <= '1000000000000'::bigint)))) AND ((ai_trace_max_repeated_tool_calls IS NULL) OR ((ai_provider IS NOT NULL) AND ((ai_trace_max_repeated_tool_calls >= 1) AND (ai_trace_max_repeated_tool_calls <= 1000)))))),
     CONSTRAINT outbound_integrations_ai_user_limits_chk CHECK ((((ai_user_daily_token_limit IS NULL) OR ((ai_provider IS NOT NULL) AND ((ai_user_daily_token_limit >= 1) AND (ai_user_daily_token_limit <= '100000000000'::bigint)))) AND ((ai_user_daily_cost_limit_millicents IS NULL) OR ((ai_provider IS NOT NULL) AND ((ai_user_daily_cost_limit_millicents >= 1) AND (ai_user_daily_cost_limit_millicents <= '1000000000000'::bigint)))))),
     CONSTRAINT outbound_integrations_allowed_methods_count_chk CHECK ((cardinality(allowed_methods) <= 6)),
     CONSTRAINT outbound_integrations_allowed_path_prefixes_count_chk CHECK ((cardinality(allowed_path_prefixes) <= 32)),
@@ -58157,6 +58208,22 @@ ALTER TABLE ONLY public.outbound_ai_tag_usage_daily
 
 
 --
+-- Name: outbound_ai_trace_days outbound_ai_trace_days_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_trace_days
+    ADD CONSTRAINT outbound_ai_trace_days_pkey PRIMARY KEY (integration_id, usage_date);
+
+
+--
+-- Name: outbound_ai_traces outbound_ai_traces_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_traces
+    ADD CONSTRAINT outbound_ai_traces_pkey PRIMARY KEY (integration_id, trace_id);
+
+
+--
 -- Name: outbound_ai_usage_daily outbound_ai_usage_daily_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -68392,6 +68459,13 @@ CREATE INDEX outbound_ai_request_log_recent_idx ON public.outbound_ai_request_lo
 
 
 --
+-- Name: outbound_ai_request_log_trace_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX outbound_ai_request_log_trace_idx ON public.outbound_ai_request_log USING btree (integration_id, trace_id, created_at) WHERE (trace_id IS NOT NULL);
+
+
+--
 -- Name: outbound_ai_route_target_minutes_prune_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -68417,6 +68491,20 @@ CREATE INDEX outbound_ai_settlements_settled_at_idx ON public.outbound_ai_settle
 --
 
 CREATE INDEX outbound_ai_tag_usage_daily_prune_idx ON public.outbound_ai_tag_usage_daily USING btree (usage_date);
+
+
+--
+-- Name: outbound_ai_traces_prune_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX outbound_ai_traces_prune_idx ON public.outbound_ai_traces USING btree (last_at);
+
+
+--
+-- Name: outbound_ai_traces_recent_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX outbound_ai_traces_recent_idx ON public.outbound_ai_traces USING btree (integration_id, last_at DESC);
 
 
 --
@@ -86548,6 +86636,22 @@ ALTER TABLE ONLY public.outbound_ai_tag_limits
 
 ALTER TABLE ONLY public.outbound_ai_tag_usage_daily
     ADD CONSTRAINT outbound_ai_tag_usage_daily_integration_id_fkey FOREIGN KEY (integration_id) REFERENCES public.outbound_integrations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: outbound_ai_trace_days outbound_ai_trace_days_integration_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_trace_days
+    ADD CONSTRAINT outbound_ai_trace_days_integration_id_fkey FOREIGN KEY (integration_id) REFERENCES public.outbound_integrations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: outbound_ai_traces outbound_ai_traces_integration_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_traces
+    ADD CONSTRAINT outbound_ai_traces_integration_id_fkey FOREIGN KEY (integration_id) REFERENCES public.outbound_integrations(id) ON DELETE CASCADE;
 
 
 --

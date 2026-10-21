@@ -333,6 +333,18 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				"letters, digits, _ . or - starting with a letter, values of 1 to 64 letters, digits or . _ : @ + / -", "")
 		return
 	}
+	// ADR 20261020202035: the call's AI trace, kept when the integration
+	// records traces.
+	aiTrace, ok := aiCallTrace(r, integration)
+	if !ok {
+		h.Metrics.ObserveRejection(metricIntegrationID, "outbound_ai_trace_invalid")
+		writeProblem(w, http.StatusBadRequest, "outbound_ai_trace_invalid",
+			"X-Gregale-AI-Trace must be one ID of 1 to 64 letters, digits or . _ : @ + = / | -", "")
+		return
+	}
+	if !integration.recordsAITraces() {
+		aiTrace = ""
+	}
 	// ADR 20261019072722: a WebSocket upgrade on an AI integration is a
 	// realtime session, metered or let through unmetered, or refused.
 	realtime, realtimeRejection := planRealtime(r, integration, path)
@@ -429,6 +441,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		UserDailyAICostLimit:           copyInt64Pointer(integration.AIUserDailyCostLimit),
 		AITags:                         aiTags,
 		AITagDailyCostLimits:           tagDailyCostLimits(integration, aiTags),
+		AITraceID:                      aiTrace,
+		AITraceLimits:                  integration.traceLimits(),
 		BindingAppID:                   bindingAppID,
 		BindingDailyRequestLimit:       copyInt64Pointer(bindingDailyRequestLimit),
 		CircuitBreakerFailureThreshold: integration.CircuitBreakerFailureThreshold,
@@ -452,6 +466,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		retry := retryAfterSeconds(decision.RetryAfter)
+		if traceRejection(decision.Reason) {
+			retry = ""
+		}
 		w.Header().Set("X-Gregale-Outbound-Rejection", decision.Reason)
 		writeProblem(w, http.StatusTooManyRequests, "outbound_budget_exhausted", "Outbound integration budget is exhausted", retry)
 		return
@@ -574,7 +591,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// The upgrade itself was admitted like a call, with no reservation;
 		// each response is admitted with its own (ADR 20261019072722).
 		h.serveRealtime(w, r, &realtimeSession{h: h, integration: integration, appID: appID, metricID: metricIntegrationID,
-			metered: realtime == realtimeMetered, spec: spec, endUser: aiEndUser, tags: aiTags,
+			metered: realtime == realtimeMetered, spec: spec, endUser: aiEndUser, tags: aiTags, traceID: aiTrace,
 			model: realtimeURLModel(r.URL.Query()), live: livePath(integration.AIProvider, path)}, upstreamReq)
 		return
 	}
@@ -730,8 +747,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// Deferred so an aborted stream still settles the tokens it used.
 		settlement := aiSettlement{
 			status: resp.StatusCode, attempts: attempts, started: upstreamStarted, routeID: routeIDFromContext(r.Context()),
-			endUser: aiEndUser, tags: aiTags, leaseID: decision.LeaseID, route: routeAttemptFromContext(r.Context()), moderation: moderation,
-			response: responseCheck, cacheHit: cacheHit,
+			endUser: aiEndUser, tags: aiTags, traceID: aiTrace, leaseID: decision.LeaseID, route: routeAttemptFromContext(r.Context()),
+			moderation: moderation,
+			response:   responseCheck, cacheHit: cacheHit,
 		}
 		if aiPlan != nil {
 			settlement.reserve, settlement.billable = aiPlan.reserve, aiPlan.endpoint.billable()

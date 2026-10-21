@@ -136,6 +136,9 @@ type realtimeSession struct {
 	spec    AdmissionSpec
 	endUser string
 	tags    []string
+	// traceID is the upgrade's AI trace; every response settles into it
+	// (ADR 20261020202035).
+	traceID string
 	// model prices the session's responses: session.model when the
 	// provider names it, else the URL's. transcriptionModel prices input
 	// transcriptions.
@@ -596,7 +599,7 @@ func (s *realtimeSession) settle(ctx context.Context, response *realtimeResponse
 		return
 	}
 	settlement := aiSettlement{status: http.StatusOK, attempts: 1, started: response.started, endUser: s.endUser, tags: s.tags,
-		leaseID: response.leaseID, reserve: response.reserve, billable: true, media: media}
+		traceID: s.traceID, leaseID: response.leaseID, reserve: response.reserve, billable: true, media: media}
 	cost := aiCallCostMillicents(s.integration, usage)
 	if estimated, estimatedCost, ok := estimatedAIUsage(outcome, usage, settlement); ok {
 		usage, cost = estimated, estimatedCost

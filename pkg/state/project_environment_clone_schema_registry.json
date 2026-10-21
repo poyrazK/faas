@@ -11096,6 +11096,7 @@
       "ai_reserved_cost_millicents",
       "ai_reserved_tokens",
       "ai_tags",
+      "ai_trace_id",
       "binding_app_id",
       "created_at",
       "expires_at",
@@ -11299,6 +11300,37 @@
     "kind": "operational"
   },
   {
+    "table": "outbound_ai_traces",
+    "columns": [
+      "caller",
+      "calls",
+      "cost_millicents",
+      "end_user",
+      "error_calls",
+      "first_at",
+      "input_tokens",
+      "integration_id",
+      "last_at",
+      "models",
+      "output_tokens",
+      "repeated_tool_calls",
+      "tool_calls",
+      "tool_signature",
+      "trace_id",
+      "usage_unknown_calls"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "outbound_ai_trace_days",
+    "columns": [
+      "integration_id",
+      "traces",
+      "usage_date"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "outbound_ai_replay_results",
     "columns": [
       "cost_millicents",
@@ -11373,6 +11405,8 @@
       "route_id",
       "status",
       "tags",
+      "tool_calls",
+      "trace_id",
       "ttfb_ms"
     ],
     "kind": "operational"
@@ -11617,6 +11651,9 @@
       "ai_response_moderation",
       "ai_response_payment_card",
       "ai_response_secret",
+      "ai_trace_max_calls",
+      "ai_trace_max_cost_millicents",
+      "ai_trace_max_repeated_tool_calls",
       "ai_user_daily_cost_limit_millicents",
       "ai_user_daily_token_limit",
       "allowed_methods",

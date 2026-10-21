@@ -5937,6 +5937,87 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
+  /v1/outbound/integrations/{integration}/ai-traces:
+    parameters:
+      - name: integration
+        in: path
+        required: true
+        description: UUID of the integration whose AI traces are read.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [outbound]
+      operationId: listOutboundAITraces
+      summary: Page an integration's AI traces.
+      description: >-
+        Requires MFA and read scope (ADR 20261020202035). A trace groups the calls of one agent task, named by
+        X-Gregale-AI-Trace or the trace ID of a W3C traceparent header. Traces are recorded while the integration keeps a
+        request log or has trace limits, and are kept for 7 days. Newest last call first.
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          description: Traces per page, 1 to 200 (default 200).
+          schema: { type: integer, minimum: 1, maximum: 200 }
+        - name: before
+          in: query
+          required: false
+          description: The previous page's next_before, to read traces last called earlier.
+          schema: { type: string, format: date-time }
+        - name: app_id
+          in: query
+          required: false
+          description: Only traces whose first call came from this app.
+          schema: { type: string, format: uuid }
+        - name: end_user
+          in: query
+          required: false
+          description: Only traces whose first call named this X-Gregale-AI-User.
+          schema: { type: string, maxLength: 64 }
+      responses:
+        '200':
+          description: One page of traces.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundAITraceList' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/outbound/integrations/{integration}/ai-traces/{trace}:
+    parameters:
+      - name: integration
+        in: path
+        required: true
+        description: UUID of the integration that recorded the trace.
+        schema: { type: string, format: uuid }
+      - name: trace
+        in: path
+        required: true
+        description: The trace ID, path-escaped.
+        schema: { type: string, maxLength: 64 }
+    get:
+      tags: [outbound]
+      operationId: getOutboundAITrace
+      summary: Read an AI trace with its logged calls.
+      description: >-
+        Requires MFA and read scope (ADR 20261020202035). Calls are the trace's request-log entries, oldest first, at most
+        500; calls_truncated marks a longer trace.
+      responses:
+        '200':
+          description: The trace.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundAITraceResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /v1/outbound/integrations/{integration}/ai-requests/{request}/replays:
     parameters:
       - name: integration
@@ -76153,6 +76234,26 @@ components:
         ai_auto_prompt_cache:
           type: boolean
           description: Whether the gateway adds prompt-cache breakpoints to Claude requests that carry none (ADR-1437).
+        ai_trace_max_calls:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 1000000
+          description: Calls each AI trace may make, settled and in flight (ADR 20261020202035). Absent when unlimited.
+        ai_trace_max_cost_millicents:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 1000000000000
+          description: Cost each AI trace may reach, with live reservations (ADR 20261020202035). Absent when unlimited.
+        ai_trace_max_repeated_tool_calls:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 1000
+          description: >-
+            Consecutive calls of a trace whose responses may request the same tools with the same arguments
+            (ADR 20261020202035). Absent when unlimited.
         ai_user_daily_token_limit:
           type: [integer, 'null']
           format: int64
@@ -76249,6 +76350,31 @@ components:
             none: after a system prompt or tool list seen again within five minutes, and after the last message of a
             conversation that carries earlier turns or names X-Gregale-AI-Session. Prompts under about 1,024 tokens are not
             marked; the response names the added breakpoints in X-Gregale-AI-Prompt-Cache (ADR-1437). Requires ai_provider.
+        trace_max_calls:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 1000000
+          description: >-
+            Refuse a trace's call once the trace made this many calls, settled and in flight, with 429
+            outbound_budget_exhausted and X-Gregale-Outbound-Rejection trace_call_limit (ADR 20261020202035). Requires
+            ai_provider.
+        trace_max_cost_millicents:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 1000000000000
+          description: >-
+            Refuse a trace's call that would take the trace's cost past this, with trace_cost_limit (ADR 20261020202035).
+            Requires ai_provider.
+        trace_max_repeated_tool_calls:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 1000
+          description: >-
+            Refuse a trace's call once this many consecutive calls requested the same tools with the same arguments, with
+            trace_tool_loop: the agent is looping (ADR 20261020202035). Requires ai_provider.
         user_daily_token_limit:
           type: [integer, 'null']
           format: int64
@@ -77041,6 +77167,15 @@ components:
           maxItems: 5
           description: The call's X-Gregale-AI-Tags as key=value, sorted by key (ADR-1436).
           items: { type: string, maxLength: 97 }
+        trace_id:
+          type: string
+          maxLength: 64
+          description: The call's AI trace, when the integration records traces (ADR 20261020202035).
+        tool_calls:
+          type: array
+          maxItems: 16
+          description: The names of the tools the call's response requested, in order (ADR 20261020202035).
+          items: { type: string, maxLength: 64 }
     OutboundAIContentBody:
       type: object
       description: The start of one captured body.
@@ -77191,6 +77326,80 @@ components:
           type: array
           items: { $ref: '#/components/schemas/OutboundAIRequestLogEntry' }
         next_before: { type: [string, 'null'], format: date-time, description: Pass as before to read the next page; null on the last page. }
+    OutboundAITrace:
+      type: object
+      description: >-
+        One AI trace's totals (ADR 20261020202035). app_id and end_user are its first call's; repeated_tool_calls is its
+        current streak of calls that requested the same tools with the same arguments.
+      required: [trace_id, app_id, end_user, first_at, last_at, calls, error_calls, usage_unknown_calls, input_tokens, output_tokens, cost_millicents, tool_calls, repeated_tool_calls, models]
+      properties:
+        trace_id: { type: string, maxLength: 64 }
+        app_id: { type: [string, 'null'], format: uuid }
+        end_user: { type: [string, 'null'], maxLength: 64 }
+        first_at: { type: string, format: date-time }
+        last_at: { type: string, format: date-time }
+        calls: { type: integer, format: int64, minimum: 0 }
+        error_calls: { type: integer, format: int64, minimum: 0 }
+        usage_unknown_calls: { type: integer, format: int64, minimum: 0 }
+        input_tokens: { type: integer, format: int64, minimum: 0 }
+        output_tokens: { type: integer, format: int64, minimum: 0 }
+        cost_millicents: { type: integer, format: int64, minimum: 0 }
+        tool_calls:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Tool calls the trace's responses requested.
+        repeated_tool_calls: { type: integer, format: int64, minimum: 0 }
+        models:
+          type: array
+          maxItems: 8
+          items: { type: string }
+    OutboundAITraceList:
+      type: object
+      description: One page of AI traces, newest last call first.
+      required: [items, next_before]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/OutboundAITrace' }
+        next_before:
+          type: [string, 'null']
+          format: date-time
+          description: The last page item's last call, to pass as before for older traces; null on the last page.
+    OutboundAITraceCall:
+      type: object
+      description: One logged call of an AI trace.
+      required: [id, created_at, caller, model, status, outcome, input_tokens, output_tokens, cost_millicents, duration_ms, ttfb_ms, tool_calls]
+      properties:
+        id: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+        caller: { type: string }
+        model: { type: string }
+        status: { type: integer, minimum: 100, maximum: 599 }
+        outcome: { type: string, enum: [known, unknown, error] }
+        input_tokens: { type: integer, format: int64, minimum: 0 }
+        output_tokens: { type: integer, format: int64, minimum: 0 }
+        cost_millicents: { type: integer, format: int64, minimum: 0 }
+        duration_ms: { type: integer, format: int64, minimum: 0 }
+        ttfb_ms: { type: [integer, 'null'], format: int64, minimum: 0 }
+        tool_calls:
+          type: array
+          maxItems: 16
+          description: The names of the tools the call's response requested.
+          items: { type: string, maxLength: 64 }
+    OutboundAITraceResponse:
+      type: object
+      description: One AI trace with its logged calls, oldest first.
+      required: [trace, calls, calls_truncated]
+      properties:
+        trace: { $ref: '#/components/schemas/OutboundAITrace' }
+        calls:
+          type: array
+          maxItems: 500
+          items: { $ref: '#/components/schemas/OutboundAITraceCall' }
+        calls_truncated:
+          type: boolean
+          description: Whether the trace logged more calls than were returned.
     UpdateOutboundBindingPolicyRequest:
       type: object
       description: Explicit nonempty method and path subsets for a bound app.

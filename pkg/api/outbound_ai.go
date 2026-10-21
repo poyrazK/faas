@@ -617,6 +617,10 @@ type OutboundAIRequestLogEntry struct {
 	Tags []string `json:"tags"`
 	// ContentCaptured reports that the call's bodies can be read (ADR-996).
 	ContentCaptured bool `json:"content_captured"`
+	// TraceID is the call's AI trace, and ToolCalls the tools its response
+	// requested (ADR 20261020202035).
+	TraceID   *string  `json:"trace_id,omitempty"`
+	ToolCalls []string `json:"tool_calls,omitempty"`
 }
 
 // Encodings of a captured body: text that is valid UTF-8, or base64.

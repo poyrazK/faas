@@ -56,6 +56,10 @@ type OutboundIntegrationOffer struct {
 	// AILogExport sends settled app calls to the app's log drains
 	// (ADR-1340).
 	AILogExport bool
+	// Per-trace limits (ADR 20261020202035).
+	AITraceMaxCalls             *int64
+	AITraceMaxCostMillicents    *int64
+	AITraceMaxRepeatedToolCalls *int64
 }
 
 // OutboundAIContentPolicyStore owns an integration's content guardrails
@@ -139,6 +143,11 @@ type OutboundAIPolicy struct {
 	// AutoPromptCache adds prompt-cache breakpoints to Claude requests; it
 	// requires a provider (ADR-1437).
 	AutoPromptCache bool
+	// TraceMaxCalls, TraceMaxCost and TraceMaxRepeatedToolCalls cap each AI
+	// trace; each requires a provider (ADR 20261020202035).
+	TraceMaxCalls             *int64
+	TraceMaxCost              *int64
+	TraceMaxRepeatedToolCalls *int64
 }
 
 func (p OutboundAIPolicy) valid() bool {
@@ -147,7 +156,8 @@ func (p OutboundAIPolicy) valid() bool {
 		api.ValidOutboundAIUserLimits(p.Provider, p.UserDailyTokenLimit, p.UserDailyCostLimit) &&
 		(!p.RequestLogEnabled || p.Provider != "") && (!p.RequestLogContent || p.RequestLogEnabled) &&
 		(!p.LogExport || p.Provider != "") && (!p.AllowUnmetered || p.Provider != "") &&
-		(!p.AutoPromptCache || p.Provider != "")
+		(!p.AutoPromptCache || p.Provider != "") &&
+		api.ValidOutboundAITraceLimits(p.Provider, p.TraceMaxCalls, p.TraceMaxCost, p.TraceMaxRepeatedToolCalls)
 }
 
 // OutboundAIPriceList is the current price list; EffectiveFrom is nil when

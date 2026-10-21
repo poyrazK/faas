@@ -80,6 +80,10 @@ type OutboundAIRequestLogEntry struct {
 	Tags []string
 	// ContentCaptured reports stored bodies for the call (ADR-996).
 	ContentCaptured bool
+	// TraceID is the call's AI trace, and ToolCalls the tools its response
+	// requested (ADR 20261020202035).
+	TraceID   string
+	ToolCalls []string
 }
 
 // OutboundAIRequestContent is one logged call's captured bodies (ADR-996):

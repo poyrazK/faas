@@ -129,6 +129,9 @@ type aiSettlement struct {
 	// X-Gregale-AI-Tags (ADR-1436).
 	endUser string
 	tags    []string
+	// traceID is the call's AI trace when its integration records traces
+	// (ADR 20261020202035).
+	traceID string
 	// reserve and billable let a billable call whose usage cannot be read
 	// settle at its admission estimate instead of zero (ADR-996).
 	reserve  aiReservation
@@ -256,9 +259,11 @@ func (h *Handler) settleAIUsage(ctx context.Context, integration Integration, ap
 		usage, cost = estimated, estimatedCost
 		span.SetAttributes(attribute.Bool("gregale.ai.usage_estimated", true))
 	}
-	h.recordSettledAIUsage(ctx, integration, appID, settlement, settledAIUsage{
-		usage: usage, outcome: outcome, cost: cost, timeToFirstByte: timeToFirstByte, capture: observer.capture,
-	}, span, metricIntegrationID)
+	settled := settledAIUsage{usage: usage, outcome: outcome, cost: cost, timeToFirstByte: timeToFirstByte, capture: observer.capture}
+	if outcome != AIUsageOutcomeError {
+		settled.toolCalls, settled.toolSignature = observer.toolCalls()
+	}
+	h.recordSettledAIUsage(ctx, integration, appID, settlement, settled, span, metricIntegrationID)
 }
 
 // settledAIUsage is one call's usage as it is recorded.
@@ -268,6 +273,10 @@ type settledAIUsage struct {
 	cost            int64
 	timeToFirstByte time.Duration
 	capture         *aiContentCapture
+	// toolCalls and toolSignature are the tool calls the response requested
+	// (ADR 20261020202035).
+	toolCalls     []string
+	toolSignature []byte
 }
 
 // recordSettledAIUsage counts and writes one call's settled usage: metrics,
@@ -311,6 +320,7 @@ func (h *Handler) recordSettledAIUsage(ctx context.Context, integration Integrat
 		IntegrationID: integration.ID, Caller: caller, Outcome: outcome, Usage: usage, CostMillicents: cost,
 		EndUser: settlement.endUser, Tags: settlement.tags, LeaseID: settlement.leaseID,
 		PromptCacheSavedMillicents: promptCacheSavedMillicents(integration, usage, cost),
+		TraceID:                    settlement.traceID, ToolCalls: settled.toolCalls, ToolSignature: settled.toolSignature,
 	}
 	if integration.AIRequestLogEnabled {
 		record.Log = newAIRequestLog(settlement, timeToFirstByte, time.Now())

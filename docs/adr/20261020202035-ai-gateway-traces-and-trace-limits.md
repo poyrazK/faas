@@ -1,0 +1,61 @@
+# ADR 20261020202035 · AI gateway: AI traces and trace limits
+
+- **Status:** accepted
+- **Date:** 2026-10-20
+- **Relates to:** ADR-991 (request log, hard caps), ADR-994 (end users), ADR-996 (bounded tracking), ADR-1120 (round trips), ADR-1340 (log export), ADR-1436 (usage tags), ADR 20261019072722 (realtime sessions)
+- **Context:**
+  - An agent turns one user action into many model calls: it plans, calls a tool, reads the result, and calls the model again, often dozens of times.
+  - The gateway records each call alone. Nothing shows which calls belong to one task, what a task cost, or what tools the model asked for along the way.
+  - Agents also fail in a way per-call caps do not catch. A model can ask for the same tool with the same arguments again and again, or a task can grow far past what it should cost, while every single call stays small and every daily cap has room.
+- **Decision:**
+  - **An AI trace groups the calls of one task.** A call belongs to a trace named by:
+    - `X-Gregale-AI-Trace`: one ID of 1 to `OutboundAIUserIDMaxBytes` characters from `A-Z a-z 0-9 . _ : @ + = / | -`. A malformed header is refused with `400 outbound_ai_trace_invalid`. Like every `X-Gregale-*` header, it never reaches the provider.
+    - otherwise the trace ID of a valid W3C `traceparent` header. Apps that already trace their requests get traces with no change. The header is forwarded as before.
+    - A call with neither belongs to no trace.
+  - **Traces are recorded** when the integration keeps a request log or has trace limits.
+    - Settlement adds the call to the trace's row in `outbound_ai_traces`: first and last call, calls, errors, calls with unknown usage, input and output tokens, cost, the tool calls the model requested, and up to `OutboundAITraceModelsMax` distinct models. The first call's app and end user name the trace.
+    - Request-log entries carry the call's `trace_id` and the names of the tools its response requested. The log-export line and OTLP drains get `gregale.ai.trace_id`.
+    - An integration records at most `OutboundAITracesPerDay` new traces per UTC day. Later new traces are not recorded, but their calls still settle and are logged.
+    - Traces are kept for `OutboundAIRequestLogRetentionDays`, like the request log.
+  - **Requested tool calls are read from responses.** The gateway reads the tool calls a model asks for, in every format it meters:
+    - OpenAI Chat Completions and Responses;
+    - Anthropic Messages, including through Bedrock;
+    - Gemini and Vertex;
+    - Bedrock Converse.
+
+    Both whole responses and streams are read.
+    - A call keeps up to `OutboundAIToolCallsPerResponseMax` tool names.
+    - The arguments are never stored. Only a hash of each call's tool names and arguments is kept, to detect loops.
+  - **Trace limits.** An integration's AI policy may set any of:
+    - `trace_max_calls`: calls per trace, settled and in flight.
+    - `trace_max_cost_millicents`: cost per trace, settled plus live reservations plus this call's reservation.
+    - `trace_max_repeated_tool_calls`: consecutive calls whose responses requested the same tools with the same arguments. A response with no tool calls ends a streak; an error leaves it as it was.
+
+    A call of a trace that reached a limit is refused at admission with `429 outbound_budget_exhausted`. `X-Gregale-Outbound-Rejection` names the reason: `trace_call_limit`, `trace_cost_limit` or `trace_tool_loop`. There is no `Retry-After`, since a trace never resets.
+    - Leases record the call's trace, so calls in flight count.
+    - With trace limits set, a call of a new trace past the day's `OutboundAITracesPerDay` is refused with `trace_untracked`: it could not be limited (as ADR-996 refuses untracked end users).
+    - The read joins the admission batch and the write joins the settlement batch, so neither adds a round trip. Calls without a trace read and write nothing new.
+  - **Visibility.**
+    - `GET /v1/outbound/integrations/{id}/ai-traces` lists recent traces, newest first, optionally of one app or end user.
+    - `GET /v1/outbound/integrations/{id}/ai-traces/{trace}` returns one trace with its logged calls in order: each with its model, status, tokens, cost, duration, time to first byte and requested tools.
+    - CLI: `gregale ai traces` lists traces and `gregale ai traces <integration-id> <trace-id>` shows one. `gregale ai policy` takes `--trace-max-calls`, `--trace-max-cost` and `--trace-max-repeated-tool-calls`.
+  - **Realtime sessions** carry the trace of their upgrade: each response or Live turn settles into it. Their tool calls are not read yet.
+- **Why:**
+  - Teams debug agents task by task, not call by call. Cost per task, steps per task and the tools a model chose are the questions they ask first.
+  - The trace ID of `traceparent` is the ID an app's own traces already use, so a gateway trace and the app's trace are the same task.
+  - Only a gateway can stop a runaway agent. It sees every call before the provider does, and per-task limits end a loop that per-day caps would let run all day.
+  - Hashes of tool arguments detect repetition without storing what a customer's tools receive.
+- **Consequences:**
+  - **Calls within a trace can run in parallel,** so "consecutive" is the order calls settle in, and a limit can be passed by the calls already in flight when it is reached, up to their reservations.
+  - **The settlement of a traced call writes one more statement.** Admission reads one more for traced calls of an integration with trace limits.
+  - **Execution of tools is not traced yet.** The trace shows what the model asked for, not the tool's own HTTP calls through other integrations.
+  - **New tables:** `outbound_ai_traces` and `outbound_ai_trace_days`.
+  - **New columns:**
+    - `outbound_integrations.ai_trace_max_calls`, `ai_trace_max_cost_millicents` and `ai_trace_max_repeated_tool_calls`;
+    - `outbound_admission_leases.ai_trace_id`;
+    - `outbound_ai_request_log.trace_id` and `tool_calls`.
+- **Rejected alternatives:**
+  - **Reusing `X-Gregale-AI-Session`.** A session is a conversation that spans many tasks, and it already steers key affinity and prompt caching.
+  - **Naming them runs.** "Runs" are Gregale's stateless executions; an AI trace is a task inside any app.
+  - **Detecting loops from repeated requests.** Each step of an agent sends a longer conversation, so identical requests are rare; identical tool requests are the loop.
+  - **Storing tool arguments.** They carry customer data. Request bodies are captured only when an integration opts in (ADR-996).

@@ -180,11 +180,7 @@ func (s *PgStore) ListOutboundAIRequestLog(ctx context.Context, accountID, integ
 		return nil, err
 	}
 	rows, err := s.pool.Query(ctx, `
-		SELECT log.id, log.created_at, log.caller, log.route_id, log.model, log.status, log.outcome,
-		       log.input_tokens, log.cached_input_tokens, log.cache_write_tokens, log.output_tokens,
-		       log.cost_millicents, log.duration_ms, log.ttfb_ms, log.attempts, COALESCE(log.end_user, ''),
-		       EXISTS (SELECT 1 FROM outbound_ai_request_content content WHERE content.log_id = log.id),
-		       COALESCE(log.tags, '{}'::text[])
+		SELECT `+outboundAIRequestLogColumns+`
 		  FROM outbound_ai_request_log log
 		 WHERE log.integration_id = $1 AND ($2::timestamptz IS NULL OR log.created_at < $2)
 		 ORDER BY log.created_at DESC, log.id DESC
@@ -192,6 +188,18 @@ func (s *PgStore) ListOutboundAIRequestLog(ctx context.Context, accountID, integ
 	if err != nil {
 		return nil, mapErr(err)
 	}
+	return scanOutboundAIRequestLogRows(rows)
+}
+
+// outboundAIRequestLogColumns are the request-log columns
+// scanOutboundAIRequestLogRows reads, from the alias "log".
+const outboundAIRequestLogColumns = `log.id, log.created_at, log.caller, log.route_id, log.model, log.status, log.outcome,
+		       log.input_tokens, log.cached_input_tokens, log.cache_write_tokens, log.output_tokens,
+		       log.cost_millicents, log.duration_ms, log.ttfb_ms, log.attempts, COALESCE(log.end_user, ''),
+		       EXISTS (SELECT 1 FROM outbound_ai_request_content content WHERE content.log_id = log.id),
+		       COALESCE(log.tags, '{}'::text[]), COALESCE(log.trace_id, ''), COALESCE(log.tool_calls, '{}'::text[])`
+
+func scanOutboundAIRequestLogRows(rows pgx.Rows) ([]OutboundAIRequestLogEntry, error) {
 	defer rows.Close()
 	entries := make([]OutboundAIRequestLogEntry, 0)
 	for rows.Next() {
@@ -202,7 +210,8 @@ func (s *PgStore) ListOutboundAIRequestLog(ctx context.Context, accountID, integ
 		var entry OutboundAIRequestLogEntry
 		if err := rows.Scan(&id, &entry.CreatedAt, &entry.Caller, &routeID, &entry.Model, &status, &entry.Outcome,
 			&entry.InputTokens, &entry.CachedInputTokens, &entry.CacheWriteTokens, &entry.OutputTokens,
-			&entry.CostMillicents, &duration, &ttfb, &attempts, &entry.EndUser, &entry.ContentCaptured, &entry.Tags); err != nil {
+			&entry.CostMillicents, &duration, &ttfb, &attempts, &entry.EndUser, &entry.ContentCaptured, &entry.Tags,
+			&entry.TraceID, &entry.ToolCalls); err != nil {
 			return nil, mapErr(err)
 		}
 		entry.ID, entry.CreatedAt = pgUUIDString(id), entry.CreatedAt.UTC()

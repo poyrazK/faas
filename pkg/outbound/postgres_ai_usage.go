@@ -176,6 +176,7 @@ func settleAIUsageRows(ctx context.Context, tx pgx.Tx, integrationID, leaseID uu
 	plan := aiSettlementPlan{
 		endUser:  record.EndUser != "",
 		tags:     len(record.Tags) > 0,
+		trace:    record.TraceID != "",
 		counters: record.Usage.BudgetTokens() > 0 || record.CostMillicents > 0,
 		binding:  record.Usage.BudgetTokens() > 0 && appCaller(record.Caller),
 		lease:    leaseID != uuid.Nil,
@@ -189,6 +190,9 @@ func settleAIUsageRows(ctx context.Context, tx pgx.Tx, integrationID, leaseID uu
 	}
 	if plan.tags {
 		queueAITagUsageRollup(batch, integrationID, record)
+	}
+	if plan.trace {
+		queueAITraceRollup(batch, integrationID, record)
 	}
 	queueAIUsageCounters(batch, integrationID, record, plan)
 	if plan.lease {
@@ -210,7 +214,7 @@ func settleAIUsageRows(ctx context.Context, tx pgx.Tx, integrationID, leaseID uu
 
 // aiSettlementPlan names the statements one settlement sends.
 type aiSettlementPlan struct {
-	endUser, tags, counters, binding, lease, content, route bool
+	endUser, tags, trace, counters, binding, lease, content, route bool
 }
 
 // queueAIRouteAttempt adds a route attempt to its target's row for the
@@ -309,6 +313,11 @@ func scanAIUsageRows(results pgx.BatchResults, record AIUsageRecord, opened open
 	if plan.tags {
 		var err error
 		if tagDays, err = scanAITagDays(results); err != nil {
+			return nil, err
+		}
+	}
+	if plan.trace {
+		if _, err := results.Exec(); err != nil {
 			return nil, err
 		}
 	}
@@ -537,12 +546,14 @@ func queueAIRequestLog(batch *pgx.Batch, integrationID uuid.UUID, record AIUsage
 	batch.Queue(`
 		INSERT INTO outbound_ai_request_log
 		    (integration_id, caller, route_id, model, status, outcome, input_tokens, cached_input_tokens,
-		     cache_write_tokens, output_tokens, cost_millicents, duration_ms, ttfb_ms, attempts, end_user, tags)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NULLIF($15, ''), $16)
+		     cache_write_tokens, output_tokens, cost_millicents, duration_ms, ttfb_ms, attempts, end_user, tags,
+		     trace_id, tool_calls)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NULLIF($15, ''), $16, NULLIF($17, ''), $18)
 		RETURNING id`,
 		integrationID, record.Caller, routeID, usage.Model, record.Log.Status, string(record.Outcome), usage.InputTokens,
 		usage.CachedInputTokens, usage.CacheWriteTokens, usage.OutputTokens, record.CostMillicents,
-		record.Log.DurationMS, record.Log.TTFBMS, record.Log.Attempts, record.EndUser, nilIfEmpty(record.Tags))
+		record.Log.DurationMS, record.Log.TTFBMS, record.Log.Attempts, record.EndUser, nilIfEmpty(record.Tags),
+		record.TraceID, nilIfEmpty(record.ToolCalls))
 }
 
 // queueAIRequestContent stores a logged call's captured bodies while the
@@ -586,6 +597,10 @@ func (b *PostgresBackend) PruneAIUsage(ctx context.Context) (int64, error) {
 		{`DELETE FROM outbound_ai_usage_daily WHERE usage_date < (now() AT TIME ZONE 'UTC')::date - $1::int`, api.OutboundAIUsageRetentionDays},
 		{`DELETE FROM outbound_ai_budget_alerts WHERE period_start < (now() AT TIME ZONE 'UTC')::date - $1::int`, api.OutboundAIUsageRetentionDays},
 		{`DELETE FROM outbound_ai_request_log WHERE created_at < now() - make_interval(days => $1::int)`, api.OutboundAIRequestLogRetentionDays},
+		// ADR 20261020202035: traces follow the request log, and their day
+		// counters only need today's.
+		{`DELETE FROM outbound_ai_traces WHERE last_at < now() - make_interval(days => $1::int)`, api.OutboundAIRequestLogRetentionDays},
+		{`DELETE FROM outbound_ai_trace_days WHERE usage_date < (now() AT TIME ZONE 'UTC')::date - $1::int`, 1},
 		// ADR-996: captured content expires sooner, and an integration that
 		// turned capture off loses what it captured within one prune.
 		{`DELETE FROM outbound_ai_request_content content

@@ -69,7 +69,9 @@ const integrationPolicySQL = `
 	       ARRAY(SELECT tag_limit.tag FROM outbound_ai_tag_limits tag_limit
 	              WHERE tag_limit.integration_id = integration.id ORDER BY tag_limit.tag),
 	       ARRAY(SELECT tag_limit.daily_cost_limit_millicents FROM outbound_ai_tag_limits tag_limit
-	              WHERE tag_limit.integration_id = integration.id ORDER BY tag_limit.tag)
+	              WHERE tag_limit.integration_id = integration.id ORDER BY tag_limit.tag),
+	       COALESCE(integration.ai_trace_max_calls, 0), COALESCE(integration.ai_trace_max_cost_millicents, 0),
+	       COALESCE(integration.ai_trace_max_repeated_tool_calls, 0)
 	  FROM outbound_integrations integration
 	  JOIN accounts account ON account.id = integration.account_id
 	 WHERE integration.id = $1`
@@ -135,6 +137,7 @@ func scanIntegration(id string, results pgx.BatchResults) (Integration, error) {
 	var aiUserTokenLimitValue, aiUserCostLimitValue int64
 	var tagLimitTags []string
 	var tagLimitCosts []int64
+	var traceLimits aiTraceLimits
 	err := results.QueryRow().
 		Scan(&accountID, &name, &plan, &origin, &tokenHash, &rate, &burst, &maxInFlight, &timeoutMS, &maxRetries, &responseCacheTTLSeconds,
 			&circuitBreakerFailureThreshold, &circuitBreakerOpenSeconds, &retryBudgetPerMinute, &policyUpdatedAt, &enabled, &providerAuthMode,
@@ -147,7 +150,7 @@ func scanIntegration(id string, results pgx.BatchResults) (Integration, error) {
 			&aiAutoPromptCache,
 			&contentPolicy.Response.Email, &contentPolicy.Response.PaymentCard, &contentPolicy.Response.IBAN,
 			&contentPolicy.Response.Secret, &contentPolicy.Response.BlockedTerms, &contentPolicy.Response.Moderation,
-			&tagLimitTags, &tagLimitCosts)
+			&tagLimitTags, &tagLimitCosts, &traceLimits.calls, &traceLimits.cost, &traceLimits.repeats)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Integration{}, ErrIntegrationNotFound
@@ -279,7 +282,9 @@ func scanIntegration(id string, results pgx.BatchResults) (Integration, error) {
 		AIAutoPromptCache: aiAutoPromptCache,
 		DailyAITokenLimit: positiveLimit(aiDailyTokenLimitValue), DailyAICostLimit: positiveLimit(aiDailyCostLimitValue),
 		MonthlyAICostLimit: positiveLimit(aiMonthlyCostLimitValue), AIUserDailyTokenLimit: positiveLimit(aiUserTokenLimitValue),
-		AIUserDailyCostLimit: positiveLimit(aiUserCostLimitValue)}
+		AIUserDailyCostLimit: positiveLimit(aiUserCostLimitValue),
+		AITraceMaxCalls:      positiveLimit(traceLimits.calls), AITraceMaxCostMillicents: positiveLimit(traceLimits.cost),
+		AITraceMaxRepeatedToolCalls: positiveLimit(traceLimits.repeats)}
 	// ADR-1436: the integration's tag limits.
 	for index, tag := range tagLimitTags {
 		if index < len(tagLimitCosts) {

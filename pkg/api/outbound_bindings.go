@@ -78,6 +78,10 @@ type OutboundIntegrationOffer struct {
 	// AIAutoPromptCache adds prompt-cache breakpoints to Claude requests
 	// that carry none (ADR-1437).
 	AIAutoPromptCache bool `json:"ai_auto_prompt_cache"`
+	// Per-trace limits (ADR 20261020202035).
+	AITraceMaxCalls             *int64 `json:"ai_trace_max_calls,omitempty"`
+	AITraceMaxCostMillicents    *int64 `json:"ai_trace_max_cost_millicents,omitempty"`
+	AITraceMaxRepeatedToolCalls *int64 `json:"ai_trace_max_repeated_tool_calls,omitempty"`
 }
 
 // Outbound AI providers select the credential handling and the response
@@ -142,6 +146,13 @@ type PutOutboundAIPolicyRequest struct {
 	// carry none: after a repeated system prompt or tool list, and after the
 	// last message of a continuing conversation (ADR-1437).
 	AutoPromptCache bool `json:"auto_prompt_cache,omitempty"`
+	// TraceMaxCalls, TraceMaxCostMillicents and TraceMaxRepeatedToolCalls
+	// cap each AI trace: its calls, its cost, and its consecutive calls
+	// whose responses requested the same tools with the same arguments
+	// (ADR 20261020202035).
+	TraceMaxCalls             *int64 `json:"trace_max_calls,omitempty"`
+	TraceMaxCostMillicents    *int64 `json:"trace_max_cost_millicents,omitempty"`
+	TraceMaxRepeatedToolCalls *int64 `json:"trace_max_repeated_tool_calls,omitempty"`
 }
 
 // Valid reports whether the complete AI policy can be stored.
@@ -149,6 +160,7 @@ func (r PutOutboundAIPolicyRequest) Valid() bool {
 	return ValidOutboundAIPolicy(r.AIProvider, r.DailyTokenLimit) &&
 		ValidOutboundAICostLimits(r.AIProvider, r.DailyCostLimitMillicents, r.MonthlyCostLimitMillicents) &&
 		ValidOutboundAIUserLimits(r.AIProvider, r.UserDailyTokenLimit, r.UserDailyCostLimitMillicents) &&
+		ValidOutboundAITraceLimits(r.AIProvider, r.TraceMaxCalls, r.TraceMaxCostMillicents, r.TraceMaxRepeatedToolCalls) &&
 		(!r.RequestLogEnabled || r.AIProvider != "") && (!r.RequestLogContent || r.RequestLogEnabled) &&
 		(!r.LogExport || r.AIProvider != "") && (!r.AllowUnmetered || r.AIProvider != "") &&
 		(!r.AutoPromptCache || r.AIProvider != "")

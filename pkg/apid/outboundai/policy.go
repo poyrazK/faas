@@ -11,7 +11,7 @@ import (
 
 // PolicyInvalidDetail explains a rejected AI policy; integration creation
 // in apidserver shares it.
-const PolicyInvalidDetail = "ai_provider must be openai, anthropic, gemini, azure_openai, bedrock or vertex; token limits (1 to 100,000,000,000), cost limits (1 to 1,000,000,000,000 millicents) and the request log require a provider; request_log_content requires the request log; log_export and allow_unmetered require a provider"
+const PolicyInvalidDetail = "ai_provider must be openai, anthropic, gemini, azure_openai, bedrock or vertex; token limits (1 to 100,000,000,000), cost limits (1 to 1,000,000,000,000 millicents) and the request log require a provider; request_log_content requires the request log; log_export and allow_unmetered require a provider; trace limits require a provider: trace_max_calls 1 to 1,000,000, trace_max_cost_millicents 1 to 1,000,000,000,000 and trace_max_repeated_tool_calls 1 to 1,000"
 
 func (s *Service) aiStore(w http.ResponseWriter) (state.OutboundAIStore, bool) {
 	store, ok := s.Host.Store().(state.OutboundAIStore)
@@ -58,6 +58,7 @@ func (s *Service) PutPolicy(w http.ResponseWriter, r *http.Request, acct state.A
 		RequestLogEnabled: req.RequestLogEnabled, UserDailyTokenLimit: req.UserDailyTokenLimit,
 		UserDailyCostLimit: req.UserDailyCostLimitMillicents, RequestLogContent: req.RequestLogContent,
 		LogExport: req.LogExport, AllowUnmetered: req.AllowUnmetered, AutoPromptCache: req.AutoPromptCache,
+		TraceMaxCalls: req.TraceMaxCalls, TraceMaxCost: req.TraceMaxCostMillicents, TraceMaxRepeatedToolCalls: req.TraceMaxRepeatedToolCalls,
 	})
 	s.writeResult(w, err, "customer outbound integration not found", PolicyInvalidDetail)
 }
