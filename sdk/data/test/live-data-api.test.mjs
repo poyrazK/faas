@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { LiveConnection, liveRead, parseDataAPIRow, parseDataAPIValue } from '../dist/live/index.js'
+import { LIVE_SUBPROTOCOL, LiveConnection, liveRead, liveSocket, parseDataAPIRow, parseDataAPIValue } from '../dist/live/index.js'
 import { createDataClient } from '../dist/index.js'
 
 const settle = () => new Promise(resolve => setTimeout(resolve, 0))
@@ -17,6 +17,28 @@ class FakeSocket {
   emit(type, event) { for (const l of [...this.listeners[type]]) l(event) }
   deliver(frame) { this.emit('message', { data: JSON.stringify(frame) }) }
 }
+
+test('the package exports the live module and its React hooks', async () => {
+  const live = await import('@gregale/data/live')
+  assert.equal(live.LiveConnection, LiveConnection)
+  assert.equal(typeof live.liveSocket, 'function')
+  const react = await import('@gregale/data/live/react')
+  assert.equal(typeof react.useLiveRead, 'function')
+  assert.equal(typeof react.useLiveQuery, 'function')
+})
+
+test('liveSocket opens the realtime v2 subprotocol and sends no credential', () => {
+  const opened = []
+  class Socket extends FakeSocket {
+    constructor(url, protocols) { super(); opened.push([url, protocols]) }
+  }
+  const url = 'wss://data.shop.example/__gregale/realtime/rt-1'
+  const connect = liveSocket(url, Socket)
+  assert.ok(connect() instanceof Socket)
+  assert.ok(connect() instanceof Socket, 'each reconnect opens a new socket')
+  assert.deepEqual(opened, [[url, [LIVE_SUBPROTOCOL]], [url, [LIVE_SUBPROTOCOL]]])
+  assert.equal(LIVE_SUBPROTOCOL, 'gregale.realtime.v2')
+})
 
 test('live values decode as the Data API returns them in JSON', () => {
   for (const [value, type, expected] of [

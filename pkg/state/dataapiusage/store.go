@@ -73,9 +73,10 @@ type Store struct {
 func New(pool *pgxpool.Pool) *Store { return &Store{pool: pool, q: sqlc.New()} }
 
 // Record adds a report's hourly deltas once per report id and returns the
-// app's month-to-date totals. A repeated report id adds nothing. Callers
+// app's month-to-date totals. A repeated report id adds nothing. access, when
+// set, replaces the app's reported access settings (validated JSON). Callers
 // validate hours and deltas; Record also prunes this app's expired rows.
-func (s *Store) Record(ctx context.Context, accountID, appID, reportID string, hours []Hour, now time.Time) (MonthToDate, error) {
+func (s *Store) Record(ctx context.Context, accountID, appID, reportID string, hours []Hour, access []byte, now time.Time) (MonthToDate, error) {
 	var mtd MonthToDate
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		if _, err := s.q.LockUsageApp(ctx, tx, sqlc.LockUsageAppParams{AppID: appID, AccountID: accountID}); errors.Is(err, pgx.ErrNoRows) {
@@ -94,6 +95,11 @@ func (s *Store) Record(ctx context.Context, accountID, appID, reportID string, h
 				}
 			}
 		}
+		if access != nil {
+			if err := s.q.UpsertAccessConfig(ctx, tx, sqlc.UpsertAccessConfigParams{AppID: appID, Config: access}); err != nil {
+				return fmt.Errorf("dataapiusage: store access settings: %w", err)
+			}
+		}
 		if err := s.prune(ctx, tx, appID, now); err != nil {
 			return err
 		}
@@ -101,6 +107,28 @@ func (s *Store) Record(ctx context.Context, accountID, appID, reportID string, h
 		return err
 	})
 	return mtd, err
+}
+
+// Access returns the access settings an app's runtime last reported, and
+// when; ok is false when it never reported any.
+func (s *Store) Access(ctx context.Context, appID string) (config []byte, reportedAt time.Time, ok bool, err error) {
+	row, err := s.q.GetAccessConfig(ctx, s.pool, appID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, time.Time{}, false, nil
+	}
+	if err != nil {
+		return nil, time.Time{}, false, fmt.Errorf("dataapiusage: read access settings: %w", err)
+	}
+	return row.Config, row.ReportedAt.Time, true, nil
+}
+
+// DeleteAccess forgets an app's reported access settings, so live reads
+// without a user token stop until its runtime reports again.
+func (s *Store) DeleteAccess(ctx context.Context, accountID, appID string) error {
+	if _, err := s.q.DeleteAccessConfig(ctx, s.pool, sqlc.DeleteAccessConfigParams{AppID: appID, AccountID: accountID}); err != nil {
+		return fmt.Errorf("dataapiusage: delete access settings: %w", err)
+	}
+	return nil
 }
 
 // MonthToDate returns an app's totals for now's UTC month.
