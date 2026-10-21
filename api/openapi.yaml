@@ -6018,6 +6018,73 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
+  /v1/outbound/integrations/{integration}/ai-quality-alerts:
+    parameters:
+      - name: integration
+        in: path
+        required: true
+        description: UUID of the integration whose alerts are listed.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [outbound]
+      operationId: listOutboundAIQualityAlerts
+      summary: List an integration's AI quality drift alerts.
+      description: >-
+        Requires MFA and read scope (ADR 20261021171712). Alerts are newest first and kept for 31 days; each fires once per
+        model, metric and UTC day.
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          description: Alerts to return, 1 to 100 (default 50).
+          schema: { type: integer, minimum: 1, maximum: 100 }
+      responses:
+        '200':
+          description: The alerts.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundAIQualityAlertList' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/outbound/integrations/{integration}/ai-requests/{request}/feedback:
+    parameters:
+      - name: integration
+        in: path
+        required: true
+        description: UUID of the integration that logged the call.
+        schema: { type: string, format: uuid }
+      - name: request
+        in: path
+        required: true
+        description: ID of the request-log entry, the value X-Gregale-AI-Call returned.
+        schema: { type: string, format: uuid }
+    put:
+      tags: [outbound]
+      operationId: putOutboundAIRequestFeedback
+      summary: Rate a logged AI call.
+      description: >-
+        Requires MFA and deploy-write scope (ADR 20261021171712). Apps rate their own calls through the gateway at
+        /i/{integration}/_gregale/feedback; this rates any logged call on a person's behalf. A later rating replaces the
+        earlier one, and the call's daily usage counts the change.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PutOutboundAIFeedbackRequest' }
+      responses:
+        '204': { description: The rating was stored. }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /v1/outbound/integrations/{integration}/ai-requests/{request}/replays:
     parameters:
       - name: integration
@@ -6123,7 +6190,7 @@ paths:
       - name: integration
         in: path
         required: true
-        description: UUID of the integration that logged the call.
+        description: UUID of the integration whose logged call is rated.
         schema: { type: string, format: uuid }
       - name: request
         in: path
@@ -77709,6 +77776,13 @@ components:
           minimum: 1
           maximum: 1000000000000
           description: UTC-day cost limit for each end user named by X-Gregale-AI-User (ADR-994).
+        ai_online_evaluation:
+          allOf:
+            - $ref: '#/components/schemas/OutboundAIOnlineEvaluation'
+          description: The sample of answered app calls a judge model scores (ADR 20261021171712).
+        ai_quality_alerts:
+          type: boolean
+          description: Drift alerts on the integration's quality signals are on (ADR 20261021171712).
     CreateOutboundIntegrationRequest:
       type: object
       description: A fixed public HTTPS destination, maximum HTTP route policy, and optional admission policy and daily admitted-request limit.
@@ -77830,10 +77904,21 @@ components:
           minimum: 1
           maximum: 1000000000000
           description: Per-end-user UTC-day cost limit for calls that send X-Gregale-AI-User (ADR-994). Requires ai_provider.
+        online_evaluation:
+          allOf:
+            - $ref: '#/components/schemas/OutboundAIOnlineEvaluation'
+          description: >-
+            Score a sample of answered app calls with a judge model (ADR 20261021171712). Requires ai_provider and
+            request_log_content.
+        quality_alerts:
+          type: boolean
+          description: >-
+            Alert bound apps with outbound.ai_quality.drift when a model's quality signals move away from its previous 7 days
+            (ADR 20261021171712). Requires ai_provider.
     OutboundAIUsageItem:
       type: object
       description: One UTC-day rollup for a caller and model. input_tokens includes cached reads and cache writes, which are also reported separately.
-      required: [caller, model, requests, error_requests, usage_unknown_requests, input_tokens, cached_input_tokens, cache_write_tokens, output_tokens, images, audio_seconds, characters, video_seconds, web_searches, file_searches, code_session_gb, cached_requests, cache_saved_millicents, prompt_cache_saved_millicents, input_audio_tokens, output_audio_tokens]
+      required: [caller, model, requests, error_requests, usage_unknown_requests, input_tokens, cached_input_tokens, cache_write_tokens, output_tokens, images, audio_seconds, characters, video_seconds, web_searches, file_searches, code_session_gb, cached_requests, cache_saved_millicents, prompt_cache_saved_millicents, input_audio_tokens, output_audio_tokens, truncated_requests, refused_requests, empty_requests, invalid_json_requests, tool_error_requests, good_feedback, bad_feedback, evaluated_requests, evaluation_score_sum, evaluation_errors]
       properties:
         caller: { type: string, description: 'App UUID, "runs" for stateless Runs, or "replay" for replayed calls (ADR-997).' }
         model: { type: string, maxLength: 128, description: 'Provider-reported model; "other" collects models beyond the daily distinct-model cap and "unknown" covers responses without one.' }
@@ -77857,6 +77942,16 @@ components:
         prompt_cache_saved_millicents: { type: integer, format: int64, description: 'What provider prompt caching saved against plain input prices; negative when cache writes outweighed reads.' }
         input_audio_tokens: { type: integer, format: int64, minimum: 0, description: 'Audio part of input_tokens, priced at the audio input price (ADR 20261019072722).' }
         output_audio_tokens: { type: integer, format: int64, minimum: 0, description: 'Audio part of output_tokens, priced at the audio output price.' }
+        truncated_requests: { type: integer, format: int64, minimum: 0, description: 'Answered calls that stopped at the output-token limit (ADR 20261021171712).' }
+        refused_requests: { type: integer, format: int64, minimum: 0, description: 'Answered calls the provider refused or filtered.' }
+        empty_requests: { type: integer, format: int64, minimum: 0, description: 'Answered calls with no text and no requested tools.' }
+        invalid_json_requests: { type: integer, format: int64, minimum: 0, description: 'Answered calls whose requested JSON, or tool-call arguments, did not parse.' }
+        tool_error_requests: { type: integer, format: int64, minimum: 0, description: 'Calls whose newest turn reported a failed tool.' }
+        good_feedback: { type: integer, format: int64, minimum: 0, description: 'Calls rated good (ADR 20261021171712).' }
+        bad_feedback: { type: integer, format: int64, minimum: 0, description: 'Calls rated bad.' }
+        evaluated_requests: { type: integer, format: int64, minimum: 0, description: 'Calls an online evaluation scored.' }
+        evaluation_score_sum: { type: integer, format: int64, minimum: 0, description: 'Sum of their scores from 1 to 5; divide by evaluated_requests for the mean.' }
+        evaluation_errors: { type: integer, format: int64, minimum: 0, description: 'Sampled calls the judge could not score.' }
     OutboundAIUsageResponse:
       type: object
       description: One UTC day of AI gateway usage for an integration.
@@ -78588,6 +78683,14 @@ components:
       description: One settled AI call's metadata (ADR-991). Its bodies are kept only when the integration captures content (ADR-996).
       required: [id, created_at, caller, route_id, model, status, outcome, input_tokens, cached_input_tokens, cache_write_tokens, output_tokens, cost_millicents, duration_ms, ttfb_ms, attempts, end_user, content_captured, tags]
       properties:
+        quality_flags:
+          type: array
+          maxItems: 5
+          items: { type: string, enum: [truncated, refused, empty, invalid_json, tool_error] }
+          description: What went wrong with the answer (ADR 20261021171712).
+        feedback: { type: string, enum: [good, bad], description: The call's rating (ADR 20261021171712). }
+        feedback_label: { type: string, maxLength: 32, pattern: '^[a-z][a-z0-9_.-]{0,31}$', description: The rating's label. }
+        evaluation_score: { type: integer, format: int32, minimum: 1, maximum: 5, description: The online evaluation's score. }
         id: { type: string, format: uuid }
         created_at: { type: string, format: date-time }
         caller: { type: string, description: 'App UUID, or "runs".' }
@@ -78797,6 +78900,50 @@ components:
           type: array
           maxItems: 8
           items: { type: string }
+    OutboundAIOnlineEvaluation:
+      type: object
+      description: >-
+        Score sample_percent of answered app calls from 1 to 5 with judge_model through judge_integration_id, one of the
+        account's AI integrations, metered under the caller evaluation (ADR 20261021171712).
+      required: [sample_percent, judge_integration_id, judge_model]
+      properties:
+        sample_percent: { type: integer, format: int32, minimum: 1, maximum: 100 }
+        judge_integration_id: { type: string, format: uuid }
+        judge_model: { type: string, minLength: 1, maxLength: 200 }
+        rubric: { type: string, maxLength: 1000, description: What a good answer does for this app, given to the judge. }
+    PutOutboundAIFeedbackRequest:
+      type: object
+      description: A rating of one logged call (ADR 20261021171712). A later rating replaces the earlier one.
+      required: [rating]
+      properties:
+        rating: { type: string, enum: [good, bad] }
+        label: { type: string, maxLength: 32, pattern: '^[a-z][a-z0-9_.-]{0,31}$' }
+    OutboundAIQualityAlert:
+      type: object
+      description: >-
+        One drift the check found: a model's metric today against its previous 7 days (ADR 20261021171712). Rates are basis
+        points of answered calls (of rated calls for bad_feedback); evaluation_score is the mean score in hundredths.
+      required: [id, integration_id, usage_date, model, metric, current_value, baseline_value, current_count, baseline_count, detected_at]
+      properties:
+        id: { type: string, format: uuid }
+        integration_id: { type: string, format: uuid }
+        usage_date: { type: string, format: date }
+        model: { type: string, maxLength: 200 }
+        metric: { type: string, enum: [truncated, refused, empty, invalid_json, tool_error, bad_feedback, evaluation_score] }
+        current_value: { type: integer, format: int64, minimum: 0 }
+        baseline_value: { type: integer, format: int64, minimum: 0 }
+        current_count: { type: integer, format: int64, minimum: 0 }
+        baseline_count: { type: integer, format: int64, minimum: 0 }
+        detected_at: { type: string, format: date-time }
+    OutboundAIQualityAlertList:
+      type: object
+      description: A page of an integration's AI quality drift alerts, newest first.
+      required: [items]
+      properties:
+        items:
+          type: array
+          maxItems: 100
+          items: { $ref: '#/components/schemas/OutboundAIQualityAlert' }
     OutboundAITraceList:
       type: object
       description: One page of AI traces, newest last call first.
@@ -113826,6 +113973,24 @@ components:
         used: { type: integer, format: int64, minimum: 0 }
         crossed_at: { type: string, format: date-time }
         tag: { type: [string, 'null'], maxLength: 97, description: The tag whose daily cost limit crossed the threshold (ADR-1438). }
+    OutboundAIQualityDriftWebhookPayload:
+      type: object
+      description: >-
+        Data delivered with outbound.ai_quality.drift to every app bound to the integration when a model's quality signal
+        moves away from its previous 7 days (ADR 20261021171712). alert_id is stable across retries.
+      required: [alert_id, integration_id, integration_name, usage_date, model, metric, current_value, baseline_value, current_count, baseline_count, detected_at]
+      properties:
+        alert_id: { type: string, format: uuid }
+        integration_id: { type: string, format: uuid }
+        integration_name: { type: string }
+        usage_date: { type: string, format: date }
+        model: { type: string, maxLength: 200 }
+        metric: { type: string, enum: [truncated, refused, empty, invalid_json, tool_error, bad_feedback, evaluation_score] }
+        current_value: { type: integer, format: int64, minimum: 0, description: 'Basis points of answered (or rated) calls; hundredths of a point for evaluation_score.' }
+        baseline_value: { type: integer, format: int64, minimum: 0 }
+        current_count: { type: integer, format: int64, minimum: 0, description: Calls the current value was taken over. }
+        baseline_count: { type: integer, format: int64, minimum: 0 }
+        detected_at: { type: string, format: date-time }
     ManagedRealtimeBatchMessageRequest:
       type: object
       required:
@@ -114508,6 +114673,7 @@ components:
               - usage_statement.finalized
               - consumer.usage_threshold
               - outbound.ai_budget.threshold
+              - outbound.ai_quality.drift
               - issue.created
               - issue.assigned
               - issue.resolved
@@ -115563,6 +115729,7 @@ components:
               - usage_statement.finalized
               - consumer.usage_threshold
               - outbound.ai_budget.threshold
+              - outbound.ai_quality.drift
               - issue.created
               - issue.assigned
               - issue.resolved
@@ -115744,6 +115911,7 @@ components:
               - usage_statement.finalized
               - consumer.usage_threshold
               - outbound.ai_budget.threshold
+              - outbound.ai_quality.drift
               - issue.created
               - issue.assigned
               - issue.resolved

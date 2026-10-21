@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { OutboundAIOnlineEvaluation } from './OutboundAIOnlineEvaluation.js';
 /**
  * Replace an integration's AI gateway settings. An empty ai_provider turns AI handling off and requires a null daily_token_limit.
  */
@@ -50,5 +51,13 @@ export type PutOutboundAIPolicyRequest = {
    * Per-end-user UTC-day cost limit for calls that send X-Gregale-AI-User (ADR-994). Requires ai_provider.
    */
   user_daily_cost_limit_millicents?: number | null;
+  /**
+   * Score a sample of answered app calls with a judge model (ADR 20261021171712). Requires ai_provider and request_log_content.
+   */
+  online_evaluation?: OutboundAIOnlineEvaluation;
+  /**
+   * Alert bound apps with outbound.ai_quality.drift when a model's quality signals move away from its previous 7 days (ADR 20261021171712). Requires ai_provider.
+   */
+  quality_alerts?: boolean;
 };
 

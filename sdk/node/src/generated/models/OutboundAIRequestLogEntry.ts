@@ -6,6 +6,22 @@
  * One settled AI call's metadata (ADR-991). Its bodies are kept only when the integration captures content (ADR-996).
  */
 export type OutboundAIRequestLogEntry = {
+  /**
+   * What went wrong with the answer (ADR 20261021171712).
+   */
+  quality_flags?: Array<'truncated' | 'refused' | 'empty' | 'invalid_json' | 'tool_error'>;
+  /**
+   * The call's rating (ADR 20261021171712).
+   */
+  feedback?: 'good' | 'bad';
+  /**
+   * The rating's label.
+   */
+  feedback_label?: string;
+  /**
+   * The online evaluation's score.
+   */
+  evaluation_score?: number;
   id: string;
   created_at: string;
   /**

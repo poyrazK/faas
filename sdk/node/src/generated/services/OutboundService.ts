@@ -16,6 +16,7 @@ import type { OutboundAIEvaluation } from '../models/OutboundAIEvaluation.js';
 import type { OutboundAIEvaluationList } from '../models/OutboundAIEvaluationList.js';
 import type { OutboundAIPriceCatalogResponse } from '../models/OutboundAIPriceCatalogResponse.js';
 import type { OutboundAIPriceListResponse } from '../models/OutboundAIPriceListResponse.js';
+import type { OutboundAIQualityAlertList } from '../models/OutboundAIQualityAlertList.js';
 import type { OutboundAIReplay } from '../models/OutboundAIReplay.js';
 import type { OutboundAIRequestContent } from '../models/OutboundAIRequestContent.js';
 import type { OutboundAIRequestLogList } from '../models/OutboundAIRequestLogList.js';
@@ -41,6 +42,7 @@ import type { OutboundIntegrationOffer } from '../models/OutboundIntegrationOffe
 import type { OutboundIntegrationOfferList } from '../models/OutboundIntegrationOfferList.js';
 import type { OutboundIntegrationUsageResponse } from '../models/OutboundIntegrationUsageResponse.js';
 import type { Problem } from '../models/Problem.js';
+import type { PutOutboundAIFeedbackRequest } from '../models/PutOutboundAIFeedbackRequest.js';
 import type { PutOutboundAIPolicyRequest } from '../models/PutOutboundAIPolicyRequest.js';
 import type { PutOutboundAIPricesRequest } from '../models/PutOutboundAIPricesRequest.js';
 import type { PutOutboundAIRouteCanaryRequest } from '../models/PutOutboundAIRouteCanaryRequest.js';
@@ -1083,6 +1085,90 @@ export class OutboundService {
     });
   }
   /**
+   * List an integration's AI quality drift alerts.
+   * Requires MFA and read scope (ADR 20261021171712). Alerts are newest first and kept for 31 days; each fires once per model, metric and UTC day.
+   * @returns OutboundAIQualityAlertList The alerts.
+   * @throws ApiError
+   */
+  public static listOutboundAiQualityAlerts({
+    integration,
+    limit,
+  }: {
+    /**
+     * UUID of the integration whose alerts are listed.
+     */
+    integration: string,
+    /**
+     * Alerts to return, 1 to 100 (default 50).
+     */
+    limit?: number,
+  }): CancelablePromise<OutboundAIQualityAlertList> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/outbound/integrations/{integration}/ai-quality-alerts',
+      path: {
+        'integration': integration,
+      },
+      query: {
+        'limit': limit,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: plan_feature_gated — the account plan does not include the AI gateway; upgrade to Hobby or above (ADR-998).`,
+        403: `code: outbound_ai_gateway_unavailable — the AI gateway is closed on this platform, or the account is not yet in its staged preview rollout (ADR-998).`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Rate a logged AI call.
+   * Requires MFA and deploy-write scope (ADR 20261021171712). Apps rate their own calls through the gateway at /i/{integration}/_gregale/feedback; this rates any logged call on a person's behalf. A later rating replaces the earlier one, and the call's daily usage counts the change.
+   * @returns void
+   * @throws ApiError
+   */
+  public static putOutboundAiRequestFeedback({
+    integration,
+    request,
+    requestBody,
+  }: {
+    /**
+     * UUID of the integration that logged the call.
+     */
+    integration: string,
+    /**
+     * ID of the request-log entry, the value X-Gregale-AI-Call returned.
+     */
+    request: string,
+    requestBody: PutOutboundAIFeedbackRequest,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/outbound/integrations/{integration}/ai-requests/{request}/feedback',
+      path: {
+        'integration': integration,
+        'request': request,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: plan_feature_gated — the account plan does not include the AI gateway; upgrade to Hobby or above (ADR-998).`,
+        403: `code: outbound_ai_gateway_unavailable — the AI gateway is closed on this platform, or the account is not yet in its staged preview rollout (ADR-998).`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
    * Replay a captured AI call on other integrations or models.
    * Requires MFA and deploy-write scope (ADR-997). outboundd resends the captured request to each target without streaming; the calls count against the targets' budgets. At most 100 replays per integration per UTC day.
    * @returns OutboundAIReplay The pending replay.
@@ -1208,7 +1294,7 @@ export class OutboundService {
     request,
   }: {
     /**
-     * UUID of the integration that logged the call.
+     * UUID of the integration whose logged call is rated.
      */
     integration: string,
     /**

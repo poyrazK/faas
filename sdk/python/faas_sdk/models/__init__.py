@@ -3912,9 +3912,15 @@ from .outbound_ai_moderation_action import OutboundAIModerationAction
 from .outbound_ai_moderation_categories_item import OutboundAIModerationCategoriesItem
 from .outbound_ai_moderation_kind import OutboundAIModerationKind
 from .outbound_ai_moderation_on_error import OutboundAIModerationOnError
+from .outbound_ai_online_evaluation import OutboundAIOnlineEvaluation
 from .outbound_ai_price_catalog_response import OutboundAIPriceCatalogResponse
 from .outbound_ai_price_entry import OutboundAIPriceEntry
 from .outbound_ai_price_list_response import OutboundAIPriceListResponse
+from .outbound_ai_quality_alert import OutboundAIQualityAlert
+from .outbound_ai_quality_alert_list import OutboundAIQualityAlertList
+from .outbound_ai_quality_alert_metric import OutboundAIQualityAlertMetric
+from .outbound_ai_quality_drift_webhook_payload import OutboundAIQualityDriftWebhookPayload
+from .outbound_ai_quality_drift_webhook_payload_metric import OutboundAIQualityDriftWebhookPayloadMetric
 from .outbound_ai_replay import OutboundAIReplay
 from .outbound_ai_replay_result import OutboundAIReplayResult
 from .outbound_ai_replay_source import OutboundAIReplaySource
@@ -3922,7 +3928,9 @@ from .outbound_ai_replay_state import OutboundAIReplayState
 from .outbound_ai_replay_target import OutboundAIReplayTarget
 from .outbound_ai_request_content import OutboundAIRequestContent
 from .outbound_ai_request_log_entry import OutboundAIRequestLogEntry
+from .outbound_ai_request_log_entry_feedback import OutboundAIRequestLogEntryFeedback
 from .outbound_ai_request_log_entry_outcome import OutboundAIRequestLogEntryOutcome
+from .outbound_ai_request_log_entry_quality_flags_item import OutboundAIRequestLogEntryQualityFlagsItem
 from .outbound_ai_request_log_list import OutboundAIRequestLogList
 from .outbound_ai_response_policy import OutboundAIResponsePolicy
 from .outbound_ai_response_policy_blocked_terms import OutboundAIResponsePolicyBlockedTerms
@@ -4594,6 +4602,8 @@ from .put_issue_tracker_link_request import PutIssueTrackerLinkRequest
 from .put_job_registry_credential_request import PutJobRegistryCredentialRequest
 from .put_operation_webhook_binding_request import PutOperationWebhookBindingRequest
 from .put_operation_webhook_binding_request_mode import PutOperationWebhookBindingRequestMode
+from .put_outbound_ai_feedback_request import PutOutboundAIFeedbackRequest
+from .put_outbound_ai_feedback_request_rating import PutOutboundAIFeedbackRequestRating
 from .put_outbound_ai_policy_request import PutOutboundAIPolicyRequest
 from .put_outbound_ai_policy_request_ai_provider import PutOutboundAIPolicyRequestAiProvider
 from .put_outbound_ai_prices_request import PutOutboundAIPricesRequest
@@ -9644,9 +9654,15 @@ __all__ = (
     "OutboundAIModerationCategoriesItem",
     "OutboundAIModerationKind",
     "OutboundAIModerationOnError",
+    "OutboundAIOnlineEvaluation",
     "OutboundAIPriceCatalogResponse",
     "OutboundAIPriceEntry",
     "OutboundAIPriceListResponse",
+    "OutboundAIQualityAlert",
+    "OutboundAIQualityAlertList",
+    "OutboundAIQualityAlertMetric",
+    "OutboundAIQualityDriftWebhookPayload",
+    "OutboundAIQualityDriftWebhookPayloadMetric",
     "OutboundAIReplay",
     "OutboundAIReplayResult",
     "OutboundAIReplaySource",
@@ -9654,7 +9670,9 @@ __all__ = (
     "OutboundAIReplayTarget",
     "OutboundAIRequestContent",
     "OutboundAIRequestLogEntry",
+    "OutboundAIRequestLogEntryFeedback",
     "OutboundAIRequestLogEntryOutcome",
+    "OutboundAIRequestLogEntryQualityFlagsItem",
     "OutboundAIRequestLogList",
     "OutboundAIResponsePolicy",
     "OutboundAIResponsePolicyBlockedTerms",
@@ -10274,6 +10292,8 @@ __all__ = (
     "PutJobRegistryCredentialRequest",
     "PutOperationWebhookBindingRequest",
     "PutOperationWebhookBindingRequestMode",
+    "PutOutboundAIFeedbackRequest",
+    "PutOutboundAIFeedbackRequestRating",
     "PutOutboundAIPolicyRequest",
     "PutOutboundAIPolicyRequestAiProvider",
     "PutOutboundAIPricesRequest",

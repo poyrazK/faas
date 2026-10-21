@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { OutboundAIContentPolicy } from './OutboundAIContentPolicy.js';
+import type { OutboundAIOnlineEvaluation } from './OutboundAIOnlineEvaluation.js';
 import type { OutboundRequestPolicy } from './OutboundRequestPolicy.js';
 /**
  * Account-owned managed integration metadata; never contains a provider key or gateway token.
@@ -92,5 +93,13 @@ export type OutboundIntegrationOffer = {
    * UTC-day cost limit for each end user named by X-Gregale-AI-User (ADR-994).
    */
   ai_user_daily_cost_limit_millicents?: number | null;
+  /**
+   * The sample of answered app calls a judge model scores (ADR 20261021171712).
+   */
+  ai_online_evaluation?: OutboundAIOnlineEvaluation;
+  /**
+   * Drift alerts on the integration's quality signals are on (ADR 20261021171712).
+   */
+  ai_quality_alerts?: boolean;
 };
 

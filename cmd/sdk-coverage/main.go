@@ -1064,6 +1064,8 @@ var methodRouteMap = map[string]string{
 	"GET /v1/outbound/integrations/{integration}/ai-requests":                          "ListOutboundAIRequestLog",
 	"GET /v1/outbound/integrations/{integration}/ai-traces":                            "ListOutboundAITraces",
 	"GET /v1/outbound/integrations/{integration}/ai-traces/{trace}":                    "GetOutboundAITrace",
+	"GET /v1/outbound/integrations/{integration}/ai-quality-alerts":                    "ListOutboundAIQualityAlerts",
+	"PUT /v1/outbound/integrations/{integration}/ai-requests/{request}/feedback":       "SetOutboundAIRequestFeedback",
 	"GET /v1/outbound/integrations/{integration}/ai-requests/{request}/content":        "GetOutboundAIRequestContent",
 	"POST /v1/outbound/integrations/{integration}/ai-requests/{request}/replays":       "CreateOutboundAIReplay",
 	"GET /v1/outbound/ai-replays/{replay}":                                             "GetOutboundAIReplay",

@@ -8,9 +8,17 @@ from uuid import UUID
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.outbound_ai_request_log_entry_feedback import (
+    OutboundAIRequestLogEntryFeedback,
+    check_outbound_ai_request_log_entry_feedback,
+)
 from ..models.outbound_ai_request_log_entry_outcome import (
     OutboundAIRequestLogEntryOutcome,
     check_outbound_ai_request_log_entry_outcome,
+)
+from ..models.outbound_ai_request_log_entry_quality_flags_item import (
+    OutboundAIRequestLogEntryQualityFlagsItem,
+    check_outbound_ai_request_log_entry_quality_flags_item,
 )
 from ..types import UNSET, Unset
 
@@ -43,6 +51,14 @@ class OutboundAIRequestLogEntry:
     """Whether the call's bodies can be read from its content endpoint (ADR-996)."""
     tags: list[str]
     """The call's X-Gregale-AI-Tags as key=value, sorted by key (ADR-1436)."""
+    quality_flags: list[OutboundAIRequestLogEntryQualityFlagsItem] | Unset = UNSET
+    """What went wrong with the answer (ADR 20261021171712)."""
+    feedback: OutboundAIRequestLogEntryFeedback | Unset = UNSET
+    """The call's rating (ADR 20261021171712)."""
+    feedback_label: str | Unset = UNSET
+    """The rating's label."""
+    evaluation_score: int | Unset = UNSET
+    """The online evaluation's score."""
     trace_id: str | Unset = UNSET
     """The call's AI trace, when the integration records traces (ADR 20261020202035)."""
     tool_calls: list[str] | Unset = UNSET
@@ -92,6 +108,21 @@ class OutboundAIRequestLogEntry:
 
         tags = self.tags
 
+        quality_flags: list[str] | Unset = UNSET
+        if not isinstance(self.quality_flags, Unset):
+            quality_flags = []
+            for quality_flags_item_data in self.quality_flags:
+                quality_flags_item: str = quality_flags_item_data
+                quality_flags.append(quality_flags_item)
+
+        feedback: str | Unset = UNSET
+        if not isinstance(self.feedback, Unset):
+            feedback = self.feedback
+
+        feedback_label = self.feedback_label
+
+        evaluation_score = self.evaluation_score
+
         trace_id = self.trace_id
 
         tool_calls: list[str] | Unset = UNSET
@@ -122,6 +153,14 @@ class OutboundAIRequestLogEntry:
                 "tags": tags,
             }
         )
+        if quality_flags is not UNSET:
+            field_dict["quality_flags"] = quality_flags
+        if feedback is not UNSET:
+            field_dict["feedback"] = feedback
+        if feedback_label is not UNSET:
+            field_dict["feedback_label"] = feedback_label
+        if evaluation_score is not UNSET:
+            field_dict["evaluation_score"] = evaluation_score
         if trace_id is not UNSET:
             field_dict["trace_id"] = trace_id
         if tool_calls is not UNSET:
@@ -191,6 +230,26 @@ class OutboundAIRequestLogEntry:
 
         tags = cast(list[str], d.pop("tags"))
 
+        _quality_flags = d.pop("quality_flags", UNSET)
+        quality_flags: list[OutboundAIRequestLogEntryQualityFlagsItem] | Unset = UNSET
+        if _quality_flags is not UNSET:
+            quality_flags = []
+            for quality_flags_item_data in _quality_flags:
+                quality_flags_item = check_outbound_ai_request_log_entry_quality_flags_item(quality_flags_item_data)
+
+                quality_flags.append(quality_flags_item)
+
+        _feedback = d.pop("feedback", UNSET)
+        feedback: OutboundAIRequestLogEntryFeedback | Unset
+        if isinstance(_feedback, Unset):
+            feedback = UNSET
+        else:
+            feedback = check_outbound_ai_request_log_entry_feedback(_feedback)
+
+        feedback_label = d.pop("feedback_label", UNSET)
+
+        evaluation_score = d.pop("evaluation_score", UNSET)
+
         trace_id = d.pop("trace_id", UNSET)
 
         tool_calls = cast(list[str], d.pop("tool_calls", UNSET))
@@ -214,6 +273,10 @@ class OutboundAIRequestLogEntry:
             end_user=end_user,
             content_captured=content_captured,
             tags=tags,
+            quality_flags=quality_flags,
+            feedback=feedback,
+            feedback_label=feedback_label,
+            evaluation_score=evaluation_score,
             trace_id=trace_id,
             tool_calls=tool_calls,
         )
