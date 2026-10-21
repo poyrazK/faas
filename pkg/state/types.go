@@ -4021,6 +4021,7 @@ const (
 	AppWebhookEventRecoveryExecutionFinished               AppWebhookEvent = "event_recovery.execution_finished"
 	AppWebhookEventWorkflowFinished                        AppWebhookEvent = "workflow.finished"
 	AppWebhookEventOutboundAIBudgetThreshold               AppWebhookEvent = "outbound.ai_budget.threshold"
+	AppWebhookEventOutboundAIQualityDrift                  AppWebhookEvent = "outbound.ai_quality.drift"
 	AppWebhookEventRecoveryQueueBlocked                    AppWebhookEvent = "automation.recovery_queue_blocked"
 	AppWebhookEventRecoveryHealthAlert                     AppWebhookEvent = "automation.recovery_health_alert"
 	AppWebhookEventRecoveryHealthRecovered                 AppWebhookEvent = "automation.recovery_health_recovered"
@@ -4076,6 +4077,7 @@ var AllAppWebhookEvents = []AppWebhookEvent{
 	AppWebhookEventUsageStatementFinalized,
 	AppWebhookEventConsumerUsageThreshold,
 	AppWebhookEventOutboundAIBudgetThreshold,
+	AppWebhookEventOutboundAIQualityDrift,
 	AppWebhookEventPlatformTenantStatementFinalized,
 	AppWebhookEventDebugRegressionDetected,
 	AppWebhookEventDebugRegressionResolved,

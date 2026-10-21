@@ -235,6 +235,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// judge model, and quality drift alerts are checked.
 	onlineEvaluationWorker := &outbound.AIOnlineEvaluationWorker{Store: backend, Handler: handler, Log: log}
 	go onlineEvaluationWorker.Run(ctx)
+	driftWorker := &outbound.AIQualityDriftWorker{Store: backend, Metrics: outboundMetrics, Log: log}
+	go driftWorker.Run(ctx)
 	relayHandler := outbound.WithSimulationRelay(trace.HTTPHandler("outboundd-relay", handler), handler.SimulationHandler)
 	shutdownRelay, err := startRelay(ctx, cfg, pool, relayHandler, identityVerifier, outboundMetrics, log)
 	if err != nil {

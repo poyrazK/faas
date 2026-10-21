@@ -15,7 +15,7 @@
   - Quality also changes without any deploy, when a provider updates a model behind the same name.
 - **Decision:**
   - **Every AI call gets an ID.** The gateway gives each AI call an ID before it calls the provider and returns it in `X-Gregale-AI-Call`.
-    - The ID is the call's request-log entry ID, so feedback, evaluations and the log refer to the same call.
+    - The ID is the call's request-log entry ID, so feedback, evaluations and the log refer to the same call. The log-export line carries it as `call_id`, and OTLP drains as `gregale.ai.call_id`.
     - Each realtime turn gets its own ID in the log, but a WebSocket has no per-turn header, so realtime turns cannot take feedback.
   - **Quality flags.** Settlement marks a call that answered (2xx with known usage) with any of:
 

@@ -41,7 +41,7 @@ type AIFeedbackRecorder interface {
 
 // validateAIFeedback checks a rating before it is stored.
 func validateAIFeedback(feedback AIFeedback) error {
-	if !validUUID(feedback.IntegrationID) || !validUUID(feedback.CallID) || !appCaller(feedback.Caller) || !validUUID(feedback.Caller) ||
+	if feedback.IntegrationID == "" || !validUUID(feedback.CallID) || !appCaller(feedback.Caller) || !validUUID(feedback.Caller) ||
 		!api.ValidOutboundAIFeedback(feedback.Rating, feedback.Label) {
 		return ErrInvalidIntegration
 	}

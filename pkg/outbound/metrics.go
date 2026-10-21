@@ -48,6 +48,7 @@ type Metrics struct {
 	aiQualityFlags         *prometheus.CounterVec
 	aiFeedback             *prometheus.CounterVec
 	aiOnlineEvaluations    *prometheus.CounterVec
+	aiQualityAlerts        *prometheus.CounterVec
 	aiResponseChecks       *prometheus.CounterVec
 	aiRealtimeSessions     *prometheus.CounterVec
 	aiPromptPrefixShared   *prometheus.CounterVec
@@ -219,6 +220,10 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 			Name: "outbound_ai_online_evaluations_total",
 			Help: "Online evaluations by result: scored or judge_error (ADR 20261021171712).",
 		}, []string{"result"}),
+		aiQualityAlerts: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "outbound_ai_quality_alerts_total",
+			Help: "AI quality drift alerts recorded, by metric (ADR 20261021171712).",
+		}, []string{"metric"}),
 		aiRealtimeSessions: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "outbound_ai_realtime_sessions_total",
 			Help: "AI realtime sessions by event: opened, unmetered, and closed by the client, the provider, a cap, the duration bound, unreadable usage or an error (ADR 20261019072722).",
@@ -278,6 +283,7 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 		m.aiQualityFlags,
 		m.aiFeedback,
 		m.aiOnlineEvaluations,
+		m.aiQualityAlerts,
 		m.aiResponseChecks,
 		m.aiResponseFindings,
 		m.aiPromptCacheMarks,
@@ -595,6 +601,15 @@ func (m *Metrics) ObserveAIOnlineEvaluation(score int) {
 		result = "judge_error"
 	}
 	m.aiOnlineEvaluations.WithLabelValues(result).Inc()
+}
+
+// ObserveAIQualityAlert counts one recorded drift alert
+// (ADR 20261021171712).
+func (m *Metrics) ObserveAIQualityAlert(metric string) {
+	if m == nil || m.aiQualityAlerts == nil {
+		return
+	}
+	m.aiQualityAlerts.WithLabelValues(metric).Inc()
 }
 
 func (m *Metrics) ObserveAIRouteFallback(reason string) {

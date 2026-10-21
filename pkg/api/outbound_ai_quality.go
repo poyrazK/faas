@@ -1,6 +1,9 @@
 package api
 
-import "regexp"
+import (
+	"regexp"
+	"time"
+)
 
 // Quality signals (ADR 20261021171712): every AI call's ID, its quality
 // flags, feedback on it, online evaluations and drift alerts.
@@ -56,4 +59,42 @@ func ValidOutboundAIOnlineEvaluation(provider string, percent *int32, judgeInteg
 	}
 	return provider != "" && *percent >= 1 && *percent <= 100 && judgeIntegrationID != "" &&
 		len(judgeModel) >= 1 && len(judgeModel) <= 200 && len(rubric) <= OutboundAIOnlineEvaluationRubricMaxBytes
+}
+
+// OutboundAIQualityAlert is one drift the check found (ADR 20261021171712):
+// a model's metric today against its previous days. Rates are basis points
+// of answered calls (of rated calls for bad_feedback) and evaluation_score
+// is the mean score in hundredths; the counts are those denominators.
+type OutboundAIQualityAlert struct {
+	ID            string    `json:"id"`
+	IntegrationID string    `json:"integration_id"`
+	UsageDate     string    `json:"usage_date"`
+	Model         string    `json:"model"`
+	Metric        string    `json:"metric"`
+	CurrentValue  int64     `json:"current_value"`
+	BaselineValue int64     `json:"baseline_value"`
+	CurrentCount  int64     `json:"current_count"`
+	BaselineCount int64     `json:"baseline_count"`
+	DetectedAt    time.Time `json:"detected_at"`
+}
+
+// OutboundAIQualityAlertList is a page of drift alerts, newest first.
+type OutboundAIQualityAlertList struct {
+	Items []OutboundAIQualityAlert `json:"items"`
+}
+
+// OutboundAIQualityDriftWebhookPayload is the data of an
+// outbound.ai_quality.drift webhook. AlertID is stable across retries.
+type OutboundAIQualityDriftWebhookPayload struct {
+	AlertID         string    `json:"alert_id"`
+	IntegrationID   string    `json:"integration_id"`
+	IntegrationName string    `json:"integration_name"`
+	UsageDate       string    `json:"usage_date"`
+	Model           string    `json:"model"`
+	Metric          string    `json:"metric"`
+	CurrentValue    int64     `json:"current_value"`
+	BaselineValue   int64     `json:"baseline_value"`
+	CurrentCount    int64     `json:"current_count"`
+	BaselineCount   int64     `json:"baseline_count"`
+	DetectedAt      time.Time `json:"detected_at"`
 }

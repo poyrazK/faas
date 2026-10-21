@@ -647,6 +647,11 @@ func (b *PostgresBackend) PruneAIUsage(ctx context.Context) (int64, error) {
 		// counters only need today's.
 		{`DELETE FROM outbound_ai_traces WHERE last_at < now() - make_interval(days => $1::int)`, api.OutboundAIRequestLogRetentionDays},
 		{`DELETE FROM outbound_ai_trace_days WHERE usage_date < (now() AT TIME ZONE 'UTC')::date - $1::int`, 1},
+		// ADR 20261021171712: drift alerts, and online evaluation day
+		// counters, which only need today's.
+		{`DELETE FROM outbound_ai_quality_alerts WHERE detected_at < now() - make_interval(days => $1::int)`,
+			api.OutboundAIQualityAlertRetentionDays},
+		{`DELETE FROM outbound_ai_online_evaluation_days WHERE usage_date < (now() AT TIME ZONE 'UTC')::date - $1::int`, 1},
 		// ADR-996: captured content expires sooner, and an integration that
 		// turned capture off loses what it captured within one prune.
 		{`DELETE FROM outbound_ai_request_content content
