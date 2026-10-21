@@ -2475,6 +2475,15 @@ export type { ReleaseApprovalDecision } from './models/ReleaseApprovalDecision.j
 export type { ReleaseApprovalPolicy } from './models/ReleaseApprovalPolicy.js';
 export type { ReleaseApprovalStatus } from './models/ReleaseApprovalStatus.js';
 export type { ReleaseDatabaseRef } from './models/ReleaseDatabaseRef.js';
+export type { ReleaseDiff } from './models/ReleaseDiff.js';
+export type { ReleaseDiffCode } from './models/ReleaseDiffCode.js';
+export type { ReleaseDiffConfig } from './models/ReleaseDiffConfig.js';
+export type { ReleaseDiffDatabase } from './models/ReleaseDiffDatabase.js';
+export type { ReleaseDiffDependencies } from './models/ReleaseDiffDependencies.js';
+export type { ReleaseDiffField } from './models/ReleaseDiffField.js';
+export type { ReleaseDiffKey } from './models/ReleaseDiffKey.js';
+export type { ReleaseDiffPackage } from './models/ReleaseDiffPackage.js';
+export type { ReleaseDiffSide } from './models/ReleaseDiffSide.js';
 export type { ReleaseFreeze } from './models/ReleaseFreeze.js';
 export type { ReleaseFreezeStatus } from './models/ReleaseFreezeStatus.js';
 export type { ReleaseFreezeWeekly } from './models/ReleaseFreezeWeekly.js';

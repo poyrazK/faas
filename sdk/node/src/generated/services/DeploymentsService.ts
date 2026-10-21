@@ -42,6 +42,7 @@ import type { ProfileCanaryGateDecision } from '../models/ProfileCanaryGateDecis
 import type { RecoverRolloutRequest } from '../models/RecoverRolloutRequest.js';
 import type { ReleaseApprovalPolicy } from '../models/ReleaseApprovalPolicy.js';
 import type { ReleaseApprovalStatus } from '../models/ReleaseApprovalStatus.js';
+import type { ReleaseDiff } from '../models/ReleaseDiff.js';
 import type { ReleaseFreeze } from '../models/ReleaseFreeze.js';
 import type { ReleaseFreezeStatus } from '../models/ReleaseFreezeStatus.js';
 import type { ReleaseGate } from '../models/ReleaseGate.js';
@@ -2152,6 +2153,46 @@ export class DeploymentsService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Show what changed between two releases (ADR-20261021101117).
+   * Compares the code, configuration keys, packages, runtime settings and release command of two releases of one app. Never returns variable values, secret fingerprints or SBOM files. A section whose history is missing reports known=false with a note.
+   * @returns ReleaseDiff The release diff.
+   * @throws ApiError
+   */
+  public static getReleaseDiff({
+    id,
+    against,
+  }: {
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+    /**
+     * The release to compare with; defaults to the release of the same scope that served before this one.
+     */
+    against?: string,
+  }): CancelablePromise<ReleaseDiff> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/deployments/{id}/diff',
+      path: {
+        'id': id,
+      },
+      query: {
+        'against': against,
+      },
+      errors: {
+        400: `code: validation_failed | env_var_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
