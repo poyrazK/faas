@@ -29,11 +29,15 @@ func cmdEdgeRulesAttackMode(args []string) int {
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
-	verb := "status"
-	if len(positional) == 1 {
-		verb = positional[0]
+	if len(positional) == 0 {
+		positional = []string{"status"}
 	}
-	if len(positional) > 1 || (verb != "on" && verb != "off" && verb != "status") {
+	if len(positional) != 1 {
+		PrintUsage(os.Stderr, edgeRulesAttackModeUsage, "edge-rules")
+		return 1
+	}
+	verb := positional[0]
+	if verb != "on" && verb != "off" && verb != "status" {
 		PrintUsage(os.Stderr, edgeRulesAttackModeUsage, "edge-rules")
 		return 1
 	}
