@@ -79,6 +79,8 @@ jobs:
       deployable: ${{ steps.detect.outputs.deployable }}
       control_plane: ${{ steps.detect.outputs.control_plane }}
       edge: ${{ steps.detect.outputs.edge }}
+      base_sha: ${{ steps.base.outputs.sha }}
+      build_cache_hit: ${{ steps.build-cache.outputs.cache-hit }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -96,20 +98,6 @@ jobs:
           go-version-file: go.mod
           cache: false
 
-      - id: cache-date
-        run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
-      - name: Restore main-branch Go build cache
-        uses: actions/cache/restore@v4
-        with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-            ~/.cache/golangci-lint
-          key: go-lint-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
-          restore-keys: |
-            go-lint-${{ runner.os }}-${{ hashFiles('go.sum') }}-
-            go-lint-${{ runner.os }}-
-
       - name: Find the base release
         id: base
         env:
@@ -122,6 +110,42 @@ jobs:
           fi
           echo "ref=$base" >> "$GITHUB_OUTPUT"
           echo "sha=$(git rev-parse --verify "${base}^{commit}")" >> "$GITHUB_OUTPUT"
+
+      # Release builds (linux/amd64, CGO off, -trimpath, the daemon tags)
+      # reuse nothing the light tier's caches compiled: with them, a
+      # one-daemon release spent 194 s comparing code and 72 s building on
+      # 2026-10-21. The release build cache holds the release recipe's
+      # compile results, one entry per base release, written once by the
+      # warm-build-cache job below, off the deploy path. A run over a new
+      # base starts from the newest entry.
+      - name: Restore the release build cache
+        id: build-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-unit-build-${{ runner.os }}-${{ hashFiles('go.mod', 'go.sum') }}-${{ steps.base.outputs.sha }}
+          restore-keys: |
+            go-unit-build-${{ runner.os }}-${{ hashFiles('go.mod', 'go.sum') }}-
+
+      # Until the warm job first writes one (or after a dependency change):
+      # the light tier's cache on main, for its modules. Same paths as
+      # ci-light saves, or the entry does not match.
+      - id: cache-date
+        if: steps.build-cache.outputs.cache-matched-key == ''
+        run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+      - name: Restore main-branch Go module cache
+        if: steps.build-cache.outputs.cache-matched-key == ''
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+            ~/.cache/golangci-lint
+          key: go-lint-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          restore-keys: |
+            go-lint-${{ runner.os }}-
 
       # Code digests of the base's release binaries (affected_units.py
       # --code-cache): the same for every unit release over one base. Each
@@ -242,6 +266,58 @@ jobs:
           path: ${{ runner.temp }}/gregale-units/release/
           if-no-files-found: error
           retention-days: 30
+
+  # Fills the release build cache for this base release, once, while the
+  # deploy lanes run: every binary a unit lane can ship and the tools a unit
+  # release carries, compiled with the release recipe
+  # (scripts/ci/warm_unit_build_cache.py). The build job only reads it, so
+  # no deploy waits on writing it.
+  warm-build-cache:
+    name: Warm the release build cache
+    needs: [build]
+    if: needs.build.outputs.build_cache_hit != 'true' && needs.build.outputs.base_sha != ''
+    runs-on: ubuntu-22.04
+    timeout-minutes: 40
+    # A cache it fails to write costs the next build time, not a deploy.
+    continue-on-error: true
+    concurrency:
+      group: release-units-warm-${{ needs.build.outputs.base_sha }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          filter: blob:none
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Restore the release build cache
+        id: cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-unit-build-${{ runner.os }}-${{ hashFiles('go.mod', 'go.sum') }}-${{ needs.build.outputs.base_sha }}
+          restore-keys: |
+            go-unit-build-${{ runner.os }}-${{ hashFiles('go.mod', 'go.sum') }}-
+
+      - name: Build every deployable binary with the release recipe
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: python3 scripts/ci/warm_unit_build_cache.py
+
+      - name: Save the release build cache
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-unit-build-${{ runner.os }}-${{ hashFiles('go.mod', 'go.sum') }}-${{ needs.build.outputs.base_sha }}
 
   # Deploy admission (docs/adr/20261020214632-automatic-unit-deploy-safety-
   # rails.md): before anything changes, wait until production is unfrozen
