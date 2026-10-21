@@ -27,6 +27,12 @@ func NewClient(dial Dial) *Client {
 	return &Client{dial: dial, gate: make(chan struct{}, 1), calls: make(chan struct{}, 8)}
 }
 
+// Acquire holds the gate across the whole Begin round trip, not just sequence
+// allocation. The host rejects a Begin at or below its high-water sequence as
+// stale, so concurrent Begins on separate connections could arrive out of order
+// and fail; a retried uncertain Begin must also still be the highest sequence.
+// A Busy or Limit reply returns at once; only an unreachable host costs the
+// two RPCTimeout attempts.
 func (c *Client) Acquire(ctx context.Context, budget time.Duration, hook string) (*Lease, api.Plan, error) {
 	select {
 	case c.gate <- struct{}{}:

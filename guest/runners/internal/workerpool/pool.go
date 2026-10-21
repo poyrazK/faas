@@ -476,7 +476,7 @@ func (p *pool) open(ctx context.Context, request any) (*Lines, error) {
 	}
 	if completion && !w.completion {
 		p.release(w, true)
-		return nil, errors.New("workerpool: adapter does not support execution completion")
+		return nil, ErrCompletionUnsupported
 	}
 	if w.mux != nil {
 		lines, err := p.openShared(ctx, w, payload)

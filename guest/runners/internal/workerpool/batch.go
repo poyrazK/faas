@@ -4,10 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"slices"
 	"sync"
 )
 
-var ErrPoolBusy = errors.New("workerpool: workers have not quiesced")
+var (
+	ErrPoolBusy = errors.New("workerpool: workers have not quiesced")
+	// ErrCompletionUnsupported is permanent for the adapter, unlike ErrPoolBusy.
+	ErrCompletionUnsupported = errors.New("workerpool: adapter does not support execution completion")
+)
 
 // Batch pins every loaded interpreter for a lifecycle callback. New ordinary
 // acquisitions wait until all callback execution/cancellation fences settle.
@@ -40,7 +46,7 @@ func (b *Batch) Close(healthy []bool) {
 
 func OpenAllIfSupported(ctx context.Context, spec Spec, request any) (*Batch, error) {
 	if !supportsPersistentProtocol(spec) {
-		return nil, errors.New("workerpool: lifecycle broadcast requires a generated adapter")
+		return nil, fmt.Errorf("%w: lifecycle broadcast requires a generated adapter", ErrCompletionUnsupported)
 	}
 	return poolFor(spec).openAll(ctx, request)
 }
@@ -60,7 +66,18 @@ func (p *pool) openAll(ctx context.Context, request any) (*Batch, error) {
 		p.release(w, true)
 		p.mu.Lock()
 	}
-	if p.broadcasting || p.starting > 0 || len(p.idle) > 0 || p.live != len(p.shared) {
+	if p.broadcasting || p.starting > 0 {
+		p.mu.Unlock()
+		return nil, ErrPoolBusy
+	}
+	// Exclusive one-slot workers sit in idle and never join shared. Without
+	// any completion-capable worker the adapter cannot run the broadcast, which
+	// no amount of waiting for quiescence changes.
+	if !slices.ContainsFunc(p.shared, func(w *worker) bool { return w.completion && !w.gone }) {
+		p.mu.Unlock()
+		return nil, ErrCompletionUnsupported
+	}
+	if len(p.idle) > 0 || p.live != len(p.shared) {
 		p.mu.Unlock()
 		return nil, ErrPoolBusy
 	}

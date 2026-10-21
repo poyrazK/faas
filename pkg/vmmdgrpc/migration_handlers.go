@@ -123,6 +123,20 @@ func (t *migrationTracker) reserveSource(instanceID string, createdAt time.Time,
 	return &copy, nil
 }
 
+// recordKeys stores the capture's storage keys on the tracked entry while it
+// is still pending. reserveSource hands callers a copy, so writes to that copy
+// never reach the cleanup paths that read the tracker.
+func (t *migrationTracker) recordKeys(leaseToken, memKey, vmstateKey string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for _, m := range t.state {
+		if m.leaseToken == leaseToken {
+			m.memKey, m.vmstateKey = memKey, vmstateKey
+			return
+		}
+	}
+}
+
 func (t *migrationTracker) complete(leaseToken, memKey, vmstateKey string) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -218,6 +232,15 @@ type errNoLease struct{ instanceID string }
 
 func (e errNoLease) Error() string {
 	return "vmmd: no active migration for instance " + e.instanceID
+}
+
+// staleMigrationLease reports lookups that name no current lease: the lease
+// is gone, or a newer lease superseded the caller's token. Ack and cancel
+// treat both as an idempotent retry; store failures still surface.
+func staleMigrationLease(err error) bool {
+	var missing errNoLease
+	var mismatch errLeaseMismatch
+	return errors.As(err, &missing) || errors.As(err, &mismatch)
 }
 
 type errLeaseMismatch struct{ instanceID string }
@@ -700,8 +723,7 @@ func (s *Server) AcknowledgeMigration(ctx context.Context, req *vmmdpb.Acknowled
 	defer finishPhase()
 	m, getErr := s.migrationLeaseForPhase(ctx, req.GetInstanceId(), req.GetLeaseToken())
 	if getErr != nil {
-		var missing errNoLease
-		if !errors.As(getErr, &missing) {
+		if !staleMigrationLease(getErr) {
 			return nil, grpcerr.ToStatus(toProblem(getErr))
 		}
 
@@ -785,21 +807,22 @@ func (s *Server) CancelLiveMigration(ctx context.Context, req *vmmdpb.CancelLive
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(err)
 	}
+	// Destination retirement shares the phase with ack, cancel and expiry for
+	// the same instance.
+	finishPhase, phaseErr := s.migrations.beginPhase(ctx, req.GetInstanceId())
+	if phaseErr != nil {
+		return nil, grpcerr.ToStatus(toProblem(phaseErr))
+	}
+	defer finishPhase()
 	if handled, err := s.cancelFunctionDestination(ctx, req); handled {
 		if err != nil {
 			return nil, admissionStatus(err)
 		}
 		return &vmmdpb.CancelLiveMigrationResponse{}, nil
 	}
-	finishPhase, phaseErr := s.migrations.beginPhase(ctx, req.GetInstanceId())
-	if phaseErr != nil {
-		return nil, grpcerr.ToStatus(toProblem(phaseErr))
-	}
-	defer finishPhase()
 	m, getErr := s.migrationLeaseForPhase(ctx, req.GetInstanceId(), req.GetLeaseToken())
 	if getErr != nil {
-		var missing errNoLease
-		if !errors.As(getErr, &missing) {
+		if !staleMigrationLease(getErr) {
 			return nil, grpcerr.ToStatus(toProblem(getErr))
 		}
 

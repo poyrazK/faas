@@ -50,6 +50,22 @@ func (m *Manager) beginFunctionExecutionBoot(lease Lease, req WakeRequest) {
 	m.functionStarting[lease.Instance] = &Instance{Lease: lease, Runtime: req.Runtime, Plan: lease.Plan}
 }
 
+// dropFunctionStartingLocked removes the boot entry of a process generation
+// that can no longer publish: it exited before registration, or another
+// generation published. Its executions ended with that process. A retained
+// entry would fence migration destination admission and let the watchdog
+// cancel whichever flight is current for the instance.
+func (m *Manager) dropFunctionStartingLocked(instance string, generation uint64) {
+	starting := m.functionStarting[instance]
+	if starting == nil || starting.Lease.processGeneration != generation {
+		return
+	}
+	delete(m.functionStarting, instance)
+	if m.functionActivity != nil {
+		m.functionActivity.Forget(instance)
+	}
+}
+
 // RegisterFunctionExecutionReceiver binds authority to the complete lease,
 // including processGeneration, rather than a caller-supplied instance ID.
 func (m *Manager) RegisterFunctionExecutionReceiver(v *JailerVMM) error {

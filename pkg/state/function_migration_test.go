@@ -203,3 +203,28 @@ func TestFunctionMigrationSourceStaleWakeAndExpiry(t *testing.T) {
 		t.Fatal("stale source mutated a replacement")
 	}
 }
+
+// Function sources have their own reconciler. Sources whose recovery keeps
+// failing must not fill the generic watchdog's expired-migration page.
+func TestListExpiredMigrationsExcludesFunctionSources(t *testing.T) {
+	m, source := functionSourceFixture(t)
+	ctx := t.Context()
+	if err := m.PrepareFunctionMigrationSource(ctx, source.InstanceID, source.LeaseToken); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.MarkInstanceMigrating(ctx, source.InstanceID, source.SourceNodeID, source.LeaseToken); err != nil {
+		t.Fatal(err)
+	}
+	m.SetInstanceMigrationStartedAtForTest(source.InstanceID, time.Now().UTC().Add(-time.Hour))
+	for _, age := range [][]time.Duration{nil, {time.Minute}} {
+		rows, err := m.ListExpiredMigrations(ctx, 100, age...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, row := range rows {
+			if row.ID == source.InstanceID {
+				t.Fatalf("expired migrations %v include function source %s", age, source.InstanceID)
+			}
+		}
+	}
+}

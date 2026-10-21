@@ -68,9 +68,17 @@ func (e *ExecutionRuntime) serve(w http.ResponseWriter, r *http.Request, cfg Ser
 		return
 	}
 	e.mu.Lock()
-	if e.background == nil || e.plan != plan {
+	switch {
+	case e.background == nil:
 		e.background, err = NewBackgroundRuntime(plan)
 		e.plan = plan
+	case e.plan != plan:
+		// Tasks admitted under the previous plan may still be running; the
+		// replacement keeps counting them against the new instance cap.
+		var next *BackgroundRuntime
+		if next, err = e.background.replace(plan); err == nil {
+			e.background, e.plan = next, plan
+		}
 	}
 	cfg.Background = e.background
 	e.mu.Unlock()

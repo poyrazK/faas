@@ -18,11 +18,13 @@ var errBackgroundCapacity = errors.New("runner: background task capacity exceede
 // variable or request header: host-side VM lifetime protection must be wired and
 // qualified before production runners opt into this completion contract.
 type BackgroundRuntime struct {
-	timeout  time.Duration
+	timeout time.Duration
+	// maxTasks bounds one invocation's in-flight registrations (api.TailCapMax).
 	maxTasks int
 	capacity int
-	mu       sync.Mutex
-	active   int
+	// admission is shared with the runtime this one replaced after a plan
+	// change, so tasks admitted under the earlier plan still count.
+	admission *backgroundAdmission
 	// Observe must not block. Events contain identifiers and closed-set states,
 	// never promise values, exception messages, SQL or request payloads.
 	Observe func(BackgroundEvent)
@@ -44,31 +46,49 @@ func NewBackgroundRuntime(plan api.Plan) (*BackgroundRuntime, error) {
 	return &BackgroundRuntime{
 		timeout:  time.Duration(plan.TailTimeoutSeconds()) * time.Second,
 		maxTasks: plan.TailCapMax(), capacity: plan.ConcurrentTailsPerInstance(),
+		admission: &backgroundAdmission{},
 	}, nil
+}
+
+// backgroundAdmission counts one runner's outstanding background tasks.
+type backgroundAdmission struct {
+	mu     sync.Mutex
+	active int
+}
+
+// replace returns the runtime for a changed plan. It keeps counting tasks the
+// earlier plan admitted, which release into the same admission when they settle.
+func (r *BackgroundRuntime) replace(plan api.Plan) (*BackgroundRuntime, error) {
+	next, err := NewBackgroundRuntime(plan)
+	if err != nil {
+		return nil, err
+	}
+	next.admission, next.Observe = r.admission, r.Observe
+	return next, nil
 }
 
 // Active counts accepted tasks whose execution has not settled. A timeout or
 // disconnected HTTP reader does not release admission before cleanup finishes.
 func (r *BackgroundRuntime) Active() int {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.active
+	r.admission.mu.Lock()
+	defer r.admission.mu.Unlock()
+	return r.admission.active
 }
 
 func (r *BackgroundRuntime) reserve() bool {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.active >= r.capacity {
+	r.admission.mu.Lock()
+	defer r.admission.mu.Unlock()
+	if r.admission.active >= r.capacity {
 		return false
 	}
-	r.active++
+	r.admission.active++
 	return true
 }
 
 func (r *BackgroundRuntime) release() {
-	r.mu.Lock()
-	r.active--
-	r.mu.Unlock()
+	r.admission.mu.Lock()
+	r.admission.active--
+	r.admission.mu.Unlock()
 }
 
 func (r *BackgroundRuntime) emit(e BackgroundEvent) {

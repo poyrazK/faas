@@ -5115,6 +5115,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		if exitCode, exited := m.pendingProcessExits[req.Instance]; exited {
 			delete(m.pendingProcessExits, req.Instance)
 			delete(m.waking, req.Instance)
+			m.dropFunctionStartingLocked(req.Instance, inst.Lease.processGeneration)
 			m.mu.Unlock()
 			err = fmt.Errorf("wake %s: firecracker exited before lifecycle registration (exit code %d)", req.Instance, exitCode)
 			return nil, err
@@ -5124,6 +5125,8 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		if starting := m.functionStarting[req.Instance]; starting != nil && starting.Lease.processGeneration == inst.Lease.processGeneration {
 			inst.functionExecutions = starting.functionExecutions
 			delete(m.functionStarting, req.Instance)
+		} else if starting != nil {
+			m.dropFunctionStartingLocked(req.Instance, starting.Lease.processGeneration)
 		}
 		// Issue #470 / PR #470-FU-B: maintain the CID→instance
 		// reverse index so the framework_ready DGRAM receipt path

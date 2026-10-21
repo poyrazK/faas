@@ -6378,6 +6378,9 @@ func (m *MemStore) ListExpiredMigrations(_ context.Context, maxPerTick int, olde
 		if ins.State != string(StateMigrating) || ins.LeaseToken == "" {
 			continue
 		}
+		if _, tracked := m.functionMigrationSources[ins.ID]; tracked {
+			continue
+		}
 		if !cutoff.IsZero() && (ins.MigrationStartedAt == nil || ins.MigrationStartedAt.After(cutoff)) {
 			continue
 		}

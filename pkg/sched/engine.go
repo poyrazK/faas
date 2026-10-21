@@ -417,8 +417,11 @@ type Engine struct {
 	validatorArtifactCheck func(context.Context, string, string) error
 	store                  state.Store
 	ledger                 *NodeLedger
-	vmm                    RoutedVMM
-	notif                  Notifier
+	// functionDestinationReleases keeps a failing function source's retries
+	// from releasing its retired destination's reservation more than once.
+	functionDestinationReleases releasedDestinations
+	vmm                         RoutedVMM
+	notif                       Notifier
 	// notifyInPublication sends a wake's instance_changed from its RUNNING
 	// publication (WithNotifyInPublication).
 	notifyInPublication bool
@@ -6006,14 +6009,16 @@ func (e *Engine) ReconcileExpiredMigrations(ctx context.Context) (int, error) {
 	if e.migrateLiveLeaseSeconds > 0 {
 		leaseSeconds = e.migrateLiveLeaseSeconds
 	}
-	attempted, recovered, err := e.reconcileExpiredFunctionMigrationSources(ctx, maxPerTick)
+	// Function sources get at most half of the tick. Sources whose recovery
+	// keeps failing stay expired, and must not starve ordinary migrations.
+	attempted, recovered, err := e.reconcileExpiredFunctionMigrationSources(ctx, maxPerTick-maxPerTick/2)
 	if err != nil {
 		return 0, fmt.Errorf("sched: list expired function migration sources: %w", err)
 	}
-	if attempted >= maxPerTick {
+	maxPerTick -= attempted
+	if maxPerTick < 1 {
 		return recovered, nil
 	}
-	maxPerTick -= attempted
 	rows, err := e.store.ListExpiredMigrations(ctx, maxPerTick, time.Duration(leaseSeconds)*time.Second)
 	if err != nil {
 		return 0, fmt.Errorf("sched: reconcile expired migrations: list: %w", err)

@@ -142,3 +142,31 @@ func TestBackgroundUnsupportedOneShotDoesNotExecute(t *testing.T) {
 		t.Fatalf("unsupported handler had side effects: %v", err)
 	}
 }
+
+// A plan change replaces the runtime while tasks admitted under the earlier
+// plan still run. They keep counting against the replacement's instance cap.
+func TestBackgroundRuntimeReplacementKeepsOutstandingTasks(t *testing.T) {
+	old, err := NewBackgroundRuntime(api.PlanFree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range old.capacity {
+		if !old.reserve() {
+			t.Fatal("old runtime refused its own capacity")
+		}
+	}
+	next, err := old.replace(api.PlanFree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next.Active() != old.capacity || next.reserve() {
+		t.Fatalf("replacement admitted beyond the instance cap: active=%d", next.Active())
+	}
+	old.release()
+	if next.Active() != old.capacity-1 || !next.reserve() {
+		t.Fatal("old task settlement did not return capacity to the replacement")
+	}
+	if _, err := old.replace(api.Plan("unknown")); err == nil {
+		t.Fatal("replacement accepted an unknown plan")
+	}
+}

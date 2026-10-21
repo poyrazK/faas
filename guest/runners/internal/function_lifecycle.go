@@ -20,6 +20,10 @@ func serveFunctionLifecycle(w http.ResponseWriter, r *http.Request, cfg ServeCon
 	batch, err := workerpool.OpenAllIfSupported(ctx, cfg.Spec, env)
 	if batch == nil {
 		cfg.executionLease.ReleaseAfter(ctx, nil)
+		if errors.Is(err, workerpool.ErrCompletionUnsupported) {
+			http.Error(w, "function adapter does not support lifecycle completion", http.StatusNotImplemented)
+			return
+		}
 		http.Error(w, "function workers have not quiesced", http.StatusServiceUnavailable)
 		return
 	}

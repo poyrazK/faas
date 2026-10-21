@@ -253,3 +253,22 @@ func TestFunctionMigrationSchedulerLegacyAbortKeepsCapacity(t *testing.T) {
 		t.Fatal("token-cleared rollback released unconfirmed source")
 	}
 }
+
+// A failing function source is retried every tick. Its retired destination's
+// reservation is released once, and again only after recovery completes.
+func TestReleasedFunctionDestinationsClaimOnce(t *testing.T) {
+	var r releasedDestinations
+	if !r.claim("fn-a") {
+		t.Fatal("first claim refused")
+	}
+	if r.claim("fn-a") {
+		t.Fatal("retry released the destination twice")
+	}
+	if !r.claim("fn-b") {
+		t.Fatal("another lease shares the claim")
+	}
+	r.forget("fn-a")
+	if !r.claim("fn-a") {
+		t.Fatal("completed recovery kept its claim")
+	}
+}

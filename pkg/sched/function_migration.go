@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -120,6 +121,34 @@ func retireFunctionMigrationDestination(ctx context.Context, store state.Store, 
 	return nil
 }
 
+// releasedDestinations records retired function destinations whose ledger
+// reservation was already returned, keyed by lease token, until their source
+// recovery completes.
+type releasedDestinations struct {
+	mu     sync.Mutex
+	tokens map[string]struct{}
+}
+
+// claim reports whether token has not released its reservation yet.
+func (r *releasedDestinations) claim(token string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, done := r.tokens[token]; done {
+		return false
+	}
+	if r.tokens == nil {
+		r.tokens = map[string]struct{}{}
+	}
+	r.tokens[token] = struct{}{}
+	return true
+}
+
+func (r *releasedDestinations) forget(token string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.tokens, token)
+}
+
 func (e *Engine) reconcileExpiredFunctionMigrationSources(ctx context.Context, limit int) (attempted, completed int, retErr error) {
 	sources, ok := e.store.(state.FunctionMigrationSourceStore)
 	if !ok {
@@ -134,8 +163,12 @@ func (e *Engine) reconcileExpiredFunctionMigrationSources(ctx context.Context, l
 		recoveryCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), api.MigrateLiveCommitRecoveryTimeout)
 		_, retired, err := rollbackFunctionMigrationSource(recoveryCtx, e.store, e.vmm, source.InstanceID, source.LeaseToken)
 		cancel()
+		// A physically retired destination frees its reservation even while
+		// source recovery is still failing, but only once: the failing source is
+		// retried every tick, and a repeated Release could drop a later
+		// reservation for the same instance.
 		if d, ok := e.store.(state.FunctionMigrationDestinationStore); ok {
-			if destination, readErr := d.GetFunctionMigrationDestination(ctx, source.InstanceID, source.LeaseToken); readErr == nil && destination.Phase == state.FunctionDestinationRetired && destination.Grant.Binding.NodeID == e.ownerNodeID {
+			if destination, readErr := d.GetFunctionMigrationDestination(ctx, source.InstanceID, source.LeaseToken); readErr == nil && destination.Phase == state.FunctionDestinationRetired && destination.Grant.Binding.NodeID == e.ownerNodeID && e.functionDestinationReleases.claim(source.LeaseToken) {
 				e.ledger.Release(source.InstanceID)
 			}
 		}
@@ -143,6 +176,7 @@ func (e *Engine) reconcileExpiredFunctionMigrationSources(ctx context.Context, l
 			e.log.Warn("sched: function migration source recovery retained", "instance_id", source.InstanceID, "err", err)
 			continue
 		}
+		e.functionDestinationReleases.forget(source.LeaseToken)
 		if retired && source.SourceNodeID == e.ownerNodeID {
 			e.ledger.Release(source.InstanceID)
 		}
