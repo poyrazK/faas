@@ -172,7 +172,7 @@ func runDatabases(ctx context.Context, log *slog.Logger) error {
 
 	f := newFleet(ctx, routes, set, keys, log)
 	for _, db := range dbs {
-		f.start(db, true)
+		f.start(db, true) //nolint:contextcheck // members live as long as the fleet's context, not the caller's
 	}
 	discovering := make(chan struct{})
 	if len(discovery.backends) > 0 {

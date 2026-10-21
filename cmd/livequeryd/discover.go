@@ -64,7 +64,7 @@ func discover(ctx context.Context, f *fleet, keys *keySource, d discovery, log *
 		case err != nil && ctx.Err() == nil:
 			log.Warn("livequeryd: reading live databases failed; keeping the current ones", "err", err)
 		case err == nil:
-			f.sync(discovered(rows, keys.identities, d, log))
+			f.sync(discovered(rows, keys.identities, d, log)) //nolint:contextcheck // members live as long as the fleet's context
 		}
 		select {
 		case <-ctx.Done():
