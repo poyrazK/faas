@@ -53,8 +53,13 @@ func NewRuntimeAppConfigFence(snapshot RuntimeAppValuesSnapshot) (RuntimeAppConf
 	if err != nil {
 		return RuntimeAppConfigFence{}, err
 	}
+	inheritedSecrets, err := runtimeInheritedSecrets(snapshot, keys)
+	if err != nil {
+		return RuntimeAppConfigFence{}, err
+	}
 	var hash string
-	if len(inherited) == 0 {
+	switch {
+	case len(inherited) == 0 && len(inheritedSecrets) == 0:
 		// A deployment that inherits nothing keeps the fingerprint it had
 		// before ADR-1136, so running and paused instances stay valid.
 		hash, err = runtimeConfigurationHash(struct {
@@ -62,13 +67,22 @@ func NewRuntimeAppConfigFence(snapshot RuntimeAppValuesSnapshot) (RuntimeAppConf
 			Configuration RuntimeAppConfiguration
 			Variables     []variable
 		}{secret, snapshot.Configuration, variables})
-	} else {
+	case len(inheritedSecrets) == 0:
+		// Likewise, inheriting no secrets keeps the ADR-1136 fingerprint.
 		hash, err = runtimeConfigurationHash(struct {
 			Secret        RuntimeAppSecretFence
 			Configuration RuntimeAppConfiguration
 			Variables     []variable
 			Inherited     []inheritedVariable
 		}{secret, snapshot.Configuration, variables, inherited})
+	default:
+		hash, err = runtimeConfigurationHash(struct {
+			Secret           RuntimeAppSecretFence
+			Configuration    RuntimeAppConfiguration
+			Variables        []variable
+			Inherited        []inheritedVariable
+			InheritedSecrets []inheritedSecret // ADR-1139
+		}{secret, snapshot.Configuration, variables, inherited, inheritedSecrets})
 	}
 	if err != nil {
 		return RuntimeAppConfigFence{}, err
