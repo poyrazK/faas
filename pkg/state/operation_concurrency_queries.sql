@@ -92,3 +92,6 @@ WHERE account_id = sqlc.arg(account_id) AND app_id = sqlc.arg(app_id)
 GROUP BY scope, operation, platform_tenant_id
 ORDER BY scope, operation, platform_tenant_id
 LIMIT sqlc.arg(row_limit);
+
+-- name: OperationQueueStats :one
+SELECT count(*)::bigint AS queued, min(queued_at)::timestamptz AS oldest FROM customer_operation_queue;

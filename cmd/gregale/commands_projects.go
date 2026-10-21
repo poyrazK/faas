@@ -42,7 +42,7 @@ func cmdProjects(args []string) int {
 
 func cmdProjectsEnvironments(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale projects environments <list|create|protect|unprotect|inspect|release-sets|releases|qualify|preflight|history|config|routes|policies|queues|diff|preview|promote|status|rollback|abort|recover|recover-migration>", "projects environments")
+		PrintUsage(os.Stderr, "usage: gregale projects environments <list|create|protect|unprotect|inspect|release-sets|releases|qualify|preflight|history|config|secrets|routes|policies|queues|diff|preview|promote|status|rollback|abort|recover|recover-migration>", "projects environments")
 		return 1
 	}
 	switch args[0] {
@@ -68,6 +68,8 @@ func cmdProjectsEnvironments(args []string) int {
 		return cmdProjectsEnvironmentHistory(args[1:])
 	case "config":
 		return cmdProjectsEnvironmentConfig(args[1:])
+	case "secrets":
+		return cmdProjectsEnvironmentSecrets(args[1:])
 	case "routes":
 		return cmdProjectsEnvironmentRoutes(args[1:])
 	case "policies":

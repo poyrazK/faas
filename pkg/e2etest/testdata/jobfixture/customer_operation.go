@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -74,6 +75,11 @@ func runCustomerOperation(ctx context.Context, client *api.Client, id string, pr
 	if input.Mode == "cancel" {
 		return waitCustomerOperationRelease(ctx, client, id, proof, false)
 	}
+	if input.Mode == "fanout" {
+		if err := fanoutCustomerOperation(ctx, client, id, proof, input); err != nil {
+			return err
+		}
+	}
 	if input.Artifact != nil {
 		var receipt api.OperationJobArtifactResponse
 		var err error
@@ -135,4 +141,51 @@ func waitCustomerOperationRelease(ctx context.Context, client *api.Client, id st
 		case <-time.After(250 * time.Millisecond):
 		}
 	}
+}
+
+// customerOperationChildKey names the one child a fanout job starts.
+const customerOperationChildKey = "child-1"
+
+// fanoutCustomerOperation starts one child with this run's proof, then
+// starts it again to prove the key replays the same child
+// (ADR-20261018183000). A retried run replays its earlier start. Child routes
+// are gated and outside the SDK, so the fixture sends the job proof itself.
+func fanoutCustomerOperation(ctx context.Context, client *api.Client, id string, proof api.OperationJobRuntimeProof, input customerOperationInput) error {
+	first, err := startCustomerOperationChild(ctx, client, id, proof, input)
+	if err != nil {
+		return err
+	}
+	replay, err := startCustomerOperationChild(ctx, client, id, proof, input)
+	if err != nil {
+		return err
+	}
+	if !replay.Replayed || replay.Operation.ID != first.Operation.ID || first.Key != customerOperationChildKey {
+		return fmt.Errorf("child start did not replay by key")
+	}
+	return nil
+}
+
+func startCustomerOperationChild(ctx context.Context, client *api.Client, id string, proof api.OperationJobRuntimeProof, input customerOperationInput) (api.OperationChildStartResponse, error) {
+	var out api.OperationChildStartResponse
+	childInput, _ := json.Marshal(map[string]any{"mode": "complete", "artifact": input.Artifact})
+	body, _ := json.Marshal(api.OperationChildRequest{Operation: "export", Key: customerOperationChildKey, Input: childInput})
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, client.BaseURL()+"/v1/runtime/job-operations/"+id+"/children", bytes.NewReader(body))
+	if err != nil {
+		return out, err
+	}
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set(api.OperationJobRunHeader, proof.RunID)
+	request.Header.Set(api.OperationJobInstanceHeader, proof.InstanceID)
+	request.Header.Set(api.OperationJobCapabilityHeader, proof.Capability)
+	request.Header.Set(api.OperationGenerationHeader, strconv.Itoa(proof.Generation))
+	request.Header.Set(api.OperationAttemptHeader, strconv.Itoa(proof.Attempt))
+	response, err := client.HTTPClient().Do(request)
+	if err != nil {
+		return out, err
+	}
+	defer func() { _ = response.Body.Close() }()
+	if response.StatusCode != http.StatusCreated && response.StatusCode != http.StatusOK {
+		return out, fmt.Errorf("child start answered %d", response.StatusCode)
+	}
+	return out, json.NewDecoder(response.Body).Decode(&out)
 }

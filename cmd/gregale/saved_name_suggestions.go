@@ -29,7 +29,7 @@ func unknownSavedName[T any](title, query string, saved map[string]T, command fu
 			if len(name)-len(query) > limit || len(query)-len(name) > limit {
 				continue
 			}
-			if distance := levenshtein(query, name); distance <= limit {
+			if distance := editDistance(query, name); distance <= limit {
 				matches = append(matches, match{name, distance})
 			}
 		}

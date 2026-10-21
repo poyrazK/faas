@@ -267,6 +267,11 @@ type ColdBootSpec struct {
 	// ExecutionMode constrains the host-derived characterization class. Empty
 	// preserves the legacy inference contract for older vmmd callers.
 	ExecutionMode string
+	// ProvenWorker boots a declared worker whose deployment already passed
+	// the full characterization window on this node with api.ProvenWorkerBootArg,
+	// so guest-init reports it after api.ProvenWorkerCharacterizationWindow
+	// (ADR-20261018101500).
+	ProvenWorker bool
 	// SkipReady suppresses readiness probing for builder VMs. Builder guests
 	// run a finite build and power off instead of binding port 8080.
 	// Networkless execution guests use the vsock execution protocol instead of
@@ -445,6 +450,9 @@ func BuildColdBootConfig(s ColdBootSpec, slot int) VMConfig {
 	bootArgs := withGuestTimer(coldBootArgs)
 	if s.Networkless {
 		bootArgs = withGuestTimer(executionBootArgs)
+	}
+	if s.ProvenWorker && s.ExecutionMode == api.ExecutionModeWorker {
+		bootArgs = strings.TrimSpace(bootArgs) + " " + api.ProvenWorkerBootArg
 	}
 	return VMConfig{
 		BootSource:        BootSource{KernelImagePath: s.KernelKey, BootArgs: bootArgs},

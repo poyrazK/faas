@@ -60,6 +60,11 @@ func runtimeAppValuesDB(ctx context.Context, db sqlc.DBTX, accountID, appID, dep
 			return RuntimeAppValuesSnapshot{}, err
 		}
 	}
+	// ADR-1139: read after the app's own secrets are final, so the keys the
+	// app sets itself leave the inherited set.
+	if result.InheritedSecrets, err = decodeInheritedProjectSecrets(result, pgUUIDString(row.ProjectID), row.ProjectSecrets); err != nil {
+		return RuntimeAppValuesSnapshot{}, err
+	}
 	var settings ProjectEnvironmentWorkloadSettings
 	var artifact projectCloneArtifact
 	result.SidecarLayers = []DeploymentSidecarLayer{}

@@ -477,6 +477,22 @@ func (q *Queries) ListQueuedOperationsForGroup(ctx context.Context, db DBTX, arg
 	return items, nil
 }
 
+const operationQueueStats = `-- name: OperationQueueStats :one
+SELECT count(*)::bigint AS queued, min(queued_at)::timestamptz AS oldest FROM customer_operation_queue
+`
+
+type OperationQueueStatsRow struct {
+	Queued int64
+	Oldest pgtype.Timestamptz
+}
+
+func (q *Queries) OperationQueueStats(ctx context.Context, db DBTX) (OperationQueueStatsRow, error) {
+	row := db.QueryRow(ctx, operationQueueStats)
+	var i OperationQueueStatsRow
+	err := row.Scan(&i.Queued, &i.Oldest)
+	return i, err
+}
+
 const releaseQueuedInvocation = `-- name: ReleaseQueuedInvocation :exec
 UPDATE invocations SET due_at = $1 WHERE id = $2 AND state = 'pending' AND due_at > $1
 `

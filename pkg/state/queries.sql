@@ -7920,7 +7920,14 @@ SELECT (SELECT values_json FROM deployment_release_secret_snapshots WHERE deploy
         FROM project_environment_config_versions c
         WHERE owner.project_id IS NOT NULL AND c.account_id=owner.account_id AND c.project_id=owner.project_id
             AND c.environment_slug=CASE WHEN owner.scope='default' THEN 'production' ELSE owner.scope END
-        ORDER BY c.version DESC LIMIT 1),'{}'::jsonb)::jsonb AS project_config
+        ORDER BY c.version DESC LIMIT 1),'{}'::jsonb)::jsonb AS project_config,
+    owner.project_id,
+    -- ADR-1139: the project environment secrets the deployment inherits.
+    COALESCE((SELECT jsonb_agg(jsonb_build_object('key',p.key,'ciphertext',encode(p.ciphertext,'base64'),'kid',p.kid,
+        'value_hash',p.value_hash,'secret_version',p.secret_version,'created_at',p.created_at,'updated_at',p.updated_at) ORDER BY p.key)
+        FROM project_environment_secrets p
+        WHERE owner.project_id IS NOT NULL AND p.account_id=owner.account_id AND p.project_id=owner.project_id
+            AND p.environment_slug=CASE WHEN owner.scope='default' THEN 'production' ELSE owner.scope END),'[]'::jsonb)::jsonb AS project_secrets
 FROM owner;
 
 -- name: LockRuntimeConfigWorkloadSpec :many
@@ -16955,6 +16962,9 @@ SELECT t.* FROM job_tasks t JOIN customer_operations o ON o.job_run_id=t.run_id
  JOIN job_runs r ON r.id=t.run_id JOIN jobs j ON j.id=r.job_id
  WHERE t.task_index=0 AND t.status='queued' AND o.state='accepted' AND j.status='active'
  AND r.image_storage_key_snapshot IS NOT NULL
+ -- ADR-20261018210500: an Operation held by a per-customer concurrency
+ -- policy waits until apid's releaser removes its queue row.
+ AND NOT EXISTS (SELECT 1 FROM customer_operation_queue q WHERE q.operation_id=o.id)
  ORDER BY t.created_at LIMIT sqlc.arg(page_limit)::integer;
 
 -- name: CustomerOperationJobHasOrdinaryActiveTasks :one
