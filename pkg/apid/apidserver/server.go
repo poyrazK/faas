@@ -3518,6 +3518,8 @@ func (s *server) handler() http.Handler {
 	// ADR 20261020202035: AI traces.
 	mux.HandleFunc("GET /v1/outbound/integrations/{integration}/ai-traces", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.ListTraces)))))
 	mux.HandleFunc("GET /v1/outbound/integrations/{integration}/ai-traces/{trace}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.GetTrace)))))
+	mux.HandleFunc("GET /v1/outbound/integrations/{integration}/ai-quality-alerts", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.ListQualityAlerts)))))
+	mux.HandleFunc("PUT /v1/outbound/integrations/{integration}/ai-requests/{request}/feedback", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.aiGateway(s.outboundAI.PutRequestFeedback)))))
 	mux.HandleFunc("GET /v1/outbound/integrations/{integration}/ai-requests/{request}/content", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.GetRequestContent)))))
 	mux.HandleFunc("POST /v1/outbound/integrations/{integration}/ai-requests/{request}/replays", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.aiGateway(s.outboundAI.CreateReplay)))))
 	mux.HandleFunc("GET /v1/outbound/ai-replays/{replay}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.GetReplay)))))

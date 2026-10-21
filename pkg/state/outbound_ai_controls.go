@@ -84,6 +84,14 @@ type OutboundAIRequestLogEntry struct {
 	// requested (ADR 20261020202035).
 	TraceID   string
 	ToolCalls []string
+	// QualityFlags mark what went wrong with the answer; Feedback is the
+	// call's rating ("good" or "bad", or empty) with its label; and
+	// EvaluationScore is its online evaluation's score from 1 to 5
+	// (ADR 20261021171712).
+	QualityFlags    []string
+	Feedback        string
+	FeedbackLabel   string
+	EvaluationScore *int32
 }
 
 // OutboundAIRequestContent is one logged call's captured bodies (ADR-996):

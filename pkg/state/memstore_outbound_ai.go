@@ -9,6 +9,14 @@ import (
 
 var _ OutboundAIStore = (*MemStore)(nil)
 
+func copyInt32Ptr(in *int32) *int32 {
+	if in == nil {
+		return nil
+	}
+	value := *in
+	return &value
+}
+
 func copyInt64Ptr(in *int64) *int64 {
 	if in == nil {
 		return nil
@@ -28,6 +36,12 @@ func (m *MemStore) SetOutboundAIPolicy(_ context.Context, accountID, integration
 	if !ok || offer.AccountID != accountID || offer.OwnerKind != "customer" || !offer.Enabled {
 		return ErrNotFound
 	}
+	if policy.OnlineEvalPercent != nil {
+		judge, ok := m.outboundIntegrationOffers[policy.OnlineEvalJudgeIntegrationID]
+		if !ok || judge.AccountID != accountID || !judge.Enabled || judge.AIProvider == "" || judge.OwnerKind != "customer" {
+			return ErrInvalidArgument
+		}
+	}
 	offer.AIProvider = policy.Provider
 	offer.AIDailyTokenLimit = copyInt64Ptr(policy.DailyTokenLimit)
 	offer.AIDailyCostLimit = copyInt64Ptr(policy.DailyCostLimit)
@@ -45,6 +59,9 @@ func (m *MemStore) SetOutboundAIPolicy(_ context.Context, accountID, integration
 	offer.AITraceMaxCalls = copyInt64Ptr(policy.TraceMaxCalls)
 	offer.AITraceMaxCostMillicents = copyInt64Ptr(policy.TraceMaxCost)
 	offer.AITraceMaxRepeatedToolCalls = copyInt64Ptr(policy.TraceMaxRepeatedToolCalls)
+	offer.AIOnlineEvalPercent = copyInt32Ptr(policy.OnlineEvalPercent)
+	offer.AIOnlineEvalJudgeIntegrationID, offer.AIOnlineEvalModel = policy.OnlineEvalJudgeIntegrationID, policy.OnlineEvalModel
+	offer.AIOnlineEvalRubric, offer.AIQualityAlerts = policy.OnlineEvalRubric, policy.QualityAlerts
 	m.outboundIntegrationOffers[integrationID] = offer
 	return nil
 }

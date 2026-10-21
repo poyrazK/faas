@@ -234,6 +234,7 @@ func requestLogResponse(entries []state.OutboundAIRequestLogEntry, limit int) ap
 		if len(entry.ToolCalls) > 0 {
 			item.ToolCalls = append([]string{}, entry.ToolCalls...)
 		}
+		qualityFields(&item, entry)
 		if entry.RouteID != "" {
 			routeID := entry.RouteID
 			item.RouteID = &routeID

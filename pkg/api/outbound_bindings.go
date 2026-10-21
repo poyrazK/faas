@@ -82,6 +82,10 @@ type OutboundIntegrationOffer struct {
 	AITraceMaxCalls             *int64 `json:"ai_trace_max_calls,omitempty"`
 	AITraceMaxCostMillicents    *int64 `json:"ai_trace_max_cost_millicents,omitempty"`
 	AITraceMaxRepeatedToolCalls *int64 `json:"ai_trace_max_repeated_tool_calls,omitempty"`
+	// AIOnlineEvaluation and AIQualityAlerts are the quality settings
+	// (ADR 20261021171712).
+	AIOnlineEvaluation *OutboundAIOnlineEvaluation `json:"ai_online_evaluation,omitempty"`
+	AIQualityAlerts    bool                        `json:"ai_quality_alerts,omitempty"`
 }
 
 // Outbound AI providers select the credential handling and the response
@@ -153,6 +157,11 @@ type PutOutboundAIPolicyRequest struct {
 	TraceMaxCalls             *int64 `json:"trace_max_calls,omitempty"`
 	TraceMaxCostMillicents    *int64 `json:"trace_max_cost_millicents,omitempty"`
 	TraceMaxRepeatedToolCalls *int64 `json:"trace_max_repeated_tool_calls,omitempty"`
+	// OnlineEvaluation samples answered app calls for a judge model to
+	// score; it needs content capture. QualityAlerts turns on drift alerts
+	// (ADR 20261021171712).
+	OnlineEvaluation *OutboundAIOnlineEvaluation `json:"online_evaluation,omitempty"`
+	QualityAlerts    bool                        `json:"quality_alerts,omitempty"`
 }
 
 // Valid reports whether the complete AI policy can be stored.
@@ -163,7 +172,8 @@ func (r PutOutboundAIPolicyRequest) Valid() bool {
 		ValidOutboundAITraceLimits(r.AIProvider, r.TraceMaxCalls, r.TraceMaxCostMillicents, r.TraceMaxRepeatedToolCalls) &&
 		(!r.RequestLogEnabled || r.AIProvider != "") && (!r.RequestLogContent || r.RequestLogEnabled) &&
 		(!r.LogExport || r.AIProvider != "") && (!r.AllowUnmetered || r.AIProvider != "") &&
-		(!r.AutoPromptCache || r.AIProvider != "")
+		(!r.AutoPromptCache || r.AIProvider != "") && r.OnlineEvaluation.valid(r.AIProvider, r.RequestLogContent) &&
+		(!r.QualityAlerts || r.AIProvider != "")
 }
 
 // OutboundAIUsageItem is one UTC-day rollup for a caller and model. Caller is
@@ -203,6 +213,18 @@ type OutboundAIUsageItem struct {
 	// Audio tokens, part of the input and output totals (ADR 20261019072722).
 	InputAudioTokens  int64 `json:"input_audio_tokens"`
 	OutputAudioTokens int64 `json:"output_audio_tokens"`
+	// Quality signals (ADR 20261021171712): calls per quality flag, ratings,
+	// and online evaluations with the sum of their scores and judge errors.
+	TruncatedRequests   int64 `json:"truncated_requests"`
+	RefusedRequests     int64 `json:"refused_requests"`
+	EmptyRequests       int64 `json:"empty_requests"`
+	InvalidJSONRequests int64 `json:"invalid_json_requests"`
+	ToolErrorRequests   int64 `json:"tool_error_requests"`
+	GoodFeedback        int64 `json:"good_feedback"`
+	BadFeedback         int64 `json:"bad_feedback"`
+	EvaluatedRequests   int64 `json:"evaluated_requests"`
+	EvaluationScoreSum  int64 `json:"evaluation_score_sum"`
+	EvaluationErrors    int64 `json:"evaluation_errors"`
 }
 
 // OutboundAIUsageResponse reports one UTC day of AI usage for an integration.

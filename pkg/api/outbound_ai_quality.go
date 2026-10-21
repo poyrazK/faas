@@ -98,3 +98,30 @@ type OutboundAIQualityDriftWebhookPayload struct {
 	BaselineCount   int64     `json:"baseline_count"`
 	DetectedAt      time.Time `json:"detected_at"`
 }
+
+// OutboundAIOnlineEvaluation samples answered app calls for a judge model:
+// SamplePercent of them, scored from 1 to 5 by JudgeModel through
+// JudgeIntegrationID, one of the account's AI integrations. Rubric, when
+// set, tells the judge what a good answer does for the app.
+type OutboundAIOnlineEvaluation struct {
+	SamplePercent      int32  `json:"sample_percent"`
+	JudgeIntegrationID string `json:"judge_integration_id"`
+	JudgeModel         string `json:"judge_model"`
+	Rubric             string `json:"rubric,omitempty"`
+}
+
+// valid reports absent settings, or settings that can be stored on an AI
+// integration that captures content.
+func (e *OutboundAIOnlineEvaluation) valid(provider string, captures bool) bool {
+	if e == nil {
+		return true
+	}
+	percent := e.SamplePercent
+	return captures && ValidOutboundAIOnlineEvaluation(provider, &percent, e.JudgeIntegrationID, e.JudgeModel, e.Rubric)
+}
+
+// PutOutboundAIFeedbackRequest rates one logged call (ADR 20261021171712).
+type PutOutboundAIFeedbackRequest struct {
+	Rating string `json:"rating"`
+	Label  string `json:"label,omitempty"`
+}

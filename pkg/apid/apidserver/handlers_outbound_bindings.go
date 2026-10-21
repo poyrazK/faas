@@ -48,7 +48,18 @@ func outboundOfferResponse(offer state.OutboundIntegrationOffer) api.OutboundInt
 		AITraceMaxCalls:             copyOutboundDailyLimit(offer.AITraceMaxCalls),
 		AITraceMaxCostMillicents:    copyOutboundDailyLimit(offer.AITraceMaxCostMillicents),
 		AITraceMaxRepeatedToolCalls: copyOutboundDailyLimit(offer.AITraceMaxRepeatedToolCalls),
+		// ADR 20261021171712 quality settings.
+		AIOnlineEvaluation: outboundOnlineEvaluation(offer),
+		AIQualityAlerts:    offer.AIQualityAlerts,
 	}
+}
+
+func outboundOnlineEvaluation(offer state.OutboundIntegrationOffer) *api.OutboundAIOnlineEvaluation {
+	if offer.AIOnlineEvalPercent == nil {
+		return nil
+	}
+	return &api.OutboundAIOnlineEvaluation{SamplePercent: *offer.AIOnlineEvalPercent,
+		JudgeIntegrationID: offer.AIOnlineEvalJudgeIntegrationID, JudgeModel: offer.AIOnlineEvalModel, Rubric: offer.AIOnlineEvalRubric}
 }
 
 func copyOutboundDailyLimit(limit *int64) *int64 {

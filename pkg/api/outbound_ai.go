@@ -621,6 +621,13 @@ type OutboundAIRequestLogEntry struct {
 	// requested (ADR 20261020202035).
 	TraceID   *string  `json:"trace_id,omitempty"`
 	ToolCalls []string `json:"tool_calls,omitempty"`
+	// QualityFlags mark what went wrong with the answer; Feedback is the
+	// call's rating with its label; EvaluationScore is its online
+	// evaluation's score from 1 to 5 (ADR 20261021171712).
+	QualityFlags    []string `json:"quality_flags,omitempty"`
+	Feedback        *string  `json:"feedback,omitempty"`
+	FeedbackLabel   *string  `json:"feedback_label,omitempty"`
+	EvaluationScore *int32   `json:"evaluation_score,omitempty"`
 }
 
 // Encodings of a captured body: text that is valid UTF-8, or base64.

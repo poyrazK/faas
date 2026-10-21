@@ -197,7 +197,9 @@ const outboundAIRequestLogColumns = `log.id, log.created_at, log.caller, log.rou
 		       log.input_tokens, log.cached_input_tokens, log.cache_write_tokens, log.output_tokens,
 		       log.cost_millicents, log.duration_ms, log.ttfb_ms, log.attempts, COALESCE(log.end_user, ''),
 		       EXISTS (SELECT 1 FROM outbound_ai_request_content content WHERE content.log_id = log.id),
-		       COALESCE(log.tags, '{}'::text[]), COALESCE(log.trace_id, ''), COALESCE(log.tool_calls, '{}'::text[])`
+		       COALESCE(log.tags, '{}'::text[]), COALESCE(log.trace_id, ''), COALESCE(log.tool_calls, '{}'::text[]),
+		       COALESCE(log.quality_flags, '{}'::text[]), COALESCE(log.feedback, ''), COALESCE(log.feedback_label, ''),
+		       log.evaluation_score`
 
 func scanOutboundAIRequestLogRows(rows pgx.Rows) ([]OutboundAIRequestLogEntry, error) {
 	defer rows.Close()
@@ -207,11 +209,12 @@ func scanOutboundAIRequestLogRows(rows pgx.Rows) ([]OutboundAIRequestLogEntry, e
 		var status, attempts int16
 		var duration int32
 		var ttfb pgtype.Int4
+		var score pgtype.Int2
 		var entry OutboundAIRequestLogEntry
 		if err := rows.Scan(&id, &entry.CreatedAt, &entry.Caller, &routeID, &entry.Model, &status, &entry.Outcome,
 			&entry.InputTokens, &entry.CachedInputTokens, &entry.CacheWriteTokens, &entry.OutputTokens,
 			&entry.CostMillicents, &duration, &ttfb, &attempts, &entry.EndUser, &entry.ContentCaptured, &entry.Tags,
-			&entry.TraceID, &entry.ToolCalls); err != nil {
+			&entry.TraceID, &entry.ToolCalls, &entry.QualityFlags, &entry.Feedback, &entry.FeedbackLabel, &score); err != nil {
 			return nil, mapErr(err)
 		}
 		entry.ID, entry.CreatedAt = pgUUIDString(id), entry.CreatedAt.UTC()
@@ -222,6 +225,10 @@ func scanOutboundAIRequestLogRows(rows pgx.Rows) ([]OutboundAIRequestLogEntry, e
 		if ttfb.Valid {
 			value := int64(ttfb.Int32)
 			entry.TTFBMS = &value
+		}
+		if score.Valid {
+			value := int32(score.Int16)
+			entry.EvaluationScore = &value
 		}
 		entries = append(entries, entry)
 	}
