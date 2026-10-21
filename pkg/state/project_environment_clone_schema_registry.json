@@ -3392,6 +3392,22 @@
     "kind": "configuration"
   },
   {
+    "table": "customer_operation_approval_forms",
+    "columns": [
+      "account_id",
+      "app_id",
+      "created_at",
+      "id",
+      "input_schema",
+      "operation",
+      "required",
+      "scope",
+      "step",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "customer_operation_attempt_instances",
     "columns": [
       "attempt",

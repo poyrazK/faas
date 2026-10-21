@@ -31560,6 +31560,28 @@ CREATE TABLE public.custom_domains (
 
 
 --
+-- Name: customer_operation_approval_forms; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.customer_operation_approval_forms (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    scope text NOT NULL,
+    operation text NOT NULL,
+    step text NOT NULL,
+    input_schema jsonb NOT NULL,
+    required boolean NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    CONSTRAINT customer_operation_approval_forms_input_schema_check CHECK ((jsonb_typeof(input_schema) = 'object'::text)),
+    CONSTRAINT customer_operation_approval_forms_operation_check CHECK ((operation ~ '^[a-z][a-z0-9-]{0,63}$'::text)),
+    CONSTRAINT customer_operation_approval_forms_scope_check CHECK (((length(scope) >= 1) AND (length(scope) <= 64))),
+    CONSTRAINT customer_operation_approval_forms_step_check CHECK ((step ~ '^[a-z][a-z0-9-]{0,63}$'::text))
+);
+
+
+--
 -- Name: customer_operation_attempt_instances; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -55527,6 +55549,22 @@ ALTER TABLE ONLY public.custom_domain_tls_hosts
 
 ALTER TABLE ONLY public.custom_domains
     ADD CONSTRAINT custom_domains_pkey PRIMARY KEY (domain);
+
+
+--
+-- Name: customer_operation_approval_forms customer_operation_approval_for_app_id_scope_operation_step_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_approval_forms
+    ADD CONSTRAINT customer_operation_approval_for_app_id_scope_operation_step_key UNIQUE (app_id, scope, operation, step);
+
+
+--
+-- Name: customer_operation_approval_forms customer_operation_approval_forms_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_approval_forms
+    ADD CONSTRAINT customer_operation_approval_forms_pkey PRIMARY KEY (id);
 
 
 --
@@ -84053,6 +84091,22 @@ ALTER TABLE ONLY public.custom_domains
 
 ALTER TABLE ONLY public.custom_domains
     ADD CONSTRAINT custom_domains_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: customer_operation_approval_forms customer_operation_approval_forms_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_approval_forms
+    ADD CONSTRAINT customer_operation_approval_forms_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_operation_approval_forms customer_operation_approval_forms_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_approval_forms
+    ADD CONSTRAINT customer_operation_approval_forms_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --
