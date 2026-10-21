@@ -273,4 +273,4 @@ esac
 "$install_dir/$BIN_NAME" version >&2 || log "warning: installed binary did not run cleanly"
 
 log ""
-log "next: gregale login    (shell completion: gregale completion --help)"
+log "next: gregale start    (shell completion: gregale completion --help)"

@@ -2268,6 +2268,9 @@ export type { ProjectEnvironmentSecretCellResponse } from './models/ProjectEnvir
 export type { ProjectEnvironmentSecretChangeResponse } from './models/ProjectEnvironmentSecretChangeResponse.js';
 export type { ProjectEnvironmentSecretResponse } from './models/ProjectEnvironmentSecretResponse.js';
 export type { ProjectEnvironmentSharedResourceResponse } from './models/ProjectEnvironmentSharedResourceResponse.js';
+export type { ProjectEnvironmentSharedSecret } from './models/ProjectEnvironmentSharedSecret.js';
+export type { ProjectEnvironmentSharedSecretResponse } from './models/ProjectEnvironmentSharedSecretResponse.js';
+export type { ProjectEnvironmentSharedSecretsResponse } from './models/ProjectEnvironmentSharedSecretsResponse.js';
 export type { ProjectEnvironmentStateResponse } from './models/ProjectEnvironmentStateResponse.js';
 export type { ProjectEnvironmentStateWorkloadResponse } from './models/ProjectEnvironmentStateWorkloadResponse.js';
 export type { ProjectEnvironmentVariableChangeResponse } from './models/ProjectEnvironmentVariableChangeResponse.js';
@@ -2815,6 +2818,7 @@ export type { SetPlatformTenantCredentialPolicyRequest } from './models/SetPlatf
 export type { SetPlatformTenantHostnamePolicyRequest } from './models/SetPlatformTenantHostnamePolicyRequest.js';
 export type { SetPlatformTenantRequestBudgetRequest } from './models/SetPlatformTenantRequestBudgetRequest.js';
 export type { SetPlatformTenantStatusRequest } from './models/SetPlatformTenantStatusRequest.js';
+export type { SetProjectEnvironmentSharedSecretRequest } from './models/SetProjectEnvironmentSharedSecretRequest.js';
 export type { SetQueueBindingReleasePolicyRequest } from './models/SetQueueBindingReleasePolicyRequest.js';
 export type { SetReleaseApprovalPolicyRequest } from './models/SetReleaseApprovalPolicyRequest.js';
 export type { SetRouteHealthGateRequest } from './models/SetRouteHealthGateRequest.js';

@@ -31567,6 +31567,28 @@ CREATE TABLE public.custom_domains (
 
 
 --
+-- Name: customer_operation_approval_forms; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.customer_operation_approval_forms (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    scope text NOT NULL,
+    operation text NOT NULL,
+    step text NOT NULL,
+    input_schema jsonb NOT NULL,
+    required boolean NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    CONSTRAINT customer_operation_approval_forms_input_schema_check CHECK ((jsonb_typeof(input_schema) = 'object'::text)),
+    CONSTRAINT customer_operation_approval_forms_operation_check CHECK ((operation ~ '^[a-z][a-z0-9-]{0,63}$'::text)),
+    CONSTRAINT customer_operation_approval_forms_scope_check CHECK (((length(scope) >= 1) AND (length(scope) <= 64))),
+    CONSTRAINT customer_operation_approval_forms_step_check CHECK ((step ~ '^[a-z][a-z0-9-]{0,63}$'::text))
+);
+
+
+--
 -- Name: customer_operation_attempt_instances; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -46503,6 +46525,45 @@ CREATE TABLE public.product_control_plan_changes (
 
 
 --
+-- Name: product_control_plan_history; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.product_control_plan_history (
+    id bigint NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    tenant_id uuid NOT NULL,
+    revision text NOT NULL,
+    plan text NOT NULL,
+    first_assignment boolean NOT NULL,
+    effective_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT product_control_plan_history_plan_chk CHECK ((plan ~ '^[a-z][a-z0-9-]{0,62}$'::text)),
+    CONSTRAINT product_control_plan_history_revision_chk CHECK ((revision ~ '^[0-9a-f]{64}$'::text))
+);
+
+
+--
+-- Name: TABLE product_control_plan_history; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.product_control_plan_history IS 'Each Product Control customer assignment to a catalog revision and plan, from effective_at; prices monthly plan fees (ADR-20261021154511).';
+
+
+--
+-- Name: product_control_plan_history_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.product_control_plan_history ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.product_control_plan_history_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
 -- Name: product_control_receipts; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -55466,6 +55527,22 @@ ALTER TABLE ONLY public.custom_domains
 
 
 --
+-- Name: customer_operation_approval_forms customer_operation_approval_for_app_id_scope_operation_step_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_approval_forms
+    ADD CONSTRAINT customer_operation_approval_for_app_id_scope_operation_step_key UNIQUE (app_id, scope, operation, step);
+
+
+--
+-- Name: customer_operation_approval_forms customer_operation_approval_forms_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_approval_forms
+    ADD CONSTRAINT customer_operation_approval_forms_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: customer_operation_attempt_instances customer_operation_attempt_instances_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -61847,6 +61924,14 @@ ALTER TABLE ONLY public.product_control_overdue_policies
 
 ALTER TABLE ONLY public.product_control_plan_changes
     ADD CONSTRAINT product_control_plan_changes_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: product_control_plan_history product_control_plan_history_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_plan_history
+    ADD CONSTRAINT product_control_plan_history_pkey PRIMARY KEY (id);
 
 
 --
@@ -72183,6 +72268,13 @@ CREATE INDEX product_control_overdue_holds_app_idx ON public.product_control_ove
 --
 
 CREATE INDEX product_control_plan_changes_history ON public.product_control_plan_changes USING btree (account_id, app_id, tenant_id, created_at DESC, id DESC);
+
+
+--
+-- Name: product_control_plan_history_customer_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX product_control_plan_history_customer_idx ON public.product_control_plan_history USING btree (app_id, tenant_id, effective_at);
 
 
 --
@@ -83998,6 +84090,22 @@ ALTER TABLE ONLY public.custom_domains
 
 
 --
+-- Name: customer_operation_approval_forms customer_operation_approval_forms_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_approval_forms
+    ADD CONSTRAINT customer_operation_approval_forms_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_operation_approval_forms customer_operation_approval_forms_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_approval_forms
+    ADD CONSTRAINT customer_operation_approval_forms_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
 -- Name: customer_operation_attempt_instances customer_operation_attempt_instanc_operation_id_generation_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -91723,6 +91831,22 @@ ALTER TABLE ONLY public.product_control_plan_changes
 
 ALTER TABLE ONLY public.product_control_plan_changes
     ADD CONSTRAINT product_control_plan_changes_tenant_id_fkey FOREIGN KEY (tenant_id) REFERENCES public.platform_tenants(id) ON DELETE CASCADE;
+
+
+--
+-- Name: product_control_plan_history product_control_plan_history_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_plan_history
+    ADD CONSTRAINT product_control_plan_history_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: product_control_plan_history product_control_plan_history_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_plan_history
+    ADD CONSTRAINT product_control_plan_history_tenant_id_fkey FOREIGN KEY (tenant_id) REFERENCES public.platform_tenants(id) ON DELETE CASCADE;
 
 
 --

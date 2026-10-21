@@ -1430,6 +1430,7 @@ func newServerWithDeps(
 	s.productControl.DocumentInvoice = s.statementInvoices.ProductStatementInvoice
 	s.productControl.BillingDetails = s.statementInvoices.PaddleBillingDetails
 	s.productControl.PutBillingDetails = s.statementInvoices.PutPaddleBillingDetails
+	s.productControl.PlanPricingEnabled = func() bool { return s.runtimeBool(runtimeConfigProductControlPlanPricing, false) }
 	s.dataRepair.Host = operationHost{s}
 	s.edgeRules.Host = edgeRulesHost{s}
 	s.queueLeases.Host = queueLeasesHost{s}
@@ -2102,6 +2103,12 @@ func (s *server) handler() http.Handler {
 	// ADR-20261017100853: a customer resumes its own waiting Operations.
 	mux.HandleFunc("POST /v1/platform-tenant-self/customer-operations/{id}/signals", s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsManage)(s.operation.SignalPlatformTenantSelfOperation)))
 	mux.HandleFunc("POST /v1/platform-tenant-self/customer-operation-signals", s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsManage)(s.operation.SignalPlatformTenantSelfOperationsBySubject)))
+	// ADR-20261019001500: approval input forms, gated by FAAS_OPERATION_APPROVAL_INPUTS_ACCOUNTS.
+	mux.HandleFunc("PUT /v1/apps/{slug}/operation-approval-forms", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.operation.PutOperationApprovalForm))))
+	mux.HandleFunc("GET /v1/apps/{slug}/operation-approval-forms", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.operation.ListOperationApprovalForms))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/operation-approval-forms/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.operation.DeleteOperationApprovalForm))))
+	mux.HandleFunc("GET /v1/apps/{slug}/operations/{id}/approvals/{step}/form", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.operation.GetOwnedOperationApprovalForm))))
+	mux.HandleFunc("GET /v1/platform-tenant-self/customer-operations/{id}/approvals/{step}/form", s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsRead)(s.operation.GetPlatformTenantSelfOperationApprovalForm)))
 	// ADR-20261018210500: per-customer Operation concurrency, gated by FAAS_OPERATION_CONCURRENCY_ACCOUNTS.
 	mux.HandleFunc("PUT /v1/apps/{slug}/operation-concurrency", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.operation.PutOperationConcurrencyPolicy))))
 	mux.HandleFunc("GET /v1/apps/{slug}/operation-concurrency", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.operation.GetOperationConcurrency))))
@@ -3260,6 +3267,11 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/config", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getProjectEnvironmentConfig))))
 	mux.HandleFunc("PUT /v1/projects/{slug}/environments/{environment}/config", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.updateProjectEnvironmentConfig)))))
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/config/diff", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.diffProjectEnvironmentConfig))))
+	// ADR-1139: secrets shared by every service of a project environment.
+	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/secrets", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.projectSecrets().List))))
+	mux.HandleFunc("PUT /v1/projects/{slug}/environments/{environment}/secrets/{key}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesSecretsWriteSurface...)(s.projectSecrets().Set))))
+	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/secrets/{key}/rotate", s.authLimited(s.requireMFA(s.requireScope(api.ScopesSecretsWriteSurface...)(s.projectSecrets().Rotate))))
+	mux.HandleFunc("DELETE /v1/projects/{slug}/environments/{environment}/secrets/{key}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesSecretsWriteSurface...)(s.projectSecrets().Delete))))
 	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/promotion-preview", s.authLimited(s.requireMFA(s.requireScope(api.ScopesProjectEnvironmentReadSurface...)(s.previewProjectEnvironmentPromotionSecrets))))
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/promotion-preview", s.authLimited(s.requireMFA(s.requireScope(api.ScopesProjectEnvironmentReadSurface...)(s.previewProjectEnvironmentPromotion))))
 	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/approvals", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.approveProjectEnvironment)))))

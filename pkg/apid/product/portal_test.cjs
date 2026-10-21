@@ -243,6 +243,24 @@ test('changed terms require a second visible confirmation without automatic resu
   await b.submit(8); assert.equal(starts, 2); assert.match(b.confirms.at(-1), /EUR 0.50/);
   assert.equal(JSON.parse(b.calls.filter(c => c.path.endsWith('/start'))[1].options.body).expected_quote, changedQuote);
 });
+// ADR-20261021154511: included starts come first at no charge, then the unit price.
+test('included starts show the included runs left and confirm a free start before the priced ones', async () => {
+  const included = remaining => {
+    const value = fixture(); value.remaining_starts = { export: remaining };
+    value.catalog.spec.plans.starter.features.export = { included_starts: 3, monthly_starts: 10, unit_price_millicents: 20000 };
+    return value;
+  };
+  let remaining = 8;
+  const b = browser(async path => {
+    if (path.endsWith('/start')) { remaining--; return { ok: true, status: 202, json: async () => ({ id: ids.op }) }; }
+    if (path.endsWith('/product')) return { ok: true, status: 200, json: async () => included(remaining) };
+  });
+  await b.signIn();
+  assert.equal(b.get('features').children[0].children[1].textContent, '1 of 3 included runs left, then EUR 0.20 per successful run · 8 of 10 starts remaining this month.');
+  await b.submit(1); assert.match(b.confirms[0], /included in your plan at no charge/);
+  await waitFor(() => b.get('features').children[0].children[1].textContent.startsWith('0 of 3 included runs left'));
+  await b.submit(2); assert.match(b.confirms.at(-1), /EUR 0.20 will be recorded only if it succeeds/);
+});
 test('reload discovers a lost acknowledgement without sending any work', async () => {
   const storage = new Map(), first = browser(async path => { if (path.endsWith('/start')) throw new Error('lost'); }, storage);
   await first.signIn(); await first.submit(8);
@@ -341,6 +359,25 @@ test('billing displays immutable statements and signed credit notes with explici
   assert.match(b.get('billing-documents').children[0].textContent, /Finalized statement/);
   assert.equal(b.get('billing-more').hidden, true);
   assert.ok(b.calls.filter(c => c.path.includes('/billing?')).every(c => c.options.method === undefined));
+});
+
+// adr: 20261021154511 — the month's plan fee shows in provisional charges and on finalized statements, with its proration.
+test('billing shows the month plan fee and its proration', async () => {
+  const fee = { plan: 'pro', revision: 'a'.repeat(64), monthly_fee_millicents: 2900000, amount_millicents: 1029032, prorated_from: '2026-10-21T00:00:00Z' };
+  const b = browser(async path => {
+    if (!path.includes('/billing?')) return;
+    const finalized = new URL(path, 'https://portal.example').searchParams.get('period') === '2026-09';
+    return { ok: true, status: 200, json: async () => ({
+      review: finalized ? { period: '2026-09', currency: 'EUR', finalized: { amount_millicents: 2900000 } } : { period: '2026-10', currency: 'EUR', amount_millicents: 1129032, unresolved: 0, closed: false, fees: [fee] },
+      documents: { documents: finalized ? [{ id: randomUUID(), kind: 'statement', currency: 'EUR', amount_millicents: 2900000, snapshot: { lines: [], fees: [{ ...fee, amount_millicents: 2900000, prorated_from: undefined }] } }] : [], next_cursor: '' },
+    }) };
+  });
+  await b.signIn(); b.get('billing-period').value = '2026-10';
+  await b.get('billing-form').onsubmit({ preventDefault() {} });
+  assert.match(b.get('billing-summary').textContent, /Provisional charges EUR 11.29032 including the monthly fee for plan pro, EUR 10.29032 prorated from 2026-10-21/);
+  b.get('billing-period').value = '2026-09';
+  await b.get('billing-form').onsubmit({ preventDefault() {} });
+  assert.equal(b.get('billing-documents').children[0].children[0].textContent, 'the monthly fee for plan pro, EUR 29.00');
 });
 
 // adr: 20261018212918 — exported statements show the provider's payment status and only its own https invoice page.
@@ -751,6 +788,7 @@ test('plan managers compare exact prices and carried usage, then explicitly conf
   await reviewPlan(b);
   assert.match(textTree(b.get('plan-comparison')), /EUR 0.25.*10 starts\/month.*1 used.*9 remaining/);
   assert.match(textTree(b.get('plan-comparison')), /EUR 0.10.*100 starts\/month.*99 remaining/);
+  assert.match(textTree(b.get('plan-comparison')), /Monthly fee.*No monthly fee.*No monthly fee/);
   assert.equal(b.get('plan-options').children[0].textContent, '<script>Pro</script>');
   assert.equal(b.calls.filter(c => c.path.endsWith('/plans/confirm')).length, 0);
   await b.get('plan-confirm').onclick();

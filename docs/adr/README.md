@@ -1,5 +1,6 @@
 # Architecture Decision Records
 
+- [Product Control plan fees, included starts and overage](20261021154511-product-control-plan-fees-and-overage.md)
 - [Data API file storage](20261021101510-data-api-file-storage.md)
 - [Keep the edge lane off the store type: edge store](20261021092138-edge-store-blast-radius.md)
 - [Product Control billing records survive app purge](20261020090607-product-control-billing-records-survive-app-purge.md)
@@ -7,6 +8,8 @@
 - [Safety rails for automatic per-unit deploys](20261020214632-automatic-unit-deploy-safety-rails.md)
 - [What a fix restarts: daemon blast radius](20261020160744-daemon-blast-radius.md)
 - [Finished invocations without a horizon get the plan default retention](20261019104819-invocation-default-retention.md)
+- [Resolve Compose extends and include](20261019190527-compose-extends-and-include.md)
+
 - [Compose build arguments and target stage for Dockerfile builds](20261019142544-compose-build-args-and-target.md)
 
 - [Data API usage reporting and owner monthly caps](20261019102108-data-api-usage-and-owner-caps.md)
