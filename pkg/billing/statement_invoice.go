@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -224,11 +225,17 @@ func TenantStatementInvoice(statement state.PlatformTenantStatement, cards ...st
 // ProductControlStatementInvoice groups a finalized Product Control
 // statement's charged successes by feature, plan and admitted unit price
 // (ADR-20261018212918). Catalog revisions at the same price share a line;
-// waived, failed, cancelled and unresolved runs are never invoiced.
+// waived, failed, cancelled and unresolved runs are never invoiced. Runs
+// admitted at price 0, such as included starts, keep a line of their own,
+// the month's plan fee is its own base fee item, and a statement that
+// charges nothing is not invoiced (ADR-20261021154511).
 func ProductControlStatementInvoice(doc api.ProductBillingDocument) (StatementInvoice, error) {
 	inv := StatementInvoice{Currency: doc.Currency}
 	if doc.Kind != "statement" || doc.Snapshot == nil {
 		return inv, fmt.Errorf("%w: only finalized Product Control statements export; credit notes keep their recorded handoff", ErrStatementNotInvoiceable)
+	}
+	if doc.AmountMillicents == 0 {
+		return inv, fmt.Errorf("%w: the statement charges nothing", ErrStatementNotInvoiceable)
 	}
 	lines := map[invoiceLineKey]*StatementInvoiceLine{}
 	for _, line := range doc.Snapshot.Lines {
@@ -236,6 +243,17 @@ func ProductControlStatementInvoice(doc api.ProductBillingDocument) (StatementIn
 		if err := inv.add(key, line.Succeeded, lines); err != nil {
 			return inv, err
 		}
+	}
+	for _, fee := range doc.Snapshot.Fees {
+		label := "Monthly fee for plan " + fee.Plan
+		if fee.ProratedFrom != nil {
+			label += ", prorated from " + fee.ProratedFrom.UTC().Format(time.DateOnly)
+		}
+		key := invoiceLineKey{fee: state.StatementFeeBase, label: label}
+		if lines[key] != nil || fee.AmountMillicents <= 0 {
+			continue
+		}
+		lines[key] = &StatementInvoiceLine{Fee: state.StatementFeeBase, Label: label, AmountMillicents: fee.AmountMillicents}
 	}
 	return finishStatementInvoice(inv, lines, doc.AmountMillicents)
 }

@@ -238,6 +238,17 @@ func renderManCommand(w io.Writer, c cliCommand) {
 		})
 	}
 	manSection(w, "SEE ALSO", func(w io.Writer) {
+		related := cliSeeAlso(c.Name, customerCliCommands())
+		for i, command := range related {
+			separator := ","
+			if i == len(related)-1 {
+				separator = ""
+			}
+			_, _ = fmt.Fprintf(w, ".BR gregale-%s (1)%s\n", command.Name, separator)
+		}
+		if len(related) > 0 {
+			_, _ = fmt.Fprintln(w, ".PP")
+		}
 		_, _ = fmt.Fprintf(w, ".UR %s\n", cliDocsURL)
 		_, _ = fmt.Fprintf(w, "gregale %s (docs)\n", c.Name)
 		_, _ = fmt.Fprintln(w, ".UE")

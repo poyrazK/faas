@@ -77,10 +77,11 @@ func productGrant(catalog api.ProductCatalog, customer api.ProductCustomer, feat
 }
 
 func productReceipt(catalog api.ProductCatalog, customer api.ProductCustomer, feature string, grant api.ProductFeatureGrant, starts int64, op Operation, now time.Time) *api.ProductOperationReceipt {
+	// An included start is admitted at price 0 (ADR-20261021154511).
 	return &api.ProductOperationReceipt{Revision: catalog.Revision, Feature: feature, Plan: customer.Plan, Currency: catalog.Spec.Currency,
-		Period: productcontrol.Period(now), UnitPriceMillicents: grant.UnitPriceMillicents, AdmittedAt: now,
+		Period: productcontrol.Period(now), UnitPriceMillicents: grant.StartPriceMillicents(starts), AdmittedAt: now,
 		Admission: &api.ProductAdmissionEvidence{DefinitionID: op.DefinitionID, DefinitionRevision: op.DefinitionRevision, DeploymentID: op.DeploymentID,
-			ReleaseID: op.ReleaseID, Scope: op.Scope, Name: op.Name, MonthlyStarts: grant.MonthlyStarts, StartsBefore: starts}}
+			ReleaseID: op.ReleaseID, Scope: op.Scope, Name: op.Name, MonthlyStarts: grant.MonthlyStarts, StartsBefore: starts, IncludedStarts: grant.IncludedStarts}}
 }
 
 func productCatalogError(err error) error { return fmt.Errorf("%w: %w", ErrInvalidArgument, err) }
@@ -101,7 +102,7 @@ func productUsageLines(lines map[string]api.ProductUsageLine) []api.ProductUsage
 // Both stores call this inside the Operations admission transaction, after
 // checking the independent Product Control idempotency namespace.
 func prepareProductReceipt(op *Operation, admission OperationAdmission, catalog api.ProductCatalog, customer api.ProductCustomer, grant api.ProductFeatureGrant, starts int64, now time.Time) error {
-	quote := productcontrol.Quote(op.AccountID, op.AppID, op.PlatformTenantID, admission.ProductFeature, catalog, customer, productcontrol.Period(now))
+	quote := productcontrol.Quote(op.AccountID, op.AppID, op.PlatformTenantID, admission.ProductFeature, catalog, customer, productcontrol.Period(now), starts)
 	if (admission.RequireProductQuote || admission.ExpectedProductQuote != "") && admission.ExpectedProductQuote != quote {
 		return ErrProductQuoteChanged
 	}

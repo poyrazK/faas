@@ -74,12 +74,12 @@ func productCustomerConsent(t *testing.T, s state.ProductContractStore) {
 	if _, err := s.ProductCustomerByAuthOrganization(ctx, uuid.NewString(), app.ID, org); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("foreign mapping: %v", err)
 	}
-	quote := productcontrol.Quote(account.ID, app.ID, tenant.ID, "export", catalog, customer, productcontrol.Period(time.Now()))
+	quote := productcontrol.Quote(account.ID, app.ID, tenant.ID, "export", catalog, customer, productcontrol.Period(time.Now()), 0)
 	req := state.OperationAdmission{AccountID: account.ID, PlatformTenantID: tenant.ID, DefinitionID: def.ID, ProductFeature: "export", ProductControlEnabled: true, RequireProductQuote: true, ProductAuthOrganizationID: org, ProductAuthApp: spec.AuthApp, Input: json.RawMessage(`{}`), IdempotencyKey: "consented"}
 	if _, _, err := s.AdmitOperation(ctx, req); !errors.Is(err, state.ErrProductQuoteChanged) {
 		t.Fatalf("unconfirmed admission: %v", err)
 	}
-	req.ExpectedProductQuote = productcontrol.Quote(account.ID, app.ID, other.ID, "export", catalog, customer, productcontrol.Period(time.Now()))
+	req.ExpectedProductQuote = productcontrol.Quote(account.ID, app.ID, other.ID, "export", catalog, customer, productcontrol.Period(time.Now()), 0)
 	if _, _, err := s.AdmitOperation(ctx, req); !errors.Is(err, state.ErrProductQuoteChanged) {
 		t.Fatalf("foreign quote admission: %v", err)
 	}
@@ -138,7 +138,7 @@ func productCustomerConsent(t *testing.T, s state.ProductContractStore) {
 	if _, err := s.SetProductCustomer(ctx, account.ID, app.ID, customer); err != nil {
 		t.Fatal(err)
 	}
-	stale.ExpectedProductQuote = productcontrol.Quote(account.ID, app.ID, tenant.ID, "export", newer, customer, productcontrol.Period(time.Now()))
+	stale.ExpectedProductQuote = productcontrol.Quote(account.ID, app.ID, tenant.ID, "export", newer, customer, productcontrol.Period(time.Now()), 1)
 	second, created, err := s.AdmitOperation(ctx, stale)
 	if err != nil || !created || second.ProductControl.UnitPriceMillicents != 50000 {
 		t.Fatalf("reconfirmed admission: %+v %t %v", second, created, err)

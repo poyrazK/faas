@@ -11,6 +11,42 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const billingRunDiscoverProductFeeItems = `-- name: BillingRunDiscoverProductFeeItems :exec
+INSERT INTO billing_run_product_items(run_id,app_id,tenant_id,external_ref,next_attempt_at,updated_at)
+SELECT DISTINCT $1::uuid,a.app_id,a.tenant_id,p.external_ref,$2::timestamptz,$2::timestamptz
+FROM product_control_plan_history a
+JOIN product_control_heads h ON h.account_id=a.account_id AND h.app_id=a.app_id
+JOIN product_control_revisions v ON v.app_id=a.app_id AND v.revision=a.revision
+JOIN platform_tenants p ON p.account_id=a.account_id AND p.id=a.tenant_id
+WHERE a.account_id=$3::uuid AND a.effective_at < $4::timestamptz
+  AND COALESCE((v.spec->'plans'->a.plan->>'monthly_fee_millicents')::bigint, 0) > 0
+  AND NOT EXISTS (SELECT 1 FROM product_control_plan_history l
+    WHERE l.app_id=a.app_id AND l.tenant_id=a.tenant_id AND l.effective_at > a.effective_at AND l.effective_at <= $5::timestamptz)
+ON CONFLICT DO NOTHING
+`
+
+type BillingRunDiscoverProductFeeItemsParams struct {
+	RunID      pgtype.UUID
+	Now        pgtype.Timestamptz
+	AccountID  pgtype.UUID
+	MonthEnd   pgtype.Timestamptz
+	MonthStart pgtype.Timestamptz
+}
+
+// Each customer who held a plan with a monthly fee in the run's month, with
+// or without runs (ADR-20261021154511): the assignment in force when the
+// month starts, or one made during it.
+func (q *Queries) BillingRunDiscoverProductFeeItems(ctx context.Context, db DBTX, arg BillingRunDiscoverProductFeeItemsParams) error {
+	_, err := db.Exec(ctx, billingRunDiscoverProductFeeItems,
+		arg.RunID,
+		arg.Now,
+		arg.AccountID,
+		arg.MonthEnd,
+		arg.MonthStart,
+	)
+	return err
+}
+
 const billingRunDiscoverProductItems = `-- name: BillingRunDiscoverProductItems :exec
 
 INSERT INTO billing_run_product_items(run_id,app_id,tenant_id,external_ref,next_attempt_at,updated_at)

@@ -155,6 +155,10 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 	if err != nil {
 		return nil, nil, nil, err
 	}
+	resolved, sources, linkWarnings, err := resolveComposeLinks(fsys, resolved, sources)
+	if err != nil {
+		return nil, nil, nil, err
+	}
 	src = strings.Join(sources, " + ")
 	var c composeDoc
 	if err := yaml.Unmarshal(resolved, &c); err != nil {
@@ -191,9 +195,7 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 		managed  []Managed
 		warnings []string
 	)
-	if warning := composeIncludeWarning(rawDoc, src); warning != "" {
-		warnings = append(warnings, warning)
-	}
+	warnings = append(warnings, linkWarnings...)
 	composeEnv, envErr := readComposeEnv(fsys)
 	if envErr != nil {
 		return nil, nil, nil, envErr
@@ -305,7 +307,7 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 			continue
 		}
 		rawService, _ := rawServices[name].(map[string]any)
-		for _, warning := range composeServiceKeyWarnings(rawService, rawServices) {
+		for _, warning := range composeServiceKeyWarnings(rawService) {
 			warnings = append(warnings, "reposcan: "+src+": "+name+": "+warning)
 		}
 		var healthcheck *api.ComposeHealthcheck

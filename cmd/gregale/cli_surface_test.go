@@ -13,10 +13,11 @@ import (
 )
 
 func TestTopLevelUsageGroupsCustomerCommands(t *testing.T) {
-	out := main.TopLevelUsage(false)
+	out := main.TopLevelUsage(false, false)
 	for _, want := range []string{
 		"Get started:",
 		"Examples:",
+		"gregale deploy --preview",
 		"Run 'gregale help --all'",
 	} {
 		if !strings.Contains(out, want) {
@@ -38,19 +39,90 @@ func TestTopLevelUsageGroupsCustomerCommands(t *testing.T) {
 	}
 }
 
-func TestTopLevelUsageAllKeepsCompatibilityAliasesDiscoverable(t *testing.T) {
-	out := main.TopLevelUsage(true)
-	if !strings.Contains(out, "Advanced/operator compatibility:") {
-		t.Fatalf("--all help missing advanced section:\n%s", out)
+// operatorCommands are callable but listed only by `help --all --operator`.
+var operatorCommands = []string{"admin", "commit", "data-repair", "entities", "github-webhook-secret", "mail", "postgres", "product", "rollouts", "tenant-surfaces"}
+
+func TestTopLevelUsageAllFollowsTheCustomerJourney(t *testing.T) {
+	out := main.TopLevelUsage(true, false)
+	sections := []string{"Get started:", "Develop & deploy:", "Operate & observe:", "Configure:", "Async & data:", "Account & billing:"}
+	last := -1
+	for _, section := range sections {
+		at := strings.Index(out, "\n"+section+"\n")
+		if at < 0 {
+			t.Fatalf("--all help omits %q:\n%s", section, out)
+		}
+		if at < last {
+			t.Errorf("--all help lists %q out of journey order", section)
+		}
+		last = at
 	}
-	for _, section := range []string{"Customer commands:", "Core:", "API:", "Data:", "Delivery:", "Observe:"} {
-		if !strings.Contains(out, section) {
-			t.Errorf("--all help omits %q", section)
+	for _, tc := range []struct{ command, section string }{
+		{"start", "Get started:"}, {"deploy", "Develop & deploy:"}, {"logs", "Operate & observe:"},
+		{"secrets", "Configure:"}, {"crons", "Async & data:"}, {"billing", "Account & billing:"},
+	} {
+		section := strings.Index(out, "\n"+tc.section+"\n")
+		end := strings.Index(out[section+1:], "\n\n") + section + 1
+		if !strings.Contains(out[section:end], "\n  "+tc.command+" ") {
+			t.Errorf("--all help does not list %q under %q", tc.command, tc.section)
 		}
 	}
-	for _, command := range []string{"admin", "mail", "postgres", "rollouts", "github-webhook-secret", "tenant-surfaces", "product"} {
-		if !strings.Contains(out, "  "+command+" ") {
-			t.Errorf("--all help omits compatibility command %q", command)
+	for _, command := range operatorCommands {
+		if strings.Contains(out, "\n  "+command+" ") {
+			t.Errorf("--all help lists operator command %q to customers", command)
+		}
+	}
+	for _, unwanted := range []string{"Customer commands:", "Advanced", "Other:", "Operator and compatibility:"} {
+		if strings.Contains(out, unwanted) {
+			t.Errorf("--all help contains %q", unwanted)
+		}
+	}
+	if !strings.Contains(out, "gregale help --all --operator") {
+		t.Error("--all help does not say how to list operator commands")
+	}
+}
+
+func TestTopLevelUsageOperatorKeepsCompatibilityCommandsDiscoverable(t *testing.T) {
+	out := main.TopLevelUsage(true, true)
+	section := strings.Index(out, "\nOperator and compatibility:\n")
+	if section < 0 {
+		t.Fatalf("operator help missing its section:\n%s", out)
+	}
+	for _, command := range operatorCommands {
+		if !strings.Contains(out[section:], "\n  "+command+" ") {
+			t.Errorf("operator help omits %q", command)
+		}
+	}
+	if !strings.Contains(out, "\nGet started:\n") {
+		t.Error("operator help drops the customer groups")
+	}
+}
+
+func TestRootHelpFlagsSelectTheView(t *testing.T) {
+	oldOut := (*main.OsStdout)
+	t.Cleanup(func() { (*main.OsStdout) = oldOut })
+	for _, tc := range []struct {
+		args           []string
+		all, operators bool
+	}{
+		{[]string{"help"}, false, false},
+		{[]string{"--help"}, false, false},
+		{[]string{"help", "--help"}, false, false},
+		{[]string{"help", "--all"}, true, false},
+		{[]string{"--help", "--all"}, true, false},
+		{[]string{"help", "--all", "--operator"}, true, true},
+		{[]string{"help", "--operator", "--all"}, true, true},
+		{[]string{"help", "--operator"}, true, true},
+	} {
+		var out bytes.Buffer
+		(*main.OsStdout) = &out
+		if code := main.Run(tc.args); code != 0 {
+			t.Fatalf("%v exit = %d", tc.args, code)
+		}
+		if got := strings.Contains(out.String(), "\nAsync & data:\n"); got != tc.all {
+			t.Errorf("%v lists every command = %v, want %v", tc.args, got, tc.all)
+		}
+		if got := strings.Contains(out.String(), "\nOperator and compatibility:\n"); got != tc.operators {
+			t.Errorf("%v lists operator commands = %v, want %v", tc.args, got, tc.operators)
 		}
 	}
 }
@@ -79,7 +151,7 @@ func TestApplicationAuthStaysOutOfEveryCustomerSurface(t *testing.T) {
 		t.Fatal("lookup finds the auth command")
 	}
 	var surfaces bytes.Buffer
-	surfaces.WriteString(main.TopLevelUsage(true))
+	surfaces.WriteString(main.TopLevelUsage(true, true))
 	main.RenderMarkdownReference(&surfaces, main.CustomerCliCommands())
 	for _, shell := range []string{"bash", "zsh", "fish", "powershell"} {
 		oldOut := (*main.OsStdout)
@@ -315,6 +387,11 @@ func TestDeployManifestIncludesEveryParserFlag(t *testing.T) {
 				}
 				return true
 			}
+			// resourceSizeFlag(fs, ...) defines --size and its deprecated --profile.
+			if ident, isIdent := call.Fun.(*ast.Ident); isIdent && ident.Name == "resourceSizeFlag" {
+				parsed["size"], parsed["profile"] = true, true
+				return true
+			}
 			sel, ok := call.Fun.(*ast.SelectorExpr)
 			if !ok {
 				return true
@@ -323,7 +400,7 @@ func TestDeployManifestIncludesEveryParserFlag(t *testing.T) {
 			if !ok || receiver.Name != "fs" {
 				return true
 			}
-			if sel.Sel.Name == "Var" && len(call.Args) > 1 {
+			if (sel.Sel.Name == "Var" || sel.Sel.Name == "BoolVar" || sel.Sel.Name == "StringVar") && len(call.Args) > 1 {
 				if literal, ok := call.Args[1].(*ast.BasicLit); ok {
 					name, err := strconv.Unquote(literal.Value)
 					if err != nil {
