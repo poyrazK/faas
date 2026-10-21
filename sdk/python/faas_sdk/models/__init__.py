@@ -1354,6 +1354,7 @@ from .durable_entity_validator_deployment_info import DurableEntityValidatorDepl
 from .durable_entity_validator_deployment_info_source import DurableEntityValidatorDeploymentInfoSource
 from .durable_entity_validator_deployment_info_status import DurableEntityValidatorDeploymentInfoStatus
 from .edge_protection_response import EdgeProtectionResponse
+from .edge_protection_response_challenge import EdgeProtectionResponseChallenge
 from .edge_protection_response_pre_auth import EdgeProtectionResponsePreAuth
 from .edge_protection_response_range import EdgeProtectionResponseRange
 from .edge_protection_response_rejections_item import EdgeProtectionResponseRejectionsItem
@@ -1391,6 +1392,8 @@ from .edge_rule_maintenance_action import EdgeRuleMaintenanceAction
 from .edge_rule_match_expr import EdgeRuleMatchExpr
 from .edge_rule_match_expr_op import EdgeRuleMatchExprOp
 from .edge_rule_recipe_suggestion import EdgeRuleRecipeSuggestion
+from .edge_rule_recipe_suggestion_alternative import EdgeRuleRecipeSuggestionAlternative
+from .edge_rule_recipe_suggestion_alternative_params import EdgeRuleRecipeSuggestionAlternativeParams
 from .edge_rule_recipe_suggestion_params import EdgeRuleRecipeSuggestionParams
 from .edge_rule_recipe_suggestions_response import EdgeRuleRecipeSuggestionsResponse
 from .edge_rule_redirect_action import EdgeRuleRedirectAction
@@ -7287,6 +7290,7 @@ __all__ = (
     "DurableEntityValidatorDeploymentInfoSource",
     "DurableEntityValidatorDeploymentInfoStatus",
     "EdgeProtectionResponse",
+    "EdgeProtectionResponseChallenge",
     "EdgeProtectionResponsePreAuth",
     "EdgeProtectionResponseRange",
     "EdgeProtectionResponseRejectionsItem",
@@ -7324,6 +7328,8 @@ __all__ = (
     "EdgeRuleMatchExpr",
     "EdgeRuleMatchExprOp",
     "EdgeRuleRecipeSuggestion",
+    "EdgeRuleRecipeSuggestionAlternative",
+    "EdgeRuleRecipeSuggestionAlternativeParams",
     "EdgeRuleRecipeSuggestionParams",
     "EdgeRuleRecipeSuggestionsResponse",
     "EdgeRuleRedirectAction",

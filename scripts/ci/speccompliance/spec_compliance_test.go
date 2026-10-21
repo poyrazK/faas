@@ -622,6 +622,7 @@ var dtoExclude = map[string]bool{
 	"EdgeRuleEventsQuery": true,
 	// Edge-protection summary parts are inline objects of
 	// EdgeProtectionResponse in the spec, not named schemas.
+	"EdgeProtectionChallenge": true,
 	"EdgeProtectionCount":     true,
 	"EdgeProtectionPreAuth":   true,
 	"EdgeProtectionRejection": true,
