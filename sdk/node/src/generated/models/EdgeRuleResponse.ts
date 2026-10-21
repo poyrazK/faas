@@ -86,5 +86,9 @@ export type EdgeRuleResponse = {
    * enforce (default) or log; a log-mode rule is matched and counted but never acts.
    */
   mode?: 'enforce' | 'log';
+  /**
+   * Set on the app's attack-mode rule (ADR-20261021220456), which changes only through /v1/apps/{slug}/edge-protection/attack-mode; PATCH refuses it. Absent on every other rule.
+   */
+  managed_by?: 'attack_mode';
 };
 

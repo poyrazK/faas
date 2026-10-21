@@ -1646,6 +1646,7 @@ var RenderDeploymentRowWide = renderDeploymentRowWide
 var RenderDiffPreviewJSON = renderDiffPreviewJSON
 var RenderDoctorHuman = renderDoctorHuman
 var RenderDoctorImage = renderDoctorImage
+var RenderEdgeAttackMode = renderEdgeAttackMode
 var RenderEdgeProtection = renderEdgeProtection
 var RenderEdgeRuleTrace = renderEdgeRuleTrace
 var RenderEnvDiffCell = renderEnvDiffCell

@@ -137,10 +137,15 @@ func (m *MemStore) RestoreEdgeRuleSetVersion(ctx context.Context, appID string, 
 			seen[r.MatchHost] = struct{}{}
 			previousHosts = append(previousHosts, r.MatchHost)
 		}
-		delete(m.edgeRules, id)
+		if !r.AttackMode() {
+			delete(m.edgeRules, id)
+		}
 	}
 	now := time.Now()
 	for _, r := range target.Rules {
+		if r.AttackMode() {
+			continue
+		}
 		r.UpdatedAt = now
 		r.MatchHeaders = cloneEdgeRuleMatchHeaders(r.MatchHeaders)
 		m.edgeRules[r.ID] = r

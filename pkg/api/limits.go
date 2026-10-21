@@ -6357,6 +6357,16 @@ const (
 	// solved and submitted.
 	EdgeChallengeTokenTTLSeconds = 300
 
+	// --- ADR-20261021220456: attack mode ------------------------------
+
+	// EdgeAttackModeDefaultSeconds is how long attack mode stays on when
+	// the request names no duration; Min/Max bound the choice. Attack mode
+	// always ends on its own, so a forgotten switch cannot keep
+	// challenging every visitor for days. Every plan may use it.
+	EdgeAttackModeDefaultSeconds = 3600
+	MinEdgeAttackModeSeconds     = 900
+	MaxEdgeAttackModeSeconds     = 86400
+
 	// --- ADR-201 §2: kind=circuit_breaker bounds ----------------------
 
 	// EdgeRuleCircuitDefaultFailureThreshold is the failure ratio at or

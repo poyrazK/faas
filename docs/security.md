@@ -391,6 +391,38 @@ In log mode the rule's matches appear as `logged` events instead.
 gregale edge-rules events --app my-site --outcome rejected
 ```
 
+## Attack mode
+
+Attack mode is one switch for when an app is flooded from too many
+addresses for rules to keep up. While it is on, every request to every host
+of the app is challenged the way a `kind=challenge` rule challenges it:
+
+- Browsers solve the short check once and continue for an hour.
+- Verified search crawlers and requests with a verified API key, consumer
+  key or JWT pass straight through.
+- Every other client gets `403` with code `challenge_required`. That
+  includes scripts, uptime checks and webhooks from other services, so
+  switch it off once the attack is over.
+
+It is available on every plan, including Free, and does not count against
+the app's edge-rule limits. It always ends on its own after the time you
+choose, from 15 minutes to 24 hours (one hour by default). Switching it on
+again while it is on moves the end.
+
+```sh
+gregale edge-rules attack-mode on --app my-site --for 1h
+gregale edge-rules attack-mode --app my-site       # is it on, and until when
+gregale edge-rules attack-mode off --app my-site
+```
+
+The dashboard's Edge protection panel has the same switch. Attack mode
+appears in the rules list as an app-wide challenge rule managed by attack
+mode. It cannot be edited there, a rule-set rollback leaves it alone, and
+deleting it switches attack mode off. Its challenges are counted in the
+edge protection summary and recorded as challenge security events. To keep
+part of an app open during an attack, use a challenge rule on the paths
+under attack instead.
+
 ## Outbound connections and DNS
 
 Workloads reach the internet by name. Outbound TCP is allowed only to addresses

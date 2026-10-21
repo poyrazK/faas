@@ -5119,6 +5119,27 @@ func (c *Client) GetAppEdgeProtection(ctx context.Context, slug, rng string) (Ed
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
+// GetAppEdgeAttackMode reads slug's attack mode (ADR-20261021220456).
+func (c *Client) GetAppEdgeAttackMode(ctx context.Context, slug string) (EdgeAttackModeStatus, error) {
+	var out EdgeAttackModeStatus
+	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/edge-protection/attack-mode", nil, &out)
+}
+
+// EnableAppEdgeAttackMode switches slug's attack mode on for
+// durationSeconds from now, or moves the end of an active one. Zero applies
+// the server's default.
+func (c *Client) EnableAppEdgeAttackMode(ctx context.Context, slug string, durationSeconds int) (EdgeAttackModeStatus, error) {
+	var out EdgeAttackModeStatus
+	return out, c.do(ctx, "PUT", "/v1/apps/"+slug+"/edge-protection/attack-mode",
+		EnableEdgeAttackModeRequest{DurationSeconds: durationSeconds}, &out)
+}
+
+// DisableAppEdgeAttackMode switches slug's attack mode off.
+func (c *Client) DisableAppEdgeAttackMode(ctx context.Context, slug string) (EdgeAttackModeStatus, error) {
+	var out EdgeAttackModeStatus
+	return out, c.do(ctx, "DELETE", "/v1/apps/"+slug+"/edge-protection/attack-mode", nil, &out)
+}
+
 // AppWakeTimelineOptions controls the optional query params for
 // GetAppWakeTimeline. Since and Until are RFC3339Nano strings (NOT
 // time.Time — the wire form is the canonical string so caller-side

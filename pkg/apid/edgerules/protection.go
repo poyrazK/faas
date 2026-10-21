@@ -47,6 +47,9 @@ func (s *Service) AppEdgeProtection(ctx context.Context, app state.App, rng stri
 		Rejections:         []api.EdgeProtectionRejection{},
 		WAF:                api.NewEdgeProtectionWAF(),
 	}
+	if row, err := s.attackModeRule(ctx, app.ID); err == nil {
+		resp.AttackMode = AttackModeStatus(row, time.Now())
+	}
 	if s.Host.PromQL() == nil {
 		resp.Source = appmetrics.SourceDegradedPrefix + "prometheus not configured"
 		return resp
@@ -61,7 +64,7 @@ func (s *Service) AppEdgeProtection(ctx context.Context, app state.App, rng stri
 			degraded := api.EdgeProtectionResponse{AppID: resp.AppID, Range: rng, AsOf: resp.AsOf,
 				Source:             appmetrics.SourceDegradedPrefix + "prometheus unavailable",
 				ValidationFailures: []api.EdgeProtectionCount{}, Rejections: []api.EdgeProtectionRejection{},
-				WAF: api.NewEdgeProtectionWAF()}
+				WAF: api.NewEdgeProtectionWAF(), AttackMode: resp.AttackMode}
 			return degraded
 		}
 		for _, sample := range samples {

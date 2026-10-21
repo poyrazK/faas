@@ -277,7 +277,8 @@ func projectDashboardEdgeRules(rows []state.EdgeRule) []dashboard.EdgeRulePageIt
 			CreatedAt: dashboardJobsTime(row.CreatedAt), UpdatedAt: dashboardJobsTime(row.UpdatedAt),
 			SecurityPreset: isSecurityHeadersRule(row),
 			Name:           row.Name, Mode: edgeRuleModeOrDefault(row.Mode),
-			AppWide: api.IsEdgeRuleAppHosts(row.MatchHost),
+			AppWide:    api.IsEdgeRuleAppHosts(row.MatchHost),
+			AttackMode: row.AttackMode(),
 		}
 		items = append(items, item)
 	}
@@ -327,7 +328,7 @@ func edgeRuleActionSummary(rule state.EdgeRule) string {
 func dashboardEdgeRulesActionFlash(r *http.Request) string {
 	switch r.URL.Query().Get("action") {
 	case "created", "updated", "deleted", "security_headers_enabled", "mode_enforce", "mode_log", "recipe_log", "recipe_enforce",
-		"recipe_log_alert", "recipe_enforce_alert", "recipe_alert_failed":
+		"recipe_log_alert", "recipe_enforce_alert", "recipe_alert_failed", "attack_mode_on", "attack_mode_off":
 		return r.URL.Query().Get("action")
 	case "error":
 		return "error"

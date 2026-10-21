@@ -2268,6 +2268,11 @@ func (s *server) handler() http.Handler {
 	// optional pre-auth guard can be configured, including Free.
 	mux.HandleFunc("GET /v1/apps/{slug}/pre-auth-observations", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppPreAuthObservations)))
 	mux.HandleFunc("GET /v1/apps/{slug}/edge-protection", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.edgeRules.GetAppEdgeProtection)))
+	// Attack mode (ADR-20261021220456): the emergency switch carries the
+	// same scopes and MFA step-up as an edge-rule write.
+	mux.HandleFunc("GET /v1/apps/{slug}/edge-protection/attack-mode", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.edgeRules.GetAppEdgeAttackMode))))
+	mux.HandleFunc("PUT /v1/apps/{slug}/edge-protection/attack-mode", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.edgeRules.EnableAppEdgeAttackMode))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/edge-protection/attack-mode", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.edgeRules.DisableAppEdgeAttackMode))))
 	// Per-app dashboard JSON mirror — wire-friendly emission of the
 	// same shape the dashboard HTML page renders (cmd/apid/
 	// handlers_dashboard.go:2548 renderAppWakeTimeline). Auth chain
@@ -4837,6 +4842,7 @@ func (s *server) handler() http.Handler {
 	// The recipe id is a form field: a path segment would conflict with
 	// /edge-rules/{id}/toggle.
 	mux.Handle("POST /dashboard/apps/{slug}/edge-rules/recipes", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardApplyEdgeRuleRecipe))))
+	mux.Handle("POST /dashboard/apps/{slug}/edge-protection/attack-mode", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardSetEdgeAttackMode))))
 	// G7 / issue #1397 — queue dead-letter replay. The handler verifies
 	// the dashboard's named CSRF envelope before delegating to the same
 	// account-scoped store transition as the JSON API endpoint.

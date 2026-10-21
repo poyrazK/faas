@@ -1103,6 +1103,9 @@ type EdgeRulePageItem struct {
 	SecurityPreset bool
 	// AppWide is set for a match_host "@app" rule (ADR-1191).
 	AppWide bool
+	// AttackMode is set for the app's attack-mode rule
+	// (ADR-20261021220456), which changes only through its switch.
+	AttackMode bool
 	// ADR-960/964: name, mode and 24 h hit counts.
 	Name       string
 	Mode       string

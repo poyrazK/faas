@@ -3480,6 +3480,14 @@ var cliCommands = []cliCommand{
 				{Name: "app", Short: "app slug", Value: "slug", Req: true},
 				{Name: "range", Short: "time window (default 1h)", Value: "WINDOW", ClosedSet: appmetrics.Ranges()},
 			}},
+			{Name: "attack-mode", Short: "Switch attack mode on, off, or show it: challenge every visitor to the app for a while (15m to 24h); clients that are not browsers need a verified API key or JWT", Positionals: []string{"[on|off|status]"}, Examples: []string{
+				"gregale edge-rules attack-mode on --app my-api --for 1h",
+				"gregale edge-rules attack-mode --app my-api",
+				"gregale edge-rules attack-mode off --app my-api",
+			}, Flags: []cliFlag{
+				{Name: "app", Short: "app slug (defaults to linked project context)", Value: "slug"},
+				{Name: "for", Short: "with on: how long attack mode stays on (default 1h, 15m to 24h)", Value: "DURATION"},
+			}},
 			{Name: "trace", Short: "Simulate composed edge-rule outcomes and budget, throttle, retry, circuit-breaker, and async-route policy; --config loads reusable JSON scenarios (see edge-rule-trace docs)", Flags: []cliFlag{
 				{Name: "config", Short: "load a versioned JSON scenario (headers array; body or body_base64); - reads stdin and is exclusive with request flags", Value: "file|-"},
 				{Name: "app", Short: "app slug (required unless --config is used)", Value: "slug"},
