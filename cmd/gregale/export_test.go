@@ -257,6 +257,7 @@ type ServiceBindingProbeBatchItem = serviceBindingProbeBatchItem
 type ServiceBindingProbeBatchReport = serviceBindingProbeBatchReport
 type Shape = shape
 type SourceRefAppPolicy = sourceRefAppPolicy
+type StartPendingSubmission = startPendingSubmission
 type StartRunner = startRunner
 type TestActionEvidence = testActionEvidence
 type TestActionSpec = testActionSpec
@@ -832,6 +833,7 @@ var CmdDomainsShow = cmdDomainsShow
 var CmdDomainsVerify = cmdDomainsVerify
 var CmdEdgeRuleLists = cmdEdgeRuleLists
 var CmdEdgeRules = cmdEdgeRules
+var EdgeRuleTrend = edgeRuleTrend
 var CmdEdgeRulesCreate = cmdEdgeRulesCreate
 var CmdEdgeRulesGet = cmdEdgeRulesGet
 var CmdEdgeRulesList = cmdEdgeRulesList
@@ -1825,7 +1827,7 @@ var SortedKeys = sortedKeys
 var SplitArgsForFlags = splitArgsForFlags
 var SplitCSV = splitCSV
 var SplitJobLogFollow = splitJobLogFollow
-var StageManifestProfiling = stageManifestProfiling
+var StartContextSessionPath = startContextSessionPath
 var StartMCPNativeRelease = startMCPNativeRelease
 var StartRequiredConfiguration = startRequiredConfiguration
 var StartSessionPath = startSessionPath
@@ -1982,8 +1984,10 @@ var WithBindingProgress = withBindingProgress
 var WithBindingVerificationBudget = withBindingVerificationBudget
 var WithBindingVerificationSlot = withBindingVerificationSlot
 var WithCwd = withCwd
+var WithFixtureCronStaging = withFixtureCronStaging
 var WithGetErr = withGetErr
 var WithRecorder = withRecorder
+var WithResetJSONOutput = withResetJSONOutput
 var WithTTYForTest = withTTYForTest
 var WithoutConfirmationFlags = withoutConfirmationFlags
 var WorkerReplicaBounds = workerReplicaBounds
@@ -2000,6 +2004,7 @@ var WriteDataAPIDiagnostics = writeDataAPIDiagnostics
 var WriteDataAPIPool = writeDataAPIPool
 var WriteDataAPITimings = writeDataAPITimings
 var WriteDataAPITypes = writeDataAPITypes
+var WriteDeploySourceArchive = writeDeploySourceArchive
 var WriteFile = writeFile
 var WriteGitOpsPlanMarkdown = writeGitOpsPlanMarkdown
 var WriteJSON = writeJSON
@@ -2178,10 +2183,6 @@ func (r *loadedAutomationScenario) Scenario() *automationScenario           { re
 
 // Members of manifestCronTransaction
 func (r *manifestCronTransaction) Steps() *[]manifestCronRollbackStep { return &r.steps }
-
-// Members of manifestProfilingTransaction
-func (r *manifestProfilingTransaction) Committed() *bool                  { return &r.committed }
-func (r *manifestProfilingTransaction) Rollback(p0 context.Context) error { return r.rollback(p0) }
 
 // Members of mcpReleaseAuthorization
 func (r *mcpReleaseAuthorization) InsufficientToken() *string { return &r.insufficientToken }

@@ -71,6 +71,29 @@ func appHealthKey(a api.AppHealthResponse) (string, error) {
 	return hex.EncodeToString(digest[:]), nil
 }
 
+// appHealthNextCheck spaces the next observation of an app. A quiet app keeps
+// its fresh assessment (no history entry), has known capacity with no
+// instances and no required capacity, and counted no requests, so only a
+// deploy or a wake can change it; it is observed every
+// AppHealthCollectorQuietInterval instead of AppHealthCollectorInterval
+// (ADR-734 amendment 1). Unknown request evidence does not prevent quiet: an
+// idle app has no request series, so its request check is
+// request_evidence_unavailable (status unknown) on every observation, the same
+// as during a Prometheus outage, and observing it sooner learns nothing new.
+// Unknown capacity (a failed instance read) keeps the short interval.
+// Production-us had 103 apps, one with a live instance; 84 idle apps were
+// unknown only for request evidence.
+func appHealthNextCheck(entries []api.AppHealthHistoryEntry, a api.AppHealthResponse) time.Duration {
+	c := a.Capacity
+	quiet := len(entries) == 0 &&
+		c.Known && c.Required == 0 && c.Ready+c.Starting+c.Unready+c.Unknown == 0 &&
+		(a.Requests == nil || a.Requests.RequestCount == 0)
+	if quiet {
+		return api.AppHealthCollectorQuietInterval
+	}
+	return api.AppHealthCollectorInterval
+}
+
 func prepareAppHealth(claim AppHealthClaim, a api.AppHealthResponse, now time.Time) (string, []byte, error) {
 	at, err := time.Parse(time.RFC3339Nano, a.EvaluatedAt)
 	if err != nil || a.AppID != claim.AppID || a.Scope != "default" || at.Before(claim.StartedAt) || at.After(now) || a.ValidForSeconds < 1 || a.ValidForSeconds > int(api.AppHealthEvidenceMaxAge/time.Second) {

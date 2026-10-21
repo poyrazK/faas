@@ -46,7 +46,7 @@
 - **Consequences:**
   - **A refused response can overshoot slightly.** The provider has already started generating it when `response.created` arrives, and anything it generates before the connection closes is not seen. This is bounded by the time to close, milliseconds.
   - **Responses that outlive their lease** (longer than the integration's request timeout) still settle under the lease's key; only their in-flight slot is freed early.
-  - **Gemini and Vertex Live stay unmetered.** Google documents `usageMetadata` only as "usage metadata about response(s)" and as sent "periodically". Vertex's reference calls it the session's usage so far, while developers report per-turn values that re-bill the context. Metering on a guess would let caps admit up to twice the spend, or refuse half of it. They need a measured session against a real key first.
+  - **Gemini and Vertex Live stay unmetered** (superseded by ADR 20261020161811, which meters them after a measured session). Google documents `usageMetadata` only as "usage metadata about response(s)" and as sent "periodically". Vertex's reference calls it the session's usage so far, while developers report per-turn values that re-bill the context. Metering on a guess would let caps admit up to twice the spend, or refuse half of it. They need a measured session against a real key first.
   - **Per-second models are not token-priced.** Models priced per session second (`gpt-live-1`, `gpt-realtime-translate`) have no token prices; like other unpriced models, they settle tokens with no cost, so cost caps do not bound them.
   - **New columns:**
     - `outbound_ai_price_entries.input_audio_millicents_per_mtok`, `cached_input_audio_millicents_per_mtok` and `output_audio_millicents_per_mtok`;

@@ -227,6 +227,11 @@ type Loop struct {
 	tenantWorkflowScheduleFailed      bool
 	workflowOrch                      *WorkflowOrchestrator
 	workflowRetention                 *WorkflowRetention
+
+	// triggerHealthMu guards triggerHealthLast, the last consumer health row
+	// written per trigger (trigger_health_throttle.go).
+	triggerHealthMu   sync.Mutex
+	triggerHealthLast map[string]triggerHealthWrite
 }
 
 func NewLoop(pool *pgxpool.Pool, engine *Engine, log *slog.Logger) *Loop {
@@ -1140,7 +1145,7 @@ func (l *Loop) Run(ctx context.Context) error {
 	triggerT := time.NewTicker(time.Second)
 	defer triggerT.Stop()
 	// Event fanout has an advisory LISTEN wake and a durable outbox sweep.
-	eventFanoutT := time.NewTicker(5 * time.Second)
+	eventFanoutT := time.NewTicker(eventFanoutSafetyTick)
 	defer eventFanoutT.Stop()
 	l.dispatchEventFanoutSweep(ctx)
 	serviceRecoveryT := time.NewTicker(time.Duration(api.ServiceRecoveryPollIntervalSeconds) * time.Second)
@@ -2415,6 +2420,7 @@ func (l *Loop) runReaper(ctx context.Context) {
 		}
 	}
 	apps = owned
+	accounts := newReaperAccounts(store)
 	// pg_notify is a wakeup hint, not a durable queue. Reconcile parked apps,
 	// suspended accounts and accounts at their spend cap (ADR-1162) from the
 	// table source of truth on every reaper tick so a restart or missed
@@ -2426,7 +2432,7 @@ func (l *Loop) runReaper(ctx context.Context) {
 		}
 		mustPark := app.Status == state.AppEvictedCold
 		if !mustPark {
-			if account, accountErr := state.AppResourceAccount(ctx, store, app); accountErr == nil {
+			if account, accountErr := accounts.forApp(ctx, app); accountErr == nil {
 				mustPark = l.engine.appMustPark(ctx, app, account)
 			} else {
 				l.log.Warn("reaper: account lifecycle lookup", "app", app.ID, "account", app.AccountID, "err", accountErr)
@@ -2533,18 +2539,22 @@ func (l *Loop) runReaper(ctx context.Context) {
 			}
 		}
 	}
+	liveByApp := l.reaperLiveInstances(ctx, store, apps)
 	for _, a := range apps {
 		plan := api.Plan("")
-		if acct, err := state.AppResourceAccount(ctx, store, a); err == nil {
+		if acct, err := accounts.forApp(ctx, a); err == nil {
 			plan = acct.Plan
 		}
-		instances, err := store.ListInstancesForApp(ctx, a.ID)
-		if err != nil {
-			continue
+		instances := liveByApp[a.ID]
+		if liveByApp == nil {
+			if instances, err = store.ListInstancesForApp(ctx, a.ID); err != nil {
+				continue
+			}
 		}
 		for _, ins := range instances {
-			// ListInstancesForApp is also used by dashboard and audit
-			// surfaces, so it intentionally returns terminal rows. The
+			// The fallback ListInstancesForApp is also used by dashboard
+			// and audit surfaces, so it intentionally returns terminal
+			// rows, and the live listing still carries draining ones. The
 			// reaper must apply the same live-state filter as
 			// ListAllInstances before warming conntrack or asking for a
 			// flow count; terminal rows have no veth and can otherwise

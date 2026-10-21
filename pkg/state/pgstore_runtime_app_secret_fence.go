@@ -18,7 +18,10 @@ func runtimeAppSecretFenceDB(ctx context.Context, db pgx.Tx, accountID, appID, i
 			return "", runtimeSecretFenceError(err)
 		}
 	}
-	if _, err := queries.LockRuntimeSecretApp(ctx, db, sqlc.LockRuntimeSecretAppParams{AccountID: mustPgUUID(accountID), AppID: mustPgUUID(appID)}); err != nil {
+	// Secret writes also lock this app exclusively in the release-snapshot
+	// trigger. Acquire that lock before the revision to avoid SHARE upgrades
+	// while another reporter holds SHARE and waits for the revision.
+	if _, err := queries.LockRuntimeSecretAppExclusive(ctx, db, sqlc.LockRuntimeSecretAppExclusiveParams{AccountID: mustPgUUID(accountID), AppID: mustPgUUID(appID)}); err != nil {
 		return "", runtimeSecretFenceError(err)
 	}
 	// Process restarts lock the promotion revision before their observation

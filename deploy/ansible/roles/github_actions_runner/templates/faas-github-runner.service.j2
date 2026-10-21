@@ -14,6 +14,9 @@ RestartSec=5s
 TimeoutStopSec=5min
 KillMode=process
 UMask=0077
+# Deploy jobs share the split-box control plane with PostgreSQL; a low weight
+# yields CPU to the database under contention (roles/postgres raises its slice).
+CPUWeight={{ faas_runner_cpu_weight }}
 Environment=HOME={{ faas_runner_home }}
 Environment=RUNNER_ALLOW_RUNASROOT=0
 NoNewPrivileges=true

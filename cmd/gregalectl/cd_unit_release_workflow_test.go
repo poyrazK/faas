@@ -1,6 +1,10 @@
 package main
 
 import (
+	"encoding/json"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -105,13 +109,66 @@ func TestUnitLaneRestartsOnlyPlannedServicesOverTheExpectedRelease(t *testing.T)
 		"deployctl deploy --only '${only}' --expect-current ${expect} ${release_id}",
 		"ROLLOUT_ACTIVATION_MARKER",
 		"unit-release-verify.sh ${release_dir}${specs}",
-		"deployctl rollback --only '${only}'",
+		`deployctl rollback --only '${only}' $(rollback_flags "$plan")`,
 	)
-	for _, forbidden := range []string{"converge-control-plane", "kgv rotate", "fleet-seal"} {
-		if strings.Contains(helper, forbidden) {
-			t.Errorf("the unit lanes must leave %q to the full lane", forbidden)
+	ordinaryActivation := renderUnitActivationForContract(t, false)
+	for _, forbidden := range []string{"migrate", "converge-control-plane", "kgv rotate", "fleet-seal"} {
+		checked := helper
+		if forbidden == "migrate" {
+			// ADR-20261018084150 permits a signed expand-only data step.
+			// An ordinary unit plan must still generate no migration step.
+			checked = ordinaryActivation
+		}
+		if strings.Contains(checked, forbidden) {
+			t.Errorf("ordinary unit activation must leave %q to the full lane", forbidden)
 		}
 	}
+	orderedIn(t, "planned migration staging", helper,
+		`if jq -e '.replace["bin/migrate"]' "$plan" >/dev/null; then`,
+		`install -m 0755 "$units/tools/migrate" "$local_stage/bin/migrate"`,
+		"fi",
+	)
+	dataActivation := renderUnitActivationForContract(t, true)
+	orderedIn(t, "planned data step before activation", dataActivation,
+		"deployctl unit-overlay --release-id",
+		"bin/migrate=/var/tmp/gregale-units.Contract1/bin/migrate",
+		"deployctl deploy --only 'apid' --expect-current",
+		"unit-release-verify.sh",
+		"deployctl rollback --only 'apid'",
+	)
+}
+
+// Render the actual host script without executing it or contacting a host.
+func renderUnitActivationForContract(t *testing.T, dataStep bool) string {
+	t.Helper()
+	replacements := map[string]string{"bin/apid": "bin/apid", "bin/deployctl": "bin/deployctl"}
+	if dataStep {
+		replacements["bin/migrate"] = "bin/migrate"
+	}
+	plan := map[string]any{
+		"action": "deploy", "release_id": strings.Repeat("a", 40),
+		"expect_current": strings.Repeat("b", 40), "commit": strings.Repeat("c", 40),
+		"only": []string{"apid"}, "replace": replacements,
+		"verify": []string{"apid=http://127.0.0.1:9101/readyz"},
+	}
+	dir := t.TempDir()
+	raw, err := json.Marshal(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	planPath, scriptPath := filepath.Join(dir, "plan.json"), filepath.Join(dir, "activate.sh")
+	if err := os.WriteFile(planPath, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("bash", filepath.Join("..", "..", "scripts", "ci", "unit_deploy.sh"), "script", planPath, "/var/tmp/gregale-units.Contract1", scriptPath)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("render unit activation: %v: %s", err, output)
+	}
+	result, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(result)
 }
 
 // TestUnitLaneMigratesOnlyThroughDeployctl: the data step
@@ -337,5 +394,135 @@ func TestFullAndUnitLanesAreExclusive(t *testing.T) {
 	}
 	if got := strings.Count(workflow, "      units_run_id:\n"); got != 2 {
 		t.Errorf("units_run_id is declared %d times, want workflow_call and workflow_dispatch", got)
+	}
+}
+
+// TestUnitLanesFetchOnlyMainAndReleaseTags: the planners read main's history
+// and the v* tags. `fetch-depth: 0` downloads every branch instead (about
+// 4,000, 1.66 GB): on 2026-10-20 the first production unit deploy spent more
+// than 13 minutes in that checkout on the control-plane runner, against 15 s
+// for main and the tags without file contents.
+func TestUnitLanesFetchOnlyMainAndReleaseTags(t *testing.T) {
+	for _, wf := range []string{"release-units.yml", "cd-controlplane.yml", "cd-edge-units.yml", "cd-edge-node.yml"} {
+		workflow := readWorkflow(t, wf)
+		if strings.Contains(workflow, "fetch-depth: 0") {
+			t.Errorf("%s checks out every branch (fetch-depth: 0); use filter: blob:none and scripts/ci/fetch_release_history.sh", wf)
+		}
+		if !strings.Contains(workflow, "scripts/ci/fetch_release_history.sh") {
+			t.Errorf("%s does not fetch main's history and the release tags", wf)
+		}
+	}
+	hostConfig := jobBlock(t, readWorkflow(t, "cd-controlplane.yml"), "converge-host-config")
+	orderedIn(t, "converge-host-config", hostConfig,
+		"filter: blob:none",
+		"scripts/ci/fetch_release_history.sh --prefetch-deploy",
+		"plan_host_config.py")
+	units := jobBlock(t, readWorkflow(t, "cd-controlplane.yml"), "deploy-units")
+	orderedIn(t, "deploy-units", units,
+		"filter: blob:none",
+		"scripts/ci/fetch_release_history.sh",
+		"git describe --tags")
+}
+
+// TestUnitDeployWaitsForAdmission: an automatic unit deploy starts only after
+// the preflight found production unfrozen, idle and healthy, and this the
+// newest deployable unit release
+// (docs/adr/20261020214632-automatic-unit-deploy-safety-rails.md). The
+// preflight reads issues (the deploy-freeze switch) and runs, and nothing
+// else; the deploy lanes run only on its go.
+func TestUnitDeployWaitsForAdmission(t *testing.T) {
+	release := readWorkflow(t, "release-units.yml")
+	preflight := jobBlock(t, release, "preflight")
+	for _, required := range []string{
+		"needs: [build]",
+		"needs.build.outputs.eligible == 'true'",
+		"(inputs.deploy_environment != '' || (github.event_name == 'push' && vars.UNIT_RELEASE_AUTODEPLOY_ENVIRONMENT != ''))",
+		"issues: read",
+		"go: ${{ steps.preflight.outputs.go }}",
+		"python3 preflight-src/scripts/ci/deploy_preflight.py --wait 40m --interval 60s",
+	} {
+		if !strings.Contains(preflight, required) {
+			t.Errorf("release-units preflight is missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"issues: write", "contents: write", "actions: write", "id-token: write", "StrictHostKeyChecking=no"} {
+		if strings.Contains(preflight, forbidden) {
+			t.Errorf("release-units preflight must not have %q", forbidden)
+		}
+	}
+	orderedIn(t, "release-units preflight", preflight, "Set up SSH", "COMPUTE_KNOWN_HOSTS", "deploy_preflight.py")
+	deploy := jobBlock(t, release, "deploy")
+	for _, required := range []string{"needs: [build, preflight]", "needs.preflight.outputs.go == 'true'"} {
+		if !strings.Contains(deploy, required) {
+			t.Errorf("release-units deploy is missing %q", required)
+		}
+	}
+}
+
+// TestUnitDeploysAreWatchedAndPauseAfterARollback: every unit deploy takes
+// the post-deploy watch over before it activates a host and returns the host
+// to the record when it fails; release-units watches after its lanes, failed
+// or not, and only the watch may open a deploy-freeze issue
+// (docs/adr/20261020214632-automatic-unit-deploy-safety-rails.md). The deploy
+// workflows keep their read-only token: cd-platform calls cd-controlplane and
+// grants no issues scope.
+func TestUnitDeploysAreWatchedAndPauseAfterARollback(t *testing.T) {
+	cp := jobBlock(t, readWorkflow(t, "cd-controlplane.yml"), "deploy-units")
+	orderedIn(t, "cd-controlplane deploy-units", cp,
+		"Stage the unit release on the control plane",
+		`unit_deploy.sh watch-open "$UNIT_PLAN" control-plane`,
+		"Activate the unit release",
+		"Hold the units on the SLO gate",
+		"if: failure() && steps.watch_open.outcome == 'success'",
+		"unit_deploy.sh watch-revert control-plane",
+	)
+	node := jobBlock(t, readWorkflow(t, "cd-edge-node.yml"), "deploy")
+	orderedIn(t, "cd-edge-node deploy", node,
+		"Stage the unit release on the node",
+		`unit_deploy.sh watch-open "$UNIT_PLAN" "$NODE" "$RUNNER_TEMP/edge-target.json"`,
+		"Activate the unit release on the node",
+		"Hold the node on the SLO gate",
+		"if: failure() && steps.watch_open.outcome == 'success'",
+		`unit_deploy.sh watch-revert "$NODE"`,
+	)
+	for name, block := range map[string]string{"cd-controlplane deploy-units": cp, "cd-edge-node deploy": node} {
+		if strings.Contains(block, "issues: write") {
+			t.Errorf("%s must not ask for issues: write", name)
+		}
+	}
+
+	release := readWorkflow(t, "release-units.yml")
+	watch := jobBlock(t, release, "watch")
+	for _, required := range []string{
+		"needs: [preflight, deploy, deploy-edge]",
+		"!cancelled() && needs.preflight.outputs.go == 'true'",
+		"uses: ./.github/workflows/cd-unit-watch.yml",
+		"deploy_results: deploy=${{ needs.deploy.result }},deploy-edge=${{ needs.deploy-edge.result }}",
+		"issues: write",
+	} {
+		if !strings.Contains(watch, required) {
+			t.Errorf("release-units watch is missing %q", required)
+		}
+	}
+	for _, job := range []string{"build", "preflight", "deploy", "deploy-edge"} {
+		if strings.Contains(jobBlock(t, release, job), "issues: write") {
+			t.Errorf("release-units %s must not ask for issues: write", job)
+		}
+	}
+
+	unitWatch := readWorkflow(t, "cd-unit-watch.yml")
+	orderedIn(t, "cd-unit-watch", unitWatch,
+		"name: gregale-unit-release",
+		"watch-src/scripts/ci/verify_unit_release.sh",
+		"COMPUTE_KNOWN_HOSTS",
+		`python3 watch-src/scripts/ci/unit_watch.py "${args[@]}"`,
+	)
+	for _, required := range []string{`--deployctl "$UNITS_DIR/tools/deployctl"`, "--deploy-results", "args+=(--adopt)"} {
+		if !strings.Contains(unitWatch, required) {
+			t.Errorf("cd-unit-watch is missing %q", required)
+		}
+	}
+	if strings.Contains(unitWatch, "StrictHostKeyChecking=no") {
+		t.Error("cd-unit-watch must never disable host-key checking")
 	}
 }

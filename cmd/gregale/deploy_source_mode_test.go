@@ -120,7 +120,7 @@ func TestDeployExplicitSourceWithoutOrigin(t *testing.T) {
 				}
 				_ = part.Close()
 			}
-			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "demo"})
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "a1"})
 		default:
 			http.Error(w, "no", http.StatusNotFound)
 		}

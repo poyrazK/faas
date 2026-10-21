@@ -40,6 +40,22 @@ func migrationFileParts(t *testing.T, name string) (string, string) {
 	return strings.Split(parts[1], "-- +goose StatementEnd")[0], strings.Split(parts[2], "-- +goose StatementEnd")[0]
 }
 
+// migrationSectionParts returns the raw Up and Down sections of a migration
+// whose Up is plain statements rather than one StatementBegin block.
+func migrationSectionParts(t *testing.T, name string) (string, string) {
+	t.Helper()
+	raw, err := migrations.FS.ReadFile(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, rest, okUp := strings.Cut(string(raw), "-- +goose Up\n")
+	up, down, okDown := strings.Cut(rest, "-- +goose Down\n")
+	if !okUp || !okDown {
+		t.Fatalf("%s has no Up and Down sections", name)
+	}
+	return up, down
+}
+
 func migrationParts(t *testing.T) (string, string) {
 	t.Helper()
 	up, down := migrationFileParts(t, "20261016183431589_platform_mail_producer_outbox.sql")
@@ -59,7 +75,8 @@ func migrationParts(t *testing.T) (string, string) {
 	quotaUp, quotaDown := migrationFileParts(t, "20261017133739854_platform_mail_quota_warning_outbox.sql")
 	endedUp, endedDown := migrationFileParts(t, "20261017142138994_platform_mail_subscription_ended_outbox.sql")
 	deployUp, deployDown := migrationFileParts(t, "20261017155842001_platform_mail_deployment_failed_outbox.sql")
-	return up + "\n" + reconcileUp + "\n" + verificationUp + "\n" + resetUp + "\n" + magicUp + "\n" + alertUp + "\n" + disableUp + "\n" + disabledUp + "\n" + changedUp + "\n" + enabledUp + "\n" + paymentUp + "\n" + restoredUp + "\n" + suspendedUp + "\n" + nonpaymentUp + "\n" + quotaUp + "\n" + endedUp + "\n" + deployUp, deployDown + "\n" + endedDown + "\n" + quotaDown + "\n" + nonpaymentDown + "\n" + suspendedDown + "\n" + restoredDown + "\n" + paymentDown + "\n" + enabledDown + "\n" + changedDown + "\n" + disabledDown + "\n" + disableDown + "\n" + alertDown + "\n" + magicDown + "\n" + resetDown + "\n" + verificationDown + "\n" + reconcileDown + "\n" + down
+	scopeShapeUp, scopeShapeDown := migrationSectionParts(t, "20261018162329975_platform_mail_deployment_scope_shape.sql")
+	return up + "\n" + reconcileUp + "\n" + verificationUp + "\n" + resetUp + "\n" + magicUp + "\n" + alertUp + "\n" + disableUp + "\n" + disabledUp + "\n" + changedUp + "\n" + enabledUp + "\n" + paymentUp + "\n" + restoredUp + "\n" + suspendedUp + "\n" + nonpaymentUp + "\n" + quotaUp + "\n" + endedUp + "\n" + deployUp + "\n" + scopeShapeUp, scopeShapeDown + "\n" + deployDown + "\n" + endedDown + "\n" + quotaDown + "\n" + nonpaymentDown + "\n" + suspendedDown + "\n" + restoredDown + "\n" + paymentDown + "\n" + enabledDown + "\n" + changedDown + "\n" + disabledDown + "\n" + disableDown + "\n" + alertDown + "\n" + magicDown + "\n" + resetDown + "\n" + verificationDown + "\n" + reconcileDown + "\n" + down
 }
 
 func outboxSchema(t *testing.T) (string, string) {

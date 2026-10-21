@@ -1,9 +1,10 @@
 from typing import Literal
 
-EnvironmentGitOpsChangedWebhookPayloadAxis = Literal["drift", "source"]
+EnvironmentGitOpsChangedWebhookPayloadAxis = Literal["drift", "rollout", "source"]
 
 ENVIRONMENT_GIT_OPS_CHANGED_WEBHOOK_PAYLOAD_AXIS_VALUES: set[EnvironmentGitOpsChangedWebhookPayloadAxis] = {
     "drift",
+    "rollout",
     "source",
 }
 

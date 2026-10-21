@@ -1346,9 +1346,15 @@ jobs:
         if: steps.verify.outputs.carries == 'true'
         with:
           # The roles converge from the unit release's commit; the planner's
-          # ancestry and N±1 checks need history and tags.
+          # ancestry and N±1 checks need main's history and the release tags,
+          # not every branch (scripts/ci/fetch_release_history.sh).
           ref: ${{ steps.verify.outputs.git_sha }}
-          fetch-depth: 0
+          filter: blob:none
+
+      - name: Fetch main's history, release tags and the base release's roles
+        if: steps.verify.outputs.carries == 'true'
+        # plan_host_config.py hashes deploy/ at the base release.
+        run: scripts/ci/fetch_release_history.sh --prefetch-deploy
 
       - name: Install pinned Ansible toolchain
         if: steps.verify.outputs.carries == 'true'
@@ -1662,9 +1668,13 @@ jobs:
       - uses: actions/checkout@v7
         with:
           # The planner and deployctl come from the unit release's commit;
-          # the planner's ancestry and N±1 checks need history and tags.
+          # the planner's ancestry and N±1 checks need main's history and the
+          # release tags, not every branch (scripts/ci/fetch_release_history.sh).
           ref: ${{ steps.verify.outputs.git_sha }}
-          fetch-depth: 0
+          filter: blob:none
+
+      - name: Fetch main's history and release tags
+        run: scripts/ci/fetch_release_history.sh
 
       - name: Set up SSH
         env:
@@ -1725,6 +1735,8 @@ jobs:
             echo
             echo "Plan: **${action}** over \`$(jq -r .current "$RUNNER_TEMP/host-state.json")\` (previous release \`${previous_tag}\`)."
             echo "Restart: $(jq -r '.only | join(", ") | if . == "" then "none" else . end' "$plan")."
+            kept="$(jq -r '.kept // [] | join(", ")' "$plan")"
+            [[ -z "$kept" ]] || echo "Already running this release's code, not restarted: ${kept}."
             migrations="$(jq -r '.migrations // [] | length' "$plan")"
             [[ "$migrations" == 0 ]] || echo "Migrations applied first: ${migrations} ($(jq -r '.data.version' "$UNITS_DIR/units-manifest.json")), lane-eligible expand only."
             pending="$(jq -r '[.pending[][]] | join(", ")' "$UNITS_DIR/units-manifest.json")"
@@ -1738,6 +1750,16 @@ jobs:
           # deployctl rides in the signed unit release (tools/deployctl).
           remote="$(scripts/ci/unit_deploy.sh stage "$UNIT_PLAN" "$UNITS_DIR" "$UNITS_DIR/tools/deployctl")"
           echo "REMOTE_STAGE=$remote" >> "$GITHUB_ENV"
+
+      # The post-deploy watch (docs/adr/20261020214632-automatic-unit-deploy-
+      # safety-rails.md): record this release as unwatched over the host's
+      # known-good one and make this run the watch's owner before anything is
+      # activated. Exit 3: the host already holds the most unwatched releases
+      # allowed (release-units' preflight waits for that).
+      - name: Take over the post-deploy watch
+        id: watch_open
+        if: steps.plan.outputs.action == 'deploy' || steps.plan.outputs.action == 'converge'
+        run: scripts/ci/unit_deploy.sh watch-open "$UNIT_PLAN" control-plane
 
       - name: Activate the unit release
         id: activate
@@ -1766,6 +1788,12 @@ jobs:
             echo "::error::rolled $(jq -r '.units | join(", ")' "$UNIT_PLAN") back after the SLO gate (exit $status)" >&2
             exit 1
           fi
+
+      # A failed activation or gate put the host back on the release it ran
+      # before: the watch record forgets what this deploy added.
+      - name: Return the host to the watch record
+        if: failure() && steps.watch_open.outcome == 'success'
+        run: scripts/ci/unit_deploy.sh watch-revert control-plane
 
       - name: Upload unit rollout probe evidence
         if: always()

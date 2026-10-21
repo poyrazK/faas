@@ -33,6 +33,13 @@ func (s *PgStore) CreateObjectS3Credential(ctx context.Context, credential Objec
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 	q := sqlc.New()
+	// Account before bucket, as every usage-accounting path locks them. With
+	// the bucket first, the account_id foreign key check waited on a sampler
+	// that held the account and needed the bucket: a deadlock that surfaced as
+	// 503 object_storage_unavailable (full CI run 39455888148).
+	if err = q.ObjectS3CredentialLockNamespace(ctx, tx, mustPgUUID(credential.AccountID)); err != nil {
+		return ObjectS3Credential{}, mapErr(err)
+	}
 	if _, err = q.ObjectS3CredentialLockBucket(ctx, tx, sqlc.ObjectS3CredentialLockBucketParams{ID: mustPgUUID(credential.BucketID), AccountID: mustPgUUID(credential.AccountID)}); err != nil {
 		return ObjectS3Credential{}, mapErr(err)
 	}
@@ -77,6 +84,10 @@ func (s *PgStore) CreateObjectS3ComputeBinding(ctx context.Context, req ObjectS3
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	q := sqlc.New()
+	// Account before bucket; see CreateObjectS3Credential.
+	if err := q.ObjectS3CredentialLockNamespace(ctx, tx, mustPgUUID(c.AccountID)); err != nil {
+		return ObjectS3Credential{}, mapErr(err)
+	}
 	if _, err := q.ObjectS3CredentialLockBucket(ctx, tx, sqlc.ObjectS3CredentialLockBucketParams{ID: mustPgUUID(c.BucketID), AccountID: mustPgUUID(c.AccountID)}); err != nil {
 		return ObjectS3Credential{}, mapErr(err)
 	}

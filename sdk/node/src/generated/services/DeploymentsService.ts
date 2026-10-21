@@ -17,6 +17,8 @@ import type { CreateReleaseGateRequest } from '../models/CreateReleaseGateReques
 import type { DecideReleaseApprovalRequest } from '../models/DecideReleaseApprovalRequest.js';
 import type { DeploymentAliasListResponse } from '../models/DeploymentAliasListResponse.js';
 import type { DeploymentAliasResponse } from '../models/DeploymentAliasResponse.js';
+import type { DeploymentCronStagingRequest } from '../models/DeploymentCronStagingRequest.js';
+import type { DeploymentCronStagingSnapshot } from '../models/DeploymentCronStagingSnapshot.js';
 import type { DeploymentListResponse } from '../models/DeploymentListResponse.js';
 import type { DeploymentPreviewURL } from '../models/DeploymentPreviewURL.js';
 import type { DeploymentResponse } from '../models/DeploymentResponse.js';
@@ -25,6 +27,10 @@ import type { DeploymentResponseCheckRequest } from '../models/DeploymentRespons
 import type { DeploymentResponseCheckResult } from '../models/DeploymentResponseCheckResult.js';
 import type { DeploymentRuntimeResponse } from '../models/DeploymentRuntimeResponse.js';
 import type { DeploymentStageState } from '../models/DeploymentStageState.js';
+import type { DeploymentStagingReceipt } from '../models/DeploymentStagingReceipt.js';
+import type { DeploymentStagingRequest } from '../models/DeploymentStagingRequest.js';
+import type { DeploymentStagingSnapshot } from '../models/DeploymentStagingSnapshot.js';
+import type { DeploymentSubmissionReceipt } from '../models/DeploymentSubmissionReceipt.js';
 import type { DeploymentSummaryResponse } from '../models/DeploymentSummaryResponse.js';
 import type { LatestDeploymentsByAppResponse } from '../models/LatestDeploymentsByAppResponse.js';
 import type { ListDeploymentAuditResponse } from '../models/ListDeploymentAuditResponse.js';
@@ -168,6 +174,221 @@ export class DeploymentsService {
     });
   }
   /**
+   * Read the HTTP cron set and its deployment staging revision.
+   * Snapshots only HTTP scheduling intent for the owned app. Command crons,
+   * execution progress and server-held original rows are excluded.
+   *
+   * @returns DeploymentCronStagingSnapshot The captured HTTP scheduling set.
+   * @throws ApiError
+   */
+  public static getDeploymentCronStagingSnapshot({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<DeploymentCronStagingSnapshot> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/deployment-cron-staging',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Prepare deferred cron activation or recover legacy cron staging.
+   * Prepare retains active schedules until the accepted production release is
+   * live and owns all traffic. Track_upload binds an owned upload for autonomous
+   * recovery of cached committed submissions. Cancel fences an unsubmitted intent.
+   * Repeating prepare reads its durable prepared, activated, conflict or discarded
+   * status. Legacy stage/restore replaces the complete set under locks. Command
+   * crons are preserved and count toward app and account quotas. The exact
+   * app, unchanged latest deployment, revision, owner and canonical intent
+   * guard staging and cleanup. Ordinary HTTP scheduling edits, including
+   * same-value updates, invalidate ownership; scheduler firing and suspension
+   * bookkeeping do not. Cleanup before a delayed stage fences it out. Accepted
+   * or uncertain deployment submission must retain staging. No builds are
+   * created; no unchecked fallback or HTTP response replay cache is used.
+   * Recovery restores scheduling configuration, not already dispatched work.
+   *
+   * @returns DeploymentStagingReceipt The guarded cron operation and durable activation status.
+   * @throws ApiError
+   */
+  public static applyDeploymentCronStaging({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: DeploymentCronStagingRequest,
+  }): CancelablePromise<DeploymentStagingReceipt> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/deployment-cron-staging',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        402: `The replacement exceeds the app or account cron quota, or the plan does not allow crons.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `deployment_cron_conflict; app, deployment, HTTP cron set, revision or ownership changed.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Cron staging storage is unavailable; scheduling recovery remains pending.`,
+      },
+    });
+  }
+  /**
+   * Read the deployment policy revision and current profiling and tracing.
+   * Atomically snapshots the owned app's policy group and latest deployment
+   * identity. Use this snapshot to prepare a private pre-submission journal.
+   * This endpoint does not change configuration or enqueue builds.
+   *
+   * @returns DeploymentStagingSnapshot The current policy snapshot.
+   * @throws ApiError
+   */
+  public static getDeploymentStagingSnapshot({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<DeploymentStagingSnapshot> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/deployment-staging',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Atomically stage or recover profiling and tracing for one deploy attempt.
+   * Requires the same write scope and MFA checks as app settings PATCH.
+   * Only profiling and tracing are supported. The exact app, unchanged latest
+   * deployment and policy revision protect staging. An ownership token and
+   * canonical intent digest protect cleanup against concurrent edits and ABA
+   * changes. Cleanup before a delayed stage fences that stage out. No builds
+   * are created. The endpoint uses its own revision protocol rather than the
+   * HTTP response replay cache. A conflict leaves cleanup pending; there is
+   * no unchecked fallback. Accepted or uncertain deployment submission must
+   * preserve staged policies rather than requesting cleanup.
+   *
+   * @returns DeploymentStagingReceipt The policies were staged or their cleanup completed.
+   * @throws ApiError
+   */
+  public static applyDeploymentStaging({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: DeploymentStagingRequest,
+  }): CancelablePromise<DeploymentStagingReceipt> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/deployment-staging',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `deployment_staging_conflict; app, deployment, policy revision or ownership changed.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Staging storage is unavailable; the journal remains pending.`,
+      },
+    });
+  }
+  /**
+   * Read the immutable acceptance receipt for a deployment attempt.
+   * Requires deployment-read access to the owned app. Returns the original
+   * deployment even after failure or supersession. A 404 means no retained
+   * receipt is available; it does not establish rejection and must never
+   * trigger automatic resubmission. Receipts expire when their deployment
+   * or app is purged. This lookup does not enqueue builds or change traffic.
+   *
+   * @returns DeploymentSubmissionReceipt The immutable accepted submission receipt.
+   * @throws ApiError
+   */
+  public static getDeploymentSubmission({
+    slug,
+    attemptId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * The opaque attempt ID persisted before deployment submission.
+     */
+    attemptId: string,
+  }): CancelablePromise<DeploymentSubmissionReceipt> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/deployment-submissions/{attempt_id}',
+      path: {
+        'slug': slug,
+        'attempt_id': attemptId,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Receipt storage is unavailable.`,
+      },
+    });
+  }
+  /**
    * List deployments for an app.
    * Paged backwards (newest first) for the app identified by `slug`.
    * `next_before` is an opaque RFC3339Nano cursor from the last row in
@@ -234,6 +455,7 @@ export class DeploymentsService {
     slug,
     requestBody,
     idempotencyKey,
+    deploymentAttemptId,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
@@ -249,6 +471,17 @@ export class DeploymentsService {
      *
      */
     idempotencyKey?: string,
+    /**
+     * Persist a random opaque ID before submission to recover lost acceptance
+     * replies. The accepted attempt remains bound to its original deployment,
+     * including after failure or supersession. Missing receipts never authorize
+     * resubmission. Independent from Idempotency-Key replay.
+     * Concurrent accepted/in-progress attempts may return 409 with
+     * deployment_attempt_accepted or deployment_attempt_pending; recover
+     * acceptance using the receipt instead of treating that conflict as rejection.
+     *
+     */
+    deploymentAttemptId?: string,
   }): CancelablePromise<DeploymentResponse> {
     return __request(OpenAPI, {
       method: 'POST',
@@ -258,6 +491,7 @@ export class DeploymentsService {
       },
       headers: {
         'Idempotency-Key': idempotencyKey,
+        'Deployment-Attempt-ID': deploymentAttemptId,
       },
       body: requestBody,
       mediaType: 'application/json',
@@ -535,6 +769,7 @@ export class DeploymentsService {
     slug,
     requestBody,
     idempotencyKey,
+    deploymentAttemptId,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
@@ -547,6 +782,17 @@ export class DeploymentsService {
      *
      */
     idempotencyKey?: string,
+    /**
+     * Persist a random opaque ID before submission to recover lost acceptance
+     * replies. The accepted attempt remains bound to its original deployment,
+     * including after failure or supersession. Missing receipts never authorize
+     * resubmission. Independent from Idempotency-Key replay.
+     * Concurrent accepted/in-progress attempts may return 409 with
+     * deployment_attempt_accepted or deployment_attempt_pending; recover
+     * acceptance using the receipt instead of treating that conflict as rejection.
+     *
+     */
+    deploymentAttemptId?: string,
   }): CancelablePromise<DeploymentResponse> {
     return __request(OpenAPI, {
       method: 'POST',
@@ -556,6 +802,7 @@ export class DeploymentsService {
       },
       headers: {
         'Idempotency-Key': idempotencyKey,
+        'Deployment-Attempt-ID': deploymentAttemptId,
       },
       body: requestBody,
       mediaType: 'application/json',
@@ -640,6 +887,7 @@ export class DeploymentsService {
     slug,
     formData,
     idempotencyKey,
+    deploymentAttemptId,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
@@ -655,6 +903,17 @@ export class DeploymentsService {
      *
      */
     idempotencyKey?: string,
+    /**
+     * Persist a random opaque ID before submission to recover lost acceptance
+     * replies. The accepted attempt remains bound to its original deployment,
+     * including after failure or supersession. Missing receipts never authorize
+     * resubmission. Independent from Idempotency-Key replay.
+     * Concurrent accepted/in-progress attempts may return 409 with
+     * deployment_attempt_accepted or deployment_attempt_pending; recover
+     * acceptance using the receipt instead of treating that conflict as rejection.
+     *
+     */
+    deploymentAttemptId?: string,
   }): CancelablePromise<DeploymentResponse> {
     return __request(OpenAPI, {
       method: 'POST',
@@ -664,6 +923,7 @@ export class DeploymentsService {
       },
       headers: {
         'Idempotency-Key': idempotencyKey,
+        'Deployment-Attempt-ID': deploymentAttemptId,
       },
       formData: formData,
       mediaType: 'multipart/form-data',

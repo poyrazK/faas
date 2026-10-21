@@ -497,7 +497,10 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 	if !s.admitCanaryDeployment(w, r, rollout) {
 		return
 	}
-	stagedManifest, manifestProblem = s.applySourceRefManifest(r.Context(), acct, app, manifest, rollout.Scope, !noTriggers)
+	stagedManifest, manifestProblem = s.stageSourceDeploymentManifest(r, acct, app, manifest, rollout, !noTriggers)
+	if stagedManifest.cronIntent != nil {
+		r = r.WithContext(state.ContextWithDeploymentSubmission(r.Context(), stagedManifest.cronIntent.SessionID))
+	}
 	if manifestProblem != nil {
 		api.WriteProblem(w, manifestProblem)
 		return
@@ -547,7 +550,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		// legacy hardcoded "image" diverged from Kind for tarball /
 		// dockerfile deploys and produced misleading split-by-source
 		// dashboards.
-		_, err := apidsource.Enqueue(r.Context(), s.store, s.notif, apidsource.EnqueueParams{
+		res, err := apidsource.Enqueue(r.Context(), s.store, s.notif, apidsource.EnqueueParams{
 			OperationDefinitions:      sourceOperationSpecs(manifest),
 			OperationAdmissionEnabled: s.operation.OperationDefinitionsAdmission(app.AccountID, app.ID, rollout.Scope, sourceOperationSpecs(manifest)),
 			Activity:                  s.newDeploymentActivity(r.Context(), r, acct, app, map[string]any{"source": string(kind), "scope": rollout.Scope}),
@@ -603,10 +606,9 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		sourceAccepted = true
 		uploadOutcome = "completed"
 		// Look up the durable deployment row to build the wire
-		// response. LatestDeployment returns the row we just
-		// inserted (state.Store.CreateDeployment is its own tx
-		// and the row is committed before Enqueue returns).
-		d, err := s.store.LatestDeployment(r.Context(), app.ID)
+		// response. Read the exact accepted ID so a concurrent newer
+		// deployment cannot replace this submission's identity.
+		d, err := s.store.DeploymentByID(r.Context(), res.DeploymentID)
 		if err != nil {
 			api.WriteProblem(w, api.ErrCapacity("could not read deployment"))
 			return

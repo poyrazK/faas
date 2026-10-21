@@ -358,6 +358,10 @@ type aiUsageFields struct {
 	// Gemini token counts by modality (ADR-997).
 	PromptTokensByModality     []geminiModalityCount `json:"promptTokensDetails"`
 	CandidatesTokensByModality []geminiModalityCount `json:"candidatesTokensDetails"`
+	// The Gemini API's Live usage names output "response" tokens
+	// (ADR 20261020161811).
+	ResponseTokenCount       *int64                `json:"responseTokenCount"`
+	ResponseTokensByModality []geminiModalityCount `json:"responseTokensDetails"`
 	// Bedrock Converse usage.
 	BedrockInputTokens      *int64 `json:"inputTokens"`
 	BedrockOutputTokens     *int64 `json:"outputTokens"`
@@ -568,6 +572,7 @@ func (r *aiRawUsage) merge(fields *aiUsageFields) {
 	}
 	take(&r.geminiPrompt, fields.PromptTokenCount)
 	take(&r.geminiCandidates, fields.CandidatesTokenCount)
+	take(&r.geminiCandidates, fields.ResponseTokenCount)
 	take(&r.geminiCached, fields.CachedContentTokenCount)
 	take(&r.geminiThoughts, fields.ThoughtsTokenCount)
 	take(&r.bedrockInput, fields.BedrockInputTokens)
@@ -578,6 +583,8 @@ func (r *aiRawUsage) merge(fields *aiUsageFields) {
 	take(&r.geminiCandidatesImage, geminiModalityTokens(fields.CandidatesTokensByModality, "IMAGE"))
 	take(&r.geminiPromptAudio, geminiModalityTokens(fields.PromptTokensByModality, "AUDIO"))
 	take(&r.geminiCandidatesAudio, geminiModalityTokens(fields.CandidatesTokensByModality, "AUDIO"))
+	take(&r.geminiCandidatesImage, geminiModalityTokens(fields.ResponseTokensByModality, "IMAGE"))
+	take(&r.geminiCandidatesAudio, geminiModalityTokens(fields.ResponseTokensByModality, "AUDIO"))
 	if fields.Seconds != nil {
 		r.noteAudioSeconds(*fields.Seconds)
 	}

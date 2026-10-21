@@ -45,7 +45,7 @@ import (
 
 	scheddpb "github.com/onebox-faas/faas/api/proto/onebox/faas/schedd/v1"
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
-	"github.com/onebox-faas/faas/pkg/sched"
+	"github.com/onebox-faas/faas/pkg/nodereport"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
@@ -451,7 +451,7 @@ func buildCapacityReport(
 		report.InstanceInventory = &scheddpb.NodeInstanceInventory{Complete: complete, InstanceIds: ids}
 		if streamer != nil {
 			if key, keyID := streamer.SigningKey(); key != nil && keyID != "" {
-				sig, err := sched.SignNodeInventory(key, sched.NodeInstanceInventory{
+				sig, err := nodereport.SignInventory(key, nodereport.Inventory{
 					NodeID: nodeID, NodeKeyID: keyID, SampledAt: time.UnixMilli(report.SampledAtUnixMs),
 					Complete: complete, InstanceIDs: ids,
 				})
@@ -468,7 +468,7 @@ func buildCapacityReport(
 	// streamers (nil key) leave both fields empty — additive.
 	if streamer != nil {
 		if key, keyID := streamer.SigningKey(); key != nil && keyID != "" {
-			schedReport := sched.CapacityReport{
+			schedReport := nodereport.CapacityReport{
 				NodeID:        report.NodeId,
 				SampledAt:     time.UnixMilli(report.SampledAtUnixMs),
 				LiveCount:     report.LiveCount,
@@ -477,7 +477,7 @@ func buildCapacityReport(
 				RAMHeadroomMB: report.RamHeadroomMb,
 				VCPUBusy:      report.VcpuBusy,
 			}
-			sig, err := sched.SignNodeReport(key, schedReport)
+			sig, err := nodereport.SignCapacity(key, schedReport)
 			if err != nil {
 				// Sign failure is rare (crypto/rand) but
 				// must not silently regress to unsigned.

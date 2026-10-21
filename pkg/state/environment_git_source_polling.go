@@ -75,7 +75,7 @@ func validateEnvironmentPollApproval(source EnvironmentGitSource, result Environ
 		return nil
 	}
 	if source.Spec.ApprovalPolicy != "protected_branch" || result.Approval == nil || result.Desired == nil || result.Approval.ReviewedDefinitionDigest != result.Digest ||
-		!result.Approval.ValidFor(source.Spec.InstallationID, source.Spec.RepositoryID, source.Spec.Repository,
+		!result.Approval.ValidForProvider(source.Spec.Provider, source.Spec.InstallationID, source.Spec.RepositoryID, source.Spec.Repository,
 			strings.TrimPrefix(source.Spec.Ref, "refs/heads/"), result.CommitSHA, time.Now(), api.EnvironmentGitProtectedBranchEvidenceMaxAge) {
 		return ErrInvalidArgument
 	}
@@ -99,4 +99,11 @@ func cloneEnvironmentGitSource(source EnvironmentGitSource) EnvironmentGitSource
 		source.SourceVerifiedAt = &at
 	}
 	return source
+}
+
+func environmentProtectedApprover(provider string) string {
+	if provider == "gitlab" {
+		return "gitlab:protected_branch"
+	}
+	return "github:protected_branch"
 }

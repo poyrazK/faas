@@ -60,8 +60,13 @@ func newServiceAddressLookup(store state.Store, nodeName string, log *slog.Logge
 
 func resolveServiceAddress(ctx context.Context, store state.Store, resolve gateway.ServiceProxyResolver, caller state.ServiceAddressCaller, service string, log *slog.Logger) (netip.Addr, bool) {
 	targetAppID := ""
-	if bindingStore, ok := store.(state.EnvironmentGitOpsServiceBindingStore); ok {
-		route, managed, found, err := bindingStore.ResolveEnvironmentGitOpsServiceBinding(ctx, caller.AppID, caller.DeploymentID, service)
+	{
+		route, managed, found, err := resolveFrozenProjectBinding(ctx, store, caller.AppID, caller.DeploymentID, service)
+		if err == nil && !managed {
+			if bindingStore, ok := store.(state.EnvironmentGitOpsServiceBindingStore); ok {
+				route, managed, found, err = bindingStore.ResolveEnvironmentGitOpsServiceBinding(ctx, caller.AppID, caller.DeploymentID, service)
+			}
+		}
 		if err != nil {
 			log.Debug("gatewayd: GitOps service address lookup fell back to the bridge", "service", service, "err", err)
 			return netip.Addr{}, false

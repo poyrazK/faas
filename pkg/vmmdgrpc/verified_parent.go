@@ -9,7 +9,7 @@ import (
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/imagechain"
-	"github.com/onebox-faas/faas/pkg/sched"
+	"github.com/onebox-faas/faas/pkg/storagekey"
 	"github.com/onebox-faas/faas/pkg/vmmdmount"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -25,7 +25,7 @@ func (s *Server) MaterializeVerifiedParentExt4(ctx context.Context, req *vmmdpb.
 		return nil, status.Error(codes.InvalidArgument, "unsupported parent materialization request")
 	}
 	expected := imagechain.ParentMaterialization{Artifact: imagechain.BaseArtifact{StorageKey: req.StorageKey, Digest: req.ArtifactDigest, Bytes: req.ArtifactBytes}, TargetDir: req.TargetDir}
-	if !expected.Valid() || !sched.IsParentBaseKey(expected.Artifact.StorageKey) {
+	if !expected.Valid() || !storagekey.IsParentBase(expected.Artifact.StorageKey) {
 		return nil, status.Error(codes.InvalidArgument, "invalid parent materialization identity")
 	}
 	owner, ok := s.vmm.(verifiedParentMaterializer)

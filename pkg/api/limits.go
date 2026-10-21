@@ -21,6 +21,9 @@ import (
 	"time"
 )
 
+// DeploymentAttemptIDBytes is the encoded size of a random 128-bit submission identity.
+const DeploymentAttemptIDBytes = 32
+
 // Migration verification shares normal task and wake admission. These bounds
 // limit orchestration receipts, not customer compute entitlements.
 const (
@@ -565,6 +568,10 @@ const (
 	StatementInvoiceSyncBatchSize    = 50
 	// The daily overdue email lists at most this many invoices.
 	StatementInvoiceOverdueDigestMax = 20
+	// One export attempt holds its statement this long, so a concurrent
+	// attempt cannot create a second provider invoice; a crashed attempt's
+	// claim expires (ADR-20261019180000).
+	StatementInvoiceExportClaimTTL = 15 * time.Minute
 	// List page sizes.
 	StatementInvoiceListDefault = 50
 	StatementInvoiceListMax     = 200
@@ -612,6 +619,11 @@ const (
 	// An invoice holding its consumer has its payment status read at least
 	// this often, so paying it lifts the hold within minutes.
 	ConsumerOverdueHeldSyncInterval = 15 * time.Minute
+	// Only a payment status read within this long holds a consumer or
+	// tenant: when Gregale cannot read the invoice (a rotated or removed
+	// key), the hold lifts rather than outlasting a payment it cannot see
+	// (ADR-20261019180000).
+	ConsumerOverdueStatusMaxAge = 24 * time.Hour
 )
 
 // PlatformTenantPlansMax bounds the tenant plans one account keeps
@@ -954,6 +966,9 @@ const QueueBindingRetryMaxSeconds = 86400
 // EnvironmentGitOpsMaxDefinitionBytes bounds one complete environment graph,
 // independently of the smaller non-secret configuration object it may contain.
 const EnvironmentGitOpsMaxDefinitionBytes = 1 << 20
+
+// EnvironmentGitRecoveryPageSize bounds per-request historical rollback assessments.
+const EnvironmentGitRecoveryPageSize = 10
 
 // EnvironmentGitOpsMaxQueueSmokePayloadBytes bounds one customer-authored
 // synthetic queue message before it is stored with frozen candidate inputs.
@@ -10988,6 +11003,10 @@ const (
 	// Content-Length up to this size is read up front; larger, chunked and
 	// streaming bodies are forwarded unbuffered and are not replayed.
 	ServiceProxyReplayBodyMaxBytes = 1 << 20
+	// ServiceTraceInferenceTimeout bounds how long the node proxy waits for
+	// the local vmmd to name the trace of the one request a calling instance
+	// is serving (ADR-1138); past it the call starts its own trace.
+	ServiceTraceInferenceTimeout = 25 * time.Millisecond
 	// Scenario TCP impairment bounds are node-wide, independent of plan quotas.
 	ScenarioTCPChaosMaxRoutesPerNode    = 256
 	ScenarioTCPChaosMaxRateKiBPerSecond = 1_000_000
@@ -11731,6 +11750,12 @@ const (
 	AppHealthWarningErrorRatePct    = 5.0
 	AppHealthUnhealthyErrorRatePct  = 25.0
 	AppHealthCollectorInterval      = 30 * time.Second
+	// AppHealthCollectorQuietInterval spaces observations of a quiet app: an
+	// unchanged assessment with no instances, no required capacity and no
+	// requests in the metrics window (ADR-734 amendment 1). It plus a lost
+	// lease, the collection timeout and one idle sweep stays under
+	// AppHealthEvidenceMaxAge, so a quiet app never records an evidence gap.
+	AppHealthCollectorQuietInterval = 75 * time.Second
 	AppHealthCollectorIdleInterval  = time.Second
 	AppHealthCollectorLease         = 30 * time.Second
 	AppHealthCollectorBatch         = 20
@@ -12326,6 +12351,132 @@ const (
 	AppEventPublishStatusCursorMaxBytes    = 8192
 )
 
+// ProjectSafeReleaseGracePeriod allows readiness after serial build budgets.
+const ProjectSafeReleaseGracePeriod = 30 * time.Minute
+
+// Project release verification bounds (ADR-20261019120005). Baseline retention must exceed
+// the verification deadline plus recovery time.
+const (
+	ProjectReleaseVerificationMaxProbes    = 5
+	ProjectReleaseVerificationTimeout      = 10 * time.Minute
+	ProjectReleaseVerificationMinRetention = 15 * time.Minute
+	ProjectReleaseVerificationInterval     = time.Minute
+	ProjectReleaseVerificationRounds       = 2
+)
+
+// ProjectReleaseConfigMaxBytes bounds paired-release plaintext configuration (ADR-20261019120006).
+const ProjectReleaseConfigMaxBytes = MaxProjectEnvironmentConfigBytes
+
+// The promotion capture holds both retained variable sets and their guards.
+// It carries no sealed secret values (ADR-20261019120022).
+const ProjectEnvironmentPromotionCaptureMaxBytes = 16 * ProjectReleaseConfigMaxBytes
+
+// Health-gated promotions reserve two verification windows plus one sample
+// interval for restart recovery while the destination baseline remains retained.
+const ProjectPromotionHealthMinRetention = 2*ProjectReleaseVerificationTimeout + ProjectReleaseVerificationInterval
+const ProjectPromotionHealthMaxBytes = 32 << 10
+
+// ProjectPromotionMaxWorkers bounds immutable policies and per-worker evidence in the health journal.
+const ProjectPromotionMaxWorkers = 8
+
+// ProjectDeploymentCheckMaxBytes bounds metadata-only readiness requests.
+const ProjectDeploymentCheckMaxBytes = ProjectEnvironmentPromotionCaptureMaxBytes
+
+// Metadata/report bounds are independent of runtime configuration quotas.
+const (
+	ProjectDeploymentCheckMaxKeys   = 256
+	ProjectDeploymentCheckMaxChecks = 1024
+)
+const ProjectPromotionHealthBatchSize = 20
+
+// ADR-20261019120029: shared across APID dispatchers; one slot prefers recovery work.
+// Promotion admission bounds whole operations, independently of probe leases.
+const ProjectPromotionAdmissionFleetActive = 24
+const ProjectPromotionAdmissionAccountActive = 8
+const ProjectPromotionAdmissionFleetQueued = 128
+const ProjectPromotionAdmissionAccountQueued = 32
+const ProjectPromotionAdmissionWaitTimeout = 15 * time.Minute
+const ProjectPromotionAdmissionRetryAfterSeconds = 5
+
+const ProjectPromotionHealthConcurrency = 4
+const ProjectPromotionHealthAccountConcurrency = 2
+const ProjectPromotionHealthPollInterval = 5 * time.Second
+const ProjectPromotionHealthRoundTimeout = 30 * time.Second
+const ProjectPromotionHealthJobTimeout = 45 * time.Second
+const ProjectPromotionHealthLeaseDuration = time.Minute
+
+// Private native publication barrier protocol bounds; production builds cannot
+// activate this barrier. It shares the existing health worker action deadline.
+const PromotionPublicationEventMaxBytes = 4096
+const PromotionPublicationAckMaxBytes = 1024
+
+// ProjectReleaseWorkerDefaultDrainSeconds is the bounded worker shutdown default.
+const ProjectReleaseWorkerDefaultDrainSeconds = 30
+
+// ProjectPromotionMigrationRecoveryWaitMaxSeconds bounds the CLI's recovery wait.
+const ProjectPromotionMigrationRecoveryWaitMaxSeconds = 24 * 60 * 60
+
+// ProjectReleaseWorkerMaxDrainSeconds bounds the first mixed-release handoff (ADR-20261019120008).
+const ProjectReleaseWorkerMaxDrainSeconds = 60
+
+// Worker outcome verification policy (ADR-20261019120009). Samples are delivery attempts, not side effects.
+const (
+	ProjectWorkerHealthMinAttempts             = 5
+	ProjectWorkerHealthMinFailures             = 3
+	ProjectWorkerHealthErrorMarginPercent      = 20
+	ProjectWorkerHealthMaxBaselineErrorPercent = 20
+	ProjectWorkerHealthLatencyRatio            = 2
+	ProjectWorkerHealthLatencyFloorMS          = 1000
+	ProjectWorkerHealthBaselineWindow          = 5 * time.Minute
+	ProjectWorkerHealthWriteTimeout            = 5 * time.Second
+)
+
+const (
+	ProjectWorkerHealthBacklogIncrease      = 10
+	ProjectWorkerHealthBacklogAgeIncreaseMS = 30000
+)
+
+// Project canary policy bounds (ADR-20261019120010). Admission remains unavailable until
+// graph staging, durable job pins and scheduler overlap are integrated.
+const (
+	ProjectCanaryInitialPercent = 5
+	ProjectCanaryMiddlePercent  = 25
+	ProjectCanaryFinalPercent   = 100
+	ProjectCanaryBucketCount    = 10000
+	ProjectPinnedWorkerReplicas = 1
+)
+
+// ProjectReleaseControlMaxBytes bounds the small generation-fenced operator request.
+const ProjectReleaseControlMaxBytes = 1024
+
+// ADR-20261019120015: bounded post-success monitoring and sufficient existing rollback retention.
+const ProjectReleaseStabilizationWindow = ProjectReleaseVerificationTimeout
+const ProjectReleaseStabilizationMinRetention = ProjectReleaseVerificationTimeout + ProjectReleaseStabilizationWindow + ProjectReleaseVerificationInterval
+
+// ADR-20261019120016: a post-expansion probe round must be fresh at publication.
+const ProjectMigrationBaselineEvidenceMaxAge = 3 * ProjectReleaseVerificationInterval
+
+// ADR-20261019120017: cleanup must start within the freshness window of its admitted health.
+const ProjectMigrationContractStartTimeout = ProjectMigrationBaselineEvidenceMaxAge
+
+// ADR-20261019120020: bounded encrypted version staging before an atomic release.
+const ProjectReleaseSecretStageMaxBytes = ProjectReleaseConfigMaxBytes
+
+// Promotion rollout limits bound operator configuration and signed approvals.
+const (
+	PromotionRolloutPolicyMaxBytes    = 64 << 10
+	PromotionRolloutApprovalMaxBytes  = 1 << 20
+	PromotionRolloutNativeLogMaxBytes = 256 << 20
+	PromotionRolloutMaxTargets        = 128
+	PromotionRolloutApprovalMaxTTL    = 7 * 24 * time.Hour
+)
+const ProjectReleaseSecretStageTTL = 24 * time.Hour
+const ProjectReleaseSecretStagesPerProject = 32
+
+// Promotion migrations get a separate bounded queue/start and execution window.
+const ProjectPromotionMigrationStartTimeout = time.Minute
+const ProjectPromotionMigrationTimeout = ProjectPromotionMigrationStartTimeout + 10*time.Minute
+
 // Operator-preview ticket admission bounds.
 const (
 	RealtimeTicketMaxTTLSeconds  = 300
@@ -12852,6 +13003,24 @@ const (
 
 // SyntheticCheckIntervalsSeconds is the closed set synthetic_checks accepts.
 var SyntheticCheckIntervalsSeconds = []int{300, 900, 3600}
+
+// Event substrate benchmark workload (spec Appendix D V12,
+// docs/ops/event-substrate-benchmark.md): disposable-database bench sizes,
+// never customer quotas. Events spread over accounts so each subscription
+// stays under the Scale per-consumer live-delivery cap.
+const (
+	EventSubstrateBenchEvents             = 2000
+	EventSubstrateBenchAccounts           = 10
+	EventSubstrateBenchPipelineSeconds    = 20
+	EventSubstrateBenchPipelineSettle     = 60 * time.Second
+	EventSubstrateBenchStageTimeout       = 10 * time.Minute
+	EventSubstrateBenchWebhookDeliveries  = 1000
+	EventSubstrateBenchWebhookSubscribers = 64
+)
+
+// EventSubstrateBenchPipelineRates are the offered end-to-end rates, in
+// events per second, the benchmark runs by default.
+var EventSubstrateBenchPipelineRates = []int{50, 200}
 
 // IssueBulkActionMax bounds one atomic triage transaction.
 const IssueBulkActionMax = 50
@@ -13687,6 +13856,15 @@ const (
 
 // ServiceMapHighErrorRatePct is the edge error rate the dashboard highlights.
 const ServiceMapHighErrorRatePct = 5.0
+
+// ADR-20261017190807: conservative opt-in artifact retention ceilings, independent of
+// routing TTL and snapshots. Account reservations prevent environment fan-out.
+const (
+	EnvironmentRecoveryMaxReleases           = 5
+	EnvironmentRecoveryMaxSeconds            = 7 * 24 * 60 * 60
+	EnvironmentRecoveryMaxBytes        int64 = 1 << 30
+	EnvironmentRecoveryAccountMaxBytes int64 = 2 << 30
+)
 
 // Debugger triage duration bounds are shared by planning, API validation and
 // fresh transactional writes. Replaying a committed receipt does not renew them.

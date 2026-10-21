@@ -21,6 +21,7 @@ package e2e_test
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -177,21 +178,36 @@ func TestJobTimeoutCoversEveryPhaseCap(t *testing.T) {
 		"managed-operation-only":            true,
 		"customer-job-operations-only":      true,
 		"customer-workflow-operations-only": true,
+		"project-worker-release-only":       true,
+		"project-progressive-release-only":  true,
+		"project-migration-contract-only":   true,
+		"project-migration-sql-only":        true,
 		"customer-http-operations-only":     true,
 		"financial-system":                  true, // separate sequential job on the same host
 	}
-	var sum, laneMax time.Duration
-	for phase, d := range phaseOuterBudgets(t) {
-		if lanes[phase] {
-			if d > laneMax {
-				laneMax = d
-			}
-			continue
+
+	outer := phaseOuterBudgets(t)
+	var sum time.Duration
+	for _, group := range []string{"source", "runtime"} {
+		output, err := exec.Command("bash", "-c", `source ../../scripts/ci/native-e2e-phases.sh; native_e2e_group_phases "$1"`, "budget", group).Output()
+		if err != nil {
+			t.Fatal("read shared native group partition")
 		}
-		sum += d
+		var budget time.Duration
+		for _, phase := range strings.Fields(string(output)) {
+			budget += outer[phase]
+		}
+		if budget > sum {
+			sum = budget
+		}
 	}
-	if sum < laneMax {
-		sum = laneMax
+	for phase, d := range outer {
+		if lanes[phase] && d > sum {
+			sum = d
+		}
+	}
+	if !strings.Contains(string(body), "max-parallel: 1") || !strings.Contains(string(body), "fail-fast: false") {
+		t.Fatal("native groups must be serialized without cancelling recovery/cleanup")
 	}
 	// Staging, source transfer, log collection and the node stop itself.
 	const overhead = 20 * time.Minute
@@ -310,5 +326,34 @@ func TestFullLaneRunsFullAPIHostingRuntimeCatalog(t *testing.T) {
 	}
 	if !strings.Contains(buildPhase, "--setenv=FAAS_E2E_API_HOSTING_CATALOG='$CATALOG_MODE'") {
 		t.Error("native build phase does not forward its selected catalog mode to the remote runner")
+	}
+}
+
+func TestProjectMigrationContractLaneBudgets(t *testing.T) {
+	const lane = "project-migration-contract-only"
+	inner, outer := phaseInnerBudgets(t)[lane], phaseOuterBudgets(t)[lane]
+	if inner != 210*time.Minute || outer <= inner {
+		t.Fatalf("contract test/systemd budgets = %s/%s", inner, outer)
+	}
+	body, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "e2e-native.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := regexp.MustCompile(`(?m)^\s*timeout-minutes:\s*(\d+)`).FindStringSubmatch(string(body))
+	if m == nil {
+		t.Fatal("job timeout missing")
+	}
+	job, err := time.ParseDuration(m[1] + "m")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job < outer+20*time.Minute || job > 6*time.Hour {
+		t.Fatalf("job %s cannot contain standalone contract lane %s and cleanup", job, outer)
+	}
+	if strings.Count(string(body), "inputs.lane != '"+lane+"'") != 9 {
+		t.Fatal("contract lane would also execute platform phases")
+	}
+	if !strings.Contains(string(body), "project_migration_contract_only=${{ steps.phase_project_migration_contract_only.outcome }}") {
+		t.Fatal("contract runner failure omitted from verdict")
 	}
 }

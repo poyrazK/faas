@@ -140,6 +140,9 @@ func TestStartPendingSubmissionIsDurableBeforeLostCommitReply(t *testing.T) {
 			w.Header().Set("Upload-Offset", strconv.FormatInt(offset+n, 10))
 		case r.URL.Path == "/v1/uploads/upload-1/commit":
 			committed.Store(true)
+			// Commit carries a non-replayable empty JSON body; the server only
+			// observes the client's disconnect once that body is consumed.
+			_, _ = io.Copy(io.Discard, r.Body)
 			cancel() // The server accepted it, but the CLI never receives its ID.
 			<-r.Context().Done()
 		case r.URL.Path == "/v1/uploads/upload-1" && r.Method == http.MethodGet:
@@ -472,18 +475,20 @@ func TestStartCachedUploadDiscoveryPreservesUnknownOutcome(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			statePath, err := uploadStatePath("first-app", digest, options)
+			client := api.NewClient(apiBase(), loadToken())
+			identity := uploadRecoveryIdentity(client, t.Context(), "first-app", digest, options)
+			statePath, err := uploadStatePath(identity)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := saveResumableUploadState(statePath, resumableUploadState{UploadID: "upload-1", AppSlug: "first-app", APIBase: apiBase(), ArchivePath: path, ArchiveSHA256: digest, ArchiveSize: 7, TotalSize: 7, ChunkSize: 3, DeployOptionsSHA256: options, CreatedAt: time.Now().UTC().Format(time.RFC3339Nano)}); err != nil {
+			if err := saveResumableUploadState(statePath, resumableUploadState{Version: resumableUploadStateVersion, UploadID: "upload-1", AppSlug: "first-app", APIBase: apiBase(), RecoveryIdentitySHA256: identity, ArchivePath: path, ArchiveSHA256: digest, ArchiveSize: 7, TotalSize: 7, ChunkSize: 3, DeployOptionsSHA256: options, CreatedAt: time.Now().UTC().Format(time.RFC3339Nano)}); err != nil {
 				t.Fatal(err)
 			}
 			runner = startTestRunner(t, startTestSource(t), "")
 			if err := runner.recordStartSubmission(deploySubmission{Key: "pending-key", Transport: "resumable", AppID: startResponseAppID, TotalSize: 7}); err != nil {
 				t.Fatal(err)
 			}
-			_, _, _, err = deployResumableTarball(api.NewClient(apiBase(), loadToken()), t.Context(), "first-app", path, nil, runner.recordStartUpload)
+			_, _, _, err = deployResumableTarball(client, t.Context(), "first-app", path, nil, runner.recordStartUpload)
 			if err == nil {
 				t.Fatal("uncertain cached upload did not stop")
 			}

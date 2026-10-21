@@ -631,3 +631,61 @@ func TestSyncJobSharesAFetchedDriveWithItsLayer(t *testing.T) {
 		})
 	}
 }
+
+// probeReplicaStore reports a fixed idle-tick probe result and counts claims.
+type probeReplicaStore struct {
+	fakeReplicaStore
+	claimable bool
+	probeErr  error
+	probes    int
+	claims    int
+}
+
+func (f *probeReplicaStore) ReconcileSnapshotReplicas(context.Context, string) (int, bool, error) {
+	f.probes++
+	return 0, f.claimable, f.probeErr
+}
+
+func (f *probeReplicaStore) ClaimSnapshotReplica(ctx context.Context, nodeID string) (state.SnapshotReplicaJob, error) {
+	f.claims++
+	return f.fakeReplicaStore.ClaimSnapshotReplica(ctx, nodeID)
+}
+
+// TestRunnerTickClaimsOnlyWhenTheProbeFindsWork pins the idle-tick fix: a
+// caught-up node probes once and skips the claim transaction, a claimable
+// tick claims, and a failed probe still claims (fail open). The probe replaces
+// the separate reconcile call.
+func TestRunnerTickClaimsOnlyWhenTheProbeFindsWork(t *testing.T) {
+	job := state.SnapshotReplicaJob{
+		SnapshotID: "snap-1", DeploymentID: "dep-1", NodeID: "node-2", Region: "local",
+		StorageKey: "snap/dep-1/mem", VMStateStorageKey: "snap/dep-1/vmstate",
+	}
+	for _, tc := range []struct {
+		name       string
+		claimable  bool
+		probeErr   error
+		wantClaims bool
+	}{
+		{"caught up", false, nil, false},
+		{"claimable", true, nil, true},
+		{"probe failed", false, errors.New("db down"), true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := &probeReplicaStore{fakeReplicaStore: fakeReplicaStore{job: job}, claimable: tc.claimable, probeErr: tc.probeErr}
+			backend := &fakeBackend{objects: map[string][]byte{
+				"snap/dep-1/mem":     []byte("memory"),
+				"snap/dep-1/vmstate": []byte("vmstate"),
+			}}
+			New(store, backend, "node-2", slog.Default()).runTick(context.Background())
+			if store.probes != 1 || store.queued != 0 {
+				t.Fatalf("probes=%d separate reconciles=%d, want one probe and no separate reconcile", store.probes, store.queued)
+			}
+			if got := store.claims > 0; got != tc.wantClaims {
+				t.Fatalf("claimed=%t (claims %d), want %t", got, store.claims, tc.wantClaims)
+			}
+			if tc.wantClaims && !store.ready {
+				t.Fatal("claimable tick did not process the replica")
+			}
+		})
+	}
+}

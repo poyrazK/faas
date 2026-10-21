@@ -1,0 +1,143 @@
+-- name: ReadPromotionReleaseConfigurationInputs :one
+SELECT jsonb_build_object(
+ 'account_id',p.account_id,'project_id',p.id,'plan',account.plan,'from',sqlc.arg(source_scope)::text,'to',sqlc.arg(target_scope)::text,
+ 'source_release_id',coalesce((SELECT r.id::text FROM project_release_sets r WHERE r.project_id=p.id AND r.environment_slug=sqlc.arg(source_scope)::text AND r.active),''),
+ 'target_release_id',coalesce((SELECT r.id::text FROM project_release_sets r WHERE r.project_id=p.id AND r.environment_slug=sqlc.arg(target_scope)::text AND r.active),''),
+ 'source_config',jsonb_build_object('version',coalesce(sc.version,0),'config_hash',coalesce(sc.config_hash,''),'values',coalesce(sc.config_json,'{}'::jsonb)),
+ 'target_config',jsonb_build_object('version',coalesce(tc.version,0),'config_hash',coalesce(tc.config_hash,''),'values',coalesce(tc.config_json,'{}'::jsonb)),
+ 'workloads',coalesce((SELECT jsonb_agg(jsonb_build_object(
+   'app_id',a.id,'slug',a.slug,'name',coalesce(nullif(a.workload_name,''),a.slug),'source',to_jsonb(sd)||jsonb_build_object('secret_reload_signal_known',sd.secret_reload_signal IS NOT NULL),
+   'previous',to_jsonb(td)||jsonb_build_object('secret_reload_signal_known',td.secret_reload_signal IS NOT NULL),
+   'source_settings',coalesce(ss.settings::jsonb,to_jsonb(a)||jsonb_build_object('public_auth_basic_sealed',encode(a.public_auth_basic,'base64'),'only_allow_declared_routes',a.only_declared_routes,'retry_policy_json',a.retry_policy)),
+   'target_settings',coalesce(th.settings::jsonb,to_jsonb(a)||jsonb_build_object('public_auth_basic_sealed',encode(a.public_auth_basic,'base64'),'only_allow_declared_routes',a.only_declared_routes,'retry_policy_json',a.retry_policy)),
+   'source_head_hash',coalesce(sh.config_hash,''),'source_snapshot',sv.values_json,'target_snapshot',tv.values_json,
+   'source_live',coalesce((SELECT jsonb_agg(to_jsonb(v) ORDER BY v.key) FROM app_envs v WHERE v.app_id=a.id AND v.account_id=p.account_id AND v.scope=sqlc.arg(source_scope)::text),'[]'::jsonb),
+   'target_live',coalesce((SELECT jsonb_agg(to_jsonb(v) ORDER BY v.key) FROM app_envs v WHERE v.app_id=a.id AND v.account_id=p.account_id AND v.scope=sqlc.arg(target_scope)::text),'[]'::jsonb),
+   'source_live_secrets',coalesce((SELECT jsonb_agg(to_jsonb(s)-'ciphertext'-'kid' ORDER BY s.key) FROM app_secrets s WHERE s.app_id=a.id AND s.account_id=p.account_id AND s.scope=sqlc.arg(source_scope)::text),'[]'::jsonb),
+   'target_live_secrets',coalesce((SELECT jsonb_agg(to_jsonb(s)-'ciphertext'-'kid' ORDER BY s.key) FROM app_secrets s WHERE s.app_id=a.id AND s.account_id=p.account_id AND s.scope=sqlc.arg(target_scope)::text),'[]'::jsonb),
+   'source_bindings',jsonb_build_object(
+      'refs',coalesce((SELECT jsonb_agg(to_jsonb(ref) ORDER BY ref.key) FROM app_environment_secret_refs ref JOIN project_environments e ON e.id=ref.environment_id WHERE ref.app_id=a.id AND e.slug=sqlc.arg(source_scope)::text),'[]'::jsonb),
+      'suppressions',coalesce((SELECT jsonb_agg(to_jsonb(supp) ORDER BY supp.key) FROM app_environment_secret_ref_suppressions supp JOIN project_environments e ON e.id=supp.environment_id WHERE supp.app_id=a.id AND e.slug=sqlc.arg(source_scope)::text),'[]'::jsonb),
+      'intent',(SELECT to_jsonb(intent) FROM app_environment_workload_intents intent JOIN project_environments e ON e.id=intent.environment_id WHERE intent.app_id=a.id AND e.slug=sqlc.arg(source_scope)::text)),
+   'target_bindings',jsonb_build_object(
+      'refs',coalesce((SELECT jsonb_agg(to_jsonb(ref) ORDER BY ref.key) FROM app_environment_secret_refs ref JOIN project_environments e ON e.id=ref.environment_id WHERE ref.app_id=a.id AND e.slug=sqlc.arg(target_scope)::text),'[]'::jsonb),
+      'suppressions',coalesce((SELECT jsonb_agg(to_jsonb(supp) ORDER BY supp.key) FROM app_environment_secret_ref_suppressions supp JOIN project_environments e ON e.id=supp.environment_id WHERE supp.app_id=a.id AND e.slug=sqlc.arg(target_scope)::text),'[]'::jsonb),
+      'intent',(SELECT to_jsonb(intent) FROM app_environment_workload_intents intent JOIN project_environments e ON e.id=intent.environment_id WHERE intent.app_id=a.id AND e.slug=sqlc.arg(target_scope)::text)),
+   'secret_ineligible',EXISTS(SELECT 1 FROM app_environment_secret_refs refs JOIN project_environments e ON e.id=refs.environment_id WHERE refs.app_id=a.id AND e.slug IN (sqlc.arg(source_scope)::text,sqlc.arg(target_scope)::text)) OR EXISTS(SELECT 1 FROM app_environment_secret_ref_suppressions suppress JOIN project_environments e ON e.id=suppress.environment_id WHERE suppress.app_id=a.id AND e.slug IN (sqlc.arg(source_scope)::text,sqlc.arg(target_scope)::text)),
+   'reserved_keys',coalesce((SELECT jsonb_agg(k.key ORDER BY k.key) FROM (
+     SELECT s.key FROM app_secrets s WHERE s.app_id=a.id AND s.scope=sqlc.arg(target_scope)::text
+     UNION SELECT refs.key FROM app_environment_secret_refs refs JOIN project_environments e ON e.id=refs.environment_id WHERE refs.app_id=a.id AND e.slug=sqlc.arg(target_scope)::text
+     UNION SELECT binding.value->>'env_key' FROM app_environment_workload_intents intent JOIN project_environments e ON e.id=intent.environment_id CROSS JOIN LATERAL jsonb_each(intent.service_bindings) binding WHERE intent.app_id=a.id AND e.slug=sqlc.arg(target_scope)::text) k),'[]'::jsonb),
+   'other_variables',(SELECT count(*) FROM app_envs v WHERE v.app_id=a.id AND v.scope<>sqlc.arg(target_scope)::text)
+     +(SELECT count(*) FROM app_environment_secret_refs refs WHERE refs.app_id=a.id)
+     +(SELECT count(*) FROM app_environment_workload_intents intent CROSS JOIN LATERAL jsonb_object_keys(intent.service_bindings) binding WHERE intent.app_id=a.id)
+ ) ORDER BY a.id) FROM apps a
+ LEFT JOIN project_release_members sm ON sm.release_id=nullif(sqlc.arg(source_release_id)::text,'')::uuid AND sm.app_id=a.id
+ LEFT JOIN deployments sd ON sd.id=sm.deployment_id AND sd.app_id=a.id AND sd.scope=sqlc.arg(source_scope)::text AND sd.status='live'
+ LEFT JOIN project_release_members tm ON tm.release_id=nullif(sqlc.arg(target_release_id)::text,'')::uuid AND tm.app_id=a.id
+ LEFT JOIN deployments td ON td.id=tm.deployment_id AND td.app_id=a.id AND td.scope=sqlc.arg(target_scope)::text AND td.status IN ('live','superseded')
+ LEFT JOIN deployment_release_env_snapshots sv ON sv.deployment_id=sd.id
+ LEFT JOIN deployment_release_env_snapshots tv ON tv.deployment_id=td.id
+ LEFT JOIN project_environment_workload_deployment_specs sp ON sp.deployment_id=sd.id
+ LEFT JOIN project_environment_workload_specs ss ON ss.id=sp.spec_id
+ LEFT JOIN project_environments se ON se.project_id=p.id AND se.slug=sqlc.arg(source_scope)::text
+ LEFT JOIN project_environments te ON te.project_id=p.id AND te.slug=sqlc.arg(target_scope)::text
+ LEFT JOIN project_environment_workload_heads source_head ON source_head.environment_id=se.id AND source_head.app_id=a.id
+ LEFT JOIN project_environment_workload_specs sh ON sh.id=source_head.spec_id
+ LEFT JOIN project_environment_workload_heads target_head ON target_head.environment_id=te.id AND target_head.app_id=a.id
+ LEFT JOIN project_environment_workload_specs th ON th.id=target_head.spec_id
+ WHERE a.account_id=p.account_id AND a.project_id=p.id AND a.status<>'deleted' AND a.preview_of_slug IS NULL),'[]'::jsonb))::jsonb AS payload
+FROM projects p JOIN accounts account ON account.id=p.account_id
+LEFT JOIN LATERAL (SELECT version,config_hash,config_json FROM project_environment_config_versions WHERE project_id=p.id AND environment_slug=sqlc.arg(source_scope)::text ORDER BY version DESC LIMIT 1) sc ON true
+LEFT JOIN LATERAL (SELECT version,config_hash,config_json FROM project_environment_config_versions WHERE project_id=p.id AND environment_slug=sqlc.arg(target_scope)::text ORDER BY version DESC LIMIT 1) tc ON true
+WHERE p.id=sqlc.arg(project_id)::text::uuid AND p.account_id=sqlc.arg(account_id)::text::uuid;
+
+-- name: SavePromotionReleaseConfiguration :exec
+INSERT INTO project_environment_promotion_release_config(promotion_id,payload)
+VALUES(sqlc.arg(promotion_id)::text::uuid,sqlc.arg(payload)::jsonb);
+
+-- name: ReadPromotionReleaseConfiguration :one
+SELECT c.payload FROM project_environment_promotion_release_config c
+JOIN project_environment_promotions p ON p.id=c.promotion_id
+WHERE p.id=sqlc.arg(promotion_id)::text::uuid AND p.account_id=sqlc.arg(account_id)::text::uuid;
+
+-- name: LockPromotionReleaseConfigurationDeployments :many
+SELECT d.id::text FROM deployments d JOIN apps a ON a.id=d.app_id
+WHERE a.account_id=sqlc.arg(account_id)::text::uuid AND a.project_id=sqlc.arg(project_id)::text::uuid
+AND (d.id IN (SELECT m.deployment_id FROM project_release_members m WHERE m.release_id IN (nullif(sqlc.arg(source_release_id)::text,'')::uuid,nullif(sqlc.arg(target_release_id)::text,'')::uuid))
+ OR d.id IN (SELECT pin.deployment_id FROM project_environment_promotion_workload_specs pin WHERE pin.promotion_id=nullif(sqlc.arg(promotion_id)::text,'')::uuid))
+ORDER BY d.id FOR NO KEY UPDATE OF d;
+
+-- name: ReadPromotionReleaseCandidate :one
+SELECT (to_jsonb(d)||jsonb_build_object('secret_reload_signal_known',d.secret_reload_signal IS NOT NULL))::jsonb AS candidate FROM deployments d
+JOIN project_environment_promotion_workload_specs pin ON pin.deployment_id=d.id AND pin.app_id=d.app_id
+JOIN project_environment_promotions p ON p.id=pin.promotion_id
+WHERE p.id=sqlc.arg(promotion_id)::text::uuid AND p.account_id=sqlc.arg(account_id)::text::uuid AND pin.app_id=sqlc.arg(app_id)::text::uuid;
+
+-- name: ReadProjectServiceGraph :one
+WITH owner AS MATERIALIZED (
+ SELECT a.id,a.account_id,a.project_id,d.scope FROM apps a JOIN deployments d ON d.app_id=a.id
+ JOIN project_environment_workload_deployment_specs pin ON pin.deployment_id=d.id
+ JOIN project_environment_workload_specs spec ON spec.id=pin.spec_id
+ WHERE a.id=sqlc.arg(caller_app_id)::text::uuid AND d.id=sqlc.arg(caller_deployment_id)::text::uuid
+ AND d.environment_workload_runtime IS NULL
+ AND (jsonb_array_length(coalesce(spec.settings::jsonb#>'{manifest,service_bindings}','[]'::jsonb))>0
+ OR EXISTS(SELECT 1 FROM project_environment_promotions p JOIN project_environment_promotion_release_config capture ON capture.promotion_id=p.id
+   WHERE p.account_id=a.account_id AND p.project_id=a.project_id AND p.to_environment=d.scope AND capture.payload ? 'destination_config'
+   AND (EXISTS(SELECT 1 FROM project_environment_promotion_workload_specs prepared WHERE prepared.promotion_id=p.id AND prepared.app_id=a.id AND prepared.deployment_id=d.id)
+     OR EXISTS(SELECT 1 FROM jsonb_array_elements(capture.payload->'workloads') workload WHERE workload->>'app_id'=a.id::text AND workload#>>'{previous,id}'=d.id::text))))
+), eligible AS MATERIALIZED (
+ SELECT sqlc.arg(caller_deployment_id)::text::uuid deployment_id FROM owner
+ UNION
+ SELECT peer.deployment_id FROM owner o
+ JOIN project_release_members caller ON caller.app_id=o.id AND caller.deployment_id=sqlc.arg(caller_deployment_id)::text::uuid
+ JOIN project_release_sets rs ON rs.id=caller.release_id AND rs.account_id=o.account_id AND rs.project_id=o.project_id AND rs.environment_slug=o.scope
+ JOIN project_release_members peer ON peer.release_id=rs.id
+ WHERE (sqlc.arg(requested_id)::text='' OR rs.id::text=sqlc.arg(requested_id)::text)
+ AND (rs.active OR rs.expires_at>now() OR EXISTS(SELECT 1 FROM customer_operation_retained_release_refs ref WHERE ref.release_id=rs.id))
+ UNION
+ SELECT peer.deployment_id FROM owner o
+ JOIN project_environment_promotion_workload_specs caller ON caller.app_id=o.id AND caller.deployment_id=sqlc.arg(caller_deployment_id)::text::uuid
+ JOIN project_environment_promotion_workload_specs peer ON peer.promotion_id=caller.promotion_id
+), members AS MATERIALIZED (
+ SELECT a.id::text app_id,a.account_id::text account_id,a.project_id::text project_id,
+        coalesce(nullif(a.workload_name,''),a.slug) name,a.slug,d.id::text deployment_id,d.scope,
+        d.status='live' AND NOT d.environment_workload_held AS live,
+        d.traffic_percent_explicit AND d.traffic_percent=0 AS dark,
+        spec.settings::jsonb settings,spec.config_hash hash
+ FROM eligible selected JOIN deployments d ON d.id=selected.deployment_id JOIN apps a ON a.id=d.app_id
+ JOIN owner o ON o.account_id=a.account_id AND o.project_id=a.project_id AND o.scope=d.scope
+ JOIN project_environment_workload_deployment_specs pin ON pin.deployment_id=d.id
+ JOIN project_environment_workload_specs spec ON spec.id=pin.spec_id AND spec.app_id=a.id
+ JOIN project_environments env ON env.id=spec.environment_id AND env.slug=d.scope AND env.project_id=a.project_id
+ WHERE a.status<>'deleted' AND a.preview_of_slug IS NULL AND d.environment_workload_runtime IS NULL
+), caller AS MATERIALIZED (
+ SELECT * FROM members WHERE app_id=sqlc.arg(caller_app_id)::text AND deployment_id=sqlc.arg(caller_deployment_id)::text
+), retained AS MATERIALIZED (
+ SELECT rs.id,rs.active,rs.created_at FROM project_release_sets rs JOIN project_release_members member ON member.release_id=rs.id
+ JOIN caller c ON c.app_id=member.app_id::text AND c.deployment_id=member.deployment_id::text
+ WHERE rs.project_id::text=c.project_id AND rs.account_id::text=c.account_id AND rs.environment_slug=c.scope
+ AND (sqlc.arg(requested_id)::text='' OR rs.id::text=sqlc.arg(requested_id)::text)
+ AND (rs.active OR rs.expires_at>now() OR EXISTS(SELECT 1 FROM customer_operation_retained_release_refs ref WHERE ref.release_id=rs.id))
+), graphs AS (
+ SELECT rs.id::text id,coalesce((SELECT jsonb_agg(coalesce(to_jsonb(m),'{}'::jsonb) ORDER BY member.app_id)
+   FROM project_release_members member LEFT JOIN members m ON m.app_id=member.app_id::text AND m.deployment_id=member.deployment_id::text
+   WHERE member.release_id=rs.id),'[]'::jsonb) members
+ FROM retained rs WHERE rs.active OR NOT EXISTS(SELECT 1 FROM retained active WHERE active.active)
+ UNION ALL
+ SELECT p.id::text,coalesce((SELECT jsonb_agg(coalesce(to_jsonb(m)||jsonb_build_object('live',m.live AND m.dark),'{}'::jsonb) ORDER BY pin.app_id)
+   FROM project_environment_promotion_workload_specs pin LEFT JOIN members m ON m.app_id=pin.app_id::text AND m.deployment_id=pin.deployment_id::text
+   WHERE pin.promotion_id=p.id),'[]'::jsonb)
+ FROM project_environment_promotions p JOIN project_environment_promotion_health health ON health.promotion_id=p.id
+ JOIN project_environment_promotion_release_config capture ON capture.promotion_id=p.id
+ JOIN project_environment_promotion_workload_specs pin ON pin.promotion_id=p.id
+ JOIN caller c ON c.app_id=pin.app_id::text AND c.deployment_id=pin.deployment_id::text
+ WHERE p.account_id::text=c.account_id AND p.project_id::text=c.project_id AND p.to_environment=c.scope
+ AND NOT EXISTS(SELECT 1 FROM retained) AND p.status='running' AND p.target_release_set_id IS NULL
+ AND (sqlc.arg(requested_id)::text='' OR p.id::text=sqlc.arg(requested_id)::text)
+ AND health.phase IN ('preflight','cutover') AND (health.payload->>'deadline')::timestamptz>now()
+ AND capture.payload ? 'destination_config'
+ AND (SELECT count(*) FROM project_environment_promotion_workload_specs prepared WHERE prepared.promotion_id=p.id)=jsonb_array_length(capture.payload->'workloads')
+)
+SELECT jsonb_build_object('managed',EXISTS(SELECT 1 FROM owner),'caller',coalesce((SELECT to_jsonb(c) FROM caller c),'{}'::jsonb),
+ 'graphs',coalesce((SELECT jsonb_agg(to_jsonb(g)) FROM graphs g),'[]'::jsonb))::jsonb payload;
