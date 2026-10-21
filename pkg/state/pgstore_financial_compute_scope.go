@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -23,10 +24,11 @@ func (t *pgFinancialComputeTxn) workloadScopes(key, instance, deployment string)
 	if _, ok := computeSharedScopeOf(key); ok {
 		return computeScopes{}, nil
 	}
-	app, err := parsePgUUID(key)
-	if err != nil {
+	// A key that is not a UUID names no app row, so it has no scopes.
+	if uuid.Validate(key) != nil {
 		return computeScopes{}, nil
 	}
+	app, _ := parsePgUUID(key)
 	// Instance IDs are opaque to the ledger; only a UUID can name a row.
 	ins, _ := parsePgUUID(instance)
 	dep, _ := parsePgUUID(deployment)
@@ -38,10 +40,10 @@ func (t *pgFinancialComputeTxn) workloadScopes(key, instance, deployment string)
 }
 
 func (t *pgFinancialComputeTxn) projectEnvironments(project string) ([]string, error) {
-	id, err := parsePgUUID(project)
-	if err != nil {
+	if uuid.Validate(project) != nil {
 		return nil, nil
 	}
+	id, _ := parsePgUUID(project)
 	return t.q.FinancialComputeProjectEnvironments(t.ctx, t.db, sqlc.FinancialComputeProjectEnvironmentsParams{AccountID: t.account, ProjectID: id})
 }
 
