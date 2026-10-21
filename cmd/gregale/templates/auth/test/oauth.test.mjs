@@ -54,7 +54,11 @@ test('consent, discovery and client tokens on the front', () => {
   assert.equal(wellKnownPath('/.well-known/oauth-authorization-server'), null)
   assert.equal(isClientToken(bearerClaims(`Bearer ${token({ sub: user, client_id: client })}`)), true)
   assert.equal(isClientToken(bearerClaims(`Bearer ${token({ sub: user })}`)), false)
-  assert.equal(bearerClaims('Bearer gaak_x'), null)
+  // The scheme is read in any letter case, as GoTrue reads it.
+  for (const scheme of ['bearer', 'BEARER', 'BeArEr']) assert.equal(isClientToken(bearerClaims(`${scheme} ${token({ sub: user, client_id: client })}`)), true, scheme)
+  // A bearer token that is not a readable JWT is reported as such.
+  for (const header of ['Bearer gaak_x', 'bearer a.b', 'Bearer a.!!!.c', `Bearer x.${Buffer.from('[1]').toString('base64url')}.y`]) assert.equal(bearerClaims(header), false, header)
+  for (const header of [undefined, '', 'Basic abc', 'Bearer  two-spaces.a.b', 'Bearer']) assert.equal(bearerClaims(header), null, header)
   assert.equal(clientTokenAllowed('GET', '/auth/v1/oauth/userinfo'), true)
   assert.equal(clientTokenAllowed('POST', '/auth/v1/logout?scope=local'), true)
   assert.equal(clientTokenAllowed('POST', '/authz/v1/authorize'), true)
@@ -142,11 +146,15 @@ test('the front confines client tokens and steers consent to the hosted page', a
     res.end('{}')
   })
   const thirdParty = { Authorization: `Bearer ${token({ sub: user, client_id: client })}` }
-  for (const [method, path] of [['PUT', '/auth/v1/user'], ['GET', '/auth/v1/factors'], ['POST', '/auth/v1/logout'], ['GET', '/authz/v1/orgs']]) {
-    const response = await fetch(base + path, { method, headers: thirdParty })
-    assert.equal(response.status, 403, `${method} ${path}`)
-    assert.equal((await response.json()).code, 'oauth_client_token')
+  // GoTrue reads the scheme in any letter case, so the front does too.
+  for (const scheme of ['Bearer', 'bearer', 'BEARER']) {
+    for (const [method, path] of [['PUT', '/auth/v1/user'], ['PUT', '/auth/v1/user/'], ['GET', '/auth/v1/factors'], ['POST', '/auth/v1/logout'], ['GET', '/authz/v1/orgs']]) {
+      const response = await fetch(base + path, { method, headers: { Authorization: `${scheme} ${token({ sub: user, client_id: client })}` } })
+      assert.equal(response.status, 403, `${scheme} ${method} ${path}`)
+      assert.equal((await response.json()).code, 'oauth_client_token')
+    }
   }
+  assert.equal(seen.some(entry => / \/user/.test(entry)), false, 'GoTrue never saw the client token on /user')
   assert.equal((await fetch(`${base}/auth/v1/oauth/userinfo`, { headers: thirdParty })).status, 200)
   assert.equal((await fetch(`${base}/auth/v1/logout?scope=local`, { method: 'POST', headers: thirdParty })).status, 200)
   assert.equal((await fetch(`${base}/authz/v1/orgs`, { headers: { Authorization: `Bearer ${token({ sub: user })}` } })).status, 200, 'the app\'s own tokens are unaffected')

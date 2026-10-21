@@ -26,11 +26,19 @@ export function consentLocation(location, site, external) {
 }
 
 // bearerClaims reads a bearer token's claims without verifying them. They
-// only ever refuse a request, never allow one.
+// only ever refuse a request, never allow one. It reads the header the way
+// GoTrue does ((?i)^bearer (\S+)$: the scheme in any letter case), so no
+// token reaches GoTrue unread: null means there is no bearer token, false
+// that there is one whose claims cannot be read, which the front refuses.
 export function bearerClaims(header) {
-  const match = /^Bearer [A-Za-z0-9_-]+\.([A-Za-z0-9_-]+)\.[A-Za-z0-9_-]+$/.exec(header ?? '')
-  if (!match) return null
-  try { return JSON.parse(Buffer.from(match[1], 'base64url').toString('utf8')) } catch { return null }
+  const token = /^bearer (\S+)$/i.exec(header ?? '')?.[1]
+  if (!token) return null
+  const parts = token.split('.')
+  if (parts.length !== 3) return false
+  try {
+    const claims = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'))
+    return claims !== null && typeof claims === 'object' && !Array.isArray(claims) ? claims : false
+  } catch { return false }
 }
 
 export function isClientToken(claims) {

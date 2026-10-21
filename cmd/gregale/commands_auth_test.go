@@ -282,6 +282,21 @@ func TestAuthTemplateRuntimeBounds(t *testing.T) {
 			t.Fatalf("authorization SQL differs from canonical limit: %q", bound)
 		}
 	}
+	// 0022 replaces invite(); it keeps the bounds above and adds the rates.
+	grants, err := os.ReadFile("templates/auth/sql/0022_role_grants_and_invitation_limits.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, bound := range []string{
+		fmt.Sprintf("expires_at > now()) >= %d", api.AuthMaxPendingInvitationsPerOrg),
+		fmt.Sprintf("ttl_seconds NOT BETWEEN 300 AND %d", api.AuthMaxInvitationTTLSeconds),
+		fmt.Sprintf("created_at > now() - interval '1 hour') >= %d", api.AuthInvitationsPerInviterPerHour),
+		fmt.Sprintf("created_at > now() - interval '1 day') >= %d", api.AuthInvitationsPerAddressPerDay),
+	} {
+		if !strings.Contains(string(grants), bound) {
+			t.Fatalf("invitation SQL differs from canonical limit: %q", bound)
+		}
+	}
 }
 
 func TestReadAuthzFileAcceptsOnlyRolesAndPolicies(t *testing.T) {

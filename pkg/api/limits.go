@@ -12139,6 +12139,11 @@ const (
 	// what one end user can create in the customer's database.
 	AuthMaxOrganizationsPerUser     = 100
 	AuthMaxPendingInvitationsPerOrg = 500
+	// AuthInvitationsPerInviterPerHour and AuthInvitationsPerAddressPerDay
+	// bound the invitation emails any signed-in member can make the app send,
+	// through the customer's own email provider.
+	AuthInvitationsPerInviterPerHour = 50
+	AuthInvitationsPerAddressPerDay  = 10
 	// AuthEmailTimeoutMs bounds one provider request; AuthHookBodyBytes
 	// bounds GoTrue's send-email hook payload; AuthEmailAPIKeyMaxBytes
 	// bounds the sealed provider key.
