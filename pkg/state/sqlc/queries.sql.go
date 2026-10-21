@@ -67533,11 +67533,12 @@ func (q *Queries) PublishInstanceRuntimeConfig(ctx context.Context, db DBTX, arg
 
 const publishOwnedInstanceRuntime = `-- name: PublishOwnedInstanceRuntime :one
 UPDATE instances SET netns=$1::text, host_ip=$2::inet,
-    guest_uid=$3::integer, started_at=clock_timestamp(), state=$4::text
-WHERE id=$5::uuid AND app_id=$6::uuid
-    AND deployment_id=$7::uuid AND node_id=$8::uuid
-    AND wake_id=$9::uuid AND state=$10::text
-    AND ($10::text NOT IN ('warm','frozen') OR EXISTS (
+    guest_uid=$3::integer, started_at=clock_timestamp(), state=$4::text,
+    last_request_at=CASE WHEN $5::text IN ('warm','frozen') THEN clock_timestamp() ELSE last_request_at END
+WHERE id=$6::uuid AND app_id=$7::uuid
+    AND deployment_id=$8::uuid AND node_id=$9::uuid
+    AND wake_id=$10::uuid AND state=$5::text
+    AND ($5::text NOT IN ('warm','frozen') OR EXISTS (
         SELECT 1 FROM runtime_instance_config_proofs proof WHERE proof.instance_id=instances.id
             AND proof.wake_id=instances.wake_id AND proof.node_id=instances.node_id
             AND proof.deployment_id=instances.deployment_id
@@ -67553,12 +67554,12 @@ type PublishOwnedInstanceRuntimeParams struct {
 	HostIp            netip.Addr
 	GuestUid          int32
 	TargetState       string
+	ExpectedState     string
 	InstanceID        pgtype.UUID
 	AppID             pgtype.UUID
 	DeploymentID      pgtype.UUID
 	NodeID            pgtype.UUID
 	WakeID            pgtype.UUID
-	ExpectedState     string
 	ConfigFingerprint string
 }
 
@@ -67582,18 +67583,22 @@ type PublishOwnedInstanceRuntimeRow struct {
 	RequestCount     int64
 }
 
+// A thawed frozen VM or a promoted warm one resumes for a wake: that is its
+// latest activity, not the request it paused after, which the reaper would
+// otherwise measure idleness from until the activity batch reports the
+// request that woke it (ADR-1151).
 func (q *Queries) PublishOwnedInstanceRuntime(ctx context.Context, db DBTX, arg PublishOwnedInstanceRuntimeParams) (PublishOwnedInstanceRuntimeRow, error) {
 	row := db.QueryRow(ctx, publishOwnedInstanceRuntime,
 		arg.Netns,
 		arg.HostIp,
 		arg.GuestUid,
 		arg.TargetState,
+		arg.ExpectedState,
 		arg.InstanceID,
 		arg.AppID,
 		arg.DeploymentID,
 		arg.NodeID,
 		arg.WakeID,
-		arg.ExpectedState,
 		arg.ConfigFingerprint,
 	)
 	var i PublishOwnedInstanceRuntimeRow
@@ -90945,7 +90950,7 @@ WITH generation_lock AS (
         SELECT 1 FROM app_application_standards s WHERE s.org_id=a.org_id AND s.app_id=a.id
             AND (s.exception_expires_at IS NULL OR now()<s.exception_expires_at)))
 ), thawed AS (
-    UPDATE instances SET started_at=clock_timestamp(), state='running'
+    UPDATE instances SET started_at=clock_timestamp(), last_request_at=clock_timestamp(), state='running'
     WHERE id=$3::uuid AND app_id=$1::uuid
         AND deployment_id=$4::uuid AND node_id=$5::uuid
         AND wake_id=$6::uuid AND state='frozen'
@@ -91016,6 +91021,7 @@ type ThawFrozenInstanceRow struct {
 // config proof must still be the ticket's, and an enrollment exception,
 // which expires with time and moves no generation, must not have expired.
 // The transition event and instance_changed notification commit with it.
+// The thaw is the instance's latest activity, as in PublishOwnedInstanceRuntime.
 // No row means a guard refused and nothing changed.
 func (q *Queries) ThawFrozenInstance(ctx context.Context, db DBTX, arg ThawFrozenInstanceParams) (ThawFrozenInstanceRow, error) {
 	row := db.QueryRow(ctx, thawFrozenInstance,

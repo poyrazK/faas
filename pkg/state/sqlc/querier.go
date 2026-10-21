@@ -4366,6 +4366,10 @@ type Querier interface {
 	PublishInstanceApplicationStandardPromotion(ctx context.Context, db DBTX, arg PublishInstanceApplicationStandardPromotionParams) (int64, error)
 	PublishInstanceApplicationStandardRuntime(ctx context.Context, db DBTX, arg PublishInstanceApplicationStandardRuntimeParams) (int64, error)
 	PublishInstanceRuntimeConfig(ctx context.Context, db DBTX, arg PublishInstanceRuntimeConfigParams) (Instance, error)
+	// A thawed frozen VM or a promoted warm one resumes for a wake: that is its
+	// latest activity, not the request it paused after, which the reaper would
+	// otherwise measure idleness from until the activity batch reports the
+	// request that woke it (ADR-1151).
 	PublishOwnedInstanceRuntime(ctx context.Context, db DBTX, arg PublishOwnedInstanceRuntimeParams) (PublishOwnedInstanceRuntimeRow, error)
 	PublishRuntimeRelease(ctx context.Context, db DBTX, arg PublishRuntimeReleaseParams) (RuntimeRelease, error)
 	PublishRuntimeUpgradeGatewayRoster(ctx context.Context, db DBTX, arg PublishRuntimeUpgradeGatewayRosterParams) (int64, error)
@@ -5619,6 +5623,7 @@ type Querier interface {
 	// config proof must still be the ticket's, and an enrollment exception,
 	// which expires with time and moves no generation, must not have expired.
 	// The transition event and instance_changed notification commit with it.
+	// The thaw is the instance's latest activity, as in PublishOwnedInstanceRuntime.
 	// No row means a guard refused and nothing changed.
 	ThawFrozenInstance(ctx context.Context, db DBTX, arg ThawFrozenInstanceParams) (ThawFrozenInstanceRow, error)
 	TouchCronActivation(ctx context.Context, db DBTX, arg TouchCronActivationParams) error

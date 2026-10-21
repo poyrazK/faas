@@ -56,6 +56,10 @@ func (m *MemStore) PublishOwnedInstanceRuntime(ctx context.Context, p RuntimeIns
 	prior := instance
 	instance.Netns, instance.HostIP, instance.GuestUID = p.Netns, p.HostIP, p.GuestUID
 	instance.StartedAt, instance.State = time.Now().UTC(), p.targetState()
+	if p.ExpectedState == string(StateWarm) || p.ExpectedState == string(StateFrozen) {
+		// A resumed VM's latest activity is the wake that resumed it.
+		instance.LastRequestAt = instance.StartedAt
+	}
 	if err := m.guardInstanceRuntimeTransitionLocked(ctx, m.instances[p.InstanceID], instance); err != nil {
 		return Instance{}, err
 	}
