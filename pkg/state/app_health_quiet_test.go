@@ -9,9 +9,10 @@ import (
 )
 
 // TestAppHealthNextCheckSpacesOnlyQuietApps pins ADR-734 amendment 1: only an
-// unchanged assessment with no instances, no required capacity and no
-// requests waits the quiet interval; anything else, including unknown
-// evidence, keeps the 30-second target.
+// unchanged assessment with known capacity, no instances, no required
+// capacity and no counted requests waits the quiet interval, including an
+// idle app whose request evidence is unknown; anything else, including
+// unknown capacity, keeps the 30-second target.
 func TestAppHealthNextCheckSpacesOnlyQuietApps(t *testing.T) {
 	quiet := func() api.AppHealthResponse {
 		return api.AppHealthResponse{Status: "healthy", Capacity: api.AppHealthCapacity{Known: true}}
@@ -31,14 +32,22 @@ func TestAppHealthNextCheckSpacesOnlyQuietApps(t *testing.T) {
 		{"recent requests", nil, func(a *api.AppHealthResponse) {
 			a.Requests = &api.AppHealthRequests{Known: true, RequestCount: 1}
 		}, api.AppHealthCollectorInterval},
-		{"request metrics unavailable", nil, func(a *api.AppHealthResponse) {
+		{"idle app without request series", nil, func(a *api.AppHealthResponse) {
+			// Production's idle apps: requests unknown (request_evidence_unavailable).
+			a.Status = "unknown"
 			a.Requests = &api.AppHealthRequests{}
+		}, api.AppHealthCollectorQuietInterval},
+		{"requests counted while evidence incomplete", nil, func(a *api.AppHealthResponse) {
+			a.Requests = &api.AppHealthRequests{RequestCount: 3}
 		}, api.AppHealthCollectorInterval},
 		{"ready instance", nil, func(a *api.AppHealthResponse) { a.Capacity.Ready = 1 }, api.AppHealthCollectorInterval},
 		{"starting instance", nil, func(a *api.AppHealthResponse) { a.Capacity.Starting = 1 }, api.AppHealthCollectorInterval},
 		{"required capacity", nil, func(a *api.AppHealthResponse) { a.Capacity.Required = 1 }, api.AppHealthCollectorInterval},
 		{"unknown capacity", nil, func(a *api.AppHealthResponse) { a.Capacity.Known = false }, api.AppHealthCollectorInterval},
-		{"unknown status", nil, func(a *api.AppHealthResponse) { a.Status = "unknown" }, api.AppHealthCollectorInterval},
+		{"unknown capacity and status", nil, func(a *api.AppHealthResponse) {
+			a.Status = "unknown"
+			a.Capacity.Known = false
+		}, api.AppHealthCollectorInterval},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			a := quiet()

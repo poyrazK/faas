@@ -79,12 +79,16 @@ PostgreSQL statements and three PromQL queries, and the health queries were
 nearly all of Prometheus's query load on the 2-vCPU control plane.
 
 An app is quiet when its new assessment adds no history entry (unchanged and
-fresh), its status is not `unknown`, its capacity is known with no instances
-and no required capacity, and it served no requests in the metrics window (or
-its plan has no request metrics). Only a deploy or a wake can change such an
-assessment, so its next check is scheduled `AppHealthCollectorQuietInterval`
-(75 seconds) later instead of 30. Unknown evidence keeps 30 seconds so a failed
-read is retried soon.
+fresh), its capacity is known with no instances and no required capacity, and
+it counted no requests. Only a deploy or a wake can change such an assessment,
+so its next check is scheduled `AppHealthCollectorQuietInterval` (75 seconds)
+later instead of 30. Unknown capacity keeps 30 seconds so a failed instance
+read is retried soon. Unknown request evidence does not: an idle app has no
+request series, so its request check is `request_evidence_unavailable` (status
+`unknown`) on every observation, the same as during a Prometheus outage, and
+observing it sooner learns nothing new. (The first version also required a
+known status and request evidence; on production-us 84 of 89 idle apps were
+`unknown` only for request evidence, so it never applied.)
 
 The quiet interval plus a lost lease (30 s), the collection timeout (10 s) and
 one idle sweep (1 s) stays under the 2-minute evidence age, so a quiet app never
