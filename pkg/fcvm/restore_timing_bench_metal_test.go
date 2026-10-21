@@ -131,6 +131,7 @@ func TestMetalRestoreTimingBench(t *testing.T) {
 	// Warnings reach stderr so a restore that fell back to a cold boot says why.
 	warnings := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 	m := NewManager(wire.ExecRunner{}, vmm, Paths{Kernel: kernel}, fcVersion, warnings, nil)
+	attachBenchResourceJournal(t, m)
 	if n := benchPreparedNetworks(t); n > 0 {
 		if err := m.EnablePreparedNetworks(context.Background(), n); err != nil {
 			t.Fatalf("enable prepared networks: %v", err)
@@ -535,6 +536,31 @@ func stageBenchMountHelper(t *testing.T, v *JailerVMM) {
 	}
 	t.Cleanup(func() { _ = os.Remove(dst) })
 	v.mountHelperPath = dst
+}
+
+// attachBenchResourceJournal attaches the ADR-473 resource journal that
+// production vmmd always runs with, so its commits land in the measured
+// phases. production-us spends most of chroot, stage_drives and
+// stage_snapshot in those commits (~60 fsyncs per restore on the root
+// disk), and a harness without the journal reports none of it.
+// FAAS_RESTORE_BENCH_JOURNAL_DIR names a directory on the filesystem to
+// measure; unset keeps the journal off, as before.
+func attachBenchResourceJournal(t *testing.T, m *Manager) {
+	t.Helper()
+	root := os.Getenv("FAAS_RESTORE_BENCH_JOURNAL_DIR")
+	if root == "" {
+		return
+	}
+	j, err := OpenResourceJournal(filepath.Join(root, fmt.Sprintf("restore-bench-journal-%d", os.Getpid())))
+	if err != nil {
+		t.Fatalf("open resource journal: %v", err)
+	}
+	if err := m.WithResourceJournal(j); err != nil {
+		_ = j.Close()
+		t.Fatalf("attach resource journal: %v", err)
+	}
+	t.Cleanup(func() { _ = j.Close() })
+	t.Logf("resource journal: %s", root)
 }
 
 // benchPreparedNetworks reads FAAS_RESTORE_BENCH_PREPARED_NETWORKS, the
