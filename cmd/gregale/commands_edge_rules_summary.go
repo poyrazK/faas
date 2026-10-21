@@ -76,6 +76,10 @@ func renderEdgeProtection(w io.Writer, slug string, s api.EdgeProtectionResponse
 		}
 	}
 	renderEdgeProtectionWAF(w, s.WAF)
+	if c := s.Challenge; c.Issued+c.Solved+c.Rejected+c.Passed+c.Bypassed+c.Invalid > 0 {
+		_, _ = fmt.Fprintf(w, "  %-28s %d pages served, %d solved, %d non-browser refused, %d passed on an earlier solve, %d verified API clients, %d invalid\n",
+			"challenge:", c.Issued, c.Solved, c.Rejected, c.Passed, c.Bypassed, c.Invalid)
+	}
 }
 
 // renderEdgeProtectionWAF prints the kind=waf section only when a WAF rule

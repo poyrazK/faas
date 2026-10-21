@@ -179,6 +179,7 @@
       <label><input type="checkbox" name="view_billing" value="true" {{if .ViewBilling}}checked{{end}}>View billing</label>
       <label><input type="checkbox" name="manage_plan" value="true" {{if .ManagePlan}}checked{{end}}>Manage plan</label>
       <label><input type="checkbox" name="manage_team" value="true" {{if .ManageTeam}}checked{{end}}>Manage team</label>
+      <label><input type="checkbox" name="manage_billing" value="true" {{if .ManageBilling}}checked{{end}}>Manage billing details</label>
       <button name="action" value="set">Review changes</button><button name="action" value="remove">Review removal</button>
     </form>
     {{end}}
@@ -189,6 +190,7 @@
       <label><input type="checkbox" name="view_work" value="true">View work</label><label><input type="checkbox" name="run_work" value="true">Run work</label><label><input type="checkbox" name="view_billing" value="true">View billing</label>
       <label><input type="checkbox" name="manage_plan" value="true">Manage plan</label>
       <label><input type="checkbox" name="manage_team" value="true">Manage team</label>
+      <label><input type="checkbox" name="manage_billing" value="true">Manage billing details</label>
       <button name="action" value="set">Review role permissions</button>
     </form>
     <p>Custom roles must already be configured in Application Auth. Assign or remove members through its workspace settings. This page changes product permissions for a role across every linked workspace.</p>
@@ -290,11 +292,15 @@
     <div class="scroll"><table><thead><tr><th>Customer</th><th>Plan</th><th>Product access</th><th>Tenant status</th></tr></thead><tbody>{{range .Data.Customers}}<tr><td><a href="{{.URL}}">{{.Name}}</a><br><code>{{.TenantID}}</code></td><td>{{.Plan}}</td><td>{{if .Suspended}}Suspended{{else}}Enabled{{end}}</td><td>{{.Status}}</td></tr>{{else}}<tr><td colspan="4">No assigned customers on this page. Open an existing platform tenant to assign a plan.</td></tr>{{end}}</tbody></table></div>
     {{if .Data.NextCustomersURL}}<a href="{{.Data.NextCustomersURL}}">More customers →</a>{{end}}
   </section>
+  {{with .Data.Overdue}}<section aria-labelledby="overdue"><h2 id="overdue">Overdue invoices</h2><p>{{.Policy}}</p>
+    <p>Change it with <code>gregale product billing overdue-policy set --block-overdue-after-days N --app {{$.Data.AppSlug}}</code> or remove it with <code>overdue-policy clear</code>, which lifts every hold. Holds are recomputed every few minutes and lift when the invoice is paid; they are separate from suspending a customer.</p>
+    <div class="scroll"><table><thead><tr><th>Held customer</th><th>Invoice due</th><th>Held since</th><th>Invoice</th></tr></thead><tbody>{{range .Holds}}<tr><td><a href="{{.URL}}"><code>{{.TenantID}}</code></a></td><td>{{.DueAt}}</td><td>{{.Since}}</td><td>{{if .InvoiceURL}}<a href="{{.InvoiceURL}}" target="_blank" rel="noopener noreferrer">Customer's hosted invoice</a>{{end}}</td></tr>{{else}}<tr><td colspan="4">No customer is held.</td></tr>{{end}}</tbody></table></div>
+  </section>{{end}}
   {{if .Data.TenantID}}
   <section aria-labelledby="customer"><h2 id="customer">{{.Data.TenantName}}</h2><p><a href="{{.Data.BaseURL}}/activity?tenant={{.Data.TenantID}}">View activity timeline</a></p>
     <p><a href="{{.Data.BaseURL}}/onboarding?tenant={{.Data.TenantID}}">Onboarding and activation</a></p>
     <p><code>{{.Data.TenantID}}</code> · tenant status {{.Data.TenantStatus}}</p>
-    {{with .Data.Customer}}<dl><dt>Plan</dt><dd>{{.Plan}}</dd><dt>Revision</dt><dd><code>{{.Revision}}</code></dd><dt>Product access</dt><dd>{{if .Suspended}}Suspended{{else}}Enabled{{end}}</dd><dt>Auth organization</dt><dd>{{if .AuthOrganizationID}}<code>{{.AuthOrganizationID}}</code>{{else}}No customer portal identity linked{{end}}</dd></dl>{{else}}<p>This platform tenant has no Product Control plan assigned.</p>{{end}}
+    {{with .Data.Customer}}<dl><dt>Plan</dt><dd>{{.Plan}}</dd><dt>Revision</dt><dd><code>{{.Revision}}</code></dd><dt>Product access</dt><dd>{{if .Suspended}}Suspended{{else}}Enabled{{end}}</dd>{{if $.Data.CustomerHold}}<dt>Payment hold</dt><dd>{{$.Data.CustomerHold}}</dd>{{end}}<dt>Auth organization</dt><dd>{{if .AuthOrganizationID}}<code>{{.AuthOrganizationID}}</code>{{else}}No customer portal identity linked{{end}}</dd></dl>{{else}}<p>This platform tenant has no Product Control plan assigned.</p>{{end}}
     <h3>{{if .Data.Customer}}Change plan or access{{else}}Assign first plan{{end}}</h3>
     <form method="post" action="{{.Data.BaseURL}}/review"><input type="hidden" name="csrf_token" value="{{.Data.ReviewToken}}"><input type="hidden" name="action" value="plan"><input type="hidden" name="tenant" value="{{.Data.TenantID}}"><input type="hidden" name="period" value="{{.Data.Period}}">
       <label>Plan<input name="plan" list="product-plans" value="{{if .Data.Customer}}{{.Data.Customer.Plan}}{{end}}" required><datalist id="product-plans">{{range .Data.Plans}}<option value="{{.Name}}">{{.Label}}</option>{{end}}</datalist></label>
@@ -315,7 +321,8 @@
     {{if not .Finalized}}{{if .Closed}}{{if eq .Unresolved 0}}<form method="post" action="{{$.Data.BaseURL}}/review"><input type="hidden" name="csrf_token" value="{{$.Data.ReviewToken}}"><input type="hidden" name="action" value="finalize"><input type="hidden" name="tenant" value="{{$.Data.TenantID}}"><input type="hidden" name="period" value="{{.Period}}"><button>Review statement for finalization</button></form>{{else}}<p>Unresolved charges block finalization. Inspect execution evidence or explicitly waive a charge.</p>{{end}}{{else}}<p>This UTC month is still open. Finalize it after month-end.</p>{{end}}{{end}}
     <h3>Statements and credit notes</h3><p>Credits are separate documents. Document pages may contain only part of the month; no partial-page net total is shown.</p>
     {{range $.Data.Documents}}<article class="card" id="document-{{.ID}}"><h4>{{.Kind}} · {{.Amount}}</h4><p><code>{{.ID}}</code> · {{.CreatedAt}}</p>{{if .StatementID}}<p>Statement <code>{{.StatementID}}</code> · run <code>{{.OperationID}}</code> · {{.Reason}}</p>{{end}}
-      {{if .Reference}}<p>Invoice handoff recorded: <code>{{.Reference}}</code></p>{{else}}<form method="post" action="{{$.Data.BaseURL}}/review"><input type="hidden" name="csrf_token" value="{{$.Data.ReviewToken}}"><input type="hidden" name="action" value="handoff"><input type="hidden" name="tenant" value="{{$.Data.TenantID}}"><input type="hidden" name="period" value="{{$.Data.Period}}"><input type="hidden" name="document" value="{{.ID}}"><label>Existing external invoice / credit reference<input name="reference" required maxlength="255"></label><button>Review invoice handoff</button></form>{{end}}
+      {{if .Invoice}}<p>{{.Invoice}}</p>{{if or .DashboardURL .InvoiceURL}}<p>{{if .DashboardURL}}<a href="{{.DashboardURL}}" target="_blank" rel="noopener noreferrer">Open in provider dashboard</a>{{end}}{{if and .DashboardURL .InvoiceURL}} · {{end}}{{if .InvoiceURL}}<a href="{{.InvoiceURL}}" target="_blank" rel="noopener noreferrer">Customer's hosted invoice</a>{{end}}</p>{{end}}{{end}}
+      {{if .Exported}}{{else if .Reference}}<p>Invoice handoff recorded: <code>{{.Reference}}</code></p>{{else}}<form method="post" action="{{$.Data.BaseURL}}/review"><input type="hidden" name="csrf_token" value="{{$.Data.ReviewToken}}"><input type="hidden" name="action" value="handoff"><input type="hidden" name="tenant" value="{{$.Data.TenantID}}"><input type="hidden" name="period" value="{{$.Data.Period}}"><input type="hidden" name="document" value="{{.ID}}"><label>Existing external invoice / credit reference<input name="reference" required maxlength="255"></label><button>Review invoice handoff</button></form>{{end}}
     </article>{{else}}<p>No documents on this page.</p>{{end}}
     {{if $.Data.NextDocumentsURL}}<a href="{{$.Data.NextDocumentsURL}}">More documents →</a>{{end}}
   </section>

@@ -38383,8 +38383,8 @@ paths:
         - name: outcome
           in: query
           required: false
-          description: Only events with this outcome; detected, warned and blocked are kind=waf detections.
-          schema: { type: string, enum: [matched, logged, detected, warned, blocked] }
+          description: Only events with this outcome; detected, warned and blocked are kind=waf detections; challenged, rejected, solved and failed are kind=challenge outcomes.
+          schema: { type: string, enum: [matched, logged, detected, warned, blocked, challenged, rejected, solved, failed] }
         - name: since
           in: query
           required: false
@@ -79536,6 +79536,45 @@ components:
         version: { type: integer, enum: [1] }
         report_id: { type: string, pattern: '^[A-Za-z0-9._:-]{1,128}$' }
         hours: { type: array, maxItems: 48, items: { $ref: '#/components/schemas/DataAPIUsageHour' } }
+        access: { $ref: '#/components/schemas/DataAPIAccessConfig' }
+    DataAPIAccessConfig:
+      description: Access settings the runtime reports for live reads without a user token, sent after start and hourly. It replaces the stored settings; turning usage reporting off forgets them. Holds key hashes, never keys.
+      type: object
+      additionalProperties: false
+      required: [version, schemas]
+      properties:
+        version: { type: integer, enum: [1] }
+        schemas: { type: array, minItems: 1, maxItems: 8, items: { type: string, pattern: '^[a-z][a-z0-9_]{0,62}$' } }
+        auth: { $ref: '#/components/schemas/DataAPIUserAuth' }
+        public_read: { type: array, maxItems: 64, items: { type: string, pattern: '^[a-z][a-z0-9_]{0,62}\.[A-Za-z_][A-Za-z0-9_]{0,62}$' } }
+        server_keys: { type: array, maxItems: 2, items: { $ref: '#/components/schemas/DataAPIServerKey' } }
+    DataAPIUserAuth:
+      description: The issuer, JWKS URL and audience the Data API verifies user tokens against. Live reads verify user tokens with the same settings.
+      type: object
+      additionalProperties: false
+      required: [issuer, jwks_url, audience]
+      properties:
+        issuer: { type: string, format: uri, maxLength: 2048 }
+        jwks_url: { type: string, format: uri, maxLength: 2048 }
+        audience: { type: string, minLength: 1, maxLength: 256 }
+    DataAPIServerKey:
+      description: One server-key rotation slot as the runtime reports it, the SHA-256 of the key and any permissions.
+      type: object
+      additionalProperties: false
+      required: [slot, sha256]
+      properties:
+        slot: { type: string, enum: [a, b] }
+        sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+        permissions: { $ref: '#/components/schemas/DataAPIServerKeyPermissionSet' }
+    DataAPIServerKeyPermissionSet:
+      description: Narrows a server key. Absent fields keep full access; live reads use relations and subjects.
+      type: object
+      additionalProperties: false
+      properties:
+        access: { type: string, enum: [read, write] }
+        relations: { type: array, maxItems: 64, items: { type: string } }
+        rpcs: { type: array, maxItems: 64, items: { type: string } }
+        subjects: { type: boolean }
     DataAPIUsageMonthToDate:
       description: Admitted requests in the current UTC calendar month, all and anonymous, which owner caps compare against.
       type: object
@@ -85786,7 +85825,7 @@ components:
     EdgeProtectionResponse:
       description: Edge rejection counts for one app over a range.
       type: object
-      required: [app_id, range, source, as_of, pre_auth, validation_failures, rejections, waf]
+      required: [app_id, range, source, as_of, pre_auth, validation_failures, rejections, waf, challenge]
       properties:
         app_id: { type: string }
         range: { type: string, enum: [5m, 15m, 1h, 6h, 24h, 7d, 15d] }
@@ -85814,7 +85853,7 @@ components:
             type: object
             required: [gate, status, count]
             properties:
-              gate: { type: string, enum: [jwt, ip_allowlist, internal_only, ip, geo, limit, body_limit, throttle, waf] }
+              gate: { type: string, enum: [jwt, ip_allowlist, internal_only, ip, geo, limit, body_limit, throttle, waf, challenge] }
               status: { type: string, enum: ['401', '403', '413', '429', '503', other] }
               count: { type: integer, format: int64, minimum: 0 }
         waf:
@@ -85847,6 +85886,17 @@ components:
                 properties:
                   name: { type: string, description: CRS rule ID. }
                   count: { type: integer, format: int64, minimum: 0 }
+        challenge:
+          type: object
+          description: kind=challenge decisions (ADR-831 amendment 7); its 403s also appear in rejections under gate challenge.
+          required: [issued, solved, rejected, passed, bypassed, invalid]
+          properties:
+            issued: { type: integer, format: int64, minimum: 0, description: "Challenge pages served to browser navigations." }
+            solved: { type: integer, format: int64, minimum: 0, description: "Passes earned by solving the proof of work." }
+            rejected: { type: integer, format: int64, minimum: 0, description: "Non-navigation requests answered 403 challenge_required." }
+            passed: { type: integer, format: int64, minimum: 0, description: "Requests let through on a pass from an earlier solve." }
+            bypassed: { type: integer, format: int64, minimum: 0, description: "Requests let through on a verified API key, consumer key or JWT." }
+            invalid: { type: integer, format: int64, minimum: 0, description: "Solutions refused: wrong work or an expired token." }
 
     PreAuthEnforcementSuggestion:
       description: |
@@ -103908,7 +103958,7 @@ components:
         enabled: { type: boolean, default: true }
         kind:
           type: string
-          enum: [route, rewrite, redirect, headers, cors, jwt, ip, validate, limit, maintenance, geo, throttle, budget, cache, respond, retry, circuit_breaker, async, waf]
+          enum: [route, rewrite, redirect, headers, cors, jwt, ip, validate, limit, maintenance, geo, throttle, budget, cache, respond, retry, circuit_breaker, async, waf, challenge]
         validate_mode:
           type: string
           enum: [block, observe, warn]
@@ -103939,6 +103989,7 @@ components:
             - { $ref: '#/components/schemas/EdgeRuleCircuitBreakerAction' }
             - { $ref: '#/components/schemas/EdgeRuleAsyncAction' }
             - { $ref: '#/components/schemas/EdgeRuleWAFAction' }
+            - { $ref: '#/components/schemas/EdgeRuleChallengeAction' }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
         name: { type: string, description: Operator-facing rule name. }
@@ -103982,7 +104033,7 @@ components:
         enabled: { type: boolean, default: true }
         kind:
           type: string
-          enum: [route, rewrite, redirect, headers, cors, jwt, ip, validate, limit, maintenance, geo, throttle, budget, cache, respond, retry, circuit_breaker, async, waf]
+          enum: [route, rewrite, redirect, headers, cors, jwt, ip, validate, limit, maintenance, geo, throttle, budget, cache, respond, retry, circuit_breaker, async, waf, challenge]
         validate_mode:
           type: string
           enum: [block, observe, warn]
@@ -104012,6 +104063,7 @@ components:
             - { $ref: '#/components/schemas/EdgeRuleCircuitBreakerAction' }
             - { $ref: '#/components/schemas/EdgeRuleAsyncAction' }
             - { $ref: '#/components/schemas/EdgeRuleWAFAction' }
+            - { $ref: '#/components/schemas/EdgeRuleChallengeAction' }
         name: { type: string, maxLength: 100, description: Optional operator-facing name for the new rule. }
         description: { type: string, maxLength: 1000, description: Optional operator-facing notes for the new rule. }
         expires_at: { type: string, format: date-time, description: Optional time after which the gateway stops applying the new rule. }
@@ -104062,6 +104114,7 @@ components:
             - { $ref: '#/components/schemas/EdgeRuleCircuitBreakerAction' }
             - { $ref: '#/components/schemas/EdgeRuleAsyncAction' }
             - { $ref: '#/components/schemas/EdgeRuleWAFAction' }
+            - { $ref: '#/components/schemas/EdgeRuleChallengeAction' }
         name: { type: string, maxLength: 100, description: Replacement rule name. }
         description: { type: string, maxLength: 1000, description: Replacement rule notes. }
         expires_at: { type: string, format: date-time, description: New expiry; the gateway stops applying the rule after it. }
@@ -104193,8 +104246,8 @@ components:
         rule_kind: { type: string }
         outcome:
           type: string
-          enum: [matched, logged, detected, warned, blocked]
-          description: 'matched (enforced rule) and logged (log-mode rule) are rule matches. detected is a kind=waf detection in a sampled request; warned and blocked are kind=waf detections in-path by a warn or block rule (blocked requests were answered with 403).'
+          enum: [matched, logged, detected, warned, blocked, challenged, rejected, solved, failed]
+          description: 'matched (enforced rule) and logged (log-mode rule) are rule matches. detected is a kind=waf detection in a sampled request; warned and blocked are kind=waf detections in-path by a warn or block rule (blocked requests were answered with 403). challenged, rejected, solved and failed are kind=challenge outcomes: the challenge page served to a browser, a request that is not a browser navigation answered with 403, a solution that earned a pass, and a solution answered with 403. An enforced challenge rule records these instead of matched.'
         occurred_at: { type: string, format: date-time }
         request_id: { type: string }
         method: { type: string }
@@ -104262,6 +104315,19 @@ components:
         params:
           type: object
           description: Recipe parameters to add it with; required parameters not listed must be supplied.
+          additionalProperties: { type: string }
+        alternative: { $ref: '#/components/schemas/EdgeRuleRecipeSuggestionAlternative' }
+
+    EdgeRuleRecipeSuggestionAlternative:
+      description: A softer recipe for the same observation, such as challenging browsers instead of rate-limiting (ADR-831 amendment 7).
+      type: object
+      required: [recipe, title]
+      properties:
+        recipe: { type: string, description: Recipe id of the alternative (ADR-986). }
+        title: { type: string, description: The alternative recipe's title. }
+        params:
+          type: object
+          description: Parameters to add the alternative with.
           additionalProperties: { type: string }
 
     EdgeRuleSetVersionResponse:
@@ -105227,6 +105293,31 @@ components:
           maximum: 65536
           default: 8192
           description: Request body prefix inspected. Larger and streaming bodies are inspected up to this size only; larger values use more of the app's inspection budget.
+    EdgeRuleChallengeAction:
+      description: |
+        Asks browsers on matched routes to prove they run a real browser
+        before the request reaches the app (ADR-831 amendment 7). A request
+        without a valid pass is answered at the edge: a page load gets a page
+        that solves a short proof of work in the browser and sets a signed
+        pass cookie, and any other request gets 403 challenge_required.
+        Requests with a verified API key, consumer key or JWT subject are
+        never challenged. Use log mode to see what a rule would challenge,
+        and add a verified_bot missing condition so search crawlers pass.
+        Hobby and above. Omitted values are stored as their defaults.
+      type: object
+      properties:
+        difficulty:
+          type: integer
+          minimum: 10
+          maximum: 22
+          default: 16
+          description: Leading zero bits the browser must find in a SHA-256 hash. Each extra bit doubles the work; the default takes tens to a few hundred milliseconds.
+        pass_ttl_seconds:
+          type: integer
+          minimum: 300
+          maximum: 86400
+          default: 3600
+          description: How long a solved challenge lets the browser through.
     EdgeRuleAsyncAction:
       description: |
         Marks the matched route for durable asynchronous execution (ADR-215).
@@ -113902,7 +113993,7 @@ components:
         automatic_tax: { type: boolean, description: "Whether Stripe Tax calculated this invoice's tax (ADR-1313)." }
         created_at: { type: string, format: date-time }
         completed_at: { type: string, format: date-time }
-        source_kind: { type: string, enum: [app_consumer, platform_tenant] }
+        source_kind: { type: string, enum: [app_consumer, platform_tenant, product_control] }
         payment_status:
           type: string
           enum: [draft, open, paid, void, uncollectible, deleted]
@@ -114034,12 +114125,12 @@ components:
         hold_on_gaps: { type: boolean, description: "Hold an app consumer whose usage ledger misses requests telemetry saw (default true)." }
 
     BillingRunSources:
-      description: "Which customers a run bills. With platform_tenants, a consumer's tenant-attributed usage is billed on the tenant statement and its app item is skipped."
+      description: "Which customers a run bills. With platform_tenants, a consumer's tenant-attributed usage is billed on the tenant statement and its app item is skipped. product_customers bills each Product Control customer's statement for the month and needs Product Control to be enabled (ADR-20261018212918)."
       type: array
       minItems: 1
-      maxItems: 2
+      maxItems: 3
       uniqueItems: true
-      items: { type: string, enum: [app_consumers, platform_tenants] }
+      items: { type: string, enum: [app_consumers, platform_tenants, product_customers] }
 
     BillingRunExport:
       description: "Where finalized statements go: none, or invoices in the account's Stripe, Paddle or Lago (ADR-1507; requires finalize and a connected key)."
@@ -114090,11 +114181,11 @@ components:
           items: { $ref: '#/components/schemas/BillingRunResponse' }
 
     BillingRunItemResponse:
-      description: "What a billing run did for one app consumer or platform tenant."
+      description: "What a billing run did for one app consumer, platform tenant or Product Control customer. A product_control item names its app in app_id and its customer in platform_tenant_id; its statement_id is the Product Control statement document."
       type: object
       required: [source_kind, external_ref, outcome, exported_invoices, attempts, updated_at]
       properties:
-        source_kind: { type: string, enum: [app_consumer, platform_tenant] }
+        source_kind: { type: string, enum: [app_consumer, platform_tenant, product_control] }
         app_id: { type: string, format: uuid }
         consumer_id: { type: string, format: uuid }
         platform_tenant_id: { type: string, format: uuid }
@@ -114102,7 +114193,7 @@ components:
         outcome:
           type: string
           enum: [pending, drafted, finalized, exported, up_to_date, held, skipped, failed]
-          description: "up_to_date: nothing new to bill or export. held: needs attention, such as unpriced usage or a completeness gap. skipped: billed through a platform tenant, or already invoiced through the other path."
+          description: "up_to_date: nothing new to bill or export. held: needs attention, such as unpriced usage, a completeness gap, or Product Control runs with no recorded outcome. skipped: billed through a platform tenant, or already invoiced through the other path or by hand."
         statement_id: { type: string, format: uuid }
         revision: { type: integer, minimum: 1 }
         currency: { type: string, pattern: '^[A-Z]{3}$' }

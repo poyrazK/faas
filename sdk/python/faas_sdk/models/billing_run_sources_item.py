@@ -1,10 +1,11 @@
 from typing import Literal
 
-BillingRunSourcesItem = Literal["app_consumers", "platform_tenants"]
+BillingRunSourcesItem = Literal["app_consumers", "platform_tenants", "product_customers"]
 
 BILLING_RUN_SOURCES_ITEM_VALUES: set[BillingRunSourcesItem] = {
     "app_consumers",
     "platform_tenants",
+    "product_customers",
 }
 
 

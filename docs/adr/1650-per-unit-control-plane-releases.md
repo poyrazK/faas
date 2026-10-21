@@ -228,9 +228,11 @@ deploy --only` and inherit that choice.
 - *Order:* lane-eligible migrations (ADR 20261018084150) are applied by the
   control-plane lane before its restarts, and contract migrations go out
   only in a full release. `release-units.yml` deploys the control-plane
-  lane, then the edge lane. When the edge lane runs alone, it checks the
-  control plane itself, including the applied migrations. Runtime (guest,
-  images) waits for a full release.
+  lane, then the edge lane. A unit release that carries nothing for the
+  control plane (no daemon, migration or host role of its lane) skips the
+  control-plane lane. The edge lane, alone or not, checks the control plane
+  itself, including the applied migrations. Runtime (guest, images) waits
+  for a full release.
 
 The `base` dispatch input can no longer move a unit release onto an older
 production release. That combination is exactly what N±1 forbids.
@@ -256,6 +258,14 @@ config, and a test fails if it exceeds 30 minutes. The per-host costs are
 estimates from the steps' local and slice-1 timings, not production
 measurements. A queued hosted build runner (0-14 min on busy CI days) comes
 on top. Each extra compute node adds 3.5 minutes.
+
+Measured on production-us on 2026-10-21 (run 39544594814, a
+gatewayd-internal fix on one canary and one follower): 16 minutes from
+dispatch to the last host. The build took 5.6 of them, because the main
+branch cache holds no release-recipe compile results; release-units now
+keeps a release build cache per base release. The control-plane lane, with
+nothing to deploy, took one minute; it is now skipped. Gates and restarts
+took 7.3 minutes.
 
 ## Real-host evidence (fsn-4, 2026-10-18)
 
