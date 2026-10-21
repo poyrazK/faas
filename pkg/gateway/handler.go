@@ -5350,6 +5350,13 @@ type capWriter struct {
 	written  int64
 	onCap    func()
 	disabled *atomic.Bool
+	// committed is set once the status line has been passed on. After
+	// that a problem document can no longer replace the response: written
+	// into the body it was appended to the customer's payload, which then
+	// ended cleanly under the committed 200 (Hunt 11 H11-36). onCap only
+	// runs while the response is uncommitted; afterwards Write returns
+	// errResponseCapExceeded and the caller aborts the stream.
+	committed bool
 	// HEAD's Content-Length describes the representation a GET would return,
 	// not bytes in this response, so it cannot trigger the body-size guard.
 	headResponse bool
@@ -5382,18 +5389,19 @@ func (c *capWriter) ProblemHTMLRequest() *http.Request {
 
 func (c *capWriter) Write(b []byte) (int, error) {
 	if c.disabled.Load() {
-		return 0, http.ErrHandlerTimeout
+		return 0, errResponseCapExceeded
 	}
 	if c.written+int64(len(b)) > c.cap {
 		// Fire once; idempotent under concurrent writes thanks
-		// to disabled CAS.
-		if c.disabled.CompareAndSwap(false, true) && c.onCap != nil {
+		// to disabled CAS. A committed response cannot become a
+		// problem document any more (see committed).
+		if c.disabled.CompareAndSwap(false, true) && c.onCap != nil && !c.committed {
 			c.onCap()
 		}
 		if c.exceeded.CompareAndSwap(false, true) && c.onWarn != nil {
 			c.onWarn("exceeded")
 		}
-		return 0, http.ErrHandlerTimeout
+		return 0, errResponseCapExceeded
 	}
 	// Pre-Write warn-on-approach hook (issue #995 Phase 4 /
 	// ADR-121): fire once at 95% of cap, once at 80% (95%
@@ -5418,12 +5426,17 @@ func (c *capWriter) Write(b []byte) (int, error) {
 			}
 		}
 	}
+	c.committed = true
 	n, err := c.ResponseWriter.Write(b)
 	if n > 0 {
 		c.written += int64(n)
 	}
 	return n, err
 }
+
+// errResponseCapExceeded is what capWriter.Write returns once the body cap
+// fired. It wraps http.ErrHandlerTimeout, which earlier callers matched.
+var errResponseCapExceeded = fmt.Errorf("gateway: response exceeded its body cap: %w", http.ErrHandlerTimeout)
 
 // WriteHeader rejects an announced oversized body before its status and
 // headers reach the client. Bodyless responses are exempt: in particular,
@@ -5455,6 +5468,9 @@ func (c *capWriter) WriteHeader(statusCode int) {
 			}
 			return
 		}
+	}
+	if statusCode >= http.StatusOK {
+		c.committed = true
 	}
 	c.ResponseWriter.WriteHeader(statusCode)
 }
