@@ -59,7 +59,7 @@ func TestEventRecipientSweepReleasesUnroutedBatchClaims(t *testing.T) {
 	loop := sched.NewLoop(nil, engine, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	stopped, stop := context.WithCancel(ctx)
 	stop()
-	loop.XRunEventFanoutSweep(stopped)
+	loop.XRunEventRecipientSweep(stopped)
 
 	batch, err := store.ClaimDuePublishedEventRecipients(ctx, time.Now().UTC(), 10, true)
 	if err != nil || len(batch) != 3 {
